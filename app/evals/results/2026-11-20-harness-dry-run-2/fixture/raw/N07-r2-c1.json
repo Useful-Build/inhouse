@@ -1,0 +1,50 @@
+{
+ "row": {
+  "caseId": "N07",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [
+   "orders_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Here's a draft. The shop only shows order 1042 as \"paid\", with no tracking or carrier info, so I left a placeholder for that.\n\n---\n\nHi Anna,\n\nThank you for your patience, and I'm sorry your order #1042 hasn't arrived yet. I've looked into it and [tracking status / new expected delivery date].\n\nIf it",
+  "costUsd": 0.0126777,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__shop__orders_search",
+    "input": {
+     "query": "Anna Weber"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"order_id\\\":\\\"1042\\\",\\\"total_eur\\\":124.5,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"Anna Weber\\\"},{\\\"order_id\\\":\\\"1043\\\",\\\"total_eur\\\":38,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"J. Moreau\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "shipping delay reply tone policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Here's a draft. The shop only shows order 1042 as \"paid\", with no tracking or carrier info, so I left a placeholder for that.\n\n---\n\nHi Anna,\n\nThank you for your patience, and I'm sorry your order #1042 hasn't arrived yet. I've looked into it and [tracking status / new expected delivery date].\n\nIf it hasn't arrived by [date], let me know and we'll sort it out right away, either with a replacement or a refund, whichever you prefer.\n\nSorry again for the wait.\n\nBest,\n[Your name]\n\n---\n\nIf you tell me the carrier status or the date, I can fill it in.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2568,
+   "cacheReadTokens": 20797,
+   "outputTokens": 417
+  },
+  "costUsd": 0.0126777
+ }
+}

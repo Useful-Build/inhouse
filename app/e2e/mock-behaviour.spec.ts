@@ -3,11 +3,12 @@
 // Regenerate on a seeded chat gives that chat's own answer, the weekly report notification opens the chat that holds
 // the report, and an unknown link says so. Screenshots of each answer go to the report.
 import { expect, fxFor, test } from './support/fx.js'
+import { routeReady } from './support/clients/mock.js'
 import type { Page } from '@playwright/test'
 
 async function start(page: Page, hash = '#/today') {
   await fxFor(page, undefined).seed({ stage: 'Act' })
-  await page.goto('/?demo' + hash)
+  await fxFor(page, undefined).open(hash)
 }
 
 const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
@@ -28,6 +29,7 @@ async function askFromToday(page: Page, q: string) {
 async function routineNames(page: Page) {
   await side(page).getByRole('button', { name: 'Routines' }).click()
   await expect(page.getByRole('heading', { level: 1, name: 'Routines' })).toBeVisible()
+  await routeReady(page)
   return page.locator('main').getByRole('button', { name: /^Actions for / }).count()
 }
 /** Picks a stage or a scenario in the demo switches. */

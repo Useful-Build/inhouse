@@ -6,11 +6,11 @@ import { fc, test } from '@fast-check/vitest'
 import { SignJWT, UnsecuredJWT, createLocalJWKSet, importJWK } from 'jose'
 import type { JWTVerifyGetKey } from 'jose'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { authenticate, authenticateUpgrade, checkOrigin, remoteKeys, testIssuerBranch } from './authenticate.ts'
+import { authenticate, checkOrigin, remoteKeys, testAssertion, testIssuerBranch } from './authenticate.ts'
 import * as issuerOff from './issuer-off.ts'
 import type { AuthOutcome } from './authenticate.ts'
 import { TEST_ISSUER, mintPerson, mintService } from './test-issuer-mint.ts'
-import { BRAND, INHOUSE, MONITOR_ID, SMOKE_ID, SMOKE_MEMBER, TEAM, authEnv, config, fakeStores, issuer, req } from '../testing/auth-fixtures.ts'
+import { BRAND, INHOUSE, MONITOR_ID, RELEASE_ID, SMOKE_ID, SMOKE_MEMBER, TEAM, authEnv, config, fakeStores, issuer, req } from '../testing/auth-fixtures.ts'
 import type { Issuer } from '../testing/auth-fixtures.ts'
 
 const NOW = Date.parse('2026-11-20T10:00:00.000Z')
@@ -105,7 +105,8 @@ describe('properties', () => {
 describe('the token', () => {
   it('signs a person in on the brand app, with the email trimmed and lower-cased', async () => {
     const { out, calls } = await run(await person())
-    expect(principalOf(out)).toEqual({ kind: 'person', memberId: 'm_sub-1', role: 'admin', subject: 'sub-1', requestId: 'req-1' })
+    // expMs: the token's exp (minted at NOW with a 10-minute life), written out, never computed from the token.
+    expect(principalOf(out)).toEqual({ kind: 'person', memberId: 'm_sub-1', role: 'admin', subject: 'sub-1', requestId: 'req-1', expMs: Date.parse('2026-11-20T10:10:00.000Z') })
     expect(calls.resolvePerson[0]).toMatchObject({ subject: 'sub-1', email: 'person@example.test', nowMs: NOW })
   })
   it('is read only from Cf-Access-Jwt-Assertion: missing, empty or not three parts is 401', async () => {
@@ -160,7 +161,7 @@ describe('the host picks the app', () => {
     const grant = { id: 'g_1', endsAtMs: NOW + 3_600_000 }
     const s = fakeStores({ grant })
     const { out, calls } = await run(await person({ aud: INHOUSE.aud }), INHOUSE.origin, { stores: s })
-    expect(principalOf(out)).toEqual({ kind: 'inhouse', memberId: 'm_ih_sub-1', subject: 'sub-1', grant, requestId: 'req-1' })
+    expect(principalOf(out)).toEqual({ kind: 'inhouse', memberId: 'm_ih_sub-1', subject: 'sub-1', grant, requestId: 'req-1', expMs: Date.parse('2026-11-20T10:10:00.000Z') })
     expect(calls.resolvePerson).toHaveLength(0)
     expect(calls.active).toEqual([{ nowMs: NOW, requestId: 'req-1' }])
   })
@@ -177,6 +178,28 @@ describe('service tokens', () => {
   it('refuses an unknown client id and any service token on the Inhouse host', async () => {
     expect((await run(await service('unknown.access'))).out).toEqual({ refused: 'unauthorized' })
     expect((await run(await service(SMOKE_ID, { aud: INHOUSE.aud }), INHOUSE.origin)).out).toEqual({ refused: 'unauthorized' })
+    expect((await run(await service(RELEASE_ID, { aud: INHOUSE.aud }), INHOUSE.origin)).out).toEqual({ refused: 'unauthorized' })
+  })
+  it('maps release (P3) to its own principal: no member row, no store call, no expMs', async () => {
+    const { out, calls } = await run(await service(RELEASE_ID))
+    expect(principalOf(out)).toEqual({ kind: 'service', name: 'release', requestId: 'req-1' })
+    expect(calls).toEqual({ resolvePerson: [], resolveInhouse: [], active: [], supportAccess: [] })
+  })
+})
+
+describe('expMs (P3): the sign-in window ends at the token\'s exp', () => {
+  it('carries exp exactly for a person and an Inhouse member, whatever the token\'s life', async () => {
+    const short = await run(await person({ lifetimeS: 60 }))
+    expect(principalOf(short.out)).toMatchObject({ kind: 'person', expMs: Date.parse('2026-11-20T10:01:00.000Z') })
+    const long = await run(await person({ lifetimeS: 86_400 }))
+    expect(principalOf(long.out)).toMatchObject({ kind: 'person', expMs: Date.parse('2026-11-21T10:00:00.000Z') })
+    const ih = await run(await person({ aud: INHOUSE.aud, lifetimeS: 3600 }), INHOUSE.origin)
+    expect(principalOf(ih.out)).toMatchObject({ kind: 'inhouse', expMs: Date.parse('2026-11-20T11:00:00.000Z') })
+  })
+  it('closes the window: past exp (beyond the 30 s tolerance) the same token signs nobody in', async () => {
+    const token = await person({ lifetimeS: 60 })
+    expect(principalOf((await run(token, BRAND.origin, { now: Date.parse('2026-11-20T10:01:29.000Z') })).out)).toMatchObject({ expMs: Date.parse('2026-11-20T10:01:00.000Z') })
+    expect((await run(token, BRAND.origin, { now: Date.parse('2026-11-20T10:01:30.000Z') })).out).toEqual({ refused: 'unauthorized' })
   })
 })
 
@@ -288,20 +311,74 @@ describe('the remote key set (fetch injected, no network)', () => {
   })
 })
 
-describe('authenticateUpgrade', () => {
-  const upgrade = async (origin: string | null, method = 'GET') => {
-    const headers: Record<string, string> = { 'Cf-Access-Jwt-Assertion': await person(), Upgrade: 'websocket' }
-    if (origin) headers.Origin = origin
-    return authenticateUpgrade(new Request(`${BRAND.origin}/api/ws`, { method, headers }), authEnv() as never, fakeStores({ people }).stores, NOW, 'r', good.keys)
+// The test issuer's own header (eval behind Access, Wasim's E-5 second lock): Access in front sends its own token in
+// Cf-Access-Jwt-Assertion, so test and eval builds read the test issuer's JWT from X-Inhouse-Test-Assertion first. Ways
+// it could fail, written down first:
+//  1. a test or eval build behind Access refuses the eval person (it reads only Access's own token);
+//  2. the product build, or a test build without INHOUSE_TEST_BUILD=1, reads the new header at all;
+//  3. a bad token in the new header falls back to Cf-Access-Jwt-Assertion (fails open), or the new header skips any of
+//     the issuer, key or aud checks;
+//  4. per-PR test builds and the existing specs, which send Cf-Access-Jwt-Assertion only, stop working.
+describe('X-Inhouse-Test-Assertion (test and eval builds behind Access)', () => {
+  const HEADER = 'X-Inhouse-Test-Assertion'
+  const testEnv = () => ({ ...authEnv(), INHOUSE_TEST_BUILD: '1', TEST_ISSUER_JWKS: JSON.stringify(good.key.jwks) })
+  const testToken = (o: Partial<Parameters<typeof mintPerson>[0]> = {}) => person({ iss: TEST_ISSUER, ...o })
+  /** Access's own token for the eval CI service token: the team domain's issuer and another key, as Access sends it. */
+  const accessToken = () => mintService({ key: other.key.privateJwk, aud: BRAND.aud, iss: TEAM, clientId: 'eval-ci.access', nowMs: NOW })
+  async function runWith(headers: Record<string, string>, o: { env?: object; testBuild?: boolean } = {}) {
+    const s = fakeStores({ people })
+    return authenticate(req(BRAND.origin, headers), (o.env ?? testEnv()) as never, s.stores, NOW, 'req-1', undefined, o.testBuild)
   }
-  it('needs the exact Origin on the GET upgrade', async () => {
-    expect(principalOf(await upgrade(BRAND.origin))).not.toBeNull()
-    expect(await upgrade(null)).toEqual({ refused: 'forbidden', reason: 'bad_origin' })
-    expect(await upgrade(INHOUSE.origin)).toEqual({ refused: 'forbidden', reason: 'bad_origin' })
+  it('test build: the test issuer\'s token in its own header signs the person in, beside Access\'s token (1)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const out = await runWith({ [HEADER]: await testToken(), 'Cf-Access-Jwt-Assertion': await accessToken() }, { testBuild: true })
+    expect(principalOf(out)?.kind).toBe('person')
   })
-  it('still refuses a bad token first', async () => {
-    const r = new Request(`${BRAND.origin}/api/ws`, { headers: { Upgrade: 'websocket', Origin: BRAND.origin } })
-    expect(await authenticateUpgrade(r, authEnv() as never, fakeStores().stores, NOW, 'r', good.keys)).toEqual({ refused: 'unauthorized' })
+  it('test build: with no new header, Cf-Access-Jwt-Assertion works as before (4)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(principalOf(await runWith({ 'Cf-Access-Jwt-Assertion': await testToken() }, { testBuild: true }))?.kind).toBe('person')
+  })
+  it('test build: a bad token in the new header is refused, never replaced by Cf-Access-Jwt-Assertion (3)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const good2 = await testToken()
+    for (const bad of ['not-a-jwt', await testToken({ iss: TEAM }), await testToken({ aud: INHOUSE.aud }), await mintPerson({ key: other.key.privateJwk, aud: BRAND.aud, iss: TEST_ISSUER, sub: 'sub-1', email: 'p@example.test', nowMs: NOW })]) {
+      expect(await runWith({ [HEADER]: bad, 'Cf-Access-Jwt-Assertion': good2 }, { testBuild: true }), bad.slice(0, 12)).toEqual({ refused: 'unauthorized' })
+    }
+  })
+  // #278 reviews (O-N3, S-nit1): an empty value counts as present (refused no_token, no fallback), and a duplicated one
+  // (Headers joins the two values) is refused as malformed.
+  it('test build: an empty new header is refused, never replaced by Cf-Access-Jwt-Assertion (3)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await runWith({ [HEADER]: '', 'Cf-Access-Jwt-Assertion': await testToken() }, { testBuild: true })).toEqual({ refused: 'unauthorized' })
+    expect(warn.mock.calls.at(-1)).toEqual([{ event: 'auth_refused', class: 'no_token', requestId: 'req-1' }])
+  })
+  it('test build: the new header given twice is refused as malformed, even when both values are good (3)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const tok = await testToken()
+    const r = req(BRAND.origin, { [HEADER]: tok, 'Cf-Access-Jwt-Assertion': tok })
+    r.headers.append(HEADER, tok)
+    expect(r.headers.get(HEADER)).toBe(`${tok}, ${tok}`)
+    const s = fakeStores({ people })
+    expect(await authenticate(r, testEnv() as never, s.stores, NOW, 'req-1', undefined, true)).toEqual({ refused: 'unauthorized' })
+    expect(warn.mock.calls.at(-1)).toEqual([{ event: 'auth_refused', class: 'malformed_token', requestId: 'req-1' }])
+  })
+  it('product build (flag off): the new header is ignored, even with INHOUSE_TEST_BUILD=1 (2)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await runWith({ [HEADER]: await testToken() }, { testBuild: false })).toEqual({ refused: 'unauthorized' })
+    expect(warn.mock.calls.at(-1)).toEqual([{ event: 'auth_refused', class: 'no_token', requestId: 'req-1' }])
+    // The team domain's own person token in the new header is ignored too.
+    expect(await runWith({ [HEADER]: await person() }, { env: authEnv(), testBuild: false })).toEqual({ refused: 'unauthorized' })
+    expect(warn.mock.calls.at(-1)).toEqual([{ event: 'auth_refused', class: 'no_token', requestId: 'req-1' }])
+  })
+  it('flag on but INHOUSE_TEST_BUILD unset: the new header is ignored (2)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await runWith({ [HEADER]: await testToken() }, { env: authEnv(), testBuild: true })).toEqual({ refused: 'unauthorized' })
+    expect(warn.mock.calls.at(-1)).toEqual([{ event: 'auth_refused', class: 'no_token', requestId: 'req-1' }])
+  })
+  it('issuer off (every build but test and eval): no header name to read at all (2)', () => {
+    expect(issuerOff.TEST_ASSERTION_HEADER).toBe('')
+    const r = req(BRAND.origin, { [HEADER]: 'x.y.z' })
+    expect(testAssertion(r, issuerOff)).toBeNull()
+    expect(testAssertion(r)).toBe('x.y.z')
   })
 })
-

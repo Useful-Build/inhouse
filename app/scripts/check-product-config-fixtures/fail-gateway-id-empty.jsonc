@@ -1,0 +1,14 @@
+// check-product-config fixture: the AI binding with an empty AI_GATEWAY_ID (the template's value, unfilled).
+{
+	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }],
+	"name": "inhouse-product",
+	"main": "server/index.ts",
+	"ai": { "binding": "AI" },
+	"vars": {
+		"AI_GATEWAY_ID": "",
+		"INHOUSE_ACCESS": "{\"teamDomain\":\"https://example-team.cloudflareaccess.com\",\"apps\":[{\"name\":\"brand\",\"origin\":\"https://brand.example.test\",\"aud\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"name\":\"inhouse\",\"origin\":\"https://inhouse.example.test\",\"aud\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}],\"serviceTokens\":{\"monitor-client.access\":\"monitor\",\"smoke-client.access\":\"smoke\"}}"
+	},
+	"version_metadata": { "binding": "CF_VERSION_METADATA" },
+	"workers_dev": false,
+	"preview_urls": false
+}

@@ -1,0 +1,35 @@
+/**
+ * The hub's TEST build: the CI workerd tests (hub/vitest.config.ts) and, from wave 4, the multi-config `wrangler dev`
+ * beside the product Worker. Never deployed: scripts/check-hub-config.mjs fails on this file, and the bundle scan
+ * requires the test seam's canary in its bundle. Every value here is invented and test-only.
+ */
+{
+	"$schema": "./hub/node_modules/wrangler/config-schema.json",
+	"name": "inhouse-hub",
+	"main": "hub/index/index.ts",
+	// The newest date the pinned wrangler 4.158.0's workerd supports (app/wrangler.jsonc is on 2026-11-13).
+	"compatibility_date": "2026-11-11",
+	"workers_dev": false,
+	"preview_urls": false,
+	"observability": {
+		"enabled": true
+	},
+	"durable_objects": {
+		"bindings": [{ "name": "SIGNIN", "class_name": "SignIn" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SignIn"] }],
+	// Turns on the test upstream seam (hub/testing/), together with INHOUSE_TEST_BUILD below.
+	"define": {
+		"__INHOUSE_HUB_TEST__": "true"
+	},
+	"vars": {
+		"INHOUSE_TEST_BUILD": "1",
+		"SHOPIFY_SHOP": "example-fixture",
+		"SHOPIFY_CLIENT_ID": "test-client",
+		// TEST-ONLY keys, generated for this file and used nowhere else. Two keys, `current` the second, so rotation
+		// paths run in tests. A real deployment sets HUB_TOKEN_KEYS as a secret through a secret card.
+		"HUB_TOKEN_KEYS": "{\"current\":\"ktest-2\",\"keys\":{\"ktest-1\":\"1Fza49LBSBNRAEZcdP+XApWhY8ZgCJilqS4O7FoBju4=\",\"ktest-2\":\"E32MH18U9aWDv8hY9zmavoxETTkRY4Xad0NJiBsPw2A=\"}}",
+		// TEST-ONLY, invented. The recorded upstream accepts it; no real app has it.
+		"SHOPIFY_CLIENT_SECRET": "test-only-client-secret-0RW9rVbhXFbVnJw6t1jyOWrJ1E7bMlc6"
+	}
+}

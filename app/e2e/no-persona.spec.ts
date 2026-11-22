@@ -7,6 +7,7 @@
 import { expect, test, type Fx } from './support/fx.js'
 import type { Locator, Page } from '@playwright/test'
 import { everything } from './page-text.js'
+import { openTraceFrom } from './support/steps.js'
 
 const STAGES = ['Watch', 'Act', 'Run'] as const
 const SCENARIOS = ['Normal', 'First day', 'Loading', 'Tool disconnected', 'Cap reached'] as const
@@ -171,7 +172,7 @@ for (const size of SIZES) {
         await check(page, `${label} team window from Help`)
         await page.keyboard.press('Escape')
         await accountMenu(page, phone)
-        await page.getByRole('menuitem', { name: 'Report a bug' }).click()
+        await page.getByRole('menuitem', { name: /^Your Inhouse team/ }).click()
         await expect(page.getByRole('dialog', { name: 'Your Inhouse team' })).toBeVisible()
         await check(page, `${label} team window`)
         await page.keyboard.press('Escape')
@@ -248,7 +249,7 @@ for (const size of SIZES) {
         if (!noData) {
           await go(page, '#/chats/stuck')
           await expect(main.getByText('Which orders are stuck over 3 days?').first()).toBeVisible()
-          await main.getByRole('button', { name: /\d+ steps/ }).last().click()
+          await openTraceFrom(main.getByRole('button', { name: /\d+ steps/ }).last())
           await traceWindow(page, `${label} chat trace (stuck)`, true)
 
           await go(page, '#/chats/refunds')
@@ -275,7 +276,7 @@ for (const size of SIZES) {
           await composerMenus(page, `${label} chat`, phone)
           const generic = main.getByRole('button', { name: /\d+ steps/ })
           if (await generic.count()) {
-            await generic.last().click()
+            await openTraceFrom(generic.last())
             await traceWindow(page, `${label} chat trace (generic)`, true)
           }
         } else {
@@ -295,10 +296,17 @@ for (const size of SIZES) {
           await page.getByRole('textbox', { name: 'Message your Inhouse agent' }).fill('Every Monday at 7, check which products have under 3 weeks of stock')
           // Send by button: on a phone width Enter adds a line instead of sending.
           await page.locator('[data-composer]').getByRole('button', { name: 'Send' }).click()
-          await expect(main.getByRole('button', { name: /\d+ steps/ })).toHaveCount(before + 1, { timeout: 30_000 })
-          await check(page, `${label} routine answer`)
-          await main.getByRole('button', { name: /\d+ steps/ }).last().click()
-          await traceWindow(page, `${label} chat trace (routine)`, true)
+          if (scenario === 'Cap reached') {
+            // Chats stop at the cap (decision L-A8): the question is refused with the cap notice, so there is no new trace.
+            await expect(main.getByText("Your team has reached its spending cap, so this answer didn't run.").last()).toBeVisible({ timeout: 30_000 })
+            await expect(main.getByRole('button', { name: /\d+ steps/ })).toHaveCount(before)
+            await check(page, `${label} routine refused at the cap`)
+          } else {
+            await expect(main.getByRole('button', { name: /\d+ steps/ })).toHaveCount(before + 1, { timeout: 30_000 })
+            await check(page, `${label} routine answer`)
+            await openTraceFrom(main.getByRole('button', { name: /\d+ steps/ }).last())
+            await traceWindow(page, `${label} chat trace (routine)`, true)
+          }
         }
       })
     }

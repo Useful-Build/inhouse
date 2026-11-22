@@ -1,0 +1,71 @@
+{
+ "row": {
+  "caseId": "T06",
+  "cat": "choice",
+  "pair": "history_search/memory_search",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "history_search",
+   "memory_search",
+   "history_read"
+  ],
+  "toolSearches": 1,
+  "answer": "I found the chat from 14 October, \"Returns window discussion\". The saved record is nearly empty, though. It only has your opening question, \"should we change the returns window?\", and a one-line summary: \"agreed to keep returns simple\". It doesn't show a specific decision.\n\nOur saved policy says ret",
+  "costUsd": 0.0162338,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__history_search",
+    "input": {
+     "query": "returns",
+     "from": "2026-10-01",
+     "to": "2026-10-31"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"history_id\\\":\\\"h_8841\\\",\\\"kind\\\":\\\"chat\\\",\\\"date\\\":\\\"2026-10-14\\\",\\\"title\\\":\\\"Returns window discussion\\\",\\\"snippet\\\":\\\"agreed to keep returns simple\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "returns policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_returns [brand] Returns are accepted within 45 days if the item is unused.\"}]",
+    "isError": false
+   },
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__history_read",
+     "max_results": 1
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__history_read\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__history_read",
+    "input": {
+     "history_id": "h_8841"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Maya: should we change the returns window? ... (transcript)\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I found the chat from 14 October, \"Returns window discussion\". The saved record is nearly empty, though. It only has your opening question, \"should we change the returns window?\", and a one-line summary: \"agreed to keep returns simple\". It doesn't show a specific decision.\n\nOur saved policy says returns are accepted within 45 days if the item is unused. That may be what \"keep it simple\" meant, but the chat doesn't confirm it.\n\nIf you remember a different outcome, such as a new window or a change to the unused condition, tell me and I can save it.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2619,
+   "cacheReadTokens": 45003,
+   "outputTokens": 517
+  },
+  "costUsd": 0.0162338
+ }
+}

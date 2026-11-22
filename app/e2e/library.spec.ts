@@ -18,11 +18,11 @@ const view = (page: Page, name: string) => page.getByRole('radiogroup', { name: 
 const shot = async (page: Page, name: string) => { await atRest(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const countOf = async (page: Page, name: string) => Number((await tab(page, name).innerText()).replace(/\D/g, ''))
 
-test('Library is in the sidebar right after Today, and Chats is not', async ({ page }) => {
+test('Library is in the sidebar, last in the "Your agent" group, and Chats is not', async ({ page }) => {
   await start(page, '#/today')
   const nav = page.getByRole('navigation', { name: 'Main' })
   await expect(nav.getByRole('button').nth(0)).toContainText('Today')
-  await expect(nav.getByRole('button').nth(1)).toHaveText(/Library$/)
+  await expect(nav.getByRole('group', { name: 'Your agent' }).getByRole('button').last()).toHaveText(/Library$/)
   await expect(page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: 'Chats', exact: true })).toHaveCount(0)
   await nav.getByRole('button', { name: 'Library' }).click()
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('All files')

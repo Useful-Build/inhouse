@@ -1,7 +1,10 @@
 import { Component, Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ComponentType, ReactNode } from 'react'
 import { agent, demo } from './agent'
-import type { AgentErrorCode, ToolsData } from './agent/types'
+import { isChatUnknown } from './state/chat-known'
+import { AgentError } from './agent/types'
+import type { AgentErrorCode, RefreshList, ToolsData } from './agent/types'
+import { NOT_FOUND } from '../shared/contract/error-codes'
 import type { Page } from './state/store'
 import { FROM_SETTINGS_MENU, chatEntries, defaultChatId, newestChat, openChatKey, takeReplaceEntry, useAgentData, useAgentState, useUi } from './state/store'
 import { Sidebar } from './shell/Sidebar'
@@ -19,14 +22,10 @@ import { reportError } from './report-error'
 import { DevSwitcher } from './shell/DevSwitcher'
 import { cn } from '@/lib/utils'
 import { Skeleton } from '@/components/ui/skeleton'
-import { DotsBackground, GooDefs, Page as PageBox } from './ui'
+import { GooDefs, Page as PageBox, SkyspaceBackground } from './ui'
 import { Today } from './screens/Today'
 import { Chats } from './screens/Chats'
-import { Approvals } from './screens/Approvals'
-import { Routines } from './screens/Routines'
-import { Activity } from './screens/Activity'
-import { Tools, ToolPage } from './screens/Tools'
-import { Skills } from './screens/Skills'
+import { useChatIsBlank } from './screens/chat/open-messages'
 import { MENU } from './screens/settings/menu'
 import { ProblemPanel } from './overlays/ProblemPanel'
 import { TeamWindow } from './overlays/TeamWindow'
@@ -46,8 +45,20 @@ function lazyRoute<M, C extends ComponentType>(load: () => Promise<M>, pick: (m:
   })
 }
 // The heavy routes load on first visit (P-2): Settings, Usage, the Library (its viewer and previews come with it) and
-// the Trace window are the biggest source files after Chats, which Today's first send needs anyway. Today and the
-// rest stay in the entry chunk.
+// the Trace window are the biggest source files after Chats, which Today's first send needs anyway. Approvals, Routines,
+// Activity, Tools (and its tool page) and Skills load on first visit too (P3 ship, to keep Today's first load under its
+// budget: build-support/entry-without-zod.test.ts pins them). Only Today and Chats stay in the entry chunk.
+const Approvals = lazyRoute(() => import('./screens/Approvals'), m => m.Approvals)
+const Routines = lazyRoute(() => import('./screens/Routines'), m => m.Routines)
+const Activity = lazyRoute(() => import('./screens/Activity'), m => m.Activity)
+const Tools = lazyRoute(() => import('./screens/Tools'), m => m.Tools)
+const ToolPage = lazyRoute(() => import('./screens/Tools'), m => m.ToolPage)
+const Skills = lazyRoute(() => import('./screens/Skills'), m => m.Skills)
+// Once the shell has painted and the browser is idle, these five load in the background, so a first visit finds its chunk
+// already there (the skeleton shows only on a slow link). Library, Usage and Settings stay on first visit: they are the big ones.
+const PREFETCH: (() => Promise<unknown>)[] = [
+  () => import('./screens/Approvals'), () => import('./screens/Routines'), () => import('./screens/Activity'), () => import('./screens/Tools'), () => import('./screens/Skills'),
+]
 const Library = lazyRoute(() => import('./screens/Library'), m => m.Library)
 const Usage = lazyRoute(() => import('./screens/Usage'), m => m.Usage)
 const Settings = lazyRoute(() => import('./screens/Settings'), m => m.Settings)
@@ -100,7 +111,7 @@ function PageFallback() {
   const [text, setText] = useState('')
   useEffect(() => { const t = setTimeout(() => setText('Loading'), 50); return () => clearTimeout(t) }, [])
   return (
-    <PageBox width="wide" role="status">
+    <PageBox width="wide" role="status" data-page-loading>
       <span className="sr-only">{text}</span>
       <Skeleton className="h-9 w-44 animate-none rounded-sm bg-fill-hover" />
       <Skeleton className="mt-4 h-4 w-80 max-w-full animate-none rounded-sm" />
@@ -137,6 +148,8 @@ const PAGE_SLUG: Record<Page, string> = { today: 'today', library: 'library', ch
 const toHash = (page: Page, appKey: string, setTab: string, chat: string, menu = false) =>
   '#/' + PAGE_SLUG[page] + (page === 'app' ? '/' + appKey : page === 'settings' ? (menu ? '' : '/' + setTab) : page === 'chats' ? '/' + encodeURIComponent(chat) : '')
 const SETTINGS_TABS = MENU.flatMap(g => g.items.map(([k]) => k))
+/** The list each page shows that the agent's work fills (read again when the page opens). */
+const PAGE_LIST: Partial<Record<Page, RefreshList>> = { today: 'problems', approvals: 'problems', library: 'library', activity: 'activity' }
 const PAGE_LABEL: Record<Page, string> = { today: 'Today', library: 'Library', chats: 'Chats', approvals: 'Approvals', routines: 'Routines', activity: 'Activity', apps: 'Tools', app: 'Tools', skills: 'Skills', usage: 'Usage', settings: 'Settings' }
 /** A link that names a page, tool or tab that doesn't exist lands where it did before, and says so. */
 const notFound = (where: string) => useUi.getState().showToast(`That page doesn't exist. You're on ${where}.`, { icon: 'info', key: 'route-notice' })
@@ -213,7 +226,18 @@ function useHashRoute() {
   const openKey = openChatKey({ fresh, chatId }, data)
   const chatKey = chatList ? 'all' : openKey ?? 'new'
   // Unknown also covers a deleted chat, and the newest sample chat (`#/chats`) once it was deleted.
-  const chatUnknown = page === 'chats' && !chatList && openKey !== null && !chatEntries(data, started, agentState).some(c => c.id === openKey)
+  const ids = chatEntries(data, started, agentState).map(c => c.id)
+  // The list is one page: a chat it lacks may be an older one. Route 24 is asked about it once (found: it joins the list;
+  // a 404 or a deleted chat: it is unknown), and a failed ask (offline) judges nothing.
+  const [looked, setLooked] = useState<Record<string, true>>({})
+  const listReady = !demo && data.resources.chat.status === 'ready'
+  const needsLook = listReady && page === 'chats' && !chatList && openKey !== null && !ids.includes(openKey) && !looked[openKey]
+  useEffect(() => {
+    if (!needsLook || openKey === null) return
+    const done = () => setLooked(l => ({ ...l, [openKey]: true }))
+    agent.getChat(openKey).then(done, (e: unknown) => { if (e instanceof AgentError && e.code === NOT_FOUND) done() })
+  }, [needsLook, openKey])
+  const chatUnknown = isChatUnknown({ page, chatList, openKey, ids, serverList: demo ? null : data.resources.chat.status, looked: openKey !== null && looked[openKey] === true })
   const fallbackChat = newestChat(data, started, agentState)?.id ?? null
   const chatIsNew = started.some(c => c.id === chatKey)
   useEffect(() => {
@@ -263,14 +287,36 @@ function useHashRoute() {
 }
 
 function Shell() {
+  useEffect(() => {
+    const go = () => { for (const load of PREFETCH) load().catch(() => {}) }
+    if (typeof requestIdleCallback === 'function') { const id = requestIdleCallback(go, { timeout: 4000 }); return () => cancelIdleCallback(id) }
+    const t = setTimeout(go, 2000)
+    return () => clearTimeout(t)
+  }, [])
   const page = useUi(s => s.page)
+  // A list page reads its list again when it opens, and the bell its notices: what the agent made since the first read
+  // (a file a chat saved, the cards a Run now found) isn't in it. Not the page the app starts on: the first reads cover it,
+  // and for the Inhouse team landing there isn't a choice (each read under a grant writes a support.access line). The
+  // client never reads the bell for the Inhouse team.
+  // Compared with the start page, not "has this effect run": StrictMode runs it twice on mount in development.
+  const startPage = useRef(page)
+  const moved = useRef(false)
+  useEffect(() => {
+    if (!moved.current && page === startPage.current) return
+    moved.current = true
+    const list = PAGE_LIST[page]
+    if (list) void agent.refresh(list)
+    void agent.refresh('notifications')
+  }, [page])
   const appKey = useUi(s => s.appKey)
   const toolKnown = !!toolName(useAgentData().tools, appKey)
   const phone = useUi(s => s.phone)
+  const sideCollapsed = useUi(s => s.sideCollapsed)
   const chatList = useUi(s => s.chatList)
   const traceId = useUi(s => s.traceId)
   const chatId = useUi(s => s.chatId)
   const fresh = useUi(s => s.fresh)
+  const chatBlank = useChatIsBlank()
   const mainRef = useRef<HTMLElement>(null)
   const setTab = useUi(s => s.setTab)
   const setMenu = useUi(s => s.setMenu)
@@ -329,9 +375,13 @@ function Shell() {
   // An unknown tool key shows the Tools list until `useHashRoute` has moved the route there.
   const Screen = page === 'app' && !toolKnown ? Tools : SCREENS[page]
   const subKey = page === 'app' ? appKey : page === 'settings' ? setTab : page === 'chats' ? (chatList ? 'all' : fresh ? 'new' : chatId ?? '') : ''
+  // Full-shell Turrell Skyspace behind both the floating sidebar and main: hero on Today and blank New chat, softly quieted in an active chat, off on other pages.
+  const skyspace = page === 'today' || (page === 'chats' && !chatList && chatBlank) ? 'hero' : page === 'chats' && !chatList ? 'subtle' : null
+  const skyspaceOffset = phone ? 'none' : sideCollapsed ? 'rail' : 'full'
   return (
-    // `isolation` here (not on main) keeps the dots layer (zIndex -1) above the page colour and below the cards, while modals inside main still stack above the Sidebar.
-    <div className="isolate flex h-dvh overflow-hidden bg-background">
+    // `isolation` here (not on main) keeps the Skyspace layer (zIndex -1) above the page colour and behind the floating sidebar and cards, while modals inside main still stack above the Sidebar.
+    <div className="relative isolate flex h-dvh overflow-hidden bg-background">
+      {skyspace && <SkyspaceBackground mode={skyspace} offset={skyspaceOffset} />}
       {/* First in the tab order: past the sidebar to the page (L18). An anchor's own jump would change the hash route. */}
       <a href="#main" onClick={e => { e.preventDefault(); mainRef.current?.focus() }}
         className="fixed top-2.5 left-2.5 z-dev rounded-lg bg-primary px-3.5 py-2 text-sm font-strong text-primary-foreground not-focus:sr-only">
@@ -339,8 +389,6 @@ function Shell() {
       </a>
       <Sidebar />
       <div className="relative flex min-w-0 flex-1 flex-col">
-        {/* Dots only on Today and inside a chat; the All chats list uses the plain page background like Tools and Skills. */}
-        {(page === 'today' || (page === 'chats' && !chatList)) && <DotsBackground />}
         {/* The top bar is the banner landmark: a header outside main, so it stays put while main scrolls. */}
         <div className="flex-none"><TopBar /></div>
         <main id="main" ref={mainRef} tabIndex={-1} className="relative flex min-h-0 flex-1 flex-col overflow-auto outline-none">

@@ -47,10 +47,19 @@ export const lostTool = (ctx: Ctx): { key: string; since: Instant } | null => {
   return null
 }
 /**
- * Day one: the agent's data has arrived and no tool is connected yet, so it has nothing to read. Today lists the setup
- * instead of problems. A client that is still loading isn't there yet: it doesn't know its tools.
+ * Day one: the agent's data has arrived, no tool is connected yet and the server holds nothing for Today (no cards, and no
+ * routine has run, a failed run included), so the agent has nothing to read. Today lists the setup instead of problems. A
+ * client that is still loading isn't there yet: it doesn't know its tools. The real client has no tools read until P5, so
+ * `connected` stays empty: what the server already holds for Today is what ends day one there.
  */
-export const isFirstDay = (data: AgentData): boolean => data.status === 'ready' && data.tools.connected.length === 0
+export const isFirstDay = (data: AgentData): boolean => data.status === 'ready' && noToolsYet(data)
+/**
+ * Whether a screen may say "no tools are connected yet": none is connected and the server holds nothing for Today (no cards,
+ * no routine run). With `connected` empty but cards or a run present (the real client before P5), the list is unknown, not
+ * empty, so such copy stays out.
+ */
+export const noToolsYet = (data: AgentData): boolean =>
+  data.tools.connected.length === 0 && data.problems.length === 0 && !data.routines.some(r => r.last !== undefined)
 /**
  * The tool the Inhouse team is connecting now (it has a `liveBy` date), with that date as shown ("Fri, Nov 20"), or null:
  * none is, or it's day one, when nothing is live yet and Today lists the setup instead.
@@ -63,6 +72,24 @@ export const goingLive = (ctx: Ctx): { name: string; by: string } | null => {
   }
   return null
 }
+export interface OpenRequest { icon: string; title: string; sub: string; status: string; /** A seeded request's place in the data, for its badge look; null for one the person sent here. */ seed: number | null }
+
+/**
+ * The team window's "Open requests": what the person sent here, then the seeded ones, with "Connect <tool>" listed only
+ * while that tool is going live (so on First day it isn't). The account menu counts these, so the two always agree.
+ * `sentHereJustNow`: the demo says "just now" for what was sent here; the product says how long ago.
+ */
+export const openRequests = (ctx: Ctx, now: number, sentHereJustNow: boolean): OpenRequest[] => {
+  const live = goingLive(ctx)
+  const seeded = ctx.data.notifications.teamRequests.flatMap((q, i): OpenRequest[] => {
+    const tool = /^Connect (.+)$/.exec(q.title)?.[1]
+    if (tool && live?.name !== tool) return []
+    const line = teamRequestLine(q, now, false)
+    return [{ icon: q.sub.startsWith('New job') ? 'work' : 'add_link', title: q.title, sub: line.sub, status: tool && live ? `Live by ${live.by}` : line.status, seed: i }]
+  })
+  return [...ctx.agent.teamRequests.map((q): OpenRequest => ({ icon: q.icon, title: q.title, ...teamRequestLine(q, now, sentHereJustNow), seed: null })), ...seeded]
+}
+
 /**
  * A request to the Inhouse team as listed: "New tool · asked by Priya, Nov 9" and "Live by Fri, Nov 20". One the person
  * sent (`sentHere`) says "just now" however long ago it went, as it did before C1; P2 shows `fmtAgo` from its instant.
@@ -168,7 +195,7 @@ export const byName = (data: AgentData, id: string) => data.people.members.find(
 export const firstName = (name: string) => name.trim().split(/\s+/)[0] ?? name
 
 /** A money field as typed in Settings ("$400", "1,200", "$0") as dollars, or null when it isn't an amount. */
-const dollarsIn = (v: string | undefined): number | null => {
+export const dollarsIn = (v: string | undefined): number | null => {
   if (v === undefined || !v.trim()) return null
   const n = Number(v.replace(/[$,\s%]/g, ''))
   return Number.isFinite(n) && n >= 0 ? n : null
@@ -186,7 +213,7 @@ export interface CapStatus {
   spent: Money
   cap: Money
   alertAt: number
-  /** Spend reached the cap: routines and jobs pause. */
+  /** Spend reached the cap: chats, routines and jobs pause. */
   reached: boolean
   /** The banner's line at the cap, from those values. */
   bannerText: string
@@ -198,8 +225,9 @@ export function capStatus(ctx: Ctx): CapStatus {
   const alertAt = usageAlertAt(ctx)
   return {
     spent, cap, alertAt,
-    reached: spent.minor >= cap.minor,
-    bannerText: `Your Inhouse agent has used ${fmtMoney(spent, display())} of ${fmtMoney(cap, display())} this month, so routines and jobs are paused. Questions still work, and waiting drafts can still be approved.`,
+    // The server's own answer when it judged the cap Settings shows now (Usage does the same); else spend against the cap.
+    reached: ctx.data.usage.capReached !== undefined && ctx.data.usage.cap.minor === cap.minor ? ctx.data.usage.capReached : spent.minor >= cap.minor,
+    bannerText: `Your Inhouse agent has used ${fmtMoney(spent, display())} of ${fmtMoney(cap, display())} this month, so chats, routines and jobs are paused until next month or until an admin raises the cap. Waiting drafts can still be approved.`,
   }
 }
 
@@ -221,8 +249,8 @@ export function usageSummary(m: { total: Money; cap: Money; alertAt: number; dai
   const capNote = !thisMonth
     ? over ? `Closed at ${Math.round(total / cap * 100)}% of the cap.` : `Closed at ${pct} of the cap. Nothing was paused.`
     : reached
-      ? 'Cap reached today. Routines and jobs are paused until an admin raises it.'
-      : `Admins get an email at ${m.alertAt}%. Your Inhouse agent pauses routines and jobs at the cap.`
+      ? 'Cap reached today. Chats, routines and jobs are paused until next month or until an admin raises the cap.'
+      : `Admins get an email at ${m.alertAt}%. Your Inhouse agent pauses chats, routines and jobs at the cap.`
   return { hint, capNote }
 }
 
@@ -273,6 +301,24 @@ export function handled(ctx: Ctx) {
   }
 }
 
+export interface TodayEmptyState {
+  /** Run: show the overnight handled strip only when the agent actually handled at least one job. */
+  showHandledBanner: boolean
+  /** When no cards show: 'clear' when there are zero problems, 'aside' when every problem was set aside, else 'none'. */
+  emptyKind: 'none' | 'clear' | 'aside'
+  asideCount: number
+}
+
+export function todayEmptyState(ctx: Ctx): TodayEmptyState {
+  const shown = visibleProblems(ctx).length
+  const asideCount = ctx.data.problems.length - shown
+  return {
+    showHandledBanner: ctx.S === 2 && handled(ctx).count > 0,
+    emptyKind: shown > 0 ? 'none' : asideCount > 0 ? 'aside' : 'clear',
+    asideCount,
+  }
+}
+
 export interface TodayCopy {
   greeting: string; headline: string; headSub: string; countLabel: string; sortLabel: string
 }
@@ -289,15 +335,26 @@ export function todayCopy(ctx: Ctx): TodayCopy {
   const read = morningReadTools(ctx)
   const connected = ctx.data.tools.connected
   const missed = connected.filter(k => !read.includes(k)).map(k => toolDetail(ctx.data, k).name)
-  // With nothing waiting in Act: say what happened to the drafts, so a set-aside one isn't counted as approved.
-  const doneLabel = aside === 0 ? 'all approved' : approvedN ? `${approvedN} approved, ${aside} set aside` : `${aside} set aside`
+  // With nothing waiting in Act: say what happened to the drafts, so zero problems isn't labelled "all approved".
+  const doneLabel = total === 0 ? '' : aside === 0 ? 'all approved' : approvedN ? `${approvedN} approved, ${aside} set aside` : `${aside} set aside`
+  const runHeadline = h > 0 && n > 0
+    ? `${h} handled before you woke up. ${n} need${n === 1 ? 's' : ''} you.`
+    : h > 0
+      ? `${h} handled before you woke up. Nothing needs you.`
+      : n > 0
+        ? `${n} ${n === 1 ? 'thing needs' : 'things need'} you today.`
+        : 'Nothing needs you today.'
+  const runCountLabel = n ? `${n} waiting on you` : total === 0 ? '' : h ? `${h} handled` : aside ? `${aside} set aside` : ''
   const copy = [
     {
       headline: shown ? `${shown} ${shown === 1 ? 'thing needs' : 'things need'} you today.` : 'Nothing needs you today.',
       headSub: missed.length
         ? `Your Inhouse agent read ${read.length} of your ${connected.length} tools and changed nothing. ${listNames(missed)} ${missed.length === 1 ? 'needs' : 'need'} reconnecting.`
-        : `Your Inhouse agent read ${listNames(read.map(k => toolDetail(ctx.data, k).name))} and changed nothing.`,
-      countLabel: `${shown} to look at`, sortLabel: 'Most urgent first',
+        : read.length
+          ? `Your Inhouse agent read ${listNames(read.map(k => toolDetail(ctx.data, k).name))} and changed nothing.`
+          // Cards but no connected list (the real client before P5): don't name tools it can't list.
+          : 'Your Inhouse agent checked this morning and changed nothing.',
+      countLabel: shown ? `${shown} to look at` : '', sortLabel: 'Most urgent first',
     },
     {
       headline: n && n === total ? `${n} things need you. A fix is drafted for each.` : n ? `${n} left to approve today.` : total && shown === total ? `All ${total} approved. Nothing is waiting on you.` : 'Nothing is waiting on you.',
@@ -305,14 +362,14 @@ export function todayCopy(ctx: Ctx): TodayCopy {
       countLabel: n ? `${n} drafted and waiting` : doneLabel, sortLabel: 'Most urgent first',
     },
     {
-      headline: `${h} handled before you woke up. ${n} need${n === 1 ? 's' : ''} you.`,
+      headline: runHeadline,
       headSub: 'Money and customer messages always wait for a person. Every step is logged and can be undone.',
-      countLabel: `${n} waiting on you`, sortLabel: 'Exceptions first',
+      countLabel: runCountLabel, sortLabel: 'Exceptions first',
     },
   ][S]
   let headSub = copy.headSub, headline = copy.headline
-  if (f.paused) headSub = 'Your Inhouse agent is paused, so routines and jobs are stopped. Questions still work.'
-  if (f.cap) headSub = 'Routines and jobs are paused at the spending cap. Drafts already waiting can still be approved.'
+  if (f.paused) headSub = 'Your Inhouse agent is paused, so chats, routines and jobs are stopped until an admin resumes it. Waiting drafts can still be approved.'
+  if (f.cap) headSub = 'Chats, routines and jobs are paused until next month or until an admin raises the cap. Drafts already waiting can still be approved.'
   if (f.isFirst) { headline = 'Your Inhouse agent is being set up.'; headSub = 'Your Inhouse team connects each tool for you. There is nothing to install.' }
   if (f.isLoading) { headline = 'Your Inhouse agent is reading your tools.'; headSub = 'The morning check takes about two minutes. Your list appears as soon as it finishes.' }
   const first = firstName(userName(ctx))
@@ -332,6 +389,8 @@ export interface IssueCard {
   primary: 'Approve' | 'Review' | null
   /** Grey button, shown only when there is no primary. */
   quiet: 'Ask about this' | 'Undo' | 'Review' | null
+  /** Run: what a waiting draft's card says on its draft sheet besides the draft ("Paused · emails wait for you"). */
+  sheetNote: string | null
   handled: boolean
   dimmed: boolean
 }
@@ -342,18 +401,18 @@ export function issueCards(ctx: Ctx): IssueCard[] {
     const sens = !!(p.draft.money || p.draft.customer)
     const at = agent.approved[p.id]
     if (at) {
-      return { problem: p, status: `Approved by ${firstName(byName(ctx.data, at.by))} at ${fmtTime(at.at, display())}${p.draft.rev || agent.sent[p.id] ? '' : ' · going out'}`, statusIcon: 'check_circle', tone: 'ink', primary: null, quiet: null, handled: false, dimmed: true }
+      return { problem: p, status: `Approved by ${firstName(byName(ctx.data, at.by))} at ${fmtTime(at.at, display())}${p.draft.rev || agent.sent[p.id] ? '' : ' · going out'}`, statusIcon: 'check_circle', tone: 'ink', primary: null, quiet: null, sheetNote: null, handled: false, dimmed: true }
     }
-    if (S === 0) return { problem: p, status: `Suggested: ${p.next}`, statusIcon: 'lightbulb', tone: 'grey', primary: null, quiet: 'Ask about this', handled: false, dimmed: false }
-    if (isHandled(ctx, p)) return { problem: p, status: 'Handled by Inhouse agent', statusIcon: 'check_circle', tone: 'blue', primary: null, quiet: 'Undo', handled: true, dimmed: true }
-    if (S === 2 && agent.undone[p.id] && !p.wait) return { problem: p, status: 'Undone · back to you', statusIcon: 'undo', tone: 'grey', primary: null, quiet: 'Review', handled: false, dimmed: false }
+    if (S === 0) return { problem: p, status: `Suggested: ${p.next}`, statusIcon: 'lightbulb', tone: 'grey', primary: null, quiet: 'Ask about this', sheetNote: null, handled: false, dimmed: false }
+    if (isHandled(ctx, p)) return { problem: p, status: 'Handled by Inhouse agent', statusIcon: 'check_circle', tone: 'blue', primary: null, quiet: 'Undo', sheetNote: null, handled: true, dimmed: true }
+    if (S === 2 && agent.undone[p.id] && !p.wait) return { problem: p, status: 'Undone · back to you', statusIcon: 'undo', tone: 'grey', primary: null, quiet: 'Review', sheetNote: 'Undone · back to you', handled: false, dimmed: false }
     const part = ranByAgent(ctx, p) && p.partial
     return {
       problem: p,
       status: part ? p.partialShort! : (S === 2 || sens) && p.wait ? `Drafted · ${p.wait}` : 'Drafted · ready to approve',
       statusIcon: S === 2 || sens ? 'front_hand' : 'edit_note',
       tone: S === 2 || sens ? 'amber' : 'blue',
-      primary: sens ? 'Review' : 'Approve', quiet: null, handled: false, dimmed: false,
+      primary: sens ? 'Review' : 'Approve', quiet: null, sheetNote: part ? p.partialShort! : null, handled: false, dimmed: false,
     }
   })
   if (S === 2) cards.sort((a, b) => Number(a.handled) - Number(b.handled))
@@ -371,13 +430,19 @@ export interface DraftView {
   bodyLabel: string | null
   /** "Spends money" or "Goes to customers", or null for low risk. */
   waitsLabel: string | null
+  /** What the draft is ("Email", "Purchase order"): the Today sheet's header and the panel's document label. */
+  kind: string
+  /** One line for the Today sheet, never cut. */
+  summary: string
+  /** Where it goes, for the panel's progress line ("Kestrel"). Null shows "Sent". */
+  destination: string | null
+  /** The sources' names, deduplicated ("Amazon · Xero"). */
+  sourceNames: string
   cta: string
   memory: string | null
   doneNote: string | null
   approverNote: string | null
   askApprover: string | null
-  /** Foot note on the Approvals card: usual approver, or the sources. */
-  footNote: string
   approvedAt: string | null
   sent: boolean
   /** Reversible drafts keep Undo; others lose it once sent. */
@@ -402,21 +467,25 @@ export function draftView(ctx: Ctx, id: string): DraftView {
   // Approved items show the wording taken at approval time, so history never rewrites itself.
   const title = rec ? rec.title : part && dr.runTitle ? dr.runTitle : dr.title
   const srcLine = p.sources.map(s => s.name).filter((v, i, a) => a.indexOf(v) === i).join(' · ')
+  const lines = part && dr.runLines ? dr.runLines : dr.lines
   return {
     problem: p,
     mode: S === 0 ? 'watch' : at ? 'approved' : isHandled(ctx, p) ? 'handled' : 'waiting',
     draftTitle: title,
-    lines: part && dr.runLines ? dr.runLines : dr.lines,
+    lines,
     // A draft with no text of its own takes a note once a person writes one.
     body: agent.edits[id] ?? dr.body ?? null,
     bodyLabel: dr.bodyLabel ?? (agent.edits[id] !== undefined ? 'Your note' : null),
     waitsLabel: dr.money ? 'Spends money' : dr.customer ? 'Goes to customers' : null,
+    kind: dr.kind ?? (dr.body ? 'Email' : 'Draft'),
+    summary: dr.summary ?? (lines[0] ? `${lines[0][0]}: ${lines[0][1]}` : ''),
+    destination: dr.destination ?? null,
+    sourceNames: srcLine,
     cta: dr.cta || 'Approve',
     memory: S >= 1 && dr.memory ? dr.memory : null,
     doneNote: part && dr.doneNote ? fmtProse(dr.doneNote, display()) : null,
     approverNote: S >= 1 && dr.approver ? dr.approver : null,
     askApprover: S >= 1 && dr.ask ? dr.ask : null,
-    footNote: dr.approver ? dr.approver.split('. ')[0] + '.' : `From ${srcLine}`,
     approvedAt: at,
     sent,
     canUndo: !!dr.rev || !sent,
@@ -428,6 +497,21 @@ export function draftView(ctx: Ctx, id: string): DraftView {
   }
 }
 
+/**
+ * The one risk text the cards and the panel show: what approving it does that a person should look at ("Spends money",
+ * "Goes to customers"). Null when it's neither, which is low risk unless the draft waits for another reason.
+ */
+export const riskLabel = (dv: DraftView): string | null => {
+  const amount = dv.problem.draft.amount
+  // The amount reads only on a draft that is about money: low risk is decided by `money` and `customer`.
+  if (!amount || !dv.problem.draft.money) return dv.waitsLabel
+  return `${amount.direction === 'claim' ? 'Claims' : 'Spends'} ${fmtMoney(amount.money, display())}`
+}
+
+/** The icon for a draft's kind, on the Today sheet's small tile. */
+export const kindIcon = (kind: string): string =>
+  /mail|email/i.test(kind) ? 'mail' : /purchase order/i.test(kind) ? 'inventory_2' : /case/i.test(kind) ? 'description'
+    : /ticket/i.test(kind) ? 'support_agent' : /shopify/i.test(kind) ? 'storefront' : 'edit_note'
 
 /**
  * Exactly the waiting drafts Today offers one-tap Approve for: no money and no customers involved, and not a Run job a
@@ -472,6 +556,9 @@ export interface ActivityRow {
   undo?: { type: 'approval' | 'handled' | 'setAside'; id: string }
   review?: string
 }
+
+/** The icon a line without a hand-picked one shows, by its kind. */
+const ACTIVITY_ICON = { read: 'visibility', change: 'check_circle', needs: 'front_hand', problem: 'error' } as const
 
 export function activityRows(ctx: Ctx): ActivityRow[] {
   const { S, agent } = ctx
@@ -519,7 +606,19 @@ export function activityRows(ctx: Ctx): ActivityRow[] {
       undo: { type: 'setAside', id: p.id }, why: `${p.title}.`, result: line.result, by: `${byName(ctx.data, rec.by)}, at ${fmtTime(rec.at, d0)}. Drafted by Inhouse agent at ${fmtTime(p.draftedAt, d0)}.` })
   }
   const { today, earlier } = ctx.data.activity
-  const morning = today[0]
+  // The demo's first line is the morning check (its trace is `morning`), with `{read}` and `{found}` filled from state. The
+  // product's lines are the server's, already complete, and its traces are run ids: every one of today's goes through the
+  // generic row below, as the earlier days' do. Keyed on the trace, which a member's name can't set.
+  const morning = today[0]?.trace === 'morning' && today[0].text.includes('{read}') ? today[0] : undefined
+  /** A line the current stage hides: `minStage` is the lowest stage that shows it. */
+  const below = (e: { minStage?: string }) => (e.minStage === 'Act' && S < 1) || (e.minStage === 'Run' && S < 2)
+  if (!morning) {
+    for (const e of today) {
+      if (below(e)) continue
+      rows.push({ ...base, ...when(e.at), icon: ACTIVITY_ICON[e.kind], kind: e.kind, trace: e.trace, who: e.who, whoBy: e.actorId ? byName(ctx.data, e.actorId) : undefined,
+        why: e.why, by: fmtProse(e.by, d0), text: e.text, result: e.result, iconTone: e.kind === 'problem' ? 'bg-destructive-tint text-destructive' : base.iconTone })
+    }
+  }
   if (morning) {
     if (f.disc) {
       const { key: tool, since: at } = lostTool(ctx)!
@@ -538,15 +637,15 @@ export function activityRows(ctx: Ctx): ActivityRow[] {
         text: fill(morning.text), result: fill(morning.result) })
       // The routines that ran today, after the morning check (none on day one: nothing was connected to read).
       for (const e of today.slice(1)) {
-        if (e.minStage === 'Act' && S < 1) continue
+        if (below(e)) continue
         rows.push({ ...base, ...when(e.at), icon: 'visibility', kind: e.kind, trace: e.trace, who: e.who, why: e.why, by: fmtProse(e.by, d0), text: e.text, result: e.result })
       }
     }
   }
   for (const e of earlier) {
-    if (e.minStage === 'Act' && S < 1) continue
+    if (below(e)) continue
     const change = e.kind === 'change'
-    rows.push({ day: fmtWeekday(e.at, d0), ...when(e.at), icon: change ? 'check_circle' : e.text.startsWith('Saved the weekly') ? 'summarize' : 'visibility', text: e.text, who: e.who,
+    rows.push({ day: fmtWeekday(e.at, d0), ...when(e.at), icon: change ? 'check_circle' : e.text.startsWith('Saved the weekly') ? 'summarize' : ACTIVITY_ICON[e.kind], text: e.text, who: e.who,
       kind: e.kind, trace: e.trace, iconTone: change ? 'bg-background text-foreground' : 'bg-background text-foreground-3', why: e.why, result: e.result, by: fmtProse(e.by, d0) })
   }
   return rows.map(r => ({ ...r, key: `${r.day}|${r.t}|${r.text}` }))

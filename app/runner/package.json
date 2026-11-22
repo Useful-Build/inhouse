@@ -1,0 +1,30 @@
+{
+  "name": "inhouse-runner",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "start": "node dist/main.mjs",
+    "build": "esbuild src/main.ts src/session/main.ts --bundle --platform=node --target=node26 --format=esm --outdir=dist --out-extension:.js=.mjs --external:@anthropic-ai/claude-agent-sdk --alias:zod=./node_modules/zod/index.js",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run",
+    "check:zod": "node scripts/check-zod-major.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.328",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@emnapi/core": "^2.0.0-beta.2",
+    "@emnapi/runtime": "^2.0.0-beta.2",
+    "@fast-check/vitest": "0.5.0",
+    "@types/node": "^26.6.6",
+    "esbuild": "0.28.2",
+    "fast-check": "4.10.3",
+    "typescript": "~7.0.2",
+    "vitest": "^5.1.1"
+  }
+}

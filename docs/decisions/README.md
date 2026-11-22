@@ -53,3 +53,4 @@ the phase plans link them by name. Each states what was tested, the numbers, the
 | [p2-previews-retest](p2-previews-retest.md) | Wave 0 retest: containers do run in Previews, and Access with a service token works |
 | [p0-s4-connector-hub](p0-s4-connector-hub.md) | The connector hub is our own gateway Worker; Shopify reads and Slack's MCP server |
 | [p0-s5-memory-tool-choice](p0-s5-memory-tool-choice.md) | Memory recall and tool choice eval, and the softer memory rule |
+| [p3-local-containers](p3-local-containers.md) | S6: the SDK sandbox can't start under `wrangler dev` (Mac or GitHub runner); decision Q2 applies |

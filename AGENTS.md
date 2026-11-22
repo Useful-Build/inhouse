@@ -5,13 +5,16 @@ Rules for coding agents working in this repo. Read `app/README.md` for how the a
 ## Layout
 
 - `app/` is the whole app: a React single-page app served by a Cloudflare Worker. The demo's Worker is `app/worker/`
-  (assets plus the client-error route); the product's is `app/server/` (P2, below).
+  (assets plus the client-error route); the product's is `app/server/` (P2 and P3, below).
 - `app/src/agent/` holds the `AgentClient` interface, the mock agent and its sample data (`sample-data/`, invented). The
   two client entries (`client.demo.ts`, `client.product.ts`) pick the client at build time; `src/agent/http/` is the
-  product's client stub.
+  product's real client (`HttpAgent`: chats, the turn socket, usage, memory, models, settings).
 - `app/shared/` holds the zod schemas for everything the `AgentClient` returns (`shared/contract/`); `src/agent/types.ts`
   re-exports their types.
-- `app/server/` is the product Worker (P2, below), `app/ops/` the table registry (`ops/tables/`: every D1 table, Durable
+- `app/server/` is the product Worker (P2 and P3, below; the chat code is `server/do/brand-agent/`, `server/do/runner/`,
+  `server/egress/` and `server/mcp/`), `app/runner/` the container image's runner (its own `package.json`: `npm test`,
+  `npm run typecheck`, `npm run check:zod`, with `harness/` for the S6 check and `image/` for the probes),
+  `app/test/scripted-model/` the scripted model (test builds only), `app/evals/` the eval harness, `app/ops/` the table registry (`ops/tables/`: every D1 table, Durable
   Object store and R2 prefix, registered in the PR that adds it).
 - `app/build-support/` holds the build helpers and their tests (the demo deploy redirect).
 - `app/public-demo/` holds the demo-only public files (the Library's sample files, avatars); the product build ships none.
@@ -20,6 +23,7 @@ Rules for coding agents working in this repo. Read `app/README.md` for how the a
   `app/e2e/support/` the fixtures layer (`fx`: sample names and seeding, the only place that knows the mock's storage
   keys); `app/e2e/product/` the product build's specs.
 - `docs/plans/` holds the approved plans. `.github/rulesets/` holds the branch rulesets as applied.
+- `docs/adopted-libraries.md` is the register of adopted base libraries and the procedure for updating them.
 
 ## Stack
 
@@ -40,9 +44,12 @@ Run them in `app/`.
 | `npm run build` | Type check and production build (the demo build) |
 | `npm run build:product` | The product build into `dist-product/`: no mock, sample data, demo controls or demo clock. `node scripts/check-product-build.mjs` checks it (CI runs both) |
 | `npm run build:product-test` | The test build into `dist-product-test/`: the product Worker with the test issuer compiled in and `wrangler.test.jsonc`. Never deployed |
+| `npm run build:product-eval` | The eval build into `dist-product-eval/`: the test issuer and the eval trace (`@eval-trace`) compiled in, the real model through the gateway (no scripted model), `wrangler.eval.jsonc`. Deployed only to the sandbox, from main, by the ops repo. `check-product-build.mjs` needs it beside the other two |
 | `npm run test-build:migrate` | Apply `server/migrations/` to the test build's local D1 (`.wrangler/test-build`, or `-- --persist-to <dir>`) |
 | `npm run test-build:seed` | Seed that D1 with the invented brand (`server/seed/run.ts`; refuses an unmigrated D1 and fails loud if the seed is missing; same `-- --persist-to <dir>`) |
 | `E2E_TEST_BUILD=1 npx playwright test --project=api --project=real-desktop --project=real-phone` | The test build's specs (`e2e/api/`, `e2e/real/`), after `npm run build:product-test`. No other run includes them |
+| `cd runner && npm test` | The runner's unit tests (light job; `npm run typecheck` and `npm run check:zod` beside it). CI's `runner` job also builds the image and runs the container probes |
+| `node evals/run.ts --target fake --out <dir>` | The eval harness dry run (no model, no cost). `--target product` needs `--paid` and `--budget`, and Wasim's OK to run |
 | `E2E_TEST_BUILD=1 npx playwright test --project=smoke` | The release smoke (`e2e/smoke/`, read only) on the test build. On a release: `SMOKE_BASE_URL=<url> npx playwright test --project=smoke`, with the service-token env vars in the `verify` skill |
 | `npm run preview` | Build, then serve the build |
 | `npm run test:e2e` | Every Playwright project against the production build (macOS skips the visual ones) |
@@ -85,9 +92,21 @@ skill before any UI change. Repo specifics:
 ## How changes land here
 
 - **CI gates:** rulesets (`.github/rulesets/`) require a PR and the checks `ci` and `pr-gates` on `main` and
-  `fleet/**`, with no bypass. `ci` (typecheck, lint, unit, build, every Playwright project) runs on every PR into
-  either. `pr-gates` fails a commit without a `Verified:` trailer and flags changed existing checks. `main` also needs
-  the branch up to date with `main`. No merge queue for now.
+  `fleet/**`, with no bypass. `ci` runs on every PR into either. Into `main` it runs everything (typecheck, lint,
+  unit, build, every Playwright project, the test build, the runner image and its probes). Into a `fleet/**` branch
+  (phase batching, Wasim, 2026-11-21) it runs only the fast checks: typecheck, lint, unit, the builds and their guards,
+  the fresh-install migrations, and the runner's tests without the image. The whole suite then runs on each push to
+  `fleet/**` (every merge), and a newer merge cancels the run in progress, so an e2e break shows up there a few
+  merges late, not on its own PR. Watch the branch's `ci` runs after merging into it. Never retarget a PR from
+  `fleet/**` to `main`: its fast-path `ci` stays green and `ci` doesn't re-run on a base change. Open a new PR, or
+  push a commit after retargeting so the main path runs. Before merging anything into `main`, check that
+  `e2e (1/2)`, `e2e (2/2)` and `test-build` show pass, not skipped. `pr-gates` fails a commit without a `Verified:`
+  trailer and flags changed existing checks. `main` also needs the branch up to date with `main`. No merge queue for
+  now.
+- **Commit hook:** `.githooks/commit-msg` refuses a commit whose `Verified:` trailer `git interpret-trailers --parse`
+  can't print (merge commits pass). `npm install` in `app/` runs `prepare`, which sets `core.hooksPath` to `.githooks`
+  (the hooks run the global hook of the same name and the repo's own `.git/hooks` one after their own check, via
+  `.githooks/chain.sh`, so a global hooks path keeps working).
 - **Big projects:** one integration branch `fleet/<topic>` cut from `main`. Each piece is its own PR into it, merged
   with a merge commit. Bring `main` into it through a PR (direct pushes are blocked). The final PR into `main` gets
   full CI, reviews, a preview, the QA gate and a ship recording (`ship.yml`, run by hand with the PR number and its
@@ -112,6 +131,52 @@ skill before any UI change. Repo specifics:
   config) is never a worker's fix: the worker proposes it in its report, the orchestrator decides with the PR's
   review, and one that costs money goes to Wasim. The orchestrator may give a spike brief a larger budget (for
   example 4 rounds); once it's spent the worker reports back and the escalation above runs from there.
+- **The connector hub (P4):** `app/hub/` is its own package (own `package.json`, lockfile, `tsconfig.json` and
+  `vitest.config.ts`; `tsc -b` in `app/` doesn't check it). Config template `app/wrangler.hub.jsonc` (no account ids,
+  hosts or shop handles), test config `app/wrangler.hub.test.jsonc`. Connectors live in
+  `app/hub/connectors/<tool>/route.ts`, each listed in `app/hub/connectors/index.ts` (one orchestrator line per
+  connector). Checks, in `app/hub/`: `npm ci`, `npm run typecheck`, `npm run test:node` (a worker's seat);
+  `npm run test:workers`, `npm run bundle` and `npm run bundle:test` start workerd or bundle, so they run in CI or
+  under the heavy lock. Two scans, in `app/`: `node scripts/check-hub-build.mjs` (the deployable bundle carries no test
+  seam and the test bundle is caught) and `node scripts/check-hub-config.mjs <config>` (no public route, no test build,
+  no secret in `vars`; the template passes, the test config must fail). The `hub` job in `ci.yml` runs all of it, and
+  `ci` needs it. **Outside-`app/hub/` rule:** code bundled into the hub from outside `app/hub/` (the recorded upstreams
+  in `app/test/upstreams/`) imports no npm package: the `hub` job installs only `app/hub/node_modules`.
+- **Hub key rotation** (`HUB_TOKEN_KEYS`, from #95):
+  1. Add the new key to `keys` in `HUB_TOKEN_KEYS`, `current` unchanged. `wrangler secret put HUB_TOKEN_KEYS` through
+     a secret card (this deploys a version).
+  2. Set `current` to the new kid; put again. New seals use it; old envelopes still open.
+  3. Wait for the refreshes (every Shopify refresh, about every 12 h, seals under `current`; reads also re-seal
+     lazily), or call `ServerGateway.reencrypt(scope, accountId)` for each account (P5 and later; the product Worker
+     knows its accounts).
+  4. When `ServerGateway.status` shows the new `kid` for every account, remove the old key; put again.
+
+  Removing a key still in use makes that record `key_unavailable`: a client credentials account discards it and grants
+  again (log `signin_key_missing`); an OAuth account (P5) needs a reconnect.
+- **The hub in the test build (P4).** The test build runs two Workers under one `wrangler dev`: the product Worker
+  (`wrangler.test.jsonc`) and the hub (`wrangler.hub.test.jsonc`), joined by the `HUB` service binding
+  (`ReadGateway` only). The hub's upstream is the recorded Shopify fixture (`app/test/upstreams/shopify/`), never a
+  real store: no store login is in CI, a preview or the sandbox account. The product config check refuses any other
+  hub entrypoint, and `check-hub-config.mjs` refuses a public hub route.
+- **P4 routes and tables (Watch).** Routes 52 to 56 Routines (list, on and off, run now, delete, restore), 57 and 58
+  Today (list, set aside), 59 Activity, 60 and 61 the bell (list, mark read), 62 to 66 the Library (list, upload,
+  download, delete, restore), and 67 the test build's alarm-now control (404 elsewhere). Tables, all in
+  `ops/tables/`: `routines`, `routine_slots`, `routine_alerts`, `today_items`, `today_aside`, `activity_lines`,
+  `notices`, `notice_reads`, `library_uploads`, `library_marks` and the R2 prefix `library/`. Migrations
+  `0200`-`0240`. Library downloads are attachments with `nosniff` and `Content-Security-Policy: sandbox`.
+- **Routines run as `m_system`.** A routine's turn is submitted as the shared `m_system` service member
+  (`server/routines/render.ts`), with the routine id and the creator recorded on the run. There is no per-routine
+  principal. Routines read brand memory, never a person's. The BrandAgent object has three test-only RPC methods
+  (`testRunAlarm`, `testStopAfterBatch`, `testSeedCursor`, `brand-agent/index.ts:92-106`). They are real methods that
+  delegate to `@test-controls`; outside the test build that is the off module `test-controls-off.ts`, which throws.
+  `check-product-build.mjs` proves the real module and its canary (`TEST_CONTROLS_CANARY`) are absent from the
+  deployable Worker; it doesn't scan for the method names. Add no others. The only other P4 lines on the object: its
+  system prompt moved from `SYSTEM_PROMPT_V1` to `SYSTEM_PROMPT_V2`, and it imports `POKE_ID` and `TICK_KIND` from
+  `routines/tick.ts`.
+- **Prompts** live in `app/server/prompt/` (orchestrator only). Eval results are versioned and kept, never deleted:
+  morning-check results in `app/evals/morning-check/results/<date>-<sha>.json`, other eval results in
+  `app/evals/results/`. A prompt change runs the eval suite and the morning-check set
+  (`app/evals/morning-check/`, steps in the `verify` skill), and its PR carries the results.
 - **Previews:** every same-repo PR (not Dependabot's) gets a Workers Preview once `ci` passes (`preview.yml`, trusted
   code from `main` in environment `preview`), and one PR comment with its preview URL, its fixed deployment URL and
   the head SHA.
@@ -130,7 +195,9 @@ skill before any UI change. Repo specifics:
   `.github/rulesets/`, `app/playwright.config.ts`, `app/vitest.config.ts`, `app/e2e/` (specs, helpers, ship specs,
   `visual.spec.ts-snapshots/`), `app/src/**/*.property.test.ts`, `app/scripts/` (the lint, icon, bundle and ship
   scripts), `app/wrangler.jsonc`, `app/worker/`, `app/public/_headers`, `app/server/auth/**` (auth), `app/server/migrations/` (the D1
-  schema), `app/wrangler.product.jsonc` and `app/wrangler.test.jsonc` (Worker config), `app/ops/` (ops).
+  schema), `app/wrangler.product.jsonc` and `app/wrangler.test.jsonc` (Worker config), `app/ops/` (ops), `app/hub/{signin,crypto,scope,testing}/` (P4: the hub's sign-in, key handling, scopes and
+  test seam), `app/wrangler.hub.jsonc` and `app/wrangler.hub.test.jsonc` (P4: hub Worker config) and the `check-hub-*`
+  scripts in `app/scripts/` (`check-hub-build.mjs`, `check-hub-config.mjs` and their fixtures).
 - **The product Worker (P2).** `app/server/` is the product Worker (entry `server/index.ts`): every `/api/*` request is
   authenticated (Access JWT), then the `Origin` check, the route (`server/routes.ts`), its row in
   `server/access-matrix.ts` and `checkAccess`, then the handler; every answer carries the security headers
@@ -143,19 +210,25 @@ skill before any UI change. Repo specifics:
   test build's, made-up values only, and never deploys. `scripts/check-product-config.mjs` (W1) exits 0 for a
   deployable config, 1 when it refuses one and 2 on usage or a crash; CI requires exactly 1 on `wrangler.test.jsonc`.
 - **The test issuer stays out of the product build:** import it only as `@test-issuer`, never by its path. Only
-  `vite build --mode product-test` resolves that to `server/auth/test-issuer.ts`; every other build gets
-  `server/auth/issuer-off.ts` (same exports, trusting nothing), and `check-product-build.mjs` fails the deployable
-  build on any `test-issuer` module or the canary.
+  `vite build --mode product-test` and `--mode product-eval` resolve that to `server/auth/test-issuer.ts`; every other
+  build gets `server/auth/issuer-off.ts` (same exports, trusting nothing), and `check-product-build.mjs` fails the
+  deployable build on any `test-issuer` module or the canary.
+- **The eval trace stays in the eval build:** import it only as `@eval-trace`. Only `vite build --mode product-eval`
+  resolves that to `server/eval-trace/on.ts`; every other build, the test build included, gets
+  `server/eval-trace/off.ts`, and `check-product-build.mjs` fails the product and test builds on its module or canary
+  and the eval build without them. The eval build never compiles the scripted model, so its egress always takes the
+  gateway (`__INHOUSE_EVAL_BUILD__`).
 - **The test build** is the proof path for the backend: `npm run build:product-test`, then the `api` and `real`
   Playwright projects with `E2E_TEST_BUILD=1` (the `verify` skill has the details). It runs the product Worker under
   `wrangler dev` with a fresh local D1 and a test issuer whose key pair is made per run; only the public half reaches
-  the Worker, and only a build compiled with the test flag trusts it. CI's `test-build` job runs it on every PR, with
-  no secret.
+  the Worker, and only a build compiled with the test flag trusts it. CI's `test-build` job runs it on every PR into
+  `main` and on each push to `fleet/**` (not on a PR into `fleet/**`: phase batching), with no secret.
 - **Migrations:** `app/server/migrations/`, forward-only (never rename or drop in the release that stops using it).
   Ranges per phase: P2 `0001`-`0099`, then a block of 100 each (P3 `0100`-`0199` up to P8 `0600`-`0699`); the
   orchestrator gives each worker its numbers in landing order. Wrangler applies every file not yet in `d1_migrations` in file-name order, so a lower number
   merged after a higher one still applies (checked 2026-11-20 with wrangler 4.162.0). CI's `test-build` job applies
-  them all to an empty D1 (the migration job's fresh install); from P3 it also upgrades from the last release tag.
+  them all to an empty D1 (the migration job's fresh install), and on a PR into `fleet/**` the `fast` job does; from
+  P3 it also upgrades from the last release tag.
 - **Candidate deploys** go to the separate sandbox Cloudflare account only, with invented data, before a phase's final
   PR. Nothing from a `fleet/` branch deploys to the house or a brand account; releases come from tags on `main`.
 - **Shared ports:** dev 5173, E2E preview 5193 (`E2E_PORT`), the product build's E2E server 5194 (`E2E_PRODUCT_PORT`), the test build 8787 (`E2E_TEST_BUILD_PORT`; the `ship` workflow serves it there too). Give each parallel worktree its own `E2E_PORT`, `E2E_PRODUCT_PORT` and `E2E_TEST_BUILD_PORT`.
@@ -167,6 +240,9 @@ skill before any UI change. Repo specifics:
   `server/migrations/`: P2 `0001`-`0099`, then a block of 100 per phase (P3 `0100`-`0199` up to P8 `0600`-`0699`), as the
   backend plan's "Migrations" says; forward-only.
 - **Accounts and releases (P2).** The sandbox Cloudflare account is for candidate deploys only (the ops workflow
-  rehearsed with invented data); there is no per-PR product preview (decision Q1), the test build is the per-PR proof.
+  rehearsed with invented data); there is no per-PR product preview (decision Q1). Since P3 a per-PR deploy of the test build with the runner container
+  goes to the sandbox account (`inhouse-sbx-pr<N>` names, guarded by `scripts/sandbox/names.mjs`), is drained and warmed up
+  (route 48), and the chat specs run against it with `E2E_TEST_BUILD_REMOTE=1` (decision Q2: the local sandbox can't run
+  Bash, so chats are proved there). The test build is still the per-PR proof for everything else.
   The release (create D1 and R2, fill the config template, migrate, set secrets, deploy a tag, run the smoke) runs from
   the private ops repo, never from this one. Keep account ids, hostnames and team domains out of this repo.

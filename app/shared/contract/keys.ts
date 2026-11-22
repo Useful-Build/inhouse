@@ -10,9 +10,12 @@ export const RESOURCE_KEYS = [
 
 /** The actions the UI asks `me().can` about, each tied to one access-matrix row (p2-design.md section 3). */
 export const CAN_KEYS = [
-  'invite', 'changeRole', 'remove', 'editBrandSettings', 'editTechnical', 'switchModelOff', 'grantSupport',
+  'invite', 'changeRole', 'remove', 'editBrandSettings', 'editTechnical', 'switchModel', 'grantSupport',
   'viewMembers', 'viewAudit', 'exportAudit',
 ] as const
 
 /** How long a support grant may run, in hours. */
 export const GRANT_HOURS = [1, 4, 24, 72] as const
+
+/** The most live (not deleted) team routines a brand may have (#312 review M2). System routines don't count. */
+export const MAX_TEAM_ROUTINES = 50

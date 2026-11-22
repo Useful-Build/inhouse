@@ -32,13 +32,22 @@ const alias = {
   '@sample': fileURLToPath(new URL('./src/agent/sample-data', import.meta.url)),
   // W1's test issuer, as in the test build (vite.config.ts): its tests import the real one.
   '@test-issuer': fileURLToPath(new URL('./server/auth/test-issuer.ts', import.meta.url)),
+  // The scripted model (P3), as in the test build (vite.config.ts).
+  '@scripted-model': fileURLToPath(new URL('./test/scripted-model/index.ts', import.meta.url)),
+  // P4's test-build controls (server/ops/test-controls.ts), as in the test build (vite.config.ts).
+  '@test-controls': fileURLToPath(new URL('./server/ops/test-controls.ts', import.meta.url)),
+  // The test shop override (server/egress/test-shop.ts), as in the test and eval builds (vite.config.ts).
+  '@test-shop': fileURLToPath(new URL('./server/egress/test-shop.ts', import.meta.url)),
+  // The eval trace, as in the eval build (vite.config.ts): its tests import the real one. Code that reads it is switched by
+  // `__INHOUSE_EVAL_BUILD__` (false below), so every other test sees a product build.
+  '@eval-trace': fileURLToPath(new URL('./server/eval-trace/on.ts', import.meta.url)),
   '@': fileURLToPath(new URL('./src', import.meta.url)),
 }
 
 export default defineConfig({
   resolve: { alias },
-  // The test build's compile-time switch (vite.config.ts): off here, as in every build but `product-test`.
-  define: { __INHOUSE_TEST_BUILD__: 'false' },
+  // The test and eval builds' compile-time switches (vite.config.ts): off here, as in the product build.
+  define: { __INHOUSE_TEST_BUILD__: 'false', __INHOUSE_EVAL_BUILD__: 'false' },
   test: {
     // The slowest property takes about 7 s at 1000 cases (the whole file about 41 s), so 25 s fails a hang fast and leaves room.
     testTimeout: 25_000,
@@ -49,10 +58,12 @@ export default defineConfig({
           name: 'node',
           include: [
             'src/**/*.property.test.ts', 'src/**/*.test.ts', 'build-support/**/*.test.ts', 'e2e/support/**/*.test.ts',
-            'ops/**/*.test.ts', 'shared/**/*.test.ts', 'scripts/**/*.test.mjs',
+            'ops/**/*.test.ts', 'shared/**/*.test.ts', 'evals/**/*.test.ts', 'scripts/**/*.test.mjs',
           ],
           // P8's ops jobs import `cloudflare:test`, so they run in the `server` project.
-          exclude: ['**/node_modules/**', ...OPS_JOB_TESTS],
+          // The hub's two script tests use Node's built-in runner (node:test) and run in the `hub` CI job with `node --test`
+          // (P4, fleet/watch); vitest finds no suite in them.
+          exclude: ['**/node_modules/**', ...OPS_JOB_TESTS, 'scripts/check-hub-build.test.mjs', 'scripts/check-hub-config.test.mjs'],
           environment: 'node',
           // The contract suite's real target (src/agent/contract/targets.ts reads it with `inject`): the test build's
           // origin, set by e2e/support/test-build/serve.ts. Read here from the environment, so it can't be dropped on the way.
@@ -75,6 +86,10 @@ export default defineConfig({
               bindings: { TEST_MIGRATIONS: await readD1Migrations(fileURLToPath(new URL('./server/migrations', import.meta.url))) },
               // Test-only: the restore's target (P8 G1). A second local D1, never in any wrangler config.
               d1Databases: { RESTORE_DB: '00000000-0000-4000-8000-000000000002' },
+              // P4: wrangler.test.jsonc binds the hub's ReadGateway as HUB (p4-h1.md OC 4), and workerd refuses to start
+              // with a binding to a Worker it doesn't run. The server tests never reach the hub (H1's route takes a
+              // `ReadGatewayLike` it's handed), so HUB here is a stand-in that answers 503 and names itself.
+              serviceBindings: { HUB: () => new Response('HUB is a stand-in in the server tests (vitest.config.ts)', { status: 503 }) },
             },
           })),
         ],

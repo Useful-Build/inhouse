@@ -92,7 +92,7 @@ export function SectionHeader({ title, count, icon, actions, onDots, id, classNa
 const cardGridVariants = cva('grid', {
   variants: {
     // The narrowest a card gets before the row wraps (--app-grid-cards-*).
-    size: { sm: 'grid-cols-cards-sm', default: 'grid-cols-cards', lg: 'grid-cols-cards-lg' },
+    size: { sm: 'grid-cols-cards-sm', default: 'grid-cols-cards', lg: 'grid-cols-cards-lg', wide: 'grid-cols-cards-wide' },
     // `cards` for bordered cards, `rows` for borderless list rows laid out in columns (Tools, Skills). A row's hover
     // fill bleeds out by its 12px padding (`p-3`), so its icon and its button sit on the content edge with the headings.
     variant: { cards: 'gap-4', rows: '-mx-3 gap-x-4 gap-y-0.5' },

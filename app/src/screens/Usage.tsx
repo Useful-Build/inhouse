@@ -2,7 +2,7 @@
 import { useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { activeChannel, capStatus, usageSummary } from '../state/derive'
-import { calendarOf, fmtCount, fmtSpentOfCap, fmtUsageMoney, majorOf } from '../lib/format'
+import { calendarOf, fmtCapFill, fmtCount, fmtShare, fmtSpentOfCap, fmtUsageMoney, majorOf } from '../lib/format'
 import { display, nowOf } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import type { UsageTab } from '../state/store'
@@ -24,17 +24,21 @@ export function Usage() {
   const ctx = useCtx()
   const { usageMonths } = ctx.data
   const monthIdx = useUi(s => s.usageMonth)
-  const month = usageMonths[monthIdx] ?? usageMonths[0]
-  const thisMonth = month === usageMonths[0]
+  // The real client fills `usageMonths` once route 42 answers; until then the snapshot's `usage` stands in.
+  const month = usageMonths[monthIdx] ?? usageMonths[0] ?? ctx.data.usage
+  // No months read yet (the real client before route 42 answers): the stand-in is this month.
+  const thisMonth = usageMonths.length === 0 || month === usageMonths[0]
   // The cap and alert level saved in Settings (Spending cap) apply to this month only. Finished months keep the ones
   // recorded for them. A cap never changes what was spent: only "reached" compares the two.
   const status = capStatus(ctx)
   const usage = thisMonth ? { ...month, cap: status.cap, alertAt: status.alertAt } : month
-  // Every month listed is in the year the client's clock is in (the demo's year in the demo).
+  // A month the server sent carries its own year (`monthKey`); the demo's months are in the year the client's clock is in.
   const year = calendarOf(nowOf(), display()).year
-  const monthLabels = usageMonths.map(m => `${m.month} ${year}`)
+  const monthLabels = usageMonths.map(m => `${m.month} ${m.monthKey?.slice(0, 4) ?? year}`)
   const mon = usage.month.slice(0, 3)
-  const cap = thisMonth && status.reached
+  // At the cap: the server's live mark when it judged the cap this page shows (P3, route 42); otherwise (the demo, or a
+  // cap just changed in Settings and not read back yet) the page's own comparison of spend and cap.
+  const cap = thisMonth && (month.capReached !== undefined && month.cap.minor === status.cap.minor ? month.capReached : status.reached)
   const tab = useUi(s => s.usageTab)
   const patch = useUi(s => s.patch)
   const phone = useUi(s => s.phone)
@@ -65,7 +69,7 @@ export function Usage() {
     bars.current[t]?.focus()
   }
   const peakAt = days.indexOf(maxD) + 1
-  const pct = Math.min(100, Math.round(total / majorOf(usage.cap) * 100)) + '%'
+  const pct = fmtCapFill(total, majorOf(usage.cap), cap)
   const over = total > majorOf(usage.cap)
   const { hint, capNote } = usageSummary(usage, thisMonth, cap)
   // A channel counts only from its stage (Act) and once connected: before that, questions come from chats alone, so a
@@ -149,7 +153,7 @@ export function Usage() {
         <div className="mt-3 border-t border-border">
           {rows.map(r => {
             const cost = majorOf(r.spent)
-            const share = Math.round(cost / total * 100) + '%'
+            const share = fmtShare(cost, total)
             return (
               <div key={r.name} className="flex items-start gap-3 border-b border-border py-3 text-base tabular-nums" data-usage-row data-cost={cost.toFixed(2)} data-conv={r.conversations}>
                 {tab === 'person' && <span className="inline-flex"><RowMark who={r.name} /></span>}
@@ -180,7 +184,7 @@ export function Usage() {
           </div>
           {rows.map(r => {
             const cost = majorOf(r.spent)
-            const share = Math.round(cost / total * 100) + '%'
+            const share = fmtShare(cost, total)
             return (
               <div key={r.name} className="flex min-h-13.5 items-center border-b border-border text-base tabular-nums" data-usage-row data-cost={cost.toFixed(2)} data-conv={r.conversations}>
                 {tab === 'person' && <span className="mr-3 inline-flex"><RowMark who={r.name} /></span>}

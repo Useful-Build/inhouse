@@ -1,5 +1,6 @@
 // check-product-config fixture: refused, rule "access-not-json".
 {
+	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }],
 	"name": "inhouse-product",
 	"version_metadata": { "binding": "CF_VERSION_METADATA" },
 	"main": "server/index.ts",

@@ -2,19 +2,24 @@
 //  1. it answers 200 while a signal fails, or 503 while all pass;
 //  2. a signal that throws takes the route down (500) instead of failing its own entry;
 //  3. a detail carries brand data (an error message, a name, an email);
-//  4. the migration signal passes when the last applied migration isn't the newest one this build knows;
-//  5. a release without the version metadata binding answers 200 healthy instead of failing the version signal (503).
+//  4. the migration signal passes when a migration this build ships isn't applied (P3: every shipped one, in any order,
+//     not just the newest: latest.ts is retired), or fails when every shipped one is applied beside others;
+//  5. a release without the version metadata binding answers 200 healthy instead of failing the version signal (503);
+//  6. (P3, W2) the pool signals are missing from the list, or an idle pool (no container started, nothing queued) reads
+//     red;
+//  7. (eval build, p3-eval-observability rev 2 rec 4) the version signal doesn't name the build's flavor (product, test or
+//     eval), or a test or eval bundle running without its runtime switch (under a product config) reads green.
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import type { HandlerEnv } from '../routes.ts'
 import { openStores } from '../db/stores.ts'
-import { LATEST_MIGRATION } from '../migrations/latest.ts'
-import { coreSignals, versionSignal } from './signals/core.ts'
+import { SHIPPED_MIGRATIONS, coreSignals, migrationsSignal, versionSignal } from './signals/core.ts'
 import { signals } from './signals/index.ts'
 import { health, healthHandler } from './health.ts'
 
 const stores = openStores(env)
-const VERSIONED = { CF_VERSION_METADATA: { id: 'v-123', tag: '', timestamp: '' } } as unknown as HandlerEnv
+// P3 lists signals that ask the BrandAgent (runs) and read the usage ledger (usage_stranded): the env carries the binding.
+const VERSIONED = { CF_VERSION_METADATA: { id: 'v-123', tag: '', timestamp: '' }, BRAND_AGENT: env.BRAND_AGENT } as unknown as HandlerEnv
 const c = { env: VERSIONED, stores }
 const call = async (h: ReturnType<typeof healthHandler>, ctx = c) => {
   const res = await h(ctx)
@@ -27,9 +32,23 @@ describe('the health route', () => {
     expect(await call(health)).toEqual({
       status: 200,
       body: { version: 'v-123', ok: true, signals: [
-        { name: 'version', ok: true, detail: 'v-123' }, { name: 'd1', ok: true }, { name: 'migrations', ok: true, detail: LATEST_MIGRATION },
+        { name: 'version', ok: true, detail: 'v-123 · product build' }, { name: 'd1', ok: true }, { name: 'migrations', ok: true, detail: `${SHIPPED_MIGRATIONS.length} applied` },
+        { name: 'runs_failed', ok: true, detail: '0 of 0 failed in the last hour' }, { name: 'runs_stuck', ok: true, detail: '0 stuck' },
+        { name: 'session_damaged', ok: true, detail: '0 damaged in 24 h' }, { name: 'scheduler', ok: true, detail: '0 quarantined' },
+        { name: 'pool_protocol', ok: true }, { name: 'pool_restarts', ok: true }, { name: 'pool_shortfall', ok: true },
+        { name: 'usage_stranded', ok: true },
+        // P4 W2: the routines signal (no routines here: green).
+        { name: 'routines', ok: true },
       ] },
     })
+  })
+
+  it('lists the three pool signals (p3-design 7), green on an idle pool (failure 6)', async () => {
+    expect(signals.map(s => s.name).filter(n => n.startsWith('pool_'))).toEqual(['pool_protocol', 'pool_restarts', 'pool_shortfall'])
+    const out = await call(health)
+    expect(out.body.signals.filter(s => s.name.startsWith('pool_'))).toEqual([
+      { name: 'pool_protocol', ok: true }, { name: 'pool_restarts', ok: true }, { name: 'pool_shortfall', ok: true },
+    ])
   })
   it('fails the version signal without the binding, except in the test build (failure 5)', async () => {
     const bare = { ...c, env: {} as HandlerEnv }
@@ -38,16 +57,36 @@ describe('the health route', () => {
       const out = await call(health, { ...bare, env })
       expect(out.status).toBe(503)
       expect(out.body.version).toBeNull()
-      expect(out.body.signals[0]).toEqual({ name: 'version', ok: false, detail: 'no version metadata' })
+      expect(out.body.signals[0]).toEqual({ name: 'version', ok: false, detail: 'no version metadata · product build' })
     }
     // A test build is compiled in and switched on: it may run without one, and says so.
     const testBuild = versionSignal(true)
-    expect(await testBuild.check({ env: { INHOUSE_TEST_BUILD: '1' } as unknown as HandlerEnv, stores })).toEqual({ ok: true, detail: 'no version metadata (test build)' })
-    expect(await testBuild.check({ env: {} as HandlerEnv, stores }), 'compiled in but not switched on').toEqual({ ok: false, detail: 'no version metadata' })
-    expect(await testBuild.check({ env: VERSIONED, stores })).toEqual({ ok: true, detail: 'v-123' })
+    const ON = { INHOUSE_TEST_BUILD: '1' }
+    expect(await testBuild.check({ env: ON as unknown as HandlerEnv, stores })).toEqual({ ok: true, detail: 'no version metadata (test build)' })
+    expect(await testBuild.check({ env: {} as HandlerEnv, stores }), 'compiled in but not switched on').toEqual({ ok: false, detail: 'no version metadata · test build without its switch' })
+    expect(await testBuild.check({ env: { ...VERSIONED, ...ON } as HandlerEnv, stores })).toEqual({ ok: true, detail: 'v-123 · test build' })
     for (const id of ['', 7, undefined]) {
-      expect(await versionSignal(false).check({ env: { CF_VERSION_METADATA: { id } } as unknown as HandlerEnv, stores })).toEqual({ ok: false, detail: 'no version metadata' })
+      expect(await versionSignal(false).check({ env: { CF_VERSION_METADATA: { id } } as unknown as HandlerEnv, stores })).toEqual({ ok: false, detail: 'no version metadata · product build' })
     }
+  })
+  it('names the flavor, and fails a test or eval bundle without its runtime switch (failure 7)', async () => {
+    const ON = { INHOUSE_TEST_BUILD: '1' }
+    const evalBuild = versionSignal(true, true, 'eval (canary)')
+    expect(await evalBuild.check({ env: { ...VERSIONED, ...ON } as HandlerEnv, stores })).toEqual({ ok: true, detail: 'v-123 · eval (canary) build' })
+    expect(await evalBuild.check({ env: ON as unknown as HandlerEnv, stores })).toEqual({ ok: true, detail: 'no version metadata (eval (canary) build)' })
+    // A test or eval bundle under a product config (version metadata, no switch) is red: that bundle must never answer there.
+    expect(await evalBuild.check({ env: VERSIONED, stores })).toEqual({ ok: false, detail: 'v-123 · eval (canary) build without its switch' })
+    expect(await versionSignal(true).check({ env: VERSIONED, stores })).toEqual({ ok: false, detail: 'v-123 · test build without its switch' })
+    // The product build reads the runtime switch as nothing (the test issuer isn't in it).
+    expect(await versionSignal(false).check({ env: { ...VERSIONED, ...ON } as HandlerEnv, stores })).toEqual({ ok: true, detail: 'v-123 · product build' })
+    // The eval define on but the alias gave the off module (no flavor): red, never read as a test bundle.
+    for (const env of [{ ...VERSIONED, ...ON }, ON]) {
+      expect(await versionSignal(true, true, null).check({ env: env as unknown as HandlerEnv, stores })).toEqual({ ok: false, detail: 'eval build without the eval trace (the build\'s define and alias disagree)' })
+    }
+    // Not the eval build: a flavor from the alias is ignored (vitest points @eval-trace at on.ts).
+    expect(await versionSignal(true, false, 'eval (canary)').check({ env: { ...VERSIONED, ...ON } as HandlerEnv, stores })).toEqual({ ok: true, detail: 'v-123 · test build' })
+    // This compile (vitest, as the product build): the defaults name the product flavor.
+    expect(await versionSignal().check({ env: VERSIONED, stores })).toEqual({ ok: true, detail: 'v-123 · product build' })
   })
   it('answers 503 when one fails, and a throwing signal fails alone with its error name only (failures 1 to 3)', async () => {
     const out = await call(healthHandler([
@@ -60,10 +99,20 @@ describe('the health route', () => {
     expect(out.body.signals.slice(3)).toEqual([{ name: 'boom', ok: false, detail: 'TypeError' }, { name: 'down', ok: false, detail: 'down' }])
     expect(JSON.stringify(out.body)).not.toContain('@')
   })
-  it('fails the migration signal when the last applied migration is not the newest (failure 4)', async () => {
-    const behind = { ...stores, health: { ...stores.health, lastMigration: async () => '0004_audit_log.sql' } }
+  it('fails the migration signal when a shipped migration is not applied (failure 4)', async () => {
+    const behind = { ...stores, health: { ...stores.health, appliedMigrations: async () => SHIPPED_MIGRATIONS.filter(name => name !== '0004_audit_log') } }
     const out = await call(health, { ...c, stores: behind })
     expect(out.status).toBe(503)
-    expect(out.body.signals.find(s => s.name === 'migrations')).toEqual({ name: 'migrations', ok: false, detail: `applied 0004_audit_log, expected ${LATEST_MIGRATION}` })
+    expect(out.body.signals.find(s => s.name === 'migrations')).toEqual({ name: 'migrations', ok: false, detail: 'not applied: 0004_audit_log' })
+  })
+  it('compares sets, not the newest name (failure 4, P3 blocks)', async () => {
+    // Literal sets: P3's workers add blocks (0100, 0120, ...), so a lower number can land and be applied after a higher one.
+    const shipped = ['0005_service_rows', '0100_chats', '0120_chat_files']
+    const run = (applied: string[]) => migrationsSignal(shipped).check({ env: VERSIONED, stores: { ...stores, health: { ...stores.health, appliedMigrations: async () => applied } } })
+    expect(await run(['0120_chat_files', '0005_service_rows', '0100_chats'])).toEqual({ ok: true, detail: '3 applied' })
+    expect(await run(['0005_service_rows', '0120_chat_files'])).toEqual({ ok: false, detail: 'not applied: 0100_chats' })
+    expect(await run(['0005_service_rows', '0100_chats', '0120_chat_files', '0130_usage'])).toEqual({ ok: true, detail: '3 applied' })
+    expect(await run([])).toEqual({ ok: false, detail: 'not applied: 0005_service_rows, 0100_chats, 0120_chat_files' })
+    expect(await migrationsSignal([]).check({ env: VERSIONED, stores })).toEqual({ ok: false, detail: 'this build ships no migrations' })
   })
 })

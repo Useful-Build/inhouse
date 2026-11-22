@@ -1,0 +1,67 @@
+{
+ "row": {
+  "caseId": "R06",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "products_search",
+   "inventory_levels_get",
+   "products_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Our notes say to offer Fern, but I can't confirm Fern is available, so check before you promise it.\n\n- **Team memory:** the Moss glaze has been discontinued since September, and the standing advice is to offer Fern instead.\n- **Shop:** it still lists the Mug 500ml Moss (MUG-500-MOSS) with 14 on hand",
+  "costUsd": 0.0157025,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Moss glaze mug substitute policy"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_seed0 [brand] The Moss glaze is discontinued since September. Offer Fern instead.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "mug"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__inventory_levels_get",
+    "input": {},
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"on_hand\\\":14}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__products_search",
+    "input": {
+     "query": "Fern"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"sku\\\":\\\"MUG-500-MOSS\\\",\\\"name\\\":\\\"Mug 500ml Moss\\\",\\\"tags\\\":[\\\"ceramic\\\"]}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Our notes say to offer Fern, but I can't confirm Fern is available, so check before you promise it.\n\n- **Team memory:** the Moss glaze has been discontinued since September, and the standing advice is to offer Fern instead.\n- **Shop:** it still lists the Mug 500ml Moss (MUG-500-MOSS) with 14 on hand. That may be leftover stock, or the listing may just be out of date.\n- **Fern:** a search for Fern returns only the Moss mug. I can't find a Fern mug in the shop.\n\nI'd tell the customer Moss is discontinued and offer Fern, but only once Tom confirms a Fern mug exists and is in stock. If the customer really wants Moss, the 14 left may be the last ones. You could offer one of those, but check the shelf first, since the shop data looks unreliable.\n\nI can draft the customer reply for approval once you pick which way to go.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2750,
+   "cacheReadTokens": 32655,
+   "outputTokens": 555
+  },
+  "costUsd": 0.0157025
+ }
+}

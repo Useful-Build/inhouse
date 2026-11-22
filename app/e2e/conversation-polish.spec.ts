@@ -8,11 +8,12 @@
 // gives back the draft, its file and its quote, and another chat or a new one never shows the quote from before the
 // edit; a suggestion asks without the composer's file or quote and leaves them there, in an edit or not; deleting a chat mid-answer pauses its queue (Undo brings it back paused);
 // a queued message's Edit waits while another is edited; All chats keeps its time column on the
-// card's edge through Select. On a phone: the answer row is Copy, steps and "···" (D3) with the thumbs as radio items,
+// card's edge through Select. On a phone: the answer row is Copy and "···" (D3; its steps line is above the card) with the thumbs as radio items,
 // every step name in the trace reads in full, Send now on the last queued message puts focus on "+" (never Stop), and
 // Select mode's bar never covers the last chat.
 import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
+import { openTraceFrom } from './support/steps.js'
 import { atRest } from './states.js'
 
 async function start(page: Page, hash: string) {
@@ -152,14 +153,14 @@ test.describe('desktop', () => {
     await expect(stop(page)).toHaveCount(0)
     await expect(msg(page, REFUNDS_A)).toHaveCount(0)
 
-    // The sent-now answer has steps of its own: the run's second turn (`<run id>-t2`) holds the query's steps, and its
-    // steps line and window show them (3 steps, "Last week by SKU"), not the refunds steps the run started with.
+    // The sent-now answer has steps of its own: its turn (a `t_` id from the agent, no longer `<run id>-t2`) holds the query's
+    // steps, and its steps line and window show them (3 steps, "Last week by SKU"), not the refunds steps the run started with.
     const turns = (await fx.saved()).runs
-    expect(turns.filter(([id, info]) => /-t2$/.test(id) && info.trace === 'query')).toHaveLength(1)
+    expect(turns.filter(([id, info]) => /^t_/.test(id) && info.trace === 'query')).toHaveLength(1)
     const mdAnswer = log(page).locator('[data-answer]').filter({ has: page.locator('[data-md-code]') })
     await expect(mdAnswer).toHaveCount(1)
     await expect(mdAnswer.getByRole('button', { name: /\d+ steps/ })).toContainText('3 steps')
-    await mdAnswer.getByRole('button', { name: /\d+ steps/ }).click()
+    await openTraceFrom(mdAnswer.getByRole('button', { name: /\d+ steps/ }))
     const trace = page.getByRole('dialog', { name: 'What your Inhouse agent did' })
     await expect(trace).toBeVisible()
     await expect(trace.getByText('Last week by SKU')).toBeVisible()
@@ -444,8 +445,9 @@ test.describe('desktop', () => {
     await expect(stop(page)).toBeVisible()
     await page.keyboard.press('Enter')
     await expect(queued(page)).toHaveCount(1)
-    // Stopped, so the message waits (paused) however long this takes.
-    await stop(page).click()
+    // A question can't be edited while an answer is being written, so the page reloads: the answer stops, and the queued message
+    // waits above the box, paused, with nothing answering (Stop alone no longer does this: the queue carries on).
+    await page.reload()
     await expect(chip(page, MD_Q)).toContainText('Paused')
     const edit = chip(page, MD_Q).getByRole('button', { name: /^Edit queued message: Give me the query/ })
     await expect(edit).toBeEnabled()
@@ -462,7 +464,7 @@ test.describe('desktop', () => {
     await expect(edit).toBeEnabled()
   })
 
-  test('Conversation polish: Stop pauses the queue, a later answer leaves it be, and Edit on a queued message asks before it replaces a draft', async ({ page }) => {
+  test('Conversation polish: Stop ends that answer only and the queue carries on, and Edit on a queued message asks before it replaces a draft', async ({ page }) => {
     test.setTimeout(90_000)
     await start(page, '#/chats/new')
     await field(page).fill(REFUNDS_Q)
@@ -475,32 +477,28 @@ test.describe('desktop', () => {
       await expect(field(page)).toHaveValue('')
     }
     await expect(queued(page)).toHaveCount(2)
+    // Held from here: the answers move only when the test says so, so the chips stay put while they are checked.
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 500))
 
-    // Stop: the answer ends and both messages stay, paused, and a screen reader hears it.
+    // Stop ends that answer only (plan S4): the first queued message goes on and is answered, the other still waits.
     await stop(page).click()
     await expect(log(page).getByText(STOPPED)).toBeVisible()
-    await expect(queued(page)).toHaveCount(2)
-    for (const q of [MD_Q, STUCK_Q]) await expect(chip(page, q)).toContainText('Paused')
-    await expect(page.getByRole('status').filter({ hasText: '2 messages paused' })).toHaveCount(1)
-    await expect(msg(page, MD_Q)).toHaveCount(0)
-
-    // A new message after Stop is a normal question. When its answer ends, the paused ones still wait.
-    await field(page).fill(OTHER_Q)
-    await expect(dock(page).getByRole('button', { name: 'Queue message' })).toHaveCount(0)
-    await page.keyboard.press('Enter')
-    await expect(msg(page, OTHER_Q)).toHaveCount(1)
-    await expect(stepsButtons(page)).toHaveCount(1, { timeout: 15_000 })
-    await expect(stop(page)).toHaveCount(0)
-    await page.clock.runFor(3500)
-    await expect(queued(page)).toHaveCount(2)
-    await expect(msg(page, MD_Q)).toHaveCount(0)
+    await expect(msg(page, MD_Q)).toHaveCount(1)
+    await expect(queued(page)).toHaveCount(1)
+    await expect(chip(page, STUCK_Q)).toContainText('Queued')
     await expect(msg(page, STUCK_Q)).toHaveCount(0)
-    await expect(stop(page)).toHaveCount(0)
-    await shot(page, 'queue-paused')
+    await expect(page.getByRole('status').filter({ hasText: '1 message queued' })).toHaveCount(1)
+    await shot(page, 'queue-carries-on')
+
+    // Two chips again, still answering: a new message queues behind them.
+    await field(page).fill(OTHER_Q)
+    await expect(dock(page).getByRole('button', { name: 'Queue message' })).toBeVisible()
+    await page.keyboard.press('Enter')
+    await expect(queued(page)).toHaveCount(2)
 
     // Edit on a queued message over a draft asks first: Cancel keeps both.
     await field(page).fill('Draft I keep')
-    await chip(page, MD_Q).getByRole('button', { name: /^Edit queued message: Give me the query/ }).click()
+    await chip(page, STUCK_Q).getByRole('button', { name: /^Edit queued message: Which orders/ }).click()
     const ask = page.getByRole('dialog', { name: 'Replace your draft?' })
     await expect(ask).toBeVisible()
     await shot(page, 'queue-replace-draft')
@@ -510,21 +508,21 @@ test.describe('desktop', () => {
     await expect(queued(page)).toHaveCount(2)
 
     // Replace: the queued message is in the box, focused, and out of the queue.
-    await chip(page, MD_Q).getByRole('button', { name: /^Edit queued message: Give me the query/ }).click()
+    await chip(page, STUCK_Q).getByRole('button', { name: /^Edit queued message: Which orders/ }).click()
     await ask.getByRole('button', { name: 'Replace' }).click()
     await expect(ask).toHaveCount(0)
-    await expect(field(page)).toHaveValue(MD_Q)
+    await expect(field(page)).toHaveValue(STUCK_Q)
     await expect(field(page)).toBeFocused()
     await expect(queued(page)).toHaveCount(1)
-    await expect(page.getByRole('status').filter({ hasText: '1 message paused' })).toHaveCount(1)
+    await expect(page.getByRole('status').filter({ hasText: '1 message queued' })).toHaveCount(1)
 
-    // Send now on the last paused one: nothing runs, so it's simply asked, and focus goes to the box.
-    await chip(page, STUCK_Q).getByRole('button', { name: /^Send now: Which orders/ }).click()
+    // Send now on the last chip: the answer running goes (a note says so), this one is asked, and focus goes to the box.
+    await chip(page, OTHER_Q).getByRole('button', { name: /^Send now: What should we skip/ }).click()
     await expect(queued(page)).toHaveCount(0)
     await expect(field(page)).toBeFocused()
-    await expect(msg(page, STUCK_Q)).toHaveCount(1)
-    await expect(stepsButtons(page)).toHaveCount(2, { timeout: 15_000 })
-    await expect(field(page)).toHaveValue(MD_Q)
+    await expect(msg(page, OTHER_Q)).toHaveCount(1)
+    await expect(field(page)).toHaveValue(STUCK_Q)
+    await page.clock.resume()
   })
 
   test('Conversation polish: a chat left mid-answer asks its queued message in the background (D9)', async ({ page, fx }) => {
@@ -644,13 +642,13 @@ test.describe('desktop', () => {
 test.describe('phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true })
 
-  test('Phone: the answer row is Copy, steps and More, and every step name in the trace reads in full', async ({ page }) => {
+  test('Phone: the answer row is Copy and More, and every step name in the trace reads in full', async ({ page }) => {
     await start(page, '#/chats/stuck')
     const answer = log(page).locator('[data-answer]').first()
     await expect(answer).toBeVisible()
     const bar = answer.getByRole('button', { name: 'Copy message' }).locator('xpath=..')
-    const names = await bar.locator('button').evaluateAll(els => els.map(el => el.getAttribute('aria-label') ?? (el.textContent?.includes('steps') ? 'steps' : '')))
-    expect(names).toEqual(['Copy message', 'steps', 'More'])
+    const names = await bar.locator('button').evaluateAll(els => els.map(el => el.getAttribute('aria-label') ?? ''))
+    expect(names).toEqual(['Copy message', 'More'])
     await answer.getByRole('button', { name: 'More', exact: true }).click()
     const menu = page.getByRole('menu', { name: 'Message actions' })
     for (const n of ['Reply', 'Report a wrong answer', 'Delete']) await expect(menu.getByRole('menuitem', { name: n })).toBeVisible()
@@ -665,7 +663,7 @@ test.describe('phone', () => {
     await expect(menu).toHaveCount(0)
 
     // The steps open as a plain list: every name wraps inside the window, none is cut.
-    await answer.getByRole('button', { name: /\d+ steps/ }).click()
+    await openTraceFrom(answer.getByRole('button', { name: /\d+ steps/ }))
     const trace = page.getByRole('dialog', { name: 'What your Inhouse agent did' })
     await expect(trace).toBeVisible()
     const list = trace.getByRole('list', { name: 'Steps' })

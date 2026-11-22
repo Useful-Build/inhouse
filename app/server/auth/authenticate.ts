@@ -5,9 +5,14 @@
 // email or claims.
 // Docs (2026-11-20): Access "Validate JWTs" (header over cookie, `<team>/cdn-cgi/access/certs`, RS256, iss/aud/exp/nbf)
 // and "Application token" (a user token's `type` is "app" too, so `type` doesn't tell a person from a service token).
+// Test and eval builds only (compiled in AND INHOUSE_TEST_BUILD=1): the test issuer's JWT is read from its own header
+// first (test-issuer.ts's TEST_ASSERTION_HEADER; an Access app in front sends its own token in `Cf-Access-Jwt-Assertion`),
+// else from `Cf-Access-Jwt-Assertion` as before; a token in the first is never replaced by the second, and both get the
+// same checks. This file is in the deployable Worker (its source map keeps comments), so it never spells that header's
+// name: check-product-build.mjs part 8 fails the build on it.
 import { createRemoteJWKSet, customFetch, errors, jwtVerify } from 'jose'
 import type { JWTPayload, JWTVerifyGetKey } from 'jose'
-import { TEST_ISSUER, testIssuerKeys } from '@test-issuer'
+import { TEST_ASSERTION_HEADER, TEST_ISSUER, testIssuerKeys } from '@test-issuer'
 import { loadAccessConfig } from './config.ts'
 import type { AccessApp, AccessConfig } from './config.ts'
 import type { Principal } from './principal.ts'
@@ -85,6 +90,15 @@ export function testIssuerBranch(env: AuthEnv, keys: JWTVerifyGetKey | undefined
 }
 
 /**
+ * The test issuer's own header's value, or null when it's absent or this build has none (issuer-off.ts: an empty name,
+ * so the deployable Worker never reads it). Called only in the test build.
+ */
+export function testAssertion(request: Request, mod: { TEST_ASSERTION_HEADER: string } = { TEST_ASSERTION_HEADER }): string | null {
+  if (mod.TEST_ASSERTION_HEADER === '') return null
+  return request.headers.get(mod.TEST_ASSERTION_HEADER)
+}
+
+/**
  * The request's principal or its refusal. `keys` replaces the key set (tests: a local one, no network). Test build
  * only (compiled in AND `INHOUSE_TEST_BUILD === '1'`): the test issuer's iss and keys instead of the team domain's.
  * `compiledTestBuild` is a seam for the unit tests (vitest defines the flag false): the API passes nothing, so it's the
@@ -95,7 +109,9 @@ export async function authenticate(request: Request, env: AuthEnv, stores: AuthS
   const config = loadAccessConfig(env.INHOUSE_ACCESS)
   if (!config) return refuse({ refused: 'unavailable' }, 'config_invalid', requestId)
 
-  const token = request.headers.get('Cf-Access-Jwt-Assertion') ?? ''
+  const testBuild = compiledTestBuild && env.INHOUSE_TEST_BUILD === '1'
+  // Test build: the test issuer's own header first, present means used (a bad token there is refused, not replaced).
+  const token = (testBuild ? testAssertion(request) : null) ?? request.headers.get('Cf-Access-Jwt-Assertion') ?? ''
   if (!TOKEN.test(token)) return refuse({ refused: 'unauthorized' }, token ? 'malformed_token' : 'no_token', requestId)
 
   const app = appForRequest(config, request)
@@ -104,7 +120,7 @@ export async function authenticate(request: Request, env: AuthEnv, stores: AuthS
   let issuer = config.teamDomain
   let keySet = keys
   try {
-    if (compiledTestBuild && env.INHOUSE_TEST_BUILD === '1') {
+    if (testBuild) {
       const test = testIssuerBranch(env, keys)
       if (!test) return refuse({ refused: 'unavailable' }, 'test_issuer_off', requestId)
       ;({ issuer, keySet } = test)
@@ -127,12 +143,16 @@ export async function authenticate(request: Request, env: AuthEnv, stores: AuthS
 
   const { sub, email } = payload
   const commonName = (payload as { common_name?: unknown }).common_name
+  // `exp` is required (jwtVerify above checks it's a number); in ms, it bounds what this sign-in may hold open (P3's socket).
+  if (typeof payload.exp !== 'number') return refuse({ refused: 'unauthorized' }, 'bad_claims', requestId)
+  const expMs = payload.exp * 1000
   try {
     // A service token: `sub` empty, a client id in `common_name`, no email. Brand app only.
     if (sub === '' && nonEmpty(commonName) && email === undefined) {
       if (app.name !== 'brand') return refuse({ refused: 'unauthorized' }, 'service_on_inhouse', requestId)
       const name = config.serviceTokens.get(commonName)
       if (name === 'monitor') return { principal: { kind: 'service', name: 'monitor', requestId } }
+      if (name === 'release') return { principal: { kind: 'service', name: 'release', requestId } }
       if (name === 'smoke') return { principal: { kind: 'service', name: 'smoke', memberId: await stores.members.serviceMember('smoke'), requestId } }
       return refuse({ refused: 'unauthorized' }, 'unknown_service', requestId)
     }
@@ -145,10 +165,10 @@ export async function authenticate(request: Request, env: AuthEnv, stores: AuthS
       // The one caller of `grants.active`: the grant is read fresh on every Inhouse request.
       const member = await stores.members.resolveInhouse(signIn)
       const grant = await stores.grants.active({ nowMs, requestId })
-      return { principal: { ...member, kind: 'inhouse', grant } }
+      return { principal: { ...member, kind: 'inhouse', grant, expMs } }
     }
     const found = await stores.members.resolvePerson(signIn)
-    if ('ok' in found) return { principal: found.ok }
+    if ('ok' in found) return { principal: { ...found.ok, expMs } }
     if (found.refused === 'wrong_kind') return refuse({ refused: 'unauthorized' }, 'wrong_kind', requestId)
     return refuse({ refused: 'forbidden', reason: found.refused }, found.refused, requestId)
   } catch (err) {
@@ -170,15 +190,4 @@ export function checkOrigin(request: Request, env: Pick<Env, 'INHOUSE_ACCESS'>):
   const site = request.headers.get('Sec-Fetch-Site')
   if (site !== null && site !== 'same-origin') return 'bad_origin'
   return null
-}
-
-/** Sign-in for a WebSocket upgrade (P3): `authenticate`, then the `Origin` match on the GET upgrade itself. */
-export async function authenticateUpgrade(request: Request, env: AuthEnv, stores: AuthStores, nowMs: number, requestId: string, keys?: JWTVerifyGetKey): Promise<AuthOutcome> {
-  const outcome = await authenticate(request, env, stores, nowMs, requestId, keys)
-  if (!('principal' in outcome)) return outcome
-  if (request.method !== 'GET' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
-    return refuse({ refused: 'unauthorized' }, 'not_an_upgrade', requestId)
-  }
-  if (checkOrigin(request, env)) return refuse({ refused: 'forbidden', reason: 'bad_origin' }, 'bad_origin', requestId)
-  return outcome
 }

@@ -1,0 +1,46 @@
+{
+ "row": {
+  "caseId": "N05",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "question_ask"
+  ],
+  "toolSearches": 0,
+  "answer": "I've noted that Order 1042 arrived damaged. I haven't taken any action yet, beca",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_Ygk7hw6u0d9-Dzs6-n2uYA",
+  "askedAs": "eval-44986365620-1-n05-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I've noted that Order 1042 arrived damaged. I haven't taken any action yet, beca",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "8bae42fb8d11979d6ce9e43d0369322763f53fbae9e54fb2d34076bb3edbf8d6",
+    "inputExcerpt": "{\"query\":\"damaged order policy replacement refund\"}"
+   },
+   {
+    "name": "mcp__inhouse__question_ask",
+    "inputSha256": "5296479c9f6323f138d05c4ae0073da4680a95127ea8dfe393a4f89bfcdd7fff",
+    "inputExcerpt": "{\"question\":\"How do you want to handle Order 1042 (damaged, customer Anna Weber)"
+   }
+  ]
+ }
+}

@@ -1,0 +1,51 @@
+{
+ "row": {
+  "caseId": "R07",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Our records say Norda Ceramics, which I take to be your pottery vendor, is on net 30. That means payment is due 30 days after the invoice date.\n\nI don't have an invoice date or any order details for them. I can't tell you the exact due date, and I don't know if you have an open invoice right now. If",
+  "costUsd": 0.0103376,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "pottery vendor payment terms"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"m_norda [brand] Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "input": {
+     "query": "pottery vendor invoice payment due"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"history_id\\\":\\\"h_8841\\\",\\\"kind\\\":\\\"chat\\\",\\\"date\\\":\\\"2026-10-14\\\",\\\"title\\\":\\\"Returns window discussion\\\",\\\"snippet\\\":\\\"agreed to keep returns simple\\\"}]\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Our records say Norda Ceramics, which I take to be your pottery vendor, is on net 30. That means payment is due 30 days after the invoice date.\n\nI don't have an invoice date or any order details for them. I can't tell you the exact due date, and I don't know if you have an open invoice right now. If you send me the invoice date, I'll work it out. For example, an invoice dated 2026-11-01 would be due 2026-12-01.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2205,
+   "cacheReadTokens": 21071,
+   "outputTokens": 271
+  },
+  "costUsd": 0.0103376
+ }
+}

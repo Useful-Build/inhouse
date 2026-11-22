@@ -13,7 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { agent } from '../agent'
 import { pickPhoto } from './photo'
 import { initials, memberFor, photoOf, userName } from '../state/derive'
-import { openRun, useAgentData, useAgentState, useUi } from '../state/store'
+import { useAgentData, useAgentState, useUi } from '../state/store'
 import { Icon as BaseIcon } from '@/components/ui/icon'
 import { ICON_NAMES, type IconName } from './icon-manifest'
 import { logoSrc } from './logo'
@@ -74,8 +74,8 @@ export function Button({ variant = 'primary', size, className, type = 'button', 
 const CHROME = 'flex-none text-foreground-3 hover:bg-foreground/5 hover:text-foreground-2 data-[state=open]:bg-foreground/5'
 // The small actions under a message (Copy, Reply, Rate...): a tighter corner and a stronger fill on hover and while open.
 const ACTION = 'rounded-md hover:bg-fill-hover aria-expanded:bg-fill-hover'
-// A card's own menu button: a resting border and fill so it reads as a button, a stronger fill on hover and while open.
-const CARD = 'border border-border bg-card shadow-xs hover:bg-fill-hover aria-expanded:bg-fill-hover'
+// A card's own menu button: a circular resting border and fill so it reads as a button, a stronger fill on hover and while open.
+const CARD = 'rounded-full border border-border bg-card shadow-xs hover:bg-fill-hover aria-expanded:bg-fill-hover'
 // On the dark toast: light glyph, a faint light fill on hover (the inverse Button's fill).
 const INVERSE = 'text-primary-foreground/70 hover:bg-primary-foreground/15 hover:text-primary-foreground'
 
@@ -322,9 +322,10 @@ export function StageTag({ tag, icon = true, size = 'default', strong }: { tag: 
   )
 }
 
-/** The agent's three-dot mark. Animated (goo filter) while the agent works. Blue: running. */
-export function AgentMark({ color = 'var(--brand)', scale = 1 }: { color?: string; scale?: number }) {
-  const live = useUi(s => s.animateMark)
+/** The agent's three-dot mark. Animated (goo filter) while the agent works. Blue: running. `live` forces it on or off (the demo's animate switch otherwise decides). */
+export function AgentMark({ color = 'var(--brand)', scale = 1, live: force }: { color?: string; scale?: number; live?: boolean }) {
+  const demo = useUi(s => s.animateMark)
+  const live = force ?? demo
   const dot = (cls: string, a: string) => (
     <i className={cn('absolute rounded-full bg-current', cls, live && a)} />
   )
@@ -361,22 +362,13 @@ export function InhouseMark({ size = 18 }: { size?: number }) {
   )
 }
 
-/** Dotted page background with the slow blue light sweep. */
-export function DotsBackground() {
-  const ambient = useUi(s => s.ambient)
-  const live = useUi(s => s.animateMark)
-  const thinking = useUi(s => !!openRun(s))
-  // The agent is still reading: its data's status says so (a real client starts there), not the demo's scenario switch.
-  const loading = useAgentData().status === 'loading'
-  const sweep = live && (ambient === 'Always' || (ambient === 'When Inhouse agent works' && (thinking || loading)))
-  // Masks only read alpha: black shows, transparent hides. The band's color hints (35%, 65%) give it the same soft
-  // edges as the old 35% stops at 30% and 70%.
+/** Full-shell Turrell Skyspace skylight cove: hero intensity on Today and blank New chat, softly quieted in an active chat. */
+export function SkyspaceBackground({ mode = 'hero', offset = 'none' }: { mode?: 'hero' | 'subtle'; offset?: 'full' | 'rail' | 'none' }) {
   return (
-    <div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-1 mask-(--app-dots-mask)">
-      <div className="absolute inset-0 bg-dot-grid bg-size-(--app-dot-grid-size)" />
-      {sweep && (
-        <div className="absolute inset-0 animate-ih-wind bg-dot-grid-live bg-size-(--app-dot-grid-size) opacity-42 mask-(--app-sweep-mask) mask-size-(--app-sweep-mask-size) mask-no-repeat" />
-      )}
+    <div aria-hidden="true" data-skyspace={mode} data-skyspace-offset={offset} className={cn('pointer-events-none absolute inset-0 -z-1 overflow-hidden transition-opacity duration-300', mode === 'subtle' && 'opacity-35')}>
+      <div className="skyspace-room absolute inset-0" />
+      <div className="skyspace-cove" />
+      <div className="skyspace-inner" />
     </div>
   )
 }

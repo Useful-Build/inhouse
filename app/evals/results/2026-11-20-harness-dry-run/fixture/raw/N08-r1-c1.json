@@ -1,0 +1,51 @@
+{
+ "row": {
+  "caseId": "N08",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "noMcp": true
+  },
+  "called": [
+   "WebFetch"
+  ],
+  "toolSearches": 1,
+  "answer": "I can't give you the Berlin forecast for tomorrow. The tool I use to look up weather online was blocked because this session has no way to approve it, and I won't retry it. I don't want to guess at a forecast.\n\nYour phone's weather app or a site like dwd.de (the German weather service) will have it.",
+  "costUsd": 0.015117599999999998,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:WebSearch,WebFetch",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"WebSearch\"},{\"type\":\"tool_reference\",\"tool_name\":\"WebFetch\"}]",
+    "isError": false
+   },
+   {
+    "name": "WebFetch",
+    "input": {
+     "url": "https://wttr.in/Berlin?format=j1",
+     "prompt": "What is the forecast for tomorrow (2026-11-20) in Berlin? Give min/max temperature in C, conditions, and chance of rain."
+    },
+    "result": "\"Permission for this tool use was denied. It requires approval, and this session has no approval surface — nobody can answer a permission prompt here — so it was denied automatically. The action was NOT performed; do not claim it succeeded, and do not retry it: this action, and anything else that re",
+    "isError": true
+   }
+  ],
+  "answer": "I can't give you the Berlin forecast for tomorrow. The tool I use to look up weather online was blocked because this session has no way to approve it, and I won't retry it. I don't want to guess at a forecast.\n\nYour phone's weather app or a site like dwd.de (the German weather service) will have it. If you need something from the shop or mail side, I can do that.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 3374,
+   "cacheReadTokens": 33106,
+   "outputTokens": 336
+  },
+  "costUsd": 0.015117599999999998
+ }
+}

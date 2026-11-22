@@ -1,0 +1,1 @@
+{"turnId":"t_a","events":[{"runId":"t_a","seq":0,"type":"started","sessionId":"7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11","resume":false},{"runId":"t_a","seq":1,"type":"heartbeat"},{"runId":"t_a","seq":2,"type":"failed","reason":"stopped","message":"stopped"},{"runId":"t_a","seq":3,"type":"released","checkpoint":null,"queryRan":false}]}

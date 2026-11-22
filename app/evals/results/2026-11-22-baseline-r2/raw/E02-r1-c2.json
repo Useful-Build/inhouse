@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "E02",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 1,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "No, going by what I have saved, you're out of office every Friday afternoon. I c",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_NyndLLKzQNtxgtaqUVjn0w",
+  "askedAs": "eval-44977516723-1-e02-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "No, going by what I have saved, you're out of office every Friday afternoon. I c",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "112728593ea6421bdaeec7eb03c3cc16414ad7bb9d8b4a397ef883b152efff8e",
+    "inputExcerpt": "{\"query\":\"Friday availability calendar schedule out of office\"}"
+   }
+  ]
+ }
+}

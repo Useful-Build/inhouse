@@ -5,11 +5,12 @@
 //  4. an end with a stale rev, or of a grant no longer live, applies.
 import { fc, test } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { GrantsListSchema, SupportGrantSchema } from '../../shared/contract/grants.ts'
 import { openStores } from '../db/stores.ts'
 import { ctx, lastLineId, linesSince, person, personPrincipal, reset } from '../db/test-support.ts'
 import { createGrant, endGrant, listGrants } from './grants.ts'
+import { recordingAgent } from '../testing/brand-agent/recording-agent.ts'
 
 const db = env.DB
 const stores = openStores(env)
@@ -27,8 +28,11 @@ const json = async (r: Promise<Response>) => {
   const res = await r
   return { status: res.status, body: (await res.json()) as Record<string, unknown> }
 }
-const create = (hours: unknown, nowMs = T) => json(createGrant(ctx(stores, personPrincipal(admin, 'admin'), { method: 'POST', path: '/api/grants', body: { hours }, nowMs }).c))
-const end = (id: string, ifRev: number, nowMs = T) => json(endGrant(ctx(stores, personPrincipal(admin, 'admin'), { method: 'POST', path: `/api/grants/${id}/end`, params: { id }, body: { ifRev }, nowMs }).c))
+// P3 W1 PR 4: the handlers now tell the BrandAgent after their batch, so they get an env (a recording stand-in here).
+const create = (hours: unknown, nowMs = T, agent = recordingAgent()) =>
+  json(createGrant({ ...ctx(stores, personPrincipal(admin, 'admin'), { method: 'POST', path: '/api/grants', body: { hours }, nowMs }).c, env: agent.env }))
+const end = (id: string, ifRev: number, nowMs = T, agent = recordingAgent()) =>
+  json(endGrant({ ...ctx(stores, personPrincipal(admin, 'admin'), { method: 'POST', path: `/api/grants/${id}/end`, params: { id }, body: { ifRev }, nowMs }).c, env: agent.env }))
 const liveCount = async (nowMs: number) => (await db.prepare('SELECT COUNT(*) AS n FROM support_grants WHERE ended_at_ms IS NULL AND ends_at_ms > ?').bind(nowMs).first<number>('n'))!
 
 describe('one live grant (failure 1)', () => {
@@ -101,5 +105,38 @@ describe('ending vs the logged expiry (fix round 1)', () => {
     const ended = await end(made.id, 1, made.endsAt.ms - 1)
     expect(ended).toMatchObject({ status: 409, body: { error: { code: 'conflict', current: { id: made.id, rev: 1, endedAt: null } } } })
     expect((await linesSince(db, before)).map(l => l.action)).toEqual(['grant.expired'])
+  })
+})
+
+// P3 W1 PR 4 (p3-design 4.10): the call sites. Ways they can fail: the expiry task is asked for another time than the
+// grant's end, the object hears of a refused create or end, hears of an end before D1 has it, or a lost call turns a
+// done write into an error.
+describe('the BrandAgent hears of grants (P3 4.10)', () => {
+  it('a create asks for the grant-expiry at the grant\'s end; a refused create says nothing', async () => {
+    const agent = recordingAgent()
+    const made = await create(4, T, agent)
+    expect(made.status).toBe(201)
+    expect(agent.calls).toEqual([{ method: 'onGrantCreated', args: [made.body.id, T + 4 * 3_600_000] }])
+    expect((await create(1, T, agent)).status).toBe(409)
+    expect(agent.calls).toHaveLength(1)
+  })
+  it('an end tells the object after the batch, once; a stale end says nothing', async () => {
+    const made = await create(24)
+    const id = made.body.id as string
+    const seen: (number | null)[] = []
+    const agent = recordingAgent({ onCall: async () => { seen.push(await db.prepare('SELECT ended_at_ms FROM support_grants WHERE id = ?').bind(id).first<number | null>('ended_at_ms')) } })
+    expect((await end(id, 99, T + 1000, agent)).status).toBe(409)
+    expect(agent.calls).toEqual([])
+    expect((await end(id, made.body.rev as number, T + 1000, agent)).status).toBe(200)
+    expect(agent.calls).toEqual([{ method: 'onGrantEnded', args: [id] }])
+    expect(seen, 'D1 already had the end when the object was told').toEqual([T + 1000])
+  })
+  it('a lost call still answers the write (the sweep repairs it)', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const made = await create(1, T, recordingAgent({ fails: true }))
+    expect(made.status).toBe(201)
+    expect((await end(made.body.id as string, made.body.rev as number, T + 1000, recordingAgent({ fails: true }))).status).toBe(200)
+    expect(err.mock.calls.map(c => (c[0] as { call: string }).call)).toEqual(['onGrantCreated', 'onGrantEnded'])
+    err.mockRestore()
   })
 })

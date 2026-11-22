@@ -11,6 +11,7 @@ node_modules
 dist
 dist-product
 dist-product-test
+dist-product-eval
 dist-ssr
 *.local
 
@@ -36,3 +37,7 @@ dist-ssr
 e2e-artifacts/
 test-results/
 playwright-report/
+
+# The hub's dry-run bundles (hub/package.json bundle, bundle:test)
+dist-hub
+dist-hub-test

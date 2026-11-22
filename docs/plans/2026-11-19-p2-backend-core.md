@@ -9,10 +9,12 @@ and update it before you stop.
 ## Goal
 
 Stand up the product Worker with sign-in, members, roles, settings and the audit log, backed by D1, proven on the test
-build and released from one tag to the house account and a second account.
+build and released from one tag to the house account. (Second account deferred, see the note below.)
 
 **Success measure (the real slice):** sign in, see your own name and role, change a setting, reload, it's there, the
-audit log shows it; a second account deploys from the same release.
+audit log shows it; the tag deploys to the house account and passes the smoke.
+
+> **Note, 2026-11-20 (Wasim, decisions batch 12): the second account is deferred. P2 releases to the house account only; the second-account deploy moves to before the first real brand is onboarded, and that account gets Workers Paid then (P3's containers need it; P2 alone fits Workers Free). The second-account deploy now sits in the backend plan, before the first brand's onboarding.**
 
 ## Scope
 
@@ -36,10 +38,19 @@ In:
   triggers reject update and delete).
 - **The access matrix:** a committed table of route by role by ownership, a scope for every settings key (personal,
   brand or technical), and one of three classes for every route. *Brand data* (chats, memory, the audit log): the
-  Inhouse team needs an unexpired support grant. *Baseline* (health, errors, usage numbers): the Inhouse team always
-  has it (BD7). *Technical controls* (agent setup, models, run limits, data and access, tools, skills): the Inhouse
+  Inhouse team needs an unexpired support grant. *Baseline* (health, errors, usage numbers, and since decision 19 the
+  members, brand settings and pause): the Inhouse team always reads it, and writes it wherever a row lists the
+  Inhouse team, with no grant (BD7 as amended below). *Technical controls* (agent setup, models, run limits, data and access, tools, skills): the Inhouse
   team edits, admins read (decision log, "Roles" and "Roles: admin views"); the one admin exception is switching a
-  model off. Object checks (whose record, which role, an unexpired grant) read from it.
+  model off or back on (decision 27a, 2026-11-20). Object checks (whose record, which role, an unexpired grant) read
+  from it.
+  **Amended 2026-11-20 (decision 19, "we are like an agency"):** the Inhouse team can do everything an Admin can
+  (members, brand settings, models, pause, tools) plus the technical pages, with no grant. The member list and member
+  photos are baseline, not brand data. A brand's chats, memory and audit log still need an Admin's live, time-boxed
+  grant; the Inhouse team never creates or ends a grant itself; a person's own settings and photo stay the owner's.
+  **Amended again 2026-11-20 (decision 19b):** the Inhouse team can't change roles, invite an Admin or remove an Admin
+  (so it can't make itself or anyone else an Admin and then grant itself access). Role changes are Admin-only; an
+  Inhouse invite or removal that touches an Admin is 403 `forbidden`, with nothing written and no audit line.
 - **Support grants** (BD7): an admin grants the Inhouse team time-boxed access to brand data; the grant, its use and
   its end are audited; ending it closes that access at once.
 - **C2** `me()` (member id, name, role, `can`), actor ids on records, approvers as member ids, stage from the server.
@@ -62,7 +73,7 @@ In:
 - **The test build**, the proof path for this and every later phase: the product Worker under `wrangler dev` with the
   test issuer and a local D1 seeded with the invented brand. `ship.yml` gets a test-build mode for it.
 - API specs (Playwright `request`), the contract suite on the real client for these methods, and the migration job.
-- A release tag deployed to the house account and a second account through the private ops repo's workflow.
+- A release tag deployed to the house account through the private ops repo's workflow.
 - **Wasim's decision Q1 (schedule): the per-PR product preview.** The backend plan put a product preview with its
   own D1 on every PR. Recommended: drop it and keep the demo preview. The ship job runs PR code and may hold no
   secret, so it can't pass a preview's Access; containers didn't start in Previews in P0; and the test build already
@@ -85,9 +96,9 @@ Out: runs, chats, the runner and WebSockets (P3); connectors (P4, P5); approvals
 - **From Wasim before the candidate deploy:** the separate sandbox Cloudflare account, a scoped API token for it
   (secret card) and an Access team there with a test identity provider or one-time PIN. If Q1 keeps previews: also
   service tokens for an Admin, a Member, a second Member and an Inhouse team principal, sandbox only.
-- **From Wasim before the release step:** the private ops repo with release credentials for the house and second
-  accounts; in each, an Access application for the brand team and one for the Inhouse team on their hostnames, with
-  their identity providers; the first Admin's email (kept in the ops repo); his OK for that release.
+- **From Wasim before the release step:** the private ops repo with release credentials for the house account; in it,
+  an Access application for the brand team and one for the Inhouse team on its hostnames, with their identity
+  providers; the first Admin's email (kept in the ops repo); his OK for that release.
 - No paid tier without Wasim's OK (Access stays on the free plan; D1 and R2 within Workers Paid).
 - **Test model (Wasim, 2026-11-19):** every test, eval, smoke or check in this phase that calls a real model runs on
   Sonnet 5.5 (`claude-sonnet-5-5`) at medium effort; everything else uses the scripted model. P2 calls no model.
@@ -128,7 +139,7 @@ Out: runs, chats, the runner and WebSockets (P3); connectors (P4, P5); approvals
   visual suite unchanged in the demo.
 - **Seed.** `app/server/seed/` writes the invented brand (an Admin, two Members, an Inhouse team principal, settings, a
   few audit lines) through the data layer, never raw SQL that skips the audit log.
-- **Releases come from `main`.** Nothing from this branch goes to the house or second account before the final PR
+- **Releases come from `main`.** Nothing from this branch goes to the house account before the final PR
   merges. Before the ship packet, the orchestrator proves the ops workflow by deploying the branch head to a
   candidate deployment in the sandbox account (invented data): create the database and bucket, migrate, deploy, the
   smoke. After Wasim approves the head SHA and it merges, the release tags the merge commit.
@@ -162,7 +173,7 @@ freezes the principal type and the object-check interface; W2 and W3 fan out fro
   health route as `monitor`. It replaces running the ship specs on a release, which change data.
 - The release step, in the private ops repo, after the merge: create the D1 database and R2 bucket if missing, fill
   the config template, `wrangler d1 migrations apply`, set Worker secrets through secret cards, seed the first Admin's
-  invite, deploy the tag to the house account, run the smoke, then deploy the same tag to the second account. The
+  invite, deploy the tag to the house account and run the smoke. The
   release fails when a required setting is unset. Account details stay in the ops repo.
 - The first release has no earlier tag, so its rollback is removing the product Worker's route (nobody uses it yet).
   The rollback rehearsal (redeploy the previous tag) runs as soon as a second tag exists: the orchestrator tags the
@@ -179,7 +190,7 @@ freezes the principal type and the object-check interface; W2 and W3 fan out fro
 3. W4 and W6 when W1 and W2 merge, against settled routes and schemas.
 4. The candidate deploy in the sandbox account once the API specs pass. Then the final PR.
 5. After the merge: the release to the house account, the smoke, Wasim's own sign-in through the identity provider,
-   the second account, then the rollback rehearsal.
+   then the rollback rehearsal.
 6. At most 4 workers at once (W1, W2, W3, and W5 if it runs), then 2 (W4, W6).
 
 ## Browser scenarios (`e2e/ship/backend-core.spec.ts`, desktop and phone, on the test build; the test issuer signs each seeded member in)
@@ -203,7 +214,7 @@ freezes the principal type and the object-check interface; W2 and W3 fan out fro
    comes only from its own Access application.
 2. The role and object spec passes for every row of the access matrix, every role, two Members with the same role, and
    the Inhouse team with and without a grant; every route has a matrix row, a class and a spec. Without a grant the
-   Inhouse team reads baseline routes and technical controls, and no brand data.
+   Inhouse team reads and writes the baseline routes that list it and the technical controls, and reads no brand data.
 3. The config check fails a deployable config that sets the test flag, trusts any issuer but the account's Access
    team, maps a service token to anything but `monitor` or `smoke`, or gives a brand deployment a `workers.dev` or
    preview hostname. The server bundle scan finds no test-issuer canary in a deployable build.
@@ -231,8 +242,8 @@ freezes the principal type and the object-check interface; W2 and W3 fan out fro
     with its own seeded D1, closing the PR deletes the D1, the R2 prefix and any container app, and no job that runs
     PR code holds a service token.
 14. The candidate deploy in the sandbox account passed before the ship packet. After the merge, one tag deploys to
-    the house account, passes the read-only smoke and Wasim's own sign-in, then deploys to a second account; the
-    release fails on an unset setting; the rollback rehearsal ran once a second tag existed.
+    the house account and passes the read-only smoke and Wasim's own sign-in; the release fails on an unset setting;
+    the rollback rehearsal ran once a second tag existed.
 15. The demo build and its visual suite are unchanged.
 16. QA PASS and the ship recording on S1 to S10.
 

@@ -1,0 +1,30 @@
+{
+ "row": {
+  "caseId": "N03",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "none": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "A purchase order (PO) is a formal document a buyer sends to a supplier to reques",
+  "costUsd": 0.015,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.015,
+  "answer": "A purchase order (PO) is a formal document a buyer sends to a supplier to reques",
+  "toolCalls": []
+ }
+}

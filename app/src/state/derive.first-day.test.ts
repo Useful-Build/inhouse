@@ -15,7 +15,7 @@ import { describe, expect, vi } from 'vitest'
 import { HttpAgent } from '../agent/http/client'
 import { SCENARIOS, STAGES, stageIndex } from '../agent/types'
 import type { AgentData, Instant, Scenario, Stage, StageIndex, ToolDetail, ToolsData } from '../agent/types'
-import { flags, goingLive, isFirstDay, pendingIds, setupRows, todayCopy, toolState, toolView } from './derive'
+import { flags, goingLive, isFirstDay, noToolsYet, pendingIds, setupRows, todayCopy, toolState, toolView } from './derive'
 import type { Ctx } from './derive'
 import { fmtWeekday } from '../lib/format'
 import { display } from './display'
@@ -108,6 +108,73 @@ describe('a real first-day agent, from its data alone', () => {
     expect(flags(withSwitch(firstDay(), 'Normal')).isFirst).toBe(true)
     expect(goingLive(withSwitch(firstDay(), 'Normal'))).toBeNull()
   })
+})
+
+// A tool-less brand whose server already holds something for Today: until the tools read arrives (P5), `connected` is always
+// empty, so the screen must also ask the server's own data (Today's cards, the routines' runs).
+describe('day one with nothing connected: only a brand the server holds nothing for', () => {
+  const card = (id: string): AgentData['problems'][number] => ({
+    id, sev: 'warning', area: 'Orders', title: 'Orders waiting to ship', sub: '', logos: [], cost: { minor: 0, currency: 'USD' }, costNote: '', next: '',
+    doneText: '', found: [], sources: [], draft: { title: '', lines: [], cta: 'Approve' }, draftedAt: at('2031-03-03T15:00:00.000Z'),
+  } as AgentData['problems'][number])
+  const routine = (last?: { result: string }): AgentData['routines'][number] => ({
+    id: 'routine-morning-check', name: 'Morning check', what: '', freq: 'Daily', day: '', time: { hour: 6, minute: 0 }, next: at('2031-03-04T11:00:00.000Z'), need: 0, rev: 1,
+    ...(last ? { last: { at: at('2031-03-03T11:00:00.000Z'), ...last } } : {}),
+  } as AgentData['routines'][number])
+  const withData = (over: Partial<AgentData>): AgentData => ({ ...firstDay(), ...over })
+
+  test('a truly new brand (nothing connected, no cards, no routine has run) is day one', () => {
+    expect(isFirstDay(withData({ routines: [routine()] }))).toBe(true)
+    expect(isFirstDay(withData({}))).toBe(true)
+  })
+
+  test('Today\'s cards present: not day one, and the cards show', () => {
+    const ctx = ctxOf(withData({ problems: [card('p1')] }))
+    expect(flags(ctx).isFirst).toBe(false)
+    expect(flags(ctx).noData).toBe(false)
+  })
+
+  test('a routine has run, even a failed run: not day one, so the failed-check card can show', () => {
+    // The real shape of a failed run: `last` is present, with the result "didn't finish" (GET /api/routines in the sandbox run).
+    for (const result of ['found 1 thing', "didn't finish"]) {
+      const ctx = ctxOf(withData({ routines: [routine({ result })], problems: [card('p_check_failed')] }))
+      expect(flags(ctx).isFirst, result).toBe(false)
+      expect(flags(ctx).noData, result).toBe(false)
+    }
+    // Every card set aside leaves no cards, but the run happened.
+    expect(isFirstDay(withData({ routines: [routine({ result: 'found 1 thing' })] }))).toBe(false)
+  })
+
+  test('the "goes live by" line follows the same rule (shown once a routine has run, hidden on day one)', () => {
+    const ran = withData({ routines: [routine({ result: "didn't finish" })] })
+    expect(goingLive(ctxOf(ran))).not.toBeNull()
+    expect(goingLive(ctxOf(withData({})))).toBeNull()
+  })
+
+  test('with cards but no connected list the stage-0 line names no tools and has no empty list or double space', () => {
+    const ctx = ctxOf(withData({ problems: [card('p1')], routines: [routine({ result: 'found 1 thing' })] }), 0)
+    const { headSub } = todayCopy(ctx)
+    expect(headSub).toBe('Your Inhouse agent checked this morning and changed nothing.')
+    expect(headSub).not.toMatch(/ {2}|read\s+and/)
+  })
+
+  test('screens may claim "no tools connected" on day one only, not when the server holds Today data', () => {
+    expect(noToolsYet(withData({}))).toBe(true)
+    expect(noToolsYet(withData({ status: 'loading' }))).toBe(true)
+    expect(noToolsYet(withData({ problems: [card('p1')] }))).toBe(false)
+    expect(noToolsYet(withData({ routines: [routine({ result: "didn't finish" })] }))).toBe(false)
+    expect(noToolsYet(afterFirstTool())).toBe(false)
+  })
+
+  test.prop([fc.constantFrom<AgentData['status']>('loading', 'ready'), fc.subarray(['store', 'ads']), fc.boolean(), fc.constantFrom<'never' | 'ok' | 'failed'>('never', 'ok', 'failed')])(
+    'day one is exactly: ready, no tool connected, no cards and no routine run', (status, connected, cards, run) => {
+      const data: AgentData = {
+        ...firstDay({ connected }), status,
+        problems: cards ? [card('p1')] : [],
+        routines: [routine(run === 'never' ? undefined : { result: run === 'ok' ? 'found 1 thing' : "didn't finish" })],
+      }
+      expect(isFirstDay(data)).toBe(status === 'ready' && connected.length === 0 && !cards && run === 'never')
+    })
 })
 
 describe('the setup list, by tool key', () => {

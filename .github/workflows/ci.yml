@@ -1,13 +1,22 @@
-# The required check for main and fleet/** (job name "ci"). Runs on PRs and on dispatch. The merge_group trigger is kept
-# for a merge queue, which is off for now (see AGENTS.md, "How changes land here").
+# The required check for main and fleet/** (job name "ci"). Runs on PRs, on push to fleet/** and on dispatch. The
+# merge_group trigger is kept for a merge queue, which is off for now (see AGENTS.md, "How changes land here").
 # The app's whole suite runs in app/: type check, lint, build and every Playwright project, in the official
 # Playwright image so screenshots render the same on every run. Two shards at most: runner slots are shared.
+# Phase batching (Wasim, 2026-11-21): a PR into a fleet/** branch runs only the fast checks (the fast job: type check,
+# lint, unit, the builds and their guards, the fresh-install migrations; the runner job without its image and container
+# probes). ci doesn't listen to a base change (pull_request: edited), so a PR retargeted from fleet/** to main keeps its
+# fast-path ci: never retarget one (AGENTS.md, "How changes land here"). The whole suite
+# runs on every push to fleet/** (each merge into the phase branch; a newer merge cancels the run in progress, so a
+# burst of merges costs one run), on every PR into main and on dispatch. "Fleet PR" below means exactly:
+#   github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')
 name: ci
 
 on:
   pull_request:
     branches: [main, "fleet/**"]
     types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: ["fleet/**"]
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
@@ -16,13 +25,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  # Only a new commit cancels a running run. A reopen or ready_for_review on the same commit queues behind it.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}
+  # A push to fleet/** has its own group per branch, and the newest merge cancels the run in progress. A PR's group
+  # (refs/pull/<n>/merge) is as before.
+  group: ${{ github.event_name == 'push' && format('ci-push-{0}', github.ref) || format('ci-{0}', github.ref) }}
+  # On a PR only a new commit cancels a running run. A reopen or ready_for_review on the same commit queues behind it.
+  cancel-in-progress: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action == 'synchronize') }}
 
 jobs:
   e2e:
     name: e2e (${{ matrix.shard }}/2)
+    # Not on a fleet PR (the fast job stands in); on its branch's push instead.
+    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     # The image's version must match @playwright/test in app/package.json (also in .github/workflows/baselines.yml
@@ -103,8 +116,10 @@ jobs:
       # pointer back when it ends, so the uploaded demo build is untouched either way.
       # P2: the test build too (built after, never beside, the product build), for the check's server bundle scan: no
       # test issuer in the deployable Worker, and the canary found in the test build's.
+      # The eval build too (p3-eval-observability rev 2, rec 1), for part 6: the eval trace in neither the deployable
+      # Worker nor the test build, its canary found in the eval build's, and no scripted model there.
       - if: matrix.shard == 1 && !cancelled()
-        run: npm run build:product && npm run build:product-test && node scripts/check-product-build.mjs
+        run: npm run build:product && npm run build:product-test && npm run build:product-eval && node scripts/check-product-build.mjs
       # The product build's own specs (e2e/product/): no sample name, no demo switches, the "Not connected
       # yet" screen. Right after the build it serves (dist-product/, via wrangler dev, so the demo's deploy pointer that
       # `vite preview` follows stays on dist/). E2E_PREBUILT keeps the demo server Playwright also starts from building
@@ -123,9 +138,66 @@ jobs:
           path: app/e2e-artifacts
           retention-days: 7
 
+  # The connector hub (P4): its own package in app/hub/, installed alone (app/ isn't), so code bundled into the hub
+  # from outside app/hub/ can't lean on app/'s packages. No secret, no environment. Type check, both test projects
+  # (Node and workerd), the deployable and test dry-run bundles, then the bundle scan (the deployable bundle has no
+  # test seam; the test bundle must be caught) and the config check (the template passes; the test config must fail).
+  hub:
+    # Light (about a minute), so it also runs on a fleet PR: the fast job doesn't cover app/hub.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: app/hub
+    env:
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No cache (AGENTS.md, "No Actions cache"); app/hub/package.json has no packageManager field.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: app/.nvmrc
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run bundle
+      - run: npm run bundle:test
+      - name: Hub bundle scan, its own tests
+        working-directory: app
+        run: node --test scripts/check-hub-build.test.mjs
+      - name: Hub bundle scan
+        working-directory: app
+        run: node scripts/check-hub-build.mjs
+      - name: Hub config check, its own tests
+        working-directory: app
+        run: node --test scripts/check-hub-config.test.mjs
+      - name: Hub config check, the template passes
+        working-directory: app
+        run: node scripts/check-hub-config.mjs wrangler.hub.jsonc
+      - name: Hub config check, the test config fails
+        working-directory: app
+        run: |
+          set +e
+          node scripts/check-hub-config.mjs wrangler.hub.test.jsonc
+          rc=$?
+          set -e
+          if [ "$rc" != 1 ]; then
+            echo "::error::check-hub-config.mjs exited $rc on wrangler.hub.test.jsonc; it must exit 1 (the test build is never deployable)."
+            exit 1
+          fi
+
   # The TEST BUILD (P2, p2-design section 10): the product Worker under `wrangler dev` with a fresh local D1 and the
   # test issuer. No secret anywhere: the issuer's key pair is made per run and only its public half reaches the Worker.
+  # P4 wave 4: the connector hub runs beside it in the same multi-config `wrangler dev` (the product's config first, then
+  # wrangler.hub.test.jsonc, one --persist-to; e2e/support/test-build/issuer.ts), answering from the recorded Shopify
+  # fixture with its test-only keys. No store credential.
   test-build:
+    # Not on a fleet PR; on its branch's push instead.
+    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     # The same image as e2e (keep the tag and digest in step with it).
@@ -141,13 +213,17 @@ jobs:
         with:
           persist-credentials: false
       - run: npm ci
+      # The hub's own packages (app/hub/ is its own package, not installed by app/'s npm ci): the hub Worker in the
+      # multi-config `wrangler dev` bundles from them.
+      - run: npm ci
+        working-directory: app/hub
       - run: npm run build:product-test
       # The migration job, fresh install: every migration in server/migrations/ on an empty local D1. From P3 it also
       # upgrades from the last release tag and runs that tag's API specs on the new schema.
       - name: Migrations, fresh install
         run: rm -rf .wrangler/test-build && npm run test-build:migrate
       # The deployable-config check must refuse the test build's config (it sets the test flag and test origins).
-      # The script's fixture tests run with test:unit (e2e shard 1).
+      # The script's fixture tests run with test:unit (e2e shard 1). The fast job runs this same step on a fleet PR.
       # Its exit codes (AGENTS.md): 0 deployable, 1 refused, 2 usage or a crash. Only 1 counts as refusing here: a crash
       # (2) or any other code fails this step too.
       - name: The config check refuses wrangler.test.jsonc
@@ -160,6 +236,25 @@ jobs:
             exit 1
           fi
           echo "check-product-config.mjs refused wrangler.test.jsonc (exit 1), as it must."
+      # The eval build's template the same way, and for the reason it's there: the test issuer is on in it, so as a
+      # product config it must be refused on that rule (the template also fails on its empty INHOUSE_ACCESS, which
+      # alone would keep exit 1 if the test-issuer rule went).
+      - name: The config check refuses wrangler.eval.jsonc
+        if: ${{ !cancelled() }}
+        run: |
+          rc=0
+          out=$(node scripts/check-product-config.mjs wrangler.eval.jsonc 2>&1) || rc=$?
+          printf '%s\n' "$out"
+          if [ "$rc" -ne 1 ]; then
+            echo "::error::check-product-config.mjs exited $rc on wrangler.eval.jsonc; it must refuse it with exit code 1 (0 = passed a config that must never deploy, 2 = usage or a crash)."
+            exit 1
+          fi
+          # POSIX sh (the job's container runs steps under dash): a pipe, not a bash here-string.
+          if ! printf '%s\n' "$out" | grep -qF 'vars.INHOUSE_TEST_BUILD is set: the test issuer must never be on in a deployable config'; then
+            echo "::error::check-product-config.mjs refused wrangler.eval.jsonc, but not on the test-issuer rule it must name."
+            exit 1
+          fi
+          echo "check-product-config.mjs refused wrangler.eval.jsonc on the test-issuer rule (exit 1), as it must."
       # The api and real projects. Their web server migrates and seeds a fresh local D1 first (prepare.mjs).
       - name: Playwright, api and real
         if: ${{ !cancelled() }}
@@ -188,24 +283,182 @@ jobs:
           path: app/e2e-artifacts
           retention-days: 7
 
+  # The agent runner (app/runner/, its own package): types, tests, the zod-major check, then the image build and a start
+  # check. No secret here, ever: it runs the PR's code. Container tests under wrangler dev join this job in P3.
+  runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: app/runner
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: app/.nvmrc
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run check:zod
+      # The harness (a local-only Worker that runs the runner under wrangler dev with the scripted model) has its own
+      # package: install and type check it. It's never deployed (it refuses every request without HARNESS_LOCAL_ONLY=1).
+      - name: Harness typecheck
+        working-directory: app/runner/harness
+        run: npm ci && npm run typecheck
+      # Build context is app/, so the protocol schemas in app/shared/ can be bundled; Dockerfile.dockerignore keeps the
+      # rest of app/ out. The image, its start check and the container probes don't run on a fleet PR (its branch's push
+      # runs them).
+      - if: ${{ !(github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')) }}
+        run: docker build -f Dockerfile -t inhouse-runner:ci ..
+      # The image starts with the guards installed and answers its health route. Until Node listens, Docker's port
+      # proxy may refuse the connection or accept and close it, so the check polls on that condition, at most 30 times
+      # about a second apart, and stops at once if the container has exited. A failure prints the container's log.
+      - name: The image starts
+        if: ${{ !(github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')) }}
+        run: |
+          docker run -d --name runner -p 8080:8080 -e EGRESS_URL=http://127.0.0.1:9 inhouse-runner:ci
+          for _ in $(seq 30); do
+            if [ "$(docker inspect -f '{{.State.Running}}' runner)" != true ]; then
+              echo "::error::The runner container exited"; docker logs runner; exit 1
+            fi
+            curl -fsS --max-time 2 http://127.0.0.1:8080/health && exit 0
+            sleep 1
+          done
+          echo "::error::The runner never answered /health"; docker logs runner; exit 1
+      # P3 R2's guards, proven in the container (app/runner/image/probes/run.ts): the real root runner with the scripted
+      # model behind a fake egress, the agent's Bash and file tools under the real sandbox, and the host's wipes. Each
+      # probe prints PROBE PASS|FAIL and each kernel fact FACT; any FAIL fails the step. Not part of the image: the
+      # bundle is mounted read-only.
+      #
+      # The sandbox is bubblewrap run by a session user, and inside it the CLI's seccomp helper makes one more user
+      # namespace for its own PID and mount namespace. A GitHub runner stops that in two places a Cloudflare container
+      # doesn't have. Each setting below takes one of them off, none changes what a session user may do inside the
+      # image, and PR #78 shows what each one stops when it's left out (and what Cloudflare gives instead):
+      # - Ubuntu's AppArmor, on the runner's host. `apparmor_restrict_unprivileged_userns` gives an unprivileged user
+      #   namespace no capabilities (`bwrap: setting up uid map: Permission denied`; the engine's sandboxing docs name
+      #   this sysctl). And the profile the host ships for /usr/bin/bwrap (bwrap-userns-restrict) attaches by path, to
+      #   the bwrap inside a container too, and takes every capability from what bwrap runs: the helper's namespace
+      #   then holds none, and every sandboxed command dies on `apply-seccomp: write /proc/self/setgroups`. The sysctl
+      #   doesn't reach a named profile, so the profile is unloaded.
+      # - Docker's wrapping of the probe container: its seccomp profile refuses a non-root user's namespaces, its
+      #   AppArmor profile refuses bwrap's mounts, and its masked /proc paths make the kernel refuse a fresh /proc.
+      # The host serves probe.txt on the bridge gateway: a private address outside the container for the egress probes.
+      - name: Probe setup
+        if: ${{ !(github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')) }}
+        run: |
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
+          if [ -e /etc/apparmor.d/bwrap-userns-restrict ]; then sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict; fi
+          sh image/probes/build.sh "$RUNNER_TEMP/probes"
+          mkdir -p "$RUNNER_TEMP/gw" && echo GW_OK > "$RUNNER_TEMP/gw/probe.txt"
+          nohup python3 -m http.server 18080 --bind 0.0.0.0 --directory "$RUNNER_TEMP/gw" > /dev/null 2>&1 &
+      - name: The guards in the container
+        if: ${{ !(github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')) }}
+        run: |
+          docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
+            -v "$RUNNER_TEMP/probes:/opt/runner/probes:ro" -e PROBE_GW_PORT=18080 inhouse-runner:ci node /opt/runner/probes/run.mjs
+
+  # A fleet PR's fast checks (phase batching): e2e shard 1's checks and builds without Playwright, and the test-build
+  # job's fresh-install migrations and config check, in the same image. Left to the push run: every Playwright project
+  # (the product project and the test build's api, real and smoke included), the contract suite on the real client and
+  # the runner image steps. Its build is the PR's preview build (preview.yml), as e2e's is on a PR into
+  # main. Target: 3 to 5 minutes.
+  fast:
+    if: ${{ github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The same image as e2e (keep the tag and digest in step with it).
+    container:
+      image: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
+      options: --user 1001 --ipc=host
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: node --version && npm run test:unit
+      - run: npm run build
+        env:
+          RELEASE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      - run: node scripts/check-bundle.mjs
+      # The preview build and its meta, exactly as e2e shard 1 uploads them on a PR into main.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: app-build
+          path: |
+            app/dist
+            app/.wrangler/deploy/config.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+      - env:
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.sha }}
+        run: printf '{"pr":%s,"sha":"%s"}\n' "$PR" "$SHA" > pr-meta.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pr-meta
+          path: app/pr-meta.json
+          if-no-files-found: error
+          retention-days: 7
+      # As e2e shard 1: the product build ships no demo code, and the deployable Worker no test issuer.
+      - if: ${{ !cancelled() }}
+        run: npm run build:product && npm run build:product-test && npm run build:product-eval && node scripts/check-product-build.mjs
+      # As the test-build job: every migration on an empty local D1 (the fresh install), so a broken migration shows on
+      # its own fleet PR, not a few merges later.
+      - name: Migrations, fresh install
+        if: ${{ !cancelled() }}
+        run: rm -rf .wrangler/test-build && npm run test-build:migrate
+      # As the test-build job: the config check must refuse wrangler.test.jsonc with exit code 1, nothing else.
+      - name: The config check refuses wrangler.test.jsonc
+        if: ${{ !cancelled() }}
+        run: |
+          rc=0
+          node scripts/check-product-config.mjs wrangler.test.jsonc || rc=$?
+          if [ "$rc" -ne 1 ]; then
+            echo "::error::check-product-config.mjs exited $rc on wrangler.test.jsonc; it must refuse it with exit code 1 (0 = passed a config that must never deploy, 2 = usage or a crash)."
+            exit 1
+          fi
+          echo "check-product-config.mjs refused wrangler.test.jsonc (exit 1), as it must."
+
   ci:
-    needs: [e2e, test-build]
-    # always(): a cancelled or skipped shard makes ci red, never skipped (a skipped check counts as passing).
+    needs: [e2e, test-build, runner, hub, fast]
+    # always(): a cancelled or skipped job makes ci red, never skipped (a skipped check counts as passing). The one
+    # exception is a job skipped by design: e2e and test-build on a fleet PR, fast on every other event. Each of
+    # those must be exactly skipped, and every other job exactly success.
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Every shard passed
+      - name: Every job this event runs passed (a fleet PR - fast, runner and hub; otherwise every shard, the test build, the runner job and the hub job)
         env:
+          FLEET_PR: ${{ github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/') }}
           RESULT: ${{ needs.e2e.result }}
           TEST_BUILD: ${{ needs.test-build.result }}
+          RUNNER: ${{ needs.runner.result }}
+          HUB: ${{ needs.hub.result }}
+          FAST: ${{ needs.fast.result }}
         run: |
+          echo "fleet PR (fast checks only): $FLEET_PR"
           echo "e2e: $RESULT"
           echo "test-build: $TEST_BUILD"
-          if [ "$RESULT" = cancelled ] || [ "$TEST_BUILD" = cancelled ]; then
-            echo "::error::The e2e or test-build jobs were cancelled or superseded by a newer run. This is not a test failure: see the newest run for this branch."
+          echo "runner: $RUNNER"
+          echo "hub: $HUB"
+          echo "fast: $FAST"
+          if [ "$RESULT" = cancelled ] || [ "$TEST_BUILD" = cancelled ] || [ "$RUNNER" = cancelled ] || [ "$HUB" = cancelled ] || [ "$FAST" = cancelled ]; then
+            echo "::error::A job was cancelled or superseded by a newer run. This is not a test failure: see the newest run for this branch."
           fi
-          test "$RESULT" = success && test "$TEST_BUILD" = success
+          if [ "$FLEET_PR" = true ]; then
+            test "$FAST" = success && test "$RUNNER" = success && test "$RESULT" = skipped && test "$TEST_BUILD" = skipped && test "$HUB" = success
+          else
+            test "$RESULT" = success && test "$TEST_BUILD" = success && test "$RUNNER" = success && test "$HUB" = success && test "$FAST" = skipped
+          fi
 
   pr-gates:
     if: github.event_name == 'pull_request'

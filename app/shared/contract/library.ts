@@ -60,6 +60,8 @@ export const LibraryFileSchema = z.object({
   entries: z.array(z.string()).optional(),
   /** Calendar files: the events. */
   lines: z.array(PairSchema).optional(),
+  /** Whether the signed-in person may delete it. Absent means yes (the demo, and a server that doesn't say). */
+  canDelete: z.boolean().optional(),
   /** Revision of this file (a delete or a restore bumps it): a write sends it back as `ifRev`. */
   rev: z.number().int().min(1),
 })

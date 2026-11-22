@@ -66,20 +66,22 @@ test('ending a grant refuses the Inhouse team on its very next request, and each
   const made = await call(request, admin, 'POST', '/api/grants', { json: { hours: 24 } })
   expect(made.status, made.text).toBe(201)
   const alexId = (await me(request, alex)).memberId
-  expect((await call(request, alex, 'GET', '/api/members')).status).toBe(200)
+  expect((await call(request, alex, 'GET', '/api/audit/export.csv')).status).toBe(200)
   expect((await call(request, alex, 'GET', '/api/audit')).status).toBe(200)
 
   // A stale rev ends nothing; a Member and the Inhouse team can't end it.
   expectConflict(await call(request, admin, 'POST', `/api/grants/${made.json.id}/end`, { json: { ifRev: made.json.rev + 1 } }))
   for (const who of ['memberA', 'inhouse'] as const) expectError(await call(request, actor(who), 'POST', `/api/grants/${made.json.id}/end`, { json: { ifRev: made.json.rev } }), 403, 'forbidden')
-  expect((await call(request, alex, 'GET', '/api/members')).status, 'still live').toBe(200)
+  expect((await call(request, alex, 'GET', '/api/audit')).status, 'still live').toBe(200)
 
   const ended = await call(request, admin, 'POST', `/api/grants/${made.json.id}/end`, { json: { ifRev: made.json.rev } })
   expect(ended.status, ended.text).toBe(200)
   expect(ended.json).toMatchObject({ id: made.json.id, live: false, endedBy: adminId, rev: made.json.rev + 1 })
   expect(ended.json.endedAt.ms).toBeLessThan(ended.json.endsAt.ms)
 
-  for (const path of ['/api/members', '/api/audit', '/api/audit/export.csv']) expectError(await call(request, alex, 'GET', path), 403, 'forbidden', 'grant_required')
+  for (const path of ['/api/audit', '/api/audit/export.csv']) expectError(await call(request, alex, 'GET', path), 403, 'forbidden', 'grant_required')
+  // The member list is baseline (decision 19): it never needed the grant.
+  expect((await call(request, alex, 'GET', '/api/members')).status).toBe(200)
   expect((await me(request, alex)).grant).toBeNull()
   // Ending it again changes nothing and adds no line.
   const again = await call(request, admin, 'POST', `/api/grants/${made.json.id}/end`, { json: { ifRev: ended.json.rev } })
@@ -92,6 +94,7 @@ test('ending a grant refuses the Inhouse team on its very next request, and each
 })
 
 test('the audit log shows grant.created, support.access, grant.ended and grant.expired', async ({ request }) => {
+  test.skip(!!process.env.E2E_TEST_BUILD_REMOTE, 'its support.access and grant.expired lines come from tests that need the local D1 or prepare step; proven by the local test-build suite')
   const { items } = await allPages<{ what: string }>(request, admin, '/api/audit', 100)
   const said = new Set(items.map(i => i.what))
   const g = 'g_shape_only'

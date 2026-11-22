@@ -12,9 +12,35 @@ import { memberStore } from './members.ts'
 import type { MemberStore } from './members.ts'
 import { photoStore } from './photos.ts'
 import type { PhotoStore, PhotoStoreDeps } from './photos.ts'
-import { first, runBatch, stmt } from './sql.ts'
+import { all, first, runBatch, stmt } from './sql.ts'
 import { settingStore } from './settings.ts'
 import type { SettingStore } from './settings.ts'
+// P3's slots (p3-design section 12): one per owner, each in the owner's own file.
+import { chatStore } from './chats.ts'
+import type { ChatStore } from './chats.ts'
+
+import { fileStore } from '../files-io/store.ts'
+import type { FileStore } from '../files-io/store.ts'
+
+import { usageStore } from '../usage/store.ts'
+import type { UsageStore } from '../usage/store.ts'
+
+import { memoryStore } from '../mcp/tools/memory/store.ts'
+import type { MemoryStore } from '../mcp/tools/memory/store.ts'
+
+// P4's slots, one per owner.
+import { activityReader } from '../activity/read.ts'
+import type { ActivityReader } from '../activity/read.ts'
+import { noticeReader } from '../notices/read.ts'
+import type { NoticeReader } from '../notices/read.ts'
+import { libraryStore } from '../files/store.ts'
+import type { LibraryStore } from '../files/store.ts'
+
+import { todayStore } from '../today/store.ts'
+import type { TodayStore } from '../today/store.ts'
+
+import { routineStore } from '../routines/store.ts'
+import type { RoutineStore } from '../routines/store.ts'
 
 export interface Stores extends AuthStores {
   members: MemberDirectory & MemberStore
@@ -26,9 +52,35 @@ export interface Stores extends AuthStores {
   health: {
     /** Throws when D1 can't answer `SELECT 1`. */
     ping(): Promise<void>
-    /** The name of the last migration applied (wrangler's `d1_migrations`), or null when none is. */
-    lastMigration(): Promise<string | null>
+    /** The names of every migration applied (wrangler's `d1_migrations`), without `.sql`, in no particular order. */
+    appliedMigrations(): Promise<string[]>
   }
+
+  // P3's slots, one per owner (blank-line separated: each owner edits only its own line and its own file).
+  /** W1 (p3-w1.md): chats and their messages. */
+  chats: ChatStore
+
+  /** W3 (p3-w3.md): chat files. */
+  files: FileStore
+
+  /** W4 (p3-w4.md): usage, the cap and the audit copy. */
+  usage: UsageStore
+
+  /** W6 (p3-w6.md): memory. */
+  memory: MemoryStore
+
+  /** P4 W4 (p4-w4.md): Activity's lines and the bell's notices and read state (the writers are `recordActivity` and `addNotice`). */
+  activity: ActivityReader
+  notices: NoticeReader
+
+  /** P4 W3 (p4-w3.md section 5): Today's read and the set-aside write. */
+  today: TodayStore
+
+  /** P4 W2 (p4-w2.md sections 9 to 11): routes 33 and 52 to 56, and the routines signal's read. */
+  routines: RoutineStore
+
+  /** P4 W5 (p4-w5.md): the Library's uploads, marks and listed files. */
+  library: LibraryStore
 }
 
 /** What the stores read from the Worker's env. `AUDIT_HASH_KEY` is a secret on the product Worker (a var in the test build). */
@@ -56,7 +108,8 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
       const line = auditInsert({
         atMs: at.nowMs,
         actorId: principal.memberId,
-        args: { action: 'support.access', grantId: principal.grant.id, method: at.method as 'GET', route: at.route as '/api/members' },
+        // The schema checks the pair (GET with a read route, PUT or POST with a write route Inhouse may use) and throws otherwise.
+        args: { action: 'support.access', grantId: principal.grant.id, method: at.method as 'GET' | 'PUT' | 'POST', route: at.route as '/api/members' },
         target: { kind: 'grant', id: principal.grant.id },
         requestId: principal.requestId,
       }, null)
@@ -73,9 +126,28 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
       async ping() {
         if ((await first<{ one: number }>(db, stmt('SELECT 1 AS one')))?.one !== 1) throw new Error('D1 did not answer SELECT 1')
       },
-      async lastMigration() {
-        return (await first<{ name: string }>(db, stmt('SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1')))?.name ?? null
+      async appliedMigrations() {
+        return (await all<{ name: string }>(db, stmt('SELECT name FROM d1_migrations'))).map(r => r.name.replace(/\.sql$/, ''))
       },
     },
+
+    // P3's slots, one per owner.
+    chats: chatStore({ db }),
+
+    files: fileStore({ db, bucket: env.FILES }),
+
+    usage: usageStore({ db }),
+
+    memory: memoryStore({ db }),
+
+    // P4's slots.
+    activity: activityReader({ db }),
+    notices: noticeReader({ db }),
+
+    today: todayStore({ db, hook }),
+
+    routines: routineStore({ db }),
+
+    library: libraryStore({ db, bucket: env.FILES }),
   }
 }

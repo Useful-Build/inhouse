@@ -1,0 +1,1165 @@
+{
+ "_about": "Requests the real Claude Agent SDK CLI (0.3.328) sent to the scripted model, captured over loopback with the runner's tool list (BUILT_IN_TOOLS, the inhouse MCP's 20 tools, 6 loaded up front) on 2026-11-21. Trimmed: system prompt, metadata, thinking and config fields dropped; text blocks other than the prompt and WebFetch's page replaced by <trimmed>; tools reduced to name and defer_loading. The `turn1-budget` requests come from a run with `maxBudgetUsd` set (as every runner run sets it), so they end with the CLI's budget line as a trailing `system` message (kept verbatim, its first line).",
+ "webfetch-allowed": {
+  "turn0": {
+   "model": "claude-sonnet-5-5",
+   "stream": true,
+   "tools": [
+    {
+     "name": "Agent"
+    },
+    {
+     "name": "Bash"
+    },
+    {
+     "name": "Edit"
+    },
+    {
+     "name": "Glob"
+    },
+    {
+     "name": "Grep"
+    },
+    {
+     "name": "Read"
+    },
+    {
+     "name": "Skill"
+    },
+    {
+     "name": "ToolSearch"
+    },
+    {
+     "name": "Write"
+    },
+    {
+     "name": "mcp__inhouse__approval_request"
+    },
+    {
+     "name": "mcp__inhouse__history_search"
+    },
+    {
+     "name": "mcp__inhouse__memory_save"
+    },
+    {
+     "name": "mcp__inhouse__memory_search"
+    },
+    {
+     "name": "mcp__inhouse__notification_send"
+    },
+    {
+     "name": "DeferredToolPlaceholder",
+     "defer_loading": true
+    },
+    {
+     "name": "mcp__inhouse__question_ask"
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "<trimmed>"
+      },
+      {
+       "type": "text",
+       "text": "scenario:webfetch-allowed go"
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": "<trimmed>"
+    }
+   ]
+  },
+  "page-summary": {
+   "model": "claude-haiku-5-5",
+   "stream": true,
+   "tools": [],
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "\nWeb page content:\n---\nExample Domain\n\nThis domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\n---\n\nSummarise the page (scenario:webfetch-allowed)\n\nProvide a concise response based only on the content above. In your response:\n - Enforce a strict 125-character maximum for quotes from any source document. Open Source Software is ok as long as we respect the license.\n - Use quotation marks for exact language from articles; any language outside of the quotation should never be word-for-word the same.\n - You are not a lawyer and never comment on the legality of your own prompts and responses.\n - Never produce or reproduce exact song lyrics.\n"
+      }
+     ]
+    }
+   ]
+  },
+  "turn1": {
+   "model": "claude-sonnet-5-5",
+   "stream": true,
+   "tools": [
+    {
+     "name": "Agent"
+    },
+    {
+     "name": "Bash"
+    },
+    {
+     "name": "Edit"
+    },
+    {
+     "name": "Glob"
+    },
+    {
+     "name": "Grep"
+    },
+    {
+     "name": "Read"
+    },
+    {
+     "name": "Skill"
+    },
+    {
+     "name": "ToolSearch"
+    },
+    {
+     "name": "Write"
+    },
+    {
+     "name": "mcp__inhouse__approval_request"
+    },
+    {
+     "name": "mcp__inhouse__history_search"
+    },
+    {
+     "name": "mcp__inhouse__memory_save"
+    },
+    {
+     "name": "mcp__inhouse__memory_search"
+    },
+    {
+     "name": "mcp__inhouse__notification_send"
+    },
+    {
+     "name": "DeferredToolPlaceholder",
+     "defer_loading": true
+    },
+    {
+     "name": "mcp__inhouse__question_ask"
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "<trimmed>"
+      },
+      {
+       "type": "text",
+       "text": "scenario:webfetch-allowed go"
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": "<trimmed>"
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_scripted_fetch",
+       "name": "WebFetch",
+       "input": {
+        "url": "https://example.com/",
+        "prompt": "Summarise the page (scenario:webfetch-allowed)"
+       }
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "tool_result",
+       "tool_use_id": "toolu_scripted_fetch",
+       "content": "A page kept for documentation examples."
+      }
+     ]
+    }
+   ]
+  },
+  "turn1-budget": {
+   "model": "claude-sonnet-5-5",
+   "stream": true,
+   "tools": [
+    {
+     "name": "Agent"
+    },
+    {
+     "name": "Bash"
+    },
+    {
+     "name": "Edit"
+    },
+    {
+     "name": "Glob"
+    },
+    {
+     "name": "Grep"
+    },
+    {
+     "name": "Read"
+    },
+    {
+     "name": "Skill"
+    },
+    {
+     "name": "ToolSearch"
+    },
+    {
+     "name": "Write"
+    },
+    {
+     "name": "mcp__inhouse__approval_request"
+    },
+    {
+     "name": "mcp__inhouse__history_search"
+    },
+    {
+     "name": "mcp__inhouse__memory_save"
+    },
+    {
+     "name": "mcp__inhouse__memory_search"
+    },
+    {
+     "name": "mcp__inhouse__notification_send"
+    },
+    {
+     "name": "DeferredToolPlaceholder",
+     "defer_loading": true
+    },
+    {
+     "name": "mcp__inhouse__question_ask"
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "<trimmed>"
+      },
+      {
+       "type": "text",
+       "text": "scenario:webfetch-allowed go"
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": "<trimmed>"
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_scripted_fetch",
+       "name": "WebFetch",
+       "input": {
+        "url": "https://example.com/",
+        "prompt": "Summarise the page (scenario:webfetch-allowed)"
+       }
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "tool_result",
+       "tool_use_id": "toolu_scripted_fetch",
+       "content": "A page kept for documentation examples."
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": [
+      {
+       "type": "text",
+       "text": "USD budget: $0.00007350000000000001/$2.5; $2.4999265 remaining"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "webfetch-refused": {
+  "turn0": {
+   "model": "claude-sonnet-5-5",
+   "stream": true,
+   "tools": [
+    {
+     "name": "Agent"
+    },
+    {
+     "name": "Bash"
+    },
+    {
+     "name": "Edit"
+    },
+    {
+     "name": "Glob"
+    },
+    {
+     "name": "Grep"
+    },
+    {
+     "name": "Read"
+    },
+    {
+     "name": "Skill"
+    },
+    {
+     "name": "ToolSearch"
+    },
+    {
+     "name": "Write"
+    },
+    {
+     "name": "mcp__inhouse__approval_request"
+    },
+    {
+     "name": "mcp__inhouse__history_search"
+    },
+    {
+     "name": "mcp__inhouse__memory_save"
+    },
+    {
+     "name": "mcp__inhouse__memory_search"
+    },
+    {
+     "name": "mcp__inhouse__notification_send"
+    },
+    {
+     "name": "DeferredToolPlaceholder",
+     "defer_loading": true
+    },
+    {
+     "name": "mcp__inhouse__question_ask"
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "<trimmed>"
+      },
+      {
+       "type": "text",
+       "text": "scenario:webfetch-refused go"
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": "<trimmed>"
+    }
+   ]
+  },
+  "turn1": {
+   "model": "claude-sonnet-5-5",
+   "stream": true,
+   "tools": [
+    {
+     "name": "Agent"
+    },
+    {
+     "name": "Bash"
+    },
+    {
+     "name": "Edit"
+    },
+    {
+     "name": "Glob"
+    },
+    {
+     "name": "Grep"
+    },
+    {
+     "name": "Read"
+    },
+    {
+     "name": "Skill"
+    },
+    {
+     "name": "ToolSearch"
+    },
+    {
+     "name": "Write"
+    },
+    {
+     "name": "mcp__inhouse__approval_request"
+    },
+    {
+     "name": "mcp__inhouse__history_search"
+    },
+    {
+     "name": "mcp__inhouse__memory_save"
+    },
+    {
+     "name": "mcp__inhouse__memory_search"
+    },
+    {
+     "name": "mcp__inhouse__notification_send"
+    },
+    {
+     "name": "DeferredToolPlaceholder",
+     "defer_loading": true
+    },
+    {
+     "name": "mcp__inhouse__question_ask"
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "<trimmed>"
+      },
+      {
+       "type": "text",
+       "text": "scenario:webfetch-refused go"
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": "<trimmed>"
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_scripted_fetch_refused",
+       "name": "WebFetch",
+       "input": {
+        "url": "https://10.0.0.1/",
+        "prompt": "Summarise the page"
+       }
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "tool_result",
+       "tool_use_id": "toolu_scripted_fetch_refused",
+       "content": "refused by the egress",
+       "is_error": true
+      }
+     ]
+    }
+   ]
+  },
+  "turn1-budget": {
+   "model": "claude-sonnet-5-5",
+   "stream": true,
+   "tools": [
+    {
+     "name": "Agent"
+    },
+    {
+     "name": "Bash"
+    },
+    {
+     "name": "Edit"
+    },
+    {
+     "name": "Glob"
+    },
+    {
+     "name": "Grep"
+    },
+    {
+     "name": "Read"
+    },
+    {
+     "name": "Skill"
+    },
+    {
+     "name": "ToolSearch"
+    },
+    {
+     "name": "Write"
+    },
+    {
+     "name": "mcp__inhouse__approval_request"
+    },
+    {
+     "name": "mcp__inhouse__history_search"
+    },
+    {
+     "name": "mcp__inhouse__memory_save"
+    },
+    {
+     "name": "mcp__inhouse__memory_search"
+    },
+    {
+     "name": "mcp__inhouse__notification_send"
+    },
+    {
+     "name": "DeferredToolPlaceholder",
+     "defer_loading": true
+    },
+    {
+     "name": "mcp__inhouse__question_ask"
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "<trimmed>"
+      },
+      {
+       "type": "text",
+       "text": "scenario:webfetch-refused go"
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": "<trimmed>"
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_scripted_fetch_refused",
+       "name": "WebFetch",
+       "input": {
+        "url": "https://10.0.0.1/",
+        "prompt": "Summarise the page"
+       }
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "tool_result",
+       "tool_use_id": "toolu_scripted_fetch_refused",
+       "content": "refused by the egress",
+       "is_error": true
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": [
+      {
+       "type": "text",
+       "text": "USD budget: $0.00007000000000000001/$2.5; $2.49993 remaining"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "write-output": {
+  "turn0": {
+   "model": "claude-sonnet-5-5",
+   "stream": true,
+   "tools": [
+    {
+     "name": "Agent"
+    },
+    {
+     "name": "Bash"
+    },
+    {
+     "name": "Edit"
+    },
+    {
+     "name": "Glob"
+    },
+    {
+     "name": "Grep"
+    },
+    {
+     "name": "Read"
+    },
+    {
+     "name": "Skill"
+    },
+    {
+     "name": "ToolSearch"
+    },
+    {
+     "name": "Write"
+    },
+    {
+     "name": "mcp__inhouse__approval_request"
+    },
+    {
+     "name": "mcp__inhouse__history_search"
+    },
+    {
+     "name": "mcp__inhouse__memory_save"
+    },
+    {
+     "name": "mcp__inhouse__memory_search"
+    },
+    {
+     "name": "mcp__inhouse__notification_send"
+    },
+    {
+     "name": "DeferredToolPlaceholder",
+     "defer_loading": true
+    },
+    {
+     "name": "mcp__inhouse__question_ask"
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "<trimmed>"
+      },
+      {
+       "type": "text",
+       "text": "scenario:write-output go"
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": "<trimmed>"
+    }
+   ]
+  },
+  "turn1": {
+   "model": "claude-sonnet-5-5",
+   "stream": true,
+   "tools": [
+    {
+     "name": "Agent"
+    },
+    {
+     "name": "Bash"
+    },
+    {
+     "name": "Edit"
+    },
+    {
+     "name": "Glob"
+    },
+    {
+     "name": "Grep"
+    },
+    {
+     "name": "Read"
+    },
+    {
+     "name": "Skill"
+    },
+    {
+     "name": "ToolSearch"
+    },
+    {
+     "name": "Write"
+    },
+    {
+     "name": "mcp__inhouse__approval_request"
+    },
+    {
+     "name": "mcp__inhouse__history_search"
+    },
+    {
+     "name": "mcp__inhouse__memory_save"
+    },
+    {
+     "name": "mcp__inhouse__memory_search"
+    },
+    {
+     "name": "mcp__inhouse__notification_send"
+    },
+    {
+     "name": "DeferredToolPlaceholder",
+     "defer_loading": true
+    },
+    {
+     "name": "mcp__inhouse__question_ask"
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "<trimmed>"
+      },
+      {
+       "type": "text",
+       "text": "scenario:write-output go"
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": "<trimmed>"
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "text",
+       "text": "<trimmed>"
+      },
+      {
+       "type": "tool_use",
+       "id": "toolu_scripted_write",
+       "name": "Bash",
+       "input": {
+        "command": "printf 'sku,qty\\nA1,3\\n' > outputs/table.csv",
+        "description": "Write the table"
+       }
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "tool_result",
+       "tool_use_id": "toolu_scripted_write",
+       "content": "(Bash completed with no output)",
+       "is_error": false
+      }
+     ]
+    }
+   ]
+  },
+  "turn1-budget": {
+   "model": "claude-sonnet-5-5",
+   "stream": true,
+   "tools": [
+    {
+     "name": "Agent"
+    },
+    {
+     "name": "Bash"
+    },
+    {
+     "name": "Edit"
+    },
+    {
+     "name": "Glob"
+    },
+    {
+     "name": "Grep"
+    },
+    {
+     "name": "Read"
+    },
+    {
+     "name": "Skill"
+    },
+    {
+     "name": "ToolSearch"
+    },
+    {
+     "name": "Write"
+    },
+    {
+     "name": "mcp__inhouse__approval_request"
+    },
+    {
+     "name": "mcp__inhouse__history_search"
+    },
+    {
+     "name": "mcp__inhouse__memory_save"
+    },
+    {
+     "name": "mcp__inhouse__memory_search"
+    },
+    {
+     "name": "mcp__inhouse__notification_send"
+    },
+    {
+     "name": "DeferredToolPlaceholder",
+     "defer_loading": true
+    },
+    {
+     "name": "mcp__inhouse__question_ask"
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "<trimmed>"
+      },
+      {
+       "type": "text",
+       "text": "scenario:write-output go"
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": "<trimmed>"
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "text",
+       "text": "<trimmed>"
+      },
+      {
+       "type": "tool_use",
+       "id": "toolu_scripted_write",
+       "name": "Bash",
+       "input": {
+        "command": "printf 'sku,qty\\nA1,3\\n' > outputs/table.csv",
+        "description": "Write the table"
+       }
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "tool_result",
+       "tool_use_id": "toolu_scripted_write",
+       "content": "(Bash completed with no output)",
+       "is_error": false
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": [
+      {
+       "type": "text",
+       "text": "USD budget: $0.00007000000000000001/$2.5; $2.49993 remaining"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "memory-save": {
+  "turn0": {
+   "model": "claude-sonnet-5-5",
+   "stream": true,
+   "tools": [
+    {
+     "name": "Agent"
+    },
+    {
+     "name": "Bash"
+    },
+    {
+     "name": "Edit"
+    },
+    {
+     "name": "Glob"
+    },
+    {
+     "name": "Grep"
+    },
+    {
+     "name": "Read"
+    },
+    {
+     "name": "Skill"
+    },
+    {
+     "name": "ToolSearch"
+    },
+    {
+     "name": "Write"
+    },
+    {
+     "name": "mcp__inhouse__approval_request"
+    },
+    {
+     "name": "mcp__inhouse__history_search"
+    },
+    {
+     "name": "mcp__inhouse__memory_save"
+    },
+    {
+     "name": "mcp__inhouse__memory_search"
+    },
+    {
+     "name": "mcp__inhouse__notification_send"
+    },
+    {
+     "name": "DeferredToolPlaceholder",
+     "defer_loading": true
+    },
+    {
+     "name": "mcp__inhouse__question_ask"
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "<trimmed>"
+      },
+      {
+       "type": "text",
+       "text": "scenario:memory-save go"
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": "<trimmed>"
+    }
+   ]
+  },
+  "turn1": {
+   "model": "claude-sonnet-5-5",
+   "stream": true,
+   "tools": [
+    {
+     "name": "Agent"
+    },
+    {
+     "name": "Bash"
+    },
+    {
+     "name": "Edit"
+    },
+    {
+     "name": "Glob"
+    },
+    {
+     "name": "Grep"
+    },
+    {
+     "name": "Read"
+    },
+    {
+     "name": "Skill"
+    },
+    {
+     "name": "ToolSearch"
+    },
+    {
+     "name": "Write"
+    },
+    {
+     "name": "mcp__inhouse__approval_request"
+    },
+    {
+     "name": "mcp__inhouse__history_search"
+    },
+    {
+     "name": "mcp__inhouse__memory_save"
+    },
+    {
+     "name": "mcp__inhouse__memory_search"
+    },
+    {
+     "name": "mcp__inhouse__notification_send"
+    },
+    {
+     "name": "DeferredToolPlaceholder",
+     "defer_loading": true
+    },
+    {
+     "name": "mcp__inhouse__question_ask"
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "<trimmed>"
+      },
+      {
+       "type": "text",
+       "text": "scenario:memory-save go"
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": "<trimmed>"
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_scripted_memory",
+       "name": "mcp__inhouse__memory_save",
+       "input": {
+        "scope": "person",
+        "text": "Likes the weekly stock report as a table."
+       }
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "tool_result",
+       "tool_use_id": "toolu_scripted_memory",
+       "content": [
+        {
+         "type": "text",
+         "text": "ok"
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  "turn1-budget": {
+   "model": "claude-sonnet-5-5",
+   "stream": true,
+   "tools": [
+    {
+     "name": "Agent"
+    },
+    {
+     "name": "Bash"
+    },
+    {
+     "name": "Edit"
+    },
+    {
+     "name": "Glob"
+    },
+    {
+     "name": "Grep"
+    },
+    {
+     "name": "Read"
+    },
+    {
+     "name": "Skill"
+    },
+    {
+     "name": "ToolSearch"
+    },
+    {
+     "name": "Write"
+    },
+    {
+     "name": "mcp__inhouse__approval_request"
+    },
+    {
+     "name": "mcp__inhouse__history_search"
+    },
+    {
+     "name": "mcp__inhouse__memory_save"
+    },
+    {
+     "name": "mcp__inhouse__memory_search"
+    },
+    {
+     "name": "mcp__inhouse__notification_send"
+    },
+    {
+     "name": "DeferredToolPlaceholder",
+     "defer_loading": true
+    },
+    {
+     "name": "mcp__inhouse__question_ask"
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "<trimmed>"
+      },
+      {
+       "type": "text",
+       "text": "scenario:memory-save go"
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": "<trimmed>"
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_scripted_memory",
+       "name": "mcp__inhouse__memory_save",
+       "input": {
+        "scope": "person",
+        "text": "Likes the weekly stock report as a table."
+       }
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "tool_result",
+       "tool_use_id": "toolu_scripted_memory",
+       "content": [
+        {
+         "type": "text",
+         "text": "ok"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": [
+      {
+       "type": "text",
+       "text": "USD budget: $0.00007000000000000001/$2.5; $2.49993 remaining"
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

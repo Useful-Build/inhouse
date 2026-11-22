@@ -10,6 +10,9 @@
 	"name": "inhouse-product",
 	"main": "server/index.ts",
 	"compatibility_date": "2026-11-13",
+	// `request.signal` fires when the caller disconnects (the egress closes a model call on it, p3-design 8.2); the default
+	// only from 2026-11-17. https://developers.cloudflare.com/workers/configuration/compatibility-flags/ (read 2026-11-20)
+	"compatibility_flags": ["enable_request_signal"],
 	"assets": {
 		"binding": "ASSETS",
 		"not_found_handling": "single-page-application",
@@ -25,13 +28,59 @@
 		}
 	],
 	"r2_buckets": [{ "binding": "FILES", "bucket_name": "inhouse-files" }],
+	// Workers AI, for the AI Gateway binding the egress calls the model through (`env.AI.gateway(AI_GATEWAY_ID)`,
+	// p3-design 8.2). Remote-only under wrangler dev: the test build never has it (it uses the scripted model;
+	// check-product-config.mjs refuses it there), and the product e2e server runs `wrangler dev --local` (playwright.config.ts).
+	// https://developers.cloudflare.com/ai-gateway/integrations/worker-binding-methods/ (read 2026-11-20)
+	"ai": { "binding": "AI" },
 	// The deployed version's id for the health route's `version` signal, which fails without it.
 	// https://developers.cloudflare.com/workers/runtime-apis/bindings/version-metadata/ (read 2026-11-20)
 	"version_metadata": { "binding": "CF_VERSION_METADATA" },
+	// P3 (p3-design sections 1 and 7): the BrandAgent (one per brand) and the Runner objects, each Runner with its
+	// container. Classes are only ever added (a new migration tag per change, never an edit of a deployed one).
+	// https://developers.cloudflare.com/durable-objects/reference/durable-objects-migrations/ (read 2026-11-20)
+	"durable_objects": {
+		"bindings": [
+			{ "name": "BRAND_AGENT", "class_name": "BrandAgent" },
+			{ "name": "RUNNER", "class_name": "Runner" }
+		]
+	},
+	"migrations": [{ "tag": "p3-v1", "new_sqlite_classes": ["BrandAgent", "Runner"] }],
+	// P4 (p4-h1.md OC 4): the connector hub's read entrypoint, for the runner's `/hub/` egress route. Only `ReadGateway`:
+	// no `ServerGateway` binding until P5 (all of a Worker's entrypoints share its env, so leaving the binding out is the
+	// rule). scripts/check-product-config.mjs refuses any other entry naming inhouse-hub.
+	// https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/rpc/ (named entrypoints, read 2026-11-21)
+	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }],
+	// The runner image, built from app/ as CI's runner job builds it (it bundles app/shared/protocol). max_instances is
+	// 3 x RUNNER_POOL (scripts/check-product-config.mjs compares them).
+	// https://developers.cloudflare.com/containers/ and the Wrangler configuration's `containers` (read 2026-11-20)
+	"containers": [
+		{
+			"class_name": "Runner",
+			"image": "./runner/Dockerfile",
+			"image_build_context": ".",
+			"instance_type": "standard-4",
+			"max_instances": 6
+		}
+	],
+	// `wrangler dev` (CI's Playwright servers) never builds or starts the container: the SDK sandbox can't run under
+	// `wrangler dev` (S6, docs/decisions/p3-local-containers.md), so the container path is proven on a deployment (Q2).
+	// Deploys ignore this block. https://developers.cloudflare.com/workers/wrangler/configuration/ (dev.enable_containers, read 2026-11-20)
+	"dev": { "enable_containers": false },
+	// The Worker's secrets, set with `wrangler secret put` (never here); deploy fails while one is missing, instead of
+	// deploying a Worker that answers every API call 503. AUDIT_HASH_KEY redacts audited values (server/db/stores.ts);
+	// AI_GATEWAY_TOKEN is the authenticated gateway's token (p3-design section 8.2). Under `wrangler dev` only these keys
+	// are read from the local secrets file, and a missing one is a warning, not a failure.
+	// https://developers.cloudflare.com/workers/wrangler/configuration/ (secrets, read 2026-11-20)
+	"secrets": { "required": ["AUDIT_HASH_KEY", "AI_GATEWAY_TOKEN"] },
 	"vars": {
 		// JSON text, filled by the ops repo: { teamDomain, apps: [{ name, origin, aud }], serviceTokens } (p2-design section 2).
 		// Empty here, so a release that doesn't fill it fails the config check.
-		"INHOUSE_ACCESS": ""
+		"INHOUSE_ACCESS": "",
+		// The runner pool's size N (p3-design section 7; the ops repo sets max(2, ceil(peak / 25)) and max_instances = 3 x N).
+		"RUNNER_POOL": "2",
+		// The house AI Gateway's id, filled by the ops repo (p3-design section 8.2).
+		"AI_GATEWAY_ID": ""
 	},
 	// A brand deployment answers only on its own routes: no workers.dev URL and no preview URLs.
 	"workers_dev": false,
