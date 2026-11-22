@@ -15,7 +15,7 @@ type Frame = {
   vh: number
 }
 
-// Runs on every document load (so also after a reload). Samples each frame until the bento has shown for a moment
+// Runs on every document load (so also after a reload). Samples each frame until the cards have shown for a moment
 // (so a later disappearance is caught) or 3 s pass, then sets window.__layoutDone.
 const SAMPLER = `(() => {
   const frames = []
@@ -36,7 +36,7 @@ const SAMPLER = `(() => {
       routine: document.querySelectorAll('[data-prompt-routine]').length,
       vh: innerHeight,
     })
-    if (bento && seenAt === null) seenAt = now
+    if (document.querySelectorAll('[data-prompt-card]').length > 0 && seenAt === null) seenAt = now
     if ((seenAt !== null && now - seenAt > 500) || now - t0 > 3000) { window.__layoutFrames = frames; window.__layoutDone = true }
     else requestAnimationFrame(tick)
   }
@@ -52,25 +52,28 @@ function assertLayout(frames: Frame[]) {
   const onNew = frames.filter(f => f.hash === '#/chats/new')
   const withComposer = onNew.filter(f => f.composerTop !== null)
   expect(withComposer.length, 'the composer shows on #/chats/new').toBeGreaterThan(0)
+  expect(onNew.length, 'enough frames were sampled (rAF not throttled)').toBeGreaterThan(30)
 
   for (const f of withComposer) {
     expect(f.docked, 'blank New chat never docks the composer at the bottom').toBe(false)
-    expect(f.composerTop!, `composer top stays in the middle band (viewport ${f.vh})`).toBeLessThan(0.6 * f.vh)
+    // A docked composer sits near 0.85-0.9 of the viewport; the lazy cards' placeholder puts early frames near 0.55.
+    expect(f.composerTop!, `composer top stays in the middle band (viewport ${f.vh})`).toBeLessThan(0.7 * f.vh)
     if (f.headingTop !== null) expect(f.headingTop, 'the heading is above the composer').toBeLessThan(f.composerTop!)
   }
 
-  const first = onNew.findIndex(f => f.bento)
+  const first = onNew.findIndex(f => f.cards > 0)
   expect(first, 'the suggestion cards show').toBeGreaterThanOrEqual(0)
-  expect(onNew.slice(first).every(f => f.bento), 'the cards never disappear once shown').toBe(true)
+  expect(onNew.slice(first).every(f => f.cards > 0), 'the cards never disappear once shown').toBe(true)
 
   const last = onNew[onNew.length - 1]
   expect(last.cards, 'three suggestion cards').toBe(3)
   expect(last.routine, 'the Routine row').toBe(1)
 }
 
-for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+// 390 matches the phone project's touch setting; the file stays in the desktop project so both sizes run.
+for (const [viewport, hasTouch] of [[{ width: 1440, height: 900 }, false], [{ width: 390, height: 844 }, true]] as const) {
   test.describe(`New chat layout at ${viewport.width}x${viewport.height}`, () => {
-    test.use({ viewport })
+    test.use({ viewport, hasTouch })
 
     test.beforeEach(async ({ page }) => {
       await fxFor(page, undefined).seed({ stage: 'Act' })
