@@ -3,7 +3,7 @@ import type { ComponentType, ReactNode } from 'react'
 import { agent, demo } from './agent'
 import { isChatUnknown } from './state/chat-known'
 import { AgentError } from './agent/types'
-import type { AgentErrorCode, ToolsData } from './agent/types'
+import type { AgentErrorCode, RefreshList, ToolsData } from './agent/types'
 import { NOT_FOUND } from '../shared/contract/error-codes'
 import type { Page } from './state/store'
 import { FROM_SETTINGS_MENU, chatEntries, defaultChatId, newestChat, openChatKey, takeReplaceEntry, useAgentData, useAgentState, useUi } from './state/store'
@@ -148,6 +148,8 @@ const PAGE_SLUG: Record<Page, string> = { today: 'today', library: 'library', ch
 const toHash = (page: Page, appKey: string, setTab: string, chat: string, menu = false) =>
   '#/' + PAGE_SLUG[page] + (page === 'app' ? '/' + appKey : page === 'settings' ? (menu ? '' : '/' + setTab) : page === 'chats' ? '/' + encodeURIComponent(chat) : '')
 const SETTINGS_TABS = MENU.flatMap(g => g.items.map(([k]) => k))
+/** The list each page shows that the agent's work fills (read again when the page opens). */
+const PAGE_LIST: Partial<Record<Page, RefreshList>> = { today: 'problems', approvals: 'problems', library: 'library', activity: 'activity' }
 const PAGE_LABEL: Record<Page, string> = { today: 'Today', library: 'Library', chats: 'Chats', approvals: 'Approvals', routines: 'Routines', activity: 'Activity', apps: 'Tools', app: 'Tools', skills: 'Skills', usage: 'Usage', settings: 'Settings' }
 /** A link that names a page, tool or tab that doesn't exist lands where it did before, and says so. */
 const notFound = (where: string) => useUi.getState().showToast(`That page doesn't exist. You're on ${where}.`, { icon: 'info', key: 'route-notice' })
@@ -292,6 +294,20 @@ function Shell() {
     return () => clearTimeout(t)
   }, [])
   const page = useUi(s => s.page)
+  // A list page reads its list again when it opens, and the bell its notices: what the agent made since the first read
+  // (a file a chat saved, the cards a Run now found) isn't in it. Not the page the app starts on: the first reads cover it,
+  // and for the Inhouse team landing there isn't a choice (each read under a grant writes a support.access line). The
+  // client never reads the bell for the Inhouse team.
+  // Compared with the start page, not "has this effect run": StrictMode runs it twice on mount in development.
+  const startPage = useRef(page)
+  const moved = useRef(false)
+  useEffect(() => {
+    if (!moved.current && page === startPage.current) return
+    moved.current = true
+    const list = PAGE_LIST[page]
+    if (list) void agent.refresh(list)
+    void agent.refresh('notifications')
+  }, [page])
   const appKey = useUi(s => s.appKey)
   const toolKnown = !!toolName(useAgentData().tools, appKey)
   const phone = useUi(s => s.phone)

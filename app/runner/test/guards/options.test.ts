@@ -17,6 +17,8 @@
 // - webFetchDomains lets in an IP literal, a local name, an internal name (`*.svc`, `*.corp`) or this container's own
 //   address;
 // - a cwd that only looks like a session folder (`/work/a/`) passes; `agents` or a non-http `inhouse` server gets in;
+// - (P4 H1) a server other than `inhouse` and `apps` gets in, either is not http, or its URL is anything but the
+//   proxy's own route for it (`/mcp/` for `inhouse`, `/hub/` for `apps`);
 // - the audit hook isn't on the run's own transport (`RunContext.audit`), lets a call go before it resolved, or lets
 //   one go when it rejected.
 import { fc, it } from '@fast-check/vitest'
@@ -126,7 +128,7 @@ describe('the guarded options', () => {
     const allowed = new Set<string>(BUILT_IN_TOOLS)
     for (const rule of o.allowedTools ?? []) {
       const tool = rule.replace(/\(.*$/, '')
-      if (rule === 'mcp__inhouse') continue
+      if (rule === 'mcp__inhouse' || rule === 'mcp__apps') continue
       expect(allowed.has(tool), rule).toBe(true)
     }
     const fetchRules = (o.allowedTools ?? []).filter((r) => r.startsWith('WebFetch'))
@@ -219,7 +221,8 @@ describe('the guarded options', () => {
     expect(() => guards.apply({ ...b, settingSources: ['project'] }, c, run)).toThrow(/settingSources/)
     expect(() => guards.apply({ ...b, settingSources: undefined }, c, run)).toThrow(/settingSources/)
     expect(() => guards.apply({ ...b, mcpServers: { other: { type: 'http', url: 'http://x.y' } } }, c, run)).toThrow(/MCP/)
-    expect(() => guards.apply({ ...b, mcpServers: { inhouse: { type: 'http', url: 'http://x.y' } } }, c, run)).not.toThrow()
+    expect(() => guards.apply({ ...b, mcpServers: { inhouse: { type: 'http', url: 'http://x.y' } } }, c, run)).toThrow(/MCP/)
+    expect(() => guards.apply({ ...b, mcpServers: { inhouse: { type: 'http', url: `${b.env!.INHOUSE_PROXY_URL}/mcp/` } } }, c, run)).not.toThrow()
     expect(() => guards.apply({ ...b, mcpServers: { inhouse: { type: 'stdio', command: 'sh' } } }, c, run)).toThrow(/MCP/)
     expect(() => guards.apply({ ...b, mcpServers: { inhouse: { type: 'sse', url: 'http://x.y' } } }, c, run)).toThrow(/MCP/)
     for (const cwd of ['/tmp/x', '/work', '/work/a/b', '/work/a/', '/work//a', '/work/../etc', '/workx/a', undefined]) {
@@ -234,6 +237,30 @@ describe('the guarded options', () => {
     for (const USER of ['../s01', 's01/..', '', 'S01', undefined]) {
       expect(() => guards.apply({ ...b, env: { ...b.env, USER } }, c, run), String(USER)).toThrow(/USER/)
     }
+  })
+
+  it('(P4 H1) allows exactly inhouse at the proxy /mcp/ and apps at its /hub/, both pre-approved in server form', () => {
+    const c = fc.sample(config, 1)[0]!
+    const b = base(c)
+    const proxy = b.env!.INHOUSE_PROXY_URL!
+    expect(b.mcpServers).toEqual({ inhouse: { type: 'http', url: `${proxy}/mcp/` }, apps: { type: 'http', url: `${proxy}/hub/` } })
+    const o = guards.apply(b, c, run)
+    expect(o.mcpServers).toEqual(b.mcpServers)
+    expect(o.allowedTools).toEqual(expect.arrayContaining(['mcp__inhouse', 'mcp__apps']))
+    expect((o.allowedTools ?? []).filter((r) => r.startsWith('mcp__'))).toEqual(['mcp__inhouse', 'mcp__apps'])
+    const refused: [string, Options['mcpServers']][] = [
+      ['an extra server', { ...b.mcpServers, hub: { type: 'http', url: `${proxy}/hub/` } }],
+      ['a stdio apps', { ...b.mcpServers, apps: { type: 'stdio', command: 'sh' } }],
+      ['an sse apps', { ...b.mcpServers, apps: { type: 'sse', url: `${proxy}/hub/` } }],
+      ['apps off the proxy', { ...b.mcpServers, apps: { type: 'http', url: 'http://127.0.0.1:9999/hub/' } }],
+      ['apps at another route', { ...b.mcpServers, apps: { type: 'http', url: `${proxy}/mcp/` } }],
+      ['apps without its slash', { ...b.mcpServers, apps: { type: 'http', url: `${proxy}/hub` } }],
+      ['apps climbing out', { ...b.mcpServers, apps: { type: 'http', url: `${proxy}/hub/../model/` } }],
+      ['inhouse at /hub/', { ...b.mcpServers, inhouse: { type: 'http', url: `${proxy}/hub/` } }],
+    ]
+    for (const [why, mcpServers] of refused) expect(() => guards.apply({ ...b, mcpServers }, c, run), why).toThrow(/MCP/)
+    // A server with no proxy in the env to check it against is refused too.
+    expect(() => guards.apply({ ...b, env: { ...b.env, INHOUSE_PROXY_URL: undefined } }, c, run)).toThrow(/MCP/)
   })
 
   it('guards agents and disableBundledSkills', () => {

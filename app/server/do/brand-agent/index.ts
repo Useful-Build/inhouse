@@ -4,7 +4,7 @@
 // 34's socket (`fetch`, then the hibernation handlers) runs on the socket hub (sockets.ts, 4.10).
 import { DurableObject } from 'cloudflare:workers'
 import { apiError } from '../../http.ts'
-import { SYSTEM_PROMPT_V1 } from '../../prompt/system.ts'
+import { SYSTEM_PROMPT_V2 } from '../../prompt/system.ts'
 import type { AuditEntry, PushAck, RunEvent } from '../../../shared/protocol/index.ts'
 import type { ActiveRun, PauseState, SendTurnResult } from '../../../shared/contract/runs.ts'
 import type { Trace } from '../../../shared/contract/trace.ts'
@@ -22,6 +22,8 @@ import { alarmPort, createScheduler, registrySeeds } from './scheduler.ts'
 import { poke, revive, taskContext } from './task-ops.ts'
 import type { SqlScheduler, TaskContext } from './scheduler.ts'
 import { taskHandlers } from './tasks/index.ts'
+import { armStopAfterBatch, runAlarmNow, seedCursor } from '@test-controls'
+import { POKE_ID, TICK_KIND } from '../../routines/tick.ts'
 import { createRunTokens } from './tokens.ts'
 import { PRINCIPAL_HEADER, SocketHub } from './sockets.ts'
 import type { HubSocket, SocketPrincipal } from './sockets.ts'
@@ -60,7 +62,7 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
         wakeBy: atMs => sweepBy(sql, sched, Math.min(atMs, now() + SWEEP_EVERY_MS)),
       })
       this.core = new AgentCore({
-        sql, scheduler: sched, tokens, ports: this.ports, now, systemPrompt: SYSTEM_PROMPT_V1, db: env.DB,
+        sql, scheduler: sched, tokens, ports: this.ports, now, systemPrompt: SYSTEM_PROMPT_V2, db: env.DB,
         modelUsable: modelUsable(openStores(env)), taskSeeds: registrySeeds(taskHandlers),
         onEvent: e => this.hub.onEvent(e),
         sockets: this.hub,
@@ -77,6 +79,32 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
 
   async alarm(): Promise<void> {
     await this.sched.alarm()
+  }
+
+  /**
+   * The test build's alarm-now control (route 67, server/ops/alarm-now.ts; p4-w6.md OC 2): one scheduler pass, as
+   * `alarm()` runs it, called directly (no `blockConcurrencyWhile`: it would hold inbound calls, reset the object after
+   * 30 s, and deadlock a handler that calls back into the object). So this pass may overlap the runtime's own alarm:
+   * that rests on what the scheduler already relies on for at-least-once alarms, handlers idempotent by task id and
+   * results that commit only for the generation they started with (W6's "fire twice, exactly one turn" case tests it).
+   * Outside the test build `@test-controls` is the off module, which throws; route 67 answers 404 there first.
+   */
+  async testRunAlarm(p: { pokeTick?: boolean } = {}): Promise<{ ran: true }> {
+    // `pokeTick` makes the routine tick due first (as a routine write does), so a spec can fire a tick again after a stop.
+    return runAlarmNow(async () => {
+      if (p.pokeTick === true) await this.poke({ kind: TICK_KIND, id: POKE_ID })
+      await this.sched.alarm()
+    })
+  }
+
+  /** The test build's stop-after-batch control (route 67): the next routine tick pass in this object stops after its batch. */
+  async testStopAfterBatch(): Promise<{ armed: true }> {
+    return armStopAfterBatch()
+  }
+
+  /** The test build's cursor seed (route 67): one routine's `checked_until_ms`, written to D1 from here. */
+  async testSeedCursor(routineId: string, checkedUntilMs: number): Promise<{ seeded: boolean }> {
+    return seedCursor(this.env.DB, routineId, checkedUntilMs)
   }
 
   /**

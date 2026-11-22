@@ -3,8 +3,11 @@
 // (quarantined tasks never count). A pass runs up to 20 tasks or 10 s, `grant-expiry` and `authority-sweep` first,
 // then by due time. A handler's result commits only while the task's generation is the one it started with, so a
 // reschedule or a cancel during the handler's await wins. Alarms can be late and run at least once (docs): handlers are
-// idempotent by task id, and nothing relies on alarm timing for authority. Passes never overlap: the runtime runs one
-// `alarm()` at a time per object ("Only one alarm() invocation runs per instance at a given moment", alarms docs).
+// idempotent by task id, and nothing relies on alarm timing for authority. Passes never overlap in the product: the
+// runtime runs one `alarm()` at a time per object ("Only one alarm() invocation runs per instance at a given moment",
+// alarms docs). In the test build only, the alarm-now control (route 67, BrandAgent.testRunAlarm) runs a pass beside the
+// runtime's and may overlap it: commits stay generation-guarded, but a retry result can apply twice and `degraded` is
+// shared between the two passes.
 // https://developers.cloudflare.com/durable-objects/api/alarms/ and /api/sqlite-storage-api/ (read 2026-11-20)
 import type { SendTurnResult } from '../../../shared/contract/runs.ts'
 import type { BrandAgentPorts, ChatStatus, DeferDecision, InternalSubmit, Refusal } from './ports.ts'

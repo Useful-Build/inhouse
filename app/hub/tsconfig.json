@@ -1,0 +1,26 @@
+{
+  // The hub's own project. app/tsconfig.json doesn't reference it, so `tsc -b` in app/ never checks the hub.
+  "compilerOptions": {
+    "target": "es2024",
+    "lib": ["ES2024"],
+    // Env and the Workers runtime from `npm run types`; cloudflare:test for the workerd test project.
+    "types": ["./worker-configuration.d.ts", "@cloudflare/vitest-plugin/types"],
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "skipLibCheck": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  // The recorded Shopify upstream (W1) is bundled into the test build through testing/index.ts; the live cases and
+  // scripts run in the `live` project.
+  "include": ["**/*.ts", "../test/upstreams/shopify/**/*.ts", "../test/upstreams/morning-check/**/*.ts", "../test/connectors/shopify/**/*.ts"],
+  "exclude": ["node_modules"]
+}

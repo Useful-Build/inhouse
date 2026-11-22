@@ -47,10 +47,19 @@ export const lostTool = (ctx: Ctx): { key: string; since: Instant } | null => {
   return null
 }
 /**
- * Day one: the agent's data has arrived and no tool is connected yet, so it has nothing to read. Today lists the setup
- * instead of problems. A client that is still loading isn't there yet: it doesn't know its tools.
+ * Day one: the agent's data has arrived, no tool is connected yet and the server holds nothing for Today (no cards, and no
+ * routine has run, a failed run included), so the agent has nothing to read. Today lists the setup instead of problems. A
+ * client that is still loading isn't there yet: it doesn't know its tools. The real client has no tools read until P5, so
+ * `connected` stays empty: what the server already holds for Today is what ends day one there.
  */
-export const isFirstDay = (data: AgentData): boolean => data.status === 'ready' && data.tools.connected.length === 0
+export const isFirstDay = (data: AgentData): boolean => data.status === 'ready' && noToolsYet(data)
+/**
+ * Whether a screen may say "no tools are connected yet": none is connected and the server holds nothing for Today (no cards,
+ * no routine run). With `connected` empty but cards or a run present (the real client before P5), the list is unknown, not
+ * empty, so such copy stays out.
+ */
+export const noToolsYet = (data: AgentData): boolean =>
+  data.tools.connected.length === 0 && data.problems.length === 0 && !data.routines.some(r => r.last !== undefined)
 /**
  * The tool the Inhouse team is connecting now (it has a `liveBy` date), with that date as shown ("Fri, Nov 20"), or null:
  * none is, or it's day one, when nothing is live yet and Today lists the setup instead.
@@ -341,7 +350,10 @@ export function todayCopy(ctx: Ctx): TodayCopy {
       headline: shown ? `${shown} ${shown === 1 ? 'thing needs' : 'things need'} you today.` : 'Nothing needs you today.',
       headSub: missed.length
         ? `Your Inhouse agent read ${read.length} of your ${connected.length} tools and changed nothing. ${listNames(missed)} ${missed.length === 1 ? 'needs' : 'need'} reconnecting.`
-        : `Your Inhouse agent read ${listNames(read.map(k => toolDetail(ctx.data, k).name))} and changed nothing.`,
+        : read.length
+          ? `Your Inhouse agent read ${listNames(read.map(k => toolDetail(ctx.data, k).name))} and changed nothing.`
+          // Cards but no connected list (the real client before P5): don't name tools it can't list.
+          : 'Your Inhouse agent checked this morning and changed nothing.',
       countLabel: shown ? `${shown} to look at` : '', sortLabel: 'Most urgent first',
     },
     {
@@ -545,6 +557,9 @@ export interface ActivityRow {
   review?: string
 }
 
+/** The icon a line without a hand-picked one shows, by its kind. */
+const ACTIVITY_ICON = { read: 'visibility', change: 'check_circle', needs: 'front_hand', problem: 'error' } as const
+
 export function activityRows(ctx: Ctx): ActivityRow[] {
   const { S, agent } = ctx
   const f = flags(ctx)
@@ -591,7 +606,19 @@ export function activityRows(ctx: Ctx): ActivityRow[] {
       undo: { type: 'setAside', id: p.id }, why: `${p.title}.`, result: line.result, by: `${byName(ctx.data, rec.by)}, at ${fmtTime(rec.at, d0)}. Drafted by Inhouse agent at ${fmtTime(p.draftedAt, d0)}.` })
   }
   const { today, earlier } = ctx.data.activity
-  const morning = today[0]
+  // The demo's first line is the morning check (its trace is `morning`), with `{read}` and `{found}` filled from state. The
+  // product's lines are the server's, already complete, and its traces are run ids: every one of today's goes through the
+  // generic row below, as the earlier days' do. Keyed on the trace, which a member's name can't set.
+  const morning = today[0]?.trace === 'morning' && today[0].text.includes('{read}') ? today[0] : undefined
+  /** A line the current stage hides: `minStage` is the lowest stage that shows it. */
+  const below = (e: { minStage?: string }) => (e.minStage === 'Act' && S < 1) || (e.minStage === 'Run' && S < 2)
+  if (!morning) {
+    for (const e of today) {
+      if (below(e)) continue
+      rows.push({ ...base, ...when(e.at), icon: ACTIVITY_ICON[e.kind], kind: e.kind, trace: e.trace, who: e.who, whoBy: e.actorId ? byName(ctx.data, e.actorId) : undefined,
+        why: e.why, by: fmtProse(e.by, d0), text: e.text, result: e.result, iconTone: e.kind === 'problem' ? 'bg-destructive-tint text-destructive' : base.iconTone })
+    }
+  }
   if (morning) {
     if (f.disc) {
       const { key: tool, since: at } = lostTool(ctx)!
@@ -610,15 +637,15 @@ export function activityRows(ctx: Ctx): ActivityRow[] {
         text: fill(morning.text), result: fill(morning.result) })
       // The routines that ran today, after the morning check (none on day one: nothing was connected to read).
       for (const e of today.slice(1)) {
-        if (e.minStage === 'Act' && S < 1) continue
+        if (below(e)) continue
         rows.push({ ...base, ...when(e.at), icon: 'visibility', kind: e.kind, trace: e.trace, who: e.who, why: e.why, by: fmtProse(e.by, d0), text: e.text, result: e.result })
       }
     }
   }
   for (const e of earlier) {
-    if (e.minStage === 'Act' && S < 1) continue
+    if (below(e)) continue
     const change = e.kind === 'change'
-    rows.push({ day: fmtWeekday(e.at, d0), ...when(e.at), icon: change ? 'check_circle' : e.text.startsWith('Saved the weekly') ? 'summarize' : 'visibility', text: e.text, who: e.who,
+    rows.push({ day: fmtWeekday(e.at, d0), ...when(e.at), icon: change ? 'check_circle' : e.text.startsWith('Saved the weekly') ? 'summarize' : ACTIVITY_ICON[e.kind], text: e.text, who: e.who,
       kind: e.kind, trace: e.trace, iconTone: change ? 'bg-background text-foreground' : 'bg-background text-foreground-3', why: e.why, result: e.result, by: fmtProse(e.by, d0) })
   }
   return rows.map(r => ({ ...r, key: `${r.day}|${r.t}|${r.text}` }))

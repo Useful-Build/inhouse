@@ -7,7 +7,7 @@ import { CONNECTION_TEXT, NOTICE_TEXT, historyWanted } from './chat/notes'
 import type { ChatMessage } from '../agent/types'
 import { Composer, PHONE_QUERY } from '../components/Composer'
 import { fileIcon, fileSize } from '@/lib/file-meta'
-import { listNames, readingTools, toolDetail } from '../state/derive'
+import { listNames, noToolsYet, readingTools, toolDetail } from '../state/derive'
 import { cn } from '@/lib/utils'
 import { isStoppedNote, openChatKey, openRun, useCtx, useUi } from '../state/store'
 import type { QueuedMsg } from '../state/store'
@@ -436,7 +436,8 @@ function Thread() {
               <h2 className="text-3xl leading-title font-medium tracking-title">What do you want to know?</h2>
               {connected.length > 0
                 ? <p className="mt-2.5 text-md text-foreground-3">Your Inhouse agent reads {listNames(connected)}.</p>
-                : <>
+                // Not claimed when the list is only unknown (cards or a run on the server, no connected list: the real client before P5).
+                : (ctx.data.tools.connected.length > 0 || noToolsYet(ctx.data)) && <>
                     <p className="mt-2.5 text-md text-foreground-3">No tools are connected yet.</p>
                     <Button variant="outline" className="mt-3" onClick={() => go('apps')}>Connect tools</Button>
                   </>}

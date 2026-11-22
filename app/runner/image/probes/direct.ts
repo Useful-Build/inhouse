@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import { createQueryGuards } from '../../src/guards/options.ts'
 import { hostAddresses } from '../../src/proxy/proc-net.ts'
 import { baseOptions, cliEnv } from '../../src/session/core.ts'
+import { mcpServers } from '../../src/session/mcp-servers.ts'
 import type { RunConfig } from '../../src/protocol/local.ts'
 import type { RunContext } from '../../src/session/seam.ts'
 import { EXTRA_PLUGIN, HOME_SKILL, PROBE_MODEL } from './lib.ts'
@@ -49,7 +50,8 @@ export type DirectVariant =
   /** The built-in plugins not turned off, and a plugin we don't ship added (test-only): init must list more than ours. */
   | 'plugins-not-off'
 
-export type DirectInput = { variant: DirectVariant; prompt: string; webFetchDomains: string[]; ip?: string; mcpUrl?: string }
+/** `mcpProxyUrl`: the origin standing in for the root's proxy (the probe egress); the server is built at its `/mcp/`. */
+export type DirectInput = { variant: DirectVariant; prompt: string; webFetchDomains: string[]; ip?: string; mcpProxyUrl?: string }
 
 const say = (o: unknown) => process.stdout.write(`${JSON.stringify(o)}\n`)
 
@@ -79,7 +81,13 @@ const config = {
 
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'PROBE_DIRECT')) as NodeJS.ProcessEnv
 const base = baseOptions(config, process.cwd(), cliEnv(env), new AbortController())
-if (input.variant === 'four-tools' && input.mcpUrl) base.mcpServers = { inhouse: { type: 'http', url: input.mcpUrl } }
+// The stub egress stands in for the proxy: the session's env and its `inhouse` server both point at it, built by the
+// session's own mcpServers() (the guards accept a server only at the proxy's route for it). The `apps` server is left
+// out: the stub serves no `/hub/`, and this probe looks at the inhouse stub's tools.
+if (input.variant === 'four-tools' && input.mcpProxyUrl) {
+  base.env = { ...base.env, INHOUSE_PROXY_URL: input.mcpProxyUrl }
+  base.mcpServers = { inhouse: mcpServers(input.mcpProxyUrl)!.inhouse! }
+}
 const run: RunContext = {
   audit: input.variant === 'audit-refused' || input.variant === 'audit-hook-removed' ? async () => Promise.reject(new Error('probe: refused')) : async () => {},
 }
