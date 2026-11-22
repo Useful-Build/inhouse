@@ -197,7 +197,7 @@ test('`m:learn` off: the agent\'s person reword is refused with learning_off and
   seedFact(MEMORY_REWORD_PERSON_ID, 'person', danaId, old, danaId)
   try {
     await put(request, dana, 'personal', 'm:learn', false)
-    expect(await turn(request, 'memory-reword-person'), 'the tool said learning_off').toBe(MEMORY_REWORD_LEARNING_OFF_ANSWER)
+    expect(await turn(request, 'memory-save-reword-person'), 'the tool said learning_off').toBe(MEMORY_REWORD_LEARNING_OFF_ANSWER)
     expect(factRow(MEMORY_REWORD_PERSON_ID)).toEqual({ status: 'active', rev: 1, text: old })
     // Forgetting still works with learning off.
     const forgot = await call(request, dana, 'PUT', `/api/memory/personal/${MEMORY_REWORD_PERSON_ID}/forgotten`, { json: { forgotten: true, ifRev: 1 } })
@@ -206,7 +206,7 @@ test('`m:learn` off: the agent\'s person reword is refused with learning_off and
     expect(undone.status, undone.text).toBe(200)
 
     await put(request, dana, 'personal', 'm:learn', true)
-    expect(await turn(request, 'memory-reword-person')).toBe(MEMORY_REWORD_CHANGED_ANSWER)
+    expect(await turn(request, 'memory-save-reword-person')).toBe(MEMORY_REWORD_CHANGED_ANSWER)
     expect(factRow(MEMORY_REWORD_PERSON_ID)).toMatchObject({ status: 'active', text: MEMORY_REWORD_PERSON_TEXT })
   } finally {
     await reset(request)
@@ -220,11 +220,11 @@ test('`m:ask` off: a person\'s agent\'s team reword is active at once; a routine
   await reset(request)
   const danaId = (await me(request, dana)).memberId as string
   const old = 'E2E toggles team fact: we restock on Fridays.'
-  const id = seedRoutine({ creatorId: danaId, hour: 6, minute: 0, instruction: 'scenario:memory-reword-team Change that team fact.', need: 0 })
+  const id = seedRoutine({ creatorId: danaId, hour: 6, minute: 0, instruction: 'scenario:memory-save-reword-team Change that team fact.', need: 0 })
   try {
     await put(request, admin, 'brand', 'm:ask', false)
     seedFact(MEMORY_REWORD_TEAM_ID, 'brand', null, old, danaId)
-    await turn(request, 'memory-reword-team')
+    await turn(request, 'memory-save-reword-team')
     expect(factRow(MEMORY_REWORD_TEAM_ID), 'a person\'s agent\'s reword is active with the switch off').toEqual({ status: 'active', rev: 2, text: MEMORY_REWORD_TEAM_TEXT })
 
     seedFact(MEMORY_REWORD_TEAM_ID, 'brand', null, old, danaId)

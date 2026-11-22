@@ -117,7 +117,7 @@ test('an Admin approves at the right ifRev: the fact is active at rev + 1, on th
   expect(await teamKeys(dana)).toContain(ids.w3)
   expect((await waiting()).facts.map(f => f.key)).not.toContain(ids.w3)
   const line = expectOneLine(mark, 'memory.approved', adminId, [T.w3])
-  expect(JSON.parse(line.args_json)).toEqual({ action: 'memory.approved', memoryId: ids.w3, rev: 1 })
+  expect(JSON.parse(line.args_json)).toEqual({ memoryId: ids.w3, rev: 1 })
   expect([line.target_kind, line.target_id]).toEqual(['memory', ids.w3])
 })
 
@@ -131,7 +131,7 @@ test('an Admin rejects at the right ifRev: the fact is forgotten at rev + 1, on 
   for (const who of [dana, admin]) expect(await teamKeys(who)).not.toContain(ids.w4)
   expect((await waiting()).facts.map(f => f.key)).not.toContain(ids.w4)
   const line = expectOneLine(mark, 'memory.rejected', adminId, [T.w4])
-  expect(JSON.parse(line.args_json)).toEqual({ action: 'memory.rejected', memoryId: ids.w4, rev: 1 })
+  expect(JSON.parse(line.args_json)).toEqual({ memoryId: ids.w4, rev: 1 })
   // Route 45's undo: waits again (an admin's OK), never active.
   const undo = await call(request, admin, 'PUT', `/api/memory/brand/${ids.w4}/forgotten`, { json: { forgotten: false, ifRev: 2 } })
   expect(undo.status, undo.text).toBe(200)
@@ -195,13 +195,13 @@ test('the Inhouse team is refused without a grant, and under one reads the list 
     expect(lines.map(l => l.action).sort()).toEqual(['memory.approved', 'support.access', 'support.access'])
     const access = lines.filter(l => l.action === 'support.access').map(l => JSON.parse(l.args_json))
     expect(access).toEqual([
-      { action: 'support.access', grantId: grant.json.id, method: 'GET', route: '/api/memory/waiting' },
-      { action: 'support.access', grantId: grant.json.id, method: 'PUT', route: '/api/memory/brand/:id/approved' },
+      { grantId: grant.json.id, method: 'GET', route: '/api/memory/waiting' },
+      { grantId: grant.json.id, method: 'PUT', route: '/api/memory/brand/:id/approved' },
     ])
     const decided = lines.find(l => l.action === 'memory.approved')!
     expect(decided.actor_id, 'the Inhouse team\'s own member id').toBe((await me(request, inhouse)).memberId)
     expect([decided.target_kind, decided.target_id]).toEqual(['memory', ids.w5])
-    expect(JSON.parse(decided.args_json)).toEqual({ action: 'memory.approved', memoryId: ids.w5, rev: 1 })
+    expect(JSON.parse(decided.args_json)).toEqual({ memoryId: ids.w5, rev: 1 })
     expect(decided.args_json).not.toContain(T.w5)
   } finally {
     await endLiveGrants(request)
@@ -219,7 +219,7 @@ test('an agent\'s reword sends an approved team fact back to waiting; approving 
   writeSql('DELETE FROM memories WHERE id = ?', MEMORY_REWORD_TEAM_ID)
   seed(MEMORY_REWORD_TEAM_ID, 'brand', null, old, 'active', danaId, Date.now() - 500)
   const chat = await createChat(request, dana)
-  const sent = await send(request, dana, chat, 'scenario:memory-reword-team we restock on Thursdays now')
+  const sent = await send(request, dana, chat, 'scenario:memory-save-reword-team we restock on Thursdays now')
   await answerOf(request, dana, chat, sent.turnId, 150_000)
   expect(row(MEMORY_REWORD_TEAM_ID)).toEqual({ status: 'waiting', rev: 2, text: MEMORY_REWORD_TEAM_TEXT })
   expect(await teamKeys(dana), 'the reworded fact leaves the page until an admin approves').not.toContain(MEMORY_REWORD_TEAM_ID)

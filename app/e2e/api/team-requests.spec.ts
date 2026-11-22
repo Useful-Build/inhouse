@@ -218,7 +218,7 @@ test('each write leaves one audit line with the id and the kind or status, never
   const r = await create(request, dana, { kind: 'change', subject, text })
   expect(r.status, r.text).toBe(201)
   const line = expectOneLine(mark, 'team_request.created', danaId, [text, subject])
-  expect(JSON.parse(line.args_json)).toEqual({ action: 'team_request.created', requestId: r.json.id, kind: 'change' })
+  expect(JSON.parse(line.args_json)).toEqual({ requestId: r.json.id, kind: 'change' })
   expect([line.target_kind, line.target_id]).toEqual(['team_request', r.json.id])
 
   // Refused writes: no line.
@@ -234,13 +234,13 @@ test('each write leaves one audit line with the id and the kind or status, never
   expect((await setStatus(request, inhouse, r.json.id, 'done', 1)).status).toBe(200)
   const inhouseId = (await me(request, inhouse)).memberId as string
   const done = expectOneLine(mark, 'team_request.status', inhouseId, [text])
-  expect(JSON.parse(done.args_json)).toEqual({ action: 'team_request.status', requestId: r.json.id, status: 'done' })
+  expect(JSON.parse(done.args_json)).toEqual({ requestId: r.json.id, status: 'done' })
 
   const w = await made(request, admin, { text: words('admin withdraws') })
   mark = auditMax()
   expect((await withdraw(request, admin, w.id, 1)).status).toBe(200)
   const line2 = expectOneLine(mark, 'team_request.status', adminId, [w.text])
-  expect(JSON.parse(line2.args_json)).toEqual({ action: 'team_request.status', requestId: w.id, status: 'withdrawn' })
+  expect(JSON.parse(line2.args_json)).toEqual({ requestId: w.id, status: 'withdrawn' })
 })
 
 test('at most 50 requests are open for the brand: the 51st is refused, and room comes back when one closes', async ({ request }) => {
