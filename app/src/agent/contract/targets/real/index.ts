@@ -3,9 +3,11 @@
 // per resource group beside this one holds what is particular to it (me.ts signs in, members.ts resets the team, ...).
 //
 // It serves the P2 methods and P5's connector methods (connectors.ts: the Tools write requests go to the Inhouse origin as
-// the Inhouse member from this one client, and Slack is put in the state each case reads before the call). Its client is the product's `HttpAgent` with two additions a browser doesn't need: the
-// test issuer's sign-in header and an `Origin` on every request (Node sends neither by itself), and a clock the suite can
-// move on (`advance`), which only the client's own notion of "now" follows (a grant stops being live at its end).
+// the Inhouse member from this one client, and Slack is put in the state each case reads before the call).
+//
+// Its client is the product's `HttpAgent` with two additions a browser doesn't need: the test issuer's sign-in header and
+// an `Origin` on every request (Node sends neither by itself), and a clock the suite can move on (`advance`), which only
+// the client's own notion of "now" follows (a grant stops being live at its end).
 import { settingRow } from '../../../../../shared/contract/settings-table'
 import { HttpAgent } from '../../../http/client'
 import type { AgentClient, AgentErrorCode, ResourceKey } from '../../../types'
@@ -110,11 +112,14 @@ function realTarget(origin: string): ContractTarget {
       // A connector method: Slack put in the state its case reads first. When the world is already in it, the call goes out
       // at once, so its change shows before the write settles, as the shared cases check.
       const needs = world.needs(prop)
-      const call = !connector || needs === null || needs === slack ? method : async (...args: unknown[]): Promise<unknown> => {
+      const ready = !connector || needs === null || needs === slack ? method : async (...args: unknown[]): Promise<unknown> => {
         await world.prepare(prop)
         slack = needs
         return method(...args)
       }
+      // A case's own connect or disconnect that went through may have moved Slack: its state is unknown until the next prepare.
+      const call = prop !== 'connectTool' && prop !== 'disconnectTool' ? ready : (...args: unknown[]) =>
+        (ready(...args) as Promise<unknown>).then(v => { slack = 'unknown'; return v })
       if (!WRITES.has(prop)) return call
       return (...args: unknown[]) => {
         const code = armedErrors.get(prop)
@@ -194,6 +199,8 @@ function realTarget(origin: string): ContractTarget {
       await resetTeam(s)
       await endLiveGrant(s)
       await resetSettings(s)
+      // Unknown until the world's reset is through: one that throws leaves no stale state behind.
+      slack = 'unknown'
       await world.reset()
       slack = 'disconnected'
       this.fixtures.personId = seeded.admin

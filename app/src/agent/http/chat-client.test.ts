@@ -182,6 +182,15 @@ describe('rename, pin, delete and restore', () => {
     expect(agent.getSnapshot()).toBe(before)
   })
 
+  test('a refused delete or restore hands back the identical snapshot (chatDeleted)', async () => {
+    const { agent } = await loaded({ ...reads({ chats: two }), 'POST /api/chats/delete': refusal(503, 'unavailable'), 'POST /api/chats/restore': refusal(403, 'forbidden') })
+    const before = agent.getSnapshot()
+    await errorOf(agent.deleteChats(['c1']))
+    expect(agent.getSnapshot()).toBe(before)
+    await errorOf(agent.restoreChats(['c2']))
+    expect(agent.getSnapshot()).toBe(before)
+  })
+
   test('a chat that isn\'t there is refused locally', async () => {
     const { agent } = await loaded(reads())
     expect(await errorOf(agent.renameChat('nope', 'x'))).toMatchObject({ code: 'not_found' })
