@@ -15,7 +15,7 @@ import { describe, expect, vi } from 'vitest'
 import { HttpAgent } from '../agent/http/client'
 import { SCENARIOS, STAGES, stageIndex } from '../agent/types'
 import type { AgentData, Instant, Scenario, Stage, StageIndex, ToolDetail, ToolsData } from '../agent/types'
-import { flags, goingLive, isFirstDay, pendingIds, setupRows, todayCopy, toolState, toolView } from './derive'
+import { flags, goingLive, isFirstDay, noToolsYet, pendingIds, setupRows, todayCopy, toolState, toolView } from './derive'
 import type { Ctx } from './derive'
 import { fmtWeekday } from '../lib/format'
 import { display } from './display'
@@ -135,6 +135,7 @@ describe('day one with nothing connected: only a brand the server holds nothing 
   })
 
   test('a routine has run, even a failed run: not day one, so the failed-check card can show', () => {
+    // The real shape of a failed run: `last` is present, with the result "didn't finish" (GET /api/routines in the sandbox run).
     for (const result of ['found 1 thing', "didn't finish"]) {
       const ctx = ctxOf(withData({ routines: [routine({ result })], problems: [card('p_check_failed')] }))
       expect(flags(ctx).isFirst, result).toBe(false)
@@ -148,6 +149,21 @@ describe('day one with nothing connected: only a brand the server holds nothing 
     const ran = withData({ routines: [routine({ result: "didn't finish" })] })
     expect(goingLive(ctxOf(ran))).not.toBeNull()
     expect(goingLive(ctxOf(withData({})))).toBeNull()
+  })
+
+  test('with cards but no connected list the stage-0 line names no tools and has no empty list or double space', () => {
+    const ctx = ctxOf(withData({ problems: [card('p1')], routines: [routine({ result: 'found 1 thing' })] }), 0)
+    const { headSub } = todayCopy(ctx)
+    expect(headSub).toBe('Your Inhouse agent checked this morning and changed nothing.')
+    expect(headSub).not.toMatch(/ {2}|read\s+and/)
+  })
+
+  test('screens may claim "no tools connected" on day one only, not when the server holds Today data', () => {
+    expect(noToolsYet(withData({}))).toBe(true)
+    expect(noToolsYet(withData({ status: 'loading' }))).toBe(true)
+    expect(noToolsYet(withData({ problems: [card('p1')] }))).toBe(false)
+    expect(noToolsYet(withData({ routines: [routine({ result: "didn't finish" })] }))).toBe(false)
+    expect(noToolsYet(afterFirstTool())).toBe(false)
   })
 
   test.prop([fc.constantFrom<AgentData['status']>('loading', 'ready'), fc.subarray(['store', 'ads']), fc.boolean(), fc.constantFrom<'never' | 'ok' | 'failed'>('never', 'ok', 'failed')])(
