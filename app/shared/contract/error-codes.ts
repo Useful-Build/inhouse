@@ -21,6 +21,15 @@ export const REASON = {
   // P5 (p5-w3): the Tools routes' refusals.
   notConfigured: 'not_configured', notDisconnectable: 'not_disconnectable', notConnected: 'not_connected',
 } as const satisfies Record<string, ErrorReason>
+/**
+ * P5 (p5-w4): the notice channel list's refusals. Kept apart from REASON because a bundler keeps a used object literal
+ * whole: keys added to REASON would ride in Today's first load (some 0.1 KB gzipped), while this export is read only by
+ * the Settings page and the demo's lazily loaded channel list. Most of #275's bundle saving is the dynamic imports.
+ */
+export const NOTIFY_REASON = {
+  sharedChannel: 'shared_channel', archived: 'archived', notPublic: 'not_public', notMember: 'not_member', channelNotFound: 'not_found',
+  nameTaken: 'name_taken', slackNotConnected: 'slack_not_connected',
+} as const satisfies Record<string, ErrorReason>
 /** Why the runner didn't save a file the agent made (the `file.refused` event), as the chat names them. */
 export const FILE_REFUSAL = {
   tooLarge: 'too_large', tooMany: 'too_many', typeNotAllowed: 'type_not_allowed', saveFailed: 'save_failed', badName: 'bad_name',

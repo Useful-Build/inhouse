@@ -56,8 +56,8 @@ export async function availableNotifyChannels(c: NotifyRouteCtx): Promise<Respon
 }
 
 /**
- * Route H, `PUT /api/notify/channels`: `{ channelIds, alertsChannelId?, ifRev }`. Each channel is re-checked at Slack
- * and its name re-read; a refused channel answers `conflict` with its reason and the channel id; a lowercase name two
+ * Route H, `PUT /api/notify/channels`: `{ channelIds, alertsChannelId?, ifRev }`. Each ADDED channel is checked at Slack
+ * and its name read (kept ones keep theirs: every post re-checks the channel); a refused channel answers `conflict` with its reason and the channel id; a lowercase name two
  * channels would share answers `conflict` `name_taken`; a stale `ifRev` answers `conflict` with the current list (no reason).
  */
 export async function putNotifyChannels(c: NotifyRouteCtx): Promise<Response> {
@@ -68,8 +68,24 @@ export async function putNotifyChannels(c: NotifyRouteCtx): Promise<Response> {
   const current = await store.list()
   if (current.rev !== body.ok.ifRev) return apiError('conflict', { current })
   const ids = [...new Set(body.ok.channelIds)]
+  // An ADDED channel must pass Slack's check here. A kept one is asked too, best effort, only for a fresh name (B2,
+  // review rounds 1 and 2): any hub error keeps the stored name and still saves, and its refusal flags are ignored
+  // (every post re-checks the channel), so removing a channel or moving the alerts mark saves while Slack is paused.
+  const listed = new Map(current.channels.map(ch => [ch.channelId, ch]))
   const checked: { channelId: string; name: string }[] = []
   for (const channelId of ids) {
+    const kept = listed.get(channelId)
+    if (kept) {
+      let name = kept.name
+      try {
+        const r = await gateway(c).checkChannel(scope(c), { accountId: SLACK, channelId })
+        if (r.ok) name = r.value.name
+      } catch {
+        // Best effort: the stored name stays.
+      }
+      checked.push({ channelId, name })
+      continue
+    }
     let r: Awaited<ReturnType<ChannelsBinding['checkChannel']>>
     try {
       r = await gateway(c).checkChannel(scope(c), { accountId: SLACK, channelId })

@@ -251,6 +251,12 @@ Settings: Members and approvers
   Expected: removing Admin asks first; a demoted approver stays on rules that name them with a tag; a wrong cap shows why and isn't saved
   Covered:  e2e/page-details.spec.ts, e2e/edge-cases.spec.ts, e2e/cross-screen.spec.ts
 
+Settings: Slack notices
+  Path:     Settings -> Slack notices
+  Selector: channel rows "#<name>" with Remove, dropdowns "Add a channel" and "Alerts channel", rows "Before the Act stage", "While Slack is paused", "Who can read them"
+  Expected: an Admin or the Inhouse team adds a public channel the connected Slack account is in, removes one (asks first) and picks one alerts channel; shared and non-member channels aren't offered; a Member reads the list and the rules only; while Slack isn't connected or is paused the picker says so with Try again; a stale save shows the latest list. The demo keeps the list until a reload
+  Covered:  src/screens/settings/slack-page.test.ts, src/agent/http/notifications.test.ts, server/notify-slack/routes.test.ts (no e2e spec yet)
+
 Settings: Stage and plan
   Path:     Settings -> Stage and plan
   Selector: rows "Current stage" and "Next stage", button "Book a check-in"

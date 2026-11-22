@@ -12,6 +12,7 @@ import type { AgentNotice, AgentNotification } from '../../shared/contract/notic
 import type { AgentData } from '../../shared/contract/data'
 import type { ErrorReason, ResourceKey } from '../../shared/contract/common'
 import type { Me } from '../../shared/contract/me'
+import type { AvailableChannels, NotifyChannelList, PutNotifyChannels } from '../../shared/contract/notify-slack'
 import type { InviteInput, MemberRole } from '../../shared/contract/members'
 import type { CreateChatInput, SendPriority } from '../../shared/contract/requests'
 import type { ActiveRun, SendTurnResult } from '../../shared/contract/runs'
@@ -22,6 +23,7 @@ import type { RunFrame } from '../../shared/contract/run-event'
 export type { Stage, StageIndex, Scenario, Effort, AgentErrorCode, ErrorReason, ResourceKey, ResourceStatus, Instant, Money, ClockTime, Prose } from '../../shared/contract/common'
 export type { AgentMeta } from '../../shared/contract/meta'
 export type { ProblemSource, ProblemFact, Draft, DraftItem, Problem } from '../../shared/contract/problem'
+export type { AvailableChannel, AvailableChannels, NotifyChannel, NotifyChannelList, PutNotifyChannels } from '../../shared/contract/notify-slack'
 export type { ToolDetail, CatalogTool, ToolChannel, ToolSetup, ToolsData } from '../../shared/contract/tools'
 export type { RoutineDef, RoutineRun } from '../../shared/contract/routine'
 export type { SkillDef, SkillSuggestion } from '../../shared/contract/skill'
@@ -228,6 +230,14 @@ export interface AgentClient {
   disconnect(): void
   /** Where signing out goes (`/cdn-cgi/access/logout` in the product), or null where there is no sign-in (the demo). */
   signOutUrl(): string | null
+
+  // ---------- P5 (p5-w4): the Slack channels listed for notices (Settings, Slack notices) ----------
+  /** The listed channels, the alerts mark and the list's `rev`. */
+  listNotifyChannels(): Promise<NotifyChannelList>
+  /** One page of the public Slack channels the connected account can list; a shared or non-member one comes `disabled`. Rejects with `unavailable` (its reason says Slack isn't connected) while Slack is paused, needs a reconnect or isn't connected. Admins and the Inhouse team only. */
+  availableNotifyChannels(cursor?: string): Promise<AvailableChannels>
+  /** Saves the whole list. Rejects with `conflict` and a reason (REASON's notice channel list in shared/contract/error-codes.ts) for a channel Slack refuses, or with the current list as `current` for a stale `ifRev`. */
+  saveNotifyChannels(input: PutNotifyChannels): Promise<NotifyChannelList>
 }
 
 /** The longest chat title a person can set. Longer titles are cut. */

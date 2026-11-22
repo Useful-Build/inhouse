@@ -1018,6 +1018,35 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       checkWorld('after connect and a refused disconnect')
     })
 
+    // P5 (p5-w4): the Slack notice channels. The shared shape: a list with a rev, a picker page, a save that answers the
+    // new list at rev + 1, and every refusal an AgentError (a body the schema refuses is `invalid`, never a raw error).
+    only('listNotifyChannels', 'availableNotifyChannels', 'saveNotifyChannels')('the Slack notice channel list: read, pick, save, refuse', async () => {
+      const c = t.client
+      const start = await c.listNotifyChannels()
+      expect(Number.isInteger(start.rev)).toBe(true)
+      const page = await c.availableNotifyChannels()
+      const open = page.channels.filter(ch => !ch.disabled)
+      const blocked = page.channels.find(ch => ch.disabled)
+      expect(open.length).toBeGreaterThan(0)
+      const saved = await c.saveNotifyChannels({ channelIds: [open[0]!.channelId], alertsChannelId: open[0]!.channelId, ifRev: start.rev })
+      expect(saved).toEqual({ rev: start.rev + 1, channels: [{ channelId: open[0]!.channelId, name: open[0]!.name, alerts: true }] })
+      const stale = await c.saveNotifyChannels({ channelIds: [], ifRev: start.rev }).then(() => null, (e: unknown) => e)
+      expect(stale).toBeInstanceOf(AgentError)
+      expect(stale).toMatchObject({ code: 'conflict', current: { rev: saved.rev } })
+      if (blocked) {
+        const refused = await c.saveNotifyChannels({ channelIds: [blocked.channelId], ifRev: saved.rev }).then(() => null, (e: unknown) => e)
+        expect(refused).toMatchObject({ code: 'conflict', reason: blocked.disabled })
+      }
+      const outside = await c.saveNotifyChannels({ channelIds: [open[0]!.channelId], alertsChannelId: 'C9NOTLISTED', ifRev: saved.rev }).then(() => null, (e: unknown) => e)
+      expect(outside).toBeInstanceOf(AgentError)
+      expect(outside).toMatchObject({ code: 'invalid' })
+      const many = await c.saveNotifyChannels({ channelIds: Array.from({ length: 51 }, (_, i) => `C1TEST${String(i).padStart(4, '0')}`), ifRev: saved.rev }).then(() => null, (e: unknown) => e)
+      expect(many).toMatchObject({ code: 'invalid' })
+      expect(await c.listNotifyChannels()).toEqual(saved)
+      // Put it back for the tests after this one.
+      await c.saveNotifyChannels({ channelIds: [], ifRev: saved.rev })
+    })
+
     only('setToggle', 'setSetting', 'setPhoto')('toggles, settings and photos', async () => {
       const c = t.client
       await c.setToggle(fx.toggleKey, false)

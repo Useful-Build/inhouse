@@ -26,6 +26,7 @@ const WRITES: ReadonlySet<string> = new Set<WriteMethod>([
   'approve', 'undo', 'editDraft', 'undoHandled', 'redoHandled', 'createChat', 'pause', 'resume', 'setToggle', 'requestTool', 'requestSkill', 'setToolPaused', 'connectTool', 'disconnectTool',
   'forgetMemory', 'setSetting', 'setPhoto', 'sendTeamRequest', 'markNoticesRead', 'deleteFiles', 'restoreFiles', 'setAside', 'runRoutine', 'deleteRoutine',
   'restoreRoutine', 'renameChat', 'pinChat', 'deleteChats', 'restoreChats', 'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant',
+  'saveNotifyChannels',
 ])
 
 /** The route a served write method's call sends to: its verbs and the exact path (the key or the id in it too), from the call's arguments. */

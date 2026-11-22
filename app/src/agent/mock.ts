@@ -25,6 +25,7 @@ import type { SupportGrant } from '../../shared/contract/grants'
 import { CAN_KEYS, GRANT_HOURS, RESOURCE_KEYS } from '../../shared/contract/keys'
 import type { Can } from '../../shared/contract/me'
 import type { InviteInput } from '../../shared/contract/members'
+import type { AvailableChannels, NotifyChannelList, PutNotifyChannels } from '../../shared/contract/notify-slack'
 import { MEMBER_ID_PATTERN, meetsRule, settingRow } from '../../shared/contract/settings-table'
 import { pendingIds, visibleProblems } from '../state/derive'
 
@@ -1224,6 +1225,12 @@ export class MockAgent implements AgentClient {
   /** The demo has no stored files: every id answers a small sample, named by the chip that asked. */
   downloadFile = (): Promise<{ blob: Blob; name: string | null }> => Promise.resolve({ blob: new Blob(['A sample file from the demo.\n'], { type: 'text/plain' }), name: null })
   signOutUrl = (): string | null => null
+
+  // ---------- P5 (p5-w4): the Slack channels listed for notices ----------
+  // The demo's list lives in ./mock-notify, loaded on first use, so none of it weighs on Today's first load.
+  listNotifyChannels = (): Promise<NotifyChannelList> => import('./mock-notify').then(m => m.demoNotify.list())
+  availableNotifyChannels = (): Promise<AvailableChannels> => import('./mock-notify').then(m => m.demoNotify.available())
+  saveNotifyChannels = (input: PutNotifyChannels): Promise<NotifyChannelList> => import('./mock-notify').then(m => m.demoNotify.save(input))
   disconnect = (): void => undefined
 
   // ----- traces -----

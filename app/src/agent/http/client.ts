@@ -26,6 +26,7 @@ import { ChatSocket } from './stream/socket'
 import type { SocketLike, SocketParts } from './stream/socket'
 import { postToolConnect, postToolDisconnect, putToolPaused, readTools } from './tools'
 import { readUsage, readUsageMonths } from './usage'
+import type { AvailableChannels, NotifyChannelList, PutNotifyChannels } from '../../../shared/contract/notify-slack'
 import { MESSAGE, Transport } from './transport'
 import type { Contract, TransportOptions } from './transport'
 
@@ -911,6 +912,22 @@ export class HttpAgent implements AgentClient {
   /** Where the audit log downloads from. A relative path: the browser sends it to its own origin, with its sign-in. */
   auditExportUrl = (): string | null => '/api/audit/export.csv'
   signOutUrl = (): string | null => '/cdn-cgi/access/logout'
+
+  // P5 (p5-w4): the Slack notice channels, routes 73 to 75. The Settings page holds the list; a refusal rejects as it came.
+  // ./notifications loads on first use (the Settings page), as ./files does, so Today's first load doesn't carry it.
+  listNotifyChannels = async (): Promise<NotifyChannelList> => (await import('./notifications')).readNotifyChannels(this.http)
+  availableNotifyChannels = async (cursor?: string): Promise<AvailableChannels> => (await import('./notifications')).readAvailableChannels(this.http, cursor)
+  saveNotifyChannels = async (input: PutNotifyChannels): Promise<NotifyChannelList> => {
+    const k = this.k ?? await this.http.contract()
+    try {
+      return await (await import('./notifications')).putNotifyChannels(this.http, k, input)
+    } catch (e) {
+      // A stale save's `current` is passed on only when it is a channel list; else the page reads the list again.
+      if (!(e instanceof AgentError) || e.code !== 'conflict' || e.reason || !e.current) throw e
+      const current = k.ANSWERS.notifyChannels.safeParse(e.current)
+      throw new AgentError('conflict', e.message, current.success ? { current: current.data } : {})
+    }
+  }
   uploadsFiles = (): boolean => true
   /** Route 39, after the chat's own save (`createChat`) has answered: the route is a 404 for a chat the server doesn't have yet. */
   uploadFile = async (chatId: string, file: File, signal?: AbortSignal): Promise<{ fileId: string; name: string }> => {

@@ -1,4 +1,5 @@
 // Settings content. Pure data: the screen renders it.
+import type { AvailableChannel, NotifyChannelList } from '../../agent/types'
 import type { AgentData, AgentState, AuditLine, CanKey, Me, MemberRecord, MemberRole, MemoryLine, Money, StageIndex } from '../../agent/types'
 import { STAGE_TAGS, channelFrom, listNames } from '../../state/derive'
 import { EFFORTS, defaultModeId, modeEffortKey, modeOnKey, thinkingModes } from '../../state/derive'
@@ -58,7 +59,7 @@ export interface Row {
   /** The `me().can` key the row's control needs. Without it the control follows the setting's scope (brand or technical). Not allowed: it shows as text. */
   can?: CanKey
   /** A Remove button beside the control: the question that names the person, and what confirming does. */
-  remove?: { label: string; title: string; text: string; action: string; go: () => void }
+  remove?: { label: string; title: string; text: string; action: string; go: () => void; /** The `me().can` key Remove needs (P5 W4); without it, `remove` (a member's removal). */ can?: CanKey }
 }
 
 export type FieldType = 'money' | 'email' | 'hosts'
@@ -99,7 +100,8 @@ const themeFromLabel = (label: string) => (Object.keys(THEME_LABELS) as Theme[])
 const ROLE_NAMES = { admin: 'Admin', member: 'Member', inhouse: 'Inhouse team' } as const
 const RETENTION = ['3 months', '6 months', '12 months', '24 months', 'Until deleted']
 
-export { MENU } from './menu'
+export { MENU, hasSlack, menuFor } from './menu'
+import { hasSlack } from './menu'
 
 export interface Env {
   S: StageIndex
@@ -143,6 +145,78 @@ export interface Env {
   loadMore: (list: 'audit' | 'members') => void
   /** Downloads the audit log from where the client says (`auditExportUrl()`), or null when the file is built here. */
   exportFromServer: (() => void) | null
+  /** P5 W4: the Slack channels listed for notices (Settings.tsx reads them while the page is open). */
+  notify: NotifyView
+}
+
+/** The Slack notices page's data and its writes. Every write sends the whole list with the rev it was read at. */
+export interface NotifyView {
+  status: 'idle' | 'loading' | 'ready' | 'error'
+  list: NotifyChannelList | null
+  /** What the connected Slack account can list (Admins and the Inhouse team); null while unread or unreadable. */
+  available: AvailableChannel[] | null
+  /** Why the picker isn't offered: Slack isn't connected (or is paused or needs a reconnect), or it couldn't be reached. */
+  pickerError: 'disconnected' | 'unavailable' | null
+  /** The picker's channels are being read. */
+  pickerLoading: boolean
+  /** The picker stopped at its page limit (2,000 channels). */
+  truncated: boolean
+  /** Whether this person may change the list: an Admin or the Inhouse team. */
+  canEdit: boolean
+  busy: boolean
+  add: (channelId: string) => void
+  remove: (channelId: string) => void
+  setAlerts: (channelId: string | null) => void
+  retry: () => void
+}
+
+/** The Slack notices page (P5 W4, p5-w4.md section 10). */
+function slackPage(nv: NotifyView): Page {
+  const listed = nv.list?.channels ?? []
+  const rules: Section = { label: 'How notices work', rows: [
+    R('Before the Act stage', 'Slack posts start at Act. Until then alerts reach the bell in the app.', 'value'),
+    R('While Slack is paused', 'Alerts pause while Slack is paused or needs a reconnect.', 'value'),
+    R('Who can read them', 'Anyone in a listed channel can read these alerts, guests included.', 'value'),
+  ] }
+  if (nv.status !== 'ready') {
+    return { title: 'Slack notices', sections: [
+      { label: 'Channels', rows: nv.status === 'error' ? [R("Couldn't load the channels", 'Check your connection and try again.', 'button', 'Try again', 0, undefined, undefined, nv.retry)] : [], empty: nv.status === 'error' ? undefined : 'Loading the channels.' },
+      rules,
+    ] }
+  }
+  const channelRows = listed.map((c): Row => ({
+    ...R(`#${c.name}`, c.alerts ? 'The alerts channel. Approvals, questions and problems post here too.' : 'Your Inhouse agent can post notices here.', 'value'),
+    ...(nv.canEdit ? { remove: { label: `Remove #${c.name}`, title: `Remove #${c.name}?`, text: 'Your Inhouse agent stops posting there. Notices already posted stay in Slack.', action: 'Remove', go: () => nv.remove(c.channelId), can: 'editBrandSettings' as const } } : {}),
+  }))
+  const editRows: Row[] = []
+  if (nv.canEdit) {
+    if (nv.pickerError) {
+      editRows.push({ ...R('Add a channel', nv.pickerError === 'disconnected' ? "Slack isn't connected, or it's paused or needs a reconnect on the Tools page." : "Slack couldn't be reached. Try again in a moment.", 'button', 'Try again', 0, undefined, undefined, nv.retry), busy: nv.pickerLoading })
+    } else if (nv.pickerLoading && !nv.available) {
+      editRows.push({ ...R('Add a channel', 'Reading the channels from Slack.', 'button', 'Loading'), busy: true })
+    } else if (nv.available) {
+      const open = nv.available.filter(a => !a.disabled && !listed.some(l => l.channelId === a.channelId))
+      const blocked = nv.available.some(a => a.disabled)
+      editRows.push({
+        ...SEL('Add a channel', [blocked ? "Channels shared with another company, and ones the connected Slack account isn't in, can't be added." : 'Public channels in your Slack.', nv.truncated ? 'Showing the first 2,000 channels.' : ''].filter(Boolean).join(' '), 'nc:add', '', open.map(a => `#${a.name}`)),
+        display: open.length > 0 ? 'Choose a channel' : 'None to add', busy: nv.busy, can: 'editBrandSettings', keywords: 'slack channel add list',
+        save: v => { const a = open.find(x => `#${x.name}` === v); if (a) nv.add(a.channelId) },
+      })
+    }
+    if (listed.length > 0) {
+      const current = listed.find(c => c.alerts)
+      editRows.push({
+        ...SEL('Alerts channel', 'Where approvals, questions and problems are posted.', 'nc:alerts', current ? `#${current.name}` : 'None', ['None', ...listed.map(c => `#${c.name}`)]),
+        can: 'editBrandSettings', keywords: 'slack alerts approvals',
+        save: v => nv.setAlerts(v === 'None' ? null : listed.find(c => `#${c.name}` === v)?.channelId ?? null),
+      })
+    }
+  }
+  return { title: 'Slack notices', sections: [
+    { label: 'Channels', rows: channelRows, empty: channelRows.length === 0 ? 'No channels yet. Your Inhouse agent posts only to channels listed here.' : undefined },
+    { label: '', rows: editRows },
+    rules,
+  ] }
 }
 
 const withAvatar = (row: Row, who: string, at: 'row' | 'control' = 'row'): Row => ({ ...row, avatar: { who, at } })
@@ -301,5 +375,7 @@ export function settingsPage(tab: string, env: Env): Page {
       }), can: 'exportAudit' }] },
     ] },
   }
+  // P5 W4: built only when it's asked for, from what Settings.tsx read.
+  if (tab === 'team-slack' && hasSlack(data.tools)) return slackPage(env.notify)
   return Object.hasOwn(pages, tab) ? pages[tab] : pages['you-general']
 }
