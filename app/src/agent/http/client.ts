@@ -11,7 +11,7 @@ import { meetsRule, settingRow } from '../../../shared/contract/settings-table'
 import { AgentError, CHAT_TITLE_MAX } from '../types'
 import type {
   ActivityLine, AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, AuditLine, LinkState, ErrorReason, Instant, LibraryFile, Me,
-  MemberRecord, MemoryData, MemoryLine, ModelMode, WaitingMemory, PauseState, RefreshList, ResourceKey, ResourceStatus, RoutineDef, RoutineRun, SupportGrant, Trace, UsageData,
+  MemberRecord, MemoryData, MemoryLine, ModelMode, WaitingMemory, PauseState, RefreshList, ResourceKey, ResourceStatus, RoutineDef, RoutineRun, SkillDef, SupportGrant, Trace, UsageData,
 } from '../types'
 import type { ChatSummary } from '../../../shared/contract/chats'
 import type { Problem } from '../../../shared/contract/problem'
@@ -24,6 +24,7 @@ import { postNoticesRead, readNotifications } from './bell'
 import { PLACES, libraryDownloadPath, postLibraryWrite, readLibrary, uploadLibraryFile } from './library'
 import { putAside, readToday } from './today'
 import { newRunKey, postRoutineRev, postRoutineRun, readRoutines, setRoutineToggle } from './routines'
+import { readSkills } from './skills'
 import { findMemoryLine, forgetMemoryLine, readMemory, readWaitingMemory, reviewLanded, reviewMemoryLine } from './memory'
 import { listedModels, readModels } from './models'
 import type { ServedModels } from './models'
@@ -38,8 +39,8 @@ import type { Contract, TransportOptions } from './transport'
 const UNAVAILABLE = 'Not connected yet.'
 
 /** The resources this client reads. Every other key has nothing to read until its phase, so it reads as ready and empty. */
-type Loaded = 'meta' | 'members' | 'grants' | 'audit' | 'memory' | 'usage' | 'models' | 'chat' | 'activity' | 'notifications' | 'library' | 'routines' | 'problems'
-const LOADED: readonly ResourceKey[] = ['meta', 'members', 'grants', 'audit', 'memory', 'usage', 'models', 'chat', 'activity', 'notifications', 'library', 'routines', 'problems'] satisfies readonly Loaded[]
+type Loaded = 'meta' | 'members' | 'grants' | 'audit' | 'memory' | 'usage' | 'models' | 'chat' | 'activity' | 'notifications' | 'library' | 'routines' | 'skills' | 'problems'
+const LOADED: readonly ResourceKey[] = ['meta', 'members', 'grants', 'audit', 'memory', 'usage', 'models', 'chat', 'activity', 'notifications', 'library', 'routines', 'skills', 'problems'] satisfies readonly Loaded[]
 /** The lists the agent's work fills: read again when their page opens and when a run ends. */
 const REFRESH_LISTS: readonly RefreshList[] = ['library', 'problems', 'activity', 'notifications']
 
@@ -159,6 +160,8 @@ interface Slices {
   /** Route 52: the routines (each one's switch is the `r:<id>` toggle in `state`), and the deleted ones (Undo restores them by their rev). */
   routines: RoutineDef[]
   routinesGone: RoutineDef[]
+  /** Route 79: the skills the agent has (P6a W3). */
+  skills: SkillDef[]
   /** Route 57: Today's cards (set aside ones left out), the records of every card of the shown run (their `rev` is what the next set-aside sends), and the cards this client set aside (out of `problems` until put back). */
   problems: Problem[]
   aside: Record<string, TodayAside>
@@ -192,7 +195,7 @@ export class HttpAgent implements AgentClient {
   private readonly now: () => number
   private s: Slices = {
     me: null, members: [], membersNext: null, audit: [], auditNext: null, grant: null, memory: EMPTY_DATA.memory, chats: [], chatsNext: null, served: null, modelList: [],
-    usage: null, usageMonths: [], pause: { paused: false, at: null, by: null }, activity: [], notifications: [], files: NO_FILES, gone: {}, routines: [], routinesGone: [], problems: [], aside: {}, asideStash: {}, revs: {}, state: EMPTY_STATE, res: EMPTY_DATA.resources,
+    usage: null, usageMonths: [], pause: { paused: false, at: null, by: null }, activity: [], notifications: [], files: NO_FILES, gone: {}, routines: [], routinesGone: [], skills: [], problems: [], aside: {}, asideStash: {}, revs: {}, state: EMPTY_STATE, res: EMPTY_DATA.resources,
   }
   private readonly socket: ChatSocket
   private readonly origin: string
@@ -278,7 +281,7 @@ export class HttpAgent implements AgentClient {
     if (hit && hit.live === live) return hit.data
     // A change to what read() doesn't carry (a setting, a switch) leaves its object alone, so nothing re-renders for it.
     const last = this.lastBuilt
-    const same = last && last.live === live && (['me', 'members', 'membersNext', 'audit', 'auditNext', 'grant', 'memory', 'chats', 'modelList', 'served', 'usage', 'usageMonths', 'activity', 'routines', 'problems', 'res'] as const).every(k => last.s[k] === this.s[k])
+    const same = last && last.live === live && (['me', 'members', 'membersNext', 'audit', 'auditNext', 'grant', 'memory', 'chats', 'modelList', 'served', 'usage', 'usageMonths', 'activity', 'routines', 'skills', 'problems', 'res'] as const).every(k => last.s[k] === this.s[k])
     const data = same ? last.data : this.build(live)
     this.dataCache.set(this.s, { live, data })
     this.lastBuilt = { s: this.s, live, data }
@@ -296,6 +299,7 @@ export class HttpAgent implements AgentClient {
       auditLog: this.s.audit,
       memory: this.s.memory,
       routines: this.s.routines,
+      skills: this.s.skills,
       problems: this.s.problems,
       activity: splitActivity(this.s.activity, this.now(), { timeZone: this.s.state.settings['g:tz'] ?? deviceTimeZone(), locale: 'en-US' }),
       ...(this.s.usage ? { usage: this.s.usage, usageMonths: this.s.usageMonths } : {}),
@@ -328,7 +332,7 @@ export class HttpAgent implements AgentClient {
 
   private async loadAll() {
     if (!(await this.loadMeta())) return
-    await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications(), this.loadLibrary(), this.loadRoutines(), this.loadProblems()])
+    await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications(), this.loadLibrary(), this.loadRoutines(), this.loadSkills(), this.loadProblems()])
   }
 
   private setStatus(k: ResourceKey, status: ResourceStatus) { this.patch({ res: { ...this.s.res, [k]: status } }) }
@@ -540,6 +544,16 @@ export class HttpAgent implements AgentClient {
     }
   }
 
+  /** Route 79: the skills the agent has. Everyone signed in may read it. */
+  private async loadSkills() {
+    try {
+      this.patch({ skills: await readSkills(this.http) })
+      this.setStatus('skills', { status: 'ready' })
+    } catch (e) {
+      this.failStatus('skills', e)
+    }
+  }
+
   /**
    * Route 57. As Activity: the Inhouse team reads it only when asked (each read under a grant writes a support.access line).
    * The cards come as the server lists them (set aside ones left out); `state.setAside` holds the records of the hidden ones.
@@ -617,7 +631,7 @@ export class HttpAgent implements AgentClient {
    * the same resource is under way joins it, so two clicks make one read and a late answer can't undo an earlier one.
    */
   retry = (resource: ResourceKey): Promise<void> => {
-    const load = { meta: () => this.reloadMeta(), members: () => this.loadMembers(), grants: () => this.loadGrants(), audit: () => this.loadAudit(), memory: () => this.loadMemory(true), usage: () => this.loadUsage(), models: () => this.loadModels(), chat: () => this.loadChats(true), activity: () => this.loadActivity(true), notifications: () => this.loadNotifications(), library: () => this.loadLibrary(true), routines: () => this.loadRoutines(true), problems: () => this.loadProblems(true) }[resource as Loaded] as (() => Promise<unknown>) | undefined
+    const load = { meta: () => this.reloadMeta(), members: () => this.loadMembers(), grants: () => this.loadGrants(), audit: () => this.loadAudit(), memory: () => this.loadMemory(true), usage: () => this.loadUsage(), models: () => this.loadModels(), chat: () => this.loadChats(true), activity: () => this.loadActivity(true), notifications: () => this.loadNotifications(), library: () => this.loadLibrary(true), routines: () => this.loadRoutines(true), skills: () => this.loadSkills(), problems: () => this.loadProblems(true) }[resource as Loaded] as (() => Promise<unknown>) | undefined
     if (!load) return Promise.resolve()
     const running = this.retrying.get(resource)
     if (running) return running
@@ -627,7 +641,7 @@ export class HttpAgent implements AgentClient {
     return p
   }
   private async reloadMeta() {
-    if (await this.loadMeta()) await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications(), this.loadLibrary(), this.loadRoutines(), this.loadProblems()])
+    if (await this.loadMeta()) await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications(), this.loadLibrary(), this.loadRoutines(), this.loadSkills(), this.loadProblems()])
   }
 
   /** The next page of a list. A second call while one is in flight for the same list does nothing. */

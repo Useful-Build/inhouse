@@ -73,6 +73,7 @@ const reads = (o: { me?: unknown; members?: unknown[]; settings?: Record<string,
   'GET /api/library?limit=100': { body: { items: [], nextCursor: null } },
   // P4 W2: route 52.
   'GET /api/routines': { body: { routines: [], deleted: [], enabled: {} } },
+  'GET /api/skills': { body: [{ n: 'pdf', d: 'Makes a PDF.', icon: 'picture_as_pdf', need: 0, by: 'Inhouse team', used: '' }] },
   // P4 W3: route 57.
   'GET /api/today': { body: { items: [], aside: {} } },
 })
@@ -136,7 +137,7 @@ describe('reads', () => {
     const staff = await loaded(reads({ me: me({ role: 'inhouse', can: can(false) }) }))
     // The Inhouse team reads the grants (route 16) though it can't grant; members and audit are skipped by its `can`.
     // It isn't asked for chats or memory on start (each read under a grant writes an audit line), but models, spending and the pause state are for everyone.
-    expect(staff.calls.map(c => c.path).sort()).toEqual(['/api/grants', '/api/me', '/api/models', '/api/pause', '/api/settings/brand', '/api/settings/technical', '/api/usage'])
+    expect(staff.calls.map(c => c.path).sort()).toEqual(['/api/grants', '/api/me', '/api/models', '/api/pause', '/api/settings/brand', '/api/settings/technical', '/api/skills', '/api/usage'])
   })
 
   test('a 403 on the grants reads as "not for you", not an error', async () => {

@@ -18,6 +18,7 @@ import { pageOf } from '../../../shared/contract/paging'
 import { SettingRecordSchema, SettingWriteInputSchema, SettingsListSchema } from '../../../shared/contract/settings'
 import { UsageDataSchema } from '../../../shared/contract/usage'
 import { RoutineEnabledInputSchema, RoutineRevInputSchema, RoutineRunAnswerSchema, RoutineRunInputSchema, RoutineStateSchema, RoutinesListSchema } from '../../../shared/contract/routines'
+import { SkillDefSchema } from '../../../shared/contract/skill'
 import { SetAsideBodySchema, TodayAnswerSchema, TodayAsideSchema } from '../../../shared/contract/today'
 import { z } from 'zod'
 import { ChatIdsInputSchema, ChatListSchema, ChatPageSchema, ChatPinInputSchema, ChatRenameInputSchema, ChatSummarySchema } from '../../../shared/contract/chats'
@@ -46,6 +47,8 @@ export const ANSWERS = {
   routines: RoutinesListSchema, routineState: RoutineStateSchema, routineRun: RoutineRunAnswerSchema,
   // P4 (W3): Today (routes 57 and 58).
   today: TodayAnswerSchema, todayAside: TodayAsideSchema,
+  // P6a (W3): the skills list (route 79).
+  skills: z.array(SkillDefSchema),
 }
 
 /** What each write sends. */

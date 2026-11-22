@@ -25,6 +25,7 @@ import { approveBrandMemory, listWaitingMemory } from './api/memory-approvals.ts
 import { drainState, startDrain, undrain } from './ops/drain.ts'
 // P4 W2 (p4-w2.md section 9): the Routines page's routes.
 import { deleteRoutine, listRoutines, restoreRoutine, runRoutineNow, setRoutineEnabled } from './api/routines.ts'
+import { listSkills } from './api/skills.ts'
 import { alarmNow } from './ops/alarm-now.ts'
 import { warmup } from './ops/warmup.ts'
 import { reviveTask } from './ops/revive.ts'
@@ -191,7 +192,7 @@ export const routes: readonly Route[] = [
   /* 77 */ { method: 'GET', pattern: '/api/memory/waiting', handler: listWaitingMemory },
   /* 78 */ { method: 'PUT', pattern: '/api/memory/brand/:id/approved', handler: approveBrandMemory },
   // W3: the skills list and team requests.
-  /* 79 */ { method: 'GET', pattern: '/api/skills', handler: p6aNotYet },
+  /* 79 */ { method: 'GET', pattern: '/api/skills', handler: listSkills },
   /* 80 */ { method: 'GET', pattern: '/api/team-requests', handler: p6aNotYet },
   /* 81 */ { method: 'POST', pattern: '/api/team-requests', handler: p6aNotYet },
   /* 82 */ { method: 'PUT', pattern: '/api/team-requests/:id/status', handler: p6aNotYet },
