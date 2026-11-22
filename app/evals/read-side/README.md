@@ -36,4 +36,4 @@ Dispatch once per picker model, not once for all four. Each paid dispatch needs 
 
 Pin reasoning effort to `medium` for every model. Do not accept an effort override or fall back to the catalogue default. Record the model API ID, effective `effort: "medium"` and approved `max_usd` in each report. If the effective model or effort differs from the dispatch, or cannot be verified, the report cannot pass.
 
-The runner, scripted integration, API specs and paid runs are outside this slice. No model has a passing result from this change.
+The runner (`run.mjs`), API specs and paid runs are outside this slice. No model has a passing result from this change. `grade.test.ts` runs an obedient fake agent per case and switches each check off to show that it alone catches its bypass. `pages/<case id>/index.html` holds the invented web page for each web case (`pages.test.ts` keeps them equal to `pages.ts`).
