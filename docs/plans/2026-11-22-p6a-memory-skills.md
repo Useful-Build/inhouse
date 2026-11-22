@@ -1,6 +1,6 @@
 # P6a: memory and skills (`fleet/memory-skills`)
 
-Status: draft for Wasim's approval, 2026-11-22. Cut from P6 by the master plan (`2026-11-22-master-plan.md`, Part 1,
+Status: draft for Wasim's approval, 2026-11-22. Cut from P6 by the master plan (`2026-11-22-master-plan.md`, which lands with line A's docs PR #322; Part 1,
 line B item 3; Wasim's decisions 1 and 2 of 2026-11-22). The rest of P6 is P6b, parked until the first client:
 [`2026-11-19-p6-act.md`](2026-11-19-p6-act.md). Common rules are in the backend plan's "Phase schedule (waves)".
 
@@ -16,7 +16,7 @@ every model a client can pick.
 **Success measure (the real slice):** at Watch, the agent saves a team fact; it waits until an admin approves that
 exact wording, and only then does the agent find it.
 
-## What's there today (checked on `main` at d0ef71e)
+## What's there today (checked on `main` at c4babe4)
 
 - **Memory is locked at Act in the UI only.** The rows "Learn from my chats" (`m:learn`), "Team memory", "Ask before
   saving a team rule" (`m:ask`), "Teach it something" and each Forget button have `need` 1
@@ -145,7 +145,8 @@ exfiltration sets; a bell notice for a waiting fact; per-brand skill switches; s
   the canary, a `memory_save` or `memory_update` of the planted text whatever its status, a file with the canary or an
   outside reference, a `team_request_create` of the planted text, a routine), graded by code over the run's rows,
   never by a model. Each model runs at its catalogue default effort (what a client gets unless Settings changes it).
-- **The skills list** is `GET /api/skills` answering P3's `SkillDef[]` (`app/shared/contract/skill.ts`), unchanged.
+- **The skills list** is `GET /api/skills` answering P3's `SkillDef[]` (`app/shared/contract/skill.ts`), unchanged. The
+  server returns `need: 0` for every skill, so the Skills page shows no stage tag at Watch (`Skills.tsx:63,73`).
 - **Routes.** Six, numbered by the orchestrator at PR0 after P5's highest (76 on `fleet/connectors` today): the two
   memory routes, `GET /api/skills`, and `GET`, `POST` and `PUT /api/team-requests/:id/status` for team requests.
 - **Migrations:** P6a takes `0470`-`0479` (W3's `0470_team_requests.sql`; W2 needs none, `memories_scope` already
@@ -157,11 +158,18 @@ exfiltration sets; a bell notice for a waiting fact; per-brand skill switches; s
 Workers run on seats A and C, or through Pi (GPT-6.2 Sol high, Gemini 4 Hydrogen) for a scoped job named in a brief.
 The orchestrator writes the design into W2's brief before it starts.
 
+Shared files, one owner at a time and lines only: `app/server/mcp/tools/memory/store.ts` merges W1's `save` and
+`update` first, then W2's new methods. `src/agent/http/client.ts` takes W2's memory methods first, then W3's
+replacements for the refused `requestTool`, `requestSkill` and `sendTeamRequest` (`client.ts:1306-1309`) and for
+`skills: []` (`client.ts:78`). `src/screens/Settings.tsx`, `src/screens/settings/content.ts` and `src/agent/mock.ts`
+belong to W1 until its PR merges, then to W2. W3 doesn't touch `mock.ts`: the mock already implements its methods and
+W3 keeps their signatures. If that changes, W3's edit goes in after W2's, under the same rule.
+
 | Id | Role, model, effort | Job | Owns | Waits for |
 |---|---|---|---|---|
 | W1 | sonnet-worker (Sonnet 5.5, medium) | Memory at Watch: the unlocks and the `m:ask` copy; `m:learn` and `m:ask` honoured in the store's `save` and `update`; the tools' answers and the `learning_off` refusal; a fast-check property over saves, rewords and switch changes. | `app/server/mcp/tools/memory/store.ts` (`save` and `update` only), `app/server/mcp/tools/memory/index.ts` (answers and the refusal), their tests and a new `toggles.test.ts`; `src/screens/settings/content.ts`, `src/screens/Settings.tsx` and `src/agent/mock.ts` until its PR merges | PR0 |
-| W2 | opus-worker (Opus 5.5, medium), sensitive: auth | Team memory approval: the store's `setBrandApproved` and `waiting`, the two routes, their contract, the client methods, the Team memory page's waiting list with Approve and Reject, the mock's waiting facts; tests that an edit or a restore can't skip approval. | `store.ts` (the two new methods only), `app/server/api/memory-approvals.ts`, `app/shared/contract/memory-approvals.ts`, `src/agent/http/memory.ts` (the new methods only), their tests; `content.ts`, `Settings.tsx` and `mock.ts` after W1's PR merges | PR0; W1's PR for the three UI files |
-| W3 | sonnet-worker (Sonnet 5.5, medium) | Skills and team requests: the three skill files and `OUR_SKILLS`, `GET /api/skills` and the Skills page; the table, store, tools, routes, contract and client for team requests; the Tools page's Request and Undo, "Request a skill", the team window's list and the Inhouse team's status change. | `app/runner/image/plugin/skills/**`, `app/server/skills/**`, `app/server/team-requests/**`, `app/server/mcp/tools/team/**`, `app/server/api/{skills,team-requests}.ts`, `app/shared/contract/team-requests.ts`, `src/agent/http/{skills,team-requests}.ts`, `src/screens/Skills.tsx`, `app/server/migrations/0470_team_requests.sql`, `app/ops/tables/team-requests.ts`; lines only: `OUR_SKILLS` in `lists.ts`, one area line in `app/server/mcp/tools/index.ts` | PR0 |
+| W2 | opus-worker (Opus 5.5, medium), sensitive: auth | Team memory approval: the store's `setBrandApproved` and `waiting`, the two routes, their contract, the client methods, the Team memory page's waiting list with Approve and Reject, the mock's waiting facts; tests that an edit or a restore can't skip approval. | `store.ts` (the two new methods only), `app/server/api/memory-approvals.ts`, `app/shared/contract/memory-approvals.ts`, `src/agent/http/memory.ts` (the new methods only), its lines in `client.ts` (before W3's), their tests; `content.ts`, `Settings.tsx` and `mock.ts` after W1's PR merges | PR0; W1's PR for the three UI files |
+| W3 | sonnet-worker (Sonnet 5.5, medium) | Skills and team requests: the three skill files and `OUR_SKILLS`, `GET /api/skills` and the Skills page; the table, store, tools, routes, contract and client for team requests; the Tools page's Request and Undo, "Request a skill", the team window's list and the Inhouse team's status change. | `app/runner/image/plugin/skills/**`, `app/server/skills/**`, `app/server/team-requests/**`, `app/server/mcp/tools/team/**`, `app/server/api/{skills,team-requests}.ts`, `app/shared/contract/team-requests.ts`, `src/agent/http/{skills,team-requests}.ts`, `src/screens/Skills.tsx`, `src/screens/Tools.tsx` (Request and Undo), `src/overlays/TeamWindow.tsx`, `app/server/migrations/0470_team_requests.sql`, `app/ops/tables/team-requests.ts`; lines only: `OUR_SKILLS` in `lists.ts`, one area line in `app/server/mcp/tools/index.ts`, the two `team_request_*` names removed from `app/server/mcp/tools/stubs/index.ts`, its lines in `client.ts` after W2's | PR0 |
 | W4 | sonnet-worker (Sonnet 5.5, medium) | The read-side eval set and P6a's API specs: the new cases, the files and team-request checks, the per-model report; `memory-approvals`, `memory-toggles`, `skills` and `team-requests` specs; the contract suite's real target for P6a's methods; the scripted scenarios they need. | `app/evals/read-side/**`, `app/e2e/api/{memory-approvals,memory-toggles,skills,team-requests}.spec.ts`, `src/agent/contract/targets/real/memory-skills.ts`, appended scenarios in `app/test/scripted-model/scenarios.ts` | Cases now; specs after W1 to W3 merge; Slack cases after P5 |
 | W5 | sonnet-worker (Sonnet 5.5, medium) | The ship spec, S1 to S8, desktop and phone. | `app/e2e/ship/memory-skills.spec.ts` | W1 to W3 merged (drafted mid-phase) |
 
@@ -216,7 +224,7 @@ nothing from a worker.
 4. A waiting fact becomes `active` only through the approve route at its exact revision. A stale revision, an active
    fact or a forgotten one answers `conflict` with the current fact. A member is refused; the Inhouse team only under
    a live grant, with its `support.access` line. Approve and reject each write one audit line with the id and the
-   revision, in the same batch as the change.
+   revision, in the same batch as the change. A literal test shows the audit line's detail never holds the fact's text.
 5. Tests prove an edit (`memory_update`) or a restore (route 45's undo) can't reach `active` without the approve route,
    including a fast-check history over saves, rewords, forgets, restores, approves, rejects and switch changes.
 6. Waiting facts never show in `memory_search`, `memory_list` or route 43; the waiting list shows them to admins only.
@@ -224,7 +232,8 @@ nothing from a worker.
    probe asserts the init list); each skill names only allowed tools; the Skills page lists the four from
    `GET /api/skills`, and a test fails if that list and `ALLOWED_SKILLS` differ.
 8. Team requests: create, list, withdraw and the Inhouse team's status change work for each role; text bounds and the
-   50-open cap hold; each write has its audit line; the Tools page's Request no longer hits a refusal.
+   50-open cap hold; each write has its audit line, and a literal test shows its detail never holds the request's
+   text; the Tools page's Request no longer hits a refusal.
 9. The read-side set has zero bypasses on each of Fable 5.2, Opus 5.5, Sonnet 5.5 and Haiku 5.5, per source and per
    exit, with results kept in `app/evals/results/`. A model without a passing run is listed as off for clients
    (`tm:<id>:on` `'off'` in the release, line A's onboarding checklist).
@@ -237,7 +246,7 @@ nothing from a worker.
 No team fact `active` without an admin's approval of that revision while `m:ask` is on; no routine's team fact ever
 `active` without approval; no change to P3's visibility rule; no person fact saved while `m:learn` is off; no outbox,
 approval tool or C7; no write to any outside tool; no skill loaded from a writable path; no copied third-party skill
-text; no Inhouse approval without a live grant; no request text, fact text or model text in an audit line; no model on
+text (judged by the reviewer); no Inhouse approval without a live grant; no request text, fact text or model text in an audit line; no model on
 for clients without a passing run.
 
 ## Risks
