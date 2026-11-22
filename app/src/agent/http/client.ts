@@ -548,7 +548,9 @@ export class HttpAgent implements AgentClient {
     if (this.s.me?.role === 'inhouse' && !asked) return this.setStatus('problems', { status: 'ready' })
     try {
       // A read a card's write overlapped may predate it (the card back, its Undo lost): read again once the writes are done.
-      const today = await this.unraced('problems', () => readToday(this.http))
+      // Every try overlapped: a refresh keeps what is shown; a first read or a Retry takes one more read as it comes, so
+      // the page never stays loading.
+      const today = (await this.unraced('problems', () => readToday(this.http))) ?? (refresh || this.s.res.problems.status === 'ready' ? null : await readToday(this.http))
       if (today === null) return
       this.commit(this.withToday(this.s, today.items, today.aside))
       this.setStatus('problems', { status: 'ready' })
@@ -573,7 +575,7 @@ export class HttpAgent implements AgentClient {
     if (this.s.me?.role === 'inhouse') return this.setStatus('notifications', { status: 'ready' })
     try {
       // As Today: a read that a mark-read overlapped would put the dots back.
-      const notifications = await this.unraced('notifications', () => readNotifications(this.http))
+      const notifications = (await this.unraced('notifications', () => readNotifications(this.http))) ?? (refresh || this.s.res.notifications.status === 'ready' ? null : await readNotifications(this.http))
       if (notifications === null) return
       this.patch({ notifications, res: { ...this.s.res, notifications: { status: 'ready' } } })
     } catch (e) {
@@ -715,21 +717,29 @@ export class HttpAgent implements AgentClient {
    * The very objects come back only for a write that found nothing queued before it and saw nothing change since.
    */
   /**
-   * Writes to Today's cards (`today:<id>` lanes) and to the bell (`notices`) on their way, and how many have finished: what
-   * `unraced` checks. A write counts as finished once its answer (or refusal) is in, before its `after`, which may read.
+   * Writes to Today's cards (`today:<id>` lanes) and to the bell (`notices`), and how many have finished: what `unraced`
+   * checks. `queued` holds each from its call, `inFlight` only once the write ahead of it in its lane is done (it is
+   * sending). A write counts as finished once its answer (or refusal) is in, before its `after`, which may read.
    */
-  private listWrites = { problems: { pending: new Set<Promise<void>>(), done: 0 }, notifications: { pending: new Set<Promise<void>>(), done: 0 } }
+  private listWrites = {
+    problems: { queued: new Set<Promise<void>>(), inFlight: new Set<Promise<void>>(), done: 0 },
+    notifications: { queued: new Set<Promise<void>>(), inFlight: new Set<Promise<void>>(), done: 0 },
+  }
   private static guardedList(lane: string | undefined): 'problems' | 'notifications' | null {
     return lane?.startsWith('today:') ? 'problems' : lane === 'notices' ? 'notifications' : null
   }
-  /** A read no write to its list overlapped: read again once those writes are done, a few times at most (null: none was). */
+  /**
+   * A read no write to its list overlapped: read again once the writes sending are done, a few times at most (null: none
+   * was). It waits only for writes sending, never for queued ones: a queued write may wait on a write whose `after` is this
+   * very read.
+   */
   private async unraced<T>(list: 'problems' | 'notifications', read: () => Promise<T>): Promise<T | null> {
     const w = this.listWrites[list]
     for (let tries = 0; tries < 3; tries++) {
-      await Promise.all(w.pending)
+      await Promise.all(w.inFlight)
       const done = w.done
       const answer = await read()
-      if (w.done === done && w.pending.size === 0) return answer
+      if (w.done === done && w.queued.size === 0) return answer
     }
     return null
   }
@@ -753,14 +763,17 @@ export class HttpAgent implements AgentClient {
     if (field) this.depth.set(field, (this.depth.get(field) ?? 0) + 1)
     const others = () => field !== undefined && (this.depth.get(field) ?? 0) > 1
     const guarded = HttpAgent.guardedList(lane)
+    const w = guarded ? this.listWrites[guarded] : null
     let finished = () => {}
-    if (guarded) {
-      const w = this.listWrites[guarded]
-      const settled: Promise<void> = new Promise(resolve => { finished = () => { if (w.pending.delete(settled)) { w.done++; resolve() } } })
-      w.pending.add(settled)
+    let sending = () => {}
+    if (w) {
+      const settled: Promise<void> = new Promise(resolve => { finished = () => { if (w.queued.delete(settled)) { w.inFlight.delete(settled); w.done++; resolve() } } })
+      sending = () => { if (w.queued.has(settled)) w.inFlight.add(settled) }
+      w.queued.add(settled)
     }
     const run = (async () => {
       await prior
+      sending()
       try {
         const answer = await o.send()
         this.commit(o.done(this.s, answer, others()))

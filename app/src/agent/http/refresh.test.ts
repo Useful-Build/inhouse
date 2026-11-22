@@ -163,6 +163,51 @@ describe('a refresh never undoes a write, never turns a list into an error, neve
     expect(agent.read().problems.map(p => p.title)).toEqual(['a', 'b'])
   })
 
+  test('two quick Undos of a card set aside before a reload never wedge Today: a refresh and Retry still finish', async () => {
+    const { w, routes } = world()
+    const ID = card('a').id
+    w.today = [card('b')]
+    let aside: Record<string, unknown> = { [ID]: { reason: 'dismissed', at: iso(2000), by: 'm_Sam', loggedAt: iso(2000), rev: 1 } }
+    const { agent } = await loaded({
+      ...routes,
+      'GET /api/today': () => ({ body: { items: w.today, aside } }),
+      [`PUT /api/today/${ID}/aside`]: r => {
+        const record = { reason: null, at: iso(2000), by: 'm_Sam', loggedAt: iso(2000), rev: (JSON.parse(r.body ?? '{}').ifRev as number) + 1 }
+        aside = { [ID]: record }
+        w.today = [card('a'), card('b')]
+        return { body: record }
+      },
+    })
+    const ends = (p: Promise<unknown>) => Promise.race([p.then(() => 'done'), new Promise(r => setTimeout(() => r('stuck'), 200))])
+    expect(await ends(Promise.all([agent.setAside(ID, null), agent.setAside(ID, null)]))).toBe('done')
+    expect(await ends(agent.refresh('problems'))).toBe('done')
+    expect(await ends(agent.retry('problems'))).toBe('done')
+    expect(agent.read().problems.map(p => p.title)).toEqual(['a', 'b'])
+  })
+
+  test('a Retry whose every read a card write overlapped still ends ready, with the server\'s cards', async () => {
+    const { w, routes } = world()
+    w.today = [card('a'), card('b'), card('c')]
+    let agent: HttpAgent | null = null
+    let poke = false
+    const order = ['a', 'b', 'c']
+    const s = server({
+      ...routes,
+      ...Object.fromEntries(order.map(k => [`PUT /api/today/${card(k).id}/aside`, { body: { reason: 'snoozed', at: iso(2000), by: 'm_Sam', loggedAt: iso(2000), rev: 1 } }])),
+    })
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const res = await s.fetch(input, init)
+      // Each Today read the Retry makes is overlapped by a new card write (another card set aside while it's on its way).
+      if (poke && new URL(String(input), 'http://x.test').pathname === '/api/today' && order.length) void agent!.setAside(card(order.shift()!).id, 'snoozed').catch(() => undefined)
+      return res
+    }
+    agent = new HttpAgent({ fetch, now: () => NOW })
+    await agent.whenLoaded()
+    poke = true
+    await agent.retry('problems')
+    expect(agent.read().resources.problems).toEqual({ status: 'ready' })
+  })
+
   test('a notice marked read while a bell read is on its way stays read', async () => {
     const { w, routes } = world()
     w.notifications = [notice('n1')]

@@ -298,9 +298,12 @@ function Shell() {
   // (a file a chat saved, the cards a Run now found) isn't in it. Not the page the app starts on: the first reads cover it,
   // and for the Inhouse team landing there isn't a choice (each read under a grant writes a support.access line). The
   // client never reads the bell for the Inhouse team.
-  const landed = useRef(false)
+  // Compared with the start page, not "has this effect run": StrictMode runs it twice on mount in development.
+  const startPage = useRef(page)
+  const moved = useRef(false)
   useEffect(() => {
-    if (!landed.current) { landed.current = true; return }
+    if (!moved.current && page === startPage.current) return
+    moved.current = true
     const list = PAGE_LIST[page]
     if (list) void agent.refresh(list)
     void agent.refresh('notifications')
