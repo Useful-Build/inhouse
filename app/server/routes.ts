@@ -107,12 +107,6 @@ export async function reportClientError(request: Request): Promise<Response> {
   }
 }
 
-/**
- * P6a PR0: rows 79 to 83 answer 404 `not_found` (as before they existed) until W3 replaces this with its
- * handlers. PR0 imports nothing from a worker.
- */
-const p6aNotYet: Handler = async () => apiError('not_found')
-
 /** One route per access-matrix row, in the table's order (the row numbers of p2-design section 3). */
 export const routes: readonly Route[] = [
   /* 1 */ { method: 'GET', pattern: '/api/health', handler: health },
