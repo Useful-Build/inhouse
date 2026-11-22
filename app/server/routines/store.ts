@@ -92,9 +92,15 @@ export interface NewRoutine {
   missed: 'skip' | 'catch_up'
 }
 
-/** A team routine (section 8): needs Act or Run (section 7), `need` 1, the cursor at now. */
-/** `tz`: the brand's zone, read before the write with the stage, so a caller answers the next run with no read after the commit. */
-export async function createRoutine(db: D1Database, n: NewRoutine, at: At, sourceChatId: string | null): Promise<{ ok: RoutineRow; tz: BrandFacts['tz'] } | { refused: 'stage' }> {
+/** The most live (not deleted) team routines a brand may have (#312 review M2). System routines don't count. */
+export const MAX_TEAM_ROUTINES = 50
+
+/**
+ * A team routine (section 8): needs Act or Run (section 7), `need` 1, the cursor at now. Refused at the cap: the count is
+ * part of the insert's statement, so two creates at once can't both take the last slot, and its lines are guarded on it.
+ * `tz`: the brand's zone, read before the write with the stage, so a caller answers the next run with no read after the commit.
+ */
+export async function createRoutine(db: D1Database, n: NewRoutine, at: At, sourceChatId: string | null): Promise<{ ok: RoutineRow; tz: BrandFacts['tz'] } | { refused: 'stage' | 'routine_limit' }> {
   const brand = await brandFacts(db)
   if (brand.stage < 1) return { refused: 'stage' }
   const id = newRoutineId()
@@ -103,11 +109,13 @@ export async function createRoutine(db: D1Database, n: NewRoutine, at: At, sourc
     db.prepare(
       `INSERT INTO routines (id, origin, kind, name, instruction, prompt_ref, days_mask, hour, minute, missed, need, enabled,
           creator_id, source_chat_id, checked_until_ms, created_at_ms, updated_at_ms, rev, req_id)
-        VALUES (?, 'team', 'agent', ?, ?, NULL, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, 1, ?) RETURNING *`,
-    ).bind(id, n.name, n.instruction, n.days_mask, n.hour, n.minute, n.missed, at.actorId, sourceChatId, at.nowMs, at.nowMs, at.nowMs, stamp),
+        SELECT ?, 'team', 'agent', ?, ?, NULL, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, 1, ?
+        WHERE (SELECT COUNT(*) FROM routines WHERE origin = 'team' AND deleted_at_ms IS NULL) < ? RETURNING *`,
+    ).bind(id, n.name, n.instruction, n.days_mask, n.hour, n.minute, n.missed, at.actorId, sourceChatId, at.nowMs, at.nowMs, at.nowMs, stamp, MAX_TEAM_ROUTINES),
     routineAudit(db, at, { action: 'routine.created', routineId: id, need: 1 }, id, stamped(id, stamp)),
-    personLine(db, 'routine_made', at, `${id}|created`),
+    personLine(db, 'routine_made', at, `${id}|created`, stamped(id, stamp)),
   ])
+  if (made.meta.changes === 0) return { refused: 'routine_limit' }
   return { ok: written(made, 'createRoutine'), tz: brand.tz }
 }
 
@@ -120,13 +128,18 @@ export interface RoutinePatch {
   enabled?: boolean
 }
 
+export type UpdateOutcome = WriteOutcome | { refused: 'system_instruction' }
+
 /**
  * An edit by the creator or an Admin, against `ifRev`. `routine.updated` names what changed besides on/off; a change of
- * on/off is its own `routine.enabled` line (#237 review). An edit that changes nothing writes nothing.
+ * on/off is its own `routine.enabled` line (#237 review). An edit that changes nothing writes nothing. A system routine
+ * runs its `prompt_ref`, never its instruction, so an instruction for one is refused (#312 review L3); its schedule,
+ * missed-run rule and switch stay editable.
  */
-export async function updateRoutine(db: D1Database, id: string, ifRev: number, p: RoutinePatch, at: At): Promise<WriteOutcome> {
+export async function updateRoutine(db: D1Database, id: string, ifRev: number, p: RoutinePatch, at: At): Promise<UpdateOutcome> {
   const r = await readRoutine(db, id)
   if (!r || r.deleted_at_ms !== null) return { refused: 'not_found' }
+  if (r.origin === 'system' && p.instruction !== undefined) return { refused: 'system_instruction' }
   const next = {
     instruction: p.instruction ?? r.instruction, days_mask: p.days_mask ?? r.days_mask, hour: p.hour ?? r.hour,
     minute: p.minute ?? r.minute, missed: p.missed ?? r.missed, enabled: p.enabled === undefined ? r.enabled : p.enabled ? 1 : 0,
@@ -316,7 +329,11 @@ export function routineStore({ db }: { db: D1Database }) {
     list: () => allRoutines(db),
     /** The brand's zone (or why it can't be used), for the routines' `next`. */
     zone: async () => (await brandFacts(db)).tz,
-    setEnabled: (id: string, on: boolean, ifRev: number, at: At) => withLast(db, id, () => updateRoutine(db, id, ifRev, { enabled: on }, at)),
+    setEnabled: (id: string, on: boolean, ifRev: number, at: At) => withLast(db, id, async () => {
+      const o = await updateRoutine(db, id, ifRev, { enabled: on }, at)
+      if ('refused' in o && o.refused === 'system_instruction') throw new Error('setEnabled: refused an instruction it never sent')
+      return o
+    }),
     runNow: (id: string, clientKey: string, at: At) => runNow(db, id, clientKey, at),
     remove: (id: string, ifRev: number, at: At) => withLast(db, id, () => deleteRoutine(db, id, ifRev, at)),
     restore: (id: string, ifRev: number, at: At) => withLast(db, id, () => restoreRoutine(db, id, ifRev, at)),

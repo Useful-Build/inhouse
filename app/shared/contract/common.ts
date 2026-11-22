@@ -34,6 +34,8 @@ export const ErrorReasonSchema = z.enum([
   'type_not_allowed', 'length_required', 'length_mismatch', 'hash',
   // P4 W2 (p4-w2.md section 9, route 54): a Run now while another is open; a team routine below its stage.
   'run_open', 'stage',
+  // #312 review: a team routine past the brand's cap (the routine_create tool); an empty Library upload (row 63).
+  'routine_limit', 'empty',
 ])
 export type ErrorReason = z.infer<typeof ErrorReasonSchema>
 

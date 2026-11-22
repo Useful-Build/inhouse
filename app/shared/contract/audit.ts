@@ -51,13 +51,13 @@ const RoutePatternSchema = z.enum([
  */
 const WritePatternSchema = z.enum([
   '/api/memory/brand/:id/forgotten',
-  // P4 (p4-w2.md route 51, p4-w3.md route 56).
+  // P4 (routes.ts rows 53 and 58).
   '/api/routines/:id/enabled', '/api/today/:id/aside',
 ])
 /**
  * The `brand_data` POST routes the Inhouse team may use under a live grant, one block per phase, appended in phase
- * order (P6 adds `/api/approvals/:id/check` after P4's). P4: a routine's Run now, delete and restore (p4-w2.md routes
- * 52 to 54) and the Library's delete and restore (p4-w5.md routes 63 and 64; the upload is people only).
+ * order (P6 adds `/api/approvals/:id/check` after P4's). P4: a routine's Run now, delete and restore (routes.ts rows
+ * 54 to 56) and the Library's delete and restore (rows 65 and 66; the upload is people only).
  */
 const PostPatternSchema = z.enum([
   // P4.

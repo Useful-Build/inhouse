@@ -6,7 +6,7 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { TOOL_HANDLERS } from '../index.ts'
 import type { ToolResult, ToolScope } from '../../server/tool.ts'
-import { addPerson, at, db, fresh, setStage, setZone, slotsOf } from '../../../routines/test-kit.ts'
+import { addPerson, at, db, fresh, insertRoutine, routine, setStage, setZone, slotsOf } from '../../../routines/test-kit.ts'
 
 const ALEX = 'm_w2_tools_alex'
 const SAM = 'm_w2_tools_sam'
@@ -229,5 +229,22 @@ describe('no read after a committed write (#250 review)', () => {
     const updated = await u.call(u.input.parse({ routine_id: data(made).routine_id, time: '07:00' }), scope(ALEX), { db: flaky })
     expect(updated.isError, text(updated)).toBeUndefined()
     expect(data(updated)).toMatchObject({ schedule: 'Every day at 07:00' })
+  })
+})
+
+// #312 review M2 and L3: what the agent is told when the cap is reached, or when it tries to rewrite a system routine.
+describe('refusals the agent can explain (#312 review)', () => {
+  it('routine_create past 50 live team routines is refused with routine_limit and what to do', async () => {
+    for (let i = 0; i < 50; i++) await create()
+    const r = await call('routine_create', { name: NAME, instruction: INSTRUCTION, days: 'daily', time: '06:00' }, scope(ALEX))
+    expect([r.isError, data(r).error, text(r)]).toEqual([true, 'routine_limit', 'This brand already has 50 routines, the most it can have. Delete one on the Routines page, then try again.'])
+  })
+  it('routine_update with an instruction for a system routine is refused; a schedule edit still works', async () => {
+    const sys = await insertRoutine(routine({ origin: 'system', kind: 'morning_check', prompt_ref: 'morning-check', need: 0, creator_id: 'm_system', checked_until_ms: NOW }))
+    const r = await call('routine_update', { routine_id: sys.id, instruction: 'Do something else.' }, scope(ADMIN))
+    expect([r.isError, data(r).error, text(r)]).toEqual([true, 'system_instruction', "This routine is built in, so its instructions can't be changed. Its schedule and on/off can."])
+    expect(await audit(sys.id)).toEqual([])
+    const ok = await call('routine_update', { routine_id: sys.id, time: '07:00' }, scope(ADMIN))
+    expect(ok.isError, text(ok)).toBeUndefined()
   })
 })

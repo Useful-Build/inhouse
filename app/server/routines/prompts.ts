@@ -4,6 +4,7 @@
 import type { OutputFormat } from '../../shared/protocol/index.ts'
 import { RESULT_HANDLERS } from './results.ts'
 import { MORNING_CHECK_PROMPT_V1 } from '../prompt/routines/morning-check.ts'
+import { TEAM_ROUTINE_PREAMBLE } from '../prompt/routines/common.ts'
 
 /**
  * The system routines' prompts, by `prompt_ref` (one line each, added with the routine's row: W3's morning check). An
@@ -27,10 +28,6 @@ export function systemDescription(ref: string | null): string {
   if (!Object.hasOwn(SYSTEM_ROUTINE_DESCRIPTIONS, key)) throw new Error(`systemDescription: no description for ${key}`)
   return SYSTEM_ROUTINE_DESCRIPTIONS[key]
 }
-
-/** Said before a team routine's instruction: no person is in this chat, and nothing earlier is in it. */
-export const TEAM_ROUTINE_PREAMBLE =
-  'This is a routine running on its schedule. No one is watching this chat and it has no earlier messages. Do the job below, then end with a short summary of what you found.'
 
 export interface PromptSource {
   origin: 'system' | 'team'
