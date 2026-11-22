@@ -33,7 +33,8 @@ import { backup } from '../backup.ts'
 import { restore } from '../restore.ts'
 import type { RestoreRecord } from '../manifest.ts'
 import { brandAgentRunner, checkBeforeSwitch, confirmRestore, reconcile } from './index.ts'
-import { ftsStub } from './test-support.ts'
+import { restoreKey } from '../../../server/db/r2-keys.ts'
+import { FtsRecordSchema } from '../fts/rebuild.ts'
 import { readRecord } from './record.ts'
 
 const e = env as Env & { RESTORE_DB: D1Database; TEST_MIGRATIONS: D1Migration[] }
@@ -119,7 +120,8 @@ beforeAll(async () => {
   })
 })
 
-const deps = () => ({ bucket: e.FILES, target: e.RESTORE_DB, restoreId: record.restoreId, rebuildFts: ftsStub().rebuildFts, at: at(B + 60), registry: replayRegistry, runners: { BrandAgent: brandAgentRunner(rpc()) } })
+// The real FTS rebuild (C1's rebuildAfterRestore, the default): no stand-in in the core proof.
+const deps = () => ({ bucket: e.FILES, target: e.RESTORE_DB, restoreId: record.restoreId, at: at(B + 60), registry: replayRegistry, runners: { BrandAgent: brandAgentRunner(rpc()) } })
 const confirm = (nowMs: number, actorId: string, approvedBy: string, bucket: R2Bucket = e.FILES) =>
   confirmRestore({ bucket, target: e.RESTORE_DB, restoreId: record.restoreId, at: at(nowMs, actorId), approvedBy })
 
@@ -141,6 +143,10 @@ it('reconciles: the audit lines come back once with their ids, and Dana stays go
   const first = await reconcile(deps())
   if (!('ok' in first)) throw new Error(first.refused)
   expect(first.ok.status).toBe('restored_unreconciled')
+  // The real rebuild ran and wrote its record; it reads the restore record and never writes it, so the write held (L-c).
+  const fts = FtsRecordSchema.parse(JSON.parse(await (await e.FILES.get(restoreKey(record.restoreId, 'fts.json')))!.text()))
+  expect(fts).toMatchObject({ restoreId: record.restoreId, status: 'rebuilt' })
+  expect(fts.tables.map(t => t.name).sort()).toEqual(record.d1.derived.map(d => d.name).sort())
   expect(first.ok.reconcile).toMatchObject({
     fts: 'rebuilt', audit: { source: 'snapshot', afterId: backupMaxId, appended: laterLines.length, gap: null, placeholders: [nia] }, outbox: 'p8b_pending', confirm: null, refusal: null,
   })

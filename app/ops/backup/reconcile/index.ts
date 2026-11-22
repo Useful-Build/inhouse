@@ -1,8 +1,9 @@
 // The restore's reconcile (P8a R; plan "A restore, step by step"), run on a `restored_unreconciled` restore after G1's
 // snapshot, write and proof (steps 1 and 2, ops/backup/restore.ts). In order, each idempotent, so a refused or stopped
 // run is finished by running it again:
-//  2b. the FTS rebuild (C1's `rebuildAfterRestore`, ops/backup/fts, handed in as `rebuildFts`): it writes
-//     `restore/<restoreId>/fts.json`, and the reconcile stops unless that says the indexes were rebuilt;
+//  2b. the FTS rebuild (C1's `rebuildAfterRestore`, ops/backup/fts/rebuild.ts): it writes
+//     `restore/<restoreId>/fts.json`, and the reconcile stops unless the call and that file both say rebuilt. It reads
+//     the record and never writes it, so the etag read before it still guards the reconcile's own write;
 //  3. the audit re-append (audit.ts);
 //  3b. the member removals and role changes those lines record, applied again (members.ts);
 //  4. P8b: hold every `approved` and `sending` outbox row, keep the outbox paused, and check each held action against
@@ -13,7 +14,6 @@
 // Accepted (A10, 2026-11-22): the audit copy's cursor (`audit_copy_state`) comes back as the backup held it and isn't
 // reset, so the next daily copy copies the re-appended range again under that day's key. A duplicate range in R2, no
 // line lost; `fromDailyCopy` (audit.ts) reads a range written twice as one, and refuses if the two disagree.
-import { z } from 'zod'
 import type { At } from '../../../server/db/members.ts'
 import { restoreKey } from '../../../server/db/r2-keys.ts'
 import type { DeletionRule } from '../../delete/rules.ts'
@@ -21,6 +21,8 @@ import type { RetentionRule } from '../../retention/rules.ts'
 import { tables as realRegistry } from '../../tables/index.ts'
 import type { TableEntry } from '../../tables/types.ts'
 import { RestoreRefusal } from '../errors.ts'
+import { FtsRecordSchema, rebuildAfterRestore } from '../fts/rebuild.ts'
+import type { RebuildDeps, RebuildResult } from '../fts/rebuild.ts'
 import type { RestoreRecord } from '../manifest.ts'
 import { reappendAudit } from './audit.ts'
 import { reapplyMemberChanges } from './members.ts'
@@ -44,23 +46,20 @@ export interface ReconcileDeps {
   retentionRules?: Readonly<Record<string, RetentionRule>>
   /** Each custom store's runner, by store name (`brandAgentRunner(brandAgent(env))` for `BrandAgent`). */
   runners?: Readonly<Record<string, PersonRunner>>
-  /**
-   * C1's FTS rebuild (`rebuildAfterRestore` in ops/backup/fts, P8 C1 PR A). Required, so no reconcile skips it; it
-   * refuses unless the record is `restored_unreconciled` and writes `restore/<restoreId>/fts.json`.
-   */
-  rebuildFts: (p: { bucket: R2Bucket; target: D1Database; restoreId: string }) => Promise<unknown>
+  /** C1's FTS rebuild; tests pass a stand-in. It refuses unless the record is `restored_unreconciled`. */
+  rebuildFts?: (p: RebuildDeps) => Promise<RebuildResult>
 }
 
-/** The part of C1's `fts.json` the reconcile reads: anything but `rebuilt` stops it. */
-const FtsResultSchema = z.object({ status: z.string() })
-
 async function ftsRebuilt(deps: ReconcileDeps): Promise<'rebuilt'> {
-  await deps.rebuildFts({ bucket: deps.bucket, target: deps.target, restoreId: deps.restoreId })
+  const result = await (deps.rebuildFts ?? rebuildAfterRestore)({ bucket: deps.bucket, target: deps.target, restoreId: deps.restoreId, nowMs: deps.at.nowMs })
+  // A refused rebuild writes no fts.json, so the answer is read first: an fts.json from an earlier run never counts.
+  if ('refused' in result) throw new RestoreRefusal('fts_rebuild_refused', result.refused)
+  if ('failed' in result) throw new RestoreRefusal('fts_rebuild_failed', result.failed)
   const obj = await deps.bucket.get(restoreKey(deps.restoreId, 'fts.json'))
   if (!obj) throw new RestoreRefusal('fts_rebuild_failed', 'no fts.json')
-  const parsed = FtsResultSchema.safeParse(JSON.parse(await obj.text()))
+  const parsed = FtsRecordSchema.safeParse(JSON.parse(await obj.text()))
   if (!parsed.success) throw new RestoreRefusal('fts_rebuild_failed', 'fts.json unreadable')
-  if (parsed.data.status !== 'rebuilt') throw new RestoreRefusal('fts_rebuild_failed', parsed.data.status)
+  if (parsed.data.restoreId !== deps.restoreId || parsed.data.status !== 'rebuilt') throw new RestoreRefusal('fts_rebuild_failed', parsed.data.status)
   return 'rebuilt'
 }
 
@@ -96,7 +95,13 @@ export async function reconcile(deps: ReconcileDeps): Promise<ReconcileResult> {
     // Another run wrote the record since this one read it: nothing to record over it.
     if (err.reason.startsWith('record_changed')) return { refused: err.reason, record: null }
     // A step that refuses leaves the restore unreconciled: no step counts as done until a whole run gets through.
-    const saved = await writeRecord(deps.bucket, { ...record, reconcile: { ...reconcile, fts: null, audit: null, members: null, replay: null, refusal: err.reason } }, etag)
-    return { refused: err.reason, record: saved }
+    try {
+      const saved = await writeRecord(deps.bucket, { ...record, reconcile: { ...reconcile, fts: null, audit: null, members: null, replay: null, refusal: err.reason } }, etag)
+      return { refused: err.reason, record: saved }
+    } catch (writeErr) {
+      // Another run wrote the record meanwhile (review L-d): returned, never thrown, with the step's own refusal.
+      if (writeErr instanceof RestoreRefusal && writeErr.reason.startsWith('record_changed')) return { refused: `${err.reason} (and ${writeErr.reason})`, record: null }
+      throw writeErr
+    }
   }
 }

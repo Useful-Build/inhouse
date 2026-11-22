@@ -69,6 +69,19 @@ it('stops before the audit re-append when the FTS rebuild didn\'t rebuild', asyn
   expect(await lines()).toBe(before)
 })
 
+it('returns, never throws, a record changed by another run while this one refused (L-d)', async () => {
+  const kept = await stored()
+  // Another run writes the record while this one's FTS step is running; this one's step then fails.
+  const racing = async () => {
+    await e.FILES.put(restoreKey(record.restoreId, 'record.json'), JSON.stringify({ ...kept, reconcile: { ...(kept.reconcile ?? {}), refusal: 'another_run' } }))
+    return { failed: 'racing' } as const
+  }
+  const out = await reconcile({ bucket: e.FILES, target: e.RESTORE_DB, restoreId: record.restoreId, rebuildFts: racing, at: at(T + 36), runners: runners() })
+  expect(out).toEqual({ refused: `fts_rebuild_failed: racing (and record_changed: ${record.restoreId})`, record: null })
+  expect((await stored()).reconcile?.refusal).toBe('another_run')
+  await e.FILES.put(restoreKey(record.restoreId, 'record.json'), JSON.stringify(kept))
+})
+
 it('refuses by name a store whose runner isn\'t built, writes nothing of the replay, and stays unreconciled (real registry)', async () => {
   expect(record.status).toBe('restored_unreconciled')
   const before = await row(ids.dana)
