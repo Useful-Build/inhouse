@@ -46,7 +46,8 @@ by hand. A cancelled queued turn doesn't come back.
 **Hub key (`HUB_TOKEN_KEYS`).** Follow AGENTS.md, "Hub key rotation". Don't remove the old key until
 `ServerGateway.status` shows the new `kid` for every account.
 
-**Tool tokens.** Shopify: a client credentials account refreshes its own token (about every 12 hours). To replace the
+**Tool tokens** (the steps for Shopify's reconnect and Slack are to confirm in the rehearsal; no code here defines them).
+Shopify: a client credentials account refreshes its own token (about every 12 hours). To replace the
 app's client secret, rotate it in the Dev Dashboard, update the stored credential through the connector's reconnect
 flow, then check `ServerGateway.status`. Slack: reinstall the app or rotate the signing secret in the Slack app
 settings, then put the new value through a secret card.
@@ -126,16 +127,26 @@ run wrote the record: stop the other run, then run the reconcile again.
 
 **Paths you may hit.**
 - **Inhouse-actor placeholder.** If a re-appended line's actor was an Inhouse operator who isn't in the restored
-  database, the placeholder is a "Former member" row, not a working sign-in. That's expected. The operator signs in
-  as themselves through the Inhouse team app. The confirm needs an active `inhouse` row in the restored database as its actor. If the
-  operator has none, stop and ask the orchestrator: how to add one is open until the first rehearsal.
+  database, the placeholder is a "Former member" row, not a working sign-in. That's expected.
+- **The operator row for the confirm.** The confirm's actor must be an active `inhouse` row in the restored database.
+  The restored `members` table is the backup's, so an operator who had signed in before the backup already has one.
+  The only code that creates an `inhouse` row is the first sign-in to the deployment's bound database, and the target
+  isn't bound until the switch.
+  - (a) Before you pick the backup, run `SELECT id FROM members WHERE kind='inhouse' AND status='active'` on the
+    target and use one of those ids as the actor.
+  - (b) If no usable operator row is there, take a new backup after the operator has signed in on the live deployment,
+    and restore from that. Never hand-INSERT a row into the target.
+  - The reconcile's member step touches person rows only, so the replay never changes `inhouse` rows. Having the
+    reconcile seed an operator row is a code change, and stays an open item.
 - **Replay stopped on `last_admin`.** The replay deletes a person the same way person deletion does, and person
   deletion refuses the last active Admin. If the replay stops on `last_admin`, the brand has no other Admin in the
   restored database. Don't skip it. Have the Admin make a second Admin (or invite one), run the reconcile again, then
   go on. If the restored database has no active Admin at all, the operator may approve in step 4, but only then, and
   you record why in writing.
-- **Replay stopped on a busy store or a missing runner** (`replay_stopped`: `busy`, or a custom store with no runner).
-  Wait, then run the reconcile again. Nothing was written for an unplannable replay.
+- **Replay stopped** (`replay_stopped`: a store is `busy`, or `last_admin` above). Fix the cause, then run the
+  reconcile again. Each step is idempotent.
+- **Replay refused for a custom store with no runner** (`replay_custom_unrun`). The replay is planned before anything is
+  written, so nothing was written. Don't skip it: the store's runner has to exist first. Stop and ask the orchestrator.
 
 ### 4. Confirm
 Run the confirm (`confirmRestore`) with two ids: the actor is the Inhouse operator (an active `inhouse` row in the
@@ -156,10 +167,10 @@ new database id). Then resume the brand and re-enable person deletion and retent
 
 **Verify.** The record says `restored` and its confirm names both ids. A chat message, a Library search and the member
 list work. A person deleted after the backup is still gone. The audit log runs unbroken: ids continue past the backup's
-last line. The soak record notes the restore as a release.
+last line. The operator records the restore in the rehearsal record and the incident notes.
 
-**Roll back.** Before the switch, nothing live changed: delete the target database and the `restore/<restoreId>/`
-prefix is kept as the record. After the switch, redeploy the previous release's database binding. Then the old
+**Roll back.** Before the switch, nothing live changed: delete the target database, and keep the `restore/<restoreId>/`
+prefix as the record. After the switch, redeploy the previous release's database binding. Then the old
 database is live again but is missing whatever was written after the switch: pause first and plan the gap.
 
 **Rehearsal record.** Date: ___ Deployment: ___ Who: ___ Backup id: ___ Result: ___

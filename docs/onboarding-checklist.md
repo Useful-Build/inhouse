@@ -21,7 +21,7 @@ Related: [runbook-backend.md](runbook-backend.md), [data-map.md](data-map.md).
       4. Check in the Dev Dashboard that the three topics show the URL. Shopify's automated check sends a bad HMAC and
          expects a 401, and a good one expects a 2xx.
 - [ ] **The Slack app.** Create it in the brand's workspace (or install ours, as the brand chooses). Note the signing
-      secret and bot token for a secret card. Keep it to the channels the brand names.
+      secret and bot token for a secret card (the exact steps are to confirm in the rehearsal). Keep it to the channels the brand names.
 - [ ] **Payload logging off on the brand's Anthropic key.** Create the key in the brand's own workspace, turn payload
       logging off, and check the setting reads off before the key goes on the Worker.
 
@@ -47,9 +47,9 @@ person who is in both gets one identity and the product answers `wrong_kind`, in
 
 Set these in the brand's settings before anyone chats.
 
-- [ ] **`t:webfetch` (the WebFetch list).** An empty list means **no** web pages, not any public host. Fill it only with
+- [ ] **`t:webfetch` (the WebFetch list).** Set by the Inhouse team; an Admin can write only `tm:<id>:on`. An empty list means **no** web pages, not any public host. Fill it only with
       hosts the brand names, one per line. Leave it empty if there are none.
-- [ ] **WebSearch off.** Keep `t:websearch` off until the web-tool evals pass. Turn it on only after a recorded pass.
+- [ ] **WebSearch off.** Set by the Inhouse team. Keep `t:websearch` off until the web-tool evals pass. Turn it on only after a recorded pass.
 - [ ] **Every model's `tm:<id>:on` is `off`** unless that model passed the read-side eval set (decision 2). Turn on
       only the models that passed, one at a time, and record the eval run id beside each.
 - [ ] Stage is Watch: no write to any tool, and notices only through the bell.
