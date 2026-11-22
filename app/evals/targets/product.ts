@@ -14,6 +14,7 @@
 // Cases run one at a time: the brand's memory is shared, so a concurrent case would read another's seeded facts.
 import { mintPerson } from '../../server/auth/test-issuer-mint.ts'
 import { SEED_PEOPLE } from '../../server/seed/brand.ts'
+import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { JWK } from 'jose'
 import { createDoor, newMemoryId, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory } from './door.ts'
@@ -101,7 +102,7 @@ export interface ProductTargetOptions {
   fetch?: typeof fetch
   model?: string
   /** The headers that sign `key` in. Default: a test-issuer token from INHOUSE_EVAL_ISSUER_JWK_FILE and INHOUSE_EVAL_AUD. */
-  signIn?: (key: PersonKey) => Promise<Record<string, string>>
+  signIn?: (key: PersonKey, who: { sub: string; email: string }) => Promise<Record<string, string>>
   /** The clock the sign-in cache reads (tests). Default: Date.now. */
   now?: () => number
   /** The memory door. Default: wrangler on INHOUSE_EVAL_D1_NAME (door.ts), made only after the eval-brand check passed. */
@@ -114,7 +115,21 @@ export interface ProductTargetOptions {
 /** True for an email on `example.test` or a subdomain: the invented domain the seeded brands use. */
 export const onExampleTest = (email: string | null): boolean => email !== null && /^[^@\s]+@(?:[a-z0-9-]+\.)*example\.test$/i.test(email)
 
-interface Member { id: string; email: string | null; status: string }
+interface Member { id: string; email: string | null; status: string; rev: number }
+
+/**
+ * A case-repeat's own person (A9, after the first full baseline: past chats persist, and history_search is member-scoped):
+ * deterministic per run, case and rep, on example.test, so a re-run doesn't collide and the results name who asked.
+ */
+export function casePerson(run: string, caseId: string, rep: number): { sub: string; email: string; name: string } {
+  const handle = `eval-${run}-${caseId.toLowerCase()}-r${rep}`
+  return { sub: handle, email: `${handle}@example.test`, name: `Eval ${caseId} r${rep}` }
+}
+/** A case person's email: what run start removes when it's another run's. */
+const CASE_PERSON = /^eval-[a-z0-9-]+@example\.test$/
+const newMemberId = (): string => `m_${randomBytes(16).toString('base64url')}`
+/** What to do when the member check's page cap trips: the case persons have filled it. */
+const MEMBER_CAP_FIX = 'reset the eval D1 (delete inhouse-sbx-eval-db, then dispatch eval-deploy with -f seed=true at app main\'s head)'
 
 /** Why the product target can't grade a case: a field its API doesn't show. Null when it can. */
 export function unobservableReason(c: Case): string | null {
@@ -150,6 +165,9 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
   if (!opts.paid) throw new ProductTargetRefusal('the product target spends real money: pass --paid and --budget <usd>')
   if (!(typeof opts.budgetUsd === 'number' && opts.budgetUsd > 0)) throw new ProductTargetRefusal('the product target needs --budget <usd> above zero')
   if (opts.env[EVAL_BRAND_FLAG] !== '1') throw new ProductTargetRefusal(`refusing: ${EVAL_BRAND_FLAG}=1 is not set, so the brand isn't marked as an eval brand`)
+  // The run's tag: the case persons' ids carry it (INHOUSE_EVAL_RUN, else GitHub's run id and attempt).
+  const runTag = opts.env.INHOUSE_EVAL_RUN ?? (opts.env.GITHUB_RUN_ID && opts.env.GITHUB_RUN_ATTEMPT ? `${opts.env.GITHUB_RUN_ID}-${opts.env.GITHUB_RUN_ATTEMPT}` : undefined)
+  if (!runTag || !/^[0-9a-z-]{1,40}$/.test(runTag)) throw new ProductTargetRefusal('refusing: no run tag (INHOUSE_EVAL_RUN, or GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT), so the case persons would collide')
   const origin = opts.env[EVAL_ORIGIN_VAR]
   if (!origin) throw new ProductTargetRefusal(`refusing: ${EVAL_ORIGIN_VAR} is not set`)
   const picker = PICKER_OF[opts.model ?? 'claude-sonnet-5-5']
@@ -164,13 +182,16 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
   const signIn = opts.signIn ?? testIssuerSignIn(opts.env)
   const now = opts.now ?? Date.now
   // Each person's signed headers and when they were signed: re-signed once SIGN_REFRESH_MS old, well before expiry.
-  const headersOf = new Map<PersonKey, { headers: Record<string, string>; at: number }>()
+  const headersOf = new Map<string, { headers: Record<string, string>; at: number }>()
+  /** The case-repeat's own person, who asks as `current` (set by seed()). */
+  let caseWho: { sub: string; email: string } | undefined
 
   async function api(who: PersonKey, method: string, path: string, o: { json?: unknown; bytes?: Uint8Array; headers?: Record<string, string>; signal?: AbortSignal } = {}): Promise<{ status: number; json: any; text: string }> {
-    let signed = headersOf.get(who)
+    const id = who === 'current' && caseWho ? caseWho : EVAL_PEOPLE[who]
+    let signed = headersOf.get(`${who}:${id.sub}`)
     if (!signed || now() - signed.at >= SIGN_REFRESH_MS) {
-      signed = { headers: await signIn(who), at: now() }
-      headersOf.set(who, signed)
+      signed = { headers: await signIn(who, id), at: now() }
+      headersOf.set(`${who}:${id.sub}`, signed)
     }
     const h = signed.headers
     // The service token last, and any caller's token header dropped first in any case (#277 review F4: Headers would join
@@ -218,11 +239,21 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
       if (cursor === null) break
     }
     // Fail closed: members past the page cap were never checked.
-    if (cursor !== null) throw new ProductTargetRefusal('refusing: the brand has more members than the check reads (100 pages), so it is not known to be an eval brand')
+    if (cursor !== null) throw new ProductTargetRefusal(`refusing: the brand has more members than the check reads (100 pages), so it is not known to be an eval brand. On the eval brand the case persons fill it (about 41 a run): ${MEMBER_CAP_FIX}`)
     const live = members.filter((m) => m.status !== 'removed')
     const offenders = live.filter((m) => !onExampleTest(m.email))
     if (offenders.length > 0) throw new ProductTargetRefusal(`refusing: ${offenders.length} member(s) of this brand are not on example.test, so it is not an eval brand`)
     for (const k of PEOPLE_KEYS) if (!live.some((m) => m.id === people[k])) throw new ProductTargetRefusal(`refusing: eval person ${k} is not an active member of this brand`)
+    // Run start: the previous runs' case persons are removed through the product's own API (its audit line), as the Admin.
+    // A removal that fails stops the run here, before any spend.
+    for (const m of live) {
+      if (!m.email || !CASE_PERSON.test(m.email) || m.email.startsWith(`eval-${runTag}-`)) continue
+      const r = await api('lena', 'DELETE', `/api/members/${encodeURIComponent(m.id)}?ifRev=${m.rev}`)
+      if (r.status !== 200 && r.status !== 204) {
+        const code = r.json?.error?.code
+        throw new ProductTargetRefusal(`refusing: could not remove the previous run's case person ${m.id} (${r.status}${typeof code === 'string' && /^[a-z_]{1,40}$/.test(code) ? ` ${code}` : ''})`)
+      }
+    }
     const models = await api('current', 'GET', '/api/models')
     must(models, 'read the models', [200])
     if (!models.json.modes?.some((m: { id: string }) => m.id === picker)) throw new ProductTargetRefusal(`refusing: the brand does not serve the ${picker} model`)
@@ -285,6 +316,15 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
         listWritten = true
         await d.setWebfetchHosts(exfil ? exfil.hosts.map((h) => h.toLowerCase()) : null)
         await d.clear()
+        // The case-repeat's own person: invited through the door, bound by its first sign-in (the product's invite path).
+        const who = casePerson(runTag, run.caseId, run.rep)
+        const personId = newMemberId()
+        await d.invitePerson({ id: personId, email: who.email, name: who.name })
+        caseWho = who
+        const me = await api('current', 'GET', '/api/me')
+        must(me, 'sign in as the case person')
+        if (me.json.memberId !== personId || me.json.evalBrand !== true) throw new ProductTargetRefusal(`refusing: the case person ${who.sub} did not sign in as the invited row`)
+        people.current = personId
         const real = new Map<string, string>()
         const facts: NewMemory[] = memory.map((f) => {
           const id = newMemoryId()
@@ -487,12 +527,12 @@ export function readIssuerKey(file: string): JWK {
 }
 
 /** Signs in with a test-issuer token minted from the deployment's private key (a file), the way the e2e specs do. */
-export function testIssuerSignIn(env: Record<string, string | undefined>): (key: PersonKey) => Promise<Record<string, string>> {
-  return async (key) => {
+export function testIssuerSignIn(env: Record<string, string | undefined>): (key: PersonKey, who?: { sub: string; email: string }) => Promise<Record<string, string>> {
+  return async (key, person) => {
     const file = env[EVAL_ISSUER_JWK_FILE]
     const aud = env[EVAL_AUD_VAR]
     if (!file || !aud) throw new ProductTargetRefusal(`refusing: ${EVAL_ISSUER_JWK_FILE} and ${EVAL_AUD_VAR} are not both set, so the eval people can't sign in`)
-    const who = EVAL_PEOPLE[key]
+    const who = person ?? EVAL_PEOPLE[key]
     const token = await mintPerson({ sub: who.sub, email: who.email, key: readIssuerKey(file), aud })
     return { 'Cf-Access-Jwt-Assertion': token, [TEST_ASSERTION_HEADER]: token }
   }

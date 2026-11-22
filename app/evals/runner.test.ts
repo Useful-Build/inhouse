@@ -76,7 +76,7 @@ describe('the fixture target replays S5', () => {
 describe('needs and people keys', () => {
   it('a product-target run over C01-C05 reports them as not run, with no network call', async () => {
     let calls = 0
-    const target = createProductTarget({ paid: true, budgetUsd: 2, env: { INHOUSE_EVAL_BRAND: '1', INHOUSE_EVAL_ORIGIN: 'https://eval.example.test', INHOUSE_EVAL_ACCESS_CLIENT_ID: 'id.access', INHOUSE_EVAL_ACCESS_CLIENT_SECRET: 's' }, fetch: (() => { calls++; throw new Error('network') }) as unknown as typeof fetch })
+    const target = createProductTarget({ paid: true, budgetUsd: 2, env: { INHOUSE_EVAL_RUN: '7-1', INHOUSE_EVAL_BRAND: '1', INHOUSE_EVAL_ORIGIN: 'https://eval.example.test', INHOUSE_EVAL_ACCESS_CLIENT_ID: 'id.access', INHOUSE_EVAL_ACCESS_CLIENT_SECRET: 's' }, fetch: (() => { calls++; throw new Error('network') }) as unknown as typeof fetch })
     const out = await runEvals({ target, cases: CASES.filter((c) => /^C0[1-5]$/.test(c.id)), reps: 3, concurrency: 1 })
     expect(out.rows).toEqual([])
     expect(out.notRun.map((n) => n.id)).toEqual(['C01', 'C02', 'C03', 'C04', 'C05'])
@@ -94,7 +94,7 @@ describe('needs and people keys', () => {
 })
 
 describe('the product target refuses without --paid, a budget and the eval brand', () => {
-  const ok = { INHOUSE_EVAL_BRAND: '1', INHOUSE_EVAL_ORIGIN: 'https://eval.example.test', INHOUSE_EVAL_ACCESS_CLIENT_ID: 'id.access', INHOUSE_EVAL_ACCESS_CLIENT_SECRET: 's' }
+  const ok = { INHOUSE_EVAL_RUN: '7-1', INHOUSE_EVAL_BRAND: '1', INHOUSE_EVAL_ORIGIN: 'https://eval.example.test', INHOUSE_EVAL_ACCESS_CLIENT_ID: 'id.access', INHOUSE_EVAL_ACCESS_CLIENT_SECRET: 's' }
   it.each([
     ['no --paid', { paid: false, budgetUsd: 2, env: ok }],
     ['no budget', { paid: true, env: ok }],
