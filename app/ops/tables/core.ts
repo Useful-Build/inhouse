@@ -6,6 +6,6 @@ export const coreTables: readonly TableEntry[] = [
   { kind: 'd1', name: 'members', retention: 'account', personKeys: ['id', 'invited_by'], export: true },
   { kind: 'd1', name: 'settings', retention: 'config', personKeys: ['owner', 'updated_by', 'value_json'], export: true },
   { kind: 'd1', name: 'support_grants', retention: 'config', personKeys: ['created_by', 'ended_by'], export: true },
-  { kind: 'd1', name: 'audit_log', retention: 'audit', personKeys: ['actor_id', 'target_id', 'args_json:$.memberId', 'args_json:$.replaces', 'args_json:$.value'], export: true },
+  { kind: 'd1', name: 'audit_log', retention: 'audit', personKeys: ['actor_id', 'target_id', 'args_json:$.memberId', 'args_json:$.replaces', 'args_json:$.value', 'args_json:$.approvedBy'], export: true },
   { kind: 'r2', name: 'photos/', retention: 'person', personKeys: ['photos/<memberId>/'], export: true },
 ]
