@@ -148,6 +148,11 @@ async function askFromToday(page: Page, text: string): Promise<string> {
 async function makeFile(page: Page): Promise<string> {
   const id = await askFromToday(page, `scenario:write-output make the table ${uid()}`)
   await expect(log(page).getByText(SAVED, { exact: true })).toBeVisible({ timeout: 150_000 })
+  // The file reaches the Library when the run's outputs are saved, which can be just after the answer: wait on the list, not the clock.
+  await expect.poll(async () => {
+    const r = await api(page, 'GET', '/api/library?limit=100')
+    return (r.json?.items as { name: string; link?: { id: string } }[] | undefined)?.some(f => f.name === FILE && f.link?.id === id) ?? false
+  }, { timeout: 60_000, message: `the Library lists ${FILE} from chat ${id}` }).toBe(true)
   return id
 }
 
@@ -254,7 +259,12 @@ test('S6: Library shows a file the agent made, it downloads, and deleting and re
   await shot(page, 'S6-library-with-the-file')
 
   await fileMenu(page).first().click()
-  const [saved] = await Promise.all([page.waitForEvent('download'), page.getByRole('menuitem', { name: 'Download', exact: true }).click()])
+  const [saved, served] = await Promise.all([
+    page.waitForEvent('download'),
+    page.waitForResponse(r => /\/api\/library\/[^/]+\/download$/.test(r.url())),
+    page.getByRole('menuitem', { name: 'Download', exact: true }).click(),
+  ])
+  expect(served.status(), `the download answered: ${await served.text().catch(() => '')}`).toBe(200)
   expect(saved.suggestedFilename()).toBe(FILE)
   expect(await readFile(await saved.path(), 'utf8')).toBe(FILE_BODY)
 
