@@ -28,8 +28,12 @@
 //   INHOUSE_EVAL_D1_NAME=inhouse-sbx-pr<N>-db INHOUSE_EVAL_WRANGLER_CONFIG=<the sandbox config that binds it> CF_SANDBOX_ACCOUNT_ID=... \
 //   [MORNING_CHECK_RELEASE_JWT=<release token, test build only>] node evals/morning-check/run.mjs --target <the build's https origin> \
 //     --out-dir evals/morning-check/results --sha <git sha> --issuer-key-file <that deploy's test issuer private JWK> --aud <its Access aud> \
-//     [--cases ...] [--model ...] [--timeout-min 20] [--settle-min 2]
+//     [--cases ...] [--model ...] [--timeout-min 20] [--settle-min 2] [--model-setting Fast]
 //
+// --model-setting <label> (remote only, default none): before the first case, the brand's Default model (`g:mode`, route 12,
+// as the person the run signs in, the seeded Admin by default) is set to that label and read back. The scripted proof passes
+// "Fast": routine turns run on the Default model (Opus when unset) and the scripted model answers only Fast. A real-model
+// run leaves it out: the eval run picks its own model.
 // No restart: per case the door (door.ts, wrangler d1 execute on the sandbox database) sets the test shop override the
 // build's egress passes to the hub, Run now is pressed, the slot is polled through the door until it ends or the deadline,
 // graded and written as above. The override is cleared before the first case, after every case and on exit. Without
@@ -51,7 +55,7 @@ import { openResults } from './results.ts'
 import { ROUTINE_ID, runAll } from './runner.ts'
 import { runMode } from './args.ts'
 import { createMorningDoor } from './door.ts'
-import { clearOnSignals, remoteEnv } from './remote.ts'
+import { clearOnSignals, ensureDefaultModel, remoteEnv } from './remote.ts'
 import { wranglerRunner } from '../targets/door.ts'
 import { SEED_PEOPLE } from '../../server/seed/brand.ts'
 
@@ -59,7 +63,7 @@ const { values: a } = parseArgs({
   options: {
     'persist-dir': { type: 'string' }, 'base-url': { type: 'string' }, 'out-dir': { type: 'string' }, sha: { type: 'string' }, cases: { type: 'string' },
     model: { type: 'string', default: 'claude-sonnet-5-5' }, 'restart-cmd': { type: 'string' }, 'timeout-min': { type: 'string', default: '20' }, 'settle-min': { type: 'string', default: '2' },
-    'shop-pattern': { type: 'string' }, 'restart-wait-sec': { type: 'string' }, target: { type: 'string' },
+    'shop-pattern': { type: 'string' }, 'restart-wait-sec': { type: 'string' }, target: { type: 'string' }, 'model-setting': { type: 'string' },
     'issuer-key-file': { type: 'string' }, aud: { type: 'string' }, sub: { type: 'string', default: SEED_PEOPLE.admin.subject }, email: { type: 'string', default: SEED_PEOPLE.admin.email },
   },
 })
@@ -74,6 +78,14 @@ const personJwt = () => mintPerson({ sub: a.sub, email: a.email, key: privateJwk
 const post = async (path, body, jwt) => {
   const r = await fetch(new URL(path, m.baseUrl), { method: 'POST', headers: { 'Content-Type': 'application/json', 'Cf-Access-Jwt-Assertion': jwt, Origin: new URL(m.baseUrl).origin }, body: JSON.stringify(body) })
   if (!r.ok) throw new Error(`run.mjs: POST ${path} answered ${r.status}: ${await r.text()}`)
+}
+/** Route 12 as the person (ensureDefaultModel reads the status and the JSON itself). */
+const asPerson = async (method, path, body) => {
+  const r = await fetch(new URL(path, m.baseUrl), { method, headers: { 'Content-Type': 'application/json', 'Cf-Access-Jwt-Assertion': await personJwt(), Origin: new URL(m.baseUrl).origin }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+  const text = await r.text()
+  let json = null
+  try { json = text ? JSON.parse(text) : null } catch { json = { text } }
+  return { status: r.status, json }
 }
 
 /** The local D1 file under the persist dir that holds the routines tables. */
@@ -149,6 +161,7 @@ const env = door ? remoteEnv({
   nowMs: () => Date.now(),
   caseTimeoutMs: Number(a['timeout-min']) * 60_000,
   settleMs: Number(a['settle-min']) * 60_000,
+  ...(m.modelSetting ? { defaultModel: () => ensureDefaultModel({ get: path => asPerson('GET', path), put: (path, body) => asPerson('PUT', path, body) }, m.modelSetting) } : {}),
 }) : {
   nowMs: () => Date.now(),
   async useShop(host) {

@@ -19,12 +19,50 @@ export interface RemoteDeps {
   settleMs: number
   /** Where a loud line goes (default console.error): a leftover override found by the run's first clear. */
   warn?(line: string): void
+  /**
+   * Sets the brand's Default model before the first case (ensureDefaultModel), or nothing when absent. The scripted proof
+   * asks for "Fast": routine turns run on the brand's Default model (Opus when unset) and the scripted model answers only
+   * the Fast one. A real-model run leaves it alone (the eval run picks its own model).
+   */
+  defaultModel?: () => Promise<void>
+}
+
+/** Route 12's answers, as the caller's HTTP gives them (the Admin's token). */
+export interface SettingsApi {
+  get(path: string): Promise<{ status: number; json: unknown }>
+  put(path: string, body: unknown): Promise<{ status: number; json: unknown }>
+}
+
+/** A Default model label (the technical setting `g:mode`'s value): a plain word, never a path or a value with markup. */
+const MODEL_LABEL = /^[A-Za-z]{1,20}$/
+
+/**
+ * The brand's Default model (`g:mode`) set to `label` and read back, as the Admin (route 12, PUT with the setting's own
+ * revision). Mirrors e2e/ship/watch.spec.ts ensureFastDefault. Throws when the write is refused or doesn't read back.
+ */
+export async function ensureDefaultModel(api: SettingsApi, label: string): Promise<void> {
+  if (!MODEL_LABEL.test(label)) throw new Error(`morning-check: ${JSON.stringify(label)} is not a Default model label`)
+  const read = async () => {
+    const r = await api.get('/api/settings/technical')
+    if (r.status !== 200) throw new Error(`morning-check: GET /api/settings/technical answered ${r.status}`)
+    const items = (r.json as { items?: { key: string; value?: unknown; rev?: number }[] } | null)?.items
+    if (!Array.isArray(items)) throw new Error('morning-check: GET /api/settings/technical has no items')
+    return items.find(i => i.key === 'g:mode')
+  }
+  const now = await read()
+  if (now?.value !== label) {
+    const put = await api.put('/api/settings/technical/g%3Amode', { value: label, ifRev: now?.rev ?? 0 })
+    if (put.status !== 200) throw new Error(`morning-check: setting the Default model to ${label} answered ${put.status}: ${JSON.stringify(put.json)}`)
+  }
+  const after = await read()
+  if (after?.value !== label) throw new Error(`morning-check: the Default model reads back ${JSON.stringify(after?.value)}, not ${label}`)
 }
 
 export function remoteEnv(d: RemoteDeps): RunnerEnv {
   const warn = d.warn ?? (line => console.error(line))
   let first = true
   return {
+    ...(d.defaultModel ? { beforeCases: d.defaultModel } : {}),
     nowMs: d.nowMs,
     useShop: host => d.door.setShop(host),
     // runAll's first clear is the run's start: a row there is a leftover from a run that didn't clear (or one running now:

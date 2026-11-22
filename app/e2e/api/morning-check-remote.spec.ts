@@ -18,7 +18,7 @@ import { expect, test } from '@playwright/test'
 import { wranglerRunner } from '../../evals/targets/door.ts'
 import { createMorningDoor, type MorningDoor } from '../../evals/morning-check/door.ts'
 import { AMBER, META } from '../../evals/morning-check/expected.ts'
-import { remoteEnv } from '../../evals/morning-check/remote.ts'
+import { ensureDefaultModel, remoteEnv } from '../../evals/morning-check/remote.ts'
 import { ROUTINE_ID, runAll } from '../../evals/morning-check/runner.ts'
 import { needsContainer } from './chat-kit.ts'
 import { actor, call } from './kit.ts'
@@ -32,6 +32,16 @@ const SETTLE_MS = 60_000
 const TIMEOUT_MS = 1_500_000
 
 let door: MorningDoor | null = null
+// Routine turns run on the brand's Default model (Opus when unset) and the scripted model answers only Fast: set it, as the
+// Admin, and read it back, before any Run now (evals/morning-check/remote.ts ensureDefaultModel; run.mjs --model-setting).
+test.beforeAll(async ({ request }) => {
+  if (!process.env.E2E_TEST_BUILD_REMOTE || DOOR_ENV.some(k => !process.env[k])) return
+  const admin = actor('admin')
+  await ensureDefaultModel({
+    get: async path => { const r = await call(request, admin, 'GET', path); return { status: r.status, json: r.json } },
+    put: async (path, body) => { const r = await call(request, admin, 'PUT', path, { json: body }); return { status: r.status, json: r.json } },
+  }, 'Fast')
+})
 test.afterAll(async () => {
   await door?.clearShop()
 })
