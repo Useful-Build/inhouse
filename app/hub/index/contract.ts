@@ -84,6 +84,13 @@ export interface ConnectGateway {
   disconnect(scope: CallerScope, accountId: string): Promise<HubResult<{ revoked: boolean }>>
   setPaused(scope: CallerScope, accountId: string, paused: boolean): Promise<HubResult<{ paused: boolean }>>
   listAccounts(scope: CallerScope): Promise<HubResult<AccountSummary[]>>
+  /**
+   * TEST BUILD ONLY, optional (W5's test-fakes hook, the product's `POST /api/ops/test-fakes`): reads and flips the
+   * fake upstreams in the hub's test bundle (hub/testing/fakes.ts). A `server` scope only. The deployable hub answers
+   * `not_configured` and loads nothing (scripts/check-hub-build.mjs proves the module absent). No product code but
+   * the test build's hook calls it.
+   */
+  testFakes?(scope: CallerScope, op: unknown): Promise<HubResult<unknown>>
 }
 
 // ---- P5 (p5-w4): notices to listed Slack channels ----

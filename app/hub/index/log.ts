@@ -73,5 +73,17 @@ export function log(event: LogEvent, fields: LogFields = {}): void {
     const value = fields[key]
     if (typeof value === 'string' || typeof value === 'number') line[key] = value
   }
-  console.log(JSON.stringify(line))
+  const text = JSON.stringify(line)
+  // The hub's TEST bundle only (wrangler.hub.jsonc defines the switch "false", so esbuild drops this): every line also
+  // goes to a bounded in-isolate buffer the test-fakes hook reads (hub/testing/fakes.ts, op `logs`).
+  if (__INHOUSE_HUB_TEST__) {
+    const g = globalThis as { __inhouseHubTestLogs?: { lines: string[]; dropped: number } }
+    const buf = (g.__inhouseHubTestLogs ??= { lines: [], dropped: 0 })
+    buf.lines.push(text)
+    if (buf.lines.length > 5000) {
+      buf.lines.shift()
+      buf.dropped++
+    }
+  }
+  console.log(text)
 }
