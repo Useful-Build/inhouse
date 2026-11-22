@@ -94,10 +94,12 @@ test("another member's state is refused: Inhouse member X starts, Inhouse member
 test('Admin and Member get 403 on routes A and B, before any hub call', async ({ request }) => {
   const before = await fakeState(request)
   const tools = await readTools(request)
-  for (const who of [admin, dana]) {
-    expectError(await call(request, who, 'POST', START, { json: {} }), 403, 'forbidden')
-    expectError(await call(request, who, 'GET', '/api/connect/callback?code=x&state=y'), 403, 'forbidden')
-  }
+  // The access matrix (server/auth/matrix.ts): an Admin's write on a technical row is `forbidden` with reason `admin_read_only` (the
+  // Inhouse team holds every Admin control); an Admin's read of a row that lists only inhouse, and any Member, is a bare `forbidden`.
+  expectError(await call(request, admin, 'POST', START, { json: {} }), 403, 'forbidden', 'admin_read_only')
+  expectError(await call(request, admin, 'GET', '/api/connect/callback?code=x&state=y'), 403, 'forbidden')
+  expectError(await call(request, dana, 'POST', START, { json: {} }), 403, 'forbidden')
+  expectError(await call(request, dana, 'GET', '/api/connect/callback?code=x&state=y'), 403, 'forbidden')
   const after = await fakeState(request)
   expect(after.mcp.requests, 'no request reached the fake Slack').toEqual(before.mcp.requests)
   expect(await readTools(request)).toEqual(tools)

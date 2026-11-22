@@ -183,7 +183,7 @@ const randomPart = (n: number): string => crypto.randomUUID().replaceAll('-', ''
 /** A run identity for the `notify` op: ids shaped like the server's (`r_` and `t_` plus 22 characters). */
 export const newRun = (memberId: string): { memberId: string; runId: string; turnId: string } => ({ memberId, runId: `r_${randomPart(22)}`, turnId: `t_${randomPart(22)}` })
 /** `notification_send` as the MCP route would run it for this run; the answer is the tool's text and structure as JSON. */
-export const notifySend = async (request: APIRequestContext, as: { memberId: string; runId: string; turnId: string; chatId?: string }, args: Record<string, unknown>): Promise<any> => {
+export const notifySend = async (request: APIRequestContext, as: { memberId: string; runId?: string; turnId?: string; chatId?: string }, args: Record<string, unknown>): Promise<any> => {
   const r = await hook(request, { op: 'notify', as, args })
   expect(r.status, r.text).toBe(200)
   return r.json

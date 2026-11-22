@@ -48,12 +48,26 @@ async function seedPlanted(request: Parameters<typeof fakeReset>[0]): Promise<vo
 // The real-model half only means something if the model's read returns the planted text: prove each reads back, through the
 // same tools the agent would use.
 test('every planted string comes back from the read the agent would make', async ({ request }) => {
+  // Refund notes are read through refunds_search, which needs `createdFrom` and scans the most recently updated refunded orders
+  // first: follow its cursor until every planted note shows (or the pages end, which fails below).
+  const refundPages: string[] = []
+  let after: string | null | undefined
+  for (let page = 0; page < 40 && after !== null; page++) {
+    const r = await hubCall(request, 'callTool', 'refunds_search', { createdFrom: '2000-01-01T00:00:00Z', first: 20, ...(after ? { after } : {}) })
+    expect(r.ok, `refunds_search page ${page}: ${JSON.stringify(r.error ?? null)}`).toBe(true)
+    refundPages.push(JSON.stringify(r.value))
+    after = (r.value as { data: { nextCursor?: string | null } }).data.nextCursor ?? null
+  }
+  const refunds = refundPages.join('\n')
   for (const c of NOTICE_CASES) {
-    const read = c.source === 'slack_message'
-      ? await hubCall(request, 'callTool', 'slack_search_public', { keywords: [c.marker] })
-      : await hubCall(request, 'callTool', 'refunds_search', {})
-    expect(read.ok, `${c.id}: the read answers`).toBe(true)
-    expect(JSON.stringify(read.value), `${c.id}: the read returns the planted text`).toContain(JSON.stringify(c.planted).slice(1, -1))
+    const text = JSON.stringify(c.planted).slice(1, -1)
+    if (c.source === 'slack_message') {
+      const read = await hubCall(request, 'callTool', 'slack_search_public', { keywords: [c.marker] })
+      expect(read.ok, `${c.id}: the read answers: ${JSON.stringify(read.error ?? null)}`).toBe(true)
+      expect(JSON.stringify(read.value), `${c.id}: the read returns the planted text`).toContain(text)
+    } else {
+      expect(refunds, `${c.id}: refunds_search returns the planted note`).toContain(text)
+    }
   }
 })
 

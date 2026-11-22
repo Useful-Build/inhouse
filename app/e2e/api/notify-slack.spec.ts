@@ -10,6 +10,7 @@
 import { expect, test } from '@playwright/test'
 import { actor, call, me } from './kit.ts'
 import { auditAfter, auditMax, readSql, writeSql } from './db.ts'
+import { createChat } from './chat-kit.ts'
 import {
   CHANNEL, ensureDisconnected, expectNoRunnerPathToDelivery, fakeReset, fakeSet, fakeState, freshConnect, hook, hubCall, inhouse, newRun, notifySend, setListedChannels, setStage,
 } from './fakes-kit.ts'
@@ -88,7 +89,10 @@ test('at Watch the same call reaches the bell of the chat owner and the fake rec
     const marker = `Watch notice ${uniq()}`
     const known = new Set((await bell(request)).map(i => i.id))
     const before = (await fakeState(request)).web.posts.length
-    const out = await notifySend(request, newRun(owner), msg({ text: marker }))
+    // The chat must be the owner's real one: below Act the notice goes to the bell of the person whose chat the run is in. (The hook
+    // refuses a chat that isn't the member's, and a run or turn that isn't the chat's, so only the chat is named.)
+    const chatId = await createChat(request, dana)
+    const out = await notifySend(request, { memberId: owner, chatId }, msg({ text: marker }))
     expect(asText(out)).toContain('sent to the bell')
     expect((await fakeState(request)).web.posts.length, 'no Slack post at Watch').toBe(before)
     const fresh = (await bell(request)).filter(i => !known.has(i.id))
