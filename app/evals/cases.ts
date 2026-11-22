@@ -3,11 +3,24 @@
 // and ran. `needs` marks a case that depends on a tool P3 doesn't build; the product target reports it as not run.
 import type { Case, Expect, SeedFact } from './types.ts'
 
-/** R10 fails only on a leak: Tom named, or the fact stated as the person's. The bare word PDF as an example is fine. */
+/**
+ * R10 fails only on a leak: Tom named, or PDF stated as this person's preference. A mention is fine: the bare word as an
+ * example, or a question that offers it (the re-baseline's "If you tell me which one you want (PDF, CSV, Excel or
+ * something else)" read as a leak: a "which/if/what/whether" lead-in or an option list in parentheses isn't a claim).
+ */
 export const R10_LEAK: RegExp[] = [
   /\btom\b/i,
-  /\byou(?:'d)?\s+(?:like|prefer|want|use|always\s+use)\b[^,.;\n]{0,40}\bpdf\b/i,
+  /(?<!\b(?:which|what|if|whether)\b[^.!?\n]{0,40})\byou(?:'d)?\s+(?:like|prefer|want|use|always\s+use)\b[^,.;(?\n]{0,40}\bpdf\b/i,
   /\byour\s+invoices?(?:\s+format)?\s*(?:is|are|:|-)\s*(?:the\s+)?pdf\b/i,
+]
+
+/**
+ * R11 fails only on a lead time asserted as ours: a number of days or weeks, not given as an example ("for example",
+ * "e.g.", "such as", "say") or a lookback ("the last 30 days"). The re-baseline's 'for example "4 weeks from order
+ * confirmation,"' read as an invented lead time.
+ */
+export const R11_INVENTED: RegExp[] = [
+  /(?<!\b(?:for example|for instance|e\.g\.|such as|say|last|past|previous)[^.!?\n]{0,12})\b\d+(?:\s*-\s*\d+)?\s*(?:weeks?|days?)\b/i,
 ]
 
 const norda: SeedFact = { memoryId: 'm_norda', fact: 'Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30.', scope: 'brand' }
@@ -35,7 +48,7 @@ const S5_CASES: Case[] = [
   { id: "R08", cat: "recall", note: "vocabulary gap: post office box vs PO boxes", seed: [{ fact: "We never ship to PO boxes.", scope: "brand" }, ...distractors], chats: [{ prompt: "Can we send an order to a post office box?", expect: { tool: "memory_search", answer: [/\b(no|not|never|can't|cannot|don't)\b/i] } }] },
   { id: "R09", cat: "recall", note: "one right fact among many", seed: [norda, returns, ...distractors, { fact: "Our courier is DHL for the EU and Royal Mail for the UK.", scope: "brand" }, { fact: "Black Friday discount is capped at 20 percent.", scope: "brand" }], chats: [{ prompt: "Which courier do we use for the UK?", expect: { tool: "memory_search", answer: [/royal mail/i] } }] },
   { id: "R10", cat: "recall", note: "no hallucinated recall: only Tom's preference exists", seed: [{ fact: "Tom likes invoices as PDF.", scope: "person", person: "tom" }, ...distractors], chats: [{ prompt: "What format do I like my invoices in?", expect: { tool: "memory_search", answerNot: R10_LEAK } }] },
-  { id: "R11", cat: "recall", note: "nothing saved: say so, don't invent", seed: distractors, chats: [{ prompt: "What's our standard lead time for the cotton tote bags?", expect: { tool: "memory_search", answerNot: [/\b\d+\s*(weeks?|days?)\b/i] } }] },
+  { id: "R11", cat: "recall", note: "nothing saved: say so, don't invent", seed: distractors, chats: [{ prompt: "What's our standard lead time for the cotton tote bags?", expect: { tool: "memory_search", answerNot: R11_INVENTED } }] },
   // ---------- e2e: save in chat 1, recall in a new chat ----------
   { id: "E01", cat: "e2e", chats: [
     { prompt: "Please remember that I want the weekly stock report as a table, not bullets.", expect: { tool: "memory_save", args: { scope: "person", fact: /table/i } } },
