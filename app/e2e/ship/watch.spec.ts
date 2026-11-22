@@ -21,7 +21,7 @@ import { needsContainer } from '../api/chat-kit.ts'
 import { actor, call, endLiveGrants, putSetting } from '../api/kit.ts'
 import { originFor, people, signInAs } from '../support/clients/real.js'
 import type { Who } from '../support/clients/real.js'
-import { expect, test } from '../support/test-build/index.js'
+import { expect, signIn, test } from '../support/test-build/index.js'
 
 const phone = () => test.info().project.name === 'ship-phone'
 
@@ -318,12 +318,30 @@ test('S6: Library shows a file the agent made, it downloads, and deleting and re
   const n = await fileMenu(page).count()
   await shot(page, 'S6-library-with-the-file')
 
+  // A download is started by the browser itself (`<a download href=/api/library/<id>/download>`), and the test's sign-in is a header the
+  // page sets on its own requests: Chrome's download manager doesn't send it, so the file route would answer 401 JSON (run 1's
+  // "download.json") or the download is cancelled. A person is signed in by Access's cookie, which rides along. So the context's
+  // route sends the same request WITH the test sign-in and hands the browser the real answer, recording its status and headers:
+  // a 404, a wrong type or a missing attachment header still fails below.
+  const served: { status: number; disposition: string | null; type: string | null; nosniff: string | null }[] = []
+  const signedIn = await signIn(people.dana.subject, 'brand')
+  await context.route(/\/api\/library\/[^/]+\/download$/, async route => {
+    const response = await route.fetch({ headers: { ...route.request().headers(), ...signedIn } })
+    const h = response.headers()
+    served.push({ status: response.status(), disposition: h['content-disposition'] ?? null, type: h['content-type'] ?? null, nosniff: h['x-content-type-options'] ?? null })
+    await route.fulfill({ response })
+  })
   await fileMenu(page).first().click()
   const [saved] = await Promise.all([page.waitForEvent('download'), page.getByRole('menuitem', { name: 'Download', exact: true }).click()])
-  // A download is no page response Playwright reports, so say what was saved: its name, any failure and its first bytes.
-  const text = await readFile(await saved.path(), 'utf8').catch((e: unknown) => `(unreadable: ${String(e)})`)
-  await attachJson('S6-download', { url: saved.url(), name: saved.suggestedFilename(), failure: await saved.failure(), body: text.slice(0, 2000) })
-  expect(saved.suggestedFilename(), `the download saved: ${text.slice(0, 300)}`).toBe(FILE)
+  const failure = await saved.failure()
+  const text = failure === null ? await readFile(await saved.path(), 'utf8') : ''
+  await attachJson('S6-download', { served, name: saved.suggestedFilename(), failure, body: text.slice(0, 2000) })
+  expect(served, 'the browser asked for the file once, through the app').toHaveLength(1)
+  expect(served[0]!.status, 'the file route answered').toBe(200)
+  expect(served[0]!.disposition, 'it is an attachment').toMatch(/^attachment/)
+  expect(served[0]!.nosniff).toBe('nosniff')
+  expect(failure, 'the download finished').toBeNull()
+  expect(saved.suggestedFilename()).toBe(FILE)
   expect(text).toBe(FILE_BODY)
 
   await fileMenu(page).first().click()
