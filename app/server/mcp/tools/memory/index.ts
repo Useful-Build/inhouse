@@ -29,6 +29,7 @@ function refused(r: WriteRefusal): ToolResult {
   switch (r.refused) {
     case 'personal_data': return refusal('personal_data', personalDataRefusal(r.kind))
     case 'service_person_fact': return refusal('person_scope_in_routine', 'Not saved: a routine runs for nobody in particular, so it can\'t save a "person" fact. Save it with scope "brand" if the whole team should know it, or leave it.')
+    case 'learning_off': return refusal('learning_off', 'Not saved: this person turned off "Learn from my chats" in Settings, so don\'t save their preferences. If they want it saved, they can turn it back on.')
     case 'no_member': return refusal('no_member', "Not saved: the person you're helping is no longer on the team.")
   }
 }
@@ -51,7 +52,7 @@ export const handlers: Partial<Record<InhouseToolName, ToolHandler>> = {
 
   memory_save: tool({
     input: z.object({
-      scope: z.enum(['brand', 'person']).describe('"brand": the whole team shares it (waits for an admin\'s OK). "person": the preference of the person you\'re helping (counts at once).'),
+      scope: z.enum(['brand', 'person']).describe('"brand": the whole team shares it (usually waits for an admin\'s OK). "person": the preference of the person you\'re helping (counts at once).'),
       text,
     }).strict(),
     async call({ scope: factScope, text: t }, scope, deps) {
@@ -61,7 +62,9 @@ export const handlers: Partial<Record<InhouseToolName, ToolHandler>> = {
       const f = r.saved
       return answer(
         f.scope === 'brand'
-          ? `Saved for the team (memory_id: ${f.id}). It waits for an admin's OK, so don't rely on it until then.`
+          ? f.status === 'active'
+            ? `Saved for the team (memory_id: ${f.id}). It counts from now.`
+            : `Saved for the team (memory_id: ${f.id}). It waits for an admin's OK, so don't rely on it until then.`
           : `Saved (memory_id: ${f.id}). It counts from now, for this person only.`,
         { fact: shown(f) },
       )
@@ -79,7 +82,9 @@ export const handlers: Partial<Record<InhouseToolName, ToolHandler>> = {
       const f = r.updated
       return answer(
         f.scope === 'brand'
-          ? `Changed (memory_id: ${f.id}). A team fact waits for an admin's OK again after a change, so don't rely on it until then.`
+          ? f.status === 'active'
+            ? `Changed (memory_id: ${f.id}). It counts from now.`
+            : `Changed (memory_id: ${f.id}). A team fact waits for an admin's OK again after a change, so don't rely on it until then.`
           : `Changed (memory_id: ${f.id}).`,
         { fact: shown(f) },
       )
