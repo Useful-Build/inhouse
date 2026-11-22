@@ -1,0 +1,53 @@
+{
+ "row": {
+  "caseId": "T03",
+  "cat": "choice",
+  "pair": "memory_update/save",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "memory_update"
+  ],
+  "toolSearches": 1,
+  "answer": "I've changed the saved Norda Ceramics note from a minimum order of 120 units to ",
+  "costUsd": 0.025,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I've changed the saved Norda Ceramics note from a minimum order of 120 units to ",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "56c036ffa64b8c53fb82950deec2c421fd71f0b48ccb9a460e0c822c7fbb063f",
+    "inputExcerpt": "{\"query\":\"Norda minimum order\"}"
+   },
+   {
+    "name": "ToolSearch",
+    "inputSha256": "abc7fad54a541ca763c424583f3981d5a68ae4f3acca379232a648b783c2ffb4",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__memory_update\",\"max_results\":1}"
+   },
+   {
+    "name": "mcp__inhouse__memory_update",
+    "inputSha256": "4de6327c8abb2447c1ac252b03eba2ef11df2eee361aea4b58f05aa8e424a599",
+    "inputExcerpt": "{\"memory_id\":\"m_norda\",\"fact\":\"Norda Ceramics, our mug supplier: lead time 6 wee",
+    "resultExcerpt": "Updated (the row's text changed)",
+    "isError": false
+   }
+  ]
+ }
+}

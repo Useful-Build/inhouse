@@ -1,0 +1,40 @@
+{
+ "row": {
+  "caseId": "T07",
+  "cat": "choice",
+  "pair": "approval_request/notification_send",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "approval_request"
+  ],
+  "toolSearches": 0,
+  "answer": "I can't send this refund for approval yet. The approval tool isn't available in ",
+  "costUsd": 0.025,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I can't send this refund for approval yet. The approval tool isn't available in ",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__approval_request",
+    "inputSha256": "226ab26121ea2d9570882f6e8afdabb8f7fe485ab2cdcee772f0763dbd823c32",
+    "inputExcerpt": "{\"action\":\"Refund customer\",\"summary\":\"Refund €24.90 to Anna Weber for order 104"
+   }
+  ]
+ }
+}

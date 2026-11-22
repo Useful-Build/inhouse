@@ -1,0 +1,32 @@
+{
+ "row": {
+  "caseId": "N04",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "Hello! Sounds like a long day. A call that runs over is draining, especially wit",
+  "costUsd": 0.015,
+  "runOk": true,
+  "turnId": "t__-tx4xDjRc1g26sj0EEdZg",
+  "askedAs": "eval-44986365620-1-n04-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.015,
+  "answer": "Hello! Sounds like a long day. A call that runs over is draining, especially wit",
+  "toolCalls": []
+ }
+}

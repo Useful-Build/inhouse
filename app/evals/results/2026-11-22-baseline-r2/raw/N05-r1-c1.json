@@ -1,0 +1,40 @@
+{
+ "row": {
+  "caseId": "N05",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I have no saved policy for damaged orders, so I haven't drafted anything yet. I ",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_8_doAM5V01l6Nh5JEVZJ2w",
+  "askedAs": "eval-44977516723-1-n05-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I have no saved policy for damaged orders, so I haven't drafted anything yet. I ",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "41cf414517b7f8ebe3dabf02b1cc64d570d4e65c79c2319028bc4db71b11ade1",
+    "inputExcerpt": "{\"query\":\"damaged order policy refund replacement\"}"
+   }
+  ]
+ }
+}

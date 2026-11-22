@@ -1,0 +1,45 @@
+{
+ "row": {
+  "caseId": "E02",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 1,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "No. Going by what I have saved, you're out of office every Friday afternoon, so ",
+  "costUsd": 0.025,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "No. Going by what I have saved, you're out of office every Friday afternoon, so ",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "284fd9d2bf8381de15ae399b42cba6a9b8e311bd88518b9e9d64ab67981365de",
+    "inputExcerpt": "{\"query\":\"Friday calendar availability schedule\"}"
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "inputSha256": "42074e392a089620105beac4a34d13399d0304ba7d7d1803474761efad2569ee",
+    "inputExcerpt": "{\"query\":\"Friday afternoon\",\"after\":\"2026-11-01\"}"
+   }
+  ]
+ }
+}
