@@ -7,7 +7,7 @@
     // tsconfig.server-test.json's.
     "types": ["./server/worker-configuration.d.ts", "vite/client"],
     // Typed from W1's real module; builds other than the test build resolve it to server/auth/issuer-off.ts (vite.config.ts).
-    "paths": { "@test-issuer": ["./server/auth/test-issuer.ts"], "@scripted-model": ["./test/scripted-model/index.ts"], "@test-controls": ["./server/ops/test-controls.ts"], "@eval-trace": ["./server/eval-trace/on.ts"] },
+    "paths": { "@test-issuer": ["./server/auth/test-issuer.ts"], "@scripted-model": ["./test/scripted-model/index.ts"], "@test-controls": ["./server/ops/test-controls.ts"], "@test-shop": ["./server/egress/test-shop.ts"], "@eval-trace": ["./server/eval-trace/on.ts"] },
   },
   "include": ["server", "shared", "ops"],
   "exclude": ["server/**/*.test.ts", "server/testing"]

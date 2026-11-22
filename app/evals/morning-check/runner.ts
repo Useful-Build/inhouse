@@ -48,6 +48,11 @@ export interface RunnerEnv {
   caseTimeoutMs: number
   /** After a case times out, how long to wait for its manual slot to reach a terminal state before the next Run now (else the next case meets `run_open`). */
   settleMs: number
+  /**
+   * The remote mode only (door.ts): removes the case's shop override and confirms none is left. runAll calls it before the
+   * first case and after every case, whatever the case did, so no override outlives its case; a failure stops the run.
+   */
+  releaseShop?(): Promise<void>
 }
 
 const ZERO: Fixed = { truncated: 0, dropped: 0, deduped: 0, overflow: 0 }
@@ -139,8 +144,14 @@ export async function runAll(
     ...meta, summary: summarise(results.map(r => ({ id: r.id, group: r.group, pass: r.verdict.pass })), META), cases: [...results],
     notRun: stopped ? cases.slice(results.length).map(c => c.id) : [], ...(stopped ? { stopped } : {}),
   })
+  await env.releaseShop?.()
   for (const c of cases) {
-    const r = await runCase(env, c)
+    let r: CaseResult
+    try {
+      r = await runCase(env, c)
+    } finally {
+      await env.releaseShop?.()
+    }
     results.push(r)
     if (r.settled === false) {
       stopped = { at: c.id, reason: `${c.id} timed out and its slot (${r.slotKey}) is still open: every later Run now would answer run_open, so the run stops here` }

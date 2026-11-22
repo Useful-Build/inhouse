@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs'
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import { createScriptedModel, type MessagesRequest, type ScriptedBranch, type ScriptedTurn } from '../../../test/scripted-model/index.ts'
-import { HARNESS_MODEL, SCENARIOS, mainLoop, resultOf, STRUCTURED_BAD_TURNS, STRUCTURED_SCHEMA, openParallelHold, parallelSubagents, subagentMarker } from '../../../test/scripted-model/scenarios.ts'
+import { HARNESS_MODEL, MORNING_CHECK_ANSWER, MORNING_CHECK_OUTAGE_ANSWER, SCENARIOS, mainLoop, resultOf, STRUCTURED_BAD_TURNS, STRUCTURED_SCHEMA, openParallelHold, parallelSubagents, subagentMarker } from '../../../test/scripted-model/scenarios.ts'
 
 type Msg = { role: 'user' | 'assistant'; content: unknown }
 const req = (messages: Msg[], stream = false, extra: Record<string, unknown> = {}) =>
@@ -319,6 +319,36 @@ describe('structured scenarios', () => {
       expect(typeof body.content[0]!.input.late_orders).toBe('string')
     }
     expect(model.misses).toEqual([])
+  })
+})
+
+// The morning check's two endings (P4): the read's own `is_error` picks the answer. Ways it could fail: a failed read (the
+// remote proof's outage shop) still answers the one-item result, a read that went through answers the outage result, or the
+// closing turn after the outage result misses (the branch's position past its own turns).
+describe('morning-check: the answer follows whether the read failed', () => {
+  const READ = 'toolu_scripted_mc_read'
+  const RESULT = 'toolu_scripted_mc_result'
+  const mcReq = (messages: Msg[]) => req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'StructuredOutput' }] })
+  const afterRead = (isError: boolean): Msg[] => [
+    { role: 'user', content: 'the morning check' },
+    { role: 'assistant', content: [{ type: 'tool_use', id: READ, name: 'mcp__apps__orders_search', input: { first: 5 } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: READ, content: isError ? 'upstream_unavailable: upstream unavailable' : '{"orders":[]}', ...(isError ? { is_error: true } : {}) }] },
+  ]
+  const afterResult = (isError: boolean): Msg[] => [
+    ...afterRead(isError),
+    { role: 'assistant', content: [{ type: 'tool_use', id: RESULT, name: 'StructuredOutput', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: RESULT, content: 'ok' }] },
+  ]
+  it.each([[false, MORNING_CHECK_ANSWER], [true, MORNING_CHECK_OUTAGE_ANSWER]])('read is_error %s: its result, then Done.', async (isError, answer) => {
+    const model = createScriptedModel(SCENARIOS)
+    const body = (await (await model.handle(mcReq(afterRead(isError)), 'morning-check')).json()) as { content: { name?: string; id?: string; input?: unknown }[] }
+    expect(body.content).toEqual([{ type: 'tool_use', id: RESULT, name: 'StructuredOutput', input: answer }])
+    const done = (await (await model.handle(mcReq(afterResult(isError)), 'morning-check')).json()) as { content: { text?: string }[] }
+    expect(done.content[0]!.text).toBe('Done.')
+    expect(model.misses).toEqual([])
+  })
+  it('the outage result names every gap area and no item (the graded set\'s outage-all expectation)', () => {
+    expect(MORNING_CHECK_OUTAGE_ANSWER).toEqual({ coverage: 'incomplete', gaps: ['orders', 'products', 'inventory', 'refunds', 'returns'], items: [] })
   })
 })
 
