@@ -1,14 +1,13 @@
 // The nightly cases against hand-made hubs (P5 W5 section 1): each case passes on a hub that matches the pins and fails when
 // the one thing it checks is wrong (the mutation each case answers "can this fail?" with). The nightly itself needs the house
-// deployment; this proves the cases would notice. Runs in the hub's node project once its include lists `../test/connectors/mcp`
-// (an orchestrator line, with `../test/connectors/mcp/**/*.ts` in hub/tsconfig.json's include); until then a throwaway config
-// with `root: '..'` and `include: ['test/connectors/mcp/**/*.test.ts']` runs it (how the PR body's check was run).
+// deployment; this proves the cases would notice. It lives under hub/ so `vitest` resolves from the hub's own node_modules (app/test/
+// has none in the hub's CI job; the Shopify live files declare their globals for the same reason).
 import { describe, expect, it } from 'vitest'
-import { slackConnector, slackTools, SLACK_KNOWN_WRITES } from '../../../hub/connectors/mcp/slack/route'
-import { discoveryProblems, EXPECTED_SCOPES, readArguments, slackCases } from './cases'
-import type { NightlyEnv } from './cases'
-import type { Discovery, HubAccount, LiveTool, NightlyHub } from './client'
-import { runCases } from './run'
+import { slackConnector, slackTools, SLACK_KNOWN_WRITES } from './slack/route'
+import { discoveryProblems, EXPECTED_SCOPES, readArguments, slackCases } from '../../../test/connectors/mcp/cases'
+import type { NightlyEnv } from '../../../test/connectors/mcp/cases'
+import type { Discovery, HubAccount, LiveTool, NightlyHub } from '../../../test/connectors/mcp/client'
+import { runCases } from '../../../test/connectors/mcp/run'
 
 const env: NightlyEnv = { channelId: 'C0TEST0001', noticesChannelId: 'C0TEST0002', rotation: true }
 const names = (pick: (t: (typeof slackTools)[number]) => boolean) => slackTools.filter(pick).map(t => ({ name: t.name }))
