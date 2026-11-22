@@ -38,8 +38,11 @@ const DOC = (body: string) => `<?xml version="1.0"?><w:document xmlns:w="w"><w:b
 const RELS = (rels: string) => `<?xml version="1.0"?><Relationships xmlns="r">${rels}</Relationships>`
 const HYPERLINK = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink'
 const IMAGE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image'
-const docx = (body: string, rels = '') => zip({ 'word/document.xml': DOC(body), 'word/_rels/document.xml.rels': RELS(rels) })
-const xlsx = (sheet: string, extra: Record<string, string> = {}) => zip({ 'xl/workbook.xml': '<workbook/>', 'xl/worksheets/sheet1.xml': `<worksheet><sheetData>${sheet}</sheetData></worksheet>`, ...extra })
+const OFFICE_DOC = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument'
+/** The package's root relationships part, naming its main part. */
+const ROOT = (main: string) => RELS(`<Relationship Id="rId1" Type="${OFFICE_DOC}" Target="${main}"/>`)
+const docx = (body: string, rels = '') => zip({ '_rels/.rels': ROOT('word/document.xml'), 'word/document.xml': DOC(body), 'word/_rels/document.xml.rels': RELS(rels) })
+const xlsx = (sheet: string, extra: Record<string, string> = {}) => zip({ '_rels/.rels': ROOT('/xl/workbook.xml'), 'xl/workbook.xml': '<workbook/>', 'xl/worksheets/sheet1.xml': `<worksheet><sheetData>${sheet}</sheetData></worksheet>`, ...extra })
 
 function pdf(objects: string[], streams: { dict: string; data: Uint8Array }[] = []): Uint8Array {
   const parts: Buffer[] = [Buffer.from('%PDF-1.7\n')]
@@ -93,6 +96,11 @@ describe('archives that must come back null', () => {
     const whole = docx('<w:p/>')
     expect(unzip(whole.subarray(0, whole.length - 30))).toBeNull()
     expect(extractFile('r.docx', '', zip({ 'other.xml': '<x/>' }))).toBeNull()
+    // The main part must be where the root relationships say, at the expected path, and no part name may repeat in another case.
+    expect(extractFile('r.docx', '', zip({ 'word/document.xml': DOC('<w:p/>') }))).toBeNull()
+    expect(extractFile('r.docx', '', zip({ '_rels/.rels': ROOT('word/other.xml'), 'word/other.xml': DOC('<w:p/>'), 'word/document.xml': DOC('<w:p/>') }))).toBeNull()
+    expect(extractFile('r.docx', '', zip({ '_rels/.rels': ROOT('word/document.xml'), 'word/document.xml': DOC('<w:p/>'), 'Word/Document.xml': DOC('<w:p/>') }))).toBeNull()
+    expect(extractFile('t.xlsx', '', zip({ '_rels/.rels': ROOT('xl/workbook.xml'), 'XL/workbook.xml': '<workbook/>' }))).toBeNull()
     expect(unobserved(extractFile('r.docx', '', zip({ 'a.xml': 'x' }, { method: 12 })))).toBe(true)
   })
   it('reads stored and deflated entries alike', () => {
@@ -125,6 +133,37 @@ describe('pdf', () => {
     expect(extractFile('r.pdf', '', pdf(['<< /Type /Catalog >>'], [{ dict: '/Filter [/ASCII85Decode /FlateDecode]', data: Buffer.from('xx') }]))).toBeNull()
     expect(extractFile('r.pdf', '', Buffer.from('%PDF-1.7\n1 0 obj\n<< /Length 4 >>\nstream\nabcd'))).toBeNull()
     expect(extractFile('r.pdf', '', Buffer.from('not a pdf'))).toBeNull()
+  })
+})
+
+describe('pdf syntax a hostile file can use', () => {
+  const catalog = '<< /Type /Catalog >>'
+  it('comes back null for a filter that is an indirect reference, a stream keyword the parser didn\'t take, deep nesting and too many dictionaries', () => {
+    expect(extractFile('r.pdf', '', pdf([catalog], [{ dict: '/Filter 9 0 R', data: Buffer.from('<< /S /URI /URI (https://x.partner.test) >>') }]))).toBeNull()
+    expect(extractFile('r.pdf', '', Buffer.from('%PDF-1.7\n1 0 obj\n<< /Length 30 >>\nstream \n<< /S /JavaScript /JS (x) >>\nendstream\nendobj\n'))).toBeNull()
+    expect(extractFile('r.pdf', '', pdf([`${'<< /A '.repeat(60)}/S /JavaScript${' >>'.repeat(60)}`]))).toBeNull()
+    expect(extractFile('r.pdf', '', pdf(Array.from({ length: 20_001 }, () => '<< /T 1 >>')))).toBeNull()
+  })
+  it('decodes #xx name escapes before it looks for actions, links and filters', () => {
+    const js = extractFile('r.pdf', '', pdf(['<< /OpenAction << /S /Java#53cript /J#53 (app.alert\\(1\\)) >> >>']))
+    expect(js === null || unsafe(js)).toBe(true)
+    const uri = extractFile('r.pdf', '', pdf(['<< /A << /S /U#52I /#55RI (https://reports.partner.test/t) >> >>']))
+    expect(uri === null || unsafe(uri)).toBe(true)
+    expect(extractFile('r.pdf', '', pdf([catalog], [{ dict: '/Filter /LZW#44ecode', data: Buffer.from('xx') }]))).toBeNull()
+  })
+  it('never passes an action or link however its names are escaped (property)', () => {
+    // The oracle: each dangerous form below fails the grader when written plainly; any escaping of its name characters must too.
+    const forms = [
+      { name: 'JavaScript', body: (n: string) => `<< /S /${n} /JS (app.alert\\(1\\)) >>` },
+      { name: 'Launch', body: (n: string) => `<< /S /${n} /F (calc.exe) >>` },
+      { name: 'URI', body: (n: string) => `<< /S /URI /${n} (https://reports.partner.test/t) >>` },
+    ]
+    const escape = (name: string, mask: boolean[]) => [...name].map((ch, i) => (mask[i % mask.length] ? `#${ch.charCodeAt(0).toString(16).padStart(2, '0')}` : ch)).join('')
+    fc.assert(fc.property(fc.constantFrom(...forms), fc.array(fc.boolean(), { minLength: 1, maxLength: 10 }), fc.constantFrom('', ' ', '\r\n'), (form, mask, gap) => {
+      expect(unsafe(extractFile('r.pdf', '', pdf([form.body(form.name)]))), 'the plain form').toBe(true)
+      const f = extractFile('r.pdf', '', pdf([`<<${gap}/OpenAction ${form.body(escape(form.name, mask))} >>`]))
+      expect(f === null || unsafe(f)).toBe(true)
+    }))
   })
 })
 

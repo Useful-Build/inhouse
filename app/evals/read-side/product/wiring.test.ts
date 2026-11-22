@@ -1,5 +1,8 @@
 // The deployment-facing pieces' refusals: the R2 reader's bucket, key and token rules, the row reader's shapes, the effort pin
 // and its put-back, which cases the product target serves now, and the proof mode's guards.
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { DoorRefusal, type RunSql } from '../../targets/door.ts'
 import { liveOnProduct, parseReadSideArgs } from '../args.ts'
@@ -8,7 +11,8 @@ import { main } from '../cli.ts'
 import { defaultLabel, effortKey, pinEffort, type SettingsApi } from './effort.ts'
 import { createSessionReader } from './r2.ts'
 import { createRowReader } from './rows.ts'
-import { READ_SIDE_ENV, wireProof } from './setup.ts'
+import { renderPage } from '../pages.ts'
+import { READ_SIDE_ENV, wireEval, wireProof, type Wired } from './setup.ts'
 
 const ACCOUNT = '0123456789abcdef0123456789abcdef'
 const env = { CF_SANDBOX_ACCOUNT_ID: ACCOUNT, CLOUDFLARE_API_TOKEN: 'tok-secret-1' }
@@ -138,15 +142,183 @@ describe('the wiring', () => {
     await expect(wireProof({ ...base, env: { ...env, INHOUSE_EVAL_D1_NAME: 'inhouse-sbx-eval-db' } })).rejects.toThrow(/PR 7's test database/)
     await expect(wireProof({ ...base, env: { ...env, INHOUSE_EVAL_D1_NAME: 'inhouse-sbx-pr8-db' } })).rejects.toThrow(/PR 7's test database/)
   })
-  it('the command line runs the product preflight before making the results directory, and a refusal is exit 2 with no spend', async () => {
+  it('the command line registers its stop handlers before the wiring, which refuses with exit 2 and no results directory', async () => {
     const errs: string[] = []
-    const out = `/nonexistent-read-side-${Date.now()}`
+    const order: string[] = []
+    const out = path.join(mkdtempSync(path.join(tmpdir(), 'rs-cli-')), 'out')
     const code = await main(['--target', 'product', '--model', 'claude-sonnet-5-5', '--out', out, '--paid', '--budget', '50', '--page-origin', 'https://pages.example.test'], {
       git: (a) => (a[0] === 'rev-parse' ? 'abc1234' : ''), log: () => {}, err: (m) => errs.push(m), env: {},
-      wire: async () => { throw new Error('read-side: refusing: preflight failed') },
-      onSignals: () => { throw new Error('no handlers before the preflight passes') },
+      wire: async () => { order.push('wire'); throw new Error('read-side: refusing: preflight failed') },
+      onSignals: () => { order.push('signals') },
     })
     expect(code).toBe(2)
+    expect(order).toEqual(['signals', 'wire'])
     expect(errs.join('\n')).toContain('preflight failed')
+    expect(existsSync(out)).toBe(false)
+  })
+})
+
+/** A Wired whose close counts its runs and can be held open, for the command line's stop paths. */
+function fakeWired(o: { leftovers?: string[]; hold?: Promise<void> } = {}) {
+  let runs = 0
+  let closing: Promise<string[]> | null = null
+  const wired: Wired = {
+    teamRequests: 'rows',
+    target: { name: 'product', honorsPending: true, async run() { throw new Error('not in this test') }, async stop() { return [] } },
+    close: () => (closing ??= (async () => { runs++; await o.hold; return o.leftovers ?? [] })()),
+  }
+  return { wired, runs: () => runs }
+}
+const cliArgs = (out: string) => ['--target', 'product', '--model', 'claude-sonnet-5-5', '--out', out, '--paid', '--budget', '50', '--page-origin', 'https://pages.example.test', '--cases', 'RS-LW1']
+const cliDeps = (errs: string[]) => ({ git: (a: string[]) => (a[0] === 'rev-parse' ? 'abc1234' : ''), log: () => {}, err: (m: string) => errs.push(m), env: {} })
+
+describe('the command line\'s stop paths', () => {
+  it('a results directory it can\'t make still closes the wiring (lease and effort given back), exit 2', async () => {
+    const f = fakeWired()
+    const file = path.join(mkdtempSync(path.join(tmpdir(), 'rs-cli-')), 'a-file')
+    writeFileSync(file, 'x')
+    const errs: string[] = []
+    expect(await main(cliArgs(path.join(file, 'sub')), { ...cliDeps(errs), wire: async () => f.wired, onSignals: () => {} })).toBe(2)
+    expect(f.runs()).toBe(1)
+  })
+  it('anything not given back at the end makes the exit 2 and is in the report', async () => {
+    const f = fakeWired({ leftovers: ['the effort could not be put back: 403'] })
+    const out = mkdtempSync(path.join(tmpdir(), 'rs-cli-'))
+    const errs: string[] = []
+    expect(await main(cliArgs(out), { ...cliDeps(errs), wire: async () => f.wired, onSignals: () => {} })).toBe(2)
+    const [dir] = readdirSync(out)
+    const report = JSON.parse(readFileSync(path.join(out, dir!, 'report.json'), 'utf8'))
+    expect(report.meta.leftovers).toEqual(['the effort could not be put back: 403'])
+    expect(report.exitCode).toBe(2)
+    expect(readFileSync(path.join(out, dir!, 'report.md'), 'utf8')).toContain('Not given back at the end')
+  })
+  it('a signal during the final close awaits the same close: the work runs once and the stop returns only when it is done', async () => {
+    let release!: () => void
+    const f = fakeWired({ hold: new Promise<void>((r) => { release = r }) })
+    let stop!: () => Promise<void>
+    const out = mkdtempSync(path.join(tmpdir(), 'rs-cli-'))
+    const errs: string[] = []
+    const running = main(cliArgs(out), { ...cliDeps(errs), wire: async () => f.wired, onSignals: (s) => { stop = s } })
+    // The run has no live case to run (RS-LW1 waits on P5), so it is straight into the final close, held open here.
+    await new Promise<void>((r) => setImmediate(r))
+    let stopped = false
+    const signal = stop().then(() => { stopped = true })
+    await new Promise<void>((r) => setImmediate(r))
+    expect(stopped).toBe(false)
+    release()
+    await signal
+    expect(await running).toBe(1)
+    expect(f.runs()).toBe(1)
+  })
+  it('a signal during the wiring closes what the wiring registered so far', async () => {
+    const f = fakeWired()
+    let stop!: () => Promise<void>
+    const errs: string[] = []
+    const code = await main(cliArgs(mkdtempSync(path.join(tmpdir(), 'rs-cli-'))), {
+      ...cliDeps(errs), onSignals: (s) => { stop = s },
+      wire: async (o) => { o.register?.(f.wired.close); await stop(); throw new Error('stopped by the signal') },
+    })
+    expect(code).toBe(2)
+    expect(f.runs()).toBe(1)
+  })
+})
+
+/** A fake eval deployment for wireEval: its database, its HTTP and its bucket, each step able to refuse. */
+function fakeEval(failAt: string | null) {
+  const sql: string[] = []
+  const http: string[] = []
+  let leaseHeld = false
+  let effort: string | undefined = 'High'
+  let effortRev = 2
+  const grants = new Map<string, boolean>()
+  const run: RunSql = async (q) => {
+    sql.push(q)
+    if (q.includes('sqlite_master')) {
+      const name = /name = '([a-z_]+)'/.exec(q)?.[1]
+      if (failAt === 'tables' && name === 'notices') return []
+      return name === 'team_requests' ? [] : [{ name }]
+    }
+    if (q.endsWith('LIMIT 0')) { if (failAt === 'probe') throw new DoorRefusal('wrangler d1 execute exited 1'); return [] }
+    if (q.includes("'eval:lease'")) {
+      if (q.startsWith('INSERT')) { leaseHeld = failAt !== 'lease'; return [] }
+      if (q.startsWith('DELETE')) { leaseHeld = false; return [] }
+      if (q.startsWith('SELECT value_json')) return failAt === 'lease' ? [{ value_json: JSON.stringify({ tag: 'product:other', until: 9e15 }) }] : leaseHeld ? [{ value_json: JSON.stringify({ tag: 'product:7-1', until: 9e15 }) }] : []
+      if (q.startsWith('SELECT 1')) return leaseHeld ? [{ one: 1 }] : []
+    }
+    if (q.includes("key = 'hub:shop'") && q.startsWith('SELECT')) return failAt === 'shop' ? [{ value_json: 'example-x.myshopify.com' }] : []
+    if (q.includes('AS now')) return [{ now: 1_700_000_000_000 }]
+    return []
+  }
+  const doFetch = (async (input: string | URL, init?: RequestInit) => {
+    const url = new URL(String(input))
+    const method = init?.method ?? 'GET'
+    http.push(`${method} ${url.host}${url.pathname}`)
+    const j = (status: number, body: unknown) => new Response(JSON.stringify(body), { status })
+    if (url.host === 'pages.example.test') return failAt === 'page' ? new Response('', { status: 404 }) : new Response(renderPage(READ_SIDE_CASES.find((c) => c.id === 'RS-WW1')!))
+    if (url.pathname === '/api/me') return failAt === 'me' ? j(500, {}) : j(200, { evalBrand: true, memberId: 'm_lena' })
+    if (url.pathname === '/api/usage') return j(200, { total: { minor: failAt === 'room' ? 4900 : 100 }, cap: { minor: 5000 } })
+    if (url.pathname === '/api/settings/technical') return j(200, { items: effort === undefined ? [] : [{ key: 'tm:sonnet:effort', value: effort, rev: effortRev }] })
+    if (url.pathname === '/api/grants' && method === 'GET') return j(200, { items: [...grants].map(([id, live]) => ({ id, rev: 1, live })) })
+    if (url.pathname === '/api/grants') { grants.set(`g${grants.size + 1}`, true); return j(201, {}) }
+    const end = /^\/api\/grants\/(.+)\/end$/.exec(url.pathname)
+    if (end) { grants.set(end[1]!, false); return j(200, {}) }
+    if (url.host === 'inhouse.example.test' && method === 'PUT') {
+      if (failAt === 'effort') return j(403, {})
+      effort = (JSON.parse(String(init!.body)) as { value: string }).value
+      effortRev++
+      return j(200, {})
+    }
+    return j(404, {})
+  }) as typeof fetch
+  const env = {
+    INHOUSE_EVAL_BRAND: '1', INHOUSE_EVAL_RUN: '7-1', INHOUSE_EVAL_ORIGIN: 'https://brand.example.test', INHOUSE_EVAL_INHOUSE_ORIGIN: 'https://inhouse.example.test',
+    INHOUSE_EVAL_INHOUSE_AUD: 'aud-inhouse', INHOUSE_EVAL_ACCESS_CLIENT_ID: 'id', INHOUSE_EVAL_ACCESS_CLIENT_SECRET: 'secret', ...env0,
+  }
+  const sessions = { async preflight() { if (failAt === 'r2') throw new DoorRefusal('R2 preflight answered 403') }, async parts() { return [] } }
+  const signIn = async () => ({ 'Cf-Access-Jwt-Assertion': 'jwt' })
+  return { run, doFetch, env, sessions, signIn, sql, http, state: () => ({ leaseHeld, effort, liveGrants: [...grants.values()].filter(Boolean).length }) }
+}
+const env0 = { CF_SANDBOX_ACCOUNT_ID: ACCOUNT, CLOUDFLARE_API_TOKEN: 'tok' }
+
+describe('wireEval', () => {
+  const wire = (f: ReturnType<typeof fakeEval>, register?: (c: () => Promise<string[]>) => void) => wireEval({
+    env: f.env, model: 'claude-sonnet-5-5', budgetUsd: 10, cases: READ_SIDE_CASES, pageOrigin: 'https://pages.example.test', note: () => {},
+    fetch: f.doFetch, run: f.run, signIn: f.signIn, signInhouse: f.signIn, sessions: f.sessions, ...(register ? { register } : {}),
+  })
+  it('passes its preflight, pins Medium, and its close puts the effort back, ends grants and gives the lease back, once however often it is called', async () => {
+    const f = fakeEval(null)
+    const w = await wire(f)
+    expect(f.state()).toMatchObject({ leaseHeld: true, effort: 'Medium', liveGrants: 0 })
+    expect(f.sql.some((q) => q.startsWith('SELECT text FROM memories') && q.endsWith('LIMIT 0'))).toBe(true)
+    const [a, b] = [w.close(), w.close()]
+    expect(a).toBe(b)
+    expect(await a).toEqual([])
+    expect(f.state()).toMatchObject({ leaseHeld: false, effort: 'High', liveGrants: 0 })
+    expect(f.http.filter((h) => h.startsWith('PUT inhouse')).length).toBe(2)
+  })
+  for (const failAt of ['me', 'tables', 'probe', 'r2', 'page', 'lease', 'shop', 'room', 'effort']) {
+    it(`a refusal at ${failAt} stops before any spend and leaves no lease, effort or grant behind`, async () => {
+      const f = fakeEval(failAt)
+      let registered = false
+      await expect(wire(f, () => { registered = true })).rejects.toThrow()
+      expect(registered).toBe(true)
+      expect(f.state()).toMatchObject({ leaseHeld: false, effort: 'High', liveGrants: 0 })
+      expect(f.http.some((h) => h.includes('/turns'))).toBe(false)
+    })
+  }
+})
+
+describe('wireProof', () => {
+  it('reaches the eval-build guard: a PR database whose deployment says evalBrand is refused before any write', async () => {
+    const writes: string[] = []
+    const raw = { current: async () => ({ status: 200, bytes: new Uint8Array(), json: { evalBrand: true, memberId: 'm_x' } }), admin: async () => ({ status: 200, bytes: new Uint8Array(), json: {} }) }
+    await expect(wireProof({ env: { ...env, INHOUSE_EVAL_D1_NAME: 'inhouse-sbx-pr7-db' }, pr: 7, api: (async () => ({ status: 200, json: {}, text: '' })) as never, raw, scenarioOf: () => 'x', note: () => {}, run: async (q) => { writes.push(q); return [] } }))
+      .rejects.toThrow(/this is the eval build/)
+    expect(writes).toEqual([])
+  })
+  it('refuses a database that does not hold the probe chat the deployment just made', async () => {
+    const raw = { current: async (method: string) => ({ status: method === 'POST' ? 201 : 200, bytes: new Uint8Array(), json: { memberId: 'm_x' } }), admin: async () => ({ status: 200, bytes: new Uint8Array(), json: {} }) }
+    await expect(wireProof({ env: { ...env, INHOUSE_EVAL_D1_NAME: 'inhouse-sbx-pr7-db' }, pr: 7, api: (async () => ({ status: 200, json: {}, text: '' })) as never, raw: raw as never, scenarioOf: () => 'x', note: () => {}, run: async () => [] }))
+      .rejects.toThrow(/does not hold the chat/)
   })
 })

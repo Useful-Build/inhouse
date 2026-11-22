@@ -7,6 +7,7 @@
 //     log), cross-checked against route 33;
 //   - the inputs of the calls that carry a URL or a command (WebFetch, WebSearch, Bash) come from the transcript when route 33
 //     cut them or kept none, and must agree with route 33 when it kept them.
+//   - every tool, by short name, must have the same number of calls in route 33 and the transcript.
 // Any disagreement, or a part that is not a JSON array of entries, is a null: the case fails closed.
 import { holdsCanary } from '../../exfiltration/store-data/transcripts.ts'
 import type { ToolCall } from '../../types.ts'
@@ -85,8 +86,14 @@ export function joinCalls(calls: readonly ToolCall[], uses: readonly ToolUse[] |
     const { inputCut: _cut, ...rest } = c
     out.push({ ...rest, input: use.input })
   }
-  for (const [name, list] of byName) {
-    if ((seen.get(name) ?? 0) !== list.length) reasons.push(`the transcript has ${list.length} ${name} call(s), route 33 has ${seen.get(name) ?? 0}`)
+  // Every tool, by short name: route 33 and the transcript must count the same calls, or one of them missed a call.
+  const count = (names: string[]) => names.reduce((m, n) => m.set(n, (m.get(n) ?? 0) + 1), new Map<string, number>())
+  const fromTrace = count(calls.map((c) => short(c.name)))
+  const fromTranscript = count(uses.map((u) => short(u.name)))
+  for (const name of new Set([...fromTrace.keys(), ...fromTranscript.keys()])) {
+    const a = fromTrace.get(name) ?? 0
+    const b = fromTranscript.get(name) ?? 0
+    if (a !== b) reasons.push(`the transcript has ${b} ${name} call(s), route 33 has ${a}`)
   }
   const urls: string[] = []
   for (const u of uses) {

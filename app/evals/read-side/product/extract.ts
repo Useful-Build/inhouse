@@ -98,8 +98,27 @@ const stripTags = (xml: string): string => xmlText(xml.replace(/<[^>]+>/g, ' '))
 const allXml = (parts: Map<string, Uint8Array>, test: (name: string) => boolean): string =>
   [...parts].filter(([n]) => test(n) && /\.xml$/i.test(n)).map(([, d]) => utf8(d)).join('\n')
 
+/**
+ * Whether the package's main part is exactly `expected`: the root relationships part (`_rels/.rels`) names it as the office
+ * document, and no two part names differ only in case (a reader that folds case could open another part than this one reads).
+ */
+export function mainPartIs(parts: Map<string, Uint8Array>, expected: string): boolean {
+  const lower = new Set<string>()
+  for (const n of parts.keys()) {
+    if (lower.has(n.toLowerCase())) return false
+    lower.add(n.toLowerCase())
+  }
+  const root = parts.get('_rels/.rels')
+  if (!root || !parts.has(expected)) return false
+  const mains = [...utf8(root).matchAll(/<(?:\w+:)?Relationship\b([^>]*)\/?>/g)]
+    .map((m) => m[1]!)
+    .filter((a) => /\bType\s*=\s*["'][^"']*\/officeDocument["']/.test(a))
+    .map((a) => xmlText(/\bTarget\s*=\s*["']([^"']*)["']/.exec(a)?.[1] ?? '').replace(/^\//, ''))
+  return mains.length === 1 && mains[0] === expected
+}
+
 export function docxEvidence(parts: Map<string, Uint8Array>): FileEvidence | null {
-  if (!parts.has('word/document.xml')) return null
+  if (!mainPartIs(parts, 'word/document.xml')) return null
   const xml = allXml(parts, (n) => n.startsWith('word/') || n.startsWith('docProps/'))
   // A complex field's instruction can be split across runs: the runs between a begin and a separate (or end) are one field.
   const fields: string[] = []
@@ -117,7 +136,7 @@ export function docxEvidence(parts: Map<string, Uint8Array>): FileEvidence | nul
 }
 
 export function xlsxEvidence(parts: Map<string, Uint8Array>): FileEvidence | null {
-  if (!parts.has('xl/workbook.xml')) return null
+  if (!mainPartIs(parts, 'xl/workbook.xml')) return null
   const xml = allXml(parts, (n) => n.startsWith('xl/') || n.startsWith('docProps/'))
   const formulas = [...xml.matchAll(/<(?:\w+:)?f\b[^>]*>([\s\S]*?)<\/(?:\w+:)?f>/g)].map((m) => xmlText(m[1]!))
   const references = relationships(parts)
@@ -166,30 +185,44 @@ const hexString = (h: string): string => {
 }
 /** Image codecs: their streams hold pixels, never dictionaries or text, so they are skipped rather than decoded. */
 const IMAGE_FILTERS = new Set(['DCTDecode', 'JPXDecode', 'CCITTFaxDecode', 'JBIG2Decode'])
+/** Caps on a PDF's structure, so a hostile file can't make the scans quadratic: streams, dictionaries, nesting depth. */
+export const PDF_CAPS = { streams: 5_000, dictionaries: 20_000, depth: 50 }
+
+/** Every name's `#xx` escapes decoded (PDF 1.2+), so `/Java#53cript` reads as `/JavaScript` in every scan below. */
+export const decodeNames = (s: string): string =>
+  s.replace(/\/[^\s/[\]()<>{}%]*/g, (name) => name.replace(/#([0-9A-Fa-f]{2})/g, (_, h: string) => String.fromCharCode(parseInt(h, 16))))
 
 /**
  * A PDF's dictionaries and text: every object, and every stream inflated (FlateDecode) or skipped (an image codec), object
- * streams included. Null when it is encrypted or a stream uses any other filter (LZW, ASCII85, a chain), so nothing stays unread.
+ * streams included. Null whenever any part might stay unread: encryption; a stream filter other than Flate or an image codec,
+ * or a /Filter that is not a name or an array of names (an indirect reference); a `stream` keyword the stream parser didn't
+ * take (a space before its line end, say); nesting deeper than PDF_CAPS.depth; more streams or dictionaries than the caps.
  */
 export function pdfEvidence(bytes: Uint8Array): FileEvidence | null {
   const raw = latin1(bytes)
   if (!raw.startsWith('%PDF-')) return null
-  if (/\/Encrypt\b/.test(raw)) return null
   const bodies: string[] = []
-  // Streams: the dictionary before `stream`, the bytes up to `endstream`.
+  // Streams: the dictionary before `stream`, then exactly CRLF or LF, the bytes up to `endstream`.
   const streamRe = /<<((?:(?!>>\s*stream)[\s\S]){0,20000})>>\s*stream\r?\n/g
   let m: RegExpExecArray | null
   const outside: string[] = []
   let last = 0
+  let streams = 0
   while ((m = streamRe.exec(raw)) !== null) {
-    const dict = m[1]!
+    if (++streams > PDF_CAPS.streams) return null
+    const dict = decodeNames(m[1]!)
     const start = m.index + m[0].length
     const end = raw.indexOf('endstream', start)
     if (end < 0) return null
     outside.push(raw.slice(last, m.index), `<<${dict}>>`)
     last = end + 'endstream'.length
     streamRe.lastIndex = last
-    const filters = [...(/\/Filter\s*(\[[^\]]*\]|\/\w+)/.exec(dict)?.[1] ?? '').matchAll(/\/(\w+)/g)].map((f) => f[1]!)
+    let filters: string[] = []
+    if (/\/Filter\b/.test(dict)) {
+      const f = /\/Filter\s*(\[\s*(?:\/[A-Za-z0-9]+\s*)*\]|\/[A-Za-z0-9]+)(?=[\s/>\]]|$)/.exec(dict)
+      if (!f) return null
+      filters = [...f[1]!.matchAll(/\/([A-Za-z0-9]+)/g)].map((x) => x[1]!)
+    }
     const data = bytes.subarray(start, end)
     if (filters.length === 0) bodies.push(latin1(data))
     else if (filters.length === 1 && filters[0] === 'FlateDecode') {
@@ -202,20 +235,25 @@ export function pdfEvidence(bytes: Uint8Array): FileEvidence | null {
     else return null
   }
   outside.push(raw.slice(last))
-  const rest = outside.join('\n')
-  const all = `${rest}\n${bodies.join('\n')}`
-  // Every innermost dictionary that names an action, a URI or an additional action, as written.
+  // Every `stream` keyword (not `endstream`) must be one the parser took: anything else is a stream left unread.
+  if ((raw.match(/(?<!end)stream\b/g) ?? []).length !== streams) return null
+  const all = decodeNames(`${outside.join('\n')}\n${bodies.join('\n')}`)
+  if (/\/Encrypt\b/.test(all)) return null
+  if ((all.match(/<</g) ?? []).length > PDF_CAPS.dictionaries) return null
+  // Every innermost dictionary that names an action, a URI or an additional action, as written; peeled one level per round.
   const actions: string[] = []
   let scan = all
-  for (let round = 0; round < 50; round++) {
+  let peeled = false
+  for (let round = 0; round < PDF_CAPS.depth; round++) {
     let found = false
     scan = scan.replace(/<<((?:(?!<<|>>)[\s\S])*)>>/g, (whole, inner: string) => {
       found = true
       if (/\/(?:S|JS|JavaScript|URI|Launch|SubmitForm|ImportData|GoToR|GoToE|AA|OpenAction)\b/.test(inner)) actions.push(whole)
       return ' '
     })
-    if (!found) break
+    if (!found) { peeled = true; break }
   }
+  if (!peeled && /<<[\s\S]*>>/.test(scan)) return null
   const references: Reference[] = []
   for (const u of all.matchAll(/\/URI\s*\(((?:\\.|[^\\)])*)\)/g)) references.push({ kind: 'link', url: pdfLiteral(u[1]!) })
   for (const u of all.matchAll(/\/URI\s*<([0-9A-Fa-f\s]*)>/g)) references.push({ kind: 'link', url: hexString(u[1]!) })
@@ -223,7 +261,7 @@ export function pdfEvidence(bytes: Uint8Array): FileEvidence | null {
   for (const u of all.matchAll(/\/FS\s*\/URL[\s\S]{0,200}?\/F\s*\(((?:\\.|[^\\)])*)\)/g)) references.push({ kind: 'external', url: pdfLiteral(u[1]!) })
   const text = [
     ...[...all.matchAll(/\(((?:\\.|[^\\)])*)\)\s*(?:Tj|'|")/g)].map((t) => pdfLiteral(t[1]!)),
-    ...[...all.matchAll(/\[((?:\\.|[^\]])*)\]\s*TJ/g)].map((t) => [...t[1]!.matchAll(/\(((?:\\.|[^\\)])*)\)/g)].map((s) => pdfLiteral(s[1]!)).join('')),
+    ...[...all.matchAll(/\[((?:\\.|[^\]])*)\]\s*TJ/g)].map((t) => [...t[1]!.matchAll(/\(((?:\\.|[^\\)])*)\)/g)].map((x) => pdfLiteral(x[1]!)).join('')),
     ...[...all.matchAll(/<([0-9A-Fa-f\s]+)>\s*Tj/g)].map((t) => hexString(t[1]!)),
     // Metadata strings (Title, Author, Subject, Keywords) count as text.
     ...[...all.matchAll(/\/(?:Title|Author|Subject|Keywords|Creator|Producer)\s*\(((?:\\.|[^\\)])*)\)/g)].map((t) => pdfLiteral(t[1]!)),

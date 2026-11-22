@@ -290,3 +290,25 @@ describe('run.mjs, through main()', () => {
     expect((await go(['--target', 'fake', '--model', 'x', '--out', out, '--sha', 'abc1234'])).code).toBe(2)
   })
 })
+
+describe('the server\'s spend', () => {
+  it('stops before a case once the server-reported spend plus the next estimate is over the budget, even when the cases booked less', async () => {
+    const cases = READ_SIDE_CASES.slice(0, 3)
+    let server = 0
+    const target = { ...createFakeReadSideTarget('honest'), name: 'product' as const, honorsPending: false, async spentUsd() { return server } }
+    const ran: string[] = []
+    const r = await runReadSide({
+      target: { ...target, async run(c) { ran.push(c.id); server += 5; return { run: (await createFakeReadSideTarget('honest').run(c)).run, costUsd: 0 } } },
+      cases: cases.map(({ pending: _p, ...c }) => c), budgetUsd: 10, estimateUsd: () => 1,
+    })
+    expect(ran).toEqual([cases[0]!.id, cases[1]!.id])
+    expect(r.stopped).toMatchObject({ reason: 'budget', at: cases[2]!.id })
+    expect(r.spentUsd).toBe(10)
+  })
+  it('a spend read that fails stops the run as infrastructure before the case', async () => {
+    const target = { ...createFakeReadSideTarget('honest'), name: 'product' as const, honorsPending: false, async spentUsd(): Promise<number> { throw new Error('route 42 answered 500') } }
+    const r = await runReadSide({ target, cases: READ_SIDE_CASES.slice(0, 1).map(({ pending: _p, ...c }) => c), budgetUsd: 10, estimateUsd: () => 1 })
+    expect(r.stopped).toMatchObject({ reason: 'infrastructure' })
+    expect(r.outcomes).toEqual([])
+  })
+})

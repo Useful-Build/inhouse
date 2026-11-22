@@ -74,6 +74,8 @@ export interface ProductDeps {
   prompt?(c: ReadSideCase, prompt: string): string
   /** A line for the run's log. */
   note?(line: string): void
+  /** The run's spend so far as the server books it (route 42 since the run's start): the runner's budget check reads it. */
+  spentUsd?(): Promise<number>
 }
 
 const said = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -112,23 +114,42 @@ export async function deleteRoutines(rows: Pick<RowReader, 'routines'>, admin: R
   return errors
 }
 
-export function createProductReadSideTarget(d: ProductDeps, deleted: Set<string> = new Set()): ReadSideTarget {
+export interface ProductTarget extends ReadSideTarget {
+  /** A stop's first step: resets the live case's session (stops its turns, puts the WebFetch list back, clears memory). Never throws. */
+  stop(): Promise<string[]>
+}
+
+export function createProductReadSideTarget(d: ProductDeps, deleted: Set<string> = new Set()): ProductTarget {
   // `deleted`: routines this run deleted, so a later case's window never reads them as its own (shared with the stop handler's sweep).
+  /** The live case's session, reset once by whichever comes first: the case's end or a stop. */
+  let active: { session: Session; reset: Promise<void> | null } | null = null
+  const resetActive = (a: NonNullable<typeof active>): Promise<void> => (a.reset ??= a.session.reset())
   return {
     name: 'product',
     honorsPending: true,
+    ...(d.spentUsd ? { spentUsd: d.spentUsd } : {}),
+    async stop() {
+      if (!active) return []
+      try {
+        await resetActive(active)
+        return []
+      } catch (e) {
+        return [`the live session could not be reset (its turns may still run): ${said(e)}`]
+      }
+    },
     async run(c) {
+      if (c.chats.length !== 1) throw new Error(`read-side: ${c.id} has ${c.chats.length} chats: the product target reads one chat's evidence per case`)
       const plan = planOf(c)
       const since = (await d.rows.nowMs()) - SINCE_MARGIN_MS
-      let session: Session | null = null
-      let result: ChatResult | null = null
+            let result: ChatResult | null = null
       let costUsd = 0
       const cleanup: string[] = []
       let evidence: ReadSideRun | null = null
       let failure: unknown = null
       try {
         // The session first: on the eval deployment its first seed takes the lease and refuses any shop override already set.
-        session = await d.seed(plan.memory, { caseId: c.id, rep: 1, canary: c.canary }, plan.exfil)
+        const session = await d.seed(plan.memory, { caseId: c.id, rep: 1, canary: c.canary }, plan.exfil)
+        active = { session, reset: null }
         await d.setWebfetchHosts(plan.hosts)
         if (plan.shop) await d.shop.set(plan.shop)
         for (const chat of c.chats) {
@@ -166,13 +187,17 @@ export function createProductReadSideTarget(d: ProductDeps, deleted: Set<string>
       } catch (e) {
         failure = e
       } finally {
-        // Straight after the case, whatever it did: no routine it made may stay scheduled.
-        cleanup.push(...(await deleteRoutines(d.rows, d.adminApi, since, deleted)))
-        try {
-          await session?.reset()
-        } catch (e) {
-          cleanup.push(`the session could not be reset: ${said(e)}`)
+        // Straight after the case, whatever it did: its turns stopped first (none can make a routine after the sweep), then no
+        // routine it made may stay scheduled.
+        if (active) {
+          try {
+            await resetActive(active)
+          } catch (e) {
+            cleanup.push(`the session could not be reset: ${said(e)}`)
+          }
+          active = null
         }
+        cleanup.push(...(await deleteRoutines(d.rows, d.adminApi, since, deleted)))
         if (plan.shop) {
           try {
             await d.shop.clear()

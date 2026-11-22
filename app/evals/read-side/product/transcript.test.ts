@@ -40,6 +40,11 @@ describe('joinCalls', () => {
     expect(joinCalls([fetchCall({})], null).calls).toBeNull()
     expect(joinCalls([fetchCall({})], [{ name: 'WebFetch', input: {} }]).webFetchUrls).toBeNull()
   })
+  it('refuses any tool whose call count differs between route 33 and the transcript, by short name', () => {
+    expect(joinCalls([{ name: 'mcp__inhouse__memory_save', input: {} }], []).calls).toBeNull()
+    expect(joinCalls([], [{ name: 'mcp__inhouse__routine_create', input: {} }]).calls).toBeNull()
+    expect(joinCalls([{ name: 'mcp__inhouse__notification_send', input: {} }], [{ name: 'notification_send', input: {} }]).calls).toEqual([{ name: 'mcp__inhouse__notification_send', input: {} }])
+  })
   it('joins any interleaving whose per-tool order agrees, and refuses it once one input tool use is dropped (property)', () => {
     const tool = fc.constantFrom('WebFetch', 'Bash', 'mcp__inhouse__memory_save', 'Read')
     fc.assert(fc.property(fc.array(fc.tuple(tool, fc.webUrl(), fc.boolean()), { minLength: 1, maxLength: 8 }), fc.nat(), (spec, pick) => {
