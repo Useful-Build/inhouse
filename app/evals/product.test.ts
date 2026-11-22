@@ -78,7 +78,7 @@ interface Server {
   capMinor?: number
   spentMinor?: number
   /** The turn ends with no answer but an end row (route 24's `event` with `end`): a failure or a cancel reason. */
-  endRow?: { failure?: string; why?: string }
+  endRow?: { failure?: string; why?: string; outcome?: string }
 }
 const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } => {
   const s: Server = {
@@ -761,8 +761,16 @@ describe('refused calls in errors', () => {
 //       pass; and a brand fact can't be forgotten by the agent (forgetOwn: only an admin, in Settings);
 //  T09, T11: a case whose expected tool the product serves only as its not_available_yet stub runs, spends and fails.
 describe('the baseline\'s harness faults', () => {
-  it('X01: an ended turn with no answer carries the end row\'s cause and the turn id; free text is never the cause', async () => {
-    for (const [endRow, cause] of [[{ failure: 'runner_lost' }, 'runner_lost'], [{ why: 'deadline' }, 'deadline'], [{ failure: '<html>Ray ID 1</html>' }, 'unknown'], [{}, 'unknown']] as const) {
+  // The re-baseline's X03 read 'unknown': the end row was a shape the harness didn't read. Each of the product's three end
+  // shapes (shared/contract/chats.ts TurnEndSchema) maps to its own prefixed code; only text outside the product's own
+  // vocabulary (runs.ts TurnFailureSchema, CancelWhySchema, outcome stopped/interrupted) is 'unknown', which can't be
+  // mistaken for the product's own failure 'unknown' (failure:unknown).
+  it('X01, X03: an ended turn with no answer carries the end row\'s cause in the product\'s own vocabulary, and the turn id', async () => {
+    for (const [endRow, cause] of [
+      [{ failure: 'files' }, 'failure:files'], [{ failure: 'unknown' }, 'failure:unknown'], [{ failure: 'session_crashed' }, 'failure:session_crashed'],
+      [{ outcome: 'stopped' }, 'outcome:stopped'], [{ outcome: 'interrupted' }, 'outcome:interrupted'], [{ why: 'removed' }, 'cancel:removed'],
+      [{ failure: 'runner_lost' }, 'unknown'], [{ why: 'deadline' }, 'unknown'], [{ failure: '<html>Ray ID 1</html>' }, 'unknown'], [{}, 'unknown'],
+    ] as const) {
       const session = await make(server({ endRow, answerParts: [] }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
       const res = await session.chat('hi')
       expect(res, JSON.stringify(endRow)).toMatchObject({ runOk: false, answer: '', failure: cause, turnId: 't_BBBBBBBBBBBBBBBBBBBBBB' })
@@ -896,8 +904,8 @@ describe('the #282 review', () => {
     const session = await make(server(), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
     expect(await session.chat('hi')).toMatchObject({ askedAs: 'eval-7-1-n01-r1' })
   })
-  it('nit: the end cause is the first plain one of failure and why', async () => {
-    for (const [endRow, cause] of [[{ failure: 'Some free text', why: 'deadline' }, 'deadline'], [{ failure: 'runner_lost', why: 'deadline' }, 'runner_lost']] as const) {
+  it('nit: the end cause is the first of failure, why and outcome the product names', async () => {
+    for (const [endRow, cause] of [[{ failure: 'Some free text', why: 'removed' }, 'cancel:removed'], [{ failure: 'timeout', why: 'removed' }, 'failure:timeout'], [{ outcome: 'stopped', why: 'not_a_code' }, 'outcome:stopped']] as const) {
       const session = await make(server({ endRow, answerParts: [] }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
       expect((await session.chat('hi')).failure, JSON.stringify(endRow)).toBe(cause)
     }

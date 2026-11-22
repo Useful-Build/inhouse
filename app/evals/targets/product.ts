@@ -14,6 +14,7 @@
 // Cases run one at a time: the brand's memory is shared, so a concurrent case would read another's seeded facts.
 import { mintPerson } from '../../server/auth/test-issuer-mint.ts'
 import { SEED_PEOPLE } from '../../server/seed/brand.ts'
+import { CancelWhySchema, TurnFailureSchema } from '../../shared/contract/runs.ts'
 import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { JWK } from 'jose'
@@ -68,8 +69,17 @@ export function accessHeaders(env: Record<string, string | undefined>): Record<s
 }
 
 
-/** A turn's end cause: the first plain code of `failure` and `why` (`runner_lost`), or `unknown`: never free text. */
-const plainCause = (...vs: unknown[]): string => (vs.find((v): v is string => typeof v === 'string' && /^[a-z_]{1,40}$/.test(v)) ?? 'unknown')
+/**
+ * A turn's end cause in the product's own vocabulary (shared/contract/chats.ts TurnEndSchema): `failure:<TurnFailure>`,
+ * `cancel:<CancelWhy>` or `outcome:stopped|interrupted`, the first of the three the end row carries. `unknown` only for
+ * text outside that vocabulary, so it's never mistaken for the product's own `failure:unknown`.
+ */
+function endCause(end: { failure?: unknown; why?: unknown; outcome?: unknown }): string {
+  if (typeof end.failure === 'string' && (TurnFailureSchema.options as readonly string[]).includes(end.failure)) return `failure:${end.failure}`
+  if (typeof end.why === 'string' && (CancelWhySchema.options as readonly string[]).includes(end.why)) return `cancel:${end.why}`
+  if (end.outcome === 'stopped' || end.outcome === 'interrupted') return `outcome:${end.outcome}`
+  return 'unknown'
+}
 
 /** The eval deployment's D1 database name and the sandbox wrangler config that binds it (door.ts). */
 export const EVAL_D1_NAME = 'INHOUSE_EVAL_D1_NAME'
@@ -454,14 +464,14 @@ function productSession(d: SessionDeps): Session {
         if (o?.signal?.aborted) throw new Error('the chat was aborted')
         const page = await d.api('current', 'GET', `/api/chats/${chatId}`, { signal: o?.signal })
         d.must(page, 'read the chat', [200])
-        const messages = page.json.messages as { role: string; turnId: string; pos: number; part?: { type: string; text?: string }; end?: { failure?: string; why?: string } }[]
+        const messages = page.json.messages as { role: string; turnId: string; pos: number; part?: { type: string; text?: string }; end?: { failure?: string; why?: string; outcome?: string } }[]
         // The turn's end row: the Spending cap fenced it (stop the run, never a pass), or it ended with no answer at all.
         const end = messages.find((m) => m.role === 'event' && m.turnId === turnId && m.end)?.end
         if (end?.failure === 'cap_reached' || end?.why === 'cap_reached') throw new CapReachedError(turnId)
         const mine = messages.filter((m) => m.role === 'agent' && m.turnId === turnId).sort((a, b) => a.pos - b.pos)
         if (mine.length === 0 && end) {
           sawError = true
-          failure = plainCause(end.failure, end.why)
+          failure = endCause(end)
           break
         }
         if (mine.length > 0) {
