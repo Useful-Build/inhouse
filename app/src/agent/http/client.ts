@@ -11,7 +11,7 @@ import { meetsRule, settingRow } from '../../../shared/contract/settings-table'
 import { AgentError, CHAT_TITLE_MAX } from '../types'
 import type {
   ActivityLine, AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, AuditLine, LinkState, ErrorReason, Instant, LibraryFile, Me,
-  MemberRecord, MemoryData, MemoryLine, ModelMode, PauseState, RefreshList, ResourceKey, ResourceStatus, RoutineDef, RoutineRun, SkillDef, SupportGrant, Trace, UsageData,
+  MemberRecord, MemoryData, MemoryLine, ModelMode, WaitingMemory, PauseState, RefreshList, ResourceKey, ResourceStatus, RoutineDef, RoutineRun, SkillDef, SupportGrant, Trace, UsageData,
 } from '../types'
 import type { ChatSummary } from '../../../shared/contract/chats'
 import type { Problem } from '../../../shared/contract/problem'
@@ -27,7 +27,7 @@ import { putAside, readToday } from './today'
 import { newRunKey, postRoutineRev, postRoutineRun, readRoutines, setRoutineToggle } from './routines'
 import { readSkills } from './skills'
 import { fromOpen, postTeamRequest, putWithdrawn, readOpenRequests } from './team-requests'
-import { findMemoryLine, forgetMemoryLine, readMemory } from './memory'
+import { findMemoryLine, forgetMemoryLine, readMemory, readWaitingMemory, reviewLanded, reviewMemoryLine } from './memory'
 import { listedModels, readModels } from './models'
 import type { ServedModels } from './models'
 import { readPause, setPause } from './pause'
@@ -1121,6 +1121,44 @@ export class HttpAgent implements AgentClient {
         return line.success && !others ? this.withLine(s, line.data) : s
       },
     })
+  })
+
+  // ----- team memory approval (P6a W2: routes 77 and 78) -----
+
+  /** The waiting list as last read: a decision sends the line's rev from here. */
+  private waitingLines = new Map<string, WaitingMemory>()
+
+  /** Route 77, read when the Team memory page opens (Admins, and the Inhouse team under a grant). */
+  waitingMemory = async (): Promise<WaitingMemory[]> => {
+    try {
+      const { facts } = await readWaitingMemory(this.http)
+      this.waitingLines = new Map(facts.map(f => [f.key, f]))
+      return facts
+    } catch (e) {
+      if (e instanceof AgentError && HttpAgent.gone(e)) this.failStatus('meta', e)
+      throw e
+    }
+  }
+
+  /**
+   * Route 78: approves or rejects a waiting line at the rev the last list read. A conflict that already shows this decision
+   * (an earlier send landed and its answer was lost) is done; any other conflict rejects with `current`, and the page
+   * reads the list again. An approved line joins the team's memory, so memory is read again.
+   */
+  reviewMemory = this.needs(async (k, key: string, approved: boolean): Promise<void> => {
+    const line = this.waitingLines.get(key)
+    if (!line) return this.refuseLocal(NOT_FOUND, MESSAGE[NOT_FOUND])
+    try {
+      await reviewMemoryLine(this.http, k, line, approved)
+    } catch (e) {
+      const current = e instanceof AgentError && e.code === 'conflict' ? k.ANSWERS.memoryLine.safeParse(e.current) : null
+      if (!current?.success || !reviewLanded(current.data, line.rev, approved)) {
+        if (e instanceof AgentError && HttpAgent.gone(e)) this.failStatus('meta', e)
+        throw this.fail(e)
+      }
+    }
+    this.waitingLines.delete(key)
+    if (approved) await this.refreshMemory()
   })
 
   /** Where the audit log downloads from. A relative path: the browser sends it to its own origin, with its sign-in. */

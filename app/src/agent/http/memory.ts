@@ -4,6 +4,7 @@
 // The client (client.ts, wired by its owner) keeps each line's last `rev` and sends it as `ifRev`; a `conflict` carries
 // the line as it is now in `current`.
 import type { MemoryData, MemoryLine } from '../../../shared/contract/memory'
+import type { WaitingMemoryList } from '../../../shared/contract/memory-approvals'
 import type { Contract, Transport } from './transport'
 
 /** Route 43: the team's lines (grouped) and the signed-in person's own. */
@@ -33,3 +34,26 @@ export function forgetMemoryLine(http: Transport, k: Contract, line: { key: stri
     json: k.BODIES.memoryForget.parse({ forgotten, ifRev: line.rev }),
   })
 }
+
+/** Route 77: the team facts waiting for an OK, newest first (Admins, and the Inhouse team under a grant). */
+export const readWaitingMemory = (http: Transport): Promise<WaitingMemoryList> =>
+  http.call({ method: 'GET', path: '/api/memory/waiting', schema: 'waitingMemory' })
+
+/**
+ * Route 78: approves (`true`) or rejects a waiting team fact at the rev last read. Answers the line as the server holds
+ * it after the write; rejects with the transport's `AgentError` (a conflict carries `current`).
+ */
+export function reviewMemoryLine(http: Transport, k: Contract, line: { key: string; rev: number }, approved: boolean): Promise<MemoryLine> {
+  return http.call({
+    method: 'PUT', path: `/api/memory/brand/${encodeURIComponent(line.key)}/approved`, schema: 'memoryLine',
+    json: k.BODIES.memoryApprove.parse({ approved, ifRev: line.rev }),
+  })
+}
+
+/**
+ * Whether a conflict's `current` already shows the decision sent at `ifRev`: an earlier send landed and its answer was
+ * lost, so it counts as done. An approve has landed only when the line is one rev on and active (neither waiting nor
+ * forgotten); a reject when it is one rev on and forgotten (an admin's forget at that rev reads as done too).
+ */
+export const reviewLanded = (current: MemoryLine, ifRev: number, approved: boolean): boolean =>
+  current.rev === ifRev + 1 && (approved ? current.forgotten !== true && current.waiting !== true : current.forgotten === true)
