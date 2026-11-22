@@ -292,6 +292,24 @@ export function handled(ctx: Ctx) {
   }
 }
 
+export interface TodayEmptyState {
+  /** Run: show the overnight handled strip only when the agent actually handled at least one job. */
+  showHandledBanner: boolean
+  /** When no cards show: 'clear' when there are zero problems, 'aside' when every problem was set aside, else 'none'. */
+  emptyKind: 'none' | 'clear' | 'aside'
+  asideCount: number
+}
+
+export function todayEmptyState(ctx: Ctx): TodayEmptyState {
+  const shown = visibleProblems(ctx).length
+  const asideCount = ctx.data.problems.length - shown
+  return {
+    showHandledBanner: ctx.S === 2 && handled(ctx).count > 0,
+    emptyKind: shown > 0 ? 'none' : asideCount > 0 ? 'aside' : 'clear',
+    asideCount,
+  }
+}
+
 export interface TodayCopy {
   greeting: string; headline: string; headSub: string; countLabel: string; sortLabel: string
 }
@@ -308,15 +326,23 @@ export function todayCopy(ctx: Ctx): TodayCopy {
   const read = morningReadTools(ctx)
   const connected = ctx.data.tools.connected
   const missed = connected.filter(k => !read.includes(k)).map(k => toolDetail(ctx.data, k).name)
-  // With nothing waiting in Act: say what happened to the drafts, so a set-aside one isn't counted as approved.
-  const doneLabel = aside === 0 ? 'all approved' : approvedN ? `${approvedN} approved, ${aside} set aside` : `${aside} set aside`
+  // With nothing waiting in Act: say what happened to the drafts, so zero problems isn't labelled "all approved".
+  const doneLabel = total === 0 ? '' : aside === 0 ? 'all approved' : approvedN ? `${approvedN} approved, ${aside} set aside` : `${aside} set aside`
+  const runHeadline = h > 0 && n > 0
+    ? `${h} handled before you woke up. ${n} need${n === 1 ? 's' : ''} you.`
+    : h > 0
+      ? `${h} handled before you woke up. Nothing needs you.`
+      : n > 0
+        ? `${n} ${n === 1 ? 'thing needs' : 'things need'} you today.`
+        : 'Nothing needs you today.'
+  const runCountLabel = n ? `${n} waiting on you` : total === 0 ? '' : h ? `${h} handled` : aside ? `${aside} set aside` : ''
   const copy = [
     {
       headline: shown ? `${shown} ${shown === 1 ? 'thing needs' : 'things need'} you today.` : 'Nothing needs you today.',
       headSub: missed.length
         ? `Your Inhouse agent read ${read.length} of your ${connected.length} tools and changed nothing. ${listNames(missed)} ${missed.length === 1 ? 'needs' : 'need'} reconnecting.`
         : `Your Inhouse agent read ${listNames(read.map(k => toolDetail(ctx.data, k).name))} and changed nothing.`,
-      countLabel: `${shown} to look at`, sortLabel: 'Most urgent first',
+      countLabel: shown ? `${shown} to look at` : '', sortLabel: 'Most urgent first',
     },
     {
       headline: n && n === total ? `${n} things need you. A fix is drafted for each.` : n ? `${n} left to approve today.` : total && shown === total ? `All ${total} approved. Nothing is waiting on you.` : 'Nothing is waiting on you.',
@@ -324,9 +350,9 @@ export function todayCopy(ctx: Ctx): TodayCopy {
       countLabel: n ? `${n} drafted and waiting` : doneLabel, sortLabel: 'Most urgent first',
     },
     {
-      headline: `${h} handled before you woke up. ${n} need${n === 1 ? 's' : ''} you.`,
+      headline: runHeadline,
       headSub: 'Money and customer messages always wait for a person. Every step is logged and can be undone.',
-      countLabel: `${n} waiting on you`, sortLabel: 'Exceptions first',
+      countLabel: runCountLabel, sortLabel: 'Exceptions first',
     },
   ][S]
   let headSub = copy.headSub, headline = copy.headline
