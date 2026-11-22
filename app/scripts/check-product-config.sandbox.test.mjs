@@ -24,6 +24,8 @@
 //     (a missing, extra or repeated binding; the eval deployment HUB alone); or a hub config (--hub, --eval --hub) gets
 //     a route, storage, a service binding, an unbundled build, a `secrets` list wrangler would fail on, or (candidate) a store
 //     credential or the test switch.
+// 14. (P5) a `worker_loaders` passes anywhere but a sandbox hub config, or in one as anything but exactly
+//     [{ "binding": "LOADER" }] (more entries, another binding name, extra keys, a non-list); the product keeps refusing it.
 // Oracles: the literal pass fixtures in check-product-config-fixtures/sandbox/ and one literal change per rule below,
 // each with the failure text it must print. Every case runs the script as CI and the ops repo do.
 import { spawnSync } from 'node:child_process'
@@ -609,6 +611,64 @@ describe('(P4) --hub: the connector hub\'s sandbox config (failure 13)', () => {
       expect(r.status, args.join(' ')).toBe(2)
       expect(r.stdout).toBe('')
     }
+  })
+})
+
+describe('(P5) --hub: worker_loaders is exactly the LOADER binding, in the hub only (failure 14)', () => {
+  const LOADER = [{ binding: 'LOADER' }]
+  const HUB_MODES = [
+    ['PR 12\'s hub', PR12_HUB, 'pass-per-pr-hub.json'],
+    ['the candidate\'s hub', CANDIDATE_HUB, 'pass-candidate-hub.json'],
+    ['the eval hub', [...EVAL, '--hub'], 'pass-eval-hub.json'],
+  ]
+  test('passes the fixture with exactly LOADER as PR 12\'s hub', () => {
+    const r = run([...PR12_HUB, `${fixtures}sandbox/pass-per-pr-hub-loader.json`])
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
+  })
+  for (const [name, mode, fixture] of HUB_MODES) {
+    test(`passes exactly LOADER, an empty list or none as ${name}`, () => {
+      for (const loaders of [LOADER, [], undefined]) {
+        const config = load(fixture)
+        if (loaders !== undefined) config.worker_loaders = loaders
+        const r = run([...mode, write(config)])
+        expect(r.stderr).toBe('')
+        expect(r.status).toBe(0)
+      }
+    })
+    const WRONG = [
+      ['two entries', [...LOADER, { binding: 'LOADER' }], 'it has 2 entries'],
+      ['LOADER and another binding', [...LOADER, { binding: 'OTHER' }], 'it has 2 entries'],
+      ['another binding name', [{ binding: 'CODE' }], 'its binding is "CODE", not "LOADER"'],
+      ['a different key for the binding', [{ name: 'LOADER' }], 'its entry has extra keys (name)'],
+      ['an extra key', [{ binding: 'LOADER', limit: 1 }], 'its entry has extra keys (limit)'],
+      ['an entry that is not an object', ['LOADER'], 'its entry is not an object'],
+      ['a plain object', { binding: 'LOADER' }, 'it is not a list'],
+      ['a string', 'LOADER', 'it is not a list'],
+    ]
+    for (const [what, value, text] of WRONG) {
+      test(`refuses ${what} as ${name}`, () => {
+        const config = load(fixture)
+        config.worker_loaders = value
+        const r = run([...mode, write(config)])
+        expect(r.status).toBe(1)
+        expect(failureLines(r)).toEqual([expect.stringContaining(text)])
+      })
+    }
+  }
+  test('the product Worker still refuses a loader, in every sandbox mode', () => {
+    for (const [mode, fixture] of [[PR12, 'pass-per-pr.json'], [CANDIDATE, 'pass-candidate.json'], [EVAL, 'pass-eval.json']]) {
+      const config = load(fixture)
+      config.worker_loaders = LOADER
+      const r = run([...mode, write(config)])
+      expect(r.status).toBe(1)
+      expect(failureLines(r)).toEqual([expect.stringContaining('worker_loaders is set: a sandbox config may not use it')])
+    }
+  })
+  test('the product Worker still passes an empty worker_loaders list', () => {
+    const r = run(['--sandbox', '--per-pr', '7', `${fixtures}sandbox/pass-per-pr-generated.json`])
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
   })
 })
 
