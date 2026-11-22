@@ -8,6 +8,10 @@
 //      SHOPIFY_UPSTREAM_CANARY (read from app/test/upstreams/shopify/server.ts), each in any output file but the
 //      metafile, and the recorded MCP upstream's MCP_UPSTREAM_CANARY (P5, read from app/test/upstreams/mcp/server.ts).
 //      Each is read from its source, so the scan and the code can't drift.
+//      The test-fakes hook (W5): HUB_FAKES_CANARY (read from app/hub/testing/fakes.ts), and the hook's three in-isolate
+//      globals (`__inhouseHubTestVars`, `__inhouseHubTestLogs`, `__inhouseHubTestConnectBodies`), which must sit only
+//      inside `if (false)` blocks of the deployable script (the define's dead branches: wrangler doesn't minify, so their
+//      text stays). So the deployable hub's ConnectGateway.testFakes and SignIn.testFireAlarm can only refuse.
 //   2. The module graph: the esbuild metafile `wrangler deploy --dry-run --metafile` writes (<dir>/bundle-meta.json).
 //      Fails when any input sits in a `testing/` folder anywhere under app/hub/ (app/hub/testing/, and later ones such
 //      as app/hub/registry/testing/), under app/test/upstreams/, or is a test module (`*.test.ts`). A string scan alone
@@ -63,6 +67,16 @@ if (!existsSync(mcpUpstream)) fail(`${relative(root, mcpUpstream)} is missing: t
 const mcpMatch = read(mcpUpstream).match(/export const MCP_UPSTREAM_CANARY = '([^']+)'/)
 if (!mcpMatch) fail(`no \`export const MCP_UPSTREAM_CANARY = '...'\` in ${relative(root, mcpUpstream)}; the upstream's shape changed.`)
 const MCP_CANARY = mcpMatch[1]
+// The test-fakes hook (W5, hub/testing/fakes.ts): its canary, and the three in-isolate globals it shares with code outside
+// hub/testing/ (the var overrides in signin/signin.ts, the log buffer in index/log.ts, the ConnectGateway answers in
+// oauth/entry.ts), each inside a branch the
+// deployable define drops. The names are fixed here: the code under hub/ is what must match them.
+const fakesHook = join(hubDir, 'testing/fakes.ts')
+if (!existsSync(fakesHook)) fail(`${relative(root, fakesHook)} is missing: there's no test-fakes canary to look for.`)
+const fakesMatch = read(fakesHook).match(/export const HUB_FAKES_CANARY = '([^']+)'/)
+if (!fakesMatch) fail(`no \`export const HUB_FAKES_CANARY = '...'\` in ${relative(root, fakesHook)}; the hook's shape changed.`)
+const FAKES_CANARY = fakesMatch[1]
+const FAKES_GLOBALS = ['__inhouseHubTestVars', '__inhouseHubTestLogs', '__inhouseHubTestConnectBodies']
 
 // ---------- a bundle's files ----------
 const METAFILE = 'bundle-meta.json'
@@ -135,6 +149,61 @@ const forbidden = p =>
   under(p, UPSTREAMS) ||
   (!p.split(sep).includes('node_modules') &&
     ((under(p, hubDir) && relative(hubDir, p).split(sep).includes('testing')) || TEST_MODULE.test(p)))
+/**
+ * The [start, end) spans of every `if (false) { ... }` block in a script, or `unclosed` when one never closes, or
+ * `ambiguous` when a line inside one is no deeper than its opener. wrangler
+ * doesn't minify, so esbuild keeps a branch the define turned into `if (false)` as text (it only skips bundling the
+ * imports inside it). esbuild prints the opener alone on its line and the block's `}` at the opener's indentation, so
+ * the span is found by lines, never by reading the code: a quote in a regex or a string can't stretch it. A block with
+ * no closing line at its indentation fails the part (it would otherwise count the rest of the file as dead).
+ */
+function deadSpans(text) {
+  const spans = []
+  const lines = text.split('\n')
+  const starts = []
+  let at = 0
+  for (const line of lines) {
+    starts.push(at)
+    at += line.length + 1
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const open = /^(\s*)(?:\} else )?if \(false\) \{$/.exec(lines[i])
+    if (!open) continue
+    const close = new RegExp(`^${open[1]}\\}`)
+    let j = i + 1
+    while (j < lines.length && !close.test(lines[j])) {
+      // Every line inside a real block sits deeper than its opener. One that doesn't (an opener-looking line inside a
+      // template literal, say) makes the span ambiguous: fail rather than count it dead.
+      if (lines[j].trim() !== '' && !lines[j].startsWith(`${open[1]} `)) return { ambiguous: i + 1 }
+      j++
+    }
+    if (j === lines.length) return { unclosed: i + 1 }
+    spans.push([starts[i], starts[j] + lines[j].length])
+  }
+  return { spans }
+}
+/**
+ * The test-fakes hook's globals in a script outside every `if (false)` block (reachable code), and any block that never
+ * closes. Scripts only: a source map carries the sources' own text, dead branches included.
+ */
+const fakesGlobals = ({ files }) =>
+  files.filter(f => /\.[cm]?js$/.test(f)).flatMap(f => {
+    const text = textOf(f)
+    const dead = deadSpans(text)
+    if (dead.ambiguous) return [`an \`if (false)\` block at line ${dead.ambiguous} of ${relative(root, f)} has a line no deeper than its opener, so its extent is ambiguous`]
+    if (dead.unclosed) return [`an \`if (false)\` block at line ${dead.unclosed} of ${relative(root, f)} never closes at its indentation, so nothing after it can be judged`]
+    const hits = []
+    for (const n of FAKES_GLOBALS) {
+      for (let i = text.indexOf(n); i !== -1; i = text.indexOf(n, i + n.length)) {
+        if (!dead.spans.some(([a, b]) => i >= a && i < b)) {
+          hits.push(`"${n}" in ${relative(root, f)} outside an \`if (false)\` block`)
+          break
+        }
+      }
+    }
+    return hits
+  })
+
 function moduleGraph({ inputs }) {
   return inputs.filter(id => candidates(id).some(forbidden)).map(id => `module ${id}`)
 }
@@ -143,6 +212,8 @@ const PARTS = [
   ['canary string', canary(CANARY)],
   ['shopify upstream canary', canary(SHOPIFY_CANARY)],
   ['mcp upstream canary', canary(MCP_CANARY)],
+  ['test-fakes canary', canary(FAKES_CANARY)],
+  ['test-fakes globals', fakesGlobals],
   ['module graph', moduleGraph],
 ]
 

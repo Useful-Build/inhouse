@@ -9,6 +9,7 @@ import { expect, test } from 'vitest'
 import { SCRIPTED_MODEL_CANARY } from '../test/scripted-model/index.ts'
 import { TEST_CONTROLS_CANARY } from '../server/ops/test-controls.ts'
 import { EVAL_TRACE_CANARY } from '../server/eval-trace/on.ts'
+import { TEST_FAKES_CANARY } from '../server/ops/test-fakes.ts'
 
 const script = fileURLToPath(new URL('./check-product-build.mjs', import.meta.url))
 const CANARY = 'INHOUSE_TEST_ISSUER_CANARY_7f3c'
@@ -241,4 +242,66 @@ test('no eval build folder: a usage failure (exit 2), never a pass (failure 3)',
   const r = run({ ...ISSUER_OK, productEval: null })
   expect(r.stderr).toContain('product-eval build folder')
   expect(r.status).toBe(2)
+})
+
+// Part 8: the test-fakes hook (server/ops/test-fakes.ts, `@test-fakes`, route 76). Ways it can fail, written down first:
+// the deployable Worker or the eval build (deployed) carries its module or its canary (the impersonating `notify` and
+// run-scoped `hub` ops could then run there); once the server imports `@test-fakes`, the test build lacks the canary
+// or the module, so the scan proves nothing; the script's canary or module path drifts from the module's and the alias's.
+const FAKES = 'inhouse-test-fakes-canary-6b2f90d4'
+const FAKES_MODULE = 'server/ops/test-fakes.ts'
+const FAKES_IMPORT = { 'do/brand-agent/index.ts': "import { runTestFakes } from '@test-fakes'" }
+const PRINCIPAL = 'm_test_fakes'
+const FAKES_OK = { server: { ...ISSUER_OK.server, ...FAKES_IMPORT }, productTest: { workerJs: `const c = '${CANARY}'; const f = '${FAKES}'; const p = '${PRINCIPAL}'`, serverModules: ['server/index.ts', FAKES_MODULE] } }
+
+test('the test-fakes canary and module are the module\'s, the script\'s and the alias\'s (part 8)', () => {
+  expect(TEST_FAKES_CANARY).toBe(FAKES)
+  const source = readFileSync(script, 'utf8')
+  expect(source).toContain(`const TEST_FAKES_CANARY = '${FAKES}'`)
+  expect(source).toContain(`const TEST_FAKES_PRINCIPAL = '${PRINCIPAL}'`)
+  expect(readFileSync(join(fileURLToPath(new URL('..', import.meta.url)), FAKES_MODULE), 'utf8')).toContain(`memberId: '${PRINCIPAL}'`)
+  const app = fileURLToPath(new URL('..', import.meta.url))
+  expect(existsSync(join(app, FAKES_MODULE))).toBe(true)
+  // The alias picks the real module for the test build alone (PRODUCT_TEST), never the eval build.
+  expect(readFileSync(join(app, 'vite.config.ts'), 'utf8')).toContain(`'@test-fakes': fileURLToPath(new URL(mode === PRODUCT_TEST ? './${FAKES_MODULE}' : './server/ops/test-fakes-off.ts'`)
+})
+test('the test build carries the hook and the deployable Worker and the eval build don\'t: the check passes (part 8)', () => {
+  const r = run(FAKES_OK)
+  expect(r.stdout).toContain('ok    test fakes: not in the deployable Worker')
+  expect(r.stdout).toContain('ok    test fakes: not in the eval build')
+  expect(r.stdout).toContain('ok    test fakes: caught the test build.')
+  expect(r.status).toBe(0)
+})
+test.each([
+  ['the deployable Worker', 'its canary', { product: { workerJs: `const f = '${FAKES}'` } }],
+  ['the deployable Worker', 'its module', { product: { serverModules: ['server/index.ts', FAKES_MODULE] } }],
+  ['the eval build', 'its canary', { productEval: { ...EVAL_OK, workerJs: `${EVAL_OK.workerJs}; const f = '${FAKES}'` } }],
+  ['the eval build', 'its module', { productEval: { ...EVAL_OK, serverModules: [...EVAL_OK.serverModules, FAKES_MODULE] } }],
+  ['the deployable Worker', 'the synthetic principal in its script', { product: { workerJs: `const p = '${PRINCIPAL}'` } }],
+  ['the deployable Worker', 'the synthetic principal in its source map', { product: { extra: { 'inhouse_product/index.js.map': `{"sourcesContent":["memberId: '${PRINCIPAL}'"]}` } } }],
+  ['the eval build', 'the synthetic principal in its source map', { productEval: { ...EVAL_OK, extra: { 'inhouse_product/index.js.map': `{"sourcesContent":["${PRINCIPAL}"]}` } } }],
+])('%s carrying %s fails the check (part 8)', (label, _what, opts) => {
+  const r = run({ ...FAKES_OK, ...opts })
+  expect(r.stderr).toContain(`FAIL  test fakes: ${label}`)
+  expect(r.status).toBe(1)
+})
+test('the off stand-in in the deployable Worker\'s graph passes (part 8)', () => {
+  const r = run({ ...FAKES_OK, product: { serverModules: ['server/index.ts', 'server/ops/test-fakes-off.ts'] } })
+  expect(r.stdout).toContain('ok    test fakes: not in the deployable Worker')
+  expect(r.status).toBe(0)
+})
+test.each([
+  ['no "inhouse-test-fakes-canary-6b2f90d4"', { productTest: { workerJs: `const c = '${CANARY}'; const p = '${PRINCIPAL}'`, serverModules: ['server/index.ts', FAKES_MODULE] } }],
+  ['no "m_test_fakes"', { productTest: { workerJs: `const c = '${CANARY}'; const f = '${FAKES}'`, serverModules: ['server/index.ts', FAKES_MODULE] } }],
+  ['no server/ops/test-fakes.ts module', { productTest: { workerJs: `const c = '${CANARY}'; const f = '${FAKES}'; const p = '${PRINCIPAL}'` } }],
+])('the server imports @test-fakes and the test build has %s: the scan proves nothing (part 8)', (missing, opts) => {
+  const r = run({ ...FAKES_OK, ...opts })
+  expect(r.stderr).toContain('FAIL  test fakes: the server imports @test-fakes but the test build')
+  expect(r.stderr).toContain(missing)
+  expect(r.status).toBe(1)
+})
+test('nothing imports @test-fakes: a note, and builds without it pass (part 8)', () => {
+  const r = run(ISSUER_OK)
+  expect(r.stdout).toContain('note  test fakes: no server source imports @test-fakes')
+  expect(r.status).toBe(0)
 })

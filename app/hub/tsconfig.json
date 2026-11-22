@@ -20,7 +20,7 @@
     "noFallthroughCasesInSwitch": true
   },
   // The recorded Shopify upstream (W1) is bundled into the test build through testing/index.ts; the live cases and
-  // scripts run in the `live` project.
-  "include": ["**/*.ts", "../test/upstreams/shopify/**/*.ts", "../test/connectors/shopify/**/*.ts"],
+  // scripts run in the `live` project. P5 W5's nightly connector cases (test/connectors/mcp/) likewise.
+  "include": ["**/*.ts", "../test/upstreams/shopify/**/*.ts", "../test/connectors/shopify/**/*.ts", "../test/connectors/mcp/**/*.ts"],
   "exclude": ["node_modules"]
 }

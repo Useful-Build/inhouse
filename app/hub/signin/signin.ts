@@ -63,7 +63,15 @@ export async function upstreamFor(env: HubEnv): Promise<Upstream> {
 export const isConfigured = (env: HubEnv, connector: HubConnector): boolean =>
   isMcpConnector(connector) ? connector.configure(envRecord(env)) !== null : connector.id === 'shopify' && parseShopifyConfig(env) !== null
 
-const envRecord = (env: HubEnv): Readonly<Record<string, unknown>> => env as unknown as Readonly<Record<string, unknown>>
+function envRecord(env: HubEnv): Readonly<Record<string, unknown>> {
+  // The hub's TEST bundle only: the test-fakes hook's var overrides (hub/testing/fakes.ts, op `var`), kept in this
+  // isolate and cleared by its reset. The deployable bundle drops the branch (the define is "false").
+  if (__INHOUSE_HUB_TEST__ && env.INHOUSE_TEST_BUILD === '1') {
+    const vars = (globalThis as { __inhouseHubTestVars?: Record<string, string> }).__inhouseHubTestVars
+    if (vars && Object.keys(vars).length > 0) return { ...(env as unknown as Record<string, unknown>), ...vars }
+  }
+  return env as unknown as Readonly<Record<string, unknown>>
+}
 
 /** The OAuth provider for an account: its module and this deployment's client settings. Null when unconfigured. */
 export async function providerFor(env: HubEnv, accountId: string): Promise<McpProvider | null> {
@@ -199,5 +207,16 @@ export class SignIn extends DurableObject<Env> {
   }
   override async alarm(): Promise<void> {
     await this.#core.alarm()
+  }
+  /**
+   * TEST BUILD ONLY (W5's test-fakes hook, op `alarm`): runs this account's alarm body once now. Anywhere else (the
+   * deployable bundle, or the test bundle not switched on) it refuses with `not_configured` and runs nothing.
+   */
+  async testFireAlarm(): Promise<HubResult<{ fired: true }>> {
+    if (!(__INHOUSE_HUB_TEST__ && (this.env as HubEnv).INHOUSE_TEST_BUILD === '1')) return err('not_configured', 'testFireAlarm')
+    return this.#guard(async () => {
+      await this.#core.alarm()
+      return { ok: true, value: { fired: true as const } }
+    })
   }
 }

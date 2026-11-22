@@ -34,6 +34,8 @@ const alias = {
   '@scripted-model': fileURLToPath(new URL('./test/scripted-model/index.ts', import.meta.url)),
   // P4's test-build controls (server/ops/test-controls.ts), as in the test build (vite.config.ts).
   '@test-controls': fileURLToPath(new URL('./server/ops/test-controls.ts', import.meta.url)),
+  // P5 W5's test-fakes hook (server/ops/test-fakes.ts), as in the test build (vite.config.ts).
+  '@test-fakes': fileURLToPath(new URL('./server/ops/test-fakes.ts', import.meta.url)),
   // The eval trace, as in the eval build (vite.config.ts): its tests import the real one. Code that reads it is switched by
   // `__INHOUSE_EVAL_BUILD__` (false below), so every other test sees a product build.
   '@eval-trace': fileURLToPath(new URL('./server/eval-trace/on.ts', import.meta.url)),
