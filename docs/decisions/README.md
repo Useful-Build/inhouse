@@ -15,7 +15,7 @@ tracker's.
 | [0003](0003-phone-answer-actions.md) | Phone answer actions: Copy, steps and a menu | UI plan 2 D3 |
 | [0004](0004-phone-team-settings-read-only.md) | Team settings are read-only on a phone | UI plan 2 D4 |
 | [0005](0005-us-formats-one-demo-clock.md) | US formats and one demo clock | UI plan 2 D5 |
-| [0006](0006-slack-is-a-connected-channel.md) | Slack is connected in the demo, as a channel | UI plan 2 D6 |
+| [0006](0006-slack-is-a-connected-channel.md) | Slack is connected in the demo, as a channel (superseded by 0025) | UI plan 2 D6 |
 | [0007](0007-phase-1-memory-in-local-storage.md) | Phase 1 memory in local storage | UI plan 2 D7 |
 | [0008](0008-off-script-answer.md) | What the agent says to an off-script question | UI plan 2 D8 |
 | [0009](0009-leaving-a-chat-finishes-the-answer.md) | Leaving a chat mid-answer finishes it in the background | UI plan 2 D9 |
