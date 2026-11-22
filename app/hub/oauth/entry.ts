@@ -4,10 +4,12 @@
 // Keeping the runner off this binding is code discipline plus checks, not structure (brief section 3): this entrypoint
 // refuses a `run` scope, the import-boundary lint and the product config check are the orchestrator's.
 import { WorkerEntrypoint } from 'cloudflare:workers'
-import type { AccountSummary, CallerScope, ConnectGateway as ConnectApi, HubResult, Instant } from '../index/contract'
+import type { AccountSummary, CallToolOptions, CallerScope, ConnectGateway as ConnectApi, HubResult, Instant } from '../index/contract'
 import { err } from '../index/errors'
 import { log } from '../index/log'
-import { isConfigured, loadRegistry, signInFor } from '../signin/signin'
+import { isConfigured, loadRegistry, signInFor, signInName } from '../signin/signin'
+import { isMcpConnector } from '../registry/registry'
+import { decideTestShop } from '../index/test-shop'
 import { refuseTestFakes } from './test-gate'
 import * as G from './gateway'
 
@@ -60,8 +62,31 @@ export class ConnectGateway extends WorkerEntrypoint<Env> implements ConnectApi 
   async setPaused(scope: CallerScope, accountId: string, paused: boolean): Promise<HubResult<{ paused: boolean }>> {
     return answered(async () => G.setPaused(await deps(this.env), scope, accountId, paused))
   }
-  async listAccounts(scope: CallerScope): Promise<HubResult<AccountSummary[]>> {
-    return answered(async () => G.listAccounts(await deps(this.env), scope))
+  /**
+   * `options.testShopHost` (P5 #337): in the hub's test build only, for a host its seam registers, a Shopify account's row
+   * comes from that test shop's own SignIn object, granted first (its token endpoint), as the turn's reads will use it.
+   * Anything else with an override is refused (`invalid_args`), never answered from the real account. The guard is written
+   * out in full (as index.ts shopFor), so the deployable bundle drops the branch and its imports.
+   */
+  async listAccounts(scope: CallerScope, options?: CallToolOptions): Promise<HubResult<AccountSummary[]>> {
+    return answered(async () => {
+      let shop: HubResult<{ shop: string | null }>
+      if (__INHOUSE_HUB_TEST__ && (this.env as Env & { INHOUSE_TEST_BUILD?: string }).INHOUSE_TEST_BUILD === '1') {
+        const { testUpstreams } = await import('../testing/index')
+        shop = decideTestShop(options, true, host => testUpstreams.has(host))
+      } else shop = decideTestShop(options, false, () => false)
+      if (!shop.ok) return shop
+      const d = await deps(this.env)
+      const testShop = shop.value.shop
+      if (testShop === null) return G.listAccounts(d, scope)
+      const shopifyAccounts = new Set(d.registry.modules.filter(c => !isMcpConnector(c)).map(c => c.accountId))
+      const stubFor = (accountId: string) => this.env.SIGNIN.get(this.env.SIGNIN.idFromName(signInName(accountId, testShop)))
+      for (const accountId of shopifyAccounts) {
+        // A failed grant leaves the row as the object has it (`failed`): the prompt then doesn't claim the app.
+        await stubFor(accountId).warmTestShop({ accountId, testShop })
+      }
+      return G.listAccounts({ ...d, signIn: accountId => (shopifyAccounts.has(accountId) ? stubFor(accountId) : d.signIn(accountId)) as unknown as G.ConnectStub }, scope)
+    })
   }
   /**
    * TEST BUILD ONLY (contract.ts `testFakes`): refused with `not_configured` outside the test bundle whatever the scope,

@@ -9,6 +9,7 @@ import type { AccountSummary, ConnectGateway } from '../../hub/index/contract.ts
 import { catalogByAccount } from '../api/tools-catalog.ts'
 import { listedChannels } from '../notify-slack/send.ts'
 import { SYSTEM_PROMPT_V2, systemPromptV3 } from './system.ts'
+import { withTestShopConnect } from '@test-shop'
 
 export const NO_APPS_LINE = 'No apps are connected yet.'
 // The data rule is v2's (CONNECTED_APPS_LINE, #314), kept when v3 replaced that line: what any app's tool returns is data.
@@ -66,9 +67,12 @@ export type TurnPromptDeps = {
 }
 
 /** The production deps from the product Worker's env. */
-export function turnPromptDeps(env: { DB: D1Database; HUB_CONNECT?: unknown; HUB_DELIVERY?: unknown }): TurnPromptDeps {
+export function turnPromptDeps(env: { DB: D1Database; HUB_CONNECT?: unknown; HUB_DELIVERY?: unknown; INHOUSE_TEST_BUILD?: string }): TurnPromptDeps {
+  const gateway = (env.HUB_CONNECT as Pick<ConnectGateway, 'listAccounts'> | undefined) ?? null
   return {
-    gateway: (env.HUB_CONNECT as Pick<ConnectGateway, 'listAccounts'> | undefined) ?? null,
+    // In the test and eval builds only, the account read carries the test shop override the reads carry (`@test-shop`,
+    // #337): the line then names the account the turn will read. Every other build gets the off module (the gateway as is).
+    gateway: gateway === null ? null : withTestShopConnect(gateway, env.DB, env),
     delivery: env.HUB_DELIVERY !== undefined,
     channels: async () => (await listedChannels(env.DB)).map(c => c.name),
   }

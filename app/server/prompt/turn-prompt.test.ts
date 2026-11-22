@@ -77,6 +77,8 @@ describe("the turn's system prompt", () => {
       const sent = h.pool.calls.filter(c => c.method === 'place').map(c => (c.args[0] as { systemPrompt: string }).systemPrompt)
       expect(sent).toEqual(['prompt build 1', 'prompt build 2'])
       expect((JSON.parse(h.turn(a.turnId).start_json!) as { systemPrompt: string }).systemPrompt).toBe('prompt build 2')
-    }, { systemPrompt: async () => ({ text: `prompt build ${++builds}`, version: 3 }) })
+      // The version recorded follows the rebuild too (#337 round 2 L1): the second build said 2.
+      expect(h.turn(a.turnId).prompt_version).toBe(2)
+    }, { systemPrompt: async () => ({ text: `prompt build ${++builds}`, version: builds === 1 ? 3 : 2 }) })
   })
 })

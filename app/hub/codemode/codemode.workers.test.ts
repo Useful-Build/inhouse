@@ -12,7 +12,7 @@
 import { env, reset } from 'cloudflare:test'
 import { exports } from 'cloudflare:workers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { CallerScope, ConnectGateway, HubResult, ReadGateway, ToolInfo } from '../index/contract'
+import type { AccountSummary, CallerScope, ConnectGateway, HubResult, ReadGateway, ToolInfo } from '../index/contract'
 import { testUpstreams } from '../testing/index'
 import { readyGatewayDeps } from '../signin/signin'
 import type { ToolContext } from '../registry/registry'
@@ -409,6 +409,26 @@ describe('the test shop override (through ReadGateway)', () => {
     expect(otherGraphql).toBe(1)
     expect(await gateways.ReadGateway.callTool(run, 'shopify_script_run', { code })).toMatchObject({ ok: false, error: { code: 'paused' } })
     expect(seen.graphql).toBe(0)
+  })
+
+  // #337 round 2 (Opus H1): the prompt's account read resolves through the test shop like the reads do, so the turn's
+  // "Connected apps" line names Shopify when the test shop will serve it, whatever the real account's object says (empty
+  // here, or paused). The test shop's object is granted first (its token endpoint only, no GraphQL read).
+  it('listAccounts with a registered test shop reports Shopify from the test shop: connected, even with the real account empty or paused', async () => {
+    const shopify = (rows: AccountSummary[]) => rows.find(r => r.accountId === 'shopify:store')!
+    const plain = (await gateways.ConnectGateway.listAccounts(server)) as HubResult<AccountSummary[]>
+    if (!plain.ok) throw new Error(plain.error.code)
+    expect(shopify(plain.value).status.state).toBe('empty')
+    for (const pause of [false, true]) {
+      if (pause) expect(await gateways.ConnectGateway.setPaused(server, 'shopify:store', true)).toMatchObject({ ok: true })
+      const r = (await gateways.ConnectGateway.listAccounts(server, { testShopHost: OTHER })) as HubResult<AccountSummary[]>
+      if (!r.ok) throw new Error(r.error.code)
+      expect(shopify(r.value), `real paused ${pause}`).toMatchObject({ configured: true, status: { state: 'active', paused: false, needsReconnect: false } })
+    }
+    expect(otherGraphql).toBe(0)
+    expect(seen.graphql).toBe(0)
+    // An override the hub can't honour is refused, never answered from the real account.
+    expect(await gateways.ConnectGateway.listAccounts(server, { testShopHost: 'example-mc-not-registered.myshopify.com' })).toMatchObject({ ok: false, error: { code: 'invalid_args' } })
   })
 
   it('an unregistered or malformed test shop is invalid_args before the script runs, and no shop is read', async () => {

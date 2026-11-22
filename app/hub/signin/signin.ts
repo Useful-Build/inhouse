@@ -195,6 +195,19 @@ export class SignIn extends DurableObject<Env> {
       return this.#core.query(rest)
     })
   }
+  /**
+   * P5 #337: a test shop's object, granted before ConnectGateway.listAccounts reads its status (oauth/entry.ts). The same
+   * guard and held-shop rule as `query`'s `testShop`: refused in the deployable build and when the object holds another shop.
+   */
+  warmTestShop(req: { accountId: string; testShop: string }) {
+    return this.#guard(() => {
+      if (!(__INHOUSE_HUB_TEST__ && (this.env as HubEnv).INHOUSE_TEST_BUILD === '1')) return err('invalid_args', 'testShopHost')
+      const held = this.ctx.storage.kv.get(TEST_SHOP_KEY)
+      if (held !== undefined && held !== req.testShop) return err('invalid_args', 'testShopHost')
+      if (held === undefined) this.ctx.storage.kv.put(TEST_SHOP_KEY, req.testShop)
+      return this.#core.warm(req.accountId)
+    })
+  }
   /** H0's fields plus P5's (paused, kind, connectedBy, connectedAt, revokeFailedAt, needsReconnect). */
   status(accountId: string) {
     return this.#guard(() => this.#core.accountStatus(accountId))

@@ -6,7 +6,7 @@
 // scans for the canary, the name and this module). At runtime it reads nothing unless INHOUSE_TEST_BUILD is "1".
 // Fail closed: a row this can't read as a shop host throws, so the egress answers the call as a binding failure, never as a
 // read of the hub's own SHOPIFY_SHOP.
-import type { CallToolOptions, ReadGateway } from '../../hub/index/contract.ts'
+import type { AccountSummary, CallToolOptions, CallerScope, HubResult, ReadGateway } from '../../hub/index/contract.ts'
 
 /** The hub's two read methods (hub.ts ReadGatewayLike, written out so the eval harness can import this file without the egress). */
 type ReadGatewayLike = Pick<ReadGateway, 'listTools' | 'callTool'>
@@ -48,6 +48,29 @@ export function withTestShop(hub: ReadGatewayLike, db: ShopDb, env: { INHOUSE_TE
       const options: CallToolOptions = { testShopHost: host }
       console.log({ event: 'test_control', control: 'test_shop', canary: TEST_SHOP_CANARY })
       return hub.callTool(scope, name, args, options)
+    },
+  }
+}
+
+/**
+ * The prompt's account read (ConnectGateway.listAccounts), written out structurally: the egress's import boundary keeps
+ * ConnectGateway's type out of this folder, and only the prompt (server/prompt/connected.ts) wraps one.
+ */
+type ConnectAccountsLike = { listAccounts(scope: CallerScope, options?: CallToolOptions): Promise<HubResult<AccountSummary[]>> }
+
+/**
+ * P5 #337: the turn prompt's account read carries the same override as the reads (a fresh read per call), so the
+ * "Connected apps" line names the account the turn's reads will use (the hub answers a Shopify row from the test shop's
+ * own SignIn object). The gateway as it is unless the build is switched on.
+ */
+export function withTestShopConnect(gateway: ConnectAccountsLike, db: ShopDb, env: { INHOUSE_TEST_BUILD?: string }): ConnectAccountsLike {
+  if (env.INHOUSE_TEST_BUILD !== '1') return gateway
+  return {
+    async listAccounts(scope) {
+      const host = await readTestShop(db)
+      if (host === null) return gateway.listAccounts(scope)
+      const options: CallToolOptions = { testShopHost: host }
+      return gateway.listAccounts(scope, options)
     },
   }
 }

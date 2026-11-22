@@ -92,7 +92,11 @@ export interface ConnectGateway {
   failConnect(scope: CallerScope, req: { state: string; memberId: string; error: string }): Promise<HubResult<{ accountId: string | null }>>
   disconnect(scope: CallerScope, accountId: string): Promise<HubResult<{ revoked: boolean }>>
   setPaused(scope: CallerScope, accountId: string, paused: boolean): Promise<HubResult<{ paused: boolean }>>
-  listAccounts(scope: CallerScope): Promise<HubResult<AccountSummary[]>>
+  /**
+   * `options.testShopHost` (P5 #337, test and eval builds only, as ReadGateway.callTool's): a Shopify account's row comes
+   * from that test shop's own SignIn object (granted first), the one the turn's reads will use. Refused elsewhere.
+   */
+  listAccounts(scope: CallerScope, options?: CallToolOptions): Promise<HubResult<AccountSummary[]>>
   /**
    * TEST BUILD ONLY, optional (W5's test-fakes hook, the product's `POST /api/ops/test-fakes`): reads and flips the
    * fake upstreams in the hub's test bundle (hub/testing/fakes.ts). A `server` scope only. The deployable hub answers
