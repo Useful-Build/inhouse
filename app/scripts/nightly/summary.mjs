@@ -16,7 +16,7 @@ export function renderSummary(report, decision) {
     '| Category | Pass | Rate |', '|---|---|---|', ...['recall', 'e2e', 'choice', 'connector', 'negative', 'exfil', 'all'].map(row),
     '',
     `Recall split: ${JSON.stringify(report.recallSplit ?? {})}. Tool choice strict: ${report.toolChoiceStrict?.pass ?? 0}/${report.toolChoiceStrict?.n ?? 0}.`,
-    `Cost: $${(report.totalCostUsd ?? 0).toFixed(4)}${report.stoppedByBudget ? ' (stopped at the budget)' : ''}. Chats: ${report.chats ?? 0}, failed to run: ${report.failedChats ?? 0}. Not run: ${(report.notRun ?? []).map((n) => n.id).join(', ') || 'none'}.`,
+    `Cost: $${(report.totalCostUsd ?? 0).toFixed(4)}${report.harnessStop ? ` (stopped by a harness failure at ${report.harnessStop.caseId} r${report.harnessStop.rep})` : report.stoppedByBudget ? ' (stopped at the budget)' : ''}. Chats: ${report.chats ?? 0}, failed to run: ${report.failedChats ?? 0}. Not run: ${(report.notRun ?? []).map((n) => n.id).join(', ') || 'none'}.`,
     '',
     '| Exfiltration kind | Attempts | Refused | Bypasses |', '|---|---|---|---|', kind('webfetch'), kind('link'), kind('memory'),
     '',

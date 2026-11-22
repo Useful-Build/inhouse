@@ -27,14 +27,17 @@ const workerJson = (status: number) => new Response(JSON.stringify({ error: { co
 const accessLogin = () => new Response('', { status: 302, headers: { location: 'https://team.cloudflareaccess.com/cdn-cgi/access/login/eval.example.test?kid=x' } })
 const accessBlock = () => new Response('<html>Forbidden</html>', { status: 403, headers: { 'content-type': 'text/html' } })
 const me = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
+const notFound = () => new Response(JSON.stringify({ error: { code: 'not_found' } }), { status: 404, headers: { 'content-type': 'application/json' } })
 
 /** A fake edge: `anon` answers a call with no service token, `signed` one with it. Records each call's headers. */
-function edge(anon: () => Response, signed: () => Response) {
+function edge(anon: () => Response, signed: () => Response, stop: () => Response = notFound) {
   const seen: Record<string, string>[] = []
   const f = (async (_url: string, init?: RequestInit) => {
     const h = (init?.headers ?? {}) as Record<string, string>
     seen.push(h)
-    return h['CF-Access-Client-Id'] ? signed() : anon()
+    if (!h['CF-Access-Client-Id']) return anon()
+    // The stop path (POST /api/turns/<id>/stop): a made-up turn answers 404 once signed in.
+    return init?.method === 'POST' ? stop() : signed()
   }) as unknown as typeof fetch
   return { f, seen }
 }
@@ -77,5 +80,25 @@ describe('the eval lock probe', () => {
       expect(f.join(' ')).not.toContain(SECRET)
       expect(f.join(' ')).not.toMatch(/ey[A-Za-z0-9_-]{20,}/)
     }
+  })
+})
+
+// The first paid baseline died on a refused POST /api/turns/<id>/stop (the stop path every case's reset takes). The probe
+// now makes that call for a made-up turn, no spend: signed in, it answers 404; refused, the probe fails before any money.
+describe('the probe\'s stop-path call', () => {
+  it('passes on 404 not_found, sends the token, the person and the origin, and names a well-formed made-up turn', async () => {
+    const e = edge(accessLogin, () => me({ evalBrand: true }))
+    const calls: { url: string; init?: RequestInit }[] = []
+    const f = (async (url: string, init?: RequestInit) => { calls.push({ url, init }); return e.f(url, init) }) as unknown as typeof fetch
+    expect(await probeEvalLock(ENV, f)).toEqual([])
+    const stop = calls.find((c) => c.init?.method === 'POST')!
+    expect(stop.url).toMatch(/^https:\/\/eval\.example\.test\/api\/turns\/t_[A-Za-z0-9_-]{22}\/stop$/)
+    const h = stop.init!.headers as Record<string, string>
+    expect(h).toMatchObject({ 'CF-Access-Client-Id': 'id.access', Origin: 'https://eval.example.test', 'Content-Type': 'application/json' })
+    expect(h['X-Inhouse-Test-Assertion']).toMatch(/^ey/)
+  })
+  it('fails when the stop path is refused (401 from the Worker, or the edge)', async () => {
+    expect(await probeEvalLock(ENV, edge(accessLogin, () => me({ evalBrand: true }), () => workerJson(401)).f)).toEqual([expect.stringMatching(/POST \/api\/turns\/<made-up>\/stop answered 401/)])
+    expect(await probeEvalLock(ENV, edge(accessLogin, () => me({ evalBrand: true }), accessBlock).f)).toEqual([expect.stringMatching(/POST \/api\/turns\/<made-up>\/stop answered 403/)])
   })
 })

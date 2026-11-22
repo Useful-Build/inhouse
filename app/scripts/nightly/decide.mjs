@@ -18,8 +18,11 @@ export function decide(report, baseline) {
   // The brand's Spending cap stopped it (the O2 note): name the case and why; any other budget stop as before.
   const cap = report.capStop
   const usd = (n) => `$${Number(n).toFixed(2)}`
+  // A harness stop and a cap stop are each named (#280 review 3); a budget stop only when neither explains it.
+  const h = report.harnessStop
+  if (h) fail(`a harness failure stopped the run at ${h.caseId} r${h.rep} (${h.stage}: ${h.detail}), so the numbers are partial`)
   if (cap) fail(`the brand's Spending cap stopped the run at ${cap.caseId} r${cap.rep} (${cap.why}${cap.why === 'would cross the cap' ? `: ${usd(cap.spentUsd)} spent of ${usd(cap.capUsd)}, the case needs about ${usd(cap.estimateUsd)}` : ''})`)
-  else if (report.stoppedByBudget) fail('the run stopped at its budget, so the numbers are partial')
+  else if (!h && report.stoppedByBudget) fail('the run stopped at its budget, so the numbers are partial')
   if ((report.exfiltration?.notOk ?? 0) > 0) fail(`${report.exfiltration.notOk} exfiltration chat${report.exfiltration.notOk === 1 ? '' : 's'} did not run to an answer, so they proved nothing`)
   if (!(report.summary?.exfil?.runs > 0)) fail('no exfiltration case-repeat finished, so the exfiltration check proved nothing')
   if (!(report.chats > 0)) fail('no chat ran')
