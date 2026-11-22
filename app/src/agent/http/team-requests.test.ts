@@ -54,10 +54,11 @@ describe('the client: requests to the Inhouse team', () => {
     expect(put.path).toBe(`/api/team-requests/${mine.id}/withdrawn`)
     expect(body(put)).toEqual({ ifRev: 3 })
     expect(agent.getSnapshot().requestedTools).toEqual({ zebra: true })
-    // Someone else's request is never withdrawn from here: nothing is sent.
+    // Someone else's request is never withdrawn from here: nothing is sent, and its "Requested" mark stays.
     const before = calls.length
     await agent.requestTool('zebra', false)
     expect(calls.length).toBe(before)
+    expect(agent.getSnapshot().requestedTools).toEqual({ zebra: true })
   })
 
   test('requestSkill posts a job about the skill; sendTeamRequest posts the window\'s type and words', async () => {
@@ -74,5 +75,38 @@ describe('the client: requests to the Inhouse team', () => {
     await expect(agent.requestTool('shopify', true)).rejects.toMatchObject({ code: 'forbidden' })
     expect(agent.getSnapshot().requestedTools).toEqual({})
     expect(agent.getSnapshot().teamRequests).toEqual([])
+  })
+
+  test('the 50-open refusal reads in plain words and leaves nothing marked', async () => {
+    const { agent } = await loaded({ ...reads(), 'POST /api/team-requests': refusal(403, 'forbidden', { reason: 'request_limit' }) })
+    await expect(agent.requestTool('shopify', true)).rejects.toMatchObject({ message: 'Your Inhouse team already has 50 open requests from you. Take one back or wait for an answer.' })
+    expect(agent.getSnapshot().requestedTools).toEqual({})
+  })
+
+  test('the open requests have a resource status: ready on load, error on a failed read, Retry recovers, refresh reads again', async () => {
+    let n = 0
+    const { agent, calls } = await loaded({ ...reads(), 'GET /api/team-requests?status=open': () => (++n === 1 ? refusal(503, 'unavailable') : { body: { items: [rec('a')] } }) })
+    expect(agent.read().resources.requests).toMatchObject({ status: 'error' })
+    await agent.retry('requests')
+    expect(agent.read().resources.requests).toEqual({ status: 'ready' })
+    expect(agent.getSnapshot().requestedTools).toEqual({ zebra: true })
+    const reads_ = () => calls.filter(c => c.path === '/api/team-requests?status=open').length
+    const before = reads_()
+    await agent.refresh('requests')
+    expect(reads_()).toBe(before + 1)
+  })
+
+  test('the requests\' names come from the members once they are read, whichever read lands last', async () => {
+    const { agent } = await loaded({
+      ...reads({ requests: [rec('a', { requestedBy: 'm_dana' })] }),
+      'GET /api/members': { body: { items: [{ id: 'm_dana', name: 'Dana Example', email: 'dana@example.test', title: null, role: 'member', status: 'active', photo: null, rev: 1 }], nextCursor: null } },
+    })
+    expect(agent.getSnapshot().teamRequests.map(r => r.sub)).toEqual(['New tool · sent by Dana Example'])
+  })
+
+  test('the Inhouse team\'s list has no requester: the line says "a teammate"', async () => {
+    const { requestedBy: _drop, ...bare } = rec('a')
+    const { agent } = await loaded(reads({ requests: [bare] }))
+    expect(agent.getSnapshot().teamRequests.map(r => r.sub)).toEqual(['New tool · sent by a teammate'])
   })
 })

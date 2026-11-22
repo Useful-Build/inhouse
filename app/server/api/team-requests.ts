@@ -13,14 +13,18 @@ import type { TeamRequestRow, WriteOutcome } from '../team-requests/store.ts'
 
 const instant = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
 
-export const recordOf = (r: TeamRequestRow, readerId: string): TeamRequestRecord => TeamRequestRecordSchema.parse({
-  id: r.id, kind: r.kind, subject: r.subject, text: r.text, requestedBy: r.requested_by, mine: r.requested_by === readerId,
+/** `readerId` null: the Inhouse team, who gets no member ids (`requestedBy` left out, `mine` false). */
+export const recordOf = (r: TeamRequestRow, readerId: string | null): TeamRequestRecord => TeamRequestRecordSchema.parse({
+  id: r.id, kind: r.kind, subject: r.subject, text: r.text, ...(readerId === null ? {} : { requestedBy: r.requested_by }), mine: readerId !== null && r.requested_by === readerId,
   status: r.status, at: instant(r.created_at_ms), updatedAt: instant(r.updated_at_ms), rev: r.rev,
 })
 
+/** Who reads: a person's member id, or null for the Inhouse team. */
+const readerOf = (c: ApiCtx): string | null => (c.principal.kind === 'person' ? writer(c).actorId : null)
+
 const idOf = (c: ApiCtx): string | null => (TeamRequestIdSchema.safeParse(c.params.id).success ? c.params.id : null)
 
-function answer(o: WriteOutcome, readerId: string): Response {
+function answer(o: WriteOutcome, readerId: string | null): Response {
   if ('ok' in o) return apiJson(recordOf(o.ok, readerId))
   if ('conflict' in o) return apiError('conflict', { current: recordOf(o.conflict, readerId) })
   if (o.refused === 'not_found') return apiError('not_found')
@@ -38,7 +42,7 @@ export const listTeamRequests: Handler = async c => {
     status = v
   }
   const rows = await storesOf(c).teamRequests.list(status)
-  return apiJson(TeamRequestsListSchema.parse({ items: rows.map(r => recordOf(r, writer(c).actorId)) }))
+  return apiJson(TeamRequestsListSchema.parse({ items: rows.map(r => recordOf(r, readerOf(c))) }))
 }
 
 /** Route 81, `POST /api/team-requests` `{ kind, subject?, text }`. 403 `request_limit` at 50 open ones. */
@@ -47,7 +51,7 @@ export const createTeamRequest: Handler = async c => {
   if ('error' in body) return body.error
   const o = await storesOf(c).teamRequests.create(body.ok, writer(c))
   if ('refused' in o) return apiError('forbidden', { reason: 'request_limit' })
-  return apiJson(recordOf(o.ok, writer(c).actorId), o.created ? 201 : 200)
+  return apiJson(recordOf(o.ok, readerOf(c)), o.created ? 201 : 200)
 }
 
 /** Route 82, `PUT /api/team-requests/:id/status` `{ status, ifRev }`: the Inhouse team, from open only. */
@@ -56,7 +60,7 @@ export const setTeamRequestStatus: Handler = async c => {
   if (!id) return apiError('not_found')
   const body = await readBody(c.request, TeamRequestStatusInputSchema)
   if ('error' in body) return body.error
-  return answer(await storesOf(c).teamRequests.setStatus({ id, status: body.ok.status, ifRev: body.ok.ifRev }, writer(c)), writer(c).actorId)
+  return answer(await storesOf(c).teamRequests.setStatus({ id, status: body.ok.status, ifRev: body.ok.ifRev }, writer(c)), readerOf(c))
 }
 
 /** Route 83, `PUT /api/team-requests/:id/withdrawn` `{ ifRev }`: the requester, from open only. */
@@ -65,5 +69,9 @@ export const withdrawTeamRequest: Handler = async c => {
   if (!id) return apiError('not_found')
   const body = await readBody(c.request, TeamRequestWithdrawInputSchema)
   if ('error' in body) return body.error
-  return answer(await storesOf(c).teamRequests.withdraw({ id, ifRev: body.ok.ifRev }, writer(c)), writer(c).actorId)
+  // An unknown id is 404 before the owner rule; then the matrix's `personal` rule runs on the request's owner.
+  const row = await storesOf(c).teamRequests.get(id)
+  if (!row) return apiError('not_found')
+  c.access.requireObject({ ownerId: row.requested_by })
+  return answer(await storesOf(c).teamRequests.withdraw({ id, ifRev: body.ok.ifRev }, writer(c)), readerOf(c))
 }

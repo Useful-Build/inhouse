@@ -1,8 +1,9 @@
 // Requests to the Inhouse team (P6a W3, 0470_team_requests.sql). Each write is one batch: the row's statement, guarded by
 // `rev`, `status` (and the owner for a withdraw) in its own WHERE, and its audit line guarded on the row this very write
 // stamped, so a refused write changes nothing and writes no line. The audit detail holds the id, kind and status, never
-// the text. A create is idempotent by request id: a retry (a tool call whose reply was lost) finds the line its first
-// try wrote, and answers that request.
+// the text. A create is idempotent by what it asks: the same person, kind and subject (or, with no subject, the same
+// words) while that request is still open answers the existing one, so a retried tool call (a fresh request id each
+// time) makes no second request.
 import { TEAM_REQUEST_LIST_MAX, TEAM_REQUEST_OPEN_MAX } from '../../shared/contract/team-requests.ts'
 import type { TeamRequestStatus } from '../../shared/contract/team-requests.ts'
 import { auditInsert } from '../db/audit.ts'
@@ -45,15 +46,15 @@ const written = (r: D1Result, what: string): TeamRequestRow => {
   return row
 }
 
-/** The request this request id already made, if its first try committed. */
-async function madeBefore(db: D1Database, requestId: string): Promise<TeamRequestRow | null> {
-  const id = await db.prepare("SELECT target_id FROM audit_log WHERE action = 'team_request.created' AND req_id = ?").bind(requestId).first<string>('target_id')
-  return id ? readRow(db, id) : null
-}
+/** The open request that already says this (same person, kind and subject; no subject: the same words), if any. */
+const SAME_OPEN = `requested_by = ? AND kind = ? AND status = 'open' AND COALESCE(subject, '') = COALESCE(?, '') AND (? IS NOT NULL OR text = ?)`
+const sameOpen = (n: NewRequest, by: string): (string | null)[] => [by, n.kind, n.subject ?? null, n.subject ?? null, n.text]
 
-/** A new open request. Refused at 50 open ones (counted in the statement, so two at once can't both take the last place). */
+/** A new open request, or the same person's open one that already says this. Refused at 50 open ones (counted in the statement, so two at once can't both take the last place). */
 export async function createRequest(db: D1Database, n: NewRequest, at: At): Promise<CreateOutcome> {
-  const before = await madeBefore(db, at.requestId)
+  const same = (): Promise<TeamRequestRow | null> =>
+    db.prepare(`SELECT * FROM team_requests WHERE ${SAME_OPEN} ORDER BY created_at_ms DESC, id DESC LIMIT 1`).bind(...sameOpen(n, at.actorId)).first<TeamRequestRow>()
+  const before = await same()
   if (before) return { ok: before, created: false }
   const id = newTeamRequestId()
   const stamp = writeStamp(at.requestId)
@@ -61,18 +62,21 @@ export async function createRequest(db: D1Database, n: NewRequest, at: At): Prom
     db.prepare(
       `INSERT INTO team_requests (id, kind, subject, text, requested_by, status, created_at_ms, updated_at_ms, rev, req_id)
         SELECT ?, ?, ?, ?, ?, 'open', ?, ?, 1, ?
-        WHERE NOT EXISTS (SELECT 1 FROM audit_log WHERE action = 'team_request.created' AND req_id = ?)
+        WHERE NOT EXISTS (SELECT 1 FROM team_requests WHERE ${SAME_OPEN})
           AND (SELECT count(*) FROM team_requests WHERE status = 'open') < ? RETURNING *`,
-    ).bind(id, n.kind, n.subject ?? null, n.text, at.actorId, at.nowMs, at.nowMs, stamp, at.requestId, TEAM_REQUEST_OPEN_MAX),
+    ).bind(id, n.kind, n.subject ?? null, n.text, at.actorId, at.nowMs, at.nowMs, stamp, ...sameOpen(n, at.actorId), TEAM_REQUEST_OPEN_MAX),
     auditStmt(db, at, { action: 'team_request.created', requestId: id, kind: n.kind }, id, stamp),
   ])
   if (made.meta.changes === 0) {
-    // Either the cap, or a retry that raced its first try.
-    const raced = await madeBefore(db, at.requestId)
+    // Either the cap, or an identical request that raced this one in.
+    const raced = await same()
     return raced ? { ok: raced, created: false } : { refused: 'request_limit' }
   }
   return { ok: written(made, 'createRequest'), created: true }
 }
+
+/** One request by id, or null. */
+export const getRequest = readRow
 
 /** Newest first, at most 200, optionally one status. */
 export async function listRequests(db: D1Database, status?: TeamRequestStatus): Promise<TeamRequestRow[]> {
@@ -112,6 +116,7 @@ export const withdraw = (db: D1Database, i: { id: string; ifRev: number }, at: A
 export function teamRequestStore({ db }: { db: D1Database }) {
   return {
     create: (n: NewRequest, at: At) => createRequest(db, n, at),
+    get: (id: string) => getRequest(db, id),
     list: (status?: TeamRequestStatus) => listRequests(db, status),
     setStatus: (i: { id: string; status: 'done' | 'declined'; ifRev: number }, at: At) => setStatus(db, i, at),
     withdraw: (i: { id: string; ifRev: number }, at: At) => withdraw(db, i, at),

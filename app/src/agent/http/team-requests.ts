@@ -43,7 +43,7 @@ export function fromOpen(open: readonly TeamRequestRecord[], nameOf: (id: string
     if (r.subject && r.kind === 'tool') requestedTools[r.subject] = true
     if (r.subject && r.kind === 'job') requestedSkills[r.subject] = true
     const [icon, label] = LABEL[r.kind]
-    teamRequests.push({ icon, title: titleOf(r.text), sub: `${label} · sent by ${r.mine ? 'you' : nameOf(r.requestedBy) ?? 'a teammate'}`, at: r.at, status: 'Sent' })
+    teamRequests.push({ icon, title: titleOf(r.text), sub: `${label} · sent by ${r.mine ? 'you' : (r.requestedBy ? nameOf(r.requestedBy) : null) ?? 'a teammate'}`, at: r.at, status: 'Sent' })
   }
   return { teamRequests, requestedTools, requestedSkills }
 }

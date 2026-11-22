@@ -41,8 +41,8 @@ import type { Contract, TransportOptions } from './transport'
 const UNAVAILABLE = 'Not connected yet.'
 
 /** The resources this client reads. Every other key has nothing to read until its phase, so it reads as ready and empty. */
-type Loaded = 'meta' | 'members' | 'grants' | 'audit' | 'memory' | 'usage' | 'models' | 'chat' | 'activity' | 'notifications' | 'library' | 'routines' | 'skills' | 'problems'
-const LOADED: readonly ResourceKey[] = ['meta', 'members', 'grants', 'audit', 'memory', 'usage', 'models', 'chat', 'activity', 'notifications', 'library', 'routines', 'skills', 'problems'] satisfies readonly Loaded[]
+type Loaded = 'meta' | 'members' | 'grants' | 'audit' | 'memory' | 'usage' | 'models' | 'chat' | 'activity' | 'notifications' | 'library' | 'routines' | 'skills' | 'requests' | 'problems'
+const LOADED: readonly ResourceKey[] = ['meta', 'members', 'grants', 'audit', 'memory', 'usage', 'models', 'chat', 'activity', 'notifications', 'library', 'routines', 'skills', 'requests', 'problems'] satisfies readonly Loaded[]
 /** The lists the agent's work fills: read again when their page opens and when a run ends. */
 const REFRESH_LISTS: readonly RefreshList[] = ['library', 'problems', 'activity', 'notifications']
 
@@ -386,6 +386,8 @@ export class HttpAgent implements AgentClient {
       const items = page.items.map(this.newest)
       items.forEach(this.confirmMember)
       this.patch({ members: items, membersNext: page.nextCursor, res: { ...this.s.res, members: { status: 'ready' } } })
+      // The requests' "sent by <name>" lines use the names just read.
+      this.commit(this.withRequests(this.s, this.s.requests))
     } catch (e) { this.failStatus('members', e) }
   }
 
@@ -444,7 +446,7 @@ export class HttpAgent implements AgentClient {
     return p
   }
   private loadList(list: RefreshList): Promise<void> {
-    return { library: () => this.loadLibrary(true, true), problems: () => this.loadProblems(true, true), activity: () => this.loadActivity(true, true), notifications: () => this.loadNotifications(true) }[list]()
+    return { library: () => this.loadLibrary(true, true), problems: () => this.loadProblems(true, true), activity: () => this.loadActivity(true, true), notifications: () => this.loadNotifications(true), requests: () => this.loadTeamRequests(true) }[list]()
   }
   /** A run ended: what its work fills may have changed. The Inhouse team isn't read for it (it didn't ask, and a read under a grant is logged). */
   private afterRun() {
@@ -549,18 +551,24 @@ export class HttpAgent implements AgentClient {
   }
 
   /** Route 80: the open requests. A failed read leaves "Requested" unmarked and the window's list empty; told in the console. */
-  private async loadTeamRequests() {
+  private async loadTeamRequests(asked = false) {
     try {
       const { items } = await readOpenRequests(this.http)
-      this.commit(this.withRequests(this.s, items))
+      this.commit(this.withRequests({ ...this.s, res: { ...this.s.res, requests: { status: 'ready' } } }, items))
     } catch (e) {
-      console.warn('Inhouse: could not read the requests to the Inhouse team.', e)
+      // A refresh that fails leaves what is shown (the window's list); the first read and Retry show it.
+      if (!asked || this.s.res.requests.status !== 'ready') this.failStatus('requests', e)
     }
   }
   /** The open requests as the pages read them: the list, and the "Requested" marks, all from the one list. */
   private withRequests(s: Slices, requests: TeamRequestRecord[]): Slices {
     const name = (id: string) => s.members.find(m => m.id === id)?.name ?? null
     return { ...s, requests, state: { ...s.state, ...fromOpen(requests, name) } }
+  }
+  /** Route 81's cap refusal in the page's words. */
+  private static requestRefusal(e: unknown): unknown {
+    if (e instanceof AgentError && e.code === 'forbidden' && e.reason === REASON.requestLimit) return new AgentError('forbidden', 'Your Inhouse team already has 50 open requests from you. Take one back or wait for an answer.', { reason: e.reason })
+    return e
   }
   /** Route 79: the skills the agent has. Everyone signed in may read it. */
   private async loadSkills() {
@@ -649,7 +657,7 @@ export class HttpAgent implements AgentClient {
    * the same resource is under way joins it, so two clicks make one read and a late answer can't undo an earlier one.
    */
   retry = (resource: ResourceKey): Promise<void> => {
-    const load = { meta: () => this.reloadMeta(), members: () => this.loadMembers(), grants: () => this.loadGrants(), audit: () => this.loadAudit(), memory: () => this.loadMemory(true), usage: () => this.loadUsage(), models: () => this.loadModels(), chat: () => this.loadChats(true), activity: () => this.loadActivity(true), notifications: () => this.loadNotifications(), library: () => this.loadLibrary(true), routines: () => this.loadRoutines(true), skills: () => this.loadSkills(), problems: () => this.loadProblems(true) }[resource as Loaded] as (() => Promise<unknown>) | undefined
+    const load = { meta: () => this.reloadMeta(), members: () => this.loadMembers(), grants: () => this.loadGrants(), audit: () => this.loadAudit(), memory: () => this.loadMemory(true), usage: () => this.loadUsage(), models: () => this.loadModels(), chat: () => this.loadChats(true), activity: () => this.loadActivity(true), notifications: () => this.loadNotifications(), library: () => this.loadLibrary(true), routines: () => this.loadRoutines(true), skills: () => this.loadSkills(), requests: () => this.loadTeamRequests(true), problems: () => this.loadProblems(true) }[resource as Loaded] as (() => Promise<unknown>) | undefined
     if (!load) return Promise.resolve()
     const running = this.retrying.get(resource)
     if (running) return running
@@ -1348,7 +1356,7 @@ export class HttpAgent implements AgentClient {
     this.write({
       lane: 'requests',
       apply: s => (subject && kind === 'tool' ? { ...s, state: { ...s.state, requestedTools: { ...s.state.requestedTools, [subject]: true } } } : subject && kind === 'job' ? { ...s, state: { ...s.state, requestedSkills: { ...s.state.requestedSkills, [subject]: true } } } : s),
-      send: () => postTeamRequest(this.http, k, { kind, ...(subject ? { subject } : {}), text }),
+      send: () => postTeamRequest(this.http, k, { kind, ...(subject ? { subject } : {}), text }).catch((e: unknown) => { throw HttpAgent.requestRefusal(e) }),
       done: (s, r) => this.withRequests(s, [r, ...s.requests.filter(x => x.id !== r.id)]),
       undo: (s, before) => ({ ...s, state: { ...s.state, requestedTools: before.state.requestedTools, requestedSkills: before.state.requestedSkills } }),
     }))
@@ -1356,7 +1364,10 @@ export class HttpAgent implements AgentClient {
   private takeBack = this.needs((k, kind: TeamRequestRecord['kind'], subject: string): Promise<void> =>
     this.write<TeamRequestRecord | null>({
       lane: 'requests',
-      apply: s => ({ ...s, state: { ...s.state, ...(kind === 'tool' ? { requestedTools: Object.fromEntries(Object.entries(s.state.requestedTools).filter(([n]) => n !== subject)) } : {}) } }),
+      // The mark comes off only when the caller has an open request of their own to take back: someone else's stays.
+      apply: s => (kind === 'tool' && s.requests.some(r => r.mine && r.status === 'open' && r.kind === kind && r.subject === subject)
+        ? { ...s, state: { ...s.state, requestedTools: Object.fromEntries(Object.entries(s.state.requestedTools).filter(([n]) => n !== subject)) } }
+        : s),
       send: async () => {
         const mine = this.s.requests.find(r => r.mine && r.status === 'open' && r.kind === kind && r.subject === subject)
         return mine ? putWithdrawn(this.http, k, mine.id, mine.rev) : null

@@ -6,7 +6,8 @@ import { InstantSchema } from './common.ts'
 
 export const TEAM_REQUEST_OPEN_MAX = 50
 export const TEAM_REQUEST_LIST_MAX = 200
-export const TEAM_REQUEST_TEXT_MAX = 1000
+export { TEAM_REQUEST_TEXT_MAX } from './keys.ts'
+import { TEAM_REQUEST_TEXT_MAX } from './keys.ts'
 export const TEAM_REQUEST_SUBJECT_MAX = 64
 
 export const TeamRequestStatusSchema = z.enum(['open', 'done', 'declined', 'withdrawn'])
@@ -18,7 +19,8 @@ export const TeamRequestRecordSchema = z.strictObject({
   kind: TeamRequestKindSchema,
   subject: z.string().nullable(),
   text: z.string(),
-  requestedBy: z.string(),
+  /** Who asked: for members and Admins (names and `mine`). The Inhouse team gets no member ids. */
+  requestedBy: z.string().optional(),
   mine: z.boolean(),
   status: TeamRequestStatusSchema,
   at: InstantSchema,

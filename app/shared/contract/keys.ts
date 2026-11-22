@@ -4,7 +4,7 @@
 
 /** One per list in `AgentData` (C3). `members` and `audit` also page. */
 export const RESOURCE_KEYS = [
-  'meta', 'problems', 'tools', 'routines', 'skills', 'usage', 'members', 'rules', 'grants', 'memory', 'audit', 'activity', 'notifications',
+  'meta', 'problems', 'tools', 'routines', 'skills', 'usage', 'members', 'rules', 'grants', 'memory', 'audit', 'activity', 'notifications', 'requests',
   'models', 'chat', 'library',
 ] as const
 
@@ -16,6 +16,9 @@ export const CAN_KEYS = [
 
 /** How long a support grant may run, in hours. */
 export const GRANT_HOURS = [1, 4, 24, 72] as const
+
+/** The longest request to the Inhouse team, in characters (the server's bound; the team window's counter). */
+export const TEAM_REQUEST_TEXT_MAX = 1000
 
 /** The most live (not deleted) team routines a brand may have (#312 review M2). System routines don't count. */
 export const MAX_TEAM_ROUTINES = 50

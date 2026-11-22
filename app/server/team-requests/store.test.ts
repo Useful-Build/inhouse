@@ -43,8 +43,10 @@ beforeEach(async () => {
 })
 
 const auditLines = async () => (await db.prepare("SELECT actor_id, action, target_kind, target_id, args_json FROM audit_log WHERE action LIKE 'team_request.%' AND id > ? ORDER BY id").bind(from).all<Record<string, string>>()).results
+let uniq = 0
+/** A request with its own subject unless one is given: the same person, kind and subject is the same request. */
 const make = async (by = ALEX, over: { kind?: 'tool' | 'job'; subject?: string; text?: string } = {}) => {
-  const o = await createRequest(db, { kind: over.kind ?? 'tool', subject: over.subject ?? SUBJECT, text: over.text ?? TEXT }, at(by))
+  const o = await createRequest(db, { kind: over.kind ?? 'tool', subject: over.subject ?? `subject-${++uniq}`, text: over.text ?? TEXT }, at(by))
   if ('refused' in o) throw new Error('refused')
   return o.ok
 }
@@ -57,7 +59,7 @@ const person = (id: string, role: 'member' | 'admin' = 'member') => personPrinci
 
 describe('create and list (the store)', () => {
   it('makes an open request at rev 1 with one audit line that has the id and kind and no text', async () => {
-    const r = await make()
+    const r = await make(ALEX, { subject: SUBJECT })
     expect([r.status, r.rev, r.requested_by, r.kind, r.subject, r.text]).toEqual(['open', 1, ALEX, 'tool', SUBJECT, TEXT])
     const lines = await auditLines()
     expect(lines).toHaveLength(1)
@@ -88,20 +90,34 @@ describe('create and list (the store)', () => {
     expect('ok' in again).toBe(true)
     expect(await createRequest(db, { kind: 'job', text: 'full again' }, at(ALEX))).toEqual({ refused: 'request_limit' })
   })
-  it('is idempotent by request id: a retry whose first batch committed (reply lost) makes no second request', async () => {
+  it('is idempotent by what it asks: a retry whose first batch committed (reply lost), with a fresh request id, makes no second request', async () => {
     const lossy = { prepare: (s: string) => db.prepare(s), batch: async (st: D1PreparedStatement[]) => { await db.batch(st); throw new Error('reply lost') } } as unknown as D1Database
-    const same = { actorId: ALEX, requestId: 'req-lost-reply', nowMs: NOW }
-    await expect(createRequest(lossy, { kind: 'tool', text: TEXT }, same)).rejects.toThrow('reply lost')
-    const retry = await createRequest(db, { kind: 'tool', text: TEXT }, same)
+    await expect(createRequest(lossy, { kind: 'tool', subject: SUBJECT, text: TEXT }, at(ALEX))).rejects.toThrow('reply lost')
+    const retry = await createRequest(db, { kind: 'tool', subject: SUBJECT, text: TEXT }, at(ALEX))
     expect('ok' in retry && retry.created).toBe(false)
     expect((await db.prepare('SELECT COUNT(*) AS n FROM team_requests').first<number>('n'))).toBe(1)
     expect((await auditLines()).length).toBe(1)
-    // Still idempotent after the request left `open`.
-    const id = 'ok' in retry ? retry.ok.id : ''
+  })
+  it('the same person, kind and subject answers the open one; another person, kind or subject, or one that left open, makes a new one', async () => {
     const { setStatus } = await import('./store.ts')
-    await setStatus(db, { id, status: 'done', ifRev: 1 }, at('m_w3_ih'))
-    await createRequest(db, { kind: 'tool', text: TEXT }, same)
-    expect((await db.prepare('SELECT COUNT(*) AS n FROM team_requests').first<number>('n'))).toBe(1)
+    const first = await make(ALEX, { subject: 'ledger' })
+    const again = await createRequest(db, { kind: 'tool', subject: 'ledger', text: 'different words, same ask' }, at(ALEX))
+    expect('ok' in again && [again.ok.id, again.created]).toEqual([first.id, false])
+    for (const other of [
+      await createRequest(db, { kind: 'tool', subject: 'ledger', text: TEXT }, at(SAM)),
+      await createRequest(db, { kind: 'job', subject: 'ledger', text: TEXT }, at(ALEX)),
+      await createRequest(db, { kind: 'tool', subject: 'other', text: TEXT }, at(ALEX)),
+    ]) expect('ok' in other && other.created).toBe(true)
+    await setStatus(db, { id: first.id, status: 'done', ifRev: 1 }, at('m_w3_ih'))
+    const reopened = await createRequest(db, { kind: 'tool', subject: 'ledger', text: TEXT }, at(ALEX))
+    expect('ok' in reopened && [reopened.created, reopened.ok.id === first.id]).toEqual([true, false])
+    expect((await auditLines()).length).toBe(6)
+  })
+  it('with no subject, the same words from the same person are the same request; other words are not', async () => {
+    const a = await createRequest(db, { kind: 'bug', text: 'It broke' }, at(ALEX))
+    const b = await createRequest(db, { kind: 'bug', text: 'It broke' }, at(ALEX))
+    const c = await createRequest(db, { kind: 'bug', text: 'It broke again' }, at(ALEX))
+    expect([('ok' in a && a.created), ('ok' in b && b.created), ('ok' in c && c.created)]).toEqual([true, false, true])
   })
 })
 
@@ -170,6 +186,12 @@ describe('routes 80 to 83 (handlers)', () => {
     const i = await route(listTeamRequests, inhouse, { path: '/api/team-requests' })
     expect([a.body.items[0].id, a.body.items[0].mine, s.body.items[0].mine, i.body.items[0].mine]).toEqual([r.id, true, false, false])
     expect((await route(listTeamRequests, person(ALEX), { path: '/api/team-requests?status=done' })).body.items).toEqual([])
+    // The Inhouse team gets no member ids, on the list or on its own answer; a person gets `requestedBy`.
+    expect(JSON.stringify(i.body)).not.toContain(ALEX)
+    expect(i.body.items[0]).not.toHaveProperty('requestedBy')
+    expect(a.body.items[0].requestedBy).toBe(ALEX)
+    const answered = await route(setTeamRequestStatus, inhouse, { method: 'PUT', path: `/api/team-requests/${r.id}/status`, params: { id: r.id }, body: { status: 'done', ifRev: 1 } })
+    expect(JSON.stringify(answered.body)).not.toContain(ALEX)
     for (const p of ['/api/team-requests?status=x', '/api/team-requests?foo=1', '/api/team-requests?status=open&status=done']) expect((await route(listTeamRequests, person(ALEX), { path: p })).status, p).toBe(400)
   })
   it('82 the Inhouse team answers; a stale rev is 409 with the request; an unknown id and a malformed one are 404', async () => {
@@ -183,11 +205,12 @@ describe('routes 80 to 83 (handlers)', () => {
     expect((await route(setTeamRequestStatus, inhouse, { method: 'PUT', path, params: { id: 'nope' }, body: { status: 'done', ifRev: 1 } })).status).toBe(404)
     expect((await route(setTeamRequestStatus, inhouse, { method: 'PUT', path, params: { id: r.id }, body: { status: 'withdrawn', ifRev: 2 } })).status).toBe(400)
   })
-  it('83 a Member cannot withdraw another request (403 not_owner); the owner can; an unknown id is 404 first', async () => {
+  it('83 a Member cannot withdraw another request (the owner rule); the owner can; an unknown id is 404 before the owner rule', async () => {
     const r = await make(ALEX)
     const path = `/api/team-requests/${r.id}/withdrawn`
-    const other = await route(withdrawTeamRequest, person(SAM), { method: 'PUT', path, params: { id: r.id }, body: { ifRev: 1 } })
-    expect([other.status, other.body.error.reason]).toEqual([403, 'not_owner'])
+    // The matrix's owner rule (`requireObject`, which the test context throws on, as api.ts turns into 403 not_owner).
+    await expect(route(withdrawTeamRequest, person(SAM), { method: 'PUT', path, params: { id: r.id }, body: { ifRev: 1 } })).rejects.toThrow('refused: not_owner')
+    expect((await db.prepare('SELECT status FROM team_requests WHERE id = ?').bind(r.id).first<string>('status'))).toBe('open')
     const gone = await route(withdrawTeamRequest, person(SAM), { method: 'PUT', path, params: { id: 'tr_AAAAAAAAAAAAAAAAAAAAAA' }, body: { ifRev: 1 } })
     expect(gone.status).toBe(404)
     const mine = await route(withdrawTeamRequest, person(ALEX), { method: 'PUT', path, params: { id: r.id }, body: { ifRev: 1 } })
@@ -213,13 +236,14 @@ describe('the tools', () => {
     const h = TOOL_HANDLERS.get(name)!
     return h.call(h.input.parse(args), s, { db })
   }
-  it('team_request_create files it, says who reads it, and answers the request id; a retry with the same request id is the same request', async () => {
+  it('team_request_create files it, says who reads it, and answers the request id; a retry with a fresh request id is the same request', async () => {
     const s = scope(ALEX)
     const a = await call('team_request_create', { kind: 'tool', subject: SUBJECT, text: TEXT }, s)
     expect(a.isError).toBeUndefined()
     expect(a.content[0]!.text).toContain('Sent to the Inhouse team')
-    expect(a.content[0]!.text).toContain('replies within one working day')
-    const b = await call('team_request_create', { kind: 'tool', subject: SUBJECT, text: TEXT }, s)
+    expect(a.content[0]!.text).not.toContain('working day')
+    // A real retry is a fresh tool call with a fresh request id: still the same request.
+    const b = await call('team_request_create', { kind: 'tool', subject: SUBJECT, text: TEXT }, scope(ALEX))
     expect(b.structuredContent!.request_id).toBe(a.structuredContent!.request_id)
     expect((await db.prepare('SELECT COUNT(*) AS n FROM team_requests').first<number>('n'))).toBe(1)
   })
@@ -228,6 +252,9 @@ describe('the tools', () => {
     expect([r.isError, r.content[0]!.text]).toEqual([true, 'A request to the Inhouse team needs a person. Tell the person in the summary instead.'])
     expect(NEEDS_PERSON_TEXT).toBe(r.content[0]!.text)
     expect((await db.prepare('SELECT COUNT(*) AS n FROM team_requests').first<number>('n'))).toBe(0)
+    // The list is refused the same way: a routine has no person whose requests to show.
+    const l = await call('team_request_list', {}, scope('m_system'))
+    expect([l.isError, l.content[0]!.text]).toEqual([true, NEEDS_PERSON_TEXT])
   })
   it('the 51st is refused with request_limit; text and subject bounds are the schema', async () => {
     for (let i = 0; i < 50; i++) await make(ALEX, { text: `r${i}` })

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { agent, demo } from '../agent'
 import type { RequestType } from '../state/store'
 import { useCtx, useUi } from '../state/store'
@@ -9,6 +10,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { TEAM_REQUEST_TEXT_MAX } from '../../shared/contract/keys'
 import { Button, ChoiceChips, Icon, IconTile, Window, WindowHeader } from '../ui'
 
 const RT: Record<RequestType, [icon: string, label: string, placeholder: string]> = {
@@ -39,6 +41,9 @@ export function TeamWindow() {
   const showToast = useUi(s => s.showToast)
   const phone = useUi(s => s.phone)
   const ctx = useCtx()
+  const [sending, setSending] = useState(false)
+  // The product reads the open requests again each time the window opens (what the team answered since the first read).
+  useEffect(() => { if (pop === 'team' && !demo) void agent.refresh('requests') }, [pop])
   if (pop !== 'team') return null
 
   const close = () => patch({ pop: null })
@@ -50,17 +55,26 @@ export function TeamWindow() {
   const sender = userName(ctx)
   // Whitespace alone is empty: Send waits for words.
   const empty = !team.text.trim()
-  const send = () => {
+  const send = async () => {
     const txt = team.text.trim()
-    if (!txt) return
-    agent.sendTeamRequest({ icon: RT[team.type][0], title: titleOf(txt), sub: `${RT[team.type][1]} · sent by ${sender}`, at: instantOf(nowOf()), status: 'Sent', kind: team.type, text: txt })
-    showToast(isBug ? 'Bug sent to your Inhouse team. Thank you.' : 'Request sent. Your Inhouse team replies within one working day.')
+    if (!txt || sending) return
+    const req = { icon: RT[team.type][0], title: titleOf(txt), sub: `${RT[team.type][1]} · sent by ${sender}`, at: instantOf(nowOf()), status: 'Sent', kind: team.type, text: txt }
+    if (demo) {
+      void agent.sendTeamRequest(req)
+      showToast(isBug ? 'Bug sent to your Inhouse team. Thank you.' : 'Request sent. Your Inhouse team replies within one working day.')
+      patch({ pop: null, team: { ...team, text: '' } })
+      return
+    }
+    // The product says "sent" only once the server has it. A refusal keeps the window and the words (the client already told the person why).
+    setSending(true)
+    try { await agent.sendTeamRequest(req) } catch { return } finally { setSending(false) }
+    showToast(isBug ? 'Bug sent to your Inhouse team. Thank you.' : 'Request sent to your Inhouse team.')
     patch({ pop: null, team: { ...team, text: '' } })
   }
 
   return (
     <Window onClose={close} label="Your Inhouse team" size="md">
-      <WindowHeader title="Your Inhouse team" description="Alex and the team build, connect and run your Inhouse agent. They reply within one working day."
+      <WindowHeader title="Your Inhouse team" description={demo ? 'Alex and the team build, connect and run your Inhouse agent. They reply within one working day.' : 'The people who build, connect and run your Inhouse agent.'}
         leading={<IconTile icon="support_agent" iconSize={20} size="lg" tone="outline" />} onClose={close} />
       <div className="flex-1 overflow-auto px-5.5 pt-3 pb-5.5">
         <h3 className="mt-1.5 mb-2 text-base font-strong text-foreground-2">Open requests</h3>
@@ -83,17 +97,17 @@ export function TeamWindow() {
         <div className={cn('rounded-2xl border border-border bg-card px-4', phone ? 'py-3' : 'py-3.5')}>
           <ChoiceChips label="Request type" value={team.type} options={(Object.keys(RT) as RequestType[]).map(k => [k, RT[k][1], RT[k][0]])}
             onChange={type => patch({ team: { ...team, type } })} />
-          <Textarea aria-label="Your request" value={team.text} placeholder={RT[team.type][2]} onChange={e => patch({ team: { ...team, text: e.target.value } })}
+          <Textarea aria-label="Your request" maxLength={TEAM_REQUEST_TEXT_MAX} value={team.text} placeholder={RT[team.type][2]} onChange={e => patch({ team: { ...team, text: e.target.value } })}
             className={cn('mt-3 max-h-60 resize-none rounded-xl bg-muted px-3.5 py-3 leading-normal', phone ? 'min-h-18' : 'min-h-27.5')} />
-          {isBug && (
+          {isBug && demo && (
             <div className="mt-2.5 flex items-center gap-2.5 text-sm text-foreground-2">
               <Checkbox id="team-shot" checked={team.shot} onCheckedChange={v => patch({ team: { ...team, shot: v === true } })} className="size-4.5" />
               <Label htmlFor="team-shot" className="text-sm leading-normal font-normal">Attach a screenshot of this page and what I was doing</Label>
             </div>
           )}
           <div className="mt-3.5 flex flex-wrap items-center gap-2.5">
-            <span className="grow basis-45 text-xs text-muted-foreground">{isBug ? 'Goes straight to the team, with the page you were on.' : 'Every tool and job is included in your plan.'}</span>
-            <Button size="lg" disabled={empty} onClick={send}>Send to the team</Button>
+            <span className="grow basis-45 text-xs text-muted-foreground">{demo ? (isBug ? 'Goes straight to the team, with the page you were on.' : 'Every tool and job is included in your plan.') : isBug ? '' : 'Every tool and job is included in your plan.'}{!demo && <span className="block tabular-nums">{team.text.length} of {TEAM_REQUEST_TEXT_MAX}</span>}</span>
+            <Button size="lg" disabled={empty || sending} onClick={() => void send()}>Send to the team</Button>
           </div>
         </div>
       </div>

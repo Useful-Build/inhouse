@@ -34,13 +34,14 @@ export const handlers: Partial<Record<InhouseToolName, ToolHandler>> = {
       const o = await createRequest(deps.db, { kind: a.kind, ...(a.subject ? { subject: a.subject } : {}), text: a.text }, at(scope))
       if ('refused' in o) return refusal(REASON.requestLimit, LIMIT_TEXT)
       const r = o.ok
-      return answer(`Sent to the Inhouse team (request_id: ${r.id}). The team reads it and replies within one working day. Tell the person it's sent.`, view(r, scope.memberId))
+      return answer(`Sent to the Inhouse team (request_id: ${r.id}). The people who run this agent read it. Tell the person it's sent.`, view(r, scope.memberId))
     },
   }),
 
   team_request_list: tool({
     input: z.object({ status: TeamRequestStatusSchema.optional().describe('Only requests with this status: "open", "done", "declined" or "withdrawn".') }).strict(),
     async call(a, scope, deps) {
+      if (scope.memberId === SYSTEM_MEMBER_ID) return refusal('forbidden', NEEDS_PERSON_TEXT)
       const rows = await listRequests(deps.db, a.status)
       const items = rows.map(r => view(r, scope.memberId))
       const open = rows.filter(r => r.status === 'open').length
