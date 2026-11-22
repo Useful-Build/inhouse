@@ -309,6 +309,11 @@ describe('guards', () => {
     egress('example.com', 'allowed')
     expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards.status).toBe('unclean')
   })
+  it('an allowed host is judged as the checks see it: Example.COM. against the list example.com is clean', async () => {
+    list('example.com')
+    egress('Example.COM.', 'allowed')
+    expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards.status).toBe('clean')
+  })
   it("only the day's rows count", async () => {
     list('example.com')
     egress('evil.example.org', 'allowed', T - 1); egress('evil.example.org', 'allowed', dayEndMs(DAY))

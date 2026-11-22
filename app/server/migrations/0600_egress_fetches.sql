@@ -3,9 +3,10 @@
 -- body, which can carry content. The egress knows the runner object and its container generation, not the run or turn
 -- (one container serves several sessions at once), so no row names a person. The Watch soak (ops/soak) judges each
 -- allowed host against that day's `t:webfetch` list. Append-only (the trigger refuses every UPDATE); retention deletes
--- rows after 30 days. Forward only.
+-- rows after 30 days. `n` is AUTOINCREMENT: a deleted newest row never has its number reused (the backup reads by
+-- rising n). Forward only.
 CREATE TABLE egress_fetches (
-  n INTEGER PRIMARY KEY,
+  n INTEGER PRIMARY KEY AUTOINCREMENT,
   at_ms INTEGER NOT NULL,
   host TEXT NOT NULL CHECK (length(host) BETWEEN 1 AND 253),
   verdict TEXT NOT NULL CHECK (verdict IN ('allowed', 'refused')),

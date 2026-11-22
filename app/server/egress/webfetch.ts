@@ -37,6 +37,8 @@ export interface WebDeps {
   log(entry: Record<string, unknown>): void
   /** Appends one egress record (P8a); throws when it can't be written. */
   record(r: FetchRecord): Promise<void>
+  /** Keeps work going after the answer (the Worker's `ctx.waitUntil`): a refusal's record, which the answer never waits on. */
+  waitUntil(p: Promise<unknown>): void
 }
 
 export type WebRefusal = 'method' | 'scheme' | 'port' | 'not_listed' | 'address' | 'dns' | 'redirects' | 'too_large' | 'settings' | 'record'
@@ -85,17 +87,16 @@ const refusal = (why: WebRefusal) =>
   new Response(`WebFetch refused: ${why}`, { status: why === 'method' ? 405 : 403, headers: { 'content-type': 'text/plain' } })
 
 /**
- * A refusal, recorded under `host` (null: nothing new would have gone out, so no row). A refusal whose record fails is
- * still a refusal (logged loud): nothing went out.
+ * A refusal, recorded under `host` (null: nothing new would have gone out, so no row). The answer doesn't wait on the
+ * record (`waitUntil`): nothing goes out either way, and a record that fails is logged loud (`egress_record_failed`,
+ * counted by the health route).
  */
-async function refuse(why: WebRefusal, d: WebDeps, host: string | null): Promise<Response> {
+function refuse(why: WebRefusal, d: WebDeps, host: string | null): Response {
   d.log({ event: 'webfetch_refused', why })
   if (host !== null) {
-    try {
-      await d.record({ host, verdict: 'refused', code: why })
-    } catch (err) {
+    d.waitUntil(d.record({ host, verdict: 'refused', code: why }).catch(err => {
       d.log({ event: 'egress_record_failed', verdict: 'refused', error: err instanceof Error ? err.name : 'unknown' })
-    }
+    }))
   }
   return refusal(why)
 }
@@ -187,6 +188,7 @@ export class WebEgress extends WorkerEntrypoint<Env, EgressSource> {
     return handleWebFetch(request, {
       hostList: () => storedHostList(db), fetch: (i, init) => fetch(i, init), log: e => console.log(e),
       record: r => recordFetch(db, source, r, Date.now()),
+      waitUntil: p => this.ctx.waitUntil(p),
     })
   }
 }

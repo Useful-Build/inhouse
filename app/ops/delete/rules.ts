@@ -91,7 +91,7 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   'library/': { action: 'keep', why: 'the brand\'s own files, with their library_uploads rows (keys name files, not people)' },
   // P8a: the egress record names a host, a runner and a container generation, never a member, a run or a turn (one
   // container serves several sessions at once), so no row is a person's; it goes by age in 30 days.
-  egress_fetches: { action: 'keep', why: 'no member id: the egress knows the container, not the run; retention removes rows after 30 days' },
+  egress_fetches: { action: 'keep', why: 'no member id: the egress knows the container, not the run; retention removes rows after 30 days. A host can carry data in a subdomain from a refused exfil attempt: kept 30 days, ops-only and not exported. A host over 253 characters is not recorded, only logged' },
 }
 
 /** The actions each retention class allows. */

@@ -159,7 +159,8 @@ async function egressDay(db: SoakDb, s: number, e: number): Promise<EgressFacet>
     try { value = JSON.parse(String(row.value_json)) } catch { value = null }
   }
   const listed = new Set(typeof value === 'string' ? parseHostlist(value) ?? [] : [])
-  const offList = [...new Set(allowed.map(r => String(r.host)).filter(h => !listed.has(h)))].sort()
+  // As the egress's checks see a host (lowercase, one trailing dot dropped): a row written another way is judged the same.
+  const offList = [...new Set(allowed.map(r => String(r.host).replace(/\.$/, '').toLowerCase()).filter(h => !listed.has(h)))].sort()
   return { allowed: allowed.length, offList }
 }
 
