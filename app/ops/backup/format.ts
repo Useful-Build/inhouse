@@ -112,16 +112,58 @@ export function appendKey(rule: TableRule): string {
 export const maxIdSelect = (db: D1Database, rule: TableRule): D1PreparedStatement =>
   db.prepare(`SELECT COALESCE(MAX(${ident(appendKey(rule))}), 0) AS max FROM ${ident(rule.name)}`)
 
-/** The rows of an `append_only` table with an id at or below `maxId`, a page of `READ_PAGE_ROWS` at a time, in id order. */
-export async function* appendRows(db: D1Database, rule: TableRule, columns: readonly string[], maxId: number): AsyncGenerator<Record<string, unknown>> {
+/**
+ * The rows of an `append_only` table with an id at or below `maxId`, a page of `pageRows` (default `READ_PAGE_ROWS`) at a time, in id order.
+ * With `createdAtMost` (C1), only rows created at or before it: SQLite reuses the largest rowid of an INTEGER PRIMARY
+ * KEY without AUTOINCREMENT, so a row inserted after the point batch can take a deleted row's id at or below `maxId`.
+ */
+export async function* appendRows(db: D1Database, rule: TableRule, columns: readonly string[], maxId: number, createdAtMost?: number): AsyncGenerator<Record<string, unknown>> {
   const key = ident(appendKey(rule))
-  const sql = `SELECT ${selectList(columns)} FROM ${ident(rule.name)} WHERE ${key} > ? AND ${key} <= ? ORDER BY ${key} LIMIT ${READ_PAGE_ROWS}`
+  const bound = createdAtMost === undefined ? '' : ` AND ${ident(createdKey(rule))} <= ?`
+  const pageRows = rule.pageRows ?? READ_PAGE_ROWS
+  const sql = `SELECT ${selectList(columns)} FROM ${ident(rule.name)} WHERE ${key} > ? AND ${key} <= ?${bound} ORDER BY ${key} LIMIT ${pageRows}`
   let after = 0
   for (;;) {
-    const page = (await db.prepare(sql).bind(after, maxId).all<Record<string, unknown>>()).results
+    const page = (await db.prepare(sql).bind(after, maxId, ...(createdAtMost === undefined ? [] : [createdAtMost])).all<Record<string, unknown>>()).results
     for (const row of page) yield row
-    if (page.length < READ_PAGE_ROWS) return
+    if (page.length < pageRows) return
     after = page[page.length - 1][appendKey(rule)] as number
+  }
+}
+
+const keyList = (rule: TableRule) => `(${orderList(rule)})`
+
+/** C1: the creation column of a table read after the point batch (`insert_only`, `paged`, a bounded `append_only`). */
+export function createdKey(rule: TableRule): string {
+  if (rule.mode === 'snapshot' || rule.createdColumn === undefined) throw new BackupError('mode_rule', `${rule.name}: no createdColumn to bound by`)
+  return rule.createdColumn
+}
+
+/** The point batch's read of a table bounded by its creation column: its largest creation value (the point) and its row count. */
+export const pointSelect = (db: D1Database, rule: TableRule): D1PreparedStatement =>
+  db.prepare(`SELECT COALESCE(MAX(${ident(createdKey(rule))}), 0) AS point, COUNT(*) AS n FROM ${ident(rule.name)}`)
+
+/**
+ * C1: every row of a table by primary key (one or more columns, compared as a row value), a page of `pageRows` (default `READ_PAGE_ROWS`) at
+ * a time; with `createdAtMost`, only the rows created at or before it. The `paged` and `insert_only`
+ * backups read with it, and the restore's proof re-reads a target with it.
+ * Row values: https://sqlite.org/rowvalue.html (read 2026-11-22).
+ */
+export async function* keyRows(db: D1Database, rule: TableRule, columns: readonly string[], opts: { createdAtMost?: number } = {}): AsyncGenerator<Record<string, unknown>> {
+  const pageRows = rule.pageRows ?? READ_PAGE_ROWS
+  const created = opts.createdAtMost === undefined ? null : ident(createdKey(rule))
+  const where = (after: boolean) => [created === null ? '' : `${created} <= ?`, after ? `${keyList(rule)} > (${rule.orderBy.map(() => '?').join(', ')})` : ''].filter(Boolean)
+  const sql = (after: boolean) => {
+    const w = where(after)
+    return `SELECT ${selectList(columns)} FROM ${ident(rule.name)}${w.length > 0 ? ` WHERE ${w.join(' AND ')}` : ''} ORDER BY ${orderList(rule)} LIMIT ${pageRows}`
+  }
+  let last: unknown[] | null = null
+  for (;;) {
+    const args = [...(opts.createdAtMost === undefined ? [] : [opts.createdAtMost]), ...(last ?? [])]
+    const page: Record<string, unknown>[] = (await db.prepare(sql(last !== null)).bind(...args).all<Record<string, unknown>>()).results
+    for (const row of page) yield row
+    if (page.length < pageRows) return
+    last = rule.orderBy.map(c => page[page.length - 1][c])
   }
 }
 
