@@ -8,7 +8,7 @@ import type { AccountSummary, CallToolOptions, CallerScope, HubResult } from '..
 import { reset } from '../db/test-support.ts'
 import { TEST_SHOP_KEY, TEST_SHOP_OWNER } from '../egress/test-shop.ts'
 import { turnPromptDeps } from '../prompt/connected.ts'
-import { toolsGatewayOf } from './tools.ts'
+import { toolsDepsOf } from './tools.ts'
 
 const HOST = 'example-mc-late-orders.myshopify.com'
 const server: CallerScope = { kind: 'server', job: 'prompt.turn', requestId: 't_1' }
@@ -40,18 +40,24 @@ describe('route 70 and the turn prompt read the same account', () => {
     const writes: string[] = []
     const hub = { ...gateway, setPaused: async () => { writes.push('setPaused'); return { ok: true, value: { paused: true } } }, disconnect: async () => { writes.push('disconnect'); return { ok: true, value: { revoked: true } } } }
     const envOn = { DB: env.DB, HUB_CONNECT: hub, INHOUSE_TEST_BUILD: '1' }
-    await toolsGatewayOf(envOn).listAccounts(server)
+    await toolsDepsOf(envOn).listView.listAccounts(server)
     await turnPromptDeps(envOn).gateway!.listAccounts(server)
     await setRow(JSON.stringify(HOST))
-    await toolsGatewayOf(envOn).listAccounts(server)
+    await toolsDepsOf(envOn).listView.listAccounts(server)
     await turnPromptDeps(envOn).gateway!.listAccounts(server)
     expect(calls).toEqual([undefined, undefined, { testShopHost: HOST }, { testShopHost: HOST }])
-    await toolsGatewayOf(envOn).setPaused(server, 'shopify:store', true)
-    await toolsGatewayOf(envOn).disconnect(server, 'shopify:store')
+    // Pause and disconnect act on the hub's own accounts, and their "before" read is the binding's (#337 round 4).
+    const binding = toolsDepsOf(envOn).gateway
+    expect(binding).toBe(hub)
+    await binding.listAccounts(server)
+    expect(calls.at(-1), 'the binding\'s own read carries no override').toBeUndefined()
+    await binding.setPaused(server, 'shopify:store', true)
+    await binding.disconnect(server, 'shopify:store')
     expect(writes).toEqual(['setPaused', 'disconnect'])
+    calls.pop()
     // A build that isn't switched on: neither read carries it, even with the row set.
     const envOff = { DB: env.DB, HUB_CONNECT: hub }
-    await toolsGatewayOf(envOff).listAccounts(server)
+    await toolsDepsOf(envOff).listView.listAccounts(server)
     await turnPromptDeps(envOff).gateway!.listAccounts(server)
     expect(calls.slice(4)).toEqual([undefined, undefined])
   })

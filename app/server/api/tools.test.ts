@@ -280,7 +280,7 @@ function fake(o: FakeOpts = {}) {
       },
     },
   }
-  return { hubCalls, lines, rowWrites, handlers: toolsHandlers(() => deps) }
+  return { hubCalls, lines, rowWrites, deps, handlers: toolsHandlers(() => deps) }
 }
 
 const ctx = (principal: Principal, method: string, path: string, params: Record<string, string>, body?: unknown): HandlerContext =>
@@ -306,6 +306,31 @@ describe('the matrix rows (the lines in the PR body) refuse before the handler',
   it('the real matrix carries exactly these three rows', () => {
     const real = accessMatrix.filter(r => r.pattern.startsWith('/api/tools')).map(r => ({ method: r.method, pattern: r.pattern, class: r.class, allow: r.allow }))
     expect(real).toEqual(rows.map(r => ({ method: r.method, pattern: r.pattern, class: r.class, allow: [...r.allow] })))
+  })
+})
+
+// #337 round 4 (L1): in test and eval builds route C's list reads through the test shop (`listView`), but pause and
+// disconnect act on the hub's own accounts, so their "before" read must be the binding's, not the view's, or the audit
+// line's no-change check compares against another account's state.
+describe('route C reads the list view; D and E read the binding they act on', () => {
+  it('a view that differs from the binding: C shows the view, D decides its audit line from the binding', async () => {
+    const f = fake()
+    const viewCalls: string[] = []
+    const deps: ToolsDeps = {
+      gateway: { ...f.deps.gateway },
+      listView: { listAccounts: async () => { viewCalls.push('view'); return { ok: true, value: [acct('shopify:store', { connectedAt: inst(NOW - 60 * MIN), paused: true })] } } },
+      accounts: f.deps.accounts,
+    }
+    const h = toolsHandlers(() => deps)
+    const listed = (await (await h.listTools(ctx(member, 'GET', '/api/tools', {}))).json()) as { connected: string[] }
+    expect(listed.connected).toEqual(['shopify'])
+    expect(viewCalls).toEqual(['view'])
+    // The binding says Shopify isn't paused (the view says it is): pausing it is a change, so it writes its line.
+    const res = await h.setToolPaused(ctx(inhouse, 'PUT', '/api/tools/shopify:store/paused', { accountId: 'shopify:store' }, { paused: true }))
+    expect(res.status).toBe(200)
+    expect(f.lines.map(l => l.line)).toEqual([{ action: 'tools.pause', accountId: 'shopify:store', paused: true }])
+    await h.disconnectTool(ctx(inhouse, 'POST', '/api/tools/slack:workspace/disconnect', { accountId: 'slack:workspace' }, {}))
+    expect(viewCalls, 'D and E never read the view').toEqual(['view'])
   })
 })
 

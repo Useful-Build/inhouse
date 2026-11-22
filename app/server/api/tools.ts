@@ -24,19 +24,16 @@ import type { CatalogEntry } from './tools-catalog.ts'
 export type ToolsGateway = Pick<ConnectGateway, 'listAccounts' | 'setPaused' | 'disconnect'>
 
 /**
- * Route 70's gateway over the env's `HUB_CONNECT` (#337 round 3). In the test and eval builds only, its account read
- * carries the test shop override the turns' reads and prompt carry (`@test-shop` withTestShopConnect), so the graded
- * runners' precheck reads exactly the account the turns use; every other build gets the off module (the binding as is).
- * Pausing and disconnecting are the binding's own.
+ * Route 70's ports over the env's `HUB_CONNECT` (#337 rounds 3 and 4): `gateway` is the binding as it is, and `listView`
+ * is route C's read. In the test and eval builds only, that read carries the test shop override the turns' reads and
+ * prompt carry (`@test-shop` withTestShopConnectInWorker), so the graded runners' store check reads exactly the account
+ * the turns use; every other build gets the off module (the binding as it is). It takes no options of its own (route C
+ * sends none; the override is the only one). Pause and disconnect keep the binding's own read and write.
  */
-export function toolsGatewayOf(env: { HUB_CONNECT?: unknown; INHOUSE_TEST_BUILD?: string }): ToolsGateway {
-  const hub = env.HUB_CONNECT as ToolsGateway
-  const read = withTestShopConnectInWorker(hub, env)
-  return {
-    listAccounts: (scope, options) => read.listAccounts(scope, options),
-    setPaused: (scope, accountId, paused) => hub.setPaused(scope, accountId, paused),
-    disconnect: (scope, accountId) => hub.disconnect(scope, accountId),
-  }
+export function toolsDepsOf(env: { HUB_CONNECT?: unknown; INHOUSE_TEST_BUILD?: string }): { gateway: ToolsGateway; listView: Pick<ToolsGateway, 'listAccounts'> } {
+  const gateway = env.HUB_CONNECT as ToolsGateway
+  const view = withTestShopConnectInWorker(gateway, env)
+  return { gateway, listView: { listAccounts: scope => view.listAccounts(scope) } }
 }
 // `disconnect` must be idempotent: route E calls it again on a retry after a failed row write (the hub is already
 // `disconnected`).
@@ -62,7 +59,13 @@ export interface ToolsAccounts {
 }
 
 export interface ToolsDeps {
+  /** The hub's own accounts: pause and disconnect act on them, and read them for their "before" state. */
   gateway: ToolsGateway
+  /**
+   * Route C's list read, when it differs from `gateway` (#337 round 4): in test and eval builds it carries the test shop
+   * override (toolsDepsOf), so the graded runners' store check reads the account the turns use. Absent: `gateway`.
+   */
+  listView?: Pick<ToolsGateway, 'listAccounts'>
   accounts: ToolsAccounts
 }
 
@@ -178,7 +181,7 @@ export function toolsHandlers(resolve: (c: HandlerContext) => ToolsDeps): { list
   /** Route C, `GET /api/tools`. A query string is ignored. */
   const listTools: Handler = async c => {
     const deps = resolve(c)
-    const hub = await deps.gateway.listAccounts(scopeOf(c, 'tools.list'))
+    const hub = await (deps.listView ?? deps.gateway).listAccounts(scopeOf(c, 'tools.list'))
     if (!hub.ok) return hubFailure(hub.error)
     const rows = await deps.accounts.list()
     return apiJson(buildToolsData({ accounts: hub.value, rows, nowMs: c.nowMs }))

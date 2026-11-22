@@ -61,7 +61,8 @@ type ConnectAccountsLike = { listAccounts(scope: CallerScope, options?: CallTool
 /**
  * P5 #337: the turn prompt's account read carries the same override as the reads (a fresh read per call), so the
  * "Connected apps" line names the account the turn's reads will use (the hub answers a Shopify row from the test shop's
- * own SignIn object). The gateway as it is unless the build is switched on.
+ * own SignIn object). The gateway as it is unless the build is switched on. The wrapper's read takes the scope alone: a
+ * caller's own options are not forwarded (no caller sends any; the override is the only option it sends).
  */
 export function withTestShopConnect(gateway: ConnectAccountsLike, db: ShopDb, env: { INHOUSE_TEST_BUILD?: string }): ConnectAccountsLike {
   if (env.INHOUSE_TEST_BUILD !== '1') return gateway
@@ -76,7 +77,7 @@ export function withTestShopConnect(gateway: ConnectAccountsLike, db: ShopDb, en
 }
 
 /**
- * withTestShopConnect for a request handler (route 70, server/api/tools.ts toolsGatewayOf), whose env has no `DB` (D1
+ * withTestShopConnect for a request handler (route 70, server/api/tools.ts toolsDepsOf), whose env has no `DB` (D1
  * only through stores): the D1 binding comes from the Worker's own env here, in this test-and-eval-only module, never in
  * the handler that every build bundles (as server/ops/test-fakes.ts runTestFakesInWorker does). The gateway as it is
  * unless the build is switched on.
