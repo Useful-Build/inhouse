@@ -232,6 +232,9 @@ export default defineConfig(({ mode }) => {
         // P4's test-build controls (server/ops/test-controls.ts, route 67) the same way: every other build gets
         // server/ops/test-controls-off.ts (check-product-build.mjs proves it).
         '@test-controls': fileURLToPath(new URL(mode === PRODUCT_TEST ? './server/ops/test-controls.ts' : './server/ops/test-controls-off.ts', import.meta.url)),
+        // The test shop override (P4, the morning-check set run remotely) in the test and eval builds, as the test issuer:
+        // every other build gets server/egress/test-shop-off.ts (check-product-build.mjs proves it).
+        '@test-shop': fileURLToPath(new URL(testIssuer ? './server/egress/test-shop.ts' : './server/egress/test-shop-off.ts', import.meta.url)),
         // The eval trace (p3-eval-observability rev 2, rec 5) only in the eval build; every other build, the test build
         // included, gets server/eval-trace/off.ts (check-product-build.mjs proves the module and its canary absent).
         '@eval-trace': fileURLToPath(new URL(mode === PRODUCT_EVAL ? './server/eval-trace/on.ts' : './server/eval-trace/off.ts', import.meta.url)),
