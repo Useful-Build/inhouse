@@ -91,6 +91,8 @@ export interface ChatResult {
   failure?: string
   /** The product's turn id, to read its trace (route 33) while it's kept. */
   turnId?: string
+  /** The product target: the chat the prompt ran in (the read-side set reads its transcript and files). */
+  chatId?: string
   /** The case person who asked (`eval-<run>-<case>-r<rep>`). */
   askedAs?: string
 }

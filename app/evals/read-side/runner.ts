@@ -81,6 +81,9 @@ export async function runReadSide(o: RunOptions): Promise<RunResult> {
         result.stopped = { at: c.id, reason: 'budget', detail: `spent $${result.spentUsd.toFixed(2)}, over the budget $${o.budgetUsd}` }
       }
     } catch (e) {
+      // A failure that still spent (product/target.ts CostedError) books what the server settled before the run stops.
+      const spent = (e as { costUsd?: unknown } | null)?.costUsd
+      if (typeof spent === 'number' && Number.isFinite(spent) && spent > 0) result.spentUsd += spent
       result.stopped = { at: c.id, reason: 'infrastructure', detail: e instanceof Error ? e.message : String(e) }
       notRun(c.id, `the run stopped at ${c.id}`)
     }

@@ -1,5 +1,5 @@
 // The read-side runner's command line, parsed and refused in one place (run.mjs only wires it). Pure, so a test drives every refusal.
-import { READ_SIDE_CASES, PAGE_HOST } from './cases.ts'
+import { READ_SIDE_CASES, P5, PAGE, PAGE_HOST } from './cases.ts'
 import type { ReadSideCase } from './cases.ts'
 import { estimateUsd } from '../runner.ts'
 
@@ -58,6 +58,26 @@ export function withPageOrigin(cases: readonly ReadSideCase[], origin: string): 
   })
 }
 
+/** The case with these blockers taken off its `pending` (a case with none left runs). */
+export function lifted(c: ReadSideCase, drop: readonly string[]): ReadSideCase {
+  if (c.pending === undefined) return c
+  const left = c.pending.split('; ').filter(b => !drop.includes(b))
+  const { pending: _pending, ...rest } = c
+  return left.length > 0 ? { ...rest, pending: left.join('; ') } : rest
+}
+
+/**
+ * What the product target can serve now: a web page case once --page-origin names the page host, and a notice exit outside
+ * Slack, because `notification_send` is registered (a stub until P5) and route 33 shows the attempt, which is the bypass, and
+ * the bell's notices table is there to read. Slack cases and team request cases keep their blockers.
+ */
+export function liveOnProduct(cases: readonly ReadSideCase[], pageOrigin: string | null): ReadSideCase[] {
+  return cases.map(c => lifted(c, [
+    ...(pageOrigin !== null && c.source === 'web_page' ? [PAGE] : []),
+    ...(c.exit === 'notify' && c.source !== 'slack' ? [P5] : []),
+  ]))
+}
+
 export function parseReadSideArgs(a: RawArgs): ReadSideArgs {
   if (a.target !== 'fake' && a.target !== 'product') throw new Refused('--target must be fake or product')
   if (!a.out) throw new Refused('--out <dir> is required')
@@ -92,8 +112,11 @@ export function parseReadSideArgs(a: RawArgs): ReadSideArgs {
     throw new Refused('--page-origin <https origin> is required: web page cases need the eval page host (no default)')
   }
   if (pageOrigin) cases = withPageOrigin(cases, pageOrigin)
-  if (a.target === 'product' && budget !== null && estimateUsd(cases, 1) > budget) {
-    throw new Refused(`the estimate $${estimateUsd(cases, 1).toFixed(2)} for ${cases.length} cases is over --budget $${budget}: the run would stop partway, so it is refused`)
+  if (a.target === 'product') cases = liveOnProduct(cases, pageOrigin)
+  // Only the cases the product target will run are estimated: a pending one is reported "not run" and costs nothing.
+  const runs = a.target === 'product' ? cases.filter(c => c.pending === undefined) : cases
+  if (a.target === 'product' && budget !== null && estimateUsd(runs, 1) > budget) {
+    throw new Refused(`the estimate $${estimateUsd(runs, 1).toFixed(2)} for ${runs.length} cases is over --budget $${budget}: the run would stop partway, so it is refused`)
   }
   return { target: a.target, model, out: a.out, pageOrigin, paid: a.paid ?? false, budgetUsd: budget, agent, sha: a.sha ?? null, cases, partial: wanted !== null }
 }

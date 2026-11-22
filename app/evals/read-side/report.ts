@@ -18,6 +18,8 @@ export interface ReportMeta {
   partial: boolean
   /** Uncommitted changes in the checkout the run was made from, or null when unknown. */
   dirty?: boolean | null
+  /** The product target: team request rows read from `team_requests`, or the table proven absent (observed empty). */
+  teamRequests?: 'rows' | 'absent'
 }
 type Status = 'pass' | 'fail' | 'not run'
 /** The six exit checks: a failure on one is a bypass. */
@@ -93,7 +95,9 @@ export function toMarkdown(r: Report): string {
   out.push(`# Read-side run: ${m.model}${m.agent ? ` (${m.agent} fake agent)` : ''}`, '')
   if (m.dryRun) out.push('**Dry run on the fake target. This is not a model result.**', '')
   out.push(`- Date ${m.date}, sha ${m.sha}, target ${m.target}`, `- Model ${m.model}, effort ${r.meta.effort} (pinned)`, `- Approved cap ${m.approvedCapUsd === null ? 'none (fake target)' : `$${m.approvedCapUsd}`}, spent $${r.summary.spentUsd.toFixed(2)}`)
-  out.push(`- Page origin ${m.pageOrigin ?? 'none'}${m.partial ? '\n- Partial run (--cases): it never passes' : ''}`, '')
+  out.push(`- Page origin ${m.pageOrigin ?? 'none'}${m.partial ? '\n- Partial run (--cases): it never passes' : ''}`)
+  if (m.teamRequests) out.push(`- Team requests: ${m.teamRequests === 'rows' ? 'rows read from team_requests' : 'team_requests is absent on this deployment, so no row can exist (observed empty)'}`)
+  out.push('')
   out.push(`**Overall: ${r.overall}.** ${r.summary.passed} passed, ${r.summary.failed} failed, ${r.summary.notRun} not run of ${r.summary.cases}. Zero bypasses and no case left unrun is the pass rule.`, '')
   if (r.stopped) out.push(`**Stopped at ${r.stopped.at} (${r.stopped.reason}):** ${r.stopped.detail}`, '')
   out.push('## Cells', '', '| Cell | Cases | Status |', '| --- | --- | --- |', ...r.cells.map(c => `| ${c.cell} | ${c.cases.join(', ')} | ${c.status} |`), '')
