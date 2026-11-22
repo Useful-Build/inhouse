@@ -251,12 +251,15 @@ test('no eval build folder: a usage failure (exit 2), never a pass (failure 3)',
 const FAKES = 'inhouse-test-fakes-canary-6b2f90d4'
 const FAKES_MODULE = 'server/ops/test-fakes.ts'
 const FAKES_IMPORT = { 'do/brand-agent/index.ts': "import { runTestFakes } from '@test-fakes'" }
-const FAKES_OK = { server: { ...ISSUER_OK.server, ...FAKES_IMPORT }, productTest: { workerJs: `const c = '${CANARY}'; const f = '${FAKES}'`, serverModules: ['server/index.ts', FAKES_MODULE] } }
+const PRINCIPAL = 'm_test_fakes'
+const FAKES_OK = { server: { ...ISSUER_OK.server, ...FAKES_IMPORT }, productTest: { workerJs: `const c = '${CANARY}'; const f = '${FAKES}'; const p = '${PRINCIPAL}'`, serverModules: ['server/index.ts', FAKES_MODULE] } }
 
 test('the test-fakes canary and module are the module\'s, the script\'s and the alias\'s (part 8)', () => {
   expect(TEST_FAKES_CANARY).toBe(FAKES)
   const source = readFileSync(script, 'utf8')
   expect(source).toContain(`const TEST_FAKES_CANARY = '${FAKES}'`)
+  expect(source).toContain(`const TEST_FAKES_PRINCIPAL = '${PRINCIPAL}'`)
+  expect(readFileSync(join(fileURLToPath(new URL('..', import.meta.url)), FAKES_MODULE), 'utf8')).toContain(`memberId: '${PRINCIPAL}'`)
   const app = fileURLToPath(new URL('..', import.meta.url))
   expect(existsSync(join(app, FAKES_MODULE))).toBe(true)
   // The alias picks the real module for the test build alone (PRODUCT_TEST), never the eval build.
@@ -274,6 +277,9 @@ test.each([
   ['the deployable Worker', 'its module', { product: { serverModules: ['server/index.ts', FAKES_MODULE] } }],
   ['the eval build', 'its canary', { productEval: { ...EVAL_OK, workerJs: `${EVAL_OK.workerJs}; const f = '${FAKES}'` } }],
   ['the eval build', 'its module', { productEval: { ...EVAL_OK, serverModules: [...EVAL_OK.serverModules, FAKES_MODULE] } }],
+  ['the deployable Worker', 'the synthetic principal in its script', { product: { workerJs: `const p = '${PRINCIPAL}'` } }],
+  ['the deployable Worker', 'the synthetic principal in its source map', { product: { extra: { 'inhouse_product/index.js.map': `{"sourcesContent":["memberId: '${PRINCIPAL}'"]}` } } }],
+  ['the eval build', 'the synthetic principal in its source map', { productEval: { ...EVAL_OK, extra: { 'inhouse_product/index.js.map': `{"sourcesContent":["${PRINCIPAL}"]}` } } }],
 ])('%s carrying %s fails the check (part 8)', (label, _what, opts) => {
   const r = run({ ...FAKES_OK, ...opts })
   expect(r.stderr).toContain(`FAIL  test fakes: ${label}`)
@@ -285,8 +291,9 @@ test('the off stand-in in the deployable Worker\'s graph passes (part 8)', () =>
   expect(r.status).toBe(0)
 })
 test.each([
-  ['no "inhouse-test-fakes-canary-6b2f90d4"', { productTest: { workerJs: `const c = '${CANARY}'`, serverModules: ['server/index.ts', FAKES_MODULE] } }],
-  ['no server/ops/test-fakes.ts module', { productTest: { workerJs: `const c = '${CANARY}'; const f = '${FAKES}'` } }],
+  ['no "inhouse-test-fakes-canary-6b2f90d4"', { productTest: { workerJs: `const c = '${CANARY}'; const p = '${PRINCIPAL}'`, serverModules: ['server/index.ts', FAKES_MODULE] } }],
+  ['no "m_test_fakes"', { productTest: { workerJs: `const c = '${CANARY}'; const f = '${FAKES}'`, serverModules: ['server/index.ts', FAKES_MODULE] } }],
+  ['no server/ops/test-fakes.ts module', { productTest: { workerJs: `const c = '${CANARY}'; const f = '${FAKES}'; const p = '${PRINCIPAL}'` } }],
 ])('the server imports @test-fakes and the test build has %s: the scan proves nothing (part 8)', (missing, opts) => {
   const r = run({ ...FAKES_OK, ...opts })
   expect(r.stderr).toContain('FAIL  test fakes: the server imports @test-fakes but the test build')

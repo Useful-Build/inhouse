@@ -16,8 +16,11 @@ declare const __INHOUSE_EVAL_BUILD__: boolean
 /** The largest body the hook reads. */
 const MAX_BODY_BYTES = 256 * 1024
 
+/** Whether a build with these two defines compiles the hook in: the test build only, never the (deployed) eval build. */
+export const compiledIn = (testBuild: boolean, evalBuild: boolean): boolean => testBuild && !evalBuild
+
 /** The flag is a parameter so the unit tests can stand in for each build mode (vitest compiles both defines `false`). */
-export function testFakesHandler(compiledTestBuild: boolean = __INHOUSE_TEST_BUILD__ && !__INHOUSE_EVAL_BUILD__): Handler {
+export function testFakesHandler(compiledTestBuild: boolean = compiledIn(__INHOUSE_TEST_BUILD__, __INHOUSE_EVAL_BUILD__)): Handler {
   return async c => {
     const on = compiledTestBuild && (c.env as { INHOUSE_TEST_BUILD?: unknown }).INHOUSE_TEST_BUILD === '1'
     if (!on) return apiError('not_found')

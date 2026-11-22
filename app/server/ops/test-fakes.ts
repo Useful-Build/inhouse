@@ -16,7 +16,8 @@
 //   synthetic run grant, so the scope is built exactly as that route builds it. Answers the ReadGateway's HubResult as
 //   it came over the binding (502 `binding_failed` when the binding threw).
 // - `notify`: { as: { memberId, chatId?, runId?, turnId? }, args }: the inhouse MCP server's own handler (handleMcp)
-//   calling `notification_send` as `as.memberId`, which must be an active person on the brand. Answers `{ result }`:
+//   calling `notification_send` as `as.memberId`, which must be an active person on the brand; an `as.chatId` must be
+//   that member's chat, and an `as.runId` or `as.turnId` given with it one of that chat's. Answers `{ result }`:
 //   the tool's CallToolResult (text, structuredContent.recipients, isError on a refusal).
 // - `prompt`: the string turnSystemPrompt builds now, for a synthetic turn id. Answers `{ prompt }`.
 // - `systemNotice`: { notice }: sendSystemNotice(env, notice) with the real env. Answers its SystemNoticeResult.
@@ -153,6 +154,18 @@ async function hubOp(env: TestFakesEnv, op: Extract<ProductOp, { op: 'hub' }>): 
 async function notifyOp(env: TestFakesEnv, op: Extract<ProductOp, { op: 'notify' }>): Promise<TestFakesAnswer> {
   const member = await env.DB.prepare("SELECT id FROM members WHERE id = ? AND kind = 'person' AND status = 'active'").bind(op.as.memberId).first<{ id: string }>()
   if (!member) return refuse(400, 'unknown_member')
+  // A chat named here must be the member's own, and a run or turn named with it must be one of that chat's (its rows
+  // in chat_messages). Without a chat the ids are synthetic and unchecked on purpose: the run caps count by run id, and
+  // a spec needs fresh runs without a turn (a real run lives in the BrandAgent, not in a table this hook could read).
+  if (op.as.chatId !== undefined) {
+    const chat = await env.DB.prepare('SELECT id FROM chats WHERE id = ? AND owner_id = ? AND deleted_at_ms IS NULL').bind(op.as.chatId, member.id).first<{ id: string }>()
+    if (!chat) return refuse(400, 'chat_not_members')
+    for (const [column, value] of [['run_id', op.as.runId], ['turn_id', op.as.turnId]] as const) {
+      if (value === undefined) continue
+      const row = await env.DB.prepare(`SELECT 1 AS one FROM chat_messages WHERE chat_id = ? AND ${column} = ? LIMIT 1`).bind(chat.id, value).first()
+      if (!row) return refuse(400, column === 'run_id' ? 'run_not_chats' : 'turn_not_chats')
+    }
+  }
   const scope = {
     memberId: member.id,
     chatId: op.as.chatId ?? `c_fakes_${tail()}`,

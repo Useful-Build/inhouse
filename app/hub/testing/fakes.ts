@@ -192,6 +192,8 @@ export function resetFakes(): void {
     f.refreshSends = []
     f.toolCalls = []
     f.restartLists()
+    // A `staleSessions` set earlier must not 401 the next test's first request.
+    for (const session of f.sessions.values()) session.stale = false
   }
   const freshWeb = new FakeSlackWeb() as unknown as Record<string, unknown>
   const liveWeb = slackWeb as unknown as Record<string, unknown>

@@ -150,44 +150,45 @@ const forbidden = p =>
   (!p.split(sep).includes('node_modules') &&
     ((under(p, hubDir) && relative(hubDir, p).split(sep).includes('testing')) || TEST_MODULE.test(p)))
 /**
- * The [start, end) spans of every `if (false) { ... }` block in a script. wrangler doesn't minify, so esbuild keeps a
- * branch the define turned into `if (false)` as text (it only skips bundling the imports inside it). Strings are
- * stepped over so a brace in one doesn't count.
+ * The [start, end) spans of every `if (false) { ... }` block in a script, or `unclosed` when one never closes. wrangler
+ * doesn't minify, so esbuild keeps a branch the define turned into `if (false)` as text (it only skips bundling the
+ * imports inside it). esbuild prints the opener alone on its line and the block's `}` at the opener's indentation, so
+ * the span is found by lines, never by reading the code: a quote in a regex or a string can't stretch it. A block with
+ * no closing line at its indentation fails the part (it would otherwise count the rest of the file as dead).
  */
 function deadSpans(text) {
   const spans = []
-  const opener = /if \(false\) \{/g
-  for (let m = opener.exec(text); m; m = opener.exec(text)) {
-    let depth = 0
-    let quote = null
-    let i = m.index + m[0].length - 1
-    for (; i < text.length; i++) {
-      const c = text[i]
-      if (quote) {
-        if (c === '\\') i++
-        else if (c === quote) quote = null
-        continue
-      }
-      if (c === '"' || c === "'" || c === '`') quote = c
-      else if (c === '{') depth++
-      else if (c === '}' && --depth === 0) break
-    }
-    spans.push([m.index, i + 1])
+  const lines = text.split('\n')
+  const starts = []
+  let at = 0
+  for (const line of lines) {
+    starts.push(at)
+    at += line.length + 1
   }
-  return spans
+  for (let i = 0; i < lines.length; i++) {
+    const open = /^(\s*)(?:\} else )?if \(false\) \{$/.exec(lines[i])
+    if (!open) continue
+    const close = new RegExp(`^${open[1]}\\}`)
+    let j = i + 1
+    while (j < lines.length && !close.test(lines[j])) j++
+    if (j === lines.length) return { unclosed: i + 1 }
+    spans.push([starts[i], starts[j] + lines[j].length])
+  }
+  return { spans }
 }
 /**
- * The test-fakes hook's globals in a script outside every `if (false)` block (reachable code). Scripts only: a source map
- * carries the sources' own text, dead branches included.
+ * The test-fakes hook's globals in a script outside every `if (false)` block (reachable code), and any block that never
+ * closes. Scripts only: a source map carries the sources' own text, dead branches included.
  */
 const fakesGlobals = ({ files }) =>
   files.filter(f => /\.[cm]?js$/.test(f)).flatMap(f => {
     const text = textOf(f)
     const dead = deadSpans(text)
+    if (dead.unclosed) return [`an \`if (false)\` block at line ${dead.unclosed} of ${relative(root, f)} never closes at its indentation, so nothing after it can be judged`]
     const hits = []
     for (const n of FAKES_GLOBALS) {
       for (let i = text.indexOf(n); i !== -1; i = text.indexOf(n, i + n.length)) {
-        if (!dead.some(([a, b]) => i >= a && i < b)) {
+        if (!dead.spans.some(([a, b]) => i >= a && i < b)) {
           hits.push(`"${n}" in ${relative(root, f)} outside an \`if (false)\` block`)
           break
         }

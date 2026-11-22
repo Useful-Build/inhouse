@@ -25,6 +25,10 @@ const EXPECTED = {
   'deploy-fakes-globals': [1, /FAIL {2}test-fakes globals: the deployable.*\n.*__inhouseHubTestLogs/],
   // The deployable script keeps the define's dead branches as text: names inside `if (false)` only are fine.
   'deploy-fakes-globals-dead': [0, /ok {4}test-fakes globals: clean/],
+  // A quote inside a regex in a dead block doesn't stretch the block: a global after it is still reachable code.
+  'deploy-fakes-globals-regex': [1, /FAIL {2}test-fakes globals: the deployable.*\n.*__inhouseHubTestVars.*outside/],
+  // A dead block that never closes at its indentation fails the part, never counts the rest of the file as dead.
+  'deploy-fakes-globals-unclosed': [1, /FAIL {2}test-fakes globals: the deployable.*\n.*never closes/],
   'deploy-hub-testing': [1, /module hub\/testing\/index\.ts/],
   'deploy-registry-testing': [1, /module hub\/registry\/testing\/fake-registry\.ts/],
   'deploy-test-module': [1, /module hub\/scope\/scope\.test\.ts/],

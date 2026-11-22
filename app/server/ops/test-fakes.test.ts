@@ -20,7 +20,7 @@ import { api } from '../api.ts'
 import type { ApiParts } from '../api.ts'
 import { routes } from '../routes.ts'
 import type { Route } from '../routes.ts'
-import { testFakesHandler } from './fakes-hook.ts'
+import { compiledIn, testFakesHandler } from './fakes-hook.ts'
 import { installLogCapture, runTestFakes, TEST_FAKES_CANARY, type TestFakesEnv } from './test-fakes.ts'
 import { runTestFakes as offRun, TEST_FAKES_CANARY as OFF_CANARY } from './test-fakes-off.ts'
 import { accessMatrix } from '../access-matrix.ts'
@@ -83,6 +83,16 @@ describe('route 76 outside the test build (failure 1)', () => {
     }
     expect(hookLines(log)).toEqual([])
     vi.restoreAllMocks()
+  })
+})
+
+describe('which builds compile the hook in (failure 1, Opus 6)', () => {
+  it('the test build only: never the eval build (deployed), never the product build', () => {
+    // [__INHOUSE_TEST_BUILD__, __INHOUSE_EVAL_BUILD__] as vite.config.ts sets them per mode: product, product-test, product-eval.
+    expect(compiledIn(false, false)).toBe(false)
+    expect(compiledIn(true, false)).toBe(true)
+    expect(compiledIn(true, true)).toBe(false)
+    expect(compiledIn(false, true)).toBe(false)
   })
 })
 
@@ -221,6 +231,31 @@ describe('notify: notification_send as an active person on the brand (failure 6)
     const result = (r.body as { result: { content: { text: string }[]; structuredContent: { recipients: unknown[] } } }).result
     expect(result.structuredContent.recipients).toEqual([{ to: me, kind: 'bell', outcome: 'posted' }])
     expect(result.content[0]!.text).toBe(`${me}: sent`)
+    vi.restoreAllMocks()
+  })
+
+  it('a chat that isn\'t the member\'s, or a run or turn that isn\'t that chat\'s: refused before any send (Opus 5)', async () => {
+    quiet()
+    const me = await person_()
+    const other = await person_()
+    // Ids shaped like the server's (`r_` and `t_` plus 22 characters): notification_send checks the run id's shape.
+    const id22 = (p: string, word: string) => `${p}_${word.padEnd(22, '0')}`
+    const R_MINE = id22('r', 'MINE'), T_MINE = id22('t', 'MINE'), R_THEIRS = id22('r', 'THEIRS'), T_THEIRS = id22('t', 'THEIRS')
+    const mine = `c_${uniq()}`
+    const theirs = `c_${uniq()}`
+    for (const [id, owner] of [[mine, me], [theirs, other]]) {
+      await db.prepare('INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms) VALUES (?, ?, ?, 1, 1)').bind(id, owner, 'A chat').run()
+    }
+    await db.prepare("INSERT INTO chat_messages (id, chat_id, run_id, turn_id, pos, role, at_ms) VALUES (?, ?, ?, ?, 0, 'user', 1)").bind(`msg_${uniq()}`, mine, R_MINE, T_MINE).run()
+    await db.prepare("INSERT INTO chat_messages (id, chat_id, run_id, turn_id, pos, role, at_ms) VALUES (?, ?, ?, ?, 0, 'user', 1)").bind(`msg_${uniq()}`, theirs, R_THEIRS, T_THEIRS).run()
+    const send = (as: Record<string, string>) => runTestFakes({ op: 'notify', as: { memberId: me, ...as }, args: args(me) }, envWith({}))
+    expect(await send({ chatId: theirs })).toEqual({ status: 400, body: { error: { code: 'chat_not_members' } } })
+    expect(await send({ chatId: 'c_nowhere' })).toEqual({ status: 400, body: { error: { code: 'chat_not_members' } } })
+    expect(await send({ chatId: mine, runId: R_THEIRS })).toEqual({ status: 400, body: { error: { code: 'run_not_chats' } } })
+    expect(await send({ chatId: mine, runId: R_MINE, turnId: T_THEIRS })).toEqual({ status: 400, body: { error: { code: 'turn_not_chats' } } })
+    const ok = await send({ chatId: mine, runId: R_MINE, turnId: T_MINE })
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200)
+    expect((ok.body as { result: { structuredContent: { recipients: unknown[] } } }).result.structuredContent.recipients).toEqual([{ to: me, kind: 'bell', outcome: 'posted' }])
     vi.restoreAllMocks()
   })
 

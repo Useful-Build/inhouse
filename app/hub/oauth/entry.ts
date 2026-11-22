@@ -8,7 +8,7 @@ import type { AccountSummary, CallerScope, ConnectGateway as ConnectApi, HubResu
 import { err } from '../index/errors'
 import { log } from '../index/log'
 import { isConfigured, loadRegistry, signInFor } from '../signin/signin'
-import { CallerScopeSchema } from '../index/schemas'
+import { refuseTestFakes } from './test-gate'
 import * as G from './gateway'
 
 async function guarded<T>(fn: () => Promise<HubResult<T>>): Promise<HubResult<T>> {
@@ -64,14 +64,16 @@ export class ConnectGateway extends WorkerEntrypoint<Env> implements ConnectApi 
     return answered(async () => G.listAccounts(await deps(this.env), scope))
   }
   /**
-   * TEST BUILD ONLY (contract.ts `testFakes`): the guard written out in full, so the deployable bundle (define "false")
-   * drops the branch and its dynamic import, and answers `not_configured`. A `server` scope only.
+   * TEST BUILD ONLY (contract.ts `testFakes`): refused with `not_configured` outside the test bundle whatever the scope,
+   * and with `invalid_args` for any scope but `server` inside it (test-gate.ts). The import sits inside the guard written
+   * out in full, so the deployable bundle (define "false") never bundles the hook.
    */
   async testFakes(scope: CallerScope, op: unknown): Promise<HubResult<unknown>> {
     return guarded(async () => {
+      const testBuild = __INHOUSE_HUB_TEST__ && (this.env as Env & { INHOUSE_TEST_BUILD?: string }).INHOUSE_TEST_BUILD === '1'
+      const refused = refuseTestFakes(testBuild, scope)
+      if (refused) return refused
       if (__INHOUSE_HUB_TEST__ && (this.env as Env & { INHOUSE_TEST_BUILD?: string }).INHOUSE_TEST_BUILD === '1') {
-        const parsed = CallerScopeSchema.safeParse(scope)
-        if (!parsed.success || parsed.data.kind !== 'server') return err('invalid_args', 'scope')
         const { runHubFakesOp } = await import('../testing/fakes')
         return runHubFakesOp(this.env, op)
       }

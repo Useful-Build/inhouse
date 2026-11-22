@@ -10,7 +10,8 @@
 //  8. `seed` plants text somewhere the reads don't return it, accepts a channel or order it can't plant in, or outlives
 //     `reset`; `state`'s shopify tokens, ConnectGateway answers or connected accounts' scopes are wrong.
 // Expected values are literals or a fresh fake's own defaults.
-import { env, runInDurableObject } from 'cloudflare:test'
+import { createExecutionContext, env, runInDurableObject } from 'cloudflare:test'
+import { ConnectGateway as ConnectGatewayClass } from '../oauth/entry'
 import { exports } from 'cloudflare:workers'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { CallerScope, ConnectGateway, HubResult } from '../index/contract'
@@ -54,6 +55,29 @@ describe('refusals (failure 1)', () => {
       { op: 'alarm' }, { op: 'logs', since: -1 }]) {
       expect(await call(bad), JSON.stringify(bad)).toMatchObject({ ok: false, error: { code: 'invalid_args' } })
     }
+  })
+
+  it('the op is a strict discriminated union: an unknown op, or extra keys on a known one, is invalid_args (A9 1)', async () => {
+    for (const bad of [{ op: 'runnerEnv', needles: ['x'] }, { op: 'STATE' }, { op: 'reset', all: true }, { op: 'alarm', accountId: 'slack:workspace', now: 1 },
+      { op: 'seed', slack: { messages: [{ channel: 'C0TEST0001', text: 'x', ts: '1' }] } }, { op: 'set', web: { channels: [{ id: 'C0TEST0001', patch: { purpose: 'x' } }] } }]) {
+      expect(await call(bad), JSON.stringify(bad)).toMatchObject({ ok: false, error: { code: 'invalid_args' } })
+    }
+  })
+
+  it('a run scope with a member or admin as principal, or a member-shaped scope, is refused in the test bundle (A9 2)', async () => {
+    for (const scope of [{ kind: 'run', runId: 'run-1', principalId: 'm_member', requestId: 'r' }, { kind: 'run', runId: 'run-2', principalId: 'm_admin', requestId: 'r' }, { kind: 'member', memberId: 'm_admin', requestId: 'r' }]) {
+      expect(await gw.ConnectGateway.testFakes(scope as CallerScope, { op: 'reset' }), JSON.stringify(scope)).toMatchObject({ ok: false, error: { code: 'invalid_args', message: 'invalid arguments: scope' } })
+    }
+  })
+
+  it('switched off (INHOUSE_TEST_BUILD not "1"): not_configured for every scope, nothing touched (A9 2)', async () => {
+    await value({ op: 'set', mcp: { sameToken: true } })
+    const { INHOUSE_TEST_BUILD: _flag, ...off } = env as Env & { INHOUSE_TEST_BUILD?: string }
+    const gate = new ConnectGatewayClass(createExecutionContext(), off as Env)
+    for (const scope of [server, run, { kind: 'member', memberId: 'm_admin', requestId: 'r' }]) {
+      expect(await gate.testFakes(scope as CallerScope, { op: 'reset' }), JSON.stringify(scope)).toEqual({ ok: false, error: { code: 'not_configured', message: 'connector not configured: testFakes' } })
+    }
+    expect(slackMcp.sameToken).toBe(true)
   })
 
   it('a set naming an unknown channel changes nothing, not even the switches beside it', async () => {
@@ -143,6 +167,15 @@ describe('reset (failure 4)', () => {
       connect: { bodies: [] },
     })
     expect((globalThis as { __inhouseHubTestVars?: unknown }).__inhouseHubTestVars).toBeUndefined()
+  })
+
+  it('reset clears the stale flag staleSessions set on every live session (Sonnet 9)', async () => {
+    slackMcp.sessions.set('sess-test-a', { token: 'xoxp-test-x', stale: false })
+    await value({ op: 'set', mcp: { profile: 'slack', staleSessions: true } })
+    expect(slackMcp.sessions.get('sess-test-a')!.stale).toBe(true)
+    await value({ op: 'reset' })
+    expect(slackMcp.sessions.get('sess-test-a')!.stale).toBe(false)
+    slackMcp.sessions.delete('sess-test-a')
   })
 })
 
