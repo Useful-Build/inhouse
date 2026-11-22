@@ -1020,14 +1020,17 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(team()).toContain('Kestrel wants PDFs')
       await c.reviewMemory(second, false)
       expect(team()).not.toContain('Restock gift boxes on Mondays')
-      expect((await c.waitingMemory()).map(l => l.key)).toEqual([third])
-      // Changed behind the client: the decision rejects with the fact as it is now, and nothing moves.
+      const listed = await c.waitingMemory()
+      expect(listed.map(l => l.key)).toEqual([third])
+      // Changed behind the client (still waiting): the decision rejects with the fact as it is now, and nothing moves.
       await t.writeElsewhere({ kind: 'memory', id: third })
       const e = await c.reviewMemory(third, true).then(() => null, (x: unknown) => x)
-      expect(e).toMatchObject({ code: 'conflict', current: { key: third, rev: 2 } })
+      expect(e).toMatchObject({ code: 'conflict', current: { key: third } })
+      const currentRev = (e as AgentError).current!.rev as number
+      expect(currentRev).toBeGreaterThan(listed[0].rev)
       expect(team()).not.toContain('Ship heavy orders by courier')
-      // Read again, the same decision goes through.
-      expect((await c.waitingMemory()).map(l => [l.key, l.rev])).toEqual([[third, 2]])
+      // Read again, at the rev the conflict showed, the same decision goes through.
+      expect((await c.waitingMemory()).map(l => [l.key, l.rev])).toEqual([[third, currentRev]])
       await c.reviewMemory(third, true)
       expect(team()).toContain('Ship heavy orders by courier')
       expect(await c.waitingMemory()).toEqual([])

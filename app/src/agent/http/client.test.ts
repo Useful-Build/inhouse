@@ -1303,14 +1303,17 @@ describe('team memory approval (P6a W2: routes 77 and 78)', () => {
     expect(calls.filter(c => c.path === '/api/memory').length).toBe(reads0)
   })
 
-  test("a lost answer's retry: a 409 whose current already shows the approve (rev + 1, active) is done, and nobody is told", async () => {
+  test("a lost answer's retry: a 409 whose current already shows the approve (rev + 1, active) is done, nobody is told, and memory is read again", async () => {
+    let memoryReads = 0
     const { agent, heard } = await loaded({
-      ...reads(), 'GET /api/memory': { body: after }, 'GET /api/memory/waiting': { body: list },
+      ...reads(), 'GET /api/memory': () => ({ body: memoryReads++ === 0 ? before : after }), 'GET /api/memory/waiting': { body: list },
       [PUT]: { status: 409, body: { error: { code: 'conflict', current: { ...approvedLine, rev: 4 } } } },
     })
     await agent.waitingMemory()
     await agent.reviewMemory(waiting.key, true)
     expect(heard.filter(n => n.type === 'error')).toEqual([])
+    expect(memoryReads).toBe(2)
+    expect(agent.read().memory).toEqual(after)
   })
 
   test("a lost reject's retry: a 409 whose current is rev + 1 and forgotten is done", async () => {

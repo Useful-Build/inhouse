@@ -12,6 +12,10 @@ type Env = Parameters<typeof settingsPage>[1]
 const at = { iso: '2026-11-20T10:00:00.000Z', ms: Date.UTC(2026, 10, 20, 10) }
 const fact = (key: string, text: string) => ({ key, text, source: 'Priya told your Inhouse agent in a chat', at, rev: 2, scope: 'brand' as const, waiting: true as const, kind: 'memory' as const })
 const WAITING = [fact('mem_one', 'Kestrel wants PDFs'), fact('mem_two', '**Ship** [heavy](https://example.test) orders by courier')]
+type W = NonNullable<Env['waiting']>
+const list = (facts: typeof WAITING, o: { status?: W['state']['status']; deciding?: string[]; decide?: W['decide']; retry?: () => void } = {}): W => ({
+  state: { status: o.status ?? 'ready', facts, deciding: new Set(o.deciding ?? []) }, decide: o.decide ?? (() => {}), retry: o.retry ?? (() => {}),
+})
 
 function page(o: Partial<Env> = {}, approve = true) {
   const data = agent.read()
@@ -29,7 +33,7 @@ function page(o: Partial<Env> = {}, approve = true) {
 
 it('an approver sees "Waiting for your OK" first, one row per fact with its text, who and when, Approve and Reject', () => {
   const decided: [string, boolean][] = []
-  const p = page({ waiting: WAITING, review: (key, approved) => { decided.push([key, approved]) } })
+  const p = page({ waiting: list(WAITING, { decide: (key, approved) => { decided.push([key, approved]) } }) })
   expect(p.sections[0].label).toBe('Waiting for your OK')
   const rows = p.sections[0].rows
   expect(rows.map(r => [r.title, r.kind, r.value, r.need, r.can])).toEqual([
@@ -38,6 +42,13 @@ it('an approver sees "Waiting for your OK" first, one row per fact with its text
   ])
   expect(rows[0].desc).toMatch(/^Priya told your Inhouse agent in a chat, /)
   expect(rows.map(r => r.also?.label)).toEqual(['Reject', 'Reject'])
+  // Each button says which rule it acts on; Reject asks first.
+  expect(rows.map(r => [r.ariaLabel, r.also?.ariaLabel])).toEqual([
+    ['Approve: Kestrel wants PDFs', 'Reject: Kestrel wants PDFs'],
+    ['Approve: **Ship** [heavy](https://example.test) orders by courier', 'Reject: **Ship** [heavy](https://example.test) orders by courier'],
+  ])
+  expect(rows[0].also?.ask).toEqual({ title: 'Reject this rule?', text: "Your Inhouse agent won't use it.", action: 'Reject' })
+  expect(rows.map(r => r.busy)).toEqual([false, false])
   rows[1].onClick!()
   rows[0].also!.go()
   expect(decided).toEqual([['mem_two', true], ['mem_one', false]])
@@ -47,9 +58,25 @@ it('an approver sees "Waiting for your OK" first, one row per fact with its text
 
 it('no section with nothing waiting, for someone without approveMemory, or before the list is read', () => {
   const labels = (p: ReturnType<typeof page>) => p.sections.map(s => s.label)
-  expect(labels(page({ waiting: [], review: () => {} }))).not.toContain('Waiting for your OK')
-  expect(labels(page({ waiting: WAITING, review: () => {} }, false))).not.toContain('Waiting for your OK')
+  expect(labels(page({ waiting: list([]) }))).not.toContain('Waiting for your OK')
+  expect(labels(page({ waiting: list(WAITING) }, false))).not.toContain('Waiting for your OK')
+  expect(labels(page({ waiting: list([], { status: 'refused' }) }))).not.toContain('Waiting for your OK')
+  expect(labels(page({ waiting: list([], { status: 'unread' }) }))).not.toContain('Waiting for your OK')
   expect(labels(page())).not.toContain('Waiting for your OK')
+})
+
+it('a row whose decision is on its way waits (busy); the others do not', () => {
+  const rows = page({ waiting: list(WAITING, { deciding: ['mem_two'] }) }).sections[0].rows
+  expect(rows.map(r => r.busy)).toEqual([false, true])
+})
+
+it('a failed read says so, with Retry, in the section', () => {
+  let retried = 0
+  const p = page({ waiting: list([], { status: 'failed', retry: () => { retried++ } }) })
+  expect(p.sections[0].label).toBe('Waiting for your OK')
+  expect(p.sections[0].rows.map(r => [r.title, r.kind, r.value, r.can])).toEqual([["Couldn't load what waits for your OK.", 'button', 'Retry', 'approveMemory']])
+  p.sections[0].rows[0].onClick!()
+  expect(retried).toBe(1)
 })
 
 it('the demo page is as before: no waiting section, and the sections are the team groups then the switches', () => {

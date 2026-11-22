@@ -36,8 +36,11 @@ export function forgetMemoryLine(http: Transport, k: Contract, line: { key: stri
 }
 
 /** Route 77: the team facts waiting for an OK, newest first (Admins, and the Inhouse team under a grant). */
-export const readWaitingMemory = (http: Transport): Promise<WaitingMemoryList> =>
-  http.call({ method: 'GET', path: '/api/memory/waiting', schema: 'waitingMemory' })
+export async function readWaitingMemory(http: Transport): Promise<WaitingMemoryList> {
+  const list = await http.call({ method: 'GET', path: '/api/memory/waiting', schema: 'waitingMemory' })
+  // Only a team line still waiting belongs here (a contract follow-up pins WaitingMemorySchema to these literals).
+  return { facts: list.facts.filter(f => f.scope === 'brand' && f.waiting === true) }
+}
 
 /**
  * Route 78: approves (`true`) or rejects a waiting team fact at the rev last read. Answers the line as the server holds

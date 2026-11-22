@@ -1,10 +1,10 @@
 // Settings: menu on the left, content on the right.
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ComponentProps } from 'react'
 import { cn } from '@/lib/utils'
 import { agent, demo } from '../agent'
-import { AgentError, STAGES } from '../agent/types'
-import type { SupportGrant, WaitingMemory } from '../agent'
+import { STAGES } from '../agent/types'
+import type { SupportGrant } from '../agent'
 import { keepUnitsTogether } from '../agent/clock'
 import { STAGE_TAGS, memberFor, userName } from '../state/derive'
 import { backToSettingsMenu, useCtx, useUi } from '../state/store'
@@ -18,6 +18,7 @@ import { allowance, pageResources } from './settings/allowance'
 import { readParts } from './settings/read-text'
 import { single } from './settings/single'
 import { tell } from './settings/write'
+import { waitingList } from './settings/waiting-list'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { PHOTO_MAX_BYTES, PHOTO_TYPES, PhotoDecodeError, squarePhoto } from '../ui/photo'
@@ -197,7 +198,7 @@ function Control({ row, locked, on, onToggle, onAsk, readOnly, denied, effortOk,
     case 'value':
       return row.value ? <span className="text-right text-base text-foreground-2">{row.value}</span> : null
     case 'button':
-      return <Button variant="outline" disabled={locked || !row.onClick || row.busy} onClick={row.onClick} size="lg">{row.value}</Button>
+      return <Button variant="outline" aria-label={row.ariaLabel} disabled={locked || !row.onClick || row.busy} onClick={row.onClick} size="lg">{row.value}</Button>
     case 'toggle':
       return <Switch on={on} label={row.title} onChange={locked ? undefined : onToggle} />
     case 'mode':
@@ -254,27 +255,15 @@ export function Settings() {
   useEffect(() => { if (readsMemory) agent.refreshMemory().catch(() => undefined) }, [readsMemory, setTab])
   // P6a: Team memory reads what waits for an OK when it opens, for someone who may approve. Unread (or refused): no section.
   const approves = setTab === 'team-memory' && !!me?.can.approveMemory
-  const [waiting, setWaiting] = useState<WaitingMemory[] | undefined>(undefined)
-  const [deciding, setDeciding] = useState<ReadonlySet<string>>(new Set())
-  const readWaiting = useCallback(() => { agent.waitingMemory().then(setWaiting, () => setWaiting(undefined)) }, [])
+  const [waitingStore] = useState(() => waitingList({
+    waitingMemory: () => agent.waitingMemory(),
+    reviewMemory: (key, approved) => agent.reviewMemory(key, approved),
+    refreshMemory: () => agent.refreshMemory(),
+    toast: (text, opts) => ui.showToast(text, opts),
+  }))
+  const waitingState = useSyncExternalStore(waitingStore.subscribe, waitingStore.get)
   // The list shows only while `approves` (see `waiting` in env), so leaving the page needs no reset here.
-  useEffect(() => { if (approves) readWaiting() }, [approves, readWaiting])
-  const review = (key: string, approved: boolean) => {
-    if (deciding.has(key)) return
-    const text = waiting?.find(l => l.key === key)?.text
-    setDeciding(d => new Set(d).add(key))
-    agent.reviewMemory(key, approved).then(
-      () => ui.showToast(approved ? 'Approved. Your Inhouse agent will use this.' : "Rejected. Your Inhouse agent won't use this."),
-      (e: unknown) => {
-        // A stale list: say what it is now, and read it again so the page shows the current wording.
-        const now = e instanceof AgentError && e.code === 'conflict' && e.current && typeof e.current.text === 'string' ? e.current.text : null
-        if (now !== null) ui.showToast(now === text ? 'Someone changed this. It has been updated.' : `Someone changed this. It's now "${now}".`, { icon: 'info', key: 'conflict' })
-      },
-    ).finally(() => {
-      setDeciding(d => { const n = new Set(d); n.delete(key); return n })
-      readWaiting()
-    })
-  }
+  useEffect(() => { if (approves) void waitingStore.read() }, [approves, waitingStore])
   // Phone: the menu alone, or the picked page alone with Back to the menu (the store forgets which when Settings is left).
   const atMenu = phone && ui.setMenu
   // A new screen starts at its top.
@@ -325,9 +314,7 @@ export function Settings() {
     loadingMore,
     loadMore: list => { more(list) },
     exportFromServer: agent.auditExportUrl() ? () => { window.location.assign(agent.auditExportUrl()!) } : null,
-    waiting: approves ? waiting : undefined,
-    review,
-    deciding,
+    waiting: approves ? { state: waitingState, decide: waitingStore.decide, retry: () => { void waitingStore.read() } } : undefined,
   }
   const page = settingsPage(setTab, env)
   const readOnly = phone && setTab.startsWith('team-')

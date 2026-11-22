@@ -1,5 +1,6 @@
 // Settings content. Pure data: the screen renders it.
-import type { AgentData, AgentState, AuditLine, CanKey, Me, MemberRecord, MemberRole, MemoryLine, Money, StageIndex, WaitingMemory } from '../../agent/types'
+import type { AgentData, AgentState, AuditLine, CanKey, Me, MemberRecord, MemberRole, MemoryLine, Money, StageIndex } from '../../agent/types'
+import type { WaitingState } from './waiting-list'
 import { STAGE_TAGS, channelFrom, listNames } from '../../state/derive'
 import { EFFORTS, defaultModeId, modeEffortKey, modeOnKey, thinkingModes } from '../../state/derive'
 import type { Pop, RequestType } from '../../state/store'
@@ -59,6 +60,8 @@ export interface Row {
   can?: CanKey
   /** A Remove button beside the control: the question that names the person, and what confirming does. */
   remove?: { label: string; title: string; text: string; action: string; go: () => void }
+  /** A `button` row's accessible name, when its visible label alone doesn't say which row it acts on (a waiting fact's Approve). */
+  ariaLabel?: string
   /** A second button beside a `button` row's own (a waiting fact's Reject): its label, its accessible name, the question asked first, and what it does. */
   also?: { label: string; ariaLabel: string; ask?: { title: string; text: string; action: string }; go: () => void }
 }
@@ -145,12 +148,11 @@ export interface Env {
   loadMore: (list: 'audit' | 'members') => void
   /** Downloads the audit log from where the client says (`auditExportUrl()`), or null when the file is built here. */
   exportFromServer: (() => void) | null
-  /** P6a: the team facts waiting for an OK, as last read (unset until the Team memory page reads them, or for someone who can't approve). */
-  waiting?: WaitingMemory[]
-  /** P6a: approves (`true`) or rejects a waiting fact. */
-  review?: (key: string, approved: boolean) => void
-  /** P6a: the waiting facts whose decision is on its way (their buttons wait). */
-  deciding?: ReadonlySet<string>
+  /**
+   * P6a: the team facts waiting for an OK (waiting-list.ts) and what the page does with them: approve (`true`) or reject one,
+   * and read the list again after a failed read. Unset for someone who can't approve.
+   */
+  waiting?: { state: WaitingState; decide: (key: string, approved: boolean) => void; retry: () => void }
 }
 
 const withAvatar = (row: Row, who: string, at: 'row' | 'control' = 'row'): Row => ({ ...row, avatar: { who, at } })
@@ -181,13 +183,16 @@ export function settingsPage(tab: string, env: Env): Page {
     lines.filter(l => !agent.forgot[l.key]).map(l => R(l.text, memorySource(l, now), 'button', 'Forget', 0, undefined, undefined, () => env.forget(l.key)))
   const teamMem = memory.team.map(g => ({ label: g.group, rows: forgetRows(g.lines) }))
   // P6a: what waits for an admin's OK, above the team's rules, for someone who may approve. Nothing waiting: no section.
-  const review = env.review
-  const waitingRows: Row[] = env.me?.can.approveMemory && review ? (env.waiting ?? []).map(l => ({
-    ...R(l.text, memorySource(l, now), 'button', 'Approve', 0, undefined, undefined, () => review(l.key, true)),
-    can: 'approveMemory' as const,
-    busy: env.deciding?.has(l.key) === true,
-    also: { label: 'Reject', ariaLabel: `Reject: ${l.text}`, ask: { title: 'Reject this rule?', text: "Your Inhouse agent won't use it.", action: 'Reject' }, go: () => review(l.key, false) },
-  })) : []
+  const w = env.me?.can.approveMemory ? env.waiting : undefined
+  const waitingRows: Row[] = !w ? [] : w.state.status === 'failed'
+    ? [{ ...R("Couldn't load what waits for your OK.", '', 'button', 'Retry', 0, undefined, undefined, w.retry), can: 'approveMemory' as const }]
+    : w.state.facts.map(l => ({
+      ...R(l.text, memorySource(l, now), 'button', 'Approve', 0, undefined, undefined, () => w.decide(l.key, true)),
+      can: 'approveMemory' as const,
+      ariaLabel: `Approve: ${l.text}`,
+      busy: w.state.deciding.has(l.key),
+      also: { label: 'Reject', ariaLabel: `Reject: ${l.text}`, ask: { title: 'Reject this rule?', text: "Your Inhouse agent won't use it.", action: 'Reject' }, go: () => w.decide(l.key, false) },
+    }))
   const waitingMem = waitingRows.length > 0 ? [{ label: 'Waiting for your OK', rows: waitingRows }] : []
   const memCount = teamMem.reduce((n, g) => n + g.rows.length, 0)
   const teach = R('Teach it something', "Tell it a rule in a chat, in your own words. It shows here, after an admin's OK if Ask is on.", 'button', 'Teach in a chat', 0, undefined, undefined, () => env.newChat('Remember that '))

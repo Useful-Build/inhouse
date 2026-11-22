@@ -33,6 +33,12 @@ describe('readWaitingMemory (route 77)', () => {
     expect(await readWaitingMemory(http)).toEqual(LIST)
     expect(sent).toEqual([{ method: 'GET', path: '/api/memory/waiting', body: undefined }])
   })
+  test('only a team line still waiting is kept: a person line or one not marked waiting is left out', async () => {
+    const { waiting: _w, ...notWaiting } = waitingLine
+    const body = { facts: [{ ...waitingLine, kind: 'memory' }, { ...waitingLine, key: 'mem_BBBBBBBBBBBBBBBBBBBBBB', scope: 'person', kind: 'memory' }, { ...notWaiting, key: 'mem_CCCCCCCCCCCCCCCCCCCCCC', kind: 'memory' }] }
+    const { http } = fake(() => ({ status: 200, body }))
+    expect((await readWaitingMemory(http)).facts.map(f => f.key)).toEqual([waitingLine.key])
+  })
   test('an answer that is not the list is refused; a line without kind memory is refused', async () => {
     for (const body of [{ facts: 'nope' }, { facts: [waitingLine] }, { facts: [{ ...waitingLine, kind: 'action' }] }]) {
       const { http } = fake(() => ({ status: 200, body }))
