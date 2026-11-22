@@ -5,6 +5,7 @@
 // parents. Every round's ids or keys go in a `progress` entry. A run that left candidates says `more`.
 // D1 binds at most 100 parameters per query (https://developers.cloudflare.com/d1/platform/limits/, read 2026-11-22):
 // rounds stay under it, and so must `limit` (MAX_LIMIT), since a plan counts its units in one IN list.
+import type { KeyedBucket } from '../../../server/db/r2-keys.ts'
 import { all, first, runBatch, stmt } from '../../../server/db/sql.ts'
 import type { SqlValue, Stmt } from '../../../server/db/sql.ts'
 import { deleteKeys } from '../../delete/r2.ts'
@@ -19,7 +20,8 @@ export const MAX_LIMIT = 90
 
 export interface JobContext {
   db: D1Database
-  bucket: R2Bucket
+  /** Keys come from rows the product wrote through r2-keys.ts (`r2_key` columns) or its prefix builders. */
+  bucket: KeyedBucket
   /** The BrandAgent's storage: present only when retention runs inside the object (the handler). */
   sql?: SqlStorage
   /** The plan's clock. */
