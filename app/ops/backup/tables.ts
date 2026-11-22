@@ -58,6 +58,9 @@ export const TABLE_RULES: readonly TableRule[] = [
   { name: 'notice_reads', orderBy: ['member_id', 'notice_id'], mode: 'snapshot', after: ['members', 'notices'] },
   { name: 'library_uploads', orderBy: ['id'], mode: 'snapshot', after: ['members'], r2KeyColumns: ['r2_key'] },
   { name: 'library_marks', orderBy: ['file_id'], mode: 'snapshot', after: ['members'] },
+  // P8a: the egress record. `egress_fetches_no_update` refuses every UPDATE (0600), and rows only ever arrive with a
+  // rising n.
+  { name: 'egress_fetches', orderBy: ['n'], mode: 'append_only' },
 ]
 
 /** A name that goes into SQL as a quoted identifier: letters, digits and `_` only. */

@@ -7,9 +7,9 @@ import type { TableEntry } from '../tables/types.ts'
  * The decided periods, in days. `chats` and `steps` are the Data and access settings `d:chats` and `d:steps` (their
  * defaults: Wasim, B9, 2026-11-21, "12 months"); the rest are fixed: soft-deleted chats and Library trash 30 days after
  * the deletion or mark (B9), forgotten memories 30 days after their last update (B9; C1 Q15), a Library upload left
- * `pending` after 1 day (p4-w5.md section 2).
+ * `pending` after 1 day (p4-w5.md section 2), the egress record after 30 days (P8a: the Watch soak reads a day at a time).
  */
-export const DEFAULT_DAYS = { chats: 365, steps: 365, trash: 30, pendingUpload: 1, forgottenMemory: 30 } as const
+export const DEFAULT_DAYS = { chats: 365, steps: 365, trash: 30, pendingUpload: 1, forgottenMemory: 30, egress: 30 } as const
 export type PeriodName = keyof typeof DEFAULT_DAYS
 
 /** One way a row goes by its own age: `column` (epoch ms; `table.column` for another table's) past `period`, when `when` holds. */
@@ -88,6 +88,8 @@ export const retentionRules: Readonly<Record<string, RetentionRule>> = {
     why: "with its file: an upload's library/ object, then its library_uploads row, then the mark; a chat output's files/ object, then its chat_files row, then the mark",
   },
   'library/': { kind: 'custom', ages: [], withParent: 'library_uploads', why: 'with its library_uploads row (deleted first), never by object age (B9: no lifecycle rule)' },
+  // P8a: the egress record. `egress_fetches_no_update` forbids UPDATE only, so DELETE works.
+  egress_fetches: { kind: 'd1', ageColumn: 'at_ms', idColumn: 'n' },
 }
 
 /**
@@ -111,6 +113,7 @@ export const retentionGroups: Readonly<Record<string, PeriodName>> = {
   library_uploads: 'trash',
   library_marks: 'trash',
   'library/': 'trash',
+  egress_fetches: 'egress',
 }
 
 /** The `periods` argument `planRetention` takes: the default days for every `retention_period` store in `registry`. */

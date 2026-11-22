@@ -89,6 +89,9 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   library_uploads: { action: 'keep', why: 'the brand\'s own files: created_by is pseudonymous', kept: ['created_by'] },
   library_marks: { action: 'keep', why: 'the brand\'s trash: deleted_by is pseudonymous; a chat output\'s mark goes with the chat cascade', kept: ['deleted_by'] },
   'library/': { action: 'keep', why: 'the brand\'s own files, with their library_uploads rows (keys name files, not people)' },
+  // P8a: the egress record names a host, a runner and a container generation, never a member, a run or a turn (one
+  // container serves several sessions at once), so no row is a person's; it goes by age in 30 days.
+  egress_fetches: { action: 'keep', why: 'no member id: the egress knows the container, not the run; retention removes rows after 30 days' },
 }
 
 /** The actions each retention class allows. */

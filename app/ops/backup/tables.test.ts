@@ -41,7 +41,7 @@ describe('the table rules (failures 1 to 3)', () => {
 describe('append-only tables (failure 4)', () => {
   it('keys each append_only table by one integer column, and no product source updates or replaces its rows', async () => {
     const appendOnly = TABLE_RULES.filter(r => r.mode === 'append_only')
-    expect(appendOnly.map(r => r.name).sort()).toEqual(['activity_lines', 'audit_log', 'chat_messages'])
+    expect(appendOnly.map(r => r.name).sort()).toEqual(['activity_lines', 'audit_log', 'chat_messages', 'egress_fetches'])
     const found: string[] = []
     for (const r of appendOnly) {
       const pk = (await columnsOf(r.name)).filter(c => c.pk > 0)
