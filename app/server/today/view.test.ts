@@ -104,13 +104,13 @@ describe('status cards, literal states', () => {
     it("uses the brand's local date, not the UTC one", () => {
       // 02:00 UTC on June 2 is 22:00 on June 1 in New York: the previous local date is May 31, not June 1.
       const may31 = slot({ slot_key: 'may31', local_date: '2026-05-31', failure: 'run_failed', claimed_at_ms: at('2026-05-31T10:00:00Z'), ended_at_ms: at('2026-05-31T10:03:00Z') })
-      const jun1 = slot({ slot_key: 'jun1', failure: 'run_failed' })
-      const night = view('2026-06-02T02:00:00Z', [may31, jun1], { ...ROUTINE, days_mask: 0 })
-      expect(night.cards).toMatchObject([{ cause: 'failed', hashed: 'jun1' }])
+      // A day off: only the previous LOCAL date (May 31) can carry. A UTC-today bug (June 2, previous June 1) finds nothing.
+      const night = view('2026-06-02T02:00:00Z', [may31], { ...ROUTINE, days_mask: 0 })
+      expect(night.cards).toMatchObject([{ cause: 'failed', hashed: 'may31' }])
       const early = view('2026-06-01T04:30:00Z', [may31], ROUTINE) // 00:30 June 1 in New York, still June 1 locally
       expect(early.cards).toMatchObject([{ cause: 'failed', hashed: 'may31' }])
     })
-    it('a set-aside carried card stays hidden', async () => {
+    it("a carried card's id is stable across times, and a dismissal hides", async () => {
       const y = slot({ slot_key: 'y', local_date: '2026-05-31', failure: 'run_failed' })
       const [c] = view('2026-06-01T10:05:00Z', [y]).cards
       const same = view('2026-06-01T10:06:00Z', [y]).cards[0]
