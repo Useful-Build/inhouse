@@ -1,8 +1,9 @@
 // The real contract target's connector part (P5 W5 section 3): what `connectTool`, `disconnectTool`, `setToolPaused` and the
 // notice-channel methods need beside P2's. Two facts shape it:
-//  - The Tools writes belong to the Inhouse team's app (`technical` rows, allow `inhouse`), so these methods run on a second
-//    client signed in as the seeded Inhouse member, on the Inhouse origin. The notice-channel reads and writes run on the
-//    Admin's own client (an Admin may edit them), after the world is put in the state they need.
+//  - The Tools writes belong to the Inhouse team's app (`technical` rows, allow `inhouse`), so the target's client sends
+//    those requests to the Inhouse origin signed in as the seeded Inhouse member (`isToolsWrite`, `inhouseFetch`). The
+//    write still happens on the one client the cases read: its optimistic change, rollback and notices are its own. The
+//    notice-channel reads and writes run as the Admin (an Admin may edit them), after the world is put in the state they need.
 //  - No single Slack state fits every shared case: `connectTool` must answer an address and `disconnectTool` must be refused
 //    (Slack not connected), while the channel picker needs Slack usable (connected). `prepare(method)` puts Slack in the state
 //    the method's case reads, through the same routes a person uses, before the call. It changes the world, never the answer.
@@ -12,7 +13,6 @@ import type { JWK } from 'jose'
 import { SEED_INHOUSE } from '../../../../../server/seed/brand'
 import { mintPerson, mintService } from '../../../../../server/auth/test-issuer-mint'
 import { mintTestCode } from '../../../../../test/upstreams/mcp/server'
-import { HttpAgent } from '../../../http/client'
 import type { AgentClient } from '../../../types'
 import type { WriteMethod } from '../../targets'
 
@@ -37,8 +37,6 @@ export const CONNECTOR_TOOL_KEY = 'slack'
 /** Methods whose case reads Slack as not connected, and the ones that need it usable. */
 const NEEDS_DISCONNECTED: ReadonlySet<string> = new Set(['connectTool', 'disconnectTool', 'setToolPaused'])
 const NEEDS_CONNECTED: ReadonlySet<string> = new Set(['availableNotifyChannels', 'saveNotifyChannels'])
-/** Methods that run on the Inhouse client (the Tools writes). */
-const ON_INHOUSE: ReadonlySet<string> = new Set(['connectTool', 'disconnectTool', 'setToolPaused'])
 
 /**
  * The route an armed refusal is aimed at, for the connector write methods (the target's `routeOf` falls through to this):
@@ -55,11 +53,22 @@ export function connectorRoute(method: WriteMethod, args: unknown[]): { verbs: s
   }
 }
 
+/**
+ * Whether a request is one of the Tools writes, which only the Inhouse team may send: the paths `connectorRoute` aims at.
+ * The target sends these from its one client with the Inhouse member's sign-in (`inhouseFetch`), so the client that
+ * wrote is the one whose snapshot, listeners and notices the shared cases read.
+ */
+export function isToolsWrite(method: string, pathname: string): boolean {
+  return (method === 'PUT' && pathname === slackPath('paused'))
+    || (method === 'POST' && pathname === slackPath('disconnect'))
+    || (method === 'POST' && pathname === `/api/connect/${encodeURIComponent(ACCOUNT)}/start`)
+}
+
 export interface ConnectorWorld {
-  /** A client signed in as the Inhouse member, for the Tools writes. Loaded before it is returned. */
-  inhouseClient(): Promise<HttpAgent>
-  /** Which client a method belongs on: true for the Inhouse client. */
-  onInhouse(method: string): boolean
+  /** One request (a path and its query) to the Inhouse origin as the Inhouse member, the rest of `init` as it is. */
+  inhouseFetch(pathAndQuery: string, init?: RequestInit): Promise<Response>
+  /** The Slack state a method's case reads, or null for any other method. */
+  needs(method: string): 'connected' | 'disconnected' | null
   /** Puts the world in the state the method's case reads (a no-op for any other method). */
   prepare(method: string): Promise<void>
   /** Back to the start: the fakes reset, no channels listed, Slack disconnected after a first connect (so its row exists). */
@@ -119,12 +128,12 @@ export function connectorWorld(brandOrigin: string): ConnectorWorld {
   const unpause = async () => { await inhouse('PUT', slackPath('paused'), { paused: false }) }
 
   return {
-    async inhouseClient() {
-      const agent = new HttpAgent({ origin: inhouseOrigin, fetch: (i, init) => fetch(i, init), headers: inhouseHeaders, now: () => Date.now() })
-      await agent.whenLoaded()
-      return agent
+    async inhouseFetch(pathAndQuery, init = {}) {
+      const headers = new Headers(init.headers)
+      for (const [k, v] of Object.entries(await inhouseHeaders())) headers.set(k, v)
+      return fetch(inhouseOrigin + pathAndQuery, { ...init, headers })
     },
-    onInhouse: method => ON_INHOUSE.has(method),
+    needs: method => (NEEDS_DISCONNECTED.has(method) ? 'disconnected' : NEEDS_CONNECTED.has(method) ? 'connected' : null),
     async prepare(method) {
       if (NEEDS_DISCONNECTED.has(method)) await ensure('disconnected')
       else if (NEEDS_CONNECTED.has(method)) { await ensure('connected'); await unpause() }

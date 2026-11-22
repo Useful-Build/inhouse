@@ -2,9 +2,12 @@
 // `origin`. targets.ts appends these when CONTRACT_REAL_ORIGIN is set; from P3 this file is the orchestrator's. One file
 // per resource group beside this one holds what is particular to it (me.ts signs in, members.ts resets the team, ...).
 //
-// It serves exactly the P2 methods. Its client is the product's `HttpAgent` with two additions a browser doesn't need: the
-// test issuer's sign-in header and an `Origin` on every request (Node sends neither by itself), and a clock the suite can
-// move on (`advance`), which only the client's own notion of "now" follows (a grant stops being live at its end).
+// It serves the P2 methods and P5's connector methods (connectors.ts: the Tools write requests go to the Inhouse origin as
+// the Inhouse member from this one client, and Slack is put in the state each case reads before the call).
+//
+// Its client is the product's `HttpAgent` with two additions a browser doesn't need: the test issuer's sign-in header and
+// an `Origin` on every request (Node sends neither by itself), and a clock the suite can move on (`advance`), which only
+// the client's own notion of "now" follows (a grant stops being live at its end).
 import { settingRow } from '../../../../../shared/contract/settings-table'
 import { HttpAgent } from '../../../http/client'
 import type { AgentClient, AgentErrorCode, ResourceKey } from '../../../types'
@@ -15,11 +18,14 @@ import { discover, signer } from './me'
 import type { Seeded, Signer } from './me'
 import { resetTeam } from './members'
 import { resetSettings, settingFixtures } from './settings'
+import { CONNECTOR_METHODS, CONNECTOR_TOOL_KEY, connectorRoute, connectorWorld, isToolsWrite } from './connectors'
 
-/** The P2 methods: what this target's client serves over HTTP. */
+/** The P2 methods and P5's connector methods: what this target's client serves over HTTP. */
 const SERVED: ReadonlySet<keyof AgentClient> = new Set<keyof AgentClient>([
   'me', 'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant', 'loadMore', 'retry', 'auditExportUrl', 'signOutUrl',
   'setSetting', 'setToggle', 'setPhoto',
+  // P5 (connectors.ts): connect, disconnect and pause a tool; the notice channels.
+  ...CONNECTOR_METHODS,
 ])
 
 const WRITES: ReadonlySet<string> = new Set<WriteMethod>([
@@ -43,7 +49,7 @@ function routeOf(method: WriteMethod, args: unknown[]): { verbs: string[]; path:
     case 'removeMember': return { verbs: ['DELETE'], path: `/api/members/${enc(args[0])}` }
     case 'grantSupport': return { verbs: ['POST'], path: '/api/grants' }
     case 'endSupportGrant': return { verbs: ['POST'], path: `/api/grants/${enc(args[0])}/end` }
-    default: return null
+    default: return connectorRoute(method, args)
   }
 }
 
@@ -57,6 +63,9 @@ const PNG_1X1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfF
 
 function realTarget(origin: string): ContractTarget {
   const s: Signer = signer(origin)
+  const world = connectorWorld(origin)
+  /** The Slack state the world is known to be in: `reset()` leaves it disconnected; `unknown` until then. */
+  let slack: 'connected' | 'disconnected' | 'unknown' = 'unknown'
   let ids: Awaited<ReturnType<typeof discover>> | undefined
   const ready = async () => (ids ??= await discover(s))
 
@@ -79,6 +88,8 @@ function realTarget(origin: string): ContractTarget {
         if (READ_PATH[resource] === url.pathname) { armedReads.delete(resource); return fetch(origin + FORBIDDEN_PATH, init) }
       }
     }
+    // The Tools writes: Inhouse-only routes, sent from this client as the Inhouse member (after the refusals above).
+    if (isToolsWrite(method, url.pathname)) return world.inhouseFetch(url.pathname + url.search, init)
     if (staleGrantEnd && method === 'POST' && /^\/api\/grants\/[^/]+\/end$/.test(url.pathname) && typeof init?.body === 'string') {
       staleGrantEnd = false
       return fetch(input, { ...init, body: JSON.stringify(staleRev(JSON.parse(init.body))) })
@@ -95,13 +106,27 @@ function realTarget(origin: string): ContractTarget {
       const member: unknown = Reflect.get(target, prop, target)
       if (typeof member !== 'function') return member
       const method = (member as (...a: unknown[]) => unknown).bind(target)
-      if (typeof prop !== 'string' || !WRITES.has(prop)) return method
+      if (typeof prop !== 'string') return method
+      const connector = (CONNECTOR_METHODS as readonly string[]).includes(prop)
+      if (!WRITES.has(prop) && !connector) return method
+      // A connector method: Slack put in the state its case reads first. When the world is already in it, the call goes out
+      // at once, so its change shows before the write settles, as the shared cases check.
+      const needs = world.needs(prop)
+      const ready = !connector || needs === null || needs === slack ? method : async (...args: unknown[]): Promise<unknown> => {
+        await world.prepare(prop)
+        slack = needs
+        return method(...args)
+      }
+      // A case's own connect or disconnect that went through may have moved Slack: its state is unknown until the next prepare.
+      const call = prop !== 'connectTool' && prop !== 'disconnectTool' ? ready : (...args: unknown[]) =>
+        (ready(...args) as Promise<unknown>).then(v => { slack = 'unknown'; return v })
+      if (!WRITES.has(prop)) return call
       return (...args: unknown[]) => {
         const code = armedErrors.get(prop)
-        if (!code) return method(...args)
+        if (!code) return call(...args)
         const route = routeOf(prop as WriteMethod, args)
         forced = route ? { code, ...route } : null
-        const done = method(...args) as Promise<unknown>
+        const done = call(...args) as Promise<unknown>
         const clear = () => { forced = null }
         done.then(clear, clear)
         return done
@@ -138,7 +163,8 @@ function realTarget(origin: string): ContractTarget {
         followUp: 'And which are over $500?',
         tooLate: 'Too late',
       },
-      toolKey: 'klaviyo',
+      // Slack, the one OAuth tool the test build connects (connectors.ts).
+      toolKey: CONNECTOR_TOOL_KEY,
       skillName: 'Stock check',
       memoryKey: 'some-line',
       ...settingFixtures,
@@ -173,6 +199,10 @@ function realTarget(origin: string): ContractTarget {
       await resetTeam(s)
       await endLiveGrant(s)
       await resetSettings(s)
+      // Unknown until the world's reset is through: one that throws leaves no stale state behind.
+      slack = 'unknown'
+      await world.reset()
+      slack = 'disconnected'
       this.fixtures.personId = seeded.admin
       this.fixtures.photoAfterSet = new RegExp(`^/api/members/${seeded.admin}/photo\\?v=[0-9a-f]{32}$`) // a member id is base64url: nothing to escape
       this.fixtures.me = { memberId: seeded.admin, role: 'admin' }

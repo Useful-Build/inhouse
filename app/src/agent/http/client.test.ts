@@ -1317,6 +1317,58 @@ describe('tools (routes C to E and the connect start)', () => {
     expect(heard.filter(n => n.type === 'error')).toHaveLength(1)
   })
 
+  // A rolled-back write hands back the very snapshot it found (useSyncExternalStore and the contract's rollback cases read
+  // identity): the paused flags derived from the tools must not be rebuilt when they come back unchanged.
+  test('a refused or failed pause hands back the identical snapshot; one that works gives a new state with the pause', async () => {
+    for (const answer of [refusal(403, 'forbidden'), refusal(503, 'unavailable'), (): Answer => { throw new TypeError('network down') }]) {
+      const { agent } = await loaded({ ...reads(), [`PUT /api/tools/${SLACK}/paused`]: answer })
+      const before = agent.getSnapshot()
+      const data = agent.read()
+      expect(await errorOf(agent.setToolPaused('slack', true))).toBeInstanceOf(AgentError)
+      expect(agent.getSnapshot()).toBe(before)
+      expect(agent.read()).toBe(data)
+    }
+    const { agent } = await loaded({ ...reads(), [`PUT /api/tools/${SLACK}/paused`]: { body: { paused: true } } })
+    const before = agent.getSnapshot()
+    await agent.setToolPaused('slack', true)
+    expect(agent.getSnapshot()).not.toBe(before)
+    expect(agent.getSnapshot().toolPaused).toEqual({ slack: true })
+  })
+
+  test('a tools read that changes the tools but no pause keeps the snapshot; read() moves', async () => {
+    let n = 0
+    const { agent } = await loaded({ ...reads(), 'GET /api/tools': () => { n += 1; return { body: n === 1 ? TOOLS : { ...TOOLS, connected: [], beingConnected: ['slack'] } } } })
+    const before = agent.getSnapshot()
+    const data = agent.read()
+    await agent.retry('tools')
+    expect(n).toBe(2)
+    expect(agent.read()).not.toBe(data)
+    expect(agent.read().tools.beingConnected).toEqual(['slack'])
+    expect(agent.getSnapshot()).toBe(before)
+  })
+
+  test('the undo path (a write committed in between): a stale pause flag is replaced by what the tools say', async () => {
+    let n = 0
+    const { agent } = await loaded({
+      ...reads(),
+      [`PUT /api/tools/${SLACK}/paused`]: () => { n += 1; return n === 1 ? refusal(403, 'forbidden') : { body: { paused: true } } },
+    })
+    const flags = () => Object.fromEntries(Object.entries(agent.read().tools.details).filter(([, d]) => d.paused === true).map(([k]) => [k, true]))
+    // Two pauses of the same tool: the second's change is on screen when the first is refused, so its rollback takes the
+    // undo path (the tools go back to unpaused) and the derived flag must follow, not keep the stale { slack: true }.
+    const first = agent.setToolPaused('slack', true)
+    const second = agent.setToolPaused('slack', true)
+    expect(agent.getSnapshot().toolPaused).toEqual({ slack: true })
+    expect(await errorOf(first)).toMatchObject({ code: 'forbidden' })
+    expect(agent.read().tools.details.slack.paused).toBe(false)
+    expect(agent.getSnapshot().toolPaused).toEqual({})
+    expect(agent.getSnapshot().toolPaused).toEqual(flags())
+    await second
+    expect(agent.getSnapshot().toolPaused).toEqual({ slack: true })
+    expect(agent.getSnapshot().toolPaused).toEqual(flags())
+    expect(n).toBe(2)
+  })
+
   test('a key the read does not list is refused before anything is sent', async () => {
     const { agent, calls } = await loaded(reads())
     const before = calls.length
