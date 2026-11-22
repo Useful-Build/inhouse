@@ -1,8 +1,10 @@
 // P3's `memory` store slot (p3-design sections 10 and 12). Owner: W6 (p3-w6.md). What the agent remembers, over D1:
 // the memory tools (search, save, update, forget, list) and the Memory pages' routes (43 to 45) read and write through
 // it. Every method takes data and returns data (the store contract in server/routes.ts).
-// - A person fact counts at once (`active`); a brand fact waits for an admin's OK (`waiting`); changing a brand fact
-//   sends it back to waiting, so a change never skips the approval.
+// - A person fact counts at once (`active`); a brand fact waits for an admin's OK (`waiting`), unless the brand turned
+//   off "Ask before saving a team rule" (`m:ask`) and a person's agent saved it; changing a brand fact follows the
+//   same rule, so a change never skips the approval. A routine's (`m_system`) brand fact always waits.
+// - A person's `m:learn` off refuses their saves and rewords, in the same statement that would write.
 // - Every write is one statement guarded by owner, `rev` and status (a team-fact forget adds its audit line in the same
 //   batch, written only when the change matched a row).
 // - Reads go through the one visibility rule (visibility.ts); the routes' owner checks read a fact by id first.
@@ -48,6 +50,8 @@ export type WriteRefusal =
   | { refused: 'service_person_fact' }
   /** The run's member isn't an active member any more. */
   | { refused: 'no_member' }
+  /** This person turned off "Learn from my chats" (`m:learn`): nothing is saved or reworded for them. */
+  | { refused: 'learning_off' }
 
 export type SaveResult = { saved: Fact } | { duplicate: Fact } | WriteRefusal
 export type UpdateResult = { updated: Fact } | { unchanged: Fact } | { notFound: true } | { conflict: true } | WriteRefusal
@@ -62,9 +66,9 @@ export interface MemoryStore {
   list(memberId: string, opts: { scope?: MemoryScope; beforeN: number | null; limit: number }): Promise<Fact[]>
   /** A visible fact by id, or null. */
   visible(memberId: string, id: string): Promise<Fact | null>
-  /** Saves a new fact for `memberId` (person scope: theirs; brand scope: the team's, waiting). */
+  /** Saves a new fact for `memberId` (person scope: theirs; brand scope: the team's, waiting unless `m:ask` is off and a person saved it). */
   save(input: { memberId: string; scope: MemoryScope; text: string; chatId: string | null; nowMs: number; requestId: string }): Promise<SaveResult>
-  /** Rewords a visible fact; a brand fact goes back to waiting. */
+  /** Rewords a visible fact; a brand fact goes back to waiting (unless `m:ask` is off and a person reworded it). */
   update(input: { memberId: string; id: string; text: string; nowMs: number; requestId: string }): Promise<UpdateResult>
   /** The agent's forget: only the member's own active person fact. */
   forgetOwn(input: { memberId: string; id: string; nowMs: number; requestId: string }): Promise<ForgetOwnResult>
@@ -120,6 +124,11 @@ const fact = (r: FactRow): Fact => ({
   createdAtMs: r.created_at_ms, updatedAtMs: r.updated_at_ms, usedCount: r.used_count, lastUsedAtMs: r.last_used_at_ms, rev: r.rev,
 })
 
+/** A switch row that is off: the settings store writes `false` as the text `false`; a reset (`null`) or a missing row is on. */
+const SWITCH_OFF = (owner: string, key: string) => `EXISTS (SELECT 1 FROM settings WHERE owner = ${owner} AND key = '${key}' AND value_json = 'false')`
+/** The status a brand fact gets when `saver` writes it (one `?`: the saver's member id): active only when `m:ask` is off and the saver is a person, never a service member (a routine, the smoke row). */
+const BRAND_STATUS = `CASE WHEN EXISTS (SELECT 1 FROM members WHERE id = ? AND kind <> 'service') AND ${SWITCH_OFF("'brand'", 'm:ask')} THEN 'active' ELSE 'waiting' END`
+
 const base64url = (bytes: Uint8Array): string => btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
 
 /** The most waiting facts `waiting()` ever returns (SQLite reads a negative LIMIT as no limit, so it's clamped here). */
@@ -159,6 +168,10 @@ export function memoryStore({ db }: { db: D1Database }): MemoryStore {
   // D1's `meta.changes` counts the FTS triggers' writes too, so a statement that changed its one row reports more than 1:
   // every check here is "changed any" (each statement names one row by its unique id).
   const changes = async (sql: string, ...params: SqlValue[]) => (await runBatch(db, [stmt(sql, ...params)]))[0].meta.changes
+  const learningOff = async (memberId: string) =>
+    (await first<{ n: number }>(db, stmt(`SELECT 1 AS n WHERE ${SWITCH_OFF('?', 'm:learn')}`, memberId))) !== null
+  const memberActive = async (memberId: string) =>
+    (await first<{ n: number }>(db, stmt("SELECT 1 AS n FROM members WHERE id = ? AND status = 'active'", memberId))) !== null
   /** After a guarded write: the change, the fact as it is now, or no such fact (of that scope and owner). */
   const settle = async (changed: number, id: string, scope: MemoryScope, ownerId: string | null): Promise<SetForgottenResult> => {
     const now = await byId(id)
@@ -197,23 +210,26 @@ export function memoryStore({ db }: { db: D1Database }): MemoryStore {
       const kind = personalDataIn(text)
       if (kind) return { refused: 'personal_data', kind }
       const ownerId = scope === 'person' ? memberId : null
-      const status: MemoryStatus = scope === 'person' ? 'active' : 'waiting'
       const id = newMemoryId()
-      // One statement: written only for an active member, and never twice (the same text, scope and owner, still
-      // active or waiting: an agent's retry after a lost answer finds the first).
+      // One statement: written only for an active member, never twice (the same text, scope and owner, still active or
+      // waiting: an agent's retry after a lost answer finds the first), and for a person fact only while their `m:learn`
+      // isn't off. A brand fact's status is decided here too, from `m:ask` as it is when the statement runs.
       const changed = await changes(
         `INSERT INTO memories (id, scope, owner_id, text, status, source_chat_id, created_by, created_at_ms, updated_at_ms, req_id)
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+         SELECT ?, ?, ?, ?, ${scope === 'person' ? "'active'" : BRAND_STATUS}, ?, ?, ?, ?, ?
          WHERE EXISTS (SELECT 1 FROM members WHERE id = ? AND status = 'active')
-           AND NOT EXISTS (SELECT 1 FROM memories WHERE scope = ? AND owner_id IS ? AND text = ? AND status IN ('active', 'waiting'))`,
-        id, scope, ownerId, text, status, chatId, memberId, nowMs, nowMs, writeStamp(requestId),
-        memberId, scope, ownerId, text,
+           AND NOT EXISTS (SELECT 1 FROM memories WHERE scope = ? AND owner_id IS ? AND text = ? AND status IN ('active', 'waiting'))${scope === 'person' ? ` AND NOT ${SWITCH_OFF('?', 'm:learn')}` : ''}`,
+        id, scope, ownerId, text, ...(scope === 'person' ? [] : [memberId]), chatId, memberId, nowMs, nowMs, writeStamp(requestId),
+        memberId, scope, ownerId, text, ...(scope === 'person' ? [memberId] : []),
       )
       if (changed > 0) return { saved: (await byId(id))! }
       const same = await first<FactRow>(db, stmt(
         `SELECT ${COLUMNS} ${FROM} WHERE m.scope = ? AND m.owner_id IS ? AND m.text = ? AND m.status IN ('active', 'waiting')`, scope, ownerId, text,
       ))
-      return same ? { duplicate: fact(same) } : { refused: 'no_member' }
+      if (same) return { duplicate: fact(same) }
+      // Nothing was written and nothing is a duplicate: a person fact is refused for `m:learn` while the member is
+      // still active (the switch is read now, so one flipped back since still gives the member's own reason).
+      return scope === 'person' && await memberActive(memberId) ? { refused: 'learning_off' } : { refused: 'no_member' }
     },
 
     async update({ memberId, id, text, nowMs, requestId }) {
@@ -223,13 +239,19 @@ export function memoryStore({ db }: { db: D1Database }): MemoryStore {
       const kind = personalDataIn(text)
       if (kind) return { refused: 'personal_data', kind }
       if (current.text === text) return { unchanged: current }
+      // A person fact is reworded only while the owner's `m:learn` isn't off; a brand fact's new status follows `m:ask`.
       const changed = await changes(
-        `UPDATE memories SET text = ?, status = CASE scope WHEN 'brand' THEN 'waiting' ELSE status END, rev = rev + 1,
+        `UPDATE memories SET text = ?, status = CASE scope WHEN 'brand' THEN ${BRAND_STATUS} ELSE status END, rev = rev + 1,
            updated_at_ms = ?, req_id = ?
-         WHERE id = ? AND rev = ? AND status = 'active' AND (scope = 'brand' OR owner_id = ?)`,
-        text, nowMs, writeStamp(requestId), id, current.rev, memberId,
+         WHERE id = ? AND rev = ? AND status = 'active'
+           AND (scope = 'brand' OR (owner_id = ? AND NOT ${SWITCH_OFF('?', 'm:learn')}))`,
+        text, memberId, nowMs, writeStamp(requestId), id, current.rev, memberId, memberId,
       )
-      return changed > 0 ? { updated: (await byId(id))! } : { conflict: true }
+      if (changed > 0) return { updated: (await byId(id))! }
+      // A lost rev or status race is a conflict whatever the switch says; only an untouched fact refused for `m:learn` is learning_off.
+      const now = await byId(id)
+      const untouched = now !== null && now.rev === current.rev && now.status === 'active'
+      return untouched && current.scope === 'person' && await learningOff(memberId) ? { refused: 'learning_off' } : { conflict: true }
     },
 
     async forgetOwn({ memberId, id, nowMs, requestId }) {
