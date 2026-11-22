@@ -98,6 +98,25 @@ describe('the retention task', () => {
     expect(scheduled.find(s => s.id === RETENTION_MORE_ID)).toEqual({ id: RETENTION_MORE_ID, kind: RETENTION_TASK_ID, dueAtMs: NOW + MORE_AFTER_MS, payload: { from: 0 } })
   })
 
+  it('one failing store is logged as retention_failed with its name, and the pass goes on to the next store', async () => {
+    const old = `a_${token()}`
+    await env.DB.prepare("INSERT INTO activity_lines (id, at_ms, kind, template, fields_json, source, source_key) VALUES (?, ?, 'change', 't', '{}', 'test', ?)").bind(old, NOW - 400 * DAY, old).run()
+    const errors: unknown[] = []
+    const spy = vi.spyOn(console, 'error').mockImplementation(e => { errors.push(e) })
+    // The BrandAgent's job outside the object throws; Activity, after it, still runs.
+    const pass = await retentionPass({ db: env.DB, bucket: env.FILES, nowMs: NOW, requestId: 'rfail', from: 0, registry: [entry('BrandAgent'), entry('activity_lines')] })
+    spy.mockRestore()
+    expect(pass).toMatchObject({ reached: 2, failed: ['BrandAgent'] })
+    expect(errors).toEqual([{ event: 'retention_failed', store: 'BrandAgent', error: 'Error' }])
+    expect((await env.DB.prepare('SELECT COUNT(*) AS n FROM activity_lines WHERE id = ?').bind(old).first<{ n: number }>())!.n).toBe(0)
+  })
+
+  it('acts only on stores with a job or a rule of their own: a store another job serves writes no run', () => {
+    const names = retentionStores().map(e => e.name)
+    for (const served of ['chat_messages', 'files/', 'sessions/', 'notice_reads', 'library_marks', 'library/']) expect(names, served).not.toContain(served)
+    expect(names).toEqual(expect.arrayContaining(['chats', 'tool_calls', 'chat_files', 'BrandAgent', 'memories', 'notices', 'library_uploads', 'activity_lines']))
+  })
+
   it('the retention handler writes the BrandAgent part\'s deletion-log entries with ids and counts only', async () => {
     const stub = env.BRAND_AGENT.get(env.BRAND_AGENT.idFromName(`rh-${token()}`))
     const before = (await listDeletionLog(env.FILES)).map(e => e.key)

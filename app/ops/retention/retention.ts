@@ -19,7 +19,7 @@ import { runLog } from '../delete/log.ts'
 import { deleteKeys, ident, listAll, registryOf } from '../delete/r2.ts'
 import type { JobDeps } from '../delete/r2.ts'
 import { MAX_LIMIT, RETENTION_JOBS, SERVED_BY } from '../coverage/chat-watch-connectors/retention-jobs.ts'
-import type { JobContext, JobPlan, RetentionJob } from '../coverage/chat-watch-connectors/retention-jobs.ts'
+import type { AgeTag, JobContext, JobPlan, LoggedCutoff, RetentionJob } from '../coverage/chat-watch-connectors/retention-jobs.ts'
 import type { TableEntry } from '../tables/types.ts'
 import { retentionRules } from './rules.ts'
 import type { RetentionRule } from './rules.ts'
@@ -48,7 +48,7 @@ interface Target {
 
 export interface RetentionPlan {
   readonly atMs: number
-  readonly cutoffs: readonly { store: string; cutoffMs: number }[]
+  readonly cutoffs: readonly LoggedCutoff[]
   /** What is past retention now, per store. */
   readonly counts: Readonly<Record<string, number>>
   readonly targets: readonly Target[]
@@ -110,7 +110,10 @@ function targetsFor(registry: readonly TableEntry[], rules: Readonly<Record<stri
   return { targets, custom }
 }
 
-const jobContext = (deps: RetentionDeps, atMs: number, cutoffMs: number | null, limit: number): JobContext => ({ db: deps.db, bucket: deps.bucket, sql: deps.sql, atMs, cutoffMs, limit })
+const jobContext = (deps: RetentionDeps, atMs: number, cutoffMs: number | null, limit: number, cutoffs?: readonly LoggedCutoff[]): JobContext => ({
+  db: deps.db, bucket: deps.bucket, sql: deps.sql, atMs, cutoffMs, limit,
+  cutoffs: cutoffs === undefined ? undefined : Object.fromEntries(cutoffs.map(c => [c.age ?? 'own', c.cutoffMs])) as Partial<Record<AgeTag, number>>,
+})
 
 const pastD1 = (t: Target & { rule: { kind: 'd1' } }) =>
   stmt(`SELECT COUNT(*) AS n FROM ${ident(t.entry.name)} WHERE ${ident(t.rule.ageColumn)} < ?`, t.cutoffMs)
@@ -135,7 +138,7 @@ export async function planRetention(deps: RetentionDeps, input: { periods: Reado
     else counts[t.entry.name] = (await pastObjects(deps.bucket, t)).length
   }
   const custom: CustomTarget[] = []
-  const cutoffs = targets.map(t => ({ store: t.entry.name, cutoffMs: t.cutoffMs }))
+  const cutoffs: LoggedCutoff[] = targets.map(t => ({ store: t.entry.name, cutoffMs: t.cutoffMs }))
   for (const c of customTargets) {
     const jobPlan = await c.job.plan(jobContext(deps, deps.at.nowMs, c.cutoffMs, limit))
     for (const [store, n] of Object.entries(jobPlan.counts)) counts[store] = (counts[store] ?? 0) + n
@@ -210,7 +213,8 @@ export async function runRetention(deps: RetentionDeps, plan: RetentionPlan, opt
   // C1's custom jobs, on the units their plans fixed.
   const customRemoved: Record<string, number> = {}
   for (const c of plan.custom ?? []) {
-    const got = await c.job.run(jobContext(deps, plan.atMs, c.cutoffMs, plan.limit ?? MAX_LIMIT), c.plan, async entries => {
+    // The run takes the plan's cutoffs (never a new clock).
+    const got = await c.job.run(jobContext(deps, plan.atMs, c.cutoffMs, plan.limit ?? MAX_LIMIT, c.plan.cutoffs), c.plan, async entries => {
       await log.write('progress', { removed: entries })
     })
     for (const [store, n] of Object.entries(got)) customRemoved[store] = (customRemoved[store] ?? 0) + n

@@ -253,7 +253,8 @@ export async function runPersonDeletion(deps: DeletionDeps, plan: PersonDeletion
     if (!deps.brandAgent) throw new Error('person deletion: the BrandAgent part needs deps.brandAgent (BrandAgentRpc.personData)')
     const answer = await deps.brandAgent.personData({ personId: memberId, mode: 'delete' })
     if ('busy' in answer) {
-      await log.write('refused', { reason: 'busy' })
+      // The member row is pseudonymised already: a distinct phase, so R's replay repeats the run (not `refused`).
+      await log.write('stopped_after_pseudonymise', { reason: 'busy' })
       return { refused: 'busy' }
     }
     if (!('counts' in answer)) throw new Error(`person deletion: personData delete answered ${JSON.stringify(answer)}`)

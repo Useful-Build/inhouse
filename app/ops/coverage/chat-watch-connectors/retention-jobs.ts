@@ -18,16 +18,27 @@ const DAY_MS = 86_400_000
 /** The most units one plan may fix: its IN lists bind them, beside a cutoff or two. */
 export const MAX_LIMIT = 90
 
+/**
+ * Which of a store's cutoffs: its own period's (`own`, logged with no tag), or a fixed one (logged as `age`). The log
+ * names only registered stores (R's replay resolves each), so a second cutoff on one store is told apart by its tag.
+ */
+export type AgeTag = 'own' | 'trash' | 'pending' | 'forgotten'
+const FIXED: Readonly<Record<Exclude<AgeTag, 'own'>, PeriodName>> = { trash: 'trash', pending: 'pendingUpload', forgotten: 'forgottenMemory' }
+/** One logged cutoff: `age` absent for the store's own period. */
+export interface LoggedCutoff { store: string; cutoffMs: number; age?: Exclude<AgeTag, 'own'> }
+
 export interface JobContext {
   db: D1Database
   /** Keys come from rows the product wrote through r2-keys.ts (`r2_key` columns) or its prefix builders. */
   bucket: KeyedBucket
   /** The BrandAgent's storage: present only when retention runs inside the object (the handler). */
   sql?: SqlStorage
-  /** The plan's clock. */
-  atMs: number
+  /** The plan's clock; null for a replay, which takes every cutoff from the log. */
+  atMs: number | null
   /** The store's own cutoff from its period (`periods`), when it has one. */
   cutoffMs: number | null
+  /** Cutoffs fixed already (a plan's, for its run; the log's, for a replay), by tag: they win over the clock. */
+  cutoffs?: Partial<Record<AgeTag, number>>
   /** At most this many units (chats, files, rows...) per run. */
   limit: number
 }
@@ -36,7 +47,7 @@ export interface JobPlan {
   counts: Record<string, number>
   /** The units the run removes (ids), fixed at plan time. */
   units: readonly string[]
-  cutoffs: { store: string; cutoffMs: number }[]
+  cutoffs: LoggedCutoff[]
   more: boolean
 }
 
@@ -53,10 +64,19 @@ export interface RetentionJob {
 
 /** A fixed period's cutoff from the plan's clock. */
 export const fixedCutoff = (atMs: number, period: PeriodName) => atMs - DEFAULT_DAYS[period] * DAY_MS
-const own = (ctx: JobContext, store: string) => {
-  if (ctx.cutoffMs === null) throw new Error(`retention: ${store}'s job needs its period`)
-  return ctx.cutoffMs
+/** A store's cutoff for `tag`: one fixed already, else its period's (`own`) or the fixed period's from the plan's clock. */
+function cut(ctx: JobContext, store: string, tag: AgeTag): number {
+  const fixed = ctx.cutoffs?.[tag]
+  if (fixed !== undefined) return fixed
+  if (tag === 'own') {
+    if (ctx.cutoffMs === null) throw new Error(`retention: ${store}'s job needs its period`)
+    return ctx.cutoffMs
+  }
+  if (ctx.atMs === null) throw new Error(`retention: replaying ${store} needs its ${tag} cutoff`)
+  return fixedCutoff(ctx.atMs, FIXED[tag])
 }
+const own = (ctx: JobContext, store: string) => cut(ctx, store, 'own')
+const logged = (store: string, tag: AgeTag, cutoffMs: number): LoggedCutoff => (tag === 'own' ? { store, cutoffMs } : { store, cutoffMs, age: tag })
 const marks = (n: number) => Array.from({ length: n }, () => '?').join(', ') || 'NULL'
 const add = (into: Record<string, number>, from: Record<string, number>) => { for (const [k, v] of Object.entries(from)) into[k] = (into[k] ?? 0) + v }
 async function ids(db: D1Database, sql: string, params: SqlValue[], limit: number): Promise<{ units: string[]; more: boolean }> {
@@ -84,7 +104,7 @@ const CHATS_ROUND = 10
 /** A chat whose last activity is past the chats period, or whose trash time is past the trash period. */
 function pastChats(ctx: JobContext) {
   const chatsCut = own(ctx, 'chats')
-  const trashCut = fixedCutoff(ctx.atMs, 'trash')
+  const trashCut = cut(ctx, 'chats', 'trash')
   return { where: 'c.last_at_ms < ? OR (c.deleted_at_ms IS NOT NULL AND c.deleted_at_ms < ?)', params: [chatsCut, trashCut] as SqlValue[], chatsCut, trashCut }
 }
 
@@ -99,7 +119,7 @@ export const chatCascade: RetentionJob = {
     if (ctx.sql) counts.BrandAgent = Object.values(countChatRows(ctx.sql, units)).reduce((a, b) => a + b, 0)
     // A busy chat is skipped, not waited on: `more` only when this run made progress, so a chat that stays busy can't
     // keep the handler coming back every minute.
-    return { counts, units, cutoffs: [{ store: 'chats', cutoffMs: past.chatsCut }, { store: 'chats:trash', cutoffMs: past.trashCut }], more: found.more && units.length > 0 }
+    return { counts, units, cutoffs: [logged('chats', 'own', past.chatsCut), logged('chats', 'trash', past.trashCut)], more: found.more && units.length > 0 }
   },
   async run(ctx, plan, round) {
     const past = pastChats(ctx)
@@ -134,16 +154,16 @@ const CALLS_ROUND = 45
 
 export const toolCallsSteps: RetentionJob = {
   async plan(ctx) {
-    const cut = own(ctx, 'tool_calls')
-    const found = await ids(ctx.db, "SELECT turn_id || ':' || n AS id FROM tool_calls WHERE at_ms < ? ORDER BY turn_id, n", [cut], ctx.limit)
-    return { counts: { tool_calls: found.units.length }, units: found.units, cutoffs: [{ store: 'tool_calls', cutoffMs: cut }], more: found.more }
+    const c = own(ctx, 'tool_calls')
+    const found = await ids(ctx.db, "SELECT turn_id || ':' || n AS id FROM tool_calls WHERE at_ms < ? ORDER BY turn_id, n", [c], ctx.limit)
+    return { counts: { tool_calls: found.units.length }, units: found.units, cutoffs: [logged('tool_calls', 'own', c)], more: found.more }
   },
   async run(ctx, plan, round) {
-    const cut = own(ctx, 'tool_calls')
+    const c = own(ctx, 'tool_calls')
     let n = 0
     for (const part of chunks(plan.units, CALLS_ROUND)) {
       const keys = part.map(u => { const i = u.lastIndexOf(':'); return [u.slice(0, i), Number(u.slice(i + 1))] as [string, number] })
-      const gone = await deleted(ctx.db, [{ store: 'tool_calls', stmt: stmt(`DELETE FROM tool_calls WHERE at_ms < ? AND (turn_id, n) IN (VALUES ${keys.map(() => '(?, ?)').join(', ')})`, cut, ...keys.flat()) }])
+      const gone = await deleted(ctx.db, [{ store: 'tool_calls', stmt: stmt(`DELETE FROM tool_calls WHERE at_ms < ? AND (turn_id, n) IN (VALUES ${keys.map(() => '(?, ?)').join(', ')})`, c, ...keys.flat()) }])
       n += gone.tool_calls ?? 0
       await round([{ store: 'tool_calls', ids: part, count: gone.tool_calls ?? 0 }])
     }
@@ -157,15 +177,15 @@ const FILES_ROUND = 50
 
 export const chatFilesTrash: RetentionJob = {
   async plan(ctx) {
-    const cut = fixedCutoff(ctx.atMs, 'trash')
-    const found = await ids(ctx.db, "SELECT f.id AS id FROM chat_files f JOIN library_marks m ON m.file_id = f.id AND m.source = 'chat' WHERE m.deleted_at_ms < ? ORDER BY f.id", [cut], ctx.limit)
-    return { counts: { chat_files: found.units.length, library_marks: found.units.length, 'files/': found.units.length }, units: found.units, cutoffs: [{ store: 'chat_files:trash', cutoffMs: cut }], more: found.more }
+    const c = cut(ctx, 'chat_files', 'trash')
+    const found = await ids(ctx.db, "SELECT f.id AS id FROM chat_files f JOIN library_marks m ON m.file_id = f.id AND m.source = 'chat' WHERE m.deleted_at_ms < ? ORDER BY f.id", [c], ctx.limit)
+    return { counts: { chat_files: found.units.length, library_marks: found.units.length, 'files/': found.units.length }, units: found.units, cutoffs: [logged('chat_files', 'trash', c)], more: found.more }
   },
   async run(ctx, plan, round) {
-    const cut = fixedCutoff(ctx.atMs, 'trash')
+    const c = cut(ctx, 'chat_files', 'trash')
     const removed: Record<string, number> = {}
     for (const part of chunks(plan.units, FILES_ROUND)) {
-      const files = await all<{ id: string; r2_key: string }>(ctx.db, stmt(`SELECT f.id, f.r2_key FROM chat_files f JOIN library_marks m ON m.file_id = f.id AND m.source = 'chat' WHERE m.deleted_at_ms < ? AND f.id IN (${marks(part.length)})`, cut, ...part))
+      const files = await all<{ id: string; r2_key: string }>(ctx.db, stmt(`SELECT f.id, f.r2_key FROM chat_files f JOIN library_marks m ON m.file_id = f.id AND m.source = 'chat' WHERE m.deleted_at_ms < ? AND f.id IN (${marks(part.length)})`, c, ...part))
       if (files.length === 0) continue
       const keys = files.map(f => f.r2_key)
       await deleteKeys(ctx.bucket, keys)
@@ -188,18 +208,18 @@ const RUNS_ROUND = 25
 export const brandAgentSteps: RetentionJob = {
   async plan(ctx) {
     if (!ctx.sql) throw new Error("retention: the BrandAgent's job runs only inside the object (TaskContext.sql)")
-    const cut = own(ctx, 'BrandAgent')
-    const found = endedRuns(ctx.sql, cut, ctx.limit)
+    const c = own(ctx, 'BrandAgent')
+    const found = endedRuns(ctx.sql, c, ctx.limit)
     const counts = countRunRows(ctx.sql, found.runIds)
-    return { counts: { BrandAgent: Object.values(counts).reduce((a, b) => a + b, 0) }, units: found.runIds, cutoffs: [{ store: 'BrandAgent', cutoffMs: cut }], more: found.more }
+    return { counts: { BrandAgent: Object.values(counts).reduce((a, b) => a + b, 0) }, units: found.runIds, cutoffs: [logged('BrandAgent', 'own', c)], more: found.more }
   },
   async run(ctx, plan, round) {
     if (!ctx.sql) throw new Error("retention: the BrandAgent's job runs only inside the object (TaskContext.sql)")
-    const cut = own(ctx, 'BrandAgent')
+    const c = own(ctx, 'BrandAgent')
     let n = 0
     for (const part of chunks(plan.units, RUNS_ROUND)) {
       // Still ended, still past the cutoff, still safe (re-read: a run is never revived, but a turn's hold may be).
-      const safe = new Set(endedRuns(ctx.sql, cut, Number.MAX_SAFE_INTEGER).runIds)
+      const safe = new Set(endedRuns(ctx.sql, c, Number.MAX_SAFE_INTEGER).runIds)
       const runs = part.filter(r => safe.has(r))
       const gone = Object.values(deleteRunRows(ctx.sql, runs)).reduce((a, b) => a + b, 0)
       n += gone
@@ -233,14 +253,14 @@ function byIds(store: string, idColumn: string, condition: (ctx: JobContext) => 
 
 /** A slot past the steps period, unless a today item still references it (0220's foreign key, no ON DELETE). */
 export const routineSlots = byIds('routine_slots', 'slot_key', ctx => {
-  const cut = own(ctx, 'routine_slots')
-  return { where: 'claimed_at_ms < ? AND NOT EXISTS (SELECT 1 FROM today_items t WHERE t.slot_key = routine_slots.slot_key)', params: [cut], cutoffs: [{ store: 'routine_slots', cutoffMs: cut }] }
+  const c = own(ctx, 'routine_slots')
+  return { where: 'claimed_at_ms < ? AND NOT EXISTS (SELECT 1 FROM today_items t WHERE t.slot_key = routine_slots.slot_key)', params: [c], cutoffs: [logged('routine_slots', 'own', c)] }
 })
 
 /** A forgotten fact 30 days after its last update; active and waiting facts never (config). */
 export const forgottenMemories = byIds('memories', 'n', ctx => {
-  const cut = fixedCutoff(ctx.atMs, 'forgottenMemory')
-  return { where: "status = 'forgotten' AND updated_at_ms < ?", params: [cut], cutoffs: [{ store: 'memories', cutoffMs: cut }] }
+  const c = cut(ctx, 'memories', 'forgotten')
+  return { where: "status = 'forgotten' AND updated_at_ms < ?", params: [c], cutoffs: [logged('memories', 'forgotten', c)] }
 })
 
 // ---------- notices, after their reads ----------
@@ -249,20 +269,20 @@ const NOTICES_ROUND = 90
 
 export const noticesSteps: RetentionJob = {
   async plan(ctx) {
-    const cut = own(ctx, 'notices')
-    const found = await ids(ctx.db, 'SELECT id FROM notices WHERE at_ms < ? ORDER BY id', [cut], ctx.limit)
+    const c = own(ctx, 'notices')
+    const found = await ids(ctx.db, 'SELECT id FROM notices WHERE at_ms < ? ORDER BY id', [c], ctx.limit)
     const reads = found.units.length === 0 ? 0 : await count(ctx.db, stmt(`SELECT COUNT(*) AS n FROM notice_reads WHERE notice_id IN (${marks(found.units.length)})`, ...found.units))
-    return { counts: { notices: found.units.length, notice_reads: reads }, units: found.units, cutoffs: [{ store: 'notices', cutoffMs: cut }], more: found.more }
+    return { counts: { notices: found.units.length, notice_reads: reads }, units: found.units, cutoffs: [logged('notices', 'own', c)], more: found.more }
   },
   async run(ctx, plan, round) {
-    const cut = own(ctx, 'notices')
+    const c = own(ctx, 'notices')
     const removed: Record<string, number> = {}
     for (const part of chunks(plan.units, NOTICES_ROUND)) {
       const old = `SELECT id FROM notices WHERE at_ms < ? AND id IN (${marks(part.length)})`
       const rows = await deleted(ctx.db, [
         // Reads first: notice_reads references notices.
-        { store: 'notice_reads', stmt: stmt(`DELETE FROM notice_reads WHERE notice_id IN (${old})`, cut, ...part) },
-        { store: 'notices', stmt: stmt(`DELETE FROM notices WHERE id IN (${old})`, cut, ...part) },
+        { store: 'notice_reads', stmt: stmt(`DELETE FROM notice_reads WHERE notice_id IN (${old})`, c, ...part) },
+        { store: 'notices', stmt: stmt(`DELETE FROM notices WHERE id IN (${old})`, c, ...part) },
       ])
       add(removed, rows)
       await round([{ store: 'notices', ids: part, count: rows.notices ?? 0 }, { store: 'notice_reads', count: rows.notice_reads ?? 0 }])
@@ -274,12 +294,12 @@ export const noticesSteps: RetentionJob = {
 // ---------- the Library: pending uploads after a day, the trash after 30 days ----------
 
 function libraryCondition(ctx: JobContext) {
-  const pendingCut = fixedCutoff(ctx.atMs, 'pendingUpload')
-  const trashCut = fixedCutoff(ctx.atMs, 'trash')
+  const pendingCut = cut(ctx, 'library_uploads', 'pending')
+  const trashCut = cut(ctx, 'library_uploads', 'trash')
   return {
     where: "(u.state = 'pending' AND u.created_at_ms < ?) OR EXISTS (SELECT 1 FROM library_marks m WHERE m.file_id = u.id AND m.source = 'upload' AND m.deleted_at_ms < ?)",
     params: [pendingCut, trashCut] as SqlValue[],
-    cutoffs: [{ store: 'library_uploads:pending', cutoffMs: pendingCut }, { store: 'library_uploads:trash', cutoffMs: trashCut }],
+    cutoffs: [logged('library_uploads', 'pending', pendingCut), logged('library_uploads', 'trash', trashCut)],
   }
 }
 

@@ -13,6 +13,7 @@
 // No handler sets or deletes the alarm: the scheduler owns it.
 import { runRetention, planRetention } from '../../ops/retention/retention.ts'
 import { periodsFor, retentionRules } from '../../ops/retention/rules.ts'
+import { SERVED_BY } from '../../ops/coverage/chat-watch-connectors/retention-jobs.ts'
 import { tables } from '../../ops/tables/index.ts'
 import type { TableEntry } from '../../ops/tables/types.ts'
 import type { KeyedBucket } from '../db/r2-keys.ts'
@@ -39,9 +40,12 @@ const COST = { d1: 30, r2: 12 }
 const CHATS_COST = { d1: 30, r2: 4 * CHATS_LIMIT + 6 }
 const LIMIT = 90
 
-/** Every store retention acts on, in registry order: a `retention_period` entry that isn't derived, or a custom rule. */
+/**
+ * Every store retention acts on, in registry order: a `retention_period` entry that isn't derived, or a custom rule;
+ * never one another store's job serves (a chat's messages go with the chats run), so an empty run isn't logged twice.
+ */
 export function retentionStores(registry: readonly TableEntry[] = tables): TableEntry[] {
-  return registry.filter(e => !e.derived && (e.retention === 'retention_period' || retentionRules[e.name]?.kind === 'custom'))
+  return registry.filter(e => !e.derived && SERVED_BY[e.name] === undefined && (e.retention === 'retention_period' || retentionRules[e.name]?.kind === 'custom'))
 }
 
 /** A D1 database and a bucket that count what they're asked to do. */
@@ -79,10 +83,15 @@ export interface PassInput {
   registry?: readonly TableEntry[]
 }
 
-/** One bounded pass, store by store from `from`: where it stopped (`stores.length` when it finished) and what it used. */
-export async function retentionPass(input: PassInput): Promise<{ stores: number; reached: number; used: { d1: number; r2: number } }> {
+/**
+ * One bounded pass, store by store from `from`: where it stopped (`stores.length` when it finished), what it used, and
+ * the stores that failed. A failing store is logged (`retention_failed`, its name and the error's safe name) and the
+ * pass goes on: one broken store never stops the others (#346 review M1); its freshness signal stays red.
+ */
+export async function retentionPass(input: PassInput): Promise<{ stores: number; reached: number; used: { d1: number; r2: number }; failed: string[] }> {
   const stores = retentionStores(input.registry)
   const { db, bucket, used } = counting(input.db, input.bucket)
+  const failed: string[] = []
   let from = input.from
   for (; from < stores.length; from++) {
     const entry = stores[from]
@@ -90,11 +99,16 @@ export async function retentionPass(input: PassInput): Promise<{ stores: number;
     if (used.d1 + cost.d1 > MAX_D1 || used.r2 + cost.r2 > MAX_R2) break
     const registry = [entry]
     const deps = { db, bucket, sql: input.sql, at: { actorId: SYSTEM_MEMBER_ID, requestId: input.requestId, nowMs: input.nowMs }, registry }
-    const plan = await planRetention(deps, { periods: periodsFor(registry), limit: entry.name === 'chats' ? CHATS_LIMIT : LIMIT })
-    const result = await runRetention(deps, plan, { maxRounds: 3 })
-    if (result.more) break
+    try {
+      const plan = await planRetention(deps, { periods: periodsFor(registry), limit: entry.name === 'chats' ? CHATS_LIMIT : LIMIT })
+      const result = await runRetention(deps, plan, { maxRounds: 3 })
+      if (result.more) break
+    } catch (err) {
+      failed.push(entry.name)
+      console.error({ event: 'retention_failed', store: entry.name, error: safeError(err) })
+    }
   }
-  return { stores: stores.length, reached: from, used }
+  return { stores: stores.length, reached: from, used, failed }
 }
 
 export interface RetentionTaskOptions {
@@ -109,7 +123,7 @@ export function createRetentionTask(opts: RetentionTaskOptions = {}): TaskHandle
       const from = task.id === RETENTION_MORE_ID ? resumeAt(task.payload) : 0
       const pass = await retentionPass({ db: ctx.env.DB, bucket: ctx.env.FILES, sql: ctx.sql, nowMs: ctx.nowMs, requestId: `retention-${task.id}`, from, registry: opts.registry })
       if (pass.reached < pass.stores) ctx.scheduler.schedule({ id: RETENTION_MORE_ID, kind: RETENTION_TASK_ID, dueAtMs: ctx.nowMs + MORE_AFTER_MS, payload: { from: pass.reached } })
-      console.log({ event: 'retention_done', taskId: task.id, stores: pass.stores, reached: pass.reached, d1: pass.used.d1, r2: pass.used.r2 })
+      console.log({ event: 'retention_done', taskId: task.id, stores: pass.stores, reached: pass.reached, failed: pass.failed.length, d1: pass.used.d1, r2: pass.used.r2 })
     } catch (err) {
       console.error({ event: 'retention_failed', taskId: task.id, error: safeError(err) })
     }

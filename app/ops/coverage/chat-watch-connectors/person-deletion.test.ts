@@ -236,7 +236,8 @@ describe('what it refuses (failures 4 and 5)', () => {
     const after = await snapshotAll(db, bucket)
     expect(comparable(after, w)).toEqual(comparable(before, w))
     const mine = (await listDeletionLog(bucket)).filter(e => e.entry.memberId === w.p).map(e => [e.entry.phase, e.entry.reason])
-    expect(mine).toEqual([['start', undefined], ['refused', 'busy']])
+    // Not `refused`: the member row is pseudonymised already, so R's replay repeats the run (#346 review M4).
+    expect(mine).toEqual([['start', undefined], ['stopped_after_pseudonymise', 'busy']])
     w.agent.busy.delete(w.p)
     const again = await runPersonDeletion(deps({ brandAgent: w.agent }), await planOk(deps({ brandAgent: w.agent }), w.p))
     expect('ok' in again).toBe(true)
