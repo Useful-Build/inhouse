@@ -166,11 +166,14 @@ skill before any UI change. Repo specifics:
   `0200`-`0240`. Library downloads are attachments with `nosniff` and `Content-Security-Policy: sandbox`.
 - **Routines run as `m_system`.** A routine's turn is submitted as the shared `m_system` service member
   (`server/routines/render.ts`), with the routine id and the creator recorded on the run. There is no per-routine
-  principal. Routines read brand memory, never a person's. The BrandAgent object keeps three test-only RPC methods
-  (`testRunAlarm`, `testStopAfterBatch`, `testSeedCursor`) that are throwing stubs outside the test build
-  (`check-product-build.mjs` scans for them). Add no others.
-- **Prompts** live in `app/server/prompt/` (orchestrator only). Eval results are versioned under `app/evals/results/`
-  and kept, never deleted. A prompt change runs the eval suite and the morning-check set
+  principal. Routines read brand memory, never a person's. The BrandAgent object has three test-only RPC methods
+  (`testRunAlarm`, `testStopAfterBatch`, `testSeedCursor`, `brand-agent/index.ts:92-106`). They are real methods that
+  delegate to `@test-controls`; outside the test build that is the off module `test-controls-off.ts`, which throws.
+  `check-product-build.mjs` proves the real module and its canary (`TEST_CONTROLS_CANARY`) are absent from the
+  deployable Worker; it doesn't scan for the method names. Add no others.
+- **Prompts** live in `app/server/prompt/` (orchestrator only). Eval results are versioned and kept, never deleted:
+  morning-check results in `app/evals/morning-check/results/<date>-<sha>.json`, other eval results in
+  `app/evals/results/`. A prompt change runs the eval suite and the morning-check set
   (`app/evals/morning-check/`, steps in the `verify` skill), and its PR carries the results.
 - **Previews:** every same-repo PR (not Dependabot's) gets a Workers Preview once `ci` passes (`preview.yml`, trusted
   code from `main` in environment `preview`), and one PR comment with its preview URL, its fixed deployment URL and
