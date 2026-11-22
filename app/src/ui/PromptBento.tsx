@@ -30,13 +30,13 @@ export function PromptBento({ suggestions, tools, onAsk, showRoutine = true, cla
   const routine = suggestions.find(isRoutinePrompt)
   const cards = suggestions.filter(q => !isRoutinePrompt(q))
   return (
-    <div className={cn('flex w-full flex-col gap-2.5', className)}>
+    <div data-prompt-bento className={cn('flex w-full flex-col gap-2.5', className)}>
       {cards.length > 0 && (
         <div className={cn('grid grid-cols-1 gap-2.5', cards.length === 2 ? 'sm:grid-cols-2' : cards.length >= 3 && 'sm:grid-cols-3')}>
           {cards.map(q => {
             const { category, logos } = promptMeta(q, tools)
             return (
-              <button key={q} type="button" onClick={() => onAsk(q)}
+              <button key={q} type="button" data-prompt-card onClick={() => onAsk(q)}
                 className="group flex flex-col gap-3 rounded-2xl border border-border bg-card p-4 text-left shadow-card transition hover:border-brand/35 hover:shadow-float">
                 {logos.length > 0 && (
                   <span aria-hidden="true" className="flex items-center">
@@ -54,7 +54,7 @@ export function PromptBento({ suggestions, tools, onAsk, showRoutine = true, cla
         </div>
       )}
       {showRoutine && routine && (
-        <button type="button" onClick={() => onAsk(routine)}
+        <button type="button" data-prompt-routine onClick={() => onAsk(routine)}
           className="group flex w-full flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border border-border bg-card px-4 py-3 text-left shadow-card transition hover:border-brand/35 hover:shadow-float sm:flex-nowrap">
           <span aria-hidden="true" className="inline-flex h-6 flex-none items-center gap-1.5 rounded-md bg-brand-tint px-2 text-xs font-semibold text-brand-text">
             <Icon name="event_repeat" size={14} />Routine
