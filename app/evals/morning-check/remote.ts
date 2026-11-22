@@ -9,6 +9,7 @@
 import type { MemoryDoor } from '../targets/door.ts'
 import type { MorningDoor } from './door.ts'
 import type { RunnerEnv } from './runner.ts'
+import { promptVersionSent } from '../prompt-version.ts'
 
 export interface RemoteDeps {
   door: MorningDoor
@@ -33,6 +34,11 @@ export interface RemoteDeps {
    * the turns ran on and a run whose slots ran on another model than --model stops. The scripted proof's spec leaves it out.
    */
   checkModel?: boolean
+  /**
+   * run.mjs sets it (P5 #337): route 33's `promptVersions` for a turn (the trace's field as read, unchecked). Each case's
+   * turn is then checked to have been sent the system prompt v3 (runner.ts promptOf). The scripted proof's spec leaves it out.
+   */
+  promptVersions?: (turnId: string) => Promise<unknown>
   /** The graded run's check before each case (gradedRun's beforeCase): a reason stops the run there. */
   beforeCase?: () => Promise<string | null>
 }
@@ -161,6 +167,12 @@ export function remoteEnv(d: RemoteDeps): RunnerEnv {
   return {
     ...(d.defaultModel ? { beforeCases: d.defaultModel } : {}),
     ...(d.checkModel ? { modelOf: (slotKey: string) => d.door.model(slotKey) } : {}),
+    ...(d.promptVersions ? {
+      promptOf: async (slotKey: string) => {
+        const turnId = (await d.door.slot(slotKey))?.turn_id ?? null
+        return turnId === null ? null : promptVersionSent(await d.promptVersions!(turnId))
+      },
+    } : {}),
     ...(d.beforeCase ? { beforeCase: d.beforeCase } : {}),
     nowMs: d.nowMs,
     useShop: host => d.door.setShop(host),

@@ -12,6 +12,7 @@
 //   - a case whose grading needs something no route shows is "not graded on product" (`unobservable`), with the reason named;
 //   - cost is the server's settled figure for the turn (route 33's `cost`, whole cents), never the SDK's estimate.
 // Cases run one at a time: the brand's memory is shared, so a concurrent case would read another's seeded facts.
+import { GRADED_PROMPT_VERSION, promptVersionSent } from '../prompt-version.ts'
 import { mintPerson } from '../../server/auth/test-issuer-mint.ts'
 import { SEED_PEOPLE } from '../../server/seed/brand.ts'
 import { CancelWhySchema, TurnFailureSchema } from '../../shared/contract/runs.ts'
@@ -530,7 +531,11 @@ function productSession(d: SessionDeps): Session {
         return JSON.stringify(seeded) === JSON.stringify(c.input) ? c : { ...c, seedInput: seeded }
       })
       for (const w of writes) if (!used.has(w)) toolCalls.push(w)
-      const runOk = answer !== '' && !sawError
+      // P5 (#337): the turn must have been sent the system prompt v3. The static v2 fallback, or no version recorded, fails
+      // the run with that reason (never a pass), so a broken prompt build can't be graded as v3.
+      const promptSent = promptVersionSent(trace.json.promptVersions)
+      if (promptSent !== GRADED_PROMPT_VERSION) failure ??= `prompt_version:${promptSent}`
+      const runOk = answer !== '' && !sawError && promptSent === GRADED_PROMPT_VERSION
       return { toolCalls, answer, runOk, usage: ZERO, costUsd, turnId, askedAs: d.askedAs, ...(runOk ? {} : { failure: failure ?? 'unknown' }) }
     },
     async settledCostUsd() {

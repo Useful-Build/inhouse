@@ -219,6 +219,40 @@ describe('the remote runner env', () => {
     expect(file.summary.thresholdMet).toBe(false)
   })
 
+  // P5 (#337): with promptVersions set (run.mjs: route 33's trace), each case keeps the system prompt version its turn was
+  // sent, and a turn not sent v3 (the static v2 fallback, or no version recorded) fails its case with that reason.
+  it('with promptVersions, a case whose turn was sent v3 passes as before and keeps prompt 3', async () => {
+    const { door } = fakes(false)
+    const slot = door.slot
+    door.slot = async (k: string) => ({ ...(await slot(k))!, turn_id: 't_AAAAAAAAAAAAAAAAAAAAAA' })
+    const asked: string[] = []
+    let now = 0
+    const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {}, promptVersions: async t => { asked.push(t); return [3] } })
+    const file = await runAll(env, twoCases(), meta)
+    expect(file.cases.map(c => [c.id, c.prompt, c.verdict.pass])).toEqual([['clean-empty', 3, true], ['outage-all', 3, false]])
+    expect(asked).toEqual(['t_AAAAAAAAAAAAAAAAAAAAAA', 't_AAAAAAAAAAAAAAAAAAAAAA'])
+  })
+
+  it('with promptVersions, a turn sent v2 or with none recorded fails its case naming why (never a pass)', async () => {
+    for (const [versions, sent] of [[[2], 2], [undefined, 'missing'], [[null], 'missing']] as const) {
+      const { door } = fakes(false)
+      const slot = door.slot
+      door.slot = async (k: string) => ({ ...(await slot(k))!, turn_id: 't_AAAAAAAAAAAAAAAAAAAAAA' })
+      let now = 0
+      const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {}, promptVersions: async () => versions })
+      const file = await runAll(env, [META.find(c => c.id === 'clean-empty')!], meta)
+      expect(file.cases[0], String(sent)).toMatchObject({ prompt: sent, verdict: { pass: false, reasons: [`prompt_version:${sent}: the turn was not sent the system prompt v3`] } })
+    }
+  })
+
+  it('with promptVersions, a slot with no turn reads no trace and keeps no prompt', async () => {
+    const { door } = fakes(false)
+    let now = 0
+    const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {}, promptVersions: async () => { throw new Error('trace read') } })
+    const file = await runAll(env, [META.find(c => c.id === 'clean-empty')!], meta)
+    expect(file.cases[0]!.prompt).toBeUndefined()
+  })
+
   it('without checkModel (the scripted proof\'s spec), no slot model is read nor kept', async () => {
     const { env, door } = fakes(false)
     door.model = async () => { throw new Error('model read') }

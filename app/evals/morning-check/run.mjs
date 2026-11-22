@@ -228,6 +228,12 @@ const env = door ? remoteEnv({
   caseTimeoutMs: Number(a['timeout-min']) * 60_000,
   settleMs: Number(a['settle-min']) * 60_000,
   checkModel: true,
+  // P5 (#337): each case's turn must have been sent the system prompt v3, read from route 33's trace as the person.
+  promptVersions: async turnId => {
+    const { status, text } = await http.send('GET', new URL(`/api/traces/${encodeURIComponent(turnId)}`, m.baseUrl), await personAuth())
+    if (status !== 200) throw new Error(`morning-check: the trace of ${turnId} could not be read (${status}), so its prompt version is unknown`)
+    return JSON.parse(text).promptVersions
+  },
   ...(graded ? { beforeCase: () => graded.beforeCase() } : {}),
   ...(m.modelSetting ? { defaultModel: () => ensureDefaultModel(settingsApi(), m.modelSetting.label) } : {}),
 }) : {

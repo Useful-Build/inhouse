@@ -8,6 +8,7 @@ import type { MorningCaseMeta } from './expected.ts'
 import { grade, summarise } from './grade.ts'
 import type { Fixed, Observed } from './grade.ts'
 import type { CaseResult, ResultFile } from './results.ts'
+import { GRADED_PROMPT_VERSION } from '../prompt-version.ts'
 
 export const ROUTINE_ID = 'routine-morning-check'
 export const TERMINAL = new Set(['ended', 'lost', 'missed', 'skipped', 'refused'])
@@ -65,6 +66,12 @@ export interface RunnerEnv {
    * routine runs on the brand's Default model, never on --model, so a mismatch would grade one model under another's name.
    */
   modelOf?(slotKey: string): Promise<string | null>
+  /**
+   * The remote mode only (run.mjs, P5 #337): the system prompt version a slot's turn was sent (route 33's trace), `missing`
+   * when the trace names none, or null when the slot has no turn. Set, runAll records it on the case (`prompt`), and a case
+   * whose turn wasn't sent v3 fails with that reason: the static v2 fallback is never graded as v3.
+   */
+  promptOf?(slotKey: string): Promise<number | 'missing' | null>
   /**
    * The graded run only (remote.ts gradedRun): before each case, a reason to stop there (its --budget spent, the cap
    * reached), or null. A reason stops the run with that case and the rest as `notRun`; so does a failure (the lease
@@ -197,6 +204,11 @@ export async function runAll(
           wrongModel = `${c.id} ran on ${ranOn}, not ${meta.model} (the brand's Default model decides a routine's model), so the run stops here`
           r = { ...r, verdict: { ...r.verdict, pass: false, reasons: [`ran on ${ranOn}, not ${meta.model}`, ...r.verdict.reasons] } }
         }
+      }
+      const sent = r.slotKey !== null && env.promptOf ? await env.promptOf(r.slotKey) : null
+      if (sent !== null) {
+        r = { ...r, prompt: sent }
+        if (sent !== GRADED_PROMPT_VERSION) r = { ...r, verdict: { ...r.verdict, pass: false, reasons: [`prompt_version:${sent}: the turn was not sent the system prompt v3`, ...r.verdict.reasons] } }
       }
     } catch (e) {
       // The case itself threw (the door or the build failed): clear the override, then fail loud with both causes.

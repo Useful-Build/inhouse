@@ -95,6 +95,8 @@ interface Server {
   spentMinor?: number
   /** The turn ends with no answer but an end row (route 24's `event` with `end`): a failure or a cancel reason. */
   endRow?: { failure?: string; why?: string; outcome?: string }
+  /** The trace's `promptVersions` (default [3], v3 sent); null leaves the field out (no version recorded). */
+  promptVersions?: (number | null)[] | null
 }
 const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } => {
   const s: Server = {
@@ -146,7 +148,10 @@ const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } 
       return json({ runId: 'r_CCCCCCCCCCCCCCCCCCCCCC', turnId, messageId: `${turnId}.u`, position: 'starting' }, 202)
     }
     if (url.pathname.startsWith('/api/traces/') && s.traceStatus && s.traceStatus !== 200) return json({ error: { code: 'unavailable' } }, s.traceStatus)
-    if (url.pathname.startsWith('/api/traces/')) return json({ cost: { minor: s.costMinor, currency: 'USD' }, steps: [{ kind: 'root', detail: '' }, ...s.steps] })
+    if (url.pathname.startsWith('/api/traces/')) {
+      const versions = s.promptVersions === undefined ? [3] : s.promptVersions
+      return json({ cost: { minor: s.costMinor, currency: 'USD' }, steps: [{ kind: 'root', detail: '' }, ...s.steps], ...(versions === null ? {} : { promptVersions: versions }) })
+    }
     if (url.pathname.startsWith('/api/chats/')) {
       const answered = ++polls > s.emptyPolls
       if (answered && s.endRow) return json({ messages: [{ role: 'user', turnId, pos: 0, text: 'q' }, { role: 'event', turnId, pos: 1, text: '', end: { retryQuestion: 'q', ...s.endRow } }], runs: [] })
@@ -850,6 +855,16 @@ describe('the baseline\'s harness faults', () => {
       const res = await session.chat('hi')
       expect(res, JSON.stringify(endRow)).toMatchObject({ runOk: false, answer: '', failure: cause, turnId: 't_BBBBBBBBBBBBBBBBBBBBBB' })
     }
+  })
+  // P5 (#337): every graded turn must have been sent the system prompt v3 (route 33's trace, promptVersions). A turn on the
+  // static v2 fallback, or with no version recorded, fails its run with that reason and is never graded as a pass.
+  it('a turn sent the v2 fallback, or with no version recorded, fails its run naming why; v3 passes', async () => {
+    for (const [promptVersions, failure] of [[[2], 'prompt_version:2'], [null, 'prompt_version:missing'], [[null], 'prompt_version:missing']] as const) {
+      const session = await make(server({ promptVersions: promptVersions === null ? null : [...promptVersions] }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
+      expect(await session.chat('hi'), JSON.stringify(promptVersions)).toMatchObject({ runOk: false, answer: 'Hello.', failure })
+    }
+    const ok = await make(server(), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
+    expect(await ok.chat('hi')).toMatchObject({ runOk: true, answer: 'Hello.' })
   })
   it('X01: an answer that is an error part names it as the cause', async () => {
     const session = await make(server({ answerParts: [{ type: 'error', text: 'model overloaded at https://x.example.test' }] }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
