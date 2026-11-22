@@ -29,7 +29,7 @@
     {
       "icon": "savings",
       "title": "Keep an eye on spend",
-      "text": "Usage shows what your Inhouse agent cost this month, by person, job, model and tool. Admins set the monthly cap in Settings. At the cap, your Inhouse agent pauses routines and jobs, and questions still work."
+      "text": "Usage shows what your Inhouse agent cost this month, by person, job, model and tool. Admins set the monthly cap in Settings. At the cap, your Inhouse agent pauses chats, routines and jobs until next month or until an admin raises the cap. Waiting drafts can still be approved."
     }
   ]
 }

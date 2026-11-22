@@ -186,7 +186,7 @@ export const byName = (data: AgentData, id: string) => data.people.members.find(
 export const firstName = (name: string) => name.trim().split(/\s+/)[0] ?? name
 
 /** A money field as typed in Settings ("$400", "1,200", "$0") as dollars, or null when it isn't an amount. */
-const dollarsIn = (v: string | undefined): number | null => {
+export const dollarsIn = (v: string | undefined): number | null => {
   if (v === undefined || !v.trim()) return null
   const n = Number(v.replace(/[$,\s%]/g, ''))
   return Number.isFinite(n) && n >= 0 ? n : null
@@ -204,7 +204,7 @@ export interface CapStatus {
   spent: Money
   cap: Money
   alertAt: number
-  /** Spend reached the cap: routines and jobs pause. */
+  /** Spend reached the cap: chats, routines and jobs pause. */
   reached: boolean
   /** The banner's line at the cap, from those values. */
   bannerText: string
@@ -218,7 +218,7 @@ export function capStatus(ctx: Ctx): CapStatus {
     spent, cap, alertAt,
     // The server's own answer when it judged the cap Settings shows now (Usage does the same); else spend against the cap.
     reached: ctx.data.usage.capReached !== undefined && ctx.data.usage.cap.minor === cap.minor ? ctx.data.usage.capReached : spent.minor >= cap.minor,
-    bannerText: `Your Inhouse agent has used ${fmtMoney(spent, display())} of ${fmtMoney(cap, display())} this month, so routines and jobs are paused. Questions still work, and waiting drafts can still be approved.`,
+    bannerText: `Your Inhouse agent has used ${fmtMoney(spent, display())} of ${fmtMoney(cap, display())} this month, so chats, routines and jobs are paused until next month or until an admin raises the cap. Waiting drafts can still be approved.`,
   }
 }
 
@@ -240,8 +240,8 @@ export function usageSummary(m: { total: Money; cap: Money; alertAt: number; dai
   const capNote = !thisMonth
     ? over ? `Closed at ${Math.round(total / cap * 100)}% of the cap.` : `Closed at ${pct} of the cap. Nothing was paused.`
     : reached
-      ? 'Cap reached today. Routines and jobs are paused until an admin raises it.'
-      : `Admins get an email at ${m.alertAt}%. Your Inhouse agent pauses routines and jobs at the cap.`
+      ? 'Cap reached today. Chats, routines and jobs are paused until next month or until an admin raises the cap.'
+      : `Admins get an email at ${m.alertAt}%. Your Inhouse agent pauses chats, routines and jobs at the cap.`
   return { hint, capNote }
 }
 
@@ -356,8 +356,8 @@ export function todayCopy(ctx: Ctx): TodayCopy {
     },
   ][S]
   let headSub = copy.headSub, headline = copy.headline
-  if (f.paused) headSub = 'Your Inhouse agent is paused, so routines, jobs and questions are stopped.'
-  if (f.cap) headSub = 'Routines and jobs are paused at the spending cap. Drafts already waiting can still be approved.'
+  if (f.paused) headSub = 'Your Inhouse agent is paused, so chats, routines and jobs are stopped until an admin resumes it. Waiting drafts can still be approved.'
+  if (f.cap) headSub = 'Chats, routines and jobs are paused until next month or until an admin raises the cap. Drafts already waiting can still be approved.'
   if (f.isFirst) { headline = 'Your Inhouse agent is being set up.'; headSub = 'Your Inhouse team connects each tool for you. There is nothing to install.' }
   if (f.isLoading) { headline = 'Your Inhouse agent is reading your tools.'; headSub = 'The morning check takes about two minutes. Your list appears as soon as it finishes.' }
   const first = firstName(userName(ctx))
