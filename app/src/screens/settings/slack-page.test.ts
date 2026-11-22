@@ -91,3 +91,24 @@ describe("the demo agent's channel list", () => {
     expect(await agent.listNotifyChannels()).toEqual(saved)
   })
 })
+
+describe('Slack notices only with Slack connected (CI round)', async () => {
+  const { MENU, hasSlack, menuFor } = await import('./menu')
+  const tabs = (m: typeof MENU) => m.flatMap(g => g.items.map(([k]) => k))
+  const none = { connected: ['shopify'], channels: [] }
+  it('a brand without Slack gets no menu row and no page; with it as a tool or a channel, both show', () => {
+    expect(hasSlack(none)).toBe(false)
+    expect(tabs(menuFor(none))).not.toContain('team-slack')
+    expect(tabs(menuFor(none)).length).toBe(tabs(MENU).length - 1)
+    for (const t of [{ connected: ['slack'], channels: [] }, { connected: [], channels: [{ key: 'slack' }] }]) {
+      expect(hasSlack(t)).toBe(true)
+      expect(tabs(menuFor(t))).toContain('team-slack')
+    }
+    const e = env(view().v)
+    const noSlack = { ...e, data: { ...e.data, tools: { ...e.data.tools, connected: ['shopify'], channels: [] } } }
+    const p = settingsPage('team-slack', noSlack)
+    expect(p.title).not.toBe('Slack notices')
+    expect(JSON.stringify(p)).not.toContain('Slack')
+    expect(settingsPage('team-slack', e).title).toBe('Slack notices')
+  })
+})

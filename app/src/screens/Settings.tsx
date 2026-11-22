@@ -22,7 +22,7 @@ import { useNotifyChannels } from './settings/notify-channels'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { PHOTO_MAX_BYTES, PHOTO_TYPES, PhotoDecodeError, squarePhoto } from '../ui/photo'
-import { MENU, checkField, settingsPage } from './settings/content'
+import { checkField, hasSlack, menuFor, settingsPage } from './settings/content'
 import { useTheme } from '@/lib/theme'
 import { saveBlob } from '@/lib/save-file'
 import type { Env, FieldType, Row } from './settings/content'
@@ -270,7 +270,7 @@ export function Settings() {
   }, [setTab, phone])
 
   // P5 W4: the Slack notices page reads its channels while it's open; an Admin or the Inhouse team also reads the picker.
-  const notify = useNotifyChannels(setTab === 'team-slack', mayEditNotify(me?.can))
+  const notify = useNotifyChannels(setTab === 'team-slack' && hasSlack(data.tools), mayEditNotify(me?.can))
   const pick = (k: string) => ui.patch({ setTab: k, setMenu: false })
   const { theme, setTheme } = useTheme()
   const env: Env = {
@@ -308,6 +308,8 @@ export function Settings() {
     notify,
   }
   const page = settingsPage(setTab, env)
+  // P5 W4: Slack notices is listed only for a brand with Slack connected.
+  const menu = menuFor(data.tools)
   const readOnly = phone && setTab.startsWith('team-')
   // The note is for a page where a control became text; a page of buttons and plain facts has nothing to explain.
   const hidesControls = readOnly && page.sections.some(sec => sec.rows.some(r => r.kind === 'toggle' || r.kind === 'select' || r.kind === 'text' || r.kind === 'mode'))
@@ -318,7 +320,7 @@ export function Settings() {
   const found = (() => {
     if (!needle) return null
     const hits = new Map<string, string[]>()
-    for (const g of MENU) for (const [k, , label] of g.items) {
+    for (const g of menu) for (const [k, , label] of g.items) {
       const p = settingsPage(k, env)
       const rows = p.sections.flatMap(sec => sec.rows).filter(r => `${r.title} ${r.desc} ${r.keywords ?? ''}`.toLowerCase().includes(needle)).map(r => r.title)
       const pageHit = `${label} ${p.title}`.toLowerCase().includes(needle)
@@ -333,7 +335,7 @@ export function Settings() {
       <nav aria-label="Settings" className={`box-border flex-none pt-3.5 ${phone ? 'w-full px-(--app-pad-x) pb-14' : 'w-settings-nav overflow-y-auto pr-3.5 pb-7.5 pl-6'}`}>
         {phone && <PageHeader title="Settings" className="mb-4" />}
         <SearchBox value={query} onChange={setQuery} placeholder="Search settings" label="Search settings" />
-        {MENU.map(g => {
+        {menu.map(g => {
           const items = g.items.filter(([k]) => !found || found.has(k))
           if (items.length === 0) return null
           return (

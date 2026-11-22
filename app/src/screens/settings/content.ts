@@ -100,7 +100,8 @@ const themeFromLabel = (label: string) => (Object.keys(THEME_LABELS) as Theme[])
 const ROLE_NAMES = { admin: 'Admin', member: 'Member', inhouse: 'Inhouse team' } as const
 const RETENTION = ['3 months', '6 months', '12 months', '24 months', 'Until deleted']
 
-export { MENU } from './menu'
+export { MENU, hasSlack, menuFor } from './menu'
+import { hasSlack } from './menu'
 
 export interface Env {
   S: StageIndex
@@ -375,6 +376,6 @@ export function settingsPage(tab: string, env: Env): Page {
     ] },
   }
   // P5 W4: built only when it's asked for, from what Settings.tsx read.
-  if (tab === 'team-slack') return slackPage(env.notify)
+  if (tab === 'team-slack' && hasSlack(data.tools)) return slackPage(env.notify)
   return Object.hasOwn(pages, tab) ? pages[tab] : pages['you-general']
 }
