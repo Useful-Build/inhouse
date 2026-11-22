@@ -19,7 +19,7 @@ import { openStores } from '../db/stores.ts'
 import { lastLineId, linesSince } from '../db/test-support.ts'
 import { routes as committed } from '../routes.ts'
 import type { Route } from '../routes.ts'
-import { approveBrandMemory, listWaitingMemory } from './memory-approvals.ts'
+import { approveBrandMemory, listWaitingMemory, waitingLimit } from './memory-approvals.ts'
 
 const db = env.DB
 const NOW = 1_800_000_000_000
@@ -174,5 +174,14 @@ describe('route 78, PUT /api/memory/brand/:id/approved (failures 1, 3 and 4)', (
       expect((await decide(person(ADMIN, 'admin'), F.waitOld, body)).status, JSON.stringify(body)).toBe(400)
     }
     expect(await row(F.waitOld)).toEqual({ status: 'waiting', rev: 1 })
+  })
+})
+
+describe("the waiting list's limit is clamped (A10)", () => {
+  it('1 to 200, whatever a caller passes; a non-number throws', () => {
+    for (const [n, want] of [[200, 200], [201, 200], [1e12, 200], [Number.MAX_SAFE_INTEGER, 200], [1, 1], [0, 1], [-5, 1], [0.5, 1], [57.9, 57]] as const) {
+      expect(waitingLimit(n), String(n)).toBe(want)
+    }
+    for (const n of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) expect(() => waitingLimit(n), String(n)).toThrow()
   })
 })
