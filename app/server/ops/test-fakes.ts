@@ -24,6 +24,8 @@
 // - `systemNotice`: { notice }: sendSystemNotice(env, notice) with the real env. Answers its SystemNoticeResult.
 // - `logs`: { since?: { product?, hub? } }: the captured log lines of this isolate and the hub's. Answers
 //   `{ lines: [{ worker: 'product' | 'hub', line }], next: { product, hub } }`: the product's lines, then the hub's.
+//   "This isolate" is the Worker request's: the BrandAgent's lines are in it only locally (one isolate for the Worker
+//   and the object). On the remote per-PR deploy the object may run in another isolate, so its lines may be missing.
 // - `transcripts`: the R2 session store's objects (`sessions/`, the runner's transcripts) as texts. Answers `{ texts }`.
 //   Empty in the local test build (no container writes a session); filled on the per-PR remote deploy.
 import { z } from 'zod'
@@ -96,7 +98,9 @@ export function installLogCapture(): void {
   }
 }
 // In the test build, from the isolate's start (this module loads with the Worker entry, which the BrandAgent's class is
-// exported from, so locally the object's lines land in the same buffer). Tests install it themselves.
+// exported from, so locally, where the Worker and the object share one isolate, the object's lines land in the same
+// buffer). Only locally: on the remote per-PR deploy the BrandAgent may run in another isolate, and `logs` (which runs in
+// the Worker request) may then miss its lines. Tests install it themselves.
 if (__INHOUSE_TEST_BUILD__) installLogCapture()
 
 export function productLogs(since = 0): { lines: string[]; next: number } {

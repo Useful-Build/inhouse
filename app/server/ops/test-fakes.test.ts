@@ -124,6 +124,14 @@ describe('route 76 in the test build (failures 2 and 3)', () => {
     vi.restoreAllMocks()
   })
 
+  it('reaches R2 from the Worker request although the handler\'s env has no FILES (transcripts: 200, texts an array)', async () => {
+    quiet()
+    const res = await setup({ compiled: true, flag: '1' })({ headers: await release(), body: JSON.stringify({ op: 'transcripts' }) })
+    expect(res.status).toBe(200)
+    expect(Array.isArray((await bodyOf(res)).texts)).toBe(true)
+    vi.restoreAllMocks()
+  })
+
   it('a body that isn\'t JSON, isn\'t { op }, names an unknown op or a malformed one: 400 invalid', async () => {
     quiet()
     const call = setup({ compiled: true, flag: '1' })
