@@ -25,8 +25,8 @@ No entry is `Covered: gap`. Not checked by any spec, or only in part:
 Today: needs-you cards
   Path:     Today
   Selector: article cards (two columns on desktop, one on a phone), "Urgent" pill, draft sheet, button "Review draft" or "{cta}"
-  Expected: only the title, the composer and the Needs you cards show, at every stage; no card cuts text; a waiting card shows its draft on the brand-tint sheet (kind, risk, title, one summary line); approved, handled and Watch cards show the status line instead, muted, with no Urgent pill
-  Covered:  e2e/dots-and-today.spec.ts, e2e/today-approvals.spec.ts
+  Expected: only the title, the composer and the Needs you cards show, at every stage; no card cuts text; a waiting card shows its draft on the slate-sapphire sheet (kind, risk, title, one summary line); approved, handled and Watch cards show the status line instead, muted, with no Urgent pill; with zero problems and tools connected, shows connected tools (no status dots) and prompt cards instead of the set-aside message; in Run, the overnight handled strip shows only when at least one job was handled
+  Covered:  e2e/dots-and-today.spec.ts, e2e/today-approvals.spec.ts, src/state/today-empty.test.ts
 
 Today: snooze and dismiss
   Path:     Today -> card "···" menu -> Snooze or Dismiss
@@ -133,7 +133,7 @@ Chat: answer actions
 Chat: steps, sources and the answer's own cards
   Path:     a finished answer in a chat (`#/chats/stuck`)
   Selector: `[data-steps]` (its button, aria-expanded, and Details), `[data-steps-meta]`, `[data-sources]`, `[data-approval]`
-  Expected: a finished answer has a collapsed steps line above its card ("Checked Shopify and ShipBob · 6 steps", or "3 steps" with no check when no connected tool was read; a step that saved or sent something is not "checked") that opens, in place, each step with its tool logo and time, ending with the mode, duration and time and a Details link to the trace window; the card ends with one quiet sources pill ("{N} sources", chevron) that opens a plain list, with no numbered chips and no pill when the answer cites nothing; a draft to approve is its own card after the answer's card; a chat with messages has no dot grid (Today and an empty new chat keep it); the chat column is 880px
+  Expected: a finished answer has a collapsed steps line above its card ("Checked Shopify and ShipBob · 6 steps", or "3 steps" with no check when no connected tool was read; a step that saved or sent something is not "checked") that opens, in place, each step with its tool logo and time, ending with the mode, duration and time and a Details link to the trace window; the card ends with one quiet sources pill ("{N} sources", chevron) that opens a plain list, with no numbered chips and no pill when the answer cites nothing; a draft to approve is its own card after the answer's card; full-shell Skyspace runs hero intensity on Today and blank New chat (with centered composer, 3-column Bento prompt cards and Routine dock) and softly dims behind messages in an active chat; the chat column is 880px
   Covered:  e2e/conversation.spec.ts, e2e/sample-data.spec.ts, e2e/conversation-polish.spec.ts, e2e/dots-and-today.spec.ts, e2e/dots-and-today-phone.spec.ts
 
 Chat: queue and edit
@@ -404,8 +404,8 @@ Palette: Report a bug
 
 Sidebar
   Path:     sidebar -> collapse
-  Selector: nav "Main": Today, Approvals (count), Activity, then group "Your agent" (Routines, Skills, Tools, Library); Recent chats; the account row; rail tooltips
-  Expected: two sections, the second labelled and announced as a group; no team card, no Tools/Skills/Usage list at the bottom; the rail shows group 1, a divider, group 2 and the avatar; the account row is selected on Settings and Usage; collapses to a rail, stays collapsed after a reload, expands with the shortcut
+  Selector: Search row (`⌘K` / `Ctrl+K`) above nav "Main": Today, Approvals (count), Activity, then group "Your agent" (Routines, Skills, Tools, Library); Recent chats; the account row; rail tooltips
+  Expected: Search opens the command palette from the expanded sidebar (and rail/phone drawer), keeping the top bar uncluttered; two nav sections, the second labelled and announced as a group; no team card, no Tools/Skills/Usage list at the bottom; the rail shows group 1, a divider, group 2 and the avatar; the account row is selected on Settings and Usage; collapses to a rail, stays collapsed after a reload, expands with the shortcut
   Covered:  e2e/navigation.spec.ts, e2e/models-and-scroll.spec.ts, e2e/help-account-menu.spec.ts, e2e/library.spec.ts
 
 Account menu
