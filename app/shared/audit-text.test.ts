@@ -191,3 +191,10 @@ describe('P5 (p5-w1): connect lines', () => {
     expect(auditText({ action: 'tools.connect', accountId: 'notes:test', outcome: 'rate_limited' }, names)).toEqual({ what: 'couldn’t connect a tool', detail: 'notes:test: rate_limited' })
   })
 })
+
+describe('P5 (p5-w4): a notice to a channel that is not listed', () => {
+  it('reads in plain words and names no channel', () => {
+    const line = { action: 'notify.send', source: 'agent', runId: 'r_AAAAAAAAAAAAAAAAAAAAAA', kind: 'slack', target: 'unlisted', outcome: 'refused', detail: 'not_listed', textLength: 12, noticeSha256: 'ab'.repeat(32) } as const
+    expect(auditText(line, names)).toEqual({ what: 'a notice didn’t go out', detail: 'Slack: a channel that isn’t listed' })
+  })
+})

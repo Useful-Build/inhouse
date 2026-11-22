@@ -367,6 +367,14 @@ describe('P5 (p5-w4): notice lines carry ids, closed codes, a length and a hash 
     expect(okLine({ ...send, source: 'approvals', runId: undefined, systemKey: 'p6:n_1:2026112109', noticeKind: 'approval_waiting', kind: 'bell', target: 'admins', outcome: 'posted', detail: undefined })).toBe(true)
     expect(okLine({ action: 'notify.channels', added: ['C0TEST0001'], removed: ['C0TEST0002'], alerts: null })).toBe(true)
   })
+  it("takes 'unlisted' as a target, never the agent's channel name", () => {
+    expect(okLine({ ...send, target: 'unlisted' })).toBe(true)
+    expect(okLine({ ...send, target: 'unlisted', kind: 'bell' })).toBe(false)
+    expect(okLine({ ...send, target: 'unlisted', outcome: 'posted', detail: undefined })).toBe(false)
+    expect(okLine({ ...send, target: '#design' })).toBe(false)
+    expect(okLine({ ...send, target: 'design' })).toBe(false)
+    expect(okLine({ ...send, target: 'unlisted:#design' })).toBe(false)
+  })
   it('refuses text, a DM or user id as a target, free-text detail and extra fields', () => {
     expect(okLine({ ...send, text: 'hello' })).toBe(false)
     expect(okLine({ ...send, title: 'Stock' })).toBe(false)

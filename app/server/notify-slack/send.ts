@@ -148,7 +148,7 @@ function auditLine(c: Common, kind: SendKind, target: string, outcome: 'posted' 
     textLength: Math.min(c.textLength, 2000),
     noticeSha256: c.sha,
   }
-  const targetRef = kind === 'slack' ? { kind: 'channel' as const, id: target } : target === 'admins' ? null : { kind: 'member' as const, id: target }
+  const targetRef = target === 'admins' || target === 'unlisted' ? null : kind === 'slack' ? { kind: 'channel' as const, id: target } : { kind: 'member' as const, id: target }
   return auditInsert({ atMs: c.ctx.nowMs, actorId: c.actorId, args, target: targetRef, requestId: c.ctx.requestId }, null)
 }
 
@@ -293,7 +293,8 @@ export async function notifyAgent(ctx: NotifyCtx, scope: AgentScope, input: Agen
     }
     for (const name of channels) {
       const l = byKey.get(channelKey(name))
-      if (l) lines.push(auditLine(c, 'slack', l.channelId, 'refused', bounded.reason))
+      // An unlisted name is audited as `unlisted`, never by the name: that's the agent's text.
+      lines.push(l ? auditLine(c, 'slack', l.channelId, 'refused', bounded.reason) : auditLine(c, 'slack', 'unlisted', 'refused', 'not_listed'))
       out.recipients.push({ kind: 'slack', to: name, outcome: 'refused', detail: l ? bounded.reason : 'not_listed' })
     }
     if (lines.length > 0) await batch(ctx.db, lines)
@@ -322,6 +323,8 @@ export async function notifyAgent(ctx: NotifyCtx, scope: AgentScope, input: Agen
   for (const name of channels) {
     const l = byKey.get(channelKey(name))
     if (!l) {
+      // Audited as `unlisted`, never by the name: that's the agent's text.
+      await batch(ctx.db, [auditLine(c, 'slack', 'unlisted', 'refused', 'not_listed')])
       out.recipients.push({ kind: 'slack', to: name, outcome: 'refused', detail: 'not_listed' })
       continue
     }
