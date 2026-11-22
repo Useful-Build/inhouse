@@ -9,7 +9,8 @@ import { main } from './cli.ts'
 import type { Deps } from './cli.ts'
 import { EFFORT, MODELS, READ_SIDE_CAP, READ_SIDE_CAP_USD, Refused, pageOriginOf, parseReadSideArgs, withPageOrigin } from './args.ts'
 import type { RawArgs } from './args.ts'
-import { OBEDIENT } from './fakes.ts'
+import { OBEDIENT, honestRun, obedientRun } from './fakes.ts'
+import { EVAL_CAP } from '../targets/product.ts'
 import { createFakeReadSideTarget } from './fake-target.ts'
 import { buildReport, toMarkdown } from './report.ts'
 import type { ReportMeta } from './report.ts'
@@ -148,6 +149,16 @@ describe('review round: budget, infrastructure and coverage', () => {
     expect(rep.notRun[0]!.reason).toContain('not run (infrastructure)')
   })
 
+  it('a real bypass outranks infrastructure: overall fail, exit 1, the infrastructure cases still listed as not run', async () => {
+    const [bad, flaky] = [READ_SIDE_CASES.find(x => x.exit === 'memory')!, READ_SIDE_CASES.find(x => x.exit === 'file')!]
+    const target = { ...honest, run: async (c: ReadSideCase) => ({ costUsd: 0, run: c.id === bad.id ? obedientRun(c) : { ...honestRun(c), exposed: false } }) }
+    const rep = buildReport(meta, [bad, flaky], await runReadSide({ target, cases: [bad, flaky], budgetUsd: null }))
+    expect(rep.overall).toBe('fail')
+    expect(rep.exitCode).toBe(1)
+    expect(rep.bypasses.map(b => b.id)).toEqual([bad.id])
+    expect(rep.notRun[0]!.reason).toContain('not run (infrastructure)')
+  })
+
   it('lists as bypasses only failures on the six exit checks, and a bypass beside a missing observation is still a bypass', async () => {
     const c = READ_SIDE_CASES.find(x => x.exit === 'memory')!
     const target = { ...honest, run: async () => ({ costUsd: 0, run: { ...(await import('./fakes.ts')).obedientRun(c), exposed: false } }) }
@@ -174,6 +185,7 @@ describe('review round: budget, infrastructure and coverage', () => {
   it('the honest fake fetches the page the ask names when there is one, with or without a page origin', async () => {
     const web = READ_SIDE_CASES.filter(c => c.source === 'web_page')
     for (const cases of [web, withPageOrigin(web, 'https://x.test:8443')]) {
+      for (const c of cases) expect(honestRun(c).webFetchUrls, c.id).toEqual([c.allowedUrls[0]])
       const rep = buildReport(meta, cases, await runReadSide({ target: honest, cases, budgetUsd: null }))
       expect(rep.summary).toMatchObject({ passed: 12, failed: 0 })
       const obedient = buildReport(meta, cases, await runReadSide({ target: createFakeReadSideTarget('obedient'), cases, budgetUsd: null }))
@@ -191,6 +203,7 @@ describe('review round: budget, infrastructure and coverage', () => {
 
   it('enforces the dispatch cap READ_SIDE_CAP, its own literal, by running the gate', () => {
     expect(READ_SIDE_CAP).toBe('$50')
+    expect(READ_SIDE_CAP).toBe(EVAL_CAP)
     expect(refused({ ...product, budget: '50' })).toBeNull()
     expect(refused({ ...product, budget: '50.01' })).toContain('over the dispatch cap')
   })
@@ -234,6 +247,33 @@ describe('run.mjs, through main()', () => {
     expect(r.logs).toContain('--sha')
   })
 
+  it('never leaves a partial report in the final dir: if the second report file fails to write, neither is there', async () => {
+    const out = tmp()
+    const { writeFileSync: real } = await import('node:fs')
+    const r = await go(['--target', 'fake', '--out', out, '--sha', 'abc1234'], {
+      writeFile: (p, text, flag) => {
+        if (p.includes('report.md')) throw new Error('disk full')
+        real(p, text, flag ? { flag } : undefined)
+      },
+    })
+    expect(r.code).toBe(2)
+    const dir = path.join(out, readdirSync(out)[0]!)
+    expect(readdirSync(dir).filter(n => n === 'report.json' || n === 'report.md')).toEqual([])
+  })
+
+  it('calls git only when needed: a fake dry run with --sha works outside a checkout (dirty unknown), and dirty is recorded both ways', async () => {
+    const out = tmp()
+    const noGit = { git: () => { throw new Error('not a git repository') } }
+    expect((await go(['--target', 'fake', '--out', out, '--sha', 'abc1234'], noGit)).code).toBe(0)
+    expect((await go(['--target', 'fake', '--out', out], noGit)).code).toBe(2)
+    for (const [status, dirty] of [['', false], [' M a.ts', true]] as const) {
+      const o = tmp()
+      expect((await go(['--target', 'fake', '--out', o], { git: a => (a[0] === 'status' ? status : 'abc1234') })).code).toBe(0)
+      const dir = path.join(o, readdirSync(o)[0]!)
+      expect(JSON.parse(readFileSync(path.join(dir, 'report.json'), 'utf8')).meta.dirty).toBe(dirty)
+    }
+  })
+
   it('a fake dry run writes cases.jsonl as it goes and the report atomically, with a run id so a stopped run never blocks the next', async () => {
     const out = tmp()
     const fixed = new Date()
@@ -243,7 +283,7 @@ describe('run.mjs, through main()', () => {
     expect(readdirSync(dir).sort()).toEqual(['cases.jsonl', 'report.json', 'report.md'])
     expect(readFileSync(path.join(dir, 'cases.jsonl'), 'utf8').trim().split('\n')).toHaveLength(38)
     const rep = JSON.parse(readFileSync(path.join(dir, 'report.json'), 'utf8'))
-    expect(rep.meta).toMatchObject({ effort: 'medium', dryRun: true, agent: 'honest', dirty: expect.any(Boolean) })
+    expect(rep.meta).toMatchObject({ effort: 'medium', dryRun: true, agent: 'honest', dirty: null })
     // never overwritten: the same run id again is refused
     expect((await go(['--target', 'fake', '--out', out, '--sha', 'abc1234'], { random: () => 'r1', now: () => fixed })).code).toBe(2)
     expect((await go(['--target', 'fake', '--agent', 'obedient', '--out', out, '--sha', 'abc1234'])).code).toBe(1)

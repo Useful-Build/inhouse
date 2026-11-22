@@ -18,9 +18,12 @@ export interface Deps {
   random: () => string
   /** `git <args>` in the checkout; throws when it fails. */
   git: (args: string[]) => string
+  /** Writes a file; `flag` 'wx' refuses to overwrite. */
+  writeFile: (path: string, text: string, flag?: string) => void
 }
 
 const defaults: Deps = {
+  writeFile: (p, text, flag) => writeFileSync(p, text, flag ? { flag } : undefined),
   log: m => console.log(m),
   err: m => console.error(m),
   now: () => new Date(),
@@ -45,11 +48,13 @@ export async function main(argv: string[], over: Partial<Deps> = {}): Promise<nu
       },
     })
     const args = parseReadSideArgs(values)
-    const head = d.git(['rev-parse', '--short', 'HEAD'])
+    // git is called only when needed: on the product target (the sha must be HEAD, and the checkout's state is recorded) or when
+    // there is no --sha. A fake dry run with --sha works outside a checkout; its `dirty` is then unknown (null).
+    const head = args.target === 'product' || args.sha === null ? d.git(['rev-parse', '--short', 'HEAD']) : null
     if (args.target === 'product' && args.sha !== null && args.sha !== head) throw new Refused(`--sha ${args.sha} is not this checkout's HEAD (${head}): a product result is recorded against the code it ran`)
-    const sha = args.sha ?? head
+    const sha = args.sha ?? head!
     if (!/^[0-9a-f]{7,40}$/.test(sha)) throw new Refused('no git sha (pass --sha)')
-    const dirty = d.git(['status', '--porcelain']).trim() !== ''
+    const dirty = head === null ? null : d.git(['status', '--porcelain']).trim() !== ''
     const now = d.now()
     const date = now.toISOString().slice(0, 10)
     const label = args.target === 'fake' ? `fake-${args.agent}` : args.model
@@ -66,7 +71,7 @@ export async function main(argv: string[], over: Partial<Deps> = {}): Promise<nu
     mkdirSync(args.out, { recursive: true })
     mkdirSync(dir)
     const jsonl = path.join(dir, 'cases.jsonl')
-    writeFileSync(jsonl, '', { flag: 'wx' })
+    d.writeFile(jsonl, '', 'wx')
     let result
     try {
       result = await runReadSide({ target, cases: args.cases, budgetUsd: args.budgetUsd, onCase: e => appendFileSync(jsonl, `${JSON.stringify(e)}\n`) })
@@ -77,12 +82,10 @@ export async function main(argv: string[], over: Partial<Deps> = {}): Promise<nu
       { date, sha, target: args.target, ...(args.target === 'fake' ? { agent: args.agent } : {}), model: args.model, pageOrigin: args.pageOrigin, approvedCapUsd: args.budgetUsd, partial: args.partial, dirty },
       args.cases, result,
     )
-    // The report is written beside its final name and renamed into place, so a reader never sees half of it.
-    for (const [name, text] of [['report.json', `${JSON.stringify(report, null, 2)}\n`], ['report.md', `${toMarkdown(report)}\n`]] as const) {
-      const tmp = path.join(dir, `.${name}.tmp`)
-      writeFileSync(tmp, text, { flag: 'wx' })
-      renameSync(tmp, path.join(dir, name))
-    }
+    // Both files are written beside their final names, then both renamed into place: a failed write leaves no report in the dir.
+    const files = [['report.json', `${JSON.stringify(report, null, 2)}\n`], ['report.md', `${toMarkdown(report)}\n`]] as const
+    for (const [name, text] of files) d.writeFile(path.join(dir, `.${name}.tmp`), text, 'wx')
+    for (const [name] of files) renameSync(path.join(dir, `.${name}.tmp`), path.join(dir, name))
     d.log(`${report.overall}: ${report.summary.passed} passed, ${report.summary.failed} failed, ${report.summary.notRun} not run of ${report.summary.cases}. Report: ${dir}`)
     return report.exitCode
   } catch (e) {

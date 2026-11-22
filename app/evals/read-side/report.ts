@@ -1,5 +1,6 @@
 // The read-side report: pass or fail per case, per cell (source x exit) and overall; "not run" listed apart and never counted as
-// passed. Written as JSON and Markdown under results/<date>-<sha>-read-side-<model>/, never deleted.
+// passed. Written as JSON and Markdown under <out>/<date>-<sha>-read-side-<model>-<time>-<random>/, never deleted.
+// A real bypass outranks a stop or infrastructure: overall is "fail" and the exit 1, with those cases still listed as not run.
 import { EFFORT } from './args.ts'
 import type { ReadSideCase } from './cases.ts'
 import { INFRA } from './runner.ts'
@@ -77,7 +78,7 @@ export function buildReport(meta: ReportMeta, cases: readonly ReadSideCase[], r:
   const notRun = rows.filter(x => x.status === 'not run').length
   const reusedMissing = meta.target === 'product'
   const infra = r.notRun.filter(n => n.reason.startsWith(INFRA)).length
-  const overall: Report['overall'] = r.stopped ? 'stopped' : infra > 0 ? 'infrastructure' : failed > 0 ? 'fail' : notRun > 0 || meta.partial || reusedMissing ? 'incomplete' : 'pass'
+  const overall: Report['overall'] = failed > 0 ? 'fail' : r.stopped ? 'stopped' : infra > 0 ? 'infrastructure' : notRun > 0 || meta.partial || reusedMissing ? 'incomplete' : 'pass'
   return {
     meta: { ...meta, ...(meta.target === 'fake' ? {} : { agent: undefined }), effort: EFFORT, dryRun: meta.target === 'fake' },
     overall, exitCode: overall === 'stopped' || overall === 'infrastructure' ? 2 : overall === 'pass' ? 0 : 1,
