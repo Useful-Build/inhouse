@@ -47,10 +47,13 @@ export const lostTool = (ctx: Ctx): { key: string; since: Instant } | null => {
   return null
 }
 /**
- * Day one: the agent's data has arrived and no tool is connected yet, so it has nothing to read. Today lists the setup
- * instead of problems. A client that is still loading isn't there yet: it doesn't know its tools.
+ * Day one: the agent's data has arrived, no tool is connected yet and the server holds nothing for Today (no cards, and no
+ * routine has run, a failed run included), so the agent has nothing to read. Today lists the setup instead of problems. A
+ * client that is still loading isn't there yet: it doesn't know its tools. The real client has no tools read until P5, so
+ * `connected` stays empty: what the server already holds for Today is what ends day one there.
  */
-export const isFirstDay = (data: AgentData): boolean => data.status === 'ready' && data.tools.connected.length === 0
+export const isFirstDay = (data: AgentData): boolean =>
+  data.status === 'ready' && data.tools.connected.length === 0 && data.problems.length === 0 && !data.routines.some(r => r.last !== undefined)
 /**
  * The tool the Inhouse team is connecting now (it has a `liveBy` date), with that date as shown ("Fri, Nov 20"), or null:
  * none is, or it's day one, when nothing is live yet and Today lists the setup instead.
