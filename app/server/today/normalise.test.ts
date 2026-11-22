@@ -1,5 +1,5 @@
 // The validator and the normaliser (p4-w3.md tests 1 and 1b). Ways it can fail, written down first:
-//  1. a structurally wrong result (a missing field, an extra key, a decimal `minor`, a wrong currency, an unknown `sev`,
+//  1. a structurally wrong result (a missing field, an extra key, a decimal `minor`, a malformed currency, an unknown `sev`,
 //     `area`, `coverage` or gap, a wrong type) saves anyway, or a cosmetic overrun fails the whole result;
 //  2. a cut string is over its maximum, doesn't end with `…`, or splits a surrogate pair; a repeated key keeps the later item;
 //  3. a bad `since` fails the result (it must become null at save: the validator keeps it a string);
@@ -24,7 +24,7 @@ const ok = (raw: unknown) => {
 
 describe('structural errors are invalid_result', () => {
   it('accepts the valid literal as it is', () => {
-    expect(ok(result())).toEqual({ result: result(), counts: { truncated: 0, dropped: 0, deduped: 0, overflow: 0 } })
+    expect(ok(result())).toEqual({ result: result(), counts: { truncated: 0, dropped: 0, deduped: 0, overflow: 0, costsRemoved: 0 } })
   })
   const MUTATIONS: [string, (r: ReturnType<typeof result>) => unknown][] = [
     ['not an object', () => 'text'],
@@ -37,7 +37,6 @@ describe('structural errors are invalid_result', () => {
     ['a decimal minor', () => result({ items: [item('late-orders', { cost: { minor: 12.5, currency: 'USD' } })] })],
     ['a minor as text', () => result({ items: [item('late-orders', { cost: { minor: '1190', currency: 'USD' } })] })],
     ['a lowercase currency', () => result({ items: [item('late-orders', { cost: { minor: 1, currency: 'usd' } })] })],
-    ['a currency that is not the brand\'s', () => result({ items: [item('late-orders', { cost: { minor: 1, currency: 'EUR' } })] })],
     ['an unknown sev', () => result({ items: [item('late-orders', { sev: 'red' })] })],
     ['an unknown area', () => result({ items: [item('late-orders', { area: 'Staff' })] })],
     ['an unknown coverage', () => result({ coverage: 'partial' })],
@@ -69,10 +68,16 @@ describe('structural errors are invalid_result', () => {
 })
 
 describe('cosmetic overruns are fixed and counted', () => {
+  it('nulls a cost in another currency than the brand\'s, keeps the item and counts it', () => {
+    const r = ok(result({ items: [item('late-orders', { cost: { minor: 1, currency: 'GBP' } })] }))
+    expect(r.result.items).toHaveLength(1)
+    expect(r.result.items[0].cost).toBeNull()
+    expect(r.counts).toEqual({ truncated: 0, dropped: 0, deduped: 0, overflow: 0, costsRemoved: 1 })
+  })
   it('cuts a 121-character title to 119 characters and an ellipsis', () => {
     const r = ok(result({ items: [item('late-orders', { title: 'a'.repeat(121) })] }))
     expect(r.result.items[0].title).toBe(`${'a'.repeat(119)}…`)
-    expect(r.counts).toEqual({ truncated: 1, dropped: 0, deduped: 0, overflow: 0 })
+    expect(r.counts).toEqual({ truncated: 1, dropped: 0, deduped: 0, overflow: 0, costsRemoved: 0 })
   })
   it('drops a found row that is not a pair, and keeps the first 6 rows and the first 10 sources', () => {
     const found = [['a', '1'], ['b', '2', '3'], ['c'], ['d', '4'], ['e', '5'], ['f', '6'], ['g', '7'], ['h', '8'], ['i', '9']]
@@ -81,7 +86,7 @@ describe('cosmetic overruns are fixed and counted', () => {
     expect(r.result.items[0].found).toEqual([['a', '1'], ['d', '4'], ['e', '5'], ['f', '6'], ['g', '7'], ['h', '8']])
     expect(r.result.items[0].sources.map(s => s.n)).toEqual(['#0', '#1', '#2', '#3', '#4', '#5', '#6', '#7', '#8', '#9'])
     // 2 bad rows, 1 row past 6 (7 pairs left), 2 sources past 10.
-    expect(r.counts).toEqual({ truncated: 0, dropped: 5, deduped: 0, overflow: 0 })
+    expect(r.counts).toEqual({ truncated: 0, dropped: 5, deduped: 0, overflow: 0, costsRemoved: 0 })
   })
   it('keeps the first of a repeated key', () => {
     const r = ok(result({ items: [item('late-orders', { title: 'first' }), item('low-stock'), item('late-orders', { title: 'second' })] }))
@@ -93,12 +98,12 @@ describe('cosmetic overruns are fixed and counted', () => {
     const r = ok(result({ items, gaps: ['refunds'] }))
     expect(r.result.items.map(i => i.key)).toEqual(Array.from({ length: 10 }, (_, i) => `k-${i}`))
     expect(r.result).toMatchObject({ coverage: 'incomplete', gaps: ['refunds', 'too_many'] })
-    expect(r.counts).toEqual({ truncated: 0, dropped: 0, deduped: 0, overflow: 1 })
+    expect(r.counts).toEqual({ truncated: 0, dropped: 0, deduped: 0, overflow: 1, costsRemoved: 0 })
   })
   it('does not count a duplicate toward the cap', () => {
     const items = [...Array.from({ length: 10 }, (_, i) => item(`k-${i}`)), item('k-0')]
     const r = ok(result({ items }))
-    expect(r.counts).toEqual({ truncated: 0, dropped: 0, deduped: 1, overflow: 0 })
+    expect(r.counts).toEqual({ truncated: 0, dropped: 0, deduped: 1, overflow: 0, costsRemoved: 0 })
     expect(r.result.coverage).toBe('complete')
   })
   it('cuts a long string with an astral character at the cut without splitting the pair', () => {

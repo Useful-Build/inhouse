@@ -179,7 +179,7 @@ describe('stage (test 8)', () => {
     await h.tick(six(D1))
     expect((await slotsOf(team.id)).map(s => [s.state, s.reason])).toEqual([['skipped', 'stage']])
     expect((await slotsOf(sys.id)).map(s => s.state)).toEqual(['started'])
-    expect([...h.runs.turns.values()].map(t => t.submit.input.text)).toEqual(['Run the test system check.'])
+    expect([...h.runs.turns.values()].map(t => t.submit.input.text)).toEqual([`Run the test system check.\n\nNow: ${new Date(six(D1)).toISOString()}`])
   })
 
   it('a stage drop between decision and submit skips the claimed row', async () => {

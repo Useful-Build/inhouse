@@ -1354,7 +1354,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(w.shown(t.client.getSnapshot())).toBe(true)
     })
 
-    only('send')('the Cap reached scenario reads at the cap, and the agent still answers and writes there', async () => {
+    only('send')('the Cap reached scenario reads at the cap, writes still work there, and a chat turn is refused with cap_reached', async () => {
       const normal = parse(AgentDataSchema, t.client.read(), 'read()').usage
       expect(normal.total.currency, 'spend and cap share a currency').toBe(normal.cap.currency)
       expect(normal.total.minor, 'a normal month is under the cap').toBeLessThan(normal.cap.minor)
@@ -1365,7 +1365,9 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(data.status).toBe('ready')
       await t.client.setToggle(fx.toggleKey, false)
       expect(t.client.getSnapshot().toggles[fx.toggleKey]).toBe(false)
-      checkRun(await drain(fx.questions.table))
+      const events = checkRun(await drain(fx.questions.table))
+      expect(events.some(e => e.type === 'notice' && e.code === 'cap_reached')).toBe(true)
+      expect(events.find(e => e.type === 'turn.finished')).toMatchObject({ outcome: 'failed', reason: 'cap_reached' })
       expect(notices).toEqual([])
     })
 

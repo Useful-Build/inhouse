@@ -58,10 +58,9 @@ test('Palette: open a chat and a settings page, run New chat, Escape gives focus
   await expect.poll(() => hash(page)).toBe('#/chats/new')
   await expect(header(page)).toContainText('New chat')
 
-  // The visible entry: the top bar's Search, with ⌘K in its tooltip. Escape closes the palette and focus goes back to it.
-  const search = header(page).getByRole('button', { name: 'Search' })
-  await search.hover()
-  await expect(tip(page, /Search\s*(⌘K|Ctrl\+K)/)).toBeVisible()
+  // The visible entry: the sidebar's Search row, with ⌘K shown on the row. Escape closes the palette and focus goes back to it.
+  const search = side(page).getByRole('button', { name: 'Search', exact: true })
+  await expect(search).toContainText(/⌘\s*K|Ctrl\+K/)
   await search.click()
   await expect(palette(page)).toBeVisible()
   await page.keyboard.press('Escape')

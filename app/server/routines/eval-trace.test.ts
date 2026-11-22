@@ -24,7 +24,8 @@ describe('a routine run\'s trace in the eval build', () => {
     await settle()
     h.clock.now = T0 + 1 * SEC
     h.push(a.turnId, ev.started(), ev.tool('WebFetch'))
-    await h.core.writeToolCall(a.turnId, 0, { hook: 'PreToolUse', toolName: 'WebFetch', toolUseId: 'tu_1', decision: 'allow', input: { url: 'https://shop.example.test/stock' } })
+    // The input as the runner sends it, in capInput's wrapper (runner/src/guards/audit.ts; eval-trace/on.ts toolInput).
+    await h.core.writeToolCall(a.turnId, 0, { hook: 'PreToolUse', toolName: 'WebFetch', toolUseId: 'tu_1', decision: 'allow', input: { cut: false, value: { url: 'https://shop.example.test/stock' } } })
     h.clock.now = T0 + 3 * SEC
     h.push(a.turnId, ...fullAnswer('done', 2))
     await settle()

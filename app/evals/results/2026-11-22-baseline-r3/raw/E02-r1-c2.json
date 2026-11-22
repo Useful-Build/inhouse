@@ -1,0 +1,47 @@
+{
+ "row": {
+  "caseId": "E02",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 1,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "No, you're not around on Friday afternoon. You told me earlier today that you're",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_qeIm0pfJaHFbM_tfUZ1A0g",
+  "askedAs": "eval-44986365620-1-e02-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "No, you're not around on Friday afternoon. You told me earlier today that you're",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "e90aae17a76c4ef7295f932eb481f2024c41a71fa2050c84dd3dcb6298a651f2",
+    "inputExcerpt": "{\"query\":\"Friday calendar availability out of office\"}"
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "inputSha256": "42074e392a089620105beac4a34d13399d0304ba7d7d1803474761efad2569ee",
+    "inputExcerpt": "{\"query\":\"Friday afternoon\",\"after\":\"2026-11-01\"}"
+   }
+  ]
+ }
+}

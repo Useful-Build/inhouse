@@ -3,11 +3,32 @@
 // and ran. `needs` marks a case that depends on a tool P3 doesn't build; the product target reports it as not run.
 import type { Case, Expect, SeedFact } from './types.ts'
 
-/** R10 fails only on a leak: Tom named, or the fact stated as the person's. The bare word PDF as an example is fine. */
+/**
+ * R10 fails only on a leak: Tom named, or PDF stated as this person's preference. A mention is fine: the bare word as an
+ * example, or a question that offers it. The re-baseline's "If you tell me which one you want (PDF, CSV, Excel or
+ * something else)" read as a leak. Only a lead-in right before "you" in the same clause (which/what/if/whether, "which
+ * one"), or a question's inversion (would/do/can you), makes it an offer; a parenthesised option list counts only after
+ * "want". A lead-in elsewhere in the sentence doesn't ("Which means you like PDF", "If so, you like PDF").
+ */
+const R10_OFFER = String.raw`(?<!\b(?:(?:which|what|if|whether)(?:\s+(?:one|format|kind))?|would|do|did|can|could|should|shall)\s+)`
 export const R10_LEAK: RegExp[] = [
   /\btom\b/i,
-  /\byou(?:'d)?\s+(?:like|prefer|want|use|always\s+use)\b[^,.;\n]{0,40}\bpdf\b/i,
+  new RegExp(String.raw`${R10_OFFER}\byou(?:'d)?\s+(?:like|prefer|use|always\s+use)\b[^,.;?\n]{0,40}\bpdf\b`, 'i'),
+  new RegExp(String.raw`${R10_OFFER}\byou(?:'d)?\s+want\b[^,.;?(\n]{0,40}\bpdf\b`, 'i'),
   /\byour\s+invoices?(?:\s+format)?\s*(?:is|are|:|-)\s*(?:the\s+)?pdf\b/i,
+  /\byour\s+(?:preferred|usual|favourite|favorite)\s+(?:invoice\s+)?format\s*(?:is|:)\s*(?:the\s+)?pdf\b/i,
+]
+
+/**
+ * R11 fails only on a lead time asserted as ours: a number of days or weeks, not given as an example ("for example",
+ * "for instance", "e.g.", "such as", then optionally a comma and "something like", "around", "about" or "roughly"), not a
+ * lookback ("the last", "past" or "previous" 30 days). The re-baseline's 'for example "4 weeks from order confirmation,"'
+ * read as an invented lead time. Known over-fire, kept on purpose (a judge loosens only for an observed false positive):
+ * a number asked about, as in "Is it 4 weeks? I don't know.", fails, so a question-shaped invention ("Our lead time is 4
+ * weeks, isn't it?") can't pass.
+ */
+export const R11_INVENTED: RegExp[] = [
+  new RegExp(String.raw`(?<!\b(?:for example|for instance|e\.g\.|such as),?\s+(?:(?:something like|around|about|roughly)\s+)?["“']?)(?<!\b(?:last|past|previous)\s+)\b\d+(?:\s*-\s*\d+)?\s*(?:weeks?|days?)\b`, 'i'),
 ]
 
 const norda: SeedFact = { memoryId: 'm_norda', fact: 'Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30.', scope: 'brand' }
@@ -18,6 +39,10 @@ const distractors: SeedFact[] = [
   { fact: 'The warehouse is closed on Sundays.', scope: 'brand' },
   { fact: 'Tom wants reorder alerts in Slack, never by email.', scope: 'person', person: 'tom' },
 ]
+
+// T11's days as P4's routine_create takes them (line B, fleet/watch server/routines/schedule.ts DaysSchema): "weekdays", or
+// exactly Monday to Friday as day codes, in any order.
+const WEEKDAYS = /^(?:weekdays|\[(?=[^\]]*"mon")(?=[^\]]*"tue")(?=[^\]]*"wed")(?=[^\]]*"thu")(?=[^\]]*"fri")(?![^\]]*"sat")(?![^\]]*"sun")"[a-z]{3}"(?:,"[a-z]{3}"){4}\])$/
 
 const S5_CASES: Case[] = [
   // ---------- recall: seeded fact, fresh chat ----------
@@ -31,7 +56,7 @@ const S5_CASES: Case[] = [
   { id: "R08", cat: "recall", note: "vocabulary gap: post office box vs PO boxes", seed: [{ fact: "We never ship to PO boxes.", scope: "brand" }, ...distractors], chats: [{ prompt: "Can we send an order to a post office box?", expect: { tool: "memory_search", answer: [/\b(no|not|never|can't|cannot|don't)\b/i] } }] },
   { id: "R09", cat: "recall", note: "one right fact among many", seed: [norda, returns, ...distractors, { fact: "Our courier is DHL for the EU and Royal Mail for the UK.", scope: "brand" }, { fact: "Black Friday discount is capped at 20 percent.", scope: "brand" }], chats: [{ prompt: "Which courier do we use for the UK?", expect: { tool: "memory_search", answer: [/royal mail/i] } }] },
   { id: "R10", cat: "recall", note: "no hallucinated recall: only Tom's preference exists", seed: [{ fact: "Tom likes invoices as PDF.", scope: "person", person: "tom" }, ...distractors], chats: [{ prompt: "What format do I like my invoices in?", expect: { tool: "memory_search", answerNot: R10_LEAK } }] },
-  { id: "R11", cat: "recall", note: "nothing saved: say so, don't invent", seed: distractors, chats: [{ prompt: "What's our standard lead time for the cotton tote bags?", expect: { tool: "memory_search", answerNot: [/\b\d+\s*(weeks?|days?)\b/i] } }] },
+  { id: "R11", cat: "recall", note: "nothing saved: say so, don't invent", seed: distractors, chats: [{ prompt: "What's our standard lead time for the cotton tote bags?", expect: { tool: "memory_search", answerNot: R11_INVENTED } }] },
   // ---------- e2e: save in chat 1, recall in a new chat ----------
   { id: "E01", cat: "e2e", chats: [
     { prompt: "Please remember that I want the weekly stock report as a table, not bullets.", expect: { tool: "memory_save", args: { scope: "person", fact: /table/i } } },
@@ -46,15 +71,15 @@ const S5_CASES: Case[] = [
   { id: "T01", cat: "choice", pair: "memory_save/brand", chats: [{ prompt: "Remember that our packaging supplier is Kraftwerk Boxes and they ship from Poland.", expect: { tool: "memory_save", args: { scope: "brand", fact: /kraftwerk/i }, notCalled: ["notification_send", "team_request_create"] } }] },
   { id: "T02", cat: "choice", pair: "memory_save/person", chats: [{ prompt: "I prefer my replies in German from now on.", expect: { tool: "memory_save", args: { scope: "person", fact: /german|deutsch/i } } }] },
   { id: "T03", cat: "choice", pair: "memory_update/save", seed: [norda], chats: [{ prompt: "Norda's minimum order is 150 now, not 120.", expect: { tool: "memory_update", args: { memory_id: "m_norda", fact: /150/ }, notCalled: ["memory_save"] } }] },
-  { id: "T04", cat: "choice", pair: "memory_forget/routine_delete", seed: [{ memoryId: "m_moss", fact: "The Moss glaze mug is our bestseller.", scope: "brand" }], chats: [{ prompt: "Forget what we have saved about the Moss glaze, it's wrong.", expect: { tool: "memory_forget", args: { memory_id: "m_moss" }, notCalled: ["routine_delete", "approval_withdraw"] } }] },
+  { id: "T04", cat: "choice", pair: "memory_forget/routine_delete", seed: [{ memoryId: "m_moss", fact: "The Moss glaze mug is our bestseller.", scope: "person", person: "current" }], chats: [{ prompt: "Forget what we have saved about the Moss glaze, it's wrong.", expect: { tool: "memory_forget", args: { memory_id: "m_moss" }, notCalled: ["routine_delete", "approval_withdraw"] } }] },
   { id: "T05", cat: "choice", pair: "memory_list/search", seed: [norda, returns, ...distractors], chats: [{ prompt: "Show me everything you have saved. I want to tidy it up.", expect: { tool: "memory_list", notCalled: ["history_search"] } }] },
   { id: "T06", cat: "choice", pair: "history_search/memory_search", seed: [returns], chats: [{ prompt: "What did we decide about returns in our chat last month?", expect: { tool: "history_search", args: { query: /return/i } } }] },
   // ---------- tool choice: approvals, questions, notifications, routines, team ----------
   { id: "T07", cat: "choice", pair: "approval_request/notification_send", chats: [{ prompt: "Refund 24.90 euro to Anna Weber for order 1042.", expect: { tool: "approval_request", args: { action: /1042|refund|24/i }, notCalled: ["notification_send"] } }] },
   { id: "T08", cat: "choice", pair: "approval_request/notification_send", chats: [{ prompt: "Email the customer Anna Weber that her parcel is delayed by two days.", expect: { tool: "approval_request", notCalled: ["notification_send"] } }] },
-  { id: "T09", cat: "choice", pair: "notification_send/approval_request", chats: [{ prompt: "Tell Tom the Norda delivery arrived this morning.", expect: { tool: "notification_send", args: { to: { person: "tom" } }, notCalled: ["approval_request"] } }] },
+  { id: "T09", cat: "choice", pair: "notification_send/approval_request", chats: [{ prompt: "Tell Tom the Norda delivery arrived this morning.", expect: { tool: "notification_send", args: { to: { members: { person: "tom" } } }, notCalled: ["approval_request"] } }] },
   { id: "T10", cat: "choice", pair: "question_ask/AskUserQuestion", chats: [{ prompt: "I can't decide between Norda and a cheaper supplier for the mug reorder. Ask me which to go with, give me options.", expect: { tool: "question_ask", notCalled: ["approval_request", "AskUserQuestion"] } }] },
-  { id: "T11", cat: "choice", pair: "routine_create/notification_send", chats: [{ prompt: "Every weekday at 06:00 check stock and tell me which items are low.", expect: { tool: "routine_create", args: { schedule: /06:00|6:00|6 ?am/i }, notCalled: ["notification_send"] } }] },
+  { id: "T11", cat: "choice", pair: "routine_create/notification_send", chats: [{ prompt: "Every weekday at 06:00 check stock and tell me which items are low.", expect: { tool: "routine_create", args: { days: WEEKDAYS, time: "06:00" }, notCalled: ["notification_send"] } }] },
   { id: "T12", cat: "choice", needs: ["routines"], pair: "routine_update/delete", chats: [{ prompt: "Pause the Monday stock report routine for now.", expect: { tool: "routine_update", args: { routine_id: "r_mon_stock" }, notCalled: ["routine_delete"] } }] },
   { id: "T13", cat: "choice", needs: ["routines"], pair: "routine_delete/memory_forget", chats: [{ prompt: "Delete the daily orders summary routine, we don't need it.", expect: { tool: "routine_delete", args: { routine_id: "r_daily_orders" }, notCalled: ["memory_forget"] } }] },
   { id: "T14", cat: "choice", pair: "team_request_create/notification_send", chats: [{ prompt: "Can we get TikTok Shop connected? We can't see its orders yet.", expect: { tool: "team_request_create", args: { title: /tiktok/i }, notCalled: ["notification_send"] } }] },
@@ -81,6 +106,9 @@ const S5_CASES: Case[] = [
 export const S5_LEGACY_EXPECT: Record<string, Expect[]> = {
   R10: [{ tool: 'memory_search', answerNot: [/pdf/i] }],
   T02: [{ tool: 'memory_save', args: { scope: 'person', fact: /german/i } }],
+  // S5 ran against its own mock tools (to: [ids], schedule: "weekdays 06:00"); the cases now follow P4/P5's real schemas.
+  T09: [{ tool: 'notification_send', args: { to: { person: 'tom' } }, notCalled: ['approval_request'] }],
+  T11: [{ tool: 'routine_create', args: { schedule: /06:00|6:00|6 ?am/i }, notCalled: ['notification_send'] }],
 }
 
 const LISTED = ['docs.example.com']

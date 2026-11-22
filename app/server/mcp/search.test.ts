@@ -1,5 +1,6 @@
 // Search over memory and chat history (FTS5, p3-design section 10). Ways it can fail, written down first:
-//  1. a word matches inside another word ("stock" finding "restock"), or case decides a match;
+//  1. a word matches inside another word ("stock" finding "restock"), or case decides a match (word forms of one stem,
+//     "restock" and "restocking", match since 0142: search-stemming.test.ts);
 //  2. a phrase matches its words in another order;
 //  3. input with FTS5 syntax (quotes, NEAR, a column filter, `*`, AND/OR/NOT) throws or reaches the expression;
 //  4. the index drifts from its table: an updated fact still found by its old words, a deleted one still found;
@@ -40,10 +41,11 @@ beforeAll(async () => {
 
 describe('memory search (failures 1 to 3)', () => {
   it('matches whole words, any case, best first', async () => {
-    expect(await texts('restock')).toEqual([FACTS.fridays])
+    // 0142's porter tokenizer: "restock" and "restocking" are one stem, so each finds both facts.
+    expect(await texts('restock')).toEqual([FACTS.fee, FACTS.fridays].sort())
     expect(await texts('stock')).toEqual([])
     expect(await texts('FRIDAYS')).toEqual([FACTS.fridays])
-    expect(await texts('restocking')).toEqual([FACTS.fee])
+    expect(await texts('restocking')).toEqual([FACTS.fee, FACTS.fridays].sort())
     expect(await texts('kestrel noon')).toEqual([FACTS.cafe, FACTS.kestrel].sort())
     expect(await texts('cafe')).toEqual([FACTS.cafe])
   })

@@ -1,0 +1,47 @@
+{
+ "row": {
+  "caseId": "T08",
+  "cat": "choice",
+  "pair": "approval_request/notification_send",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "approval_request"
+  ],
+  "toolSearches": 0,
+  "answer": "I couldn't send the email or queue it for approval. The approval feature isn't a",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_mI_gCYt5jLgmlR2amwBDKQ",
+  "askedAs": "eval-44977516723-1-t08-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I couldn't send the email or queue it for approval. The approval feature isn't a",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "5dc4efafd1495bd2a667ecbba152f64c6e7af792a187bc75e5c10e58af10dab9",
+    "inputExcerpt": "{\"query\":\"Anna Weber\"}"
+   },
+   {
+    "name": "mcp__inhouse__approval_request",
+    "inputSha256": "661c416c8f97832e530558a4ebfcbc4d7a1538e55448be1187e0bed8c429ade7",
+    "inputExcerpt": "{\"action\":\"Send email to customer\",\"to\":\"Anna Weber (email address not on file, "
+   }
+  ]
+ }
+}

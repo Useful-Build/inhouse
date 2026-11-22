@@ -187,7 +187,12 @@ export function neverPlaceholder(ip: string, own: readonly string[]): boolean {
 export const onlyPlaceholders = (answers: readonly string[], placeholders: ReadonlySet<string>, own: readonly string[]): boolean =>
   answers.length > 0 && answers.every((a) => placeholders.has(a) && !neverPlaceholder(a, own))
 
-export function webFetchHook(domains: readonly string[] | null, hostAddresses: readonly string[] = [], resolve: Resolve = systemResolve): HookCallbackMatcher {
+/**
+ * `onDeny`: called with the call before a deny goes back, and awaited (options.ts records a 'deny' audit entry with it);
+ * if it throws, the hook throws and `onFailure: 'block'` blocks the call, so a deny is never lost to a call that runs.
+ */
+export function webFetchHook(domains: readonly string[] | null, hostAddresses: readonly string[] = [], resolve: Resolve = systemResolve,
+  onDeny?: (input: HookInput & { hook_event_name: 'PreToolUse' }) => Promise<void>): HookCallbackMatcher {
   const listed = domains === null ? null : [...domains]
   const own = [...hostAddresses]
   // The probe's answers, kept only when there are some (real DNS has none, and is asked again each time). A host's
@@ -210,22 +215,28 @@ export function webFetchHook(domains: readonly string[] | null, hostAddresses: r
     hooks: [
       async (input: HookInput) => {
         if (input.hook_event_name !== 'PreToolUse' || input.tool_name !== 'WebFetch') return {}
-        const url = (input.tool_input as { url?: unknown } | null)?.url
-        const host = allowedFetchHost(url, listed, own)
-        if (host !== null && listed !== null) return {}
-        const { reserved, answers, probe } = host === null ? { reserved: [], answers: [], probe: null } : await reservedHere(host)
-        if (host !== null && reserved.length === 0) return {}
-        // What the synthetic-DNS probe got and what a public name resolved to here (both capped), probe first, so a run's
-        // visible refusal shows why the check ran. With a probe answer, every one of the host's answers, so a mismatch
-        // with the placeholders shows; without, its reserved ones.
-        if (listed === null) {
-          if (reserved.length === 0) return deny(WEBFETCH_DENY.publicOnly)
-          const probed = probe !== null && probe.length > 0
-          return deny(`${WEBFETCH_DENY.publicOnly} (probe: ${probed ? shown(probe, own) : 'none'}; ${host} resolved here to ${shown(probed ? answers : reserved, own)})`)
-        }
-        return deny(listed.length === 0 ? WEBFETCH_DENY.off : WEBFETCH_DENY.notListed)
+        const out = await decide(input)
+        if (out.hookSpecificOutput?.permissionDecision === 'deny' && onDeny) await onDeny(input)
+        return out
       },
     ],
+  }
+  /** The hook's decision for one WebFetch call: `{}` to let it go, or a deny. */
+  async function decide(input: HookInput & { hook_event_name: 'PreToolUse' }): Promise<HookJSONOutput & { hookSpecificOutput?: { permissionDecision?: string } }> {
+    const url = (input.tool_input as { url?: unknown } | null)?.url
+    const host = allowedFetchHost(url, listed, own)
+    if (host !== null && listed !== null) return {}
+    const { reserved, answers, probe } = host === null ? { reserved: [], answers: [], probe: null } : await reservedHere(host)
+    if (host !== null && reserved.length === 0) return {}
+    // What the synthetic-DNS probe got and what a public name resolved to here (both capped), probe first, so a run's
+    // visible refusal shows why the check ran. With a probe answer, every one of the host's answers, so a mismatch
+    // with the placeholders shows; without, its reserved ones.
+    if (listed === null) {
+      if (reserved.length === 0) return deny(WEBFETCH_DENY.publicOnly)
+      const probed = probe !== null && probe.length > 0
+      return deny(`${WEBFETCH_DENY.publicOnly} (probe: ${probed ? shown(probe, own) : 'none'}; ${host} resolved here to ${shown(probed ? answers : reserved, own)})`)
+    }
+    return deny(listed.length === 0 ? WEBFETCH_DENY.off : WEBFETCH_DENY.notListed)
   }
 }
 

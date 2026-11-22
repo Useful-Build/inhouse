@@ -22,7 +22,7 @@ export const appMergeConfig: ConfigExtension<string, string> = {
         'window-max', 'window-max-lg',
         /* PR 5 */ 'selection-room'],
       // Documentation only: tailwind-merge v3 already reads any text-, bg- or border- name as a colour.
-      color: ['done', 'destructive-solid', 'on-destructive', 'switch-off', 'window-surface', 'tag-edge-strong', 'draft-sheet', 'draft-kind', /* PR 5 */ 'bubble'],
+      color: ['done', 'destructive-solid', 'on-destructive', 'switch-off', 'window-surface', 'tag-edge-strong', 'draft-sheet', 'draft-kind', 'success', 'success-tint', 'success-text', /* PR 5 */ 'bubble'],
     },
     // Groups whose names aren't theme scales in tailwind-merge. Without these, bg-dot-grid reads as a color and
     // border-hairline as a border color, and cn() drops one of two classes that don't conflict.

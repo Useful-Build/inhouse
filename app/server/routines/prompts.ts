@@ -3,14 +3,15 @@
 // instruction a person gave, after a fixed line that says what kind of chat this is.
 import type { OutputFormat } from '../../shared/protocol/index.ts'
 import { RESULT_HANDLERS } from './results.ts'
+import { MORNING_CHECK_PROMPT_V1 } from '../prompt/routines/morning-check.ts'
 
 /**
  * The system routines' prompts, by `prompt_ref` (one line each, added with the routine's row: W3's morning check). An
  * unknown ref fails loud: that routine's pass throws, its cursor holds and the routines signal goes red on the lag.
  */
 export const SYSTEM_ROUTINE_PROMPTS: Readonly<Record<string, string>> = {
-  // W3's morning check. A placeholder: the orchestrator replaces this line with the import from `prompt/routines/morning-check.ts`.
-  'morning-check': 'PLACEHOLDER: the morning check prompt is the orchestrator\'s (app/server/prompt/routines/morning-check.ts).',
+  // W3's morning check; the text is the orchestrator's (prompt/routines/morning-check.ts).
+  'morning-check': MORNING_CHECK_PROMPT_V1,
 }
 
 /**

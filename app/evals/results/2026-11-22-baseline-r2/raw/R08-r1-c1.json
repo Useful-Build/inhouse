@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "R08",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "No. Our saved shipping policy says we never ship to PO boxes.\n\nIf a customer giv",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_bL7wUN0l1rCDL4ySP77ihg",
+  "askedAs": "eval-44977516723-1-r08-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "No. Our saved shipping policy says we never ship to PO boxes.\n\nIf a customer giv",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "ccfa80793fefa7d7ba2524afdd9cd8bc3540c9ae1e297cb03ca973de81046a5b",
+    "inputExcerpt": "{\"query\":\"PO box shipping carrier policy\"}"
+   }
+  ]
+ }
+}

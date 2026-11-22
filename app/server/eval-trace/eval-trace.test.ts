@@ -12,7 +12,10 @@
 //  8. `GET /api/me` says `evalBrand` outside the eval build or without the deploy-time marker;
 //  9. the eval build's task registry drops the TTL task (the 7-day promise breaks silently);
 // 10. a call's input recorded before its step (the audit post winning the race) isn't shown on it;
-// 11. deleting a person leaves their kept inputs behind.
+// 11. deleting a person leaves their kept inputs behind;
+// 12. (#245 review) the kept input is the runner's capInput wrapper instead of the tool's input, a runner-side cut isn't
+//     marked cut, or a WebFetch the runner's hook denied isn't marked denied. Oracle: the golden file of what the real
+//     runner hooks send (app/evals/fixtures/runner-audit.json, pinned by runner/test/guards/hook-audit.test.ts).
 // Oracles: literal inputs and byte counts, and the scope rule written out here.
 import { describe, expect, it, vi } from 'vitest'
 import type { SendTurnResult } from '../../shared/contract/runs.ts'
@@ -25,6 +28,7 @@ import { DESIGN_CAN_ROWS, DESIGN_ROWS, fakeStores } from '../testing/auth-fixtur
 import { MEMBER, OTHER, SEC, T0, ev, fullAnswer, inAgent, settle } from '../testing/brand-agent/core-harness.ts'
 import { buildTaskHandlers, taskHandlers } from '../do/brand-agent/tasks/index.ts'
 import { registrySeeds } from '../do/brand-agent/scheduler.ts'
+import type { AuditEntry } from '../../shared/protocol/index.ts'
 import * as on from './on.ts'
 import * as off from './off.ts'
 
@@ -32,8 +36,15 @@ const ok = (r: SendTurnResult | Refusal): SendTurnResult => {
   if ('refused' in r) throw new Error(`refused ${JSON.stringify(r.refused)}`)
   return r
 }
+/** The runner's audit entries for three real calls (runner/test/guards/hook-audit.test.ts keeps this file equal to them). */
+const GOLDEN = JSON.parse(Object.values(import.meta.glob('../../evals/fixtures/runner-audit.json', { query: '?raw', import: 'default', eager: true }))[0] as string) as AuditEntry[]
+/** An entry as the runner sends it: the input in capInput's `{ cut: false, value }` (pinned to the golden file below). */
+const wrapped = (value: unknown) => ({ cut: false, value })
 const entry = (toolUseId: string | undefined, input: unknown) =>
-  ({ hook: 'PreToolUse', toolName: 'WebFetch', ...(toolUseId === undefined ? {} : { toolUseId }), decision: 'allow', input })
+  ({ hook: 'PreToolUse', toolName: 'WebFetch', ...(toolUseId === undefined ? {} : { toolUseId }), decision: 'allow', input: wrapped(input) })
+/** One assistant message with one tool_use block of this id, as the SDK sends it. */
+const toolUse = (id: string, name: string) =>
+  ({ type: 'sdk', truncated: false, message: { type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input: {} }] } } }) as const
 const ioRows = (sql: SqlStorage, turnId: string) =>
   sql.exec<{ json: string }>("SELECT json FROM turn_trace WHERE turn_id = ? AND json_extract(json, '$.io') IS NOT NULL ORDER BY n", turnId).toArray()
     .map(r => JSON.parse(r.json) as Record<string, string>)
@@ -62,6 +73,41 @@ describe('the eval trace on route 33', () => {
       expect(all?.steps.some(s => 'io' in s), id).toBe(false)
     }
     expect(h.core.readTrace(a.turnId, { owner: OTHER })).toBeNull()
+  }, { evalTrace: true }))
+
+  it("replays the real runner's entries: the tool's input unwrapped, the hook's denial and a runner-side cut on the owner's steps, nothing for Inhouse (failures 1, 2, 12)", () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-evt05'))
+    await settle()
+    h.push(a.turnId, ev.started(), toolUse('toolu_listed', 'WebFetch'), toolUse('toolu_unlisted', 'WebFetch'), toolUse('toolu_bash', 'Bash'))
+    // As the root does with each entry: an `audit` run event (the trace) and the audit route's post (writeToolCall).
+    let n = 0
+    for (const e of GOLDEN) {
+      h.push(a.turnId, { type: 'audit', entry: e })
+      await h.core.writeToolCall(a.turnId, n++, e)
+    }
+    h.push(a.turnId, ...fullAnswer('done', 2))
+    await settle()
+    const steps = h.core.readTrace(a.turnId, { owner: MEMBER })!.steps.filter(s => s.kind === 'tool')
+    const value = (i: number) => JSON.stringify((GOLDEN[i]!.input as { value: unknown }).value)
+    expect(steps.map(s => s.io)).toEqual([
+      { input: value(0) },
+      { input: value(1), denied: true },
+      // The runner cut the Bash input: what's kept is the start of its JSON text, marked cut.
+      { input: (GOLDEN[3]!.input as { head: string }).head, cut: true },
+    ])
+    expect(JSON.parse(steps[0]!.io!.input)).toEqual({ url: 'https://docs.example.com/guide', prompt: 'Summarise it.' })
+    expect(h.core.readTrace(a.turnId, { all: true })?.steps.some(s => 'io' in s)).toBe(false)
+  }, { evalTrace: true }))
+
+  it('the tests\' own entries wrap the input as the real runner does (failure 12)', () => {
+    expect(GOLDEN[0]!.input).toEqual(wrapped({ url: 'https://docs.example.com/guide', prompt: 'Summarise it.' }))
+  })
+
+  it('an input in no known wrapper is kept as its JSON, marked cut: never read as the tool\'s input (failure 12)', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-evt09'))
+    await settle()
+    await h.core.writeToolCall(a.turnId, 0, { hook: 'PreToolUse', toolName: 'WebFetch', toolUseId: 'tu_raw', decision: 'allow', input: { url: 'https://raw.example.test/' } })
+    expect(ioRows(h.sql, a.turnId)).toEqual([{ io: 'tu_raw', input: '{"url":"https://raw.example.test/"}', bytes: '65', cut: '1' }])
   }, { evalTrace: true }))
 
   it('keeps and shows nothing outside the eval build (failure 3)', () => inAgent(async h => {

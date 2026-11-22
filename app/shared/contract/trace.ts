@@ -7,9 +7,10 @@ export type TraceStepKind = z.infer<typeof TraceStepKindSchema>
 
 /**
  * The eval build's kept input of one tool call (p3-eval-observability rev 2, rec 5): its JSON text, `cut` when the trace's
- * 256 KB of inputs ran out on it. Only the eval build keeps one, and only the run's owner reads it.
+ * 256 KB of inputs ran out on it (or none was kept: `input` is then empty). `denied`: a hook denied this call (rec 6, the
+ * harness's WebFetch refusal). Only the eval build keeps one, and only the run's owner reads it.
  */
-export const StepIoSchema = z.strictObject({ input: z.string(), cut: z.literal(true).optional() })
+export const StepIoSchema = z.strictObject({ input: z.string(), cut: z.literal(true).optional(), denied: z.literal(true).optional() })
 export type StepIo = z.infer<typeof StepIoSchema>
 
 /**

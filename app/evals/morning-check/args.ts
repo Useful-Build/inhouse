@@ -9,6 +9,7 @@
 //    as evals/probe.ts on main). One of the two is refused; neither is the per-PR deploy (no Access). Behind Access there's
 //    no route 67: MORNING_CHECK_RELEASE_JWT is the per-PR test deploy's only, so it's refused with the service token.
 // The modes' options are mutually exclusive: a remote run given a local option (or the reverse) is refused, never ignored.
+import { DoorRefusal, EVAL_DB } from '../targets/door.ts'
 
 export type RunArgs = Record<string, string | undefined>
 
@@ -61,6 +62,16 @@ function accessToken(env: Record<string, string | undefined>): AccessToken | nul
   if (!id && !secret) return null
   if (!id || !secret) throw new Error(`run.mjs: ${ACCESS_CLIENT_ID_VAR} and ${ACCESS_CLIENT_SECRET_VAR} are not both set, so the eval host's Access lock would refuse every call`)
   return { id, secret }
+}
+
+/**
+ * Remote mode never runs on the eval deployment's shared database: the door (evals/targets/door.ts) now admits only
+ * EVAL_DB, and a paid product eval may be running there, so a test-shop override set on it would break the one runner
+ * per deployment rule. Throws DoorRefusal (run.mjs stops with exit 2 before any case). Line A's morning-check door rule
+ * replaces this.
+ */
+export function refuseSharedEvalDb(database: string): void {
+  if (database === EVAL_DB) throw new DoorRefusal(`refusing: ${EVAL_DB} is the eval deployment's shared database, and a paid product eval may be running on it (one runner per deployment)`)
 }
 
 export function runMode(a: RunArgs, env: Record<string, string | undefined>): RunMode {

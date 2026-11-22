@@ -9,6 +9,13 @@ import type { JSONWebKeySet, JWTVerifyGetKey } from 'jose'
 /** The bundle-scan canary: it must be in the test build's Worker and never in the deployable one. */
 export const TEST_ISSUER_CANARY = 'INHOUSE_TEST_ISSUER_CANARY_7f3c'
 
+/**
+ * The header the test issuer's JWT travels in when an Access app fronts a test or eval build (the eval deployment, Wasim's
+ * E-5 second lock): Access sends its own token in `Cf-Access-Jwt-Assertion`, so authenticate.ts reads this one first in
+ * the test build. issuer-off.ts has it empty, so the deployable Worker never names it (check-product-build.mjs).
+ */
+export const TEST_ASSERTION_HEADER = 'X-Inhouse-Test-Assertion'
+
 /** The test issuer's `iss`, a reserved `.invalid` name nothing real can serve. */
 export const TEST_ISSUER = 'https://test-issuer.invalid'
 

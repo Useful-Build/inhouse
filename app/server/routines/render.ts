@@ -27,7 +27,8 @@ export async function renderSlot(
     routine_id: r.id,
     chat_id: await slotChatId(s.slot_key),
     client_key: await slotClientKey(s.slot_key),
-    prompt_text: routinePrompt(r),
+    // The SDK gets our system prompt as a plain string, so nothing else tells the turn the date: the slot's due instant does.
+    prompt_text: `${routinePrompt(r)}\n\nNow: ${new Date(s.due_at_ms).toISOString()}`,
     submit_json: JSON.stringify(stored),
     routine_rev: r.rev,
     creator_id: r.creator_id,

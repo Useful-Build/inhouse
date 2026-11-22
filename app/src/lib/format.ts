@@ -167,6 +167,8 @@ export interface MoneyOptions {
   grouping?: boolean
 }
 /** An amount: "$1,190", "$0.03", "$250.00". */
+/** Whether a problem's cost is worth showing: the server serves an unknown cost as `minor: 0`, which must never read "$0.00". */
+export const hasAmount = (m: Money): boolean => m.minor > 0
 export const fmtMoney = (m: Money, d: Display, o: MoneyOptions = {}): string => {
   const digits = minorDigits(m.currency)
   const whole = m.minor % 10 ** digits === 0
