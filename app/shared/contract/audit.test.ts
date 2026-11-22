@@ -369,6 +369,8 @@ describe('P5 (p5-w4): notice lines carry ids, closed codes, a length and a hash 
   })
   it("takes 'unlisted' as a target, never the agent's channel name", () => {
     expect(okLine({ ...send, target: 'unlisted' })).toBe(true)
+    expect(okLine({ ...send, target: 'unlisted', kind: 'bell' })).toBe(false)
+    expect(okLine({ ...send, target: 'unlisted', outcome: 'posted', detail: undefined })).toBe(false)
     expect(okLine({ ...send, target: '#design' })).toBe(false)
     expect(okLine({ ...send, target: 'design' })).toBe(false)
     expect(okLine({ ...send, target: 'unlisted:#design' })).toBe(false)

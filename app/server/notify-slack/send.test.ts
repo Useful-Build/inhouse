@@ -213,7 +213,8 @@ describe('test 5: channels', () => {
       await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), msg())
       const ls = await lines(since)
       expect(ls.map(l => [l.target_kind, l.target_id])).toEqual([['channel', 'C0TEST0001']])
-      expect((JSON.parse(ls[0]!.args_json) as { target: string; outcome: string }).target).toBe('C0TEST0001')
+      const a = JSON.parse(ls[0]!.args_json) as { target: string; outcome: string; detail?: string }
+      expect([a.target, a.outcome, a.detail]).toEqual(['C0TEST0001', 'refused', reason])
     }
   })
 

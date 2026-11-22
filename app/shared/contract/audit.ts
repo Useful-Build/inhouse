@@ -228,6 +228,9 @@ const otherLines = [
     repeat: z.literal(true).optional(),
     textLength: z.number().int().min(0).max(2000),
     noticeSha256: z.string().regex(/^[0-9a-f]{64}$/),
+  }).superRefine((a, ctx) => {
+    // `unlisted` only ever names a refused Slack recipient: nothing is sent to it, and it is no bell.
+    if (a.target === 'unlisted' && (a.kind !== 'slack' || a.outcome !== 'refused')) ctx.addIssue({ code: 'custom', path: ['target'], message: 'unlisted is a refused Slack recipient only' })
   }),
   line('notify.channels', {
     added: z.array(SlackChannelIdSchema).max(100),
