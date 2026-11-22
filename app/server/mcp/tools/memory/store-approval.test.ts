@@ -211,12 +211,14 @@ describe('waiting: the only read of waiting facts (failure 6)', () => {
     await seed('brand', 'active', 'Active one')
     await seed('brand', 'forgotten', 'Forgotten one')
     await seed('person', 'active', 'Person one')
+    const personWaiting = await seed('person', 'waiting', 'Person waiting')
     const w1 = await seed('brand', 'waiting', 'Waiting first')
     const w2 = await seed('brand', 'waiting', 'Waiting second')
     const w3 = await seed('brand', 'waiting', 'Waiting third')
     expect((await store.waiting(200)).map(f => f.id)).toEqual([w3, w2, w1])
     expect((await store.waiting(2)).map(f => f.id)).toEqual([w3, w2])
     expect((await store.waiting(200)).every(f => f.scope === 'brand' && f.status === 'waiting')).toBe(true)
+    expect((await store.waiting(200)).map(f => f.id)).not.toContain(personWaiting)
   })
   it('stops at the limit with more waiting than that', async () => {
     for (let i = 0; i < 205; i++) await seed('brand', 'waiting', `Waiting ${i}`)
@@ -225,46 +227,74 @@ describe('waiting: the only read of waiting facts (failure 6)', () => {
     expect(list[0].text).toBe('Waiting 204')
     expect(list[199].text).toBe('Waiting 5')
   })
+  it('the limit is held to 1 to 200 in the store: never unbounded (SQLite LIMIT -1), zero or past 200; a non-number throws', async () => {
+    for (let i = 0; i < 205; i++) await seed('brand', 'waiting', `Waiting ${i}`)
+    for (const [n, want] of [[201, 200], [1e12, 200], [Number.MAX_SAFE_INTEGER, 200], [200, 200], [57.9, 57], [1, 1], [0.5, 1], [0, 1], [-1, 1], [-5, 1]] as const) {
+      expect(await store.waiting(n), String(n)).toHaveLength(want)
+    }
+    for (const n of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) await expect(store.waiting(n), String(n)).rejects.toThrow()
+  })
 })
 
 // ---------- failure 7: the history property. ----------
 
 /**
- * W1's switches (`m:ask` honoured in `save` and `update`) aren't on this branch yet. Until W1's PR merges, switching
- * `m:ask` changes nothing in the model (and must change nothing in the store); once it merges, this is `true` and the
- * model follows the plan's rule: a person's agent's brand save or reword is `active` while `m:ask` is off.
+ * Whether W1's switches (`m:ask` honoured in `save` and `update`) are in the store, probed once before the property:
+ * one person's agent's team save with `m:ask` off. `active` means they've landed, and the model then follows the plan's
+ * rule (a person's agent's brand save or reword is `active` while `m:ask` is off); `waiting` means they haven't, and
+ * switching `m:ask` must change nothing. Anything else fails the probe.
  */
-const SWITCHES_LANDED = false
+let SWITCHES_LANDED: boolean | null = null
+async function setAsk(to: 'on' | 'off' | 'unset') {
+  if (to === 'unset') await db.prepare("DELETE FROM settings WHERE owner = 'brand' AND key = 'm:ask'").run()
+  else {
+    await db.prepare(`INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 'm:ask', ?, 1, 1, ?, 'r')
+      ON CONFLICT (owner, key) DO UPDATE SET value_json = excluded.value_json, rev = rev + 1`).bind(to === 'on' ? 'true' : 'false', ADMIN).run()
+  }
+}
 
 type Who = 'person' | 'routine'
 type Op =
   | { op: 'save'; who: Who; t: number }
   | { op: 'reword'; who: Who; i: number; t: number }
-  | { op: 'forget'; i: number; stale: boolean }
-  | { op: 'restore'; i: number; stale: boolean }
-  | { op: 'decide'; i: number; approved: boolean; stale: boolean }
+  | { op: 'forget'; i: number; off: number }
+  | { op: 'restore'; i: number; off: number }
+  | { op: 'decide'; i: number; approved: boolean; off: number }
   | { op: 'ask'; to: 'on' | 'off' | 'unset' }
 const TEXTS = ['We restock on Fridays', 'Ship orders before noon', 'Use the blue box for gifts', 'Returns take five days']
 const who = fc.constantFrom<Who>('person', 'routine')
+/** The ifRev sent, as an offset from the fact's rev: right, one behind, or ahead of it (a revision that doesn't exist yet). */
+const off = fc.oneof({ weight: 3, arbitrary: fc.constant(0) }, { weight: 1, arbitrary: fc.constantFrom(-1, 1, 5) })
 const opArb: fc.Arbitrary<Op> = fc.oneof(
   { weight: 3, arbitrary: fc.record({ op: fc.constant('save' as const), who, t: fc.nat(TEXTS.length - 1) }) },
   { weight: 2, arbitrary: fc.record({ op: fc.constant('reword' as const), who, i: fc.nat(9), t: fc.nat(TEXTS.length - 1) }) },
-  { weight: 1, arbitrary: fc.record({ op: fc.constant('forget' as const), i: fc.nat(9), stale: fc.boolean() }) },
-  { weight: 1, arbitrary: fc.record({ op: fc.constant('restore' as const), i: fc.nat(9), stale: fc.boolean() }) },
-  { weight: 3, arbitrary: fc.record({ op: fc.constant('decide' as const), i: fc.nat(9), approved: fc.boolean(), stale: fc.boolean() }) },
+  { weight: 1, arbitrary: fc.record({ op: fc.constant('forget' as const), i: fc.nat(9), off }) },
+  { weight: 1, arbitrary: fc.record({ op: fc.constant('restore' as const), i: fc.nat(9), off }) },
+  { weight: 3, arbitrary: fc.record({ op: fc.constant('decide' as const), i: fc.nat(9), approved: fc.boolean(), off }) },
   { weight: 1, arbitrary: fc.record({ op: fc.constant('ask' as const), to: fc.constantFrom('on' as const, 'off' as const, 'unset' as const) }) },
 )
 
 interface ModelFact { id: string; text: string; status: 'active' | 'waiting' | 'forgotten'; rev: number; why: string | null }
 
 describe('the history property (failure 7)', () => {
+  beforeAll(async () => {
+    await db.prepare('DELETE FROM memories').run()
+    await setAsk('off')
+    const r = await store.save({ memberId: A, scope: 'brand', text: 'Probe for the switches', chatId: null, nowMs: 1, requestId: 'probe' })
+    if (!('saved' in r) || (r.saved.status !== 'active' && r.saved.status !== 'waiting')) throw new Error(`switch probe: ${JSON.stringify(r)}`)
+    SWITCHES_LANDED = r.saved.status === 'active'
+    await db.prepare('DELETE FROM memories').run()
+    await setAsk('unset')
+  })
   test.prop([fc.array(opArb, { minLength: 1, maxLength: 30 })], { numRuns: 40 })(
     'a team fact is active only through an approve of its revision (or, with the switches, an agent save while m:ask is off)',
     async ops => {
       await db.batch([db.prepare('DELETE FROM memories'), db.prepare("DELETE FROM settings WHERE key = 'm:ask'")])
       const facts: ModelFact[] = []
       let ask: 'on' | 'off' | 'unset' = 'unset'
-      const askOff = () => SWITCHES_LANDED && ask === 'off'
+      if (SWITCHES_LANDED === null) throw new Error('the switch probe did not run')
+      const runStart = await lastLineId(db)
+      const askOff = () => SWITCHES_LANDED === true && ask === 'off'
       const member = (w: Who) => (w === 'person' ? A : SYSTEM_MEMBER_ID)
       let clock = 0
       const req = () => `rq-${++clock}`
@@ -297,37 +327,49 @@ describe('the history property (failure 7)', () => {
           const f = facts[o.i % Math.max(facts.length, 1)]
           if (!f) continue
           const forgotten = o.op === 'forget'
-          const ifRev = o.stale ? Math.max(1, f.rev - 1) : f.rev
+          const ifRev = Math.max(1, f.rev + o.off)
+          const before = await lastLineId(db)
           const r = await store.setBrandForgotten({ id: f.id, forgotten, ifRev }, at())
           const takes = forgotten ? f.status !== 'forgotten' : f.status === 'forgotten'
           if (takes && ifRev === f.rev) {
             expect(r).toMatchObject({ ok: { id: f.id } })
             Object.assign(f, { rev: f.rev + 1, status: forgotten ? 'forgotten' : 'waiting', why: null })
-          } else expect(r).toMatchObject({ conflict: { id: f.id } })
+            expect((await linesSince(db, before)).map(l => l.action)).toEqual([forgotten ? 'memory.forgotten' : 'memory.restored'])
+          } else {
+            expect(r).toMatchObject({ conflict: { id: f.id } })
+            expect(await linesSince(db, before)).toEqual([])
+          }
         } else if (o.op === 'decide') {
           const f = facts[o.i % Math.max(facts.length, 1)]
           if (!f) continue
-          const ifRev = o.stale ? Math.max(1, f.rev - 1) : f.rev
+          const ifRev = Math.max(1, f.rev + o.off)
+          const before = await lastLineId(db)
           const r = await store.setBrandApproved({ id: f.id, approved: o.approved, ifRev }, at())
           if (f.status === 'waiting' && ifRev === f.rev) {
             expect(r).toMatchObject({ ok: { id: f.id } })
             Object.assign(f, { rev: f.rev + 1, status: o.approved ? 'active' : 'forgotten', why: o.approved ? `approved at rev ${ifRev}` : null })
-          } else expect(r).toMatchObject({ conflict: { id: f.id } })
+            expect((await linesSince(db, before)).map(l => [l.action, l.target_id, JSON.parse(l.args_json)]))
+              .toEqual([[o.approved ? 'memory.approved' : 'memory.rejected', f.id, { memoryId: f.id, rev: ifRev }]])
+          } else {
+            expect(r).toMatchObject({ conflict: { id: f.id } })
+            expect(await linesSince(db, before)).toEqual([])
+          }
         } else {
           ask = o.to
-          if (o.to === 'unset') await db.prepare("DELETE FROM settings WHERE owner = 'brand' AND key = 'm:ask'").run()
-          else {
-            await db.prepare(`INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 'm:ask', ?, 1, 1, ?, 'r')
-              ON CONFLICT (owner, key) DO UPDATE SET value_json = excluded.value_json, rev = rev + 1`).bind(o.to === 'on' ? 'true' : 'false', ADMIN).run()
-          }
+          await setAsk(o.to)
         }
         // The store matches the model, row for row.
         const rows = await db.prepare("SELECT id, text, status, rev FROM memories WHERE scope = 'brand' ORDER BY n").all<{ id: string; text: string; status: string; rev: number }>()
         expect(rows.results).toEqual(facts.map(f => ({ id: f.id, text: f.text, status: f.status, rev: f.rev })))
-        // The invariant: every active fact got there through an approve of the revision it then had (one below its
-        // rev now), or through an agent's save or reword while m:ask was off.
-        for (const f of facts.filter(x => x.status === 'active')) {
-          expect(f.why === `approved at rev ${f.rev - 1}` || (SWITCHES_LANDED && /while m:ask off$/.test(f.why ?? '')), `${f.id} ${f.why}`).toBe(true)
+        // The invariant, read from the store (rows and audit lines), not the model: every active team row's last audit
+        // line is a memory.approved of the revision just below its rev now (so nothing moved it since), unless the
+        // switches have landed and an agent saved or reworded it while m:ask was off.
+        const audit = await db.prepare("SELECT target_id, action, args_json FROM audit_log WHERE target_kind = 'memory' AND id > ? ORDER BY id").bind(runStart).all<{ target_id: string; action: string; args_json: string }>()
+        for (const r of rows.results.filter(x => x.status === 'active')) {
+          const last = audit.results.filter(l => l.target_id === r.id).at(-1)
+          const approvedHere = last?.action === 'memory.approved' && (JSON.parse(last.args_json) as { rev: number }).rev === r.rev - 1
+          const modelSaysAskOff = SWITCHES_LANDED === true && /while m:ask off$/.test(facts.find(f => f.id === r.id)?.why ?? '')
+          expect(approvedHere || modelSaysAskOff, `${r.id} rev ${r.rev}, last line ${JSON.stringify(last)}`).toBe(true)
         }
         // And the one read of waiting facts lists exactly the waiting ones, newest first.
         expect((await store.waiting(200)).map(f => f.id)).toEqual(facts.filter(f => f.status === 'waiting').map(f => f.id).reverse())

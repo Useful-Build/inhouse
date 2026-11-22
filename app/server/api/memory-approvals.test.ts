@@ -17,7 +17,6 @@ import type { Principal } from '../auth/principal.ts'
 import { openStores } from '../db/stores.ts'
 import { lastLineId, linesSince } from '../db/test-support.ts'
 import { routes } from '../routes.ts'
-import { waitingLimit } from './memory-approvals.ts'
 
 const db = env.DB
 const NOW = 1_800_000_000_000
@@ -49,6 +48,7 @@ const F = {
   waitNew: 'mem_apprRouteWaitNewaaaaaa',
   gone: 'mem_apprRouteGoneaaaaaaaaa',
   own: 'mem_apprRouteOwnaaaaaaaaaa',
+  ownWaiting: 'mem_apprRouteOwnWaitaaaaaa',
 }
 
 beforeAll(async () => {
@@ -67,6 +67,7 @@ beforeEach(async () => {
     fact(F.waitOld, 'brand', null, 'Kestrel wants PDFs', 'waiting'),
     fact(F.gone, 'brand', null, 'Old cutoff was Thursday', 'forgotten'),
     fact(F.own, 'person', A, 'Ada likes tables sorted by date', 'active'),
+    fact(F.ownWaiting, 'person', A, 'Ada waits on nothing', 'waiting'),
     fact(F.waitNew, 'brand', null, 'Ship gifts in the blue box', 'waiting'),
   ])
 })
@@ -75,6 +76,7 @@ describe('route 77, GET /api/memory/waiting (failures 1, 2 and 5)', () => {
   it('an Admin sees the waiting team facts only, newest first, each a memory line with kind memory', async () => {
     const r = await waiting(person(ADMIN, 'admin'))
     expect(r.status).toBe(200)
+    expect(keys(r)).not.toContain(F.ownWaiting)
     expect(r.body).toEqual({
       facts: [
         { kind: 'memory', key: F.waitNew, text: 'Ship gifts in the blue box', source: 'Ada told your Inhouse agent in a chat', at: { iso: '1970-01-01T00:00:00.001Z', ms: 1 }, rev: 1, scope: 'brand' },
@@ -92,10 +94,11 @@ describe('route 77, GET /api/memory/waiting (failures 1, 2 and 5)', () => {
     const r = await waiting(inhouse(true))
     expect(r.status).toBe(200)
     expect(keys(r)).toEqual([F.waitNew, F.waitOld])
+    expect(keys(r)).not.toContain(F.ownWaiting)
     expect((await linesSince(db, before)).map(l => [l.action, l.actor_id, JSON.parse(l.args_json)])).toEqual([['support.access', IH, { grantId: GRANT, method: 'GET', route: '/api/memory/waiting' }]])
   })
   it('a query string is invalid', async () => {
-    expect((await waiting(person(ADMIN, 'admin'), '?limit=5')).status).toBe(400)
+    expect(await waiting(person(ADMIN, 'admin'), '?limit=5')).toEqual({ status: 400, body: { error: { code: 'invalid' } } })
   })
   it('at most 200', async () => {
     const stmts = Array.from({ length: 205 }, (_, i) => db.prepare("INSERT INTO memories (id, scope, text, status, created_by, created_at_ms, updated_at_ms) VALUES (?, 'brand', ?, 'waiting', ?, 1, 1)")
@@ -105,9 +108,9 @@ describe('route 77, GET /api/memory/waiting (failures 1, 2 and 5)', () => {
     expect(keys(r)).toHaveLength(200)
     expect(keys(r)[0]).toBe(`mem_apprMany${String(204).padStart(14, '0')}`)
   })
-  it('a service principal gets no answer (it throws, as route 43)', async () => {
+  it('a service principal is refused by the matrix (the handler would throw, as route 43)', async () => {
     const svc: Principal = { kind: 'service', name: 'smoke', memberId: 'm_smoke', requestId: 'r' }
-    expect((await waiting(svc)).status).not.toBe(200)
+    expect(await waiting(svc)).toEqual({ status: 403, body: { error: { code: 'forbidden' } } })
   })
 })
 
@@ -164,17 +167,8 @@ describe('route 78, PUT /api/memory/brand/:id/approved (failures 1, 3 and 4)', (
   })
   it('a strict body: an extra key, no ifRev, a wrong type or an ifRev out of bounds is 400', async () => {
     for (const body of [{ approved: true }, { ifRev: 1 }, { approved: 'yes', ifRev: 1 }, { approved: true, ifRev: 0 }, { approved: true, ifRev: 1_000_000_000 }, { approved: true, ifRev: 1, extra: 1 }, { forgotten: true, ifRev: 1 }]) {
-      expect((await decide(person(ADMIN, 'admin'), F.waitOld, body)).status, JSON.stringify(body)).toBe(400)
+      expect(await decide(person(ADMIN, 'admin'), F.waitOld, body), JSON.stringify(body)).toEqual({ status: 400, body: { error: { code: 'invalid' } } })
     }
     expect(await row(F.waitOld)).toEqual({ status: 'waiting', rev: 1 })
-  })
-})
-
-describe("the waiting list's limit is clamped (A10)", () => {
-  it('1 to 200, whatever a caller passes; a non-number throws', () => {
-    for (const [n, want] of [[200, 200], [201, 200], [1e12, 200], [Number.MAX_SAFE_INTEGER, 200], [1, 1], [0, 1], [-5, 1], [0.5, 1], [57.9, 57]] as const) {
-      expect(waitingLimit(n), String(n)).toBe(want)
-    }
-    for (const n of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) expect(() => waitingLimit(n), String(n)).toThrow()
   })
 })

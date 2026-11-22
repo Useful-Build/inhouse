@@ -85,7 +85,10 @@ export interface MemoryStore {
    * decided, by `at.actorId`, in the same batch.
    */
   setBrandApproved(input: { id: string; approved: boolean; ifRev: number }, at: At): Promise<SetForgottenResult>
-  /** P6a (W2), route 77: the team's waiting facts, newest first, at most `limit`. The only read of waiting facts. */
+  /**
+   * P6a (W2), route 77: the team's waiting facts, newest first, at most `limit` held to 1 to `WAITING_MAX` (a
+   * non-number throws). The only read of waiting facts.
+   */
   waiting(limit: number): Promise<Fact[]>
 }
 
@@ -118,6 +121,9 @@ const fact = (r: FactRow): Fact => ({
 })
 
 const base64url = (bytes: Uint8Array): string => btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
+
+/** The most waiting facts `waiting()` ever returns (SQLite reads a negative LIMIT as no limit, so it's clamped here). */
+export const WAITING_MAX = 200
 
 /** A new fact id: `mem_` + 128 random bits. */
 export const newMemoryId = (): string => `mem_${base64url(crypto.getRandomValues(new Uint8Array(16)))}`
@@ -299,8 +305,10 @@ export function memoryStore({ db }: { db: D1Database }): MemoryStore {
     },
 
     async waiting(limit) {
+      if (!Number.isFinite(limit)) throw new Error(`waiting: limit is not a number: ${limit}`)
+      const held = Math.min(WAITING_MAX, Math.max(1, Math.trunc(limit)))
       const rows = await all<FactRow>(db, stmt(
-        `SELECT ${COLUMNS} ${FROM} WHERE m.scope = 'brand' AND m.status = 'waiting' ORDER BY m.n DESC LIMIT ?`, limit,
+        `SELECT ${COLUMNS} ${FROM} WHERE m.scope = 'brand' AND m.status = 'waiting' ORDER BY m.n DESC LIMIT ?`, held,
       ))
       return rows.map(fact)
     },

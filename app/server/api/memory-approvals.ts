@@ -7,18 +7,10 @@ import type { WaitingMemoryList } from '../../shared/contract/memory-approvals.t
 import { apiError, apiJson } from '../http.ts'
 import { readBody, readQuery, storesOf, writer } from '../db/handler-kit.ts'
 import type { ApiCtx } from '../db/handler-kit.ts'
-import { factLine } from '../mcp/tools/memory/store.ts'
+import { factLine, WAITING_MAX } from '../mcp/tools/memory/store.ts'
 import type { SetForgottenResult } from '../mcp/tools/memory/store.ts'
 import { z } from 'zod'
 
-/** The most waiting facts route 77 answers. */
-export const WAITING_LIMIT = 200
-
-/** A limit for `waiting()`, held to 1 to `WAITING_LIMIT`: never unbounded, zero or negative. A non-number throws. */
-export function waitingLimit(n: number): number {
-  if (!Number.isFinite(n)) throw new Error(`waiting limit is not a number: ${n}`)
-  return Math.min(WAITING_LIMIT, Math.max(1, Math.trunc(n)))
-}
 
 const answer = (r: SetForgottenResult): Response =>
   'ok' in r ? apiJson(factLine(r.ok)) : 'conflict' in r ? apiError('conflict', { current: factLine(r.conflict) }) : apiError('not_found')
@@ -29,7 +21,7 @@ export async function listWaitingMemory(c: ApiCtx): Promise<Response> {
   if ('error' in query) return query.error
   const p = c.principal
   if (p.kind === 'service') throw new Error(`${p.name} has no waiting list`)
-  const facts = await storesOf(c).memory.waiting(waitingLimit(WAITING_LIMIT))
+  const facts = await storesOf(c).memory.waiting(WAITING_MAX)
   const data: WaitingMemoryList = { facts: facts.map(f => ({ ...factLine(f), kind: 'memory' as const })) }
   return apiJson(data)
 }
