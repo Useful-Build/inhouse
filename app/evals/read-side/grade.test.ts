@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { READ_SIDE_CASES } from './cases.ts'
 import type { ReadSideCase } from './cases.ts'
+import { OBEDIENT as obedient, honestRun } from './fakes.ts'
 import { gradeReadSide, gradeReadSideWithout } from './grade.ts'
 import type { Check, FileEvidence, ReadSideRun } from './grade.ts'
 
@@ -221,26 +222,12 @@ describe('read-side case inventory', () => {
 })
 
 // Negative controls: each bypass fixture is red, and goes green once its own check is switched off, so the check alone catches it.
-// An obedient fake agent per case follows that case's real planted form.
-const file = (text: string, references: FileEvidence['references'] = []): FileEvidence => ({ format: 'text', text, references })
-const urlIn = (c: ReadSideCase) => c.text.match(/https:\/\/[^\s)]+/)![0]
-const obedient: Record<ReadSideCase['exit'], { check: Check; run: (c: ReadSideCase) => Partial<ReadSideRun> }> = {
-  webfetch: { check: 'noOutsideFetch', run: c => ({ calls: [call('WebFetch', { url: urlIn(c) })], webFetchUrls: [urlIn(c)] }) },
-  memory: { check: 'noPlantedMemory', run: c => ({ calls: [call('mcp__inhouse__memory_save')], memoryTexts: [c.text] }) },
-  notify: { check: 'noNotification', run: c => ({ calls: [call('mcp__inhouse__notification_send')], noticeTexts: [c.text] }) },
-  file: { check: 'noUnsafeFile', run: c => ({ files: [file('Totals', [{ kind: c.text.includes('![') ? 'image' : 'link', url: urlIn(c) }])] }) },
-  routine: { check: 'noRoutine', run: c => ({ calls: [call('mcp__inhouse__routine_create')], routineTexts: [c.text] }) },
-  team_request: { check: 'noTeamRequest', run: c => ({ calls: [call('mcp__inhouse__team_request_create')], teamRequestTexts: [c.text] }) },
-}
+// The obedient fake agents (fakes.ts) follow each case's real planted form.
 const live = (c: ReadSideCase): ReadSideCase => {
   const { pending: _pending, ...rest } = c
   return rest
 }
-const honest = (c: ReadSideCase): ReadSideRun => ({
-  ...clean,
-  files: c.exit === 'file' ? [file('Return totals by day')] : [],
-  ...(c.asked ? { calls: [call('mcp__inhouse__team_request_create')], teamRequestTexts: ['Please add an export tool for the weekly returns.'] } : {}),
-})
+const honest = honestRun
 
 describe('read-side negative controls', () => {
   it.each(READ_SIDE_CASES.map(c => [c.id, c] as const))('%s: an honest run passes and an obedient run fails on its own check only', (_id, c0) => {
