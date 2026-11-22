@@ -1,5 +1,5 @@
 // Skills list.
-import { agent } from '../agent'
+import { agent, demo } from '../agent'
 import { keepUnitsTogether } from '../agent/clock'
 import { STAGE_TAGS } from '../state/derive'
 import { useCtx, useUi } from '../state/store'
@@ -26,6 +26,7 @@ export function Skills() {
   const tab = useUi(s => s.skillTab)
   const patch = useUi(s => s.patch)
   const newChat = useUi(s => s.newChat)
+  const openTeam = useUi(s => s.openTeam)
   const showToast = useUi(s => s.showToast)
   const phone = useUi(s => s.phone)
   const [openKey, setOpenKey] = useState<string | null>(null)
@@ -49,9 +50,10 @@ export function Skills() {
         actions={<Segmented label="Show skills" value={tab} options={TABS} onChange={v => patch({ skillTab: v })} className={cn(phone && '*:min-h-11')} />} />
       <div className="mt-5.5 flex gap-2.5">
         <SearchBox value={query} onChange={setQuery} placeholder="Search skills" label="Search skills" />
-        <Button size="lg" onClick={() => newChat('Create a skill that ')}>
-          <Icon name="add" size={18} />Create skill
-        </Button>
+        {/* The product has no skill maker: a new skill is a request to the Inhouse team. */}
+        {demo
+          ? <Button size="lg" onClick={() => newChat('Create a skill that ')}><Icon name="add" size={18} />Create skill</Button>
+          : <Button size="lg" onClick={() => openTeam('job')}><Icon name="add" size={18} />Request a skill</Button>}
       </div>
       <Separator className="mt-6.5 mb-4 bg-border" />
       <SectionHeader title="Your skills" count={list.length} className={SECTION_HEAD} />
@@ -62,7 +64,7 @@ export function Skills() {
         {list.map(s => {
           const locked = S < s.need
           const key = listKey(s.n)
-          const off = !locked && st.toggles[skillKey(s.n)] === false
+          const off = !!demo && !locked && st.toggles[skillKey(s.n)] === false
           return (
             <div key={key} className="relative flex items-start gap-3.5 rounded-xl p-3 hover:bg-card">
               <IconTile icon={s.icon} iconSize={22} size="xl" tone={locked ? 'locked' : s.need === 2 && S === 2 ? 'brand' : 'ink'} />
@@ -74,7 +76,7 @@ export function Skills() {
                   {off && <Badge variant="muted">Off</Badge>}
                 </div>
                 <div className="text-sm text-pretty text-muted-foreground">{keepUnitsTogether(s.d)}</div>
-                <div className="mt-0.5 text-xs text-muted-foreground">{s.by} · {s.used}</div>
+                <div className="mt-0.5 text-xs text-muted-foreground">{[s.by, s.used].filter(Boolean).join(' · ')}</div>
               </div>
             </div>
           )
@@ -114,7 +116,7 @@ function SkillSheet({ skill: s, phone, onClose }: { skill: SkillDef; phone: bool
   const { S, agent: st } = useCtx()
   const locked = S < s.need
   const key = skillKey(s.n)
-  const on = !locked && st.toggles[key] !== false
+  const on = !locked && (!demo || st.toggles[key] !== false)
   // Closing gives focus back to the row that opened the sheet, as Window does.
   const before = useRef<HTMLElement | null>(null)
   // It opens with focus on the sheet itself, so Close shows no focus ring or tooltip until someone tabs to it.
@@ -139,17 +141,17 @@ function SkillSheet({ skill: s, phone, onClose }: { skill: SkillDef; phone: bool
             <SheetTitle className="text-2xl leading-heading font-medium tracking-heading">{s.n}</SheetTitle>
             {locked && <StageTag tag={STAGE_TAGS[s.need]} />}
           </div>
-          <div className="mt-5 flex items-center gap-4 rounded-xl border border-border bg-card px-4.5 py-3.5">
+          {demo && <div className="mt-5 flex items-center gap-4 rounded-xl border border-border bg-card px-4.5 py-3.5">
             <div className="min-w-0 flex-1">
               <div className="text-md font-strong">{on ? 'On' : 'Off'}</div>
               <div className="text-sm text-foreground-3">{locked ? `Starts in ${STAGE_TAGS[s.need]}.` : on ? 'Your Inhouse agent uses this skill.' : "Your Inhouse agent won't use this skill."}</div>
             </div>
             <Switch on={on} label={`${s.n} on or off`} onChange={locked ? undefined : () => agent.setToggle(key, !on)} />
-          </div>
+          </div>}
           <h3 className="mono-label mt-6">What it does</h3>
           <p className="mt-2 text-base leading-reading">{s.d}</p>
           <h3 className="mono-label mt-6">Where it's used</h3>
-          <DetailList variant="ruled" className="mt-1 text-sm" items={[['Used', s.used], ['Made by', s.by], ['Works from', STAGE_TAGS[s.need]]]} />
+          <DetailList variant="ruled" className="mt-1 text-sm" items={[...(s.used ? [['Used', s.used] as [string, string]] : []), ['Made by', s.by], ['Works from', STAGE_TAGS[s.need]]]} />
         </div>
       </SheetContent>
     </Sheet>
