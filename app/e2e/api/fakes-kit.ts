@@ -21,21 +21,26 @@ export const release = actor('release')
 export interface McpLogEntry { host: string; path: string; method: string; rpc?: string; tool?: string; session?: string | null }
 export interface WebLogEntry { path: string; method: string; params: Record<string, string>; authorized: boolean }
 /** The fakes' logs as the hook returns them (JSON copies, in order). */
+/** One generic-or-Slack MCP fake's logs. */
+export interface McpFakeState {
+  requests: McpLogEntry[]
+  revoked: string[]
+  refreshSends: string[]
+  toolCalls: { name: string; args: Record<string, unknown> }[]
+  /** Every access token the fake issued (the canaries), live or not. */
+  issuedTokens: string[]
+  liveTokens: string[]
+}
 export interface FakeState {
-  mcp: {
-    requests: McpLogEntry[]
-    revoked: string[]
-    refreshSends: string[]
-    toolCalls: { name: string; args: Record<string, unknown> }[]
-    /** Every access token the fake issued (the canaries), live or not. */
-    issuedTokens: string[]
-    liveTokens: string[]
-  }
+  /** The Slack fake. */
+  mcp: McpFakeState
+  /** The generic `notes` fake (account `notes:test`), same shape. */
+  notes: McpFakeState
   web: { requests: WebLogEntry[]; posts: Record<string, string>[]; violations: string[][] }
   /** The recorded Shopify upstream's requests and the tokens it issued (the Shopify canaries). */
   shopify: { requests: { path: string; method: string }[]; issuedTokens: string[] }
-  /** The raw ConnectGateway answers the product Worker received, in order (a spec strict-parses each). */
-  connect: { bodies: unknown[] }
+  /** The raw ConnectGateway answers the product Worker received, in order, each as JSON text (a spec parses and strict-checks each). */
+  connect: { bodies: string[] }
   /** The hub's accounts: id and granted scopes (the hub's AccountStatus). */
   accounts: { accountId: string; scopes: string[] }[]
   /** The server's current UTC day, `YYYY-MM-DD` (the notice caps count by it). */
@@ -50,7 +55,8 @@ export interface FakeSeed {
 
 /** What `{op:'set'}` takes: the switches of FakeMcpServer and FakeSlackWeb the specs flip. */
 export interface FakeSwitches {
-  mcp?: { sameToken?: boolean; rotation?: boolean; exportAfterLists?: number; missingScope?: 'hide' | 'fail'; revokeFails?: boolean }
+  /** FakeMcpServer's own switch names; `profile` picks one fake (both when absent). */
+  mcp?: { profile?: 'slack' | 'notes'; sameToken?: boolean; rotation?: boolean; exportAfterLists?: number; missingScope?: 'hide' | 'fail'; revokeFails?: boolean; cumulative?: boolean; sse?: boolean; noS256?: boolean; staleSessions?: true }
   web?: { rateLimitNextPost?: boolean; failNextPost?: string | null; channels?: { id: string; patch: Record<string, unknown> }[] }
 }
 
@@ -67,12 +73,14 @@ export const fakeState = async (request: APIRequestContext): Promise<FakeState> 
 export const fakeReset = async (request: APIRequestContext): Promise<void> => { await hookOk(request, { op: 'reset' }) }
 export const fakeSet = async (request: APIRequestContext, s: FakeSwitches): Promise<void> => { await hookOk(request, { op: 'set', ...s }) }
 export type WorkerLog = { worker: 'product' | 'hub'; line: string }
-/** Worker log lines captured since the run began, each tagged with its Worker. */
-export const workerLogEntries = async (request: APIRequestContext): Promise<WorkerLog[]> => {
-  const j = await hookOk(request, { op: 'logs' })
-  return (Array.isArray(j) ? j : j.lines) as WorkerLog[]
-}
-export const workerLogs = async (request: APIRequestContext): Promise<string[]> => (await workerLogEntries(request)).map(e => e.line)
+export type LogMark = { product: number; hub: number }
+/** Worker log lines captured since `since` (the whole capture without it), each tagged with its Worker, and the mark after them. */
+export const workerLogsSince = async (request: APIRequestContext, since?: LogMark): Promise<{ lines: WorkerLog[]; next: LogMark }> =>
+  hookOk(request, { op: 'logs', ...(since ? { since } : {}) })
+export const workerLogEntries = async (request: APIRequestContext, since?: LogMark): Promise<WorkerLog[]> => (await workerLogsSince(request, since)).lines
+/** The mark after every line captured so far: pass it to the next read to see only what a test did. */
+export const logMark = async (request: APIRequestContext): Promise<LogMark> => (await workerLogsSince(request)).next
+export const workerLogs = async (request: APIRequestContext, since?: LogMark): Promise<string[]> => (await workerLogEntries(request, since)).map(e => e.line)
 /** Plants text where a read returns it (cleared by `reset`). */
 export const seedFake = async (request: APIRequestContext, seed: FakeSeed): Promise<void> => { await hookOk(request, { op: 'seed', ...seed }) }
 /** The hub's ReadGateway answer, as a run-scoped call would get it. */

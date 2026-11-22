@@ -47,7 +47,7 @@ test('the system prompt names exactly the usable apps: before a connect, after i
 })
 
 test('a tool outside the allowlist is absent and unknown_tool, a write is write_refused, and the fake sees no call for either', async ({ request }) => {
-  await fakeSet(request, { mcp: { exportAfterLists: 1 } })
+  await fakeSet(request, { mcp: { profile: 'notes', exportAfterLists: 1 } })
   await ensureDisconnected(request)
   const c = await connectSlack(request, { account: NOTES_ACCOUNT })
   expect(c.location).toBe('/tools/notes?connected=1')
@@ -57,19 +57,19 @@ test('a tool outside the allowlist is absent and unknown_tool, a write is write_
   let names: string[] = []
   for (let i = 0; i < 3; i++) names = await hubToolNames(request)
   const mid = await fakeState(request)
-  expect(mid.mcp.requests.filter(r => r.rpc === 'tools/list').length, 'the hub asked the upstream for its list').toBeGreaterThan(before.mcp.requests.filter(r => r.rpc === 'tools/list').length)
+  expect(mid.notes.requests.filter(r => r.rpc === 'tools/list').length, 'the hub asked the upstream for its list').toBeGreaterThan(before.notes.requests.filter(r => r.rpc === 'tools/list').length)
   expect(names).toEqual(expect.arrayContaining(['notes_search', 'notes_read']))
   expect(names, 'notes_export is hidden by design').not.toContain('notes_export')
   expect(names).not.toContain('notes_delete')
 
-  const callsBefore = (await fakeState(request)).mcp.toolCalls.length
+  const callsBefore = (await fakeState(request)).notes.toolCalls.length
   const unknown = await hubCall(request, 'callTool', 'notes_export', {})
   expect(unknown).toMatchObject({ ok: false, error: { code: 'unknown_tool' } })
   expect(await hubCall(request, 'callTool', 'notes_delete', { id: 'n1' })).toMatchObject({ ok: false, error: { code: 'write_refused' } })
   const after = await fakeState(request)
-  expect(after.mcp.toolCalls.length, 'no tools/call reached the fake for the hidden tool or the write').toBe(callsBefore)
-  expect(after.mcp.toolCalls.map(t => t.name)).not.toContain('notes_export')
-  expect(after.mcp.toolCalls.map(t => t.name)).not.toContain('notes_delete')
+  expect(after.notes.toolCalls.length, 'no tools/call reached the fake for the hidden tool or the write').toBe(callsBefore)
+  expect(after.notes.toolCalls.map(t => t.name)).not.toContain('notes_export')
+  expect(after.notes.toolCalls.map(t => t.name)).not.toContain('notes_delete')
 
   // A Slack write is refused the same way (the runner's hub route has no other answer to give).
   await freshConnect(request)
@@ -78,7 +78,7 @@ test('a tool outside the allowlist is absent and unknown_tool, a write is write_
   expect((await fakeState(request)).mcp.toolCalls.length, 'the write never reached Slack').toBe(slackCalls)
   const gone = await call(request, inhouse, 'POST', `/api/tools/${acct(NOTES_ACCOUNT)}/disconnect`, { json: {} })
   expect([200, 404, 409], gone.text).toContain(gone.status)
-  await fakeSet(request, { mcp: { exportAfterLists: 2 } })
+  await fakeSet(request, { mcp: { profile: 'notes', exportAfterLists: 2 } })
 })
 
 test('pause hides: a paused tool leaves the list and answers paused; unpaused it is back', async ({ request }) => {

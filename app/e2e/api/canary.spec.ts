@@ -3,9 +3,9 @@
 // are canaries too. A Slack connect with rotation on, a Slack read, a Shopify read, a code-mode ask (when listed) and a
 // `notification_send` run through the hook; then none of the canaries may be in: the Worker logs of BOTH Workers (the hook's
 // `logs` op, the orchestrator's capture of `wrangler dev`'s output; the egress log is among them), every API answer this spec
-// received and, on the per-PR deployment, the runner's environment and the transcript of a scripted run that calls the
-// connector tools through the runner. Ways it can fail, written first:
-//  1. a token, refresh token or client secret reaches a log line, an API answer, the runner's environment or the transcript;
+// received and, on the per-PR deployment, the transcript of a scripted run that calls the connector tools through the runner.
+// The runner's environment is not tested: the hook has no `runnerEnv` op (annotated as skipped). Ways it can fail, written first:
+//  1. a token, refresh token or client secret reaches a log line, an API answer or the transcript;
 //  2. the check passes because nothing was captured or nothing happened: each capture must be non-empty, both Workers must have
 //     logged, the recorded Shopify must have been asked, and the transcript must hold the tool result (a positive control);
 //  3. a failure prints a secret: only labels (`slack#0`, `secret#1`, `shopify#0`, `refresh-token`) are ever printed.
@@ -14,8 +14,8 @@ import type { APIRequestContext } from '@playwright/test'
 import { actor, call, me } from './kit.ts'
 import { answerOf, createChat, send } from './chat-kit.ts'
 import {
-  CHANNEL, ensureDisconnected, fakeReset, fakeSet, fakeState, freshConnect, hook, hubCall, hubToolNames, inhouse, newRun, notifySend, seedFake, setListedChannels,
-  setStage, workerLogEntries,
+  CHANNEL, ensureDisconnected, fakeReset, fakeSet, fakeState, freshConnect, hook, hubCall, hubToolNames, inhouse, logMark, newRun, notifySend, seedFake,
+  setListedChannels, setStage, workerLogEntries,
 } from './fakes-kit.ts'
 
 const dana = actor('memberA')
@@ -93,7 +93,7 @@ test('no token, refresh token or client secret is in a Worker log (both Workers)
   await fakeSet(request, { mcp: { rotation: false } })
 })
 
-test('a scripted run that calls the connector tools leaves no canary in the runner environment, the transcript or the logs', async ({ request }) => {
+test('a scripted run that calls the connector tools leaves no canary in the transcript or the logs', async ({ request }) => {
   test.skip(!process.env.E2E_TEST_BUILD_REMOTE, 'needs a container (runner, session store): it runs on the per-PR test deployment (E2E_TEST_BUILD_REMOTE)')
   await fakeReset(request)
   await freshConnect(request)
@@ -102,6 +102,7 @@ test('a scripted run that calls the connector tools leaves no canary in the runn
   await setListedChannels(request, [CHANNEL.opsAlerts], true)
 
   // The run goes first: the checks below read what it left.
+  const mark = await logMark(request)
   const chat = await createChat(request, dana)
   const sent = await send(request, dana, chat, 'scenario:connectors check the connectors')
   await answerOf(request, dana, chat, sent.turnId)
@@ -115,13 +116,11 @@ test('a scripted run that calls the connector tools leaves no canary in the runn
   expect(texts.some(t => t.includes(KESTREL)), 'the transcript holds the Slack tool result').toBe(true)
   expect(found(needles, texts), 'canaries found in the transcript').toEqual([])
 
-  const literals = needles.filter(n => n.literal !== undefined)
-  const env = await hook(request, { op: 'runnerEnv', needles: literals.map(n => n.literal) })
-  expect(env.status, 'the runnerEnv op answers').toBe(200)
-  expect(env.json.keys.length, 'the runner environment was read').toBeGreaterThan(0)
-  expect((env.json.hits as number[]).map(i => literals[i]?.label ?? 'unknown-hit'), 'canaries found in the runner environment').toEqual([])
+  // The runner's environment is NOT checked here: the hook can't read it (a route in the runner image would be shared by every build
+  // and no bundle check could fence it). The session env is wholly `sessionEnv()` (runner/src/session/env.ts), which takes no token by construction.
+  test.info().annotations.push({ type: 'skipped', description: "runner environment: the hook has no runnerEnv op (it would need a runner-image route no bundle check can fence)" })
 
-  const logs = await workerLogEntries(request)
-  for (const worker of ['product', 'hub'] as const) expect(logs.filter(e => e.worker === worker).length, `the ${worker} Worker's log was captured`).toBeGreaterThan(0)
+  const logs = await workerLogEntries(request, mark)
+  for (const worker of ['product', 'hub'] as const) expect(logs.filter(e => e.worker === worker).length, `the ${worker} Worker's log was captured during the run`).toBeGreaterThan(0)
   expect(found(needles, logs.map(e => e.line)), 'canaries found in a Worker log line after the run').toEqual([])
 })

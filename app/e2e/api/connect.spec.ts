@@ -15,7 +15,7 @@ import { ToolDetailSchema, ToolsDataSchema } from '../../shared/contract/tools.t
 import { mintTestCode } from '../../test/upstreams/mcp/server.ts'
 import { actor, call, expectError, me, newIdentity, personActor } from './kit.ts'
 import {
-  anyContains, callbackOf, connectSlack, ensureDisconnected, fakeReset, fakeSet, fakeState, freshConnect, hook, inhouse, readTools, SLACK_ACCOUNT,
+  anyContains, callbackOf, connectSlack, ensureDisconnected, fakeReset, fakeSet, fakeState, freshConnect, hook, inhouse, logMark, readTools, SLACK_ACCOUNT,
   SLACK_SCOPES, TEAM, workerLogs,
 } from './fakes-kit.ts'
 
@@ -31,6 +31,7 @@ const START = `/api/connect/${encodeURIComponent(SLACK_ACCOUNT)}/start`
 test('a full connect with the fake Slack ends active, and no token is in any answer, header or log line', async ({ request }) => {
   await ensureDisconnected(request)
   const before = await fakeState(request)
+  const mark = await logMark(request)
   const c = await freshConnect(request)
   // Route A answers exactly the address and its expiry; route B is a redirect with no body.
   expect(Object.keys(c.start.json).sort()).toEqual(['authorizeUrl', 'expiresAt'])
@@ -45,7 +46,7 @@ test('a full connect with the fake Slack ends active, and no token is in any ans
   expect([...(after.accounts.find(a => a.accountId === SLACK_ACCOUNT)?.scopes ?? [])].sort(), "the account's scopes").toEqual([...SLACK_SCOPES])
   const issued = after.mcp.issuedTokens.filter(t => !before.mcp.issuedTokens.includes(t))
   expect(issued.length, 'the fake issued a token for this connect').toBeGreaterThan(0)
-  const surfaces = [c.start.text, c.callback.text, JSON.stringify(c.start.headers), JSON.stringify(c.callback.headers), JSON.stringify(tools), ...(await workerLogs(request))]
+  const surfaces = [c.start.text, c.callback.text, JSON.stringify(c.start.headers), JSON.stringify(c.callback.headers), JSON.stringify(tools), ...(await workerLogs(request, mark))]
   for (const token of issued) expect(anyContains(surfaces, token), 'the token is in no answer, header or log line').toBe(false)
 })
 
@@ -206,10 +207,9 @@ test('every route answer has no field beyond the contract and carries no token',
   // the contract, and none holds a canary.
   const bodies = (await fakeState(request)).connect.bodies
   expect(bodies.length, 'the hook recorded the hub answers').toBeGreaterThan(0)
-  for (const [n, body] of bodies.entries()) {
-    const problem = strictHubResult(body)
-    expect(problem, `ConnectGateway body #${n}`).toBeNull()
-    for (const [i, token] of issued.entries()) expect(JSON.stringify(body).includes(token), `ConnectGateway body #${n} holds canary slack#${i}`).toBe(false)
+  for (const [n, text] of bodies.entries()) {
+    expect(strictHubResult(JSON.parse(text)), `ConnectGateway body #${n}`).toBeNull()
+    for (const [i, token] of issued.entries()) expect(text.includes(token), `ConnectGateway body #${n} holds canary slack#${i}`).toBe(false)
   }
 })
 
