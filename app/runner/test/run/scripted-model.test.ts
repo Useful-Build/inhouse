@@ -390,6 +390,19 @@ describe("the real CLI's requests", () => {
       const noResult = { ...r, messages: r.messages.slice(0, -1) }
       expect((await answer(model, noResult, 'memory-recall')).status).toBe(400)
     })
+    it('memory-recall-returns: searches "return" and says the fact only when the result is exactly that one fact', async () => {
+      const RETURNS = 'Returns are accepted within 45 days.'
+      const id = 'toolu_scripted_recall_returns'
+      for (const key of ['turn1', 'turn1-budget'] as const) {
+        const model = createScriptedModel(SCENARIOS)
+        expect(await answer(model, captured['memory-save']!.turn0!, 'memory-recall-returns')).toEqual({ status: 200, content: ['mcp__inhouse__memory_search'] })
+        expect(await answer(model, withResult(key, id, `1 saved fact matches:\n- [person] ${RETURNS} (memory_id: m)`), 'memory-recall-returns')).toEqual({ status: 200, content: [`From memory: ${RETURNS}`] })
+        for (const other of [`2 saved facts match:\n- [person] ${RETURNS} (memory_id: m)\n- [person] ${RETURNS} (memory_id: n)`, '1 saved fact matches:\n- [person] Something else (memory_id: m)', 'Nothing saved matches "return".']) {
+          expect(await answer(model, withResult(key, id, other), 'memory-recall-returns'), other).toEqual({ status: 200, content: ['The search did not return exactly that one fact.'] })
+        }
+        expect(model.misses).toEqual([])
+      }
+    })
   })
 
   it("memory-save-team: the real CLI's memory-save requests (the same tool call), with the call id renamed, get its two answers, also past the trailing budget line", async () => {

@@ -214,6 +214,30 @@ function memoryRecall(id: string, query: string, fact: string): Scenario {
   }
 }
 
+/** The fact the `memory-save-returns` scenario saves (a person's own, active at once): eval R02's returns fact. */
+export const MEMORY_RETURNS_TEXT = 'Returns are accepted within 45 days.'
+export const MEMORY_RECALL_NOT_ONE = 'The search did not return exactly that one fact.'
+/**
+ * Searches memory for `query` and answers `From memory: <fact>` only when the result is exactly one fact and it's `fact`
+ * (memory_search's text says "1 saved fact matches:"; more says "N saved facts match"), else MEMORY_RECALL_NOT_ONE.
+ * The remote stemming check (e2e/api/memory-search.spec.ts) uses it: "return" finds "Returns" on the sandbox's D1.
+ */
+function memoryRecallOne(id: string, query: string, fact: string): Scenario {
+  const ask = mainLoop('mcp__inhouse__memory_search')
+  const one = (r: MessagesRequest) => {
+    const block = resultBlock(r, id)
+    return block !== undefined && resultText(block).includes('1 saved fact matches:') && resultText(block).includes(fact)
+  }
+  const reply = (text: string): ScriptedTurn => ({ content: [{ type: 'text', text }], expect: both(ask, resultOf(id)) })
+  return {
+    turns: [{ content: [{ type: 'tool_use', id, name: 'mcp__inhouse__memory_search', input: { query } }], expect: ask }],
+    branches: {
+      one: { match: one, turns: [null, reply(memoryRecallAnswer(fact))] },
+      other: { match: (r) => resultBlock(r, id) !== undefined && !one(r), turns: [null, reply(MEMORY_RECALL_NOT_ONE)] },
+    },
+  }
+}
+
 /** How long the `slow-bash` scenario's one Bash call sleeps: long enough to act on the live turn, short enough to end on its own. */
 export const SLOW_BASH_SECONDS = 20
 
@@ -251,6 +275,17 @@ export const SCENARIOS: Record<string, Scenario> = {
 
   /** The same for the team's Friday restock fact: it waits for an admin, so a search can't find it and the answer says nothing is saved. */
   'memory-recall-team': memoryRecall('toolu_scripted_recall_team', 'restock Fridays', MEMORY_SAVE_TEAM_TEXT),
+
+  /** Saves eval R02's returns fact for the person (active at once), for the remote stemming check (e2e/api/memory-search.spec.ts). */
+  'memory-save-returns': {
+    turns: [
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_memory_returns', name: 'mcp__inhouse__memory_save', input: { scope: 'person', text: MEMORY_RETURNS_TEXT } }], expect: mainLoop('mcp__inhouse__memory_save') },
+      { content: [{ type: 'text', text: 'Saved.' }], expect: both(mainLoop('mcp__inhouse__memory_save'), resultOf('toolu_scripted_memory_returns')) },
+    ],
+  },
+
+  /** Searches memory for "return" (another form of the saved "Returns") and says whether exactly that one fact came back. */
+  'memory-recall-returns': memoryRecallOne('toolu_scripted_recall_returns', 'return', MEMORY_RETURNS_TEXT),
 
   /** Saves one fact for the whole team: it waits for an admin's OK, so no page lists it yet (the ship spec's S7). */
   'memory-save-team': {

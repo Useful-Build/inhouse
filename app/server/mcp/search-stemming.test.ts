@@ -3,7 +3,9 @@
 //  1. a query word misses a saved word of the same stem (return/returns/returned, ship/shipping), in facts or history;
 //  2. the R02 query still finds nothing;
 //  3. an exact word or a quoted phrase stops matching, or a phrase matches out of order;
-//  4. the wider matching reaches past the visibility rule: a member finds another member's person facts, a waiting or
+//  4. a code the agent is asked about (an order "PO-1187", an invoice "#4821") stops being found by its digits or its
+//     parts;
+//  5. the wider matching reaches past the visibility rule: a member finds another member's person facts, a waiting or
 //     forgotten fact, or another member's (or a deleted) chat. That's the must-not.
 // The oracle is the seed record below (each item's stem family and who may see it), never the code under test.
 import { fc, test } from '@fast-check/vitest'
@@ -91,7 +93,31 @@ describe('exact words and phrases still match (failure 3)', () => {
   })
 })
 
-describe('the visibility rule holds under the wider matching (failure 4, the must-not)', () => {
+describe('codes (failure 4)', () => {
+  const CODE = 'mem_stemCodesaaaaaaaaaaaa'
+  const SKU = 'mem_stemSkuaaaaaaaaaaaaaa'
+  const SKU_S = 'mem_stemSkusaaaaaaaaaaaaa'
+  beforeAll(async () => {
+    await db.batch([[CODE, 'Order PO-1187 goes out with invoice #4821'], [SKU, 'SKU ABC123 is the blue mug'], [SKU_S, 'SKU ABC123S is the small blue mug']]
+      .map(([id, text]) => db.prepare("INSERT INTO memories (id, scope, owner_id, text, status, created_by, created_at_ms, updated_at_ms) VALUES (?, 'brand', NULL, ?, 'active', ?, 1, 1)").bind(id, text, A)))
+  })
+  it('an order or invoice code is found by its digits and by its parts', async () => {
+    expect(await factsFound(A, '1187')).toEqual([CODE])
+    expect(await factsFound(A, 'po 1187')).toEqual([CODE])
+    expect(await factsFound(A, '"po 1187"')).toEqual([CODE])
+    expect(await factsFound(A, 'PO-1187')).toEqual([CODE])
+    expect(await factsFound(A, '4821')).toEqual([CODE])
+    expect(await factsFound(A, '#4821')).toEqual([CODE])
+  })
+  it('known limit, accepted: porter merges a code with its trailing-s form (ABC123 and ABC123S find each other)', async () => {
+    // A9's call (2026-11-22): OR-matching adds noise here but never loses a hit. The fix (an unstemmed index ranked
+    // first) is in P9; when it lands, this test changes with it.
+    expect(await factsFound(A, 'ABC123')).toEqual([SKU, SKU_S].sort())
+    expect(await factsFound(A, 'ABC123S')).toEqual([SKU, SKU_S].sort())
+  })
+})
+
+describe('the visibility rule holds under the wider matching (failure 5, the must-not)', () => {
   const FORMS = Object.values(FAMILIES).flat()
   test.prop([fc.constantFrom(A, B), fc.oneof(
     fc.array(fc.constantFrom(...FORMS), { minLength: 1, maxLength: 4 }).map(w => w.join(' ')),
