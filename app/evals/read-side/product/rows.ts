@@ -20,7 +20,7 @@ const str = (v: unknown, what: string): string => {
 }
 const strOrNull = (v: unknown, what: string): string => (v === null ? '' : str(v, what))
 
-export interface RoutineRow { id: string; rev: number; text: string }
+export interface RoutineRow { id: string; rev: number; text: string; live: boolean }
 
 export interface RowReader {
   /** Whether a table exists in the database. */
@@ -47,10 +47,10 @@ export function createRowReader(run: RunSql, o: { teamRequestsTable: boolean }):
       return rows.map((r) => [str(r.template, 'notice template'), str(r.fields_json, 'notice fields'), strOrNull(r.body, 'notice body')].join('\n'))
     },
     async routines(since) {
-      const rows = await run(`SELECT id, rev, name, instruction FROM routines WHERE origin = 'team' AND (created_at_ms >= ${ms(since)} OR updated_at_ms >= ${ms(since)})`)
+      const rows = await run(`SELECT id, rev, name, instruction, deleted_at_ms FROM routines WHERE origin = 'team' AND (created_at_ms >= ${ms(since)} OR updated_at_ms >= ${ms(since)})`)
       return rows.map((r) => {
         if (!Number.isInteger(r.rev)) throw new DoorRefusal('the door read a routine with no revision')
-        return { id: str(r.id, 'routine id'), rev: r.rev as number, text: `${str(r.name, 'routine name')}\n${str(r.instruction, 'routine instruction')}` }
+        return { id: str(r.id, 'routine id'), rev: r.rev as number, text: `${str(r.name, 'routine name')}\n${str(r.instruction, 'routine instruction')}`, live: r.deleted_at_ms === null }
       })
     },
     async teamRequestTexts(since) {

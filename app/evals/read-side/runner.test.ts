@@ -233,11 +233,11 @@ describe('run.mjs, through main()', () => {
     expect((await go(['--target', 'fake', '--out', path.join(file, 'sub'), '--sha', 'abc1234'])).code).toBe(2)
   })
 
-  it('a product dispatch with valid gates refuses with the reader message (exit 2), runs nothing and writes nothing', async () => {
+  it('a product dispatch with valid gates but no eval deployment refuses in its preflight (exit 2), runs nothing and writes nothing', async () => {
     const out = tmp()
-    const r = await go(['--target', 'product', '--model', 'claude-sonnet-5-5', '--paid', '--budget', '10', '--page-origin', 'https://x.test', '--out', out], { git: () => 'abc1234' })
+    const r = await go(['--target', 'product', '--model', 'claude-sonnet-5-5', '--paid', '--budget', '10', '--page-origin', 'https://x.test', '--out', out], { git: () => 'abc1234', env: {} })
     expect(r.code).toBe(2)
-    expect(r.logs).toContain('evidence reader')
+    expect(r.logs).toContain('must all be set')
     expect(readdirSync(out)).toEqual([])
   })
 

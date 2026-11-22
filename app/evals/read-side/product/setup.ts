@@ -25,7 +25,7 @@ import type { ExfilSpec, RunContext, SeedFact, Session } from '../../types.ts'
 import { pinEffort, type SettingsApi } from './effort.ts'
 import { createSessionReader, type SessionReader } from './r2.ts'
 import { createRowReader } from './rows.ts'
-import { createProductReadSideTarget, type RawApi, type ProductDeps } from './target.ts'
+import { createProductReadSideTarget, deleteRoutines, SINCE_MARGIN_MS, type RawApi, type ProductDeps } from './target.ts'
 import type { ReadSideTarget } from '../runner.ts'
 
 /** The Inhouse app's origin and Access aud on the eval deployment: the effort is a technical setting only the Inhouse team writes. */
@@ -132,10 +132,14 @@ export async function wireEval(o: EvalOptions): Promise<Wired> {
   const leaseTag = `product:${runTag}`
   let restoreEffort: (() => Promise<void>) | null = null
   let closed = false
+  /** The run's start on D1's clock and the routines it deleted: a stop sweeps every routine made since, as each case's end does. */
+  let runStart: number | null = null
+  const deleted = new Set<string>()
   const close = async (): Promise<string[]> => {
     if (closed) return []
     closed = true
     const errors: string[] = []
+    if (runStart !== null) errors.push(...(await deleteRoutines(createRowReader(run, { teamRequestsTable: false }), admin, runStart, deleted)))
     shops.close()
     await shops.clearShop().catch((e: unknown) => errors.push(`the test shop override could not be cleared: ${said(e)}`))
     if (restoreEffort) await restoreEffort().catch((e: unknown) => errors.push(`the effort could not be put back: ${said(e)}`))
@@ -156,6 +160,7 @@ export async function wireEval(o: EvalOptions): Promise<Wired> {
     await door.setSpendingCap(EVAL_CAP)
     const room = await product.room!()
     if (room.spentUsd + o.budgetUsd > room.capUsd) throw new Error(`read-side: refusing: this month's spend $${room.spentUsd.toFixed(2)} plus --budget $${o.budgetUsd} is over the brand's ${EVAL_CAP} cap`)
+    runStart = (await nowOf(run)()) - SINCE_MARGIN_MS
     restoreEffort = await pinEffort(settings, o.model)
     o.note(`read-side: effort pinned to Medium for ${o.model}; team requests: ${teamTable ? 'rows read from team_requests' : 'team_requests absent, observed empty'}`)
     const rows = createRowReader(run, { teamRequestsTable: teamTable })
@@ -172,7 +177,7 @@ export async function wireEval(o: EvalOptions): Promise<Wired> {
       adminApi: admin,
       note: o.note,
     }
-    return { target: createProductReadSideTarget(deps), teamRequests: teamTable ? 'rows' : 'absent', close }
+    return { target: createProductReadSideTarget(deps, deleted), teamRequests: teamTable ? 'rows' : 'absent', close }
   } catch (e) {
     const errors = await close()
     if (errors.length) throw new Error(`${said(e)}; and ${errors.join('; ')}`, { cause: e })
@@ -211,9 +216,11 @@ export async function wireProof(o: ProofOptions): Promise<Wired> {
   await sessions.preflight()
   const rows = createRowReader(run, { teamRequestsTable: teamTable })
   const must = (r: { status: number }, what: string, ok: number[] = [200, 201]) => { if (!ok.includes(r.status)) throw new Error(`${what}: ${r.status}`) }
+  const runStart = (await nowOf(run)()) - SINCE_MARGIN_MS
+  const deleted = new Set<string>()
   const close = async (): Promise<string[]> => {
+    const errors: string[] = await deleteRoutines(rows, o.raw.admin, runStart, deleted)
     shops.close()
-    const errors: string[] = []
     await shops.clearShop().catch((e: unknown) => errors.push(`the test shop override could not be cleared: ${said(e)}`))
     await door.setWebfetchHosts(null).catch((e: unknown) => errors.push(`the WebFetch list could not be put back: ${said(e)}`))
     return errors
@@ -239,6 +246,6 @@ export async function wireProof(o: ProofOptions): Promise<Wired> {
     adminApi: o.raw.admin,
     prompt: (c, p) => `scenario:${o.scenarioOf(c)} ${p}`,
     note: o.note,
-  })
+  }, deleted)
   return { target, teamRequests: teamTable ? 'rows' : 'absent', close }
 }

@@ -27,8 +27,10 @@ export type RawApi = (method: 'GET' | 'POST' | 'PUT', path: string, body?: unkno
 
 /** A thrown failure that still carries what the case spent (the server's settled figure). */
 export class CostedError extends Error {
-  constructor(message: string, readonly costUsd: number, options?: { cause?: unknown }) {
+  readonly costUsd: number
+  constructor(message: string, costUsd: number, options?: { cause?: unknown }) {
     super(message, options)
+    this.costUsd = costUsd
   }
 }
 
@@ -91,13 +93,30 @@ async function filesOf(api: RawApi, chatId: string): Promise<(FileEvidence | nul
   return out
 }
 
-export function createProductReadSideTarget(d: ProductDeps): ReadSideTarget & { deleted: ReadonlySet<string> } {
-  /** Routines this run deleted: a later case's window never reads them as its own. */
-  const deleted = new Set<string>()
+/**
+ * Deletes (route 55, as the Admin) every live team routine made or changed since `since` that this run hasn't deleted yet, so
+ * none stays scheduled to spend. Returns what went wrong, never throws: the caller reports it with everything else.
+ */
+export async function deleteRoutines(rows: Pick<RowReader, 'routines'>, admin: RawApi, since: number, deleted: Set<string>): Promise<string[]> {
+  const errors: string[] = []
+  try {
+    for (const r of await rows.routines(since)) {
+      if (deleted.has(r.id) || !r.live) continue
+      const del = await admin('POST', `/api/routines/${encodeURIComponent(r.id)}/delete`, { ifRev: r.rev })
+      if (del.status === 200 || del.status === 404) deleted.add(r.id)
+      else errors.push(`routine ${r.id} could not be deleted (${del.status}): delete it on the Routines page before the next run`)
+    }
+  } catch (e) {
+    errors.push(`the routines could not be read for the delete: ${said(e)}`)
+  }
+  return errors
+}
+
+export function createProductReadSideTarget(d: ProductDeps, deleted: Set<string> = new Set()): ReadSideTarget {
+  // `deleted`: routines this run deleted, so a later case's window never reads them as its own (shared with the stop handler's sweep).
   return {
     name: 'product',
     honorsPending: true,
-    deleted,
     async run(c) {
       const plan = planOf(c)
       const since = (await d.rows.nowMs()) - SINCE_MARGIN_MS
@@ -148,15 +167,7 @@ export function createProductReadSideTarget(d: ProductDeps): ReadSideTarget & { 
         failure = e
       } finally {
         // Straight after the case, whatever it did: no routine it made may stay scheduled.
-        try {
-          for (const r of (await d.rows.routines(since)).filter((x) => !deleted.has(x.id))) {
-            const del = await d.adminApi('POST', `/api/routines/${encodeURIComponent(r.id)}/delete`, { ifRev: r.rev })
-            if (del.status === 200 || del.status === 404) deleted.add(r.id)
-            else cleanup.push(`routine ${r.id} could not be deleted (${del.status})`)
-          }
-        } catch (e) {
-          cleanup.push(`the routines could not be read for the delete: ${said(e)}`)
-        }
+        cleanup.push(...(await deleteRoutines(d.rows, d.adminApi, since, deleted)))
         try {
           await session?.reset()
         } catch (e) {
