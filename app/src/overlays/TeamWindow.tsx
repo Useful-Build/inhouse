@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { agent, demo } from '../agent'
 import type { RequestType } from '../state/store'
 import { useCtx, useUi } from '../state/store'
@@ -43,6 +43,10 @@ export function TeamWindow() {
   const phone = useUi(s => s.phone)
   const ctx = useCtx()
   const [sending, setSending] = useState(false)
+  // After a refusal the box is enabled again with the words in it: focus goes back to it, once it can take focus.
+  const box = useRef<HTMLTextAreaElement>(null)
+  const refocus = useRef(false)
+  useEffect(() => { if (!sending && refocus.current) { refocus.current = false; box.current?.focus() } }, [sending])
   // The product reads the open requests again each time the window opens (what the team answered since the first read).
   useEffect(() => { if (pop === 'team' && !demo) void agent.refresh('requests') }, [pop])
   if (pop !== 'team') return null
@@ -63,12 +67,13 @@ export function TeamWindow() {
     // The product waits for the server; the chips and the box are locked meanwhile, so nothing typed is wiped or reverted.
     if (demo === null) setSending(true)
     try {
-      await sendFromWindow({
+      const outcome = await sendFromWindow({
         product: demo === null,
         send: () => agent.sendTeamRequest(req),
         sent: () => showToast(sentToast(demo !== null, isBug)),
         done: () => patch({ pop: null, team: { ...team, text: '' } }),
       })
+      refocus.current = outcome === 'kept'
     } finally { setSending(false) }
   }
 
@@ -105,7 +110,7 @@ export function TeamWindow() {
         <div className={cn('rounded-2xl border border-border bg-card px-4', phone ? 'py-3' : 'py-3.5')}>
           <ChoiceChips label="Request type" value={team.type} options={(Object.keys(RT) as RequestType[]).map(k => [k, RT[k][1], RT[k][0]])}
             onChange={type => patch({ team: { ...team, type } })} disabled={sending} />
-          <Textarea aria-label="Your request" disabled={sending} maxLength={TEAM_REQUEST_TEXT_MAX} value={team.text} placeholder={RT[team.type][2]} onChange={e => patch({ team: { ...team, text: e.target.value } })}
+          <Textarea ref={box} aria-label="Your request" disabled={sending} maxLength={TEAM_REQUEST_TEXT_MAX} value={team.text} placeholder={RT[team.type][2]} onChange={e => patch({ team: { ...team, text: e.target.value } })}
             className={cn('mt-3 max-h-60 resize-none rounded-xl bg-muted px-3.5 py-3 leading-normal', phone ? 'min-h-18' : 'min-h-27.5')} />
           {showScreenshotBox(demo !== null, isBug) && (
             <div className="mt-2.5 flex items-center gap-2.5 text-sm text-foreground-2">

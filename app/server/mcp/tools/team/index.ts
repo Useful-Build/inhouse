@@ -38,6 +38,7 @@ export const handlers: Partial<Record<InhouseToolName, ToolHandler>> = {
       if (!o.created && r.text !== a.text) {
         return answer(`There is already an open request about this from this person, so nothing new was sent. Its words: "${r.text}". Tell the person it's with the Inhouse team, and that they can take it back before asking again. (request_id: ${r.id})`, { ...view(r, scope.memberId), created: false })
       }
+      if (!o.created) return answer(`That request is already with the Inhouse team, so nothing new was sent. Tell the person it's with them. (request_id: ${r.id})`, { ...view(r, scope.memberId), created: false })
       return answer(`Sent to the Inhouse team (request_id: ${r.id}). The people who run this agent read it. Tell the person it's sent.`, { ...view(r, scope.memberId), created: o.created })
     },
   }),

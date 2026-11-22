@@ -120,6 +120,24 @@ describe('the client: requests to the Inhouse team', () => {
     await expect(sent).rejects.toMatchObject({ message: expect.stringContaining('already have an open request') })
   })
 
+  test('on that conflict the returned open request joins the list and its Requested mark stays, so the page does not offer Request again', async () => {
+    const existing = rec('e', { kind: 'tool', subject: 'shopify', text: 'Connect shopify', mine: true })
+    const { agent } = await loaded({ ...reads(), 'POST /api/team-requests': { status: 200, body: existing } })
+    await expect(agent.sendTeamRequest({ icon: 'add_link', title: 't', sub: 's', at, status: 'Sent', kind: 'tool', text: 'Connect shopify, but read-only' })).rejects.toMatchObject({ code: 'conflict' })
+    // The window sends no subject; the tool button does: same person, kind and subject means the server answers the open one.
+    await expect(agent.requestTool('shopify', true)).resolves.toBeUndefined()
+    const open = rec('o', { kind: 'tool', subject: 'zebra', text: 'Connect zebra, first words', mine: true })
+    const second = await loaded({ ...reads(), 'POST /api/team-requests': { status: 200, body: open } })
+    await expect(second.agent.requestTool('zebra', true)).rejects.toMatchObject({ code: 'conflict' })
+    expect(second.agent.getSnapshot().requestedTools).toEqual({ zebra: true })
+    expect(second.agent.getSnapshot().teamRequests.map(r => r.title)).toEqual(['Connect zebra, first words'])
+  })
+
+  test('the different-words check ignores surrounding whitespace in what was sent', async () => {
+    const { agent } = await loaded({ ...reads(), 'POST /api/team-requests': { status: 201, body: rec('n', { kind: 'bug', subject: null, text: 'It broke.', mine: true }) } })
+    await expect(agent.sendTeamRequest({ icon: 'bug_report', title: 't', sub: 's', at, status: 'Sent', kind: 'bug', text: '  It broke.  ' })).resolves.toBeUndefined()
+  })
+
   test('the names are recomputed when the members arrive after the requests', async () => {
     // The members read is held until the requests are in the snapshot, so they were first built without any name.
     const s = server({

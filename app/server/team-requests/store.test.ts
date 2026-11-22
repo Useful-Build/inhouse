@@ -258,6 +258,14 @@ describe('the tools', () => {
     expect(second.structuredContent).toMatchObject({ created: false, text: 'Connect Zebra Ledger please' })
     expect((await db.prepare('SELECT COUNT(*) AS n FROM team_requests').first<number>('n'))).toBe(1)
   })
+  it('a same-words resend says it is already with the team, not "Sent"', async () => {
+    await call('team_request_create', { kind: 'tool', subject: SUBJECT, text: TEXT }, scope(ALEX))
+    const again = await call('team_request_create', { kind: 'tool', subject: SUBJECT, text: TEXT }, scope(ALEX))
+    expect(again.isError).toBeUndefined()
+    expect(again.content[0]!.text).toContain('already with the Inhouse team')
+    expect(again.content[0]!.text).not.toContain('Sent to the Inhouse team')
+    expect(again.structuredContent).toMatchObject({ created: false })
+  })
   it('a routine\'s run (m_system) gets the literal refusal and writes nothing', async () => {
     const r = await call('team_request_create', { kind: 'tool', text: TEXT }, scope('m_system'))
     expect([r.isError, r.content[0]!.text]).toEqual([true, 'A request to the Inhouse team needs a person. Tell the person in the summary instead.'])

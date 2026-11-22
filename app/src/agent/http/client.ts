@@ -1359,13 +1359,15 @@ export class HttpAgent implements AgentClient {
       send: () => postTeamRequest(this.http, k, { kind, ...(subject ? { subject } : {}), text }).then(
         r => {
           // The server answers the person's own open request when it already says this subject: other words back means this wasn't sent.
-          if (r.text !== text) throw new AgentError('conflict', `You already have an open request about this: "${r.text}". Your Inhouse team has it. Wait for an answer, or take it back before sending another.`)
+          if (r.text !== text.trim()) throw new AgentError('conflict', `You already have an open request about this: "${r.text}". Your Inhouse team has it. Wait for an answer, or take it back before sending another.`, { current: r as unknown as Record<string, unknown> })
           return r
         },
         (e: unknown) => { throw HttpAgent.requestRefusal(e) },
       ),
       done: (s, r) => this.withRequests(s, [r, ...s.requests.filter(x => x.id !== r.id)]),
       undo: (s, before) => ({ ...s, state: { ...s.state, requestedTools: before.state.requestedTools, requestedSkills: before.state.requestedSkills } }),
+      // The person's own open request, as the server has it, joins the list: its Requested mark stays and Request isn't offered again.
+      onConflict: (s, current) => this.withRequests(s, [current as unknown as TeamRequestRecord, ...s.requests.filter(x => x.id !== (current as { id?: string }).id)]),
     }))
   /** Route 83: the caller's own open request of this kind about `subject`, looked up when the write goes out (a request filed a moment ago is in the list by then). */
   private takeBack = this.needs((k, kind: TeamRequestRecord['kind'], subject: string): Promise<void> =>
