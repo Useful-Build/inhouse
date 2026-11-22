@@ -231,6 +231,11 @@ export interface GradedDeps {
   budgetUsd: number
   /** The probe chat's id (default: a fresh `eval-probe-<hex>`). */
   probeId?: () => string
+  /**
+   * A check run right after the lease is taken, before the probe chat, the cap and the Default model are written (the
+   * store-data set's R2 read preflight); a throw refuses the start.
+   */
+  preflight?: () => Promise<void>
 }
 
 export interface GradedRun {
@@ -276,6 +281,7 @@ export function gradedRun(g: GradedDeps): GradedRun {
     async start() {
       taking = g.door.takeLease(g.tag).then(() => { leased = true })
       await taking
+      await g.preflight?.()
       // --target must answer from the door's database (EVAL_DB): a chat made there is read back here, or nothing is set.
       const probe = g.probeId?.() ?? `eval-probe-${crypto.randomUUID().replaceAll('-', '').slice(0, 24)}`
       const made = await g.admin('POST', '/api/chats', { id: probe, title: 'Eval probe' })
