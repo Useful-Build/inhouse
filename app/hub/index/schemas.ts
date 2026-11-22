@@ -61,3 +61,7 @@ export const AccountStatusSchema = z.strictObject({
 export const ACCOUNT_ID = /^[a-z]+(:[a-z0-9-]{1,40})?$/
 export const AccountIdSchema = z.string().regex(ACCOUNT_ID)
 export const ToolNameSchema = z.string().min(1).max(200)
+
+/** A Shopify shop host: `<handle>.myshopify.com`, the handle as parseShopifyConfig takes it (signin/providers/shopify.ts). */
+export const SHOP_HOST = /^[a-z0-9][a-z0-9-]{0,59}\.myshopify\.com$/
+export const CallToolOptionsSchema = z.strictObject({ testShopHost: z.string().regex(SHOP_HOST).optional() })

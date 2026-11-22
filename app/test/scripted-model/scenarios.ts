@@ -220,6 +220,48 @@ export const SLOW_BASH_SECONDS = 20
 /** The fact the `memory-save` scenario saves (a person's own, active at once). */
 export const MEMORY_SAVE_TEXT = 'Likes the weekly stock report as a table.'
 
+/** What the `routine-create` scenario sends and says (the refusal text is `server/mcp/tools/routines/index.ts`'s `STAGE_TEXT`, written out here so a change to it fails loudly). */
+export const ROUTINE_STAGE_TEXT = 'Routines you set up need the Act stage. Ask an admin to move to Act.'
+export const ROUTINE_CREATE_INPUT = { name: 'Stock check', instruction: 'scenario:hello Check stock and say what is low.', days: 'daily', time: '06:00' }
+export const ROUTINE_REFUSED_ANSWER = 'The routine was refused.'
+export const ROUTINE_CREATED_ANSWER = 'The routine was created.'
+/** The `hub-write-refused` scenario's document and answers. */
+export const HUB_MUTATION_DOCUMENT = 'mutation { orderCancel(orderId: "1") { job { id } } }'
+export const HUB_WRITE_REFUSED_ANSWER = 'The hub refused the write: write_refused.'
+export const HUB_WRITE_NOT_REFUSED_ANSWER = 'The hub did not refuse the write.'
+/** The `morning-check` scenario's result: one item, every field the schema asks for. */
+export const MORNING_CHECK_ANSWER = {
+  coverage: 'complete',
+  gaps: [],
+  items: [
+    {
+      key: 'late-orders', sev: '#b97a14', area: 'Orders', title: 'Orders waiting to ship', sub: 'Unfulfilled for more than 3 days',
+      cost: { minor: 13681, currency: 'USD' }, costNote: 'Value of the orders waiting', next: 'Ship the oldest orders today',
+      found: [['Orders', '1']], sources: [{ n: '#1001', text: 'Lite Trekking Poles, unfulfilled' }], since: null,
+    },
+  ],
+}
+
+/** The `late-orders` scenario's answer (the P4 ship spec's S3): a table of at most LATE_ORDERS_BOUND rows, then the sources it read. */
+export const LATE_ORDERS_BOUND = 3
+export const LATE_ORDERS_ORDERS = ['#1001', '#1002', '#1003']
+export const LATE_ORDERS_SOURCES = 'Sources: Shopify orders, the 3 oldest unfulfilled.'
+export const LATE_ORDERS_TEXT = [
+  'These orders are late (the 3 oldest, not all of them):',
+  '',
+  '| Order | Waiting | Why |',
+  '| --- | --- | --- |',
+  ...LATE_ORDERS_ORDERS.map((o, i) => `| ${o} | ${i + 4} days | Unfulfilled |`),
+  '',
+  LATE_ORDERS_SOURCES,
+].join('\n')
+
+/**
+ * The `morning-check` scenario's result when its read failed (the case's shop answers errors, as the graded set's
+ * `outage-all` does): nothing read, so no items, and every area a gap (shared/contract/today.ts GAP_AREAS).
+ */
+export const MORNING_CHECK_OUTAGE_ANSWER = { coverage: 'incomplete', gaps: ['orders', 'products', 'inventory', 'refunds', 'returns'], items: [] }
+
 export const SCENARIOS: Record<string, Scenario> = {
   /** Answers with the SDK's StructuredOutput tool, matching STRUCTURED_SCHEMA (run it with that outputFormat). */
   structured: {
@@ -336,4 +378,98 @@ export const SCENARIOS: Record<string, Scenario> = {
       { content: [{ type: 'text', text: 'Noted, thanks.' }], expect: both(mainLoop('mcp__inhouse__question_ask'), resultOf('toolu_scripted_ask')) },
     ],
   },
+
+  // ---------- P4 W6 (the Watch API specs, e2e/api/{routines,hub}.spec.ts). Scenarios only. ----------
+
+  /**
+   * One `routine_create` call, then an answer that says which way it went (picked by the result's text, so the scenario never
+   * says what it wasn't told): at Watch the call is refused with STAGE_TEXT, at Act it creates the routine.
+   */
+  'routine-create': scriptedBranchesOnResult(
+    { id: 'toolu_scripted_routine_create', name: 'mcp__inhouse__routine_create', input: ROUTINE_CREATE_INPUT },
+    ROUTINE_STAGE_TEXT,
+    ROUTINE_REFUSED_ANSWER,
+    ROUTINE_CREATED_ANSWER,
+  ),
+
+  /**
+   * One read-only hub tool call with a GraphQL mutation document (`fixture_query`): the hub answers `write_refused` before any
+   * upstream call, and the answer says whether the result held that code. The hub tools aren't listed up front (tool search),
+   * so the turn checks only the main loop, not an offered tool.
+   */
+  'hub-write-refused': scriptedBranchesOnResult(
+    { id: 'toolu_scripted_hub_write', name: 'mcp__apps__fixture_query', input: { document: HUB_MUTATION_DOCUMENT } },
+    'write_refused',
+    HUB_WRITE_REFUSED_ANSWER,
+    HUB_WRITE_NOT_REFUSED_ANSWER,
+  ),
+
+  /** One bounded read of the orders through the hub, then a table of the late ones with its sources (the P4 ship spec's S3). */
+  'late-orders': {
+    turns: [
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_late_read', name: 'mcp__apps__orders_search', input: { first: LATE_ORDERS_BOUND } }], expect: mainLoop() },
+      { content: [{ type: 'text', text: LATE_ORDERS_TEXT }], expect: both(mainLoop(), resultIs('toolu_scripted_late_read', false)) },
+    ],
+  },
+
+  /** Prints the runner's environment into a file the spec reads back through the Library (`outputs/env.txt`), then answers. */
+  'env-to-file': {
+    turns: [
+      {
+        content: [
+          { type: 'text', text: 'Writing the environment.' },
+          { type: 'tool_use', id: 'toolu_scripted_env', name: 'Bash', input: { command: 'env > outputs/env.txt', description: 'Write the environment' } },
+        ],
+        expect: mainLoop('Bash'),
+      },
+      { content: [{ type: 'text', text: 'Saved outputs/env.txt.' }], expect: both(mainLoop('Bash'), resultOf('toolu_scripted_env')) },
+    ],
+  },
+
+  /**
+   * The morning check's run on the recorded upstream: one read through the hub (orders), then the structured result with one
+   * item (valid against `MorningCheckResultSchema`), so Today fills. The routine's prompt carries no `scenario:` marker, so
+   * the orchestrator's test build names this scenario for the system routine (p4-w6 PR body, "Needs from the orchestrator").
+   * A read the hub answered `upstream_unavailable` (the morning-check set's remote proof points the hub at the outage-all
+   * shop through the test shop override, e2e/api/morning-check-remote.spec.ts) takes the `read-failed` branch: the outage
+   * result. Any other error (`internal`, a refused override's `invalid_args`) matches no branch and misses, so the proof
+   * can't pass on a failure that isn't the outage shop's.
+   */
+  'morning-check': {
+    turns: [
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_mc_read', name: 'mcp__apps__orders_search', input: { first: 5 } }], expect: mainLoop() },
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_mc_result', name: 'StructuredOutput', input: MORNING_CHECK_ANSWER }], expect: both(mainLoop(), resultIs('toolu_scripted_mc_read', false)) },
+      { content: [{ type: 'text', text: 'Done.' }], expect: both(mainLoop('StructuredOutput'), resultOf('toolu_scripted_mc_result')) },
+    ],
+    branches: {
+      'read-failed': {
+        match: r => {
+          const block = resultBlock(r, 'toolu_scripted_mc_read')
+          return block?.is_error === true && resultText(block).includes('upstream_unavailable')
+        },
+        turns: [null, { content: [{ type: 'tool_use', id: 'toolu_scripted_mc_result', name: 'StructuredOutput', input: MORNING_CHECK_OUTAGE_ANSWER }], expect: both(mainLoop(), resultIs('toolu_scripted_mc_read', true)) }],
+      },
+    },
+  },
+}
+
+/**
+ * One tool call, then one of two answers picked by whether the call's result text holds `needle`: a branch each, the way
+ * `memoryRecall` does it, so the scenario never reports something the result didn't say.
+ */
+function scriptedBranchesOnResult(call: { id: string; name: string; input: Record<string, unknown> }, needle: string, hit: string, miss: string): Scenario {
+  const loop = mainLoop()
+  const said = (yes: boolean) => (r: MessagesRequest) => {
+    const block = resultBlock(r, call.id)
+    return block !== undefined && resultText(block).includes(needle) === yes
+  }
+  // The answer that says "refused" also needs the result flagged as an error, and the other needs it not to be one.
+  const reply = (text: string, error: boolean): ScriptedTurn => ({ content: [{ type: 'text', text }], expect: both(loop, resultIs(call.id, error)) })
+  return {
+    turns: [{ content: [{ type: 'tool_use', id: call.id, name: call.name, input: call.input }], expect: loop }],
+    branches: {
+      hit: { match: said(true), turns: [null, reply(hit, true)] },
+      miss: { match: said(false), turns: [null, reply(miss, false)] },
+    },
+  }
 }

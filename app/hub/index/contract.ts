@@ -43,10 +43,19 @@ export type AccountStatus = {
   lastError: { code: HubErrorCode; at: Instant } | null
 }
 
+/**
+ * A read call's options. `testShopHost` is the test and eval builds' shop override (the morning-check set, P4): the Shopify
+ * host (`<handle>.myshopify.com`) this one call reads instead of the hub's SHOPIFY_SHOP. Only the product Worker's test and
+ * eval builds ever send it (server/egress/test-shop.ts); a hub honours it only when built for tests (`__INHOUSE_HUB_TEST__`
+ * and INHOUSE_TEST_BUILD=1) and only for a host its test seam registers (hub/testing/index.ts). Anything else is refused
+ * (`invalid_args`), never read from SHOPIFY_SHOP instead.
+ */
+export type CallToolOptions = { testShopHost?: string }
+
 /** Bound by the runner's egress route (H1) and by product server code that reads. Lists and runs read tools only. */
 export interface ReadGateway {
   listTools(scope: CallerScope): Promise<HubResult<ToolInfo[]>>
-  callTool(scope: CallerScope, name: string, args: unknown): Promise<HubResult<{ data: unknown }>>
+  callTool(scope: CallerScope, name: string, args: unknown, options?: CallToolOptions): Promise<HubResult<{ data: unknown }>>
 }
 
 /** Product Worker server code only. H1's egress route never holds this binding. */

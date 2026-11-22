@@ -1216,6 +1216,7 @@ export class MockAgent implements AgentClient {
 
   auditExportUrl = (): string | null => null
   refreshMemory = (): Promise<void> => Promise.resolve()
+  refresh = (): Promise<void> => Promise.resolve()
   uploadsFiles = (): boolean => false
   uploadFile = (): Promise<{ fileId: string; name: string }> => this.rejected('unknown', 'Files are not kept in the demo.', false)
   /** The demo has no stored files: every id answers a small sample, named by the chip that asked. */
