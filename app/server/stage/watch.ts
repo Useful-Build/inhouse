@@ -1,7 +1,8 @@
 // The Watch switches (P8a S; decision log "Stages", "urgent alerts go to Slack from Act"): at stage Watch a notice
 // reaches the in-app bell only, and nothing writes outside Inhouse. "Outside" means a write that leaves the account
 // (Shopify, Slack, email, any other outside system); a write to Inhouse's own D1 and R2 (memory, team requests, bell
-// notices, routines, the Library) is not one and runs at Watch. Which tools write outside is explicit, per MCP server
+// notices, routines, the Library) is not one, and this switch never refuses it (a tool's own stage rule still applies:
+// P4's routine_create needs Act for a person's routine). Which tools write outside is explicit, per MCP server
 // (`toolWriteRefusal`), never "any write". The server decides from the brand's stored stage, never from the client, the
 // runner or the model. Every path that delivers a notice or writes outside Inhouse asks here first, with the stage read
 // fresh from D1:

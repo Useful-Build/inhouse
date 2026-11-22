@@ -163,12 +163,13 @@ describe('descriptions promise only what P3 does (failure 5)', () => {
 })
 
 describe('the Watch switch (P8a S)', () => {
-  it('memory_save and team_request_create are not refused by stage at Watch (they write only Inhouse\'s own stores)', async () => {
+  it("memory_save runs at Watch; team_request_create (a stub until P6a) isn't refused by the stage gate", async () => {
     await db.prepare("DELETE FROM settings WHERE owner = 'brand' AND key = 'stage'").run()
     await db.prepare("INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 'stage', '\"Watch\"', 1, 0, 'm_x', 'r-watch')").run()
     const saved = await call('memory_save', { scope: 'brand', text: 'We restock on Fridays at Watch.' })
     expect(saved.isError).toBeFalsy()
+    // A stub today: it answers not_available_yet. This proves only that the Watch gate lets it through, not that it works.
     const team = await call('team_request_create', { text: 'Connect our helpdesk' })
-    expect(team.structuredContent).not.toEqual({ error: 'stage' })
+    expect(team.structuredContent).toEqual({ error: 'not_available_yet' })
   })
 })

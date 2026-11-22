@@ -4,7 +4,8 @@
 //  3. a brand whose stage is missing, reset or broken is read as Act or Run instead of Watch (fail open);
 //  4. from Act, the bell or a listed channel is refused (the switch is stage-bound, not a blanket off);
 //  5. the write switch is a blanket "any write": a tool that writes only Inhouse's own D1 and R2 (memory_save,
-//     team_request_create, routines) is refused at Watch, or a hub tool that isn't listed as a read runs.
+//     team_request_create) is refused by it at Watch, or a hub tool that isn't listed as a read runs. Only this gate:
+//     a tool's own stage rule still applies (P4's routine_create needs Act for a person's routine, routines/store.ts).
 import { env } from 'cloudflare:workers'
 import { fc, it as prop } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
@@ -55,8 +56,9 @@ describe('writes outside Inhouse at Watch (failure 2, 4)', () => {
 
 describe('which tools write outside Inhouse (failure 5)', () => {
   const HUB_READS = new Set(['orders_search', 'products_search'])
-  it('memory_save, team_request_create and every other inhouse tool run at Watch; a hub write is refused', () => {
-    for (const name of ['memory_save', 'memory_update', 'team_request_create', 'team_request_list', 'routine_create']) {
+  it('the write gate refuses no inhouse tool at Watch (memory_save, team_request_create among them); it refuses a hub write', () => {
+    // Not that each runs at Watch: a tool's own stage rule still applies (routine_create needs Act, P4's decision).
+    for (const name of ['memory_save', 'memory_update', 'team_request_create', 'team_request_list']) {
       expect(toolWriteRefusal(WATCH, 'inhouse', name), name).toBeNull()
     }
     for (const t of INHOUSE_TOOLS) expect(toolWriteRefusal(WATCH, 'inhouse', t.name), t.name).toBeNull()

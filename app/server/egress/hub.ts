@@ -22,7 +22,7 @@ const LOGGED_METHODS = ['initialize', 'ping', 'tools/list', 'tools/call', 'notif
 export type HubLogMethod = (typeof LOGGED_METHODS)[number] | 'other' | 'none'
 
 /** What a log line's `code` may be: `ok`, a hub error code, or this route's own refusals. */
-export type HubLogCode = 'ok' | HubErrorCode | 'binding_failed' | 'unknown_hub_code' | 'bad_request' | 'bad_params' | 'unknown_method' | 'method_not_allowed' | 'not_found' | 'too_large'
+export type HubLogCode = 'ok' | HubErrorCode | 'binding_failed' | 'stage_unreadable' | 'unknown_hub_code' | 'bad_request' | 'bad_params' | 'unknown_method' | 'method_not_allowed' | 'not_found' | 'too_large'
 
 /** One line per call, these fields only: never the token, its hash, arguments, results, documents or hub messages. */
 export type HubEgressLog = {
@@ -52,8 +52,8 @@ export function hubRouteDeps(hub: ReadGatewayLike, log: (e: Record<string, unkno
 
 /** What the model reads when a call is refused at Watch (P8a S): a tool the hub doesn't list as read never runs. */
 export const WATCH_WRITE_TEXT = "write_refused: at the Watch stage only reading tools run; nothing outside Inhouse is changed"
-/** The model's text when the Watch check couldn't read the hub's list (fail closed). */
-const WATCH_LIST_FAILED_TEXT = 'internal: the tool list could not be read, so the call did not run'
+/** The model's text when the Watch check couldn't read the stage or the hub's list (fail closed). */
+const WATCH_LIST_FAILED_TEXT = 'internal: the stage or the tool list could not be read, so the call did not run'
 
 export const HUB_PATH = '/hub/'
 export const HUB_MAX_BODY_BYTES = 64 * 1024
@@ -209,7 +209,7 @@ export async function handleHub(request: Request, grant: RunGrant, deps: HubRout
       try {
         stage = await deps.stage()
       } catch {
-        return done('binding_failed', rpcResult(id, { content: [{ type: 'text', text: WATCH_LIST_FAILED_TEXT }], isError: true }))
+        return done('stage_unreadable', rpcResult(id, { content: [{ type: 'text', text: WATCH_LIST_FAILED_TEXT }], isError: true }))
       }
       if (externalWriteRefusal(stage) !== null) {
         let listed: unknown

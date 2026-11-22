@@ -406,7 +406,7 @@ describe('the Watch switch: only listed read tools run (P8a S, failure 8)', () =
   })
   it('fails closed: an unreadable stage, a failing or malformed list, or a list error runs nothing', async () => {
     const cases: ((f: Fake) => void)[] = [
-      f => { f.deps = { ...f.deps, stage: async () => { throw new Error('d1 down') } } },
+      f => { f.deps = { ...f.deps, stage: async () => { throw new Error('d1 down') } } },  // logged stage_unreadable (below)
       f => { f.list = async () => { throw new Error('binding') } },
       f => { f.list = async () => ({ nope: true }) },
       f => { f.list = async () => ({ ok: false, error: { code: 'internal', message: 'x' } }) },
@@ -418,6 +418,13 @@ describe('the Watch switch: only listed read tools run (P8a S, failure 8)', () =
       expect(r.body, String(i)).toMatchObject({ jsonrpc: '2.0', id: 9, result: { isError: true } })
       expect(f.calls, String(i)).toEqual([])
     }
+  })
+  it("a stage that can't be read is logged as stage_unreadable, not as a hub binding failure", async () => {
+    const f = atWatch()
+    f.deps = { ...f.deps, stage: async () => { throw new Error('d1 down') } }
+    await call(f, callTool('orders_search'))
+    expect(f.logs.map(l => l.code)).toEqual(['stage_unreadable'])
+    expect(f.scopes).toEqual([])
   })
   it('from Act the call goes to the hub as before (its own read/write split decides)', async () => {
     const f = fake()

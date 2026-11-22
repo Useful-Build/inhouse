@@ -185,6 +185,15 @@ describe('the list decides (property, failure 2)', () => {
       expect(why).toBe(list.includes(host) ? null : 'not_listed')
     },
   )
+  prop.prop([fc.uniqueArray(HOST, { minLength: 1, maxLength: 6 }), LABEL])(
+    'exact hosts only: a subdomain of a listed host, and the parent of one, are not listed', async (list, label) => {
+      const listed = list[0]!
+      const sub = `${label}.${listed}`
+      if (!list.includes(sub)) expect(await checkUrl(new URL(`https://${sub}/x`), list, everyNamePublic)).toBe('not_listed')
+      // The parent of a listed host: only the subdomain is on the list.
+      expect(await checkUrl(new URL(`https://${listed}/x`), [sub], everyNamePublic)).toBe('not_listed')
+    },
+  )
   prop.prop([fc.uniqueArray(HOST, { minLength: 1, maxLength: 6 }), fc.constantFrom('A', 'B')])(
     'a listed host passes in any case and with a trailing dot', async (list, variant) => {
       const host = variant === 'A' ? list[0]!.toUpperCase() : `${list[0]!}.`

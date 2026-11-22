@@ -25,7 +25,7 @@ export interface StartInput {
   maxTurns: number
   /** null only from a turn stored before P8a S: sent as `[]`, no host. */
   webFetchDomains: string[] | null
-  /** Web search (P8a S): sent as `webSearch: true` only when true. */
+  /** Web search (P8a S): sent as `webSearch: true` only when true, and left out otherwise. */
   webSearch?: boolean
   systemPrompt: string
   /** Structured output (PR 5, ask C): the run answers a JSON value matching it. Absent on a turn without one. */
@@ -52,7 +52,9 @@ export function buildStart(i: StartInput): StartWithoutToken {
     maxBudgetUsd: ceiling / 1_000_000,
     // Never null (the runner's "any public host"): a list, empty for none (P8a S).
     webFetchDomains: i.webFetchDomains ?? [],
-    webSearch: i.webSearch === true,
+    // The key only when on (like outputFormat): RunStart is a strict object, so a runner on an image from before P8a
+    // refuses a start that carries it; off is its absence.
+    ...(i.webSearch === true ? { webSearch: true } : {}),
     fileCaps: FILE_CAPS,
     ...(i.outputFormat === undefined ? {} : { outputFormat: i.outputFormat }),
   }

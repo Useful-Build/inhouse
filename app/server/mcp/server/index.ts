@@ -115,7 +115,8 @@ export async function handleMcp(request: Request, scope: McpScope, deps: McpDeps
       // Input errors are tool execution errors (2025-11-25), so the model can read them and correct its call.
       if (!parsed.success) return rpcResult(id, refusal('invalid_arguments', `The arguments don't fit ${name}: ${issues(parsed.error)}. Fix them and call it again.`))
       // The Watch switch (P8a S): only a tool on the explicit list of ones that write outside Inhouse asks for the stage;
-      // the rest (memory, team requests, routines) write Inhouse's own stores and run at Watch.
+      // the rest (memory, team requests, routines) write Inhouse's own stores, and this switch lets them through (their own
+      // rules still apply: P4's routine_create needs Act for a person's routine).
       if (INHOUSE_EXTERNAL_WRITE_TOOLS.includes(name as string) && toolWriteRefusal(await brandStage(deps.db), 'inhouse', name as string) !== null) {
         return rpcResult(id, refusal('stage', `${name} changes something outside Inhouse, which the Watch stage doesn't allow. Tell the person it isn't available yet.`))
       }
