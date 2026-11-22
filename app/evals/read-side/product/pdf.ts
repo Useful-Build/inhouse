@@ -9,9 +9,10 @@
 //   - a font program, XMP metadata, an ICC profile: data, decoded in full and not scanned;
 //   - anything else (page content, forms, XFA): decoded and lexed (strings, names, comments, inline images).
 // Filters: FlateDecode (to the zlib end: bytes after it, or a cut stream, are null; PNG predictors applied, TIFF's null),
-// ASCII85Decode and ASCIIHexDecode, each reading its input in full. Every classic or stream xref offset, startxref, /Prev, /Root
-// and /Info must land on an object start or xref section this parser read, outside any stream; an ObjStm-shaped stream that
-// isn't typed as one, an xref entry into a stream that isn't an object stream, and encryption are null.
+// ASCII85Decode and ASCIIHexDecode, each reading its input in full. Every classic or stream xref offset, startxref, /Prev,
+// /XRefStm, /Root and /Info must land on an object start or xref section this parser read, outside any stream. An object number
+// defined twice (incremental updates included), an ObjStm-shaped stream that isn't typed as one, an xref entry into a stream
+// that isn't an object stream, and encryption are null.
 // Detection walks every parsed object and every lexed content stream: an action name anywhere is an action; rich media, XFA,
 // embedded files and a URL file specification (in any key order) are external references; a /URI string is a link (an indirect
 // one is resolved); an indirect /S must resolve to a name, an indirect /OpenAction or /AA to a dictionary or array, or null.
@@ -329,6 +330,7 @@ function parse(bytes: Uint8Array): FileEvidence {
   const L = new Lexer(s)
   const objects = new Map<string, Value>()
   const allObjects: Value[] = []
+  const defined = new Set<number>()
   const objStartOf = new Map<number, number>() // offset -> object number, top-level objects only
   const xrefSections = new Set<number>()
   const streams: Stream[] = []
@@ -372,7 +374,10 @@ function parse(bytes: Uint8Array): FileEvidence {
         L.skipWs()
       }
       if (!L.keyword('endobj')) reject(`expected endobj at ${L.i}`)
-      // An incremental update may redefine an object: every version is walked below, the last one is the one resolved.
+      // One definition per object number, incremental updates included (honest generators write none): a viewer finds an object
+      // through the xref, this parser by scan order, and two definitions would let them read different objects.
+      if (defined.has(num)) reject(`object ${num} is defined more than once`)
+      defined.add(num)
       allObjects.push(v)
       objects.set(`${num} ${gen}`, v)
       objStartOf.set(at, num)
@@ -471,7 +476,9 @@ function parse(bytes: Uint8Array): FileEvidence {
         O.skipWs()
         if (O.i !== first + offsets[k]!.off) reject('an object stream\'s object is not where its header says')
         const v = O.value()
-        if (!objects.has(`${offsets[k]!.num} 0`)) objects.set(`${offsets[k]!.num} 0`, v)
+        if (defined.has(offsets[k]!.num)) reject(`object ${offsets[k]!.num} is defined more than once`)
+        defined.add(offsets[k]!.num)
+        objects.set(`${offsets[k]!.num} 0`, v)
         extraObjects.push(v)
       }
       O.skipWs()
@@ -495,6 +502,9 @@ function parse(bytes: Uint8Array): FileEvidence {
     if (t.m.has('Encrypt')) reject('the file is encrypted')
     const prev = t.m.get('Prev')
     if (prev !== undefined && (intOf(prev) === undefined || !sections(intOf(prev)!))) reject('/Prev points at no xref')
+    // A hybrid file's /XRefStm must be an xref stream this parser read, outside any other stream.
+    const xs = t.m.get('XRefStm')
+    if (xs !== undefined && (intOf(xs) === undefined || !xrefStreamStarts.has(intOf(xs)!))) reject('/XRefStm points at no xref stream')
     for (const key of ['Root', 'Info'] as const) {
       const v = t.m.get(key)
       if (v === undefined) continue
@@ -536,7 +546,7 @@ function parse(bytes: Uint8Array): FileEvidence {
       walk(x, depth + 1)
     }
     // A URL file specification, whatever the key order.
-    if (nameOf(v.m.get('FS')) === 'URL') references.push({ kind: 'external', url: strOf(v.m.get('F')) ?? 'pdf:URL file specification' })
+    if (nameOf(resolve(v.m.get('FS'))) === 'URL') references.push({ kind: 'external', url: strOf(v.m.get('F')) ?? 'pdf:URL file specification' })
   }
   for (const v of allObjects) walk(v, 0)
   for (const v of extraObjects) walk(v, 0)

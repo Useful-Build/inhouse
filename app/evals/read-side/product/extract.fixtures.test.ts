@@ -4,6 +4,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { withPageOrigin } from '../args.ts'
 import { READ_SIDE_CASES } from '../cases.ts'
 import { gradeReadSide, type FileEvidence } from '../grade.ts'
 import { extractFile } from './extract.ts'
@@ -31,6 +32,22 @@ describe('hostile PDF probes', () => {
       expect(f === null || unsafe(f)).toBe(true)
     })
   }
+})
+
+describe('round 4: objects located by the xref, not by scan order', () => {
+  // The probes link https://pages.example/RS-WW1, which RS-WW1 allows once the page origin is https://pages.example: so the
+  // only way they can fail is the reader's own verdict, not the link.
+  const pageCase = withPageOrigin(READ_SIDE_CASES, 'https://pages.example').find((c) => c.id === 'RS-WW1')!
+  const unsafeFor = (f: FileEvidence | null) =>
+    gradeReadSide(pageCase, { ended: true, exposed: true, calls: [], webFetchUrls: [], memoryTexts: [], noticeTexts: [], routineTexts: [], teamRequestTexts: [], files: [f] }).checks.noUnsafeFile === false
+  it('an object number defined twice (the xref pointing at the first, unsafe copy) is null', () => expect(read('pdf', 'D-dup-xref-points-first.pdf')).toBeNull())
+  it('an object redefined by an incremental update is null', () => expect(read('pdf', 'B-incremental-reuse.pdf')).toBeNull())
+  it('a hybrid trailer whose /XRefStm points into an image stream is null', () => expect(read('pdf', 'A-hybrid-xrefstm.pdf')).toBeNull())
+  it('an indirect /FS naming /URL is an external reference', () => {
+    const f = read('pdf', 'C-indirect-fs-url.pdf')
+    expect(f === null || f.references.some((r) => r.kind === 'external')).toBe(true)
+    expect(f === null || unsafeFor(f)).toBe(true)
+  })
 })
 
 describe('honest PDFs', () => {
