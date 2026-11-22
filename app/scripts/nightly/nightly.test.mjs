@@ -165,6 +165,21 @@ describe('probes.sh', () => {
 // ops repo holds, and runs only once the baseline's cost is measured); it runs something other than probes.sh.
 describe('nightly.yml', () => {
   const wf = () => fs.readFileSync(path.join(here, '../../../.github/workflows/nightly.yml'), 'utf8')
+  // A top-level job's text, up to the next top-level job key (or the end).
+  const job = (text, name) => {
+    const start = text.indexOf(`\n  ${name}:\n`)
+    expect(start).toBeGreaterThan(-1)
+    const next = text.slice(start + 1).search(/\n  [a-z-]+:\n/)
+    return next === -1 ? text.slice(start) : text.slice(start, start + 1 + next)
+  }
+  // A step's text, from its `- name:` line up to the next step (or the end of the job).
+  const step = (jobText, name) => {
+    const start = jobText.indexOf(`\n      - name: ${name}\n`)
+    expect(start).toBeGreaterThan(-1)
+    const next = jobText.slice(start + 1).search(/\n      - /)
+    return next === -1 ? jobText.slice(start) : jobText.slice(start, start + 1 + next)
+  }
+  const SHOPIFY_SECRETS = ['SHOPIFY_SHOP', 'SHOPIFY_CLIENT_ID', 'SHOPIFY_CLIENT_SECRET']
   it('runs on a daily schedule and by hand', () => {
     expect(wf()).toMatch(/\n  schedule:\n    - cron: "\d+ \d+ \* \* \*"\n/)
     expect(wf()).toMatch(/\n  workflow_dispatch:\n/)
@@ -174,10 +189,12 @@ describe('nightly.yml', () => {
   it('runs main only, with read-only contents and no secret outside the connectors job', () => {
     const text = wf()
     expect(text.match(/\n    if: github\.ref == 'refs\/heads\/main'\n/g)).toHaveLength(2)
-    const connectors = text.slice(text.indexOf('\n  connectors:\n'), text.indexOf('\n  notify:\n'))
+    const connectors = job(text, 'connectors')
     const rest = text.replace(connectors, '')
-    expect(rest).not.toMatch(/secrets\./)
-    expect(new Set(connectors.match(/secrets\.[A-Z_]+/g))).toEqual(new Set(['secrets.SHOPIFY_SHOP', 'secrets.SHOPIFY_CLIENT_ID', 'secrets.SHOPIFY_CLIENT_SECRET']))
+    // Any spelling of a secrets reference: dot, bracket or toJSON, any case.
+    expect(rest).not.toMatch(/\bsecrets\b\s*[.[]|toJSON\(\s*secrets/i)
+    const refs = connectors.match(/secrets\s*(?:\.\s*[A-Za-z0-9_]+|\[)/gi) ?? []
+    expect(new Set(refs)).toEqual(new Set(SHOPIFY_SECRETS.map(n => `secrets.${n}`)))
     expect(wf()).toMatch(/\npermissions:\n  contents: read\n/)
     expect(wf()).toMatch(/persist-credentials: false/)
   })
@@ -185,7 +202,8 @@ describe('nightly.yml', () => {
   it('a failure opens or updates one issue, from a job of its own that alone may write issues', () => {
     const text = wf()
     const notify = text.slice(text.indexOf('\n  notify:\n'))
-    expect(notify).toMatch(/^\n  notify:\n    needs: \[probes, connectors\]\n    if: failure\(\)\n/)
+    // A timeout or cancel notifies too; skipped jobs (a dispatch off main) don't.
+    expect(notify).toMatch(/^\n  notify:\n    needs: \[probes, connectors\]\n(    #[^\n]*\n)*    if: always\(\) && \(contains\(needs\.\*\.result, 'failure'\) \|\| contains\(needs\.\*\.result, 'cancelled'\)\)\n/)
     expect(notify).toMatch(/\n    permissions:\n      issues: write\n/)
     expect(notify).not.toMatch(/actions\/checkout|npm |contents: write/)
     expect(notify).toMatch(/TITLE: Nightly guard check failing\n/)
@@ -200,17 +218,28 @@ describe('nightly.yml', () => {
   // (the recorder or a reseed runs), a real failure is masked, the secrets reach a step other than the test run.
   it('runs the connector live files read-only, unmasked, with the secrets on the test step only', () => {
     const text = wf()
-    const connectors = text.slice(text.indexOf('\n  connectors:\n'), text.indexOf('\n  notify:\n'))
+    const connectors = job(text, 'connectors')
     expect(connectors).toMatch(/\n    environment: shopify-read-fixture\n/)
     expect(connectors).toMatch(/\n    permissions:\n      contents: read\n/)
     expect(connectors).toMatch(/\n        run: npm run test:live -- test\/connectors\/shopify\/\n/)
     const code = text.split('\n').filter(l => !l.trim().startsWith('#')).join('\n')
     expect(code).not.toMatch(/continue-on-error|record\.live|upstreams\/shopify|seed/i)
-    // A secret's value appears once each, on the test step; the gate step sees only `!= ''`.
-    for (const name of ['SHOPIFY_SHOP', 'SHOPIFY_CLIENT_ID', 'SHOPIFY_CLIENT_SECRET']) {
-      expect(connectors.match(new RegExp(`\\$\\{\\{ secrets\\.${name} \\}\\}`, 'g'))).toHaveLength(1)
-      expect(connectors.match(new RegExp(`secrets\\.${name}`, 'g'))).toHaveLength(2)
+    // A secret's value appears once each, on the test step only; the gate step sees only `!= ''`; no other step has any.
+    const testStep = step(connectors, 'Shopify connectors against the read fixture')
+    const gate = step(connectors, 'Live project and secrets present')
+    const anyRef = /secrets\s*(?:\.\s*[A-Za-z0-9_]+|\[)/gi
+    for (const name of SHOPIFY_SECRETS) {
+      expect(testStep.match(new RegExp(`\\$\\{\\{ secrets\\.${name} \\}\\}`, 'g'))).toHaveLength(1)
+      expect(gate.match(new RegExp(`\\$\\{\\{ secrets\\.${name} != '' \\}\\}`, 'g'))).toHaveLength(1)
     }
+    expect(testStep.match(anyRef)).toHaveLength(3)
+    expect(gate.match(anyRef)).toHaveLength(3)
+    expect(connectors.replace(testStep, '').replace(gate, '')).not.toMatch(anyRef)
+  })
+  // The fixture's credentials never reach ci.yml (PR code runs there).
+  it('ci.yml holds none of the read fixture\'s credentials', () => {
+    const ci = fs.readFileSync(path.join(here, '../../../.github/workflows/ci.yml'), 'utf8')
+    expect(ci).not.toMatch(/shopify-read-fixture|SHOPIFY_CLIENT_SECRET|secrets\.SHOPIFY/)
   })
   it('runs probes.sh, and no eval step', () => {
     expect(wf()).toMatch(/\n        run: sh app\/scripts\/nightly\/probes\.sh\n/)

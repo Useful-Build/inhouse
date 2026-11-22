@@ -9,8 +9,9 @@
 # `npm run test:live`) against the Shopify read fixture store, read-only: it never reseeds or writes. The fixture app's
 # credentials are secrets of the `shopify-read-fixture` environment (SHOPIFY_SHOP, SHOPIFY_CLIENT_ID,
 # SHOPIFY_CLIENT_SECRET, the names live-run.ts reads), handed to that one step only, never to any ci.yml job. Until the
-# live project is on main and all three secrets are set, the job skips with a notice; after that a failed case fails
-# the night. One or two of the three set is a misconfiguration and fails.
+# hub (app/hub/package.json) is on main, the job skips with a notice. Once it is, the check can't switch off quietly:
+# no *.live.ts under app/test/connectors/shopify fails, and fewer than all three secrets fails (the P4 ship packet sets
+# them before the squash). A failed case fails the night.
 # The monthly A-seed re-seed is not here: it needs the seed app's write_orders credential, and a scheduled writer would
 # put a write credential in a workflow. It runs by hand on the Mac until the merchant-org fixture lands (before
 # 2027-01-18); revisit then.
@@ -71,20 +72,20 @@ jobs:
           HAS_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID != '' }}
           HAS_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET != '' }}
         run: |
-          # A missing folder is the absent case (before P4 lands), so find's complaint about it is dropped.
-          live=$(find app/test/connectors/shopify -name '*.live.ts' 2>/dev/null || true)
-          if [ -z "$live" ] || [ ! -f app/hub/package.json ]; then
-            echo "::notice title=Connector check skipped::The live project (app/test/connectors/shopify/**/*.live.ts, app/hub) isn't on main yet."
+          # Before P4 lands (no hub on main) is the only skip.
+          if [ ! -f app/hub/package.json ]; then
+            echo "::notice title=Connector check skipped::The hub (app/hub) isn't on main yet."
             echo "run=false" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+          # A missing folder shows as no files, so find's complaint about it is dropped; the empty result fails below.
+          live=$(find app/test/connectors/shopify -name '*.live.ts' 2>/dev/null || true)
+          if [ -z "$live" ]; then
+            echo "::error title=Connector live files missing::The hub is on main but app/test/connectors/shopify has no *.live.ts."
+            exit 1
           fi
           set=0
           for v in "$HAS_SHOP" "$HAS_CLIENT_ID" "$HAS_CLIENT_SECRET"; do if [ "$v" = true ]; then set=$((set + 1)); fi; done
-          if [ "$set" -eq 0 ]; then
-            echo "::warning title=Connector check skipped::The live project is on main but the shopify-read-fixture environment has none of SHOPIFY_SHOP, SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET."
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           if [ "$set" -ne 3 ]; then
             echo "::error title=Connector secrets incomplete::shopify-read-fixture needs all of SHOPIFY_SHOP ($HAS_SHOP), SHOPIFY_CLIENT_ID ($HAS_CLIENT_ID), SHOPIFY_CLIENT_SECRET ($HAS_CLIENT_SECRET)."
             exit 1
@@ -114,7 +115,8 @@ jobs:
   # repository code: no checkout, gh only.
   notify:
     needs: [probes, connectors]
-    if: failure()
+    # A timeout or cancel counts too. Skipped jobs (a dispatch from another branch) notify nothing.
+    if: always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
