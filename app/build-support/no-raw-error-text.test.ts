@@ -4,9 +4,9 @@
 // over server/, worker/, hub/, shared/ and runner/src/, each with the reviewed sites below:
 //  1. line shapes that put an error's text somewhere: `.message` / `.stack` (on a caught name or a cast), `${err}`,
 //     `String(err)`, `console.x(err)`, `{ error: err }` (Workers Logs serialises an Error's message and stack),
-//     `const { message } = err`, `err.toString()`, `z.prettifyError`;
-//  2. every catch binding (`catch (x)`, `.catch((x) =>`, `.on('error', (x) =>`), whatever its name: inside its body, any
-//     use other than `safeError(x)`, `errnoOf(x)`, `reasonOf(x)`, `throw x`, `x instanceof`, `x.name`, `x.code` or
+//     `const { message } = err`, `err.toString()`, `(x as PromiseRejectedResult).reason`, `z.prettifyError`;
+//  2. every catch binding (`catch (x)`, `.catch((x) =>`, `.then(ok, (x) =>`, `.on('error', (x) =>`), whatever its name:
+//     inside its body, any use other than `safeError(x)`, `errnoOf(x)`, `reasonOf(x)`, `throw x`, `x instanceof`, `x.name`, `x.code` or
 //     `(x as T).code`.
 // A site that is truly safe goes on the list with its reason. The full record:
 // verify/backend-impl/probes/err-message-audit-verified.md (outside the repo).
@@ -28,6 +28,7 @@ const RAW = [
   new RegExp(String.raw`\{[^}]*\b(?:message|stack)\b[^}]*\}\s*=\s*${CAUGHT}\b`),
   new RegExp(String.raw`\b${CAUGHT}\??\.toString\(`),
   /\bprettifyError\(/,
+  /(?<!(?:safeError|errnoOf|reasonOf)\()\(\w+ as PromiseRejectedResult\)\??\.reason\b/,
 ]
 
 /** Reviewed sites: [file, exact text on the line, why it's safe]. Each entry must still match a hit. */
@@ -64,6 +65,8 @@ const REVIEWED: readonly (readonly [string, string, string])[] = [
   ['runner/src/protocol/local.ts', 'z.prettifyError(outer.error)', 'returned to session-host.ts, which logs a fixed reason'],
   ['runner/src/protocol/local.ts', 'z.prettifyError(body.error)', 'as above'],
   ['runner/src/server/app.ts', 'z.prettifyError(parsed.error).slice(0, 2000)', "a 400 body to the Worker's RunnerContainer, which logs the status only"],
+  ['server/files-io/bytes.ts', '(e: unknown) => ({ ok: false, e }),', "returned as `failed`, which files-io/store.ts rethrows; every log above it is safeError"],
+  ['runner/src/files/files.ts', "(e) => (signal.removeEventListener('abort', onAbort), rej(e)),", 'passed through to the caller unchanged'],
   ['hub/connectors/shopify/test-kit.ts', 'parsed.error.message', 'a test kit, never in the deployed hub'],
   ['server/egress/deny.ts', 'e => console.log(e)', '`e` is the structured log entry, not an error'],
   ['server/egress/webfetch.ts', 'log: e => console.log(e)', 'as above'],
@@ -118,6 +121,22 @@ function catchUses(src: string): number[] {
   for (const m of src.matchAll(/\.(?:catch\(|on\(\s*'error'\s*,)\s*(?:async\s*)?\(?\s*(\w+)\s*(?::\s*\w+\s*)?\)?\s*=>/g)) {
     bodies.push({ name: m[1]!, from: m.index + m[0].length, to: closing(src, src.indexOf('(', m.index)) })
   }
+  // `.then(ok, (x) => ...)`: the second callback is a catch too.
+  for (const m of src.matchAll(/\.then\(/g)) {
+    const open = m.index + m[0].length - 1
+    const close = closing(src, open)
+    let depth = 0
+    let comma = -1
+    for (let i = open; i < close && comma < 0; i++) {
+      const ch = src[i]
+      if (ch === '(' || ch === '{' || ch === '[') depth++
+      else if (ch === ')' || ch === '}' || ch === ']') depth--
+      else if (ch === ',' && depth === 1) comma = i
+    }
+    if (comma < 0) continue
+    const second = /^\s*(?:async\s*)?\(?\s*(\w+)\s*(?::\s*\w+\s*)?\)?\s*=>/.exec(src.slice(comma + 1, close))
+    if (second) bodies.push({ name: second[1]!, from: comma + 1 + second[0].length, to: close })
+  }
   const lines: number[] = []
   for (const b of bodies) {
     for (const u of src.slice(b.from, b.to).matchAll(new RegExp(String.raw`\b${b.name}\b`, 'g'))) {
@@ -170,8 +189,9 @@ describe('raw error text', () => {
       'const { name, stack } = e',
       'log(err?.toString())',
       'log(e?.message)',
+      'log({ error: (bad as PromiseRejectedResult).reason })',
     ]) expect(flagged(leak), leak).toEqual([1])
-    for (const safe of ["error: err instanceof Error ? err.name : 'unknown'", 'error: safeError(e)', 'mapSdkMessage(ev.message, ev.truncated)', 'String((b as { id?: unknown }).id)'])
+    for (const safe of ["error: err instanceof Error ? err.name : 'unknown'", 'error: safeError(e)', 'mapSdkMessage(ev.message, ev.truncated)', 'String((b as { id?: unknown }).id)', 'error: safeError((failed as PromiseRejectedResult).reason)'])
       expect(flagged(safe), safe).toEqual([])
   })
   it('follows a catch binding of any name', () => {
@@ -185,7 +205,9 @@ describe('raw error text', () => {
       "p.catch((boom: unknown) => send({ detail: describe(boom) }))",
       "sock.on('error', (problem) => write(problem))",
       'p.catch(() => undefined)',
+      'p.then(ok, (boom) => log({ error: boom }))',
+      'p.then((v) => use(v), (boom: unknown) => { if (boom instanceof Error) throw boom })',
     ].join('\n')
-    expect(catchUses(src)).toEqual([5, 7, 8])
+    expect(catchUses(src)).toEqual([5, 7, 8, 10])
   })
 })

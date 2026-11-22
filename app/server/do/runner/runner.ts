@@ -124,15 +124,22 @@ class RunnerStepError extends Error {
   }
 }
 
+const PLATFORM_EXIT = /(unexpected exit code|runtime signalled the container to exit): (\d+)$/i
+
 /**
  * A reason for a log or a returned detail: our own (a literal string, which is all any caller here passes, or a
- * RunnerStepError) as it is; a platform exit as its exit code; anything else by name and code only (P8a P-auth).
+ * RunnerStepError) as it is; a platform exit as its code (`exit code 3`, `signalled 15`); anything else by name and code
+ * only (P8a P-auth).
  */
-function reasonOf(r: unknown): string {
+export function reasonOf(r: unknown): string {
   if (typeof r === 'string') return r
   if (r instanceof RunnerStepError) return r.message
-  const exit: unknown = (r as { exitCode?: unknown } | null)?.exitCode
-  if (typeof exit === 'number' && Number.isInteger(exit)) return `exit code ${exit}`
+  if (r instanceof Error) {
+    // The platform's monitor() rejection is a plain Error with the code at the end of its message, in one of two shapes
+    // (cloudflare/containers' getExitCodeFromError reads the same two). Only the digits are kept.
+    const exit = PLATFORM_EXIT.exec(r.message)
+    if (exit) return `${exit[1]!.toLowerCase().startsWith('unexpected') ? 'exit code' : 'signalled'} ${exit[2]}`
+  }
   return safeError(r)
 }
 

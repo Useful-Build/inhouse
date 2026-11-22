@@ -19,7 +19,7 @@ import { runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import type { RunStart } from '../../../shared/protocol/index.ts'
-import { ADMIT_TIMEOUT_MS, BOOT_TIMEOUT_MS, RunnerCore, sqlRunnerState, type ContainerPort, type EgressProps, type RunnerState } from './runner.ts'
+import { ADMIT_TIMEOUT_MS, BOOT_TIMEOUT_MS, RunnerCore, reasonOf, sqlRunnerState, type ContainerPort, type EgressProps, type RunnerState } from './runner.ts'
 import { STARTING_DEADLINE_MS } from '../brand-agent/core.ts'
 
 type Binding = { kind: 'egress' | 'web' | 'deny'; props: EgressProps }
@@ -321,16 +321,38 @@ describe('an exit says whether its container came up (failure 9)', () => {
     expect(m.ups).toEqual([[1, false]])
   }))
 
-  it("container_exited keeps the exit code and our own reasons, never the platform's text (P8a P-auth)", t(async state => {
+  // The platform's monitor() rejects with a plain Error whose message carries the code (cloudflare/containers'
+  // getExitCodeFromError reads the same two shapes): https://github.com/cloudflare/containers/blob/main/src/lib/container.ts
+  it.each([
+    ['an unexpected exit', () => new Error('Container exited with unexpected exit code: 3'), 'exit code 3'],
+    ['a runtime signal', () => new Error('Runtime signalled the container to exit: 15'), 'signalled 15'],
+    ['any other platform text', () => new Error('CANARY-chat-text broke: 9'), 'Error'],
+  ])("container_exited on %s logs the platform's code only (P8a P-auth)", (_what, error, how) => t(async state => {
     const c = new FakeContainer()
     c.route = v2Runner([2])
     const m = make(c, state)
     expect(await m.core.admit(RS)).toEqual({ accepted: true, gen: 1, protocol: 2 })
-    c.monitors.splice(0).forEach(x => x.reject(Object.assign(new Error('exited: CANARY-chat-text'), { exitCode: 3 })))
+    c.monitors.splice(0).forEach(x => x.reject(error()))
     await settle()
-    expect(m.logs.filter(l => l.event === 'container_exited')).toEqual([{ event: 'container_exited', gen: 1, cameUp: true, how: 'exit code 3' }])
+    expect(m.logs.filter(l => l.event === 'container_exited')).toEqual([{ event: 'container_exited', gen: 1, cameUp: true, how }])
     expect(JSON.stringify(m.logs)).not.toContain('CANARY')
+  })())
+
+  it('container_exited on a clean exit logs exit 0', t(async state => {
+    const c = new FakeContainer()
+    c.route = v2Runner([2])
+    const m = make(c, state)
+    expect(await m.core.admit(RS)).toEqual({ accepted: true, gen: 1, protocol: 2 })
+    c.monitors.splice(0).forEach(x => x.resolve())
+    await settle()
+    expect(m.logs.filter(l => l.event === 'container_exited')).toEqual([{ event: 'container_exited', gen: 1, cameUp: true, how: 'exit 0' }])
   }))
+
+  it("reasonOf passes our own literal reasons through unchanged, and nothing else's text", () => {
+    expect(reasonOf('exited while the object was away')).toBe('exited while the object was away')
+    expect(reasonOf('replaced at warm-up')).toBe('replaced at warm-up')
+    expect(reasonOf(new TypeError('CANARY-chat-text'))).toBe('TypeError')
+  })
 
   it("a warm-up whose container stops keeps our own reason as the detail, not the platform's", t(async state => {
     const c = new FakeContainer()
