@@ -4,6 +4,9 @@
 // One deliberate difference (the #248 review, item 8d): with no record or a disconnected one, the extended alarm re-arms
 // itself at the next live one-time item's expiry, where H0 set nothing. Alarm histories are compared without those
 // entries, and a second property checks each extra entry is exactly such an expiry.
+// A second one (the P5 Tools crash fix): the extended core keeps `connectedAtMs` on a client-credentials record, set at
+// the first successful grant and never moved. Records are compared without that field, and the run checks it is set
+// once, to that grant's `obtainedAtMs`, and then stays.
 import { fc, test } from '@fast-check/vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -73,6 +76,7 @@ describe('test 9: H0 unchanged', () => {
     const logs: { a: string[]; b: string[] } = { a: [], b: [] }
     const expiries = new Set<number>()
     let target: 'a' | 'b' = 'a'
+    let connectedAtMs: number | undefined
     vi.spyOn(console, 'log').mockImplementation((...x: unknown[]) => void logs[target].push(x.map(String).join(' ')))
     for (const o of ops) {
       const out: unknown[] = []
@@ -116,8 +120,16 @@ describe('test 9: H0 unchanged', () => {
         }
       }
       expect(JSON.stringify(out[0])).toBe(JSON.stringify(out[1]))
+      const rec = b.store.record()
+      if (connectedAtMs === undefined && rec?.connectedAtMs != null) {
+        connectedAtMs = rec.connectedAtMs
+        expect(connectedAtMs).toBe(rec.obtainedAtMs)
+      }
+      expect(rec?.connectedAtMs ?? undefined).toBe(connectedAtMs)
     }
-    expect(comparable(b.store)).toEqual(comparable(a.store))
+    const withoutConnectedAt = (store: MemStore) =>
+      comparable(store).map(([k, v]: [string, unknown]) => (k === 'record' && v && typeof v === 'object' ? [k, { ...v, connectedAtMs: undefined }] : [k, v]))
+    expect(withoutConnectedAt(b.store)).toEqual(comparable(a.store))
     // H0's own entries, in order; any extra entry on the extended core is a pending item's expiry (the re-arm).
     const withoutRearm = (h: (number | null)[]) => h.filter(x => x === null || !expiries.has(x))
     expect(withoutRearm(b.alarm.history)).toEqual(withoutRearm(a.alarm.history))

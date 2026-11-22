@@ -33,6 +33,15 @@ describe('a tool with a history here', () => {
     expect(toolState(ctx, 'slack')).toBe('off')
   })
 
+  // #321 review M1: a first login that failed (never connected) says so with the page's existing copy, not "Not connected".
+  test('a first login that failed (loginFailedAt, nothing connected): off, with the failed-login status and "Needs reconnecting"', () => {
+    const ctx = ctxOf({ details: { shopify: detail({ name: 'Shopify', accountId: 'shopify:store', loginFailedAt: at('2026-11-20T09:00:00.000Z') }) } })
+    expect(toolState(ctx, 'shopify')).toBe('off')
+    const v = toolView(ctx, 'shopify')
+    expect(v.statusText).toMatch(/^Disconnected · login expired at /)
+    expect(v).toMatchObject({ state: 'off', listLine: 'Needs reconnecting', connectedRow: 'Not connected', lastRead: 'Not yet', examples: [] })
+  })
+
   test('a tool being connected is still "connecting"; a connected one with a failed login is still "disconnected"', () => {
     const connecting = ctxOf({ beingConnected: ['slack'], details: { slack: detail({ liveBy: at('2026-11-21T10:00:00.000Z') }) } })
     expect(toolState(connecting, 'slack')).toBe('connecting')

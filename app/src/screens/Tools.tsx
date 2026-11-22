@@ -200,7 +200,8 @@ export function Tools() {
               <LogoTile k={c.k} className={locked ? 'grayscale' : undefined} />
               <div className="min-w-0 flex-1">
                 <div className={`flex items-center gap-2 ${NAME} ${locked ? 'text-foreground-3' : ''}`}>{c.name}{locked && <StageTag tag={STAGE_TAGS[need]} />}</div>
-                <div className={DESC}>{c.desc}</div>
+                {/* A first login that failed shows the tool page's own line in place of the description. */}
+                {tools.details[c.k]?.loginFailedAt ? <div className={cn(DESC, 'text-warning-text')}>{toolView(ctx, c.k).listLine}</div> : <div className={DESC}>{c.desc}</div>}
               </div>
               {manage && c.accountId
                 ? <Button variant="outline" disabled={connecting !== null} onClick={() => { void connect(c.k) }} className={cn('flex-none', tap)}>Connect</Button>
