@@ -181,7 +181,7 @@ describe('onDeferred through deferred-hook:<questionId> (P6 ask 4, failure 3)', 
   it('fails 10 times → quarantined, the scheduler signal red; revive runs the same payload once more and the question reaches P6', () => inAgent(async h => {
     const calls: DeferredQuestion[] = []
     let up = false
-    h.core.setOnDeferred(async q => { calls.push(q); return up ? { ok: true } : { retry: 'd1 down' } })
+    h.core.setOnDeferred(async q => { calls.push(q); return up ? { ok: true } : { retry: 'unavailable' } })
     await d1Chat('c-quar', MEMBER)  // its turn's history flushes (a failing flush would quarantine too)
     const a = ok(await h.submit('c-quar', 'key-quar01')); await settle()
     defer(h, a.turnId)

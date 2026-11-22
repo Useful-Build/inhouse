@@ -10,10 +10,17 @@ export const TableManifestSchema = z.object({
   name: z.string().min(1),
   columns: z.array(z.string().min(1)).min(1),
   orderBy: z.array(z.string().min(1)).min(1),
-  mode: z.enum(['snapshot', 'append_only']),
+  mode: z.enum(['snapshot', 'append_only', 'insert_only', 'paged']),
   rows: Count,
   /** `append_only` tables: the largest id at the point batch (0 when empty). */
   maxId: Count.optional(),
+  /** `insert_only` and bounded `append_only` tables (C1): the largest creation value at the point batch (0 when empty). */
+  point: z.number().optional(),
+  /**
+   * C1: `exact` when the table is the state at the point batch; `paged` when it was read after it and may differ (every
+   * `paged` table, and an `insert_only` one whose count moved). Absent in a backup taken before C1 (all exact then).
+   */
+  consistency: z.enum(['exact', 'paged']).optional(),
   /** Of every part's bytes, in order. */
   sha256: Sha256,
   parts: z.array(PartSchema),
@@ -76,6 +83,8 @@ export const RestoreRecordSchema = z.object({
     tables: z.array(z.object({ name: z.string(), rows: Count, sha256: Sha256, verified: z.boolean() })),
     /** The backup's derived tables (FTS5 indexes): not restored from the backup; ops/backup/fts rebuilds them. */
     derived: z.array(z.object({ name: z.string(), from: z.array(z.string()), state: z.literal('rebuild_needed') })),
+    /** C1: the tables the backup read after its point batch (`consistency: 'paged'`); F1's reconcile reads it. */
+    paged: z.array(z.string()).optional(),
   }),
   /** The `resetAfterRestore` hooks that ran on the target (a job's cursor rows), in order. */
   resets: z.array(z.string()),

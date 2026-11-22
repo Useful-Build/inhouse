@@ -9,6 +9,7 @@ import type { PushFetch } from './server/pusher.ts'
 import { readMemory } from './server/memory.ts'
 import { productionSessionUsers } from './server/production.ts'
 import { spawnSessionProcess } from './server/session-host.ts'
+import { logCrashes } from './server/crash-log.ts'
 
 const log = (entry: Record<string, unknown>) => console.log(JSON.stringify({ t: new Date().toISOString(), ...entry }))
 
@@ -46,6 +47,9 @@ const proxy = createProxy({ upstream, lookupUid: (s) => readPeerUid(s), tokenFor
 
 proxy.listen(proxyPort, '127.0.0.1', () => log({ type: 'proxy_listening', port: proxyPort }))
 root.server.listen(port, () => log({ type: 'runner_listening', port }))
+// Installed once started: a start-up refusal above (a missing pool user, an unset variable) is our own text and keeps
+// Node's default report; from here on a crash logs the error's name and code only.
+logCrashes(process, log)
 
 // SIGTERM: no new runs (503), idle connections closed, and every run, starting ones included, gets interrupt(), flush,
 // end (the session's stop path); then the root exits.
