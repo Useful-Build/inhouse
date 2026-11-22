@@ -266,7 +266,12 @@ export interface DeferredQuestion {
  * P6's `onDeferred` (ask 4), run by the `deferred-hook:<questionId>` task, never inline: `{ ok: true }` ends it; a
  * `retry` (or a throw) runs it again with the default backoff, and 10 failures quarantine it.
  */
-export type OnDeferredHook = (q: DeferredQuestion, ctx: TaskContext) => Promise<{ ok: true } | { retry: string }>
+/**
+ * Why the hook asks for a retry, stored as `due_tasks.last_error`: a code, never text (P8a P-auth: no message or
+ * content in a stored error). P6 adds codes here.
+ */
+export type DeferredRetryCode = 'unavailable' | 'not_ready'
+export type OnDeferredHook = (q: DeferredQuestion, ctx: TaskContext) => Promise<{ ok: true } | { retry: DeferredRetryCode }>
 
 /** `TaskContext.chats.status` (P4, B2): whether the chat waits on a question, and its live run. */
 export interface ChatStatus { waiting: boolean; liveRunId: string | null }

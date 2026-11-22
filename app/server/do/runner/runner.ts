@@ -113,6 +113,29 @@ export interface StatusResult {
 
 export type WarmResult = { ok: true; gen: number; protocol: number } | { ok: false; why: 'protocol' | 'health' | 'start' | 'busy'; detail: string }
 
+/**
+ * A boot or call failure this core raises itself: its message is fixed text of ours, with any error under it by name
+ * only, so `reasonOf` passes it through.
+ */
+class RunnerStepError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'RunnerStepError'
+  }
+}
+
+/**
+ * A reason for a log or a returned detail: our own (a literal string, which is all any caller here passes, or a
+ * RunnerStepError) as it is; a platform exit as its exit code; anything else by name and code only (P8a P-auth).
+ */
+function reasonOf(r: unknown): string {
+  if (typeof r === 'string') return r
+  if (r instanceof RunnerStepError) return r.message
+  const exit: unknown = (r as { exitCode?: unknown } | null)?.exitCode
+  if (typeof exit === 'number' && Number.isInteger(exit)) return `exit code ${exit}`
+  return safeError(r)
+}
+
 export class RunnerCore<B> {
   readonly #d: RunnerDeps<B>
   readonly #accepted: readonly number[]
@@ -144,8 +167,7 @@ export class RunnerCore<B> {
     try {
       up = await this.#up()
     } catch (e) {
-      // Returned, never logged (pool.ts reads only that it's there): #up's own reasons, whose inner errors are names only.
-      return { placementError: (e instanceof Error ? e.message : 'unknown').slice(0, 200), booting: this.#d.container.running }
+      return { placementError: reasonOf(e), booting: this.#d.container.running }
     }
     if (up.protocol === null) return { protocol: 'none', gen: up.gen }
     const { gen } = up
@@ -241,7 +263,7 @@ export class RunnerCore<B> {
       this.#d.state.setProtocol(up.gen, undefined)
       up = { gen: up.gen, protocol: await this.#negotiate(up.gen, true) }
     } catch (e) {
-      return { ok: false, why: 'start', detail: safeError(e) }
+      return { ok: false, why: 'start', detail: reasonOf(e) }
     }
     if (up.protocol === null) return { ok: false, why: 'protocol', detail: 'no shared protocol version' }
     try {
@@ -254,17 +276,17 @@ export class RunnerCore<B> {
       if (!health.ok) return { ok: false, why: 'health', detail: 'health not ok' }
       return { ok: true, gen: up.gen, protocol: up.protocol }
     } catch (e) {
-      return { ok: false, why: 'health', detail: safeError(e) }
+      return { ok: false, why: 'health', detail: reasonOf(e) }
     }
   }
 
   /** The runner's live runs, from `/health`. */
   async #live(protocol: number | null): Promise<number> {
-    if (protocol === null) throw new Error('no shared protocol version with the runner')
+    if (protocol === null) throw new RunnerStepError('no shared protocol version with the runner')
     const res = await this.#port().fetch('http://runner/health', { signal: this.#timeout(CALL_TIMEOUT_MS) })
     if (res.status !== 200) {
       await res.body?.cancel()
-      throw new Error(`health answered ${res.status}`)
+      throw new RunnerStepError(`health answered ${res.status}`)
     }
     return Health.parse(await res.json()).live
   }
@@ -273,7 +295,7 @@ export class RunnerCore<B> {
     // No container: nothing runs there to interrupt or stop.
     if (!this.#d.container.running) return
     const up = await this.#up()
-    if (up.protocol === null) throw new Error(`${action}: no shared protocol version with the runner`)
+    if (up.protocol === null) throw new RunnerStepError(`${action}: no shared protocol version with the runner`)
     const res = await this.#port().fetch(`http://runner/runs/${encodeURIComponent(turnId)}/${action}`, {
       method: 'POST',
       headers: { [PROTOCOL_HEADER]: String(up.protocol) },
@@ -281,7 +303,7 @@ export class RunnerCore<B> {
     })
     await res.body?.cancel()
     // 404: the runner doesn't know the run (it ended): nothing left to do.
-    if (res.status !== 202 && res.status !== 404) throw new Error(`${action}: the runner answered ${res.status}`)
+    if (res.status !== 202 && res.status !== 404) throw new RunnerStepError(`${action}: the runner answered ${res.status}`)
   }
 
   #port() {
@@ -332,8 +354,8 @@ export class RunnerCore<B> {
     const deadline = this.#timeout(BOOT_TIMEOUT_MS)
     let last: unknown = 'no answer'
     for (;;) {
-      if (deadline.aborted) throw new Error(`no /protocol answer within ${BOOT_TIMEOUT_MS} ms: ${safeError(last)}`)
-      if (!this.#d.container.running) throw new Error('the container stopped before it answered /protocol')
+      if (deadline.aborted) throw new RunnerStepError(`no /protocol answer within ${BOOT_TIMEOUT_MS} ms: ${reasonOf(last)}`)
+      if (!this.#d.container.running) throw new RunnerStepError('the container stopped before it answered /protocol')
       try {
         const res = await this.#port().fetch('http://runner/protocol', { signal: AbortSignal.any([deadline, this.#timeout(CALL_TIMEOUT_MS)]) })
         if (res.status === 200) {
@@ -347,7 +369,7 @@ export class RunnerCore<B> {
       } catch (e) {
         last = e
       }
-      if (once) throw new Error(`no /protocol answer: ${safeError(last)}`)
+      if (once) throw new RunnerStepError(`no /protocol answer: ${reasonOf(last)}`)
       if (!deadline.aborted) await this.#wait(BOOT_POLL_MS)
     }
   }
@@ -369,7 +391,7 @@ export class RunnerCore<B> {
     // Read before it's cleared: a generation that answered /protocol came up (a version, or null for no shared one).
     const cameUp = s.protocol(gen) !== undefined
     if (s.gen() === gen) s.setProtocol(gen, undefined)
-    this.#log({ event: 'container_exited', gen, cameUp, how: safeError(how) })
+    this.#log({ event: 'container_exited', gen, cameUp, how: reasonOf(how) })
     try {
       await this.#d.exited(this.#d.name, gen, cameUp)
     } catch (e) {

@@ -51,4 +51,8 @@ describe('StoreUnavailableError (failure 4)', () => {
     expect(e.message).not.toContain(CANARY)
     expect(e.cause).toBe(cause)
   })
+  it('says which store failed, as its code', () => {
+    expect(safeError(new StoreUnavailableError('R2', new Error(CANARY)))).toBe('StoreUnavailableError:R2')
+    expect(safeError(new StoreUnavailableError('usage ledger', new Error(CANARY)))).toBe('StoreUnavailableError:usage_ledger')
+  })
 })

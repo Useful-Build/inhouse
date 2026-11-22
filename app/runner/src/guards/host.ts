@@ -24,6 +24,7 @@ import { chmod, chown, lchown, lstat, mkdir, readdir, readFile, rm, writeFile } 
 import { join } from 'node:path'
 import { INPUTS, OUTPUTS, USERS_ROOT, WORK_ROOT, sessionPaths, userPaths } from './paths.ts'
 import type { PoolUser, SessionHost } from './users.ts'
+import { safeError } from '../safe-error.ts'
 
 /** The sandbox mounts over these in `.claude/`; they must exist and be root's (P0 S2, problem 2). */
 export const STUB_DIRS = ['skills', 'agents', 'commands', 'hooks', 'workflows', 'routines', 'worktrees', 'checkpoints', 'mailbox']
@@ -122,11 +123,14 @@ export function createSessionHost(deps: HostDeps): SessionHost {
 
   async function wipeUserFiles(user: PoolUser) {
     // Every place is tried before it throws: a uid that fails (and is quarantined) leaves as little behind as it can.
+    // Each failure as its place and the error's name and code: a wipe's own message names the file it found left, and a
+    // session's file names are chat content (P8a P-auth). The shared places are fixed system folders (SHARED_WRITABLE).
     const failed: string[] = []
     const own = userPaths(user.user, usersRoot)
-    for (const dir of [own.home, own.tmp]) await emptyOwn(dir, user, runAs, runRoot).catch((e: unknown) => void failed.push(String(e instanceof Error ? e.message : e)))
-    for (const dir of shared) await wipeOwned(dir, user, runAs, runRoot).catch((e: unknown) => void failed.push(String(e instanceof Error ? e.message : e)))
-    await wipeSysV(user, runAs, join(procDir, 'sysvipc')).catch((e: unknown) => void failed.push(String(e instanceof Error ? e.message : e)))
+    const places: [string, string][] = [['home', own.home], ['tmp', own.tmp]]
+    for (const [place, dir] of places) await emptyOwn(dir, user, runAs, runRoot).catch((e: unknown) => void failed.push(`${place}:${safeError(e)}`))
+    for (const dir of shared) await wipeOwned(dir, user, runAs, runRoot).catch((e: unknown) => void failed.push(`${dir}:${safeError(e)}`))
+    await wipeSysV(user, runAs, join(procDir, 'sysvipc')).catch((e: unknown) => void failed.push(`sysv:${safeError(e)}`))
     if (failed.length > 0) throw new Error(failed.join('; '))
   }
 

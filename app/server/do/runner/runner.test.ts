@@ -129,11 +129,13 @@ interface Made {
   /** [gen, cameUp] as each exit was reported: whether that generation had answered /protocol */
   ups: [number, boolean][]
   aborts: AbortController[]
+  logs: Record<string, unknown>[]
 }
 function make(container: FakeContainer, state: RunnerState, accepted?: readonly number[], name = 'runner-0'): Made {
   const exits: [string, number, number][] = []
   const ups: [number, boolean][] = []
   const aborts: AbortController[] = []
+  const logs: Record<string, unknown>[] = []
   const core = new RunnerCore<Binding>({
     name,
     container,
@@ -151,9 +153,9 @@ function make(container: FakeContainer, state: RunnerState, accepted?: readonly 
       return c.signal
     },
     wait: async () => {},
-    log: () => {},
+    log: e => void logs.push(e),
   })
-  return { core, exits, ups, aborts }
+  return { core, exits, ups, aborts, logs }
 }
 
 const headerOf = (init: RequestInit | undefined) => new Headers(init?.headers).get('x-inhouse-protocol')
@@ -317,6 +319,24 @@ describe('an exit says whether its container came up (failure 9)', () => {
     expect(await m.core.admit(RS)).toEqual({ placementError: 'the container stopped before it answered /protocol', booting: false })
     await settle()
     expect(m.ups).toEqual([[1, false]])
+  }))
+
+  it("container_exited keeps the exit code and our own reasons, never the platform's text (P8a P-auth)", t(async state => {
+    const c = new FakeContainer()
+    c.route = v2Runner([2])
+    const m = make(c, state)
+    expect(await m.core.admit(RS)).toEqual({ accepted: true, gen: 1, protocol: 2 })
+    c.monitors.splice(0).forEach(x => x.reject(Object.assign(new Error('exited: CANARY-chat-text'), { exitCode: 3 })))
+    await settle()
+    expect(m.logs.filter(l => l.event === 'container_exited')).toEqual([{ event: 'container_exited', gen: 1, cameUp: true, how: 'exit code 3' }])
+    expect(JSON.stringify(m.logs)).not.toContain('CANARY')
+  }))
+
+  it("a warm-up whose container stops keeps our own reason as the detail, not the platform's", t(async state => {
+    const c = new FakeContainer()
+    c.route = () => { c.exit(1); throw new TypeError('connection refused: CANARY-chat-text') }
+    const { core } = make(c, state)
+    expect(await core.warm(null)).toEqual({ ok: false, why: 'start', detail: 'the container stopped before it answered /protocol' })
   }))
 
   it('a container that answered, refused the run (typed 503) and then died: reported as up', t(async state => {

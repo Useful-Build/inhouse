@@ -189,7 +189,7 @@ describe('the session pool', () => {
     expect(p.state().quarantined).toEqual([30000])
     expect(p.quarantined()).toBe(1)
     // The log names the error's class only (P8a P-auth: a wipe's message names a session's leftover file).
-    expect(logged).toEqual([expect.objectContaining({ type: 'session_user_quarantined', uid: 30000, error: 'Error', folderParkedForGood: true })])
+    expect(logged).toEqual([expect.objectContaining({ type: 'session_user_quarantined', uid: 30000, error: 'Error', step: 'kill', folderParkedForGood: true })])
   })
 
   it("a folder whose last user's processes survived the kill is parked for good: root never walks it again", async () => {
@@ -242,7 +242,7 @@ describe('the session pool', () => {
     // Every process is dead, a file is left: the uid is quarantined, the folder is safe to hand to another.
     failWipe = true
     await expect(p.release('a', u)).rejects.toThrow(/still owns/)
-    expect(logged.filter((e) => e.uid === u.uid)).toEqual([expect.objectContaining({ type: 'session_user_quarantined', sessionKey: 'a', error: 'Error' })])
+    expect(logged.filter((e) => e.uid === u.uid)).toEqual([expect.objectContaining({ type: 'session_user_quarantined', sessionKey: 'a', step: 'wipe', error: 'Error' })])
     expect(JSON.stringify(logged)).not.toContain('CANARY')
     failWipe = false
     expect(p.state().parkedForGood).toEqual([])

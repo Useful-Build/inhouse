@@ -19,9 +19,12 @@ export const stmt = (sql: string, ...params: SqlValue[]): Stmt => ({ sql, params
  * value, and every log above a store would carry it).
  */
 export class StoreUnavailableError extends Error {
+  /** Which store, as a code logs can carry (`StoreUnavailableError:R2` through safeError). */
+  readonly code: string
   constructor(what: string, cause: unknown) {
     super(`${what} failed`, { cause })
     this.name = 'StoreUnavailableError'
+    this.code = what.replace(/\W+/g, '_')
   }
 }
 

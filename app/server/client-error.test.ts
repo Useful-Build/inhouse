@@ -56,6 +56,20 @@ describe('client_error log line', () => {
     expect(line.frames).toEqual(['at f (https://brand.example/a.js:1:2)'])
     expect(line.name).toBe('Error')
   })
+  it("keeps only frames on the page's own http(s) origin: a message line shaped like a frame doesn't survive", async () => {
+    const line = await logged({
+      stack: [
+        'Error: x',
+        '    at x (note:Jane_Smith:1:2)',
+        '    at y (https://other.example/evil.js:1:2)',
+        'z@note:Jane_Smith:3:4',
+        '    at ok (https://brand.example/assets/a.js:5:6)',
+      ].join('\n'),
+      kind: 'error',
+    })
+    expect(JSON.stringify(line)).not.toContain('Jane_Smith')
+    expect(line.frames).toEqual(['at ok (https://brand.example/assets/a.js:5:6)'])
+  })
   it('a report with no stack logs no name and no frames', async () => {
     const line = await logged({ message: CANARY, kind: 'boundary' })
     expect(JSON.stringify(line)).not.toContain(CANARY)

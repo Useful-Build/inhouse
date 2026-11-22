@@ -1639,7 +1639,7 @@ export class AgentCore {
     if (this.onDeferred === null) return { retryAtMs: ctx.nowMs + backoffMs(task.attempts), error: 'no onDeferred hook' }
     const answer = await this.onDeferred(q, ctx)
     if ('ok' in answer) return { done: true }
-    return { retryAtMs: ctx.nowMs + backoffMs(task.attempts), error: answer.retry.slice(0, 300) }
+    return { retryAtMs: ctx.nowMs + backoffMs(task.attempts), error: answer.retry }
   }
 
   /**
