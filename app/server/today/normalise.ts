@@ -6,7 +6,7 @@ import type { MorningCheckResult } from '../../shared/contract/today.ts'
 export interface Normalised {
   /** Strings cut to their maximum (ending `…`). */
   truncated: number
-  /** `found` rows that aren't a pair, and `found` and `sources` past their maxima. */
+  /** `found` rows that aren't a pair, `found` and `sources` past their maxima, and costs nulled for a currency other than the brand's. */
   dropped: number
   /** Items whose `key` repeated an earlier item's. */
   deduped: number
@@ -72,6 +72,11 @@ export function normaliseResult(raw: unknown, brandCurrency: string): Checked {
         counts.dropped += it.sources.length - kept10.length
         next.sources = kept10.map(s => (isObject(s) ? { ...s, ...('n' in s ? { n: fit(s.n, 40) } : {}), ...('text' in s ? { text: fit(s.text, CELL_MAX) } : {}) } : s))
       }
+      // The brand shows one currency (`s:currency`): a cost in another is nulled and counted, the item stays.
+      if (isObject(it.cost) && typeof it.cost.currency === 'string' && /^[A-Z]{3}$/.test(it.cost.currency) && it.cost.currency !== brandCurrency) {
+        next.cost = null
+        counts.dropped++
+      }
       kept.push(next)
     }
     if (kept.length > ITEMS_MAX) {
@@ -83,8 +88,6 @@ export function normaliseResult(raw: unknown, brandCurrency: string): Checked {
   const parsed = MorningCheckResultSchema.safeParse({ ...raw, items })
   if (!parsed.success) return { invalid: true }
   const result = parsed.data
-  // The brand shows one currency (`s:currency`): an item in another is a wrong value, not a cosmetic one.
-  if (result.items.some(i => i.cost !== null && i.cost.currency !== brandCurrency)) return { invalid: true }
   if (counts.overflow === 0) return { ok: { result, counts } }
   return { ok: { result: { ...result, coverage: 'incomplete', gaps: [...result.gaps, TOO_MANY] }, counts } }
 }

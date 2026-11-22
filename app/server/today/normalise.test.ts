@@ -1,5 +1,5 @@
 // The validator and the normaliser (p4-w3.md tests 1 and 1b). Ways it can fail, written down first:
-//  1. a structurally wrong result (a missing field, an extra key, a decimal `minor`, a wrong currency, an unknown `sev`,
+//  1. a structurally wrong result (a missing field, an extra key, a decimal `minor`, a malformed currency, an unknown `sev`,
 //     `area`, `coverage` or gap, a wrong type) saves anyway, or a cosmetic overrun fails the whole result;
 //  2. a cut string is over its maximum, doesn't end with `…`, or splits a surrogate pair; a repeated key keeps the later item;
 //  3. a bad `since` fails the result (it must become null at save: the validator keeps it a string);
@@ -37,7 +37,6 @@ describe('structural errors are invalid_result', () => {
     ['a decimal minor', () => result({ items: [item('late-orders', { cost: { minor: 12.5, currency: 'USD' } })] })],
     ['a minor as text', () => result({ items: [item('late-orders', { cost: { minor: '1190', currency: 'USD' } })] })],
     ['a lowercase currency', () => result({ items: [item('late-orders', { cost: { minor: 1, currency: 'usd' } })] })],
-    ['a currency that is not the brand\'s', () => result({ items: [item('late-orders', { cost: { minor: 1, currency: 'EUR' } })] })],
     ['an unknown sev', () => result({ items: [item('late-orders', { sev: 'red' })] })],
     ['an unknown area', () => result({ items: [item('late-orders', { area: 'Staff' })] })],
     ['an unknown coverage', () => result({ coverage: 'partial' })],
@@ -69,6 +68,12 @@ describe('structural errors are invalid_result', () => {
 })
 
 describe('cosmetic overruns are fixed and counted', () => {
+  it('nulls a cost in another currency than the brand\'s, keeps the item and counts it', () => {
+    const r = ok(result({ items: [item('late-orders', { cost: { minor: 1, currency: 'GBP' } })] }))
+    expect(r.result.items).toHaveLength(1)
+    expect(r.result.items[0].cost).toBeNull()
+    expect(r.counts).toEqual({ truncated: 0, dropped: 1, deduped: 0, overflow: 0 })
+  })
   it('cuts a 121-character title to 119 characters and an ellipsis', () => {
     const r = ok(result({ items: [item('late-orders', { title: 'a'.repeat(121) })] }))
     expect(r.result.items[0].title).toBe(`${'a'.repeat(119)}…`)

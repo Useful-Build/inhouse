@@ -208,10 +208,14 @@ describe('what is never saved', () => {
     expect(await titles()).toEqual([`${'x'.repeat(119)}…`])
   })
 
-  it('a currency that is not the brand\'s is invalid_result', async () => {
+  it('a currency that is not the brand\'s saves the item with its cost null (zero in the brand\'s currency, no note)', async () => {
     const s = await addSlot({ claimed: at('2026-06-01T10:00:00Z') })
     await deliver(s, { coverage: 'complete', gaps: [], items: [item('a', { cost: { minor: 1, currency: 'GBP' } })] }, at('2026-06-01T10:03:00Z'))
-    expect((await slotRow(s.key))?.failure).toBe('invalid_result')
+    expect((await slotRow(s.key))?.failure).toBeNull()
+    expect(await titles()).toEqual(['Title of a'])
+    const [it] = (await todayStore({ db }).read(NOW)).items
+    expect(it.cost).toEqual({ minor: 0, currency: 'USD' })
+    expect(it.costNote).toBe('')
   })
 
   it('no store connected (an empty tool list, or not_configured): no statements, a quiet failure and no bell for it', async () => {

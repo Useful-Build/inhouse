@@ -26,9 +26,10 @@ describe('the system prompt v2', () => {
   it('is v1 unchanged plus the connected-apps line, read only, found by tool search', () => {
     expect(SYSTEM_PROMPT_V2.startsWith(SYSTEM_PROMPT_V1)).toBe(true)
     expect(SYSTEM_PROMPT_V2.endsWith(CONNECTED_APPS_LINE)).toBe(true)
-    expect(CONNECTED_APPS_LINE).toContain('Shopify (orders, products, inventory, refunds, returns)')
-    expect(CONNECTED_APPS_LINE).toContain('Their tools are read only')
-    expect(CONNECTED_APPS_LINE).toContain('search for them with tool search')
+    expect(CONNECTED_APPS_LINE).toContain('Shopify, when the brand has connected it (orders, products, inventory, refunds, returns), read only')
+    expect(CONNECTED_APPS_LINE).toContain('search for its tools with tool search')
+    expect(CONNECTED_APPS_LINE).toContain("If tool search finds no store tools, say the store isn't connected.")
+    expect(CONNECTED_APPS_LINE).not.toMatch(/^Connected apps: Shopify \(/)
     expect(SYSTEM_PROMPT_V2).not.toContain('\u2014')
   })
 })
