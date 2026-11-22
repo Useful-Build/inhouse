@@ -271,6 +271,12 @@ test('S3: Ask which orders are late and the answer shows with a bounded table an
   await expect(table).toContainText(ORDER)
   await expect(log(page).getByText(LATE_SOURCES, { exact: true })).toBeVisible()
   await shot(page, 'S3-late-orders-table')
+  // The turn ends the way a person sees it: the live "Using a tool" work line goes, Stop gives Send its place back. A failure here
+  // is the product not ending the turn in the UI, so it is not loosened.
+  await expect(log(page).getByText('Using a tool', { exact: true }), 'the work line is gone once the answer is done').toHaveCount(0, { timeout: 60_000 })
+  await expect(page.getByRole('button', { name: 'Stop', exact: true }), 'the composer\'s Stop is gone').toHaveCount(0, { timeout: 60_000 })
+  await expect(page.getByRole('button', { name: 'Send', exact: true }), 'Send is back').toBeVisible({ timeout: 60_000 })
+  await shot(page, 'S3-turn-ended')
 })
 
 // ---------- S4 and S5: Activity and the bell ----------
