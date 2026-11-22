@@ -167,6 +167,15 @@ describe('the literal cases (failures 1 to 4)', () => {
 })
 
 describe('the reason is the right one (failure 1)', () => {
+  it('m:learn off and m:ask off: the person save is refused with text that says not to reroute to the team, and a brand save of the same text still works (the brand rule is not the person switch)', async () => {
+    await reset(); await learn(P1, false); await ask(false)
+    const first = await call(P1, 'memory_save', { scope: 'person', text: 'Tia prefers email summaries' })
+    expect(first.structuredContent).toEqual({ error: 'learning_off' })
+    expect(first.content[0].text).toContain("Don't save it for the team instead.")
+    const second = await call(P1, 'memory_save', { scope: 'brand', text: 'Tia prefers email summaries' })
+    expect(second.isError).toBeUndefined()
+    expect((await row(savedId(second)))!.status).toBe('active')
+  })
   it('a member who is no longer active gets no_member even with m:learn off', async () => {
     await reset()
     await db.prepare("INSERT OR IGNORE INTO members (id, kind, role, status, name, created_at_ms) VALUES ('m_tog_gone', 'person', 'member', 'removed', 'Gus', 1)").run()
