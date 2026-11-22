@@ -30,6 +30,8 @@ export const SEED_SETTINGS = [
   ['brand', 's:currency', 'USD ($)', 'admin'],
   ['technical', 'stage', 'Watch', 'inhouse'],
   ['technical', 'tm:fable:effort', 'High', 'inhouse'],
+  // WebFetch reaches only listed hosts (P8a S): the test build's WebFetch scenario reads example.com (IANA's example domain).
+  ['technical', 't:webfetch', 'example.com', 'inhouse'],
   ['personal', 'g:theme', 'Dark', 'dana'],
   ['personal', 'n:weekly', true, 'dana'],
 ] as const

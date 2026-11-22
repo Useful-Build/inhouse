@@ -56,6 +56,12 @@ async function sidebar(page: Page) {
 
 async function goTo(page: Page, name: string) {
   const side = await sidebar(page)
+  // Usage lives in the account menu, not the sidebar's nav (#226).
+  if (name === 'Usage') {
+    await side.getByRole('button', { name: /account and settings/i }).click()
+    await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: 'Usage', exact: true }).click()
+    return
+  }
   await side.getByRole('button', { name, exact: true }).click()
 }
 
@@ -73,11 +79,11 @@ test('S1: Today opens at the morning start with the same six things and the same
   await expect(page.getByRole('article')).toHaveCount(6)
   // Every card's amount goes through the money formatter: it reads as it did before P1.
   // The amount element itself is checked: a title can carry the figure too ("Amazon paid out $1,240 less than expected").
-  for (const [title, cost] of Object.entries(GOLDEN_COST)) await expect(card(page, title).locator('span.text-xl'), title).toHaveText(cost)
+  for (const [title, cost] of Object.entries(GOLDEN_COST)) await expect(card(page, title).locator('span.text-2xl'), title).toHaveText(cost)
   // The Kestrel reorder spends money: its panel carries the sign-off amount.
   await card(page, KESTREL).getByRole('button', { name: 'Review' }).click()
   const panel = page.getByRole('dialog')
-  await expect(panel).toContainText('Spends money')
+  await expect(panel).toContainText('Spends $9,600')
   // The approver is the sample's own person (`fx.names.people`), so a renamed sample person keeps this spec working.
   const approver = fx.names.people.find(p => p.id === 'dana')
   expect(approver, 'the sample has the approver for orders over $5,000').toBeDefined()
@@ -116,10 +122,13 @@ test('S2: A suggested question streams its answer with the orders table, and tim
   await expect(log.getByText('Not picked at ShipBob')).toBeVisible()
   await expect(log.getByText('$312')).toBeVisible()
   // The answer's trace keeps its length.
-  // The answer bar reads steps, duration and the stamp from the demo clock (8:00 AM, give or take the run's seconds).
+  // The steps line reads the step count; opened, its meta reads the duration and the stamp from the demo clock (8:00 AM,
+  // give or take the run's seconds), and Details opens the trace.
   const bar = log.getByRole('button', { name: /6 steps/ }).last()
-  await expect(bar).toContainText(/6 steps · 9\.4s · 8:0\d\s*AM/)
+  await expect(bar).toContainText(/6 steps/)
   await bar.click()
+  await expect(log.locator('[data-steps-meta]').last()).toContainText(/9\.4s · 8:0\d\s*AM/)
+  await bar.locator('xpath=..').getByRole('button', { name: 'Details', exact: true }).click()
   await expect(page.getByRole('dialog', { name: /What your Inhouse agent did/ })).toContainText('9.4s')
 })
 

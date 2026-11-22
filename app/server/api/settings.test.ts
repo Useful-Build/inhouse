@@ -44,7 +44,7 @@ const put = (scope: SettingScope, key: string, body: unknown, who = admin, role:
   return { res: PUT[scope](c), objects }
 }
 const inhousePut = (key: string, body: unknown, s: Stores = stores) => {
-  const { c, objects } = ctx(s, { kind: 'inhouse', memberId: inhouse, subject: 'sub-inhouse', grant: null, requestId: `r-${uniq()}` }, { method: 'PUT', path: `/api/settings/technical/${key}`, params: { key }, body })
+  const { c, objects } = ctx(s, { kind: 'inhouse', memberId: inhouse, subject: 'sub-inhouse', grant: null, requestId: `r-${uniq()}`, expMs: 4_102_444_800_000 }, { method: 'PUT', path: `/api/settings/technical/${key}`, params: { key }, body })
   return { res: putTechnicalSetting(c), objects }
 }
 const json = async (r: Response | Promise<Response>) => {
@@ -108,17 +108,24 @@ describe('with the real object gate (failure 2)', () => {
     c.access = { requireObject: gate.requireObject }
     return { run: () => PUT[scope](c), gate }
   }
-  it('an Admin may only switch a model off; anything else is refused before it is written', async () => {
-    const off = gated(technicalRow, admin, 'tm:sonnet:on', 'off', 'technical')
-    expect((await off.run()).status).toBe(200)
-    expect(off.gate.passed).toBe(true)
-    for (const [key, value] of [['tm:haiku:on', 'on'], ['stage', 'Run']] as const) {
+  it('an Admin may only switch a model off or back on; anything else is refused before it is written', async () => {
+    for (const [key, value] of [['tm:sonnet:on', 'off'], ['tm:fable:on', 'on']] as const) {
+      const g = gated(technicalRow, admin, key, value, 'technical')
+      expect((await g.run()).status).toBe(200)
+      expect(g.gate.passed).toBe(true)
+    }
+    // P8a S: the web switches are the Inhouse team's alone (an Admin can't open web search or a WebFetch host).
+    for (const [key, value] of [['tm:haiku:on', null], ['tm:haiku:effort', 'High'], ['stage', 'Run'], ['t:websearch', true], ['t:webfetch', 'evil.example.com']] as const) {
       const before = await snapshot(db)
       const g = gated(technicalRow, admin, key, value, 'technical')
       await expect(g.run()).rejects.toThrow()
       expect(g.gate.refusal?.reason).toBe('admin_read_only')
       expect(await snapshot(db)).toEqual(before)
     }
+  })
+  it('the Inhouse team turns web search on (P8a S); only a switch value is taken', async () => {
+    expect((await inhousePut('t:websearch', { value: true, ifRev: 0 }).res).status).toBe(200)
+    expect((await inhousePut('t:websearch', { value: 'on', ifRev: 1 }).res).status).toBe(400)
   })
   it("the owner rule: a person's own settings only (the handler names the caller as owner)", async () => {
     const g = gated(personalRow, admin, 'g:theme', 'Light', 'personal')

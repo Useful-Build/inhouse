@@ -1,0 +1,64 @@
+{
+ "row": {
+  "caseId": "T11",
+  "cat": "choice",
+  "pair": "routine_create/notification_send",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "routine_create"
+  ],
+  "toolSearches": 1,
+  "answer": "I set up the routine \"Weekday low stock check\". It runs Monday to Friday at 06:00, checks inventory, and sends you a short message listing the low items. If nothing is low, it says so in one line.\n\nI didn't have a low-stock threshold saved, so I set it to 10 units or fewer, plus anything the shop fl",
+  "costUsd": 0.0169683,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "low stock threshold"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__inhouse__routine_create,mcp__inhouse__routine_list",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_create\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__inhouse__routine_list\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__routine_create",
+    "input": {
+     "name": "Weekday low stock check",
+     "schedule": "weekdays 06:00",
+     "instruction": "Check current inventory levels in the shop. List the items that are low on stock, with product name, SKU if available, current quantity and the threshold used. If the brand has a saved low stock threshold in memory, use it; otherwise treat items at or below 10 units, or flagged low by the shop, as low. Send the list to Maya (p_maya) as a short message. If nothing is low, say so in one line. Do not place orders or change stock; if a reorder looks needed, mention it so Tom (p_tom) can follow up.",
+     "on_missed": "run_once"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Created routine r_new1.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I set up the routine \"Weekday low stock check\". It runs Monday to Friday at 06:00, checks inventory, and sends you a short message listing the low items. If nothing is low, it says so in one line.\n\nI didn't have a low-stock threshold saved, so I set it to 10 units or fewer, plus anything the shop flags as low. Tell me if you want a different number, or one that varies by product.\n\nIf a run is missed while the system is off, it runs once when the system is back. It only reports and never orders or changes stock. If a reorder looks needed, it flags it so Tom can follow up.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 6,
+   "cacheCreationTokens": 2835,
+   "cacheReadTokens": 33188,
+   "outputTokens": 655
+  },
+  "costUsd": 0.0169683
+ }
+}

@@ -1,0 +1,7 @@
+#!/bin/sh
+# The CLI as every session starts it (the guards' `pathToClaudeCodeExecutable`, src/guards/paths.ts CLI_WRAPPER).
+# It caps the processes the session's uid may have (RLIMIT_NPROC, soft and hard, so nothing under it can raise it),
+# then runs the SDK's own CLI, linked next to this file at image build (claude-cli). A fork bomb in Bash stops at the
+# cap, so the release's kill and wipe still run. The number is SESSION_PROCESS_LIMIT; test/guards/cli-wrapper.test.ts
+# pins the two together.
+exec /usr/bin/prlimit --nproc=512:512 -- /opt/inhouse/bin/claude-cli "$@"

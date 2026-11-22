@@ -1,0 +1,48 @@
+{
+ "row": {
+  "caseId": "R02",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "answer": false
+  },
+  "called": [
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I couldn't find your return window. I searched saved memory and past chats, and ",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_RVp08F82TXN2gi8n1WObrw",
+  "askedAs": "eval-44977516723-1-r02-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I couldn't find your return window. I searched saved memory and past chats, and ",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "2639f741196ae4e95802dd6122b1dd35445c83bf8aebf5a1841f3cec3f02e251",
+    "inputExcerpt": "{\"query\":\"return window policy\"}"
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "inputSha256": "e2e612caa592403a4839c41a05fd775032472b5d1452528b3c6268c36f9bddd6",
+    "inputExcerpt": "{\"query\":\"return window days returns policy\"}"
+   }
+  ]
+ }
+}

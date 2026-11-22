@@ -5,6 +5,7 @@ import { test } from '../support/test-build/index.js'
 import { open, signInAs } from '../support/clients/real.js'
 
 test('Sign out goes to the Access logout path', async ({ page, context }) => {
+  test.skip(!!process.env.E2E_TEST_BUILD_REMOTE, 'per-PR hosts have no Access, so the edge answers /cdn-cgi/access/logout without the app\'s CSP; proven by the local test-build suite, and the real logout on the candidate (behind Access)')
   await signInAs(context, 'admin')
   await open(page, 'admin', '#/today')
   // On a phone the sidebar is a drawer behind the Menu button: wait for the button, then open it.

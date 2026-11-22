@@ -1,0 +1,15 @@
+// check-product-config fixture: the runner pool, 3 x 4 instances (invented values).
+{
+	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }],
+	"name": "inhouse-product",
+	"main": "server/index.ts",
+	"vars": {
+		"INHOUSE_ACCESS": "{\"teamDomain\":\"https://example-team.cloudflareaccess.com\",\"apps\":[{\"name\":\"brand\",\"origin\":\"https://brand.example.test\",\"aud\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"name\":\"inhouse\",\"origin\":\"https://inhouse.example.test\",\"aud\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}],\"serviceTokens\":{\"monitor-client.access\":\"monitor\",\"smoke-client.access\":\"smoke\",\"release-client.access\":\"release\"}}",
+		"RUNNER_POOL": "4"
+	},
+	"version_metadata": { "binding": "CF_VERSION_METADATA" },
+	"durable_objects": { "bindings": [{ "name": "RUNNER", "class_name": "Runner" }] },
+	"containers": [{ "class_name": "Runner", "image": "./runner/Dockerfile", "max_instances": 12 }],
+	"workers_dev": false,
+	"preview_urls": false
+}

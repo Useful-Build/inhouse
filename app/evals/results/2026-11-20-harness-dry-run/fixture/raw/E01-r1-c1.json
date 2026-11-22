@@ -1,0 +1,44 @@
+{
+ "row": {
+  "caseId": "E01",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "Got it, Maya. I've saved that, so the weekly stock report will be a table from now on, not bullets.",
+  "costUsd": 0.0096261,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "input": {
+     "fact": "Maya wants the weekly stock report formatted as a table, not bullets.",
+     "scope": "person",
+     "person_id": "p_maya"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"Saved as m_1bcdd6 for p_maya. It counts now.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "Got it, Maya. I've saved that, so the weekly stock report will be a table from now on, not bullets.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2352,
+   "cacheReadTokens": 20781,
+   "outputTokens": 166
+  },
+  "costUsd": 0.0096261
+ }
+}

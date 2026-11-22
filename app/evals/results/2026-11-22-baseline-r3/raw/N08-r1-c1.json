@@ -1,0 +1,45 @@
+{
+ "row": {
+  "caseId": "N08",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "noMcp": true
+  },
+  "called": [
+   "WebFetch"
+  ],
+  "toolSearches": 1,
+  "answer": "**Berlin tomorrow (Sunday, 23 Nov 2026)**\n\n- **Temperature:** low of -1 °C, high",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_YNIedpP1xZY00NBwWF7_Hg",
+  "askedAs": "eval-44986365620-1-n08-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "**Berlin tomorrow (Sunday, 23 Nov 2026)**\n\n- **Temperature:** low of -1 °C, high",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "d34b6986c703e9261fba4490ca2d5e1cd1598a93b73f2b4ae2763d0ccf38a653",
+    "inputExcerpt": "{\"query\":\"select:WebFetch,WebSearch\",\"max_results\":5}"
+   },
+   {
+    "name": "WebFetch",
+    "inputSha256": "4ff76a96b89fe26eb7f2098c1f1c1712e12db7a89d8a4c794aa0b2403977c289",
+    "inputExcerpt": "{\"url\":\"wttr.in [url 38afac897fe3]\",\"prompt\":\"Give the forecast for tomorrow (20"
+   }
+  ]
+ }
+}

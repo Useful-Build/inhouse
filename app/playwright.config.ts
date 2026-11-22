@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 import type { PlaywrightTestProject } from '@playwright/test'
 import { existsSync } from 'node:fs'
-import { TEST_BUILD_WORKER_CONFIG, testAccessConfig, testBuildPort, testIssuerJwks } from './e2e/support/test-build/issuer.ts'
+import { TEST_BUILD_HUB_CONFIG, TEST_BUILD_WORKER_CONFIG, testAccessConfig, testBuildPort, testIssuerJwks } from './e2e/support/test-build/issuer.ts'
 
 // Artifacts go to VERIFY_DIR when it's set, else to e2e-artifacts/. Runs against the
 // production build.
@@ -36,8 +36,17 @@ const productURL = `http://localhost:${productPort}`
 // `wrangler dev` with a fresh local D1 (migrated and seeded first) and this run's test issuer key.
 // Run: npm run build:product-test && E2E_TEST_BUILD=1 E2E_PREBUILT=1 npx playwright test --project=api --project=real-desktop --project=real-phone
 // e2e/smoke/ (the `smoke` project, below) is ignored by every other project the same way, so it joins this pattern.
+// E2E_TEST_BUILD_REMOTE: the same projects against a test build deployed elsewhere (the private ops repo's per-PR
+// test-deploy workflow): BASE_URL and TEST_BUILD_INHOUSE_URL are its two origins and TEST_ISSUER_PRIVATE_JWK_FILE that
+// deploy's private key (e2e/support/test-build/issuer.ts reads all three). No local server starts and no prebuilt build
+// is needed; a test that reads or writes the local D1 (e2e/api/db.ts) skips itself there.
 const testBuild = /e2e[\\/](api|real|smoke)[\\/]/
-const testBuildOn = !!process.env.E2E_TEST_BUILD
+const testBuildRemote = !!process.env.E2E_TEST_BUILD_REMOTE
+const testBuildOn = !!process.env.E2E_TEST_BUILD || testBuildRemote
+if (testBuildRemote) {
+  const missing = ['BASE_URL', 'TEST_BUILD_INHOUSE_URL', 'TEST_ISSUER_PRIVATE_JWK_FILE'].filter(name => !process.env[name])
+  if (missing.length > 0) throw new Error(`E2E_TEST_BUILD_REMOTE=1 runs against a deployed test build and needs ${missing.join(', ')}.`)
+}
 const testBuildPortNumber = testBuildPort()
 const visualMatch = noVisual ? { testIgnore: /.*/ } : { testMatch: /visual\.spec/, testIgnore: [ship, product, testBuild] }
 const shipUse = (width: number, height: number) => ({
@@ -70,7 +79,7 @@ const productWorkerConfig = 'dist-product/inhouse_product/wrangler.json'
 if (process.env.E2E_PRODUCT && !existsSync(new URL(productWorkerConfig, import.meta.url))) {
   throw new Error(`E2E_PRODUCT=1 serves the prebuilt product build, and ${productWorkerConfig} is missing. Run \`npm run build:product\` first.`)
 }
-if (testBuildOn && !existsSync(new URL(TEST_BUILD_WORKER_CONFIG, import.meta.url))) {
+if (testBuildOn && !testBuildRemote && !existsSync(new URL(TEST_BUILD_WORKER_CONFIG, import.meta.url))) {
   throw new Error(`E2E_TEST_BUILD=1 serves the prebuilt test build, and ${TEST_BUILD_WORKER_CONFIG} is missing. Run \`npm run build:product-test\` first.`)
 }
 const testBuildProjects: PlaywrightTestProject[] = testBuildOn
@@ -95,7 +104,9 @@ const demoServer = {
   timeout: 180_000,
 }
 const productServer = {
-  command: `npx wrangler dev --config ${productWorkerConfig} --port ${productPort}`,
+  // `--local`: remote bindings off. The product config binds Workers AI (the egress's gateway, p3-design 8.2), which
+  // `wrangler dev` otherwise serves through a remote proxy session that needs a Cloudflare login; the specs make no model call.
+  command: `npx wrangler dev --local --config ${productWorkerConfig} --port ${productPort}`,
   url: productURL,
   reuseExistingServer: false,
   timeout: 180_000,
@@ -103,10 +114,11 @@ const productServer = {
 // The test build's server: a fresh local D1 (prepare.mjs migrates and seeds it), then `wrangler dev` on the test build's
 // own Worker config with this run's public JWKS and INHOUSE_ACCESS on this run's port, both as --var (wrangler keeps
 // everything after the first ':' as the value). The private key stays in the test runner (e2e/support/test-build/issuer.ts).
+// P4 wave 4: the hub's test config rides along as the second config (issuer.ts, TEST_BUILD_HUB_CONFIG).
 const testBuildServer = () => ({
   command: [
     'node e2e/support/test-build/prepare.mjs &&',
-    `npx wrangler dev --config ${TEST_BUILD_WORKER_CONFIG} --port ${testBuildPortNumber} --persist-to .wrangler/test-build`,
+    `npx wrangler dev --config ${TEST_BUILD_WORKER_CONFIG} --config ${TEST_BUILD_HUB_CONFIG} --port ${testBuildPortNumber} --persist-to .wrangler/test-build`,
     `--var 'TEST_ISSUER_JWKS:${testIssuerJwks()}'`,
     `--var 'INHOUSE_ACCESS:${JSON.stringify(testAccessConfig())}'`,
   ].join(' '),
@@ -119,7 +131,7 @@ const testBuildServer = () => ({
 const webServers = [
   ...(process.env.BASE_URL || process.env.SMOKE_BASE_URL || testBuildOn ? [] : [demoServer]),
   ...(process.env.E2E_PRODUCT ? [productServer] : []),
-  ...(testBuildOn ? [testBuildServer()] : []),
+  ...(testBuildOn && !testBuildRemote ? [testBuildServer()] : []),
 ]
 
 export default defineConfig({

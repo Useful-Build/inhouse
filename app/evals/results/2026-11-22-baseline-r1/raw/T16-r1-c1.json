@@ -1,0 +1,51 @@
+{
+ "row": {
+  "caseId": "T16",
+  "cat": "choice",
+  "pair": "approval_withdraw/memory_forget",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "approval_get",
+   "approval_withdraw"
+  ],
+  "toolSearches": 1,
+  "answer": "I couldn't withdraw ap_311. The withdraw tool isn't available yet, and neither i",
+  "costUsd": 0.025,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I couldn't withdraw ap_311. The withdraw tool isn't available yet, and neither i",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "452bd5dc4fe45b48d13c065dad12170fac50adbdc39defef0e2c3d577a863f4a",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__approval_get,mcp__inhouse__approval_withdraw\",\"ma"
+   },
+   {
+    "name": "mcp__inhouse__approval_get",
+    "inputSha256": "728eac60a7d29d9aacf1728174e0bc2d61a672ac781ef893e928a20042055ded",
+    "inputExcerpt": "{\"approval_id\":\"ap_311\"}"
+   },
+   {
+    "name": "mcp__inhouse__approval_withdraw",
+    "inputSha256": "13e66de48433fb7e049c80a99c3a92932e84331d53d2efab3e9455177621ff5d",
+    "inputExcerpt": "{\"approval_id\":\"ap_311\",\"reason\":\"The mugs arrived, so the reorder is no longer "
+   }
+  ]
+ }
+}

@@ -7,7 +7,7 @@ import type { AuditArgs } from '../../shared/contract/audit.ts'
 import { stmt } from './sql.ts'
 import type { SqlValue, Stmt } from './sql.ts'
 
-export type TargetKind = 'member' | 'setting' | 'grant'
+export type TargetKind = 'member' | 'setting' | 'grant' | 'memory'
 
 export interface LineInput {
   atMs: number
@@ -19,7 +19,7 @@ export interface LineInput {
 
 /** The row the change touched, found by `where` (with `params`) and the write's `stamp` on its `req_id`. */
 export interface Guard {
-  table: 'members' | 'settings' | 'support_grants'
+  table: 'members' | 'settings' | 'support_grants' | 'memories' | 'today_aside'
   where: string
   params: readonly SqlValue[]
   stamp: string

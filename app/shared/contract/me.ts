@@ -12,7 +12,7 @@ export type Role = z.infer<typeof RoleSchema>
 /**
  * The closed list of actions the UI asks about, each tied to one access-matrix row (p2-design section 3):
  * `invite` (row 4), `changeRole` (5), `remove` (6), `editBrandSettings` (10), `editTechnical` (12, for Inhouse),
- * `switchModelOff` (12 via its `adminWrite` flag), `grantSupport` (17), `viewMembers` (3), `viewAudit` (19),
+ * `switchModel` (12 via its `adminWrite` flag: an Admin turns a model off or back on), `grantSupport` (17), `viewMembers` (3), `viewAudit` (19),
  * `exportAudit` (20).
  */
 export const CanKeySchema = z.enum(CAN_KEYS)
@@ -38,6 +38,11 @@ export const MeSchema = z.strictObject({
   can: CanSchema,
   /** `/api/members/<id>/photo` when the member has a photo, else null. */
   photoUrl: z.string().nullable(),
+  /**
+   * Only on the eval deployment (p3-eval-observability rev 2, "The eval-brand marker"): the eval build compiled in AND
+   * `INHOUSE_EVAL_BRAND === '1'`, a deploy-time fact, never data. The eval harness refuses a brand without it.
+   */
+  evalBrand: z.literal(true).optional(),
   /** The live support grant for an Inhouse principal; always null for anyone else. */
   grant: MeGrantSchema.nullable(),
 }).refine(m => m.grant === null || m.role === 'inhouse', { path: ['grant'], message: 'only the Inhouse team sees a grant' })

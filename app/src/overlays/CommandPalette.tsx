@@ -12,7 +12,7 @@ import { Icon, StageTag } from '../ui'
 import { keepForToast } from '../ui/dialogs'
 import { NO_MOTION } from '../ui/motion'
 import { MENU } from '../screens/settings/menu'
-import { mac, PRIMARY, SECONDARY, SHORTCUTS } from '../shell/nav'
+import { mac, PAGES, SHORTCUTS } from '../shell/nav'
 import { demoEnabled } from '../shell/demo'
 
 /** Words a settings page is also found by, by its tab: Models was called Thinking modes. */
@@ -68,7 +68,7 @@ export function CommandPalette() {
   }
 
   const chats = chatEntries(ctx.data, started, ctx.agent)
-  const pages = [...PRIMARY, ...SECONDARY]
+  const pages = PAGES
 
   return (
     <Dialog open={open} onOpenChange={o => patch({ palette: o })}>

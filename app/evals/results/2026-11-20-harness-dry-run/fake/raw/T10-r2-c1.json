@@ -1,0 +1,45 @@
+{
+ "row": {
+  "caseId": "T10",
+  "cat": "choice",
+  "pair": "question_ask/AskUserQuestion",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "question_ask"
+  ],
+  "toolSearches": 0,
+  "answer": "I've put the question to you.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__question_ask",
+    "input": {
+     "question": "Norda or a cheaper supplier?",
+     "options": [
+      "Norda",
+      "Cheaper supplier"
+     ]
+    },
+    "result": "Shown to the person."
+   }
+  ],
+  "answer": "I've put the question to you.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0
+ }
+}

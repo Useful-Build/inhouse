@@ -1,0 +1,42 @@
+{
+ "row": {
+  "caseId": "T07",
+  "cat": "choice",
+  "pair": "approval_request/notification_send",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "approval_request"
+  ],
+  "toolSearches": 0,
+  "answer": "I can't refund Anna Weber yet. The approval request tool isn't available in this",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_zyGLupUhkXFGJ-DYwxM87Q",
+  "askedAs": "eval-44977516723-1-t07-r1",
+  "argsNotGraded": "the served schema defines no fields"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I can't refund Anna Weber yet. The approval request tool isn't available in this",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__approval_request",
+    "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "inputExcerpt": "{}"
+   }
+  ]
+ }
+}

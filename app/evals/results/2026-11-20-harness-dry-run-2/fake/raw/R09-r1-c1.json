@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "R09",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "We use Royal Mail for the UK.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "courier UK"
+    },
+    "result": "Our courier is DHL for the EU and Royal Mail for the UK."
+   }
+  ],
+  "answer": "We use Royal Mail for the UK.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0
+ }
+}

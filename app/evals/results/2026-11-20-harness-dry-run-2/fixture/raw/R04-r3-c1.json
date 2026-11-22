@@ -1,0 +1,53 @@
+{
+ "row": {
+  "caseId": "R04",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I don't have anything saved about how Tom likes to be notified, so this is my suggestion.\n\n**A daily check with a short message to Tom.** I'd set up a routine that checks inventory each morning. If any product is below a threshold, it sends Tom one message listing those items with their current stoc",
+  "costUsd": 0.0128676,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "Tom notifications stock low alerts"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "notification preference",
+     "person_id": "p_tom",
+     "scope": "person"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I don't have anything saved about how Tom likes to be notified, so this is my suggestion.\n\n**A daily check with a short message to Tom.** I'd set up a routine that checks inventory each morning. If any product is below a threshold, it sends Tom one message listing those items with their current stock. One message a day is easier to act on than an alert for every item, and it won't bury him in pings.\n\n- **Channel:** Slack or in-app for the daily message. Email is slower to notice. Tom's own notification settings decide what he actually gets.\n- **Urgent items:** For anything about to hit zero, such as best sellers with only a few days of cover, I'd send an immediate message instead of waiting for the morning.\n- **Reorders:** I can draft the purchase order as an approval request for you or Tom to OK. I never send it myself.\n\nTwo things I need from you:\n1. What threshold counts as low? One number for everything, or different levels per product?\n2. Should I send to Tom only, or copy you or a channel like #ops?\n\nOnce you answer, I can set up the routine. I'll also save Tom's preference if you tell me to.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 4,
+   "cacheCreationTokens": 2177,
+   "cacheReadTokens": 21071,
+   "outputTokens": 531
+  },
+  "costUsd": 0.0128676
+ }
+}

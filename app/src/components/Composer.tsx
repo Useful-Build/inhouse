@@ -3,12 +3,16 @@
 // On a phone both boxes keep attach and send: the tools and the model move into "+", the logo stack and dictate leave (M27).
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { ChangeEvent, ClipboardEvent, DragEvent, ReactElement } from 'react'
+import { agent } from '../agent'
 import type { Attachment } from '../agent/types'
-import { activeMode, readingTools, thinkingModes, toolCounts, toolDetail } from '../state/derive'
+import { dropFile, keepFile } from '../state/pending-files'
+import { activeMode, emptyToolsNote, readingTools, thinkingModes, toolCounts, toolDetail } from '../state/derive'
 import { openChatKey, openRun, useCtx, useUi } from '../state/store'
 import { cn } from '@/lib/utils'
 import { AttachmentChip, Button, Icon, IconButton, LogoCount, LogoTile, SwitchLook } from '../ui'
 import { TAP } from '../ui/fields'
+import { fileIcon, fileSize } from '@/lib/file-meta'
+import { ATTACHMENT_NAME_TOO_LONG, NO_MODEL_NOTE, NO_MODEL_YET, attachmentNameTooLong } from '../screens/chat/notes'
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Textarea } from '@/components/ui/textarea'
@@ -60,8 +64,6 @@ function useTouchOnly() {
 /** Browsers without field-sizing get the field's height measured instead. */
 const AUTO_SIZE = typeof CSS !== 'undefined' && CSS.supports('field-sizing', 'content')
 
-const fileSize = (b: number) => b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB'
-const fileIcon = (n: string) => /\.(png|jpe?g|gif|webp|heic)$/i.test(n) ? 'image' : /\.(csv|xlsx?|numbers)$/i.test(n) ? 'table_view' : /\.pdf$/i.test(n) ? 'picture_as_pdf' : 'description'
 
 export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat'; showToolsLabel: boolean }) {
   const ctx = useCtx()
@@ -75,6 +77,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   // A sent question being edited in this chat: Send puts it in place of the old one and its answer.
   const editing = useUi(s => variant === 'chat' && s.editMsg !== null && s.editMsg.chatId === openChatKey(s, ctx.data))
   const composerFocus = useUi(s => s.composerFocus)
+  const modelMenuAsk = useUi(s => s.modelMenuAsk)
   const atts = useUi(s => s.atts)
   const replyTo = useUi(s => s.replyTo)
   const modelSel = useUi(s => s.modelSel)
@@ -90,6 +93,13 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   // The field's top edge fades once it scrolls (over 8 lines), so a cut line reads as more above (M12).
   const [scrolled, setScrolled] = useState(false)
   const [pop, setPop] = useState<Pop>(null)
+  // A failed answer asked for the model menu (on a phone it lives in "+"). Only the chat's composer answers.
+  const seenAsk = useRef(modelMenuAsk)
+  useEffect(() => {
+    if (modelMenuAsk === seenAsk.current) return
+    seenAsk.current = modelMenuAsk
+    if (variant !== 'today') setPop(slim ? 'attach' : 'model')
+  }, [modelMenuAsk, slim, variant])
   // Limit notes belong to the chat they were shown in.
   const [rejectedIn, setRejectedIn] = useState<{ key: string; list: { name: string; reason: string }[] }>({ key: chatKey, list: [] })
   const rejected = rejectedIn.key === chatKey ? rejectedIn.list : []
@@ -111,8 +121,10 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
     const bad: { name: string; reason: string }[] = []
     for (const file of files) {
       if (file.size > MAX_MB * 1e6) bad.push({ name: file.name, reason: `Over the ${MAX_MB} MB limit` })
+      else if (attachmentNameTooLong(file.name)) bad.push({ name: file.name, reason: ATTACHMENT_NAME_TOO_LONG })
       else if (have + ok.length >= MAX_FILES) bad.push({ name: file.name, reason: `Only ${MAX_FILES} files per message` })
-      else ok.push({ name: file.name, meta: fileSize(file.size), icon: fileIcon(file.name) })
+      // The real client keeps the file until the send, which uploads it; the demo's chip is only its name and size.
+      else ok.push({ name: file.name, meta: fileSize(file.size), icon: fileIcon(file.name), ...(agent.uploadsFiles() ? { pending: keepFile(file) } : {}) })
     }
     if (ok.length) addAtts(ok)
     setRejected(bad)
@@ -172,9 +184,10 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
 
   // Stubs say what they are (M36).
   const notConnected = (what: string) => useUi.getState().showToast(`${what} isn't connected in this demo.`, { icon: 'info', ms: 4000 })
-  const canSend = !!draft.trim()
+  const noModel = thinkingModes(data, ctx.agent.settings).every(m => !m.on)
+  const canSend = !!draft.trim() && !noModel
   const send = () => {
-    if (!draft.trim()) return
+    if (!draft.trim() || noModel) return
     setRejected([])
     // Editing goes first: it replaces the old question (and stops an answer to it). Over a running answer a message
     // waits above the box for its turn.
@@ -196,10 +209,21 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   const holders = TOOL_KEYS.filter(k => attachExample?.sources.includes(k)).map(k => toolDetail(data, k).name)
   const orderSources = holders.length < 2 ? `From ${holders[0] ?? 'your connected tools'}` : `From ${holders.slice(0, -1).join(', ')} or ${holders[holders.length - 1]}`
   const offHere = TOOL_KEYS.length - onTools.length
-  const toolsLabel = counts.connected === 0 ? 'No tools connected yet'
+  const emptyTools = TOOL_KEYS.length === 0 ? emptyToolsNote(data) : null
+  const claimNone = emptyTools?.kind === 'none'
+  const toolsLabel = counts.connected === 0 ? (claimNone ? 'No tools connected yet' : '')
     : offHere > 0 ? `${onTools.length} of ${TOOL_KEYS.length} tools on in this chat`
       : counts.reading < counts.connected ? `${counts.reading} of ${counts.connected} tools connected` : `${counts.reading} tools connected`
-  const modes = thinkingModes(data, ctx.agent.settings).filter(m => m.on)
+  // The logos and their +N already say how many tools are read, so the plain "6 tools connected" isn't shown; the label
+  // shows only when it says what the logos can't: none connected, some turned off in this chat, or some not read yet.
+  // The button's name always carries it.
+  const toolsNote = claimNone || offHere > 0 || (counts.connected > 0 && counts.reading < counts.connected)
+  const toolsName = `${logosOn.length ? `${logosOn.map(k => toolDetail(data, k).name).join(', ')}${moreCount > 0 ? ` +${moreCount} ` : ', '}` : ''}${toolsLabel}`
+  const everyMode = thinkingModes(data, ctx.agent.settings)
+  const modes = everyMode.filter(m => m.on)
+  // A model the person picked that an Admin has since switched off stays in the list, greyed, until they pick another.
+  const offPick = everyMode.find(m => !m.on && m.id === modelSel)
+  const listed = offPick ? [offPick, ...modes] : modes
   const sel = activeMode(data, ctx.agent.settings, modelSel)?.id ?? ''
   const modelLabel = modes.find(m => m.id === sel)?.label ?? ''
 
@@ -208,8 +232,8 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
     <>
       <DropdownMenuLabel id={toolsHead} className={cn('text-sm font-normal', slim ? 'px-2.5 pt-2 pb-1 text-muted-foreground' : 'pt-2 pb-1.5')}>Tools read in this chat</DropdownMenuLabel>
       <DropdownMenuGroup aria-labelledby={toolsHead}>
-      {TOOL_KEYS.length === 0 && (
-        <DropdownMenuLabel className="pt-0 pb-2 text-sm font-normal text-muted-foreground">{counts.connected === 0 ? 'No tools are connected yet.' : "Your Inhouse agent can't read any of your tools right now."}</DropdownMenuLabel>
+      {emptyTools && (
+        <DropdownMenuLabel className="pt-0 pb-2 text-sm font-normal text-muted-foreground">{emptyTools.text}</DropdownMenuLabel>
       )}
       {TOOL_KEYS.map(k => {
         const on = !toolOff[k]
@@ -248,6 +272,12 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
           <Button variant="ghost" size="sm" onClick={cancelEdit} className={cn('-my-1.5 flex-none', phone && TAP)}>Cancel</Button>
         </div>
       )}
+      {noModel && (
+        <div className={NOTE_BAR}>
+          <Icon name="info" size={15} />
+          <b className="min-w-0 flex-1 font-semibold text-foreground">{NO_MODEL_NOTE}</b>
+        </div>
+      )}
       {variant === 'chat' && replyTo && (
         <div className={NOTE_BAR}>
           <Icon name="reply" size={15} />
@@ -259,7 +289,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
       {(atts.length > 0 || rejected.length > 0) && (
         <div className="mb-2.5 -ml-1.5 flex flex-wrap gap-1.5">
           {atts.map((a, i) => (
-            <AttachmentChip key={a.name + i} icon={a.icon} name={a.name} meta={a.meta} tap={phone} onRemove={() => patch({ atts: atts.filter((_, j) => j !== i) })} />
+            <AttachmentChip key={a.name + i} icon={a.icon} name={a.name} meta={a.meta} tap={phone} onRemove={() => { if (a.pending !== undefined) dropFile(a.pending); patch({ atts: atts.filter((_, j) => j !== i) }) }} />
           ))}
           {rejected.length > 0 && (
             // One alert for all the rejected files, so a screen reader reads them together once.
@@ -321,7 +351,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
                   <>
                     <DropdownMenuSeparator className="mx-1.5 my-1" />
                     <DropdownMenuLabel className="px-2.5 pt-2 pb-1 text-sm font-normal text-muted-foreground">Model</DropdownMenuLabel>
-                    <ModelItems modes={modes} sel={sel} onPick={id => patch({ modelSel: id })} />
+                    <ModelItems modes={listed} sel={sel} onPick={id => patch({ modelSel: id })} />
                   </>
                 )}
               </>
@@ -331,7 +361,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
         {!slim && <DropdownMenu modal={false} open={pop === 'tools'} onOpenChange={onOpen('tools')}>
           <Tip label="Tools read in this chat">
             <DropdownMenuTrigger asChild>
-              <button type="button" aria-label={`Tools read in this chat: ${logosOn.length ? `${logosOn.map(k => toolDetail(data, k).name).join(', ')}${moreCount > 0 ? ` +${moreCount} ` : ', '}` : ''}${toolsLabel}`}
+              <button type="button" aria-label={toolsName ? `Tools read in this chat: ${toolsName}` : 'Tools read in this chat'}
                 className={cn('flex h-8.5 min-w-0 items-center gap-2.5 rounded-full pr-2.5 pl-1.5 hover:bg-accent', pop === 'tools' && 'bg-accent')}>
                 <span className="flex flex-none">
                   {logosOn.map(k => (
@@ -342,7 +372,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
                   )}
                 </span>
                 {/* The label gives way first when the row is tight (768px), so Send stays inside the box (M13). */}
-                {showToolsLabel && <>{' '}<span className="ellipsis ml-1 min-w-0 text-xs text-muted-foreground">{toolsLabel}</span></>}
+                {showToolsLabel && toolsNote && <>{' '}<span className="ellipsis ml-1 min-w-0 text-xs text-muted-foreground">{toolsLabel}</span></>}
               </button>
             </DropdownMenuTrigger>
           </Tip>
@@ -361,7 +391,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
             </DropdownMenuTrigger>
           </Tip>
           <DropdownMenuContent {...menuProps} align="end" alignOffset={-46} className={cn(MENU, phone ? 'w-menu-mode-phone' : 'w-menu-mode')}>
-            <ModelItems modes={modes} sel={sel} onPick={id => patch({ modelSel: id })} />
+            <ModelItems modes={listed} sel={sel} onPick={id => patch({ modelSel: id })} />
             <div className="mt-1 border-t border-divider px-2.5 pt-2 pb-1.5 text-xs text-muted-foreground">Admins choose which models the team can use, in Settings.</div>
           </DropdownMenuContent>
         </DropdownMenu>}
@@ -389,8 +419,8 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
             </button>
           </Tip>
         ) : (
-          <Tip label="Send">
-            <button type="button" data-composer-send aria-label="Send" onClick={send} disabled={!canSend} className={SEND}>
+          <Tip label={noModel ? NO_MODEL_YET : 'Send'}>
+            <button type="button" data-composer-send aria-label={noModel ? `Send, ${NO_MODEL_YET}` : 'Send'} onClick={send} disabled={!canSend} className={SEND}>
               <Icon name="arrow_upward" size={19} weight={400} />
             </button>
           </Tip>
@@ -401,14 +431,14 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
 }
 
 /** The model choices, in the model menu and, on a phone, in "+". */
-function ModelItems({ modes, sel, onPick }: { modes: { id: string; label: string; model: string; sub: string }[]; sel: string; onPick: (id: string) => void }) {
+function ModelItems({ modes, sel, onPick }: { modes: { id: string; label: string; model: string; sub: string; on?: boolean }[]; sel: string; onPick: (id: string) => void }) {
   return (
     <DropdownMenuRadioGroup aria-label="Model" value={sel} onValueChange={onPick}>
       {modes.map(m => (
-        <DropdownMenuRadioItem key={m.id} value={m.id} className={cn(OWN_MARK, 'py-2')}>
+        <DropdownMenuRadioItem key={m.id} value={m.id} disabled={m.on === false} className={cn(OWN_MARK, 'py-2')}>
           <span className="min-w-0 flex-1">
             <span className="block text-base font-medium">{m.label}</span>
-            <span className="block text-xs text-muted-foreground">{m.model} · {m.sub}</span>
+            <span className="block text-xs text-muted-foreground">{m.on === false ? `${m.model} · Switched off by your Admin` : `${m.model} · ${m.sub}`}</span>
           </span>
           {sel === m.id && <Icon name="check" size={18} className="text-foreground" />}
         </DropdownMenuRadioItem>

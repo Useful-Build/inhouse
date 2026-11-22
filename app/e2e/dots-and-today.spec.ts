@@ -19,41 +19,48 @@ async function shot(page: Page, name: string) {
   await page.screenshot({ path: dir ? join(dir, `${name}.png`) : test.info().outputPath(`${name}.png`), fullPage: true })
 }
 
-/** The element on top at the middle of each target, with the dots layer made hit-testable. It must never be the dots layer. */
-async function dotsBehind(page: Page, selectors: string[]) {
-  const tops = await page.evaluate(sels => {
-    // The dots layer sits in main's column, behind the top bar and main.
-    const dots = document.querySelector('div:has(> main) > div[aria-hidden="true"]') as HTMLElement | null
-    if (!dots) return null
-    dots.style.pointerEvents = 'auto'
+/** The element on top at the middle of each target, with the Skyspace layer made hit-testable. It must never cover the UI. */
+async function skyspaceBehind(page: Page, mode: 'hero' | 'subtle', selectors: string[]) {
+  const tops = await page.evaluate(({ m, sels }) => {
+    // The full-shell Skyspace layer sits on the app shell behind both the floating sidebar and main.
+    const bg = document.querySelector(`[data-skyspace="${m}"]`) as HTMLElement | null
+    if (!bg) return null
+    bg.style.pointerEvents = 'auto'
     const out = sels.map(sel => {
       const el = document.querySelector(sel)
       if (!el) return `${sel}: missing`
       const r = el.getBoundingClientRect()
       const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
-      return top && dots.contains(top) ? `${sel}: dots on top` : 'ok'
+      return top && bg.contains(top) ? `${sel}: skyspace on top` : 'ok'
     })
-    dots.style.pointerEvents = 'none'
+    bg.style.pointerEvents = 'none'
     return out
-  }, selectors)
-  expect(tops, 'dots layer exists').not.toBeNull()
+  }, { m: mode, sels: selectors })
+  expect(tops, `skyspace (${mode}) layer exists`).not.toBeNull()
   expect(tops).toEqual(selectors.map(() => 'ok'))
 }
 
-test('All chats has the plain background; dots sit behind the cards on Today and in a chat', async ({ page }) => {
+test('All chats has the plain background; full-shell Skyspace sits behind sidebar and cards on Today, blank New chat and active chats', async ({ page }) => {
   await start(page, '#/chats/all')
   await expect(page.getByRole('heading', { name: 'All chats' })).toBeVisible()
-  await expect(page.locator('div:has(> main) > div[aria-hidden="true"]')).toHaveCount(0)
+  await expect(page.locator('[data-skyspace]')).toHaveCount(0)
   await shot(page, 'all-chats-1440')
 
   await page.goto('/?demo#/today')
   await expect(page.getByRole('heading', { level: 1 })).toContainText('things need you')
-  await dotsBehind(page, ['.today-card', '[data-composer]'])
+  await skyspaceBehind(page, 'hero', ['#sidebar', '.today-card', '[data-composer]'])
 
+  // A chat with messages keeps a softly quieted Skyspace background behind messages.
   await page.goto('/?demo#/chats')
   await expect(page.getByRole('textbox', { name: 'Message your Inhouse agent' })).toBeVisible()
-  await dotsBehind(page, ['[data-composer]', '[data-chat-msg]'])
+  await expect(page.locator('[data-chat-msg]').first()).toBeVisible()
+  await skyspaceBehind(page, 'subtle', ['#sidebar', '[data-chat-msg]', '[data-composer]'])
   await shot(page, 'chat-1440')
+
+  // An empty new chat keeps the full hero Skyspace with centered composer.
+  await page.goto('/?demo#/chats/new')
+  await expect(page.getByRole('heading', { name: 'What do you want to know?' })).toBeVisible()
+  await skyspaceBehind(page, 'hero', ['#sidebar', '[data-composer]'])
 })
 
 test('Today shows only the title, the composer and the Needs you cards, at every stage', async ({ page }) => {
@@ -92,8 +99,9 @@ test('Composer logo row: 3 logos, a +N chip for the rest, and the real count', a
   const logos = chip.locator('img')
   const more = chip.getByTestId('tools-more')
 
-  // The sample has 6 tools.
-  await expect(chip).toContainText('6 tools connected')
+  // The sample has 6 tools, all read: the logos and +3 say so, and the count is in the button's name, not written out.
+  await expect(chip).toHaveAccessibleName(/6 tools connected$/)
+  await expect(chip).not.toContainText('tools connected')
   await expect(logos).toHaveCount(3)
   await expect(more).toHaveText('+3')
   await shot(page, 'today-logo-row-1440')
@@ -123,14 +131,17 @@ test('Composer logo row: 3 logos, a +N chip for the rest, and the real count', a
 
 test('Composer logo row with a longer list: +N and the count match', async ({ page }) => {
   // Test-only fixture: add a 7th connected tool to the built sample data.
+  // Every script is read, and only the chunk that holds the data is changed (the demo agent's lazy chunks load beside it).
+  let applied = false
   await page.route('**/assets/*.js', async route => {
     const res = await route.fetch()
     const body = await res.text()
     const next = body.replace('connected:[`shopify`,`amazon`,`shipbob`,`xero`,`gorgias`,`meta-ads`]', 'connected:[`shopify`,`amazon`,`shipbob`,`xero`,`gorgias`,`meta-ads`,`klaviyo`]')
-    expect(next, 'fixture applied to the bundle').not.toBe(body)
+    if (next !== body) applied = true
     await route.fulfill({ response: res, body: next })
   })
   await start(page, '#/today')
+  expect(applied, 'fixture applied to the bundle').toBe(true)
   // Klaviyo is still being connected (its tool details say so), so the agent reads six of the seven: the row, the
   // count and the menu all say six (M17).
   const chip = page.getByRole('button', { name: /Tools read in this chat/ })
@@ -142,11 +153,11 @@ test('Composer logo row with a longer list: +N and the count match', async ({ pa
   await shot(page, 'today-logo-row-7-tools-1440')
 })
 
-test('Pages: every other page has no dots layer, so nothing can sit under a card', async ({ page }) => {
+test('Pages: every other page has no Skyspace layer, so nothing can sit under a card', async ({ page }) => {
   for (const [name, hash] of [['library', '#/library'], ['approvals', '#/approvals'], ['routines', '#/routines'], ['activity', '#/activity'], ['tools', '#/tools'], ['skills', '#/skills'], ['usage', '#/usage'], ['settings', '#/settings/you-general']]) {
     await page.goto('/?demo' + hash)
     await expect(page.locator('main')).toBeVisible()
-    await expect(page.locator('div:has(> main) > div[aria-hidden="true"]')).toHaveCount(0)
+    await expect(page.locator('[data-skyspace]')).toHaveCount(0)
     await shot(page, `${name}-1440`)
   }
 })

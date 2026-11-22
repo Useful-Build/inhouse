@@ -131,7 +131,7 @@ test('Audit log: pausing the agent adds a row at the top that survives a reload,
   await expect(page.getByRole('status', { name: 'Inhouse agent is paused' })).toBeVisible()
   await goTo(page, 'team-audit')
   await expect(paused).toBeVisible()
-  await expect(main(page).getByText(/^Routines and jobs stopped\s·\s/)).toBeVisible()
+  await expect(main(page).getByText(/^Chats, routines and jobs stopped\s·\s/)).toBeVisible()
   const top = async (loc: typeof paused) => (await loc.boundingBox())!.y
   expect(await top(paused)).toBeLessThan(await top(seeded))
 

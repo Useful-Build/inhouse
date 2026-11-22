@@ -6,5 +6,7 @@ export function readParts(row: Row, on: boolean): string[] | string {
   if (row.kind === 'mode') return [row.value, row.switchOn ? 'team can use it' : 'turned off']
   if (row.kind === 'toggle') return on ? 'On' : 'Off'
   if (row.kind === 'select') return [row.display ?? row.labels?.[row.value] ?? row.value, ...(row.tag ? [row.tag] : [])]
+  // A list of websites reads on one line; none means any public website.
+  if (row.type === 'hosts') return row.value ? row.value.split('\n').join(', ') : 'Any public website'
   return row.value
 }

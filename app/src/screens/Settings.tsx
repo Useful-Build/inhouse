@@ -19,9 +19,11 @@ import { readParts } from './settings/read-text'
 import { single } from './settings/single'
 import { tell } from './settings/write'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { PHOTO_MAX_BYTES, PHOTO_TYPES, PhotoDecodeError, squarePhoto } from '../ui/photo'
 import { MENU, checkField, settingsPage } from './settings/content'
 import { useTheme } from '@/lib/theme'
+import { saveBlob } from '@/lib/save-file'
 import type { Env, FieldType, Row } from './settings/content'
 
 /** Upload and Remove for a person's photo. Saved through the agent, so every avatar updates at once. */
@@ -120,9 +122,14 @@ function TypedField({ row, type, disabled }: { row: Row; type: FieldType; disabl
   }
   return (
     <div className="flex max-w-full flex-col items-end gap-1.5">
-      <Input {...common} value={draft} inputMode={type === 'money' ? 'decimal' : 'email'} aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined}
-        onChange={e => { setDraft(e.target.value); if (error) setError(null) }}
-        onBlur={commit} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commit() } }} />
+      {type === 'hosts'
+        // A list: Enter adds a line, and the list is checked when the field loses focus.
+        ? <Textarea aria-label={row.title} disabled={disabled} autoComplete="off" spellCheck={false} rows={4} value={draft} aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined}
+            className="box-border w-55 max-w-full rounded-lg bg-card px-3.25 py-2 text-base text-foreground shadow-none focus-visible:border-foreground/45 focus-visible:shadow-halo focus-visible:ring-0 md:text-base"
+            onChange={e => { setDraft(e.target.value); if (error) setError(null) }} onBlur={commit} />
+        : <Input {...common} value={draft} inputMode={type === 'money' ? 'decimal' : 'email'} aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined}
+            onChange={e => { setDraft(e.target.value); if (error) setError(null) }}
+            onBlur={commit} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commit() } }} />}
       {error && <p id={errorId} className="m-0 w-55 max-w-full text-sm text-destructive-text">{error}</p>}
     </div>
   )
@@ -204,7 +211,7 @@ function Control({ row, locked, on, onToggle, onAsk, readOnly, denied, effortOk,
           </div>
           {/* The switch's visible label: whether the team can use this model. */}
           <span className="inline-flex h-9.5 items-center gap-2">
-            <Switch on={!!row.switchOn} label={`${row.title}: the team can use this model`} reason={row.switchTip} onChange={switchOk ? () => tell(agent.setSetting(row.switchKey!, row.switchOn ? 'off' : null), row) : undefined} />
+            <Switch on={!!row.switchOn} label={`${row.title}: the team can use this model`} reason={row.switchTip} onChange={switchOk ? () => tell(agent.setSetting(row.switchKey!, row.switchOn ? 'off' : 'on'), row) : undefined} />
             <span aria-hidden="true" className="w-6 text-sm text-foreground-3">{row.switchOn ? 'On' : 'Off'}</span>
           </span>
         </div>
@@ -222,11 +229,7 @@ const TeamMark = () => <span aria-hidden="true" className="flex size-9 items-cen
 
 /** Saves a file from the browser. */
 function download(file: string, text: string, type: string) {
-  const url = URL.createObjectURL(new Blob([text], { type }))
-  const a = document.createElement('a')
-  a.href = url; a.download = file
-  document.body.append(a); a.click(); a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  saveBlob(file, new Blob([text], { type }))
 }
 
 export function Settings() {
@@ -246,6 +249,9 @@ export function Settings() {
   const [ask, setAsk] = useState<Ask | null>(null)
   // A "Saved" still waiting for typing to stop doesn't follow the person off the page.
   useEffect(() => () => clearTimeout(savedTimer), [])
+  // A Memory page re-reads memory when it opens: what the agent saved since the app started isn't in the first read.
+  const readsMemory = pageResources(setTab, false).includes('memory')
+  useEffect(() => { if (readsMemory) agent.refreshMemory().catch(() => undefined) }, [readsMemory, setTab])
   // Phone: the menu alone, or the picked page alone with Back to the menu (the store forgets which when Settings is left).
   const atMenu = phone && ui.setMenu
   // A new screen starts at its top.
@@ -407,7 +413,7 @@ export function Settings() {
         </div>
       </div>
       )}
-      {inviting && <InviteDialog onClose={() => setInviting(false)} />}
+      {inviting && <InviteDialog onClose={() => setInviting(false)} memberOnly={me?.role === 'inhouse'} />}
       {ask && (
         <Confirm label={ask.title} title={ask.title} action={ask.action} onCancel={() => setAsk(null)} onConfirm={() => { ask.go(); setAsk(null) }}>
           {ask.text}

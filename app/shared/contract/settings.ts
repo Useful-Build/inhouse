@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { InstantSchema } from './common.ts'
 import { MemberIdSchema } from './members.ts'
 import type { SettingRow, ValueRule } from './settings-table.ts'
-import { EXACT_ROWS, PATTERN_ROWS, capOk, settingRow } from './settings-table.ts'
+import { EXACT_ROWS, PATTERN_ROWS, capOk, parseHostlist, settingRow } from './settings-table.ts'
 
 export const SettingScopeSchema = z.enum(['personal', 'brand', 'technical'])
 export type SettingScope = z.infer<typeof SettingScopeSchema>
@@ -32,6 +32,7 @@ const zodOf = (rule: ValueRule): z.ZodType<SettingValue> => {
     case 'text': return z.string().trim().min(rule.min).max(rule.max)
     case 'cap': return z.string().regex(/^\$\d{1,6}(\.\d{2})?$/).refine(capOk, 'Out of range')
     case 'member': return z.union([MemberIdSchema, z.literal('anyone')])
+    case 'hostlist': return z.string().refine(v => parseHostlist(v) !== null, 'Not a list of host names')
   }
 }
 const specOf = (row: SettingRow): SettingSpec => ({ scope: row.scope, value: zodOf(row.rule), auditSafe: row.auditSafe })
@@ -65,7 +66,8 @@ const SETTING_LABELS: Record<string, string> = {
   'm:learn': 'Learn from my chats', 'm:ask': 'Ask before saving a team rule', 's:cap': 'Monthly cap', 's:alert': 'Alert at',
   's:currency': 'Show amounts in', 'stage': 'Stage', 't:tone': 'Tone', 't:signs': 'Signs emails as', 'g:mode': 'Default model',
   'l:daily': 'Daily limit', 'l:restock': 'Largest restock', 'd:chats': 'Chats', 'd:steps': 'Activity and steps',
-  'd:2fa': 'Two-step sign-in',
+  'd:2fa': 'Two-step sign-in', 't:max_turns': 'Most steps per answer', 't:webfetch': 'Web pages the agent may read',
+  't:websearch': 'Web search',
 }
 
 /** A key's readable name: the page's label for an exact key, a described one for a key pattern, else null. */

@@ -1,0 +1,70 @@
+{
+ "row": {
+  "caseId": "T08",
+  "cat": "choice",
+  "pair": "approval_request/notification_send",
+  "rep": 3,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": false,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "orders_search",
+   "order_get"
+  ],
+  "toolSearches": 1,
+  "answer": "I haven't drafted the email yet, because the shop data doesn't match what you described.\n\nAnna Weber's only recent order is #1042 (Moss mug x2). The shop lists its shipping status as \"delivered\", not delayed. The totals also disagree: the order search shows €124.50, but the order itself shows €24.90",
+  "costUsd": 0.0178266,
+  "runOk": true
+ },
+ "result": {
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "input": {
+     "query": "customer emails delay policy tone"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"No matching facts. Try other keywords, or this isn't saved.\"}]",
+    "isError": false
+   },
+   {
+    "name": "ToolSearch",
+    "input": {
+     "query": "select:mcp__shop__orders_search,mcp__shop__order_get",
+     "max_results": 2
+    },
+    "result": "[{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__orders_search\"},{\"type\":\"tool_reference\",\"tool_name\":\"mcp__shop__order_get\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__orders_search",
+    "input": {
+     "from": "2026-10-20",
+     "to": "2026-11-19"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"[{\\\"order_id\\\":\\\"1042\\\",\\\"total_eur\\\":124.5,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"Anna Weber\\\"},{\\\"order_id\\\":\\\"1043\\\",\\\"total_eur\\\":38,\\\"status\\\":\\\"paid\\\",\\\"customer\\\":\\\"J. Moreau\\\"}]\"}]",
+    "isError": false
+   },
+   {
+    "name": "mcp__shop__order_get",
+    "input": {
+     "order_id": "1042"
+    },
+    "result": "[{\"type\":\"text\",\"text\":\"{\\\"order_id\\\":\\\"1042\\\",\\\"items\\\":[\\\"Moss mug x2\\\"],\\\"total_eur\\\":24.9,\\\"shipping\\\":\\\"delivered\\\"}\"}]",
+    "isError": false
+   }
+  ],
+  "answer": "I haven't drafted the email yet, because the shop data doesn't match what you described.\n\nAnna Weber's only recent order is #1042 (Moss mug x2). The shop lists its shipping status as \"delivered\", not delayed. The totals also disagree: the order search shows €124.50, but the order itself shows €24.90.\n\nA delay notice for a parcel that shows as delivered could confuse her. Do you want me to draft it anyway, or check on #1042 first? Maybe she has a different order that isn't in the shop yet. If you want it drafted, I'll send it to Approvals for you to review before anything goes out.",
+  "runOk": true,
+  "usage": {
+   "inputTokens": 8,
+   "cacheCreationTokens": 2787,
+   "cacheReadTokens": 45431,
+   "outputTokens": 630
+  },
+  "costUsd": 0.0178266
+ }
+}

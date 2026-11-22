@@ -1,0 +1,1 @@
+{"runId":"t_structured","seq":9,"type":"finished","subtype":"success","isError":false,"numTurns":2,"costUsd":0.02,"usage":{"input_tokens":120},"structuredOutput":{"late_orders":3,"summary":"Three orders shipped late."}}
