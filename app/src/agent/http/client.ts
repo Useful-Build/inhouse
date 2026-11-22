@@ -11,7 +11,7 @@ import { meetsRule, settingRow } from '../../../shared/contract/settings-table'
 import { AgentError, CHAT_TITLE_MAX } from '../types'
 import type {
   ActivityLine, AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, AuditLine, LinkState, ErrorReason, Instant, LibraryFile, Me,
-  MemberRecord, MemoryData, MemoryLine, ModelMode, PauseState, ResourceKey, ResourceStatus, RoutineDef, RoutineRun, SupportGrant, Trace, UsageData,
+  MemberRecord, MemoryData, MemoryLine, ModelMode, PauseState, RefreshList, ResourceKey, ResourceStatus, RoutineDef, RoutineRun, SupportGrant, Trace, UsageData,
 } from '../types'
 import type { ChatSummary } from '../../../shared/contract/chats'
 import type { Problem } from '../../../shared/contract/problem'
@@ -40,6 +40,8 @@ const UNAVAILABLE = 'Not connected yet.'
 /** The resources this client reads. Every other key has nothing to read until its phase, so it reads as ready and empty. */
 type Loaded = 'meta' | 'members' | 'grants' | 'audit' | 'memory' | 'usage' | 'models' | 'chat' | 'activity' | 'notifications' | 'library' | 'routines' | 'problems'
 const LOADED: readonly ResourceKey[] = ['meta', 'members', 'grants', 'audit', 'memory', 'usage', 'models', 'chat', 'activity', 'notifications', 'library', 'routines', 'problems'] satisfies readonly Loaded[]
+/** The lists the agent's work fills: read again when their page opens and when a run ends. */
+const REFRESH_LISTS: readonly RefreshList[] = ['library', 'problems', 'activity', 'notifications']
 
 export interface HttpAgentOptions extends TransportOptions {
   /** Epoch ms. The real clock by default; the contract target moves it on (`advance`). */
@@ -411,6 +413,30 @@ export class HttpAgent implements AgentClient {
   private refreshing: Promise<void> | null = null
   /** The Memory page opened: reads memory again (the boot read doesn't hold what the agent saved since). */
   refreshMemory = (): Promise<void> => (this.refreshing ??= this.loadMemory(true).finally(() => { this.refreshing = null }))
+
+  private refreshingList = new Map<RefreshList, Promise<void>>()
+  /**
+   * A list page opened (or the bell's list, on any page): reads that list again, without the page showing as loading. The
+   * agent's work since the first read (a file a chat saved, the cards a Run now found) isn't in it. Nothing before the
+   * first read is in (or while it failed: Retry is the way back); one read at a time (an open while one runs joins it).
+   */
+  refresh = (list: RefreshList): Promise<void> => {
+    if (this.s.res[list].status !== 'ready') return Promise.resolve()
+    const running = this.refreshingList.get(list)
+    if (running) return running
+    const p = this.loadList(list, true).finally(() => { this.refreshingList.delete(list) })
+    this.refreshingList.set(list, p)
+    return p
+  }
+  private loadList(list: RefreshList, asked: boolean): Promise<void> {
+    return { library: () => this.loadLibrary(asked), problems: () => this.loadProblems(asked), activity: () => this.loadActivity(asked), notifications: () => this.loadNotifications() }[list]()
+  }
+  /** A run ended: what its work fills may have changed. The Inhouse team isn't read for it (it didn't ask, and a read under a grant is logged). */
+  private afterRun() {
+    void this.refreshUsage()
+    if (this.s.me?.role === 'inhouse') return
+    for (const list of REFRESH_LISTS) if (this.s.res[list].status === 'ready') void this.loadList(list, false)
+  }
 
   private async loadMemory(asked = false) {
     if (this.s.me?.role === 'inhouse' && !asked) return this.setStatus('memory', { status: 'ready' })
@@ -1158,7 +1184,7 @@ export class HttpAgent implements AgentClient {
   }
 
   attach = (runId: string, onFrame: Parameters<AgentClient['attach']>[1], fromSeq = 0, onRefused?: Parameters<AgentClient['attach']>[3]): (() => void) =>
-    this.socket.attach(runId, f => { onFrame(f); if (f.event.type === 'run.finished') void this.refreshUsage() }, fromSeq, onRefused)
+    this.socket.attach(runId, f => { onFrame(f); if (f.event.type === 'run.finished') this.afterRun() }, fromSeq, onRefused)
   link = (): LinkState => this.socket.link()
   onLink = (l: (s: LinkState) => void): (() => void) => this.socket.onLink(l)
   /** Sign out: the socket closes first. */
