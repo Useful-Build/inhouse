@@ -187,16 +187,16 @@ describe('checkAccess cases', () => {
   })
   it('can: an Admin may switch a model but not edit technical; Inhouse has every Admin control but granting, and the audit log only under a grant', () => {
     const admin = canFor(principals.admin(), DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
-    expect(admin).toMatchObject({ switchModel: true, editTechnical: false, invite: true, grantSupport: true })
+    expect(admin).toMatchObject({ switchModel: true, editTechnical: false, invite: true, grantSupport: true, approveMemory: true })
     const member = canFor(principals.member(), DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
     expect(Object.values(member).filter(Boolean)).toHaveLength(3) // viewMembers, viewAudit, exportAudit
     const inhouse = canFor(principals.inhouse(), DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
     expect(inhouse).toEqual({
       invite: true, changeRole: false, remove: true, editBrandSettings: true, editTechnical: true, switchModel: true, grantSupport: false,
-      viewMembers: true, viewAudit: false, exportAudit: false,
+      viewMembers: true, viewAudit: false, exportAudit: false, approveMemory: false,
     })
     const granted = canFor(principals.inhouse({ id: 'g', endsAtMs: NOW + 1 }), DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
-    expect(granted).toMatchObject({ grantSupport: false, viewAudit: true, exportAudit: true })
+    expect(granted).toMatchObject({ grantSupport: false, viewAudit: true, exportAudit: true, approveMemory: true })
   })
 })
 

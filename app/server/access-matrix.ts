@@ -114,4 +114,5 @@ export const canRows: CanRows = {
   viewMembers: { method: 'GET', pattern: '/api/members' },
   viewAudit: { method: 'GET', pattern: '/api/audit' },
   exportAudit: { method: 'GET', pattern: '/api/audit/export.csv' },
+  approveMemory: { method: 'PUT', pattern: '/api/memory/brand/:id/approved' },
 }
