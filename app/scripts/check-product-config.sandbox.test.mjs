@@ -32,7 +32,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
-import { stripJsonc } from './check-product-config.mjs'
+import { EVAL_TEST_HUB_VARS, stripJsonc } from './check-product-config.mjs'
 
 const script = fileURLToPath(new URL('./check-product-config.mjs', import.meta.url))
 const fixtures = fileURLToPath(new URL('./check-product-config-fixtures/', import.meta.url))
@@ -691,6 +691,46 @@ describe('(P4) the eval deployment\'s own hub (failures 12 and 13)', () => {
       expect(failureLines(r)).toEqual([expect.stringContaining(text)])
     })
   }
+  // The morning-check graded run's eval hub: the hub's test build (test upstreams only), so exactly the test config's vars.
+  test('EVAL_TEST_HUB_VARS is exactly app/wrangler.hub.test.jsonc\'s vars', () => {
+    const testConfig = JSON.parse(stripJsonc(readFileSync(fileURLToPath(new URL('../wrangler.hub.test.jsonc', import.meta.url)), 'utf8')))
+    expect({ ...EVAL_TEST_HUB_VARS }).toEqual(testConfig.vars)
+  })
+  test('the eval hub passes with exactly the test config\'s vars (the hub\'s test build)', () => {
+    const config = load('pass-eval-hub.json')
+    config.vars = { ...EVAL_TEST_HUB_VARS }
+    const r = run([...EVAL_HUB, write(config)])
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
+  })
+  const EVAL_TEST_HUB_CASES = [
+    ['a real store', v => { v.SHOPIFY_SHOP = 'real-store' }, 'vars.SHOPIFY_SHOP must be empty'],
+    ['another client id', v => { v.SHOPIFY_CLIENT_ID = 'abc' }, 'vars.SHOPIFY_CLIENT_ID must be empty'],
+    ['another client secret', v => { v.SHOPIFY_CLIENT_SECRET = 'a-real-looking-secret' }, 'vars.SHOPIFY_CLIENT_SECRET is set'],
+    ['other token keys', v => { v.HUB_TOKEN_KEYS = '{"current":"k1","keys":{"k1":"AAAA"}}' }, 'vars.HUB_TOKEN_KEYS is set'],
+    ['the test switch off', v => { v.INHOUSE_TEST_BUILD = '0' }, 'vars.INHOUSE_TEST_BUILD is set'],
+    ['one var missing', v => { delete v.SHOPIFY_CLIENT_SECRET }, 'vars.HUB_TOKEN_KEYS is set'],
+    ['one var more', v => { v.AI_GATEWAY_ID = 'inhouse-eval' }, 'vars.AI_GATEWAY_ID is set'],
+  ]
+  for (const [name, change, text] of EVAL_TEST_HUB_CASES) {
+    test(`the eval hub on the test config's vars refuses ${name}`, () => {
+      const config = load('pass-eval-hub.json')
+      config.vars = { ...EVAL_TEST_HUB_VARS }
+      change(config.vars)
+      const r = run([...EVAL_HUB, write(config)])
+      expect(r.status).toBe(1)
+      expect(failureLines(r)).toEqual(expect.arrayContaining([expect.stringContaining(text)]))
+      expect(r.stderr).toContain('or exactly app/wrangler.hub.test.jsonc\'s vars')
+    })
+  }
+  test('the candidate hub never takes the test config\'s vars', () => {
+    const config = load('pass-candidate-hub.json')
+    config.vars = { ...EVAL_TEST_HUB_VARS }
+    const r = run([...CANDIDATE_HUB, write(config)])
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('vars.INHOUSE_TEST_BUILD is set: the candidate hub\'s vars are SHOPIFY_SHOP and SHOPIFY_CLIENT_ID only')
+    expect(r.stderr).not.toContain('wrangler.hub.test.jsonc')
+  })
   test('the eval hub passes as no other hub, no other hub as the eval\'s, and the eval product fails as its hub', () => {
     const asCandidate = run([...CANDIDATE_HUB, `${fixtures}sandbox/pass-eval-hub.json`])
     expect(asCandidate.status).toBe(1)

@@ -1101,6 +1101,9 @@ export class MockAgent implements AgentClient {
     return this.writeRecs([...new Set(ids)].map(id => [`file:${id}`, 1] as [string, number]), { libraryDeleted })
   }
 
+  uploadFiles = (_files: File[]): Promise<LibraryFile[]> => this.rejected('unavailable', "Uploads aren't connected in this demo.", true)
+  fileDownloadUrl = (_id: string): string | null => null
+
   setAside(id: string, reason: SetAsideReason | null) {
     problemById(id)
     const setAside = { ...this.state.setAside }
@@ -1213,6 +1216,7 @@ export class MockAgent implements AgentClient {
 
   auditExportUrl = (): string | null => null
   refreshMemory = (): Promise<void> => Promise.resolve()
+  refresh = (): Promise<void> => Promise.resolve()
   uploadsFiles = (): boolean => false
   uploadFile = (): Promise<{ fileId: string; name: string }> => this.rejected('unknown', 'Files are not kept in the demo.', false)
   /** The demo has no stored files: every id answers a small sample, named by the chip that asked. */

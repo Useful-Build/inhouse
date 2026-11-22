@@ -227,8 +227,9 @@ describe('T09, T11 and open served schemas', () => {
   })
   it('the open set is what the server serves: the stubs today, never a built tool', async () => {
     const open = await openSchemaTools()
-    for (const n of ['notification_send', 'routine_create', 'approval_request']) expect(open.has(n), n).toBe(true)
-    for (const n of ['memory_search', 'memory_forget', 'history_search']) expect(open.has(n), n).toBe(false)
+    for (const n of ['notification_send', 'question_ask', 'approval_request']) expect(open.has(n), n).toBe(true)
+    // P4 built the routine tools (line B, fleet/watch): their real schemas have fields, so they're closed now.
+    for (const n of ['memory_search', 'memory_forget', 'history_search', 'routine_create', 'routine_run_now']) expect(open.has(n), n).toBe(false)
   })
 })
 
@@ -240,11 +241,16 @@ describe('the served-schema loader and the span, outside the happy path', () => 
     const { spawnSync } = await import('node:child_process')
     // By path at run time: a literal specifier would pull the server's types into evals/'s project (no Worker Env).
     const stubs = '../server/mcp/tools/stubs/index.ts'
-    const { STUB_NAMES } = (await import(/* @vite-ignore */ stubs)) as { STUB_NAMES: readonly string[] }
+    const { STUB_NAMES, handlers } = (await import(/* @vite-ignore */ stubs)) as { STUB_NAMES: readonly string[]; handlers: Record<string, unknown> }
+    // The stubs the server still serves: a later area (P4's routines) replaces a stub's handler with its real tool.
+    const composed = '../server/mcp/tools/index.ts'
+    const { TOOL_HANDLERS } = (await import(/* @vite-ignore */ composed)) as { TOOL_HANDLERS: ReadonlyMap<string, unknown> }
+    const served = STUB_NAMES.filter((n) => TOOL_HANDLERS.get(n) === handlers[n])
+    expect(served.length, 'some stub is still served').toBeGreaterThan(0)
     const url = new URL('./served-schema.ts', import.meta.url).href
     const r = spawnSync(process.execPath, ['--input-type=module', '-e', `const m = await import(${JSON.stringify(url)}); console.log(JSON.stringify([...await m.openSchemaTools()].sort()))`], { cwd: new URL('..', import.meta.url).pathname, encoding: 'utf8' })
     expect(r.status, r.stderr).toBe(0)
-    expect(JSON.parse(r.stdout.trim().split('\n').at(-1)!)).toEqual([...STUB_NAMES].sort())
+    expect(JSON.parse(r.stdout.trim().split('\n').at(-1)!)).toEqual([...served].sort())
   })
   it('L3: only the stub\'s open object is open: not a union, not a strict empty object, not one with fields', async () => {
     const { z } = await import('zod')

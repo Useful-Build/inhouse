@@ -222,6 +222,14 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
   let door: MemoryDoor | undefined = opts.door
   let ready: Promise<void> | undefined
   /** The server-side eval-brand check, then the people's ids and the door. Once, before the first chat. */
+  /** The eval lease's tag (door.ts takeLease): this run's. */
+  const leaseTag = `product:${runTag}`
+  let leased = false
+  /**
+   * The first take while it's in flight: close() waits for it, so a signal during setup still gives back a lease the take
+   * goes on to win (#306 review L3).
+   */
+  let taking: Promise<void> | null = null
   const setup = (): Promise<void> => (ready ??= (async () => {
     for (const k of PEOPLE_KEYS) {
       const me = await api(k, 'GET', '/api/me')
@@ -271,6 +279,14 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     const probe = `eval-probe-${rid()}`
     must(await api('current', 'POST', '/api/chats', { json: { id: probe, title: 'Eval probe' } }), 'create the probe chat')
     if (!(await door.hasChat(probe))) throw new ProductTargetRefusal(`refusing: ${EVAL_D1_NAME} does not hold the chat the origin just created, so it is not this deployment's database`)
+    // One runner per eval deployment (#308 review): the eval lease before any write that spends, renewed by every seed and
+    // given back by close(). A test shop override on the deployment means a morning-check run is on it (or left it): this
+    // run's hub calls would read its shop, so it refuses.
+    const d0 = door
+    taking = d0.takeLease(leaseTag).then(() => { leased = true })
+    await taking
+    const shop = await door.testShop()
+    if (shop !== null) throw new ProductTargetRefusal(`refusing: a test shop override (hub:shop ${shop}) is set on the eval deployment, so this run's hub calls would read a morning-check shop: a morning-check run is on it or left it`)
     // The O2 note: the brand's own Spending cap is the run's $50 (no second ledger). Pinned here, then read back as the
     // product reads it: anything else refuses before any case is seeded.
     await door.setSpendingCap(EVAL_CAP)
@@ -306,6 +322,11 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     unobservable: unobservableReason,
     spentUsd: () => spentTotal,
     room,
+    async close() {
+      await taking?.catch(() => {})
+      if (leased) await door!.releaseLease(leaseTag)
+      leased = false
+    },
     async seed(memory: SeedFact[], run: RunContext, exfil?: ExfilSpec): Promise<Session> {
       // One case-repeat at a time: the brand's memory is shared.
       const prev = tail
@@ -318,6 +339,8 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
       try {
         await setup()
         const d = door!
+        // Each case-repeat renews the eval lease (it lapses only for a run that died).
+        await d.takeLease(leaseTag)
         // Every case starts from a known WebFetch list (#245 S-L2): an exfiltration case's hosts (rec 6: the hook refuses
         // exactly what the grader calls unlisted), any other case the default.
         listWritten = true

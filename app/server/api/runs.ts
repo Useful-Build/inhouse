@@ -12,6 +12,7 @@ import type { ActiveRuns } from '../../shared/contract/runs.ts'
 import { MAX_TURNS, parseHostlist } from '../../shared/contract/settings-table.ts'
 import { apiError, apiJson } from '../http.ts'
 import { readCapped, storesOf } from '../db/handler-kit.ts'
+import { SYSTEM_MEMBER_ID } from '../db/ids.ts'
 import { BRAND_OWNER } from '../db/settings.ts'
 import { CATALOG, resolveModel } from '../model/catalog.ts'
 import type { CatalogModel, ModelRefusal, SettingsView } from '../model/catalog.ts'
@@ -150,7 +151,10 @@ export const getTrace: Handler = async (c: HandlerContext) => {
   if (scope instanceof Response) return scope
   const id = c.params.id
   if (!RunIdSchema.safeParse(id).success && !TurnIdSchema.safeParse(id).success) return apiError('not_found')
-  const trace = await brandAgent(c.env).getTrace(id, scope)
+  let trace = await brandAgent(c.env).getTrace(id, scope)
+  // P4 W2 (OC 6): a routine run's trace is the team's. Its chat is the routine principal's (`m_system`), so a person's
+  // scope misses it; admitted only when a routine slot names the id and its chat is `m_system`'s. Another person's chat stays 404.
+  if (!trace && 'owner' in scope && await storesOf(c).routines.isRoutineRun(id)) trace = await brandAgent(c.env).getTrace(id, { owner: SYSTEM_MEMBER_ID })
   if (!trace) return apiError('not_found')
   if ('owner' in scope) c.access.requireObject({ ownerId: scope.owner })
   return apiJson(trace)

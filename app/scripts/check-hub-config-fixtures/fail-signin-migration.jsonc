@@ -1,0 +1,41 @@
+// Fails signin-migration.
+/* "routes": ["not-a-real-route/*"], in a comment: ignored */
+{
+  "name": "inhouse-hub",
+  "main": "hub/index/index.ts",
+  "compatibility_date": "2026-11-11",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SIGNIN",
+        "class_name": "SignIn"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_classes": [
+        "SignIn"
+      ]
+    }
+  ],
+  "define": {
+    "__INHOUSE_HUB_TEST__": "false"
+  },
+  "vars": {
+    "SHOPIFY_SHOP": "",
+    "SHOPIFY_CLIENT_ID": ""
+  },
+  "secrets": {
+    "required": [
+      "HUB_TOKEN_KEYS",
+      "SHOPIFY_CLIENT_SECRET"
+    ]
+  },
+}

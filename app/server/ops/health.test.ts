@@ -37,6 +37,8 @@ describe('the health route', () => {
         { name: 'session_damaged', ok: true, detail: '0 damaged in 24 h' }, { name: 'scheduler', ok: true, detail: '0 quarantined' },
         { name: 'pool_protocol', ok: true }, { name: 'pool_restarts', ok: true }, { name: 'pool_shortfall', ok: true },
         { name: 'usage_stranded', ok: true },
+        // P4 W2: the routines signal (no routines here: green).
+        { name: 'routines', ok: true },
       ] },
     })
   })
@@ -98,7 +100,7 @@ describe('the health route', () => {
     expect(JSON.stringify(out.body)).not.toContain('@')
   })
   it('fails the migration signal when a shipped migration is not applied (failure 4)', async () => {
-    const behind = { ...stores, health: { ...stores.health, appliedMigrations: async () => ['0001_members', '0002_settings', '0003_support_grants', '0005_service_rows', '0100_chats', '0101_tool_calls', '0120_chat_files', '0121_chat_files_sweep_indexes', '0130_usage', '0140_memories', '0141_search', '0142_search_stemming'] } }
+    const behind = { ...stores, health: { ...stores.health, appliedMigrations: async () => SHIPPED_MIGRATIONS.filter(name => name !== '0004_audit_log') } }
     const out = await call(health, { ...c, stores: behind })
     expect(out.status).toBe(503)
     expect(out.body.signals.find(s => s.name === 'migrations')).toEqual({ name: 'migrations', ok: false, detail: 'not applied: 0004_audit_log' })
