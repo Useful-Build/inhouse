@@ -12,15 +12,16 @@ A mixed diff takes the highest tier it touches.
 
 | Tier | When it applies | Required review |
 |---|---|---|
-| Low | Docs, copy, isolated tests, dependency bumps, tiny scoped fixes | Automated CI + author self-check. No separate review agent. |
+| Low | Non-policy docs, copy, non-property unit tests outside sensitive paths, dependency bumps, tiny scoped fixes | Automated CI + author self-check. No separate review agent. |
 | Normal | Features, UI screens, refactors, non-sensitive API or state changes | 1 fresh-context reviewer: Opus 5.5 (high). Fix real issues in one pass. |
-| High (Sensitive) | Any file in Sensitive paths below | Fable 5.2 (high) + Gemini 4 Neon (high, when available in T3 Code via Antigravity) + Wasim's OK before merge. |
+| High (Sensitive) | Any file in Sensitive paths below | Fable 5.2 (high) + Gemini 4 Neon (high, via Antigravity; if unavailable, fall back to Fable 5.2 high + Opus 5.5 high and note it in the PR) + Wasim's OK before merge. |
 
 ## 3. Sensitive paths and how to ask Wasim
 
-Changes here need a High-tier review plus explicit approval from Wasim in chat or the task brief:
+Changes here need a High-tier review plus explicit approval from Wasim in chat or in a brief Wasim wrote:
 
-- Auth, crypto, and scopes: `app/server/auth/**`, `app/hub/{signin,crypto,scope,testing}/`, `app/public/_headers`
+- Policy and agent gates: `AGENTS.md`, `REVIEW.md`, `VERIFY.md`
+- Auth, routing, security, prompts, and build seams: `app/server/auth/**`, `app/server/routes.ts`, `app/server/access-matrix.ts`, `app/server/prompt/`, `app/shared/security-headers.ts`, `app/vite.config.ts`, `app/hub/{signin,crypto,scope,testing}/`, `app/public/_headers`
 - Data and config: `app/server/migrations/`, `app/ops/`, `app/wrangler*.jsonc`, `app/worker/`
 - Checks and CI: `.github/workflows/`, `.github/rulesets/`, `app/scripts/`, `app/playwright.config.ts`, `app/vitest.config.ts`, `app/e2e/`, `app/src/**/*.property.test.ts`
 
@@ -30,7 +31,7 @@ How to notify Wasim: send a short, plain-language note (2 to 3 short paragraphs)
 
 Classify every finding by real user, agent, or system impact:
 
-- Critical / High (blocks merge): breaks a core user or agent flow, shows wrong data or triggers a wrong action, causes security/auth/privacy/money/data-loss risk, or breaks an invariant or check. Must fix before merge. If the root cause is unclear or a first fix fails, delegate root-cause diagnosis and fix to Fable 5.2 (high). Run 1 focused re-review after the fix.
+- Critical / High (blocks merge): breaks a core user or agent flow, shows wrong data or triggers a wrong action, causes security/auth/privacy/money/data-loss risk, or breaks an invariant or check. Must fix before merge. If the root cause is unclear or a fix fails twice, escalate per `AGENTS.md` §5 stuck rule (Fable 5.2 high). Run 1 focused re-review after the fix.
 - Medium (fix if small, otherwise defer): real edge-case bug or non-critical error path that does not break the main flow or cause a wrong user/agent action. Fix in the same pass if small and safe; otherwise log a short follow-up issue and accept/merge. No extra review round.
 - Low / Nit (skip / accept): style, naming taste, cosmetic polish, rare edge cases with no wrong action, or speculative refactors. Report at most 2 nits total. Never block merge or trigger another review pass.
 

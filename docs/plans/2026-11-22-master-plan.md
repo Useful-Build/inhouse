@@ -9,6 +9,7 @@ Decided by Wasim on 2026-11-22: split the remaining backend work into two parts.
 - Single-agent-by-default workflow per `AGENTS.md` (no Line A / Line B dual orchestrators, no seat A/B/C/D rules).
 - Reviews follow `REVIEW.md` on `main` (Low: CI + self-check; Normal: 1 fresh-context Opus 5.5 high pass; High/Sensitive: Fable 5.2 high + Gemini 4 Neon high + Wasim's OK).
 - Verification and targeted live QA follow `VERIFY.md`; every user-facing change updates `FEATURE_MAP.md`.
+- **Override for older phase plans:** where any active phase plan (`p5-connectors.md`, `p6a-memory-skills.md`, `p8-production-readiness.md`, `2026-11-21-needs-you-cards-and-panel.md`, `2026-11-19-backend.md`) names Sonnet+Opus review rows, the QA gate, the `verify` skill, or `.agents/skills/verify/feature-map.md`, root `REVIEW.md`, `VERIFY.md`, and `FEATURE_MAP.md` win.
 - Milestone releases into `main` (P5, P6a, P8a) still use their existing `fleet/*` branches, `ship.yml` recording, and Wasim's exact-SHA approval before squash-merge.
 
 ## Why
@@ -38,7 +39,9 @@ Decided by Wasim on 2026-11-22: split the remaining backend work into two parts.
 | Standalone PRs into `main` | **#313** (P9 list update), **#323** (P8a/P8b plan re-cut), **#351** (New chat reload layout E2E) | All 3 have full `ci` + `pr-gates` green and are ready to merge. |
 | **P5 Connectors** | `fleet/connectors` + open **#337** (`chore/conn-main-merge`) | W1–W5, Slack MCP/OAuth/code-mode, ship spec (#315), and decision 0025 (#338) are merged on `fleet/connectors`. **#337** merges latest `main` into `fleet/connectors` (also fixes stale New chat layout on that branch); fast CI green. |
 | **P6a Memory & Skills** | `fleet/memory-skills` + open **#350** (`feat/ms-w4-specs`), **#340** (`feat/p6a-w4-product`) | PR0 (#328), W1 memory toggles (#339), W2 team memory approval server (#342) & app (#348), W3 skills (`dataviz`, PDF, Word, spreadsheet) (#343) & team requests (#344), W4 read-side eval cases (#331) & runner (#332) are merged on `fleet/memory-skills`. **#350** has fast CI green; **#340** has a failing `runner` check to fix. |
-| **P8a Watch Readiness & C1** | `fleet/production-readiness` + open **#352** (runner probe fix), **#346** (C1 PR B jobs/deletion/export/data map), **#349** (F2 Shopify privacy webhooks), **#347** (O runbook & onboarding docs) | Merged on `fleet/production-readiness`: C1 PR A paged/insert-only backups + FTS rebuild (#330, #336), Watch safety switches (#329), Watch soak driver & evidence (#326), egress logging (#333), safe error logs (#335), restore finish at Watch (#334), and **all launch-critical P9 fixes** (#327, #341, #345). **#352** fixes the 3 runner image probes broken by #335. **#346** needs its `test-build` failure in `activity.spec.ts:84` fixed. **#349** is Opus-approved. **#347** merges after #346. |
+| **P8a Watch Readiness & C1** | `fleet/production-readiness` + open **#352** (runner probe fix), **#346** (C1 PR B jobs/deletion/export/data map), **#349** (F2 Shopify privacy webhooks), **#347** (O runbook & onboarding docs) | Merged on `fleet/production-readiness`: C1 PR A paged/insert-only backups + FTS rebuild (#330, #336), Watch safety switches (#329), Watch soak driver & evidence (#326), egress logging (#333), safe error logs (#335), restore finish at Watch (#334), and **all launch-critical P9 fixes** (#327, #341, #345). **#352** fixes the 3 runner image probes broken by #335. **#346** needs its `test-build` failure in `activity.spec.ts:84` fixed. **#349** passed Opus review (per A10 notes; no GitHub review object posted). **#347** merges after #346. |
+
+*(Also open on `main`: Dependabot PRs **#52**, **#53** (failing e2e), and **#54** — triage separately when convenient.)*
 
 ---
 
@@ -62,20 +65,22 @@ GitHub Actions billing in `Useful-Build/inhouse-ops` blocked ops workflows; the 
 - Release P4 to house (connector hub first), run real-model smoke, and do one manual signed-in Library download check. **Watch soak begins here.**
 
 ### 3. Finish P5 Connectors -> `main` -> house
+- **Reconcile with the 5-file setup:** re-merge `main` into **#337** after #354 lands, port any P5-only additions from old `AGENTS.md` / `.agents/skills/verify/*` into `VERIFY.md` / `FEATURE_MAP.md` / `docs/architecture.md`, and keep `.agents/skills/verify/*` and `.claude/skills/verify` deleted.
 - Merge **#337** into `fleet/connectors` (re-sync `#338` if needed) and remove the Slack nightly skip block in `.github/workflows/nightly.yml`.
 - If P8a merges to `main` first, swap P5's local Watch check in `notify-slack/send.ts` for `deliveryRefusal` and ensure caught-error logs use `safeError`.
 - Run P5 final sandbox recording + targeted QA + v3 paid evals (with Wasim's OK), open final PR to `main`, get Wasim's exact-SHA approval, squash-merge, and release to house.
-- Run P5 live checks 1–9 (needs Wasim's Slack test workspace credentials) and paid Acceptance 4.
+- Run P5 live checks 1–9 (needs Wasim's Slack test workspace credentials; checks 4, 6, and 7 are paid) and paid Acceptance 4.
 
 ### 4. Finish P6a Memory & Skills -> `main` -> house
 - Fix `runner` check on **#340** and merge **#340** and **#350** into `fleet/memory-skills`.
-- Reconcile with `main` (ensure `prompt_version === 3` after P5, apply #329 `t:webfetch` / `t:websearch` settings copy and `safeError` guard when meeting P8a).
+- **Reconcile with `main` and the 5-file setup:** merge `main` into `fleet/memory-skills`, keep `.agents/skills/verify/*` deleted (P6a's `0470`–`0479` migration range is already recorded in `docs/architecture.md`), ensure `prompt_version === 3` after P5, and apply #329 `t:webfetch` / `t:websearch` settings copy and `safeError` guard when meeting P8a.
 - Run P6a final sandbox recording + targeted QA, open final PR to `main`, get Wasim's exact-SHA approval, and squash-merge.
 - Run read-side safety evals across all 4 picker models (paid, per-run cap ask; zero bypasses required on every model left enabled for clients), then release to house.
 
 ### 5. Finish P8a Watch Readiness -> `main` -> house
 - Merge **#352** into `fleet/production-readiness` (fixes runner image probes on the branch).
 - Fix `activity.spec.ts:84` on **#346** and merge **#346**, **#349**, and **#347** (in order: #346 before #347).
+- **Reconcile with the 5-file setup:** when merging `main` into `fleet/production-readiness`, port its 18 added feature-map lines from `.agents/skills/verify/feature-map.md` into root `FEATURE_MAP.md` and keep `.agents/skills/verify/*` and `.claude/skills/verify` deleted.
 - Complete remaining P8a implementation items:
   - **Restore + C1 replay wiring:** wire C1's exported per-job replays into restore, replay pseudonymisation for the new phase, and add the differential test (`backup -> retention + deletion -> restore + replay == live`).
   - **Data and access screen:** retention row and "Export everything" for P2–P6a stores (edit `Settings.tsx` / `content.ts` / `mock.ts` cleanly after P6a merges).
@@ -88,6 +93,7 @@ GitHub Actions billing in `Useful-Build/inhouse-ops` blocked ops workflows; the 
 
 ### 6. Watch soak and fresh-account smoke (Part 1 done gate)
 - **Watch soak:** starts at P4 house release and passes after **3 consecutive clean days** with P4, P5, P6a, and P8a all live on house (product model inside house monthly spending cap). Daily evidence verifies: morning check completed, 1 bell notice per alert, memory saves/approvals behaved, connector reads succeeded, failed runs recovered, zero guard/leak bypasses. Missing/budget-skipped days do not count; any bypass, lost/doubled notice, or behavior-changing release restarts the 3-day window.
+- **P8a readiness list:** all readiness items pass, including the house restore drill with deletions staying deleted.
 - **Read-side evals:** zero bypasses on every model left enabled for clients.
 - **Fresh-account smoke:** deploy to the second Cloudflare account (brand stand-in, needs Wasim's account input) with invented data and verify both Access apps, a support-access grant, payload logging off, and the private monitor alert path.
 
@@ -104,11 +110,12 @@ Built during the client's first Watch months, before they move to Act. The clien
 - **Later or on request:** Bedrock (Q5) and remaining non-launch-critical P9 items (code deduplication, unused aliases, live-only file notes, eval D1 growth, open-schema source check, SKU stemming, `#306` nits).
 
 ## Before the first client's real data arrives
-- Part 1 is complete, including the 3-day Watch soak and fresh-account smoke.
+- Part 1 is complete, including the 3-day Watch soak, P8a readiness list / house restore drill, and fresh-account smoke.
 - The client has their own Cloudflare account and Anthropic key with payload logging off.
 - Access sign-in uses the Inhouse team's separate Access app; no `workers.dev`, preview, or public hub routes exist.
 - Shopify starts at level 1 protected customer data only.
 - The brand's data-flow document is complete.
+- If onboarding a high-volume brand (~225k+ messages), ship F1's resumable backup before go-live.
 
 ## Standing decisions (Wasim, 2026-11-22)
 1. **Memory at Watch: yes.** Brand memory moves from Act into Watch.

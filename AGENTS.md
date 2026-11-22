@@ -13,6 +13,7 @@ This file stays short on purpose. The repo uses 5 core root files; load the matc
 - `DESIGN.md`: design bar, `ui-base` tokens, dark mode, components, and UI copy rules.
 - `FEATURE_MAP.md`: every screen, flow, selector, expected behavior, E2E spec coverage, and known gaps. Read the relevant section before changing a UI screen, user flow, or E2E spec; update its `Expected`, `Covered`, or `Gaps` lines in the same PR for any user-facing change.
 - Deep reference lives in `docs/` only (read only when working in that area): `docs/architecture.md`, `docs/runbook.md`, `docs/decisions/`, `docs/plans/`, `docs/adopted-libraries.md`. Do not add extra guide files to the repo root.
+- Global overrides: this repo intentionally has no `.agents/skills/verify` directory (`VERIFY.md` and `FEATURE_MAP.md` replace it — do not recreate it). `REVIEW.md` and Section 5 below replace global change-loop review tables and round limits here.
 
 ## 3. Stack and layout
 
@@ -38,13 +39,13 @@ Run in `app/` unless noted. Ports, env flags, and sandbox commands are in `VERIF
 
 ## 5. How work lands here
 
-Work end to end without check-ins on routine steps. Use one strong model by default; fan out subagents only when a task cleanly splits into independent files.
+Work end to end without check-ins on routine steps. Use one strong model by default; fan out subagents only when a task cleanly splits into independent files. Fleet repo: no (`fleet/<topic>` is only an integration branch name here; global fleet rules and `--admin` merges do not apply).
 
-1. Branch and commits: always work on a feature branch (never commit or push directly to `main`). Use conventional commits. Every non-merge commit must end with a trailer-only last paragraph containing `Verified: <what you ran>` (no blank line between trailers, or `pr-gates` fails).
-2. Build and prove: keep edits surgical and fail loud. Run the relevant checks and targeted live QA in `VERIFY.md` before opening a PR. Never silence errors or weaken an existing check to make a change pass. Update `FEATURE_MAP.md` for any user-facing change.
-3. Review by risk: follow `REVIEW.md`. Low-risk PRs need no separate reviewer. Normal PRs get 1 fresh-context Opus 5.5 (high) review. High-risk (sensitive) PRs get Fable 5.2 (high) + Gemini 4 Neon (high, when available) + Wasim's OK.
-4. Stuck rule: if a check or bug fails twice, escalate once to a stronger model or higher effort (Fable 5.2 or Gemini 4 Carbon). If it still fails, stop and send Wasim a short plain report (what failed, what you tried, why it is stuck, user impact).
-5. Merge and ship: squash-merge into `main` once CI (`ci` and `pr-gates`) is green, clean up temporary worktrees, and watch `deploy.yml` pass on `main`. Big multi-PR projects can use a `fleet/<topic>` integration branch when a plan calls for it (never retarget a fast-path `fleet/**` PR directly to `main` without triggering full CI).
+1. Branch and commits: always work on a feature branch (never commit or push directly to `main`). Use conventional commits. Every non-merge commit must end with a trailer-only last paragraph containing `Verified: <what you ran>` (no blank line between trailers; `.githooks/commit-msg` enforces this locally after `npm install` in `app/`, and `pr-gates` enforces it in CI).
+2. Build and prove: keep edits surgical and fail loud. Run the relevant checks before opening a PR and targeted live QA before merge (`VERIFY.md`). Never silence errors or weaken an existing check to make a change pass. Update `FEATURE_MAP.md` for any user-facing change.
+3. Review by risk: follow `REVIEW.md` on `main`. Low-risk PRs need no separate reviewer. Normal PRs get 1 fresh-context Opus 5.5 (high) review. High-risk (sensitive) PRs get Fable 5.2 (high) + Gemini 4 Neon (high, or fallback in `REVIEW.md`) + Wasim's OK.
+4. Stuck rule: if a check or bug fails twice (for CI, 1 fix push or re-run = 1 round per check; never change CI environment config without review and Wasim's OK), escalate once to **Fable 5.2 (high)** (or **Gemini 4 Carbon** if Fable is unavailable). If it still fails, stop and send Wasim a short plain report (what failed, what you tried, why it is stuck, user impact).
+5. Merge and ship: `main` requires the branch to be up to date with `main`, `ci` and `pr-gates` green, and `e2e (1/2)`, `e2e (2/2)`, and `test-build` showing **pass (not skipped)**. Squash-merge into `main`, clean up temporary worktrees, and watch `deploy.yml` pass on `main`. For multi-PR milestones on `fleet/<topic>`: feature PRs merge into `fleet/<topic>` with merge commits; never retarget a fast-path `fleet/**` PR directly to `main` without triggering full CI; final `fleet/<topic>` PRs into `main` go through `ship.yml`, Wasim's approval of the exact head SHA, and squash-merge with `--match-head-commit <sha>`.
 
 ## 6. Repo invariants (do not break)
 
@@ -53,5 +54,5 @@ Work end to end without check-ins on routine steps. Use one strong model by defa
 - Secrets and environment: keep account IDs, hosts, store logins, and secrets out of this repo. Never run bare `env`, `printenv`, or `set` in shell commands (pass env vars inline instead so session tokens never print to logs).
 - Data and migrations: sample data stays 100% invented. Migrations in `app/server/migrations/` are forward-only (never drop or rename in the release that stops using a column). Register every new D1 table, DO store, or R2 prefix in `app/ops/tables/`.
 - Hub isolation: code bundled into `app/hub/` from outside it (such as `app/test/upstreams/`) imports no npm packages. The hub never exposes a public route.
-- Prompts and evals: eval results are versioned and never deleted. Any edit to `app/server/prompt/` runs the eval or morning-check set and commits the results file.
-- CI and deploys: never enable GitHub Actions cache in workflows. Never deploy production from a laptop (`deploy.yml` owns production; brand releases run from the private ops repo).
+- Prompts and evals: eval results are versioned and never deleted. Any edit to `app/server/prompt/` runs the eval suite and the morning-check set (`VERIFY.md`) and commits the results files.
+- CI and deploys: never enable GitHub Actions cache in workflows (if adding `packageManager` or `devEngines.packageManager` to `app/package.json`, add `package-manager-cache: false` to every `setup-node` step first). Candidate deploys go to the separate sandbox account only; nothing from `fleet/*` deploys to house or a brand account. Never deploy production from a laptop (`deploy.yml` owns production; brand releases run from the private ops repo).

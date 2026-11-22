@@ -112,16 +112,16 @@ An hourly check (`monitor.yml`) watches production and opens an issue assigned t
 
 ```mermaid
 flowchart TD
-  W[Worker PR from its own worktree] --> CI{ci and pr-gates}
+  W[Feature PR] --> CI{ci and pr-gates}
   CI -- fail --> W
   CI -- pass --> PV[Workers Preview and PR comment]
-  PV --> RV[Reviews: Sonnet and Opus]
+  PV --> RV[Risk-tiered review: REVIEW.md]
   RV -- findings --> W
   RV -- clean --> M1[Merge commit into fleet/topic]
   M1 --> F[Final PR: fleet/topic into main]
   F --> CI2{ci and pr-gates, up to date with main}
-  CI2 --> PV2[Preview of the final PR]
-  PV2 --> QA[QA agent on the fixed deployment URL]
+  CI2 --> PV2[Preview or sandbox of the final PR]
+  PV2 --> QA[Targeted live QA: VERIFY.md]
   QA --> SH[ship.yml records reel.mp4]
   SH --> AP{Owner approves the exact head SHA}
   AP -- a new push voids it --> CI2
@@ -140,8 +140,8 @@ The product build (`app/server/`, entry `server/index.ts`) replaces `MockAgent` 
 
 - **Request pipeline:** every `/api/*` request passes through Cloudflare Access JWT authentication (`server/auth/`), the `Origin` check, route dispatch (`server/routes.ts`), its row in `server/access-matrix.ts` (`checkAccess`), and the handler. Every answer carries the security headers (`shared/security-headers.ts`, synced from `app/public/_headers`). Number new routes with plain integers (`/* N */`) so `e2e/api/kit.ts` parses them.
 - **Configs and builds:** `app/wrangler.product.jsonc` is a secret-free template (filled by the private ops repo at release). `app/wrangler.test.jsonc` is the local/sandbox test build (`npm run build:product-test`, never deployed); `scripts/check-product-config.mjs` exits `0` for a deployable config, `1` for refused configs (CI requires `1` on `wrangler.test.jsonc`), and `2` on usage/crash. `app/wrangler.eval.jsonc` (`npm run build:product-eval`) compiles the eval trace (`@eval-trace`) with real models through the gateway (no scripted model) and deploys only to the sandbox from `main`.
-- **Compile-time seams:** import the test issuer only as `@test-issuer` (resolves to `issuer-off.ts` outside `product-test`/`product-eval`), eval trace only as `@eval-trace` (`off.ts` outside `product-eval`), and BrandAgent test controls (`testRunAlarm`, `testStopAfterBatch`, `testSeedCursor`) only as `@test-controls` (`test-controls-off.ts` outside `product-test`). `scripts/check-product-build.mjs` proves their modules and canaries are absent from the deployable bundle.
-- **Migrations and storage registry:** `app/server/migrations/` is forward-only (never rename or drop a column in the release that stops using it). Numbering reserves 100-wide blocks per phase: P2 `0001`-`0099`, P3 `0100`-`0199`, P4 `0200`-`0299`, through P8 `0600`-`0699`. Register every D1 table, Durable Object store, and R2 prefix in `app/ops/tables/`.
+- **Compile-time seams:** import the test issuer only as `@test-issuer` (resolves to `issuer-off.ts` outside `product-test`/`product-eval`), eval trace only as `@eval-trace` (`off.ts` outside `product-eval`), and BrandAgent's three test-only RPC methods (`testRunAlarm`, `testStopAfterBatch`, `testSeedCursor` — add no others) only as `@test-controls` (`test-controls-off.ts` outside `product-test`). `scripts/check-product-build.mjs` proves their modules and canaries are absent from the deployable bundle.
+- **Migrations and storage registry:** `app/server/migrations/` is forward-only (never rename or drop a column in the release that stops using it). Numbering reserves 100-wide blocks per phase: P2 `0001`-`0099`, P3 `0100`-`0199`, P4 `0200`-`0299`, P5 `0300`-`0399`, P6 `0400`-`0499` (P6a reserves `0470`-`0479`), P7 `0500`-`0599`, P8 `0600`-`0699`. Register every D1 table, Durable Object store, and R2 prefix in `app/ops/tables/`.
 - **Connector hub (`app/hub/`):** standalone package (`app/wrangler.hub.jsonc` template, `app/wrangler.hub.test.jsonc` test config) with no public route (`check-hub-config.mjs` rejects public routes and secrets in `vars`; `check-hub-build.mjs` scans bundles). Connectors live in `app/hub/connectors/<tool>/route.ts` and register in `app/hub/connectors/index.ts`. In the test build, the product Worker and hub run together under one `wrangler dev` joined by the `HUB` service binding (`ReadGateway`), backed by recorded Shopify fixtures (`app/test/upstreams/shopify/`, no npm imports allowed because CI installs only `app/hub/node_modules`).
 - **Watch routes, tables, and routines (P4):** routes 52-56 Routines, 57-58 Today, 59 Activity, 60-61 bell notices, 62-66 Library (downloads send `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`), and 67 test-build alarm-now control (404 elsewhere). Tables: `routines`, `routine_slots`, `routine_alerts`, `today_items`, `today_aside`, `activity_lines`, `notices`, `notice_reads`, `library_uploads`, `library_marks`, plus R2 prefix `library/` (migrations `0200`-`0240`). Routines execute as the shared `m_system` service member (`server/routines/render.ts`) and read brand memory only, never personal memory.
 - **Sandbox deploys:** container-backed features (chats, routines, evals) cannot run Bash locally, so per-PR test-build deploys (`inhouse-sbx-pr<N>`, guarded by `scripts/sandbox/names.mjs`) run in the separate sandbox Cloudflare account via `inhouse-ops` and are exercised with `E2E_TEST_BUILD_REMOTE=1`. Brand releases run exclusively from the private ops repo.

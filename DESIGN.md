@@ -15,8 +15,8 @@ Typography is self-hosted Geist and Geist Mono; icons are Material Symbols Round
 Inhouse runs on `Useful-Build/ui-base` (shadcn/ui on Radix + Tailwind v4).
 
 - Base-owned (never edit): `app/src/ui-base.css`, `app/src/components/ui/*.tsx` (except `icon.tsx`), `icon-names.ts`, `app/src/lib/utils.ts`, `app/scripts/check-tokens.mjs`, `app/DESIGN_SYSTEM.md`.
-- App-owned (edit here): `app/src/index.css`, `app/src/components/ui/icon.tsx`, `app/src/lib/merge-config.ts`, `app/src/ui/`, `app/DESIGN_APP.md`.
-- Updating the base: `npx shadcn@4.23.0 add Useful-Build/ui-base/update#vX.Y.Z -y --overwrite` (never re-add `base`).
+- App-owned (edit here): `app/src/index.css`, `app/src/components/ui/icon.tsx`, `app/src/lib/merge-config.ts`, `app/src/ui/`, `app/scripts/check-tokens.allow.json`, `app/e2e/ui/routes.ts`, `app/DESIGN_APP.md`.
+- Updating the base: `npx shadcn@4.23.0 add ui-base/update -y --overwrite` (see `app/DESIGN_SYSTEM.md`; never re-add `base`).
 
 ## 4. Hard UI rules (enforced by `npm run lint`)
 
