@@ -18,7 +18,7 @@ import { tables as realRegistry } from '../tables/index.ts'
 import type { TableEntry } from '../tables/types.ts'
 import { timeId } from './backup.ts'
 import { BackupError, RestoreRefusal } from './errors.ts'
-import { TableWriter, appendRows, encodeRow, insertPartSql, isRowLine, linesAsArray, newDigest, maxIdSelect, partLines, sha256, snapshotSelect, tableColumns, toHex } from './format.ts'
+import { TableWriter, appendRows, encodeRow, insertPartSql, isRowLine, keyRows, linesAsArray, newDigest, maxIdSelect, partLines, sha256, snapshotSelect, tableColumns, toHex } from './format.ts'
 import { BackupManifestSchema, DeletionLogListSchema, RestoreRecordSchema, SnapshotManifestSchema } from './manifest.ts'
 import type { BackupManifest, RestoreRecord, TableManifest } from './manifest.ts'
 import { canonicalTables, ident } from './tables.ts'
@@ -236,10 +236,10 @@ async function digestTable(db: D1Database, rule: TableRule, columns: readonly st
   const writer = new TableWriter(rule.name, async () => '')
   if (rule.mode === 'snapshot') {
     for (const row of (await snapshotSelect(db, rule, columns).all<Record<string, unknown>>()).results) await writer.add(encodeRow(rule.name, columns, row))
-  } else {
+  } else if (rule.mode === 'append_only') {
     const maxId = (await maxIdSelect(db, rule).first<{ max: number }>())?.max ?? 0
     for await (const row of appendRows(db, rule, columns, maxId)) await writer.add(encodeRow(rule.name, columns, row))
-  }
+  } else for await (const row of keyRows(db, rule, columns)) await writer.add(encodeRow(rule.name, columns, row))
   const d = await writer.finish()
   return { rows: d.rows, sha256: d.sha256 }
 }
@@ -373,7 +373,8 @@ export async function restore(deps: RestoreDeps): Promise<RestoreRecord> {
       startedAtMs: at.nowMs, finishedAtMs: Math.max(at.nowMs, Date.now()), actorId: at.actorId, source: 'r2-backup',
       backup: { backupId, takenAtMs: m?.takenAtMs ?? null, migration: m?.migration ?? null },
       d1: { restorePointMs: m?.takenAtMs ?? null, tables: (m?.tables ?? []).map(t => ({ name: t.name, rows: t.rows, sha256: t.sha256, verified: verified.get(t.name) ?? false })),
-        derived: (m?.derived ?? []).map(d => ({ ...d, state: 'rebuild_needed' as const })) },
+        derived: (m?.derived ?? []).map(d => ({ ...d, state: 'rebuild_needed' as const })),
+        paged: (m?.tables ?? []).filter(t => t.consistency === 'paged').map(t => t.name) },
       resets,
       r2: { prefixes, missingPhotoKeys },
       durableObjects: status === 'refused' || status === 'failed' ? [] : (deps.durableObjects ?? []).map(d => ({ name: d.name, recoveredAtMs: d.recoveredAtMs })),

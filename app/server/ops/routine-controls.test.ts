@@ -127,7 +127,8 @@ describe('stopAfterBatch in the test build (failure 2)', () => {
     expect((await slotsOf(r.id)).map(s => [s.state, s.run_id])).toEqual([['claimed', null]])
     expect(await cursorOf(r.id)).toBe(NOW)
     expect(h.runs.calls).toBe(0)
-    expect(errors).toHaveBeenCalledWith({ event: 'routine_tick_failed', id: 'routine-tick', error: 'Error: test control: the tick stopped after its batch' })
+    // The log names the error's class only (P8a P-auth: an error's message never reaches a log).
+    expect(errors).toHaveBeenCalledWith({ event: 'routine_tick_failed', id: 'routine-tick', error: 'Error' })
     // One-shot: the next pass runs the claimed row, once.
     await h.tick(NOW + MIN)
     await h.tick(NOW + 2 * MIN)

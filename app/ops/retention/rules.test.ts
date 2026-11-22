@@ -39,7 +39,7 @@ beforeAll(async () => {
 
 describe('the periods (failures 1 and 2)', () => {
   it('pins the decided periods: chats and steps 365 days, trash 30, a pending upload 1, a forgotten memory 30', () => {
-    expect(DEFAULT_DAYS).toEqual({ chats: 365, steps: 365, trash: 30, pendingUpload: 1, forgottenMemory: 30 })
+    expect(DEFAULT_DAYS).toEqual({ chats: 365, steps: 365, trash: 30, pendingUpload: 1, forgottenMemory: 30, egress: 30 })
   })
 
   it('gives every retention_period store a rule, and every one that isn\'t derived a period from its group', () => {
@@ -49,7 +49,7 @@ describe('the periods (failures 1 and 2)', () => {
     expect(Object.keys(periods).sort()).toEqual(stores.filter(e => !e.derived).map(e => e.name).sort())
     for (const [store, days] of Object.entries(periods)) expect(days, store).toBe(DEFAULT_DAYS[retentionGroups[store]])
     // Only `chats` and `steps` follow a Data and access setting; the Library's period is the fixed trash period.
-    expect(new Set(Object.values(retentionGroups))).toEqual(new Set(['chats', 'steps', 'trash']))
+    expect(new Set(Object.values(retentionGroups))).toEqual(new Set(['chats', 'steps', 'trash', 'egress']))
     const later: TableEntry = { kind: 'd1', name: 'later_store', retention: 'retention_period', personKeys: [], export: false }
     expect(() => periodsFor([...tables, later])).toThrow(/later_store/)
   })
@@ -107,6 +107,11 @@ describe('what the plan refuses (failures 4 and 5)', () => {
     await expect(planRetention(deps({ registry, rules: { ...retentionRules, chat_messages_fts: { kind: 'd1', ageColumn: 'rowid', idColumn: 'rowid' } } }), { periods: {} })).rejects.toThrow(/chat_messages_fts is derived/)
     const fixture: TableEntry = { kind: 'd1', name: 'derived_fixture', retention: 'retention_period', personKeys: [], export: false }
     await expect(planRetention(deps({ registry: [...p2AndP8, fixture], rules: { derived_fixture: { kind: 'derived' } } }), { periods: { derived_fixture: 30 } })).rejects.toThrow(/derived_fixture isn't derived/)
+  })
+
+  it('plans the egress record at its fixed 30 days (P8a)', async () => {
+    const plan = await planRetention(deps({ registry: [...p2AndP8, entry('egress_fetches')] }), { periods: periodsFor([entry('egress_fetches')]) })
+    expect(plan.cutoffs.map(c => [c.store, c.cutoffMs])).toEqual([['egress_fetches', BASE - 30 * 86_400_000]])
   })
 
   it('plans the plain D1 stores (Activity, Today) on their own', async () => {
