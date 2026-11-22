@@ -359,6 +359,19 @@ const HUB_KEYS = new Set([
   'rules', 'python_modules', '$schema', 'compatibility_date', 'compatibility_flags', 'no_bundle', 'limits', 'send_metrics',
 ])
 /** (P4) The candidate hub's vars: the store's shop and client id, both empty (no store in the sandbox account). */
+/** (P5) The one loader binding a sandbox hub config may hold: dynamic Workers for code mode, as the hub's own configs pin it. */
+const HUB_LOADER_SHAPE = 'worker_loaders may only be exactly [{ "binding": "LOADER" }] in a sandbox hub config'
+/** Why a hub's `worker_loaders` is not exactly [{ binding: "LOADER" }] (null: it is). */
+function hubLoaderFault(value) {
+  if (!Array.isArray(value)) return `${HUB_LOADER_SHAPE}: it is not a list`
+  if (value.length !== 1) return `${HUB_LOADER_SHAPE}: it has ${value.length} entries`
+  const e = value[0]
+  if (!e || typeof e !== 'object' || Array.isArray(e)) return `${HUB_LOADER_SHAPE}: its entry is not an object`
+  const extra = Object.keys(e).filter(k => k !== 'binding')
+  if (extra.length) return `${HUB_LOADER_SHAPE}: its entry has extra keys (${extra.join(', ')})`
+  if (e.binding !== 'LOADER') return `${HUB_LOADER_SHAPE}: its binding is ${JSON.stringify(e.binding)}, not "LOADER"`
+  return null
+}
 const CANDIDATE_HUB_VARS = new Set(['SHOPIFY_SHOP', 'SHOPIFY_CLIENT_ID'])
 
 /** A relative path that stays inside its folder: no `..` segment, not absolute, no backslash or NUL. */
@@ -424,6 +437,10 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
 
   for (const [key, value] of Object.entries(config)) {
     if (key === 'env' || key === 'ai' || key === 'services' || FORBIDDEN.has(key)) continue // each has its own rule
+    if (hub && key === 'worker_loaders') { // (P5) a hub may hold exactly the LOADER binding; the product still may not
+      if (!isEmpty(value)) { const fault = hubLoaderFault(value); if (fault) fail(fault) }
+      continue
+    }
     if (!SANDBOX_KEYS.has(key) && !isEmpty(value)) fail(`${key} is set: a sandbox config may not use it (it could reach resources or files outside the sandbox)`)
     else if (hub && !HUB_KEYS.has(key) && !isEmpty(value)) fail(`${key} is set: a sandbox hub config may not use it (the hub has no route, assets or storage but its own Durable Objects)`)
   }
