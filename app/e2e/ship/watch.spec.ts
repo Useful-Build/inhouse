@@ -121,10 +121,31 @@ async function attachRunDiagnostics(page: Page) {
 }
 
 /**
+ * The brand's Default model must be Fast (Sonnet) before any run: the routine's turn takes the brand default, which nothing
+ * seeds, so it is Opus; the scripted model answers only claude-sonnet-5-5, so an Opus request is a 400 miss and the run ends
+ * `sdk_error`. (Its model check is not loosened for this: chats work around it by picking Fast in the composer.) Set once, as
+ * the Admin, through route 12 at the setting's current rev, and read back.
+ */
+let defaultModelFast = false
+async function ensureFastDefault(browser: Browser) {
+  if (defaultModelFast) return
+  const admin = await pageFor(browser, 'admin')
+  const read = async () => (await api(admin, 'GET', '/api/settings/technical')).json?.items?.find((i: { key: string }) => i.key === 'g:mode') as { value?: unknown; rev?: number } | undefined
+  const now = await read()
+  if (now?.value !== 'Fast') {
+    const put = await api(admin, 'PUT', '/api/settings/technical/g%3Amode', { value: 'Fast', ifRev: now?.rev ?? 0 })
+    expect(put.status, `setting the default model to Fast: ${JSON.stringify(put.json)}`).toBe(200)
+  }
+  expect((await read())?.value, 'the default model reads back as Fast').toBe('Fast')
+  defaultModelFast = true
+}
+
+/**
  * Runs the morning check as a person does: Routines, the routine's details, Run now. Waits on the routine's last run moving
  * (the run ended and saved), then leaves the page on Routines.
  */
 async function runMorningCheck(page: Page) {
+  await ensureFastDefault(page.context().browser()!)
   const before = (await morningCheck(page)).last?.at.ms ?? 0
   await goTo(page, '#/routines')
   await page.locator(`[data-routine-open="${MORNING_CHECK}"]`).click()
