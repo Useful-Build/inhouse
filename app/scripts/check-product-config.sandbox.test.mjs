@@ -372,7 +372,7 @@ const EVAL_CASES = [
   ['another account', c => { c.account_id = 'fedcba9876543210fedcba9876543210' }, 'account_id is missing or is not the sandbox account'],
   ['3 containers', c => { c.containers[0].max_instances = 3 }, 'containers[0].max_instances must be 1 or 2'],
   // (eval hub) still refused; the eval deployment's own refusal names the one binding it may hold.
-  ['a service binding', c => { c.services = [{ binding: 'LIVE', service: 'live-product' }] }, 'services is set: the eval deployment may bind exactly { HUB -> ReadGateway } to its own hub'],
+  ['a service binding', c => { c.services = [{ binding: 'LIVE', service: 'live-product' }] }, 'services is set: the eval deployment may bind exactly { HUB -> ReadGateway } or { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway } to its own hub'],
   ['__proto__ in the AI binding', c => c, 'config.ai.__proto__ is a forbidden key', after('"ai":{"binding":"AI"', '"__proto__":{"remote":true}')],
 ]
 
@@ -684,13 +684,31 @@ describe('(P4) the eval deployment\'s own hub (failures 12 and 13)', () => {
     expect(r.stderr).toBe('')
     expect(r.status).toBe(0)
   })
-  const SHAPE = 'services is set: the eval deployment may bind exactly { HUB -> ReadGateway } to its own hub'
+  const SHAPE = 'services is set: the eval deployment may bind exactly { HUB -> ReadGateway } or { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway } to its own hub'
   const p5 = [evalEntry, { binding: 'HUB_CONNECT', service: EVAL_HUB_NAME, entrypoint: 'ConnectGateway' }, { binding: 'HUB_DELIVERY', service: EVAL_HUB_NAME, entrypoint: 'DeliveryGateway' }]
+  // P5's main merge (#337, A10): the eval product runs the per-turn prompt v3, which reads the accounts through
+  // HUB_CONNECT, so the eval deployment may bind the read and connect pair. Never HUB_DELIVERY (the eval brand is at
+  // Watch: notices reach the bell only).
+  test('the eval product may bind the eval hub\'s ReadGateway and ConnectGateway together, in either order', () => {
+    for (const services of [p5.slice(0, 2), [p5[1], p5[0]]]) {
+      const config = load('pass-eval.json')
+      config.services = services
+      const r = run([...EVAL, write(config)])
+      expect(r.stderr).toBe('')
+      expect(r.status).toBe(0)
+    }
+  })
   const EVAL_PRODUCT_CASES = [
-    // #266's P5 set passes for a PR and the candidate; the eval deployment takes the read binding alone.
+    // #266's P5 set passes for a PR and the candidate; the eval deployment takes the read binding, alone or with connect.
     ['P5\'s three bindings', p5, SHAPE],
     ['P5\'s connect binding alone', [p5[1]], SHAPE],
     ['the read and the delivery bindings', [evalEntry, p5[2]], SHAPE],
+    ['the connect and the delivery bindings', [p5[1], p5[2]], SHAPE],
+    ['HUB_CONNECT on ReadGateway', [evalEntry, { ...p5[1], entrypoint: 'ReadGateway' }], SHAPE],
+    ['HUB_CONNECT on the server entrypoint', [evalEntry, { ...p5[1], entrypoint: 'ServerGateway' }], SHAPE],
+    ['HUB_CONNECT twice', [evalEntry, p5[1], p5[1]], SHAPE],
+    ['HUB_CONNECT to the house hub', [evalEntry, { ...p5[1], service: 'inhouse-hub' }], 'services[1].service: "inhouse-hub" is not the eval deployment\'s hub name'],
+    ['HUB_CONNECT to the candidate\'s hub', [evalEntry, { ...p5[1], service: 'inhouse-sbx-hub' }], 'services[1].service: "inhouse-sbx-hub" is not the eval deployment\'s hub name'],
     ['the candidate\'s hub', { ...evalEntry, service: 'inhouse-sbx-hub' }, 'services[0].service: "inhouse-sbx-hub" is not the eval deployment\'s hub name (inhouse-sbx-eval-hub)'],
     ['a PR\'s hub', { ...evalEntry, service: 'inhouse-sbx-pr12-hub' }, 'services[0].service: "inhouse-sbx-pr12-hub" is not the eval deployment\'s hub name'],
     ['the house hub', { ...evalEntry, service: 'inhouse-hub' }, 'services[0].service: "inhouse-hub" is not the eval deployment\'s hub name'],
@@ -904,12 +922,12 @@ describe('(P5) the product\'s three hub bindings: exact sets, not any subset (fa
       expect(r.stderr).toContain(text)
     }
   })
-  // (eval hub) the eval deployment binds its own hub's read surface only, never P5's three.
+  // (eval hub) the eval deployment binds its own hub's read surface, with connect at most (#337), never P5's three.
   test('the eval deployment binds none of P5\'s set', () => {
     const config = load('pass-eval.json')
     config.services = three('inhouse-sbx-eval-hub')
     const r = run([...EVAL, write(config)])
     expect(r.status).toBe(1)
-    expect(failureLines(r)).toEqual([expect.stringContaining('services is set: the eval deployment may bind exactly { HUB -> ReadGateway } to its own hub')])
+    expect(failureLines(r)).toEqual([expect.stringContaining('services is set: the eval deployment may bind exactly { HUB -> ReadGateway } or { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway } to its own hub')])
   })
 })

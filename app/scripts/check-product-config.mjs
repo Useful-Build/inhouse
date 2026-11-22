@@ -126,10 +126,12 @@
 // The generic product, per-PR and candidate rules are unchanged by it; checkPool's "no gateway on a test build" rule is
 // the one it lifts.
 // Eval and the hub (P4, line A's eval hub): the eval deployment has its own hub, `evalNames().hub`
-// (`inhouse-sbx-eval-hub`). An eval product config's `services` is nothing (a build before P4) or exactly
-// `{ binding: "HUB", service: "inhouse-sbx-eval-hub", entrypoint: "ReadGateway" }`: never P5's HUB_CONNECT or
-// HUB_DELIVERY (the eval brand connects no store and delivers nothing), and never the candidate's, a PR's or the house's
-// hub; `--eval --hub` locks the eval hub's own config by the hub rules above.
+// (`inhouse-sbx-eval-hub`). An eval product config's `services` is nothing (a build before P4), exactly
+// `{ binding: "HUB", service: "inhouse-sbx-eval-hub", entrypoint: "ReadGateway" }`, or that plus
+// `{ binding: "HUB_CONNECT", service: "inhouse-sbx-eval-hub", entrypoint: "ConnectGateway" }` (P5's main merge, #337:
+// the per-turn prompt v3 reads the accounts through it; the eval hub is the hub's test bundle, which exports it): never
+// P5's HUB_DELIVERY (the eval brand is at Watch and delivers nothing to Slack), and never the candidate's, a PR's or the
+// house's hub; `--eval --hub` locks the eval hub's own config by the hub rules above.
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, isAbsolute, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -399,9 +401,9 @@ const OBSERVABILITY_PART_KEYS = new Set(['enabled', 'head_sampling_rate', 'invoc
 const SANDBOX_HUB_ENTRYPOINTS = { HUB: 'ReadGateway', HUB_CONNECT: 'ConnectGateway', HUB_DELIVERY: 'DeliveryGateway' }
 /** (P4, P5) The allowed sets of those bindings, exactly: P4's read binding alone, or P5's three. */
 const SANDBOX_HUB_SETS = [['HUB'], ['HUB', 'HUB_CONNECT', 'HUB_DELIVERY']]
-/** (eval hub) The eval deployment's one allowed set: its own hub's read binding alone, never P5's connect or delivery. */
-const EVAL_HUB_SETS = [['HUB']]
-const EVAL_SERVICES_SHAPE = 'services is set: the eval deployment may bind exactly { HUB -> ReadGateway } to its own hub, entry { binding, service, entrypoint } and nothing else (no P5 bindings)'
+/** (eval hub) The eval deployment's allowed sets: its own hub's read binding alone, or with P5's connect binding (#337); never delivery. */
+const EVAL_HUB_SETS = [['HUB'], ['HUB', 'HUB_CONNECT']]
+const EVAL_SERVICES_SHAPE = 'services is set: the eval deployment may bind exactly { HUB -> ReadGateway } or { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway } to its own hub, each entry { binding, service, entrypoint } and nothing else (never HUB_DELIVERY)'
 const SERVICES_SHAPE = 'services is set: a sandbox config may not use it, but for exactly { HUB -> ReadGateway } or { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway, HUB_DELIVERY -> DeliveryGateway }, each entry { binding, service: <its own hub>, entrypoint } and nothing else'
 /** (P4) The keys a sandbox hub config may give a value (a subset of SANDBOX_KEYS). */
 const HUB_KEYS = new Set([
@@ -525,7 +527,7 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
   if (!perPr && !hub && config.name === CANDIDATE_HUB) fail(`name: the candidate product may not take the hub's name (${CANDIDATE_HUB})`)
   // (P4, P5) services: nothing for the hub; for the product, nothing, HUB -> ReadGateway alone, or HUB -> ReadGateway,
   // HUB_CONNECT -> ConnectGateway and HUB_DELIVERY -> DeliveryGateway together, each naming its own hub (the eval
-  // deployment: nothing or HUB -> ReadGateway alone).
+  // deployment: nothing, HUB -> ReadGateway alone, or that and HUB_CONNECT -> ConnectGateway).
   const services = list('services')
   if (hub) {
     if (!isEmpty(services)) fail('services is set: a sandbox hub config binds no other Worker')
