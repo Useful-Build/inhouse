@@ -567,7 +567,7 @@ export class HttpAgent implements AgentClient {
   }
   /** Route 81's cap refusal in the page's words. */
   private static requestRefusal(e: unknown): unknown {
-    if (e instanceof AgentError && e.code === 'forbidden' && e.reason === REASON.requestLimit) return new AgentError('forbidden', 'Your Inhouse team already has 50 open requests from you. Take one back or wait for an answer.', { reason: e.reason })
+    if (e instanceof AgentError && e.code === 'forbidden' && e.reason === REASON.requestLimit) return new AgentError('forbidden', 'Your Inhouse team already has 50 open requests. Wait for an answer, or take back one of yours.', { reason: e.reason })
     return e
   }
   /** Route 79: the skills the agent has. Everyone signed in may read it. */
@@ -1356,7 +1356,14 @@ export class HttpAgent implements AgentClient {
     this.write({
       lane: 'requests',
       apply: s => (subject && kind === 'tool' ? { ...s, state: { ...s.state, requestedTools: { ...s.state.requestedTools, [subject]: true } } } : subject && kind === 'job' ? { ...s, state: { ...s.state, requestedSkills: { ...s.state.requestedSkills, [subject]: true } } } : s),
-      send: () => postTeamRequest(this.http, k, { kind, ...(subject ? { subject } : {}), text }).catch((e: unknown) => { throw HttpAgent.requestRefusal(e) }),
+      send: () => postTeamRequest(this.http, k, { kind, ...(subject ? { subject } : {}), text }).then(
+        r => {
+          // The server answers the person's own open request when it already says this subject: other words back means this wasn't sent.
+          if (r.text !== text) throw new AgentError('conflict', `You already have an open request about this: "${r.text}". Your Inhouse team has it. Wait for an answer, or take it back before sending another.`)
+          return r
+        },
+        (e: unknown) => { throw HttpAgent.requestRefusal(e) },
+      ),
       done: (s, r) => this.withRequests(s, [r, ...s.requests.filter(x => x.id !== r.id)]),
       undo: (s, before) => ({ ...s, state: { ...s.state, requestedTools: before.state.requestedTools, requestedSkills: before.state.requestedSkills } }),
     }))

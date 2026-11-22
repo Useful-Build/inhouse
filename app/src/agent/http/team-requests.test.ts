@@ -62,7 +62,9 @@ describe('the client: requests to the Inhouse team', () => {
   })
 
   test('requestSkill posts a job about the skill; sendTeamRequest posts the window\'s type and words', async () => {
-    const { agent, calls } = await loaded({ ...reads(), 'POST /api/team-requests': { status: 201, body: rec('n', { kind: 'job', subject: 'pdf', mine: true }) } })
+    // The server answers what was filed: the echo of the body.
+    const echo = (r: Req) => ({ status: 201, body: rec('n', { kind: body(r).kind, subject: body(r).subject ?? null, text: body(r).text, mine: true }) })
+    const { agent, calls } = await loaded({ ...reads(), 'POST /api/team-requests': echo })
     await agent.requestSkill('pdf')
     expect(body(calls.filter(c => c.method === 'POST')[0]!)).toEqual({ kind: 'job', subject: 'pdf', text: 'Add the skill "pdf"' })
     expect(agent.getSnapshot().requestedSkills).toEqual({ pdf: true })
@@ -79,7 +81,7 @@ describe('the client: requests to the Inhouse team', () => {
 
   test('the 50-open refusal reads in plain words and leaves nothing marked', async () => {
     const { agent } = await loaded({ ...reads(), 'POST /api/team-requests': refusal(403, 'forbidden', { reason: 'request_limit' }) })
-    await expect(agent.requestTool('shopify', true)).rejects.toMatchObject({ message: 'Your Inhouse team already has 50 open requests from you. Take one back or wait for an answer.' })
+    await expect(agent.requestTool('shopify', true)).rejects.toMatchObject({ message: 'Your Inhouse team already has 50 open requests. Wait for an answer, or take back one of yours.' })
     expect(agent.getSnapshot().requestedTools).toEqual({})
   })
 
@@ -108,5 +110,33 @@ describe('the client: requests to the Inhouse team', () => {
     const { requestedBy: _drop, ...bare } = rec('a')
     const { agent } = await loaded(reads({ requests: [bare] }))
     expect(agent.getSnapshot().teamRequests.map(r => r.sub)).toEqual(['New tool · sent by a teammate'])
+  })
+
+  test('a request the server merged into the person\'s open one (other words come back) is told so, and not shown as sent', async () => {
+    const existing = rec('e', { kind: 'bug', subject: null, text: 'It broke when I sent a long request.', mine: true })
+    const { agent } = await loaded({ ...reads(), 'POST /api/team-requests': { status: 200, body: existing } })
+    const sent = agent.sendTeamRequest({ icon: 'bug_report', title: 't', sub: 's', at, status: 'Sent', kind: 'bug', text: 'Something else broke.' })
+    await expect(sent).rejects.toMatchObject({ code: 'conflict', message: expect.stringContaining('It broke when I sent a long request.') })
+    await expect(sent).rejects.toMatchObject({ message: expect.stringContaining('already have an open request') })
+  })
+
+  test('the names are recomputed when the members arrive after the requests', async () => {
+    // The members read is held until the requests are in the snapshot, so they were first built without any name.
+    const s = server({
+      ...reads({ requests: [rec('a', { requestedBy: 'm_dana' })] }),
+      'GET /api/members': { body: { items: [{ id: 'm_dana', name: 'Dana Example', email: 'dana@example.test', title: null, role: 'member', status: 'active', photo: null, rev: 1 }], nextCursor: null } },
+    })
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input), 'http://x.test')
+      if (url.pathname === '/api/members') await gate
+      return s.fetch(input, init)
+    }
+    const agent = new HttpAgent({ fetch, now: () => NOW })
+    // Released only once the requests are in the snapshot, so the members' read always lands after them.
+    agent.subscribe(() => { if (agent.read().resources.requests.status === 'ready') release() })
+    await agent.whenLoaded()
+    expect(agent.getSnapshot().teamRequests.map(r => r.sub)).toEqual(['New tool · sent by Dana Example'])
   })
 })

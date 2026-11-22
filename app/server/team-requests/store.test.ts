@@ -247,6 +247,17 @@ describe('the tools', () => {
     expect(b.structuredContent!.request_id).toBe(a.structuredContent!.request_id)
     expect((await db.prepare('SELECT COUNT(*) AS n FROM team_requests').first<number>('n'))).toBe(1)
   })
+  it('a different request on a subject that already has an open one of the person\'s is told so, quoting the first words, never "Sent"', async () => {
+    const first = await call('team_request_create', { kind: 'tool', subject: SUBJECT, text: 'Connect Zebra Ledger please' }, scope(ALEX))
+    expect(first.structuredContent).toMatchObject({ created: true })
+    const second = await call('team_request_create', { kind: 'tool', subject: SUBJECT, text: 'Actually, connect it read-only' }, scope(ALEX))
+    expect(second.isError).toBeUndefined()
+    expect(second.content[0]!.text).toContain('already an open request')
+    expect(second.content[0]!.text).toContain('Connect Zebra Ledger please')
+    expect(second.content[0]!.text).not.toContain('Sent to the Inhouse team')
+    expect(second.structuredContent).toMatchObject({ created: false, text: 'Connect Zebra Ledger please' })
+    expect((await db.prepare('SELECT COUNT(*) AS n FROM team_requests').first<number>('n'))).toBe(1)
+  })
   it('a routine\'s run (m_system) gets the literal refusal and writes nothing', async () => {
     const r = await call('team_request_create', { kind: 'tool', text: TEXT }, scope('m_system'))
     expect([r.isError, r.content[0]!.text]).toEqual([true, 'A request to the Inhouse team needs a person. Tell the person in the summary instead.'])
