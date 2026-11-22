@@ -1252,6 +1252,9 @@ export class HttpAgent implements AgentClient {
   activeRuns = async (): Promise<Awaited<ReturnType<AgentClient['activeRuns']>>> => {
     if (!ACTIVE_RUNS_WIRED) return []
     await this.whenLoaded()
+    // The first read was refused (signed out, not on the team, an Inhouse team account): `whenLoaded` resolves then too,
+    // and the start screen is up, so nothing more is asked.
+    if (this.s.res.meta.status !== 'ready') return []
     // A run of a chat the first page didn't hold is followed when that chat opens (route 24 names it in `runs`).
     return readActiveRuns(this.http)
   }
