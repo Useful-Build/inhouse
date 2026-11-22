@@ -1268,6 +1268,82 @@ describe('memory (P3 W6: routes 43 to 45)', () => {
   })
 })
 
+describe('team memory approval (P6a W2: routes 77 and 78)', () => {
+  // Ways it could break, written down first: a decision sent at a rev the list never showed, or for a line it never
+  // listed; a lost answer's retry (409 whose current already shows the decision) shown to the Admin as a conflict; a real
+  // conflict (a newer rev, or a change at rev + 1 that left the line waiting) taken as done; an approved line that doesn't
+  // reach the team's memory; a refusal nobody hears.
+  const iso2 = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
+  const waiting = { key: 'mem_WWWWWWWWWWWWWWWWWWWWWW', text: 'Kestrel wants PDFs', source: 'Sam told your Inhouse agent in a chat', at: iso2(1), rev: 3, scope: 'brand', waiting: true }
+  const { waiting: _w, ...approvedLine } = waiting
+  const list = { facts: [{ ...waiting, kind: 'memory' }] }
+  const PUT = 'PUT /api/memory/brand/mem_WWWWWWWWWWWWWWWWWWWWWW/approved'
+  const before = { team: [], personal: [] }
+  const after = { team: [{ group: 'Shared with the team', lines: [{ ...approvedLine, rev: 4 }] }], personal: [] }
+
+  test('reads the list, then approves at its rev; the approved line is read into the team memory', async () => {
+    let memoryReads = 0
+    const { agent, calls } = await loaded({
+      ...reads(), 'GET /api/memory': () => ({ body: memoryReads++ === 0 ? before : after }), 'GET /api/memory/waiting': { body: list },
+      [PUT]: { body: { ...approvedLine, rev: 4 } },
+    })
+    expect(await agent.waitingMemory()).toEqual(list.facts)
+    await agent.reviewMemory(waiting.key, true)
+    expect(calls.filter(c => c.method === 'PUT').map(c => [c.path, JSON.parse(c.body!)])).toEqual([['/api/memory/brand/mem_WWWWWWWWWWWWWWWWWWWWWW/approved', { approved: true, ifRev: 3 }]])
+    expect(agent.read().memory).toEqual(after)
+  })
+
+  test('a reject sends approved false and reads nothing else', async () => {
+    const { agent, calls } = await loaded({ ...reads(), 'GET /api/memory': { body: before }, 'GET /api/memory/waiting': { body: list }, [PUT]: { body: { ...approvedLine, rev: 4, forgotten: true } } })
+    await agent.waitingMemory()
+    const reads0 = calls.filter(c => c.path === '/api/memory').length
+    await agent.reviewMemory(waiting.key, false)
+    expect(calls.filter(c => c.method === 'PUT').map(c => JSON.parse(c.body!))).toEqual([{ approved: false, ifRev: 3 }])
+    expect(calls.filter(c => c.path === '/api/memory').length).toBe(reads0)
+  })
+
+  test("a lost answer's retry: a 409 whose current already shows the approve (rev + 1, active) is done, and nobody is told", async () => {
+    const { agent, heard } = await loaded({
+      ...reads(), 'GET /api/memory': { body: after }, 'GET /api/memory/waiting': { body: list },
+      [PUT]: { status: 409, body: { error: { code: 'conflict', current: { ...approvedLine, rev: 4 } } } },
+    })
+    await agent.waitingMemory()
+    await agent.reviewMemory(waiting.key, true)
+    expect(heard.filter(n => n.type === 'error')).toEqual([])
+  })
+
+  test("a lost reject's retry: a 409 whose current is rev + 1 and forgotten is done", async () => {
+    const { agent, heard } = await loaded({
+      ...reads(), 'GET /api/memory': { body: before }, 'GET /api/memory/waiting': { body: list },
+      [PUT]: { status: 409, body: { error: { code: 'conflict', current: { ...approvedLine, rev: 4, forgotten: true } } } },
+    })
+    await agent.waitingMemory()
+    await agent.reviewMemory(waiting.key, false)
+    expect(heard.filter(n => n.type === 'error')).toEqual([])
+  })
+
+  test('A10: a change at rev + 1 that left the line waiting is a conflict for an approve, not done; so is a newer rev', async () => {
+    for (const current of [{ ...waiting, rev: 4 }, { ...approvedLine, rev: 5 }, { ...approvedLine, rev: 4, forgotten: true }]) {
+      const { agent, heard } = await loaded({
+        ...reads(), 'GET /api/memory': { body: before }, 'GET /api/memory/waiting': { body: list },
+        [PUT]: { status: 409, body: { error: { code: 'conflict', current } } },
+      })
+      await agent.waitingMemory()
+      const e = await errorOf(agent.reviewMemory(waiting.key, true))
+      expect(e, JSON.stringify(current)).toMatchObject({ code: 'conflict', current })
+      expect(heard.filter(n => n.type === 'error'), JSON.stringify(current)).toHaveLength(1)
+    }
+  })
+
+  test('a line the list never showed is refused locally, nothing sent; a member is refused the list', async () => {
+    const { agent, calls } = await loaded({ ...reads(), 'GET /api/memory': { body: before }, 'GET /api/memory/waiting': { body: list } })
+    expect(await errorOf(agent.reviewMemory(waiting.key, true))).toMatchObject({ code: 'not_found' })
+    expect(calls.filter(c => c.method === 'PUT')).toEqual([])
+    const m = await loaded({ ...reads({ me: me({ role: 'member', can: can(false) }) }), 'GET /api/memory': { body: before }, 'GET /api/memory/waiting': refusal(403, 'forbidden') })
+    expect(await errorOf(m.agent.waitingMemory())).toMatchObject({ code: 'forbidden' })
+  })
+})
+
 describe('files (route 41)', () => {
   const FILE = 'f_0123456789abcdefABCDEF'
   test('a 401 is the signed-out state and still rejects with its code', async () => {

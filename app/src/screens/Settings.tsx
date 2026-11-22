@@ -1,10 +1,10 @@
 // Settings: menu on the left, content on the right.
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ComponentProps } from 'react'
 import { cn } from '@/lib/utils'
 import { agent, demo } from '../agent'
-import { STAGES } from '../agent/types'
-import type { SupportGrant } from '../agent'
+import { AgentError, STAGES } from '../agent/types'
+import type { SupportGrant, WaitingMemory } from '../agent'
 import { keepUnitsTogether } from '../agent/clock'
 import { STAGE_TAGS, memberFor, userName } from '../state/derive'
 import { backToSettingsMenu, useCtx, useUi } from '../state/store'
@@ -252,6 +252,29 @@ export function Settings() {
   // A Memory page re-reads memory when it opens: what the agent saved since the app started isn't in the first read.
   const readsMemory = pageResources(setTab, false).includes('memory')
   useEffect(() => { if (readsMemory) agent.refreshMemory().catch(() => undefined) }, [readsMemory, setTab])
+  // P6a: Team memory reads what waits for an OK when it opens, for someone who may approve. Unread (or refused): no section.
+  const approves = setTab === 'team-memory' && !!me?.can.approveMemory
+  const [waiting, setWaiting] = useState<WaitingMemory[] | undefined>(undefined)
+  const [deciding, setDeciding] = useState<ReadonlySet<string>>(new Set())
+  const readWaiting = useCallback(() => { agent.waitingMemory().then(setWaiting, () => setWaiting(undefined)) }, [])
+  // The list shows only while `approves` (see `waiting` in env), so leaving the page needs no reset here.
+  useEffect(() => { if (approves) readWaiting() }, [approves, readWaiting])
+  const review = (key: string, approved: boolean) => {
+    if (deciding.has(key)) return
+    const text = waiting?.find(l => l.key === key)?.text
+    setDeciding(d => new Set(d).add(key))
+    agent.reviewMemory(key, approved).then(
+      () => ui.showToast(approved ? 'Approved. Your Inhouse agent will use this.' : "Rejected. Your Inhouse agent won't use this."),
+      (e: unknown) => {
+        // A stale list: say what it is now, and read it again so the page shows the current wording.
+        const now = e instanceof AgentError && e.code === 'conflict' && e.current && typeof e.current.text === 'string' ? e.current.text : null
+        if (now !== null) ui.showToast(now === text ? 'Someone changed this. It has been updated.' : `Someone changed this. It's now "${now}".`, { icon: 'info', key: 'conflict' })
+      },
+    ).finally(() => {
+      setDeciding(d => { const n = new Set(d); n.delete(key); return n })
+      readWaiting()
+    })
+  }
   // Phone: the menu alone, or the picked page alone with Back to the menu (the store forgets which when Settings is left).
   const atMenu = phone && ui.setMenu
   // A new screen starts at its top.
@@ -302,6 +325,9 @@ export function Settings() {
     loadingMore,
     loadMore: list => { more(list) },
     exportFromServer: agent.auditExportUrl() ? () => { window.location.assign(agent.auditExportUrl()!) } : null,
+    waiting: approves ? waiting : undefined,
+    review,
+    deciding,
   }
   const page = settingsPage(setTab, env)
   const readOnly = phone && setTab.startsWith('team-')
@@ -402,6 +428,7 @@ export function Settings() {
                       </div>
                       {row.avatar?.at === 'control' && memberFor(data, row.avatar.who, userName(ctx)) && <span className={cn('flex flex-none', locked && 'grayscale')}><Avatar who={row.avatar.who} size={28} fontSize={11} /></span>}
                       <Control readOnly={readOnly || denied} denied={denied} effortOk={al.effort} switchOk={al.switch} grant={data.people.supportGrant} row={row} locked={locked} on={on} onToggle={() => (row.toggle ? row.toggle(!on) : tell(agent.setToggle(row.key!, !on), row))} onAsk={setAsk} caption={i === 0 && !readOnly ? sec.caption : undefined} />
+                      {row.also && !denied && <Button variant="outline" size="lg" aria-label={row.also.ariaLabel} disabled={row.busy} onClick={() => (row.also!.ask ? setAsk({ ...row.also!.ask, go: row.also!.go }) : row.also!.go())}>{row.also.label}</Button>}
                       {row.remove && me?.can.remove !== false && !readOnly && <Button variant="outline" size="lg" aria-label={row.remove.label} onClick={() => setAsk({ title: row.remove!.title, text: row.remove!.text, action: row.remove!.action, go: row.remove!.go })}>Remove</Button>}
                     </div>
                   )

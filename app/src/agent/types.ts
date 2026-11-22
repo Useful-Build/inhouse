@@ -10,6 +10,7 @@ import type { LibraryFile } from '../../shared/contract/library'
 import type { ApproveResult, TeamRequest, SetAsideReason, AgentState } from '../../shared/contract/state'
 import type { AgentNotice, AgentNotification } from '../../shared/contract/notice'
 import type { AgentData } from '../../shared/contract/data'
+import type { WaitingMemory } from '../../shared/contract/memory-approvals'
 import type { ErrorReason, ResourceKey } from '../../shared/contract/common'
 import type { Me } from '../../shared/contract/me'
 import type { InviteInput, MemberRole } from '../../shared/contract/members'
@@ -30,6 +31,7 @@ export type { SkillDef, SkillSuggestion } from '../../shared/contract/skill'
 export type { TraceStepKind, TraceStep, Trace } from '../../shared/contract/trace'
 export type { ModelMode } from '../../shared/contract/model'
 export type { MemoryLine, MemoryData } from '../../shared/contract/memory'
+export type { WaitingMemory } from '../../shared/contract/memory-approvals'
 export type { UsageRow, UsageData } from '../../shared/contract/usage'
 export type { PeopleData, ApprovalRule, Approver } from '../../shared/contract/people'
 export type { MemberRecord, MemberRole, MemberId, InviteInput } from '../../shared/contract/members'
@@ -154,6 +156,17 @@ export interface AgentClient {
   requestSkill(name: string): Promise<void>
   setToolPaused(key: string, paused: boolean): Promise<void>
   forgetMemory(key: string, forgotten: boolean): Promise<void>
+  /**
+   * P6a: the team facts waiting for an OK, newest first. Read when the Team memory page opens, for someone with
+   * `me().can.approveMemory` (an Admin, or the Inhouse team under a grant); anyone else is refused. The demo has none.
+   */
+  waitingMemory(): Promise<WaitingMemory[]>
+  /**
+   * P6a: approves (`true`) or rejects a waiting team fact, at the rev the last `waitingMemory()` read. Approved, it joins the
+   * team's memory; rejected, it's gone. A stale rev rejects with `conflict` carrying the fact as it is now (read the list
+   * again). A conflict showing this same decision already landed (an earlier send's answer was lost) resolves as done.
+   */
+  reviewMemory(key: string, approved: boolean): Promise<void>
   /** A settings dropdown or text field. Null puts it back to the default. Rejects with `invalid` for a key or value the settings registry (shared/contract/settings.ts) refuses. */
   setSetting(key: string, value: string | null): Promise<void>
   /** A member's photo as a data URL. Null removes it, so initials show; Reset demo brings the sample photo back. */
