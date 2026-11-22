@@ -1,13 +1,14 @@
-// The privacy request record (migration 0601): one row per Shopify delivery, its audit line and the admins' bell notice
-// in one D1 batch. A retry of the same delivery (the same X-Shopify-Webhook-Id) has the same request id, so its row
-// insert, its audit line (guarded on this write's stamp) and its notice (ON CONFLICT (id)) all write nothing.
+// The privacy request record (migration 0601): one row per Shopify request, its audit line and the admins' bell notice
+// in one D1 batch. The row insert skips on any of the table's keys (the webhook id, the body's SHA-256, or the same open
+// request delivered by the brand's other app); the audit line and the notice are both inserted only when the row was,
+// each guarded on this write's stamp, so a repeat of any kind writes nothing at all.
 import { auditInsert } from '../../db/audit.ts'
 import { SYSTEM_MEMBER_ID, writeStamp } from '../../db/ids.ts'
 import { all, first, stmt, storage } from '../../db/sql.ts'
 import type { Stmt } from '../../db/sql.ts'
-import { noticeInsert } from '../../notices/store.ts'
+import { checkNotice } from '../../notices/store.ts'
 import { NOTICE_TEMPLATES } from '../../notices/templates.ts'
-import type { PrivacyTopic } from './payload.ts'
+import type { ParsedRequest, PrivacyTopic } from './payload.ts'
 
 export const DUE_MS = 30 * 86_400_000
 
@@ -19,17 +20,19 @@ export const NOTICE_FOR: Readonly<Record<PrivacyTopic, string>> = {
 }
 
 export interface PrivacyRequestInput {
+  /** Shopify's X-Shopify-Webhook-Id, or `body:<sha256>` when the signed delivery carried none we could use. */
   webhookId: string
+  /** The signed body's SHA-256, hex. */
+  bodySha256: string
   topic: PrivacyTopic
-  shopId: number
-  customerId: string | null
-  orderIds: readonly number[] | null
-  dataRequestId: string | null
+  /** The ids the payload named, or null when Shopify signed a body that isn't the topic's shape (recorded unparsed). */
+  parsed: ParsedRequest | null
 }
 
 export interface PrivacyRequestRow {
   id: string
   topic: PrivacyTopic
+  parse_failed: 0 | 1
   status: 'open' | 'closed'
   received_at_ms: number
   due_at_ms: number
@@ -47,23 +50,32 @@ const prepare = (db: D1Database, s: Stmt): D1PreparedStatement => db.prepare(s.s
 
 export function privacyRequestStore(db: D1Database) {
   return {
-    /** Records the request (once per webhook id). `created`: false on a retry of a delivery already recorded. */
+    /** Records the request once. `created`: false when any of the table's keys already held it. */
     async record(r: PrivacyRequestInput, at: { nowMs: number; requestId: string }): Promise<{ id: string; created: boolean }> {
       const id = await requestIdFor(r.webhookId)
       const stamp = writeStamp(at.requestId)
+      const p = r.parsed
       const insert = stmt(
-        `INSERT INTO privacy_requests (id, webhook_id, topic, shop_id, customer_id, order_ids_json, data_request_id, received_at_ms, due_at_ms, req_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-        id, r.webhookId, r.topic, r.shopId, r.customerId, r.orderIds === null ? null : JSON.stringify(r.orderIds), r.dataRequestId,
-        at.nowMs, at.nowMs + DUE_MS, stamp,
+        `INSERT INTO privacy_requests (id, webhook_id, body_sha256, topic, parse_failed, shop_id, customer_id, order_ids_json, data_request_id, received_at_ms, due_at_ms, req_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+        id, r.webhookId, r.bodySha256, r.topic, p ? 0 : 1, p?.shopId ?? null, p?.customerId ?? null, p?.orderIds ? JSON.stringify(p.orderIds) : null,
+        p?.dataRequestId ?? null, at.nowMs, at.nowMs + DUE_MS, stamp,
       )
+      const guard = { table: 'privacy_requests' as const, where: 'id = ?', params: [id], stamp }
       const line = auditInsert({
-        atMs: at.nowMs, actorId: SYSTEM_MEMBER_ID, args: { action: 'privacy.requested', requestId: id, topic: r.topic }, target: null, requestId: at.requestId,
-      }, { table: 'privacy_requests', where: 'id = ?', params: [id], stamp })
-      const notice = noticeInsert(db, NOTICE_TEMPLATES, {
-        id: `privacy-${id}`, audience: 'admins', template: NOTICE_FOR[r.topic], fields: {}, icon: 'shield_lock', link: { to: 'page', page: 'activity' }, atMs: at.nowMs,
-      })
-      const results = await storage('D1', () => db.batch([prepare(db, insert), prepare(db, line), notice]))
+        atMs: at.nowMs, actorId: SYSTEM_MEMBER_ID, args: { action: 'privacy.requested', requestId: id, topic: r.topic, parsed: p !== null }, target: null, requestId: at.requestId,
+      }, guard)
+      // notices/store.ts's insert with the same checks, guarded like the line: a skipped row adds no notice either.
+      const n = {
+        id: `privacy-${id}`, audience: 'admins' as const, template: NOTICE_FOR[r.topic], fields: {}, icon: 'shield_lock', link: { to: 'page' as const, page: 'activity' as const }, atMs: at.nowMs,
+      }
+      const { t, link } = checkNotice(NOTICE_TEMPLATES, n)
+      const notice = stmt(
+        `INSERT INTO notices (id, audience, audience_member_id, template, fields_json, body, icon, person_id, at_ms, waiting, link_json, source)
+         SELECT ?, ?, NULL, ?, ?, NULL, ?, NULL, ?, 0, ?, ? WHERE EXISTS (SELECT 1 FROM privacy_requests WHERE id = ? AND req_id = ?) ON CONFLICT (id) DO NOTHING`,
+        n.id, n.audience, n.template, JSON.stringify(n.fields), n.icon, n.atMs, JSON.stringify(link), t.source, id, stamp,
+      )
+      const results = await storage('D1', () => db.batch([prepare(db, insert), prepare(db, line), prepare(db, notice)]))
       return { id, created: (results[0].meta.changes ?? 0) > 0 }
     },
 
@@ -90,7 +102,7 @@ export function privacyRequestStore(db: D1Database) {
 
     /** The open requests, oldest first (ids, topics and dates only), for the health signal. */
     async open(): Promise<PrivacyRequestRow[]> {
-      return all<PrivacyRequestRow>(db, stmt("SELECT id, topic, status, received_at_ms, due_at_ms FROM privacy_requests WHERE status = 'open' ORDER BY received_at_ms, id"))
+      return all<PrivacyRequestRow>(db, stmt("SELECT id, topic, parse_failed, status, received_at_ms, due_at_ms FROM privacy_requests WHERE status = 'open' ORDER BY received_at_ms, id"))
     },
   }
 }

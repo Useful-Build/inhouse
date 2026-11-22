@@ -29,7 +29,7 @@ const actions = async () => (await db.prepare('SELECT action FROM audit_log WHER
 describe('route 94', () => {
   it('closes an open request once: closed, then already_closed, one privacy.closed line', async () => {
     const { id } = await privacyRequestStore(db).record(
-      { webhookId: 'wh-close-1', topic: 'customers/redact', shopId: 1, customerId: '42', orderIds: [7], dataRequestId: null }, { nowMs: 1_800_000_000_000, requestId: 'req-rec' },
+      { webhookId: 'wh-close-1', bodySha256: 'c'.repeat(64), topic: 'customers/redact', parsed: { shopId: 1, customerId: '42', orderIds: [7], dataRequestId: null } }, { nowMs: 1_800_000_000_000, requestId: 'req-rec' },
     )
     mark = await lastLineId(db)
     expect(await call(id)).toEqual({ status: 200, body: { result: 'closed' } })

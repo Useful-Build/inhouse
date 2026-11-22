@@ -48,7 +48,7 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   'library.restored': { action: 'library.restored', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA', 'f_BBBBBBBBBBBBBBBBBBBBBB'] },
   'today.set_aside': { action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason: 'snoozed' },
   'restore.confirmed': { action: 'restore.confirmed', restoreId: '20261122T191611123Z-0a1b2c3d', backupId: '20261121T020000000Z-ffee0011', approvedBy: m },
-  'privacy.requested': { action: 'privacy.requested', requestId: 'pr_AAAAAAAAAAAAAAAAAAAAAA', topic: 'customers/redact' },
+  'privacy.requested': { action: 'privacy.requested', requestId: 'pr_AAAAAAAAAAAAAAAAAAAAAA', topic: 'customers/redact', parsed: true },
   'privacy.closed': { action: 'privacy.closed', requestId: 'pr_AAAAAAAAAAAAAAAAAAAAAA', topic: 'shop/redact', by: 'release' },
   'restore.member_placeholder': { action: 'restore.member_placeholder', memberId: m, restoreId: '20261122T191611123Z-0a1b2c3d' },
 }

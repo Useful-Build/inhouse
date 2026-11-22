@@ -22,7 +22,7 @@ export function healthHandler(signals: readonly Signal[] = registered) {
     for (const s of signals) {
       try {
         const r = await s.check({ env: c.env, stores })
-        results.push({ name: s.name, ok: r.ok, ...(r.detail === undefined ? {} : { detail: r.detail }) })
+        results.push({ name: s.name, ok: r.ok, ...(r.ok && r.amber ? { amber: true as const } : {}), ...(r.detail === undefined ? {} : { detail: r.detail }) })
       } catch (err) {
         results.push({ name: s.name, ok: false, detail: err instanceof Error ? err.name : 'failed' })
       }

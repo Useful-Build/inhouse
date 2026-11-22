@@ -128,7 +128,7 @@ const settingChanged = line('setting.changed', {
 /** A backup's or a restore's id (ops/backup/backup.ts `timeId`): `<yyyymmdd>T<hhmmssSSS>Z-<8 hex>`. */
 const RestoreIdSchema = z.string().regex(/^\d{8}T\d{9}Z-[0-9a-f]{8}$/)
 
-/** A privacy request (server/webhooks/shopify-privacy): `pr_` + 128 random bits. */
+/** A privacy request (server/webhooks/shopify-privacy): `pr_` + the first 128 bits of a SHA-256 over Shopify's webhook id, base64url. */
 export const PrivacyRequestIdSchema = z.string().regex(new RegExp(`^pr_${RANDOM}$`))
 /** Shopify's three compliance topics (https://shopify.dev/docs/apps/build/compliance/privacy-law-compliance). */
 export const PrivacyTopicSchema = z.enum(['customers/data_request', 'customers/redact', 'shop/redact'])
@@ -193,7 +193,8 @@ const otherLines = [
   /** The member id the placeholder row keeps (its actor's audit lines need it), and the restore that wrote it. */
   line('restore.member_placeholder', { memberId: MemberIdSchema, restoreId: RestoreIdSchema }),
   // P8a F2. The actor is `m_system` on both: Shopify and the release token have no member row.
-  line('privacy.requested', { requestId: PrivacyRequestIdSchema, topic: PrivacyTopicSchema }),
+  /** `parsed: false`: Shopify signed it but the body wasn't the topic's shape; recorded with no ids, for the team to read. */
+  line('privacy.requested', { requestId: PrivacyRequestIdSchema, topic: PrivacyTopicSchema, parsed: z.boolean() }),
   line('privacy.closed', { requestId: PrivacyRequestIdSchema, topic: PrivacyTopicSchema, by: z.literal('release') }),
 ] as const
 

@@ -1,8 +1,8 @@
 // Shopify's privacy webhooks on the test build (P8a F2, routes 91 to 94), end to end: a delivery signed with the test
 // build's invented app secret (wrangler.test.jsonc `SHOPIFY_WEBHOOK_SECRETS`) is recorded, audited and shown to the
 // brand's admins in the bell; an unsigned, wrongly signed or tampered one is 401 with nothing recorded; Shopify's retry
-// of one delivery changes nothing; the health signal is red while the request is open, and the release token's close
-// (route 94) clears it. https://shopify.dev/docs/apps/build/compliance/privacy-law-compliance
+// of one delivery, or the same request from the other app, changes nothing; the health signal is amber (still ok, so no
+// release is blocked) while the request is open, and the release token's close (route 94) clears it. https://shopify.dev/docs/apps/build/compliance/privacy-law-compliance
 import { createHash, createHmac } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { expect, test } from '@playwright/test'
@@ -25,8 +25,8 @@ const sign = (body: string, secret: string) => createHmac('sha256', secret).upda
 /** server/webhooks/shopify-privacy/store.ts `requestIdFor`. */
 const requestIdFor = (webhookId: string) => `pr_${createHash('sha256').update(`shopify-webhook:${webhookId}`).digest('base64url').slice(0, 22)}`
 
-const REDACT = { shop_id: 954889, shop_domain: 'invented-shop.myshopify.com', customer: { id: 191167, email: 'invented.customer@example.test', phone: '+15550100999' }, orders_to_redact: [299938, 280263] }
 const run = Date.now()
+const REDACT = { shop_id: 954889, shop_domain: 'invented-shop.myshopify.com', customer: { id: 100_000 + (run % 900_000), email: 'invented.customer@example.test', phone: '+15550100999' }, orders_to_redact: [299938, 280263] }
 
 async function deliver(request: APIRequestContext, o: { webhookId: string; body?: string; signature?: string | null; secret?: string; send?: string }) {
   const body = o.body ?? JSON.stringify(REDACT)
@@ -61,16 +61,17 @@ test('a signed customers/redact: 200, recorded once across retries, audited by i
   const mark = auditMax()
   const webhookId = `e2e-redact-${run}`
   const id = requestIdFor(webhookId)
-  for (const secret of [READ, READ, WRITE]) {
-    const r = await deliver(request, { webhookId, secret })
+  // Shopify's retries of one delivery, then the same request delivered by the brand's other app under its own id.
+  for (const [id_, secret] of [[webhookId, READ], [webhookId, READ], [`${webhookId}-write-app`, WRITE]]) {
+    const r = await deliver(request, { webhookId: id_, secret })
     expect(r.status, r.text).toBe(200)
     expect(r.json).toEqual({ ok: true })
   }
   expect(readSql('SELECT id, topic, customer_id, order_ids_json, status FROM privacy_requests WHERE webhook_id = ?', webhookId)).toEqual([
-    { id, topic: 'customers/redact', customer_id: '191167', order_ids_json: '[299938,280263]', status: 'open' },
+    { id, topic: 'customers/redact', customer_id: String(REDACT.customer.id), order_ids_json: '[299938,280263]', status: 'open' },
   ])
   const lines = auditAfter(mark).filter(l => l.action.startsWith('privacy.'))
-  expect(lines.map(l => [l.action, l.actor_id, JSON.parse(l.args_json)])).toEqual([['privacy.requested', 'm_system', { requestId: id, topic: 'customers/redact' }]])
+  expect(lines.map(l => [l.action, l.actor_id, JSON.parse(l.args_json)])).toEqual([['privacy.requested', 'm_system', { requestId: id, topic: 'customers/redact', parsed: true }]])
   expect(JSON.stringify(lines)).not.toContain('invented.customer')
 
   const bell = await call(request, actor('admin'), 'GET', '/api/notifications')
@@ -81,7 +82,10 @@ test('a signed customers/redact: 200, recorded once across retries, audited by i
   const memberBell = await call(request, actor('memberA'), 'GET', '/api/notifications')
   expect(memberBell.json.items.some((n: { id: string }) => n.id === `privacy-${id}`), 'admins only').toBe(false)
 
-  expect((await privacySignal(request))?.ok).toBe(false)
+  // Amber, not red: an open request needs the team but never blocks a release.
+  const open = await call(request, actor('monitor'), 'GET', '/api/health')
+  expect(open.status, open.text).toBe(200)
+  expect((await privacySignal(request))).toEqual({ name: 'privacy_requests', ok: true, amber: true, detail: '1 open, oldest 29 days left' })
 
   const closed = await call(request, actor('release'), 'POST', `/api/ops/privacy-requests/${id}/close`, { json: {} })
   expect(closed.status, closed.text).toBe(200)

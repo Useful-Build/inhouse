@@ -112,7 +112,7 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'restore.confirmed': return { what: 'confirmed a restore from a backup', detail: `Approved by ${who(args.approvedBy)}` }
     case 'restore.member_placeholder': return { what: 'kept a former member’s history after a restore', detail: who(args.memberId) }
     // P8a F2. The topic only: the line never says whom a request was about.
-    case 'privacy.requested': return { what: 'received a privacy request from Shopify', detail: PRIVACY_TOPIC[args.topic] }
+    case 'privacy.requested': return { what: 'received a privacy request from Shopify', detail: args.parsed ? PRIVACY_TOPIC[args.topic] : `${PRIVACY_TOPIC[args.topic]} (couldn’t be read)` }
     case 'privacy.closed': return { what: 'closed a privacy request from Shopify', detail: `${PRIVACY_TOPIC[args.topic]} (release job)` }
   }
 }

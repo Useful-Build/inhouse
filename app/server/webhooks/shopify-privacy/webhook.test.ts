@@ -5,13 +5,20 @@
 //  2. a signed delivery answers anything but 2xx, or records it without its audit line or the admins' notice;
 //  3. Shopify's retry of one delivery (the same X-Shopify-Webhook-Id) records a second row, line or notice;
 //  4. the customer's email or phone reaches the row, the audit line or the notice;
-//  5. a body over the cap, a non-JSON Content-Type, another topic's header or payload is recorded;
+//  5. a signed delivery that doesn't parse (another topic's header or shape, a non-JSON type, more order ids than the
+//     cap, no webhook id) is dropped or answered non-2xx (Shopify retries it into oblivion) instead of recorded as
+//     unparsed, audited and notified; a customer known by email only (no customer id) is refused;
 //  6. the secrets are unset or malformed and a delivery still verifies (or is answered 401, so Shopify gives up instead
 //     of retrying our misconfiguration);
-//  7. another method on a webhook path is served without sign-in, or a webhook route without its `webhook` row runs;
+//  7. another method on a webhook path, or a near path (a trailing slash, a suffix, an encoded slash), is served
+//     without sign-in, or a webhook route without its `webhook` row runs;
 //  8. closing a request leaves the Shopify ids on it, writes no line, or closes it twice;
-//  9. the health signal stays green while a request is open, or red after it's closed.
+//  9. the health signal blocks a release (red) while a request is merely open, or stays quiet: it must be amber while
+//     open and red once the oldest has 7 days or fewer left;
+// 10. a captured body replayed under a fresh webhook id, or the same request delivered by the brand's other app,
+//     records a second row, line or notice.
 import { env } from 'cloudflare:workers'
+import worker from '../../index.ts'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { accessMatrix } from '../../access-matrix.ts'
 import { webhookRoutes } from '../../routes.ts'
@@ -19,7 +26,7 @@ import { lastLineId } from '../../db/test-support.ts'
 import { serveWebhook } from '../serve.ts'
 import { MAX_BODY_BYTES } from './handler.ts'
 import { signShopifyBody } from './hmac.ts'
-import { privacySignal } from './signal.ts'
+import { privacySignal, secretsSignal } from './signal.ts'
 import { DUE_MS, privacyRequestStore, requestIdFor } from './store.ts'
 
 const db = env.DB
@@ -40,13 +47,14 @@ type Topic = keyof typeof PAYLOADS
 let n = 0
 const newWebhookId = () => `wh-${Date.now()}-${++n}`
 
-async function deliver(topic: Topic, o: { webhookId?: string; secret?: string | null; raw?: string; tamper?: boolean; contentType?: string; topicHeader?: string; method?: string; env?: Record<string, unknown> } = {}) {
+async function deliver(topic: Topic, o: { webhookId?: string | null; secret?: string | null; raw?: string; tamper?: boolean; contentType?: string; topicHeader?: string; method?: string; env?: Record<string, unknown> } = {}) {
   const raw = o.raw ?? JSON.stringify(PAYLOADS[topic].body)
   const bytes = enc.encode(raw)
   const headers: Record<string, string> = {
-    'Content-Type': o.contentType ?? 'application/json', 'X-Shopify-Topic': o.topicHeader ?? topic, 'X-Shopify-Webhook-Id': o.webhookId ?? newWebhookId(),
+    'Content-Type': o.contentType ?? 'application/json', 'X-Shopify-Topic': o.topicHeader ?? topic,
     'X-Shopify-Shop-Domain': 'invented-shop.myshopify.com', 'X-Shopify-API-Version': '2026-10',
   }
+  if (o.webhookId !== null) headers['X-Shopify-Webhook-Id'] = o.webhookId ?? newWebhookId()
   if (o.secret !== null) headers['X-Shopify-Hmac-Sha256'] = await signShopifyBody(bytes, o.secret ?? READ)
   const sent = o.tamper ? raw.replace('954889', '954880') : raw
   const request = new Request(`http://brand.localhost:8787/api/webhooks/shopify/${PAYLOADS[topic].path}`, { method: o.method ?? 'POST', headers, body: o.method === 'GET' ? undefined : sent })
@@ -63,6 +71,7 @@ beforeEach(async () => {
 afterEach(() => vi.restoreAllMocks())
 const lines = async () => (await db.prepare('SELECT actor_id, action, target_kind, target_id, args_json FROM audit_log WHERE id > ? ORDER BY id').bind(mark).all()).results
 const requests = async () => (await db.prepare('SELECT * FROM privacy_requests ORDER BY received_at_ms, id').all<Record<string, unknown>>()).results
+const sha256 = async (text: string) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(text)))].map(b => b.toString(16).padStart(2, '0')).join('')
 const notices = async () => (await db.prepare("SELECT id, audience, template, fields_json, body, person_id FROM notices WHERE source = 'shopify-privacy' ORDER BY id").all()).results
 
 describe('the signature (failure 1)', () => {
@@ -101,12 +110,12 @@ describe('a signed delivery (failures 2 to 4)', () => {
     const rows = await requests()
     expect(rows).toHaveLength(1)
     const row = rows[0]
-    expect(row).toMatchObject({ id, webhook_id: webhookId, topic, shop_id: 954889, status: 'open', closed_at_ms: null })
+    expect(row).toMatchObject({ id, webhook_id: webhookId, topic, shop_id: 954889, parse_failed: 0, status: 'open', closed_at_ms: null, body_sha256: await sha256(JSON.stringify(PAYLOADS[topic].body)) })
     expect(row.due_at_ms).toBe(Number(row.received_at_ms) + DUE_MS)
     if (topic === 'customers/data_request') expect(row).toMatchObject({ customer_id: '191167', order_ids_json: '[299938,280263]', data_request_id: '9999' })
     if (topic === 'customers/redact') expect(row).toMatchObject({ customer_id: '191167', order_ids_json: '[299938,280263,220458]', data_request_id: null })
     if (topic === 'shop/redact') expect(row).toMatchObject({ customer_id: null, order_ids_json: null, data_request_id: null })
-    expect(await lines()).toEqual([{ actor_id: 'm_system', action: 'privacy.requested', target_kind: null, target_id: null, args_json: JSON.stringify({ requestId: id, topic }) }])
+    expect(await lines()).toEqual([{ actor_id: 'm_system', action: 'privacy.requested', target_kind: null, target_id: null, args_json: JSON.stringify({ requestId: id, topic, parsed: true }) }])
     const template = { 'customers/data_request': 'privacy_data_request', 'customers/redact': 'privacy_customer_redact', 'shop/redact': 'privacy_shop_redact' }[topic]
     expect(await notices()).toEqual([{ id: `privacy-${id}`, audience: 'admins', template, fields_json: '{}', body: null, person_id: null }])
     const stored = JSON.stringify([rows, await lines(), await notices()])
@@ -119,25 +128,86 @@ describe('a signed delivery (failures 2 to 4)', () => {
     expect(await requests()).toHaveLength(1)
     expect(await lines()).toHaveLength(1)
     expect(await notices()).toHaveLength(1)
-    // A new delivery of the same topic is its own request.
-    expect((await deliver('customers/redact')).res?.status).toBe(200)
+    // A new request of the same topic (another customer) is its own row.
+    expect((await deliver('customers/redact', { raw: JSON.stringify({ ...PAYLOADS['customers/redact'].body, customer: { id: 191168, email: EMAIL, phone: PHONE } }) })).res?.status).toBe(200)
     expect(await requests()).toHaveLength(2)
     expect(await lines()).toHaveLength(2)
   })
 })
 
-describe('refused before anything is recorded (failures 5 to 7)', () => {
-  it('a body over the cap (413 as invalid too_large), a non-JSON type, another topic or a bad payload is 400', async () => {
+describe('a signed delivery that does not parse is recorded, never dropped (failure 5)', () => {
+  const unparsed: [string, Topic, Parameters<typeof deliver>[1]][] = [
+    ['a non-JSON Content-Type', 'shop/redact', { contentType: 'text/plain' }],
+    ["another topic's header", 'shop/redact', { topicHeader: 'customers/redact' }],
+    ["another topic's shape (a customers/redact body carrying data_request)", 'customers/redact', { raw: JSON.stringify({ ...PAYLOADS['customers/redact'].body, data_request: { id: 1 } }) }],
+    ['a field no topic has', 'shop/redact', { raw: JSON.stringify({ ...PAYLOADS['shop/redact'].body, customer: { id: 5 } }) }],
+    ['broken JSON', 'shop/redact', { raw: '{"shop_id":' }],
+    ['more than 10,000 order ids', 'customers/redact', { raw: JSON.stringify({ ...PAYLOADS['customers/redact'].body, orders_to_redact: Array.from({ length: 10_001 }, (_, i) => i + 1) }) }],
+    ['no webhook id', 'shop/redact', { webhookId: null }],
+    ['a malformed webhook id', 'shop/redact', { webhookId: 'bad id with spaces' }],
+  ]
+  it.each(unparsed)('%s: 200, one parse_failed row with no ids, its line (parsed false) and the admins notice', async (_, topic, o) => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const big = JSON.stringify({ shop_id: 1, pad: 'x'.repeat(MAX_BODY_BYTES) })
-    const tooBig = await deliver('shop/redact', { raw: big })
+    const { res } = await deliver(topic, o)
+    expect(res?.status).toBe(200)
+    const rows = await requests()
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ topic, parse_failed: 1, shop_id: null, customer_id: null, order_ids_json: null, data_request_id: null, status: 'open' })
+    expect(rows[0].webhook_id).toMatch(o?.webhookId === undefined ? /^wh-/ : /^body:[0-9a-f]{64}$/)
+    expect((await lines()).map(l => JSON.parse(String(l.args_json)))).toEqual([{ requestId: rows[0].id, topic, parsed: false }])
+    expect(await notices()).toHaveLength(1)
+  })
+  it('a customer known by email only (no customer id) is a parsed request with no customer id', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const body = { ...PAYLOADS['customers/redact'].body, customer: { id: null, email: EMAIL, phone: null } }
+    expect((await deliver('customers/redact', { raw: JSON.stringify(body) })).res?.status).toBe(200)
+    expect((await requests())[0]).toMatchObject({ parse_failed: 0, customer_id: null, order_ids_json: '[299938,280263,220458]' })
+    expect(JSON.stringify(await requests())).not.toContain(EMAIL)
+  })
+})
+
+describe('one request is one row (failure 10)', () => {
+  it('the same signed body replayed under a fresh webhook id adds nothing', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    for (let i = 0; i < 2; i++) expect((await deliver('customers/redact')).res?.status).toBe(200)
+    expect(await requests()).toHaveLength(1)
+    expect(await lines()).toHaveLength(1)
+    expect(await notices()).toHaveLength(1)
+  })
+  it("the same open request from the brand's other app (another body, another id) adds nothing; a new request does", async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const b = PAYLOADS['customers/data_request'].body
+    expect((await deliver('customers/data_request', { secret: READ })).res?.status).toBe(200)
+    const reordered = JSON.stringify({ data_request: b.data_request, customer: b.customer, orders_requested: b.orders_requested, shop_domain: b.shop_domain, shop_id: b.shop_id })
+    expect((await deliver('customers/data_request', { secret: WRITE, raw: reordered })).res?.status).toBe(200)
+    expect(await requests()).toHaveLength(1)
+    expect(await lines()).toHaveLength(1)
+    expect(await notices()).toHaveLength(1)
+    // Another data request for the same customer is its own request.
+    expect((await deliver('customers/data_request', { raw: JSON.stringify({ ...b, data_request: { id: 10_000 } }) })).res?.status).toBe(200)
+    expect(await requests()).toHaveLength(2)
+    // Two email-only customers have no key to match on: both kept.
+    const emailOnly = (email: string) => JSON.stringify({ ...PAYLOADS['customers/redact'].body, customer: { id: null, email, phone: null } })
+    expect((await deliver('customers/redact', { raw: emailOnly('a@example.test') })).res?.status).toBe(200)
+    expect((await deliver('customers/redact', { raw: emailOnly('b@example.test') })).res?.status).toBe(200)
+    expect(await requests()).toHaveLength(4)
+  })
+  it('once closed, the same request may open again', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { webhookId } = await deliver('shop/redact')
+    await privacyRequestStore(db).close(await requestIdFor(webhookId), { nowMs: Date.now(), requestId: 'r-close' })
+    // The identical body (a shop's second uninstall, say) is a new request once the first is closed.
+    expect((await deliver('shop/redact')).res?.status).toBe(200)
+    expect((await requests()).map(r => r.status)).toEqual(['closed', 'open'])
+  })
+})
+
+describe('refused before anything is recorded (failures 6 and 7)', () => {
+  it('a body over the cap is 400 too_large, before the signature', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const tooBig = await deliver('shop/redact', { raw: JSON.stringify({ shop_id: 1, pad: 'x'.repeat(MAX_BODY_BYTES) }) })
     expect(tooBig.res?.status).toBe(400)
     expect(await tooBig.res?.json()).toEqual({ error: { code: 'invalid', reason: 'too_large' } })
-    expect((await deliver('shop/redact', { contentType: 'text/plain' })).res?.status).toBe(400)
-    expect((await deliver('shop/redact', { topicHeader: 'customers/redact' })).res?.status).toBe(400)
-    expect((await deliver('customers/redact', { raw: JSON.stringify(PAYLOADS['shop/redact'].body) })).res?.status).toBe(400)
-    expect((await deliver('shop/redact', { raw: '{"shop_id":' })).res?.status).toBe(400)
-    expect((await deliver('shop/redact', { webhookId: 'bad id with spaces' })).res?.status).toBe(400)
     expect(await requests()).toEqual([])
     expect(await lines()).toEqual([])
   })
@@ -156,6 +226,18 @@ describe('refused before anything is recorded (failures 5 to 7)', () => {
     const other = new Request('http://brand.localhost:8787/api/webhooks/shopify/orders-create', { method: 'POST', body: '{}' })
     expect(await serveWebhook(webhookRoutes, accessMatrix, other, hookEnv, 'r')).toBeNull()
   })
+  it('a correctly signed POST to a near path is not a webhook: the Worker sends it to sign-in, 401, nothing recorded (failure 7)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const raw = JSON.stringify(PAYLOADS['customers/redact'].body)
+    const headers = { 'Content-Type': 'application/json', 'X-Shopify-Topic': 'customers/redact', 'X-Shopify-Webhook-Id': newWebhookId(), 'X-Shopify-Hmac-Sha256': await signShopifyBody(enc.encode(raw), READ) }
+    for (const path of ['/api/webhooks/shopify/customers-redact/', '/api/webhooks/shopify/customers-redact-x', '/api/webhooks/shopify%2Fcustomers-redact', '/api/webhooks%2Fshopify%2Fcustomers-redact', '/api/webhooks/shopify/customers%2Dredact']) {
+      const request = new Request(`http://brand.localhost:8787${path}`, { method: 'POST', headers, body: raw })
+      expect(await serveWebhook(webhookRoutes, accessMatrix, request.clone() as Request, hookEnv, 'r'), path).toBeNull()
+      const res = await worker.fetch(request as never, { ...env, ...hookEnv } as Env, {} as ExecutionContext)
+      expect(res.status, path).toBe(401)
+    }
+    expect(await requests()).toEqual([])
+  })
   it('a webhook route without its webhook row answers 500 and never runs (failure 7)', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     const handler = vi.fn(async () => new Response('ran'))
@@ -169,15 +251,22 @@ describe('refused before anything is recorded (failures 5 to 7)', () => {
 })
 
 describe('closing a request and the health signal (failures 8 and 9)', () => {
-  it('the signal is red while one is open; closing clears the Shopify ids, writes privacy.closed once, and the signal goes green', async () => {
+  it('the signal is amber (ok) while one is open, red at 7 days left or overdue; closing clears the ids, writes privacy.closed once, and the signal goes green', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const store = privacyRequestStore(db)
+    const DAY = 86_400_000
     expect(await privacySignal(store, Date.now())).toEqual({ ok: true })
     const { webhookId } = await deliver('customers/data_request')
     const id = await requestIdFor(webhookId)
     const received = Number((await requests())[0].received_at_ms)
-    expect(await privacySignal(store, received)).toEqual({ ok: false, detail: '1 open, 30 days left on the oldest' })
-    expect(await privacySignal(store, received + DUE_MS + 86_400_000)).toEqual({ ok: false, detail: '1 open, -1 days left on the oldest' })
+    expect(await privacySignal(store, received)).toEqual({ ok: true, amber: true, detail: '1 open, oldest 30 days left' })
+    expect(await privacySignal(store, received + 23 * DAY - 1)).toEqual({ ok: true, amber: true, detail: '1 open, oldest 7 days left' })
+    expect(await privacySignal(store, received + 23 * DAY)).toEqual({ ok: false, detail: '1 open, oldest 7 days left' })
+    expect(await privacySignal(store, received + DUE_MS + DAY)).toEqual({ ok: false, detail: '1 open, oldest -1 days left' })
+    // An unparsed one counts, and says so.
+    await deliver('shop/redact', { contentType: 'text/plain' })
+    expect(await privacySignal(store, received)).toEqual({ ok: true, amber: true, detail: '2 open (1 unparsed), oldest 30 days left' })
+    await db.prepare("DELETE FROM privacy_requests WHERE parse_failed = 1").run()
     mark = await lastLineId(db)
     expect(await store.close(id, { nowMs: received + 1000, requestId: 'req-close' })).toBe('closed')
     expect(await store.close(id, { nowMs: received + 2000, requestId: 'req-close-2' })).toBe('already_closed')
@@ -186,9 +275,18 @@ describe('closing a request and the health signal (failures 8 and 9)', () => {
     expect(await lines()).toEqual([{ actor_id: 'm_system', action: 'privacy.closed', target_kind: null, target_id: null, args_json: JSON.stringify({ requestId: id, topic: 'customers/data_request', by: 'release' }) }])
     expect(await privacySignal(store, Date.now())).toEqual({ ok: true })
   })
-  it('the table refuses a closed row that still names a customer', async () => {
-    await expect(db.prepare(
-      "INSERT INTO privacy_requests (id, webhook_id, topic, shop_id, customer_id, received_at_ms, due_at_ms, status, closed_at_ms, req_id) VALUES ('pr_BBBBBBBBBBBBBBBBBBBBBB', 'w', 'customers/redact', 1, '5', 1, 2, 'closed', 3, 'r')",
-    ).run()).rejects.toThrow(/CHECK/)
+  it('the secrets signal: green when they parse, amber when unset (a deployment without Shopify), red when malformed', () => {
+    expect(secretsSignal(JSON.stringify([READ, WRITE]))).toEqual({ ok: true, detail: '2 app secrets' })
+    expect(secretsSignal(undefined)).toEqual({ ok: true, amber: true, detail: 'not set' })
+    for (const bad of ['', 'not json', '[]', '["short"]']) expect(secretsSignal(bad), bad).toEqual({ ok: false, detail: 'malformed' })
+  })
+  it('the table refuses a closed row that still names a customer, and an unparsed row with ids', async () => {
+    const insert = (status: string, parseFailed: number, shopId: number | null, customerId: string | null) => db.prepare(
+      "INSERT INTO privacy_requests (id, webhook_id, body_sha256, topic, parse_failed, shop_id, customer_id, received_at_ms, due_at_ms, status, closed_at_ms, req_id) VALUES ('pr_BBBBBBBBBBBBBBBBBBBBBB', 'w', ?, 'customers/redact', ?, ?, ?, 1, 2, ?, 3, 'r')",
+    ).bind('a'.repeat(64), parseFailed, shopId, customerId, status).run()
+    await expect(insert('closed', 0, 1, '5')).rejects.toThrow(/CHECK/)
+    await expect(insert('open', 1, 1, null)).rejects.toThrow(/CHECK/)
+    await expect(insert('open', 1, null, '5')).rejects.toThrow(/CHECK/)
+    await expect(insert('open', 0, null, null)).rejects.toThrow(/CHECK/)
   })
 })
