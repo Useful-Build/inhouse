@@ -112,7 +112,7 @@ test('Cap reached: a chat is refused with the cap notice, and a waiting draft ca
   await todayBox(page).fill(Q)
   await page.keyboard.press('Enter')
   await page.clock.runFor(4000)
-  await expect(log(page).getByText('Your team has reached its spending cap.')).toBeVisible()
+  await expect(log(page).getByText("Your team has reached its spending cap, so this answer didn't run.")).toBeVisible()
   await expect(log(page).getByText(A)).toHaveCount(0)
   // Waiting drafts can still be approved at the cap.
   await go(page, '#/today')
