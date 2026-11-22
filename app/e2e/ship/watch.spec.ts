@@ -323,10 +323,14 @@ test('S6: Library shows a file the agent made, it downloads, and deleting and re
   needsContainer()
   test.setTimeout(360_000)
   await openAs(context, page, 'dana', '#/today')
+  // The files of this name already there (the other project's run leaves one): the Library must show one more before it is counted,
+  // since the client's list can still be the one read before this test's file was saved.
+  const named = async () => (((await api(page, 'GET', '/api/library?limit=100')).json?.items ?? []) as { name: string }[]).filter(f => f.name === FILE).length
+  const had = await named()
   await makeFile(page)
   await goTo(page, '#/library')
-  await expect(fileMenu(page).first()).toBeVisible()
-  const n = await fileMenu(page).count()
+  await expect(fileMenu(page), `the Library shows the new ${FILE}, one more than the ${had} before`).toHaveCount(had + 1)
+  const n = had + 1
   await shot(page, 'S6-library-with-the-file')
 
   // The download, in two halves, because the browser and the test can't both be signed in the way a person is. A person's browser
