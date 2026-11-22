@@ -103,13 +103,15 @@ describe('the client: the bell', () => {
   })
   test('a refused mark leaves a notice a newer read reported READ as read (the reload\'s answer stands)', async () => {
     let held: HttpAgent | null = null
+    let reload: Promise<void> = Promise.resolve()
     let current = [notice('n1', true), notice('n2', true)]
     const s = server({ ...reads(), 'GET /api/notifications': () => ({ body: { items: current } }) })
     const fetch: typeof globalThis.fetch = async (i, init) => {
       if (String(i).endsWith('/api/notifications/read')) {
-        // Another tab read n1 meanwhile: the reload says n1 is read, then this write is refused.
+        // Another tab read n1 meanwhile: the reload says n1 is read, then this write is refused. The reload starts while the
+        // write is on its way, so it reads once the write has settled (a read the write overlapped is never taken).
         current = [notice('n1', false), notice('n2', true)]
-        await held!.retry('notifications')
+        reload = held!.retry('notifications')
         return new Response(JSON.stringify({ error: { code: 'unavailable' } }), { status: 503 })
       }
       return s.fetch(i, init)
@@ -118,6 +120,7 @@ describe('the client: the bell', () => {
     held = agent
     await agent.whenLoaded()
     expect(await agent.markNoticesRead(['n1']).then(() => 'ok', (e: unknown) => e)).toMatchObject({ code: 'unavailable' })
+    await reload
     expect(agent.listNotifications().map(n => [n.id, n.unread])).toEqual([['n1', false], ['n2', true]])
   })
   test('nothing unread to mark sends nothing', async () => {

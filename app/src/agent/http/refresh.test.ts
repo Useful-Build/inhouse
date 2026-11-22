@@ -4,7 +4,11 @@
 //  - opening the Library, Today or Activity shows the read from the app's start, not what the agent made since;
 //  - a run's end (a chat turn) that leaves those lists and the bell as they were;
 //  - a refresh that shows the page as loading, or reads a list whose first read isn't in yet (two reads for one open);
-//  - the Inhouse team read on a run's end it didn't ask for (each read under a grant writes a support.access line).
+//  - the Inhouse team read on a run's end it didn't ask for, or its bell read at all (each read under a grant writes a
+//    support.access line);
+//  - a read that left before a write (a card set aside, a notice read) landing after it and undoing it on screen;
+//  - a refresh that fails turning a list the person was reading into an error;
+//  - a run's end during a page's read lost (the read joined, though it left before the run's work was saved).
 import { describe, expect, test } from 'vitest'
 import { HttpAgent } from './client'
 import type { SocketLike } from './stream/socket'
@@ -46,7 +50,24 @@ async function loaded(routes: Routes) {
   await agent.whenLoaded()
   return { agent, ...s }
 }
-const reads_ = (calls: { method: string; path: string }[], path: string) => calls.filter(c => c.method === 'GET' && c.path === path).length
+/**
+ * A fetch whose next answer to `path` is made when asked (the server's state then) but held back until `release()`: a read
+ * that left before what the test does next, and lands after it.
+ */
+function held(routes: Routes, path: string) {
+  const s = server(routes)
+  let gate: Promise<void> | null = null
+  let release = () => {}
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const res = await s.fetch(input, init)
+    const url = new URL(String(input), 'http://x.test')
+    if (gate && (init?.method ?? 'GET') === 'GET' && url.pathname + url.search === path) { const g = gate; gate = null; await g }
+    return res
+  }
+  const hold = () => { gate = new Promise<void>(r => { release = r }) }
+  return { fetch, calls: s.calls, hold, release: () => release() }
+}
+const countReads = (calls: { method: string; path: string }[], path: string) => calls.filter(c => c.method === 'GET' && c.path === path).length
 
 describe('a list page opened reads its list again', () => {
   test('the Library opened after a chat saved a file shows the file, without a reload and without showing as loading', async () => {
@@ -85,7 +106,7 @@ describe('a list page opened reads its list again', () => {
     const { routes } = world()
     const { agent, calls } = await loaded(routes)
     await Promise.all([agent.refresh('library'), agent.refresh('library')])
-    expect(reads_(calls, '/api/library?limit=100')).toBe(2)
+    expect(countReads(calls, '/api/library?limit=100')).toBe(2)
 
     let release!: () => void
     const gate = new Promise<void>(r => { release = r })
@@ -99,16 +120,118 @@ describe('a list page opened reads its list again', () => {
     const opened = early.refresh('library')
     release()
     await Promise.all([early.whenLoaded(), opened])
-    expect(reads_(s.calls, '/api/library?limit=100')).toBe(1)
+    expect(countReads(s.calls, '/api/library?limit=100')).toBe(1)
   })
 
   test('the Inhouse team reads a page it opens (it asked)', async () => {
     const { w, routes } = world()
     const { agent, calls } = await loaded({ ...routes, 'GET /api/me': { body: me({ role: 'inhouse' }) } })
-    expect(reads_(calls, '/api/library?limit=100')).toBe(0)
+    expect(countReads(calls, '/api/library?limit=100')).toBe(0)
     w.library = [file('made')]
     await agent.refresh('library')
     expect(agent.listFiles().map(f => f.id)).toEqual([F('made')])
+  })
+})
+
+describe('a refresh never undoes a write, never turns a list into an error, never loses a newer ask', () => {
+  test('a card dismissed while a Today read is on its way stays dismissed, and Undo brings it back where it was', async () => {
+    const { w, routes } = world()
+    w.today = [card('a'), card('b')]
+    let aside: Record<string, unknown> = {}
+    const ID = card('a').id
+    const h = held({
+      ...routes,
+      'GET /api/today': () => ({ body: { items: w.today, aside } }),
+      [`PUT /api/today/${ID}/aside`]: r => {
+        const reason = JSON.parse(r.body ?? '{}').reason as string | null
+        const record = { reason, at: iso(2000), by: 'm_Sam', loggedAt: iso(2000), rev: (JSON.parse(r.body ?? '{}').ifRev as number) + 1 }
+        aside = { [ID]: record }
+        w.today = reason === null ? [card('a'), card('b')] : [card('b')]
+        return { body: record }
+      },
+    }, '/api/today')
+    const agent = new HttpAgent({ fetch: h.fetch, now: () => NOW })
+    await agent.whenLoaded()
+    h.hold()
+    const reading = agent.refresh('problems')
+    await new Promise(r => setTimeout(r, 0))
+    await agent.setAside(ID, 'dismissed')
+    h.release()
+    await reading
+    expect(agent.read().problems.map(p => p.title)).toEqual(['b'])
+    await agent.setAside(ID, null)
+    expect(agent.read().problems.map(p => p.title)).toEqual(['a', 'b'])
+  })
+
+  test('a notice marked read while a bell read is on its way stays read', async () => {
+    const { w, routes } = world()
+    w.notifications = [notice('n1')]
+    const h = held({
+      ...routes,
+      'POST /api/notifications/read': r => { const ids = JSON.parse(r.body ?? '{}').ids as string[]; w.notifications = (w.notifications as { id: string }[]).map(n => (ids.includes(n.id) ? { ...n, unread: false } : n)); return { body: { ok: true } } },
+    }, '/api/notifications')
+    const agent = new HttpAgent({ fetch: h.fetch, now: () => NOW })
+    await agent.whenLoaded()
+    h.hold()
+    const reading = agent.refresh('notifications')
+    await new Promise(r => setTimeout(r, 0))
+    await agent.markNoticesRead(['n1'])
+    h.release()
+    await reading
+    expect(agent.listNotifications().map(n => [n.id, n.unread])).toEqual([['n1', false]])
+  })
+
+  test('a refresh that fails leaves the list as it was, ready, on a page open and on a run\'s end', async () => {
+    const { w, routes } = world()
+    w.library = [file('kept')]
+    let fail = false
+    const failing: Routes = { ...routes, 'GET /api/library?limit=100': () => (fail ? { status: 500, body: { error: { code: 'unavailable' } } } : { body: { items: w.library, nextCursor: null } }) }
+    const { agent } = await loaded(failing)
+    fail = true
+    await agent.refresh('library')
+    expect(agent.listFiles().map(f => f.id)).toEqual([F('kept')])
+    expect(agent.read().resources.library).toEqual({ status: 'ready' })
+    fail = false
+    const t = await attached(failing)
+    fail = true
+    t.sockets[0].say(finished)
+    await settle(); await settle(); await settle()
+    expect(t.agent.listFiles().map(f => f.id)).toEqual([F('kept')])
+    expect(t.agent.read().resources.library).toEqual({ status: 'ready' })
+  })
+
+  test('a run\'s end while a page\'s read is on its way reads once more after it', async () => {
+    const { w, routes } = world()
+    const sockets: FakeSocket[] = []
+    const h = held(routes, '/api/library?limit=100')
+    const agent = new HttpAgent({ fetch: h.fetch, now: () => NOW, origin: '', openSocket: () => { const s = new FakeSocket(); sockets.push(s); return s }, after: () => {} })
+    await agent.whenLoaded()
+    agent.attach(RUN, () => {})
+    await settle()
+    sockets[0].onopen?.()
+    h.hold()
+    const reading = agent.refresh('library')
+    await settle()
+    // The run saved a file after the page's read left: that read can't hold it.
+    w.library = [file('made')]
+    sockets[0].say(finished)
+    // The page's read lands last: it must not leave its older list on screen.
+    await settle(); await settle(); await settle()
+    h.release()
+    await reading
+    await settle(); await settle()
+    expect(countReads(h.calls, '/api/library?limit=100')).toBe(3)
+    expect(agent.listFiles().map(f => f.id)).toEqual([F('made')])
+  })
+
+  test('the Inhouse team: nothing of the four read on start, its bell never, and a page it opens once', async () => {
+    const { routes } = world()
+    const { agent, calls } = await loaded({ ...routes, 'GET /api/me': { body: me({ role: 'inhouse' }) } })
+    const four = ['/api/library?limit=100', '/api/today', '/api/activity?limit=100', '/api/notifications']
+    expect(calls.filter(c => four.includes(c.path))).toEqual([])
+    await agent.refresh('notifications')
+    await agent.refresh('library')
+    expect(calls.filter(c => four.includes(c.path)).map(c => c.path)).toEqual(['/api/library?limit=100'])
   })
 })
 

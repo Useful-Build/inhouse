@@ -295,8 +295,12 @@ function Shell() {
   }, [])
   const page = useUi(s => s.page)
   // A list page reads its list again when it opens, and the bell its notices: what the agent made since the first read
-  // (a file a chat saved, the cards a Run now found) isn't in it.
+  // (a file a chat saved, the cards a Run now found) isn't in it. Not the page the app starts on: the first reads cover it,
+  // and for the Inhouse team landing there isn't a choice (each read under a grant writes a support.access line). The
+  // client never reads the bell for the Inhouse team.
+  const landed = useRef(false)
   useEffect(() => {
+    if (!landed.current) { landed.current = true; return }
     const list = PAGE_LIST[page]
     if (list) void agent.refresh(list)
     void agent.refresh('notifications')

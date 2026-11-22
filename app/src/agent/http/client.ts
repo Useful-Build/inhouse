@@ -415,27 +415,34 @@ export class HttpAgent implements AgentClient {
   refreshMemory = (): Promise<void> => (this.refreshing ??= this.loadMemory(true).finally(() => { this.refreshing = null }))
 
   private refreshingList = new Map<RefreshList, Promise<void>>()
+  /** Lists asked again (a run ended) while their read was on its way: that read may have left before the change. */
+  private refreshAgain = new Set<RefreshList>()
   /**
    * A list page opened (or the bell's list, on any page): reads that list again, without the page showing as loading. The
    * agent's work since the first read (a file a chat saved, the cards a Run now found) isn't in it. Nothing before the
-   * first read is in (or while it failed: Retry is the way back); one read at a time (an open while one runs joins it).
+   * first read is in (or while it failed: Retry is the way back); a failure leaves what is shown. One read at a time: an
+   * open while one runs joins it.
    */
-  refresh = (list: RefreshList): Promise<void> => {
+  refresh = (list: RefreshList): Promise<void> => this.refreshList(list, false)
+  /** `again`: something changed after a running read left (a run ended), so one more read follows it. */
+  private refreshList(list: RefreshList, again: boolean): Promise<void> {
     if (this.s.res[list].status !== 'ready') return Promise.resolve()
     const running = this.refreshingList.get(list)
-    if (running) return running
-    const p = this.loadList(list, true).finally(() => { this.refreshingList.delete(list) })
+    if (running) { if (again) this.refreshAgain.add(list); return running }
+    const p = (async () => {
+      do { this.refreshAgain.delete(list); await this.loadList(list) } while (this.refreshAgain.has(list))
+    })().finally(() => { this.refreshingList.delete(list) })
     this.refreshingList.set(list, p)
     return p
   }
-  private loadList(list: RefreshList, asked: boolean): Promise<void> {
-    return { library: () => this.loadLibrary(asked), problems: () => this.loadProblems(asked), activity: () => this.loadActivity(asked), notifications: () => this.loadNotifications() }[list]()
+  private loadList(list: RefreshList): Promise<void> {
+    return { library: () => this.loadLibrary(true, true), problems: () => this.loadProblems(true, true), activity: () => this.loadActivity(true, true), notifications: () => this.loadNotifications(true) }[list]()
   }
   /** A run ended: what its work fills may have changed. The Inhouse team isn't read for it (it didn't ask, and a read under a grant is logged). */
   private afterRun() {
     void this.refreshUsage()
     if (this.s.me?.role === 'inhouse') return
-    for (const list of REFRESH_LISTS) if (this.s.res[list].status === 'ready') void this.loadList(list, false)
+    for (const list of REFRESH_LISTS) void this.refreshList(list, true)
   }
 
   private async loadMemory(asked = false) {
@@ -480,19 +487,20 @@ export class HttpAgent implements AgentClient {
    * Route 59, the first page. Like memory and chats, the Inhouse team isn't asked on start: under a grant every read writes
    * a `support.access` line, so it reads Activity only when asked. Without a live grant it's refused: nothing to show.
    */
-  private async loadActivity(asked = false) {
+  private async loadActivity(asked = false, refresh = false) {
     if (this.s.me?.role === 'inhouse' && !asked) return this.setStatus('activity', { status: 'ready' })
     try {
       const page = await readActivityPage(this.http, { limit: ACTIVITY_PAGE })
       this.patch({ activity: page.items, res: { ...this.s.res, activity: { status: 'ready' } } })
     } catch (e) {
+      if (refresh) return this.afterRefreshFailed(e, 'Activity')
       if (e instanceof AgentError && e.code === 'forbidden' && !HttpAgent.gone(e)) return this.setStatus('activity', { status: 'ready' })
       this.failStatus('activity', e)
     }
   }
 
   /** Route 62, every page. As Activity: the Inhouse team reads it only when asked (each read writes a `support.access` line). */
-  private async loadLibrary(asked = false) {
+  private async loadLibrary(asked = false, refresh = false) {
     if (this.s.me?.role === 'inhouse' && !asked) return this.setStatus('library', { status: 'ready' })
     try {
       let files: LibraryFile[] | null = null
@@ -510,6 +518,7 @@ export class HttpAgent implements AgentClient {
       const gone = Object.fromEntries(Object.entries(this.s.gone).filter(([id]) => !live.has(id)))
       this.patch({ files, gone, res: { ...this.s.res, library: { status: 'ready' } } })
     } catch (e) {
+      if (refresh) return this.afterRefreshFailed(e, 'the Library')
       if (e instanceof AgentError && e.code === 'forbidden' && !HttpAgent.gone(e)) return this.setStatus('library', { status: 'ready' })
       this.failStatus('library', e)
     }
@@ -535,13 +544,16 @@ export class HttpAgent implements AgentClient {
    * Route 57. As Activity: the Inhouse team reads it only when asked (each read under a grant writes a support.access line).
    * The cards come as the server lists them (set aside ones left out); `state.setAside` holds the records of the hidden ones.
    */
-  private async loadProblems(asked = false) {
+  private async loadProblems(asked = false, refresh = false) {
     if (this.s.me?.role === 'inhouse' && !asked) return this.setStatus('problems', { status: 'ready' })
     try {
-      const today = await readToday(this.http)
+      // A read a card's write overlapped may predate it (the card back, its Undo lost): read again once the writes are done.
+      const today = await this.unraced('problems', () => readToday(this.http))
+      if (today === null) return
       this.commit(this.withToday(this.s, today.items, today.aside))
       this.setStatus('problems', { status: 'ready' })
     } catch (e) {
+      if (refresh) return this.afterRefreshFailed(e, 'Today')
       if (e instanceof AgentError && e.code === 'forbidden' && !HttpAgent.gone(e)) return this.setStatus('problems', { status: 'ready' })
       this.failStatus('problems', e)
     }
@@ -557,11 +569,15 @@ export class HttpAgent implements AgentClient {
   }
 
   /** Route 60. The Inhouse team has no bell (the route is the brand team's), so it isn't asked. */
-  private async loadNotifications() {
+  private async loadNotifications(refresh = false) {
     if (this.s.me?.role === 'inhouse') return this.setStatus('notifications', { status: 'ready' })
     try {
-      this.patch({ notifications: await readNotifications(this.http), res: { ...this.s.res, notifications: { status: 'ready' } } })
+      // As Today: a read that a mark-read overlapped would put the dots back.
+      const notifications = await this.unraced('notifications', () => readNotifications(this.http))
+      if (notifications === null) return
+      this.patch({ notifications, res: { ...this.s.res, notifications: { status: 'ready' } } })
     } catch (e) {
+      if (refresh) return this.afterRefreshFailed(e, 'the notifications')
       if (e instanceof AgentError && e.code === 'forbidden' && !HttpAgent.gone(e)) return this.setStatus('notifications', { status: 'ready' })
       this.failStatus('notifications', e)
     }
@@ -657,7 +673,7 @@ export class HttpAgent implements AgentClient {
   /** A read after a save failed: the save stands. A person who has left the team is told like any other request would tell them. */
   private afterRefreshFailed(e: unknown, what: string) {
     if (e instanceof AgentError && HttpAgent.gone(e)) this.failStatus('meta', e)
-    else console.warn(`Inhouse: could not read ${what} again after a save.`, e)
+    else console.warn(`Inhouse: could not read ${what} again.`, e)
   }
 
   /** The grant stops being live at its end: the snapshot is told then, so a screen showing "live until" moves on. */
@@ -698,6 +714,26 @@ export class HttpAgent implements AgentClient {
    * field's last server-confirmed value, never to the state this write found (which may hold an earlier, unsaved write).
    * The very objects come back only for a write that found nothing queued before it and saw nothing change since.
    */
+  /**
+   * Writes to Today's cards (`today:<id>` lanes) and to the bell (`notices`) on their way, and how many have finished: what
+   * `unraced` checks. A write counts as finished once its answer (or refusal) is in, before its `after`, which may read.
+   */
+  private listWrites = { problems: { pending: new Set<Promise<void>>(), done: 0 }, notifications: { pending: new Set<Promise<void>>(), done: 0 } }
+  private static guardedList(lane: string | undefined): 'problems' | 'notifications' | null {
+    return lane?.startsWith('today:') ? 'problems' : lane === 'notices' ? 'notifications' : null
+  }
+  /** A read no write to its list overlapped: read again once those writes are done, a few times at most (null: none was). */
+  private async unraced<T>(list: 'problems' | 'notifications', read: () => Promise<T>): Promise<T | null> {
+    const w = this.listWrites[list]
+    for (let tries = 0; tries < 3; tries++) {
+      await Promise.all(w.pending)
+      const done = w.done
+      const answer = await read()
+      if (w.done === done && w.pending.size === 0) return answer
+    }
+    return null
+  }
+
   private write<T>(o: {
     lane?: string
     field?: string
@@ -716,18 +752,28 @@ export class HttpAgent implements AgentClient {
     const prior = lane ? this.lanes.get(lane) : undefined
     if (field) this.depth.set(field, (this.depth.get(field) ?? 0) + 1)
     const others = () => field !== undefined && (this.depth.get(field) ?? 0) > 1
+    const guarded = HttpAgent.guardedList(lane)
+    let finished = () => {}
+    if (guarded) {
+      const w = this.listWrites[guarded]
+      const settled: Promise<void> = new Promise(resolve => { finished = () => { if (w.pending.delete(settled)) { w.done++; resolve() } } })
+      w.pending.add(settled)
+    }
     const run = (async () => {
       await prior
       try {
         const answer = await o.send()
         this.commit(o.done(this.s, answer, others()))
+        finished()
         await o.after?.()
       } catch (e) {
+        finished()
         if (!prior && this.s === mine) this.commit(before); else this.commit(o.undo(this.s, before, others()))
         const err = e instanceof AgentError ? e : new AgentError('unknown', MESSAGE.unknown)
         if (err.current && o.onConflict) this.commit(o.onConflict(this.s, err.current, others()))
         throw this.fail(err)
       } finally {
+        finished()
         if (field) { const n = (this.depth.get(field) ?? 1) - 1; if (n > 0) this.depth.set(field, n); else this.depth.delete(field) }
       }
     })()
