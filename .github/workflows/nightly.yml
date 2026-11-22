@@ -4,7 +4,7 @@
 # host settings as ci.yml's "Probe setup" (why each is needed is written there). Any probe FAIL fails the run.
 # No eval step: a paid eval run needs the test issuer's private key, which only the private ops repo holds (decision 5),
 # and a nightly eval starts only once the baseline's cost is measured (decision 4). The only secrets here are the
-# connector job's three below.
+# connector job's three and the Slack connector job's three below.
 # The connector check (P4 Acc 9): W1's live project (app/test/connectors/shopify/**/*.live.ts, through the hub's
 # `npm run test:live`) against the Shopify read fixture store, read-only: it never reseeds or writes. The fixture app's
 # credentials are secrets of the `shopify-read-fixture` environment (SHOPIFY_SHOP, SHOPIFY_CLIENT_ID,
@@ -15,6 +15,15 @@
 # The monthly A-seed re-seed is not here: it needs the seed app's write_orders credential, and a scheduled writer would
 # put a write credential in a workflow. It runs by hand on the Mac until the merchant-org fixture lands (before
 # 2027-01-18); revisit then.
+# The Slack connector check (P5 Acc 1 and 9): W5's app/test/connectors/mcp/slack.live.ts, through the hub's
+# `npm run test:live`, against the house deployment's ops path and Slack's hosted MCP server in the P0 test workspace.
+# Its own environment, `slack-test-workspace` (main only): secrets NIGHTLY_BASE_URL (the house deployment's host stays out
+# of public logs), NIGHTLY_ACCESS_CLIENT_ID and NIGHTLY_ACCESS_CLIENT_SECRET (the Access service token); variables
+# NIGHTLY_SLACK_CHANNEL_ID and NIGHTLY_SLACK_NOTICES_CHANNEL_ID (test workspace channel ids, no credential), and the
+# optional NIGHTLY_ROTATION and NIGHTLY_CODEMODE ("1" or unset). NIGHTLY_HOUSE is fixed at "1": the target is the house
+# deployment. Values reach the test step only. Until P5's Slack connector (app/hub/connectors/mcp/slack) is on main, the
+# job skips with a notice. Once it is: no slack.live.ts fails, fewer than all three secrets and both channel ids fails,
+# and a flag other than "1" or unset fails. A failed case fails the night.
 # Run by hand: gh workflow run nightly (main only: a dispatch from another branch skips both jobs).
 # A failure opens one issue ("Nightly guard check failing", label nightly, assigned) or comments on the open one.
 # GitHub disables a scheduled workflow after 60 days without repository activity in a public repo (see monitor.yml);
@@ -110,11 +119,95 @@ jobs:
           SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
         run: npm run test:live -- test/connectors/shopify/
 
+  slack-connectors:
+    # Main's code only, as probes.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: slack-test-workspace
+    permissions:
+      contents: read
+    env:
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Presence only: each secret reaches this step as true or false, never its value.
+      - name: Slack live file, secrets and variables present
+        id: gate
+        shell: bash
+        env:
+          HAS_BASE_URL: ${{ secrets.NIGHTLY_BASE_URL != '' }}
+          HAS_ACCESS_CLIENT_ID: ${{ secrets.NIGHTLY_ACCESS_CLIENT_ID != '' }}
+          HAS_ACCESS_CLIENT_SECRET: ${{ secrets.NIGHTLY_ACCESS_CLIENT_SECRET != '' }}
+          HAS_CHANNEL_ID: ${{ vars.NIGHTLY_SLACK_CHANNEL_ID != '' }}
+          HAS_NOTICES_CHANNEL_ID: ${{ vars.NIGHTLY_SLACK_NOTICES_CHANNEL_ID != '' }}
+          ROTATION: ${{ vars.NIGHTLY_ROTATION }}
+          CODEMODE: ${{ vars.NIGHTLY_CODEMODE }}
+        run: |
+          # Before P5 lands (no hub, or no Slack connector in it, on main) is the only skip. Keyed on the connector, not the
+          # live file, so a live file moved or deleted after P5 fails below instead of skipping.
+          if [ ! -f app/hub/package.json ] || [ ! -d app/hub/connectors/mcp/slack ]; then
+            echo "::notice title=Slack connector check skipped::P5's Slack connector (app/hub/connectors/mcp/slack) isn't on main yet."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ ! -f app/test/connectors/mcp/slack.live.ts ]; then
+            echo "::error title=Slack live file missing::The Slack connector is on main but app/test/connectors/mcp/slack.live.ts isn't."
+            exit 1
+          fi
+          set=0
+          for v in "$HAS_BASE_URL" "$HAS_ACCESS_CLIENT_ID" "$HAS_ACCESS_CLIENT_SECRET" "$HAS_CHANNEL_ID" "$HAS_NOTICES_CHANNEL_ID"; do
+            if [ "$v" = true ]; then set=$((set + 1)); fi
+          done
+          if [ "$set" -ne 5 ]; then
+            echo "::error title=Slack nightly settings incomplete::slack-test-workspace needs secrets NIGHTLY_BASE_URL ($HAS_BASE_URL), NIGHTLY_ACCESS_CLIENT_ID ($HAS_ACCESS_CLIENT_ID), NIGHTLY_ACCESS_CLIENT_SECRET ($HAS_ACCESS_CLIENT_SECRET) and variables NIGHTLY_SLACK_CHANNEL_ID ($HAS_CHANNEL_ID), NIGHTLY_SLACK_NOTICES_CHANNEL_ID ($HAS_NOTICES_CHANNEL_ID)."
+            exit 1
+          fi
+          # slack.live.ts turns a check on only for exactly "1", so any other value (a "true", a typo) would switch it off quietly.
+          for pair in "NIGHTLY_ROTATION=$ROTATION" "NIGHTLY_CODEMODE=$CODEMODE"; do
+            case "${pair#*=}" in
+              "" | 1) ;;
+              *)
+                echo "::error title=Slack nightly flag invalid::${pair%%=*} must be 1 or unset."
+                exit 1
+                ;;
+            esac
+          done
+          rotation=off; if [ "$ROTATION" = 1 ]; then rotation=on; fi
+          codemode=off; if [ "$CODEMODE" = 1 ]; then codemode=on; fi
+          echo "::notice title=Slack nightly options::rotation $rotation, code mode $codemode, house read-back on."
+          echo "run=true" >> "$GITHUB_OUTPUT"
+      # No cache (AGENTS.md, "No Actions cache"), as ci.yml's hub job.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.gate.outputs.run == 'true'
+        with:
+          node-version-file: app/.nvmrc
+      - name: Install the hub
+        if: steps.gate.outputs.run == 'true'
+        working-directory: app/hub
+        run: npm ci
+      # The exact file: a rename makes vitest find no test file and fail, never run something else.
+      - name: Slack connectors against the test workspace
+        if: steps.gate.outputs.run == 'true'
+        working-directory: app/hub
+        env:
+          NIGHTLY_BASE_URL: ${{ secrets.NIGHTLY_BASE_URL }}
+          NIGHTLY_ACCESS_CLIENT_ID: ${{ secrets.NIGHTLY_ACCESS_CLIENT_ID }}
+          NIGHTLY_ACCESS_CLIENT_SECRET: ${{ secrets.NIGHTLY_ACCESS_CLIENT_SECRET }}
+          NIGHTLY_SLACK_CHANNEL_ID: ${{ vars.NIGHTLY_SLACK_CHANNEL_ID }}
+          NIGHTLY_SLACK_NOTICES_CHANNEL_ID: ${{ vars.NIGHTLY_SLACK_NOTICES_CHANNEL_ID }}
+          NIGHTLY_HOUSE: "1"
+          NIGHTLY_ROTATION: ${{ vars.NIGHTLY_ROTATION }}
+          NIGHTLY_CODEMODE: ${{ vars.NIGHTLY_CODEMODE }}
+        run: npm run test:live -- test/connectors/mcp/slack.live.ts
+
   # A failed night reaches a person (as monitor.yml does): one open issue titled TITLE, labelled LABEL and assigned,
   # commented on by every later failure until someone closes it. Its own job, so only it may write issues, and it runs no
   # repository code: no checkout, gh only.
   notify:
-    needs: [probes, connectors]
+    needs: [probes, connectors, slack-connectors]
     # A timeout or cancel counts too. Skipped jobs (a dispatch from another branch) notify nothing.
     if: always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))
     runs-on: ubuntu-latest
@@ -135,12 +228,13 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           PROBES: ${{ needs.probes.result }}
           CONNECTORS: ${{ needs.connectors.result }}
+          SLACK_CONNECTORS: ${{ needs.slack-connectors.result }}
         run: |
           numbers=$(gh api --paginate "repos/$REPO/issues?state=open&labels=$LABEL&per_page=100" \
             --jq '.[] | select(.pull_request == null and .title == env.TITLE) | .number')
           open=$(head -n 1 <<< "$numbers")
-          body=$(printf 'The nightly check failed at %s (container guard probes: %s, Shopify connectors: %s).\n\nRun: %s\n' \
-            "$(date -u '+%Y-%m-%d %H:%M UTC')" "$PROBES" "$CONNECTORS" "$RUN_URL")
+          body=$(printf 'The nightly check failed at %s (container guard probes: %s, Shopify connectors: %s, Slack connectors: %s).\n\nRun: %s\n' \
+            "$(date -u '+%Y-%m-%d %H:%M UTC')" "$PROBES" "$CONNECTORS" "$SLACK_CONNECTORS" "$RUN_URL")
           if [ -n "$open" ]; then
             gh issue comment "$open" --repo "$REPO" --body "$body"
             echo "Commented on #$open"
