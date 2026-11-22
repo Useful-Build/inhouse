@@ -2,7 +2,8 @@
 //  1. snapshot the live audit log and list the deletion log to `restore/<restoreId>/snapshot/`, before anything is
 //     written anywhere (a readable `live` whose snapshot fails stops the restore);
 //  2. check the backup (manifest, format, migration level, columns, every part's rows and sha256);
-//  3. check the target is a freshly migrated database (only rows identical to the backup's, the service rows);
+//  3. check the target is a freshly migrated database (only rows identical to the backup's, the service rows, or a
+//     named migration-seeded row, which the write overwrites with the backup's values);
 //  4. write each part as one statement, members before the audit log;
 //  5. prove it: re-read every table from the target and compare rows and sha256 with the manifest;
 //  6. write the restore record, whatever the outcome.
@@ -64,6 +65,17 @@ const messageOf = (err: unknown) => (err instanceof Error ? err.message : String
 const pad = (n: number) => String(n).padStart(5, '0')
 /** Target rows read per table for the emptiness check; a table with more isn't freshly migrated. */
 const TARGET_ROWS_CHECKED = 1_000
+
+/**
+ * Rows a migration inserts that a used database changes (P8 C1): on a freshly migrated target each differs from the
+ * backup's (its times are the migration's), so the write overwrites it with the backup's values instead of refusing.
+ * Any other row in the target still refuses (`seeded_row_differs`, `target_not_empty`). 0005's service rows aren't
+ * listed: they never change, so they match the backup's and are skipped. `key` is the row's primary key, in order.
+ */
+export const SEEDED_ROWS: readonly { table: string; key: readonly (string | number)[]; migration: string }[] = [
+  { table: 'routines', key: ['routine-morning-check'], migration: '0221_morning_check.sql' },
+]
+const seededKey = (table: string, pk: string) => SEEDED_ROWS.some(r => r.table === table && JSON.stringify(r.key) === pk)
 
 async function listAll(bucket: R2Bucket, prefix: string): Promise<R2Object[]> {
   const out: R2Object[] = []
@@ -146,14 +158,19 @@ async function targetRows(target: D1Database, manifest: BackupManifest): Promise
   return out
 }
 
-/** Step 2's part check, and step 3's match of the target's rows. Returns the lines already in the target, per table. */
-async function checkParts(bucket: R2Bucket, manifest: BackupManifest, existing: Map<string, Map<string, string>>): Promise<Map<string, Set<string>>> {
+/**
+ * Step 2's part check, and step 3's match of the target's rows. Returns the lines already in the target (`skip`), and
+ * the primary keys of the named seeded rows that differ (`overwrite`), per table.
+ */
+async function checkParts(bucket: R2Bucket, manifest: BackupManifest, existing: Map<string, Map<string, string>>): Promise<{ skip: Map<string, Set<string>>; overwrite: Map<string, Set<string>> }> {
   const skip = new Map<string, Set<string>>()
+  const overwrite = new Map<string, Set<string>>()
   const differs: string[] = []
   for (const t of manifest.tables) {
     const idx = pkIndexes(t)
     const inTarget = existing.get(t.name) ?? new Map<string, string>()
     const matched = new Set<string>()
+    const replaced = new Set<string>()
     const digest = newDigest()
     const hash = digest.getWriter()
     let rows = 0
@@ -169,9 +186,11 @@ async function checkParts(bucket: R2Bucket, manifest: BackupManifest, existing: 
       await hash.write(bytes)
       rows += lines.length
       for (const line of lines) {
-        const there = inTarget.get(pkOf(line, idx))
+        const pk = pkOf(line, idx)
+        const there = inTarget.get(pk)
         if (there === undefined) continue
         if (there === line) matched.add(line)
+        else if (seededKey(t.name, pk)) replaced.add(pk)
         else differs.push(t.name)
       }
     }
@@ -179,12 +198,13 @@ async function checkParts(bucket: R2Bucket, manifest: BackupManifest, existing: 
     if (rows !== t.rows) throw new RestoreRefusal('part_rows', `${t.name}: ${rows} rows, manifest ${t.rows}`)
     if (toHex(await digest.digest) !== t.sha256) throw new RestoreRefusal('table_sha256', t.name)
     skip.set(t.name, matched)
+    overwrite.set(t.name, replaced)
   }
   if (differs.length > 0) throw new RestoreRefusal('seeded_row_differs', differs[0])
   for (const t of manifest.tables) {
-    if ((existing.get(t.name)?.size ?? 0) > (skip.get(t.name)?.size ?? 0)) throw new RestoreRefusal('target_not_empty', t.name)
+    if ((existing.get(t.name)?.size ?? 0) > (skip.get(t.name)?.size ?? 0) + (overwrite.get(t.name)?.size ?? 0)) throw new RestoreRefusal('target_not_empty', t.name)
   }
-  return skip
+  return { skip, overwrite }
 }
 
 async function targetMigration(target: D1Database): Promise<string | null> {
@@ -251,9 +271,10 @@ export async function restore(deps: RestoreDeps): Promise<RestoreRecord> {
       if (t.mode !== r.mode || JSON.stringify(t.orderBy) !== JSON.stringify(r.orderBy)) throw new RestoreRefusal('tables_mismatch', `${r.name}: mode or key`)
       if (JSON.stringify(await tableColumns(target, r.name)) !== JSON.stringify(t.columns)) throw new RestoreRefusal('columns_mismatch', r.name)
     }
-    // 3. The target: only rows the backup holds identically (migration 0005's service rows) are allowed; skipped below.
+    // 3. The target: only rows the backup holds identically (migration 0005's service rows) are allowed, skipped below,
+    // and the named seeded rows, overwritten below.
     const existing = await targetRows(target, manifest)
-    const skip = await checkParts(bucket, manifest, existing)
+    const { skip, overwrite } = await checkParts(bucket, manifest, existing)
 
     // 4. The write, one statement per part.
     await deps.testing?.beforeTargetWrite?.()
@@ -262,6 +283,11 @@ export async function restore(deps: RestoreDeps): Promise<RestoreRecord> {
       const t = byName.get(r.name) as TableManifest
       const keyCols = (r.r2KeyColumns ?? []).map(c => t.columns.indexOf(c))
       const sql = insertPartSql(t.name, t.columns)
+      // A named seeded row goes first, so the backup's row is inserted in its place (its children come later in order).
+      for (const pk of overwrite.get(t.name) ?? []) {
+        const values = JSON.parse(pk) as (string | number)[]
+        await target.prepare(`DELETE FROM ${ident(t.name)} WHERE ${t.orderBy.map(c => `${ident(c)} = ?`).join(' AND ')}`).bind(...values).run()
+      }
       for (const [i, part] of t.parts.entries()) {
         const obj = await bucket.get(part.key)
         if (!obj) throw new RestoreFailure(`part_changed: ${t.name}/${pad(i)}`)

@@ -92,7 +92,7 @@ describe('a backup that is wrong (failures 1, 3)', () => {
     await expectRefused(await copyBackup({ manifest: m => ({ ...m, derived: [{ name: 'search_q', from: ['settings'] }] }) }), /^tables_mismatch: derived/)
   })
   it('refuses a backup that names a table the target has no entry for', async () => {
-    await expectRefused(await copyBackup({ manifest: m => ({ ...m, tables: [...m.tables, { ...m.tables[1], name: 'ghost_table' }] }) }), /^tables_mismatch: backup \[members, settings, support_grants, audit_log, ghost_table\]/)
+    await expectRefused(await copyBackup({ manifest: m => ({ ...m, tables: [...m.tables, { ...m.tables[1], name: 'ghost_table' }] }) }), /^tables_mismatch: backup \[members, settings, support_grants, audit_log, [a-z_, ]+, ghost_table\]/)
   })
   it('refuses a part whose lines aren\'t rows of its table, even when its sha256 matches', async () => {
     const settings = good.tables.find(t => t.name === 'settings')
