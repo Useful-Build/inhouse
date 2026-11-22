@@ -186,6 +186,19 @@ describe('failed runs', () => {
     slot({ routine: 'other', due: T + 9 * HOUR })
     expect((await collectDay(db, DAY, NOW)).runs?.unrecovered).toBe(1)
   })
+  it('a failed slot followed only by another failed slot is not recovered, whichever way the later one failed', async () => {
+    slot({ failure: 'run_failed', outcome: 'failed', due: T + 6 * HOUR })
+    slot({ failure: 'run_failed', outcome: 'failed', due: T + 8 * HOUR, deadline: T + 9 * HOUR, ended: T + 8 * HOUR + 60_000 })
+    const e = await collectDay(db, DAY, NOW)
+    expect(e.runs).toMatchObject({ slots: 2, failed: 2, unrecovered: 2 })
+    expect(runChecks(e).failed_runs.status).toBe('unclean')
+    sqlite.exec('DELETE FROM routine_slots')
+    // a later end that says done but carries a failure, and one with no failure that did not end done
+    slot({ failure: 'run_failed', outcome: 'failed', due: T + 6 * HOUR })
+    slot({ failure: 'invalid_result', outcome: 'done', due: T + 8 * HOUR, deadline: T + 9 * HOUR, ended: T + 8 * HOUR + 60_000 })
+    slot({ failure: null, outcome: 'failed', due: T + 9 * HOUR, deadline: T + 10 * HOUR, ended: T + 9 * HOUR + 60_000 })
+    expect((await collectDay(db, DAY, NOW)).runs).toMatchObject({ slots: 3, failed: 2, unrecovered: 2 })
+  })
   it('an ok slot that had not ended by the cut-off does not recover it', async () => {
     slot({ failure: 'run_failed', outcome: 'failed', due: T + 6 * HOUR })
     slot({ due: T + 8 * HOUR, ended: NOW + 1 })
@@ -205,6 +218,10 @@ describe('failed runs', () => {
     slot({ state: 'started', ended: null, outcome: null, started: NOW - BACKSTOP_MS - 1, deadline: T + HOUR })
     expect((await collectDay(db, DAY, NOW)).runs?.stuck).toBe(1)
   })
+  it('boundary: a started slot exactly at the backstop is not stuck (< not <=), as the tick loses it only past it', async () => {
+    slot({ state: 'started', ended: null, outcome: null, started: NOW - BACKSTOP_MS, deadline: T + HOUR })
+    expect((await collectDay(db, DAY, NOW)).runs?.stuck).toBe(0)
+  })
   it('no routine slot at all on the day is missing, not clean', async () => {
     const e = await collectDay(db, DAY, NOW)
     expect(e.runs?.slots).toBe(0)
@@ -221,6 +238,17 @@ describe('days still in flight (dayPending)', () => {
     slot({ state: 'started', ended: null, outcome: null, deadline: EOD + HOUR })
     expect(await dayPending(db, DAY, EOD + 1)).toMatch(/window/)
     expect(await dayPending(db, DAY, EOD + 2 * HOUR + 10 * HOUR)).toBeNull()
+  })
+  it('the open-slot branch alone: a skip routine\'s slot whose deadline runs past the day\'s end defers the day with no catch-up window open', async () => {
+    sqlite.exec('UPDATE routines SET enabled = 0')
+    run(`INSERT INTO routines (id, origin, name, instruction, days_mask, hour, minute, missed, need, creator_id, checked_until_ms, created_at_ms, updated_at_ms, kind) VALUES ('late', 'team', 'n', 'i', 127, 23, 55, 'skip', 0, 'm', 1, 1, 1, 'agent')`)
+    const MIN = 60_000
+    for (const state of ['claimed', 'started']) {
+      sqlite.exec('DELETE FROM routine_slots')
+      slot({ routine: 'late', state, ended: null, outcome: null, due: EOD - 5 * MIN, deadline: EOD + 5 * MIN })
+      expect(await dayPending(db, DAY, EOD + MIN)).toBe('a slot due this day is still inside its window')
+      expect(await dayPending(db, DAY, EOD + 5 * MIN)).toBeNull()
+    }
   })
   it('boundary: a slot whose deadline equals now is no longer inside its window', async () => {
     sqlite.exec('UPDATE routines SET enabled = 0')
@@ -239,17 +267,34 @@ describe('days still in flight (dayPending)', () => {
 })
 
 describe('guards', () => {
-  const fetchCall = (decision: string) =>
-    run(`INSERT INTO tool_calls (turn_id, n, chat_id, member_id, hook, tool, decision, input_bytes, input_sha256, at_ms) VALUES ('t', 1, 'c', 'm', 'pre', 'WebFetch', ?, 1, 'x', ?)`, decision, T + HOUR)
-  it('counts allowed WebFetch calls but does not judge them (no host is recorded), under any host list', async () => {
-    fetchCall('deny')
+  let calls = 0
+  const fetchCall = (decision: string, toolUseId: string | null = 'toolu_a', turn = 't') =>
+    run(`INSERT INTO tool_calls (turn_id, n, chat_id, member_id, hook, tool, tool_use_id, decision, input_bytes, input_sha256, at_ms) VALUES (?, ?, 'c', 'm', 'pre', 'WebFetch', ?, ?, 1, 'x', ?)`, turn, ++calls, toolUseId, decision, T + HOUR)
+  const planted = { canaries: ['PLANTED-1'] }
+  it('a WebFetch the hook refused leaves its deny row and the audit hook\'s allow row (runner hook-audit.test.ts): not an allowed fetch', async () => {
+    fetchCall('deny'); fetchCall('allow')
     expect((await collectDay(db, DAY, NOW)).guards).toMatchObject({ webfetchAllowed: 0, leaks: 0 })
-    sqlite.exec('DELETE FROM tool_calls'); fetchCall('allow')
-    expect((await collectDay(db, DAY, NOW)).guards).toMatchObject({ webfetchAllowed: 1, leaks: 0 })
+    fetchCall('allow', 'toolu_b')
+    expect((await collectDay(db, DAY, NOW)).guards?.webfetchAllowed).toBe(1)
+  })
+  it('an allow row that can\'t be paired with a deny counts as allowed: no tool_use id, or a deny in another turn', async () => {
+    fetchCall('deny', null); fetchCall('allow', null)
+    expect((await collectDay(db, DAY, NOW)).guards?.webfetchAllowed).toBe(1)
+    sqlite.exec('DELETE FROM tool_calls')
+    fetchCall('deny', 'toolu_a', 'other-turn'); fetchCall('allow', 'toolu_a')
+    expect((await collectDay(db, DAY, NOW)).guards?.webfetchAllowed).toBe(1)
+  })
+  it('an allowed WebFetch makes the guards check missing, under an empty list and under a list: no host is recorded', async () => {
+    fetchCall('allow')
+    expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards).toMatchObject({ status: 'missing', detail: expect.stringContaining('record the fetched host') })
     run(`INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 't:webfetch', ?, 1, 1, 'm_a', 'r')`, JSON.stringify('example.com'))
-    const e = await collectDay(db, DAY, NOW)
-    expect(e.guards).not.toBeNull()
-    expect(runChecks(e).guards.status).toBe('clean')
+    expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards.status).toBe('missing')
+  })
+  it('with planted canaries and no allowed WebFetch the guards check is clean; a refused WebFetch keeps it clean; without --canary it is missing', async () => {
+    expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards.status).toBe('clean')
+    fetchCall('deny'); fetchCall('allow')
+    expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards.status).toBe('clean')
+    expect(runChecks(await collectDay(db, DAY, NOW)).guards).toMatchObject({ status: 'missing', detail: expect.stringContaining('--canary') })
   })
   it('without --canary, a canary-shaped string in a notice body or fields is a leak (shape mode)', async () => {
     notice('n1', 'morning_check_found', T + HOUR, null, '{"note":"kestrel-x03-r2-0a1b2c3d"}')

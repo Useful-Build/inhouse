@@ -51,6 +51,12 @@ describe('the rules', () => {
     expect(d3).toMatchObject({ verdict: 'not_clean', count: 0, reasons: ['release'], releases: [sha('b')] })
     expect(run('2026-12-04', cleanEvidence(), [base, rel], d3)).toMatchObject({ verdict: 'clean', count: 1 })
   })
+  it('boundary: a behaviour release at exactly 00:00:00.000 restarts the day it starts, not the day it ends (>= start, < end)', () => {
+    const rel: ReleaseMarker = { appSha: sha('b'), atMs: dayStartMs('2026-12-03'), behaviour: true, live: ALL }
+    expect(run('2026-12-02', cleanEvidence(), [base, rel], { count: 1 })).toMatchObject({ verdict: 'clean', count: 2, releases: [] })
+    expect(run('2026-12-03', cleanEvidence(), [base, rel], { count: 2 })).toMatchObject({ verdict: 'not_clean', count: 0, reasons: ['release'], releases: [sha('b')] })
+    expect(run('2026-12-04', cleanEvidence(), [base, rel], { count: 0 })).toMatchObject({ verdict: 'clean', count: 1, releases: [] })
+  })
   it('a release that changes no behaviour leaves the count', () => {
     const rel: ReleaseMarker = { appSha: sha('b'), atMs: dayStartMs('2026-12-03') + 1, behaviour: false, live: ALL }
     expect(run('2026-12-03', cleanEvidence(), [base, rel], { count: 2 })).toMatchObject({ verdict: 'clean', count: 3, passed: true })

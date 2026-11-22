@@ -6,7 +6,8 @@
 // current value and its last write time, so a save made before a later change couldn't be judged from it.
 //
 // Not read, by design: Worker logs (`egress_refused`, `egress_denied`) are not stored in D1, R2 or a Durable Object, so
-// "refused egress logged" is not judged here; the guard check covers the allowed calls and the stored text instead.
+// "refused egress logged" is not judged here; the guard check covers the allowed calls and the stored text instead. It
+// can't judge an allowed WebFetch either (no host is stored), so a day with one is missing on the guards check.
 // Durable Object run state has no read route either; a stuck run shows as its routine slot staying open past its deadline.
 import { SYSTEM_MEMBER_ID } from '../../server/db/ids.ts'
 import { hashId } from '../../server/routines/keys.ts'
@@ -115,9 +116,18 @@ async function runs(db: SoakDb, s: number, e: number, nowMs: number): Promise<Ru
   return { slots: n(total[0]?.c), failed: failed.length, unrecovered, stuck: n(stuck[0]?.c) }
 }
 
-/** `tool_calls` keeps a call's input size and hash, never its host, so where a WebFetch went is not judged here. */
+/**
+ * `tool_calls` keeps a call's input size and hash, never its host, so where an allowed WebFetch went can't be judged
+ * here: checks.ts reports any as missing. Allowed means the audit hook's 'allow' row with no 'deny' row for the same
+ * call: the WebFetch hook records a 'deny' row for a call it refuses and the audit hook still records its 'allow' row
+ * (runner/src/guards/options.ts), so a refused call has both. A row with no tool_use id can't be paired and counts.
+ */
 async function guards(db: SoakDb, s: number, e: number, canaries: readonly string[]): Promise<GuardFacet> {
-  const fetched = await db("SELECT COUNT(*) AS c FROM tool_calls WHERE tool = 'WebFetch' AND decision = 'allow' AND at_ms >= ? AND at_ms < ?", [s, e])
+  const fetched = await db(
+    `SELECT COUNT(*) AS c FROM tool_calls a WHERE a.tool = 'WebFetch' AND a.decision = 'allow' AND a.at_ms >= ? AND a.at_ms < ?
+      AND NOT EXISTS (SELECT 1 FROM tool_calls d WHERE d.turn_id = a.turn_id AND d.tool_use_id = a.tool_use_id AND d.tool = 'WebFetch' AND d.decision = 'deny')`,
+    [s, e],
+  )
   const text = await db('SELECT body, fields_json FROM notices WHERE at_ms >= ? AND at_ms < ?', [s, e])
   const lines = await db('SELECT fields_json FROM activity_lines WHERE at_ms >= ? AND at_ms < ?', [s, e])
   const hit = (v: unknown): boolean => typeof v === 'string' && (canaries.length > 0 ? canaries.some(c => v.includes(c)) : CANARY_SHAPE.test(v))
@@ -145,7 +155,7 @@ const facet = async <T>(read: () => Promise<T>): Promise<T | null> => {
 }
 
 export interface CollectOptions {
-  /** Exact strings planted in the house data (`--canary`): the leak scan looks for these and nothing else. */
+  /** Exact strings planted in the house data (`--canary`): the leak scan looks for these and nothing else. Without them the guards check is missing. */
   canaries?: readonly string[]
 }
 

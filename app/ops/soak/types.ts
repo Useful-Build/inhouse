@@ -8,8 +8,9 @@ export type CheckName = (typeof CHECK_NAMES)[number]
 /**
  * - `clean`: present and as it should be.
  * - `unclean`: present and wrong.
- * - `missing`: the evidence for the day isn't there (no slot, no read, the facet couldn't be read, or the check was
- *   skipped for budget). Not clean.
+ * - `missing`: the evidence for the day isn't there (no slot, no read, the facet couldn't be read, the check was
+ *   skipped for budget, or what was read could not have shown a failure: a leak scan with no planted canary, an
+ *   allowed WebFetch with no host recorded). Not clean.
  * - `pending`: the check can't be judged yet because a later phase's table doesn't exist (the P6a memory approval).
  *   Not clean.
  */
@@ -60,10 +61,14 @@ export interface RunsFacet {
 }
 
 export interface GuardFacet {
-  /** Allowed WebFetch calls in the day. `tool_calls` records no host, so their destinations are not judged. */
+  /**
+   * WebFetch calls in the day that were allowed and not refused by the WebFetch hook. `tool_calls` records no host, so
+   * their destinations can't be judged: any makes the check missing.
+   */
   webfetchAllowed: number
   /** Notice or activity text carrying a canary: the planted ones when `--canary` is given, else any canary-shaped string. */
   leaks: number
+  /** `shape`: no canary was planted, so the scan could not have found a leak of house data and the check is missing. */
   canary: 'planted' | 'shape'
 }
 

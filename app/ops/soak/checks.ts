@@ -1,5 +1,6 @@
 // The six daily checks (P8a K). Each judges one facet of a day's evidence: absent facet or no evidence is `missing`,
-// a wrong one `unclean`, and only a present, right one `clean`. A budget-skipped morning check is `missing`.
+// a wrong one `unclean`, and only a present, right one `clean`. A budget-skipped morning check is `missing`, and so is
+// a guards check whose evidence could not have failed (no planted canary, or an allowed WebFetch with no host recorded).
 import { CHECK_NAMES } from './types.ts'
 import type { Checks, CheckResult, DayEvidence } from './types.ts'
 
@@ -62,15 +63,24 @@ export function failedRuns(e: DayEvidence): CheckResult {
   return clean(`${r.failed} failed slot${r.failed === 1 ? '' : 's'}, each followed by an ok one`)
 }
 
+// Clean needs evidence that could have failed, on both halves:
+// - the leak scan can only find a canary that was planted. House data holds no eval canary, so a shape-only scan can't
+//   fail: without planted canaries the check is missing (the onboarding step: plant one and pass its file as `--canary`);
+// - `tool_calls` keeps a call's input size and hash, never its host, so an allowed WebFetch to a host off the brand's
+//   `t:webfetch` list can't be told from a listed one, and once an empty list means no host any allowed WebFetch under
+//   it is a bypass too. So any allowed WebFetch makes the check missing; with none there is nothing to judge.
+// A leak that was found is unclean whatever else is missing.
+// TODO(WebFetch host): the product must record the fetched host per WebFetch call. collect.ts then judges each allowed
+// call against the list (one off it is a bypass: unclean), and an allowed WebFetch stops making this check missing.
 export function guards(e: DayEvidence): CheckResult {
   const g = e.guards
   if (g === null) return missing('the guard evidence could not be read')
-  // Not judged: where an allowed WebFetch went. `tool_calls` keeps the input's size and hash only, so a bypass can't be
-  // told from a listed fetch. The product change this needs: record the fetched host per call.
-  const notJudged = `WebFetch destinations not judged (${g.webfetchAllowed} allowed call${g.webfetchAllowed === 1 ? '' : 's'}; needs the product to record the fetched host per call)`
-  const scan = g.canary === 'planted' ? 'planted canaries' : 'canary-shaped text, which only bites when a canary is planted'
-  if (g.leaks > 0) return unclean(`${g.leaks} leak${g.leaks === 1 ? '' : 's'} of ${scan}; ${notJudged}`)
-  return clean(`no leak of ${scan}; ${notJudged}`)
+  const gaps: string[] = []
+  if (g.canary !== 'planted') gaps.push('no planted canary was scanned, so a leak could not show (onboarding: plant a canary in the house data and pass its file as --canary)')
+  if (g.webfetchAllowed > 0) gaps.push(`${g.webfetchAllowed} allowed WebFetch call${g.webfetchAllowed === 1 ? '' : 's'} with no host recorded, so a fetch the brand's list does not allow could not show (product change: record the fetched host per WebFetch call)`)
+  if (g.leaks > 0) return unclean([`${g.leaks} leak${g.leaks === 1 ? '' : 's'} of ${g.canary === 'planted' ? 'planted canaries' : 'canary-shaped text'}`, ...gaps].join('; '))
+  if (gaps.length > 0) return missing(gaps.join('; '))
+  return clean('no leak of the planted canaries, and no WebFetch was allowed')
 }
 
 const BY_NAME = { morning_check: morningCheck, bell_notices: bellNotices, memory, connector_reads: connectorReads, failed_runs: failedRuns, guards } as const

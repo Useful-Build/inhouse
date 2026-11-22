@@ -1,9 +1,11 @@
 // Each check's clean, unclean and missing case (P8a K). A budget-skipped morning check and a P6a-pending memory check
 // are not clean.
+import { fc, test } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
 import { bellNotices, connectorReads, failedRuns, guards, memory, morningCheck, runChecks } from './checks.ts'
 import { cleanEvidence } from './test-support.ts'
 import { CHECK_NAMES } from './types.ts'
+import type { GuardFacet } from './types.ts'
 
 const e = cleanEvidence
 
@@ -101,20 +103,47 @@ describe('failed runs', () => {
   })
 })
 
+// Ways the guards check can read clean on evidence that could not have failed, written down first:
+//  1. no canary is planted, so the leak scan has nothing it could find (house data holds no eval canary);
+//  2. a WebFetch was allowed and `tool_calls` records no host, so a fetch off the brand's list can't show;
+//  3. a leak is reported as missing, not unclean, because one of the two gaps above is open too.
 describe('guards', () => {
-  it('clean, and says what it does not judge', () => {
-    const r = guards(e())
-    expect(r.status).toBe('clean')
+  const g = (o: Partial<GuardFacet> = {}) => guards({ ...e(), guards: { webfetchAllowed: 0, leaks: 0, canary: 'planted', ...o } })
+  it('clean: planted canaries were scanned with no leak, and no WebFetch was allowed', () => {
+    expect(g()).toMatchObject({ status: 'clean', detail: expect.stringContaining('planted') })
+  })
+  it('missing without a planted canary (failure 1), and the detail names the onboarding step', () => {
+    const r = g({ canary: 'shape' })
+    expect(r.status).toBe('missing')
+    expect(r.detail).toContain('plant a canary')
+    expect(r.detail).toContain('--canary')
+  })
+  it('missing when a WebFetch was allowed (failure 2), and the detail names the product change', () => {
+    const r = g({ webfetchAllowed: 5 })
+    expect(r.status).toBe('missing')
+    expect(r.detail).toContain('5 allowed WebFetch calls')
     expect(r.detail).toContain('record the fetched host')
   })
-  it('the detail says a canary-shape scan only bites when a canary is planted', () => {
-    expect(guards({ ...e(), guards: { webfetchAllowed: 0, leaks: 0, canary: 'shape' } }).detail).toContain('only bites when a canary is planted')
+  it('missing names both gaps when both are open', () => {
+    const r = g({ canary: 'shape', webfetchAllowed: 1 })
+    expect(r.status).toBe('missing')
+    expect(r.detail).toContain('plant a canary')
+    expect(r.detail).toContain('record the fetched host')
   })
-  it('unclean: a leak. Allowed WebFetch calls alone are not judged', () => {
-    expect(guards({ ...e(), guards: { webfetchAllowed: 0, leaks: 1, canary: 'planted' } }).status).toBe('unclean')
-    expect(guards({ ...e(), guards: { webfetchAllowed: 5, leaks: 0, canary: 'planted' } }).status).toBe('clean')
+  it('unclean: a leak, whichever scan found it and whatever else is missing (failure 3)', () => {
+    expect(g({ leaks: 1 }).status).toBe('unclean')
+    expect(g({ leaks: 1, canary: 'shape' }).status).toBe('unclean')
+    expect(g({ leaks: 2, webfetchAllowed: 5 })).toMatchObject({ status: 'unclean', detail: expect.stringContaining('record the fetched host') })
   })
   it('missing: unreadable', () => expect(guards({ ...e(), guards: null }).status).toBe('missing'))
+  test.prop([fc.record({ webfetchAllowed: fc.nat(3), leaks: fc.nat(3), canary: fc.constantFrom<GuardFacet['canary']>('planted', 'shape') })])(
+    'clean only when planted canaries were scanned, none leaked and no WebFetch was allowed; unclean exactly on a leak',
+    f => {
+      const status = guards({ ...e(), guards: f }).status
+      expect(status === 'clean').toBe(f.canary === 'planted' && f.leaks === 0 && f.webfetchAllowed === 0)
+      expect(status === 'unclean').toBe(f.leaks > 0)
+    },
+  )
 })
 
 describe('runChecks', () => {

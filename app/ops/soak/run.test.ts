@@ -1,8 +1,8 @@
 // The driver and the release markers (P8a K): catch-up days, no gaps, the record is appended and never rewritten.
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { inline, main, recordDays, verifyRecord } from './run.ts'
 import type { SoakRecordFile } from './run.ts'
 import type { SoakDb } from './collect.ts'
@@ -42,6 +42,12 @@ describe('recordDays', () => {
     const added = await recordDays(cleanDb, { records: [] }, markers, { from: '2026-12-01', until: '2026-12-03', nowMs: NOW, pending: async () => null })
     expect(added.map(r => r.day)).toEqual(['2026-12-01', '2026-12-02', '2026-12-03'])
     expect(added.every(r => r.count === 0 && !r.passed && r.checks.memory.status === 'pending')).toBe(true)
+  })
+  it('without planted canaries the guards check is missing on every day; with them, and no allowed WebFetch, it is clean', async () => {
+    const db: SoakDb = async sql => (sql.includes("tool = 'WebFetch'") ? [{ c: 0 }] : cleanDb(sql))
+    const day = async (canaries?: string[]) => (await recordDays(db, { records: [] }, markers, { from: '2026-12-01', until: '2026-12-01', nowMs: NOW, pending: async () => null, canaries }))[0]!
+    expect((await day()).checks.guards).toMatchObject({ status: 'missing', detail: expect.stringContaining('--canary') })
+    expect((await day(['PLANTED-1'])).checks.guards.status).toBe('clean')
   })
   it('the count carries across runs: a second run continues from the first run\'s last record', async () => {
     const file: SoakRecordFile = { records: [] }
@@ -95,6 +101,13 @@ describe('verifyRecord', () => {
   it('names a recorded day whose live set disagrees with the markers', () => {
     expect(verifyRecord({ records: [rec('2026-12-01', { live: ['P4'] })] }, [base])).toContain('2026-12-01')
   })
+  it('names a record with no live set (written before the driver recorded it) instead of throwing', () => {
+    const old = rec('2026-12-01') as Partial<DayRecord>
+    delete old.live
+    const why = verifyRecord({ records: [old as DayRecord] }, [base])
+    expect(why).toContain('2026-12-01')
+    expect(why).toContain('older driver')
+  })
 })
 
 describe('main: the releases file', () => {
@@ -114,6 +127,18 @@ describe('main: the releases file', () => {
     writeFileSync(rec, JSON.stringify({ records: [{ day: '2026-12-02', checks: {}, verdict: 'not_clean', reasons: [], live: [], count: 0, releases: [], passed: false }] }))
     const rel = file('rel.json', JSON.stringify([{ at: '2026-12-02T01:00:00Z', app_sha: 'b'.repeat(40), live: ['P4'], behaviour: true }]))
     expect(await main(['--db', 'x', '--record', rec, '--releases', rel])).toBe(2)
+  })
+  it('a record written by an older driver (no live set) exits 2 with a message, and the record is left as it was', async () => {
+    const rec = join(dir, 'older.json')
+    const text = JSON.stringify({ records: [{ day: '2026-12-02', checks: {}, verdict: 'not_clean', reasons: [], count: 0, releases: [], passed: false }] })
+    writeFileSync(rec, text)
+    const said: string[] = []
+    const spy = vi.spyOn(console, 'error').mockImplementation(m => { said.push(String(m)) })
+    try {
+      expect(await main(['--db', 'x', '--record', rec, '--releases', file('none-yet.json', '[]')])).toBe(2)
+    } finally { spy.mockRestore() }
+    expect(said.join('\n')).toMatch(/2026-12-02.*older driver/)
+    expect(readFileSync(rec, 'utf8')).toBe(text)
   })
   it('a missing, unreadable or invalid releases file exits 2 and writes no record', async () => {
     for (const p of [join(dir, 'none.json'), file('bad.json', '[{"at":"nope"}]'), file('obj.json', '{}')]) {

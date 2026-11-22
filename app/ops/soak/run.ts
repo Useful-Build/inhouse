@@ -6,8 +6,10 @@
 //                        [--from YYYY-MM-DD] [--until YYYY-MM-DD] [--local --persist-to <dir>]
 //                        [--config <wrangler config with the D1 binding>] [--canary <file>]
 //
-// `--canary` (optional): a file of the exact strings planted in the house data, one per line. With it the leak scan
-// looks for those; without it, only for canary-shaped text (which bites only when a canary is planted).
+// `--canary`: a file of the exact strings planted in the house data, one per line. With it the leak scan looks for
+// those. The flag is optional, but a clean day needs it: without it the scan looks only for canary-shaped text, which
+// house data never holds, so the guards check is missing (not clean). The guards check is also missing on a day with an
+// allowed WebFetch, until the product records the fetched host per call (checks.ts).
 // `--until` can't be later than the UTC day before now, and a day is deferred (not recorded) while a slot due in it is
 // still inside its window or a catch-up could still be made.
 //
@@ -89,6 +91,8 @@ export function verifyRecord(file: SoakRecordFile, markers: readonly ReleaseMark
     if (rec !== undefined && !rec.releases.includes(m.appSha)) return `the record for ${rec.day} doesn't list the behaviour release ${m.appSha}`
   }
   for (const rec of file.records) {
+    // A record from before the driver wrote each day's live set has none to check.
+    if (!Array.isArray(rec.live)) return `the record for ${rec.day} has no live phases: an older driver wrote it, so it can't be checked against the releases (record those days again into a new file with --from)`
     const want = [...livePhases(markers, rec.day)].sort().join(',')
     if (rec.live.join(',') !== want) return `the record for ${rec.day} has live phases [${rec.live.join(',')}] but the releases say [${want}]`
   }
