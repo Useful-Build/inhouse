@@ -2,6 +2,10 @@
 
 <!-- What changed and why, in a few lines. Link the plan or issue. -->
 
+## Risk tier
+
+<!-- Low, Normal, or High (Sensitive) per REVIEW.md on main. -->
+
 ## Changed existing checks
 
 <!-- Every spec, baseline, property test, lint rule, workflow or ruleset this PR changes, each with the reason.
@@ -14,9 +18,9 @@ pr-gates flags them. Write "None" if there are none. -->
 <!-- For a UI change: before and after, light and dark, desktop (1440x900) and phone (390x844).
 Changed visual baselines show in the diff; say why each one moved. Delete this section for a change with no UI. -->
 
-## Verification
+## Verification & live QA
 
-<!-- What you ran and what it showed. -->
+<!-- What automated checks you ran and what they showed, plus targeted live QA proof (e.g., Live QA: PASS - ...) for user-facing or agent-behavior changes per VERIFY.md. -->
 
 ## Commit trailers
 
