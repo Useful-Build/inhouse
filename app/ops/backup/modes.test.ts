@@ -5,6 +5,8 @@
 //  3. an insert_only table holds a row created after the point, or claims it is exact when a row landed at or before
 //     its point during the read;
 //  4. a paged table is called exact: the manifest or the restore record doesn't mark it, so F1's reconcile can't know;
+//  6. an append_only table whose highest row is deleted after the point batch holds the row that reuses its id (SQLite
+//     reuses the largest rowid of an INTEGER PRIMARY KEY without AUTOINCREMENT), or claims to be exact;
 //  5. a rule that misuses a mode (insert_only with no creation column, a creation column on another mode) backs up
 //     anyway instead of throwing by name.
 import { applyD1Migrations } from 'cloudflare:test'
@@ -58,7 +60,21 @@ beforeAll(async () => {
   }
 })
 
-describe('the modes (failures 1 to 4)', () => {
+describe('the modes (failures 1 to 4, 6)', () => {
+  it('an append_only table bounded by its creation column holds no row that reuses a deleted id after the point, and is marked paged when a row went', async () => {
+    const msg = (id: string, pos: number, atMs: number) => e.DB.prepare("INSERT INTO chat_messages (id, chat_id, run_id, turn_id, pos, role, text, at_ms) VALUES (?, 'c_big_00002', 'r', 't', ?, 'agent', 'x', ?)").bind(id, pos, atMs).run()
+    for (let i = 0; i < 3; i++) await msg(`t_reuse.${i}`, i, T + i)
+    const top = (await e.DB.prepare("SELECT n FROM chat_messages WHERE id = 't_reuse.2'").first<{ n: number }>())!.n
+    const m = await backup({ db: e.DB, bucket: e.FILES, nowMs: T + 4, testing: { afterPointBatch: async () => {
+      // A deletion runner removes the highest row, and the next message takes its rowid.
+      await e.DB.prepare("DELETE FROM chat_messages WHERE id = 't_reuse.2'").run()
+      await msg('t_reuse.new', 3, T + 60_000)
+    } } })
+    expect((await e.DB.prepare("SELECT n FROM chat_messages WHERE id = 't_reuse.new'").first<{ n: number }>())!.n).toBe(top)
+    expect(tableOf(m, 'chat_messages')).toMatchObject({ mode: 'append_only', maxId: top, point: T + 2, rows: 2, consistency: 'paged' })
+    await e.DB.prepare("DELETE FROM chat_messages WHERE id = 't_reuse.new'").run()
+  })
+
   it('an insert_only table that gains a row at or before its point during the read is marked paged, not exact', async () => {
     const m = await backup({ db: e.DB, bucket: e.FILES, nowMs: T + 1, testing: { afterPointBatch: async () => { await toolCall(e.DB, 'turn_late', 0, T - 5000) } } })
     expect(tableOf(m, 'tool_calls')).toMatchObject({ mode: 'insert_only', consistency: 'paged', rows: 31 })
@@ -95,7 +111,7 @@ describe('misuse (failure 5)', () => {
 
   it('throws by name on an insert_only rule with no creation column, a creation column on another mode, or one the table lacks', async () => {
     expect(await codeOf(canonicalTables(e.DB, undefined, swap('tool_calls', r => ({ ...r, createdColumn: undefined }))))).toEqual(['mode_rule', 'backup: mode_rule (tool_calls: insert_only needs a createdColumn)'])
-    expect(await codeOf(canonicalTables(e.DB, undefined, swap('chats', r => ({ ...r, createdColumn: 'created_at_ms' }))))).toEqual(['mode_rule', 'backup: mode_rule (chats: createdColumn is for insert_only only)'])
+    expect(await codeOf(canonicalTables(e.DB, undefined, swap('chats', r => ({ ...r, createdColumn: 'created_at_ms' }))))).toEqual(['mode_rule', 'backup: mode_rule (chats: createdColumn is for insert_only and append_only only)'])
     expect(await codeOf(canonicalTables(e.DB, undefined, swap('tool_calls', r => ({ ...r, createdColumn: 'nope' }))))).toEqual(['mode_rule', 'backup: mode_rule (tool_calls: createdColumn nope is not a column)'])
   })
 })

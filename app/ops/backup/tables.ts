@@ -22,7 +22,10 @@ export interface TableRule {
    * snapshot across queries, so it isn't exactly at the point: the manifest and the restore record mark it `paged`.
    */
   mode: 'snapshot' | 'append_only' | 'insert_only' | 'paged'
-  /** `insert_only` only: the creation time column (epoch ms) that bounds the rows read after the point batch. */
+  /**
+   * The creation time column (epoch ms) that bounds the rows read after the point batch: required on `insert_only`,
+   * optional on `append_only` (where a deleted top row's rowid can be reused), never on the other modes.
+   */
   createdColumn?: string
   /** Tables whose rows must be restored first (foreign keys). */
   after?: readonly string[]
@@ -42,7 +45,7 @@ export const TABLE_RULES: readonly TableRule[] = [
   { name: 'chats', orderBy: ['id'], mode: 'paged', after: ['members'] },
   // Only ever inserted (`ON CONFLICT(id) DO NOTHING`, server/do/brand-agent/projection.ts); tables.test.ts fails on
   // any UPDATE or REPLACE in the product's code.
-  { name: 'chat_messages', orderBy: ['n'], mode: 'append_only', after: ['chats'] },
+  { name: 'chat_messages', orderBy: ['n'], mode: 'append_only', createdColumn: 'at_ms', after: ['chats'] },
   // No foreign key, but a tool call belongs to its chat.
   { name: 'tool_calls', orderBy: ['turn_id', 'n'], mode: 'insert_only', createdColumn: 'at_ms', after: ['chats'] },
   { name: 'chat_files', orderBy: ['id'], mode: 'paged', after: ['chats'], r2KeyColumns: ['r2_key'] },
@@ -58,7 +61,7 @@ export const TABLE_RULES: readonly TableRule[] = [
   { name: 'today_items', orderBy: ['id'], mode: 'paged', after: ['routine_slots'] },
   { name: 'today_aside', orderBy: ['item_id'], mode: 'snapshot', after: ['members'] },
   // `activity_no_update` refuses every UPDATE (0230).
-  { name: 'activity_lines', orderBy: ['n'], mode: 'append_only', after: ['members'] },
+  { name: 'activity_lines', orderBy: ['n'], mode: 'append_only', createdColumn: 'at_ms', after: ['members'] },
   { name: 'notices', orderBy: ['id'], mode: 'paged', after: ['members'] },
   { name: 'notice_reads', orderBy: ['member_id', 'notice_id'], mode: 'insert_only', createdColumn: 'at_ms', after: ['members', 'notices'] },
   { name: 'library_uploads', orderBy: ['id'], mode: 'paged', after: ['members'], r2KeyColumns: ['r2_key'] },
@@ -115,13 +118,19 @@ export async function canonicalTables(db: D1Database, registry: readonly TableEn
   return { rules: restoreOrder(rules), derived }
 }
 
-/** C1: an `insert_only` rule names a real creation column, and no other mode names one. Throws `mode_rule` by name. */
+/**
+ * C1: an `insert_only` rule names a real creation column, an `append_only` one may, and no other mode does. Throws
+ * `mode_rule` by name.
+ */
 async function checkMode(db: D1Database, r: TableRule): Promise<void> {
-  if (r.mode !== 'insert_only') {
-    if (r.createdColumn !== undefined) throw new BackupError('mode_rule', `${r.name}: createdColumn is for insert_only only`)
+  if (r.mode !== 'insert_only' && r.mode !== 'append_only') {
+    if (r.createdColumn !== undefined) throw new BackupError('mode_rule', `${r.name}: createdColumn is for insert_only and append_only only`)
     return
   }
-  if (r.createdColumn === undefined) throw new BackupError('mode_rule', `${r.name}: insert_only needs a createdColumn`)
+  if (r.createdColumn === undefined) {
+    if (r.mode === 'insert_only') throw new BackupError('mode_rule', `${r.name}: insert_only needs a createdColumn`)
+    return
+  }
   const columns = (await db.prepare(`PRAGMA table_info(${ident(r.name)})`).all<{ name: string }>()).results.map(c => c.name)
   if (!columns.includes(r.createdColumn)) throw new BackupError('mode_rule', `${r.name}: createdColumn ${r.createdColumn} is not a column`)
 }

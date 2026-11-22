@@ -14,7 +14,7 @@ export const TableManifestSchema = z.object({
   rows: Count,
   /** `append_only` tables: the largest id at the point batch (0 when empty). */
   maxId: Count.optional(),
-  /** `insert_only` tables (C1): the largest creation value at the point batch (0 when empty). */
+  /** `insert_only` and bounded `append_only` tables (C1): the largest creation value at the point batch (0 when empty). */
   point: z.number().optional(),
   /**
    * C1: `exact` when the table is the state at the point batch; `paged` when it was read after it and may differ (every

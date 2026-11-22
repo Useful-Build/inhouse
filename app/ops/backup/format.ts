@@ -112,13 +112,18 @@ export function appendKey(rule: TableRule): string {
 export const maxIdSelect = (db: D1Database, rule: TableRule): D1PreparedStatement =>
   db.prepare(`SELECT COALESCE(MAX(${ident(appendKey(rule))}), 0) AS max FROM ${ident(rule.name)}`)
 
-/** The rows of an `append_only` table with an id at or below `maxId`, a page of `READ_PAGE_ROWS` at a time, in id order. */
-export async function* appendRows(db: D1Database, rule: TableRule, columns: readonly string[], maxId: number): AsyncGenerator<Record<string, unknown>> {
+/**
+ * The rows of an `append_only` table with an id at or below `maxId`, a page of `READ_PAGE_ROWS` at a time, in id order.
+ * With `createdAtMost` (C1), only rows created at or before it: SQLite reuses the largest rowid of an INTEGER PRIMARY
+ * KEY without AUTOINCREMENT, so a row inserted after the point batch can take a deleted row's id at or below `maxId`.
+ */
+export async function* appendRows(db: D1Database, rule: TableRule, columns: readonly string[], maxId: number, createdAtMost?: number): AsyncGenerator<Record<string, unknown>> {
   const key = ident(appendKey(rule))
-  const sql = `SELECT ${selectList(columns)} FROM ${ident(rule.name)} WHERE ${key} > ? AND ${key} <= ? ORDER BY ${key} LIMIT ${READ_PAGE_ROWS}`
+  const bound = createdAtMost === undefined ? '' : ` AND ${ident(createdKey(rule))} <= ?`
+  const sql = `SELECT ${selectList(columns)} FROM ${ident(rule.name)} WHERE ${key} > ? AND ${key} <= ?${bound} ORDER BY ${key} LIMIT ${READ_PAGE_ROWS}`
   let after = 0
   for (;;) {
-    const page = (await db.prepare(sql).bind(after, maxId).all<Record<string, unknown>>()).results
+    const page = (await db.prepare(sql).bind(after, maxId, ...(createdAtMost === undefined ? [] : [createdAtMost])).all<Record<string, unknown>>()).results
     for (const row of page) yield row
     if (page.length < READ_PAGE_ROWS) return
     after = page[page.length - 1][appendKey(rule)] as number
@@ -127,13 +132,16 @@ export async function* appendRows(db: D1Database, rule: TableRule, columns: read
 
 const keyList = (rule: TableRule) => `(${orderList(rule)})`
 
-/** C1: an `insert_only` table's creation column. */
+/** C1: an `insert_only` (or bounded `append_only`) table's creation column. */
 export function createdKey(rule: TableRule): string {
-  if (rule.mode !== 'insert_only' || rule.createdColumn === undefined) throw new BackupError('mode_rule', `${rule.name}: insert_only needs a createdColumn`)
+  if ((rule.mode !== 'insert_only' && rule.mode !== 'append_only') || rule.createdColumn === undefined) throw new BackupError('mode_rule', `${rule.name}: no createdColumn to bound by`)
   return rule.createdColumn
 }
 
-/** The point batch's read of an `insert_only` table: its largest creation value (the point) and its row count. */
+/**
+ * The point batch's read of an `insert_only` or bounded `append_only` table: its largest creation value (the point) and
+ * its row count.
+ */
 export const pointSelect = (db: D1Database, rule: TableRule): D1PreparedStatement =>
   db.prepare(`SELECT COALESCE(MAX(${ident(createdKey(rule))}), 0) AS point, COUNT(*) AS n FROM ${ident(rule.name)}`)
 

@@ -45,7 +45,8 @@ export async function backup(deps: BackupDeps): Promise<BackupManifest> {
   // tables are read after it (C1).
   const snapshotRules = rules.filter(r => r.mode === 'snapshot')
   const appendRules = rules.filter(r => r.mode === 'append_only')
-  const insertRules = rules.filter(r => r.mode === 'insert_only')
+  // insert_only tables, and append_only ones bounded by a creation column: their point and count.
+  const insertRules = rules.filter(r => r.mode === 'insert_only' || (r.mode === 'append_only' && r.createdColumn !== undefined))
   const results = await db.batch([
     ...snapshotRules.map(r => snapshotSelect(db, r, cols(r.name))),
     ...appendRules.map(r => maxIdSelect(db, r)),
@@ -72,12 +73,13 @@ export async function backup(deps: BackupDeps): Promise<BackupManifest> {
     if (r.mode === 'snapshot') {
       for (const row of snapshotRows.get(r.name) ?? []) await writer.add(encodeRow(r.name, cols(r.name), row))
     } else if (r.mode === 'append_only') {
-      for await (const row of appendRows(db, r, cols(r.name), maxIds.get(r.name) as number)) await writer.add(encodeRow(r.name, cols(r.name), row))
+      for await (const row of appendRows(db, r, cols(r.name), maxIds.get(r.name) as number, point?.point)) await writer.add(encodeRow(r.name, cols(r.name), row))
     } else {
       for await (const row of keyRows(db, r, cols(r.name), point === undefined ? {} : { createdAtMost: point.point })) await writer.add(encodeRow(r.name, cols(r.name), row))
     }
     const digest = await writer.finish()
-    // An insert_only table is exact when it read back the rows the point batch counted; paged tables never are.
+    // An insert_only or bounded append_only table is exact when it read back the rows the point batch counted; paged
+    // tables never are.
     const exact = r.mode === 'paged' ? false : point === undefined ? true : digest.rows === point.n
     tables.push({
       name: r.name, columns: cols(r.name), orderBy: [...r.orderBy], mode: r.mode, rows: digest.rows,
