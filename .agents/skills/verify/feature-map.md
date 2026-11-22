@@ -34,7 +34,7 @@ Today: needs-you cards
 Today: failed morning check (product)
   Path:     Today before the current day's morning check has run or is late
   Selector: the check's "didn't finish" card
-  Expected: if yesterday's latest check failed, its card is still visible. A morning with no known failure stays empty before the deadline. After the deadline, a missing check shows the usual "hasn't run today" card.
+  Expected: if the previous local date's latest check failed, its card is still visible (before the deadline on a due day, all day on a day off, never from two days back, never with no routine). A morning with no known failure stays empty before the deadline. After the deadline, a missing check shows the usual "hasn't run today" card.
   Covered:  server/today/view.test.ts
 
 Today: snooze and dismiss

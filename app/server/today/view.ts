@@ -2,7 +2,7 @@
 // the literal timelines in the tests are the whole oracle. "Newer" is `(local_date, claimed_at_ms)` as a pair, never the
 // slot key's text; Today shows the shown run's items only, so a late older result can't bring a resolved problem back.
 import { ON_TIME_MS } from '../routines/limits.ts'
-import { instantOf, intlZone, weekdayBit } from '../routines/slots.ts'
+import { instantOf, intlZone, prevDate, weekdayBit } from '../routines/slots.ts'
 import { gapsOfSummary } from './words.ts'
 import type { CardCause } from './ids.ts'
 
@@ -89,17 +89,19 @@ export function todayView(input: { nowMs: number; tz: string; routine: RoutineFa
     else if (status !== null) cards.push(slotCard(status, newest))
     return { shown, cards }
   }
-  // No slot today: past the slot's deadline the check hasn't run (or is off).
+  // No slot today. A deleted routine has nothing to carry or to be late. On a due day, past the slot's deadline the check
+  // hasn't run (or is off). Otherwise the previous local date's latest failure stays visible: before the deadline on a
+  // due day, all day on a day off, and never from two days back.
   const r = input.routine
-  if (r !== null && (r.days_mask & (1 << weekdayBit(today))) !== 0) {
+  if (r === null) return { shown, cards }
+  if ((r.days_mask & (1 << weekdayBit(today))) !== 0) {
     const due = instantOf(zone, today, `${pad(r.hour)}:${pad(r.minute)}`)
     if (input.nowMs > due + ON_TIME_MS) {
       cards.push({ cause: !r.enabled || r.deleted ? 'off' : 'not_run', localDate: today, hashed: `${r.id}|${today}`, clock: null, atMs: due + ON_TIME_MS, areas: [], tooMany: false })
       return { shown, cards }
     }
   }
-  // The store reads today and yesterday. Keep yesterday's latest failure visible while there is no status for today.
-  const previous = slots.find(s => s.local_date < today)
+  const previous = slots.find(s => s.local_date === prevDate(today))
   if (previous && slotStatus(previous) === 'failed') cards.push(slotCard('failed', previous))
   return { shown, cards }
 }

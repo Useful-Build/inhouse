@@ -84,7 +84,7 @@ export function instantOf(zone: ZoneFn, date: string, time: string): number {
 export const weekdayBit = (date: string): number => (new Date(`${date}T00:00:00Z`).getUTCDay() + 6) % 7
 
 const nextDate = (date: string) => new Date(Date.parse(`${date}T00:00:00Z`) + DAY).toISOString().slice(0, 10)
-const prevDate = (date: string) => new Date(Date.parse(`${date}T00:00:00Z`) - DAY).toISOString().slice(0, 10)
+export const prevDate = (date: string) => new Date(Date.parse(`${date}T00:00:00Z`) - DAY).toISOString().slice(0, 10)
 
 export const slotKey = (routineId: string, date: string, time: string): string => `${routineId}|${date}|${time}`
 export const scheduledTime = (r: Schedule): string => `${pad(r.hour)}:${pad(r.minute)}`

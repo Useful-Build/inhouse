@@ -61,6 +61,20 @@ describe('empty chat tool status', () => {
     expect(html).toContain('>Manage tools</button>')
   })
 
+  test('a paused and a disconnected tool together are unreadable, not none', () => {
+    const html = blankChat(['paused', 'disconnected'])
+    expect(html).toContain(UNREADABLE)
+    expect(html).not.toContain(NONE)
+    expect(html).toContain('>Manage tools</button>')
+  })
+
+  test('while loading with no data, the current claim is unchanged', () => {
+    const data = agent.read()
+    vi.spyOn(agent, 'read').mockReturnValue({ ...data, status: 'loading' })
+    const html = renderToStaticMarkup(createElement(TooltipProvider, null, createElement(Chats)))
+    expect(html).not.toContain(UNREADABLE)
+  })
+
   test('offers to connect tools when none have been connected', () => {
     const html = blankChat([])
     expect(html).toContain(NONE)
