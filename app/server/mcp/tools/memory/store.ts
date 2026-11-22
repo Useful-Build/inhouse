@@ -79,6 +79,14 @@ export interface MemoryStore {
    * that (it waits for an admin's OK again), at `ifRev`. Writes `memory.forgotten` or `memory.restored`, by `at.actorId`.
    */
   setBrandForgotten(input: { id: string; forgotten: boolean; ifRev: number }, at: At): Promise<SetForgottenResult>
+  /**
+   * P6a (W2), route 78: an Admin (or the Inhouse team under a grant) approves a waiting team fact (`active`) or rejects
+   * it (`forgotten`), at `ifRev`. Only from `waiting`. Writes `memory.approved` or `memory.rejected` with the revision
+   * decided, by `at.actorId`, in the same batch.
+   */
+  setBrandApproved(input: { id: string; approved: boolean; ifRev: number }, at: At): Promise<SetForgottenResult>
+  /** P6a (W2), route 77: the team's waiting facts, newest first, at most `limit`. The only read of waiting facts. */
+  waiting(limit: number): Promise<Fact[]>
 }
 
 interface FactRow {
@@ -269,6 +277,32 @@ export function memoryStore({ db }: { db: D1Database }): MemoryStore {
         }, { table: 'memories', where: 'id = ?', params: [id], stamp }),
       ])
       return settle(results[0].meta.changes, id, 'brand', null)
+    },
+
+    async setBrandApproved({ id, approved, ifRev }, at) {
+      const stamp = writeStamp(at.requestId)
+      const results = await runBatch(db, [
+        stmt(
+          `UPDATE memories SET status = ?, rev = rev + 1, updated_at_ms = ?, req_id = ?
+           WHERE id = ? AND scope = 'brand' AND status = 'waiting' AND rev = ?`,
+          approved ? 'active' : 'forgotten', at.nowMs, stamp, id, ifRev,
+        ),
+        auditInsert({
+          atMs: at.nowMs,
+          actorId: at.actorId,
+          args: { action: approved ? 'memory.approved' : 'memory.rejected', memoryId: id, rev: ifRev },
+          target: { kind: 'memory', id },
+          requestId: at.requestId,
+        }, { table: 'memories', where: 'id = ?', params: [id], stamp }),
+      ])
+      return settle(results[0].meta.changes, id, 'brand', null)
+    },
+
+    async waiting(limit) {
+      const rows = await all<FactRow>(db, stmt(
+        `SELECT ${COLUMNS} ${FROM} WHERE m.scope = 'brand' AND m.status = 'waiting' ORDER BY m.n DESC LIMIT ?`, limit,
+      ))
+      return rows.map(fact)
     },
   }
 }
