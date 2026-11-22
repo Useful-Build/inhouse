@@ -408,7 +408,7 @@ export const SCENARIOS: Record<string, Scenario> = {
   'late-orders': {
     turns: [
       { content: [{ type: 'tool_use', id: 'toolu_scripted_late_read', name: 'mcp__apps__orders_search', input: { first: LATE_ORDERS_BOUND } }], expect: mainLoop() },
-      { content: [{ type: 'text', text: LATE_ORDERS_TEXT }], expect: both(mainLoop(), resultOf('toolu_scripted_late_read')) },
+      { content: [{ type: 'text', text: LATE_ORDERS_TEXT }], expect: both(mainLoop(), resultIs('toolu_scripted_late_read', false)) },
     ],
   },
 
