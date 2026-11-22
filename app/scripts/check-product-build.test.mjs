@@ -250,7 +250,7 @@ test('no eval build folder: a usage failure (exit 2), never a pass (failure 3)',
 // or the module, so the scan proves nothing; the script's canary or module path drifts from the module's and the alias's.
 const FAKES = 'inhouse-test-fakes-canary-6b2f90d4'
 const FAKES_MODULE = 'server/ops/test-fakes.ts'
-const FAKES_IMPORT = { 'do/brand-agent/index.ts': "import { runTestFakes } from '@test-fakes'" }
+const FAKES_IMPORT = { 'ops/fakes-hook.ts': "import { runTestFakesInWorker } from '@test-fakes'" }
 const PRINCIPAL = 'm_test_fakes'
 const FAKES_OK = { server: { ...ISSUER_OK.server, ...FAKES_IMPORT }, productTest: { workerJs: `const c = '${CANARY}'; const f = '${FAKES}'; const p = '${PRINCIPAL}'`, serverModules: ['server/index.ts', FAKES_MODULE] } }
 
