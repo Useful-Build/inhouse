@@ -6,6 +6,7 @@
 //    CF_SANDBOX_ACCOUNT_ID (wrangler reads CLOUDFLARE_API_TOKEN itself). MORNING_CHECK_RELEASE_JWT is optional: the eval
 //    build has none, and without it there's no nudge.
 // The modes' options are mutually exclusive: a remote run given a local option (or the reverse) is refused, never ignored.
+import { DoorRefusal, EVAL_DB } from '../targets/door.ts'
 
 export type RunArgs = Record<string, string | undefined>
 
@@ -44,6 +45,16 @@ function remoteModelSetting(a: RunArgs): { label: string; inhouseOrigin: string;
   }
   if (url.protocol !== 'https:' || url.origin !== origin.replace(/\/$/, '')) throw new Error('run.mjs: --inhouse-origin must be the build\'s Inhouse app https origin (no path, query or credentials)')
   return { label, inhouseOrigin: url.origin, inhouseAud: aud }
+}
+
+/**
+ * Remote mode never runs on the eval deployment's shared database: the door (evals/targets/door.ts) now admits only
+ * EVAL_DB, and a paid product eval may be running there, so a test-shop override set on it would break the one runner
+ * per deployment rule. Throws DoorRefusal (run.mjs stops with exit 2 before any case). Line A's morning-check door rule
+ * replaces this.
+ */
+export function refuseSharedEvalDb(database: string): void {
+  if (database === EVAL_DB) throw new DoorRefusal(`refusing: ${EVAL_DB} is the eval deployment's shared database, and a paid product eval may be running on it (one runner per deployment)`)
 }
 
 export function runMode(a: RunArgs, env: Record<string, string | undefined>): RunMode {

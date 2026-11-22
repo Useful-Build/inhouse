@@ -57,7 +57,7 @@ import { Build, DEFAULT_SHOP_PATTERN, shopShownBy } from './restart.ts'
 import { commandFor, hubConfigFor } from './hubconfig.ts'
 import { openResults } from './results.ts'
 import { ROUTINE_ID, runAll } from './runner.ts'
-import { runMode } from './args.ts'
+import { refuseSharedEvalDb, runMode } from './args.ts'
 import { createMorningDoor } from './door.ts'
 import { clearOnSignals, ensureDefaultModel, remoteEnv } from './remote.ts'
 import { DoorRefusal, wranglerRunner } from '../targets/door.ts'
@@ -178,10 +178,12 @@ const build = new Build({
 // The remote mode's door: wrangler on the sandbox database only (evals/targets/door.ts refuses any other). That door now
 // admits only the eval deployment's database (its EVAL_DB): a per-PR test deployment's inhouse-sbx-pr<N>-db is refused
 // until line A's eval-target PR adds the morning-check door rule. The refusal is the door's own message and exit 2,
-// before any case runs, never a stack trace.
+// before any case runs, never a stack trace. The eval deployment's shared database is refused here too
+// (args.ts refuseSharedEvalDb), until line A's morning-check door rule replaces both.
 let door = null
 if (m.mode === 'remote') {
   try {
+    refuseSharedEvalDb(m.database)
     door = createMorningDoor(wranglerRunner({ database: m.database, config: m.wranglerConfig, env: process.env }))
   } catch (e) {
     if (!(e instanceof DoorRefusal)) throw e
