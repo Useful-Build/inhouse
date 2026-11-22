@@ -36,13 +36,13 @@ describe('the rules', () => {
     expect(run('2026-12-03', x, [base], { count: 2 })).toMatchObject({ verdict: 'not_clean', count: 0 })
   })
   it('a bypass restarts the count and says so', () => {
-    const x = cleanEvidence(); x.guards = { webfetchBypass: 1, leaks: 0 }
+    const x = cleanEvidence(); x.guards = { webfetchAllowed: 0, leaks: 1, canary: 'planted' }
     expect(run('2026-12-03', x, [base], { count: 2 })).toMatchObject({ count: 0, reasons: ['bypass', 'check'] })
   })
   it('a lost or doubled notice restarts the count and says so', () => {
     const lost = cleanEvidence(); lost.bell!.failedNoticeIds = []
     expect(run('2026-12-03', lost, [base], { count: 2 })).toMatchObject({ count: 0, reasons: ['notice', 'check'] })
-    const doubled = cleanEvidence(); doubled.bell!.morningNotices = 2
+    const doubled = cleanEvidence(); doubled.bell!.morning = [{ items: 2, notices: 2 }]
     expect(run('2026-12-03', doubled, [base], { count: 2 })).toMatchObject({ count: 0, reasons: ['notice', 'check'] })
   })
   it('a release that changes behaviour restarts the window: its day doesn\'t count, the next can', () => {
@@ -72,6 +72,9 @@ describe('the rules', () => {
     expect(run('2026-12-01', cleanEvidence(), [at], null).verdict).toBe('clean')
     const later: ReleaseMarker = { appSha: sha('a'), atMs: dayStartMs('2026-12-01') + 1, behaviour: false, live: ALL }
     expect(run('2026-12-01', cleanEvidence(), [later], null).reasons).toContain('phases_not_live')
+  })
+  it('the record carries the live set it was judged against', () => {
+    expect(run('2026-12-01', cleanEvidence(), [base], null).live.sort()).toEqual([...ALL].sort())
   })
   it('a day is bound to UTC', () => {
     expect(nextDay('2026-12-31')).toBe('2027-01-01')

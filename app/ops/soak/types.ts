@@ -28,9 +28,10 @@ export interface BellFacet {
   expectedIds: string[]
   /** Every `routine_failed` notice in the day. */
   failedNoticeIds: string[]
-  /** `morning_check_found` notices in the day, against the morning check's ended slots (at most one each). */
-  morningNotices: number
-  morningEnded: number
+  /** Each morning check slot that ended in the day: the items it saved and the `morning_check_found` notices that are its own. */
+  morning: { items: number; notices: number }[]
+  /** `morning_check_found` notices in the day that belong to no ended slot of the day. */
+  strayMorningNotices: number
 }
 
 export interface MemoryFacet {
@@ -48,15 +49,22 @@ export interface ConnectorFacet {
 }
 
 export interface RunsFacet {
-  /** Slots still claimed or started past their deadline. */
+  /** Every routine slot due in the day, any state. Zero on a day the morning check should run is not clean. */
+  slots: number
+  /** The product's own "failed" (routines/signal.ts): an end with a failure other than not_connected, lost, refused as internal, a system routine missed. */
+  failed: number
+  /** Failed slots with no ok slot of the same routine after them by the cut-off. */
+  unrecovered: number
+  /** Claimed past their deadline, or started with no end past the 8-day backstop. */
   stuck: number
 }
 
 export interface GuardFacet {
-  /** Allowed WebFetch calls while the team's host list was empty (empty means no host at Watch). */
-  webfetchBypass: number
-  /** Notice or activity text carrying a canary-shaped string. */
+  /** Allowed WebFetch calls in the day. `tool_calls` records no host, so their destinations are not judged. */
+  webfetchAllowed: number
+  /** Notice or activity text carrying a canary: the planted ones when `--canary` is given, else any canary-shaped string. */
   leaks: number
+  canary: 'planted' | 'shape'
 }
 
 /** A facet is `null` when it couldn't be read: that's `missing`, never clean. */
@@ -86,6 +94,8 @@ export interface DayRecord {
   verdict: DayVerdict
   /** Empty on a clean day. */
   reasons: DayReason[]
+  /** The phases live on this day (the latest release at or before its start). */
+  live: string[]
   /** Consecutive clean days up to and including this one. */
   count: number
   /** The app SHAs of the behaviour releases that started a new window on this day. */

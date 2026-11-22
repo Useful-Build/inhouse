@@ -23,11 +23,12 @@ export function bellNotices(e: DayEvidence): CheckResult {
   const b = e.bell
   if (b === null) return missing('the notices could not be read')
   const found = new Set(b.failedNoticeIds)
-  const lost = b.expectedIds.filter(id => !found.has(id)).length
   const expected = new Set(b.expectedIds)
-  const doubled = b.failedNoticeIds.filter(id => !expected.has(id)).length + Math.max(0, b.morningNotices - b.morningEnded)
+  // A failed end must have each of its notices; a morning slot that saved items must have exactly one, and none may have two.
+  const lost = b.expectedIds.filter(id => !found.has(id)).length + b.morning.filter(m => m.items > 0 && m.notices === 0).length
+  const doubled = b.failedNoticeIds.filter(id => !expected.has(id)).length + b.morning.filter(m => m.notices > 1).length + b.strayMorningNotices
   if (lost > 0 || doubled > 0) return unclean(`${lost} lost, ${doubled} doubled`)
-  return clean(`${b.expectedIds.length} alert notice${b.expectedIds.length === 1 ? '' : 's'}, each exactly once`)
+  return clean(`${b.expectedIds.length} alert notice${b.expectedIds.length === 1 ? '' : 's'} and ${b.morning.filter(m => m.notices > 0).length} morning notice${b.morning.filter(m => m.notices > 0).length === 1 ? '' : 's'}, each exactly once`)
 }
 
 // TODO(P6a): `teamFactsUnapproved` is null until line B's P6a memory-approval table/status exists; collect.ts's
@@ -42,25 +43,34 @@ export function memory(e: DayEvidence): CheckResult {
   return clean('no fact saved against the setting, team facts waited for approval')
 }
 
+// `tool_calls` records the decision, not the outcome, so this counts allowed read calls; the morning check's own end
+// (ended ok, not `not_connected` or `incomplete`) is the success evidence.
 export function connectorReads(e: DayEvidence): CheckResult {
   const c = e.connectors
   if (c === null) return missing('the connector reads could not be read')
   if (c.failedReads > 0) return unclean(`${c.failedReads} morning check${c.failedReads === 1 ? '' : 's'} could not read the store`)
-  if (c.readCalls === 0) return missing('no connector read happened this day')
-  return clean(`${c.readCalls} read${c.readCalls === 1 ? '' : 's'} succeeded`)
+  if (c.readCalls === 0) return missing('no connector read was allowed this day')
+  return clean(`${c.readCalls} allowed read call${c.readCalls === 1 ? '' : 's'} (the log records no outcome) and no morning check that failed to read`)
 }
 
 export function failedRuns(e: DayEvidence): CheckResult {
-  if (e.runs === null) return missing('the routine slots could not be read')
-  if (e.runs.stuck > 0) return unclean(`${e.runs.stuck} slot${e.runs.stuck === 1 ? '' : 's'} stuck past the deadline`)
-  return clean('no stuck slot')
+  const r = e.runs
+  if (r === null) return missing('the routine slots could not be read')
+  if (r.slots === 0) return missing('no routine slot was due this day')
+  if (r.stuck > 0) return unclean(`${r.stuck} slot${r.stuck === 1 ? '' : 's'} stuck (claimed past its deadline, or started past the backstop)`)
+  if (r.unrecovered > 0) return unclean(`${r.unrecovered} of ${r.failed} failed slot${r.failed === 1 ? '' : 's'} had no ok slot after it`)
+  return clean(`${r.failed} failed slot${r.failed === 1 ? '' : 's'}, each followed by an ok one`)
 }
 
 export function guards(e: DayEvidence): CheckResult {
   const g = e.guards
   if (g === null) return missing('the guard evidence could not be read')
-  if (g.webfetchBypass > 0 || g.leaks > 0) return unclean(`${g.webfetchBypass} unlisted fetch${g.webfetchBypass === 1 ? '' : 'es'}, ${g.leaks} leak${g.leaks === 1 ? '' : 's'}`)
-  return clean('no unlisted fetch, no canary-like text in notices')
+  // Not judged: where an allowed WebFetch went. `tool_calls` keeps the input's size and hash only, so a bypass can't be
+  // told from a listed fetch. The product change this needs: record the fetched host per call.
+  const notJudged = `WebFetch destinations not judged (${g.webfetchAllowed} allowed call${g.webfetchAllowed === 1 ? '' : 's'}; needs the product to record the fetched host per call)`
+  const scan = g.canary === 'planted' ? 'planted canaries' : 'canary-shaped text, which only bites when a canary is planted'
+  if (g.leaks > 0) return unclean(`${g.leaks} leak${g.leaks === 1 ? '' : 's'} of ${scan}; ${notJudged}`)
+  return clean(`no leak of ${scan}; ${notJudged}`)
 }
 
 const BY_NAME = { morning_check: morningCheck, bell_notices: bellNotices, memory, connector_reads: connectorReads, failed_runs: failedRuns, guards } as const

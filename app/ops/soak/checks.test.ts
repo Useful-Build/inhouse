@@ -33,7 +33,7 @@ describe('morning check', () => {
 describe('bell notices', () => {
   it('clean: every alert has its notice exactly once', () => expect(bellNotices(e()).status).toBe('clean'))
   it('clean with no alerts', () => {
-    const x = e(); x.bell = { expectedIds: [], failedNoticeIds: [], morningNotices: 0, morningEnded: 1 }
+    const x = e(); x.bell = { expectedIds: [], failedNoticeIds: [], morning: [{ items: 0, notices: 0 }], strayMorningNotices: 0 }
     expect(bellNotices(x).status).toBe('clean')
   })
   it('unclean: a lost notice', () => {
@@ -43,8 +43,16 @@ describe('bell notices', () => {
   it('unclean: a doubled notice (an extra routine_failed or a second morning notice for one slot)', () => {
     const extra = e(); extra.bell!.failedNoticeIds = ['rf_a', 'rf_b']
     expect(bellNotices(extra)).toMatchObject({ status: 'unclean', detail: '0 lost, 1 doubled' })
-    const second = e(); second.bell!.morningNotices = 2
-    expect(bellNotices(second).status).toBe('unclean')
+    const second = e(); second.bell!.morning = [{ items: 2, notices: 2 }]
+    expect(bellNotices(second)).toMatchObject({ status: 'unclean', detail: '0 lost, 1 doubled' })
+    const stray = e(); stray.bell!.strayMorningNotices = 1
+    expect(bellNotices(stray).status).toBe('unclean')
+  })
+  it('a morning slot that saved items needs exactly one notice; one with none needs none', () => {
+    const lost = e(); lost.bell!.morning = [{ items: 3, notices: 0 }]
+    expect(bellNotices(lost)).toMatchObject({ status: 'unclean', detail: '1 lost, 0 doubled' })
+    const quiet = e(); quiet.bell!.morning = [{ items: 0, notices: 0 }]
+    expect(bellNotices(quiet).status).toBe('clean')
   })
   it('missing: unreadable', () => expect(bellNotices({ ...e(), bell: null }).status).toBe('missing'))
 })
@@ -67,7 +75,9 @@ describe('memory', () => {
 })
 
 describe('connector reads', () => {
-  it('clean', () => expect(connectorReads(e()).status).toBe('clean'))
+  it('clean, and says it counts allowed calls (tool_calls records no outcome)', () => {
+    expect(connectorReads(e())).toMatchObject({ status: 'clean', detail: expect.stringContaining('allowed') })
+  })
   it('unclean: a morning check that could not read the store', () => {
     const x = e(); x.connectors = { readCalls: 3, failedReads: 1 }
     expect(connectorReads(x).status).toBe('unclean')
@@ -80,16 +90,29 @@ describe('connector reads', () => {
 })
 
 describe('failed runs', () => {
-  it('clean', () => expect(failedRuns(e()).status).toBe('clean'))
-  it('unclean: a slot stuck past its deadline', () => expect(failedRuns({ ...e(), runs: { stuck: 1 } }).status).toBe('unclean'))
-  it('missing: unreadable', () => expect(failedRuns({ ...e(), runs: null }).status).toBe('missing'))
+  it('clean: every failed slot was followed by an ok one', () => expect(failedRuns(e()).status).toBe('clean'))
+  it('unclean: a failed slot never recovered, or a slot stuck', () => {
+    expect(failedRuns({ ...e(), runs: { slots: 3, failed: 1, unrecovered: 1, stuck: 0 } })).toMatchObject({ status: 'unclean', detail: expect.stringContaining('no ok slot') })
+    expect(failedRuns({ ...e(), runs: { slots: 3, failed: 0, unrecovered: 0, stuck: 1 } }).status).toBe('unclean')
+  })
+  it('missing: no routine slot on the day, or unreadable', () => {
+    expect(failedRuns({ ...e(), runs: { slots: 0, failed: 0, unrecovered: 0, stuck: 0 } }).status).toBe('missing')
+    expect(failedRuns({ ...e(), runs: null }).status).toBe('missing')
+  })
 })
 
 describe('guards', () => {
-  it('clean', () => expect(guards(e()).status).toBe('clean'))
-  it('unclean: an unlisted fetch or a canary-like leak', () => {
-    expect(guards({ ...e(), guards: { webfetchBypass: 1, leaks: 0 } }).status).toBe('unclean')
-    expect(guards({ ...e(), guards: { webfetchBypass: 0, leaks: 1 } }).status).toBe('unclean')
+  it('clean, and says what it does not judge', () => {
+    const r = guards(e())
+    expect(r.status).toBe('clean')
+    expect(r.detail).toContain('record the fetched host')
+  })
+  it('the detail says a canary-shape scan only bites when a canary is planted', () => {
+    expect(guards({ ...e(), guards: { webfetchAllowed: 0, leaks: 0, canary: 'shape' } }).detail).toContain('only bites when a canary is planted')
+  })
+  it('unclean: a leak. Allowed WebFetch calls alone are not judged', () => {
+    expect(guards({ ...e(), guards: { webfetchAllowed: 0, leaks: 1, canary: 'planted' } }).status).toBe('unclean')
+    expect(guards({ ...e(), guards: { webfetchAllowed: 5, leaks: 0, canary: 'planted' } }).status).toBe('clean')
   })
   it('missing: unreadable', () => expect(guards({ ...e(), guards: null }).status).toBe('missing'))
 })

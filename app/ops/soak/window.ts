@@ -29,14 +29,15 @@ export interface Carry { count: number }
 export function nextRecord(day: string, checks: Checks, markers: readonly ReleaseMarker[], prev: Carry | null): DayRecord {
   const start = dayStartMs(day), end = start + DAY_MS
   const releases = markers.filter(m => m.behaviour && m.atMs >= start && m.atMs < end).map(m => m.appSha)
-  const live = livePhases(markers, day)
+  const liveSet = livePhases(markers, day)
+  const live = [...liveSet].sort()
   const reasons: DayReason[] = []
-  if (!REQUIRED_PHASES.every(p => live.has(p))) reasons.push('phases_not_live')
+  if (!REQUIRED_PHASES.every(p => liveSet.has(p))) reasons.push('phases_not_live')
   if (releases.length > 0) reasons.push('release')
   if (checks.guards.status === 'unclean') reasons.push('bypass')
   if (checks.bell_notices.status === 'unclean') reasons.push('notice')
   if (CHECK_NAMES.some(n => checks[n].status !== 'clean')) reasons.push('check')
   const verdict = reasons.length === 0 ? 'clean' : 'not_clean'
   const count = verdict === 'clean' ? (prev?.count ?? 0) + 1 : 0
-  return { day, checks, verdict, reasons, count, releases, passed: verdict === 'clean' && count >= GATE_DAYS }
+  return { day, checks, verdict, reasons, live, count, releases, passed: verdict === 'clean' && count >= GATE_DAYS }
 }
