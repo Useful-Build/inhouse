@@ -50,7 +50,8 @@ export interface RunnerEnv {
   settleMs: number
   /**
    * The remote mode only (door.ts): removes the case's shop override and confirms none is left. runAll calls it before the
-   * first case and after every case, whatever the case did, so no override outlives its case; a failure stops the run.
+   * first case and after every case, whatever the case did, so no override outlives its case. A failure before the first
+   * case throws; after a case, the case's result is kept and the run stops ("override could not be cleared").
    */
   releaseShop?(): Promise<void>
 }
@@ -133,7 +134,8 @@ export async function runCase(env: RunnerEnv, c: MorningCaseMeta): Promise<CaseR
  * Every case in order, one at a time. `onCase` gets the file after each case, so a crash keeps the finished ones; a run of
  * fewer cases than the set is `partial` and never meets the threshold. A case that timed out and whose slot doesn't settle
  * leaves its slot `started` for up to 45 minutes (the sweep's LOST_AFTER_MS), so every later Run now would answer `run_open`:
- * the run stops there, the cases after it are listed as `notRun`, and `stopped` says why.
+ * the run stops there, the cases after it are listed as `notRun`, and `stopped` says why. It also stops after a case whose
+ * slot never appeared (the reader is on another database) and after a case whose shop override could not be cleared.
  */
 export async function runAll(
   env: RunnerEnv, cases: readonly MorningCaseMeta[], meta: { date: string; sha: string; model: string }, onCase?: (file: ResultFile) => void,
@@ -145,17 +147,34 @@ export async function runAll(
     notRun: stopped ? cases.slice(results.length).map(c => c.id) : [], ...(stopped ? { stopped } : {}),
   })
   await env.releaseShop?.()
+  /** The override's clear after a case: null when it went, else what went wrong (the case's result is still kept). */
+  const release = async (): Promise<string | null> => {
+    try {
+      await env.releaseShop?.()
+      return null
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e)
+    }
+  }
   for (const c of cases) {
     let r: CaseResult
     try {
       r = await runCase(env, c)
-    } finally {
-      await env.releaseShop?.()
+    } catch (e) {
+      // The case itself threw (the door or the build failed): clear the override, then fail loud with both causes.
+      const unclear = await release()
+      if (unclear !== null) throw new Error(`${e instanceof Error ? e.message : String(e)}; and the test shop override could not be cleared: ${unclear}`, { cause: e })
+      throw e
     }
+    const unclear = await release()
     results.push(r)
     if (r.settled === false) {
       stopped = { at: c.id, reason: `${c.id} timed out and its slot (${r.slotKey}) is still open: every later Run now would answer run_open, so the run stops here` }
+    } else if (!r.observed.ok && r.observed.cause === 'no_slot') {
+      // Run now was taken but its slot never showed in the rows read: the reader is most likely on another database.
+      stopped = { at: c.id, reason: `${c.id}: slot not found in this D1 (wrong database?), so the run stops here` }
     }
+    if (unclear !== null) stopped = { at: c.id, reason: `${c.id}: the test shop override could not be cleared (${unclear}), so the run stops here` }
     onCase?.(file())
     if (stopped) break
   }

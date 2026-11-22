@@ -347,6 +347,15 @@ describe('morning-check: the answer follows whether the read failed', () => {
     expect(done.content[0]!.text).toBe('Done.')
     expect(model.misses).toEqual([])
   })
+  it('a read that failed another way (internal: internal error) takes no branch: a miss, never the outage answer', async () => {
+    const model = createScriptedModel(SCENARIOS)
+    const messages = afterRead(true)
+    ;(messages[2]!.content as { content: string }[])[0]!.content = 'internal: internal error'
+    const res = await model.handle(mcReq(messages), 'morning-check')
+    expect(res.status).toBe(400)
+    expect(JSON.stringify(await res.json())).not.toContain('"coverage":"incomplete"')
+    expect(model.misses).toHaveLength(1)
+  })
   it('the outage result names every gap area and no item (the graded set\'s outage-all expectation)', () => {
     expect(MORNING_CHECK_OUTAGE_ANSWER).toEqual({ coverage: 'incomplete', gaps: ['orders', 'products', 'inventory', 'refunds', 'returns'], items: [] })
   })

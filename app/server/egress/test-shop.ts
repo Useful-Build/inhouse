@@ -21,7 +21,7 @@ export const TEST_SHOP_OWNER: string = 'test-control'
 export const TEST_SHOP_KEY: string = 'hub:shop'
 
 /** A Shopify host, as the hub's CallToolOptionsSchema takes it (hub/index/schemas.ts SHOP_HOST). */
-const SHOP_HOST = /^[a-z0-9][a-z0-9-]{0,59}\.myshopify\.com$/
+export const SHOP_HOST = /^[a-z0-9][a-z0-9-]{0,59}\.myshopify\.com$/
 
 /** The override the door set, or null when none is set. Throws on a row that isn't a shop host. */
 export async function readTestShop(db: ShopDb): Promise<string | null> {

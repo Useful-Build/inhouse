@@ -35,6 +35,8 @@
 // graded and written as above. The override is cleared before the first case, after every case and on exit. Without
 // MORNING_CHECK_RELEASE_JWT there's no route 67 nudge (Run now pokes the scheduler itself). --target excludes every local
 // option (--persist-dir, --base-url, --restart-cmd, --shop-pattern, --restart-wait-sec).
+// One runner per deployment: the override is one row in the build's D1, so two runs against one deployment would set each
+// other's shop. A leftover row found at the start is removed and said loudly; SIGINT and SIGTERM clear it before exiting.
 import { spawn } from 'node:child_process'
 import { readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
@@ -49,7 +51,7 @@ import { openResults } from './results.ts'
 import { ROUTINE_ID, runAll } from './runner.ts'
 import { runMode } from './args.ts'
 import { createMorningDoor } from './door.ts'
-import { remoteEnv } from './remote.ts'
+import { clearOnSignals, remoteEnv } from './remote.ts'
 import { wranglerRunner } from '../targets/door.ts'
 import { SEED_PEOPLE } from '../../server/seed/brand.ts'
 
@@ -137,6 +139,8 @@ const build = new Build({
 
 // The remote mode's door: wrangler on the sandbox database only (evals/targets/door.ts refuses any other).
 const door = m.mode === 'remote' ? createMorningDoor(wranglerRunner({ database: m.database, config: m.wranglerConfig, env: process.env })) : null
+// An interrupted run clears the override before it exits (130 on SIGINT, 143 on SIGTERM).
+if (door) clearOnSignals(() => door.clearShop())
 const env = door ? remoteEnv({
   door,
   runNow: async clientKey => post(`/api/routines/${ROUTINE_ID}/run`, { clientKey }, await personJwt()),

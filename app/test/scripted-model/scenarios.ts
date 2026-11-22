@@ -408,9 +408,10 @@ export const SCENARIOS: Record<string, Scenario> = {
    * The morning check's run on the recorded upstream: one read through the hub (orders), then the structured result with one
    * item (valid against `MorningCheckResultSchema`), so Today fills. The routine's prompt carries no `scenario:` marker, so
    * the orchestrator's test build names this scenario for the system routine (p4-w6 PR body, "Needs from the orchestrator").
-   * A read the hub answered with an error (the morning-check set's remote proof points the hub at an outage shop through
-   * the test shop override, e2e/api/morning-check-remote.spec.ts) takes the `read-failed` branch: the outage result, picked
-   * by the read's own `is_error`, so the scenario never says the read failed when it didn't, or the other way round.
+   * A read the hub answered `upstream_unavailable` (the morning-check set's remote proof points the hub at the outage-all
+   * shop through the test shop override, e2e/api/morning-check-remote.spec.ts) takes the `read-failed` branch: the outage
+   * result. Any other error (`internal`, a refused override's `invalid_args`) matches no branch and misses, so the proof
+   * can't pass on a failure that isn't the outage shop's.
    */
   'morning-check': {
     turns: [
@@ -420,7 +421,10 @@ export const SCENARIOS: Record<string, Scenario> = {
     ],
     branches: {
       'read-failed': {
-        match: r => resultBlock(r, 'toolu_scripted_mc_read')?.is_error === true,
+        match: r => {
+          const block = resultBlock(r, 'toolu_scripted_mc_read')
+          return block?.is_error === true && resultText(block).includes('upstream_unavailable')
+        },
         turns: [null, { content: [{ type: 'tool_use', id: 'toolu_scripted_mc_result', name: 'StructuredOutput', input: MORNING_CHECK_OUTAGE_ANSWER }], expect: both(mainLoop(), resultIs('toolu_scripted_mc_read', true)) }],
       },
     },

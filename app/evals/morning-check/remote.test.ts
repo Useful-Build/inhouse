@@ -16,9 +16,9 @@ import { describe, expect, it } from 'vitest'
 import { readTestShop, type ShopDb } from '../../server/egress/test-shop.ts'
 import { DoorRefusal, type RunSql } from '../targets/door.ts'
 import { runMode } from './args.ts'
-import { createMorningDoor } from './door.ts'
-import { META, hostOf } from './expected.ts'
-import { remoteEnv } from './remote.ts'
+import { createMorningDoor, type MorningDoor } from './door.ts'
+import { AMBER, META, hostOf } from './expected.ts'
+import { clearOnSignals, remoteEnv } from './remote.ts'
 import { ROUTINE_ID, runAll } from './runner.ts'
 
 const migrations = fileURLToPath(new URL('../../server/migrations/', import.meta.url))
@@ -46,9 +46,9 @@ describe('the door: the test shop override', () => {
     expect(await readTestShop(d1)).toBe(HOST)
     await door.setShop(hostOf('outage-all'))
     expect(await readTestShop(d1)).toBe(hostOf('outage-all'))
-    await door.clearShop()
+    expect(await door.clearShop(), 'the clear names what it removed').toBe(hostOf('outage-all'))
     expect(await readTestShop(d1)).toBeNull()
-    await door.clearShop()
+    expect(await door.clearShop(), 'nothing left to remove').toBeNull()
   })
 
   it.each(['example-fixture.myshopify.com', 'real-store.myshopify.com', `${HOST}'; DROP TABLE settings; --`, 'example-mc-late-orders'])('refuses %s before any SQL (failure 1)', async host => {
@@ -91,21 +91,66 @@ describe('the door: what grade.ts reads (failure 4, 5)', () => {
 describe('the remote runner env', () => {
   function fakes(alarm: boolean) {
     const log: string[] = []
+    const warnings: string[] = []
     let held: string | null = null
     let now = 0
-    const door = {
+    const door: MorningDoor = {
       setShop: async (h: string) => { held = h; log.push(`set ${h}`) },
-      clearShop: async () => { held = null; log.push('clear') },
+      clearShop: async () => { const was = held; held = null; log.push('clear'); return was },
       slot: async (k: string) => { log.push(`poll ${held ?? 'none'}`); return { slot_key: k, state: 'ended', failure: null, result_text: 'found 0 things', turn_id: null, claimed_at_ms: 1 } },
       items: async () => [],
       tools: async () => [],
     }
     const env = remoteEnv({
       door, runNow: async k => { log.push(`run ${k.length}`) }, alarm: alarm ? async b => { log.push(`alarm ${JSON.stringify(b)}`) } : null,
-      pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000,
+      pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: line => void warnings.push(line),
     })
-    return { env, log, door, held: () => held }
+    return { env, log, door, warnings, held: () => held, leave: (h: string) => { held = h } }
   }
+  const twoCases = () => [META.find(c => c.id === 'clean-empty')!, META.find(c => c.id === 'outage-all')!]
+  const meta = { date: '2026-11-22', sha: 'abc1234', model: 'scripted' }
+
+  it('a leftover override at the run\'s start is removed and said loudly, once; the cases\' own clears say nothing (failure 2)', async () => {
+    const { env, warnings, leave } = fakes(false)
+    leave(hostOf('fixture'))
+    await runAll(env, twoCases(), meta)
+    expect(warnings).toEqual([expect.stringContaining(`removed a leftover test shop override (${hostOf('fixture')})`)])
+    expect(warnings[0]).toContain('only one runner per deployment')
+    const clean = fakes(false)
+    await runAll(clean.env, twoCases(), meta)
+    expect(clean.warnings).toEqual([])
+  })
+
+  it('a clear that fails after a case keeps that case\'s result and stops the run, naming it (LOW 5)', async () => {
+    const { env, door } = fakes(false)
+    let clears = 0
+    const real = door.clearShop
+    door.clearShop = async () => { if (++clears === 2) throw new Error('wrangler d1 execute exited 1'); return real() }
+    const written: number[] = []
+    const file = await runAll(env, twoCases(), meta, f => void written.push(f.cases.length))
+    expect(file.cases.map(c => c.id)).toEqual(['clean-empty'])
+    expect(file.cases[0]!.verdict.pass).toBe(true)
+    expect(file.stopped).toEqual({ at: 'clean-empty', reason: expect.stringContaining('the test shop override could not be cleared (wrangler d1 execute exited 1)') })
+    expect(file.notRun).toEqual(['outage-all'])
+    expect(written).toEqual([1])
+  })
+
+  it('a case that throws and whose clear fails too throws with both causes', async () => {
+    const { env, door } = fakes(false)
+    door.slot = async () => { throw new Error('the door read failed') }
+    let clears = 0
+    door.clearShop = async () => { if (++clears === 2) throw new Error('clear failed'); return null }
+    await expect(runAll(env, twoCases(), meta)).rejects.toThrow('the door read failed; and the test shop override could not be cleared: clear failed')
+  })
+
+  it('a slot that never appears stops the run after that case: wrong database (LOW 6)', async () => {
+    const { env, door } = fakes(false)
+    door.slot = async () => null
+    const file = await runAll(env, twoCases(), meta)
+    expect(file.cases.map(c => [c.id, c.observed.ok ? 'ok' : c.observed.cause])).toEqual([['clean-empty', 'no_slot']])
+    expect(file.stopped).toEqual({ at: 'clean-empty', reason: expect.stringContaining('slot not found in this D1 (wrong database?)') })
+    expect(file.notRun).toEqual(['outage-all'])
+  })
 
   it('sets each case\'s shop, clears it before the first case and after every case, even one that throws (failure 2)', async () => {
     const { env, log, door, held } = fakes(true)
@@ -133,6 +178,71 @@ describe('the remote runner env', () => {
     const a = env.newKey()
     expect(a).toMatch(/^[0-9a-f]{32}$/)
     expect(env.newKey()).not.toBe(a)
+  })
+})
+
+// The whole remote path on a fake build: the real door on the real schema, and a "build" whose Run now reads the override
+// with the product's own reader (server/egress/test-shop.ts) and leaves the rows a morning check on that shop would. The
+// grader is untouched. It must see each case's own shop, grade both as passes, and leave no override.
+describe('runAll in remote mode, the real door on a fake build', () => {
+  it('each case runs on its own shop, grades unchanged, and no override is left', async () => {
+    const { db, run, d1 } = database()
+    const seen: (string | null)[] = []
+    let turn = 0
+    const runNow = async (clientKey: string) => {
+      const host = await readTestShop(d1)
+      seen.push(host)
+      if (host === null) return
+      const key = `now|${ROUTINE_ID}|${clientKey}`
+      const t = `turn_${++turn}`
+      const outage = host === hostOf('outage-all')
+      db.prepare(`INSERT INTO routine_slots (slot_key, routine_id, kind, local_date, tz, due_at_ms, deadline_ms, state, chat_id, client_key, prompt_text, submit_json, routine_rev, creator_id, turn_id, failure, result_text, claimed_at_ms)
+        VALUES (?, ?, 'manual', '2026-11-22', 'UTC', 1, 2, 'ended', 'c', ?, 'p', '{}', 1, 'm', ?, ?, ?, ?)`).run(key, ROUTINE_ID, clientKey, t, outage ? 'incomplete' : null, outage ? "found 0 things; couldn't read orders, products, inventory, refunds, returns" : 'found 1 thing', turn)
+      db.prepare("INSERT INTO tool_calls (turn_id, n, chat_id, member_id, hook, tool, decision, input_bytes, input_sha256, at_ms) VALUES (?, 1, 'c', 'm', 'pre', 'mcp__apps__orders_search', 'allow', 1, 'x', 1)").run(t)
+      if (!outage) {
+        const item = { key: 'late-orders', sev: AMBER, sources: [{ n: 'Order #2001' }, { n: '#2002' }, { n: '#2003' }] }
+        db.prepare("INSERT INTO today_items (id, key, local_date, slot_key, claimed_at_ms, run_id, item_json, created_at_ms) VALUES (?, 'late-orders', '2026-11-22', ?, 1, 'r', ?, 1)").run(`i_${t}`, key, JSON.stringify(item))
+      }
+    }
+    let now = 0
+    const env = remoteEnv({ door: createMorningDoor(run), runNow, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {} })
+    const cases = ['outage-all', 'late-orders'].map(id => META.find(c => c.id === id)!)
+    const file = await runAll(env, cases, { date: '2026-11-22', sha: 'abc1234', model: 'scripted' })
+    expect(seen).toEqual([hostOf('outage-all'), hostOf('late-orders')])
+    expect(file.cases.map(c => [c.id, c.verdict.pass, c.verdict.reasons])).toEqual([['outage-all', true, []], ['late-orders', true, []]])
+    expect(file.cases[0]!.observed).toMatchObject({ ok: true, coverage: 'incomplete', calls: ['mcp__apps__orders_search'] })
+    expect(await readTestShop(d1)).toBeNull()
+  })
+})
+
+describe('run.mjs stop handlers (MEDIUM 3)', () => {
+  function signals(clear: () => Promise<unknown>) {
+    const handlers = new Map<string, () => void>()
+    const log: string[] = []
+    let exited: (code: number) => void = () => {}
+    const exit = new Promise<number>(done => { exited = done })
+    clearOnSignals(clear, { on: (s, h) => void handlers.set(s, h), exit: code => { log.push(`exit ${code}`); exited(code) }, error: line => void log.push(line) })
+    return { handlers, log, exit }
+  }
+
+  it.each([['SIGINT', 130], ['SIGTERM', 143]] as const)('%s clears the override, awaited, then exits %i', async (signal, code) => {
+    let release: () => void = () => {}
+    const cleared = new Promise<void>(done => { release = done })
+    const order: string[] = []
+    const s = signals(async () => { order.push('clear started'); await cleared; order.push('clear done') })
+    expect([...s.handlers.keys()]).toEqual(['SIGINT', 'SIGTERM'])
+    s.handlers.get(signal)!()
+    expect(s.log.filter(l => l.startsWith('exit'))).toEqual([])
+    release()
+    expect(await s.exit).toBe(code)
+    expect(order).toEqual(['clear started', 'clear done'])
+  })
+
+  it('a clear that fails is printed and the exit code stays the signal\'s', async () => {
+    const s = signals(async () => { throw new Error('wrangler d1 execute exited 1') })
+    s.handlers.get('SIGTERM')!()
+    expect(await s.exit).toBe(143)
+    expect(s.log).toContain('run.mjs: the test shop override could not be cleared: wrangler d1 execute exited 1')
   })
 })
 

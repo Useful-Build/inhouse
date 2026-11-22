@@ -10,8 +10,11 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { CallToolOptions, CallerScope, HubResult } from '../../hub/index/contract.ts'
 import { reset } from '../db/test-support.ts'
 import type { ReadGatewayLike } from './hub.ts'
-import { TEST_SHOP_KEY, TEST_SHOP_OWNER, readTestShop, withTestShop } from './test-shop.ts'
+import { TEST_SHOP_KEY, TEST_SHOP_OWNER, SHOP_HOST, readTestShop, withTestShop } from './test-shop.ts'
 import * as off from './test-shop-off.ts'
+import { SHOP_HOST as HUB_SHOP_HOST } from '../../hub/index/schemas.ts'
+import { handleHub, hubRouteDeps } from './hub.ts'
+import { GRANT } from './testing/harness.ts'
 
 const HOST = 'example-mc-late-orders.myshopify.com'
 const scope: CallerScope = { kind: 'run', runId: 'r', principalId: 'p', requestId: 'q' }
@@ -84,5 +87,35 @@ describe('the off stand-in (every other build)', () => {
     expect(off.withTestShop(hub, env.DB, { INHOUSE_TEST_BUILD: '1' })).toBe(hub)
     expect([off.TEST_SHOP_CANARY, off.TEST_SHOP_OWNER, off.TEST_SHOP_KEY]).toEqual(['', '', ''])
     expect(() => off.readTestShop(env.DB)).toThrow(/not in this build/)
+  })
+})
+
+// A9: the runner's own route to the hub (H1's `/hub/`, hub.ts) also reaches ReadGateway.callTool. Ways it could leak the
+// option: a caller-supplied `options`, `testShopHost` or `_meta` in the JSON-RPC params forwarded as the fourth argument;
+// a row set but the caller's host sent instead. Only test-shop.ts may set it, and only from the row.
+describe('the runner\'s egress route never forwards a caller\'s override', () => {
+  const tamper = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'orders_search', arguments: {}, options: { testShopHost: 'evil-store.myshopify.com' }, testShopHost: 'evil-store.myshopify.com', _meta: { testShopHost: 'evil-store.myshopify.com' } } }
+  const post = (hub: ReadGatewayLike) =>
+    handleHub(new Request('http://egress.internal/hub/', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(tamper) }), GRANT, hubRouteDeps(hub, () => {}))
+
+  it.each([['the off stand-in', false], ['test-shop.ts with no row', true]])('%s: the hub gets three arguments, no options', async (_label, real) => {
+    const { hub, calls } = recordingHub()
+    const wrapped = real ? withTestShop(hub, env.DB, { INHOUSE_TEST_BUILD: '1' }) : off.withTestShop(hub, env.DB, { INHOUSE_TEST_BUILD: '1' })
+    expect((await post(wrapped)).status).toBe(200)
+    expect(calls).toEqual([{ name: 'orders_search', options: undefined, arity: 3 }])
+  })
+
+  it('with a row set, the option is the row\'s host, never the caller\'s', async () => {
+    const { hub, calls } = recordingHub()
+    await setRow(TEST_SHOP_OWNER, JSON.stringify(HOST))
+    await post(withTestShop(hub, env.DB, { INHOUSE_TEST_BUILD: '1' }))
+    expect(calls).toEqual([{ name: 'orders_search', options: { testShopHost: HOST }, arity: 4 }])
+  })
+})
+
+describe('the shop host pattern', () => {
+  it('is the hub schema\'s (hub/index/schemas.ts SHOP_HOST), so the product never sends a host the hub refuses as malformed', () => {
+    expect(SHOP_HOST.source).toBe(HUB_SHOP_HOST.source)
+    expect(SHOP_HOST.flags).toBe(HUB_SHOP_HOST.flags)
   })
 })

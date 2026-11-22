@@ -8,6 +8,8 @@
 //  - what the grader needs from a slot: the same rows and columns run.mjs's local reader takes from the local D1 file, so
 //    runner.ts and grade.ts read them unchanged.
 // Every value in a statement is checked against a pattern and quoted; nothing else reaches SQL.
+// One runner per deployment: the override is one row per deployment (one brand, one D1), so two runs against the same build
+// would set each other's shop. Never run two at once against one deployment.
 import { TEST_SHOP_KEY, TEST_SHOP_OWNER } from '../../server/egress/test-shop.ts'
 import { DoorRefusal, sqlString, type RunSql } from '../targets/door.ts'
 import { META, hostOf } from './expected.ts'
@@ -22,8 +24,8 @@ const SHOPS = new Set(META.map(c => hostOf(c.id)))
 export interface MorningDoor extends Reader {
   /** Sets the test shop override to one of the set's shops and reads it back. */
   setShop(host: string): Promise<void>
-  /** Removes the override and reads back that none is left. */
-  clearShop(): Promise<void>
+  /** Removes the override and reads back that none is left. Returns the host it removed (null: none was set). */
+  clearShop(): Promise<string | null>
 }
 
 const str = (v: unknown, what: string): string => {
@@ -48,9 +50,19 @@ export function createMorningDoor(run: RunSql, nowMs: () => number = Date.now): 
       if (now.length !== 1 || now[0] !== value) throw new DoorRefusal(`the test shop override reads back ${JSON.stringify(now)}, not ${value}`)
     },
     async clearShop() {
+      const before = await held()
       await run(`DELETE FROM settings WHERE ${where}`)
       const now = await held()
       if (now.length !== 0) throw new DoorRefusal('the test shop override is still set after clearing it')
+      if (before.length === 0) return null
+      // The row holds the host as JSON; a row that isn't (someone else's write) is named as it was stored.
+      const raw = String(before[0])
+      try {
+        const host: unknown = JSON.parse(raw)
+        return typeof host === 'string' ? host : raw
+      } catch {
+        return raw
+      }
     },
     async slot(slotKey) {
       if (!SLOT_KEY.test(slotKey)) throw new DoorRefusal(`not a morning-check Run now slot key: ${slotKey}`)

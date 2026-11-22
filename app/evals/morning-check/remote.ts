@@ -17,13 +17,23 @@ export interface RemoteDeps {
   nowMs(): number
   caseTimeoutMs: number
   settleMs: number
+  /** Where a loud line goes (default console.error): a leftover override found by the run's first clear. */
+  warn?(line: string): void
 }
 
 export function remoteEnv(d: RemoteDeps): RunnerEnv {
+  const warn = d.warn ?? (line => console.error(line))
+  let first = true
   return {
     nowMs: d.nowMs,
     useShop: host => d.door.setShop(host),
-    releaseShop: () => d.door.clearShop(),
+    // runAll's first clear is the run's start: a row there is a leftover from a run that didn't clear (or one running now:
+    // one runner per deployment), said loudly. Later clears remove the case's own row.
+    async releaseShop() {
+      const removed = await d.door.clearShop()
+      if (first && removed !== null) warn(`morning-check: removed a leftover test shop override (${removed}) at the start of the run. Another run may not have cleared it, or one is running against this deployment now: only one runner per deployment.`)
+      first = false
+    },
     newKey: () => crypto.randomUUID().replaceAll('-', ''),
     async trigger(clientKey) {
       await d.runNow(clientKey)
@@ -36,5 +46,31 @@ export function remoteEnv(d: RemoteDeps): RunnerEnv {
     reader: d.door,
     caseTimeoutMs: d.caseTimeoutMs,
     settleMs: d.settleMs,
+  }
+}
+
+export interface SignalDeps {
+  on(signal: 'SIGINT' | 'SIGTERM', handler: () => void): void
+  exit(code: number): void
+  error(line: string): void
+}
+const processSignals: SignalDeps = { on: (s, h) => void process.once(s, h), exit: code => process.exit(code), error: line => console.error(line) }
+
+/**
+ * run.mjs's stop handlers: on SIGINT or SIGTERM the override is cleared (awaited) before the process exits 130 or 143, so
+ * an interrupted run leaves no override behind. A clear that fails is printed; the exit code stays the signal's.
+ */
+export function clearOnSignals(clear: () => Promise<unknown>, d: SignalDeps = processSignals): void {
+  for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]] as const) {
+    d.on(signal, () => {
+      d.error(`run.mjs: ${signal}: clearing the test shop override before exiting`)
+      clear().then(
+        () => d.exit(code),
+        (e: unknown) => {
+          d.error(`run.mjs: the test shop override could not be cleared: ${e instanceof Error ? e.message : String(e)}`)
+          d.exit(code)
+        },
+      )
+    })
   }
 }
