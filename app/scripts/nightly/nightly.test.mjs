@@ -169,7 +169,7 @@ describe('nightly.yml', () => {
   const job = (text, name) => {
     const start = text.indexOf(`\n  ${name}:\n`)
     expect(start).toBeGreaterThan(-1)
-    const next = text.slice(start + 1).search(/\n  [a-z-]+:\n/)
+    const next = text.slice(start + 1).search(/\n  [A-Za-z0-9_-]+:\n/)
     return next === -1 ? text.slice(start) : text.slice(start, start + 1 + next)
   }
   // A step's text, from its `- name:` line up to the next step (or the end of the job).
@@ -193,7 +193,7 @@ describe('nightly.yml', () => {
     const rest = text.replace(connectors, '')
     // Any spelling of a secrets reference: dot, bracket or toJSON, any case.
     expect(rest).not.toMatch(/\bsecrets\b\s*[.[]|toJSON\(\s*secrets/i)
-    const refs = connectors.match(/secrets\s*(?:\.\s*[A-Za-z0-9_]+|\[)/gi) ?? []
+    const refs = connectors.match(/secrets\s*(?:\.\s*[A-Za-z0-9_]+|\[)|toJSON\(\s*secrets/gi) ?? []
     expect(new Set(refs)).toEqual(new Set(SHOPIFY_SECRETS.map(n => `secrets.${n}`)))
     expect(wf()).toMatch(/\npermissions:\n  contents: read\n/)
     expect(wf()).toMatch(/persist-credentials: false/)
@@ -227,7 +227,7 @@ describe('nightly.yml', () => {
     // A secret's value appears once each, on the test step only; the gate step sees only `!= ''`; no other step has any.
     const testStep = step(connectors, 'Shopify connectors against the read fixture')
     const gate = step(connectors, 'Live project and secrets present')
-    const anyRef = /secrets\s*(?:\.\s*[A-Za-z0-9_]+|\[)/gi
+    const anyRef = /secrets\s*(?:\.\s*[A-Za-z0-9_]+|\[)|toJSON\(\s*secrets/gi
     for (const name of SHOPIFY_SECRETS) {
       expect(testStep.match(new RegExp(`\\$\\{\\{ secrets\\.${name} \\}\\}`, 'g'))).toHaveLength(1)
       expect(gate.match(new RegExp(`\\$\\{\\{ secrets\\.${name} != '' \\}\\}`, 'g'))).toHaveLength(1)
@@ -239,7 +239,7 @@ describe('nightly.yml', () => {
   // The fixture's credentials never reach ci.yml (PR code runs there).
   it('ci.yml holds none of the read fixture\'s credentials', () => {
     const ci = fs.readFileSync(path.join(here, '../../../.github/workflows/ci.yml'), 'utf8')
-    expect(ci).not.toMatch(/shopify-read-fixture|SHOPIFY_CLIENT_SECRET|secrets\.SHOPIFY/)
+    expect(ci).not.toMatch(/shopify-read-fixture|SHOPIFY_CLIENT_SECRET|secrets\.SHOPIFY|\bsecrets\b\s*\[\s*['"]?shopify|toJSON\(\s*secrets/i)
   })
   it('runs probes.sh, and no eval step', () => {
     expect(wf()).toMatch(/\n        run: sh app\/scripts\/nightly\/probes\.sh\n/)
