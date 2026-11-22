@@ -19,6 +19,8 @@ ends somewhere else (a bare `\r`) can't hide config from the lock. Invented valu
 - `pass-per-pr-hub.json` (P4, `--hub`): PR 12's connector hub as the ops repo writes it from the hub's test bundle and
   `wrangler.hub.test.jsonc`: the bundle deployed as built (`no_bundle`), the SignIn Durable Object, the test switch on
   and invented test vars, no `define` or `secrets`.
+- `pass-per-pr-hub-loader.json` (P5, `--hub`): `pass-per-pr-hub.json` with the one loader binding code mode adds,
+  `worker_loaders: [{ "binding": "LOADER" }]`, the only shape a sandbox hub config may hold.
 - `pass-candidate-hub.json` (P4, `--hub`): the candidate's hub: the product hub config with its store vars empty and
   no `secrets.required` (wrangler fails a deploy whose required secrets are unset). Any runtime secret the candidate hub
   needs is a per-run value the ops deploy sets at deploy time, not a store credential.
