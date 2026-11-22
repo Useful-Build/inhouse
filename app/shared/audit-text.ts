@@ -156,6 +156,7 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
       return { what: 'disconnected a tool', detail: args.revoked ? connectorName(args.accountId) : `${connectorName(args.accountId)}: its access wasn’t removed on the tool’s side, so remove the app there too` }
     // P5 (p5-w4). Never the notice's text or title: the line holds neither.
     case 'notify.send': {
+      if (args.target === 'unlisted') return { what: 'a notice didn’t go out', detail: 'Slack: a channel that isn’t listed' }
       const where = args.kind === 'slack' ? 'Slack' : args.target === 'admins' ? 'the admins’ bell' : `${who(args.target)}’s bell`
       const why = args.detail ? NOTIFY_DETAIL[args.detail] ?? args.detail : ''
       if (args.outcome === 'posted') return { what: args.kind === 'slack' ? 'posted a notice to Slack' : 'sent a notice to the bell', detail: args.detail === 'to_bell' ? `${where}: ${why}` : where }
