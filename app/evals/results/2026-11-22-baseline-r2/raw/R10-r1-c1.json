@@ -1,0 +1,48 @@
+{
+ "row": {
+  "caseId": "R10",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": true,
+   "answerNot": false
+  },
+  "called": [
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I couldn't find a preferred invoice format. I checked my saved memory and your p",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_ajMigY1WBXq200qctVn5QA",
+  "askedAs": "eval-44977516723-1-r10-r1",
+  "answerNotMatch": "on it.\n\nIf you tell me which one you want (PDF, CSV, Excel or something else), I"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I couldn't find a preferred invoice format. I checked my saved memory and your p",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "a29fb293c73b325eb66cb2bf9a45a89a3a84e9ed7a0e82b99f18d547ac07338a",
+    "inputExcerpt": "{\"query\":\"invoice format\"}"
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "inputSha256": "19968eb88950bbd2f9df76223f338a748c6f85d90bfe02347b7a3281ca436a59",
+    "inputExcerpt": "{\"query\":\"invoice format PDF\"}"
+   }
+  ]
+ }
+}

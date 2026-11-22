@@ -7,12 +7,13 @@ import { CONNECTION_TEXT, NOTICE_TEXT, historyWanted } from './chat/notes'
 import type { ChatMessage } from '../agent/types'
 import { Composer, PHONE_QUERY } from '../components/Composer'
 import { fileIcon, fileSize } from '@/lib/file-meta'
-import { listNames, readingTools, toolDetail } from '../state/derive'
+import { listNames, noToolsYet, readingTools, toolDetail } from '../state/derive'
 import { cn } from '@/lib/utils'
 import { isStoppedNote, openChatKey, openRun, useCtx, useUi } from '../state/store'
 import type { QueuedMsg } from '../state/store'
 import { Confirm, TAP } from '../ui/fields'
 import { AgentMark, AttachmentChip, Button, Icon, IconButton, LogoTile, MenuItem, StageTag } from '../ui'
+import { PromptBentoSlot } from '../ui/chat'
 import { Button as UiButton } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -23,15 +24,12 @@ import { useOpenChatMessages } from './chat/open-messages'
 import { FileChip } from './chat/FileChip'
 import { filesOfTurns } from './chat/view'
 import { ChatList } from './chat/ChatList'
-import { SuggestionChip } from '../ui/chat'
 import { copyText } from './chat/copy'
 
 /** Within this many px of the bottom, new messages and thinking steps keep the view at the bottom. */
 const NEAR_BOTTOM = 80
 /** Shown on hover and focus, always on a phone or a touch screen. */
 const REVEAL = 'opacity-0 transition-opacity duration-120 group-focus-within/msg:opacity-100 group-hover/msg:opacity-100 pointer-coarse:opacity-100 data-[on=1]:opacity-100'
-/** An answer's action bar: its ground shows with the actions (REVEAL); its steps line shows on every answer. */
-const BAR_GROUND = 'transition-shadow duration-120 data-[on=1]:bg-background data-[on=1]:shadow-page-xs group-hover/msg:bg-background group-hover/msg:shadow-page-xs group-focus-within/msg:bg-background group-focus-within/msg:shadow-page-xs pointer-coarse:bg-background pointer-coarse:shadow-page-xs'
 
 /** A phone menu's thumbs: a radio item that looks like the menu's other rows (MenuItem), its own check at the right. */
 const RATE_ITEM = 'h-9.5 pl-2.5 text-base text-foreground [&>span:first-child]:hidden'
@@ -381,7 +379,7 @@ function Thread() {
     const copyBtn = <IconButton icon="content_copy" label="Copy message" size={17} variant="action" box="icon-sm" className="flex-none" onClick={() => copy(txt)} />
     if (phone) {
       return (
-        <div data-on="1" className={cn('relative mt-1.5 flex max-w-full items-center gap-0.5 self-start rounded-md pl-1 text-sm text-foreground-3', BAR_GROUND)}>
+        <div data-on="1" className="relative mt-1.5 flex max-w-full items-center gap-0.5 self-start rounded-md pl-1 text-sm text-foreground-3">
           {copyBtn}
           <span className="flex flex-none">{more}</span>
         </div>
@@ -390,7 +388,7 @@ function Thread() {
     // The actions show on hover or focus, and stay while More is open so the menu's button never fades from under the pointer.
     const on = menuOpen ? '1' : undefined
     return (
-      <div data-on={on} className={cn('relative mt-1.5 flex flex-wrap items-center gap-0.5 self-start rounded-md pl-1 text-sm text-foreground-3', BAR_GROUND)}>
+      <div data-on={on} className="relative mt-1.5 flex flex-wrap items-center gap-0.5 self-start rounded-md pl-1 text-sm text-foreground-3">
         <span data-on={on} data-answer-actions className={cn('flex flex-wrap items-center gap-0.5', REVEAL)}>
           <IconButton icon="reply" label="Reply" size={17} variant="action" box="icon-sm" onClick={() => patch({ replyTo: txt.slice(0, 140) })} />
           {copyBtn}
@@ -403,145 +401,172 @@ function Thread() {
     )
   }
 
+  const isBlank = msgs.length === 0 && !thinking && queue.length === 0 && historyIn
+  const notices = (ctx.agent.paused !== null || view?.notice || view?.damaged || link !== 'live') ? (
+    <div data-chat-notice role="status" className="mb-2 flex flex-col gap-1.5">
+      {link !== 'live' && (
+        <div className="flex items-center gap-2 rounded-xl bg-accent px-3 py-2 text-sm text-foreground-3">
+          <Icon name={link === 'held' ? 'refresh' : 'info'} size={16} className="flex-none" />
+          <span className="min-w-0 flex-1">{CONNECTION_TEXT[link]}</span>
+          {(link === 'reload' || link === 'grantEnded') && <Button variant="soft" size="sm" onClick={() => location.reload()}>Reload</Button>}
+        </div>
+      )}
+      {ctx.agent.paused !== null && (
+        <div className="flex items-center gap-2 rounded-xl bg-accent px-3 py-2 text-sm text-foreground-3"><Icon name="pause" size={16} className="flex-none" /><span className="min-w-0 flex-1">{NOTICE_TEXT.paused}</span></div>
+      )}
+      {view?.notice && !view.damaged && view.notice.code !== 'paused' && !view.budgetWait && (
+        <div className="flex items-center gap-2 rounded-xl bg-accent px-3 py-2 text-sm text-foreground-3"><Icon name="info" size={16} className="flex-none" /><span className="min-w-0 flex-1">{view.notice.text}</span></div>
+      )}
+      {view?.damaged && openId !== null && (
+        <div className="flex items-center gap-2 rounded-xl bg-accent px-3 py-2 text-sm text-foreground-3">
+          <Icon name="error" size={16} className="flex-none" />
+          <span className="min-w-0 flex-1">{NOTICE_TEXT.session_damaged}</span>
+          <Button variant="soft" size="sm" onClick={() => useUi.getState().resetSession(openId)}>Start fresh</Button>
+        </div>
+      )}
+    </div>
+  ) : null
+
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
-      <div ref={scroller} onScroll={onScroll} className="flex-1 overflow-auto px-(--app-pad-x) pt-2 pb-14">
-        <div ref={column} className="mx-auto flex max-w-chat-column flex-col">
-          {msgs.length === 0 && (
-            <div className="flex flex-col items-center pt-chat-empty-top text-center">
-              <h2 className="rounded-3xl bg-background px-3.5 text-3xl leading-title font-medium tracking-title shadow-page-xl">What do you want to know?</h2>
+    <div className={cn('relative flex min-h-0 flex-1 flex-col', isBlank && 'overflow-auto')}>
+      <div ref={scroller} onScroll={onScroll} className={isBlank ? 'flex grow shrink-0 flex-col justify-end px-(--app-pad-x) pt-8' : 'flex-1 overflow-auto px-(--app-pad-x) pt-2 pb-14'}>
+        <div ref={column} className={cn('mx-auto flex w-full flex-col', isBlank ? 'max-w-today-column items-center text-center' : 'max-w-chat-column')}>
+          {isBlank ? (
+            <>
+              <h2 className="text-3xl leading-title font-medium tracking-title">What do you want to know?</h2>
               {connected.length > 0
-                ? <p className="mt-2.5 rounded-xl bg-background px-2.5 text-md text-foreground-3 shadow-page-lg">Your Inhouse agent reads {listNames(connected)}.</p>
-                : <>
-                    <p className="mt-2.5 rounded-xl bg-background px-2.5 text-md text-foreground-3 shadow-page-lg">No tools are connected yet.</p>
+                ? <p className="mt-2.5 text-md text-foreground-3">Your Inhouse agent reads {listNames(connected)}.</p>
+                // Not claimed when the list is only unknown (cards or a run on the server, no connected list: the real client before P5).
+                : (ctx.data.tools.connected.length > 0 || noToolsYet(ctx.data)) && <>
+                    <p className="mt-2.5 text-md text-foreground-3">No tools are connected yet.</p>
                     <Button variant="outline" className="mt-3" onClick={() => go('apps')}>Connect tools</Button>
                   </>}
-              <div className="mt-5.5 flex flex-wrap justify-center gap-2">
-                {ctx.data.chat.suggestions.map(t => <SuggestionChip key={t} question={t} onAsk={q => { void ask(q) }} />)}
-              </div>
-            </div>
-          )}
-
-          {/* The conversation as a log, so screen readers hear each new answer once (not every thinking step).
-              Keyed by chat, so opening a chat doesn't read out its whole history. */}
-          {history && (history.next !== null || history.state === 'error') && (
-            <div className="mt-2 flex justify-center">
-              <Button variant="soft" size="sm" disabled={history.state === 'loading'} onClick={() => loadHistory(openId!, history.state !== 'error' || history.next !== null)}>
-                {history.state === 'error' ? "Couldn't load earlier messages. Try again" : 'Show earlier messages'}
-              </Button>
-            </div>
-          )}
-          <div key={threadKey} role="log" aria-label="Conversation" aria-busy={revealing.size > 0 || undefined} className="flex flex-col">
-          {blocks.map((b, k) => {
-            const mt = k === 0 ? 'mt-2' : b.kind === 'event' ? 'mt-3.5' : 'mt-5.5'
-            if (b.kind === 'user') {
-              const m = b.m
-              return (
-                <div key={m.id} data-chat-msg className={`group/msg relative flex flex-col ${mt}`}>
-                  {/* Desktop: the actions sit beside the bubble, out of the flow, so they cost no space at rest.
-                      Phone and touch: in the flow under the bubble, always visible. */}
-                  <div className={`relative flex flex-col items-end self-end ${bubbleMax}`}>
-                    <div className={cn('max-w-prose-measure rounded-3xl bg-bubble px-4.5 py-3 text-md leading-prose text-pretty whitespace-pre-wrap wrap-anywhere', editingId === m.id && 'shadow-selected')}>
-                      {m.quote && (
-                        <div className="mb-2 flex gap-2 overflow-hidden rounded-lg bg-fill px-2.5 py-1.5 text-sm whitespace-nowrap text-foreground-3">
-                          <Icon name="reply" size={15} />
-                          <span className="overflow-hidden text-ellipsis">{m.quote}</span>
+            </>
+          ) : (
+            <>
+              {/* The conversation as a log, so screen readers hear each new answer once (not every thinking step).
+                  Keyed by chat, so opening a chat doesn't read out its whole history. */}
+              {history && (history.next !== null || history.state === 'error') && (
+                <div className="mt-2 flex justify-center">
+                  <Button variant="soft" size="sm" disabled={history.state === 'loading'} onClick={() => loadHistory(openId!, history.state !== 'error' || history.next !== null)}>
+                    {history.state === 'error' ? "Couldn't load earlier messages. Try again" : 'Show earlier messages'}
+                  </Button>
+                </div>
+              )}
+              <div key={threadKey} role="log" aria-label="Conversation" aria-busy={revealing.size > 0 || undefined} className="flex flex-col">
+              {blocks.map((b, k) => {
+                const mt = k === 0 ? 'mt-2' : b.kind === 'event' ? 'mt-3.5' : 'mt-5.5'
+                if (b.kind === 'user') {
+                  const m = b.m
+                  return (
+                    <div key={m.id} data-chat-msg className={`group/msg relative flex flex-col ${mt}`}>
+                      {/* Desktop: the actions sit beside the bubble, out of the flow, so they cost no space at rest.
+                          Phone and touch: in the flow under the bubble, always visible. */}
+                      <div className={`relative flex flex-col items-end self-end ${bubbleMax}`}>
+                        <div className={cn('max-w-prose-measure rounded-3xl bg-bubble px-4.5 py-3 text-md leading-prose text-pretty whitespace-pre-wrap wrap-anywhere', editingId === m.id && 'shadow-selected')}>
+                          {m.quote && (
+                            <div className="mb-2 flex gap-2 overflow-hidden rounded-lg bg-fill px-2.5 py-1.5 text-sm whitespace-nowrap text-foreground-3">
+                              <Icon name="reply" size={15} />
+                              <span className="overflow-hidden text-ellipsis">{m.quote}</span>
+                            </div>
+                          )}
+                          <LongText text={m.text} onToggle={onToggleLong} />
+                        </div>
+                        <div data-on={phone ? '1' : undefined} className={cn(phone ? 'mt-1' : 'absolute right-full bottom-0 mr-1.5 pointer-coarse:static pointer-coarse:mr-0 pointer-coarse:mt-1', 'flex items-center gap-0.5 rounded-md px-0.5 text-foreground-3', REVEAL)}>
+                          <IconButton icon="content_copy" label="Copy message" size={17} variant="action" box="icon-sm" onClick={() => copy(m.text)} />
+                          {/* Editing sends the new question in place of this one and its answer, so not while one is being written. */}
+                          <IconButton icon="edit" label="Edit message" size={17} variant="action" box="icon-sm" disabled={thinking} onClick={() => startEdit(m, [m.id, ...answerOf(b.at)])} />
+                        </div>
+                      </div>
+                      {m.atts && m.atts.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap justify-end gap-1.5 self-end">
+                          {m.atts.map((f, j) => (
+                            f.fileId !== undefined
+                              ? <FileChip key={f.name + j} fileId={f.fileId} icon={f.icon} name={f.name} meta={f.meta} tap={phone} />
+                              : <AttachmentChip key={f.name + j} icon={f.icon} name={f.name} meta={f.meta} />
+                          ))}
                         </div>
                       )}
-                      <LongText text={m.text} onToggle={onToggleLong} />
-                    </div>
-                    <div data-on={phone ? '1' : undefined} className={cn(phone ? 'mt-1' : 'absolute right-full bottom-0 mr-1.5 pointer-coarse:static pointer-coarse:mr-0 pointer-coarse:mt-1', 'flex items-center gap-0.5 rounded-md bg-background px-0.5 text-foreground-3 shadow-page-xs', REVEAL)}>
-                      <IconButton icon="content_copy" label="Copy message" size={17} variant="action" box="icon-sm" onClick={() => copy(m.text)} />
-                      {/* Editing sends the new question in place of this one and its answer, so not while one is being written. */}
-                      <IconButton icon="edit" label="Edit message" size={17} variant="action" box="icon-sm" disabled={thinking} onClick={() => startEdit(m, [m.id, ...answerOf(b.at)])} />
-                    </div>
-                  </div>
-                  {m.atts && m.atts.length > 0 && (
-                    <div className="mt-1.5 flex flex-wrap justify-end gap-1.5 self-end">
-                      {m.atts.map((f, j) => (
-                        f.fileId !== undefined
-                          ? <FileChip key={f.name + j} fileId={f.fileId} icon={f.icon} name={f.name} meta={f.meta} tap={phone} />
-                          : <AttachmentChip key={f.name + j} icon={f.icon} name={f.name} meta={f.meta} />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            }
-            if (b.kind === 'event') {
-              const m = b.m
-              // A stopped answer can be asked again (M11).
-              const stopped = isStoppedNote(m) ? questionBefore(b.at) : null
-              return (
-                <div key={m.id} data-chat-msg className={`group/msg relative flex flex-col ${mt}`}>
-                  <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 self-center rounded-md bg-background px-2 py-0.5 text-center text-sm text-muted-foreground shadow-page-sm">
-                    <span>{m.text}</span>
-                    {stopped && (
-                      <Button variant="soft" size="sm" disabled={thinking} className={cn('-my-0.5', phone && TAP)}
-                        onClick={() => regenerate([stopped.q.id, ...stopped.between, m.id], { text: stopped.q.text, quote: stopped.q.quote, atts: stopped.q.atts })}>
-                        <Icon name="refresh" size={16} />Retry
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              )
-            }
-            const streaming = thinking && b.at + b.ms.length === msgs.length
-            const endsTurn = !streaming
-            const lastMsg = b.ms[b.ms.length - 1]
-            const traceId = lastMsg.trace
-            const tr = endsTurn ? traceOf(traceId) : null
-            // A draft to approve is its own card after the answer's; everything else is in the answer's card.
-            const inCard = b.ms.filter(x => x.part.type !== 'approval')
-            const drafts = b.ms.filter(x => x.part.type === 'approval')
-            return (
-              <div key={b.ms[0].id} data-chat-msg data-answer className={`group/msg relative flex flex-col ${mt}`}>
-                {/* The finished steps, collapsed above the card. */}
-                {tr && <StepsLine trace={tr} traceId={traceId} model={ctx.data.models.find(x => x.id === lastMsg.model)?.label} at={lastMsg.at} onToggle={onToggleLong} />}
-                {/* One white card per answer (D2): its text and tables inside, then its sources, and while it streams
-                    the thinking line at its foot, so no second card shows. */}
-                {(inCard.length > 0 || streaming) && (
-                  <div className={cn(CARD, phone ? 'px-4' : 'px-5')}>
-                    {inCard.map(x => <AgentPart key={x.id} id={x.id} chat={openId ?? undefined} part={x.part} trace={x.trace} animate={seenNow.ids.has(x.trace)} onBusy={onBusy} />)}
-                    {streaming && <Thinking text={thinkingText} />}
-                    {endsTurn && <SourcesRow parts={inCard.map(x => x.part)} trace={tr} onToggle={onToggleLong} />}
-                  </div>
-                )}
-                {drafts.map(x => (
-                  <div key={x.id} className="mt-1.5 flex flex-col">
-                    {x.part.type === 'approval' && <ApprovalCard problemId={x.part.problemId} />}
-                  </div>
-                ))}
-                {/* The files this answer saved, each with Download. */}
-                {(() => {
-                  const files = filesOfTurns(view, new Set(b.ms.map(m => m.trace)))
-                  return files.length > 0 && (
-                    <div className="mt-1.5 flex flex-wrap gap-1.5 self-start">
-                      {files.map(f => <FileChip key={f.fileId} fileId={f.fileId} icon={fileIcon(f.name)} name={f.name} meta={fileSize(f.bytes)} tap={phone} />)}
                     </div>
                   )
-                })()}
-                {/* The actions show once the turn is done, so the live log announces them once, not with every streamed part. */}
-                {endsTurn && answerBar(b)}
+                }
+                if (b.kind === 'event') {
+                  const m = b.m
+                  // A stopped answer can be asked again (M11).
+                  const stopped = isStoppedNote(m) ? questionBefore(b.at) : null
+                  return (
+                    <div key={m.id} data-chat-msg className={`group/msg relative flex flex-col ${mt}`}>
+                      <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 self-center rounded-md px-2 py-0.5 text-center text-sm text-muted-foreground">
+                        <span>{m.text}</span>
+                        {stopped && (
+                          <Button variant="soft" size="sm" disabled={thinking} className={cn('-my-0.5', phone && TAP)}
+                            onClick={() => regenerate([stopped.q.id, ...stopped.between, m.id], { text: stopped.q.text, quote: stopped.q.quote, atts: stopped.q.atts })}>
+                            <Icon name="refresh" size={16} />Retry
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                }
+                const streaming = thinking && b.at + b.ms.length === msgs.length
+                const endsTurn = !streaming
+                const lastMsg = b.ms[b.ms.length - 1]
+                const traceId = lastMsg.trace
+                const tr = endsTurn ? traceOf(traceId) : null
+                // A draft to approve is its own card after the answer's; everything else is in the answer's card.
+                const inCard = b.ms.filter(x => x.part.type !== 'approval')
+                const drafts = b.ms.filter(x => x.part.type === 'approval')
+                return (
+                  <div key={b.ms[0].id} data-chat-msg data-answer className={`group/msg relative flex flex-col ${mt}`}>
+                    {/* The finished steps, collapsed above the card. */}
+                    {tr && <StepsLine trace={tr} traceId={traceId} model={ctx.data.models.find(x => x.id === lastMsg.model)?.label} at={lastMsg.at} onToggle={onToggleLong} />}
+                    {/* One white card per answer (D2): its text and tables inside, then its sources, and while it streams
+                        the thinking line at its foot, so no second card shows. */}
+                    {(inCard.length > 0 || streaming) && (
+                      <div className={cn(CARD, phone ? 'px-4' : 'px-5')}>
+                        {inCard.map(x => <AgentPart key={x.id} id={x.id} chat={openId ?? undefined} part={x.part} trace={x.trace} animate={seenNow.ids.has(x.trace)} onBusy={onBusy} />)}
+                        {streaming && <Thinking text={thinkingText} />}
+                        {endsTurn && <SourcesRow parts={inCard.map(x => x.part)} trace={tr} onToggle={onToggleLong} />}
+                      </div>
+                    )}
+                    {drafts.map(x => (
+                      <div key={x.id} className="mt-1.5 flex flex-col">
+                        {x.part.type === 'approval' && <ApprovalCard problemId={x.part.problemId} />}
+                      </div>
+                    ))}
+                    {/* The files this answer saved, each with Download. */}
+                    {(() => {
+                      const files = filesOfTurns(view, new Set(b.ms.map(m => m.trace)))
+                      return files.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap gap-1.5 self-start">
+                          {files.map(f => <FileChip key={f.fileId} fileId={f.fileId} icon={fileIcon(f.name)} name={f.name} meta={fileSize(f.bytes)} tap={phone} />)}
+                        </div>
+                      )
+                    })()}
+                    {/* The actions show once the turn is done, so the live log announces them once, not with every streamed part. */}
+                    {endsTurn && answerBar(b)}
+                  </div>
+                )
+              })}
               </div>
-            )
-          })}
-          </div>
 
-          {/* Before the answer's first part, its card holds the thinking line: the parts then fill that same card. */}
-          {thinking && blocks.at(-1)?.kind !== 'turn' && (
-            <div className={cn(CARD, 'mt-5.5', phone ? 'px-4' : 'px-5')}><Thinking text={thinkingText} /></div>
+              {/* Before the answer's first part, its card holds the thinking line: the parts then fill that same card. */}
+              {thinking && blocks.at(-1)?.kind !== 'turn' && (
+                <div className={cn(CARD, 'mt-5.5', phone ? 'px-4' : 'px-5')}><Thinking text={thinkingText} /></div>
+              )}
+            </>
           )}
           {/* What the agent is doing, read out once per step (the visible line is in the card, hidden from the log). */}
           <div role="status" className="sr-only">{thinkingText}</div>
         </div>
       </div>
 
-      {/* The bottom dock: toasts stack above it (data-bottom-dock). */}
-      <div data-bottom-dock className="relative z-composer px-(--app-pad-x) pb-5">
-        <div className="relative mx-auto max-w-chat-column">
+      {/* The bottom dock: toasts stack above it (data-bottom-dock). Kept in one tree slot across blank and active
+          states so scroller/column stay observed and Composer never unmounts or drops focus on the first send. */}
+      <div data-bottom-dock={!isBlank ? '' : undefined} className={cn('relative z-composer flex-none px-(--app-pad-x)', isBlank ? 'pt-6' : 'pb-5')}>
+        <div className={cn('relative mx-auto w-full', isBlank ? 'max-w-today-column' : 'max-w-chat-column')}>
           {/* Centred above the box: clear of an answer's sources at the left and your messages at the right (M12). */}
-          {away && (
+          {!isBlank && away && (
             <div className="absolute bottom-full left-1/2 mb-2 -translate-x-1/2">
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -563,35 +588,20 @@ function Thread() {
             </div>
           )}
           {/* What holds the agent back, said where the person is about to type: a pause, a busy budget, a damaged session, a lost link. */}
-          {(ctx.agent.paused !== null || view?.notice || view?.damaged || link !== 'live') && (
-            <div data-chat-notice role="status" className="mb-2 flex flex-col gap-1.5">
-              {link !== 'live' && (
-                <div className="flex items-center gap-2 rounded-xl bg-accent px-3 py-2 text-sm text-foreground-3">
-                  <Icon name={link === 'held' ? 'refresh' : 'info'} size={16} className="flex-none" />
-                  <span className="min-w-0 flex-1">{CONNECTION_TEXT[link]}</span>
-                  {(link === 'reload' || link === 'grantEnded') && <Button variant="soft" size="sm" onClick={() => location.reload()}>Reload</Button>}
-                </div>
-              )}
-              {ctx.agent.paused !== null && (
-                <div className="flex items-center gap-2 rounded-xl bg-accent px-3 py-2 text-sm text-foreground-3"><Icon name="pause" size={16} className="flex-none" /><span className="min-w-0 flex-1">{NOTICE_TEXT.paused}</span></div>
-              )}
-              {view?.notice && !view.damaged && view.notice.code !== 'paused' && !view.budgetWait && (
-                <div className="flex items-center gap-2 rounded-xl bg-accent px-3 py-2 text-sm text-foreground-3"><Icon name="info" size={16} className="flex-none" /><span className="min-w-0 flex-1">{view.notice.text}</span></div>
-              )}
-              {view?.damaged && openId !== null && (
-                <div className="flex items-center gap-2 rounded-xl bg-accent px-3 py-2 text-sm text-foreground-3">
-                  <Icon name="error" size={16} className="flex-none" />
-                  <span className="min-w-0 flex-1">{NOTICE_TEXT.session_damaged}</span>
-                  <Button variant="soft" size="sm" onClick={() => useUi.getState().resetSession(openId)}>Start fresh</Button>
-                </div>
-              )}
-            </div>
-          )}
+          {notices}
           {/* Always there, so a screen reader hears each change to the queue. */}
           <div role="status" className="sr-only">{queueStatus}</div>
+          <Composer variant="chat" showToolsLabel={isBlank && !phone} />
         </div>
-        <Composer variant="chat" showToolsLabel={!phone && msgs.length === 0} />
       </div>
+
+      {isBlank && (
+        <div className="flex grow shrink-0 flex-col px-(--app-pad-x) pt-5 pb-8">
+          <div className="mx-auto w-full max-w-today-column">
+            <PromptBentoSlot suggestions={ctx.data.chat.suggestions} tools={readingTools(ctx)} onAsk={q => { void ask(q) }} showRoutine={ctx.S >= 1} />
+          </div>
+        </div>
+      )}
       {replacing && (
         <Confirm label="Replace your draft?" title="Replace your draft?" action="Replace" onCancel={() => setReplacing(null)}
           closeFocus={() => (replaced.current ? document.querySelector<HTMLElement>('[data-composer] textarea') : null)}

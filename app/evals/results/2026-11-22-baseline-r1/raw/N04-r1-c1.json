@@ -1,0 +1,30 @@
+{
+ "row": {
+  "caseId": "N04",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "Hello! Sounds like a long day. Long supplier calls can be draining.\n\nWhen you're",
+  "costUsd": 0.015,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.015,
+  "answer": "Hello! Sounds like a long day. Long supplier calls can be draining.\n\nWhen you're",
+  "toolCalls": []
+ }
+}

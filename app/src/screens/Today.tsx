@@ -1,9 +1,9 @@
 // Today: greeting, composer, then the problem cards (or the first-day and loading states).
 import { Fragment } from 'react'
 import { Composer } from '../components/Composer'
-import { amountOf, draftView, flags, handled, issueCards, kindIcon, pendingIds, riskLabel, setupRows, todayCopy, TONE_TEXT } from '../state/derive'
+import { amountOf, draftView, flags, handled, issueCards, kindIcon, pendingIds, readingTools, riskLabel, setupRows, todayCopy, todayEmptyState, TONE_TEXT, toolView } from '../state/derive'
 import { isUrgent } from '../ui/severity'
-import { fmtMoney } from '../lib/format'
+import { fmtMoney, hasAmount } from '../lib/format'
 import { display } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -11,6 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/compon
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { AgentMark, Button, CardGrid, EmptyState, Icon, IconButton, LogoTile, MenuItem, SectionHeader } from '../ui'
+import { PromptBentoSlot } from '../ui/chat'
 import { Select, TAP } from '../ui/fields'
 
 const SORT_AMOUNT = 'Biggest amount first'
@@ -29,6 +30,7 @@ export function Today() {
   // Handled cards stay after the ones that need the person, in every sort.
   if (byAmount) cards.sort((a, b) => Number(a.handled) - Number(b.handled) || amountOf(b.problem) - amountOf(a.problem))
   const h = handled(ctx)
+  const empty = todayEmptyState(ctx)
   const setup = setupRows(ctx.data)
   // The first tool the agent doesn't have yet: the one Today waits for.
   const next = setup.find(s => !ctx.data.tools.connected.includes(s.key))
@@ -40,7 +42,7 @@ export function Today() {
   return (
     <div className="relative mx-auto box-border max-w-page-wide px-(--app-pad-x) pt-today-top pb-14">
       <div className="flex flex-col items-center text-center">
-        <h1 className="rounded-3xl bg-background px-3.5 text-hero leading-hero font-medium tracking-title text-pretty shadow-page-xl">
+        <h1 className="px-3.5 text-hero leading-hero font-medium tracking-title text-pretty">
           {copy.greeting}<span className="block text-muted-foreground">{copy.headline}</span>
         </h1>
         <div className="mt-6.5 flex w-full justify-center">
@@ -50,21 +52,19 @@ export function Today() {
 
       {f.isFirst && (
         <div className="mx-auto mt-7 max-w-today-column">
-          <SectionHeader onDots title="Getting your Inhouse agent ready" count={`${ctx.data.tools.connected.length} of ${setup.length} tools connected`} className="mb-3"
-            actions={<button type="button" className={cn('on-page text-sm font-strong whitespace-nowrap text-foreground transition-colors hover:text-foreground-3', tap)} onClick={() => openTeam('tool')}>Message the team →</button>} />
+          <SectionHeader title="Getting your Inhouse agent ready" count={`${ctx.data.tools.connected.length} of ${setup.length} tools connected`} className="mb-3"
+            actions={<button type="button" className={cn('text-sm font-strong whitespace-nowrap text-foreground transition-colors hover:text-foreground-3', tap)} onClick={() => openTeam('tool')}>Message the team →</button>} />
           <div className="rounded-2xl border border-border bg-card px-4.5 py-0.5">
             {setup.map((s, i) => (
               <button key={s.key} type="button" data-setup-row={s.key} onClick={() => openTool(s.key)} className={`flex min-h-13.25 w-full items-center gap-3 border-t text-left text-base ${i === 0 ? 'border-transparent' : 'border-divider'}`}>
                 <LogoTile k={s.key} size="md" />
                 <span className="min-w-0 flex-1 font-medium">{s.name}</span>
-                <span className="flex items-center gap-1.5 text-sm whitespace-nowrap text-foreground-3">
-                  <i className={`size-1.5 rounded-full ${s.key === next?.key ? 'bg-warning' : 'bg-fill-strong'}`} />{s.when}
-                </span>
+                <span className="text-sm whitespace-nowrap text-foreground-3">{s.when}</span>
                 <Icon name="chevron_right" size={18} className="text-faint" />
               </button>
             ))}
           </div>
-          <p className="on-page mx-1 mt-3 mb-0 text-sm text-pretty text-muted-foreground shadow-page-md">
+          <p className="mx-1 mt-3 mb-0 text-sm text-pretty text-muted-foreground">
             Today fills in the day after {next?.name ?? 'your first tool'} is connected. Until then your Inhouse agent has nothing to read, so it won't guess.
           </p>
         </div>
@@ -72,7 +72,7 @@ export function Today() {
 
       {f.isLoading && (
         <div className="mt-7">
-          <SectionHeader onDots icon={<AgentMark />} title="Reading your tools" count={`${ctx.data.tools.readDone} of ${ctx.data.tools.connected.length} done`} className="mb-3" />
+          <SectionHeader icon={<AgentMark />} title="Reading your tools" count={`${ctx.data.tools.readDone} of ${ctx.data.tools.connected.length} done`} className="mb-3" />
           <CardGrid size="wide" aria-hidden="true">
             {SKELETON_WIDTHS.map(w => (
               <div key={w} className="box-border flex min-h-47.5 flex-col gap-2.5 rounded-2xl border border-border bg-card p-4.5">
@@ -89,14 +89,16 @@ export function Today() {
 
       {!f.noData && (
         <div className="mt-7">
-          <SectionHeader onDots title={headTitle} count={allApproved ? undefined : copy.countLabel} className="mb-3"
-            actions={phone || settled ? undefined : (
-              <Select label="Sort cards" value={byAmount ? SORT_AMOUNT : copy.sortLabel} options={[copy.sortLabel, SORT_AMOUNT]} minWidth={0}
-                onChange={v => useUi.getState().patch({ todaySort: v === SORT_AMOUNT ? 'amount' : 'default' })}
-                className={cn('rounded-lg border-transparent bg-transparent pr-1.5 pl-2.5 text-sm text-foreground-3 data-[size=default]:h-7.5', tap)} />
-            )} />
+          {(cards.length > 0 || empty.emptyKind === 'aside') && (
+            <SectionHeader title={headTitle} count={allApproved || !copy.countLabel ? undefined : copy.countLabel} className="mb-3"
+              actions={phone || settled || cards.length === 0 ? undefined : (
+                <Select label="Sort cards" value={byAmount ? SORT_AMOUNT : copy.sortLabel} options={[copy.sortLabel, SORT_AMOUNT]} minWidth={0}
+                  onChange={v => useUi.getState().patch({ todaySort: v === SORT_AMOUNT ? 'amount' : 'default' })}
+                  className={cn('rounded-lg border-transparent bg-transparent pr-1.5 pl-2.5 text-sm text-foreground-3 data-[size=default]:h-7.5', tap)} />
+              )} />
+          )}
 
-          {ctx.S === 2 && (
+          {empty.showHandledBanner && (
             <button type="button" onClick={() => go('activity')}
               className={`mb-3 box-border flex w-full items-center rounded-xl bg-brand-tint px-4 py-3 text-sm text-brand-text transition-colors hover:bg-brand/12 ${phone ? 'flex-wrap gap-x-3 gap-y-1.5' : 'flex-nowrap gap-3'}`}>
               <Icon name="check_circle" size={18} weight={400} />
@@ -107,7 +109,36 @@ export function Today() {
             </button>
           )}
 
-          {cards.length === 0 && <EmptyState>Every card is set aside for today. Activity lists them, each with Undo.</EmptyState>}
+          {cards.length === 0 && empty.emptyKind === 'aside' && (
+            <EmptyState>Every card is set aside for today. Activity lists them, each with Undo.</EmptyState>
+          )}
+          {cards.length === 0 && empty.emptyKind === 'clear' && (
+            <div className="mx-auto flex max-w-today-column flex-col gap-3">
+              {ctx.data.tools.connected.length > 0 && (
+                <div className="rounded-2xl border border-border bg-card p-4 shadow-card">
+                  <div className={cn('grid grid-cols-1 gap-2', ctx.data.tools.connected.length === 2 ? 'sm:grid-cols-2' : ctx.data.tools.connected.length >= 3 && 'sm:grid-cols-3')}>
+                    {ctx.data.tools.connected.map(k => {
+                      const v = toolView(ctx, k)
+                      return (
+                        <button key={k} type="button" onClick={() => openTool(k)}
+                          className="flex items-center gap-2.5 rounded-xl bg-muted px-3 py-2.5 text-left transition-colors hover:bg-fill-hover">
+                          <LogoTile k={k} size="sm" />
+                          <span className="min-w-0 flex-1">
+                            <span className="ellipsis block text-sm font-medium text-foreground">{v.name}</span>
+                            <span className="ellipsis block text-xs text-muted-foreground">{v.listLine}</span>
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+              <PromptBentoSlot suggestions={ctx.data.chat.suggestions} tools={readingTools(ctx)} onAsk={q => { void ask(q) }} showRoutine={false} />
+              {ctx.data.tools.connected.length === 0 && ctx.data.chat.suggestions.length === 0 && (
+                <EmptyState>Nothing needs you today.</EmptyState>
+              )}
+            </div>
+          )}
           <CardGrid size="wide">
             {cards.map(c => {
               const p = c.problem
@@ -159,7 +190,8 @@ export function Today() {
                     {/* The space sits above the amount, so amounts and bottom blocks line up across a row. */}
                     <div className="min-h-3.5 flex-1" />
                     <div className={`flex flex-wrap items-baseline gap-x-2 pb-4 ${done}`}>
-                      <span className="text-2xl leading-none font-semibold tracking-stat tabular-nums">{fmtMoney(p.cost, display())}</span>
+                      {/* A card with no money at stake (a status card, an item the check couldn't put a value on) shows no amount. */}
+                      {hasAmount(p.cost) && <span className="text-2xl leading-none font-semibold tracking-stat tabular-nums">{fmtMoney(p.cost, display())}</span>}
                       <span className="text-sm text-pretty text-muted-foreground">{p.costNote}</span>
                     </div>
                   </div>

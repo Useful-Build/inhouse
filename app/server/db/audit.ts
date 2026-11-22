@@ -23,7 +23,7 @@ export interface LineInput {
 
 /** The row the change touched, found by `where` (with `params`) and the write's `stamp` on its `req_id`. */
 export interface Guard {
-  table: 'members' | 'settings' | 'support_grants' | 'memories'
+  table: 'members' | 'settings' | 'support_grants' | 'memories' | 'today_aside'
     // P5 (p5-w1)
     | 'connector_accounts'
     // P5 (p5-w4)

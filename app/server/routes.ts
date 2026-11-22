@@ -22,6 +22,8 @@ import { getFile, listChatFiles, uploadAttachment } from './api/attachments.ts'
 import { getUsage } from './usage/api.ts'
 import { forgetBrandMemory, forgetPersonalMemory, listMemory } from './api/memory.ts'
 import { drainState, startDrain, undrain } from './ops/drain.ts'
+// P4 W2 (p4-w2.md section 9): the Routines page's routes.
+import { deleteRoutine, listRoutines, restoreRoutine, runRoutineNow, setRoutineEnabled } from './api/routines.ts'
 import { alarmNow } from './ops/alarm-now.ts'
 import { testFakes } from './ops/fakes-hook.ts'
 import { warmup } from './ops/warmup.ts'
@@ -29,6 +31,10 @@ import { reviveTask } from './ops/revive.ts'
 // P4 W4: Activity and the bell (rows 59 to 61).
 import { listActivity } from './api/activity.ts'
 import { listNotifications, markNotificationsRead } from './api/bell.ts'
+// P4 W3: Today (rows 57 and 58).
+import { getToday, putAside } from './api/today.ts'
+// P4 W5: the Library (rows 62 to 66).
+import { deleteLibraryFiles, downloadLibraryFile, listLibrary, restoreLibraryFiles, uploadLibraryFile } from './api/library.ts'
 // P5 (p5-w1 section 9): the Inhouse team connects an OAuth tool through the hub's ConnectGateway.
 import { connectCallback, startConnect } from './api/connect.ts'
 import { toolsHandlers } from './api/tools.ts'
@@ -170,6 +176,21 @@ export const routes: readonly Route[] = [
   /* 59 */ { method: 'GET', pattern: '/api/activity', handler: listActivity },
   /* 60 */ { method: 'GET', pattern: '/api/notifications', handler: listNotifications },
   /* 61 */ { method: 'POST', pattern: '/api/notifications/read', handler: markNotificationsRead },
+  // P4 W3 (p4-w3.md section 5): Today.
+  /* 57 */ { method: 'GET', pattern: '/api/today', handler: getToday },
+  /* 58 */ { method: 'PUT', pattern: '/api/today/:id/aside', handler: putAside },
+  // P4 W5 (p4-w5.md section 3): the Library.
+  /* 62 */ { method: 'GET', pattern: '/api/library', handler: listLibrary },
+  /* 63 */ { method: 'POST', pattern: '/api/library/uploads', handler: uploadLibraryFile },
+  /* 64 */ { method: 'GET', pattern: '/api/library/:id/download', handler: downloadLibraryFile },
+  /* 65 */ { method: 'POST', pattern: '/api/library/delete', handler: deleteLibraryFiles },
+  /* 66 */ { method: 'POST', pattern: '/api/library/restore', handler: restoreLibraryFiles },
+  // P4 W2 (p4-w2.md section 9): the Routines page.
+  /* 52 */ { method: 'GET', pattern: '/api/routines', handler: listRoutines },
+  /* 53 */ { method: 'PUT', pattern: '/api/routines/:id/enabled', handler: setRoutineEnabled },
+  /* 54 */ { method: 'POST', pattern: '/api/routines/:id/run', handler: runRoutineNow },
+  /* 55 */ { method: 'POST', pattern: '/api/routines/:id/delete', handler: deleteRoutine },
+  /* 56 */ { method: 'POST', pattern: '/api/routines/:id/restore', handler: restoreRoutine },
   // P5 W1 (p5-w1.md section 9): connect start and the OAuth callback. P5's rows start at 68.
   /* 68 */ { method: 'POST', pattern: '/api/connect/:accountId/start', handler: startConnect },
   /* 69 */ { method: 'GET', pattern: '/api/connect/callback', handler: connectCallback },

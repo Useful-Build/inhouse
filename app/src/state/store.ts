@@ -1108,7 +1108,7 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     togglePause: () => {
       if (agent.getSnapshot().paused) { agent.resume().catch(logFailure('could not resume')); showToast('Your Inhouse agent is running again', { ms: 4000 }); return }
       agent.pause().catch(logFailure('could not pause'))
-      showToast('Your Inhouse agent is paused. Routines, jobs and questions are stopped.', { undo: () => { agent.resume().catch(logFailure('could not resume')) } })
+      showToast('Your Inhouse agent is paused. Chats, routines and jobs are stopped.', { undo: () => { agent.resume().catch(logFailure('could not resume')) } })
     },
 
     setDemo: p => {

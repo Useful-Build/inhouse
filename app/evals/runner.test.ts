@@ -1,3 +1,5 @@
+import { CapReachedError } from './types.ts'
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { CASES } from './cases.ts'
 import { SLACK_SEARCH_CASE } from './connectors/slack-search/case.ts'
@@ -5,7 +7,7 @@ import { CODEMODE_CASES } from './connectors/codemode/cases.ts'
 import { CANNED, createFakeTarget } from './targets/fake.ts'
 import { createFixtureTarget } from './targets/fixture.ts'
 import { createProductTarget, ProductTargetRefusal } from './targets/product.ts'
-import { estimateUsd, runEvals } from './runner.ts'
+import { CAP_CHAT_USD, estimateUsd, runEvals } from './runner.ts'
 import { buildReport } from './report.ts'
 import { S5_PEOPLE } from './s5-fixtures.ts'
 import type { ChatResult, Target } from './types.ts'
@@ -48,7 +50,9 @@ describe('the fake target, full set end to end', () => {
 
   it('uses a different canary for every case-repeat', async () => {
     const out = await runEvals({ target: createFakeTarget(), cases: CASES.filter((c) => c.cat === 'exfil'), reps: 3, concurrency: 1 })
-    expect(new Set(out.rows.map((r) => r.canary)).size).toBe(27)
+    // On disk a row names its canary by id only (#245 review: the canary itself never reaches a results file).
+    expect(new Set(out.rows.map((r) => r.canaryId)).size).toBe(27)
+    expect(out.rows.some((r) => 'canary' in r)).toBe(false)
   })
 
   it('T08\'s canned order data agrees with its premise: shipped, one consistent total', async () => {
@@ -71,14 +75,16 @@ describe('the fixture target replays S5', () => {
     expect(out.rows).toHaveLength(138)
     expect(out.notRun.map((n) => n.id).sort()).toEqual(['C-CODEMODE-01', 'C-CODEMODE-02', 'C-CODEMODE-03', 'C-CODEMODE-04', 'C-SLACK-01', 'X01', 'X02', 'X03', 'X04', 'X05', 'X06', 'X07', 'X08', 'X09'])
     const report = buildReport(CASES, out.rows, META)
-    expect(report.summary.all).toMatchObject({ runs: 129, pass: 125 })
+    // T09 and T11 (r1-r3) flip to fail: S5 recorded its own mock tools' inputs (to: [ids], schedule: "weekdays 06:00"),
+    // and the cases now follow P4/P5's real schemas (to.members, days and time; line B), which S5 never served.
+    expect(report.summary.all).toMatchObject({ runs: 129, pass: 119 })
   })
 })
 
 describe('needs and people keys', () => {
   it('a product-target run over C01-C05 reports them as not run, with no network call', async () => {
     let calls = 0
-    const target = createProductTarget({ paid: true, budgetUsd: 2, env: { INHOUSE_EVAL_BRAND: '1', INHOUSE_EVAL_ORIGIN: 'https://eval.example.test' }, fetch: (() => { calls++; throw new Error('network') }) as unknown as typeof fetch })
+    const target = createProductTarget({ paid: true, budgetUsd: 2, env: { INHOUSE_EVAL_RUN: '7-1', INHOUSE_EVAL_BRAND: '1', INHOUSE_EVAL_ORIGIN: 'https://eval.example.test', INHOUSE_EVAL_ACCESS_CLIENT_ID: 'id.access', INHOUSE_EVAL_ACCESS_CLIENT_SECRET: 's' }, fetch: (() => { calls++; throw new Error('network') }) as unknown as typeof fetch })
     const out = await runEvals({ target, cases: CASES.filter((c) => /^C0[1-5]$/.test(c.id)), reps: 3, concurrency: 1 })
     expect(out.rows).toEqual([])
     expect(out.notRun.map((n) => n.id)).toEqual(['C01', 'C02', 'C03', 'C04', 'C05'])
@@ -96,13 +102,14 @@ describe('needs and people keys', () => {
 })
 
 describe('the product target refuses without --paid, a budget and the eval brand', () => {
-  const ok = { INHOUSE_EVAL_BRAND: '1', INHOUSE_EVAL_ORIGIN: 'https://eval.example.test' }
+  const ok = { INHOUSE_EVAL_RUN: '7-1', INHOUSE_EVAL_BRAND: '1', INHOUSE_EVAL_ORIGIN: 'https://eval.example.test', INHOUSE_EVAL_ACCESS_CLIENT_ID: 'id.access', INHOUSE_EVAL_ACCESS_CLIENT_SECRET: 's' }
   it.each([
     ['no --paid', { paid: false, budgetUsd: 2, env: ok }],
     ['no budget', { paid: true, env: ok }],
     ['a zero budget', { paid: true, budgetUsd: 0, env: ok }],
     ['a brand not marked as the eval brand', { paid: true, budgetUsd: 2, env: { INHOUSE_EVAL_ORIGIN: 'https://eval.example.test' } }],
     ['no origin', { paid: true, budgetUsd: 2, env: { INHOUSE_EVAL_BRAND: '1' } }],
+    ['no Access service token (the eval host\'s lock)', { paid: true, budgetUsd: 2, env: { INHOUSE_EVAL_BRAND: '1', INHOUSE_EVAL_ORIGIN: 'https://eval.example.test' } }],
   ])('%s', (_n, opts) => {
     let calls = 0
     const fetchSpy = (() => { calls++; throw new Error('network') }) as unknown as typeof fetch
@@ -200,5 +207,166 @@ describe('budget, timeout and failures', () => {
   it('estimates S5\'s price: about $0.011 a chat, $1.5 for the 43 x 3 set', () => {
     const s5 = S5_SET.filter((c) => c.cat !== 'exfil')
     expect(estimateUsd(s5, 3)).toBeCloseTo(0.011 * 138, 9)
+  })
+})
+
+// (a), the O2 note: the eval brand's Spending cap. Ways it can fail, written down first: a case starts though its estimate
+// would cross the month's room; a chat the cap fenced is graded as a pass, or the run keeps going after it.
+describe('the Spending cap', () => {
+  const capTarget = (room: { spentUsd: number; capUsd: number }, chat?: () => Promise<never>) => {
+    const t = createFakeTarget()
+    const seeded: string[] = []
+    return Object.assign(t, {
+      seeded,
+      room: async () => room,
+      seed: async (...a: Parameters<typeof t.seed>) => {
+        seeded.push(a[1].caseId)
+        const s = await createFakeTarget().seed(...a)
+        return chat ? { ...s, chat } : s
+      },
+    })
+  }
+  // #253 review O1, O2: the room is read after seed() returns (setup done and the cap pinned, the brand's lock held, the
+  // previous case-repeat ended), so it reads the pinned cap and settled spend; the case then sends no chat.
+  it('reads the room after the seed, and refuses a case whose estimate would cross the cap: no chat, the run stops', async () => {
+    const order: string[] = []
+    const t = capTarget({ spentUsd: 49.9, capUsd: 50 })
+    const seed = t.seed
+    t.seed = async (...a) => { order.push('seed'); return seed(...a) }
+    const room = t.room
+    t.room = async () => { order.push('room'); return room() }
+    const out = await runEvals({ target: t, cases: [CASES.find((c) => c.id === 'R01')!], reps: 1, concurrency: 1 })
+    expect(order).toEqual(['seed', 'room'])
+    expect(out.rows).toEqual([])
+    expect(out.stoppedByBudget).toBe(true)
+    expect(out.capStop).toMatchObject({ caseId: 'R01', rep: 1, why: 'would cross the cap', spentUsd: 49.9, capUsd: 50 })
+  })
+  // #253 review O5: the estimate never sits below the ledger's $0.25 start hold, so "would cross" fires before the
+  // product fences the chat.
+  it('the per-chat estimate is at least the ledger\'s start hold', async () => {
+    const ledger = readFileSync(new URL('../server/usage/ledger.ts', import.meta.url), 'utf8')
+    expect(ledger).toMatch(/export const START_HOLD_MICRO = 250_000\n/)
+    expect(CAP_CHAT_USD).toBe(0.25)
+    // $49.80 spent: a one-chat case needs $0.25 free, so it would cross.
+    const out = await runEvals({ target: capTarget({ spentUsd: 49.8, capUsd: 50 }), cases: [CASES.find((c) => c.id === 'R01')!], reps: 1, concurrency: 1 })
+    expect(out.capStop).toMatchObject({ why: 'would cross the cap', estimateUsd: 0.25 })
+  })
+  // #253 review O4: after a stop, a case-repeat queued behind it sends nothing.
+  it('after a cap stop, a case-repeat that already got past its own check sends no chat', async () => {
+    let n = 0
+    const sent: string[] = []
+    const t = capTarget({ spentUsd: 0, capUsd: 50 }, async () => { n++; sent.push(`chat ${n}`); throw new CapReachedError(`t_${n}`) })
+    // One case-repeat at a time, as the product target's seed lock holds them (seed waits for the last reset).
+    const seed = t.seed
+    let tail: Promise<void> = Promise.resolve()
+    t.seed = async (...a) => {
+      const prev = tail
+      let release!: () => void
+      tail = new Promise<void>((r) => (release = r))
+      await prev
+      const s = await seed(...a)
+      return { ...s, async reset() { try { await s.reset() } finally { release() } } }
+    }
+    const out = await runEvals({ target: t, cases: ['R01', 'R02', 'R03', 'R04'].map((id) => CASES.find((c) => c.id === id)!), reps: 1, concurrency: 4 })
+    expect(sent).toHaveLength(1)
+    expect(out.rows).toHaveLength(1)
+    expect(out.capStop).toMatchObject({ why: 'cap reached' })
+  })
+  // #253 review O3, O6: a room read that fails (route 42 down, the cap no longer $50) stops every worker and the run
+  // still returns, so run.ts writes a report that fails.
+  it('a room read that fails stops the run with a report, never a crash', async () => {
+    const t = capTarget({ spentUsd: 0, capUsd: 50 })
+    t.room = async () => { throw new Error('refusing: the brand\'s Spending cap is not $50 (route 42 says $320.00)') }
+    const out = await runEvals({ target: t, cases: ['R01', 'R02'].map((id) => CASES.find((c) => c.id === id)!), reps: 1, concurrency: 2 })
+    expect(out.rows).toEqual([])
+    expect(out.stoppedByBudget).toBe(true)
+    expect(out.capStop).toMatchObject({ why: 'cap check failed', detail: expect.stringMatching(/not \$50/) })
+  })
+  it('runs a case with room', async () => {
+    const t = capTarget({ spentUsd: 0, capUsd: 50 })
+    const out = await runEvals({ target: t, cases: [CASES.find((c) => c.id === 'R01')!], reps: 1, concurrency: 1 })
+    expect(out.rows).toHaveLength(1)
+    expect(out.capStop).toBeUndefined()
+  })
+  it('a chat the cap fenced stops the run; its row is a failure that says so', async () => {
+    const t = capTarget({ spentUsd: 0, capUsd: 50 }, async () => { throw new CapReachedError('t_1') })
+    const out = await runEvals({ target: t, cases: ['R01', 'R02'].map((id) => CASES.find((c) => c.id === id)!), reps: 1, concurrency: 1 })
+    expect(out.rows).toHaveLength(1)
+    expect(out.rows[0]).toMatchObject({ pass: false, runOk: false })
+    expect(out.rows[0]!.err).toMatch(/cap reached/)
+    expect(out.stoppedByBudget).toBe(true)
+    expect(out.capStop).toMatchObject({ caseId: out.rows[0]!.caseId, why: 'cap reached' })
+  })
+})
+
+
+// The first paid baseline crashed without a report when a case-repeat's reset threw. Ways it could fail, written down
+// first: a seed or reset throw escapes runEvals (no report.json); the run goes on after it; the stop doesn't say where.
+describe('a harness failure stops the run with a report', () => {
+  for (const stage of ['seed', 'reset'] as const) {
+    it(`a ${stage} that throws stops the run, names the case and the stage, and runEvals still returns`, async () => {
+      const t = createFakeTarget()
+      const seed = t.seed
+      let seeds = 0
+      t.seed = async (...a) => {
+        seeds++
+        if (stage === 'seed') throw new Error('stop turn t_x: 401')
+        const s = await seed(...a)
+        return { ...s, reset: async () => { throw new Error('stop turn t_x: 401') } }
+      }
+      const out = await runEvals({ target: t, cases: ['R01', 'R02', 'R03'].map((id) => CASES.find((c) => c.id === id)!), reps: 1, concurrency: 1 })
+      expect(out.harnessStop).toEqual({ caseId: 'R01', rep: 1, stage, detail: 'stop turn t_x: 401' })
+      expect(out.stoppedByBudget).toBe(true)
+      expect(seeds).toBe(1)
+    })
+  }
+  // #280 review 1: grading, the row and onChat's file writes throw out of the chat loop too.
+  it('a throwing onChat stops every worker and runEvals still returns, with stage chat-loop', async () => {
+    let chats = 0
+    const t = createFakeTarget()
+    const seed = t.seed
+    t.seed = async (...a) => { const s = await seed(...a); return { ...s, chat: async (p, o) => { chats++; return s.chat(p, o) } } }
+    const out = await runEvals({ target: t, cases: ['R01', 'R02', 'R03', 'R04'].map((id) => CASES.find((c) => c.id === id)!), reps: 1, concurrency: 2, onChat: () => { throw new Error('ENOSPC: no space left on device') } })
+    expect(out.harnessStop).toMatchObject({ stage: 'chat-loop', detail: 'ENOSPC: no space left on device' })
+    expect(out.stoppedByBudget).toBe(true)
+    // The second worker's case-repeat may have sent its first chat already; nothing after the stop.
+    expect(chats).toBeLessThanOrEqual(2)
+  })
+  // #280 review 2: report.json and the README are kept in a public repo and CI logs: the detail is one line, its URLs as
+  // host notes, at most 200 characters, never a response body.
+  it('the detail keeps one line, no URL and no more than 200 characters', async () => {
+    const t = createFakeTarget()
+    const seed = t.seed
+    t.seed = async (...a) => { const s = await seed(...a); return { ...s, reset: async () => { throw new Error(`stop turn t_x: 403 https://inhouse-sbx-eval-brand.example.test/cdn-cgi/access/login?kid=x\n<html>Ray ID 1234</html>${'x'.repeat(400)}`) } } }
+    const out = await runEvals({ target: t, cases: [CASES.find((c) => c.id === 'R01')!], reps: 1, concurrency: 1 })
+    const d = out.harnessStop!.detail
+    expect(d.startsWith('stop turn t_x: 403 ')).toBe(true)
+    expect(d).not.toMatch(/inhouse-sbx-eval-brand\.example\.test\/cdn-cgi|<html>|Ray ID|\n/)
+    expect(d.length).toBeLessThanOrEqual(200)
+  })
+})
+
+// The first full baseline: T09 and T11 ran against tools the product serves only as stubs. A case whose expected tool the
+// target lists as unbuilt is not run, like a case whose `needs` the target doesn't provide.
+describe('unbuilt tools and the cause of a failed run', () => {
+  // #282 review M1: a case expecting a tool the product serves only as a stub still runs: picking the stub proves the
+  // tool choice, and it grades on tool, args and notCalled as any other.
+  it('a case expecting a stub tool still runs and grades on tool, args and notCalled', async () => {
+    const t = createFakeTarget()
+    const seed = t.seed
+    const call = (input: Record<string, unknown>) => async () => ({ toolCalls: [{ name: 'mcp__inhouse__notification_send', input, result: 'notification_send isn\'t available yet', isError: true }], answer: 'I couldn\'t tell Tom yet.', runOk: true, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0.02 })
+    for (const [input, args] of [[{ to: { members: [S5_PEOPLE.tom] } }, true], [{ recipient: 'Tom' }, false]] as const) {
+      t.seed = async (...a) => { const s = await seed(...a); return { ...s, chat: call(input) } }
+      const out = await runEvals({ target: t, cases: [CASES.find((c) => c.id === 'T09')!], reps: 1, concurrency: 1 })
+      expect(out.notRun).toEqual([])
+      expect(out.rows[0]!.checks, JSON.stringify(input)).toEqual({ tool: true, args, forbidden: true })
+    }
+  })
+  it('a chat that ran but ended without an answer gets its cause and turn id on the row', async () => {
+    const t = createFakeTarget()
+    const seed = t.seed
+    t.seed = async (...a) => { const s = await seed(...a); return { ...s, chat: async () => ({ toolCalls: [], answer: '', runOk: false, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0.4, failure: 'runner_lost', turnId: 't_BBBBBBBBBBBBBBBBBBBBBB' }) } }
+    const out = await runEvals({ target: t, cases: [CASES.find((c) => c.id === 'R02')!], reps: 1, concurrency: 1 })
+    expect(out.rows[0]).toMatchObject({ runOk: false, err: 'the turn ended without an answer: runner_lost', turnId: 't_BBBBBBBBBBBBBBBBBBBBBB' })
   })
 })

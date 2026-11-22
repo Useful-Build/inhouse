@@ -1,4 +1,5 @@
-// The product build check (P1, C8; part 4 P2; part 5 the hub, P4; part 6 the eval build). Run in app/ after `npm run build`,
+// The product build check (P1, C8; part 4 P2; part 5 the hub, P4; part 6 the eval build; part 7 the test shop, P4;
+// part 8 the test issuer's header). Run in app/ after `npm run build`,
 // `npm run build:product`, `npm run build:product-test` and `npm run build:product-eval`:
 //   node scripts/check-product-build.mjs                      checks dist-product/ (must pass) and dist/ (must fail)
 //   node scripts/check-product-build.mjs --product DIR --demo DIR --product-test DIR --product-eval DIR   other folders
@@ -33,12 +34,19 @@
 //      build only (vite.config.ts). Its canary (EVAL_CANARY) and that module are in neither the deployable Worker nor the
 //      test build's (built from PR code on every PR); the eval build must carry both, or the scan proves nothing; and the
 //      eval build carries no scripted model (it runs the real model).
-//   8. The test-fakes hook (P5 W5, route 76): `@test-fakes` resolves to server/ops/test-fakes.ts in the test build only
+//   7. The test shop override (P4, the morning-check set run remotely): `@test-shop` resolves to server/egress/test-shop.ts
+//      in the test and eval builds only (vite.config.ts). That module, its canary (TEST_SHOP_CANARY) and the hub option's
+//      name (`testShopHost`, hub/index/contract.ts) are nowhere in the deployable Worker; the test and eval builds must carry
+//      the canary and the module as soon as any server source imports `@test-shop`, or the scan proves nothing.
+//   8. The test issuer's header (the eval deployment behind Access): X-Inhouse-Test-Assertion, which test and eval builds'
+//      authenticate.ts reads the test issuer's JWT from, is named nowhere in the deployable Worker (any case), and is in
+//      the test and the eval builds, or the scan proves nothing.
+//   9. The test-fakes hook (P5 W5, route 76): `@test-fakes` resolves to server/ops/test-fakes.ts in the test build only
 //      (vite.config.ts), not in the eval build, which is deployed. That module (which calls notification_send as a named
 //      member and the hub's ReadGateway with a run scope), its canary (TEST_FAKES_CANARY) and that run scope's
 //      synthetic principal (`m_test_fakes`) are in neither the deployable Worker nor the eval build, source maps
 //      included; the test build must carry all three as soon as any server source imports
-//      `@test-fakes`, or the scan proves nothing. (Part 8, not 7: fleet/watch's #291 holds part 7, the test shop.)
+//      `@test-fakes`, or the scan proves nothing. (Part 9: P4 holds parts 7, the test shop, and 8, the test issuer's header.)
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -253,7 +261,7 @@ if (serverImports('@test-controls')) {
   } else console.log('ok    server bundle: caught the test controls in the test build.')
 } else console.log('note  test controls: no server source imports @test-controls, so the test build need not carry their canary.')
 
-// ---------- 5. the eval trace ----------
+// ---------- 6. the eval trace ----------
 /** app/server/eval-trace/on.ts's EVAL_TRACE_CANARY (check-product-build.test.mjs keeps the two equal). */
 const EVAL_CANARY = 'inhouse-eval-trace-canary-5d1e8a40'
 /** vite.config.ts's `@eval-trace` target in the eval build (check-product-build.test.mjs pins it to the real file and the alias). */
@@ -300,7 +308,68 @@ if (inEval.scripted.length) {
   console.error(`FAIL  eval trace: the eval build carries the scripted model (${relative(root, evalWorker)}):\n${show(inEval.scripted)}`)
 } else console.log('ok    eval trace: no scripted model in the eval build.')
 
-// ---------- 8. the test-fakes hook ----------
+// ---------- 7. the test shop override ----------
+/** app/server/egress/test-shop.ts's TEST_SHOP_CANARY (check-product-build.test.mjs keeps the two equal). */
+const TEST_SHOP_CANARY = 'inhouse-test-shop-canary-9c4e17b2'
+/** hub/index/contract.ts's CallToolOptions field: only the test and eval builds ever send it. */
+const TEST_SHOP_OPTION = 'testShopHost'
+/** The real module only: the off stand-in (test-shop-off.ts) is what the deployable Worker bundles. */
+const TEST_SHOP_MODULE = /(^|\/)server\/egress\/test-shop\.ts($|\?)/
+/** The override's canary and option name in a Worker's files, and its module in the Worker's graph. */
+function testShopScan(dir) {
+  const hits = []
+  for (const f of walk(dir).filter(f => TEXT.test(f))) {
+    const text = readFileSync(f, 'utf8')
+    if (text.includes(TEST_SHOP_CANARY)) hits.push(`"${TEST_SHOP_CANARY}" in ${relative(root, f)}`)
+    if (text.includes(TEST_SHOP_OPTION)) hits.push(`"${TEST_SHOP_OPTION}" in ${relative(root, f)}`)
+  }
+  for (const id of JSON.parse(readFileSync(join(dir, '..', 'server-modules.json'), 'utf8'))) if (TEST_SHOP_MODULE.test(id)) hits.push(`module ${id}`)
+  return hits
+}
+const testShopInProduct = testShopScan(productWorker)
+if (testShopInProduct.length) {
+  bad = true
+  console.error(`FAIL  test shop: the deployable Worker (${relative(root, productWorker)}) has the test shop override:\n${show(testShopInProduct)}`)
+} else console.log(`ok    test shop: not in the deployable Worker (${relative(root, productWorker)}).`)
+if (serverImports('@test-shop')) {
+  for (const [label, dir] of [['the test build', testWorker], ['the eval build', evalWorker]]) {
+    const hits = testShopScan(dir)
+    const missing = [
+      ...(hits.some(h => h.includes(TEST_SHOP_CANARY)) ? [] : [`no "${TEST_SHOP_CANARY}"`]),
+      ...(hits.some(h => h.startsWith('module ')) ? [] : ['no server/egress/test-shop.ts module']),
+    ]
+    if (missing.length) {
+      bad = true
+      console.error(`FAIL  test shop: the server imports @test-shop but ${label} (${relative(root, dir)}) has ${missing.join(' and ')}, so the scan proves nothing.`)
+    } else console.log(`ok    test shop: caught ${label}.`)
+  }
+} else console.log('note  test shop: no server source imports @test-shop, so the test and eval builds need not carry it.')
+
+// ---------- 8. the test issuer's header ----------
+/**
+ * app/server/auth/test-issuer.ts's TEST_ASSERTION_HEADER (check-product-build.test.mjs keeps the two equal): test and eval
+ * builds read the test issuer's JWT from it behind Access. It must never name itself in the deployable Worker (whose
+ * authenticate.ts reads Cf-Access-Jwt-Assertion alone), and must be in the test and eval builds, or the scan proves nothing.
+ */
+const TEST_ASSERTION = 'X-Inhouse-Test-Assertion'
+/** Files of a Worker that name the header, in any case. */
+function assertionScan(dir) {
+  const needle = TEST_ASSERTION.toLowerCase()
+  return walk(dir).filter(f => TEXT.test(f) && readFileSync(f, 'utf8').toLowerCase().includes(needle)).map(f => `"${TEST_ASSERTION}" in ${relative(root, f)}`)
+}
+const assertionInProduct = assertionScan(productWorker)
+if (assertionInProduct.length) {
+  bad = true
+  console.error(`FAIL  test issuer's header: the deployable Worker (${relative(root, productWorker)}) names it:\n${show(assertionInProduct)}`)
+} else console.log(`ok    test issuer's header: not in the deployable Worker (${relative(root, productWorker)}).`)
+for (const [label, dir] of [['the test build', testWorker], ['the eval build', evalWorker]]) {
+  if (!assertionScan(dir).length) {
+    bad = true
+    console.error(`FAIL  test issuer's header: no "${TEST_ASSERTION}" in ${label} (${relative(root, dir)}), so the scan proves nothing (and the build can't sign in behind Access).`)
+  } else console.log(`ok    test issuer's header: caught ${label}.`)
+}
+
+// ---------- 9. the test-fakes hook ----------
 /** app/server/ops/test-fakes.ts's TEST_FAKES_CANARY (check-product-build.test.mjs keeps the two equal). */
 const TEST_FAKES_CANARY = 'inhouse-test-fakes-canary-6b2f90d4'
 /** The synthetic principal the hook's `hub` op calls the ReadGateway as (test-fakes.ts): a run scope only it builds. */

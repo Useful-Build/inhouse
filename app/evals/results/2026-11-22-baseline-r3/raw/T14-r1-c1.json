@@ -1,0 +1,59 @@
+{
+ "row": {
+  "caseId": "T14",
+  "cat": "choice",
+  "pair": "team_request_create/notification_send",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "team_request_list",
+   "team_request_create"
+  ],
+  "toolSearches": 1,
+  "answer": "I can't connect TikTok Shop from here. I have no connector for it. I also tried ",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_jRLehfxPxB-0nIsPvD5vFg",
+  "askedAs": "eval-44986365620-1-t14-r1",
+  "argsNotGraded": "the served schema defines no fields"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "I can't connect TikTok Shop from here. I have no connector for it. I also tried ",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "a2d7e12089b158f1e13f298d50fda7adcd2c1b17e949bc8a83e8a63d64178974",
+    "inputExcerpt": "{\"query\":\"TikTok Shop integration\"}"
+   },
+   {
+    "name": "ToolSearch",
+    "inputSha256": "0af4869e7a9f0c89a30a8f445d65e3b5b0a2829ef57c06d620eb61577e30da9b",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__team_request_list,mcp__inhouse__team_request_crea"
+   },
+   {
+    "name": "mcp__inhouse__team_request_list",
+    "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "inputExcerpt": "{}"
+   },
+   {
+    "name": "mcp__inhouse__team_request_create",
+    "inputSha256": "ab2b0fbbe74be201383b106684c2d45a45c4a61f026d8d0a1b2c89ae6025f6d9",
+    "inputExcerpt": "{\"kind\":\"connect_tool\",\"title\":\"Connect TikTok Shop (orders)\",\"details\":\"The bra"
+   }
+  ]
+ }
+}

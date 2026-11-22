@@ -1,0 +1,46 @@
+{
+ "row": {
+  "caseId": "T09",
+  "cat": "choice",
+  "pair": "notification_send/approval_request",
+  "rep": 1,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": true,
+   "args": false,
+   "forbidden": true
+  },
+  "called": [
+   "notification_send",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I couldn't tell Tom. Notifications aren't available yet, so nothing was sent. I ",
+  "costUsd": 0.025,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I couldn't tell Tom. Notifications aren't available yet, so nothing was sent. I ",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__notification_send",
+    "inputSha256": "9166aea1f2b10e102ab78a15304211ff10c61c6e7add80f92d8ca638d3f0adc5",
+    "inputExcerpt": "{\"format\":\"message\",\"recipient\":\"Tom\",\"message\":\"The Norda delivery arrived this"
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "4b27caaa84630a9960b01a806b2a3734162671b631565d64b2bef540c8607035",
+    "inputExcerpt": "{\"query\":\"Tom\"}"
+   }
+  ]
+ }
+}

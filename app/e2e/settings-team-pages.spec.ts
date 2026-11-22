@@ -150,7 +150,7 @@ test('Run limits: switches, limits and Pause work, survive a reload and Reset de
 
   // Pause stops the agent, says so in the top bar and flips the button; Resume undoes it.
   await pause.click()
-  await expect(toast(page, 'Your Inhouse agent is paused. Routines, jobs and questions are stopped.')).toBeVisible()
+  await expect(toast(page, 'Your Inhouse agent is paused. Chats, routines and jobs are stopped.')).toBeVisible()
   await expect(resume).toBeVisible()
   await expect(status('paused')).toBeVisible()
   await resume.click()

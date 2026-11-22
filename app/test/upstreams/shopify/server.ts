@@ -436,7 +436,13 @@ export function createShopifyUpstream(datasetValue: unknown, options: ShopifyUps
 
     const m = /^\/admin\/api\/([^/]+)\/graphql\.json$/.exec(url.pathname)
     if (!m) return new Response('not found', { status: 404 })
-    if (!tokens.has(req.headers.get('X-Shopify-Access-Token') ?? '')) return json({ errors: '[API] Invalid API key or access token' }, 401)
+    if (!tokens.has(req.headers.get('X-Shopify-Access-Token') ?? '')) {
+      // A token this store never issued (the hub's stored one, after the store restarted in a new isolate and lost its memory) is
+      // already the one 401 `unauthorized-once` stands for: the hub's single re-grant handles it. Sending the fault's own 401 on
+      // top would be a second in a row, which the hub treats as rejected credentials and locks out.
+      unauthorizedSent = true
+      return json({ errors: '[API] Invalid API key or access token' }, 401)
+    }
     if (faults.has('unauthorized-once') && !unauthorizedSent) {
       unauthorizedSent = true
       return json({ errors: '[API] Invalid API key or access token' }, 401)

@@ -3,7 +3,7 @@ import type { ComponentType, ReactNode } from 'react'
 import { agent, demo } from './agent'
 import { isChatUnknown } from './state/chat-known'
 import { AgentError } from './agent/types'
-import type { AgentErrorCode } from './agent/types'
+import type { AgentErrorCode, RefreshList } from './agent/types'
 import { NOT_FOUND } from '../shared/contract/error-codes'
 import type { Page } from './state/store'
 import { FROM_SETTINGS_MENU, chatEntries, defaultChatId, newestChat, openChatKey, takeReplaceEntry, useAgentData, useAgentState, useUi } from './state/store'
@@ -24,7 +24,7 @@ import { reportError } from './report-error'
 import { DevSwitcher } from './shell/DevSwitcher'
 import { cn } from '@/lib/utils'
 import { Skeleton } from '@/components/ui/skeleton'
-import { DotsBackground, GooDefs, Page as PageBox } from './ui'
+import { GooDefs, Page as PageBox, SkyspaceBackground } from './ui'
 import { Today } from './screens/Today'
 import { Chats } from './screens/Chats'
 import { useChatIsBlank } from './screens/chat/open-messages'
@@ -148,6 +148,8 @@ const PAGE_SLUG: Record<Page, string> = { today: 'today', library: 'library', ch
 const toHash = (page: Page, appKey: string, setTab: string, chat: string, menu = false) =>
   '#/' + PAGE_SLUG[page] + (page === 'app' ? '/' + appKey : page === 'settings' ? (menu ? '' : '/' + setTab) : page === 'chats' ? '/' + encodeURIComponent(chat) : '')
 const SETTINGS_TABS = MENU.flatMap(g => g.items.map(([k]) => k))
+/** The list each page shows that the agent's work fills (read again when the page opens). */
+const PAGE_LIST: Partial<Record<Page, RefreshList>> = { today: 'problems', approvals: 'problems', library: 'library', activity: 'activity' }
 const PAGE_LABEL: Record<Page, string> = { today: 'Today', library: 'Library', chats: 'Chats', approvals: 'Approvals', routines: 'Routines', activity: 'Activity', apps: 'Tools', app: 'Tools', skills: 'Skills', usage: 'Usage', settings: 'Settings' }
 /** A link that names a page, tool or tab that doesn't exist lands where it did before, and says so. */
 const notFound = (where: string) => useUi.getState().showToast(`That page doesn't exist. You're on ${where}.`, { icon: 'info', key: 'route-notice' })
@@ -303,11 +305,26 @@ function Shell() {
     return () => clearTimeout(t)
   }, [])
   const page = useUi(s => s.page)
+  // A list page reads its list again when it opens, and the bell its notices: what the agent made since the first read
+  // (a file a chat saved, the cards a Run now found) isn't in it. Not the page the app starts on: the first reads cover it,
+  // and for the Inhouse team landing there isn't a choice (each read under a grant writes a support.access line). The
+  // client never reads the bell for the Inhouse team.
+  // Compared with the start page, not "has this effect run": StrictMode runs it twice on mount in development.
+  const startPage = useRef(page)
+  const moved = useRef(false)
+  useEffect(() => {
+    if (!moved.current && page === startPage.current) return
+    moved.current = true
+    const list = PAGE_LIST[page]
+    if (list) void agent.refresh(list)
+    void agent.refresh('notifications')
+  }, [page])
   const appKey = useUi(s => s.appKey)
   const shellData = useAgentData()
   const route = toolRoute(shellData.tools, appKey, shellData.resources.tools.status)
   const toolKnown = route === 'known'
   const phone = useUi(s => s.phone)
+  const sideCollapsed = useUi(s => s.sideCollapsed)
   const chatList = useUi(s => s.chatList)
   const traceId = useUi(s => s.traceId)
   const chatId = useUi(s => s.chatId)
@@ -372,9 +389,13 @@ function Shell() {
   // While the tools are still being read, the tool page itself says so (it knows nothing of the key yet).
   const Screen = page === 'app' && route === 'unknown' ? Tools : SCREENS[page]
   const subKey = page === 'app' ? appKey : page === 'settings' ? setTab : page === 'chats' ? (chatList ? 'all' : fresh ? 'new' : chatId ?? '') : ''
+  // Full-shell Turrell Skyspace behind both the floating sidebar and main: hero on Today and blank New chat, softly quieted in an active chat, off on other pages.
+  const skyspace = page === 'today' || (page === 'chats' && !chatList && chatBlank) ? 'hero' : page === 'chats' && !chatList ? 'subtle' : null
+  const skyspaceOffset = phone ? 'none' : sideCollapsed ? 'rail' : 'full'
   return (
-    // `isolation` here (not on main) keeps the dots layer (zIndex -1) above the page colour and below the cards, while modals inside main still stack above the Sidebar.
-    <div className="isolate flex h-dvh overflow-hidden bg-background">
+    // `isolation` here (not on main) keeps the Skyspace layer (zIndex -1) above the page colour and behind the floating sidebar and cards, while modals inside main still stack above the Sidebar.
+    <div className="relative isolate flex h-dvh overflow-hidden bg-background">
+      {skyspace && <SkyspaceBackground mode={skyspace} offset={skyspaceOffset} />}
       {/* First in the tab order: past the sidebar to the page (L18). An anchor's own jump would change the hash route. */}
       <a href="#main" onClick={e => { e.preventDefault(); mainRef.current?.focus() }}
         className="fixed top-2.5 left-2.5 z-dev rounded-lg bg-primary px-3.5 py-2 text-sm font-strong text-primary-foreground not-focus:sr-only">
@@ -382,8 +403,6 @@ function Shell() {
       </a>
       <Sidebar />
       <div className="relative flex min-w-0 flex-1 flex-col">
-        {/* Dots only on Today and a blank new chat; a saved chat or one that has started, and the All chats list, use the plain page background like Tools and Skills. */}
-        {(page === 'today' || (page === 'chats' && !chatList && chatBlank)) && <DotsBackground />}
         {/* The top bar is the banner landmark: a header outside main, so it stays put while main scrolls. */}
         <div className="flex-none"><TopBar /></div>
         <main id="main" ref={mainRef} tabIndex={-1} className="relative flex min-h-0 flex-1 flex-col overflow-auto outline-none">

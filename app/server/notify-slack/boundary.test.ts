@@ -23,14 +23,20 @@ describe('test 8: the egress never hands HUB_DELIVERY to a route', () => {
   it("the hub route's deps hold the ReadGateway only, and no route's deps hold the delivery binding or the env", () => {
     const delivery = { trap: 'HUB_DELIVERY' }
     const hub = { listTools: () => null, callTool: () => null }
-    const fakeEnv = { ...(env as unknown as Record<string, unknown>), HUB: hub, HUB_DELIVERY: delivery } as unknown as Env
     const ctx = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as unknown as ExecutionContext
-    const deps = egressDeps(fakeEnv, ctx, { runner: 'runner-test' } as never) as unknown as Record<string, unknown>
-    const hubDeps = deps.hub as Record<string, unknown>
-    expect(Object.keys(hubDeps).sort()).toEqual(['hub', 'log', 'now', 'requestId'])
-    expect(hubDeps.hub).toBe(hub)
-    const all = reachable(deps)
-    expect(all).not.toContain(delivery)
-    expect(all).not.toContain(fakeEnv)
+    // Outside the test and eval builds (INHOUSE_TEST_BUILD unset) the hub route holds the ReadGateway itself. In them, P4's
+    // test shop wrapper (`@test-shop`, server/egress/test-shop.ts) stands in its place: the same two read methods, over the
+    // same ReadGateway and the D1, never the env or the delivery binding.
+    for (const testBuild of [undefined, '1']) {
+      const fakeEnv = { ...(env as unknown as Record<string, unknown>), HUB: hub, HUB_DELIVERY: delivery, INHOUSE_TEST_BUILD: testBuild } as unknown as Env
+      const deps = egressDeps(fakeEnv, ctx, { runner: 'runner-test' } as never) as unknown as Record<string, unknown>
+      const hubDeps = deps.hub as Record<string, unknown>
+      expect(Object.keys(hubDeps).sort()).toEqual(['hub', 'log', 'now', 'requestId'])
+      if (testBuild === undefined) expect(hubDeps.hub).toBe(hub)
+      else expect(Object.keys(hubDeps.hub as object).sort()).toEqual(['callTool', 'listTools'])
+      const all = reachable(deps)
+      expect(all).not.toContain(delivery)
+      expect(all).not.toContain(fakeEnv)
+    }
   })
 })

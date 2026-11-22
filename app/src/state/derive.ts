@@ -51,10 +51,19 @@ export const lostTool = (ctx: Ctx): { key: string; since: Instant } | null => {
   return null
 }
 /**
- * Day one: the agent's data has arrived and no tool is connected yet, so it has nothing to read. Today lists the setup
- * instead of problems. A client that is still loading isn't there yet: it doesn't know its tools.
+ * Day one: the agent's data has arrived, no tool is connected yet and the server holds nothing for Today (no cards, and no
+ * routine has run, a failed run included), so the agent has nothing to read. Today lists the setup instead of problems. A
+ * client that is still loading isn't there yet: it doesn't know its tools. The real client has no tools read until P5, so
+ * `connected` stays empty: what the server already holds for Today is what ends day one there.
  */
-export const isFirstDay = (data: AgentData): boolean => data.status === 'ready' && data.tools.connected.length === 0
+export const isFirstDay = (data: AgentData): boolean => data.status === 'ready' && noToolsYet(data)
+/**
+ * Whether a screen may say "no tools are connected yet": none is connected and the server holds nothing for Today (no cards,
+ * no routine run). With `connected` empty but cards or a run present (the real client before P5), the list is unknown, not
+ * empty, so such copy stays out.
+ */
+export const noToolsYet = (data: AgentData): boolean =>
+  data.tools.connected.length === 0 && data.problems.length === 0 && !data.routines.some(r => r.last !== undefined)
 /**
  * The tool the Inhouse team is connecting now (it has a `liveBy` date), with that date as shown ("Fri, Nov 20"), or null:
  * none is, or it's day one, when nothing is live yet and Today lists the setup instead.
@@ -192,7 +201,7 @@ export const byName = (data: AgentData, id: string) => data.people.members.find(
 export const firstName = (name: string) => name.trim().split(/\s+/)[0] ?? name
 
 /** A money field as typed in Settings ("$400", "1,200", "$0") as dollars, or null when it isn't an amount. */
-const dollarsIn = (v: string | undefined): number | null => {
+export const dollarsIn = (v: string | undefined): number | null => {
   if (v === undefined || !v.trim()) return null
   const n = Number(v.replace(/[$,\s%]/g, ''))
   return Number.isFinite(n) && n >= 0 ? n : null
@@ -210,7 +219,7 @@ export interface CapStatus {
   spent: Money
   cap: Money
   alertAt: number
-  /** Spend reached the cap: routines and jobs pause. */
+  /** Spend reached the cap: chats, routines and jobs pause. */
   reached: boolean
   /** The banner's line at the cap, from those values. */
   bannerText: string
@@ -224,7 +233,7 @@ export function capStatus(ctx: Ctx): CapStatus {
     spent, cap, alertAt,
     // The server's own answer when it judged the cap Settings shows now (Usage does the same); else spend against the cap.
     reached: ctx.data.usage.capReached !== undefined && ctx.data.usage.cap.minor === cap.minor ? ctx.data.usage.capReached : spent.minor >= cap.minor,
-    bannerText: `Your Inhouse agent has used ${fmtMoney(spent, display())} of ${fmtMoney(cap, display())} this month, so routines and jobs are paused. Questions still work, and waiting drafts can still be approved.`,
+    bannerText: `Your Inhouse agent has used ${fmtMoney(spent, display())} of ${fmtMoney(cap, display())} this month, so chats, routines and jobs are paused until next month or until an admin raises the cap. Waiting drafts can still be approved.`,
   }
 }
 
@@ -246,8 +255,8 @@ export function usageSummary(m: { total: Money; cap: Money; alertAt: number; dai
   const capNote = !thisMonth
     ? over ? `Closed at ${Math.round(total / cap * 100)}% of the cap.` : `Closed at ${pct} of the cap. Nothing was paused.`
     : reached
-      ? 'Cap reached today. Routines and jobs are paused until an admin raises it.'
-      : `Admins get an email at ${m.alertAt}%. Your Inhouse agent pauses routines and jobs at the cap.`
+      ? 'Cap reached today. Chats, routines and jobs are paused until next month or until an admin raises the cap.'
+      : `Admins get an email at ${m.alertAt}%. Your Inhouse agent pauses chats, routines and jobs at the cap.`
   return { hint, capNote }
 }
 
@@ -298,6 +307,24 @@ export function handled(ctx: Ctx) {
   }
 }
 
+export interface TodayEmptyState {
+  /** Run: show the overnight handled strip only when the agent actually handled at least one job. */
+  showHandledBanner: boolean
+  /** When no cards show: 'clear' when there are zero problems, 'aside' when every problem was set aside, else 'none'. */
+  emptyKind: 'none' | 'clear' | 'aside'
+  asideCount: number
+}
+
+export function todayEmptyState(ctx: Ctx): TodayEmptyState {
+  const shown = visibleProblems(ctx).length
+  const asideCount = ctx.data.problems.length - shown
+  return {
+    showHandledBanner: ctx.S === 2 && handled(ctx).count > 0,
+    emptyKind: shown > 0 ? 'none' : asideCount > 0 ? 'aside' : 'clear',
+    asideCount,
+  }
+}
+
 export interface TodayCopy {
   greeting: string; headline: string; headSub: string; countLabel: string; sortLabel: string
 }
@@ -314,15 +341,26 @@ export function todayCopy(ctx: Ctx): TodayCopy {
   const read = morningReadTools(ctx)
   const connected = ctx.data.tools.connected
   const missed = connected.filter(k => !read.includes(k)).map(k => toolDetail(ctx.data, k).name)
-  // With nothing waiting in Act: say what happened to the drafts, so a set-aside one isn't counted as approved.
-  const doneLabel = aside === 0 ? 'all approved' : approvedN ? `${approvedN} approved, ${aside} set aside` : `${aside} set aside`
+  // With nothing waiting in Act: say what happened to the drafts, so zero problems isn't labelled "all approved".
+  const doneLabel = total === 0 ? '' : aside === 0 ? 'all approved' : approvedN ? `${approvedN} approved, ${aside} set aside` : `${aside} set aside`
+  const runHeadline = h > 0 && n > 0
+    ? `${h} handled before you woke up. ${n} need${n === 1 ? 's' : ''} you.`
+    : h > 0
+      ? `${h} handled before you woke up. Nothing needs you.`
+      : n > 0
+        ? `${n} ${n === 1 ? 'thing needs' : 'things need'} you today.`
+        : 'Nothing needs you today.'
+  const runCountLabel = n ? `${n} waiting on you` : total === 0 ? '' : h ? `${h} handled` : aside ? `${aside} set aside` : ''
   const copy = [
     {
       headline: shown ? `${shown} ${shown === 1 ? 'thing needs' : 'things need'} you today.` : 'Nothing needs you today.',
       headSub: missed.length
         ? `Your Inhouse agent read ${read.length} of your ${connected.length} tools and changed nothing. ${listNames(missed)} ${missed.length === 1 ? 'needs' : 'need'} reconnecting.`
-        : `Your Inhouse agent read ${listNames(read.map(k => toolDetail(ctx.data, k).name))} and changed nothing.`,
-      countLabel: `${shown} to look at`, sortLabel: 'Most urgent first',
+        : read.length
+          ? `Your Inhouse agent read ${listNames(read.map(k => toolDetail(ctx.data, k).name))} and changed nothing.`
+          // Cards but no connected list (the real client before P5): don't name tools it can't list.
+          : 'Your Inhouse agent checked this morning and changed nothing.',
+      countLabel: shown ? `${shown} to look at` : '', sortLabel: 'Most urgent first',
     },
     {
       headline: n && n === total ? `${n} things need you. A fix is drafted for each.` : n ? `${n} left to approve today.` : total && shown === total ? `All ${total} approved. Nothing is waiting on you.` : 'Nothing is waiting on you.',
@@ -330,14 +368,14 @@ export function todayCopy(ctx: Ctx): TodayCopy {
       countLabel: n ? `${n} drafted and waiting` : doneLabel, sortLabel: 'Most urgent first',
     },
     {
-      headline: `${h} handled before you woke up. ${n} need${n === 1 ? 's' : ''} you.`,
+      headline: runHeadline,
       headSub: 'Money and customer messages always wait for a person. Every step is logged and can be undone.',
-      countLabel: `${n} waiting on you`, sortLabel: 'Exceptions first',
+      countLabel: runCountLabel, sortLabel: 'Exceptions first',
     },
   ][S]
   let headSub = copy.headSub, headline = copy.headline
-  if (f.paused) headSub = 'Your Inhouse agent is paused, so routines, jobs and questions are stopped.'
-  if (f.cap) headSub = 'Routines and jobs are paused at the spending cap. Drafts already waiting can still be approved.'
+  if (f.paused) headSub = 'Your Inhouse agent is paused, so chats, routines and jobs are stopped until an admin resumes it. Waiting drafts can still be approved.'
+  if (f.cap) headSub = 'Chats, routines and jobs are paused until next month or until an admin raises the cap. Drafts already waiting can still be approved.'
   if (f.isFirst) { headline = 'Your Inhouse agent is being set up.'; headSub = 'Your Inhouse team connects each tool for you. There is nothing to install.' }
   if (f.isLoading) { headline = 'Your Inhouse agent is reading your tools.'; headSub = 'The morning check takes about two minutes. Your list appears as soon as it finishes.' }
   const first = firstName(userName(ctx))

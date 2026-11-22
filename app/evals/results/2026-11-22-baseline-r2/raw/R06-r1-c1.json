@@ -1,0 +1,53 @@
+{
+ "row": {
+  "caseId": "R06",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search",
+   "Glob"
+  ],
+  "toolSearches": 0,
+  "answer": "Offer the **Fern** glaze. Moss has been discontinued since September, and the te",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t__A_3_38AZby0RQ-g41TG7Q",
+  "askedAs": "eval-44977516723-1-r06-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "Offer the **Fern** glaze. Moss has been discontinued since September, and the te",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "428b4da384bd507e6a186d45a8afb8e900079aaa38496d65dbfad277dc7a3c1c",
+    "inputExcerpt": "{\"query\":\"Moss glaze mug\"}"
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "974dd5d47067ba5a66f919a1288dc6ee610db977459824a41d84d7fbcf7a5de6",
+    "inputExcerpt": "{\"query\":\"out of stock substitute offer policy\"}"
+   },
+   {
+    "name": "Glob",
+    "inputSha256": "1a60526d10f05ef34f89dc89a127ffe23877d52fc1676dd52c038a3ba341fab8",
+    "inputExcerpt": "{\"pattern\":\"**/*\"}"
+   }
+  ]
+ }
+}

@@ -88,3 +88,7 @@ export const MemberIdSchema = z.string().min(1).max(200)
 export const ConnectStateSchema = z.string().min(3).max(512)
 export const AuthCodeSchema = z.string().min(1).max(4096)
 export const ConnectErrorSchema = z.string().max(512)
+
+/** A Shopify shop host: `<handle>.myshopify.com`, the handle as parseShopifyConfig takes it (signin/providers/shopify.ts). */
+export const SHOP_HOST = /^[a-z0-9][a-z0-9-]{0,59}\.myshopify\.com$/
+export const CallToolOptionsSchema = z.strictObject({ testShopHost: z.string().regex(SHOP_HOST).optional() })

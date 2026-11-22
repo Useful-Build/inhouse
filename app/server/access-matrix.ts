@@ -67,6 +67,22 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 59 */ { method: 'GET', pattern: '/api/activity', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 60 */ { method: 'GET', pattern: '/api/notifications', class: 'personal', allow: ['member', 'admin'] },
   /* 61 */ { method: 'POST', pattern: '/api/notifications/read', class: 'personal', allow: ['member', 'admin'] },
+  // P4 W3 (p4-w3.md section 5): Today is brand data; setting an item aside is a write the Inhouse team may make under a live grant (audited; INHOUSE_BRAND_WRITES).
+  /* 57 */ { method: 'GET', pattern: '/api/today', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  /* 58 */ { method: 'PUT', pattern: '/api/today/:id/aside', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  // P4 W5 (p4-w5.md section 3, OC 4): the Library is brand data; the upload is people only.
+  /* 62 */ { method: 'GET', pattern: '/api/library', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  /* 63 */ { method: 'POST', pattern: '/api/library/uploads', class: 'brand_data', allow: ['member', 'admin'] },
+  /* 64 */ { method: 'GET', pattern: '/api/library/:id/download', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  /* 65 */ { method: 'POST', pattern: '/api/library/delete', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  /* 66 */ { method: 'POST', pattern: '/api/library/restore', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  // P4 W2 (p4-w2.md section 9, OC 5): the Routines page is brand data; the Inhouse team writes under a live grant
+  // (support.access pairs these with audit.ts's PUT and POST lists). Who may switch, delete or restore is the handler's.
+  /* 52 */ { method: 'GET', pattern: '/api/routines', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  /* 53 */ { method: 'PUT', pattern: '/api/routines/:id/enabled', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  /* 54 */ { method: 'POST', pattern: '/api/routines/:id/run', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  /* 55 */ { method: 'POST', pattern: '/api/routines/:id/delete', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  /* 56 */ { method: 'POST', pattern: '/api/routines/:id/restore', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   // P5 W1 (p5-w1.md section 9): technical, the Inhouse team alone. Route B is a GET the AS redirects the browser to, on
   // the Inhouse team's host (OC-W1-11): it needs that host's Access session like any route (401 before routing without
   // one; a top-level redirect carries it), so no open row. Its CSRF guard is the state's member binding at the hub.

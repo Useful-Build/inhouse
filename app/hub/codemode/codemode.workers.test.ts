@@ -371,6 +371,45 @@ describe('A.7.10 pause and readiness by account (through ReadGateway)', () => {
   })
 })
 
+// P4's test shop override (index/test-shop.ts) holds for code mode too (P5 main merge). This project is the hub's test
+// build; the deployable build's refusal is index/test-shop.test.ts. Failure modes: a script's shop.graphql reaches
+// SHOPIFY_SHOP while a test shop is set, or an override the hub can't honour still runs the script.
+describe('the test shop override (through ReadGateway)', () => {
+  const OTHER = 'example-mc-codemode-check.myshopify.com'
+  let otherGraphql = 0
+  beforeEach(() => {
+    otherGraphql = 0
+    const base = createShopifyUpstream(dataset)
+    testUpstreams.set(OTHER, async req => {
+      if (new URL(req.url).pathname.endsWith('/graphql.json')) otherGraphql++
+      return base(req)
+    })
+  })
+  afterEach(() => {
+    testUpstreams.delete(OTHER)
+  })
+  const code = `const r = await shop.graphql(${PRODUCTS_PAGE}, { first: 1 }); return r.data.products.nodes.length`
+
+  it('a registered test shop is what the script reads; SHOPIFY_SHOP is never reached', async () => {
+    const r = (await gateways.ReadGateway.callTool(run, 'shopify_script_run', { code }, { testShopHost: OTHER })) as HubResult<{ data: { result?: unknown; error?: string } }>
+    expect(r).toMatchObject({ ok: true, value: { data: { result: 1 } } })
+    expect(otherGraphql).toBe(1)
+    expect(seen.graphql).toBe(0)
+    // Without the option the same script reads the configured shop.
+    expect(await gateways.ReadGateway.callTool(run, 'shopify_script_run', { code })).toMatchObject({ ok: true, value: { data: { result: 1 } } })
+    expect(seen.graphql).toBe(1)
+    expect(otherGraphql).toBe(1)
+  })
+
+  it('an unregistered or malformed test shop is invalid_args before the script runs, and no shop is read', async () => {
+    for (const options of [{ testShopHost: 'example-mc-not-registered.myshopify.com' }, { testShopHost: 'evil.example' }, 'x']) {
+      expect(await gateways.ReadGateway.callTool(run, 'shopify_script_run', { code }, options as never), JSON.stringify(options)).toMatchObject({ ok: false, error: { code: 'invalid_args' } })
+    }
+    expect(seen.graphql + otherGraphql).toBe(0)
+    expect(lines.some(l => l.includes('hub_codemode'))).toBe(false)
+  })
+})
+
 describe('A.7.11 canary', () => {
   it('no result, error, log line or tool result ever carries the token, even stringifying shop', async () => {
     const CANARY = 'shpat_CANARY_W2_4f1e9b'

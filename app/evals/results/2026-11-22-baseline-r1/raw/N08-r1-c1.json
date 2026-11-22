@@ -1,0 +1,43 @@
+{
+ "row": {
+  "caseId": "N08",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "noMcp": true
+  },
+  "called": [
+   "WebFetch"
+  ],
+  "toolSearches": 1,
+  "answer": "**Berlin tomorrow (Monday, 23 Nov 2026):**\n\n- **Temperature:** -1 °C to 3 °C\n- *",
+  "costUsd": 0.035,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "**Berlin tomorrow (Monday, 23 Nov 2026):**\n\n- **Temperature:** -1 °C to 3 °C\n- *",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "1dcb0f3584fe6d13f120bcc1ee1cc80c511b6e19befe383935514de1a330cc51",
+    "inputExcerpt": "{\"query\":\"select:WebFetch,WebSearch\",\"max_results\":2}"
+   },
+   {
+    "name": "WebFetch",
+    "inputSha256": "4ff76a96b89fe26eb7f2098c1f1c1712e12db7a89d8a4c794aa0b2403977c289",
+    "inputExcerpt": "{\"url\":\"wttr.in [url 38afac897fe3]\",\"prompt\":\"Give the forecast for tomorrow (20"
+   }
+  ]
+ }
+}

@@ -70,6 +70,49 @@ describe('ReadGateway through the Worker exports', () => {
   })
 })
 
+// The test shop override (contract.ts CallToolOptions, test-shop.ts). This project runs the hub's TEST build
+// (`__INHOUSE_HUB_TEST__` true, INHOUSE_TEST_BUILD=1); the deployable build's refusal is test-shop.test.ts (node project).
+// Ways it can go wrong: the override reaches the configured shop anyway (a quiet fallback), an unregistered host is read,
+// a refusal still reaches an upstream, or the override's token and the account's mix.
+describe('ReadGateway: the test shop override (test build)', () => {
+  const OTHER = 'example-mc-override-check.myshopify.com'
+  let other: FakeShop
+  beforeEach(() => {
+    other = new FakeShop(() => Date.now())
+    testUpstreams.set(OTHER, other.upstream)
+  })
+  afterEach(() => {
+    testUpstreams.delete(OTHER)
+  })
+
+  it('a registered host is read instead of SHOPIFY_SHOP, and only for that call', async () => {
+    expect(await exports.ReadGateway.callTool(run, 'fixture_read', {}, { testShopHost: OTHER })).toMatchObject({ ok: true })
+    expect([...other.hosts]).toEqual([OTHER])
+    expect(other.grants).toBe(1)
+    expect(shop.grants + shop.reads.length).toBe(0)
+    // The next call without options reads the configured shop, with its own grant: nothing carried over.
+    expect(await exports.ReadGateway.callTool(run, 'fixture_read', {})).toMatchObject({ ok: true })
+    expect(shop.grants).toBe(1)
+    expect([...shop.hosts]).toEqual([HOST])
+    // The override's object keeps its own token: a second call grants nothing new.
+    expect(await exports.ReadGateway.callTool(run, 'fixture_read', {}, { testShopHost: OTHER })).toMatchObject({ ok: true })
+    expect(other.grants).toBe(1)
+  })
+
+  it('an unregistered or malformed host is invalid_args, and no upstream is reached', async () => {
+    for (const options of [{ testShopHost: 'example-mc-not-registered.myshopify.com' }, { testShopHost: 'evil.example' }, { testShopHost: OTHER, shop: 'x' }, 'x']) {
+      expect(await exports.ReadGateway.callTool(run, 'fixture_read', {}, options as never), JSON.stringify(options)).toMatchObject({ ok: false, error: { code: 'invalid_args' } })
+    }
+    expect(shop.grants + shop.reads.length + other.grants + other.reads.length).toBe(0)
+  })
+
+  it('empty options read SHOPIFY_SHOP', async () => {
+    expect(await exports.ReadGateway.callTool(run, 'fixture_read', {}, {})).toMatchObject({ ok: true })
+    expect(shop.grants).toBe(1)
+    expect(other.grants).toBe(0)
+  })
+})
+
 describe('ServerGateway', () => {
   it('reports status and re-encrypts', async () => {
     expect(await exports.ServerGateway.status(server, FIXTURE_ACCOUNT)).toMatchObject({ ok: true, value: { state: 'empty', kid: null } })

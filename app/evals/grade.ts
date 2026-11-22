@@ -10,20 +10,28 @@ function matches(want: Want, value: unknown, people: People): boolean {
   const s = typeof value === 'string' ? value : JSON.stringify(value ?? '')
   if (want instanceof RegExp) return want.test(s)
   if (typeof want === 'string') return s === want
-  return new RegExp(escapeRe(people[want.person])).test(s)
+  if ('person' in want && typeof want.person === 'string' && Object.keys(want).length === 1) return new RegExp(escapeRe(people[want.person as keyof People])).test(s)
+  // A nested object: each named field of the value matches its want (T09's `to: { members: ... }`).
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  return Object.entries(want).every(([k, w]) => matches(w as Want, (value as Record<string, unknown>)[k], people))
 }
 
-export function gradeChat(expect: Expect, result: ChatResult | null | undefined, people: People): CheckVerdict {
-  const calls = (result?.toolCalls ?? []).map((c) => ({ name: shortName(c.name), mcp: c.name.startsWith('mcp__'), input: c.input ?? {} }))
+/** The served schema of an expected tool has no fields: its args aren't graded (A9, after the first full baseline). */
+export const ARGS_NOT_GRADED = 'the served schema defines no fields'
+
+export function gradeChat(expect: Expect, result: ChatResult | null | undefined, people: People, o: { openSchema?: ReadonlySet<string> } = {}): CheckVerdict {
+  const calls = (result?.toolCalls ?? []).map((c) => ({ name: shortName(c.name), mcp: c.name.startsWith('mcp__'), input: c.seedInput ?? c.input ?? {} }))
   const real = calls.filter((c) => !META.has(c.name))
   const answer = result?.answer ?? ''
   const checks: Record<string, boolean> = {}
   const tools = expect.tool ? ([] as string[]).concat(expect.tool) : null
+  let argsNotGraded: string | undefined
   if (tools) {
     const hit = real.filter((c) => tools.includes(c.name))
     checks.tool = hit.length > 0
     const args = expect.args
-    if (args) checks.args = hit.some((c) => Object.entries(args).every(([k, w]) => matches(w, c.input[k], people)))
+    if (args && tools.every((t) => o.openSchema?.has(t))) argsNotGraded = ARGS_NOT_GRADED
+    else if (args) checks.args = hit.some((c) => Object.entries(args).every(([k, w]) => matches(w, c.input[k], people)))
   }
   const notCalled = expect.notCalled
   if (notCalled) checks.forbidden = !real.some((c) => notCalled.includes(c.name))
@@ -38,5 +46,6 @@ export function gradeChat(expect: Expect, result: ChatResult | null | undefined,
     runOk,
     called: real.map((c) => c.name),
     toolSearches: calls.filter((c) => c.name === 'ToolSearch').length,
+    ...(argsNotGraded ? { argsNotGraded } : {}),
   }
 }

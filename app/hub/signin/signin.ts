@@ -87,16 +87,20 @@ export const signInFor = (env: Env, accountId: string) => env.SIGNIN.get(env.SIG
  * The ReadGateway's deps with readiness and the MCP proxy (P5 W1). index.ts's ReadGateway uses these through the
  * orchestrator's wiring line: `listReadyTools(await readyGatewayDeps(this.env))`, `callReadyTool(...)`.
  */
-export async function readyGatewayDeps(env: Env): Promise<ReadyGatewayDeps> {
+export async function readyGatewayDeps(env: Env, testShop: string | null = null): Promise<ReadyGatewayDeps> {
   const registry = await loadRegistry(env)
   return {
     registry,
     isConfigured: c => isConfigured(env, c),
+    // `testShop` (P4): a test build's override handle (index.ts shopFor), read by its own SignIn object (signInName).
+    // Every Shopify read (the read tools and code mode's shop.graphql) comes through here, so none reaches SHOPIFY_SHOP.
     shopifyFor: (c: HubConnector): ShopifyReadClient => ({
       graphql: async (document, variables, apiVersion) => {
         const version = apiVersion ?? (isMcpConnector(c) ? undefined : c.apiVersion)
         if (!version) return err('invalid_args', 'apiVersion')
-        return (await signInFor(env, c.accountId).query({ accountId: c.accountId, document, variables, apiVersion: version })) as HubResult<{ data: unknown }>
+        const query = { accountId: c.accountId, document, variables, apiVersion: version }
+        if (testShop === null) return (await signInFor(env, c.accountId).query(query)) as HubResult<{ data: unknown }>
+        return (await env.SIGNIN.get(env.SIGNIN.idFromName(signInName(c.accountId, testShop))).query({ ...query, testShop })) as HubResult<{ data: unknown }>
       },
     }),
     nowMs: () => Date.now(),
@@ -110,12 +114,22 @@ export async function readyGatewayDeps(env: Env): Promise<ReadyGatewayDeps> {
   }
 }
 
+/**
+ * The SignIn object a call reaches: the account's own, or in a test build a test shop's (index.ts shopFor), named apart so
+ * its token, grant and alarm never mix with the account's or another shop's.
+ */
+export const signInName = (accountId: string, testShop: string | null): string => (testShop === null ? accountId : `${accountId}|test-shop|${testShop}`)
+
+/** The SignIn storage key holding a test shop object's handle (outside the core's `record` and `pending:` keys). */
+const TEST_SHOP_KEY = 'test-shop'
+
 export class SignIn extends DurableObject<Env> {
   readonly #core: SignInCore
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
     const storage = ctx.storage
+    const hubEnv: HubEnv = env
     const store: SyncStore = {
       get: key => storage.kv.get(key),
       put: (key, value) => storage.kv.put(key, value),
@@ -134,7 +148,16 @@ export class SignIn extends DurableObject<Env> {
       },
       upstream: () => upstreamFor(env),
       keyring: () => keyRingFor(env),
-      shopify: () => parseShopifyConfig(env),
+      // A test shop's object reads that shop (stored by its first query, so a refresh alarm in a new isolate still has it);
+      // every other object, and every object in the deployable build, reads SHOPIFY_SHOP.
+      shopify: () => {
+        const config = parseShopifyConfig(env)
+        if (__INHOUSE_HUB_TEST__ && hubEnv.INHOUSE_TEST_BUILD === '1') {
+          const testShop = storage.kv.get(TEST_SHOP_KEY)
+          if (config !== null && typeof testShop === 'string') return { ...config, shop: testShop }
+        }
+        return config
+      },
       scopesFor: async accountId => scopesFor(await loadRegistry(env), accountId),
       provider: accountId => providerFor(env, accountId),
       kindFor: async accountId => kindFor(await loadRegistry(env), accountId),
@@ -152,8 +175,21 @@ export class SignIn extends DurableObject<Env> {
     }
   }
 
-  query(req: QueryRequest) {
-    return this.#guard(() => this.#core.query(req))
+  /**
+   * `testShop` (index.ts, a test build only, a host its seam registers, already checked there): this object is that
+   * shop's, and stays it. Refused in the deployable build, and when the object already holds another shop.
+   */
+  query(req: QueryRequest & { testShop?: string }) {
+    return this.#guard(() => {
+      const { testShop, ...rest } = req
+      if (testShop !== undefined) {
+        if (!(__INHOUSE_HUB_TEST__ && (this.env as HubEnv).INHOUSE_TEST_BUILD === '1')) return err('invalid_args', 'testShopHost')
+        const held = this.ctx.storage.kv.get(TEST_SHOP_KEY)
+        if (held !== undefined && held !== testShop) return err('invalid_args', 'testShopHost')
+        if (held === undefined) this.ctx.storage.kv.put(TEST_SHOP_KEY, testShop)
+      }
+      return this.#core.query(rest)
+    })
   }
   /** H0's fields plus P5's (paused, kind, connectedBy, connectedAt, revokeFailedAt, needsReconnect). */
   status(accountId: string) {

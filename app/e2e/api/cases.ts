@@ -46,6 +46,10 @@ const NO_CHAT = 'c_e2e_nobody'
  * id and body checks to the store's lookup, which finds no fact: 404, and nothing changes.
  */
 const NO_MEMORY = 'mem_e2eNobodyAAAAAAAAAAAAA'
+/** A Today item id of the right shape (`p_` + 22) that names nothing. */
+const NO_TODAY = 'p_e2eNobodyAAAAAAAAAAAAA'
+/** A routine id nobody has (`rt_` + 22, audit.ts `RoutineIdSchema`). */
+const NO_ROUTINE = 'rt_e2eNobodyAAAAAAAAAAAAA'
 const ALL: Role[] = ['member', 'admin', 'inhouse']
 const PEOPLE: Role[] = ['member', 'admin']
 
@@ -123,6 +127,21 @@ export const CASES: Record<string, RouteCase> = {
   'GET /api/activity': { design: d('brand_data', ALL), path: '/api/activity', passes: 200 },
   'GET /api/notifications': { design: d('personal', PEOPLE), path: '/api/notifications', passes: 200 },
   'POST /api/notifications/read': { design: d('personal', PEOPLE), path: '/api/notifications/read', json: { ids: ['n_e2e_nobody'] }, passes: 200 },
+  // Rows 57 and 58 (P4 W3): Today (brand data). An id of the right shape that names nothing passes access and the body check to the store's lookup: 404, nothing changes.
+  'GET /api/today': { design: d('brand_data', ALL), path: '/api/today', passes: 200 },
+  'PUT /api/today/:id/aside': { design: d('brand_data', ALL), path: `/api/today/${NO_TODAY}/aside`, json: { reason: 'dismissed', ifRev: 0 }, passes: 404 },
+  // Rows 62 to 66 (P4 W5): the Library. An upload with no X-File-Name, a write with no items: 400; an id nobody has: 404.
+  'GET /api/library': { design: d('brand_data', ALL), path: '/api/library', passes: 200 },
+  'POST /api/library/uploads': { design: d('brand_data', PEOPLE), path: '/api/library/uploads', json: {}, passes: 400 },
+  'GET /api/library/:id/download': { design: d('brand_data', ALL), path: `/api/library/f_${'0'.repeat(22)}/download`, passes: 404 },
+  'POST /api/library/delete': { design: d('brand_data', ALL), path: '/api/library/delete', json: {}, passes: 400 },
+  'POST /api/library/restore': { design: d('brand_data', ALL), path: '/api/library/restore', json: {}, passes: 400 },
+  // Rows 52 to 56 (P4 W2): the Routines page. The list reads (200); a write names a routine nobody has (404, nothing written).
+  'GET /api/routines': { design: d('brand_data', ALL), path: '/api/routines', passes: 200 },
+  'PUT /api/routines/:id/enabled': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/enabled`, json: { on: false, ifRev: 1 }, passes: 404 },
+  'POST /api/routines/:id/run': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/run`, json: { clientKey: 'e2e-run-key-1' }, passes: 404 },
+  'POST /api/routines/:id/delete': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/delete`, json: { ifRev: 1 }, passes: 404 },
+  'POST /api/routines/:id/restore': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/restore`, json: { ifRev: 1 }, passes: 404 },
   // P5 W1, routes 68 and 69. The start names an account no connector has, so the hub answers unknown_tool (404) and
   // nothing is written; the callback with no code or state redirects to /tools?connect_error=state_invalid (303) and
   // writes nothing (connect.test.ts proves both).

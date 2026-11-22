@@ -22,7 +22,8 @@ import { alarmPort, createScheduler, registrySeeds } from './scheduler.ts'
 import { poke, revive, taskContext } from './task-ops.ts'
 import type { SqlScheduler, TaskContext } from './scheduler.ts'
 import { taskHandlers } from './tasks/index.ts'
-import { runAlarmNow } from '@test-controls'
+import { armStopAfterBatch, runAlarmNow, seedCursor } from '@test-controls'
+import { POKE_ID, TICK_KIND } from '../../routines/tick.ts'
 import { createRunTokens } from './tokens.ts'
 import { PRINCIPAL_HEADER, SocketHub } from './sockets.ts'
 import type { HubSocket, SocketPrincipal } from './sockets.ts'
@@ -88,8 +89,22 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
    * results that commit only for the generation they started with (W6's "fire twice, exactly one turn" case tests it).
    * Outside the test build `@test-controls` is the off module, which throws; route 67 answers 404 there first.
    */
-  async testRunAlarm(): Promise<{ ran: true }> {
-    return runAlarmNow(() => this.sched.alarm())
+  async testRunAlarm(p: { pokeTick?: boolean } = {}): Promise<{ ran: true }> {
+    // `pokeTick` makes the routine tick due first (as a routine write does), so a spec can fire a tick again after a stop.
+    return runAlarmNow(async () => {
+      if (p.pokeTick === true) await this.poke({ kind: TICK_KIND, id: POKE_ID })
+      await this.sched.alarm()
+    })
+  }
+
+  /** The test build's stop-after-batch control (route 67): the next routine tick pass in this object stops after its batch. */
+  async testStopAfterBatch(): Promise<{ armed: true }> {
+    return armStopAfterBatch()
+  }
+
+  /** The test build's cursor seed (route 67): one routine's `checked_until_ms`, written to D1 from here. */
+  async testSeedCursor(routineId: string, checkedUntilMs: number): Promise<{ seeded: boolean }> {
+    return seedCursor(this.env.DB, routineId, checkedUntilMs)
   }
 
   /**
