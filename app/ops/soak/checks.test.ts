@@ -103,14 +103,16 @@ describe('failed runs', () => {
   })
 })
 
-// Ways the guards check can read clean on evidence that could not have failed, written down first:
+// Ways the guards check can read clean on evidence that could not have failed, or miss a bypass, written down first:
 //  1. no canary is planted, so the leak scan has nothing it could find (house data holds no eval canary);
-//  2. a WebFetch was allowed and `tool_calls` records no host, so a fetch off the brand's list can't show;
-//  3. a leak is reported as missing, not unclean, because one of the two gaps above is open too.
+//  2. the egress record can't be read (or the day's WebFetch list is unknown), so a fetch off the list can't show;
+//  3. an allowed fetch to a host off the day's list (WebFetch's or Bash's) reads clean or missing, not unclean;
+//  4. a leak or a bypass is reported as missing, not unclean, because one of the gaps above is open too.
 describe('guards', () => {
-  const g = (o: Partial<GuardFacet> = {}) => guards({ ...e(), guards: { webfetchAllowed: 0, leaks: 0, canary: 'planted', ...o } })
-  it('clean: planted canaries were scanned with no leak, and no WebFetch was allowed', () => {
+  const g = (o: Partial<GuardFacet> = {}) => guards({ ...e(), guards: { webfetchAllowed: 0, egress: { allowed: 0, offList: [] }, leaks: 0, canary: 'planted', ...o } })
+  it('clean: planted canaries were scanned with no leak, and every allowed fetch was to a listed host', () => {
     expect(g()).toMatchObject({ status: 'clean', detail: expect.stringContaining('planted') })
+    expect(g({ webfetchAllowed: 3, egress: { allowed: 4, offList: [] } })).toMatchObject({ status: 'clean', detail: expect.stringContaining('4 allowed fetches') })
   })
   it('missing without a planted canary (failure 1), and the detail names the onboarding step', () => {
     const r = g({ canary: 'shape' })
@@ -118,30 +120,35 @@ describe('guards', () => {
     expect(r.detail).toContain('plant a canary')
     expect(r.detail).toContain('--canary')
   })
-  it('missing when a WebFetch was allowed (failure 2), and the detail names the product change', () => {
-    const r = g({ webfetchAllowed: 5 })
-    expect(r.status).toBe('missing')
-    expect(r.detail).toContain('5 allowed WebFetch calls')
-    expect(r.detail).toContain('record the fetched host')
+  it('missing when the egress record is unreadable (failure 2), whether or not a WebFetch was allowed', () => {
+    for (const webfetchAllowed of [0, 5]) {
+      const r = g({ webfetchAllowed, egress: { unreadable: 'the egress record could not be read' } })
+      expect(r.status).toBe('missing')
+      expect(r.detail).toContain('egress record could not be read')
+    }
   })
-  it('missing names both gaps when both are open', () => {
-    const r = g({ canary: 'shape', webfetchAllowed: 1 })
-    expect(r.status).toBe('missing')
-    expect(r.detail).toContain('plant a canary')
-    expect(r.detail).toContain('record the fetched host')
+  it('unclean: an allowed fetch to a host off the day\'s list is a bypass, named by host (failure 3)', () => {
+    const r = g({ egress: { allowed: 2, offList: ['evil.example.org'] } })
+    expect(r).toMatchObject({ status: 'unclean', detail: expect.stringContaining('evil.example.org') })
   })
-  it('unclean: a leak, whichever scan found it and whatever else is missing (failure 3)', () => {
+  it('unclean: a leak or a bypass, whatever else is missing (failure 4)', () => {
     expect(g({ leaks: 1 }).status).toBe('unclean')
     expect(g({ leaks: 1, canary: 'shape' }).status).toBe('unclean')
-    expect(g({ leaks: 2, webfetchAllowed: 5 })).toMatchObject({ status: 'unclean', detail: expect.stringContaining('record the fetched host') })
+    expect(g({ leaks: 2, egress: { unreadable: 'x' } })).toMatchObject({ status: 'unclean', detail: expect.stringContaining('x') })
+    expect(g({ canary: 'shape', egress: { allowed: 1, offList: ['evil.example.org'] } }).status).toBe('unclean')
   })
   it('missing: unreadable', () => expect(guards({ ...e(), guards: null }).status).toBe('missing'))
-  test.prop([fc.record({ webfetchAllowed: fc.nat(3), leaks: fc.nat(3), canary: fc.constantFrom<GuardFacet['canary']>('planted', 'shape') })])(
-    'clean only when planted canaries were scanned, none leaked and no WebFetch was allowed; unclean exactly on a leak',
+  const EGRESS = fc.oneof(
+    fc.record({ allowed: fc.nat(3), offList: fc.uniqueArray(fc.constantFrom('a.example.org', 'b.example.org'), { maxLength: 2 }) }),
+    fc.constant({ unreadable: 'x' }),
+  )
+  test.prop([fc.record({ webfetchAllowed: fc.nat(3), egress: EGRESS, leaks: fc.nat(3), canary: fc.constantFrom<GuardFacet['canary']>('planted', 'shape') })])(
+    'clean only when planted canaries were scanned, none leaked and the egress record shows no off-list host; unclean exactly on a leak or an off-list host',
     f => {
       const status = guards({ ...e(), guards: f }).status
-      expect(status === 'clean').toBe(f.canary === 'planted' && f.leaks === 0 && f.webfetchAllowed === 0)
-      expect(status === 'unclean').toBe(f.leaks > 0)
+      const offList = 'offList' in f.egress ? f.egress.offList.length : 0
+      expect(status === 'clean').toBe(f.canary === 'planted' && f.leaks === 0 && 'offList' in f.egress && offList === 0)
+      expect(status === 'unclean').toBe(f.leaks > 0 || offList > 0)
     },
   )
 })

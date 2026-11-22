@@ -10,7 +10,7 @@ export type CheckName = (typeof CHECK_NAMES)[number]
  * - `unclean`: present and wrong.
  * - `missing`: the evidence for the day isn't there (no slot, no read, the facet couldn't be read, the check was
  *   skipped for budget, or what was read could not have shown a failure: a leak scan with no planted canary, an
- *   allowed WebFetch with no host recorded). Not clean.
+ *   egress record that could not be read or a day whose WebFetch list is unknown). Not clean.
  * - `pending`: the check can't be judged yet because a later phase's table doesn't exist (the P6a memory approval).
  *   Not clean.
  */
@@ -60,12 +60,17 @@ export interface RunsFacet {
   stuck: number
 }
 
+/**
+ * The egress record's day (P8a, `egress_fetches`): every container HTTPS request, WebFetch's and Bash's alike. `allowed`
+ * counts the requests the egress let out; `offList` names each distinct allowed host that isn't on the day's
+ * `t:webfetch` list (empty: no host), a bypass. `unreadable`: the record couldn't be read, or the day's list is unknown.
+ */
+export type EgressFacet = { allowed: number; offList: string[] } | { unreadable: string }
+
 export interface GuardFacet {
-  /**
-   * WebFetch calls in the day that were allowed and not refused by the WebFetch hook. `tool_calls` records no host, so
-   * their destinations can't be judged: any makes the check missing.
-   */
+  /** WebFetch calls in the day that were allowed and not refused by the WebFetch hook (for the detail; the egress judges). */
   webfetchAllowed: number
+  egress: EgressFacet
   /** Notice or activity text carrying a canary: the planted ones when `--canary` is given, else any canary-shaped string. */
   leaks: number
   /** `shape`: no canary was planted, so the scan could not have found a leak of house data and the check is missing. */

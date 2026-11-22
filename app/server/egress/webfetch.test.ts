@@ -6,11 +6,15 @@
 //     through or refuses a listed public one;
 //  3. a redirect to an unlisted host or a private address is followed; more than 3 hops are followed;
 //  4. a method other than GET or HEAD, a port other than 443 or plain http passes;
-//  5. cookies or authorization reach the site; a body over 10 MB comes back whole.
+//  5. cookies or authorization reach the site; a body over 10 MB comes back whole;
+//  6. (P8a, the egress record) a request goes out unrecorded, a hop of a redirect included, or one whose record failed;
+//     a record holds anything but the host (a path, a query, a header); a refusal's record lacks its code; a request
+//     from Bash (any client, any method) isn't recorded; a record can be updated.
 import { fc, it as prop } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
 import { addressVerdict } from './ip.ts'
-import { checkUrl, handleWebFetch, WEBFETCH_MAX_BYTES } from './webfetch.ts'
+import { env } from 'cloudflare:workers'
+import { checkUrl, handleWebFetch, recordFetch, WEBFETCH_MAX_BYTES, type FetchRecord } from './webfetch.ts'
 
 type Dns = Record<string, { A?: string[]; AAAA?: string[]; status?: number }>
 
@@ -45,11 +49,20 @@ const PUBLIC_DNS: Dns = {
 const ALL = [...Object.keys(PUBLIC_DNS), 'missing.example.com'].join('\n')
 const page = (body = 'hello') => () => new Response(body, { headers: { 'content-type': 'text/html', 'set-cookie': 'tracker=1', server: 'x' } })
 
-async function run(url: string, opts: { list?: string | null; method?: string; headers?: Record<string, string>; pages?: Record<string, () => Response>; dns?: Dns } = {}) {
+async function run(url: string, opts: { list?: string | null; method?: string; headers?: Record<string, string>; pages?: Record<string, () => Response>; dns?: Dns; recordFails?: boolean; refusalRecordHangs?: boolean } = {}) {
   const { f, fetched } = net(opts.dns ?? PUBLIC_DNS, opts.pages ?? { 'https://docs.example.com/a': page(), 'https://other.example.org/b': page() })
   const logs: Record<string, unknown>[] = []
-  const res = await handleWebFetch(new Request(url, { method: opts.method ?? 'GET', headers: opts.headers }), { hostList: async () => opts.list ?? null, fetch: f, log: e => void logs.push(e) })
-  return { res, fetched, logs }
+  const records: FetchRecord[] = []
+  const later: Promise<unknown>[] = []
+  const record = async (r: FetchRecord) => {
+    if (opts.recordFails) throw new Error('d1 down')
+    if (opts.refusalRecordHangs && r.verdict === 'refused') await new Promise(() => {})
+    records.push(r)
+  }
+  const res = await handleWebFetch(new Request(url, { method: opts.method ?? 'GET', headers: opts.headers }), { hostList: async () => opts.list ?? null, fetch: f, log: e => void logs.push(e), record, waitUntil: p => void later.push(p) })
+  // What the runtime would finish after the answer: a refusal's record (never one that hangs).
+  if (!opts.refusalRecordHangs) await Promise.all(later)
+  return { res, fetched, logs, records, later }
 }
 
 describe('addresses (failure 1)', () => {
@@ -200,4 +213,102 @@ describe('the list decides (property, failure 2)', () => {
       expect(await checkUrl(new URL(`https://${host}/x`), list, everyNamePublic)).toBeNull()
     },
   )
+})
+
+describe('the egress record (P8a, failure 6)', () => {
+  it('an allowed request is recorded by host before it goes out; a refused one with its code', async () => {
+    const ok = await run('https://docs.example.com/a?token=SECRET#frag', { list: ALL, headers: { 'x-data': 'SECRET' } })
+    expect(ok.records).toEqual([{ host: 'docs.example.com', verdict: 'allowed', code: null }])
+    const no = await run('https://other.example.org/SECRET', { list: 'docs.example.com' })
+    expect(no.records).toEqual([{ host: 'other.example.org', verdict: 'refused', code: 'not_listed' }])
+    const empty = await run('https://docs.example.com/a')
+    expect(empty.records).toEqual([{ host: 'docs.example.com', verdict: 'refused', code: 'not_listed' }])
+  })
+  it('each redirect hop is its own record; the refused hop records its code', async () => {
+    const pages = {
+      'https://docs.example.com/a': () => new Response(null, { status: 302, headers: { location: 'https://other.example.org/b?x=SECRET' } }),
+      'https://docs.example.com/b': () => new Response(null, { status: 301, headers: { location: '/c' } }),
+      'https://docs.example.com/c': page('moved'),
+    }
+    expect((await run('https://docs.example.com/b', { list: ALL, pages })).records).toEqual([
+      { host: 'docs.example.com', verdict: 'allowed', code: null }, { host: 'docs.example.com', verdict: 'allowed', code: null },
+    ])
+    expect((await run('https://docs.example.com/a', { list: 'docs.example.com', pages })).records).toEqual([
+      { host: 'docs.example.com', verdict: 'allowed', code: null }, { host: 'other.example.org', verdict: 'refused', code: 'not_listed' },
+    ])
+  })
+  it("a request from Bash (curl's client, a POST) is recorded the same way: the egress sees every container HTTPS request", async () => {
+    const post = await run('https://docs.example.com/upload', { list: ALL, method: 'POST', headers: { 'user-agent': 'curl/8.5.0' } })
+    expect(post.res.status).toBe(405)
+    expect(post.records).toEqual([{ host: 'docs.example.com', verdict: 'refused', code: 'method' }])
+    const get = await run('https://docs.example.com/a', { list: ALL, headers: { 'user-agent': 'curl/8.5.0' } })
+    expect(get.records).toEqual([{ host: 'docs.example.com', verdict: 'allowed', code: null }])
+  })
+  it("a refusal doesn't wait on its record (handed to waitUntil); a failed one is only logged", async () => {
+    const hung = await run('https://other.example.org/b', { list: 'docs.example.com', refusalRecordHangs: true })
+    expect(hung.res.status).toBe(403)
+    expect(hung.later).toHaveLength(1)
+    const failed = await run('https://other.example.org/b', { list: 'docs.example.com', recordFails: true })
+    expect(failed.res.status).toBe(403)
+    expect(failed.logs).toContainEqual(expect.objectContaining({ event: 'egress_record_failed', verdict: 'refused' }))
+  })
+  it('a request whose record fails never goes out', async () => {
+    const r = await run('https://docs.example.com/a', { list: ALL, recordFails: true })
+    expect(r.res.status).toBe(403)
+    expect(await r.res.text()).toBe('WebFetch refused: record')
+    expect(r.fetched).toEqual([])
+  })
+  prop.prop([fc.webPath(), fc.webQueryParameters(), fc.stringMatching(/^[a-z0-9]{6,12}$/), fc.boolean()])(
+    'no record ever holds a path, a query or a header (a canary in each never lands)', async (path, query, canary, listed) => {
+      const url = `https://docs.example.com/${canary}${path}?c=${canary}&${query}`
+      const r = await run(url, { list: listed ? ALL : 'other.example.org', headers: { 'x-canary': canary, cookie: canary } })
+      expect(r.records.length).toBeGreaterThan(0)
+      for (const rec of r.records) {
+        expect(Object.keys(rec).sort()).toEqual(['code', 'host', 'verdict'])
+        expect(JSON.stringify(rec)).not.toContain(canary)
+      }
+    },
+  )
+  // The host part itself: case, one trailing dot, userinfo, a port (443 or another), an IP literal, an IDN. The record
+  // keeps the hostname as the checks see it (lowercase, no trailing dot): never the port, the userinfo or a slash.
+  const NAME = fc.oneof(
+    fc.constantFrom('docs.example.com', 'Docs.Example.COM', 'other.example.org', '93.184.216.34', '[2606:2800:220:1::1]', 'bücher.example', 'ÄBC.example.com'),
+    LABEL.map(l => `${l}.example.com`),
+  )
+  prop.prop([NAME, fc.boolean(), fc.constantFrom('', 'user:pw@', 'u@'), fc.constantFrom('', ':443', ':8443'), fc.stringMatching(/^[a-z0-9]{6,12}$/)])(
+    'a record holds the normalised hostname only, whatever the host part carries', async (name, dot, userinfo, port, canary) => {
+      const url = `https://${userinfo.replace('pw', canary)}${name}${dot && !name.startsWith('[') ? '.' : ''}${port}/p`
+      const r = await run(url, { list: ALL })
+      expect(r.records.length).toBeGreaterThan(0)
+      const rec = r.records[0]!
+      expect(rec.host).toBe(new URL(url).hostname.replace(/\.$/, '').toLowerCase())
+      expect(rec.host).not.toMatch(/[@/]/)
+      if (!name.startsWith('[')) expect(rec.host).not.toContain(':')
+      expect(rec.host).not.toContain(canary)
+    },
+  )
+})
+
+describe('recordFetch: the D1 row (P8a, failure 6)', () => {
+  it('never reuses a row number, even after the newest row is deleted (AUTOINCREMENT: the backup reads by rising n)', async () => {
+    const db = env.DB
+    const src = { runner: 'runner-0', containerGen: 1 }
+    await recordFetch(db, src, { host: 'a.example.com', verdict: 'allowed', code: null }, 1)
+    const first = (await db.prepare('SELECT MAX(n) AS n FROM egress_fetches').first<{ n: number }>())!.n
+    await db.prepare('DELETE FROM egress_fetches WHERE n = ?').bind(first).run()
+    await recordFetch(db, src, { host: 'b.example.com', verdict: 'allowed', code: null }, 2)
+    expect((await db.prepare('SELECT MAX(n) AS n FROM egress_fetches').first<{ n: number }>())!.n).toBeGreaterThan(first)
+  })
+  it('appends host, verdict, code, runner and generation, and refuses an UPDATE', async () => {
+    const db = env.DB
+    await db.prepare('DELETE FROM egress_fetches').run()
+    await recordFetch(db, { runner: 'runner-0', containerGen: 3 }, { host: 'docs.example.com', verdict: 'allowed', code: null }, 1_800_000_000_000)
+    await recordFetch(db, { runner: 'runner-0', containerGen: 3 }, { host: 'evil.example.org', verdict: 'refused', code: 'not_listed' }, 1_800_000_000_001)
+    expect((await db.prepare('SELECT at_ms, host, verdict, code, runner, container_gen FROM egress_fetches ORDER BY n').all()).results).toEqual([
+      { at_ms: 1_800_000_000_000, host: 'docs.example.com', verdict: 'allowed', code: null, runner: 'runner-0', container_gen: 3 },
+      { at_ms: 1_800_000_000_001, host: 'evil.example.org', verdict: 'refused', code: 'not_listed', runner: 'runner-0', container_gen: 3 },
+    ])
+    await expect(db.prepare("UPDATE egress_fetches SET host = 'x.example.com'").run()).rejects.toThrow(/append-only/)
+    await expect(db.prepare("INSERT INTO egress_fetches (at_ms, host, verdict, code, runner, container_gen) VALUES (1, 'a.example.com', 'allowed', 'method', 'r', 1)").run()).rejects.toThrow()
+  })
 })

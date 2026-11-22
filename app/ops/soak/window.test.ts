@@ -36,7 +36,7 @@ describe('the rules', () => {
     expect(run('2026-12-03', x, [base], { count: 2 })).toMatchObject({ verdict: 'not_clean', count: 0 })
   })
   it('a bypass restarts the count and says so', () => {
-    const x = cleanEvidence(); x.guards = { webfetchAllowed: 0, leaks: 1, canary: 'planted' }
+    const x = cleanEvidence(); x.guards = { webfetchAllowed: 0, egress: { allowed: 0, offList: [] }, leaks: 1, canary: 'planted' }
     expect(run('2026-12-03', x, [base], { count: 2 })).toMatchObject({ count: 0, reasons: ['bypass', 'check'] })
   })
   it('a lost or doubled notice restarts the count and says so', () => {
