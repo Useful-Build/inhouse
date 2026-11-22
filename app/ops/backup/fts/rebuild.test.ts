@@ -115,10 +115,10 @@ describe('a rebuild that fails (failure 5)', () => {
     const broken = { prepare: (q: string) => e.RESTORE_DB.prepare(q), batch: () => Promise.reject(new Error('D1 is down (test)')) } as unknown as D1Database
     const out = await rebuildAfterRestore({ bucket: e.FILES, target: broken, restoreId: r.restoreId, nowMs: T + 400 })
     // P3's runBatch names the database in its error.
-    expect(out).toEqual({ failed: 'D1 failed: D1 is down (test)' })
+    expect(out).toEqual({ failed: 'D1 failed' })
     const stored = await ftsJson(r.restoreId)
     expect(stored?.status).toBe('failed')
-    expect(stored?.tables.map(t => [t.name, t.state, t.error])).toEqual([['chat_messages_fts', 'failed', 'D1 failed: D1 is down (test)'], ['memories_fts', 'failed', 'D1 failed: D1 is down (test)']])
+    expect(stored?.tables.map(t => [t.name, t.state, t.error])).toEqual([['chat_messages_fts', 'failed', 'D1 failed'], ['memories_fts', 'failed', 'D1 failed']])
   })
 
   it('fails an index the rebuild left empty: integrity-check against the source catches it, per table', async () => {
