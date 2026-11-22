@@ -24,10 +24,16 @@ function hookRawImports(): void {
   })
 }
 
-/** True for a served input schema with no fields at all. */
+/**
+ * True for exactly the stub's open object (`z.object({}).catchall(z.unknown())`: an object, no properties, any extra field
+ * allowed). Not a union (anyOf/oneOf/allOf, no top-level properties), not a strict empty object (additionalProperties
+ * false), not one with fields (#282 re-review L3).
+ */
 export function isOpenSchema(input: z.ZodType): boolean {
-  const s = z.toJSONSchema(input, { io: 'input' }) as { properties?: Record<string, unknown> }
-  return !s.properties || Object.keys(s.properties).length === 0
+  const s = z.toJSONSchema(input, { io: 'input' }) as { type?: unknown; properties?: Record<string, unknown>; additionalProperties?: unknown; anyOf?: unknown; oneOf?: unknown; allOf?: unknown }
+  if (s.type !== 'object' || s.anyOf !== undefined || s.oneOf !== undefined || s.allOf !== undefined) return false
+  if (s.properties !== undefined && Object.keys(s.properties).length > 0) return false
+  return s.additionalProperties !== undefined && s.additionalProperties !== false
 }
 
 /** The tools the server serves with an open input schema, by name (`notification_send`). */

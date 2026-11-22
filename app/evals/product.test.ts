@@ -879,7 +879,18 @@ describe('the #282 review', () => {
   it('L2: an invite the door can\'t write refuses, naming the person and the tag', async () => {
     const door = new FakeDoor()
     door.invitePerson = async () => { throw new Error('wrangler d1 execute failed (exit 1)') }
-    await expect(make(server(), door).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(/could not invite the case person eval-7-1-n01-r1 \(run tag 7-1\)/)
+    // #282 re-review M1: the door's own error comes through (message and cause), never a guess at why.
+    const err = (await make(server(), door).seed([], { caseId: 'N01', rep: 1, canary: 'c' }).then(() => new Error('it resolved'), (e: unknown) => e)) as Error
+    expect(err.message).toMatch(/could not invite the case person eval-7-1-n01-r1 \(run tag 7-1\): wrangler d1 execute failed \(exit 1\)/)
+    expect((err.cause as Error).message).toBe('wrangler d1 execute failed (exit 1)')
+  })
+  // #282 re-review L4: tag 7 is not tag 7-1 (case ids start with a letter): 7-1's persons are a previous run's, removed.
+  it('L4: tag 7 doesn\'t read tag 7-1\'s persons as its own; they are removed as a previous run\'s', async () => {
+    const srv = server()
+    srv.s.members.push({ id: 'm_runAAAAAAAAAAAAAAAAAAA', email: 'eval-7-1-r01-r1@example.test', status: 'active', rev: 2 })
+    const target = createProductTarget({ paid: true, budgetUsd: 5, env: { ...ENV, INHOUSE_EVAL_RUN: '7' }, fetch: srv.fetch, signIn, door: (() => { const d = new FakeDoor(); d.onInvite = (p) => srv.s.members.push({ id: p.id, email: p.email, status: 'invited', rev: 1 }); return d })(), pollMs: 0, sleep: async () => {} })
+    await (await target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).reset()
+    expect(srv.s.sent.filter((x) => x.method === 'DELETE').map((x) => x.path)).toEqual(['/api/members/m_runAAAAAAAAAAAAAAAAAAA?ifRev=2'])
   })
   it('nit: a chat\'s result names who asked; the row carries it', async () => {
     const session = await make(server(), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })

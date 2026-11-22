@@ -43,7 +43,10 @@ function answerNotSpan(nots: RegExp[] | undefined, answer: string, canary: strin
   if (!nots?.length) return {}
   const text = reduceText(answer, canary)
   for (const r of nots) {
-    const m = new RegExp(r.source, r.flags.replace('g', '')).exec(text)
+    const once = new RegExp(r.source, r.flags.replace('g', ''))
+    const m = once.exec(text)
+    // Matched in the raw answer only: inside a URL (now a host note) or on the canary (#282 re-review nit).
+    if (!m && once.test(answer)) return { answerNotMatch: '(match is inside a redacted URL or the canary)' }
     if (!m) continue
     const room = Math.max(0, EXCERPT_CHARS - m[0].length)
     const from = Math.max(0, Math.min(m.index - Math.floor(room / 2), text.length - EXCERPT_CHARS))

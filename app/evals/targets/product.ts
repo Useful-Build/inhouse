@@ -237,7 +237,9 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     // Run start: the previous runs' case persons are removed through the product's own API (its audit line), as the Admin.
     // A removal that fails stops the run here, before any spend.
     // A run tag used before: its case persons are already here, so this run's invites would collide (#282 review L2).
-    if (live.some((m) => m.email?.startsWith(`eval-${runTag}-`))) throw new ProductTargetRefusal(`refusing: the run tag ${runTag} was used before (its case persons are on the brand): give the run a new one`)
+    // `eval-<tag>-<letter>`: case ids start with a letter, so tag 7 never reads tag 7-1's persons as its own (#282 re-review L4).
+    const ofThisTag = new RegExp(`^eval-${runTag}-[a-z]`)
+    if (live.some((m) => m.email !== null && ofThisTag.test(m.email))) throw new ProductTargetRefusal(`refusing: the run tag ${runTag} was used before (its case persons are on the brand): give the run a new one`)
     for (const m of live) {
       if (!m.email || !CASE_PERSON.test(m.email)) continue
       const r = await api('lena', 'DELETE', `/api/members/${encodeURIComponent(m.id)}?ifRev=${m.rev}`)
@@ -313,8 +315,9 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
         const personId = newMemberId()
         try {
           await d.invitePerson({ id: personId, email: who.email, name: who.name })
-        } catch {
-          throw new ProductTargetRefusal(`refusing: could not invite the case person ${who.sub} (run tag ${runTag}): a tag used before collides with its own persons' open invites`)
+        } catch (e) {
+          // The door's own error, never a guess at why (#282 re-review M1).
+          throw new ProductTargetRefusal(`refusing: could not invite the case person ${who.sub} (run tag ${runTag}): ${e instanceof Error ? e.message : String(e)}`, { cause: e })
         }
         caseWho = who
         const me = await api('current', 'GET', '/api/me')

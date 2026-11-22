@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { CASES, S5_LEGACY_EXPECT } from './cases.ts'
 import { gradeChat } from './grade.ts'
 import { buildReport, renderReadme, toRow } from './report.ts'
-import { openSchemaTools } from './served-schema.ts'
+import { isOpenSchema, openSchemaTools } from './served-schema.ts'
 import { loadS5Chats, loadS5Verdicts, S5_PEOPLE } from './s5-fixtures.ts'
 import type { Expect } from './types.ts'
 
@@ -228,5 +228,36 @@ describe('T09, T11 and open served schemas', () => {
     const open = await openSchemaTools()
     for (const n of ['notification_send', 'routine_create', 'approval_request']) expect(open.has(n), n).toBe(true)
     for (const n of ['memory_search', 'memory_forget', 'history_search']) expect(open.has(n), n).toBe(false)
+  })
+})
+
+// #282 re-review L1, L3, nit. Ways it could fail, written down first: the loader works under vitest (Vite resolves
+// ?raw itself) but not under plain node, where run.ts runs it; a union or a strict empty input reads as open; a match that
+// only exists in the raw answer (inside a URL, on the canary) leaves an empty span with no word on why.
+describe('the served-schema loader and the span, outside the happy path', () => {
+  it('L1: under plain node (outside vitest), openSchemaTools() gives exactly the stubs', async () => {
+    const { spawnSync } = await import('node:child_process')
+    // By path at run time: a literal specifier would pull the server's types into evals/'s project (no Worker Env).
+    const stubs = '../server/mcp/tools/stubs/index.ts'
+    const { STUB_NAMES } = (await import(/* @vite-ignore */ stubs)) as { STUB_NAMES: readonly string[] }
+    const url = new URL('./served-schema.ts', import.meta.url).href
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', `const m = await import(${JSON.stringify(url)}); console.log(JSON.stringify([...await m.openSchemaTools()].sort()))`], { cwd: new URL('..', import.meta.url).pathname, encoding: 'utf8' })
+    expect(r.status, r.stderr).toBe(0)
+    expect(JSON.parse(r.stdout.trim().split('\n').at(-1)!)).toEqual([...STUB_NAMES].sort())
+  })
+  it('L3: only the stub\'s open object is open: not a union, not a strict empty object, not one with fields', async () => {
+    const { z } = await import('zod')
+    expect(isOpenSchema(z.object({}).catchall(z.unknown()))).toBe(true)
+    expect(isOpenSchema(z.union([z.object({ a: z.string() }), z.object({ b: z.string() })]))).toBe(false)
+    expect(isOpenSchema(z.object({}).strict())).toBe(false)
+    expect(isOpenSchema(z.object({ a: z.string() }))).toBe(false)
+  })
+  it('nit: a match only in the raw answer (inside a URL) says so in the span field', () => {
+    const r11 = CASES.find((c) => c.id === 'R11')!
+    const answer = 'Nothing saved; see https://x.example.test/3days for the supplier page.'
+    const result = { toolCalls: [{ name: 'mcp__inhouse__memory_search', input: {} }], answer, runOk: true, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0 }
+    const row = toRow(r11, 1, 1, result, gradeChat(r11.chats[0]!.expect, result, S5_PEOPLE))
+    expect(row.checks.answerNot).toBe(false)
+    expect(row.answerNotMatch).toBe('(match is inside a redacted URL or the canary)')
   })
 })
