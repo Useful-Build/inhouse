@@ -153,6 +153,7 @@ export function factLine(f: Fact): MemoryLine {
     rev: f.rev,
     scope: f.scope,
     ...(f.status === 'forgotten' ? { forgotten: true } : {}),
+    ...(f.status === 'waiting' ? { waiting: true as const } : {}),
   }
 }
 

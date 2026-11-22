@@ -79,8 +79,8 @@ describe('route 77, GET /api/memory/waiting (failures 1, 2 and 5)', () => {
     expect(keys(r)).not.toContain(F.ownWaiting)
     expect(r.body).toEqual({
       facts: [
-        { kind: 'memory', key: F.waitNew, text: 'Ship gifts in the blue box', source: 'Ada told your Inhouse agent in a chat', at: { iso: '1970-01-01T00:00:00.001Z', ms: 1 }, rev: 1, scope: 'brand' },
-        { kind: 'memory', key: F.waitOld, text: 'Kestrel wants PDFs', source: 'Ada told your Inhouse agent in a chat', at: { iso: '1970-01-01T00:00:00.001Z', ms: 1 }, rev: 1, scope: 'brand' },
+        { kind: 'memory', key: F.waitNew, text: 'Ship gifts in the blue box', source: 'Ada told your Inhouse agent in a chat', at: { iso: '1970-01-01T00:00:00.001Z', ms: 1 }, rev: 1, scope: 'brand', waiting: true },
+        { kind: 'memory', key: F.waitOld, text: 'Kestrel wants PDFs', source: 'Ada told your Inhouse agent in a chat', at: { iso: '1970-01-01T00:00:00.001Z', ms: 1 }, rev: 1, scope: 'brand', waiting: true },
       ],
     })
   })
@@ -117,7 +117,11 @@ describe('route 77, GET /api/memory/waiting (failures 1, 2 and 5)', () => {
 describe('route 78, PUT /api/memory/brand/:id/approved (failures 1, 3 and 4)', () => {
   it('an Admin approves: the line as it is now, active; gone from the waiting list, on the Memory page', async () => {
     const before = await lastLineId(db)
-    expect(await decide(person(ADMIN, 'admin'), F.waitOld, { approved: true, ifRev: 1 })).toMatchObject({ status: 200, body: { key: F.waitOld, rev: 2, scope: 'brand', text: 'Kestrel wants PDFs' } })
+    const yes = await decide(person(ADMIN, 'admin'), F.waitOld, { approved: true, ifRev: 1 })
+    expect(yes).toMatchObject({ status: 200, body: { key: F.waitOld, rev: 2, scope: 'brand', text: 'Kestrel wants PDFs' } })
+    // An approved line says neither waiting nor forgotten: a client tells it from one that still waits.
+    expect(yes.body.waiting).toBeUndefined()
+    expect(yes.body.forgotten).toBeUndefined()
     expect(await row(F.waitOld)).toEqual({ status: 'active', rev: 2 })
     expect(keys(await waiting(person(ADMIN, 'admin')))).toEqual([F.waitNew])
     const page = await send(person(A, 'member'), 'GET', '/api/memory')
@@ -128,7 +132,7 @@ describe('route 78, PUT /api/memory/brand/:id/approved (failures 1, 3 and 4)', (
     const before = await lastLineId(db)
     expect(await decide(person(ADMIN, 'admin'), F.waitOld, { approved: false, ifRev: 1 })).toMatchObject({ status: 200, body: { key: F.waitOld, rev: 2, forgotten: true } })
     expect(await row(F.waitOld)).toEqual({ status: 'forgotten', rev: 2 })
-    expect((await send(person(ADMIN, 'admin'), 'PUT', `/api/memory/brand/${F.waitOld}/forgotten`, { forgotten: false, ifRev: 2 })).status).toBe(200)
+    expect(await send(person(ADMIN, 'admin'), 'PUT', `/api/memory/brand/${F.waitOld}/forgotten`, { forgotten: false, ifRev: 2 })).toMatchObject({ status: 200, body: { rev: 3, waiting: true } })
     expect(await row(F.waitOld)).toEqual({ status: 'waiting', rev: 3 })
     expect((await linesSince(db, before)).map(l => [l.action, JSON.parse(l.args_json)])).toEqual([
       ['memory.rejected', { memoryId: F.waitOld, rev: 1 }],
@@ -143,6 +147,13 @@ describe('route 78, PUT /api/memory/brand/:id/approved (failures 1, 3 and 4)', (
     expect(await decide(person(ADMIN, 'admin'), F.gone, { approved: true, ifRev: 1 })).toMatchObject({ status: 409, body: { error: { code: 'conflict', current: { key: F.gone, forgotten: true } } } })
     expect(await linesSince(db, before)).toEqual([])
     expect(await row(F.team)).toEqual({ status: 'active', rev: 1 })
+  })
+  it("a conflict's current says whether the fact still waits: a stale rev on a waiting fact carries waiting, an active one doesn't", async () => {
+    await db.prepare('UPDATE memories SET rev = 2 WHERE id = ?').bind(F.waitNew).run()
+    const stillWaiting = await decide(person(ADMIN, 'admin'), F.waitNew, { approved: true, ifRev: 1 })
+    expect(stillWaiting).toMatchObject({ status: 409, body: { error: { code: 'conflict', current: { key: F.waitNew, rev: 2, waiting: true } } } })
+    const active = await decide(person(ADMIN, 'admin'), F.team, { approved: true, ifRev: 1 })
+    expect((active.body.error as { current: Record<string, unknown> }).current.waiting).toBeUndefined()
   })
   it('a Member is refused, and nothing changes', async () => {
     expect(await decide(person(A, 'member'), F.waitOld, { approved: true, ifRev: 1 })).toEqual({ status: 403, body: { error: { code: 'forbidden' } } })

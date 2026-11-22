@@ -12,7 +12,7 @@ import type {
   CreateChatInput, ApprovalRule, AuditLine, MemberRecord, MemberRole, Me, ResourceKey, ResourceStatus,
   AgentClient, AgentData, AgentErrorCode, AgentNotice, AgentNotification, AgentState, ApproveResult, ActiveRun, ChatList, ChatPage, ChatSendInput, ChatSummary, ChatThread, LinkState, RunFrame, SendTurnResult, StoredMessage, ClockTime, DemoContext,
   Instant, LibraryFile, MessagePart, NoticePage, RoutineCard, RoutineDef, RoutineRun, Scenario, SeedTurn, SetAsideReason, SetAsideRecord,
-  SkillDef, Stage, StampRecord, TablePart, TeamRequest, ToolSetup, ToolsData, Trace, UsageData,
+  SkillDef, Stage, StampRecord, TablePart, TeamRequest, ToolSetup, ToolsData, Trace, UsageData, MemoryLine, WaitingMemory,
 } from './types'
 import { AgentError, CHAT_TITLE_MAX, stageIndex } from './types'
 import type { ChatEngine, Host } from './mock-chat'
@@ -383,13 +383,28 @@ interface Server {
   grant: StoredGrant | null
   grantSeq: number
   revs: Record<string, number>
+  /**
+   * P6a: team facts waiting for an OK (the demo has none; the e2e fixtures seed them), and the ones approved since, which
+   * join the team's memory. Each line's rev is its first; `revs` moves it.
+   */
+  memoryWaiting: MemoryLine[]
+  memoryApproved: MemoryLine[]
 }
+/** What the mock says to someone without `approveMemory` (the server's matrix refuses routes 77 and 78 the same way). */
+const WAITING_REFUSED = 'Only admins and the Inhouse team can see what waits for an OK.'
+const DECIDING_REFUSED = 'Only admins and the Inhouse team can decide on what waits for an OK.'
+/** A saved team line (hand-checked, so the mock doesn't carry zod's runtime; memory.ts holds the schema). */
+const isTeamLine = (l: unknown): l is MemoryLine =>
+  isRec(l) && str(l.key) && l.key.length > 0 && str(l.text) && l.text.length > 0 && str(l.source)
+  && typeof l.rev === 'number' && Number.isInteger(l.rev) && l.rev >= 1 && (l.at === undefined || isInstant(l.at))
+/** The saved line with only the fields a team line carries (no forgotten or waiting mark: where it's kept says that). */
+const teamLineOf = (l: MemoryLine): MemoryLine => ({ key: l.key, text: l.text, source: l.source, ...(l.at ? { at: l.at } : {}), rev: l.rev, scope: 'brand' })
 const DEMO_GRANT_HOURS = 72
 /** A first-run server: the sample team, and the live support grant the demo's "Inhouse team access" switch always showed. */
 const defaultServer = (startedAt: number): Server => {
   const now = demoNow(startedAt).getTime()
   return {
-    roles: {}, photos: {}, removed: {}, invited: [], grantSeq: 1, revs: {},
+    roles: {}, photos: {}, removed: {}, invited: [], grantSeq: 1, revs: {}, memoryWaiting: [], memoryApproved: [],
     grant: { id: 'g_demo-1', createdBy: ME_ID, createdAt: instantOf(now), endsAt: instantOf(now + DEMO_GRANT_HOURS * 3_600_000), endedAt: null, endedBy: null },
   }
 }
@@ -427,6 +442,8 @@ const savedServer = (v: unknown, startedAt: number): Server => {
     grant: v.grant === null ? null : g ?? out.grant,
     grantSeq: typeof v.grantSeq === 'number' && Number.isInteger(v.grantSeq) && v.grantSeq >= 1 ? v.grantSeq : 1,
     revs: recOf(v.revs, (x): x is number => typeof x === 'number' && Number.isInteger(x) && x >= 0),
+    memoryWaiting: (isArr(v.memoryWaiting) ? v.memoryWaiting : []).filter(isTeamLine).map(teamLineOf),
+    memoryApproved: (isArr(v.memoryApproved) ? v.memoryApproved : []).filter(isTeamLine).map(teamLineOf),
   }
 }
 
@@ -771,12 +788,19 @@ export class MockAgent implements AgentClient {
       },
       routines: base.routines.map(r => ({ ...r, rev: revs[`routine:${r.id}`] ?? r.rev })),
       memory: {
-        team: base.memory.team.map(g => ({ ...g, lines: g.lines.map(l => ({ ...l, rev: revs[`memory:${l.key}`] ?? l.rev })) })),
+        team: this.withApproved(base.memory.team).map(g => ({ ...g, lines: g.lines.map(l => ({ ...l, rev: revs[`memory:${l.key}`] ?? l.rev })) })),
         personal: base.memory.personal.map(l => ({ ...l, rev: revs[`memory:${l.key}`] ?? l.rev })),
       },
       auditLog: failed.audit ? [] : base.auditLog,
       resources: Object.fromEntries(RESOURCE_KEYS.map(k => [k, status(k)])) as Record<ResourceKey, ResourceStatus>,
     }
+  }
+  /** The team's groups with the lines approved in this demo after the first group's own (a group of their own when there is none). */
+  private withApproved(team: AgentData['memory']['team']): AgentData['memory']['team'] {
+    const extra = this.server.memoryApproved
+    if (extra.length === 0) return team
+    if (team.length === 0) return [{ group: 'Shared with the team', lines: extra }]
+    return team.map((g, i) => (i === 0 ? { ...g, lines: [...g.lines, ...extra] } : g))
   }
   private approverOf(i: number, sample: ApprovalRule['approver']): ApprovalRule['approver'] {
     const saved = this.state.settings[`a:${i}`]
@@ -930,6 +954,26 @@ export class MockAgent implements AgentClient {
     const forgot = { ...this.state.forgot }
     if (forgotten) forgot[key] = true; else delete forgot[key]
     return this.writeRecs([[rec, 1]], { forgot })
+  }
+  waitingMemory(): Promise<WaitingMemory[]> {
+    if (!this.me()?.can.approveMemory) return this.rejected('forbidden', WAITING_REFUSED, false)
+    const facts = this.server.memoryWaiting.map(l => {
+      const rec = `memory:${l.key}`
+      this.seen[rec] = this.rev(rec, l.rev)
+      return { ...l, rev: this.rev(rec, l.rev), scope: 'brand' as const, waiting: true as const, kind: 'memory' as const }
+    })
+    return Promise.resolve([...facts].reverse())
+  }
+  reviewMemory(key: string, approved: boolean) {
+    if (!this.me()?.can.approveMemory) return this.rejected('forbidden', DECIDING_REFUSED, true)
+    const line = this.server.memoryWaiting.find(l => l.key === key)
+    if (!line) return this.rejected(NOT_FOUND, 'That rule no longer waits for an OK.', true)
+    const rec = `memory:${key}`
+    const stale = this.conflict(rec, line.rev, () => ({ ...line, rev: this.rev(rec, line.rev), waiting: true }))
+    if (stale) return stale
+    const memoryWaiting = this.server.memoryWaiting.filter(l => l.key !== key)
+    const memoryApproved = approved ? [...this.server.memoryApproved, line] : this.server.memoryApproved
+    return this.writeRecs([[rec, line.rev]], {}, { memoryWaiting, memoryApproved })
   }
   setSetting(key: string, value: string | null) {
     const row = settingRow(key)
