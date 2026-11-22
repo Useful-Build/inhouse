@@ -150,7 +150,8 @@ const forbidden = p =>
   (!p.split(sep).includes('node_modules') &&
     ((under(p, hubDir) && relative(hubDir, p).split(sep).includes('testing')) || TEST_MODULE.test(p)))
 /**
- * The [start, end) spans of every `if (false) { ... }` block in a script, or `unclosed` when one never closes. wrangler
+ * The [start, end) spans of every `if (false) { ... }` block in a script, or `unclosed` when one never closes, or
+ * `ambiguous` when a line inside one is no deeper than its opener. wrangler
  * doesn't minify, so esbuild keeps a branch the define turned into `if (false)` as text (it only skips bundling the
  * imports inside it). esbuild prints the opener alone on its line and the block's `}` at the opener's indentation, so
  * the span is found by lines, never by reading the code: a quote in a regex or a string can't stretch it. A block with
@@ -170,7 +171,12 @@ function deadSpans(text) {
     if (!open) continue
     const close = new RegExp(`^${open[1]}\\}`)
     let j = i + 1
-    while (j < lines.length && !close.test(lines[j])) j++
+    while (j < lines.length && !close.test(lines[j])) {
+      // Every line inside a real block sits deeper than its opener. One that doesn't (an opener-looking line inside a
+      // template literal, say) makes the span ambiguous: fail rather than count it dead.
+      if (lines[j].trim() !== '' && !lines[j].startsWith(`${open[1]} `)) return { ambiguous: i + 1 }
+      j++
+    }
     if (j === lines.length) return { unclosed: i + 1 }
     spans.push([starts[i], starts[j] + lines[j].length])
   }
@@ -184,6 +190,7 @@ const fakesGlobals = ({ files }) =>
   files.filter(f => /\.[cm]?js$/.test(f)).flatMap(f => {
     const text = textOf(f)
     const dead = deadSpans(text)
+    if (dead.ambiguous) return [`an \`if (false)\` block at line ${dead.ambiguous} of ${relative(root, f)} has a line no deeper than its opener, so its extent is ambiguous`]
     if (dead.unclosed) return [`an \`if (false)\` block at line ${dead.unclosed} of ${relative(root, f)} never closes at its indentation, so nothing after it can be judged`]
     const hits = []
     for (const n of FAKES_GLOBALS) {

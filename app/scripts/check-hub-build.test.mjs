@@ -29,6 +29,9 @@ const EXPECTED = {
   'deploy-fakes-globals-regex': [1, /FAIL {2}test-fakes globals: the deployable.*\n.*__inhouseHubTestVars.*outside/],
   // A dead block that never closes at its indentation fails the part, never counts the rest of the file as dead.
   'deploy-fakes-globals-unclosed': [1, /FAIL {2}test-fakes globals: the deployable.*\n.*never closes/],
+  // An opener-looking line inside a template literal: the "block" holds a line no deeper than it, so the part fails as
+  // ambiguous instead of counting the live global inside it as dead.
+  'deploy-fakes-globals-template': [1, /FAIL {2}test-fakes globals: the deployable.*\n.*ambiguous/],
   'deploy-hub-testing': [1, /module hub\/testing\/index\.ts/],
   'deploy-registry-testing': [1, /module hub\/registry\/testing\/fake-registry\.ts/],
   'deploy-test-module': [1, /module hub\/scope\/scope\.test\.ts/],

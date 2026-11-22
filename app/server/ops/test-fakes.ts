@@ -17,7 +17,8 @@
 //   it came over the binding (502 `binding_failed` when the binding threw).
 // - `notify`: { as: { memberId, chatId?, runId?, turnId? }, args }: the inhouse MCP server's own handler (handleMcp)
 //   calling `notification_send` as `as.memberId`, which must be an active person on the brand; an `as.chatId` must be
-//   that member's chat, and an `as.runId` or `as.turnId` given with it one of that chat's. Answers `{ result }`:
+//   that member's chat, and an `as.runId` or `as.turnId` given with it one of that chat's (both: a pair of one row).
+//   Answers `{ result }`:
 //   the tool's CallToolResult (text, structuredContent.recipients, isError on a refusal).
 // - `prompt`: the string turnSystemPrompt builds now, for a synthetic turn id. Answers `{ prompt }`.
 // - `systemNotice`: { notice }: sendSystemNotice(env, notice) with the real env. Answers its SystemNoticeResult.
@@ -164,6 +165,11 @@ async function notifyOp(env: TestFakesEnv, op: Extract<ProductOp, { op: 'notify'
       if (value === undefined) continue
       const row = await env.DB.prepare(`SELECT 1 AS one FROM chat_messages WHERE chat_id = ? AND ${column} = ? LIMIT 1`).bind(chat.id, value).first()
       if (!row) return refuse(400, column === 'run_id' ? 'run_not_chats' : 'turn_not_chats')
+    }
+    // Both given: the turn must be that run's, not just any turn of the chat.
+    if (op.as.runId !== undefined && op.as.turnId !== undefined) {
+      const pair = await env.DB.prepare('SELECT 1 AS one FROM chat_messages WHERE chat_id = ? AND run_id = ? AND turn_id = ? LIMIT 1').bind(chat.id, op.as.runId, op.as.turnId).first()
+      if (!pair) return refuse(400, 'turn_not_runs')
     }
   }
   const scope = {
