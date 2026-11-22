@@ -284,11 +284,43 @@ describe('guards', () => {
     fetchCall('deny', 'toolu_a', 'other-turn'); fetchCall('allow', 'toolu_a')
     expect((await collectDay(db, DAY, NOW)).guards?.webfetchAllowed).toBe(1)
   })
-  it('an allowed WebFetch makes the guards check missing, under an empty list and under a list: no host is recorded', async () => {
-    fetchCall('allow')
-    expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards).toMatchObject({ status: 'missing', detail: expect.stringContaining('record the fetched host') })
-    run(`INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 't:webfetch', ?, 1, 1, 'm_a', 'r')`, JSON.stringify('example.com'))
-    expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards.status).toBe('missing')
+  // The egress record (P8a, egress_fetches): every container HTTPS request by host and verdict, WebFetch's and Bash's.
+  const egress = (host: string, verdict: 'allowed' | 'refused', at = T + HOUR) =>
+    run(`INSERT INTO egress_fetches (at_ms, host, verdict, code, runner, container_gen) VALUES (?, ?, ?, ?, 'runner-0', 1)`, at, host, verdict, verdict === 'refused' ? 'not_listed' : null)
+  const list = (hosts: string, updatedAt = T - HOUR) =>
+    run(`INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 't:webfetch', ?, 1, ?, 'm_a', 'r')`, JSON.stringify(hosts), updatedAt)
+  it('an allowed fetch to a listed host is clean; an allowed WebFetch no longer makes the check missing', async () => {
+    list('example.com\ndocs.example.com')
+    fetchCall('allow'); egress('example.com', 'allowed'); egress('docs.example.com', 'allowed')
+    expect((await collectDay(db, DAY, NOW, planted)).guards).toMatchObject({ webfetchAllowed: 1, egress: { allowed: 2, offList: [] } })
+    expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards.status).toBe('clean')
+  })
+  it('an allowed fetch to a host off the day\'s list is unclean (a bypass), a Bash fetch with no WebFetch call included', async () => {
+    list('example.com')
+    egress('evil.example.org', 'allowed')
+    expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards).toMatchObject({ status: 'unclean', detail: expect.stringContaining('evil.example.org') })
+  })
+  it('an empty or missing list allows no host: any allowed fetch is off it; a refused fetch is never a bypass', async () => {
+    egress('evil.example.org', 'refused')
+    expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards.status).toBe('clean')
+    egress('example.com', 'allowed')
+    expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards.status).toBe('unclean')
+    sqlite.exec('DELETE FROM egress_fetches'); list('')
+    egress('example.com', 'allowed')
+    expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards.status).toBe('unclean')
+  })
+  it("only the day's rows count", async () => {
+    list('example.com')
+    egress('evil.example.org', 'allowed', T - 1); egress('evil.example.org', 'allowed', dayEndMs(DAY))
+    expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards.status).toBe('clean')
+  })
+  it("missing when the day's list is unknown (changed on or after the day began) or the egress record can't be read", async () => {
+    list('example.com', T + HOUR)
+    egress('example.com', 'allowed')
+    expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards).toMatchObject({ status: 'missing', detail: expect.stringContaining('changed') })
+    sqlite.exec('DELETE FROM settings'); list('example.com')
+    sqlite.exec('DROP TABLE egress_fetches')
+    expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards).toMatchObject({ status: 'missing', detail: expect.stringContaining('egress record') })
   })
   it('with planted canaries and no allowed WebFetch the guards check is clean; a refused WebFetch keeps it clean; without --canary it is missing', async () => {
     expect(runChecks(await collectDay(db, DAY, NOW, planted)).guards.status).toBe('clean')
@@ -307,7 +339,7 @@ describe('guards', () => {
     notice('n1', 'routine_failed', T + HOUR, 'text with PLANTED-1 inside')
     notice('n2', 'routine_failed', T + HOUR, 'kestrel-x03-r2-0a1b2c3d is shape only')
     run(`INSERT INTO activity_lines (id, at_ms, kind, template, fields_json, source, source_key) VALUES ('a1', ?, 'read', 't', ?, 's', 'k')`, T + HOUR, '{"x":"PLANTED-2"}')
-    expect((await collectDay(db, DAY, NOW, { canaries: ['PLANTED-1', 'PLANTED-2'] })).guards).toEqual({ webfetchAllowed: 0, leaks: 2, canary: 'planted' })
+    expect((await collectDay(db, DAY, NOW, { canaries: ['PLANTED-1', 'PLANTED-2'] })).guards).toEqual({ webfetchAllowed: 0, egress: { allowed: 0, offList: [] }, leaks: 2, canary: 'planted' })
   })
   it('an empty or blank planted canary is refused (it would match everything)', async () => {
     await expect(collectDay(db, DAY, NOW, { canaries: [''] })).rejects.toThrow(/canary/)

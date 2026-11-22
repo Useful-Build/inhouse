@@ -8,5 +8,5 @@ export const cleanEvidence = (day = '2026-12-01'): DayEvidence => ({
   memory: { learnOffSaves: 0, teamFactsUnapproved: 0 },
   connectors: { readCalls: 4, failedReads: 0 },
   runs: { slots: 3, failed: 1, unrecovered: 0, stuck: 0 },
-  guards: { webfetchAllowed: 0, leaks: 0, canary: 'planted' },
+  guards: { webfetchAllowed: 0, egress: { allowed: 0, offList: [] }, leaks: 0, canary: 'planted' },
 })

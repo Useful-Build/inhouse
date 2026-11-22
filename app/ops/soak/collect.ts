@@ -6,13 +6,14 @@
 // current value and its last write time, so a save made before a later change couldn't be judged from it.
 //
 // Not read, by design: Worker logs (`egress_refused`, `egress_denied`) are not stored in D1, R2 or a Durable Object, so
-// "refused egress logged" is not judged here; the guard check covers the allowed calls and the stored text instead. It
-// can't judge an allowed WebFetch either (no host is stored), so a day with one is missing on the guards check.
+// "refused egress logged" is not judged from them; the guard check judges every allowed fetch from the egress record
+// (P8a, `egress_fetches`, in D1) and the stored text instead.
 // Durable Object run state has no read route either; a stuck run shows as its routine slot staying open past its deadline.
 import { SYSTEM_MEMBER_ID } from '../../server/db/ids.ts'
 import { hashId } from '../../server/routines/keys.ts'
 import { BACKSTOP_MS } from '../../server/routines/limits.ts'
-import type { BellFacet, ConnectorFacet, DayEvidence, GuardFacet, MemoryFacet, MorningFacet, RunsFacet } from './types.ts'
+import { parseHostlist } from '../../shared/contract/settings-table.ts'
+import type { BellFacet, ConnectorFacet, DayEvidence, EgressFacet, GuardFacet, MemoryFacet, MorningFacet, RunsFacet } from './types.ts'
 import { dayEndMs, dayStartMs } from './window.ts'
 
 /** A read-only SQL runner: `?` parameters, rows as plain objects. */
@@ -117,10 +118,10 @@ async function runs(db: SoakDb, s: number, e: number, nowMs: number): Promise<Ru
 }
 
 /**
- * `tool_calls` keeps a call's input size and hash, never its host, so where an allowed WebFetch went can't be judged
- * here: checks.ts reports any as missing. Allowed means the audit hook's 'allow' row with no 'deny' row for the same
- * call: the WebFetch hook records a 'deny' row for a call it refuses and the audit hook still records its 'allow' row
- * (runner/src/guards/options.ts), so a refused call has both. A row with no tool_use id can't be paired and counts.
+ * Allowed means the audit hook's 'allow' row with no 'deny' row for the same call: the WebFetch hook records a 'deny'
+ * row for a call it refuses and the audit hook still records its 'allow' row (runner/src/guards/options.ts), so a
+ * refused call has both. A row with no tool_use id can't be paired and counts. The count is for the detail: the egress
+ * record judges where fetches went.
  */
 async function guards(db: SoakDb, s: number, e: number, canaries: readonly string[]): Promise<GuardFacet> {
   const fetched = await db(
@@ -132,7 +133,34 @@ async function guards(db: SoakDb, s: number, e: number, canaries: readonly strin
   const lines = await db('SELECT fields_json FROM activity_lines WHERE at_ms >= ? AND at_ms < ?', [s, e])
   const hit = (v: unknown): boolean => typeof v === 'string' && (canaries.length > 0 ? canaries.some(c => v.includes(c)) : CANARY_SHAPE.test(v))
   const leaks = [...text.flatMap(r => [r.body, r.fields_json]), ...lines.map(r => r.fields_json)].filter(hit).length
-  return { webfetchAllowed: n(fetched[0]?.c), leaks, canary: canaries.length > 0 ? 'planted' : 'shape' }
+  return { webfetchAllowed: n(fetched[0]?.c), egress: await egressDay(db, s, e), leaks, canary: canaries.length > 0 ? 'planted' : 'shape' }
+}
+
+/**
+ * The egress record's day against the day's `t:webfetch` list. The settings row keeps only the current list and its
+ * last write time (and the audit log keeps the list redacted), so the day's list is known only when the row was last
+ * written before the day began; otherwise, or when the record can't be read, the facet is unreadable. No row, or an
+ * empty or broken list, is no host (the product's rule, server/api/runs.ts).
+ */
+async function egressDay(db: SoakDb, s: number, e: number): Promise<EgressFacet> {
+  let allowed: Record<string, unknown>[]
+  let listRows: Record<string, unknown>[]
+  try {
+    listRows = await db("SELECT value_json, updated_at_ms FROM settings WHERE owner = 'brand' AND key = 't:webfetch'")
+    allowed = await db("SELECT host FROM egress_fetches WHERE verdict = 'allowed' AND at_ms >= ? AND at_ms < ?", [s, e])
+  } catch (err) {
+    console.error(`soak: the egress record could not be read: ${err instanceof Error ? err.message : String(err)}`)
+    return { unreadable: 'the egress record could not be read' }
+  }
+  const row = listRows[0]
+  if (row !== undefined && n(row.updated_at_ms) >= s) return { unreadable: "the brand's WebFetch list changed on or after this day began, so the day's list is unknown" }
+  let value: unknown = null
+  if (row !== undefined) {
+    try { value = JSON.parse(String(row.value_json)) } catch { value = null }
+  }
+  const listed = new Set(typeof value === 'string' ? parseHostlist(value) ?? [] : [])
+  const offList = [...new Set(allowed.map(r => String(r.host)).filter(h => !listed.has(h)))].sort()
+  return { allowed: allowed.length, offList }
 }
 
 /**
