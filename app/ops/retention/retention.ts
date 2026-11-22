@@ -24,7 +24,7 @@ const DAY_MS = 86_400_000
 
 interface Target {
   entry: TableEntry
-  rule: RetentionRule
+  rule: Extract<RetentionRule, { kind: 'd1' | 'r2' }>
   cutoffMs: number
 }
 
@@ -45,13 +45,24 @@ function targetsFor(registry: readonly TableEntry[], rules: Readonly<Record<stri
     if (entry.retention !== 'retention_period') throw new Error(`retention: ${store} is ${entry.retention}, not retention_period: it takes no period`)
     if (!Number.isSafeInteger(days) || days < 1) throw new Error(`retention: ${store}'s period must be a whole number of days, at least 1`)
   }
+  // C1: a custom rule's job (the chat cascade, a condition, a Durable Object's storage) isn't built yet, so a plan that
+  // would reach one refuses by name, whatever the store's class (a config store's forgotten facts included).
+  for (const entry of registry) {
+    if (rules[entry.name]?.kind === 'custom') throw new Error(`retention: ${entry.name}'s rule is custom, and its job isn't built yet (P8 C1), so retention refuses to plan it`)
+  }
   const targets: Target[] = []
   for (const entry of registry) {
     if (entry.retention !== 'retention_period') continue
+    // A derived index has no rows of its own to age: its triggers follow its source. It takes a derived rule, no period.
+    if (entry.derived) {
+      if (rules[entry.name]?.kind !== 'derived') throw new Error(`retention: ${entry.name} is derived: its rule must be derived`)
+      continue
+    }
     const days = periods[entry.name]
     if (days === undefined) throw new Error(`retention: no period given for ${entry.name}`)
     const rule = rules[entry.name]
     if (rule === undefined) throw new Error(`retention: no rule for ${entry.kind} store ${entry.name} (add one to ops/retention/rules.ts)`)
+    if (rule.kind === 'derived' || rule.kind === 'custom') throw new Error(`retention: ${entry.name} isn't derived, its rule is ${rule.kind}`)
     if (rule.kind !== entry.kind) throw new Error(`retention: ${entry.name} is ${entry.kind}, its rule is ${rule.kind}`)
     if (rule.kind === 'd1') {
       ident(entry.name)

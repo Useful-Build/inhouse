@@ -5,8 +5,9 @@
 //  4. the run takes a new clock instead of the plan's cutoff, or runs without a plan;
 //  5. the log entry misses a removed id or the cutoff, or the result hides a count that changed since the plan;
 //  6. an unknown store, a period for a non-retention store or a missing period or rule passes silently.
-// P2 has no `retention_period` store, so the test brings its own: a fixture table and prefix with their entries and
-// rules, passed in as arguments. The real registry yields an empty plan.
+// The test brings its own `retention_period` stores: a fixture table and prefix with their entries and rules, passed
+// in as arguments beside P2's and P8's entries. C1's stores (P3 and P4's) have their own rules and tests
+// (rules.test.ts); their custom rules refuse to plan until C1's jobs land, so the real registry refuses by name.
 import { fc, test } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -16,10 +17,13 @@ import { seedBrand } from '../../server/seed/seed.ts'
 import { listDeletionLog } from '../delete/log.ts'
 import { recordingDb, snapshotAll, token, withoutLog, writesAudit } from '../delete/test-support.ts'
 import type { Snapshot } from '../delete/test-support.ts'
+import { coreTables } from '../tables/core.ts'
 import { tables } from '../tables/index.ts'
+import { p8Tables } from '../tables/p8.ts'
 import type { TableEntry } from '../tables/types.ts'
 import { planRetention, runRetention } from './retention.ts'
 import type { RetentionDeps, RetentionPlan } from './retention.ts'
+import { periodsFor } from './rules.ts'
 import type { RetentionRule } from './rules.ts'
 
 const db = env.DB
@@ -28,7 +32,8 @@ const DAY = 86_400_000
 const BASE = 1_800_000_000_000
 const FIXTURE_PREFIX = 'retention-fixture/'
 const registry: TableEntry[] = [
-  ...tables,
+  ...coreTables,
+  ...p8Tables,
   { kind: 'd1', name: 'retention_fixture', retention: 'retention_period', personKeys: [], export: false },
   { kind: 'r2', name: FIXTURE_PREFIX, retention: 'retention_period', personKeys: [], export: false },
 ]
@@ -144,9 +149,11 @@ describe('what retention refuses (failures 2, 4, 6)', () => {
     await expect(runRetention(deps(BASE), forged)).rejects.toThrow(/only from a plan/)
   })
 
-  it('on the real registry, plans nothing (P2 has no retention_period store)', async () => {
-    const plan = await planRetention({ db, bucket, at: { actorId: SYSTEM_MEMBER_ID, requestId: 'r', nowMs: BASE } }, { periods: {} })
+  it('on P2\'s and P8\'s stores, plans nothing; on the real registry, refuses C1\'s custom rules by name', async () => {
+    const at = { actorId: SYSTEM_MEMBER_ID, requestId: 'r', nowMs: BASE }
+    const plan = await planRetention({ db, bucket, at, registry: [...coreTables, ...p8Tables] }, { periods: {} })
     expect(plan.counts).toEqual({})
     expect(plan.cutoffs).toEqual([])
+    await expect(planRetention({ db, bucket, at }, { periods: periodsFor(tables) })).rejects.toThrow(/rule is custom/)
   })
 })
