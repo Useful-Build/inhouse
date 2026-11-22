@@ -86,7 +86,12 @@ test('a brand-app person is never an Inhouse principal, and an Inhouse person is
   const asInhouse = await call(request, { app: 'inhouse', sub: SEED_PEOPLE.admin.subject, email: SEED_PEOPLE.admin.email }, 'GET', '/api/me')
   expect(asInhouse.status, asInhouse.text).toBe(200)
   expect(asInhouse.json.role).toBe('inhouse')
-  // Alex's subject on the brand hostname is bound to an `inhouse` row: refused 401, never a member.
-  const asBrand = await call(request, { app: 'brand', sub: SEED_INHOUSE.subject, email: SEED_INHOUSE.email }, 'GET', '/api/me')
-  expectError(asBrand, 401, 'unauthorized')
+  // Alex's subject on the brand hostname is bound to an `inhouse` row: refused, never a member. P8a P-auth: 403
+  // `wrong_kind` (it was 401, which the client read as an ended session and looped on), on any route, and the body
+  // carries the code and the reason only: no member id, name or email.
+  for (const path of ['/api/me', '/api/members', '/api/settings/brand']) {
+    const asBrand = await call(request, { app: 'brand', sub: SEED_INHOUSE.subject, email: SEED_INHOUSE.email }, 'GET', path)
+    expectError(asBrand, 403, 'forbidden', 'wrong_kind')
+    expect(asBrand.json).toEqual({ error: { code: 'forbidden', reason: 'wrong_kind' } })
+  }
 })

@@ -23,7 +23,7 @@ export const AgentErrorCodeSchema = z.enum([
 ])
 export type AgentErrorCode = z.infer<typeof AgentErrorCodeSchema>
 
-/** Why a request was refused, when the code alone doesn't say (p2-design.md section 4). The UI reads `not_invited` and `removed` as "You're not on this team". */
+/** Why a request was refused, when the code alone doesn't say (p2-design.md section 4). The UI reads `not_invited` and `removed` as "You're not on this team", and `wrong_kind` (an Inhouse team sign-in on the brand app) as "This is an Inhouse team account". */
 export const ErrorReasonSchema = z.enum([
   'not_invited', 'removed', 'bad_origin', 'grant_required', 'admin_read_only', 'not_owner', 'wrong_scope', 'last_admin',
   'already_member', 'grant_live', 'bad_type', 'too_large',
@@ -36,6 +36,8 @@ export const ErrorReasonSchema = z.enum([
   'run_open', 'stage',
   // #312 review: a team routine past the brand's cap (the routine_create tool); an empty Library upload (row 63).
   'routine_limit', 'empty',
+  // P8a P-auth: a brand-app sign-in whose subject is an Inhouse team (or service) member.
+  'wrong_kind',
 ])
 export type ErrorReason = z.infer<typeof ErrorReasonSchema>
 
