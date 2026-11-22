@@ -53,7 +53,7 @@ export function TeamWindow() {
   const send = () => {
     const txt = team.text.trim()
     if (!txt) return
-    agent.sendTeamRequest({ icon: RT[team.type][0], title: titleOf(txt), sub: `${RT[team.type][1]} · sent by ${sender}`, at: instantOf(nowOf()), status: 'Sent' })
+    agent.sendTeamRequest({ icon: RT[team.type][0], title: titleOf(txt), sub: `${RT[team.type][1]} · sent by ${sender}`, at: instantOf(nowOf()), status: 'Sent', kind: team.type, text: txt })
     showToast(isBug ? 'Bug sent to your Inhouse team. Thank you.' : 'Request sent. Your Inhouse team replies within one working day.')
     patch({ pop: null, team: { ...team, text: '' } })
   }

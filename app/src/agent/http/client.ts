@@ -18,6 +18,7 @@ import type { Problem } from '../../../shared/contract/problem'
 import type { SetAsideReason, SetAsideRecord } from '../../../shared/contract/state'
 import type { TodayAside } from '../../../shared/contract/today'
 import type { RoutineState } from '../../../shared/contract/routines'
+import type { TeamRequestRecord } from '../../../shared/contract/team-requests'
 import { postDeleted, postSessionReset, putPin, putTitle, readChat, readChats, saveChat } from './chats'
 import { ACTIVITY_PAGE, readActivityPage, splitActivity } from './activity'
 import { postNoticesRead, readNotifications } from './bell'
@@ -25,6 +26,7 @@ import { PLACES, libraryDownloadPath, postLibraryWrite, readLibrary, uploadLibra
 import { putAside, readToday } from './today'
 import { newRunKey, postRoutineRev, postRoutineRun, readRoutines, setRoutineToggle } from './routines'
 import { readSkills } from './skills'
+import { fromOpen, postTeamRequest, putWithdrawn, readOpenRequests } from './team-requests'
 import { findMemoryLine, forgetMemoryLine, readMemory } from './memory'
 import { listedModels, readModels } from './models'
 import type { ServedModels } from './models'
@@ -162,6 +164,8 @@ interface Slices {
   routinesGone: RoutineDef[]
   /** Route 79: the skills the agent has (P6a W3). */
   skills: SkillDef[]
+  /** Route 80: the brand's open requests to the Inhouse team; `state.teamRequests`, `requestedTools` and `requestedSkills` are made from them. */
+  requests: TeamRequestRecord[]
   /** Route 57: Today's cards (set aside ones left out), the records of every card of the shown run (their `rev` is what the next set-aside sends), and the cards this client set aside (out of `problems` until put back). */
   problems: Problem[]
   aside: Record<string, TodayAside>
@@ -195,7 +199,7 @@ export class HttpAgent implements AgentClient {
   private readonly now: () => number
   private s: Slices = {
     me: null, members: [], membersNext: null, audit: [], auditNext: null, grant: null, memory: EMPTY_DATA.memory, chats: [], chatsNext: null, served: null, modelList: [],
-    usage: null, usageMonths: [], pause: { paused: false, at: null, by: null }, activity: [], notifications: [], files: NO_FILES, gone: {}, routines: [], routinesGone: [], skills: [], problems: [], aside: {}, asideStash: {}, revs: {}, state: EMPTY_STATE, res: EMPTY_DATA.resources,
+    usage: null, usageMonths: [], pause: { paused: false, at: null, by: null }, activity: [], notifications: [], files: NO_FILES, gone: {}, routines: [], routinesGone: [], skills: [], requests: [], problems: [], aside: {}, asideStash: {}, revs: {}, state: EMPTY_STATE, res: EMPTY_DATA.resources,
   }
   private readonly socket: ChatSocket
   private readonly origin: string
@@ -332,7 +336,7 @@ export class HttpAgent implements AgentClient {
 
   private async loadAll() {
     if (!(await this.loadMeta())) return
-    await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications(), this.loadLibrary(), this.loadRoutines(), this.loadSkills(), this.loadProblems()])
+    await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications(), this.loadLibrary(), this.loadRoutines(), this.loadSkills(), this.loadTeamRequests(), this.loadProblems()])
   }
 
   private setStatus(k: ResourceKey, status: ResourceStatus) { this.patch({ res: { ...this.s.res, [k]: status } }) }
@@ -544,6 +548,20 @@ export class HttpAgent implements AgentClient {
     }
   }
 
+  /** Route 80: the open requests. A failed read leaves "Requested" unmarked and the window's list empty; told in the console. */
+  private async loadTeamRequests() {
+    try {
+      const { items } = await readOpenRequests(this.http)
+      this.commit(this.withRequests(this.s, items))
+    } catch (e) {
+      console.warn('Inhouse: could not read the requests to the Inhouse team.', e)
+    }
+  }
+  /** The open requests as the pages read them: the list, and the "Requested" marks, all from the one list. */
+  private withRequests(s: Slices, requests: TeamRequestRecord[]): Slices {
+    const name = (id: string) => s.members.find(m => m.id === id)?.name ?? null
+    return { ...s, requests, state: { ...s.state, ...fromOpen(requests, name) } }
+  }
   /** Route 79: the skills the agent has. Everyone signed in may read it. */
   private async loadSkills() {
     try {
@@ -641,7 +659,7 @@ export class HttpAgent implements AgentClient {
     return p
   }
   private async reloadMeta() {
-    if (await this.loadMeta()) await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications(), this.loadLibrary(), this.loadRoutines(), this.loadSkills(), this.loadProblems()])
+    if (await this.loadMeta()) await Promise.all([this.loadMembers(), this.loadGrants(), this.loadAudit(), this.loadMemory(), this.loadChats(), this.loadModels(), this.loadUsage(), this.loadPause(), this.loadActivity(), this.loadNotifications(), this.loadLibrary(), this.loadRoutines(), this.loadSkills(), this.loadTeamRequests(), this.loadProblems()])
   }
 
   /** The next page of a list. A second call while one is in flight for the same list does nothing. */
@@ -1317,10 +1335,35 @@ export class HttpAgent implements AgentClient {
   }
   resume = (): Promise<void> => this.setPaused(false) as Promise<void>
 
-  requestTool = (_key: string, _on: boolean) => this.refuse()
-  requestSkill = (_name: string) => this.refuse()
+  /** Route 81: "Connect <tool>", named by the catalogue when it has the tool. Route 83 takes the caller's own open one back. */
+  requestTool = (key: string, on: boolean): Promise<void> =>
+    on ? this.fileRequest('tool', key, `Connect ${this.read().tools.catalog.find(c => c.k === key)?.name ?? key}`) : this.takeBack('tool', key)
+  /** Route 81: a skill the team should add (a `job` about that skill). */
+  requestSkill = (name: string): Promise<void> => this.fileRequest('job', name, `Add the skill "${name}"`)
   setToolPaused = (_key: string, _paused: boolean) => this.refuse()
-  sendTeamRequest = (_req: Parameters<AgentClient['sendTeamRequest']>[0]) => this.refuse()
+  /** Route 81: what the team window sent (its type and words ride on the request as `kind` and `text`). */
+  sendTeamRequest = (req: Parameters<AgentClient['sendTeamRequest']>[0]): Promise<void> =>
+    req.kind && req.text ? this.fileRequest(req.kind, undefined, req.text) : rejected()
+  private fileRequest = this.needs((k, kind: TeamRequestRecord['kind'], subject: string | undefined, text: string): Promise<void> =>
+    this.write({
+      lane: 'requests',
+      apply: s => (subject && kind === 'tool' ? { ...s, state: { ...s.state, requestedTools: { ...s.state.requestedTools, [subject]: true } } } : subject && kind === 'job' ? { ...s, state: { ...s.state, requestedSkills: { ...s.state.requestedSkills, [subject]: true } } } : s),
+      send: () => postTeamRequest(this.http, k, { kind, ...(subject ? { subject } : {}), text }),
+      done: (s, r) => this.withRequests(s, [r, ...s.requests.filter(x => x.id !== r.id)]),
+      undo: (s, before) => ({ ...s, state: { ...s.state, requestedTools: before.state.requestedTools, requestedSkills: before.state.requestedSkills } }),
+    }))
+  /** Route 83: the caller's own open request of this kind about `subject`, looked up when the write goes out (a request filed a moment ago is in the list by then). */
+  private takeBack = this.needs((k, kind: TeamRequestRecord['kind'], subject: string): Promise<void> =>
+    this.write<TeamRequestRecord | null>({
+      lane: 'requests',
+      apply: s => ({ ...s, state: { ...s.state, ...(kind === 'tool' ? { requestedTools: Object.fromEntries(Object.entries(s.state.requestedTools).filter(([n]) => n !== subject)) } : {}) } }),
+      send: async () => {
+        const mine = this.s.requests.find(r => r.mine && r.status === 'open' && r.kind === kind && r.subject === subject)
+        return mine ? putWithdrawn(this.http, k, mine.id, mine.rev) : null
+      },
+      done: (s, r) => (r ? this.withRequests(s, s.requests.filter(x => x.id !== r.id)) : s),
+      undo: (s, before) => ({ ...s, state: { ...s.state, requestedTools: before.state.requestedTools } }),
+    }))
   listNotifications = () => this.s.notifications
   /**
    * Route 61: the notices opened, or every one listed. They show read at once; a refusal puts the dot back only on the very

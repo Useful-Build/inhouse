@@ -22,6 +22,8 @@ export const REASON = {
   runOpen: 'run_open', stage: 'stage',
   // #312 review: routine_create past the cap; an empty Library upload (row 63).
   routineLimit: 'routine_limit', empty: 'empty',
+  // P6a W3: a request to the Inhouse team past 50 open ones.
+  requestLimit: 'request_limit',
 } as const satisfies Record<string, ErrorReason>
 /** Why the runner didn't save a file the agent made (the `file.refused` event), as the chat names them. */
 export const FILE_REFUSAL = {
