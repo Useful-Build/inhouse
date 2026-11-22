@@ -74,6 +74,7 @@ const reads = (o: { me?: unknown; members?: unknown[]; settings?: Record<string,
   // P4 W2: route 52.
   'GET /api/routines': { body: { routines: [], deleted: [], enabled: {} } },
   'GET /api/skills': { body: [{ n: 'pdf', d: 'Makes a PDF.', icon: 'picture_as_pdf', need: 0, by: 'Inhouse team', used: '' }] },
+  'GET /api/team-requests?status=open': { body: { items: [] } },
   // P4 W3: route 57.
   'GET /api/today': { body: { items: [], aside: {} } },
 })
@@ -137,7 +138,7 @@ describe('reads', () => {
     const staff = await loaded(reads({ me: me({ role: 'inhouse', can: can(false) }) }))
     // The Inhouse team reads the grants (route 16) though it can't grant; members and audit are skipped by its `can`.
     // It isn't asked for chats or memory on start (each read under a grant writes an audit line), but models, spending and the pause state are for everyone.
-    expect(staff.calls.map(c => c.path).sort()).toEqual(['/api/grants', '/api/me', '/api/models', '/api/pause', '/api/settings/brand', '/api/settings/technical', '/api/skills', '/api/usage'])
+    expect(staff.calls.map(c => c.path).sort()).toEqual(['/api/grants', '/api/me', '/api/models', '/api/pause', '/api/settings/brand', '/api/settings/technical', '/api/skills', '/api/team-requests?status=open', '/api/usage'])
   })
 
   test('a 403 on the grants reads as "not for you", not an error', async () => {
@@ -1120,7 +1121,7 @@ describe('the parts that stay the stub until their phase', () => {
   const STUBS: [string, (c: AgentClient) => Promise<unknown>][] = [
     ['approve', c => c.approve('p')], ['undo', c => c.undo('p')], ['editDraft', c => c.editDraft('p', 'x')],
     // A routine's switch and Run now (P4 W2) and the Library's writes (P4 W5) are built.
-    ['requestTool', c => c.requestTool('k', true)],
+    ['setToolPaused', c => c.setToolPaused('k', true)],
   ]
   test.each(STUBS)('%s rejects with AgentError("unavailable") and sends one error notice', async (_n, call) => {
     const { agent, heard } = await loaded(reads())

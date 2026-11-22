@@ -18,6 +18,7 @@ import { SettingRecordSchema, SettingWriteInputSchema, SettingsListSchema } from
 import { UsageDataSchema } from '../../../shared/contract/usage'
 import { RoutineEnabledInputSchema, RoutineRevInputSchema, RoutineRunAnswerSchema, RoutineRunInputSchema, RoutineStateSchema, RoutinesListSchema } from '../../../shared/contract/routines'
 import { SkillDefSchema } from '../../../shared/contract/skill'
+import { TeamRequestCreateInputSchema, TeamRequestRecordSchema, TeamRequestWithdrawInputSchema, TeamRequestsListSchema } from '../../../shared/contract/team-requests'
 import { SetAsideBodySchema, TodayAnswerSchema, TodayAsideSchema } from '../../../shared/contract/today'
 import { z } from 'zod'
 import { ChatIdsInputSchema, ChatListSchema, ChatPageSchema, ChatPinInputSchema, ChatRenameInputSchema, ChatSummarySchema } from '../../../shared/contract/chats'
@@ -46,6 +47,8 @@ export const ANSWERS = {
   today: TodayAnswerSchema, todayAside: TodayAsideSchema,
   // P6a (W3): the skills list (route 79).
   skills: z.array(SkillDefSchema),
+  // P6a (W3): requests to the Inhouse team (routes 80, 81 and 83).
+  teamRequests: TeamRequestsListSchema, teamRequest: TeamRequestRecordSchema,
 }
 
 /** What each write sends. */
@@ -56,6 +59,7 @@ export const BODIES = {
   notificationsRead: NotificationsReadInputSchema,
   libraryWrite: LibraryWriteSchema,
   todayAside: SetAsideBodySchema,
+  teamRequestCreate: TeamRequestCreateInputSchema, teamRequestWithdraw: TeamRequestWithdrawInputSchema,
   routineEnabled: RoutineEnabledInputSchema, routineRun: RoutineRunInputSchema, routineRev: RoutineRevInputSchema,
   createChat: CreateChatInputSchema, chatRename: ChatRenameInputSchema, chatPin: ChatPinInputSchema, chatIds: ChatIdsInputSchema, sendTurn: SendTurnInputSchema,
 }

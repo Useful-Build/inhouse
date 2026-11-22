@@ -36,6 +36,8 @@ export const ErrorReasonSchema = z.enum([
   'run_open', 'stage',
   // #312 review: a team routine past the brand's cap (the routine_create tool); an empty Library upload (row 63).
   'routine_limit', 'empty',
+  // P6a W3: a request to the Inhouse team past 50 open ones.
+  'request_limit',
 ])
 export type ErrorReason = z.infer<typeof ErrorReasonSchema>
 
