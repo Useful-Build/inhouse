@@ -3,8 +3,9 @@
 // `ifRev`, someone else's routine); a write without its line; a failed batch that leaves the line, the audit line or the
 // change behind; an error answered for a write that committed (a read after the commit).
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { createRoutine, deleteRoutine, readRoutine, runNow, updateRoutine } from './store.ts'
-import { addPerson, at, db, fresh, setStage, setZone } from './test-kit.ts'
+import { createRoutine, deleteRoutine, readRoutine, restoreRoutine, runNow, updateRoutine } from './store.ts'
+import { addPerson, at, db, fresh, insertRoutine, routine, setStage, setZone } from './test-kit.ts'
+import { MAX_TEAM_ROUTINES } from '../../shared/contract/keys.ts'
 
 const ALEX = 'm_w2_store_alex'
 const SAM = 'm_w2_store_sam'
@@ -76,5 +77,70 @@ describe('a write and its Activity line, in one batch', () => {
     const made = await createRoutine(db, NEW, by(ALEX), null)
     if (!('ok' in made)) throw new Error('not made')
     await expect(runNow(db, made.ok.id, 'key.with.dots', by(ALEX))).rejects.toThrow('client key')
+  })
+})
+
+// #312 review M2: a brand's live team routines are capped. Ways it can fail: the 51st is made; a system routine or a deleted
+// one counts against the cap; a refused create leaves an audit or Activity line behind.
+describe('the cap on live team routines', () => {
+  it('50 are made, the 51st is refused and writes nothing; system routines do not count; a delete frees a slot', async () => {
+    expect(MAX_TEAM_ROUTINES).toBe(50)
+    await insertRoutine(routine({ origin: 'system', kind: 'morning_check', prompt_ref: 'morning-check', need: 0, creator_id: 'm_system', checked_until_ms: NOW }))
+    const ids: string[] = []
+    for (let i = 0; i < 50; i++) {
+      const made = await createRoutine(db, NEW, by(ALEX), null)
+      if (!('ok' in made)) throw new Error(`routine ${i + 1} not made`)
+      ids.push(made.ok.id)
+    }
+    const auditsBefore = await db.prepare('SELECT COUNT(*) AS n FROM audit_log').first('n')
+    const linesBefore = await db.prepare('SELECT COUNT(*) AS n FROM activity_lines').first('n')
+    expect(await createRoutine(db, NEW, by(ALEX), null)).toEqual({ refused: 'routine_limit' })
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM routines WHERE origin = 'team'").first('n')).toBe(50)
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM audit_log').first('n')).toBe(auditsBefore)
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM activity_lines').first('n')).toBe(linesBefore)
+
+    expect(await deleteRoutine(db, ids[0], 1, by(ALEX))).toMatchObject({ ok: { rev: 2 } })
+    expect(await createRoutine(db, NEW, by(ALEX), null)).toMatchObject({ ok: { origin: 'team' } })
+    expect(await createRoutine(db, NEW, by(ALEX), null)).toEqual({ refused: 'routine_limit' })
+  })
+})
+
+describe('the cap on restore (route 56)', () => {
+  it('at 50 live a restore is refused and writes nothing; at 49 it succeeds; a system routine restores whatever the count', async () => {
+    const ids: string[] = []
+    for (let i = 0; i < 50; i++) {
+      const made = await createRoutine(db, NEW, by(ALEX), null)
+      if (!('ok' in made)) throw new Error(`routine ${i + 1} not made`)
+      ids.push(made.ok.id)
+    }
+    expect(await deleteRoutine(db, ids[0], 1, by(ALEX))).toMatchObject({ ok: { rev: 2 } })
+    const refill = await createRoutine(db, NEW, by(ALEX), null)
+    if (!('ok' in refill)) throw new Error('refill not made')
+    const auditsBefore = await db.prepare('SELECT COUNT(*) AS n FROM audit_log').first('n')
+    const linesBefore = await db.prepare('SELECT COUNT(*) AS n FROM activity_lines').first('n')
+    expect(await restoreRoutine(db, ids[0], 2, by(ALEX))).toEqual({ refused: 'routine_limit' })
+    expect(await readRoutine(db, ids[0])).toMatchObject({ rev: 2, deleted_at_ms: NOW })
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM audit_log').first('n')).toBe(auditsBefore)
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM activity_lines').first('n')).toBe(linesBefore)
+    const sys = await insertRoutine(routine({ origin: 'system', kind: 'morning_check', prompt_ref: 'morning-check', need: 0, creator_id: ALEX, checked_until_ms: NOW, deleted_at_ms: NOW }))
+    expect(await restoreRoutine(db, sys.id, 1, by(ALEX))).toMatchObject({ ok: { rev: 2, deleted_at_ms: null } })
+
+    expect(await deleteRoutine(db, ids[1], 1, by(ALEX))).toMatchObject({ ok: { rev: 2 } })
+    expect(await restoreRoutine(db, ids[0], 2, by(ALEX))).toMatchObject({ ok: { rev: 3, deleted_at_ms: null } })
+  })
+})
+
+// #312 review L3: a system routine runs its `prompt_ref`, never its instruction. Ways it can fail: an instruction edit is
+// answered as a success and audited though it changes nothing that runs; the refusal also blocks its schedule or switch.
+describe('a system routine', () => {
+  it('refuses an instruction edit and writes nothing; its schedule and switch stay editable', async () => {
+    const admin = await addPerson('m_w2_store_admin', 'admin')
+    const sys = await insertRoutine(routine({ origin: 'system', kind: 'morning_check', prompt_ref: 'morning-check', need: 0, creator_id: 'm_system', checked_until_ms: NOW }))
+    expect(await updateRoutine(db, sys.id, 1, { instruction: 'Do something else.' }, by(admin))).toEqual({ refused: 'system_instruction' })
+    expect(await updateRoutine(db, sys.id, 1, { instruction: 'Do something else.', hour: 7 }, by(admin))).toEqual({ refused: 'system_instruction' })
+    expect(await readRoutine(db, sys.id)).toMatchObject({ rev: 1, hour: 6, instruction: sys.instruction })
+    expect(await audits(sys.id)).toEqual([])
+    expect(await updateRoutine(db, sys.id, 1, { hour: 7, enabled: false }, by(admin))).toMatchObject({ ok: { rev: 2, hour: 7, enabled: 0 } })
+    expect(await audits(sys.id)).toEqual(['routine.updated', 'routine.enabled'])
   })
 })

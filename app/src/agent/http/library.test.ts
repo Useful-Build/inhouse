@@ -176,6 +176,16 @@ describe('upload and download', () => {
     expect(heard).toEqual(["page.pdf isn't a type Inhouse can read. Use a PDF, an image, a spreadsheet, a document or plain text."])
     expect(agent.listFiles().map(f => f.id)).toEqual([F('u1'), F('f1')])
   })
+  test("an empty file's refusal keeps its reason (PR 312 review, L7) and says what to do", async () => {
+    const { agent } = await loaded({
+      ...reads({ library: [] }),
+      'POST /api/library/uploads': { status: 400, body: { error: { code: 'invalid', reason: 'empty' } } },
+    })
+    const heard: string[] = []
+    agent.onNotice(x => { if (x.type === 'error') heard.push(x.text) })
+    await expect(agent.uploadFiles([new File([], 'blank.csv')])).rejects.toMatchObject({ code: 'invalid', reason: 'empty' })
+    expect(heard).toEqual(['blank.csv is empty. Pick a file with something in it.'])
+  })
   test("the download URL is row 64's, the id kept in one segment", async () => {
     const { agent } = await loaded(reads())
     expect(agent.fileDownloadUrl('f_abc')).toBe('/api/library/f_abc/download')

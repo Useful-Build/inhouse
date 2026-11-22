@@ -170,7 +170,9 @@ skill before any UI change. Repo specifics:
   (`testRunAlarm`, `testStopAfterBatch`, `testSeedCursor`, `brand-agent/index.ts:92-106`). They are real methods that
   delegate to `@test-controls`; outside the test build that is the off module `test-controls-off.ts`, which throws.
   `check-product-build.mjs` proves the real module and its canary (`TEST_CONTROLS_CANARY`) are absent from the
-  deployable Worker; it doesn't scan for the method names. Add no others.
+  deployable Worker; it doesn't scan for the method names. Add no others. The only other P4 lines on the object: its
+  system prompt moved from `SYSTEM_PROMPT_V1` to `SYSTEM_PROMPT_V2`, and it imports `POKE_ID` and `TICK_KIND` from
+  `routines/tick.ts`.
 - **Prompts** live in `app/server/prompt/` (orchestrator only). Eval results are versioned and kept, never deleted:
   morning-check results in `app/evals/morning-check/results/<date>-<sha>.json`, other eval results in
   `app/evals/results/`. A prompt change runs the eval suite and the morning-check set

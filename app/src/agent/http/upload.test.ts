@@ -105,6 +105,7 @@ describe('uploadRefusalText', () => {
     ['too_large', 'a.csv is over the 20 MB limit.'],
     ['type_not_allowed', "a.csv isn't a type Inhouse can read. Use a PDF, an image, a spreadsheet, a document or plain text."],
     ['bad_name', "a.csv has a name Inhouse can't keep. Rename it and try again."],
+    ['empty', 'a.csv is empty. Pick a file with something in it.'],
   ])('%s', (reason, text) => { expect(uploadRefusalText('a.csv', refused(reason))).toBe(text) })
 
   test('anything else, an unknown reason included, is the plain failure', () => {

@@ -4,6 +4,7 @@
 // change a routine (its creator or an active Admin) is part of the statement, so a refused write changes nothing.
 import { stripFixed } from '../today/words.ts'
 import { AuditArgsSchema } from '../../shared/contract/audit.ts'
+import { MAX_TEAM_ROUTINES } from '../../shared/contract/keys.ts'
 import type { AuditArgs } from '../../shared/contract/audit.ts'
 import { recordActivity } from '../activity/store.ts'
 import type { ActivityTemplateId } from '../activity/templates.ts'
@@ -73,7 +74,7 @@ export async function mayManage(db: D1Database, r: RoutineRow, at: Pick<At, 'act
   ).bind(at.inhouseGrant ?? '', at.nowMs, at.actorId).first()) !== null
 }
 
-export type WriteOutcome = { ok: RoutineRow } | { conflict: RoutineRow } | { refused: 'not_found' | 'not_allowed' | 'stage' }
+export type WriteOutcome = { ok: RoutineRow } | { conflict: RoutineRow } | { refused: 'not_found' | 'not_allowed' | 'stage' | 'routine_limit' }
 
 /** Why a guarded write matched nothing: gone, a newer `rev`, or not this person's to change. */
 async function whyNot(db: D1Database, id: string, ifRev: number, at: At, deleted: 'live' | 'deleted'): Promise<WriteOutcome> {
@@ -92,9 +93,14 @@ export interface NewRoutine {
   missed: 'skip' | 'catch_up'
 }
 
-/** A team routine (section 8): needs Act or Run (section 7), `need` 1, the cursor at now. */
-/** `tz`: the brand's zone, read before the write with the stage, so a caller answers the next run with no read after the commit. */
-export async function createRoutine(db: D1Database, n: NewRoutine, at: At, sourceChatId: string | null): Promise<{ ok: RoutineRow; tz: BrandFacts['tz'] } | { refused: 'stage' }> {
+const LIVE_TEAM_COUNT = "SELECT COUNT(*) AS n FROM routines WHERE origin = 'team' AND deleted_at_ms IS NULL"
+
+/**
+ * A team routine (section 8): needs Act or Run (section 7), `need` 1, the cursor at now. Refused at the cap: the count is
+ * part of the insert's statement, so two creates at once can't both take the last slot, and its lines are guarded on it.
+ * `tz`: the brand's zone, read before the write with the stage, so a caller answers the next run with no read after the commit.
+ */
+export async function createRoutine(db: D1Database, n: NewRoutine, at: At, sourceChatId: string | null): Promise<{ ok: RoutineRow; tz: BrandFacts['tz'] } | { refused: 'stage' | 'routine_limit' }> {
   const brand = await brandFacts(db)
   if (brand.stage < 1) return { refused: 'stage' }
   const id = newRoutineId()
@@ -103,11 +109,13 @@ export async function createRoutine(db: D1Database, n: NewRoutine, at: At, sourc
     db.prepare(
       `INSERT INTO routines (id, origin, kind, name, instruction, prompt_ref, days_mask, hour, minute, missed, need, enabled,
           creator_id, source_chat_id, checked_until_ms, created_at_ms, updated_at_ms, rev, req_id)
-        VALUES (?, 'team', 'agent', ?, ?, NULL, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, 1, ?) RETURNING *`,
-    ).bind(id, n.name, n.instruction, n.days_mask, n.hour, n.minute, n.missed, at.actorId, sourceChatId, at.nowMs, at.nowMs, at.nowMs, stamp),
+        SELECT ?, 'team', 'agent', ?, ?, NULL, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, 1, ?
+        WHERE (${LIVE_TEAM_COUNT}) < ? RETURNING *`,
+    ).bind(id, n.name, n.instruction, n.days_mask, n.hour, n.minute, n.missed, at.actorId, sourceChatId, at.nowMs, at.nowMs, at.nowMs, stamp, MAX_TEAM_ROUTINES),
     routineAudit(db, at, { action: 'routine.created', routineId: id, need: 1 }, id, stamped(id, stamp)),
-    personLine(db, 'routine_made', at, `${id}|created`),
+    personLine(db, 'routine_made', at, `${id}|created`, stamped(id, stamp)),
   ])
+  if (made.meta.changes === 0) return { refused: 'routine_limit' }
   return { ok: written(made, 'createRoutine'), tz: brand.tz }
 }
 
@@ -120,13 +128,18 @@ export interface RoutinePatch {
   enabled?: boolean
 }
 
+export type UpdateOutcome = WriteOutcome | { refused: 'system_instruction' }
+
 /**
  * An edit by the creator or an Admin, against `ifRev`. `routine.updated` names what changed besides on/off; a change of
- * on/off is its own `routine.enabled` line (#237 review). An edit that changes nothing writes nothing.
+ * on/off is its own `routine.enabled` line (#237 review). An edit that changes nothing writes nothing. A system routine
+ * runs its `prompt_ref`, never its instruction, so an instruction for one is refused (#312 review L3); its schedule,
+ * missed-run rule and switch stay editable.
  */
-export async function updateRoutine(db: D1Database, id: string, ifRev: number, p: RoutinePatch, at: At): Promise<WriteOutcome> {
+export async function updateRoutine(db: D1Database, id: string, ifRev: number, p: RoutinePatch, at: At): Promise<UpdateOutcome> {
   const r = await readRoutine(db, id)
   if (!r || r.deleted_at_ms !== null) return { refused: 'not_found' }
+  if (r.origin === 'system' && p.instruction !== undefined) return { refused: 'system_instruction' }
   const next = {
     instruction: p.instruction ?? r.instruction, days_mask: p.days_mask ?? r.days_mask, hour: p.hour ?? r.hour,
     minute: p.minute ?? r.minute, missed: p.missed ?? r.missed, enabled: p.enabled === undefined ? r.enabled : p.enabled ? 1 : 0,
@@ -172,18 +185,28 @@ export async function deleteRoutine(db: D1Database, id: string, ifRev: number, a
   return { ok: written(res, 'deleteRoutine') }
 }
 
-/** Undo of a delete (route 56) by the creator or an Admin, against `ifRev`: back with its cursor at now (no backfill). */
+/**
+ * Undo of a delete (route 56) by the creator or an Admin, against `ifRev`: back with its cursor at now (no backfill). A
+ * team routine is refused at the cap (#312 review), counted in the statement as `createRoutine` does; a system one isn't.
+ */
 export async function restoreRoutine(db: D1Database, id: string, ifRev: number, at: At): Promise<WriteOutcome> {
   const stamp = writeStamp(at.requestId)
   const [res] = await db.batch([
     db.prepare(
       `UPDATE routines SET deleted_at_ms = NULL, checked_until_ms = ?, updated_at_ms = ?, rev = rev + 1, req_id = ?
-        WHERE id = ? AND rev = ? AND deleted_at_ms IS NOT NULL AND ${MAY_MANAGE} RETURNING *`,
-    ).bind(at.nowMs, at.nowMs, stamp, id, ifRev, ...manageParams(at)),
+        WHERE id = ? AND rev = ? AND deleted_at_ms IS NOT NULL AND ${MAY_MANAGE}
+          AND (origin = 'system' OR (${LIVE_TEAM_COUNT}) < ?) RETURNING *`,
+    ).bind(at.nowMs, at.nowMs, stamp, id, ifRev, ...manageParams(at), MAX_TEAM_ROUTINES),
     routineAudit(db, at, { action: 'routine.restored', routineId: id }, id, stamped(id, stamp)),
     personLine(db, 'routine_restored', at, `${id}|rev${ifRev + 1}`, stamped(id, stamp)),
   ])
-  if (res.meta.changes === 0) return whyNot(db, id, ifRev, at, 'deleted')
+  if (res.meta.changes === 0) {
+    const o = await whyNot(db, id, ifRev, at, 'deleted')
+    // Still deleted, at this rev and this person's to restore (whyNot answers `conflict` at the same rev only then), yet
+    // not restored: the cap is the only clause left, so no second count (which could race the statement's).
+    if ('conflict' in o && o.conflict.rev === ifRev && o.conflict.origin === 'team') return { refused: 'routine_limit' }
+    return o
+  }
   return { ok: written(res, 'restoreRoutine') }
 }
 
@@ -298,7 +321,7 @@ async function lastOf(db: D1Database, id: string): Promise<LastFields> {
   ).bind(id).first<LastFields>()) ?? NO_LAST
 }
 
-export type ListedOutcome = { ok: ListedRoutine } | { conflict: ListedRoutine } | { refused: 'not_found' | 'not_allowed' | 'stage' }
+export type ListedOutcome = { ok: ListedRoutine } | { conflict: ListedRoutine } | { refused: 'not_found' | 'not_allowed' | 'stage' | 'routine_limit' }
 
 /** A route write with its routine's `last` (switching, deleting or restoring never changes which slot ended last). */
 async function withLast(db: D1Database, id: string, write: () => Promise<WriteOutcome>): Promise<ListedOutcome> {
@@ -316,7 +339,11 @@ export function routineStore({ db }: { db: D1Database }) {
     list: () => allRoutines(db),
     /** The brand's zone (or why it can't be used), for the routines' `next`. */
     zone: async () => (await brandFacts(db)).tz,
-    setEnabled: (id: string, on: boolean, ifRev: number, at: At) => withLast(db, id, () => updateRoutine(db, id, ifRev, { enabled: on }, at)),
+    setEnabled: (id: string, on: boolean, ifRev: number, at: At) => withLast(db, id, async () => {
+      const o = await updateRoutine(db, id, ifRev, { enabled: on }, at)
+      if ('refused' in o && o.refused === 'system_instruction') throw new Error('setEnabled: refused an instruction it never sent')
+      return o
+    }),
     runNow: (id: string, clientKey: string, at: At) => runNow(db, id, clientKey, at),
     remove: (id: string, ifRev: number, at: At) => withLast(db, id, () => deleteRoutine(db, id, ifRev, at)),
     restore: (id: string, ifRev: number, at: At) => withLast(db, id, () => restoreRoutine(db, id, ifRev, at)),

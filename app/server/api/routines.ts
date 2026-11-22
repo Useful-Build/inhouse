@@ -86,6 +86,7 @@ function answerWrite(o: ListedOutcome, tz: string, viewer: Viewer, nowMs: number
   if ('ok' in o) return apiJson(state(o.ok))
   if ('conflict' in o) return apiError('conflict', { current: state(o.conflict) })
   if (o.refused === 'not_found') return apiError('not_found')
+  if (o.refused === 'routine_limit') return apiError('forbidden', { reason: 'routine_limit' })
   return apiError('forbidden', { reason: 'not_owner' })
 }
 

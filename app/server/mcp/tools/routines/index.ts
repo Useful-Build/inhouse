@@ -12,7 +12,9 @@ import type { RoutineRow } from '../../../routines/rows.ts'
 import { DaysSchema, TimeSchema, daysMask, parseTime, scheduleWords } from '../../../routines/schedule.ts'
 import { nextSlot, scheduledTime } from '../../../routines/slots.ts'
 import { createRoutine, deleteRoutine, listRoutines, readRoutine, resultWords, runNow, updateRoutine } from '../../../routines/store.ts'
-import type { At, WriteOutcome } from '../../../routines/store.ts'
+import type { At, UpdateOutcome } from '../../../routines/store.ts'
+import { REASON } from '../../../../shared/contract/error-codes.ts'
+import { MAX_TEAM_ROUTINES } from '../../../../shared/contract/keys.ts'
 import { answer, refusal, tool } from '../../server/tool.ts'
 import type { InhouseToolName, ToolHandler, ToolResult, ToolScope } from '../../server/tool.ts'
 
@@ -21,6 +23,8 @@ const NEXT_WITHIN_MS = 8 * 86_400_000
 
 export const STAGE_TEXT = 'Routines you set up need the Act stage. Ask an admin to move to Act.'
 export const NOT_ALLOWED_TEXT = 'Only the person who set it up or an admin can change it'
+export const ROUTINE_LIMIT_TEXT = `This brand already has ${MAX_TEAM_ROUTINES} routines, the most it can have. Delete one on the Routines page, then try again.`
+export const SYSTEM_INSTRUCTION_TEXT = "This routine is built in, so its instructions can't be changed. Its schedule and on/off can."
 const IN_ROUTINE = refusal('forbidden', "A routine's own run can list routines but can't create, change, delete or run one. Say what you'd change in your summary instead.")
 const NOT_FOUND = (id: string) => refusal('not_found', `No routine has routine_id "${id}". Use routine_list to find it, then try again.`)
 const CONFLICT = refusal('conflict', 'That routine changed while you were working on it. Call routine_list to see it as it is now, then try again.')
@@ -45,10 +49,12 @@ function nextIso(r: RoutineRow, tz: BrandFacts['tz'], nowMs: number): string | n
 
 const words = (r: RoutineRow) => scheduleWords(r.days_mask, scheduledTime(r))
 
-function writeRefused(o: Exclude<WriteOutcome, { ok: RoutineRow }>, id: string): ToolResult {
+function writeRefused(o: Exclude<UpdateOutcome, { ok: RoutineRow }>, id: string): ToolResult {
   if ('conflict' in o) return CONFLICT
   if (o.refused === 'not_found') return NOT_FOUND(id)
   if (o.refused === 'stage') return refusal('stage', STAGE_TEXT)
+  if (o.refused === 'system_instruction') return refusal('system_instruction', SYSTEM_INSTRUCTION_TEXT)
+  if (o.refused === 'routine_limit') return refusal(REASON.routineLimit, ROUTINE_LIMIT_TEXT)
   return refusal('not_allowed', NOT_ALLOWED_TEXT)
 }
 
@@ -64,7 +70,7 @@ export const handlers: Partial<Record<InhouseToolName, ToolHandler>> = {
       if (scope.memberId === SYSTEM_MEMBER_ID) return IN_ROUTINE
       const { hour, minute } = parseTime(a.time)
       const made = await createRoutine(deps.db, { name: a.name, instruction: a.instruction, days_mask: daysMask(a.days), hour, minute, missed: a.missed ?? 'skip' }, at(scope), scope.chatId)
-      if ('refused' in made) return refusal('stage', STAGE_TEXT)
+      if ('refused' in made) return made.refused === 'stage' ? refusal('stage', STAGE_TEXT) : refusal(REASON.routineLimit, ROUTINE_LIMIT_TEXT)
       const r = made.ok
       const next = nextIso(r, made.tz, scope.nowMs)
       return answer(`Set up "${r.name}": ${words(r)}.${next ? ` Next run: ${next}.` : ''} (routine_id: ${r.id})`, { routine_id: r.id, schedule: words(r), next })
