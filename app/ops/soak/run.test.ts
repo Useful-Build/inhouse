@@ -1,8 +1,10 @@
 // The driver and the release markers (P8a K): catch-up days, no gaps, the record is appended and never rewritten.
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { inline, recordDays } from './run.ts'
+import { inline, main, recordDays } from './run.ts'
 import type { SoakRecordFile } from './run.ts'
-import { parseMarkers } from './releases.ts'
 import type { SoakDb } from './collect.ts'
 import { dayStartMs } from './window.ts'
 
@@ -17,22 +19,6 @@ describe('inline', () => {
   })
 })
 
-describe('parseMarkers', () => {
-  const at = Math.floor(dayStartMs('2026-12-01') / 1000)
-  it('reads house tags only, oldest first', () => {
-    const m = parseMarkers([`house-20261202-1\t${at + 10}\tlive=P6a,P8a behaviour=no`, `v2026.11.22.9\t${at}\tx`, `house-20261201-1\t${at}\tlive=P4,P5 behaviour=yes`])
-    expect(m.map(x => x.tag)).toEqual(['house-20261201-1', 'house-20261202-1'])
-    expect(m[0]).toMatchObject({ behaviour: true, live: ['P4', 'P5'] })
-    expect(m[1]).toMatchObject({ behaviour: false, live: ['P6a', 'P8a'], atMs: (at + 10) * 1000 })
-  })
-  it('an unreadable subject is a behaviour change with no phases', () => {
-    expect(parseMarkers([`house-20261201-1\t${at}\twhatever`])[0]).toMatchObject({ behaviour: true, live: [] })
-  })
-  it('a tag with no time is an error', () => {
-    expect(() => parseMarkers(['house-20261201-1\t\tx'])).toThrow()
-  })
-})
-
 // A db that answers every query as a clean day would, except the morning slots when `broken` has the day.
 const cleanDb: SoakDb = async sql => {
   if (sql.includes('FROM routine_slots WHERE routine_id = ? AND due_at_ms')) return [{ state: 'ended', kind: 'scheduled', reason: null, failure: null, outcome: 'done' }]
@@ -40,7 +26,7 @@ const cleanDb: SoakDb = async sql => {
   if (sql.includes('FROM settings')) return []
   return []
 }
-const markers = [{ tag: 'house-20261130-1', atMs: dayStartMs('2026-11-30'), behaviour: true, live: ['P4', 'P5', 'P6a', 'P8a'] }]
+const markers = [{ appSha: 'a'.repeat(40), atMs: dayStartMs('2026-11-30'), behaviour: true, live: ['P4', 'P5', 'P6a', 'P8a'] }]
 
 describe('recordDays', () => {
   it('needs --from on an empty record', async () => {
@@ -61,5 +47,20 @@ describe('recordDays', () => {
   })
   it('refuses a long catch-up', async () => {
     await expect(recordDays(cleanDb, { records: [] }, markers, { from: '2026-11-01', until: '2026-12-01', nowMs: 0 })).rejects.toThrow(/catch up/)
+  })
+})
+
+describe('main: the releases file', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'soak-'))
+  const file = (name: string, text: string) => { const p = join(dir, name); writeFileSync(p, text); return p }
+  const base = ['--db', 'x', '--record', join(dir, 'record.json')]
+  it('a missing --releases flag is a usage error', async () => {
+    expect(await main(base)).toBe(2)
+  })
+  it('a missing, unreadable or invalid releases file exits 2 and writes no record', async () => {
+    for (const p of [join(dir, 'none.json'), file('bad.json', '[{"at":"nope"}]'), file('obj.json', '{}')]) {
+      expect(await main([...base, '--releases', p, '--from', '2026-12-01'])).toBe(2)
+    }
+    expect(existsSync(join(dir, 'record.json'))).toBe(false)
   })
 })

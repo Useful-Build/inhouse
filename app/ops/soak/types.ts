@@ -70,8 +70,8 @@ export interface DayEvidence {
   guards: GuardFacet | null
 }
 
-/** A house release marker: when it went live, whether it changed behaviour, and the phases live after it. */
-export interface ReleaseMarker { tag: string; atMs: number; behaviour: boolean; live: string[] }
+/** A house release marker (releases.ts): when it went live, the app SHA, whether it changed behaviour, and every phase live after it. */
+export interface ReleaseMarker { appSha: string; atMs: number; behaviour: boolean; live: string[] }
 
 /** The phases that must all be live for a day to count (decision 3). */
 export const REQUIRED_PHASES = ['P4', 'P5', 'P6a', 'P8a'] as const
@@ -88,7 +88,7 @@ export interface DayRecord {
   reasons: DayReason[]
   /** Consecutive clean days up to and including this one. */
   count: number
-  /** The release tags that started a new window on this day. */
+  /** The app SHAs of the behaviour releases that started a new window on this day. */
   releases: string[]
   /** True once `count` has reached the gate with every required phase live. */
   passed: boolean

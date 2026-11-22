@@ -13,7 +13,8 @@ import type { Checks, CheckStatus, DayEvidence, ReleaseMarker } from './types.ts
 import { GATE_DAYS, dayStartMs, nextDay, nextRecord } from './window.ts'
 
 const ALL = [...REQUIRED_PHASES]
-const base: ReleaseMarker = { tag: 'house-20261201-1', atMs: dayStartMs('2026-12-01') - 1, behaviour: true, live: ALL }
+const sha = (c: string) => c.repeat(40)
+const base: ReleaseMarker = { appSha: sha('a'), atMs: dayStartMs('2026-12-01') - 1, behaviour: true, live: ALL }
 const run = (day: string, e: DayEvidence, markers: ReleaseMarker[], prev: { count: number } | null) => nextRecord(day, runChecks({ ...e, day }), markers, prev)
 
 describe('the rules', () => {
@@ -45,13 +46,13 @@ describe('the rules', () => {
     expect(run('2026-12-03', doubled, [base], { count: 2 })).toMatchObject({ count: 0, reasons: ['notice', 'check'] })
   })
   it('a release that changes behaviour restarts the window: its day doesn\'t count, the next can', () => {
-    const rel: ReleaseMarker = { tag: 'house-20261203-1', atMs: dayStartMs('2026-12-03') + 3_600_000, behaviour: true, live: ALL }
+    const rel: ReleaseMarker = { appSha: sha('b'), atMs: dayStartMs('2026-12-03') + 3_600_000, behaviour: true, live: ALL }
     const d3 = run('2026-12-03', cleanEvidence(), [base, rel], { count: 2 })
-    expect(d3).toMatchObject({ verdict: 'not_clean', count: 0, reasons: ['release'], releases: ['house-20261203-1'] })
+    expect(d3).toMatchObject({ verdict: 'not_clean', count: 0, reasons: ['release'], releases: [sha('b')] })
     expect(run('2026-12-04', cleanEvidence(), [base, rel], d3)).toMatchObject({ verdict: 'clean', count: 1 })
   })
   it('a release that changes no behaviour leaves the count', () => {
-    const rel: ReleaseMarker = { tag: 'house-20261203-1', atMs: dayStartMs('2026-12-03') + 1, behaviour: false, live: ALL }
+    const rel: ReleaseMarker = { appSha: sha('b'), atMs: dayStartMs('2026-12-03') + 1, behaviour: false, live: ALL }
     expect(run('2026-12-03', cleanEvidence(), [base, rel], { count: 2 })).toMatchObject({ verdict: 'clean', count: 3, passed: true })
   })
   it('a day before all four phases are live doesn\'t count', () => {
@@ -59,10 +60,18 @@ describe('the rules', () => {
     expect(run('2026-12-01', cleanEvidence(), [early], null)).toMatchObject({ verdict: 'not_clean', count: 0, reasons: ['phases_not_live'] })
     expect(run('2026-12-01', cleanEvidence(), [], null).reasons).toContain('phases_not_live')
   })
-  it('phases add up across releases', () => {
-    const a: ReleaseMarker = { tag: 'house-20261201-1', atMs: dayStartMs('2026-12-01') - 9, behaviour: false, live: ['P4', 'P5'] }
-    const b: ReleaseMarker = { tag: 'house-20261201-2', atMs: dayStartMs('2026-12-01') - 5, behaviour: false, live: ['P6a', 'P8a'] }
-    expect(run('2026-12-01', cleanEvidence(), [a, b], null).verdict).toBe('clean')
+  it('the live set is the latest release at or before the day\'s start, not a union', () => {
+    const a: ReleaseMarker = { appSha: sha('a'), atMs: dayStartMs('2026-12-01') - 9, behaviour: false, live: ['P4', 'P5'] }
+    const b: ReleaseMarker = { appSha: sha('b'), atMs: dayStartMs('2026-12-01') - 5, behaviour: false, live: ['P6a', 'P8a'] }
+    expect(run('2026-12-01', cleanEvidence(), [a, b], null).reasons).toContain('phases_not_live')
+    const c: ReleaseMarker = { appSha: sha('c'), atMs: dayStartMs('2026-12-01') - 1, behaviour: false, live: ALL }
+    expect(run('2026-12-01', cleanEvidence(), [a, b, c], null).verdict).toBe('clean')
+  })
+  it('a release at the day\'s start counts for that day; one later in the day does not', () => {
+    const at: ReleaseMarker = { appSha: sha('a'), atMs: dayStartMs('2026-12-01'), behaviour: false, live: ALL }
+    expect(run('2026-12-01', cleanEvidence(), [at], null).verdict).toBe('clean')
+    const later: ReleaseMarker = { appSha: sha('a'), atMs: dayStartMs('2026-12-01') + 1, behaviour: false, live: ALL }
+    expect(run('2026-12-01', cleanEvidence(), [later], null).reasons).toContain('phases_not_live')
   })
   it('a day is bound to UTC', () => {
     expect(nextDay('2026-12-31')).toBe('2027-01-01')
@@ -92,7 +101,7 @@ describe('property: the count', () => {
     const markers: ReleaseMarker[] = [base]
     days.forEach((d, i) => {
       if (i > 0) day = nextDay(day)
-      if (d.release) markers.push({ tag: `house-${day.replaceAll('-', '')}-1`, atMs: dayStartMs(day) + 1000, behaviour: d.behaviour, live: ALL })
+      if (d.release) markers.push({ appSha: sha('d'), atMs: dayStartMs(day) + 1000, behaviour: d.behaviour, live: ALL })
       const rec = nextRecord(day, withStatuses(d.statuses), markers, prev)
       const allClean = d.statuses.every(x => x === 'clean')
       const restarted = d.release && d.behaviour

@@ -2,8 +2,13 @@
 // and appends the record to the soak record file: the day's verdict and the running count of consecutive clean days.
 // A recorded day is never rewritten.
 //
-//   node ops/soak/run.ts --db <house D1 name or binding> --record <soak-record.json> [--from YYYY-MM-DD] [--until YYYY-MM-DD]
-//                        [--local --persist-to <dir>] [--config <wrangler config with the D1 binding>]
+//   node ops/soak/run.ts --db <house D1 name or binding> --record <soak-record.json> --releases <releases.json>
+//                        [--from YYYY-MM-DD] [--until YYYY-MM-DD] [--local --persist-to <dir>]
+//                        [--config <wrangler config with the D1 binding>]
+//
+// `--releases` is required (a missing flag is a usage error, never an empty list): a JSON array of house release
+// markers, read strictly (releases.ts: a bad file exits 2). House releases run from the private ops repo, and so does
+// this driver. The orchestrator appends a marker at each house release; the ops automation comes later.
 //
 // Needs `wrangler` signed in to the account that holds the house D1 (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`).
 // Meant to run once a day from the private ops repo (the nightly's soak step is a workflow, a sensitive path that waits
@@ -13,7 +18,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { collectDay } from './collect.ts'
 import type { SoakDb } from './collect.ts'
 import { runChecks } from './checks.ts'
-import { readMarkers } from './releases.ts'
+import { ReleasesError, parseReleases } from './releases.ts'
 import type { DayRecord, ReleaseMarker } from './types.ts'
 import { dayStartMs, nextDay, nextRecord } from './window.ts'
 
@@ -83,15 +88,20 @@ const arg = (args: string[], name: string): string | undefined => {
   return at >= 0 ? args[at + 1] : undefined
 }
 
-async function main(args: string[]): Promise<number> {
-  const db = arg(args, '--db'), record = arg(args, '--record')
-  if (!db || !record) { console.error('usage: node ops/soak/run.ts --db <house D1> --record <file> [--from YYYY-MM-DD] [--until YYYY-MM-DD] [--local --persist-to <dir>]'); return 2 }
+export async function main(args: string[]): Promise<number> {
+  const db = arg(args, '--db'), record = arg(args, '--record'), releases = arg(args, '--releases')
+  if (!db || !record || !releases) { console.error('usage: node ops/soak/run.ts --db <house D1> --record <file> --releases <file> [--from YYYY-MM-DD] [--until YYYY-MM-DD] [--local --persist-to <dir>] [--config <file>]'); return 2 }
   const persistTo = arg(args, '--persist-to')
   if (args.includes('--local') && !persistTo) { console.error('--local needs --persist-to <dir>'); return 2 }
+  let markers: ReleaseMarker[]
+  try { markers = parseReleases(readFileSync(releases, 'utf8')) } catch (err) {
+    if (err instanceof ReleasesError || (err as NodeJS.ErrnoException).code === 'ENOENT') { console.error(`soak: ${(err as Error).message}`); return 2 }
+    throw err
+  }
   const nowMs = Date.now()
   const until = arg(args, '--until') ?? new Date(nowMs - DAY_MS).toISOString().slice(0, 10)
   const file = loadRecord(record)
-  const added = await recordDays(wranglerDb(db, args.includes('--local') ? { persistTo: persistTo! } : null, arg(args, '--config')), file, readMarkers(process.cwd()), { from: arg(args, '--from'), until, nowMs })
+  const added = await recordDays(wranglerDb(db, args.includes('--local') ? { persistTo: persistTo! } : null, arg(args, '--config')), file, markers, { from: arg(args, '--from'), until, nowMs })
   writeFileSync(record, JSON.stringify({ records: [...file.records, ...added] }, null, 2) + '\n')
   for (const r of added) {
     const bad = Object.entries(r.checks).filter(([, c]) => c.status !== 'clean').map(([k, c]) => `${k}: ${c.status}`)

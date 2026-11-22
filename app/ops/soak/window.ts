@@ -16,10 +16,11 @@ export const dayStartMs = (day: string): number => {
 export const dayEndMs = (day: string): number => dayStartMs(day) + DAY_MS
 export const nextDay = (day: string): string => new Date(dayEndMs(day)).toISOString().slice(0, 10)
 
-/** The phases live at the end of `day`: the union of every marker's `live` up to then. */
+/** The phases live on `day`: the `live` of the latest release at or before the day's start (UTC). Empty before any release. */
 export function livePhases(markers: readonly ReleaseMarker[], day: string): Set<string> {
-  const end = dayEndMs(day)
-  return new Set(markers.filter(m => m.atMs < end).flatMap(m => m.live))
+  const start = dayStartMs(day)
+  const latest = markers.filter(m => m.atMs <= start).reduce<ReleaseMarker | null>((a, m) => (a === null || m.atMs > a.atMs ? m : a), null)
+  return new Set(latest?.live ?? [])
 }
 
 export interface Carry { count: number }
@@ -27,7 +28,7 @@ export interface Carry { count: number }
 /** The next record, from yesterday's count (0 when there is none). Pure. */
 export function nextRecord(day: string, checks: Checks, markers: readonly ReleaseMarker[], prev: Carry | null): DayRecord {
   const start = dayStartMs(day), end = start + DAY_MS
-  const releases = markers.filter(m => m.behaviour && m.atMs >= start && m.atMs < end).map(m => m.tag)
+  const releases = markers.filter(m => m.behaviour && m.atMs >= start && m.atMs < end).map(m => m.appSha)
   const live = livePhases(markers, day)
   const reasons: DayReason[] = []
   if (!REQUIRED_PHASES.every(p => live.has(p))) reasons.push('phases_not_live')
