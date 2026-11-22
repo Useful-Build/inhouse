@@ -1,4 +1,4 @@
-// Today's first load has a 240 KB gzip budget (scripts/check-bundle.mjs), and zod's runtime is ~360 KB of source. The
+// Today's first load has a 241 KB gzip budget (scripts/check-bundle.mjs), and zod's runtime is ~360 KB of source. The
 // client files in the entry (the mock, the HTTP client, the types) therefore take only plain values from shared/contract:
 // the lists in keys.ts, the settings table, the error constants. A schema (anything from a file that imports zod) belongs
 // to the server and the tests. Fails when one of them imports a value from another contract file, or when a plain
@@ -34,7 +34,7 @@ describe('the entry reaches no zod', () => {
 })
 
 describe('the upload and download code loads with the first file, not with Today', () => {
-  // scripts/check-bundle.mjs holds Today's first load to 240 KB gzip: files.ts and chat/upload.ts load lazily (a dynamic import in the client, the chat chunk for the store).
+  // scripts/check-bundle.mjs holds Today's first load to 241 KB gzip: files.ts and chat/upload.ts load lazily (a dynamic import in the client, the chat chunk for the store).
   const LAZY = [/\/files$/, /chat\/upload$/]
   for (const file of ['src/agent/http/client.ts', 'src/state/store.ts', 'src/components/Composer.tsx', 'src/screens/Chats.tsx']) {
     it(`${file} imports them only as types or at run time later`, () => {
@@ -44,7 +44,7 @@ describe('the upload and download code loads with the first file, not with Today
 })
 
 describe('the screens Today does not need load on first visit, not with the entry', () => {
-  // scripts/check-bundle.mjs holds Today's first load to 240 KB gzip. Today and Chats stay in the entry; every other screen is a
+  // scripts/check-bundle.mjs holds Today's first load to 241 KB gzip. Today and Chats stay in the entry; every other screen is a
   // lazy route in App.tsx (a dynamic import), and nothing else in src imports one at run time (that would pull it back in).
   const LAZY_SCREENS = ['Approvals', 'Routines', 'Activity', 'Tools', 'Skills', 'Library', 'Usage', 'Settings']
   const files = (dir: string): string[] => readdirSync(new URL(`../${dir}`, import.meta.url), { withFileTypes: true })

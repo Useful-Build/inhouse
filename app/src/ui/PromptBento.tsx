@@ -1,5 +1,5 @@
 // 3-column Bento prompt cards and an optional Routine dock for blank New chat and clear Today.
-// Split into its own chunk so Today's initial JS stays flat under the 240 KB gzip budget.
+// Loaded with the page, not lazily: blank New chat centres its composer on these cards' height (ui/chat.tsx PromptBentoSlot).
 import { cn } from '@/lib/utils'
 import { Icon, LogoTile } from './index'
 
