@@ -6,12 +6,14 @@ import type { MorningCheckResult } from '../../shared/contract/today.ts'
 export interface Normalised {
   /** Strings cut to their maximum (ending `…`). */
   truncated: number
-  /** `found` rows that aren't a pair, `found` and `sources` past their maxima, and costs nulled for a currency other than the brand's. */
+  /** `found` rows that aren't a pair, and `found` and `sources` past their maxima. */
   dropped: number
   /** Items whose `key` repeated an earlier item's. */
   deduped: number
   /** Items past the tenth. */
   overflow: number
+  /** Costs nulled for a currency other than the brand's (the item stays). */
+  costsRemoved: number
 }
 
 /** The gaps a stored result may name: the five areas and the server's `too_many`. */
@@ -38,7 +40,7 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 
 export function normaliseResult(raw: unknown, brandCurrency: string): Checked {
   if (!isObject(raw)) return { invalid: true }
-  const counts: Normalised = { truncated: 0, dropped: 0, deduped: 0, overflow: 0 }
+  const counts: Normalised = { truncated: 0, dropped: 0, deduped: 0, overflow: 0, costsRemoved: 0 }
   const fit = (v: unknown, max: number): unknown => {
     if (typeof v !== 'string' || v.length <= max) return v
     counts.truncated++
@@ -75,7 +77,7 @@ export function normaliseResult(raw: unknown, brandCurrency: string): Checked {
       // The brand shows one currency (`s:currency`): a cost in another is nulled and counted, the item stays.
       if (isObject(it.cost) && typeof it.cost.currency === 'string' && /^[A-Z]{3}$/.test(it.cost.currency) && it.cost.currency !== brandCurrency) {
         next.cost = null
-        counts.dropped++
+        counts.costsRemoved++
       }
       kept.push(next)
     }

@@ -147,8 +147,10 @@ describe('the words', () => {
     expect(gapsOfSummary("found more than 10 things; showing 10; couldn't read orders")).toEqual({ areas: ['orders'], tooMany: true })
     expect(gapsOfSummary("found more than 10 things; showing 10 (fixed: 1 over the cap)")).toEqual({ areas: [], tooMany: true })
     expect(gapsOfSummary("found 2 things; couldn't read refunds (fixed: 3 cut)")).toEqual({ areas: ['refunds'], tooMany: false })
-    expect(fixedWords({ truncated: 0, dropped: 0, deduped: 0, overflow: 0 })).toBe('')
-    expect(fixedWords({ truncated: 2, dropped: 0, deduped: 1, overflow: 3 })).toBe(' (fixed: 2 cut, 1 repeated, 3 over the cap)')
+    expect(fixedWords({ truncated: 0, dropped: 0, deduped: 0, overflow: 0, costsRemoved: 0 })).toBe('')
+    expect(fixedWords({ truncated: 2, dropped: 0, deduped: 1, overflow: 3, costsRemoved: 0 })).toBe(' (fixed: 2 cut, 1 repeated, 3 over the cap)')
+    expect(fixedWords({ truncated: 0, dropped: 0, deduped: 0, overflow: 0, costsRemoved: 1 })).toBe(' (fixed: 1 cost removed)')
+    expect(fixedWords({ truncated: 0, dropped: 0, deduped: 0, overflow: 0, costsRemoved: 2 })).toBe(' (fixed: 2 costs removed)')
     expect(gapsOfSummary(null)).toEqual({ areas: [], tooMany: false })
   })
   it('the tail of fixed counts never reaches the product text: resultWords drops it, the stored text keeps it', () => {
@@ -158,7 +160,7 @@ describe('the words', () => {
     expect(stripFixed('found 1 thing (fixed: 1 cut) and more')).toBe('found 1 thing (fixed: 1 cut) and more')
     const slot = { state: 'ended' as const, failure: 'incomplete', outcome: 'done', reason: null }
     expect(resultWords({ ...slot, result_text: stored })).toBe("found 3 things; couldn't read refunds")
-    expect(resultWords({ ...slot, result_text: `found 4 things${fixedWords({ truncated: 1, dropped: 2, deduped: 3, overflow: 4 })}` })).toBe('found 4 things')
+    expect(resultWords({ ...slot, result_text: `found 4 things${fixedWords({ truncated: 1, dropped: 2, deduped: 3, overflow: 4, costsRemoved: 0 })}` })).toBe('found 4 things')
     expect(resultWords({ ...slot, result_text: 'found 4 things' })).toBe('found 4 things')
     expect(gapsOfSummary(stored).areas).toEqual(['refunds'])
   })

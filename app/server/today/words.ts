@@ -26,8 +26,8 @@ export function gapsOfSummary(text: string | null): { areas: (typeof GAP_AREAS)[
 /** A summary without its tail of fixed counts: the product's own words (the counts stay in the stored text for the runner). */
 export const stripFixed = (text: string): string => text.replace(/ \(fixed: [^)]*\)$/, '')
 
-/** What the normaliser fixed, in fixed words, for the summary's tail (empty when it fixed nothing): ` (fixed: 1 cut, 2 dropped)`. */
-export function fixedWords(c: { truncated: number; dropped: number; deduped: number; overflow: number }): string {
-  const parts = [[c.truncated, 'cut'], [c.dropped, 'dropped'], [c.deduped, 'repeated'], [c.overflow, 'over the cap']].filter(([n]) => (n as number) > 0).map(([n, w]) => `${n} ${w}`)
+/** What the normaliser fixed, in fixed words, for the summary's tail (empty when it fixed nothing): ` (fixed: 1 cut, 2 dropped, 1 cost removed)`. */
+export function fixedWords(c: { truncated: number; dropped: number; deduped: number; overflow: number; costsRemoved: number }): string {
+  const parts = [[c.truncated, 'cut'], [c.dropped, 'dropped'], [c.deduped, 'repeated'], [c.overflow, 'over the cap'], [c.costsRemoved, c.costsRemoved === 1 ? 'cost removed' : 'costs removed']].filter(([n]) => (n as number) > 0).map(([n, w]) => `${n} ${w}`)
   return parts.length > 0 ? ` (fixed: ${parts.join(', ')})` : ''
 }

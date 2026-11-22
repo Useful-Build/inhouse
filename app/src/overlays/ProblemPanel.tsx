@@ -3,7 +3,7 @@ import { Fragment, useRef } from 'react'
 import { cn } from '@/lib/utils'
 import { agent } from '../agent'
 import { draftView, memberFor, riskLabel, userName } from '../state/derive'
-import { fmtMoney, fmtProse, fmtTime } from '../lib/format'
+import { fmtMoney, fmtProse, fmtTime, hasAmount } from '../lib/format'
 import { display } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import { Avatar, Button, Icon, IconButton, IconTile, LogoTile } from '../ui'
@@ -111,7 +111,7 @@ export function ProblemPanel() {
         <div className="min-h-0 flex-1 overflow-auto px-6 pt-3 pb-6">
           <SheetTitle className="text-2xl leading-heading font-medium tracking-heading">{p.title}</SheetTitle>
           <div className="mt-2 text-base text-foreground-3">
-            <b className="font-semibold text-foreground tabular-nums">{fmtMoney(p.cost, display())}</b> {p.costNote}
+            {hasAmount(p.cost) && <><b className="font-semibold text-foreground tabular-nums">{fmtMoney(p.cost, display())}</b>{' '}</>}{p.costNote}
           </div>
 
           {dv.mode === 'watch' ? (

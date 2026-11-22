@@ -20,7 +20,7 @@ import type { Reader, RunnerEnv, SlotRow } from './runner.ts'
 import { fixedWords } from '../../server/today/words.ts'
 
 const byId = (id: string): MorningCaseMeta => META.find(c => c.id === id)!
-const NONE = { truncated: 0, dropped: 0, deduped: 0, overflow: 0 }
+const NONE = { truncated: 0, dropped: 0, deduped: 0, overflow: 0, costsRemoved: 0 }
 
 /** The perfect answer for a case, as the stored rows would show it. */
 function perfect(c: MorningCaseMeta): Extract<Observed, { ok: true }> {
@@ -299,7 +299,7 @@ describe('the runner', () => {
     }
   })
 
-  test.prop([fc.record({ truncated: fc.nat(50), dropped: fc.nat(50), deduped: fc.nat(50), overflow: fc.nat(50) })])('parseFixed reads back what fixedWords wrote', c => {
+  test.prop([fc.record({ truncated: fc.nat(50), dropped: fc.nat(50), deduped: fc.nat(50), overflow: fc.nat(50), costsRemoved: fc.nat(50) })])('parseFixed reads back what fixedWords wrote', c => {
     expect(parseFixed(`found 3 things; couldn't read refunds${fixedWords(c)}`)).toEqual(c)
     expect(parseFixed(null)).toEqual(NONE)
   })

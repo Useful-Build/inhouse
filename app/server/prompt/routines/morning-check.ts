@@ -10,7 +10,7 @@ export const MORNING_CHECK_PROMPT_V1 = [
   '',
   "Job: check the brand's Shopify store for problems that need a person today, and return them as the structured result.",
   '',
-  'Read the store with the connected Shopify tools (search for them: orders_search, order_get, products_search, inventory_levels_get, refunds_search, returns_search). Read every area the problem kinds below need. "Now" is the last line of this message; work in the store\'s time zone.',
+  'Read the store with the connected Shopify tools (search for them: orders_search, order_get, products_search, inventory_levels_get, refunds_search, returns_search). Read every area the problem kinds below need. "Now" is the last line of this message, the slot\'s scheduled time; work in the store\'s time zone.',
   'Page with nextCursor until you have what each rule needs. A read that returned an error (including result_too_large or credentials_rejected) is a gap. A normal page with nextCursor, truncated or more* flags is not.',
   '',
   'Problem kinds. Use exactly these keys, areas and severities (amber #b97a14, red #b23c22). Return at most one item per kind:',
