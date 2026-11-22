@@ -66,11 +66,28 @@ describe('status cards, literal states', () => {
     expect(v.shown?.slot_key).toBe('y')
     expect(causes(v)).toEqual(['failed'])
   })
+  it("shows yesterday's failed check at 06:05, before today's scheduled check is late", () => {
+    const failed = slot({
+      slot_key: 'y-failed', local_date: '2026-05-31', failure: 'run_failed',
+      claimed_at_ms: at('2026-05-31T10:00:00Z'), ended_at_ms: at('2026-05-31T10:03:00Z'),
+    })
+    const early = '2026-06-01T10:05:00Z'
+    const v = view(early, [failed])
+    expect(v.shown).toBeNull()
+    expect(v.cards).toMatchObject([{
+      cause: 'failed', hashed: 'y-failed', localDate: '2026-05-31', clock: '6:00 AM', atMs: failed.ended_at_ms,
+    }])
+    expect(causes(view('2026-06-01T10:11:00Z', [failed]))).toEqual(['not_run'])
+    expect(causes(view(early, [failed, slot({ slot_key: 'success' })]))).toEqual([])
+    const recovered = { ...failed, slot_key: 'y-recovered', failure: null, claimed_at_ms: failed.claimed_at_ms + 600_000 }
+    expect(causes(view(early, [failed, recovered]))).toEqual([])
+  })
   it('lost, missed and refused slots are failed cards; claimed and started are none', () => {
     for (const state of ['lost', 'missed', 'refused'] as const) expect(causes(view('2026-06-01T12:00:00Z', [slot({ slot_key: state, state, ended_at_ms: null })]))).toEqual(['failed'])
     for (const state of ['claimed', 'started'] as const) expect(causes(view('2026-06-01T12:00:00Z', [slot({ slot_key: state, state, ended_at_ms: null })]))).toEqual([])
   })
   it('past 06:10 with no slot today: the card; before 06:10: none; on the minute after: the card', () => {
+    expect(causes(view('2026-06-01T10:05:00Z', []))).toEqual([])
     expect(causes(view('2026-06-01T10:10:00Z', []))).toEqual([])
     expect(causes(view('2026-06-01T10:11:00Z', []))).toEqual(['not_run'])
     expect(view('2026-06-01T10:11:00Z', []).cards[0]).toMatchObject({ hashed: 'routine-morning-check|2026-06-01', localDate: '2026-06-01' })

@@ -6,7 +6,7 @@ import type { ChangeEvent, ClipboardEvent, DragEvent, ReactElement } from 'react
 import { agent } from '../agent'
 import type { Attachment } from '../agent/types'
 import { dropFile, keepFile } from '../state/pending-files'
-import { activeMode, noToolsYet, readingTools, thinkingModes, toolCounts, toolDetail } from '../state/derive'
+import { activeMode, emptyToolsNote, readingTools, thinkingModes, toolCounts, toolDetail } from '../state/derive'
 import { openChatKey, openRun, useCtx, useUi } from '../state/store'
 import { cn } from '@/lib/utils'
 import { AttachmentChip, Button, Icon, IconButton, LogoCount, LogoTile, SwitchLook } from '../ui'
@@ -209,8 +209,8 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   const holders = TOOL_KEYS.filter(k => attachExample?.sources.includes(k)).map(k => toolDetail(data, k).name)
   const orderSources = holders.length < 2 ? `From ${holders[0] ?? 'your connected tools'}` : `From ${holders.slice(0, -1).join(', ')} or ${holders[holders.length - 1]}`
   const offHere = TOOL_KEYS.length - onTools.length
-  // With cards or a run on the server but no connected list (the real client before P5) nothing is claimed about tools.
-  const claimNone = counts.connected === 0 && noToolsYet(data)
+  const emptyTools = TOOL_KEYS.length === 0 ? emptyToolsNote(data) : null
+  const claimNone = emptyTools?.kind === 'none'
   const toolsLabel = counts.connected === 0 ? (claimNone ? 'No tools connected yet' : '')
     : offHere > 0 ? `${onTools.length} of ${TOOL_KEYS.length} tools on in this chat`
       : counts.reading < counts.connected ? `${counts.reading} of ${counts.connected} tools connected` : `${counts.reading} tools connected`
@@ -232,8 +232,8 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
     <>
       <DropdownMenuLabel id={toolsHead} className={cn('text-sm font-normal', slim ? 'px-2.5 pt-2 pb-1 text-muted-foreground' : 'pt-2 pb-1.5')}>Tools read in this chat</DropdownMenuLabel>
       <DropdownMenuGroup aria-labelledby={toolsHead}>
-      {TOOL_KEYS.length === 0 && (counts.connected > 0 || claimNone) && (
-        <DropdownMenuLabel className="pt-0 pb-2 text-sm font-normal text-muted-foreground">{counts.connected === 0 ? 'No tools are connected yet.' : "Your Inhouse agent can't read any of your tools right now."}</DropdownMenuLabel>
+      {emptyTools && (
+        <DropdownMenuLabel className="pt-0 pb-2 text-sm font-normal text-muted-foreground">{emptyTools.text}</DropdownMenuLabel>
       )}
       {TOOL_KEYS.map(k => {
         const on = !toolOff[k]

@@ -56,6 +56,16 @@ export function clockWords(time: string): string {
   return `${h % 12 === 0 ? 12 : h % 12}:${time.slice(3, 5)} ${h < 12 ? 'AM' : 'PM'}`
 }
 
+function slotStatus(s: SlotFacts): 'failed' | 'not_connected' | 'off' | null {
+  if (s.state === 'ended') {
+    if (s.failure === 'not_connected') return 'not_connected'
+    return s.failure !== null && s.failure !== 'incomplete' ? 'failed' : null
+  }
+  if (s.state === 'lost' || s.state === 'missed' || s.state === 'refused') return 'failed'
+  if (s.state === 'skipped') return s.reason === 'disabled' || s.reason === 'deleted' ? 'off' : 'failed'
+  return null
+}
+
 export function todayView(input: { nowMs: number; tz: string; routine: RoutineFacts | null; slots: readonly SlotFacts[] }): View {
   const zone = intlZone(input.tz)
   const today = zone(input.nowMs).date
@@ -74,14 +84,9 @@ export function todayView(input: { nowMs: number; tz: string; routine: RoutineFa
   }
   const newest = slots.find(s => s.local_date === today)
   if (newest) {
-    if (newest.state === 'ended') {
-      if (newest.failure === 'not_connected') cards.push(slotCard('not_connected', newest))
-      else if (newest.failure !== null && newest.failure !== 'incomplete') cards.push(slotCard('failed', newest))
-    } else if (newest.state === 'lost' || newest.state === 'missed' || newest.state === 'refused') {
-      cards.push(slotCard('failed', newest))
-    } else if (newest.state === 'skipped') {
-      cards.push(newest.reason === 'disabled' || newest.reason === 'deleted' ? slotCard('off', newest, { hashed: `${input.routine?.id ?? ''}|${today}` }) : slotCard('failed', newest))
-    }
+    const status = slotStatus(newest)
+    if (status === 'off') cards.push(slotCard('off', newest, { hashed: `${input.routine?.id ?? ''}|${today}` }))
+    else if (status !== null) cards.push(slotCard(status, newest))
     return { shown, cards }
   }
   // No slot today: past the slot's deadline the check hasn't run (or is off).
@@ -90,7 +95,11 @@ export function todayView(input: { nowMs: number; tz: string; routine: RoutineFa
     const due = instantOf(zone, today, `${pad(r.hour)}:${pad(r.minute)}`)
     if (input.nowMs > due + ON_TIME_MS) {
       cards.push({ cause: !r.enabled || r.deleted ? 'off' : 'not_run', localDate: today, hashed: `${r.id}|${today}`, clock: null, atMs: due + ON_TIME_MS, areas: [], tooMany: false })
+      return { shown, cards }
     }
   }
+  // The store reads today and yesterday. Keep yesterday's latest failure visible while there is no status for today.
+  const previous = slots.find(s => s.local_date < today)
+  if (previous && slotStatus(previous) === 'failed') cards.push(slotCard('failed', previous))
   return { shown, cards }
 }
