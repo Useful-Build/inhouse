@@ -15,13 +15,15 @@ No entry is `Covered: gap`. Not checked by any spec, or only in part:
 - Settings > General: Language and Text size are opened and closed by `menus.spec.ts`, but no spec picks one and checks it saves.
 - Icons: the fallback glyph for a name outside the manifest is drawn by `src/ui/index.tsx` but no spec checks it; a name
   missing from the font fails lint (`scripts/check-icons.mjs`), not a spec.
-- Connector hub (`app/hub/`, P4): no screen yet. Its default export answers 404 to every request (`hub/index/index.workers.test.ts`); the `hub` CI job runs its checks.
+- Connector hub (`app/hub/`, P4): no screen. Its default export answers 404 to every request and it has no public route (`hub/index/index.workers.test.ts`); it answers only the product Worker's service binding; the `hub` CI job runs its checks.
 - Export everything is a stub, and so is Sign out in the demo: specs check they say so and change nothing. In the product Sign out goes to Access's logout; `e2e/real/sign-out.spec.ts` checks the account menu goes to that path on the test build (no Access there); the real Access logout is checked on the candidate deploy (pending).
 - The chat WebSocket under the enforced CSP (`e2e/real/socket-csp.spec.ts`) needs a run, so it is checked on the sandbox deploy (`E2E_TEST_BUILD_REMOTE=1`), not on the local test build, which has no container. `e2e/real/csp-download-photo.spec.ts` covers the audit CSV download and a member photo on both.
 - A failed or never-run chat turn's words after a reload (its stored end row, P3) and a trace's "up to" cost while a model call is open are proven only by unit tests (`server/do/brand-agent/projection.test.ts`, `src/screens/chat/history.test.ts`, `src/lib/trace-cost.test.ts`): the test build has no container and no way to force a placement failure or hold a call open without new test code in the deployable bundle.
 - "A failed audit write leaves no change" (Acceptance 6) is proven only by the server unit tests on the vitest workerd (compat 2026-11-11), not on the test build's: forcing an audit write to fail there needs test code in the deployable bundle.
 
 ## Today
+
+In the product build Today, Activity, the bell, the Library and Routines are real, backed by the API (P4 routes 52 to 66), not demo data. The `?demo` entries below describe the demo build. Product proof: `e2e/api/{today,activity,bell,library,routines}.spec.ts` on the test build and the ship spec `e2e/ship/watch.spec.ts` (S1 to S8).
 
 Today: needs-you cards
   Path:     Today
