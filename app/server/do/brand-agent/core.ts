@@ -128,8 +128,11 @@ export interface CoreDeps {
   tokens: RunTokens
   ports: BrandAgentPorts
   now: () => number
-  /** The system prompt every run carries (the orchestrator's `app/server/prompt/`). */
-  systemPrompt: string
+  /**
+   * The system prompt every run carries (the orchestrator's `app/server/prompt/`): fixed, or built when each turn starts
+   * (P5: the connected apps and listed channels). The builder never throws; it logs a failed read and leaves its line out.
+   */
+  systemPrompt: string | ((turnId: string) => Promise<string>)
   /** D1, for the redacted `tool_calls` rows (8.7). */
   db: D1Database
   /** A new session id (a UUID); tests pass literal ones. */
@@ -489,6 +492,9 @@ export class AgentCore {
     t = this.current(turnId, gen, 'starting')
     if (!t) return
     if (!usable) return this.failUnstarted(t, { outcome: 'failed', reason: 'model_off' })
+    const systemPrompt = typeof this.d.systemPrompt === 'string' ? this.d.systemPrompt : await this.d.systemPrompt(turnId)
+    t = this.current(turnId, gen, 'starting')
+    if (!t) return
 
     // The start hold (section 9). `reserved = 1` before the await: a cancel during it gives the hold back.
     this.sql.exec('UPDATE turns SET reserved = MAX(reserved, 1) WHERE turn_id = ?', turnId)
@@ -536,7 +542,7 @@ export class AgentCore {
       start = buildStart({
         turnId, chatId: t.chat_id, sessionId, expect, text: t.text, quote: t.quote, attachments: atts, model: t.model,
         sideModel: t.side_model, effort: t.effort as StartWithoutToken['effort'], maxTurns: t.max_turns,
-        webFetchDomains: t.web_fetch_json === null ? null : JSON.parse(t.web_fetch_json) as string[], systemPrompt: this.d.systemPrompt,
+        webFetchDomains: t.web_fetch_json === null ? null : JSON.parse(t.web_fetch_json) as string[], systemPrompt,
         outputFormat: t.output_format_json === null ? undefined : JSON.parse(t.output_format_json) as OutputFormat,
       })
     } catch (err) {
