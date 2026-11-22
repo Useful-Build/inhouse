@@ -1,6 +1,7 @@
 // The search indexes (p3-design section 10, W6): two FTS5 external-content tables over memories.text and
-// chat_messages.text (migration 0141). Derived, never canonical: P8's backup skips them and their shadow tables (the
-// registry marks them `derived`, ops/tables/memory.ts) and, after a restore, calls `rebuildSearchIndexes`.
+// chat_messages.text (migration 0141; 0142 remade them with the porter tokenizer, so word forms match). Derived, never
+// canonical: P8's backup skips them and their shadow tables (the registry marks them `derived`, ops/tables/memory.ts)
+// and, after a restore, calls `rebuildSearchIndexes`.
 // D1 supports FTS5 (https://developers.cloudflare.com/d1/sql-api/sql-statements/, read 2026-11-20) and exports no
 // database with a virtual table (https://developers.cloudflare.com/d1/best-practices/import-export-data/, read
 // 2026-11-20: delete the virtual tables, export, recreate them).

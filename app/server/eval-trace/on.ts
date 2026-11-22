@@ -36,9 +36,25 @@ const encoder = new TextEncoder()
 const storedBytes = (id: string, input: string): number => encoder.encode(JSON.stringify({ io: id, input })).byteLength
 
 /**
+ * The tool's own input from the runner's audit entry, as JSON text. The runner wraps every input (runner/src/guards/audit.ts
+ * `capInput`): `{ cut: false, value }` is the whole input; `{ cut: true, bytes, sha256, head, tail }` is one over the
+ * protocol's cap, of which the start of its JSON text (`head`) is kept, marked cut. Anything else (no wrapper, an
+ * unencodable input) is kept as its own JSON, marked cut, so it is never read as the tool's input.
+ */
+export function toolInput(input: unknown): { text: string; cut: boolean } {
+  if (input !== null && typeof input === 'object' && !Array.isArray(input)) {
+    const w = input as Record<string, unknown>
+    if (w.cut === false && Object.hasOwn(w, 'value') && Object.keys(w).length === 2) return { text: JSON.stringify(w.value ?? null), cut: false }
+    if (w.cut === true && typeof w.head === 'string') return { text: w.head, cut: true }
+  }
+  return { text: JSON.stringify(input ?? null), cut: true }
+}
+
+/**
  * The `turn_trace` record that keeps this audit entry's input for its call, or null: no tool_use id (nothing to show it
- * on), or the call's input already kept in this run (another hook's entry for the same call). The JSON text of
- * `entry.input`, cut to the run's remaining room at a whole character (a cut record says so; `bytes` is its stored size).
+ * on), or the call's input already kept in this run (another hook's entry for the same call). The tool's input
+ * (`toolInput`) as JSON text, cut to the run's remaining room at a whole character; `cut` when the runner or this cap cut
+ * it; `bytes` is its stored size.
  */
 export function ioRecord(sql: SqlStorage, turnId: string, entry: AuditEntry): Record<string, string> | null {
   const id = entry.toolUseId
@@ -49,9 +65,9 @@ export function ioRecord(sql: SqlStorage, turnId: string, entry: AuditEntry): Re
         AND turn_id IN (SELECT turn_id FROM turns WHERE run_id = (SELECT run_id FROM turns WHERE turn_id = ?))`, id, turnId).one()
   if (kept.dup > 0) return null
   const room = Math.max(0, IO_TRACE_MAX_BYTES - (kept.used ?? 0))
-  const input = JSON.stringify(entry.input ?? null)
+  const { text: input, cut: runnerCut } = toolInput(entry.input)
   const full = storedBytes(id, input)
-  if (full <= room) return { io: id, input, bytes: String(full) }
+  if (full <= room) return { io: id, input, bytes: String(full), ...(runnerCut ? { cut: '1' } : {}) }
   // The longest prefix of whole characters (code points) whose stored size fits the room: no split character, and the
   // escaping is counted as stored. Binary search: the stored size only grows with the prefix.
   const chars = Array.from(input)

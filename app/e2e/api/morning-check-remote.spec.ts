@@ -16,6 +16,7 @@
 // token wrangler reads itself. Without them it skips, saying which are missing.
 import { expect, test } from '@playwright/test'
 import { wranglerRunner } from '../../evals/targets/door.ts'
+import { refuseSharedEvalDb } from '../../evals/morning-check/args.ts'
 import { createMorningDoor, type MorningDoor } from '../../evals/morning-check/door.ts'
 import { AMBER, META } from '../../evals/morning-check/expected.ts'
 import { ensureDefaultModel, remoteEnv, type ApiCall } from '../../evals/morning-check/remote.ts'
@@ -44,6 +45,9 @@ function cannotRun(): string | null {
 test.beforeAll(async ({ request }) => {
   // Never writes the setting on a run whose test skips.
   if (cannotRun() !== null) return
+  // Never on the eval deployment's shared database (a paid eval may run there): refused before any write, loud. Line A's
+  // morning-check door rule replaces this (evals/morning-check/args.ts).
+  refuseSharedEvalDb(process.env.INHOUSE_EVAL_D1_NAME!)
   const as = (who: Actor): ApiCall => async (method, path, body) => {
     const r = await call(request, who, method, path, body === undefined ? {} : { json: body })
     return { status: r.status, json: r.json }
@@ -59,6 +63,7 @@ test('the morning-check set runs remotely: the outage shop passes graded, a work
   skipLoudly(reason !== null, reason ?? '')
   test.setTimeout(TIMEOUT_MS)
   expect(2 * (CASE_MS + SETTLE_MS), 'the budget leaves at least 10 minutes for the door\'s calls').toBeLessThanOrEqual(TIMEOUT_MS - 600_000)
+  refuseSharedEvalDb(process.env.INHOUSE_EVAL_D1_NAME!)
   const d = createMorningDoor(wranglerRunner({ database: process.env.INHOUSE_EVAL_D1_NAME!, config: process.env.INHOUSE_EVAL_WRANGLER_CONFIG!, env: process.env }))
   door = d
   const env = remoteEnv({

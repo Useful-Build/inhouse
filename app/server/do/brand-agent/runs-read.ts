@@ -58,7 +58,8 @@ const fmtTokens = (n: number) => (n < 1000 ? String(n) : n < 1_000_000 ? `${(n /
 /**
  * A run's (`r_…`) or a turn's (`t_…`) trace, or null when it isn't there or isn't in the scope. `evalIo`: the eval build
  * (core.ts passes it), where a `tool` step carries its call's kept input (`io`) for the run's owner only, never for
- * Inhouse's `all` scope (BD7, BD11; p3-eval-observability rev 2 rec 5).
+ * Inhouse's `all` scope (BD7, BD11; p3-eval-observability rev 2 rec 5), and `io.denied` when a hook denied that call
+ * (rec 6: the eval harness's WebFetch refusal, matched by tool_use id, not by name).
  */
 export function traceOf(sql: SqlStorage, id: string, scope: RunScope, nowMs: number, evalIo = false): Trace | null {
   let turns: TurnRead[]
@@ -87,6 +88,7 @@ export function traceOf(sql: SqlStorage, id: string, scope: RunScope, nowMs: num
     // A call's kept input may be recorded before or after its step (the audit post and the SDK message race), so the
     // turn's inputs are matched to its steps after the pass.
     const io = new Map<string, NonNullable<TraceStep['io']>>()
+    const denied = new Set<string>()
     const toolSteps: [TraceStep, string][] = []
     for (const r of sql.exec<{ at_ms: number; json: string }>('SELECT at_ms, json FROM turn_trace WHERE turn_id = ? ORDER BY n', t.turn_id).toArray()) {
       const rec = JSON.parse(r.json) as Record<string, string>
@@ -98,12 +100,15 @@ export function traceOf(sql: SqlStorage, id: string, scope: RunScope, nowMs: num
         const kept = withIo ? ioFrom(rec) : null
         if (kept !== null) io.set(kept[0], kept[1])
       } else if (rec.audit !== undefined && rec.decision !== 'allow') {
+        if (withIo && rec.decision === 'deny' && rec.id !== undefined) denied.add(rec.id)
         steps.push({ label: rec.audit, kind: rec.decision === 'deny' ? 'fail' : 'approval', startMs: at(r.at_ms), endMs: at(r.at_ms), depth: 1, detail: `${rec.hook} · ${rec.decision}` })
       }
     }
     for (const [step, toolUseId] of toolSteps) {
       const kept = io.get(toolUseId)
-      if (kept !== undefined) step.io = kept
+      // A denied call with no kept input still says so: an empty input marked cut, never a listed-looking one.
+      if (denied.has(toolUseId)) step.io = { ...(kept ?? { input: '', cut: true }), denied: true }
+      else if (kept !== undefined) step.io = kept
     }
     const calls = sql.exec<{ model: string; granted_at_ms: number; closed_at_ms: number | null; state: string; usage_json: string | null }>(
       'SELECT model, granted_at_ms, closed_at_ms, state, usage_json FROM model_calls WHERE turn_id = ? AND granted_at_ms IS NOT NULL ORDER BY n', t.turn_id).toArray()

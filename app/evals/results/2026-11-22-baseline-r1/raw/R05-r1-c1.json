@@ -1,0 +1,40 @@
+{
+ "row": {
+  "caseId": "R05",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Your free shipping threshold is €60. That comes from a brand fact saved in memor",
+  "costUsd": 0.025,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "Your free shipping threshold is €60. That comes from a brand fact saved in memor",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "e8763c0d1850f8fab93bca4bc72839b8775c8b158025c729e3cad8810f461a08",
+    "inputExcerpt": "{\"query\":\"free shipping threshold\"}"
+   }
+  ]
+ }
+}

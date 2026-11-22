@@ -1,0 +1,47 @@
+{
+ "row": {
+  "caseId": "T16",
+  "cat": "choice",
+  "pair": "approval_withdraw/memory_forget",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "approval_withdraw"
+  ],
+  "toolSearches": 1,
+  "answer": "I couldn't withdraw ap_311. The withdraw function isn't available yet, so the dr",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_AWBhUKnhWNg5XX2jXv1RQA",
+  "askedAs": "eval-44986365620-1-t16-r1",
+  "argsNotGraded": "the served schema defines no fields"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I couldn't withdraw ap_311. The withdraw function isn't available yet, so the dr",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "452bd5dc4fe45b48d13c065dad12170fac50adbdc39defef0e2c3d577a863f4a",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__approval_get,mcp__inhouse__approval_withdraw\",\"ma"
+   },
+   {
+    "name": "mcp__inhouse__approval_withdraw",
+    "inputSha256": "322c28e4d8c3447d2dd39235111bcd93102fe869f3737d2301f5bd231b7096a2",
+    "inputExcerpt": "{\"approval_id\":\"ap_311\",\"reason\":\"The mugs have arrived, so the reorder is no lo"
+   }
+  ]
+ }
+}

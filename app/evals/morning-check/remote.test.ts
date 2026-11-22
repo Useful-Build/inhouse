@@ -14,8 +14,8 @@ import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { readTestShop, type ShopDb } from '../../server/egress/test-shop.ts'
-import { DoorRefusal, type RunSql } from '../targets/door.ts'
-import { runMode } from './args.ts'
+import { DoorRefusal, EVAL_DB, type RunSql } from '../targets/door.ts'
+import { refuseSharedEvalDb, runMode } from './args.ts'
 import { createMorningDoor, type MorningDoor } from './door.ts'
 import { AMBER, META, hostOf } from './expected.ts'
 import { clearOnSignals, ensureDefaultModel, remoteEnv, type ApiCall, type SettingsApi } from './remote.ts'
@@ -421,6 +421,21 @@ describe('run.mjs arguments (failure 6)', () => {
   it('remote: the origin, the door\'s database and config, the release token only when given', () => {
     expect(runMode({ ...common, target: 'https://pr12.example.dev' }, doorEnv)).toEqual({ mode: 'remote', baseUrl: 'https://pr12.example.dev', releaseJwt: null, database: 'inhouse-sbx-pr12-db', wranglerConfig: 'w.json', modelSetting: null })
     expect(runMode({ ...common, target: 'https://pr12.example.dev/' }, { ...doorEnv, MORNING_CHECK_RELEASE_JWT: 'j' })).toMatchObject({ mode: 'remote', releaseJwt: 'j' })
+  })
+
+  // #308 review M1: the door now admits only the eval deployment's shared database, where a paid product eval may run, so
+  // remote mode refuses it (until line A's morning-check door rule): run.mjs and the remote spec, before any write.
+  it('remote on the eval deployment\'s shared database is refused (DoorRefusal), a per-PR database is not', () => {
+    expect(() => refuseSharedEvalDb(EVAL_DB)).toThrow(DoorRefusal)
+    expect(() => refuseSharedEvalDb(EVAL_DB)).toThrow(`refusing: ${EVAL_DB} is the eval deployment's shared database`)
+    expect(() => refuseSharedEvalDb('inhouse-sbx-pr12-db')).not.toThrow()
+    const runMjs = readFileSync(new URL('./run.mjs', import.meta.url), 'utf8')
+    const at = runMjs.indexOf('refuseSharedEvalDb(m.database)')
+    expect(at, 'run.mjs refuses it').toBeGreaterThan(-1)
+    expect(at, 'before the door is made').toBeLessThan(runMjs.indexOf('wranglerRunner({'))
+    const spec = readFileSync(new URL('../../e2e/api/morning-check-remote.spec.ts', import.meta.url), 'utf8')
+    expect(spec.indexOf('refuseSharedEvalDb(process.env.INHOUSE_EVAL_D1_NAME!)'), 'the spec refuses it before the setting is written').toBeLessThan(spec.indexOf('ensureDefaultModel({'))
+    expect(spec.lastIndexOf('refuseSharedEvalDb('), 'and before its door').toBeLessThan(spec.indexOf('wranglerRunner({'))
   })
 
   it('--model-setting: remote only, a plain label, with the Inhouse app\'s origin and aud (only the Inhouse team writes g:mode)', () => {
