@@ -154,7 +154,14 @@ async function ensureFastDefault(request: APIRequestContext) {
  * Runs the morning check as a person does: Routines, the routine's details, Run now. Waits on the routine's last run moving
  * (the run ended and saved), then leaves the page on Routines.
  */
+/**
+ * Set once a run has ended well in this worker (a worker restarts after a failed or timed-out test): S2, S4 and S5 read what
+ * S1's run left rather than starting another, so a project makes one run, not four. A run's output is the brand's, shared by
+ * every page, and each test opens its own page, which reads it fresh.
+ */
+let ranInThisWorker = false
 async function runMorningCheck(page: Page, request: APIRequestContext) {
+  if (ranInThisWorker) return
   await ensureFastDefault(request)
   const before = (await morningCheck(page)).last?.at.ms ?? 0
   await goTo(page, '#/routines')
@@ -171,9 +178,8 @@ async function runMorningCheck(page: Page, request: APIRequestContext) {
   }
   await page.keyboard.press('Escape')
   await expect(sheet).toBeHidden()
-  // Today, Activity and the bell were read when the app started: load it again to see what the run left, as a person would.
-  await page.reload()
-  await ready(page)
+  // No reload: the client reads Today, Activity, the bell and the Library again on a page change and when a run ends.
+  ranInThisWorker = true
 }
 
 /** Chooses the Fast model (Sonnet): the composer's default is Opus, and the scripted model answers only for Sonnet. */
@@ -207,9 +213,6 @@ async function makeFile(page: Page): Promise<string> {
     const r = await api(page, 'GET', '/api/library?limit=100')
     return (r.json?.items as { name: string; link?: { id: string } }[] | undefined)?.some(f => f.name === FILE && f.link?.id === id) ?? false
   }, { timeout: 60_000, message: `the Library lists ${FILE} from chat ${id}` }).toBe(true)
-  // The page read its Library when the app started (empty) and doesn't read it again on opening the screen: load the app again, as a person would.
-  await page.reload()
-  await ready(page)
   return id
 }
 
@@ -230,7 +233,7 @@ test('S1: Run the morning check from Routines and Today fills with the store\'s 
   await goTo(page, '#/today')
   await expect(page.getByRole('article', { name: CARD_TITLE })).toBeVisible()
   await expect(page.getByRole('heading', { level: 1 })).toContainText('1 thing needs you')
-  await expect(main(page).getByText('1 to look at', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 2, name: /1 to look at$/ })).toBeVisible()
   await shot(page, 'S1-today-filled')
 })
 
@@ -240,7 +243,7 @@ test('S2: Open an item and the problem panel shows the orders behind it from the
   await openAs(context, page, 'dana', '#/today')
   await runMorningCheck(page, request)
   await goTo(page, '#/today')
-  await page.getByRole('article', { name: CARD_TITLE }).getByRole('button', { name: CARD_TITLE }).click()
+  await page.getByRole('article', { name: CARD_TITLE }).getByRole('button', { name: CARD_TITLE, exact: true }).click()
   const panel = page.getByRole('dialog')
   await expect(panel).toBeVisible()
   await expect(panel).toContainText(CARD_TITLE)
@@ -285,8 +288,8 @@ test('S5: The bell shows the new notice and marking it read clears the dot after
   test.setTimeout(360_000)
   await openAs(context, page, 'dana', '#/today')
   await runMorningCheck(page, request)
-  await page.reload()
-  await ready(page)
+  // A page of its own, opened after the run: the bell reads its notices when the app starts and again on a page change.
+  await goTo(page, '#/today')
   const bell = page.getByRole('button', { name: /^Notifications, \d+ unread$/ })
   await expect(bell).toBeVisible()
   await bell.click()
@@ -316,16 +319,12 @@ test('S6: Library shows a file the agent made, it downloads, and deleting and re
   await shot(page, 'S6-library-with-the-file')
 
   await fileMenu(page).first().click()
-  const [saved, served] = await Promise.all([
-    page.waitForEvent('download'),
-    page.waitForResponse(r => /\/api\/library\/[^/]+\/download$/.test(r.url())),
-    page.getByRole('menuitem', { name: 'Download', exact: true }).click(),
-  ])
-  const body = await served.text().catch((e: unknown) => `(no body: ${String(e)})`)
-  await attachJson('S6-download-response', { url: served.url(), status: served.status(), headers: served.headers(), body: body.slice(0, 4000) })
-  expect(served.status(), `the download answered: ${body.slice(0, 300)}`).toBe(200)
-  expect(saved.suggestedFilename()).toBe(FILE)
-  expect(await readFile(await saved.path(), 'utf8')).toBe(FILE_BODY)
+  const [saved] = await Promise.all([page.waitForEvent('download'), page.getByRole('menuitem', { name: 'Download', exact: true }).click()])
+  // A download is no page response Playwright reports, so say what was saved: its name, any failure and its first bytes.
+  const text = await readFile(await saved.path(), 'utf8').catch((e: unknown) => `(unreadable: ${String(e)})`)
+  await attachJson('S6-download', { url: saved.url(), name: saved.suggestedFilename(), failure: await saved.failure(), body: text.slice(0, 2000) })
+  expect(saved.suggestedFilename(), `the download saved: ${text.slice(0, 300)}`).toBe(FILE)
+  expect(text).toBe(FILE_BODY)
 
   await fileMenu(page).first().click()
   await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
