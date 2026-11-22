@@ -26,7 +26,9 @@
 //   CLOUDFLARE_API_TOKEN=... INHOUSE_EVAL_ORIGIN=<the eval host> INHOUSE_EVAL_ACCESS_CLIENT_ID=... INHOUSE_EVAL_ACCESS_CLIENT_SECRET=... \
 //   node evals/exfiltration/store-data/run.mjs --target <INHOUSE_EVAL_ORIGIN> --budget <usd, at most STORE_DATA_CAP> \
 //     --out-dir evals/exfiltration/store-data/results --sha <git sha> --issuer-key-file <the eval deploy's test issuer private JWK> --aud <its Access aud> \
-//     [--cases XS01,XS02] [--model claude-sonnet-5-5] [--timeout-min 20] [--settle-min 2]
+//     [--model claude-sonnet-5-5] [--timeout-min 20] [--settle-min 2] [--cases XS01,XS02]
+//
+// --cases is debug only: the run is partial and never passes (the ops suite never passes it).
 //
 // It is the morning-check graded run's frame (evals/morning-check/run.mjs and remote.ts, reused as they are): the eval lease, a
 // probe chat proving --target answers from EVAL_DB, a refusal of a test shop override it didn't write, the Spending cap pinned
@@ -36,7 +38,10 @@
 // case's shop (STORE_DATA_SHOPS only), Run now is pressed, the slot polled through the door, and what the grader needs is
 // read remotely (remote.ts storeDataReader: the door's D1 rows, and the slot's transcript in the eval R2 through
 // transcripts.ts, which needs CLOUDFLARE_API_TOKEN with R2 read on the sandbox account). A case whose slot ran on another
-// model than --model fails and stops the run.
+// model than --model fails and stops the run. The parts are made by remote.ts buildRemote (one place, under test): right
+// after the lease an R2 preflight refuses a token without Workers R2 Storage Read before anything is written. A failure
+// part way (the door, R2, a slot that ran but left no transcript) stops the run (exit 2) after the cleanup, the finished
+// cases kept in the result file.
 //
 // In both modes a case that times out with its slot still open (after --settle-min) stops the run (exit 2), the rest listed as
 // `notRun`. A run of fewer cases than the set is `partial` and never passes. What it can't observe it says so: the egress logs only
@@ -48,19 +53,18 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import { SEED_PEOPLE } from '../../../server/seed/brand.ts'
-import { createMorningDoor } from '../../morning-check/door.ts'
 import { commandFor, hubConfigFor } from '../../morning-check/hubconfig.ts'
-import { clearOnSignals, gradedRun, remoteEnv, remoteHttp } from '../../morning-check/remote.ts'
+import { clearOnSignals, remoteHttp } from '../../morning-check/remote.ts'
 import { Build, DEFAULT_SHOP_PATTERN, shopShownBy } from '../../morning-check/restart.ts'
 import { resultPath } from '../../morning-check/results.ts'
 import { ROUTINE_ID } from '../../morning-check/runner.ts'
-import { createDoor, DoorRefusal, wranglerRunner } from '../../targets/door.ts'
+import { DoorRefusal } from '../../targets/door.ts'
 import { accessHeaders, EVAL_AUD_VAR, EVAL_ISSUER_JWK_FILE, testIssuerSignIn } from '../../targets/product.ts'
 import { storeDataMode } from './args.ts'
 import { STORE_DATA_CASES, hostOf } from './cases.ts'
-import { gradedSession, STORE_DATA_SHOPS, storeDataReader } from './remote.ts'
+import { buildRemote, gradedSession } from './remote.ts'
 import { runStoreData } from './runner.ts'
-import { createTranscriptReader, EVAL_BUCKET, holdsCanary } from './transcripts.ts'
+import { holdsCanary } from './transcripts.ts'
 
 const { values: a } = parseArgs({
   options: {
@@ -179,13 +183,15 @@ const build = new Build({
 // reader on the eval bucket. A refusal is the door's own message and exit 2, before any case runs.
 let door = null
 let graded = null
-let reader = localReader
+let remoteRunEnv = null
 if (remote) {
   try {
-    const run = wranglerRunner({ database: m.database, config: m.wranglerConfig, env: process.env, rule: 'morning-check' })
-    door = createMorningDoor(run, Date.now, STORE_DATA_SHOPS)
-    graded = gradedRun({ door: createDoor(run), admin, label: m.graded.label, budgetUsd: m.graded.budgetUsd, tag: `store-data:${a.sha}:${crypto.randomUUID().slice(0, 8)}` })
-    reader = storeDataReader({ door, run, transcripts: createTranscriptReader({ env: process.env, bucket: EVAL_BUCKET }) })
+    ;({ door, graded, env: remoteRunEnv } = buildRemote({
+      database: m.database, wranglerConfig: m.wranglerConfig, env: process.env, admin,
+      runNow: async clientKey => post(`/api/routines/${ROUTINE_ID}/run`, { clientKey }, await personAuth()),
+      label: m.graded.label, budgetUsd: m.graded.budgetUsd, tag: `store-data:${a.sha}:${crypto.randomUUID().slice(0, 8)}`,
+      caseTimeoutMs: Number(a['timeout-min']) * 60_000, settleMs: Number(a['settle-min']) * 60_000,
+    }))
   } catch (e) {
     if (!(e instanceof DoorRefusal)) throw e
     console.error(`run.mjs: STOPPED before any case. The door refused the remote run: ${e.message}`)
@@ -196,20 +202,7 @@ if (remote) {
 let mayClear = false
 if (door) clearOnSignals({ close: () => door.close(), clearShop: () => (mayClear ? door.clearShop() : Promise.resolve(null)) }, undefined, () => graded.release())
 
-const env = remote ? {
-  ...remoteEnv({
-    door,
-    runNow: async clientKey => post(`/api/routines/${ROUTINE_ID}/run`, { clientKey }, await personAuth()),
-    alarm: null,
-    pause: () => new Promise(r => setTimeout(r, 2000)),
-    nowMs: () => Date.now(),
-    caseTimeoutMs: Number(a['timeout-min']) * 60_000,
-    settleMs: Number(a['settle-min']) * 60_000,
-    checkModel: true,
-    beforeCase: () => graded.beforeCase(),
-  }),
-  reader,
-} : {
+const env = remote ? remoteRunEnv : {
   nowMs: () => Date.now(),
   async useShop(host) {
     if (!a['restart-cmd']) return
@@ -222,7 +215,7 @@ const env = remote ? {
   },
   nudge: () => post('/api/ops/alarm', { action: 'alarm' }, releaseAuth),
   pause: () => new Promise(r => setTimeout(r, 2000)),
-  reader,
+  reader: localReader,
   caseTimeoutMs: Number(a['timeout-min']) * 60_000,
   settleMs: Number(a['settle-min']) * 60_000,
 }
@@ -244,18 +237,28 @@ const report = ({ outcomes, set, notRun, stopped }) => {
 const runCases = () => runStoreData(env, cases, done => write(done, null), remote ? a.model : undefined)
 try {
   if (graded) {
-    const { result, refused, cleanup } = await gradedSession({ graded, clearShop: () => door.clearShop(), onStarted: () => { mayClear = true }, run: runCases })
-    if (refused !== null) {
-      console.error(`run.mjs: STOPPED before any case. ${refused}`)
+    let session
+    try {
+      session = await gradedSession({ graded, clearShop: () => door.clearShop(), onStarted: () => { mayClear = true }, run: runCases })
+    } catch (e) {
+      // Part way (the door, R2, a slot that ran with no transcript): the override was cleared and the lease given back
+      // (gradedSession), the finished cases are in the result file.
+      console.error(`\nrun.mjs: STOPPED. ${e instanceof Error ? e.message : String(e)}\nThe finished cases are in ${path} (partial).`)
       process.exitCode = 2
-    } else {
-      report(result)
-      // The graded run doesn't put the Default model back: the eval brand keeps the label --model mapped to.
-      console.error(`run.mjs: the eval brand's Default model (g:mode) stays ${m.graded.label}: the graded run doesn't put it back.`)
     }
-    for (const line of cleanup) {
-      console.error(`run.mjs: ${line}`)
-      process.exitCode = 2
+    if (session !== undefined) {
+      if (session.refused !== null) {
+        console.error(`run.mjs: STOPPED before any case. ${session.refused}`)
+        process.exitCode = 2
+      } else {
+        report(session.result)
+        // The graded run doesn't put the Default model back: the eval brand keeps the label --model mapped to.
+        console.error(`run.mjs: the eval brand's Default model (g:mode) stays ${m.graded.label}: the graded run doesn't put it back.`)
+      }
+      for (const line of session.cleanup) {
+        console.error(`run.mjs: ${line}`)
+        process.exitCode = 2
+      }
     }
   } else {
     report(await runCases())

@@ -12,20 +12,24 @@
 //     takes a store-data shop;
 //  8. a remote run starts on any deployment but the eval one, or without the token; the local mode changes;
 //  9. the runner leaves an override behind, ignores the graded run's per-case check, or grades a case that ran on
-//     another model; the eval lease outlives a failed start or a failed run.
+//     another model; the eval lease outlives a failed start or a failed run;
+// 10. (review round) a token without R2 read is found only after the cap and model writes; a run whose slot ran but left no
+//     transcript reads as "not exposed"; an R2 request or body read hangs; a body-read error carries the token; a `.` or
+//     `..` subagent segment is read; the since-times come from the runner's clock; run.mjs's remote wiring drifts.
 import { readdirSync, readFileSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { createMorningDoor } from '../../morning-check/door.ts'
 import { hostOf as morningHost } from '../../morning-check/expected.ts'
-import { MORNING_CHECK_CAP } from '../../morning-check/remote.ts'
+import { MORNING_CHECK_CAP, type ApiCall } from '../../morning-check/remote.ts'
 import { ROUTINE_ID } from '../../morning-check/runner.ts'
-import { DoorRefusal, EVAL_DB, type RunSql } from '../../targets/door.ts'
+import { DoorRefusal, EVAL_DB, wranglerRunner, type RunSql } from '../../targets/door.ts'
+import { slotChatId } from '../../../server/routines/keys.ts'
 import { EVAL_CAP } from '../../targets/product.ts'
 import { storeDataMode } from './args.ts'
 import { STORE_DATA_CASES, hostOf } from './cases.ts'
-import { gradedSession, STORE_DATA_CAP, STORE_DATA_SHOPS, storeDataReader } from './remote.ts'
+import { buildRemote, gradedSession, STORE_DATA_CAP, STORE_DATA_SHOPS, storeDataReader } from './remote.ts'
 import { runStoreData } from './runner.ts'
 import type { StoreDataEnv, StoreDataReader } from './runner.ts'
 import { createTranscriptReader, EVAL_BUCKET, holdsCanary, R2_API_BASE } from './transcripts.ts'
@@ -40,13 +44,15 @@ const key = (part: string, sub = 'm', chat = CHAT) => `sessions/${chat}/${SESSIO
 const CANARY = STORE_DATA_CASES[0]!.canary
 
 /** A fake Cloudflare API: the bucket's objects, and every request it was sent. */
-function api(objects: Record<string, string>, o: { perPage?: number; listStatus?: number; getStatus?: (k: string) => number; redirect?: boolean; throws?: string; extraKeys?: string[] } = {}) {
-  const calls: { url: string; method: string; headers: Record<string, string>; redirect: RequestRedirect | undefined }[] = []
+function api(objects: Record<string, string>, o: { perPage?: number; listStatus?: number; getStatus?: (k: string) => number; redirect?: boolean; throws?: string; extraKeys?: string[]; hang?: boolean; bodyHang?: boolean; bodyError?: string } = {}) {
+  const calls: { url: string; method: string; headers: Record<string, string>; redirect: RequestRedirect | undefined; signal: AbortSignal | null | undefined }[] = []
   const listBase = `${R2_API_BASE}/accounts/${ACCOUNT}/r2/buckets/${EVAL_BUCKET}/objects`
   const doFetch = (async (input: string | URL, init?: RequestInit) => {
     const url = String(input)
-    calls.push({ url, method: init?.method ?? 'GET', headers: { ...(init?.headers as Record<string, string>) }, redirect: init?.redirect })
+    calls.push({ url, method: init?.method ?? 'GET', headers: { ...(init?.headers as Record<string, string>) }, redirect: init?.redirect, signal: init?.signal })
     if (o.throws) throw new Error(o.throws)
+    // A request that never answers, whatever its signal does.
+    if (o.hang) return new Promise<Response>(() => {})
     if (o.redirect) return new Response(null, { status: 302, headers: { Location: 'https://elsewhere.example/' } })
     const u = new URL(url)
     if (u.origin + u.pathname === listBase) {
@@ -62,6 +68,8 @@ function api(objects: Record<string, string>, o: { perPage?: number; listStatus?
     const k = decodeURIComponent(u.pathname.slice(`${new URL(listBase).pathname}/`.length))
     const status = o.getStatus?.(k) ?? (k in objects ? 200 : 404)
     if (status !== 200) return new Response('{"success":false}', { status })
+    if (o.bodyHang) return new Response(new ReadableStream({ start: c => c.enqueue(new TextEncoder().encode('[')) }), { status: 200 })
+    if (o.bodyError) return new Response(new ReadableStream({ start: c => c.error(new Error(o.bodyError)) }), { status: 200 })
     return new Response(objects[k]!, { status: 200 })
   }) as typeof fetch
   return { calls, doFetch }
@@ -89,7 +97,7 @@ describe('the transcript reader: what it reads (failures 2, 4, 5)', () => {
   it('lists the slot\'s chat under sessions/, then GETs each object on the documented paths, the token only in Authorization', async () => {
     const { calls, doFetch } = api({ [key('000000000000001-000001')]: '[{"type":"user"}]', [key('000000000000002-000002')]: `[{"type":"user","content":"${CANARY}"}]` })
     const r = createTranscriptReader({ env: ENV, bucket: EVAL_BUCKET, fetch: doFetch })
-    expect(await r.canarySeen(CHAT, CANARY)).toBe(true)
+    expect(await r.canarySeen(CHAT, CANARY)).toEqual({ objects: 2, seen: true })
     expect(calls.map(c => c.method)).toEqual(['GET', 'GET', 'GET'])
     const list = new URL(calls[0]!.url)
     expect(list.origin + list.pathname).toBe(`https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/r2/buckets/${EVAL_BUCKET}/objects`)
@@ -98,25 +106,26 @@ describe('the transcript reader: what it reads (failures 2, 4, 5)', () => {
     for (const c of calls) {
       expect(c.headers).toEqual({ Authorization: `Bearer ${TOKEN}` })
       expect(c.redirect, 'a redirect is never followed').toBe('manual')
+      expect(c.signal, 'every request has a timeout signal').toBeInstanceOf(AbortSignal)
       expect(c.url).not.toContain(TOKEN)
     }
   })
   it('reads a subagent\'s transcript too, its subpath percent-encoded in the GET path as the key holds it', async () => {
     const sub = `s/${encodeURIComponent('agent one/x')}`
     const { calls, doFetch } = api({ [key('000000000000001-000001', sub)]: `["${CANARY}"]` })
-    expect(await createTranscriptReader({ env: ENV, bucket: EVAL_BUCKET, fetch: doFetch }).canarySeen(CHAT, CANARY)).toBe(true)
+    expect(await createTranscriptReader({ env: ENV, bucket: EVAL_BUCKET, fetch: doFetch }).canarySeen(CHAT, CANARY)).toEqual({ objects: 1, seen: true })
     expect(calls[1]!.url.endsWith(`/s/${encodeURIComponent(encodeURIComponent('agent one/x'))}/000000000000001-000001.json`)).toBe(true)
   })
   it('no object under the chat is observed "not exposed" (false), and objects without the canary too', async () => {
-    expect(await createTranscriptReader({ env: ENV, bucket: EVAL_BUCKET, fetch: api({}).doFetch }).canarySeen(CHAT, CANARY)).toBe(false)
+    expect(await createTranscriptReader({ env: ENV, bucket: EVAL_BUCKET, fetch: api({}).doFetch }).canarySeen(CHAT, CANARY)).toEqual({ objects: 0, seen: false })
     const other = api({ [key('000000000000001-000001')]: '[{"type":"user"}]', [key('000000000000001-000001', 'm', 'rc_ZZZZZZZZZZZZZZZZZZZZZZ')]: `["${CANARY}"]` })
-    expect(await createTranscriptReader({ env: ENV, bucket: EVAL_BUCKET, fetch: other.doFetch }).canarySeen(CHAT, CANARY), 'another chat\'s object is never read').toBe(false)
+    expect(await createTranscriptReader({ env: ENV, bucket: EVAL_BUCKET, fetch: other.doFetch }).canarySeen(CHAT, CANARY), 'another chat\'s object is never read').toEqual({ objects: 1, seen: false })
     expect(other.calls.map(c => c.url).filter(u => u.includes('rc_ZZZ'))).toEqual([])
   })
   it('pages the list with its cursor', async () => {
     const objects = Object.fromEntries(Array.from({ length: 5 }, (_, i) => [key(`00000000000000${i}-00000${i}`), i === 4 ? `["${CANARY}"]` : '[]']))
     const { calls, doFetch } = api(objects, { perPage: 2 })
-    expect(await createTranscriptReader({ env: ENV, bucket: EVAL_BUCKET, fetch: doFetch }).canarySeen(CHAT, CANARY)).toBe(true)
+    expect(await createTranscriptReader({ env: ENV, bucket: EVAL_BUCKET, fetch: doFetch }).canarySeen(CHAT, CANARY)).toEqual({ objects: 5, seen: true })
     expect(calls.filter(c => c.url.includes('?')).map(c => new URL(c.url).searchParams.get('cursor'))).toEqual([null, '2', '4'])
   })
   it('the content test is the local mode\'s: the bytes as latin1 hold the canary', () => {
@@ -136,6 +145,8 @@ describe('the transcript reader: refusals (failures 2, 3, 4)', () => {
     ['a key of another shape', `sessions/${CHAT}/${SESSION}/${PROJECT}/m/0.json`],
     ['a key with a path step', `sessions/${CHAT}/${SESSION}/${PROJECT}/m/../x/000000000000001-000001.json`],
     ['a key in another folder', `sessions/${CHAT}/not-a-uuid/${PROJECT}/m/000000000000001-000001.json`],
+    ['a "." subagent segment', `sessions/${CHAT}/${SESSION}/${PROJECT}/s/./000000000000001-000001.json`],
+    ['a ".." subagent segment', `sessions/${CHAT}/${SESSION}/${PROJECT}/s/../000000000000001-000001.json`],
   ])('refuses the listing when it holds %s, reading nothing', async (_n, odd) => {
     const a = api({ [key('000000000000001-000001')]: `["${CANARY}"]` }, { extraKeys: [odd] })
     await expect(reader(a).canarySeen(CHAT, CANARY)).rejects.toThrow(/not a transcript key/)
@@ -175,6 +186,43 @@ describe('the transcript reader: refusals (failures 2, 3, 4)', () => {
     expect(err.message).not.toContain(TOKEN)
     expect(JSON.stringify(err)).not.toContain(TOKEN)
     expect(String(err.cause ?? '')).not.toContain(TOKEN)
+  })
+  it('a body stream that errors with the token in its message is a scrubbed DoorRefusal with no cause (Opus L1)', async () => {
+    const err = await errorOf(reader(api({ [key('000000000000001-000001')]: '[]' }, { bodyError: `socket reset, Bearer ${TOKEN}` })).canarySeen(CHAT, CANARY))
+    expect(err).toBeInstanceOf(DoorRefusal)
+    expect(err.message).toContain('[secret]')
+    expect(err.message).not.toContain(TOKEN)
+    expect(err.cause).toBeUndefined()
+  })
+  it('a request that never answers, and a body that never ends, time out as a DoorRefusal (Sonnet M1)', async () => {
+    await expect(reader(api({}, { hang: true }), { timeoutMs: 20 }).canarySeen(CHAT, CANARY)).rejects.toThrow(/R2 list timed out after 20 ms/)
+    const body = errorOf(reader(api({ [key('000000000000001-000001')]: '[]' }, { bodyHang: true }), { timeoutMs: 20 }).canarySeen(CHAT, CANARY))
+    expect(await body).toBeInstanceOf(DoorRefusal)
+    expect((await body).message).toMatch(/timed out after 20 ms/)
+    await expect(reader(api({}, { hang: true }), { timeoutMs: 20 }).preflight()).rejects.toThrow(/timed out/)
+  })
+})
+
+describe('the transcript reader: the preflight (Opus M1)', () => {
+  const reader = (a: ReturnType<typeof api>) => createTranscriptReader({ env: ENV, bucket: EVAL_BUCKET, fetch: a.doFetch })
+  it('is one LIST of one key under sessions/ in the eval bucket', async () => {
+    const a = api({ [key('000000000000001-000001')]: '[]' })
+    await reader(a).preflight()
+    expect(a.calls).toHaveLength(1)
+    const u = new URL(a.calls[0]!.url)
+    expect(u.pathname).toBe(`/client/v4/accounts/${ACCOUNT}/r2/buckets/${EVAL_BUCKET}/objects`)
+    expect([u.searchParams.get('prefix'), u.searchParams.get('per_page')]).toEqual(['sessions/', '1'])
+  })
+  it.each([401, 403])('a %i names the permission the token lacks', async status => {
+    const err = await errorOf(reader(api({}, { listStatus: status })).preflight())
+    expect(err).toBeInstanceOf(DoorRefusal)
+    expect(err.message).toMatch(/Workers R2 Storage Read/)
+    expect(err.message).not.toContain(TOKEN)
+  })
+  it('a 404 names the bucket and the account', async () => {
+    const err = await errorOf(reader(api({}, { listStatus: 404 })).preflight())
+    expect(err.message).toContain(EVAL_BUCKET)
+    expect(err.message).toContain(ACCOUNT)
   })
 })
 
@@ -217,7 +265,7 @@ describe('the store-data reader on the eval D1 (failure 6)', () => {
     return d
   }
   const asked: [string, string][] = []
-  const transcripts = { canarySeen: async (chat: string, canary: string) => { asked.push([chat, canary]); return true } }
+  const transcripts = { preflight: async () => {}, canarySeen: async (chat: string, canary: string) => { asked.push([chat, canary]); return { objects: 1, seen: true } } }
   it('reads memories and team routines made since the case began, as the local reader\'s queries do', async () => {
     const { db, run } = seeded()
     const routine = (id: string, origin: string, at: number) => db.exec(`INSERT INTO routines (id, origin, name, instruction, prompt_ref, days_mask, hour, minute, missed, need, creator_id, checked_until_ms, created_at_ms, updated_at_ms)
@@ -245,6 +293,16 @@ describe('the store-data reader on the eval D1 (failure 6)', () => {
     const { run } = database()
     const r = storeDataReader({ door: createMorningDoor(run, Date.now, STORE_DATA_SHOPS), run, transcripts })
     await expect(r.canarySeen(CANARY, 0, SLOT)).rejects.toThrow(/no slot/)
+  })
+  it('a slot that ran (a turn with tool calls) but left no transcript stops the run loud; one with no tool call is "not exposed" (Opus M2)', async () => {
+    const empty = { preflight: async () => {}, canarySeen: async () => ({ objects: 0, seen: false }) }
+    const quiet = seeded()
+    const r0 = storeDataReader({ door: createMorningDoor(quiet.run, Date.now, STORE_DATA_SHOPS), run: quiet.run, transcripts: empty })
+    expect(await r0.canarySeen(CANARY, 0, SLOT), 'no tool call: nothing was read').toBe(false)
+    const ran = seeded()
+    ran.db.exec("INSERT INTO tool_calls (turn_id, n, chat_id, member_id, hook, tool, decision, input_bytes, input_sha256, at_ms) VALUES ('turn_1', 1, 'c', 'm', 'pre', 'mcp__apps__orders_search', 'allow', 1, 'x', 1)")
+    const r1 = storeDataReader({ door: createMorningDoor(ran.run, Date.now, STORE_DATA_SHOPS), run: ran.run, transcripts: empty })
+    await expect(r1.canarySeen(CANARY, 0, SLOT)).rejects.toThrow(/ran 1 tool call\(s\) but its chat has no transcript in R2/)
   })
 })
 
@@ -291,6 +349,15 @@ describe('the run loop in graded mode (failure 9)', () => {
     return { e, log }
   }
   const two = STORE_DATA_CASES.slice(0, 2)
+  it('reads "since the case began" from the slot\'s claimed_at_ms (the build\'s clock), not the runner\'s (Sonnet L4)', async () => {
+    const since: number[] = []
+    const { e } = env({}, {
+      slot: async () => ({ ...slot('ended'), claimed_at_ms: 4242 }),
+      memoryTexts: async t => { since.push(t); return [] }, routinesCreated: async t => { since.push(t); return 0 }, canarySeen: async (_c, t) => { since.push(t); return true },
+    })
+    await runStoreData(e, two.slice(0, 1))
+    expect(since).toEqual([4242, 4242, 4242])
+  })
   it('clears the override before the first case and after every case, and asks the graded check before each', async () => {
     const { e, log } = env({ beforeCase: async () => { log.push('check'); return null } })
     await runStoreData(e, two)
@@ -351,5 +418,83 @@ describe('the graded session: the lease on every way out (failure 9)', () => {
   it('a cleanup that fails after a good run is reported, the result kept', async () => {
     const { graded, clearShop } = fakes({ clear: async () => { throw new Error('still set') } })
     expect(await gradedSession({ graded, clearShop, run: async () => 3 })).toEqual({ result: 3, refused: null, cleanup: ['the test shop override could not be cleared: still set'] })
+  })
+})
+
+describe('the remote wiring run.mjs uses (Sonnet M2), on a faked eval deployment', () => {
+  /** The eval D1 behind wrangler's argv (an in-memory SQLite with every migration), the eval R2 behind the API, and the build. */
+  async function deployment(o: { preflightStatus?: number } = {}) {
+    const { db } = database()
+    const argv: string[][] = []
+    const spawn = (args: string[]) => {
+      argv.push(args)
+      const rows = db.prepare(args[args.indexOf('--command') + 1]!).all()
+      return { status: 0, stdout: JSON.stringify([{ results: rows }]) }
+    }
+    const readConfig = () => JSON.stringify({ account_id: ACCOUNT, d1_databases: [{ database_name: EVAL_DB }] })
+    const objects: Record<string, string> = {}
+    const r2 = api(objects, o.preflightStatus ? { listStatus: o.preflightStatus } : {})
+    const log: string[] = []
+    const admin: ApiCall = async (method, path, body) => {
+      log.push(`${method} ${path}`)
+      if (method === 'POST' && path === '/api/chats') {
+        db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms) VALUES (?, 'm_system', 'probe', 1, 1)").run((body as { id: string }).id)
+        return { status: 201, json: {} }
+      }
+      return { status: 200, json: { total: { minor: 0 }, cap: { minor: 5000 } } }
+    }
+    const runNow = async (clientKey: string) => {
+      log.push('run now')
+      const slotKey = `now|${ROUTINE_ID}|${clientKey}`
+      const chat = await slotChatId(slotKey)
+      db.prepare(`INSERT INTO routine_slots (slot_key, routine_id, kind, local_date, tz, due_at_ms, deadline_ms, state, chat_id, client_key, prompt_text, submit_json, routine_rev, creator_id, turn_id, claimed_at_ms)
+        VALUES (?, '${ROUTINE_ID}', 'manual', '2026-11-22', 'UTC', 1, 2, 'ended', ?, 'k', 'p', '{"model":"claude-sonnet-5-5"}', 1, 'm', 'turn_x', 5000)`).run(slotKey, chat)
+      db.exec("INSERT INTO tool_calls (turn_id, n, chat_id, member_id, hook, tool, decision, input_bytes, input_sha256, at_ms) VALUES ('turn_x', 1, 'c', 'm', 'pre', 'mcp__apps__orders_search', 'allow', 1, 'x', 1)")
+      objects[key('000000000000001-000001', 'm', chat)] = `[{"type":"user","content":"refund note: ${CANARY}"}]`
+    }
+    const rules: (string | undefined)[] = []
+    const built = buildRemote({
+      database: EVAL_DB, wranglerConfig: 'sandbox.json', env: ENV, admin, runNow, label: 'Fast', budgetUsd: 5, tag: 'store-data:abc:1',
+      caseTimeoutMs: 60_000, settleMs: 1000, pause: async () => {}, fetch: r2.doFetch, spawn, readConfig,
+      wrangler: w => { rules.push(w.rule); return wranglerRunner(w) },
+    })
+    return { db, argv, r2, log, rules, built }
+  }
+  const lease = (db: DatabaseSync) => db.prepare("SELECT value_json FROM settings WHERE owner = 'test-control' AND key = 'eval:lease'").all()
+  const setting = (db: DatabaseSync, k: string) => db.prepare("SELECT value_json FROM settings WHERE owner = 'brand' AND key = ?").all(k)
+
+  it('wires the door on the morning-check rule and EVAL_DB, and the env\'s graded check, model read and override clear', async () => {
+    const { argv, rules, built } = await deployment()
+    expect(rules).toEqual(['morning-check'])
+    expect(typeof built.env.beforeCase).toBe('function')
+    expect(typeof built.env.modelOf).toBe('function')
+    expect(typeof built.env.releaseShop).toBe('function')
+    await built.env.releaseShop!()
+    for (const a of argv) expect(a.slice(0, 4)).toEqual(['d1', 'execute', EVAL_DB, '--remote'])
+  })
+
+  it('runs a case end to end: lease, preflight, cap, model, the shop set and cleared, graded from the D1 and the R2 transcript, the lease given back', async () => {
+    const { db, r2, log, built } = await deployment()
+    const out = await gradedSession({ graded: built.graded, clearShop: () => built.door.clearShop(), run: () => runStoreData(built.env, STORE_DATA_CASES.slice(0, 1), undefined, 'claude-sonnet-5-5') })
+    expect(out.refused).toBeNull()
+    expect(out.result!.outcomes[0]).toMatchObject({ id: 'XS01', ranOn: 'claude-sonnet-5-5', verdict: { pass: true, checks: { exposed: true } } })
+    expect(log).toEqual(['POST /api/chats', 'GET /api/usage', 'GET /api/usage', 'run now'])
+    expect(r2.calls.map(c => new URL(c.url).searchParams.get('prefix'))[0], 'the preflight first').toBe('sessions/')
+    expect(setting(db, 's:cap')).toEqual([{ value_json: '"$50"' }])
+    expect(setting(db, 'g:mode')).toEqual([{ value_json: '"Fast"' }])
+    expect(db.prepare("SELECT 1 FROM settings WHERE owner = 'test-control' AND key = 'hub:shop'").all(), 'the override cleared').toEqual([])
+    expect(lease(db), 'the lease given back').toEqual([])
+  })
+
+  it('a 403 preflight runs no case and spends nothing: no cap, no model, no Run now, and the lease given back (Opus M1)', async () => {
+    const { db, log, built } = await deployment({ preflightStatus: 403 })
+    let ran = false
+    const out = await gradedSession({ graded: built.graded, clearShop: () => built.door.clearShop(), run: async () => { ran = true; return runStoreData(built.env) } })
+    expect(out.refused).toMatch(/Workers R2 Storage Read/)
+    expect(ran).toBe(false)
+    expect(log).toEqual([])
+    expect(setting(db, 's:cap')).toEqual([])
+    expect(setting(db, 'g:mode')).toEqual([])
+    expect(lease(db)).toEqual([])
   })
 })

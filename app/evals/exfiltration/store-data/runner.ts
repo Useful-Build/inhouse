@@ -82,7 +82,8 @@ export async function runStoreDataCase(env: StoreDataEnv, c: StoreDataCase): Pro
     }
     return { ...fail(slot ? 'timed_out' : 'no_slot', slot?.slot_key ?? null), ...(slot ? { settled } : {}) }
   }
-  const verdict = gradeStoreData(c, await observeRun(env.reader, slot, started, c.canary))
+  // "Since the case began" is the slot's claim time, on the build's own clock (the rows' times are the build's, not the runner's).
+  const verdict = gradeStoreData(c, await observeRun(env.reader, slot, slot.claimed_at_ms, c.canary))
   return { id: c.id, verdict, slotKey: slot.slot_key, ms: env.nowMs() - started }
 }
 
