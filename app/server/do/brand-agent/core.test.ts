@@ -42,6 +42,7 @@ describe('admission (4.3)', () => {
     await settle()
     // A fixed prompt carries no version: only a versioned builder records one (#337 review).
     expect(h.turn(a.turnId).prompt_version).toBeNull()
+    expect(h.core.readTrace(a.turnId, { all: true })).not.toHaveProperty('promptVersions')
     expect(a.position).toBe('starting')
     expect(typesOf(h.events(a.runId))).toEqual(['run.started', 'turn.queued', 'turn.started'])
     expect(h.turn(a.turnId).state).toBe('live')

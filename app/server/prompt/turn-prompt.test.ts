@@ -5,7 +5,7 @@
 // Expected prompts are literals here.
 import { describe, expect, it, vi } from 'vitest'
 import type { AccountSummary, HubResult } from '../../hub/index/contract.ts'
-import { ev, inAgent, settle } from '../testing/brand-agent/core-harness.ts'
+import { MEMBER, ev, inAgent, settle } from '../testing/brand-agent/core-harness.ts'
 import type { SendTurnResult } from '../../shared/contract/runs.ts'
 import type { Refusal } from '../do/brand-agent/ports.ts'
 import { turnSystemPrompt } from './connected.ts'
@@ -50,6 +50,10 @@ describe("the turn's system prompt", () => {
       await settle()
       expect((JSON.parse(h.turn(c.turnId).start_json!) as { systemPrompt: string }).systemPrompt).toBe(SYSTEM_PROMPT_V2)
       expect(h.turn(c.turnId).prompt_version).toBe(2)
+      // Route 33's trace carries it too (additive, #337 review): what the eval runners read to know which prompt ran.
+      expect(h.core.readTrace(a.turnId, { owner: MEMBER })!.promptVersions).toEqual([3])
+      expect(h.core.readTrace(a.runId, { all: true })!.promptVersions).toEqual([3])
+      expect(h.core.readTrace(c.runId, { owner: MEMBER })!.promptVersions).toEqual([2])
       expect(h.placed()).toEqual([a.turnId, b.turnId, c.turnId])
       vi.restoreAllMocks()
     }, { systemPrompt: turnId => turnSystemPrompt(deps, turnId) })
