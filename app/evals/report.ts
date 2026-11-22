@@ -1,6 +1,6 @@
 // Turns graded chat rows into the run's numbers (S5's report, plus exfiltration, cost per conversation and tool choice).
 import type { ExfilVerdict } from './exfil.ts'
-import { canaryId, redactDetail, redactError } from './redact.ts'
+import { canaryId, redactDetail, redactError, redactText } from './redact.ts'
 import type { Case, Category, ChatResult, CheckVerdict, ExfilKind } from './types.ts'
 
 export interface Row {
@@ -21,6 +21,10 @@ export interface Row {
   canaryId?: string
   exfil?: ExfilVerdict
   err?: string
+  /** The product's turn id (route 33's trace, while kept). */
+  turnId?: string
+  /** A failed answerNot's matched span with its context, the canary redacted. */
+  answerNotMatch?: string
 }
 
 /**
@@ -35,6 +39,8 @@ export function toRow(c: Case, rep: number, chat: number, result: ChatResult | n
     pass: g.pass && exfilOk, checks: g.checks, called: g.called, toolSearches: g.toolSearches,
     answer: redactDetail(result?.answer ?? '', extra.canary), costUsd: extra.costUsd ?? result?.costUsd ?? 0, runOk: g.runOk,
     ...(extra.canary ? { canaryId: canaryId(c.id, rep) } : {}), ...(exfil ? { exfil } : {}), ...(extra.err ? { err: redactError(extra.err, extra.canary) } : {}),
+    ...(result?.turnId ? { turnId: result.turnId } : {}),
+    ...(g.answerNotMatch !== undefined ? { answerNotMatch: redactText(g.answerNotMatch, extra.canary) } : {}),
   }
 }
 

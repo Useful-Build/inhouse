@@ -337,3 +337,21 @@ describe('a harness failure stops the run with a report', () => {
     expect(d.length).toBeLessThanOrEqual(200)
   })
 })
+
+// The first full baseline: T09 and T11 ran against tools the product serves only as stubs. A case whose expected tool the
+// target lists as unbuilt is not run, like a case whose `needs` the target doesn't provide.
+describe('unbuilt tools and the cause of a failed run', () => {
+  it('a case expecting a tool the target serves only as a stub is not run; the rest run', async () => {
+    const t = Object.assign(createFakeTarget(), { unbuilt: new Set(['notification_send', 'routine_create']) })
+    const out = await runEvals({ target: t, cases: ['T09', 'T11', 'T01'].map((id) => CASES.find((c) => c.id === id)!), reps: 1, concurrency: 1 })
+    expect(out.notRun).toEqual([{ id: 'T09', needs: ['notification_send'] }, { id: 'T11', needs: ['routine_create'] }])
+    expect(out.rows.map((r) => r.caseId)).toEqual(['T01'])
+  })
+  it('a chat that ran but ended without an answer gets its cause and turn id on the row', async () => {
+    const t = createFakeTarget()
+    const seed = t.seed
+    t.seed = async (...a) => { const s = await seed(...a); return { ...s, chat: async () => ({ toolCalls: [], answer: '', runOk: false, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0.4, failure: 'runner_lost', turnId: 't_BBBBBBBBBBBBBBBBBBBBBB' }) } }
+    const out = await runEvals({ target: t, cases: [CASES.find((c) => c.id === 'R02')!], reps: 1, concurrency: 1 })
+    expect(out.rows[0]).toMatchObject({ runOk: false, err: 'the turn ended without an answer: runner_lost', turnId: 't_BBBBBBBBBBBBBBBBBBBBBB' })
+  })
+})

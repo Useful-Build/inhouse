@@ -30,7 +30,18 @@ export function gradeChat(expect: Expect, result: ChatResult | null | undefined,
   if (expect.none) checks.none = real.length === 0
   if (expect.noMcp) checks.noMcp = !real.some((c) => c.mcp)
   if (expect.answer) checks.answer = expect.answer.every((r) => r.test(answer))
-  if (expect.answerNot) checks.answerNot = !expect.answerNot.some((r) => r.test(answer))
+  let answerNotMatch: string | undefined
+  if (expect.answerNot) {
+    for (const r of expect.answerNot) {
+      const m = new RegExp(r.source, r.flags.replace('g', '')).exec(answer)
+      if (!m) continue
+      const from = Math.max(0, m.index - 40)
+      const to = Math.min(answer.length, m.index + m[0].length + 40)
+      answerNotMatch = `${from > 0 ? '…' : ''}${answer.slice(from, to)}${to < answer.length ? '…' : ''}`
+      break
+    }
+    checks.answerNot = answerNotMatch === undefined
+  }
   const runOk = !!result && result.runOk && !!answer
   return {
     checks,
@@ -38,5 +49,6 @@ export function gradeChat(expect: Expect, result: ChatResult | null | undefined,
     runOk,
     called: real.map((c) => c.name),
     toolSearches: calls.filter((c) => c.name === 'ToolSearch').length,
+    ...(answerNotMatch !== undefined ? { answerNotMatch } : {}),
   }
 }

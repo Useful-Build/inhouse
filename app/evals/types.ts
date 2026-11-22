@@ -85,6 +85,10 @@ export interface ChatResult {
   runOk: boolean
   usage: Usage
   costUsd: number
+  /** Why a chat that ran ended without an answer: the end row's plain cause (`runner_lost`), `error_part`, or `unknown`. */
+  failure?: string
+  /** The product's turn id, to read its trace (route 33) while it's kept. */
+  turnId?: string
 }
 
 export interface RunContext {
@@ -109,6 +113,11 @@ export interface Target {
   readonly people: People
   /** Tool families this target can serve (`shop`, `mail`, `routines`); a case needing another is not run. */
   readonly provides: ReadonlySet<string>
+  /**
+   * Tools this target serves only as a `not_available_yet` stub (short names). A case expecting one is not run, like a
+   * case whose `needs` it doesn't provide: it could only fail, and it spends.
+   */
+  readonly unbuilt?: ReadonlySet<string>
   /** False for a case this target has no way to serve (the fixture target holds only S5's runs). */
   canRun?(c: Case): boolean
   /** Why this target can't grade the case (a field its API doesn't show), or null when it can. Such a case isn't run: it's listed as not graded. */
@@ -142,4 +151,6 @@ export interface CheckVerdict {
   runOk: boolean
   called: string[]
   toolSearches: number
+  /** A failed answerNot's matched span with up to 40 characters around it (the excerpt can't show where it was). */
+  answerNotMatch?: string
 }

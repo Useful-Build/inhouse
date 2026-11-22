@@ -716,3 +716,50 @@ describe('refused calls in errors', () => {
     await expect(make(srv, new FakeDoor(), { fetch: json }).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(/^sign in as the eval person current: 401 unauthorized$/)
   })
 })
+
+// The first full baseline (inhouse-ops run 44971615417): four failures traced to the harness. Ways it could fail, written
+// down first:
+//  X01: a turn that ends with no answer is a row with runOk false and no cause, and no turn id to read its trace by;
+//  T04: a seeded fact's id in a tool's input is the product's own (mem_...), so an args check on the seed's id can never
+//       pass; and a brand fact can't be forgotten by the agent (forgetOwn: only an admin, in Settings);
+//  T09, T11: a case whose expected tool the product serves only as its not_available_yet stub runs, spends and fails.
+describe('the baseline\'s harness faults', () => {
+  it('X01: an ended turn with no answer carries the end row\'s cause and the turn id; free text is never the cause', async () => {
+    for (const [endRow, cause] of [[{ failure: 'runner_lost' }, 'runner_lost'], [{ why: 'deadline' }, 'deadline'], [{ failure: '<html>Ray ID 1</html>' }, 'unknown'], [{}, 'unknown']] as const) {
+      const session = await make(server({ endRow, answerParts: [] }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
+      const res = await session.chat('hi')
+      expect(res, JSON.stringify(endRow)).toMatchObject({ runOk: false, answer: '', failure: cause, turnId: 't_BBBBBBBBBBBBBBBBBBBBBB' })
+    }
+  })
+  it('X01: an answer that is an error part names it as the cause', async () => {
+    const session = await make(server({ answerParts: [{ type: 'error', text: 'model overloaded at https://x.example.test' }] }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
+    expect(await session.chat('hi')).toMatchObject({ runOk: false, failure: 'error_part', turnId: 't_BBBBBBBBBBBBBBBBBBBBBB' })
+  })
+  it('T04: a seeded fact\'s product id in a tool\'s input reads as the seed\'s id', async () => {
+    const srv = server()
+    const door = new FakeDoor()
+    const session = await make(srv, door).seed([{ memoryId: 'm_moss', fact: 'The Moss glaze mug is our bestseller.', scope: 'person' }], { caseId: 'T04', rep: 1, canary: 'c' })
+    const productId = door.rowsNow[0]!.id
+    expect(productId).not.toBe('m_moss')
+    srv.s.steps = [{ kind: 'tool', detail: 'mcp__inhouse__memory_forget', io: { input: JSON.stringify({ memory_id: productId }) } }]
+    const res = await session.chat('Forget it')
+    expect(res.toolCalls).toEqual([{ name: 'mcp__inhouse__memory_forget', input: { memory_id: 'm_moss' } }])
+  })
+  it('T04: the case seeds a fact the eval person owns (the agent\'s memory_forget forgets only the person\'s own)', () => {
+    const t04 = kase('T04')
+    expect(t04.seed).toEqual([{ memoryId: 'm_moss', fact: 'The Moss glaze mug is our bestseller.', scope: 'person', person: 'current' }])
+    const memoryTools = readFileSync(new URL('../server/mcp/tools/memory/index.ts', import.meta.url), 'utf8')
+    expect(memoryTools).toMatch(/storeOf\(deps\)\.forgetOwn\(/)
+    expect(memoryTools).toMatch(/only an admin can forget those/)
+  })
+  it('T09, T11: the product target names the tools it serves only as stubs, exactly what the server composes', async () => {
+    // Loaded by path at run time: a literal specifier would pull the server's module graph into evals/'s type project,
+    // which has no Worker Env (typecheck fails on server/api). The test still reads the server's real composition.
+    const root = '../server/mcp/tools/'
+    const { TOOL_HANDLERS } = (await import(/* @vite-ignore */ `${root}index.ts`)) as { TOOL_HANDLERS: ReadonlyMap<string, unknown> }
+    const { handlers: stubs } = (await import(/* @vite-ignore */ `${root}stubs/index.ts`)) as { handlers: Record<string, unknown> }
+    const fromServer = [...TOOL_HANDLERS.entries()].filter(([n, h]) => stubs[n] === h).map(([n]) => n).sort()
+    expect(fromServer.length).toBeGreaterThan(0)
+    expect([...make(server(), new FakeDoor()).unbuilt!].sort()).toEqual(fromServer)
+  })
+})

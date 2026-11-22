@@ -63,6 +63,22 @@ export function accessHeaders(env: Record<string, string | undefined>): Record<s
   return { 'CF-Access-Client-Id': id, 'CF-Access-Client-Secret': secret }
 }
 
+/**
+ * The tools the product serves only as its `not_available_yet` stub (server/mcp/tools/stubs, P4-P6): a case expecting
+ * one is not run. product.test.ts keeps this equal to the server's own composition (TOOL_HANDLERS), so a phase that
+ * builds one fails that test until it's taken off here.
+ */
+export const PRODUCT_UNBUILT_TOOLS: ReadonlySet<string> = new Set([
+  'approval_request', 'approval_get', 'approval_list', 'approval_withdraw',
+  'question_ask',
+  'routine_create', 'routine_list', 'routine_update', 'routine_delete', 'routine_run_now',
+  'notification_send',
+  'team_request_create', 'team_request_list',
+])
+
+/** A turn's end cause as a plain code (`runner_lost`), or `unknown`: never free text into a row. */
+const plainCause = (v: unknown): string => (typeof v === 'string' && /^[a-z_]{1,40}$/.test(v) ? v : 'unknown')
+
 /** The eval deployment's D1 database name and the sandbox wrangler config that binds it (door.ts). */
 export const EVAL_D1_NAME = 'INHOUSE_EVAL_D1_NAME'
 export const EVAL_WRANGLER_CONFIG = 'INHOUSE_EVAL_WRANGLER_CONFIG'
@@ -112,6 +128,11 @@ export function unobservableReason(c: Case): string | null {
 
 interface TraceStep { kind: string; detail: string; io?: { input: string; cut?: true; denied?: true } }
 /** A `tool` step as a call: its kept input parsed, a cut (or unparsable) input as `{}` marked `inputCut`, a denial as `hookDenied`. */
+/** A tool input with every string that is a seeded fact's product id replaced by the seed's id (top-level values). */
+export function seedIds(input: Record<string, unknown>, seedOf: (productId: string) => string | undefined): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).map(([k, v]) => [k, typeof v === 'string' ? (seedOf(v) ?? v) : v]))
+}
+
 export function callOfStep(s: TraceStep): ToolCall {
   let input: Record<string, unknown> = {}
   let cut = s.io?.cut === true
@@ -243,6 +264,7 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     people,
     // P3 builds none of the shop and mail connectors or routines: the cases that need them report as not run (phase P4/P5).
     provides: new Set<string>(),
+    unbuilt: PRODUCT_UNBUILT_TOOLS,
     unobservable: unobservableReason,
     spentUsd: () => spentTotal,
     room,
@@ -383,6 +405,7 @@ function productSession(d: SessionDeps): Session {
       // The turn has ended once its answer is stored: the projection writes a turn's messages in one batch when it ends.
       let answer = ''
       let sawError = false
+      let failure: string | undefined
       for (;;) {
         if (o?.signal?.aborted) throw new Error('the chat was aborted')
         const page = await d.api('current', 'GET', `/api/chats/${chatId}`, { signal: o?.signal })
@@ -394,11 +417,13 @@ function productSession(d: SessionDeps): Session {
         const mine = messages.filter((m) => m.role === 'agent' && m.turnId === turnId).sort((a, b) => a.pos - b.pos)
         if (mine.length === 0 && end) {
           sawError = true
+          failure = plainCause(end.failure ?? end.why)
           break
         }
         if (mine.length > 0) {
           answer = mine.filter((m) => m.part?.type === 'text').map((m) => m.part!.text ?? '').join('\n\n')
           sawError = mine.some((m) => m.part?.type === 'error')
+          if (sawError) failure = 'error_part'
           break
         }
         await d.sleep(d.pollMs)
@@ -422,10 +447,13 @@ function productSession(d: SessionDeps): Session {
           // The call left no row: the product refused it (personal data, a conflict) or it failed. Seen from the rows, not the tool's reply.
           return { name: n, input: {}, result: 'Not saved: no row was written (seen from the brand\'s memory rows, not the tool\'s reply)', isError: true }
         }
-        return callOfStep(s)
+        // A seeded fact's product id reads as the seed's id (T04: the case's args name `m_moss`).
+        const c = callOfStep(s)
+        return { ...c, input: seedIds(c.input, (id) => d.real.get(id)) }
       })
       for (const w of writes) if (!used.has(w)) toolCalls.push(w)
-      return { toolCalls, answer, runOk: answer !== '' && !sawError, usage: ZERO, costUsd }
+      const runOk = answer !== '' && !sawError
+      return { toolCalls, answer, runOk, usage: ZERO, costUsd, turnId, ...(runOk ? {} : { failure: failure ?? 'unknown' }) }
     },
     async settledCostUsd() {
       return bookCost()

@@ -158,3 +158,19 @@ describe('every rule of an expectation can fail (literal negative fixtures)', ()
     expect(gradeChat(byId.N08!.chats[0]!.expect, call('WebFetch'), S5_PEOPLE).pass).toBe(true)
   })
 })
+
+// R11 in the first full baseline failed answerNot, and the 80-character excerpt couldn't show where. The verdict keeps the
+// matched span with some context, so a lookback ("the last 30 days") can be told from an invented lead time.
+describe('answerNot keeps what it matched', () => {
+  const expect11 = { tool: 'memory_search', answerNot: [/\b\d+\s*(weeks?|days?)\b/i] } as Expect
+  const result = (answer: string) => ({ toolCalls: [{ name: 'mcp__inhouse__memory_search', input: {} }], answer, runOk: true, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0 })
+  it('a failed answerNot names the span and up to 40 characters around it', () => {
+    const long = `I couldn't find a standard lead time for the cotton tote bags. I checked saved memory and our chats from the last 30 days, and nothing mentions totes.`
+    const g = gradeChat(expect11, result(long), S5_PEOPLE)
+    expect(g.checks.answerNot).toBe(false)
+    expect(g.answerNotMatch).toBe('…aved memory and our chats from the last 30 days, and nothing mentions totes.')
+  })
+  it('no match, no span', () => {
+    expect(gradeChat(expect11, result('Nothing saved about totes.'), S5_PEOPLE).answerNotMatch).toBeUndefined()
+  })
+})
