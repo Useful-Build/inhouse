@@ -28,6 +28,8 @@ export const AuditActionSchema = z.enum([
   'routine.created', 'routine.updated', 'routine.enabled', 'routine.deleted', 'routine.restored', 'routine.run_now',
   'library.uploaded', 'library.deleted', 'library.restored',
   'today.set_aside',
+  // P8a R: an admin confirmed a restore once its audit re-append and deletion-log replay were done (ops/backup/reconcile).
+  'restore.confirmed',
 ])
 export type AuditAction = z.infer<typeof AuditActionSchema>
 
@@ -118,6 +120,9 @@ const settingChanged = line('setting.changed', {
   redacted: RedactedValueSchema.optional(),
 })
 
+/** A backup's or a restore's id (ops/backup/backup.ts `timeId`): `<yyyymmdd>T<hhmmssSSS>Z-<8 hex>`. */
+const RestoreIdSchema = z.string().regex(/^\d{8}T\d{9}Z-[0-9a-f]{8}$/)
+
 const otherLines = [
   line('member.invited', { ...member, role: MemberRoleSchema }),
   line('member.reinvited', { ...member, role: MemberRoleSchema }),
@@ -172,6 +177,8 @@ const otherLines = [
   line('library.restored', { fileIds: FileIdsSchema }),
   /** `reason: null`: the item was put back (a snooze or a dismissal undone). */
   line('today.set_aside', { itemId: TodayItemIdSchema, reason: z.enum(['snoozed', 'dismissed', 'declined']).nullable() }),
+  // P8a R. The restore's and the backup's ids only (`timeId`: a UTC stamp and 8 hex characters), never a row of either.
+  line('restore.confirmed', { restoreId: RestoreIdSchema, backupId: RestoreIdSchema }),
 ] as const
 
 /**

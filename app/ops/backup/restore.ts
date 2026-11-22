@@ -9,8 +9,9 @@
 //  6. write the restore record, whatever the outcome.
 // The target is never the live database: the audit log's triggers refuse every DELETE, so it can't be cleared, and
 // pointing the deployment at the restored database is the runbook's step. The restore writes no audit line: the
-// record is its record, and F1's reconcile (audit re-append, deletion-log replay, outbox hold, the admin's confirm)
-// decides whether it gets one. Success is `restored_unreconciled`, never done.
+// record is its record. Success here is `restored_unreconciled`, never done: P8a R's reconcile
+// (ops/backup/reconcile/) appends the audit lines back (step 3), leaves step 4 to P8b (the outbox hold), replays the
+// deletion log (step 5), and only an admin's audited confirm makes it `restored`.
 import { backupManifestKey, backupPartKey, restoreKey } from '../../server/db/r2-keys.ts'
 import type { At } from '../../server/db/members.ts'
 import { tables as realRegistry } from '../tables/index.ts'
@@ -31,6 +32,12 @@ export interface RestoreDeps {
   live: D1Database | 'unreadable'
   backupId: string
   at: At
+  /**
+   * Each Durable Object's recovery time, from the runbook's point-in-time recovery (`getBookmarkForTime` then
+   * `onNextSessionRestoreBookmark`, https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/, read
+   * 2026-11-22). One not rewound gives the restore's own time. Each name is a `do` entry of the registry, once.
+   */
+  durableObjects?: readonly { name: string; recoveredAtMs: number }[]
   registry?: readonly TableEntry[]
   /** The cursor resets to run on the target after a proven write; default `RESET_AFTER_RESTORE`. */
   resetAfterRestore?: readonly ResetHook[]
@@ -71,11 +78,22 @@ const TARGET_ROWS_CHECKED = 1_000
  * backup's (its times are the migration's), so the write overwrites it with the backup's values instead of refusing.
  * Any other row in the target still refuses (`seeded_row_differs`, `target_not_empty`). 0005's service rows aren't
  * listed: they never change, so they match the backup's and are skipped. `key` is the row's primary key, in order.
+ * `pristine` (P8a R, C1 review L1): the target's row is overwritten only while it's still the migration's own (each
+ * named column holds that value); a row the target has used since refuses `seeded_row_differs` like any other.
  */
-export const SEEDED_ROWS: readonly { table: string; key: readonly (string | number)[]; migration: string }[] = [
-  { table: 'routines', key: ['routine-morning-check'], migration: '0221_morning_check.sql' },
+export const SEEDED_ROWS: readonly { table: string; key: readonly (string | number)[]; migration: string; pristine: Readonly<Record<string, string | number | null>> }[] = [
+  { table: 'routines', key: ['routine-morning-check'], migration: '0221_morning_check.sql', pristine: { rev: 1, last_slot_key: null } },
 ]
-const seededKey = (table: string, pk: string) => SEEDED_ROWS.some(r => r.table === table && JSON.stringify(r.key) === pk)
+/** Whether the target's row (an encoded line) is a named seeded row the migration left as it was. */
+function pristineSeed(t: TableManifest, pk: string, targetLine: string): boolean {
+  const seed = SEEDED_ROWS.find(r => r.table === t.name && JSON.stringify(r.key) === pk)
+  if (!seed) return false
+  const cells = JSON.parse(targetLine) as unknown[]
+  return Object.entries(seed.pristine).every(([col, value]) => {
+    const i = t.columns.indexOf(col)
+    return i >= 0 && cells[i] === value
+  })
+}
 
 async function listAll(bucket: R2Bucket, prefix: string): Promise<R2Object[]> {
   const out: R2Object[] = []
@@ -190,7 +208,7 @@ async function checkParts(bucket: R2Bucket, manifest: BackupManifest, existing: 
         const there = inTarget.get(pk)
         if (there === undefined) continue
         if (there === line) matched.add(line)
-        else if (seededKey(t.name, pk)) replaced.add(pk)
+        else if (pristineSeed(t, pk, there)) replaced.add(pk)
         else differs.push(t.name)
       }
     }
@@ -243,6 +261,12 @@ export async function restore(deps: RestoreDeps): Promise<RestoreRecord> {
   try {
     // The target is never the live database (its audit log can't be cleared, and the write would land on top of it).
     if (live !== 'unreadable' && target === live) throw new RestoreRefusal('target_is_live')
+    const doNames = (deps.durableObjects ?? []).map(d => d.name)
+    for (const d of deps.durableObjects ?? []) {
+      if (!registry.some(e => e.kind === 'do' && e.name === d.name)) throw new RestoreRefusal('durable_objects_invalid', `${d.name}: not a registered Durable Object`)
+      if (!Number.isSafeInteger(d.recoveredAtMs) || d.recoveredAtMs < 0) throw new RestoreRefusal('durable_objects_invalid', `${d.name}: recoveredAtMs`)
+    }
+    if (new Set(doNames).size !== doNames.length) throw new RestoreRefusal('durable_objects_invalid', 'a name given twice')
 
     // 1. The snapshot, before anything is written anywhere.
     try { snapshot = await takeSnapshot(bucket, live, restoreId, at.nowMs) } catch (err) { throw new RestoreFailure(`snapshot_failed: ${messageOf(err)}`) }
@@ -352,11 +376,12 @@ export async function restore(deps: RestoreDeps): Promise<RestoreRecord> {
         derived: (m?.derived ?? []).map(d => ({ ...d, state: 'rebuild_needed' as const })) },
       resets,
       r2: { prefixes, missingPhotoKeys },
-      durableObjects: [],
-      // The earliest of the D1 point and every Durable Object recovery time; on P2 there are no Durable Objects.
-      watermarkMs: m?.takenAtMs ?? null,
+      durableObjects: status === 'refused' || status === 'failed' ? [] : (deps.durableObjects ?? []).map(d => ({ name: d.name, recoveredAtMs: d.recoveredAtMs })),
+      // The earliest of the D1 point and every Durable Object recovery time.
+      watermarkMs: m ? Math.min(m.takenAtMs, ...(status === 'refused' || status === 'failed' ? [] : (deps.durableObjects ?? []).map(d => d.recoveredAtMs))) : null,
       snapshot,
       reconciled: false,
+      reconcile: null,
     })
     await bucket.put(restoreKey(restoreId, 'record.json'), JSON.stringify(record), json)
   }
