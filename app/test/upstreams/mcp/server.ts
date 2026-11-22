@@ -178,6 +178,8 @@ export class FakeMcpServer {
   headerMetadata = true
   /** Retry-After (seconds) on a rate-limited refresh. */
   retryAfterS = 30
+  /** Lifetime of a rotation token (`expires_in`), seconds: a short one makes the hub's proactive refresh due at half of it. */
+  expiresInS = 43_200
   /** Overrides the AS metadata's `issuer` (RFC 8414 section 3.3 mismatch). */
   asIssuer: string | null = null
   /** `notes_export` is listed from this `tools/list` call on (deterministic "added mid-test"). */
@@ -335,7 +337,7 @@ export class FakeMcpServer {
   #issue(clientId: string, user: string, team: string, scopes: string[]): string {
     const access = this.#id(this.profile === 'slack' ? 'xoxp-test-' : 'notes-at-')
     const refresh = this.rotation ? this.#id(this.profile === 'slack' ? 'xoxe-test-' : 'notes-rt-') : null
-    this.tokens.set(access, { clientId, user, team, scopes, expiresAtMs: this.rotation ? this.now() + 43_200_000 : null, revoked: false, refresh })
+    this.tokens.set(access, { clientId, user, team, scopes, expiresAtMs: this.rotation ? this.now() + this.expiresInS * 1000 : null, revoked: false, refresh })
     if (refresh) this.refreshes.set(refresh, { clientId, access, used: false, sends: 0 })
     issued.add(access)
     return access
@@ -343,7 +345,7 @@ export class FakeMcpServer {
 
   #tokenAnswer(access: string): Response {
     const t = this.tokens.get(access)!
-    const extra = t.refresh ? { refresh_token: t.refresh, expires_in: 43_200 } : {}
+    const extra = t.refresh ? { refresh_token: t.refresh, expires_in: this.expiresInS } : {}
     if (this.profile === 'slack') {
       return json({ ok: true, access_token: access, token_type: 'Bearer', user_id: t.user, app_id: 'A0TEST0001', team: { id: t.team }, scope: t.scopes.join(','), ...extra })
     }

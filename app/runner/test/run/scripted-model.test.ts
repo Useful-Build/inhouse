@@ -35,7 +35,10 @@ const memoryReq = (messages: Msg[]) =>
 /** A main-loop request with the memory search tool in its list, as `memory-recall` expects. */
 const recallReq = (messages: Msg[]) =>
   req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__memory_search' }] })
-const mainFor = (name: string) => (name.startsWith('structured') ? structuredReq : name.startsWith('webfetch') ? webReq : name.startsWith('memory-save') ? memoryReq : name.startsWith('memory-recall') ? recallReq : mainReq)
+/** A main-loop request with the first connector tool in its list, as `connectors` expects. */
+const connectorsReq = (messages: Msg[]) =>
+  req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'mcp__apps__slack_search_public' }] })
+const mainFor = (name: string) => (name === 'connectors' ? connectorsReq : name.startsWith('structured') ? structuredReq : name.startsWith('webfetch') ? webReq : name.startsWith('memory-save') ? memoryReq : name.startsWith('memory-recall') ? recallReq : mainReq)
 const convo = (assistants: number) => [{ role: 'user' as const, content: 'q' }, ...Array.from({ length: assistants }, () => [{ role: 'assistant' as const, content: 'a' }, { role: 'user' as const, content: 'r' }]).flat()]
 
 const turn = (i: number): ScriptedTurn => ({ content: [{ type: 'text', text: `turn ${i}` }] })
