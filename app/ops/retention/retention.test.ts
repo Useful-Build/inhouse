@@ -7,7 +7,7 @@
 //  6. an unknown store, a period for a non-retention store or a missing period or rule passes silently.
 // The test brings its own `retention_period` stores: a fixture table and prefix with their entries and rules, passed
 // in as arguments beside P2's and P8's entries. C1's stores (P3 and P4's) have their own rules and tests
-// (rules.test.ts); their custom rules refuse to plan until C1's jobs land, so the real registry refuses by name.
+// (rules.test.ts, ops/coverage); outside the BrandAgent its job refuses, so the real registry refuses by name there.
 import { fc, test } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -149,11 +149,11 @@ describe('what retention refuses (failures 2, 4, 6)', () => {
     await expect(runRetention(deps(BASE), forged)).rejects.toThrow(/only from a plan/)
   })
 
-  it('on P2\'s and P8\'s stores, plans nothing; on the real registry, refuses C1\'s custom rules by name', async () => {
+  it('on P2\'s and P8\'s stores, plans nothing; on the real registry outside the BrandAgent, refuses its job by name', async () => {
     const at = { actorId: SYSTEM_MEMBER_ID, requestId: 'r', nowMs: BASE }
     const plan = await planRetention({ db, bucket, at, registry: [...coreTables, ...p8Tables] }, { periods: {} })
     expect(plan.counts).toEqual({})
     expect(plan.cutoffs).toEqual([])
-    await expect(planRetention({ db, bucket, at }, { periods: periodsFor(tables) })).rejects.toThrow(/rule is custom/)
+    await expect(planRetention({ db, bucket, at }, { periods: periodsFor(tables) })).rejects.toThrow(/runs only inside the object/)
   })
 })

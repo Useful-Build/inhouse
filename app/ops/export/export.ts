@@ -6,9 +6,13 @@
 // one of the entry's person keys equals the id, and every object under its `<memberId>` pattern; another person's
 // account row that only references them (members.invited_by) is cut to its key columns, so a person's export never
 // holds another person's name or email. Export removes nothing, so it doesn't log.
+// C1: a person's chats go whole (the chat cascade's scope): every message in their chats (the agent's answers too), the
+// chats' tool calls, files and file bytes, matched by the chat's owner rather than by a person key. Never a transcript,
+// a Durable Object row or a derived index row (none of them is `export: true`).
 // R2 list and get: https://developers.cloudflare.com/r2/api/workers/workers-api-reference/ (read 2026-11-20)
 import { all, first, stmt } from '../../server/db/sql.ts'
 import type { SqlValue } from '../../server/db/sql.ts'
+import { chatFilesPrefix } from '../../server/db/r2-keys.ts'
 import { ident, isMemberId, listAll, personPrefix, readObject, registryOf } from '../delete/r2.ts'
 import type { JobDeps } from '../delete/r2.ts'
 import type { TableEntry } from '../tables/types.ts'
@@ -55,6 +59,16 @@ export function personFilter(entry: TableEntry, memberId: string): { where: stri
   return parts.length === 0 ? null : { where: parts.map(p => `(${p})`).join(' OR '), params }
 }
 
+/** C1: the stores whose person export is the person's own chats', by the chat column. */
+const CHAT_SCOPED: Readonly<Record<string, string>> = { chat_messages: 'chat_id', tool_calls: 'chat_id', chat_files: 'chat_id' }
+const OWN_CHATS = 'SELECT id FROM chats WHERE owner_id = ?'
+
+/** A D1 entry's rows for one person: their chats' rows for a chat-scoped store, else `personFilter`. */
+function personScope(entry: TableEntry, memberId: string): { where: string; params: SqlValue[] } | null {
+  const column = CHAT_SCOPED[entry.name]
+  return column === undefined ? personFilter(entry, memberId) : { where: `${ident(column)} IN (${OWN_CHATS})`, params: [memberId] }
+}
+
 /** The plain-column person keys (members: id, invited_by). */
 const plainKeys = (entry: TableEntry) => entry.personKeys.filter(k => !k.includes(':') && !k.endsWith('_json'))
 
@@ -77,15 +91,21 @@ function included(registry: readonly TableEntry[]): TableEntry[] {
   })
 }
 
-/** The objects one store contributes: all of them (brand), or those under the person's pattern. */
-async function objectsOf(bucket: JobDeps['bucket'], entry: TableEntry, scope: ExportScope): Promise<R2Object[]> {
+/** The objects one store contributes: all of them (brand), those of the person's chats (`files/`), or those under the person's pattern. */
+async function objectsOf(db: D1Database, bucket: JobDeps['bucket'], entry: TableEntry, scope: ExportScope): Promise<R2Object[]> {
   if (scope.kind === 'brand') return listAll(bucket, entry.name)
+  if (entry.name === 'files/') {
+    const chats = await all<{ id: string }>(db, stmt(`${OWN_CHATS} ORDER BY id`, scope.memberId))
+    const out: R2Object[] = []
+    for (const c of chats) out.push(...await listAll(bucket, chatFilesPrefix(c.id)))
+    return out
+  }
   const prefix = personPrefix(entry, scope.memberId)
   return prefix === null ? [] : listAll(bucket, prefix)
 }
 
 async function countRows(db: D1Database, entry: TableEntry, scope: ExportScope): Promise<number> {
-  const filter = scope.kind === 'person' ? personFilter(entry, scope.memberId) : { where: '1', params: [] }
+  const filter = scope.kind === 'person' ? personScope(entry, scope.memberId) : { where: '1', params: [] }
   if (filter === null) return 0
   const r = await first<{ n: number }>(db, stmt(`SELECT COUNT(*) AS n FROM ${ident(entry.name)} WHERE ${filter.where}`, ...filter.params))
   if (!r) throw new Error(`export: no count from ${entry.name}`)
@@ -103,7 +123,7 @@ export async function planExport(deps: JobDeps, scope: ExportScope): Promise<{ o
   }
   const counts: Record<string, number> = {}
   for (const e of included(registry)) {
-    counts[e.name] = e.kind === 'd1' ? await countRows(deps.db, e, scope) : (await objectsOf(deps.bucket, e, scope)).length
+    counts[e.name] = e.kind === 'd1' ? await countRows(deps.db, e, scope) : (await objectsOf(deps.db, deps.bucket, e, scope)).length
   }
   const plan: ExportPlan = Object.freeze({ scope: Object.freeze({ ...scope }), atMs: deps.at.nowMs, registry: Object.freeze([...registry]), counts: Object.freeze(counts) })
   issued.add(plan)
@@ -130,7 +150,7 @@ async function* lines(deps: JobDeps, plan: ExportPlan, pageSize: number): AsyncG
   for (const entry of included(plan.registry)) {
     counts[entry.name] = 0
     if (entry.kind === 'd1') {
-      const filter = scope.kind === 'person' ? personFilter(entry, scope.memberId) : { where: '1', params: [] }
+      const filter = scope.kind === 'person' ? personScope(entry, scope.memberId) : { where: '1', params: [] }
       if (filter === null) continue
       const pk = await primaryKey(db, entry.name)
       // Another person's account row that only references this one: its key columns only.
@@ -159,7 +179,7 @@ async function* lines(deps: JobDeps, plan: ExportPlan, pageSize: number): AsyncG
         last = pk.cols.map(c => end[c] as SqlValue)
       }
     } else {
-      for (const obj of await objectsOf(bucket, entry, scope)) {
+      for (const obj of await objectsOf(db, bucket, entry, scope)) {
         const { bytes, contentType } = await readObject(bucket, obj.key)
         counts[entry.name]++
         yield { store: entry.name, key: obj.key, contentType, size: bytes.byteLength, base64: base64(bytes) }
