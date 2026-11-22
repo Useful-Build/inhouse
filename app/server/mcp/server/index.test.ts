@@ -28,7 +28,9 @@ const THE_20 = [
 const THE_6 = ['memory_search', 'memory_save', 'approval_request', 'question_ask', 'history_search', 'notification_send']
 const BUILT = ['memory_search', 'memory_save', 'memory_update', 'memory_forget', 'memory_list', 'history_search', 'history_read',
   // P4 W2: the routine tools.
-  'routine_create', 'routine_list', 'routine_update', 'routine_delete', 'routine_run_now']
+  'routine_create', 'routine_list', 'routine_update', 'routine_delete', 'routine_run_now',
+  // P6a W3: the Inhouse team tools.
+  'team_request_create', 'team_request_list']
 
 const post = (body: string, headers: Record<string, string> = {}, scope = SCOPE) =>
   handleMcp(new Request('http://egress.internal/mcp/', { method: 'POST', body, headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...headers } }), scope, { db, now: () => NOW })

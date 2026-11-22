@@ -23,7 +23,7 @@ import type { RunFrame } from '../../shared/contract/run-event'
 export type { Stage, StageIndex, Scenario, Effort, AgentErrorCode, ErrorReason, ResourceKey, ResourceStatus, Instant, Money, ClockTime, Prose } from '../../shared/contract/common'
 export type { AgentMeta } from '../../shared/contract/meta'
 /** The lists the agent's work fills, which `refresh` reads again (the resource each shows by). */
-export type RefreshList = Extract<ResourceKey, 'library' | 'problems' | 'activity' | 'notifications'>
+export type RefreshList = Extract<ResourceKey, 'library' | 'problems' | 'activity' | 'notifications' | 'requests'>
 export type { ProblemSource, ProblemFact, Draft, DraftItem, Problem } from '../../shared/contract/problem'
 export type { ToolDetail, CatalogTool, ToolChannel, ToolSetup, ToolsData } from '../../shared/contract/tools'
 export type { RoutineDef, RoutineRun } from '../../shared/contract/routine'

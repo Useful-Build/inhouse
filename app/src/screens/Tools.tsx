@@ -1,6 +1,7 @@
 // Tools list and the single tool page.
 import { cn } from '@/lib/utils'
-import { agent } from '../agent'
+import { agent, demo } from '../agent'
+import { askForTool } from '../lib/product-flow'
 import { keepUnitsTogether } from '../agent/clock'
 import { STAGE_TAGS, toolCounts, toolDetail, toolView } from '../state/derive'
 import type { ToolState } from '../state/derive'
@@ -147,8 +148,12 @@ export function Tools() {
           const locked = S < need
           const req = !!st.requestedTools[c.k]
           const ask = () => {
-            agent.requestTool(c.k, true)
-            showToast(`Request sent to your Inhouse team: connect ${c.name}`, { undo: () => { agent.requestTool(c.k, false); clearToast() } })
+            // The product says "sent" once the server has it; a refusal is told by the client and shows no toast.
+            askForTool({
+              product: demo === null,
+              request: () => agent.requestTool(c.k, true),
+              say: () => showToast(`Request sent to your Inhouse team: connect ${c.name}`, { undo: () => { agent.requestTool(c.k, false); clearToast() } }),
+            })
           }
           return (
             <div key={c.k} className="flex items-center gap-3.5 rounded-xl p-3">

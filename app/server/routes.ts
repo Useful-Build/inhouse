@@ -26,6 +26,7 @@ import { drainState, startDrain, undrain } from './ops/drain.ts'
 // P4 W2 (p4-w2.md section 9): the Routines page's routes.
 import { deleteRoutine, listRoutines, restoreRoutine, runRoutineNow, setRoutineEnabled } from './api/routines.ts'
 import { listSkills } from './api/skills.ts'
+import { createTeamRequest, listTeamRequests, setTeamRequestStatus, withdrawTeamRequest } from './api/team-requests.ts'
 import { alarmNow } from './ops/alarm-now.ts'
 import { warmup } from './ops/warmup.ts'
 import { reviveTask } from './ops/revive.ts'
@@ -105,12 +106,6 @@ export async function reportClientError(request: Request): Promise<Response> {
     default: return res
   }
 }
-
-/**
- * P6a PR0: rows 79 to 83 answer 404 `not_found` (as before they existed) until W3 replaces this with its
- * handlers. PR0 imports nothing from a worker.
- */
-const p6aNotYet: Handler = async () => apiError('not_found')
 
 /** One route per access-matrix row, in the table's order (the row numbers of p2-design section 3). */
 export const routes: readonly Route[] = [
@@ -193,10 +188,10 @@ export const routes: readonly Route[] = [
   /* 78 */ { method: 'PUT', pattern: '/api/memory/brand/:id/approved', handler: approveBrandMemory },
   // W3: the skills list and team requests.
   /* 79 */ { method: 'GET', pattern: '/api/skills', handler: listSkills },
-  /* 80 */ { method: 'GET', pattern: '/api/team-requests', handler: p6aNotYet },
-  /* 81 */ { method: 'POST', pattern: '/api/team-requests', handler: p6aNotYet },
-  /* 82 */ { method: 'PUT', pattern: '/api/team-requests/:id/status', handler: p6aNotYet },
-  /* 83 */ { method: 'PUT', pattern: '/api/team-requests/:id/withdrawn', handler: p6aNotYet },
+  /* 80 */ { method: 'GET', pattern: '/api/team-requests', handler: listTeamRequests },
+  /* 81 */ { method: 'POST', pattern: '/api/team-requests', handler: createTeamRequest },
+  /* 82 */ { method: 'PUT', pattern: '/api/team-requests/:id/status', handler: setTeamRequestStatus },
+  /* 83 */ { method: 'PUT', pattern: '/api/team-requests/:id/withdrawn', handler: withdrawTeamRequest },
 ]
 
 /** The route for this method and path, with its params, or null (404 `not_found`). */

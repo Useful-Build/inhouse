@@ -38,7 +38,11 @@ export type ApproveResult = z.infer<typeof ApproveResultSchema>
  * is where it stands ("Live by", "Sent") and `statusAt` the date that goes with it. Shown as
  * "New tool · asked by Priya, Nov 9" and "Live by Fri, Nov 20".
  */
-export const TeamRequestSchema = z.object({ icon: z.string(), title: z.string(), sub: z.string(), at: InstantSchema, status: z.string(), statusAt: InstantSchema.optional() })
+export const TeamRequestSchema = z.object({
+  icon: z.string(), title: z.string(), sub: z.string(), at: InstantSchema, status: z.string(), statusAt: InstantSchema.optional(),
+  /** The product's real client sends these two (the team window fills them); the mock ignores them. */
+  kind: z.enum(['tool', 'job', 'change', 'bug', 'feedback']).optional(), text: z.string().optional(),
+})
 export type TeamRequest = z.infer<typeof TeamRequestSchema>
 
 /** When and by whom something was done: `at` on the agent's clock, `by` the member's id. */
