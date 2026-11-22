@@ -706,6 +706,17 @@ describe('(P4) the eval deployment\'s own hub (failures 12 and 13)', () => {
       expect(r.status).toBe(0)
     }
   })
+  // #337 round 2 (Sonnet): the real app/wrangler.eval.jsonc's services, as the ops repo renames their service to the eval
+  // hub, pass the eval lock, so the fixtures above can't drift from the file the eval deployment is built from.
+  test('app/wrangler.eval.jsonc\'s services (the service renamed to the eval hub, as ops does) pass the eval lock', () => {
+    const real = JSON.parse(stripJsonc(readFileSync(fileURLToPath(new URL('../wrangler.eval.jsonc', import.meta.url)), 'utf8')))
+    expect(real.services.map(s => [s.binding, s.entrypoint]).sort()).toEqual([['HUB', 'ReadGateway'], ['HUB_CONNECT', 'ConnectGateway']])
+    const config = load('pass-eval.json')
+    config.services = real.services.map(s => ({ ...s, service: EVAL_HUB_NAME }))
+    const r = run([...EVAL, write(config)])
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
+  })
   const EVAL_PRODUCT_CASES = [
     // #266's P5 set passes for a PR and the candidate; the eval deployment takes exactly the read and connect pair.
     ['P5\'s three bindings', p5, SHAPE],

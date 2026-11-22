@@ -7,6 +7,7 @@ import type { Reader, RunnerEnv, SlotRow } from '../../morning-check/runner.ts'
 import { STORE_DATA_CASES, hostOf } from './cases.ts'
 import type { StoreDataCase } from './cases.ts'
 import { gradeSet, gradeStoreData } from './grade.ts'
+import { GRADED_PROMPT_VERSION, promptReason } from '../../prompt-version.ts'
 import type { SetResult, StoreDataRun, Verdict } from './grade.ts'
 
 /** The morning-check reader plus what this set needs beyond its tool names. */
@@ -27,9 +28,10 @@ export type StoreDataEnv = Omit<RunnerEnv, 'reader'> & { reader: StoreDataReader
 
 /**
  * `settled`: set only for a case that timed out with its slot open: whether the slot then reached a terminal state (else the
- * next Run now would be `run_open`). `ranOn`: the API model id the slot was submitted with (remote mode, `modelOf`).
+ * next Run now would be `run_open`). `ranOn`: the API model id the slot was submitted with (remote mode, `modelOf`). `prompt`:
+ * the system prompt version its turn was sent (remote mode, `promptOf`; P5 #337).
  */
-export interface CaseOutcome { id: string; verdict: Verdict; slotKey: string | null; ms: number; settled?: boolean; ranOn?: string }
+export interface CaseOutcome { id: string; verdict: Verdict; slotKey: string | null; ms: number; settled?: boolean; ranOn?: string; prompt?: number | 'missing' }
 
 /** What the slot left, as the grader reads it. */
 export async function observeRun(reader: StoreDataReader, slot: SlotRow, sinceMs: number, canary: string): Promise<StoreDataRun> {
@@ -119,6 +121,12 @@ export async function runStoreData(
     let o: CaseOutcome
     try {
       o = await runStoreDataCase(env, c)
+      // P5 #337: the turn must have been sent the current system prompt (evals/prompt-version.ts), else the case fails.
+      const sent = o.slotKey !== null && env.promptOf ? await env.promptOf(o.slotKey) : null
+      if (sent !== null) {
+        o = { ...o, prompt: sent }
+        if (sent !== GRADED_PROMPT_VERSION) o = { ...o, verdict: { ...o.verdict, pass: false, reasons: [promptReason(sent), ...o.verdict.reasons] } }
+      }
       const ranOn = o.slotKey !== null && env.modelOf ? await env.modelOf(o.slotKey) : null
       if (ranOn !== null) {
         o = { ...o, ranOn }

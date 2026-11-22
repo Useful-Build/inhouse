@@ -10,6 +10,7 @@ import type { MemoryDoor } from '../targets/door.ts'
 import type { MorningDoor } from './door.ts'
 import type { RunnerEnv } from './runner.ts'
 import { promptVersionSent } from '../prompt-version.ts'
+import { shopifyNotServed } from '../shopify-served.ts'
 
 export interface RemoteDeps {
   door: MorningDoor
@@ -169,8 +170,9 @@ export function remoteEnv(d: RemoteDeps): RunnerEnv {
     ...(d.checkModel ? { modelOf: (slotKey: string) => d.door.model(slotKey) } : {}),
     ...(d.promptVersions ? {
       promptOf: async (slotKey: string) => {
+        // A slot with no turn has no prompt to check: `missing`, so it can never pass (#337 round 2, Sonnet M3).
         const turnId = (await d.door.slot(slotKey))?.turn_id ?? null
-        return turnId === null ? null : promptVersionSent(await d.promptVersions!(turnId))
+        return turnId === null ? 'missing' : promptVersionSent(await d.promptVersions!(turnId))
       },
     } : {}),
     ...(d.beforeCase ? { beforeCase: d.beforeCase } : {}),
@@ -254,7 +256,8 @@ export interface GradedRun {
   /**
    * Before runAll: takes the eval lease, proves --target answers from this door's database (a probe chat made through the
    * API is read back through the door, as targets/product.ts does), refuses a test shop override this run didn't write (a
-   * morning-check run is on the deployment or one left it), pins MORNING_CHECK_CAP and reads it back on route 42 (a month at the cap refuses), notes
+   * morning-check run is on the deployment or one left it), refuses a brand whose Tools page doesn't show Shopify served
+   * (#337), pins MORNING_CHECK_CAP and reads it back on route 42 (a month at the cap refuses), notes
    * the month's spend as the run's start, then sets the Default model to `label`.
    */
   start(): Promise<void>
@@ -301,6 +304,11 @@ export function gradedRun(g: GradedDeps): GradedRun {
       if (!(await g.door.hasChat(probe))) throw new Error('morning-check: refusing: the door\'s database does not hold the chat --target just made, so --target is not the eval deployment the door writes to')
       const shop = await g.door.testShop()
       if (shop !== null) throw new Error(`morning-check: refusing: a test shop override (hub:shop ${shop}) is already set on the eval deployment and this run didn't write it: another morning-check run is on it or left it (clear it through the door once none runs)`)
+      // #337 round 2: the store must be served, or every graded turn's prompt says none is connected. Before the cap and any case.
+      const tools = await g.admin('GET', '/api/tools')
+      if (tools.status !== 200) throw new Error(`morning-check: refusing: GET /api/tools answered ${tools.status}, so the store can't be checked`)
+      const notServed = shopifyNotServed(tools.json)
+      if (notServed !== null) throw new Error(`morning-check: refusing: ${notServed}`)
       await g.door.setSpendingCap(MORNING_CHECK_CAP)
       const { spentUsd } = await usage(g.admin)
       if (spentUsd >= capUsd) throw new Error(`morning-check: refusing: this month's spend ($${spentUsd.toFixed(2)}) has reached the ${MORNING_CHECK_CAP} cap`)

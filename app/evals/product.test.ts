@@ -95,6 +95,8 @@ interface Server {
   spentMinor?: number
   /** The turn ends with no answer but an end row (route 24's `event` with `end`): a failure or a cancel reason. */
   endRow?: { failure?: string; why?: string; outcome?: string }
+  /** Route 70's answer (default: Shopify connected, not paused, readable). */
+  tools?: unknown
   /** The trace's `promptVersions` (default [3], v3 sent); null leaves the field out (no version recorded). */
   promptVersions?: (number | null)[] | null
 }
@@ -139,6 +141,7 @@ const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } 
       return n < (s.stopsBeforeEnded ?? 0) ? json({}) : json({ error: { code: 'conflict', reason: 'turn_ended' } }, 409)
     }
     if (url.pathname === '/api/models') return json({ default: 'sonnet', modes: [{ id: 'sonnet' }] })
+    if (url.pathname === '/api/tools') return json(s.tools ?? { connected: ['shopify'], details: { shopify: { name: 'Shopify' } }, connection: {} })
     if (url.pathname === '/api/usage') return json({ cap: { minor: s.capMinor ?? 5000, currency: 'USD' }, total: { minor: s.spentMinor ?? 0, currency: 'USD' } })
     if (url.pathname === '/api/chats' && method === 'POST') return json({ id: body.id }, 201)
     if (url.pathname.endsWith('/attachments')) return json({ fileId: 'f_AAAAAAAAAAAAAAAAAAAAAA', name: 'note.txt' }, 201)
@@ -169,6 +172,23 @@ const make = (srv: ReturnType<typeof server>, door: MemoryDoor, extra: Partial<P
 const kase = (id: string): Case => CASES.find((c) => c.id === id)!
 
 describe('the eval-brand check (server side, before the first chat)', () => {
+  // #337 round 2 (Opus H1): every graded turn needs the store served, or its prompt says no store is connected; refused
+  // before any spend (the lease, a member removal or a chat), never graded.
+  it('refuses a brand whose Tools page doesn\'t show Shopify connected and readable, before the lease or any chat', async () => {
+    for (const [tools, text] of [
+      [{ connected: [], details: {}, connection: {} }, /Shopify is not connected on the brand's Tools page/],
+      [{ connected: ['shopify'], details: { shopify: { name: 'Shopify', paused: true } }, connection: {} }, /Shopify is paused on the brand's Tools page/],
+      [{ connected: ['shopify'], details: { shopify: { name: 'Shopify' } }, connection: { shopify: { state: 'disconnected', since: '2026-11-22T10:00:00Z' } } }, /Shopify can't be read now/],
+      [{ nope: 1 }, /Shopify is not connected on the brand's Tools page/],
+    ] as const) {
+      const door = new FakeDoor()
+      const srv = server({ tools })
+      await expect(make(srv, door).seed([], { caseId: 'N01', rep: 1, canary: 'c' }), JSON.stringify(tools)).rejects.toThrow(ProductTargetRefusal)
+      await expect(make(server({ tools }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(text)
+      expect(srv.s.sent.some((x) => x.path.startsWith('/api/chats')), 'no chat').toBe(false)
+    }
+  })
+
   it.each([
     ['a member on a real domain', [{ id: 'm_dana', email: 'dana@example.test', status: 'active' }, { id: 'm_leo', email: 'leo@example.test', status: 'active' }, { id: 'm_sam', email: 'sam@example.test', status: 'active' }, { id: 'm_x', email: 'owner@acme-shop.com', status: 'active' }]],
     ['a lookalike domain', [{ id: 'm_dana', email: 'dana@example.test.evil.com', status: 'active' }, { id: 'm_leo', email: 'leo@example.test', status: 'active' }, { id: 'm_sam', email: 'sam@example.test', status: 'active' }]],
@@ -865,6 +885,11 @@ describe('the baseline\'s harness faults', () => {
     }
     const ok = await make(server(), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
     expect(await ok.chat('hi')).toMatchObject({ runOk: true, answer: 'Hello.' })
+  })
+  // #337 round 2 (L2): a turn that errored and fell back to v2 reports both causes, not only the first.
+  it('a turn with an error part that was also sent v2 names both causes', async () => {
+    const session = await make(server({ promptVersions: [2], answerParts: [{ type: 'error', text: 'model overloaded' }] }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
+    expect(await session.chat('hi')).toMatchObject({ runOk: false, failure: 'error_part; prompt_version:2' })
   })
   it('X01: an answer that is an error part names it as the cause', async () => {
     const session = await make(server({ answerParts: [{ type: 'error', text: 'model overloaded at https://x.example.test' }] }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })

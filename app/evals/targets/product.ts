@@ -13,6 +13,7 @@
 //   - cost is the server's settled figure for the turn (route 33's `cost`, whole cents), never the SDK's estimate.
 // Cases run one at a time: the brand's memory is shared, so a concurrent case would read another's seeded facts.
 import { GRADED_PROMPT_VERSION, promptVersionSent } from '../prompt-version.ts'
+import { shopifyNotServed } from '../shopify-served.ts'
 import { mintPerson } from '../../server/auth/test-issuer-mint.ts'
 import { SEED_PEOPLE } from '../../server/seed/brand.ts'
 import { CancelWhySchema, TurnFailureSchema } from '../../shared/contract/runs.ts'
@@ -273,6 +274,11 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     const models = await api('current', 'GET', '/api/models')
     must(models, 'read the models', [200])
     if (!models.json.modes?.some((m: { id: string }) => m.id === picker)) throw new ProductTargetRefusal(`refusing: the brand does not serve the ${picker} model`)
+    // #337 round 2: the store must be served, or every graded turn's prompt says none is connected. Before the lease and any spend.
+    const tools = await api('lena', 'GET', '/api/tools')
+    must(tools, 'read the brand\'s tools', [200])
+    const notServed = shopifyNotServed(tools.json)
+    if (notServed !== null) throw new ProductTargetRefusal(`refusing: ${notServed}`)
     // (a) the door only after the check passed; (b) and (c) are door.ts's.
     door ??= createDoor(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env }))
     // The database must be the one this origin answers from: make a chat through the API, read it back through the door. Nothing is
@@ -534,7 +540,8 @@ function productSession(d: SessionDeps): Session {
       // P5 (#337): the turn must have been sent the system prompt v3. The static v2 fallback, or no version recorded, fails
       // the run with that reason (never a pass), so a broken prompt build can't be graded as v3.
       const promptSent = promptVersionSent(trace.json.promptVersions)
-      if (promptSent !== GRADED_PROMPT_VERSION) failure ??= `prompt_version:${promptSent}`
+      // Both causes when the turn also failed otherwise (an error part, an end row): neither hides the other.
+      if (promptSent !== GRADED_PROMPT_VERSION) failure = failure === undefined ? `prompt_version:${promptSent}` : `${failure}; prompt_version:${promptSent}`
       const runOk = answer !== '' && !sawError && promptSent === GRADED_PROMPT_VERSION
       return { toolCalls, answer, runOk, usage: ZERO, costUsd, turnId, askedAs: d.askedAs, ...(runOk ? {} : { failure: failure ?? 'unknown' }) }
     },

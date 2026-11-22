@@ -163,6 +163,12 @@ export function buildRemote(o: RemoteOptions): { door: MorningDoor; graded: Grad
     ...remoteEnv({
       door, runNow: o.runNow, alarm: null, pause: o.pause ?? (() => new Promise(r => setTimeout(r, 2000))), nowMs: o.nowMs ?? (() => Date.now()),
       caseTimeoutMs: o.caseTimeoutMs, settleMs: o.settleMs, checkModel: true, beforeCase: () => graded.beforeCase(),
+      // P5 #337: each case's turn must have been sent the current system prompt, read from route 33 as the Admin.
+      promptVersions: async turnId => {
+        const t = await o.admin('GET', `/api/traces/${encodeURIComponent(turnId)}`)
+        if (t.status !== 200) throw new DoorRefusal(`the trace of ${turnId} could not be read (${t.status}), so its prompt version is unknown`)
+        return (t.json as { promptVersions?: unknown } | null)?.promptVersions
+      },
     }),
     reader: storeDataReader({ door, run, transcripts }),
   }

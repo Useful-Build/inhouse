@@ -245,12 +245,14 @@ describe('the remote runner env', () => {
     }
   })
 
-  it('with promptVersions, a slot with no turn reads no trace and keeps no prompt', async () => {
+  // #337 round 2 (Sonnet M3): a slot that ended with no turn has no prompt to check, so it fails as missing (it would
+  // otherwise grade on its stored rows alone), and no trace is read for it.
+  it('with promptVersions, a slot with no turn reads no trace and fails as prompt_version:missing', async () => {
     const { door } = fakes(false)
     let now = 0
     const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {}, promptVersions: async () => { throw new Error('trace read') } })
     const file = await runAll(env, [META.find(c => c.id === 'clean-empty')!], meta)
-    expect(file.cases[0]!.prompt).toBeUndefined()
+    expect(file.cases[0]).toMatchObject({ prompt: 'missing', verdict: { pass: false, reasons: ['prompt_version:missing: the turn was not sent the system prompt v3'] } })
   })
 
   it('without checkModel (the scripted proof\'s spec), no slot model is read nor kept', async () => {
@@ -793,7 +795,7 @@ describe('the graded run (failure 10)', () => {
     expect(readFileSync(new URL('./remote.ts', import.meta.url), 'utf8')).toContain("\nexport const MORNING_CHECK_CAP = '$50'\n")
   })
 
-  function fakes(o: { spent?: readonly number[]; capMinor?: number; shop?: string | null; otherLease?: boolean; elsewhere?: boolean; chatStatus?: number; takeGate?: Promise<void> } = {}) {
+  function fakes(o: { spent?: readonly number[]; capMinor?: number; shop?: string | null; otherLease?: boolean; elsewhere?: boolean; chatStatus?: number; takeGate?: Promise<void>; tools?: unknown } = {}) {
     const log: string[] = []
     const spent = [...(o.spent ?? [1000])]
     let last = spent[0]!
@@ -813,6 +815,7 @@ describe('the graded run (failure 10)', () => {
         if (!o.elsewhere) chats.add((body as { id: string }).id)
         return { status: o.chatStatus ?? 201, json: {} }
       }
+      if (path === '/api/tools') return { status: 200, json: o.tools ?? { connected: ['shopify'], details: { shopify: { name: 'Shopify' } }, connection: {} } }
       last = spent.length ? spent.shift()! : last
       return { status: 200, json: { total: { minor: last }, cap: { minor: o.capMinor ?? 5000 } } }
     }
@@ -822,7 +825,7 @@ describe('the graded run (failure 10)', () => {
   it('start: the lease, the probe chat read back, the override check, the cap pinned and read back, then the Default model', async () => {
     const { log, g } = fakes()
     await g.start()
-    expect(log).toEqual(['take morning-check:abc1234:1', 'POST /api/chats', 'hasChat eval-probe-1', 'cap $50', 'GET /api/usage', 'mode Fast'])
+    expect(log).toEqual(['take morning-check:abc1234:1', 'POST /api/chats', 'hasChat eval-probe-1', 'GET /api/tools', 'cap $50', 'GET /api/usage', 'mode Fast'])
     await g.release()
     await g.release()
     expect(log.filter(l => l.startsWith('release'))).toEqual(['release morning-check:abc1234:1'])
@@ -837,6 +840,9 @@ describe('the graded run (failure 10)', () => {
       [{ shop: '"example-mc-late-orders.myshopify.com"' }, 'a test shop override (hub:shop "example-mc-late-orders.myshopify.com") is already set'],
       [{ capMinor: 32000 }, 'Spending cap is not $50'],
       [{ spent: [5000] }, 'has reached the $50 cap'],
+      // #337 round 2 (Opus H1): the store must be served, or every graded turn's prompt says no store is connected.
+      [{ tools: { connected: [], details: {}, connection: {} } }, 'Shopify is not connected on the brand\'s Tools page'],
+      [{ tools: { connected: ['shopify'], details: { shopify: { name: 'Shopify', paused: true } }, connection: {} } }, 'Shopify is paused on the brand\'s Tools page'],
     ] as const) {
       const { log, g } = fakes(o)
       await expect(g.start(), text).rejects.toThrow(text)

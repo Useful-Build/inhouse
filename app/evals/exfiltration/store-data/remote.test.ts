@@ -379,6 +379,19 @@ describe('the run loop in graded mode (failure 9)', () => {
     expect(run.outcomes[0]).toMatchObject({ ranOn: 'claude-opus-5-5', verdict: { pass: false } })
     expect(run.stopped).toMatch(/ran on claude-opus-5-5, not claude-sonnet-5-5/)
   })
+  // #337 round 2 (M2): every graded turn must have been sent the system prompt v3 (evals/prompt-version.ts). A v2 fallback, a
+  // missing version or a slot with no turn fails the case with that reason, never a pass.
+  it('a case whose turn was sent v3 keeps prompt 3 and grades as before; v2, missing or no turn fails naming why', async () => {
+    const ok = env({ promptOf: async () => 3 })
+    const passed = await runStoreData(ok.e, two.slice(0, 1))
+    expect(passed.outcomes[0]).toMatchObject({ prompt: 3, verdict: { pass: true } })
+    for (const sent of [2, 'missing'] as const) {
+      const { e } = env({ promptOf: async () => sent })
+      const run = await runStoreData(e, two.slice(0, 1))
+      expect(run.outcomes[0], String(sent)).toMatchObject({ prompt: sent, verdict: { pass: false, reasons: [`prompt_version:${sent}: the turn was not sent the system prompt v3`] } })
+    }
+  })
+
   it('a case that throws still clears the override, then fails loud', async () => {
     const { e, log } = env({}, { canarySeen: async () => { throw new DoorRefusal('R2 list answered 500') } })
     await expect(runStoreData(e, two)).rejects.toThrow('R2 list answered 500')
@@ -445,6 +458,10 @@ describe('the remote wiring run.mjs uses (Sonnet M2), on a faked eval deployment
         db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms) VALUES (?, 'm_system', 'probe', 1, 1)").run((body as { id: string }).id)
         return { status: 201, json: {} }
       }
+      // #337 round 2: the store check before any spend (route 70, Shopify served).
+      if (path === '/api/tools') return { status: 200, json: { connected: ['shopify'], details: { shopify: { name: 'Shopify' } }, connection: {} } }
+      // #337 round 2 (M2): the case's turn's trace, as the Admin reads it (a routine run's: runs.ts admits it).
+      if (path.startsWith('/api/traces/')) return { status: 200, json: { promptVersions: [3] } }
       return { status: 200, json: { total: { minor: 0 }, cap: { minor: 5000 } } }
     }
     const runNow = async (clientKey: string) => {
@@ -482,6 +499,7 @@ describe('the remote wiring run.mjs uses (Sonnet M2), on a faked eval deployment
     expect(rules, 'the default eval rule, never the morning-check rule that admits a PR database').toEqual([undefined])
     expect(typeof built.env.beforeCase).toBe('function')
     expect(typeof built.env.modelOf).toBe('function')
+    expect(typeof built.env.promptOf).toBe('function')
     expect(typeof built.env.releaseShop).toBe('function')
     await built.env.releaseShop!()
     for (const a of argv) expect(a.slice(0, 4)).toEqual(['d1', 'execute', EVAL_DB, '--remote'])
@@ -491,8 +509,8 @@ describe('the remote wiring run.mjs uses (Sonnet M2), on a faked eval deployment
     const { db, r2, log, built } = await deployment()
     const out = await gradedSession({ graded: built.graded, clearShop: () => built.door.clearShop(), run: () => runStoreData(built.env, STORE_DATA_CASES.slice(0, 1), undefined, 'claude-sonnet-5-5') })
     expect(out.refused).toBeNull()
-    expect(out.result!.outcomes[0]).toMatchObject({ id: 'XS01', ranOn: 'claude-sonnet-5-5', verdict: { pass: true, checks: { exposed: true } } })
-    expect(log).toEqual(['POST /api/chats', 'GET /api/usage', 'GET /api/usage', 'run now'])
+    expect(out.result!.outcomes[0]).toMatchObject({ id: 'XS01', ranOn: 'claude-sonnet-5-5', prompt: 3, verdict: { pass: true, checks: { exposed: true } } })
+    expect(log).toEqual(['POST /api/chats', 'GET /api/tools', 'GET /api/usage', 'GET /api/usage', 'run now', 'GET /api/traces/turn_x'])
     expect(r2.calls.map(c => new URL(c.url).searchParams.get('prefix'))[0], 'the preflight first').toBe('sessions/')
     expect(setting(db, 's:cap')).toEqual([{ value_json: '"$50"' }])
     expect(setting(db, 'g:mode')).toEqual([{ value_json: '"Fast"' }])
