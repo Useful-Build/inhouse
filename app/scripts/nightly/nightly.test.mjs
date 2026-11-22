@@ -219,6 +219,9 @@ describe('nightly.yml', () => {
     expect(notify).toMatch(/\n    permissions:\n      issues: write\n/)
     expect(notify).not.toMatch(/actions\/checkout|npm |contents: write/)
     expect(notify).toMatch(/TITLE: Nightly guard check failing\n/)
+    // #317 review: the issue says how the Slack job ended.
+    expect(notify).toContain('\n          SLACK_CONNECTORS: ${{ needs.slack-connectors.result }}\n')
+    expect(notify).toMatch(/body=\$\(printf '[^']*Slack connectors: %s[^']*'[^\n]*\n[^\n]*"\$SLACK_CONNECTORS"/)
     // The open issue with that title is reused (a comment); only with none open is one created.
     expect(notify).toMatch(/gh api --paginate "repos\/\$REPO\/issues\?state=open&labels=\$LABEL[^"]*"[\s\S]*select\(\.pull_request == null and \.title == env\.TITLE\)/)
     expect(notify).toMatch(/gh issue comment "\$open"[\s\S]*else[\s\S]*gh issue create /)
@@ -274,13 +277,29 @@ describe('nightly.yml', () => {
     expect(gate.match(anyRef)).toHaveLength(3)
     expect(slack.replace(testStep, '').replace(gate, '')).not.toMatch(anyRef)
     expect(slack.replace(testStep, '').replace(gate, '')).not.toMatch(anyVar)
-    // The only skip is before P5 (no hub or no Slack connector); after it, a missing live file, any of the five settings
-    // missing or a flag other than 1 fails.
-    expect(gate).toContain('if [ ! -f app/hub/package.json ] || [ ! -d app/hub/connectors/mcp/slack ]; then')
-    expect(gate.match(/echo "run=false"/g)).toHaveLength(1)
+    // A missing live file, any of the five settings missing or a flag other than 1 fails (the skip: the next test).
     expect(gate).toMatch(/if \[ ! -f app\/test\/connectors\/mcp\/slack\.live\.ts \]; then\n[^\n]*::error[^\n]*\n\s*exit 1\n/)
     expect(gate).toMatch(/if \[ "\$set" -ne 5 \]; then\n[^\n]*::error[^\n]*\n\s*exit 1\n/)
     expect(gate).toMatch(/"" \| 1\) ;;\n\s*\*\)\n[^\n]*::error[^\n]*\n\s*exit 1\n/)
+    // #317 review: each flag is in the gate's env and its validation loop, so neither can skip the check.
+    const loop = gate.match(/\n\s*for pair in ([^\n]*); do\n/)
+    expect(loop).not.toBeNull()
+    for (const [short, name] of [['ROTATION', 'NIGHTLY_ROTATION'], ['CODEMODE', 'NIGHTLY_CODEMODE']]) {
+      expect(gate).toContain(`\n          ${short}: \${{ vars.${name} }}\n`)
+      expect(loop[1]).toContain(`"${name}=$${short}"`)
+    }
+  })
+  // #317 review (M2): the pre-P5 skip is for main today only. Once P5's live file is in the repo (P5's squash), the gate
+  // may not skip at all, so a later move of the connector can't switch the check off quietly.
+  it('the Slack gate has no skip once slack.live.ts is in the repo', () => {
+    const gate = step(job(wf(), 'slack-connectors'), 'Slack live file, secrets and variables present')
+    if (fs.existsSync(path.join(here, '../../test/connectors/mcp/slack.live.ts'))) {
+      expect(gate).not.toMatch(/run=false|::notice title=Slack connector check skipped/)
+    } else {
+      // Before P5 (no hub or no Slack connector on main) is the only skip.
+      expect(gate).toContain('if [ ! -f app/hub/package.json ] || [ ! -d app/hub/connectors/mcp/slack ]; then')
+      expect(gate.match(/echo "run=false"/g)).toHaveLength(1)
+    }
   })
   // The fixture's and the test workspace's credentials never reach ci.yml (PR code runs there).
   it('ci.yml holds none of the read fixture\'s or the test workspace\'s credentials', () => {
