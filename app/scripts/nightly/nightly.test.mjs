@@ -180,21 +180,33 @@ describe('nightly.yml', () => {
     return next === -1 ? jobText.slice(start) : jobText.slice(start, start + 1 + next)
   }
   const SHOPIFY_SECRETS = ['SHOPIFY_SHOP', 'SHOPIFY_CLIENT_ID', 'SHOPIFY_CLIENT_SECRET']
+  // P5 Acc 1 and 9: slack.live.ts's required names (client.ts's NIGHTLY_ENV), split by what is a credential.
+  const SLACK_SECRETS = ['NIGHTLY_BASE_URL', 'NIGHTLY_ACCESS_CLIENT_ID', 'NIGHTLY_ACCESS_CLIENT_SECRET']
+  const SLACK_VARS = ['NIGHTLY_SLACK_CHANNEL_ID', 'NIGHTLY_SLACK_NOTICES_CHANNEL_ID']
+  const SLACK_FLAGS = ['NIGHTLY_ROTATION', 'NIGHTLY_CODEMODE']
+  // Any spelling of a secrets or vars reference: dot, bracket or toJSON, any case.
+  const anyRef = /secrets\s*(?:\.\s*[A-Za-z0-9_]+|\[)|toJSON\(\s*secrets/gi
+  const anyVar = /\bvars\s*(?:\.\s*[A-Za-z0-9_]+|\[)|toJSON\(\s*vars/gi
   it('runs on a daily schedule and by hand', () => {
     expect(wf()).toMatch(/\n  schedule:\n    - cron: "\d+ \d+ \* \* \*"\n/)
     expect(wf()).toMatch(/\n  workflow_dispatch:\n/)
   })
   // P4 Acc 9 (bootstrap): the connector check holds the read fixture's three secrets, so "no secrets" became "only
   // those three, only in the connectors job". The eval key stays out (no other secret name can appear).
-  it('runs main only, with read-only contents and no secret outside the connectors job', () => {
+  // P5 Acc 1 and 9 (bootstrap): the Slack connector job holds its own three, so it's "each connector job's names, only there".
+  it('runs main only, with read-only contents and no secret outside the connector jobs', () => {
     const text = wf()
-    expect(text.match(/\n    if: github\.ref == 'refs\/heads\/main'\n/g)).toHaveLength(2)
+    expect(text.match(/\n    if: github\.ref == 'refs\/heads\/main'\n/g)).toHaveLength(3)
     const connectors = job(text, 'connectors')
-    const rest = text.replace(connectors, '')
-    // Any spelling of a secrets reference: dot, bracket or toJSON, any case.
+    const slack = job(text, 'slack-connectors')
+    const rest = text.replace(connectors, '').replace(slack, '')
     expect(rest).not.toMatch(/\bsecrets\b\s*[.[]|toJSON\(\s*secrets/i)
-    const refs = connectors.match(/secrets\s*(?:\.\s*[A-Za-z0-9_]+|\[)|toJSON\(\s*secrets/gi) ?? []
+    expect(rest).not.toMatch(/\bvars\b\s*[.[]|toJSON\(\s*vars/i)
+    const refs = connectors.match(anyRef) ?? []
     expect(new Set(refs)).toEqual(new Set(SHOPIFY_SECRETS.map(n => `secrets.${n}`)))
+    expect(connectors).not.toMatch(anyVar)
+    expect(new Set(slack.match(anyRef) ?? [])).toEqual(new Set(SLACK_SECRETS.map(n => `secrets.${n}`)))
+    expect(new Set(slack.match(anyVar) ?? [])).toEqual(new Set([...SLACK_VARS, ...SLACK_FLAGS].map(n => `vars.${n}`)))
     expect(wf()).toMatch(/\npermissions:\n  contents: read\n/)
     expect(wf()).toMatch(/persist-credentials: false/)
   })
@@ -203,10 +215,13 @@ describe('nightly.yml', () => {
     const text = wf()
     const notify = text.slice(text.indexOf('\n  notify:\n'))
     // A timeout or cancel notifies too; skipped jobs (a dispatch off main) don't.
-    expect(notify).toMatch(/^\n  notify:\n    needs: \[probes, connectors\]\n(    #[^\n]*\n)*    if: always\(\) && \(contains\(needs\.\*\.result, 'failure'\) \|\| contains\(needs\.\*\.result, 'cancelled'\)\)\n/)
+    expect(notify).toMatch(/^\n  notify:\n    needs: \[probes, connectors, slack-connectors\]\n(    #[^\n]*\n)*    if: always\(\) && \(contains\(needs\.\*\.result, 'failure'\) \|\| contains\(needs\.\*\.result, 'cancelled'\)\)\n/)
     expect(notify).toMatch(/\n    permissions:\n      issues: write\n/)
     expect(notify).not.toMatch(/actions\/checkout|npm |contents: write/)
     expect(notify).toMatch(/TITLE: Nightly guard check failing\n/)
+    // #317 review: the issue says how the Slack job ended.
+    expect(notify).toContain('\n          SLACK_CONNECTORS: ${{ needs.slack-connectors.result }}\n')
+    expect(notify).toMatch(/body=\$\(printf '[^']*Slack connectors: %s[^']*'[^\n]*\n[^\n]*"\$SLACK_CONNECTORS"/)
     // The open issue with that title is reused (a comment); only with none open is one created.
     expect(notify).toMatch(/gh api --paginate "repos\/\$REPO\/issues\?state=open&labels=\$LABEL[^"]*"[\s\S]*select\(\.pull_request == null and \.title == env\.TITLE\)/)
     expect(notify).toMatch(/gh issue comment "\$open"[\s\S]*else[\s\S]*gh issue create /)
@@ -227,7 +242,6 @@ describe('nightly.yml', () => {
     // A secret's value appears once each, on the test step only; the gate step sees only `!= ''`; no other step has any.
     const testStep = step(connectors, 'Shopify connectors against the read fixture')
     const gate = step(connectors, 'Live project and secrets present')
-    const anyRef = /secrets\s*(?:\.\s*[A-Za-z0-9_]+|\[)|toJSON\(\s*secrets/gi
     for (const name of SHOPIFY_SECRETS) {
       expect(testStep.match(new RegExp(`\\$\\{\\{ secrets\\.${name} \\}\\}`, 'g'))).toHaveLength(1)
       expect(gate.match(new RegExp(`\\$\\{\\{ secrets\\.${name} != '' \\}\\}`, 'g'))).toHaveLength(1)
@@ -236,10 +250,62 @@ describe('nightly.yml', () => {
     expect(gate.match(anyRef)).toHaveLength(3)
     expect(connectors.replace(testStep, '').replace(gate, '')).not.toMatch(anyRef)
   })
-  // The fixture's credentials never reach ci.yml (PR code runs there).
-  it('ci.yml holds none of the read fixture\'s credentials', () => {
+  // P5 Acc 1 and 9: the Slack nightly against the P0 test workspace. Ways it can fail: it skips after P5 lands (the skip
+  // keyed on something a later move could remove quietly), a real failure is masked, a value reaches a step other than the
+  // test run, a flag the gate never checked switches a case off, it runs a file other than slack.live.ts.
+  it('runs the Slack live file unmasked, with the secrets and variables on the test step only', () => {
+    const text = wf()
+    const slack = job(text, 'slack-connectors')
+    expect(slack).toMatch(/\n    environment: slack-test-workspace\n/)
+    expect(slack).toMatch(/\n    permissions:\n      contents: read\n/)
+    expect(slack).toMatch(/\n        run: npm run test:live -- test\/connectors\/mcp\/slack\.live\.ts\n/)
+    expect(slack).not.toMatch(/continue-on-error/i)
+    const testStep = step(slack, 'Slack connectors against the test workspace')
+    const gate = step(slack, 'Slack live file, secrets and variables present')
+    for (const name of SLACK_SECRETS) {
+      expect(testStep.match(new RegExp(`\\$\\{\\{ secrets\\.${name} \\}\\}`, 'g'))).toHaveLength(1)
+      expect(gate.match(new RegExp(`\\$\\{\\{ secrets\\.${name} != '' \\}\\}`, 'g'))).toHaveLength(1)
+    }
+    for (const name of SLACK_VARS) {
+      expect(testStep).toContain(`\n          ${name}: \${{ vars.${name} }}\n`)
+      expect(gate).toContain(`\${{ vars.${name} != '' }}`)
+    }
+    for (const name of SLACK_FLAGS) expect(testStep).toContain(`\n          ${name}: \${{ vars.${name} }}\n`)
+    // The target is the house deployment, so the house-only read-back is always on.
+    expect(testStep).toContain('\n          NIGHTLY_HOUSE: "1"\n')
+    expect(testStep.match(anyRef)).toHaveLength(3)
+    expect(gate.match(anyRef)).toHaveLength(3)
+    expect(slack.replace(testStep, '').replace(gate, '')).not.toMatch(anyRef)
+    expect(slack.replace(testStep, '').replace(gate, '')).not.toMatch(anyVar)
+    // A missing live file, any of the five settings missing or a flag other than 1 fails (the skip: the next test).
+    expect(gate).toMatch(/if \[ ! -f app\/test\/connectors\/mcp\/slack\.live\.ts \]; then\n[^\n]*::error[^\n]*\n\s*exit 1\n/)
+    expect(gate).toMatch(/if \[ "\$set" -ne 5 \]; then\n[^\n]*::error[^\n]*\n\s*exit 1\n/)
+    expect(gate).toMatch(/"" \| 1\) ;;\n\s*\*\)\n[^\n]*::error[^\n]*\n\s*exit 1\n/)
+    // #317 review: each flag is in the gate's env and its validation loop, so neither can skip the check.
+    const loop = gate.match(/\n\s*for pair in ([^\n]*); do\n/)
+    expect(loop).not.toBeNull()
+    for (const [short, name] of [['ROTATION', 'NIGHTLY_ROTATION'], ['CODEMODE', 'NIGHTLY_CODEMODE']]) {
+      expect(gate).toContain(`\n          ${short}: \${{ vars.${name} }}\n`)
+      expect(loop[1]).toContain(`"${name}=$${short}"`)
+    }
+  })
+  // #317 review (M2): the pre-P5 skip is for main today only. Once P5's live file is in the repo (P5's squash), the gate
+  // may not skip at all, so a later move of the connector can't switch the check off quietly.
+  it('the Slack gate has no skip once slack.live.ts is in the repo', () => {
+    const gate = step(job(wf(), 'slack-connectors'), 'Slack live file, secrets and variables present')
+    if (fs.existsSync(path.join(here, '../../test/connectors/mcp/slack.live.ts'))) {
+      expect(gate).not.toMatch(/run=false|::notice title=Slack connector check skipped/)
+    } else {
+      // Before P5 (no hub or no Slack connector on main) is the only skip.
+      expect(gate).toContain('if [ ! -f app/hub/package.json ] || [ ! -d app/hub/connectors/mcp/slack ]; then')
+      expect(gate.match(/echo "run=false"/g)).toHaveLength(1)
+    }
+  })
+  // The fixture's and the test workspace's credentials never reach ci.yml (PR code runs there).
+  it('ci.yml holds none of the read fixture\'s or the test workspace\'s credentials', () => {
     const ci = fs.readFileSync(path.join(here, '../../../.github/workflows/ci.yml'), 'utf8')
     expect(ci).not.toMatch(/shopify-read-fixture|SHOPIFY_CLIENT_SECRET|secrets\.SHOPIFY|\bsecrets\b\s*\[\s*['"]?shopify|toJSON\(\s*secrets/i)
+    expect(ci).not.toMatch(/slack-test-workspace|NIGHTLY_ACCESS_CLIENT|NIGHTLY_BASE_URL|\b(?:secrets|vars)\s*\.\s*NIGHTLY|\b(?:secrets|vars)\b\s*\[\s*['"]?nightly|toJSON\(\s*vars/i)
   })
   it('runs probes.sh, and no eval step', () => {
     expect(wf()).toMatch(/\n        run: sh app\/scripts\/nightly\/probes\.sh\n/)
