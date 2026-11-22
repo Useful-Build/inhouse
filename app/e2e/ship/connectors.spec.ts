@@ -6,8 +6,11 @@
 // What runs where. S2, S3 and S4 run turns in a container, which only the sandbox deployment has: they call `needsContainer()`
 // (E2E_TEST_BUILD_REMOTE) and skip elsewhere. A turn plays the scripted model's scenario named in its message
 // (`scenario:connectors-supplier`, `-codemode`, `-notice`, `-notice-unlisted`; test/scripted-model/scenarios.ts), so every answer
-// is fixed and each test proves the PATH: the tool calls reached the fakes (the test-fakes hook's state and logs), and the answer
-// the person reads is on screen. The hook is the test build's `POST /api/ops/test-fakes` (release token).
+// is fixed and each test proves the PATH: the run's own record shows the named tool calls (the owner's trace: each tool step's detail
+// is the tool's name) and, for alerts, the audit lines; and the answer the person reads is on screen. On a LOCAL test build the fakes'
+// own logs are asserted too (the post's parameters, the tool calls, the store's requests): on the sandbox the hook can't see them (see
+// `remote`). The post's four parameters, no preview and only the app link are therefore asserted locally and by the API specs, not
+// in the sandbox recording. The hook is the test build's `POST /api/ops/test-fakes` (release token).
 //
 // What the scripted model cannot prove, and who does. S5 and S6 say "the agent no longer uses it" and "asking again says it's not
 // connected": a scripted answer would only repeat our own text, so these tests prove the agent's side from what decides it, the
@@ -50,6 +53,7 @@ const SUPPLIER_ANSWER = 'Kestrel Mills says the November restock of the Fern mug
 const CODE_MODE_ANSWER = 'I counted every product in the store with a script: the five lowest on stock and how many sell for over $150. Source: Shopify, all products.'
 const NOTICE_ANSWER = 'I sent the stock alert to #ops-alerts.'
 const UNLISTED_ANSWER = "I couldn't send that: #design isn't one of the channels your admin listed."
+const NOTIFY_TOOL = 'mcp__inhouse__notification_send'
 const NOTICE_TEXT = 'The Fern mug is almost out. Restock it this week.'
 const CONNECTED_TOAST = 'The tool is connected.'
 const ADMIN_LINE = 'Your Inhouse team manages tools.'
@@ -86,13 +90,22 @@ async function api(page: Page, method: string, path: string, body?: unknown): Pr
   }, [method, path, body ?? null] as const)
 }
 
+/** A read that feeds an assertion: it must answer 200 with a JSON body, so a failed read can't pass as an empty one. */
+async function apiOk(page: Page, path: string): Promise<any> {
+  const r = await api(page, 'GET', path)
+  expect(r.status, `GET ${path} answered ${r.status}`).toBe(200)
+  expect(r.json, `GET ${path} answered a JSON body`).not.toBeNull()
+  return r.json
+}
+
 /** Goes to a screen by its hash, as the sidebar's rows do (on a phone the drawer stays out of the way). */
 async function goTo(page: Page, hash: string) {
   await page.evaluate(h => { location.hash = h }, hash)
   await expect(page).toHaveURL(new RegExp(`${hash.replace('/', '\\/')}$`))
 }
 
-const toast = (page: Page, text: string) => page.locator('[data-toast]').filter({ hasText: text })
+/** A toast with this text in the toast stack. A same-key toast replaces the one on screen, so a count of 1 can't tell one showing from two; tools-return.spec.ts counts each showing. */
+const toast = (page: Page, text: string) => page.locator('[data-toast-stack] [data-toast]').filter({ hasText: text })
 
 /** Slack connected, by the routes a person's connect uses (no browser): a test that needs it starts here, and S1 starts from none. */
 async function ensureConnected(request: APIRequestContext) {
@@ -162,7 +175,7 @@ async function askFromToday(page: Page, text: string): Promise<string> {
  * Dana asks (a scenario by name) and waits for the fixed answer. Returns the fakes' view (an attachment too; empty on the sandbox, see
  * `remote`) and the run's tool steps as the person's trace shows them.
  */
-async function askAndRead(page: Page, request: APIRequestContext, scenario: string, question: string, answer: string, name: string, toolCalls: number) {
+async function askAndRead(page: Page, request: APIRequestContext, scenario: string, question: string, answer: string, name: string, tools: string[]) {
   await ensureFastDefault(request)
   const chat = await askFromToday(page, `scenario:${scenario} ${question} ${uid()}`)
   await expect(log(page).getByText(answer, { exact: true })).toBeVisible({ timeout: 150_000 })
@@ -173,15 +186,16 @@ async function askAndRead(page: Page, request: APIRequestContext, scenario: stri
   // carries it from the send, the agent's once stored. The trace is polled the same way until it holds the steps the scenario makes.
   let turnId: string | undefined
   await expect.poll(async () => {
-    const messages = (await api(page, 'GET', `/api/chats/${chat}`)).json?.messages as { turnId?: string }[] | undefined
-    turnId = messages?.find(m => m.turnId)?.turnId
+    const messages = (await apiOk(page, `/api/chats/${chat}`)).messages as { turnId?: string }[]
+    turnId = messages.find(m => m.turnId)?.turnId
     return turnId
   }, { timeout: 60_000, message: 'the chat holds the turn of this question' }).toBeTruthy()
+  // A tool step's `detail` is the tool's own name (recording 4); a step carries no status, so a failed call is told by the answer.
   let steps: { kind: string; label: string; detail: string }[] = []
   await expect.poll(async () => {
-    steps = (((await api(page, 'GET', `/api/traces/${turnId}`)).json?.steps ?? []) as { kind: string; label: string; detail: string }[]).filter(x => x.kind === 'tool')
-    return steps.length
-  }, { timeout: 60_000, message: `the run's trace holds ${toolCalls} tool step(s)` }).toBe(toolCalls)
+    steps = ((await apiOk(page, `/api/traces/${turnId}`)).steps as { kind: string; label: string; detail: string }[]).filter(x => x.kind === 'tool')
+    return steps.map(x => x.detail)
+  }, { timeout: 60_000, message: `the run's trace shows the tool steps ${tools.join(', ')}` }).toEqual(tools)
   await attachJson(`${name}-tool-steps`, steps)
   return { state, steps }
 }
@@ -190,6 +204,7 @@ async function askAndRead(page: Page, request: APIRequestContext, scenario: stri
 async function auditSince(request: APIRequestContext, after: number) {
   const r = await call(request, actor('admin'), 'GET', '/api/audit?limit=100')
   expect(r.status, r.text).toBe(200)
+  expect(Array.isArray(r.json?.items), 'the audit answer lists items').toBe(true)
   return (r.json.items as { id: number; what: string; detail: string }[]).filter(l => l.id > after)
 }
 const auditMark = async (request: APIRequestContext) => {
@@ -210,11 +225,15 @@ test('S1: As the Inhouse team, connect Slack with the pre-consented test user an
     await route.fulfill({ status: 302, headers: { Location: `${originFor('inhouse')}${back.pathname}${back.search}` } })
   })
   await openAs(context, page, 'inhouse', '#/tools')
-  const row = main(page).locator('div').filter({ has: page.getByRole('button', { name: 'Connect', exact: true }) }).filter({ hasText: 'Slack' }).last()
-  await expect(row, 'Slack is offered with a Connect button').toBeVisible()
+  // The Connect buttons are in the catalog's order (the server's list); Slack's is the one at its index.
+  const offered = (await readTools(request)).catalog.filter(c => c.accountId)
+  const at = offered.findIndex(c => c.k === 'slack')
+  expect(at, `Slack is in the catalog of tools to connect: ${JSON.stringify(offered)}`).toBeGreaterThanOrEqual(0)
+  const connects = main(page).getByRole('button', { name: 'Connect', exact: true })
+  await expect(connects, 'one Connect button per tool offered').toHaveCount(offered.length)
   await shot(page, 'S1-slack-not-connected')
-  await row.getByRole('button', { name: 'Connect', exact: true }).click()
-  // Back from the sign-in: the tool's page, with the connected line once.
+  await connects.nth(at).click()
+  // Back from the sign-in: the tool's page, with the connected line (a same-key toast replaces itself, so "once" is tools-return.spec.ts's).
   await expect(page).toHaveURL(/#\/tools\/slack$/, { timeout: 60_000 })
   await expect(toast(page, CONNECTED_TOAST)).toHaveCount(1)
   await expect(main(page)).toContainText('Slack')
@@ -235,9 +254,9 @@ test('S2: Ask about a supplier delay and the orders it holds up and the answer c
   await ensureConnected(request)
   await fakeReset(request)
   await openAs(context, page, 'dana', '#/today')
-  const { state } = await askAndRead(page, request, 'connectors-supplier', 'what is the supplier delay and which orders does it hold up?', SUPPLIER_ANSWER, 'S2', 2)
+  const { state } = await askAndRead(page, request, 'connectors-supplier', 'what is the supplier delay and which orders does it hold up?', SUPPLIER_ANSWER, 'S2', ['mcp__apps__slack_search_public', 'mcp__apps__orders_search'])
   await shot(page, 'S2-answer-with-both-sources')
-  // The path, not only the text: the run made two tool calls (Slack, then the store) through the hub, as its trace records them.
+  // The path, not only the text: the run's trace records the Slack search, then the store's orders (asserted by name in askAndRead).
   if (!remote()) {
     expect(state.mcp.toolCalls.map(t => t.name), 'the agent searched Slack').toContain('slack_search_public')
     expect(state.shopify.requests.length, 'the agent read the store').toBeGreaterThan(0)
@@ -252,10 +271,10 @@ test('S3: Ask over the whole store and the answer comes from a code mode script 
   await fakeReset(request)
   await openAs(context, page, 'dana', '#/today')
   const mark = await logMark(request)
-  const { state } = await askAndRead(page, request, 'connectors-codemode', 'across all the products which are lowest on stock?', CODE_MODE_ANSWER, 'S3', 1)
+  const { state } = await askAndRead(page, request, 'connectors-codemode', 'across all the products which are lowest on stock?', CODE_MODE_ANSWER, 'S3', ['mcp__apps__shopify_script_run'])
   await shot(page, 'S3-codemode-answer')
   expect(CODE_MODE_ANSWER.length, 'a short answer').toBeLessThan(300)
-  // One tool call (the script), however many pages it read: the answer comes from a script, not a chain of reads.
+  // One tool step, the script (asserted by name in askAndRead), however many pages it read: the answer comes from a script, not a chain of reads.
   // The hub logs one line per script run (its code hash and outcome, never the code or its data). Attached on the sandbox, asserted locally.
   const lines = (await workerLogs(request, mark)).filter(l => l.includes('hub_codemode'))
   await attachJson('S3-hub-codemode-lines', lines)
@@ -284,7 +303,7 @@ test('S4: At Act an alert reaches a listed Slack channel with no link preview, a
     await setStage(request, 'Act')
     const before = (await fakeState(request)).web.posts.length
     let mark = await auditMark(request)
-    await askAndRead(page, request, 'connectors-notice', 'send the stock alert', NOTICE_ANSWER, 'S4-act', 1)
+    await askAndRead(page, request, 'connectors-notice', 'send the stock alert', NOTICE_ANSWER, 'S4-act', [NOTIFY_TOOL])
     const act = await auditSince(request, mark)
     await attachJson('S4-act-audit', act)
     expect(act.filter(l => l.what === POSTED).length, 'one post to Slack at Act').toBe(1)
@@ -305,7 +324,7 @@ test('S4: At Act an alert reaches a listed Slack channel with no link preview, a
 
     // An unlisted channel: refused (the audit line says a notice didn't go out, and no post is made), and the person reads the refusal.
     mark = await auditMark(request)
-    await askAndRead(page, request, 'connectors-notice-unlisted', 'send it to the design channel', UNLISTED_ANSWER, 'S4-unlisted', 1)
+    await askAndRead(page, request, 'connectors-notice-unlisted', 'send it to the design channel', UNLISTED_ANSWER, 'S4-unlisted', [NOTIFY_TOOL])
     const unlisted = await auditSince(request, mark)
     await attachJson('S4-unlisted-audit', unlisted)
     expect(unlisted.filter(l => l.what === REFUSED).length, 'the unlisted channel was refused and audited').toBe(1)
@@ -315,26 +334,26 @@ test('S4: At Act an alert reaches a listed Slack channel with no link preview, a
 
     // At Watch: the same alert reaches the bell of the person who asked, and Slack gets nothing.
     await setStage(request, 'Watch')
-    const known = new Set((((await api(page, 'GET', '/api/notifications')).json?.items ?? []) as { id: string }[]).map(i => i.id))
+    const known = new Set(((await apiOk(page, '/api/notifications')).items as { id: string }[]).map(i => i.id))
     mark = await auditMark(request)
-    await askAndRead(page, request, 'connectors-notice', 'send the stock alert', NOTICE_ANSWER, 'S4-watch', 1)
+    await askAndRead(page, request, 'connectors-notice', 'send the stock alert', NOTICE_ANSWER, 'S4-watch', [NOTIFY_TOOL])
     const watch = await auditSince(request, mark)
     await attachJson('S4-watch-audit', watch)
     expect(watch.filter(l => l.what === TO_BELL).length, 'the alert went to the bell').toBe(1)
     expect(watch.filter(l => l.what === POSTED).length, 'no Slack post at Watch').toBe(0)
     if (!remote()) expect((await fakeState(request)).web.posts.length, 'no Slack post at Watch').toBe(before + 1)
-    await expect.poll(async () => (((await api(page, 'GET', '/api/notifications')).json?.items ?? []) as { id: string; body?: string }[]).filter(i => !known.has(i.id) && i.body?.includes(NOTICE_TEXT)).length,
+    await expect.poll(async () => ((await apiOk(page, '/api/notifications')).items as { id: string; body?: string }[]).filter(i => !known.has(i.id) && i.body?.includes(NOTICE_TEXT)).length,
       { timeout: 60_000, message: "the person's bell holds the new alert" }).toBe(1)
-    // What the person sees. The bell reads its notices when the app starts and on a page change, and this notice came from the agent's
-    // own tool, not a run the page was watching: so the person opens the app again, as they would. (Recording 4: without it the desktop's
-    // bell still said "Notifications" with no count.) The popup's row is the notice's headline, "Message from your Inhouse agent"; the
-    // body is read through the API above, not in the popup.
-    const unread = (((await api(page, 'GET', '/api/notifications')).json?.items ?? []) as { unread?: boolean }[]).filter(i => i.unread).length
+    // What the person sees. The bell reads its notices when the app starts and on a page change; the alert came from the agent's own tool
+    // (a hook-free run whose end the page may not have seen), not from a notice the bell was told about, so the person goes to another page
+    // as they would, and the product's own page-change read brings it in. (Recording 4: staying on the chat left the desktop's bell at
+    // "Notifications" with no count.) The popup's row is the notice's headline, "Message from your Inhouse agent", on both desktop and
+    // phone; the body is read through the API above, not in the popup.
+    const unread = ((await apiOk(page, '/api/notifications')).items as { unread: boolean }[]).filter(i => i.unread).length
     expect(unread, 'the new alert is unread').toBeGreaterThan(0)
-    await page.reload()
-    await ready(page)
+    await goTo(page, '#/today')
     const bell = page.getByRole('button', { name: `Notifications, ${unread} unread`, exact: true })
-    await expect(bell, 'the bell counts the new alert').toBeVisible()
+    await expect(bell, 'the bell counts the new alert after a page change').toBeVisible({ timeout: 30_000 })
     await bell.click()
     await expect(page.getByRole('dialog', { name: 'Notifications' }).getByRole('button', { name: /^Message from your Inhouse agent/ }).first()).toBeVisible()
     await shot(page, 'S4-watch-bell')
@@ -349,6 +368,16 @@ test('S5: Pause the tool and the agent no longer uses it, then unpause', async (
   test.setTimeout(240_000)
   await ensureConnected(request)
   await openAs(context, page, 'inhouse', '#/tools/slack')
+  try {
+    await pauseAndResume(page, request)
+  } finally {
+    // Whatever failed above, Slack is left unpaused: the tests after this one (and the next run) need it usable.
+    const back = await call(request, actor('inhouse'), 'PUT', `/api/tools/${encodeURIComponent(SLACK_ACCOUNT)}/paused`, { json: { paused: false } })
+    expect(back.status, back.text).toBe(200)
+  }
+})
+
+async function pauseAndResume(page: Page, request: APIRequestContext) {
   expect(await hubToolNames(request), 'Slack tools are listed while connected').toContain('slack_search_public')
   expect(namedApps(await turnPrompt(request))).toContain('Slack')
   await main(page).getByRole('button', { name: 'Pause access' }).click()
@@ -366,11 +395,14 @@ test('S5: Pause the tool and the agent no longer uses it, then unpause', async (
   await expect.poll(async () => (await hubToolNames(request)).filter(n => n.startsWith('slack_')).length, { message: 'the Slack tools are back' }).toBeGreaterThan(0)
   expect(namedApps(await turnPrompt(request))).toContain('Slack')
   await shot(page, 'S5-resumed')
-})
+}
 
 test('S6: Disconnect the tool and the agent is told it is not connected and what is', async ({ context, page, request }) => {
   test.setTimeout(240_000)
   await ensureConnected(request)
+  // The store is read once first, so Shopify is a usable app whatever ran before: the prompt must then still offer it.
+  const read = await hubCall(request, 'callTool', 'orders_search', { first: 1 })
+  expect(read.ok, `the store answers a read: ${JSON.stringify(read.error ?? null)}`).toBe(true)
   await openAs(context, page, 'inhouse', '#/tools/slack')
   await main(page).getByRole('button', { name: 'Disconnect' }).click()
   const confirm = page.locator('[role="dialog"], [role="alertdialog"]').filter({ hasText: 'Disconnect Slack?' })
@@ -386,6 +418,7 @@ test('S6: Disconnect the tool and the agent is told it is not connected and what
   const prompt = await turnPrompt(request)
   const still = namedApps(prompt)
   expect(still, 'a disconnected app is not named').not.toContain('Slack')
+  expect(still, 'the prompt still offers what is connected').toContain('Shopify')
   const tools = await readTools(request)
   await attachJson('S6-prompt-and-tools', { apps: still, connected: tools.connected })
   expect(still.map(n => n.toLowerCase()).sort(), 'the prompt names exactly the apps still usable').toEqual(tools.connected.filter(k => !tools.connection[k] && !tools.details[k]?.paused).sort())
@@ -400,6 +433,9 @@ test('S7: As an Admin the Tools page is read-only', async ({ context, page, requ
   test.setTimeout(180_000)
   await ensureConnected(request)
   await openAs(context, page, 'admin', '#/tools')
+  // A positive first: the list has loaded and shows Slack connected, so "no Connect button" below isn't an unloaded page.
+  await expect(main(page).getByRole('heading', { level: 2, name: /^Connected/ })).toBeVisible()
+  await expect(main(page).getByRole('button', { name: /^Slack Team conversations/ })).toBeVisible()
   await expect(main(page).getByRole('button', { name: 'Connect', exact: true })).toHaveCount(0)
   await shot(page, 'S7-admin-tools-list')
   await goTo(page, '#/tools/slack')
