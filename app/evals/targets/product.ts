@@ -32,6 +32,31 @@ export const EVAL_ORIGIN_VAR = 'INHOUSE_EVAL_ORIGIN'
 /** The deployment's test issuer: the private key (a file) and the brand app's `aud`. The eval deployment is a test build in the sandbox. */
 export const EVAL_ISSUER_JWK_FILE = 'INHOUSE_EVAL_ISSUER_JWK_FILE'
 export const EVAL_AUD_VAR = 'INHOUSE_EVAL_AUD'
+/**
+ * The eval host's Access lock (Wasim's E-5 second lock): the dedicated service token `inhouse-sbx-eval-ci`, held only in
+ * inhouse-ops. Every call to the eval origin carries it as CF-Access-Client-Id and CF-Access-Client-Secret, as the house's
+ * service-token calls do (inhouse-ops house-model-smoke.mjs). Never printed.
+ */
+export const EVAL_ACCESS_CLIENT_ID_VAR = 'INHOUSE_EVAL_ACCESS_CLIENT_ID'
+export const EVAL_ACCESS_CLIENT_SECRET_VAR = 'INHOUSE_EVAL_ACCESS_CLIENT_SECRET'
+/**
+ * The header the test-issuer JWT also travels in: Access in front sets its own Cf-Access-Jwt-Assertion, so the eval build
+ * may read the test issuer's from here (held: authenticate.ts reads it only after the lock probe shows Access replaces
+ * Cf-Access-Jwt-Assertion). Sent in both, so the probe answers either way.
+ */
+export const TEST_ASSERTION_HEADER = 'X-Inhouse-Test-Assertion'
+
+/** The Access service token's header names, lowercased: a caller's own copy is dropped before ours goes on. */
+const EDGE_KEYS = new Set(['cf-access-client-id', 'cf-access-client-secret'])
+
+/** The Access service token's headers, or a refusal naming the variables (never their values). */
+export function accessHeaders(env: Record<string, string | undefined>): Record<string, string> {
+  const id = env[EVAL_ACCESS_CLIENT_ID_VAR]
+  const secret = env[EVAL_ACCESS_CLIENT_SECRET_VAR]
+  if (!id || !secret) throw new ProductTargetRefusal(`refusing: ${EVAL_ACCESS_CLIENT_ID_VAR} and ${EVAL_ACCESS_CLIENT_SECRET_VAR} are not both set, so the eval host's Access lock would refuse every call`)
+  return { 'CF-Access-Client-Id': id, 'CF-Access-Client-Secret': secret }
+}
+
 /** The eval deployment's D1 database name and the sandbox wrangler config that binds it (door.ts). */
 export const EVAL_D1_NAME = 'INHOUSE_EVAL_D1_NAME'
 export const EVAL_WRANGLER_CONFIG = 'INHOUSE_EVAL_WRANGLER_CONFIG'
@@ -100,18 +125,23 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
   if (!origin) throw new ProductTargetRefusal(`refusing: ${EVAL_ORIGIN_VAR} is not set`)
   const picker = PICKER_OF[opts.model ?? 'claude-sonnet-5-5']
   if (!picker) throw new ProductTargetRefusal(`refusing: no model picker id for ${JSON.stringify(opts.model)}`)
+  // Before any call: every request to the eval origin passes its Access lock with the service token.
+  const edge = accessHeaders(opts.env)
 
   const doFetch = opts.fetch ?? fetch
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
   const pollMs = opts.pollMs ?? 2000
   const people: People = { current: '', tom: '', lena: '' }
-  const signIn = opts.signIn ?? defaultSignIn(opts.env)
+  const signIn = opts.signIn ?? testIssuerSignIn(opts.env)
   const headersOf = new Map<PersonKey, Record<string, string>>()
 
   async function api(who: PersonKey, method: string, path: string, o: { json?: unknown; bytes?: Uint8Array; headers?: Record<string, string>; signal?: AbortSignal } = {}): Promise<{ status: number; json: any; text: string }> {
     let h = headersOf.get(who)
     if (!h) headersOf.set(who, (h = await signIn(who)))
-    const headers: Record<string, string> = { ...h, ...o.headers }
+    // The service token last, and any caller's token header dropped first in any case (#277 review F4: Headers would join
+    // a differently cased duplicate with ours), so nothing replaces or corrupts it.
+    const headers: Record<string, string> = Object.fromEntries(Object.entries({ ...h, ...o.headers }).filter(([k]) => !EDGE_KEYS.has(k.toLowerCase())))
+    Object.assign(headers, edge)
     if (method !== 'GET') headers.Origin = origin!
     let body: BodyInit | undefined
     if (o.json !== undefined) { body = JSON.stringify(o.json); headers['Content-Type'] = 'application/json' }
@@ -411,13 +441,13 @@ export function readIssuerKey(file: string): JWK {
 }
 
 /** Signs in with a test-issuer token minted from the deployment's private key (a file), the way the e2e specs do. */
-function defaultSignIn(env: Record<string, string | undefined>): (key: PersonKey) => Promise<Record<string, string>> {
+export function testIssuerSignIn(env: Record<string, string | undefined>): (key: PersonKey) => Promise<Record<string, string>> {
   return async (key) => {
     const file = env[EVAL_ISSUER_JWK_FILE]
     const aud = env[EVAL_AUD_VAR]
     if (!file || !aud) throw new ProductTargetRefusal(`refusing: ${EVAL_ISSUER_JWK_FILE} and ${EVAL_AUD_VAR} are not both set, so the eval people can't sign in`)
     const who = EVAL_PEOPLE[key]
     const token = await mintPerson({ sub: who.sub, email: who.email, key: readIssuerKey(file), aud })
-    return { 'Cf-Access-Jwt-Assertion': token }
+    return { 'Cf-Access-Jwt-Assertion': token, [TEST_ASSERTION_HEADER]: token }
   }
 }

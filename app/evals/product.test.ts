@@ -16,7 +16,7 @@ import { buildReport, renderReadme } from './report.ts'
 import { writeResults } from './write.ts'
 import type { Case, ChatResult, Target } from './types.ts'
 
-const ENV = { INHOUSE_EVAL_BRAND: '1', INHOUSE_EVAL_ORIGIN: 'https://eval.example.test' }
+const ENV = { INHOUSE_EVAL_BRAND: '1', INHOUSE_EVAL_ORIGIN: 'https://eval.example.test', INHOUSE_EVAL_ACCESS_CLIENT_ID: 'id.access', INHOUSE_EVAL_ACCESS_CLIENT_SECRET: 'eval-ci-secret' }
 const MEMBER = { current: 'm_dana', tom: 'm_leo', lena: 'm_sam' }
 const TOKEN_OF: Record<string, string> = { 'tok-current': 'm_dana', 'tok-tom': 'm_leo', 'tok-lena': 'm_sam' }
 const signIn = async (key: string) => ({ 'Cf-Access-Jwt-Assertion': `tok-${key}` })
@@ -611,5 +611,45 @@ describe('the test issuer\'s key file', () => {
   })
   it('returns the key from a valid file', () => {
     expect(readIssuerKey(file('ok', '{"kty":"EC","crv":"P-256"}'))).toEqual({ kty: 'EC', crv: 'P-256' })
+  })
+})
+
+// The eval host's Access lock (E-5): every call to the origin carries the service token, and the target refuses to start
+// without it. Ways it could fail: a call goes out without the token (Access refuses it); a caller's header replaces it; the
+// target starts without the token and fails on its first call instead of up front; the secret reaches a message.
+describe('the Access service token', () => {
+  it('rides on every call to the eval origin', async () => {
+    const srv = server()
+    const seen: Headers[] = []
+    const spy = (async (url: string, init?: RequestInit) => { seen.push(new Headers(init?.headers)); return srv.fetch(url, init) }) as typeof fetch
+    const target = make(srv, new FakeDoor(), { fetch: spy })
+    await (await target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).reset()
+    expect(seen.length).toBeGreaterThan(3)
+    for (const h of seen) {
+      expect(h.get('CF-Access-Client-Id')).toBe('id.access')
+      expect(h.get('CF-Access-Client-Secret')).toBe('eval-ci-secret')
+    }
+  })
+  // #277 review F4: a caller's header in another case must not survive beside ours (Headers would join the two values).
+  it('a caller\'s token header, in any case, is dropped for ours', async () => {
+    const srv = server()
+    const seen: Headers[] = []
+    const spy = (async (url: string, init?: RequestInit) => { seen.push(new Headers(init?.headers)); return srv.fetch(url, init) }) as typeof fetch
+    const caller = async (key: Parameters<typeof signIn>[0]) => ({ ...(await signIn(key)), 'cf-access-client-id': 'other-id', 'CF-ACCESS-CLIENT-SECRET': 'other-secret' })
+    await (await make(srv, new FakeDoor(), { fetch: spy, signIn: caller }).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).reset()
+    expect(seen.length).toBeGreaterThan(0)
+    for (const h of seen) {
+      expect(h.get('CF-Access-Client-Id')).toBe('id.access')
+      expect(h.get('CF-Access-Client-Secret')).toBe('eval-ci-secret')
+    }
+  })
+  it('refuses to start without it, before any call, naming the variables only', () => {
+    for (const drop of ['INHOUSE_EVAL_ACCESS_CLIENT_ID', 'INHOUSE_EVAL_ACCESS_CLIENT_SECRET']) {
+      let calls = 0
+      const env = { ...ENV, [drop]: undefined }
+      expect(() => createProductTarget({ paid: true, budgetUsd: 5, env, fetch: (() => { calls++ }) as unknown as typeof fetch })).toThrow(/INHOUSE_EVAL_ACCESS_CLIENT_ID and INHOUSE_EVAL_ACCESS_CLIENT_SECRET are not both set/)
+      try { createProductTarget({ paid: true, budgetUsd: 5, env, fetch: (() => {}) as unknown as typeof fetch }) } catch (e) { expect(String(e)).not.toContain('eval-ci-secret') }
+      expect(calls).toBe(0)
+    }
   })
 })
