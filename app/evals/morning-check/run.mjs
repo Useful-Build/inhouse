@@ -28,8 +28,17 @@
 //   INHOUSE_EVAL_D1_NAME=inhouse-sbx-pr<N>-db INHOUSE_EVAL_WRANGLER_CONFIG=<the sandbox config that binds it> CF_SANDBOX_ACCOUNT_ID=... \
 //   [MORNING_CHECK_RELEASE_JWT=<release token, test build only>] node evals/morning-check/run.mjs --target <the build's https origin> \
 //     --out-dir evals/morning-check/results --sha <git sha> --issuer-key-file <that deploy's test issuer private JWK> --aud <its Access aud> \
-//     [--cases ...] [--model ...] [--timeout-min 20] [--settle-min 2]
+//     [--cases ...] [--model ...] [--timeout-min 20] [--settle-min 2] [--model-setting Fast --inhouse-origin <its Inhouse app origin> --inhouse-aud <that app's Access aud>]
 //
+// --model-setting <label> (remote only, default none): before the first case, the brand's Default model (`g:mode`, route 12)
+// is set to that label and read back. Only the Inhouse team writes `g:mode` (an Admin may write only `tm:<id>:on` there and
+// gets 403 admin_read_only); it needs no grant (remote.ts SettingsApi says why). As watch-kit's setStage does, the seeded
+// Admin ends live grants and opens one, the seeded Inhouse team member writes it on the build's Inhouse app
+// (--inhouse-origin, --inhouse-aud), and the grants are ended again. The Admin calls are always SEED_PEOPLE.admin, never
+// --sub/--email (those name the person who presses Run now).
+// The scripted proof passes "Fast": routine turns run on the Default model (Opus when unset) and the scripted model
+// answers only Fast. A real-model run leaves it out: the eval run picks its own model. The setting is not put back after
+// the run (the brand's Default model stays changed), so use --model-setting only on a per-PR sandbox.
 // No restart: per case the door (door.ts, wrangler d1 execute on the sandbox database) sets the test shop override the
 // build's egress passes to the hub, Run now is pressed, the slot is polled through the door until it ends or the deadline,
 // graded and written as above. The override is cleared before the first case, after every case and on exit. Without
@@ -51,15 +60,15 @@ import { openResults } from './results.ts'
 import { ROUTINE_ID, runAll } from './runner.ts'
 import { runMode } from './args.ts'
 import { createMorningDoor } from './door.ts'
-import { clearOnSignals, remoteEnv } from './remote.ts'
+import { clearOnSignals, ensureDefaultModel, remoteEnv } from './remote.ts'
 import { wranglerRunner } from '../targets/door.ts'
-import { SEED_PEOPLE } from '../../server/seed/brand.ts'
+import { SEED_INHOUSE, SEED_PEOPLE } from '../../server/seed/brand.ts'
 
 const { values: a } = parseArgs({
   options: {
     'persist-dir': { type: 'string' }, 'base-url': { type: 'string' }, 'out-dir': { type: 'string' }, sha: { type: 'string' }, cases: { type: 'string' },
     model: { type: 'string', default: 'claude-sonnet-5-5' }, 'restart-cmd': { type: 'string' }, 'timeout-min': { type: 'string', default: '20' }, 'settle-min': { type: 'string', default: '2' },
-    'shop-pattern': { type: 'string' }, 'restart-wait-sec': { type: 'string' }, target: { type: 'string' },
+    'shop-pattern': { type: 'string' }, 'restart-wait-sec': { type: 'string' }, target: { type: 'string' }, 'model-setting': { type: 'string' }, 'inhouse-origin': { type: 'string' }, 'inhouse-aud': { type: 'string' },
     'issuer-key-file': { type: 'string' }, aud: { type: 'string' }, sub: { type: 'string', default: SEED_PEOPLE.admin.subject }, email: { type: 'string', default: SEED_PEOPLE.admin.email },
   },
 })
@@ -75,6 +84,26 @@ const post = async (path, body, jwt) => {
   const r = await fetch(new URL(path, m.baseUrl), { method: 'POST', headers: { 'Content-Type': 'application/json', 'Cf-Access-Jwt-Assertion': jwt, Origin: new URL(m.baseUrl).origin }, body: JSON.stringify(body) })
   if (!r.ok) throw new Error(`run.mjs: POST ${path} answered ${r.status}: ${await r.text()}`)
 }
+/**
+ * One API call as one identity, minted with the test issuer as e2e/api/kit.ts `actor` does: `who` is its sub and email, sent
+ * to `origin` with that app's Access aud (and `Origin`). ensureDefaultModel reads the status and the JSON itself.
+ */
+const callAs = (who, origin, aud) => async (method, path, body) => {
+  const jwt = await mintPerson({ sub: who.subject, email: who.email, key: privateJwk, aud })
+  const r = await fetch(new URL(path, origin), { method, headers: { 'Content-Type': 'application/json', 'Cf-Access-Jwt-Assertion': jwt, Origin: origin }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+  const text = await r.text()
+  let json = null
+  try { json = text ? JSON.parse(text) : null } catch { json = { text } }
+  return { status: r.status, json }
+}
+/**
+ * The Default model's writers (remote.ts SettingsApi): the seeded Admin on the brand app (reads, support grants) and the
+ * seeded Inhouse team member on the build's Inhouse app (only the Inhouse team writes `g:mode`).
+ */
+const settingsApi = () => ({
+  admin: callAs(SEED_PEOPLE.admin, new URL(m.baseUrl).origin, a.aud),
+  inhouse: callAs(SEED_INHOUSE, m.modelSetting.inhouseOrigin, m.modelSetting.inhouseAud),
+})
 
 /** The local D1 file under the persist dir that holds the routines tables. */
 function findDb() {
@@ -149,6 +178,7 @@ const env = door ? remoteEnv({
   nowMs: () => Date.now(),
   caseTimeoutMs: Number(a['timeout-min']) * 60_000,
   settleMs: Number(a['settle-min']) * 60_000,
+  ...(m.modelSetting ? { defaultModel: () => ensureDefaultModel(settingsApi(), m.modelSetting.label) } : {}),
 }) : {
   nowMs: () => Date.now(),
   async useShop(host) {

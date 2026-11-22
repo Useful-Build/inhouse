@@ -18,7 +18,7 @@ import { DoorRefusal, type RunSql } from '../targets/door.ts'
 import { runMode } from './args.ts'
 import { createMorningDoor, type MorningDoor } from './door.ts'
 import { AMBER, META, hostOf } from './expected.ts'
-import { clearOnSignals, remoteEnv } from './remote.ts'
+import { clearOnSignals, ensureDefaultModel, remoteEnv, type ApiCall, type SettingsApi } from './remote.ts'
 import { ROUTINE_ID, runAll } from './runner.ts'
 
 const migrations = fileURLToPath(new URL('../../server/migrations/', import.meta.url))
@@ -269,13 +269,168 @@ describe('run.mjs stop handlers (MEDIUM 3)', () => {
   })
 })
 
+// The Default model before the first Run now (routine turns run on it; the scripted model answers only Fast). The fake
+// server models route 12's rule (server/auth/matrix.ts, its own tests in matrix.test.ts): an Admin writing `g:mode` gets 403
+// admin_read_only; the Inhouse team member's write is accepted with or without a live grant (matrix.ts answers a technical
+// row for Inhouse OK, and server/api/routes-wired.test.ts writes one with no grant open), so the grant step is only
+// setStage's, checked here for order and cleanup. Ways it can go wrong: a case is pressed before the setting is written,
+// the write goes as the Admin (refused live), a grant is left open after it (also when the write fails or throws), a
+// refused or unconfirmed write lets the run go on, a stale revision is sent, a write failure and a grant that won't end
+// hide each other, or a run that didn't ask for a model writes one anyway.
+describe('the Default model, set before the first Run now', () => {
+  function server(initial: { value: string; rev: number } | null, o: { grantStatus?: number; leftoverGrant?: boolean; putStatus?: number; endFails?: boolean } = {}) {
+    const events: string[] = []
+    let row = initial
+    let grants: { id: string; rev: number; live: boolean }[] = o.leftoverGrant ? [{ id: 'g_old', rev: 3, live: true }] : []
+    const answer = (status: number, json: unknown) => ({ status, json })
+    const as = (who: 'admin' | 'inhouse'): ApiCall => async (method, path, body) => {
+      events.push(`${who} ${method} ${path}${body === undefined ? '' : ` ${JSON.stringify(body)}`}`)
+      if (method === 'GET' && path === '/api/settings/technical') return answer(200, { items: row ? [{ key: 'g:mode', value: row.value, rev: row.rev }] : [] })
+      if (who === 'admin' && method === 'GET' && path === '/api/grants') return answer(200, { items: grants })
+      if (who === 'admin' && method === 'POST' && path === '/api/grants') {
+        if ((o.grantStatus ?? 201) !== 201) return answer(o.grantStatus!, { error: { code: 'conflict' } })
+        grants = [...grants, { id: `g_${grants.length + 1}`, rev: 1, live: true }]
+        return answer(201, grants.at(-1))
+      }
+      const end = /^\/api\/grants\/([^/]+)\/end$/.exec(path)
+      if (who === 'admin' && method === 'POST' && end) {
+        if (o.endFails) return answer(500, { error: { code: 'internal' } })
+        grants = grants.map(g => (g.id === end[1] ? { ...g, live: false, rev: g.rev + 1 } : g))
+        return answer(200, {})
+      }
+      if (method === 'PUT' && path === '/api/settings/technical/g%3Amode') {
+        if (who === 'admin') return answer(403, { error: { code: 'forbidden', reason: 'admin_read_only' } })
+        if (o.putStatus !== undefined) return answer(o.putStatus, { error: { code: 'conflict' } })
+        row = { value: (body as { value: string }).value, rev: (row?.rev ?? 0) + 1 }
+        return answer(200, row)
+      }
+      return answer(404, { error: { code: 'not_found' } })
+    }
+    return { api: { admin: as('admin'), inhouse: as('inhouse') } as SettingsApi, events, live: () => grants.filter(g => g.live).length }
+  }
+  function fakeRun(api: SettingsApi | null, events: string[]) {
+    const door: MorningDoor = {
+      close: () => {}, setShop: async () => {}, clearShop: async () => null,
+      slot: async k => ({ slot_key: k, state: 'ended', failure: null, result_text: 'found 0 things', turn_id: null, claimed_at_ms: 1 }),
+      items: async () => [], tools: async () => [],
+    }
+    let now = 0
+    return remoteEnv({
+      door, runNow: async () => void events.push('Run now'), alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {},
+      ...(api ? { defaultModel: () => ensureDefaultModel(api, 'Fast') } : {}),
+    })
+  }
+  const one = [META.find(c => c.id === 'clean-empty')!]
+  const meta = { date: '2026-11-22', sha: 'abc1234', model: 'scripted' }
+
+  it('unset (Opus): grants ended, one opened by the Admin, the Inhouse write with its revision, grants ended, read back, then Run now', async () => {
+    const s = server(null)
+    await runAll(fakeRun(s.api, s.events), [...one, META.find(c => c.id === 'clean-steady')!], meta)
+    expect(s.events).toEqual([
+      'admin GET /api/settings/technical', 'admin GET /api/grants', 'admin POST /api/grants {"hours":1}',
+      'inhouse PUT /api/settings/technical/g%3Amode {"value":"Fast","ifRev":0}', 'admin GET /api/grants', 'admin POST /api/grants/g_1/end {"ifRev":1}',
+      'admin GET /api/settings/technical', 'Run now', 'Run now',
+    ])
+    expect(s.live()).toBe(0)
+  })
+
+  it('a live grant left over is ended first; another model is written over with that row\'s revision', async () => {
+    const s = server({ value: 'Deep', rev: 4 }, { leftoverGrant: true })
+    await runAll(fakeRun(s.api, s.events), one, meta)
+    expect(s.events.slice(1, 4)).toEqual(['admin GET /api/grants', 'admin POST /api/grants/g_old/end {"ifRev":3}', 'admin POST /api/grants {"hours":1}'])
+    expect(s.events).toContain('inhouse PUT /api/settings/technical/g%3Amode {"value":"Fast","ifRev":4}')
+    expect(s.live()).toBe(0)
+  })
+
+  it('already Fast: read only, no grant, no write', async () => {
+    const s = server({ value: 'Fast', rev: 2 })
+    await runAll(fakeRun(s.api, s.events), one, meta)
+    expect(s.events).toEqual(['admin GET /api/settings/technical', 'admin GET /api/settings/technical', 'Run now'])
+  })
+
+  it('written as the Admin, the write is refused 403 admin_read_only: the run stops before any Run now, no grant left open', async () => {
+    const s = server(null)
+    await expect(runAll(fakeRun({ admin: s.api.admin, inhouse: s.api.admin }, s.events), one, meta)).rejects.toThrow('setting the Default model to Fast answered 403: {"error":{"code":"forbidden","reason":"admin_read_only"}}')
+    expect(s.events).not.toContain('Run now')
+    expect(s.live()).toBe(0)
+  })
+
+  it('a grant that can\'t be opened: no write, the run stops before any Run now', async () => {
+    const s = server(null, { grantStatus: 409 })
+    await expect(runAll(fakeRun(s.api, s.events), one, meta)).rejects.toThrow('opening a support grant answered 409')
+    expect(s.events.some(e => e.startsWith('inhouse PUT'))).toBe(false)
+    expect(s.events).not.toContain('Run now')
+    expect(s.live()).toBe(0)
+  })
+
+  it('a stale revision (409 on the write): the run stops before any Run now, no grant left open', async () => {
+    const s = server({ value: 'Deep', rev: 4 }, { putStatus: 409 })
+    await expect(runAll(fakeRun(s.api, s.events), one, meta)).rejects.toThrow('setting the Default model to Fast answered 409')
+    expect(s.events).not.toContain('Run now')
+    expect(s.live()).toBe(0)
+  })
+
+  it('the Inhouse call throws (a network failure): the rejection is its own, and no grant is left open', async () => {
+    const s = server(null)
+    const api: SettingsApi = { admin: s.api.admin, inhouse: async () => { throw new Error('fetch failed: the Inhouse app is unreachable') } }
+    await expect(runAll(fakeRun(api, s.events), one, meta)).rejects.toThrow('fetch failed: the Inhouse app is unreachable')
+    expect(s.events).not.toContain('Run now')
+    expect(s.live()).toBe(0)
+  })
+
+  it('a write that fails and grants that won\'t end are both reported (LOW 3)', async () => {
+    const s = server(null, { putStatus: 409, endFails: true })
+    const run = runAll(fakeRun(s.api, s.events), one, meta)
+    await expect(run).rejects.toThrow('setting the Default model to Fast answered 409')
+    await expect(run).rejects.toThrow('and live support grants could not be ended: morning-check: ending support grant g_1 answered 500')
+    expect(s.events).not.toContain('Run now')
+  })
+
+  it('grants that won\'t end after a good write still stop the run', async () => {
+    const s = server(null, { endFails: true })
+    await expect(runAll(fakeRun(s.api, s.events), one, meta)).rejects.toThrow('live support grants could not be ended: morning-check: ending support grant g_1 answered 500')
+    expect(s.events).not.toContain('Run now')
+  })
+
+  it('a write that doesn\'t read back stops the run before any Run now', async () => {
+    const s = server(null)
+    const lying: SettingsApi = { admin: async (method, path, body) => (method === 'GET' && path === '/api/settings/technical' ? { status: 200, json: { items: [] } } : s.api.admin(method, path, body)), inhouse: s.api.inhouse }
+    const events: string[] = []
+    await expect(runAll(fakeRun(lying, events), one, meta)).rejects.toThrow('the Default model reads back undefined, not Fast')
+    expect(events).toEqual([])
+    expect(s.live()).toBe(0)
+  })
+
+  it('a run that asks for no model writes none (the real-model run)', async () => {
+    const events: string[] = []
+    await runAll(fakeRun(null, events), one, meta)
+    expect(events).toEqual(['Run now'])
+  })
+
+  it.each(['fast mode', '../x', '', 'Fast"}'])('refuses the label %j before any call', async label => {
+    const s = server(null)
+    await expect(ensureDefaultModel(s.api, label)).rejects.toThrow('is not a Default model label')
+    expect(s.events).toEqual([])
+  })
+})
+
 describe('run.mjs arguments (failure 6)', () => {
   const common = { 'out-dir': 'o', sha: 'abc1234', 'issuer-key-file': 'k.json', aud: 'aud' }
   const doorEnv = { INHOUSE_EVAL_D1_NAME: 'inhouse-sbx-pr12-db', INHOUSE_EVAL_WRANGLER_CONFIG: 'w.json', CF_SANDBOX_ACCOUNT_ID: 'acct' }
 
   it('remote: the origin, the door\'s database and config, the release token only when given', () => {
-    expect(runMode({ ...common, target: 'https://pr12.example.dev' }, doorEnv)).toEqual({ mode: 'remote', baseUrl: 'https://pr12.example.dev', releaseJwt: null, database: 'inhouse-sbx-pr12-db', wranglerConfig: 'w.json' })
+    expect(runMode({ ...common, target: 'https://pr12.example.dev' }, doorEnv)).toEqual({ mode: 'remote', baseUrl: 'https://pr12.example.dev', releaseJwt: null, database: 'inhouse-sbx-pr12-db', wranglerConfig: 'w.json', modelSetting: null })
     expect(runMode({ ...common, target: 'https://pr12.example.dev/' }, { ...doorEnv, MORNING_CHECK_RELEASE_JWT: 'j' })).toMatchObject({ mode: 'remote', releaseJwt: 'j' })
+  })
+
+  it('--model-setting: remote only, a plain label, with the Inhouse app\'s origin and aud (only the Inhouse team writes g:mode)', () => {
+    const ms = { 'model-setting': 'Fast', 'inhouse-origin': 'https://ih-pr12.example.dev', 'inhouse-aud': 'ih-aud' }
+    expect(runMode({ ...common, target: 'https://pr12.example.dev', ...ms }, doorEnv)).toMatchObject({ mode: 'remote', modelSetting: { label: 'Fast', inhouseOrigin: 'https://ih-pr12.example.dev', inhouseAud: 'ih-aud' } })
+    expect(() => runMode({ ...common, target: 'https://pr12.example.dev', ...ms, 'model-setting': 'fast mode' }, doorEnv)).toThrow('--model-setting must be a Default model label')
+    expect(() => runMode({ ...common, target: 'https://pr12.example.dev', 'model-setting': 'Fast' }, doorEnv)).toThrow('needs --inhouse-origin and --inhouse-aud')
+    expect(() => runMode({ ...common, target: 'https://pr12.example.dev', ...ms, 'inhouse-origin': 'https://ih.example.dev/api' }, doorEnv)).toThrow('--inhouse-origin must be')
+    expect(() => runMode({ ...common, target: 'https://pr12.example.dev', 'inhouse-aud': 'x' }, doorEnv)).toThrow('--inhouse-aud only go with --model-setting')
+    expect(() => runMode({ ...common, 'persist-dir': 'p', 'base-url': 'http://localhost:8788', ...ms }, { MORNING_CHECK_RELEASE_JWT: 'j' })).toThrow('--model-setting is for a deployed build (--target) only')
   })
 
   it.each(['persist-dir', 'base-url', 'restart-cmd', 'shop-pattern', 'restart-wait-sec'])('remote with --%s is refused', k => {

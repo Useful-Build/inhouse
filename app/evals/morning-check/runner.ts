@@ -54,6 +54,11 @@ export interface RunnerEnv {
    * case throws; after a case, the case's result is kept and the run stops ("override could not be cleared").
    */
   releaseShop?(): Promise<void>
+  /**
+   * Once, after the start-of-run clear and before the first case's Run now (remote.ts: the brand's Default model when the
+   * run asks for one). A failure throws: no case runs.
+   */
+  beforeCases?(): Promise<void>
 }
 
 const ZERO: Fixed = { truncated: 0, dropped: 0, deduped: 0, overflow: 0 }
@@ -147,6 +152,7 @@ export async function runAll(
     notRun: stopped ? cases.slice(results.length).map(c => c.id) : [], ...(stopped ? { stopped } : {}),
   })
   await env.releaseShop?.()
+  await env.beforeCases?.()
   /** The override's clear after a case: null when it went, else what went wrong (the case's result is still kept). */
   const release = async (): Promise<string | null> => {
     try {

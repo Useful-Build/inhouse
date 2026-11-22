@@ -15,7 +15,36 @@ const DOOR_ENV = ['INHOUSE_EVAL_D1_NAME', 'INHOUSE_EVAL_WRANGLER_CONFIG', 'CF_SA
 
 export type RunMode =
   | { mode: 'local'; baseUrl: string; persistDir: string; releaseJwt: string }
-  | { mode: 'remote'; baseUrl: string; releaseJwt: string | null; database: string; wranglerConfig: string }
+  | { mode: 'remote'; baseUrl: string; releaseJwt: string | null; database: string; wranglerConfig: string; modelSetting: { label: string; inhouseOrigin: string; inhouseAud: string } | null }
+
+const MODEL_SETTING = ['model-setting', 'inhouse-origin', 'inhouse-aud'] as const
+
+/**
+ * --model-setting writes the brand's Default model (`g:mode`, route 12). An Admin may write only `tm:<id>:on` there
+ * (server/auth/matrix.ts: anything else is 403 admin_read_only); `g:mode` takes the Inhouse team member, signed in on the
+ * build's Inhouse app. So it needs that app's origin (--inhouse-origin) and Access aud (--inhouse-aud), and those go with
+ * it only.
+ */
+function remoteModelSetting(a: RunArgs): { label: string; inhouseOrigin: string; inhouseAud: string } | null {
+  const label = a['model-setting']
+  if (label === undefined) {
+    const extra = MODEL_SETTING.filter(k => a[k] !== undefined)
+    if (extra.length) throw new Error(`run.mjs: ${extra.map(k => `--${k}`).join(', ')} only go with --model-setting`)
+    return null
+  }
+  if (!/^[A-Za-z]{1,20}$/.test(label)) throw new Error('run.mjs: --model-setting must be a Default model label (Fast, say)')
+  const origin = a['inhouse-origin']
+  const aud = a['inhouse-aud']
+  if (!origin || !aud) throw new Error('run.mjs: --model-setting needs --inhouse-origin and --inhouse-aud (g:mode is written by the Inhouse team member, on the Inhouse app)')
+  let url: URL
+  try {
+    url = new URL(origin)
+  } catch {
+    throw new Error('run.mjs: --inhouse-origin must be the build\'s Inhouse app https origin')
+  }
+  if (url.protocol !== 'https:' || url.origin !== origin.replace(/\/$/, '')) throw new Error('run.mjs: --inhouse-origin must be the build\'s Inhouse app https origin (no path, query or credentials)')
+  return { label, inhouseOrigin: url.origin, inhouseAud: aud }
+}
 
 export function runMode(a: RunArgs, env: Record<string, string | undefined>): RunMode {
   for (const k of COMMON) if (!a[k]) throw new Error(`run.mjs: --${k} is required`)
@@ -32,8 +61,10 @@ export function runMode(a: RunArgs, env: Record<string, string | undefined>): Ru
     if (url.protocol !== 'https:' || url.origin !== a.target.replace(/\/$/, '')) throw new Error('run.mjs: --target must be the deployed build\'s https origin (no path, query or credentials)')
     const missing = DOOR_ENV.filter(k => !env[k])
     if (missing.length) throw new Error(`run.mjs: --target reads the build's D1 through the door and needs ${missing.join(', ')}`)
-    return { mode: 'remote', baseUrl: url.origin, releaseJwt, database: env.INHOUSE_EVAL_D1_NAME!, wranglerConfig: env.INHOUSE_EVAL_WRANGLER_CONFIG! }
+    const modelSetting = remoteModelSetting(a)
+    return { mode: 'remote', baseUrl: url.origin, releaseJwt, database: env.INHOUSE_EVAL_D1_NAME!, wranglerConfig: env.INHOUSE_EVAL_WRANGLER_CONFIG!, modelSetting }
   }
+  for (const k of MODEL_SETTING) if (a[k] !== undefined) throw new Error(`run.mjs: --${k} is for a deployed build (--target) only`)
   for (const k of ['persist-dir', 'base-url'] as const) if (!a[k]) throw new Error(`run.mjs: --${k} is required (or --target for a deployed build)`)
   if (!releaseJwt) throw new Error('run.mjs: MORNING_CHECK_RELEASE_JWT is not set')
   return { mode: 'local', baseUrl: a['base-url']!, persistDir: a['persist-dir']!, releaseJwt }

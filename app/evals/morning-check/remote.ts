@@ -19,12 +19,104 @@ export interface RemoteDeps {
   settleMs: number
   /** Where a loud line goes (default console.error): a leftover override found by the run's first clear. */
   warn?(line: string): void
+  /**
+   * Sets the brand's Default model before the first case (ensureDefaultModel), or nothing when absent. The scripted proof
+   * asks for "Fast": routine turns run on the brand's Default model (Opus when unset) and the scripted model answers only
+   * the Fast one. A real-model run leaves it alone (the eval run picks its own model).
+   */
+  defaultModel?: () => Promise<void>
+}
+
+/** One API call as one identity, as the caller's HTTP gives the answer (status and parsed JSON). */
+export type ApiCall = (method: 'GET' | 'PUT' | 'POST', path: string, body?: unknown) => Promise<{ status: number; json: unknown }>
+
+/**
+ * Who writes the brand's Default model. Only the Inhouse team writes `g:mode` (server/auth/matrix.ts: a Member never writes
+ * technical settings, an Admin only `tm:<id>:on` keys, so the Admin gets 403 admin_read_only). The Inhouse team needs no
+ * grant for it: matrix.ts answers a technical row for an Inhouse principal OK (only brand_data takes a live grant), and no
+ * gate before the matrix refuses one (server/api/routes-wired.test.ts writes technical `stage` as Inhouse with no grant
+ * open, through the whole Worker). The grant step below only mirrors e2e/api/watch-kit.ts setStage and
+ * e2e/ship/watch.spec.ts ensureFastDefault. So: the Admin (a brand person: reads, grants) and the Inhouse team member,
+ * signed in on the build's Inhouse app.
+ */
+export interface SettingsApi {
+  admin: ApiCall
+  inhouse: ApiCall
+}
+
+/** A Default model label (the technical setting `g:mode`'s value): a plain word, never a path or a value with markup. */
+const MODEL_LABEL = /^[A-Za-z]{1,20}$/
+
+const fail = (what: string, r: { status: number; json: unknown }) => new Error(`morning-check: ${what} answered ${r.status}: ${JSON.stringify(r.json)}`)
+const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
+
+/** Tries to end every live support grant, as the Admin; returns what went wrong (nothing: all ended). */
+async function endLiveGrants(admin: ApiCall): Promise<string[]> {
+  const errors: string[] = []
+  let items: { id: string; rev: number; live: boolean }[]
+  try {
+    const list = await admin('GET', '/api/grants')
+    if (list.status !== 200) throw fail('GET /api/grants', list)
+    const found = (list.json as { items?: { id: string; rev: number; live: boolean }[] } | null)?.items
+    if (!Array.isArray(found)) throw new Error('morning-check: GET /api/grants has no items')
+    items = found
+  } catch (e) {
+    return [message(e)]
+  }
+  for (const g of items.filter(x => x.live)) {
+    try {
+      const done = await admin('POST', `/api/grants/${encodeURIComponent(g.id)}/end`, { ifRev: g.rev })
+      if (done.status !== 200) throw fail(`ending support grant ${g.id}`, done)
+    } catch (e) {
+      errors.push(message(e))
+    }
+  }
+  return errors
+}
+
+/**
+ * The brand's Default model (`g:mode`) set to `label` and read back as a brand person (route 12). When it differs: live
+ * grants ended, a one-hour grant opened by the Admin (setStage's steps; the write itself needs none), the Inhouse team
+ * member's PUT with the setting's own revision, every live grant ended again whatever the PUT did, then the read back.
+ * Throws when any step is refused or the value doesn't read back; a write that failed and grants that wouldn't end are
+ * reported together.
+ */
+export async function ensureDefaultModel(api: SettingsApi, label: string): Promise<void> {
+  if (!MODEL_LABEL.test(label)) throw new Error(`morning-check: ${JSON.stringify(label)} is not a Default model label`)
+  const read = async () => {
+    const r = await api.admin('GET', '/api/settings/technical')
+    if (r.status !== 200) throw fail('GET /api/settings/technical', r)
+    const items = (r.json as { items?: { key: string; value?: unknown; rev?: number }[] } | null)?.items
+    if (!Array.isArray(items)) throw new Error('morning-check: GET /api/settings/technical has no items')
+    return items.find(i => i.key === 'g:mode')
+  }
+  const now = await read()
+  if (now?.value !== label) {
+    const before = await endLiveGrants(api.admin)
+    if (before.length) throw new Error(`morning-check: live support grants could not be ended: ${before.join('; ')}`)
+    let failed: unknown = null
+    try {
+      const grant = await api.admin('POST', '/api/grants', { hours: 1 })
+      if (grant.status !== 201) throw fail('opening a support grant', grant)
+      const put = await api.inhouse('PUT', '/api/settings/technical/g%3Amode', { value: label, ifRev: now?.rev ?? 0 })
+      if (put.status !== 200) throw fail(`setting the Default model to ${label}`, put)
+    } catch (e) {
+      failed = e
+    }
+    const after = await endLiveGrants(api.admin)
+    if (failed !== null && after.length) throw new Error(`${message(failed)}; and live support grants could not be ended: ${after.join('; ')}`, { cause: failed })
+    if (failed !== null) throw failed
+    if (after.length) throw new Error(`morning-check: live support grants could not be ended: ${after.join('; ')}`)
+  }
+  const after = await read()
+  if (after?.value !== label) throw new Error(`morning-check: the Default model reads back ${JSON.stringify(after?.value)}, not ${label}`)
 }
 
 export function remoteEnv(d: RemoteDeps): RunnerEnv {
   const warn = d.warn ?? (line => console.error(line))
   let first = true
   return {
+    ...(d.defaultModel ? { beforeCases: d.defaultModel } : {}),
     nowMs: d.nowMs,
     useShop: host => d.door.setShop(host),
     // runAll's first clear is the run's start: a row there is a leftover from a run that didn't clear (or one running now:
