@@ -162,16 +162,26 @@ async function askFromToday(page: Page, text: string): Promise<string> {
  * Dana asks (a scenario by name) and waits for the fixed answer. Returns the fakes' view (an attachment too; empty on the sandbox, see
  * `remote`) and the run's tool steps as the person's trace shows them.
  */
-async function askAndRead(page: Page, request: APIRequestContext, scenario: string, question: string, answer: string, name: string) {
+async function askAndRead(page: Page, request: APIRequestContext, scenario: string, question: string, answer: string, name: string, toolCalls: number) {
   await ensureFastDefault(request)
   const chat = await askFromToday(page, `scenario:${scenario} ${question} ${uid()}`)
   await expect(log(page).getByText(answer, { exact: true })).toBeVisible({ timeout: 150_000 })
   const state = await fakeState(request)
   await attachJson(`${name}-fakes`, { slackToolCalls: state.mcp.toolCalls.map(t => t.name), shopifyRequests: state.shopify.requests.length, posts: state.web.posts })
-  // The run's tool steps, by the owner's trace route: what the agent did, as the product records it.
-  const turnId = ((await api(page, 'GET', `/api/chats/${chat}`)).json?.messages as { role: string; turnId?: string }[] | undefined)?.find(m => m.role === 'agent')?.turnId
-  expect(turnId, 'the answer belongs to a turn').toBeTruthy()
-  const steps = (((await api(page, 'GET', `/api/traces/${turnId}`)).json?.steps ?? []) as { kind: string; label: string; detail: string }[]).filter(x => x.kind === 'tool')
+  // The run's tool steps, by the owner's trace route. The answer is on screen from the socket before its messages are stored (a turn's
+  // are written in one batch when it ends), so the turn id is read from the chat's stored messages by condition: the user's message
+  // carries it from the send, the agent's once stored. The trace is polled the same way until it holds the steps the scenario makes.
+  let turnId: string | undefined
+  await expect.poll(async () => {
+    const messages = (await api(page, 'GET', `/api/chats/${chat}`)).json?.messages as { turnId?: string }[] | undefined
+    turnId = messages?.find(m => m.turnId)?.turnId
+    return turnId
+  }, { timeout: 60_000, message: 'the chat holds the turn of this question' }).toBeTruthy()
+  let steps: { kind: string; label: string; detail: string }[] = []
+  await expect.poll(async () => {
+    steps = (((await api(page, 'GET', `/api/traces/${turnId}`)).json?.steps ?? []) as { kind: string; label: string; detail: string }[]).filter(x => x.kind === 'tool')
+    return steps.length
+  }, { timeout: 60_000, message: `the run's trace holds ${toolCalls} tool step(s)` }).toBe(toolCalls)
   await attachJson(`${name}-tool-steps`, steps)
   return { state, steps }
 }
@@ -225,10 +235,9 @@ test('S2: Ask about a supplier delay and the orders it holds up and the answer c
   await ensureConnected(request)
   await fakeReset(request)
   await openAs(context, page, 'dana', '#/today')
-  const { state, steps } = await askAndRead(page, request, 'connectors-supplier', 'what is the supplier delay and which orders does it hold up?', SUPPLIER_ANSWER, 'S2')
+  const { state } = await askAndRead(page, request, 'connectors-supplier', 'what is the supplier delay and which orders does it hold up?', SUPPLIER_ANSWER, 'S2', 2)
   await shot(page, 'S2-answer-with-both-sources')
   // The path, not only the text: the run made two tool calls (Slack, then the store) through the hub, as its trace records them.
-  expect(steps.length, `the run's tool steps: ${JSON.stringify(steps)}`).toBe(2)
   if (!remote()) {
     expect(state.mcp.toolCalls.map(t => t.name), 'the agent searched Slack').toContain('slack_search_public')
     expect(state.shopify.requests.length, 'the agent read the store').toBeGreaterThan(0)
@@ -243,11 +252,10 @@ test('S3: Ask over the whole store and the answer comes from a code mode script 
   await fakeReset(request)
   await openAs(context, page, 'dana', '#/today')
   const mark = await logMark(request)
-  const { state, steps } = await askAndRead(page, request, 'connectors-codemode', 'across all the products which are lowest on stock?', CODE_MODE_ANSWER, 'S3')
+  const { state } = await askAndRead(page, request, 'connectors-codemode', 'across all the products which are lowest on stock?', CODE_MODE_ANSWER, 'S3', 1)
   await shot(page, 'S3-codemode-answer')
   expect(CODE_MODE_ANSWER.length, 'a short answer').toBeLessThan(300)
   // One tool call (the script), however many pages it read: the answer comes from a script, not a chain of reads.
-  expect(steps.length, `the run's tool steps: ${JSON.stringify(steps)}`).toBe(1)
   // The hub logs one line per script run (its code hash and outcome, never the code or its data). Attached on the sandbox, asserted locally.
   const lines = (await workerLogs(request, mark)).filter(l => l.includes('hub_codemode'))
   await attachJson('S3-hub-codemode-lines', lines)
@@ -276,7 +284,7 @@ test('S4: At Act an alert reaches a listed Slack channel with no link preview, a
     await setStage(request, 'Act')
     const before = (await fakeState(request)).web.posts.length
     let mark = await auditMark(request)
-    await askAndRead(page, request, 'connectors-notice', 'send the stock alert', NOTICE_ANSWER, 'S4-act')
+    await askAndRead(page, request, 'connectors-notice', 'send the stock alert', NOTICE_ANSWER, 'S4-act', 1)
     const act = await auditSince(request, mark)
     await attachJson('S4-act-audit', act)
     expect(act.filter(l => l.what === POSTED).length, 'one post to Slack at Act').toBe(1)
@@ -297,7 +305,7 @@ test('S4: At Act an alert reaches a listed Slack channel with no link preview, a
 
     // An unlisted channel: refused (the audit line says a notice didn't go out, and no post is made), and the person reads the refusal.
     mark = await auditMark(request)
-    await askAndRead(page, request, 'connectors-notice-unlisted', 'send it to the design channel', UNLISTED_ANSWER, 'S4-unlisted')
+    await askAndRead(page, request, 'connectors-notice-unlisted', 'send it to the design channel', UNLISTED_ANSWER, 'S4-unlisted', 1)
     const unlisted = await auditSince(request, mark)
     await attachJson('S4-unlisted-audit', unlisted)
     expect(unlisted.filter(l => l.what === REFUSED).length, 'the unlisted channel was refused and audited').toBe(1)
@@ -309,7 +317,7 @@ test('S4: At Act an alert reaches a listed Slack channel with no link preview, a
     await setStage(request, 'Watch')
     const known = new Set((((await api(page, 'GET', '/api/notifications')).json?.items ?? []) as { id: string }[]).map(i => i.id))
     mark = await auditMark(request)
-    await askAndRead(page, request, 'connectors-notice', 'send the stock alert', NOTICE_ANSWER, 'S4-watch')
+    await askAndRead(page, request, 'connectors-notice', 'send the stock alert', NOTICE_ANSWER, 'S4-watch', 1)
     const watch = await auditSince(request, mark)
     await attachJson('S4-watch-audit', watch)
     expect(watch.filter(l => l.what === TO_BELL).length, 'the alert went to the bell').toBe(1)
