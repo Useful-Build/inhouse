@@ -605,6 +605,8 @@ async function probeFacts() {
     { name: 'seccomp', cmd: 'grep -E "Seccomp|NoNewPrivs" /proc/self/status | tr "\\n" " "' },
     { name: 'ps', cmd: 'ps -eo pid,user,args --no-headers | head -20' },
     { name: 'sysctl', cmd: 'cat /proc/sys/fs/protected_hardlinks /proc/sys/fs/protected_symlinks | tr "\\n" " "' },
+    // P6a W3: our three skills reach the image, readable by the session, and not writable by it (Q7).
+    { name: 'skill-files', cmd: 'for s in pdf word spreadsheet; do f=/opt/inhouse/plugin/skills/$s/SKILL.md; test -f "$f" && test -r "$f" && echo "$s readable"; test -w "$f" && echo "$s WRITABLE"; done; true' },
   ]
   const script = shellScript(probes)
   const { done } = startRun({ chatId: 'p-facts', script: { steps: [bash(script)] } })
@@ -614,6 +616,12 @@ async function probeFacts() {
   const off = await userShell(userNamed('s50'), script)
   // The filter refuses a named Unix socket; a socketpair reaches nothing outside its maker, and is left alone.
   judge('facts', real, off, [{ name: 'shell' }, { name: 'tmpdir' }, { name: 'ns' }, { name: 'unix-socket', leak: (x) => x.out.split('\n').includes('made') }, { name: 'seccomp' }, { name: 'ps' }, { name: 'sysctl' }])
+  const skillFiles = real.get('skill-files')?.out ?? ''
+  record(
+    'facts.skill-files-present-and-read-only',
+    ['pdf', 'word', 'spreadsheet'].every((s) => skillFiles.includes(`${s} readable`)) && !skillFiles.includes('WRITABLE'),
+    `agent saw: ${skillFiles.replace(/\s+/g, ' ')}`,
+  )
   const shell = real.get('shell')
   fact('bash-under-nologin-without-SHELL', shell && shell.rc === 0 ? `works (${shell.out.replace(/\n/g, ' ')})` : `FAILED: R1 must add SHELL=/bin/bash (${shell?.out})`)
   record('facts.bash-runs-under-nologin', shell?.rc === 0, shell?.out ?? 'no output')
