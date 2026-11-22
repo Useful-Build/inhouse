@@ -104,6 +104,12 @@ export async function reportClientError(request: Request): Promise<Response> {
   }
 }
 
+/**
+ * P6a PR0: rows 77 to 82 answer 404 `not_found` (as before they existed) until W2 and W3 replace this with their
+ * handlers. PR0 imports nothing from a worker.
+ */
+const p6aNotYet: Handler = async () => apiError('not_found')
+
 /** One route per access-matrix row, in the table's order (the row numbers of p2-design section 3). */
 export const routes: readonly Route[] = [
   /* 1 */ { method: 'GET', pattern: '/api/health', handler: health },
@@ -179,6 +185,14 @@ export const routes: readonly Route[] = [
   /* 54 */ { method: 'POST', pattern: '/api/routines/:id/run', handler: runRoutineNow },
   /* 55 */ { method: 'POST', pattern: '/api/routines/:id/delete', handler: deleteRoutine },
   /* 56 */ { method: 'POST', pattern: '/api/routines/:id/restore', handler: restoreRoutine },
+  // P6a PR0: rows 77 to 82 (rows 68 to 76 are P5's). W2: the waiting team facts and their approve or reject.
+  /* 77 */ { method: 'GET', pattern: '/api/memory/waiting', handler: p6aNotYet },
+  /* 78 */ { method: 'PUT', pattern: '/api/memory/brand/:id/approved', handler: p6aNotYet },
+  // W3: the skills list and team requests.
+  /* 79 */ { method: 'GET', pattern: '/api/skills', handler: p6aNotYet },
+  /* 80 */ { method: 'GET', pattern: '/api/team-requests', handler: p6aNotYet },
+  /* 81 */ { method: 'POST', pattern: '/api/team-requests', handler: p6aNotYet },
+  /* 82 */ { method: 'PUT', pattern: '/api/team-requests/:id/status', handler: p6aNotYet },
 ]
 
 /** The route for this method and path, with its params, or null (404 `not_found`). */

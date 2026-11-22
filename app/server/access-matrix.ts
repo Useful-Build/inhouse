@@ -83,6 +83,19 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 54 */ { method: 'POST', pattern: '/api/routines/:id/run', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 55 */ { method: 'POST', pattern: '/api/routines/:id/delete', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 56 */ { method: 'POST', pattern: '/api/routines/:id/restore', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  // P6a PR0 (docs/plans/2026-11-22-p6a-memory-skills.md). Rows 68 to 76 are P5's (fleet/connectors), so P6a starts at 77.
+  // Team memory approval (W2): brand data, admins and the Inhouse team; the Inhouse team's approve is a write under a
+  // live grant (support.access PUT, INHOUSE_BRAND_WRITES). Members are refused here.
+  /* 77 */ { method: 'GET', pattern: '/api/memory/waiting', class: 'brand_data', allow: ['admin', 'inhouse'] },
+  /* 78 */ { method: 'PUT', pattern: '/api/memory/brand/:id/approved', class: 'brand_data', allow: ['admin', 'inhouse'] },
+  // Skills (W3): the image's skill list, technical like the Tools page; everyone reads, nobody writes.
+  /* 79 */ { method: 'GET', pattern: '/api/skills', class: 'technical', allow: ['member', 'admin', 'inhouse'] },
+  // Team requests (W3): baseline, since a request is addressed to the Inhouse team, which reads it and sets its status
+  // without a grant. People create; who may move a request to which status (the requester withdraws their own, the
+  // Inhouse team marks done or declined) is the store's rule.
+  /* 80 */ { method: 'GET', pattern: '/api/team-requests', class: 'baseline', allow: ['member', 'admin', 'inhouse'] },
+  /* 81 */ { method: 'POST', pattern: '/api/team-requests', class: 'baseline', allow: ['member', 'admin'] },
+  /* 82 */ { method: 'PUT', pattern: '/api/team-requests/:id/status', class: 'baseline', allow: ['member', 'admin', 'inhouse'] },
 ]
 
 /** Each `CanKey`'s row (section 3). */

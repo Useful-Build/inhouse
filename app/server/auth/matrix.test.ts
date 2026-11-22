@@ -289,6 +289,15 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'POST /api/routines/:id/run': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'POST /api/routines/:id/delete': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'POST /api/routines/:id/restore': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  // Rows 77 to 82 (P6a PR0). Team memory approval: Admins, and the Inhouse team only under a live grant (audited);
+  // members never. Skills: everyone reads. Team requests are addressed to the Inhouse team: it reads them and sets
+  // their status with or without a grant, and never files one; people read, file and (their own) withdraw.
+  'GET /api/memory/waiting': ['no', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'PUT /api/memory/brand/:id/approved': ['no', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'GET /api/skills': ['ok', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
+  'GET /api/team-requests': ['ok', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
+  'POST /api/team-requests': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  'PUT /api/team-requests/:id/status': ['ok', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },

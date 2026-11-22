@@ -225,7 +225,8 @@ skill before any UI change. Repo specifics:
   `main` and on each push to `fleet/**` (not on a PR into `fleet/**`: phase batching), with no secret.
 - **Migrations:** `app/server/migrations/`, forward-only (never rename or drop in the release that stops using it).
   Ranges per phase: P2 `0001`-`0099`, then a block of 100 each (P3 `0100`-`0199` up to P8 `0600`-`0699`); the
-  orchestrator gives each worker its numbers in landing order. Wrangler applies every file not yet in `d1_migrations` in file-name order, so a lower number
+  orchestrator gives each worker its numbers in landing order. P6a (`fleet/memory-skills`) holds `0470`-`0479` (W3's
+  `0470_team_requests.sql`); P6b keeps the rest of `0400`-`0499`. Wrangler applies every file not yet in `d1_migrations` in file-name order, so a lower number
   merged after a higher one still applies (checked 2026-11-20 with wrangler 4.162.0). CI's `test-build` job applies
   them all to an empty D1 (the migration job's fresh install), and on a PR into `fleet/**` the `fast` job does; from
   P3 it also upgrades from the last release tag.
