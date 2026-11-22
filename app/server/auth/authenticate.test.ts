@@ -6,7 +6,7 @@ import { fc, test } from '@fast-check/vitest'
 import { SignJWT, UnsecuredJWT, createLocalJWKSet, importJWK } from 'jose'
 import type { JWTVerifyGetKey } from 'jose'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { authenticate, checkOrigin, remoteKeys, testIssuerBranch } from './authenticate.ts'
+import { authenticate, checkOrigin, remoteKeys, testAssertion, testIssuerBranch } from './authenticate.ts'
 import * as issuerOff from './issuer-off.ts'
 import type { AuthOutcome } from './authenticate.ts'
 import { TEST_ISSUER, mintPerson, mintService } from './test-issuer-mint.ts'
@@ -308,5 +308,60 @@ describe('the remote key set (fetch injected, no network)', () => {
     expect((await run(rotated, BRAND.origin, { keys })).out).toEqual({ refused: 'unauthorized' })
     vi.setSystemTime(NOW + 31_000)
     expect(principalOf((await run(rotated, BRAND.origin, { keys })).out)).not.toBeNull()
+  })
+})
+
+// The test issuer's own header (eval behind Access, Wasim's E-5 second lock): Access in front sends its own token in
+// Cf-Access-Jwt-Assertion, so test and eval builds read the test issuer's JWT from X-Inhouse-Test-Assertion first. Ways
+// it could fail, written down first:
+//  1. a test or eval build behind Access refuses the eval person (it reads only Access's own token);
+//  2. the product build, or a test build without INHOUSE_TEST_BUILD=1, reads the new header at all;
+//  3. a bad token in the new header falls back to Cf-Access-Jwt-Assertion (fails open), or the new header skips any of
+//     the issuer, key or aud checks;
+//  4. per-PR test builds and the existing specs, which send Cf-Access-Jwt-Assertion only, stop working.
+describe('X-Inhouse-Test-Assertion (test and eval builds behind Access)', () => {
+  const HEADER = 'X-Inhouse-Test-Assertion'
+  const testEnv = () => ({ ...authEnv(), INHOUSE_TEST_BUILD: '1', TEST_ISSUER_JWKS: JSON.stringify(good.key.jwks) })
+  const testToken = (o: Partial<Parameters<typeof mintPerson>[0]> = {}) => person({ iss: TEST_ISSUER, ...o })
+  /** Access's own token for the eval CI service token: the team domain's issuer and another key, as Access sends it. */
+  const accessToken = () => mintService({ key: other.key.privateJwk, aud: BRAND.aud, iss: TEAM, clientId: 'eval-ci.access', nowMs: NOW })
+  async function runWith(headers: Record<string, string>, o: { env?: object; testBuild?: boolean } = {}) {
+    const s = fakeStores({ people })
+    return authenticate(req(BRAND.origin, headers), (o.env ?? testEnv()) as never, s.stores, NOW, 'req-1', undefined, o.testBuild)
+  }
+  it('test build: the test issuer\'s token in its own header signs the person in, beside Access\'s token (1)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const out = await runWith({ [HEADER]: await testToken(), 'Cf-Access-Jwt-Assertion': await accessToken() }, { testBuild: true })
+    expect(principalOf(out)?.kind).toBe('person')
+  })
+  it('test build: with no new header, Cf-Access-Jwt-Assertion works as before (4)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(principalOf(await runWith({ 'Cf-Access-Jwt-Assertion': await testToken() }, { testBuild: true }))?.kind).toBe('person')
+  })
+  it('test build: a bad token in the new header is refused, never replaced by Cf-Access-Jwt-Assertion (3)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const good2 = await testToken()
+    for (const bad of ['not-a-jwt', await testToken({ iss: TEAM }), await testToken({ aud: INHOUSE.aud }), await mintPerson({ key: other.key.privateJwk, aud: BRAND.aud, iss: TEST_ISSUER, sub: 'sub-1', email: 'p@example.test', nowMs: NOW })]) {
+      expect(await runWith({ [HEADER]: bad, 'Cf-Access-Jwt-Assertion': good2 }, { testBuild: true }), bad.slice(0, 12)).toEqual({ refused: 'unauthorized' })
+    }
+  })
+  it('product build (flag off): the new header is ignored, even with INHOUSE_TEST_BUILD=1 (2)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await runWith({ [HEADER]: await testToken() }, { testBuild: false })).toEqual({ refused: 'unauthorized' })
+    expect(warn.mock.calls.at(-1)).toEqual([{ event: 'auth_refused', class: 'no_token', requestId: 'req-1' }])
+    // The team domain's own person token in the new header is ignored too.
+    expect(await runWith({ [HEADER]: await person() }, { env: authEnv(), testBuild: false })).toEqual({ refused: 'unauthorized' })
+    expect(warn.mock.calls.at(-1)).toEqual([{ event: 'auth_refused', class: 'no_token', requestId: 'req-1' }])
+  })
+  it('flag on but INHOUSE_TEST_BUILD unset: the new header is ignored (2)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await runWith({ [HEADER]: await testToken() }, { env: authEnv(), testBuild: true })).toEqual({ refused: 'unauthorized' })
+    expect(warn.mock.calls.at(-1)).toEqual([{ event: 'auth_refused', class: 'no_token', requestId: 'req-1' }])
+  })
+  it('issuer off (every build but test and eval): no header name to read at all (2)', () => {
+    expect(issuerOff.TEST_ASSERTION_HEADER).toBe('')
+    const r = req(BRAND.origin, { [HEADER]: 'x.y.z' })
+    expect(testAssertion(r, issuerOff)).toBeNull()
+    expect(testAssertion(r)).toBe('x.y.z')
   })
 })

@@ -27,6 +27,9 @@
 //      build only (vite.config.ts). Its canary (EVAL_CANARY) and that module are in neither the deployable Worker nor the
 //      test build's (built from PR code on every PR); the eval build must carry both, or the scan proves nothing; and the
 //      eval build carries no scripted model (it runs the real model).
+//   6. The test issuer's header (the eval deployment behind Access): X-Inhouse-Test-Assertion, which test and eval builds'
+//      authenticate.ts reads the test issuer's JWT from, is named nowhere in the deployable Worker (any case), and is in
+//      the test and the eval builds, or the scan proves nothing.
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -246,5 +249,29 @@ if (inEval.scripted.length) {
   bad = true
   console.error(`FAIL  eval trace: the eval build carries the scripted model (${relative(root, evalWorker)}):\n${show(inEval.scripted)}`)
 } else console.log('ok    eval trace: no scripted model in the eval build.')
+
+// ---------- 6. the test issuer's header ----------
+/**
+ * app/server/auth/test-issuer.ts's TEST_ASSERTION_HEADER (check-product-build.test.mjs keeps the two equal): test and eval
+ * builds read the test issuer's JWT from it behind Access. It must never name itself in the deployable Worker (whose
+ * authenticate.ts reads Cf-Access-Jwt-Assertion alone), and must be in the test and eval builds, or the scan proves nothing.
+ */
+const TEST_ASSERTION = 'X-Inhouse-Test-Assertion'
+/** Files of a Worker that name the header, in any case. */
+function assertionScan(dir) {
+  const needle = TEST_ASSERTION.toLowerCase()
+  return walk(dir).filter(f => TEXT.test(f) && readFileSync(f, 'utf8').toLowerCase().includes(needle)).map(f => `"${TEST_ASSERTION}" in ${relative(root, f)}`)
+}
+const assertionInProduct = assertionScan(productWorker)
+if (assertionInProduct.length) {
+  bad = true
+  console.error(`FAIL  test issuer's header: the deployable Worker (${relative(root, productWorker)}) names it:\n${show(assertionInProduct)}`)
+} else console.log(`ok    test issuer's header: not in the deployable Worker (${relative(root, productWorker)}).`)
+for (const [label, dir] of [['the test build', testWorker], ['the eval build', evalWorker]]) {
+  if (!assertionScan(dir).length) {
+    bad = true
+    console.error(`FAIL  test issuer's header: no "${TEST_ASSERTION}" in ${label} (${relative(root, dir)}), so the scan proves nothing (and the build can't sign in behind Access).`)
+  } else console.log(`ok    test issuer's header: caught ${label}.`)
+}
 
 process.exit(bad ? 1 : 0)
