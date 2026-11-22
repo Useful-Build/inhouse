@@ -98,12 +98,26 @@ async function goTo(page: Page, hash: string) {
 }
 
 /** The morning check's routine as the server lists it. */
-async function morningCheck(page: Page): Promise<{ name: string; next: { ms: number }; time: { hour: number; minute: number }; last?: { at: { ms: number } } }> {
+async function morningCheck(page: Page): Promise<{ name: string; next: { ms: number }; time: { hour: number; minute: number }; last?: { at: { ms: number }; result: string } }> {
   const r = await api(page, 'GET', '/api/routines')
   expect(r.status).toBe(200)
   const def = (r.json.routines as { id: string }[]).find(x => x.id === MORNING_CHECK)
   expect(def, 'the morning check is listed').toBeDefined()
   return def as never
+}
+
+/** Attaches a JSON value to the test report under a name. */
+const attachJson = (name: string, value: unknown) => test.info().attach(name, { body: JSON.stringify(value, null, 2), contentType: 'application/json' })
+
+/** Why a run failed: the activity lines as the person sees them, and each failed line's run trace through the owner's trace route (as the person signed in here). */
+async function attachRunDiagnostics(page: Page) {
+  const activity = await api(page, 'GET', '/api/activity?limit=100')
+  const traces: Record<string, { status: number; body: unknown }> = {}
+  for (const line of ((activity.json?.items ?? []) as { kind: string; trace?: string }[]).filter(l => l.kind === 'problem' && l.trace).slice(0, 3)) {
+    const r = await api(page, 'GET', `/api/traces/${encodeURIComponent(line.trace!)}`)
+    traces[line.trace!] = { status: r.status, body: r.json }
+  }
+  await attachJson('morning-check-failure', { activity, traces })
 }
 
 /**
@@ -118,6 +132,12 @@ async function runMorningCheck(page: Page) {
   await sheet.getByRole('button', { name: 'Run now' }).click()
   await expect(page.locator('[data-toast]').filter({ hasText: 'is running now' })).toBeVisible()
   await expect.poll(async () => (await morningCheck(page)).last?.at.ms ?? 0, { timeout: 240_000, message: 'the morning check run to end' }).toBeGreaterThan(before)
+  // A failed run moves the last run too: say so here, with why, instead of failing later at a card that never came.
+  const { last } = await morningCheck(page)
+  if (/didn't finish/i.test(last?.result ?? '')) {
+    await attachRunDiagnostics(page)
+    throw new Error(`the morning check run failed (the routine's last result: "${last!.result}"); /api/activity and the run traces are attached as morning-check-failure`)
+  }
   await page.keyboard.press('Escape')
   await expect(sheet).toBeHidden()
 }
@@ -264,7 +284,9 @@ test('S6: Library shows a file the agent made, it downloads, and deleting and re
     page.waitForResponse(r => /\/api\/library\/[^/]+\/download$/.test(r.url())),
     page.getByRole('menuitem', { name: 'Download', exact: true }).click(),
   ])
-  expect(served.status(), `the download answered: ${await served.text().catch(() => '')}`).toBe(200)
+  const body = await served.text().catch((e: unknown) => `(no body: ${String(e)})`)
+  await attachJson('S6-download-response', { url: served.url(), status: served.status(), headers: served.headers(), body: body.slice(0, 4000) })
+  expect(served.status(), `the download answered: ${body.slice(0, 300)}`).toBe(200)
   expect(saved.suggestedFilename()).toBe(FILE)
   expect(await readFile(await saved.path(), 'utf8')).toBe(FILE_BODY)
 
