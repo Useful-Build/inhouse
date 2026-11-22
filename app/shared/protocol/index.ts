@@ -172,11 +172,17 @@ export const RunStartFields = z.strictObject({
   maxBudgetUsd: z.number().positive().max(1000),
   runToken: z.string().regex(/^[\x21-\x7e]{16,512}$/),
   /**
-   * WebFetch's reach (Wasim, decision 20: on from the start). `null`: any public host (the runner still refuses IP
-   * literals, local names and its own host; the Worker's egress refuses private and reserved addresses); a list: only
-   * those hosts; `[]`: none.
+   * WebFetch's reach (Wasim, decision 20: on from the start). A list: only those hosts; `[]`: none. `null`: any public
+   * host (the runner still refuses IP literals, local names and its own host); since P8a S the Worker never sends it
+   * (an empty `t:webfetch` is `[]`), and its egress refuses every host not on the brand's list whatever the runner got.
    */
   webFetchDomains: z.array(Hostname).max(200).nullable(),
+  /**
+   * Optional (v2, additive; P8a S): the engine's WebSearch tool. The runner offers it only when this is `true`; absent
+   * (a Worker from before P8a) or `false` is off. The Worker's model route also refuses a web search request on a brand
+   * whose `t:websearch` isn't on, whatever the runner sent.
+   */
+  webSearch: z.boolean().optional(),
   fileCaps: FileCaps,
   /**
    * Optional (v2, additive): the run answers with structured output. The runner gives the SDK the format and lets its

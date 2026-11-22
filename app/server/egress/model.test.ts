@@ -126,6 +126,7 @@ describe('the worst case and the count (failure 3)', () => {
   })
   it('a big body counts the projection: its fields only, server tools out; I = ceil(count × 1.1) + 1,000, + 10,000 a search', async () => {
     const h = await harness()
+    h.settings['t:websearch'] = true
     h.answer = async c => (c.path === '/v1/messages/count_tokens' ? Response.json({ input_tokens: 40_000 }) : Response.json({ usage: {} }))
     await call(h, big)
     expect(h.upstreamCalls.map(c => c.path)).toEqual(['/v1/messages/count_tokens', '/v1/messages'])
@@ -135,11 +136,13 @@ describe('the worst case and the count (failure 3)', () => {
   })
   it('a 4xx count falls back to the byte bound; a 5xx is 503 and nothing is admitted', async () => {
     const h = await harness()
+    h.settings['t:websearch'] = true
     h.answer = async c => (c.path === '/v1/messages/count_tokens' ? Response.json({ type: 'error', error: { type: 'invalid_request_error', message: 'no' } }, { status: 400 }) : Response.json({ usage: {} }))
     expect((await call(h, big)).status).toBe(200)
     const worst = h.rpc.callsOf('admitModelCall')[0]!.args[2] as ModelCallWorst
     expect(worst.inputTokens).toBeGreaterThan(130_000 + 20_000)
     const h5 = await harness()
+    h5.settings['t:websearch'] = true
     h5.answer = async () => new Response('down', { status: 503 })
     const res = await call(h5, big)
     expect(res.status).toBe(503)
@@ -347,6 +350,28 @@ describe('the gate (failure 6)', () => {
     await settle(h)
     const ends = h.rpc.callsOf('releaseModelCall').map(c => [c.args[1], (c.args[2] as { cut: boolean }).cut])
     expect(ends.sort()).toEqual([['c_1', true], ['c_2', false]])
+  })
+})
+
+describe('the WebSearch switch (P8a S)', () => {
+  // Ways it can fail: a web search request reaches the model on a brand whose `t:websearch` isn't on (missing, false, or
+  // a value that isn't true), or one is refused with the switch on; a refused call is admitted or priced.
+  const searching = { ...small, tools: [{ name: 'Bash', input_schema: { type: 'object' } }, { type: 'web_search_20250305', name: 'web_search' }] }
+  it('refused with 400 before admission unless the switch is true; a call without search is unaffected', async () => {
+    for (const value of [undefined, false, 'true', 'on']) {
+      const h = await harness()
+      if (value !== undefined) h.settings['t:websearch'] = value
+      const res = await call(h, searching)
+      expect(res.status, String(value)).toBe(400)
+      expect(await json(res)).toEqual({ type: 'error', error: { type: 'invalid_request_error', message: 'web search is off for this brand' } })
+      expect(h.rpc.callsOf('admitModelCall')).toEqual([])
+      expect(h.upstreamCalls).toEqual([])
+      expect((await call(h, small)).status).toBe(200)
+    }
+    const on = await harness()
+    on.settings['t:websearch'] = true
+    expect((await call(on, searching)).status).toBe(200)
+    expect(on.upstreamCalls.map(c => c.path)).toEqual(['/v1/messages'])
   })
 })
 

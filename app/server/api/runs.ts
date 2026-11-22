@@ -2,7 +2,7 @@
 //
 // Route 29 resolves the turn first (4.9): the owner check (another person's chat is 404 before `requireObject`, a
 // deleted one too), the model from the picker's id and the brand's technical settings (unknown → 400, off or unpriced →
-// 403 `model_off`), the effort, the side model, `maxTurns` and WebFetch's hosts; then the BrandAgent admits it (4.3)
+// 403 `model_off`), the effort, the side model, `maxTurns`, WebFetch's hosts and web search; then the BrandAgent admits it (4.3)
 // and answers at once, never waiting for placement. Attachments are checked by the BrandAgent against the stored input
 // rows (`files.inputsOf`), never taken from the client's names.
 import { ChatIdSchema } from '../../shared/contract/chat-ids.ts'
@@ -54,15 +54,17 @@ export interface ResolvedTurn {
   effort: Effort
   sideModel: string
   maxTurns: number
-  /** null: any public host (an empty `t:webfetch`); a list narrows WebFetch to it. */
-  webFetchDomains: string[] | null
+  /** The hosts WebFetch may reach: exactly `t:webfetch`'s list, so empty (the default) is none (P8a S). */
+  webFetchDomains: string[]
+  /** Web search: only with the Inhouse team's `t:websearch` switch set to true (P8a S); off by default. */
+  webSearch: boolean
 }
 
 /**
  * Route 29's model and settings resolution (design 4.9; PR 5, ask F), the one function the route and a due-task handler
  * call: unknown model → `invalid`; switched off or unpriced → `forbidden`/`model_off`; the effort and side model from
- * the catalogue and `tm:<id>:*`; `maxTurns` from `t:max_turns` (else 25); WebFetch's hosts from `t:webfetch` (empty:
- * any public host; a stored value that breaks the rule allows none, fail closed).
+ * the catalogue and `tm:<id>:*`; `maxTurns` from `t:max_turns` (else 25); WebFetch's hosts from `t:webfetch` (empty or
+ * missing: none; a stored value that breaks the rule: none, fail closed); web search on only when `t:websearch` is true.
  */
 export async function resolveTurnSettings(
   settingsStore: Pick<Stores['settings'], 'list'>, pickerId: string, catalog: readonly CatalogModel[] = CATALOG,
@@ -75,8 +77,9 @@ export async function resolveTurnSettings(
   const maxTurns = typeof maxTurnsSetting === 'string' && (MAX_TURNS as readonly string[]).includes(maxTurnsSetting) ? Number(maxTurnsSetting) : 25
   const hostSetting = settings['t:webfetch']
   const hosts = typeof hostSetting === 'string' ? parseHostlist(hostSetting) : []
-  const webFetchDomains = hosts === null ? [] : hosts.length === 0 ? null : hosts
-  return { model: resolved.model.apiId, pickerId: resolved.model.id, effort: resolved.effort, sideModel: resolved.sideApiId, maxTurns, webFetchDomains }
+  const webFetchDomains = hosts ?? []
+  const webSearch = settings['t:websearch'] === true
+  return { model: resolved.model.apiId, pickerId: resolved.model.id, effort: resolved.effort, sideModel: resolved.sideApiId, maxTurns, webFetchDomains, webSearch }
 }
 
 /** Route 29 over a given catalogue (tests pass a priced copy; the route uses the shipped one). */

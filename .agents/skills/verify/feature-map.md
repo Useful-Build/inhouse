@@ -31,6 +31,12 @@ Today: needs-you cards
   Expected: only the title, the composer and the Needs you cards show, at every stage; no card cuts text; a waiting card shows its draft on the slate-sapphire sheet (kind, risk, title, one summary line); approved, handled and Watch cards show the status line instead, muted, with no Urgent pill; with zero problems and tools connected, shows connected tools (no status dots) and prompt cards instead of the set-aside message; in Run, the overnight handled strip shows only when at least one job was handled
   Covered:  e2e/dots-and-today.spec.ts, e2e/today-approvals.spec.ts, src/state/today-empty.test.ts
 
+Today: failed morning check (product)
+  Path:     Today before the current day's morning check has run or is late
+  Selector: the check's "didn't finish" card
+  Expected: if the previous local date's latest check failed, its card is still visible (before the deadline on a due day, all day on a day off, never from two days back, never with no routine). A morning with no known failure stays empty before the deadline. After the deadline, a missing check shows the usual "hasn't run today" card.
+  Covered:  server/today/view.test.ts
+
 Today: snooze and dismiss
   Path:     Today -> card "···" menu -> Snooze or Dismiss
   Selector: card menu items, Approvals badge
@@ -108,6 +114,12 @@ Chat: ask a question
   Selector: composer field, Send, Stop
   Expected: the stuck-orders question gives the same table and a 6-step, 9.4 s trace; Stop ends the run and says nothing was changed; Send is off while the field is empty
   Covered:  e2e/app.spec.ts, e2e/composer.spec.ts
+
+Chat: empty chat tool status
+  Path:     New chat with no messages
+  Selector: copy and action under "What do you want to know?"
+  Expected: if tools exist but none can be read, the empty chat uses the same message as the composer tools menu and offers Manage tools. Connect tools is only for when no tools have been connected.
+  Covered:  src/screens/Chats.test.ts
 
 Chat: composer files
   Path:     composer -> paste or drop files

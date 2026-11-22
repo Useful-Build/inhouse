@@ -18,7 +18,9 @@ import { openStores } from '../../server/db/stores.ts'
 import { seedBrand } from '../../server/seed/seed.ts'
 import type { Seeded } from '../../server/seed/seed.ts'
 import { planExport, runExport } from '../export/export.ts'
+import { coreTables } from '../tables/core.ts'
 import { tables } from '../tables/index.ts'
+import { p8Tables } from '../tables/p8.ts'
 import { listDeletionLog, newRunId, writeLogEntry } from './log.ts'
 import { planPersonDeletion, runPersonDeletion } from './person.ts'
 import type { DeletionDeps, PersonDeletionPlan } from './person.ts'
@@ -33,7 +35,10 @@ const BASE = 1_800_000_000_000
 let clock = BASE
 // The wall clock the log stamps entries with: later than any `at.nowMs` here, and moving on every read.
 let wall = BASE + 1_000_000_000
-const deps = (over: Partial<DeletionDeps> = {}): DeletionDeps => ({ db, bucket, at: { actorId: SYSTEM_MEMBER_ID, requestId: `req-${token()}`, nowMs: (clock += 1000) }, clock: () => ++wall, ...over })
+// P2's and P8's stores: C1's (P3 and P4's) have their own rules and tests (rules.test.ts), and their custom rules refuse
+// to plan until C1's runner lands, so the real registry refuses by name.
+const p2AndP8 = [...coreTables, ...p8Tables]
+const deps = (over: Partial<DeletionDeps> = {}): DeletionDeps => ({ db, bucket, at: { actorId: SYSTEM_MEMBER_ID, requestId: `req-${token()}`, nowMs: (clock += 1000) }, clock: () => ++wall, registry: p2AndP8, ...over })
 let seeded: Seeded
 
 beforeAll(async () => {
@@ -242,7 +247,7 @@ describe('the registry guard (failure 9)', () => {
   it('throws by name on a store with no rule, or a rule its class forbids', async () => {
     const p = await addPerson(db, { role: 'member', status: 'active' }, seeded.members.admin, BASE)
     const extra = { kind: 'd1' as const, name: 'later_store', retention: 'retention_period' as const, personKeys: ['member_id'], export: true }
-    await expect(planPersonDeletion(deps({ registry: [...tables, extra] }), { memberId: p.id })).rejects.toThrow(/later_store/)
+    await expect(planPersonDeletion(deps({ registry: [...p2AndP8, extra] }), { memberId: p.id })).rejects.toThrow(/later_store/)
     await expect(planPersonDeletion(deps({ rules: { ...deletionRules, audit_log: { action: 'delete_rows', column: 'actor_id' } } }), { memberId: p.id })).rejects.toThrow(/audit_log/)
     const { members: _m, ...noMembers } = deletionRules
     await expect(planPersonDeletion(deps({ rules: noMembers }), { memberId: p.id })).rejects.toThrow(/members/)

@@ -34,7 +34,7 @@ export interface PersonDeletionPlan {
   readonly steps: readonly Step[]
 }
 
-type Step = { entry: TableEntry; rule: Exclude<DeletionRule, { action: 'keep' }> }
+type Step = { entry: TableEntry; rule: Extract<DeletionRule, { action: 'pseudonymise' | 'delete_rows' | 'delete_objects' }> }
 
 /** Only plans made by `planPersonDeletion` run (no plan, no run). */
 const issued = new WeakSet<PersonDeletionPlan>()
@@ -46,7 +46,16 @@ function stepsFor(registry: readonly TableEntry[], rules: Readonly<Record<string
     const rule = rules[entry.name]
     if (rule === undefined) throw new Error(`person deletion: no rule for ${entry.kind} store ${entry.name} (add one to ops/delete/rules.ts)`)
     if (!ALLOWED[entry.retention].includes(rule.action)) throw new Error(`person deletion: rule ${rule.action} isn't allowed for ${entry.name} (class ${entry.retention})`)
+    // A derived index isn't a store of its own: its triggers follow its source's deletes. It takes a derived rule only.
+    if (entry.derived && rule.action !== 'derived') throw new Error(`person deletion: ${entry.name} is derived: its rule must be derived`)
+    if (rule.action === 'derived') {
+      if (!entry.derived) throw new Error(`person deletion: ${entry.name} isn't derived, its rule is`)
+      continue
+    }
     if (rule.action === 'keep') continue
+    // C1: a custom rule's runner (the chat cascade, the bell's ordered delete, the BrandAgent's personData) isn't built
+    // yet, so a plan that would reach one refuses by name: no run removes one store's rows and leaves another's.
+    if (rule.action === 'custom') throw new Error(`person deletion: ${entry.name}'s rule is custom, and its runner isn't built yet (P8 C1), so person deletion refuses to plan it`)
     if (entry.kind === 'do') throw new Error(`person deletion: no Durable Object reader yet for ${entry.name}`)
     if (rule.action === 'pseudonymise' && !(entry.kind === 'd1' && entry.name === 'members')) throw new Error(`person deletion: pseudonymise is P2's members row only, not ${entry.name}`)
     if (rule.action === 'delete_rows' && entry.kind !== 'd1') throw new Error(`person deletion: delete_rows on ${entry.kind} store ${entry.name}`)

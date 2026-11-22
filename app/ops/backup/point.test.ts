@@ -20,6 +20,9 @@ import { partLines } from './format.ts'
 import type { BackupManifest } from './manifest.ts'
 import { derivedEntry, insertRows } from './test-support.ts'
 
+// The real registry's own derived indexes (P3 W6's search), listed beside a test's fixture index, sorted by name.
+const withRealDerived = (d: { name: string; from: string[] }) => [...realRegistry.filter(r => r.derived).map(r => ({ name: r.name, from: [...(r.derived?.from ?? [])] })), d].sort((a, b) => (a.name < b.name ? -1 : 1))
+
 const T = 1_800_000_000_000
 const stores = openStores(env)
 const seeded = await seedBrand(env.DB, stores, T)
@@ -114,15 +117,15 @@ describe('the registry guard (failure 2)', () => {
     // A plain `search_c_content` can't sit beside it to be skipped: SQLite reserves the name.
     await expect(env.DB.prepare('CREATE TABLE search_c_content (x TEXT)').run()).rejects.toThrow(/reserved for internal use/)
     const m = await backup({ db: env.DB, bucket: env.FILES, nowMs: T, registry: [...realRegistry, derivedEntry('search_c')] })
-    expect(m.derived).toEqual([{ name: 'search_c', from: ['settings'] }])
+    expect(m.derived).toEqual(withRealDerived({ name: 'search_c', from: ['settings'] }))
   }))
   it('skips a derived table and its FTS5 shadow tables, and lists it in the manifest', () => withTable('CREATE VIRTUAL TABLE search_z USING fts5(body)', 'search_z', async () => {
     await env.DB.prepare("INSERT INTO search_z (body) VALUES ('some text')").run()
     const shadows = (await env.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'search_z_%'").all<{ name: string }>()).results.map(r => r.name)
     expect(shadows.length).toBeGreaterThan(0)
     const m = await backup({ db: env.DB, bucket: env.FILES, nowMs: T, registry: [...realRegistry, derivedEntry('search_z')] })
-    expect(m.derived).toEqual([{ name: 'search_z', from: ['settings'] }])
-    expect(m.tables.map(t => t.name).sort()).toEqual(['audit_log', 'members', 'settings', 'support_grants'])
+    expect(m.derived).toEqual(withRealDerived({ name: 'search_z', from: ['settings'] }))
+    expect(m.tables.map(t => t.name).sort()).toEqual(TABLE_RULES.map(r => r.name).sort())
     const keys = (await env.FILES.list({ prefix: `backups/d1/${m.backupId}/` })).objects.map(o => o.key)
     expect(keys.filter(k => k.includes('search_z'))).toEqual([])
   }))

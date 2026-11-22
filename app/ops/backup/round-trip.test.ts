@@ -48,8 +48,10 @@ it(`restores the seeded brand plus generated rows exactly, and the target works 
 
   const sql: string[] = []
   const manifest = await backup({ db: recordingDb(e.DB, sql), bucket: e.FILES, nowMs: T + 1, registry })
-  expect(manifest.derived).toEqual([{ name: 'search_rt', from: ['settings'] }])
-  expect(manifest.tables.map(t => t.name).sort()).toEqual(['audit_log', 'members', 'settings', 'support_grants'])
+  // P3 W6's own search indexes sit beside the fixture; every canonical table is backed up (P3 and P4's empty here).
+  expect(manifest.derived.map(d => d.name)).toEqual(['chat_messages_fts', 'memories_fts', 'search_rt'])
+  expect(manifest.derived.find(d => d.name === 'search_rt')).toEqual({ name: 'search_rt', from: ['settings'] })
+  expect(manifest.tables.map(t => t.name).sort()).toEqual(realRegistry.filter(r => r.kind === 'd1' && !r.derived).map(r => r.name).sort())
   expect((await listBackups(e.FILES)).map(b => b.backupId)).toEqual([manifest.backupId])
   const audit = manifest.tables.find(t => t.name === 'audit_log')
   expect(audit?.parts.length).toBeGreaterThan(5)
@@ -99,14 +101,17 @@ it(`restores the seeded brand plus generated rows exactly, and the target works 
     backup: { backupId: manifest.backupId, takenAtMs: T + 1, migration: manifest.migration },
     d1: {
       restorePointMs: T + 1, tables: manifest.tables.map(t => ({ name: t.name, rows: t.rows, sha256: t.sha256, verified: true })),
-      derived: [{ name: 'search_rt', from: ['settings'], state: 'rebuild_needed' }],
+      derived: manifest.derived.map(d => ({ ...d, state: 'rebuild_needed' })),
     },
     resets: ['test-cursor'],
     r2: { missingPhotoKeys: photoKeys.filter(k => !present.includes(k)) },
     durableObjects: [], watermarkMs: T + 1, reconciled: false,
   })
   expect(record.finishedAtMs).toBeGreaterThanOrEqual(record.startedAtMs)
-  expect(record.r2.prefixes).toEqual([{ prefix: 'photos/', objects: present.length }, { prefix: 'deletion-log/', objects: 0 }])
+  // Every registered prefix outside the backup set, in registry order (P3 and P4's are empty here).
+  const prefixes = realRegistry.filter(r => r.kind === 'r2' && r.retention !== 'backup').map(r => ({ prefix: r.name, objects: r.name === 'photos/' ? present.length : 0 }))
+  expect(prefixes.map(p => p.prefix)).toEqual(expect.arrayContaining(['photos/', 'files/', 'sessions/', 'library/', 'audit-copy/', 'deletion-log/']))
+  expect(record.r2.prefixes).toEqual(prefixes)
   const sourceAuditRows = (await e.DB.prepare('SELECT COUNT(*) AS n FROM audit_log').first<{ n: number }>())?.n
   expect(record.snapshot).toEqual({ key: restoreKey(record.restoreId, 'snapshot/manifest.json'), auditRows: sourceAuditRows, auditMaxId: maxId })
   const snap = SnapshotManifestSchema.parse(JSON.parse(await (await e.FILES.get(restoreKey(record.restoreId, 'snapshot/manifest.json')))!.text()))

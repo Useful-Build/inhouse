@@ -43,6 +43,7 @@ class FakeDoor implements MemoryDoor {
     this.rowsNow = []
   }
   async setWebfetchHosts(hosts: string[] | null) { this.calls.push(`webfetch ${hosts === null ? 'default' : hosts.join(',')}`) }
+  async setWebSearch(on: boolean) { this.calls.push(`websearch ${on}`) }
   /** The next insert throws (a seed that fails after the WebFetch list was set). */
   insertThrows = false
   clearThrows = false
@@ -616,6 +617,16 @@ describe('the memory door', () => {
     expect(sqls[1]).toBe("DELETE FROM settings WHERE owner = 'brand' AND key = 't:webfetch'")
     // The server's own rule (parseHostlist, #245 S-L3 and O-L6): no port, no single label, no numeric last label.
     for (const bad of ["x'; DROP TABLE settings;--", 'a b', '', 'Docs.Example.com', 'cdn.example.com:8443', 'localhost', '10.0.0.1', 'a..b.com']) await expect(door.setWebfetchHosts([bad]), bad).rejects.toThrow(DoorRefusal)
+    expect(sqls).toHaveLength(2)
+  })
+  it("setWebSearch turns the brand's t:websearch on (JSON true) and off by deleting it (the default, P8a S)", async () => {
+    const sqls: string[] = []
+    const door = createDoor(async (sql) => { sqls.push(sql); return [] })
+    await door.setWebSearch(true)
+    expect(sqls[0]).toMatch(/^INSERT INTO settings \(owner, key, value_json, rev, updated_at_ms, updated_by, req_id\) VALUES \('brand', 't:websearch', 'true', 1, \d+, 'eval', 'eval'\) ON CONFLICT \(owner, key\) DO UPDATE SET value_json = excluded\.value_json, rev = settings\.rev \+ 1, updated_at_ms = excluded\.updated_at_ms, updated_by = 'eval', req_id = 'eval'$/)
+    await door.setWebSearch(false)
+    expect(sqls[1]).toBe("DELETE FROM settings WHERE owner = 'brand' AND key = 't:websearch'")
+    await expect(door.setWebSearch('yes' as unknown as boolean)).rejects.toThrow(DoorRefusal)
     expect(sqls).toHaveLength(2)
   })
   it('hasChat asks for exactly that chat id and refuses an id that is not one', async () => {

@@ -43,6 +43,7 @@ export function submitOf(slot: { slot_key: string; chat_id: string; client_key: 
     input: { clientTurnKey: slot.client_key, text: slot.prompt_text, priority: s.priority, model: s.pickerId, attachments: [] },
     by: { kind: 'service', memberId: SYSTEM_MEMBER_ID },
     model: s.model, pickerId: s.pickerId, effort: s.effort, sideModel: s.sideModel, maxTurns: s.maxTurns, webFetchDomains: s.webFetchDomains,
+    webSearch: s.webSearch === true,
     ...(s.outputFormat ? { outputFormat: s.outputFormat } : {}),
     onEnd: { kind: END_KIND, id: endTaskId(slot.slot_key) },
   }
