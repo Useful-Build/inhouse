@@ -102,7 +102,7 @@ describe('the off stand-in (every other build)', () => {
 describe('the runner\'s egress route never forwards a caller\'s override', () => {
   const tamper = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'orders_search', arguments: {}, options: { testShopHost: 'evil-store.myshopify.com' }, testShopHost: 'evil-store.myshopify.com', _meta: { testShopHost: 'evil-store.myshopify.com' } } }
   const post = (hub: ReadGatewayLike) =>
-    handleHub(new Request('http://egress.internal/hub/', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(tamper) }), GRANT, hubRouteDeps(hub, () => {}))
+    handleHub(new Request('http://egress.internal/hub/', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(tamper) }), GRANT, hubRouteDeps(hub, () => {}, async () => 1))
 
   it.each([['the off stand-in', false], ['test-shop.ts with no row', true]])('%s: the hub gets three arguments, no options', async (_label, real) => {
     const { hub, calls } = recordingHub()

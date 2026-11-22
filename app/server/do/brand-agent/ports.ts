@@ -197,8 +197,13 @@ export interface SubmitTurn {
   effort: Effort
   sideModel: string
   maxTurns: number
-  /** null: any public host (an empty `t:webfetch`); a list narrows WebFetch to it. */
+  /**
+   * The hosts WebFetch may reach. Route 29 always sends a list (empty: none, P8a S); null comes only from a turn or a
+   * routine slot stored before P8a and is sent to the runner as `[]`, no host (run-start.ts).
+   */
   webFetchDomains: string[] | null
+  /** Web search (P8a S): on only when true; absent (a turn stored before P8a) is off. */
+  webSearch?: boolean
 }
 
 /** The due task a turn's end schedules (PR 5, ask B): `{ id, kind }`, a registered kind. */

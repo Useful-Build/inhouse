@@ -9,6 +9,7 @@ import { readCapped } from '../../db/handler-kit.ts'
 import { StoreUnavailableError } from '../../db/sql.ts'
 import { ALWAYS_LOAD_META_KEY, INHOUSE_TOOLS } from '../registry.ts'
 import { TOOL_HANDLERS } from '../tools/index.ts'
+import { brandStage, INHOUSE_EXTERNAL_WRITE_TOOLS, toolWriteRefusal } from '../../stage/watch.ts'
 import { refusal } from './tool.ts'
 import type { ToolScope } from './tool.ts'
 
@@ -113,6 +114,11 @@ export async function handleMcp(request: Request, scope: McpScope, deps: McpDeps
       const parsed = impl.input.safeParse(args)
       // Input errors are tool execution errors (2025-11-25), so the model can read them and correct its call.
       if (!parsed.success) return rpcResult(id, refusal('invalid_arguments', `The arguments don't fit ${name}: ${issues(parsed.error)}. Fix them and call it again.`))
+      // The Watch switch (P8a S): only a tool on the explicit list of ones that write outside Inhouse asks for the stage;
+      // the rest (memory, team requests, routines) write Inhouse's own stores and run at Watch.
+      if (INHOUSE_EXTERNAL_WRITE_TOOLS.includes(name as string) && toolWriteRefusal(await brandStage(deps.db), 'inhouse', name as string) !== null) {
+        return rpcResult(id, refusal('stage', `${name} changes something outside Inhouse, which the Watch stage doesn't allow. Tell the person it isn't available yet.`))
+      }
       const now = deps.now ?? Date.now
       const call: ToolScope = { ...scope, nowMs: now(), requestId: `mcp-${crypto.randomUUID()}` }
       try {

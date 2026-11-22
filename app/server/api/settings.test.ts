@@ -114,13 +114,18 @@ describe('with the real object gate (failure 2)', () => {
       expect((await g.run()).status).toBe(200)
       expect(g.gate.passed).toBe(true)
     }
-    for (const [key, value] of [['tm:haiku:on', null], ['tm:haiku:effort', 'High'], ['stage', 'Run']] as const) {
+    // P8a S: the web switches are the Inhouse team's alone (an Admin can't open web search or a WebFetch host).
+    for (const [key, value] of [['tm:haiku:on', null], ['tm:haiku:effort', 'High'], ['stage', 'Run'], ['t:websearch', true], ['t:webfetch', 'evil.example.com']] as const) {
       const before = await snapshot(db)
       const g = gated(technicalRow, admin, key, value, 'technical')
       await expect(g.run()).rejects.toThrow()
       expect(g.gate.refusal?.reason).toBe('admin_read_only')
       expect(await snapshot(db)).toEqual(before)
     }
+  })
+  it('the Inhouse team turns web search on (P8a S); only a switch value is taken', async () => {
+    expect((await inhousePut('t:websearch', { value: true, ifRev: 0 }).res).status).toBe(200)
+    expect((await inhousePut('t:websearch', { value: 'on', ifRev: 1 }).res).status).toBe(400)
   })
   it("the owner rule: a person's own settings only (the handler names the caller as owner)", async () => {
     const g = gated(personalRow, admin, 'g:theme', 'Light', 'personal')

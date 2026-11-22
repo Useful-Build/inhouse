@@ -11,6 +11,7 @@ import { z } from 'zod'
 import type { CallerScope, HubErrorCode, ReadGateway, ToolInfo } from '../../hub/index/contract.ts'
 import type { RunGrant } from '../do/brand-agent/tokens.ts'
 import { MCP_PROTOCOL_VERSIONS } from '../mcp/server/index.ts'
+import { externalWriteRefusal, toolWriteRefusal } from '../stage/watch.ts'
 import { readCapped } from './http.ts'
 
 /** The two read methods; the product Worker never binds the hub's `ServerGateway` (P4 OC 4). */
@@ -37,15 +38,22 @@ const LOG_FIELDS: readonly (keyof HubEgressLog)[] = ['event', 'method', 'tool', 
 
 export interface HubRouteDeps {
   hub: ReadGatewayLike
+  /** The brand's stage index, read fresh per call (server/stage/watch.ts `brandStage`: anything unreadable is Watch). */
+  stage(): Promise<number>
   now(): number
   requestId(): string
   log(e: HubEgressLog): void
 }
 
 /** The real deps for the egress (the dispatch passes `env.HUB`). */
-export function hubRouteDeps(hub: ReadGatewayLike, log: (e: Record<string, unknown>) => void): HubRouteDeps {
-  return { hub, now: () => Date.now(), requestId: () => crypto.randomUUID(), log }
+export function hubRouteDeps(hub: ReadGatewayLike, log: (e: Record<string, unknown>) => void, stage: () => Promise<number>): HubRouteDeps {
+  return { hub, stage, now: () => Date.now(), requestId: () => crypto.randomUUID(), log }
 }
+
+/** What the model reads when a call is refused at Watch (P8a S): a tool the hub doesn't list as read never runs. */
+export const WATCH_WRITE_TEXT = "write_refused: at the Watch stage only reading tools run; nothing outside Inhouse is changed"
+/** The model's text when the Watch check couldn't read the hub's list (fail closed). */
+const WATCH_LIST_FAILED_TEXT = 'internal: the tool list could not be read, so the call did not run'
 
 export const HUB_PATH = '/hub/'
 export const HUB_MAX_BODY_BYTES = 64 * 1024
@@ -194,6 +202,28 @@ export async function handleHub(request: Request, grant: RunGrant, deps: HubRout
         return done('bad_params', rpcError(id, INVALID_PARAMS, 'tools/call needs params.name (a string) and params.arguments (an object, if given)'))
       }
       tool = knownTools.has(name) ? name : 'unknown'
+      // The Watch switch (P8a S): below Act, a call runs only when the hub's read list, read now, names the tool. The
+      // hub's ReadGateway refuses a write itself; this check doesn't rest on that, so a hub that grows a write tool (P6)
+      // still runs none at Watch. From Act the hub's own read/write split decides, as before.
+      let stage: number
+      try {
+        stage = await deps.stage()
+      } catch {
+        return done('binding_failed', rpcResult(id, { content: [{ type: 'text', text: WATCH_LIST_FAILED_TEXT }], isError: true }))
+      }
+      if (externalWriteRefusal(stage) !== null) {
+        let listed: unknown
+        try {
+          listed = await deps.hub.listTools(scope())
+        } catch {
+          return done('binding_failed', rpcResult(id, { content: [{ type: 'text', text: WATCH_LIST_FAILED_TEXT }], isError: true }))
+        }
+        const reads = listMirror.safeParse(listed)
+        if (!reads.success || !reads.data.ok) return done('binding_failed', rpcResult(id, { content: [{ type: 'text', text: WATCH_LIST_FAILED_TEXT }], isError: true }))
+        if (toolWriteRefusal(stage, 'apps', name, new Set(reads.data.value.map(t => t.name))) !== null) {
+          return done('write_refused', rpcResult(id, { content: [{ type: 'text', text: WATCH_WRITE_TEXT }], isError: true }))
+        }
+      }
       let answer: unknown
       try {
         answer = await deps.hub.callTool(scope(), name, args ?? {})

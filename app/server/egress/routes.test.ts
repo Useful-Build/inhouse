@@ -287,15 +287,17 @@ describe('events and audit (failures 4, 5)', () => {
 })
 
 describe('the settings the gate reads', () => {
-  it("brandSettings reads the brand's tm: keys from D1, nothing else", async () => {
+  it("brandSettings reads the brand's tm: keys and t:websearch from D1, nothing else", async () => {
     const { brandSettings } = await import('./index.ts')
     await env.DB.prepare('DELETE FROM settings').run()
-    const put = (owner: string, key: string, v: string) =>
+    const put = (owner: string, key: string, v: string | boolean) =>
       env.DB.prepare('INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES (?, ?, ?, 1, 0, ?, ?)').bind(owner, key, JSON.stringify(v), 'system', `req-bs-${owner}-${key}`).run()
     await put('brand', 'tm:opus:on', 'off')
     await put('brand', 'tm:opus:effort', 'High')
     await put('brand', 't:webfetch', 'docs.example.com')
+    await put('brand', 't:websearch', true)
     await put('m_someone', 'tm:sonnet:on', 'off')
-    expect(await brandSettings(env.DB)).toEqual({ 'tm:opus:on': 'off', 'tm:opus:effort': 'High' })
+    await put('m_someone', 't:websearch', false)
+    expect(await brandSettings(env.DB)).toEqual({ 'tm:opus:on': 'off', 'tm:opus:effort': 'High', 't:websearch': true })
   })
 })

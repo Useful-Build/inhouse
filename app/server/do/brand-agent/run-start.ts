@@ -23,7 +23,10 @@ export interface StartInput {
   sideModel: string
   effort: RunStart['effort']
   maxTurns: number
+  /** null only from a turn stored before P8a S: sent as `[]`, no host. */
   webFetchDomains: string[] | null
+  /** Web search (P8a S): sent as `webSearch: true` only when true. */
+  webSearch?: boolean
   systemPrompt: string
   /** Structured output (PR 5, ask C): the run answers a JSON value matching it. Absent on a turn without one. */
   outputFormat?: RunStart['outputFormat']
@@ -47,7 +50,9 @@ export function buildStart(i: StartInput): StartWithoutToken {
     maxTurns: i.maxTurns,
     // Per query() call, never the resumed session's earlier spend (SDK 0.3.328 sdk.d.ts:6252; agent-sdk/cost-tracking, read 2026-11-21).
     maxBudgetUsd: ceiling / 1_000_000,
-    webFetchDomains: i.webFetchDomains,
+    // Never null (the runner's "any public host"): a list, empty for none (P8a S).
+    webFetchDomains: i.webFetchDomains ?? [],
+    webSearch: i.webSearch === true,
     fileCaps: FILE_CAPS,
     ...(i.outputFormat === undefined ? {} : { outputFormat: i.outputFormat }),
   }

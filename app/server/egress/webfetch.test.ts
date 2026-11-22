@@ -2,13 +2,15 @@
 // fail, written down first:
 //  1. a private, loopback, link-local, CGNAT, metadata, multicast, reserved or IPv4-mapped address passes, as a DNS
 //     answer (even one among public ones) or as a literal;
-//  2. an empty list blocks a public host, or a non-empty list lets an unlisted host through;
+//  2. an empty list, or none stored, lets any host through (P8a S: empty means no host); a list lets an unlisted host
+//     through or refuses a listed public one;
 //  3. a redirect to an unlisted host or a private address is followed; more than 3 hops are followed;
 //  4. a method other than GET or HEAD, a port other than 443 or plain http passes;
 //  5. cookies or authorization reach the site; a body over 10 MB comes back whole.
+import { fc, it as prop } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
 import { addressVerdict } from './ip.ts'
-import { handleWebFetch, WEBFETCH_MAX_BYTES } from './webfetch.ts'
+import { checkUrl, handleWebFetch, WEBFETCH_MAX_BYTES } from './webfetch.ts'
 
 type Dns = Record<string, { A?: string[]; AAAA?: string[]; status?: number }>
 
@@ -39,6 +41,8 @@ const PUBLIC_DNS: Dns = {
   'meta.example.com': { A: ['169.254.169.254'] },
   'dual.example.com': { A: ['93.184.216.34'], AAAA: ['fd00:ec2::254'] },
 }
+/** Every name PUBLIC_DNS knows, and one it doesn't: the address checks run on listed hosts. */
+const ALL = [...Object.keys(PUBLIC_DNS), 'missing.example.com'].join('\n')
 const page = (body = 'hello') => () => new Response(body, { headers: { 'content-type': 'text/html', 'set-cookie': 'tracker=1', server: 'x' } })
 
 async function run(url: string, opts: { list?: string | null; method?: string; headers?: Record<string, string>; pages?: Record<string, () => Response>; dns?: Dns } = {}) {
@@ -63,9 +67,23 @@ describe('addresses (failure 1)', () => {
   })
 })
 
-describe('an empty list: any public host (6.2, decision 20)', () => {
+describe('an empty list, or none stored: no host (P8a S, failure 2)', () => {
+  it('refuses every host, public ones included, before any lookup or fetch', async () => {
+    for (const list of [null, '']) {
+      for (const url of ['https://docs.example.com/a', 'https://other.example.org/b', 'https://example.com/']) {
+        const { res, fetched, logs } = await run(url, { list })
+        expect(res.status, `${String(list)} ${url}`).toBe(403)
+        expect(await res.text()).toBe('WebFetch refused: not_listed')
+        expect(fetched, url).toEqual([])
+        expect(logs).toEqual([{ event: 'webfetch_refused', why: 'not_listed' }])
+      }
+    }
+  })
+})
+
+describe('listed hosts: every address check still runs (6.2, decision 20)', () => {
   it('fetches a public host, without cookies, authorization or the response cookie', async () => {
-    const { res, fetched } = await run('https://docs.example.com/a', { headers: { cookie: 'a=1', authorization: 'Bearer x', accept: 'text/html' } })
+    const { res, fetched } = await run('https://docs.example.com/a', { list: ALL, headers: { cookie: 'a=1', authorization: 'Bearer x', accept: 'text/html' } })
     expect(res.status).toBe(200)
     expect(await res.text()).toBe('hello')
     expect([...res.headers]).toEqual([['content-type', 'text/html']])
@@ -73,18 +91,18 @@ describe('an empty list: any public host (6.2, decision 20)', () => {
   })
   it('refuses a private answer, one private answer among public ones, a public A with a private AAAA, IPv6 unique-local, mapped and metadata', async () => {
     for (const host of ['dual.example.com', 'sneaky.example.com', 'v6private.example.com', 'mapped.example.com', 'meta.example.com', 'missing.example.com']) {
-      const { res, fetched } = await run(`https://${host}/x`)
+      const { res, fetched } = await run(`https://${host}/x`, { list: ALL })
       expect(res.status, host).toBe(403)
       expect(fetched, host).toEqual([])
     }
   })
   it('refuses IP literals in private ranges, a non-443 port, plain http and POST', async () => {
     for (const url of ['https://127.0.0.1/x', 'https://[::1]/x', 'https://169.254.169.254/latest', 'https://0x7f.1/x', 'https://docs.example.com:8443/a', 'http://docs.example.com/a']) {
-      const { res, fetched } = await run(url)
+      const { res, fetched } = await run(url, { list: ALL })
       expect(res.status, url).toBe(403)
       expect(fetched, url).toEqual([])
     }
-    const post = await run('https://docs.example.com/a', { method: 'POST' })
+    const post = await run('https://docs.example.com/a', { list: ALL, method: 'POST' })
     expect(post.res.status).toBe(405)
     expect(post.fetched).toEqual([])
   })
@@ -94,16 +112,16 @@ describe('an empty list: any public host (6.2, decision 20)', () => {
       'https://docs.example.com/b': () => new Response(null, { status: 301, headers: { location: '/c' } }),
       'https://docs.example.com/c': page('moved'),
     }
-    const bad = await run('https://docs.example.com/a', { pages })
+    const bad = await run('https://docs.example.com/a', { list: ALL, pages })
     expect(bad.res.status).toBe(403)
     expect(bad.fetched.map(f => f.url)).toEqual(['https://docs.example.com/a'])
-    const good = await run('https://docs.example.com/b', { pages })
+    const good = await run('https://docs.example.com/b', { list: ALL, pages })
     expect(await good.res.text()).toBe('moved')
   })
   it('at most 3 redirects', async () => {
     const pages: Record<string, () => Response> = {}
     for (let i = 0; i < 5; i++) pages[`https://docs.example.com/r${i}`] = () => new Response(null, { status: 302, headers: { location: `/r${i + 1}` } })
-    const { res, fetched } = await run('https://docs.example.com/r0', { pages })
+    const { res, fetched } = await run('https://docs.example.com/r0', { list: ALL, pages })
     expect(res.status).toBe(403)
     expect(fetched).toHaveLength(4)
   })
@@ -131,11 +149,11 @@ describe('a non-empty list: exactly those hosts', () => {
 
 describe('size (failure 5)', () => {
   it('a declared length over 10 MB is refused; an undeclared one is cut at 10 MB', async () => {
-    const declared = await run('https://docs.example.com/a', { pages: { 'https://docs.example.com/a': () => new Response('x', { headers: { 'content-length': String(WEBFETCH_MAX_BYTES + 1) } }) } })
+    const declared = await run('https://docs.example.com/a', { list: ALL, pages: { 'https://docs.example.com/a': () => new Response('x', { headers: { 'content-length': String(WEBFETCH_MAX_BYTES + 1) } }) } })
     expect(declared.res.status).toBe(403)
     const chunk = new Uint8Array(1024 * 1024)
     const endless = () => new Response(new ReadableStream({ pull: c => c.enqueue(chunk) }))
-    const { res } = await run('https://docs.example.com/a', { pages: { 'https://docs.example.com/a': endless } })
+    const { res } = await run('https://docs.example.com/a', { list: ALL, pages: { 'https://docs.example.com/a': endless } })
     const reader = res.body!.getReader()
     let got = 0
     await expect((async () => {
@@ -147,4 +165,30 @@ describe('size (failure 5)', () => {
     })()).rejects.toThrow()
     expect(got).toBeLessThanOrEqual(WEBFETCH_MAX_BYTES)
   })
+})
+
+// Failure 2 as a property: over random host lists and random https URLs (on a network where every name resolves to one
+// public address), a URL passes the checks exactly when its host is on the list; an empty list passes none.
+const LABEL = fc.stringMatching(/^[a-z0-9]([a-z0-9-]{0,8}[a-z0-9])?$/)
+const HOST = fc.tuple(fc.array(LABEL, { minLength: 1, maxLength: 3 }), fc.constantFrom('com', 'org', 'test', 'io')).map(([ls, tld]) => [...ls, tld].join('.'))
+const everyNamePublic = (async (input: RequestInfo | URL) => {
+  const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url)
+  const type = url.searchParams.get('type')
+  return Response.json({ Status: 0, Answer: [{ type: type === 'A' ? 1 : 28, data: type === 'A' ? '93.184.216.34' : '2606:2800:220:1::1' }] })
+}) as typeof fetch
+
+describe('the list decides (property, failure 2)', () => {
+  prop.prop([fc.uniqueArray(HOST, { maxLength: 6 }), fc.oneof(HOST, fc.constantFrom('docs.example.com')), fc.boolean(), fc.webPath()])(
+    'a URL is allowed only when its host is listed', async (list, other, pickListed, path) => {
+      const host = pickListed && list.length > 0 ? list[0]! : other
+      const why = await checkUrl(new URL(`https://${host}${path}`), list, everyNamePublic)
+      expect(why).toBe(list.includes(host) ? null : 'not_listed')
+    },
+  )
+  prop.prop([fc.uniqueArray(HOST, { minLength: 1, maxLength: 6 }), fc.constantFrom('A', 'B')])(
+    'a listed host passes in any case and with a trailing dot', async (list, variant) => {
+      const host = variant === 'A' ? list[0]!.toUpperCase() : `${list[0]!}.`
+      expect(await checkUrl(new URL(`https://${host}/x`), list, everyNamePublic)).toBeNull()
+    },
+  )
 })

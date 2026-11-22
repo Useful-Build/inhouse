@@ -69,9 +69,14 @@ const config = fc
     maxBudgetUsd: fc.double({ min: 0.01, max: 1000, noNaN: true }),
     // null: WebFetch to any public host (Wasim, decision 20); a list: only those.
     webFetchDomains: fc.option(fc.uniqueArray(domain, { maxLength: 8 }), { nil: null, freq: 3 }),
+    // P8a S: absent (a Worker from before it), false or true.
+    webSearch: fc.option(fc.boolean(), { nil: undefined }),
     fileCaps: fc.constant({ maxFileBytes: 1, maxFilesPerTurn: 1, maxRestoreBytes: 0, allowedTypes: [] }),
   })
   .map((c) => RunConfig.parse({ ...c, expect: c.resume ? { mainEntries: 1, lastUuid: null, lastUuidIndex: null } : null }))
+
+/** The built-in tools a run gets: WebSearch only when the run config turns it on (P8a S). */
+const builtIns = (c: RunConfig) => BUILT_IN_TOOLS.filter((t) => t !== 'WebSearch' || c.webSearch === true)
 
 /** R1's real base options for a session folder, as the session process builds them. */
 function base(c: RunConfig): Options {
@@ -92,9 +97,23 @@ describe('the guarded options', () => {
     expect(plain.outputFormat).toBeUndefined()
     const asked = { ...c, outputFormat: { type: 'json_schema' as const, schema: SCHEMA } }
     const o = guards.apply(base(asked), asked, run)
-    expect(o.tools).toEqual([...BUILT_IN_TOOLS, 'StructuredOutput'])
+    expect(o.tools).toEqual([...builtIns(c), 'StructuredOutput'])
     expect(o.allowedTools).toContain('StructuredOutput')
     expect(o.outputFormat).toEqual({ type: 'json_schema', schema: SCHEMA })
+  })
+
+  // The WebSearch switch (P8a S). Ways it could fail: WebSearch is offered or pre-approved with the switch off or absent
+  // (a Worker from before P8a), or missing with it on.
+  it.prop([config])('WebSearch is in tools and allowedTools exactly when webSearch is true', (c) => {
+    const o = guards.apply(base(c), c, run)
+    expect((o.tools as string[]).includes('WebSearch')).toBe(c.webSearch === true)
+    expect(o.allowedTools?.includes('WebSearch')).toBe(c.webSearch === true)
+    for (const off of [undefined, false]) {
+      const d = { ...c, webSearch: off }
+      const p = guards.apply(base(d), d, run)
+      expect(p.tools).not.toContain('WebSearch')
+      expect(p.allowedTools).not.toContain('WebSearch')
+    }
   })
 
   it.prop([config])("a base whose outputFormat isn't the run config's is refused", (c) => {
@@ -110,7 +129,7 @@ describe('the guarded options', () => {
     expect(o.sandbox?.enabled).toBe(true)
     expect(o.sandbox?.failIfUnavailable).toBe(true)
     expect(o.sandbox?.allowUnsandboxedCommands).toBe(false)
-    expect(o.tools).toEqual([...BUILT_IN_TOOLS])
+    expect(o.tools).toEqual(builtIns(c))
     expect(o.skills).toEqual([...ALLOWED_SKILLS])
     expect(o.permissionMode).toBe('dontAsk')
     expect(o.allowDangerouslySkipPermissions).toBeUndefined()

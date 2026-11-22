@@ -55,7 +55,8 @@ export const HOSTLIST_MAX_HOSTS = 50
 export const HOSTLIST_MAX_CHARS = 4000
 /**
  * `t:webfetch`'s hosts: newline-separated, each a hostname (not an IP literal), at most 50 hosts and 4,000 characters.
- * Empty is valid and means no list: WebFetch may reach any public host (6.2, decision 20). Null when the value breaks a rule.
+ * Empty is valid and means no host: WebFetch reaches only listed hosts (P8a S; before it, empty meant any public host).
+ * Null when the value breaks a rule.
  */
 export function parseHostlist(v: string): string[] | null {
   if (v.length > HOSTLIST_MAX_CHARS) return null
@@ -109,6 +110,9 @@ export const EXACT_ROWS: Record<string, SettingRow> = {
   // P3 (p3-design 4.9). A host list is free text, so it's redacted in the log like any text.
   't:max_turns': safe('technical', oneOf(MAX_TURNS)),
   't:webfetch': spec('technical', { t: 'hostlist' }),
+  // P8a S: the agent's web search, off unless the Inhouse team turns it on (a technical key: only they write it). Missing
+  // or anything but true is off.
+  't:websearch': safe('technical', bool),
 }
 
 /** An id inside a key (a model, a run-limit job). */
