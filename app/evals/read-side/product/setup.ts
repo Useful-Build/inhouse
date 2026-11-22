@@ -173,6 +173,8 @@ export async function wireEval(o: EvalOptions): Promise<Wired> {
   const leaseTag = `product:${runTag}`
   let leased = false
   let restoreEffort: (() => Promise<void>) | null = null
+  /** The pin while it runs: a stop waits for it, so a pin cut short by a signal still has its effort put back and its grant ended. */
+  let pinning: Promise<() => Promise<void>> | null = null
   let target: ProductTarget | null = null
   /** The run's start on D1's clock and the routines it deleted: a stop sweeps every routine made since, as each case's end does. */
   let runStart: number | null = null
@@ -184,9 +186,11 @@ export async function wireEval(o: EvalOptions): Promise<Wired> {
       try { await work() } catch (e) { errors.push(`${what}: ${said(e)}`) }
     }
     if (target) errors.push(...(await target.stop()))
-    if (runStart !== null) errors.push(...(await deleteRoutines(createRowReader(run, { teamRequestsTable: false }), admin, runStart, deleted)))
+    if (runStart !== null) errors.push(...(target ? await target.sweep(runStart) : await deleteRoutines(createRowReader(run, { teamRequestsTable: false }), admin, runStart, deleted)))
     shops.close()
     await step('the test shop override could not be cleared', () => shops.clearShop())
+    // A pin that failed put its own effort back and ended its grant (effort.ts), and its error is the wiring's to report.
+    if (pinning) restoreEffort = await pinning.catch(() => null)
     if (restoreEffort) await step('the effort could not be put back', restoreEffort)
     await step('the eval lease could not be given back', async () => {
       await product.close?.()
@@ -212,7 +216,8 @@ export async function wireEval(o: EvalOptions): Promise<Wired> {
     if (room.spentUsd + o.budgetUsd > room.capUsd) throw new Error(`read-side: refusing: this month's spend $${room.spentUsd.toFixed(2)} plus --budget $${o.budgetUsd} is over the brand's ${EVAL_CAP} cap`)
     const startUsd = room.spentUsd
     runStart = (await nowOf(run)()) - SINCE_MARGIN_MS
-    restoreEffort = await pinEffort(settings, o.model)
+    pinning = pinEffort(settings, o.model)
+    restoreEffort = await pinning
     o.note(`read-side: effort pinned to Medium for ${o.model}; team requests: ${teamTable ? 'rows read from team_requests' : 'team_requests absent, observed empty'}`)
     const rows = createRowReader(run, { teamRequestsTable: teamTable })
     const deps: ProductDeps = {
@@ -287,7 +292,7 @@ export async function wireProof(o: ProofOptions): Promise<Wired> {
   let closing: Promise<string[]> | null = null
   const close = (): Promise<string[]> => (closing ??= (async () => {
     const errors: string[] = target ? await target.stop() : []
-    errors.push(...(await deleteRoutines(rows, o.raw.admin, runStart, deleted)))
+    errors.push(...(target ? await target.sweep(runStart) : await deleteRoutines(rows, o.raw.admin, runStart, deleted)))
     shops.close()
     await shops.clearShop().catch((e: unknown) => errors.push(`the test shop override could not be cleared: ${said(e)}`))
     await door.setWebfetchHosts(null).catch((e: unknown) => errors.push(`the WebFetch list could not be put back: ${said(e)}`))

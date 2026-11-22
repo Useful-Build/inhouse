@@ -117,6 +117,11 @@ export async function deleteRoutines(rows: Pick<RowReader, 'routines'>, admin: R
 export interface ProductTarget extends ReadSideTarget {
   /** A stop's first step: resets the live case's session (stops its turns, puts the WebFetch list back, clears memory). Never throws. */
   stop(): Promise<string[]>
+  /**
+   * Deletes every live routine made since `since` (deleteRoutines). Sweeps run one after another, never at once: a case's end
+   * and a stop can't both delete one routine and read the second answer as a failure.
+   */
+  sweep(since: number): Promise<string[]>
 }
 
 export function createProductReadSideTarget(d: ProductDeps, deleted: Set<string> = new Set()): ProductTarget {
@@ -124,7 +129,14 @@ export function createProductReadSideTarget(d: ProductDeps, deleted: Set<string>
   /** The live case's session, reset once by whichever comes first: the case's end or a stop. */
   let active: { session: Session; reset: Promise<void> | null } | null = null
   const resetActive = (a: NonNullable<typeof active>): Promise<void> => (a.reset ??= a.session.reset())
+  let sweeps: Promise<unknown> = Promise.resolve()
+  const sweep = (since: number): Promise<string[]> => {
+    const next = sweeps.then(() => deleteRoutines(d.rows, d.adminApi, since, deleted))
+    sweeps = next
+    return next
+  }
   return {
+    sweep,
     name: 'product',
     honorsPending: true,
     ...(d.spentUsd ? { spentUsd: d.spentUsd } : {}),
@@ -197,7 +209,7 @@ export function createProductReadSideTarget(d: ProductDeps, deleted: Set<string>
           }
           active = null
         }
-        cleanup.push(...(await deleteRoutines(d.rows, d.adminApi, since, deleted)))
+        cleanup.push(...(await sweep(since)))
         if (plan.shop) {
           try {
             await d.shop.clear()

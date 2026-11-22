@@ -208,6 +208,24 @@ describe('an honest run, and what can\'t be observed', () => {
     await running
     expect(await target.stop(), 'nothing live after the case').toEqual([])
   })
+  it('two sweeps at once (a case\'s end and a stop) run one after the other, so a routine is never deleted twice', async () => {
+    const c = byId('RS-TM1')
+    const gone = new Set<string>()
+    const routines: RoutineRow[] = [{ id: 'r_5', rev: 1, text: 'x', live: true }]
+    const { d } = deps(c, { calls: [] })
+    const adminApi: RawApi = async (_m, path) => {
+      const id = /routines\/(.+)\/delete/.exec(path)![1]!
+      await new Promise<void>((r) => setImmediate(r))
+      if (gone.has(id)) return { status: 409, bytes: new Uint8Array(), json: null }
+      gone.add(id)
+      routines[0] = { ...routines[0]!, live: false }
+      return { status: 200, bytes: new Uint8Array(), json: {} }
+    }
+    const target = createProductReadSideTarget({ ...d, adminApi, rows: { ...d.rows, async routines() { return routines.map((r) => ({ ...r })) } } })
+    const [a, b] = await Promise.all([target.sweep(0), target.sweep(0)])
+    expect([...a, ...b]).toEqual([])
+    expect([...gone]).toEqual(['r_5'])
+  })
   it('a routine that won\'t delete stops the run loud, even after a clean case', async () => {
     const c = byId('RS-TM1')
     const { d } = deps(c, { calls: [], routines: [{ id: 'r_9', rev: 1, text: 'x', live: true }] })

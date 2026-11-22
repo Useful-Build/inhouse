@@ -89,6 +89,29 @@ describe('xlsx', () => {
   })
 })
 
+describe('office packages a hostile file can use', () => {
+  const REL = (type: string, target: string, external = false) => `<Relationship Id="r${type}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="${target}"${external ? ' TargetMode="External"' : ''}/>`
+  it('scans every XML part wherever it lives, and flags reaching parts by relationship type, not by name', () => {
+    const hidden = extractFile('r.docx', '', zip({ '_rels/.rels': ROOT('word/document.xml'), 'word/document.xml': DOC('<w:p/>'), 'custom/item.xml': '<w:instrText>INCLUDEPICTURE "https://x.partner.test/a.png"</w:instrText>' }))
+    expect(hidden !== null && unsafe(hidden)).toBe(true)
+    for (const type of ['connections', 'queryTable', 'externalLink', 'aFChunk', 'oleObject', 'package', 'control', 'vbaProject', 'subDocument', 'attachedTemplate']) {
+      const f = extractFile('t.xlsx', '', xlsx('', { 'xl/_rels/workbook.xml.rels': RELS(REL(type, 'moved/part.xml')), 'moved/part.xml': '<x/>' }))
+      expect(f === null || unsafe(f), type).toBe(true)
+    }
+  })
+  it('is null for a part that isn\'t XML, relationships, content types or a media image', () => {
+    expect(extractFile('r.docx', '', zip({ '_rels/.rels': ROOT('word/document.xml'), 'word/document.xml': DOC('<w:p/>'), 'word/afchunk.html': '<img src="https://x.test">' }))).toBeNull()
+    expect(extractFile('t.xlsx', '', xlsx('', { 'xl/vbaProject.bin': 'x' }))).toBeNull()
+    expect(extractFile('r.docx', '', zip({ '_rels/.rels': ROOT('word/document.xml'), '[Content_Types].xml': '<Types/>', 'word/document.xml': DOC('<w:p/>'), 'word/media/image1.png': 'png' }))).not.toBeNull()
+  })
+  it('reads defined names and conditional-format and validation formulas as formulas', () => {
+    for (const xml of ['<definedNames><definedName name="x">WEBSERVICE("https://x.partner.test")</definedName></definedNames>', '<formula>WEBSERVICE("https://x.partner.test")</formula>', '<formula1>IMAGE("https://x.partner.test")</formula1>', '<formula2>IMAGE("https://x.partner.test")</formula2>']) {
+      const f = extractFile('t.xlsx', '', xlsx('', { 'xl/workbook.xml': `<workbook>${xml}</workbook>` }))
+      expect(f !== null && unsafe(f), xml).toBe(true)
+    }
+  })
+})
+
 describe('archives that must come back null', () => {
   it('refuses encryption, a method other than stored or deflate, a truncated archive and a missing main part', () => {
     expect(unzip(zip({ 'a.xml': 'x' }, { flags: 1 }))).toBeNull()
@@ -141,8 +164,69 @@ describe('pdf syntax a hostile file can use', () => {
   it('comes back null for a filter that is an indirect reference, a stream keyword the parser didn\'t take, deep nesting and too many dictionaries', () => {
     expect(extractFile('r.pdf', '', pdf([catalog], [{ dict: '/Filter 9 0 R', data: Buffer.from('<< /S /URI /URI (https://x.partner.test) >>') }]))).toBeNull()
     expect(extractFile('r.pdf', '', Buffer.from('%PDF-1.7\n1 0 obj\n<< /Length 30 >>\nstream \n<< /S /JavaScript /JS (x) >>\nendstream\nendobj\n'))).toBeNull()
-    expect(extractFile('r.pdf', '', pdf([`${'<< /A '.repeat(60)}/S /JavaScript${' >>'.repeat(60)}`]))).toBeNull()
-    expect(extractFile('r.pdf', '', pdf(Array.from({ length: 20_001 }, () => '<< /T 1 >>')))).toBeNull()
+    // Detection is a scan of the whole decoded text, not a peel of dictionaries: depth can't hide an action, and size can't make it slow.
+    expect(unsafe(extractFile('r.pdf', '', pdf([`${'<< /A '.repeat(60)}/S /JavaScript${' >>'.repeat(60)}`])))).toBe(true)
+    expect(unsafe(extractFile('r.pdf', '', pdf(Array.from({ length: 20_001 }, () => '<< /T 1 >>'))))).toBe(false)
+  })
+  // Round 2's probes: each passed the dictionary peel. Every one must now be unsafe or null.
+  const nullOrUnsafe = (b: Uint8Array) => { const f = extractFile('r.pdf', '', b); return f === null || unsafe(f) }
+  it('an action named through an indirect /S or /URI is unsafe', () => {
+    for (const target of ['/Launch /F (calc.exe)', '/SubmitForm /F (https://x.partner.test)', '/GoToR /F (other.pdf)']) {
+      expect(nullOrUnsafe(pdf(['<< /OpenAction << /S 2 0 R >> >>', target.split(' ')[0]!, `<< ${target} >>`])), target).toBe(true)
+    }
+    expect(nullOrUnsafe(pdf(['<< /A << /S 2 0 R >> >>', '/Launch']))).toBe(true)
+    expect(nullOrUnsafe(pdf(['<< /A << /S /URI /URI 2 0 R >> >>', '(https://reports.partner.test/t)']))).toBe(true)
+  })
+  it('a `>>` hidden in a literal string, a comment or an escaped name can\'t close a dictionary early', () => {
+    expect(nullOrUnsafe(pdf(['<< /T (a >> b) /S /Launch /F (calc.exe) >>']))).toBe(true)
+    expect(nullOrUnsafe(pdf(['<< /T 1 % >> comment\n /S /JavaScript /JS (x) >>']))).toBe(true)
+    expect(nullOrUnsafe(pdf(['<< /A#3E#3E /S /JavaScript /JS (x) >>']))).toBe(true)
+    // An escaped name that decodes to a delimiter is ambiguous: null.
+    expect(extractFile('r.pdf', '', pdf(['<< /A#3E#3E /T 1 >>']))).toBeNull()
+  })
+  it('a stream with two /Filter keys, a span that crosses objects, a cut Flate stream or a /Length that lies is null', () => {
+    const plain = Buffer.from('<< /S /JavaScript /JS (x) >>')
+    expect(extractFile('r.pdf', '', pdf([catalog], [{ dict: '/Filter /DCTDecode /Filter /FlateDecode', data: deflateSync(plain) }]))).toBeNull()
+    const cut = deflateSync(Buffer.alloc(4000, 'a'))
+    expect(extractFile('r.pdf', '', pdf([catalog], [{ dict: '/Filter /FlateDecode', data: cut.subarray(0, cut.length - 20) }]))).toBeNull()
+    // A stored deflate block whose bytes hold `endstream`: the stream ends where /Length says, never at the first `endstream`.
+    const stored = deflateSync(Buffer.from('BT (x) Tj ET\nendstream\nendobj\n9 0 obj << /S /Launch /F (calc.exe) >> endobj'), { level: 0 })
+    expect(nullOrUnsafe(pdf([catalog], [{ dict: '/Filter /FlateDecode', data: stored }]))).toBe(true)
+    const lying = Buffer.from(`%PDF-1.7\n1 0 obj\n<< /Length 4 >>\nstream\nBT (hello) Tj ET\nendstream\nendobj\n`)
+    expect(extractFile('r.pdf', '', lying)).toBeNull()
+    const spanning = Buffer.from(`%PDF-1.7\n1 0 obj\n<< /Length 60 >>\nstream\nabc\nendstream\nendobj\n2 0 obj\n<< /S /Launch >>\nendobj\nendstream\n`)
+    expect(extractFile('r.pdf', '', spanning)).toBeNull()
+  })
+  it('a filter on another object never decides how a stream is read', () => {
+    const b = Buffer.concat([Buffer.from('%PDF-1.7\n1 0 obj\n<< /Filter /DCTDecode >>\nendobj\n2 0 obj\n<< /Length 28 >>\nstream\n'), Buffer.from('<< /S /JavaScript /JS (x) >>'), Buffer.from('\nendstream\nendobj\n')])
+    expect(nullOrUnsafe(b)).toBe(true)
+  })
+  it('reads the filter chains generators write (ASCII85 then Flate, ASCIIHex) and refuses a malformed one', () => {
+    // The oracle: an ASCII85 encoder written here (Adobe's form, `z` for zero groups, `~>` at the end).
+    const a85 = (b: Buffer) => {
+      let out = ''
+      for (let i = 0; i < b.length; i += 4) {
+        const chunk = Buffer.concat([b.subarray(i, i + 4), Buffer.alloc(4)]).subarray(0, 4)
+        let n = chunk.readUInt32BE(0)
+        const take = Math.min(4, b.length - i)
+        if (n === 0 && take === 4) { out += 'z'; continue }
+        const d: string[] = []
+        for (let k = 0; k < 5; k++) { d.unshift(String.fromCharCode(33 + (n % 85))); n = Math.floor(n / 85) }
+        out += d.join('').slice(0, take + 1)
+      }
+      return `${out}~>`
+    }
+    const content = Buffer.from('BT (Refund total 42) Tj ET')
+    const chain = extractFile('r.pdf', '', pdf([catalog], [{ dict: '/Filter [/ASCII85Decode /FlateDecode]', data: Buffer.from(a85(deflateSync(content))) }]))
+    expect(chain?.text).toContain('Refund total 42')
+    const hex = extractFile('r.pdf', '', pdf([catalog], [{ dict: '/Filter /ASCIIHexDecode', data: Buffer.from(`${content.toString('hex')}>`) }]))
+    expect(hex?.text).toContain('Refund total 42')
+    expect(extractFile('r.pdf', '', pdf([catalog], [{ dict: '/Filter /ASCII85Decode', data: Buffer.from('ab\u0080c~>') }]))).toBeNull()
+    expect(extractFile('r.pdf', '', pdf([catalog], [{ dict: '/Filter [/FlateDecode /ASCII85Decode]', data: deflateSync(Buffer.from(a85(content))) }]))?.text).toContain('Refund total 42')
+  })
+  it('keeps #xx escapes inside literal strings as written (only names are decoded)', () => {
+    const f = extractFile('r.pdf', '', pdf(['<< /Type /Catalog >>'], [{ dict: '', data: Buffer.from('BT (path a/b#41 off) Tj ET') }]))
+    expect(f?.text).toContain('path a/b#41 off')
   })
   it('decodes #xx name escapes before it looks for actions, links and filters', () => {
     const js = extractFile('r.pdf', '', pdf(['<< /OpenAction << /S /Java#53cript /J#53 (app.alert\\(1\\)) >> >>']))

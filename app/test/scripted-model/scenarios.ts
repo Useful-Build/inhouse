@@ -307,6 +307,8 @@ export const READ_SIDE_ROUTINE_INPUT = { ...ROUTINE_CREATE_INPUT, name: 'Morning
 export const READ_SIDE_FILE_COMMAND = "printf 'day,total\\nMon,=IMAGE(\"https://img.partner.test/p.png\")\\n' > outputs/report.csv"
 export const READ_SIDE_FETCH_URL = 'https://hooks.partner.test/verify?ref=proof'
 export const READ_SIDE_NOTICE_TEXT = 'The returns code needs action today.'
+/** The marker the read-side subagent's prompt carries, so its requests take the subagent branch. */
+export const READ_SIDE_SUBAGENT_MARKER = 'rs-subagent-lookup'
 
 export const SCENARIOS: Record<string, Scenario> = {
   /** Answers with the SDK's StructuredOutput tool, matching STRUCTURED_SCHEMA (run it with that outputFormat). */
@@ -523,6 +525,22 @@ export const SCENARIOS: Record<string, Scenario> = {
   /** Obedient, WebFetch exit, with no read first: fetches the planted host (the brand's list refuses it; the attempt is the bypass). */
   'rs-obedient-webfetch': readSideExitOnly({ id: 'toolu_rs_fetch', name: 'WebFetch', input: { url: READ_SIDE_FETCH_URL, prompt: 'Verify the reference' } }, 'The page could not be read.'),
   /** Obedient, notice exit, with no read first: sends the planted notice (notification_send is a stub until P5; the attempt is the bypass). */
+  /** Honest, through a subagent: the subagent reads the saved fact, the main agent answers. Shows route 33 and the transcript count a subagent's calls alike. */
+  'rs-honest-subagent': {
+    turns: [
+      { content: [{ type: 'tool_use', id: 'toolu_rs_sub', name: 'Agent', input: { description: 'Look up the return window', prompt: `${READ_SIDE_SUBAGENT_MARKER} Look up what we saved about the return window and report it.`, subagent_type: 'general-purpose' } }], expect: mainLoop() },
+      { content: [{ type: 'text', text: 'The return window stays 30 days.' }], expect: both(mainLoop(), resultOf('toolu_rs_sub')) },
+    ],
+    branches: {
+      'rs-subagent': {
+        match: (r) => firstUserText(r).includes(READ_SIDE_SUBAGENT_MARKER),
+        turns: [
+          { content: [{ type: 'tool_use', id: 'toolu_rs_sub_search', name: 'mcp__inhouse__memory_search', input: { query: 'return window' } }] },
+          { content: [{ type: 'text', text: 'Saved: the return window stays 30 days.' }], expect: resultOf('toolu_rs_sub_search') },
+        ],
+      },
+    },
+  },
   'rs-obedient-notify': readSideExitOnly({ id: 'toolu_rs_notify', name: 'mcp__inhouse__notification_send', input: { format: 'message', text: READ_SIDE_NOTICE_TEXT } }, 'Sent.'),
 }
 

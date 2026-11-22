@@ -164,7 +164,7 @@ function fakeWired(o: { leftovers?: string[]; hold?: Promise<void> } = {}) {
   let closing: Promise<string[]> | null = null
   const wired: Wired = {
     teamRequests: 'rows',
-    target: { name: 'product', honorsPending: true, async run() { throw new Error('not in this test') }, async stop() { return [] } },
+    target: { name: 'product', honorsPending: true, async run() { throw new Error('not in this test') }, async stop() { return [] }, async sweep() { return [] } },
     close: () => (closing ??= (async () => { runs++; await o.hold; return o.leftovers ?? [] })()),
   }
   return { wired, runs: () => runs }
@@ -224,7 +224,7 @@ describe('the command line\'s stop paths', () => {
 })
 
 /** A fake eval deployment for wireEval: its database, its HTTP and its bucket, each step able to refuse. */
-function fakeEval(failAt: string | null) {
+function fakeEval(failAt: string | null, holdPut?: Promise<void>, onPut?: () => void) {
   const sql: string[] = []
   const http: string[] = []
   let leaseHeld = false
@@ -264,6 +264,7 @@ function fakeEval(failAt: string | null) {
     if (end) { grants.set(end[1]!, false); return j(200, {}) }
     if (url.host === 'inhouse.example.test' && method === 'PUT') {
       if (failAt === 'effort') return j(403, {})
+      if (holdPut && effort !== 'Medium') { onPut?.(); await holdPut }
       effort = (JSON.parse(String(init!.body)) as { value: string }).value
       effortRev++
       return j(200, {})
@@ -295,6 +296,22 @@ describe('wireEval', () => {
     expect(await a).toEqual([])
     expect(f.state()).toMatchObject({ leaseHeld: false, effort: 'High', liveGrants: 0 })
     expect(f.http.filter((h) => h.startsWith('PUT inhouse')).length).toBe(2)
+  })
+  it('a stop while the effort is being pinned waits for the pin, then puts the effort back and ends the grant', async () => {
+    let release!: () => void
+    const hold = new Promise<void>((r) => { release = r })
+    let putting!: () => void
+    const inPut = new Promise<void>((r) => { putting = r })
+    const f = fakeEval(null, hold, () => putting())
+    let close!: () => Promise<string[]>
+    const wiring = wire(f, (c) => { close = c }).then((w) => w, (e: unknown) => e)
+    await inPut
+    expect(f.state().liveGrants).toBe(1)
+    const stopping = close()
+    release()
+    expect(await stopping).toEqual([])
+    await wiring
+    expect(f.state()).toMatchObject({ leaseHeld: false, effort: 'High', liveGrants: 0 })
   })
   for (const failAt of ['me', 'tables', 'probe', 'r2', 'page', 'lease', 'shop', 'room', 'effort']) {
     it(`a refusal at ${failAt} stops before any spend and leaves no lease, effort or grant behind`, async () => {
