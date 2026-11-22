@@ -33,7 +33,8 @@
 // --model-setting <label> (remote only, default none): before the first case, the brand's Default model (`g:mode`, route 12,
 // as the person the run signs in, the seeded Admin by default) is set to that label and read back. The scripted proof passes
 // "Fast": routine turns run on the Default model (Opus when unset) and the scripted model answers only Fast. A real-model
-// run leaves it out: the eval run picks its own model.
+// run leaves it out: the eval run picks its own model. The setting is not put back after the run (the brand's Default
+// model stays changed), so use --model-setting only on a per-PR sandbox.
 // No restart: per case the door (door.ts, wrangler d1 execute on the sandbox database) sets the test shop override the
 // build's egress passes to the hub, Run now is pressed, the slot is polled through the door until it ends or the deadline,
 // graded and written as above. The override is cleared before the first case, after every case and on exit. Without
