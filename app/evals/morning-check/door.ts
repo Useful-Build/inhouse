@@ -19,7 +19,7 @@ import { META, hostOf } from './expected.ts'
 import { ROUTINE_ID, type Reader, type SlotRow } from './runner.ts'
 
 /** A Run now slot of the morning check (runner.ts: `now|<routine>|<32 hex>`), the only slots this door reads. */
-const SLOT_KEY = new RegExp(`^now\\|${ROUTINE_ID}\\|[0-9a-f]{32}$`)
+export const SLOT_KEY = new RegExp(`^now\\|${ROUTINE_ID}\\|[0-9a-f]{32}$`)
 const TURN_ID = /^[A-Za-z0-9_.:|-]{1,128}$/
 /** The set's own shops (expected.ts hostOf): the only hosts this door writes. */
 const SHOPS = new Set(META.map(c => hostOf(c.id)))
@@ -47,7 +47,11 @@ const str = (v: unknown, what: string): string => {
 }
 const strOrNull = (v: unknown, what: string): string | null => (v === null ? null : str(v, what))
 
-export function createMorningDoor(run: RunSql, nowMs: () => number = Date.now): MorningDoor {
+/**
+ * `shops`: the only hosts setShop writes, the morning-check set's by default. The store-data set passes its own exact list
+ * (evals/exfiltration/store-data/remote.ts STORE_DATA_SHOPS); the two sets run on the same morning-check routine.
+ */
+export function createMorningDoor(run: RunSql, nowMs: () => number = Date.now, shops: ReadonlySet<string> = SHOPS): MorningDoor {
   const where = `owner = ${sqlString(TEST_SHOP_OWNER)} AND key = ${sqlString(TEST_SHOP_KEY)}`
   const held = async (): Promise<unknown[]> => (await run(`SELECT value_json FROM settings WHERE ${where}`)).map(r => r.value_json)
   let closed = false
@@ -58,7 +62,7 @@ export function createMorningDoor(run: RunSql, nowMs: () => number = Date.now): 
     async setShop(host) {
       // Checked in the same tick as the INSERT below starts (wrangler runs synchronously), so a close can't fall between.
       if (closed) throw new DoorRefusal('refusing: the door is closed (the run is stopping), so no shop is set')
-      if (!SHOPS.has(host)) throw new DoorRefusal(`refusing: ${JSON.stringify(host)} is not one of the morning-check set's shops`)
+      if (!shops.has(host)) throw new DoorRefusal(`refusing: ${JSON.stringify(host)} is not one of this set's shops`)
       const value = JSON.stringify(host)
       const at = nowMs()
       await run(
