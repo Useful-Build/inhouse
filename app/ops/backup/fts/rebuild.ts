@@ -5,8 +5,9 @@
 //  1. read G1's restore record and refuse unless its status is `restored_unreconciled`;
 //  2. check that the record's derived list, the registry's derived entries and P3's DERIVED_SEARCH_TABLES name the same
 //     tables from the same sources (a string `from` read as a one-item list; shadows and `state` aside);
-//  3. P3's `rebuildSearchIndexes(target)`, then `integrity-check` with rank 1 (compared with the source) on each index;
-//  4. write `restore/<restoreId>/fts.json` in a `finally`. The state moves to `rebuilt` there, never in G1's record
+//  3. P3's `rebuildSearchIndexes(target)` (one batch: if it fails, every index fails), then `integrity-check` with rank
+//     1 (compared with the source) on each index, recorded per index;
+//  4. write `restore/<restoreId>/fts.json` in a `finally`, its top-level `status` `rebuilt` only when every index is. The state moves to `rebuilt` there, never in G1's record
 //     (G1 writes that once, in its own `finally`; a second writer would race it).
 // A refusal (steps 1 and 2) writes nothing. R's reconcile calls this first and reads fts.json before the outbox resumes.
 // No C1 job drops or recreates a table: a runbook that uses D1's own export or Time Travel instead runs those steps
@@ -27,6 +28,8 @@ export const FtsRecordSchema = z.object({
   format: z.literal(1),
   restoreId: z.string().min(1),
   atMs: z.number().int().nonnegative(),
+  /** What R reads: `rebuilt` only when there is at least one table and every table is rebuilt. */
+  status: z.enum(['rebuilt', 'failed']),
   tables: z.array(z.object({
     name: z.string().min(1),
     from: z.array(z.string().min(1)).min(1),
@@ -76,26 +79,38 @@ export async function rebuildAfterRestore(deps: RebuildDeps): Promise<RebuildRes
   // 3 and 4. The rebuild, the check, and the record whatever happens.
   const sorted = [...fromRecord].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   const done = new Map<string, number>()
-  let error: string | undefined
+  const failed = new Map<string, string>()
   let fts!: FtsRecord
   try {
-    await rebuildSearchIndexes(target)
-    for (const d of sorted) {
-      await target.prepare(`INSERT INTO ${ident(d.name)}(${ident(d.name)}, rank) VALUES ('integrity-check', 1)`).run()
-      const n = await target.prepare(`SELECT COUNT(*) AS n FROM ${ident(d.from[0])}`).first<{ n: number }>()
-      if (!n) throw new Error(`no count from ${d.from[0]}`)
-      done.set(d.name, n.n)
+    try {
+      await rebuildSearchIndexes(target)
+    } catch (err) {
+      for (const d of sorted) failed.set(d.name, messageOf(err))
     }
-  } catch (err) {
-    error = messageOf(err)
+    for (const d of sorted) {
+      if (failed.has(d.name)) continue
+      try {
+        await target.prepare(`INSERT INTO ${ident(d.name)}(${ident(d.name)}, rank) VALUES ('integrity-check', 1)`).run()
+        const n = await target.prepare(`SELECT COUNT(*) AS n FROM ${ident(d.from[0])}`).first<{ n: number }>()
+        if (!n) throw new Error(`no count from ${d.from[0]}`)
+        done.set(d.name, n.n)
+      } catch (err) {
+        failed.set(d.name, messageOf(err))
+      }
+    }
   } finally {
-    fts = FtsRecordSchema.parse({
-      format: 1, restoreId, atMs: deps.nowMs ?? Date.now(),
-      tables: sorted.map(d => (error === undefined
-        ? { name: d.name, from: d.from, sourceRows: done.get(d.name) as number, state: 'rebuilt' }
-        : { name: d.name, from: d.from, state: 'failed', error })),
-    })
+    // Any table neither rebuilt nor failed (an unexpected throw above) is recorded as failed, never as rebuilt.
+    const tableRecords = sorted.map(d => (done.has(d.name) && !failed.has(d.name)
+      ? { name: d.name, from: d.from, sourceRows: done.get(d.name) as number, state: 'rebuilt' as const }
+      : { name: d.name, from: d.from, state: 'failed' as const, error: failed.get(d.name) ?? 'not rebuilt' }))
+    const status = tableRecords.length > 0 && tableRecords.every(t => t.state === 'rebuilt') ? 'rebuilt' : 'failed'
+    fts = FtsRecordSchema.parse({ format: 1, restoreId, atMs: deps.nowMs ?? Date.now(), status, tables: tableRecords })
     await bucket.put(restoreKey(restoreId, 'fts.json'), JSON.stringify(fts), { httpMetadata: { contentType: 'application/json' } })
   }
-  return error === undefined ? { ok: fts } : { failed: error }
+  if (fts.status === 'rebuilt') return { ok: fts }
+  const errors = fts.tables.filter(t => t.state === 'failed')
+  if (errors.length === 0) return { failed: 'no derived tables' }
+  // One error for every table (the rebuild batch failed) is reported as it is; otherwise the first table names its own.
+  const sameForAll = errors.length === sorted.length && new Set(errors.map(t => t.error)).size === 1
+  return { failed: sameForAll ? (errors[0].error as string) : `${errors[0].name}: ${errors[0].error}` }
 }

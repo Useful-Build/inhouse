@@ -7,9 +7,11 @@
 //  4. an `append_only` table is updated somewhere, or its key isn't one integer column, so the rows read after the
 //     point batch aren't the rows at the point;
 //  5. an `insert_only` table is updated somewhere, or its creation column isn't a column, so a row read after the point
-//     batch may have changed since it.
+//     batch may have changed since it;
+//  6. a table with unbounded text columns is read 5,000 rows a page, so one page can pass D1's 50 MB result limit.
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
+import { READ_PAGE_ROWS } from './format.ts'
 import { TABLE_RULES } from './tables.ts'
 
 const db = env.DB
@@ -67,5 +69,12 @@ describe('insert-only tables (failure 5)', () => {
       for (const [path, source] of Object.entries(serverSources)) if (writes.test(source)) found.push(`${r.name}: ${path}`)
     }
     expect(found).toEqual([])
+  })
+})
+
+describe('read pages (failure 6)', () => {
+  it('reads the tables with unbounded text columns at most 500 rows a page, and no table more than 5,000', () => {
+    for (const name of ['chat_messages', 'routine_slots', 'today_items', 'notices']) expect(TABLE_RULES.find(r => r.name === name)?.pageRows, name).toBeLessThanOrEqual(500)
+    for (const r of TABLE_RULES) expect(r.pageRows ?? READ_PAGE_ROWS, r.name).toBeLessThanOrEqual(5_000)
   })
 })

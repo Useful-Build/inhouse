@@ -12,7 +12,8 @@ import { BackupError } from './errors.ts'
 import { SNAPSHOT_MAX_ROWS, TableWriter, appendRows, encodeRow, keyRows, maxIdSelect, pointSelect, snapshotSelect, tableColumns } from './format.ts'
 import { BackupManifestSchema } from './manifest.ts'
 import type { BackupManifest, TableManifest } from './manifest.ts'
-import { canonicalTables } from './tables.ts'
+import { canonicalTables, ident } from './tables.ts'
+import type { TableRule } from './tables.ts'
 
 export interface BackupDeps {
   db: D1Database
@@ -40,13 +41,13 @@ export async function backup(deps: BackupDeps): Promise<BackupManifest> {
   const columns = new Map<string, string[]>()
   for (const r of rules) columns.set(r.name, await tableColumns(db, r.name))
   const cols = (name: string) => columns.get(name) as string[]
+  const fks = await foreignKeys(db, rules)
 
-  // The point batch: snapshot tables whole, append-only maxima, insert-only points and counts, the migration. `paged`
-  // tables are read after it (C1).
+  // The point batch: snapshot tables whole, append-only maxima, each bounded table's point and count, the migration.
+  // `paged` and `insert_only` tables are read after it (C1), each bounded by its creation column at its point.
   const snapshotRules = rules.filter(r => r.mode === 'snapshot')
   const appendRules = rules.filter(r => r.mode === 'append_only')
-  // insert_only tables, and append_only ones bounded by a creation column: their point and count.
-  const insertRules = rules.filter(r => r.mode === 'insert_only' || (r.mode === 'append_only' && r.createdColumn !== undefined))
+  const insertRules = rules.filter(r => r.mode !== 'snapshot' && r.createdColumn !== undefined)
   const results = await db.batch([
     ...snapshotRules.map(r => snapshotSelect(db, r, cols(r.name))),
     ...appendRules.map(r => maxIdSelect(db, r)),
@@ -63,7 +64,21 @@ export async function backup(deps: BackupDeps): Promise<BackupManifest> {
 
   const backupId = timeId(nowMs)
   const tables: TableManifest[] = []
+  // C1: the closure check. Tables come in restore order (each after its foreign keys' parents), so every parent's
+  // backed-up keys are known before its children are read; a child whose parent isn't in the backup fails it by name
+  // (a clock-skewed row created after the point batch with a time inside the bound), before any manifest is written.
+  const keys = new Map<string, Set<string>>()
+  for (const fk of fks.values()) for (const f of fk) keys.set(`${f.table}.${f.to}`, new Set())
   for (const r of rules) {
+    const tableFks = fks.get(r.name) ?? []
+    const add = async (row: Record<string, unknown>) => {
+      for (const f of tableFks) {
+        const v = row[f.from]
+        if (v !== null && v !== undefined && !keys.get(`${f.table}.${f.to}`)?.has(JSON.stringify(v))) throw new BackupError('fk_closure', `${r.name}.${f.from} -> ${f.table}.${f.to}: ${JSON.stringify(v)}`)
+      }
+      for (const [k, set] of keys) if (k.startsWith(`${r.name}.`)) set.add(JSON.stringify(row[k.slice(r.name.length + 1)]))
+      await writer.add(encodeRow(r.name, cols(r.name), row))
+    }
     const writer = new TableWriter(r.name, async (part, bytes) => {
       const key = backupPartKey(backupId, r.name, part)
       await bucket.put(key, bytes, ndjson)
@@ -71,15 +86,17 @@ export async function backup(deps: BackupDeps): Promise<BackupManifest> {
     })
     const point = points.get(r.name)
     if (r.mode === 'snapshot') {
-      for (const row of snapshotRows.get(r.name) ?? []) await writer.add(encodeRow(r.name, cols(r.name), row))
+      for (const row of snapshotRows.get(r.name) ?? []) await add(row)
     } else if (r.mode === 'append_only') {
-      for await (const row of appendRows(db, r, cols(r.name), maxIds.get(r.name) as number, point?.point)) await writer.add(encodeRow(r.name, cols(r.name), row))
+      for await (const row of appendRows(db, r, cols(r.name), maxIds.get(r.name) as number, point?.point)) await add(row)
     } else {
-      for await (const row of keyRows(db, r, cols(r.name), point === undefined ? {} : { createdAtMost: point.point })) await writer.add(encodeRow(r.name, cols(r.name), row))
+      for await (const row of keyRows(db, r, cols(r.name), point === undefined ? {} : { createdAtMost: point.point })) await add(row)
     }
     const digest = await writer.finish()
     // An insert_only or bounded append_only table is exact when it read back the rows the point batch counted; paged
-    // tables never are.
+    // tables never are. The count is the only check: a delete and an insert inside the read window cancel out and read
+    // as exact. Retention runs in the same one-task queue as the backup, and person deletion is serialised with it in
+    // C1's jobs PR, so neither deletes inside the window.
     const exact = r.mode === 'paged' ? false : point === undefined ? true : digest.rows === point.n
     tables.push({
       name: r.name, columns: cols(r.name), orderBy: [...r.orderBy], mode: r.mode, rows: digest.rows,
@@ -92,6 +109,20 @@ export async function backup(deps: BackupDeps): Promise<BackupManifest> {
   const manifest = BackupManifestSchema.parse({ format: 1, backupId, takenAtMs: nowMs, migration, tables, derived })
   await bucket.put(backupManifestKey(backupId), JSON.stringify(manifest), json)
   return manifest
+}
+
+/** Each rule's foreign keys (`PRAGMA foreign_key_list`), the parent's column defaulting to its one-column key. */
+async function foreignKeys(db: D1Database, rules: readonly TableRule[]): Promise<Map<string, { from: string; table: string; to: string }[]>> {
+  const out = new Map<string, { from: string; table: string; to: string }[]>()
+  for (const r of rules) {
+    const list = (await db.prepare(`PRAGMA foreign_key_list(${ident(r.name)})`).all<{ from: string; table: string; to: string | null }>()).results
+    out.set(r.name, list.map(f => {
+      const to = f.to ?? rules.find(p => p.name === f.table)?.orderBy[0]
+      if (to === undefined) throw new BackupError('fk_closure', `${r.name}.${f.from} -> ${f.table}: no parent key`)
+      return { from: f.from, table: f.table, to }
+    }))
+  }
+  return out
 }
 
 /** Reads and parses a backup's manifest; null when it has none (an incomplete backup). A bad manifest throws. */

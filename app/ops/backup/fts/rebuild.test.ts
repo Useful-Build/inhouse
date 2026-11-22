@@ -5,7 +5,8 @@
 //  3. the record's derived list, the registry's derived entries and P3's DERIVED_SEARCH_TABLES name different tables or
 //     sources, and it rebuilds anyway (an index nobody rebuilds, or one rebuilt from the wrong table);
 //  4. FTS5's integrity check isn't run against the source, or fts.json misses a table, its source row count or its state;
-//  5. a rebuild that throws leaves no record, or a record that says rebuilt.
+//  5. a rebuild that throws, or an index the rebuild didn't fill, leaves no record, or a record that says rebuilt
+//     (R reads the top-level `status`).
 import { applyD1Migrations } from 'cloudflare:test'
 import type { D1Migration } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
@@ -98,7 +99,7 @@ describe('the rebuild (failures 1 and 4)', () => {
     const expected = await Promise.all([...DERIVED_SEARCH_TABLES].sort((a, b) => (a.name < b.name ? -1 : 1)).map(async t => ({ name: t.name, from: [t.from], sourceRows: await rows(t.from), state: 'rebuilt' })))
     const stored = await ftsJson(good.restoreId)
     expect(stored).toEqual(out.ok)
-    expect(stored).toEqual({ format: 1, restoreId: good.restoreId, atMs: T + 300, tables: expected })
+    expect(stored).toEqual({ format: 1, restoreId: good.restoreId, atMs: T + 300, status: 'rebuilt', tables: expected })
     // Its own check passed, and passes again from here.
     for (const t of DERIVED_SEARCH_TABLES) await e.RESTORE_DB.prepare(`INSERT INTO ${t.name}(${t.name}, rank) VALUES ('integrity-check', 1)`).run()
     // G1's record is untouched: the state moves in fts.json only.
@@ -116,6 +117,23 @@ describe('a rebuild that fails (failure 5)', () => {
     // P3's runBatch names the database in its error.
     expect(out).toEqual({ failed: 'D1 failed: D1 is down (test)' })
     const stored = await ftsJson(r.restoreId)
+    expect(stored?.status).toBe('failed')
     expect(stored?.tables.map(t => [t.name, t.state, t.error])).toEqual([['chat_messages_fts', 'failed', 'D1 failed: D1 is down (test)'], ['memories_fts', 'failed', 'D1 failed: D1 is down (test)']])
+  })
+
+  it('fails an index the rebuild left empty: integrity-check against the source catches it, per table', async () => {
+    const r = RestoreRecordSchema.parse({ ...good, restoreId: `${good.restoreId}-silent` })
+    await putRecord(r)
+    // A batch that resolves without running, after one index was emptied: only the integrity check can tell.
+    await e.RESTORE_DB.prepare("INSERT INTO memories_fts(memories_fts) VALUES ('delete-all')").run()
+    const silent = { prepare: (q: string) => e.RESTORE_DB.prepare(q), batch: () => Promise.resolve([]) } as unknown as D1Database
+    const out = await rebuildAfterRestore({ bucket: e.FILES, target: silent, restoreId: r.restoreId, nowMs: T + 500 })
+    expect(out).toMatchObject({ failed: expect.stringMatching(/^memories_fts: /) })
+    const stored = await ftsJson(r.restoreId)
+    expect(stored?.status).toBe('failed')
+    expect(stored?.tables.map(t => [t.name, t.state])).toEqual([['chat_messages_fts', 'rebuilt'], ['memories_fts', 'failed']])
+    expect(stored?.tables[1].error).toBeTruthy()
+    // Put the index back for anything after.
+    await e.RESTORE_DB.prepare("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')").run()
   })
 })
