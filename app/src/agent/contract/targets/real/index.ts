@@ -2,7 +2,8 @@
 // `origin`. targets.ts appends these when CONTRACT_REAL_ORIGIN is set; from P3 this file is the orchestrator's. One file
 // per resource group beside this one holds what is particular to it (me.ts signs in, members.ts resets the team, ...).
 //
-// It serves exactly the P2 methods. Its client is the product's `HttpAgent` with two additions a browser doesn't need: the
+// It serves the P2 methods and P5's connector methods (connectors.ts: the Tools writes on an Inhouse client, Slack put in the
+// state each case reads before the call). Its client is the product's `HttpAgent` with two additions a browser doesn't need: the
 // test issuer's sign-in header and an `Origin` on every request (Node sends neither by itself), and a clock the suite can
 // move on (`advance`), which only the client's own notion of "now" follows (a grant stops being live at its end).
 import { settingRow } from '../../../../../shared/contract/settings-table'
@@ -15,11 +16,14 @@ import { discover, signer } from './me'
 import type { Seeded, Signer } from './me'
 import { resetTeam } from './members'
 import { resetSettings, settingFixtures } from './settings'
+import { CONNECTOR_METHODS, CONNECTOR_TOOL_KEY, connectorRoute, connectorWorld } from './connectors'
 
-/** The P2 methods: what this target's client serves over HTTP. */
+/** The P2 methods and P5's connector methods: what this target's client serves over HTTP. */
 const SERVED: ReadonlySet<keyof AgentClient> = new Set<keyof AgentClient>([
   'me', 'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant', 'loadMore', 'retry', 'auditExportUrl', 'signOutUrl',
   'setSetting', 'setToggle', 'setPhoto',
+  // P5 (connectors.ts): connect, disconnect and pause a tool; the notice channels.
+  ...CONNECTOR_METHODS,
 ])
 
 const WRITES: ReadonlySet<string> = new Set<WriteMethod>([
@@ -43,7 +47,7 @@ function routeOf(method: WriteMethod, args: unknown[]): { verbs: string[]; path:
     case 'removeMember': return { verbs: ['DELETE'], path: `/api/members/${enc(args[0])}` }
     case 'grantSupport': return { verbs: ['POST'], path: '/api/grants' }
     case 'endSupportGrant': return { verbs: ['POST'], path: `/api/grants/${enc(args[0])}/end` }
-    default: return null
+    default: return connectorRoute(method, args)
   }
 }
 
@@ -57,6 +61,10 @@ const PNG_1X1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfF
 
 function realTarget(origin: string): ContractTarget {
   const s: Signer = signer(origin)
+  const world = connectorWorld(origin)
+  /** The Inhouse member's client for the Tools writes, made once per reset, on the target's own fetch. */
+  let inhouse: Promise<HttpAgent> | null = null
+  const inhouseClient = () => (inhouse ??= world.inhouseClient(wire))
   let ids: Awaited<ReturnType<typeof discover>> | undefined
   const ready = async () => (ids ??= await discover(s))
 
@@ -95,13 +103,22 @@ function realTarget(origin: string): ContractTarget {
       const member: unknown = Reflect.get(target, prop, target)
       if (typeof member !== 'function') return member
       const method = (member as (...a: unknown[]) => unknown).bind(target)
-      if (typeof prop !== 'string' || !WRITES.has(prop)) return method
+      if (typeof prop !== 'string') return method
+      const connector = (CONNECTOR_METHODS as readonly string[]).includes(prop)
+      if (!WRITES.has(prop) && !connector) return method
+      // A connector method: Slack put in the state its case reads first, then the call, on the Inhouse client for the Tools writes.
+      const call = !connector ? method : async (...args: unknown[]): Promise<unknown> => {
+        await world.prepare(prop)
+        const on = world.onInhouse(prop) ? await inhouseClient() : target
+        return (Reflect.get(on, prop, on) as (...a: unknown[]) => Promise<unknown>).apply(on, args)
+      }
+      if (!WRITES.has(prop)) return call
       return (...args: unknown[]) => {
         const code = armedErrors.get(prop)
-        if (!code) return method(...args)
+        if (!code) return call(...args)
         const route = routeOf(prop as WriteMethod, args)
         forced = route ? { code, ...route } : null
-        const done = method(...args) as Promise<unknown>
+        const done = call(...args) as Promise<unknown>
         const clear = () => { forced = null }
         done.then(clear, clear)
         return done
@@ -138,7 +155,8 @@ function realTarget(origin: string): ContractTarget {
         followUp: 'And which are over $500?',
         tooLate: 'Too late',
       },
-      toolKey: 'klaviyo',
+      // Slack, the one OAuth tool the test build connects (connectors.ts).
+      toolKey: CONNECTOR_TOOL_KEY,
       skillName: 'Stock check',
       memoryKey: 'some-line',
       ...settingFixtures,
@@ -173,6 +191,8 @@ function realTarget(origin: string): ContractTarget {
       await resetTeam(s)
       await endLiveGrant(s)
       await resetSettings(s)
+      await world.reset()
+      inhouse = null
       this.fixtures.personId = seeded.admin
       this.fixtures.photoAfterSet = new RegExp(`^/api/members/${seeded.admin}/photo\\?v=[0-9a-f]{32}$`) // a member id is base64url: nothing to escape
       this.fixtures.me = { memberId: seeded.admin, role: 'admin' }

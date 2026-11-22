@@ -56,8 +56,11 @@ export function connectorRoute(method: WriteMethod, args: unknown[]): { verbs: s
 }
 
 export interface ConnectorWorld {
-  /** A client signed in as the Inhouse member, for the Tools writes. Loaded before it is returned. */
-  inhouseClient(): Promise<HttpAgent>
+  /**
+   * A client signed in as the Inhouse member, for the Tools writes. Loaded before it is returned. `wire`, when given, is
+   * the target's own fetch (its armed refusals and failed saves reach these writes too).
+   */
+  inhouseClient(wire?: typeof fetch): Promise<HttpAgent>
   /** Which client a method belongs on: true for the Inhouse client. */
   onInhouse(method: string): boolean
   /** Puts the world in the state the method's case reads (a no-op for any other method). */
@@ -119,8 +122,8 @@ export function connectorWorld(brandOrigin: string): ConnectorWorld {
   const unpause = async () => { await inhouse('PUT', slackPath('paused'), { paused: false }) }
 
   return {
-    async inhouseClient() {
-      const agent = new HttpAgent({ origin: inhouseOrigin, fetch: (i, init) => fetch(i, init), headers: inhouseHeaders, now: () => Date.now() })
+    async inhouseClient(wire) {
+      const agent = new HttpAgent({ origin: inhouseOrigin, fetch: wire ?? ((i, init) => fetch(i, init)), headers: inhouseHeaders, now: () => Date.now() })
       await agent.whenLoaded()
       return agent
     },
