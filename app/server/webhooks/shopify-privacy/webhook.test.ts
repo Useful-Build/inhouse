@@ -25,6 +25,7 @@ import { webhookRoutes } from '../../routes.ts'
 import { lastLineId } from '../../db/test-support.ts'
 import { serveWebhook } from '../serve.ts'
 import { MAX_BODY_BYTES } from './handler.ts'
+import { MAX_ORDER_IDS } from './payload.ts'
 import { signShopifyBody } from './hmac.ts'
 import { privacySignal, secretsSignal } from './signal.ts'
 import { DUE_MS, privacyRequestStore, requestIdFor } from './store.ts'
@@ -140,7 +141,13 @@ describe('a signed delivery that does not parse is recorded, never dropped (fail
     ['a non-JSON Content-Type', 'shop/redact', { contentType: 'text/plain' }],
     ["another topic's header", 'shop/redact', { topicHeader: 'customers/redact' }],
     ["another topic's shape (a customers/redact body carrying data_request)", 'customers/redact', { raw: JSON.stringify({ ...PAYLOADS['customers/redact'].body, data_request: { id: 1 } }) }],
-    ['a field no topic has', 'shop/redact', { raw: JSON.stringify({ ...PAYLOADS['shop/redact'].body, customer: { id: 5 } }) }],
+    // Each key that marks another topic is refused (an unknown key is not: see below).
+    ['a shop/redact carrying customer', 'shop/redact', { raw: JSON.stringify({ ...PAYLOADS['shop/redact'].body, customer: { id: 5 } }) }],
+    ['a shop/redact carrying orders_to_redact', 'shop/redact', { raw: JSON.stringify({ ...PAYLOADS['shop/redact'].body, orders_to_redact: [1] }) }],
+    ['a shop/redact carrying orders_requested', 'shop/redact', { raw: JSON.stringify({ ...PAYLOADS['shop/redact'].body, orders_requested: [1] }) }],
+    ['a shop/redact carrying data_request', 'shop/redact', { raw: JSON.stringify({ ...PAYLOADS['shop/redact'].body, data_request: { id: 1 } }) }],
+    ['a customers/redact carrying orders_requested', 'customers/redact', { raw: JSON.stringify({ ...PAYLOADS['customers/redact'].body, orders_requested: [1] }) }],
+    ['a data request carrying orders_to_redact', 'customers/data_request', { raw: JSON.stringify({ ...PAYLOADS['customers/data_request'].body, orders_to_redact: [1] }) }],
     ['broken JSON', 'shop/redact', { raw: '{"shop_id":' }],
     ['more than 10,000 order ids', 'customers/redact', { raw: JSON.stringify({ ...PAYLOADS['customers/redact'].body, orders_to_redact: Array.from({ length: 10_001 }, (_, i) => i + 1) }) }],
     ['no webhook id', 'shop/redact', { webhookId: null }],
@@ -153,9 +160,16 @@ describe('a signed delivery that does not parse is recorded, never dropped (fail
     const rows = await requests()
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ topic, parse_failed: 1, shop_id: null, customer_id: null, order_ids_json: null, data_request_id: null, status: 'open' })
-    expect(rows[0].webhook_id).toMatch(o?.webhookId === undefined ? /^wh-/ : /^body:[0-9a-f]{64}$/)
+    expect(rows[0].webhook_id).toMatch(o?.webhookId === undefined ? /^wh-/ : /^body:[0-9a-f]{64}:req-hook$/)
     expect((await lines()).map(l => JSON.parse(String(l.args_json)))).toEqual([{ requestId: rows[0].id, topic, parsed: false }])
     expect(await notices()).toHaveLength(1)
+  })
+  it.each(Object.keys(PAYLOADS) as Topic[])('%s with a field Shopify may add later still parses, with its ids', async topic => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const b = PAYLOADS[topic].body
+    const extra = { ...b, new_top_level_field: { nested: true }, ...('customer' in b ? { customer: { ...b.customer, new_customer_field: 'x' } } : {}) }
+    expect((await deliver(topic, { raw: JSON.stringify(extra) })).res?.status).toBe(200)
+    expect((await requests())[0]).toMatchObject({ parse_failed: 0, shop_id: 954889, customer_id: topic === 'shop/redact' ? null : '191167' })
   })
   it('a customer known by email only (no customer id) is a parsed request with no customer id', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -167,6 +181,33 @@ describe('a signed delivery that does not parse is recorded, never dropped (fail
 })
 
 describe('one request is one row (failure 10)', () => {
+  // Only the body index can catch these: an email-only customer has no open-request key, and an unparsed row none either.
+  it.each([
+    ['an email-only customers/redact', 'customers/redact', { raw: JSON.stringify({ ...PAYLOADS['customers/redact'].body, customer: { id: null, email: EMAIL, phone: null } }) }],
+    ['an unparsed body', 'shop/redact', { raw: '{"shop_id":' }],
+    ['a body with no webhook id', 'shop/redact', { webhookId: null }],
+  ] as [string, Topic, Parameters<typeof deliver>[1]][])('%s replayed under a new webhook id is one row', async (_, topic, o) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    for (let i = 0; i < 2; i++) expect((await deliver(topic, o)).res?.status).toBe(200)
+    expect(await requests()).toHaveLength(1)
+    expect(await lines()).toHaveLength(1)
+  })
+  it("a second customers/redact for the same open customer merges its order ids into the open row (deduped, bounded), adding no row, line or notice", async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const b = PAYLOADS['customers/redact'].body
+    expect((await deliver('customers/redact')).res?.status).toBe(200)
+    expect((await deliver('customers/redact', { secret: WRITE, raw: JSON.stringify({ ...b, orders_to_redact: [220458, 111111, 299938] }) })).res?.status).toBe(200)
+    expect((await requests()).map(r => r.order_ids_json)).toEqual(['[111111,220458,280263,299938]'])
+    expect(await lines()).toHaveLength(1)
+    expect(await notices()).toHaveLength(1)
+    // Bounded: never past MAX_ORDER_IDS.
+    expect((await deliver('customers/redact', { raw: JSON.stringify({ ...b, orders_to_redact: Array.from({ length: MAX_ORDER_IDS }, (_, i) => 500_000 + i) }) })).res?.status).toBe(200)
+    expect(JSON.parse(String((await requests())[0].order_ids_json))).toHaveLength(MAX_ORDER_IDS)
+    // Another customer's request is never merged into.
+    expect((await deliver('customers/redact', { raw: JSON.stringify({ ...b, customer: { id: 191168, email: EMAIL, phone: PHONE }, orders_to_redact: [7] }) })).res?.status).toBe(200)
+    expect((await requests()).map(r => r.order_ids_json)).toHaveLength(2)
+    expect((await requests())[1].order_ids_json).toBe('[7]')
+  })
   it('the same signed body replayed under a fresh webhook id adds nothing', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     for (let i = 0; i < 2; i++) expect((await deliver('customers/redact')).res?.status).toBe(200)

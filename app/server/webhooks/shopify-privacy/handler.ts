@@ -81,13 +81,16 @@ export function privacyWebhook(topic: PrivacyTopic): WebhookHandler {
     // Signed by one of the brand's apps from here on: recorded whatever it holds.
     const bodySha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', body))].map(b => b.toString(16).padStart(2, '0')).join('')
     const header = request.headers.get('X-Shopify-Webhook-Id')
-    const webhookId = header !== null && WEBHOOK_ID.test(header) ? header : `body:${bodySha256}`
+    // No usable webhook id: one of our own, unique to this delivery (`webhook_id` is unique forever); a replay of the
+    // same body while its request is open is still caught by the body index.
+    const webhookId = header !== null && WEBHOOK_ID.test(header) ? header : `body:${bodySha256}:${requestId}`
     const parsed = readPayload(topic, request, body)
     if ('problem' in parsed) console.warn({ event: 'privacy_webhook_unparsed', requestId, topic, reason: parsed.problem })
     try {
       const { id, created } = await privacyRequestStore(env.DB).record({ webhookId, bodySha256, topic, parsed: 'problem' in parsed ? null : parsed.ok }, { nowMs, requestId })
       // Ids only: our request id and the topic, never the customer's.
-      console.warn({ event: created ? 'privacy_request_received' : 'privacy_request_repeat', requestId, topic, privacyRequestId: id })
+      // A repeat names no request id: the derived one names no row, and the matched row isn't read back.
+      console.warn(created ? { event: 'privacy_request_received', requestId, topic, privacyRequestId: id } : { event: 'privacy_request_repeat', requestId, topic })
     } catch (err) {
       if (err instanceof StoreUnavailableError) {
         console.error({ event: 'store_unavailable', requestId, error: err.name })

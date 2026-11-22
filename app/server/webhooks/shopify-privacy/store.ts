@@ -8,6 +8,7 @@ import { all, first, stmt, storage } from '../../db/sql.ts'
 import type { Stmt } from '../../db/sql.ts'
 import { checkNotice } from '../../notices/store.ts'
 import { NOTICE_TEMPLATES } from '../../notices/templates.ts'
+import { MAX_ORDER_IDS } from './payload.ts'
 import type { ParsedRequest, PrivacyTopic } from './payload.ts'
 
 export const DUE_MS = 30 * 86_400_000
@@ -75,7 +76,21 @@ export function privacyRequestStore(db: D1Database) {
          SELECT ?, ?, NULL, ?, ?, NULL, ?, NULL, ?, 0, ?, ? WHERE EXISTS (SELECT 1 FROM privacy_requests WHERE id = ? AND req_id = ?) ON CONFLICT (id) DO NOTHING`,
         n.id, n.audience, n.template, JSON.stringify(n.fields), n.icon, n.atMs, JSON.stringify(link), t.source, id, stamp,
       )
-      const results = await storage('D1', () => db.batch([prepare(db, insert), prepare(db, line), prepare(db, notice)]))
+      const batch = [insert, line, notice]
+      // A second delivery of an open request (the open-request index skipped its row) may name more orders: they join
+      // the open row's list, deduped, sorted and capped at MAX_ORDER_IDS (skipped when this write's own row went in). Only on that index's own key: a request with
+      // neither a customer nor a data request id has no key, and is never merged into another.
+      if (p?.orderIds && p.orderIds.length > 0 && (p.customerId !== null || p.dataRequestId !== null)) {
+        batch.push(stmt(
+          `UPDATE privacy_requests SET order_ids_json = (
+             SELECT json_group_array(v) FROM (
+               SELECT value AS v FROM json_each(COALESCE(privacy_requests.order_ids_json, '[]')) UNION SELECT value FROM json_each(?) ORDER BY v LIMIT ?))
+           WHERE status = 'open' AND parse_failed = 0 AND topic = ? AND shop_id = ? AND customer_id IS ? AND data_request_id IS ?
+             AND NOT EXISTS (SELECT 1 FROM privacy_requests WHERE id = ? AND req_id = ?)`,
+          JSON.stringify(p.orderIds), MAX_ORDER_IDS, r.topic, p.shopId, p.customerId, p.dataRequestId, id, stamp,
+        ))
+      }
+      const results = await storage('D1', () => db.batch(batch.map(s => prepare(db, s))))
       return { id, created: (results[0].meta.changes ?? 0) > 0 }
     },
 
