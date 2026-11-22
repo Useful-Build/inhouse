@@ -220,6 +220,31 @@ export const SLOW_BASH_SECONDS = 20
 /** The fact the `memory-save` scenario saves (a person's own, active at once). */
 export const MEMORY_SAVE_TEXT = 'Likes the weekly stock report as a table.'
 
+/**
+ * The code mode script the `connectors-codemode` scenario runs: a literal copy of the measured "lowest stock" reference script
+ * (hub/codemode/measure/scripts.ts, MEASURE_CASES[0]), because this file can't import the hub (the runner's program and the product
+ * bundle don't include it). hub/codemode/measure/scenario-script.test.ts fails when the two differ.
+ */
+export const CODE_MODE_SCRIPT: string = "\nasync function all(doc, root, vars) {\n  const out = []\n  let after = null\n  do {\n    const r = await shop.graphql(doc, after ? { ...vars, after } : vars)\n    const conn = r.data[root]\n    out.push(...conn.nodes)\n    after = conn.pageInfo.hasNextPage ? conn.pageInfo.endCursor : null\n  } while (after)\n  return out\n}\nconst products = await all(\"query RecordProducts($first: Int!, $after: String) {\\n  products(first: $first, after: $after, sortKey: ID) {\\n    nodes {\\n      id title status totalInventory tracksInventory\\n      variants(first: 3) {\\n        nodes {\\n          id sku title price\\n          inventoryItem {\\n            tracked\\n            inventoryLevels(first: 2) { nodes { location { name } quantities(names: [\\\"available\\\", \\\"on_hand\\\", \\\"committed\\\", \\\"incoming\\\"]) { name quantity } } pageInfo { hasNextPage } }\\n          }\\n        }\\n        pageInfo { hasNextPage }\\n      }\\n    }\\n    pageInfo { hasNextPage endCursor }\\n  }\\n}\", 'products', { first: 250 })\nconst tracked = products.filter(p => p.tracksInventory)\ntracked.sort((a, b) => a.totalInventory - b.totalInventory || (a.title < b.title ? -1 : a.title > b.title ? 1 : 0))\nreturn {\n  lowest: tracked.slice(0, 5).map(p => ({ title: p.title, stock: p.totalInventory })),\n  overPrice: products.filter(p => p.variants.nodes.some(v => Number(v.price) > 150)).length,\n  products: products.length,\n}"
+
+const APPS = 'mcp__apps__'
+/**
+ * A scenario of tool calls one after another, then a fixed answer: each turn needs the previous call's result, and that result must be
+ * a success (`is_error` absent), so a refused or failed call breaks the scenario instead of passing as an answer. (A notification_send
+ * to an unlisted channel is still such a success: the tool answers normally with the recipient refused; only a malformed call is an error.)
+ */
+function toolsThenAnswer(calls: { id: string; name: string; input: Record<string, unknown> }[], answer: string): Scenario {
+  return {
+    turns: [
+      ...calls.map((c, i) => ({
+        content: [{ type: 'tool_use' as const, id: c.id, name: c.name, input: c.input }],
+        expect: i === 0 ? mainLoop(c.name) : both(mainLoop(c.name), resultIs(calls[i - 1]!.id, false)),
+      })),
+      { content: [{ type: 'text' as const, text: answer }], expect: both(mainLoop(calls.at(-1)!.name), resultIs(calls.at(-1)!.id, false)) },
+    ],
+  }
+}
+
 export const SCENARIOS: Record<string, Scenario> = {
   /** Answers with the SDK's StructuredOutput tool, matching STRUCTURED_SCHEMA (run it with that outputFormat). */
   structured: {
@@ -270,6 +295,39 @@ export const SCENARIOS: Record<string, Scenario> = {
       { content: [{ type: 'text', text: 'Read Slack and Shopify and posted the notice.' }], expect: both(mainLoop('mcp__apps__orders_search'), resultOf('toolu_scripted_conn_orders')) },
     ],
   },
+
+  /** The supplier-delay question: a Slack search, then the orders (P5 ship S2). The answer names both sources. */
+  'connectors-supplier': toolsThenAnswer(
+    [
+      { id: 'toolu_scripted_sup_slack', name: `${APPS}slack_search_public`, input: { keywords: ['supplier'] } },
+      { id: 'toolu_scripted_sup_orders', name: `${APPS}orders_search`, input: { first: 5 } },
+    ],
+    'Kestrel Mills says the November restock of the Fern mug ships 2 weeks late. Sources: Slack #suppliers, Shopify orders.',
+  ),
+
+  /** A question over the whole store, answered by one code mode script (P5 ship S3). */
+  'connectors-codemode': toolsThenAnswer(
+    [{ id: 'toolu_scripted_code', name: `${APPS}shopify_script_run`, input: { code: CODE_MODE_SCRIPT } }],
+    'I counted every product in the store with a script: the five lowest on stock and how many sell for over $150. Source: Shopify, all products.',
+  ),
+
+  /** An alert to a listed channel (P5 ship S4). */
+  'connectors-notice': toolsThenAnswer(
+    [{ id: 'toolu_scripted_notice', name: 'mcp__inhouse__notification_send', input: { to: { channels: ['#ops-alerts'] }, title: 'Stock alert', text: 'The Fern mug is almost out. Restock it this week.', format: 'message', link: { kind: 'today' } } }],
+    'I sent the stock alert to #ops-alerts.',
+  ),
+
+  /** The same alert at Watch (P5 ship S4): the notice reaches the bell, not Slack, and the answer says so. */
+  'connectors-notice-watch': toolsThenAnswer(
+    [{ id: 'toolu_scripted_notice_watch', name: 'mcp__inhouse__notification_send', input: { to: { channels: ['#ops-alerts'] }, title: 'Stock alert', text: 'The Fern mug is almost out. Restock it this week.', format: 'message', link: { kind: 'today' } } }],
+    'I sent the stock alert to your bell. It reaches Slack from the Act stage.',
+  ),
+
+  /** The same alert to a channel the admin did not list (P5 ship S4): the server refuses it. */
+  'connectors-notice-unlisted': toolsThenAnswer(
+    [{ id: 'toolu_scripted_unlisted', name: 'mcp__inhouse__notification_send', input: { to: { channels: ['#design'] }, title: 'Stock alert', text: 'The Fern mug is almost out. Restock it this week.', format: 'message' } }],
+    "I couldn't send that: #design isn't one of the channels your admin listed.",
+  ),
 
   /** Saves one fact for the whole team: it waits for an admin's OK, so no page lists it yet (the ship spec's S7). */
   'memory-save-team': {
