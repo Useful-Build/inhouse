@@ -167,6 +167,14 @@ describe('routes 53, 55 and 56: switch, delete and restore', () => {
     expect(pokes).toBe(0)
   })
 
+  it('a restore at the cap of 50 live team routines is 403 routine_limit, the row unchanged (#312 review)', async () => {
+    for (let i = 0; i < 50; i++) await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW }))
+    const r = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW, deleted_at_ms: NOW - 1000 }))
+    expect(await send(person(ALEX), 'POST', `/api/routines/${r.id}/restore`, { ifRev: 1 })).toEqual({ status: 403, body: { error: { code: 'forbidden', reason: 'routine_limit' } } })
+    expect(await row(r.id)).toMatchObject({ rev: 1, deleted_at_ms: NOW - 1000 })
+    expect(pokes).toBe(0)
+  })
+
   it('a restore whose cursor was old when it was deleted starts at now: no backfill (L3)', async () => {
     const r = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW - 5 * 86_400_000, deleted_at_ms: NOW - 4 * 86_400_000 }))
     expect((await send(person(ALEX), 'POST', `/api/routines/${r.id}/restore`, { ifRev: 1 })).status).toBe(200)

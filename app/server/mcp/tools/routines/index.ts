@@ -53,6 +53,7 @@ function writeRefused(o: Exclude<UpdateOutcome, { ok: RoutineRow }>, id: string)
   if (o.refused === 'not_found') return NOT_FOUND(id)
   if (o.refused === 'stage') return refusal('stage', STAGE_TEXT)
   if (o.refused === 'system_instruction') return refusal('system_instruction', SYSTEM_INSTRUCTION_TEXT)
+  if (o.refused === 'routine_limit') return refusal(REASON.routineLimit, ROUTINE_LIMIT_TEXT)
   return refusal('not_allowed', NOT_ALLOWED_TEXT)
 }
 

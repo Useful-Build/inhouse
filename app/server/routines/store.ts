@@ -73,7 +73,7 @@ export async function mayManage(db: D1Database, r: RoutineRow, at: Pick<At, 'act
   ).bind(at.inhouseGrant ?? '', at.nowMs, at.actorId).first()) !== null
 }
 
-export type WriteOutcome = { ok: RoutineRow } | { conflict: RoutineRow } | { refused: 'not_found' | 'not_allowed' | 'stage' }
+export type WriteOutcome = { ok: RoutineRow } | { conflict: RoutineRow } | { refused: 'not_found' | 'not_allowed' | 'stage' | 'routine_limit' }
 
 /** Why a guarded write matched nothing: gone, a newer `rev`, or not this person's to change. */
 async function whyNot(db: D1Database, id: string, ifRev: number, at: At, deleted: 'live' | 'deleted'): Promise<WriteOutcome> {
@@ -94,6 +94,9 @@ export interface NewRoutine {
 
 /** The most live (not deleted) team routines a brand may have (#312 review M2). System routines don't count. */
 export const MAX_TEAM_ROUTINES = 50
+const LIVE_TEAM_COUNT = "SELECT COUNT(*) AS n FROM routines WHERE origin = 'team' AND deleted_at_ms IS NULL"
+const atCap = async (db: D1Database): Promise<boolean> =>
+  ((await db.prepare(LIVE_TEAM_COUNT).first<number>('n')) as number) >= MAX_TEAM_ROUTINES
 
 /**
  * A team routine (section 8): needs Act or Run (section 7), `need` 1, the cursor at now. Refused at the cap: the count is
@@ -110,7 +113,7 @@ export async function createRoutine(db: D1Database, n: NewRoutine, at: At, sourc
       `INSERT INTO routines (id, origin, kind, name, instruction, prompt_ref, days_mask, hour, minute, missed, need, enabled,
           creator_id, source_chat_id, checked_until_ms, created_at_ms, updated_at_ms, rev, req_id)
         SELECT ?, 'team', 'agent', ?, ?, NULL, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, 1, ?
-        WHERE (SELECT COUNT(*) FROM routines WHERE origin = 'team' AND deleted_at_ms IS NULL) < ? RETURNING *`,
+        WHERE (${LIVE_TEAM_COUNT}) < ? RETURNING *`,
     ).bind(id, n.name, n.instruction, n.days_mask, n.hour, n.minute, n.missed, at.actorId, sourceChatId, at.nowMs, at.nowMs, at.nowMs, stamp, MAX_TEAM_ROUTINES),
     routineAudit(db, at, { action: 'routine.created', routineId: id, need: 1 }, id, stamped(id, stamp)),
     personLine(db, 'routine_made', at, `${id}|created`, stamped(id, stamp)),
@@ -185,18 +188,27 @@ export async function deleteRoutine(db: D1Database, id: string, ifRev: number, a
   return { ok: written(res, 'deleteRoutine') }
 }
 
-/** Undo of a delete (route 56) by the creator or an Admin, against `ifRev`: back with its cursor at now (no backfill). */
+/**
+ * Undo of a delete (route 56) by the creator or an Admin, against `ifRev`: back with its cursor at now (no backfill). A
+ * team routine is refused at the cap (#312 review), counted in the statement as `createRoutine` does; a system one isn't.
+ */
 export async function restoreRoutine(db: D1Database, id: string, ifRev: number, at: At): Promise<WriteOutcome> {
   const stamp = writeStamp(at.requestId)
   const [res] = await db.batch([
     db.prepare(
       `UPDATE routines SET deleted_at_ms = NULL, checked_until_ms = ?, updated_at_ms = ?, rev = rev + 1, req_id = ?
-        WHERE id = ? AND rev = ? AND deleted_at_ms IS NOT NULL AND ${MAY_MANAGE} RETURNING *`,
-    ).bind(at.nowMs, at.nowMs, stamp, id, ifRev, ...manageParams(at)),
+        WHERE id = ? AND rev = ? AND deleted_at_ms IS NOT NULL AND ${MAY_MANAGE}
+          AND (origin = 'system' OR (${LIVE_TEAM_COUNT}) < ?) RETURNING *`,
+    ).bind(at.nowMs, at.nowMs, stamp, id, ifRev, ...manageParams(at), MAX_TEAM_ROUTINES),
     routineAudit(db, at, { action: 'routine.restored', routineId: id }, id, stamped(id, stamp)),
     personLine(db, 'routine_restored', at, `${id}|rev${ifRev + 1}`, stamped(id, stamp)),
   ])
-  if (res.meta.changes === 0) return whyNot(db, id, ifRev, at, 'deleted')
+  if (res.meta.changes === 0) {
+    const o = await whyNot(db, id, ifRev, at, 'deleted')
+    // Deleted, at this rev and this person's to restore, yet not restored: a team routine at the cap.
+    if ('conflict' in o && o.conflict.rev === ifRev && o.conflict.origin === 'team' && await atCap(db)) return { refused: 'routine_limit' }
+    return o
+  }
   return { ok: written(res, 'restoreRoutine') }
 }
 
@@ -311,7 +323,7 @@ async function lastOf(db: D1Database, id: string): Promise<LastFields> {
   ).bind(id).first<LastFields>()) ?? NO_LAST
 }
 
-export type ListedOutcome = { ok: ListedRoutine } | { conflict: ListedRoutine } | { refused: 'not_found' | 'not_allowed' | 'stage' }
+export type ListedOutcome = { ok: ListedRoutine } | { conflict: ListedRoutine } | { refused: 'not_found' | 'not_allowed' | 'stage' | 'routine_limit' }
 
 /** A route write with its routine's `last` (switching, deleting or restoring never changes which slot ended last). */
 async function withLast(db: D1Database, id: string, write: () => Promise<WriteOutcome>): Promise<ListedOutcome> {

@@ -3,7 +3,7 @@
 // `ifRev`, someone else's routine); a write without its line; a failed batch that leaves the line, the audit line or the
 // change behind; an error answered for a write that committed (a read after the commit).
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { MAX_TEAM_ROUTINES, createRoutine, deleteRoutine, readRoutine, runNow, updateRoutine } from './store.ts'
+import { MAX_TEAM_ROUTINES, createRoutine, deleteRoutine, readRoutine, restoreRoutine, runNow, updateRoutine } from './store.ts'
 import { addPerson, at, db, fresh, insertRoutine, routine, setStage, setZone } from './test-kit.ts'
 
 const ALEX = 'm_w2_store_alex'
@@ -101,6 +101,31 @@ describe('the cap on live team routines', () => {
     expect(await deleteRoutine(db, ids[0], 1, by(ALEX))).toMatchObject({ ok: { rev: 2 } })
     expect(await createRoutine(db, NEW, by(ALEX), null)).toMatchObject({ ok: { origin: 'team' } })
     expect(await createRoutine(db, NEW, by(ALEX), null)).toEqual({ refused: 'routine_limit' })
+  })
+})
+
+describe('the cap on restore (route 56)', () => {
+  it('at 50 live a restore is refused and writes nothing; at 49 it succeeds; a system routine restores whatever the count', async () => {
+    const ids: string[] = []
+    for (let i = 0; i < 50; i++) {
+      const made = await createRoutine(db, NEW, by(ALEX), null)
+      if (!('ok' in made)) throw new Error(`routine ${i + 1} not made`)
+      ids.push(made.ok.id)
+    }
+    expect(await deleteRoutine(db, ids[0], 1, by(ALEX))).toMatchObject({ ok: { rev: 2 } })
+    const refill = await createRoutine(db, NEW, by(ALEX), null)
+    if (!('ok' in refill)) throw new Error('refill not made')
+    const auditsBefore = await db.prepare('SELECT COUNT(*) AS n FROM audit_log').first('n')
+    const linesBefore = await db.prepare('SELECT COUNT(*) AS n FROM activity_lines').first('n')
+    expect(await restoreRoutine(db, ids[0], 2, by(ALEX))).toEqual({ refused: 'routine_limit' })
+    expect(await readRoutine(db, ids[0])).toMatchObject({ rev: 2, deleted_at_ms: NOW })
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM audit_log').first('n')).toBe(auditsBefore)
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM activity_lines').first('n')).toBe(linesBefore)
+    const sys = await insertRoutine(routine({ origin: 'system', kind: 'morning_check', prompt_ref: 'morning-check', need: 0, creator_id: ALEX, checked_until_ms: NOW, deleted_at_ms: NOW }))
+    expect(await restoreRoutine(db, sys.id, 1, by(ALEX))).toMatchObject({ ok: { rev: 2, deleted_at_ms: null } })
+
+    expect(await deleteRoutine(db, ids[1], 1, by(ALEX))).toMatchObject({ ok: { rev: 2 } })
+    expect(await restoreRoutine(db, ids[0], 2, by(ALEX))).toMatchObject({ ok: { rev: 3, deleted_at_ms: null } })
   })
 })
 
