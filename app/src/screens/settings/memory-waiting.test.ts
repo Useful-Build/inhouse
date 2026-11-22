@@ -13,8 +13,8 @@ const at = { iso: '2026-11-20T10:00:00.000Z', ms: Date.UTC(2026, 10, 20, 10) }
 const fact = (key: string, text: string) => ({ key, text, source: 'Priya told your Inhouse agent in a chat', at, rev: 2, scope: 'brand' as const, waiting: true as const, kind: 'memory' as const })
 const WAITING = [fact('mem_one', 'Kestrel wants PDFs'), fact('mem_two', '**Ship** [heavy](https://example.test) orders by courier')]
 type W = NonNullable<Env['waiting']>
-const list = (facts: typeof WAITING, o: { status?: W['state']['status']; deciding?: string[]; decide?: W['decide']; retry?: () => void } = {}): W => ({
-  state: { status: o.status ?? 'ready', facts, deciding: new Set(o.deciding ?? []) }, decide: o.decide ?? (() => {}), retry: o.retry ?? (() => {}),
+const list = (facts: typeof WAITING, o: { status?: W['state']['status']; deciding?: string[]; reading?: boolean; decide?: W['decide']; retry?: () => void } = {}): W => ({
+  state: { status: o.status ?? 'ready', facts, deciding: new Set(o.deciding ?? []), reading: o.reading ?? false }, decide: o.decide ?? (() => {}), retry: o.retry ?? (() => {}),
 })
 
 function page(o: Partial<Env> = {}, approve = true) {
@@ -77,6 +77,9 @@ it('a failed read says so, with Retry, in the section', () => {
   expect(p.sections[0].rows.map(r => [r.title, r.kind, r.value, r.can])).toEqual([["Couldn't load what waits for your OK.", 'button', 'Retry', 'approveMemory']])
   p.sections[0].rows[0].onClick!()
   expect(retried).toBe(1)
+  expect(p.sections[0].rows[0].busy).toBe(false)
+  // While the read is out, Retry waits.
+  expect(page({ waiting: list([], { status: 'failed', reading: true }) }).sections[0].rows[0].busy).toBe(true)
 })
 
 it('the demo page is as before: no waiting section, and the sections are the team groups then the switches', () => {

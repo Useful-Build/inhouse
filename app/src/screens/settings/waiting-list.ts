@@ -12,6 +12,8 @@ export interface WaitingState {
   facts: WaitingMemory[]
   /** Facts whose decision is on its way, until the list is read again after it. */
   deciding: ReadonlySet<string>
+  /** The latest read is out (Retry waits on it). */
+  reading: boolean
 }
 export interface WaitingDeps {
   waitingMemory(): Promise<WaitingMemory[]>
@@ -21,7 +23,7 @@ export interface WaitingDeps {
 }
 
 export function waitingList(d: WaitingDeps) {
-  let state: WaitingState = { status: 'unread', facts: [], deciding: new Set() }
+  let state: WaitingState = { status: 'unread', facts: [], deciding: new Set(), reading: false }
   let seq = 0
   const listeners = new Set<() => void>()
   const set = (next: Partial<WaitingState>) => { state = { ...state, ...next }; listeners.forEach(l => l()) }
@@ -31,10 +33,16 @@ export function waitingList(d: WaitingDeps) {
 
   const read = (): Promise<void> => {
     const mine = ++seq
+    set({ reading: true })
     return d.waitingMemory().then(
-      facts => { if (mine === seq) set({ status: 'ready', facts }) },
-      (e: unknown) => { if (mine === seq) set({ status: e instanceof AgentError && e.code === 'forbidden' ? 'refused' : 'failed', facts: [] }) },
+      facts => { if (mine === seq) set({ status: 'ready', facts, reading: false }) },
+      (e: unknown) => { if (mine === seq) set({ status: e instanceof AgentError && e.code === 'forbidden' ? 'refused' : 'failed', facts: [], reading: false }) },
     )
+  }
+  /** The page opened (again): no rows until a fresh read answers, so an old list's buttons are never live. */
+  const open = (): Promise<void> => {
+    set({ status: 'unread', facts: [] })
+    return read()
   }
 
   const decide = (key: string, approved: boolean): void => {
@@ -74,6 +82,7 @@ export function waitingList(d: WaitingDeps) {
     get: (): WaitingState => state,
     subscribe: (l: () => void) => { listeners.add(l); return () => { listeners.delete(l) } },
     read,
+    open,
     decide,
   }
 }

@@ -392,6 +392,7 @@ interface Server {
 }
 /** What the mock says to someone without `approveMemory` (the server's matrix refuses routes 77 and 78 the same way). */
 const WAITING_REFUSED = 'Only admins and the Inhouse team can see what waits for an OK.'
+const DECIDING_REFUSED = 'Only admins and the Inhouse team can decide on what waits for an OK.'
 /** A saved team line (hand-checked, so the mock doesn't carry zod's runtime; memory.ts holds the schema). */
 const isTeamLine = (l: unknown): l is MemoryLine =>
   isRec(l) && str(l.key) && l.key.length > 0 && str(l.text) && l.text.length > 0 && str(l.source)
@@ -959,12 +960,12 @@ export class MockAgent implements AgentClient {
     const facts = this.server.memoryWaiting.map(l => {
       const rec = `memory:${l.key}`
       this.seen[rec] = this.rev(rec, l.rev)
-      return { ...l, rev: this.rev(rec, l.rev), waiting: true as const, kind: 'memory' as const }
+      return { ...l, rev: this.rev(rec, l.rev), scope: 'brand' as const, waiting: true as const, kind: 'memory' as const }
     })
     return Promise.resolve([...facts].reverse())
   }
   reviewMemory(key: string, approved: boolean) {
-    if (!this.me()?.can.approveMemory) return this.rejected('forbidden', WAITING_REFUSED, true)
+    if (!this.me()?.can.approveMemory) return this.rejected('forbidden', DECIDING_REFUSED, true)
     const line = this.server.memoryWaiting.find(l => l.key === key)
     if (!line) return this.rejected(NOT_FOUND, 'That rule no longer waits for an OK.', true)
     const rec = `memory:${key}`

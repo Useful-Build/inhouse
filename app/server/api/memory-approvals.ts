@@ -3,14 +3,20 @@
 // store's, in its one guarded statement, with the decision's audit line in the same batch.
 import { MemoryIdSchema } from '../../shared/contract/memory.ts'
 import { MemoryApproveInputSchema } from '../../shared/contract/memory-approvals.ts'
-import type { WaitingMemoryList } from '../../shared/contract/memory-approvals.ts'
+import type { WaitingMemory, WaitingMemoryList } from '../../shared/contract/memory-approvals.ts'
 import { apiError, apiJson } from '../http.ts'
 import { readBody, readQuery, storesOf, writer } from '../db/handler-kit.ts'
 import type { ApiCtx } from '../db/handler-kit.ts'
 import { factLine, WAITING_MAX } from '../mcp/tools/memory/store.ts'
-import type { SetForgottenResult } from '../mcp/tools/memory/store.ts'
+import type { Fact, SetForgottenResult } from '../mcp/tools/memory/store.ts'
 import { z } from 'zod'
 
+
+/** A waiting team fact as route 77 lists it. Anything else from the store is a bug: it throws (500), never a quiet row. */
+const waitingLine = (f: Fact): WaitingMemory => {
+  if (f.scope !== 'brand' || f.status !== 'waiting') throw new Error(`route 77: ${f.id} is not a waiting team fact`)
+  return { ...factLine(f), kind: 'memory', scope: 'brand', waiting: true }
+}
 
 const answer = (r: SetForgottenResult): Response =>
   'ok' in r ? apiJson(factLine(r.ok)) : 'conflict' in r ? apiError('conflict', { current: factLine(r.conflict) }) : apiError('not_found')
@@ -22,7 +28,7 @@ export async function listWaitingMemory(c: ApiCtx): Promise<Response> {
   const p = c.principal
   if (p.kind === 'service') throw new Error(`${p.name} has no waiting list`)
   const facts = await storesOf(c).memory.waiting(WAITING_MAX)
-  const data: WaitingMemoryList = { facts: facts.map(f => ({ ...factLine(f), kind: 'memory' as const })) }
+  const data: WaitingMemoryList = { facts: facts.map(waitingLine) }
   return apiJson(data)
 }
 

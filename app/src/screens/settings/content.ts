@@ -185,7 +185,7 @@ export function settingsPage(tab: string, env: Env): Page {
   // P6a: what waits for an admin's OK, above the team's rules, for someone who may approve. Nothing waiting: no section.
   const w = env.me?.can.approveMemory ? env.waiting : undefined
   const waitingRows: Row[] = !w ? [] : w.state.status === 'failed'
-    ? [{ ...R("Couldn't load what waits for your OK.", '', 'button', 'Retry', 0, undefined, undefined, w.retry), can: 'approveMemory' as const }]
+    ? [{ ...R("Couldn't load what waits for your OK.", '', 'button', 'Retry', 0, undefined, undefined, w.retry), can: 'approveMemory' as const, busy: w.state.reading }]
     : w.state.facts.map(l => ({
       ...R(l.text, memorySource(l, now), 'button', 'Approve', 0, undefined, undefined, () => w.decide(l.key, true)),
       can: 'approveMemory' as const,

@@ -10,8 +10,11 @@ import { MemoryForgetInputSchema, MemoryLineSchema } from './memory.ts'
 export const MemoryApproveInputSchema = z.object({ approved: z.boolean(), ifRev: MemoryForgetInputSchema.shape.ifRev }).strict()
 export type MemoryApproveInput = z.infer<typeof MemoryApproveInputSchema>
 
-/** A team fact waiting for an OK. `kind` lets P6b's Approvals list show facts beside actions. */
-export const WaitingMemorySchema = MemoryLineSchema.extend({ kind: z.literal('memory') })
+/**
+ * A team fact waiting for an OK. `kind` lets P6b's Approvals list show facts beside actions. `scope` and `waiting` are
+ * pinned: a person fact or one that no longer waits on route 77 is a server bug, and fails the parse loudly.
+ */
+export const WaitingMemorySchema = MemoryLineSchema.extend({ kind: z.literal('memory'), scope: z.literal('brand'), waiting: z.literal(true) })
 export type WaitingMemory = z.infer<typeof WaitingMemorySchema>
 
 /** `GET /api/memory/waiting` (route 77): the brand's waiting facts, newest first, at most 200. */

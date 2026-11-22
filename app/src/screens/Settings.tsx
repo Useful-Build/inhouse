@@ -263,7 +263,7 @@ export function Settings() {
   }))
   const waitingState = useSyncExternalStore(waitingStore.subscribe, waitingStore.get)
   // The list shows only while `approves` (see `waiting` in env), so leaving the page needs no reset here.
-  useEffect(() => { if (approves) void waitingStore.read() }, [approves, waitingStore])
+  useEffect(() => { if (approves) void waitingStore.open() }, [approves, waitingStore])
   // Phone: the menu alone, or the picked page alone with Back to the menu (the store forgets which when Settings is left).
   const atMenu = phone && ui.setMenu
   // A new screen starts at its top.

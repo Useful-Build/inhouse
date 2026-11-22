@@ -40,7 +40,7 @@ describe('the mock: team memory approval', () => {
     const a = load({ roles: { [ME_ID]: 'member' }, memoryWaiting: [line(1, 'Kestrel wants PDFs')] })
     expect(a.me()?.can.approveMemory).toBe(false)
     expect(await errorOf(a.waitingMemory())).toMatchObject({ code: 'forbidden', message: 'Only admins and the Inhouse team can see what waits for an OK.' })
-    expect(await errorOf(a.reviewMemory(line(1, '').key, true))).toMatchObject({ code: 'forbidden' })
+    expect(await errorOf(a.reviewMemory(line(1, '').key, true))).toMatchObject({ code: 'forbidden', message: 'Only admins and the Inhouse team can decide on what waits for an OK.' })
     expect(teamTexts(a)).not.toContain('Kestrel wants PDFs')
     const admin = load({ memoryWaiting: [line(1, 'Kestrel wants PDFs')] })
     expect((await admin.waitingMemory()).map(f => f.text)).toEqual(['Kestrel wants PDFs'])
