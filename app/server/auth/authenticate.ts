@@ -5,9 +5,11 @@
 // email or claims.
 // Docs (2026-11-20): Access "Validate JWTs" (header over cookie, `<team>/cdn-cgi/access/certs`, RS256, iss/aud/exp/nbf)
 // and "Application token" (a user token's `type` is "app" too, so `type` doesn't tell a person from a service token).
-// Test and eval builds only (compiled in AND INHOUSE_TEST_BUILD=1): the test issuer's JWT is read from
-// `X-Inhouse-Test-Assertion` first (an Access app in front sends its own token in `Cf-Access-Jwt-Assertion`), else from
-// `Cf-Access-Jwt-Assertion` as before; a token in the first is never replaced by the second, and both get the same checks.
+// Test and eval builds only (compiled in AND INHOUSE_TEST_BUILD=1): the test issuer's JWT is read from its own header
+// first (test-issuer.ts's TEST_ASSERTION_HEADER; an Access app in front sends its own token in `Cf-Access-Jwt-Assertion`),
+// else from `Cf-Access-Jwt-Assertion` as before; a token in the first is never replaced by the second, and both get the
+// same checks. This file is in the deployable Worker (its source map keeps comments), so it never spells that header's
+// name: check-product-build.mjs part 6 fails the build on it.
 import { createRemoteJWKSet, customFetch, errors, jwtVerify } from 'jose'
 import type { JWTPayload, JWTVerifyGetKey } from 'jose'
 import { TEST_ASSERTION_HEADER, TEST_ISSUER, testIssuerKeys } from '@test-issuer'

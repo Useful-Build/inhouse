@@ -345,6 +345,23 @@ describe('X-Inhouse-Test-Assertion (test and eval builds behind Access)', () => 
       expect(await runWith({ [HEADER]: bad, 'Cf-Access-Jwt-Assertion': good2 }, { testBuild: true }), bad.slice(0, 12)).toEqual({ refused: 'unauthorized' })
     }
   })
+  // #278 reviews (O-N3, S-nit1): an empty value counts as present (refused no_token, no fallback), and a duplicated one
+  // (Headers joins the two values) is refused as malformed.
+  it('test build: an empty new header is refused, never replaced by Cf-Access-Jwt-Assertion (3)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await runWith({ [HEADER]: '', 'Cf-Access-Jwt-Assertion': await testToken() }, { testBuild: true })).toEqual({ refused: 'unauthorized' })
+    expect(warn.mock.calls.at(-1)).toEqual([{ event: 'auth_refused', class: 'no_token', requestId: 'req-1' }])
+  })
+  it('test build: the new header given twice is refused as malformed, even when both values are good (3)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const tok = await testToken()
+    const r = req(BRAND.origin, { [HEADER]: tok, 'Cf-Access-Jwt-Assertion': tok })
+    r.headers.append(HEADER, tok)
+    expect(r.headers.get(HEADER)).toBe(`${tok}, ${tok}`)
+    const s = fakeStores({ people })
+    expect(await authenticate(r, testEnv() as never, s.stores, NOW, 'req-1', undefined, true)).toEqual({ refused: 'unauthorized' })
+    expect(warn.mock.calls.at(-1)).toEqual([{ event: 'auth_refused', class: 'malformed_token', requestId: 'req-1' }])
+  })
   it('product build (flag off): the new header is ignored, even with INHOUSE_TEST_BUILD=1 (2)', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     expect(await runWith({ [HEADER]: await testToken() }, { testBuild: false })).toEqual({ refused: 'unauthorized' })
