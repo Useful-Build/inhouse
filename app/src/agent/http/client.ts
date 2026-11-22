@@ -550,7 +550,7 @@ export class HttpAgent implements AgentClient {
       // A read a card's write overlapped may predate it (the card back, its Undo lost): read again once the writes are done.
       // Every try overlapped: a refresh keeps what is shown; a first read or a Retry takes one more read as it comes, so
       // the page never stays loading.
-      const today = (await this.unraced('problems', () => readToday(this.http))) ?? (refresh || this.s.res.problems.status === 'ready' ? null : await readToday(this.http))
+      const today = (await this.unraced('problems', () => readToday(this.http))) ?? (refresh || this.s.res.problems.status === 'ready' ? null : await this.plainRead('problems', () => readToday(this.http)))
       if (today === null) return
       this.commit(this.withToday(this.s, today.items, today.aside))
       this.setStatus('problems', { status: 'ready' })
@@ -575,7 +575,7 @@ export class HttpAgent implements AgentClient {
     if (this.s.me?.role === 'inhouse') return this.setStatus('notifications', { status: 'ready' })
     try {
       // As Today: a read that a mark-read overlapped would put the dots back.
-      const notifications = (await this.unraced('notifications', () => readNotifications(this.http))) ?? (refresh || this.s.res.notifications.status === 'ready' ? null : await readNotifications(this.http))
+      const notifications = (await this.unraced('notifications', () => readNotifications(this.http))) ?? (refresh || this.s.res.notifications.status === 'ready' ? null : await this.plainRead('notifications', () => readNotifications(this.http)))
       if (notifications === null) return
       this.patch({ notifications, res: { ...this.s.res, notifications: { status: 'ready' } } })
     } catch (e) {
@@ -722,8 +722,8 @@ export class HttpAgent implements AgentClient {
    * sending). A write counts as finished once its answer (or refusal) is in, before its `after`, which may read.
    */
   private listWrites = {
-    problems: { queued: new Set<Promise<void>>(), inFlight: new Set<Promise<void>>(), done: 0 },
-    notifications: { queued: new Set<Promise<void>>(), inFlight: new Set<Promise<void>>(), done: 0 },
+    problems: { queued: new Set<Promise<void>>(), inFlight: new Set<Promise<void>>(), done: 0, dirty: false },
+    notifications: { queued: new Set<Promise<void>>(), inFlight: new Set<Promise<void>>(), done: 0, dirty: false },
   }
   private static guardedList(lane: string | undefined): 'problems' | 'notifications' | null {
     return lane?.startsWith('today:') ? 'problems' : lane === 'notices' ? 'notifications' : null
@@ -731,17 +731,28 @@ export class HttpAgent implements AgentClient {
   /**
    * A read no write to its list overlapped: read again once the writes sending are done, a few times at most (null: none
    * was). It waits only for writes sending, never for queued ones: a queued write may wait on a write whose `after` is this
-   * very read.
+   * very read. A read given up on marks the list `dirty`: the last of those writes to finish reads it again (`write`).
    */
   private async unraced<T>(list: 'problems' | 'notifications', read: () => Promise<T>): Promise<T | null> {
     const w = this.listWrites[list]
     for (let tries = 0; tries < 3; tries++) {
       await Promise.all(w.inFlight)
+      // A write still waiting in its lane will overlap any read made now.
+      if (w.queued.size > w.inFlight.size) break
       const done = w.done
       const answer = await read()
       if (w.done === done && w.queued.size === 0) return answer
     }
+    w.dirty = true
     return null
+  }
+  /** A read taken as it comes (a first read or a Retry every guarded try missed): a write it overlapped marks the list `dirty`. */
+  private async plainRead<T>(list: 'problems' | 'notifications', read: () => Promise<T>): Promise<T> {
+    const w = this.listWrites[list]
+    const done = w.done
+    const answer = await read()
+    if (w.done !== done || w.queued.size > 0) w.dirty = true
+    return answer
   }
 
   private write<T>(o: {
@@ -787,6 +798,9 @@ export class HttpAgent implements AgentClient {
         throw this.fail(err)
       } finally {
         finished()
+        // A read of this list was given up on (or taken as it came) while writes were on their way: the last one reads it
+        // again, without holding up this write.
+        if (guarded && w?.dirty && w.queued.size === 0) { w.dirty = false; void this.refreshList(guarded, true) }
         if (field) { const n = (this.depth.get(field) ?? 1) - 1; if (n > 0) this.depth.set(field, n); else this.depth.delete(field) }
       }
     })()

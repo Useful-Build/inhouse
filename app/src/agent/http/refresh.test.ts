@@ -208,6 +208,60 @@ describe('a refresh never undoes a write, never turns a list into an error, neve
     expect(agent.read().resources.problems).toEqual({ status: 'ready' })
   })
 
+  /** Today as a server keeps it: every card, in order, less the hidden ones; each card's record. Each Today read can be overlapped by the next queued card write. */
+  function triage(all: string[], hidden: string[]) {
+    const { routes } = world()
+    const hide = new Set(hidden)
+    /** Cards the server doesn't have yet (no record either). */
+    const absent = new Set<string>()
+    const recs: Record<string, { reason: string | null; at: unknown; by: string; loggedAt: unknown; rev: number }> = {}
+    for (const k of hidden) recs[card(k).id] = { reason: 'dismissed', at: iso(2000), by: 'm_Sam', loggedAt: iso(2000), rev: 1 }
+    const pokes: (() => void)[] = []
+    let agent: HttpAgent | null = null
+    const s = server({
+      ...routes,
+      'GET /api/today': () => ({ body: { items: all.filter(k => !hide.has(k) && !absent.has(k)).map(card), aside: recs } }),
+      ...Object.fromEntries(all.map(k => [`PUT /api/today/${card(k).id}/aside`, (r: { body?: string }) => {
+        const b = JSON.parse(r.body ?? '{}') as { reason: string | null; ifRev: number }
+        if (b.reason === null) hide.delete(k); else hide.add(k)
+        recs[card(k).id] = { reason: b.reason, at: iso(2000), by: 'm_Sam', loggedAt: iso(2000), rev: b.ifRev + 1 }
+        return { body: recs[card(k).id] }
+      }])),
+    })
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const res = await s.fetch(input, init)
+      if (new URL(String(input), 'http://x.test').pathname === '/api/today' && pokes.length) pokes.shift()!()
+      return res
+    }
+    return { all, pokes, absent, start: async () => { agent = new HttpAgent({ fetch, now: () => NOW }); await agent.whenLoaded(); return agent } }
+  }
+  const settleAll = async () => { for (let i = 0; i < 20; i++) await new Promise(r => setTimeout(r, 0)) }
+  const titles = (agent: HttpAgent) => agent.read().problems.map(p => p.title)
+
+  test('an Undo of a card set aside before a reload, whose reads quick dismisses overlap, still ends with the card shown', async () => {
+    const t = triage(['a', 'b', 'c', 'd', 'e'], ['a'])
+    const agent = await t.start()
+    expect(titles(agent)).toEqual(['b', 'c', 'd', 'e'])
+    // The person dismisses b, c and d while the Undo's own read of Today is on its way, each time.
+    for (const k of ['b', 'c', 'd']) t.pokes.push(() => { void agent.setAside(card(k).id, 'dismissed') })
+    await agent.setAside(card('a').id, null)
+    await settleAll()
+    expect(titles(agent)).toEqual(['a', 'e'])
+  })
+
+  test('a refresh whose every try a card write overlapped shows a new card the server has once the writes settle', async () => {
+    const t = triage(['a', 'b', 'c', 'd', 'new'], [])
+    t.absent.add('new')
+    const agent = await t.start()
+    expect(titles(agent)).toEqual(['a', 'b', 'c', 'd'])
+    // A run found a new card: the server lists it now. Each of the refresh's reads is overlapped by a dismiss.
+    t.absent.delete('new')
+    for (const k of ['a', 'b', 'c']) t.pokes.push(() => { void agent.setAside(card(k).id, 'dismissed') })
+    await agent.refresh('problems')
+    await settleAll()
+    expect(titles(agent)).toEqual(['d', 'new'])
+  })
+
   test('a notice marked read while a bell read is on its way stays read', async () => {
     const { w, routes } = world()
     w.notifications = [notice('n1')]
