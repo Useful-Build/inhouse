@@ -8,7 +8,10 @@
 //  4. the slot reader gives grade.ts other shapes than the local reader (a renamed column, a number as a string);
 //  5. a key or turn id reaches SQL unchecked;
 //  6. remote mode mixed with local options, or missing the door's settings, starts anyway; a remote run without a release
-//     token still calls route 67; a local run without one starts.
+//     token still calls route 67; a local run without one starts;
+//  7. behind the eval host's Access: a request goes without the service token or the person JWT in both headers, a run with
+//     only half the token starts, a per-PR run (no token) sends anything new, or the secret reaches an error or an answer;
+//  8. the results claim --model while the slots ran on the brand's Default model (another model): graded under the wrong name.
 import { readdirSync, readFileSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
@@ -18,7 +21,7 @@ import { DoorRefusal, type RunSql } from '../targets/door.ts'
 import { runMode } from './args.ts'
 import { createMorningDoor, type MorningDoor } from './door.ts'
 import { AMBER, META, hostOf } from './expected.ts'
-import { clearOnSignals, ensureDefaultModel, remoteEnv, type ApiCall, type SettingsApi } from './remote.ts'
+import { clearOnSignals, ensureDefaultModel, remoteEnv, remoteHttp, requestHeaders, type ApiCall, type SettingsApi } from './remote.ts'
 import { ROUTINE_ID, runAll } from './runner.ts'
 
 const migrations = fileURLToPath(new URL('../../server/migrations/', import.meta.url))
@@ -79,9 +82,22 @@ describe('the door: what grade.ts reads (failure 4, 5)', () => {
     expect(await door.slot(`now|${ROUTINE_ID}|${'b'.repeat(32)}`)).toBeNull()
   })
 
+  it('reads the model a slot was submitted with, null while there\'s no slot, and refuses a submit without one (failure 8)', async () => {
+    const { db, run } = database()
+    const insert = (key: string, submit: string) => db.prepare(`INSERT INTO routine_slots (slot_key, routine_id, kind, local_date, tz, due_at_ms, deadline_ms, state, chat_id, client_key, prompt_text, submit_json, routine_rev, creator_id, claimed_at_ms)
+      VALUES (?, '${ROUTINE_ID}', 'manual', '2026-11-22', 'UTC', 1, 2, 'ended', 'c', 'k', 'p', ?, 1, 'm', 1)`).run(key, submit)
+    insert(KEY, JSON.stringify({ model: 'claude-opus-5-5', pickerId: 'opus', effort: 'medium', priority: 'next' }))
+    const door = createMorningDoor(run)
+    expect(await door.model(KEY)).toBe('claude-opus-5-5')
+    expect(await door.model(`now|${ROUTINE_ID}|${'b'.repeat(32)}`)).toBeNull()
+    insert(`now|${ROUTINE_ID}|${'c'.repeat(32)}`, '{}')
+    await expect(door.model(`now|${ROUTINE_ID}|${'c'.repeat(32)}`)).rejects.toThrow('slot model that is not a string')
+  })
+
   it.each([`now|${ROUTINE_ID}|${'a'.repeat(31)}'`, `due|${ROUTINE_ID}|2026-11-22`, `now|other|${'a'.repeat(32)}`])('refuses the slot key %s before any SQL', async key => {
     const { run, statements } = database()
     await expect(createMorningDoor(run).slot(key)).rejects.toBeInstanceOf(DoorRefusal)
+    await expect(createMorningDoor(run).model(key)).rejects.toBeInstanceOf(DoorRefusal)
     await expect(createMorningDoor(run).items(key)).rejects.toBeInstanceOf(DoorRefusal)
     await expect(createMorningDoor(run).tools("t' OR 1=1 --")).rejects.toBeInstanceOf(DoorRefusal)
     expect(statements).toEqual([])
@@ -101,6 +117,7 @@ describe('the remote runner env', () => {
       slot: async (k: string) => { log.push(`poll ${held ?? 'none'}`); return { slot_key: k, state: 'ended', failure: null, result_text: 'found 0 things', turn_id: null, claimed_at_ms: 1 } },
       items: async () => [],
       tools: async () => [],
+      model: async () => 'claude-sonnet-5-5',
     }
     const env = remoteEnv({
       door, runNow: async k => { log.push(`run ${k.length}`) }, alarm: alarm ? async b => { log.push(`alarm ${JSON.stringify(b)}`) } : null,
@@ -172,6 +189,35 @@ describe('the remote runner env', () => {
     await without.env.trigger('f'.repeat(32))
     await without.env.nudge()
     expect(without.log).toEqual(['run 32'])
+  })
+
+  it('with checkModel, each case keeps the model its slot ran on; a run on --model passes (failure 8)', async () => {
+    const { door } = fakes(false)
+    let now = 0
+    const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {}, checkModel: true })
+    const file = await runAll(env, twoCases(), { ...meta, model: 'claude-sonnet-5-5' })
+    expect(file.cases.map(c => [c.id, c.ranOn, c.verdict.pass])).toEqual([['clean-empty', 'claude-sonnet-5-5', true], ['outage-all', 'claude-sonnet-5-5', false]])
+    expect(file.stopped).toBeUndefined()
+  })
+
+  it('with checkModel, a slot that ran on another model fails its case and stops the run, naming both (failure 8)', async () => {
+    const { door } = fakes(false)
+    door.model = async () => 'claude-opus-5-5'
+    let now = 0
+    const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {}, checkModel: true })
+    const file = await runAll(env, twoCases(), { ...meta, model: 'claude-sonnet-5-5' })
+    expect(file.cases).toHaveLength(1)
+    expect(file.cases[0]).toMatchObject({ id: 'clean-empty', ranOn: 'claude-opus-5-5', verdict: { pass: false, reasons: ['ran on claude-opus-5-5, not claude-sonnet-5-5'] } })
+    expect(file.stopped).toEqual({ at: 'clean-empty', reason: expect.stringContaining('clean-empty ran on claude-opus-5-5, not claude-sonnet-5-5') })
+    expect(file.notRun).toEqual(['outage-all'])
+    expect(file.summary.thresholdMet).toBe(false)
+  })
+
+  it('without checkModel (the scripted proof\'s spec), no slot model is read nor kept', async () => {
+    const { env, door } = fakes(false)
+    door.model = async () => { throw new Error('model read') }
+    const file = await runAll(env, twoCases(), meta)
+    expect(file.cases.map(c => c.ranOn)).toEqual([undefined, undefined])
   })
 
   it('a fresh 32-hex key per case', () => {
@@ -312,7 +358,7 @@ describe('the Default model, set before the first Run now', () => {
     const door: MorningDoor = {
       close: () => {}, setShop: async () => {}, clearShop: async () => null,
       slot: async k => ({ slot_key: k, state: 'ended', failure: null, result_text: 'found 0 things', turn_id: null, claimed_at_ms: 1 }),
-      items: async () => [], tools: async () => [],
+      items: async () => [], tools: async () => [], model: async () => null,
     }
     let now = 0
     return remoteEnv({
@@ -414,12 +460,66 @@ describe('the Default model, set before the first Run now', () => {
   })
 })
 
+// Behind the eval host's Access lock, as main's evals/probe.test.ts checks the probe: every request carries the service token
+// and the person JWT in both headers; a per-PR run (no token) sends exactly today's headers; the secret never reaches an
+// error or an answer.
+describe('requests behind the eval host\'s Access (failure 7)', () => {
+  const SECRET = 'eval-ci-secret-SHOULD-NOT-PRINT'
+  const access = { id: 'id.access', secret: SECRET }
+  const JWT = 'eyJhbGciOiJSUzI1NiJ9.e30.sig'
+  function server(answer: (url: string) => Response | Promise<Response>) {
+    const seen: { url: string; method?: string; headers: Record<string, string>; body?: string }[] = []
+    const f = (async (url: URL, init?: RequestInit) => {
+      seen.push({ url: String(url), method: init?.method, headers: init?.headers as Record<string, string>, body: init?.body as string | undefined })
+      return answer(String(url))
+    }) as unknown as typeof fetch
+    return { f, seen }
+  }
+
+  it('with the token, Run now, route 67 and the settings calls each send the token and the JWT in both headers', async () => {
+    const s = server(() => new Response('{}', { status: 200 }))
+    const http = remoteHttp(access, s.f)
+    await http.post(new URL('https://eval.example.test/api/routines/x/run'), { clientKey: 'k' }, JWT)
+    await http.post(new URL('https://eval.example.test/api/ops/alarm'), { action: 'alarm' }, JWT)
+    await http.send('GET', new URL('https://eval.example.test/api/settings/technical'), JWT)
+    await http.send('PUT', new URL('https://ih.eval.example.test/api/settings/technical/g%3Amode'), JWT, { value: 'Fast' })
+    expect(s.seen).toHaveLength(4)
+    for (const r of s.seen) {
+      expect(r.headers).toEqual({
+        'Content-Type': 'application/json', 'Cf-Access-Jwt-Assertion': JWT, 'X-Inhouse-Test-Assertion': JWT, Origin: new URL(r.url).origin,
+        'CF-Access-Client-Id': 'id.access', 'CF-Access-Client-Secret': SECRET,
+      })
+    }
+    expect(s.seen.map(r => r.method)).toEqual(['POST', 'POST', 'GET', 'PUT'])
+    expect(s.seen[2]!.body).toBeUndefined()
+  })
+
+  it('without the token (a per-PR deploy), exactly today\'s headers', async () => {
+    expect(requestHeaders(JWT, 'https://pr12.example.dev', null)).toEqual({ 'Content-Type': 'application/json', 'Cf-Access-Jwt-Assertion': JWT, Origin: 'https://pr12.example.dev' })
+    const s = server(() => new Response('', { status: 202 }))
+    await remoteHttp(null, s.f).post(new URL('https://pr12.example.dev/api/routines/x/run'), {}, JWT)
+    expect(Object.keys(s.seen[0]!.headers).sort()).toEqual(['Cf-Access-Jwt-Assertion', 'Content-Type', 'Origin'])
+  })
+
+  it('no refusal, answer or failure carries the secret', async () => {
+    const echo = server(() => new Response(`denied: client secret ${SECRET} is not allowed`, { status: 403 }))
+    const http = remoteHttp(access, echo.f)
+    const refused = await http.post(new URL('https://eval.example.test/api/routines/x/run'), {}, JWT).then(() => '', (e: Error) => e.message)
+    expect(refused).toMatch(/^run\.mjs: POST \/api\/routines\/x\/run answered 403: denied: client secret \[secret\]/)
+    expect(refused).not.toContain(SECRET)
+    expect((await http.send('GET', new URL('https://eval.example.test/api/settings/technical'), JWT)).text).not.toContain(SECRET)
+    const down = server(() => { throw new TypeError(`fetch failed: ${SECRET}`) })
+    const failed = await remoteHttp(access, down.f).send('GET', new URL('https://eval.example.test/api/grants'), JWT).then(() => '', (e: Error) => e.message)
+    expect(failed).toBe('run.mjs: GET /api/grants failed: fetch failed: [secret]')
+  })
+})
+
 describe('run.mjs arguments (failure 6)', () => {
   const common = { 'out-dir': 'o', sha: 'abc1234', 'issuer-key-file': 'k.json', aud: 'aud' }
   const doorEnv = { INHOUSE_EVAL_D1_NAME: 'inhouse-sbx-pr12-db', INHOUSE_EVAL_WRANGLER_CONFIG: 'w.json', CF_SANDBOX_ACCOUNT_ID: 'acct' }
 
   it('remote: the origin, the door\'s database and config, the release token only when given', () => {
-    expect(runMode({ ...common, target: 'https://pr12.example.dev' }, doorEnv)).toEqual({ mode: 'remote', baseUrl: 'https://pr12.example.dev', releaseJwt: null, database: 'inhouse-sbx-pr12-db', wranglerConfig: 'w.json', modelSetting: null })
+    expect(runMode({ ...common, target: 'https://pr12.example.dev' }, doorEnv)).toEqual({ mode: 'remote', baseUrl: 'https://pr12.example.dev', releaseJwt: null, database: 'inhouse-sbx-pr12-db', wranglerConfig: 'w.json', modelSetting: null, access: null })
     expect(runMode({ ...common, target: 'https://pr12.example.dev/' }, { ...doorEnv, MORNING_CHECK_RELEASE_JWT: 'j' })).toMatchObject({ mode: 'remote', releaseJwt: 'j' })
   })
 
@@ -431,6 +531,23 @@ describe('run.mjs arguments (failure 6)', () => {
     expect(() => runMode({ ...common, target: 'https://pr12.example.dev', ...ms, 'inhouse-origin': 'https://ih.example.dev/api' }, doorEnv)).toThrow('--inhouse-origin must be')
     expect(() => runMode({ ...common, target: 'https://pr12.example.dev', 'inhouse-aud': 'x' }, doorEnv)).toThrow('--inhouse-aud only go with --model-setting')
     expect(() => runMode({ ...common, 'persist-dir': 'p', 'base-url': 'http://localhost:8788', ...ms }, { MORNING_CHECK_RELEASE_JWT: 'j' })).toThrow('--model-setting is for a deployed build (--target) only')
+  })
+
+  it('the Access service token (failure 7): both or neither; half is refused naming the variables only; no release token beside it; local never', () => {
+    const SECRET = 'eval-ci-secret-SHOULD-NOT-PRINT'
+    const token = { INHOUSE_EVAL_ACCESS_CLIENT_ID: 'id.access', INHOUSE_EVAL_ACCESS_CLIENT_SECRET: SECRET }
+    const graded = { ...common, target: 'https://eval.example.dev', model: 'claude-sonnet-5-5' }
+    expect(runMode(graded, { ...doorEnv, ...token })).toMatchObject({ mode: 'remote', releaseJwt: null, modelSetting: null, access: { id: 'id.access', secret: SECRET } })
+    const refusal = (env: Record<string, string | undefined>, args: Record<string, string> = graded) => { try { runMode(args, env); return '' } catch (e) { return (e as Error).message } }
+    for (const half of [{ INHOUSE_EVAL_ACCESS_CLIENT_ID: 'id.access' }, { INHOUSE_EVAL_ACCESS_CLIENT_SECRET: SECRET }]) {
+      const m = refusal({ ...doorEnv, ...half })
+      expect(m).toContain('INHOUSE_EVAL_ACCESS_CLIENT_ID and INHOUSE_EVAL_ACCESS_CLIENT_SECRET are not both set')
+      expect(m).not.toContain(SECRET)
+    }
+    expect(refusal({ ...doorEnv, ...token, MORNING_CHECK_RELEASE_JWT: 'j' })).toContain('MORNING_CHECK_RELEASE_JWT is for a per-PR test deploy')
+    const local = { ...common, 'persist-dir': 'p', 'base-url': 'http://localhost:8788' }
+    expect(refusal({ MORNING_CHECK_RELEASE_JWT: 'j', ...token }, local)).toContain('are for a deployed build behind Access (--target) only')
+    expect(refusal({ MORNING_CHECK_RELEASE_JWT: 'j', INHOUSE_EVAL_ACCESS_CLIENT_SECRET: SECRET }, local)).not.toContain(SECRET)
   })
 
   it.each(['persist-dir', 'base-url', 'restart-cmd', 'shop-pattern', 'restart-wait-sec'])('remote with --%s is refused', k => {

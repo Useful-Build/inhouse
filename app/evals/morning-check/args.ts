@@ -4,7 +4,10 @@
 //  - remote (--target <origin>): a deployed test or eval build. The shop is the test shop override and the slot is read
 //    through the door (door.ts), whose database and config come from INHOUSE_EVAL_D1_NAME, INHOUSE_EVAL_WRANGLER_CONFIG and
 //    CF_SANDBOX_ACCOUNT_ID (wrangler reads CLOUDFLARE_API_TOKEN itself). MORNING_CHECK_RELEASE_JWT is optional: the eval
-//    build has none, and without it there's no nudge.
+//    build has none, and without it there's no nudge. The eval deploy's host is behind Access: with
+//    INHOUSE_EVAL_ACCESS_CLIENT_ID and _SECRET both set, every request carries that service token (remote.ts accessHeaders,
+//    as evals/probe.ts on main). One of the two is refused; neither is the per-PR deploy (no Access). Behind Access there's
+//    no route 67: MORNING_CHECK_RELEASE_JWT is the per-PR test deploy's only, so it's refused with the service token.
 // The modes' options are mutually exclusive: a remote run given a local option (or the reverse) is refused, never ignored.
 
 export type RunArgs = Record<string, string | undefined>
@@ -12,10 +15,15 @@ export type RunArgs = Record<string, string | undefined>
 const COMMON = ['out-dir', 'sha', 'issuer-key-file', 'aud'] as const
 const LOCAL_ONLY = ['persist-dir', 'base-url', 'restart-cmd', 'shop-pattern', 'restart-wait-sec'] as const
 const DOOR_ENV = ['INHOUSE_EVAL_D1_NAME', 'INHOUSE_EVAL_WRANGLER_CONFIG', 'CF_SANDBOX_ACCOUNT_ID'] as const
+/** The eval host's Access service token (main's evals/targets/product.ts names): both, or neither (a per-PR deploy). */
+export const ACCESS_CLIENT_ID_VAR = 'INHOUSE_EVAL_ACCESS_CLIENT_ID'
+export const ACCESS_CLIENT_SECRET_VAR = 'INHOUSE_EVAL_ACCESS_CLIENT_SECRET'
+
+export interface AccessToken { id: string; secret: string }
 
 export type RunMode =
   | { mode: 'local'; baseUrl: string; persistDir: string; releaseJwt: string }
-  | { mode: 'remote'; baseUrl: string; releaseJwt: string | null; database: string; wranglerConfig: string; modelSetting: { label: string; inhouseOrigin: string; inhouseAud: string } | null }
+  | { mode: 'remote'; baseUrl: string; releaseJwt: string | null; database: string; wranglerConfig: string; modelSetting: { label: string; inhouseOrigin: string; inhouseAud: string } | null; access: AccessToken | null }
 
 const MODEL_SETTING = ['model-setting', 'inhouse-origin', 'inhouse-aud'] as const
 
@@ -46,6 +54,15 @@ function remoteModelSetting(a: RunArgs): { label: string; inhouseOrigin: string;
   return { label, inhouseOrigin: url.origin, inhouseAud: aud }
 }
 
+/** The Access service token from the environment: both set, neither (null), or a refusal naming the variables (never a value). */
+function accessToken(env: Record<string, string | undefined>): AccessToken | null {
+  const id = env[ACCESS_CLIENT_ID_VAR]
+  const secret = env[ACCESS_CLIENT_SECRET_VAR]
+  if (!id && !secret) return null
+  if (!id || !secret) throw new Error(`run.mjs: ${ACCESS_CLIENT_ID_VAR} and ${ACCESS_CLIENT_SECRET_VAR} are not both set, so the eval host's Access lock would refuse every call`)
+  return { id, secret }
+}
+
 export function runMode(a: RunArgs, env: Record<string, string | undefined>): RunMode {
   for (const k of COMMON) if (!a[k]) throw new Error(`run.mjs: --${k} is required`)
   const releaseJwt = env.MORNING_CHECK_RELEASE_JWT || null
@@ -62,8 +79,11 @@ export function runMode(a: RunArgs, env: Record<string, string | undefined>): Ru
     const missing = DOOR_ENV.filter(k => !env[k])
     if (missing.length) throw new Error(`run.mjs: --target reads the build's D1 through the door and needs ${missing.join(', ')}`)
     const modelSetting = remoteModelSetting(a)
-    return { mode: 'remote', baseUrl: url.origin, releaseJwt, database: env.INHOUSE_EVAL_D1_NAME!, wranglerConfig: env.INHOUSE_EVAL_WRANGLER_CONFIG!, modelSetting }
+    const access = accessToken(env)
+    if (access && releaseJwt) throw new Error('run.mjs: MORNING_CHECK_RELEASE_JWT is for a per-PR test deploy (route 67): the Access-locked eval host takes no release token, and Run now pokes the scheduler itself')
+    return { mode: 'remote', baseUrl: url.origin, releaseJwt, database: env.INHOUSE_EVAL_D1_NAME!, wranglerConfig: env.INHOUSE_EVAL_WRANGLER_CONFIG!, modelSetting, access }
   }
+  if (accessToken(env)) throw new Error(`run.mjs: ${ACCESS_CLIENT_ID_VAR} and ${ACCESS_CLIENT_SECRET_VAR} are for a deployed build behind Access (--target) only`)
   for (const k of MODEL_SETTING) if (a[k] !== undefined) throw new Error(`run.mjs: --${k} is for a deployed build (--target) only`)
   for (const k of ['persist-dir', 'base-url'] as const) if (!a[k]) throw new Error(`run.mjs: --${k} is required (or --target for a deployed build)`)
   if (!releaseJwt) throw new Error('run.mjs: MORNING_CHECK_RELEASE_JWT is not set')

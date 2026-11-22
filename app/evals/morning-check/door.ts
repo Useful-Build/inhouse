@@ -31,6 +31,11 @@ export interface MorningDoor extends Reader {
   close(): void
   /** Removes the override and reads back that none is left. Returns the host it removed (null: none was set). */
   clearShop(): Promise<string | null>
+  /**
+   * The API model id a slot's turn was submitted with (`submit_json.model`, fixed when the slot is made from the brand's
+   * Default model: server/routines/brand.ts submitSettings), or null while the slot doesn't exist.
+   */
+  model(slotKey: string): Promise<string | null>
 }
 
 const str = (v: unknown, what: string): string => {
@@ -85,6 +90,18 @@ export function createMorningDoor(run: RunSql, nowMs: () => number = Date.now): 
         result_text: strOrNull(r.result_text, 'result text'), turn_id: strOrNull(r.turn_id, 'turn id'), claimed_at_ms: Number(r.claimed_at_ms),
       }
       return row
+    },
+    async model(slotKey) {
+      if (!SLOT_KEY.test(slotKey)) throw new DoorRefusal(`not a morning-check Run now slot key: ${slotKey}`)
+      const rows = await run(`SELECT submit_json FROM routine_slots WHERE slot_key = ${sqlString(slotKey)}`)
+      if (rows.length === 0) return null
+      let model: unknown
+      try {
+        model = (JSON.parse(str(rows[0]!.submit_json, 'submit')) as { model?: unknown } | null)?.model
+      } catch {
+        throw new DoorRefusal('the door read a slot submit that is not JSON')
+      }
+      return str(model, 'slot model')
     },
     async items(slotKey) {
       if (!SLOT_KEY.test(slotKey)) throw new DoorRefusal(`not a morning-check Run now slot key: ${slotKey}`)

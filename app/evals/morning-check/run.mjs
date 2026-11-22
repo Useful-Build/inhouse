@@ -30,6 +30,16 @@
 //     --out-dir evals/morning-check/results --sha <git sha> --issuer-key-file <that deploy's test issuer private JWK> --aud <its Access aud> \
 //     [--cases ...] [--model ...] [--timeout-min 20] [--settle-min 2] [--model-setting Fast --inhouse-origin <its Inhouse app origin> --inhouse-aud <that app's Access aud>]
 //
+// The eval deploy (the graded run): its host is behind Access, so INHOUSE_EVAL_ACCESS_CLIENT_ID and _SECRET (the eval service
+// token) are both set, and every request (Run now, the settings calls) carries them as CF-Access-Client-Id and
+// CF-Access-Client-Secret, with the person JWT in both Cf-Access-Jwt-Assertion and X-Inhouse-Test-Assertion (remote.ts
+// requestHeaders, as evals/probe.ts). One of the two is refused; neither is a per-PR deploy (no Access, today's headers). The
+// eval build takes no release token: MORNING_CHECK_RELEASE_JWT with the service token is refused (no route 67 nudge). The
+// secret is never printed nor kept in the results (remote.ts cuts it from any answer or error).
+// --model names the model the results claim, but a routine runs on the brand's Default model (`g:mode`, fixed in the slot
+// when it's made), never on --model. So in remote mode each case's slot model is read through the door and kept as the
+// case's `ranOn`; a case that ran on another model fails and the run stops (one case's spend at most). On the eval deploy,
+// `--model claude-sonnet-5-5` with no --model-setting therefore needs the eval brand's Default model to be Fast already.
 // --model-setting <label> (remote only, default none): before the first case, the brand's Default model (`g:mode`, route 12)
 // is set to that label and read back. Only the Inhouse team writes `g:mode` (an Admin may write only `tm:<id>:on` there and
 // gets 403 admin_read_only); it needs no grant (remote.ts SettingsApi says why). As watch-kit's setStage does, the seeded
@@ -60,7 +70,7 @@ import { openResults } from './results.ts'
 import { ROUTINE_ID, runAll } from './runner.ts'
 import { runMode } from './args.ts'
 import { createMorningDoor } from './door.ts'
-import { clearOnSignals, ensureDefaultModel, remoteEnv } from './remote.ts'
+import { clearOnSignals, ensureDefaultModel, remoteEnv, remoteHttp } from './remote.ts'
 import { wranglerRunner } from '../targets/door.ts'
 import { SEED_INHOUSE, SEED_PEOPLE } from '../../server/seed/brand.ts'
 
@@ -80,21 +90,20 @@ const privateJwk = JSON.parse(readFileSync(a['issuer-key-file'], 'utf8'))
 /** The person who presses Run now: a fresh token each call (ten minutes), as the test issuer would mint it. */
 const personJwt = () => mintPerson({ sub: a.sub, email: a.email, key: privateJwk, aud: a.aud })
 
-const post = async (path, body, jwt) => {
-  const r = await fetch(new URL(path, m.baseUrl), { method: 'POST', headers: { 'Content-Type': 'application/json', 'Cf-Access-Jwt-Assertion': jwt, Origin: new URL(m.baseUrl).origin }, body: JSON.stringify(body) })
-  if (!r.ok) throw new Error(`run.mjs: POST ${path} answered ${r.status}: ${await r.text()}`)
-}
+// Every request to the build: with the eval host's Access service token (remote only), the token and the person JWT in both
+// headers (remote.ts requestHeaders); without it, today's headers.
+const http = remoteHttp(m.mode === 'remote' ? m.access : null)
+const post = (path, body, jwt) => http.post(new URL(path, m.baseUrl), body, jwt)
 /**
  * One API call as one identity, minted with the test issuer as e2e/api/kit.ts `actor` does: `who` is its sub and email, sent
  * to `origin` with that app's Access aud (and `Origin`). ensureDefaultModel reads the status and the JSON itself.
  */
 const callAs = (who, origin, aud) => async (method, path, body) => {
   const jwt = await mintPerson({ sub: who.subject, email: who.email, key: privateJwk, aud })
-  const r = await fetch(new URL(path, origin), { method, headers: { 'Content-Type': 'application/json', 'Cf-Access-Jwt-Assertion': jwt, Origin: origin }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
-  const text = await r.text()
+  const { status, text } = await http.send(method, new URL(path, origin), jwt, body)
   let json = null
   try { json = text ? JSON.parse(text) : null } catch { json = { text } }
-  return { status: r.status, json }
+  return { status, json }
 }
 /**
  * The Default model's writers (remote.ts SettingsApi): the seeded Admin on the brand app (reads, support grants) and the
@@ -178,6 +187,7 @@ const env = door ? remoteEnv({
   nowMs: () => Date.now(),
   caseTimeoutMs: Number(a['timeout-min']) * 60_000,
   settleMs: Number(a['settle-min']) * 60_000,
+  checkModel: true,
   ...(m.modelSetting ? { defaultModel: () => ensureDefaultModel(settingsApi(), m.modelSetting.label) } : {}),
 }) : {
   nowMs: () => Date.now(),

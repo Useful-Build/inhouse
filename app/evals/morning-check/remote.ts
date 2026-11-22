@@ -4,6 +4,7 @@
 // own tokens, the spec uses its kit). Route 67 (the scheduler nudge) is the test build's only, behind a release token:
 // with no `alarm`, Run now's own poke and the scheduler's heartbeat move the slot, and the polls just wait (with the case's
 // deadline, as ever).
+import type { AccessToken } from './args.ts'
 import type { MorningDoor } from './door.ts'
 import type { RunnerEnv } from './runner.ts'
 
@@ -25,6 +26,55 @@ export interface RemoteDeps {
    * the Fast one. A real-model run leaves it alone (the eval run picks its own model).
    */
   defaultModel?: () => Promise<void>
+  /**
+   * run.mjs sets it: each case's slot model is read through the door (runner.ts modelOf), so the results carry the model
+   * the turns ran on and a run whose slots ran on another model than --model stops. The scripted proof's spec leaves it out.
+   */
+  checkModel?: boolean
+}
+
+/**
+ * The header the person JWT also travels in behind Access (main's evals/targets/product.ts TEST_ASSERTION_HEADER): Access in
+ * front sets its own Cf-Access-Jwt-Assertion, so the eval build may read the test issuer's from here.
+ */
+export const TEST_ASSERTION_HEADER = 'X-Inhouse-Test-Assertion'
+
+/**
+ * One request's headers, as main's evals/probe.ts sends them: the person JWT in Cf-Access-Jwt-Assertion; with the eval
+ * host's Access service token, the same JWT in X-Inhouse-Test-Assertion too and the token as CF-Access-Client-Id and
+ * CF-Access-Client-Secret, last. Without it (a per-PR deploy) exactly today's headers.
+ */
+export function requestHeaders(jwt: string, origin: string, access: AccessToken | null): Record<string, string> {
+  return {
+    'Content-Type': 'application/json', 'Cf-Access-Jwt-Assertion': jwt, Origin: origin,
+    ...(access ? { [TEST_ASSERTION_HEADER]: jwt, 'CF-Access-Client-Id': access.id, 'CF-Access-Client-Secret': access.secret } : {}),
+  }
+}
+
+/** `text` with the service token's secret cut out: no answer or error the run prints or keeps can carry it. */
+const scrub = (text: string, access: AccessToken | null) => (access ? text.replaceAll(access.secret, '[secret]') : text)
+
+/**
+ * run.mjs's HTTP: every request it makes to a build (Run now, route 67, the settings calls) goes through `send`, so each
+ * carries requestHeaders. `send` gives the status and the body's text, a network failure rethrown with its message; `post`
+ * throws on any answer but 2xx with the status and the body. Neither lets the secret into a message.
+ */
+export function remoteHttp(access: AccessToken | null, doFetch: typeof fetch = fetch) {
+  const send = async (method: 'GET' | 'PUT' | 'POST', url: URL, jwt: string, body?: unknown): Promise<{ status: number; text: string }> => {
+    try {
+      const r = await doFetch(url, { method, headers: requestHeaders(jwt, url.origin, access), ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+      return { status: r.status, text: scrub(await r.text(), access) }
+    } catch (e) {
+      throw new Error(`run.mjs: ${method} ${url.pathname} failed: ${scrub(e instanceof Error ? e.message : String(e), access)}`)
+    }
+  }
+  return {
+    send,
+    async post(url: URL, body: unknown, jwt: string): Promise<void> {
+      const r = await send('POST', url, jwt, body)
+      if (r.status < 200 || r.status > 299) throw new Error(`run.mjs: POST ${url.pathname} answered ${r.status}: ${r.text}`)
+    },
+  }
 }
 
 /** One API call as one identity, as the caller's HTTP gives the answer (status and parsed JSON). */
@@ -117,6 +167,7 @@ export function remoteEnv(d: RemoteDeps): RunnerEnv {
   let first = true
   return {
     ...(d.defaultModel ? { beforeCases: d.defaultModel } : {}),
+    ...(d.checkModel ? { modelOf: (slotKey: string) => d.door.model(slotKey) } : {}),
     nowMs: d.nowMs,
     useShop: host => d.door.setShop(host),
     // runAll's first clear is the run's start: a row there is a leftover from a run that didn't clear (or one running now:

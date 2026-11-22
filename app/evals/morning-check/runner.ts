@@ -59,6 +59,12 @@ export interface RunnerEnv {
    * run asks for one). A failure throws: no case runs.
    */
   beforeCases?(): Promise<void>
+  /**
+   * The remote mode only (run.mjs): the API model id a slot was submitted with, or null when it doesn't exist. Set, runAll
+   * records it on the case (`ranOn`), and a case that ran on another model than the run's fails and stops the run: the
+   * routine runs on the brand's Default model, never on --model, so a mismatch would grade one model under another's name.
+   */
+  modelOf?(slotKey: string): Promise<string | null>
 }
 
 const ZERO: Fixed = { truncated: 0, dropped: 0, deduped: 0, overflow: 0 }
@@ -164,8 +170,17 @@ export async function runAll(
   }
   for (const c of cases) {
     let r: CaseResult
+    let wrongModel: string | null = null
     try {
       r = await runCase(env, c)
+      const ranOn = r.slotKey !== null && env.modelOf ? await env.modelOf(r.slotKey) : null
+      if (ranOn !== null) {
+        r = { ...r, ranOn }
+        if (ranOn !== meta.model) {
+          wrongModel = `${c.id} ran on ${ranOn}, not ${meta.model} (the brand's Default model decides a routine's model), so the run stops here`
+          r = { ...r, verdict: { ...r.verdict, pass: false, reasons: [`ran on ${ranOn}, not ${meta.model}`, ...r.verdict.reasons] } }
+        }
+      }
     } catch (e) {
       // The case itself threw (the door or the build failed): clear the override, then fail loud with both causes.
       const unclear = await release()
@@ -180,6 +195,7 @@ export async function runAll(
       // Run now was taken but its slot never showed in the rows read: the reader is most likely on another database.
       stopped = { at: c.id, reason: `${c.id}: slot not found in this D1 (wrong database?), so the run stops here` }
     }
+    if (wrongModel !== null) stopped = { at: c.id, reason: wrongModel }
     if (unclear !== null) stopped = { at: c.id, reason: `${c.id}: the test shop override could not be cleared (${unclear}), so the run stops here` }
     onCase?.(file())
     if (stopped) break
