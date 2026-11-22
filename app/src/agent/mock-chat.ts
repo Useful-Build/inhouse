@@ -10,7 +10,8 @@ import type { ErrorReason } from '../../shared/contract/common'
 import { CONFLICT, FORBIDDEN, INVALID, NOT_FOUND, RATE_LIMITED, REASON } from '../../shared/contract/error-codes'
 import { FAIL, NOTICE } from '../../shared/contract/chat-codes'
 import { demoNow } from './demo-clock'
-import { instantOf } from '../lib/format'
+import { instantOf, moneyOf } from '../lib/format'
+import { dollarsIn } from '../state/derive'
 import { buildScript } from './mock-script'
 import type { ScriptHost } from './mock-script'
 import type { MockRun, MockTurn, RunInfo, ScriptedTurn } from './mock'
@@ -250,8 +251,13 @@ export class ChatEngine {
   /** Runs one turn to its end. True when it started (a cancelled one didn't). */
   async runTurn(run: MockRun, turn: MockTurn): Promise<boolean> {
     const { input } = turn
-    // At the cap (the Cap reached scenario) a chat turn is refused the way a scripted capReached turn is (decision L-A8).
-    const forced = this.h.demo.scenario === 'Cap reached' ? 'capReached' : this.h.scripted
+    // At the cap a chat turn is refused the way a scripted capReached turn is (decision L-A8). Same test as Usage's capStatus:
+    // the Monthly cap typed in Settings, else the scenario's; the data's own answer when it judged that cap, else spend against it.
+    const { usage } = this.h.read()
+    const typed = dollarsIn(this.h.state.settings['s:cap'])
+    const cap = typed === null ? usage.cap : moneyOf(typed, usage.cap.currency)
+    const atCap = usage.capReached !== undefined && usage.cap.minor === cap.minor ? usage.capReached : usage.total.minor >= cap.minor
+    const forced = atCap ? 'capReached' : this.h.scripted
     this.h.scripted = null
     if (forced === 'capReached') {
       this.emit(run, { type: 'notice', code: NOTICE.capReached })

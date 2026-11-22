@@ -186,7 +186,7 @@ export const byName = (data: AgentData, id: string) => data.people.members.find(
 export const firstName = (name: string) => name.trim().split(/\s+/)[0] ?? name
 
 /** A money field as typed in Settings ("$400", "1,200", "$0") as dollars, or null when it isn't an amount. */
-const dollarsIn = (v: string | undefined): number | null => {
+export const dollarsIn = (v: string | undefined): number | null => {
   if (v === undefined || !v.trim()) return null
   const n = Number(v.replace(/[$,\s%]/g, ''))
   return Number.isFinite(n) && n >= 0 ? n : null
@@ -204,7 +204,7 @@ export interface CapStatus {
   spent: Money
   cap: Money
   alertAt: number
-  /** Spend reached the cap: routines and jobs pause. */
+  /** Spend reached the cap: chats, routines and jobs pause. */
   reached: boolean
   /** The banner's line at the cap, from those values. */
   bannerText: string
@@ -240,7 +240,7 @@ export function usageSummary(m: { total: Money; cap: Money; alertAt: number; dai
   const capNote = !thisMonth
     ? over ? `Closed at ${Math.round(total / cap * 100)}% of the cap.` : `Closed at ${pct} of the cap. Nothing was paused.`
     : reached
-      ? 'Cap reached today. Chats, routines and jobs are paused until an admin raises it.'
+      ? 'Cap reached today. Chats, routines and jobs are paused until next month or until an admin raises the cap.'
       : `Admins get an email at ${m.alertAt}%. Your Inhouse agent pauses chats, routines and jobs at the cap.`
   return { hint, capNote }
 }
@@ -331,7 +331,7 @@ export function todayCopy(ctx: Ctx): TodayCopy {
   ][S]
   let headSub = copy.headSub, headline = copy.headline
   if (f.paused) headSub = 'Your Inhouse agent is paused, so chats, routines and jobs are stopped until an admin resumes it. Waiting drafts can still be approved.'
-  if (f.cap) headSub = 'Chats, routines and jobs are paused at the spending cap. Drafts already waiting can still be approved.'
+  if (f.cap) headSub = 'Chats, routines and jobs are paused until next month or until an admin raises the cap. Drafts already waiting can still be approved.'
   if (f.isFirst) { headline = 'Your Inhouse agent is being set up.'; headSub = 'Your Inhouse team connects each tool for you. There is nothing to install.' }
   if (f.isLoading) { headline = 'Your Inhouse agent is reading your tools.'; headSub = 'The morning check takes about two minutes. Your list appears as soon as it finishes.' }
   const first = firstName(userName(ctx))

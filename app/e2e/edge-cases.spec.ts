@@ -157,7 +157,7 @@ test("Usage: a saved cap below this month's spend shows the capped state, and th
   await page.goto('/?demo#/usage')
   await expect(page.getByText('$78.40 of $50', { exact: true })).toBeVisible()
   await expect(page.getByText('Cap reached with 14 days of the month left')).toBeVisible()
-  await expect(page.getByText('Cap reached today. Chats, routines and jobs are paused until an admin raises it.')).toBeVisible()
+  await expect(page.getByText('Cap reached today. Chats, routines and jobs are paused until next month or until an admin raises the cap.')).toBeVisible()
   await keep(page, 'usage-low-cap-1440', true)
   // November is the first month with spend (the first tool was connected on Nov 2), the only one: no month picker.
   await expect(page.getByRole('combobox', { name: /^Month/ })).toHaveCount(0)

@@ -477,7 +477,7 @@ test('S9: At the cap a new question gets the cap notice, and Usage shows the cap
     await expect(main(member)).toContainText('$0.01')
     // At the cap (the server reads it so once less than a start hold is left): Usage says so in the words of usageSummary.
     await expect(main(member)).toContainText(/Cap reached with \d+ days of the month left/)
-    await expect(main(member)).toContainText('Cap reached today. Chats, routines and jobs are paused until an admin raises it.')
+    await expect(main(member)).toContainText('Cap reached today. Chats, routines and jobs are paused until next month or until an admin raises the cap.')
     await shot(member, 'S9-usage-shows-the-cap')
   } finally {
     await setCap((before?.value as string | null | undefined) ?? null)

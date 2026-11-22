@@ -106,6 +106,21 @@ test('Memory: a chat answering when the page reloads keeps its question and says
   await shot(page, 'memory-reload-mid-answer')
 })
 
+test('Cap reached: a chat is refused with the cap notice, and a waiting draft can still be approved (decision L-A8)', async ({ page }) => {
+  await start(page, '#/today', 'Act', 'Cap reached')
+  // Chats stop at the cap: the question gets the cap notice and no answer.
+  await todayBox(page).fill(Q)
+  await page.keyboard.press('Enter')
+  await page.clock.runFor(4000)
+  await expect(log(page).getByText('Your team has reached its spending cap.')).toBeVisible()
+  await expect(log(page).getByText(A)).toHaveCount(0)
+  // Waiting drafts can still be approved at the cap.
+  await go(page, '#/today')
+  await page.getByRole('article').filter({ hasText: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Review' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Approve and send to Kestrel' }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Approved. It goes out in 10 seconds.' })).toBeVisible()
+})
+
 test('Reset demo puts the stage and scenario back to Act and Normal, clears the change, and stays so after a reload', async ({ page }) => {
   await start(page, '#/today', 'Run', 'Cap reached')
   await expect(page.getByRole('button', { name: 'Demo switches: Run, Cap reached' })).toBeVisible()
