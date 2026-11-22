@@ -16,8 +16,9 @@
 //   E2E_TEST_BUILD_REMOTE=1 SHIP=1 BASE_URL=... TEST_BUILD_INHOUSE_URL=... TEST_ISSUER_PRIVATE_JWK_FILE=...
 //   npx playwright test e2e/ship/watch.spec.ts --project=ship-desktop --project=ship-phone
 import { readFile } from 'node:fs/promises'
-import type { Browser, BrowserContext, Page } from '@playwright/test'
+import type { APIRequestContext, Browser, BrowserContext, Page } from '@playwright/test'
 import { needsContainer } from '../api/chat-kit.ts'
+import { actor, call, endLiveGrants, putSetting } from '../api/kit.ts'
 import { originFor, people, signInAs } from '../support/clients/real.js'
 import type { Who } from '../support/clients/real.js'
 import { expect, test } from '../support/test-build/index.js'
@@ -48,7 +49,8 @@ const BROWSER_TZ = 'Pacific/Auckland'
 
 /** Waits for menus and windows to finish their finite animations, then attaches a screenshot named by the item. */
 async function shot(page: Page, name: string) {
-  await page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
+  // allSettled: a cancelled animation rejects `finished`, which is not a failure here.
+  await page.evaluate(() => Promise.allSettled(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
   await test.info().attach(name, { body: await page.screenshot(), contentType: 'image/png' })
 }
 
@@ -123,20 +125,28 @@ async function attachRunDiagnostics(page: Page) {
 /**
  * The brand's Default model must be Fast (Sonnet) before any run: the routine's turn takes the brand default, which nothing
  * seeds, so it is Opus; the scripted model answers only claude-sonnet-5-5, so an Opus request is a 400 miss and the run ends
- * `sdk_error`. (Its model check is not loosened for this: chats work around it by picking Fast in the composer.) Set once, as
- * the Admin, through route 12 at the setting's current rev, and read back.
+ * `sdk_error`. (Its model check is not loosened for this: chats work around it by picking Fast in the composer.) Technical
+ * settings are written by the Inhouse team, under a live grant the Admin gives (an Admin may only switch models on or off,
+ * a Member never writes them): the Admin grants, the Inhouse team writes g:mode at its current rev, the grant ends, and the
+ * setting is read back as a Member.
  */
 let defaultModelFast = false
-async function ensureFastDefault(browser: Browser) {
+async function ensureFastDefault(request: APIRequestContext) {
   if (defaultModelFast) return
-  const admin = await pageFor(browser, 'admin')
-  const read = async () => (await api(admin, 'GET', '/api/settings/technical')).json?.items?.find((i: { key: string }) => i.key === 'g:mode') as { value?: unknown; rev?: number } | undefined
-  const now = await read()
-  if (now?.value !== 'Fast') {
-    const put = await api(admin, 'PUT', '/api/settings/technical/g%3Amode', { value: 'Fast', ifRev: now?.rev ?? 0 })
-    expect(put.status, `setting the default model to Fast: ${JSON.stringify(put.json)}`).toBe(200)
+  const read = async () => {
+    const r = await call(request, actor('memberA'), 'GET', '/api/settings/technical')
+    expect(r.status, r.text).toBe(200)
+    return (r.json.items as { key: string; value?: unknown }[]).find(i => i.key === 'g:mode')?.value
   }
-  expect((await read())?.value, 'the default model reads back as Fast').toBe('Fast')
+  if ((await read()) !== 'Fast') {
+    await endLiveGrants(request)
+    const grant = await call(request, actor('admin'), 'POST', '/api/grants', { json: { hours: 1 } })
+    expect(grant.status, grant.text).toBe(201)
+    const put = await putSetting(request, actor('inhouse'), 'technical', 'g:mode', 'Fast')
+    await endLiveGrants(request)
+    expect(put.status, `setting the default model to Fast: ${put.text}`).toBe(200)
+  }
+  expect(await read(), 'the default model reads back as Fast').toBe('Fast')
   defaultModelFast = true
 }
 
@@ -144,8 +154,8 @@ async function ensureFastDefault(browser: Browser) {
  * Runs the morning check as a person does: Routines, the routine's details, Run now. Waits on the routine's last run moving
  * (the run ended and saved), then leaves the page on Routines.
  */
-async function runMorningCheck(page: Page) {
-  await ensureFastDefault(page.context().browser()!)
+async function runMorningCheck(page: Page, request: APIRequestContext) {
+  await ensureFastDefault(request)
   const before = (await morningCheck(page)).last?.at.ms ?? 0
   await goTo(page, '#/routines')
   await page.locator(`[data-routine-open="${MORNING_CHECK}"]`).click()
@@ -161,6 +171,9 @@ async function runMorningCheck(page: Page) {
   }
   await page.keyboard.press('Escape')
   await expect(sheet).toBeHidden()
+  // Today, Activity and the bell were read when the app started: load it again to see what the run left, as a person would.
+  await page.reload()
+  await ready(page)
 }
 
 /** Chooses the Fast model (Sonnet): the composer's default is Opus, and the scripted model answers only for Sonnet. */
@@ -194,6 +207,9 @@ async function makeFile(page: Page): Promise<string> {
     const r = await api(page, 'GET', '/api/library?limit=100')
     return (r.json?.items as { name: string; link?: { id: string } }[] | undefined)?.some(f => f.name === FILE && f.link?.id === id) ?? false
   }, { timeout: 60_000, message: `the Library lists ${FILE} from chat ${id}` }).toBe(true)
+  // The page read its Library when the app started (empty) and doesn't read it again on opening the screen: load the app again, as a person would.
+  await page.reload()
+  await ready(page)
   return id
 }
 
@@ -205,11 +221,11 @@ const plain = (s: string) => s.replace(/[\u00a0\u202f]/g, ' ')
 
 // ---------- S1 to S2: the morning check fills Today ----------
 
-test('S1: Run the morning check from Routines and Today fills with the store\'s items and the right count', async ({ context, page }) => {
+test('S1: Run the morning check from Routines and Today fills with the store\'s items and the right count', async ({ context, page, request }) => {
   needsContainer()
   test.setTimeout(360_000)
   await openAs(context, page, 'dana', '#/today')
-  await runMorningCheck(page)
+  await runMorningCheck(page, request)
   await shot(page, 'S1-routines-after-the-run')
   await goTo(page, '#/today')
   await expect(page.getByRole('article', { name: CARD_TITLE })).toBeVisible()
@@ -218,11 +234,11 @@ test('S1: Run the morning check from Routines and Today fills with the store\'s 
   await shot(page, 'S1-today-filled')
 })
 
-test('S2: Open an item and the problem panel shows the orders behind it from the store', async ({ context, page }) => {
+test('S2: Open an item and the problem panel shows the orders behind it from the store', async ({ context, page, request }) => {
   needsContainer()
   test.setTimeout(360_000)
   await openAs(context, page, 'dana', '#/today')
-  await runMorningCheck(page)
+  await runMorningCheck(page, request)
   await goTo(page, '#/today')
   await page.getByRole('article', { name: CARD_TITLE }).getByRole('button', { name: CARD_TITLE }).click()
   const panel = page.getByRole('dialog')
@@ -251,11 +267,11 @@ test('S3: Ask which orders are late and the answer shows with a bounded table an
 
 // ---------- S4 and S5: Activity and the bell ----------
 
-test('S4: Activity shows the morning check\'s run with its time', async ({ context, page }) => {
+test('S4: Activity shows the morning check\'s run with its time', async ({ context, page, request }) => {
   needsContainer()
   test.setTimeout(360_000)
   await openAs(context, page, 'dana', '#/today')
-  await runMorningCheck(page)
+  await runMorningCheck(page, request)
   await goTo(page, '#/activity')
   const line = main(page).locator('[data-activity-row]').filter({ hasText: RAN_LINE }).first()
   await expect(line).toBeVisible()
@@ -264,11 +280,11 @@ test('S4: Activity shows the morning check\'s run with its time', async ({ conte
   await shot(page, 'S4-activity-run')
 })
 
-test('S5: The bell shows the new notice and marking it read clears the dot after a reload', async ({ context, page }) => {
+test('S5: The bell shows the new notice and marking it read clears the dot after a reload', async ({ context, page, request }) => {
   needsContainer()
   test.setTimeout(360_000)
   await openAs(context, page, 'dana', '#/today')
-  await runMorningCheck(page)
+  await runMorningCheck(page, request)
   await page.reload()
   await ready(page)
   const bell = page.getByRole('button', { name: /^Notifications, \d+ unread$/ })
