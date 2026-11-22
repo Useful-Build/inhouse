@@ -405,6 +405,10 @@ export class AgentCore {
     if (t.input.priority === 'now') {
       const live = this.sql.exec<TurnRow>("SELECT * FROM turns WHERE run_id = ? AND state = 'live' AND interrupt_asked = 0 AND fenced = 0", runId).toArray()[0]
       if (live) this.askInterrupt(live)
+      // A held platform stop (A9) is the person's earlier question: `now` ends it `interrupted`, as `interrupt` does,
+      // so it isn't placed again after the new answer.
+      const held = this.sql.exec<TurnRow>("SELECT * FROM turns WHERE run_id = ? AND state = 'ending' AND outcome IS NULL AND held_json IS NOT NULL", runId).toArray()[0]
+      if (held) this.fence(held, { outcome: 'interrupted' })
     }
     // While a turn exists the authority sweep runs every 5 minutes (4.10).
     sweepBy(this.sql, this.d.scheduler, now + SWEEP_EVERY_MS)
@@ -973,8 +977,10 @@ export class AgentCore {
         const fresh = this.turn(t.turn_id)!
         if (!ev.queryRan && fresh.query_ran === 0) {
           // A held platform stop (A9) before the query started: placed once more, only on the turn's first attempt
-          // (`requeues` 0: one re-run, though MAX_REQUEUES allows 2). No `turn.finished` was shown for it.
-          if (this.held(fresh) && fresh.requeues === 0) {
+          // (`requeues` 0: one re-run, though MAX_REQUEUES allows 2) and only when no model call reached the gate (the
+          // runner's `queryRan` alone isn't trusted for that). No `turn.finished` was shown for it.
+          const noCall = this.sql.exec('SELECT 1 FROM model_calls WHERE turn_id = ? LIMIT 1', fresh.turn_id).toArray().length === 0
+          if (this.held(fresh) && fresh.requeues === 0 && noCall) {
             this.requeue(fresh, true)
             return true
           }
@@ -1081,12 +1087,16 @@ export class AgentCore {
   /**
    * The terminal event (terminal once): the outcome, `ending`, the first routes closed, `turn.finished`.
    *
-   * A9: a `failed stopped|session_crashed` that reaches here was never asked for by this object (a person's stop and
-   * every other stop fence first, and a fenced turn's terminal event never gets here: `ingestOne`). It is the platform
-   * stopping the runner (a rollout, a host restart), so it shows as `failed session_crashed` (a try-again), never as a
-   * stop nobody pressed. With nothing shown yet (no query, part or step), the event is held instead (`held_json`, no
-   * outcome, no `turn.finished`): `released` places the turn once more if its query never started, else `endTurn` ends
-   * it with the held end. An interrupt the person asked for is theirs, never held.
+   * A9: a `failed stopped|session_crashed` that reaches here was never asked for by a person. A person's stop and every
+   * stop of ours that ends the turn (pause, delete, removal, the live and ending watchdog, `containerExited`, the gate)
+   * fence first, and a fenced turn's terminal event never gets here (`ingestOne`). The one unfenced stop of ours is
+   * `watchStarting`'s ambiguous path, which stops a placement it isn't sure was admitted and requeues the turn itself,
+   * so a re-run there is what that path wants. What's left is the platform stopping the runner (a rollout, a host
+   * restart) or the session crashing (it couldn't start, or it died): it shows as `failed session_crashed` (a
+   * try-again), never as a stop nobody pressed. With nothing shown yet (no query, part or step), the event is held
+   * instead (`held_json`, no outcome, no `turn.finished`): `released` places the turn once more if its query never
+   * started and no model call reached the gate, else `endTurn` ends it with the held end. An interrupt the person asked
+   * for is theirs, never held.
    */
   private terminal(t: TurnRow, ev: Extract<RunEventBody, { type: 'finished' | 'failed' }>) {
     if (t.outcome !== null || t.state !== 'live') return

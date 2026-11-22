@@ -1046,20 +1046,56 @@ describe('a platform stop before anything ran: one re-run (A9)', () => {
     expect(h.turn(a.turnId)).toMatchObject({ settled: 1, start_hold_micro: 250_000 })
   }))
 
-  type Op = 'failedStopped' | 'failedCrashed' | 'released' | 'releasedRan' | 'stop' | 'exited' | 'text'
-  const opArb = fc.constantFrom<Op>('failedStopped', 'failedCrashed', 'released', 'releasedRan', 'stop', 'exited', 'text')
-  test.prop([fc.array(opArb, { minLength: 1, maxLength: 12 })], { numRuns: 60 })(
-    "any order of failed, released, a person's stop and containerExited: every turn ends once and is re-run at most once",
-    ops => inAgent(async h => {
+  it('a model call that reached the gate is never re-run, whatever the runner says of queryRan', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-rr-call1'))
+    await settle()
+    h.push(a.turnId, ev.started())
+    expect(await h.core.admitModelCall(a.turnId, 'call-1', { model: 'claude-sonnet-5-5', inputTokens: 1000, maxTokens: 1000, modifiers: {}, micro: 1 })).toEqual({ granted: true })
+    h.push(a.turnId, ev.failed('stopped'), ev.released(null, false))
+    await settle()
+    expect(ends(h, a.runId, a.turnId)).toEqual([expect.objectContaining({ type: 'turn.finished', outcome: 'failed', reason: 'session_crashed' })])
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', requeues: 0 })
+    expect(h.placed()).toEqual([a.turnId])
+  }))
+
+  it('a now send during the hold ends the held turn interrupted: the old question is not re-run after the new answer', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-rr-now01'))
+    await settle()
+    h.push(a.turnId, ev.started(), ev.failed('stopped'))
+    const b = ok(await h.submit('c1', 'key-rr-now02', { priority: 'now' }))
+    expect(ends(h, a.runId, a.turnId)).toEqual([expect.objectContaining({ type: 'turn.finished', outcome: 'interrupted' })])
+    h.push(a.turnId, ev.released(null, false))
+    await settle()
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'interrupted', requeues: 0 })
+    expect(h.turn(b.turnId).state).toBe('live')
+    h.push(b.turnId, ...fullAnswer('the new answer', 2))
+    await settle()
+    expect(h.placed()).toEqual([a.turnId, b.turnId])
+  }))
+
+  type Op = 'failedStopped' | 'failedCrashed' | 'released' | 'releasedRan' | 'stop' | 'exited' | 'text' | 'interrupt' | 'pause' | 'deleted' | 'restart'
+  const opArb = fc.constantFrom<Op>('failedStopped', 'failedCrashed', 'released', 'releasedRan', 'stop', 'exited', 'text', 'interrupt', 'pause', 'deleted', 'restart')
+  test.prop([fc.array(opArb, { minLength: 1, maxLength: 12 })], { numRuns: 80 })(
+    "any order of failed, released, a person's stop, interrupt, pause, delete, containerExited and a reset: every turn ends once and is re-run at most once",
+    ops => inAgent(async h0 => {
+      let h = h0
       const finals: string[] = []
-      h.core.onFinal = t => { finals.push(t.turn_id) }
+      const watchFinals = () => { h.core.onFinal = t => { finals.push(t.turn_id) } }
+      watchFinals()
       const a = ok(await h.submit('c1', 'key-rr-prop1'))
       await settle()
       let gen = 0
+      let rev = 1
+      // The requeue count when the current attempt's query ran (a text or a releasedRan landed on it): it never moves.
+      let ranAt: number | null = null
       for (const o of ops) {
         const t = h.turn(a.turnId)
         const onRunner = t.state === 'live' || t.state === 'ending'
         if (o === 'stop') h.core.stop(a.turnId, { kind: 'person', memberId: MEMBER })
+        else if (o === 'interrupt') h.core.interrupt(a.turnId, { kind: 'person', memberId: MEMBER })
+        else if (o === 'pause') void h.core.pause({ kind: 'person', memberId: 'm_admin' })
+        else if (o === 'deleted') h.core.endChats([{ id: 'c1', rev: ++rev }])
+        else if (o === 'restart') { h = h.restart(); watchFinals() }
         else if (o === 'exited') {
           const runner = t.runner ?? 'runner-0'
           h.pool.runnerTurns.set(runner, [a.turnId])
@@ -1070,10 +1106,12 @@ describe('a platform stop before anything ran: one re-run (A9)', () => {
           else if (o === 'released') h.push(a.turnId, ev.released(null, false))
           else if (o === 'releasedRan') h.push(a.turnId, ev.released(null, true))
           else h.push(a.turnId, ev.text('x'))
+          if ((o === 'text' || o === 'releasedRan') && ranAt === null) ranAt = t.requeues
         }
         await settle()
         expect(ends(h, a.runId, a.turnId).length).toBeLessThanOrEqual(1)
         expect(h.turn(a.turnId).requeues).toBeLessThanOrEqual(1)
+        if (ranAt !== null) expect(h.turn(a.turnId).requeues).toBe(ranAt)
       }
       // Then the runner answers whatever is left and the clock runs out every wait: the turn always ends.
       for (let i = 0; i < 6 && !['ended', 'cancelled'].includes(h.turn(a.turnId).state); i++) {
