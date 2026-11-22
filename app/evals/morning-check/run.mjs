@@ -38,7 +38,9 @@
 // brand's Spending cap to MORNING_CHECK_CAP and reads it back on route 42, and sets the brand's Default model to the
 // label --model maps to (claude-sonnet-5-5 is "Fast"). Before each case it renews the lease and stops once the run has
 // spent its --budget (route 42's month total, less the total at its start). On exit and on signals the lease is given
-// back. The secret is never printed (remote.ts cuts it from any answer or error).
+// back. The eval brand's Default model is left set to that label (the run's last line says so). --target must be
+// INHOUSE_EVAL_ORIGIN, and the run proves it answers from EVAL_DB (a probe chat read back through the door) before it sets
+// anything. The secret is never printed (remote.ts cuts it from any answer or error).
 // --model names the model the results claim, but a routine runs on the brand's Default model (`g:mode`, fixed in the slot
 // when it's made). So in remote mode each case's slot model is read through the door and kept as the case's `ranOn`; a
 // case that ran on another model fails and the run stops (one case's spend at most): the backstop to the graded run's
@@ -202,7 +204,7 @@ if (m.mode === 'remote') {
     if (m.graded) {
       graded = gradedRun({
         door: createDoor(run), admin: callAs(SEED_PEOPLE.admin, new URL(m.baseUrl).origin, a.aud), label: m.graded.label, budgetUsd: m.graded.budgetUsd,
-        tag: `morning-check:${a.sha}:${crypto.randomUUID().slice(0, 8)}`, nowMs: () => Date.now(),
+        tag: `morning-check:${a.sha}:${crypto.randomUUID().slice(0, 8)}`,
       })
     }
   } catch (e) {
@@ -211,18 +213,12 @@ if (m.mode === 'remote') {
     process.exit(2)
   }
 }
-// An interrupted run closes the door (no more shops set), clears the override, gives the eval lease back (graded), then
-// exits (130 on SIGINT, 143 on SIGTERM).
-if (door) clearOnSignals(door, undefined, graded ? () => graded.release() : undefined)
-if (graded) {
-  try {
-    await graded.start()
-  } catch (e) {
-    await graded.release().catch(r => console.error(`run.mjs: the eval lease could not be given back: ${r.message}`))
-    console.error(`run.mjs: STOPPED before any case. ${e.message}`)
-    process.exit(2)
-  }
-}
+// Whether this run may clear the test shop override: a graded run only once its start passed (its start refuses an override
+// another run wrote, which this run must then leave alone); any other remote run from the outset.
+let mayClear = !graded
+// An interrupted run closes the door (no more shops set), clears the override (when it may), gives the eval lease back
+// (graded: a take still in flight is awaited first), then exits (130 on SIGINT, 143 on SIGTERM).
+if (door) clearOnSignals({ close: () => door.close(), clearShop: () => (mayClear ? door.clearShop() : Promise.resolve(null)) }, undefined, graded ? () => graded.release() : undefined)
 const env = door ? remoteEnv({
   door,
   runNow: async clientKey => post(`/api/routines/${ROUTINE_ID}/run`, { clientKey }, await personAuth()),
@@ -255,14 +251,31 @@ const env = door ? remoteEnv({
 
 const out = openResults(a['out-dir'], new Date().toISOString().slice(0, 10), a.sha)
 try {
-  const file = await runAll(env, cases, { date: new Date().toISOString().slice(0, 10), sha: a.sha, model: a.model }, f => out.write(f))
-  console.log(JSON.stringify({ path: out.path, summary: file.summary, failed: file.cases.filter(c => !c.verdict.pass).map(c => [c.id, c.verdict.reasons]) }, null, 2))
-  if (file.stopped) console.error(`\nrun.mjs: STOPPED. ${file.stopped.reason}\nNot run: ${file.notRun.join(', ') || 'none'}. The result is partial (${out.path}).`)
-  process.exitCode = file.stopped ? 2 : file.summary.thresholdMet ? 0 : 1
+  // The graded run's start (remote.ts gradedRun: the lease, the probe chat, the override check, the cap, the Default
+  // model) runs inside this try, so the finally gives the lease back on every path out (#306 review L3).
+  let started = true
+  if (graded) {
+    try {
+      await graded.start()
+      mayClear = true
+    } catch (e) {
+      started = false
+      console.error(`run.mjs: STOPPED before any case. ${e.message}`)
+      process.exitCode = 2
+    }
+  }
+  if (started) {
+    const file = await runAll(env, cases, { date: new Date().toISOString().slice(0, 10), sha: a.sha, model: a.model }, f => out.write(f))
+    console.log(JSON.stringify({ path: out.path, summary: file.summary, failed: file.cases.filter(c => !c.verdict.pass).map(c => [c.id, c.verdict.reasons]) }, null, 2))
+    if (file.stopped) console.error(`\nrun.mjs: STOPPED. ${file.stopped.reason}\nNot run: ${file.notRun.join(', ') || 'none'}. The result is partial (${out.path}).`)
+    process.exitCode = file.stopped ? 2 : file.summary.thresholdMet ? 0 : 1
+  }
 } finally {
   // runAll clears the override after every case; this covers a crash part way (a failure here is printed and fails the run).
-  if (door) await door.clearShop().catch(e => { console.error(`run.mjs: the test shop override could not be cleared: ${e.message}`); process.exitCode = 2 })
+  if (door && mayClear) await door.clearShop().catch(e => { console.error(`run.mjs: the test shop override could not be cleared: ${e.message}`); process.exitCode = 2 })
   if (graded) await graded.release().catch(e => { console.error(`run.mjs: the eval lease could not be given back: ${e.message}`); process.exitCode = 2 })
+  // The graded run doesn't put the Default model back: the eval brand keeps the label --model mapped to.
+  if (graded && mayClear) console.error(`run.mjs: the eval brand's Default model (g:mode) stays ${m.graded.label}: the graded run doesn't put it back.`)
   await build.stop().catch(e => console.error(`run.mjs: the build did not stop cleanly: ${e.message}`))
   for (const p of configsMade) rmSync(p, { force: true })
 }

@@ -218,30 +218,35 @@ export function clearOnSignals(door: Pick<MorningDoor, 'close' | 'clearShop'>, d
 }
 
 /** The graded run's door: the eval lease, the test shop override's read, the cap and the Default model (targets/door.ts). */
-export type GradedDoor = Pick<MemoryDoor, 'takeLease' | 'releaseLease' | 'testShop' | 'setSpendingCap' | 'setDefaultModel'>
+export type GradedDoor = Pick<MemoryDoor, 'hasChat' | 'takeLease' | 'releaseLease' | 'testShop' | 'setSpendingCap' | 'setDefaultModel'>
 
 export interface GradedDeps {
   door: GradedDoor
-  /** Route 42 (`GET /api/usage`, the Usage page's numbers) as the seeded Admin. */
+  /** The seeded Admin on --target: route 42 (`GET /api/usage`, the Usage page's numbers) and the probe chat (route `POST /api/chats`). */
   admin: ApiCall
   /** This run's eval lease tag. */
   tag: string
   /** The Default model label --model maps to (args.ts defaultModelLabel). */
   label: string
   budgetUsd: number
-  nowMs(): number
+  /** The probe chat's id (default: a fresh `eval-probe-<hex>`). */
+  probeId?: () => string
 }
 
 export interface GradedRun {
   /**
-   * Before runAll: takes the eval lease, refuses a test shop override this run didn't write (a morning-check run is on the
-   * deployment or one left it), pins MORNING_CHECK_CAP and reads it back on route 42 (a month at the cap refuses), notes
+   * Before runAll: takes the eval lease, proves --target answers from this door's database (a probe chat made through the
+   * API is read back through the door, as targets/product.ts does), refuses a test shop override this run didn't write (a
+   * morning-check run is on the deployment or one left it), pins MORNING_CHECK_CAP and reads it back on route 42 (a month at the cap refuses), notes
    * the month's spend as the run's start, then sets the Default model to `label`.
    */
   start(): Promise<void>
-  /** Before each case: renews the lease; a reason when the run has spent its --budget or the month reached the cap. */
+  /**
+   * Before each case: renews the lease; a reason when the run has spent its --budget, the month reached the cap, or the
+   * month rolled over (the month's total fell below the run's start, so the run's spend can't be read).
+   */
   beforeCase(): Promise<string | null>
-  /** Gives the lease back if this run took it. */
+  /** Gives the lease back if this run took it, waiting for a take still in flight (a signal during start). */
   release(): Promise<void>
 }
 
@@ -264,12 +269,18 @@ async function usage(admin: ApiCall): Promise<{ spentUsd: number; capUsd: number
 
 export function gradedRun(g: GradedDeps): GradedRun {
   let leased = false
+  let taking: Promise<void> | null = null
   let startUsd: number | null = null
   const capUsd = Number(MORNING_CHECK_CAP.slice(1))
   return {
     async start() {
-      await g.door.takeLease(g.tag, g.nowMs())
-      leased = true
+      taking = g.door.takeLease(g.tag).then(() => { leased = true })
+      await taking
+      // --target must answer from the door's database (EVAL_DB): a chat made there is read back here, or nothing is set.
+      const probe = g.probeId?.() ?? `eval-probe-${crypto.randomUUID().replaceAll('-', '').slice(0, 24)}`
+      const made = await g.admin('POST', '/api/chats', { id: probe, title: 'Eval probe' })
+      if (made.status !== 200 && made.status !== 201) throw new Error(`morning-check: refusing: --target did not make the probe chat (POST /api/chats answered ${made.status})`)
+      if (!(await g.door.hasChat(probe))) throw new Error('morning-check: refusing: the door\'s database does not hold the chat --target just made, so --target is not the eval deployment the door writes to')
       const shop = await g.door.testShop()
       if (shop !== null) throw new Error(`morning-check: refusing: a test shop override (hub:shop ${shop}) is already set on the eval deployment and this run didn't write it: another morning-check run is on it or left it (clear it through the door once none runs)`)
       await g.door.setSpendingCap(MORNING_CHECK_CAP)
@@ -280,14 +291,16 @@ export function gradedRun(g: GradedDeps): GradedRun {
     },
     async beforeCase() {
       if (startUsd === null) throw new Error('morning-check: the graded run was not started')
-      await g.door.takeLease(g.tag, g.nowMs())
+      await g.door.takeLease(g.tag)
       const { spentUsd } = await usage(g.admin)
+      if (spentUsd < startUsd) return `the month rolled over during the run (route 42's total $${spentUsd.toFixed(2)} is below the $${startUsd.toFixed(2)} at its start), so its spend can't be read: it stops before the next case`
       const run = spentUsd - startUsd
       if (run >= g.budgetUsd) return `the run has spent $${run.toFixed(2)} (route 42, since its start), reaching its --budget $${g.budgetUsd.toFixed(2)}, so it stops before the next case`
       if (spentUsd >= capUsd) return `this month's spend ($${spentUsd.toFixed(2)}) has reached the ${MORNING_CHECK_CAP} cap, so the run stops before the next case`
       return null
     },
     async release() {
+      await taking?.catch(() => {})
       if (leased) await g.door.releaseLease(g.tag)
       leased = false
     },

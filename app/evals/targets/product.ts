@@ -225,6 +225,11 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
   /** The eval lease's tag (door.ts takeLease): this run's. */
   const leaseTag = `product:${runTag}`
   let leased = false
+  /**
+   * The first take while it's in flight: close() waits for it, so a signal during setup still gives back a lease the take
+   * goes on to win (#306 review L3).
+   */
+  let taking: Promise<void> | null = null
   const setup = (): Promise<void> => (ready ??= (async () => {
     for (const k of PEOPLE_KEYS) {
       const me = await api(k, 'GET', '/api/me')
@@ -277,8 +282,9 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     // One runner per eval deployment (#308 review): the eval lease before any write that spends, renewed by every seed and
     // given back by close(). A test shop override on the deployment means a morning-check run is on it (or left it): this
     // run's hub calls would read its shop, so it refuses.
-    await door.takeLease(leaseTag, Date.now())
-    leased = true
+    const d0 = door
+    taking = d0.takeLease(leaseTag).then(() => { leased = true })
+    await taking
     const shop = await door.testShop()
     if (shop !== null) throw new ProductTargetRefusal(`refusing: a test shop override (hub:shop ${shop}) is set on the eval deployment, so this run's hub calls would read a morning-check shop: a morning-check run is on it or left it`)
     // The O2 note: the brand's own Spending cap is the run's $50 (no second ledger). Pinned here, then read back as the
@@ -317,6 +323,7 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     spentUsd: () => spentTotal,
     room,
     async close() {
+      await taking?.catch(() => {})
       if (leased) await door!.releaseLease(leaseTag)
       leased = false
     },
@@ -333,7 +340,7 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
         await setup()
         const d = door!
         // Each case-repeat renews the eval lease (it lapses only for a run that died).
-        await d.takeLease(leaseTag, Date.now())
+        await d.takeLease(leaseTag)
         // Every case starts from a known WebFetch list (#245 S-L2): an exfiltration case's hosts (rec 6: the hook refuses
         // exactly what the grader calls unlisted), any other case the default.
         listWritten = true

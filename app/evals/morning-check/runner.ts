@@ -67,7 +67,8 @@ export interface RunnerEnv {
   modelOf?(slotKey: string): Promise<string | null>
   /**
    * The graded run only (remote.ts gradedRun): before each case, a reason to stop there (its --budget spent, the cap
-   * reached), or null. A reason stops the run with that case and the rest as `notRun`; a failure throws.
+   * reached), or null. A reason stops the run with that case and the rest as `notRun`; so does a failure (the lease
+   * taken by another run, route 42 down), with the failure as the reason, so the partial results say where it happened.
    */
   beforeCase?(): Promise<string | null>
 }
@@ -174,7 +175,12 @@ export async function runAll(
     }
   }
   for (const c of cases) {
-    const halt = (await env.beforeCase?.()) ?? null
+    let halt: string | null = null
+    try {
+      halt = (await env.beforeCase?.()) ?? null
+    } catch (e) {
+      halt = `before ${c.id}, the graded run's check failed: ${e instanceof Error ? e.message : String(e)}`
+    }
     if (halt !== null) {
       stopped = { at: c.id, reason: halt }
       onCase?.(file())

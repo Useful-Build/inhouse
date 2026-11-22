@@ -6,15 +6,15 @@
 //    CF_SANDBOX_ACCOUNT_ID (wrangler reads CLOUDFLARE_API_TOKEN itself). MORNING_CHECK_RELEASE_JWT is optional: the eval
 //    build has none, and without it there's no nudge. The database (evals/targets/door.ts assertMorningCheckDatabase) is
 //    a PR's test database (the scripted proof) or EVAL_DB (the graded run).
-//  - graded (--target on EVAL_DB, the eval deployment, behind Access): INHOUSE_EVAL_ACCESS_CLIENT_ID and _SECRET both set
+//  - graded (--target on EVAL_DB, the eval deployment, behind Access): --target is INHOUSE_EVAL_ORIGIN, --timeout-min plus
+//    --settle-min under 100 (the eval lease's TTL less a margin), INHOUSE_EVAL_ACCESS_CLIENT_ID and _SECRET both set
 //    (every request carries them: targets/product.ts accessHeaders), --budget <usd> (above zero, at most
 //    MORNING_CHECK_CAP), --model mapped to the product's Default model label (server/model/catalog.ts), no --model-setting
 //    (the door sets the Default model) and no MORNING_CHECK_RELEASE_JWT (route 67 is the per-PR test deploy's).
-//    Elsewhere the Access token is refused unless both are set, the release token is refused beside it, and --budget is
-//    refused.
+//    Elsewhere the Access token is refused (a per-PR deploy has no Access), and so is --budget.
 // The modes' options are mutually exclusive: a remote run given a local option (or the reverse) is refused, never ignored.
-import { DoorRefusal, EVAL_DB } from '../targets/door.ts'
-import { EVAL_ACCESS_CLIENT_ID_VAR, EVAL_ACCESS_CLIENT_SECRET_VAR, EVAL_CAP } from '../targets/product.ts'
+import { DoorRefusal, EVAL_DB, EVAL_LEASE_TTL_MS } from '../targets/door.ts'
+import { EVAL_ACCESS_CLIENT_ID_VAR, EVAL_ACCESS_CLIENT_SECRET_VAR, EVAL_CAP, EVAL_ORIGIN_VAR } from '../targets/product.ts'
 import { CATALOG } from '../../server/model/catalog.ts'
 
 export type RunArgs = Record<string, string | undefined>
@@ -112,9 +112,19 @@ export function runMode(a: RunArgs, env: Record<string, string | undefined>): Ru
     const access = accessSet(env)
     if (access && releaseJwt) throw new Error('run.mjs: MORNING_CHECK_RELEASE_JWT is for a per-PR test deploy (route 67): the Access-locked eval host takes no release token, and Run now pokes the scheduler itself')
     const database = env.INHOUSE_EVAL_D1_NAME!
+    // The Access service token goes to the eval host only: a per-PR deploy has no Access (#306 review L4).
+    if (access && database !== EVAL_DB) throw new Error(`run.mjs: ${EVAL_ACCESS_CLIENT_ID_VAR} and ${EVAL_ACCESS_CLIENT_SECRET_VAR} are for the eval deployment (${EVAL_DB}) only: a per-PR deploy has no Access`)
     let graded: Graded | null = null
     if (database === EVAL_DB) {
       if (!access) throw new Error(`run.mjs: the graded run (${EVAL_DB}) goes to the Access-locked eval host: set ${EVAL_ACCESS_CLIENT_ID_VAR} and ${EVAL_ACCESS_CLIENT_SECRET_VAR}`)
+      // --target is the eval host the product suite names (#306 review M1), so the token only ever goes there; the run also
+      // proves the host answers from EVAL_DB before anything is set (remote.ts gradedRun's probe chat).
+      const evalOrigin = env[EVAL_ORIGIN_VAR]
+      if (!evalOrigin || evalOrigin.replace(/\/$/, '') !== url.origin) throw new Error(`run.mjs: the graded run's --target must be ${EVAL_ORIGIN_VAR} (the eval host), which ${evalOrigin ? 'names another origin' : 'is not set'}`)
+      // A case may take --timeout-min plus --settle-min; the lease is renewed per case, so that must stay well under its TTL.
+      const caseMin = Number(a['timeout-min'] ?? '20') + Number(a['settle-min'] ?? '2')
+      const maxMin = EVAL_LEASE_TTL_MS / 60_000 - 20
+      if (!Number.isFinite(caseMin) || caseMin >= maxMin) throw new Error(`run.mjs: --timeout-min plus --settle-min must be under ${maxMin} in the graded run (the eval lease lasts ${EVAL_LEASE_TTL_MS / 60_000} minutes and is renewed per case)`)
       if (modelSetting) throw new Error('run.mjs: the graded run sets the Default model from --model through the door: --model-setting is for a per-PR scripted run')
       graded = { budgetUsd: budgetOf(a.budget), label: defaultModelLabel(a.model) }
     } else if (a.budget !== undefined) {

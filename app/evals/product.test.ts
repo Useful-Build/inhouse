@@ -57,8 +57,11 @@ class FakeDoor implements MemoryDoor {
   otherLease = false
   /** A test shop override on the deployment (`hub:shop`). */
   shop: string | null = null
+  /** Holds the take open until it resolves (a signal during setup's take). */
+  takeGate?: Promise<void>
   async takeLease(tag: string) {
     this.leases.push(`take ${tag}`)
+    await this.takeGate
     if (this.otherLease) throw new DoorRefusal('refusing: another eval run (morning-check:abc) holds the eval deployment')
   }
   async releaseLease(tag: string) { this.leases.push(`release ${tag}`) }
@@ -199,6 +202,21 @@ describe('the eval-brand check (server side, before the first chat)', () => {
     expect(shop.calls).toEqual(['hasChat'])
     await target.close!()
     expect(shop.leases).toEqual(['take product:7-1', 'shop?', 'release product:7-1'])
+  })
+  // #306 review L3: a SIGINT while setup's take is in flight: close() waits for it and gives the won lease back.
+  it('close() during the first take waits for it, then gives the lease back', async () => {
+    const door = new FakeDoor()
+    let open!: () => void
+    door.takeGate = new Promise<void>((r) => (open = r))
+    const target = make(server(), door)
+    const seeding = target.seed([], { caseId: 'N01', rep: 1, canary: 'c' }).catch(() => null)
+    while (!door.leases.includes('take product:7-1')) await new Promise((r) => setImmediate(r))
+    const closing = target.close!()
+    open()
+    await closing
+    expect(door.leases.slice(0, 1)).toEqual(['take product:7-1'])
+    expect(door.leases).toContain('release product:7-1')
+    await seeding
   })
   it('a target that never took the lease gives nothing back', async () => {
     const door = new FakeDoor()

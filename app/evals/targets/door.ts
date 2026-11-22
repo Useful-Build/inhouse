@@ -13,7 +13,10 @@
 // candidate's. createDoor's own runner keeps (b).
 // One runner per eval deployment (#308 review): the product target and the morning-check graded run each take the eval
 // lease (a `settings` row, owner `test-control`, key `eval:lease`, holding the run's tag and an expiry) before any spend,
-// and give it back on exit. The product target also refuses to start while a test shop override (`hub:shop`) is set.
+// and give it back on exit. The product target also refuses to start while a test shop override (`hub:shop`) is set. The
+// lease's clock is D1's own (julianday('now'), D1_NOW_MS), never a runner's, so two runners' clocks can't disagree about expiry.
+// Break-glass, only once no run is going: a dead run's lease lapses after EVAL_LEASE_TTL_MS, or is removed at once with
+//   npx wrangler d1 execute inhouse-sbx-eval-db --remote --config <the sandbox config> --command "DELETE FROM settings WHERE owner = 'test-control' AND key = 'eval:lease'"
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
@@ -81,11 +84,11 @@ export interface MemoryDoor {
    */
   setDefaultModel(label: string): Promise<void>
   /**
-   * Takes (or renews) the eval lease for `tag` until `nowMs + EVAL_LEASE_TTL_MS`, in one conditional upsert: it goes
-   * through only when no row is there, the row's lease has expired, or it is this tag's. Read back: another tag there is a
-   * DoorRefusal naming it and its expiry.
+   * Takes (or renews) the eval lease for `tag` until D1's now + EVAL_LEASE_TTL_MS, in one conditional upsert on D1's clock:
+   * it goes through only when no row is there, the row's lease has expired, or it is this tag's. Read back: another tag
+   * there is a DoorRefusal naming it and its expiry.
    */
-  takeLease(tag: string, nowMs: number): Promise<void>
+  takeLease(tag: string): Promise<void>
   /** Gives the lease back if this tag holds it (another's is left alone), and reads back that this tag holds none. */
   releaseLease(tag: string): Promise<void>
   /** The test shop override's host (`hub:shop`, the morning-check door's row), or null when none is set. */
@@ -113,7 +116,13 @@ export function assertSandboxDatabase(name: string | undefined, env: Record<stri
   return name
 }
 
-export function createDoor(run: RunSql): MemoryDoor {
+/** D1's own clock in milliseconds, as SQL: one value for the whole statement. */
+// julianday('now') rather than unixepoch('subsec'): the same instant in ms, without needing SQLite 3.42's subsec modifier
+// (D1's SQL docs name no SQLite version). SQLite keeps 'now' fixed for the whole statement.
+export const D1_NOW_MS = "CAST(ROUND((julianday('now') - 2440587.5) * 86400000) AS INTEGER)"
+
+/** `nowSql` is the SQL for "now" in ms (default D1_NOW_MS; tests give a fixed integer to step a clock). */
+export function createDoor(run: RunSql, nowSql: () => string = () => D1_NOW_MS): MemoryDoor {
   return {
     async hasChat(id) {
       if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw new DoorRefusal('not a chat id')
@@ -155,19 +164,18 @@ export function createDoor(run: RunSql): MemoryDoor {
       const now = (await run("SELECT value_json FROM settings WHERE owner = 'brand' AND key = 'g:mode'")).map((r) => r.value_json)
       if (now.length !== 1 || now[0] !== value) throw new DoorRefusal(`the Default model reads back ${JSON.stringify(now)}, not ${value}`)
     },
-    async takeLease(tag, nowMs) {
+    async takeLease(tag) {
       if (!LEASE_TAG.test(tag)) throw new DoorRefusal('not an eval lease tag')
-      if (!Number.isSafeInteger(nowMs) || nowMs <= 0) throw new DoorRefusal('not a time')
-      const until = nowMs + EVAL_LEASE_TTL_MS
+      const now = nowSql()
       await run(
-        `INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES (${sqlString(TEST_SHOP_OWNER)}, '${LEASE_KEY}', ${sqlString(JSON.stringify({ tag, until }))}, 1, ${nowMs}, 'eval', 'eval') ` +
+        `INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES (${sqlString(TEST_SHOP_OWNER)}, '${LEASE_KEY}', json_object('tag', ${sqlString(tag)}, 'until', ${now} + ${EVAL_LEASE_TTL_MS}), 1, ${now}, 'eval', 'eval') ` +
           `ON CONFLICT (owner, key) DO UPDATE SET value_json = excluded.value_json, rev = settings.rev + 1, updated_at_ms = excluded.updated_at_ms ` +
-          `WHERE json_extract(settings.value_json, '$.until') <= ${nowMs} OR json_extract(settings.value_json, '$.tag') = ${sqlString(tag)}`,
+          `WHERE json_extract(settings.value_json, '$.until') <= ${now} OR json_extract(settings.value_json, '$.tag') = ${sqlString(tag)}`,
       )
       const held = (await run(`SELECT value_json FROM settings WHERE owner = ${sqlString(TEST_SHOP_OWNER)} AND key = '${LEASE_KEY}'`)).map((r) => r.value_json)
       let lease: { tag?: unknown; until?: unknown } | null = null
       try { lease = held.length === 1 ? JSON.parse(String(held[0])) : null } catch { /* named below */ }
-      if (lease?.tag !== tag || lease.until !== until) {
+      if (lease?.tag !== tag || typeof lease.until !== 'number') {
         const other = typeof lease?.tag === 'string' ? lease.tag : JSON.stringify(held)
         const till = typeof lease?.until === 'number' ? ` until ${new Date(lease.until).toISOString()}` : ''
         throw new DoorRefusal(`refusing: another eval run (${other}) holds the eval deployment${till}: one runner per eval deployment`)
