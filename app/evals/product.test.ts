@@ -802,11 +802,11 @@ describe('the eval people\'s tokens', () => {
     const releaseOnly = ['exfiltration/store-data/run.mjs', 'morning-check/run.mjs']
     expect(quoted.sort()).toEqual([...releaseOnly, 'targets/product.ts'])
     for (const f of releaseOnly) expect(readFileSync(new URL(`./${f}`, import.meta.url), 'utf8'), f).toMatch(/\{ 'Cf-Access-Jwt-Assertion': releaseJwt \}/)
-    // #308 review L1: and releaseJwt is only ever MORNING_CHECK_RELEASE_JWT: store-data reads it there, morning-check reads
-    // it through args.ts, and nothing in evals/ gives it any other value (an assignment or a property with a value).
+    // #308 review L1: and releaseJwt is only ever MORNING_CHECK_RELEASE_JWT: both runners read it through morning-check
+    // args.ts, and nothing in evals/ gives it any other value (an assignment or a property with a value).
     const sets = sources.flatMap((f) => [...readFileSync(f, 'utf8').matchAll(/^.*\breleaseJwt\b\s*(?:=(?![=>])|:(?!\s*string\b)).*$/gm)].map((m) => `${f.split('/evals/')[1]}: ${m[0].trim()}`))
     expect(sets.sort()).toEqual([
-      'exfiltration/store-data/run.mjs: const releaseJwt = process.env.MORNING_CHECK_RELEASE_JWT',
+      'exfiltration/store-data/run.mjs: const releaseJwt = m.releaseJwt',
       'morning-check/args.ts: const releaseJwt = env.MORNING_CHECK_RELEASE_JWT || null',
       'morning-check/run.mjs: const releaseJwt = m.releaseJwt',
     ])
