@@ -32,6 +32,9 @@ export const AuditActionSchema = z.enum([
   'restore.confirmed',
   // P8a R: the restore's audit re-append put back a pseudonymised member row for an actor added after the backup.
   'restore.member_placeholder',
+  // P8a F2: a Shopify privacy webhook arrived (Shopify's signature checked), and the release job closed one once the
+  // Inhouse team had acted on it. Our request id and the topic only: never a Shopify customer id, email or phone.
+  'privacy.requested', 'privacy.closed',
 ])
 export type AuditAction = z.infer<typeof AuditActionSchema>
 
@@ -125,6 +128,11 @@ const settingChanged = line('setting.changed', {
 /** A backup's or a restore's id (ops/backup/backup.ts `timeId`): `<yyyymmdd>T<hhmmssSSS>Z-<8 hex>`. */
 const RestoreIdSchema = z.string().regex(/^\d{8}T\d{9}Z-[0-9a-f]{8}$/)
 
+/** A privacy request (server/webhooks/shopify-privacy): `pr_` + 128 random bits. */
+export const PrivacyRequestIdSchema = z.string().regex(new RegExp(`^pr_${RANDOM}$`))
+/** Shopify's three compliance topics (https://shopify.dev/docs/apps/build/compliance/privacy-law-compliance). */
+export const PrivacyTopicSchema = z.enum(['customers/data_request', 'customers/redact', 'shop/redact'])
+
 const otherLines = [
   line('member.invited', { ...member, role: MemberRoleSchema }),
   line('member.reinvited', { ...member, role: MemberRoleSchema }),
@@ -184,6 +192,9 @@ const otherLines = [
   line('restore.confirmed', { restoreId: RestoreIdSchema, backupId: RestoreIdSchema, approvedBy: MemberIdSchema }),
   /** The member id the placeholder row keeps (its actor's audit lines need it), and the restore that wrote it. */
   line('restore.member_placeholder', { memberId: MemberIdSchema, restoreId: RestoreIdSchema }),
+  // P8a F2. The actor is `m_system` on both: Shopify and the release token have no member row.
+  line('privacy.requested', { requestId: PrivacyRequestIdSchema, topic: PrivacyTopicSchema }),
+  line('privacy.closed', { requestId: PrivacyRequestIdSchema, topic: PrivacyTopicSchema, by: z.literal('release') }),
 ] as const
 
 /**

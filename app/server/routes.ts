@@ -34,6 +34,10 @@ import { listNotifications, markNotificationsRead } from './api/bell.ts'
 import { getToday, putAside } from './api/today.ts'
 // P4 W5: the Library (rows 62 to 66).
 import { deleteLibraryFiles, downloadLibraryFile, listLibrary, restoreLibraryFiles, uploadLibraryFile } from './api/library.ts'
+// P8a F2: Shopify's privacy webhooks (rows 91 to 93, `webhookRoutes`) and the runbook's close (row 94).
+import { customersDataRequest, customersRedact, shopRedact } from './webhooks/shopify-privacy/handler.ts'
+import type { WebhookHandler } from './webhooks/shopify-privacy/handler.ts'
+import { closePrivacyRequest } from './webhooks/shopify-privacy/close.ts'
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
@@ -179,6 +183,22 @@ export const routes: readonly Route[] = [
   /* 54 */ { method: 'POST', pattern: '/api/routines/:id/run', handler: runRoutineNow },
   /* 55 */ { method: 'POST', pattern: '/api/routines/:id/delete', handler: deleteRoutine },
   /* 56 */ { method: 'POST', pattern: '/api/routines/:id/restore', handler: restoreRoutine },
+  // P8a F2: the runbook closes a Shopify privacy request once the Inhouse team has acted on it (release only).
+  /* 94 */ { method: 'POST', pattern: '/api/ops/privacy-requests/:id/close', handler: closePrivacyRequest },
+]
+
+/** A webhook route: served by server/index.ts before sign-in, its handler authenticating the request itself. */
+export interface WebhookRoute { readonly method: 'POST'; readonly pattern: string; readonly handler: WebhookHandler }
+
+/**
+ * The closed list of routes outside sign-in (P2 plan, "Routes"): Shopify's privacy webhooks (P8a F2), authenticated by
+ * Shopify's HMAC. Each has a `webhook` row in access-matrix.ts, which `checkAccess` refuses to every principal, so
+ * api.ts never serves one.
+ */
+export const webhookRoutes: readonly WebhookRoute[] = [
+  /* 91 */ { method: 'POST', pattern: '/api/webhooks/shopify/customers-data-request', handler: customersDataRequest },
+  /* 92 */ { method: 'POST', pattern: '/api/webhooks/shopify/customers-redact', handler: customersRedact },
+  /* 93 */ { method: 'POST', pattern: '/api/webhooks/shopify/shop-redact', handler: shopRedact },
 ]
 
 /** The route for this method and path, with its params, or null (404 `not_found`). */

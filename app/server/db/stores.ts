@@ -42,6 +42,10 @@ import type { TodayStore } from '../today/store.ts'
 import { routineStore } from '../routines/store.ts'
 import type { RoutineStore } from '../routines/store.ts'
 
+// P8a F2's slot.
+import { privacyRequestStore } from '../webhooks/shopify-privacy/store.ts'
+import type { PrivacyRequestStore } from '../webhooks/shopify-privacy/store.ts'
+
 export interface Stores extends AuthStores {
   members: MemberDirectory & MemberStore
   grants: GrantStore & GrantStoreImpl
@@ -81,6 +85,9 @@ export interface Stores extends AuthStores {
 
   /** P4 W5 (p4-w5.md): the Library's uploads, marks and listed files. */
   library: LibraryStore
+
+  /** P8a F2: Shopify's privacy requests: route 94's close and the `privacy_requests` signal (the webhooks write their own). */
+  privacyRequests: PrivacyRequestStore
 }
 
 /** What the stores read from the Worker's env. `AUDIT_HASH_KEY` is a secret on the product Worker (a var in the test build). */
@@ -149,5 +156,7 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
     routines: routineStore({ db }),
 
     library: libraryStore({ db, bucket: env.FILES }),
+
+    privacyRequests: privacyRequestStore(db),
   }
 }

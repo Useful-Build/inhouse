@@ -17,7 +17,8 @@ test.afterAll(async ({ request }) => {
 
 const admin = actor('admin')
 const rows = matrixRows()
-const writes = rows.filter(r => r.method !== 'GET')
+// P8a F2's webhook rows have no browser caller and no Origin rule: Shopify's signature answers first (webhooks.spec.ts).
+const writes = rows.filter(r => r.method !== 'GET' && r.class !== 'webhook')
 
 const bodyOf = (row: (typeof rows)[number]): CallOptions => {
   const c = caseFor(row)

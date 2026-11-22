@@ -18,8 +18,11 @@ import type { Method } from '../routes.ts'
  *   and no Inhouse principal reaches an `open` row.
  * - `report`: POST only, per `allow` (Inhouse included, no grant: the error reporter posts from both hosts); never a
  *   service token. Its handler gets no stores (api.ts), so it can only log. No `CanKey` points at one.
+ * - `webhook`: the closed list of Shopify's privacy webhooks (P8a F2, routes 91 to 93): no principal ever reaches one
+ *   through api.ts (`checkAccess` refuses them all). server/index.ts serves them before sign-in, authenticated by
+ *   Shopify's HMAC instead (server/webhooks/shopify-privacy). `allow` and `services` are empty.
  */
-export type RouteClass = 'brand_data' | 'baseline' | 'technical' | 'personal' | 'open' | 'report'
+export type RouteClass = 'brand_data' | 'baseline' | 'technical' | 'personal' | 'open' | 'report' | 'webhook'
 
 /** One row per route. `method` and `pattern` match the route's own (server/routes.ts) exactly. */
 export interface AccessRow {
@@ -141,6 +144,8 @@ const owner = (object: AccessObject | undefined, memberId: string): AccessDecisi
   object === undefined ? OBJECT_REQUIRED : object.ownerId === memberId ? OK : { refused: 'forbidden', reason: 'not_owner' }
 
 export const checkAccess: CheckAccess = (principal, row, object, nowMs) => {
+  // A webhook row has no signed-in caller: Shopify's HMAC is its authentication (server/index.ts), never a JWT.
+  if (row.class === 'webhook') return NO
   const read = row.method === 'GET'
   if (principal.kind === 'service') {
     if (!row.services?.includes(principal.name)) return NO

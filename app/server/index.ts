@@ -7,8 +7,9 @@ import type { ApiParts } from './api.ts'
 import { authenticate, checkAccess, checkOrigin } from './auth/index.ts'
 import { openStores } from './db/stores.ts'
 import { apiError } from './http.ts'
-import { routes } from './routes.ts'
+import { routes, webhookRoutes } from './routes.ts'
 import { safeError } from './safe-error.ts'
+import { serveWebhook } from './webhooks/serve.ts'
 
 // P3's classes (p3-design section 1), each in its owner's file: the Durable Objects the Worker config binds, and the
 // egress entrypoints the Runner registers as intercepts.
@@ -26,6 +27,9 @@ export default {
     const { pathname } = new URL(request.url)
     if (pathname !== '/api' && !pathname.startsWith('/api/')) return env.ASSETS.fetch(request)
     const requestId = crypto.randomUUID()
+    // P8a F2: Shopify's privacy webhooks, the one exception to sign-in, authenticated by Shopify's HMAC (webhooks/serve.ts).
+    const hook = await serveWebhook(webhookRoutes, accessMatrix, request, env, requestId)
+    if (hook) return hook
     try {
       return await api(parts, request, env, ctx, requestId)
     } catch (err) {

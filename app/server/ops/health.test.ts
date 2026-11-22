@@ -39,6 +39,8 @@ describe('the health route', () => {
         { name: 'usage_stranded', ok: true },
         // P4 W2: the routines signal (no routines here: green).
         { name: 'routines', ok: true },
+        // P8a F2: no open Shopify privacy request here: green.
+        { name: 'privacy_requests', ok: true },
       ] },
     })
   })

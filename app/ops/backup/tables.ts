@@ -78,6 +78,8 @@ export const TABLE_RULES: readonly TableRule[] = [
   // P8a: the egress record. `egress_fetches_no_update` refuses every UPDATE (0600), and rows only ever arrive with a
   // rising n.
   { name: 'egress_fetches', orderBy: ['n'], mode: 'append_only' },
+  // P8a F2: a few rows a year, and closing one updates it, so a whole snapshot.
+  { name: 'privacy_requests', orderBy: ['id'], mode: 'snapshot' },
 ]
 
 /** A name that goes into SQL as a quoted identifier: letters, digits and `_` only. */

@@ -92,6 +92,8 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   // P8a: the egress record names a host, a runner and a container generation, never a member, a run or a turn (one
   // container serves several sessions at once), so no row is a person's; it goes by age in 30 days.
   egress_fetches: { action: 'keep', why: 'no member id: the egress knows the container, not the run; retention removes rows after 30 days. A host can carry data in a subdomain from a refused exfil attempt: kept 30 days, ops-only and not exported. A host over 253 characters is not recorded, only logged' },
+  // P8a F2: a privacy request names a Shopify customer by Shopify id, never a member; its ids go when the runbook closes it.
+  privacy_requests: { action: 'keep', why: 'no member id: a Shopify customer by Shopify id only, cleared when the request is closed (route 94); the topic and dates stay as the record that it was answered' },
 }
 
 /** The actions each retention class allows. */
