@@ -57,14 +57,16 @@ export interface SignalDeps {
 const processSignals: SignalDeps = { on: (s, h) => void process.once(s, h), exit: code => process.exit(code), error: line => console.error(line) }
 
 /**
- * run.mjs's stop handlers: on SIGINT or SIGTERM the override is cleared (awaited) before the process exits 130 or 143, so
- * an interrupted run leaves no override behind. A clear that fails is printed; the exit code stays the signal's.
+ * run.mjs's stop handlers: on SIGINT or SIGTERM the door is closed first (runAll may still be going, and its next setShop
+ * must not write an override after the clear), then the override is cleared (awaited) before the process exits 130 or 143,
+ * so an interrupted run leaves no override behind. A clear that fails is printed; the exit code stays the signal's.
  */
-export function clearOnSignals(clear: () => Promise<unknown>, d: SignalDeps = processSignals): void {
+export function clearOnSignals(door: Pick<MorningDoor, 'close' | 'clearShop'>, d: SignalDeps = processSignals): void {
   for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]] as const) {
     d.on(signal, () => {
+      door.close()
       d.error(`run.mjs: ${signal}: clearing the test shop override before exiting`)
-      clear().then(
+      door.clearShop().then(
         () => d.exit(code),
         (e: unknown) => {
           d.error(`run.mjs: the test shop override could not be cleared: ${e instanceof Error ? e.message : String(e)}`)

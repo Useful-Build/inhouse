@@ -24,6 +24,11 @@ const SHOPS = new Set(META.map(c => hostOf(c.id)))
 export interface MorningDoor extends Reader {
   /** Sets the test shop override to one of the set's shops and reads it back. */
   setShop(host: string): Promise<void>
+  /**
+   * Stops the door setting any shop: every later setShop throws DoorRefusal before any SQL (the stop handlers call it
+   * before their clear, so a run still going can't write an override after it). Clearing and reading still work.
+   */
+  close(): void
   /** Removes the override and reads back that none is left. Returns the host it removed (null: none was set). */
   clearShop(): Promise<string | null>
 }
@@ -37,8 +42,14 @@ const strOrNull = (v: unknown, what: string): string | null => (v === null ? nul
 export function createMorningDoor(run: RunSql, nowMs: () => number = Date.now): MorningDoor {
   const where = `owner = ${sqlString(TEST_SHOP_OWNER)} AND key = ${sqlString(TEST_SHOP_KEY)}`
   const held = async (): Promise<unknown[]> => (await run(`SELECT value_json FROM settings WHERE ${where}`)).map(r => r.value_json)
+  let closed = false
   return {
+    close() {
+      closed = true
+    },
     async setShop(host) {
+      // Checked in the same tick as the INSERT below starts (wrangler runs synchronously), so a close can't fall between.
+      if (closed) throw new DoorRefusal('refusing: the door is closed (the run is stopping), so no shop is set')
       if (!SHOPS.has(host)) throw new DoorRefusal(`refusing: ${JSON.stringify(host)} is not one of the morning-check set's shops`)
       const value = JSON.stringify(host)
       const at = nowMs()

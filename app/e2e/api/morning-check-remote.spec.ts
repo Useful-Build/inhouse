@@ -65,9 +65,16 @@ test('the morning-check set runs remotely: the outage shop passes graded, a work
   let leftover: string | null = null
   try {
     file = await runAll(env, cases, { date: new Date().toISOString().slice(0, 10), sha: 'e2e0000', model: 'scripted' })
-  } finally {
-    leftover = await d.clearShop()
+  } catch (runError) {
+    // The run failed: clear anyway, and if that fails too, report both (the clear's error never hides the run's).
+    try {
+      await d.clearShop()
+    } catch (clearError) {
+      throw new Error(`the run failed: ${String(runError)}; and the test shop override could not be cleared: ${String(clearError)}`, { cause: runError })
+    }
+    throw runError
   }
+  leftover = await d.clearShop()
   expect(leftover, 'runAll left no override').toBeNull()
 
   expect(file.stopped).toBeUndefined()

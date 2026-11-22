@@ -11,6 +11,7 @@ import type { CallToolOptions, CallerScope, HubResult } from '../../hub/index/co
 import { reset } from '../db/test-support.ts'
 import type { ReadGatewayLike } from './hub.ts'
 import { TEST_SHOP_KEY, TEST_SHOP_OWNER, SHOP_HOST, readTestShop, withTestShop } from './test-shop.ts'
+import * as real from './test-shop.ts'
 import * as off from './test-shop-off.ts'
 import { SHOP_HOST as HUB_SHOP_HOST } from '../../hub/index/schemas.ts'
 import { handleHub, hubRouteDeps } from './hub.ts'
@@ -81,6 +82,11 @@ describe('withTestShop (test and eval builds)', () => {
 })
 
 describe('the off stand-in (every other build)', () => {
+  it('has every export of the real module, and its shop host pattern matches nothing', () => {
+    expect(Object.keys(off).sort()).toEqual(Object.keys(real).sort())
+    expect(off.SHOP_HOST.test('example-mc-late-orders.myshopify.com')).toBe(false)
+  })
+
   it('returns the hub as it is, names nothing and reads nothing (failure 4)', async () => {
     const { hub } = recordingHub()
     await setRow(TEST_SHOP_OWNER, JSON.stringify(HOST))

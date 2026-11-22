@@ -96,6 +96,7 @@ describe('the remote runner env', () => {
     let now = 0
     const door: MorningDoor = {
       setShop: async (h: string) => { held = h; log.push(`set ${h}`) },
+      close: () => {},
       clearShop: async () => { const was = held; held = null; log.push('clear'); return was },
       slot: async (k: string) => { log.push(`poll ${held ?? 'none'}`); return { slot_key: k, state: 'ended', failure: null, result_text: 'found 0 things', turn_id: null, claimed_at_ms: 1 } },
       items: async () => [],
@@ -216,12 +217,12 @@ describe('runAll in remote mode, the real door on a fake build', () => {
 })
 
 describe('run.mjs stop handlers (MEDIUM 3)', () => {
-  function signals(clear: () => Promise<unknown>) {
+  function signals(clear: () => Promise<string | null>, close: () => void = () => {}) {
     const handlers = new Map<string, () => void>()
     const log: string[] = []
     let exited: (code: number) => void = () => {}
     const exit = new Promise<number>(done => { exited = done })
-    clearOnSignals(clear, { on: (s, h) => void handlers.set(s, h), exit: code => { log.push(`exit ${code}`); exited(code) }, error: line => void log.push(line) })
+    clearOnSignals({ close, clearShop: clear }, { on: (s, h) => void handlers.set(s, h), exit: code => { log.push(`exit ${code}`); exited(code) }, error: line => void log.push(line) })
     return { handlers, log, exit }
   }
 
@@ -229,13 +230,35 @@ describe('run.mjs stop handlers (MEDIUM 3)', () => {
     let release: () => void = () => {}
     const cleared = new Promise<void>(done => { release = done })
     const order: string[] = []
-    const s = signals(async () => { order.push('clear started'); await cleared; order.push('clear done') })
+    const s = signals(async () => { order.push('clear started'); await cleared; order.push('clear done'); return null }, () => void order.push('closed'))
     expect([...s.handlers.keys()]).toEqual(['SIGINT', 'SIGTERM'])
     s.handlers.get(signal)!()
     expect(s.log.filter(l => l.startsWith('exit'))).toEqual([])
     release()
     expect(await s.exit).toBe(code)
-    expect(order).toEqual(['clear started', 'clear done'])
+    expect(order).toEqual(['closed', 'clear started', 'clear done'])
+  })
+
+  // Opus round 2 LOW: a SIGTERM to node alone leaves runAll going; its next setShop must not write after the clear.
+  it('after the signal the door is closed: the run\'s next useShop is refused before any INSERT, and nothing is left set', async () => {
+    const { run, statements, d1 } = database()
+    const door = createMorningDoor(run)
+    const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => {}, nowMs: () => 0, caseTimeoutMs: 1, settleMs: 1, warn: () => {} })
+    await env.useShop(HOST)
+    const s = signals(() => door.clearShop(), () => door.close())
+    s.handlers.get('SIGTERM')!()
+    const after = statements.length
+    await expect(env.useShop(hostOf('outage-all'))).rejects.toBeInstanceOf(DoorRefusal)
+    expect(await s.exit).toBe(143)
+    expect(statements.slice(after).filter(q => q.startsWith('INSERT'))).toEqual([])
+    expect(await readTestShop(d1)).toBeNull()
+    // A run that goes on after the signal fails its case on the refused shop and never presses Run now.
+    const pressed: string[] = []
+    const going = remoteEnv({ door, runNow: async k => void pressed.push(k), alarm: null, pause: async () => {}, nowMs: () => 0, caseTimeoutMs: 1, settleMs: 1, warn: () => {} })
+    const file = await runAll(going, [META.find(c => c.id === 'late-orders')!], { date: '2026-11-22', sha: 'abc1234', model: 'scripted' })
+    expect(file.cases[0]!.observed).toMatchObject({ ok: false, cause: expect.stringContaining('the door is closed') })
+    expect(pressed).toEqual([])
+    expect(statements.slice(after).filter(q => q.startsWith('INSERT'))).toEqual([])
   })
 
   it('a clear that fails is printed and the exit code stays the signal\'s', async () => {

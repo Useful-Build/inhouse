@@ -139,8 +139,8 @@ const build = new Build({
 
 // The remote mode's door: wrangler on the sandbox database only (evals/targets/door.ts refuses any other).
 const door = m.mode === 'remote' ? createMorningDoor(wranglerRunner({ database: m.database, config: m.wranglerConfig, env: process.env })) : null
-// An interrupted run clears the override before it exits (130 on SIGINT, 143 on SIGTERM).
-if (door) clearOnSignals(() => door.clearShop())
+// An interrupted run closes the door (no more shops set), clears the override, then exits (130 on SIGINT, 143 on SIGTERM).
+if (door) clearOnSignals(door)
 const env = door ? remoteEnv({
   door,
   runNow: async clientKey => post(`/api/routines/${ROUTINE_ID}/run`, { clientKey }, await personJwt()),
