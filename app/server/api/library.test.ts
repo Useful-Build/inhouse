@@ -457,7 +457,9 @@ describe('more refusals (review fold)', () => {
   })
   it('a D1 failure at the save step removes the object and the pending row', async () => {
     const before = await leftovers()
-    await expect(upload(personPrincipal(A, 'member'), 'a.csv', enc.encode('a,1\n'), {}, racing({ failBatch: true }))).rejects.toThrow('d1 down at the save')
+    const err = await upload(personPrincipal(A, 'member'), 'a.csv', enc.encode('a,1\n'), {}, racing({ failBatch: true })).catch((e: unknown) => e)
+    // The storage error is the cause; the message names what failed only (P8a P-auth: no D1 text in a message).
+    expect(err).toMatchObject({ name: 'StoreUnavailableError', message: 'D1 failed', cause: { message: 'd1 down at the save' } })
     expect(await leftovers()).toEqual(before)
   })
   it('a cursor that is not ours is 400', async () => {

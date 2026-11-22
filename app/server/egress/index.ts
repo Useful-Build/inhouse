@@ -21,6 +21,7 @@ import { jsonAnswer, messagesError, RUN_TOKEN_HEADER } from './http.ts'
 import { mcpHandler } from '../mcp/server/index.ts'
 import { modelRoute } from './model.ts'
 import { storeRoute } from './store.ts'
+import { safeError } from '../safe-error.ts'
 
 /** The test issuer's compile-time switch (vite.config.ts); true in the test and eval builds only. */
 declare const __INHOUSE_TEST_BUILD__: boolean
@@ -45,7 +46,21 @@ function withoutToken(request: Request): Request {
   return new Request(request, { headers })
 }
 
+/**
+ * The egress's one entry. Its last catch answers a fixed 500 and logs the error's name only (P8a P-auth): an uncaught
+ * throw would put its message in the runtime's own exception log. A failure inside a streamed body, after the answer
+ * left, is the route's own to handle.
+ */
 export async function handleEgress(request: Request, d: EgressDeps): Promise<Response> {
+  try {
+    return await routeEgress(request, d)
+  } catch (e) {
+    d.log({ event: 'egress_failed', error: safeError(e), runner: d.runner })
+    return jsonAnswer({ error: 'internal' }, 500)
+  }
+}
+
+async function routeEgress(request: Request, d: EgressDeps): Promise<Response> {
   const url = new URL(request.url)
   if (url.hostname !== EGRESS_HOST) return jsonAnswer({ error: 'not_found' }, 404)
   const name = /^\/([a-z]+)\//.exec(url.pathname)?.[1]

@@ -15,6 +15,7 @@
 // the pusher is done.
 import { PUSH_BATCH_MAX_EVENTS, PUSH_BUFFER_MAX_BYTES, PushAck, TERMINAL_EVENTS, jsonBytes, type PushBatch, type RunEvent } from '../../../shared/protocol/index.ts'
 import { RUN_TOKEN_HEADER } from '../proxy/server.ts'
+import { safeError } from '../safe-error.ts'
 
 export const FLUSH_EVENTS = 20
 /** How long the first unsent event waits for others before its batch goes. */
@@ -196,7 +197,7 @@ export function createPusher(opts: {
         else outcome = { kind: 'acked', stop: ack.data.stop }
       }
     } catch (e) {
-      outcome = { kind: 'failed', why: String(e instanceof Error ? e.message : e).slice(0, 200) }
+      outcome = { kind: 'failed', why: safeError(e) }
     } finally {
       timers.clearTimeout(deadline)
     }
