@@ -69,59 +69,72 @@ export function turnPromptDeps(env: { DB: D1Database; HUB_CONNECT?: unknown; HUB
   }
 }
 
-async function readAccounts(deps: TurnPromptDeps, turnId: string): Promise<readonly AccountSummary[] | null> {
+/** A log line, dropped once the turn's deadline has passed (the turn already went out without this read). */
+type Log = (line: Record<string, unknown>) => void
+const errorName = (err: unknown): string => (err instanceof Error ? err.name : typeof err)
+
+async function readAccounts(deps: TurnPromptDeps, turnId: string, log: Log): Promise<readonly AccountSummary[] | null> {
   if (deps.gateway === null) {
-    console.error({ event: 'prompt_accounts_unread', turnId, code: 'no_binding' })
+    log({ event: 'prompt_accounts_unread', turnId, code: 'no_binding' })
     return null
   }
   try {
     const r = await deps.gateway.listAccounts({ kind: 'server', job: 'prompt.turn', requestId: turnId })
     if (r.ok) return r.value
-    console.error({ event: 'prompt_accounts_unread', turnId, code: r.error.code })
+    log({ event: 'prompt_accounts_unread', turnId, code: r.error.code })
   } catch (err) {
-    console.error({ event: 'prompt_accounts_unread', turnId, code: 'threw', error: err instanceof Error ? err.name : typeof err })
+    log({ event: 'prompt_accounts_unread', turnId, code: 'threw', error: errorName(err) })
   }
   return null
 }
 
-/** The longest a turn's start waits for the hub and the channel list before it sends v1 (A9's condition). */
-export const PROMPT_READ_DEADLINE_MS = 3000
-
-async function readTurnLines(deps: TurnPromptDeps, turnId: string): Promise<string> {
-  const accounts = await readAccounts(deps, turnId)
-  let channels: readonly string[] = []
-  if (accounts !== null) {
-    const unknown = unknownConnected(accounts)
-    if (unknown > 0) console.error({ event: 'prompt_unknown_connectors', turnId, count: unknown })
+async function readChannels(deps: TurnPromptDeps, turnId: string, log: Log): Promise<readonly string[]> {
+  try {
+    return await deps.channels()
+  } catch (err) {
+    log({ event: 'prompt_channels_unread', turnId, error: errorName(err) })
+    return []
   }
-  if (accounts !== null && deps.delivery && slackConnected(accounts)) {
-    try {
-      channels = await deps.channels()
-    } catch (err) {
-      console.error({ event: 'prompt_channels_unread', turnId, error: err instanceof Error ? err.name : typeof err })
-    }
-    const dropped = channels.filter(c => !SLACK_CHANNEL_NAME.test(c)).length
-    if (dropped > 0) console.error({ event: 'prompt_channel_names_dropped', turnId, dropped })
-  }
-  return connectedLines(accounts, channels)
 }
 
+/** The longest a turn's start waits for the hub and the channel list together (A9's condition). */
+export const PROMPT_READ_DEADLINE_MS = 3000
+
 /**
- * The system prompt v2 for one turn. Never throws, by construction: a failed read is logged and its line left out; a
- * read past the deadline, or anything else that fails, is logged and sends v1.
+ * The system prompt v2 for one turn. Never throws, by construction. One deadline covers both reads: the accounts past
+ * it send v1; the channels past it (accounts already read) keep the apps line and drop the channel line. A failed read
+ * is logged and its line left out; a read that loses to the deadline logs nothing more.
  */
 export async function turnSystemPrompt(deps: TurnPromptDeps, turnId: string): Promise<string> {
   let timer: ReturnType<typeof setTimeout> | undefined
+  let expired = false
+  const log: Log = line => { if (!expired) console.error(line) }
   try {
-    const deadline = new Promise<'timeout'>(resolve => { timer = setTimeout(() => resolve('timeout'), PROMPT_READ_DEADLINE_MS) })
-    const lines = await Promise.race([readTurnLines(deps, turnId), deadline])
-    if (lines === 'timeout') {
+    const deadline = new Promise<'timeout'>(resolve => {
+      timer = setTimeout(() => { expired = true; resolve('timeout') }, PROMPT_READ_DEADLINE_MS)
+    })
+    const accounts = await Promise.race([readAccounts(deps, turnId, log), deadline])
+    if (accounts === 'timeout') {
       console.error({ event: 'prompt_accounts_unread', turnId, code: 'timeout' })
       return SYSTEM_PROMPT_V1
     }
-    return systemPromptV2(lines)
+    if (accounts !== null) {
+      const unknown = unknownConnected(accounts)
+      if (unknown > 0) log({ event: 'prompt_unknown_connectors', turnId, count: unknown })
+    }
+    let channels: readonly string[] = []
+    if (accounts !== null && deps.delivery && slackConnected(accounts)) {
+      const read = await Promise.race([readChannels(deps, turnId, log), deadline])
+      if (read === 'timeout') console.error({ event: 'prompt_channels_unread', turnId, code: 'timeout' })
+      else {
+        channels = read
+        const dropped = channels.filter(c => !SLACK_CHANNEL_NAME.test(c)).length
+        if (dropped > 0) log({ event: 'prompt_channel_names_dropped', turnId, dropped })
+      }
+    }
+    return systemPromptV2(connectedLines(accounts, channels))
   } catch (err) {
-    console.error({ event: 'prompt_build_failed', turnId, error: err instanceof Error ? err.name : typeof err })
+    console.error({ event: 'prompt_build_failed', turnId, error: errorName(err) })
     return SYSTEM_PROMPT_V1
   } finally {
     clearTimeout(timer)

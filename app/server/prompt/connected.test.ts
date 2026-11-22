@@ -7,7 +7,8 @@
 //  5. the channel line shows while Slack isn't connected, while no channel is listed, or while the accounts couldn't be read;
 //  6. a failed or thrown listAccounts still sends a connected-apps line (or "No apps are connected yet."), or fails quietly;
 //  7. a failed channel read drops the connected-apps line with it, or fails quietly;
-//  8. a slow hub or channel read holds the turn's start past 3 s, or a malformed answer throws out of the builder;
+//  8. a slow hub or channel read holds the turn's start past 3 s, a slow channel read drops the apps line, a read that
+//     lost to the deadline still logs, or a malformed answer throws out of the builder;
 //  9. a connected account the catalog doesn't know turns into the false "No apps are connected yet."
 // Expected values come from literals here and a reference model written separately below, never from connected.ts.
 import { fc, test } from '@fast-check/vitest'
@@ -177,11 +178,41 @@ describe('turnSystemPrompt, per turn from the gateway and the channel list', () 
       await vi.advanceTimersByTimeAsync(1)
       expect(await built).toBe(SYSTEM_PROMPT_V1)
       expect(errors).toHaveBeenCalledWith({ event: 'prompt_accounts_unread', turnId: 't_7', code: 'timeout' })
-      // A slow channel read counts against the same deadline.
+      // A slow channel read counts against the same deadline, but the accounts were read: the apps line stays.
+      errors.mockClear()
       const slowChannels = deps(async () => ({ ok: true, value: [account('slack:workspace')] }), { channels: () => new Promise(() => {}) })
       const built2 = turnSystemPrompt(slowChannels, 't_8')
+      await vi.advanceTimersByTimeAsync(2999)
+      expect(errors).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(await built2).toBe(`${SYSTEM_PROMPT_V1}\n\nConnected apps: Slack${TAIL}`)
+      expect(errors.mock.calls).toEqual([[{ event: 'prompt_channels_unread', turnId: 't_8', code: 'timeout' }]])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a read that loses to the deadline logs nothing more once the turn went out', async () => {
+    vi.useFakeTimers()
+    try {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+      let late!: (r: HubResult<AccountSummary[]>) => void
+      const built = turnSystemPrompt(deps(() => new Promise(r => { late = r })), 't_11')
       await vi.advanceTimersByTimeAsync(3000)
-      expect(await built2).toBe(SYSTEM_PROMPT_V1)
+      expect(await built).toBe(SYSTEM_PROMPT_V1)
+      late({ ok: false, error: { code: 'upstream_unavailable', message: 'late' } })
+      await vi.advanceTimersByTimeAsync(10)
+      expect(errors.mock.calls).toEqual([[{ event: 'prompt_accounts_unread', turnId: 't_11', code: 'timeout' }]])
+
+      errors.mockClear()
+      let lateFail!: (e: Error) => void
+      const d = deps(async () => ({ ok: true, value: [account('slack:workspace')] }), { channels: () => new Promise((_r, rej) => { lateFail = rej }) })
+      const built2 = turnSystemPrompt(d, 't_12')
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(await built2).toBe(`${SYSTEM_PROMPT_V1}\n\nConnected apps: Slack${TAIL}`)
+      lateFail(new Error('d1 late'))
+      await vi.advanceTimersByTimeAsync(10)
+      expect(errors.mock.calls).toEqual([[{ event: 'prompt_channels_unread', turnId: 't_12', code: 'timeout' }]])
     } finally {
       vi.useRealTimers()
     }
