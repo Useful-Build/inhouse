@@ -39,6 +39,10 @@ const sample: Record<AuditArgs['action'], AuditArgs> = {
   'library.deleted': { action: 'library.deleted', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA'] },
   'library.restored': { action: 'library.restored', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA'] },
   'today.set_aside': { action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason: 'snoozed' },
+  'memory.approved': { action: 'memory.approved', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA', rev: 3 },
+  'memory.rejected': { action: 'memory.rejected', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA', rev: 1 },
+  'team_request.created': { action: 'team_request.created', requestId: 'tr_AAAAAAAAAAAAAAAAAAAAAA', kind: 'tool' },
+  'team_request.status': { action: 'team_request.status', requestId: 'tr_AAAAAAAAAAAAAAAAAAAAAA', status: 'done' },
 }
 const names = (id: string) => ({ m_a: 'Ada Example' } as Record<string, string>)[id] ?? null
 
@@ -160,5 +164,36 @@ describe('support.access writes (P4 review fold): a write reads as a change, nev
       ['PUT', '/api/today/:id/aside', 'An item on Today'],
       ['POST', '/api/library/delete', 'The Library'], ['POST', '/api/library/restore', 'The Library'],
     ] as const) expect(auditText({ action: 'support.access', grantId: 'g_1', method, route }, names), `${method} ${route}`).toEqual({ what: 'changed brand data', detail })
+  })
+})
+
+// P6a PR0. Ways it can fail, written down first: a P6a line has no text or the wrong one; a text shows an id, a
+// revision number or an em dash (the house voice); the waiting list or the approve route reads as the raw pattern.
+describe('P6a lines (PR0): literal texts, no id and no em dash', () => {
+  const mem = 'mem_AAAAAAAAAAAAAAAAAAAAAA'
+  const tr = 'tr_AAAAAAAAAAAAAAAAAAAAAA'
+  it('says what happened to a waiting team fact', () => {
+    expect(auditText({ action: 'memory.approved', memoryId: mem, rev: 3 }, names)).toEqual({ what: 'approved a team memory', detail: '' })
+    expect(auditText({ action: 'memory.rejected', memoryId: mem, rev: 1 }, names)).toEqual({ what: 'rejected a team memory', detail: '' })
+  })
+  it('says what kind of request went to the Inhouse team', () => {
+    for (const [kind, detail] of [
+      ['tool', 'New tool'], ['job', 'New job'], ['change', 'Change something'], ['bug', 'Bug report'], ['feedback', 'Feedback'],
+    ] as const) expect(auditText({ action: 'team_request.created', requestId: tr, kind }, names), kind).toEqual({ what: 'sent the Inhouse team a request', detail })
+  })
+  it("says what happened to a request's status", () => {
+    expect(auditText({ action: 'team_request.status', requestId: tr, status: 'done' }, names)).toEqual({ what: 'marked a request done', detail: '' })
+    expect(auditText({ action: 'team_request.status', requestId: tr, status: 'declined' }, names)).toEqual({ what: 'declined a request', detail: '' })
+    expect(auditText({ action: 'team_request.status', requestId: tr, status: 'withdrawn' }, names)).toEqual({ what: 'withdrew a request', detail: '' })
+  })
+  it('names the waiting list and the approve route in support.access', () => {
+    expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'GET', route: '/api/memory/waiting' }, names)).toEqual({ what: 'looked at brand data', detail: 'Team memory waiting for an OK' })
+    expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'PUT', route: '/api/memory/brand/:id/approved' }, names)).toEqual({ what: 'changed brand data', detail: 'Team memory' })
+  })
+  it('never shows an id, a revision or an em dash', () => {
+    for (const action of ['memory.approved', 'memory.rejected', 'team_request.created', 'team_request.status'] as const) {
+      const t = `${auditText(sample[action], names).what} ${auditText(sample[action], names).detail}`
+      expect(t, action).not.toMatch(/mem_|tr_|\d|\u2014/)
+    }
   })
 })

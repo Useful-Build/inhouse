@@ -50,6 +50,8 @@ const NO_MEMORY = 'mem_e2eNobodyAAAAAAAAAAAAA'
 const NO_TODAY = 'p_e2eNobodyAAAAAAAAAAAAA'
 /** A routine id nobody has (`rt_` + 22, audit.ts `RoutineIdSchema`). */
 const NO_ROUTINE = 'rt_e2eNobodyAAAAAAAAAAAAA'
+/** A team request id nobody has (`tr_` + 22, audit.ts `TeamRequestIdSchema`). */
+const NO_TEAM_REQUEST = 'tr_e2eNobodyAAAAAAAAAAAAA'
 const ALL: Role[] = ['member', 'admin', 'inhouse']
 const PEOPLE: Role[] = ['member', 'admin']
 
@@ -140,6 +142,16 @@ export const CASES: Record<string, RouteCase> = {
   'POST /api/routines/:id/delete': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/delete`, json: { ifRev: 1 }, passes: 404 },
   'POST /api/routines/:id/restore': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/restore`, json: { ifRev: 1 }, passes: 404 },
   'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: 404 },
+  // Rows 77 to 83 (P6a PR0; rows 68 to 76 are P5's). Each handler is PR0's 404 stub until its worker fills it: then the
+  // reads pass with 200 and the create with 400 (an empty body), and the writes keep 404 (ids that name nothing). Row 83
+  // is personal: the handler answers an unknown id 404 before its requireObject, as routes 44 and 49 do.
+  'GET /api/memory/waiting': { design: d('brand_data', ['admin', 'inhouse']), path: '/api/memory/waiting', passes: 404 },
+  'PUT /api/memory/brand/:id/approved': { design: d('brand_data', ['admin', 'inhouse']), path: `/api/memory/brand/${NO_MEMORY}/approved`, json: { approved: true, ifRev: 1 }, passes: 404 },
+  'GET /api/skills': { design: d('technical', ALL), path: '/api/skills', passes: 404 },
+  'GET /api/team-requests': { design: d('baseline', ALL), path: '/api/team-requests', passes: 404 },
+  'POST /api/team-requests': { design: d('baseline', PEOPLE), path: '/api/team-requests', json: {}, passes: 404 },
+  'PUT /api/team-requests/:id/status': { design: d('baseline', ['inhouse']), path: `/api/team-requests/${NO_TEAM_REQUEST}/status`, json: { status: 'done', ifRev: 1 }, passes: 404 },
+  'PUT /api/team-requests/:id/withdrawn': { design: d('personal', PEOPLE), path: `/api/team-requests/${NO_TEAM_REQUEST}/withdrawn`, json: { withdrawn: true, ifRev: 1 }, passes: 404 },
 }
 
 /** The case for a row, or an error naming it (routes.spec.ts reports the gap on its own; this is for the specs that use it). */

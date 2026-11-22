@@ -8,6 +8,8 @@ import { stmt } from './sql.ts'
 import type { SqlValue, Stmt } from './sql.ts'
 
 export type TargetKind = 'member' | 'setting' | 'grant' | 'memory'
+  // P6a (PR0): a request to the Inhouse team (W3, `team_requests`).
+  | 'team_request'
 
 export interface LineInput {
   atMs: number
@@ -20,6 +22,8 @@ export interface LineInput {
 /** The row the change touched, found by `where` (with `params`) and the write's `stamp` on its `req_id`. */
 export interface Guard {
   table: 'members' | 'settings' | 'support_grants' | 'memories' | 'today_aside'
+    // P6a (PR0): W3's table (0470_team_requests.sql).
+    | 'team_requests'
   where: string
   params: readonly SqlValue[]
   stamp: string

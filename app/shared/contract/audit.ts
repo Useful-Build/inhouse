@@ -28,6 +28,9 @@ export const AuditActionSchema = z.enum([
   'routine.created', 'routine.updated', 'routine.enabled', 'routine.deleted', 'routine.restored', 'routine.run_now',
   'library.uploaded', 'library.deleted', 'library.restored',
   'today.set_aside',
+  // P6a (PR0, docs/plans/2026-11-22-p6a-memory-skills.md): an admin, or the Inhouse team under a live grant, approves
+  // or rejects a waiting team fact (W2); a person sends the Inhouse team a request, and its status changes (W3).
+  'memory.approved', 'memory.rejected', 'team_request.created', 'team_request.status',
 ])
 export type AuditAction = z.infer<typeof AuditActionSchema>
 
@@ -43,16 +46,21 @@ const RoutePatternSchema = z.enum([
   // P4's brand_data GET routes (Sonnet M-4): the Routines page, Today, Activity and the Library, so Inhouse under a live
   // grant gets data, not 503 ("no line, no data").
   '/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download',
+  // P6a (PR0, route 77): the waiting team facts, admins and the Inhouse team under a live grant.
+  '/api/memory/waiting',
 ])
 /**
  * The `brand_data` PUT routes the Inhouse team may use under a live grant (item 19, p3-design section 10): forgetting
- * a team fact; P4: turning a routine on or off and setting aside an item on Today. `support.access` pairs `PUT` with
+ * a team fact; P4: turning a routine on or off and setting aside an item on Today; P6a: approving or rejecting a
+ * waiting team fact. `support.access` pairs `PUT` with
  * these only, `POST` with `PostPatternSchema` only and `GET` with `RoutePatternSchema` only.
  */
 const WritePatternSchema = z.enum([
   '/api/memory/brand/:id/forgotten',
   // P4 (routes.ts rows 53 and 58).
   '/api/routines/:id/enabled', '/api/today/:id/aside',
+  // P6a (PR0, route 78): approving or rejecting a waiting team fact.
+  '/api/memory/brand/:id/approved',
 ])
 /**
  * The `brand_data` POST routes the Inhouse team may use under a live grant, one block per phase, appended in phase
@@ -106,6 +114,16 @@ export const LibraryTypeSchema = z.enum([
 /** P3's chat file cap (20 MiB, caps.ts `maxFileBytes`). */
 const LIBRARY_MAX_BYTES = 20_971_520
 const FileIdsSchema = z.array(FileIdSchema).min(1).max(100)
+
+// ---------- P6a's argument shapes (PR0): ids, a revision and closed lists; never a fact's or a request's text ----------
+/** The revision a team fact was decided at (memory.ts `MemoryForgetInputSchema`'s `ifRev` bounds). */
+const MemoryRevSchema = z.number().int().min(1).max(999_999_999)
+/** A team request: `tr_` + 128 random bits (W3's store makes it). */
+export const TeamRequestIdSchema = z.string().regex(new RegExp(`^tr_${RANDOM}$`))
+/** The Inhouse team window's request types (src/state/store.ts `RequestType`); "Request a skill" is `job`. */
+export const TeamRequestKindSchema = z.enum(['tool', 'job', 'change', 'bug', 'feedback'])
+/** Where a status change can move a request: it's created `open`, and only leaves it. */
+export const TeamRequestStatusChangeSchema = z.enum(['done', 'declined', 'withdrawn'])
 
 const line = <A extends AuditAction, S extends z.ZodRawShape>(action: A, shape: S) => z.object({ action: z.literal(action), ...shape }).strict()
 const member = { memberId: MemberIdSchema }
@@ -172,6 +190,11 @@ const otherLines = [
   line('library.restored', { fileIds: FileIdsSchema }),
   /** `reason: null`: the item was put back (a snooze or a dismissal undone). */
   line('today.set_aside', { itemId: TodayItemIdSchema, reason: z.enum(['snoozed', 'dismissed', 'declined']).nullable() }),
+  // P6a (PR0). `rev`: the revision the admin decided (the one the fact had while it waited).
+  line('memory.approved', { memoryId: MemoryIdArgSchema, rev: MemoryRevSchema }),
+  line('memory.rejected', { memoryId: MemoryIdArgSchema, rev: MemoryRevSchema }),
+  line('team_request.created', { requestId: TeamRequestIdSchema, kind: TeamRequestKindSchema }),
+  line('team_request.status', { requestId: TeamRequestIdSchema, status: TeamRequestStatusChangeSchema }),
 ] as const
 
 /**
