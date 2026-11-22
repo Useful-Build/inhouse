@@ -190,6 +190,9 @@ const pageSummary = (r: MessagesRequest): boolean =>
 
 /** The fact the `memory-save-team` scenario saves (the team's, waiting for an admin). */
 export const MEMORY_SAVE_TEAM_TEXT = 'We restock on Fridays.'
+/** The `memory-reword-team` scenario's target (a fact the spec seeds under this id, valid under `MemoryIdSchema`) and its new wording. */
+export const MEMORY_REWORD_TEAM_ID = 'mem_E2eRewordTeamFact00001'
+export const MEMORY_REWORD_TEAM_TEXT = 'We restock on Thursdays.'
 
 /**
  * Looks one fact up with memory_search and answers from what came back, so a test sees what the session actually received:
@@ -349,6 +352,14 @@ export const SCENARIOS: Record<string, Scenario> = {
     turns: [
       { content: [{ type: 'tool_use', id: 'toolu_scripted_memory_team', name: 'mcp__inhouse__memory_save', input: { scope: 'brand', text: MEMORY_SAVE_TEAM_TEXT } }], expect: mainLoop('mcp__inhouse__memory_save') },
       { content: [{ type: 'text', text: 'Saved for the team.' }], expect: both(mainLoop('mcp__inhouse__memory_save'), resultOf('toolu_scripted_memory_team')) },
+    ],
+  },
+
+  /** Rewords the seeded team fact `MEMORY_REWORD_TEAM_ID` with memory_update: an approved team fact goes back to waiting (the approvals spec). */
+  'memory-reword-team': {
+    turns: [
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_memory_reword', name: 'mcp__inhouse__memory_update', input: { memory_id: MEMORY_REWORD_TEAM_ID, text: MEMORY_REWORD_TEAM_TEXT } }], expect: mainLoop('mcp__inhouse__memory_update') },
+      { content: [{ type: 'text', text: 'Reworded.' }], expect: both(mainLoop('mcp__inhouse__memory_update'), resultOf('toolu_scripted_memory_reword')) },
     ],
   },
 
