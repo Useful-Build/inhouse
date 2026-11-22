@@ -250,7 +250,8 @@ export class ChatEngine {
   /** Runs one turn to its end. True when it started (a cancelled one didn't). */
   async runTurn(run: MockRun, turn: MockTurn): Promise<boolean> {
     const { input } = turn
-    const forced = this.h.scripted
+    // At the cap (the Cap reached scenario) a chat turn is refused the way a scripted capReached turn is (decision L-A8).
+    const forced = this.h.demo.scenario === 'Cap reached' ? 'capReached' : this.h.scripted
     this.h.scripted = null
     if (forced === 'capReached') {
       this.emit(run, { type: 'notice', code: NOTICE.capReached })
