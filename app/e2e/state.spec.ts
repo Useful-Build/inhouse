@@ -83,7 +83,7 @@ test('Run: Pause, then Undo in the toast, puts Inhouse agent back to running', a
   await page.getByRole('button', { name: 'Pause', exact: true }).click()
   await expect(page.getByText('Inhouse agent is paused', { exact: true })).toBeVisible()
 
-  const toast = page.getByRole('status').filter({ hasText: 'Inhouse agent is paused. Routines, jobs and questions are stopped.' })
+  const toast = page.getByRole('status').filter({ hasText: 'Inhouse agent is paused. Chats, routines and jobs are stopped.' })
   await expect(toast).toBeVisible()
   await toast.getByRole('button', { name: 'Undo', exact: true }).click()
   await expect(page.getByText('Inhouse agent is running', { exact: true })).toBeVisible()
