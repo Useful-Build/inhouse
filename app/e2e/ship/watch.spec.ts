@@ -126,8 +126,10 @@ async function attachRunDiagnostics(page: Page) {
  * seeds, so it is Opus; the scripted model answers only claude-sonnet-5-5, so an Opus request is a 400 miss and the run ends
  * `sdk_error`. (Its model check is not loosened for this: chats work around it by picking Fast in the composer.) Technical
  * settings are written by the Inhouse team, under a live grant the Admin gives (an Admin may only switch models on or off,
- * a Member never writes them): the Admin grants, the Inhouse team writes g:mode at its current rev, the grant ends, and the
- * setting is read back as a Member.
+ * a Member never writes them): the Admin grants, the Inhouse team writes g:mode at its current rev, the grant ends (also when
+ * a step fails), and the setting is read back as a Member.
+ * Left as is, by design: g:mode stays Fast on the sandbox brand for the specs that run after this one. And `endLiveGrants` ends
+ * every live grant on the sandbox brand, not only the one this spec made.
  */
 let defaultModelFast = false
 async function ensureFastDefault(request: APIRequestContext) {
@@ -139,26 +141,30 @@ async function ensureFastDefault(request: APIRequestContext) {
   }
   if ((await read()) !== 'Fast') {
     await endLiveGrants(request)
-    const grant = await call(request, actor('admin'), 'POST', '/api/grants', { json: { hours: 1 } })
-    expect(grant.status, grant.text).toBe(201)
-    const put = await putSetting(request, actor('inhouse'), 'technical', 'g:mode', 'Fast')
-    await endLiveGrants(request)
-    expect(put.status, `setting the default model to Fast: ${put.text}`).toBe(200)
+    try {
+      const grant = await call(request, actor('admin'), 'POST', '/api/grants', { json: { hours: 1 } })
+      expect(grant.status, grant.text).toBe(201)
+      const put = await putSetting(request, actor('inhouse'), 'technical', 'g:mode', 'Fast')
+      expect(put.status, `setting the default model to Fast: ${put.text}`).toBe(200)
+    } finally {
+      await endLiveGrants(request)
+    }
   }
   expect(await read(), 'the default model reads back as Fast').toBe('Fast')
   defaultModelFast = true
 }
 
 /**
- * Runs the morning check as a person does: Routines, the routine's details, Run now. Waits on the routine's last run moving
- * (the run ended and saved), then leaves the page on Routines.
- */
-/**
  * Set once a run has ended well in this worker (a worker restarts after a failed or timed-out test): S2, S4 and S5 read what
  * S1's run left rather than starting another, so a project makes one run, not four. A run's output is the brand's, shared by
  * every page, and each test opens its own page, which reads it fresh.
  */
 let ranInThisWorker = false
+
+/**
+ * Runs the morning check as a person does: Routines, the routine's details, Run now. Waits on the routine's last run moving
+ * (the run ended and saved), then leaves the page on Routines. A worker that has already run it once returns at once.
+ */
 async function runMorningCheck(page: Page, request: APIRequestContext) {
   if (ranInThisWorker) return
   await ensureFastDefault(request)
