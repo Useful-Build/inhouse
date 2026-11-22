@@ -186,7 +186,8 @@ export const routes: readonly Route[] = [
   /* 54 */ { method: 'POST', pattern: '/api/routines/:id/run', handler: runRoutineNow },
   /* 55 */ { method: 'POST', pattern: '/api/routines/:id/delete', handler: deleteRoutine },
   /* 56 */ { method: 'POST', pattern: '/api/routines/:id/restore', handler: restoreRoutine },
-  // P6a PR0: rows 77 to 83 (rows 68 to 76 are P5's; P6a holds 77 to 89). W2: the waiting team facts and their approve or reject.
+  // P6a: rows 77 to 83 (rows 68 to 76 are P5's; P6a holds 77 to 89). W2's 77 and 78 (wired): the waiting team facts and
+  // their approve or reject.
   /* 77 */ { method: 'GET', pattern: '/api/memory/waiting', handler: listWaitingMemory },
   /* 78 */ { method: 'PUT', pattern: '/api/memory/brand/:id/approved', handler: approveBrandMemory },
   // W3: the skills list and team requests.
