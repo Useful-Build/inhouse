@@ -218,7 +218,7 @@ export function capStatus(ctx: Ctx): CapStatus {
     spent, cap, alertAt,
     // The server's own answer when it judged the cap Settings shows now (Usage does the same); else spend against the cap.
     reached: ctx.data.usage.capReached !== undefined && ctx.data.usage.cap.minor === cap.minor ? ctx.data.usage.capReached : spent.minor >= cap.minor,
-    bannerText: `Your Inhouse agent has used ${fmtMoney(spent, display())} of ${fmtMoney(cap, display())} this month, so routines and jobs are paused. Questions still work, and waiting drafts can still be approved.`,
+    bannerText: `Your Inhouse agent has used ${fmtMoney(spent, display())} of ${fmtMoney(cap, display())} this month, so chats, routines and jobs are paused until next month or until an admin raises the cap. Waiting drafts can still be approved.`,
   }
 }
 

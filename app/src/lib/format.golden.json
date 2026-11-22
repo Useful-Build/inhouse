@@ -607,7 +607,7 @@
   "usage.capReached.November.tool.3": "$34.44",
   "usage.capReached.November.tool.4": "$23.28",
   "usage.capReached.November.tool.5": "$14.03",
-  "usage.capReached.capBanner": "Your Inhouse agent has used $250 of $250 this month, so routines and jobs are paused. Questions still work, and waiting drafts can still be approved.",
+  "usage.capReached.capBanner": "Your Inhouse agent has used $250 of $250 this month, so chats, routines and jobs are paused until next month or until an admin raises the cap. Waiting drafts can still be approved.",
   "usage.capReached.settings.cap": "$250",
   "usage.capReached.settings.spent": "$250.00",
   "usage.firstDay.November.capHint": "$250",
@@ -632,7 +632,7 @@
   "usage.firstDay.November.hint": "On track for about $0 this month, under your cap",
   "usage.firstDay.November.peak": "$0.00",
   "usage.firstDay.November.projection": "$0",
-  "usage.firstDay.capBanner": "Your Inhouse agent has used $0 of $250 this month, so routines and jobs are paused. Questions still work, and waiting drafts can still be approved.",
+  "usage.firstDay.capBanner": "Your Inhouse agent has used $0 of $250 this month, so chats, routines and jobs are paused until next month or until an admin raises the cap. Waiting drafts can still be approved.",
   "usage.firstDay.settings.cap": "$250",
   "usage.firstDay.settings.spent": "$0.00",
   "usage.normal.November.capHint": "$250",
@@ -677,7 +677,7 @@
   "usage.normal.November.tool.3": "$10.80",
   "usage.normal.November.tool.4": "$7.30",
   "usage.normal.November.tool.5": "$4.40",
-  "usage.normal.capBanner": "Your Inhouse agent has used $78.40 of $250 this month, so routines and jobs are paused. Questions still work, and waiting drafts can still be approved.",
+  "usage.normal.capBanner": "Your Inhouse agent has used $78.40 of $250 this month, so chats, routines and jobs are paused until next month or until an admin raises the cap. Waiting drafts can still be approved.",
   "usage.normal.settings.cap": "$250",
   "usage.normal.settings.spent": "$78.40"
 }
