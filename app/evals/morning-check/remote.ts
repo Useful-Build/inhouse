@@ -27,32 +27,64 @@ export interface RemoteDeps {
   defaultModel?: () => Promise<void>
 }
 
-/** Route 12's answers, as the caller's HTTP gives them (the Admin's token). */
+/** One API call as one identity, as the caller's HTTP gives the answer (status and parsed JSON). */
+export type ApiCall = (method: 'GET' | 'PUT' | 'POST', path: string, body?: unknown) => Promise<{ status: number; json: unknown }>
+
+/**
+ * Who writes the brand's Default model. Only the Inhouse team writes `g:mode` (server/auth/matrix.ts: a Member never writes
+ * technical settings, an Admin only `tm:<id>:on` keys, so the Admin gets 403 admin_read_only), under a live support grant
+ * an Admin opens. So: the Admin (a brand person: reads, grants) and the Inhouse team member, signed in on the build's
+ * Inhouse app. Mirrors e2e/api/watch-kit.ts setStage and e2e/ship/watch.spec.ts ensureFastDefault.
+ */
 export interface SettingsApi {
-  get(path: string): Promise<{ status: number; json: unknown }>
-  put(path: string, body: unknown): Promise<{ status: number; json: unknown }>
+  admin: ApiCall
+  inhouse: ApiCall
 }
 
 /** A Default model label (the technical setting `g:mode`'s value): a plain word, never a path or a value with markup. */
 const MODEL_LABEL = /^[A-Za-z]{1,20}$/
 
+const fail = (what: string, r: { status: number; json: unknown }) => new Error(`morning-check: ${what} answered ${r.status}: ${JSON.stringify(r.json)}`)
+
+/** Ends every live support grant, as the Admin (each end must succeed). */
+async function endLiveGrants(admin: ApiCall): Promise<void> {
+  const list = await admin('GET', '/api/grants')
+  if (list.status !== 200) throw fail('GET /api/grants', list)
+  const items = (list.json as { items?: { id: string; rev: number; live: boolean }[] } | null)?.items
+  if (!Array.isArray(items)) throw new Error('morning-check: GET /api/grants has no items')
+  for (const g of items.filter(x => x.live)) {
+    const done = await admin('POST', `/api/grants/${encodeURIComponent(g.id)}/end`, { ifRev: g.rev })
+    if (done.status !== 200) throw fail(`ending support grant ${g.id}`, done)
+  }
+}
+
 /**
- * The brand's Default model (`g:mode`) set to `label` and read back, as the Admin (route 12, PUT with the setting's own
- * revision). Mirrors e2e/ship/watch.spec.ts ensureFastDefault. Throws when the write is refused or doesn't read back.
+ * The brand's Default model (`g:mode`) set to `label` and read back as a brand person (route 12). When it differs: live
+ * grants ended, a one-hour grant opened by the Admin, the Inhouse team member's PUT with the setting's own revision, the
+ * grants ended again (whatever the PUT answered), then the read back. Throws when any step is refused or the value doesn't
+ * read back; no grant is left open by it.
  */
 export async function ensureDefaultModel(api: SettingsApi, label: string): Promise<void> {
   if (!MODEL_LABEL.test(label)) throw new Error(`morning-check: ${JSON.stringify(label)} is not a Default model label`)
   const read = async () => {
-    const r = await api.get('/api/settings/technical')
-    if (r.status !== 200) throw new Error(`morning-check: GET /api/settings/technical answered ${r.status}`)
+    const r = await api.admin('GET', '/api/settings/technical')
+    if (r.status !== 200) throw fail('GET /api/settings/technical', r)
     const items = (r.json as { items?: { key: string; value?: unknown; rev?: number }[] } | null)?.items
     if (!Array.isArray(items)) throw new Error('morning-check: GET /api/settings/technical has no items')
     return items.find(i => i.key === 'g:mode')
   }
   const now = await read()
   if (now?.value !== label) {
-    const put = await api.put('/api/settings/technical/g%3Amode', { value: label, ifRev: now?.rev ?? 0 })
-    if (put.status !== 200) throw new Error(`morning-check: setting the Default model to ${label} answered ${put.status}: ${JSON.stringify(put.json)}`)
+    await endLiveGrants(api.admin)
+    let put: { status: number; json: unknown }
+    try {
+      const grant = await api.admin('POST', '/api/grants', { hours: 1 })
+      if (grant.status !== 201) throw fail('opening a support grant', grant)
+      put = await api.inhouse('PUT', '/api/settings/technical/g%3Amode', { value: label, ifRev: now?.rev ?? 0 })
+    } finally {
+      await endLiveGrants(api.admin)
+    }
+    if (put.status !== 200) throw fail(`setting the Default model to ${label}`, put)
   }
   const after = await read()
   if (after?.value !== label) throw new Error(`morning-check: the Default model reads back ${JSON.stringify(after?.value)}, not ${label}`)
