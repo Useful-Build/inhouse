@@ -62,13 +62,23 @@ const safeCell = (v: string): string => {
 }
 
 describe('safe_cell', () => {
-  it('the skill file carries the same regex as this port', () => {
-    expect(text('spreadsheet')).toContain('NUMBER = re.compile(r"^[+-]?\\$?\\d[\\d,]*(\\.\\d+)?%?$")')
+  it('the skill file carries the same regex, the same first-character tuple and fullmatch, as this port', () => {
+    const s = text('spreadsheet')
+    expect(s).toContain('NUMBER = re.compile(r"[+-]?\\$?\\d[\\d,]*(\\.\\d+)?%?")')
+    expect(s).toContain('NUMBER.fullmatch(value)')
+    expect(s).toContain('value[0] in ("=", "@", "\\t", "\\r")')
+    expect(s).toContain('value[0] in ("+", "-")')
+  })
+  it('an .xlsx text cell keeps a plain string value (data_type s), never an apostrophe; the quote prefix is for CSV only', () => {
+    const s = text('spreadsheet')
+    expect(s).toContain('cell.data_type = "s"')
+    expect(s).toMatch(/def safe_cell\(value\):  # \.csv only/)
+    expect(s).not.toMatch(/put_text[^\n]*\+ *value/)
   })
   it('leaves honest numbers alone, negative ones included', () => {
     for (const v of ['-12.50', '-3', '+4', '-1,234.50', '-$20', '-5%', '42', 'hello', '']) expect(safeCell(v)).toBe(v)
   })
   it('escapes everything that can run as a formula', () => {
-    for (const v of ['=SUM(A1:A2)', '=WEBSERVICE("x")', '@SUM(1)', '+cmd|x', '-1+2', '-A1', '-', '--1', '\t=1', '\r=1', '-5 or more']) expect(safeCell(v)).toBe(`'${v}`)
+    for (const v of ['=SUM(A1:A2)', '=WEBSERVICE("x")', '@SUM(1)', '+cmd|x', '-1+2', '-A1', '-', '--1', '\t=1', '\r=1', '-5 or more', '-5\n']) expect(safeCell(v)).toBe(`'${v}`)
   })
 })

@@ -22,19 +22,28 @@ Use this skill when the person asks for an `.xlsx` workbook or `.csv` export, or
   - No remote images or external workbook links (`[other.xlsx]Sheet1!A1`).
   - No fetching or network formulas (`WEBSERVICE`, `IMPORTXML`, `IMPORTDATA`, `IMPORTHTML`, `IMPORTFEED`, `RTD`).
   - No `HYPERLINK` formulas pointing to an outside host. Only include a link if the person gave you that exact URL in this chat.
-- **Prevent formula injection:** Never build a formula from untrusted text. A text value that starts with `=`, `+`, `-`, `@`, a tab or a carriage return can run as a formula, so write it with a leading single quote `'`. A plain number, negative ones included (`-12.50`, `-3`, `+4`), is not text to escape: write it as a number. Formulas you write yourself (`=SUM(B2:B9)`) go in as they are, never through `safe_cell`.
+- **Prevent formula injection:** Never build a formula from untrusted text. Text from outside that starts with `=`, `+`, `-`, `@`, a tab or a carriage return can run as a formula. A plain number, negative ones included (`-12.50`, `-3`, `+4`), is not text to escape: write it as a number. Formulas you write yourself (`=SUM(B2:B9)`) go in as they are, never through these helpers.
+  - In an `.xlsx`, write outside text with `put_text`: it keeps a plain string value. Never add an apostrophe, it would show in the cell.
+  - In a `.csv`, write outside text through `safe_cell`: a leading single quote `'` makes it plain text there.
 
 ```python
 import re
-NUMBER = re.compile(r"^[+-]?\$?\d[\d,]*(\.\d+)?%?$")
+NUMBER = re.compile(r"[+-]?\$?\d[\d,]*(\.\d+)?%?")
 
-def safe_cell(value):
-    if isinstance(value, str) and value:
-        if value[0] in ("=", "@", "\t", "\r"):
-            return "'" + value
-        if value[0] in ("+", "-") and not NUMBER.match(value):
-            return "'" + value
-    return value
+def risky(value):
+    if not isinstance(value, str) or not value:
+        return False
+    if value[0] in ("=", "@", "\t", "\r"):
+        return True
+    return value[0] in ("+", "-") and not NUMBER.fullmatch(value)
+
+def put_text(cell, value):  # .xlsx
+    cell.value = value
+    if risky(value):
+        cell.data_type = "s"
+
+def safe_cell(value):  # .csv only
+    return "'" + value if risky(value) else value
 ```
 
 ## Reading a spreadsheet

@@ -606,7 +606,7 @@ async function probeFacts() {
     { name: 'ps', cmd: 'ps -eo pid,user,args --no-headers | head -20' },
     { name: 'sysctl', cmd: 'cat /proc/sys/fs/protected_hardlinks /proc/sys/fs/protected_symlinks | tr "\\n" " "' },
     // P6a W3: our three skills reach the image, readable by the session, and not writable by it (Q7).
-    { name: 'skill-files', cmd: 'for s in pdf word spreadsheet; do f=/opt/inhouse/plugin/skills/$s/SKILL.md; test -f "$f" && test -r "$f" && echo "$s readable"; test -w "$f" && echo "$s WRITABLE"; done; true' },
+    { name: 'skill-files', cmd: 'for s in pdf word spreadsheet; do f=/opt/inhouse/plugin/skills/$s/SKILL.md; d=/opt/inhouse/plugin/skills/$s; test -f "$f" && test -r "$f" && echo "$s readable"; test -w "$f" && echo "$s WRITABLE"; test -w "$d" && echo "$s FOLDER WRITABLE"; done; true' },
   ]
   const script = shellScript(probes)
   const { done } = startRun({ chatId: 'p-facts', script: { steps: [bash(script)] } })
