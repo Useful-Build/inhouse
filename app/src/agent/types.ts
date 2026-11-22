@@ -21,6 +21,8 @@ import type { RunFrame } from '../../shared/contract/run-event'
 
 export type { Stage, StageIndex, Scenario, Effort, AgentErrorCode, ErrorReason, ResourceKey, ResourceStatus, Instant, Money, ClockTime, Prose } from '../../shared/contract/common'
 export type { AgentMeta } from '../../shared/contract/meta'
+/** The lists the agent's work fills, which `refresh` reads again (the resource each shows by). */
+export type RefreshList = Extract<ResourceKey, 'library' | 'problems' | 'activity' | 'notifications'>
 export type { ProblemSource, ProblemFact, Draft, DraftItem, Problem } from '../../shared/contract/problem'
 export type { ToolDetail, CatalogTool, ToolChannel, ToolSetup, ToolsData } from '../../shared/contract/tools'
 export type { RoutineDef, RoutineRun } from '../../shared/contract/routine'
@@ -212,6 +214,8 @@ export interface AgentClient {
   retry(resource: ResourceKey): Promise<void>
   /** Reads the Memory pages' lines again, without the page showing as loading: a fact the agent saved since the last read shows. One read at a time (an open while one runs joins it). Nothing to read in the demo. */
   refreshMemory(): Promise<void>
+  /** Reads a list the agent's work fills again, without the page showing as loading: what it made since the last read shows. One read at a time per list; nothing before the list's first read is in. Nothing to read in the demo. */
+  refresh(list: RefreshList): Promise<void>
   /** Where the audit log downloads from, or null when the client builds the file itself (the demo, with shared/csv.ts). */
   auditExportUrl(): string | null
   /** Route 41: one chat file's bytes, and the name the server gave it (null when it gave none). Rejects with an `AgentError`. The demo serves a sample file. */
