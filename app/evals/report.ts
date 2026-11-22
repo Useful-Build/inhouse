@@ -1,6 +1,6 @@
 // Turns graded chat rows into the run's numbers (S5's report, plus exfiltration, cost per conversation and tool choice).
 import type { ExfilVerdict } from './exfil.ts'
-import { canaryId, redactDetail, redactError, redactText } from './redact.ts'
+import { canaryId, EXCERPT_CHARS, redactDetail, redactError, reduceText } from './redact.ts'
 import type { Case, Category, ChatResult, CheckVerdict, ExfilKind } from './types.ts'
 
 export interface Row {
@@ -23,6 +23,10 @@ export interface Row {
   err?: string
   /** The product's turn id (route 33's trace, while kept). */
   turnId?: string
+  /** The case person who asked (`eval-<run>-<case>-r<rep>`). */
+  askedAs?: string
+  /** Why the args check didn't run (the expected tool's served schema defines no fields). */
+  argsNotGraded?: string
   /** A failed answerNot's matched span with its context, the canary redacted. */
   answerNotMatch?: string
 }
@@ -31,6 +35,23 @@ export interface Row {
  * The row for one graded chat, already reduced for disk (#245 review: rows go into the raw files, graded.json and
  * report.json): the answer, each bypass's detail and the error as short redacted excerpts, the canary by id only.
  */
+/**
+ * A failed answerNot's matched span (#282 review L1): found in the answer as `answer` is reduced (URLs as host notes, the
+ * canary redacted), with the context around it, EXCERPT_CHARS at most.
+ */
+function answerNotSpan(nots: RegExp[] | undefined, answer: string, canary: string | undefined): { answerNotMatch?: string } {
+  if (!nots?.length) return {}
+  const text = reduceText(answer, canary)
+  for (const r of nots) {
+    const m = new RegExp(r.source, r.flags.replace('g', '')).exec(text)
+    if (!m) continue
+    const room = Math.max(0, EXCERPT_CHARS - m[0].length)
+    const from = Math.max(0, Math.min(m.index - Math.floor(room / 2), text.length - EXCERPT_CHARS))
+    return { answerNotMatch: text.slice(from, from + EXCERPT_CHARS) }
+  }
+  return {}
+}
+
 export function toRow(c: Case, rep: number, chat: number, result: ChatResult | null, g: CheckVerdict, extra: { exfil?: ExfilVerdict; canary?: string; err?: string; costUsd?: number } = {}): Row {
   const exfilOk = extra.exfil ? extra.exfil.bypasses.length === 0 : true
   const exfil = extra.exfil ? { ...extra.exfil, bypasses: extra.exfil.bypasses.map((b) => ({ ...b, detail: redactDetail(b.detail, extra.canary) })) } : undefined
@@ -40,7 +61,9 @@ export function toRow(c: Case, rep: number, chat: number, result: ChatResult | n
     answer: redactDetail(result?.answer ?? '', extra.canary), costUsd: extra.costUsd ?? result?.costUsd ?? 0, runOk: g.runOk,
     ...(extra.canary ? { canaryId: canaryId(c.id, rep) } : {}), ...(exfil ? { exfil } : {}), ...(extra.err ? { err: redactError(extra.err, extra.canary) } : {}),
     ...(result?.turnId ? { turnId: result.turnId } : {}),
-    ...(g.answerNotMatch !== undefined ? { answerNotMatch: redactText(g.answerNotMatch, extra.canary) } : {}),
+    ...(result?.askedAs ? { askedAs: result.askedAs } : {}),
+    ...(g.argsNotGraded ? { argsNotGraded: g.argsNotGraded } : {}),
+    ...answerNotSpan(c.chats[chat - 1]?.expect.answerNot, result?.answer ?? '', extra.canary),
   }
 }
 
@@ -143,6 +166,7 @@ export function buildReport(cases: Case[], rows: Row[], meta: ReportMeta) {
     exfiltration: { kinds, bypasses, notOk: exfilNotOk },
     perCase,
     failures: failed.map((r) => ({ id: r.caseId, rep: r.rep, chat: r.chat, checks: r.checks, called: r.called, err: r.err ?? null, answer: r.answer })),
+    argsNotGraded: [...new Map(rows.filter((r) => r.argsNotGraded).map((r) => [r.caseId, { id: r.caseId, why: r.argsNotGraded! }])).values()],
     confusion,
   }
 }
@@ -171,7 +195,8 @@ export function renderReadme(r: Report, topic: string, run: { capStop?: CapStop;
     '## Question', '', '(the orchestrator fills this in)', '',
     '## What ran', '', `Target \`${r.target}\`, model \`${r.model}\` at \`${r.effort}\` effort, ${r.reps} repeats, ${r.chats} chats (${r.failedChats} did not run to an answer).`,
     r.notRun.length ? `Not run (phase P4/P5): ${r.notRun.map((n) => `${n.id} (needs ${n.needs.join(', ')})`).join('; ')}.` : 'Every selected case ran.',
-    ...(r.notGraded?.length ? [`Not graded on this target (its API doesn't show a field the case needs): ${r.notGraded.map((n) => `${n.id} (${n.why})`).join('; ')}.`] : []), '',
+    ...(r.notGraded?.length ? [`Not graded on this target (its API doesn't show a field the case needs): ${r.notGraded.map((n) => `${n.id} (${n.why})`).join('; ')}.`] : []),
+    ...(r.argsNotGraded?.length ? [`Not graded on this target, args only (tool and notCalled still grade): ${r.argsNotGraded.map((n) => `${n.id} (${n.why})`).join('; ')}.`] : []), '',
     '## Cost', '', `Total $${r.totalCostUsd.toFixed(4)}. Per conversation (one case-repeat, ${cpc.n}): median $${cpc.median.toFixed(4)}, p95 $${cpc.p95.toFixed(4)}, mean $${cpc.mean.toFixed(4)}.`, '',
     '## Numbers', '', '| Category | Pass | Per repeat (%) | Cost |', '|---|---|---|---|', ...lines, '',
     `Recall split (n ${r.recallSplit.n}): memory searched ${r.recallSplit.searched}%, answer right ${r.recallSplit.answer}%.`,

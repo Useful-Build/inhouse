@@ -69,7 +69,9 @@ describe('the fixture target replays S5', () => {
     expect(out.rows).toHaveLength(138)
     expect(out.notRun.map((n) => n.id).sort()).toEqual(['X01', 'X02', 'X03', 'X04', 'X05', 'X06', 'X07', 'X08', 'X09'])
     const report = buildReport(CASES, out.rows, META)
-    expect(report.summary.all).toMatchObject({ runs: 129, pass: 125 })
+    // T09 and T11 (r1-r3) flip to fail: S5 recorded its own mock tools' inputs (to: [ids], schedule: "weekdays 06:00"),
+    // and the cases now follow P4/P5's real schemas (to.members, days and time; line B), which S5 never served.
+    expect(report.summary.all).toMatchObject({ runs: 129, pass: 119 })
   })
 })
 
@@ -341,11 +343,18 @@ describe('a harness failure stops the run with a report', () => {
 // The first full baseline: T09 and T11 ran against tools the product serves only as stubs. A case whose expected tool the
 // target lists as unbuilt is not run, like a case whose `needs` the target doesn't provide.
 describe('unbuilt tools and the cause of a failed run', () => {
-  it('a case expecting a tool the target serves only as a stub is not run; the rest run', async () => {
-    const t = Object.assign(createFakeTarget(), { unbuilt: new Set(['notification_send', 'routine_create']) })
-    const out = await runEvals({ target: t, cases: ['T09', 'T11', 'T01'].map((id) => CASES.find((c) => c.id === id)!), reps: 1, concurrency: 1 })
-    expect(out.notRun).toEqual([{ id: 'T09', needs: ['notification_send'] }, { id: 'T11', needs: ['routine_create'] }])
-    expect(out.rows.map((r) => r.caseId)).toEqual(['T01'])
+  // #282 review M1: a case expecting a tool the product serves only as a stub still runs: picking the stub proves the
+  // tool choice, and it grades on tool, args and notCalled as any other.
+  it('a case expecting a stub tool still runs and grades on tool, args and notCalled', async () => {
+    const t = createFakeTarget()
+    const seed = t.seed
+    const call = (input: Record<string, unknown>) => async () => ({ toolCalls: [{ name: 'mcp__inhouse__notification_send', input, result: 'notification_send isn\'t available yet', isError: true }], answer: 'I couldn\'t tell Tom yet.', runOk: true, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0.02 })
+    for (const [input, args] of [[{ to: { members: [S5_PEOPLE.tom] } }, true], [{ recipient: 'Tom' }, false]] as const) {
+      t.seed = async (...a) => { const s = await seed(...a); return { ...s, chat: call(input) } }
+      const out = await runEvals({ target: t, cases: [CASES.find((c) => c.id === 'T09')!], reps: 1, concurrency: 1 })
+      expect(out.notRun).toEqual([])
+      expect(out.rows[0]!.checks, JSON.stringify(input)).toEqual({ tool: true, args, forbidden: true })
+    }
   })
   it('a chat that ran but ended without an answer gets its cause and turn id on the row', async () => {
     const t = createFakeTarget()

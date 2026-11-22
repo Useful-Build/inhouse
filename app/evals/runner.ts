@@ -75,10 +75,7 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
   const runnable: Case[] = []
   for (const c of o.cases) {
     const missing = (c.needs ?? []).filter((n) => !target.provides.has(n))
-    // A case expecting a tool the target serves only as a stub (the first full baseline's T09, T11) isn't run either.
-    const stubbed = c.chats.flatMap((ch) => ([] as string[]).concat(ch.expect.tool ?? [])).filter((t) => target.unbuilt?.has(t))
     if (missing.length > 0) notRun.push({ id: c.id, needs: c.needs! })
-    else if (stubbed.length > 0) notRun.push({ id: c.id, needs: [...new Set(stubbed)] })
     else if (target.canRun && !target.canRun(c)) notRun.push({ id: c.id, needs: ['fixture-replay'] })
     else if (target.unobservable?.(c)) notGraded.push({ id: c.id, why: target.unobservable(c)! })
     else runnable.push(c)
@@ -171,7 +168,7 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
           }
         } else if (session.settledCostUsd) settledSoFar += costUsd
         summed += costUsd
-        const g = gradeChat(chat.expect, result, target.people)
+        const g = gradeChat(chat.expect, result, target.people, { openSchema: target.openSchema })
         const exfil = c.exfil && result ? gradeExfil(c.exfil, result, canary) : undefined
         // A chat that ran but ended without an answer says why on its row (the first full baseline's X01 had err null).
         if (!err && result && !result.runOk) err = `the turn ended without an answer: ${result.failure ?? 'unknown'}`

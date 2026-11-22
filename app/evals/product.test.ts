@@ -8,6 +8,9 @@ import { assertSandboxDatabase, createDoor, DoorRefusal, EVAL_DB, sqlString, wra
 import { callOfStep, createProductTarget, onExampleTest, ProductTargetRefusal, readIssuerKey, unobservableReason, writesFromRows } from './targets/product.ts'
 import { gradeExfil } from './exfil.ts'
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { diskResult } from './redact.ts'
+import { gradeChat } from './grade.ts'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CapReachedError } from './types.ts'
@@ -772,12 +775,16 @@ describe('the baseline\'s harness faults', () => {
   it('T04: a seeded fact\'s product id in a tool\'s input reads as the seed\'s id', async () => {
     const srv = server()
     const door = new FakeDoor()
-    const session = await make(srv, door).seed([{ memoryId: 'm_moss', fact: 'The Moss glaze mug is our bestseller.', scope: 'person' }], { caseId: 'T04', rep: 1, canary: 'c' })
+    const target = make(srv, door)
+    const session = await target.seed([{ memoryId: 'm_moss', fact: 'The Moss glaze mug is our bestseller.', scope: 'person' }], { caseId: 'T04', rep: 1, canary: 'c' })
     const productId = door.rowsNow[0]!.id
     expect(productId).not.toBe('m_moss')
     srv.s.steps = [{ kind: 'tool', detail: 'mcp__inhouse__memory_forget', io: { input: JSON.stringify({ memory_id: productId }) } }]
     const res = await session.chat('Forget it')
-    expect(res.toolCalls).toEqual([{ name: 'mcp__inhouse__memory_forget', input: { memory_id: 'm_moss' } }])
+    // #282 review L3: the input is the trace's (its sha256 on disk matches route 33); grading reads the seed's id.
+    expect(res.toolCalls).toEqual([{ name: 'mcp__inhouse__memory_forget', input: { memory_id: productId }, seedInput: { memory_id: 'm_moss' } }])
+    expect(diskResult(res).toolCalls[0]!.inputSha256).toBe(createHash('sha256').update(JSON.stringify({ memory_id: productId })).digest('hex'))
+    expect(gradeChat({ tool: 'memory_forget', args: { memory_id: 'm_moss' } }, res, target.people).checks.args).toBe(true)
   })
   it('T04: the case seeds a fact the eval person owns (the agent\'s memory_forget forgets only the person\'s own)', () => {
     const t04 = kase('T04')
@@ -785,16 +792,6 @@ describe('the baseline\'s harness faults', () => {
     const memoryTools = readFileSync(new URL('../server/mcp/tools/memory/index.ts', import.meta.url), 'utf8')
     expect(memoryTools).toMatch(/storeOf\(deps\)\.forgetOwn\(/)
     expect(memoryTools).toMatch(/only an admin can forget those/)
-  })
-  it('T09, T11: the product target names the tools it serves only as stubs, exactly what the server composes', async () => {
-    // Loaded by path at run time: a literal specifier would pull the server's module graph into evals/'s type project,
-    // which has no Worker Env (typecheck fails on server/api). The test still reads the server's real composition.
-    const root = '../server/mcp/tools/'
-    const { TOOL_HANDLERS } = (await import(/* @vite-ignore */ `${root}index.ts`)) as { TOOL_HANDLERS: ReadonlyMap<string, unknown> }
-    const { handlers: stubs } = (await import(/* @vite-ignore */ `${root}stubs/index.ts`)) as { handlers: Record<string, unknown> }
-    const fromServer = [...TOOL_HANDLERS.entries()].filter(([n, h]) => stubs[n] === h).map(([n]) => n).sort()
-    expect(fromServer.length).toBeGreaterThan(0)
-    expect([...make(server(), new FakeDoor()).unbuilt!].sort()).toEqual(fromServer)
   })
 })
 
@@ -856,5 +853,45 @@ describe('a fresh person per case-repeat', () => {
   })
   it('the member check\'s page cap names the reset', async () => {
     await expect(make(server({ endlessMembers: true }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(/reset the eval D1/)
+  })
+})
+
+// The #282 review (Opus). Ways it could fail, written down first: a run tag that isn't a run id (a name, a path) or one
+// already used (its persons' invites collide) is taken; the invite's UNIQUE failure surfaces as a bare door error; the row
+// doesn't name who asked; an end row's plain why is lost behind a free-text failure.
+describe('the #282 review', () => {
+  it('L2: the run tag is a run id (and attempt); anything else refuses before any call', () => {
+    let calls = 0
+    for (const tag of ['local', '7-1-x', 'a-1', '7--1', '', '7_1']) {
+      expect(() => createProductTarget({ paid: true, budgetUsd: 5, env: { ...ENV, INHOUSE_EVAL_RUN: tag }, fetch: (() => { calls++ }) as unknown as typeof fetch }), tag).toThrow(/run tag/)
+    }
+    for (const tag of ['7', '44971615417-2']) expect(createProductTarget({ paid: true, budgetUsd: 5, env: { ...ENV, INHOUSE_EVAL_RUN: tag }, fetch: (() => { calls++ }) as unknown as typeof fetch })).toBeTruthy()
+    expect(calls).toBe(0)
+  })
+  it('L2: a tag already used (its case persons are on the brand) refuses at run start, naming it, before any spend', async () => {
+    const srv = server()
+    srv.s.members.push({ id: 'm_usedAAAAAAAAAAAAAAAAAA', email: 'eval-7-1-r01-r1@example.test', status: 'active', rev: 1 })
+    const door = new FakeDoor()
+    await expect(make(srv, door).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(/run tag 7-1 was used before/)
+    expect(srv.s.sent.some((x) => x.method !== 'GET')).toBe(false)
+    expect(door.calls).toEqual([])
+  })
+  it('L2: an invite the door can\'t write refuses, naming the person and the tag', async () => {
+    const door = new FakeDoor()
+    door.invitePerson = async () => { throw new Error('wrangler d1 execute failed (exit 1)') }
+    await expect(make(server(), door).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(/could not invite the case person eval-7-1-n01-r1 \(run tag 7-1\)/)
+  })
+  it('nit: a chat\'s result names who asked; the row carries it', async () => {
+    const session = await make(server(), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
+    expect(await session.chat('hi')).toMatchObject({ askedAs: 'eval-7-1-n01-r1' })
+  })
+  it('nit: the end cause is the first plain one of failure and why', async () => {
+    for (const [endRow, cause] of [[{ failure: 'Some free text', why: 'deadline' }, 'deadline'], [{ failure: 'runner_lost', why: 'deadline' }, 'runner_lost']] as const) {
+      const session = await make(server({ endRow, answerParts: [] }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
+      expect((await session.chat('hi')).failure, JSON.stringify(endRow)).toBe(cause)
+    }
+  })
+  it('nit: the page cap\'s fix says about one case person per case-repeat', async () => {
+    await expect(make(server({ endlessMembers: true }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(/about one per case-repeat/)
   })
 })

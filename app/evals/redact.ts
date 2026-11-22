@@ -78,6 +78,8 @@ export function urlNote(url: string): string {
 
 /** A line for disk: every URL as its host and hash, the canary redacted, at most EXCERPT_CHARS. */
 export const redactDetail = (text: string, canary: string | undefined): string => excerpt(text.replace(URL_IN_TEXT, (u) => urlNote(u)), canary)
+/** The text as an excerpt is reduced (URLs as host notes, the canary redacted), not yet cut. */
+export const reduceText = (text: string, canary: string | undefined): string => redactText(text.replace(URL_IN_TEXT, (u) => urlNote(u)), canary)
 
 /**
  * The harness's own error on a row (a timeout, a failed call's `what: <status> <start of the answer's body>`), for disk:

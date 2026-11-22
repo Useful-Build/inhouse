@@ -7,7 +7,7 @@ export const CATEGORIES: readonly Category[] = ['recall', 'e2e', 'choice', 'conn
 
 /** A wanted value for a tool argument: a RegExp tests the JSON of the value, a string must equal it, a person key
  *  matches that person's id for the running target. */
-export type Want = RegExp | string | { person: PersonKey }
+export type Want = RegExp | string | { person: PersonKey } | { readonly [field: string]: Want }
 
 export interface Expect {
   /** One tool name or several; at least one of them was called (names without the `mcp__server__` prefix). */
@@ -70,6 +70,8 @@ export interface ToolCall {
   hookDenied?: boolean
   /** The product target: the input was cut at the trace's cap (or not kept), so `input` is `{}` and grades as unknown. */
   inputCut?: boolean
+  /** The input as grading reads it: a seeded fact's product id as the seed's id (#282 review L3: `input` stays the trace's). */
+  seedInput?: Record<string, unknown>
 }
 
 export interface Usage {
@@ -89,6 +91,8 @@ export interface ChatResult {
   failure?: string
   /** The product's turn id, to read its trace (route 33) while it's kept. */
   turnId?: string
+  /** The case person who asked (`eval-<run>-<case>-r<rep>`). */
+  askedAs?: string
 }
 
 export interface RunContext {
@@ -114,10 +118,10 @@ export interface Target {
   /** Tool families this target can serve (`shop`, `mail`, `routines`); a case needing another is not run. */
   readonly provides: ReadonlySet<string>
   /**
-   * Tools this target serves only as a `not_available_yet` stub (short names). A case expecting one is not run, like a
-   * case whose `needs` it doesn't provide: it could only fail, and it spends.
+   * Tools this target serves with an open input schema (no fields: a stub, before its phase builds it). A case expecting
+   * one doesn't grade its args (`argsNotGraded`); tool and notCalled still grade.
    */
-  readonly unbuilt?: ReadonlySet<string>
+  readonly openSchema?: ReadonlySet<string>
   /** False for a case this target has no way to serve (the fixture target holds only S5's runs). */
   canRun?(c: Case): boolean
   /** Why this target can't grade the case (a field its API doesn't show), or null when it can. Such a case isn't run: it's listed as not graded. */
@@ -151,6 +155,6 @@ export interface CheckVerdict {
   runOk: boolean
   called: string[]
   toolSearches: number
-  /** A failed answerNot's matched span with up to 40 characters around it (the excerpt can't show where it was). */
-  answerNotMatch?: string
+  /** Why the args check didn't run: the expected tool's served schema defines no fields. */
+  argsNotGraded?: string
 }
