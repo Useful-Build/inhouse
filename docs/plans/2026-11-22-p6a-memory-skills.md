@@ -1,6 +1,6 @@
 # P6a: memory and skills (`fleet/memory-skills`)
 
-Status: draft for Wasim's approval, 2026-11-22. Cut from P6 by the master plan (`2026-11-22-master-plan.md`, which lands with line A's docs PR #322; Part 1,
+Status: draft for Wasim's approval, 2026-11-22. Cut from P6 by the master plan ([`2026-11-22-master-plan.md`](2026-11-22-master-plan.md), landed in #322; Part 1,
 line B item 3; Wasim's decisions 1 and 2 of 2026-11-22). The rest of P6 is P6b, parked until the first client:
 [`2026-11-19-p6-act.md`](2026-11-19-p6-act.md). Common rules are in the backend plan's "Phase schedule (waves)".
 
