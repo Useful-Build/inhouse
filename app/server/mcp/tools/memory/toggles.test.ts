@@ -82,9 +82,11 @@ describe('the literal cases (failures 1 to 4)', () => {
     const refused = await call(P1, 'memory_save', { scope: 'person', text: 'Tia wants bold totals' })
     expect(refused.isError).toBe(true)
     expect(refused.structuredContent).toEqual({ error: 'learning_off' })
-    expect(refused.content[0].text).toBe('Not saved: this person turned off "Learn from my chats" in Settings, so don\'t save their preferences. If they want it saved, they can turn it back on.')
+    expect(refused.content[0].text).toBe('Not saved: this person turned off "Learn from my chats" in Settings, so don\'t save their preferences. Don\'t save it for the team instead. If they want it saved, they can turn it back on.')
     expect(await db.prepare("SELECT COUNT(*) AS n FROM memories WHERE text = 'Tia wants bold totals'").first<number>('n')).toBe(0)
-    expect((await call(P1, 'memory_update', { memory_id: mine, text: 'Tia likes very tidy tables' })).structuredContent).toEqual({ error: 'learning_off' })
+    const upRefused = await call(P1, 'memory_update', { memory_id: mine, text: 'Tia likes very tidy tables' })
+    expect(upRefused.structuredContent).toEqual({ error: 'learning_off' })
+    expect(upRefused.content[0].text).toBe('Not changed: this person turned off "Learn from my chats" in Settings, so don\'t change their saved preferences. If they want that, they can turn it back on.')
     expect(await row(mine)).toEqual({ status: 'active', text: 'Tia likes tidy tables', rev: 1 })
     expect((await call(P1, 'memory_save', { scope: 'brand', text: 'Learn-off brand fact one' })).isError).toBeUndefined()
     expect((await call(P1, 'memory_forget', { memory_id: mine })).structuredContent).toEqual({ memory_id: mine, forgotten: true })
@@ -129,6 +131,17 @@ describe('the literal cases (failures 1 to 4)', () => {
     expect(back.content[0].text).toBe(`Changed (memory_id: ${id}). A team fact waits for an admin's OK again after a change, so don't rely on it until then.`)
   })
 
+  it('a routine\'s reword of an active team fact waits, with m:ask off; a service row (smoke) saves as waiting', async () => {
+    await reset(); await ask(false)
+    const id = savedId(await call(P1, 'memory_save', { scope: 'brand', text: 'Routine reword target' }))
+    expect((await row(id))!.status).toBe('active')
+    const r = await store.update({ memberId: SYSTEM_MEMBER_ID, id, text: 'Routine reword target, changed', nowMs: 5, requestId: 'r-sys-up' })
+    expect('updated' in r && r.updated.status).toBe('waiting')
+    expect(await row(id)).toEqual({ status: 'waiting', text: 'Routine reword target, changed', rev: 2 })
+    const smoke = await store.save({ memberId: 'm_smoke', scope: 'brand', text: 'Smoke row team fact', chatId: null, nowMs: 5, requestId: 'r-smoke' })
+    expect('saved' in smoke && smoke.saved.status).toBe('waiting')
+  })
+
   it('the waiting answer for a save is the old text', async () => {
     await reset()
     const r = await call(P1, 'memory_save', { scope: 'brand', text: 'Waiting answer fact' })
@@ -153,6 +166,28 @@ describe('the literal cases (failures 1 to 4)', () => {
   })
 })
 
+describe('the reason is the right one (failure 1)', () => {
+  it('a member who is no longer active gets no_member even with m:learn off', async () => {
+    await reset()
+    await db.prepare("INSERT OR IGNORE INTO members (id, kind, role, status, name, created_at_ms) VALUES ('m_tog_gone', 'person', 'member', 'removed', 'Gus', 1)").run()
+    await learn('m_tog_gone', false)
+    expect((await call('m_tog_gone', 'memory_save', { scope: 'person', text: 'Gus is gone' })).structuredContent).toEqual({ error: 'no_member' })
+    await learn('m_tog_gone', 'missing')
+  })
+  it('the switch flipped back on after a refused save still gives learning_off for an active member', async () => {
+    await reset(); await learn(P1, false)
+    const r = await call(P1, 'memory_save', { scope: 'person', text: 'Tia flipped back' }, withBarrier(/^\s*INSERT INTO memories/, async () => {}, () => learn(P1, true)))
+    expect(r.structuredContent).toEqual({ error: 'learning_off' })
+  })
+  it('a lost rev race with m:learn off is a conflict, not learning_off', async () => {
+    await reset()
+    const id = savedId(await call(P1, 'memory_save', { scope: 'person', text: 'Tia rev race' }))
+    const meddle = async () => { await db.prepare('UPDATE memories SET rev = rev + 1 WHERE id = ?').bind(id).run(); await learn(P1, false) }
+    const r = await call(P1, 'memory_update', { memory_id: id, text: 'Tia rev race two' }, withBarrier(/^\s*UPDATE memories SET text/, meddle))
+    expect(r.structuredContent).toEqual({ error: 'conflict' })
+  })
+})
+
 describe('pins from the line-A review', () => {
   it('m:ask on: a person\'s reword of an active brand fact goes back to waiting', async () => {
     await reset()
@@ -170,6 +205,14 @@ describe('pins from the line-A review', () => {
     expect((await call('m_tog_admin', 'memory_update', { memory_id: id, text: 'Admin edit' })).structuredContent).toEqual({ error: 'not_found' })
     expect(await row(id)).toEqual({ status: 'active', text: 'Tia private pin', rev: 1 })
   })
+  it('m:ask turned off through the real settings store makes a person\'s team save active', async () => {
+    await reset()
+    const settings = settingStore({ db, hashKey: 'test-hash-key', members: memberStore({ db }) })
+    const done = await settings.write({ owner: 'brand', scope: 'brand', key: 'm:ask', value: false, ifRev: 0 }, at(P1))
+    expect('ok' in done).toBe(true)
+    const r = await call(P1, 'memory_save', { scope: 'brand', text: 'Team fact after the real m:ask switch' })
+    expect((await row(savedId(r)))!.status).toBe('active')
+  })
   it('the real settings store writes the switch off as the text false, and the save then refuses', async () => {
     await reset()
     const settings = settingStore({ db, hashKey: 'test-hash-key', members: memberStore({ db }) })
@@ -183,7 +226,7 @@ describe('pins from the line-A review', () => {
   })
 })
 
-describe('memory at stage Watch (failure 5)', () => {
+describe('memory at stage Watch: a pin that the server has no stage check, not a proof of the product at Watch', () => {
   it('saves and searches with the brand\'s stage set to Watch', async () => {
     await reset()
     await setSwitch('brand', 'stage', 'Watch' as unknown as Switch)
@@ -227,22 +270,23 @@ describe('races (failure 1)', () => {
 // ----- the property: histories against a reference model written here, not the store's SQL -----
 type Op =
   | { op: 'save'; who: 'p1' | 'p2' | 'sys'; scope: 'person' | 'brand'; t: number }
-  | { op: 'update'; who: 'p1' | 'p2'; pick: number; t: number }
+  | { op: 'update'; who: 'p1' | 'p2' | 'sys'; pick: number; t: number }
   | { op: 'learn'; who: 'p1' | 'p2'; v: Switch }
   | { op: 'ask'; v: Switch }
 const sw = fc.constantFrom<Switch>(true, false, null, 'missing')
+// Weighted toward rewords of active team facts (saves, then rewords, with m:ask flipping between them).
 const opArb: fc.Arbitrary<Op> = fc.oneof(
-  fc.record({ op: fc.constant('save' as const), who: fc.constantFrom('p1' as const, 'p2' as const, 'sys' as const), scope: fc.constantFrom('person' as const, 'brand' as const), t: fc.integer({ min: 0, max: 3 }) }),
-  fc.record({ op: fc.constant('update' as const), who: fc.constantFrom('p1' as const, 'p2' as const), pick: fc.nat(20), t: fc.integer({ min: 0, max: 3 }) }),
-  fc.record({ op: fc.constant('learn' as const), who: fc.constantFrom('p1' as const, 'p2' as const), v: sw }),
-  fc.record({ op: fc.constant('ask' as const), v: sw }),
+  { weight: 4, arbitrary: fc.record({ op: fc.constant('save' as const), who: fc.constantFrom('p1' as const, 'p2' as const, 'sys' as const), scope: fc.constantFrom('person' as const, 'brand' as const, 'brand' as const), t: fc.integer({ min: 0, max: 3 }) }) },
+  { weight: 5, arbitrary: fc.record({ op: fc.constant('update' as const), who: fc.constantFrom('p1' as const, 'p2' as const, 'sys' as const), pick: fc.nat(20), t: fc.integer({ min: 0, max: 3 }) }) },
+  { weight: 2, arbitrary: fc.record({ op: fc.constant('learn' as const), who: fc.constantFrom('p1' as const, 'p2' as const), v: sw }) },
+  { weight: 3, arbitrary: fc.record({ op: fc.constant('ask' as const), v: sw }) },
 )
 interface ModelFact { id: string; scope: 'person' | 'brand'; owner: string | null; text: string; status: 'active' | 'waiting' }
 const idOf = { p1: P1, p2: P2, sys: SYSTEM_MEMBER_ID }
 let runNo = 0
 
 describe('histories against a reference model (failures 1 and 2)', () => {
-  test.prop({ ops: fc.array(opArb, { minLength: 1, maxLength: 25 }) }, { numRuns: 60 })('every save and reword is refused or lands as the model says', async ({ ops }) => {
+  test.prop({ ops: fc.array(opArb, { minLength: 1, maxLength: 25 }) }, { numRuns: 150 })('every save and reword is refused or lands as the model says', async ({ ops }) => {
     await reset()
     await db.prepare("DELETE FROM memories WHERE text LIKE 'prop%'").run()
     const run = ++runNo
@@ -274,10 +318,10 @@ describe('histories against a reference model (failures 1 and 2)', () => {
       const t = text(`${target.scope}-re`, o.t)
       const r = await store.update({ memberId: who, id: target.id, text: t, nowMs: 2, requestId: `r-p-${++rid}` })
       if (target.text === t) { expect('unchanged' in r).toBe(true); continue }
-      if (target.scope === 'person' && learnOff[o.who]) { expect(r, JSON.stringify(o)).toEqual({ refused: 'learning_off' }); continue }
+      if (target.scope === 'person' && o.who !== 'sys' && learnOff[o.who]) { expect(r, JSON.stringify(o)).toEqual({ refused: 'learning_off' }); continue }
       expect('updated' in r, JSON.stringify(o)).toBe(true)
       target.text = t
-      target.status = target.scope === 'person' || askOff ? 'active' : 'waiting'
+      target.status = target.scope === 'person' || (o.who !== 'sys' && askOff) ? 'active' : 'waiting'
       if ('updated' in r) expect(r.updated.status).toBe(target.status)
     }
     for (const f of facts) expect((await row(f.id))!.status, f.text).toBe(f.status)

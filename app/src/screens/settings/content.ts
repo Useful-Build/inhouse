@@ -173,7 +173,7 @@ export function settingsPage(tab: string, env: Env): Page {
     lines.filter(l => !agent.forgot[l.key]).map(l => R(l.text, memorySource(l, now), 'button', 'Forget', 0, undefined, undefined, () => env.forget(l.key)))
   const teamMem = memory.team.map(g => ({ label: g.group, rows: forgetRows(g.lines) }))
   const memCount = teamMem.reduce((n, g) => n + g.rows.length, 0)
-  const teach = R('Teach it something', 'Tell it a rule in a chat, in your own words. It appears here.', 'button', 'Teach in a chat', 0, undefined, undefined, () => env.newChat('Remember that '))
+  const teach = R('Teach it something', "Tell it a rule in a chat, in your own words. It shows here once it's approved.", 'button', 'Teach in a chat', 0, undefined, undefined, () => env.newChat('Remember that '))
   const lim = people.runLimits
   // These rows start at Act, so they name the channel Act connects. None: no channel wording or option.
   const channel = channelFrom(data, 1)?.name
@@ -257,7 +257,7 @@ export function settingsPage(tab: string, env: Env): Page {
     ] },
     'team-memory': { title: 'Team memory', sections: [
       ...teamMem,
-      { label: 'How your Inhouse agent learns', rows: [R('Ask before saving a team rule', 'New team rules wait until an admin approves them.', 'toggle', '', 0, 'm:ask', true), teach] },
+      { label: 'How your Inhouse agent learns', rows: [R('Ask before saving a team rule', 'On: new and changed team rules wait until an admin approves them. Off: they count at once.', 'toggle', '', 0, 'm:ask', true), teach] },
     ] },
     'team-members': { title: 'Members', sections: [
       { label: `${team.length} people`, rows: [...team.map(m => {

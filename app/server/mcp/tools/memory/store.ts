@@ -115,8 +115,8 @@ const fact = (r: FactRow): Fact => ({
 
 /** A switch row that is off: the settings store writes `false` as the text `false`; a reset (`null`) or a missing row is on. */
 const SWITCH_OFF = (owner: string, key: string) => `EXISTS (SELECT 1 FROM settings WHERE owner = ${owner} AND key = '${key}' AND value_json = 'false')`
-/** The status a brand fact gets when `saver` writes it (one `?`: the saver's member id): active only when `m:ask` is off and the saver is a person. */
-const BRAND_STATUS = `CASE WHEN ? <> '${SYSTEM_MEMBER_ID}' AND ${SWITCH_OFF("'brand'", 'm:ask')} THEN 'active' ELSE 'waiting' END`
+/** The status a brand fact gets when `saver` writes it (one `?`: the saver's member id): active only when `m:ask` is off and the saver is a person, never a service member (a routine, the smoke row). */
+const BRAND_STATUS = `CASE WHEN EXISTS (SELECT 1 FROM members WHERE id = ? AND kind <> 'service') AND ${SWITCH_OFF("'brand'", 'm:ask')} THEN 'active' ELSE 'waiting' END`
 
 const base64url = (bytes: Uint8Array): string => btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
 
@@ -156,6 +156,8 @@ export function memoryStore({ db }: { db: D1Database }): MemoryStore {
   const changes = async (sql: string, ...params: SqlValue[]) => (await runBatch(db, [stmt(sql, ...params)]))[0].meta.changes
   const learningOff = async (memberId: string) =>
     (await first<{ n: number }>(db, stmt(`SELECT 1 AS n WHERE ${SWITCH_OFF('?', 'm:learn')}`, memberId))) !== null
+  const memberActive = async (memberId: string) =>
+    (await first<{ n: number }>(db, stmt("SELECT 1 AS n FROM members WHERE id = ? AND status = 'active'", memberId))) !== null
   /** After a guarded write: the change, the fact as it is now, or no such fact (of that scope and owner). */
   const settle = async (changed: number, id: string, scope: MemoryScope, ownerId: string | null): Promise<SetForgottenResult> => {
     const now = await byId(id)
@@ -211,7 +213,9 @@ export function memoryStore({ db }: { db: D1Database }): MemoryStore {
         `SELECT ${COLUMNS} ${FROM} WHERE m.scope = ? AND m.owner_id IS ? AND m.text = ? AND m.status IN ('active', 'waiting')`, scope, ownerId, text,
       ))
       if (same) return { duplicate: fact(same) }
-      return scope === 'person' && await learningOff(memberId) ? { refused: 'learning_off' } : { refused: 'no_member' }
+      // Nothing was written and nothing is a duplicate: a person fact is refused for `m:learn` while the member is
+      // still active (the switch is read now, so one flipped back since still gives the member's own reason).
+      return scope === 'person' && await memberActive(memberId) ? { refused: 'learning_off' } : { refused: 'no_member' }
     },
 
     async update({ memberId, id, text, nowMs, requestId }) {
@@ -230,7 +234,10 @@ export function memoryStore({ db }: { db: D1Database }): MemoryStore {
         text, memberId, nowMs, writeStamp(requestId), id, current.rev, memberId, memberId,
       )
       if (changed > 0) return { updated: (await byId(id))! }
-      return current.scope === 'person' && await learningOff(memberId) ? { refused: 'learning_off' } : { conflict: true }
+      // A lost rev or status race is a conflict whatever the switch says; only an untouched fact refused for `m:learn` is learning_off.
+      const now = await byId(id)
+      const untouched = now !== null && now.rev === current.rev && now.status === 'active'
+      return untouched && current.scope === 'person' && await learningOff(memberId) ? { refused: 'learning_off' } : { conflict: true }
     },
 
     async forgetOwn({ memberId, id, nowMs, requestId }) {
