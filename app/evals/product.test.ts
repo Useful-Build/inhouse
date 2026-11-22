@@ -577,6 +577,14 @@ describe('the README and the cap', () => {
     expect(renderReadme(report, 't')).not.toMatch(/Spending cap at/)
   })
   // Since #245's writeResults: the cap stop reaches report.json (the verdict, decide.mjs, fails on it) and the README.
+  it('writeResults keeps a harness stop in report.json and the README', () => {
+    const report = buildReport(CASES, [], { target: 'product', model: 'm', effort: 'e', reps: 1, notRun: [] })
+    const harnessStop = { caseId: 'R07', rep: 2, stage: 'reset' as const, detail: 'stop turn t_x: 401' }
+    const out = mkdtempSync(join(tmpdir(), 'harness-results-'))
+    writeResults(out, { rows: [], stoppedByBudget: true, spentUsd: 0, harnessStop }, report, 't')
+    expect(JSON.parse(readFileSync(join(out, 'report.json'), 'utf8')).harnessStop).toEqual(harnessStop)
+    expect(readFileSync(join(out, 'README.md'), 'utf8')).toContain('Stopped by a harness failure at R07 r2 (reset): stop turn t_x: 401. The numbers are partial and the run fails.')
+  })
   it('writeResults keeps the cap stop in report.json and the README, and leaves it out when there was none', () => {
     const report = buildReport(CASES, [], { target: 'product', model: 'm', effort: 'e', reps: 1, notRun: [] })
     const capStop = { caseId: 'R07', rep: 2, why: 'cap reached' as const }
@@ -651,5 +659,46 @@ describe('the Access service token', () => {
       try { createProductTarget({ paid: true, budgetUsd: 5, env, fetch: (() => {}) as unknown as typeof fetch }) } catch (e) { expect(String(e)).not.toContain('eval-ci-secret') }
       expect(calls).toBe(0)
     }
+  })
+})
+
+// The first paid baseline (inhouse-ops run 44967754241) died 10 min 38 s in on a 401: the harness cached each person's
+// test-issuer token for the whole run, and the token lives 600 s. Ways it could fail, written down first: a cached token
+// outlives its life (every call after it is refused); a token is re-signed on every call (needless, but not wrong); a call
+// path sets the identity header itself instead of the one sign-in helper.
+describe('the eval people\'s tokens', () => {
+  it('re-signs a person once the cached token is half its life old, and not before', async () => {
+    let clock = 1_000_000
+    const signed: string[] = []
+    const counting = async (key: string) => { signed.push(key); return { 'Cf-Access-Jwt-Assertion': `tok-${key}` } }
+    const srv = server()
+    const target = make(srv, new FakeDoor(), { signIn: counting, now: () => clock })
+    await (await target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).reset()
+    const after = (key: string) => signed.filter((k) => k === key).length
+    expect(after('current')).toBe(1)
+    clock += 299_000
+    await target.room!()
+    await (await target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).reset()
+    expect(after('current')).toBe(1)
+    expect(after('lena')).toBe(1)
+    clock += 2_000
+    await target.room!()
+    expect(after('lena')).toBe(2)
+    // Within the next window the fresh headers are reused; past it, signed again.
+    clock += 299_000
+    await target.room!()
+    expect(after('lena')).toBe(2)
+    clock += 1_000
+    await target.room!()
+    expect(after('lena')).toBe(3)
+  })
+  it('no file in evals/ sets the identity header but the one sign-in helper', () => {
+    const { readdirSync } = require('node:fs') as typeof import('node:fs')
+    const dir = new URL('./', import.meta.url)
+    const walk = (u: URL): string[] => readdirSync(u, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? (e.name === 'results' || e.name === 'fixtures' ? [] : walk(new URL(`${e.name}/`, u))) : [new URL(e.name, u).pathname])
+    const sources = walk(dir).filter((f) => /\.(ts|mjs)$/.test(f) && !/\.test\.[a-z]+$/.test(f))
+    const quoted = sources.flatMap((f) => (readFileSync(f, 'utf8').match(/['"`]Cf-Access-Jwt-Assertion['"`]/gi) ?? []).map(() => f.split('/evals/')[1]))
+    expect(quoted).toEqual(['targets/product.ts'])
+    expect(readFileSync(new URL('./targets/product.ts', import.meta.url), 'utf8')).toMatch(/export function testIssuerSignIn[\s\S]*?'Cf-Access-Jwt-Assertion': token, \[TEST_ASSERTION_HEADER\]: token/)
   })
 })

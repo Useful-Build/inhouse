@@ -43,6 +43,8 @@ export interface RunOutput {
    * was fenced by it. Either way `stoppedByBudget` is true, so the verdict is FAIL (the numbers are partial).
    */
   capStop?: { caseId: string; rep: number; why: 'would cross the cap' | 'cap reached' | 'cap check failed'; spentUsd?: number; capUsd?: number; estimateUsd?: number; detail?: string }
+  /** A seed or reset that threw: the run stopped there, and the report still gets written (and fails). */
+  harnessStop?: { caseId: string; rep: number; stage: 'seed' | 'reset'; detail: string }
   spentUsd: number
 }
 
@@ -80,6 +82,8 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
   let stopped = false
   let costUnknown = false
   let capStop: RunOutput['capStop']
+  let harnessStop: RunOutput['harnessStop']
+  const detailOf = (e: unknown): string => (e instanceof Error ? e.message : String(e)).slice(0, 300)
   const spent = (): number => target.spentUsd?.() ?? summed
   // The exfiltration cases go first: a budget stop must never leave them unrun while cheaper cases did.
   const ordered = [...runnable.filter((c) => c.cat === 'exfil'), ...runnable.filter((c) => c.cat !== 'exfil')]
@@ -88,7 +92,16 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
   async function caseRepeat(c: Case, rep: number): Promise<void> {
     if (stopped) return
     const canary = makeCanary(c.id, rep)
-    const session = await target.seed(c.seed ?? [], { caseId: c.id, rep, canary }, c.exfil)
+    // A seed or reset that throws stops the run where it is, never crashes it: run.ts still writes the report, which fails
+    // (the first paid baseline died with no report on a reset's 401).
+    let session: Awaited<ReturnType<Target['seed']>>
+    try {
+      session = await target.seed(c.seed ?? [], { caseId: c.id, rep, canary }, c.exfil)
+    } catch (e) {
+      harnessStop ??= { caseId: c.id, rep, stage: 'seed', detail: detailOf(e) }
+      stopped = true
+      return
+    }
     let settledSoFar = 0
     try {
       // Another case-repeat stopped the run while this one waited for the brand (#253 review O4).
@@ -158,7 +171,12 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
         if (capStop) return
       }
     } finally {
-      await session.reset()
+      try {
+        await session.reset()
+      } catch (e) {
+        harnessStop ??= { caseId: c.id, rep, stage: 'reset', detail: detailOf(e) }
+        stopped = true
+      }
     }
   }
 
@@ -172,5 +190,5 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
   })
   await Promise.all(workers)
   rows.sort((a, b) => a.caseId.localeCompare(b.caseId) || a.rep - b.rep || a.chat - b.chat)
-  return { rows, notRun, notGraded, stoppedByBudget: stopped, costUnknown, spentUsd: spent(), ...(capStop ? { capStop } : {}) }
+  return { rows, notRun, notGraded, stoppedByBudget: stopped, costUnknown, spentUsd: spent(), ...(capStop ? { capStop } : {}), ...(harnessStop ? { harnessStop } : {}) }
 }

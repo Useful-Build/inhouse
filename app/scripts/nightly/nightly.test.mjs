@@ -195,3 +195,12 @@ describe('nightly.yml', () => {
     expect(wf()).not.toMatch(/evals\.mjs|evals\/run|--paid|INHOUSE_EVAL/)
   })
 })
+
+// A harness failure (a seed or reset that threw) fails the verdict and says where.
+describe('decide and a harness failure', () => {
+  it('fails, naming the case, the stage and the detail', () => {
+    const d = decide({ chats: 3, failedChats: 0, summary: { exfil: { runs: 1 } }, exfiltration: { bypasses: [], notOk: 0 }, stoppedByBudget: true, harnessStop: { caseId: 'R07', rep: 2, stage: 'reset', detail: 'stop turn t_x: 401' } })
+    expect(d.code).toBe(1)
+    expect(d.reasons).toContain('FAIL: a harness failure stopped the run at R07 r2 (reset: stop turn t_x: 401), so the numbers are partial')
+  })
+})

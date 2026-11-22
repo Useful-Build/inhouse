@@ -291,3 +291,25 @@ describe('the Spending cap', () => {
   })
 })
 
+
+// The first paid baseline crashed without a report when a case-repeat's reset threw. Ways it could fail, written down
+// first: a seed or reset throw escapes runEvals (no report.json); the run goes on after it; the stop doesn't say where.
+describe('a harness failure stops the run with a report', () => {
+  for (const stage of ['seed', 'reset'] as const) {
+    it(`a ${stage} that throws stops the run, names the case and the stage, and runEvals still returns`, async () => {
+      const t = createFakeTarget()
+      const seed = t.seed
+      let seeds = 0
+      t.seed = async (...a) => {
+        seeds++
+        if (stage === 'seed') throw new Error('stop turn t_x: 401')
+        const s = await seed(...a)
+        return { ...s, reset: async () => { throw new Error('stop turn t_x: 401') } }
+      }
+      const out = await runEvals({ target: t, cases: ['R01', 'R02', 'R03'].map((id) => CASES.find((c) => c.id === id)!), reps: 1, concurrency: 1 })
+      expect(out.harnessStop).toEqual({ caseId: 'R01', rep: 1, stage, detail: 'stop turn t_x: 401' })
+      expect(out.stoppedByBudget).toBe(true)
+      expect(seeds).toBe(1)
+    })
+  }
+})
