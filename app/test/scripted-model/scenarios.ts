@@ -214,28 +214,43 @@ function memoryRecall(id: string, query: string, fact: string): Scenario {
   }
 }
 
-/** The fact the `memory-save-returns` scenario saves (a person's own, active at once): eval R02's returns fact. */
-export const MEMORY_RETURNS_TEXT = 'Returns are accepted within 45 days.'
-export const MEMORY_RECALL_NOT_ONE = 'The search did not return exactly that one fact.'
 /**
- * Searches memory for `query` and answers `From memory: <fact>` only when the result is exactly one fact and it's `fact`
- * (memory_search's text says "1 saved fact matches:"; more says "N saved facts match"), else MEMORY_RECALL_NOT_ONE.
- * The remote stemming check (e2e/api/memory-search.spec.ts) uses it: "return" finds "Returns" on the sandbox's D1.
+ * The fact the `memory-save-stem` scenario saves (a person's own, active at once). A made-up word, so on any D1, seeded or
+ * not, only a form of it matches: `memory-recall-stem` searches "zorblat", which finds "Zorblats" only by its stem.
  */
-function memoryRecallOne(id: string, query: string, fact: string): Scenario {
+export const MEMORY_STEM_TEXT = 'Zorblats are accepted within 45 days.'
+/** What `memory-recall-stem` answers: how many facts the search returned ("?" when unreadable) and whether the fact was among them. */
+export const memoryRecallCount = (hits: number | '?', match: boolean): string => `hits=${hits} match=${match ? 'yes' : 'no'}`
+/**
+ * memory_search's count, from its text ("Nothing saved matches" is 0, "1 saved fact matches" or "N saved facts match" is
+ * N) or, when the CLI hands over only its structured answer (`{"facts":[...]}`), from the facts' `memory_id` keys.
+ */
+const hitsOf = (text: string): number | '?' => {
+  if (text.includes('Nothing saved matches')) return 0
+  const m = /\b(\d+) saved facts? match/.exec(text)
+  if (m) return Number(m[1])
+  return text.includes('"facts"') ? (text.match(/"memory_id"/g) ?? []).length : '?'
+}
+/**
+ * Searches memory for `query` and answers memoryRecallCount for what came back, so a failing check says what the search saw.
+ * One branch per answer (memory_search returns at most 20 facts), so the scenario still says only fixed text.
+ */
+function memoryRecallCounted(id: string, query: string, fact: string): Scenario {
   const ask = mainLoop('mcp__inhouse__memory_search')
-  const one = (r: MessagesRequest) => {
-    const block = resultBlock(r, id)
-    return block !== undefined && resultText(block).includes('1 saved fact matches:') && resultText(block).includes(fact)
-  }
   const reply = (text: string): ScriptedTurn => ({ content: [{ type: 'text', text }], expect: both(ask, resultOf(id)) })
-  return {
-    turns: [{ content: [{ type: 'tool_use', id, name: 'mcp__inhouse__memory_search', input: { query } }], expect: ask }],
-    branches: {
-      one: { match: one, turns: [null, reply(memoryRecallAnswer(fact))] },
-      other: { match: (r) => resultBlock(r, id) !== undefined && !one(r), turns: [null, reply(MEMORY_RECALL_NOT_ONE)] },
-    },
+  const branches: Record<string, ScriptedBranch> = {}
+  for (const hits of [...Array.from({ length: 21 }, (_, n) => n), '?' as const]) {
+    for (const match of [true, false]) {
+      branches[`hits-${hits}-${match}`] = {
+        match: (r) => {
+          const block = resultBlock(r, id)
+          return block !== undefined && hitsOf(resultText(block)) === hits && resultText(block).includes(fact) === match
+        },
+        turns: [null, reply(memoryRecallCount(hits, match))],
+      }
+    }
   }
+  return { turns: [{ content: [{ type: 'tool_use', id, name: 'mcp__inhouse__memory_search', input: { query } }], expect: ask }], branches }
 }
 
 /** How long the `slow-bash` scenario's one Bash call sleeps: long enough to act on the live turn, short enough to end on its own. */
@@ -276,16 +291,16 @@ export const SCENARIOS: Record<string, Scenario> = {
   /** The same for the team's Friday restock fact: it waits for an admin, so a search can't find it and the answer says nothing is saved. */
   'memory-recall-team': memoryRecall('toolu_scripted_recall_team', 'restock Fridays', MEMORY_SAVE_TEAM_TEXT),
 
-  /** Saves eval R02's returns fact for the person (active at once), for the remote stemming check (e2e/api/memory-search.spec.ts). */
-  'memory-save-returns': {
+  /** Saves the made-up "Zorblats" fact for the person (active at once), for the remote stemming check (e2e/api/memory-search.spec.ts). */
+  'memory-save-stem': {
     turns: [
-      { content: [{ type: 'tool_use', id: 'toolu_scripted_memory_returns', name: 'mcp__inhouse__memory_save', input: { scope: 'person', text: MEMORY_RETURNS_TEXT } }], expect: mainLoop('mcp__inhouse__memory_save') },
-      { content: [{ type: 'text', text: 'Saved.' }], expect: both(mainLoop('mcp__inhouse__memory_save'), resultOf('toolu_scripted_memory_returns')) },
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_memory_stem', name: 'mcp__inhouse__memory_save', input: { scope: 'person', text: MEMORY_STEM_TEXT } }], expect: mainLoop('mcp__inhouse__memory_save') },
+      { content: [{ type: 'text', text: 'Saved.' }], expect: both(mainLoop('mcp__inhouse__memory_save'), resultOf('toolu_scripted_memory_stem')) },
     ],
   },
 
-  /** Searches memory for "return" (another form of the saved "Returns") and says whether exactly that one fact came back. */
-  'memory-recall-returns': memoryRecallOne('toolu_scripted_recall_returns', 'return', MEMORY_RETURNS_TEXT),
+  /** Searches memory for "zorblat" (the saved "Zorblats" only by its stem) and says how many facts came back and whether it was one. */
+  'memory-recall-stem': memoryRecallCounted('toolu_scripted_recall_stem', 'zorblat', MEMORY_STEM_TEXT),
 
   /** Saves one fact for the whole team: it waits for an admin's OK, so no page lists it yet (the ship spec's S7). */
   'memory-save-team': {

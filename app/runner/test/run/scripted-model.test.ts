@@ -390,15 +390,24 @@ describe("the real CLI's requests", () => {
       const noResult = { ...r, messages: r.messages.slice(0, -1) }
       expect((await answer(model, noResult, 'memory-recall')).status).toBe(400)
     })
-    it('memory-recall-returns: searches "return" and says the fact only when the result is exactly that one fact', async () => {
-      const RETURNS = 'Returns are accepted within 45 days.'
-      const id = 'toolu_scripted_recall_returns'
+    it('memory-recall-stem: searches "zorblat" and says how many facts came back and whether the saved one was among them', async () => {
+      const STEM = 'Zorblats are accepted within 45 days.'
+      const id = 'toolu_scripted_recall_stem'
+      const cases: [string, string][] = [
+        [`1 saved fact matches:\n- [person] ${STEM} (memory_id: m)`, 'hits=1 match=yes'],
+        [`2 saved facts match:\n- [person] ${STEM} (memory_id: m)\n- [person] Zorblat colours (memory_id: n)`, 'hits=2 match=yes'],
+        ['1 saved fact matches:\n- [person] Something else (memory_id: m)', 'hits=1 match=no'],
+        ['Nothing saved matches "zorblat". Try other words.', 'hits=0 match=no'],
+        [`20 saved facts match:\n- [person] ${STEM} (memory_id: m)`, 'hits=20 match=yes'],
+        [JSON.stringify({ facts: [{ memory_id: 'm', scope: 'person', text: STEM, saved: '2026-11-22' }] }), 'hits=1 match=yes'],
+        [JSON.stringify({ facts: [] }), 'hits=0 match=no'],
+        [`an answer in another shape: ${STEM}`, 'hits=? match=yes'],
+      ]
       for (const key of ['turn1', 'turn1-budget'] as const) {
         const model = createScriptedModel(SCENARIOS)
-        expect(await answer(model, captured['memory-save']!.turn0!, 'memory-recall-returns')).toEqual({ status: 200, content: ['mcp__inhouse__memory_search'] })
-        expect(await answer(model, withResult(key, id, `1 saved fact matches:\n- [person] ${RETURNS} (memory_id: m)`), 'memory-recall-returns')).toEqual({ status: 200, content: [`From memory: ${RETURNS}`] })
-        for (const other of [`2 saved facts match:\n- [person] ${RETURNS} (memory_id: m)\n- [person] ${RETURNS} (memory_id: n)`, '1 saved fact matches:\n- [person] Something else (memory_id: m)', 'Nothing saved matches "return".']) {
-          expect(await answer(model, withResult(key, id, other), 'memory-recall-returns'), other).toEqual({ status: 200, content: ['The search did not return exactly that one fact.'] })
+        expect(await answer(model, captured['memory-save']!.turn0!, 'memory-recall-stem')).toEqual({ status: 200, content: ['mcp__inhouse__memory_search'] })
+        for (const [result, said] of cases) {
+          expect(await answer(model, withResult(key, id, result), 'memory-recall-stem'), result).toEqual({ status: 200, content: [said] })
         }
         expect(model.misses).toEqual([])
       }
