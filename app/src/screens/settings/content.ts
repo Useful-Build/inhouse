@@ -170,10 +170,10 @@ export function settingsPage(tab: string, env: Env): Page {
   const d0 = display()
   const now = nowOf()
   const forgetRows = (lines: MemoryLine[]) =>
-    lines.filter(l => !agent.forgot[l.key]).map(l => R(l.text, memorySource(l, now), 'button', 'Forget', 1, undefined, undefined, () => env.forget(l.key)))
+    lines.filter(l => !agent.forgot[l.key]).map(l => R(l.text, memorySource(l, now), 'button', 'Forget', 0, undefined, undefined, () => env.forget(l.key)))
   const teamMem = memory.team.map(g => ({ label: g.group, rows: forgetRows(g.lines) }))
   const memCount = teamMem.reduce((n, g) => n + g.rows.length, 0)
-  const teach = R('Teach it something', 'Tell it a rule in a chat, in your own words. It appears here.', 'button', 'Teach in a chat', 1, undefined, undefined, () => env.newChat('Remember that '))
+  const teach = R('Teach it something', "Tell it a rule in a chat, in your own words. It shows here, after an admin's OK if Ask is on.", 'button', 'Teach in a chat', 0, undefined, undefined, () => env.newChat('Remember that '))
   const lim = people.runLimits
   // These rows start at Act, so they name the channel Act connects. None: no channel wording or option.
   const channel = channelFrom(data, 1)?.name
@@ -237,7 +237,7 @@ export function settingsPage(tab: string, env: Env): Page {
     ] },
     'you-memory': { title: 'Memory', sections: [
       { label: 'What your Inhouse agent knows about you', rows: forgetRows(memory.personal) },
-      { label: 'Privacy', rows: [R('Only you can see this', 'Teammates and admins cannot read your personal memory.', 'value', 'Private'), R('Learn from my chats', 'Your Inhouse agent saves your preferences as you work. Turn off to stop.', 'toggle', '', 1, 'm:learn', true)] },
+      { label: 'Privacy', rows: [R('Only you can see this', 'Teammates and admins cannot read your personal memory.', 'value', 'Private'), R('Learn from my chats', 'Your Inhouse agent saves your preferences as you work. Turn off to stop.', 'toggle', '', 0, 'm:learn', true)] },
     ] },
     'team-plan': { title: 'Stage and plan', sections: [
       { label: 'Your stage', rows: [R('Current stage', stageDesc, 'value', stage), R('Next stage', nextStage, 'value', S < 2 ? STAGE_TAGS[S + 1] : 'None'), R('Talk to your Inhouse team', 'Move up when you are ready. Every stage includes all your tools.', 'button', 'Book a check-in', 0, undefined, undefined, () => env.openTeam('change', ''))] },
@@ -249,7 +249,7 @@ export function settingsPage(tab: string, env: Env): Page {
         sel('Most steps in one answer', 'An answer that needs more steps than this stops and says so.', 't:max_turns', '25', [...MAX_TURNS]),
         { ...txt('Websites it may open', 'One website name a line. Leave empty and it may open any public website.', 't:webfetch', ''), type: 'hosts', keywords: 'webfetch hosts domains allowlist' },
       ] },
-      { label: 'What your Inhouse agent knows', rows: [R('Team memory', `Supplier, customer and stock rules the whole team shares. ${memCount} things remembered.`, 'button', 'Open memory', 1, undefined, undefined, () => env.openSettings('team-memory')), R('Skills', `The jobs it knows how to do. ${skills.length} skills, added by your Inhouse team.`, 'button', 'View skills', 0, undefined, undefined, env.goSkills)] },
+      { label: 'What your Inhouse agent knows', rows: [R('Team memory', `Supplier, customer and stock rules the whole team shares. ${memCount} things remembered.`, 'button', 'Open memory', 0, undefined, undefined, () => env.openSettings('team-memory')), R('Skills', `The jobs it knows how to do. ${skills.length} skills, added by your Inhouse team.`, 'button', 'View skills', 0, undefined, undefined, env.goSkills)] },
     ] },
     'team-modes': { title: 'Models', sections: [
       { label: '', caption: 'How hard it thinks', rows: modeRows },
@@ -257,7 +257,7 @@ export function settingsPage(tab: string, env: Env): Page {
     ] },
     'team-memory': { title: 'Team memory', sections: [
       ...teamMem,
-      { label: 'How your Inhouse agent learns', rows: [R('Ask before saving a team rule', 'Your Inhouse agent shows the rule in the chat and an approver confirms it.', 'toggle', '', 1, 'm:ask', true), teach] },
+      { label: 'How your Inhouse agent learns', rows: [R('Ask before saving a team rule', 'On: new and changed team rules wait until an admin approves them. Off: they count at once.', 'toggle', '', 0, 'm:ask', true), teach] },
     ] },
     'team-members': { title: 'Members', sections: [
       { label: `${team.length} people`, rows: [...team.map(m => {
