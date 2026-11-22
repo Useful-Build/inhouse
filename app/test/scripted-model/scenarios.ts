@@ -193,6 +193,11 @@ export const MEMORY_SAVE_TEAM_TEXT = 'We restock on Fridays.'
 /** The `memory-reword-team` scenario's target (a fact the spec seeds under this id, valid under `MemoryIdSchema`) and its new wording. */
 export const MEMORY_REWORD_TEAM_ID = 'mem_E2eRewordTeamFact00001'
 export const MEMORY_REWORD_TEAM_TEXT = 'We restock on Thursdays.'
+/** The `memory-reword-person` scenario's target (seeded for Dana), its new wording, and its two answers: said by what the tool's result held. */
+export const MEMORY_REWORD_PERSON_ID = 'mem_E2eRewordPersonFact001'
+export const MEMORY_REWORD_PERSON_TEXT = 'Likes the weekly stock report as a chart.'
+export const MEMORY_REWORD_LEARNING_OFF_ANSWER = 'Not changed: learning is off.'
+export const MEMORY_REWORD_CHANGED_ANSWER = 'Changed.'
 
 /**
  * Looks one fact up with memory_search and answers from what came back, so a test sees what the session actually received:
@@ -356,6 +361,21 @@ export const SCENARIOS: Record<string, Scenario> = {
   },
 
   /** Rewords the seeded team fact `MEMORY_REWORD_TEAM_ID` with memory_update: an approved team fact goes back to waiting (the approvals spec). */
+  /** Rewords Dana's seeded person fact with memory_update and says which way it went: `learning_off` is the tool's refusal when her `m:learn` is off. */
+  'memory-reword-person': (() => {
+    const id = 'toolu_scripted_memory_reword_person'
+    const ask = mainLoop('mcp__inhouse__memory_update')
+    const refused = (r: MessagesRequest) => { const b = resultBlock(r, id); return b !== undefined && resultText(b).includes('turned off "Learn from my chats"') }
+    const reply = (text: string): ScriptedTurn => ({ content: [{ type: 'text', text }], expect: both(ask, resultOf(id)) })
+    return {
+      turns: [{ content: [{ type: 'tool_use', id, name: 'mcp__inhouse__memory_update', input: { memory_id: MEMORY_REWORD_PERSON_ID, text: MEMORY_REWORD_PERSON_TEXT } }], expect: ask }],
+      branches: {
+        off: { match: refused, turns: [null, reply(MEMORY_REWORD_LEARNING_OFF_ANSWER)] },
+        changed: { match: (r: MessagesRequest) => resultBlock(r, id) !== undefined && !refused(r), turns: [null, reply(MEMORY_REWORD_CHANGED_ANSWER)] },
+      },
+    }
+  })(),
+
   'memory-reword-team': {
     turns: [
       { content: [{ type: 'tool_use', id: 'toolu_scripted_memory_reword', name: 'mcp__inhouse__memory_update', input: { memory_id: MEMORY_REWORD_TEAM_ID, text: MEMORY_REWORD_TEAM_TEXT } }], expect: mainLoop('mcp__inhouse__memory_update') },

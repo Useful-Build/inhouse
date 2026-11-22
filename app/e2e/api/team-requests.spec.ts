@@ -7,7 +7,7 @@
 // and a refused write leaves none. The audit reads need the local D1; the rest runs on a deployed build too.
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
-import { actor, call, expectConflict, expectError, me } from './kit.ts'
+import { actor, call, endLiveGrants, expectConflict, expectError, me } from './kit.ts'
 import type { Actor, Reply } from './kit.ts'
 import { auditAfter, auditMax, expectOneLine } from './db.ts'
 import { needsLocalD1 } from './watch-kit.ts'
@@ -51,7 +51,10 @@ async function closeAllOpen(request: APIRequestContext): Promise<void> {
   }
 }
 
-test.beforeAll(async ({ request }) => { await closeAllOpen(request) })
+test.beforeAll(async ({ request }) => {
+  await endLiveGrants(request)
+  await closeAllOpen(request)
+})
 test.afterAll(async ({ request }) => { await closeAllOpen(request) })
 
 test('a Member and an Admin create a request; the Inhouse team can\'t; the record says what was asked, trimmed', async ({ request }) => {
@@ -194,7 +197,7 @@ test('route 83: only the requester withdraws, from open; another Member, the Adm
 })
 
 test('an unknown id is 404 wherever the matrix lets the caller in; the matrix answers first for the rest', async ({ request }) => {
-  const missing = 'tr_E2eNobodyAAAAAAAAAAAA'
+  const missing = 'tr_E2eNobodyAAAAAAAAAAAAA'
   expect(missing).toMatch(ID)
   expectError(await withdraw(request, dana, missing, 1), 404, 'not_found')
   expectError(await withdraw(request, admin, missing, 1), 404, 'not_found')
@@ -222,17 +225,16 @@ test('each write leaves one audit line with the id and the kind or status, never
   mark = auditMax()
   expectForbidden(await setStatus(request, admin, r.json.id, 'declined', 1))
   expectForbidden(await withdraw(request, leo, r.json.id, 1))
-  expectError(await withdraw(request, dana, 'tr_E2eNobodyAAAAAAAAAAAA', 1), 404, 'not_found')
+  expectError(await withdraw(request, dana, 'tr_E2eNobodyAAAAAAAAAAAAA', 1), 404, 'not_found')
   expect((await setStatus(request, inhouse, r.json.id, 'done', 9)).status).toBe(409)
   expect((await create(request, dana, { kind: 'job', text: '' })).status).toBe(400)
   expect(auditAfter(mark), 'no refused write leaves a line').toEqual([])
 
   mark = auditMax()
   expect((await setStatus(request, inhouse, r.json.id, 'done', 1)).status).toBe(200)
-  const done = auditAfter(mark)
-  expect(done.map(l => l.action)).toEqual(['team_request.status'])
-  expect(JSON.parse(done[0]!.args_json)).toEqual({ action: 'team_request.status', requestId: r.json.id, status: 'done' })
-  expect(done[0]!.args_json).not.toContain(text)
+  const inhouseId = (await me(request, inhouse)).memberId as string
+  const done = expectOneLine(mark, 'team_request.status', inhouseId, [text])
+  expect(JSON.parse(done.args_json)).toEqual({ action: 'team_request.status', requestId: r.json.id, status: 'done' })
 
   const w = await made(request, admin, { text: words('admin withdraws') })
   mark = auditMax()

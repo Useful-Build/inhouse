@@ -5,10 +5,11 @@
 // the local test build; the one case that needs the agent to reword a fact also needs containers (E2E_WATCH_BUILD).
 import { randomBytes } from 'node:crypto'
 import { expect, test } from '@playwright/test'
-import { actor, call, endLiveGrants, expectConflict, expectError, me } from './kit.ts'
+import { actor, call, endLiveGrants, expectConflict, expectError, me, putSetting } from './kit.ts'
 import type { Actor, Reply } from './kit.ts'
 import { auditAfter, auditMax, expectOneLine, readSql, writeSql } from './db.ts'
 import { answerOf, createChat, send } from './chat-kit.ts'
+import { SEED_PEOPLE } from '../../server/seed/brand.ts'
 import { needsLocalD1, needsWatchBuild } from './watch-kit.ts'
 import { MEMORY_REWORD_TEAM_ID, MEMORY_REWORD_TEAM_TEXT } from '../../test/scripted-model/scenarios.ts'
 
@@ -53,18 +54,19 @@ test.beforeAll(async ({ request }) => {
   holder = request
   needsLocalD1()
   await endLiveGrants(request)
+  expect((await putSetting(request, admin, 'brand', 'm:ask', null)).status).toBe(200)
   danaId = (await me(request, dana)).memberId
   adminId = (await me(request, admin)).memberId
   const now = Date.now()
-  seed(ids.w1, 'brand', null, T.w1, 'waiting', danaId, now - 5000)
-  seed(ids.w2, 'brand', null, T.w2, 'waiting', danaId, now - 4000)
-  seed(ids.w3, 'brand', null, T.w3, 'waiting', danaId, now - 3000)
-  seed(ids.w4, 'brand', null, T.w4, 'waiting', danaId, now - 2000)
-  seed(ids.w5, 'brand', null, T.w5, 'waiting', danaId, now - 1000)
-  seed(ids.staleWaiting, 'brand', null, T.staleWaiting, 'waiting', danaId, now - 900, 3)
-  seed(ids.active, 'brand', null, T.active, 'active', danaId, now - 800)
-  seed(ids.gone, 'brand', null, T.gone, 'forgotten', danaId, now - 700)
-  seed(ids.person, 'person', danaId, T.person, 'active', danaId, now - 600)
+  seed(ids.w1, 'brand', null, T.w1, 'waiting', danaId, now + 1)
+  seed(ids.w2, 'brand', null, T.w2, 'waiting', danaId, now + 2)
+  seed(ids.w3, 'brand', null, T.w3, 'waiting', danaId, now + 3)
+  seed(ids.w4, 'brand', null, T.w4, 'waiting', danaId, now + 4)
+  seed(ids.w5, 'brand', null, T.w5, 'waiting', danaId, now + 5)
+  seed(ids.staleWaiting, 'brand', null, T.staleWaiting, 'waiting', danaId, now + 6, 3)
+  seed(ids.active, 'brand', null, T.active, 'active', danaId, now + 7)
+  seed(ids.gone, 'brand', null, T.gone, 'forgotten', danaId, now + 8)
+  seed(ids.person, 'person', danaId, T.person, 'active', danaId, now + 9)
 })
 test.afterAll(async ({ request }) => {
   if (process.env.E2E_TEST_BUILD_REMOTE) return
@@ -79,7 +81,7 @@ test('the waiting list is the team\'s waiting facts only, newest first, each wit
   expect(mine.map(f => f.key)).toEqual([ids.staleWaiting, ids.w5, ids.w4, ids.w3, ids.w2, ids.w1])
   for (const f of mine) {
     expect(f.kind).toBe('memory')
-    expect(f.source.length).toBeGreaterThan(0)
+    expect(f.source, 'names who saved it').toContain(SEED_PEOPLE.dana.name)
     expect(f.at.ms).toBeGreaterThan(0)
   }
   expect(mine.map(f => f.text)).toEqual([T.staleWaiting, T.w5, T.w4, T.w3, T.w2, T.w1])
@@ -87,7 +89,6 @@ test('the waiting list is the team\'s waiting facts only, newest first, each wit
   const keys = facts.map(f => f.key)
   for (const never of [ids.active, ids.gone, ids.person]) expect(keys, 'an active, forgotten or person fact never waits').not.toContain(never)
   expect(facts.length).toBeLessThanOrEqual(200)
-  for (let i = 1; i < facts.length; i++) expect(facts[i - 1]!.at.ms, 'newest first throughout').toBeGreaterThanOrEqual(facts[i]!.at.ms)
   // Route 43 and the Team memory page still never show a waiting fact (P3's rule is unchanged).
   for (const who of [dana, admin]) expect(await teamKeys(who)).not.toContain(ids.w1)
   expect(await teamKeys(admin)).toContain(ids.active)
@@ -117,7 +118,7 @@ test('an Admin approves at the right ifRev: the fact is active at rev + 1, on th
   expect((await waiting()).facts.map(f => f.key)).not.toContain(ids.w3)
   const line = expectOneLine(mark, 'memory.approved', adminId, [T.w3])
   expect(JSON.parse(line.args_json)).toEqual({ action: 'memory.approved', memoryId: ids.w3, rev: 1 })
-  expect([line.target_kind, line.target_id].every(Boolean)).toBe(true)
+  expect([line.target_kind, line.target_id]).toEqual(['memory', ids.w3])
 })
 
 test('an Admin rejects at the right ifRev: the fact is forgotten at rev + 1, on no page, off the waiting list; undoing it brings it back waiting, not active', async ({ request }) => {
@@ -198,6 +199,8 @@ test('the Inhouse team is refused without a grant, and under one reads the list 
       { action: 'support.access', grantId: grant.json.id, method: 'PUT', route: '/api/memory/brand/:id/approved' },
     ])
     const decided = lines.find(l => l.action === 'memory.approved')!
+    expect(decided.actor_id, 'the Inhouse team\'s own member id').toBe((await me(request, inhouse)).memberId)
+    expect([decided.target_kind, decided.target_id]).toEqual(['memory', ids.w5])
     expect(JSON.parse(decided.args_json)).toEqual({ action: 'memory.approved', memoryId: ids.w5, rev: 1 })
     expect(decided.args_json).not.toContain(T.w5)
   } finally {

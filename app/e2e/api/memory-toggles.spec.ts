@@ -12,7 +12,8 @@ import type { APIRequestContext } from '@playwright/test'
 import { actor, call, putSetting, me } from './kit.ts'
 import type { Actor } from './kit.ts'
 import { readSql, writeSql } from './db.ts'
-import { answerOf, createChat, needsContainer, send } from './chat-kit.ts'
+import { answerOf, createChat, needsContainer, send, textOf } from './chat-kit.ts'
+import { MEMORY_REWORD_CHANGED_ANSWER, MEMORY_REWORD_LEARNING_OFF_ANSWER, MEMORY_REWORD_PERSON_ID, MEMORY_REWORD_PERSON_TEXT, MEMORY_REWORD_TEAM_ID, MEMORY_REWORD_TEAM_TEXT } from '../../test/scripted-model/scenarios.ts'
 import { memberIdOf, needsLocalD1, needsWatchBuild, retireRoutines, seedRoutine } from './watch-kit.ts'
 import { randomBytes } from 'node:crypto'
 
@@ -62,10 +63,16 @@ const reset = async (request: APIRequestContext): Promise<void> => {
   await clean(request)
 }
 /** One scripted turn as Dana, run to its answer. */
-async function turn(request: APIRequestContext, scenario: string): Promise<void> {
+async function turn(request: APIRequestContext, scenario: string): Promise<string> {
   const chat = await createChat(request, dana)
   const sent = await send(request, dana, chat, `scenario:${scenario} please remember that`)
-  await answerOf(request, dana, chat, sent.turnId, 150_000)
+  return textOf(await answerOf(request, dana, chat, sent.turnId, 150_000))
+}
+const factRow = (id: string) => readSql<{ status: string; rev: number; text: string }>('SELECT status, rev, text FROM memories WHERE id = ?', id)[0]
+function seedFact(id: string, scope: 'brand' | 'person', owner: string | null, body: string, by: string): void {
+  const now = Date.now()
+  writeSql('DELETE FROM memories WHERE id = ?', id)
+  writeSql('INSERT INTO memories (id, scope, owner_id, text, status, created_by, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', id, scope, owner, body, 'active', by, now, now)
 }
 
 test('`m:learn` off: the agent\'s person save is refused and the Memory page stays empty; on again it saves; reset to unset means on', async ({ request }) => {
@@ -149,8 +156,10 @@ test('`m:ask` off: a routine\'s team save still waits', async ({ request }) => {
     await put(request, admin, 'brand', 'm:ask', false)
     const run = await call(request, dana, 'POST', `/api/routines/${id}/run`, { json: { clientKey: randomBytes(16).toString('hex') } })
     expect(run.status, run.text).toBe(200)
-    await expect.poll(async () => (await waitingLines(request, TEAM_FACT)).length, { timeout: 180_000, message: 'the routine\'s fact waits' }).toBe(1)
+    // Wait for the fact in either list, then say which: a wrong active save fails at once, not after the timeout.
+    await expect.poll(async () => (await waitingLines(request, TEAM_FACT)).length + (await teamLines(request, TEAM_FACT)).length, { timeout: 180_000, message: 'the routine saved the fact' }).toBe(1)
     expect(await teamLines(request, TEAM_FACT), 'the switch being off does not make a routine\'s fact active').toHaveLength(0)
+    expect(await waitingLines(request, TEAM_FACT)).toHaveLength(1)
   } finally {
     retireRoutines()
     await reset(request)
@@ -176,5 +185,56 @@ test('`m:ask` off: an admin\'s restore (route 45\'s undo) still waits', async ({
   } finally {
     await put(request, admin, 'brand', 'm:ask', null)
     writeSql('DELETE FROM memories WHERE id = ?', key)
+  }
+})
+
+test('`m:learn` off: the agent\'s person reword is refused with learning_off and the fact stays as it was; forgetting still works; on, the reword applies', async ({ request }) => {
+  needsWatchBuild()
+  test.setTimeout(400_000)
+  await reset(request)
+  const danaId = (await me(request, dana)).memberId as string
+  const old = 'E2E toggles person fact: prefers a table.'
+  seedFact(MEMORY_REWORD_PERSON_ID, 'person', danaId, old, danaId)
+  try {
+    await put(request, dana, 'personal', 'm:learn', false)
+    expect(await turn(request, 'memory-reword-person'), 'the tool said learning_off').toBe(MEMORY_REWORD_LEARNING_OFF_ANSWER)
+    expect(factRow(MEMORY_REWORD_PERSON_ID)).toEqual({ status: 'active', rev: 1, text: old })
+    // Forgetting still works with learning off.
+    const forgot = await call(request, dana, 'PUT', `/api/memory/personal/${MEMORY_REWORD_PERSON_ID}/forgotten`, { json: { forgotten: true, ifRev: 1 } })
+    expect(forgot.status, forgot.text).toBe(200)
+    const undone = await call(request, dana, 'PUT', `/api/memory/personal/${MEMORY_REWORD_PERSON_ID}/forgotten`, { json: { forgotten: false, ifRev: 2 } })
+    expect(undone.status, undone.text).toBe(200)
+
+    await put(request, dana, 'personal', 'm:learn', true)
+    expect(await turn(request, 'memory-reword-person')).toBe(MEMORY_REWORD_CHANGED_ANSWER)
+    expect(factRow(MEMORY_REWORD_PERSON_ID)).toMatchObject({ status: 'active', text: MEMORY_REWORD_PERSON_TEXT })
+  } finally {
+    await reset(request)
+    writeSql('DELETE FROM memories WHERE id = ?', MEMORY_REWORD_PERSON_ID)
+  }
+})
+
+test('`m:ask` off: a person\'s agent\'s team reword is active at once; a routine\'s reword still waits', async ({ request }) => {
+  needsWatchBuild()
+  test.setTimeout(400_000)
+  await reset(request)
+  const danaId = (await me(request, dana)).memberId as string
+  const old = 'E2E toggles team fact: we restock on Fridays.'
+  const id = seedRoutine({ creatorId: danaId, hour: 6, minute: 0, instruction: 'scenario:memory-reword-team Change that team fact.', need: 0 })
+  try {
+    await put(request, admin, 'brand', 'm:ask', false)
+    seedFact(MEMORY_REWORD_TEAM_ID, 'brand', null, old, danaId)
+    await turn(request, 'memory-reword-team')
+    expect(factRow(MEMORY_REWORD_TEAM_ID), 'a person\'s agent\'s reword is active with the switch off').toEqual({ status: 'active', rev: 2, text: MEMORY_REWORD_TEAM_TEXT })
+
+    seedFact(MEMORY_REWORD_TEAM_ID, 'brand', null, old, danaId)
+    const run = await call(request, dana, 'POST', `/api/routines/${id}/run`, { json: { clientKey: randomBytes(16).toString('hex') } })
+    expect(run.status, run.text).toBe(200)
+    await expect.poll(() => factRow(MEMORY_REWORD_TEAM_ID)!.text, { timeout: 180_000, message: 'the routine reworded the fact' }).toBe(MEMORY_REWORD_TEAM_TEXT)
+    expect(factRow(MEMORY_REWORD_TEAM_ID), 'a routine\'s reword waits whatever the switch says').toMatchObject({ status: 'waiting', rev: 2 })
+  } finally {
+    retireRoutines()
+    await reset(request)
+    writeSql('DELETE FROM memories WHERE id = ?', MEMORY_REWORD_TEAM_ID)
   }
 })
