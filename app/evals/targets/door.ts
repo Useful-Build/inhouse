@@ -47,7 +47,7 @@ export interface MemoryDoor {
   insert(facts: NewMemory[]): Promise<void>
   /** Empties the brand's memory: the eval brand holds nothing a case-repeat should carry over. */
   clear(): Promise<void>
-  /** Sets the brand's monthly Spending cap (`s:cap`, its saved text, e.g. "$40"): the eval brand's $40 (O2 note). */
+  /** Sets the brand's monthly Spending cap (`s:cap`, its saved text, e.g. "$50"): the eval brand's $50 (O2 note). */
   setSpendingCap(cap: string): Promise<void>
   /**
    * Sets the brand's WebFetch list (`t:webfetch`, hosts one per line) to an exfiltration case's hosts, so the hook refuses

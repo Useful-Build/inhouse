@@ -95,7 +95,7 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
       if (stopped) return
       // The month's room under the brand's Spending cap, read after the seed (#253 review O1, O2): the target's setup has
       // pinned the cap, its lock is held and the case-repeat before has ended, so this is the cap we pinned and settled
-      // spend. A failed read (route 42 down, the cap no longer $40) stops the run with a report (O3, O6).
+      // spend. A failed read (route 42 down, the cap no longer $50) stops the run with a report (O3, O6).
       if (target.room) {
         let room: { spentUsd: number; capUsd: number }
         try {

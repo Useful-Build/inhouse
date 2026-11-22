@@ -66,7 +66,7 @@ interface Server {
   stopsBeforeEnded?: number
   /** Every stop answers this status instead. */
   stopStatus?: number
-  /** Route 42's cap and the month's spend, in cents (defaults: the $40 cap, nothing spent). */
+  /** Route 42's cap and the month's spend, in cents (defaults: the $50 cap, nothing spent). */
   capMinor?: number
   spentMinor?: number
   /** The turn ends with no answer but an end row (route 24's `event` with `end`): a failure or a cancel reason. */
@@ -97,7 +97,7 @@ const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } 
       return n < (s.stopsBeforeEnded ?? 0) ? json({}) : json({ error: { code: 'conflict', reason: 'turn_ended' } }, 409)
     }
     if (url.pathname === '/api/models') return json({ default: 'sonnet', modes: [{ id: 'sonnet' }] })
-    if (url.pathname === '/api/usage') return json({ cap: { minor: s.capMinor ?? 4000, currency: 'USD' }, total: { minor: s.spentMinor ?? 0, currency: 'USD' } })
+    if (url.pathname === '/api/usage') return json({ cap: { minor: s.capMinor ?? 5000, currency: 'USD' }, total: { minor: s.spentMinor ?? 0, currency: 'USD' } })
     if (url.pathname === '/api/chats' && method === 'POST') return json({ id: body.id }, 201)
     if (url.pathname.endsWith('/attachments')) return json({ fileId: 'f_AAAAAAAAAAAAAAAAAAAAAA', name: 'note.txt' }, 201)
     if (url.pathname.endsWith('/turns')) {
@@ -135,14 +135,14 @@ describe('the eval-brand check (server side, before the first chat)', () => {
     expect(srv.s.sent.filter((x) => x.method !== 'GET')).toEqual([])
   })
 
-  // (a), the O2 note: the eval brand's own Spending cap is the $40 (decision 18), pinned by the harness every run.
-  it('pins the brand\'s Spending cap to $40 through the door, then reads it back on route 42; any other cap refuses', async () => {
+  // (a), the O2 note: the eval brand's own Spending cap is the $50 (Wasim's monthly test budget), pinned by the harness every run.
+  it('pins the brand\'s Spending cap to $50 through the door, then reads it back on route 42; any other cap refuses', async () => {
     const door = new FakeDoor()
     await (await make(server(), door).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).reset()
-    expect(door.calls).toContain('cap $40')
-    for (const capMinor of [32000, 3999, 0]) {
+    expect(door.calls).toContain('cap $50')
+    for (const capMinor of [32000, 4999, 4000, 0]) {
       const d = new FakeDoor()
-      await expect(make(server({ capMinor }), d).seed([], { caseId: 'N01', rep: 1, canary: 'c' }), String(capMinor)).rejects.toThrow(/Spending cap is not \$40/)
+      await expect(make(server({ capMinor }), d).seed([], { caseId: 'N01', rep: 1, canary: 'c' }), String(capMinor)).rejects.toThrow(/Spending cap is not \$50/)
       expect(d.calls.filter((c) => c === 'clear' || c.startsWith('insert'))).toEqual([])
     }
   })
@@ -150,23 +150,23 @@ describe('the eval-brand check (server side, before the first chat)', () => {
   it('room(): the month\'s spend and the cap from route 42, in dollars', async () => {
     const target = make(server({ spentMinor: 1250 }), new FakeDoor())
     await (await target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).reset()
-    expect(await target.room!()).toEqual({ spentUsd: 12.5, capUsd: 40 })
+    expect(await target.room!()).toEqual({ spentUsd: 12.5, capUsd: 50 })
   })
 
-  // #253 review O3: our $40 layer can't be lifted silently mid-run (a re-seed's $320, a Settings change).
-  it('room() refuses whenever the cap is no longer $40', async () => {
+  // #253 review O3: our $50 layer can't be lifted silently mid-run (a re-seed's $320, a Settings change).
+  it('room() refuses whenever the cap is no longer $50', async () => {
     const srv = server()
     const target = make(srv, new FakeDoor())
     await (await target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).reset()
     srv.s.capMinor = 32000
-    await expect(target.room!()).rejects.toThrow(/Spending cap is not \$40/)
+    await expect(target.room!()).rejects.toThrow(/Spending cap is not \$50/)
   })
 
   // #253 review O1: a month already at the cap is refused at setup, not on the first chat.
   it('setup refuses a month whose spend has reached the cap', async () => {
-    for (const spentMinor of [4000, 4500]) {
+    for (const spentMinor of [5000, 5500]) {
       const d = new FakeDoor()
-      await expect(make(server({ spentMinor }), d).seed([], { caseId: 'N01', rep: 1, canary: 'c' }), String(spentMinor)).rejects.toThrow(/reached the \$40 cap/)
+      await expect(make(server({ spentMinor }), d).seed([], { caseId: 'N01', rep: 1, canary: 'c' }), String(spentMinor)).rejects.toThrow(/reached the \$50 cap/)
       expect(d.calls.filter((c) => c === 'clear' || c.startsWith('insert'))).toEqual([])
     }
   })
@@ -484,9 +484,9 @@ describe('the memory door', () => {
   it('setSpendingCap upserts the brand\'s s:cap (its JSON string) and refuses anything but a cap the product reads', async () => {
     const sqls: string[] = []
     const door = createDoor(async (sql) => { sqls.push(sql); return [] })
-    await door.setSpendingCap('$40')
-    expect(sqls[0]).toMatch(/^INSERT INTO settings \(owner, key, value_json, rev, updated_at_ms, updated_by, req_id\) VALUES \('brand', 's:cap', '"\$40"', 1, \d+, 'eval', 'eval'\) ON CONFLICT \(owner, key\) DO UPDATE SET value_json = excluded\.value_json, rev = settings\.rev \+ 1, updated_at_ms = excluded\.updated_at_ms, updated_by = 'eval', req_id = 'eval'$/)
-    for (const bad of ['40', '$0', "$40'; DROP TABLE settings;--", '$100001', '$40.5']) await expect(door.setSpendingCap(bad), bad).rejects.toThrow(DoorRefusal)
+    await door.setSpendingCap('$50')
+    expect(sqls[0]).toMatch(/^INSERT INTO settings \(owner, key, value_json, rev, updated_at_ms, updated_by, req_id\) VALUES \('brand', 's:cap', '"\$50"', 1, \d+, 'eval', 'eval'\) ON CONFLICT \(owner, key\) DO UPDATE SET value_json = excluded\.value_json, rev = settings\.rev \+ 1, updated_at_ms = excluded\.updated_at_ms, updated_by = 'eval', req_id = 'eval'$/)
+    for (const bad of ['40', '$0', "$50'; DROP TABLE settings;--", '$100001', '$50.5']) await expect(door.setSpendingCap(bad), bad).rejects.toThrow(DoorRefusal)
     expect(sqls).toHaveLength(1)
   })
   it('wrangler runs in the sandbox account with the config and never echoes the environment', async () => {
@@ -572,8 +572,8 @@ describe('the chat helper ids', () => {
 describe('the README and the cap', () => {
   it('names the cap stop', () => {
     const report = buildReport(CASES, [], { target: 'product', model: 'm', effort: 'e', reps: 1, notRun: [] })
-    const text = renderReadme(report, 't', { capStop: { caseId: 'R07', rep: 2, why: 'would cross the cap', spentUsd: 39.9, capUsd: 40, estimateUsd: 0.25 } })
-    expect(text).toContain('Stopped by the brand\'s Spending cap at R07 r2: would cross the cap ($39.90 spent of $40.00, the case needs about $0.25).')
+    const text = renderReadme(report, 't', { capStop: { caseId: 'R07', rep: 2, why: 'would cross the cap', spentUsd: 49.9, capUsd: 50, estimateUsd: 0.25 } })
+    expect(text).toContain('Stopped by the brand\'s Spending cap at R07 r2: would cross the cap ($49.90 spent of $50.00, the case needs about $0.25).')
     expect(renderReadme(report, 't')).not.toMatch(/Spending cap at/)
   })
   // Since #245's writeResults: the cap stop reaches report.json (the verdict, decide.mjs, fails on it) and the README.
