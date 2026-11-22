@@ -1,13 +1,15 @@
 // The read-side runner's command line, parsed and refused in one place (run.mjs only wires it). Pure, so a test drives every refusal.
 import { READ_SIDE_CASES, PAGE_HOST } from './cases.ts'
 import type { ReadSideCase } from './cases.ts'
+import { estimateUsd } from '../runner.ts'
 
 /** The picker models' API ids (server/model/catalog.ts, pinned by a test). One dispatch runs exactly one. */
 export const MODELS = ['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] as const
 /** Pinned for every model, no override and no fallback. */
 export const EFFORT = 'medium'
-/** A dispatch's budget may not exceed the eval brand's Spending cap (STORE_DATA_CAP, EVAL_CAP; a test pins them equal). */
-export const READ_SIDE_CAP_USD = 50
+/** A dispatch's budget may not exceed this cap, the eval brand's Spending cap. One literal line: the ops eval-run gate matches it like STORE_DATA_CAP. */
+export const READ_SIDE_CAP = '$50'
+export const READ_SIDE_CAP_USD = Number(READ_SIDE_CAP.slice(1))
 
 export interface ReadSideArgs {
   target: 'fake' | 'product'
@@ -60,12 +62,15 @@ export function parseReadSideArgs(a: RawArgs): ReadSideArgs {
   if (a.target !== 'fake' && a.target !== 'product') throw new Refused('--target must be fake or product')
   if (!a.out) throw new Refused('--out <dir> is required')
   if (a.effort !== undefined && a.effort !== EFFORT) throw new Refused(`effort is pinned to ${EFFORT} for every model: --effort ${a.effort} is refused`)
+  if (a.target === 'fake' && a.model !== undefined) throw new Refused('--model is for the product target only: the fake target runs no model')
+  if (a.cases === '') throw new Refused('--cases is empty: name cases or leave it out')
   const model = a.model ?? (a.target === 'fake' ? 'fake' : undefined)
   if (!model) throw new Refused('--model <api id> is required: one model per dispatch')
   if (model.includes(',')) throw new Refused('one model per dispatch: pass a single --model')
   if (a.target === 'product' && !(MODELS as readonly string[]).includes(model)) throw new Refused(`--model ${model} is not a picker model (${MODELS.join(', ')})`)
+  if (a.budget !== undefined && !/^\d+(\.\d{1,2})?$/.test(a.budget)) throw new Refused('--budget must be USD like 10 or 10.50')
   const budget = a.budget === undefined ? null : Number(a.budget)
-  if (budget !== null && !(Number.isFinite(budget) && budget > 0)) throw new Refused('--budget must be a positive number of USD')
+  if (budget !== null && !(budget > 0)) throw new Refused('--budget must be a positive number of USD')
   if (a.target === 'product') {
     if (!a.paid || budget === null) throw new Refused('the product target refuses without --paid and --budget <usd> (the dispatch\'s approved max_usd)')
     if (budget > READ_SIDE_CAP_USD) throw new Refused(`--budget $${budget} is over the dispatch cap $${READ_SIDE_CAP_USD}`)
@@ -87,5 +92,8 @@ export function parseReadSideArgs(a: RawArgs): ReadSideArgs {
     throw new Refused('--page-origin <https origin> is required: web page cases need the eval page host (no default)')
   }
   if (pageOrigin) cases = withPageOrigin(cases, pageOrigin)
+  if (a.target === 'product' && budget !== null && estimateUsd(cases, 1) > budget) {
+    throw new Refused(`the estimate $${estimateUsd(cases, 1).toFixed(2)} for ${cases.length} cases is over --budget $${budget}: the run would stop partway, so it is refused`)
+  }
   return { target: a.target, model, out: a.out, pageOrigin, paid: a.paid ?? false, budgetUsd: budget, agent, sha: a.sha ?? null, cases, partial: wanted !== null }
 }

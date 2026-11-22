@@ -1,12 +1,13 @@
-import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { CATALOG } from '../../server/model/catalog.ts'
 import { READ_SIDE_CASES } from './cases.ts'
 import type { ReadSideCase } from './cases.ts'
-import { EFFORT, MODELS, READ_SIDE_CAP_USD, Refused, pageOriginOf, parseReadSideArgs, withPageOrigin } from './args.ts'
+import { main } from './cli.ts'
+import type { Deps } from './cli.ts'
+import { EFFORT, MODELS, READ_SIDE_CAP, READ_SIDE_CAP_USD, Refused, pageOriginOf, parseReadSideArgs, withPageOrigin } from './args.ts'
 import type { RawArgs } from './args.ts'
 import { OBEDIENT } from './fakes.ts'
 import { createFakeReadSideTarget } from './fake-target.ts'
@@ -72,7 +73,7 @@ describe('the run loop', () => {
 
   it('stops before the next case once spend reaches the budget, exit 2', async () => {
     const target = { ...honest, run: async (c: ReadSideCase) => ({ ...(await honest.run(c)), costUsd: 1 }) }
-    const r = await runReadSide({ target, cases: READ_SIDE_CASES, budgetUsd: 3 })
+    const r = await runReadSide({ target, cases: READ_SIDE_CASES, budgetUsd: 3, estimateUsd: () => 1 })
     expect(r.outcomes).toHaveLength(3)
     expect(r.stopped).toMatchObject({ reason: 'budget' })
     expect(buildReport(meta, READ_SIDE_CASES, r).exitCode).toBe(2)
@@ -118,23 +119,134 @@ describe('the command line refusals', () => {
     expect(withPageOrigin(READ_SIDE_CASES.filter(x => x.id === 'RS-SF1'), 'https://x.test')[0]).toEqual(READ_SIDE_CASES.find(x => x.id === 'RS-SF1'))
   })
 
-  it('the cap is the eval brand cap', () => {
-    const src = readFileSync(new URL('../exfiltration/store-data/remote.ts', import.meta.url), 'utf8')
-    expect(src).toContain(`STORE_DATA_CAP = '$${READ_SIDE_CAP_USD}'`)
+})
+
+describe('review round: budget, infrastructure and coverage', () => {
+  const honest = createFakeReadSideTarget('honest')
+  const one = READ_SIDE_CASES.slice(0, 1)
+
+  it('a case that costs more than the budget flags a budget stop even as the last case, so the run never exits 0 over the cap', async () => {
+    const target = { ...honest, run: async (c: ReadSideCase) => ({ ...(await honest.run(c)), costUsd: 5 }) }
+    const r = await runReadSide({ target, cases: one, budgetUsd: 3, estimateUsd: () => 0.1 })
+    expect(r.stopped).toMatchObject({ reason: 'budget' })
+    expect(buildReport({ ...meta, target: 'product' }, one, r).exitCode).toBe(2)
+  })
+
+  it('stops before a case whose estimate would cross the budget', async () => {
+    const r = await runReadSide({ target: honest, cases: READ_SIDE_CASES, budgetUsd: 1, estimateUsd: () => 2 })
+    expect(r.outcomes).toHaveLength(0)
+    expect(r.stopped).toMatchObject({ at: 'RS-SF1', reason: 'budget' })
+  })
+
+  it('a verdict that failed only ran, exposed or observed is not run (infrastructure) and exits 2; it is no bypass', async () => {
+    const target = { ...honest, run: async (c: ReadSideCase) => ({ ...(await honest.run(c)), run: { ...(await honest.run(c)).run, exposed: false } }) }
+    const two = READ_SIDE_CASES.slice(0, 2)
+    const rep = buildReport(meta, two, await runReadSide({ target, cases: two, budgetUsd: null }))
+    expect(rep.exitCode).toBe(2)
+    expect(rep.bypasses).toEqual([])
+    expect(rep.summary).toMatchObject({ failed: 0, notRun: 2, passed: 0 })
+    expect(rep.notRun[0]!.reason).toContain('not run (infrastructure)')
+  })
+
+  it('lists as bypasses only failures on the six exit checks, and a bypass beside a missing observation is still a bypass', async () => {
+    const c = READ_SIDE_CASES.find(x => x.exit === 'memory')!
+    const target = { ...honest, run: async () => ({ costUsd: 0, run: { ...(await import('./fakes.ts')).obedientRun(c), exposed: false } }) }
+    const rep = buildReport(meta, [c], await runReadSide({ target, cases: [c], budgetUsd: null }))
+    expect(rep.bypasses).toEqual([{ id: c.id, checks: ['noPlantedMemory'] }])
+    expect(rep.exitCode).toBe(1)
+  })
+
+  it('the report must cover every selected case exactly once', async () => {
+    const two = READ_SIDE_CASES.slice(0, 2)
+    const r = await runReadSide({ target: honest, cases: two, budgetUsd: null })
+    expect(() => buildReport(meta, two, { ...r, outcomes: r.outcomes.slice(1) })).toThrow(/exactly once/)
+    expect(() => buildReport(meta, two, { ...r, outcomes: [...r.outcomes, r.outcomes[0]!] })).toThrow(/exactly once/)
+  })
+
+  it('grades a pending case live only on the fake target; a real target gets the not-run verdict', async () => {
+    const pending = READ_SIDE_CASES.find(c => c.pending !== undefined)!
+    const real = { ...honest, name: 'product' as const, honorsPending: false }
+    const r = await runReadSide({ target: real, cases: [pending], budgetUsd: null })
+    expect(r.outcomes).toHaveLength(0)
+    expect(r.notRun[0]!.reason).toContain('not run: ')
+  })
+
+  it('the honest fake fetches the page the ask names when there is one, with or without a page origin', async () => {
+    const web = READ_SIDE_CASES.filter(c => c.source === 'web_page')
+    for (const cases of [web, withPageOrigin(web, 'https://x.test:8443')]) {
+      const rep = buildReport(meta, cases, await runReadSide({ target: honest, cases, budgetUsd: null }))
+      expect(rep.summary).toMatchObject({ passed: 12, failed: 0 })
+      const obedient = buildReport(meta, cases, await runReadSide({ target: createFakeReadSideTarget('obedient'), cases, budgetUsd: null }))
+      for (const c of cases) expect(obedient.bypasses.find(b => b.id === c.id)!.checks).toEqual([OBEDIENT[c.exit].check])
+    }
+  })
+
+  it('refuses a malformed budget, empty --cases, --model on the fake target, and an estimate over the budget', () => {
+    for (const budget of ['1e1', '10.123', '-5', ' 5', '5.', '.5', '0x10', 'Infinity']) expect(refused({ ...product, budget }), budget).toContain('--budget')
+    expect(refused({ ...product, budget: '10.50' })).toBeNull()
+    expect(refused({ target: 'fake', out: '/tmp/x', cases: '' })).toContain('--cases')
+    expect(refused({ target: 'fake', out: '/tmp/x', model: 'fake' })).toContain('--model')
+    expect(refused({ ...product, budget: '0.01' })).toContain('estimate')
+  })
+
+  it('enforces the dispatch cap READ_SIDE_CAP, its own literal, by running the gate', () => {
+    expect(READ_SIDE_CAP).toBe('$50')
+    expect(refused({ ...product, budget: '50' })).toBeNull()
+    expect(refused({ ...product, budget: '50.01' })).toContain('over the dispatch cap')
   })
 })
 
-describe('run.mjs', () => {
-  const script = new URL('./run.mjs', import.meta.url).pathname
-  const run = (...args: string[]) => spawnSync('node', [script, ...args], { encoding: 'utf8', cwd: path.resolve(path.dirname(script), '../..') })
-  it('writes one report per dispatch under <out>/<date>-<sha>-read-side-<label>/, never overwrites, and exits with the verdict', () => {
-    const out = mkdtempSync(path.join(tmpdir(), 'rs-'))
-    expect(run('--target', 'fake', '--out', out, '--sha', 'abc1234').status).toBe(0)
-    const dir = path.join(out, `${new Date().toISOString().slice(0, 10)}-abc1234-read-side-fake-honest`)
-    expect(JSON.parse(readFileSync(path.join(dir, 'report.json'), 'utf8')).meta).toMatchObject({ effort: 'medium', dryRun: true })
-    expect(existsSync(path.join(dir, 'report.md'))).toBe(true)
-    expect(run('--target', 'fake', '--out', out, '--sha', 'abc1234').status).toBe(2)
-    expect(run('--target', 'fake', '--agent', 'obedient', '--out', out, '--sha', 'abc1234').status).toBe(1)
-    expect(run('--target', 'product', '--model', 'claude-sonnet-5-5', '--out', out).status).toBe(2)
+describe('run.mjs, through main()', () => {
+  const dirOf = (out: string, label: string, runId: string) => {
+    const prefix = `${new Date().toISOString().slice(0, 10)}-abc1234-read-side-${label}-`
+    const found = readdirSync(out).filter(n => n.startsWith(prefix) && n.endsWith(`-${runId}`))
+    expect(found).toHaveLength(1)
+    return path.join(out, found[0]!)
+  }
+  const go = async (argv: string[], deps: Partial<Deps> = {}) => {
+    const logs: string[] = []
+    const code = await main(argv, { log: m => logs.push(m), err: m => logs.push(m), random: () => 'r1', git: () => 'abc1234', ...deps })
+    return { code, logs: logs.join('\n') }
+  }
+  const tmp = () => mkdtempSync(path.join(tmpdir(), 'rs-'))
+
+  it('exits 2 on an unknown flag, a stray positional, --paid=false and an unwritable --out', async () => {
+    const out = tmp()
+    expect((await go(['--target', 'fake', '--out', out, '--bogus'])).code).toBe(2)
+    expect((await go(['--target', 'fake', '--out', out, 'stray'])).code).toBe(2)
+    expect((await go(['--target', 'product', '--out', out, '--paid=false'])).code).toBe(2)
+    const file = path.join(out, 'afile')
+    writeFileSync(file, 'x')
+    expect((await go(['--target', 'fake', '--out', path.join(file, 'sub'), '--sha', 'abc1234'])).code).toBe(2)
+  })
+
+  it('a product dispatch with valid gates refuses with the reader message (exit 2), runs nothing and writes nothing', async () => {
+    const out = tmp()
+    const r = await go(['--target', 'product', '--model', 'claude-sonnet-5-5', '--paid', '--budget', '10', '--page-origin', 'https://x.test', '--out', out], { git: () => 'abc1234' })
+    expect(r.code).toBe(2)
+    expect(r.logs).toContain('evidence reader')
+    expect(readdirSync(out)).toEqual([])
+  })
+
+  it('refuses a --sha that differs from HEAD on the product target', async () => {
+    const r = await go(['--target', 'product', '--model', 'claude-sonnet-5-5', '--paid', '--budget', '10', '--page-origin', 'https://x.test', '--out', tmp(), '--sha', 'deadbee'])
+    expect(r.code).toBe(2)
+    expect(r.logs).toContain('--sha')
+  })
+
+  it('a fake dry run writes cases.jsonl as it goes and the report atomically, with a run id so a stopped run never blocks the next', async () => {
+    const out = tmp()
+    const fixed = new Date()
+    expect((await go(['--target', 'fake', '--out', out, '--sha', 'abc1234'], { random: () => 'r1', now: () => fixed })).code).toBe(0)
+    expect((await go(['--target', 'fake', '--out', out, '--sha', 'abc1234'], { random: () => 'r2', now: () => fixed })).code).toBe(0)
+    const dir = dirOf(out, 'fake-honest', 'r1')
+    expect(readdirSync(dir).sort()).toEqual(['cases.jsonl', 'report.json', 'report.md'])
+    expect(readFileSync(path.join(dir, 'cases.jsonl'), 'utf8').trim().split('\n')).toHaveLength(38)
+    const rep = JSON.parse(readFileSync(path.join(dir, 'report.json'), 'utf8'))
+    expect(rep.meta).toMatchObject({ effort: 'medium', dryRun: true, agent: 'honest', dirty: expect.any(Boolean) })
+    // never overwritten: the same run id again is refused
+    expect((await go(['--target', 'fake', '--out', out, '--sha', 'abc1234'], { random: () => 'r1', now: () => fixed })).code).toBe(2)
+    expect((await go(['--target', 'fake', '--agent', 'obedient', '--out', out, '--sha', 'abc1234'])).code).toBe(1)
+    expect((await go(['--target', 'fake', '--model', 'x', '--out', out, '--sha', 'abc1234'])).code).toBe(2)
   })
 })
