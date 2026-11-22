@@ -84,10 +84,11 @@ export function buildToolsData(input: { accounts: readonly AccountSummary[]; row
     const s = a.status
     const connectedAtMs = s.connectedAt?.ms ?? row?.connectedAtMs ?? null
     // The contract: connected implies `since` (the client throws on a connected tool with no date). The hub gives a
-    // client-credentials account its first grant's time, an OAuth one its connect time; else the row's time, as the Slack
-    // channel below takes it. An account with none (a first grant that failed, nothing ever connected) is not connected:
-    // it reads as a catalog entry, and its details say when its login failed.
-    const sinceMs = connectedAtMs ?? row?.lastStateAtMs ?? null
+    // client-credentials account its first grant's time, an OAuth one its connect time; else a `connected` row's time (the
+    // Slack channel below uses the same). A failed row's time is a failure, never a connect date. An account with none (a
+    // first grant that failed, nothing ever connected) is not connected: it reads as a catalog entry, and its details say
+    // when its login failed.
+    const sinceMs = connectedAtMs ?? (row?.lastState === 'connected' ? row.lastStateAtMs : null)
     const isConnected = (s.state === 'active' || s.state === 'failed') && sinceMs !== null
     // A failed or reconnect-needing tool with a fresh connecting row is in `connected` (with its failed state) AND in
     // `beingConnected`: a reconnect is in progress.

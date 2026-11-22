@@ -219,6 +219,19 @@ describe('route C: the merge', () => {
     expect(was.details.shopify!.loginFailedAt).toBeUndefined()
     expect(ToolsDataSchema.safeParse(shop).success).toBe(true)
   })
+  // #321 review round 2: the row-time fallback comes only from a `connected` row, so a failure time never shows as a
+  // connected date.
+  it('a failed hub account with a failed row and no connect time is not connected; the row failure time is never its since', () => {
+    for (const lastState of ['failed', 'never', 'disconnected', 'connecting'] as const) {
+      const d = buildToolsData({ accounts: [acct('slack:workspace', { state: 'failed', lastError: { code: 'credentials_rejected', at: inst(NOW - 4 * MIN) } })], rows: [row('slack:workspace', lastState, NOW - 20 * MIN)], nowMs: NOW })
+      expect(d.connected, lastState).toEqual([])
+      expect(d.details.slack!.since, lastState).toBeUndefined()
+      expect(d.details.slack!.loginFailedAt, lastState).toEqual(inst(NOW - 4 * MIN))
+    }
+    const active = buildToolsData({ accounts: [acct('slack:workspace')], rows: [row('slack:workspace', 'failed', NOW - 20 * MIN)], nowMs: NOW })
+    expect(active.connected).toEqual([])
+    expect(active.channels).toEqual([])
+  })
   // #321 review L2: isConnected takes the same row fallback as the Slack channel does.
   it('an active account with no connect time but a row time is connected since the row time', () => {
     const d = buildToolsData({ accounts: [acct('slack:workspace')], rows: [row('slack:workspace', 'connected', NOW - 3 * MIN)], nowMs: NOW })
