@@ -205,6 +205,26 @@ describe('route C: the merge', () => {
     expect(none.connected).toEqual([])
     expect(none.catalog.map(c => c.k)).toEqual(['shopify'])
   })
+  // #321 review M1: a first grant that failed (never held a token) must not read as a plain "Not connected": the details
+  // carry when its login failed, so the page says so. Ways it can fail: the failure time is dropped; a connected tool
+  // also carries it; a time is invented when the hub gave none.
+  it('a failed account never connected: not in connected, its details carry loginFailedAt from the hub error, else nothing', () => {
+    const shop = buildToolsData({ accounts: [acct('shopify:store', { state: 'failed', lastError: { code: 'credentials_rejected', at: inst(NOW - 5 * MIN) } })], rows: [], nowMs: NOW })
+    expect(shop.connected).toEqual([])
+    expect(shop.details.shopify!.loginFailedAt).toEqual(inst(NOW - 5 * MIN))
+    const slack = buildToolsData({ accounts: [acct('slack:workspace', { state: 'failed', lastError: { code: 'credentials_rejected', at: inst(NOW - 9 * MIN) } })], rows: [], nowMs: NOW })
+    expect(slack.details.slack!.loginFailedAt).toEqual(inst(NOW - 9 * MIN))
+    expect(buildToolsData({ accounts: [acct('slack:workspace', { state: 'failed' })], rows: [], nowMs: NOW }).details.slack!.loginFailedAt).toBeUndefined()
+    const was = buildToolsData({ accounts: [acct('shopify:store', { state: 'failed', connectedAt: inst(NOW - 60 * MIN), lastError: { code: 'credentials_rejected', at: inst(NOW - 5 * MIN) } })], rows: [], nowMs: NOW })
+    expect(was.details.shopify!.loginFailedAt).toBeUndefined()
+    expect(ToolsDataSchema.safeParse(shop).success).toBe(true)
+  })
+  // #321 review L2: isConnected takes the same row fallback as the Slack channel does.
+  it('an active account with no connect time but a row time is connected since the row time', () => {
+    const d = buildToolsData({ accounts: [acct('slack:workspace')], rows: [row('slack:workspace', 'connected', NOW - 3 * MIN)], nowMs: NOW })
+    expect(d.connected).toEqual(['slack'])
+    expect(d.details.slack!.since).toEqual(inst(NOW - 3 * MIN))
+  })
 })
 
 

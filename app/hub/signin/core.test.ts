@@ -1,7 +1,8 @@
 import { fc, test } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { BACKOFF_MS, EXPIRY_MARGIN_MS, MAX_PENDING_TTL_MS, REJECTED_COOLDOWN_MS } from './core'
-import { ACCOUNT, API, harness, LIFETIME_S, MemStore, readQuery, ringJson, START_MS, type Harness } from './testing/kit'
+import { BACKOFF_MS, EXPIRY_MARGIN_MS, MAX_PENDING_TTL_MS, REJECTED_COOLDOWN_MS, SignInCore } from './core'
+import { ACCOUNT, API, harness, LIFETIME_S, MemStore, readQuery, ringJson, SCOPES, START_MS, type Harness } from './testing/kit'
+import { parseKeyRing } from '../crypto/keyring'
 
 // Quiet the JSON log lines; tests that inspect them install their own spy.
 beforeEach(() => void vi.spyOn(console, 'log').mockImplementation(() => {}))
@@ -545,6 +546,13 @@ describe('the canary token (property 8)', () => {
 // Ways it can fail, first: connectedAt stays null after a grant; it moves with every refresh grant (it would read as
 // "connected today" every morning); it is the clock at read time; a legacy active record (granted before this field)
 // stays null forever; a first grant that failed gets a date though nothing was ever connected.
+/** The harness's deps over the same store, clock and fakes, for a second core with one dependency changed. */
+const depsOf = (h: Harness) => ({
+  store: h.store, now: () => h.clock.ms, alarm: h.alarm, upstream: async () => h.shop.upstream,
+  keyring: () => parseKeyRing(h.ring.json), shopify: () => h.config.value,
+  scopesFor: async (id: string) => (id === ACCOUNT ? SCOPES : null),
+})
+
 describe('connectedAt for a client-credentials account', () => {
   const connectedAtOf = async (h: Harness) => {
     const s = await h.core.accountStatus(ACCOUNT)
@@ -575,6 +583,18 @@ describe('connectedAt for a client-credentials account', () => {
     expect(codeOf(await readQuery(h))).not.toBe('ok')
     expect(h.store.record()).toMatchObject({ state: 'failed' })
     expect(await connectedAtOf(h)).toBeNull()
+  })
+
+  // #321 review L3: kind is resolved before the backfill, so an OAuth account never gets a token-time date.
+  it('a record with no stored kind that kindFor says is OAuth gets no backfilled date', async () => {
+    const h = harness()
+    await readQuery(h)
+    const { connectedAtMs: _drop, ...legacy } = h.store.record()!
+    h.store.put('record', legacy)
+    const oauth = new SignInCore({ ...depsOf(h), kindFor: async () => 'oauth_mcp' })
+    const s = await oauth.accountStatus(ACCOUNT)
+    expect(s.ok && s.value.connectedAt).toBeNull()
+    expect(h.store.record()!.connectedAtMs).toBeUndefined()
   })
 
   it('a legacy active record (granted before connectedAt was kept) reads its token time once, then keeps it', async () => {

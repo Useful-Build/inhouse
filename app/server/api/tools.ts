@@ -84,9 +84,11 @@ export function buildToolsData(input: { accounts: readonly AccountSummary[]; row
     const s = a.status
     const connectedAtMs = s.connectedAt?.ms ?? row?.connectedAtMs ?? null
     // The contract: connected implies `since` (the client throws on a connected tool with no date). The hub gives a
-    // client-credentials account its first grant's time, an OAuth one its connect time; an account with neither (a first
-    // grant that failed, nothing ever connected) is not connected, so it reads as a catalog entry with its details.
-    const isConnected = (s.state === 'active' || s.state === 'failed') && connectedAtMs !== null
+    // client-credentials account its first grant's time, an OAuth one its connect time; else the row's time, as the Slack
+    // channel below takes it. An account with none (a first grant that failed, nothing ever connected) is not connected:
+    // it reads as a catalog entry, and its details say when its login failed.
+    const sinceMs = connectedAtMs ?? row?.lastStateAtMs ?? null
+    const isConnected = (s.state === 'active' || s.state === 'failed') && sinceMs !== null
     // A failed or reconnect-needing tool with a fresh connecting row is in `connected` (with its failed state) AND in
     // `beingConnected`: a reconnect is in progress.
     const connecting = row?.lastState === 'connecting' && nowMs - row.lastStateAtMs <= CONNECT_STATE_TTL_MS
@@ -97,7 +99,7 @@ export function buildToolsData(input: { accounts: readonly AccountSummary[]; row
       if (s.state === 'failed' || s.needsReconnect) {
         // The contract's `since` is required: the hub's error time, else the row's, else when it was connected (never the
         // clock). Rare: a failure the hub gave no time for.
-        connection[e.key] = { status: 'disconnected', since: instant(s.lastError?.at.ms ?? row?.lastStateAtMs ?? connectedAtMs) }
+        connection[e.key] = { status: 'disconnected', since: instant(s.lastError?.at.ms ?? row?.lastStateAtMs ?? sinceMs) }
       } else if (s.state === 'active' && !s.paused) {
         readable += 1
       }
@@ -111,7 +113,8 @@ export function buildToolsData(input: { accounts: readonly AccountSummary[]; row
     // is a catalog entry only, and the UI has no page for it.
     if (!isConnected && !connecting && s.state === 'empty' && row === undefined) continue
     const d: ToolDetail = { accountId: e.accountId, name: e.name, desc: e.desc, ex: e.ex, read: e.read, draft: e.draft, run: e.run, conn: e.conn, site: e.site }
-    if (isConnected) d.since = instant(connectedAtMs)
+    if (isConnected) d.since = instant(sinceMs)
+    else if (s.state === 'failed' && s.lastError) d.loginFailedAt = s.lastError.at
     if (connecting && row) d.liveBy = instant(row.lastStateAtMs + CONNECT_STATE_TTL_MS)
     if (connectedBy !== null) d.connectedBy = connectedBy
     if (e.oauth) d.canDisconnect = isConnected
@@ -122,8 +125,7 @@ export function buildToolsData(input: { accounts: readonly AccountSummary[]; row
     // Slack is also a channel (decision 0006's successor): where notices reach the team, once it's usable.
     if (e.key === 'slack' && s.state === 'active' && !s.needsReconnect) {
       // `since` is required by the contract: with no time from the hub or the row, Slack isn't listed as a channel yet.
-      const sinceMs = connectedAtMs ?? row?.lastStateAtMs
-      if (sinceMs !== undefined) channels.push({ key: e.key, name: e.name, desc: SLACK_CHANNEL_DESC, need: SLACK_CHANNEL_NEED, since: instant(sinceMs), site: e.site })
+      if (sinceMs !== null) channels.push({ key: e.key, name: e.name, desc: SLACK_CHANNEL_DESC, need: SLACK_CHANNEL_NEED, since: instant(sinceMs), site: e.site })
     }
   }
 
