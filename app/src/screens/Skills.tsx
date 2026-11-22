@@ -17,13 +17,16 @@ import { claimTrigger, rememberTrigger, restoreFocus, keepForToast } from '../ui
 
 const SECTION_HEAD = 'mb-1.5'
 const TABS: [SkillTab, string][] = [['all', 'All'], ['team', 'By Inhouse team'], ['mine', 'By your team']]
+/** The product has no skills made in a chat, so "By your team" is always empty there: it isn't offered. */
+const PRODUCT_TABS = TABS.filter(([k]) => k !== 'mine')
 /** Where a skill's on switch is saved in `AgentState.toggles`. Missing means on. */
 const skillKey = (name: string) => `s:${name}`
 
 export function Skills() {
   const { S, agent: st, data } = useCtx()
   const loading = data.status === 'loading'
-  const tab = useUi(s => s.skillTab)
+  const savedTab = useUi(s => s.skillTab)
+  const tab = demo || savedTab !== 'mine' ? savedTab : 'all'
   const patch = useUi(s => s.patch)
   const newChat = useUi(s => s.newChat)
   const openTeam = useUi(s => s.openTeam)
@@ -47,7 +50,7 @@ export function Skills() {
   return (
     <Page>
       <PageHeader title="Skills" description="Instructions that teach your Inhouse agent a job. Your Inhouse team writes and tests each one."
-        actions={<Segmented label="Show skills" value={tab} options={TABS} onChange={v => patch({ skillTab: v })} className={cn(phone && '*:min-h-11')} />} />
+        actions={<Segmented label="Show skills" value={tab} options={demo ? TABS : PRODUCT_TABS} onChange={v => patch({ skillTab: v })} className={cn(phone && '*:min-h-11')} />} />
       <div className="mt-5.5 flex gap-2.5">
         <SearchBox value={query} onChange={setQuery} placeholder="Search skills" label="Search skills" />
         {/* The product has no skill maker: a new skill is a request to the Inhouse team. */}
@@ -151,7 +154,7 @@ function SkillSheet({ skill: s, phone, onClose }: { skill: SkillDef; phone: bool
           <h3 className="mono-label mt-6">What it does</h3>
           <p className="mt-2 text-base leading-reading">{s.d}</p>
           <h3 className="mono-label mt-6">Where it's used</h3>
-          <DetailList variant="ruled" className="mt-1 text-sm" items={[...(s.used ? [['Used', s.used] as [string, string]] : []), ['Made by', s.by], ['Works from', STAGE_TAGS[s.need]]]} />
+          <DetailList variant="ruled" className="mt-1 text-sm" items={[...(s.used ? [['Used', s.used] as [string, string]] : []), ['Made by', s.by], ...(demo || s.need > 0 ? [['Works from', STAGE_TAGS[s.need]] as [string, string]] : [])]} />
         </div>
       </SheetContent>
     </Sheet>
