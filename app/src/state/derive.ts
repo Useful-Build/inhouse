@@ -330,7 +330,7 @@ export function todayCopy(ctx: Ctx): TodayCopy {
     },
   ][S]
   let headSub = copy.headSub, headline = copy.headline
-  if (f.paused) headSub = 'Your Inhouse agent is paused, so routines, jobs and questions are stopped.'
+  if (f.paused) headSub = 'Your Inhouse agent is paused, so chats, routines and jobs are stopped until an admin resumes it. Waiting drafts can still be approved.'
   if (f.cap) headSub = 'Chats, routines and jobs are paused at the spending cap. Drafts already waiting can still be approved.'
   if (f.isFirst) { headline = 'Your Inhouse agent is being set up.'; headSub = 'Your Inhouse team connects each tool for you. There is nothing to install.' }
   if (f.isLoading) { headline = 'Your Inhouse agent is reading your tools.'; headSub = 'The morning check takes about two minutes. Your list appears as soon as it finishes.' }
