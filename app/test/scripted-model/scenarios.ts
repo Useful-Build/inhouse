@@ -317,6 +317,12 @@ export const SCENARIOS: Record<string, Scenario> = {
     'I sent the stock alert to #ops-alerts.',
   ),
 
+  /** The same alert at Watch (P5 ship S4): the notice reaches the bell, not Slack, and the answer says so. */
+  'connectors-notice-watch': toolsThenAnswer(
+    [{ id: 'toolu_scripted_notice_watch', name: 'mcp__inhouse__notification_send', input: { to: { channels: ['#ops-alerts'] }, title: 'Stock alert', text: 'The Fern mug is almost out. Restock it this week.', format: 'message', link: { kind: 'today' } } }],
+    'I sent the stock alert to your bell. It reaches Slack from the Act stage.',
+  ),
+
   /** The same alert to a channel the admin did not list (P5 ship S4): the server refuses it. */
   'connectors-notice-unlisted': toolsThenAnswer(
     [{ id: 'toolu_scripted_unlisted', name: 'mcp__inhouse__notification_send', input: { to: { channels: ['#design'] }, title: 'Stock alert', text: 'The Fern mug is almost out. Restock it this week.', format: 'message' } }],

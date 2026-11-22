@@ -52,6 +52,7 @@ const uid = () => crypto.randomUUID().slice(0, 8)
 const SUPPLIER_ANSWER = 'Kestrel Mills says the November restock of the Fern mug ships 2 weeks late. Sources: Slack #suppliers, Shopify orders.'
 const CODE_MODE_ANSWER = 'I counted every product in the store with a script: the five lowest on stock and how many sell for over $150. Source: Shopify, all products.'
 const NOTICE_ANSWER = 'I sent the stock alert to #ops-alerts.'
+const WATCH_ANSWER = 'I sent the stock alert to your bell. It reaches Slack from the Act stage.'
 const UNLISTED_ANSWER = "I couldn't send that: #design isn't one of the channels your admin listed."
 const NOTIFY_TOOL = 'mcp__inhouse__notification_send'
 const NOTICE_TEXT = 'The Fern mug is almost out. Restock it this week.'
@@ -112,6 +113,17 @@ async function ensureConnected(request: APIRequestContext) {
   if ((await readTools(request)).connected.includes('slack')) return
   const c = await connectSlack(request)
   expect(c.location, 'Slack connected for the test').toBe('/tools/slack?connected=1')
+}
+
+/**
+ * Shopify usable the way a brand's is: its account is active once the hub has read the store (it has no sign-in of its own), so a
+ * hub read through the hook makes it so, and the Tools read must then list it as connected (recording 5 cited Shopify while the page
+ * said it wasn't connected).
+ */
+async function ensureShopifyConnected(request: APIRequestContext) {
+  const read = await hubCall(request, 'callTool', 'orders_search', { first: 1 })
+  expect(read.ok, `the store answers a read: ${JSON.stringify(read.error ?? null)}`).toBe(true)
+  expect((await readTools(request)).connected, 'Shopify shows as connected').toContain('shopify')
 }
 
 /** The apps a prompt's "Connected apps:" line names (empty: no such line). */
@@ -252,6 +264,7 @@ test('S2: Ask about a supplier delay and the orders it holds up and the answer c
   needsContainer()
   test.setTimeout(300_000)
   await ensureConnected(request)
+  await ensureShopifyConnected(request)
   await fakeReset(request)
   await openAs(context, page, 'dana', '#/today')
   const { state } = await askAndRead(page, request, 'connectors-supplier', 'what is the supplier delay and which orders does it hold up?', SUPPLIER_ANSWER, 'S2', ['mcp__apps__slack_search_public', 'mcp__apps__orders_search'])
@@ -268,6 +281,7 @@ test('S3: Ask over the whole store and the answer comes from a code mode script 
   needsContainer()
   test.setTimeout(300_000)
   await ensureConnected(request)
+  await ensureShopifyConnected(request)
   await fakeReset(request)
   await openAs(context, page, 'dana', '#/today')
   const mark = await logMark(request)
@@ -336,7 +350,7 @@ test('S4: At Act an alert reaches a listed Slack channel with no link preview, a
     await setStage(request, 'Watch')
     const known = new Set(((await apiOk(page, '/api/notifications')).items as { id: string }[]).map(i => i.id))
     mark = await auditMark(request)
-    await askAndRead(page, request, 'connectors-notice', 'send the stock alert', NOTICE_ANSWER, 'S4-watch', [NOTIFY_TOOL])
+    await askAndRead(page, request, 'connectors-notice-watch', 'send the stock alert', WATCH_ANSWER, 'S4-watch', [NOTIFY_TOOL])
     const watch = await auditSince(request, mark)
     await attachJson('S4-watch-audit', watch)
     expect(watch.filter(l => l.what === TO_BELL).length, 'the alert went to the bell').toBe(1)
@@ -400,9 +414,8 @@ async function pauseAndResume(page: Page, request: APIRequestContext) {
 test('S6: Disconnect the tool and the agent is told it is not connected and what is', async ({ context, page, request }) => {
   test.setTimeout(240_000)
   await ensureConnected(request)
-  // The store is read once first, so Shopify is a usable app whatever ran before: the prompt must then still offer it.
-  const read = await hubCall(request, 'callTool', 'orders_search', { first: 1 })
-  expect(read.ok, `the store answers a read: ${JSON.stringify(read.error ?? null)}`).toBe(true)
+  // Shopify is made usable first, whatever ran before: the prompt must then still offer it.
+  await ensureShopifyConnected(request)
   await openAs(context, page, 'inhouse', '#/tools/slack')
   await main(page).getByRole('button', { name: 'Disconnect' }).click()
   const confirm = page.locator('[role="dialog"], [role="alertdialog"]').filter({ hasText: 'Disconnect Slack?' })
@@ -444,6 +457,8 @@ test('S7: As an Admin the Tools page is read-only', async ({ context, page, requ
   for (const name of ['Pause access', 'Resume access', 'Disconnect', 'Connect', 'Reconnect']) {
     await expect(main(page).getByRole('button', { name, exact: true }), `no "${name}" button for an Admin`).toHaveCount(0)
   }
+  // The Connection card is below the fold on a phone: bring it (its Admin line) into view so the shot shows the missing buttons.
+  await main(page).getByText(ADMIN_LINE).scrollIntoViewIfNeeded()
   await shot(page, 'S7-admin-slack-read-only')
   // And the server agrees: an Admin's write is refused, and nothing changed.
   const refused = await api(page, 'PUT', `/api/tools/${encodeURIComponent(SLACK_ACCOUNT)}/paused`, { paused: true })

@@ -12,7 +12,7 @@ describe('the connector ship scenarios', () => {
   })
 
   it('every connector scenario exists and ends in a text answer', () => {
-    for (const name of ['connectors', 'connectors-supplier', 'connectors-codemode', 'connectors-notice', 'connectors-notice-unlisted']) {
+    for (const name of ['connectors', 'connectors-supplier', 'connectors-codemode', 'connectors-notice', 'connectors-notice-watch', 'connectors-notice-unlisted']) {
       const turns = SCENARIOS[name]?.turns
       expect(turns, name).toBeDefined()
       expect((turns!.at(-1)!.content as { type: string }[])[0]!.type).toBe('text')
