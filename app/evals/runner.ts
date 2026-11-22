@@ -2,6 +2,7 @@
 import { makeCanary } from './cases.ts'
 import { gradeExfil } from './exfil.ts'
 import { gradeChat } from './grade.ts'
+import { redactText } from './redact.ts'
 import { toRow, type Row } from './report.ts'
 import { CapReachedError, type Case, type ChatResult, type Target } from './types.ts'
 
@@ -43,8 +44,11 @@ export interface RunOutput {
    * was fenced by it. Either way `stoppedByBudget` is true, so the verdict is FAIL (the numbers are partial).
    */
   capStop?: { caseId: string; rep: number; why: 'would cross the cap' | 'cap reached' | 'cap check failed'; spentUsd?: number; capUsd?: number; estimateUsd?: number; detail?: string }
-  /** A seed or reset that threw: the run stopped there, and the report still gets written (and fails). */
-  harnessStop?: { caseId: string; rep: number; stage: 'seed' | 'reset'; detail: string }
+  /**
+   * A seed, the chat loop (grading, the row, onChat's writes) or a reset that threw: the run stopped there, and the report
+   * still gets written (and fails).
+   */
+  harnessStop?: { caseId: string; rep: number; stage: 'seed' | 'chat-loop' | 'reset'; detail: string }
   spentUsd: number
 }
 
@@ -83,7 +87,12 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
   let costUnknown = false
   let capStop: RunOutput['capStop']
   let harnessStop: RunOutput['harnessStop']
-  const detailOf = (e: unknown): string => (e instanceof Error ? e.message : String(e)).slice(0, 300)
+  // report.json and the README are kept in a public repo and CI logs (#280 review 2): the first line, URLs dropped, the
+  // canary redacted, 200 characters at most. Harness errors name what and the status, never a response body.
+  const detailOf = (e: unknown, canary?: string): string => {
+    const line = (e instanceof Error ? e.message : String(e)).split('\n')[0]!.replace(/\bhttps?:\/\/\S+/gi, '[url]')
+    return redactText(line, canary).slice(0, 200)
+  }
   const spent = (): number => target.spentUsd?.() ?? summed
   // The exfiltration cases go first: a budget stop must never leave them unrun while cheaper cases did.
   const ordered = [...runnable.filter((c) => c.cat === 'exfil'), ...runnable.filter((c) => c.cat !== 'exfil')]
@@ -98,7 +107,9 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
     try {
       session = await target.seed(c.seed ?? [], { caseId: c.id, rep, canary }, c.exfil)
     } catch (e) {
-      harnessStop ??= { caseId: c.id, rep, stage: 'seed', detail: detailOf(e) }
+      // A seed that throws partway leaves no session to reset: the run stops here (the product target's own seed puts the
+      // brand's WebFetch list back and releases the brand before it rethrows).
+      harnessStop ??= { caseId: c.id, rep, stage: 'seed', detail: detailOf(e, canary) }
       stopped = true
       return
     }
@@ -170,11 +181,15 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
         // The cap fenced this chat: its row says so, and nothing else runs.
         if (capStop) return
       }
+    } catch (e) {
+      // Anything else in the case-repeat (grading, the row, onChat's file writes) stops the run with a report (#280 review 1).
+      harnessStop ??= { caseId: c.id, rep, stage: 'chat-loop', detail: detailOf(e, canary) }
+      stopped = true
     } finally {
       try {
         await session.reset()
       } catch (e) {
-        harnessStop ??= { caseId: c.id, rep, stage: 'reset', detail: detailOf(e) }
+        harnessStop ??= { caseId: c.id, rep, stage: 'reset', detail: detailOf(e, canary) }
         stopped = true
       }
     }
@@ -185,7 +200,14 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
       if (stopped) return
       const t = queue.shift()
       if (!t) return
-      await caseRepeat(t.c, t.rep)
+      // Never rejects Promise.all (the other workers would keep spending with no report): caseRepeat catches its own, and
+      // this is the backstop.
+      try {
+        await caseRepeat(t.c, t.rep)
+      } catch (e) {
+        harnessStop ??= { caseId: t.c.id, rep: t.rep, stage: 'chat-loop', detail: detailOf(e) }
+        stopped = true
+      }
     }
   })
   await Promise.all(workers)

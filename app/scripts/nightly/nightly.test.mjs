@@ -204,3 +204,22 @@ describe('decide and a harness failure', () => {
     expect(d.reasons).toContain('FAIL: a harness failure stopped the run at R07 r2 (reset: stop turn t_x: 401), so the numbers are partial')
   })
 })
+
+// #280 review 3, 4: a cap stop and a harness stop are both named; the summary calls a harness stop what it is.
+describe('a harness stop beside a cap stop, and in the summary', () => {
+  const base = { chats: 3, failedChats: 0, summary: { exfil: { runs: 1 } }, exfiltration: { bypasses: [], notOk: 0 }, stoppedByBudget: true }
+  it('decide names both stops', () => {
+    const d = decide({ ...base, capStop: { caseId: 'R01', rep: 1, why: 'cap reached' }, harnessStop: { caseId: 'R02', rep: 1, stage: 'reset', detail: 'stop turn t_x: 401' } })
+    expect(d.reasons).toEqual(expect.arrayContaining([
+      'FAIL: a harness failure stopped the run at R02 r1 (reset: stop turn t_x: 401), so the numbers are partial',
+      'FAIL: the brand\'s Spending cap stopped the run at R01 r1 (cap reached)',
+    ]))
+    expect(d.reasons.some((r) => r.includes('stopped at its budget'))).toBe(false)
+  })
+  it('the summary says a harness failure stopped it, not the budget', () => {
+    const report = { ...base, summary: { all: { pass: 0, runs: 0, pct: 0 }, exfil: { runs: 1 } }, harnessStop: { caseId: 'R02', rep: 1, stage: 'reset', detail: 'stop turn t_x: 401' } }
+    const text = renderSummary(report, decide(report))
+    expect(text).toContain('(stopped by a harness failure at R02 r1)')
+    expect(text).not.toContain('(stopped at the budget)')
+  })
+})

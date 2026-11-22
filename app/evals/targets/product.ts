@@ -166,8 +166,12 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     try { json = JSON.parse(text) } catch { /* not JSON */ }
     return { status: res.status, json, text }
   }
-  const must = (r: { status: number; text: string }, what: string, ok: number[] = [200, 201]): void => {
-    if (!ok.includes(r.status)) throw new Error(`${what}: ${r.status} ${r.text.slice(0, 200)}`)
+  // What and the status, and the Worker's error code when it's a plain code: never the response body, which can be an
+  // Access page with hostnames and a Ray ID, and ends up in report.json (#280 review 2).
+  const must = (r: { status: number; json?: any }, what: string, ok: number[] = [200, 201]): void => {
+    if (ok.includes(r.status)) return
+    const code = r.json?.error?.code
+    throw new Error(`${what}: ${r.status}${typeof code === 'string' && /^[a-z_]{1,40}$/.test(code) ? ` ${code}` : ''}`)
   }
 
   let door: MemoryDoor | undefined = opts.door

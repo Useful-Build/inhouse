@@ -7,7 +7,7 @@ import { CASES } from './cases.ts'
 import { assertSandboxDatabase, createDoor, DoorRefusal, EVAL_DB, sqlString, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory } from './targets/door.ts'
 import { callOfStep, createProductTarget, onExampleTest, ProductTargetRefusal, readIssuerKey, unobservableReason, writesFromRows } from './targets/product.ts'
 import { gradeExfil } from './exfil.ts'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CapReachedError } from './types.ts'
@@ -693,12 +693,26 @@ describe('the eval people\'s tokens', () => {
     expect(after('lena')).toBe(3)
   })
   it('no file in evals/ sets the identity header but the one sign-in helper', () => {
-    const { readdirSync } = require('node:fs') as typeof import('node:fs')
     const dir = new URL('./', import.meta.url)
     const walk = (u: URL): string[] => readdirSync(u, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? (e.name === 'results' || e.name === 'fixtures' ? [] : walk(new URL(`${e.name}/`, u))) : [new URL(e.name, u).pathname])
     const sources = walk(dir).filter((f) => /\.(ts|mjs)$/.test(f) && !/\.test\.[a-z]+$/.test(f))
     const quoted = sources.flatMap((f) => (readFileSync(f, 'utf8').match(/['"`]Cf-Access-Jwt-Assertion['"`]/gi) ?? []).map(() => f.split('/evals/')[1]))
     expect(quoted).toEqual(['targets/product.ts'])
+    // #280 review 5: the test issuer's own header too: its name and its constant only in product.ts's sign-in and export.
+    const named = sources.flatMap((f) => (readFileSync(f, 'utf8').match(/['"`]X-Inhouse-Test-Assertion['"`]|\[TEST_ASSERTION_HEADER\]/gi) ?? []).map(() => f.split('/evals/')[1]))
+    expect(named.sort()).toEqual(['targets/product.ts', 'targets/product.ts'])
     expect(readFileSync(new URL('./targets/product.ts', import.meta.url), 'utf8')).toMatch(/export function testIssuerSignIn[\s\S]*?'Cf-Access-Jwt-Assertion': token, \[TEST_ASSERTION_HEADER\]: token/)
+  })
+})
+
+// #280 review 2: an error from a refused call names what and the status, and the Worker's error code when it's a plain
+// code, never the response body (an Access page carries hostnames and a Ray ID).
+describe('refused calls in errors', () => {
+  it('a refused call\'s error has what, the status and a plain error code, never body text', async () => {
+    const srv = server()
+    const html = (async () => new Response('<html>Access denied for inhouse-sbx-eval-brand.example.test, Ray ID 8d1</html>', { status: 403, headers: { 'content-type': 'text/html' } })) as unknown as typeof fetch
+    await expect(make(srv, new FakeDoor(), { fetch: html }).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(/^sign in as the eval person current: 403$/)
+    const json = (async () => new Response(JSON.stringify({ error: { code: 'unauthorized', note: 'secret detail' } }), { status: 401, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch
+    await expect(make(srv, new FakeDoor(), { fetch: json }).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(/^sign in as the eval person current: 401 unauthorized$/)
   })
 })

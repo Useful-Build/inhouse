@@ -153,7 +153,7 @@ const capStopLine = (s: CapStop): string => {
 }
 
 /** A seed or reset that threw (the runner's `harnessStop`). */
-export type HarnessStop = { caseId: string; rep: number; stage: 'seed' | 'reset'; detail: string }
+export type HarnessStop = { caseId: string; rep: number; stage: 'seed' | 'chat-loop' | 'reset'; detail: string }
 
 export function renderReadme(r: Report, topic: string, run: { capStop?: CapStop; harnessStop?: HarnessStop } = {}): string {
   const cats = ['recall', 'e2e', 'choice', 'connector', 'negative', 'exfil', 'all']
