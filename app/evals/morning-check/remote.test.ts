@@ -271,12 +271,14 @@ describe('run.mjs stop handlers (MEDIUM 3)', () => {
 
 // The Default model before the first Run now (routine turns run on it; the scripted model answers only Fast). The fake
 // server models route 12's rule (server/auth/matrix.ts, its own tests in matrix.test.ts): an Admin writing `g:mode` gets 403
-// admin_read_only, the Inhouse team member gets 403 grant_required without a live grant and 200 with one. Ways it can go
-// wrong: a case is pressed before the setting is written, the write goes as the Admin (refused live), it goes without a
-// grant, a grant is left open after it (also when the write fails), a refused or unconfirmed write lets the run go on, a
-// stale revision is sent, or a run that didn't ask for a model writes one anyway.
+// admin_read_only; the Inhouse team member's write is accepted with or without a live grant (matrix.ts answers a technical
+// row for Inhouse OK, and server/api/routes-wired.test.ts writes one with no grant open), so the grant step is only
+// setStage's, checked here for order and cleanup. Ways it can go wrong: a case is pressed before the setting is written,
+// the write goes as the Admin (refused live), a grant is left open after it (also when the write fails or throws), a
+// refused or unconfirmed write lets the run go on, a stale revision is sent, a write failure and a grant that won't end
+// hide each other, or a run that didn't ask for a model writes one anyway.
 describe('the Default model, set before the first Run now', () => {
-  function server(initial: { value: string; rev: number } | null, o: { grantStatus?: number; leftoverGrant?: boolean } = {}) {
+  function server(initial: { value: string; rev: number } | null, o: { grantStatus?: number; leftoverGrant?: boolean; putStatus?: number; endFails?: boolean } = {}) {
     const events: string[] = []
     let row = initial
     let grants: { id: string; rev: number; live: boolean }[] = o.leftoverGrant ? [{ id: 'g_old', rev: 3, live: true }] : []
@@ -292,12 +294,13 @@ describe('the Default model, set before the first Run now', () => {
       }
       const end = /^\/api\/grants\/([^/]+)\/end$/.exec(path)
       if (who === 'admin' && method === 'POST' && end) {
+        if (o.endFails) return answer(500, { error: { code: 'internal' } })
         grants = grants.map(g => (g.id === end[1] ? { ...g, live: false, rev: g.rev + 1 } : g))
         return answer(200, {})
       }
       if (method === 'PUT' && path === '/api/settings/technical/g%3Amode') {
         if (who === 'admin') return answer(403, { error: { code: 'forbidden', reason: 'admin_read_only' } })
-        if (!grants.some(g => g.live)) return answer(403, { error: { code: 'forbidden', reason: 'grant_required' } })
+        if (o.putStatus !== undefined) return answer(o.putStatus, { error: { code: 'conflict' } })
         row = { value: (body as { value: string }).value, rev: (row?.rev ?? 0) + 1 }
         return answer(200, row)
       }
@@ -356,6 +359,36 @@ describe('the Default model, set before the first Run now', () => {
     const s = server(null, { grantStatus: 409 })
     await expect(runAll(fakeRun(s.api, s.events), one, meta)).rejects.toThrow('opening a support grant answered 409')
     expect(s.events.some(e => e.startsWith('inhouse PUT'))).toBe(false)
+    expect(s.events).not.toContain('Run now')
+    expect(s.live()).toBe(0)
+  })
+
+  it('a stale revision (409 on the write): the run stops before any Run now, no grant left open', async () => {
+    const s = server({ value: 'Deep', rev: 4 }, { putStatus: 409 })
+    await expect(runAll(fakeRun(s.api, s.events), one, meta)).rejects.toThrow('setting the Default model to Fast answered 409')
+    expect(s.events).not.toContain('Run now')
+    expect(s.live()).toBe(0)
+  })
+
+  it('the Inhouse call throws (a network failure): the rejection is its own, and no grant is left open', async () => {
+    const s = server(null)
+    const api: SettingsApi = { admin: s.api.admin, inhouse: async () => { throw new Error('fetch failed: the Inhouse app is unreachable') } }
+    await expect(runAll(fakeRun(api, s.events), one, meta)).rejects.toThrow('fetch failed: the Inhouse app is unreachable')
+    expect(s.events).not.toContain('Run now')
+    expect(s.live()).toBe(0)
+  })
+
+  it('a write that fails and grants that won\'t end are both reported (LOW 3)', async () => {
+    const s = server(null, { putStatus: 409, endFails: true })
+    const run = runAll(fakeRun(s.api, s.events), one, meta)
+    await expect(run).rejects.toThrow('setting the Default model to Fast answered 409')
+    await expect(run).rejects.toThrow('and live support grants could not be ended: morning-check: ending support grant g_1 answered 500')
+    expect(s.events).not.toContain('Run now')
+  })
+
+  it('grants that won\'t end after a good write still stop the run', async () => {
+    const s = server(null, { endFails: true })
+    await expect(runAll(fakeRun(s.api, s.events), one, meta)).rejects.toThrow('live support grants could not be ended: morning-check: ending support grant g_1 answered 500')
     expect(s.events).not.toContain('Run now')
   })
 

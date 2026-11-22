@@ -31,9 +31,11 @@
 //     [--cases ...] [--model ...] [--timeout-min 20] [--settle-min 2] [--model-setting Fast --inhouse-origin <its Inhouse app origin> --inhouse-aud <that app's Access aud>]
 //
 // --model-setting <label> (remote only, default none): before the first case, the brand's Default model (`g:mode`, route 12)
-// is set to that label and read back. Only the Inhouse team writes `g:mode`, under a live support grant (an Admin may write
-// only `tm:<id>:on` there and gets 403 admin_read_only): the seeded Admin ends live grants and opens one, the seeded Inhouse
-// team member writes it on the build's Inhouse app (--inhouse-origin, --inhouse-aud), and the grants are ended again.
+// is set to that label and read back. Only the Inhouse team writes `g:mode` (an Admin may write only `tm:<id>:on` there and
+// gets 403 admin_read_only); it needs no grant (remote.ts SettingsApi says why). As watch-kit's setStage does, the seeded
+// Admin ends live grants and opens one, the seeded Inhouse team member writes it on the build's Inhouse app
+// (--inhouse-origin, --inhouse-aud), and the grants are ended again. The Admin calls are always SEED_PEOPLE.admin, never
+// --sub/--email (those name the person who presses Run now).
 // The scripted proof passes "Fast": routine turns run on the Default model (Opus when unset) and the scripted model
 // answers only Fast. A real-model run leaves it out: the eval run picks its own model. The setting is not put back after
 // the run (the brand's Default model stays changed), so use --model-setting only on a per-PR sandbox.
@@ -96,7 +98,7 @@ const callAs = (who, origin, aud) => async (method, path, body) => {
 }
 /**
  * The Default model's writers (remote.ts SettingsApi): the seeded Admin on the brand app (reads, support grants) and the
- * seeded Inhouse team member on the build's Inhouse app (only the Inhouse team writes `g:mode`, under a live grant).
+ * seeded Inhouse team member on the build's Inhouse app (only the Inhouse team writes `g:mode`).
  */
 const settingsApi = () => ({
   admin: callAs(SEED_PEOPLE.admin, new URL(m.baseUrl).origin, a.aud),

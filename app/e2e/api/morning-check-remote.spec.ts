@@ -32,8 +32,8 @@ const TIMEOUT_MS = 1_500_000
 
 let door: MorningDoor | null = null
 // Routine turns run on the brand's Default model (Opus when unset) and the scripted model answers only Fast: set it before any
-// Run now. Only the Inhouse team writes it, under a live grant the Admin opens (evals/morning-check/remote.ts
-// ensureDefaultModel, as watch-kit's setStage; run.mjs --model-setting).
+// Run now. Only the Inhouse team writes it (no grant needed; the Admin opens one only to mirror watch-kit's setStage:
+// evals/morning-check/remote.ts ensureDefaultModel; run.mjs --model-setting).
 /** Why this spec can't run here, or null when it can: the one condition beforeAll and the test both use. */
 function cannotRun(): string | null {
   if (!process.env.E2E_TEST_BUILD_REMOTE) return 'runs a turn, which needs a container: it runs on the per-PR test deployment (E2E_TEST_BUILD_REMOTE)'
