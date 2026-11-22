@@ -117,8 +117,8 @@ describe('the client: routines', () => {
     const { agent } = await loaded({ ...reads({ routines: LIST }), 'POST /api/routines/rt_gone/restore': refusal(403, 'forbidden', { reason: 'routine_limit' }) })
     const heard: unknown[] = []
     agent.onNotice(n => heard.push(n))
-    await expect(agent.restoreRoutine('rt_gone')).rejects.toMatchObject({ code: 'forbidden', reason: 'routine_limit', message: 'You already have 50 routines. Delete one to restore this.' })
-    expect(heard).toEqual([{ type: 'error', code: 'forbidden', text: 'You already have 50 routines. Delete one to restore this.' }])
+    await expect(agent.restoreRoutine('rt_gone')).rejects.toMatchObject({ code: 'forbidden', reason: 'routine_limit', message: 'This brand already has 50 routines. Delete one to restore this.' })
+    expect(heard).toEqual([{ type: 'error', code: 'forbidden', text: 'This brand already has 50 routines. Delete one to restore this.' }])
     expect(agent.getSnapshot().routinesDeleted.rt_gone).toBe(true)
   })
 

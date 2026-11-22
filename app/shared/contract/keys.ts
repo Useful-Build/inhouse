@@ -16,3 +16,6 @@ export const CAN_KEYS = [
 
 /** How long a support grant may run, in hours. */
 export const GRANT_HOURS = [1, 4, 24, 72] as const
+
+/** The most live (not deleted) team routines a brand may have (#312 review M2). System routines don't count. */
+export const MAX_TEAM_ROUTINES = 50

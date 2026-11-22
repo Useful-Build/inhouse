@@ -5,7 +5,7 @@
 // each record's last `rev` and sends it as `ifRev`; a `conflict` puts `current` into the snapshot.
 // It imports nothing from the mock or the sample data.
 import { deviceTimeZone, instantOf } from '../../lib/format'
-import { RESOURCE_KEYS } from '../../../shared/contract/keys'
+import { MAX_TEAM_ROUTINES, RESOURCE_KEYS } from '../../../shared/contract/keys'
 import { NOT_FOUND, REASON } from '../../../shared/contract/error-codes'
 import { meetsRule, settingRow } from '../../../shared/contract/settings-table'
 import { AgentError, CHAT_TITLE_MAX } from '../types'
@@ -1521,7 +1521,7 @@ export class HttpAgent implements AgentClient {
 
   /** Route 56's cap refusal in the page's words (#312 review); anything else as it came. */
   private static revRefusal(e: unknown): unknown {
-    if (e instanceof AgentError && e.code === 'forbidden' && e.reason === REASON.routineLimit) return new AgentError('forbidden', 'You already have 50 routines. Delete one to restore this.', { reason: e.reason })
+    if (e instanceof AgentError && e.code === 'forbidden' && e.reason === REASON.routineLimit) return new AgentError('forbidden', `This brand already has ${MAX_TEAM_ROUTINES} routines. Delete one to restore this.`, { reason: e.reason })
     return e
   }
 

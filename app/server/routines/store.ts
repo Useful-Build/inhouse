@@ -4,6 +4,7 @@
 // change a routine (its creator or an active Admin) is part of the statement, so a refused write changes nothing.
 import { stripFixed } from '../today/words.ts'
 import { AuditArgsSchema } from '../../shared/contract/audit.ts'
+import { MAX_TEAM_ROUTINES } from '../../shared/contract/keys.ts'
 import type { AuditArgs } from '../../shared/contract/audit.ts'
 import { recordActivity } from '../activity/store.ts'
 import type { ActivityTemplateId } from '../activity/templates.ts'
@@ -92,11 +93,7 @@ export interface NewRoutine {
   missed: 'skip' | 'catch_up'
 }
 
-/** The most live (not deleted) team routines a brand may have (#312 review M2). System routines don't count. */
-export const MAX_TEAM_ROUTINES = 50
 const LIVE_TEAM_COUNT = "SELECT COUNT(*) AS n FROM routines WHERE origin = 'team' AND deleted_at_ms IS NULL"
-const atCap = async (db: D1Database): Promise<boolean> =>
-  ((await db.prepare(LIVE_TEAM_COUNT).first<number>('n')) as number) >= MAX_TEAM_ROUTINES
 
 /**
  * A team routine (section 8): needs Act or Run (section 7), `need` 1, the cursor at now. Refused at the cap: the count is
@@ -205,8 +202,9 @@ export async function restoreRoutine(db: D1Database, id: string, ifRev: number, 
   ])
   if (res.meta.changes === 0) {
     const o = await whyNot(db, id, ifRev, at, 'deleted')
-    // Deleted, at this rev and this person's to restore, yet not restored: a team routine at the cap.
-    if ('conflict' in o && o.conflict.rev === ifRev && o.conflict.origin === 'team' && await atCap(db)) return { refused: 'routine_limit' }
+    // Still deleted, at this rev and this person's to restore (whyNot answers `conflict` at the same rev only then), yet
+    // not restored: the cap is the only clause left, so no second count (which could race the statement's).
+    if ('conflict' in o && o.conflict.rev === ifRev && o.conflict.origin === 'team') return { refused: 'routine_limit' }
     return o
   }
   return { ok: written(res, 'restoreRoutine') }

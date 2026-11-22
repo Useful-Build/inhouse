@@ -3,8 +3,9 @@
 // `ifRev`, someone else's routine); a write without its line; a failed batch that leaves the line, the audit line or the
 // change behind; an error answered for a write that committed (a read after the commit).
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { MAX_TEAM_ROUTINES, createRoutine, deleteRoutine, readRoutine, restoreRoutine, runNow, updateRoutine } from './store.ts'
+import { createRoutine, deleteRoutine, readRoutine, restoreRoutine, runNow, updateRoutine } from './store.ts'
 import { addPerson, at, db, fresh, insertRoutine, routine, setStage, setZone } from './test-kit.ts'
+import { MAX_TEAM_ROUTINES } from '../../shared/contract/keys.ts'
 
 const ALEX = 'm_w2_store_alex'
 const SAM = 'm_w2_store_sam'
