@@ -9,6 +9,9 @@
 // backup's start and its end. Its point is still the backup's start (`takenAtMs`, the D1 point here), and the replay
 // is inclusive, so every deletion logged during the read is applied again: none is missed, and nothing logged before
 // the read began is touched (M2). So a paged table needs no point of its own.
+// Clock skew (review L4): an entry's time is its Worker's clock and the backup's point another's, so the D1 and R2
+// point (and the watermark) is taken `SKEW_MARGIN_MS` early. An entry in that minute before the point is applied
+// again: safe, since the replay applies rules (a member id, a cutoff), never logged row ids, and each is idempotent.
 //
 // A person run deletes the member again with the store rules person deletion uses (ops/delete/rules.ts), in its order:
 // pseudonymise the member row, then each custom store through its runner (the BrandAgent's `personData`, before the
@@ -193,10 +196,13 @@ async function apply(deps: ReplayDeps, p: Planned): Promise<void> {
  * Replays the deletion log past the record's watermark onto the target, R2 and the Durable Objects. Throws a
  * `RestoreRefusal` (written nowhere: the caller records it) when the replay can't be planned or a step stops.
  */
+/** How far before the backup's point the replay starts, for clock skew between Workers. */
+export const SKEW_MARGIN_MS = 60_000
+
 export async function replayDeletionLog(deps: ReplayDeps, record: RestoreRecord): Promise<NonNullable<Reconcile['replay']>> {
-  const d1Point = record.d1.restorePointMs
-  const watermarkMs = record.watermarkMs
-  if (d1Point === null || watermarkMs === null) throw new RestoreRefusal('record_invalid', 'no restore point')
+  if (record.d1.restorePointMs === null || record.watermarkMs === null) throw new RestoreRefusal('record_invalid', 'no restore point')
+  const d1Point = Math.max(0, record.d1.restorePointMs - SKEW_MARGIN_MS)
+  const watermarkMs = Math.min(record.watermarkMs, d1Point)
   const recovered = new Map(record.durableObjects.map(d => [d.name, d.recoveredAtMs]))
   // A Durable Object a person deletion reaches must have a recorded recovery time, or the replay can't know its point.
   const rules = deps.deletion ?? deletionRules

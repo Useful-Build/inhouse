@@ -111,6 +111,10 @@ async function placeholderLines(target: D1Database, restoreId: string): Promise<
   return new Map(rows.map(r => [r.member, r.id]))
 }
 
+/** This restore's own confirm line, if a confirm wrote it and then failed to write the record (review L1). */
+const confirmedLines = async (target: D1Database, restoreId: string): Promise<number[]> =>
+  (await target.prepare("SELECT id FROM audit_log WHERE action = 'restore.confirmed' AND json_extract(args_json, '$.restoreId') = ?").bind(restoreId).all<{ id: number }>()).results.map(r => r.id)
+
 export async function reappendAudit(bucket: R2Bucket, target: D1Database, record: RestoreRecord, at: At): Promise<AuditResult> {
   const snapshot = record.snapshot
   if (snapshot === null) throw new RestoreRefusal('snapshot_missing', 'the record has none')
@@ -124,7 +128,8 @@ export async function reappendAudit(bucket: R2Bucket, target: D1Database, record
 
   const inTarget = await targetLines(target, columns, afterId)
   const ours = await placeholderLines(target, record.restoreId)
-  for (const id of ours.values()) inTarget.delete(id)
+  // This restore's own lines aren't from the source: a re-run after a failed record write must not see a conflict.
+  for (const id of [...ours.values(), ...await confirmedLines(target, record.restoreId)]) inTarget.delete(id)
   const toWrite: string[] = []
   for (const l of lines) {
     const there = inTarget.get(idOf(l))

@@ -33,7 +33,8 @@ describe('person keys', () => {
         if (inner === MemberIdSchema) memberArgs.add(field)
       }
     }
-    expect([...memberArgs].sort()).toEqual(['memberId', 'replaces'])
+    // P8a R adds `approvedBy` (restore.confirmed: the approving Admin), registered in ops/tables/core.ts and kept by ops/delete/rules.ts.
+    expect([...memberArgs].sort()).toEqual(['approvedBy', 'memberId', 'replaces'])
     expect(audit.personKeys).toEqual(expect.arrayContaining(['actor_id', 'target_id', ...[...memberArgs].map(f => `args_json:$.${f}`)]))
   })
 

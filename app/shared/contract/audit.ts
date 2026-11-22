@@ -180,7 +180,8 @@ const otherLines = [
   /** `reason: null`: the item was put back (a snooze or a dismissal undone). */
   line('today.set_aside', { itemId: TodayItemIdSchema, reason: z.enum(['snoozed', 'dismissed', 'declined']).nullable() }),
   // P8a R. The restore's and the backup's ids only (`timeId`: a UTC stamp and 8 hex characters), never a row of either.
-  line('restore.confirmed', { restoreId: RestoreIdSchema, backupId: RestoreIdSchema }),
+  /** `approvedBy`: the brand's Admin who approved it (an Inhouse operator only when none is left); the actor ran it. */
+  line('restore.confirmed', { restoreId: RestoreIdSchema, backupId: RestoreIdSchema, approvedBy: MemberIdSchema }),
   /** The member id the placeholder row keeps (its actor's audit lines need it), and the restore that wrote it. */
   line('restore.member_placeholder', { memberId: MemberIdSchema, restoreId: RestoreIdSchema }),
 ] as const

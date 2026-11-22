@@ -32,7 +32,7 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   // approver (`value_json`) keeps the id, which is pseudonymous once their row is.
   settings: { action: 'delete_rows', column: 'owner', kept: ['updated_by', 'value_json'] },
   support_grants: { action: 'keep', why: 'the brand access history: created_by and ended_by keep the pseudonymous id', kept: ['created_by', 'ended_by'] },
-  audit_log: { action: 'keep', why: 'decision Q3: never shortened or edited', kept: ['actor_id', 'target_id', 'args_json:$.memberId', 'args_json:$.replaces', 'args_json:$.value'] },
+  audit_log: { action: 'keep', why: 'decision Q3: never shortened or edited', kept: ['actor_id', 'target_id', 'args_json:$.memberId', 'args_json:$.replaces', 'args_json:$.value', 'args_json:$.approvedBy'] },
   'photos/': { action: 'delete_objects' },
   'backups/': { action: 'keep', why: 'kept 30 days by the R2 lifecycle rule (Q3)' },
   'restore/': { action: 'keep', why: 'kept 30 days by the R2 lifecycle rule (Q3)' },

@@ -67,6 +67,8 @@ export const RESTORE_STATUSES = ['restored_unreconciled', 'restored', 'refused',
  * gets through. Step 4 (the outbox hold and the tool check) is P8b's: `outbox` says so until it lands.
  */
 export const ReconcileSchema = z.object({
+  /** Step 2b: C1's FTS rebuild, read back from its `fts.json`. */
+  fts: z.literal('rebuilt').nullable(),
   /** Step 3: the audit lines newer than the backup's, appended back to the target with their own ids. */
   audit: z.object({
     /** `snapshot`: the pre-restore snapshot; `audit_copy`: the daily copy, because the snapshot recorded the audit as unreadable. */
@@ -84,6 +86,14 @@ export const ReconcileSchema = z.object({
      */
     placeholders: z.array(z.string()),
   }).nullable(),
+  /**
+   * Step 3b: the member removals and role changes the re-appended lines record (`member.removed`,
+   * `member.role_changed`), applied again to the restored rows, so a member removed after the backup stays removed.
+   */
+  members: z.object({
+    removed: z.array(z.string()),
+    roles: z.array(z.object({ memberId: z.string(), role: z.enum(['member', 'admin']) })),
+  }).nullable(),
   /** Step 4, P8b: the outbox hold and the check against each tool's record. Not built in P8a. */
   outbox: z.literal('p8b_pending'),
   /** Step 5: the deletion log replayed past the watermark. */
@@ -100,8 +110,11 @@ export const ReconcileSchema = z.object({
     /** Runs a `refused` entry stopped: they removed nothing, so nothing is replayed. */
     skippedRefused: z.array(z.string()),
   }).nullable(),
-  /** The admin's confirm, with its audit line's id in the target. */
-  confirm: z.object({ actorId: z.string().min(1), atMs: Count, auditId: Count }).nullable(),
+  /**
+   * The confirm, with its audit line's id in the target: `actorId` the Inhouse operator who ran it, `approvedBy` the
+   * brand's Admin whose written approval it carries (an Inhouse operator only when the target has no active Admin).
+   */
+  confirm: z.object({ actorId: z.string().min(1), approvedBy: z.string().min(1), atMs: Count, auditId: Count }).nullable(),
   refusal: z.string().nullable(),
 })
 
@@ -127,7 +140,7 @@ export const RestoreRecordSchema = z.object({
     restorePointMs: Count.nullable(),
     tables: z.array(z.object({ name: z.string(), rows: Count, sha256: Sha256, verified: z.boolean() })),
     /** The backup's derived tables (FTS5 indexes): not restored from the backup; ops/backup/fts rebuilds them. */
-    derived: z.array(z.object({ name: z.string(), from: z.array(z.string()), state: z.literal('rebuild_needed') })),
+    derived: z.array(z.object({ name: z.string(), from: z.array(z.string()), state: z.enum(['rebuild_needed', 'rebuilt']) })),
   }),
   /** The `resetAfterRestore` hooks that ran on the target (a job's cursor rows), in order. */
   resets: z.array(z.string()),
@@ -152,8 +165,11 @@ export const RestoreRecordSchema = z.object({
   reconcile: ReconcileSchema.nullable(),
 }).superRefine((r, ctx) => {
   // No path marks a restore done before the audit re-append, the deletion-log replay and the admin's confirm.
-  const done = r.reconcile !== null && r.reconcile.audit !== null && r.reconcile.replay !== null && r.reconcile.confirm !== null
-  if ((r.status === 'restored') !== done) ctx.addIssue({ code: 'custom', path: ['status'], message: 'restored needs the audit re-append, the replay and the confirm' })
+  const c = r.reconcile
+  const done = c !== null && c.fts !== null && c.audit !== null && c.members !== null && c.replay !== null && c.confirm !== null && c.refusal === null
+    && r.d1.derived.every(d => d.state === 'rebuilt')
+  if ((r.status === 'restored') !== done) ctx.addIssue({ code: 'custom', path: ['status'], message: 'restored needs the FTS rebuild, the audit re-append, the member changes, the replay, the confirm and no refusal' })
+  if (r.status !== 'restored' && r.d1.derived.some(d => d.state === 'rebuilt')) ctx.addIssue({ code: 'custom', path: ['d1', 'derived'], message: 'rebuilt only on a restored record' })
   if (r.reconciled !== (r.status === 'restored')) ctx.addIssue({ code: 'custom', path: ['reconciled'], message: 'reconciled is true only when restored' })
   if (r.reconcile !== null && r.status !== 'restored_unreconciled' && r.status !== 'restored') ctx.addIssue({ code: 'custom', path: ['reconcile'], message: 'only a proven restore is reconciled' })
 })

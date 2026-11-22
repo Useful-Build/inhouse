@@ -4,6 +4,7 @@
 //  2b. the FTS rebuild (C1's `rebuildAfterRestore`, ops/backup/fts, handed in as `rebuildFts`): it writes
 //     `restore/<restoreId>/fts.json`, and the reconcile stops unless that says the indexes were rebuilt;
 //  3. the audit re-append (audit.ts);
+//  3b. the member removals and role changes those lines record, applied again (members.ts);
 //  4. P8b: hold every `approved` and `sending` outbox row, keep the outbox paused, and check each held action against
 //     its tool's own record. Not built in P8a: the record says `outbox: 'p8b_pending'`, and this is where it goes;
 //  5. the deletion-log replay past the watermark (replay.ts).
@@ -22,6 +23,7 @@ import type { TableEntry } from '../../tables/types.ts'
 import { RestoreRefusal } from '../errors.ts'
 import type { RestoreRecord } from '../manifest.ts'
 import { reappendAudit } from './audit.ts'
+import { reapplyMemberChanges } from './members.ts'
 import { emptyReconcile, readRecord, writeRecord } from './record.ts'
 import { replayDeletionLog } from './replay.ts'
 import type { PersonRunner } from './replay.ts'
@@ -29,6 +31,7 @@ import type { PersonRunner } from './replay.ts'
 export { brandAgentRunner } from './replay.ts'
 export type { PersonRunner } from './replay.ts'
 export { confirmRestore } from './confirm.ts'
+export { checkBeforeSwitch } from './switch.ts'
 
 export interface ReconcileDeps {
   bucket: R2Bucket
@@ -51,21 +54,23 @@ export interface ReconcileDeps {
 /** The part of C1's `fts.json` the reconcile reads: anything but `rebuilt` stops it. */
 const FtsResultSchema = z.object({ status: z.string() })
 
-async function ftsRebuilt(deps: ReconcileDeps): Promise<void> {
+async function ftsRebuilt(deps: ReconcileDeps): Promise<'rebuilt'> {
   await deps.rebuildFts({ bucket: deps.bucket, target: deps.target, restoreId: deps.restoreId })
   const obj = await deps.bucket.get(restoreKey(deps.restoreId, 'fts.json'))
   if (!obj) throw new RestoreRefusal('fts_rebuild_failed', 'no fts.json')
   const parsed = FtsResultSchema.safeParse(JSON.parse(await obj.text()))
   if (!parsed.success) throw new RestoreRefusal('fts_rebuild_failed', 'fts.json unreadable')
   if (parsed.data.status !== 'rebuilt') throw new RestoreRefusal('fts_rebuild_failed', parsed.data.status)
+  return 'rebuilt'
 }
 
 export type ReconcileResult = { ok: RestoreRecord } | { refused: string; record: RestoreRecord | null }
 
 export async function reconcile(deps: ReconcileDeps): Promise<ReconcileResult> {
   let record: RestoreRecord
+  let etag: string
   try {
-    record = await readRecord(deps.bucket, deps.restoreId)
+    ({ record, etag } = await readRecord(deps.bucket, deps.restoreId))
   } catch (err) {
     if (err instanceof RestoreRefusal) return { refused: err.reason, record: null }
     throw err
@@ -74,20 +79,24 @@ export async function reconcile(deps: ReconcileDeps): Promise<ReconcileResult> {
   const reconcile = record.reconcile ?? emptyReconcile()
   try {
     // 2b. The derived indexes (FTS5), first: before the audit re-append and before any status change.
-    await ftsRebuilt(deps)
+    const fts = await ftsRebuilt(deps)
     // 3. The audit lines newer than the backup's.
     const audit = await reappendAudit(deps.bucket, deps.target, record, deps.at)
+    // 3b. The member removals and role changes since the backup.
+    const members = await reapplyMemberChanges(deps.target, audit.afterId)
     // 4. P8b: the outbox hold and the tool check go here, before the replay and the confirm. Not built in P8a.
     // 5. The deletion log past the watermark.
     const replay = await replayDeletionLog({
       bucket: deps.bucket, target: deps.target, at: deps.at, registry: deps.registry ?? realRegistry,
       deletion: deps.deletionRules, retention: deps.retentionRules, runners: deps.runners,
     }, record)
-    return { ok: await writeRecord(deps.bucket, { ...record, reconcile: { ...reconcile, audit, replay, refusal: null } }) }
+    return { ok: await writeRecord(deps.bucket, { ...record, reconcile: { ...reconcile, fts, audit, members, replay, refusal: null } }, etag) }
   } catch (err) {
     if (!(err instanceof RestoreRefusal)) throw err
-    // A step that refuses leaves the restore unreconciled: neither step counts as done until a whole run gets through.
-    const saved = await writeRecord(deps.bucket, { ...record, reconcile: { ...reconcile, audit: null, replay: null, refusal: err.reason } })
+    // Another run wrote the record since this one read it: nothing to record over it.
+    if (err.reason.startsWith('record_changed')) return { refused: err.reason, record: null }
+    // A step that refuses leaves the restore unreconciled: no step counts as done until a whole run gets through.
+    const saved = await writeRecord(deps.bucket, { ...record, reconcile: { ...reconcile, fts: null, audit: null, members: null, replay: null, refusal: err.reason } }, etag)
     return { refused: err.reason, record: saved }
   }
 }

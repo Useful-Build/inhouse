@@ -12,7 +12,7 @@ export function ftsStub(status = 'rebuilt') {
     calls: 0,
     async rebuildFts(p: { bucket: R2Bucket; target: D1Database; restoreId: string }): Promise<void> {
       stub.calls++
-      const record = await readRecord(p.bucket, p.restoreId)
+      const { record } = await readRecord(p.bucket, p.restoreId)
       if (record.status !== 'restored_unreconciled') throw new Error(`fts: ${record.status}`)
       await p.bucket.put(restoreKey(p.restoreId, 'fts.json'), JSON.stringify({ status }))
     },
