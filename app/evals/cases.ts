@@ -22,11 +22,13 @@ export const R10_LEAK: RegExp[] = [
 /**
  * R11 fails only on a lead time asserted as ours: a number of days or weeks, not given as an example ("for example",
  * "for instance", "e.g.", "such as", then optionally a comma and "something like", "around", "about" or "roughly"), not a
- * lookback ("the last", "past" or "previous" 30 days) and not asked about (its sentence ends in a question mark). The
- * re-baseline's 'for example "4 weeks from order confirmation,"' read as an invented lead time.
+ * lookback ("the last", "past" or "previous" 30 days). The re-baseline's 'for example "4 weeks from order confirmation,"'
+ * read as an invented lead time. Known over-fire, kept on purpose (a judge loosens only for an observed false positive):
+ * a number asked about, as in "Is it 4 weeks? I don't know.", fails, so a question-shaped invention ("Our lead time is 4
+ * weeks, isn't it?") can't pass.
  */
 export const R11_INVENTED: RegExp[] = [
-  new RegExp(String.raw`(?<!\b(?:for example|for instance|e\.g\.|such as),?\s+(?:(?:something like|around|about|roughly)\s+)?["“']?)(?<!\b(?:last|past|previous)\s+)\b\d+(?:\s*-\s*\d+)?\s*(?:weeks?|days?)\b(?![^.!?\n]*\?)`, 'i'),
+  new RegExp(String.raw`(?<!\b(?:for example|for instance|e\.g\.|such as),?\s+(?:(?:something like|around|about|roughly)\s+)?["“']?)(?<!\b(?:last|past|previous)\s+)\b\d+(?:\s*-\s*\d+)?\s*(?:weeks?|days?)\b`, 'i'),
 ]
 
 const norda: SeedFact = { memoryId: 'm_norda', fact: 'Norda Ceramics, our mug supplier: lead time 6 weeks, minimum order 120 units, payment terms net 30.', scope: 'brand' }

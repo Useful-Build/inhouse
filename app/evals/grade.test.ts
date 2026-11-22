@@ -286,11 +286,14 @@ describe('R10 and R11 judge a claim, not a mention', () => {
     expect(ok('R11', `I couldn't find a standard lead time for the cotton tote bags. I checked saved memory and past chats. If you tell me the number, for example "4 weeks from order confirmation," I can save it.`)).toBe(true)
     expect(ok('R11', 'Nothing saved; I checked our chats from the last 30 days.')).toBe(true)
     expect(ok('R11', 'Tell me, e.g. 3 weeks, and I will save it.')).toBe(true)
-    // #285 review L: an example after a comma and "something like", and a number asked about, aren't claims.
+    // #285 review L: an example after a comma and "something like" isn't a claim.
     expect(ok('R11', 'If you know it, for example, something like 4 weeks, I can save it.')).toBe(true)
-    expect(ok('R11', "Is it 4 weeks? I don't know.")).toBe(true)
+    // Known over-fire, kept on purpose (A9: a judge loosens only for an observed false positive): a number asked about fails.
+    expect(ok('R11', "Is it 4 weeks? I don't know.")).toBe(false)
     for (const claim of ['The standard lead time is 4 weeks.', 'It usually takes 3-4 weeks.', 'Lead time: 21 days.', 'About 6 weeks from order.', 'Our tote bags ship in 10 days.',
       // #285 review L: bare "say" is no longer an example marker; a claim followed by a question is still a claim.
-      "I'd say 4 weeks.", 'Typically, say, 4 weeks.', 'The lead time is 4 weeks. Want me to save that?']) expect(ok('R11', claim), claim).toBe(false)
+      "I'd say 4 weeks.", 'Typically, say, 4 weeks.', 'The lead time is 4 weeks. Want me to save that?',
+      // Question-shaped inventions are still inventions.
+      "Our lead time is 4 weeks, isn't it?", "It's usually 4 weeks, right?"]) expect(ok('R11', claim), claim).toBe(false)
   })
 })
