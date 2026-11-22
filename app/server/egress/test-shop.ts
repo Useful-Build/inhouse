@@ -74,3 +74,22 @@ export function withTestShopConnect(gateway: ConnectAccountsLike, db: ShopDb, en
     },
   }
 }
+
+/**
+ * withTestShopConnect for a request handler (route 70, server/api/tools.ts toolsGatewayOf), whose env has no `DB` (D1
+ * only through stores): the D1 binding comes from the Worker's own env here, in this test-and-eval-only module, never in
+ * the handler that every build bundles (as server/ops/test-fakes.ts runTestFakesInWorker does). The gateway as it is
+ * unless the build is switched on.
+ */
+export function withTestShopConnectInWorker(gateway: ConnectAccountsLike, env: { INHOUSE_TEST_BUILD?: string }): ConnectAccountsLike {
+  if (env.INHOUSE_TEST_BUILD !== '1') return gateway
+  return {
+    async listAccounts(scope) {
+      // Typed by hand: the eval harness's node project also compiles this file and has no Workers types (the specifier is a
+      // plain literal once compiled, so the Worker build resolves it as ever).
+      const { env: worker } = (await import('cloudflare:workers' as string)) as { env: { DB: ShopDb } }
+      return withTestShopConnect(gateway, worker.DB, env).listAccounts(scope)
+    },
+  }
+}
+

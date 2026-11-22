@@ -37,8 +37,7 @@ import { getToday, putAside } from './api/today.ts'
 import { deleteLibraryFiles, downloadLibraryFile, listLibrary, restoreLibraryFiles, uploadLibraryFile } from './api/library.ts'
 // P5 (p5-w1 section 9): the Inhouse team connects an OAuth tool through the hub's ConnectGateway.
 import { connectCallback, startConnect } from './api/connect.ts'
-import { toolsHandlers } from './api/tools.ts'
-import type { ToolsGateway } from './api/tools.ts'
+import { toolsGatewayOf, toolsHandlers } from './api/tools.ts'
 import { toolsAccounts } from './api/tools-accounts.ts'
 import { storesOf } from './db/handler-kit.ts'
 // P5 (p5-w4 section 10): the notice channel list.
@@ -113,8 +112,8 @@ export async function reportClientError(request: Request): Promise<Response> {
   }
 }
 
-/** P5 W3's Tools handlers: the hub's `HUB_CONNECT` binding (typed from its contract, as connect.ts does) and W1's connector store. */
-const tools = toolsHandlers(c => ({ gateway: c.env.HUB_CONNECT as unknown as ToolsGateway, accounts: toolsAccounts(storesOf(c).connectors) }))
+/** P5 W3's Tools handlers: the hub's `HUB_CONNECT` binding (its account read carrying the test shop in test and eval builds, #337) and W1's connector store. */
+const tools = toolsHandlers(c => ({ gateway: toolsGatewayOf(c.env), accounts: toolsAccounts(storesOf(c).connectors) }))
 
 /** One route per access-matrix row, in the table's order (the row numbers of p2-design section 3). */
 export const routes: readonly Route[] = [

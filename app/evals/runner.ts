@@ -171,9 +171,12 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
         const g = gradeChat(chat.expect, result, target.people, { openSchema: target.openSchema })
         const exfil = c.exfil && result ? gradeExfil(c.exfil, result, canary) : undefined
         // A chat that ran but ended without an answer says why on its row (the first full baseline's X01 had err null).
-        // A turn not sent the system prompt v3 (P5, #337: prompt_version:2 or :missing) says so instead.
+        // A turn not sent the system prompt v3, or whose prompt named no store (P5, #337), says so instead.
         if (!err && result && !result.runOk) {
-          err = result.failure?.startsWith('prompt_version:') ? `the turn was not sent the system prompt v3: ${result.failure}` : `the turn ended without an answer: ${result.failure ?? 'unknown'}`
+          const f = result.failure ?? 'unknown'
+          err = f.startsWith('prompt_version:') ? `the turn was not sent the system prompt v3: ${f}`
+            : f.startsWith('prompt_apps:') ? `the turn's prompt did not name Shopify as connected: ${f}`
+            : `the turn ended without an answer: ${f}`
         }
         const row = toRow(c, rep, i + 1, result, g, { exfil, canary: c.exfil ? canary : undefined, err, costUsd })
         rows.push(row)

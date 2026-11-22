@@ -7,7 +7,7 @@ import type { Reader, RunnerEnv, SlotRow } from '../../morning-check/runner.ts'
 import { STORE_DATA_CASES, hostOf } from './cases.ts'
 import type { StoreDataCase } from './cases.ts'
 import { gradeSet, gradeStoreData } from './grade.ts'
-import { GRADED_PROMPT_VERSION, promptReason } from '../../prompt-version.ts'
+import { promptFailure, promptReason } from '../../prompt-version.ts'
 import type { SetResult, StoreDataRun, Verdict } from './grade.ts'
 
 /** The morning-check reader plus what this set needs beyond its tool names. */
@@ -31,7 +31,7 @@ export type StoreDataEnv = Omit<RunnerEnv, 'reader'> & { reader: StoreDataReader
  * next Run now would be `run_open`). `ranOn`: the API model id the slot was submitted with (remote mode, `modelOf`). `prompt`:
  * the system prompt version its turn was sent (remote mode, `promptOf`; P5 #337).
  */
-export interface CaseOutcome { id: string; verdict: Verdict; slotKey: string | null; ms: number; settled?: boolean; ranOn?: string; prompt?: number | 'missing' }
+export interface CaseOutcome { id: string; verdict: Verdict; slotKey: string | null; ms: number; settled?: boolean; ranOn?: string; prompt?: number | 'missing'; promptApps?: string[] | 'missing'; storeRefused?: string }
 
 /** What the slot left, as the grader reads it. */
 export async function observeRun(reader: StoreDataReader, slot: SlotRow, sinceMs: number, canary: string): Promise<StoreDataRun> {
@@ -50,6 +50,9 @@ export async function observeRun(reader: StoreDataReader, slot: SlotRow, sinceMs
 export async function runStoreDataCase(env: StoreDataEnv, c: StoreDataCase): Promise<CaseOutcome> {
   const started = env.nowMs()
   await env.useShop(hostOf(c.id))
+  // #337 round 3: the store must be served for this case's shop (route 70, as the turns read it), before any spend.
+  const notServed = await env.checkStore?.() ?? null
+  if (notServed !== null) return { id: c.id, slotKey: null, ms: env.nowMs() - started, storeRefused: notServed, verdict: { pass: false, checks: { ran: false, exposed: false, noOutsideFetch: true, noNotification: true, noPlantedMemory: true, noRoutine: true, noRepeat: true }, reasons: [`store: ${notServed}`] } }
   const clientKey = env.newKey()
   const slotKey = `now|${ROUTINE_ID}|${clientKey}`
   const fail = (reason: string, slot: string | null): CaseOutcome => ({
@@ -121,11 +124,12 @@ export async function runStoreData(
     let o: CaseOutcome
     try {
       o = await runStoreDataCase(env, c)
-      // P5 #337: the turn must have been sent the current system prompt (evals/prompt-version.ts), else the case fails.
+      // P5 #337: the turn must have been sent the current system prompt naming Shopify (evals/prompt-version.ts), else it fails.
       const sent = o.slotKey !== null && env.promptOf ? await env.promptOf(o.slotKey) : null
       if (sent !== null) {
-        o = { ...o, prompt: sent }
-        if (sent !== GRADED_PROMPT_VERSION) o = { ...o, verdict: { ...o.verdict, pass: false, reasons: [promptReason(sent), ...o.verdict.reasons] } }
+        o = { ...o, prompt: sent.version, promptApps: sent.apps === 'missing' ? 'missing' : [...sent.apps] }
+        const bad = promptFailure(sent)
+        if (bad !== null) o = { ...o, verdict: { ...o.verdict, pass: false, reasons: [promptReason(bad), ...o.verdict.reasons] } }
       }
       const ranOn = o.slotKey !== null && env.modelOf ? await env.modelOf(o.slotKey) : null
       if (ranOn !== null) {
@@ -149,6 +153,12 @@ export async function runStoreData(
       await env.releaseShop?.()
     } catch (e) {
       unclear = said(e)
+    }
+    if (o.storeRefused !== undefined) {
+      // The store isn't served for this case's shop: stop before its spend, the case not run (never graded).
+      stopped = `${c.id}: ${o.storeRefused}, so the run stops before this case's Run now${unclear !== null ? `; and the test shop override could not be cleared (${unclear})` : ''}`
+      onCase?.([...outcomes])
+      break
     }
     outcomes.push(o)
     if (o.settled === false) stopped = `${c.id} timed out and its slot (${o.slotKey}) is still open: every later Run now would answer run_open, so the run stops here`

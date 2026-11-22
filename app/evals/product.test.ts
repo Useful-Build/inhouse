@@ -99,6 +99,8 @@ interface Server {
   tools?: unknown
   /** The trace's `promptVersions` (default [3], v3 sent); null leaves the field out (no version recorded). */
   promptVersions?: (number | null)[] | null
+  /** The trace's `promptApps` (default [['Shopify']]); null leaves the field out. */
+  promptApps?: (string[] | null)[] | null
 }
 const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } => {
   const s: Server = {
@@ -153,7 +155,8 @@ const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } 
     if (url.pathname.startsWith('/api/traces/') && s.traceStatus && s.traceStatus !== 200) return json({ error: { code: 'unavailable' } }, s.traceStatus)
     if (url.pathname.startsWith('/api/traces/')) {
       const versions = s.promptVersions === undefined ? [3] : s.promptVersions
-      return json({ cost: { minor: s.costMinor, currency: 'USD' }, steps: [{ kind: 'root', detail: '' }, ...s.steps], ...(versions === null ? {} : { promptVersions: versions }) })
+      const apps = s.promptApps === undefined ? [['Shopify']] : s.promptApps
+      return json({ cost: { minor: s.costMinor, currency: 'USD' }, steps: [{ kind: 'root', detail: '' }, ...s.steps], ...(versions === null ? {} : { promptVersions: versions }), ...(apps === null ? {} : { promptApps: apps }) })
     }
     if (url.pathname.startsWith('/api/chats/')) {
       const answered = ++polls > s.emptyPolls
@@ -885,6 +888,15 @@ describe('the baseline\'s harness faults', () => {
     }
     const ok = await make(server(), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
     expect(await ok.chat('hi')).toMatchObject({ runOk: true, answer: 'Hello.' })
+  })
+  // #337 round 3 (M3): a v3 turn whose built line didn't name Shopify as connected fails too (prompt_apps:<list>).
+  it('a v3 turn whose prompt named no store, or another app only, fails naming the apps it named', async () => {
+    for (const [promptApps, failure] of [[[[]], 'prompt_apps:none'], [[['Slack']], 'prompt_apps:Slack'], [null, 'prompt_apps:missing'], [[null], 'prompt_apps:missing']] as const) {
+      const session = await make(server({ promptApps: promptApps === null ? null : promptApps.map(a => (a === null ? null : [...a])) }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
+      expect(await session.chat('hi'), JSON.stringify(promptApps)).toMatchObject({ runOk: false, answer: 'Hello.', failure })
+    }
+    const ok = await make(server({ promptApps: [['Shopify', 'Slack']] }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
+    expect(await ok.chat('hi')).toMatchObject({ runOk: true })
   })
   // #337 round 2 (L2): a turn that errored and fell back to v2 reports both causes, not only the first.
   it('a turn with an error part that was also sent v2 names both causes', async () => {

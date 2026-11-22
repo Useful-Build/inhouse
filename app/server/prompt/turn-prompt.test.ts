@@ -37,12 +37,14 @@ describe("the turn's system prompt", () => {
         + 'Slack channels you may post to with notification_send: #ops. Post nowhere else.')
       // The version sent is kept on the turn's row beside its start record (#337 review M1, M2).
       expect(h.turn(a.turnId).prompt_version).toBe(3)
+      expect(h.turn(a.turnId).prompt_apps).toBe('["Slack"]')
 
       answer = { ok: true, value: [slack(true)] }
       const b = ok(await h.submit('c2', 'key-prompt2'))
       await settle()
       expect((JSON.parse(h.turn(b.turnId).start_json!) as { systemPrompt: string }).systemPrompt).toBe(`${SYSTEM_PROMPT_V1}\n\nNo apps are connected yet.`)
       expect(h.turn(b.turnId).prompt_version).toBe(3)
+      expect(h.turn(b.turnId).prompt_apps).toBe('[]')
 
       vi.spyOn(console, 'error').mockImplementation(() => {})
       answer = { ok: false, error: { code: 'upstream_unavailable', message: 'down' } }
@@ -50,10 +52,14 @@ describe("the turn's system prompt", () => {
       await settle()
       expect((JSON.parse(h.turn(c.turnId).start_json!) as { systemPrompt: string }).systemPrompt).toBe(SYSTEM_PROMPT_V2)
       expect(h.turn(c.turnId).prompt_version).toBe(2)
+      expect(h.turn(c.turnId).prompt_apps).toBeNull()
       // Route 33's trace carries it too (additive, #337 review): what the eval runners read to know which prompt ran.
       expect(h.core.readTrace(a.turnId, { owner: MEMBER })!.promptVersions).toEqual([3])
+      expect(h.core.readTrace(a.turnId, { owner: MEMBER })!.promptApps).toEqual([['Slack']])
+      expect(h.core.readTrace(b.runId, { owner: MEMBER })!.promptApps).toEqual([[]])
       expect(h.core.readTrace(a.runId, { all: true })!.promptVersions).toEqual([3])
       expect(h.core.readTrace(c.runId, { owner: MEMBER })!.promptVersions).toEqual([2])
+      expect(h.core.readTrace(c.runId, { owner: MEMBER })!.promptApps).toEqual([null])
       expect(h.placed()).toEqual([a.turnId, b.turnId, c.turnId])
       vi.restoreAllMocks()
     }, { systemPrompt: turnId => turnSystemPrompt(deps, turnId) })
@@ -79,6 +85,6 @@ describe("the turn's system prompt", () => {
       expect((JSON.parse(h.turn(a.turnId).start_json!) as { systemPrompt: string }).systemPrompt).toBe('prompt build 2')
       // The version recorded follows the rebuild too (#337 round 2 L1): the second build said 2.
       expect(h.turn(a.turnId).prompt_version).toBe(2)
-    }, { systemPrompt: async () => ({ text: `prompt build ${++builds}`, version: builds === 1 ? 3 : 2 }) })
+    }, { systemPrompt: async () => ({ text: `prompt build ${++builds}`, version: builds === 1 ? 3 : 2, apps: builds === 1 ? ['Shopify'] : null }) })
   })
 })

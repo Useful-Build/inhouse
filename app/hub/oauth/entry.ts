@@ -70,6 +70,8 @@ export class ConnectGateway extends WorkerEntrypoint<Env> implements ConnectApi 
    */
   async listAccounts(scope: CallerScope, options?: CallToolOptions): Promise<HubResult<AccountSummary[]>> {
     return answered(async () => {
+      // The caller's scope first (#337 round 3): nothing is granted for a caller G.listAccounts would refuse.
+      if (!G.serverScope(scope)) return err('invalid_args', 'scope')
       let shop: HubResult<{ shop: string | null }>
       if (__INHOUSE_HUB_TEST__ && (this.env as Env & { INHOUSE_TEST_BUILD?: string }).INHOUSE_TEST_BUILD === '1') {
         const { testUpstreams } = await import('../testing/index')

@@ -9,7 +9,7 @@
 import type { MemoryDoor } from '../targets/door.ts'
 import type { MorningDoor } from './door.ts'
 import type { RunnerEnv } from './runner.ts'
-import { promptVersionSent } from '../prompt-version.ts'
+import { NO_PROMPT, promptSentOf } from '../prompt-version.ts'
 import { shopifyNotServed } from '../shopify-served.ts'
 
 export interface RemoteDeps {
@@ -36,10 +36,15 @@ export interface RemoteDeps {
    */
   checkModel?: boolean
   /**
-   * run.mjs sets it (P5 #337): route 33's `promptVersions` for a turn (the trace's field as read, unchecked). Each case's
-   * turn is then checked to have been sent the system prompt v3 (runner.ts promptOf). The scripted proof's spec leaves it out.
+   * run.mjs sets it (P5 #337): route 33's trace of a turn (its JSON as read, unchecked). Each case's turn is then checked
+   * to have been sent the system prompt v3 naming Shopify (runner.ts promptOf). The scripted proof's spec leaves it out.
    */
-  promptVersions?: (turnId: string) => Promise<unknown>
+  promptTrace?: (turnId: string) => Promise<unknown>
+  /**
+   * run.mjs and the store-data run set it (#337 round 3): route 70's answer, read after the case's shop is set (in the eval
+   * build it then carries the test shop), so the store check reads exactly the account the case's turns will use.
+   */
+  storeTools?: () => Promise<unknown>
   /** The graded run's check before each case (gradedRun's beforeCase): a reason stops the run there. */
   beforeCase?: () => Promise<string | null>
 }
@@ -168,11 +173,12 @@ export function remoteEnv(d: RemoteDeps): RunnerEnv {
   return {
     ...(d.defaultModel ? { beforeCases: d.defaultModel } : {}),
     ...(d.checkModel ? { modelOf: (slotKey: string) => d.door.model(slotKey) } : {}),
-    ...(d.promptVersions ? {
+    ...(d.storeTools ? { checkStore: async () => shopifyNotServed(await d.storeTools!()) } : {}),
+    ...(d.promptTrace ? {
       promptOf: async (slotKey: string) => {
         // A slot with no turn has no prompt to check: `missing`, so it can never pass (#337 round 2, Sonnet M3).
         const turnId = (await d.door.slot(slotKey))?.turn_id ?? null
-        return turnId === null ? 'missing' : promptVersionSent(await d.promptVersions!(turnId))
+        return turnId === null ? NO_PROMPT : promptSentOf(await d.promptTrace!(turnId))
       },
     } : {}),
     ...(d.beforeCase ? { beforeCase: d.beforeCase } : {}),
@@ -256,8 +262,7 @@ export interface GradedRun {
   /**
    * Before runAll: takes the eval lease, proves --target answers from this door's database (a probe chat made through the
    * API is read back through the door, as targets/product.ts does), refuses a test shop override this run didn't write (a
-   * morning-check run is on the deployment or one left it), refuses a brand whose Tools page doesn't show Shopify served
-   * (#337), pins MORNING_CHECK_CAP and reads it back on route 42 (a month at the cap refuses), notes
+   * morning-check run is on the deployment or one left it), pins MORNING_CHECK_CAP and reads it back on route 42 (a month at the cap refuses), notes
    * the month's spend as the run's start, then sets the Default model to `label`.
    */
   start(): Promise<void>
@@ -304,11 +309,6 @@ export function gradedRun(g: GradedDeps): GradedRun {
       if (!(await g.door.hasChat(probe))) throw new Error('morning-check: refusing: the door\'s database does not hold the chat --target just made, so --target is not the eval deployment the door writes to')
       const shop = await g.door.testShop()
       if (shop !== null) throw new Error(`morning-check: refusing: a test shop override (hub:shop ${shop}) is already set on the eval deployment and this run didn't write it: another morning-check run is on it or left it (clear it through the door once none runs)`)
-      // #337 round 2: the store must be served, or every graded turn's prompt says none is connected. Before the cap and any case.
-      const tools = await g.admin('GET', '/api/tools')
-      if (tools.status !== 200) throw new Error(`morning-check: refusing: GET /api/tools answered ${tools.status}, so the store can't be checked`)
-      const notServed = shopifyNotServed(tools.json)
-      if (notServed !== null) throw new Error(`morning-check: refusing: ${notServed}`)
       await g.door.setSpendingCap(MORNING_CHECK_CAP)
       const { spentUsd } = await usage(g.admin)
       if (spentUsd >= capUsd) throw new Error(`morning-check: refusing: this month's spend ($${spentUsd.toFixed(2)}) has reached the ${MORNING_CHECK_CAP} cap`)

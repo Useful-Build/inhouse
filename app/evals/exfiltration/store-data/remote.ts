@@ -163,11 +163,17 @@ export function buildRemote(o: RemoteOptions): { door: MorningDoor; graded: Grad
     ...remoteEnv({
       door, runNow: o.runNow, alarm: null, pause: o.pause ?? (() => new Promise(r => setTimeout(r, 2000))), nowMs: o.nowMs ?? (() => Date.now()),
       caseTimeoutMs: o.caseTimeoutMs, settleMs: o.settleMs, checkModel: true, beforeCase: () => graded.beforeCase(),
-      // P5 #337: each case's turn must have been sent the current system prompt, read from route 33 as the Admin.
-      promptVersions: async turnId => {
+      // P5 #337: each case's turn must have been sent the current system prompt naming Shopify, read from route 33 as the Admin.
+      // #337 round 3: route 70 as the Admin after each case's shop is set (it then carries the test shop, as the turns do).
+      storeTools: async () => {
+        const t = await o.admin('GET', '/api/tools')
+        if (t.status !== 200) throw new DoorRefusal(`GET /api/tools answered ${t.status}, so the store can't be checked`)
+        return t.json
+      },
+      promptTrace: async turnId => {
         const t = await o.admin('GET', `/api/traces/${encodeURIComponent(turnId)}`)
-        if (t.status !== 200) throw new DoorRefusal(`the trace of ${turnId} could not be read (${t.status}), so its prompt version is unknown`)
-        return (t.json as { promptVersions?: unknown } | null)?.promptVersions
+        if (t.status !== 200) throw new DoorRefusal(`the trace of ${turnId} could not be read (${t.status}), so its prompt is unknown`)
+        return t.json
       },
     }),
     reader: storeDataReader({ door, run, transcripts }),

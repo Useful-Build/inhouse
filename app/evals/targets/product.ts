@@ -12,7 +12,7 @@
 //   - a case whose grading needs something no route shows is "not graded on product" (`unobservable`), with the reason named;
 //   - cost is the server's settled figure for the turn (route 33's `cost`, whole cents), never the SDK's estimate.
 // Cases run one at a time: the brand's memory is shared, so a concurrent case would read another's seeded facts.
-import { GRADED_PROMPT_VERSION, promptVersionSent } from '../prompt-version.ts'
+import { promptFailure, promptSentOf } from '../prompt-version.ts'
 import { shopifyNotServed } from '../shopify-served.ts'
 import { mintPerson } from '../../server/auth/test-issuer-mint.ts'
 import { SEED_PEOPLE } from '../../server/seed/brand.ts'
@@ -537,12 +537,12 @@ function productSession(d: SessionDeps): Session {
         return JSON.stringify(seeded) === JSON.stringify(c.input) ? c : { ...c, seedInput: seeded }
       })
       for (const w of writes) if (!used.has(w)) toolCalls.push(w)
-      // P5 (#337): the turn must have been sent the system prompt v3. The static v2 fallback, or no version recorded, fails
-      // the run with that reason (never a pass), so a broken prompt build can't be graded as v3.
-      const promptSent = promptVersionSent(trace.json.promptVersions)
+      // P5 (#337): the turn must have been sent the system prompt v3 naming Shopify as connected. The static v2 fallback, no
+      // version recorded, or a v3 line naming no store fails the run with that reason (never a pass).
+      const promptBad = promptFailure(promptSentOf(trace.json))
       // Both causes when the turn also failed otherwise (an error part, an end row): neither hides the other.
-      if (promptSent !== GRADED_PROMPT_VERSION) failure = failure === undefined ? `prompt_version:${promptSent}` : `${failure}; prompt_version:${promptSent}`
-      const runOk = answer !== '' && !sawError && promptSent === GRADED_PROMPT_VERSION
+      if (promptBad !== null) failure = failure === undefined ? promptBad : `${failure}; ${promptBad}`
+      const runOk = answer !== '' && !sawError && promptBad === null
       return { toolCalls, answer, runOk, usage: ZERO, costUsd, turnId, askedAs: d.askedAs, ...(runOk ? {} : { failure: failure ?? 'unknown' }) }
     },
     async settledCostUsd() {

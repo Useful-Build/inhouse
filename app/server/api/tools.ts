@@ -17,10 +17,27 @@ import type { Handler, HandlerContext } from '../routes.ts'
 import type { AccountSummary, ConnectGateway, HubError } from '../../hub/index/contract.ts'
 import type { ConnectorAccount } from '../db/connector-accounts.ts'
 import { TOOL_CATALOG, catalogByAccount } from './tools-catalog.ts'
+import { withTestShopConnectInWorker } from '@test-shop'
 import type { CatalogEntry } from './tools-catalog.ts'
 
 /** The ConnectGateway methods these routes call (W1's contract, app/hub/index/contract.ts). */
 export type ToolsGateway = Pick<ConnectGateway, 'listAccounts' | 'setPaused' | 'disconnect'>
+
+/**
+ * Route 70's gateway over the env's `HUB_CONNECT` (#337 round 3). In the test and eval builds only, its account read
+ * carries the test shop override the turns' reads and prompt carry (`@test-shop` withTestShopConnect), so the graded
+ * runners' precheck reads exactly the account the turns use; every other build gets the off module (the binding as is).
+ * Pausing and disconnecting are the binding's own.
+ */
+export function toolsGatewayOf(env: { HUB_CONNECT?: unknown; INHOUSE_TEST_BUILD?: string }): ToolsGateway {
+  const hub = env.HUB_CONNECT as ToolsGateway
+  const read = withTestShopConnectInWorker(hub, env)
+  return {
+    listAccounts: (scope, options) => read.listAccounts(scope, options),
+    setPaused: (scope, accountId, paused) => hub.setPaused(scope, accountId, paused),
+    disconnect: (scope, accountId) => hub.disconnect(scope, accountId),
+  }
+}
 // `disconnect` must be idempotent: route E calls it again on a retry after a failed row write (the hub is already
 // `disconnected`).
 

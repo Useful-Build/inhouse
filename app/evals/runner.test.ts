@@ -369,6 +369,14 @@ describe('unbuilt tools and the cause of a failed run', () => {
     const out = await runEvals({ target: t, cases: [CASES.find((c) => c.id === 'R02')!], reps: 1, concurrency: 1 })
     expect(out.rows[0]).toMatchObject({ runOk: false, err: 'the turn ended without an answer: runner_lost', turnId: 't_BBBBBBBBBBBBBBBBBBBBBB' })
   })
+  // #337 round 3: a v3 turn whose prompt didn't name Shopify says that instead.
+  it('a turn whose prompt did not name Shopify fails its row with that reason', async () => {
+    const t = createFakeTarget()
+    const seed = t.seed
+    t.seed = async (...a) => { const s = await seed(...a); return { ...s, chat: async () => ({ toolCalls: [], answer: 'Hello.', runOk: false, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0.4, failure: 'prompt_apps:none', turnId: 't_BBBBBBBBBBBBBBBBBBBBBB' }) } }
+    const out = await runEvals({ target: t, cases: [CASES.find((c) => c.id === 'R02')!], reps: 1, concurrency: 1 })
+    expect(out.rows[0]).toMatchObject({ runOk: false, pass: false, err: 'the turn\'s prompt did not name Shopify as connected: prompt_apps:none' })
+  })
   // P5 (#337): a turn that answered but wasn't sent prompt v3 is a failed row that says so, never a pass.
   it('a turn not sent the system prompt v3 fails its row with that reason, even with an answer', async () => {
     for (const failure of ['prompt_version:2', 'prompt_version:missing']) {

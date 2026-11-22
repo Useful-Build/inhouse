@@ -307,14 +307,16 @@ describe('the version sent, on every path', () => {
 
   it('the builder: 3, with apps, with none connected, and when only the channel read failed', async () => {
     quiet()
-    for (const [d, label] of [
-      [deps(async () => ({ ok: true, value: [account('shopify:store'), account('slack:workspace')] })), 'apps'],
-      [deps(async () => ({ ok: true, value: [] })), 'none'],
-      [deps(async () => ({ ok: true, value: [account('slack:workspace')] }), { channels: async () => { throw new Error('d1') } }), 'channels failed'],
+    for (const [d, label, apps] of [
+      [deps(async () => ({ ok: true, value: [account('shopify:store'), account('slack:workspace')] })), 'apps', ['Shopify', 'Slack']],
+      [deps(async () => ({ ok: true, value: [] })), 'none', []],
+      [deps(async () => ({ ok: true, value: [account('slack:workspace')] }), { channels: async () => { throw new Error('d1') } }), 'channels failed', ['Slack']],
     ] as const) {
       const p = await turnSystemPrompt(d, 't_v3')
       expect(p.version, label).toBe(3)
       expect(p.text, label).not.toBe(SYSTEM_PROMPT_V2)
+      // #337 round 3 (M3): the apps the built line named, so a v3 turn that named no store can't pass as one that did.
+      expect(p.apps, label).toEqual(apps)
     }
   })
 
@@ -326,7 +328,7 @@ describe('the version sent, on every path', () => {
       deps(async () => { throw new Error('unreachable') }),
       deps(async () => ({ ok: true, value: [{ accountId: 'slack:workspace', configured: true } as unknown as AccountSummary] })),
       deps(async () => ({ ok: true, value: [account('mystery:x')] })),
-    ] as TurnPromptDeps[]) expect(await turnSystemPrompt(d, 't_v2')).toEqual({ text: SYSTEM_PROMPT_V2, version: 2 })
+    ] as TurnPromptDeps[]) expect(await turnSystemPrompt(d, 't_v2')).toEqual({ text: SYSTEM_PROMPT_V2, version: 2, apps: null })
   })
 
   it('the 3 s timeout: 2', async () => {
@@ -335,7 +337,7 @@ describe('the version sent, on every path', () => {
       quiet()
       const built = turnSystemPrompt(deps(() => new Promise(() => {})), 't_v2_timeout')
       await vi.advanceTimersByTimeAsync(PROMPT_READ_DEADLINE_MS)
-      expect(await built).toEqual({ text: SYSTEM_PROMPT_V2, version: 2 })
+      expect(await built).toEqual({ text: SYSTEM_PROMPT_V2, version: 2, apps: null })
     } finally {
       vi.useRealTimers()
     }

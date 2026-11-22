@@ -377,11 +377,14 @@ describe('A.7.10 pause and readiness by account (through ReadGateway)', () => {
 describe('the test shop override (through ReadGateway)', () => {
   const OTHER = 'example-mc-codemode-check.myshopify.com'
   let otherGraphql = 0
+  let otherOther = 0
   beforeEach(() => {
     otherGraphql = 0
+    otherOther = 0
     const base = createShopifyUpstream(dataset)
     testUpstreams.set(OTHER, async req => {
       if (new URL(req.url).pathname.endsWith('/graphql.json')) otherGraphql++
+      else otherOther++
       return base(req)
     })
   })
@@ -429,6 +432,13 @@ describe('the test shop override (through ReadGateway)', () => {
     expect(seen.graphql).toBe(0)
     // An override the hub can't honour is refused, never answered from the real account.
     expect(await gateways.ConnectGateway.listAccounts(server, { testShopHost: 'example-mc-not-registered.myshopify.com' })).toMatchObject({ ok: false, error: { code: 'invalid_args' } })
+  })
+
+  // #337 round 3 (L5): the caller's scope is checked before the test shop's object is granted: a run scope (the runner's)
+  // is refused and reaches no upstream, not even the token endpoint.
+  it('listAccounts with a test shop refuses a run scope before any grant', async () => {
+    expect(await gateways.ConnectGateway.listAccounts(run, { testShopHost: OTHER })).toMatchObject({ ok: false, error: { code: 'invalid_args' } })
+    expect(otherOther + otherGraphql).toBe(0)
   })
 
   it('an unregistered or malformed test shop is invalid_args before the script runs, and no shop is read', async () => {

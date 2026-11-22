@@ -27,10 +27,12 @@ export type TraceStep = z.infer<typeof TraceStepSchema>
 /**
  * `id` is whatever the agent calls the run: a recorded key or a run id in the mock, a run id in phase 2. `promptVersions`
  * (P5, #337): the system prompt version each of its turns was sent, in order (3 the built prompt, 2 the static fallback,
- * null a turn with none recorded); absent when no turn recorded one. The eval runners read it to know which prompt ran.
+ * null a turn with none recorded); absent when no turn recorded one. `promptApps` (#337 round 3), beside it: the apps each
+ * built prompt named as connected (null for a fallback or none recorded). The eval runners read both to know which prompt ran.
  */
 export const TraceSchema = z.object({
   id: z.string(), title: z.string(), durationMs: DurationMsSchema, cost: MoneySchema, tokens: z.string(), steps: z.array(TraceStepSchema),
   promptVersions: z.array(z.number().int().nullable()).optional(),
+  promptApps: z.array(z.array(z.string()).nullable()).optional(),
 })
 export type Trace = z.infer<typeof TraceSchema>

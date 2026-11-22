@@ -46,15 +46,20 @@ export function joinNames(names: readonly string[]): string {
  * account the catalog doesn't know is left out, never named by its id.
  */
 export function connectedLines(accounts: readonly AccountSummary[] | null, channels: readonly string[]): string {
-  if (accounts === null) return ''
+  return connectedParts(accounts, channels).lines
+}
+
+/** connectedLines, with the app names its apps line names (#337 round 3: recorded beside the turn's prompt version). */
+function connectedParts(accounts: readonly AccountSummary[] | null, channels: readonly string[]): { lines: string; apps: string[] } {
+  if (accounts === null) return { lines: '', apps: [] }
   const names = [...new Set(accounts.filter(isConnected).flatMap(a => catalogByAccount(a.accountId)?.name ?? []))].sort(byCodeUnit)
   // A connected account the catalog can't name: "none" would be false, so no apps line at all (and Slack, which the
   // catalog names, isn't connected, so no channel line either).
-  if (names.length === 0 && unknownConnected(accounts) > 0) return ''
+  if (names.length === 0 && unknownConnected(accounts) > 0) return { lines: '', apps: [] }
   const lines = [names.length === 0 ? NO_APPS_LINE : connectedAppsLine(joinNames(names))]
   const safe = [...new Set(channels.filter(c => SLACK_CHANNEL_NAME.test(c)))].sort(byCodeUnit)
   if (slackConnected(accounts) && safe.length > 0) lines.push(listedChannelsLine(joinNames(safe.map(c => `#${c}`))))
-  return lines.join('\n')
+  return { lines: lines.join('\n'), apps: names }
 }
 
 export type TurnPromptDeps = {
@@ -107,9 +112,12 @@ async function readChannels(deps: TurnPromptDeps, turnId: string, log: Log): Pro
   }
 }
 
-/** The prompt a turn is sent and its version: 3 for the built prompt, 2 for the static fallback (system.ts). */
-export type TurnPrompt = { text: string; version: 2 | 3 }
-const FALLBACK: TurnPrompt = { text: SYSTEM_PROMPT_V2, version: 2 }
+/**
+ * The prompt a turn is sent, its version (3 the built prompt, 2 the static fallback, system.ts) and the apps the built
+ * line named as connected (`[]`: "No apps are connected yet."; null: the fallback, which names none as connected).
+ */
+export type TurnPrompt = { text: string; version: 2 | 3; apps: string[] | null }
+const FALLBACK: TurnPrompt = { text: SYSTEM_PROMPT_V2, version: 2, apps: null }
 
 /** The longest a turn's start waits for the hub and the channel list together (A9's condition). */
 export const PROMPT_READ_DEADLINE_MS = 3000
@@ -146,8 +154,8 @@ export async function turnSystemPrompt(deps: TurnPromptDeps, turnId: string): Pr
         if (dropped > 0) log({ event: 'prompt_channel_names_dropped', turnId, dropped })
       }
     }
-    const lines = connectedLines(accounts, channels)
-    return lines === '' ? FALLBACK : { text: systemPromptV3(lines), version: 3 }
+    const { lines, apps } = connectedParts(accounts, channels)
+    return lines === '' ? FALLBACK : { text: systemPromptV3(lines), version: 3, apps }
   } catch (err) {
     console.error({ event: 'prompt_build_failed', turnId, error: errorName(err) })
     return FALLBACK
