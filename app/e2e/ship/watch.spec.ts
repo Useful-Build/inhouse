@@ -189,7 +189,7 @@ test('S2: Open an item and the problem panel shows the orders behind it from the
 
 // ---------- S3: a chat answer with a bounded table and its sources ----------
 
-test('S3: Ask which orders are late and the answer streams with a bounded table and its sources', async ({ context, page }) => {
+test('S3: Ask which orders are late and the answer shows with a bounded table and its sources', async ({ context, page }) => {
   needsContainer()
   test.setTimeout(240_000)
   await openAs(context, page, 'dana', '#/today')
@@ -283,9 +283,9 @@ test('S7: Routines shows the morning check\'s next run on the brand\'s time zone
   const row = other.locator('li').filter({ has: other.locator(`[data-routine-open="${MORNING_CHECK}"]`) })
   await expect(row).toBeVisible()
   const text = plain(await row.innerText())
-  expect(text).toContain('Next run')
-  expect(text).toContain(clock(BRAND_TZ))
-  expect(text).not.toContain(clock(BROWSER_TZ))
+  // Only the time after "Next run" ("Tue, Nov 17 at 7:00 AM"): the row also holds the last run's time.
+  const shown = /Next run\s+[^\n]*?\bat (\d{1,2}:\d{2} [AP]M)/.exec(text)?.[1]
+  expect(shown, `the row's Next run in: ${text}`).toBe(clock(BRAND_TZ))
   await shot(other, 'S7-next-run')
 })
 
@@ -308,6 +308,7 @@ test('S8: A second Member sees that file in the Library but can\'t open the chat
   // Not by its id either: the server answers as if there were no such chat.
   expect((await api(other, 'GET', `/api/chats/${chat}`)).status).toBe(404)
   await goTo(other, `#/chats/${chat}`)
+  await expect(other.locator('[data-toast]').filter({ hasText: "That chat isn't available" })).toBeVisible()
   await expect(log(other).getByText('make the table')).toHaveCount(0)
   await shot(other, 'S8-leo-cannot-open-the-chat')
 })
