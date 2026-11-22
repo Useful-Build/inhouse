@@ -18,9 +18,8 @@ import { expect, test } from '@playwright/test'
 import { wranglerRunner } from '../../evals/targets/door.ts'
 import { createMorningDoor, type MorningDoor } from '../../evals/morning-check/door.ts'
 import { AMBER, META } from '../../evals/morning-check/expected.ts'
-import { remoteEnv } from '../../evals/morning-check/remote.ts'
+import { ensureDefaultModel, remoteEnv } from '../../evals/morning-check/remote.ts'
 import { ROUTINE_ID, runAll } from '../../evals/morning-check/runner.ts'
-import { needsContainer } from './chat-kit.ts'
 import { actor, call } from './kit.ts'
 import { alarmControl, skipLoudly } from './watch-kit.ts'
 
@@ -32,14 +31,31 @@ const SETTLE_MS = 60_000
 const TIMEOUT_MS = 1_500_000
 
 let door: MorningDoor | null = null
+// Routine turns run on the brand's Default model (Opus when unset) and the scripted model answers only Fast: set it, as the
+// Admin, and read it back, before any Run now (evals/morning-check/remote.ts ensureDefaultModel; run.mjs --model-setting).
+/** Why this spec can't run here, or null when it can: the one condition beforeAll and the test both use. */
+function cannotRun(): string | null {
+  if (!process.env.E2E_TEST_BUILD_REMOTE) return 'runs a turn, which needs a container: it runs on the per-PR test deployment (E2E_TEST_BUILD_REMOTE)'
+  const missing = DOOR_ENV.filter(k => !process.env[k])
+  return missing.length > 0 ? `the door needs ${missing.join(', ')} (the deployment's D1, read with wrangler)` : null
+}
+
+test.beforeAll(async ({ request }) => {
+  // Never writes the setting on a run whose test skips.
+  if (cannotRun() !== null) return
+  const admin = actor('admin')
+  await ensureDefaultModel({
+    get: async path => { const r = await call(request, admin, 'GET', path); return { status: r.status, json: r.json } },
+    put: async (path, body) => { const r = await call(request, admin, 'PUT', path, { json: body }); return { status: r.status, json: r.json } },
+  }, 'Fast')
+})
 test.afterAll(async () => {
   await door?.clearShop()
 })
 
 test('the morning-check set runs remotely: the outage shop passes graded, a working shop reads through, no override is left', async ({ request }) => {
-  needsContainer()
-  const missing = DOOR_ENV.filter(k => !process.env[k])
-  skipLoudly(missing.length > 0, `the door needs ${missing.join(', ')} (the deployment's D1, read with wrangler)`)
+  const reason = cannotRun()
+  skipLoudly(reason !== null, reason ?? '')
   test.setTimeout(TIMEOUT_MS)
   expect(2 * (CASE_MS + SETTLE_MS), 'the budget leaves at least 10 minutes for the door\'s calls').toBeLessThanOrEqual(TIMEOUT_MS - 600_000)
   const d = createMorningDoor(wranglerRunner({ database: process.env.INHOUSE_EVAL_D1_NAME!, config: process.env.INHOUSE_EVAL_WRANGLER_CONFIG!, env: process.env }))

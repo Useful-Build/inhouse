@@ -18,7 +18,7 @@ import { DoorRefusal, type RunSql } from '../targets/door.ts'
 import { runMode } from './args.ts'
 import { createMorningDoor, type MorningDoor } from './door.ts'
 import { AMBER, META, hostOf } from './expected.ts'
-import { clearOnSignals, remoteEnv } from './remote.ts'
+import { clearOnSignals, ensureDefaultModel, remoteEnv, type SettingsApi } from './remote.ts'
 import { ROUTINE_ID, runAll } from './runner.ts'
 
 const migrations = fileURLToPath(new URL('../../server/migrations/', import.meta.url))
@@ -269,13 +269,95 @@ describe('run.mjs stop handlers (MEDIUM 3)', () => {
   })
 })
 
+// The Default model before the first Run now (routine turns run on it; the scripted model answers only Fast). Ways it can go
+// wrong: a case is pressed before the setting is written, a refused write or one that doesn't read back still lets the run go
+// on, the write is sent with a stale revision, or a run that didn't ask for a model writes one anyway.
+describe('the Default model, set before the first Run now', () => {
+  function settings(initial: { value: string; rev: number } | null, putStatus = 200) {
+    const events: string[] = []
+    let row = initial
+    const api: SettingsApi = {
+      get: async () => { events.push('GET'); return { status: 200, json: { items: row ? [{ key: 'g:mode', value: row.value, rev: row.rev }, { key: 'other', value: 'x', rev: 1 }] : [{ key: 'other', value: 'x', rev: 1 }] } } },
+      put: async (path, body) => {
+        events.push(`PUT ${path} ${JSON.stringify(body)}`)
+        if (putStatus === 200) row = { value: (body as { value: string }).value, rev: (row?.rev ?? 0) + 1 }
+        return { status: putStatus, json: putStatus === 200 ? row : { error: 'conflict' } }
+      },
+    }
+    return { api, events }
+  }
+  function fakeRun(api: SettingsApi | null, events: string[]) {
+    const door: MorningDoor = {
+      close: () => {}, setShop: async () => {}, clearShop: async () => null,
+      slot: async k => ({ slot_key: k, state: 'ended', failure: null, result_text: 'found 0 things', turn_id: null, claimed_at_ms: 1 }),
+      items: async () => [], tools: async () => [],
+    }
+    let now = 0
+    return remoteEnv({
+      door, runNow: async () => void events.push('Run now'), alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {},
+      ...(api ? { defaultModel: () => ensureDefaultModel(api, 'Fast') } : {}),
+    })
+  }
+  const one = [META.find(c => c.id === 'clean-empty')!]
+  const meta = { date: '2026-11-22', sha: 'abc1234', model: 'scripted' }
+
+  it('unset (Opus): written with its revision and read back, before the first Run now', async () => {
+    const { api, events } = settings(null)
+    await runAll(fakeRun(api, events), [...one, META.find(c => c.id === 'clean-steady')!], meta)
+    expect(events).toEqual(['GET', 'PUT /api/settings/technical/g%3Amode {"value":"Fast","ifRev":0}', 'GET', 'Run now', 'Run now'])
+  })
+
+  it('another model set: written over with that row\'s revision', async () => {
+    const { api, events } = settings({ value: 'Deep', rev: 4 })
+    await runAll(fakeRun(api, events), one, meta)
+    expect(events.slice(0, 3)).toEqual(['GET', 'PUT /api/settings/technical/g%3Amode {"value":"Fast","ifRev":4}', 'GET'])
+  })
+
+  it('already Fast: read only, no write', async () => {
+    const { api, events } = settings({ value: 'Fast', rev: 2 })
+    await runAll(fakeRun(api, events), one, meta)
+    expect(events).toEqual(['GET', 'GET', 'Run now'])
+  })
+
+  it('a refused write stops the run before any Run now', async () => {
+    const { api, events } = settings({ value: 'Deep', rev: 4 }, 409)
+    await expect(runAll(fakeRun(api, events), one, meta)).rejects.toThrow('setting the Default model to Fast answered 409')
+    expect(events).not.toContain('Run now')
+  })
+
+  it('a write that doesn\'t read back stops the run before any Run now', async () => {
+    const events: string[] = []
+    const api: SettingsApi = { get: async () => ({ status: 200, json: { items: [] } }), put: async () => ({ status: 200, json: {} }) }
+    await expect(runAll(fakeRun(api, events), one, meta)).rejects.toThrow('the Default model reads back undefined, not Fast')
+    expect(events).toEqual([])
+  })
+
+  it('a run that asks for no model writes none (the real-model run)', async () => {
+    const events: string[] = []
+    await runAll(fakeRun(null, events), one, meta)
+    expect(events).toEqual(['Run now'])
+  })
+
+  it.each(['fast mode', '../x', '', 'Fast"}'])('refuses the label %j before any call', async label => {
+    const { api, events } = settings(null)
+    await expect(ensureDefaultModel(api, label)).rejects.toThrow('is not a Default model label')
+    expect(events).toEqual([])
+  })
+})
+
 describe('run.mjs arguments (failure 6)', () => {
   const common = { 'out-dir': 'o', sha: 'abc1234', 'issuer-key-file': 'k.json', aud: 'aud' }
   const doorEnv = { INHOUSE_EVAL_D1_NAME: 'inhouse-sbx-pr12-db', INHOUSE_EVAL_WRANGLER_CONFIG: 'w.json', CF_SANDBOX_ACCOUNT_ID: 'acct' }
 
   it('remote: the origin, the door\'s database and config, the release token only when given', () => {
-    expect(runMode({ ...common, target: 'https://pr12.example.dev' }, doorEnv)).toEqual({ mode: 'remote', baseUrl: 'https://pr12.example.dev', releaseJwt: null, database: 'inhouse-sbx-pr12-db', wranglerConfig: 'w.json' })
+    expect(runMode({ ...common, target: 'https://pr12.example.dev' }, doorEnv)).toEqual({ mode: 'remote', baseUrl: 'https://pr12.example.dev', releaseJwt: null, database: 'inhouse-sbx-pr12-db', wranglerConfig: 'w.json', modelSetting: null })
     expect(runMode({ ...common, target: 'https://pr12.example.dev/' }, { ...doorEnv, MORNING_CHECK_RELEASE_JWT: 'j' })).toMatchObject({ mode: 'remote', releaseJwt: 'j' })
+  })
+
+  it('--model-setting: remote only, a plain label', () => {
+    expect(runMode({ ...common, target: 'https://pr12.example.dev', 'model-setting': 'Fast' }, doorEnv)).toMatchObject({ mode: 'remote', modelSetting: 'Fast' })
+    expect(() => runMode({ ...common, target: 'https://pr12.example.dev', 'model-setting': 'fast mode' }, doorEnv)).toThrow('--model-setting must be a Default model label')
+    expect(() => runMode({ ...common, 'persist-dir': 'p', 'base-url': 'http://localhost:8788', 'model-setting': 'Fast' }, { MORNING_CHECK_RELEASE_JWT: 'j' })).toThrow('--model-setting is for a deployed build (--target) only')
   })
 
   it.each(['persist-dir', 'base-url', 'restart-cmd', 'shop-pattern', 'restart-wait-sec'])('remote with --%s is refused', k => {

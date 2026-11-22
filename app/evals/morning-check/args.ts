@@ -15,7 +15,7 @@ const DOOR_ENV = ['INHOUSE_EVAL_D1_NAME', 'INHOUSE_EVAL_WRANGLER_CONFIG', 'CF_SA
 
 export type RunMode =
   | { mode: 'local'; baseUrl: string; persistDir: string; releaseJwt: string }
-  | { mode: 'remote'; baseUrl: string; releaseJwt: string | null; database: string; wranglerConfig: string }
+  | { mode: 'remote'; baseUrl: string; releaseJwt: string | null; database: string; wranglerConfig: string; modelSetting: string | null }
 
 export function runMode(a: RunArgs, env: Record<string, string | undefined>): RunMode {
   for (const k of COMMON) if (!a[k]) throw new Error(`run.mjs: --${k} is required`)
@@ -32,8 +32,11 @@ export function runMode(a: RunArgs, env: Record<string, string | undefined>): Ru
     if (url.protocol !== 'https:' || url.origin !== a.target.replace(/\/$/, '')) throw new Error('run.mjs: --target must be the deployed build\'s https origin (no path, query or credentials)')
     const missing = DOOR_ENV.filter(k => !env[k])
     if (missing.length) throw new Error(`run.mjs: --target reads the build's D1 through the door and needs ${missing.join(', ')}`)
-    return { mode: 'remote', baseUrl: url.origin, releaseJwt, database: env.INHOUSE_EVAL_D1_NAME!, wranglerConfig: env.INHOUSE_EVAL_WRANGLER_CONFIG! }
+    const modelSetting = a['model-setting'] ?? null
+    if (modelSetting !== null && !/^[A-Za-z]{1,20}$/.test(modelSetting)) throw new Error('run.mjs: --model-setting must be a Default model label (Fast, say)')
+    return { mode: 'remote', baseUrl: url.origin, releaseJwt, database: env.INHOUSE_EVAL_D1_NAME!, wranglerConfig: env.INHOUSE_EVAL_WRANGLER_CONFIG!, modelSetting }
   }
+  if (a['model-setting'] !== undefined) throw new Error('run.mjs: --model-setting is for a deployed build (--target) only')
   for (const k of ['persist-dir', 'base-url'] as const) if (!a[k]) throw new Error(`run.mjs: --${k} is required (or --target for a deployed build)`)
   if (!releaseJwt) throw new Error('run.mjs: MORNING_CHECK_RELEASE_JWT is not set')
   return { mode: 'local', baseUrl: a['base-url']!, persistDir: a['persist-dir']!, releaseJwt }
