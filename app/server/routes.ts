@@ -21,6 +21,7 @@ import { listModels } from './api/models.ts'
 import { getFile, listChatFiles, uploadAttachment } from './api/attachments.ts'
 import { getUsage } from './usage/api.ts'
 import { forgetBrandMemory, forgetPersonalMemory, listMemory } from './api/memory.ts'
+import { approveBrandMemory, listWaitingMemory } from './api/memory-approvals.ts'
 import { drainState, startDrain, undrain } from './ops/drain.ts'
 // P4 W2 (p4-w2.md section 9): the Routines page's routes.
 import { deleteRoutine, listRoutines, restoreRoutine, runRoutineNow, setRoutineEnabled } from './api/routines.ts'
@@ -105,7 +106,7 @@ export async function reportClientError(request: Request): Promise<Response> {
 }
 
 /**
- * P6a PR0: rows 77 to 83 answer 404 `not_found` (as before they existed) until W2 and W3 replace this with their
+ * P6a PR0: rows 79 to 83 answer 404 `not_found` (as before they existed) until W3 replaces this with its
  * handlers. PR0 imports nothing from a worker.
  */
 const p6aNotYet: Handler = async () => apiError('not_found')
@@ -186,8 +187,8 @@ export const routes: readonly Route[] = [
   /* 55 */ { method: 'POST', pattern: '/api/routines/:id/delete', handler: deleteRoutine },
   /* 56 */ { method: 'POST', pattern: '/api/routines/:id/restore', handler: restoreRoutine },
   // P6a PR0: rows 77 to 83 (rows 68 to 76 are P5's; P6a holds 77 to 89). W2: the waiting team facts and their approve or reject.
-  /* 77 */ { method: 'GET', pattern: '/api/memory/waiting', handler: p6aNotYet },
-  /* 78 */ { method: 'PUT', pattern: '/api/memory/brand/:id/approved', handler: p6aNotYet },
+  /* 77 */ { method: 'GET', pattern: '/api/memory/waiting', handler: listWaitingMemory },
+  /* 78 */ { method: 'PUT', pattern: '/api/memory/brand/:id/approved', handler: approveBrandMemory },
   // W3: the skills list and team requests.
   /* 79 */ { method: 'GET', pattern: '/api/skills', handler: p6aNotYet },
   /* 80 */ { method: 'GET', pattern: '/api/team-requests', handler: p6aNotYet },

@@ -7,7 +7,6 @@
 //     isn't 400;
 //  4. a stale rev applies, or a decision isn't the line route 45 answers (the fact, or conflict with `current`);
 //  5. a service principal gets an answer from the waiting list.
-// Until the orchestrator wires rows 77 and 78 in routes.ts, this file wires them itself (same patterns, same handlers).
 import { env } from 'cloudflare:workers'
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { accessMatrix } from '../access-matrix.ts'
@@ -17,9 +16,8 @@ import { checkAccess } from '../auth/matrix.ts'
 import type { Principal } from '../auth/principal.ts'
 import { openStores } from '../db/stores.ts'
 import { lastLineId, linesSince } from '../db/test-support.ts'
-import { routes as committed } from '../routes.ts'
-import type { Route } from '../routes.ts'
-import { approveBrandMemory, listWaitingMemory, waitingLimit } from './memory-approvals.ts'
+import { routes } from '../routes.ts'
+import { waitingLimit } from './memory-approvals.ts'
 
 const db = env.DB
 const NOW = 1_800_000_000_000
@@ -27,11 +25,6 @@ const A = 'm_appr_route_a'
 const ADMIN = 'm_appr_route_admin'
 const IH = 'm_appr_route_ih'
 const GRANT = 'g_apprtest'
-
-const routes: readonly Route[] = committed.map(r =>
-  r.method === 'GET' && r.pattern === '/api/memory/waiting' ? { ...r, handler: listWaitingMemory }
-    : r.method === 'PUT' && r.pattern === '/api/memory/brand/:id/approved' ? { ...r, handler: approveBrandMemory }
-      : r)
 
 const person = (memberId: string, role: 'member' | 'admin'): Principal => ({ kind: 'person', memberId, role, subject: `s-${memberId}`, requestId: `req-${Math.random()}`, expMs: NOW + 600_000 })
 const inhouse = (live: boolean): Principal => ({ kind: 'inhouse', memberId: IH, subject: 's-ih', grant: live ? { id: GRANT, endsAtMs: NOW + 60_000 } : null, requestId: `req-${Math.random()}`, expMs: NOW + 600_000 })
