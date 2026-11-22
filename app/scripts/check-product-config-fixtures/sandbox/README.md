@@ -22,3 +22,5 @@ ends somewhere else (a bare `\r`) can't hide config from the lock. Invented valu
 - `pass-candidate-hub.json` (P4, `--hub`): the candidate's hub: the product hub config with its store vars empty and
   no `secrets.required` (wrangler fails a deploy whose required secrets are unset). Any runtime secret the candidate hub
   needs is a per-run value the ops deploy sets at deploy time, not a store credential.
+- `pass-eval-hub.json` (P4, `--eval --hub`): the eval deployment's own hub, `inhouse-sbx-eval-hub`: the candidate hub's
+  config under the eval hub's name (main's hub config, store vars empty, no `secrets.required`).

@@ -87,13 +87,13 @@ describe('PR numbers, PR names and the candidate rule (failures 1, 2)', () => {
 })
 
 describe('the eval deployment\'s names (failure 5)', () => {
-  const EVAL = ['inhouse-sbx-eval', 'inhouse-sbx-eval-db', 'inhouse-sbx-eval-files', 'inhouse-sbx-eval-brand', 'inhouse-sbx-eval-team']
+  const EVAL = ['inhouse-sbx-eval', 'inhouse-sbx-eval-db', 'inhouse-sbx-eval-files', 'inhouse-sbx-eval-brand', 'inhouse-sbx-eval-team', 'inhouse-sbx-eval-hub']
   const NEAR = ['inhouse-sbx-evals', 'inhouse-sbx-evaluation', 'inhouse-sbx-eval-', 'inhouse-sbx-eval-DB', 'inhouse-sbx-eval-db1',
-    'inhouse-sbx-eval-db-x', 'xinhouse-sbx-eval', 'inhouse-sbx-eval\n', 'inhouse-sbx-eval.db', 'inhouse-eval', '']
+    'inhouse-sbx-eval-db-x', 'xinhouse-sbx-eval', 'inhouse-sbx-eval\n', 'inhouse-sbx-eval.db', 'inhouse-eval', '', 'inhouse-sbx-eval-hubs', 'inhouse-sbx-eval-hub-x']
   test('evalNames gives its literal names', () => {
     expect(evalNames()).toEqual({
       worker: 'inhouse-sbx-eval', d1: 'inhouse-sbx-eval-db', r2: 'inhouse-sbx-eval-files', container: 'inhouse-sbx-eval',
-      image: 'inhouse-sbx-eval', brand: 'inhouse-sbx-eval-brand', team: 'inhouse-sbx-eval-team',
+      image: 'inhouse-sbx-eval', brand: 'inhouse-sbx-eval-brand', team: 'inhouse-sbx-eval-team', hub: 'inhouse-sbx-eval-hub',
     })
   })
   test('the eval rule takes the eval names and no near miss', () => {
@@ -207,11 +207,20 @@ describe('the rules agree with the reference parser', () => {
 })
 
 describe('(P4) the hub names and the eval names', () => {
-  test('the candidate hub and every PR\'s hub are shared or per-PR names, never an eval name; no eval name is a hub', () => {
+  test('the candidate hub and every PR\'s hub are shared or per-PR names, never an eval name', () => {
     expect(assertCandidateName(CANDIDATE_HUB)).toBe(CANDIDATE_HUB)
     expect(isEvalName(CANDIDATE_HUB)).toBe(false)
     for (const pr of [1, 12, 999999]) expect(isEvalName(perPrNames(pr).hub)).toBe(false)
     expect(Object.values(evalNames())).not.toContain(CANDIDATE_HUB)
-    expect(Object.keys(evalNames())).not.toContain('hub')
+  })
+  // The eval hub: the eval deployment's own, so neither the candidate nor a PR may take it.
+  test('the eval hub is an eval name: never the candidate\'s, a PR\'s or the house\'s', () => {
+    const hub = evalNames().hub
+    expect(hub).toBe('inhouse-sbx-eval-hub')
+    expect(isEvalName(hub)).toBe(true)
+    expect(isPerPrName(hub)).toBe(false)
+    expect(() => assertCandidateName(hub)).toThrow(SandboxNameError)
+    expect(hub).not.toBe(CANDIDATE_HUB)
+    expect(hub).not.toBe('inhouse-hub')
   })
 })

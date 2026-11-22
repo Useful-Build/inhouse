@@ -52,7 +52,6 @@ import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
-import { mintPerson } from '../../server/auth/test-issuer-mint.ts'
 import { META } from './expected.ts'
 import { Build, DEFAULT_SHOP_PATTERN, shopShownBy } from './restart.ts'
 import { commandFor, hubConfigFor } from './hubconfig.ts'
@@ -61,7 +60,8 @@ import { ROUTINE_ID, runAll } from './runner.ts'
 import { runMode } from './args.ts'
 import { createMorningDoor } from './door.ts'
 import { clearOnSignals, ensureDefaultModel, remoteEnv } from './remote.ts'
-import { wranglerRunner } from '../targets/door.ts'
+import { DoorRefusal, wranglerRunner } from '../targets/door.ts'
+import { EVAL_AUD_VAR, EVAL_ISSUER_JWK_FILE, testIssuerSignIn } from '../targets/product.ts'
 import { SEED_INHOUSE, SEED_PEOPLE } from '../../server/seed/brand.ts'
 
 const { values: a } = parseArgs({
@@ -76,21 +76,30 @@ const m = runMode(a, process.env)
 const releaseJwt = m.releaseJwt
 const cases = a.cases ? a.cases.split(',').map(id => META.find(c => c.id === id) ?? (() => { throw new Error(`run.mjs: no case ${id}`) })()) : META
 
-const privateJwk = JSON.parse(readFileSync(a['issuer-key-file'], 'utf8'))
-/** The person who presses Run now: a fresh token each call (ten minutes), as the test issuer would mint it. */
-const personJwt = () => mintPerson({ sub: a.sub, email: a.email, key: privateJwk, aud: a.aud })
+// Read once up front, so a bad key file stops the run before anything is set (testIssuerSignIn reads it again per token).
+JSON.parse(readFileSync(a['issuer-key-file'], 'utf8'))
+/**
+ * A person's sign-in headers on the app with Access aud `aud`: evals/targets/product.ts's one sign-in helper (a fresh
+ * test-issuer token each call, ten minutes), so the token travels as the eval harness sends it: in Cf-Access-Jwt-Assertion
+ * and X-Inhouse-Test-Assertion, which test and eval builds read first (#278: an Access app in front replaces the first).
+ */
+const signIn = (aud, who) => testIssuerSignIn({ [EVAL_ISSUER_JWK_FILE]: a['issuer-key-file'], [EVAL_AUD_VAR]: aud })('current', who)
+/** The person who presses Run now. */
+const personAuth = () => signIn(a.aud, { sub: a.sub, email: a.email })
+/** Route 67's release service token (MORNING_CHECK_RELEASE_JWT, minted outside the run; test builds only), not a person. */
+const releaseAuth = releaseJwt ? { 'Cf-Access-Jwt-Assertion': releaseJwt } : null
 
-const post = async (path, body, jwt) => {
-  const r = await fetch(new URL(path, m.baseUrl), { method: 'POST', headers: { 'Content-Type': 'application/json', 'Cf-Access-Jwt-Assertion': jwt, Origin: new URL(m.baseUrl).origin }, body: JSON.stringify(body) })
+const post = async (path, body, auth) => {
+  const r = await fetch(new URL(path, m.baseUrl), { method: 'POST', headers: { 'Content-Type': 'application/json', ...auth, Origin: new URL(m.baseUrl).origin }, body: JSON.stringify(body) })
   if (!r.ok) throw new Error(`run.mjs: POST ${path} answered ${r.status}: ${await r.text()}`)
 }
 /**
- * One API call as one identity, minted with the test issuer as e2e/api/kit.ts `actor` does: `who` is its sub and email, sent
+ * One API call as one identity, signed in with signIn above (as e2e/api/kit.ts `actor` mints it): `who` is its sub and email, sent
  * to `origin` with that app's Access aud (and `Origin`). ensureDefaultModel reads the status and the JSON itself.
  */
 const callAs = (who, origin, aud) => async (method, path, body) => {
-  const jwt = await mintPerson({ sub: who.subject, email: who.email, key: privateJwk, aud })
-  const r = await fetch(new URL(path, origin), { method, headers: { 'Content-Type': 'application/json', 'Cf-Access-Jwt-Assertion': jwt, Origin: origin }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+  const auth = await signIn(aud, { sub: who.subject, email: who.email })
+  const r = await fetch(new URL(path, origin), { method, headers: { 'Content-Type': 'application/json', ...auth, Origin: origin }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
   const text = await r.text()
   let json = null
   try { json = text ? JSON.parse(text) : null } catch { json = { text } }
@@ -166,14 +175,26 @@ const build = new Build({
   shopShown: shopShownBy(a['shop-pattern'] ?? DEFAULT_SHOP_PATTERN),
 })
 
-// The remote mode's door: wrangler on the sandbox database only (evals/targets/door.ts refuses any other).
-const door = m.mode === 'remote' ? createMorningDoor(wranglerRunner({ database: m.database, config: m.wranglerConfig, env: process.env })) : null
+// The remote mode's door: wrangler on the sandbox database only (evals/targets/door.ts refuses any other). That door now
+// admits only the eval deployment's database (its EVAL_DB): a per-PR test deployment's inhouse-sbx-pr<N>-db is refused
+// until line A's eval-target PR adds the morning-check door rule. The refusal is the door's own message and exit 2,
+// before any case runs, never a stack trace.
+let door = null
+if (m.mode === 'remote') {
+  try {
+    door = createMorningDoor(wranglerRunner({ database: m.database, config: m.wranglerConfig, env: process.env }))
+  } catch (e) {
+    if (!(e instanceof DoorRefusal)) throw e
+    console.error(`run.mjs: STOPPED before any case. The door refused the remote run: ${e.message}`)
+    process.exit(2)
+  }
+}
 // An interrupted run closes the door (no more shops set), clears the override, then exits (130 on SIGINT, 143 on SIGTERM).
 if (door) clearOnSignals(door)
 const env = door ? remoteEnv({
   door,
-  runNow: async clientKey => post(`/api/routines/${ROUTINE_ID}/run`, { clientKey }, await personJwt()),
-  alarm: releaseJwt ? body => post('/api/ops/alarm', body, releaseJwt) : null,
+  runNow: async clientKey => post(`/api/routines/${ROUTINE_ID}/run`, { clientKey }, await personAuth()),
+  alarm: releaseAuth ? body => post('/api/ops/alarm', body, releaseAuth) : null,
   pause: () => new Promise(r => setTimeout(r, 2000)),
   nowMs: () => Date.now(),
   caseTimeoutMs: Number(a['timeout-min']) * 60_000,
@@ -188,10 +209,10 @@ const env = door ? remoteEnv({
   },
   newKey: () => crypto.randomUUID().replaceAll('-', ''),
   async trigger(clientKey) {
-    await post(`/api/routines/${ROUTINE_ID}/run`, { clientKey }, await personJwt())
-    await post('/api/ops/alarm', { action: 'alarm', pokeTick: true }, releaseJwt)
+    await post(`/api/routines/${ROUTINE_ID}/run`, { clientKey }, await personAuth())
+    await post('/api/ops/alarm', { action: 'alarm', pokeTick: true }, releaseAuth)
   },
-  nudge: () => post('/api/ops/alarm', { action: 'alarm' }, releaseJwt),
+  nudge: () => post('/api/ops/alarm', { action: 'alarm' }, releaseAuth),
   pause: () => new Promise(r => setTimeout(r, 2000)),
   reader,
   caseTimeoutMs: Number(a['timeout-min']) * 60_000,

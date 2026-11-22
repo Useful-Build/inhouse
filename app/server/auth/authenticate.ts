@@ -5,9 +5,14 @@
 // email or claims.
 // Docs (2026-11-20): Access "Validate JWTs" (header over cookie, `<team>/cdn-cgi/access/certs`, RS256, iss/aud/exp/nbf)
 // and "Application token" (a user token's `type` is "app" too, so `type` doesn't tell a person from a service token).
+// Test and eval builds only (compiled in AND INHOUSE_TEST_BUILD=1): the test issuer's JWT is read from its own header
+// first (test-issuer.ts's TEST_ASSERTION_HEADER; an Access app in front sends its own token in `Cf-Access-Jwt-Assertion`),
+// else from `Cf-Access-Jwt-Assertion` as before; a token in the first is never replaced by the second, and both get the
+// same checks. This file is in the deployable Worker (its source map keeps comments), so it never spells that header's
+// name: check-product-build.mjs part 8 fails the build on it.
 import { createRemoteJWKSet, customFetch, errors, jwtVerify } from 'jose'
 import type { JWTPayload, JWTVerifyGetKey } from 'jose'
-import { TEST_ISSUER, testIssuerKeys } from '@test-issuer'
+import { TEST_ASSERTION_HEADER, TEST_ISSUER, testIssuerKeys } from '@test-issuer'
 import { loadAccessConfig } from './config.ts'
 import type { AccessApp, AccessConfig } from './config.ts'
 import type { Principal } from './principal.ts'
@@ -85,6 +90,15 @@ export function testIssuerBranch(env: AuthEnv, keys: JWTVerifyGetKey | undefined
 }
 
 /**
+ * The test issuer's own header's value, or null when it's absent or this build has none (issuer-off.ts: an empty name,
+ * so the deployable Worker never reads it). Called only in the test build.
+ */
+export function testAssertion(request: Request, mod: { TEST_ASSERTION_HEADER: string } = { TEST_ASSERTION_HEADER }): string | null {
+  if (mod.TEST_ASSERTION_HEADER === '') return null
+  return request.headers.get(mod.TEST_ASSERTION_HEADER)
+}
+
+/**
  * The request's principal or its refusal. `keys` replaces the key set (tests: a local one, no network). Test build
  * only (compiled in AND `INHOUSE_TEST_BUILD === '1'`): the test issuer's iss and keys instead of the team domain's.
  * `compiledTestBuild` is a seam for the unit tests (vitest defines the flag false): the API passes nothing, so it's the
@@ -95,7 +109,9 @@ export async function authenticate(request: Request, env: AuthEnv, stores: AuthS
   const config = loadAccessConfig(env.INHOUSE_ACCESS)
   if (!config) return refuse({ refused: 'unavailable' }, 'config_invalid', requestId)
 
-  const token = request.headers.get('Cf-Access-Jwt-Assertion') ?? ''
+  const testBuild = compiledTestBuild && env.INHOUSE_TEST_BUILD === '1'
+  // Test build: the test issuer's own header first, present means used (a bad token there is refused, not replaced).
+  const token = (testBuild ? testAssertion(request) : null) ?? request.headers.get('Cf-Access-Jwt-Assertion') ?? ''
   if (!TOKEN.test(token)) return refuse({ refused: 'unauthorized' }, token ? 'malformed_token' : 'no_token', requestId)
 
   const app = appForRequest(config, request)
@@ -104,7 +120,7 @@ export async function authenticate(request: Request, env: AuthEnv, stores: AuthS
   let issuer = config.teamDomain
   let keySet = keys
   try {
-    if (compiledTestBuild && env.INHOUSE_TEST_BUILD === '1') {
+    if (testBuild) {
       const test = testIssuerBranch(env, keys)
       if (!test) return refuse({ refused: 'unavailable' }, 'test_issuer_off', requestId)
       ;({ issuer, keySet } = test)

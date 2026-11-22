@@ -203,7 +203,7 @@ function ChannelPage({ channel: c }: { channel: ToolChannel }) {
       </Button>
       <PageHeader className="mt-4" title={c.name} description={c.desc}
         leading={<LogoTile k={c.key} size="xl" className={cn('shadow-card', locked && 'grayscale')} />}
-        tag={<Badge variant="status" size="md">{!locked && <Dot className={INK_DOT} size={6} />}{status}</Badge>}
+        tag={<Badge variant="status" size="md">{status}</Badge>}
         actions={!locked && (
           <Button variant="outline" size="lg" onClick={() => openSettings('you-notif')}>
             <Icon name="notifications" size={17} />Notification settings
@@ -257,7 +257,7 @@ function ToolDetailPage() {
       </Button>
       <PageHeader className="mt-4" title={A.name} description={A.desc}
         leading={<LogoTile k={key} size="xl" className="shadow-card" />}
-        tag={<Badge variant="status" size="md"><Dot className={DOT_OF[view.state]} size={6} />{view.statusText}</Badge>}
+        tag={<Badge variant="status" size="md">{view.statusText}</Badge>}
         actions={(
           <Button variant="outline" size="lg" onClick={() => newChat(`In ${A.name}, `)}>
             <Icon name="chat_bubble" size={17} />Ask about {A.name}

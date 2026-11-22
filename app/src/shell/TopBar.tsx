@@ -36,8 +36,8 @@ export function TopBar() {
   // Every other page shows its own h1 (All chats too), so the bar names only Today and the open chat, on a phone too.
   const title = page === 'today' ? 'Today' : page === 'chats' && !chatList ? (fresh ? 'New chat' : openChat?.title ?? '') : ''
   const unread = useNotices().filter(n => n.unread).length
-  // The sidebar's icon rail has its own search button, and on a phone the drawer's header does.
-  const railSearch = useUi(s => s.sideCollapsed) && !phone
+  // On Skyspace pages (Today and an open chat), keep the bar transparent so the skylight cove flows uninterrupted to the top edge.
+  const onSkyspace = page === 'today' || (page === 'chats' && !chatList)
   // The open conversation's own menu. Not for a new chat with nothing asked yet.
   const headerChat = page === 'chats' && !chatList && !fresh ? openChat : undefined
   const renaming = !!headerChat && renamingId === headerChat.id
@@ -51,7 +51,7 @@ export function TopBar() {
   const titleEl = <span data-topbar-title className="overflow-hidden font-semibold text-ellipsis text-foreground">{title}</span>
 
   return (
-    <header className="relative flex h-14.5 items-center gap-1.5 bg-topbar-fade pr-4.5 pl-6">
+    <header className={cn('relative flex h-14.5 items-center gap-1.5 pr-4.5 pl-6', !onSkyspace && 'bg-topbar-fade')}>
       {phone && (
         <IconButton data-drawer-opener icon="menu" label="Menu" variant="chrome" size={21} aria-expanded={sideOpen} aria-controls={sideOpen ? 'sidebar' : undefined} onClick={() => patch({ sideOpen: true })} className={cn('-ml-2', TAP)} />
       )}
@@ -76,7 +76,7 @@ export function TopBar() {
         )}
       </div>
       {showPill && (
-        <div role="status" aria-label={paused ? 'Inhouse agent is paused' : 'Inhouse agent is running'} className={cn('mr-1.5 flex h-7.5 items-center gap-2 rounded-full py-0 pr-1 pl-2 text-xs font-strong whitespace-nowrap', paused ? 'bg-warning-tint text-warning-text' : 'bg-brand-tint text-brand')}>
+        <div role="status" aria-label={paused ? 'Inhouse agent is paused' : 'Inhouse agent is running'} className={cn('mr-1.5 flex h-7.5 items-center gap-2 rounded-full py-0 pr-1 pl-2 text-xs font-strong whitespace-nowrap', paused ? 'bg-warning-tint text-warning-text' : 'bg-brand-tint text-brand-text')}>
           {paused ? <Icon name="pause_circle" size={16} weight={400} /> : <AgentMark scale={0.75} />}
           <span>{phone ? (paused ? 'Paused' : 'Running') : paused ? 'Inhouse agent is paused' : 'Inhouse agent is running'}</span>
           <Button variant="surface" size="xs" onClick={togglePause}>
@@ -84,7 +84,6 @@ export function TopBar() {
           </Button>
         </div>
       )}
-      {!railSearch && !phone && <IconButton icon="search" label="Search" shortcut={SHORTCUTS.palette} variant="chrome" size={19} onClick={() => patch({ palette: true })} />}
       <div className="relative flex-none">
         <Notifications>
           <IconButton icon="notifications" label={unread ? `Notifications, ${unread} unread` : 'Notifications'} variant="chrome" size={19} aria-expanded={pop === 'notif'} className={cn('aria-expanded:bg-accent', phone && TAP)} />

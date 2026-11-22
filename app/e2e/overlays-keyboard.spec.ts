@@ -63,8 +63,8 @@ async function escapeTo(page: Page, overlay: Locator, trigger: Locator) {
 test('Dark, by keyboard: the palette, Help, the team window, the account menu and notifications open and give focus back', async ({ fx, page }) => {
   await open(page, fx, '#/today', '6 things need you')
 
-  // Command palette, from the top bar's Search: the field has focus, Escape gives it back.
-  const search = header(page).getByRole('button', { name: 'Search', exact: true })
+  // Command palette, from the sidebar's Search row: the field has focus, Escape gives it back.
+  const search = side(page).getByRole('button', { name: 'Search', exact: true })
   await press(search)
   const palette = page.getByRole('dialog', { name: 'Search' })
   await expect(palette.getByRole('combobox')).toBeFocused()

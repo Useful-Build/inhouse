@@ -22,7 +22,7 @@ import { reportError } from './report-error'
 import { DevSwitcher } from './shell/DevSwitcher'
 import { cn } from '@/lib/utils'
 import { Skeleton } from '@/components/ui/skeleton'
-import { DotsBackground, GooDefs, Page as PageBox } from './ui'
+import { GooDefs, Page as PageBox, SkyspaceBackground } from './ui'
 import { Today } from './screens/Today'
 import { Chats } from './screens/Chats'
 import { useChatIsBlank } from './screens/chat/open-messages'
@@ -311,6 +311,7 @@ function Shell() {
   const appKey = useUi(s => s.appKey)
   const toolKnown = !!toolName(useAgentData().tools, appKey)
   const phone = useUi(s => s.phone)
+  const sideCollapsed = useUi(s => s.sideCollapsed)
   const chatList = useUi(s => s.chatList)
   const traceId = useUi(s => s.traceId)
   const chatId = useUi(s => s.chatId)
@@ -374,9 +375,13 @@ function Shell() {
   // An unknown tool key shows the Tools list until `useHashRoute` has moved the route there.
   const Screen = page === 'app' && !toolKnown ? Tools : SCREENS[page]
   const subKey = page === 'app' ? appKey : page === 'settings' ? setTab : page === 'chats' ? (chatList ? 'all' : fresh ? 'new' : chatId ?? '') : ''
+  // Full-shell Turrell Skyspace behind both the floating sidebar and main: hero on Today and blank New chat, softly quieted in an active chat, off on other pages.
+  const skyspace = page === 'today' || (page === 'chats' && !chatList && chatBlank) ? 'hero' : page === 'chats' && !chatList ? 'subtle' : null
+  const skyspaceOffset = phone ? 'none' : sideCollapsed ? 'rail' : 'full'
   return (
-    // `isolation` here (not on main) keeps the dots layer (zIndex -1) above the page colour and below the cards, while modals inside main still stack above the Sidebar.
-    <div className="isolate flex h-dvh overflow-hidden bg-background">
+    // `isolation` here (not on main) keeps the Skyspace layer (zIndex -1) above the page colour and behind the floating sidebar and cards, while modals inside main still stack above the Sidebar.
+    <div className="relative isolate flex h-dvh overflow-hidden bg-background">
+      {skyspace && <SkyspaceBackground mode={skyspace} offset={skyspaceOffset} />}
       {/* First in the tab order: past the sidebar to the page (L18). An anchor's own jump would change the hash route. */}
       <a href="#main" onClick={e => { e.preventDefault(); mainRef.current?.focus() }}
         className="fixed top-2.5 left-2.5 z-dev rounded-lg bg-primary px-3.5 py-2 text-sm font-strong text-primary-foreground not-focus:sr-only">
@@ -384,8 +389,6 @@ function Shell() {
       </a>
       <Sidebar />
       <div className="relative flex min-w-0 flex-1 flex-col">
-        {/* Dots only on Today and a blank new chat; a saved chat or one that has started, and the All chats list, use the plain page background like Tools and Skills. */}
-        {(page === 'today' || (page === 'chats' && !chatList && chatBlank)) && <DotsBackground />}
         {/* The top bar is the banner landmark: a header outside main, so it stays put while main scrolls. */}
         <div className="flex-none"><TopBar /></div>
         <main id="main" ref={mainRef} tabIndex={-1} className="relative flex min-h-0 flex-1 flex-col overflow-auto outline-none">

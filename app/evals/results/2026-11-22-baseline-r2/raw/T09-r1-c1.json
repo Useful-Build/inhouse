@@ -1,0 +1,42 @@
+{
+ "row": {
+  "caseId": "T09",
+  "cat": "choice",
+  "pair": "notification_send/approval_request",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "notification_send"
+  ],
+  "toolSearches": 0,
+  "answer": "I couldn't send that to Tom. The notification tool isn't available yet, so he ha",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_F4QZH7P_o4Y8_BzTjPzYRg",
+  "askedAs": "eval-44977516723-1-t09-r1",
+  "argsNotGraded": "the served schema defines no fields"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I couldn't send that to Tom. The notification tool isn't available yet, so he ha",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__notification_send",
+    "inputSha256": "10826c5de1e7c5db0131c03e538514f30a70586318c74d20265be3cda537b12f",
+    "inputExcerpt": "{\"format\":\"message\",\"message\":\"The Norda delivery arrived this morning.\",\"recipi"
+   }
+  ]
+ }
+}

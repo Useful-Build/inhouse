@@ -7,7 +7,7 @@ import { keepForToast } from '../ui/dialogs'
 import { AccountMenu } from '../overlays/Menus'
 import { ChatRow } from '../ui/chat'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
-import { AGENT, DAILY, SHORTCUTS } from './nav'
+import { AGENT, DAILY, mac, SHORTCUTS } from './nav'
 import type { NavDef } from './nav'
 
 // The account row while its menu is open: it holds its hover look (open is hover, never selected).
@@ -88,14 +88,22 @@ export function Sidebar() {
           <IconButton icon="edit_square" label="New chat" shortcut={SHORTCUTS.newChat} size={18} onClick={() => newChat()} variant="chrome" />
         </div>
 
-        <nav aria-label="Main" className="mt-4.5 flex flex-col gap-px">
-          {phone && <NavItem icon="search" label="Search" onClick={() => patch({ sideOpen: false, palette: true })} />}
-          {DAILY.map(n => navItem(n, false))}
-          <div role="group" aria-labelledby="side-agent" className="flex flex-col gap-px">
-            <div id="side-agent" className="px-2.5 pt-5.5 pb-1.5 text-xs font-medium text-muted-foreground">Your agent</div>
-            {AGENT.map(n => navItem(n, false))}
-          </div>
-        </nav>
+        <div className="mt-4.5 flex flex-col gap-px">
+          <NavItem icon="search" label="Search" aria-keyshortcuts={SHORTCUTS.palette.aria}
+            onClick={() => patch(phone ? { sideOpen: false, palette: true } : { palette: true })}
+            trailing={!phone && (
+              mac
+                ? <span aria-hidden="true" className="inline-flex items-center gap-0.75 text-xs text-muted-foreground"><span>⌘</span><span>K</span></span>
+                : <span aria-hidden="true" className="text-xs text-muted-foreground">{SHORTCUTS.palette.label}</span>
+            )} />
+          <nav aria-label="Main" className="flex flex-col gap-px">
+            {DAILY.map(n => navItem(n, false))}
+            <div role="group" aria-labelledby="side-agent" className="flex flex-col gap-px">
+              <div id="side-agent" className="px-2.5 pt-5.5 pb-1.5 text-xs font-medium text-muted-foreground">Your agent</div>
+              {AGENT.map(n => navItem(n, false))}
+            </div>
+          </nav>
+        </div>
 
         {pinned.length > 0 && (
           <div role="group" aria-labelledby="side-pinned" className="flex flex-none flex-col">

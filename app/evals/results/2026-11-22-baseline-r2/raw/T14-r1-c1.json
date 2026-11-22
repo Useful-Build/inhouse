@@ -1,0 +1,59 @@
+{
+ "row": {
+  "caseId": "T14",
+  "cat": "choice",
+  "pair": "team_request_create/notification_send",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "team_request_list",
+   "team_request_create"
+  ],
+  "toolSearches": 1,
+  "answer": "I'll check what's saved about this and load the tool for contacting the Inhouse ",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_hxip7pGkUDzbju5W1148vg",
+  "askedAs": "eval-44977516723-1-t14-r1",
+  "argsNotGraded": "the served schema defines no fields"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "I'll check what's saved about this and load the tool for contacting the Inhouse ",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "a2d7e12089b158f1e13f298d50fda7adcd2c1b17e949bc8a83e8a63d64178974",
+    "inputExcerpt": "{\"query\":\"TikTok Shop integration\"}"
+   },
+   {
+    "name": "ToolSearch",
+    "inputSha256": "dc32367e5b9efa008c6b4a776dfc1b061dfce38e4eabe83a3cdc46faa25548bb",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__team_request_create,mcp__inhouse__team_request_li"
+   },
+   {
+    "name": "mcp__inhouse__team_request_list",
+    "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "inputExcerpt": "{}"
+   },
+   {
+    "name": "mcp__inhouse__team_request_create",
+    "inputSha256": "4192608f79097fb6d52933f9fdba00c605652b23f0d191091c4bb9140c1c89fb",
+    "inputExcerpt": "{\"kind\":\"connect_tool\",\"title\":\"Connect TikTok Shop so its orders are visible\",\""
+   }
+  ]
+ }
+}

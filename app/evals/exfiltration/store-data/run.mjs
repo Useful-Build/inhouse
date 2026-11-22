@@ -26,12 +26,12 @@ import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
-import { mintPerson } from '../../../server/auth/test-issuer-mint.ts'
 import { SEED_PEOPLE } from '../../../server/seed/brand.ts'
 import { commandFor, hubConfigFor } from '../../morning-check/hubconfig.ts'
 import { Build, DEFAULT_SHOP_PATTERN, shopShownBy } from '../../morning-check/restart.ts'
 import { resultPath } from '../../morning-check/results.ts'
 import { ROUTINE_ID } from '../../morning-check/runner.ts'
+import { EVAL_AUD_VAR, EVAL_ISSUER_JWK_FILE, testIssuerSignIn } from '../../targets/product.ts'
 import { STORE_DATA_CASES, hostOf } from './cases.ts'
 import { runStoreData } from './runner.ts'
 
@@ -51,11 +51,18 @@ if (a['restart-cmd'] && !a['restart-cmd'].includes('{hubConfig}')) throw new Err
 if (!a['restart-cmd'] && cases.length !== 1) throw new Error('run.mjs: without --restart-cmd this is a single-build run: name exactly one case in --cases')
 if (!a['restart-cmd']) console.log(`run.mjs: single-build run of ${cases[0].id}: the test build must be running with SHOPIFY_SHOP=${hostOf(cases[0].id).replace('.myshopify.com', '')}`)
 
-const privateJwk = JSON.parse(readFileSync(a['issuer-key-file'], 'utf8'))
-const personJwt = () => mintPerson({ sub: a.sub, email: a.email, key: privateJwk, aud: a.aud })
+// Read once up front, so a bad key file stops the run before any build starts (testIssuerSignIn reads it again per token).
+JSON.parse(readFileSync(a['issuer-key-file'], 'utf8'))
+/**
+ * The person who presses Run now: evals/targets/product.ts's one sign-in helper (a fresh test-issuer token each call), so the
+ * token travels as the eval harness sends it, in Cf-Access-Jwt-Assertion and X-Inhouse-Test-Assertion (#278).
+ */
+const personAuth = () => testIssuerSignIn({ [EVAL_ISSUER_JWK_FILE]: a['issuer-key-file'], [EVAL_AUD_VAR]: a.aud })('current', { sub: a.sub, email: a.email })
+/** Route 67's release service token (MORNING_CHECK_RELEASE_JWT, minted outside the run; test builds only), not a person. */
+const releaseAuth = { 'Cf-Access-Jwt-Assertion': releaseJwt }
 
-const post = async (path, body, jwt) => {
-  const r = await fetch(new URL(path, a['base-url']), { method: 'POST', headers: { 'Content-Type': 'application/json', 'Cf-Access-Jwt-Assertion': jwt, Origin: new URL(a['base-url']).origin }, body: JSON.stringify(body) })
+const post = async (path, body, auth) => {
+  const r = await fetch(new URL(path, a['base-url']), { method: 'POST', headers: { 'Content-Type': 'application/json', ...auth, Origin: new URL(a['base-url']).origin }, body: JSON.stringify(body) })
   if (!r.ok) throw new Error(`run.mjs: POST ${path} answered ${r.status}: ${await r.text()}`)
 }
 
@@ -137,10 +144,10 @@ const env = {
   },
   newKey: () => crypto.randomUUID().replaceAll('-', ''),
   async trigger(clientKey) {
-    await post(`/api/routines/${ROUTINE_ID}/run`, { clientKey }, await personJwt())
-    await post('/api/ops/alarm', { action: 'alarm', pokeTick: true }, releaseJwt)
+    await post(`/api/routines/${ROUTINE_ID}/run`, { clientKey }, await personAuth())
+    await post('/api/ops/alarm', { action: 'alarm', pokeTick: true }, releaseAuth)
   },
-  nudge: () => post('/api/ops/alarm', { action: 'alarm' }, releaseJwt),
+  nudge: () => post('/api/ops/alarm', { action: 'alarm' }, releaseAuth),
   pause: () => new Promise(r => setTimeout(r, 2000)),
   reader,
   caseTimeoutMs: Number(a['timeout-min']) * 60_000,
