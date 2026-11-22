@@ -11,7 +11,7 @@
 import type { MorningDoor } from '../../morning-check/door.ts'
 import { createMorningDoor, SLOT_KEY } from '../../morning-check/door.ts'
 import { gradedRun, remoteEnv, type ApiCall, type GradedRun } from '../../morning-check/remote.ts'
-import { createDoor, DoorRefusal, sqlString, wranglerRunner, type RunSql, type WranglerOptions } from '../../targets/door.ts'
+import { createDoor, DoorRefusal, EVAL_DB, sqlString, wranglerRunner, type RunSql, type WranglerOptions } from '../../targets/door.ts'
 import { STORE_DATA_CASES, hostOf } from './cases.ts'
 import type { StoreDataEnv, StoreDataReader } from './runner.ts'
 import { createTranscriptReader, EVAL_BUCKET, type TranscriptReader } from './transcripts.ts'
@@ -146,13 +146,16 @@ export interface RemoteOptions {
 }
 
 /**
- * run.mjs's remote parts, made in one place so a test drives them: wrangler on the morning-check database rule, the
+ * run.mjs's remote parts, made in one place so a test drives them: wrangler on the eval rule (EVAL_DB only), the
  * morning-check door with STORE_DATA_SHOPS, the transcript reader on the eval bucket, gradedRun with the R2 preflight right
  * after the lease (before the probe chat, the cap and the Default model), and remoteEnv with the graded check, the slot's
  * model and the override's clear, its reader replaced by storeDataReader. Throws DoorRefusal before any request when a rule fails.
  */
 export function buildRemote(o: RemoteOptions): { door: MorningDoor; graded: GradedRun; env: StoreDataEnv } {
-  const run = (o.wrangler ?? wranglerRunner)({ database: o.database, config: o.wranglerConfig, env: o.env, rule: 'morning-check', ...(o.spawn ? { spawn: o.spawn } : {}), ...(o.readConfig ? { readConfig: o.readConfig } : {}) })
+  // EVAL_DB only (line A L1): the default eval rule (targets/door.ts assertSandboxDatabase), never the morning-check rule,
+  // which also admits a PR's test database.
+  if (o.database !== EVAL_DB) throw new DoorRefusal(`refusing: ${JSON.stringify(o.database)} is not the eval deployment's database (${EVAL_DB}): the store-data graded run runs there only`)
+  const run = (o.wrangler ?? wranglerRunner)({ database: o.database, config: o.wranglerConfig, env: o.env, ...(o.spawn ? { spawn: o.spawn } : {}), ...(o.readConfig ? { readConfig: o.readConfig } : {}) })
   const door = createMorningDoor(run, Date.now, STORE_DATA_SHOPS)
   const transcripts = createTranscriptReader({ env: o.env, bucket: EVAL_BUCKET, ...(o.fetch ? { fetch: o.fetch } : {}) })
   const graded = gradedRun({ door: createDoor(run), admin: o.admin, label: o.label, budgetUsd: o.budgetUsd, tag: o.tag, preflight: () => transcripts.preflight() })

@@ -322,6 +322,10 @@ describe('run.mjs arguments for store-data (failure 8)', () => {
     expect(() => storeDataMode({ ...COMMON, target: EVAL_ORIGIN, budget: '20' }, noToken)).toThrow(/CLOUDFLARE_API_TOKEN/)
     expect(() => storeDataMode({ ...COMMON, target: EVAL_ORIGIN }, evalEnv)).toThrow(/--budget/)
   })
+  it('bounds --budget by STORE_DATA_CAP', () => {
+    expect(storeDataMode({ ...COMMON, target: EVAL_ORIGIN, budget: STORE_DATA_CAP.slice(1) }, evalEnv)).toMatchObject({ graded: { budgetUsd: 50 } })
+    expect(() => storeDataMode({ ...COMMON, target: EVAL_ORIGIN, budget: '50.01' }, evalEnv)).toThrow(/above/)
+  })
   it('keeps the local mode as it was', () => {
     expect(storeDataMode({ ...COMMON, 'persist-dir': 'p', 'base-url': 'http://127.0.0.1:8787' }, { MORNING_CHECK_RELEASE_JWT: 'j' })).toMatchObject({ mode: 'local', persistDir: 'p' })
     expect(() => storeDataMode({ ...COMMON, 'persist-dir': 'p', 'base-url': 'http://x' }, {})).toThrow(/MORNING_CHECK_RELEASE_JWT/)
@@ -463,9 +467,19 @@ describe('the remote wiring run.mjs uses (Sonnet M2), on a faked eval deployment
   const lease = (db: DatabaseSync) => db.prepare("SELECT value_json FROM settings WHERE owner = 'test-control' AND key = 'eval:lease'").all()
   const setting = (db: DatabaseSync, k: string) => db.prepare("SELECT value_json FROM settings WHERE owner = 'brand' AND key = ?").all(k)
 
-  it('wires the door on the morning-check rule and EVAL_DB, and the env\'s graded check, model read and override clear', async () => {
+  it('refuses any database but EVAL_DB, a PR\'s test database included, before wrangler runs (line A L1)', async () => {
+    const seen: (string | undefined)[] = []
+    const make = (database: string) => () => buildRemote({
+      database, wranglerConfig: 'sandbox.json', env: ENV, admin: async () => ({ status: 200, json: {} }), runNow: async () => {}, label: 'Fast', budgetUsd: 5, tag: 't',
+      caseTimeoutMs: 1, settleMs: 1, spawn: () => { throw new Error('wrangler ran') }, readConfig: () => '{}', wrangler: w => { seen.push(w.database); return wranglerRunner(w) },
+    })
+    for (const db of ['inhouse-sbx-pr12-db', 'inhouse-sbx-db', 'other']) expect(make(db)).toThrow(DoorRefusal)
+    expect(seen, 'refused before the runner is made').toEqual([])
+  })
+
+  it('wires the door on the eval rule (EVAL_DB only), and the env\'s graded check, model read and override clear', async () => {
     const { argv, rules, built } = await deployment()
-    expect(rules).toEqual(['morning-check'])
+    expect(rules, 'the default eval rule, never the morning-check rule that admits a PR database').toEqual([undefined])
     expect(typeof built.env.beforeCase).toBe('function')
     expect(typeof built.env.modelOf).toBe('function')
     expect(typeof built.env.releaseShop).toBe('function')

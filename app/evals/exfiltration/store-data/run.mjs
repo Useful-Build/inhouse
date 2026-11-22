@@ -178,7 +178,7 @@ const build = new Build({
   shopShown: shopShownBy(a['shop-pattern'] ?? DEFAULT_SHOP_PATTERN),
 })
 
-// The graded run's door and frame: wrangler on the morning-check database rule (args.ts has already required EVAL_DB), the
+// The graded run's door and frame (remote.ts buildRemote): wrangler on the eval rule, EVAL_DB only (args.ts requires it too), the
 // morning-check door with this set's shops, the eval door's lease, cap and Default model (gradedRun), and the transcript
 // reader on the eval bucket. A refusal is the door's own message and exit 2, before any case runs.
 let door = null
