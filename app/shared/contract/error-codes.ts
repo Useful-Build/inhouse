@@ -18,6 +18,10 @@ export const REASON = {
   tooMany: 'too_many', badName: 'bad_name',
   // Route 39 (an attachment's upload).
   tooLarge: 'too_large', typeNotAllowed: 'type_not_allowed',
+  // P4 W2: route 54's refusals.
+  runOpen: 'run_open', stage: 'stage',
+  // #312 review: routine_create past the cap; an empty Library upload (row 63).
+  routineLimit: 'routine_limit', empty: 'empty',
 } as const satisfies Record<string, ErrorReason>
 /** Why the runner didn't save a file the agent made (the `file.refused` event), as the chat names them. */
 export const FILE_REFUSAL = {

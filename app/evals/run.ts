@@ -51,11 +51,33 @@ const out = path.resolve(v.out!)
 const estimate = estimateUsd(cases, reps)
 console.log(`target ${target.name}: ${cases.length} cases x ${reps} reps, estimate $${targetName === 'product' ? estimate.toFixed(2) : '0.00'}${budgetUsd !== undefined ? `, budget $${budgetUsd}` : ''}`)
 
-const result = await runEvals({
-  target, cases, reps, concurrency: Number(v.concurrency), budgetUsd,
-  // Kept forever in a public repo: every target's files are reduced for disk (redact.ts, p3-eval-observability rev 2 rec 6).
-  onChat: rawWriter(out),
-})
+// What the target holds on the deployment (the product target's eval lease) is given back on exit, and on SIGINT or SIGTERM
+// before exiting 130 or 143; a give-back that fails is printed and fails the run.
+const close = async (): Promise<boolean> => {
+  try {
+    await target.close?.()
+    return true
+  } catch (e) {
+    console.error(`the target could not give back what it holds (the eval lease): ${e instanceof Error ? e.message : String(e)}`)
+    return false
+  }
+}
+for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]] as const) {
+  process.once(signal, () => {
+    console.error(`${signal}: giving back the eval lease before exiting`)
+    void close().then(() => process.exit(code))
+  })
+}
+let result: Awaited<ReturnType<typeof runEvals>>
+try {
+  result = await runEvals({
+    target, cases, reps, concurrency: Number(v.concurrency), budgetUsd,
+    // Kept forever in a public repo: every target's files are reduced for disk (redact.ts, p3-eval-observability rev 2 rec 6).
+    onChat: rawWriter(out),
+  })
+} finally {
+  if (!(await close())) process.exitCode = 1
+}
 
 const report = buildReport(CASES, result.rows, { target: target.name, model: v.model!, effort: v.effort!, reps, notRun: result.notRun, notGraded: result.notGraded })
 writeResults(out, result, report, v.topic ?? path.basename(out))

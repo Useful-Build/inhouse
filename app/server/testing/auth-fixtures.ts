@@ -141,6 +141,27 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'POST', pattern: '/api/chats/:id/session/reset', class: 'personal', allow: ['member', 'admin'] },
   // Route 51 (W1 PR 6): revive one quarantined due task, release only like drain.
   { method: 'POST', pattern: '/api/ops/tasks/revive', class: 'open', allow: [], services: ['release'] },
+  // Route 67 (P4 wave 4, p4-w6.md OC 2): the test build's alarm-now control, release only (404 outside the test build).
+  { method: 'POST', pattern: '/api/ops/alarm', class: 'open', allow: [], services: ['release'] },
+  // Rows 59 to 61 (P4 W4): Activity is brand data; the bell is personal, no Inhouse.
+  { method: 'GET', pattern: '/api/activity', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'GET', pattern: '/api/notifications', class: 'personal', allow: ['member', 'admin'] },
+  { method: 'POST', pattern: '/api/notifications/read', class: 'personal', allow: ['member', 'admin'] },
+  // Rows 57 and 58 (P4 W3): Today is brand data; the set-aside write is open to the Inhouse team under a live grant.
+  { method: 'GET', pattern: '/api/today', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'PUT', pattern: '/api/today/:id/aside', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  // Rows 62 to 66 (P4 W5): the Library is brand data; the upload is people only.
+  { method: 'GET', pattern: '/api/library', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'POST', pattern: '/api/library/uploads', class: 'brand_data', allow: ['member', 'admin'] },
+  { method: 'GET', pattern: '/api/library/:id/download', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'POST', pattern: '/api/library/delete', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'POST', pattern: '/api/library/restore', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  // Rows 52 to 56 (P4 W2): the Routines page, brand data; Inhouse writes under a live grant.
+  { method: 'GET', pattern: '/api/routines', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'PUT', pattern: '/api/routines/:id/enabled', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'POST', pattern: '/api/routines/:id/run', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'POST', pattern: '/api/routines/:id/delete', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'POST', pattern: '/api/routines/:id/restore', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
 ]
 
 /** `CanRows` as section 3 maps them. */

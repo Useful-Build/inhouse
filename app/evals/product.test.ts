@@ -50,6 +50,22 @@ class FakeDoor implements MemoryDoor {
   /** The server the person rows go to (make() wires it): the fake API sees the invite as the product's D1 would. */
   onInvite?: (p: { id: string; email: string; name: string }) => void
   async invitePerson(p: { id: string; email: string; name: string }) { this.calls.push(`person ${p.email}`); this.onInvite?.(p) }
+  async setDefaultModel(label: string) { this.calls.push(`mode ${label}`) }
+  /** The eval lease's takes and give-backs, apart from `calls`. */
+  leases: string[] = []
+  /** Another run holds the eval lease (takeLease refuses). */
+  otherLease = false
+  /** A test shop override on the deployment (`hub:shop`). */
+  shop: string | null = null
+  /** Holds the take open until it resolves (a signal during setup's take). */
+  takeGate?: Promise<void>
+  async takeLease(tag: string) {
+    this.leases.push(`take ${tag}`)
+    await this.takeGate
+    if (this.otherLease) throw new DoorRefusal('refusing: another eval run (morning-check:abc) holds the eval deployment')
+  }
+  async releaseLease(tag: string) { this.leases.push(`release ${tag}`) }
+  async testShop() { this.leases.push('shop?'); return this.shop }
 }
 
 interface Sent { method: string; path: string; token: string | null; body: any }
@@ -159,6 +175,53 @@ describe('the eval-brand check (server side, before the first chat)', () => {
     await expect(target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(ProductTargetRefusal)
     expect(door.calls).toEqual([])
     expect(srv.s.sent.filter((x) => x.method !== 'GET')).toEqual([])
+  })
+
+  // #308 review (one runner per eval deployment): the eval lease before any spend, renewed per case-repeat, given back by
+  // close(); another run's lease or a test shop override refuses before the cap is pinned or anything is cleared.
+  it('takes the eval lease before the cap, renews it each case-repeat and gives it back on close', async () => {
+    const door = new FakeDoor()
+    const target = make(server(), door)
+    await (await target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).reset()
+    await (await target.seed([], { caseId: 'N02', rep: 1, canary: 'c' })).reset()
+    expect(door.leases).toEqual(['take product:7-1', 'shop?', 'take product:7-1', 'take product:7-1'])
+    await target.close!()
+    expect(door.leases.at(-1)).toBe('release product:7-1')
+    await target.close!()
+    expect(door.leases.filter((l) => l.startsWith('release'))).toHaveLength(1)
+  })
+  it('another run\'s lease or a test shop override refuses before the cap or any clear', async () => {
+    const held = new FakeDoor()
+    held.otherLease = true
+    await expect(make(server(), held).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(/another eval run \(morning-check:abc\) holds the eval deployment/)
+    expect(held.calls).toEqual(['hasChat'])
+    const shop = new FakeDoor()
+    shop.shop = '"example-mc-late-orders.myshopify.com"'
+    const target = make(server(), shop)
+    await expect(target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(/test shop override \(hub:shop "example-mc-late-orders\.myshopify\.com"\) is set/)
+    expect(shop.calls).toEqual(['hasChat'])
+    await target.close!()
+    expect(shop.leases).toEqual(['take product:7-1', 'shop?', 'release product:7-1'])
+  })
+  // #306 review L3: a SIGINT while setup's take is in flight: close() waits for it and gives the won lease back.
+  it('close() during the first take waits for it, then gives the lease back', async () => {
+    const door = new FakeDoor()
+    let open!: () => void
+    door.takeGate = new Promise<void>((r) => (open = r))
+    const target = make(server(), door)
+    const seeding = target.seed([], { caseId: 'N01', rep: 1, canary: 'c' }).catch(() => null)
+    while (!door.leases.includes('take product:7-1')) await new Promise((r) => setImmediate(r))
+    const closing = target.close!()
+    open()
+    await closing
+    expect(door.leases.slice(0, 1)).toEqual(['take product:7-1'])
+    expect(door.leases).toContain('release product:7-1')
+    await seeding
+  })
+  it('a target that never took the lease gives nothing back', async () => {
+    const door = new FakeDoor()
+    await make(server(), door).close!()
+    expect(door.leases).toEqual([])
   })
 
   // (a), the O2 note: the eval brand's own Spending cap is the $50 (Wasim's monthly test budget), pinned by the harness every run.
@@ -734,7 +797,19 @@ describe('the eval people\'s tokens', () => {
     const walk = (u: URL): string[] => readdirSync(u, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? (e.name === 'results' || e.name === 'fixtures' ? [] : walk(new URL(`${e.name}/`, u))) : [new URL(e.name, u).pathname])
     const sources = walk(dir).filter((f) => /\.(ts|mjs)$/.test(f) && !/\.test\.[a-z]+$/.test(f))
     const quoted = sources.flatMap((f) => (readFileSync(f, 'utf8').match(/['"`]Cf-Access-Jwt-Assertion['"`]/gi) ?? []).map(() => f.split('/evals/')[1]))
-    expect(quoted).toEqual(['targets/product.ts'])
+    // P4's two runners each set it once more, for route 67's release service token only (MORNING_CHECK_RELEASE_JWT, minted
+    // outside the run, test builds only): not a person, which testIssuerSignIn doesn't sign. Their people sign in through it.
+    const releaseOnly = ['exfiltration/store-data/run.mjs', 'morning-check/run.mjs']
+    expect(quoted.sort()).toEqual([...releaseOnly, 'targets/product.ts'])
+    for (const f of releaseOnly) expect(readFileSync(new URL(`./${f}`, import.meta.url), 'utf8'), f).toMatch(/\{ 'Cf-Access-Jwt-Assertion': releaseJwt \}/)
+    // #308 review L1: and releaseJwt is only ever MORNING_CHECK_RELEASE_JWT: store-data reads it there, morning-check reads
+    // it through args.ts, and nothing in evals/ gives it any other value (an assignment or a property with a value).
+    const sets = sources.flatMap((f) => [...readFileSync(f, 'utf8').matchAll(/^.*\breleaseJwt\b\s*(?:=(?![=>])|:(?!\s*string\b)).*$/gm)].map((m) => `${f.split('/evals/')[1]}: ${m[0].trim()}`))
+    expect(sets.sort()).toEqual([
+      'exfiltration/store-data/run.mjs: const releaseJwt = process.env.MORNING_CHECK_RELEASE_JWT',
+      'morning-check/args.ts: const releaseJwt = env.MORNING_CHECK_RELEASE_JWT || null',
+      'morning-check/run.mjs: const releaseJwt = m.releaseJwt',
+    ])
     // #280 review 5: the test issuer's own header too: its name and its constant only in product.ts's sign-in and export.
     const named = sources.flatMap((f) => (readFileSync(f, 'utf8').match(/['"`]X-Inhouse-Test-Assertion['"`]|\[TEST_ASSERTION_HEADER\]/gi) ?? []).map(() => f.split('/evals/')[1]))
     expect(named.sort()).toEqual(['targets/product.ts', 'targets/product.ts'])

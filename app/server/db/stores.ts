@@ -28,6 +28,20 @@ import type { UsageStore } from '../usage/store.ts'
 import { memoryStore } from '../mcp/tools/memory/store.ts'
 import type { MemoryStore } from '../mcp/tools/memory/store.ts'
 
+// P4's slots, one per owner.
+import { activityReader } from '../activity/read.ts'
+import type { ActivityReader } from '../activity/read.ts'
+import { noticeReader } from '../notices/read.ts'
+import type { NoticeReader } from '../notices/read.ts'
+import { libraryStore } from '../files/store.ts'
+import type { LibraryStore } from '../files/store.ts'
+
+import { todayStore } from '../today/store.ts'
+import type { TodayStore } from '../today/store.ts'
+
+import { routineStore } from '../routines/store.ts'
+import type { RoutineStore } from '../routines/store.ts'
+
 export interface Stores extends AuthStores {
   members: MemberDirectory & MemberStore
   grants: GrantStore & GrantStoreImpl
@@ -54,6 +68,19 @@ export interface Stores extends AuthStores {
 
   /** W6 (p3-w6.md): memory. */
   memory: MemoryStore
+
+  /** P4 W4 (p4-w4.md): Activity's lines and the bell's notices and read state (the writers are `recordActivity` and `addNotice`). */
+  activity: ActivityReader
+  notices: NoticeReader
+
+  /** P4 W3 (p4-w3.md section 5): Today's read and the set-aside write. */
+  today: TodayStore
+
+  /** P4 W2 (p4-w2.md sections 9 to 11): routes 33 and 52 to 56, and the routines signal's read. */
+  routines: RoutineStore
+
+  /** P4 W5 (p4-w5.md): the Library's uploads, marks and listed files. */
+  library: LibraryStore
 }
 
 /** What the stores read from the Worker's env. `AUDIT_HASH_KEY` is a secret on the product Worker (a var in the test build). */
@@ -81,8 +108,8 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
       const line = auditInsert({
         atMs: at.nowMs,
         actorId: principal.memberId,
-        // The schema checks the pair (GET with a read route, PUT with a write route Inhouse may use) and throws otherwise.
-        args: { action: 'support.access', grantId: principal.grant.id, method: at.method as 'GET' | 'PUT', route: at.route as '/api/members' },
+        // The schema checks the pair (GET with a read route, PUT or POST with a write route Inhouse may use) and throws otherwise.
+        args: { action: 'support.access', grantId: principal.grant.id, method: at.method as 'GET' | 'PUT' | 'POST', route: at.route as '/api/members' },
         target: { kind: 'grant', id: principal.grant.id },
         requestId: principal.requestId,
       }, null)
@@ -112,5 +139,15 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
     usage: usageStore({ db }),
 
     memory: memoryStore({ db }),
+
+    // P4's slots.
+    activity: activityReader({ db }),
+    notices: noticeReader({ db }),
+
+    today: todayStore({ db, hook }),
+
+    routines: routineStore({ db }),
+
+    library: libraryStore({ db, bucket: env.FILES }),
   }
 }

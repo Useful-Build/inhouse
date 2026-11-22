@@ -103,6 +103,8 @@ export interface ContractTarget {
     pagesLists: boolean
     /** True on the demo: its Admin may do everything (`me().can` all true). A product target's Admin has what the server's access rows give an Admin. */
     adminCanDoEverything: boolean
+    /** True when the client keeps uploaded files and serves downloads (a product target, P4 W5); false on the demo, which refuses uploads as `unavailable` and has no download URLs. */
+    keepsFiles: boolean
   }
   /** Let what is in flight arrive without moving the clock: microtasks flushed (the mock), delivery awaited (a server). Called before each `advance`. */
   settle(): Promise<void>
@@ -288,7 +290,7 @@ function mockTarget(): ContractTarget {
       unknownTraceId: 'no-such-trace',
     },
     failedSaveNotice: 'save.failed',
-    capabilities: { agentWritesSaveInClient: true, pagesLists: false, adminCanDoEverything: true },
+    capabilities: { agentWritesSaveInClient: true, pagesLists: false, adminCanDoEverything: true, keepsFiles: false },
     async setup() { vi.useFakeTimers() },
     async teardown() { vi.useRealTimers() },
     async settle() { await vi.advanceTimersByTimeAsync(0) },

@@ -66,6 +66,15 @@ const reads = (o: { me?: unknown; members?: unknown[]; settings?: Record<string,
   'GET /api/models': { body: { default: 'opus', modes: [] } },
   'GET /api/usage': { body: EMPTY_USAGE },
   'GET /api/pause': { body: { paused: false, at: null, by: null } },
+  // P4 (W4): Activity and the bell.
+  'GET /api/activity?limit=100': { body: { items: [], nextCursor: null } },
+  'GET /api/notifications': { body: { items: [] } },
+  // P4 (W5): the Library.
+  'GET /api/library?limit=100': { body: { items: [], nextCursor: null } },
+  // P4 W2: route 52.
+  'GET /api/routines': { body: { routines: [], deleted: [], enabled: {} } },
+  // P4 W3: route 57.
+  'GET /api/today': { body: { items: [], aside: {} } },
 })
 const EMPTY_USAGE = {
   month: 'November', cap: { minor: 32000, currency: 'USD' }, alertAt: 80, total: { minor: 0, currency: 'USD' }, conversations: 0, questionsAsked: 0, jobsRun: 0,
@@ -1109,8 +1118,8 @@ describe('paging', () => {
 describe('the parts that stay the stub until their phase', () => {
   const STUBS: [string, (c: AgentClient) => Promise<unknown>][] = [
     ['approve', c => c.approve('p')], ['undo', c => c.undo('p')], ['editDraft', c => c.editDraft('p', 'x')],
-    ['requestTool', c => c.requestTool('k', true)], ['setToggle (a routine)', c => c.setToggle('r:Morning', true)],
-    ['markNoticesRead', c => c.markNoticesRead(['n'])], ['deleteFiles', c => c.deleteFiles(['f'])], ['runRoutine', c => c.runRoutine('r')],
+    // A routine's switch and Run now (P4 W2) and the Library's writes (P4 W5) are built.
+    ['requestTool', c => c.requestTool('k', true)],
   ]
   test.each(STUBS)('%s rejects with AgentError("unavailable") and sends one error notice', async (_n, call) => {
     const { agent, heard } = await loaded(reads())
