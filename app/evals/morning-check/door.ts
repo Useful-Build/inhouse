@@ -1,6 +1,8 @@
 // The morning-check set's door into a deployed build's D1 (the remote mode of run.mjs, and the scripted proof
 // e2e/api/morning-check-remote.spec.ts): the same `RunSql` the eval harness's memory door uses (evals/targets/door.ts:
-// `wrangler d1 execute --remote` on a per-PR sandbox database only, credentials from the environment, never logged).
+// `wrangler d1 execute --remote` with the morning-check rule, assertMorningCheckDatabase: a PR's test database for the
+// scripted proof or the eval deployment's EVAL_DB for the graded run, never the candidate's; credentials from the
+// environment, never logged).
 // Two jobs, so the deployed build gains no HTTP surface:
 //  - the test shop override: the `settings` row the test and eval builds' egress reads on each hub call
 //    (server/egress/test-shop.ts). The door owns its lifecycle: set per case, cleared at case end and at run start
@@ -9,7 +11,8 @@
 //    runner.ts and grade.ts read them unchanged.
 // Every value in a statement is checked against a pattern and quoted; nothing else reaches SQL.
 // One runner per deployment: the override is one row per deployment (one brand, one D1), so two runs against the same build
-// would set each other's shop. Never run two at once against one deployment.
+// would set each other's shop. Never run two at once against one deployment. On the eval deployment the graded run also
+// holds the eval lease (targets/door.ts takeLease), which the product eval takes too, so neither runs beside the other.
 import { TEST_SHOP_KEY, TEST_SHOP_OWNER } from '../../server/egress/test-shop.ts'
 import { DoorRefusal, sqlString, type RunSql } from '../targets/door.ts'
 import { META, hostOf } from './expected.ts'
@@ -31,6 +34,11 @@ export interface MorningDoor extends Reader {
   close(): void
   /** Removes the override and reads back that none is left. Returns the host it removed (null: none was set). */
   clearShop(): Promise<string | null>
+  /**
+   * The API model id a slot's turn was submitted with (`submit_json.model`, fixed when the slot is made from the brand's
+   * Default model: server/routines/brand.ts submitSettings), or null while the slot doesn't exist.
+   */
+  model(slotKey: string): Promise<string | null>
 }
 
 const str = (v: unknown, what: string): string => {
@@ -85,6 +93,18 @@ export function createMorningDoor(run: RunSql, nowMs: () => number = Date.now): 
         result_text: strOrNull(r.result_text, 'result text'), turn_id: strOrNull(r.turn_id, 'turn id'), claimed_at_ms: Number(r.claimed_at_ms),
       }
       return row
+    },
+    async model(slotKey) {
+      if (!SLOT_KEY.test(slotKey)) throw new DoorRefusal(`not a morning-check Run now slot key: ${slotKey}`)
+      const rows = await run(`SELECT submit_json FROM routine_slots WHERE slot_key = ${sqlString(slotKey)}`)
+      if (rows.length === 0) return null
+      let model: unknown
+      try {
+        model = (JSON.parse(str(rows[0]!.submit_json, 'submit')) as { model?: unknown } | null)?.model
+      } catch {
+        throw new DoorRefusal('the door read a slot submit that is not JSON')
+      }
+      return str(model, 'slot model')
     },
     async items(slotKey) {
       if (!SLOT_KEY.test(slotKey)) throw new DoorRefusal(`not a morning-check Run now slot key: ${slotKey}`)

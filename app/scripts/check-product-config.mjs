@@ -98,7 +98,9 @@
 // was built deploys as it is); per-PR: vars.INHOUSE_TEST_BUILD is "1" (the hub's test build) and INHOUSE_ACCESS isn't
 // needed; candidate and eval: `vars`, when set, is a plain object holding only SHOPIFY_SHOP and SHOPIFY_CLIENT_ID, both
 // empty (no store credential in the sandbox account, p4 plan "Must not"), and the product rules don't apply (the hub
-// isn't the product Worker); eval: the name is exactly the eval hub's (`evalNames().hub`, `inhouse-sbx-eval-hub`), and
+// isn't the product Worker); the eval hub may instead carry exactly app/wrangler.hub.test.jsonc's vars (EVAL_TEST_HUB_VARS:
+// the hub's test build, invented test values only, for the morning-check graded run); eval: the name is exactly the eval
+// hub's (`evalNames().hub`, `inhouse-sbx-eval-hub`), and
 // the eval product's rules (the AI binding, the gateway, the eval brand marker) don't apply: the hub runs no model.
 // `secrets` (wrangler fails a deploy whose `secrets.required` aren't set) and `define` (applied at bundle time) must be
 // empty, as every unlisted key: no generated sandbox or candidate hub config carries `secrets.required`. Any
@@ -399,6 +401,25 @@ const HUB_KEYS = new Set([
 ])
 /** (P4) The candidate hub's vars: the store's shop and client id, both empty (no store in the sandbox account). */
 const CANDIDATE_HUB_VARS = new Set(['SHOPIFY_SHOP', 'SHOPIFY_CLIENT_ID'])
+/**
+ * (P4, the morning-check graded run) The one other set of vars the eval hub may carry: exactly app/wrangler.hub.test.jsonc's
+ * (a test pins the two equal), the hub's TEST build (the test bundle, its seam on: test upstreams only). Every value is
+ * invented and test-only: the fixture shop, the test client id, the test token keys and the test client secret, which no
+ * real app or store accepts. The eval hub lives in the sandbox account only. Whether the bundle beside it is the test
+ * bundle is check-hub-build.mjs's to tell (its canary scan); this lock reads the config.
+ */
+export const EVAL_TEST_HUB_VARS = Object.freeze({
+  INHOUSE_TEST_BUILD: '1',
+  SHOPIFY_SHOP: 'example-fixture',
+  SHOPIFY_CLIENT_ID: 'test-client',
+  HUB_TOKEN_KEYS: '{"current":"ktest-2","keys":{"ktest-1":"1Fza49LBSBNRAEZcdP+XApWhY8ZgCJilqS4O7FoBju4=","ktest-2":"E32MH18U9aWDv8hY9zmavoxETTkRY4Xad0NJiBsPw2A="}}',
+  SHOPIFY_CLIENT_SECRET: 'test-only-client-secret-0RW9rVbhXFbVnJw6t1jyOWrJ1E7bMlc6',
+})
+/** True when `vars` holds exactly EVAL_TEST_HUB_VARS: the same keys, each the same string. */
+const isEvalTestHubVars = vars => {
+  const want = Object.entries(EVAL_TEST_HUB_VARS)
+  return Object.keys(vars).length === want.length && want.every(([k, v]) => Object.hasOwn(vars, k) && vars[k] === v)
+}
 
 /** A relative path that stays inside its folder: no `..` segment, not absolute, no backslash or NUL. */
 const isInsidePath = p => typeof p === 'string' && p !== '' && !isAbsolute(p) && !/^[A-Za-z]:/.test(p) &&
@@ -604,9 +625,13 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
     const which = evalMode ? 'eval' : 'candidate'
     if (config.vars !== undefined && !plain) fail(`vars must be a plain object in the ${which} hub config`)
     const vars = plain ? config.vars : {}
-    for (const [k, v] of Object.entries(vars)) {
-      if (!CANDIDATE_HUB_VARS.has(k)) fail(`vars.${k} is set: the ${which} hub's vars are SHOPIFY_SHOP and SHOPIFY_CLIENT_ID only (no test switch, no secret)`)
-      else if (v !== '') fail(`vars.${k} must be empty: no store credential in the sandbox account`)
+    // The eval hub alone may instead be the hub's test build: exactly the test config's vars, nothing more or less.
+    if (!(evalMode && isEvalTestHubVars(vars))) {
+      const or = evalMode ? ', or exactly app/wrangler.hub.test.jsonc\'s vars (the hub\'s test build)' : ''
+      for (const [k, v] of Object.entries(vars)) {
+        if (!CANDIDATE_HUB_VARS.has(k)) fail(`vars.${k} is set: the ${which} hub's vars are SHOPIFY_SHOP and SHOPIFY_CLIENT_ID only (no test switch, no secret)${or}`)
+        else if (v !== '') fail(`vars.${k} must be empty: no store credential in the sandbox account${or}`)
+      }
     }
   } else if (evalMode) {
     if (config.vars?.INHOUSE_TEST_BUILD !== '1') fail('vars.INHOUSE_TEST_BUILD must be "1" in the eval deployment (the harness signs in through the test issuer)')

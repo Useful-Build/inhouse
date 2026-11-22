@@ -13,7 +13,10 @@
 // and once more after all; one runner per deployment.
 // Needs a container (E2E_TEST_BUILD_REMOTE) and the door's settings: INHOUSE_EVAL_D1_NAME (this deployment's
 // inhouse-sbx-pr<N>-db), INHOUSE_EVAL_WRANGLER_CONFIG (the sandbox config that binds it), CF_SANDBOX_ACCOUNT_ID and the
-// token wrangler reads itself. Without them it skips, saying which are missing.
+// token wrangler reads itself. Without them it skips, saying which are missing. The door takes the morning-check rule
+// (evals/targets/door.ts assertMorningCheckDatabase, `rule: 'morning-check'`), and this spec refuses the eval deployment's
+// EVAL_DB on top (args.ts refuseSharedEvalDb): the scripted proof runs on a PR's test database only; the eval deployment
+// runs run.mjs's graded run on the real model.
 import { expect, test } from '@playwright/test'
 import { wranglerRunner } from '../../evals/targets/door.ts'
 import { refuseSharedEvalDb } from '../../evals/morning-check/args.ts'
@@ -45,8 +48,8 @@ function cannotRun(): string | null {
 test.beforeAll(async ({ request }) => {
   // Never writes the setting on a run whose test skips.
   if (cannotRun() !== null) return
-  // Never on the eval deployment's shared database (a paid eval may run there): refused before any write, loud. Line A's
-  // morning-check door rule replaces this (evals/morning-check/args.ts).
+  // Never on the eval deployment's shared database (the real model runs there, through run.mjs's graded run): refused
+  // before any write, loud (evals/morning-check/args.ts).
   refuseSharedEvalDb(process.env.INHOUSE_EVAL_D1_NAME!)
   const as = (who: Actor): ApiCall => async (method, path, body) => {
     const r = await call(request, who, method, path, body === undefined ? {} : { json: body })
@@ -64,7 +67,7 @@ test('the morning-check set runs remotely: the outage shop passes graded, a work
   test.setTimeout(TIMEOUT_MS)
   expect(2 * (CASE_MS + SETTLE_MS), 'the budget leaves at least 10 minutes for the door\'s calls').toBeLessThanOrEqual(TIMEOUT_MS - 600_000)
   refuseSharedEvalDb(process.env.INHOUSE_EVAL_D1_NAME!)
-  const d = createMorningDoor(wranglerRunner({ database: process.env.INHOUSE_EVAL_D1_NAME!, config: process.env.INHOUSE_EVAL_WRANGLER_CONFIG!, env: process.env }))
+  const d = createMorningDoor(wranglerRunner({ database: process.env.INHOUSE_EVAL_D1_NAME!, config: process.env.INHOUSE_EVAL_WRANGLER_CONFIG!, env: process.env, rule: 'morning-check' }))
   door = d
   const env = remoteEnv({
     door: d,

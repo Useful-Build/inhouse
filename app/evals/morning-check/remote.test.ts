@@ -8,17 +8,26 @@
 //  4. the slot reader gives grade.ts other shapes than the local reader (a renamed column, a number as a string);
 //  5. a key or turn id reaches SQL unchecked;
 //  6. remote mode mixed with local options, or missing the door's settings, starts anyway; a remote run without a release
-//     token still calls route 67; a local run without one starts.
+//     token still calls route 67; a local run without one starts;
+//  7. behind the eval host's Access: a request goes without the service token or the person JWT in both headers, a run with
+//     only half the token starts, a per-PR run (no token) sends anything new, or the secret reaches an error or an answer;
+//  8. the results claim --model while the slots ran on the brand's Default model (another model): graded under the wrong name;
+//  9. the graded run (EVAL_DB) starts without the Access token or --budget, with --model-setting or a model the product
+//     doesn't serve, or a per-PR run takes --budget; the scripted proof's door refuses its per-PR database;
+// 10. two runs hold the eval lease at once, a run starts over another's test shop override, the lease outlives the run
+//     (exit, signal), the cap isn't pinned or reads back other than MORNING_CHECK_CAP, or a run goes past its --budget.
 import { readdirSync, readFileSync } from 'node:fs'
+import fc from 'fast-check'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { readTestShop, type ShopDb } from '../../server/egress/test-shop.ts'
-import { DoorRefusal, EVAL_DB, type RunSql } from '../targets/door.ts'
-import { refuseSharedEvalDb, runMode } from './args.ts'
+import { assertMorningCheckDatabase, assertSandboxDatabase, createDoor, D1_NOW_MS, DoorRefusal, EVAL_DB, EVAL_LEASE_TTL_MS, PER_PR_DB, wranglerRunner, type RunSql } from '../targets/door.ts'
+import { EVAL_CAP } from '../targets/product.ts'
+import { defaultModelLabel, refuseSharedEvalDb, runMode } from './args.ts'
 import { createMorningDoor, type MorningDoor } from './door.ts'
 import { AMBER, META, hostOf } from './expected.ts'
-import { clearOnSignals, ensureDefaultModel, remoteEnv, type ApiCall, type SettingsApi } from './remote.ts'
+import { clearOnSignals, ensureDefaultModel, gradedRun, MORNING_CHECK_CAP, remoteEnv, remoteHttp, type ApiCall, type GradedDoor, type SettingsApi } from './remote.ts'
 import { ROUTINE_ID, runAll } from './runner.ts'
 
 const migrations = fileURLToPath(new URL('../../server/migrations/', import.meta.url))
@@ -79,9 +88,22 @@ describe('the door: what grade.ts reads (failure 4, 5)', () => {
     expect(await door.slot(`now|${ROUTINE_ID}|${'b'.repeat(32)}`)).toBeNull()
   })
 
+  it('reads the model a slot was submitted with, null while there\'s no slot, and refuses a submit without one (failure 8)', async () => {
+    const { db, run } = database()
+    const insert = (key: string, submit: string) => db.prepare(`INSERT INTO routine_slots (slot_key, routine_id, kind, local_date, tz, due_at_ms, deadline_ms, state, chat_id, client_key, prompt_text, submit_json, routine_rev, creator_id, claimed_at_ms)
+      VALUES (?, '${ROUTINE_ID}', 'manual', '2026-11-22', 'UTC', 1, 2, 'ended', 'c', 'k', 'p', ?, 1, 'm', 1)`).run(key, submit)
+    insert(KEY, JSON.stringify({ model: 'claude-opus-5-5', pickerId: 'opus', effort: 'medium', priority: 'next' }))
+    const door = createMorningDoor(run)
+    expect(await door.model(KEY)).toBe('claude-opus-5-5')
+    expect(await door.model(`now|${ROUTINE_ID}|${'b'.repeat(32)}`)).toBeNull()
+    insert(`now|${ROUTINE_ID}|${'c'.repeat(32)}`, '{}')
+    await expect(door.model(`now|${ROUTINE_ID}|${'c'.repeat(32)}`)).rejects.toThrow('slot model that is not a string')
+  })
+
   it.each([`now|${ROUTINE_ID}|${'a'.repeat(31)}'`, `due|${ROUTINE_ID}|2026-11-22`, `now|other|${'a'.repeat(32)}`])('refuses the slot key %s before any SQL', async key => {
     const { run, statements } = database()
     await expect(createMorningDoor(run).slot(key)).rejects.toBeInstanceOf(DoorRefusal)
+    await expect(createMorningDoor(run).model(key)).rejects.toBeInstanceOf(DoorRefusal)
     await expect(createMorningDoor(run).items(key)).rejects.toBeInstanceOf(DoorRefusal)
     await expect(createMorningDoor(run).tools("t' OR 1=1 --")).rejects.toBeInstanceOf(DoorRefusal)
     expect(statements).toEqual([])
@@ -101,6 +123,7 @@ describe('the remote runner env', () => {
       slot: async (k: string) => { log.push(`poll ${held ?? 'none'}`); return { slot_key: k, state: 'ended', failure: null, result_text: 'found 0 things', turn_id: null, claimed_at_ms: 1 } },
       items: async () => [],
       tools: async () => [],
+      model: async () => 'claude-sonnet-5-5',
     }
     const env = remoteEnv({
       door, runNow: async k => { log.push(`run ${k.length}`) }, alarm: alarm ? async b => { log.push(`alarm ${JSON.stringify(b)}`) } : null,
@@ -172,6 +195,35 @@ describe('the remote runner env', () => {
     await without.env.trigger('f'.repeat(32))
     await without.env.nudge()
     expect(without.log).toEqual(['run 32'])
+  })
+
+  it('with checkModel, each case keeps the model its slot ran on; a run on --model passes (failure 8)', async () => {
+    const { door } = fakes(false)
+    let now = 0
+    const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {}, checkModel: true })
+    const file = await runAll(env, twoCases(), { ...meta, model: 'claude-sonnet-5-5' })
+    expect(file.cases.map(c => [c.id, c.ranOn, c.verdict.pass])).toEqual([['clean-empty', 'claude-sonnet-5-5', true], ['outage-all', 'claude-sonnet-5-5', false]])
+    expect(file.stopped).toBeUndefined()
+  })
+
+  it('with checkModel, a slot that ran on another model fails its case and stops the run, naming both (failure 8)', async () => {
+    const { door } = fakes(false)
+    door.model = async () => 'claude-opus-5-5'
+    let now = 0
+    const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {}, checkModel: true })
+    const file = await runAll(env, twoCases(), { ...meta, model: 'claude-sonnet-5-5' })
+    expect(file.cases).toHaveLength(1)
+    expect(file.cases[0]).toMatchObject({ id: 'clean-empty', ranOn: 'claude-opus-5-5', verdict: { pass: false, reasons: ['ran on claude-opus-5-5, not claude-sonnet-5-5'] } })
+    expect(file.stopped).toEqual({ at: 'clean-empty', reason: expect.stringContaining('clean-empty ran on claude-opus-5-5, not claude-sonnet-5-5') })
+    expect(file.notRun).toEqual(['outage-all'])
+    expect(file.summary.thresholdMet).toBe(false)
+  })
+
+  it('without checkModel (the scripted proof\'s spec), no slot model is read nor kept', async () => {
+    const { env, door } = fakes(false)
+    door.model = async () => { throw new Error('model read') }
+    const file = await runAll(env, twoCases(), meta)
+    expect(file.cases.map(c => c.ranOn)).toEqual([undefined, undefined])
   })
 
   it('a fresh 32-hex key per case', () => {
@@ -312,7 +364,7 @@ describe('the Default model, set before the first Run now', () => {
     const door: MorningDoor = {
       close: () => {}, setShop: async () => {}, clearShop: async () => null,
       slot: async k => ({ slot_key: k, state: 'ended', failure: null, result_text: 'found 0 things', turn_id: null, claimed_at_ms: 1 }),
-      items: async () => [], tools: async () => [],
+      items: async () => [], tools: async () => [], model: async () => null,
     }
     let now = 0
     return remoteEnv({
@@ -414,28 +466,88 @@ describe('the Default model, set before the first Run now', () => {
   })
 })
 
+// Behind the eval host's Access lock, as main's evals/probe.test.ts checks the probe: every request carries the service token
+// (targets/product.ts accessHeaders, as run.mjs passes it) after the person's sign-in headers; a per-PR run (no token) sends
+// the sign-in headers alone; the secret never reaches an error or an answer.
+describe('requests behind the eval host\'s Access (failure 7)', () => {
+  const SECRET = 'eval-ci-secret-SHOULD-NOT-PRINT'
+  const edge = { 'CF-Access-Client-Id': 'id.access', 'CF-Access-Client-Secret': SECRET }
+  const auth = { 'Cf-Access-Jwt-Assertion': 'eyJhbGciOiJSUzI1NiJ9.e30.sig', 'X-Test-Sign-In': 'same' }
+  function server(answer: (url: string) => Response | Promise<Response>) {
+    const seen: { url: string; method?: string; headers: Record<string, string>; body?: string }[] = []
+    const f = (async (url: URL, init?: RequestInit) => {
+      seen.push({ url: String(url), method: init?.method, headers: init?.headers as Record<string, string>, body: init?.body as string | undefined })
+      return answer(String(url))
+    }) as unknown as typeof fetch
+    return { f, seen }
+  }
+
+  it('run.mjs builds its edge from targets/product.ts accessHeaders and sends no header literal of its own', () => {
+    const runMjs = readFileSync(new URL('./run.mjs', import.meta.url), 'utf8')
+    expect(runMjs).toMatch(/const http = remoteHttp\(m\.mode === 'remote' && m\.access \? accessHeaders\(process\.env\) : \{\}\)/)
+    expect(runMjs.match(/fetch\(/g), 'only the local build\'s health probe calls fetch itself').toHaveLength(1)
+    expect(readFileSync(new URL('./remote.ts', import.meta.url), 'utf8')).not.toMatch(/CF-Access-Client|Cf-Access-Jwt|X-Inhouse/)
+  })
+
+  it('with the token, Run now, route 67 and the settings calls each send the sign-in headers, then the token', async () => {
+    const s = server(() => new Response('{}', { status: 200 }))
+    const http = remoteHttp(edge, s.f)
+    await http.post(new URL('https://eval.example.test/api/routines/x/run'), { clientKey: 'k' }, auth)
+    await http.post(new URL('https://eval.example.test/api/ops/alarm'), { action: 'alarm' }, auth)
+    await http.send('GET', new URL('https://eval.example.test/api/usage'), auth)
+    await http.send('PUT', new URL('https://ih.eval.example.test/api/settings/technical/g%3Amode'), auth, { value: 'Fast' })
+    expect(s.seen).toHaveLength(4)
+    for (const r of s.seen) expect(r.headers).toEqual({ 'Content-Type': 'application/json', ...auth, Origin: new URL(r.url).origin, ...edge })
+    expect(s.seen.map(r => r.method)).toEqual(['POST', 'POST', 'GET', 'PUT'])
+    expect(s.seen[2]!.body).toBeUndefined()
+  })
+
+  it('a caller\'s own copy of the token is overridden by the edge (the edge goes last)', async () => {
+    const s = server(() => new Response('{}', { status: 200 }))
+    await remoteHttp(edge, s.f).send('GET', new URL('https://eval.example.test/api/me'), { ...auth, 'CF-Access-Client-Secret': 'other' })
+    expect(s.seen[0]!.headers['CF-Access-Client-Secret']).toBe(SECRET)
+  })
+
+  it('without the token (a per-PR deploy), the sign-in headers alone', async () => {
+    const s = server(() => new Response('', { status: 202 }))
+    await remoteHttp({}, s.f).post(new URL('https://pr12.example.dev/api/routines/x/run'), {}, auth)
+    expect(s.seen[0]!.headers).toEqual({ 'Content-Type': 'application/json', ...auth, Origin: 'https://pr12.example.dev' })
+  })
+
+  it('no refusal, answer or failure carries the secret', async () => {
+    const echo = server(() => new Response(`denied: client secret ${SECRET} is not allowed`, { status: 403 }))
+    const http = remoteHttp(edge, echo.f)
+    const refused = await http.post(new URL('https://eval.example.test/api/routines/x/run'), {}, auth).then(() => '', (e: Error) => e.message)
+    expect(refused).toMatch(/^run\.mjs: POST \/api\/routines\/x\/run answered 403: denied: client secret \[secret\]/)
+    expect(refused).not.toContain(SECRET)
+    expect((await http.send('GET', new URL('https://eval.example.test/api/usage'), auth)).text).not.toContain(SECRET)
+    const down = server(() => { throw new TypeError(`fetch failed: ${SECRET}`) })
+    const failed = await remoteHttp(edge, down.f).send('GET', new URL('https://eval.example.test/api/grants'), auth).then(() => '', (e: Error) => e.message)
+    expect(failed).toBe('run.mjs: GET /api/grants failed: fetch failed: [secret]')
+  })
+})
+
 describe('run.mjs arguments (failure 6)', () => {
   const common = { 'out-dir': 'o', sha: 'abc1234', 'issuer-key-file': 'k.json', aud: 'aud' }
   const doorEnv = { INHOUSE_EVAL_D1_NAME: 'inhouse-sbx-pr12-db', INHOUSE_EVAL_WRANGLER_CONFIG: 'w.json', CF_SANDBOX_ACCOUNT_ID: 'acct' }
 
   it('remote: the origin, the door\'s database and config, the release token only when given', () => {
-    expect(runMode({ ...common, target: 'https://pr12.example.dev' }, doorEnv)).toEqual({ mode: 'remote', baseUrl: 'https://pr12.example.dev', releaseJwt: null, database: 'inhouse-sbx-pr12-db', wranglerConfig: 'w.json', modelSetting: null })
+    expect(runMode({ ...common, target: 'https://pr12.example.dev' }, doorEnv)).toEqual({ mode: 'remote', baseUrl: 'https://pr12.example.dev', releaseJwt: null, database: 'inhouse-sbx-pr12-db', wranglerConfig: 'w.json', modelSetting: null, access: false, graded: null })
     expect(runMode({ ...common, target: 'https://pr12.example.dev/' }, { ...doorEnv, MORNING_CHECK_RELEASE_JWT: 'j' })).toMatchObject({ mode: 'remote', releaseJwt: 'j' })
   })
 
-  // #308 review M1: the door now admits only the eval deployment's shared database, where a paid product eval may run, so
-  // remote mode refuses it (until line A's morning-check door rule): run.mjs and the remote spec, before any write.
-  it('remote on the eval deployment\'s shared database is refused (DoorRefusal), a per-PR database is not', () => {
+  // The scripted proof (the spec) never runs on the eval deployment's EVAL_DB: it writes Fast for the scripted model. It
+  // takes the morning-check door rule, so a PR's test database passes (ops#24 runs it there).
+  it('the scripted proof refuses EVAL_DB before any write and opens its door on the morning-check rule', () => {
     expect(() => refuseSharedEvalDb(EVAL_DB)).toThrow(DoorRefusal)
-    expect(() => refuseSharedEvalDb(EVAL_DB)).toThrow(`refusing: ${EVAL_DB} is the eval deployment's shared database`)
     expect(() => refuseSharedEvalDb('inhouse-sbx-pr12-db')).not.toThrow()
-    const runMjs = readFileSync(new URL('./run.mjs', import.meta.url), 'utf8')
-    const at = runMjs.indexOf('refuseSharedEvalDb(m.database)')
-    expect(at, 'run.mjs refuses it').toBeGreaterThan(-1)
-    expect(at, 'before the door is made').toBeLessThan(runMjs.indexOf('wranglerRunner({'))
     const spec = readFileSync(new URL('../../e2e/api/morning-check-remote.spec.ts', import.meta.url), 'utf8')
     expect(spec.indexOf('refuseSharedEvalDb(process.env.INHOUSE_EVAL_D1_NAME!)'), 'the spec refuses it before the setting is written').toBeLessThan(spec.indexOf('ensureDefaultModel({'))
     expect(spec.lastIndexOf('refuseSharedEvalDb('), 'and before its door').toBeLessThan(spec.indexOf('wranglerRunner({'))
+    expect(spec).toContain("env: process.env, rule: 'morning-check' })")
+    const runMjs = readFileSync(new URL('./run.mjs', import.meta.url), 'utf8')
+    expect(runMjs).toContain("env: process.env, rule: 'morning-check' })")
+    expect(runMjs).not.toContain('refuseSharedEvalDb')
   })
 
   it('--model-setting: remote only, a plain label, with the Inhouse app\'s origin and aud (only the Inhouse team writes g:mode)', () => {
@@ -446,6 +558,57 @@ describe('run.mjs arguments (failure 6)', () => {
     expect(() => runMode({ ...common, target: 'https://pr12.example.dev', ...ms, 'inhouse-origin': 'https://ih.example.dev/api' }, doorEnv)).toThrow('--inhouse-origin must be')
     expect(() => runMode({ ...common, target: 'https://pr12.example.dev', 'inhouse-aud': 'x' }, doorEnv)).toThrow('--inhouse-aud only go with --model-setting')
     expect(() => runMode({ ...common, 'persist-dir': 'p', 'base-url': 'http://localhost:8788', ...ms }, { MORNING_CHECK_RELEASE_JWT: 'j' })).toThrow('--model-setting is for a deployed build (--target) only')
+  })
+
+  it('the Access service token (failure 7): both or neither; half is refused naming the variables only; no release token beside it; never on a per-PR deploy or local', () => {
+    const SECRET = 'eval-ci-secret-SHOULD-NOT-PRINT'
+    const token = { INHOUSE_EVAL_ACCESS_CLIENT_ID: 'id.access', INHOUSE_EVAL_ACCESS_CLIENT_SECRET: SECRET }
+    const graded = { ...common, target: 'https://eval.example.dev', model: 'claude-sonnet-5-5', budget: '5' }
+    const evalEnv = { ...doorEnv, INHOUSE_EVAL_D1_NAME: EVAL_DB, INHOUSE_EVAL_ORIGIN: 'https://eval.example.dev', ...token }
+    expect(runMode(graded, evalEnv)).toMatchObject({ mode: 'remote', releaseJwt: null, modelSetting: null, access: true })
+    expect(JSON.stringify(runMode(graded, evalEnv)), 'the mode holds no secret').not.toContain(SECRET)
+    const refusal = (env: Record<string, string | undefined>, args: Record<string, string> = graded) => { try { runMode(args, env); return '' } catch (e) { return (e as Error).message } }
+    // #306 review L4: a per-PR deploy has no Access, so the token never goes to one.
+    expect(refusal({ ...doorEnv, ...token }, { ...common, target: 'https://pr12.example.dev' })).toContain(`are for the eval deployment (${EVAL_DB}) only`)
+    expect(refusal({ ...doorEnv, ...token }, { ...common, target: 'https://pr12.example.dev' })).not.toContain(SECRET)
+    for (const half of [{ INHOUSE_EVAL_ACCESS_CLIENT_ID: 'id.access' }, { INHOUSE_EVAL_ACCESS_CLIENT_SECRET: SECRET }]) {
+      const m = refusal({ ...doorEnv, ...half })
+      expect(m).toContain('INHOUSE_EVAL_ACCESS_CLIENT_ID and INHOUSE_EVAL_ACCESS_CLIENT_SECRET are not both set')
+      expect(m).not.toContain(SECRET)
+    }
+    expect(refusal({ ...doorEnv, ...token, MORNING_CHECK_RELEASE_JWT: 'j' })).toContain('MORNING_CHECK_RELEASE_JWT is for a per-PR test deploy')
+    const local = { ...common, 'persist-dir': 'p', 'base-url': 'http://localhost:8788' }
+    expect(refusal({ MORNING_CHECK_RELEASE_JWT: 'j', ...token }, local)).toContain('are for a deployed build behind Access (--target) only')
+    expect(refusal({ MORNING_CHECK_RELEASE_JWT: 'j', INHOUSE_EVAL_ACCESS_CLIENT_SECRET: SECRET }, local)).not.toContain(SECRET)
+  })
+
+  it('the graded run (EVAL_DB, failure 9): Access and --budget required, the model mapped, no --model-setting or release token', () => {
+    const SECRET = 'eval-ci-secret-SHOULD-NOT-PRINT'
+    const token = { INHOUSE_EVAL_ACCESS_CLIENT_ID: 'id.access', INHOUSE_EVAL_ACCESS_CLIENT_SECRET: SECRET }
+    const evalEnv = { ...doorEnv, INHOUSE_EVAL_D1_NAME: EVAL_DB, INHOUSE_EVAL_ORIGIN: 'https://eval.example.dev/', ...token }
+    const args = { ...common, target: 'https://eval.example.dev', model: 'claude-sonnet-5-5', budget: '12.5' }
+    expect(runMode(args, evalEnv)).toMatchObject({ mode: 'remote', database: EVAL_DB, access: true, graded: { budgetUsd: 12.5, label: 'Fast' } })
+    expect(runMode({ ...args, budget: '50' }, evalEnv)).toMatchObject({ graded: { budgetUsd: 50 } })
+    const refusal = (a: Record<string, string | undefined>, env: Record<string, string | undefined> = evalEnv) => { try { runMode(a, env); return '' } catch (e) { return (e as Error).message } }
+    expect(refusal(args, { ...doorEnv, INHOUSE_EVAL_D1_NAME: EVAL_DB })).toContain('goes to the Access-locked eval host')
+    // #306 review M1: --target is the eval host the product suite names, so the token only ever goes there.
+    expect(refusal({ ...args, target: 'https://elsewhere.example.dev' })).toContain('--target must be INHOUSE_EVAL_ORIGIN (the eval host), which names another origin')
+    expect(refusal(args, { ...evalEnv, INHOUSE_EVAL_ORIGIN: undefined })).toContain('which is not set')
+    // #306 review L2: a case's window stays under the lease's TTL less a margin (100 minutes).
+    expect(runMode({ ...args, 'timeout-min': '90', 'settle-min': '9' }, evalEnv)).toMatchObject({ graded: { label: 'Fast' } })
+    for (const [t, st] of [['90', '10'], ['100', '0'], ['x', '2'], ['20', 'Infinity']]) expect(refusal({ ...args, 'timeout-min': t, 'settle-min': st }), `${t}+${st}`).toContain('--timeout-min plus --settle-min must be under 100')
+    for (const budget of [undefined, '0', '-1', 'ten', '1e3', '5.555']) expect(refusal({ ...args, budget }), String(budget)).toContain('needs --budget <usd> above zero')
+    expect(refusal({ ...args, budget: '50.01' })).toContain('above the eval brand\'s $50 cap')
+    expect(refusal({ ...args, model: 'claude-sonnet-4' })).toContain('is no model the product serves')
+    expect(refusal({ ...args, 'model-setting': 'Fast', 'inhouse-origin': 'https://ih.example.dev', 'inhouse-aud': 'x' })).toContain('--model-setting is for a per-PR scripted run')
+    expect(refusal(args, { ...evalEnv, MORNING_CHECK_RELEASE_JWT: 'j' })).toContain('MORNING_CHECK_RELEASE_JWT is for a per-PR test deploy')
+    expect(refusal({ ...common, target: 'https://pr12.example.dev', budget: '5' }, doorEnv)).toContain('--budget is for the graded run')
+    expect(refusal({ ...common, 'persist-dir': 'p', 'base-url': 'http://localhost:8788', budget: '5' }, { MORNING_CHECK_RELEASE_JWT: 'j' })).toContain('--budget is for the graded run')
+  })
+
+  it('--model maps to the catalogue\'s Default model label, and nothing else does', () => {
+    expect(['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'].map(defaultModelLabel)).toEqual(['Max', 'Smart', 'Fast', 'Instant'])
+    for (const m of [undefined, '', 'sonnet', 'Fast', 'claude-sonnet-5-5 ']) expect(() => defaultModelLabel(m), String(m)).toThrow('is no model the product serves')
   })
 
   it.each(['persist-dir', 'base-url', 'restart-cmd', 'shop-pattern', 'restart-wait-sec'])('remote with --%s is refused', k => {
@@ -469,5 +632,271 @@ describe('run.mjs arguments (failure 6)', () => {
 
   it.each(Object.keys(common))('either mode without --%s is refused', k => {
     expect(() => runMode({ ...common, [k]: undefined, target: 'https://pr12.example.dev' }, doorEnv)).toThrow(`--${k} is required`)
+  })
+})
+
+// 2a: the morning-check door rule beside the product's strict one.
+describe('the morning-check database rule (targets/door.ts)', () => {
+  const ok = { CF_SANDBOX_ACCOUNT_ID: 'acct' }
+  it('admits EVAL_DB and a PR\'s test database; the product\'s rule still admits EVAL_DB only', () => {
+    for (const n of [EVAL_DB, 'inhouse-sbx-pr1-db', 'inhouse-sbx-pr12-db', 'inhouse-sbx-pr999999-db']) expect(assertMorningCheckDatabase(n, ok), n).toBe(n)
+    expect(() => assertSandboxDatabase('inhouse-sbx-pr12-db', ok)).toThrow(/eval deployment's database/)
+  })
+  it.each(['inhouse-sbx-db', 'inhouse-sbx-hub', 'inhouse-sbx-pr12', 'inhouse-sbx-pr12-files', 'inhouse-sbx-pr0-db', 'inhouse-sbx-pr01-db', 'inhouse-sbx-pr1234567-db', 'inhouse-prod-db', 'inhouse-sbx-pr12-db\n', 'inhouse-sbx-eval', ''])('refuses %j', n => {
+    expect(() => assertMorningCheckDatabase(n, ok)).toThrow(DoorRefusal)
+  })
+  it('refuses without the sandbox account', () => {
+    expect(() => assertMorningCheckDatabase('inhouse-sbx-pr12-db', {})).toThrow(/CF_SANDBOX_ACCOUNT_ID/)
+  })
+  it('PER_PR_DB is scripts/sandbox/names.mjs\'s per-PR rule with the -db word: perPrNames(N).d1, never the candidate\'s', async () => {
+    const names = await import(/* @vite-ignore */ new URL('../../scripts/sandbox/names.mjs', import.meta.url).href) as { PER_PR: RegExp; perPrNames: (n: number) => Record<string, string>; evalNames: () => Record<string, string> }
+    fc.assert(fc.property(fc.integer({ min: 1, max: 999_999 }), n => {
+      const all = names.perPrNames(n)
+      expect(PER_PR_DB.test(all.d1!)).toBe(true)
+      expect(names.PER_PR.test(all.d1!)).toBe(true)
+      for (const [k, v] of Object.entries(all)) if (k !== 'd1') expect(PER_PR_DB.test(v), v).toBe(false)
+    }))
+    fc.assert(fc.property(fc.string(), s => { if (PER_PR_DB.test(s)) expect(names.PER_PR.test(s)).toBe(true) }))
+    expect(PER_PR_DB.test(names.evalNames().d1!)).toBe(false)
+  })
+  it('wranglerRunner takes the morning-check rule only when asked', () => {
+    const cfg = (db: string) => () => JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: db }] })
+    const base = { config: '/tmp/sbx.jsonc', env: ok, spawn: () => ({ status: 0, stdout: '[{"results":[]}]' }) }
+    expect(() => wranglerRunner({ ...base, database: 'inhouse-sbx-pr12-db', readConfig: cfg('inhouse-sbx-pr12-db') })).toThrow(/eval deployment's database/)
+    expect(() => wranglerRunner({ ...base, database: 'inhouse-sbx-pr12-db', readConfig: cfg('inhouse-sbx-pr12-db'), rule: 'morning-check' })).not.toThrow()
+    expect(() => wranglerRunner({ ...base, database: 'inhouse-sbx-db', readConfig: cfg('inhouse-sbx-db'), rule: 'morning-check' })).toThrow(DoorRefusal)
+  })
+})
+
+// 2b, 2g: the eval door's Default model, lease and override read, on the real schema.
+describe('the eval door: Default model, lease, override (failure 10)', () => {
+  const T = 1_800_000_000_000
+  it('setDefaultModel writes g:mode as the routine reads it and reads it back; refuses a label with markup', async () => {
+    const { db, run } = database()
+    const door = createDoor(run)
+    await door.setDefaultModel('Fast')
+    await door.setDefaultModel('Smart')
+    expect(db.prepare("SELECT value_json, rev FROM settings WHERE owner = 'brand' AND key = 'g:mode'").get()).toEqual({ value_json: '"Smart"', rev: 2 })
+    for (const bad of ['fast mode', "Fast'; --", '']) await expect(door.setDefaultModel(bad), bad).rejects.toBeInstanceOf(DoorRefusal)
+    await expect(createDoor(async () => []).setDefaultModel('Fast')).rejects.toThrow('the Default model reads back []')
+  })
+  it('a lease is taken, renewed by its holder, refused to another until it expires, and given back', async () => {
+    const { run } = database()
+    let now = T
+    const door = createDoor(run, () => String(now))
+    const at = (ms: number) => { now = ms; return door }
+    await at(T).takeLease('morning-check:abc')
+    await at(T + 1000).takeLease('morning-check:abc')
+    await expect(at(T + 2000).takeLease('product:7-1')).rejects.toThrow(/another eval run \(morning-check:abc\) holds the eval deployment until /)
+    await door.releaseLease('product:7-1')
+    await expect(at(T + 3000).takeLease('product:7-1'), 'another\'s give-back leaves the lease alone').rejects.toThrow(/morning-check:abc/)
+    await at(T + 1000 + EVAL_LEASE_TTL_MS).takeLease('product:7-1')
+    await expect(at(T + 1001 + EVAL_LEASE_TTL_MS).takeLease('morning-check:abc')).rejects.toThrow(/product:7-1/)
+    await door.releaseLease('product:7-1')
+    await at(T + 1002 + EVAL_LEASE_TTL_MS).takeLease('morning-check:def')
+  })
+  // #306 review L5: the expiry is D1's clock, never the runner's: the statement carries no runner time.
+  it('by default the lease runs on the database\'s own clock', async () => {
+    const { db, run, statements } = database()
+    const before = Date.now()
+    await createDoor(run).takeLease('morning-check:abc')
+    const after = Date.now()
+    expect(statements[0]).toContain(D1_NOW_MS)
+    expect(statements[0]).not.toMatch(/\b1[0-9]{12}\b/)
+    const lease = JSON.parse((db.prepare("SELECT value_json FROM settings WHERE owner = 'test-control' AND key = 'eval:lease'").get() as { value_json: string }).value_json) as { tag: string; until: number }
+    expect(lease.tag).toBe('morning-check:abc')
+    expect(lease.until).toBeGreaterThanOrEqual(before + EVAL_LEASE_TTL_MS - 1)
+    expect(lease.until).toBeLessThanOrEqual(after + EVAL_LEASE_TTL_MS + 1)
+  })
+  it('refuses a tag that isn\'t one before any SQL', async () => {
+    const { run, statements } = database()
+    const door = createDoor(run)
+    for (const tag of ["x'; DROP TABLE settings; --", '', 'a b']) await expect(door.takeLease(tag), tag).rejects.toBeInstanceOf(DoorRefusal)
+    await expect(door.releaseLease('a b')).rejects.toBeInstanceOf(DoorRefusal)
+    expect(statements).toEqual([])
+  })
+  it('the lease row never reads as a setting or as the test shop override', async () => {
+    const { run, d1 } = database()
+    const door = createDoor(run)
+    await door.takeLease('morning-check:abc')
+    expect(await readTestShop(d1)).toBeNull()
+    expect(await door.testShop()).toBeNull()
+    await createMorningDoor(run).setShop(HOST)
+    expect(await door.testShop()).toBe(JSON.stringify(HOST))
+  })
+  // The property: whatever the order of takes, renewals, give-backs and clock steps across runs, at most one run holds the
+  // lease at any time, and a take that went through means the taker is the holder.
+  it('the lease is never held by two runs (property)', async () => {
+    const tags = ['product:1-1', 'product:2-1', 'morning-check:a', 'morning-check:b']
+    const step = fc.oneof(
+      fc.record({ op: fc.constant('take' as const), who: fc.integer({ min: 0, max: 3 }), dt: fc.integer({ min: 0, max: EVAL_LEASE_TTL_MS * 2 }) }),
+      fc.record({ op: fc.constant('release' as const), who: fc.integer({ min: 0, max: 3 }), dt: fc.constant(0) }),
+    )
+    await fc.assert(fc.asyncProperty(fc.array(step, { maxLength: 25 }), async steps => {
+      const { db, run } = database()
+      let now = T
+      const door = createDoor(run, () => String(now))
+      for (const s of steps) {
+        now += s.dt
+        const tag = tags[s.who]!
+        let took = false
+        if (s.op === 'take') took = await door.takeLease(tag).then(() => true, (e: unknown) => { if (!(e instanceof DoorRefusal)) throw e; return false })
+        else await door.releaseLease(tag)
+        const rows = db.prepare("SELECT value_json FROM settings WHERE owner = 'test-control' AND key = 'eval:lease'").all() as { value_json: string }[]
+        expect(rows.length).toBeLessThanOrEqual(1)
+        const holder = rows[0] ? (JSON.parse(rows[0].value_json) as { tag: string; until: number }) : null
+        if (took) expect(holder).toEqual({ tag, until: now + EVAL_LEASE_TTL_MS })
+        if (s.op === 'release') expect(holder?.tag).not.toBe(tag)
+      }
+    }), { numRuns: 60 })
+  })
+})
+
+// 2c, 2g: the graded run's start, its check before each case and its give-back.
+describe('the graded run (failure 10)', () => {
+  it('MORNING_CHECK_CAP is the product eval\'s EVAL_CAP, written as the literal line ops eval-gate matches', () => {
+    expect(MORNING_CHECK_CAP).toBe(EVAL_CAP)
+    expect(readFileSync(new URL('./remote.ts', import.meta.url), 'utf8')).toContain("\nexport const MORNING_CHECK_CAP = '$50'\n")
+  })
+
+  function fakes(o: { spent?: readonly number[]; capMinor?: number; shop?: string | null; otherLease?: boolean; elsewhere?: boolean; chatStatus?: number; takeGate?: Promise<void> } = {}) {
+    const log: string[] = []
+    const spent = [...(o.spent ?? [1000])]
+    let last = spent[0]!
+    const chats = new Set<string>()
+    const door: GradedDoor = {
+      hasChat: async id => { log.push(`hasChat ${id}`); return chats.has(id) },
+      takeLease: async tag => { log.push(`take ${tag}`); await o.takeGate; if (o.otherLease) throw new DoorRefusal('refusing: another eval run (product:7-1) holds the eval deployment') },
+      releaseLease: async tag => void log.push(`release ${tag}`),
+      testShop: async () => o.shop ?? null,
+      setSpendingCap: async cap => void log.push(`cap ${cap}`),
+      setDefaultModel: async label => void log.push(`mode ${label}`),
+    }
+    const admin: ApiCall = async (method, path, body) => {
+      log.push(`${method} ${path}`)
+      if (method === 'POST' && path === '/api/chats') {
+        // --target answers from another database when `elsewhere`: the door never sees the chat.
+        if (!o.elsewhere) chats.add((body as { id: string }).id)
+        return { status: o.chatStatus ?? 201, json: {} }
+      }
+      last = spent.length ? spent.shift()! : last
+      return { status: 200, json: { total: { minor: last }, cap: { minor: o.capMinor ?? 5000 } } }
+    }
+    return { log, g: gradedRun({ door, admin, tag: 'morning-check:abc1234:1', label: 'Fast', budgetUsd: 5, probeId: () => 'eval-probe-1' }) }
+  }
+
+  it('start: the lease, the probe chat read back, the override check, the cap pinned and read back, then the Default model', async () => {
+    const { log, g } = fakes()
+    await g.start()
+    expect(log).toEqual(['take morning-check:abc1234:1', 'POST /api/chats', 'hasChat eval-probe-1', 'cap $50', 'GET /api/usage', 'mode Fast'])
+    await g.release()
+    await g.release()
+    expect(log.filter(l => l.startsWith('release'))).toEqual(['release morning-check:abc1234:1'])
+  })
+
+  it('start refuses another run\'s lease, an override it didn\'t write, another cap, a month at the cap; the model is never set', async () => {
+    for (const [o, text] of [
+      [{ otherLease: true }, 'another eval run (product:7-1)'],
+      // #306 review M1: --target answers from another database than the door's (or won't make the chat): nothing is set.
+      [{ elsewhere: true }, 'the door\'s database does not hold the chat --target just made'],
+      [{ chatStatus: 403 }, '--target did not make the probe chat (POST /api/chats answered 403)'],
+      [{ shop: '"example-mc-late-orders.myshopify.com"' }, 'a test shop override (hub:shop "example-mc-late-orders.myshopify.com") is already set'],
+      [{ capMinor: 32000 }, 'Spending cap is not $50'],
+      [{ spent: [5000] }, 'has reached the $50 cap'],
+    ] as const) {
+      const { log, g } = fakes(o)
+      await expect(g.start(), text).rejects.toThrow(text)
+      expect(log.some(l => l.startsWith('mode'))).toBe(false)
+      if (!('capMinor' in o) && !('spent' in o)) expect(log.some(l => l.startsWith('cap')), text).toBe(false)
+    }
+  })
+
+  it('a give-back while the take is still in flight waits for it, then gives the won lease back (#306 review L3)', async () => {
+    let open!: () => void
+    const { log, g } = fakes({ takeGate: new Promise<void>(r => (open = r)) })
+    const starting = g.start()
+    const releasing = g.release()
+    open()
+    await starting
+    await releasing
+    expect(log.filter(l => l.startsWith('take') || l.startsWith('release'))).toEqual(['take morning-check:abc1234:1', 'release morning-check:abc1234:1'])
+  })
+
+  it('the month rolling over during the run stops it before the next case (#306 review L1)', async () => {
+    const { g } = fakes({ spent: [4000, 4100, 50] })
+    await g.start()
+    expect(await g.beforeCase()).toBeNull()
+    expect(await g.beforeCase()).toMatch(/^the month rolled over during the run \(route 42's total \$0\.50 is below the \$40\.00 at its start\)/)
+  })
+
+  it('before each case: renews the lease, stops once the run has spent its --budget, or the month reached the cap', async () => {
+    const { log, g } = fakes({ spent: [1000, 1200, 1499, 1500] })
+    await g.start()
+    expect(await g.beforeCase()).toBeNull()
+    expect(await g.beforeCase()).toBeNull()
+    expect(await g.beforeCase()).toMatch(/^the run has spent \$5\.00 \(route 42, since its start\), reaching its --budget \$5\.00/)
+    expect(log.filter(l => l.startsWith('take'))).toHaveLength(4)
+    const atCap = fakes({ spent: [4800, 5000] })
+    await atCap.g.start()
+    expect(await atCap.g.beforeCase()).toMatch(/has reached the \$50 cap/)
+    await expect(fakes().g.beforeCase()).rejects.toThrow('was not started')
+  })
+
+  it('runAll stops before the case the budget halts, the rest not run', async () => {
+    const { g } = fakes({ spent: [1000, 1000, 1600] })
+    await g.start()
+    const door: MorningDoor = {
+      close: () => {}, setShop: async () => {}, clearShop: async () => null, model: async () => 'claude-sonnet-5-5',
+      slot: async k => ({ slot_key: k, state: 'ended', failure: null, result_text: 'found 0 things', turn_id: null, claimed_at_ms: 1 }), items: async () => [], tools: async () => [],
+    }
+    let now = 0
+    const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {}, checkModel: true, beforeCase: () => g.beforeCase() })
+    const cases = ['clean-empty', 'clean-steady', 'outage-all'].map(id => META.find(c => c.id === id)!)
+    const file = await runAll(env, cases, { date: '2026-11-22', sha: 'abc1234', model: 'claude-sonnet-5-5' })
+    expect(file.cases.map(c => c.id)).toEqual(['clean-empty'])
+    expect(file.stopped).toEqual({ at: 'clean-steady', reason: expect.stringContaining('reaching its --budget $5.00') })
+    expect(file.notRun).toEqual(['clean-steady', 'outage-all'])
+  })
+
+  it('a check that throws before a case stops the run there, recorded in the partial results', async () => {
+    const door: MorningDoor = {
+      close: () => {}, setShop: async () => {}, clearShop: async () => null, model: async () => 'claude-sonnet-5-5',
+      slot: async k => ({ slot_key: k, state: 'ended', failure: null, result_text: 'found 0 things', turn_id: null, claimed_at_ms: 1 }), items: async () => [], tools: async () => [],
+    }
+    let calls = 0
+    let now = 0
+    const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {},
+      beforeCase: async () => { if (++calls === 2) throw new DoorRefusal('refusing: another eval run (product:9-1) holds the eval deployment'); return null } })
+    const written: { cases: number; stopped?: { at: string; reason: string } }[] = []
+    const cases = ['clean-empty', 'clean-steady', 'outage-all'].map(id => META.find(c => c.id === id)!)
+    const file = await runAll(env, cases, { date: '2026-11-22', sha: 'abc1234', model: 'claude-sonnet-5-5' }, f => void written.push({ cases: f.cases.length, ...(f.stopped ? { stopped: f.stopped } : {}) }))
+    expect(file.stopped).toEqual({ at: 'clean-steady', reason: 'before clean-steady, the graded run\'s check failed: refusing: another eval run (product:9-1) holds the eval deployment' })
+    expect(file.notRun).toEqual(['clean-steady', 'outage-all'])
+    expect(written.at(-1)).toEqual({ cases: 1, stopped: file.stopped })
+  })
+
+  it('a signal clears the override, then gives the lease back, then exits', async () => {
+    const log: string[] = []
+    const handlers = new Map<string, () => void>()
+    let exited!: (code: number) => void
+    const done = new Promise<number>(r => (exited = r))
+    clearOnSignals({ close: () => void log.push('close'), clearShop: async () => { log.push('clear'); return null } }, { on: (sg, h) => void handlers.set(sg, h), exit: code => { log.push(`exit ${code}`); exited(code) }, error: () => {} }, async () => void log.push('release'))
+    handlers.get('SIGTERM')!()
+    expect(await done).toBe(143)
+    expect(log).toEqual(['close', 'clear', 'release', 'exit 143'])
+  })
+
+  it('run.mjs starts the graded run inside the try its finally gives the lease back from, after the env and results are made', () => {
+    const runMjs = readFileSync(new URL('./run.mjs', import.meta.url), 'utf8')
+    const start = runMjs.indexOf('await graded.start()')
+    const tryAt = runMjs.lastIndexOf('\ntry {', start)
+    expect(start).toBeGreaterThan(-1)
+    expect(runMjs.indexOf('const env = door ? remoteEnv(')).toBeLessThan(tryAt)
+    expect(runMjs.indexOf('const out = openResults(')).toBeLessThan(tryAt)
+    expect(start).toBeLessThan(runMjs.indexOf('await runAll('))
+    expect(runMjs.indexOf('process.exit(', tryAt), 'no exit skips the finally').toBe(-1)
+    expect(runMjs.indexOf('graded ? () => graded.release() : undefined)')).toBeLessThan(tryAt)
+    expect(runMjs.lastIndexOf('if (graded) await graded.release()')).toBeGreaterThan(runMjs.indexOf('} finally {', start))
+    expect(runMjs).toContain("the eval brand's Default model (g:mode) stays ${m.graded.label}")
   })
 })

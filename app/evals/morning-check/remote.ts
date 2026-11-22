@@ -4,6 +4,9 @@
 // own tokens, the spec uses its kit). Route 67 (the scheduler nudge) is the test build's only, behind a release token:
 // with no `alarm`, Run now's own poke and the scheduler's heartbeat move the slot, and the polls just wait (with the case's
 // deadline, as ever).
+// The graded run (run.mjs on EVAL_DB, gradedRun below) holds the eval lease, pins the eval brand's Spending cap and its
+// Default model through the door, and stops before the next case once the run has spent its --budget.
+import type { MemoryDoor } from '../targets/door.ts'
 import type { MorningDoor } from './door.ts'
 import type { RunnerEnv } from './runner.ts'
 
@@ -25,6 +28,46 @@ export interface RemoteDeps {
    * the Fast one. A real-model run leaves it alone (the eval run picks its own model).
    */
   defaultModel?: () => Promise<void>
+  /**
+   * run.mjs sets it: each case's slot model is read through the door (runner.ts modelOf), so the results carry the model
+   * the turns ran on and a run whose slots ran on another model than --model stops. The scripted proof's spec leaves it out.
+   */
+  checkModel?: boolean
+  /** The graded run's check before each case (gradedRun's beforeCase): a reason stops the run there. */
+  beforeCase?: () => Promise<string | null>
+}
+
+/**
+ * The eval brand's Spending cap for the morning-check graded run: the product eval's own (targets/product.ts EVAL_CAP, a
+ * test pins the two equal). Written as one literal line: ops eval-gate matches it.
+ */
+export const MORNING_CHECK_CAP = '$50'
+
+/**
+ * run.mjs's HTTP: every request it makes to a build (Run now, route 67, the settings and usage calls) goes through `send`:
+ * the caller's sign-in headers (targets/product.ts testIssuerSignIn, or route 67's release token), then `edge`, the eval
+ * host's Access service token (targets/product.ts accessHeaders; empty on a per-PR deploy), last. `send` gives the status
+ * and the body's text, a network failure rethrown with its message; `post` throws on any answer but 2xx with the status
+ * and the body. Neither lets an `edge` value (the secret) into a message.
+ */
+export function remoteHttp(edge: Record<string, string>, doFetch: typeof fetch = fetch) {
+  const hidden = Object.values(edge).filter(v => v !== '')
+  const scrub = (text: string) => hidden.reduce((t, v) => t.replaceAll(v, '[secret]'), text)
+  const send = async (method: 'GET' | 'PUT' | 'POST', url: URL, auth: Record<string, string>, body?: unknown): Promise<{ status: number; text: string }> => {
+    try {
+      const r = await doFetch(url, { method, headers: { 'Content-Type': 'application/json', ...auth, Origin: url.origin, ...edge }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+      return { status: r.status, text: scrub(await r.text()) }
+    } catch (e) {
+      throw new Error(`run.mjs: ${method} ${url.pathname} failed: ${scrub(e instanceof Error ? e.message : String(e))}`)
+    }
+  }
+  return {
+    send,
+    async post(url: URL, body: unknown, auth: Record<string, string>): Promise<void> {
+      const r = await send('POST', url, auth, body)
+      if (r.status < 200 || r.status > 299) throw new Error(`run.mjs: POST ${url.pathname} answered ${r.status}: ${r.text}`)
+    },
+  }
 }
 
 /** One API call as one identity, as the caller's HTTP gives the answer (status and parsed JSON). */
@@ -117,6 +160,8 @@ export function remoteEnv(d: RemoteDeps): RunnerEnv {
   let first = true
   return {
     ...(d.defaultModel ? { beforeCases: d.defaultModel } : {}),
+    ...(d.checkModel ? { modelOf: (slotKey: string) => d.door.model(slotKey) } : {}),
+    ...(d.beforeCase ? { beforeCase: d.beforeCase } : {}),
     nowMs: d.nowMs,
     useShop: host => d.door.setShop(host),
     // runAll's first clear is the run's start: a row there is a leftover from a run that didn't clear (or one running now:
@@ -153,18 +198,111 @@ const processSignals: SignalDeps = { on: (s, h) => void process.once(s, h), exit
  * must not write an override after the clear), then the override is cleared (awaited) before the process exits 130 or 143,
  * so an interrupted run leaves no override behind. A clear that fails is printed; the exit code stays the signal's.
  */
-export function clearOnSignals(door: Pick<MorningDoor, 'close' | 'clearShop'>, d: SignalDeps = processSignals): void {
+export function clearOnSignals(door: Pick<MorningDoor, 'close' | 'clearShop'>, d: SignalDeps = processSignals, release?: () => Promise<void>): void {
+  const said = (e: unknown) => (e instanceof Error ? e.message : String(e))
   for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]] as const) {
     d.on(signal, () => {
       door.close()
       d.error(`run.mjs: ${signal}: clearing the test shop override before exiting`)
+      // The graded run's eval lease is given back after the clear, whatever the clear did (`release`).
+      const giveBack = () => (release ? release().catch((e: unknown) => d.error(`run.mjs: the eval lease could not be given back: ${said(e)}`)) : Promise.resolve())
       door.clearShop().then(
-        () => d.exit(code),
+        () => giveBack().then(() => d.exit(code)),
         (e: unknown) => {
-          d.error(`run.mjs: the test shop override could not be cleared: ${e instanceof Error ? e.message : String(e)}`)
-          d.exit(code)
+          d.error(`run.mjs: the test shop override could not be cleared: ${said(e)}`)
+          void giveBack().then(() => d.exit(code))
         },
       )
     })
+  }
+}
+
+/** The graded run's door: the eval lease, the test shop override's read, the cap and the Default model (targets/door.ts). */
+export type GradedDoor = Pick<MemoryDoor, 'hasChat' | 'takeLease' | 'releaseLease' | 'testShop' | 'setSpendingCap' | 'setDefaultModel'>
+
+export interface GradedDeps {
+  door: GradedDoor
+  /** The seeded Admin on --target: route 42 (`GET /api/usage`, the Usage page's numbers) and the probe chat (route `POST /api/chats`). */
+  admin: ApiCall
+  /** This run's eval lease tag. */
+  tag: string
+  /** The Default model label --model maps to (args.ts defaultModelLabel). */
+  label: string
+  budgetUsd: number
+  /** The probe chat's id (default: a fresh `eval-probe-<hex>`). */
+  probeId?: () => string
+}
+
+export interface GradedRun {
+  /**
+   * Before runAll: takes the eval lease, proves --target answers from this door's database (a probe chat made through the
+   * API is read back through the door, as targets/product.ts does), refuses a test shop override this run didn't write (a
+   * morning-check run is on the deployment or one left it), pins MORNING_CHECK_CAP and reads it back on route 42 (a month at the cap refuses), notes
+   * the month's spend as the run's start, then sets the Default model to `label`.
+   */
+  start(): Promise<void>
+  /**
+   * Before each case: renews the lease; a reason when the run has spent its --budget, the month reached the cap, or the
+   * month rolled over (the month's total fell below the run's start, so the run's spend can't be read).
+   */
+  beforeCase(): Promise<string | null>
+  /** Gives the lease back if this run took it, waiting for a take still in flight (a signal during start). */
+  release(): Promise<void>
+}
+
+/**
+ * The month's spend and the cap from route 42, in dollars, as targets/product.ts room() reads them: the cap must still be
+ * MORNING_CHECK_CAP (a re-seed or a Settings change can't lift it silently).
+ */
+async function usage(admin: ApiCall): Promise<{ spentUsd: number; capUsd: number }> {
+  const u = await admin('GET', '/api/usage')
+  if (u.status !== 200) throw new Error(`morning-check: GET /api/usage answered ${u.status}`)
+  const j = u.json as { total?: { minor?: unknown }; cap?: { minor?: unknown } } | null
+  const cents = (m: unknown, what: string) => {
+    if (!Number.isInteger(m)) throw new Error(`morning-check: route 42 gave no ${what}`)
+    return (m as number) / 100
+  }
+  const r = { spentUsd: cents(j?.total?.minor, 'total'), capUsd: cents(j?.cap?.minor, 'cap') }
+  if (Math.round(r.capUsd * 100) !== Number(MORNING_CHECK_CAP.slice(1)) * 100) throw new Error(`morning-check: refusing: the brand's Spending cap is not ${MORNING_CHECK_CAP} (route 42 says $${r.capUsd.toFixed(2)})`)
+  return r
+}
+
+export function gradedRun(g: GradedDeps): GradedRun {
+  let leased = false
+  let taking: Promise<void> | null = null
+  let startUsd: number | null = null
+  const capUsd = Number(MORNING_CHECK_CAP.slice(1))
+  return {
+    async start() {
+      taking = g.door.takeLease(g.tag).then(() => { leased = true })
+      await taking
+      // --target must answer from the door's database (EVAL_DB): a chat made there is read back here, or nothing is set.
+      const probe = g.probeId?.() ?? `eval-probe-${crypto.randomUUID().replaceAll('-', '').slice(0, 24)}`
+      const made = await g.admin('POST', '/api/chats', { id: probe, title: 'Eval probe' })
+      if (made.status !== 200 && made.status !== 201) throw new Error(`morning-check: refusing: --target did not make the probe chat (POST /api/chats answered ${made.status})`)
+      if (!(await g.door.hasChat(probe))) throw new Error('morning-check: refusing: the door\'s database does not hold the chat --target just made, so --target is not the eval deployment the door writes to')
+      const shop = await g.door.testShop()
+      if (shop !== null) throw new Error(`morning-check: refusing: a test shop override (hub:shop ${shop}) is already set on the eval deployment and this run didn't write it: another morning-check run is on it or left it (clear it through the door once none runs)`)
+      await g.door.setSpendingCap(MORNING_CHECK_CAP)
+      const { spentUsd } = await usage(g.admin)
+      if (spentUsd >= capUsd) throw new Error(`morning-check: refusing: this month's spend ($${spentUsd.toFixed(2)}) has reached the ${MORNING_CHECK_CAP} cap`)
+      startUsd = spentUsd
+      await g.door.setDefaultModel(g.label)
+    },
+    async beforeCase() {
+      if (startUsd === null) throw new Error('morning-check: the graded run was not started')
+      await g.door.takeLease(g.tag)
+      const { spentUsd } = await usage(g.admin)
+      if (spentUsd < startUsd) return `the month rolled over during the run (route 42's total $${spentUsd.toFixed(2)} is below the $${startUsd.toFixed(2)} at its start), so its spend can't be read: it stops before the next case`
+      const run = spentUsd - startUsd
+      if (run >= g.budgetUsd) return `the run has spent $${run.toFixed(2)} (route 42, since its start), reaching its --budget $${g.budgetUsd.toFixed(2)}, so it stops before the next case`
+      if (spentUsd >= capUsd) return `this month's spend ($${spentUsd.toFixed(2)}) has reached the ${MORNING_CHECK_CAP} cap, so the run stops before the next case`
+      return null
+    },
+    async release() {
+      await taking?.catch(() => {})
+      if (leased) await g.door.releaseLease(g.tag)
+      leased = false
+    },
   }
 }
