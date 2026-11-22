@@ -327,6 +327,7 @@ describe('an exit says whether its container came up (failure 9)', () => {
     ['an unexpected exit', () => new Error('Container exited with unexpected exit code: 3'), 'exit code 3'],
     ['a runtime signal', () => new Error('Runtime signalled the container to exit: 15'), 'signalled 15'],
     ['any other platform text', () => new Error('CANARY-chat-text broke: 9'), 'Error'],
+    ['an exit shape whose code is not digits', () => new Error('Container exited with unexpected exit code: CANARY-chat-text'), 'Error'],
   ])("container_exited on %s logs the platform's code only (P8a P-auth)", (_what, error, how) => t(async state => {
     const c = new FakeContainer()
     c.route = v2Runner([2])
