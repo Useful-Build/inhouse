@@ -1,6 +1,6 @@
 # 0006. Slack is connected in the demo, as a channel
 
-- Status: accepted, 2026-11-17
+- Status: superseded by [0025](0025-slack-is-a-connected-tool.md), 2026-11-22
 - Was: UI plan 2 D6
 - Plan: [UI plan 2, Decisions](../history/UI_PLAN_2.md#decisions) (PR 3)
 

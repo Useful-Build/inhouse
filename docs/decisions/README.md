@@ -34,6 +34,7 @@ tracker's.
 | [0022](0022-icon-font-subset.md) | Subset the icon font | PD8 |
 | [0023](0023-repo-security-settings.md) | Repo security settings | PD9 |
 | [0024](0024-issues-only-contributions.md) | Issues welcome, outside PRs not accepted | PD10 |
+| [0025](0025-slack-is-a-connected-tool.md) | Slack is a connected tool the agent reads, and a channel from Act (supersedes 0006) | P5 |
 
 `PD` ids are the [production plan](../plans/2026-11-19-production.md#decisions)'s. The
 [backend plan](../plans/2026-11-19-backend.md#decisions)'s `BD1` to `BD13` don't collide and stay in that plan until
