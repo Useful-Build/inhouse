@@ -35,39 +35,30 @@ test.afterAll(async ({ request }) => {
 })
 
 /** Plants every case's text where a read returns it: Slack messages in a public channel, refund notes (the one order text the hub returns: the order's own note is denied) on recorded refunded orders. */
+/** The recorded order each Shopify case's note is planted on, by case id (the first refunded orders, in recorded order). */
+const plantedOn = new Map<string, string>()
 async function seedPlanted(request: Parameters<typeof fakeReset>[0]): Promise<void> {
   const refunded = (dataset as { orders: { name: string; refunds: unknown[] }[] }).orders.filter(o => o.refunds.length > 0).map(o => o.name)
   const shopify = NOTICE_CASES.filter(c => c.source === 'shopify_order_note')
   expect(refunded.length, 'the recorded store has refunded orders to plant notes on').toBeGreaterThanOrEqual(shopify.length)
   await seedFake(request, {
     slack: { messages: NOTICE_CASES.filter(c => c.source === 'slack_message').map(c => ({ channel: CHANNEL.general, text: c.planted })) },
-    shopify: { refundNotes: shopify.map((c, i) => ({ order: refunded[i]!, note: c.planted })) },
+    shopify: { refundNotes: shopify.map((c, i) => { plantedOn.set(c.id, refunded[i]!); return { order: refunded[i]!, note: c.planted } }) },
   })
 }
 
 // The real-model half only means something if the model's read returns the planted text: prove each reads back, through the
 // same tools the agent would use.
 test('every planted string comes back from the read the agent would make', async ({ request }) => {
-  // Refund notes are read through refunds_search, which needs `createdFrom` and scans the most recently updated refunded orders
-  // first: follow its cursor until every planted note shows (or the pages end, which fails below).
-  const refundPages: string[] = []
-  let after: string | null | undefined
-  for (let page = 0; page < 40 && after !== null; page++) {
-    const r = await hubCall(request, 'callTool', 'refunds_search', { createdFrom: '2000-01-01T00:00:00Z', first: 20, ...(after ? { after } : {}) })
-    expect(r.ok, `refunds_search page ${page}: ${JSON.stringify(r.error ?? null)}`).toBe(true)
-    refundPages.push(JSON.stringify(r.value))
-    after = (r.value as { data: { nextCursor?: string | null } }).data.nextCursor ?? null
-  }
-  const refunds = refundPages.join('\n')
   for (const c of NOTICE_CASES) {
     const text = JSON.stringify(c.planted).slice(1, -1)
-    if (c.source === 'slack_message') {
-      const read = await hubCall(request, 'callTool', 'slack_search_public', { keywords: [c.marker] })
-      expect(read.ok, `${c.id}: the read answers: ${JSON.stringify(read.error ?? null)}`).toBe(true)
-      expect(JSON.stringify(read.value), `${c.id}: the read returns the planted text`).toContain(text)
-    } else {
-      expect(refunds, `${c.id}: refunds_search returns the planted note`).toContain(text)
-    }
+    // A Slack message is found by its marker word. A refund note is read through order_get on the order it was planted on: search
+    // results (refunds_search) cut a note at 120 bytes and N01's is longer, while order_get keeps 200 (hub/connectors/shopify/shape.ts).
+    const read = c.source === 'slack_message'
+      ? await hubCall(request, 'callTool', 'slack_search_public', { keywords: [c.marker] })
+      : await hubCall(request, 'callTool', 'order_get', { name: plantedOn.get(c.id) })
+    expect(read.ok, `${c.id}: the read answers: ${JSON.stringify(read.error ?? null)}`).toBe(true)
+    expect(JSON.stringify(read.value), `${c.id}: the read returns the planted text`).toContain(text)
   }
 })
 

@@ -134,22 +134,28 @@ test('scope_mismatch: an extra scope is granted, the connect is refused and the 
 
 test('with the same-token switch on, a refused reconnect does not revoke the live token', async ({ request }) => {
   await fakeSet(request, { mcp: { sameToken: true } })
-  await freshConnect(request)
-  const connected = await fakeState(request)
-  const live = connected.mcp.liveTokens
-  expect(live.length).toBeGreaterThan(0)
-  const revokedBefore = connected.mcp.revoked
-  // Reconnecting an active account: the fake re-issues the same token, then the workspace check refuses it.
-  const c = await connectSlack(request, { team: TEAM.other })
-  expect(c.location).toMatch(/connect_error=workspace_mismatch$/)
-  const after = await fakeState(request)
-  // Same-token mode: the received token IS the live one, so nothing new was issued and the live set is unchanged.
-  expect(after.mcp.issuedTokens, 'the fake issued nothing new: the received token is the live one').toEqual(connected.mcp.issuedTokens)
-  expect([...after.mcp.liveTokens].sort()).toEqual([...live].sort())
-  for (const t of live) {
-    expect(after.mcp.revoked.filter(r => r === t).length, 'the live token is not revoked by the refused reconnect').toBe(revokedBefore.filter(r => r === t).length)
+  try {
+    await freshConnect(request)
+    const connected = await fakeState(request)
+    const live = connected.mcp.liveTokens
+    expect(live.length).toBeGreaterThan(0)
+    const revokedBefore = connected.mcp.revoked
+    // Reconnecting an active account with a wider grant: in same-token mode the fake hands back the very token the account uses
+    // (with its stored team, as real Slack does, so a team can't be changed this way), and the exact scope rule refuses it. The
+    // received token is the live one, so it is not revoked (hub/signin/core.ts, the live-token rule).
+    const c = await connectSlack(request, { grant: [...SLACK_SCOPES, 'files:read'] })
+    expect(c.location).toMatch(/connect_error=scope_mismatch$/)
+    const after = await fakeState(request)
+    expect(after.mcp.issuedTokens, 'the fake issued nothing new: the received token is the live one').toEqual(connected.mcp.issuedTokens)
+    expect([...after.mcp.liveTokens].sort()).toEqual([...live].sort())
+    for (const t of live) {
+      expect(after.mcp.revoked.filter(r => r === t).length, 'the live token is not revoked by the refused reconnect').toBe(revokedBefore.filter(r => r === t).length)
+    }
+  } finally {
+    await fakeSet(request, { mcp: { sameToken: false } })
+    // The record is left needing a reconnect (it now carries the wider scopes): disconnect so the next test starts clean.
+    await ensureDisconnected(request)
   }
-  await fakeSet(request, { mcp: { sameToken: false } })
 })
 
 test('a refresh racing a disconnect: the end state is disconnected, no token, no refresh request after the disconnect', async ({ request }) => {
@@ -169,15 +175,20 @@ test('a refresh racing a disconnect: the end state is disconnected, no token, no
 
   const gone = await call(request, inhouse, 'POST', `/api/tools/${encodeURIComponent(SLACK_ACCOUNT)}/disconnect`, { json: {} })
   expect(gone.status, gone.text).toBe(200)
-  const mark = (await fakeState(request)).mcp.refreshSends.length
+  const atDisconnect = await fakeState(request)
+  const mark = atDisconnect.mcp.refreshSends.length
   // The alarm the account would have fired for its refresh, now (the hook runs the hub's alarm once).
   const alarm = await hook(request, { op: 'alarm', accountId: SLACK_ACCOUNT })
   expect(alarm.status, alarm.text).toBe(200)
   const after = await fakeState(request)
   expect(after.mcp.refreshSends.length, 'no refresh request after the disconnect').toBe(mark)
-  // This account's tokens (every access token issued since this test began) are not live: a refresh in flight would have made one.
-  const everyoneMine = after.mcp.issuedTokens.filter(t => !before.mcp.issuedTokens.includes(t))
-  for (const t of everyoneMine) expect(after.mcp.liveTokens, 'no token of this account is live').not.toContain(t)
+  // The account's current token (the newest the fake issued, after the control's refresh) was revoked by the disconnect, and the second
+  // alarm issued no newer one: a refresh that outlived the disconnect would have made a live token here. (The fake doesn't revoke a
+  // token a refresh replaced, so only the current one is expected dead.)
+  const current = atDisconnect.mcp.issuedTokens.at(-1)!
+  expect(after.mcp.issuedTokens, 'the alarm after the disconnect issued no token').toEqual(atDisconnect.mcp.issuedTokens)
+  expect(after.mcp.revoked, 'the current token was revoked at Slack').toContain(current)
+  expect(after.mcp.liveTokens).not.toContain(current)
   const t = await readTools(request)
   expect(t.connected).not.toContain('slack')
   expect(t.details.slack?.canDisconnect).toBe(false)

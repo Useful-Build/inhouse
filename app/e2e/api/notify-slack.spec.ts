@@ -145,7 +145,10 @@ test('a member id reaches the bell and never Slack; the stored text has no URL o
   const fresh = (await bell(request)).filter(i => !known.has(i.id))
   const mine = fresh.find(i => i.body?.includes(marker))
   expect(mine, 'the bell holds the notice').toBeTruthy()
-  expect(mine!.body).not.toMatch(/https?:|www\.|<[@!#]|evil\.test/)
+  // No URL survives. Slack syntax is stored as plain characters (`<!channel>` stays text: the bell renders plain text, and the escape
+  // is the hub's, for Slack only; server/notify-slack/send.test.ts pins the same body), so this asserts the link removal, not the syntax.
+  expect(mine!.body).not.toMatch(/https?:|www\.|evil\.test/)
+  expect(mine!.body, 'the link became the fixed marker').toContain('[link removed]')
 
   const inhouseId = (await me(request, inhouse)).memberId as string
   expect(asText(await notifySend(request, newRun(owner), msg({ to: { members: [inhouseId] } })))).toContain('unknown_member')
@@ -170,6 +173,7 @@ test('the 4th post in one run is refused (run_cap) and the 21st in a day is refu
   }
   const sys = await hook(request, { op: 'systemNotice', notice: { key: `e2e:${uniq()}`, source: 'approvals', kind: 'approval_waiting', to: { alertsChannel: true }, link: { kind: 'today' } } })
   expect(sys.status, sys.text).toBe(200)
+  expect(sys.json.ok, `the system notice was accepted: ${sys.text}`).toBe(true)
   const twentieth = newRun(owner)
   expect(asText(await notifySend(request, twentieth, msg())), 'the 20th agent post').toContain('sent')
   const dayMark = auditMax()
