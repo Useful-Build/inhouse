@@ -1,0 +1,43 @@
+{
+ "row": {
+  "caseId": "E01",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "I've saved that. From now on I'll format your weekly stock report as a table, no",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_L1j1zaEQfvboz3HSXBJyGQ",
+  "askedAs": "eval-44986365620-1-e01-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I've saved that. From now on I'll format your weekly stock report as a table, no",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "inputSha256": "eeca326881fd7d364b8543baf3b6042d7cb7c519d60be5f2e989e920e7a16495",
+    "inputExcerpt": "{\"scope\":\"person\",\"person_id\":\"current\",\"fact\":\"Prefers the weekly stock report ",
+    "resultExcerpt": "Saved (a new row in the brand's memory)",
+    "isError": false
+   }
+  ]
+ }
+}

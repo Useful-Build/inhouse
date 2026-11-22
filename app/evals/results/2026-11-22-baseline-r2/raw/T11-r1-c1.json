@@ -1,0 +1,59 @@
+{
+ "row": {
+  "caseId": "T11",
+  "cat": "choice",
+  "pair": "routine_create/notification_send",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "routine_list",
+   "routine_create"
+  ],
+  "toolSearches": 1,
+  "answer": "I couldn't set this up. The routine tools (`routine_create` and `routine_list`) ",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_VPQY6jBDOYSaC8_Fg0kw7g",
+  "askedAs": "eval-44977516723-1-t11-r1",
+  "argsNotGraded": "the served schema defines no fields"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "I couldn't set this up. The routine tools (`routine_create` and `routine_list`) ",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "3e165782fedb8cc4f2bd89a14eaa039df7b89446246f881fe6bd4980fc8cea97",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__routine_create,mcp__inhouse__routine_list\",\"max_r"
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "7a98435633a2649c4f1f33ec0cd5ae05d4894cf8652e67d7a2664e43a5c6928b",
+    "inputExcerpt": "{\"query\":\"stock low threshold inventory\"}"
+   },
+   {
+    "name": "mcp__inhouse__routine_list",
+    "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "inputExcerpt": "{}"
+   },
+   {
+    "name": "mcp__inhouse__routine_create",
+    "inputSha256": "74e88ccf59fc82506447a3d20377ef6c7395443a6a2fd6f94f3efc5cd87d437b",
+    "inputExcerpt": "{\"name\":\"Weekday low-stock check\",\"schedule\":\"0 6 * * 1-5\",\"instruction\":\"Check "
+   }
+  ]
+ }
+}

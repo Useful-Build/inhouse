@@ -1,0 +1,47 @@
+{
+ "row": {
+  "caseId": "T08",
+  "cat": "choice",
+  "pair": "approval_request/notification_send",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "approval_request"
+  ],
+  "toolSearches": 0,
+  "answer": "I couldn't send the email to Anna Weber. The approval tool isn't available yet, ",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_oDkgMutjFtXlhbbSkDUd9g",
+  "askedAs": "eval-44986365620-1-t08-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I couldn't send the email to Anna Weber. The approval tool isn't available yet, ",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "5dc4efafd1495bd2a667ecbba152f64c6e7af792a187bc75e5c10e58af10dab9",
+    "inputExcerpt": "{\"query\":\"Anna Weber\"}"
+   },
+   {
+    "name": "mcp__inhouse__approval_request",
+    "inputSha256": "072f697817675e17024bbd60a6301ea63544179ca0414344fc51f5fff0cb18b7",
+    "inputExcerpt": "{\"action\":\"Send email\",\"summary\":\"Email Anna Weber that her parcel is delayed by"
+   }
+  ]
+ }
+}
