@@ -53,14 +53,14 @@ export const lostTool = (ctx: Ctx): { key: string; since: Instant } | null => {
 /**
  * Day one: the agent's data has arrived, no tool is connected yet and the server holds nothing for Today (no cards, and no
  * routine has run, a failed run included), so the agent has nothing to read. Today lists the setup instead of problems. A
- * client that is still loading isn't there yet: it doesn't know its tools. The real client has no tools read until P5, so
- * `connected` stays empty: what the server already holds for Today is what ends day one there.
+ * client that is still loading isn't there yet: it doesn't know its tools. The real client reads its tools since P5 (route
+ * 70); until that read lands (or when it fails) `connected` is empty, and what the server already holds for Today ends day one.
  */
 export const isFirstDay = (data: AgentData): boolean => data.status === 'ready' && noToolsYet(data)
 /**
  * Whether a screen may say "no tools are connected yet": none is connected and the server holds nothing for Today (no cards,
- * no routine run). With `connected` empty but cards or a run present (the real client before P5), the list is unknown, not
- * empty, so such copy stays out.
+ * no routine run). With `connected` empty but cards or a run present (the real client's tools read not landed or failed),
+ * the list is unknown, not empty, so such copy stays out.
  */
 export const noToolsYet = (data: AgentData): boolean =>
   data.tools.connected.length === 0 && data.problems.length === 0 && !data.routines.some(r => r.last !== undefined)
@@ -358,7 +358,7 @@ export function todayCopy(ctx: Ctx): TodayCopy {
         ? `Your Inhouse agent read ${read.length} of your ${connected.length} tools and changed nothing. ${listNames(missed)} ${missed.length === 1 ? 'needs' : 'need'} reconnecting.`
         : read.length
           ? `Your Inhouse agent read ${listNames(read.map(k => toolDetail(ctx.data, k).name))} and changed nothing.`
-          // Cards but no connected list (the real client before P5): don't name tools it can't list.
+          // Cards but no connected list (the real client's tools read not landed or failed): don't name tools it can't list.
           : 'Your Inhouse agent checked this morning and changed nothing.',
       countLabel: shown ? `${shown} to look at` : '', sortLabel: 'Most urgent first',
     },

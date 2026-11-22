@@ -40,6 +40,8 @@ describe('admission (4.3)', () => {
   it('a new chat opens a run, queues the turn and starts it at once', () => inAgent(async h => {
     const a = ok(await h.submit('c1', 'key-aaaa1'))
     await settle()
+    // A fixed prompt carries no version: only a versioned builder records one (#337 review).
+    expect(h.turn(a.turnId).prompt_version).toBeNull()
     expect(a.position).toBe('starting')
     expect(typesOf(h.events(a.runId))).toEqual(['run.started', 'turn.queued', 'turn.started'])
     expect(h.turn(a.turnId).state).toBe('live')
@@ -140,7 +142,7 @@ describe('claim before await (4.2.1, 4.4)', () => {
     expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'stopped', start_json: null })
     expect(h.usage.calls.map(c => c.method)).not.toContain('reserve')
     expect(h.usage.holds.get(a.turnId) ?? 0).toBe(0)
-  }, { systemPrompt: async () => 'built' }))
+  }, { systemPrompt: async () => ({ text: 'built', version: 3 }) }))
 
   it('a pause while the prompt is built (P5): no reserve, nothing placed, the turn cancelled cleanly', () => inAgent(async h => {
     const gate = deferred()
@@ -155,7 +157,7 @@ describe('claim before await (4.2.1, 4.4)', () => {
     expect(h.turn(a.turnId).state).toBe('cancelled')
     expect(h.usage.calls.map(c => c.method)).not.toContain('reserve')
     expect(h.usage.holds.get(a.turnId) ?? 0).toBe(0)
-  }, { systemPrompt: async () => 'built' }))
+  }, { systemPrompt: async () => ({ text: 'built', version: 3 }) }))
 
   it('a prompt builder that rejects (P5): logged, the static v2 prompt goes and the turn is placed', () => inAgent(async h => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -164,6 +166,7 @@ describe('claim before await (4.2.1, 4.4)', () => {
       await settle()
       expect(h.placed()).toEqual([a.turnId])
       expect((JSON.parse(h.turn(a.turnId).start_json!) as { systemPrompt: string }).systemPrompt).toBe(SYSTEM_PROMPT_V2)
+      expect(h.turn(a.turnId).prompt_version).toBe(2)
       expect(errors).toHaveBeenCalledWith(expect.objectContaining({ event: 'turn_prompt_failed', turnId: a.turnId }))
       // The error's name, never its message.
       expect(JSON.stringify(errors.mock.calls)).not.toContain('builder broke')

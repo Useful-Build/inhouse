@@ -104,8 +104,12 @@ export async function readyGatewayDeps(env: Env, testShop: string | null = null)
       },
     }),
     nowMs: () => Date.now(),
+    // With a test shop, a Shopify account's readiness is the test shop's own object's (#337 review): the real account's
+    // pause or state never decides a test-shop read. MCP accounts have no test shop and keep their own object.
     isReady: async accountId => {
-      const r = await signInFor(env, accountId).ready(accountId)
+      const shopify = testShop !== null && registry.modules.some(c => c.accountId === accountId && !isMcpConnector(c))
+      const stub = shopify ? env.SIGNIN.get(env.SIGNIN.idFromName(signInName(accountId, testShop))) : signInFor(env, accountId)
+      const r = await stub.ready(accountId)
       return r.ok ? r.value : { ready: false, code: 'not_configured' }
     },
     mcpFor: (c: McpConnectorModule): McpClient => ({

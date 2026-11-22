@@ -401,6 +401,16 @@ describe('the test shop override (through ReadGateway)', () => {
     expect(otherGraphql).toBe(1)
   })
 
+  // #337 review (Sonnet L3): a test-shop read asks the test shop's own SignIn object whether it's ready, never the real
+  // account's, so pausing the real account neither blocks nor changes a test-shop read (and the real shop stays unread).
+  it('with the real account paused, a registered test shop still reads; without the option the call is paused', async () => {
+    expect(await gateways.ConnectGateway.setPaused(server, 'shopify:store', true)).toMatchObject({ ok: true })
+    expect(await gateways.ReadGateway.callTool(run, 'shopify_script_run', { code }, { testShopHost: OTHER })).toMatchObject({ ok: true, value: { data: { result: 1 } } })
+    expect(otherGraphql).toBe(1)
+    expect(await gateways.ReadGateway.callTool(run, 'shopify_script_run', { code })).toMatchObject({ ok: false, error: { code: 'paused' } })
+    expect(seen.graphql).toBe(0)
+  })
+
   it('an unregistered or malformed test shop is invalid_args before the script runs, and no shop is read', async () => {
     for (const options of [{ testShopHost: 'example-mc-not-registered.myshopify.com' }, { testShopHost: 'evil.example' }, 'x']) {
       expect(await gateways.ReadGateway.callTool(run, 'shopify_script_run', { code }, options as never), JSON.stringify(options)).toMatchObject({ ok: false, error: { code: 'invalid_args' } })

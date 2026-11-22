@@ -21,10 +21,10 @@ import { resetSettings, settingFixtures } from './settings'
 import { CONNECTOR_METHODS, CONNECTOR_TOOL_KEY, connectorRoute, connectorWorld, isToolsWrite } from './connectors'
 import { WATCH_READ_PATH, WATCH_SERVED, changeRoutineElsewhere, settleRuns, WATCH_EXEMPT, WATCH_ONLY_ON_WATCH_BUILD, watchBuild, watchRoute } from './watch'
 
-/** The P2 methods, P4's Watch methods and P5's connector methods: what this target's client serves over HTTP. */
 /** How many live Library files `reset()` leaves (the shared Library cases delete one or two). */
 const LIBRARY_FILES = 2
 
+/** The P2 methods, P4's Watch methods and P5's connector methods: what this target's client serves over HTTP. */
 const SERVED: ReadonlySet<keyof AgentClient> = new Set<keyof AgentClient>([
   'me', 'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant', 'loadMore', 'retry', 'auditExportUrl', 'signOutUrl',
   'setSetting', 'setToggle', 'setPhoto',
