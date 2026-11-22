@@ -29,6 +29,8 @@ import { planExport } from '../../export/export.ts'
 import { planRetention } from '../../retention/retention.ts'
 import { periodsFor } from '../../retention/rules.ts'
 import { tables } from '../../tables/index.ts'
+import { activityReader } from '../../../server/activity/read.ts'
+import { FORMER, nameOf } from '../../../server/activity/render.ts'
 import { addActivity, addChat, addMemory, addNotice, addRead, agentDouble, withoutIndexes } from './test-support.ts'
 
 const db = env.DB
@@ -188,6 +190,22 @@ describe('the parts (failures 1, 2, 4)', () => {
     const row = await db.prepare('SELECT name, pseudonymised_at_ms FROM members WHERE id = ?').bind(w.p).first<{ name: string | null; pseudonymised_at_ms: number | null }>()
     expect(row?.pseudonymised_at_ms).not.toBeNull()
     expect(row?.name).toBe(FORMER_MEMBER)
+    // The read path itself (route 59's reader and its renderer): P's id renders as "A former member", Q's keeps a name.
+    const page = await activityReader({ db }).page({ limit: 500, before: null })
+    expect(page.rows.some(r => r.actor_id === w.p)).toBe(true)
+    expect(nameOf(w.p, page.names)).toBe(FORMER)
+    expect(nameOf(w.q, page.names)).not.toBe(FORMER)
+  })
+
+  it('runs against the real BrandAgent object: its personData counts and deletes P\'s rows (none here) through the same seam', async () => {
+    const w = await world(1, false)
+    const stub = env.BRAND_AGENT.get(env.BRAND_AGENT.idFromName(`pd-${token()}`))
+    const plan = await planOk(deps({ brandAgent: stub }), w.p)
+    expect(Object.keys(plan.counts).filter(k => k.startsWith('BrandAgent.')).sort()).toEqual(PERSON_DATA_TABLES.map(t => `BrandAgent.${t}`).sort())
+    const r = await runPersonDeletion(deps({ brandAgent: stub }), plan)
+    if (!('ok' in r)) throw new Error(`run refused: ${JSON.stringify(r)}`)
+    expect(r.ok.removed).toEqual(plan.counts)
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM chats WHERE owner_id = ?').bind(w.p).first<{ n: number }>()).toEqual({ n: 0 })
   })
 
   it('planPersonDeletion, planRetention and planExport succeed over the whole merged registry: every entry has a rule or is derived', async () => {
@@ -208,6 +226,17 @@ describe('what it refuses (failures 4 and 5)', () => {
     const before = await snapshotAll(db, bucket)
     expect(await planPersonDeletion(deps({ brandAgent: w.agent }), { memberId: w.p })).toEqual({ refused: 'outside_chats' })
     expect(await snapshotAll(db, bucket)).toEqual(before)
+  })
+
+  it('refuses outside_chats for a message P authored, or a tool call P made, in a chat P doesn\'t own', async () => {
+    for (const plant of ['message', 'tool call'] as const) {
+      const w = await world(1, false)
+      const qChat = `c_${token()}`
+      await addChat(db, bucket, { id: qChat, owner: w.q, lastAtMs: T, marker: 'shared2' })
+      if (plant === 'message') await db.prepare("INSERT INTO chat_messages (id, chat_id, run_id, turn_id, pos, role, author_id, text, at_ms) VALUES (?, ?, 'r', 't', 9, 'user', ?, 'x', ?)").bind(`${qChat}.p`, qChat, w.p, T).run()
+      else await db.prepare("INSERT INTO tool_calls (turn_id, n, chat_id, member_id, hook, tool, decision, input_bytes, input_sha256, at_ms) VALUES (?, 9, ?, ?, 'pre', 'x', 'allow', 1, 'ab', ?)").bind(`t_p_${token()}`, qChat, w.p, T).run()
+      expect(await planPersonDeletion(deps({ brandAgent: w.agent }), { memberId: w.p }), plant).toEqual({ refused: 'outside_chats' })
+    }
   })
 
   it('a BrandAgent count difference at the recount refuses with busy and changes nothing; a D1 or R2 difference refuses with plan_stale and changes nothing', async () => {

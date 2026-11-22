@@ -17,8 +17,16 @@ describe('KeySet', () => {
     },
   )
 
+  it('grows past a capacity too small, and a set sized to its keys answers the same', () => {
+    const small = new KeySet(2)
+    const sized = new KeySet(1000)
+    for (let i = 0; i < 1000; i++) { small.add(`k${i}`); sized.add(`k${i}`) }
+    for (const k of ['k0', 'k999', 'k1000']) expect(small.has(k), k).toBe(sized.has(k))
+    expect(sized.bytes).toBe(8000)
+  })
+
   it('holds 8 bytes a key once sealed, and refuses a key added after it answered', () => {
-    const set = new KeySet()
+    const set = new KeySet(100_000)
     for (let i = 0; i < 100_000; i++) set.add(`"t_${i}"`)
     expect(set.has('"t_99999"')).toBe(true)
     expect(set.has('"t_100000"')).toBe(false)

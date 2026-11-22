@@ -22,18 +22,29 @@ function hash53(key: string): number {
 }
 
 export class KeySet {
-  private pending: number[] = []
+  private buffer: Float64Array
+  private size = 0
   private sorted: Float64Array | null = null
+
+  /** `capacity`: the keys expected (the backup knows each parent's row count from its point batch); it grows past it. */
+  constructor(capacity = 0) {
+    this.buffer = new Float64Array(Math.max(16, capacity))
+  }
 
   add(key: string): void {
     if (this.sorted !== null) throw new Error('KeySet: sealed (a key added after the set first answered)')
-    this.pending.push(hash53(key))
+    if (this.size === this.buffer.length) {
+      const grown = new Float64Array(this.buffer.length * 2)
+      grown.set(this.buffer)
+      this.buffer = grown
+    }
+    this.buffer[this.size++] = hash53(key)
   }
 
   has(key: string): boolean {
     if (this.sorted === null) {
-      this.sorted = Float64Array.from(this.pending).sort()
-      this.pending = []
+      this.sorted = this.buffer.slice(0, this.size).sort()
+      this.buffer = new Float64Array(0)
     }
     const h = hash53(key)
     let lo = 0
@@ -50,6 +61,6 @@ export class KeySet {
 
   /** The bytes the sealed set holds (8 a key). */
   get bytes(): number {
-    return (this.sorted?.length ?? this.pending.length) * 8
+    return (this.sorted?.length ?? this.size) * 8
   }
 }

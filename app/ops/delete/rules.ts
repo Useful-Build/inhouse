@@ -20,7 +20,7 @@ export type DeletionRule =
   /**
    * A deletion only C1's own runner can do: the chat cascade (objects before rows, children before parents), the bell's
    * ordered delete, the BrandAgent's storage through `BrandAgentRpc.personData`. `deletes` names the person keys whose
-   * rows go. Person deletion refuses to plan a custom rule until that runner lands (P8 C1, after this PR), so no run
+   * rows go. Each runs through its part in person.ts; a custom rule no part serves refuses to plan by name, so no run
    * can remove one store's rows and leave another's.
    */
   | { action: 'custom'; deletes: readonly string[]; kept?: readonly string[]; why: string }

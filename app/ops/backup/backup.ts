@@ -71,7 +71,9 @@ export async function backup(deps: BackupDeps): Promise<BackupManifest> {
   // Each referenced parent column's backed-up keys, 8 bytes a key (key-set.ts), so a parent that grows without bound
   // (usage_turns, about 365,000 ids a year) stays well inside the isolate's 128 MB.
   const keys = new Map<string, KeySet>()
-  for (const fk of fks.values()) for (const f of fk) keys.set(`${f.table}.${f.to}`, new KeySet())
+  // Each set sized to its parent's rows at the point batch (a snapshot table's rows, a bounded table's count).
+  const expected = (table: string) => snapshotRows.get(table)?.length ?? points.get(table)?.n ?? 0
+  for (const fk of fks.values()) for (const f of fk) keys.set(`${f.table}.${f.to}`, new KeySet(expected(f.table)))
   for (const r of rules) {
     const tableFks = fks.get(r.name) ?? []
     const add = async (row: Record<string, unknown>) => {
@@ -98,8 +100,8 @@ export async function backup(deps: BackupDeps): Promise<BackupManifest> {
     const digest = await writer.finish()
     // An insert_only or bounded append_only table is exact when it read back the rows the point batch counted; paged
     // tables never are. The count is the only check: a delete and an insert inside the read window cancel out and read
-    // as exact. Retention runs in the same one-task queue as the backup, and person deletion is serialised with it in
-    // C1's jobs PR, so neither deletes inside the window.
+    // as exact. Retention runs in the same one-task queue as the backup, so it never deletes inside the window. Nothing
+    // calls runPersonDeletion yet: when F1 adds its entry point, it's a due-task kind in the same queue.
     const exact = r.mode === 'paged' ? false : point === undefined ? true : digest.rows === point.n
     tables.push({
       name: r.name, columns: cols(r.name), orderBy: [...r.orderBy], mode: r.mode, rows: digest.rows,

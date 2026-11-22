@@ -117,6 +117,23 @@ describe('the retention task', () => {
     expect(names).toEqual(expect.arrayContaining(['chats', 'tool_calls', 'chat_files', 'BrandAgent', 'memories', 'notices', 'library_uploads', 'activity_lines']))
   })
 
+  it('inside the object, a run that stops early leaves a retention-more task a minute on, and that task finishes the work', () => inAgent(async h => {
+    const h2 = h.restart()
+    const now = h2.clock.now
+    await env.DB.prepare(`WITH RECURSIVE s(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM s WHERE i < 1600)
+      INSERT INTO activity_lines (id, at_ms, kind, template, fields_json, source, source_key) SELECT 'ado_' || i, ?, 'change', 't', '{}', 'test', 'ado_' || i FROM s`).bind(now - 400 * DAY).run()
+    const old = async () => (await env.DB.prepare("SELECT COUNT(*) AS n FROM activity_lines WHERE id LIKE 'ado_%'").first<{ n: number }>())!.n
+    const more = () => h2.sql.exec<{ due_at_ms: number }>("SELECT due_at_ms FROM due_tasks WHERE id = 'retention-more'").toArray()
+    await h2.tick(0)
+    // 1,500 a run (3 rounds of 500): 100 left, under retention-more a minute on.
+    expect(await old()).toBe(100)
+    expect(more()).toEqual([{ due_at_ms: now + MORE_AFTER_MS }])
+    await h2.tick(MORE_AFTER_MS)
+    expect(await old()).toBe(0)
+    expect(more()).toEqual([])
+    expect(h2.sql.exec<{ due_at_ms: number }>("SELECT due_at_ms FROM due_tasks WHERE id = 'retention'").toArray()).toEqual([{ due_at_ms: nextDaily(now, RETENTION_AT) }])
+  }, { handlers: { retention: createRetentionTask({ registry: [entry('activity_lines')] }) } }))
+
   it('the retention handler writes the BrandAgent part\'s deletion-log entries with ids and counts only', async () => {
     const stub = env.BRAND_AGENT.get(env.BRAND_AGENT.idFromName(`rh-${token()}`))
     const before = (await listDeletionLog(env.FILES)).map(e => e.key)

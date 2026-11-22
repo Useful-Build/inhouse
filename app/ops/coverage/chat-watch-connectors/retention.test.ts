@@ -284,6 +284,12 @@ describe('the dry run and coverage (failures 6 and 7)', () => {
     const now = nextClock()
     const cut = now - DEFAULT_DAYS.chats * DAY
     for (let i = 0; i < 3; i++) await addChat(db, bucket, { id: `c_${token()}`, owner: seeded.members.dana, lastAtMs: cut - 1 - i, marker: `dry${i}` })
+    // One past-retention row in each of the other kinds of store, and one just inside each cutoff.
+    for (const [at, tag] of [[cut - 1, 'old'], [cut, 'edge']] as const) {
+      await addActivity(db, { id: `a_dry_${tag}_${token()}`, actor: null, subject: null, atMs: at })
+      await addNotice(db, { id: `n_dry_${tag}_${token()}`, audience: 'team', atMs: at })
+    }
+    await addMemory(db, { id: `mem_dry_${token()}`, owner: null, createdBy: SYSTEM_MEMBER_ID, marker: 'dry', status: 'forgotten', updatedAtMs: now - 30 * DAY - 1 })
     const stores = ['chats', 'chat_messages', 'tool_calls', 'chat_files', 'files/', 'sessions/', 'activity_lines', 'notices', 'notice_reads', 'memories', 'library_uploads', 'library_marks', 'library/', 'routine_slots', 'today_items', 'today_aside']
     const registry = stores.map(entry)
     const before = await snapshotAll(db, bucket)
@@ -294,6 +300,32 @@ describe('the dry run and coverage (failures 6 and 7)', () => {
     expect(plan.counts.chats).toBe(pastChats.size)
     expect(plan.counts.chat_messages).toBe(before.d1.chat_messages.filter(m => pastChats.has(m.chat_id)).length)
     expect(plan.counts['files/']).toBe(Object.keys(before.r2).filter(k => [...pastChats].some(c => k.startsWith(`files/${c}/`))).length)
+    expect(plan.counts.activity_lines).toBe(before.d1.activity_lines.filter(r => (r.at_ms as number) < now - DEFAULT_DAYS.steps * DAY).length)
+    const oldNotices = new Set(before.d1.notices.filter(r => (r.at_ms as number) < now - DEFAULT_DAYS.steps * DAY).map(r => r.id))
+    expect(plan.counts.notices).toBe(oldNotices.size)
+    expect(plan.counts.notice_reads).toBe(before.d1.notice_reads.filter(r => oldNotices.has(r.notice_id)).length)
+    expect(plan.counts.memories).toBe(before.d1.memories.filter(r => r.status === 'forgotten' && (r.updated_at_ms as number) < now - 30 * DAY).length)
+    expect(plan.counts.today_aside).toBe(before.d1.today_aside.filter(r => (r.at_ms as number) < now - DEFAULT_DAYS.steps * DAY).length)
+    expect(plan.counts.activity_lines).toBeGreaterThan(0)
+    expect(plan.counts.memories).toBeGreaterThan(0)
+  })
+
+  it('a chat cascade whose object delete fails leaves the chat in D1, and the next run finds and finishes it', async () => {
+    const now = nextClock()
+    const cut = now - DEFAULT_DAYS.chats * DAY
+    const id = `c_${token()}`
+    const objs = await addChat(db, bucket, { id, owner: seeded.members.dana, lastAtMs: cut - 1, marker: 'r2fail' })
+    const failing = Object.assign(Object.create(Object.getPrototypeOf(bucket)), { delete: async () => { throw new Error('R2 delete failed (test)') } }) as R2Bucket
+    for (const m of ['list', 'get', 'head', 'put'] as const) (failing as unknown as Record<string, unknown>)[m] = (bucket[m] as (...a: unknown[]) => unknown).bind(bucket)
+    const registry = [entry('chats')]
+    const d = { db, bucket: failing, at: { actorId: SYSTEM_MEMBER_ID, requestId: 'r', nowMs: now }, clock: () => ++wall, registry }
+    await expect(runRetention(d, await planRetention(d, { periods: periodsFor(registry) }))).rejects.toThrow(/R2 delete failed/)
+    expect(await has('chats', 'id = ?', id)).toBe(1)
+    expect(await object(objs.fileKey)).toBe(true)
+    await retain(['chats'], now)
+    expect(await has('chats', 'id = ?', id)).toBe(0)
+    expect(await object(objs.fileKey)).toBe(false)
+    expect(await object(objs.sessionKey)).toBe(false)
   })
 
   it('every P3 to P5 registry entry has a retention decision, a deletion rule or a stated keep, and an export decision', () => {

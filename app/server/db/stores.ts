@@ -41,6 +41,7 @@ import type { TodayStore } from '../today/store.ts'
 
 import { routineStore } from '../routines/store.ts'
 import { dataHealth } from '../ops/signals/data.ts'
+import type { KeyedBucket } from './r2-keys.ts'
 import type { DataHealth } from '../ops/signals/data.ts'
 import type { RoutineStore } from '../routines/store.ts'
 
@@ -92,7 +93,7 @@ export interface Stores extends AuthStores {
 export interface StoresEnv {
   DB: D1Database
   /** The R2 bucket of photos (wrangler config `FILES`); P8 C1's health signals list it (backups, the deletion log). */
-  FILES: PhotoStoreDeps['files'] & Pick<R2Bucket, 'list'>
+  FILES: PhotoStoreDeps['files'] & Pick<KeyedBucket, 'list'>
   AUDIT_HASH_KEY?: string
 }
 

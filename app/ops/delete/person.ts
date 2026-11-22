@@ -271,6 +271,10 @@ export async function runPersonDeletion(deps: DeletionDeps, plan: PersonDeletion
 
   // One batch, children before parents: the delete_rows steps (notice_reads before notices), the notices part, then
   // the cascade's rows (library marks, chat files, tool calls, messages, then the chats).
+  // Its size limit, recorded (#346 review): the cascade's statements select through `chats WHERE owner_id = ?`, so they
+  // bind one parameter however many chats the person has, but the batch is one transaction, and D1 caps a query's time
+  // (https://developers.cloudflare.com/d1/platform/limits/, read 2026-11-22). A person with very many chats may need it
+  // chunked by chats; nothing calls this job yet, and F1's entry point (a due task) is where that chunking would go.
   const rowSteps = steps.filter(s => s.rule.action === 'delete_rows')
   const batch: { store: string; stmt: ReturnType<typeof stmt> }[] = rowSteps.map(({ entry: e, rule }) => ({
     store: e.name, stmt: stmt(`DELETE FROM ${ident(e.name)} WHERE ${ident((rule as { column: string }).column)} = ?`, memberId),
