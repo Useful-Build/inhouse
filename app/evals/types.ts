@@ -137,7 +137,7 @@ export interface Target {
 
 /**
  * A turn the brand's Spending cap fenced (`cap_reached`, as a failure or a cancel reason on the turn's end row): the run
- * stops there, and the chat is never graded as a pass (O2 note: the eval brand's $40 cap, decision 18).
+ * stops there, and the chat is never graded as a pass (O2 note: the eval brand's $50 cap).
  */
 export class CapReachedError extends Error {
   override name = 'CapReachedError'

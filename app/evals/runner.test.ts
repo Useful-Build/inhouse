@@ -224,7 +224,7 @@ describe('the Spending cap', () => {
   // previous case-repeat ended), so it reads the pinned cap and settled spend; the case then sends no chat.
   it('reads the room after the seed, and refuses a case whose estimate would cross the cap: no chat, the run stops', async () => {
     const order: string[] = []
-    const t = capTarget({ spentUsd: 39.9, capUsd: 40 })
+    const t = capTarget({ spentUsd: 49.9, capUsd: 50 })
     const seed = t.seed
     t.seed = async (...a) => { order.push('seed'); return seed(...a) }
     const room = t.room
@@ -233,7 +233,7 @@ describe('the Spending cap', () => {
     expect(order).toEqual(['seed', 'room'])
     expect(out.rows).toEqual([])
     expect(out.stoppedByBudget).toBe(true)
-    expect(out.capStop).toMatchObject({ caseId: 'R01', rep: 1, why: 'would cross the cap', spentUsd: 39.9, capUsd: 40 })
+    expect(out.capStop).toMatchObject({ caseId: 'R01', rep: 1, why: 'would cross the cap', spentUsd: 49.9, capUsd: 50 })
   })
   // #253 review O5: the estimate never sits below the ledger's $0.25 start hold, so "would cross" fires before the
   // product fences the chat.
@@ -241,15 +241,15 @@ describe('the Spending cap', () => {
     const ledger = readFileSync(new URL('../server/usage/ledger.ts', import.meta.url), 'utf8')
     expect(ledger).toMatch(/export const START_HOLD_MICRO = 250_000\n/)
     expect(CAP_CHAT_USD).toBe(0.25)
-    // $39.80 spent: a one-chat case needs $0.25 free, so it would cross.
-    const out = await runEvals({ target: capTarget({ spentUsd: 39.8, capUsd: 40 }), cases: [CASES.find((c) => c.id === 'R01')!], reps: 1, concurrency: 1 })
+    // $49.80 spent: a one-chat case needs $0.25 free, so it would cross.
+    const out = await runEvals({ target: capTarget({ spentUsd: 49.8, capUsd: 50 }), cases: [CASES.find((c) => c.id === 'R01')!], reps: 1, concurrency: 1 })
     expect(out.capStop).toMatchObject({ why: 'would cross the cap', estimateUsd: 0.25 })
   })
   // #253 review O4: after a stop, a case-repeat queued behind it sends nothing.
   it('after a cap stop, a case-repeat that already got past its own check sends no chat', async () => {
     let n = 0
     const sent: string[] = []
-    const t = capTarget({ spentUsd: 0, capUsd: 40 }, async () => { n++; sent.push(`chat ${n}`); throw new CapReachedError(`t_${n}`) })
+    const t = capTarget({ spentUsd: 0, capUsd: 50 }, async () => { n++; sent.push(`chat ${n}`); throw new CapReachedError(`t_${n}`) })
     // One case-repeat at a time, as the product target's seed lock holds them (seed waits for the last reset).
     const seed = t.seed
     let tail: Promise<void> = Promise.resolve()
@@ -266,24 +266,24 @@ describe('the Spending cap', () => {
     expect(out.rows).toHaveLength(1)
     expect(out.capStop).toMatchObject({ why: 'cap reached' })
   })
-  // #253 review O3, O6: a room read that fails (route 42 down, the cap no longer $40) stops every worker and the run
+  // #253 review O3, O6: a room read that fails (route 42 down, the cap no longer $50) stops every worker and the run
   // still returns, so run.ts writes a report that fails.
   it('a room read that fails stops the run with a report, never a crash', async () => {
-    const t = capTarget({ spentUsd: 0, capUsd: 40 })
-    t.room = async () => { throw new Error('refusing: the brand\'s Spending cap is not $40 (route 42 says $320.00)') }
+    const t = capTarget({ spentUsd: 0, capUsd: 50 })
+    t.room = async () => { throw new Error('refusing: the brand\'s Spending cap is not $50 (route 42 says $320.00)') }
     const out = await runEvals({ target: t, cases: ['R01', 'R02'].map((id) => CASES.find((c) => c.id === id)!), reps: 1, concurrency: 2 })
     expect(out.rows).toEqual([])
     expect(out.stoppedByBudget).toBe(true)
-    expect(out.capStop).toMatchObject({ why: 'cap check failed', detail: expect.stringMatching(/not \$40/) })
+    expect(out.capStop).toMatchObject({ why: 'cap check failed', detail: expect.stringMatching(/not \$50/) })
   })
   it('runs a case with room', async () => {
-    const t = capTarget({ spentUsd: 0, capUsd: 40 })
+    const t = capTarget({ spentUsd: 0, capUsd: 50 })
     const out = await runEvals({ target: t, cases: [CASES.find((c) => c.id === 'R01')!], reps: 1, concurrency: 1 })
     expect(out.rows).toHaveLength(1)
     expect(out.capStop).toBeUndefined()
   })
   it('a chat the cap fenced stops the run; its row is a failure that says so', async () => {
-    const t = capTarget({ spentUsd: 0, capUsd: 40 }, async () => { throw new CapReachedError('t_1') })
+    const t = capTarget({ spentUsd: 0, capUsd: 50 }, async () => { throw new CapReachedError('t_1') })
     const out = await runEvals({ target: t, cases: ['R01', 'R02'].map((id) => CASES.find((c) => c.id === id)!), reps: 1, concurrency: 1 })
     expect(out.rows).toHaveLength(1)
     expect(out.rows[0]).toMatchObject({ pass: false, runOk: false })
