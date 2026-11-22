@@ -148,8 +148,8 @@ describe('pdf', () => {
     expect(uri?.references).toEqual([{ kind: 'link', url: 'https://reports.partner.test/t?d=k' }])
     expect(unsafe(uri)).toBe(true)
     const hidden = extractFile('r.pdf', '', pdf(['<< /Type /Catalog >>'], [{ dict: '/Type /ObjStm /N 1 /First 4 /Filter /FlateDecode', data: deflateSync(Buffer.from('9 0 << /S /URI /URI (https://img.partner.test/z) >>')) }]))
-    expect(hidden?.references.map((r) => r.url)).toEqual(['https://img.partner.test/z'])
-    expect(unsafe(hidden)).toBe(true)
+    // Object streams are refused outright (round 5): only classic single-revision PDFs are read.
+    expect(hidden).toBeNull()
   })
   it('reads shown text and passes a PDF with no action or link', () => {
     const text = extractFile('r.pdf', '', pdf(['<< /Type /Catalog >>'], [{ dict: '/Filter /FlateDecode', data: deflateSync(Buffer.from('BT (Refund total 42) Tj [(per) -20 (day)] TJ ET')) }]))

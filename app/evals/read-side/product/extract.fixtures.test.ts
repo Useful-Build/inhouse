@@ -23,8 +23,11 @@ describe('hostile PDF probes', () => {
     '04-objstm-untyped-length1', '04b-objstm-untyped-length1', '04c-objstm-untyped-metadata', '06-objstm-ccitt',
     // Filters this reader doesn't take, encryption, and an update whose xref points nowhere.
     '08-lzw', '09-runlength', '10-nested-filters', '12-encrypt', '13-incremental',
+    // Any object stream or cross-reference stream (Wasim's call, round 5: classic single-revision PDFs only, as reportlab writes).
+    '05-objstm-typed', '05b-objstm-typed', '07-objstm-predictor', '07b-objstm-predictor', '11-indirect-length',
+    'E-objstm-index-mismatch', 'F-top-and-objstm', 'G-gen1-reuse', 'H-xrefstm-into-image',
   ]
-  const UNSAFE = ['01-direct-js', '05-objstm-typed', '05b-objstm-typed', '07-objstm-predictor', '07b-objstm-predictor', '11-indirect-length', '14-xfa', '15-filespec-order']
+  const UNSAFE = ['01-direct-js', '14-xfa', '15-filespec-order']
   for (const name of NULL) it(`${name} is null`, () => expect(read('pdf', `${name}.pdf`)).toBeNull())
   for (const name of UNSAFE) {
     it(`${name} fails the grader (or is null)`, () => {

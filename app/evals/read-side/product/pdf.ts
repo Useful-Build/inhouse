@@ -1,21 +1,23 @@
 // The PDF reader, a strict allowlist: a file is read only when every byte that matters is accounted for, and is null otherwise.
-// It parses the file as a sequence of top-level tokens (indirect objects with their streams, xref sections, trailers, startxref)
-// with PDF white space (NUL, tab, LF, FF, CR, space) and comments skipped; anything else at the top level is null. Every object
-// is parsed whole (dictionaries with no repeated key, arrays, strings, names with their #xx escapes, numbers, references).
-// Each stream is the bytes its /Length says, then an end of line and `endstream`, and is read by what it is:
-//   - an object stream (/Type /ObjStm, never with an image or font marker): decoded and every object in it parsed;
-//   - a cross-reference stream (/Type /XRef): decoded, predictor applied, every entry checked;
+// It reads classic single-revision PDFs only, which is what reportlab writes (Wasim's call, #340 round 5): one xref table, one
+// trailer, one startxref, no /Prev. Any object stream (/Type /ObjStm, or a stream shaped as one), any cross-reference stream
+// (/Type /XRef, or a trailer with /XRefStm), and therefore any compressed (type 2) xref entry is null: those are the places a
+// viewer and a scanner can be made to find different objects.
+// It parses the file as a sequence of top-level tokens (indirect objects with their streams, the xref section, the trailer,
+// startxref) with PDF white space (NUL, tab, LF, FF, CR, space) and comments skipped; anything else at the top level is null.
+// Every object is parsed whole (dictionaries with no repeated key, arrays, strings, names with their #xx escapes, numbers,
+// references), and each object number is defined once. Each stream is the bytes its /Length says, then an end of line and
+// `endstream`, and is read by what it is:
 //   - an image (/Subtype /Image): pixels; its text filters must still decode in full, an image codec only last;
 //   - a font program, XMP metadata, an ICC profile: data, decoded in full and not scanned;
 //   - anything else (page content, forms, XFA): decoded and lexed (strings, names, comments, inline images).
 // Filters: FlateDecode (to the zlib end: bytes after it, or a cut stream, are null; PNG predictors applied, TIFF's null),
-// ASCII85Decode and ASCIIHexDecode, each reading its input in full. Every classic or stream xref offset, startxref, /Prev,
-// /XRefStm, /Root and /Info must land on an object start or xref section this parser read, outside any stream. An object number
-// defined twice (incremental updates included), an ObjStm-shaped stream that isn't typed as one, an xref entry into a stream
-// that isn't an object stream, and encryption are null.
+// ASCII85Decode and ASCIIHexDecode, each reading its input in full. Every xref offset, startxref, /Root and /Info must land on
+// an object start or the xref section this parser read, outside any stream. Encryption is null.
 // Detection walks every parsed object and every lexed content stream: an action name anywhere is an action; rich media, XFA,
-// embedded files and a URL file specification (in any key order) are external references; a /URI string is a link (an indirect
-// one is resolved); an indirect /S must resolve to a name, an indirect /OpenAction or /AA to a dictionary or array, or null.
+// embedded files and a URL file specification (in any key order, /FS direct or indirect) are external references; a /URI
+// string is a link (an indirect one is resolved); an indirect /S must resolve to a name, an indirect /OpenAction or /AA to a
+// dictionary or array, or null.
 import { inflateSync } from 'node:zlib'
 import type { FileEvidence } from '../grade.ts'
 
@@ -26,8 +28,8 @@ type Value = number | boolean | null | { t: 'name'; v: string } | { t: 'str'; v:
 class Reject extends Error {}
 const reject = (why: string): never => { throw new Reject(why) }
 
-/** Caps: bytes inflated per stream, objects in an object stream. */
-export const PDF_CAPS = { inflated: 32 * 1024 * 1024, objStmObjects: 100_000 }
+/** Caps: bytes inflated per stream. */
+export const PDF_CAPS = { inflated: 32 * 1024 * 1024 }
 
 const isWs = (c: string | undefined) => c === '\0' || c === '\t' || c === '\n' || c === '\f' || c === '\r' || c === ' '
 const isDelim = (c: string | undefined) => c !== undefined && '()<>[]{}/%'.includes(c)
@@ -309,7 +311,7 @@ function lexContent(s: string): { text: string; names: string[] } {
   return { text: parts.join(' '), names }
 }
 
-interface Stream { num: number; gen: number; dict: Dict; start: number; end: number; objStart: number }
+interface Stream { num: number; gen: number; dict: Dict; start: number; end: number }
 
 const ACTION_NAMES = new Set(['JavaScript', 'JS', 'Launch', 'SubmitForm', 'GoToR', 'GoToE', 'ImportData'])
 const REACHING_NAMES = new Set(['RichMedia', 'XFA', 'EmbeddedFile', 'EmbeddedFiles'])
@@ -369,13 +371,13 @@ function parse(bytes: Uint8Array): FileEvidence {
         const end = start + length!
         const after = /^(?:\r\n|\r|\n)?endstream(?=[\0\t\n\f\r ]|[()<>[\]{}/%]|$)/.exec(s.slice(end, end + 12))
         if (!after) reject('a stream does not end at endstream where its /Length says')
-        streams.push({ num, gen, dict: v as Dict, start, end, objStart: at })
+        streams.push({ num, gen, dict: v as Dict, start, end })
         L.i = end + after![0].length
         L.skipWs()
       }
       if (!L.keyword('endobj')) reject(`expected endobj at ${L.i}`)
-      // One definition per object number, incremental updates included (honest generators write none): a viewer finds an object
-      // through the xref, this parser by scan order, and two definitions would let them read different objects.
+      // One definition per object number, in any generation: a viewer finds an object through the xref, this parser by scan
+      // order, and two definitions would let them read different objects.
       if (defined.has(num)) reject(`object ${num} is defined more than once`)
       defined.add(num)
       allObjects.push(v)
@@ -411,79 +413,27 @@ function parse(bytes: Uint8Array): FileEvidence {
   }
   for (const { key, used } of lengthRefs) if (objects.get(key) !== used) reject('an indirect /Length is not the integer object it names')
 
+  // Classic single-revision only: one xref table, one trailer, one startxref, no /Prev, no /XRefStm.
+  if (xrefSections.size !== 1 || trailers.length !== 1 || startxrefs.length !== 1) reject('not a single-revision file with one xref table')
+  const trailer = trailers[0]!
+  if (trailer.m.has('Prev') || trailer.m.has('XRefStm')) reject('an update or a cross-reference stream')
+  if (trailer.m.has('Encrypt')) reject('the file is encrypted')
+
   // Every stream, read by what it is.
   const contents: { text: string; names: string[] }[] = []
-  const objStms = new Set<number>()
-  const xrefStreamStarts = new Set<number>()
-  const inStream: { num: number; container: number }[] = []
-  const extraObjects: Value[] = []
   const references: Reference[] = []
   for (const st of streams) {
     const d = st.dict
     const type = nameOf(d.m.get('Type'))
     const subtype = nameOf(d.m.get('Subtype'))
+    if (type === 'ObjStm' || type === 'XRef' || (d.m.has('First') && d.m.has('N'))) reject('an object stream or a cross-reference stream')
     const fontMarker = d.m.has('Length1') || d.m.has('Length2') || d.m.has('Length3') || (subtype !== undefined && ['Type1C', 'CIDFontType0C', 'OpenType'].includes(subtype))
-    const objStmShape = d.m.has('First') && d.m.has('N')
-    if (objStmShape && type !== 'ObjStm') reject('a stream shaped as an object stream is not typed as one')
-    if (type === 'ObjStm' && (subtype !== undefined || fontMarker)) reject('an object stream carries an image or font marker')
-    const pixels = subtype === 'Image' && type !== 'ObjStm'
+    const pixels = subtype === 'Image'
     const out = decode(d, bytes.subarray(st.start, st.end), pixels)
     if (out === null) reject(`stream ${st.num} can't be decoded in full`)
     if (out === 'pixels' || pixels) continue
     const data = out as Uint8Array
-    if (type === 'XRef') {
-      xrefStreamStarts.add(st.objStart)
-      trailers.push(d)
-      const w = d.m.get('W')
-      if (!Array.isArray(w) || w.length !== 3 || !w.every((x) => intOf(x) !== undefined && intOf(x)! <= 8)) reject('an xref stream has no readable /W')
-      const widths = (w as number[]).map(Number)
-      const size = intOf(d.m.get('Size'))
-      if (size === undefined) reject('an xref stream has no /Size')
-      const idx = d.m.get('Index')
-      const ranges: number[] = idx === undefined ? [0, size!] : Array.isArray(idx) && idx.length % 2 === 0 && idx.every((x) => intOf(x) !== undefined) ? (idx as number[]) : reject('an xref stream has an unreadable /Index')
-      const rowLen = widths[0]! + widths[1]! + widths[2]!
-      const total = ranges.filter((_, i) => i % 2 === 1).reduce((a, b) => a + b, 0)
-      if (rowLen === 0 || data.length !== total * rowLen) reject('an xref stream\'s data does not fit its /W and /Index')
-      const field = (row: number, k: number) => {
-        let v = 0
-        const off = row * rowLen + widths.slice(0, k).reduce((a, b) => a + b, 0)
-        for (let b = 0; b < widths[k]!; b++) v = v * 256 + data[off + b]!
-        return widths[k] === 0 && k === 0 ? 1 : v
-      }
-      let row = 0
-      for (let r = 0; r < ranges.length; r += 2) {
-        for (let k = 0; k < ranges[r + 1]!; k++, row++) {
-          const t = field(row, 0)
-          if (t === 1) classic.push({ num: ranges[r]! + k, off: field(row, 1) })
-          else if (t === 2) inStream.push({ num: ranges[r]! + k, container: field(row, 1) })
-          else if (t !== 0) reject('an xref stream entry has an unknown type')
-        }
-      }
-    } else if (type === 'ObjStm') {
-      objStms.add(st.num)
-      const n = intOf(d.m.get('N'))
-      const first = intOf(d.m.get('First'))
-      if (n === undefined || first === undefined || n > PDF_CAPS.objStmObjects) return reject('an object stream has no readable /N or /First')
-      const text = latin1(data)
-      const H = new Lexer(text.slice(0, first))
-      const offsets: { num: number; off: number }[] = []
-      for (let k = 0; k < n!; k++) { H.skipWs(); const num = H.int(); H.skipWs(); offsets.push({ num, off: H.int() }) }
-      H.skipWs()
-      if (H.i !== first) reject('an object stream\'s header has extra bytes')
-      const O = new Lexer(text)
-      O.i = first
-      for (let k = 0; k < offsets.length; k++) {
-        O.skipWs()
-        if (O.i !== first + offsets[k]!.off) reject('an object stream\'s object is not where its header says')
-        const v = O.value()
-        if (defined.has(offsets[k]!.num)) reject(`object ${offsets[k]!.num} is defined more than once`)
-        defined.add(offsets[k]!.num)
-        objects.set(`${offsets[k]!.num} 0`, v)
-        extraObjects.push(v)
-      }
-      O.skipWs()
-      if (O.i !== text.length) reject('an object stream has bytes after its last object')
-    } else if (fontMarker || type === 'Metadata' || (type === undefined && subtype === undefined && intOf(d.m.get('N')) !== undefined && !objStmShape)) {
+    if (fontMarker || type === 'Metadata' || (type === undefined && subtype === undefined && intOf(d.m.get('N')) !== undefined)) {
       // A font program, XMP metadata or an ICC profile: data, decoded in full above and not scanned.
     } else {
       contents.push(lexContent(latin1(data)))
@@ -492,28 +442,14 @@ function parse(bytes: Uint8Array): FileEvidence {
 
   // Every pointer into the file must land on something this parser read.
   for (const e of classic) if (objStartOf.get(e.off) !== e.num) reject(`xref entry for object ${e.num} points at ${e.off}, not at that object`)
-  for (const e of inStream) if (!objStms.has(e.container)) reject(`xref entry for object ${e.num} names stream ${e.container}, which is not an object stream`)
-  const sections = (off: number) => xrefSections.has(off) || xrefStreamStarts.has(off)
-  if (startxrefs.length === 0) reject('no startxref')
-  for (const off of startxrefs) if (!sections(off)) reject('startxref points at no xref')
-  if (trailers.length === 0) reject('no trailer')
-  let root = false
-  for (const t of trailers) {
-    if (t.m.has('Encrypt')) reject('the file is encrypted')
-    const prev = t.m.get('Prev')
-    if (prev !== undefined && (intOf(prev) === undefined || !sections(intOf(prev)!))) reject('/Prev points at no xref')
-    // A hybrid file's /XRefStm must be an xref stream this parser read, outside any other stream.
-    const xs = t.m.get('XRefStm')
-    if (xs !== undefined && (intOf(xs) === undefined || !xrefStreamStarts.has(intOf(xs)!))) reject('/XRefStm points at no xref stream')
-    for (const key of ['Root', 'Info'] as const) {
-      const v = t.m.get(key)
-      if (v === undefined) continue
-      const r = refOf(v)
-      if (!r || !objects.has(`${r.n} ${r.g}`)) reject(`/${key} names no object this parser read`)
-      if (key === 'Root') root = true
-    }
+  if (!xrefSections.has(startxrefs[0]!)) reject('startxref points at no xref')
+  for (const key of ['Root', 'Info'] as const) {
+    const v = trailer.m.get(key)
+    if (v === undefined) continue
+    const r = refOf(v)
+    if (!r || !objects.has(`${r.n} ${r.g}`)) reject(`/${key} names no object this parser read`)
   }
-  if (!root) reject('no /Root')
+  if (trailer.m.get('Root') === undefined) reject('no /Root')
 
   // Detection over every object read and every content stream.
   const actions = new Set<string>()
@@ -549,14 +485,12 @@ function parse(bytes: Uint8Array): FileEvidence {
     if (nameOf(resolve(v.m.get('FS'))) === 'URL') references.push({ kind: 'external', url: strOf(v.m.get('F')) ?? 'pdf:URL file specification' })
   }
   for (const v of allObjects) walk(v, 0)
-  for (const v of extraObjects) walk(v, 0)
-  for (const t of trailers) walk(t, 0)
+  walk(trailer, 0)
   for (const c of contents) {
     for (const n of c.names) noteName(n)
     const unesc = (x: string) => x.replace(/\\([\\()])/g, '$1')
     for (const m of c.text.matchAll(/\(((?:\\.|[^\\)])*)\)\s*(?:Tj|'|")/g)) textParts.push(unesc(m[1]!))
     for (const m of c.text.matchAll(/\[((?:\\.|[^\]])*)\]\s*TJ/g)) textParts.push([...m[1]!.matchAll(/\(((?:\\.|[^\\)])*)\)/g)].map((x) => unesc(x[1]!)).join(''))
   }
-  // Every version of an object is walked, so one link can be listed twice: harmless for the grader.
   return { format: 'pdf', text: textParts.join('\n'), references, actions: [...actions] }
 }
