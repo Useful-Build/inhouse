@@ -256,7 +256,7 @@ export function memberStore({ db, hook = s => s }: MemberStoreDeps) {
           results = await write(built.stmts)
         } catch (err) {
           // The partial unique index: a concurrent invite for the same email won the insert.
-          if (err instanceof Error && /UNIQUE constraint failed/.test(err.message)) return { refused: 'already_member' }
+          if (err instanceof Error && err.cause instanceof Error && /UNIQUE constraint failed/.test(err.cause.message)) return { refused: 'already_member' }
           throw err
         }
       }

@@ -8,6 +8,7 @@ import { authenticate, checkAccess, checkOrigin } from './auth/index.ts'
 import { openStores } from './db/stores.ts'
 import { apiError } from './http.ts'
 import { routes } from './routes.ts'
+import { safeError } from './safe-error.ts'
 
 // P3's classes (p3-design section 1), each in its owner's file: the Durable Objects the Worker config binds, and the
 // egress entrypoints the Runner registers as intercepts.
@@ -29,7 +30,7 @@ export default {
       return await api(parts, request, env, ctx, requestId)
     } catch (err) {
       // Logged with the request id; the answer carries no detail.
-      console.error({ event: 'api_error', requestId, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err) })
+      console.error({ event: 'api_error', requestId, error: safeError(err) })
       return apiError('unknown')
     }
   },

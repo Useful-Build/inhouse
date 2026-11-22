@@ -351,6 +351,15 @@ describe('bounds and backoff (failures 1, 5)', () => {
     expect(await runDurableObjectAlarm(h.stub)).toBe(true)
     expect(await rows(h.stub)).toEqual([{ id: 'b', kind: 'a', due_at_ms: T + 90_000, attempts: 2, state: 'ready' }])
   })
+  it("a throw's message never reaches due_tasks.last_error, only its name (P8a P-auth)", async () => {
+    const canary = 'CANARY-tool-input-7f3a'
+    const h = await harness({ handlers: { a: async () => { throw new SyntaxError(`Unexpected token in JSON: ${canary}`) } } })
+    await inObject(h.stub, async () => { h.sched.schedule({ id: 'c', kind: 'a', dueAtMs: T }); await h.sched.settled() })
+    expect(await runDurableObjectAlarm(h.stub)).toBe(true)
+    const stored = await runInDurableObject(h.stub, (_i, state) =>
+      state.storage.sql.exec<{ last_error: string | null }>('SELECT last_error FROM due_tasks WHERE id = ?', 'c').toArray())
+    expect(stored).toEqual([{ last_error: 'SyntaxError' }])
+  })
   it('a result of another shape counts as a retry', async () => {
     const h = await harness({ handlers: { a: async () => ({ retryAtMs: 'soon' }) as unknown as TaskResult } })
     await inObject(h.stub, async () => { h.sched.schedule({ id: 'x', kind: 'a', dueAtMs: T }); await h.sched.settled() })

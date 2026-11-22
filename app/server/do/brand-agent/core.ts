@@ -46,6 +46,7 @@ import type { Trace } from '../../../shared/contract/trace.ts'
 import type { AdmitAnswer, LeaseAnswer, ModelCallUsage, ModelCallWorst } from './ports.ts'
 import { SWEEP_EVERY_MS, ensureGrantExpiry, runAuthoritySweep, runGrantExpiry, sweepBy } from './authority.ts'
 import type { AuthorityDeps, SocketAuthority } from './authority.ts'
+import { safeError } from '../../safe-error.ts'
 
 // ---------- numbers (p3-design 1.3, 4.3, 4.4, 4.6, 4.11) ----------
 export const STARTING_DEADLINE_MS = 3 * 60_000
@@ -202,8 +203,6 @@ interface Extra {
 const waitRefusal = (r: Refusal) =>
   (r.refused.code === 'forbidden' && r.refused.reason === 'paused') || (r.refused.code === 'unavailable' && r.refused.reason === 'draining')
   || (r.refused.code === 'rate_limited' && r.refused.reason === 'queue_full')
-
-const errorText = (err: unknown) => (err instanceof Error ? `${err.name}: ${err.message}` : 'unknown').slice(0, 300)
 
 export class AgentCore {
   private readonly d: CoreDeps
@@ -468,7 +467,7 @@ export class AgentCore {
       `UPDATE turns SET state = 'starting', gen = ?, starting_deadline_ms = ?, claimed_at_ms = ?, placed = 0, pool_queued = 0,
         runner = NULL, runner_last_seq = -1, watch_json = NULL WHERE turn_id = ?`, gen, now + STARTING_DEADLINE_MS, now, t.turn_id)
     this.watchTask(t.turn_id, now + WATCH_EVERY_MS)
-    void this.start(t.turn_id, gen).catch(err => console.error({ event: 'turn_start_failed', error: errorText(err) }))
+    void this.start(t.turn_id, gen).catch(err => console.error({ event: 'turn_start_failed', error: safeError(err) }))
   }
 
   // ---------- start (4.4) ----------
@@ -497,7 +496,7 @@ export class AgentCore {
     try {
       usable = await this.d.modelUsable(t.picker_id)
     } catch (err) {
-      console.error({ event: 'turn_model_check_failed', error: errorText(err) })
+      console.error({ event: 'turn_model_check_failed', error: safeError(err) })
       return
     }
     t = this.current(turnId, gen, 'starting')
@@ -555,7 +554,7 @@ export class AgentCore {
         outputFormat: t.output_format_json === null ? undefined : JSON.parse(t.output_format_json) as OutputFormat,
       })
     } catch (err) {
-      console.error({ event: 'turn_start_unbuildable', error: errorText(err) })
+      console.error({ event: 'turn_start_unbuildable', error: safeError(err) })
       return this.failUnstarted(t, { outcome: 'failed', reason: 'protocol' })
     }
     this.sql.exec('UPDATE turns SET session_id = ?, start_json = ? WHERE turn_id = ?', sessionId, JSON.stringify(start), turnId)
@@ -582,7 +581,7 @@ export class AgentCore {
       rs = RunStartSchema.parse({ ...JSON.parse(t.start_json!), runToken: token })
     } catch (err) {
       this.d.tokens.revokeToken(tokenHash, 'unbuildable')
-      console.error({ event: 'turn_start_unbuildable', error: errorText(err) })
+      console.error({ event: 'turn_start_unbuildable', error: safeError(err) })
       return this.failUnstarted(t, { outcome: 'failed', reason: 'protocol' })
     }
     this.sql.exec('UPDATE turns SET placed = 1, pool_queued = 0 WHERE turn_id = ? AND gen = ?', turnId, gen)
@@ -611,7 +610,7 @@ export class AgentCore {
         // admitted there (a 404 the runner takes as done), so stop it again now that it is (round 2 low). The token
         // stays: the grace still flushes through `store` and `events`.
         if (named !== null && t.fenced === 1) {
-          void this.d.ports.pool.stop(named, turnId).catch(err => console.error({ event: 'turn_fenced_stop_failed', error: errorText(err) }))
+          void this.d.ports.pool.stop(named, turnId).catch(err => console.error({ event: 'turn_fenced_stop_failed', error: safeError(err) }))
         }
         return
       }
@@ -620,7 +619,7 @@ export class AgentCore {
       this.d.tokens.revokeToken(tokenHash, 'fenced')
       const newerThere = t.runner === named && (t.state === 'starting' || t.state === 'live' || t.state === 'ending')
       if (named !== null && !newerThere) {
-        void this.d.ports.pool.stop(named, turnId).catch(err => console.error({ event: 'turn_undo_stop_failed', error: errorText(err) }))
+        void this.d.ports.pool.stop(named, turnId).catch(err => console.error({ event: 'turn_undo_stop_failed', error: safeError(err) }))
       }
       return
     }
@@ -785,7 +784,7 @@ export class AgentCore {
       this.d.scheduler.cancel(`${FLUSH_TURN_PREFIX}${turnId}`)
       return true
     } catch (err) {
-      console.error({ event: 'flush_turn_failed', turnId, error: errorText(err) })
+      console.error({ event: 'flush_turn_failed', turnId, error: safeError(err) })
       return false
     }
   }
@@ -821,7 +820,7 @@ export class AgentCore {
     this.watchTask(t.turn_id, now + GRACE_MS)
     if (t.runner !== null) {
       const runner = t.runner
-      void this.d.ports.pool.stop(runner, t.turn_id).catch(err => console.error({ event: 'turn_stop_failed', error: errorText(err) }))
+      void this.d.ports.pool.stop(runner, t.turn_id).catch(err => console.error({ event: 'turn_stop_failed', error: safeError(err) }))
     }
   }
 
@@ -1138,7 +1137,7 @@ export class AgentCore {
         try {
           file = await this.d.ports.files.confirm(row.chat_id, turnId, path, sha256, this.d.now())
         } catch (err) {
-          console.error({ event: 'file_confirm_failed', error: errorText(err) })
+          console.error({ event: 'file_confirm_failed', error: safeError(err) })
           this.d.scheduler.schedule({ id: `run-advance:${row.run_id}`, kind: 'run-advance', dueAtMs: this.d.now() + EFFECT_RETRY_MS })
           return
         }
@@ -1196,7 +1195,7 @@ export class AgentCore {
       try {
         await this.d.ports.pool.stop(runner, t.turn_id)
       } catch (err) {
-        console.error({ event: 'turn_ambiguous_stop_failed', error: errorText(err) })
+        console.error({ event: 'turn_ambiguous_stop_failed', error: safeError(err) })
       }
       if (!this.current(t.turn_id, t.gen, 'starting')) return { done: true }
       w.stopped = true
@@ -1206,7 +1205,7 @@ export class AgentCore {
     try {
       st = await this.d.ports.pool.status(runner, t.turn_id)
     } catch (err) {
-      console.error({ event: 'turn_status_failed', error: errorText(err) })
+      console.error({ event: 'turn_status_failed', error: safeError(err) })
       st = { state: 'unreachable', containerGone: false }
     }
     const fresh = this.current(t.turn_id, t.gen, 'starting')
@@ -1336,7 +1335,7 @@ export class AgentCore {
     if (runner === null) return
     const gen = t.gen
     void this.d.ports.pool.interrupt(runner, t.turn_id).catch(err => {
-      console.error({ event: 'turn_interrupt_failed', error: errorText(err) })
+      console.error({ event: 'turn_interrupt_failed', error: safeError(err) })
       this.sql.exec("UPDATE turns SET interrupt_asked = 0 WHERE turn_id = ? AND gen = ? AND state = 'live' AND outcome IS NULL", t.turn_id, gen)
     })
   }

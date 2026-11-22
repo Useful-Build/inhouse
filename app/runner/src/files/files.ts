@@ -236,7 +236,7 @@ export function createFiles(deps: { fetch: Fetch; proxyUrl: string; cwd: string;
             await rename(inDir(dir, tmp), inDir(dir, name))
           } catch (e) {
             await unlink(inDir(dir, tmp)).catch(() => undefined)
-            log({ type: 'file_restore_skipped', reason: 'could not be put in place', error: String((e as NodeJS.ErrnoException).code ?? e).slice(0, 100), bytes: f.bytes })
+            log({ type: 'file_restore_skipped', reason: 'could not be put in place', ...errnoOf(e), bytes: f.bytes })
             continue
           }
           restored++

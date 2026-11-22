@@ -1,7 +1,7 @@
 // POST /api/client-error: hardening's client error reports, logged to Workers Logs. Used by both Workers (the demo's
 // worker/index.ts and the product's server/index.ts), each passing its own parsed security headers.
 import { respond } from '../shared/security-headers.ts'
-import { scrubReport } from './scrub.ts'
+import { scrubReport, stripUrl } from './scrub.ts'
 
 const MAX_BODY = 8 * 1024
 
@@ -58,6 +58,45 @@ function crossSite(request: Request): boolean {
   return origin !== null && origin !== new URL(request.url).origin
 }
 
+// ---------- what reaches Workers Logs: an allowlist ----------
+// A report's message and stack are free text from the browser, and the scrubber's patterns (URLs, emails, tokens) don't
+// catch what was on screen: a customer's name, an order note, a file name or a chat line in an error's message
+// (JSON.parse quotes the text it choked on). So the log keeps only what an operator needs to find the bug (P8a P-auth):
+// the kind, the release, the page's path, the error's name from the stack's first line, and the stack frames that are
+// code locations (V8's `at fn (url:line:col)` and `at url:line:col`, Firefox and Safari's `fn@url:line:col`), each URL
+// without its query. Frames are read from the raw stack (the scrubber would cut a URL's `:line:col` with its query).
+// The client's own report (src/report-error.ts) is unchanged; it never leaves the request.
+const NAME = /^([A-Z][A-Za-z0-9_]{0,63})(?::|$)/
+const V8_FRAME = /^\s*at (?:((?:new |async )?[\w$.<>[\]/-]{1,200}) \(([^\s()]+):(\d+):(\d+)\)|([^\s()]+):(\d+):(\d+))$/
+const OTHER_FRAME = /^([\w$.<>[\]/-]{0,200})@([^\s@]+):(\d+):(\d+)$/
+const MAX_FRAMES = 20
+const MAX_STACK = 8000
+
+const at = (url: string, line: string, col: string) => `${stripUrl(url)}:${line}:${col}`
+
+function frameOf(text: string): string | null {
+  const v8 = V8_FRAME.exec(text)
+  if (v8) return v8[1] !== undefined ? `at ${v8[1]} (${at(v8[2]!, v8[3]!, v8[4]!)})` : `at ${at(v8[5]!, v8[6]!, v8[7]!)}`
+  const other = OTHER_FRAME.exec(text)
+  return other ? `${other[1]}@${at(other[2]!, other[3]!, other[4]!)}` : null
+}
+
+/** The log line's fields: no message, and of the stack only its error name and its code locations. */
+export function loggedReport(input: unknown) {
+  const report = scrubReport(input)
+  const stack = (input as { stack?: unknown }).stack
+  const lines = (typeof stack === 'string' ? stack.slice(0, MAX_STACK) : '').split('\n')
+  const frames = lines.map(frameOf).filter((f): f is string => f !== null).slice(0, MAX_FRAMES)
+  return {
+    kind: report.kind,
+    release: report.release,
+    url: report.url,
+    name: NAME.exec(lines[0] ?? '')?.[1] ?? 'unknown',
+    frames,
+    ...(report.demo ? { demo: true as const } : {}),
+  }
+}
+
 export async function clientError(request: Request, security: readonly [string, string][]): Promise<Response> {
   if (request.method !== 'POST') return respond(security, 405, { headers: { Allow: 'POST' } })
   if (crossSite(request)) return respond(security, 403)
@@ -67,8 +106,8 @@ export async function clientError(request: Request, security: readonly [string, 
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { return respond(security, 400) }
   if (typeof parsed !== 'object' || parsed === null) return respond(security, 400)
-  const report = scrubReport(parsed)
-  // One structured line per report, for Workers Logs (its fields are indexed, so filter on release or kind).
+  const report = loggedReport(parsed)
+  // One structured line per report, for Workers Logs (its fields are indexed, so filter on release, kind or name).
   console.error({ event: 'client_error', ...report, country: request.cf?.country ?? null })
   return respond(security, 204)
 }

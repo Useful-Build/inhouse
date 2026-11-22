@@ -17,6 +17,7 @@ import {
   type RunRefusalCode, type RunStart,
 } from '../../../shared/protocol/index.ts'
 import type { RunnerTurnStatus } from '../brand-agent/ports.ts'
+import { safeError } from '../../safe-error.ts'
 
 export const RUNNER_PORT = 8080
 export const PROXY_PORT = 8081
@@ -112,8 +113,6 @@ export interface StatusResult {
 
 export type WarmResult = { ok: true; gen: number; protocol: number } | { ok: false; why: 'protocol' | 'health' | 'start' | 'busy'; detail: string }
 
-const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 200)
-
 export class RunnerCore<B> {
   readonly #d: RunnerDeps<B>
   readonly #accepted: readonly number[]
@@ -145,7 +144,8 @@ export class RunnerCore<B> {
     try {
       up = await this.#up()
     } catch (e) {
-      return { placementError: errorText(e), booting: this.#d.container.running }
+      // Returned, never logged (pool.ts reads only that it's there): #up's own reasons, whose inner errors are names only.
+      return { placementError: (e instanceof Error ? e.message : 'unknown').slice(0, 200), booting: this.#d.container.running }
     }
     if (up.protocol === null) return { protocol: 'none', gen: up.gen }
     const { gen } = up
@@ -158,7 +158,7 @@ export class RunnerCore<B> {
         signal: this.#timeout(ADMIT_TIMEOUT_MS),
       })
     } catch (e) {
-      this.#log({ event: 'admit_ambiguous', turnId: rs.runId, error: errorText(e) })
+      this.#log({ event: 'admit_ambiguous', turnId: rs.runId, error: safeError(e) })
       return { ambiguous: true, gen }
     }
     // The status decides: an answer came, so it's definite. The body is only read to tell the refusals apart.
@@ -207,7 +207,7 @@ export class RunnerCore<B> {
         parsed.state === 'released' ? 'ended' : parsed.state === 'unknown' ? 'unknown' : 'live'
       return { state, containerGone: false }
     } catch (e) {
-      this.#log({ event: 'status_failed', turnId, error: errorText(e) })
+      this.#log({ event: 'status_failed', turnId, error: safeError(e) })
       return { state: 'unreachable', containerGone: !this.#d.container.running }
     }
   }
@@ -241,7 +241,7 @@ export class RunnerCore<B> {
       this.#d.state.setProtocol(up.gen, undefined)
       up = { gen: up.gen, protocol: await this.#negotiate(up.gen, true) }
     } catch (e) {
-      return { ok: false, why: 'start', detail: errorText(e) }
+      return { ok: false, why: 'start', detail: safeError(e) }
     }
     if (up.protocol === null) return { ok: false, why: 'protocol', detail: 'no shared protocol version' }
     try {
@@ -254,7 +254,7 @@ export class RunnerCore<B> {
       if (!health.ok) return { ok: false, why: 'health', detail: 'health not ok' }
       return { ok: true, gen: up.gen, protocol: up.protocol }
     } catch (e) {
-      return { ok: false, why: 'health', detail: errorText(e) }
+      return { ok: false, why: 'health', detail: safeError(e) }
     }
   }
 
@@ -332,7 +332,7 @@ export class RunnerCore<B> {
     const deadline = this.#timeout(BOOT_TIMEOUT_MS)
     let last: unknown = 'no answer'
     for (;;) {
-      if (deadline.aborted) throw new Error(`no /protocol answer within ${BOOT_TIMEOUT_MS} ms: ${errorText(last)}`)
+      if (deadline.aborted) throw new Error(`no /protocol answer within ${BOOT_TIMEOUT_MS} ms: ${safeError(last)}`)
       if (!this.#d.container.running) throw new Error('the container stopped before it answered /protocol')
       try {
         const res = await this.#port().fetch('http://runner/protocol', { signal: AbortSignal.any([deadline, this.#timeout(CALL_TIMEOUT_MS)]) })
@@ -347,7 +347,7 @@ export class RunnerCore<B> {
       } catch (e) {
         last = e
       }
-      if (once) throw new Error(`no /protocol answer: ${errorText(last)}`)
+      if (once) throw new Error(`no /protocol answer: ${safeError(last)}`)
       if (!deadline.aborted) await this.#wait(BOOT_POLL_MS)
     }
   }
@@ -369,12 +369,12 @@ export class RunnerCore<B> {
     // Read before it's cleared: a generation that answered /protocol came up (a version, or null for no shared one).
     const cameUp = s.protocol(gen) !== undefined
     if (s.gen() === gen) s.setProtocol(gen, undefined)
-    this.#log({ event: 'container_exited', gen, cameUp, how: errorText(how) })
+    this.#log({ event: 'container_exited', gen, cameUp, how: safeError(how) })
     try {
       await this.#d.exited(this.#d.name, gen, cameUp)
     } catch (e) {
       // The BrandAgent's turn-watch still finds the turns (status: unreachable with the container gone).
-      this.#log({ event: 'container_exit_report_failed', gen, error: errorText(e) })
+      this.#log({ event: 'container_exit_report_failed', gen, error: safeError(e) })
     }
   }
 }

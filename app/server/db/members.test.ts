@@ -12,6 +12,8 @@ import { fc, test } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { SYSTEM_MEMBER_ID } from './ids.ts'
+import { memberStore } from './members.ts'
+import { stmt, type Stmt } from './sql.ts'
 import { openStores } from './stores.ts'
 import { at, brokenAudit, lastLineId, linesSince, person, reqId, reset, snapshot } from './test-support.ts'
 
@@ -242,5 +244,21 @@ describe('pseudonymise (failure 7)', () => {
     expect(again.ok.id).not.toBe(old)
     expect(await signIn(`sl1-${k}`, email)).toMatchObject({ ok: { memberId: again.ok.id } })
     expect(await row(old)).toMatchObject({ status: 'removed', subject: null })
+  })
+})
+
+describe('an invite that loses the unique index (P8a P-auth)', () => {
+  // The refusal reads the D1 error under StoreUnavailableError (its cause): the wrapper's own message no longer quotes
+  // what D1 said, so a check on that message would turn this into a 503. The audit hook swaps the audit line for a
+  // second open row with the same email, so the batch fails on the partial unique index the way a concurrent invite would.
+  it('is refused as already_member, not a storage failure', async () => {
+    const email = `race${uniq()}@example.test`
+    const rival = (): Stmt => stmt(
+      `INSERT INTO members (id, kind, role, status, name, title, email_norm, created_at_ms, invited_by, req_id)
+       VALUES (?, 'person', 'member', 'invited', 'Other Example', NULL, ?, ?, ?, ?)`,
+      `m_rival${uniq().replace(/[^a-z0-9]/g, '')}`, email, T, SYSTEM_MEMBER_ID, reqId(),
+    )
+    const store = memberStore({ db, hook: rival })
+    expect(await store.invite({ name: 'Gi Example', email, role: 'member' }, at(SYSTEM_MEMBER_ID))).toEqual({ refused: 'already_member' })
   })
 })

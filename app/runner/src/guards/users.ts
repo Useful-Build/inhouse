@@ -14,6 +14,7 @@
 //   root's take-over walks a folder by path, so root never prepares that folder again in this container's life.
 import type { SessionUser, SessionUsers } from '../session/seam.ts'
 import { assertSessionKey } from './paths.ts'
+import { safeError } from '../safe-error.ts'
 
 /** A pool member, as /etc/passwd has it. */
 export type PoolUser = { user: string; uid: number; gid: number }
@@ -123,7 +124,7 @@ export function createSessionPool(pool: readonly PoolUser[], host: SessionHost, 
         uid: user.uid,
         user: user.user,
         sessionKey,
-        error: String(e instanceof Error ? e.message : e),
+        error: safeError(e),
         quarantined: quarantined.size,
         folderParkedForGood: parkedForGood.has(sessionKey),
       })
