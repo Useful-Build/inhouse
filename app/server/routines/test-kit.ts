@@ -57,6 +57,21 @@ export async function insertRoutine(r: RoutineRow): Promise<RoutineRow> {
   return r
 }
 
+/** One slot row as a test wants it: a scheduled slot that ended `done` at its time, unless `over` says otherwise. */
+export async function insertSlot(over: Partial<SlotRow> & Pick<SlotRow, 'routine_id' | 'local_date' | 'claimed_at_ms'>): Promise<SlotRow> {
+  const s: SlotRow = {
+    slot_key: `${over.routine_id}|${over.local_date}|06:00|${rand(6)}`, kind: 'scheduled', local_time: '06:00', tz: 'America/New_York',
+    due_at_ms: over.claimed_at_ms, deadline_ms: over.claimed_at_ms + 10 * MIN, state: 'ended', reason: null, chat_id: `rc_${rand(22)}`,
+    client_key: `rs_${rand(22)}`, prompt_text: 'x', submit_json: '{}', routine_rev: 1, creator_id: 'm_system', requested_by: null,
+    submit_failures: 0, next_attempt_ms: 0, run_id: null, turn_id: null, outcome: 'done', failure: null, result_text: null,
+    started_at_ms: over.claimed_at_ms, ended_at_ms: over.claimed_at_ms + MIN,
+    ...over,
+  }
+  const cols = Object.keys(s) as (keyof SlotRow)[]
+  await db.prepare(`INSERT INTO routine_slots (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`).bind(...cols.map(c => s[c])).run()
+  return s
+}
+
 export const slotsOf = async (routineId: string): Promise<SlotRow[]> =>
   (await db.prepare('SELECT * FROM routine_slots WHERE routine_id = ? ORDER BY due_at_ms, slot_key').bind(routineId).all<SlotRow>()).results
 

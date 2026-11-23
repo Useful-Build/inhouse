@@ -1,7 +1,8 @@
 {
   "fieldGuide": {
     "need": "lowest stage index (0 Watch, 1 Act, 2 Run)",
-    "money": "drafts always wait, even in Run"
+    "money": "drafts always wait, even in Run",
+    "runs": "recent runs, newest first, as the routine panel lists them (outcome: running, done, failed or skipped; trace: recorded steps)"
   },
   "routines": [
     {
@@ -13,7 +14,12 @@
       "time": "06:00",
       "next": "+1d 06:00",
       "need": 0,
-      "last": { "at": "0d 06:00", "result": "found 6 things" }
+      "last": { "at": "0d 06:00", "result": "found 6 things" },
+      "runs": [
+        { "at": "0d 06:00", "outcome": "done", "result": "Read 5 tools, found 6 things", "trace": "morning" },
+        { "at": "-3d 06:00", "outcome": "done", "result": "Read 5 tools, found 3 things", "trace": "morning" },
+        { "at": "-4d 06:00", "outcome": "done", "result": "Read 4 tools, found 4 things", "trace": "morning" }
+      ]
     },
     {
       "name": "Monday reorder list",
@@ -25,7 +31,10 @@
       "next": "+7d 07:00",
       "need": 1,
       "money": true,
-      "last": { "at": "0d 07:00", "result": "nothing beyond the Ridge 30L draft" }
+      "last": { "at": "0d 07:00", "result": "nothing beyond the Ridge 30L draft" },
+      "runs": [
+        { "at": "0d 07:00", "outcome": "done", "result": "Nothing beyond the Ridge 30L draft" }
+      ]
     },
     {
       "name": "Amazon payout check",
@@ -36,7 +45,11 @@
       "time": "06:00",
       "next": "+1d 06:00",
       "need": 1,
-      "last": { "at": "0d 06:00", "result": "found a $1,240 gap" }
+      "last": { "at": "0d 06:00", "result": "found a $1,240 gap" },
+      "runs": [
+        { "at": "0d 06:00", "outcome": "done", "result": "Found a $1,240 gap" },
+        { "at": "-1d 06:00", "outcome": "done", "result": "Every payout matched what Xero expected" }
+      ]
     },
     {
       "name": "Weekly numbers report",
@@ -47,7 +60,10 @@
       "time": "16:00",
       "next": "+4d 16:00",
       "need": 1,
-      "last": { "at": "-3d 16:00", "result": "saved to Library" }
+      "last": { "at": "-3d 16:00", "result": "saved to Library" },
+      "runs": [
+        { "at": "-3d 16:00", "outcome": "done", "result": "Saved to Library", "trace": "weekly-report" }
+      ]
     }
   ],
   "createdInSeedChat": {

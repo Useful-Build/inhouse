@@ -6,6 +6,7 @@ import { stripFixed } from '../today/words.ts'
 import { AuditArgsSchema } from '../../shared/contract/audit.ts'
 import { MAX_TEAM_ROUTINES } from '../../shared/contract/keys.ts'
 import type { AuditArgs } from '../../shared/contract/audit.ts'
+import type { RoutineRunOutcome } from '../../shared/contract/routines.ts'
 import { recordActivity } from '../activity/store.ts'
 import type { ActivityTemplateId } from '../activity/templates.ts'
 import { writeStamp } from '../db/ids.ts'
@@ -252,18 +253,55 @@ export async function runNow(db: D1Database, routineId: string, clientKey: strin
   return open ? { conflict: open } : { refused: 'not_found' }
 }
 
-/** A slot's last result in plain words: its `result_text`, else its failure, else how it ended. */
+/**
+ * A slot's result in plain words, for people who run a brand: its `result_text` (the agent's summary), else how it went.
+ * Never a failure or refusal code (DESIGN.md, "Who it's for").
+ */
 export function resultWords(s: Pick<SlotRow, 'state' | 'result_text' | 'failure' | 'outcome' | 'reason'>): string {
   // A morning check's tail of normaliser counts (`(fixed: 2 cut)`) is for the eval runner, never for a person.
   if (s.result_text) return stripFixed(s.result_text)
-  if (s.state === 'ended') {
-    if (s.failure) return `It stopped with ${s.failure}`
-    return s.outcome === 'done' ? 'It finished' : `It was ${s.outcome ?? 'ended'}`
+  switch (s.state) {
+    case 'claimed': case 'started': return "It's running"
+    case 'ended':
+      if (s.failure) return 'It stopped before it finished'
+      return s.outcome === 'done' ? 'It finished' : 'It was stopped before it finished'
+    case 'lost': return 'It stopped before it finished'
+    case 'missed': return 'It missed its time'
+    case 'skipped': return s.reason === 'disabled' ? 'It was off at its time' : s.reason === 'stage' ? 'It starts at a later stage' : 'It was skipped'
+    case 'refused': return s.reason === 'paused' ? 'Your agent was paused' : s.reason === 'cap_reached' ? 'The spending cap was reached' : "It couldn't start"
   }
-  if (s.state === 'lost') return 'It stopped without an end'
-  if (s.state === 'missed') return 'It missed its time'
-  if (s.state === 'refused') return `It couldn't start (${s.reason ?? 'refused'})`
-  return 'It was skipped'
+}
+
+/** A slot's outcome in the panel's closed list (`RoutineRunOutcome`). */
+export function runOutcome(s: Pick<SlotRow, 'state' | 'failure' | 'outcome' | 'reason'>): RoutineRunOutcome {
+  switch (s.state) {
+    case 'claimed': case 'started': return 'running'
+    case 'ended': return s.outcome === 'done' && s.failure === null ? 'done' : 'failed'
+    case 'lost': return 'failed'
+    case 'missed': case 'skipped': return 'skipped'
+    case 'refused': return s.reason === 'paused' ? 'skipped' : 'failed'
+  }
+}
+
+/** The fields of a slot route 68 reads. */
+export type RunSlot = Pick<SlotRow, 'kind' | 'state' | 'reason' | 'due_at_ms' | 'started_at_ms' | 'run_id' | 'outcome' | 'failure' | 'result_text'>
+
+/**
+ * Route 68's read: a routine's own slots, newest first (`(local_date, claimed_at_ms)`, as 0200 orders them), at most
+ * `limit`. Null when the routine isn't this brand's or is deleted (each brand has its own D1, so another brand's id names
+ * nothing here).
+ */
+export async function routineRuns(db: D1Database, id: string, limit: number): Promise<RunSlot[] | null> {
+  // One batch, so the routine and its slots are read at the same moment.
+  const [routine, slots] = await db.batch<RunSlot | { ok: number }>([
+    db.prepare('SELECT 1 AS ok FROM routines WHERE id = ? AND deleted_at_ms IS NULL').bind(id),
+    db.prepare(
+      `SELECT kind, state, reason, due_at_ms, started_at_ms, run_id, outcome, failure, result_text FROM routine_slots
+        WHERE routine_id = ? ORDER BY local_date DESC, claimed_at_ms DESC, slot_key DESC LIMIT ?`,
+    ).bind(id, limit),
+  ])
+  if (routine.results.length === 0) return null
+  return slots.results as RunSlot[]
 }
 
 export interface ListedRoutine extends RoutineRow {
@@ -332,7 +370,7 @@ async function withLast(db: D1Database, id: string, write: () => Promise<WriteOu
   return o
 }
 
-/** The routines slot of the D1 stores (server/db/stores.ts): data in, data out, for routes 33 and 52 to 56 and the signal. */
+/** The routines slot of the D1 stores (server/db/stores.ts): data in, data out, for routes 33, 52 to 56 and 68 and the signal. */
 export function routineStore({ db }: { db: D1Database }) {
   return {
     signal: (nowMs: number) => routinesSignal(db, nowMs),
@@ -348,6 +386,7 @@ export function routineStore({ db }: { db: D1Database }) {
     remove: (id: string, ifRev: number, at: At) => withLast(db, id, () => deleteRoutine(db, id, ifRev, at)),
     restore: (id: string, ifRev: number, at: At) => withLast(db, id, () => restoreRoutine(db, id, ifRev, at)),
     isRoutineRun: (id: string) => isRoutineRun(db, id),
+    runs: (id: string, limit: number) => routineRuns(db, id, limit),
   }
 }
 export type RoutineStore = ReturnType<typeof routineStore>

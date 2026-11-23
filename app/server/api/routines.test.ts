@@ -11,7 +11,10 @@
 //  5. canManage says yes where the write would refuse (or no where it would pass); the list leaks a deleted routine
 //     into `routines`;
 //  6. route 33: a person can't read a routine run's trace, or can read another person's chat trace, or a chat owned by
-//     the routine principal with no slot row is readable.
+//     the routine principal with no slot row is readable;
+//  7. route 68: a routine's runs leak another routine's, come back oldest first or past the cap, show a run id other than
+//     as the steps link, a failure code or a timing; a routine with no runs isn't an empty list; an unknown (another
+//     brand's), deleted or malformed id answers anything but 404; Inhouse reads without a grant or its support.access line.
 import { env } from 'cloudflare:workers'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { accessMatrix } from '../access-matrix.ts'
@@ -22,7 +25,7 @@ import type { Principal } from '../auth/principal.ts'
 import { openStores } from '../db/stores.ts'
 import { lastLineId, linesSince } from '../db/test-support.ts'
 import { routes } from '../routes.ts'
-import { addPerson, fresh, insertRoutine, routine, setStage, setZone, slotsOf } from '../routines/test-kit.ts'
+import { MIN, addPerson, fresh, insertRoutine, insertSlot, routine, setStage, setZone, slotsOf } from '../routines/test-kit.ts'
 
 const db = env.DB
 const NOW = Date.parse('2026-06-01T12:00:00Z')
@@ -308,5 +311,61 @@ describe('route 33: a routine run\'s trace (OC 6)', () => {
     expect((await send(person(SAM), 'GET', '/api/traces/r_RoutineRunAAAAAAAAAAAA')).status).toBe(200)
     // A slot row naming a person's chat is never admitted for another person (L4).
     expect((await send(person(SAM), 'GET', '/api/traces/t_PersonSlotAAAAAAAAAAAA')).status).toBe(404)
+  })
+})
+
+describe('route 68: a routine\'s runs', () => {
+  const runs = async (p: Principal, id: string, query = '') => send(p, 'GET', `/api/routines/${id}/runs${query}`)
+
+  it('answers its own runs newest first: when, outcome, one plain line, a Run now marked, the steps link only', async () => {
+    const r = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW }))
+    const other = await insertRoutine(routine({ creator_id: SAM, checked_until_ms: NOW }))
+    await insertSlot({ routine_id: other.id, local_date: '2026-06-01', claimed_at_ms: NOW - MIN })
+    await insertSlot({ routine_id: r.id, local_date: '2026-05-30', claimed_at_ms: NOW - 3000 * MIN, state: 'missed', reason: 'late', started_at_ms: null, ended_at_ms: null, outcome: null })
+    await insertSlot({ routine_id: r.id, local_date: '2026-05-31', claimed_at_ms: NOW - 1500 * MIN, outcome: 'failed', failure: 'run_failed', run_id: 'r_FailedRunAAAAAAAAAAAAAA', turn_id: 't_FailedTurnAAAAAAAAAAAAA' })
+    await insertSlot({ routine_id: r.id, local_date: '2026-06-01', claimed_at_ms: NOW - 120 * MIN, started_at_ms: NOW - 119 * MIN, result_text: 'Found 2 low-stock items (fixed: 1 cut)', run_id: 'r_DoneRunAAAAAAAAAAAAAAAA' })
+    await insertSlot({ routine_id: r.id, local_date: '2026-06-01', claimed_at_ms: NOW - MIN, kind: 'manual', slot_key: `now|${r.id}|key-12345678`, state: 'claimed', started_at_ms: null, ended_at_ms: null, outcome: null })
+    const iso = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
+    for (const who of [person(SAM), person(ADMIN, 'admin')]) {
+      const res = await runs(who, r.id)
+      expect(res.status).toBe(200)
+      expect(res.body).toEqual({
+        runs: [
+          { at: iso(NOW - MIN), outcome: 'running', result: "It's running", manual: true },
+          { at: iso(NOW - 119 * MIN), outcome: 'done', result: 'Found 2 low-stock items', manual: false, trace: 'r_DoneRunAAAAAAAAAAAAAAAA' },
+          { at: iso(NOW - 1500 * MIN), outcome: 'failed', result: 'It stopped before it finished', manual: false, trace: 'r_FailedRunAAAAAAAAAAAAAA' },
+          { at: iso(NOW - 3000 * MIN), outcome: 'skipped', result: 'It missed its time', manual: false },
+        ],
+      })
+    }
+  })
+
+  it('a routine with no runs answers an empty list; at most 20 runs come back', async () => {
+    const quiet = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW }))
+    expect(await runs(person(ALEX), quiet.id)).toEqual({ status: 200, body: { runs: [] } })
+    const busy = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW }))
+    for (let i = 1; i <= 21; i++) await insertSlot({ routine_id: busy.id, local_date: `2026-05-${String(i).padStart(2, '0')}`, claimed_at_ms: NOW - (40 - i) * 1440 * MIN })
+    const got = (await runs(person(ALEX), busy.id)).body.runs as { at: { ms: number } }[]
+    expect(got).toHaveLength(20)
+    expect(got[0].at.ms).toBe(NOW - 19 * 1440 * MIN)
+    expect(got[19].at.ms).toBe(NOW - 38 * 1440 * MIN)
+  })
+
+  it('another brand\'s routine (an id this brand\'s D1 doesn\'t have), a deleted one or a bad id is 404; a query is invalid', async () => {
+    expect(await runs(person(ALEX), 'rt_OtherBrandAAAAAAAAAAAA')).toEqual({ status: 404, body: { error: { code: 'not_found' } } })
+    const gone = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW, deleted_at_ms: NOW - 5 }))
+    await insertSlot({ routine_id: gone.id, local_date: '2026-05-31', claimed_at_ms: NOW - 1500 * MIN })
+    expect((await runs(person(ALEX), gone.id)).status).toBe(404)
+    expect((await runs(person(ALEX), 'not-a-routine')).status).toBe(404)
+    const r = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW }))
+    expect((await runs(person(ALEX), r.id, '?limit=50')).body).toEqual({ error: { code: 'invalid' } })
+  })
+
+  it('the Inhouse team reads only under a grant, after a support.access line naming the route pattern', async () => {
+    const r = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW }))
+    expect((await runs(inhouse(false), r.id)).body).toEqual({ error: { code: 'forbidden', reason: 'grant_required' } })
+    const before = await lastLineId(db)
+    expect(await runs(inhouse(true), r.id)).toEqual({ status: 200, body: { runs: [] } })
+    expect((await linesSince(db, before)).map(l => [l.action, JSON.parse(l.args_json)])).toEqual([['support.access', { grantId: GRANT, method: 'GET', route: '/api/routines/:id/runs' }]])
   })
 })

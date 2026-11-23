@@ -21,7 +21,7 @@ No entry is `Covered: gap`. Not checked by any spec, or only in part:
 
 ## Today
 
-In the product build Today, Activity, the bell, the Library and Routines are real, backed by the API (P4 routes 52 to 66), not demo data. The `?demo` entries below describe the demo build. Product proof: `e2e/api/{today,activity,bell,library,routines}.spec.ts` on the test build and the ship spec `e2e/ship/watch.spec.ts` (S1 to S8).
+In the product build Today, Activity, the bell, the Library and Routines are real, backed by the API (P4 routes 52 to 66, and route 68 for a routine's own runs), not demo data. The `?demo` entries below describe the demo build. Product proof: `e2e/api/{today,activity,bell,library,routines}.spec.ts` on the test build and the ship spec `e2e/ship/watch.spec.ts` (S1 to S8).
 
 Today: needs-you cards
   Path:     Today
@@ -197,9 +197,10 @@ Library: select and delete
 
 Routines: details and actions
   Path:     Routines -> a routine
-  Selector: row switch "<name> on or off"; the side panel: name and what it does, the schedule card (schedule sentence, next run, the same switch, one "how it works" line), Run now, Edit in a chat, "More for <name>" (Delete), list "Last runs" (time, outcome sentence, Steps or Activity), Made by
-  Expected: the panel leads with the schedule sentence and the next run; its switch replaces Pause, says "Off. It won't run until you turn it on." when off and agrees with the row; while the agent is paused both switches still show the routine's own on or off (a click saves the other one) and the pause shows as "Paused" for the next run; Run now lands in Last runs with its result and survives a reload; Steps opens the trace; Delete (in More) asks and Undo works; all of it survives a reload; at Watch a routine is locked, shows "Starts in Act" and has no Run now
-  Covered:  e2e/page-details.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts, src/screens/routine-switch.test.ts
+  Selector: row switch "<name> on or off"; the side panel: name and what it does, the schedule card (schedule sentence, next run, the same switch, one "how it works" line), Run now, Edit in a chat, "More for <name>" (Delete), list "Last runs" (`data-run-line`: an outcome icon, "Today, <time>" or "<weekday>, <date>, <time>", one plain line, Steps when the run has steps), Made by
+  Expected: the panel leads with the schedule sentence and the next run; its switch replaces Pause, says "Off. It won't run until you turn it on." when off and agrees with the row; while the agent is paused both switches still show the routine's own on or off (a click saves the other one) and the pause shows as "Paused" for the next run; Last runs are the routine's own runs from `GET /api/routines/:id/runs` (route 68), newest first, at most 20, never matched from Activity by name: each shows when it ran, done, failed, skipped or running, and one plain line with no run ids, timings, costs or codes; a routine with none says "Not run yet."; a list that can't load says so with Try again; Run now lands at the top of Last runs ("Run now · <result>", or "Run now" while it runs) and survives a reload; Steps opens the trace; Delete (in More) asks and Undo works; all of it survives a reload; at Watch a routine is locked, shows "Starts in Act" and has no Run now
+  Covered:  e2e/page-details.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts, src/screens/routine-switch.test.ts, src/state/routine-run-lines.test.ts, src/agent/mock.routine-runs.test.ts, src/agent/http/routines.test.ts, server/api/routines.test.ts, server/routines/store.test.ts, e2e/api/routines.spec.ts (route 68)
+  Gaps:     the Try again state and the failed and skipped icons are proven by unit tests only (the demo's sample runs all finished)
 
 Activity: log
   Path:     Activity

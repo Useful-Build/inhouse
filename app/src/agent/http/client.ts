@@ -17,13 +17,13 @@ import type { ChatSummary } from '../../../shared/contract/chats'
 import type { Problem } from '../../../shared/contract/problem'
 import type { SetAsideReason, SetAsideRecord } from '../../../shared/contract/state'
 import type { TodayAside } from '../../../shared/contract/today'
-import type { RoutineState } from '../../../shared/contract/routines'
+import type { RoutineRunHistory, RoutineState } from '../../../shared/contract/routines'
 import { postDeleted, postSessionReset, putPin, putTitle, readChat, readChats, saveChat } from './chats'
 import { ACTIVITY_PAGE, readActivityPage, splitActivity } from './activity'
 import { postNoticesRead, readNotifications } from './bell'
 import { PLACES, libraryDownloadPath, postLibraryWrite, readLibrary, uploadLibraryFile } from './library'
 import { putAside, readToday } from './today'
-import { newRunKey, postRoutineRev, postRoutineRun, readRoutines, setRoutineToggle } from './routines'
+import { newRunKey, postRoutineRev, postRoutineRun, readRoutineRuns, readRoutines, setRoutineToggle } from './routines'
 import { findMemoryLine, forgetMemoryLine, readMemory } from './memory'
 import { listedModels, readModels } from './models'
 import type { ServedModels } from './models'
@@ -1526,6 +1526,9 @@ export class HttpAgent implements AgentClient {
     if (e instanceof AgentError && e.code === 'forbidden' && e.reason === REASON.routineLimit) return new AgentError('forbidden', `This brand already has ${MAX_TEAM_ROUTINES} routines. Delete one to restore this.`, { reason: e.reason })
     return e
   }
+
+  /** Route 68: a routine's own recent runs. A read: it changes nothing on screen, so a failure is the caller's to show. */
+  routineRunHistory = (id: string): Promise<RoutineRunHistory> => guard(readRoutineRuns(this.http, id))
 
   /** Route 54: one Run now; the run heads `routineRuns`. A retry of this call is a new run (a new key). */
   runRoutine = (id: string): Promise<RoutineRun> => guard((async () => {
