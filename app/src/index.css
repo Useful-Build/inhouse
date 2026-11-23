@@ -219,7 +219,7 @@
   --app-cove-shadow: rgba(17, 17, 22, .058);
 
   /* card grids (CardGrid sizes): the narrowest a card gets before the row wraps */
-  --app-grid-cards-sm: repeat(auto-fill, minmax(min(200px, 100%), 1fr));   /* Library */
+  --app-grid-cards-sm: repeat(auto-fill, minmax(min(216px, 100%), 1fr));   /* Library: 216px keeps main's column count now the page padding is 32px, so names and tiles stay even */
   --app-grid-cards: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
   --app-grid-cards-lg: repeat(auto-fill, minmax(min(360px, 100%), 1fr));   /* Tools, Skills, Usage */
   --app-grid-cards-wide: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); /* Today's Needs you cards: two columns at page-wide */
