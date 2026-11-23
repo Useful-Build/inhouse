@@ -122,7 +122,7 @@ function byline(s: SkillDef): string {
 /** A card in the page's side rail, titled when it has a title. */
 function RailCard({ title, children, className }: { title?: string; children: ReactNode; className?: string }) {
   return (
-    <section aria-label={title} className={cn('rounded-2xl border border-border bg-card px-5 shadow-card', title ? 'py-4.5' : 'py-1.5', className)}>
+    <section aria-label={title} className={cn('w-full rounded-2xl border border-border bg-card px-5 shadow-card', title ? 'py-4.5' : 'py-1.5', className)}>
       {title && <h2 className="text-sm font-semibold">{title}</h2>}
       {children}
     </section>
@@ -227,7 +227,7 @@ export function SkillPage() {
             </div>
           )}
           {/* Stacked under the instructions, the rail's cards sit two to a row (one on a phone). */}
-          <aside aria-label="About this skill" className={cn('grid items-start gap-4 @xl:grid-cols-2', s.body && '@4xl:flex @4xl:w-detail-rail @4xl:flex-none @4xl:flex-col')}>
+          <aside aria-label="About this skill" className={cn('grid gap-4 @xl:grid-cols-2', s.body && '@4xl:flex @4xl:w-detail-rail @4xl:flex-none @4xl:flex-col')}>
             <RailCard>
               <dl>
                 {facts.map(([k, v], i) => (
