@@ -264,9 +264,11 @@ test('S2: The agent saves a team fact; a Member doesn\'t see it, an Admin approv
   await expect(main(page).getByRole('button', { name: /^Approve: / })).toHaveCount(0)
   await shot(page, 'S2-member-sees-no-team-fact')
   // The Admin sees it waiting, with Approve and Reject.
+  // The server holds it first (so a miss below is the page's, not the save's), then the page lists it under its heading.
+  expect((await waiting(admin)).map(f => f.text), 'the fact waits on the server').toContain(fact)
   await settingsPage(admin, 'Team settings', 'Team memory')
-  await expect(admin.getByRole('heading', { name: 'Waiting for your OK' })).toBeVisible()
   await expect(row(admin, fact)).toBeVisible()
+  await expect(admin.getByRole('heading', { level: 2, name: 'Waiting for your OK' })).toBeVisible()
   await expect(admin.getByRole('button', { name: `Reject: ${fact}`, exact: true })).toBeVisible()
   await shot(admin, 'S2-admin-sees-it-waiting')
   await admin.getByRole('button', { name: `Approve: ${fact}`, exact: true }).click()
@@ -364,14 +366,27 @@ test('S5: An Admin turns "Ask before saving a team rule" off and the agent\'s ne
   const admin = await pageFor(browser, 'admin', '#/today')
   try {
     await settingsPage(admin, 'Team settings', 'Team memory')
-    const ask = switchOf(admin, 'Ask before saving a team rule')
-    await expect(ask).toBeEnabled()
-    await expect(ask).toBeChecked()
-    await expect(row(admin, 'Ask before saving a team rule')).not.toContainText(/\b(Act|Run)\b/)
-    const saved = admin.waitForResponse(r => r.request().method() === 'PUT' && decodeURIComponent(r.url()).endsWith('/api/settings/brand/m:ask') && r.status() === 200)
-    await ask.click()
-    await saved
-    await expect(ask).not.toBeChecked()
+    if (phone()) {
+      // A team page is read-only on a phone ("Change these on a computer"): the switch is shown as its value, so the
+      // phone run shows that, and turns the setting off as the API does (the desktop run clicks the switch).
+      await expect(switchOf(admin, 'Ask before saving a team rule')).toHaveCount(0)
+      await expect(main(admin).getByRole('note')).toContainText('Change these on a computer.')
+      await expect(row(admin, 'Ask before saving a team rule').locator('.text-foreground-2')).toHaveText('On')
+      await setSwitch(request, adminActor, 'brand', 'm:ask', false)
+      await admin.reload()
+      await ready(admin)
+      await settingsPage(admin, 'Team settings', 'Team memory')
+      await expect(row(admin, 'Ask before saving a team rule').locator('.text-foreground-2')).toHaveText('Off')
+    } else {
+      const ask = switchOf(admin, 'Ask before saving a team rule')
+      await expect(ask).toBeEnabled()
+      await expect(ask).toBeChecked()
+      await expect(row(admin, 'Ask before saving a team rule')).not.toContainText(/\b(Act|Run)\b/)
+      const saved = admin.waitForResponse(r => r.request().method() === 'PUT' && decodeURIComponent(r.url()).endsWith('/api/settings/brand/m:ask') && r.status() === 200)
+      await ask.click()
+      await saved
+      await expect(ask).not.toBeChecked()
+    }
     expect(await switchValue(request, adminActor, 'brand', 'm:ask')).toBe(false)
     await shot(admin, 'S5-ask-off')
     // The agent's next team fact is active at once: nothing waits, and a new chat finds it with no approval.
@@ -447,33 +462,41 @@ test('S7: Request a skill from the Skills page; it shows in the team window, and
   await shot(page, 'S7-done-in-closed-requests')
 })
 
-test('S8: Request on a catalogue tool says "Request sent" and stays requested after a reload; Undo withdraws it', async ({ context, page }) => {
+test('S8: Request a tool from the Tools page; "Request sent" says so, it stays open after a reload, and Withdraw takes it back', async ({ context, page }) => {
+  // The product's Tools page has no catalogue of tools to request (that list is the demo's invented data), so its one
+  // way to ask for a tool is "Request a tool", which opens the team window on a tool request.
   await openAs(context, page, 'dana', '#/tools')
-  const requested = main(page).getByRole('button', { name: 'Requested', exact: true })
-  const requestable = main(page).getByRole('button', { name: 'Request', exact: true })
-  await expect(requestable.first(), 'the Tools page offers a catalogue tool to request').toBeVisible()
-  const before = await requested.count()
+  await expect(main(page).getByRole('heading', { name: 'Add a tool' })).toHaveCount(0)
+  const title = `Connect our Faire account ${uid()}`
+  const openRequests = () => teamWindow(page).getByRole('list', { name: 'Open requests' }).getByRole('listitem').filter({ hasText: title })
+  const openYourRequests = async () => {
+    await accountItem(page, /^Your Inhouse team/)
+    await teamWindow(page).getByRole('radio', { name: /^Your requests/ }).click()
+  }
   try {
-    // Request, then Undo: it is withdrawn.
-    await requestable.first().click()
-    const sent = toast(page, 'Request sent')
-    await expect(sent).toBeVisible()
-    await expect(requested).toHaveCount(before + 1)
-    await shot(page, 'S8-request-sent')
-    await sent.getByRole('button', { name: 'Undo', exact: true }).click()
-    await expect(requested).toHaveCount(before)
+    await main(page).getByRole('button', { name: 'Request a tool', exact: true }).click()
+    await expect(teamWindow(page)).toBeVisible()
+    await expect(teamWindow(page).getByRole('radio', { name: /New tool/ })).toBeChecked()
+    await teamWindow(page).getByRole('textbox', { name: 'Title' }).fill(title)
+    await shot(page, 'S8-the-tool-request')
+    await teamWindow(page).getByRole('button', { name: 'Send to the team' }).click()
+    await expect(toast(page, 'Request sent to your Inhouse team.')).toBeVisible()
+    await expect(teamWindow(page)).toHaveCount(0)
+    // It stays open after a reload.
     await page.reload()
     await ready(page)
-    await expect(requested).toHaveCount(before)
-    // Request again: it stays requested after a reload.
-    await expect(requestable.first()).toBeVisible()
-    await requestable.first().click()
-    await expect(toast(page, 'Request sent')).toBeVisible()
-    await expect(requested).toHaveCount(before + 1)
+    await openYourRequests()
+    await expect(openRequests()).toContainText('With the team')
+    await shot(page, 'S8-still-open-after-a-reload')
+    // Withdraw takes it back: it leaves the open list, and stays gone after another reload.
+    await openRequests().getByRole('button').first().click()
+    await teamWindow(page).getByRole('button', { name: 'Withdraw request', exact: true }).click()
+    await expect(toast(page, 'Request withdrawn.')).toBeVisible()
+    await expect(openRequests()).toHaveCount(0)
     await page.reload()
     await ready(page)
-    await expect(requested).toHaveCount(before + 1)
-    await shot(page, 'S8-still-requested-after-a-reload')
+    await openYourRequests()
+    await expect(openRequests()).toHaveCount(0)
   } finally {
     // Leave no open tool request of this person's behind (the team caps open requests at 50 a brand).
     const open = await api(page, 'GET', '/api/team-requests?status=open')

@@ -220,6 +220,7 @@ Tools: list and pages
   Selector: search, Pause access, Reconnect, Request a tool
   Expected: pausing or disconnecting changes the count, the tool page (Read, Draft, Access) and the composer alike; Pause access has Undo and Resume brings it all back; Request a tool opens the team window; a catalogue tool's Request (Add a tool) shows "Requested" and a toast starting "Request sent" (the product's once the server has it), stays "Requested" after a reload, and the toast's Undo withdraws it (the product withdraws through route 83)
   Covered:  e2e/data-states.spec.ts, e2e/page-actions.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts, e2e/ship/memory-skills.spec.ts (S8)
+  Gaps:     the product's Tools page has no catalogue ("Add a tool" is the demo's invented list), so the ship spec's S8 shows "Request a tool" (open after a reload, Withdraw) instead of a catalogue tool's Request
 
 Tools: Slack channel
   Path:     Tools -> Slack
@@ -282,7 +283,7 @@ Settings: Team memory
   Selector: buttons "Forget", switch "Ask before saving a team rule", button "Teach in a chat"
   Expected: usable at every stage (no stage tag), with a "Waiting for your OK" section for an Admin in the product (Approve, Reject after asking; a stale Approve is refused and says what the rule is now); Forget removes a line with an Undo toast and the Inhouse agent page's count follows; the switch turns off; both survive a reload and Reset demo clears them; Teach in a chat opens a new chat holding "Remember that "
   Covered:  e2e/settings-team-pages.spec.ts, e2e/ship/memory-skills.spec.ts (S2 to S5), e2e/support/memory-scenarios.test.ts
-  Gaps:     the ship spec doesn't show a routine's team fact waiting while Ask is off (a routine can't be made at Watch through the app; the store's tests prove it)
+  Gaps:     on a phone a team page is read-only, so S5's phone run turns Ask off through the API and checks the page shows Off; the ship spec doesn't show a routine's team fact waiting while Ask is off (a routine can't be made at Watch through the app; the store's tests prove it)
 
 Settings: Run limits
   Path:     Settings -> Run limits
