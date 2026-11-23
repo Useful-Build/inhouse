@@ -84,8 +84,6 @@ export interface TeamRow extends OpenRequest {
   text?: string
   /** The signed-in person asked it, so they may withdraw it while it's open. */
   mine: boolean
-  /** The status carries a date ("Live by Fri, Nov 20"). */
-  dated: boolean
   closed?: 'done' | 'declined' | 'withdrawn'
 }
 
@@ -111,14 +109,13 @@ export const teamRequests = (ctx: Ctx, now: number, sentHereJustNow: boolean, wi
     return {
       key: teamRequestKey(q), icon: q.icon ?? KIND_ICON[kind] ?? 'add_link', title: q.title, kind, who: mine ? 'You' : name,
       when: line.sub.slice(q.sub.length + 2), sub: line.sub, text: q.text, mine, seed,
-      status: withdrew ? 'Withdrawn' : line.status, dated: !withdrew && !!q.statusAt, closed: withdrew ? 'withdrawn' : q.closed,
+      status: withdrew ? 'Withdrawn' : line.status, closed: withdrew ? 'withdrawn' : q.closed,
     }
   }
   const seeded = ctx.data.notifications.teamRequests.flatMap((q, i): TeamRow[] => {
     const tool = /^Connect (.+)$/.exec(q.title)?.[1]
     if (!q.closed && tool && live?.name !== tool) return []
-    const r = row(q, false, i)
-    return [!q.closed && tool && live && !r.closed ? { ...r, status: `Live by ${live.by}` } : r]
+    return [row(q, false, i)]
   })
   const all = [...ctx.agent.teamRequests.map(q => row(q, true, null)), ...seeded]
   return { open: all.filter(r => !r.closed), closed: all.filter(r => r.closed) }
@@ -132,12 +129,12 @@ export const openRequests = (ctx: Ctx, now: number, sentHereJustNow: boolean, wi
   teamRequests(ctx, now, sentHereJustNow, withdrawn).open
 
 /**
- * A request to the Inhouse team as listed: "New tool · asked by Priya, Nov 9" and "Live by Fri, Nov 20". One the person
+ * A request to the Inhouse team as listed: "New tool · asked by Priya, Nov 9", with its status as it is, never a date. One the person
  * sent (`sentHere`) says "just now" however long ago it went, as it did before C1; P2 shows `fmtAgo` from its instant.
  */
 export const teamRequestLine = (q: Omit<TeamRequest, 'icon'>, now: number, sentHere: boolean): { sub: string; status: string } => {
   const d0 = display()
-  return { sub: `${q.sub}, ${sentHere ? 'just now' : fmtAgo(q.at, now, d0)}`, status: q.statusAt ? `${q.status} ${fmtWeekday(q.statusAt, d0)}` : q.status }
+  return { sub: `${q.sub}, ${sentHere ? 'just now' : fmtAgo(q.at, now, d0)}`, status: q.status }
 }
 /** When a tool being set up should connect, as Today's setup list and its row on Tools say it. */
 const SETUP_DUE: Record<ToolSetup['due'], string> = { today: 'Connecting today', tomorrow: 'Tomorrow', 'this-week': 'This week' }

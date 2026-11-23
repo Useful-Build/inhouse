@@ -352,7 +352,7 @@ const savedRequest = (r: unknown, now: Instant): TeamRequest | null => {
   // In the order `sendTeamRequest` writes them, so a state saved now loads as it was saved.
   const sub = isInstant(r.at) ? r.sub as string : (r.sub as string).replace(/, just now$/, '')
   return {
-    icon: r.icon as string, title: r.title as string, sub, at: isInstant(r.at) ? r.at : now, status: r.status as string, ...(isInstant(r.statusAt) ? { statusAt: r.statusAt } : {}),
+    icon: r.icon as string, title: r.title as string, sub, at: isInstant(r.at) ? r.at : now, status: r.status as string,
     ...(typeof r.text === 'string' ? { text: r.text } : {}),
   }
 }

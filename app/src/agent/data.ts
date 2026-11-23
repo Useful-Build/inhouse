@@ -365,7 +365,6 @@ export const notifications = {
   notifications: notificationsJson.notifications,
   teamRequests: notificationsJson.teamRequests.map((r): Omit<TeamRequest, 'icon'> => ({
     title: r.title, sub: r.sub, at: sampleAt(`the team request "${r.title}"`, r.at), status: r.status,
-    ...(r.statusAt !== undefined ? { statusAt: sampleAt(`the team request "${r.title}"`, r.statusAt) } : {}),
     ...(r.text !== undefined ? { text: r.text } : {}),
     ...(r.closed !== undefined ? { closed: closedOf(r.title, r.closed) } : {}),
   })),
