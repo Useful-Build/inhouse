@@ -89,6 +89,7 @@ function overdueChecks(nowMs: number, periods: RetentionPeriods): { store: strin
   const checks: ReturnType<typeof overdueChecks> = [
     { store: 'chats', sql: 'SELECT COUNT(*) AS n FROM chats WHERE last_at_ms < ? OR (deleted_at_ms IS NOT NULL AND deleted_at_ms < ?)', params: [own('chats'), fixed('trash')] },
     { store: 'tool_calls', sql: 'SELECT COUNT(*) AS n FROM tool_calls WHERE at_ms < ?', params: [own('tool_calls')] },
+    // The chat trash job removes expired marks even when the file row is gone.
     { store: 'chat_files', sql: "SELECT COUNT(*) AS n FROM library_marks WHERE source = 'chat' AND deleted_at_ms < ?", params: [fixed('trash')] },
     { store: 'memories', sql: "SELECT COUNT(*) AS n FROM memories WHERE status = 'forgotten' AND updated_at_ms < ?", params: [fixed('forgottenMemory')] },
     { store: 'routine_slots', sql: 'SELECT COUNT(*) AS n FROM routine_slots s WHERE claimed_at_ms < ? AND NOT EXISTS (SELECT 1 FROM today_items t WHERE t.slot_key = s.slot_key)', params: [own('routine_slots')] },

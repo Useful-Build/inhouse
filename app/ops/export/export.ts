@@ -158,8 +158,8 @@ async function* lines(deps: JobDeps, plan: ExportPlan, pageSize: number): AsyncG
       if (filter === null) continue
       const pk = await primaryKey(db, entry.name)
       // Another person's account row that only references this one: its key columns only.
-      const cut = scope.kind === 'person' && entry.retention === 'account'
-        ? (row: Record<string, unknown>) => pk.cols.some(c => row[c] !== scope.memberId)
+      const cut = scope.kind === 'person' && entry.name === 'members'
+        ? (row: Record<string, unknown>) => row.id !== scope.memberId
           ? Object.fromEntries([...new Set([...pk.cols, ...plainKeys(entry)])].map(c => [c, row[c]]))
           : row
         : (row: Record<string, unknown>) => row

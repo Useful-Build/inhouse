@@ -62,6 +62,19 @@ describe('the data signals', () => {
     await env.DB.prepare("DELETE FROM activity_lines WHERE id IN ('a_slack', 'a_late')").run()
   })
 
+  it('retention clears overdue orphaned chat marks and leaves unexpired ones', async () => {
+    const db = env.DB
+    const cutoff = NOW - 30 * DAY
+    const mark = db.prepare("INSERT INTO library_marks (file_id, source, deleted_at_ms) VALUES (?, 'chat', ?)")
+    await db.batch([mark.bind('f_orphan_expired', cutoff - OVERDUE_SLACK_MS - 1), mark.bind('f_orphan_current', cutoff)])
+    expect(await retentionOverdue(db, NOW)).toEqual({ ok: false, detail: 'past retention: chat_files 1' })
+    const registry = tables.filter(t => t.name === 'chat_files')
+    expect(await retentionPass({ db, bucket, nowMs: NOW, requestId: 'orphan-trash', from: 0, registry })).toMatchObject({ reached: 1, failed: [] })
+    expect(await retentionOverdue(db, NOW)).toEqual({ ok: true })
+    const marks = await db.prepare("SELECT file_id FROM library_marks WHERE file_id IN ('f_orphan_expired', 'f_orphan_current')").all()
+    expect(marks.results).toEqual([{ file_id: 'f_orphan_current' }])
+  })
+
   it.each([
     { chats: '3 months', steps: '24 months', chatAge: 93, stepAge: 395, chatGone: true, stepGone: false, late: 'chats 1' },
     { chats: '24 months', steps: '3 months', chatAge: 395, stepAge: 93, chatGone: false, stepGone: true, late: 'activity_lines 1' },

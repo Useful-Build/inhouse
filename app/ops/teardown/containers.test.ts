@@ -6,7 +6,9 @@ const preview = { id: 'preview', name: 'test_preview_runner' }
 const other = { id: 'other', name: 'testing_runner' }
 const account = { id: 'a'.repeat(32), name: 'Test Brand Account' }
 
-function scenario({ keep = false, deleteFails = false, invalidPage = false } = {}) {
+function scenario({ keep = false, deleteFails = false, invalidPage = false, lastPage = {} }: {
+  keep?: boolean; deleteFails?: boolean; invalidPage?: boolean; lastPage?: Record<string, unknown>
+} = {}) {
   let apps = [runner, other, preview]
   let time = 0
   const deleting = new Set<string>()
@@ -16,7 +18,7 @@ function scenario({ keep = false, deleteFails = false, invalidPage = false } = {
     if (init.method === 'DELETE') {
       const id = url.pathname.split('/').at(-1)!
       calls.push(`DELETE ${id}`)
-      if (deleteFails && id === runner.id) return Response.json({ success: false })
+      if (deleteFails && id === runner.id) return Response.json({ success: false }, { status: 403 })
       deleting.add(id)
       return Response.json({ success: true })
     }
@@ -24,11 +26,13 @@ function scenario({ keep = false, deleteFails = false, invalidPage = false } = {
       calls.push('GET account')
       return Response.json({ success: true, result: account })
     }
+    expect(url.pathname).toBe(`/client/v4/accounts/${account.id}/containers/applications`)
+    expect(url.searchParams.get('per_page')).toBe('100')
     const next = url.searchParams.get('page_token')
     calls.push(`GET ${next ?? 'first'}`)
     return Response.json({
       success: true, result: next ? apps.slice(1) : apps.slice(0, 1),
-      result_info: { next_page_token: invalidPage || !next ? 'next' : '' },
+      result_info: { next_page_token: invalidPage || !next ? 'next' : '', ...(next ? lastPage : {}) },
     })
   }
   const run = (options: Partial<Parameters<typeof teardownContainers>[0]> = {}) => teardownContainers({
@@ -74,9 +78,22 @@ describe('container teardown with a fake Cloudflare API', () => {
 
   it('attempts every delete and reports leftovers when a delete fails', async () => {
     const { run, calls, reports } = scenario({ deleteFails: true })
-    await expect(run()).rejects.toThrow('Container teardown failed')
+    await expect(run()).rejects.toMatchObject({
+      message: 'Container teardown failed',
+      errors: expect.arrayContaining([expect.objectContaining({
+        message: 'Delete failed for test_runner (runner)', cause: expect.objectContaining({ code: 403 }),
+      })]),
+    })
     expect(calls).toContain('DELETE preview')
     expect(reports.at(-1)).toMatchObject({ phase: 'after', applications: [runner, preview] })
+  })
+
+  it.each(['House', ' house ', ' HOUSE '])('requires house approval for %j and reports the canonical brand', async brand => {
+    const { run, calls, reports } = scenario()
+    await expect(run({ brand })).rejects.toThrow('approval for house')
+    expect(calls).toEqual([])
+    await run({ brand, houseApproved: true })
+    expect(reports.every(report => (report as { brand: string }).brand === 'house')).toBe(true)
   })
 
   it('only lists in a dry run and requires approval before any calls for a deletion', async () => {
@@ -112,5 +129,23 @@ describe('container teardown with a fake Cloudflare API', () => {
     const { run, calls } = scenario({ invalidPage: true })
     await expect(run()).rejects.toThrow('invalid page token')
     expect(calls).toEqual(['GET account', 'GET first', 'GET next'])
+  })
+
+  it.each([
+    { page: 2, total_pages: 3 },
+    { total_count: 4 },
+    { cursor: 'next' },
+    { cursors: { after: 'next' } },
+  ])('refuses a partial inventory indicated by %j without a page token', async lastPage => {
+    const { run, calls, reports } = scenario({ lastPage })
+    await expect(run()).rejects.toThrow('inventory is incomplete')
+    expect(calls).toEqual(['GET account', 'GET first', 'GET next'])
+    expect(reports).toEqual([])
+  })
+
+  it('accepts complete count-based metadata, including out-of-scope applications', async () => {
+    const { run, reports } = scenario({ lastPage: { page: 2, total_pages: 2, total_count: 3 } })
+    await run({ apply: false })
+    expect(reports).toEqual([{ phase: 'before', brand: 'test', applications: [runner, preview] }])
   })
 })

@@ -207,6 +207,8 @@ empty. If the ID set differs, the script refuses before deleting anything. Run a
 before applying. For house, also pass `--house --house-approved` after Wasim's approval. Save both JSON lists with
 the offboarding record. [Cloudflare account details API](https://developers.cloudflare.com/api/resources/accounts/methods/get/)
 The script polls for asynchronous deletion and fails if any applications in scope remain.
+It uses the public Containers list endpoint and refuses an incomplete inventory if the response advertises more
+results without a usable page token. [Cloudflare Containers list API](https://developers.cloudflare.com/api/resources/containers/subresources/applications/methods/list/)
 
 **Verify.** The after list is empty. The Cloudflare dashboard shows no Worker, D1, R2 bucket or Access app for the brand.
 

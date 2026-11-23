@@ -174,31 +174,38 @@ export const toolCallsSteps: RetentionJob = {
   },
 }
 
-// ---------- a Library-deleted chat output, 30 days after its mark ----------
+// ---------- expired chat trash, including marks whose file row is gone ----------
 
 const FILES_ROUND = 50
+const CHAT_TRASH = "FROM library_marks m LEFT JOIN chat_files f ON f.id = m.file_id WHERE m.source = 'chat' AND m.deleted_at_ms < ?"
+type ChatTrashRow = { id: string; r2_key: string | null }
 
 export const chatFilesTrash: RetentionJob = {
   async plan(ctx) {
     const c = cut(ctx, 'chat_files', 'trash')
-    const found = await ids(ctx.db, "SELECT f.id AS id FROM chat_files f JOIN library_marks m ON m.file_id = f.id AND m.source = 'chat' WHERE m.deleted_at_ms < ? ORDER BY f.id", [c], ctx.limit)
-    return { counts: { chat_files: found.units.length, library_marks: found.units.length, 'files/': found.units.length }, units: found.units, cutoffs: [logged('chat_files', 'trash', c)], more: found.more }
+    const rows = await all<ChatTrashRow>(ctx.db, stmt(`SELECT m.file_id AS id, f.r2_key ${CHAT_TRASH} ORDER BY m.file_id LIMIT ?`, c, ctx.limit + 1))
+    const selected = rows.slice(0, ctx.limit)
+    const files = selected.filter(row => row.r2_key !== null).length
+    return { counts: { chat_files: files, library_marks: selected.length, 'files/': files }, units: selected.map(row => row.id), cutoffs: [logged('chat_files', 'trash', c)], more: rows.length > ctx.limit }
   },
   async run(ctx, plan, round) {
     const c = cut(ctx, 'chat_files', 'trash')
     const removed: Record<string, number> = {}
     for (const part of chunks(plan.units, FILES_ROUND)) {
-      const files = await all<{ id: string; r2_key: string }>(ctx.db, stmt(`SELECT f.id, f.r2_key FROM chat_files f JOIN library_marks m ON m.file_id = f.id AND m.source = 'chat' WHERE m.deleted_at_ms < ? AND f.id IN (${marks(part.length)})`, c, ...part))
-      if (files.length === 0) continue
-      const keys = files.map(f => f.r2_key)
+      const trash = await all<ChatTrashRow>(ctx.db, stmt(`SELECT m.file_id AS id, f.r2_key ${CHAT_TRASH} AND m.file_id IN (${marks(part.length)})`, c, ...part))
+      if (trash.length === 0) continue
+      const files = trash.filter(row => row.r2_key !== null)
+      const keys = trash.map(row => row.r2_key).filter(key => key !== null)
       await deleteKeys(ctx.bucket, keys)
       const fileIds = files.map(f => f.id)
+      const markIds = trash.map(row => row.id)
       const rows = await deleted(ctx.db, [
-        { store: 'library_marks', stmt: stmt(`DELETE FROM library_marks WHERE source = 'chat' AND file_id IN (${marks(fileIds.length)})`, ...fileIds) },
         { store: 'chat_files', stmt: stmt(`DELETE FROM chat_files WHERE id IN (${marks(fileIds.length)})`, ...fileIds) },
+        { store: 'library_marks', stmt: stmt(`DELETE FROM library_marks WHERE source = 'chat' AND deleted_at_ms < ? AND file_id IN (${marks(markIds.length)})
+          AND NOT EXISTS (SELECT 1 FROM chat_files WHERE id = library_marks.file_id)`, c, ...markIds) },
       ])
       add(removed, { ...rows, 'files/': keys.length })
-      await round([{ store: 'chat_files', ids: fileIds, count: rows.chat_files ?? 0 }, { store: 'library_marks', ids: fileIds, count: rows.library_marks ?? 0 }, { store: 'files/', keys, count: keys.length }])
+      await round([{ store: 'chat_files', ids: fileIds, count: rows.chat_files ?? 0 }, { store: 'library_marks', ids: markIds, count: rows.library_marks ?? 0 }, { store: 'files/', keys, count: keys.length }])
     }
     return removed
   },
