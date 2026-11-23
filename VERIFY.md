@@ -36,9 +36,10 @@ On the laptop, run only the light checks. Everything heavier runs in GitHub CI o
 ## 5. Targeted live QA, visual proof, and milestones
 
 - Targeted live QA (every user-facing or agent-behavior PR, before merge): run the PR itself on its Workers Preview deployment URL (or the PR sandbox deploy for container/agent behavior), never a local build, and exercise the exact flow or bug you changed like a real user. Confirm it works end to end before merging to `main`, and note the proof in the PR or report (for example: `Live QA: PASS - reproduced X, verified fix works on Y`). No separate QA subagent is needed.
-- Visual proof (UI changes): CI keeps Playwright artifacts only when a job fails (`screenshot: 'only-on-failure'`, upload on `!success()`), so a green run has no screenshots. Fix any clipping, overflow, contrast, or wrapping issue you find in these:
+- Visual proof (UI changes): every CI run that isn't cancelled uploads its Playwright output as the `playwright-shard-<n>` and `playwright-test-build` artifacts. On a green run that's the named screenshots specs take of the screens they test (`page.screenshot` into `outputPath`); on a failing run also the failure screenshots, traces and videos. Fix any clipping, overflow, contrast, or wrapping issue you find in these:
+  - Any UI change: download the `playwright-shard-<n>` artifacts and inspect the screenshots of the screens you changed, at 1440px and 390px, light and dark.
   - Intentional UI change: run `gh workflow run baselines --ref <branch>`. It uploads the new Linux PNGs as the `visual-baselines` artifact. Download them into `app/e2e/visual.spec.ts-snapshots/`, look at each one and commit them. Then inspect each changed PNG in the PR's file view (GitHub shows before and after).
-  - Failing run: inspect the expected, actual and diff images in the uploaded `playwright-shard-<n>` or `playwright-test-build` artifact.
+  - Failing run: inspect the expected, actual and diff images in the same artifacts.
   - Flow check: use the PR's Workers Preview URL (the demo build, deployed by `preview.yml` after `ci` passes). For product or container behavior, use the ops-repo sandbox deploy (§3).
   - Animated transitions: check frame by frame, not with spaced screenshots. Run `gh workflow run motion --ref <branch>` (no inputs); it records 30 fps video and per-frame JSON at desktop and 390px and uploads them as the `motion` artifact, even on failure.
   - Keep any artifacts you download in gitignored `verify/<branch>/`.
