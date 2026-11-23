@@ -15,7 +15,7 @@ import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { Button, CardGrid, EmptyState, Icon, IconButton, IconTile, LogoTile, MenuItem, Page, PageHeader, SectionHeader, Segmented, StageTag } from '../ui'
 import { Confirm, SearchBox, TAP } from '../ui/fields'
-import { rememberTrigger } from '../ui/dialogs'
+import { rememberTrigger, triggerTogglesMenu } from '../ui/dialogs'
 import { Markdown } from './chat/Markdown'
 
 const SECTION_HEAD = 'mb-1.5'
@@ -222,7 +222,9 @@ export function SkillPage() {
               <DropdownMenuTrigger asChild>
                 <IconButton data-skill-more icon="more_horiz" label={`More for ${s.n}`} size={18} box="icon-lg" className={cn(phone && TAP)} />
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" collisionPadding={16} aria-label="Skill actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
+              <DropdownMenuContent align="end" collisionPadding={16} aria-label="Skill actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input"
+                // More reopens the menu even while it's still fading out (after Delete skill, then Cancel).
+                onInteractOutside={triggerTogglesMenu('[data-skill-more]')}>
                 {switchable && (
                   <MenuItem onSelect={switchIt}>
                     <Icon name={on ? 'pause_circle' : 'play_circle'} size={18} />{on ? 'Turn off' : 'Turn on'}
