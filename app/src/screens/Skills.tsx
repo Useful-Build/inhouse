@@ -217,10 +217,11 @@ export function SkillPage() {
       )}
 
       <div className="@container mt-7">
+        {/* The label sits above the whole row, so the instructions card and the side cards start on one line. */}
+        {s.body && <div id="skill-instructions" className="px-1 pb-3 text-base font-medium text-foreground-3">Instructions</div>}
         <div className="flex flex-col gap-6 @4xl:flex-row @4xl:items-start">
           {s.body && (
             <div className="min-w-0 flex-1">
-              <div id="skill-instructions" className="px-1 pb-3 text-base font-medium text-foreground-3">Instructions</div>
               <article aria-labelledby="skill-instructions" className="rounded-3xl border border-border bg-card px-5 pt-8 pb-9 shadow-card sm:px-10 sm:pt-10 sm:pb-11">
                 <Markdown text={s.body} look="page" />
               </article>
