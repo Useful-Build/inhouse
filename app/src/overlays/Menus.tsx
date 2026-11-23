@@ -9,6 +9,7 @@ import { display, nowOf } from '../state/display'
 import { Avatar, EmptyState, Icon, IconTile, MenuItem } from '../ui'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Badge } from '@/components/ui/badge'
 import { PHONE_QUERY } from '../components/Composer'
 import { signOutAction } from './account'
 
@@ -139,7 +140,10 @@ export function AccountMenu({ children }: { children: ReactNode }) {
         onEscapeKeyDown={e => { if (useUi.getState().pop === 'me') e.stopPropagation() }}>
         <DropdownMenuLabel className="flex items-center gap-3 px-2.5 pt-2.5 pb-3 text-foreground">
           <Avatar who={id} size={38} fontSize={13} />
-          <div><div className="text-base font-semibold">{name}</div><div className="text-xs font-normal text-muted-foreground">{email} · {role}</div></div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2"><span className="truncate text-base font-semibold">{name}</span>{role && <Badge variant="secondary" className="flex-none font-medium">{role}</Badge>}</div>
+            <div className="truncate text-xs font-normal text-muted-foreground">{email}</div>
+          </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator className="mx-1.5 mt-0" />
         {groups.map((items, g) => (

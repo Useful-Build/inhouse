@@ -74,7 +74,8 @@ export const STATES: UiState[] = [
     name: 'pop-account', stage: 'Act', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
     act: async page => {
       await (await sidebar(page)).getByRole('button', { name: 'Settings' }).click()
-      await expect(page.getByText('sam@northline.example · Admin')).toBeVisible()
+      await expect(page.getByRole('menu').getByText('sam@northline.example', { exact: true })).toBeVisible()
+      await expect(page.getByRole('menu').getByText('Admin', { exact: true })).toBeVisible()
     },
   },
   {
