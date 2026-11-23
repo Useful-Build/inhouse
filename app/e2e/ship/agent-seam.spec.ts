@@ -75,7 +75,7 @@ async function switches(page: Page) {
 
 test('S1: Today opens at the morning start with the same six things and the same dollar amounts', async ({ fx, page }) => {
   await start(page, fx)
-  await expect(h1(page)).toContainText('6 things need you. A fix is drafted for each.')
+  await expect(h1(page)).toContainText('6 things need you. Drafts are ready.')
   await expect(page.getByRole('article')).toHaveCount(6)
   // Every card's amount goes through the money formatter: it reads as it did before P1.
   // The amount element itself is checked: a title can carry the figure too ("Amazon paid out $1,240 less than expected").
@@ -115,7 +115,7 @@ test('S2: A suggested question streams its answer with the orders table, and tim
   await start(page, fx)
   // "#/chats" opens the newest chat, so a person starts a new one: its empty state offers the suggestions.
   await goTo(page, 'New chat')
-  await expect(page.getByRole('heading', { name: 'What do you want to know?' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'What should we look into?' })).toBeVisible()
   await page.getByRole('button', { name: 'Which orders are stuck over 3 days?' }).click()
   const log = page.getByRole('log', { name: 'Conversation' })
   await expect(log.getByText('3 orders · $556')).toBeVisible({ timeout: 15_000 })
@@ -193,7 +193,7 @@ test('S5: The demo switches move to Run and to Cap reached, and Reset demo retur
   let panel = await switches(page)
   await panel.getByRole('radiogroup', { name: 'Stage' }).getByRole('radio', { name: 'Run', exact: true }).click()
   await panel.getByRole('button', { name: 'Close demo switches' }).click()
-  await expect(h1(page)).toContainText('4 handled before you woke up. 3 need you.')
+  await expect(h1(page)).toContainText('4 handled today. 3 need you.')
   panel = await switches(page)
   await panel.getByRole('button', { name: 'Cap reached', exact: true }).click()
   await panel.getByRole('button', { name: 'Close demo switches' }).click()
@@ -203,7 +203,7 @@ test('S5: The demo switches move to Run and to Cap reached, and Reset demo retur
   await expect(toast(page, 'Demo reset. Every change is cleared.')).toBeVisible()
   await panel.getByRole('button', { name: 'Close demo switches' }).click()
   await expect(page.getByRole('button', { name: 'Demo switches: Act, Normal' })).toBeVisible()
-  await expect(h1(page)).toContainText('6 things need you. A fix is drafted for each.')
+  await expect(h1(page)).toContainText('6 things need you. Drafts are ready.')
   await expect(page.getByRole('alert')).toHaveCount(0)
   // The clock is back at the 8:00 AM start: an approval is stamped 8:00 AM, not 8:30.
   await approve(page)

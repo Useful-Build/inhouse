@@ -104,7 +104,7 @@ export function Today() {
             <button type="button" onClick={() => go('activity')}
               className={`mb-3 box-border flex w-full items-center rounded-xl bg-brand-tint px-4 py-3 text-sm text-brand-text transition-colors hover:bg-brand/12 ${phone ? 'flex-wrap gap-x-3 gap-y-1.5' : 'flex-nowrap gap-3'}`}>
               <Icon name="check_circle" size={18} weight={400} />
-              <b className="font-semibold whitespace-nowrap">{h.count} handled before you woke up</b>
+              <b className="font-semibold whitespace-nowrap">{h.count} handled today</b>
               {/* On a phone the list gets its own full-width lines under the title. */}
               <span className={`min-w-0 text-left text-brand-text ${phone ? 'order-3 grow basis-full' : 'ellipsis flex-1'}`}>{phone ? h.summary.split(' · ').map((item, i, all) => <Fragment key={item}><span className="whitespace-nowrap">{item}{i < all.length - 1 && ' ·'}</span>{' '}</Fragment>) : h.summary}</span>
               <span className={`font-semibold whitespace-nowrap ${phone ? 'order-2 ml-auto' : ''}`}>See activity</span>
@@ -137,7 +137,7 @@ export function Today() {
               )}
               <PromptBentoSlot suggestions={ctx.data.chat.suggestions} tools={readingTools(ctx)} onAsk={q => { void ask(q) }} showRoutine={false} />
               {ctx.data.tools.connected.length === 0 && ctx.data.chat.suggestions.length === 0 && (
-                <EmptyState>Nothing needs you today.</EmptyState>
+                <EmptyState>You're all caught up.</EmptyState>
               )}
             </div>
           )}
@@ -173,7 +173,7 @@ export function Today() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" collisionPadding={16} aria-label="Card actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
                           <MenuItem onSelect={askAbout}>
-                            <Icon name="chat_bubble" size={18} /><span className="flex-1">Ask about this</span>
+                            <Icon name="chat_bubble" size={18} /><span className="flex-1">Ask Inhouse</span>
                           </MenuItem>
                           {needsYou && <>
                             <MenuItem onSelect={() => setAside(p.id, 'snoozed')}>
@@ -228,7 +228,7 @@ export function Today() {
                         <span className="min-w-0 flex-1 text-pretty">{c.status}</span>
                       </div>
                       {c.quiet && (
-                        <Button variant="secondary" className={cn('relative z-raised self-start', tap)} onClick={c.quiet === 'Ask about this' ? askAbout : c.quiet === 'Undo' ? () => undoHandled(p.id) : open}>{c.quiet}</Button>
+                        <Button variant="secondary" className={cn('relative z-raised self-start', tap)} onClick={c.quiet === 'Ask Inhouse' ? askAbout : c.quiet === 'Undo' ? () => undoHandled(p.id) : open}>{c.quiet}</Button>
                       )}
                     </div>
                   )}

@@ -9,6 +9,7 @@ import { fmtMoney, fmtProse, fmtTime, hasAmount } from '../lib/format'
 import { display } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import { Button, DetailList, Icon, IconButton, InhouseMark, LogoTile, MenuItem, Window } from '../ui'
+import { Badge } from '@/components/ui/badge'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { isUrgent } from '../ui/severity'
 import { TAP } from '../ui/fields'
@@ -214,7 +215,7 @@ export function ProblemPanel() {
         )}
         {!watch && (
           <MenuItem onSelect={() => void ask('Tell me more about: ' + p.title)}>
-            <Icon name="chat_bubble" size={18} /><span className="flex-1">Ask about this</span>
+            <Icon name="chat_bubble" size={18} /><span className="flex-1">Ask Inhouse</span>
           </MenuItem>
         )}
         {!ctx.agent.setAside[openId] && <>
@@ -242,9 +243,10 @@ export function ProblemPanel() {
   return (
     <Window onClose={closeProblem} label={p.title} size={phone ? 'md' : 'wide'}>
       <div className={cn('flex flex-none items-center gap-1.5 pt-3.5 text-sm', phone ? 'pr-2.5 pl-5' : 'pr-4 pl-8')}>
-        <span className="min-w-0 flex-1 truncate">
-          {needsYou && isUrgent(p.sev) && <span className="font-semibold text-destructive-text">Urgent · </span>}
-          <span className="text-muted-foreground">{p.area}</span>
+        {/* As on the cards: the Urgent pill, then the area. */}
+        <span className="flex min-w-0 flex-1 items-center gap-2">
+          {needsYou && isUrgent(p.sev) && <Badge variant="destructive" size="lg">Urgent</Badge>}
+          <span className="truncate text-muted-foreground">{p.area}</span>
         </span>
         {stepping && <>
           <span className="mr-0.5 text-muted-foreground tabular-nums">{at + 1} of {list.length}</span>
@@ -268,6 +270,10 @@ export function ProblemPanel() {
             {dv.mode === 'waiting' && dv.doneNote && (
               <div className="flex items-start gap-2 rounded-lg bg-brand-tint px-3 py-2.5 text-sm text-brand-text"><Icon name="check_circle" size={16} weight={400} className="leading-icon" /><span>{dv.doneNote}</span></div>
             )}
+            {/* Who usually approves, when it's someone else: a quiet note under the draft. Asking them is in the menu. */}
+            {dv.mode === 'waiting' && dv.approverNote && (
+              <div className="flex items-start gap-2 rounded-lg bg-fill px-3 py-2.5 text-sm text-foreground-3"><Icon name="person" size={16} weight={400} className="leading-icon" /><span className="min-w-0 flex-1 text-pretty">{dv.approverNote}</span></div>
+            )}
           </div>
           {phone && checked}
         </div>
@@ -276,7 +282,7 @@ export function ProblemPanel() {
       <div className={cn('flex flex-none gap-2 border-t border-divider pt-3.5 pb-4', phone ? 'flex-wrap items-center px-5' : 'items-center pr-6 pl-8')}>
         {/* The decision reads left to right: the main action, Don't send, then everything else in the "···" menu. */}
         {watch && <>
-          <Button variant="primary" size="lg" className={tap} onClick={() => void ask('Tell me more about: ' + p.title)}>Ask about this</Button>
+          <Button variant="primary" size="lg" className={tap} onClick={() => void ask('Tell me more about: ' + p.title)}>Ask Inhouse</Button>
           {more}
         </>}
         {dv.mode === 'waiting' && <>
@@ -284,8 +290,6 @@ export function ProblemPanel() {
             {dv.cta}{p.draft.amount && p.draft.money && <span className="font-normal tabular-nums">{fmtMoney(p.draft.amount.money, display())}</span>}
           </Button>
           {more}
-          {/* Who usually approves, when it's someone else: a quiet note on the right. Asking them is in the menu. */}
-          {dv.approverNote && <span className={cn('min-w-0 flex-1 text-sm text-muted-foreground', phone ? 'basis-full' : 'max-w-sm pl-4 text-right')}>{dv.approverNote}</span>}
         </>}
         {dv.mode === 'approved' && <div className="flex-1">{status('check_circle', dv.doneText, dv.approvedLine, dv.canUndo ? () => unapprove(openId) : null)}</div>}
         {dv.mode === 'handled' && (

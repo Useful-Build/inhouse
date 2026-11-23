@@ -201,7 +201,7 @@ async function pickFast(page: Page) {
 /** A person starts a chat from Today with a question, on the Fast model; returns the new chat's id. */
 async function askFromToday(page: Page, text: string): Promise<string> {
   await goTo(page, '#/today')
-  await expect(page.getByRole('textbox', { name: 'Ask your Inhouse agent' })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Ask Inhouse' })).toBeVisible()
   await page.locator('[data-composer] textarea').fill(text)
   await pickFast(page)
   await page.getByRole('button', { name: 'Send', exact: true }).click()

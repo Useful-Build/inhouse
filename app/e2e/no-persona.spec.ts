@@ -279,7 +279,7 @@ for (const size of SIZES) {
         } else {
           // No chats yet: a new chat and its composer menus.
           await go(page, '#/chats/new')
-          await expect(main.getByRole('heading', { name: 'What do you want to know?' })).toBeVisible()
+          await expect(main.getByRole('heading', { name: 'What should we look into?' })).toBeVisible()
           await check(page, `${label} new chat`)
           await composerMenus(page, `${label} new chat`, phone)
         }
@@ -290,7 +290,7 @@ for (const size of SIZES) {
           await go(page, noData ? '#/chats/new' : '#/chats/stuck')
           await expect(main.getByText('Which orders are stuck over 3 days?').first()).toBeVisible()
           const before = await main.getByRole('button', { name: /\d+ steps/ }).count()
-          await page.getByRole('textbox', { name: 'Message your Inhouse agent' }).fill('Every Monday at 7, check which products have under 3 weeks of stock')
+          await page.getByRole('textbox', { name: 'Message Inhouse' }).fill('Every Monday at 7, check which products have under 3 weeks of stock')
           // Send by button: on a phone width Enter adds a line instead of sending.
           await page.locator('[data-composer]').getByRole('button', { name: 'Send' }).click()
           if (scenario === 'Cap reached') {

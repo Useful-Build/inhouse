@@ -62,6 +62,6 @@ test('Pop-ups: notifications, account menu, team window, empty chat', async ({ f
   await shot(page, 'pop-team')
   await page.keyboard.press('Escape')
   await page.getByRole('button', { name: 'New chat' }).click()
-  await expect(page.getByText('What do you want to know?')).toBeVisible()
+  await expect(page.getByText('What should we look into?')).toBeVisible()
   await shot(page, 'chat-empty')
 })

@@ -6,7 +6,7 @@ test('Phone: the chat composer stays above the safe area, and opening a chat lea
   await page.clock.install() // time keeps flowing; runFor adds app time on top, so no real sleep
   await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
   await page.goto('/?demo#/chats/refunds')
-  const field = page.getByRole('textbox', { name: 'Message your Inhouse agent' })
+  const field = page.getByRole('textbox', { name: 'Message Inhouse' })
   const composer = page.locator('[data-composer]')
   await expect(field).toBeVisible()
   await page.clock.runFor(300) // covers timer-based focus only (a setTimeout), not a focus after a real network or frame wait

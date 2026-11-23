@@ -109,14 +109,14 @@ test('Approvals: edit then approve and Undo, Don\'t send and Undo, approve all l
 test('Today: snooze one card and dismiss another; Today, Approvals and the badge agree, after a reload too, until Reset demo', async ({ fx, page }) => {
   await start(page, fx, 'Act')
   const h1 = page.getByRole('heading', { level: 1 })
-  await expect(h1).toContainText('6 things need you. A fix is drafted for each.')
+  await expect(h1).toContainText('6 things need you. Drafts are ready.')
   await expect(page.getByRole('article')).toHaveCount(6)
 
   // The menu doesn't open the card's panel.
   await card(page, 'Order #4821 is stuck for 4 days').getByRole('button', { name: 'More' }).click()
   const menu = page.getByRole('menu', { name: 'Card actions' })
   await expect(menu.getByRole('menuitem')).toHaveCount(3)
-  for (const name of ['Ask about this', 'Snooze until tomorrow', 'Not a problem']) await expect(menu.getByRole('menuitem', { name, exact: true })).toBeVisible()
+  for (const name of ['Ask Inhouse', 'Snooze until tomorrow', 'Not a problem']) await expect(menu.getByRole('menuitem', { name, exact: true })).toBeVisible()
   await shot(page, 'today-card-menu')
   await menu.getByRole('menuitem', { name: 'Snooze until tomorrow' }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
@@ -158,7 +158,7 @@ test('Today: snooze one card and dismiss another; Today, Approvals and the badge
   await page.getByRole('button', { name: /Demo switches/ }).click()
   await page.getByRole('button', { name: 'Reset demo', exact: true }).click()
   await expect(page.getByRole('article')).toHaveCount(6)
-  await expect(h1).toContainText('6 things need you. A fix is drafted for each.')
+  await expect(h1).toContainText('6 things need you. Drafts are ready.')
   await expect(badge(page)).toContainText('6')
 })
 
@@ -320,7 +320,7 @@ test('Counts leave set-aside problems out: Watch notifications and Approvals, an
 
   await go(page, '#/today')
   for (const t of titles.slice(2)) await snooze(t)
-  await expect(h1).toContainText('Nothing needs you today.')
+  await expect(h1).toContainText("You're all caught up.")
   await expect(page.getByRole('status').filter({ hasText: 'Every card is set aside for today.' })).toBeVisible()
   await shot(page, 'today-all-set-aside')
   await page.getByRole('button', { name: 'Notifications' }).click()

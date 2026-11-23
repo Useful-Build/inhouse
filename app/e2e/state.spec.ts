@@ -63,17 +63,17 @@ test('Act: Undo in the toast during the hold cancels the send', async ({ fx, pag
 test('Run: Undo on a handled card sends it back to you, and the toast Undo restores it', async ({ fx, page }) => {
   await start(page, fx, 'Run')
   const heading = page.getByRole('heading', { level: 1 })
-  await expect(heading).toContainText('4 handled before you woke up. 3 need you.')
+  await expect(heading).toContainText('4 handled today. 3 need you.')
 
   await card(page, '11 returns are not restocked').getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect(heading).toContainText('3 handled before you woke up. 4 need you.')
+  await expect(heading).toContainText('3 handled today. 4 need you.')
   await expect(card(page, '11 returns are not restocked')).toContainText('Undone · back to you')
   await page.screenshot({ path: test.info().outputPath('state-run-undone.png') })
 
   const toast = page.getByRole('status').filter({ hasText: 'Undone:' })
   await expect(toast).toBeVisible()
   await toast.getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect(heading).toContainText('4 handled before you woke up. 3 need you.')
+  await expect(heading).toContainText('4 handled today. 3 need you.')
   await expect(card(page, '11 returns are not restocked')).toContainText('Handled by Inhouse agent')
 })
 
@@ -165,12 +165,12 @@ test('Deep links: an unknown page lands on Today and an unknown tool on the Tool
 
 test('Chats: New chat right after asking leaves the new chat empty, and the old answer never shows up', async ({ fx, page }) => {
   await start(page, fx, 'Act', 'Normal', '#/today', true)
-  await page.getByRole('textbox', { name: 'Ask your Inhouse agent' }).fill('Why did refunds jump this week?')
+  await page.getByRole('textbox', { name: 'Ask Inhouse' }).fill('Why did refunds jump this week?')
   await page.keyboard.press('Enter')
   await page.getByRole('button', { name: 'New chat' }).click()
 
   await page.clock.runFor(3000)
-  await expect(page.getByRole('heading', { name: 'What do you want to know?' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'What should we look into?' })).toBeVisible()
   await expect(page.getByText('Refund requests rose')).toHaveCount(0)
   // Only the suggestion chip may carry the question in the chat; the old user bubble must be gone.
   // (The sidebar lists the first chat under Recent chats, which is right.)
@@ -194,7 +194,7 @@ test('Saved storage holding old values (persona name, morning email settings, re
     setAside: {}, routinesDeleted: {}, routineRuns: [], chatTitles: {}, chatPinned: {}, chatDeleted: {},
   })
   await page.goto('/?demo#/today')
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('handled before you woke up')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('handled today')
 
   // The old dot sweep value maps to the renamed option instead of falling back to Always.
   await page.getByRole('button', { name: /^Demo switches:/ }).click()

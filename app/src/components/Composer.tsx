@@ -311,7 +311,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
           if (e.key !== 'Enter' || e.shiftKey || touch || e.nativeEvent.isComposing || e.keyCode === 229) return
           e.preventDefault(); send()
         }}
-        placeholder={variant === 'today' ? (phone ? 'Ask about orders, stock or numbers' : 'Ask about orders, stock, customers or numbers…') : 'Message your Inhouse agent'} aria-label={variant === 'today' ? 'Ask your Inhouse agent' : 'Message your Inhouse agent'}
+        placeholder={variant === 'today' && !claimNone ? (phone ? 'Ask about orders, stock or numbers' : 'Ask about orders, stock, customers or numbers') : 'Message Inhouse'} aria-label={variant === 'today' ? 'Ask Inhouse' : 'Message Inhouse'}
         className="block max-h-composer-input min-h-8.5 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 py-(--app-composer-input-pad-y) text-md text-foreground shadow-none outline-0 focus:shadow-none data-scrolled:mask-(--app-composer-fade)" />
 
       <div className="relative mt-2.5 flex items-center gap-2">

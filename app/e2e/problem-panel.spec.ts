@@ -1,4 +1,4 @@
-// The problem panel's two ways out that aren't approvals, at 1440: "Ask about this" (the panel header's Ask, and the card's
+// The problem panel's two ways out that aren't approvals, at 1440: "Ask Inhouse" (the panel header's Ask, and the card's
 // menu) starts a chat holding the question, which a reload keeps; the memory note's Manage opens Team memory. Approve,
 // Edit, Don't send and Undo are in app.spec.ts, today-approvals.spec.ts and page-actions.spec.ts.
 import { expect, test, type Fx } from './support/fx.js'
@@ -22,7 +22,7 @@ test('Problem panel: Ask starts a chat with the question, the panel closes, and 
   await start(page, fx)
   await card(page, STUCK).click({ position: { x: 12, y: 12 } })
   await expect(panel(page)).toBeVisible()
-  await panel(page).getByRole('button', { name: 'Ask about this', exact: true }).click()
+  await panel(page).getByRole('button', { name: 'Ask Inhouse', exact: true }).click()
 
   const question = `Tell me more about: ${STUCK}`
   await expect(panel(page)).toHaveCount(0)
@@ -40,14 +40,14 @@ test('Problem panel: Ask starts a chat with the question, the panel closes, and 
   await expect(card(page, STUCK)).toBeVisible()
 })
 
-test("Card menu: Ask about this starts the same chat without opening the panel; the panel's Manage opens Team memory", async ({ fx, page }) => {
+test("Card menu: Ask Inhouse starts the same chat without opening the panel; the panel's Manage opens Team memory", async ({ fx, page }) => {
   await start(page, fx)
   await card(page, STUCK).getByRole('button', { name: 'More' }).click()
   const menu = page.getByRole('menu', { name: 'Card actions' })
   await expect(menu).toBeVisible()
   // The menu opened on its own: no problem panel behind it.
   await expect(panel(page)).toHaveCount(0)
-  await menu.getByRole('menuitem', { name: 'Ask about this', exact: true }).click()
+  await menu.getByRole('menuitem', { name: 'Ask Inhouse', exact: true }).click()
   await expect(page).toHaveURL(/#\/chats\/(?!new$|all$)[^/]+$/)
   await expect(sent(page, `Tell me more about: ${STUCK}`)).toHaveCount(1)
 

@@ -55,7 +55,7 @@ export const STATES: UiState[] = [
   page_('act-first-day', 'Act', 'First day', '#/today', 'Getting your Inhouse agent ready'),
   page_('act-loading', 'Act', 'Loading', '#/today', 'Reading your tools'),
   page_('act-cap-today', 'Act', 'Cap reached', '#/today', 'Spending cap reached.'),
-  page_('act-today', 'Act', 'Normal', '#/today', '6 things need you. A fix is drafted for each.', true),
+  page_('act-today', 'Act', 'Normal', '#/today', '6 things need you. Drafts are ready.', true),
   page_('act-approvals', 'Act', 'Normal', '#/approvals', 'Waiting for you', true),
   page_('act-library', 'Act', 'Normal', '#/library', 'All files', true),
   // PR 6: the Library with nothing in it yet, and while it loads.
@@ -91,7 +91,7 @@ export const STATES: UiState[] = [
     name: 'chat-empty', stage: 'Act', scenario: 'Normal', hash: '#/today', ready: '6 things need you',
     act: async page => {
       await (await sidebar(page)).getByRole('button', { name: 'New chat' }).click()
-      await expect(page.getByText('What do you want to know?')).toBeVisible()
+      await expect(page.getByText('What should we look into?')).toBeVisible()
     },
   },
   {
@@ -109,7 +109,7 @@ export const STATES: UiState[] = [
     },
   },
   // Today in Run: the cards the agent handled, muted with the done token.
-  page_('run-today', 'Run', 'Normal', '#/today', 'handled before you woke up', true),
+  page_('run-today', 'Run', 'Normal', '#/today', 'handled today', true),
   {
     // Today once every draft is approved and sent: every card muted (text-done). The approvals are made on the
     // Approvals page under a paused clock, which then runs past the 10-second send hold and its notices, so no toast
@@ -137,7 +137,7 @@ export const STATES: UiState[] = [
       }
       await page.clock.runFor(30_000)
       await page.evaluate(() => { location.hash = '#/today' })
-      await expect(page.getByText('All 6 approved. Nothing is waiting on you.')).toBeVisible()
+      await expect(page.getByText('All 6 approved.')).toBeVisible()
       // No hover or focus left over from the last Approve click on the card now under the pointer.
       await page.mouse.move(0, 0)
       await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur() })

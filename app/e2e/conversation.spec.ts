@@ -17,7 +17,7 @@ const main = (page: Page) => page.locator('main')
 const log = (page: Page) => page.getByRole('log', { name: 'Conversation' })
 const msg = (page: Page, text: string) => log(page).locator('[data-chat-msg]').filter({ hasText: text })
 const stepsButtons = (page: Page) => log(page).getByRole('button', { name: /\d+ steps/ })
-const composer = (page: Page) => page.getByRole('textbox', { name: 'Message your Inhouse agent' })
+const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Inhouse' })
 /** The thread's scroll position: top, and distance from the bottom. */
 const scrollState = (page: Page) => page.evaluate(() => {
   const el = document.querySelector('[role="log"]')!.closest('.overflow-auto')!
@@ -35,7 +35,7 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, E
   await start(page, 'Normal', '#/today')
 
   // A question from Today starts a chat; the markdown answer has a code block and a wide table.
-  await page.getByRole('textbox', { name: 'Ask your Inhouse agent' }).fill(MD_Q)
+  await page.getByRole('textbox', { name: 'Ask Inhouse' }).fill(MD_Q)
   await page.keyboard.press('Enter')
   const code = log(page).locator('[data-md-code]')
   await expect(code).toBeVisible({ timeout: 15_000 })
@@ -238,7 +238,7 @@ test('Conversation: an error turn has a steps line that opens the trace, and the
 
   // Gorgias is disconnected, so the new chat's sentence leaves it out.
   await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: 'New chat' }).click()
-  await expect(main(page).getByText('Your Inhouse agent reads Shopify, Amazon, ShipBob, Xero and Meta Ads.')).toBeVisible()
+  await expect(main(page).getByText('Connected to Shopify, Amazon, ShipBob, Xero and Meta Ads.')).toBeVisible()
 })
 
 test('Conversation: the steps line expands and collapses and opens the trace, sources are one pill, a draft is its own card, the column is 880px', async ({ page }) => {

@@ -248,7 +248,7 @@ test('Dark, by keyboard: F6 reaches the newest toast and goes back, traps nothin
   await snooze('PO-1187 from Kestrel is 6 days late')
   // 4 of its 7 seconds go by first, so a toast that F6 remounted (its countdown started again) would outlast the check below.
   await page.clock.runFor(4000)
-  const composer = page.getByRole('textbox', { name: 'Ask your Inhouse agent' })
+  const composer = page.getByRole('textbox', { name: 'Ask Inhouse' })
   await composer.focus()
   await page.keyboard.press('F6')
   await expect(newestUndo()).toBeFocused()

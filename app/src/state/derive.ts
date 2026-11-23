@@ -1,7 +1,7 @@
 // Pure selectors: stage + agent state + agent data -> what the screens show. The demo's scenario switch isn't an input:
 // what a scenario changes on screen is in the agent's data.
 import type { AgentData, AgentState, ChatMessage, ClockTime, Instant, Money, ToolChannel, Effort, Problem, Prose, StageIndex, TeamRequest, ThinkingMode, ToolDetail, ToolSetup } from '../agent/types'
-import { calendarOf, fmtAgo, fmtClock, fmtDay, fmtDayWord, fmtMoney, fmtProse, fmtTime, fmtWeekday, majorOf, moneyOf, type Display } from '../lib/format'
+import { calendarOf, fmtAgo, fmtClock, fmtDay, fmtDayWord, fmtMoney, fmtProse, fmtTime, fmtWeekday, majorOf, moneyOf, partOfDay, type Display } from '../lib/format'
 import { display, nowOf } from './display'
 
 export const STAGE_TAGS = ['Watch', 'Act', 'Run'] as const
@@ -379,16 +379,16 @@ export function todayCopy(ctx: Ctx): TodayCopy {
   // With nothing waiting in Act: say what happened to the drafts, so zero problems isn't labelled "all approved".
   const doneLabel = total === 0 ? '' : aside === 0 ? 'all approved' : approvedN ? `${approvedN} approved, ${aside} set aside` : `${aside} set aside`
   const runHeadline = h > 0 && n > 0
-    ? `${h} handled before you woke up. ${n} need${n === 1 ? 's' : ''} you.`
+    ? `${h} handled today. ${n} need${n === 1 ? 's' : ''} you.`
     : h > 0
-      ? `${h} handled before you woke up. Nothing needs you.`
+      ? `${h} handled today. You're all caught up.`
       : n > 0
         ? `${n} ${n === 1 ? 'thing needs' : 'things need'} you today.`
-        : 'Nothing needs you today.'
+        : "You're all caught up."
   const runCountLabel = n ? `${n} waiting on you` : total === 0 ? '' : h ? `${h} handled` : aside ? `${aside} set aside` : ''
   const copy = [
     {
-      headline: shown ? `${shown} ${shown === 1 ? 'thing needs' : 'things need'} you today.` : 'Nothing needs you today.',
+      headline: shown ? `${shown} ${shown === 1 ? 'thing needs' : 'things need'} you today.` : "You're all caught up.",
       headSub: missed.length
         ? `Your Inhouse agent read ${read.length} of your ${connected.length} tools and changed nothing. ${listNames(missed)} ${missed.length === 1 ? 'needs' : 'need'} reconnecting.`
         : read.length
@@ -398,7 +398,7 @@ export function todayCopy(ctx: Ctx): TodayCopy {
       countLabel: shown ? `${shown} to look at` : '', sortLabel: 'Most urgent first',
     },
     {
-      headline: n && n === total ? `${n} things need you. A fix is drafted for each.` : n ? `${n} left to approve today.` : total && shown === total ? `All ${total} approved. Nothing is waiting on you.` : 'Nothing is waiting on you.',
+      headline: n && n === total ? (n === 1 ? '1 thing needs you. A draft is ready.' : `${n} things need you. Drafts are ready.`) : n ? `${n} left to approve today.` : total && shown === total ? (total === 1 ? "Approved. You're all caught up." : `All ${total} approved.`) : "You're all caught up.",
       headSub: 'Nothing goes out until you approve it. Money and customer messages ask you to look first.',
       countLabel: n ? `${n} drafted and waiting` : doneLabel, sortLabel: 'Most urgent first',
     },
@@ -411,10 +411,10 @@ export function todayCopy(ctx: Ctx): TodayCopy {
   let headSub = copy.headSub, headline = copy.headline
   if (f.paused) headSub = 'Your Inhouse agent is paused, so chats, routines and jobs are stopped until an admin resumes it. Waiting drafts can still be approved.'
   if (f.cap) headSub = 'Chats, routines and jobs are paused until next month or until an admin raises the cap. Drafts already waiting can still be approved.'
-  if (f.isFirst) { headline = 'Your Inhouse agent is being set up.'; headSub = 'Your Inhouse team connects each tool for you. There is nothing to install.' }
-  if (f.isLoading) { headline = 'Your Inhouse agent is reading your tools.'; headSub = 'The morning check takes about two minutes. Your list appears as soon as it finishes.' }
+  if (f.isFirst) { headline = "We're setting up your Inhouse agent."; headSub = 'Your Inhouse team connects each tool for you. There is nothing to install.' }
+  if (f.isLoading) { headline = 'Your Inhouse agent is checking your tools.'; headSub = 'The morning check takes about two minutes. Your list appears as soon as it finishes.' }
   const first = firstName(userName(ctx))
-  return { ...copy, headline, headSub, greeting: f.isFirst ? `Welcome, ${first}.` : `Good morning, ${first}.` }
+  return { ...copy, headline, headSub, greeting: f.isFirst ? `Welcome, ${first}.` : `Good ${partOfDay(nowOf(), display())}, ${first}.` }
 }
 
 export type Tone = 'grey' | 'blue' | 'amber' | 'ink'
@@ -429,7 +429,7 @@ export interface IssueCard {
   /** Black button: one-tap Approve for low risk, Review (opens the panel) for money or customers. */
   primary: 'Approve' | 'Review' | null
   /** Grey button, shown only when there is no primary. */
-  quiet: 'Ask about this' | 'Undo' | 'Review' | null
+  quiet: 'Ask Inhouse' | 'Undo' | 'Review' | null
   /** Run: what a waiting draft's card says on its draft sheet besides the draft ("Paused · emails wait for you"). */
   sheetNote: string | null
   handled: boolean
@@ -444,7 +444,7 @@ export function issueCards(ctx: Ctx): IssueCard[] {
     if (at) {
       return { problem: p, status: `Approved by ${firstName(byName(ctx.data, at.by))} at ${fmtTime(at.at, display())}${p.draft.rev || agent.sent[p.id] ? '' : ' · going out'}`, statusIcon: 'check_circle', tone: 'ink', primary: null, quiet: null, sheetNote: null, handled: false, dimmed: true }
     }
-    if (S === 0) return { problem: p, status: `Suggested: ${p.next}`, statusIcon: 'lightbulb', tone: 'grey', primary: null, quiet: 'Ask about this', sheetNote: null, handled: false, dimmed: false }
+    if (S === 0) return { problem: p, status: `Suggested: ${p.next}`, statusIcon: 'lightbulb', tone: 'grey', primary: null, quiet: 'Ask Inhouse', sheetNote: null, handled: false, dimmed: false }
     if (isHandled(ctx, p)) return { problem: p, status: 'Handled by Inhouse agent', statusIcon: 'check_circle', tone: 'blue', primary: null, quiet: 'Undo', sheetNote: null, handled: true, dimmed: true }
     if (S === 2 && agent.undone[p.id] && !p.wait) return { problem: p, status: 'Undone · back to you', statusIcon: 'undo', tone: 'grey', primary: null, quiet: 'Review', sheetNote: 'Undone · back to you', handled: false, dimmed: false }
     const part = ranByAgent(ctx, p) && p.partial

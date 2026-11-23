@@ -98,7 +98,7 @@ test('S2: Review draft opens the review window: the brief, what it checked, the 
   await doc.getByRole('button', { name: 'Edit', exact: true }).click()
   await expect(doc.getByRole('button', { name: 'Done', exact: true })).toBeVisible()
   await doc.getByRole('button', { name: 'Done', exact: true }).click()
-  // The footer: the approver, Don't send and the main action with the amount it moves.
+  // The approver note under the draft, Don't send and the main action with the amount it moves.
   await expect(p).toContainText('Dana Kim usually signs off orders over $5,000')
   await expect(p.getByRole('button', { name: "Don't send", exact: true })).toBeVisible()
   await p.getByRole('button', { name: /^Approve and send to Kestrel\s*\$9,600$/ }).click()
@@ -166,8 +166,8 @@ test('S5: Watch shows what the agent suggests and Ask starts a chat; in Run a ha
   await expect(panel(page)).toContainText('Reorder 600 from Kestrel Supply today.')
   await expect(panel(page)).toContainText("For now your agent only suggests. It doesn't send anything.")
   await expect(panel(page).getByRole('button', { name: 'Set aside', exact: true })).toBeVisible()
-  // Ask about this starts a chat about the problem.
-  await panel(page).getByRole('button', { name: 'Ask about this', exact: true }).click()
+  // Ask Inhouse starts a chat about the problem.
+  await panel(page).getByRole('button', { name: 'Ask Inhouse', exact: true }).click()
   await expect(panel(page)).toHaveCount(0)
   await expect(page).toHaveURL(/#\/chats\/(?!new$|all$)[^/]+$/)
 

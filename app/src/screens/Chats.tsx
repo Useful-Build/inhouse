@@ -433,9 +433,9 @@ function Thread() {
         <div ref={column} className={cn('mx-auto flex w-full flex-col', isBlank ? 'max-w-today-column items-center text-center' : 'max-w-chat-column')}>
           {isBlank ? (
             <>
-              <h2 className="text-3xl leading-title font-medium tracking-title">What do you want to know?</h2>
+              <h2 className="text-3xl leading-title font-medium tracking-title">What should we look into?</h2>
               {connected.length > 0
-                ? <p className="mt-2.5 text-md text-foreground-3">Your Inhouse agent reads {listNames(connected)}.</p>
+                ? <p className="mt-2.5 text-md text-foreground-3">Connected to {listNames(connected)}.</p>
                 // Not claimed when the list is only unknown (cards or a run on the server, no connected list: the real client before P5).
                 : (ctx.data.tools.connected.length > 0 || noToolsYet(ctx.data)) && <>
                     <p className="mt-2.5 text-md text-foreground-3">No tools are connected yet.</p>

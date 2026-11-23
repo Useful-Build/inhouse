@@ -26,8 +26,8 @@ In the product build Today, Activity, the bell, the Library and Routines are rea
 Today: needs-you cards
   Path:     Today
   Selector: article cards (two columns on desktop, one on a phone), "Urgent" pill, draft sheet, button "Review draft" or "{cta}"
-  Expected: only the title, the composer and the Needs you cards show, at every stage; no card cuts text; a waiting card shows its draft on the slate-sapphire sheet (kind, risk, title, one summary line); approved, handled and Watch cards show the status line instead, muted, with no Urgent pill; with zero problems and tools connected, shows connected tools (no status dots) and prompt cards instead of the set-aside message; in Run, the overnight handled strip shows only when at least one job was handled
-  Covered:  e2e/dots-and-today.spec.ts, e2e/today-approvals.spec.ts, src/state/today-empty.test.ts
+  Expected: only the title, the composer and the Needs you cards show, at every stage; no card cuts text; a waiting card shows its draft on the slate-sapphire sheet (kind, risk, title, one summary line); approved, handled and Watch cards show the status line instead, muted, with no Urgent pill; with zero problems and tools connected, shows connected tools (no status dots) and prompt cards instead of the set-aside message; in Run, the "{N} handled today" strip shows only when at least one job was handled; the greeting follows the app's clock (Good morning 5:00 to 11:59, Good afternoon 12:00 to 16:59, Good evening otherwise; Welcome on day one) and a clear day reads "You're all caught up."
+  Covered:  e2e/dots-and-today.spec.ts, e2e/today-approvals.spec.ts, src/state/today-empty.test.ts, src/state/derive.first-day.test.ts
 
 Today: snooze and dismiss
   Path:     Today -> card "···" menu -> Snooze or Dismiss
@@ -423,8 +423,8 @@ Help and guides
 
 Problem panel
   Path:     Today or Approvals -> a card
-  Selector: panel dialog, header "Ask" (named "Ask about this"), progress list, facts strip, sources toggle, the draft document with Edit, Don't send, Approve, Ask <approver>, Manage
-  Expected: the approval actions as in Approvals above; the footer (waiting only) holds Don't send and the main action with the amount it moves; Ask <approver> says it isn't connected; Ask (and the card menu's Ask about this) starts a chat holding the question that a reload keeps; Manage on a memory note opens Team memory; a purchase order shows its item table and total
+  Selector: panel dialog, top line with the "Urgent" pill and the area (as on the cards), "Ask Inhouse" (the Watch main button and the More menu item), progress list, facts strip, sources toggle, the draft document with Edit, Don't send, Approve, Ask <approver>, Manage
+  Expected: the approval actions as in Approvals above; the footer (waiting only) holds only the buttons, left-aligned: the main action with the amount it moves and More; who usually approves, when it's someone else, is a quiet note (person icon) under the draft sheet, never in the footer; Ask <approver> says it isn't connected; Ask Inhouse (in the window and the card menu) starts a chat holding the question that a reload keeps; Manage on a memory note opens Team memory; a purchase order shows its item table and total
   Covered:  e2e/problem-panel.spec.ts, e2e/today-approvals.spec.ts, e2e/app.spec.ts, e2e/page-actions.spec.ts, e2e/sample-data.spec.ts, e2e/phone.spec.ts
 
 Trace window

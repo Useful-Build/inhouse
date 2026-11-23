@@ -204,7 +204,7 @@ test('Chats: each recent chat opens its own conversation', async ({ page, fx }) 
   }
   // A question asked in one chat stays with it.
   await side(page).getByRole('button', { name: 'Why did refunds jump?', exact: true }).click()
-  await page.getByRole('textbox', { name: 'Message your Inhouse agent' }).fill('And last week?')
+  await page.getByRole('textbox', { name: 'Message Inhouse' }).fill('And last week?')
   await page.keyboard.press('Enter')
   await expect(page.locator('main').getByText('And last week?')).toBeVisible()
   await side(page).getByRole('button', { name: 'Amazon payout gap', exact: true }).click()
