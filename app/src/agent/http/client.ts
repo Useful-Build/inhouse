@@ -1305,6 +1305,8 @@ export class HttpAgent implements AgentClient {
 
   requestTool = (_key: string, _on: boolean) => this.refuse()
   requestSkill = (_name: string) => this.refuse()
+  // The agent has no read for a skill's instructions yet, so `body` stays undefined and the page shows its header and rail.
+  loadSkill = (_name: string): Promise<void> => Promise.resolve()
   setToolPaused = (_key: string, _paused: boolean) => this.refuse()
   sendTeamRequest = (_req: Parameters<AgentClient['sendTeamRequest']>[0]) => this.refuse()
   listNotifications = () => this.s.notifications

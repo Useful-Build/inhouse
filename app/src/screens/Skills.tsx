@@ -8,7 +8,7 @@ import { skillBySlug, skillSlugs, useCtx, useUi } from '../state/store'
 import type { SkillTab } from '../state/store'
 import type { SkillDef } from '../agent'
 import type { ReactNode } from 'react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Separator } from '@/components/ui/separator'
@@ -140,6 +140,11 @@ export function SkillPage() {
   const showToast = useUi(s => s.showToast)
   const phone = useUi(s => s.phone)
   const s = skillBySlug(data, st, key)
+  // The instructions come separately (the demo's are their own chunk): ask for them once the page knows its skill.
+  const want = s && s.body === undefined ? s.n : null
+  useEffect(() => {
+    if (want) agent.loadSkill(want).catch((err: unknown) => { console.warn(`Inhouse: could not load the instructions for ${want}.`, err) })
+  }, [want])
   // App shows the list in place of a skill it doesn't know (and moves the route there once the skills have loaded).
   if (!s) return null
   const locked = S < s.need

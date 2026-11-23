@@ -87,3 +87,19 @@ describe('the New chat prompt cards load with the page', () => {
     for (const file of files('src')) expect(read(file), `${file} imports PromptBento lazily`).not.toMatch(/import\(\s*['"][^'"]*PromptBento['"]/)
   })
 })
+
+describe('what opens only on a click loads then, not with Today', () => {
+  // scripts/check-bundle.mjs holds Today's first load to 241 KB gzip.
+  it("the sample skills' instructions are a dynamic import in the data layer, and nothing imports them up front", () => {
+    expect(read('src/agent/data.ts')).toContain("await import('@sample/skill-bodies.json')")
+    for (const file of files('src')) expect(runtimeImports(read(file)).filter(i => /skill-bodies/.test(i)), `${file} imports the skill bodies up front`).toEqual([])
+  })
+  for (const name of ['ProblemPanel', 'TeamWindow']) {
+    it(`${name} is a lazy route in App.tsx and prefetched, and imported at run time nowhere else`, () => {
+      const app = read('src/App.tsx')
+      expect(app).toMatch(new RegExp(`lazyRoute\\(\\(\\) => import\\('\\./overlays/${name}'\\)`))
+      expect(app.split(`import('./overlays/${name}')`).length - 1).toBe(2)
+      for (const file of files('src')) expect(runtimeImports(read(file)).filter(i => new RegExp(`overlays/${name}$`).test(i)), `${file} imports ${name} up front`).toEqual([])
+    })
+  }
+})

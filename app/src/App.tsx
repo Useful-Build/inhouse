@@ -27,8 +27,6 @@ import { Today } from './screens/Today'
 import { Chats } from './screens/Chats'
 import { useChatIsBlank } from './screens/chat/open-messages'
 import { SETTINGS_PAGES } from './screens/settings/menu'
-import { ProblemPanel } from './overlays/ProblemPanel'
-import { TeamWindow } from './overlays/TeamWindow'
 import { HelpWindow } from './overlays/HelpWindow'
 import { CommandPalette } from './overlays/CommandPalette'
 
@@ -59,25 +57,41 @@ const SkillPage = lazyRoute(() => import('./screens/Skills'), m => m.SkillPage)
 // already there (the skeleton shows only on a slow link). Library, Usage and Settings stay on first visit: they are the big ones.
 const PREFETCH: (() => Promise<unknown>)[] = [
   () => import('./screens/Approvals'), () => import('./screens/Routines'), () => import('./screens/Activity'), () => import('./screens/Tools'), () => import('./screens/Skills'),
+  () => import('./overlays/ProblemPanel'), () => import('./overlays/TeamWindow'),
 ]
 const Library = lazyRoute(() => import('./screens/Library'), m => m.Library)
 const Usage = lazyRoute(() => import('./screens/Usage'), m => m.Usage)
 const Settings = lazyRoute(() => import('./screens/Settings'), m => m.Settings)
 const NotOnTeam = lazyRoute(() => import('./shell/NotOnTeam'), m => m.NotOnTeam)
 const TraceWindow = lazyRoute(() => import('./overlays/TraceWindow'), m => m.TraceWindow)
+// The problem window and the team window open only on a click, so they load then (or with the idle prefetch above), not with Today.
+const ProblemPanel = lazyRoute(() => import('./overlays/ProblemPanel'), m => m.ProblemPanel)
+const TeamWindow = lazyRoute(() => import('./overlays/TeamWindow'), m => m.TeamWindow)
 
-/** A trace window whose chunk can't load closes and says so, instead of taking the app down. */
-class TraceBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+/** True from the first render where `on` is: a lazy overlay stays mounted once it has opened, so its own state lives on as it did when it loaded with the page. */
+function useOpenedOnce(on: boolean) {
+  const [opened, setOpened] = useState(on)
+  if (on && !opened) setOpened(true)
+  return opened || on
+}
+
+/** A lazy window (the trace, a problem, the team window) whose chunk can't load closes and says so, instead of taking the app down. */
+class OverlayBoundary extends Component<{ children: ReactNode; name: string; what: string; open: boolean; close: () => void }, { failed: boolean }> {
   state = { failed: false }
   static getDerivedStateFromError() { return { failed: true } }
+  // Once it has closed, the next open tries again (a window that stays mounted keeps its boundary).
+  static getDerivedStateFromProps(props: { open: boolean }, state: { failed: boolean }) { return state.failed && !props.open ? { failed: false } : null }
   componentDidCatch(error: unknown) {
-    console.error('Inhouse: the trace window crashed and was closed.', error instanceof Error ? error.message : error, error)
+    console.error(`Inhouse: the ${this.props.name} window crashed and was closed.`, error instanceof Error ? error.message : error, error)
     reportError('boundary', error)
-    useUi.getState().patch({ traceId: null })
-    useUi.getState().showToast("Couldn't open the trace. Reload and try again.", { icon: 'info', key: 'trace-error' })
+    this.props.close()
+    useUi.getState().showToast(`Couldn't open ${this.props.what}. Reload and try again.`, { icon: 'info', key: `${this.props.name}-error` })
   }
   render() { return this.state.failed ? null : this.props.children }
 }
+const closeTrace = () => useUi.getState().patch({ traceId: null })
+const closeProblem = () => useUi.getState().closeProblem()
+const closeTeam = () => useUi.getState().patch({ pop: null })
 
 const SCREENS: Record<Page, React.ComponentType> = {
   today: Today, library: Library, chats: Chats, approvals: Approvals, routines: Routines, activity: Activity,
@@ -329,6 +343,10 @@ function Shell() {
   const sideCollapsed = useUi(s => s.sideCollapsed)
   const chatList = useUi(s => s.chatList)
   const traceId = useUi(s => s.traceId)
+  const problemOpen = useUi(s => s.openId) !== null
+  const teamOpen = useUi(s => s.pop) === 'team'
+  const problemOpened = useOpenedOnce(problemOpen)
+  const teamOpened = useOpenedOnce(teamOpen)
   const chatId = useUi(s => s.chatId)
   const fresh = useUi(s => s.fresh)
   const chatBlank = useChatIsBlank()
@@ -421,9 +439,9 @@ function Shell() {
           </div>
         </main>
       </div>
-      <ProblemPanel />
-      {traceId && <TraceBoundary><Suspense fallback={null}><TraceWindow /></Suspense></TraceBoundary>}
-      <TeamWindow />
+      {problemOpened && <OverlayBoundary name="problem" what="this problem" open={problemOpen} close={closeProblem}><Suspense fallback={null}><ProblemPanel /></Suspense></OverlayBoundary>}
+      {traceId && <OverlayBoundary name="trace" what="the trace" open close={closeTrace}><Suspense fallback={null}><TraceWindow /></Suspense></OverlayBoundary>}
+      {teamOpened && <OverlayBoundary name="team" what="your Inhouse team" open={teamOpen} close={closeTeam}><Suspense fallback={null}><TeamWindow /></Suspense></OverlayBoundary>}
       <HelpWindow />
       <CommandPalette />
       <Toasts />

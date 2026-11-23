@@ -58,7 +58,8 @@ describe('the page look', () => {
 
 describe('the sample skills', () => {
   const SECTIONS = ['When to use', 'What it reads', 'Steps', 'Ground rules', 'What you get']
-  test('every one has a full body with the five sections, in order, under its frontmatter', () => {
+  test('every one has a full body with the five sections, in order, under its frontmatter, once a skill page loads them', async () => {
+    await agentMod.agent.loadSkill('Morning check')
     const { skills } = agentMod.agent.read()
     expect(skills).toHaveLength(9)
     for (const s of skills) {

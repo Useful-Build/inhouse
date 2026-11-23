@@ -195,6 +195,18 @@ const skillOf = (x: RawSkill): SkillDef => {
   }
 }
 export const skills = (skillsJson.skills as RawSkill[]).map(skillOf)
+/**
+ * The sample skills' instructions (`body`), by skill name. A separate chunk, loaded when a skill's page first opens, so
+ * the long markdown isn't in Today's first load (scripts/check-bundle.mjs). A body for a skill skills.json doesn't have stops the app.
+ */
+export const loadSkillBodies = async (): Promise<Record<string, string>> => {
+  const raw = keepTimesTogether((await import('@sample/skill-bodies.json')).default.bodies) as Record<string, unknown>
+  for (const [n, body] of Object.entries(raw)) {
+    if (!skills.some(s => s.n === n)) throw new Error(`Sample data: skill-bodies.json has a body for "${n}", which isn't a skill.`)
+    if (typeof body !== 'string' || !body.trim()) throw new Error(`Sample data: the skill "${n}" has an empty body.`)
+  }
+  return raw as Record<string, string>
+}
 export const skillSuggestions = skillsJson.suggested as SkillSuggestion[]
 export const skillSuggestionsTitle = skillsJson.suggestedTitle
 
