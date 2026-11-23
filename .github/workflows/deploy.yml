@@ -641,7 +641,8 @@ jobs:
           if (start < 0) fail('no JSON in the wrangler output');
           let d;
           try { d = JSON.parse(out.slice(start)); } catch (e) { fail(e.message); }
-          const versions = Array.isArray(d?.versions) ? d.versions : [];
+          if (!Array.isArray(d?.versions)) fail('no versions list in the wrangler output');
+          const versions = d.versions;
           const shown = versions.map((v) => `${v?.version_id}@${v?.percentage}%`).join(', ');
           console.log(`Active: ${shown || 'none'}`);
           if (versions.length !== 1 || versions[0].version_id !== process.env.EXPECTED || versions[0].percentage !== 100) {
@@ -649,8 +650,10 @@ jobs:
           }
           EOF
             if [ "$rc" = 0 ]; then exit 0; fi
-            if [ "$rc" != 3 ] || [ "$wait" = 0 ]; then
-              echo "::error::Active deployment isn't ${EXPECTED}@100%."
+            # Any other failure already printed its own error.
+            if [ "$rc" != 3 ]; then exit 1; fi
+            if [ "$wait" = 0 ]; then
+              echo "::error::Active deployment isn't ${EXPECTED}@100% after about 30 s."
               exit 1
             fi
             echo "Not the new version yet; reading again in ${wait}s."
