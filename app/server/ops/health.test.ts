@@ -39,6 +39,10 @@ describe('the health route', () => {
         { name: 'usage_stranded', ok: true },
         // P4 W2: the routines signal (no routines here: green).
         { name: 'routines', ok: true },
+        // P8 C1: the data jobs' signals (a fresh deployment: no first night yet, green and saying so).
+        { name: 'backup_fresh', ok: true, detail: 'no backup yet (deployed under 26h ago)' },
+        { name: 'retention_fresh', ok: true, detail: 'no run yet (deployed under 26h ago)' },
+        { name: 'retention_overdue', ok: true },
       ] },
     })
   })

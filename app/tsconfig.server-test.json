@@ -6,6 +6,6 @@
     // `cloudflare:test`. The code they import is typechecked here too, and without test types in tsconfig.server.json.
     "types": ["./server/worker-configuration.d.ts", "vite/client", "@cloudflare/vitest-plugin/types"],
   },
-  "include": ["server/**/*.test.ts", "server/testing", "ops/backup/**/*.test.ts", "ops/retention/**/*.test.ts", "ops/export/**/*.test.ts", "ops/delete/**/*.test.ts"],
+  "include": ["server/**/*.test.ts", "server/testing", "ops/backup/**/*.test.ts", "ops/retention/**/*.test.ts", "ops/export/**/*.test.ts", "ops/delete/**/*.test.ts", "ops/coverage/**/*.test.ts"],
   "exclude": []
 }

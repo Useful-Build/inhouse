@@ -46,6 +46,10 @@ export const sessionKey = (chatId: string, sessionId: string, projectHash: strin
 export const CHAT_FILES_PREFIX = 'files/'
 /** A chat file's bytes: `files/<chatId>/<fileId>` (an attachment or an output, p3-design 8.5). */
 export const chatFileKey = (chatId: string, fileId: string): string => `${CHAT_FILES_PREFIX}${chatId}/${fileId}`
+/** P8 C1: every file of one chat, `files/<chatId>/` (the chat cascade lists and deletes it). */
+export const chatFilesPrefix = (chatId: string): string => `${CHAT_FILES_PREFIX}${segment('chatId', chatId)}/`
+/** P8 C1: every session of one chat, `sessions/<chatId>/` (the chat cascade lists and deletes it). */
+export const chatSessionsPrefix = (chatId: string): string => `sessions/${segment('chatId', chatId)}/`
 
 // W4's key builders (audit-copy/).
 /** One range of the audit log's daily copy: `audit-copy/<date>/<fromId>-<toId>.jsonl` (p3-design section 9). */

@@ -28,8 +28,8 @@ export type RetentionRule =
   /**
    * A store only C1's own job can age: a cascade, a condition, a composite key or an order, or a Durable Object's
    * storage. `ages` lists each way a row goes by its own age; `withParent` names the store whose removal takes it too
-   * (a chat's messages go only with their chat). Retention refuses to plan a custom rule, on any class, until that
-   * job lands (P8 C1, after this PR).
+   * (a chat's messages go only with their chat). Each runs its job (ops/coverage/chat-watch-connectors/
+   * retention-jobs.ts), on any class; a custom rule with no job refuses to plan by name.
    */
   | { kind: 'custom'; ages: readonly Age[]; withParent?: string; why: string }
 

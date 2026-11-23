@@ -20,7 +20,7 @@ export type DeletionRule =
   /**
    * A deletion only C1's own runner can do: the chat cascade (objects before rows, children before parents), the bell's
    * ordered delete, the BrandAgent's storage through `BrandAgentRpc.personData`. `deletes` names the person keys whose
-   * rows go. Person deletion refuses to plan a custom rule until that runner lands (P8 C1, after this PR), so no run
+   * rows go. Each runs through its part in person.ts; a custom rule no part serves refuses to plan by name, so no run
    * can remove one store's rows and leave another's.
    */
   | { action: 'custom'; deletes: readonly string[]; kept?: readonly string[]; why: string }
@@ -89,6 +89,9 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   library_uploads: { action: 'keep', why: 'the brand\'s own files: created_by is pseudonymous', kept: ['created_by'] },
   library_marks: { action: 'keep', why: 'the brand\'s trash: deleted_by is pseudonymous; a chat output\'s mark goes with the chat cascade', kept: ['deleted_by'] },
   'library/': { action: 'keep', why: 'the brand\'s own files, with their library_uploads rows (keys name files, not people)' },
+  // The connector hub (P4 H0; wrangler.hub.jsonc): no member id today (client credentials). P5's per-person connectors
+  // add `connectedBy`; the runbook then revokes the connection before a person's deletion runs (C1's PR C).
+  SignIn: { action: 'keep', why: 'the brand\'s connector token (client credentials): no person connects it on P4; pending items sweep themselves' },
   // P8a: the egress record names a host, a runner and a container generation, never a member, a run or a turn (one
   // container serves several sessions at once), so no row is a person's; it goes by age in 30 days.
   egress_fetches: { action: 'keep', why: 'no member id: the egress knows the container, not the run; retention removes rows after 30 days. A host can carry data in a subdomain from a refused exfil attempt: kept 30 days, ops-only and not exported. A host over 253 characters is not recorded, only logged' },

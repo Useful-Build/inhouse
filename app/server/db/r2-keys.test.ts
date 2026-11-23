@@ -2,11 +2,13 @@
 //  1. a key lands outside its prefix (a lifecycle rule or a registry entry then misses it);
 //  2. two different inputs give one key (a backup part, a restore file or a log entry overwrites another);
 //  3. the deletion log doesn't list in time order across runs (F1's replay starts after a watermark with `startAfter`),
-//     or in write order (step) within one run, whose entries all share one `atMs`.
+//     or in write order (step) within one run, whose entries all share one `atMs`;
+//  4. (C1) a chat's prefix doesn't hold every key of that chat's files or sessions, or holds another chat's (`c1` vs
+//     `c10`), so the chat cascade misses an object or deletes another chat's.
 // `/` and the key's own separators are kept out of the generated ids, as the real ids (hex, `m_…`) never hold them.
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
-import { R2_PREFIXES, backupManifestKey, backupPartKey, deletionLogKey, photoKey, restoreKey } from './r2-keys.ts'
+import { R2_PREFIXES, backupManifestKey, backupPartKey, chatFileKey, chatFilesPrefix, chatSessionsPrefix, deletionLogKey, photoKey, restoreKey, sessionPrefix } from './r2-keys.ts'
 
 const id = fc.stringMatching(/^[A-Za-z0-9_-]{1,24}$/)
 const part = fc.integer({ min: 0, max: 99_999 })
@@ -77,5 +79,19 @@ describe('R2 key builders', () => {
     expect(() => deletionLogKey(1, 'a/b', 0, 'done')).toThrow()
     for (const bad of [-1, 10_000, 1.5, Number.NaN]) expect(() => deletionLogKey(1, 'abc', bad, 'done')).toThrow(/step/)
     for (const bad of [-1, 10_000_000_000_000, 1.5]) expect(() => deletionLogKey(bad, 'abc', 0, 'done')).toThrow(/atMs/)
+  })
+
+  it('gives each chat a prefix that holds exactly its own files and sessions (failure 4)', () => {
+    fc.assert(fc.property(id, id, id, id, id, (c, d, f, sess, hash) => {
+      expect(chatFileKey(c, f).startsWith(chatFilesPrefix(c))).toBe(true)
+      expect(sessionPrefix(c, sess, hash).startsWith(chatSessionsPrefix(c))).toBe(true)
+      if (c !== d) {
+        expect(chatFileKey(d, f).startsWith(chatFilesPrefix(c))).toBe(false)
+        expect(sessionPrefix(d, sess, hash).startsWith(chatSessionsPrefix(c))).toBe(false)
+      }
+    }))
+    expect(chatFileKey('c10', 'f').startsWith(chatFilesPrefix('c1'))).toBe(false)
+    expect(() => chatFilesPrefix('c1/../c2')).toThrow(/chatId/)
+    expect(() => chatSessionsPrefix('')).toThrow(/chatId/)
   })
 })

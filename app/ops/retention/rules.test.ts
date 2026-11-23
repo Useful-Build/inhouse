@@ -4,9 +4,8 @@
 //     30 days, forgotten memories 30 days) or C1's constant (a pending upload 1 day);
 //  2. a `retention_period` store has no rule or no group, so it has no period, or one nobody decided;
 //  3. a rule ages rows by a column the table doesn't have, or follows a store that isn't registered;
-//  4. a custom rule (the chat cascade, a condition, a composite key, a Durable Object's storage) is planned before its
-//     job exists, so a live chat's messages could go by their own age, or a config store's rule (forgotten memories)
-//     is ignored silently;
+//  4. a custom rule no job serves (or the BrandAgent's job outside the object) is planned anyway, so a store past
+//     retention is skipped silently;
 //  5. a derived index is aged as a store, or a derived rule hides a store that isn't derived.
 import { env } from 'cloudflare:workers'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -89,14 +88,13 @@ describe('the rules (failure 3)', () => {
 })
 
 describe('what the plan refuses (failures 4 and 5)', () => {
-  it('refuses to plan a custom rule by name, on any class, and writes nothing', async () => {
+  // C1's jobs PR built the jobs: a custom rule no job serves, or the BrandAgent's job outside the object, still refuses.
+  it('refuses to plan a custom rule no job serves, or the BrandAgent\'s job outside the object, by name, and writes nothing', async () => {
     const before = await snapshotAll(db, bucket)
-    for (const name of ['chats', 'chat_messages', 'files/', 'BrandAgent', 'notice_reads', 'library_uploads']) {
-      await expect(planRetention(deps({ registry: [...p2AndP8, entry(name)] }), { periods: { [name]: 365 } }), name).rejects.toThrow(`${name}'s rule is custom`)
-    }
-    // `memories` is a config store: its custom rule (forgotten facts) takes no period, and still refuses.
-    await expect(planRetention(deps({ registry: [...p2AndP8, entry('memories')] }), { periods: {} })).rejects.toThrow("memories's rule is custom")
-    await expect(planRetention(deps(), { periods: periodsFor(tables) })).rejects.toThrow(/rule is custom/)
+    const later = { kind: 'custom' as const, ages: [], why: 'a later store' }
+    await expect(planRetention(deps({ registry: [...p2AndP8, entry('activity_lines')], rules: { ...retentionRules, activity_lines: later } }), { periods: { activity_lines: 365 } })).rejects.toThrow("activity_lines's rule is custom, and no job serves it")
+    await expect(planRetention(deps({ registry: [...p2AndP8, entry('BrandAgent')] }), { periods: { BrandAgent: 365 } })).rejects.toThrow(/runs only inside the object/)
+    await expect(planRetention(deps(), { periods: periodsFor(tables) })).rejects.toThrow(/runs only inside the object/)
     expect(await snapshotAll(db, bucket)).toEqual(before)
   })
 

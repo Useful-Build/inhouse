@@ -1,6 +1,6 @@
 // The registry is complete (P2 plan, "The table registry"; P8 acceptance 2). Ways it can fail, written down first:
 //  1. a migration creates a D1 table that has no entry;
-//  2. wrangler.product.jsonc binds a Durable Object class that has no entry;
+//  2. wrangler.product.jsonc or wrangler.hub.jsonc binds a Durable Object class that has no entry;
 //  3. server/db/r2-keys.ts names an R2 prefix that has no entry, or the code writes R2 keys that don't go through it
 //     (a module using the bucket without r2-keys.ts, a key builder whose key is under no listed prefix);
 //  4. an entry names nothing (a dropped table, a renamed class, a typo), or two entries name one store;
@@ -8,6 +8,7 @@
 //     skips a derived table and a restore rebuilds it; anything else must be backed up, which a virtual table can't be);
 //     or a `derived` entry names a table the migrations create as a plain table (it would never be backed up).
 import { describe, expect, it } from 'vitest'
+import hubConfig from '../../wrangler.hub.jsonc?raw'
 import productConfig from '../../wrangler.product.jsonc?raw'
 import * as r2Keys from '../../server/db/r2-keys.ts'
 import { R2_PREFIXES } from '../../server/db/r2-keys.ts'
@@ -62,7 +63,8 @@ const usesR2 = (text: string) => /\bR2Bucket\b|\bFILES\s*\.\s*(put|get|delete|li
 const R2_EXEMPT = ['/server/worker-configuration.d.ts', '/server/routes.ts', '/server/db/r2-keys.ts']
 const importsR2Keys = (text: string) => /from\s+['"][./]*(?:server\/)?(?:db\/)?r2-keys\.ts['"]/.test(text)
 
-const sources = (): Record<TableEntry['kind'], string[]> => ({ d1: d1Tables(), do: doClasses(), r2: [...R2_PREFIXES] })
+// The hub's classes too (P8 C1): its SignIn objects hold a brand's connector tokens, so they're a store like any other.
+const sources = (): Record<TableEntry['kind'], string[]> => ({ d1: d1Tables(), do: [...doClasses(), ...doClasses(hubConfig)], r2: [...R2_PREFIXES] })
 
 describe('the table registry', () => {
   it('finds the stores it checks (the parsers still read the files)', () => {

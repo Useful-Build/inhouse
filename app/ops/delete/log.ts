@@ -16,8 +16,12 @@ export const deletionLogEntrySchema = z.strictObject({
   runId: z.string().regex(/^[0-9a-f]{16}$/),
   /** The entry's place in its run: 0, 1, 2... in write order. */
   step: z.number().int().min(0).max(9999),
-  /** `progress`: one bounded round of a retention run, with the ids or keys it removed. */
-  phase: z.enum(['start', 'progress', 'done', 'refused']),
+  /**
+   * `progress`: one bounded round of a retention run, with the ids or keys it removed. `stopped_after_pseudonymise`
+   * (C1): a person run that pseudonymised the member row, then stopped (the BrandAgent answered `busy`): unlike
+   * `refused`, it changed something, so a replay after a restore repeats it.
+   */
+  phase: z.enum(['start', 'progress', 'done', 'refused', 'stopped_after_pseudonymise']),
   kind: z.enum(['person', 'retention']),
   atMs: z.number().int().nonnegative(),
   /** Always a member id (the job's `at.actorId`). */
@@ -25,7 +29,12 @@ export const deletionLogEntrySchema = z.strictObject({
   /** A person deletion's member id: what a replay deletes again. */
   memberId: z.string().regex(/^m_[A-Za-z0-9_-]+$/).optional(),
   /** A retention run's cutoff per store: what a replay applies again. */
-  cutoffs: z.array(z.strictObject({ store, cutoffMs: z.number().int() })).optional(),
+  cutoffs: z.array(z.strictObject({
+    store,
+    cutoffMs: z.number().int(),
+    /** C1: which fixed period a store's second cutoff is (a chat's trash, a pending upload); absent for its own period. */
+    age: z.enum(['trash', 'pending', 'forgotten']).optional(),
+  })).optional(),
   removed: z.array(z.strictObject({ store, ids: z.array(z.string()).optional(), keys: z.array(z.string()).optional(), count: z.number().int().nonnegative() })).optional(),
   /** A `refused` entry's reason (a refusal code, never content). */
   reason: z.string().regex(/^[a-z_]+$/).optional(),

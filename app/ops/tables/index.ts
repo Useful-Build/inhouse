@@ -7,6 +7,7 @@ import { chatTables } from './chat.ts'
 import { coreTables } from './core.ts'
 import { egressTables } from './egress.ts'
 import { filesTables } from './files.ts'
+import { hubTables } from './hub.ts'
 import { libraryTables } from './library.ts'
 import { memoryTables } from './memory.ts'
 import { noticeTables } from './notices.ts'
@@ -17,4 +18,4 @@ import { todayTables } from './today.ts'
 import type { TableEntry } from './types.ts'
 import { usageTables } from './usage.ts'
 
-export const tables: readonly TableEntry[] = [...coreTables, ...chatTables, ...filesTables, ...usageTables, ...memoryTables, ...poolTables, ...activityTables, ...noticeTables, ...routineTables, ...libraryTables, ...todayTables, ...p8Tables, ...egressTables]
+export const tables: readonly TableEntry[] = [...coreTables, ...chatTables, ...filesTables, ...usageTables, ...memoryTables, ...poolTables, ...activityTables, ...noticeTables, ...routineTables, ...libraryTables, ...todayTables, ...p8Tables, ...egressTables, ...hubTables]

@@ -4,6 +4,7 @@
 // R2 Workers API (list with prefix, cursor, truncated, limit max 1,000; delete with up to 1,000 keys; uploaded is a Date):
 // https://developers.cloudflare.com/r2/api/workers/workers-api-reference/ (read 2026-11-20)
 import type { At } from '../../server/db/members.ts'
+import type { PersonDataAnswer } from '../../server/do/brand-agent/ports.ts'
 import { R2_PREFIXES } from '../../server/db/r2-keys.ts'
 import { tables } from '../tables/index.ts'
 import type { TableEntry } from '../tables/types.ts'
@@ -19,6 +20,8 @@ export interface JobDeps {
   at: At
   clock?: () => number
   registry?: readonly TableEntry[]
+  /** C1: the BrandAgent's `personData` (its stub, or a double in tests), for the person deletion's BrandAgent part. */
+  brandAgent?: { personData(p: { personId: string; mode: 'count' | 'delete' }): Promise<PersonDataAnswer> }
 }
 
 export const registryOf = (deps: { registry?: readonly TableEntry[] }): readonly TableEntry[] => deps.registry ?? tables

@@ -35,8 +35,8 @@ const BASE = 1_800_000_000_000
 let clock = BASE
 // The wall clock the log stamps entries with: later than any `at.nowMs` here, and moving on every read.
 let wall = BASE + 1_000_000_000
-// P2's and P8's stores: C1's (P3 and P4's) have their own rules and tests (rules.test.ts), and their custom rules refuse
-// to plan until C1's runner lands, so the real registry refuses by name.
+// P2's and P8's stores: C1's (P3 and P4's) have their own rules and tests (ops/coverage), which need a BrandAgent double
+// for personData, so these cases stay on P2's and P8's stores.
 const p2AndP8 = [...coreTables, ...p8Tables]
 const deps = (over: Partial<DeletionDeps> = {}): DeletionDeps => ({ db, bucket, at: { actorId: SYSTEM_MEMBER_ID, requestId: `req-${token()}`, nowMs: (clock += 1000) }, clock: () => ++wall, registry: p2AndP8, ...over })
 let seeded: Seeded

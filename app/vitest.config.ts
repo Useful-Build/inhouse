@@ -24,8 +24,9 @@ if (testConfigDate !== PIN_CHECKED_AGAINST) {
     'supports, then update the pin and PIN_CHECKED_AGAINST.',
   )
 }
-// P8's backup, retention, export and deletion jobs (ops/{backup,retention,export,delete}) run in the Workers runtime.
-const OPS_JOB_TESTS = ['ops/{backup,retention,export,delete}/**/*.test.ts']
+// P8's backup, retention, export and deletion jobs (ops/{backup,retention,export,delete}) and C1's coverage of P3 to P5's
+// stores (ops/coverage) run in the Workers runtime.
+const OPS_JOB_TESTS = ['ops/{backup,retention,export,delete,coverage}/**/*.test.ts']
 const alias = {
   // The demo client entry, as in tsconfig.app.json; vite.config.ts picks it by mode.
   '@client': fileURLToPath(new URL('./src/agent/client.demo.ts', import.meta.url)),

@@ -16,6 +16,7 @@
 // 2026-11-22.
 import { restoreKey } from '../../../server/db/r2-keys.ts'
 import { DERIVED_SEARCH_TABLES, rebuildSearchIndexes } from '../../../server/mcp/search-index.ts'
+import { safeError } from '../../../server/safe-error.ts'
 import type { DerivedSearchTable } from '../../../server/mcp/search-index.ts'
 import { z } from 'zod'
 import { tables as realRegistry } from '../../tables/index.ts'
@@ -36,6 +37,7 @@ export const FtsRecordSchema = z.object({
     /** The source's row count after the check; absent on a failed table. */
     sourceRows: z.number().int().nonnegative().optional(),
     state: z.enum(['rebuilt', 'failed']),
+    /** The error's name and code only (server/safe-error.ts): a message could quote a stored value. */
     error: z.string().optional(),
   })),
 })
@@ -58,7 +60,6 @@ export type RebuildResult = { ok: FtsRecord } | { refused: string } | { failed: 
 type Derived = { name: string; from: string[] }
 const normal = (list: readonly Derived[]) => JSON.stringify([...list].map(d => ({ name: d.name, from: [...d.from] })).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)))
 const names = (list: readonly Derived[]) => list.map(d => `${d.name}<-${d.from.join('+')}`).sort().join(', ')
-const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
 export async function rebuildAfterRestore(deps: RebuildDeps): Promise<RebuildResult> {
   const { bucket, target, restoreId } = deps
@@ -85,7 +86,7 @@ export async function rebuildAfterRestore(deps: RebuildDeps): Promise<RebuildRes
     try {
       await rebuildSearchIndexes(target)
     } catch (err) {
-      for (const d of sorted) failed.set(d.name, messageOf(err))
+      for (const d of sorted) failed.set(d.name, safeError(err))
     }
     for (const d of sorted) {
       if (failed.has(d.name)) continue
@@ -95,7 +96,7 @@ export async function rebuildAfterRestore(deps: RebuildDeps): Promise<RebuildRes
         if (!n) throw new Error(`no count from ${d.from[0]}`)
         done.set(d.name, n.n)
       } catch (err) {
-        failed.set(d.name, messageOf(err))
+        failed.set(d.name, safeError(err))
       }
     }
   } finally {
