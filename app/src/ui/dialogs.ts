@@ -6,6 +6,14 @@
  * For a modal's `onPointerDownOutside` and `onInteractOutside`: the toast stack floats over every window, panel and sheet
  * (it portals to body, `z-toast`) and takes clicks (Undo, Dismiss), so a click on a toast isn't a click outside.
  */
+/**
+ * A menu's `onEscapeKeyDown`: Escape closes only the menu, not the window or page behind it (App's window listener
+ * hears it after Radix). Only while focus is inside the open menu: a menu that's closing after a pick still hears keys
+ * during its exit animation, and then Escape belongs to the window again.
+ */
+export const escapeClosesMenuOnly = (e: KeyboardEvent) => {
+  if (e.target instanceof Element && e.target.closest('[role="menu"][data-state="open"]')) e.stopPropagation()
+}
 export const keepForToast = (e: Event) => { if (e.target instanceof Element && e.target.closest('[data-toast]')) e.preventDefault() }
 
 /** What had focus when the person clicked to open a dialog. Taken by the next dialog that opens. */

@@ -118,7 +118,7 @@ describe('P4 lines (wave-4 PR0): literal texts, and no id in any of them', () =>
   it('names each P4 brand_data read', () => {
     for (const [route, detail] of [
       ['/api/routines', 'Routines'], ['/api/today', 'Today'], ['/api/activity', 'Activity'], ['/api/library', 'The Library'],
-      ['/api/library/:id/download', 'A Library file'],
+      ['/api/library/:id/download', 'A Library file'], ['/api/routines/:id/runs', "A routine's runs"],
     ] as const) expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'GET', route }, names), route).toEqual({ what: 'looked at brand data', detail })
   })
   it('says what happened to a routine', () => {

@@ -50,6 +50,8 @@ const RoutePatternSchema = z.enum([
   // P4's brand_data GET routes (Sonnet M-4): the Routines page, Today, Activity and the Library, so Inhouse under a live
   // grant gets data, not 503 ("no line, no data").
   '/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download',
+  // Master plan decision 8 (route 86): a routine's recent runs.
+  '/api/routines/:id/runs',
 ])
 /**
  * The `brand_data` PUT routes the Inhouse team may use under a live grant (item 19, p3-design section 10): forgetting

@@ -1,7 +1,7 @@
 // Managing chats: the "···" menu on a chat (sidebar rows, See all rows, the top bar), the inline rename field and
 // the chat row itself, with its running marker and a tooltip for a title that is cut off.
-import { Component, Fragment, Suspense, lazy, useEffect, useId, useRef, useState } from 'react'
-import type { ReactElement, ReactNode } from 'react'
+import { Fragment, useEffect, useId, useRef, useState } from 'react'
+import type { ReactElement } from 'react'
 import { cva } from 'class-variance-authority'
 import { CHAT_TITLE_MAX } from '../agent/types'
 import type { ChatEntry } from '../state/store'
@@ -14,6 +14,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuSeparator, DropdownMenuT
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Icon, IconButton, MenuItem } from './index'
 import { NO_CLOSE_MOTION } from './motion'
+import { PromptBento } from './PromptBento'
 
 /** Set by Pin and Delete for the menu's close, which may come after the row (and its menu) was replaced. One menu is open at a time. */
 let restoreFocusAfterMenu: (() => void) | null = null
@@ -250,27 +251,13 @@ export function SuggestionChip({ question, onAsk }: { question: string; onAsk: (
   )
 }
 
-const LazyPromptBento = lazy(async () => {
-  const m = await import('./PromptBento')
-  return m === undefined ? new Promise<never>(() => {}) : { default: m.PromptBento }
-})
-
-class BentoBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
-  state = { failed: false }
-  static getDerivedStateFromError() { return { failed: true } }
-  render() { return this.state.failed ? null : this.props.children }
-}
-
-/** Lazy-loaded PromptBento: fetches nothing when suggestions is empty and fails silently if offline. */
+/**
+ * PromptBento, loaded with the screen (not lazily): blank New chat centres its composer between the heading and these
+ * cards, so cards that arrived a moment after the first paint made the composer drop and then jump up on every load.
+ */
 export function PromptBentoSlot(props: {
   suggestions: string[]; tools: string[]; onAsk: (q: string) => void; showRoutine?: boolean; className?: string
 }) {
   if (!props.suggestions.length) return null
-  return (
-    <BentoBoundary>
-      <Suspense fallback={<div data-page-loading />}>
-        <LazyPromptBento {...props} />
-      </Suspense>
-    </BentoBoundary>
-  )
+  return <PromptBento {...props} />
 }

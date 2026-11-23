@@ -67,7 +67,7 @@ test('A demo stored by the build before the seam opens with its chat, draft, mod
   // The draft in the other chat's composer.
   await side(page).getByRole('button', { name: draftTitle, exact: true }).click()
   await expect(page.getByRole('banner')).toContainText(draftTitle)
-  await expect(page.getByRole('textbox', { name: 'Message your Inhouse agent' })).toHaveValue(draft.text)
+  await expect(page.getByRole('textbox', { name: 'Message Inhouse' })).toHaveValue(draft.text)
 
   // The approval is mid-hold, then goes out on the clock.
   await side(page).getByRole('button', { name: 'Today', exact: true }).click()

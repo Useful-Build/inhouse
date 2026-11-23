@@ -204,7 +204,7 @@ test('Chats: each recent chat opens its own conversation', async ({ page, fx }) 
   }
   // A question asked in one chat stays with it.
   await side(page).getByRole('button', { name: 'Why did refunds jump?', exact: true }).click()
-  await page.getByRole('textbox', { name: 'Message your Inhouse agent' }).fill('And last week?')
+  await page.getByRole('textbox', { name: 'Message Inhouse' }).fill('And last week?')
   await page.keyboard.press('Enter')
   await expect(page.locator('main').getByText('And last week?')).toBeVisible()
   await side(page).getByRole('button', { name: 'Amazon payout gap', exact: true }).click()
@@ -561,10 +561,10 @@ test('Facts agree across screens: PO-1187, the waiting count and the stuck-order
   await expect(log).not.toContainText('in Watch')
 })
 
-test('Activity: every time sits on one line in its column', async ({ page, fx }) => {
+test('Activity: every time sits on one line', async ({ page, fx }) => {
   await start(fx, 'Run', '#/activity')
   // Run shows the most lines, "10:12 AM" the widest time.
-  const times = page.locator('[data-activity-row] > span:first-child')
+  const times = page.locator('[data-activity-time]')
   await expect(times.first()).toBeVisible()
   await expect(page.locator('main')).toContainText('10:12 AM')
   const lines = await times.evaluateAll(els => els.map(e => ({ t: e.textContent, lines: Math.round(e.getBoundingClientRect().height / parseFloat(getComputedStyle(e).lineHeight)) })))
@@ -572,7 +572,7 @@ test('Activity: every time sits on one line in its column', async ({ page, fx })
   await shot(page, 'activity-times')
 })
 
-test('The Klaviyo request takes its date from the data and hides on First day; Ask Leo says it isn\'t connected; the audit CSV has plain spaces', async ({ page, fx }) => {
+test('The Klaviyo request shows its status, never a date, and hides on First day; Ask Leo says it isn\'t connected; the audit CSV has plain spaces', async ({ page, fx }) => {
   await start(fx, 'Act')
   const team = page.getByRole('dialog', { name: 'Your Inhouse team' })
   /** The team window, from the account menu's "Your Inhouse team", once the item counts `open` requests. */
@@ -584,14 +584,20 @@ test('The Klaviyo request takes its date from the data and hides on First day; A
   }
   // Two open requests: the Klaviyo connection and the weekly wholesale job.
   await openTeam(2)
-  await expect(team).toContainText('Live by Fri, Nov 20')
+  await team.getByRole('radio', { name: /^Your requests/ }).click()
+  const openList = team.getByRole('list', { name: 'Open requests' })
+  await expect(openList.getByRole('listitem')).toHaveCount(2)
+  await expect(openList.getByRole('listitem').filter({ hasText: 'Connect Klaviyo' })).toContainText('With the team')
+  await expect(openList).not.toContainText(/Live by|Call on/)
   await page.keyboard.press('Escape')
   await expect(team).toHaveCount(0)
 
   // The approver's Ask button says it isn't wired up, as a sentence.
   await page.getByRole('article', { name: 'Trail Shell Jacket (M, Olive) is oversold by 5' }).click({ position: { x: 12, y: 12 } })
   const panel = page.getByRole('dialog')
-  await panel.getByRole('button', { name: 'Ask Leo' }).click()
+  // Asking the approver is in the window's More menu.
+  await panel.getByRole('button', { name: 'More', exact: true }).click()
+  await page.getByRole('menu', { name: 'More actions' }).getByRole('menuitem', { name: 'Ask Leo' }).click()
   await expect(page.locator('[data-toast]').filter({ hasText: "Asking Leo isn't connected in this demo." })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(panel).toHaveCount(0)
@@ -603,13 +609,17 @@ test('The Klaviyo request takes its date from the data and hides on First day; A
   expect(csv).toMatch(/\d [AP]M/)
   expect(csv).not.toContain(' ')
 
-  // First day: nothing is being connected yet, so the team window names no date and the menu counts one request fewer.
+  // First day: nothing is being connected yet, so the menu counts one request fewer.
   await page.getByRole('button', { name: /^Demo switches:/ }).click()
   await page.getByRole('dialog', { name: 'Demo switches' }).getByRole('button', { name: 'First day', exact: true }).click()
   await page.getByRole('button', { name: 'Close demo switches' }).click()
   // The Klaviyo request is no longer listed or counted.
   await openTeam(1)
   await expect(team).toBeVisible()
-  await expect(team).not.toContainText('Live by')
+  await team.getByRole('radio', { name: /^Your requests/ }).click()
+  const firstDay = team.getByRole('list', { name: 'Open requests' })
+  await expect(firstDay.getByRole('listitem')).toHaveCount(1)
+  await expect(firstDay).toContainText('Weekly wholesale stock report')
+  await expect(firstDay).not.toContainText('Connect Klaviyo')
   await shot(page, 'team-window-first-day')
 })

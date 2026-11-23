@@ -21,7 +21,7 @@ const composer = (page: Page) => page.locator('[data-composer]')
 
 test('Composer: "From Google Drive" says Google Drive isn\'t connected and attaches nothing', async ({ fx, page }) => {
   await start(page, fx, '#/today', titled)
-  const field = page.getByRole('textbox', { name: 'Ask your Inhouse agent' })
+  const field = page.getByRole('textbox', { name: 'Ask Inhouse' })
   await composer(page).getByRole('button', { name: 'Attach', exact: true }).click()
   const menu = page.getByRole('menu')
   await expect(menu.getByRole('menuitem', { name: /From Google Drive/ })).toBeVisible()
@@ -34,7 +34,7 @@ test('Composer: "From Google Drive" says Google Drive isn\'t connected and attac
 
 test('Composer: Dictate says Dictation isn\'t connected and leaves the field alone', async ({ fx, page }) => {
   await start(page, fx, '#/today', titled)
-  const field = page.getByRole('textbox', { name: 'Ask your Inhouse agent' })
+  const field = page.getByRole('textbox', { name: 'Ask Inhouse' })
   await field.fill('Draft I keep')
   await composer(page).getByRole('button', { name: 'Dictate' }).click()
   await expect(toast(page, "Dictation isn't connected in this demo.")).toBeVisible()

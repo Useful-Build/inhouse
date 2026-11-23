@@ -116,10 +116,12 @@ export function pagesPolish(test: TestType<{ page: Page }, object>, size: 'deskt
       const sheet = page.getByRole('dialog', { name })
       await expect(sheet).toBeVisible()
       const runs = sheet.getByRole('list', { name: 'Last runs' })
+      // The runs load after the sheet opens (route 86): count them once they're there.
+      await expect(runs.getByRole('listitem').first()).toBeVisible()
       const before = await runs.getByRole('listitem').count()
       await sheet.getByRole('button', { name: 'Run now' }).click()
       await expect(runs.getByRole('listitem')).toHaveCount(before + 1)
-      const runAt = (await runs.getByRole('listitem').first().locator('span.tabular-nums').innerText()).trim()
+      const runAt = (await runs.getByRole('listitem').first().locator('.tabular-nums').innerText()).trim().replace(/^Today, /, '')
       await expect(runs.getByRole('listitem').first()).toContainText(`Run now · ${result}`)
       // The row agrees with the sheet once it closes.
       await shot(page, `pages-polish-${size}-routine-run-${name.split(' ')[0].toLowerCase()}`)

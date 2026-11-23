@@ -292,6 +292,7 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'POST /api/routines/:id/run': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'POST /api/routines/:id/delete': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'POST /api/routines/:id/restore': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'GET /api/routines/:id/runs': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   // Rows 91 to 93 (P8a F2): Shopify's privacy webhooks. No principal passes; Shopify's HMAC is their authentication.
   'POST /api/webhooks/shopify/customers-data-request': ['no', 'no', 'no', 'no', 'no', 'no', 'no'],
   'POST /api/webhooks/shopify/customers-redact': ['no', 'no', 'no', 'no', 'no', 'no', 'no'],

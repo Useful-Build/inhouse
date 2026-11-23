@@ -139,6 +139,7 @@ export const CASES: Record<string, RouteCase> = {
   'POST /api/routines/:id/run': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/run`, json: { clientKey: 'e2e-run-key-1' }, passes: 404 },
   'POST /api/routines/:id/delete': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/delete`, json: { ifRev: 1 }, passes: 404 },
   'POST /api/routines/:id/restore': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/restore`, json: { ifRev: 1 }, passes: 404 },
+  'GET /api/routines/:id/runs': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/runs`, passes: 404 },
   'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: 404 },
   // Rows 91 to 93 (P8a F2): Shopify's privacy webhooks, outside sign-in. A JWT counts for nothing there: without Shopify's
   // signature every caller gets 401 (webhooks.spec.ts sends signed deliveries).

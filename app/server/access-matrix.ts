@@ -83,6 +83,8 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 54 */ { method: 'POST', pattern: '/api/routines/:id/run', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 55 */ { method: 'POST', pattern: '/api/routines/:id/delete', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 56 */ { method: 'POST', pattern: '/api/routines/:id/restore', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  // Master plan decision 8: a routine's recent runs, read like route 52.
+  /* 86 */ { method: 'GET', pattern: '/api/routines/:id/runs', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   // P8a F2: Shopify's privacy webhooks, the closed exception outside sign-in (routes.ts `webhookRoutes`): no principal
   // passes these rows; server/index.ts serves them before sign-in, authenticated by Shopify's HMAC.
   /* 91 */ { method: 'POST', pattern: '/api/webhooks/shopify/customers-data-request', class: 'webhook', allow: [] },

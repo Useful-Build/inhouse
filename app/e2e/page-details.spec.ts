@@ -1,4 +1,4 @@
-// Page actions: a routine's details and actions, a skill's on switch, Library sort, row menu and
+// Page actions: a routine's details and actions, a skill's page and its on switch, Library sort, row menu and
 // viewer stepping, and Settings' Admin confirm and field checks. Each flow reloads to prove what was saved.
 import { expect, test, type Fx, type Stage } from './support/fx.js'
 import type { Page } from '@playwright/test'
@@ -24,13 +24,16 @@ test('Routines: details, Pause, Run now, Delete with confirm and Undo, and all o
   await expect(sheet).toBeVisible()
   await expect(sheet).toContainText('Compares each Amazon payout with what Xero expected.')
   await expect(sheet).toContainText('Every day at 6:00 AM')
-  await expect(sheet.getByRole('list', { name: 'Last runs' })).toContainText('found a $1,240 gap')
+  await expect(sheet.getByRole('list', { name: 'Last runs' })).toContainText('Found a $1,240 gap')
   await shot(page, 'routine-sheet')
 
-  // Pause from the sheet: the toast says so and the sheet offers Resume.
-  await sheet.getByRole('button', { name: 'Pause', exact: true }).click()
+  // The sheet's On switch pauses it: the toast says so and the switch is off.
+  const sheetSwitch = sheet.getByRole('switch', { name: `${name} on or off` })
+  await expect(sheetSwitch).toBeChecked()
+  await sheetSwitch.click()
   await expect(toast(page, `Paused ${name}`)).toBeVisible()
-  await expect(sheet.getByRole('button', { name: 'Resume', exact: true })).toBeVisible()
+  await expect(sheetSwitch).not.toBeChecked()
+  await expect(sheet).toContainText("Off. It won't run until you turn it on.")
 
   // Run now adds a line at the top of the last runs.
   await sheet.getByRole('button', { name: 'Run now' }).click()
@@ -50,7 +53,7 @@ test('Routines: details, Pause, Run now, Delete with confirm and Undo, and all o
   // A Morning check run links to its steps.
   await page.getByRole('button', { name: 'Morning check', exact: true }).click()
   sheet = page.getByRole('dialog', { name: 'Morning check' })
-  await sheet.getByRole('button', { name: 'Steps →' }).first().click()
+  await sheet.getByRole('button', { name: 'Steps', exact: true }).first().click()
   await expect(page.getByRole('dialog', { name: /What your Inhouse agent did/ })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog')).toHaveCount(0)
@@ -95,32 +98,35 @@ test('Routines in Watch: a locked routine shows its stage and no actions', async
   await expect(sheet.getByRole('button', { name: 'Run now' })).toHaveCount(0)
 })
 
-test('Skills: turn a skill off in its details and back on', async ({ fx, page }) => {
+test("Skills: a skill's page, turning it off from its More menu and back on", async ({ fx, page }) => {
   await start(page, fx, '#/skills')
   const name = 'Reorder drafting'
   await page.getByRole('button', { name, exact: true }).click()
-  const sheet = page.getByRole('dialog', { name })
-  await expect(sheet).toContainText("Works out how much to reorder and drafts the PO in the supplier's format.")
-  await expect(sheet).toContainText('12 times')
-  const sw = sheet.getByRole('switch', { name: `${name} on or off` })
-  await expect(sw).toBeChecked()
-  await sw.click()
-  await expect(sw).not.toBeChecked()
-  await expect(sheet).toContainText("won't use this skill")
-  await shot(page, 'skill-sheet-off')
-  await page.keyboard.press('Escape')
-  await expect(sheet).toHaveCount(0)
-  // Focus goes back to the row that opened the sheet.
-  await expect(page.getByRole('button', { name, exact: true })).toBeFocused()
+  // The row opens the skill's own page, with a link the app keeps.
+  await expect(page).toHaveURL(/#\/skills\/reorder-drafting$/)
+  await expect(page.getByRole('heading', { level: 1, name })).toBeVisible()
+  await expect(page.getByRole('main')).toContainText("Works out how much to reorder and drafts the PO in the supplier's format.")
+  await expect(page.getByRole('complementary', { name: 'About this skill' })).toContainText('12 times')
+  // The instructions read as a document: its sections are headings, the frontmatter isn't shown.
+  const instructions = page.getByRole('article', { name: 'Instructions' })
+  await expect(instructions.getByRole('heading', { level: 2, name: 'Ground rules' })).toBeVisible()
+  await expect(instructions).not.toContainText('name: reorder-drafting')
+  await page.getByRole('button', { name: `More for ${name}` }).click()
+  await page.getByRole('menuitem', { name: 'Turn off' }).click()
+  await expect(toast(page, `${name} is off`)).toBeVisible()
+  await expect(page.getByRole('main')).toContainText('Off')
+  await shot(page, 'skill-page-off')
   // The row says it's off, and stays so after a reload.
   await page.reload()
-  await expect(page.getByRole('heading', { level: 1, name: 'Skills' })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name })).toBeVisible()
+  await page.getByRole('main').getByRole('button', { name: 'Skills', exact: true }).click()
+  await expect(page).toHaveURL(/#\/skills$/)
   const row = page.getByRole('button', { name, exact: true }).locator('xpath=..')
   await expect(row).toContainText('Off')
   await page.getByRole('button', { name, exact: true }).click()
-  await page.getByRole('dialog', { name }).getByRole('switch', { name: `${name} on or off` }).click()
-  await expect(page.getByRole('dialog', { name }).getByRole('switch', { name: `${name} on or off` })).toBeChecked()
-  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: `More for ${name}` }).click()
+  await page.getByRole('menuitem', { name: 'Turn on' }).click()
+  await page.goBack()
   await expect(row).not.toContainText('Off')
 })
 
@@ -299,7 +305,9 @@ test('Routines: Cancel on a delete asked from the details gives focus back to th
   const name = 'Monday reorder list'
   const open = page.getByRole('button', { name, exact: true })
   await open.click()
-  await page.getByRole('dialog', { name }).getByRole('button', { name: 'Delete' }).click()
+  // Delete sits in the panel's "···" menu (UI plan 3).
+  await page.getByRole('dialog', { name }).getByRole('button', { name: `More for ${name}` }).click()
+  await page.getByRole('menu', { name: 'More routine actions' }).getByRole('menuitem', { name: 'Delete' }).click()
   const ask = page.getByRole('dialog', { name: 'Delete routine' })
   await expect(ask).toContainText(`Delete ${name}?`)
   await ask.getByRole('button', { name: 'Cancel' }).click()

@@ -109,14 +109,14 @@ test('Approvals: edit then approve and Undo, Don\'t send and Undo, approve all l
 test('Today: snooze one card and dismiss another; Today, Approvals and the badge agree, after a reload too, until Reset demo', async ({ fx, page }) => {
   await start(page, fx, 'Act')
   const h1 = page.getByRole('heading', { level: 1 })
-  await expect(h1).toContainText('6 things need you. A fix is drafted for each.')
+  await expect(h1).toContainText('6 things need you. Drafts are ready.')
   await expect(page.getByRole('article')).toHaveCount(6)
 
   // The menu doesn't open the card's panel.
   await card(page, 'Order #4821 is stuck for 4 days').getByRole('button', { name: 'More' }).click()
   const menu = page.getByRole('menu', { name: 'Card actions' })
   await expect(menu.getByRole('menuitem')).toHaveCount(3)
-  for (const name of ['Ask about this', 'Snooze until tomorrow', 'Not a problem']) await expect(menu.getByRole('menuitem', { name, exact: true })).toBeVisible()
+  for (const name of ['Ask Inhouse', 'Snooze until tomorrow', 'Not a problem']) await expect(menu.getByRole('menuitem', { name, exact: true })).toBeVisible()
   await shot(page, 'today-card-menu')
   await menu.getByRole('menuitem', { name: 'Snooze until tomorrow' }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
@@ -158,7 +158,7 @@ test('Today: snooze one card and dismiss another; Today, Approvals and the badge
   await page.getByRole('button', { name: /Demo switches/ }).click()
   await page.getByRole('button', { name: 'Reset demo', exact: true }).click()
   await expect(page.getByRole('article')).toHaveCount(6)
-  await expect(h1).toContainText('6 things need you. A fix is drafted for each.')
+  await expect(h1).toContainText('6 things need you. Drafts are ready.')
   await expect(badge(page)).toContainText('6')
 })
 
@@ -233,7 +233,6 @@ test('A set-aside problem approved from the chat card or the Library\'s approval
   await go(page, '#/activity')
   const notSent = actRow(page, `Not sent: ask ShipBob why #4821 hasn't shipped`)
   await expect(notSent).toBeVisible()
-  await expect(notSent).toContainText('Sam')
   await page.getByRole('searchbox', { name: 'Search activity' }).fill('left Approvals')
   await expect(page.locator('button[data-activity-row]')).toHaveCount(1)
   // A time typed with a plain space finds the row, whose time carries a no-break space.
@@ -242,7 +241,9 @@ test('A set-aside problem approved from the chat card or the Library\'s approval
   await expect(actRow(page, 'Saved the weekly numbers report')).toBeVisible()
   await page.getByRole('searchbox', { name: 'Search activity' }).fill('')
   await notSent.click()
-  await expect(page.getByRole('main').getByRole('button', { name: 'Undo', exact: true })).toBeVisible()
+  // The line opens as a sheet that says who did it, with its one action.
+  await expect(page.getByRole('dialog')).toContainText('Sam')
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Undo', exact: true })).toBeVisible()
   await shot(page, 'activity-not-sent-line')
 
   // The chat still offers its approval card; approving there clears the set-aside.
@@ -290,7 +291,7 @@ test('A set-aside problem approved from the chat card or the Library\'s approval
   await expect(card(page, '11 returns are not restocked')).toHaveCount(0)
   await go(page, '#/activity')
   await actRow(page, 'Dismissed: 11 returns are not restocked').click()
-  await page.getByRole('main').getByRole('button', { name: 'Undo', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Undo', exact: true }).click()
   await expect(actRow(page, 'Dismissed:')).toHaveCount(0)
   await go(page, '#/today')
   await expect(card(page, '11 returns are not restocked')).toBeVisible()
@@ -319,7 +320,7 @@ test('Counts leave set-aside problems out: Watch notifications and Approvals, an
 
   await go(page, '#/today')
   for (const t of titles.slice(2)) await snooze(t)
-  await expect(h1).toContainText('Nothing needs you today.')
+  await expect(h1).toContainText("You're all caught up.")
   await expect(page.getByRole('status').filter({ hasText: 'Every card is set aside for today.' })).toBeVisible()
   await shot(page, 'today-all-set-aside')
   await page.getByRole('button', { name: 'Notifications' }).click()
