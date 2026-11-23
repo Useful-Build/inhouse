@@ -114,7 +114,7 @@ describe('Today empty-state copy and view state (zero problems)', () => {
     })
     const waitingProblem = makeProblem({
       id: 'p-wait', sev: 'med',
-      draft: { title: 'Reorder', lines: [], kind: 'Purchase order', summary: 'Send PO', cta: 'Approve', rev: true, money: true, customer: false },
+      draft: { title: 'Reorder', lines: [['To', 'Kestrel Supply']], kind: 'Purchase order', summary: 'Send PO', cta: 'Approve', rev: true, money: true, customer: false },
       draftedAt: at('2031-03-03T07:00:00.000Z'),
       wait: 'Waiting on your approval',
     })

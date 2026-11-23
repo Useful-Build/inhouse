@@ -4,7 +4,8 @@
 //     that the product refuses;
 //  2. a real draft (lines, text, items or run lines alone) is taken for a placeholder and loses its Approve;
 //  3. an approved or handled problem goes back to Watch because its draft is empty;
-//  4. a refused Approve still reads as approved: the store's `approve` resolves as done, so the window steps on.
+//  4. a refused Approve still reads as approved: the store's `approve` resolves as done, so the window steps on;
+//  5. the Today card or the Approvals queue still offers Approve for it, which the product refuses.
 import { describe, expect, test, vi } from 'vitest'
 import fc from 'fast-check'
 
@@ -16,7 +17,7 @@ vi.hoisted(() => {
 })
 const { agent } = await import('../agent')
 const { AgentError } = await import('../agent/types')
-const { draftView, hasDraft } = await import('./derive')
+const { draftView, hasDraft, issueCards, pendingIds } = await import('./derive')
 const { useUi } = await import('./store')
 type Ctx = Parameters<typeof draftView>[0]
 type Problem = Ctx['data']['problems'][number]
@@ -51,6 +52,16 @@ describe('a problem with no real draft', () => {
       }
       expect(hasDraft({ ...p, draft })).toBe(lines || body || items || runLines)
     }))
+  })
+
+  test('the Today card offers no Approve and the approval queue leaves it out, at every stage', () => {
+    for (const S of [1, 2] as const) {
+      const ctx = ctxWith(S, [p, ...sample.problems])
+      expect(issueCards(ctx).find(c => c.problem.id === p.id)?.primary ?? null, `S${S}`).toBeNull()
+      expect(pendingIds(ctx), `S${S}`).not.toContain(p.id)
+    }
+    // A real draft still waits for approval at Act.
+    expect(pendingIds(ctxWith(1, sample.problems))).toContain(sample.problems[0].id)
   })
 
   test('approved stays approved even with an empty draft', () => {

@@ -326,7 +326,8 @@ export function pendingIds(ctx: Ctx): string[] {
   const { S, agent } = ctx
   if (flags(ctx).noData) return []
   return ctx.data.problems
-    .filter(p => !agent.approved[p.id] && !agent.setAside[p.id] && !isHandled(ctx, p) && (S === 1 || (S === 2 && (!!p.wait || !!agent.undone[p.id]))))
+    // Only a real draft waits for approval: the server's morning-check placeholder has nothing to approve.
+    .filter(p => !agent.approved[p.id] && !agent.setAside[p.id] && !isHandled(ctx, p) && hasDraft(p) && (S === 1 || (S === 2 && (!!p.wait || !!agent.undone[p.id]))))
     .map(p => p.id)
 }
 
@@ -444,7 +445,8 @@ export function issueCards(ctx: Ctx): IssueCard[] {
     if (at) {
       return { problem: p, status: `Approved by ${firstName(byName(ctx.data, at.by))} at ${fmtTime(at.at, display())}${p.draft.rev || agent.sent[p.id] ? '' : ' · going out'}`, statusIcon: 'check_circle', tone: 'ink', primary: null, quiet: null, sheetNote: null, handled: false, dimmed: true }
     }
-    if (S === 0) return { problem: p, status: `Suggested: ${p.next}`, statusIcon: 'lightbulb', tone: 'grey', primary: null, quiet: 'Ask Inhouse', sheetNote: null, handled: false, dimmed: false }
+    // No real draft (the server's morning-check placeholder) reads as Watch at any stage, as in the review window: no Approve.
+    if (S === 0 || (!hasDraft(p) && !isHandled(ctx, p))) return { problem: p, status: `Suggested: ${p.next}`, statusIcon: 'lightbulb', tone: 'grey', primary: null, quiet: 'Ask Inhouse', sheetNote: null, handled: false, dimmed: false }
     if (isHandled(ctx, p)) return { problem: p, status: 'Handled by Inhouse agent', statusIcon: 'check_circle', tone: 'blue', primary: null, quiet: 'Undo', sheetNote: null, handled: true, dimmed: true }
     if (S === 2 && agent.undone[p.id] && !p.wait) return { problem: p, status: 'Undone · back to you', statusIcon: 'undo', tone: 'grey', primary: null, quiet: 'Review', sheetNote: 'Undone · back to you', handled: false, dimmed: false }
     const part = ranByAgent(ctx, p) && p.partial
