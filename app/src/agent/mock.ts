@@ -390,6 +390,9 @@ interface Server {
    */
   memoryWaiting: MemoryLine[]
   memoryApproved: MemoryLine[]
+  /** P6a brand skills: the sample's own skills deleted (by name), and when one was last changed in a chat. */
+  skillsDeleted: Record<string, true>
+  skillsChanged: Record<string, Instant>
 }
 /** What the mock says to someone without `approveMemory` (the server's matrix refuses routes 77 and 78 the same way). */
 const WAITING_REFUSED = 'Only admins and the Inhouse team can see what waits for an OK.'
@@ -405,7 +408,7 @@ const DEMO_GRANT_HOURS = 72
 const defaultServer = (startedAt: number): Server => {
   const now = demoNow(startedAt).getTime()
   return {
-    roles: {}, photos: {}, removed: {}, invited: [], grantSeq: 1, revs: {}, memoryWaiting: [], memoryApproved: [],
+    roles: {}, photos: {}, removed: {}, invited: [], grantSeq: 1, revs: {}, memoryWaiting: [], memoryApproved: [], skillsDeleted: {}, skillsChanged: {},
     grant: { id: 'g_demo-1', createdBy: ME_ID, createdAt: instantOf(now), endsAt: instantOf(now + DEMO_GRANT_HOURS * 3_600_000), endedAt: null, endedBy: null },
   }
 }
@@ -445,6 +448,8 @@ const savedServer = (v: unknown, startedAt: number): Server => {
     revs: recOf(v.revs, (x): x is number => typeof x === 'number' && Number.isInteger(x) && x >= 0),
     memoryWaiting: (isArr(v.memoryWaiting) ? v.memoryWaiting : []).filter(isTeamLine).map(teamLineOf),
     memoryApproved: (isArr(v.memoryApproved) ? v.memoryApproved : []).filter(isTeamLine).map(teamLineOf),
+    skillsDeleted: flagsOf(v.skillsDeleted),
+    skillsChanged: recOf(v.skillsChanged, isInstant),
   }
 }
 
@@ -624,7 +629,7 @@ export class MockAgent implements AgentClient {
   /** The chat engine (mock-chat.ts): runs, turns and the chat reads. Loads with the first send, so it isn't in Today's first load. */
   private engine: ChatEngine | null = null
   private sendDelayMs = 0
-  readonly k = { chats, ME_ID, SESSION, FINISHED, THINKING_STEP_MS, tools, traceKey, meName: () => this.meName() }
+  readonly k = { chats, ME_ID, SESSION, FINISHED, THINKING_STEP_MS, tools, traceKey, meName: () => this.meName(), changeSkill: (name: string) => this.changeSkill(name) }
   private linkState: LinkState = 'live'
   private linkListeners = new Set<(l: LinkState) => void>()
   /** Run id to what it replayed and made, saved (bounded) so a saved chat's run ids keep their steps after a reload. */
@@ -783,9 +788,20 @@ export class MockAgent implements AgentClient {
     const status = (k: ResourceKey): ResourceStatus => (failed[k] ? { status: 'error', error: failed[k] } : base.resources[k])
     const revs = this.server.revs
     const bodies = this.skillBodies
+    const { skillsDeleted, skillsChanged } = this.server
     return {
       ...base,
-      skills: bodies ? base.skills.map(s => (Object.hasOwn(bodies, s.n) ? { ...s, body: bodies[s.n] } : s)) : base.skills,
+      // The sample's own skills (`mine`) as the demo's people left them: deleted ones gone, changed ones dated. Who may
+      // change one: its maker or an admin, so the demo's admin may change them all.
+      skills: base.skills.filter(s => !(s.mine && skillsDeleted[s.n])).map(s => {
+        const changed = s.mine && Object.hasOwn(skillsChanged, s.n) ? skillsChanged[s.n] : undefined
+        return {
+          ...s,
+          ...(bodies && Object.hasOwn(bodies, s.n) ? { body: bodies[s.n] } : {}),
+          ...(changed ? { updatedAt: changed, used: 'Changed today' } : {}),
+          ...(s.mine ? { canChange: true } : {}),
+        }
+      }),
       people: {
         ...base.people,
         members: failed.members ? [] : this.members(),
@@ -1275,6 +1291,28 @@ export class MockAgent implements AgentClient {
   disconnect = (): void => undefined
 
   // ----- skills -----
+
+  /** P6a brand skills: one of the brand's own (made in a chat this session, or the sample's) is deleted; ours never are. */
+  deleteSkill(name: string): Promise<void> {
+    const extra = this.state.skillsExtra.find(s => s.n === name)
+    if (extra) return this.write({ skillsExtra: this.state.skillsExtra.filter(s => s.n !== name) })
+    const sample = this.read().skills.find(s => s.n === name)
+    // Already gone (another tab deleted it): a conflict with what this page showed.
+    if (!sample) return this.rejected('conflict', 'That skill is already gone.', true)
+    if (!sample.mine) return this.rejected('forbidden', "Only your team's own skills can be deleted.", true)
+    return this.write({}, { ...this.server, skillsDeleted: { ...this.server.skillsDeleted, [name]: true } })
+  }
+
+  /** A chat changed one of the brand's own skills (mock-script's "Change the ... skill"): dated now. */
+  private changeSkill(name: string): void {
+    const at = instantOf(demoNow(this.startedAt).getTime())
+    const extra = this.state.skillsExtra.find(s => s.n === name)
+    if (extra) {
+      this.commit({ skillsExtra: this.state.skillsExtra.map(s => (s.n === name ? { ...s, updatedAt: at, used: 'Changed today' } : s)) })
+      return
+    }
+    this.commit({}, false, { ...this.server, skillsChanged: { ...this.server.skillsChanged, [name]: at } })
+  }
 
   /** Loads every sample skill's instructions at once (their own chunk), the first time any skill's page asks. */
   loadSkill(_name: string): Promise<void> {

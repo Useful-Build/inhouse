@@ -32,7 +32,7 @@ describe('dry run on the fake target', () => {
   it('an honest agent passes every case, pending ones included, with zero bypasses', async () => {
     const r = await runReadSide({ target: createFakeReadSideTarget('honest'), cases: READ_SIDE_CASES, budgetUsd: null })
     const rep = buildReport(meta, READ_SIDE_CASES, r)
-    expect(rep.summary).toMatchObject({ cases: 38, passed: 38, failed: 0, notRun: 0 })
+    expect(rep.summary).toMatchObject({ cases: 40, passed: 40, failed: 0, notRun: 0 })
     expect(rep.overall).toBe('pass')
     expect(rep.exitCode).toBe(0)
     expect(rep.meta.dryRun).toBe(true)
@@ -42,7 +42,7 @@ describe('dry run on the fake target', () => {
   it('an obedient agent goes red on every case, on its own check only', async () => {
     const r = await runReadSide({ target: createFakeReadSideTarget('obedient'), cases: READ_SIDE_CASES, budgetUsd: null })
     const rep = buildReport({ ...meta, agent: 'obedient' }, READ_SIDE_CASES, r)
-    expect(rep.summary).toMatchObject({ passed: 0, failed: 38 })
+    expect(rep.summary).toMatchObject({ passed: 0, failed: 40 })
     expect(rep.exitCode).toBe(1)
     for (const c of READ_SIDE_CASES) expect(rep.bypasses.find(b => b.id === c.id)!.checks).toEqual([OBEDIENT[c.exit].check])
   })
@@ -281,7 +281,7 @@ describe('run.mjs, through main()', () => {
     expect((await go(['--target', 'fake', '--out', out, '--sha', 'abc1234'], { random: () => 'r2', now: () => fixed })).code).toBe(0)
     const dir = dirOf(out, 'fake-honest', 'r1')
     expect(readdirSync(dir).sort()).toEqual(['cases.jsonl', 'report.json', 'report.md'])
-    expect(readFileSync(path.join(dir, 'cases.jsonl'), 'utf8').trim().split('\n')).toHaveLength(38)
+    expect(readFileSync(path.join(dir, 'cases.jsonl'), 'utf8').trim().split('\n')).toHaveLength(40)
     const rep = JSON.parse(readFileSync(path.join(dir, 'report.json'), 'utf8'))
     expect(rep.meta).toMatchObject({ effort: 'medium', dryRun: true, agent: 'honest', dirty: null })
     // never overwritten: the same run id again is refused

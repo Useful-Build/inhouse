@@ -1,14 +1,6 @@
-// What differs on the product from the demo in the Skills page, the Inhouse team window and the Tools page's Request,
+// What differs on the product from the demo in the Inhouse team window, the help window and the Tools page's Request,
 // kept as plain functions so each decision has a test (the repo has no DOM test setup). `demo` is `demo !== null`, `product` its opposite.
 import type { ResourceStatus } from '../../shared/contract/common'
-import type { SkillTab } from '../state/store'
-
-const TABS: [SkillTab, string][] = [['all', 'All'], ['team', 'By Inhouse team'], ['mine', 'By your team']]
-
-/** The product has no skills made in a chat, so "By your team" is always empty there: it isn't offered. */
-export const skillTabs = (demo: boolean): [SkillTab, string][] => (demo ? TABS : TABS.filter(([k]) => k !== 'mine'))
-/** A saved "By your team" tab shows as All on the product. */
-export const shownSkillTab = (demo: boolean, saved: SkillTab): SkillTab => (demo || saved !== 'mine' ? saved : 'all')
 
 /** The screenshot box on a bug report: the demo's only (the product sends no screenshot). */
 export const showScreenshotBox = (demo: boolean, isBug: boolean): boolean => demo && isBug

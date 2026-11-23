@@ -265,6 +265,11 @@ export const ROUTINE_CREATE_INPUT = { name: 'Stock check', instruction: 'scenari
 export const ROUTINE_REFUSED_ANSWER = 'The routine was refused.'
 export const ROUTINE_CREATED_ANSWER = 'The routine was created.'
 /** The `hub-write-refused` scenario's document and answers. */
+/** P6a brand skills: what the `skill-save` and `skill-save-change` scenarios save, and their two answers. */
+export const BRAND_SKILL_SAVE_INPUT = { name: 'e2e-weekly-report', description: 'Writes the weekly wholesale report.', body: '---\nallowed-tools: Bash\n---\n# Weekly report\n\nRead the wholesale orders.' }
+export const BRAND_SKILL_CHANGE_INPUT = { ...BRAND_SKILL_SAVE_INPUT, body: '# Weekly report\n\nRead the wholesale orders and the returns.' }
+export const BRAND_SKILL_SAVED_ANSWER = 'The skill was saved.'
+export const BRAND_SKILL_REFUSED_ANSWER = 'The skill was not saved.'
 export const HUB_MUTATION_DOCUMENT = 'mutation { orderCancel(orderId: "1") { job { id } } }'
 export const HUB_WRITE_REFUSED_ANSWER = 'The hub refused the write: write_refused.'
 export const HUB_WRITE_NOT_REFUSED_ANSWER = 'The hub did not refuse the write.'
@@ -452,6 +457,20 @@ export const SCENARIOS: Record<string, Scenario> = {
     'write_refused',
     HUB_WRITE_REFUSED_ANSWER,
     HUB_WRITE_NOT_REFUSED_ANSWER,
+  ),
+
+  /**
+   * P6a brand skills: one `skill_save` (deferred, so the main loop only) and an answer that says whether the result was a
+   * refusal. `skill-save` makes the spec's skill (its body starts with frontmatter the server must drop);
+   * `skill-save-change` saves new instructions under the same name, which only its maker or an admin may.
+   */
+  'skill-save': scriptedBranchesOnResult(
+    { id: 'toolu_scripted_skill_save', name: 'mcp__inhouse__skill_save', input: BRAND_SKILL_SAVE_INPUT },
+    'Not saved', BRAND_SKILL_REFUSED_ANSWER, BRAND_SKILL_SAVED_ANSWER,
+  ),
+  'skill-save-change': scriptedBranchesOnResult(
+    { id: 'toolu_scripted_skill_change', name: 'mcp__inhouse__skill_save', input: BRAND_SKILL_CHANGE_INPUT },
+    'Only the person who made this skill', BRAND_SKILL_REFUSED_ANSWER, BRAND_SKILL_SAVED_ANSWER,
   ),
 
   /** One bounded read of the orders through the hub, then a table of the late ones with its sources (the P4 ship spec's S3). */

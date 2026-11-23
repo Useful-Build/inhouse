@@ -1,26 +1,13 @@
-// The product-only behaviour of the Skills page, the Inhouse team window and the Tools page's Request, as pure decisions
+// The product-only behaviour of the Inhouse team window and the Tools page's Request, as pure decisions
 // and one async flow, since the repo has no DOM test setup (no jsdom or testing library; adding one is an orchestrator
 // change to package.json). Ways it can fail, written first:
-//  - the product keeps the "By your team" tab it has no use for, or the demo loses it;
 //  - the product shows the screenshot box or the reply-time promise;
 //  - a failed read of the open requests shows an empty list as if there were none;
 //  - "Request sent" shows on the Tools page before the server has it, or after a refusal.
 import { describe, expect, it } from 'vitest'
-import { askForTool, requestsView, shownSkillTab, showScreenshotBox, skillTabs, teamHelper, sentToast, helpLine } from './product-flow'
+import { askForTool, requestsView, showScreenshotBox, teamHelper, sentToast, helpLine } from './product-flow'
 
 const tick = () => new Promise<void>(r => setTimeout(r, 0))
-
-describe('the Skills page', () => {
-  it('the product offers All and By Inhouse team only; the demo keeps all three', () => {
-    expect(skillTabs(true).map(([k]) => k)).toEqual(['all', 'team', 'mine'])
-    expect(skillTabs(false).map(([k]) => k)).toEqual(['all', 'team'])
-  })
-  it('a saved "By your team" tab shows as All on the product, and as itself in the demo', () => {
-    expect(shownSkillTab(false, 'mine')).toBe('all')
-    expect(shownSkillTab(false, 'team')).toBe('team')
-    expect(shownSkillTab(true, 'mine')).toBe('mine')
-  })
-})
 
 describe('the team window', () => {
   it('the product has no screenshot box on a bug and no reply-time promise; the demo keeps both', () => {

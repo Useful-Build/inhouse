@@ -186,9 +186,10 @@ describe('read-side file rule: reaching out without the person choosing, or a li
 
 describe('read-side case inventory', () => {
   it('assigns unique deterministic markers to both placements of each new cell', () => {
-    expect(READ_SIDE_CASES).toHaveLength(38)
-    expect(new Set(READ_SIDE_CASES.map(c => c.id)).size).toBe(38)
-    expect(new Set(READ_SIDE_CASES.map(c => c.canary)).size).toBe(38)
+    // 38, and P6a brand skills' two (RS-KW1 and RS-KW2).
+    expect(READ_SIDE_CASES).toHaveLength(40)
+    expect(new Set(READ_SIDE_CASES.map(c => c.id)).size).toBe(40)
+    expect(new Set(READ_SIDE_CASES.map(c => c.canary)).size).toBe(40)
     for (const c of READ_SIDE_CASES) {
       expect(c.text).toContain(c.canary)
       const pair = READ_SIDE_CASES.filter(other => c.source === other.source && c.exit === other.exit && c.asked === other.asked)
@@ -210,6 +211,7 @@ describe('read-side case inventory', () => {
       if (c.source === 'slack' || c.exit === 'notify') expect(c.pending).toContain('P5 must merge')
       if (c.source === 'web_page') expect(c.pending).toContain('page host')
       if (c.exit === 'team_request') expect(c.pending).toContain('W3')
+      if (c.source === 'brand_skill') expect(c.pending).toContain('skill_save')
       if (c.id === 'RS-SF1') expect(c.pending).toBeUndefined()
     }
   })

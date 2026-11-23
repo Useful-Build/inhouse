@@ -18,7 +18,7 @@ import { pageOf } from '../../../shared/contract/paging'
 import { SettingRecordSchema, SettingWriteInputSchema, SettingsListSchema } from '../../../shared/contract/settings'
 import { UsageDataSchema } from '../../../shared/contract/usage'
 import { RoutineEnabledInputSchema, RoutineRevInputSchema, RoutineRunAnswerSchema, RoutineRunInputSchema, RoutineStateSchema, RoutinesListSchema } from '../../../shared/contract/routines'
-import { SkillDefSchema } from '../../../shared/contract/skill'
+import { BrandSkillDeleteInputSchema, SkillDefSchema, SkillPageSchema } from '../../../shared/contract/skill'
 import { TeamRequestCreateInputSchema, TeamRequestRecordSchema, TeamRequestWithdrawInputSchema, TeamRequestsListSchema } from '../../../shared/contract/team-requests'
 import { SetAsideBodySchema, TodayAnswerSchema, TodayAsideSchema } from '../../../shared/contract/today'
 import { z } from 'zod'
@@ -48,8 +48,8 @@ export const ANSWERS = {
   routines: RoutinesListSchema, routineState: RoutineStateSchema, routineRun: RoutineRunAnswerSchema,
   // P4 (W3): Today (routes 57 and 58).
   today: TodayAnswerSchema, todayAside: TodayAsideSchema,
-  // P6a (W3): the skills list (route 79).
-  skills: z.array(SkillDefSchema),
+  // P6a (W3): the skills list (route 79); a skill's instructions (route 84) and a deleted brand skill (route 85).
+  skills: z.array(SkillDefSchema), skillPage: SkillPageSchema, skill: SkillDefSchema,
   // P6a (W3): requests to the Inhouse team (routes 80, 81 and 83).
   teamRequests: TeamRequestsListSchema, teamRequest: TeamRequestRecordSchema,
 }
@@ -65,6 +65,7 @@ export const BODIES = {
   todayAside: SetAsideBodySchema,
   teamRequestCreate: TeamRequestCreateInputSchema, teamRequestWithdraw: TeamRequestWithdrawInputSchema,
   routineEnabled: RoutineEnabledInputSchema, routineRun: RoutineRunInputSchema, routineRev: RoutineRevInputSchema,
+  skillDelete: BrandSkillDeleteInputSchema,
   createChat: CreateChatInputSchema, chatRename: ChatRenameInputSchema, chatPin: ChatPinInputSchema, chatIds: ChatIdsInputSchema, sendTurn: SendTurnInputSchema,
 }
 

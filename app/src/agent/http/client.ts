@@ -25,7 +25,7 @@ import { postNoticesRead, readNotifications } from './bell'
 import { PLACES, libraryDownloadPath, postLibraryWrite, readLibrary, uploadLibraryFile } from './library'
 import { putAside, readToday } from './today'
 import { newRunKey, postRoutineRev, postRoutineRun, readRoutines, setRoutineToggle } from './routines'
-import { readSkills } from './skills'
+import { postSkillDelete, readSkillPage, readSkills } from './skills'
 import { fromOpen, postTeamRequest, putWithdrawn, readOpenRequests, requestWords } from './team-requests'
 import { findMemoryLine, forgetMemoryLine, readMemory, readWaitingMemory, reviewLanded, reviewMemoryLine } from './memory'
 import { listedModels, readModels } from './models'
@@ -44,7 +44,8 @@ const UNAVAILABLE = 'Not connected yet.'
 type Loaded = 'meta' | 'members' | 'grants' | 'audit' | 'memory' | 'usage' | 'models' | 'chat' | 'activity' | 'notifications' | 'library' | 'routines' | 'skills' | 'requests' | 'problems'
 const LOADED: readonly ResourceKey[] = ['meta', 'members', 'grants', 'audit', 'memory', 'usage', 'models', 'chat', 'activity', 'notifications', 'library', 'routines', 'skills', 'requests', 'problems'] satisfies readonly Loaded[]
 /** The lists the agent's work fills: read again when their page opens and when a run ends. */
-const REFRESH_LISTS: readonly RefreshList[] = ['library', 'problems', 'activity', 'notifications']
+// `skills`: a chat's run may have saved a brand skill (skill_save).
+const REFRESH_LISTS: readonly RefreshList[] = ['library', 'problems', 'activity', 'notifications', 'skills']
 
 export interface HttpAgentOptions extends TransportOptions {
   /** Epoch ms. The real clock by default; the contract target moves it on (`advance`). */
@@ -446,7 +447,7 @@ export class HttpAgent implements AgentClient {
     return p
   }
   private loadList(list: RefreshList): Promise<void> {
-    return { library: () => this.loadLibrary(true, true), problems: () => this.loadProblems(true, true), activity: () => this.loadActivity(true, true), notifications: () => this.loadNotifications(true), requests: () => this.loadTeamRequests(true) }[list]()
+    return { library: () => this.loadLibrary(true, true), problems: () => this.loadProblems(true, true), activity: () => this.loadActivity(true, true), notifications: () => this.loadNotifications(true), requests: () => this.loadTeamRequests(true), skills: () => this.loadSkills(true, true) }[list]()
   }
   /** A run ended: what its work fills may have changed. The Inhouse team isn't read for it (it didn't ask, and a read under a grant is logged). */
   private afterRun() {
@@ -570,12 +571,25 @@ export class HttpAgent implements AgentClient {
     if (e instanceof AgentError && e.code === 'forbidden' && e.reason === REASON.requestLimit) return new AgentError('forbidden', 'Your Inhouse team already has 50 open requests. Wait for an answer, or take back one of yours.', { reason: e.reason })
     return e
   }
-  /** Route 79: the skills the agent has. Everyone signed in may read it. */
-  private async loadSkills() {
+  /**
+   * Route 79: the skills the agent has, ours then the brand's own (brand data: the Inhouse team reads it only when asked,
+   * under a grant, as routines). A skill's instructions already read stay while it hasn't changed. `quiet` (a refresh):
+   * a failure leaves what is shown.
+   */
+  private async loadSkills(asked = false, quiet = false) {
+    if (this.s.me?.role === 'inhouse' && !asked) return this.setStatus('skills', { status: 'ready' })
     try {
-      this.patch({ skills: await readSkills(this.http) })
+      const list = await readSkills(this.http)
+      const before = new Map(this.s.skills.map(s => [s.n, s]))
+      const skills = list.map(s => {
+        const old = before.get(s.n)
+        return old?.body !== undefined && old.updatedAt?.ms === s.updatedAt?.ms ? { ...s, body: old.body, tools: old.tools, updatedAt: old.updatedAt } : s
+      })
+      this.patch({ skills })
       this.setStatus('skills', { status: 'ready' })
     } catch (e) {
+      if (quiet) return console.warn('Inhouse: could not read the skills again.', e instanceof Error ? e.message : e)
+      if (e instanceof AgentError && e.code === 'forbidden' && !HttpAgent.gone(e)) return this.setStatus('skills', { status: 'ready' })
       this.failStatus('skills', e)
     }
   }
@@ -657,7 +671,7 @@ export class HttpAgent implements AgentClient {
    * the same resource is under way joins it, so two clicks make one read and a late answer can't undo an earlier one.
    */
   retry = (resource: ResourceKey): Promise<void> => {
-    const load = { meta: () => this.reloadMeta(), members: () => this.loadMembers(), grants: () => this.loadGrants(), audit: () => this.loadAudit(), memory: () => this.loadMemory(true), usage: () => this.loadUsage(), models: () => this.loadModels(), chat: () => this.loadChats(true), activity: () => this.loadActivity(true), notifications: () => this.loadNotifications(), library: () => this.loadLibrary(true), routines: () => this.loadRoutines(true), skills: () => this.loadSkills(), requests: () => this.loadTeamRequests(true), problems: () => this.loadProblems(true) }[resource as Loaded] as (() => Promise<unknown>) | undefined
+    const load = { meta: () => this.reloadMeta(), members: () => this.loadMembers(), grants: () => this.loadGrants(), audit: () => this.loadAudit(), memory: () => this.loadMemory(true), usage: () => this.loadUsage(), models: () => this.loadModels(), chat: () => this.loadChats(true), activity: () => this.loadActivity(true), notifications: () => this.loadNotifications(), library: () => this.loadLibrary(true), routines: () => this.loadRoutines(true), skills: () => this.loadSkills(true), requests: () => this.loadTeamRequests(true), problems: () => this.loadProblems(true) }[resource as Loaded] as (() => Promise<unknown>) | undefined
     if (!load) return Promise.resolve()
     const running = this.retrying.get(resource)
     if (running) return running
@@ -1386,8 +1400,27 @@ export class HttpAgent implements AgentClient {
     on ? this.fileRequest('tool', key, `Connect ${this.read().tools.catalog.find(c => c.k === key)?.name ?? key}`) : this.takeBack('tool', key)
   /** Route 81: a skill the team should add (a `job` about that skill). */
   requestSkill = (name: string): Promise<void> => this.fileRequest('job', name, `Add the skill "${name}"`)
-  // The agent has no read for a skill's instructions yet, so `body` stays undefined and the page shows its header and rail.
-  loadSkill = (_name: string): Promise<void> => Promise.resolve()
+  /** Route 84: a skill's instructions, the tools it reads and when it changed, onto its entry in the list. */
+  loadSkill = async (name: string): Promise<void> => {
+    const s = this.s.skills.find(x => x.n === name)
+    if (!s || s.body !== undefined) return
+    const page = await readSkillPage(this.http, name)
+    this.patch({ skills: this.s.skills.map(x => (x.n === name ? { ...x, body: page.body, tools: page.tools, updatedAt: page.updatedAt } : x)) })
+  }
+  /** Route 85: a brand skill, at its rev. Off the list at once; back (as the server has it) on a refusal. */
+  deleteSkill = this.needs((k, name: string): Promise<void> => {
+    const s = this.s.skills.find(x => x.n === name)
+    if (!s || !s.mine || s.id === undefined || s.rev === undefined) return this.refuseLocal('forbidden', "Only your team's own skills can be deleted.")
+    const { id, rev } = s
+    return this.write<SkillDef>({
+      lane: 'skills',
+      apply: st => ({ ...st, skills: st.skills.filter(x => x.n !== name) }),
+      send: () => postSkillDelete(this.http, k, id, rev),
+      done: st => st,
+      undo: (now, before) => ({ ...now, skills: before.skills }),
+      onConflict: (st, current) => ({ ...st, skills: [...st.skills.filter(x => x.n !== name), current as unknown as SkillDef] }),
+    })
+  })
   setToolPaused = (_key: string, _paused: boolean) => this.refuse()
   /** Route 81: what the team window sent (its type rides on the request as `kind`; its title and details become the words). */
   sendTeamRequest = (req: Parameters<AgentClient['sendTeamRequest']>[0]): Promise<void> =>

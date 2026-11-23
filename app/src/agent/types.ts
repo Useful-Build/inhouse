@@ -23,7 +23,7 @@ import type { RunFrame } from '../../shared/contract/run-event'
 export type { Stage, StageIndex, Scenario, Effort, AgentErrorCode, ErrorReason, ResourceKey, ResourceStatus, Instant, Money, ClockTime, Prose } from '../../shared/contract/common'
 export type { AgentMeta } from '../../shared/contract/meta'
 /** The lists the agent's work fills, which `refresh` reads again (the resource each shows by). */
-export type RefreshList = Extract<ResourceKey, 'library' | 'problems' | 'activity' | 'notifications' | 'requests'>
+export type RefreshList = Extract<ResourceKey, 'library' | 'problems' | 'activity' | 'notifications' | 'requests' | 'skills'>
 export type { ProblemSource, ProblemFact, Draft, DraftItem, Problem } from '../../shared/contract/problem'
 export type { ToolDetail, CatalogTool, ToolChannel, ToolSetup, ToolsData } from '../../shared/contract/tools'
 export type { RoutineDef, RoutineRun } from '../../shared/contract/routine'
@@ -157,6 +157,12 @@ export interface AgentClient {
   /** A skill's page is open: fetches its instructions (`body` in `read().skills`) if they aren't in yet. `read()` changes when
    *  they arrive; it resolves then, or at once when there's nothing to fetch. */
   loadSkill(name: string): Promise<void>
+  /**
+   * P6a brand skills: deletes one of the brand's own skills (`mine`) by name, at the rev last read. Its maker or an
+   * admin may (`canChange`); anyone else, or one of the Inhouse team's skills, is refused. Gone from `read().skills` at
+   * once, and back if the server refuses.
+   */
+  deleteSkill(name: string): Promise<void>
   setToolPaused(key: string, paused: boolean): Promise<void>
   forgetMemory(key: string, forgotten: boolean): Promise<void>
   /**

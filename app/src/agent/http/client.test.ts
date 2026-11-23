@@ -138,7 +138,8 @@ describe('reads', () => {
     const staff = await loaded(reads({ me: me({ role: 'inhouse', can: can(false) }) }))
     // The Inhouse team reads the grants (route 16) though it can't grant; members and audit are skipped by its `can`.
     // It isn't asked for chats or memory on start (each read under a grant writes an audit line), but models, spending and the pause state are for everyone.
-    expect(staff.calls.map(c => c.path).sort()).toEqual(['/api/grants', '/api/me', '/api/models', '/api/pause', '/api/settings/brand', '/api/settings/technical', '/api/skills', '/api/team-requests?status=open', '/api/usage'])
+    // Not the skills list (route 79): it holds the brand's own skills, brand data read only when asked, under a grant.
+    expect(staff.calls.map(c => c.path).sort()).toEqual(['/api/grants', '/api/me', '/api/models', '/api/pause', '/api/settings/brand', '/api/settings/technical', '/api/team-requests?status=open', '/api/usage'])
   })
 
   test('a 403 on the grants reads as "not for you", not an error', async () => {

@@ -166,7 +166,7 @@ const toHash = (page: Page, appKey: string, setTab: string, chat: string, menu =
   '#/' + PAGE_SLUG[page] + (page === 'app' ? '/' + appKey : page === 'skill' ? '/' + skill : page === 'settings' ? (menu ? '' : '/' + setTab) : page === 'chats' ? '/' + encodeURIComponent(chat) : '')
 const SETTINGS_TABS = SETTINGS_PAGES.map(p => p.id)
 /** The list each page shows that the agent's work fills (read again when the page opens). */
-const PAGE_LIST: Partial<Record<Page, RefreshList>> = { today: 'problems', approvals: 'problems', library: 'library', activity: 'activity' }
+const PAGE_LIST: Partial<Record<Page, RefreshList>> = { today: 'problems', approvals: 'problems', library: 'library', activity: 'activity', skills: 'skills', skill: 'skills' }
 const PAGE_LABEL: Record<Page, string> = { today: 'Today', library: 'Library', chats: 'Chats', approvals: 'Approvals', routines: 'Routines', activity: 'Activity', apps: 'Tools', app: 'Tools', skills: 'Skills', skill: 'Skills', usage: 'Usage', settings: 'Settings' }
 /** A link that names a page, tool or tab that doesn't exist lands where it did before, and says so. */
 const notFound = (where: string) => useUi.getState().showToast(`That page doesn't exist. You're on ${where}.`, { icon: 'info', key: 'route-notice' })

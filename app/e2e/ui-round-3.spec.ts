@@ -1,6 +1,6 @@
 // UI plan 3 at 1440, the flows no older spec walks: the review window's queue stepping, an Activity line's Review the
-// draft, the team window's Withdraw (Closed tab, Undo, the account menu's count), a skill page's Try in a chat and its
-// Versions, the Settings menu's five sections, the account menu's role badge and the sidebar's collapse button in its
+// draft, the team window's Withdraw (Closed tab, Undo, the account menu's count), a skill page's Try in a chat, a brand
+// skill's Edit in a chat and Delete (P6a brand skills), the Settings menu's five sections, the account menu's role badge and the sidebar's collapse button in its
 // bottom row. The member's lock on Settings is in real/settings-lock.spec.ts (the demo has no member).
 import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
@@ -136,19 +136,64 @@ test('Team window: Withdraw moves your open request to Closed with an Undo, and 
   await expect(page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: /^Your Inhouse team/ })).toContainText(`${openCount} open`)
 })
 
-test("A skill's page: Try in a chat starts a chat holding the skill, and Versions' Restore says it isn't connected", async ({ fx, page }) => {
+test("A skill's page: Try in a chat starts a chat holding the skill; one of ours has no Edit, Delete or Versions", async ({ fx, page }) => {
   await start(page, fx, '#/skills/reorder-drafting')
   await expect(page.getByRole('heading', { level: 1, name: 'Reorder drafting' })).toBeVisible()
   // Skills stays the selected sidebar row on a skill's page.
   await expect(side(page).getByRole('button', { name: 'Skills', exact: true })).toHaveAttribute('aria-current', 'page')
   await expect(page.getByRole('article', { name: 'Instructions' })).toContainText('When to use')
   const rail = page.getByRole('complementary', { name: 'About this skill' })
-  await rail.getByRole('button', { name: 'Restore the Inhouse version' }).click()
-  await expect(toast(page, "Restoring a version isn't connected in this demo.")).toBeVisible()
+  await expect(rail).toContainText('Who can change itInhouse team')
+  await expect(rail.getByRole('heading', { name: 'Versions' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Edit in a chat' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'More for Reorder drafting' }).click()
+  await expect(page.getByRole('menuitem', { name: 'Delete skill' })).toHaveCount(0)
+  await page.keyboard.press('Escape')
 
   await page.getByRole('button', { name: 'Try in a chat', exact: true }).click()
   await expect(page).toHaveURL(/#\/chats\/new$/)
   await expect(page.getByRole('textbox', { name: 'Message Inhouse' })).toHaveValue('Use the "Reorder drafting" skill: ')
+})
+
+test('Brand skills: Create a skill starts a chat; a brand skill shows its maker, edits in a chat, and deletes after a confirmation in the page', async ({ fx, page }) => {
+  await start(page, fx, '#/skills')
+  await page.getByRole('button', { name: 'Create a skill' }).click()
+  await expect(page).toHaveURL(/#\/chats\/new$/)
+  await expect(page.getByRole('textbox', { name: 'Message Inhouse' })).toHaveValue('Create a skill that ')
+
+  await page.goto('/?demo#/skills')
+  await page.getByRole('main').getByRole('radio', { name: 'By your team' }).click()
+  const main = page.getByRole('main')
+  await expect(main.getByText('Made by Sam Mercer', { exact: false }).first()).toBeVisible()
+  await main.getByRole('button', { name: 'Stuck order nudge', exact: true }).click()
+  await expect(page).toHaveURL(/#\/skills\/stuck-order-nudge$/)
+  await expect(page.getByRole('heading', { level: 1, name: 'Stuck order nudge' })).toBeVisible()
+  await expect(page.getByRole('complementary', { name: 'About this skill' })).toContainText('Who can change itSam Mercer and admins')
+
+  await page.getByRole('button', { name: 'Edit in a chat' }).click()
+  await expect(page.getByRole('textbox', { name: 'Message Inhouse' })).toHaveValue('Change the "Stuck order nudge" skill: ')
+  await page.goto('/?demo#/skills/stuck-order-nudge')
+
+  // Delete asks first, in the page's own window: Cancel keeps the skill.
+  const more = page.getByRole('button', { name: 'More for Stuck order nudge' })
+  await more.click()
+  await page.getByRole('menuitem', { name: 'Delete skill' }).click()
+  const ask = page.getByRole('dialog', { name: 'Delete skill' })
+  await expect(ask).toContainText('Delete "Stuck order nudge"?')
+  await ask.getByRole('button', { name: 'Cancel' }).click()
+  await expect(ask).toHaveCount(0)
+  await expect(page.getByRole('heading', { level: 1, name: 'Stuck order nudge' })).toBeVisible()
+
+  await more.click()
+  await page.getByRole('menuitem', { name: 'Delete skill' }).click()
+  await ask.getByRole('button', { name: 'Delete skill' }).click()
+  await expect(page).toHaveURL(/#\/skills$/)
+  await expect(toast(page, 'Deleted "Stuck order nudge".')).toBeVisible()
+  await expect(page.getByRole('main').getByRole('button', { name: 'Stuck order nudge', exact: true })).toHaveCount(0)
+  // Gone after a reload too.
+  await page.reload()
+  await expect(page.getByRole('heading', { level: 1, name: 'Skills' })).toBeVisible()
+  await expect(page.getByRole('main').getByRole('button', { name: 'Stuck order nudge', exact: true })).toHaveCount(0)
 })
 
 test('Settings: five sections in order, each announced, and no lock for an Admin', async ({ fx, page }) => {
