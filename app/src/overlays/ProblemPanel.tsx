@@ -9,7 +9,7 @@ import { fmtMoney, fmtProse, fmtTime, hasAmount } from '../lib/format'
 import { display } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import { Button, DetailList, Icon, IconButton, InhouseMark, LogoTile, MenuItem, Window } from '../ui'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { isUrgent } from '../ui/severity'
 import { TAP } from '../ui/fields'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion'
@@ -192,18 +192,21 @@ export function ProblemPanel() {
     </div>
   )
 
-  // A problem already set aside keeps its reason: Undo would otherwise restore it as declined.
-  const dontSend = !ctx.agent.setAside[openId] && (
-    <Button variant="ghost" size="lg" className={cn('flex-none text-foreground-3', tap)} onClick={() => { setAside(openId, 'declined'); closeProblem() }}>Don't send</Button>
-  )
-  // Everything besides the decision: ask the usual approver, ask the agent, snooze, or say it isn't a problem.
-  const putAside = (why: 'snoozed' | 'dismissed') => { setAside(openId, why); closeProblem() }
+  // Everything besides the main action, behind one "More" button: Don't send first (a problem already set aside keeps
+  // its reason, so it isn't offered again), then asking someone, then snoozing or saying it isn't a problem.
+  const putAside = (why: 'snoozed' | 'dismissed' | 'declined') => { setAside(openId, why); closeProblem() }
   const more = (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
-        <IconButton icon="more_horiz" label="More actions" size={18} variant="card" className={cn('flex-none', tap)} />
+        <Button variant="outline" size="lg" className={cn('flex-none', tap)}>More<Icon name="expand_more" size={18} /></Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" side="top" collisionPadding={16} aria-label="More actions" className="w-menu-message max-w-screen-gutter border-input">
+        {dv.mode === 'waiting' && !ctx.agent.setAside[openId] && <>
+          <MenuItem onSelect={() => putAside('declined')}>
+            <Icon name="cancel_schedule_send" size={18} /><span className="flex-1">Don't send</span>
+          </MenuItem>
+          <DropdownMenuSeparator />
+        </>}
         {dv.mode === 'waiting' && dv.askApprover && (
           <MenuItem onSelect={() => showToast(`${dv.askApprover?.replace(/^Ask\b/, 'Asking')} isn't connected in this demo.`, { icon: 'info', ms: 4000 })}>
             <Icon name="person" size={18} /><span className="flex-1">{dv.askApprover}</span>
@@ -280,7 +283,6 @@ export function ProblemPanel() {
           <Button variant="primary" size="lg" className={cn('h-auto min-h-10 min-w-0 py-2 whitespace-nowrap', phone && 'w-full')} onClick={approveAndNext}>
             {dv.cta}{p.draft.amount && p.draft.money && <span className="font-normal tabular-nums">{fmtMoney(p.draft.amount.money, display())}</span>}
           </Button>
-          {dontSend}
           {more}
           {/* Who usually approves, when it's someone else: a quiet note on the right. Asking them is in the menu. */}
           {dv.approverNote && <span className={cn('min-w-0 flex-1 text-sm text-muted-foreground', phone ? 'basis-full' : 'max-w-sm pl-4 text-right')}>{dv.approverNote}</span>}

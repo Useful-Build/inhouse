@@ -169,7 +169,7 @@ export function Today() {
                       )}
                       <DropdownMenu modal={false}>
                         <DropdownMenuTrigger asChild>
-                          <IconButton icon="more_horiz" label={`More actions for ${p.title}`} size={18} variant={c.dimmed ? 'ghost' : 'card'} box="icon-sm" className={cn('relative z-raised -my-1.5 -mr-1', c.dimmed && done, tap)} />
+                          <IconButton icon="more_horiz" label={`More actions for ${p.title}`} size={18} variant="ghost" box="icon-sm" className={cn('relative z-raised -my-1.5 -mr-1', c.dimmed && done, tap)} />
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" collisionPadding={16} aria-label="Card actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
                           <MenuItem onSelect={askAbout}>
