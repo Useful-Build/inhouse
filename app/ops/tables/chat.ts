@@ -5,6 +5,7 @@
 // `run_tokens.member_id`, every `turn.queued` event's `by` (`events.json:$.by`), the removed set (`authority.id` where
 // `kind = 'member'`) and who paused (`flags.value` where `key = 'paused_by'`). A socket's attachment holds the member id
 // too, in the runtime's socket state rather than SQLite: it lives at most an hour (the lease) and goes with the socket.
+// flags.egress_record_failed_at is an operational timestamp that holds no person data.
 import type { TableEntry } from './types.ts'
 
 export const chatTables: readonly TableEntry[] = [

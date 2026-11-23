@@ -5,10 +5,10 @@
 // resolver, and any non-public answer refuses it; address literals are judged directly. Redirects: at most 3, each hop
 // checked the same way. Response bytes capped at 10 MB.
 //
-// The egress record (P8a): every request a container sends here, WebFetch's or Bash's alike (one `*` HTTPS intercept,
-// server/do/runner/runner.ts), is recorded by host and verdict in `egress_fetches` before it goes out, each redirect hop
-// its own row. Never the path, query, headers or body. A request whose record can't be written doesn't go out
-// (`record`). The record names the runner and its container generation, not the run: one container serves several.
+// The egress record (P8a): the container's HTTPS intercept (server/do/runner/runner.ts) records each hop by hostname
+// and verdict in `egress_fetches`, for WebFetch and Bash alike. Allowed hops are recorded before sending, and refused
+// hops in the background up to the per-brand rate limit. Never the path, query, headers or body. A request whose record
+// can't be written doesn't go out (`record`). The record names the runner and its container generation.
 //
 // KNOWN LIMIT (decision 20, Wasim): the Workers `fetch` resolves the name again, so the connection isn't pinned to the
 // address the check approved (check-then-connect). A pinned fetch is the tracked follow-up (`feat/chat-w3-pinned-fetch`).
@@ -18,12 +18,17 @@
 // `Status` 0 is success; `Answer[]` entries carry a numeric `type` (1 A, 28 AAAA, 5 CNAME) and `data`.
 import { WorkerEntrypoint } from 'cloudflare:workers'
 import { parseHostlist } from '../../shared/contract/settings-table.ts'
+import { brandAgent } from '../do/brand-agent/client.ts'
+import { safeError } from '../safe-error.ts'
 import type { EgressProps } from './index.ts'
 import { addressVerdict } from './ip.ts'
 
 export const DOH_URL = 'https://cloudflare-dns.com/dns-query'
 export const WEBFETCH_MAX_BYTES = 10 * 1024 * 1024
 export const WEBFETCH_MAX_REDIRECTS = 3
+/** Bound the D1 log volume from refused requests across the brand's runners. */
+export const REFUSAL_RECORDS_PER_MINUTE = 60
+const REFUSAL_WINDOW_MS = 60_000
 /** Request headers a fetch may carry upstream (nothing that identifies or authorises). */
 const REQUEST_HEADERS = ['accept', 'accept-language', 'user-agent']
 /** Response headers passed back. */
@@ -35,8 +40,10 @@ export interface WebDeps {
   /** The network: the DoH resolver and the page fetches go through it. */
   fetch: typeof fetch
   log(entry: Record<string, unknown>): void
-  /** Appends one egress record (P8a); throws when it can't be written. */
+  /** Appends an egress record. Refused entries are capped. Throws on a storage failure. */
   record(r: FetchRecord): Promise<void>
+  /** Stores a health marker independently of D1. */
+  noteRecordFailure(): Promise<void>
   /** Keeps work going after the answer (the Worker's `ctx.waitUntil`): a refusal's record, which the answer never waits on. */
   waitUntil(p: Promise<unknown>): void
 }
@@ -86,17 +93,21 @@ export async function checkUrl(url: URL, list: string[], f: typeof fetch): Promi
 const refusal = (why: WebRefusal) =>
   new Response(`WebFetch refused: ${why}`, { status: why === 'method' ? 405 : 403, headers: { 'content-type': 'text/plain' } })
 
-/**
- * A refusal, recorded under `host` (null: nothing new would have gone out, so no row). The answer doesn't wait on the
- * record (`waitUntil`): nothing goes out either way, and a record that fails is logged loud (`egress_record_failed`,
- * counted by the health route).
- */
+async function reportRecordFailure(d: WebDeps, verdict: FetchRecord['verdict'], error: string): Promise<void> {
+  d.log({ event: 'egress_record_failed', verdict, error })
+  try {
+    await d.noteRecordFailure()
+  } catch (err) {
+    d.log({ event: 'egress_record_health_failed', error: safeError(err) })
+  }
+}
+
+/** A refusal never waits for its capped background record. A null host means no new outbound request. */
 function refuse(why: WebRefusal, d: WebDeps, host: string | null): Response {
   d.log({ event: 'webfetch_refused', why })
   if (host !== null) {
-    d.waitUntil(d.record({ host, verdict: 'refused', code: why }).catch(err => {
-      d.log({ event: 'egress_record_failed', verdict: 'refused', error: err instanceof Error ? err.name : 'unknown' })
-    }))
+    d.waitUntil(d.record({ host, verdict: 'refused', code: why })
+      .catch(err => reportRecordFailure(d, 'refused', safeError(err))))
   }
   return refusal(why)
 }
@@ -132,7 +143,7 @@ export async function handleWebFetch(request: Request, d: WebDeps): Promise<Resp
     try {
       await d.record({ host: hostOf(url), verdict: 'allowed', code: null })
     } catch (err) {
-      d.log({ event: 'egress_record_failed', verdict: 'allowed', error: err instanceof Error ? err.name : 'unknown' })
+      d.waitUntil(reportRecordFailure(d, 'allowed', safeError(err)))
       d.log({ event: 'webfetch_refused', why: 'record' })
       return refusal('record')
     }
@@ -175,10 +186,17 @@ async function storedHostList(db: D1Database): Promise<string | null> {
 /** The container a request came from: the intercept's props (never a token, chat or member). */
 export type EgressSource = EgressProps
 
-/** Appends one `egress_fetches` row (0600). Throws when it can't be written. */
+/** Refused rows are capped with an atomic insert, so concurrent requests share the same budget. */
 export async function recordFetch(db: D1Database, source: EgressSource, r: FetchRecord, atMs: number): Promise<void> {
-  await db.prepare('INSERT INTO egress_fetches (at_ms, host, verdict, code, runner, container_gen) VALUES (?, ?, ?, ?, ?, ?)')
-    .bind(atMs, r.host, r.verdict, r.code, source.runner, source.containerGen).run()
+  const insert = 'INSERT INTO egress_fetches (at_ms, host, verdict, code, runner, container_gen)'
+  const values = [atMs, r.host, r.verdict, r.code, source.runner, source.containerGen]
+  if (r.verdict === 'allowed') {
+    await db.prepare(`${insert} VALUES (?, ?, ?, ?, ?, ?)`).bind(...values).run()
+    return
+  }
+  await db.prepare(`${insert} SELECT ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
+    SELECT 1 FROM egress_fetches WHERE at_ms > ? AND verdict = 'refused' LIMIT 1 OFFSET ?
+  )`).bind(...values, atMs - REFUSAL_WINDOW_MS, REFUSAL_RECORDS_PER_MINUTE - 1).run()
 }
 
 export class WebEgress extends WorkerEntrypoint<Env, EgressSource> {
@@ -188,6 +206,7 @@ export class WebEgress extends WorkerEntrypoint<Env, EgressSource> {
     return handleWebFetch(request, {
       hostList: () => storedHostList(db), fetch: (i, init) => fetch(i, init), log: e => console.log(e),
       record: r => recordFetch(db, source, r, Date.now()),
+      noteRecordFailure: () => brandAgent(this.env).noteEgressRecordFailure(),
       waitUntil: p => this.ctx.waitUntil(p),
     })
   }

@@ -58,6 +58,7 @@ export const NOTES: Readonly<Record<string, Note>> = {
   'deletion-log/': { holds: 'What each deletion and retention run removed', personal: 'Member ids and counts only', retention: 'Never shortened', deletion: 'Kept: the deletion log is never shortened', backup: 'Not backed up (replayed after a restore)' },
   egress_fetches: { holds: 'Outbound web requests by host', personal: 'None', retention: '30 days', deletion: 'Kept: no member id; removed after 30 days' },
   SignIn: { holds: 'The connector hub\'s sealed tokens', personal: 'None', retention: 'Kept while the connection is', deletion: 'Kept: no personal data', backup: 'Not restored: reconnect' },
+  privacy_requests: { holds: 'Shopify privacy requests and their status', personal: 'Shopify customer and order IDs while open', retention: 'Request record kept while the deployment lives; customer and order IDs cleared on close', deletion: 'Kept: no team member ID' },
 }
 
 /** The Backup column for a backed-up D1 table, by its mode. */

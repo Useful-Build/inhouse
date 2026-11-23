@@ -12,6 +12,7 @@
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import type { HandlerEnv } from '../routes.ts'
+import { brandAgent } from '../do/brand-agent/client.ts'
 import { openStores } from '../db/stores.ts'
 import { SHIPPED_MIGRATIONS, coreSignals, migrationsSignal, versionSignal } from './signals/core.ts'
 import { signals } from './signals/index.ts'
@@ -46,7 +47,17 @@ describe('the health route', () => {
         // P8a F2: no open Shopify privacy request here: green; no webhook secrets in this env: amber, still ok.
         { name: 'privacy_requests', ok: true },
         { name: 'shopify_webhook_secrets', ok: true, amber: true, detail: 'not set' },
+        { name: 'egress_record_failed', ok: true },
       ] },
+    })
+  })
+
+  it('exposes a persisted egress record failure to the monitor without blocking release smoke', async () => {
+    await brandAgent(env).noteEgressRecordFailure()
+    const out = await call(health)
+    expect(out.status).toBe(200)
+    expect(out.body.signals.find(s => s.name === 'egress_record_failed')).toEqual({
+      name: 'egress_record_failed', ok: true, amber: true, detail: 'record write failed in the last hour',
     })
   })
 

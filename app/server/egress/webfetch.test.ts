@@ -14,7 +14,7 @@ import { fc, it as prop } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
 import { addressVerdict } from './ip.ts'
 import { env } from 'cloudflare:workers'
-import { checkUrl, handleWebFetch, recordFetch, WEBFETCH_MAX_BYTES, type FetchRecord } from './webfetch.ts'
+import { checkUrl, handleWebFetch, recordFetch, REFUSAL_RECORDS_PER_MINUTE, WEBFETCH_MAX_BYTES, type FetchRecord } from './webfetch.ts'
 
 type Dns = Record<string, { A?: string[]; AAAA?: string[]; status?: number }>
 
@@ -53,16 +53,17 @@ async function run(url: string, opts: { list?: string | null; method?: string; h
   const { f, fetched } = net(opts.dns ?? PUBLIC_DNS, opts.pages ?? { 'https://docs.example.com/a': page(), 'https://other.example.org/b': page() })
   const logs: Record<string, unknown>[] = []
   const records: FetchRecord[] = []
+  let recordFailures = 0
   const later: Promise<unknown>[] = []
   const record = async (r: FetchRecord) => {
     if (opts.recordFails) throw new Error('d1 down')
     if (opts.refusalRecordHangs && r.verdict === 'refused') await new Promise(() => {})
     records.push(r)
   }
-  const res = await handleWebFetch(new Request(url, { method: opts.method ?? 'GET', headers: opts.headers }), { hostList: async () => opts.list ?? null, fetch: f, log: e => void logs.push(e), record, waitUntil: p => void later.push(p) })
+  const res = await handleWebFetch(new Request(url, { method: opts.method ?? 'GET', headers: opts.headers }), { hostList: async () => opts.list ?? null, fetch: f, log: e => void logs.push(e), record, noteRecordFailure: async () => { recordFailures++ }, waitUntil: p => void later.push(p) })
   // What the runtime would finish after the answer: a refusal's record (never one that hangs).
   if (!opts.refusalRecordHangs) await Promise.all(later)
-  return { res, fetched, logs, records, later }
+  return { res, fetched, logs, records, later, recordFailures }
 }
 
 describe('addresses (failure 1)', () => {
@@ -244,18 +245,20 @@ describe('the egress record (P8a, failure 6)', () => {
     const get = await run('https://docs.example.com/a', { list: ALL, headers: { 'user-agent': 'curl/8.5.0' } })
     expect(get.records).toEqual([{ host: 'docs.example.com', verdict: 'allowed', code: null }])
   })
-  it("a refusal doesn't wait on its record (handed to waitUntil); a failed one is only logged", async () => {
+  it("a refusal doesn't wait on its record (handed to waitUntil); a failed one is logged and reported to health", async () => {
     const hung = await run('https://other.example.org/b', { list: 'docs.example.com', refusalRecordHangs: true })
     expect(hung.res.status).toBe(403)
     expect(hung.later).toHaveLength(1)
     const failed = await run('https://other.example.org/b', { list: 'docs.example.com', recordFails: true })
     expect(failed.res.status).toBe(403)
+    expect(failed.recordFailures).toBe(1)
     expect(failed.logs).toContainEqual(expect.objectContaining({ event: 'egress_record_failed', verdict: 'refused' }))
   })
   it('a request whose record fails never goes out', async () => {
     const r = await run('https://docs.example.com/a', { list: ALL, recordFails: true })
     expect(r.res.status).toBe(403)
     expect(await r.res.text()).toBe('WebFetch refused: record')
+    expect(r.recordFailures).toBe(1)
     expect(r.fetched).toEqual([])
   })
   prop.prop([fc.webPath(), fc.webQueryParameters(), fc.stringMatching(/^[a-z0-9]{6,12}$/), fc.boolean()])(
@@ -311,4 +314,25 @@ describe('recordFetch: the D1 row (P8a, failure 6)', () => {
     await expect(db.prepare("UPDATE egress_fetches SET host = 'x.example.com'").run()).rejects.toThrow(/append-only/)
     await expect(db.prepare("INSERT INTO egress_fetches (at_ms, host, verdict, code, runner, container_gen) VALUES (1, 'a.example.com', 'allowed', 'method', 'r', 1)").run()).rejects.toThrow()
   })
+})
+
+
+it('caps refused records across runners for one minute and always records allowed requests', async () => {
+  const db = env.DB
+  const at = 1_900_000_000_000
+  const denied = { host: 'unlisted.example.test', verdict: 'refused', code: 'not_listed' } as const
+  const source = { runner: 'runner-a', containerGen: 1 }
+  await Promise.all(Array.from({ length: REFUSAL_RECORDS_PER_MINUTE + 2 }, (_, i) =>
+    recordFetch(db, { ...source, runner: i % 2 === 0 ? 'runner-a' : 'runner-b' }, denied, at),
+  ))
+  await recordFetch(db, source, { host: 'listed.example.test', verdict: 'allowed', code: null }, at)
+  await recordFetch(db, source, denied, at + 59_999)
+  await recordFetch(db, source, denied, at + 60_000)
+  const rows = await db.prepare('SELECT verdict, at_ms, COUNT(*) AS n FROM egress_fetches WHERE at_ms >= ? GROUP BY verdict, at_ms ORDER BY at_ms, verdict')
+    .bind(at).all()
+  expect(rows.results).toEqual([
+    { verdict: 'allowed', at_ms: at, n: 1 },
+    { verdict: 'refused', at_ms: at, n: REFUSAL_RECORDS_PER_MINUTE },
+    { verdict: 'refused', at_ms: at + 60_000, n: 1 },
+  ])
 })

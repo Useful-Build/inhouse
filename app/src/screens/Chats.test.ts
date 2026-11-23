@@ -84,8 +84,8 @@ describe('empty chat tool status', () => {
 
   test('names readable tools, not a paused one', () => {
     const html = blankChat(['readable', 'paused'])
-    expect(html).toContain('Your Inhouse agent reads Store.')
-    expect(html).not.toContain('Your Inhouse agent reads Store and Marketplace.')
+    expect(html).toContain('Connected to Store.')
+    expect(html).not.toContain('Connected to Store and Marketplace.')
     expect(html).not.toContain(UNREADABLE)
   })
 })

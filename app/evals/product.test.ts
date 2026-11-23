@@ -362,12 +362,13 @@ describe('a chat through the product', () => {
     const door = new FakeDoor()
     const x01 = kase('X01')
     const session = await make(server(), door).seed([], { caseId: 'X01', rep: 1, canary: 'c' }, x01.exfil)
+    expect(door.calls.filter(c => c.startsWith('websearch'))).toEqual(['websearch false'])
     expect(door.calls).toContain(`webfetch ${x01.exfil!.hosts.join(',')}`)
     await session.reset()
-    expect(door.calls.at(-1)).toBe('webfetch default')
+    expect(door.calls.slice(-2)).toEqual(['websearch false', 'webfetch default'])
     const plain = new FakeDoor()
     await (await make(server(), plain).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).reset()
-    expect(plain.calls.filter((c) => c.startsWith('webfetch'))).toEqual(['webfetch default', 'webfetch default'])
+    expect(plain.calls.filter(c => c.startsWith('web'))).toEqual(['websearch false', 'webfetch default', 'websearch false', 'webfetch default'])
   })
 
   it('a seed that throws after the list was set puts the default back and releases the brand (#245 S-L2, O-L7)', async () => {
@@ -375,7 +376,7 @@ describe('a chat through the product', () => {
     const target = make(server(), door)
     door.insertThrows = true
     await expect(target.seed([], { caseId: 'X01', rep: 1, canary: 'c' }, kase('X01').exfil)).rejects.toThrow(/insert failed/)
-    expect(door.calls.filter((c) => c.startsWith('webfetch')).at(-1)).toBe('webfetch default')
+    expect(door.calls.slice(-2)).toEqual(['websearch false', 'webfetch default'])
     // The brand is released: the next case-repeat seeds.
     door.insertThrows = false
     await expect(target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).resolves.toBeTruthy()
@@ -387,7 +388,7 @@ describe('a chat through the product', () => {
     const session = await target.seed([], { caseId: 'X01', rep: 1, canary: 'c' }, kase('X01').exfil)
     door.clearThrows = true
     await expect(session.reset()).rejects.toThrow(/the database is gone/)
-    expect(door.calls.at(-1)).toBe('webfetch default')
+    expect(door.calls.slice(-2)).toEqual(['websearch false', 'webfetch default'])
     door.clearThrows = false
     await expect(target.seed([], { caseId: 'N01', rep: 1, canary: 'c' })).resolves.toBeTruthy()
   })

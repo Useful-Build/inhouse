@@ -193,6 +193,14 @@ its container applications behind, so the script must:
 
 Steps for the operator: pause the brand, get the written approval, run the script in the ops repo, and read both lists.
 
+For the container step, the ops workflow can run `node app/ops/teardown/containers.ts` with
+`--account-id`, `--brand` and one scope. Use `--all-in-dedicated-account` when retiring a brand's whole account.
+On a shared account, pass the retiring deployment's unique container name `--prefix` (ending in `_` or `-`),
+such as the complete Worker and Preview prefix for a Preview. The token comes from `CLOUDFLARE_API_TOKEN`.
+Review the initial list, then pass `--apply --approved-by` with the Admin's name. For house, also pass
+`--house --house-approved` after Wasim's approval. Save both JSON lists with the offboarding record.
+The script polls for asynchronous deletion and fails if any applications in scope remain.
+
 **Verify.** The after list is empty. The Cloudflare dashboard shows no Worker, D1, R2 bucket or Access app for the brand.
 
 **Roll back.** There isn't one after step 5. Before it, resume the brand. After it, the final backup is the only way

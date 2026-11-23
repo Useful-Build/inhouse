@@ -52,6 +52,7 @@ The block below is generated from the table registry (`app/ops/tables`) by `data
 | `deletion-log/` | R2 prefix | What each deletion and retention run removed | Member ids and counts only | Never shortened | Yes | Kept: the deletion log is never shortened | Not backed up (replayed after a restore) |  |
 | `egress_fetches` | D1 table | Outbound web requests by host | None | 30 days | No | Kept: no member id; removed after 30 days | Nightly, exact (rows only added) |  |
 | `SignIn` | Durable Object | The connector hub's sealed tokens | None | Kept while the connection is | No | Kept: no personal data | Not restored: reconnect |  |
+| `privacy_requests` | D1 table | Shopify privacy requests and their status | Shopify customer and order IDs while open | Request record kept while the deployment lives; customer and order IDs cleared on close | No | Kept: no team member ID | Nightly, exact |  |
 <!-- stores:end -->
 
 ## Terms
