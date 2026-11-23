@@ -43,6 +43,9 @@ describe('the health route', () => {
         { name: 'backup_fresh', ok: true, detail: 'no backup yet (deployed under 26h ago)' },
         { name: 'retention_fresh', ok: true, detail: 'no run yet (deployed under 26h ago)' },
         { name: 'retention_overdue', ok: true },
+        // P8a F2: no open Shopify privacy request here: green; no webhook secrets in this env: amber, still ok.
+        { name: 'privacy_requests', ok: true },
+        { name: 'shopify_webhook_secrets', ok: true, amber: true, detail: 'not set' },
       ] },
     })
   })
@@ -102,6 +105,18 @@ describe('the health route', () => {
     expect(out.body.ok).toBe(false)
     expect(out.body.signals.slice(3)).toEqual([{ name: 'boom', ok: false, detail: 'TypeError' }, { name: 'down', ok: false, detail: 'down' }])
     expect(JSON.stringify(out.body)).not.toContain('@')
+  })
+  // P8a F2 (review M1): an amber signal needs a look but isn't a failure, so it never blocks a deploy, a rollback or the
+  // release smoke (which needs 200 and `ok`).
+  it('an amber signal keeps 200 and ok, and says amber; a red one beside it still fails the route', async () => {
+    const amber = { name: 'privacy', async check() { return { ok: true, amber: true as const, detail: '1 open, oldest 30 days left' } } }
+    const out = await call(healthHandler([...coreSignals, amber]))
+    expect(out.status).toBe(200)
+    expect(out.body.ok).toBe(true)
+    expect(out.body.signals.slice(3)).toEqual([{ name: 'privacy', ok: true, amber: true, detail: '1 open, oldest 30 days left' }])
+    // The release smoke's view (e2e/smoke/product.spec.ts): status 200 and `ok`.
+    const red = await call(healthHandler([...coreSignals, amber, { name: 'down', async check() { return { ok: false } } }]))
+    expect([red.status, red.body.ok]).toEqual([503, false])
   })
   it('fails the migration signal when a shipped migration is not applied (failure 4)', async () => {
     const behind = { ...stores, health: { ...stores.health, appliedMigrations: async () => SHIPPED_MIGRATIONS.filter(name => name !== '0004_audit_log') } }

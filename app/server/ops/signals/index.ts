@@ -5,7 +5,8 @@ import { POOL_SIGNALS } from './pool.ts'
 import { RUNS_SIGNALS } from './runs.ts'
 import { usageSignals } from '../../usage/signal.ts'
 import { routinesSignals } from '../../routines/signal.ts'
+import { privacySignals } from '../../webhooks/shopify-privacy/signal.ts'
 import { dataSignals } from './data.ts'
 import type { Signal } from './types.ts'
 
-export const signals: readonly Signal[] = [...coreSignals, ...RUNS_SIGNALS, ...POOL_SIGNALS, ...usageSignals, ...routinesSignals, ...dataSignals()]
+export const signals: readonly Signal[] = [...coreSignals, ...RUNS_SIGNALS, ...POOL_SIGNALS, ...usageSignals, ...routinesSignals, ...dataSignals(), ...privacySignals]

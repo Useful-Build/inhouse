@@ -12,6 +12,7 @@ export interface AuditText {
 
 const ROLE = { member: 'Member', admin: 'Admin' } as const
 const REVIVE = { revived: 'restarted', not_quarantined: 'wasn’t stuck', not_found: 'not found' } as const
+const PRIVACY_TOPIC = { 'customers/data_request': 'A customer asked for their data', 'customers/redact': 'A customer asked to be erased', 'shop/redact': 'The store asked to be erased' } as const
 
 const ROUTE: Record<string, string> = {
   '/api/members': 'The team',
@@ -110,5 +111,8 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'today.set_aside': return args.reason === null ? { what: 'put back an item on Today', detail: '' } : { what: SET_ASIDE[args.reason], detail: '' }
     case 'restore.confirmed': return { what: 'confirmed a restore from a backup', detail: `Approved by ${who(args.approvedBy)}` }
     case 'restore.member_placeholder': return { what: 'kept a former member’s history after a restore', detail: who(args.memberId) }
+    // P8a F2. The topic only: the line never says whom a request was about.
+    case 'privacy.requested': return { what: 'received a privacy request from Shopify', detail: args.parsed ? PRIVACY_TOPIC[args.topic] : `${PRIVACY_TOPIC[args.topic]} (couldn’t be read)` }
+    case 'privacy.closed': return { what: 'closed a privacy request from Shopify', detail: `${PRIVACY_TOPIC[args.topic]} (release job)` }
   }
 }
