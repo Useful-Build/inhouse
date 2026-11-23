@@ -145,14 +145,13 @@ export const CASES: Record<string, RouteCase> = {
   'POST /api/routines/:id/restore': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/restore`, json: { ifRev: 1 }, passes: 404 },
   'GET /api/routines/:id/runs': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/runs`, passes: 404 },
   'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: 404 },
-  // Rows 77 to 83 (P6a PR0; rows 68 to 76 are P5's). Each handler is PR0's 404 stub until its worker fills it: then the
-  // reads pass with 200 and the create with 400 (an empty body), and the writes keep 404 (ids that name nothing). Row 83
-  // is personal: the handler answers an unknown id 404 before its requireObject, as routes 44 and 49 do.
-  'GET /api/memory/waiting': { design: d('brand_data', ['admin', 'inhouse']), path: '/api/memory/waiting', passes: 404 },
+  // P6a's list handlers return 200, the empty create body returns 400, and writes to unknown ids return 404.
+  // Row 83 is personal: the handler answers an unknown id 404 before its requireObject, as routes 44 and 49 do.
+  'GET /api/memory/waiting': { design: d('brand_data', ['admin', 'inhouse']), path: '/api/memory/waiting', passes: 200 },
   'PUT /api/memory/brand/:id/approved': { design: d('brand_data', ['admin', 'inhouse']), path: `/api/memory/brand/${NO_MEMORY}/approved`, json: { approved: true, ifRev: 1 }, passes: 404 },
-  'GET /api/skills': { design: d('brand_data', ALL), path: '/api/skills', passes: 404 },
-  'GET /api/team-requests': { design: d('baseline', ALL), path: '/api/team-requests', passes: 404 },
-  'POST /api/team-requests': { design: d('baseline', PEOPLE), path: '/api/team-requests', json: {}, passes: 404 },
+  'GET /api/skills': { design: d('brand_data', ALL), path: '/api/skills', passes: 200 },
+  'GET /api/team-requests': { design: d('baseline', ALL), path: '/api/team-requests', passes: 200 },
+  'POST /api/team-requests': { design: d('baseline', PEOPLE), path: '/api/team-requests', json: {}, passes: 400 },
   'PUT /api/team-requests/:id/status': { design: d('baseline', ['inhouse']), path: `/api/team-requests/${NO_TEAM_REQUEST}/status`, json: { status: 'done', ifRev: 1 }, passes: 404 },
   'PUT /api/team-requests/:id/withdrawn': { design: d('personal', PEOPLE), path: `/api/team-requests/${NO_TEAM_REQUEST}/withdrawn`, json: { withdrawn: true, ifRev: 1 }, passes: 404 },
   // Rows 84 and 85 (P6a brand skills): a name and an id that name nothing, so a caller the matrix lets in gets 404.

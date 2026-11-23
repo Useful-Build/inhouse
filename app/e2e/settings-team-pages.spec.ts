@@ -54,13 +54,14 @@ for (const [stage, current, next, nextName] of STAGE_ROWS) {
   })
 }
 
-test('Team memory at Watch: the lines and the switch are locked until Act', async ({ fx, page }) => {
+test('Team memory at Watch: the lines, rule switch and Teach are available', async ({ fx, page }) => {
   await start(page, fx, 'Watch', '#/settings/team-memory')
   await expect(main(page).getByText('Kestrel Supply ships in 14 days and wants purchase orders as a PDF.')).toBeVisible()
-  await expect(main(page).getByRole('button', { name: 'Forget', exact: true })).toHaveCount(7)
-  await expect(main(page).locator('button:not([disabled])', { hasText: /^Forget$/ })).toHaveCount(0)
-  await expect(main(page).getByRole('switch', { name: 'Ask before saving a team rule' })).toBeDisabled()
-  await expect(main(page).getByRole('button', { name: 'Teach in a chat', exact: true })).toBeDisabled()
+  const forgets = main(page).getByRole('button', { name: 'Forget', exact: true })
+  await expect(forgets).toHaveCount(7)
+  for (const forget of await forgets.all()) await expect(forget).toBeEnabled()
+  await expect(main(page).getByRole('switch', { name: 'Ask before saving a team rule' })).toBeEnabled()
+  await expect(main(page).getByRole('button', { name: 'Teach in a chat', exact: true })).toBeEnabled()
 })
 
 test('Team memory: Forget (with Undo) and the rule switch work, survive a reload and Reset demo clears them; Teach in a chat opens a chat', async ({ fx, page }) => {

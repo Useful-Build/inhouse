@@ -280,7 +280,7 @@ Settings: Stage and plan
 Settings: Team memory
   Path:     Settings -> Team memory
   Selector: buttons "Forget", switch "Ask before saving a team rule", button "Teach in a chat"
-  Expected: locked at Watch; Forget removes a line with an Undo toast and the Inhouse agent page's count follows; the switch turns off; both survive a reload and Reset demo clears them; Teach in a chat opens a new chat holding "Remember that "
+  Expected: Forget, the rule switch and Teach are available at Watch; Forget removes a line with an Undo toast and the Inhouse agent page's count follows; the switch turns off; both survive a reload and Reset demo clears them; Teach in a chat opens a new chat holding "Remember that "
   Covered:  e2e/settings-team-pages.spec.ts
 
 Settings: Run limits
@@ -298,7 +298,7 @@ Settings: Notifications
 Settings: Memory
   Path:     Settings -> Memory
   Selector: buttons "Forget", switch "Learn from my chats"
-  Expected: locked at Watch; Forget removes a line with an Undo toast; the switch turns off; both survive a reload and Reset demo clears them; Team memory is not touched; Forget works on a phone
+  Expected: Forget and the learn switch are available at Watch; Forget removes a line with an Undo toast; the switch turns off; both survive a reload and Reset demo clears them; Team memory is not touched; Forget works on a phone
   Covered:  e2e/settings-your-pages.spec.ts, e2e/settings-pages-phone.spec.ts
 
 Settings: Inhouse agent
