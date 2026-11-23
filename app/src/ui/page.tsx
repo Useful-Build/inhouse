@@ -8,8 +8,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 const pageVariants = cva('page', {
   variants: {
     // The page width steps (--app-page-* in src/index.css): every list page shares `default`, so the content edge
-    // doesn't move between them; Today and Usage are `wide`.
-    width: { default: 'max-w-page-default', wide: 'max-w-page-wide' },
+    // doesn't move between them; Today and Usage are `wide`; a skill's page, its instructions beside a rail, is `detail`.
+    width: { default: 'max-w-page-default', wide: 'max-w-page-wide', detail: 'max-w-page-detail' },
   },
   defaultVariants: { width: 'default' },
 })

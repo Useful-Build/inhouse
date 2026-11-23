@@ -18,9 +18,13 @@ import type { AgentData, Instant, Scenario, Stage, StageIndex, ToolDetail, Tools
 import { flags, goingLive, isFirstDay, noToolsYet, pendingIds, setupRows, todayCopy, toolState, toolView } from './derive'
 import type { Ctx } from './derive'
 import { fmtWeekday } from '../lib/format'
-import { display } from './display'
+import { display, setNow } from './display'
 
 // ---------- a real agent: the product's shapes, no mock, no sample data, no scenario ----------
+
+/** The app's clock, at a local time on the demo's Monday (the device's zone is the display zone here). */
+const clockAt = (hour: number, minute = 0) => setNow(() => new Date(2026, 10, 16, hour, minute).getTime())
+clockAt(8)
 
 const stub = new HttpAgent()
 /** The product's empty snapshot: every list empty, `status` `loading`. */
@@ -60,7 +64,7 @@ describe('a real first-day agent, from its data alone', () => {
     expect(pendingIds(ctx)).toEqual([])
     const copy = todayCopy(ctx)
     expect(copy.greeting).toBe('Welcome, Ada.')
-    expect(copy.headline).toBe('Your Inhouse agent is being set up.')
+    expect(copy.headline).toBe("We're setting up your Inhouse agent.")
   })
 
   test('shows no "goes live by" line, though a tool has a date: nothing is live yet', () => {
@@ -79,6 +83,12 @@ describe('a real first-day agent, from its data alone', () => {
     expect(f.isFirst).toBe(false)
     expect(f.noData).toBe(false)
     expect(todayCopy(ctx).greeting).toBe('Good morning, Ada.')
+    // The greeting follows the app's clock: morning from 5:00, afternoon from 12:00, evening from 17:00 until 4:59.
+    for (const [h, m, part] of [[4, 59, 'evening'], [5, 0, 'morning'], [11, 59, 'morning'], [12, 0, 'afternoon'], [16, 59, 'afternoon'], [17, 0, 'evening'], [0, 0, 'evening']] as const) {
+      clockAt(h, m)
+      expect(todayCopy(ctx).greeting).toBe(`Good ${part}, Ada.`)
+    }
+    clockAt(8)
     expect(goingLive(ctx)).toEqual({ name: 'Ads', by: fmtWeekday(LIVE_BY, display()) })
     expect(flags(ctxOf(afterFirstTool(), 1, { 's:cap': '$0' })).cap).toBe(true)
   })

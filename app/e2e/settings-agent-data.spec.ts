@@ -105,7 +105,7 @@ test('Data and access: retention and access switches are saved, survive a reload
   await main(page).getByRole('button', { name: 'Ask the team', exact: true }).click()
   await expect(team(page)).toBeVisible()
   await expect(team(page).getByRole('radio', { name: /Change something/ })).toBeChecked()
-  await expect(team(page).getByRole('textbox', { name: 'Your request' })).toHaveValue('Please delete the Inhouse agent and its data for Northline Outdoor.')
+  await expect(team(page).getByRole('textbox', { name: 'Details' })).toHaveValue('Please delete the Inhouse agent and its data for Northline Outdoor.')
   await page.keyboard.press('Escape')
   await expect(team(page)).toHaveCount(0)
 

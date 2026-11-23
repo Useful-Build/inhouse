@@ -21,7 +21,7 @@ async function start(page: Page, fx: Fx) {
 
 test('S1: Ask from Today: one working line, the answer fades in, and "Checked … · N steps" opens what the agent did', async ({ fx, page }) => {
   await start(page, fx)
-  await page.getByRole('textbox', { name: 'Ask your Inhouse agent' }).fill(REFUNDS_Q)
+  await page.getByRole('textbox', { name: 'Ask Inhouse' }).fill(REFUNDS_Q)
   // Send with the button, as a phone does: on a touch screen Enter starts a new line.
   await page.locator('[data-composer-send]').click()
   // While it works: one line, with the agent's mark.

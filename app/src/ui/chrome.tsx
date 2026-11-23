@@ -48,9 +48,9 @@ const navItemVariants = cva('flex w-full flex-none items-center gap-2.75 rounded
  * `rail` is the collapsed sidebar's square: the label (and `tip`, when the name differs from what the tooltip should say)
  * shows in a tooltip, the count becomes a dot, and the name, count and tag stay for screen readers.
  */
-export function NavItem({ icon, leading, label, active, locked, count, countLabel, meta, detail, tag, trailing, size, tone, avatar, rail, tip, className, type = 'button', ...rest }:
+export function NavItem({ icon, iconWeight, leading, label, active, locked, count, countLabel, meta, detail, tag, trailing, size, tone, avatar, rail, tip, className, type = 'button', ...rest }:
   Omit<ComponentProps<'button'>, 'children'> & VariantProps<typeof navItemVariants> & {
-    icon?: string; leading?: ReactNode; label: string; count?: number; countLabel?: string; meta?: ReactNode; detail?: ReactNode; tag?: string; trailing?: ReactNode; tip?: string
+    icon?: string; /** The glyph's weight, when it must match a heavier label than the default 300 (the Settings menu). */ iconWeight?: number; leading?: ReactNode; label: string; count?: number; countLabel?: string; meta?: ReactNode; detail?: ReactNode; tag?: string; trailing?: ReactNode; tip?: string
   }) {
   // A passed aria-current wins even when it's undefined (a selected Library place isn't the current page).
   const current = 'aria-current' in rest ? rest['aria-current'] : active ? 'page' : undefined
@@ -60,7 +60,7 @@ export function NavItem({ icon, leading, label, active, locked, count, countLabe
     <button type={type} {...rest} aria-current={current} className={cn(navItemVariants({ size, tone, avatar, rail, active, locked }), rail && 'relative', className)}>
       {leading}
       {/* A fixed 20px box, so labels line up whatever the glyph's own width. */}
-      {icon && <span className="flex w-5 flex-none justify-center"><Icon name={icon} size={size && size !== 'default' ? 18 : 20} /></span>}
+      {icon && <span className="flex w-5 flex-none justify-center"><Icon name={icon} size={size && size !== 'default' ? 18 : 20} weight={iconWeight} /></span>}
       {rail ? <span className="sr-only">{label}</span> : (
         <span className="min-w-0 flex-1">
           <span className="ellipsis block">{label}</span>

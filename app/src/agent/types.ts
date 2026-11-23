@@ -152,6 +152,9 @@ export interface AgentClient {
   setToggle(key: string, on: boolean): Promise<void>
   requestTool(key: string, on: boolean): Promise<void>
   requestSkill(name: string): Promise<void>
+  /** A skill's page is open: fetches its instructions (`body` in `read().skills`) if they aren't in yet. `read()` changes when
+   *  they arrive; it resolves then, or at once when there's nothing to fetch. */
+  loadSkill(name: string): Promise<void>
   setToolPaused(key: string, paused: boolean): Promise<void>
   forgetMemory(key: string, forgotten: boolean): Promise<void>
   /** A settings dropdown or text field. Null puts it back to the default. Rejects with `invalid` for a key or value the settings registry (shared/contract/settings.ts) refuses. */

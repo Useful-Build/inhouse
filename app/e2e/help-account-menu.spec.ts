@@ -50,23 +50,25 @@ test('Help: one guide open at a time; Ask the team sends a question that is list
   await expect(help(page)).toHaveCount(0)
   await expect(team(page)).toBeVisible()
   await expect(team(page).getByRole('radio', { name: /Feedback/ })).toBeChecked()
-  const text = team(page).getByRole('textbox', { name: 'Your request' })
+  const text = team(page).getByRole('textbox', { name: 'Details' })
   await expect(text).toHaveValue('I have a question: ')
   await text.fill('I have a question: can a routine run twice a day?')
   await team(page).getByRole('button', { name: 'Send to the team' }).click()
   await expect(team(page)).toHaveCount(0)
   await expect(page.locator('[data-toast]').filter({ hasText: 'Request sent. Your Inhouse team replies within one working day.' })).toBeVisible()
 
-  // It is listed first among the open requests, as feedback from Sam, and a reload keeps it.
+  // It is listed first among your open requests, as your feedback, and a reload keeps it.
   const listed = (p: Page) => team(p).getByText('I have a question: can a routine run twice a day?', { exact: true })
+  const yourRequests = (p: Page) => team(p).getByRole('radio', { name: /^Your requests/ }).click()
   await accountItem(page, /^Your Inhouse team/)
+  await yourRequests(page)
   await expect(listed(page)).toBeVisible()
-  // The first row under "Open requests" (the selected row's icon and status sit in the same row, so contain, not equal).
-  await expect(team(page).getByRole('heading', { name: 'Open requests' }).locator('xpath=following-sibling::div[1]/div[1]')).toContainText('I have a question: can a routine run twice a day?')
-  await expect(team(page).getByText('Feedback · sent by Sam Mercer, just now', { exact: true })).toBeVisible()
+  await expect(team(page).getByRole('list', { name: 'Open requests' }).getByRole('listitem').first()).toContainText('I have a question: can a routine run twice a day?')
+  await expect(team(page).getByText('Feedback · You, just now', { exact: true })).toBeVisible()
   await page.keyboard.press('Escape')
   await page.reload()
   await accountItem(page, /^Your Inhouse team/)
+  await yourRequests(page)
   await expect(listed(page)).toBeVisible()
 })
 
@@ -82,11 +84,14 @@ test('Account menu: Your Inhouse team opens the team window with its open reques
   const counted = Number((await item.textContent())!.match(/(\d+) open/)![1])
   await item.click()
   await expect(team(page)).toBeVisible()
-  // The count is the number of rows under "Open requests".
-  await expect(team(page).getByRole('heading', { name: 'Open requests' }).locator('xpath=following-sibling::div[1]/div')).toHaveCount(counted)
+  // The count is the number of open requests, the same number "Your requests" shows.
+  await team(page).getByRole('radio', { name: /^Your requests/ }).click()
+  await expect(team(page).getByRole('radio', { name: `Your requests ${counted}` })).toBeVisible()
+  await expect(team(page).getByRole('list', { name: 'Open requests' }).getByRole('listitem')).toHaveCount(counted)
+  await team(page).getByRole('radio', { name: 'New request' }).click()
   // Feedback is one of the window's request types: no screenshot box, Send waits for words.
   await team(page).getByRole('radio', { name: /Feedback/ }).click()
-  const text = team(page).getByRole('textbox', { name: 'Your request' })
+  const text = team(page).getByRole('textbox', { name: 'Details' })
   await expect(text).toHaveValue('')
   await expect(text).toHaveAttribute('placeholder', 'What would make Inhouse better for you?')
   await expect(team(page).getByRole('checkbox', { name: /Attach a screenshot/ })).toHaveCount(0)

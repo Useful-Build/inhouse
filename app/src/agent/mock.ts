@@ -6,7 +6,7 @@ import {
   problems, routines, scenarios, seedRoutine, seedTable, skillSuggestions, skillSuggestionsTitle, skills, traceDisconnectedVariant,
   traces, tools as sampleTools, usage, usageAtCap, usageHistory,
 } from './data'
-import { sampleAt } from './data'
+import { loadSkillBodies, routineIdOf, sampleAt } from './data'
 import type { ProblemSeed, TraceKey } from './data'
 import type {
   CreateChatInput, ApprovalRule, AuditLine, MemberRecord, MemberRole, Me, ResourceKey, ResourceStatus,
@@ -113,9 +113,6 @@ const initialState = (): AgentState => ({
 
 // ---------- the read-only snapshot ----------
 
-/** A sample routine's id, from its name: "Morning check" is "routine-morning-check". */
-const routineIdOf = (name: string) => 'routine-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
-
 type RawTurn = { user?: string; stage?: string; agent?: Record<string, unknown>[]; trace?: string; model?: string }
 /** A seeded answer's recorded trace: every one has its own, so its footer and steps are its own. */
 const needTrace = (turn: RawTurn, where: string): string => {
@@ -190,9 +187,10 @@ function draftTimes(): Record<string, Instant> {
 function routineDefs(): RoutineDef[] {
   const asked = (chatScript.seedThread.turns as RawTurn[]).find(t => t.user && /\bevery morning\b/.test(t.user))
   if (!asked?.user) throw new Error('chat-script.json: the seed thread has no request for the stuck orders routine.')
-  const { name, freq, day, time, next, need } = seedRoutine
+  const { name, freq, day, time, next, need, by } = seedRoutine
   if (![0, 1, 2].includes(need)) throw new Error(`Sample data: the routine "${name}" has an unknown stage "${String(need)}".`)
-  const fromChat: Omit<RoutineDef, 'id'> = { name, freq, day, time, next, need: need as RoutineDef['need'], what: `Created in a chat: "${asked.user}"`, inChat: true, rev: 1 }
+  // `by` stays: the routine's details say who made it ("Made by You" for the signed-in person).
+  const fromChat: Omit<RoutineDef, 'id'> = { name, freq, day, time, next, need: need as RoutineDef['need'], what: `Created in a chat: "${asked.user}"`, inChat: true, rev: 1, ...(by ? { by } : {}) }
   const out = [...routines, fromChat].map(r => ({ ...r, id: routineIdOf(r.name) }))
   const ids = new Set(out.map(r => r.id))
   if (ids.size !== out.length) throw new Error('Sample data: two routines have the same id.')
@@ -352,7 +350,10 @@ const savedRequest = (r: unknown, now: Instant): TeamRequest | null => {
   if (!hasStrs(r, ['icon', 'title', 'sub', 'status'])) return null
   // In the order `sendTeamRequest` writes them, so a state saved now loads as it was saved.
   const sub = isInstant(r.at) ? r.sub as string : (r.sub as string).replace(/, just now$/, '')
-  return { icon: r.icon as string, title: r.title as string, sub, at: isInstant(r.at) ? r.at : now, status: r.status as string, ...(isInstant(r.statusAt) ? { statusAt: r.statusAt } : {}) }
+  return {
+    icon: r.icon as string, title: r.title as string, sub, at: isInstant(r.at) ? r.at : now, status: r.status as string, ...(isInstant(r.statusAt) ? { statusAt: r.statusAt } : {}),
+    ...(typeof r.text === 'string' ? { text: r.text } : {}),
+  }
 }
 /** A stamp (when and who), saved now or before C1. */
 const savedStamp = (x: unknown, idOf: (by: string) => string): StampRecord | null => {
@@ -594,6 +595,9 @@ export class MockAgent implements AgentClient {
    *  state under the same key, as it always was, but not part of `AgentState`: the real agent has no demo start. */
   private startedAt: number
   private listeners = new Set<() => void>()
+  /** The sample skills' instructions once `loadSkill` has loaded them (by skill name), and the load while it runs. */
+  private skillBodies: Record<string, string> | null = null
+  private skillBodiesLoad: Promise<void> | null = null
   private noticeListeners = new Set<(n: AgentNotice) => void>()
   private holdTimers: Record<string, ReturnType<typeof setTimeout>> = {}
   private mockRuns = new Map<string, MockRun>()
@@ -726,7 +730,7 @@ export class MockAgent implements AgentClient {
   read = (): AgentData => {
     const base = DATA_FOR[this.demo.scenario]
     // Whether the grant is live changes with the clock alone, so it is part of what a view is built from.
-    const key = [this.server, this.state.settings, this.failed, this.grantNow()?.live]
+    const key = [this.server, this.state.settings, this.failed, this.grantNow()?.live, this.skillBodies]
     const hit = this.views.find(x => x.base === base && x.key.every((k, i) => k === key[i]))
     if (hit) return hit.v
     const v = this.overlay(base)
@@ -761,8 +765,10 @@ export class MockAgent implements AgentClient {
     const failed = this.failed
     const status = (k: ResourceKey): ResourceStatus => (failed[k] ? { status: 'error', error: failed[k] } : base.resources[k])
     const revs = this.server.revs
+    const bodies = this.skillBodies
     return {
       ...base,
+      skills: bodies ? base.skills.map(s => (Object.hasOwn(bodies, s.n) ? { ...s, body: bodies[s.n] } : s)) : base.skills,
       people: {
         ...base.people,
         members: failed.members ? [] : this.members(),
@@ -1223,6 +1229,18 @@ export class MockAgent implements AgentClient {
   downloadFile = (): Promise<{ blob: Blob; name: string | null }> => Promise.resolve({ blob: new Blob(['A sample file from the demo.\n'], { type: 'text/plain' }), name: null })
   signOutUrl = (): string | null => null
   disconnect = (): void => undefined
+
+  // ----- skills -----
+
+  /** Loads every sample skill's instructions at once (their own chunk), the first time any skill's page asks. */
+  loadSkill(_name: string): Promise<void> {
+    if (this.skillBodies) return Promise.resolve()
+    this.skillBodiesLoad ??= loadSkillBodies().then(
+      bodies => { this.skillBodies = bodies; this.listeners.forEach(l => l()) },
+      (err: unknown) => { this.skillBodiesLoad = null; throw err },
+    )
+    return this.skillBodiesLoad
+  }
 
   // ----- traces -----
 
