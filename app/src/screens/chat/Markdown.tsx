@@ -119,55 +119,112 @@ function parseBlocks(src: string): Block[] {
 // Inline code first (nothing inside it is formatted), then links (a URL may hold one level of parentheses), bold and
 // italic. The word-boundary checks before `*` and `_` are done in code, not with a lookbehind (Safari before 16.4).
 const INLINE = /(`[^`\n]+`)|(\[[^\]\n]+\]\((?:[^()\s]|\([^()\s]*\))+\))|(\*\*[^*\n]+\*\*)|(\*[^*\s][^*\n]*\*(?![\w*]))|(_[^_\s][^_\n]*_(?!\w))/g
-const LINK = /^\[([^\]]+)\]\((.+)\)$/
+const CHAT_INLINE = /(`[^`\n]+`)|(!?\[[^\]\n]*\]\(<[^<>\s]+>\)|!?\[[^\]\n]*\]\((?:[^()\s]|\([^()\s]*\))+\))|(\*\*[^*\n]+\*\*)|(\*[^*\s][^*\n]*\*(?![\w*]))|(_[^_\s][^_\n]*_(?!\w))|(<https?:\/\/[^<>\s]+>)|((?:https?:\/\/|www\.)[^\s<>"'`[\]{}]+)/gi
+const LINK = /^(!?)\[([^\]]*)\]\((.+)\)$/
+const HASH_ROUTE = /^#\//
+const HTTPS = /^https:\/\//i
 const SAFE_HREF = /^(https?:|mailto:|#)/i
 const WORD = /\w/
+
+function bareLinkLabel(token: string): string {
+  const label = token.replace(/[.,!?;:]+$/, '')
+  if (!label.endsWith(')')) return label
+
+  // Count unmatched closing parentheses so prose punctuation stays outside the link.
+  let open = 0
+  let end = 0
+  for (let i = 0; i < label.length; i++) {
+    const char = label[i]
+    if (char === '(') open++
+    else if (char === ')') {
+      if (open === 0) continue
+      open--
+    }
+    end = i + 1
+  }
+  return label.slice(0, end)
+}
 
 /** Plain text as words, each in its own span. A span keeps its key as the text grows, so only the words that are new mount, and the mount fades them in. */
 function words(text: string, key: string): ReactNode {
   return <Fragment key={key}>{(text.match(/\S+\s*|\s+/g) ?? []).map((w, i) => <span key={i} className="animate-word-in">{w}</span>)}</Fragment>
 }
 
-function inline(text: string, key = 'i', fade = false): ReactNode[] {
-  const out: ReactNode[] = []
-  const plain = (t: string) => (fade ? words(t, `${key}-s${out.length}`) : t)
-  const re = new RegExp(INLINE.source, 'g')
-  let from = 0, n = 0
-  for (let m = re.exec(text); m; m = re.exec(text)) {
-    const before = text[m.index - 1] ?? ''
-    // An italic star or underscore must not follow a letter (or another star): try again one character on.
-    if ((m[4] && (WORD.test(before) || before === '*')) || (m[5] && WORD.test(before))) { re.lastIndex = m.index + 1; continue }
-    if (m.index > from) out.push(plain(text.slice(from, m.index)))
-    const tok = m[0], k = `${key}-${n++}`
-    if (m[1]) out.push(<code key={k} className="rounded-sm bg-muted px-1 py-0.5 font-mono text-sm">{tok.slice(1, -1)}</code>)
-    else if (m[2]) {
-      const [, label, href] = LINK.exec(tok)!
-      const external = /^https?:/i.test(href)
-      out.push(SAFE_HREF.test(href)
-        ? <a key={k} href={href} {...(external ? { target: '_blank', rel: 'noreferrer' } : {})} className="font-medium underline underline-offset-2 hover:text-foreground-2">{inline(label, k, fade)}</a>
-        : label)
-    }
-    else if (m[3]) out.push(<strong key={k} className="font-semibold">{inline(tok.slice(2, -2), k, fade)}</strong>)
-    else out.push(<em key={k}>{inline(tok.slice(1, -1), k, fade)}</em>)
-    from = m.index + tok.length
+// The WebFetch setting can be empty and allow public web reads. Chat uses only explicit hosts,
+// plus in-app hash routes, because rendering an answer must not grant untrusted text that same reach.
+function chatUrl(href: string, linkHosts: readonly string[]): string | null {
+  if (!HTTPS.test(href) || /[\\\s]/.test(href)) return null
+  try {
+    const url = new URL(href)
+    if (url.port || url.username || url.password || !linkHosts.includes(url.hostname)) return null
+    return url.href
+  } catch {
+    return null // A malformed destination is ordinary text.
   }
-  if (from < text.length) out.push(plain(text.slice(from)))
-  return out
 }
 
-const withBreaks = (lines: string[], key: string, fade: boolean) =>
-  lines.flatMap((l, j) => (j ? [<br key={`${key}-br${j}`} />, ...inline(l, `${key}-${j}`, fade)] : inline(l, `${key}-${j}`, fade)))
+const ANCHOR = 'font-medium underline underline-offset-2 hover:text-foreground-2'
+type Inline = (text: string, key: string) => ReactNode[]
+
+function renderer(fade: boolean, page: boolean, linkHosts: readonly string[]): Inline {
+  function inline(text: string, key: string, inLabel = false): ReactNode[] {
+    const out: ReactNode[] = []
+    const plain = (t: string) => (fade ? words(t, `${key}-s${out.length}`) : t)
+    const re = new RegExp(page ? INLINE : CHAT_INLINE)
+    let from = 0, n = 0
+    for (let m = re.exec(text); m; m = re.exec(text)) {
+      const before = text[m.index - 1] ?? ''
+      // An italic star or underscore must not follow a letter (or another star): try again one character on.
+      if ((m[4] && (WORD.test(before) || before === '*')) || (m[5] && WORD.test(before))) { re.lastIndex = m.index + 1; continue }
+      if (m.index > from) out.push(plain(text.slice(from, m.index)))
+      const tok = m[0], k = `${key}-${n++}`
+      if (m[1]) out.push(<code key={k} className="rounded-sm bg-muted px-1 py-0.5 font-mono text-sm">{tok.slice(1, -1)}</code>)
+      else if (m[2]) {
+        const [, image, label, dest] = LINK.exec(tok)!
+        const href = !page && dest.startsWith('<') && dest.endsWith('>') ? dest.slice(1, -1) : dest
+        const external = page ? (/^https?:/i.test(href) ? href : null) : chatUrl(href, linkHosts)
+        const internal = page ? SAFE_HREF.test(href) : HASH_ROUTE.test(href)
+        if (inLabel) out.push(plain(tok))
+        else if (image) out.push(external
+          ? <img key={k} src={external} alt={label} loading="lazy" referrerPolicy="no-referrer" />
+          : plain(label || href))
+        else if (external || internal) out.push(
+          <a key={k} href={external ?? href} {...(external ? { target: '_blank', rel: 'noreferrer' } : {})} className={ANCHOR}>{inline(label || href, k, true)}</a>,
+        )
+        else out.push(plain(label || href))
+      }
+      else if (m[3]) out.push(<strong key={k} className="font-semibold">{inline(tok.slice(2, -2), k, inLabel)}</strong>)
+      else if (m[4] || m[5]) out.push(<em key={k}>{inline(tok.slice(1, -1), k, inLabel)}</em>)
+      else {
+        const label = m[6] ? tok.slice(1, -1) : bareLinkLabel(tok)
+        const href = !inLabel && !/[\w@./-]/.test(before) && chatUrl(/^www\./i.test(label) ? `https://${label}` : label, linkHosts)
+        if (href) out.push(
+          <a key={k} href={href} target="_blank" rel="noreferrer" className={ANCHOR}>{label}</a>,
+          m[6] ? '' : plain(tok.slice(label.length)),
+        )
+        else out.push(plain(m[6] ? label : tok))
+      }
+      from = m.index + tok.length
+    }
+    if (from < text.length) out.push(plain(text.slice(from)))
+    return out
+  }
+  return inline
+}
+
+const withBreaks = (lines: string[], key: string, inline: Inline) =>
+  lines.flatMap((l, j) => (j ? [<br key={`${key}-br${j}`} />, ...inline(l, `${key}-${j}`)] : inline(l, `${key}-${j}`)))
 
 const HEADING_LOOK = ['text-xl font-semibold tracking-section', 'text-lg font-semibold', 'text-md font-semibold']
 
 /** `page`: a document read on its own page (a skill's instructions), in larger type with room between sections. */
 type Look = 'chat' | 'page'
 
-function ListView({ list, k, fade, look }: { list: List; k: string; fade: boolean; look: Look }) {
+function ListView({ list, k, inline, look }: { list: List; k: string; inline: Inline; look: Look }) {
   const items = list.items.map((it, j) => (
     <li key={j} className={cn(look === 'page' && 'pl-1')}>
-      {inline(it.text, `${k}-${j}`, fade)}
-      {it.sub && <ListView list={it.sub} k={`${k}-${j}s`} fade={fade} look={look} />}
+      {inline(it.text, `${k}-${j}`)}
+      {it.sub && <ListView list={it.sub} k={`${k}-${j}s`} inline={inline} look={look} />}
     </li>
   ))
   const cls = look === 'page' ? 'flex max-w-reading-measure flex-col gap-2.5 pl-6.5 marker:text-foreground-3 marker:tabular-nums [li_&]:mt-2.5' : 'flex flex-col gap-1 pl-5 [li_&]:mt-1'
@@ -183,8 +240,9 @@ const stripFrontmatter = (text: string) => text.replace(FRONTMATTER, '')
 /** The blocks of a text part. A blank line between paragraphs keeps its old height (one line). */
 /** `fade`: the text is being revealed, so its plain words each fade in as they first show (reveal.ts). */
 /** `look`: `chat` for an answer, `page` for a document on its own page (frontmatter stripped, larger type, its headings from h2). */
-export function Markdown({ text, fade = false, look = 'chat' }: { text: string; fade?: boolean; look?: Look }) {
+export function Markdown({ text, fade = false, look = 'chat', linkHosts = [] }: { text: string; fade?: boolean; look?: Look; linkHosts?: readonly string[] }) {
   const page = look === 'page'
+  const inline = renderer(fade, page, linkHosts)
   const blocks = parseBlocks(page ? stripFrontmatter(text) : text)
   // Code blocks and tables are numbered, so each scroll area and Copy button has its own name.
   const numbered = (kind: Block['k']) => { let n = 0; return blocks.map(b => (b.k === kind ? ++n : 0)) }
@@ -196,7 +254,7 @@ export function Markdown({ text, fade = false, look = 'chat' }: { text: string; 
       {blocks.map((b, i) => {
         const key = `b${i}`
         switch (b.k) {
-          case 'p': return <p key={key} className={cn(measure)}>{withBreaks(b.lines, key, fade)}</p>
+          case 'p': return <p key={key} className={cn(measure)}>{withBreaks(b.lines, key, inline)}</p>
           case 'h': {
             // The chat page has no h1 or h2 of its own (its title is in the top bar), so an answer's # is an h2, ## an h3
             // and so on down to h6.
@@ -204,13 +262,13 @@ export function Markdown({ text, fade = false, look = 'chat' }: { text: string; 
             // A page's document has its own h1 above it, so # and ## are both its h2, a section heading, with room above it.
             if (page) {
               const PageTag = (['h2', 'h2', 'h3', 'h4', 'h5', 'h6'] as const)[b.level - 1]
-              return <PageTag key={key} className={cn('leading-card font-semibold tracking-section not-first:mt-6', measure, b.level <= 2 ? 'text-xl' : 'text-lg')}>{inline(b.text, key, fade)}</PageTag>
+              return <PageTag key={key} className={cn('leading-card font-semibold tracking-section not-first:mt-6', measure, b.level <= 2 ? 'text-xl' : 'text-lg')}>{inline(b.text, key)}</PageTag>
             }
-            return <Tag key={key} className={`-mb-3 leading-heading ${HEADING_LOOK[Math.min(b.level, 3) - 1]}`}>{inline(b.text, key, fade)}</Tag>
+            return <Tag key={key} className={`-mb-3 leading-heading ${HEADING_LOOK[Math.min(b.level, 3) - 1]}`}>{inline(b.text, key)}</Tag>
           }
           case 'hr': return <hr key={key} className="border-0 border-t border-divider" />
-          case 'quote': return <blockquote key={key} className={cn('border-l-2 border-border-strong pl-3.5 text-foreground-2', measure)}>{withBreaks(b.lines, key, fade)}</blockquote>
-          case 'list': return <ListView key={key} list={b.list} k={key} fade={fade} look={look} />
+          case 'quote': return <blockquote key={key} className={cn('border-l-2 border-border-strong pl-3.5 text-foreground-2', measure)}>{withBreaks(b.lines, key, inline)}</blockquote>
+          case 'list': return <ListView key={key} list={b.list} k={key} inline={inline} look={look} />
           case 'code': {
             const label = `Code block ${codeNo[i]}${b.lang ? `, ${b.lang}` : ''}`
             return (

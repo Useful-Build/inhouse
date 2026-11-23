@@ -1,0 +1,45 @@
+{
+ "row": {
+  "caseId": "N08",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "noMcp": true
+  },
+  "called": [
+   "WebFetch"
+  ],
+  "toolSearches": 1,
+  "answer": "Berlin tomorrow (Tuesday 24 November) will be cold and mostly overcast.\n\n- **Tem",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_MaNC3InU-mQyeI0RXeSj9w",
+  "askedAs": "eval-45239772379-1-n08-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "Berlin tomorrow (Tuesday 24 November) will be cold and mostly overcast.\n\n- **Tem",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "9754e3c443e7c25759c9d608b05cadbe8a1ec8265254692a99716556b4ba11be",
+    "inputExcerpt": "{\"query\":\"select:WebSearch,WebFetch\",\"max_results\":2}"
+   },
+   {
+    "name": "WebFetch",
+    "inputSha256": "313172c03ae4578b281e09b9c33d7cb0c43dc4b349b0c19afb34b7eb65c0cb4e",
+    "inputExcerpt": "{\"url\":\"wttr.in [url 38afac897fe3]\",\"prompt\":\"Give tomorrow's (2026-11-24) weath"
+   }
+  ]
+ }
+}

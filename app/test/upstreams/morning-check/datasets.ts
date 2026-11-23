@@ -18,8 +18,9 @@ export interface OrderSpec {
   /** The order number: the name is `#<n>`. */
   n: number
   ageMs: number
-  /** When the order last changed (default: when it was placed). */
+  /** When the order last changed (default: its latest refund if it has one, else when it was placed). */
   updatedAgoMs?: number
+  /** The financial status (default: refunded or partially refunded if it has a refund, else paid). */
   fin?: string
   ful?: string
   cancelled?: boolean
@@ -45,11 +46,17 @@ export function store(now: number, orders: OrderSpec[], skus: Sku[], recordedOn 
       name: r.name, status: r.status, createdAt: iso(now - r.agoMs),
       returnLineItems: { nodes: [{ quantity: 1, unprocessedQuantity: r.unprocessed ?? 1, returnReasonDefinition: null, fulfillmentLineItem: { lineItem: { sku: lines[0]!.sku } } }] },
     }))
-    const total = lines.reduce((t, l) => t + l.qty * Number(price(l.sku)), 0).toFixed(2)
+    const total = lines.reduce((t, l) => t + l.qty * Number(price(l.sku)), 0)
+    // A refunded order as Shopify shows it: refunded (or partially refunded, below the order's total) and updated when the
+    // refund was made. `refunds_search` reads only refunded or partially refunded orders updated in its window, so a refund
+    // on an order still marked paid, or last updated before the window, is one it never returns.
+    const refunded = (o.refunds ?? []).reduce((t, r) => t + Number(r.amount ?? '10.00'), 0)
+    const fin = o.fin ?? (refunds.length === 0 ? 'PAID' : refunded >= total ? 'REFUNDED' : 'PARTIALLY_REFUNDED')
+    const updatedAgoMs = o.updatedAgoMs ?? (refunds.length > 0 ? Math.min(...o.refunds!.map(r => r.agoMs)) : o.ageMs)
     return {
-      id: `gid://shopify/Order/${9_000_000_000 + o.n}`, name: `#${o.n}`, processedAt: placed, updatedAt: iso(now - (o.updatedAgoMs ?? o.ageMs)),
-      cancelledAt: o.cancelled ? placed : null, displayFinancialStatus: o.fin ?? 'PAID', displayFulfillmentStatus: o.ful ?? 'FULFILLED',
-      returnStatus: returns.length > 0 ? 'IN_PROGRESS' : 'NO_RETURN', currentTotalPriceSet: usd(total), totalRefundedSet: usd(refunds.length > 0 ? '10.00' : '0.00'),
+      id: `gid://shopify/Order/${9_000_000_000 + o.n}`, name: `#${o.n}`, processedAt: placed, updatedAt: iso(now - updatedAgoMs),
+      cancelledAt: o.cancelled ? placed : null, displayFinancialStatus: fin, displayFulfillmentStatus: o.ful ?? 'FULFILLED',
+      returnStatus: returns.length > 0 ? 'IN_PROGRESS' : 'NO_RETURN', currentTotalPriceSet: usd(total.toFixed(2)), totalRefundedSet: usd(refunded.toFixed(2)),
       currentSubtotalLineItemsQuantity: lines.reduce((t, l) => t + l.qty, 0),
       lineItems: { nodes: lines.map(l => ({ sku: l.sku, title: titleOf.get(l.sku) ?? l.sku, currentQuantity: l.qty, unfulfilledQuantity: l.unfulfilled ?? (o.ful === 'UNFULFILLED' ? l.qty : 0), originalUnitPriceSet: usd(price(l.sku)) })) },
       refunds, returns: { nodes: returns },

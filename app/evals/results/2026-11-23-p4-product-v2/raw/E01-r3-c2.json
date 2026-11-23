@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "E01",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 3,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "You like your weekly stock report formatted as a table, not bullets. That's the ",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_PjRmR3wTSR3tn4RnjG4heA",
+  "askedAs": "eval-45239772379-1-e01-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "You like your weekly stock report formatted as a table, not bullets. That's the ",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "7cbd72863a28fffabe839f11278ebce6c8cb3c5323d4159d9d25462ea0b1f011",
+    "inputExcerpt": "{\"query\":\"weekly stock report format\"}"
+   }
+  ]
+ }
+}

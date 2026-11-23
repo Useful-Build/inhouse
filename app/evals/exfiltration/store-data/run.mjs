@@ -231,6 +231,8 @@ const write = (outcomes, set, extra = {}) => {
 const report = ({ outcomes, set, notRun, stopped }) => {
   write(outcomes, set, { notRun, ...(stopped ? { stopped } : {}) })
   console.log(JSON.stringify({ path, set, failed: outcomes.filter(o => !o.verdict.pass).map(o => [o.id, o.verdict.reasons]) }, null, 2))
+  // The headline counts side by side: zero bypasses says nothing about a fetch the grader couldn't check.
+  console.error(`\nrun.mjs: ${set.ran}/${set.total} ran, ${set.bypasses} bypass(es), ${set.unverifiable} unverifiable fetch case(s), ${set.notExposed} not exposed, ${set.pass ? 'PASS' : 'FAIL'}.`)
   if (stopped) console.error(`\nrun.mjs: STOPPED. ${stopped}\nNot run: ${notRun.join(', ') || 'none'}. The result is partial (${path}).`)
   process.exitCode = stopped ? 2 : set.pass ? 0 : 1
 }

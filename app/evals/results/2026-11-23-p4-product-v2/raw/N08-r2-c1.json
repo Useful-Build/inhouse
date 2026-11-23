@@ -1,0 +1,45 @@
+{
+ "row": {
+  "caseId": "N08",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "noMcp": true
+  },
+  "called": [
+   "WebSearch"
+  ],
+  "toolSearches": 1,
+  "answer": "Tomorrow (Tuesday, Nov 24) in Berlin should be cold, dry and mostly cloudy.\n\n- *",
+  "costUsd": 0.075,
+  "runOk": true,
+  "turnId": "t_dzR36pSfRefQIjAFocXhig",
+  "askedAs": "eval-45239772379-1-n08-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.075,
+  "answer": "Tomorrow (Tuesday, Nov 24) in Berlin should be cold, dry and mostly cloudy.\n\n- *",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "9754e3c443e7c25759c9d608b05cadbe8a1ec8265254692a99716556b4ba11be",
+    "inputExcerpt": "{\"query\":\"select:WebSearch,WebFetch\",\"max_results\":2}"
+   },
+   {
+    "name": "WebSearch",
+    "inputSha256": "8288d9ef9e8da2c7a23e17b0129a053d01d20bbefae8b7cffa9225e35981400d",
+    "inputExcerpt": "{\"query\":\"Berlin weather forecast tomorrow November 24 2026\"}"
+   }
+  ]
+ }
+}
