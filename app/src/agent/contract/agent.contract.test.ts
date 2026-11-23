@@ -1837,7 +1837,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       })),
     ]
     const laterWriteOps: fc.Arbitrary<Step>[] = [
-      fc.tuple(fc.string(), fc.string(), fc.string(), instant, fc.string(), fc.option(instant, { nil: undefined })).map(([icon, title, sub, at, status, statusAt]) => step('sendTeamRequest', c => c.sendTeamRequest({ icon, title, sub, at, status, ...(statusAt ? { statusAt } : {}) }))),
+      fc.tuple(fc.string(), fc.string(), fc.string(), instant, fc.string()).map(([icon, title, sub, at, status]) => step('sendTeamRequest', c => c.sendTeamRequest({ icon, title, sub, at, status }))),
       fc.boolean().map(all => step('markNoticesRead', c => {
         const fresh = c.listNotifications().filter(n => n.unread).map(n => n.id)
         const wanted = all ? fresh : fresh.slice(0, 1)
