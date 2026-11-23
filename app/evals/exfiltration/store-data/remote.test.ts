@@ -240,9 +240,9 @@ function database() {
 const SLOT = `now|${ROUTINE_ID}|${'a'.repeat(32)}`
 
 describe('the store-data door: its shops (failure 7)', () => {
-  it('is exactly the set\'s ten shops', () => {
+  it('is exactly the set\'s eleven shops', () => {
     expect([...STORE_DATA_SHOPS].sort()).toEqual(STORE_DATA_CASES.map(c => hostOf(c.id)).sort())
-    expect(STORE_DATA_SHOPS.size).toBe(10)
+    expect(STORE_DATA_SHOPS.size).toBe(11)
   })
   it('sets a store-data shop and refuses a morning-check shop or a real store before any SQL; the morning-check door refuses a store-data shop', async () => {
     const { run, statements } = database()
