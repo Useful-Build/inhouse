@@ -86,6 +86,15 @@ export async function listRequests(db: D1Database, status?: TeamRequestStatus): 
   return res.results
 }
 
+/** The team window shows all open requests (at most 50) and the 50 most recently closed, by status-change time. */
+async function listWindowRequests(db: D1Database): Promise<TeamRequestRow[]> {
+  const [open, closed] = await db.batch<TeamRequestRow>([
+    db.prepare("SELECT * FROM team_requests WHERE status = 'open' ORDER BY created_at_ms DESC, id DESC LIMIT ?").bind(TEAM_REQUEST_OPEN_MAX),
+    db.prepare("SELECT * FROM team_requests WHERE status <> 'open' ORDER BY updated_at_ms DESC, id DESC LIMIT 50"),
+  ])
+  return [...open.results, ...closed.results]
+}
+
 async function move(db: D1Database, id: string, ifRev: number, status: 'done' | 'declined' | 'withdrawn', at: At, owner: string | null): Promise<WriteOutcome> {
   const stamp = writeStamp(at.requestId)
   const ownerSql = owner === null ? '' : ' AND requested_by = ?'
@@ -118,6 +127,7 @@ export function teamRequestStore({ db }: { db: D1Database }) {
     create: (n: NewRequest, at: At) => createRequest(db, n, at),
     get: (id: string) => getRequest(db, id),
     list: (status?: TeamRequestStatus) => listRequests(db, status),
+    listWindow: () => listWindowRequests(db),
     setStatus: (i: { id: string; status: 'done' | 'declined'; ifRev: number }, at: At) => setStatus(db, i, at),
     withdraw: (i: { id: string; ifRev: number }, at: At) => withdraw(db, i, at),
   }

@@ -437,13 +437,14 @@ test('S7: Request a skill from the Skills page; it shows in the team window, and
   expect(mine, 'the request is open for its requester').toBeDefined()
   const done = await call(request, actor('inhouse'), 'PUT', `/api/team-requests/${mine!.id}/status`, { json: { status: 'done', ifRev: mine!.rev } })
   expect(done.status, done.text).toBe(200)
-  // The requester's window reads the open requests again each time it opens: it is no longer among them, and the server calls it done.
+  // The requester sees the team's answer in Closed after opening the window again.
   await accountItem(page, /^Your Inhouse team/)
   await teamWindow(page).getByRole('radio', { name: /^Your requests/ }).click()
-  await expect(teamWindow(page).getByRole('list', { name: 'Open requests' }).getByRole('listitem').filter({ hasText: title })).toHaveCount(0)
-  const closed = await api(page, 'GET', '/api/team-requests?status=done')
-  expect((closed.json.items as { text: string; status: string }[]).find(r => r.text.startsWith(title))?.status).toBe('done')
-  await shot(page, 'S7-done-and-no-longer-open')
+  await expect(openList.getByRole('listitem').filter({ hasText: title })).toHaveCount(0)
+  await teamWindow(page).getByRole('radio', { name: /^Closed/ }).click()
+  const row = teamWindow(page).getByRole('list', { name: 'Closed requests' }).getByRole('listitem').filter({ hasText: title })
+  await expect(row.getByText('Done', { exact: true })).toBeVisible()
+  await shot(page, 'S7-done-in-closed-requests')
 })
 
 test('S8: Request on a catalogue tool says "Request sent" and stays requested after a reload; Undo withdraws it', async ({ context, page }) => {

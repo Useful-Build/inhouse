@@ -185,9 +185,8 @@ export interface AgentClient {
   sendTeamRequest(req: TeamRequest): Promise<void>
   /**
    * The person withdraws their own open request, named as the team window's row names it (its title and when it was asked).
-   * Resolves once it is withdrawn. Rejects when it can't be: `forbidden` (not open any more, or not theirs), `conflict` (the team
-   * answered it meanwhile), or the network's. There is no way back: the product has no un-withdraw route, so only the demo's
-   * window offers an Undo.
+   * In the product, it resolves once withdrawn. It rejects with not_found if missing or not theirs, `conflict` if
+   * already closed, or the network's error. The demo's window handles the session's withdrawal and Undo.
    */
   withdrawTeamRequest(ref: { title: string; at: Instant }): Promise<void>
   /** The bell's notifications, newest first. Stable between changes. */

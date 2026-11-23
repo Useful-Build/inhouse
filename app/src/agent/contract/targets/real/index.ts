@@ -27,6 +27,7 @@ const SERVED: ReadonlySet<keyof AgentClient> = new Set<keyof AgentClient>([
   // P4 W5 (p4-w5.md addendum, #256 review): the Library.
   // (`deleteFiles` and `restoreFiles` are in WATCH_EXEMPT: the real client's writes don't fill the state the shared cases observe.)
   'listFiles', 'uploadFiles', 'fileDownloadUrl',
+  'withdrawTeamRequest',
   // P4 W6 (watch.ts): the routines, the bell and Today's set-aside.
   ...WATCH_SERVED,
 ])
@@ -34,11 +35,12 @@ const SERVED: ReadonlySet<keyof AgentClient> = new Set<keyof AgentClient>([
 const WRITES: ReadonlySet<string> = new Set<WriteMethod>([
   'approve', 'undo', 'editDraft', 'undoHandled', 'redoHandled', 'createChat', 'pause', 'resume', 'setToggle', 'requestTool', 'requestSkill', 'setToolPaused',
   'forgetMemory', 'setSetting', 'setPhoto', 'sendTeamRequest', 'markNoticesRead', 'deleteFiles', 'restoreFiles', 'setAside', 'runRoutine', 'deleteRoutine',
+  'withdrawTeamRequest',
   'restoreRoutine', 'renameChat', 'pinChat', 'deleteChats', 'restoreChats', 'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant',
 ])
 
-/** The route a served write method's call sends to: its verbs and the exact path (the key or the id in it too), from the call's arguments. */
-function routeOf(method: WriteMethod, args: unknown[]): { verbs: string[]; path: string } | null {
+/** The verbs and path for a served write. Withdrawal's id is resolved by the client from the displayed title and instant. */
+function routeOf(method: WriteMethod, args: unknown[]): { verbs: string[]; path: string | RegExp } | null {
   const enc = (v: unknown) => encodeURIComponent(String(v))
   switch (method) {
     case 'setSetting': case 'setToggle': {
@@ -53,6 +55,7 @@ function routeOf(method: WriteMethod, args: unknown[]): { verbs: string[]; path:
     case 'endSupportGrant': return { verbs: ['POST'], path: `/api/grants/${enc(args[0])}/end` }
     case 'deleteFiles': return { verbs: ['POST'], path: '/api/library/delete' }
     case 'restoreFiles': return { verbs: ['POST'], path: '/api/library/restore' }
+    case 'withdrawTeamRequest': return { verbs: ['PUT'], path: /^\/api\/team-requests\/tr_[A-Za-z0-9_-]{22}\/withdrawn$/ }
     default: return watchRoute(method, args)
   }
 }
@@ -76,7 +79,7 @@ function realTarget(origin: string): ContractTarget {
   // What the target does to the client's requests, the way a failing network or server would.
   let clockOffset = 0
   let failAllSaves = false
-  let forced: { code: AgentErrorCode; verbs: string[]; path: string } | null = null
+  let forced: { code: AgentErrorCode; verbs: string[]; path: string | RegExp } | null = null
   const armedErrors = new Map<string, AgentErrorCode>()
   const armedReads = new Set<ResourceKey>()
   let staleGrantEnd = false
@@ -86,7 +89,11 @@ function realTarget(origin: string): ContractTarget {
     const method = (init?.method ?? 'GET').toUpperCase()
     if (method !== 'GET' && failAllSaves) return refusal('unavailable')
     // An armed refusal answers the next request to the armed call's own URL (the key or id in it too), so a write to another record, made meanwhile, isn't refused.
-    if (forced !== null && forced.verbs.includes(method) && forced.path === url.pathname) { const code = forced.code; forced = null; return refusal(code) }
+    if (forced !== null && forced.verbs.includes(method) && (typeof forced.path === 'string' ? forced.path === url.pathname : forced.path.test(url.pathname))) {
+      const code = forced.code
+      forced = null
+      return refusal(code)
+    }
     if (method === 'GET') {
       for (const resource of armedReads) {
         if ((READ_PATH[resource] ?? WATCH_READ_PATH[resource]) === url.pathname) { armedReads.delete(resource); return fetch(origin + FORBIDDEN_PATH, init) }

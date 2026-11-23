@@ -1,6 +1,6 @@
 // Requests to the Inhouse team over HTTP (routes 80 to 83, P6a W3). Plain request builders (no zod here: the entry's size
 // budget) and the one mapping from the server's records to what the pages read: `AgentState.requestedTools`,
-// `requestedSkills` and `teamRequests` all come from the brand's open requests, never kept apart.
+// `requestedSkills` come from open requests. `teamRequests` also includes the brand's recently closed ones.
 import type { Instant } from '../../../shared/contract/common'
 import type { TeamRequest } from '../../../shared/contract/state'
 import type { TeamRequestRecord, TeamRequestsList } from '../../../shared/contract/team-requests'
@@ -8,8 +8,8 @@ import type { Contract, Transport } from './transport'
 
 const path = (id: string, what: string) => `/api/team-requests/${encodeURIComponent(id)}/${what}`
 
-/** Route 80: the brand's open requests, newest first. */
-export const readOpenRequests = (http: Transport): Promise<TeamRequestsList> => http.call({ method: 'GET', path: '/api/team-requests?status=open', schema: 'teamRequests' })
+/** Route 80: the brand's open and recently closed requests. */
+export const readTeamRequests = (http: Transport): Promise<TeamRequestsList> => http.call({ method: 'GET', path: '/api/team-requests?view=window', schema: 'teamRequests' })
 
 /** Route 81: a request. */
 export const postTeamRequest = (http: Transport, k: Contract, body: { kind: TeamRequestRecord['kind']; subject?: string; text: string }): Promise<TeamRequestRecord> =>
@@ -49,15 +49,14 @@ export const requestKey = (r: { at: Instant; text: string }): string => `${r.at.
 const CLOSED_STATUS = { done: 'Done', declined: 'Declined', withdrawn: 'Withdrawn' } as const
 
 /**
- * What the pages read from the requests. The brand's open ones are read (route 80); one answered or withdrawn in this session
- * stays as a closed row until the next read of the open ones, and never marks a tool or skill as requested.
+ * What the pages read from the requests. Only open requests mark a tool or skill as requested.
  * `nameOf`: a member's name by id, or null.
  */
-export function fromOpen(open: readonly TeamRequestRecord[], nameOf: (id: string) => string | null): { teamRequests: TeamRequest[]; requestedTools: Record<string, true>; requestedSkills: Record<string, true> } {
+export function fromRequests(requests: readonly TeamRequestRecord[], nameOf: (id: string) => string | null): { teamRequests: TeamRequest[]; requestedTools: Record<string, true>; requestedSkills: Record<string, true> } {
   const requestedTools: Record<string, true> = {}
   const requestedSkills: Record<string, true> = {}
   const teamRequests: TeamRequest[] = []
-  for (const r of open) {
+  for (const r of requests) {
     const closed = r.status === 'open' ? undefined : r.status
     if (!closed && r.subject && r.kind === 'tool') requestedTools[r.subject] = true
     if (!closed && r.subject && r.kind === 'job') requestedSkills[r.subject] = true

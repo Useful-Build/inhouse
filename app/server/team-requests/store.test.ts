@@ -79,6 +79,18 @@ describe('create and list (the store)', () => {
     expect((await listRequests(db, 'open')).map(r => r.text)).toEqual(['second'])
     expect((await listRequests(db, 'withdrawn')).map(r => r.text)).toEqual(['first'])
   })
+  it('the window keeps all 50 open requests alongside the newest 50 closed by when they changed status', async () => {
+    await db.prepare(`
+      WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 101)
+      INSERT INTO team_requests (id, kind, text, requested_by, status, created_at_ms, updated_at_ms, rev)
+      SELECT printf('tr_%022d', n), 'job', CAST(n AS TEXT), ?,
+        CASE WHEN n <= 50 THEN 'open' WHEN n % 3 = 0 THEN 'done' WHEN n % 3 = 1 THEN 'declined' ELSE 'withdrawn' END,
+        102 - n, n + 102, 1 FROM seq
+    `).bind(ALEX).run()
+    const rows = await stores.teamRequests.listWindow()
+    expect(rows.filter(r => r.status === 'open').map(r => Number(r.text))).toEqual(Array.from({ length: 50 }, (_, i) => i + 1))
+    expect(rows.filter(r => r.status !== 'open').map(r => Number(r.text))).toEqual(Array.from({ length: 50 }, (_, i) => 101 - i))
+  })
   it('refuses the 51st open request; done, declined and withdrawn ones do not count', async () => {
     const ids: string[] = []
     for (let i = 0; i < 50; i++) ids.push((await make(ALEX, { text: `request ${i}` })).id)
@@ -192,7 +204,7 @@ describe('routes 80 to 83 (handlers)', () => {
     expect(a.body.items[0].requestedBy).toBe(ALEX)
     const answered = await route(setTeamRequestStatus, inhouse, { method: 'PUT', path: `/api/team-requests/${r.id}/status`, params: { id: r.id }, body: { status: 'done', ifRev: 1 } })
     expect(JSON.stringify(answered.body)).not.toContain(ALEX)
-    for (const p of ['/api/team-requests?status=x', '/api/team-requests?foo=1', '/api/team-requests?status=open&status=done']) expect((await route(listTeamRequests, person(ALEX), { path: p })).status, p).toBe(400)
+    for (const p of ['/api/team-requests?status=x', '/api/team-requests?foo=1', '/api/team-requests?status=open&status=done', '/api/team-requests?view=unknown', '/api/team-requests?view=window&status=open']) expect((await route(listTeamRequests, person(ALEX), { path: p })).status, p).toBe(400)
   })
   it('82 the Inhouse team answers; a stale rev is 409 with the request; an unknown id and a malformed one are 404', async () => {
     const r = await make(ALEX)

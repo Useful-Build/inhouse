@@ -63,5 +63,5 @@ export const reads = (o: { chats?: unknown[]; models?: unknown; usage?: unknown;
   'GET /api/today': { body: o.today ?? { items: [], aside: {} } },
   // P6a W3: routes 79 and 80.
   'GET /api/skills': { body: [] },
-  'GET /api/team-requests?status=open': { body: { items: o.requests ?? [] } },
+  'GET /api/team-requests?view=window': { body: { items: o.requests ?? [] } },
 })
