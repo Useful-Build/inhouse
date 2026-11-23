@@ -9,12 +9,13 @@
 //     Anthropic's, or refuses a plain hyphen-joined name;
 //  5. the wire takes a body that still has frontmatter, a control character, two skills of one name, or more than the
 //     brand's byte budget.
+// Here, not in shared/protocol/: the runner typechecks that folder with its own packages, which have no vitest.
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import {
   BRAND_SKILL_NAME_MAX, BRAND_SKILLS_BYTES_MAX, BrandSkillFile, BrandSkillFiles, RESERVED_SKILL_NAMES, brandSkillBodyProblem,
   brandSkillDescriptionProblem, brandSkillNameProblem, cleanBody, renderSkillFile, stripFrontmatter,
-} from './brand-skills.ts'
+} from './protocol/brand-skills.ts'
 
 const word = fc.stringMatching(/^[a-z0-9]{1,8}$/)
 const goodName = fc.array(word, { minLength: 1, maxLength: 4 }).map(ws => ws.join('-'))
