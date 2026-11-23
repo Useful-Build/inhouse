@@ -28,9 +28,9 @@ export interface ReadSideCase extends Pick<Case, 'id' | 'cat' | 'chats'> {
   pending?: string
 }
 
-const P5 = 'P5 must merge into main and main into fleet/memory-skills'
-const PAGE = 'Line A must provide the eval page host (inhouse-sbx-eval-pages)'
-const TEAM = 'W3 must provide the team request tool and rows'
+export const P5 = 'P5 must merge into main and main into fleet/memory-skills'
+export const PAGE = 'Line A must provide the eval page host (inhouse-sbx-eval-pages)'
+export const TEAM = 'W3 must provide the team request tool and rows'
 /** Each web page case is one page at `https://<host>/<case id>` whose body is the case's `text` inside the placement. Placeholder until line A names the host: the grader allows exactly this host for web page cases. */
 export const PAGE_HOST = 'pages.eval.test'
 

@@ -12,6 +12,8 @@ export interface ReadSideTarget {
   /** Runs one case and returns what it left behind plus its spend in USD. A throw is an infrastructure failure: the run stops. */
   run(c: ReadSideCase): Promise<{ run: ReadSideRun; costUsd: number }>
   close?(): Promise<void>
+  /** The run's spend so far as the server books it (the product target: route 42 since the start, routine runs included). */
+  spentUsd?(): Promise<number>
 }
 
 /** The checks that say the run could not be observed or judged, not that the agent did something. */
@@ -56,6 +58,16 @@ export async function runReadSide(o: RunOptions): Promise<RunResult> {
       notRun(c.id, gradeReadSide(c, NO_RUN).reasons[0]!)
       continue
     }
+    if (o.budgetUsd !== null && o.target.spentUsd) {
+      // The server's figure wins when it is higher: it books what the cases' own costs can miss (a routine's run, say).
+      try {
+        result.spentUsd = Math.max(result.spentUsd, await o.target.spentUsd())
+      } catch (e) {
+        result.stopped = { at: c.id, reason: 'infrastructure', detail: `the run's spend could not be read: ${e instanceof Error ? e.message : String(e)}` }
+        notRun(c.id, `the run stopped at ${c.id}`)
+        continue
+      }
+    }
     if (o.budgetUsd !== null && result.spentUsd + estimate(c) > o.budgetUsd) {
       result.stopped = { at: c.id, reason: 'budget', detail: `spent $${result.spentUsd.toFixed(2)} and the next case would cost about $${estimate(c).toFixed(2)} of $${o.budgetUsd}` }
       notRun(c.id, `the run stopped at ${c.id}`)
@@ -81,6 +93,9 @@ export async function runReadSide(o: RunOptions): Promise<RunResult> {
         result.stopped = { at: c.id, reason: 'budget', detail: `spent $${result.spentUsd.toFixed(2)}, over the budget $${o.budgetUsd}` }
       }
     } catch (e) {
+      // A failure that still spent (product/target.ts CostedError) books what the server settled before the run stops.
+      const spent = (e as { costUsd?: unknown } | null)?.costUsd
+      if (typeof spent === 'number' && Number.isFinite(spent) && spent > 0) result.spentUsd += spent
       result.stopped = { at: c.id, reason: 'infrastructure', detail: e instanceof Error ? e.message : String(e) }
       notRun(c.id, `the run stopped at ${c.id}`)
     }
