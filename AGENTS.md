@@ -37,7 +37,7 @@ Run in `app/` unless noted. Ports, env flags, and sandbox commands are in `VERIF
 - Hub and runner unit tests (local): `cd app/hub && npm run typecheck && npm run test:node`; `cd app/runner && npm test`
 - Builds (CI): `npm run build` (demo), `npm run build:product`, `npm run build:product-test`, `npm run build:product-eval`
 - Bundle and config guards (CI): `node scripts/check-product-build.mjs`, `node scripts/check-hub-build.mjs`, `node scripts/check-hub-config.mjs wrangler.hub.jsonc`
-- E2E, a11y and visual (CI): `npm run test:e2e`, `npm run test:a11y`, `npm run test:visual:linux`; baselines update through `baselines.yml`
+- E2E, a11y and visual (CI): the `e2e (1/2)` and `e2e (2/2)` jobs run every Playwright project (`npx playwright test --fully-parallel --shard=n/4`), visual and a11y included; baselines update through `baselines.yml`
 
 ## 5. How work lands here
 
