@@ -83,7 +83,8 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 54 */ { method: 'POST', pattern: '/api/routines/:id/run', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 55 */ { method: 'POST', pattern: '/api/routines/:id/delete', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 56 */ { method: 'POST', pattern: '/api/routines/:id/restore', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
-  // P6a PR0 (docs/plans/2026-11-22-p6a-memory-skills.md). Rows 68 to 76 are P5's (fleet/connectors), so P6a holds 77 to 89.
+  // P6a PR0 (docs/plans/2026-11-22-p6a-memory-skills.md). Rows 68 to 76 are P5's (fleet/connectors), so P6a holds 77 to 85 and 87 to 89 (86 is main's
+  // routine runs, master plan decision 8).
   // Team memory approval (W2): brand data, admins and the Inhouse team; the Inhouse team's approve is a write under a
   // live grant (support.access PUT, INHOUSE_BRAND_WRITES). Members are refused here.
   /* 77 */ { method: 'GET', pattern: '/api/memory/waiting', class: 'brand_data', allow: ['admin', 'inhouse'] },
@@ -103,7 +104,9 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 83 */ { method: 'PUT', pattern: '/api/team-requests/:id/withdrawn', class: 'personal', allow: ['member', 'admin'] },
   /* 84 */ { method: 'GET', pattern: '/api/skills/:name', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 85 */ { method: 'POST', pattern: '/api/skills/brand/:id/delete', class: 'brand_data', allow: ['member', 'admin'] },
-  // Rows 86 to 89 stay P6a's spare numbers; line A holds 90 to 99.
+  // Rows 87 to 89 stay P6a's spare numbers (86 is main's, below); line A holds 90 to 99.
+  // Master plan decision 8: a routine's recent runs, read like route 52.
+  /* 86 */ { method: 'GET', pattern: '/api/routines/:id/runs', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
 ]
 
 /** Each `CanKey`'s row (section 3). */

@@ -304,6 +304,7 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   // people delete a brand skill, and its maker or an admin is the store's rule. The Inhouse team deletes none.
   'GET /api/skills/:name': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'POST /api/skills/brand/:id/delete': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  'GET /api/routines/:id/runs': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },

@@ -177,6 +177,7 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   // decides whose.
   { method: 'GET', pattern: '/api/skills/:name', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   { method: 'POST', pattern: '/api/skills/brand/:id/delete', class: 'brand_data', allow: ['member', 'admin'] },
+  { method: 'GET', pattern: '/api/routines/:id/runs', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
 ]
 
 /** `CanRows` as section 3 maps them. */

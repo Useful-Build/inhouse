@@ -1,9 +1,10 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { agent } from '../agent'
 import { traceOf, useTraces } from './chat/traces'
 import { keepUnitsTogether } from '../agent/clock'
 import type { RoutineDef } from '../agent'
-import { flags, lastRunLine, routineRuns, STAGE_TAGS, userName, whenOf } from '../state/derive'
+import type { RoutineHistoryRun, RoutineRunOutcome } from '../agent/types'
+import { flags, lastRunLine, routineRunLines, STAGE_TAGS, userName, whenOf } from '../state/derive'
 import type { Instant } from '../agent/types'
 import { fmtNextRun, fmtWeekdayAt } from '../lib/format'
 import { display, nowOf } from '../state/display'
@@ -187,12 +188,56 @@ const outcomeOf = (text: string, name: string) => {
   return t.charAt(0).toUpperCase() + t.slice(1)
 }
 
+/**
+ * The open routine's last runs (route 86): undefined while they load, 'failed' when they couldn't be read. Asked again
+ * after each Run now (`runNows`), on Try again (`attempt`) and when the stage changes.
+ */
+const RUN_RECHECK_MS = 15_000
+/** At most 10 minutes of rechecks per open panel. */
+const RUN_RECHECK_MAX = 40
+
+function useRunHistory(id: string, runNows: number, attempt: number, stage: number, recheck: boolean): readonly RoutineHistoryRun[] | 'failed' | undefined {
+  const [got, setGot] = useState<{ id: string; runs: readonly RoutineHistoryRun[] | 'failed' }>()
+  // While a run is still going, ask again every 15 s so the open panel sees it end: never for the Inhouse team (each
+  // read under a grant writes an audit line), never while the tab is hidden, and for 10 minutes at most.
+  const [tick, setTick] = useState(0)
+  const running = got?.id === id && got.runs !== 'failed' && got.runs.some(x => x.outcome === 'running')
+  useEffect(() => {
+    if (!running || !recheck || tick >= RUN_RECHECK_MAX) return
+    const fire = () => {
+      if (document.hidden) document.addEventListener('visibilitychange', fire, { once: true })
+      else setTick(n => n + 1)
+    }
+    const t = setTimeout(fire, RUN_RECHECK_MS)
+    return () => { clearTimeout(t); document.removeEventListener('visibilitychange', fire) }
+  }, [running, recheck, tick, got])
+  useEffect(() => {
+    let live = true
+    agent.routineRunHistory(id).then(h => { if (live) setGot({ id, runs: h.runs }) }, (e: unknown) => {
+      console.warn('Inhouse: could not read the last runs.', e)
+      // A failed recheck keeps the list on screen; only a first read that fails shows the error.
+      if (live) setGot(prev => (prev?.id === id && prev.runs !== 'failed' ? prev : { id, runs: 'failed' }))
+    })
+    return () => { live = false }
+  }, [id, runNows, attempt, stage, tick])
+  return got?.id === id ? got.runs : undefined
+}
+
+const RUN_ICON: Record<RoutineRunOutcome, [string, string]> = {
+  done: ['check_circle', 'text-success'],
+  failed: ['error', 'text-warning-text'],
+  skipped: ['do_not_disturb_on', 'text-foreground-3'],
+  running: ['progress_activity', 'text-brand'],
+}
+
 function RoutineSheet({ item, phone, paused, actions, onClose }: { item: Item; phone: boolean; paused: boolean; actions: Actions; onClose: () => void }) {
   useTraces()
   const ctx = useCtx()
-  const { openTrace, go } = useUi.getState()
+  const { openTrace } = useUi.getState()
   const { r, locked, on } = item
-  const runs = routineRuns(ctx, r)
+  const [attempt, setAttempt] = useState(0)
+  const signedIn = useSyncExternalStore(agent.subscribe, agent.me)
+  const history = useRunHistory(r.id, ctx.agent.routineRuns.filter(x => x.routine === r.id).length, attempt, ctx.S, signedIn?.role !== 'inhouse')
   const how = howOf(r, ctx.S, locked)
   const me = userName(ctx)
   // Closing gives focus back to the row that opened the sheet, as Window does.
@@ -258,21 +303,24 @@ function RoutineSheet({ item, phone, paused, actions, onClose }: { item: Item; p
           )}
 
           <h3 className="mt-7.5 mb-1 text-sm font-semibold">Last runs</h3>
-          {runs.length === 0 ? <p className="mt-2 text-sm text-foreground-3">Not run yet.</p> : (
+          {history === 'failed' ? (
+            <div role="status" className="mt-1 flex flex-wrap items-center gap-2 text-sm text-foreground-3">
+              {"Couldn't load the last runs."}
+              <Button variant="ghost" size="sm" onClick={() => setAttempt(n => n + 1)}>Try again</Button>
+            </div>
+          ) : history === undefined ? null : history.length === 0 ? <p className="mt-2 text-sm text-foreground-3">Not run yet.</p> : (
             <ul aria-label="Last runs" className="m-0 list-none p-0">
-              {runs.map((l, i) => {
+              {routineRunLines(history, nowOf()).map((l, i) => {
                 const trace = l.trace && traceOf(l.trace) ? l.trace : undefined
-                const when = l.t ? (l.day === 'Today' ? `Today, ${l.t}` : `${l.day.replace(/^\w+day /, '')}, ${l.t}`) : ''
+                const [icon, tone] = RUN_ICON[l.outcome]
                 return (
                   <li key={l.key} data-run-line className={cn('flex items-center gap-3 py-3', i > 0 && 'border-t border-divider')}>
-                    <Icon name={l.failed ? 'error' : 'check_circle'} size={18} weight={400} className={cn('flex-none', l.failed ? 'text-warning-text' : 'text-success')} />
+                    <Icon name={icon} size={18} weight={400} className={cn('flex-none', tone)} />
                     <div className="min-w-0 flex-1">
-                      {when && <div className="font-medium tabular-nums">{when}</div>}
-                      <div className={cn('text-sm text-pretty', when ? 'mt-0.5' : '', l.failed ? 'text-warning-text' : when ? 'text-muted-foreground' : 'text-foreground-2')}>{outcomeOf(l.text, r.name)}</div>
+                      <div className="font-medium tabular-nums">{l.when}</div>
+                      <div className={cn('mt-0.5 text-sm text-pretty', l.outcome === 'failed' ? 'text-warning-text' : 'text-muted-foreground')}>{outcomeOf(l.text, r.name)}</div>
                     </div>
-                    {trace
-                      ? <Button variant="ghost" size="sm" className="flex-none" onClick={() => { onClose(); openTrace(trace) }}>Steps<Icon name="chevron_right" size={16} /></Button>
-                      : l.inActivity && <Button variant="ghost" size="sm" className="flex-none" onClick={() => { onClose(); go('activity') }}>Activity<Icon name="chevron_right" size={16} /></Button>}
+                    {trace && <Button variant="ghost" size="sm" className="flex-none" onClick={() => { onClose(); openTrace(trace) }}>Steps<Icon name="chevron_right" size={16} /></Button>}
                   </li>
                 )
               })}

@@ -53,6 +53,8 @@ const RoutePatternSchema = z.enum([
   '/api/memory/waiting',
   // P6a brand skills (routes 79 and 84): the skills list holds the brand's own, so it's brand data like a skill's text.
   '/api/skills', '/api/skills/:name',
+  // Master plan decision 8 (route 86): a routine's recent runs.
+  '/api/routines/:id/runs',
 ])
 /**
  * The `brand_data` PUT routes the Inhouse team may use under a live grant (item 19, p3-design section 10): forgetting

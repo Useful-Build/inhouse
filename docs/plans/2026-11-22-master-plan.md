@@ -1,6 +1,6 @@
 # Master plan: Watch first, the rest at the first client
 
-Updated: 2026-11-22 (aligned with the 5-file repo setup in `AGENTS.md`, `REVIEW.md`, `VERIFY.md`, `DESIGN.md`, and `FEATURE_MAP.md`).
+Updated: 2026-11-23 (standing decisions 6 to 8: brand skills, team request statuses, routine run history). Earlier: 2026-11-22 (aligned with the 5-file repo setup in `AGENTS.md`, `REVIEW.md`, `VERIFY.md`, `DESIGN.md`, and `FEATURE_MAP.md`).
 
 Decided by Wasim on 2026-11-22: split the remaining backend work into two parts. **Part 1** is built now: a Watch-ready product, including memory at Watch, document skills, and Watch safety/readiness. **Part 2** is built once the first client signs, during that client's Watch months.
 
@@ -76,6 +76,14 @@ GitHub Actions billing in `Useful-Build/inhouse-ops` blocked ops workflows; the 
 - **Reconcile with `main` and the 5-file setup:** merge `main` into `fleet/memory-skills`, keep `.agents/skills/verify/*` deleted (P6a's `0470`–`0479` migration range is already recorded in `docs/architecture.md`), ensure `prompt_version === 3` after P5, and apply #329 `t:webfetch` / `t:websearch` settings copy and `safeError` guard when meeting P8a.
 - Run P6a final sandbox recording + targeted QA, open final PR to `main`, get Wasim's exact-SHA approval, and squash-merge.
 - Run read-side safety evals across all 4 picker models (paid, per-run cap ask; zero bypasses required on every model left enabled for clients), then release to house.
+- **Added to P6a (standing decision 6):** brand skills and the skill page's real text, built on `fleet/memory-skills` before the final PR:
+  - **Skill text on the product:** the Worker bundle carries a copy of our `SKILL.md` files. `GET /api/skills/:name` serves the body (frontmatter stripped), the tools it uses and when it last changed. `dataviz` ships inside the engine, so it gets our own short summary.
+  - **Skill Creator:** Anthropic's `skill-creator` (Apache 2.0, from `anthropics/skills`) ships as our plugin skill `inhouse:skill-creator`, with its licence file and a notice beside it. Scripts or steps it needs that our guards refuse are cut or rewritten.
+  - **Brand skills:** a member or admin creates one in a chat. The agent drafts it with Skill Creator and saves it through our MCP tool `skill_save` (name, description, body), which goes to the server. The agent can't write a skill file in its sandbox. A brand skill is live at once, with no approval step. Its creator or an admin can edit it in a chat or delete it. A D1 table holds the brand's skills (registered in `app/ops/tables/`), each with who made it and when it last changed.
+  - **Loading:** at session start the runner writes the brand's skills into a root-owned, read-only folder beside our plugin. They load like every skill: only the name and description sit in the agent's context, and the body is read when the skill is used. A brand skill can't widen anything: its `allowed-tools` and other frontmatter beyond name and description are dropped, and every container guard still applies.
+  - **Not changed:** our skills (PDF, Word, Spreadsheet, Skill Creator) and `dataviz` stay read-only for brands. "Request a skill" still sends the Inhouse team a request.
+  - **The P6a plan's "Must not" changes:** "no skill loaded from a writable path" now reads "no skill loaded from a path the agent can write"; "no copied third-party skill text" gains one exception, Skill Creator under its licence.
+  - **Proof:** property tests on the frontmatter strip and the name rules, an API spec for create, edit and delete with the access matrix, the runner's container probe listing a brand skill, and a read-side eval case where a brand skill's body tries to widen tools or send data out (zero bypasses).
 
 ### 5. Finish P8a Watch Readiness -> `main` -> house
 - Merge **#352** into `fleet/production-readiness` (fixes runner image probes on the branch).
@@ -123,3 +131,6 @@ Built during the client's first Watch months, before they move to Act. The clien
 3. **Watch soak:** starts at P4 house release; passes after 3 consecutive clean days with P4, P5, P6a, and P8a live, inside the house monthly spending cap.
 4. **P4 paid runs:** morning-check $5 (done, 12/12 passed), system v2 product suite $5 (up to $10), store-data $3.
 5. **Interface audience (2026-11-23):** members and admins are non-technical to semi-technical people running a brand, not developers. Every screen shows outcomes in plain words: what happened, what it means for the business, what to decide. Hide mechanics (run ids, step timings, token or model detail, tool call names) behind a deliberate "full trace" view at most. Every phase that adds a user-facing field follows this, and `DESIGN.md` carries the rule.
+6. **Brand skills (2026-11-23):** any member or admin can create skills in a chat and edit or delete their own (admins any brand skill), with no approval step. Skills the Inhouse team builds stay ours and read-only for brands. Skill Creator ships so the agent can write skills well. Skills load the normal way: name and description in context, the body only when used. Lands in P6a (step 4).
+7. **Team requests (2026-11-23):** a request shows its status only. No dates, notes or "In progress": timing is agreed with the brand directly.
+8. **Routine run history (2026-11-23):** `GET /api/routines/:id/runs` (route 86: P5 holds 68 to 76 on `fleet/connectors`, P6a 77 to 85) returns each routine's own recent runs (when, outcome, a plain one-line result) from its run slots, so the routine panel stops matching Activity by name. A normal-risk PR into `main`.

@@ -1,7 +1,7 @@
 // Pure selectors: stage + agent state + agent data -> what the screens show. The demo's scenario switch isn't an input:
 // what a scenario changes on screen is in the agent's data.
-import type { AgentData, AgentState, ChatMessage, ClockTime, Instant, Money, ToolChannel, Effort, Problem, Prose, StageIndex, TeamRequest, ThinkingMode, ToolDetail, ToolSetup } from '../agent/types'
-import { calendarOf, fmtAgo, fmtClock, fmtDay, fmtDayWord, fmtMoney, fmtProse, fmtTime, fmtWeekday, majorOf, moneyOf, partOfDay, type Display } from '../lib/format'
+import type { AgentData, AgentState, ChatMessage, ClockTime, Instant, Money, ToolChannel, Effort, Problem, Prose, RoutineHistoryRun, RoutineRunOutcome, StageIndex, TeamRequest, ThinkingMode, ToolDetail, ToolSetup } from '../agent/types'
+import { calendarOf, daysBefore, fmtAgo, fmtClock, fmtDay, fmtDayWord, fmtMoney, fmtProse, fmtTime, fmtWeekday, majorOf, moneyOf, partOfDay, type Display } from '../lib/format'
 import { display, nowOf } from './display'
 
 export const STAGE_TAGS = ['Watch', 'Act', 'Run'] as const
@@ -810,22 +810,21 @@ export function fillActivity(ctx: Ctx) {
 }
 
 /** One line in a routine's last runs. `trace` is set only when the agent has the run's steps. */
-export interface RoutineRunLine { key: string; day: string; t: string; text: string; trace?: string; inActivity: boolean; /** The run hit a problem (its Activity line is one). */ failed?: boolean }
+export interface RoutineRunLine { key: string; when: string; text: string; outcome: RoutineRunOutcome; trace?: string }
 
 /**
- * A routine's last runs, newest first: the Run nows from this session, then the Activity lines it wrote (matched by
- * its name), else the sample data's last-run note.
+ * A routine's last runs (route 86's answer, newest first) as the panel's lines: "Today, 6:00 AM" or "Fri, Nov 13,
+ * 6:00 AM", and the result. A Run now reads "Run now · <result>", or plain "Run now" while it runs.
  */
-export function routineRuns(ctx: Ctx, r: { id: string; name: string; last?: { at: Instant; result: string } }): RoutineRunLine[] {
-  const { S, agent, data } = ctx
+export function routineRunLines(runs: readonly RoutineHistoryRun[], now: number): RoutineRunLine[] {
   const d0 = display()
-  const now = agent.routineRuns.filter(x => x.routine === r.id)
-    .map((x, i): RoutineRunLine => ({ key: `now|${i}|${fmtTime(x.at, d0)}`, day: 'Today', t: fmtTime(x.at, d0), text: x.result ? `Run now · ${x.result}` : 'Run now', trace: x.trace, inActivity: false }))
-  const name = r.name.toLowerCase()
-  const fill = fillActivity(ctx)
-  const lines = [...data.activity.today.map(l => ({ ...l, day: 'Today' })), ...data.activity.earlier.map(l => ({ ...l, day: fmtWeekday(l.at, d0) }))]
-    .filter(l => !(l.minStage === 'Act' && S < 1) && l.text.toLowerCase().includes(name))
-    .map((l): RoutineRunLine => ({ key: `${l.day}|${fmtTime(l.at, d0)}|${l.text}`, day: l.day, t: fmtTime(l.at, d0), text: fill(l.text), trace: l.trace, inActivity: true, failed: l.kind === 'problem' }))
-  if (lines.length === 0 && r.last) lines.push({ key: 'last', day: '', t: '', text: lastRunLine(r.last, nowOf()), inActivity: false })
-  return [...now, ...lines]
+  return runs.map((x, i): RoutineRunLine => {
+    const t = fmtTime(x.at, d0)
+    // A Run now with no result of its own ("It finished", the words for a run with nothing to report) reads plain "Run now".
+    const text = !x.manual ? x.result : x.outcome === 'running' || x.result === 'It finished' ? 'Run now' : `Run now · ${x.result}`
+    return {
+      key: `${i}|${x.at.ms}`, when: daysBefore(x.at, now, d0) === 0 ? `Today, ${t}` : `${fmtWeekday(x.at, d0)}, ${t}`, text, outcome: x.outcome,
+      ...(x.trace ? { trace: x.trace } : {}),
+    }
+  })
 }

@@ -531,6 +531,10 @@ jobs:
         if: steps.go.outputs.deploy == 'true' || steps.go.outputs.rollback == 'true'
         run: echo "live=true" >> "$GITHUB_OUTPUT"
 
+      # For a few seconds after an upload the Workers API can answer a read of the new version with "not found"
+      # (code 100146), and wrangler 4.162.0's `versions deploy` doesn't retry that read (workers-sdk #16717; fixed
+      # with a retry in 4.166.0). So only that answer is retried, after 3, 6, 9 and 12 s; any other failure fails
+      # at once, and a fifth 100146 fails the step.
       - name: Promote the version to 100%
         if: steps.go.outputs.deploy == 'true'
         working-directory: app
@@ -540,7 +544,17 @@ jobs:
           VERSION_ID: ${{ steps.version.outputs.version_id }}
           MESSAGE: ${{ steps.upload.outputs.message }}
         run: |
-          "$RUNNER_TEMP/wrangler.sh" versions deploy "$VERSION_ID@100%" --yes --message="$MESSAGE"
+          out="$RUNNER_TEMP/promote.log"
+          for wait in 3 6 9 12 0; do
+            if "$RUNNER_TEMP/wrangler.sh" versions deploy "$VERSION_ID@100%" --yes --message="$MESSAGE" 2>&1 | tee "$out"; then
+              exit 0
+            fi
+            if [ "$wait" = 0 ] || ! grep -q 'code: 100146' "$out"; then
+              exit 1
+            fi
+            echo "::warning::The new version isn't readable yet (100146); trying again in ${wait}s."
+            sleep "$wait"
+          done
 
       # wrangler.jsonc has no routes (preview.yml refuses any), so the custom domain is attached here through the
       # Workers Domains API (PUT /accounts/{id}/workers/domains, hostname and service). Idempotent: nothing

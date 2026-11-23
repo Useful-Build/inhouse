@@ -4,6 +4,7 @@
 // schemas, so each is defined once. What stays here: the client interface, its inputs, the error class and constants.
 import type { Stage, StageIndex, Scenario, AgentErrorCode, Instant } from '../../shared/contract/common'
 import type { RoutineRun } from '../../shared/contract/routine'
+import type { RoutineRunHistory } from '../../shared/contract/routines'
 import type { Trace } from '../../shared/contract/trace'
 import type { ModelMode } from '../../shared/contract/model'
 import type { LibraryFile } from '../../shared/contract/library'
@@ -27,6 +28,7 @@ export type RefreshList = Extract<ResourceKey, 'library' | 'problems' | 'activit
 export type { ProblemSource, ProblemFact, Draft, DraftItem, Problem } from '../../shared/contract/problem'
 export type { ToolDetail, CatalogTool, ToolChannel, ToolSetup, ToolsData } from '../../shared/contract/tools'
 export type { RoutineDef, RoutineRun } from '../../shared/contract/routine'
+export type { RoutineHistoryRun, RoutineRunHistory, RoutineRunOutcome } from '../../shared/contract/routines'
 export type { SkillDef, SkillSuggestion } from '../../shared/contract/skill'
 export type { TraceStepKind, TraceStep, Trace } from '../../shared/contract/trace'
 export type { ModelMode } from '../../shared/contract/model'
@@ -201,6 +203,8 @@ export interface AgentClient {
   setAside(id: string, reason: SetAsideReason | null): Promise<void>
   /** Run a routine now, outside its schedule. `id` is the routine's own `id`. */
   runRoutine(id: string): Promise<RoutineRun>
+  /** A routine's own recent runs, newest first (at most `ROUTINE_RUNS_MAX`). Rejects (not found) for a routine it doesn't have. */
+  routineRunHistory(id: string): Promise<RoutineRunHistory>
   deleteRoutine(id: string): Promise<void>
   /** Undo a routine delete. */
   restoreRoutine(id: string): Promise<void>

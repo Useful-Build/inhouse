@@ -23,7 +23,7 @@ import { keepTimesTogether } from './clock'
 import { demoAt } from './demo-clock'
 import { moneyOf } from '../lib/format'
 import type {
-  ActivityLine, AuditEntry, CatalogTool, ClockTime, Draft, Effort, Instant, LibraryFile, LibraryKind, LibraryPlace, MemoryLine, ModelMode, Money, Problem, Prose, RoutineDef, SkillDef,
+  ActivityLine, AuditEntry, CatalogTool, ClockTime, Draft, Effort, Instant, LibraryFile, LibraryKind, LibraryPlace, MemoryLine, ModelMode, Money, Problem, Prose, RoutineDef, RoutineHistoryRun, SkillDef,
   SkillSuggestion, StageIndex, Attachment, TablePart, TeamRequest, ToolChannel, ToolDetail, Trace, TraceStep, TraceStepKind, UsageData, UsageRow,
 } from './types'
 
@@ -165,10 +165,11 @@ export const tools = {
 }
 
 /** A routine as the sample data has it: the mock gives each its id. */
-type RawRoutine = Omit<RoutineDef, 'id' | 'time' | 'next' | 'last' | 'need' | 'rev'> & { time: string; next: string; need: number; last?: { at: string; result: string } }
+type RawRun = Omit<RoutineHistoryRun, 'at' | 'manual'> & { at: string }
+type RawRoutine = Omit<RoutineDef, 'id' | 'time' | 'next' | 'last' | 'need' | 'rev'> & { time: string; next: string; need: number; last?: { at: string; result: string }; runs?: RawRun[] }
 const routineOf = (r: RawRoutine): Omit<RoutineDef, 'id'> => {
   const what = `the routine "${r.name}"`
-  const { last, ...rest } = r
+  const { last, runs: _runs, ...rest } = r
   return {
     ...rest, rev: 1, need: needOf(what, r.need), time: clockTimeOf(what, r.time), next: sampleAt(what, r.next),
     ...(last ? { last: { at: sampleAt(what, last.at), result: last.result } } : {}),
@@ -176,6 +177,10 @@ const routineOf = (r: RawRoutine): Omit<RoutineDef, 'id'> => {
 }
 export const routines = (routinesJson.routines as RawRoutine[]).map(routineOf)
 export const seedRoutine = routineOf(routinesJson.createdInSeedChat as RawRoutine)
+/** Each sample routine's recent runs by its name, newest first, as route 86 answers them (none is a Run now). */
+export const sampleRuns: Record<string, RoutineHistoryRun[]> = Object.fromEntries((routinesJson.routines as RawRoutine[]).map(r => [
+  r.name, (r.runs ?? []).map(x => ({ ...x, at: sampleAt(`a run of the routine "${r.name}"`, x.at), manual: false })),
+]))
 
 /** A sample routine's id, from its name: "Morning check" is "routine-morning-check". */
 export const routineIdOf = (name: string) => 'routine-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
