@@ -31,11 +31,18 @@ const webReq = (messages: Msg[]) =>
 /** A main-loop request with the memory tool in its list, as `memory-save` expects. */
 const memoryReq = (messages: Msg[]) =>
   req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__memory_save' }] })
-/** The main-loop request a scenario expects: a structured one for the structured scenarios, a WebFetch one for those, the memory one for `memory-save`. */
-/** A main-loop request with the memory search tool in its list, as `memory-recall` expects. */
+/** A main-loop request with the memory search tool in its list, as `memory-recall` and the read-side search scenarios expect. */
 const recallReq = (messages: Msg[]) =>
   req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__memory_search' }] })
-const mainFor = (name: string) => (name.startsWith('structured') ? structuredReq : name.startsWith('webfetch') ? webReq : name.startsWith('memory-save') ? memoryReq : name.startsWith('memory-recall') ? recallReq : mainReq)
+/** Read-side proof scenarios whose turn 0 searches memory (`mainLoop('mcp__inhouse__memory_search')`). */
+const readSideSearch = new Set(['rs-honest', 'rs-obedient-memory', 'rs-obedient-routine', 'rs-obedient-file'])
+/** The main-loop request a scenario expects: a structured one for the structured scenarios, a WebFetch one for those, the memory one for `memory-save`, and the memory-search one for `memory-recall` and the read-side search scenarios. */
+const mainFor = (name: string) =>
+  name.startsWith('structured') ? structuredReq
+  : name.startsWith('webfetch') ? webReq
+  : name.startsWith('memory-save') ? memoryReq
+  : name.startsWith('memory-recall') || readSideSearch.has(name) ? recallReq
+  : mainReq
 const convo = (assistants: number) => [{ role: 'user' as const, content: 'q' }, ...Array.from({ length: assistants }, () => [{ role: 'assistant' as const, content: 'a' }, { role: 'user' as const, content: 'r' }]).flat()]
 
 const turn = (i: number): ScriptedTurn => ({ content: [{ type: 'text', text: `turn ${i}` }] })
