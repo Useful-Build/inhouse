@@ -1,5 +1,8 @@
 # UI plan 3: settings, team window, review panel, Activity, Routines and Skills
 
+> History. This tracker is finished and kept as written. Paths in it are relative to `app/`. Its backend decisions D2 to
+> D5 are still open (see "Decisions for Wasim"); the product build hides what waits on them.
+
 Tracks the interface round Wasim asked for on 2026-11-23. Paths are relative to `app/`. Update this file in every PR of the plan: tick what landed, add the PR link, note anything moved or dropped and why.
 
 **Status: every surface locked and built on `feat/ui-round-3`, one PR.** Wasim approved the round (2026-11-23); the mockups live on the design canvas ("Inhouse UI round 3", his private artifact). The canvas was the visual source; where this file and a mockup disagree on data, this file wins. D2 to D5 below stay open: they're backend decisions, and the product build hides what waits on them.
@@ -7,7 +10,7 @@ Tracks the interface round Wasim asked for on 2026-11-23. Paths are relative to 
 | Surface | Mockup | Built |
 |---|---|---|
 | Settings menu | **Locked** (round 1) | Yes: five sections, the lock and its tooltip |
-| Team window | **Locked** (round 1) | Yes: New request and Your requests tabs, Open and Closed, Withdraw |
+| Team window | **Locked** (round 1) | Yes: New request and Your requests tabs, Open and Closed, Withdraw (demo only until a withdraw route lands) |
 | Routine panel | **Locked** (round 1) | Yes: schedule sentence with the On switch, Run now, Edit in a chat, Delete in its "···" menu |
 | Review window | **Locked** (round 4, then the two-button footer) | Yes: wide, short, centered beside the sidebar, the main action and More |
 | Approvals page | **Kept** (Wasim: "don't change the approval cards") | Only the "···" became a More button, with Don't send first in it |
