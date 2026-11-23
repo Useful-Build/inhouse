@@ -20,8 +20,10 @@ npm run dev        # http://localhost:5173 (the demo switcher shows in dev)
 npm run typecheck  # tsc -b
 npm run lint       # oxlint
 npm run test:unit  # Vitest: src/**/*.test.ts (property tests included) and build-support/; VITE_PROP_RUNS=1000 for a long run
-npm run test:e2e   # Playwright against the production build
+npm run test:e2e   # Playwright against the production build (runs in CI; not on Wasim's laptop, see VERIFY.md §6)
 ```
+
+On Wasim's laptop only the light checks run (typecheck, lint, unit tests). Builds, E2E, a11y and visual suites run in GitHub CI on the PR.
 
 Two builds share one source tree. `npm run build` (and `npm run dev`) is the demo: the mock agent, the sample data and the demo switches. `npm run build:product` (`vite build --mode product`) is the product: its client is `HttpAgent` in `src/agent/http/`, the real client of the product Worker's `/api/*` routes: chats and their history, the turn socket, pause, models, usage, memory and settings. Pages whose server side is a later phase still read `loading` and write `unavailable`. The build picks the client through the `@client` alias: `src/agent/client.demo.ts` (mock plus `DemoControls`) or `src/agent/client.product.ts`, both a `ClientEntry` (`{ agent, demo, now() }`). `demo` is `null` in the product, so `?demo`, the switcher and Reset demo do nothing there, and `now()` is the real clock. The zod schemas in `shared/contract/` define every value the `AgentClient` returns, and the contract suite (`src/agent/contract/`) holds the mock to them. `scripts/check-product-build.mjs` fails the product build on sample data, mock code, demo controls or the demo clock.
 
