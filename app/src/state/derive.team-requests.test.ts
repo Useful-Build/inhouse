@@ -25,7 +25,7 @@ describe('team requests', () => {
     const [klaviyo, wholesale] = open
     expect(klaviyo).toMatchObject({ kind: 'New tool', who: 'Priya', mine: false})
     expect(klaviyo.status).toBe('With the team')
-    expect(wholesale).toMatchObject({ kind: 'New job', who: 'You', mine: true, icon: 'work' })
+    expect(wholesale).toMatchObject({ kind: 'New job', who: 'You', mine: true, icon: 'work', status: 'With the team' })
     expect(wholesale.text).toMatch(/^Every Monday/)
   })
 
