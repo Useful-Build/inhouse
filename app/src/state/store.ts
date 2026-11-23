@@ -3,7 +3,7 @@
 import { useMemo, useSyncExternalStore } from 'react'
 import { create } from 'zustand'
 import { agent, demo as demoControls, now } from '../agent'
-import type { AgentData, AgentState, Attachment, ChatMessage, Instant, LibraryFile, MessagePart, RunFrame, Scenario, SetAsideReason, Stage } from '../agent/types'
+import type { AgentData, AgentState, Attachment, ChatMessage, Instant, LibraryFile, MessagePart, RunFrame, Scenario, SetAsideReason, SkillDef, Stage } from '../agent/types'
 import { AgentError, SCENARIOS, STAGES, stageIndex } from '../agent/types'
 import { NOT_FOUND, REASON } from '../../shared/contract/error-codes'
 import type { ChatView } from '../screens/chat/view'
@@ -19,13 +19,36 @@ import { rememberTrigger } from '../ui/dialogs'
 import { activeMode, problemById } from './derive'
 import type { Ctx } from './derive'
 
-export type Page = 'today' | 'library' | 'chats' | 'approvals' | 'routines' | 'activity' | 'apps' | 'app' | 'skills' | 'usage' | 'settings'
+export type Page = 'today' | 'library' | 'chats' | 'approvals' | 'routines' | 'activity' | 'apps' | 'app' | 'skills' | 'skill' | 'usage' | 'settings'
 export type Pop = null | 'notif' | 'me' | 'team' | 'help'
 export type RequestType = 'tool' | 'job' | 'change' | 'bug' | 'feedback'
 export type Ambient = 'When Inhouse agent works' | 'Always' | 'Off'
-export type ActivityFilter = 'all' | 'change' | 'needs' | 'problem'
+export type ActivityFilter = 'all' | 'change' | 'needs'
 export type UsageTab = 'person' | 'job' | 'model' | 'tool'
 export type SkillTab = 'all' | 'team' | 'mine'
+/** A skill's name as it shows in its page's link: "Morning check" is "morning-check". */
+export const skillSlug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'skill'
+/**
+ * Every skill's link, one per skill: the Inhouse team's skills first, then the team's own (made in a chat). A skill whose
+ * name makes a slug already taken gets "-2", "-3" and so on, so a team-made "Reorder drafting" never opens the built-in one.
+ */
+export const skillSlugs = (data: { skills: SkillDef[] }, state: { skillsExtra: SkillDef[] }): Map<SkillDef, string> => {
+  const out = new Map<SkillDef, string>()
+  const taken = new Set<string>()
+  for (const s of data.skills.concat(state.skillsExtra)) {
+    const base = skillSlug(s.n)
+    let slug = base
+    for (let i = 2; taken.has(slug); i++) slug = `${base}-${i}`
+    taken.add(slug)
+    out.set(s, slug)
+  }
+  return out
+}
+/** The skill a page's slug names (`skillSlugs`). */
+export const skillBySlug = (data: { skills: SkillDef[] }, state: { skillsExtra: SkillDef[] }, key: string): SkillDef | undefined => {
+  for (const [s, slug] of skillSlugs(data, state)) if (slug === key) return s
+  return undefined
+}
 export type TodaySort = 'default' | 'amount'
 export type ApprovalSort = 'oldest' | 'newest' | 'stake'
 
@@ -99,11 +122,17 @@ export interface UiState {
   // navigation
   page: Page
   appKey: string
+  /** The open skill's page (`skill`): the skill's slug, from `skillSlugs`. */
+  skillKey: string
   setTab: string
-  /** Problem panel. */
+  /** The review window. */
   openId: string | null
+  /** The list the review window was opened from (Today's needs-you cards, Approvals' waiting drafts): what "1 of N" steps through. */
+  queue: string[]
   pop: Pop
-  team: { type: RequestType; text: string; shot: boolean }
+  team: { type: RequestType; title: string; text: string; shot: boolean }
+  /** Team requests the person withdrew this session (`teamRequestKey`): there's no withdraw route on main yet (P6a), so it lives here. */
+  teamWithdrawn: string[]
   traceId: string | null
   /** The toast stack, oldest first. */
   toasts: Toast[]
@@ -150,7 +179,6 @@ export interface UiState {
 
   // page filters
   actFilter: ActivityFilter
-  actOpen: string | null
   usageTab: UsageTab
   /** Index into the usage months, 0 being this month. */
   usageMonth: number
@@ -176,8 +204,14 @@ export interface UiActions {
   patch(p: Partial<UiState>): void
   go(page: Page, extra?: Partial<UiState>): void
   openTool(key: string): void
+  /** A skill's page, by the skill's name. */
+  /** Opens a skill's page by its link slug (`skillSlugs`). */
+  openSkill(key: string): void
   openSettings(tab: string): void
-  openProblem(id: string): void
+  /** Opens the review window. `queue` is the list it was opened from, in its order, for stepping. */
+  openProblem(id: string, queue?: string[]): void
+  /** Moves the open review window to another problem in its queue. */
+  stepProblem(id: string): void
   closeProblem(): void
   openPop(pop: Pop): void
   openTeam(type: RequestType, text?: string): void
@@ -218,7 +252,8 @@ export interface UiActions {
   sendEdit(): void
   /** Deletes messages from a chat, with Undo that works from any chat. */
   deleteMessages(chatId: string, ids: string[]): void
-  approve(id: string): void
+  /** Resolves with null once approved, or with why it wasn't (the agent's notice also says so); it never rejects. */
+  approve(id: string): Promise<string | null>
   unapprove(id: string): void
   undoHandled(id: string): void
   togglePause(): void
@@ -591,12 +626,12 @@ function clearSession() {
 // ---------- end phase 1 memory ----------
 
 const initialUi = (): Omit<UiState, 'stage' | 'scenario' | 'ambient' | 'animateMark' | 'palette' | 'sideCollapsed'> => ({
-  demoOpen: false, page: 'today', appKey: 'shopify', setTab: 'you-general', openId: null, pop: null,
-  team: { type: 'tool', text: '', shot: true }, traceId: null, toasts: [], phone: false, sideOpen: false,
+  demoOpen: false, page: 'today', appKey: 'shopify', skillKey: '', setTab: 'you-general', openId: null, queue: [], pop: null,
+  team: { type: 'tool', title: '', text: '', shot: true }, teamWithdrawn: [], traceId: null, toasts: [], phone: false, sideOpen: false,
   editing: null, todayDraft: '', chatDraft: '', atts: [], modelSel: null, toolOff: {},
   chatId: null, chatList: false, fresh: false, extras: [], hidden: {}, stash: {}, started: [], replyTo: null,
   runs: {}, views: {}, history: {}, queued: {}, editMsg: null, libraryView: 'masonry',
-  actFilter: 'all', actOpen: null, usageTab: 'person', usageMonth: 0, skillTab: 'all', todaySort: 'default',
+  actFilter: 'all', usageTab: 'person', usageMonth: 0, skillTab: 'all', todaySort: 'default',
   drafts: {}, composerFocus: 0, modelMenuAsk: 0,
   feedback: {},
   approvalSort: 'oldest',
@@ -932,15 +967,17 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     ...composerActions(set),
     go: (page, extra) => set({ page, openId: null, pop: null, sideOpen: false, ...extra }),
     openTool: key => set({ page: 'app', appKey: key, pop: null, openId: null, sideOpen: false }),
+    openSkill: key => set({ page: 'skill', skillKey: key, pop: null, openId: null, sideOpen: false }),
     // The page itself, never the phone menu (openSettingsMenu asks for the menu).
     openSettings: tab => set({ page: 'settings', setTab: tab, setMenu: false, pop: null, openId: null, sideOpen: false }),
-    openProblem: id => { rememberTrigger(); set({ openId: id }) },
-    closeProblem: () => set({ openId: null, editing: null }),
+    openProblem: (id, queue) => { rememberTrigger(); set({ openId: id, queue: queue?.includes(id) ? queue : [] }) },
+    stepProblem: id => set({ openId: id, editing: null }),
+    closeProblem: () => set({ openId: null, queue: [], editing: null }),
     // On a phone the drawer sits above these, so opening one closes the drawer.
     // Only pops that are focus-managed dialogs remember their trigger; the account menu is not one.
     // The account menu opens from the phone drawer, so it leaves the drawer open; every other pop-up closes it.
     openPop: pop => { if (pop === 'team' || pop === 'help') rememberTrigger(); set(pop === 'me' ? { pop } : { pop, sideOpen: false }) },
-    openTeam: (type, text = '') => { rememberTrigger(); set({ pop: 'team', team: { type, text, shot: true }, sideOpen: false }) },
+    openTeam: (type, text = '') => { rememberTrigger(); set({ pop: 'team', team: { type, title: '', text, shot: true }, sideOpen: false }) },
     closeOverlays: () => set({ openId: null, pop: null, traceId: null, sideOpen: false, editing: null }),
     showToast,
     dismissToast,
@@ -1086,11 +1123,15 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
 
     approve: id => {
       set({ editing: null })
-      agent.approve(id).then(({ held, doneText }) => {
+      return agent.approve(id).then(({ held, doneText }) => {
         // A held approval's toast stays until it goes out (no timer): pausing it would promise an Undo the agent no longer honours.
         if (held) showHeld([id], [id])
         else showToast(doneText, { undo: () => get().unapprove(id), key: `approve:${id}` })
-      }, logFailure('could not approve'))
+        return null
+      }, (e: unknown) => {
+        logFailure('could not approve')(e)
+        return e instanceof Error && e.message ? e.message : 'Something went wrong.'
+      })
     },
     unapprove: id => {
       if (agent.getSnapshot().sent[id] && !problemById(agent.read(), id).draft.rev) {

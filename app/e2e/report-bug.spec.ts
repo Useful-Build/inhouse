@@ -29,7 +29,7 @@ test('Palette: Report a bug opens the bug window, Send waits for words, then the
 
   // It opens on the bug type, with the bug wording and the screenshot box ticked.
   await expect(team.getByRole('radio', { name: /Report a bug/ })).toBeChecked()
-  const text = team.getByRole('textbox', { name: 'Your request' })
+  const text = team.getByRole('textbox', { name: 'Details' })
   await expect(text).toHaveAttribute('placeholder', 'What happened, and what did you expect?')
   const shot = team.getByRole('checkbox', { name: /Attach a screenshot/ })
   await expect(shot).toBeChecked()
@@ -50,8 +50,9 @@ test('Palette: Report a bug opens the bug window, Send waits for words, then the
   await expect(team).toHaveCount(0)
   await expect(page.locator('[data-toast]').filter({ hasText: 'Bug sent to your Inhouse team. Thank you.' })).toBeVisible()
 
-  // The report is among the open requests, as a bug.
+  // The report is among your open requests, as a bug: its details are its title, since none was typed.
   await openTeam(page)
+  await team.getByRole('radio', { name: /^Your requests/ }).click()
   await expect(team.getByText('The Approve button does nothing on a refund card', { exact: true })).toBeVisible()
-  await expect(team.getByText(/^Report a bug · sent by .+, just now$/)).toBeVisible()
+  await expect(team.getByText(/^Report a bug · You, just now$/)).toBeVisible()
 })

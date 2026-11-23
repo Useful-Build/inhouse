@@ -6,7 +6,7 @@
 //     deploy unchecked: the product config is one environment);
 //   - the test issuer is switched on: `INHOUSE_TEST_BUILD` or `TEST_ISSUER_JWKS` in `vars`;
 //   - the eval brand marker `INHOUSE_EVAL_BRAND` is in `vars` (only the sandbox's eval deployment is an eval brand);
-//   - a var is a Worker secret (`AUDIT_HASH_KEY` or `AI_GATEWAY_TOKEN`, the product config's required ones) or has a
+//   - a var is a Worker secret (`AUDIT_HASH_KEY`, `AI_GATEWAY_TOKEN` or `SHOPIFY_WEBHOOK_SECRETS`, the product config's required ones) or has a
 //     secret-like name (ends in SECRET, TOKEN, PASSWORD, PRIVATE or _KEY, any case): secrets are set with
 //     `wrangler secret put`, never in the config;
 //   - `version_metadata` has no `binding` name (the Worker reads its release from that binding);
@@ -184,7 +184,7 @@ export function stripJsonc(text) {
 const TEAM_DOMAIN = /^https:\/\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.cloudflareaccess\.com$/
 const AUD = /^[0-9a-f]{64}$/i
 /** The Worker's secrets (wrangler.product.jsonc's required ones), and the names that look like one. */
-const SECRET_VARS = new Set(['AUDIT_HASH_KEY', 'AI_GATEWAY_TOKEN'])
+const SECRET_VARS = new Set(['AUDIT_HASH_KEY', 'AI_GATEWAY_TOKEN', 'SHOPIFY_WEBHOOK_SECRETS'])
 const SECRET_LIKE = /(SECRET|TOKEN|PASSWORD|PRIVATE|_KEY)$/i
 const GATEWAY_ID = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/
 const EVAL_BRAND_REFUSED = "vars.INHOUSE_EVAL_BRAND is set: only the sandbox's eval deployment is an eval brand"

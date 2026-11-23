@@ -6,7 +6,7 @@ import { calendarOf, fmtCapFill, fmtCount, fmtShare, fmtSpentOfCap, fmtUsageMone
 import { display, nowOf } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import type { UsageTab } from '../state/store'
-import { AgentMark, Avatar, CardGrid, EmptyState, Page, PageHeader, Segmented } from '../ui'
+import { Avatar, CardGrid, EmptyState, InhouseMark, Page, PageHeader, Segmented } from '../ui'
 import { Select, TAP } from '../ui/fields'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -16,7 +16,7 @@ const COL: Record<UsageTab, string> = { person: 'Person', job: 'Job', model: 'Mo
 
 /** A person's avatar on the Person tab; the agent's own row wears the agent's mark. */
 function RowMark({ who }: { who: string }) {
-  if (who.startsWith('Inhouse agent')) return <span aria-hidden="true" className="flex size-7.5 flex-none items-center justify-center rounded-full bg-fill"><AgentMark /></span>
+  if (who.startsWith('Inhouse agent')) return <span aria-hidden="true" className="flex size-7.5 flex-none items-center justify-center rounded-full bg-fill"><InhouseMark size={14} /></span>
   return <Avatar who={who} size={30} fontSize={11} />
 }
 

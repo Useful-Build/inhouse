@@ -76,7 +76,7 @@ try {
 
   const side = page.getByRole('complementary', { name: 'Sidebar' })
   const log = page.getByRole('log', { name: 'Conversation' })
-  const chatBox = page.getByRole('textbox', { name: 'Message your Inhouse agent' })
+  const chatBox = page.getByRole('textbox', { name: 'Message Inhouse' })
 
   // The model pick, then a question from Today: it starts a chat of its own.
   await step('pick the Fast model', async () => {
@@ -85,7 +85,7 @@ try {
     await expect(page.getByRole('button', { name: 'Model: Fast' })).toBeVisible()
   })
   await step('ask from Today and get the answer', async () => {
-    await page.getByRole('textbox', { name: 'Ask your Inhouse agent' }).fill(Q)
+    await page.getByRole('textbox', { name: 'Ask Inhouse' }).fill(Q)
     await page.keyboard.press('Enter')
     await expect(log.getByText(A)).toBeVisible({ timeout: 15_000 })
     expect(await page.evaluate(() => location.hash)).toMatch(/^#\/chats\/chat-new-/)

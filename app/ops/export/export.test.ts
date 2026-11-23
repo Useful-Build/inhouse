@@ -61,7 +61,7 @@ function expected(s: Snapshot, scope: ExportScope): Record<string, unknown[]> {
       let rows = s.d1[e.name]
       if (scope.kind === 'person') {
         rows = rows.filter(r => names(e, r, scope.memberId))
-        if (e.retention === 'account') rows = rows.map(r => (r.id === scope.memberId ? r : { id: r.id, invited_by: r.invited_by }))
+        if (e.name === 'members') rows = rows.map(r => (r.id === scope.memberId ? r : { id: r.id, invited_by: r.invited_by }))
       }
       out[e.name] = rows
     } else {
@@ -96,6 +96,23 @@ const worldArb = fc.record({
 })
 
 describe('export completeness (failures 1 to 4, property)', () => {
+  it('exports every column of the person’s usage turns and excludes other people’s turns', async () => {
+    const insert = db.prepare(`INSERT INTO usage_turns
+      (turn_id, run_id, chat_id, member_id, model, month, reserved_micro, created_at_ms, source)
+      VALUES (?, 'r_usage', 'c_usage', ?, 'test-model', '2099-01', 250000, ?, 'tally')`)
+    await db.batch([
+      db.prepare("INSERT INTO usage_months (month, cap_micro) VALUES ('2099-01', 1000000)"),
+      insert.bind('t_own_usage', seeded.members.dana, BASE),
+      insert.bind('t_other_usage', seeded.members.leo, BASE),
+    ])
+    const plan = await planOk({ kind: 'person', memberId: seeded.members.dana })
+    const { lines } = await readLines(runExport(d(), plan))
+    expect(plan.counts.usage_turns).toBe(1)
+    const row = await db.prepare("SELECT * FROM usage_turns WHERE turn_id = 't_own_usage'").first()
+    expect(row).toMatchObject({ model: 'test-model', reserved_micro: 250000 })
+    expect(lines.filter(l => l.store === 'usage_turns')).toEqual([{ store: 'usage_turns', row }])
+  })
+
   test.prop([worldArb], { numRuns: 20 })('the brand export is every exported store whole; a person export is exactly what names them', async w => {
     const ids: string[] = [seeded.members.dana, seeded.members.leo, seeded.members.admin, seeded.members.invite]
     for (const status of w.people) {

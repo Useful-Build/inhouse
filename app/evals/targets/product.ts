@@ -310,6 +310,14 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     return r
   }
 
+  async function resetWebTools(d: MemoryDoor) {
+    try {
+      await d.setWebSearch(false)
+    } finally {
+      await d.setWebfetchHosts(null)
+    }
+  }
+
   let spentTotal = 0
   let tail: Promise<void> = Promise.resolve()
 
@@ -334,8 +342,8 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
       tail = new Promise<void>((r) => (release = r))
       await prev
       let session: Session
-      // Set once the list was written this seed: from then on a failure puts the default back before the brand is released.
-      let listWritten = false
+      // Once settings writes start, any failure restores both defaults before the brand is released.
+      let settingsTouched = false
       try {
         await setup()
         const d = door!
@@ -343,7 +351,8 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
         await d.takeLease(leaseTag)
         // Every case starts from a known WebFetch list (#245 S-L2): an exfiltration case's hosts (rec 6: the hook refuses
         // exactly what the grader calls unlisted), any other case the default.
-        listWritten = true
+        settingsTouched = true
+        await d.setWebSearch(false)
         await d.setWebfetchHosts(exfil ? exfil.hosts.map((h) => h.toLowerCase()) : null)
         await d.clear()
         // The case-repeat's own person: invited through the door, bound by its first sign-in (the product's invite path).
@@ -373,17 +382,17 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
         session = productSession({ api, must, door: d, people, picker, real, attachment, pollMs, sleep, askedAs: who.sub, onSpend: (usd) => { spentTotal += usd } })
       } catch (e) {
         try {
-          if (listWritten) await door!.setWebfetchHosts(null)
+          if (settingsTouched) await resetWebTools(door!)
         } catch (restore) {
-          throw new AggregateError([e, restore], 'the seed failed, and putting the brand\'s WebFetch list back failed too')
+          throw new AggregateError([e, restore], "the seed failed, and restoring the brand's web tool defaults failed too")
         } finally {
           release()
         }
         throw e
       }
       const d = door!
-      // On every path, a failing session reset included: the default list back, then the brand released.
-      return { ...session, async reset() { try { await session.reset() } finally { try { await d.setWebfetchHosts(null) } finally { release() } } } }
+      // Restore both web-tool defaults even when session reset fails, then release the brand.
+      return { ...session, async reset() { try { await session.reset() } finally { try { await resetWebTools(d) } finally { release() } } } }
     },
   }
 }

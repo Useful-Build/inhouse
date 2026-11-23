@@ -53,7 +53,7 @@ test('A screen that throws shows its own boundary, keeps the shell and sends one
   const team = page.getByRole('dialog', { name: 'Your Inhouse team' })
   await expect(team).toBeVisible()
   await expect(team.getByRole('radio', { name: /Report a bug/ })).toBeChecked()
-  await expect(team.getByRole('textbox', { name: 'Your request' })).toHaveValue(/The Today screen crashed/)
+  await expect(team.getByRole('textbox', { name: 'Details' })).toHaveValue(/The Today screen crashed/)
 
   // Still one report: the same error isn't sent twice.
   expect(reports).toHaveLength(1)

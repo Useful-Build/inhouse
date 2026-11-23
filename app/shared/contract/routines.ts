@@ -1,6 +1,9 @@
-// Routes 52 to 56 (P4 W2, p4-w2.md section 9): the Routines page over HTTP. Request and response schemas, strict, parsed at
-// the boundary both ways. A routine as the page shows it is `RoutineDef` (./routine.ts); a Run now's answer is `RoutineRun`.
+// Routes 52 to 56 and 68 (P4 W2, p4-w2.md section 9; master plan decision 8): the Routines page over HTTP. Request and
+// response schemas, strict, parsed at the boundary both ways. A routine as the page shows it is `RoutineDef`
+// (./routine.ts); a Run now's answer is `RoutineRun`; a routine's own recent runs are `RoutineRunHistory`.
 import { z } from 'zod'
+import { InstantSchema } from './common.ts'
+import { ROUTINE_RUNS_MAX, ROUTINE_RUN_OUTCOMES } from './keys.ts'
 import { RoutineDefSchema, RoutineRunSchema } from './routine.ts'
 
 /**
@@ -39,3 +42,29 @@ export const RoutineRunAnswerSchema = RoutineRunSchema
 /** Routes 55 and 56, `POST /api/routines/:id/delete` and `/restore`: against the routine's `rev`. Answer `RoutineState`. */
 export const RoutineRevInputSchema = z.strictObject({ ifRev: z.number().int().min(1) })
 export type RoutineRevInput = z.infer<typeof RoutineRevInputSchema>
+
+/**
+ * How a run went, in the panel's closed list: `running` (waiting to start or under way), `done`, `failed` (it stopped
+ * before it finished, or couldn't start) and `skipped` (it missed its time, or wasn't due to run: off, below its stage,
+ * the agent paused).
+ */
+export const RoutineRunOutcomeSchema = z.enum(ROUTINE_RUN_OUTCOMES)
+export type RoutineRunOutcome = z.infer<typeof RoutineRunOutcomeSchema>
+
+/**
+ * One run of a routine as its panel lists it, for people who run a brand: when, how it went and one plain line. No run
+ * ids, timings, costs or model detail. `manual` is a Run now. `trace` opens the run's steps (route 33) behind the panel's
+ * Steps link and is never shown.
+ */
+export const RoutineHistoryRunSchema = z.strictObject({
+  at: InstantSchema,
+  outcome: RoutineRunOutcomeSchema,
+  result: z.string().min(1),
+  manual: z.boolean(),
+  trace: z.string().min(1).optional(),
+})
+export type RoutineHistoryRun = z.infer<typeof RoutineHistoryRunSchema>
+
+/** Route 86, `GET /api/routines/:id/runs`: the routine's own recent runs, newest first, at most `ROUTINE_RUNS_MAX`. */
+export const RoutineRunHistorySchema = z.strictObject({ runs: z.array(RoutineHistoryRunSchema).max(ROUTINE_RUNS_MAX) })
+export type RoutineRunHistory = z.infer<typeof RoutineRunHistorySchema>

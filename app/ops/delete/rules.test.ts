@@ -5,8 +5,8 @@
 //  2. a rule deletes or keeps a person key the store doesn't have (a typo that acts on nothing);
 //  3. a D1 rule or person key names a column the migrated table doesn't have;
 //  4. a rule its store's class doesn't allow (the audit log or its copy anything but kept);
-//  5. a custom rule (the chat cascade, the bell's ordered delete, the BrandAgent's storage) is planned before its runner
-//     exists, so a deletion would run half way: one store's rows gone, another's left;
+//  5. a custom rule no runner serves (or the BrandAgent part with no personData) is planned anyway, so a deletion would
+//     run half way: one store's rows gone, another's left;
 //  6. a derived index is acted on as a store, or a derived rule hides a store that isn't derived.
 import { env } from 'cloudflare:workers'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -109,12 +109,12 @@ describe('the rules (failures 1 to 4)', () => {
 })
 
 describe('the run refuses what it can\'t finish (failures 5 and 6)', () => {
-  it('refuses to plan a custom rule, naming its store, and writes nothing', async () => {
+  // C1's jobs PR built the runners: a custom rule with no runner, or the BrandAgent part with no personData, still refuses.
+  it('refuses to plan a custom rule no runner serves, or the BrandAgent part without personData, naming it, and writes nothing', async () => {
     const before = await snapshotAll(db, bucket)
-    for (const name of ['chats', 'BrandAgent', 'notices']) {
-      await expect(planPersonDeletion(deps({ registry: [...coreTables, ...p8Tables, entry(name)] }), { memberId: seeded.members.dana }), name).rejects.toThrow(new RegExp(`${name}'s rule is custom`))
-    }
-    await expect(planPersonDeletion(deps(), { memberId: seeded.members.dana })).rejects.toThrow(/rule is custom/)
+    const later = { action: 'custom' as const, deletes: ['actor_id', 'subject_id'], why: 'a later store' }
+    await expect(planPersonDeletion(deps({ registry: [...coreTables, ...p8Tables, entry('activity_lines')], rules: { ...deletionRules, activity_lines: later } }), { memberId: seeded.members.dana })).rejects.toThrow("activity_lines's rule is custom, and no runner serves it")
+    await expect(planPersonDeletion(deps({ registry: [...coreTables, ...p8Tables, entry('BrandAgent')] }), { memberId: seeded.members.dana })).rejects.toThrow(/needs deps\.brandAgent/)
     expect(await snapshotAll(db, bucket)).toEqual(before)
   })
 

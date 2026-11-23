@@ -114,11 +114,11 @@ describe('a rebuild that fails (failure 5)', () => {
     await putRecord(r)
     const broken = { prepare: (q: string) => e.RESTORE_DB.prepare(q), batch: () => Promise.reject(new Error('D1 is down (test)')) } as unknown as D1Database
     const out = await rebuildAfterRestore({ bucket: e.FILES, target: broken, restoreId: r.restoreId, nowMs: T + 400 })
-    // P3's runBatch names the database in its error.
-    expect(out).toEqual({ failed: 'D1 failed' })
+    // The record holds the error's name only, never its text (server/safe-error.ts).
+    expect(out).toEqual({ failed: 'StoreUnavailableError:D1' })
     const stored = await ftsJson(r.restoreId)
     expect(stored?.status).toBe('failed')
-    expect(stored?.tables.map(t => [t.name, t.state, t.error])).toEqual([['chat_messages_fts', 'failed', 'D1 failed'], ['memories_fts', 'failed', 'D1 failed']])
+    expect(stored?.tables.map(t => [t.name, t.state, t.error])).toEqual([['chat_messages_fts', 'failed', 'StoreUnavailableError:D1'], ['memories_fts', 'failed', 'StoreUnavailableError:D1']])
   })
 
   it('fails an index the rebuild left empty: integrity-check against the source catches it, per table', async () => {

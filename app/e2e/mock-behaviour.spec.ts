@@ -20,7 +20,7 @@ const stop = (page: Page) => page.locator('[data-composer]').getByRole('button',
 const routineCards = (page: Page) => log(page).getByText('Created routine')
 /** Asks from Today and waits for the answer to finish. */
 async function askFromToday(page: Page, q: string) {
-  await page.getByRole('textbox', { name: 'Ask your Inhouse agent' }).fill(q)
+  await page.getByRole('textbox', { name: 'Ask Inhouse' }).fill(q)
   await page.keyboard.press('Enter')
   await expect(stop(page)).toBeVisible()
   await expect(stop(page)).toHaveCount(0, { timeout: 15_000 })
@@ -294,7 +294,7 @@ test('Links: First day picked with a sample chat open falls back quietly, with n
   await expect.poll(() => page.evaluate(() => location.hash)).not.toContain('refunds')
   // The notice would show just after the fallback: give it the time before checking there is none.
   await page.clock.runFor(1000)
-  await expect(page.getByRole('textbox', { name: 'Message your Inhouse agent' })).toBeVisible() // the new chat First day falls back to is drawn, so no toast is a real absence
+  await expect(page.getByRole('textbox', { name: 'Message Inhouse' })).toBeVisible() // the new chat First day falls back to is drawn, so no toast is a real absence
   await expect.poll(() => page.evaluate(() => location.hash)).toBe('#/chats/new')
   await expect(page.locator('[data-toast]').filter({ hasText: 'may have been deleted' })).toHaveCount(0)
 })

@@ -2,7 +2,8 @@
 // caught error's message or stack can quote chat, customer, tool or file content, or a secret; logs and stored rows carry
 // only its name and a known code (server/safe-error.ts, runner/src/safe-error.ts) plus fixed text we wrote. Two checks
 // over server/, worker/, hub/, shared/ and runner/src/, each with the reviewed sites below:
-//  1. line shapes that put an error's text somewhere: `.message` / `.stack` (on a caught name or a cast), `${err}`,
+//  1. line shapes that put an error's text somewhere: dot or bracket reads of message/stack (including casts and
+//     non-null assertions), `${err}`, concatenation,
 //     `String(err)`, `console.x(err)`, `{ error: err }` (Workers Logs serialises an Error's message and stack),
 //     `const { message } = err`, `err.toString()`, `(x as PromiseRejectedResult).reason`, `z.prettifyError`;
 //  2. every catch binding (`catch (x)`, `.catch((x) =>`, `.then(ok, (x) =>`, `.on('error', (x) =>`), whatever its name:
@@ -18,9 +19,11 @@ import { describe, expect, it } from 'vitest'
 const APP = fileURLToPath(new URL('..', import.meta.url))
 const ROOTS = ['server', 'worker', 'hub', 'shared', 'runner/src']
 const CAUGHT = String.raw`(?:e|err|error|cause|reason|thrown|last|how|ex|failed|failure)`
+const ERROR_TEXT = String.raw`\s*!?\s*(?:\??\.\s*(?:message|stack)\b|(?:\?\.)?\[\s*(['"\x60])(?:message|stack)\1\s*\])`
 const RAW = [
-  new RegExp(String.raw`\b${CAUGHT}\??\.(?:message|stack)\b`),
-  /\)\??\.(?:message|stack)\b/,
+  new RegExp(String.raw`\b${CAUGHT}(?:\??\.cause)*${ERROR_TEXT}`),
+  new RegExp(String.raw`\)${ERROR_TEXT}`),
+  new RegExp(String.raw`(?:['"\x60]\s*\+\s*\b${CAUGHT}(?![\w.?!\[])|\b${CAUGHT}\s*\+\s*['"\x60])`),
   new RegExp(String.raw`\bString\(\s*\(?\s*${CAUGHT}\b`),
   new RegExp(String.raw`\$\{\s*${CAUGHT}\s*\}`),
   new RegExp(String.raw`console\.\w+\(\s*${CAUGHT}\s*[,)]`),
@@ -189,6 +192,13 @@ describe('raw error text', () => {
       'const { name, stack } = e',
       'log(err?.toString())',
       'log(e?.message)',
+      'log(err!.message)',
+      'log(err.cause?.stack)',
+      'log(err?.["message"])',
+      "log((problem as Error)['stack'])",
+      'log(err[`message`])',
+      'log("failed: " + err)',
+      'log(err + " failed")',
       'log({ error: (bad as PromiseRejectedResult).reason })',
     ]) expect(flagged(leak), leak).toEqual([1])
     for (const safe of ["error: err instanceof Error ? err.name : 'unknown'", 'error: safeError(e)', 'mapSdkMessage(ev.message, ev.truncated)', 'String((b as { id?: unknown }).id)', 'error: safeError((failed as PromiseRejectedResult).reason)'])

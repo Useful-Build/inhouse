@@ -40,7 +40,14 @@ import { todayStore } from '../today/store.ts'
 import type { TodayStore } from '../today/store.ts'
 
 import { routineStore } from '../routines/store.ts'
+import { dataHealth } from '../ops/signals/data.ts'
+import type { KeyedBucket } from './r2-keys.ts'
+import type { DataHealth } from '../ops/signals/data.ts'
 import type { RoutineStore } from '../routines/store.ts'
+
+// P8a F2's slot.
+import { privacyRequestStore } from '../webhooks/shopify-privacy/store.ts'
+import type { PrivacyRequestStore } from '../webhooks/shopify-privacy/store.ts'
 
 export interface Stores extends AuthStores {
   members: MemberDirectory & MemberStore
@@ -81,13 +88,18 @@ export interface Stores extends AuthStores {
 
   /** P4 W5 (p4-w5.md): the Library's uploads, marks and listed files. */
   library: LibraryStore
+
+  /** P8 C1: what the data jobs' health signals read (server/ops/signals/data.ts). */
+  dataHealth: DataHealth
+  /** P8a F2: Shopify's privacy requests: route 94's close and the `privacy_requests` signal (the webhooks write their own). */
+  privacyRequests: PrivacyRequestStore
 }
 
 /** What the stores read from the Worker's env. `AUDIT_HASH_KEY` is a secret on the product Worker (a var in the test build). */
 export interface StoresEnv {
   DB: D1Database
-  /** The R2 bucket of photos (wrangler config `FILES`). */
-  FILES: PhotoStoreDeps['files']
+  /** The R2 bucket of photos (wrangler config `FILES`); P8 C1's health signals list it (backups, the deletion log). */
+  FILES: PhotoStoreDeps['files'] & Pick<KeyedBucket, 'list'>
   AUDIT_HASH_KEY?: string
 }
 
@@ -149,5 +161,9 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
     routines: routineStore({ db }),
 
     library: libraryStore({ db, bucket: env.FILES }),
+
+    // P8 C1's slot.
+    dataHealth: dataHealth({ db, bucket: env.FILES }),
+    privacyRequests: privacyRequestStore(db),
   }
 }

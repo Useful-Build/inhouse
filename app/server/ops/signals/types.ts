@@ -6,6 +6,11 @@ import type { Stores } from '../../db/stores.ts'
 
 export interface SignalResult {
   ok: boolean
+  /**
+   * P8a F2: needs a look but isn't a failure (only with `ok: true`): the route still answers 200 and `ok`, so it never
+   * blocks a deploy, a rollback or the release smoke; a monitor that reads the signals raises it.
+   */
+  amber?: true
   detail?: string
 }
 

@@ -28,8 +28,8 @@ export type RetentionRule =
   /**
    * A store only C1's own job can age: a cascade, a condition, a composite key or an order, or a Durable Object's
    * storage. `ages` lists each way a row goes by its own age; `withParent` names the store whose removal takes it too
-   * (a chat's messages go only with their chat). Retention refuses to plan a custom rule, on any class, until that
-   * job lands (P8 C1, after this PR).
+   * (a chat's messages go only with their chat). Each runs its job (ops/coverage/chat-watch-connectors/
+   * retention-jobs.ts), on any class; a custom rule with no job refuses to plan by name.
    */
   | { kind: 'custom'; ages: readonly Age[]; withParent?: string; why: string }
 
@@ -94,12 +94,12 @@ export const retentionRules: Readonly<Record<string, RetentionRule>> = {
 
 /**
  * The period each `retention_period` store follows (a derived index has none): `chats` or `steps` (the Data and access
- * settings), or the fixed `trash` period for the Library.
+ * settings), or a fixed period.
  */
 export const retentionGroups: Readonly<Record<string, PeriodName>> = {
   chats: 'chats',
   chat_messages: 'chats',
-  chat_files: 'chats',
+  chat_files: 'trash',
   'files/': 'chats',
   'sessions/': 'chats',
   tool_calls: 'steps',
@@ -116,14 +116,22 @@ export const retentionGroups: Readonly<Record<string, PeriodName>> = {
   egress_fetches: 'egress',
 }
 
-/** The `periods` argument `planRetention` takes: the default days for every `retention_period` store in `registry`. */
-export function periodsFor(registry: readonly TableEntry[]): Record<string, number> {
-  const periods: Record<string, number> = {}
+export type RetentionPeriods = Readonly<Record<string, number | null>>
+
+/** Days per retention store. Null disables its own age rule. */
+export function periodsFor(
+  registry: readonly TableEntry[],
+  days: Readonly<Record<PeriodName, number | null>> = DEFAULT_DAYS,
+): RetentionPeriods {
+  const periods: Record<string, number | null> = {}
   for (const e of registry) {
     if (e.retention !== 'retention_period' || e.derived) continue
     const group = retentionGroups[e.name]
     if (group === undefined) throw new Error(`retention: no group for ${e.name} (add one to ops/retention/rules.ts)`)
-    periods[e.name] = DEFAULT_DAYS[group]
+    periods[e.name] = days[group]
   }
   return periods
 }
+
+/** Chats still process trash when their own age rule is disabled. */
+export const hasRetentionWork = (store: string, periods: RetentionPeriods) => periods[store] !== null || store === 'chats'

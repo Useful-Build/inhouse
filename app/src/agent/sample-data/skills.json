@@ -1,7 +1,12 @@
 {
   "fieldGuide": {
     "need": "lowest stage index",
-    "mine": "made by the brand team in a chat"
+    "mine": "made by the brand team in a chat",
+    "body": "the skill's SKILL.md, frontmatter included: in skill-bodies.json by skill name, loaded when a skill's page opens",
+    "tools": "tool keys it reads",
+    "routines": "names of the routines that use it",
+    "updatedAt": "when it last changed",
+    "versions": "saved versions, newest first"
   },
   "skills": [
     {
@@ -10,7 +15,30 @@
       "icon": "wb_twilight",
       "need": 0,
       "by": "Inhouse team",
-      "used": "Every weekday"
+      "used": "Every weekday",
+      "tools": [
+        "shopify",
+        "shipbob",
+        "amazon",
+        "xero"
+      ],
+      "example": "Run it now and tell me what changed since yesterday.",
+      "routines": [
+        "Morning check"
+      ],
+      "updatedAt": "-3d 15:20",
+      "versions": [
+        {
+          "by": "Priya Shah",
+          "at": "-3d 15:20",
+          "note": "Late means 2 days for wholesale orders."
+        },
+        {
+          "by": "Inhouse team",
+          "at": "-5d 11:00",
+          "note": "Added refund spikes."
+        }
+      ]
     },
     {
       "n": "Answers with sources",
@@ -18,7 +46,23 @@
       "icon": "chat_bubble",
       "need": 0,
       "by": "Inhouse team",
-      "used": "268 times this month"
+      "used": "268 times this month",
+      "tools": [
+        "shopify",
+        "shipbob",
+        "amazon",
+        "xero",
+        "gorgias"
+      ],
+      "example": "How many Ridge 30L Packs did we sell last week, and where?",
+      "updatedAt": "-12d 10:00",
+      "versions": [
+        {
+          "by": "Inhouse team",
+          "at": "-12d 10:00",
+          "note": "Answers now lead with the number."
+        }
+      ]
     },
     {
       "n": "Payout check",
@@ -26,7 +70,23 @@
       "icon": "payments",
       "need": 1,
       "by": "Inhouse team",
-      "used": "Daily"
+      "used": "Daily",
+      "tools": [
+        "amazon",
+        "xero"
+      ],
+      "example": "Check this week's Amazon payouts against Xero.",
+      "routines": [
+        "Amazon payout check"
+      ],
+      "updatedAt": "-7d 14:00",
+      "versions": [
+        {
+          "by": "Inhouse team",
+          "at": "-7d 14:00",
+          "note": "Gaps under $5 are left out."
+        }
+      ]
     },
     {
       "n": "Reorder drafting",
@@ -34,7 +94,28 @@
       "icon": "inventory_2",
       "need": 1,
       "by": "Inhouse team",
-      "used": "12 times"
+      "used": "12 times",
+      "tools": [
+        "shopify",
+        "shipbob"
+      ],
+      "example": "Do we need to reorder the Summit Fleece?",
+      "routines": [
+        "Monday reorder list"
+      ],
+      "updatedAt": "-9d 09:30",
+      "versions": [
+        {
+          "by": "Sam Mercer",
+          "at": "-9d 09:30",
+          "note": "Reorder below 21 days of stock, not 14."
+        },
+        {
+          "by": "Inhouse team",
+          "at": "-20d 11:00",
+          "note": "First version."
+        }
+      ]
     },
     {
       "n": "Supplier chase",
@@ -42,7 +123,19 @@
       "icon": "forward_to_inbox",
       "need": 1,
       "by": "Inhouse team",
-      "used": "7 times"
+      "used": "7 times",
+      "tools": [
+        "shipbob"
+      ],
+      "example": "Is PO-1187 from Kestrel late? Draft a chase if it is.",
+      "updatedAt": "-14d 16:10",
+      "versions": [
+        {
+          "by": "Inhouse team",
+          "at": "-14d 16:10",
+          "note": "Never chases twice in 3 days."
+        }
+      ]
     },
     {
       "n": "Stuck order nudge",
@@ -51,7 +144,23 @@
       "need": 1,
       "by": "Sam Mercer, in a chat",
       "used": "New today",
-      "mine": true
+      "mine": true,
+      "tools": [
+        "shopify",
+        "shipbob"
+      ],
+      "example": "Which orders haven't been picked in 3 days?",
+      "routines": [
+        "Stuck orders check"
+      ],
+      "updatedAt": "0d 09:12",
+      "versions": [
+        {
+          "by": "Sam Mercer",
+          "at": "0d 09:12",
+          "note": "Made it in a chat."
+        }
+      ]
     },
     {
       "n": "Customer reply drafts",
@@ -59,7 +168,26 @@
       "icon": "support_agent",
       "need": 1,
       "by": "Inhouse team",
-      "used": "41 times"
+      "used": "41 times",
+      "tools": [
+        "gorgias",
+        "shopify",
+        "shipbob"
+      ],
+      "example": "Draft a reply to the newest ticket about a late order.",
+      "updatedAt": "-6d 13:45",
+      "versions": [
+        {
+          "by": "Leo Park",
+          "at": "-6d 13:45",
+          "note": "Offer a refund before a discount."
+        },
+        {
+          "by": "Inhouse team",
+          "at": "-18d 10:00",
+          "note": "First version."
+        }
+      ]
     },
     {
       "n": "Returns restock",
@@ -67,7 +195,20 @@
       "icon": "assignment_return",
       "need": 2,
       "by": "Inhouse team",
-      "used": "Runs by itself"
+      "used": "Runs by itself",
+      "tools": [
+        "shopify",
+        "shipbob"
+      ],
+      "example": "Which returns came back this week, and which can go back on sale?",
+      "updatedAt": "-10d 11:20",
+      "versions": [
+        {
+          "by": "Inhouse team",
+          "at": "-10d 11:20",
+          "note": "Unopened returns count as sellable."
+        }
+      ]
     },
     {
       "n": "Oversell guard",
@@ -75,7 +216,20 @@
       "icon": "block",
       "need": 2,
       "by": "Inhouse team",
-      "used": "Runs by itself"
+      "used": "Runs by itself",
+      "tools": [
+        "shopify",
+        "shipbob"
+      ],
+      "example": "Is anything oversold right now?",
+      "updatedAt": "-8d 17:05",
+      "versions": [
+        {
+          "by": "Inhouse team",
+          "at": "-8d 17:05",
+          "note": "Pauses one variant, never a whole product."
+        }
+      ]
     }
   ],
   "suggestedTitle": "Suggested for Shopify brands",

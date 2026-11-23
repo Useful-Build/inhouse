@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useLayoutEffect, useRef } from 'react'
 import { pendingIds, STAGE_TAGS, userName } from '../state/derive'
 import { chatEntries, openChatKey, useCtx, useUi } from '../state/store'
 import { cn } from '@/lib/utils'
@@ -25,10 +25,35 @@ export function Sidebar() {
   const runs = useUi(s => s.runs)
   // The icon rail is desktop only: the phone drawer always shows the full sidebar.
   const rail = useUi(s => s.sideCollapsed) && !phone
-  const { go, newChat, openChat, openChatList, patch } = useUi.getState()
+  // Windows portal to body and center in the room right of the sidebar: tell them how wide it is (index.css, --app-side-offset).
+  const side = phone ? 'none' : rail ? 'rail' : 'full'
+  useLayoutEffect(() => {
+    document.documentElement.dataset.side = side
+    return () => { delete document.documentElement.dataset.side }
+  }, [side])
+  const { go, newChat, openChat, openChatList, openTeam, patch, toggleSidebar } = useUi.getState()
   // The phone drawer opens with focus on itself, so no row shows a focus ring until someone tabs.
   const drawer = useRef<HTMLDivElement>(null)
-  const activeKey = page === 'app' ? 'apps' : page
+  // The rail and the full sidebar are different trees, so the collapse button is a new element after a click on it:
+  // focus moves to the new one. The shortcut doesn't move focus.
+  const refocusToggle = useRef(false)
+  useLayoutEffect(() => {
+    if (!refocusToggle.current) return
+    refocusToggle.current = false
+    document.querySelector<HTMLElement>('#sidebar [data-sidebar-toggle]')?.focus()
+  }, [rail])
+  // Desktop only: on a phone the drawer closes instead, and the top bar's menu button opens it.
+  const toggle = (
+    <IconButton data-sidebar-toggle icon={rail ? 'left_panel_open' : 'left_panel_close'} label="Sidebar" tip={rail ? 'Expand sidebar' : 'Collapse sidebar'}
+      tipSide={rail ? 'right' : undefined} shortcut={SHORTCUTS.sidebar} variant="chrome" size={18} aria-expanded={!rail} aria-controls="sidebar"
+      onClick={() => { refocusToggle.current = true; toggleSidebar() }} />
+  )
+  // The Inhouse team window, one click from the account row (the account menu keeps its entry too).
+  const team = (
+    <IconButton data-team-button icon="support_agent" label="Your Inhouse team" tipSide={rail ? 'right' : undefined}
+      variant="chrome" size={18} onClick={() => openTeam('tool')} />
+  )
+  const activeKey = page === 'app' ? 'apps' : page === 'skill' ? 'skills' : page
   const count = ctx.S >= 1 ? pendingIds(ctx).length : 0
 
   // The account row is selected on Settings and on Usage, which its menu opens.
@@ -65,7 +90,9 @@ export function Sidebar() {
         </div>
       </nav>
       <div className="grow shrink-0 basis-3" />
-      <div className="flex flex-none flex-col items-center">
+      <div className="flex flex-none flex-col items-center gap-1.5">
+        {team}
+        {toggle}
         <AccountMenu>
           <NavItem rail tone="quiet" label={name} tip={name} aria-label={`${name}, account and settings`} active={meActive} className={OPEN_ROW}
             leading={<Avatar who={ctx.data.meta.currentUser.id} size={24} fontSize={10} />} />
@@ -121,11 +148,14 @@ export function Sidebar() {
         </>}
 
         <div className="grow shrink-0 basis-3" />
-        <div className="flex flex-none flex-col">
+        {/* The account row, the Inhouse team button and on desktop the collapse button, in line with New chat above. */}
+        <div className="flex flex-none items-center gap-1 pr-1">
           <AccountMenu>
-            <NavItem tone="quiet" avatar label={name} aria-label={`${name}, account and settings`} active={meActive} className={OPEN_ROW} leading={<Avatar who={ctx.data.meta.currentUser.id} size={24} fontSize={10} />}
-              trailing={<Icon name="unfold_more" size={16} className="text-faint" />} />
+            <NavItem tone="quiet" avatar label={name} aria-label={`${name}, account and settings`} active={meActive} className={cn(OPEN_ROW, 'min-w-0 flex-1')} leading={<Avatar who={ctx.data.meta.currentUser.id} size={24} fontSize={10} />}
+              trailing={phone && <Icon name="unfold_more" size={16} className="text-faint" />} />
           </AccountMenu>
+          {team}
+          {!phone && toggle}
         </div>
       </aside>
   )

@@ -128,7 +128,7 @@
  */
 :root {
   /* the page's side padding */
-  --app-pad-x: clamp(16px, 4vw, 40px);
+  --app-pad-x: clamp(16px, 3vw, 32px);
 
   /* columns and page widths */
   --app-sidebar: 252px;
@@ -138,8 +138,11 @@
   --app-today-column: 720px;      /* Today's column and its composer */
   --app-chat-column: 880px;       /* a chat and its composer */
   --app-page-narrow: 800px;       /* a Settings page's column, beside its menu */
-  --app-page-default: 900px;      /* page width steps (Page): every list page shares this one content edge */
+  --app-page-default: 1040px;     /* page width steps (Page): every list page shares this one content edge */
   --app-page-wide: 1000px;        /* Today, Usage, the top banner */
+  --app-page-detail: 1160px;      /* a skill's page: its instructions beside a side rail */
+  --app-detail-rail: 264px;       /* that side rail */
+  --app-reading-measure: 680px;   /* a document's paragraphs and lists on its own page (a skill's instructions) */
   --app-screen-below-topbar: calc(100vh - 58px);
   --app-screen-gutter: calc(100vw - 32px);    /* the widest a floating piece gets */
   --app-screen-gutter-sm: calc(100vw - 24px);
@@ -154,17 +157,25 @@
   --app-popover-notifications: min(380px, calc(100vw - 36px));
   --app-select-menu: min(320px, calc(100vw - 32px));
   --app-problem-panel: min(540px, calc(100vw - 40px));
+  --app-activity-panel: min(440px, calc(100vw - 40px)); /* an Activity line, opened */
 
-  /* windows (Window sizes): the width, where the top sits and the tallest it gets */
-  --app-window-sm: min(420px, calc(100vw - 40px));   /* a question (Confirm), a short notice */
-  --app-window-md: min(600px, calc(100vw - 40px));   /* Help, the team window */
-  --app-window-lg: min(960px, calc(100vw - 40px));   /* the Library's file viewer */
-  --app-window-xl: min(1120px, calc(100vw - 40px));  /* the trace */
+  /* windows (Window sizes): the width, where the top sits and the tallest it gets. On desktop a window centers in the room
+   * right of the sidebar and never covers it: --app-side-offset is the sidebar and its margin (the Sidebar sets data-side
+   * on <html>), 0 on a phone. */
+  --app-side-offset: 0px;
+  --app-window-center: calc(50% + var(--app-side-offset) / 2);
+  --app-window-sm: min(420px, calc(100vw - var(--app-side-offset) - 40px));   /* a question (Confirm), a short notice */
+  --app-window-md: min(600px, calc(100vw - var(--app-side-offset) - 40px));   /* Help */
+  --app-window-form: min(720px, calc(100vw - var(--app-side-offset) - 32px));  /* a form with a row of tiles (the team window), 16px clear each side */
+  --app-window-lg: min(960px, calc(100vw - var(--app-side-offset) - 40px));   /* the file viewer, the review window */
+  --app-window-xl: min(1120px, calc(100vw - var(--app-side-offset) - 40px));  /* the trace */
   --app-window-top: 6vh;
+  --app-window-top-wide: 14vh;  /* a wide, short window (the review window) */
   --app-window-top-sm: 22vh;
   --app-window-top-lg: 5vh;
   --app-window-max: 88vh;
   --app-window-max-lg: 90vh;
+  --app-window-max-wide: 80vh;  /* under top-window-wide, so a long one still ends above the screen's foot */
 
   /* stacking layers, lowest first. A window's scrim sits one below its window. Windows, sheets, menus and the toast
    * stack portal to body, so z-toast floats over all of them. The demo switches render inside the app root (an isolated
@@ -208,7 +219,7 @@
   --app-cove-shadow: rgba(17, 17, 22, .058);
 
   /* card grids (CardGrid sizes): the narrowest a card gets before the row wraps */
-  --app-grid-cards-sm: repeat(auto-fill, minmax(min(200px, 100%), 1fr));   /* Library */
+  --app-grid-cards-sm: repeat(auto-fill, minmax(min(216px, 100%), 1fr));   /* Library: 216px keeps main's column count now the page padding is 32px, so names and tiles stay even */
   --app-grid-cards: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
   --app-grid-cards-lg: repeat(auto-fill, minmax(min(360px, 100%), 1fr));   /* Tools, Skills, Usage */
   --app-grid-cards-wide: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); /* Today's Needs you cards: two columns at page-wide */
@@ -225,10 +236,7 @@
   --app-composer-input-max: calc(8 * var(--text-md) * 1.45 + 2 * var(--app-composer-input-pad-y));
   --app-trace-label: min(440px, 48%);           /* the trace's step-name column, wide enough that names read in full on desktop (H6) */
   --app-playhead: 9px;                          /* the trace replay's playhead dot */
-  --app-time-column: 8ch;                       /* a list's time column in mono: "10:12 AM" on one line */
   --app-bar-tick: 3px;                          /* the Usage chart: a $0 day still draws a tick on the baseline */
-  --app-run-when: 21ch;                         /* a routine's last runs: "Fri, Nov 13, 10:42 AM" on one line, every row alike */
-  --app-activity-indent: clamp(0px, 6vw, 72px); /* an opened activity row's detail: past the time column */
   --app-today-top: clamp(14px, 4vh, 40px);
   --app-chat-empty-top: 12vh;
   --app-viewer-image: 64vh;
@@ -241,6 +249,7 @@
 
   /* type: page and window heads, stats, prose */
   --app-text-hero: clamp(26px, 3.4vw, 34px);  /* Today's greeting */
+  --app-text-window-title: 22px;               /* the review window's title */
   --app-tracking-card: -0.01em;
   --app-tracking-section: -0.015em;
   --app-tracking-stat: -0.02em;
@@ -320,6 +329,10 @@
   --divider: var(--app-popup-divider);
 }
 
+/* The desktop sidebar's room (the Sidebar sets data-side on <html>): its width plus its 10px margin. */
+:root[data-side="full"] { --app-side-offset: calc(var(--app-sidebar) + 10px); }
+:root[data-side="rail"] { --app-side-offset: calc(var(--app-sidebar-rail) + 10px); }
+
 /* A window's and a side panel's ground (data-surface="window", with bg-window-surface): a hovered or picked row and an
  * inset well (bg-muted) each take a clear step off it. Menus portal out of it, so theirs are unchanged. */
 [data-surface="window"] {
@@ -358,6 +371,9 @@
   --container-page-narrow: var(--app-page-narrow);
   --container-page-default: var(--app-page-default);
   --container-page-wide: var(--app-page-wide);
+  --container-page-detail: var(--app-page-detail);
+  --container-detail-rail: var(--app-detail-rail);
+  --container-reading-measure: var(--app-reading-measure);
   --container-screen-gutter: var(--app-screen-gutter);
   --container-screen-gutter-sm: var(--app-screen-gutter-sm);
   --container-menu-message: var(--app-menu-message);
@@ -369,16 +385,21 @@
   --container-popover-notifications: var(--app-popover-notifications);
   --container-select-menu: var(--app-select-menu);
   --container-problem-panel: var(--app-problem-panel);
+  --container-activity-panel: var(--app-activity-panel);
   --container-window-sm: var(--app-window-sm);
   --container-window-md: var(--app-window-md);
+  --container-window-form: var(--app-window-form);
   --container-window-lg: var(--app-window-lg);
   --container-window-xl: var(--app-window-xl);
   --inset-window: var(--app-window-top);
   --inset-window-sm: var(--app-window-top-sm);
   --inset-window-lg: var(--app-window-top-lg);
+  --inset-window-wide: var(--app-window-top-wide);
+  --inset-window-center: var(--app-window-center);
   /* max-h-window-max: not --spacing-window-lg, which w-window-lg would read before --container-window-lg */
   --spacing-window-max: var(--app-window-max);
   --spacing-window-max-lg: var(--app-window-max-lg);
+  --spacing-window-max-wide: var(--app-window-max-wide);
   --z-index-raised: var(--app-z-raised);
   --z-index-sidebar: var(--app-z-sidebar);
   --z-index-composer: var(--app-z-composer);
@@ -406,9 +427,6 @@
   --spacing-below-topbar: var(--app-screen-below-topbar);
   --spacing-playhead: var(--app-playhead);
   --spacing-playhead-offset: calc(var(--app-playhead) / 2);
-  --spacing-activity-indent: var(--app-activity-indent);
-  --spacing-time-column: var(--app-time-column);
-  --spacing-run-when: var(--app-run-when);
   --spacing-bar-tick: var(--app-bar-tick);
   --spacing-today-top: var(--app-today-top);
   --spacing-chat-empty-top: var(--app-chat-empty-top);
@@ -487,6 +505,7 @@
 /* App font sizes. After the block above, whose --text-*: initial would clear them. */
 @theme inline {
   --text-hero: var(--app-text-hero);
+  --text-window-title: var(--app-text-window-title);
   --text-parent: inherit;  /* a component's own text size gives way to its parent's */
 }
 

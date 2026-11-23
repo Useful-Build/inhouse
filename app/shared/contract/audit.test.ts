@@ -48,6 +48,8 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   'library.restored': { action: 'library.restored', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA', 'f_BBBBBBBBBBBBBBBBBBBBBB'] },
   'today.set_aside': { action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason: 'snoozed' },
   'restore.confirmed': { action: 'restore.confirmed', restoreId: '20261122T191611123Z-0a1b2c3d', backupId: '20261121T020000000Z-ffee0011', approvedBy: m },
+  'privacy.requested': { action: 'privacy.requested', requestId: 'pr_AAAAAAAAAAAAAAAAAAAAAA', topic: 'customers/redact', parsed: true },
+  'privacy.closed': { action: 'privacy.closed', requestId: 'pr_AAAAAAAAAAAAAAAAAAAAAA', topic: 'shop/redact', by: 'release' },
   'restore.member_placeholder': { action: 'restore.member_placeholder', memberId: m, restoreId: '20261122T191611123Z-0a1b2c3d' },
 }
 const word = fc.stringMatching(/^[A-Z][a-z]{1,11}$/)
@@ -167,17 +169,17 @@ describe('P3 memory lines (W6, item 19)', () => {
 //  7. a count or a list goes out of its bounds (need 0 to 2, 1 to 3 changes each once, 1 to 100 files, bytes 1 to the cap);
 //  8. the Library's type list drifts from P3's chat file type list.
 describe('P4 lines (wave-4 PR0)', () => {
-  const P4_GET = ['/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download']
+  const P4_GET = ['/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download', '/api/routines/:id/runs']
   const rt = 'rt_AAAAAAAAAAAAAAAAAAAAAA'
   const f = 'f_AAAAAAAAAAAAAAAAAAAAAA'
   const texts = ['Morning check', 'Check refunds every morning and tell me', 'Q3 invoices.pdf', 'Refund spike on order 1001', 'routine morning check']
 
-  it('support.access takes the five P4 read patterns with GET only, and nothing concrete (failure 5)', () => {
+  it('support.access takes the six P4 read patterns with GET only, and nothing concrete (failure 5)', () => {
     for (const route of P4_GET) {
       expect(ok({ action: 'support.access', grantId: g, method: 'GET', route }), route).toBe(true)
       expect(ok({ action: 'support.access', grantId: g, method: 'PUT', route }), route).toBe(false)
     }
-    for (const route of ['/api/routines/rt_AAAAAAAAAAAAAAAAAAAAAA', '/api/library/f_AAAAAAAAAAAAAAAAAAAAAA/download', '/api/library?kind=images', '/api/routines/:id', '/api/library/:id', '/api/today/:id/aside']) {
+    for (const route of ['/api/routines/rt_AAAAAAAAAAAAAAAAAAAAAA', '/api/library/f_AAAAAAAAAAAAAAAAAAAAAA/download', '/api/routines/rt_AAAAAAAAAAAAAAAAAAAAAA/runs', '/api/library?kind=images', '/api/routines/:id', '/api/library/:id', '/api/today/:id/aside']) {
       expect(ok({ action: 'support.access', grantId: g, method: 'GET', route }), route).toBe(false)
     }
   })
@@ -276,6 +278,7 @@ describe('P4 lines (wave-4 PR0)', () => {
       'library.uploaded', 'library.deleted', 'library.restored',
       'today.set_aside',
       'restore.confirmed', 'restore.member_placeholder',
+      'privacy.requested', 'privacy.closed',
     ])
   })
 })
@@ -291,7 +294,7 @@ describe('support.access write pairs (P4 review fold)', () => {
     ['PUT', '/api/today/:id/aside'],
     ['POST', '/api/library/delete'], ['POST', '/api/library/restore'],
   ] as const
-  const READS = ['/api/members', '/api/memory', '/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download']
+  const READS = ['/api/members', '/api/memory', '/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download', '/api/routines/:id/runs']
 
   it('takes each write pair, and its route with no other method', () => {
     for (const [method, route] of WRITES) {

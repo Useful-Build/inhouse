@@ -19,7 +19,7 @@ export interface LineInput {
 
 /** The row the change touched, found by `where` (with `params`) and the write's `stamp` on its `req_id`. */
 export interface Guard {
-  table: 'members' | 'settings' | 'support_grants' | 'memories' | 'today_aside'
+  table: 'members' | 'settings' | 'support_grants' | 'memories' | 'today_aside' | 'privacy_requests'
   where: string
   params: readonly SqlValue[]
   stamp: string

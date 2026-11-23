@@ -231,6 +231,16 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   async runsHealth(): Promise<RunsHealth> {
     return this.core.runsHealth(this.sched.quarantinedCount())
   }
+  /** Keep the last failure in this object's flags so a D1 write failure is observable after D1 recovers. */
+  async noteEgressRecordFailure(): Promise<void> {
+    this.ctx.storage.sql.exec(
+      "INSERT INTO flags (key, value) VALUES ('egress_record_failed_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      Date.now(),
+    )
+  }
+  async lastEgressRecordFailure(): Promise<number | null> {
+    return this.ctx.storage.sql.exec<{ value: number }>("SELECT value FROM flags WHERE key = 'egress_record_failed_at'").toArray()[0]?.value ?? null
+  }
   async drain(): Promise<DrainState> {
     return this.core.drain()
   }

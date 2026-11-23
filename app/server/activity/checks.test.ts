@@ -73,7 +73,8 @@ describe('the tables (failure 2)', () => {
       for (const s of slotsOfRow([t.text, t.who])) expect(allowed.has(s), `${id} slot ${s}`).toBe(true)
       expect(t.body, id).toBeUndefined()
     }
-    expect(Object.keys(NOTICE_TEMPLATES).sort()).toEqual(['morning_check_found', 'routine_failed'])
+    // P8a F2 adds the three Shopify privacy notices (no fields, no body).
+    expect(Object.keys(NOTICE_TEMPLATES).sort()).toEqual(['morning_check_found', 'privacy_customer_redact', 'privacy_data_request', 'privacy_shop_redact', 'routine_failed'])
   })
 })
 

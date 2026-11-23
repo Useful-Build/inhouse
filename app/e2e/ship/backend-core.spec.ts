@@ -229,7 +229,8 @@ test('S1: Open the app as the Admin and see your own name and role in the accoun
   await openAs(context, page, 'admin')
   const menu = await accountMenu(page)
   await expect(menu).toContainText(people.admin.name)
-  await expect(menu).toContainText(`${people.admin.email} · Admin`)
+  await expect(menu).toContainText(people.admin.email)
+  await expect(menu.getByText('Admin', { exact: true })).toBeVisible()
 })
 
 test('S2: Change the time zone in Settings, reload, and it\'s still set', async ({ context, page }) => {
@@ -296,7 +297,8 @@ test('S5: As a Member, the team pages are read-only and an admin-only action isn
   await openAs(context, page, 'dana')
   const menu = await accountMenu(page)
   await expect(menu).toContainText(`${people.dana.name}`)
-  await expect(menu).toContainText(`${people.dana.email} · Member`)
+  await expect(menu).toContainText(people.dana.email)
+  await expect(menu.getByText('Member', { exact: true })).toBeVisible()
   await closeMenu(page)
   // A team setting is text for a Member, not a control; a personal one is theirs to change.
   await settingsPage(page, 'Your settings', 'General')
@@ -435,7 +437,8 @@ test('S8: The Admin invites a person; their first sign-in lands as a Member with
   await ready(theirs)
   const menu = await accountMenu(theirs)
   await expect(menu).toContainText(who.name)
-  await expect(menu).toContainText(`${who.email} · Member`)
+  await expect(menu).toContainText(who.email)
+  await expect(menu.getByText('Member', { exact: true })).toBeVisible()
 })
 
 test('S9: A person who wasn\'t invited sees "You\'re not on this team". A removed member\'s next request is refused', async ({ browser, context, page, request }) => {

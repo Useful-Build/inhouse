@@ -15,7 +15,7 @@ const card = (page: Page, title: string) => page.getByRole('article').filter({ h
 
 test('Act: money drafts need a review, the Kestrel reorder holds 10 s then is final, the restock keeps Undo, counts agree', async ({ page }) => {
   await start(page, 'Act')
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you. A fix is drafted for each.')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('6 things need you. Drafts are ready.')
   await expect(badge(page)).toContainText('6')
 
   // Money: no one-tap approve on the card.
@@ -24,20 +24,26 @@ test('Act: money drafts need a review, the Kestrel reorder holds 10 s then is fi
   await kestrel.getByRole('button', { name: 'Review' }).click()
 
   const panel = page.getByRole('dialog')
-  await expect(panel).toContainText('Spends $9,600')
-  await expect(panel).toContainText('Remembered: Kestrel ships in 14 days')
+  // The main action names the amount it moves; the review window shows no risk tag or memory line (UI plan 3, round 4).
+  await expect(panel.getByRole('button', { name: /^Approve and send to Kestrel/ })).toContainText('$9,600')
+  await expect(panel).not.toContainText('Remembered')
   await expect(panel).toContainText('Dana Kim usually signs off orders over $5,000')
   await page.screenshot({ path: test.info().outputPath('act-panel-kestrel.png') })
-  await panel.getByRole('button', { name: 'Approve and send to Kestrel' }).click()
+  await panel.getByRole('button', { name: /^Approve and send to Kestrel/ }).click()
 
   const toast = page.getByRole('status').filter({ hasText: 'Approved. It goes out in 10 seconds.' })
   await expect(toast).toBeVisible()
   await expect(toast.getByRole('button', { name: 'Undo', exact: true })).toBeVisible()
-  await expect(panel).toContainText('Approved: reorder 600 ridge 30l packs'.replace('ridge 30l packs', 'Ridge 30L Packs'))
+  // Approve moves the window straight on to the next draft that needs you.
+  await expect(panel.getByRole('heading', { level: 2 })).not.toHaveText('Ridge 30L Pack runs out in 9 days')
   await page.keyboard.press('Escape')
   await expect(page.getByRole('heading', { level: 1 })).toContainText('5 left to approve today.')
   await expect(badge(page)).toContainText('5')
   await expect(kestrel).toContainText(/Approved by Sam at \d{1,2}:\d\d\s[AP]M · going out/)
+  // Opened again during the hold, its window says what was approved.
+  await kestrel.click({ position: { x: 12, y: 12 } })
+  await expect(panel).toContainText('Approved: reorder 600 Ridge 30L Packs')
+  await page.keyboard.press('Escape')
   await page.screenshot({ path: test.info().outputPath('act-hold.png') })
 
   // After 10 s: sent, final, no Undo anywhere.
@@ -69,7 +75,7 @@ test('Act: money drafts need a review, the Kestrel reorder holds 10 s then is fi
 
 test('Chat: the stuck-orders question always gives the same table and a 6-step, 9.4 s trace', async ({ page }) => {
   await start(page, 'Act')
-  await page.getByRole('textbox', { name: 'Ask your Inhouse agent' }).fill('Which orders are stuck over 3 days?')
+  await page.getByRole('textbox', { name: 'Ask Inhouse' }).fill('Which orders are stuck over 3 days?')
   await page.keyboard.press('Enter')
   await expect(page.locator('[data-composer]').getByRole('button', { name: 'Stop' })).toBeVisible()
   const chat = page.locator('main')
@@ -96,7 +102,7 @@ test('Chat: the stuck-orders question always gives the same table and a 6-step, 
 test('Chat: Stop ends a run and says nothing was changed', async ({ page }) => {
   await page.clock.install() // time keeps flowing; runFor adds app time on top, so no real sleep
   await start(page, 'Act', 'Normal', '#/chats')
-  await page.getByRole('textbox', { name: 'Message your Inhouse agent' }).fill('Why did refunds jump this week?')
+  await page.getByRole('textbox', { name: 'Message Inhouse' }).fill('Why did refunds jump this week?')
   await page.keyboard.press('Enter')
   await page.locator('[data-composer]').getByRole('button', { name: 'Stop' }).click()
   await expect(page.getByText('You stopped your Inhouse agent. Nothing was changed.')).toBeVisible()
@@ -106,7 +112,7 @@ test('Chat: Stop ends a run and says nothing was changed', async ({ page }) => {
 
 test('Run: 4 handled, 3 need you; the jacket is paused by Inhouse agent with 5 emails waiting; Pause stops routines', async ({ page }) => {
   await start(page, 'Run')
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('4 handled before you woke up. 3 need you.')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('4 handled today. 3 need you.')
   await expect(card(page, 'Trail Shell Jacket (M, Olive) is oversold by 5')).toContainText('Paused · emails wait for you')
   await card(page, 'Trail Shell Jacket (M, Olive) is oversold by 5').click()
   const panel = page.getByRole('dialog')
@@ -116,17 +122,18 @@ test('Run: 4 handled, 3 need you; the jacket is paused by Inhouse agent with 5 e
   await page.screenshot({ path: test.info().outputPath('run-today.png'), fullPage: true })
 
   await page.getByRole('button', { name: 'Pause', exact: true }).click()
-  await expect(page.getByText('Inhouse agent is paused', { exact: true })).toBeVisible()
+  await expect(page.getByRole('status', { name: 'Inhouse agent is paused', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeVisible()
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Routines' }).click()
-  await expect(page.getByText('Paused', { exact: true }).first()).toBeVisible()
+  // On the Routines page itself: the top bar's status also reads "Paused" now.
+  await expect(page.getByRole('main').getByText('Paused', { exact: true }).first()).toBeVisible()
   await page.screenshot({ path: test.info().outputPath('run-paused-routines.png'), fullPage: true })
 })
 
 test('Tool disconnected: banner, Gorgias question fails with Try again', async ({ page }) => {
   await start(page, 'Act', 'Tool disconnected')
   await expect(page.getByRole('alert')).toContainText('Gorgias is disconnected.')
-  await page.getByRole('textbox', { name: 'Ask your Inhouse agent' }).fill('What are customers saying in Gorgias tickets?')
+  await page.getByRole('textbox', { name: 'Ask Inhouse' }).fill('What are customers saying in Gorgias tickets?')
   await page.keyboard.press('Enter')
   await expect(page.getByText(/I couldn't read Gorgias/)).toBeVisible({ timeout: 5_000 })
   await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible()

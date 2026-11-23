@@ -24,4 +24,14 @@ export const NOTICE_TEMPLATES: Readonly<Record<string, NoticeTemplate>> = {
   morning_check_found: {
     source: 'morning-check', text: 'The morning check found {items:thing}', who: 'Your Inhouse agent', fields: { items: 'number' },
   },
+  // P8a F2: Shopify sent a privacy (compliance) request for this store. To the brand's admins; no field names the customer.
+  privacy_data_request: {
+    source: 'shopify-privacy', text: 'Shopify sent a customer data request. The Inhouse team will answer it within 30 days', who: 'Inhouse', fields: {},
+  },
+  privacy_customer_redact: {
+    source: 'shopify-privacy', text: "Shopify asked to erase a customer's data. The Inhouse team will handle it within 30 days", who: 'Inhouse', fields: {},
+  },
+  privacy_shop_redact: {
+    source: 'shopify-privacy', text: "Shopify asked to erase this store's data. The Inhouse team will follow up with you", who: 'Inhouse', fields: {},
+  },
 }

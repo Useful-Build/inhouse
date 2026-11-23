@@ -40,6 +40,8 @@ const sample: Record<AuditArgs['action'], AuditArgs> = {
   'library.restored': { action: 'library.restored', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA'] },
   'today.set_aside': { action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason: 'snoozed' },
   'restore.confirmed': { action: 'restore.confirmed', restoreId: '20261122T191611123Z-0a1b2c3d', backupId: '20261121T020000000Z-ffee0011', approvedBy: 'm_a' },
+  'privacy.requested': { action: 'privacy.requested', requestId: 'pr_AAAAAAAAAAAAAAAAAAAAAA', topic: 'customers/redact', parsed: true },
+  'privacy.closed': { action: 'privacy.closed', requestId: 'pr_AAAAAAAAAAAAAAAAAAAAAA', topic: 'shop/redact', by: 'release' },
   'restore.member_placeholder': { action: 'restore.member_placeholder', memberId: 'm_a', restoreId: '20261122T191611123Z-0a1b2c3d' },
 }
 const names = (id: string) => ({ m_a: 'Ada Example' } as Record<string, string>)[id] ?? null
@@ -116,7 +118,7 @@ describe('P4 lines (wave-4 PR0): literal texts, and no id in any of them', () =>
   it('names each P4 brand_data read', () => {
     for (const [route, detail] of [
       ['/api/routines', 'Routines'], ['/api/today', 'Today'], ['/api/activity', 'Activity'], ['/api/library', 'The Library'],
-      ['/api/library/:id/download', 'A Library file'],
+      ['/api/library/:id/download', 'A Library file'], ['/api/routines/:id/runs', "A routine's runs"],
     ] as const) expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'GET', route }, names), route).toEqual({ what: 'looked at brand data', detail })
   })
   it('says what happened to a routine', () => {
