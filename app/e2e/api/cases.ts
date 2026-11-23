@@ -145,8 +145,8 @@ export const CASES: Record<string, RouteCase> = {
   'POST /api/routines/:id/restore': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/restore`, json: { ifRev: 1 }, passes: 404 },
   'GET /api/routines/:id/runs': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/runs`, passes: 404 },
   'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: 404 },
-  // P6a's list handlers return 200, the empty create body returns 400, and writes to unknown ids return 404.
-  // Row 83 is personal: the handler answers an unknown id 404 before its requireObject, as routes 44 and 49 do.
+  // Rows 77 to 83: lists return 200, an empty create body returns 400, and writes to unknown ids return 404.
+  // Row 83 is personal: with a well-formed { ifRev } body, an unknown id returns 404 before the owner check.
   'GET /api/memory/waiting': { design: d('brand_data', ['admin', 'inhouse']), path: '/api/memory/waiting', passes: 200 },
   'PUT /api/memory/brand/:id/approved': { design: d('brand_data', ['admin', 'inhouse']), path: `/api/memory/brand/${NO_MEMORY}/approved`, json: { approved: true, ifRev: 1 }, passes: 404 },
   'GET /api/skills': { design: d('technical', ALL), path: '/api/skills', passes: 200 },

@@ -233,11 +233,11 @@ describe('run.mjs, through main()', () => {
     expect((await go(['--target', 'fake', '--out', path.join(file, 'sub'), '--sha', 'abc1234'])).code).toBe(2)
   })
 
-  it('a product dispatch with valid gates refuses with the reader message (exit 2), runs nothing and writes nothing', async () => {
+  it('a product dispatch with valid gates but no eval deployment refuses in its preflight (exit 2), runs nothing and writes nothing', async () => {
     const out = tmp()
-    const r = await go(['--target', 'product', '--model', 'claude-sonnet-5-5', '--paid', '--budget', '10', '--page-origin', 'https://x.test', '--out', out], { git: () => 'abc1234' })
+    const r = await go(['--target', 'product', '--model', 'claude-sonnet-5-5', '--paid', '--budget', '10', '--page-origin', 'https://x.test', '--out', out], { git: () => 'abc1234', env: {} })
     expect(r.code).toBe(2)
-    expect(r.logs).toContain('evidence reader')
+    expect(r.logs).toContain('must all be set')
     expect(readdirSync(out)).toEqual([])
   })
 
@@ -288,5 +288,27 @@ describe('run.mjs, through main()', () => {
     expect((await go(['--target', 'fake', '--out', out, '--sha', 'abc1234'], { random: () => 'r1', now: () => fixed })).code).toBe(2)
     expect((await go(['--target', 'fake', '--agent', 'obedient', '--out', out, '--sha', 'abc1234'])).code).toBe(1)
     expect((await go(['--target', 'fake', '--model', 'x', '--out', out, '--sha', 'abc1234'])).code).toBe(2)
+  })
+})
+
+describe('the server\'s spend', () => {
+  it('stops before a case once the server-reported spend plus the next estimate is over the budget, even when the cases booked less', async () => {
+    const cases = READ_SIDE_CASES.slice(0, 3)
+    let server = 0
+    const target = { ...createFakeReadSideTarget('honest'), name: 'product' as const, honorsPending: false, async spentUsd() { return server } }
+    const ran: string[] = []
+    const r = await runReadSide({
+      target: { ...target, async run(c) { ran.push(c.id); server += 5; return { run: (await createFakeReadSideTarget('honest').run(c)).run, costUsd: 0 } } },
+      cases: cases.map(({ pending: _p, ...c }) => c), budgetUsd: 10, estimateUsd: () => 1,
+    })
+    expect(ran).toEqual([cases[0]!.id, cases[1]!.id])
+    expect(r.stopped).toMatchObject({ reason: 'budget', at: cases[2]!.id })
+    expect(r.spentUsd).toBe(10)
+  })
+  it('a spend read that fails stops the run as infrastructure before the case', async () => {
+    const target = { ...createFakeReadSideTarget('honest'), name: 'product' as const, honorsPending: false, async spentUsd(): Promise<number> { throw new Error('route 42 answered 500') } }
+    const r = await runReadSide({ target, cases: READ_SIDE_CASES.slice(0, 1).map(({ pending: _p, ...c }) => c), budgetUsd: 10, estimateUsd: () => 1 })
+    expect(r.stopped).toMatchObject({ reason: 'infrastructure' })
+    expect(r.outcomes).toEqual([])
   })
 })

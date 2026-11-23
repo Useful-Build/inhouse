@@ -5,7 +5,8 @@
 // test bundle, 1 for a refusal, 2 when the scan can't run.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { readdirSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -57,4 +58,51 @@ test('a test bundle that is clean fails the scan: it proves nothing', () => {
 test('a missing folder or a flag with no value exits 2, never 0 or 1', () => {
   assert.equal(run('--deploy', `${FIXTURES}/does-not-exist`, '--test', TEST).status, 2)
   assert.equal(run('--deploy').status, 2)
+})
+
+// Regression: realistic multi-MB bundles with ~260 metafile inputs trigger concurrent Maglev compilation right before
+// exit. Calling process.exit() from top-level ESM deadlocks Node 26's DisposePlatform() against Maglev's GC barrier;
+// setting process.exitCode lets Node dispose the Isolate cleanly first.
+test('realistic multi-MB bundles with hundreds of metafile inputs exit promptly without deadlocking', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'check-hub-build-large-'))
+  try {
+    const deployDir = join(tmp, 'deploy')
+    const testDir = join(tmp, 'test')
+    mkdirSync(deployDir)
+    mkdirSync(testDir)
+    const canaries = readFileSync(join(app, TEST, 'index.js'), 'utf8')
+    const chunk = `export const a = 1; // ${'x'.repeat(100)}\n`
+    const pad = bytes => chunk.repeat(Math.ceil(bytes / chunk.length))
+    const deployInputs = Object.fromEntries(Array.from({ length: 250 }, (_, i) => [`hub/mod-${i}/index.ts`, { bytes: 100 }]))
+    const testInputs = {
+      ...deployInputs,
+      'hub/testing/index.ts': { bytes: 100 },
+      ...Object.fromEntries(Array.from({ length: 15 }, (_, i) => [`test/upstreams/mod-${i}.ts`, { bytes: 100 }])),
+    }
+    writeFileSync(join(deployDir, 'index.js'), pad(950_000))
+    writeFileSync(join(deployDir, 'index.js.map'), pad(1_700_000))
+    writeFileSync(join(deployDir, 'bundle-meta.json'), JSON.stringify({
+      inputs: deployInputs,
+      outputs: { [join(deployDir, 'index.js')]: { bytes: 950_000 } },
+    }))
+    writeFileSync(join(testDir, 'index.js'), `${pad(1_700_000)}\n${canaries}`)
+    writeFileSync(join(testDir, 'index.js.map'), `${pad(2_600_000)}\n${canaries}`)
+    writeFileSync(join(testDir, 'bundle-meta.json'), JSON.stringify({
+      inputs: testInputs,
+      outputs: { [join(testDir, 'index.js')]: { bytes: 1_700_000 } },
+    }))
+
+    for (let i = 0; i < 3; i++) {
+      const r = spawnSync(process.execPath, ['scripts/check-hub-build.mjs', '--deploy', deployDir, '--test', testDir], {
+        cwd: app,
+        encoding: 'utf8',
+        timeout: 10_000,
+      })
+      assert.equal(r.signal, null, `run ${i} hung and was killed by ${r.signal}`)
+      assert.equal(r.status, 0, r.stdout + r.stderr)
+      assert.match(r.stdout, /ok {4}module graph: caught the test bundle \(16 hits\)\./)
+    }
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
 })

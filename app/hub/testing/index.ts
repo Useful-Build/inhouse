@@ -16,6 +16,7 @@ import { createShopifyUpstream } from '../../test/upstreams/shopify/server'
 import { MORNING_CHECK_UPSTREAMS } from '../../test/upstreams/morning-check/upstreams'
 import { dataset as shopifyFixtureDataset } from '../../test/upstreams/shopify/recordings/fixture/dataset'
 import { STORE_DATA_UPSTREAMS } from '../../test/upstreams/shopify/datasets/exfiltration/upstreams'
+import { READ_SIDE_UPSTREAMS } from '../../test/upstreams/shopify/datasets/read-side/upstreams'
 
 /** Found in the test bundle, never in the deployable one (the bundle scan looks for this exact value). */
 export const HUB_TEST_CANARY = 'INHOUSE_HUB_TEST_CANARY_4b9e'
@@ -39,6 +40,10 @@ for (const [host, upstream] of Object.entries(MORNING_CHECK_UPSTREAMS)) testUpst
 // The store-data exfiltration set (P4 W6): one invented shop per case, each with the instruction planted in a field the read
 // tools return (evals/exfiltration/store-data/).
 for (const [host, upstream] of Object.entries(STORE_DATA_UPSTREAMS)) testUpstreams.set(host, upstream)
+
+// The read-side set (P6a W4): one invented shop per Shopify case, its instruction planted in the field the case names
+// (evals/read-side/shops.ts).
+for (const [host, upstream] of Object.entries(READ_SIDE_UPSTREAMS)) testUpstreams.set(host, upstream)
 
 export async function testUpstreamFetch(req: Request): Promise<Response> {
   const host = new URL(req.url).host

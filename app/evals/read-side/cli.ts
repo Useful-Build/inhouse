@@ -10,6 +10,8 @@ import { Refused, parseReadSideArgs } from './args.ts'
 import { createFakeReadSideTarget } from './fake-target.ts'
 import { buildReport, toMarkdown } from './report.ts'
 import { runReadSide } from './runner.ts'
+import type { ReadSideTarget } from './runner.ts'
+import { wireEval, type Wired } from './product/setup.ts'
 
 export interface Deps {
   log: (m: string) => void
@@ -20,6 +22,11 @@ export interface Deps {
   git: (args: string[]) => string
   /** Writes a file; `flag` 'wx' refuses to overwrite. */
   writeFile: (path: string, text: string, flag?: string) => void
+  env: Record<string, string | undefined>
+  /** Wires the product target to the eval deployment, its preflight and the effort pin included (product/setup.ts). */
+  wire: typeof wireEval
+  /** Registers the stop handlers: on SIGINT or SIGTERM `stop` gives everything back, then the process exits 130 or 143. */
+  onSignals: (stop: () => Promise<void>) => void
 }
 
 const defaults: Deps = {
@@ -33,9 +40,24 @@ const defaults: Deps = {
     if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed`)
     return r.stdout.trim()
   },
+  env: process.env,
+  wire: wireEval,
+  onSignals: (stop) => {
+    // One stop per run: a repeat signal while it gives things back is said and ignored, so a second Ctrl-C can't cut it short.
+    let stopping = false
+    for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]] as const) {
+      process.on(signal, () => {
+        if (stopping) {
+          console.error(`read-side: ${signal} again: still giving back the run's session, routines, effort, shop override and lease`)
+          return
+        }
+        stopping = true
+        console.error(`read-side: ${signal}: stopping the live turn, deleting the run's routines, putting back the effort and the shop override, giving back the eval lease`)
+        void stop().finally(() => process.exit(code))
+      })
+    }
+  },
 }
-
-export const REFUSED_PRODUCT = 'the product target\'s evidence reader is not wired in this build, so no case could be graded. Use --target fake for the dry run'
 
 export async function main(argv: string[], over: Partial<Deps> = {}): Promise<number> {
   const d = { ...defaults, ...over }
@@ -61,25 +83,38 @@ export async function main(argv: string[], over: Partial<Deps> = {}): Promise<nu
     const runId = `${now.toISOString().slice(11, 19).replace(/:/g, '')}-${d.random()}`
     const dir = path.resolve(args.out, `${date}-${sha}-read-side-${label}-${runId}`)
 
-    d.log(`target ${args.target}, model ${args.model}, effort medium: ${args.cases.length} cases x 1 run, estimate $${args.target === 'product' ? estimateUsd([...args.cases], 1).toFixed(2) : '0.00'}${args.budgetUsd !== null ? `, budget $${args.budgetUsd}` : ''}`)
+    d.log(`target ${args.target}, model ${args.model}, effort medium: ${args.cases.length} cases x 1 run, estimate $${args.target === 'product' ? estimateUsd(args.cases.filter(c => c.pending === undefined), 1).toFixed(2) : '0.00'}${args.budgetUsd !== null ? `, budget $${args.budgetUsd}` : ''}`)
+    // The product target's preflight runs here, before the results directory exists and before any spend: a refusal is exit 2.
+    // The stop handlers come first, with the run's close filled in as soon as the wiring has one, so a signal at any point
+    // gives back what was taken so far; from the wiring on, every way out of this function closes it too.
+    let wired: Wired | null = null
+    let close: (() => Promise<string[]>) | null = null
+    let target: ReadSideTarget
     if (args.target === 'product') {
-      // Never a fall-through to the fake: the product path's evidence (planting, rows, files, the run's transcript) needs the eval deployment.
-      throw new Refused(REFUSED_PRODUCT)
+      d.onSignals(async () => { for (const e of await (close?.() ?? Promise.resolve([]))) d.err(`read-side: ${e}`) })
+      wired = await d.wire({ env: d.env, model: args.model, budgetUsd: args.budgetUsd!, cases: args.cases, pageOrigin: args.pageOrigin, note: d.log, register: (c) => { close = c } })
+      close = wired.close
+      target = wired.target
+    } else {
+      target = createFakeReadSideTarget(args.agent)
     }
-    const target = createFakeReadSideTarget(args.agent)
-    // Never deleted or overwritten: mkdir fails if the directory exists. Each case is appended as the run goes.
-    mkdirSync(args.out, { recursive: true })
-    mkdirSync(dir)
-    const jsonl = path.join(dir, 'cases.jsonl')
-    d.writeFile(jsonl, '', 'wx')
     let result
+    let leftovers: string[] = []
     try {
+      // Never deleted or overwritten: mkdir fails if the directory exists. Each case is appended as the run goes.
+      mkdirSync(args.out, { recursive: true })
+      mkdirSync(dir)
+      const jsonl = path.join(dir, 'cases.jsonl')
+      d.writeFile(jsonl, '', 'wx')
       result = await runReadSide({ target, cases: args.cases, budgetUsd: args.budgetUsd, onCase: e => appendFileSync(jsonl, `${JSON.stringify(e)}\n`) })
     } finally {
       await target.close?.()
+      leftovers = close ? await (close as () => Promise<string[]>)() : []
+      for (const e of leftovers) d.err(`read-side: ${e}`)
+      if (leftovers.length > 0) d.err('read-side: the run did not give everything back (above): clear it before the next run')
     }
     const report = buildReport(
-      { date, sha, target: args.target, ...(args.target === 'fake' ? { agent: args.agent } : {}), model: args.model, pageOrigin: args.pageOrigin, approvedCapUsd: args.budgetUsd, partial: args.partial, dirty },
+      { date, sha, target: args.target, ...(args.target === 'fake' ? { agent: args.agent } : {}), ...(wired ? { teamRequests: wired.teamRequests, leftovers } : {}), model: args.model, pageOrigin: args.pageOrigin, approvedCapUsd: args.budgetUsd, partial: args.partial, dirty },
       args.cases, result,
     )
     // Both files are written beside their final names, then both renamed into place: a failed write leaves no report in the dir.

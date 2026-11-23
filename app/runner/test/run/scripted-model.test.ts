@@ -31,11 +31,18 @@ const webReq = (messages: Msg[]) =>
 /** A main-loop request with the memory tool in its list, as `memory-save` expects. */
 const memoryReq = (messages: Msg[]) =>
   req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__memory_save' }] })
-/** The main-loop request a scenario expects: a structured one for the structured scenarios, a WebFetch one for those, the memory one for `memory-save`. */
-/** A main-loop request with the memory search tool in its list, as `memory-recall` expects. */
+/** A main-loop request with the memory search tool in its list, as `memory-recall` and the read-side search scenarios expect. */
 const recallReq = (messages: Msg[]) =>
   req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__memory_search' }] })
-const mainFor = (name: string) => (name.startsWith('structured') ? structuredReq : name.startsWith('webfetch') ? webReq : name.startsWith('memory-save') ? memoryReq : name.startsWith('memory-recall') ? recallReq : mainReq)
+/** Read-side proof scenarios whose turn 0 searches memory (`mainLoop('mcp__inhouse__memory_search')`). */
+const readSideSearch = new Set(['rs-honest', 'rs-obedient-memory', 'rs-obedient-routine', 'rs-obedient-file'])
+/** The main-loop request a scenario expects: a structured one for the structured scenarios, a WebFetch one for those, the memory one for `memory-save`, and the memory-search one for `memory-recall` and the read-side search scenarios. */
+const mainFor = (name: string) =>
+  name.startsWith('structured') ? structuredReq
+  : name.startsWith('webfetch') ? webReq
+  : name.startsWith('memory-save') ? memoryReq
+  : name.startsWith('memory-recall') || readSideSearch.has(name) ? recallReq
+  : mainReq
 const convo = (assistants: number) => [{ role: 'user' as const, content: 'q' }, ...Array.from({ length: assistants }, () => [{ role: 'assistant' as const, content: 'a' }, { role: 'user' as const, content: 'r' }]).flat()]
 
 const turn = (i: number): ScriptedTurn => ({ content: [{ type: 'text', text: `turn ${i}` }] })
@@ -98,11 +105,12 @@ describe('the scripted model', () => {
 
   it.each(Object.keys(SCENARIOS))('%s: a side request on turn 0 (no tool list, or another model) is a miss', async (name) => {
     const model = createScriptedModel(SCENARIOS)
-    expect((await model.handle(req(convo(0), false, { model: HARNESS_MODEL }), name)).status).toBe(400)
-    expect((await model.handle(req(convo(0), false, { model: 'claude-haiku-5-5', tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__question_ask' }] }), name)).status).toBe(400)
+    const messages: Msg[] = [{ role: 'user', content: 'q [fx0a1b2c3d]' }]
+    expect((await model.handle(req(messages, false, { model: HARNESS_MODEL }), name)).status).toBe(400)
+    expect((await model.handle(req(messages, false, { model: 'claude-haiku-5-5', tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__question_ask' }] }), name)).status).toBe(400)
     // The miss names the failed check (#tool-turns): no tool list, then the wrong model.
     expect(model.misses.map((m) => m.reason)).toEqual(['the request does not match the turn: no tool list (a side request)', `the request does not match the turn: model claude-haiku-5-5, not ${HARNESS_MODEL}`])
-    expect((await model.handle(mainFor(name)(convo(0)), name)).status).toBe(200)
+    expect((await model.handle(mainFor(name)(messages), name)).status).toBe(200)
   })
 
   it.each([

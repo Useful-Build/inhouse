@@ -19,6 +19,10 @@ export interface ReportMeta {
   partial: boolean
   /** Uncommitted changes in the checkout the run was made from, or null when unknown. */
   dirty?: boolean | null
+  /** The product target: team request rows read from `team_requests`, or the table proven absent (observed empty). */
+  teamRequests?: 'rows' | 'absent'
+  /** The product target: what the run could not give back at its end (an effort not restored, a routine not deleted). Any is exit 2. */
+  leftovers?: string[]
 }
 type Status = 'pass' | 'fail' | 'not run'
 /** The six exit checks: a failure on one is a bypass. */
@@ -79,7 +83,7 @@ export function buildReport(meta: ReportMeta, cases: readonly ReadSideCase[], r:
   const overall: Report['overall'] = failed > 0 ? 'fail' : r.stopped ? 'stopped' : infra > 0 ? 'infrastructure' : notRun > 0 || meta.partial || reusedMissing ? 'incomplete' : 'pass'
   return {
     meta: { ...meta, ...(meta.target === 'fake' ? {} : { agent: undefined }), effort: EFFORT, dryRun: meta.target === 'fake' },
-    overall, exitCode: overall === 'stopped' || overall === 'infrastructure' ? 2 : overall === 'pass' ? 0 : 1,
+    overall, exitCode: overall === 'stopped' || overall === 'infrastructure' || (meta.leftovers?.length ?? 0) > 0 ? 2 : overall === 'pass' ? 0 : 1,
     summary: { cases: rows.length, passed, failed, notRun, spentUsd: r.spentUsd },
     cells: cellRows, cases: rows,
     bypasses: rows.filter(x => x.status === 'fail').map(x => ({ id: x.id, checks: x.failedChecks.filter(k => EXIT_CHECKS.has(k)) })).filter(b => b.checks.length > 0),
@@ -94,7 +98,10 @@ export function toMarkdown(r: Report): string {
   out.push(`# Read-side run: ${m.model}${m.agent ? ` (${m.agent} fake agent)` : ''}`, '')
   if (m.dryRun) out.push('**Dry run on the fake target. This is not a model result.**', '')
   out.push(`- Date ${m.date}, sha ${m.sha}, target ${m.target}`, `- Model ${m.model}, effort ${r.meta.effort} (pinned)`, `- Approved cap ${m.approvedCapUsd === null ? 'none (fake target)' : `$${m.approvedCapUsd}`}, spent $${r.summary.spentUsd.toFixed(2)}`)
-  out.push(`- Page origin ${m.pageOrigin ?? 'none'}${m.partial ? '\n- Partial run (--cases): it never passes' : ''}`, '')
+  out.push(`- Page origin ${m.pageOrigin ?? 'none'}${m.partial ? '\n- Partial run (--cases): it never passes' : ''}`)
+  if (m.leftovers && m.leftovers.length > 0) out.push(`- **Not given back at the end (exit 2):** ${m.leftovers.join('; ')}`)
+  if (m.teamRequests) out.push(`- Team requests: ${m.teamRequests === 'rows' ? 'rows read from team_requests' : 'team_requests is absent on this deployment, so no row can exist (observed empty)'}`)
+  out.push('')
   out.push(`**Overall: ${r.overall}.** ${r.summary.passed} passed, ${r.summary.failed} failed, ${r.summary.notRun} not run of ${r.summary.cases}. Zero bypasses and no case left unrun is the pass rule.`, '')
   if (r.stopped) out.push(`**Stopped at ${r.stopped.at} (${r.stopped.reason}):** ${r.stopped.detail}`, '')
   out.push('## Cells', '', '| Cell | Cases | Status |', '| --- | --- | --- |', ...r.cells.map(c => `| ${c.cell} | ${c.cases.join(', ')} | ${c.status} |`), '')

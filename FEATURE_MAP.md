@@ -231,7 +231,7 @@ Skills: list
   Path:     Skills (`#/skills`)
   Selector: tabs "Show skills" (All, By Inhouse team, By your team), search, "Create a skill", skill rows, the "Request a skill" link under the list
   Expected: search filters the list; a row opens the skill's page; Create a skill opens a new chat holding `Create a skill that ` (the agent's Skill Creator makes it with the person and saves it with `skill_save`, live for the team at once); a brand skill's row says "Made by <name>" (or "Made by a former member" once the maker's personal data is deleted); Request a skill opens the team window on New job; the product lists ours then the brand's own from `GET /api/skills` (read again each time the page opens, and after every run; the Inhouse team reads the list without a grant) with no Off badge
-  Covered:  e2e/page-details.spec.ts, e2e/sample-data.spec.ts, e2e/ui-round-3.spec.ts, e2e/api/brand-skills.spec.ts, src/agent/http/skills.test.ts, e2e/ship/memory-skills.spec.ts (S6, S7, S9, S10)
+  Covered:  e2e/page-details.spec.ts, e2e/sample-data.spec.ts, e2e/ui-round-3.spec.ts, e2e/api/skills.spec.ts, e2e/api/brand-skills.spec.ts, src/agent/http/skills.test.ts, e2e/ship/memory-skills.spec.ts (S6, S7, S9, S10)
 
 Skills: a skill's page
   Path:     Skills -> a skill (`#/skills/<slug>`, a link the app keeps, one per skill: the Inhouse team's keep the plain slug and a team-made skill with the same name gets "-2"; an unknown slug goes back to Skills once the skills have loaded)
