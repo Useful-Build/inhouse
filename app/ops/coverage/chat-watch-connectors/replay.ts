@@ -4,34 +4,44 @@
 // `brandAgentRunner`). Both apply rules, never logged row ids, so each is idempotent and safe to repeat.
 import type { KeyedBucket } from '../../../server/db/r2-keys.ts'
 import { runBatch, stmt } from '../../../server/db/sql.ts'
+import { RestoreRefusal } from '../../backup/errors.ts'
 import type { PersonRunner } from '../../backup/reconcile/replay.ts'
 import { deleteChatRows, quietChats } from './brand-agent-storage.ts'
 import { cascadeRowStatements, chatIds, deleteCascadeObjects, ownedBy } from './chat-cascade.ts'
 import { MAX_LIMIT, RETENTION_JOBS, SERVED_BY } from './retention-jobs.ts'
-import type { AgeTag, LoggedCutoff } from './retention-jobs.ts'
+import type { AgeTag, JobContext, LoggedCutoff } from './retention-jobs.ts'
 
 /**
  * Repeats `store`'s custom retention job at the cutoffs one logged run wrote for it (`age` tags included), in rounds
  * until nothing is left past them: no limit, no clock. A store another store's job serves replays as nothing (that
- * job's store carries the cutoffs). Throws by name on a store with no job, or a cutoff the job needs and the log lacks.
+ * job's store carries the cutoffs). Throws `RestoreRefusal` on a store with no job, a missing cutoff, or a busy
+ * BrandAgent chat or unsafe ended run.
  */
 export async function replayRetention(store: string, deps: { db: D1Database; bucket: KeyedBucket; sql?: SqlStorage }, cutoffs: readonly Omit<LoggedCutoff, 'store'>[]): Promise<Record<string, number>> {
   const job = RETENTION_JOBS[store]
   if (job === undefined) {
     if (SERVED_BY[store] !== undefined) return {}
-    throw new Error(`replay: ${store} has no retention job`)
+    throw new RestoreRefusal('deletion_log_invalid', `replay: ${store} has no retention job`)
   }
   const fixed = Object.fromEntries(cutoffs.map(c => [c.age ?? 'own', c.cutoffMs])) as Partial<Record<AgeTag, number>>
   // The chat job checks each id twice in its BrandAgent safety query.
   const limit = store === 'chats' && deps.sql ? Math.floor(MAX_LIMIT / 2) : MAX_LIMIT
-  const ctx = { db: deps.db, bucket: deps.bucket, sql: deps.sql, atMs: null, cutoffMs: fixed.own ?? null, cutoffs: fixed, limit }
+  const ctx: JobContext = { db: deps.db, bucket: deps.bucket, sql: deps.sql, atMs: null, cutoffMs: fixed.own ?? null, cutoffs: fixed, limit, replay: true }
   const removed: Record<string, number> = {}
+  const blocked: string[] = []
   for (;;) {
     const plan = await job.plan(ctx)
-    if (plan.units.length === 0) break
-    const got = await job.run(ctx, plan, async () => {})
-    for (const [s, n] of Object.entries(got)) removed[s] = (removed[s] ?? 0) + n
+    if (plan.blocked?.length) blocked.push(...plan.blocked)
+    if (plan.units.length > 0) {
+      const got = await job.run(ctx, plan, async () => {})
+      for (const [s, n] of Object.entries(got)) removed[s] = (removed[s] ?? 0) + n
+    }
     if (!plan.more) break
+    ctx.after = plan.nextAfter ?? (plan.units.length > 0 ? plan.units[plan.units.length - 1] : ctx.after)
+  }
+  if (blocked.length > 0) {
+    const uniq = [...new Set(blocked)]
+    throw new RestoreRefusal('replay_stopped', `${store}: ${uniq.length} busy (${uniq[0]})`)
   }
   return removed
 }

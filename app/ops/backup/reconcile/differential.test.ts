@@ -9,14 +9,15 @@ import { SYSTEM_MEMBER_ID } from '../../../server/db/ids.ts'
 import { libraryKey } from '../../../server/db/r2-keys.ts'
 import { openStores } from '../../../server/db/stores.ts'
 import type { BrandAgent } from '../../../server/do/brand-agent/index.ts'
+import { brandRetentionDays, retentionStores } from '../../../server/ops/retention-handlers.ts'
 import { seedBrand } from '../../../server/seed/seed.ts'
 import { CHAT_TABLES } from '../../coverage/chat-watch-connectors/brand-agent-storage.ts'
 import { addActivity, addChat, addMemory, addNotice, addRead, withoutIndexes } from '../../coverage/chat-watch-connectors/test-support.ts'
 import { planPersonDeletion, runPersonDeletion } from '../../delete/person.ts'
 import { listAll } from '../../delete/r2.ts'
-import { addPerson, snapshotAll } from '../../delete/test-support.ts'
+import { addPerson, addPhoto, addSetting, snapshotAll } from '../../delete/test-support.ts'
 import { planRetention, runRetention } from '../../retention/retention.ts'
-import { DEFAULT_DAYS, periodsFor } from '../../retention/rules.ts'
+import { DEFAULT_DAYS, hasRetentionWork, periodsFor } from '../../retention/rules.ts'
 import { tables } from '../../tables/index.ts'
 import { backup } from '../backup.ts'
 import { restore } from '../restore.ts'
@@ -95,6 +96,31 @@ const sortRows = (rows: Record<string, SqlStorageValue>[]) =>
 
 const agentState = (sql: SqlStorage) =>
   Object.fromEntries(AGENT_TABLES.map(t => [t, sortRows(sql.exec(`SELECT * FROM ${t}`).toArray())]))
+
+async function assertFts(
+  db: D1Database,
+  checks: { chatKeep?: readonly string[]; chatGone?: readonly string[]; memKeep?: readonly string[]; memGone?: readonly string[] },
+): Promise<void> {
+  const count = async (table: string) => (await db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<{ n: number }>())!.n
+  expect(await count('chat_messages_fts_docsize')).toBe(await count('chat_messages'))
+  expect(await count('memories_fts_docsize')).toBe(await count('memories'))
+  for (const m of checks.chatKeep ?? []) {
+    const r = await db.prepare('SELECT rowid FROM chat_messages_fts WHERE chat_messages_fts MATCH ?').bind(`"${m}"`).all()
+    expect(r.results.length, `chat_messages_fts keep ${m}`).toBeGreaterThan(0)
+  }
+  for (const m of checks.chatGone ?? []) {
+    const r = await db.prepare('SELECT rowid FROM chat_messages_fts WHERE chat_messages_fts MATCH ?').bind(`"${m}"`).all()
+    expect(r.results, `chat_messages_fts gone ${m}`).toEqual([])
+  }
+  for (const m of checks.memKeep ?? []) {
+    const r = await db.prepare('SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?').bind(`"${m}"`).all()
+    expect(r.results.length, `memories_fts keep ${m}`).toBeGreaterThan(0)
+  }
+  for (const m of checks.memGone ?? []) {
+    const r = await db.prepare('SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?').bind(`"${m}"`).all()
+    expect(r.results, `memories_fts gone ${m}`).toEqual([])
+  }
+}
 
 const historyArb = fc.record({
   offsets: fc.array(fc.integer({ min: -60_000, max: 60_000 }), { minLength: 1, maxLength: 3 }),
@@ -175,6 +201,11 @@ it('backup, live retention and person deletion, restore and replay converge acro
     }
 
     for (const chat of history) await addChat(e.DB, bucket, { ...chat, marker: chat.id })
+    // Non-vacuous tool_calls retention: old and edge tool_calls on surviving chat `c_step_only` (chat lastAtMs = B - DAY).
+    await e.DB.batch([
+      e.DB.prepare("INSERT INTO tool_calls (turn_id, n, chat_id, member_id, hook, tool, decision, input_bytes, input_sha256, at_ms) VALUES ('t_c_step_only', 1, 'c_step_only', ?, 'pre', 'shop.old', 'allow', 2, 'ab', ?)").bind(members.admin, stepCut - 1),
+      e.DB.prepare("INSERT INTO tool_calls (turn_id, n, chat_id, member_id, hook, tool, decision, input_bytes, input_sha256, at_ms) VALUES ('t_c_step_only', 2, 'c_step_only', ?, 'pre', 'shop.edge', 'allow', 2, 'ab', ?)").bind(members.admin, stepCut),
+    ])
 
     // Routine separate from migration-seeded `routine-morning-check` (restore checks pristine seeded rows).
     await e.DB.prepare(
@@ -235,11 +266,18 @@ it('backup, live retention and person deletion, restore and replay converge acro
     await e.DB.prepare("INSERT INTO library_marks (file_id, source, deleted_at_ms, deleted_by) VALUES ('f_orphan', 'chat', ?, ?)")
       .bind(trashCut + generated.orphanFileDelta, members.admin).run()
 
-    // Member notices for person deletion (live and replayed).
+    // Surviving active brand memory + personal data for person deletion (settings, memories, photos/, notices & own notice_reads).
+    await addMemory(e.DB, { id: 'mem_keep', owner: null, createdBy: members.admin, marker: 'memkeepbrand', status: 'active', updatedAtMs: B - DAY })
     for (const member of [stopped, retry, members.dana]) {
       const id = `n_${member}`
       await addNotice(e.DB, { id, audience: 'member', member, atMs: B - DAY })
       await addRead(e.DB, members.admin, id, B - DAY)
+    }
+    for (const [tag, member] of [['stopped', stopped], ['retry', retry]] as const) {
+      await addSetting(e.DB, member, { theme: tag }, member, B - DAY)
+      await addMemory(e.DB, { id: `mem_${tag}`, owner: member, createdBy: member, marker: `memperson${tag}`, status: 'active', updatedAtMs: B - DAY })
+      await addPhoto(e.DB, bucket, member)
+      await addRead(e.DB, member, 'nt_1', B - DAY)
     }
 
     const retain = async (names: readonly string[], atMs: number, sql: SqlStorage, logAtMs = atMs) => {
@@ -282,6 +320,17 @@ it('backup, live retention and person deletion, restore and replay converge acro
     expect(expected.d1.library_uploads.map(row => row.id)).toContain('up_keep')
     expect(expected.d1.library_uploads.map(row => row.id)).not.toContain('up_p_0')
     expect(expected.d1.library_uploads.map(row => row.id)).not.toContain('up_t_0')
+    expect(expected.d1.tool_calls.filter(r => r.chat_id === 'c_step_only').map(r => r.n)).toEqual([0, 2])
+    expect(expected.d1.settings.some(r => r.owner === retry)).toBe(false)
+    expect(expected.d1.notice_reads.some(r => r.member_id === retry)).toBe(false)
+    expect(Object.keys(expected.r2).some(k => k.startsWith(`photos/${retry}/`))).toBe(false)
+    const ftsChecks = {
+      chatKeep: ['c_age_1', 'c_stopped', 'c_step_only'],
+      chatGone: ['c_before', 'c_age_0', 'c_trash_0', 'c_retry'],
+      memKeep: ['memkeepbrand', 'mempersonstopped'],
+      memGone: ['memory0', 'mempersonretry'],
+    }
+    await assertFts(e.DB, ftsChecks)
     const expectedAgent = await runInDurableObject(liveAgent(), (_instance, state) => agentState(state.storage.sql))
     expect(expectedAgent.runs.map(r => r.run_id)).not.toContain('r_c_step_only')
 
@@ -302,9 +351,200 @@ it('backup, live retention and person deletion, restore and replay converge acro
         if (!('ok' in reconciled)) throw new Error(reconciled.refused)
         expect(await comparable(e.RESTORE_DB)).toEqual(expected)
         expect(agentState(state.storage.sql)).toEqual(expectedAgent)
+        await assertFts(e.RESTORE_DB, ftsChecks)
       }
       const confirmed = await confirmRestore({ ...deps, at: at(AFTER + 120, members.inhouse), approvedBy: members.admin })
       expect(confirmed).toMatchObject({ ok: { status: 'restored' } })
     })
   }), { numRuns: 4 })
+})
+
+it('topology agentPoint > d1Point converges across D1, R2, BrandAgent and FTS', async () => {
+  await resetAll()
+  const { members } = await seedBrand(e.DB, openStores(e), B - 2 * DAY)
+  const early = (await addPerson(e.DB, { role: 'member', status: 'active' }, members.admin, B - DAY)).id
+  const late = (await addPerson(e.DB, { role: 'member', status: 'active' }, members.admin, B - DAY)).id
+  const chats = [
+    { id: 'c_early', owner: early, lastAtMs: B - DAY },
+    { id: 'c_late', owner: late, lastAtMs: B - DAY },
+    { id: 'c_live', owner: members.admin, lastAtMs: B - DAY },
+  ]
+  for (const c of chats) await addChat(e.DB, bucket, { ...c, marker: c.id })
+  await addMemory(e.DB, { id: 'mem_early', owner: early, createdBy: early, marker: 'memearly', status: 'active', updatedAtMs: B - DAY })
+  await addMemory(e.DB, { id: 'mem_late', owner: late, createdBy: late, marker: 'memlate', status: 'active', updatedAtMs: B - DAY })
+  await addPhoto(e.DB, bucket, early)
+  await addPhoto(e.DB, bucket, late)
+  await addSetting(e.DB, early, { a: 1 }, early, B - DAY)
+  await addSetting(e.DB, late, { b: 2 }, late, B - DAY)
+
+  const seedChatRows = (sql: SqlStorage, list: readonly { id: string; owner: string; lastAtMs: number }[]) => {
+    for (const c of list) {
+      sql.exec('INSERT INTO chat_state (chat_id, owner_id, next_pos, last_at_ms) VALUES (?, ?, 2, ?)', c.id, c.owner, c.lastAtMs)
+      sql.exec("INSERT INTO runs (run_id, chat_id, owner_id, state, started_at_ms, ended_at_ms) VALUES (?, ?, ?, 'ended', ?, ?)", `r_${c.id}`, c.id, c.owner, c.lastAtMs - 10, c.lastAtMs)
+    }
+  }
+  const liveAgent = e.BRAND_AGENT.getByName('diff-after-live') as DurableObjectStub<BrandAgent>
+  const recAgent = e.BRAND_AGENT.getByName('diff-after-rec') as DurableObjectStub<BrandAgent>
+  await runInDurableObject(liveAgent, async (_i, state) => { await state.storage.deleteAlarm(); seedChatRows(state.storage.sql, chats) })
+
+  const manifest = await backup({ db: e.DB, bucket, nowMs: B })
+  const backedUp = await comparable(e.DB)
+  const T1 = B + 10_000 // > d1Point (B - 60_000), < agentPoint (B + 120_000 - 60_000 = B + 60_000)
+  const R = B + 120_000
+  const T2 = R + 30_000 // >= agentPoint
+  await runInDurableObject(liveAgent, async instance => {
+    for (const [memberId, when] of [[early, T1], [late, T2]] as const) {
+      const deps = { db: e.DB, bucket, brandAgent: instance, at: at(when), clock: () => when }
+      const plan = await planPersonDeletion(deps, { memberId })
+      if (!('ok' in plan)) throw new Error(plan.refused)
+      expect(await runPersonDeletion(deps, plan.ok)).toHaveProperty('ok')
+    }
+  })
+  const expected = await comparable(e.DB)
+  const expectedAgent = await runInDurableObject(liveAgent, (_i, state) => agentState(state.storage.sql))
+  for (const [key, body] of Object.entries(backedUp.r2)) {
+    if (!(key in expected.r2)) await bucket.put(key, Uint8Array.from(atob(body.base64), c => c.charCodeAt(0)))
+  }
+
+  const record = await restore({ bucket, target: e.RESTORE_DB, live: e.DB, backupId: manifest.backupId, at: at(T2 + 10), durableObjects: [{ name: 'BrandAgent', recoveredAtMs: R }] })
+  await runInDurableObject(recAgent, async (instance, state) => {
+    await state.storage.deleteAlarm()
+    // Recovered to R > T1: `early` was already deleted from the DO at T1, while `late` and `c_live` were present.
+    seedChatRows(state.storage.sql, chats.filter(c => c.id !== 'c_early'))
+    const deps = { bucket, target: e.RESTORE_DB, restoreId: record.restoreId, at: at(T2 + 20), retentionSql: state.storage.sql, runners: { BrandAgent: brandAgentRunner(instance) } }
+    const out = await reconcile(deps)
+    if (!('ok' in out)) throw new Error(out.refused)
+    expect(await comparable(e.RESTORE_DB)).toEqual(expected)
+    expect(agentState(state.storage.sql)).toEqual(expectedAgent)
+    await assertFts(e.RESTORE_DB, { chatKeep: ['c_live'], chatGone: ['c_early', 'c_late'], memGone: ['memearly', 'memlate'] })
+    expect(await confirmRestore({ ...deps, at: at(T2 + 30, members.inhouse), approvedBy: members.admin })).toMatchObject({ ok: { status: 'restored' } })
+  })
+})
+
+it('topology Until deleted replays trash-only without deleting old live chats or steps', async () => {
+  await resetAll()
+  const stores = openStores(e)
+  const { members } = await seedBrand(e.DB, stores, B - 2 * DAY)
+  for (const key of ['d:chats', 'd:steps'] as const) {
+    expect(await stores.settings.write({ owner: 'brand', scope: 'technical', key, value: 'Until deleted', ifRev: 0 }, at(B - 2 * DAY, members.admin))).toHaveProperty('ok')
+  }
+  const trashCut = AFTER - DEFAULT_DAYS.trash * DAY
+  const old = B - 900 * DAY
+  await addChat(e.DB, bucket, { id: 'c_old_live', owner: members.admin, lastAtMs: old, marker: 'cOldLive' })
+  await addChat(e.DB, bucket, { id: 'c_trash_gone', owner: members.admin, lastAtMs: B - DAY, deletedAtMs: trashCut - 1, marker: 'cTrashGone' })
+  await addChat(e.DB, bucket, { id: 'c_trash_edge', owner: members.admin, lastAtMs: B - DAY, deletedAtMs: trashCut, marker: 'cTrashEdge' })
+  await addChat(e.DB, bucket, { id: 'c_file_trash', owner: members.admin, lastAtMs: B - DAY, fileMarkedAtMs: trashCut - 1, marker: 'cFileTrash' })
+  await addActivity(e.DB, { id: 'a_old_keep', actor: members.admin, subject: null, atMs: old })
+  await addMemory(e.DB, { id: 'mem_f_gone', owner: null, createdBy: members.admin, marker: 'memFGone', status: 'forgotten', updatedAtMs: AFTER - DEFAULT_DAYS.forgottenMemory * DAY - 1 })
+
+  const liveAgent = e.BRAND_AGENT.getByName('diff-until-live') as DurableObjectStub<BrandAgent>
+  const recAgent = e.BRAND_AGENT.getByName('diff-until-rec') as DurableObjectStub<BrandAgent>
+  const seed = (sql: SqlStorage) => {
+    for (const c of ['c_old_live', 'c_trash_gone', 'c_trash_edge', 'c_file_trash']) {
+      sql.exec('INSERT INTO chat_state (chat_id, owner_id, next_pos, last_at_ms) VALUES (?, ?, 2, ?)', c, members.admin, B - DAY)
+    }
+  }
+  await runInDurableObject(liveAgent, async (_i, state) => { await state.storage.deleteAlarm(); seed(state.storage.sql) })
+
+  const manifest = await backup({ db: e.DB, bucket, nowMs: B })
+  const backedUp = await comparable(e.DB)
+  const days = await brandRetentionDays(e.DB)
+  expect(days).toEqual({ ...DEFAULT_DAYS, chats: null, steps: null })
+  await runInDurableObject(liveAgent, async (_i, state) => {
+    let tick = AFTER
+    for (const entry of retentionStores()) {
+      const reg = [entry]
+      const periods = periodsFor(reg, days)
+      if (!hasRetentionWork(entry.name, periods)) continue
+      const deps = { db: e.DB, bucket, sql: state.storage.sql, registry: reg, at: at(AFTER), clock: () => tick++ }
+      await runRetention(deps, await planRetention(deps, { periods }))
+    }
+  })
+  const expected = await comparable(e.DB)
+  const expectedAgent = await runInDurableObject(liveAgent, (_i, state) => agentState(state.storage.sql))
+  expect(expected.d1.chats.map(r => r.id).sort()).toEqual(['c_file_trash', 'c_old_live', 'c_trash_edge'])
+  expect(expected.d1.activity_lines.map(r => r.id)).toContain('a_old_keep')
+  for (const [key, body] of Object.entries(backedUp.r2)) {
+    if (!(key in expected.r2)) await bucket.put(key, Uint8Array.from(atob(body.base64), c => c.charCodeAt(0)))
+  }
+
+  const record = await restore({ bucket, target: e.RESTORE_DB, live: e.DB, backupId: manifest.backupId, at: at(AFTER + 50), durableObjects: [{ name: 'BrandAgent', recoveredAtMs: BEFORE - 1 }] })
+  await runInDurableObject(recAgent, async (instance, state) => {
+    await state.storage.deleteAlarm()
+    seed(state.storage.sql)
+    const deps = { bucket, target: e.RESTORE_DB, restoreId: record.restoreId, at: at(AFTER + 60), retentionSql: state.storage.sql, runners: { BrandAgent: brandAgentRunner(instance) } }
+    for (let pass = 0; pass < 2; pass++) {
+      const out = await reconcile(deps)
+      if (!('ok' in out)) throw new Error(out.refused)
+      expect(await comparable(e.RESTORE_DB)).toEqual(expected)
+      expect(agentState(state.storage.sql)).toEqual(expectedAgent)
+      await assertFts(e.RESTORE_DB, { chatKeep: ['cOldLive', 'cTrashEdge', 'cFileTrash'], chatGone: ['cTrashGone'], memGone: ['memFGone'] })
+    }
+    expect(await confirmRestore({ ...deps, at: at(AFTER + 70, members.inhouse), approvedBy: members.admin })).toMatchObject({ ok: { status: 'restored' } })
+  })
+})
+
+it('topology busy DO recovery refuses replay_stopped until settled, then converges', async () => {
+  await resetAll()
+  const { members } = await seedBrand(e.DB, openStores(e), B - 2 * DAY)
+  const chatCut = AFTER - DEFAULT_DAYS.chats * DAY
+  const stepCut = AFTER - DEFAULT_DAYS.steps * DAY
+  await addChat(e.DB, bucket, { id: 'c_ret_busy', owner: members.admin, lastAtMs: chatCut - 10, marker: 'cRetBusy' })
+  await addChat(e.DB, bucket, { id: 'c_ret_keep', owner: members.admin, lastAtMs: B - DAY, marker: 'cRetKeep' })
+
+  const liveAgent = e.BRAND_AGENT.getByName('diff-busy-live') as DurableObjectStub<BrandAgent>
+  const recAgent = e.BRAND_AGENT.getByName('diff-busy-rec') as DurableObjectStub<BrandAgent>
+  await runInDurableObject(liveAgent, async (_i, state) => {
+    await state.storage.deleteAlarm()
+    const sql = state.storage.sql
+    sql.exec('INSERT INTO chat_state (chat_id, owner_id, next_pos, last_at_ms) VALUES (?, ?, 2, ?)', 'c_ret_busy', members.admin, chatCut - 10)
+    sql.exec('INSERT INTO chat_state (chat_id, owner_id, next_pos, last_at_ms) VALUES (?, ?, 2, ?)', 'c_ret_keep', members.admin, B - DAY)
+    sql.exec("INSERT INTO runs (run_id, chat_id, owner_id, state, started_at_ms, ended_at_ms) VALUES ('r_ret_old', 'c_ret_keep', ?, 'ended', ?, ?)", members.admin, stepCut - 20, stepCut - 1)
+  })
+  const manifest = await backup({ db: e.DB, bucket, nowMs: B })
+  const backedUp = await comparable(e.DB)
+  await runInDurableObject(liveAgent, async (_i, state) => {
+    let tick = AFTER
+    for (const store of ['chats', 'BrandAgent']) {
+      const reg = tables.filter(t => t.name === store)
+      const deps = { db: e.DB, bucket, sql: state.storage.sql, registry: reg, at: at(AFTER), clock: () => tick++ }
+      await runRetention(deps, await planRetention(deps, { periods: periodsFor(reg) }))
+    }
+  })
+  const expected = await comparable(e.DB)
+  const expectedAgent = await runInDurableObject(liveAgent, (_i, state) => agentState(state.storage.sql))
+  for (const [key, body] of Object.entries(backedUp.r2)) {
+    if (!(key in expected.r2)) await bucket.put(key, Uint8Array.from(atob(body.base64), c => c.charCodeAt(0)))
+  }
+
+  const record = await restore({ bucket, target: e.RESTORE_DB, live: e.DB, backupId: manifest.backupId, at: at(AFTER + 50), durableObjects: [{ name: 'BrandAgent', recoveredAtMs: BEFORE - 1 }] })
+  await runInDurableObject(recAgent, async (instance, state) => {
+    await state.storage.deleteAlarm()
+    const sql = state.storage.sql
+    // Recovered DO holds a busy chat (live_run_id set) and an unsafe ended run (d1_flushed = 0).
+    sql.exec("INSERT INTO chat_state (chat_id, owner_id, live_run_id, next_pos, last_at_ms) VALUES ('c_ret_busy', ?, 'r_live_busy', 2, ?)", members.admin, chatCut - 10)
+    sql.exec("INSERT INTO chat_state (chat_id, owner_id, next_pos, last_at_ms) VALUES ('c_ret_keep', ?, 2, ?)", members.admin, B - DAY)
+    sql.exec("INSERT INTO runs (run_id, chat_id, owner_id, state, started_at_ms, ended_at_ms) VALUES ('r_ret_old', 'c_ret_keep', ?, 'ended', ?, ?)", members.admin, stepCut - 20, stepCut - 1)
+    sql.exec(
+      `INSERT INTO turns (turn_id, run_id, chat_id, owner_id, ord, client_key, payload_hash, state, priority, text,
+        attachments_json, model, picker_id, side_model, effort, max_turns, answer_position, d1_flushed, created_at_ms)
+       VALUES ('t_ret_old', 'r_ret_old', 'c_ret_keep', ?, 0, 'ck_ret', 'ph', 'ended', 'now', 'hi', '[]', 'm', 'p', 's', 'e', 1, 'after', 0, ?)`,
+      members.admin, stepCut - 20,
+    )
+
+    const deps = { bucket, target: e.RESTORE_DB, restoreId: record.restoreId, at: at(AFTER + 60), retentionSql: sql, runners: { BrandAgent: brandAgentRunner(instance) } }
+    const refused = await reconcile(deps)
+    expect(refused).toMatchObject({ refused: expect.stringMatching(/^replay_stopped: /), record: { status: 'restored_unreconciled' } })
+    expect(await confirmRestore({ ...deps, at: at(AFTER + 65, members.inhouse), approvedBy: members.admin })).toMatchObject({ refused: 'not_reconciled: audit' })
+
+    // Settle the busy chat and flush the ended turn, then re-run reconcile -> converges and confirms.
+    sql.exec("UPDATE chat_state SET live_run_id = NULL WHERE chat_id = 'c_ret_busy'")
+    sql.exec("UPDATE turns SET d1_flushed = 1 WHERE turn_id = 't_ret_old'")
+    const out = await reconcile({ ...deps, at: at(AFTER + 70) })
+    if (!('ok' in out)) throw new Error(out.refused)
+    expect(await comparable(e.RESTORE_DB)).toEqual(expected)
+    expect(agentState(sql)).toEqual(expectedAgent)
+    await assertFts(e.RESTORE_DB, { chatKeep: ['cRetKeep'], chatGone: ['cRetBusy'] })
+    expect(await confirmRestore({ ...deps, at: at(AFTER + 80, members.inhouse), approvedBy: members.admin })).toMatchObject({ ok: { status: 'restored' } })
+  })
 })

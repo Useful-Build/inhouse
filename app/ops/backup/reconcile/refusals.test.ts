@@ -15,7 +15,7 @@ import type { D1Migration } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { beforeAll, expect, it } from 'vitest'
 import { SYSTEM_MEMBER_ID } from '../../../server/db/ids.ts'
-import { restoreKey } from '../../../server/db/r2-keys.ts'
+import { deletionLogKey, restoreKey } from '../../../server/db/r2-keys.ts'
 import { openStores } from '../../../server/db/stores.ts'
 import type { PersonDataAnswer } from '../../../server/do/brand-agent/ports.ts'
 import { seedBrand } from '../../../server/seed/seed.ts'
@@ -130,6 +130,30 @@ it('the record schema refuses restored without every step, with a refusal, or wi
   expect(RestoreRecordSchema.safeParse({ ...base, reconcile: null }).success).toBe(false)
   expect(RestoreRecordSchema.safeParse({ ...record, reconciled: true }).success).toBe(false)
   expect(RestoreRecordSchema.safeParse({ ...base, reconciled: false, reconcile: steps }).success).toBe(false)
+})
+
+it('records deletion_log_invalid when replayRetention hits a missing cutoff tag instead of throwing a plain Error', async () => {
+  const badRestoreId = 'refusal-missing-tag'
+  const badKey = deletionLogKey(T + 66, '00000000000000cc', 0, 'done')
+  await e.FILES.put(restoreKey(badRestoreId, 'record.json'), JSON.stringify({
+    ...record, restoreId: badRestoreId, status: 'restored_unreconciled', reconciled: false, reconcile: null,
+    durableObjects: [{ name: 'BrandAgent', recoveredAtMs: T + 100_000 }],
+  }))
+  await e.FILES.put(badKey, JSON.stringify({
+    format: 1, runId: '00000000000000cc', step: 0, phase: 'done', kind: 'retention', atMs: T + 66, actorId: SYSTEM_MEMBER_ID,
+    cutoffs: [{ store: 'chats', cutoffMs: 1 }],
+  }))
+  try {
+    const withChats = [...fixture, tables.find(t => t.name === 'chats')!]
+    const out = await reconcile({ bucket: e.FILES, target: e.RESTORE_DB, restoreId: badRestoreId, rebuildFts: ftsStub().rebuildFts, at: at(T + 70), registry: withChats, runners: runners() })
+    expect(out).toMatchObject({
+      refused: expect.stringMatching(/^deletion_log_invalid: .*chats.*trash/),
+      record: { status: 'restored_unreconciled', reconcile: { replay: null, refusal: expect.stringMatching(/^deletion_log_invalid: /) } },
+    })
+    expect((await readRecord(e.FILES, badRestoreId)).record.reconcile?.refusal).toMatch(/^deletion_log_invalid: /)
+  } finally {
+    await e.FILES.delete(badKey)
+  }
 })
 
 it('skips a refused run (the Admin stays as restored), refuses a deletion logged after the replay, then lets a new reconcile through', async () => {

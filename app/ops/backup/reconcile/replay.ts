@@ -9,10 +9,10 @@
 // backup's start and its end. Its point is still the backup's start (`takenAtMs`, the D1 point here), and the replay
 // is inclusive, so every deletion logged during the read is applied again: none is missed, and nothing logged before
 // the read began is touched (M2). So a paged table needs no point of its own.
-// Clock skew (review L4): an entry's time is its Worker's clock and the backup's point another's, so the D1 and R2
-// point (and the watermark) is taken `SKEW_MARGIN_MS` early. An entry in that minute before the point is applied
-// again: the replay uses member ids and cutoffs. Chat ids from completed cascade rounds also let an older
-// BrandAgent recovery replay its side of a cascade after the chat has already gone from D1.
+// Clock skew (review L4): an entry's time is its Worker's clock and the backup's point another's, so the D1, R2 and
+// Durable Object recovery points (and the watermark) are taken `SKEW_MARGIN_MS` early. An entry in that minute before
+// the point is applied again: the replay uses member ids and cutoffs. Chat ids from completed cascade rounds also let
+// an older BrandAgent recovery replay its side of a cascade after the chat has already gone from D1.
 //
 // A person run deletes the member again with the store rules person deletion uses (ops/delete/rules.ts), in its order:
 // pseudonymise the member row, then the BrandAgent's `personData` before every other custom store (such as `chats` and
@@ -251,9 +251,10 @@ export const SKEW_MARGIN_MS = 60_000
 
 export async function replayDeletionLog(deps: ReplayDeps, record: RestoreRecord): Promise<NonNullable<Reconcile['replay']>> {
   if (record.d1.restorePointMs === null || record.watermarkMs === null) throw new RestoreRefusal('record_invalid', 'no restore point')
-  const d1Point = Math.max(0, record.d1.restorePointMs - SKEW_MARGIN_MS)
-  const watermarkMs = Math.min(record.watermarkMs, d1Point)
-  const recovered = new Map(record.durableObjects.map(d => [d.name, d.recoveredAtMs]))
+  const skew = (ms: number) => Math.max(0, ms - SKEW_MARGIN_MS)
+  const d1Point = skew(record.d1.restorePointMs)
+  const recovered = new Map(record.durableObjects.map(d => [d.name, skew(d.recoveredAtMs)]))
+  const watermarkMs = Math.min(skew(record.watermarkMs), d1Point, ...recovered.values())
   // A Durable Object a person deletion reaches must have a recorded recovery time, or the replay can't know its point.
   const rules = deps.deletion ?? deletionRules
   for (const e of deps.registry) {

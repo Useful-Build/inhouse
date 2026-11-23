@@ -2,7 +2,7 @@
 // its detail is counts, ages and store names only.
 // - `backup_fresh`: the newest complete backup (a manifest) is at most 26 hours old.
 // - `retention_fresh`: every retention store has a `done` run in the deletion log within 26 hours (the handler runs
-//   store by store, so each store's own newest `done` counts).
+//   store by store, so each store's own newest `done` counts), or belongs to a chats or steps group shortened within 26h.
 // - `retention_overdue`: no store holds a row older than its cutoff plus two days (the daily run's slack). It reads D1
 //   only, so the BrandAgent's own storage isn't in it (its job's freshness is), and a chat busy in the object is too
 //   rare to exclude here: a chat with a live or waiting session has recent activity, so it isn't past its period.
@@ -18,7 +18,7 @@ import { deletionLogEntrySchema } from '../../../ops/delete/log.ts'
 import { DEFAULT_DAYS, hasRetentionWork, periodsFor, retentionGroups, retentionRules } from '../../../ops/retention/rules.ts'
 import type { PeriodName, RetentionPeriods } from '../../../ops/retention/rules.ts'
 import { tables } from '../../../ops/tables/index.ts'
-import { brandRetentionDays, brandRetentionSettings, retentionStores } from '../retention-handlers.ts'
+import { brandRetentionSettings, retentionStores } from '../retention-handlers.ts'
 import { backupManifestKey } from '../../db/r2-keys.ts'
 import type { KeyedBucket } from '../../db/r2-keys.ts'
 import { first, stmt } from '../../db/sql.ts'
@@ -63,7 +63,8 @@ export async function backupFresh(db: D1Database, bucket: Bucket, nowMs: number)
 
 /** Every retention store has a `done` run within 26 hours: red names the ones that don't. */
 export async function retentionFresh(db: D1Database, bucket: Bucket, nowMs: number, stores: readonly string[] = retentionStores().map(e => e.name)): Promise<SignalResult> {
-  const periods = periodsFor(tables, await brandRetentionDays(db))
+  const { days, shortenedAt } = await brandRetentionSettings(db)
+  const periods = periodsFor(tables, days)
   const enabled = stores.filter(store => hasRetentionWork(store, periods))
   const since = `deletion-log/${String(nowMs - FRESH_MS - 1).padStart(13, '0')}.`
   // listAll only lists (ops/delete/r2.ts); the signal's bucket is the stores' read view of the same binding.
@@ -75,7 +76,11 @@ export async function retentionFresh(db: D1Database, bucket: Bucket, nowMs: numb
     const e = deletionLogEntrySchema.parse(JSON.parse(await body.text()))
     if (e.kind === 'retention') for (const c of e.cutoffs ?? []) seen.add(c.store)
   }
-  const stale = enabled.filter(s => !seen.has(s))
+  const graced = (store: string) => {
+    const at = shortenedAt[retentionGroups[store]]
+    return at !== undefined && nowMs - at < FRESH_MS
+  }
+  const stale = enabled.filter(s => !seen.has(s) && !graced(s))
   if (stale.length > 0 && young(await deployedAtMs(db), nowMs)) return { ok: true, detail: 'no run yet (deployed under 26h ago)' }
   return stale.length === 0 ? { ok: true, detail: `${enabled.length} stores` } : { ok: false, detail: `no run in 26h: ${stale.join(', ')}` }
 }
