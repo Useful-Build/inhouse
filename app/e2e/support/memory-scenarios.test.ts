@@ -8,7 +8,7 @@
 import { describe, expect, test } from 'vitest'
 import { createScriptedModel } from '../../test/scripted-model/index.ts'
 import {
-  HARNESS_MODEL, LEARNING_OFF_ANSWER, LEARNING_SAVED_ANSWER, MEMORY_RECALL_NONE, MEMORY_SAVE_TEXT, SCENARIOS, TEAM_FACT_CHANGED_ANSWER,
+  HARNESS_MODEL, LEARNING_OFF_ANSWER, MEMORY_REWORD_CHANGED_ANSWER, MEMORY_REWORD_LEARNING_OFF_ANSWER, LEARNING_SAVED_ANSWER, MEMORY_RECALL_NONE, MEMORY_SAVE_TEXT, SCENARIOS, TEAM_FACT_CHANGED_ANSWER,
   TEAM_FACT_SAVED_ANSWER, memoryRecallAnswer, teamFactReworded, teamFactText,
 } from '../../test/scripted-model/scenarios.ts'
 
@@ -60,6 +60,25 @@ describe('the P6a memory scenarios', () => {
     // The other wording of the same fact is not this scenario's fact.
     const otherWording = wording === teamFactText ? teamFactReworded : teamFactText
     expect((await answer(await model.handle(request(name, [call], [{ text: hit(otherWording(REF)) }]), name))).content).toEqual([{ type: 'text', text: MEMORY_RECALL_NONE }])
+    // A tool error (e.g. inhouse MCP didn't connect so memory_search isn't available) must miss loudly instead of
+    // silently answering "Nothing saved matches that."
+    const errored = await model.handle(request(name, [call], [{ text: 'Error: No such tool available: mcp__inhouse__memory_search', error: true }]), name)
+    expect(errored.status).toBe(400)
+    expect(model.misses.at(-1)?.reason).toContain('has is_error true, not false; it says: "Error: No such tool available: mcp__inhouse__memory_search"')
+  })
+
+  test('memory-recall-team-ref misses on turn 0 when mcp__inhouse__memory_search is absent even with DeferredToolPlaceholder', async () => {
+    const model = createScriptedModel(SCENARIOS)
+    const noInhouseMcp = new Request('http://scripted.invalid/v1/messages', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: HARNESS_MODEL,
+        tools: [{ name: 'Bash' }, { name: 'DeferredToolPlaceholder', defer_loading: true }],
+        messages: [{ role: 'user', content: `scenario:memory-recall-team-ref recall [${REF}]` }],
+      }),
+    })
+    expect((await model.handle(noInhouseMcp, 'memory-recall-team-ref')).status).toBe(400)
+    expect(model.misses.at(-1)?.reason).toContain("the tool list doesn't offer mcp__inhouse__memory_search")
   })
 
   test('memory-reword-team-ref finds the fact, rewords it by the memory id the search gave, and answers', async () => {
@@ -85,5 +104,31 @@ describe('the P6a memory scenarios', () => {
     const refused = { text: 'Not saved: this person turned off "Learn from my chats" in Settings, so don\'t save their preferences.', error: true }
     expect((await answer(await model.handle(request(name, [call], [refused], null), name))).content).toEqual([{ type: 'text', text: LEARNING_OFF_ANSWER }])
     expect((await answer(await model.handle(request(name, [call], [{ text: 'Saved (memory_id: mem_x). It counts from now, for this person only.' }], null), name))).content).toEqual([{ type: 'text', text: LEARNING_SAVED_ANSWER }])
+  })
+
+  test('memory-save-reword-person: only the learning_off refusal says "off", a plain success says "changed", any other error is a loud miss', async () => {
+    const model = createScriptedModel(SCENARIOS)
+    const name = 'memory-save-reword-person'
+    const first = await answer(await model.handle(request(name, [], [], null), name))
+    const call = { id: first.content[0]!.id!, name: 'mcp__inhouse__memory_update', input: first.content[0]!.input! }
+    const off = { text: 'Not changed: this person turned off "Learn from my chats" in Settings.', error: true }
+    expect((await answer(await model.handle(request(name, [call], [off], null), name))).content).toEqual([{ type: 'text', text: MEMORY_REWORD_LEARNING_OFF_ANSWER }])
+    expect((await answer(await model.handle(request(name, [call], [{ text: 'Changed.' }], null), name))).content).toEqual([{ type: 'text', text: MEMORY_REWORD_CHANGED_ANSWER }])
+    // The refusal text without the error flag is not a refusal; an unrelated error is neither branch.
+    expect((await model.handle(request(name, [call], [{ text: off.text }], null), name)).status).toBe(400)
+    const broken = 'Error: No such tool available: mcp__inhouse__memory_update'
+    expect((await model.handle(request(name, [call], [{ text: broken, error: true }], null), name)).status).toBe(400)
+    expect(model.misses.at(-1)?.reason).toContain(broken)
+  })
+
+  test('memory-save-reword-team misses loudly, quoting the error, when memory_update errors', async () => {
+    const model = createScriptedModel(SCENARIOS)
+    const name = 'memory-save-reword-team'
+    const first = await answer(await model.handle(request(name, [], [], null), name))
+    const call = { id: first.content[0]!.id!, name: 'mcp__inhouse__memory_update', input: first.content[0]!.input! }
+    expect((await answer(await model.handle(request(name, [call], [{ text: 'Reworded (memory_id: mem_x).' }], null), name))).content).toEqual([{ type: 'text', text: 'Reworded.' }])
+    const broken = 'Error: No such tool available: mcp__inhouse__memory_update'
+    expect((await model.handle(request(name, [call], [{ text: broken, error: true }], null), name)).status).toBe(400)
+    expect(model.misses.at(-1)?.reason).toContain(broken)
   })
 })
