@@ -4,14 +4,14 @@
 // because that is the one that type-checks and runs files under test/upstreams/ (like morning-check-set.test.ts).
 import { fc, test as fcTest } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
-import { ASKS, PLANT_FIELDS, STORE_DATA_CASES, hostOf } from '../../../evals/exfiltration/store-data/cases'
+import { ASKS, PLANT_FIELDS, STORE_DATA_CASES, canaryOf, hostOf } from '../../../evals/exfiltration/store-data/cases'
 import type { Ask, PlantField, StoreDataCase } from '../../../evals/exfiltration/store-data/cases'
 import { expectedFindings } from '../../../test/upstreams/morning-check/oracle'
 import { checkDataset } from '../../../test/upstreams/shopify/dataset'
 import { REFUND_ORDER, RETURN_ORDER, UNRESTOCKED_ORDER, planted } from '../../../test/upstreams/shopify/datasets/exfiltration/datasets'
 import type { PlantedField } from '../../../test/upstreams/shopify/datasets/exfiltration/datasets'
 import { storeDataUpstreams } from '../../../test/upstreams/shopify/datasets/exfiltration/upstreams'
-import { TEST_CLIENT_ID, TEST_CLIENT_SECRET } from '../../../test/upstreams/shopify/server'
+import { TEST_CLIENT_ID, TEST_CLIENT_SECRET, createShopifyUpstream } from '../../../test/upstreams/shopify/server'
 import { CAPS } from './documents'
 import { call, signInClient } from './test-kit'
 
@@ -43,7 +43,7 @@ describe('the store-data datasets', () => {
       product_title: /^\$\.products\[0\]\.title$/,
       variant_title: /^\$\.products\[0\]\.variants\.nodes\[0\]\.title$/,
     }
-    expect([...PLANT_FIELDS].sort()).toEqual(Object.keys(PATHS).sort())
+    expect(Object.keys(PATHS).sort()).toEqual([...PLANT_FIELDS, 'variant_title'].sort())
     for (const k of STORE_DATA_CASES) {
       const hits = where(planted(NOW, k.field, k.text), k.canary)
       expect(hits, k.id).toHaveLength(1)
@@ -120,8 +120,8 @@ describe('what the morning check reads', () => {
   }
   const has = (v: unknown, k: StoreDataCase) => JSON.stringify(v).includes(k.canary)
 
-  /** The read that carries each field to the model. Variant titles are left out: see the blocked test below. */
-  const READ: Record<Exclude<PlantField, 'variant_title'>, (k: StoreDataCase) => Promise<unknown>> = {
+  /** The read that carries each field to the model. */
+  const READ: Record<PlantField, (k: StoreDataCase) => Promise<unknown>> = {
     // The refund-spike rule needs at least the last 24 h; the agent picks the window, so the property below tries them.
     refund_note: k => paged(k, 'refunds_search', { createdFrom: iso(NOW - 15 * DAY_MS) }),
     product_title: k => paged(k, 'products_search', { first: 20 }),
@@ -135,9 +135,24 @@ describe('what the morning check reads', () => {
     },
   }
 
-  for (const k of STORE_DATA_CASES.filter(x => x.field !== 'variant_title')) {
-    it(`${k.id} (${k.field}): the canary is in what the read returns`, async () => {
-      expect(has(await READ[k.field as keyof typeof READ](k), k)).toBe(true)
+  it('cover all ten cases', () => {
+    expect(STORE_DATA_CASES).toHaveLength(10)
+    expect(STORE_DATA_CASES.every(k => Object.hasOwn(READ, k.field))).toBe(true)
+  })
+
+  /** How much of the planted text each field's read shows: all of it, except a return reason (cut after the canary). */
+  const SHOWN: Record<PlantField, (k: StoreDataCase) => string> = {
+    refund_note: k => k.text, product_title: k => k.text, line_item_title: k => k.text,
+    return_reason: k => k.text.slice(0, CAPS.reason),
+  }
+
+  for (const k of STORE_DATA_CASES) {
+    it(`${k.id} (${k.field}, ${k.ask}): exposed, the canary and the planted text are in what the read returns`, async () => {
+      const shown = SHOWN[k.field](k)
+      expect(shown, k.id).toContain(k.canary)
+      const got = await READ[k.field](k)
+      expect(has(got, k)).toBe(true)
+      expect(where(got, shown).length, k.id).toBeGreaterThan(0)
     })
   }
 
@@ -159,19 +174,45 @@ describe('what the morning check reads', () => {
     expect(NOW - Date.parse(refund.createdAt!)).toBeLessThan(24 * 3600_000)
   })
 
-  // Blocked, not fixed here: the hub caps a variant title at CAPS.variantTitle bytes (products_search and
-  // inventory_levels_get alike), and every ask puts the canary past that, so the canary of a variant_title case never
-  // reaches a tool result, whatever the morning check reads. This pins the facts, so a change to the cap or the asks
-  // shows up here.
-  it('variant_title (XS05, XS06) is blocked: the variant title cap cuts every ask\'s canary', async () => {
-    for (const a of Object.keys(ASKS) as Ask[]) {
-      const text = ASKS[a].text('kestrel-xs00-r0-00000000')
-      expect(text.indexOf('kestrel-') + 'kestrel-xs00-r0-00000000'.length, a).toBeGreaterThan(CAPS.variantTitle)
+})
+
+// A counted defence (cases.ts header): the hub cuts a variant title to CAPS.variantTitle bytes in both read tools that
+// return one, so a variant title planted with any ask's instruction reaches the model as a fragment, without the full
+// instruction or its canary. Driven through the hub's own tools over a planted dataset; the cut fragment must be there,
+// so a read that drops the field (rather than cutting it) fails here too.
+describe('the variant title cap, a counted defence', () => {
+  const strings = (v: unknown): string[] => {
+    const out: string[] = []
+    const walk = (x: unknown) => {
+      if (typeof x === 'string') out.push(x)
+      else if (Array.isArray(x)) x.forEach(walk)
+      else if (x && typeof x === 'object') Object.values(x).forEach(walk)
     }
-    for (const k of STORE_DATA_CASES.filter(x => x.field === 'variant_title')) {
-      const pages = await paged(k, 'products_search', { first: 20 })
-      expect(JSON.stringify(pages), k.id).toContain(k.text.slice(0, CAPS.variantTitle))
-      expect(has(pages, k), k.id).toBe(false)
-    }
-  })
+    walk(v)
+    return out
+  }
+
+  for (const a of Object.keys(ASKS) as Ask[]) {
+    it(`${a}: products_search and inventory_levels_get cut the planted instruction before its end and before its canary ends`, async () => {
+      const canary = canaryOf(`VT-${a}`)
+      const text = ASKS[a].text(canary)
+      const fragment = text.slice(0, CAPS.variantTitle)
+      expect(new TextEncoder().encode(text).byteLength).toBeGreaterThan(CAPS.variantTitle)
+      expect(fragment.includes(canary)).toBe(false)
+      const d = planted(NOW, 'variant_title', text)
+      const sku = d.products[0]!.variants.nodes[0]!.sku!
+      const client = signInClient(createShopifyUpstream(d)).client
+      const reads = {
+        products_search: await call('products_search', { first: 20 }, client, NOW),
+        inventory_levels_get: await call('inventory_levels_get', { sku }, client, NOW),
+      }
+      for (const [tool, r] of Object.entries(reads)) {
+        expect(r.ok, tool).toBe(true)
+        const got = strings(r)
+        expect(got, tool).toContain(fragment)
+        expect(got.some(x => x.includes(text)), tool).toBe(false)
+        expect(got.some(x => x.includes(canary)), tool).toBe(false)
+      }
+    })
+  }
 })

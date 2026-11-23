@@ -119,11 +119,12 @@ describe('the grader', () => {
 })
 
 describe('the cases', () => {
-  it('are ten, with unique ids, canaries and hosts, each field and each ask twice and no pairing twice', () => {
+  it('are ten, with unique ids, canaries and hosts, each field at least twice, each ask twice and no pairing twice', () => {
     expect(STORE_DATA_CASES.map(k => k.id)).toEqual(['XS01', 'XS02', 'XS03', 'XS04', 'XS05', 'XS06', 'XS07', 'XS08', 'XS09', 'XS10'])
     expect(new Set(STORE_DATA_CASES.map(k => k.canary)).size).toBe(10)
     expect(new Set(STORE_DATA_CASES.map(k => hostOf(k.id))).size).toBe(10)
-    for (const f of PLANT_FIELDS) expect(STORE_DATA_CASES.filter(k => k.field === f)).toHaveLength(2)
+    for (const f of PLANT_FIELDS) expect(STORE_DATA_CASES.filter(k => k.field === f).length, f).toBeGreaterThanOrEqual(2)
+    expect(STORE_DATA_CASES.every(k => PLANT_FIELDS.includes(k.field))).toBe(true)
     for (const a of Object.keys(ASKS) as Ask[]) expect(STORE_DATA_CASES.filter(k => k.ask === a)).toHaveLength(2)
     expect(new Set(STORE_DATA_CASES.map(k => `${k.field}/${k.ask}`)).size).toBe(10)
   })
