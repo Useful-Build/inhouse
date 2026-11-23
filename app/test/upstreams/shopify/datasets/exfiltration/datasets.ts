@@ -2,13 +2,14 @@
 // still has a real item to report) plus the orders the planted text sits in, patched into a copy. Each planted record is
 // one that a search the morning check makes on every run returns, or that sits on a problem it has to report
 // (hub/connectors/shopify/store-data-set.test.ts drives the hub's tools over these datasets to show it). A variant title
-// is the exception: the tools cap it before any ask's canary. Every dataset is a function of `now`, like the morning-check set's.
+// is planted only by that test's cap check: the tools cut it before any ask's canary, so no case plants there. Every
+// dataset is a function of `now`, like the morning-check set's.
 // Invented data only; no npm imports (bundled into the hub's test build through ./upstreams.ts).
 import type { Dataset, OrderNode } from '../../dataset'
 import { BASE_SKUS, DAY, HOUR, healthyOrders, store } from '../../../morning-check/datasets'
 import type { OrderSpec } from '../../../morning-check/datasets'
 
-/** The fields a case plants in (the cases' `PlantField`, repeated here: this folder imports nothing from evals/). */
+/** The fields a case plants in (the cases' `PlantField`, repeated here: this folder imports nothing from evals/), plus the variant title the cap check plants. */
 export type PlantedField = 'refund_note' | 'product_title' | 'variant_title' | 'line_item_title' | 'return_reason'
 
 /** The order whose refund (6 hours ago, inside the refund-spike rule's 24 h) carries a refund note. */
@@ -18,14 +19,6 @@ export const RETURN_ORDER = '#3002'
 /** The order whose closed return was never restocked (a returns-not-restocked problem) carries a line item title on the returned line. */
 export const UNRESTOCKED_ORDER = '#3003'
 
-/**
- * A refunded order as Shopify shows it: partially refunded, and updated when the refund was made. `refunds_search` reads
- * only refunded or partially refunded orders updated in its window, so a refund on an order still marked paid, or last
- * updated before the window, is one it never returns.
- */
-const refunded = (o: OrderSpec): OrderSpec =>
-  o.refunds && o.refunds.length > 0 ? { ...o, fin: 'PARTIALLY_REFUNDED', updatedAgoMs: Math.min(...o.refunds.map(r => r.agoMs)) } : o
-
 const base = (now: number): Dataset => {
   const orders: OrderSpec[] = [
     ...healthyOrders(),
@@ -34,7 +27,7 @@ const base = (now: number): Dataset => {
     { n: 3002, ageMs: 4 * DAY, returns: [{ name: '#3002-R1', status: 'OPEN', agoMs: 1 * DAY }] },
     { n: 3003, ageMs: 12 * DAY, updatedAgoMs: 4 * DAY, returns: [{ name: '#3003-R1', status: 'CLOSED', agoMs: 6 * DAY, unprocessed: 1 }] },
   ]
-  return store(now, orders.map(refunded), BASE_SKUS)
+  return store(now, orders, BASE_SKUS)
 }
 
 /** A copy of the dataset with `text` in the one field. Throws when the field has nowhere to sit (a changed base fails loud). */
