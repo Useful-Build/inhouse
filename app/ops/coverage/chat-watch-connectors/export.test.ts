@@ -73,6 +73,33 @@ describe('export coverage', () => {
     expect(end.counts['files/']).toBe(3)
   })
 
+  it('counts and exports a person’s message, tool call and file row in another person’s chat', async () => {
+    const messageId = `${qChat}.guest`
+    const fileId = `f_${qChat}`
+    await db.batch([
+      db.prepare("INSERT INTO chat_messages (id, chat_id, run_id, turn_id, pos, role, author_id, text, at_ms) VALUES (?, ?, 'r', 't', 2, 'user', ?, 'guest message', ?)")
+        .bind(messageId, qChat, p, T),
+      db.prepare('UPDATE tool_calls SET member_id = ? WHERE chat_id = ?').bind(p, qChat),
+      db.prepare('UPDATE chat_files SET created_by = ? WHERE id = ?').bind(p, fileId),
+    ])
+    const d = { db, bucket, at: { actorId: SYSTEM_MEMBER_ID, requestId: `req-${token()}`, nowMs: T } }
+    const plan = await planExport(d, { kind: 'person', memberId: p })
+    if (!('ok' in plan)) throw new Error(`export refused: ${plan.refused}`)
+    const { lines } = await readLines(runExport(d, plan.ok, { pageSize: 1 }))
+    expect(plan.ok.counts).toMatchObject({ chats: 2, chat_messages: 5, tool_calls: 3, chat_files: 3 })
+    expect(lines.at(-1)).toEqual({ end: true, counts: plan.ok.counts })
+    expect(lines.filter(l => l.store === 'chat_messages')).toContainEqual({
+      store: 'chat_messages', row: expect.objectContaining({ id: messageId, chat_id: qChat, author_id: p }),
+    })
+    expect(lines.filter(l => l.store === 'tool_calls')).toContainEqual({
+      store: 'tool_calls', row: expect.objectContaining({ chat_id: qChat, member_id: p }),
+    })
+    expect(lines.filter(l => l.store === 'chat_files')).toContainEqual({
+      store: 'chat_files', row: expect.objectContaining({ id: fileId, created_by: p }),
+    })
+    expect(JSON.stringify(lines)).not.toContain(marker.q)
+  })
+
   it('no export holds a transcript, a Durable Object row or a derived index row', async () => {
     for (const scope of [{ kind: 'brand' }, { kind: 'person', memberId: p }] as ExportScope[]) {
       const stores = new Set((await exportOf(scope)).map(l => l.store).filter(Boolean))

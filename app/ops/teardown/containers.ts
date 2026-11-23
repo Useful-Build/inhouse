@@ -10,6 +10,8 @@ type Application = { id: string; name: string }
 type Inventory = { phase: 'before' | 'after'; brand: string; applications: Application[] }
 type Options = {
   accountId?: string
+  expectAccountName?: string
+  expectIds?: readonly string[]
   prefix?: string
   allInDedicatedAccount?: boolean
   brand?: string
@@ -25,12 +27,13 @@ type Options = {
 }
 
 export async function teardownContainers({
-  accountId, prefix, allInDedicatedAccount = false, brand, approvedBy,
+  accountId, expectAccountName, expectIds, prefix, allInDedicatedAccount = false, brand, approvedBy,
   house = false, houseApproved = false, apply = false, token,
   fetchApi = fetch, report = console.log, now = Date.now,
   wait = () => new Promise(resolve => setTimeout(resolve, 2000)),
 }: Options) {
   if (!accountId || !/^[a-f0-9]{32}$/.test(accountId)) throw new Error('A Cloudflare account ID is required')
+  if (!expectAccountName?.trim()) throw new Error('--expect-account-name is required')
   if (allInDedicatedAccount ? prefix !== undefined : !prefix || !/^[a-z0-9][a-z0-9_-]*[_-]$/.test(prefix)) {
     throw new Error('Specify one scope: a deployment-specific prefix ending in _ or -, or the dedicated account')
   }
@@ -38,16 +41,21 @@ export async function teardownContainers({
   if (apply && (!approvedBy?.trim() || ((house || brand === 'house') && !houseApproved))) {
     throw new Error('Teardown requires written Admin approval, plus Wasim’s approval for house')
   }
+  const reviewedIds = new Set(expectIds)
+  if (apply && (!expectIds || reviewedIds.size !== expectIds.length || expectIds.some(id => !/^[a-zA-Z0-9_-]+$/.test(id)))) {
+    throw new Error('--apply requires --expect-ids with the reviewed application IDs, comma-separated (empty for no apps)')
+  }
 
+  const accountUrl = new URL(`accounts/${accountId}`, API)
   const endpoint = new URL(`accounts/${accountId}/containers/applications`, API)
   async function call(url: URL, method: 'GET' | 'DELETE') {
     const response = await fetchApi(url, {
       method, redirect: 'error', signal: AbortSignal.timeout(15_000),
       headers: { authorization: `Bearer ${token}` },
     })
-    if (!response.ok) throw new Error(`Cloudflare Containers ${method} failed (HTTP ${response.status})`)
+    if (!response.ok) throw new Error(`Cloudflare ${method} failed (HTTP ${response.status})`)
     const body = await response.json() as ApiEnvelope | null
-    if (body?.success !== true) throw new Error(`Cloudflare Containers ${method} reported failure`)
+    if (body?.success !== true) throw new Error(`Cloudflare ${method} reported failure`)
     return body
   }
 
@@ -76,9 +84,17 @@ export async function teardownContainers({
     }
   }
 
+  const { result: account } = await call(accountUrl, 'GET')
+  if (!account || typeof account !== 'object' || !('id' in account) || account.id !== accountId
+    || !('name' in account) || account.name !== expectAccountName) {
+    throw new Error('Cloudflare account does not match --account-id and --expect-account-name')
+  }
   const before = await list()
   report({ phase: 'before', brand, applications: before })
   if (!apply) return
+  if (before.length !== reviewedIds.size || before.some(app => !reviewedIds.has(app.id))) {
+    throw new Error('Container application IDs differ from --expect-ids. Run a new dry run and review the list.')
+  }
   const failures: Error[] = []
   for (const app of before) {
     const url = new URL(endpoint)
@@ -113,6 +129,8 @@ if (import.meta.main) {
   try {
     const { values } = parseArgs({ options: {
       'account-id': { type: 'string' },
+      'expect-account-name': { type: 'string' },
+      'expect-ids': { type: 'string' },
       prefix: { type: 'string' },
       'all-in-dedicated-account': { type: 'boolean' },
       brand: { type: 'string' },
@@ -122,7 +140,8 @@ if (import.meta.main) {
       apply: { type: 'boolean' },
     } })
     await teardownContainers({
-      accountId: values['account-id'], prefix: values.prefix,
+      accountId: values['account-id'], expectAccountName: values['expect-account-name'],
+      expectIds: values['expect-ids'] === '' ? [] : values['expect-ids']?.split(','), prefix: values.prefix,
       allInDedicatedAccount: values['all-in-dedicated-account'], brand: values.brand,
       approvedBy: values['approved-by'], house: values.house, houseApproved: values['house-approved'],
       apply: values.apply, token: process.env.CLOUDFLARE_API_TOKEN,

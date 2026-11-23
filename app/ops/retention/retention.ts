@@ -21,8 +21,8 @@ import type { JobDeps } from '../delete/r2.ts'
 import { MAX_LIMIT, RETENTION_JOBS, SERVED_BY } from '../coverage/chat-watch-connectors/retention-jobs.ts'
 import type { AgeTag, JobContext, JobPlan, LoggedCutoff, RetentionJob } from '../coverage/chat-watch-connectors/retention-jobs.ts'
 import type { TableEntry } from '../tables/types.ts'
-import { retentionRules } from './rules.ts'
-import type { RetentionRule } from './rules.ts'
+import { hasRetentionWork, retentionRules } from './rules.ts'
+import type { RetentionPeriods, RetentionRule } from './rules.ts'
 
 export interface RetentionDeps extends JobDeps {
   /** Defaults to `retentionRules` (rules.ts); tests pass fixtures. */
@@ -60,12 +60,12 @@ export interface RetentionPlan {
 
 const issued = new WeakSet<RetentionPlan>()
 
-function targetsFor(registry: readonly TableEntry[], rules: Readonly<Record<string, RetentionRule>>, periods: Readonly<Record<string, number>>, nowMs: number): { targets: Target[]; custom: Omit<CustomTarget, 'plan'>[] } {
+function targetsFor(registry: readonly TableEntry[], rules: Readonly<Record<string, RetentionRule>>, periods: RetentionPeriods, nowMs: number): { targets: Target[]; custom: Omit<CustomTarget, 'plan'>[] } {
   for (const [store, days] of Object.entries(periods)) {
     const entry = registry.find(e => e.name === store)
     if (!entry) throw new Error(`retention: ${store} is not a registered store`)
     if (entry.retention !== 'retention_period') throw new Error(`retention: ${store} is ${entry.retention}, not retention_period: it takes no period`)
-    if (!Number.isSafeInteger(days) || days < 1) throw new Error(`retention: ${store}'s period must be a whole number of days, at least 1`)
+    if (days !== null && (!Number.isSafeInteger(days) || days < 1)) throw new Error(`retention: ${store}'s period must be a whole number of days, at least 1`)
   }
   // C1: a custom rule runs its store's job, whatever the store's class; one with no job (and no other store's job
   // serving it) refuses by name, so nothing past retention is skipped silently.
@@ -81,7 +81,8 @@ function targetsFor(registry: readonly TableEntry[], rules: Readonly<Record<stri
     if (entry.retention === 'retention_period') {
       const days = periods[entry.name]
       if (days === undefined) throw new Error(`retention: no period given for ${entry.name}`)
-      cutoffMs = nowMs - days * DAY_MS
+      if (!hasRetentionWork(entry.name, periods)) continue
+      cutoffMs = days === null ? null : nowMs - days * DAY_MS
     }
     custom.push({ entry, job, cutoffMs })
   }
@@ -100,6 +101,7 @@ function targetsFor(registry: readonly TableEntry[], rules: Readonly<Record<stri
     if (rule === undefined) throw new Error(`retention: no rule for ${entry.kind} store ${entry.name} (add one to ops/retention/rules.ts)`)
     if (rule.kind === 'derived' || rule.kind === 'custom') throw new Error(`retention: ${entry.name} isn't derived, its rule is ${rule.kind}`)
     if (rule.kind !== entry.kind) throw new Error(`retention: ${entry.name} is ${entry.kind}, its rule is ${rule.kind}`)
+    if (days === null) continue
     if (rule.kind === 'd1') {
       ident(entry.name)
       ident(rule.ageColumn)
@@ -122,8 +124,8 @@ async function pastObjects(bucket: JobDeps['bucket'], t: Target): Promise<string
   return (await listAll(bucket, t.entry.name)).filter(o => o.uploaded.getTime() < t.cutoffMs).map(o => o.key)
 }
 
-/** The dry run: writes nothing. `periods` in days, one per `retention_period` store, no defaults. */
-export async function planRetention(deps: RetentionDeps, input: { periods: Readonly<Record<string, number>>; limit?: number }): Promise<RetentionPlan> {
+/** The dry run: writes nothing. Each `retention_period` store takes days or null for no age rule. */
+export async function planRetention(deps: RetentionDeps, input: { periods: RetentionPeriods; limit?: number }): Promise<RetentionPlan> {
   const limit = input.limit ?? MAX_LIMIT
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_LIMIT) throw new Error(`retention: limit must be 1 to ${MAX_LIMIT}`)
   const { targets, custom: customTargets } = targetsFor(registryOf(deps), deps.rules ?? retentionRules, input.periods, deps.at.nowMs)

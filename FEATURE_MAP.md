@@ -327,7 +327,7 @@ Settings: Spending cap
 Settings: Data and access
   Path:     Settings -> Data and access
   Selector: dropdowns "Chats" and "Activity and steps", switches "Inhouse team access" and "Two-step sign-in", buttons "Export" and "Ask the team"
-  Expected: retention picks and the switches save, survive a reload and Reset demo clears them; the audit log's retention is fixed; Export says it isn't connected and changes nothing; Ask the team opens the team window on "Change something" with the delete request written; on a phone it reads as text and Export still answers
+  Expected: retention picks and the switches save, survive a reload and Reset demo clears them; in product, Chats and Activity and steps set the age rules used by nightly retention and the overdue health signal, and Until deleted turns off the corresponding age rule while the trash period still applies; the audit log's retention is fixed; Export says it isn't connected and changes nothing; Ask the team opens the team window on "Change something" with the delete request written; on a phone it reads as text and Export still answers
   Covered:  e2e/settings-agent-data.spec.ts, e2e/settings-pages-phone.spec.ts, e2e/no-persona.spec.ts
 
 Settings: Audit log

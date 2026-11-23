@@ -1,7 +1,8 @@
 # Backend runbook
 
-Operations on a brand's backend: pause, rotate keys, remove a member, restore, tear down, roll back a release. For a
-broken live site or a failed deploy, start with [runbook.md](runbook.md). For what data each store holds, see
+Operations on a brand's backend include pausing, rotating keys, removing members, handling Shopify privacy requests,
+restoring, tearing down and rolling back a release. For a broken live site or a failed deploy, start with
+[runbook.md](runbook.md). For what data each store holds, see
 [data-map.md](data-map.md).
 
 Ground rules for every section:
@@ -183,8 +184,8 @@ database is live again but is missing whatever was written after the switch: pau
 its container applications behind, so the script must:
 1. Require the brand id and an Admin's written approval, and refuse on the house deployment without Wasim's OK.
 2. Pause the brand and take a final backup, and check that backup proves.
-3. **List the container applications before** the teardown, and record the list.
-4. Delete each container application **explicitly**, one by one.
+3. **Verify the account and list the container applications before** the teardown. Review and record their IDs.
+4. Recheck the account and the reviewed ID set, then delete each container application **explicitly**, one by one.
 5. Delete the Workers, the Durable Object classes, D1, R2 prefixes or buckets, queues and secrets, in the order the
    dependencies need.
 6. Remove the Access applications, the DNS records and the custom domain.
@@ -194,11 +195,17 @@ its container applications behind, so the script must:
 Steps for the operator: pause the brand, get the written approval, run the script in the ops repo, and read both lists.
 
 For the container step, the ops workflow can run `node app/ops/teardown/containers.ts` with
-`--account-id`, `--brand` and one scope. Use `--all-in-dedicated-account` when retiring a brand's whole account.
+`--account-id`, `--brand`, `--expect-account-name` and one scope. Take the expected account name from the brand's
+private ops record and pass it exactly as Cloudflare reports it. Both dry run and apply verify it before listing apps.
+Use `--all-in-dedicated-account` when retiring a brand's whole account.
 On a shared account, pass the retiring deployment's unique container name `--prefix` (ending in `_` or `-`),
 such as the complete Worker and Preview prefix for a Preview. The token comes from `CLOUDFLARE_API_TOKEN`.
-Review the initial list, then pass `--apply --approved-by` with the Admin's name. For house, also pass
-`--house --house-approved` after Wasim's approval. Save both JSON lists with the offboarding record.
+It needs permission to read the account and manage its container applications.
+Review the initial list, then repeat the same flags with `--apply`, `--approved-by` with the Admin's name and
+`--expect-ids` with the reviewed application IDs separated by commas. Use `--expect-ids=` if the reviewed list is
+empty. If the ID set differs, the script refuses before deleting anything. Run a new dry run and review the new list
+before applying. For house, also pass `--house --house-approved` after Wasim's approval. Save both JSON lists with
+the offboarding record. [Cloudflare account details API](https://developers.cloudflare.com/api/resources/accounts/methods/get/)
 The script polls for asynchronous deletion and fails if any applications in scope remain.
 
 **Verify.** The after list is empty. The Cloudflare dashboard shows no Worker, D1, R2 bucket or Access app for the brand.
@@ -207,6 +214,32 @@ The script polls for asynchronous deletion and fails if any applications in scop
 back, through Restore, into a new deployment.
 
 **Rehearsal record.** Date: ___ Deployment: ___ Who: ___ Containers before: ___ after: ___ Result: ___
+
+## Shopify privacy requests
+
+Use the [onboarding checklist](onboarding-checklist.md#1-accounts-and-apps) to register one subscription per topic
+on both Shopify apps, set `SHOPIFY_WEBHOOK_SECRETS` via a secret card and scope the Access bypass to
+`/api/webhooks/shopify/*`. The three POST routes (91–93) authenticate deliveries with Shopify's HMAC.
+
+When an Admin sees a privacy notice, find the matching `privacy.requested` audit entry and open `privacy_requests`
+row using the brand's private ops access. Match the shop ID to the brand's store, then use the customer and order IDs
+from the request to scope the work. If the row is unparsed or the IDs are insufficient, confirm the scope with the
+merchant before acting. Work within 30 days of receipt and escalate any legal retention requirement before erasing
+data. [Shopify privacy law compliance](https://shopify.dev/docs/apps/build/compliance/privacy-law-compliance)
+
+| Topic | What the Inhouse team does before closing |
+|---|---|
+| `customers/data_request` (route 91) | Find the customer data Inhouse holds for the named shop, customer and requested orders. Use the data map to check stored copies in chat and run records, Library files and other applicable stores. Export only the matching customer data, verify its scope and deliver it securely to the merchant. If no matching data is held, tell the merchant and record that outcome. |
+| `customers/redact` (route 92) | Find and erase Inhouse's stored copies of personal data for the named customer and orders in that shop. Check related records, files and derived indexes, and verify that the data is gone. If no matching data is held, record the search and its outcome. |
+| `shop/redact` (route 93) | Locate and erase the Shopify data Inhouse holds for the uninstalled shop, including stored copies in records, files and derived indexes. If the whole brand deployment is retiring, coordinate the approved teardown separately. Verify erasure or document that Inhouse held no shop data. |
+
+For redaction, check backups against the data map. Record any copies that age out and make sure a restore cannot
+reintroduce the erased data. Record completion in the private ops record using the internal request ID.
+
+After the topic's work is complete, use the `release` service token through the private ops workflow to
+`POST /api/ops/privacy-requests/:id/close` (route 94). Pass the internal privacy request ID. Confirm the response
+is `closed` or `already_closed` and that the audit log has `privacy.closed`. Closing clears the request's customer,
+order and data request IDs.
 
 ## Redeploy the previous release
 

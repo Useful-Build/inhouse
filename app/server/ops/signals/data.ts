@@ -13,9 +13,10 @@
 // `backup_failed` and `retention_failed` stay log lines too.
 import { listAll } from '../../../ops/delete/r2.ts'
 import { deletionLogEntrySchema } from '../../../ops/delete/log.ts'
-import { DEFAULT_DAYS, periodsFor, retentionRules } from '../../../ops/retention/rules.ts'
+import { DEFAULT_DAYS, hasRetentionWork, periodsFor, retentionRules } from '../../../ops/retention/rules.ts'
+import type { RetentionPeriods } from '../../../ops/retention/rules.ts'
 import { tables } from '../../../ops/tables/index.ts'
-import { retentionStores } from '../retention-handlers.ts'
+import { brandRetentionDays, retentionStores } from '../retention-handlers.ts'
 import { backupManifestKey } from '../../db/r2-keys.ts'
 import type { KeyedBucket } from '../../db/r2-keys.ts'
 import { first, stmt } from '../../db/sql.ts'
@@ -60,6 +61,8 @@ export async function backupFresh(db: D1Database, bucket: Bucket, nowMs: number)
 
 /** Every retention store has a `done` run within 26 hours: red names the ones that don't. */
 export async function retentionFresh(db: D1Database, bucket: Bucket, nowMs: number, stores: readonly string[] = retentionStores().map(e => e.name)): Promise<SignalResult> {
+  const periods = periodsFor(tables, await brandRetentionDays(db))
+  const enabled = stores.filter(store => hasRetentionWork(store, periods))
   const since = `deletion-log/${String(nowMs - FRESH_MS - 1).padStart(13, '0')}.`
   // listAll only lists (ops/delete/r2.ts); the signal's bucket is the stores' read view of the same binding.
   const done = (await listAll(bucket as R2Bucket, 'deletion-log/', since)).filter(o => o.key.endsWith('-done.json'))
@@ -70,17 +73,20 @@ export async function retentionFresh(db: D1Database, bucket: Bucket, nowMs: numb
     const e = deletionLogEntrySchema.parse(JSON.parse(await body.text()))
     if (e.kind === 'retention') for (const c of e.cutoffs ?? []) seen.add(c.store)
   }
-  const stale = stores.filter(s => !seen.has(s))
+  const stale = enabled.filter(s => !seen.has(s))
   if (stale.length > 0 && young(await deployedAtMs(db), nowMs)) return { ok: true, detail: 'no run yet (deployed under 26h ago)' }
-  return stale.length === 0 ? { ok: true, detail: `${stores.length} stores` } : { ok: false, detail: `no run in 26h: ${stale.join(', ')}` }
+  return stale.length === 0 ? { ok: true, detail: `${enabled.length} stores` } : { ok: false, detail: `no run in 26h: ${stale.join(', ')}` }
 }
 
 /** Per store, a count of rows older than its cutoff plus the slack (D1 stores only). */
-function overdueChecks(nowMs: number): { store: string; sql: string; params: number[] }[] {
-  const periods = periodsFor(tables)
-  const own = (store: string) => nowMs - (periods[store] ?? 0) * DAY - OVERDUE_SLACK_MS
+function overdueChecks(nowMs: number, periods: RetentionPeriods): { store: string; sql: string; params: (number | null)[] }[] {
+  const own = (store: string) => {
+    const days = periods[store]
+    if (days === undefined) throw new Error(`retention_overdue: no period for ${store}`)
+    return days === null ? null : nowMs - days * DAY - OVERDUE_SLACK_MS
+  }
   const fixed = (p: keyof typeof DEFAULT_DAYS) => nowMs - DEFAULT_DAYS[p] * DAY - OVERDUE_SLACK_MS
-  const checks: { store: string; sql: string; params: number[] }[] = [
+  const checks: ReturnType<typeof overdueChecks> = [
     { store: 'chats', sql: 'SELECT COUNT(*) AS n FROM chats WHERE last_at_ms < ? OR (deleted_at_ms IS NOT NULL AND deleted_at_ms < ?)', params: [own('chats'), fixed('trash')] },
     { store: 'tool_calls', sql: 'SELECT COUNT(*) AS n FROM tool_calls WHERE at_ms < ?', params: [own('tool_calls')] },
     { store: 'chat_files', sql: "SELECT COUNT(*) AS n FROM library_marks WHERE source = 'chat' AND deleted_at_ms < ?", params: [fixed('trash')] },
@@ -93,13 +99,14 @@ function overdueChecks(nowMs: number): { store: string; sql: string; params: num
   for (const [store, rule] of Object.entries(retentionRules)) {
     if (rule.kind === 'd1') checks.push({ store, sql: `SELECT COUNT(*) AS n FROM "${store}" WHERE "${rule.ageColumn}" < ?`, params: [own(store)] })
   }
-  return checks
+  return checks.filter(c => hasRetentionWork(c.store, periods))
 }
 
 /** No store holds a row past its cutoff plus two days: red names each store that does, with its count. */
 export async function retentionOverdue(db: D1Database, nowMs: number): Promise<SignalResult> {
+  const periods = periodsFor(tables, await brandRetentionDays(db))
   const late: string[] = []
-  for (const c of overdueChecks(nowMs)) {
+  for (const c of overdueChecks(nowMs, periods)) {
     const r = await first<{ n: number }>(db, stmt(c.sql, ...c.params))
     if (!r) throw new Error(`retention_overdue: no count from ${c.store}`)
     if (r.n > 0) late.push(`${c.store} ${r.n}`)

@@ -103,7 +103,8 @@ const CHATS_ROUND = 10
 
 /** A chat whose last activity is past the chats period, or whose trash time is past the trash period. */
 function pastChats(ctx: JobContext) {
-  const chatsCut = own(ctx, 'chats')
+  // A trash-only plan (including replay) has no own cutoff. Comparing with SQL NULL leaves only the trash predicate.
+  const chatsCut = ctx.cutoffs?.own ?? ctx.cutoffMs
   const trashCut = cut(ctx, 'chats', 'trash')
   return { where: 'c.last_at_ms < ? OR (c.deleted_at_ms IS NOT NULL AND c.deleted_at_ms < ?)', params: [chatsCut, trashCut] as SqlValue[], chatsCut, trashCut }
 }
@@ -119,7 +120,9 @@ export const chatCascade: RetentionJob = {
     if (ctx.sql) counts.BrandAgent = Object.values(countChatRows(ctx.sql, units)).reduce((a, b) => a + b, 0)
     // A busy chat is skipped, not waited on: `more` only when this run made progress, so a chat that stays busy can't
     // keep the handler coming back every minute.
-    return { counts, units, cutoffs: [logged('chats', 'own', past.chatsCut), logged('chats', 'trash', past.trashCut)], more: found.more && units.length > 0 }
+    const cutoffs = past.chatsCut === null ? [] : [logged('chats', 'own', past.chatsCut)]
+    cutoffs.push(logged('chats', 'trash', past.trashCut))
+    return { counts, units, cutoffs, more: found.more && units.length > 0 }
   },
   async run(ctx, plan, round) {
     const past = pastChats(ctx)

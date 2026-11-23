@@ -7,7 +7,7 @@
 // account row that only references them (members.invited_by) is cut to its key columns, so a person's export never
 // holds another person's name or email. Export removes nothing, so it doesn't log.
 // C1: a person's chats go whole (the chat cascade's scope): every message in their chats (the agent's answers too), the
-// chats' tool calls, files and file bytes, matched by the chat's owner rather than by a person key. Never a transcript,
+// chats' tool calls, files and file bytes, matched by the chat's owner in addition to each row's person keys. Never a transcript,
 // a Durable Object row or a derived index row (none of them is `export: true`).
 // R2 list and get: https://developers.cloudflare.com/r2/api/workers/workers-api-reference/ (read 2026-11-20)
 import { all, first, stmt } from '../../server/db/sql.ts'
@@ -63,10 +63,14 @@ export function personFilter(entry: TableEntry, memberId: string): { where: stri
 const CHAT_SCOPED: Readonly<Record<string, string>> = { chat_messages: 'chat_id', tool_calls: 'chat_id', chat_files: 'chat_id' }
 const OWN_CHATS = 'SELECT id FROM chats WHERE owner_id = ?'
 
-/** A D1 entry's rows for one person: their chats' rows for a chat-scoped store, else `personFilter`. */
+/** A D1 entry's rows for one person: rows that name them or belong to their chats. */
 function personScope(entry: TableEntry, memberId: string): { where: string; params: SqlValue[] } | null {
+  const person = personFilter(entry, memberId)
   const column = CHAT_SCOPED[entry.name]
-  return column === undefined ? personFilter(entry, memberId) : { where: `${ident(column)} IN (${OWN_CHATS})`, params: [memberId] }
+  if (column === undefined) return person
+  const chat = `${ident(column)} IN (${OWN_CHATS})`
+  return person === null ? { where: chat, params: [memberId] }
+    : { where: `(${person.where} OR ${chat})`, params: [...person.params, memberId] }
 }
 
 /** The plain-column person keys (members: id, invited_by). */

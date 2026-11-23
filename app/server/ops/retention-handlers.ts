@@ -12,12 +12,16 @@
 // Every removal is in the deletion log (G2's entries: ids and counts only), the BrandAgent part's too.
 // No handler sets or deletes the alarm: the scheduler owns it.
 import { runRetention, planRetention } from '../../ops/retention/retention.ts'
-import { periodsFor, retentionRules } from '../../ops/retention/rules.ts'
+import { DEFAULT_DAYS, hasRetentionWork, periodsFor, retentionRules } from '../../ops/retention/rules.ts'
+import type { PeriodName } from '../../ops/retention/rules.ts'
+import { RETENTION } from '../../shared/contract/settings-table.ts'
 import { SERVED_BY } from '../../ops/coverage/chat-watch-connectors/retention-jobs.ts'
 import { tables } from '../../ops/tables/index.ts'
 import type { TableEntry } from '../../ops/tables/types.ts'
 import type { KeyedBucket } from '../db/r2-keys.ts'
 import { SYSTEM_MEMBER_ID } from '../db/ids.ts'
+import { BRAND_OWNER } from '../db/settings.ts'
+import { all, stmt } from '../db/sql.ts'
 import type { DueTask, TaskContext, TaskHandler, TaskResult } from '../do/brand-agent/scheduler.ts'
 import { withSeed } from '../do/brand-agent/scheduler.ts'
 import { safeError } from '../safe-error.ts'
@@ -39,6 +43,29 @@ export const CHATS_LIMIT = 10
 const COST = { d1: 30, r2: 12 }
 const CHATS_COST = { d1: 30, r2: 4 * CHATS_LIMIT + 6 }
 const LIMIT = 90
+
+const SETTING_DAYS = {
+  '3 months': 90,
+  '6 months': 180,
+  '12 months': DEFAULT_DAYS.chats,
+  '24 months': 730,
+  'Until deleted': null,
+} satisfies Record<(typeof RETENTION)[number], number | null>
+
+export async function brandRetentionDays(db: D1Database): Promise<Record<PeriodName, number | null>> {
+  const rows = await all<{ key: 'd:chats' | 'd:steps'; value_json: string }>(db, stmt(
+    "SELECT key, value_json FROM settings WHERE owner = ? AND key IN ('d:chats', 'd:steps')", BRAND_OWNER,
+  ))
+  const days: Record<PeriodName, number | null> = { ...DEFAULT_DAYS }
+  for (const row of rows) {
+    const value: unknown = JSON.parse(row.value_json)
+    if (value === null) continue // Reset to the default.
+    const choice = RETENTION.find(option => option === value)
+    if (choice === undefined) throw new Error(`retention: invalid ${row.key} setting`)
+    days[row.key === 'd:chats' ? 'chats' : 'steps'] = SETTING_DAYS[choice]
+  }
+  return days
+}
 
 /**
  * Every store retention acts on, in registry order: a `retention_period` entry that isn't derived, or a custom rule;
@@ -91,6 +118,7 @@ export interface PassInput {
 export async function retentionPass(input: PassInput): Promise<{ stores: number; reached: number; used: { d1: number; r2: number }; failed: string[] }> {
   const stores = retentionStores(input.registry)
   const { db, bucket, used } = counting(input.db, input.bucket)
+  const days = await brandRetentionDays(db)
   const failed: string[] = []
   let from = input.from
   for (; from < stores.length; from++) {
@@ -100,7 +128,9 @@ export async function retentionPass(input: PassInput): Promise<{ stores: number;
     const registry = [entry]
     const deps = { db, bucket, sql: input.sql, at: { actorId: SYSTEM_MEMBER_ID, requestId: input.requestId, nowMs: input.nowMs }, registry }
     try {
-      const plan = await planRetention(deps, { periods: periodsFor(registry), limit: entry.name === 'chats' ? CHATS_LIMIT : LIMIT })
+      const periods = periodsFor(registry, days)
+      if (!hasRetentionWork(entry.name, periods)) continue
+      const plan = await planRetention(deps, { periods, limit: entry.name === 'chats' ? CHATS_LIMIT : LIMIT })
       const result = await runRetention(deps, plan, { maxRounds: 3 })
       if (result.more) break
     } catch (err) {

@@ -12,14 +12,19 @@ Related: [runbook-backend.md](runbook-backend.md), [data-map.md](data-map.md).
       own merchant organization (not ours). The read app asks only for read scopes. The write app is created now but
       stays unused until a later phase turns writes on. Install each on the brand's store.
 - [ ] **Compliance webhooks, per app.** Shopify doesn't allow these through the Admin API. Subscribe each app to
-      `customers/data_request`, `customers/redact` and `shop/redact` through the CLI app config:
+      the three topics through its CLI app config.
       1. `shopify app config link` to link the app.
-      2. In `shopify.app.toml`, under the webhooks section, set `compliance_topics` to the three topics and the URI to
-         `<compliance webhook URL>`. The URL comes from P8a F2 (the product Worker's HMAC-verified route). Placeholder
-         until F2 merges.
-      3. `shopify app deploy`.
-      4. Check in the Dev Dashboard that the three topics show the URL. Shopify's automated check sends a bad HMAC and
-         expects a 401, and a good one expects a 2xx.
+      2. Add three `[[webhooks.subscriptions]]` entries in `shopify.app.toml`. Give each entry a one-topic
+         `compliance_topics` array and set `uri` to the HTTPS URL on the brand host with the corresponding path.
+         - `customers/data_request` → `/api/webhooks/shopify/customers-data-request`
+         - `customers/redact` → `/api/webhooks/shopify/customers-redact`
+         - `shop/redact` → `/api/webhooks/shopify/shop-redact`
+      3. Use a T3 secret card to set the required `SHOPIFY_WEBHOOK_SECRETS` Worker secret as a JSON array of the
+         read and write apps' client secrets. Keep secret values out of app config, commands and records.
+      4. Configure the scoped Access exemption in section 2 before running `shopify app deploy` for each app.
+      5. Verify each topic's URL in the Dev Dashboard. A delivery with an invalid HMAC should return 401 and a
+         correctly signed test delivery should return 2xx. See the backend runbook for handling requests.
+         [Shopify privacy law compliance](https://shopify.dev/docs/apps/build/compliance/privacy-law-compliance)
 - [ ] **The Slack app.** Create it in the brand's workspace (or install ours, as the brand chooses). Note the signing
       secret and bot token for a secret card (the exact steps are to confirm in the rehearsal). Keep it to the channels the brand names.
 - [ ] **Payload logging off on the brand's Anthropic key.** Create the key in the brand's own workspace, turn payload
@@ -32,6 +37,10 @@ identity provider**. One email can't be both a brand member and an Inhouse membe
 person who is in both gets one identity and the product answers `wrong_kind`, in a loop.
 
 - [ ] **Brand app**: `<brand host>`, policy allows only the brand's people, identity provider A.
+- [ ] **Shopify webhook exemption.** Add a path-specific Access application on the brand host for
+      `/api/webhooks/shopify/*` with a Bypass policy that includes Everyone. Shopify can then reach the Worker's
+      HMAC verification without signing in.
+      [Cloudflare Access bypass for public endpoints](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/common-policies/#bypass-a-public-endpoint)
 - [ ] **Inhouse team app**: the support path on `<brand host>` (or `<house host>`), policy allows only the Inhouse
       team, identity provider B. Provider B is never the brand's.
 - [ ] Check both ways: a brand member can't open the team app, an Inhouse member can't sign in to the brand app, and
