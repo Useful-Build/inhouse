@@ -34,11 +34,15 @@ export const ApproveResultSchema = z.object({
 export type ApproveResult = z.infer<typeof ApproveResultSchema>
 
 /**
- * A request to the Inhouse team. `sub` is what and who ("New tool · asked by Priya"), `at` when it was asked; `status`
- * is where it stands ("Live by", "Sent") and `statusAt` the date that goes with it. Shown as
- * "New tool · asked by Priya, Nov 9" and "Live by Fri, Nov 20".
+ * A request to the Inhouse team. `sub` is what and who ("New tool · Priya"), `at` when it was asked; `status`
+ * is where it stands ("Live by", "With the team", "Done") and `statusAt` the date that goes with it. Shown as
+ * "New tool · Priya, Nov 9" and "Live by Fri, Nov 20". `text` is the request in full, when there is more than the
+ * title; `closed` says how a closed request ended (absent while it's open).
  */
-export const TeamRequestSchema = z.object({ icon: z.string(), title: z.string(), sub: z.string(), at: InstantSchema, status: z.string(), statusAt: InstantSchema.optional() })
+export const TeamRequestSchema = z.object({
+  icon: z.string(), title: z.string(), sub: z.string(), at: InstantSchema, status: z.string(), statusAt: InstantSchema.optional(),
+  text: z.string().optional(), closed: z.enum(['done', 'declined', 'withdrawn']).optional(),
+})
 export type TeamRequest = z.infer<typeof TeamRequestSchema>
 
 /** When and by whom something was done: `at` on the agent's clock, `by` the member's id. */

@@ -48,7 +48,7 @@ for (const [stage, current, next, nextName] of STAGE_ROWS) {
     const team = page.getByRole('dialog', { name: 'Your Inhouse team' })
     await expect(team).toBeVisible()
     await expect(team.getByRole('radio', { name: /Change something/ })).toBeChecked()
-    await expect(team.getByRole('textbox', { name: 'Your request' })).toHaveValue('')
+    await expect(team.getByRole('textbox', { name: 'Details' })).toHaveValue('')
     await page.keyboard.press('Escape')
     await expect(team).toHaveCount(0)
   })

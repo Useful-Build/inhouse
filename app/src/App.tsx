@@ -26,7 +26,7 @@ import { GooDefs, Page as PageBox, SkyspaceBackground } from './ui'
 import { Today } from './screens/Today'
 import { Chats } from './screens/Chats'
 import { useChatIsBlank } from './screens/chat/open-messages'
-import { MENU } from './screens/settings/menu'
+import { SETTINGS_PAGES } from './screens/settings/menu'
 import { ProblemPanel } from './overlays/ProblemPanel'
 import { TeamWindow } from './overlays/TeamWindow'
 import { HelpWindow } from './overlays/HelpWindow'
@@ -147,15 +147,15 @@ const toolName = (t: ToolsData, k: string) => t.channels.find(c => c.key === k)?
 const PAGE_SLUG: Record<Page, string> = { today: 'today', library: 'library', chats: 'chats', approvals: 'approvals', routines: 'routines', activity: 'activity', apps: 'tools', app: 'tools', skills: 'skills', usage: 'usage', settings: 'settings' }
 const toHash = (page: Page, appKey: string, setTab: string, chat: string, menu = false) =>
   '#/' + PAGE_SLUG[page] + (page === 'app' ? '/' + appKey : page === 'settings' ? (menu ? '' : '/' + setTab) : page === 'chats' ? '/' + encodeURIComponent(chat) : '')
-const SETTINGS_TABS = MENU.flatMap(g => g.items.map(([k]) => k))
+const SETTINGS_TABS = SETTINGS_PAGES.map(p => p.id)
 /** The list each page shows that the agent's work fills (read again when the page opens). */
 const PAGE_LIST: Partial<Record<Page, RefreshList>> = { today: 'problems', approvals: 'problems', library: 'library', activity: 'activity' }
 const PAGE_LABEL: Record<Page, string> = { today: 'Today', library: 'Library', chats: 'Chats', approvals: 'Approvals', routines: 'Routines', activity: 'Activity', apps: 'Tools', app: 'Tools', skills: 'Skills', usage: 'Usage', settings: 'Settings' }
 /** A link that names a page, tool or tab that doesn't exist lands where it did before, and says so. */
 const notFound = (where: string) => useUi.getState().showToast(`That page doesn't exist. You're on ${where}.`, { icon: 'info', key: 'route-notice' })
 const SETTINGS_DEFAULT = 'you-general'
-/** A settings tab's label: MENU items are [key, icon, label]. */
-const settingsLabel = (tab: string) => MENU.flatMap(g => g.items).find(([k]) => k === tab)?.[2] ?? 'Settings'
+/** A settings tab's label. */
+const settingsLabel = (tab: string) => SETTINGS_PAGES.find(p => p.id === tab)?.label ?? 'Settings'
 /** The hash names something (as opposed to an empty hash). */
 const hasSlug = (hash: string) => hash.startsWith('#/') && !!hash.slice(2).split('/')[0]
 /** `chat` is `all` (See all), `new` (a chat with nothing asked yet) or a chat id. */

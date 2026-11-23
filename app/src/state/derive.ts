@@ -74,21 +74,62 @@ export const goingLive = (ctx: Ctx): { name: string; by: string } | null => {
 }
 export interface OpenRequest { icon: string; title: string; sub: string; status: string; /** A seeded request's place in the data, for its badge look; null for one the person sent here. */ seed: number | null }
 
-/**
- * The team window's "Open requests": what the person sent here, then the seeded ones, with "Connect <tool>" listed only
- * while that tool is going live (so on First day it isn't). The account menu counts these, so the two always agree.
- * `sentHereJustNow`: the demo says "just now" for what was sent here; the product says how long ago.
- */
-export const openRequests = (ctx: Ctx, now: number, sentHereJustNow: boolean): OpenRequest[] => {
-  const live = goingLive(ctx)
-  const seeded = ctx.data.notifications.teamRequests.flatMap((q, i): OpenRequest[] => {
-    const tool = /^Connect (.+)$/.exec(q.title)?.[1]
-    if (tool && live?.name !== tool) return []
-    const line = teamRequestLine(q, now, false)
-    return [{ icon: q.sub.startsWith('New job') ? 'work' : 'add_link', title: q.title, sub: line.sub, status: tool && live ? `Live by ${live.by}` : line.status, seed: i }]
-  })
-  return [...ctx.agent.teamRequests.map((q): OpenRequest => ({ icon: q.icon, title: q.title, ...teamRequestLine(q, now, sentHereJustNow), seed: null })), ...seeded]
+/** A request in the team window: its kind and who asked ("New tool", "Priya" or "You"), when, the full text, and how it stands. */
+export interface TeamRow extends OpenRequest {
+  /** Stable while the request exists: its title and when it was asked. */
+  key: string
+  kind: string
+  who: string
+  when: string
+  text?: string
+  /** The signed-in person asked it, so they may withdraw it while it's open. */
+  mine: boolean
+  /** The status carries a date ("Live by Fri, Nov 20"). */
+  dated: boolean
+  closed?: 'done' | 'declined' | 'withdrawn'
 }
+
+/** A request's key: what `withdrawn` holds. */
+export const teamRequestKey = (q: { title: string; at: Instant }) => `${q.title}|${q.at}`
+
+/**
+ * The team window's requests, open and closed. Open: what the person sent here, then the seeded ones, with "Connect
+ * <tool>" listed only while that tool is going live (so on First day it isn't). The account menu counts the open ones,
+ * so the two always agree. `withdrawn` holds the keys of requests the person withdrew this session (closed as
+ * "Withdrawn"). `sentHereJustNow`: the demo says "just now" for what was sent here; the product says how long ago.
+ */
+export const teamRequests = (ctx: Ctx, now: number, sentHereJustNow: boolean, withdrawn: readonly string[] = []): { open: TeamRow[]; closed: TeamRow[] } => {
+  const live = goingLive(ctx)
+  const me = userName(ctx)
+  const row = (q: Omit<TeamRequest, 'icon'> & { icon?: string }, sentHere: boolean, seed: number | null): TeamRow => {
+    const line = teamRequestLine(q, now, sentHere && sentHereJustNow)
+    const [kind, asker = ''] = q.sub.split(' · ')
+    // "asked by Priya" and "sent by Sam Mercer": requests saved before the window said just the name.
+    const name = asker.replace(/^(asked|sent) by /, '')
+    const mine = sentHere || name === me || name === me.split(' ')[0]
+    const withdrew = !q.closed && withdrawn.includes(teamRequestKey(q))
+    return {
+      key: teamRequestKey(q), icon: q.icon ?? KIND_ICON[kind] ?? 'add_link', title: q.title, kind, who: mine ? 'You' : name,
+      when: line.sub.slice(q.sub.length + 2), sub: line.sub, text: q.text, mine, seed,
+      status: withdrew ? 'Withdrawn' : line.status, dated: !withdrew && !!q.statusAt, closed: withdrew ? 'withdrawn' : q.closed,
+    }
+  }
+  const seeded = ctx.data.notifications.teamRequests.flatMap((q, i): TeamRow[] => {
+    const tool = /^Connect (.+)$/.exec(q.title)?.[1]
+    if (!q.closed && tool && live?.name !== tool) return []
+    const r = row(q, false, i)
+    return [!q.closed && tool && live && !r.closed ? { ...r, status: `Live by ${live.by}` } : r]
+  })
+  const all = [...ctx.agent.teamRequests.map(q => row(q, true, null)), ...seeded]
+  return { open: all.filter(r => !r.closed), closed: all.filter(r => r.closed) }
+}
+
+/** The kind of a seeded request, by the first part of its line ("New tool · Priya"). */
+const KIND_ICON: Record<string, string> = { 'New tool': 'add_link', 'New job': 'work', 'Change something': 'tune', 'Report a bug': 'bug_report', Feedback: 'campaign' }
+
+/** The open requests: what the account menu counts. */
+export const openRequests = (ctx: Ctx, now: number, sentHereJustNow: boolean, withdrawn: readonly string[] = []): TeamRow[] =>
+  teamRequests(ctx, now, sentHereJustNow, withdrawn).open
 
 /**
  * A request to the Inhouse team as listed: "New tool · asked by Priya, Nov 9" and "Live by Fri, Nov 20". One the person
@@ -759,7 +800,7 @@ export function fillActivity(ctx: Ctx) {
 }
 
 /** One line in a routine's last runs. `trace` is set only when the agent has the run's steps. */
-export interface RoutineRunLine { key: string; day: string; t: string; text: string; trace?: string; inActivity: boolean }
+export interface RoutineRunLine { key: string; day: string; t: string; text: string; trace?: string; inActivity: boolean; /** The run hit a problem (its Activity line is one). */ failed?: boolean }
 
 /**
  * A routine's last runs, newest first: the Run nows from this session, then the Activity lines it wrote (matched by
@@ -774,7 +815,7 @@ export function routineRuns(ctx: Ctx, r: { id: string; name: string; last?: { at
   const fill = fillActivity(ctx)
   const lines = [...data.activity.today.map(l => ({ ...l, day: 'Today' })), ...data.activity.earlier.map(l => ({ ...l, day: fmtWeekday(l.at, d0) }))]
     .filter(l => !(l.minStage === 'Act' && S < 1) && l.text.toLowerCase().includes(name))
-    .map((l): RoutineRunLine => ({ key: `${l.day}|${fmtTime(l.at, d0)}|${l.text}`, day: l.day, t: fmtTime(l.at, d0), text: fill(l.text), trace: l.trace, inActivity: true }))
+    .map((l): RoutineRunLine => ({ key: `${l.day}|${fmtTime(l.at, d0)}|${l.text}`, day: l.day, t: fmtTime(l.at, d0), text: fill(l.text), trace: l.trace, inActivity: true, failed: l.kind === 'problem' }))
   if (lines.length === 0 && r.last) lines.push({ key: 'last', day: '', t: '', text: lastRunLine(r.last, nowOf()), inActivity: false })
   return [...now, ...lines]
 }

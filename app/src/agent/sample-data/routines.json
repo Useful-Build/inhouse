@@ -6,6 +6,7 @@
   "routines": [
     {
       "name": "Morning check",
+      "by": "Inhouse team",
       "what": "Reads every tool and updates Today.",
       "freq": "Daily",
       "day": "Weekdays",
@@ -16,6 +17,7 @@
     },
     {
       "name": "Monday reorder list",
+      "by": "Inhouse team",
       "what": "Drafts a reorder for anything with under 21 days of stock.",
       "freq": "Weekly",
       "day": "Monday",
@@ -27,6 +29,7 @@
     },
     {
       "name": "Amazon payout check",
+      "by": "Priya Shah",
       "what": "Compares each Amazon payout with what Xero expected.",
       "freq": "Daily",
       "day": "Every day",
@@ -37,6 +40,7 @@
     },
     {
       "name": "Weekly numbers report",
+      "by": "Dana Kim",
       "what": "Sales, margin, stock and ad spend, saved to Library.",
       "freq": "Weekly",
       "day": "Friday",
@@ -48,6 +52,7 @@
   ],
   "createdInSeedChat": {
     "name": "Stuck orders check",
+    "by": "Sam Mercer",
     "freq": "Daily",
     "day": "Every day",
     "time": "07:00",

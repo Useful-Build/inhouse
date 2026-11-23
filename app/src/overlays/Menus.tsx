@@ -82,7 +82,7 @@ export function AccountMenu({ children }: { children: ReactNode }) {
   const email = me ? me.email ?? '' : meta.email
   const go = useUi(s => s.go)
   // The count beside "Your Inhouse team" is the team window's "Open requests" list, counted the same way.
-  const open = openRequests(useCtx(), nowOf(), false).length
+  const open = openRequests(useCtx(), nowOf(), false, useUi(s => s.teamWithdrawn)).length
   type Item = [icon: string, label: string, run: () => void, trailing?: ReactNode]
   // A window an item opens gives focus back to the button that opened this menu, not to the menu item about to close:
   // focus that button first, so the window remembers it as its trigger.
