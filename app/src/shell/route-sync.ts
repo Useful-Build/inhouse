@@ -13,9 +13,9 @@
 // until the next hashchange. `build-support/route-sync-wiring.test.ts` fails when a raw write appears.
 
 
-export interface Place { page: string; appKey: string; setTab: string; chatKey: string; menu: boolean; phone: boolean; chatIsNew: boolean; defaultChat: string | null }
+export interface Place { page: string; appKey: string; skillKey?: string; setTab: string; chatKey: string; menu: boolean; phone: boolean; chatIsNew: boolean; defaultChat: string | null }
 /** A route read from a hash (`fromHash` in App.tsx). */
-export interface Parsed { page?: string; appKey?: string; setTab?: string; chat?: string; setMenu?: boolean }
+export interface Parsed { page?: string; appKey?: string; skillKey?: string; setTab?: string; chat?: string; setMenu?: boolean }
 /** The browser's address bar and history, so a test can stand in for them. */
 export interface HashHost { hash(): string; state(): unknown; replace(state: unknown, hash: string): void; push(state: unknown, hash: string): void }
 
@@ -48,7 +48,7 @@ export interface SyncDeps {
 
 /** On a phone the settings menu and a settings page are two entries; desktop tidies #/settings into its page. */
 const sameMenu = (cur: Parsed, p: Place) => !(p.page === 'settings' && p.phone) || (cur.setMenu ?? p.menu) === p.menu
-const samePlace = (cur: Parsed, p: Place) => cur.page === p.page && (cur.appKey ?? p.appKey) === p.appKey && (cur.setTab ?? p.setTab) === p.setTab && sameMenu(cur, p)
+const samePlace = (cur: Parsed, p: Place) => cur.page === p.page && (cur.appKey ?? p.appKey) === p.appKey && (cur.skillKey ?? p.skillKey) === p.skillKey && (cur.setTab ?? p.setTab) === p.setTab && sameMenu(cur, p)
 
 /**
  * Whether a route names the place the app is in, in other words: `#/chats` is the newest chat, `#/settings` on desktop is

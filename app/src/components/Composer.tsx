@@ -28,7 +28,7 @@ function Tip({ label, children }: { label: string; children: ReactElement }) {
 }
 
 type Pop = null | 'attach' | 'tools' | 'model'
-const PAGE_TITLES: Record<string, string> = { today: 'Today', chats: 'Chats', approvals: 'Approvals', routines: 'Routines', activity: 'Activity', apps: 'Tools', app: 'Tools', skills: 'Skills', usage: 'Usage', settings: 'Settings' }
+const PAGE_TITLES: Record<string, string> = { today: 'Today', chats: 'Chats', approvals: 'Approvals', routines: 'Routines', activity: 'Activity', apps: 'Tools', app: 'Tools', skills: 'Skills', skill: 'Skills', usage: 'Usage', settings: 'Settings' }
 const MAX_LOGOS = 3
 
 const MENU = 'box-border max-w-screen-gutter border-input'

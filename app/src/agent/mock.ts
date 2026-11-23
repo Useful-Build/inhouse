@@ -6,7 +6,7 @@ import {
   problems, routines, scenarios, seedRoutine, seedTable, skillSuggestions, skillSuggestionsTitle, skills, traceDisconnectedVariant,
   traces, tools as sampleTools, usage, usageAtCap, usageHistory,
 } from './data'
-import { sampleAt } from './data'
+import { routineIdOf, sampleAt } from './data'
 import type { ProblemSeed, TraceKey } from './data'
 import type {
   CreateChatInput, ApprovalRule, AuditLine, MemberRecord, MemberRole, Me, ResourceKey, ResourceStatus,
@@ -112,9 +112,6 @@ const initialState = (): AgentState => ({
 })
 
 // ---------- the read-only snapshot ----------
-
-/** A sample routine's id, from its name: "Morning check" is "routine-morning-check". */
-const routineIdOf = (name: string) => 'routine-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 
 type RawTurn = { user?: string; stage?: string; agent?: Record<string, unknown>[]; trace?: string; model?: string }
 /** A seeded answer's recorded trace: every one has its own, so its footer and steps are its own. */
