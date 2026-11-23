@@ -113,8 +113,8 @@ describe('a signed delivery (failures 2 to 4)', () => {
     const row = rows[0]
     expect(row).toMatchObject({ id, webhook_id: webhookId, topic, shop_id: 954889, parse_failed: 0, status: 'open', closed_at_ms: null, body_sha256: await sha256(JSON.stringify(PAYLOADS[topic].body)) })
     expect(row.due_at_ms).toBe(Number(row.received_at_ms) + DUE_MS)
-    if (topic === 'customers/data_request') expect(row).toMatchObject({ customer_id: '191167', order_ids_json: '[299938,280263]', data_request_id: '9999' })
-    if (topic === 'customers/redact') expect(row).toMatchObject({ customer_id: '191167', order_ids_json: '[299938,280263,220458]', data_request_id: null })
+    if (topic === 'customers/data_request') expect(row).toMatchObject({ customer_id: '191167', order_ids_json: '[280263,299938]', data_request_id: '9999' })
+    if (topic === 'customers/redact') expect(row).toMatchObject({ customer_id: '191167', order_ids_json: '[220458,280263,299938]', data_request_id: null })
     if (topic === 'shop/redact') expect(row).toMatchObject({ customer_id: null, order_ids_json: null, data_request_id: null })
     expect(await lines()).toEqual([{ actor_id: 'm_system', action: 'privacy.requested', target_kind: null, target_id: null, args_json: JSON.stringify({ requestId: id, topic, parsed: true }) }])
     const template = { 'customers/data_request': 'privacy_data_request', 'customers/redact': 'privacy_customer_redact', 'shop/redact': 'privacy_shop_redact' }[topic]
@@ -175,12 +175,28 @@ describe('a signed delivery that does not parse is recorded, never dropped (fail
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const body = { ...PAYLOADS['customers/redact'].body, customer: { id: null, email: EMAIL, phone: null } }
     expect((await deliver('customers/redact', { raw: JSON.stringify(body) })).res?.status).toBe(200)
-    expect((await requests())[0]).toMatchObject({ parse_failed: 0, customer_id: null, order_ids_json: '[299938,280263,220458]' })
+    expect((await requests())[0]).toMatchObject({ parse_failed: 0, customer_id: null, order_ids_json: '[220458,280263,299938]' })
     expect(JSON.stringify(await requests())).not.toContain(EMAIL)
   })
 })
 
 describe('one request is one row (failure 10)', () => {
+  it('keeps a canonical 128-bit request ID and sorted unique order IDs across both apps’ deliveries', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const webhookId = 'wh-canonical'
+    // For this digest, slicing the full base64url string would end in "o" instead of "g".
+    const id = 'pr_Ld2e5sIJGeoeZBvRMwSEzg'
+    const raw = JSON.stringify({ ...PAYLOADS['customers/redact'].body, orders_to_redact: [100, 20, 20, 3] })
+    for (const delivery of [{ webhookId }, { webhookId }, { webhookId: `${webhookId}-write`, secret: WRITE }]) {
+      expect((await deliver('customers/redact', { ...delivery, raw })).res?.status).toBe(200)
+      expect((await requests()).map(r => ({ id: r.id, webhookId: r.webhook_id, orders: r.order_ids_json }))).toEqual([
+        { id, webhookId, orders: '[3,20,100]' },
+      ])
+    }
+    expect(await lines()).toHaveLength(1)
+    expect((await notices()).map(n => n.id)).toEqual([`privacy-${id}`])
+  })
+
   // Only the body index can catch these: an email-only customer has no open-request key, and an unparsed row none either.
   it.each([
     ['an email-only customers/redact', 'customers/redact', { raw: JSON.stringify({ ...PAYLOADS['customers/redact'].body, customer: { id: null, email: EMAIL, phone: null } }) }],

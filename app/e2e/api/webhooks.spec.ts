@@ -22,8 +22,8 @@ function testSecrets(): string[] {
 const [READ, WRITE] = testSecrets()
 
 const sign = (body: string, secret: string) => createHmac('sha256', secret).update(body, 'utf8').digest('base64')
-/** server/webhooks/shopify-privacy/store.ts `requestIdFor`. */
-const requestIdFor = (webhookId: string) => `pr_${createHash('sha256').update(`shopify-webhook:${webhookId}`).digest('base64url').slice(0, 22)}`
+/** Encode the first 128 digest bits so the last base64url character has canonical padding bits. */
+const requestIdFor = (webhookId: string) => `pr_${createHash('sha256').update(`shopify-webhook:${webhookId}`).digest().subarray(0, 16).toString('base64url')}`
 
 const run = Date.now()
 const REDACT = { shop_id: 954889, shop_domain: 'invented-shop.myshopify.com', customer: { id: 100_000 + (run % 900_000), email: 'invented.customer@example.test', phone: '+15550100999' }, orders_to_redact: [299938, 280263] }
@@ -57,7 +57,7 @@ test('unsigned, wrongly signed or tampered: 401 unauthorized, nothing recorded o
   expect(auditAfter(mark).filter(l => l.action.startsWith('privacy.'))).toEqual([])
 })
 
-test('a signed customers/redact: 200, recorded once across retries, audited by id only, in the admins\' bell, red on health until closed', async ({ request }) => {
+test('a signed customers/redact: 200, recorded once across retries, audited by id only, in the admins\' bell, amber on health until closed', async ({ request }) => {
   const mark = auditMax()
   const webhookId = `e2e-redact-${run}`
   const id = requestIdFor(webhookId)
@@ -68,7 +68,7 @@ test('a signed customers/redact: 200, recorded once across retries, audited by i
     expect(r.json).toEqual({ ok: true })
   }
   expect(readSql('SELECT id, topic, customer_id, order_ids_json, status FROM privacy_requests WHERE webhook_id = ?', webhookId)).toEqual([
-    { id, topic: 'customers/redact', customer_id: String(REDACT.customer.id), order_ids_json: '[299938,280263]', status: 'open' },
+    { id, topic: 'customers/redact', customer_id: String(REDACT.customer.id), order_ids_json: '[280263,299938]', status: 'open' },
   ])
   const lines = auditAfter(mark).filter(l => l.action.startsWith('privacy.'))
   expect(lines.map(l => [l.action, l.actor_id, JSON.parse(l.args_json)])).toEqual([['privacy.requested', 'm_system', { requestId: id, topic: 'customers/redact', parsed: true }]])

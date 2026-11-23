@@ -1,7 +1,8 @@
 // The privacy request record (migration 0601): one row per Shopify request, its audit line and the admins' bell notice
 // in one D1 batch. The row insert skips on any of the table's keys (the webhook id, the body's SHA-256, or the same open
 // request delivered by the brand's other app); the audit line and the notice are both inserted only when the row was,
-// each guarded on this write's stamp, so a repeat of any kind writes nothing at all.
+// each guarded on this write's stamp. A repeat can add order IDs to the existing request without adding a row, line
+// or notice.
 import { auditInsert } from '../../db/audit.ts'
 import { SYSTEM_MEMBER_ID, writeStamp } from '../../db/ids.ts'
 import { all, first, stmt, storage } from '../../db/sql.ts'
@@ -56,10 +57,12 @@ export function privacyRequestStore(db: D1Database) {
       const id = await requestIdFor(r.webhookId)
       const stamp = writeStamp(at.requestId)
       const p = r.parsed
+      // Store a sorted set from the first delivery, matching the SQL union used for later deliveries.
+      const orderIdsJson = p?.orderIds ? JSON.stringify([...new Set(p.orderIds)].sort((a, b) => a - b)) : null
       const insert = stmt(
         `INSERT INTO privacy_requests (id, webhook_id, body_sha256, topic, parse_failed, shop_id, customer_id, order_ids_json, data_request_id, received_at_ms, due_at_ms, req_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-        id, r.webhookId, r.bodySha256, r.topic, p ? 0 : 1, p?.shopId ?? null, p?.customerId ?? null, p?.orderIds ? JSON.stringify(p.orderIds) : null,
+        id, r.webhookId, r.bodySha256, r.topic, p ? 0 : 1, p?.shopId ?? null, p?.customerId ?? null, orderIdsJson,
         p?.dataRequestId ?? null, at.nowMs, at.nowMs + DUE_MS, stamp,
       )
       const guard = { table: 'privacy_requests' as const, where: 'id = ?', params: [id], stamp }
@@ -87,7 +90,7 @@ export function privacyRequestStore(db: D1Database) {
                SELECT value AS v FROM json_each(COALESCE(privacy_requests.order_ids_json, '[]')) UNION SELECT value FROM json_each(?) ORDER BY v LIMIT ?))
            WHERE status = 'open' AND parse_failed = 0 AND topic = ? AND shop_id = ? AND customer_id IS ? AND data_request_id IS ?
              AND NOT EXISTS (SELECT 1 FROM privacy_requests WHERE id = ? AND req_id = ?)`,
-          JSON.stringify(p.orderIds), MAX_ORDER_IDS, r.topic, p.shopId, p.customerId, p.dataRequestId, id, stamp,
+          orderIdsJson, MAX_ORDER_IDS, r.topic, p.shopId, p.customerId, p.dataRequestId, id, stamp,
         ))
       }
       const results = await storage('D1', () => db.batch(batch.map(s => prepare(db, s))))
