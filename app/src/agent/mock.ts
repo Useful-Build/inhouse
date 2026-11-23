@@ -6,7 +6,7 @@ import {
   problems, routines, scenarios, seedRoutine, seedTable, skillSuggestions, skillSuggestionsTitle, skills, traceDisconnectedVariant,
   traces, tools as sampleTools, usage, usageAtCap, usageHistory,
 } from './data'
-import { loadSkillBodies, routineIdOf, sampleAt } from './data'
+import { loadSkillBodies, routineIdOf, sampleAt, sampleRuns } from './data'
 import type { ProblemSeed, TraceKey } from './data'
 import type {
   CreateChatInput, ApprovalRule, AuditLine, MemberRecord, MemberRole, Me, ResourceKey, ResourceStatus,
@@ -22,7 +22,8 @@ import { instantOf } from '../lib/format'
 import { INVALID, NOT_FOUND, REASON } from '../../shared/contract/error-codes'
 import type { ErrorReason } from '../../shared/contract/common'
 import type { SupportGrant } from '../../shared/contract/grants'
-import { CAN_KEYS, GRANT_HOURS, RESOURCE_KEYS } from '../../shared/contract/keys'
+import { CAN_KEYS, GRANT_HOURS, RESOURCE_KEYS, ROUTINE_RUNS_MAX } from '../../shared/contract/keys'
+import type { RoutineHistoryRun, RoutineRunHistory } from '../../shared/contract/routines'
 import type { Can } from '../../shared/contract/me'
 import type { InviteInput } from '../../shared/contract/members'
 import { MEMBER_ID_PATTERN, meetsRule, settingRow } from '../../shared/contract/settings-table'
@@ -1125,6 +1126,21 @@ export class MockAgent implements AgentClient {
     const note = DATA_FOR[this.demo.scenario].routines.find(r => r.id === id)?.last?.result
     const run: RoutineRun = { routine: id, at, ...(note ? { result: note } : {}), ...(id === routineIdOf('Morning check') ? { trace: 'morning' } : {}) }
     return this.writeThen({ routineRuns: [run, ...this.state.routineRuns] }, run)
+  }
+  /**
+   * Route 68's answer from the sample data: this session's Run nows (one with no result is still running), then the
+   * routine's sample runs where this scenario has them (not on day one) and the stage runs it.
+   */
+  routineRunHistory(id: string): Promise<RoutineRunHistory> {
+    const r = DATA_FOR[this.demo.scenario].routines.find(x => x.id === id) ?? this.state.routinesExtra.find(x => x.id === id)
+    if (!r || this.state.routinesDeleted[id]) return this.rejected(NOT_FOUND, "This routine isn't here any more.", false)
+    const now = this.state.routineRuns.filter(x => x.routine === id).map((x): RoutineHistoryRun => ({
+      at: x.at, outcome: x.result ? 'done' : 'running', result: x.result ?? "It's running", manual: true, ...(x.trace ? { trace: x.trace } : {}),
+    }))
+    const need = 'need' in r ? r.need : 1
+    const sample = 'last' in r && r.last && stageIndex(this.demo.stage) >= need ? sampleRuns[r.name] ?? [] : []
+    const runs = [...now, ...sample].sort((a, b) => b.at.ms - a.at.ms).slice(0, ROUTINE_RUNS_MAX)
+    return Promise.resolve({ runs })
   }
   deleteRoutine(id: string) {
     const stale = this.staleAmong('routine', [id])

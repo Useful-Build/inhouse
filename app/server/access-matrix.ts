@@ -83,6 +83,8 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 54 */ { method: 'POST', pattern: '/api/routines/:id/run', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 55 */ { method: 'POST', pattern: '/api/routines/:id/delete', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 56 */ { method: 'POST', pattern: '/api/routines/:id/restore', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  // Master plan decision 8: a routine's recent runs, read like route 52.
+  /* 68 */ { method: 'GET', pattern: '/api/routines/:id/runs', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
 ]
 
 /** Each `CanKey`'s row (section 3). */
