@@ -56,18 +56,18 @@ test('Phone 390: Today has no sort and no fixed card height; Approvals has one h
   await shot(page, 'approvals-approved-row-390')
 })
 
-test('Phone 390: the review panel gives its main action a full-width row of its own, on one line, with Don\'t send below', async ({ page }) => {
+test('Phone 390: the review panel gives its main action a full-width row of its own, on one line, with More below', async ({ page }) => {
   await start(page, 'Act', '#/today')
   await page.getByRole('article', { name: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Review' }).click()
   const panel = page.getByRole('dialog')
   const primary = await panel.getByRole('button', { name: /^Approve and/ }).boundingBox()
-  const dont = await panel.getByRole('button', { name: "Don't send", exact: true }).boundingBox()
+  const dont = await panel.getByRole('button', { name: 'More', exact: true }).boundingBox()
   const box = await panel.boundingBox()
   // The main action is 46px tall: one line of its label, where two would pass 60.
   expect(primary!.height, 'the main label is on one line').toBeLessThanOrEqual(48)
   expect(await panel.getByRole('button', { name: /^Approve and/ }).evaluate(e => e.scrollWidth <= e.clientWidth), 'the label fits its button').toBe(true)
   expect(primary!.width, 'the main action spans the footer').toBeGreaterThan(box!.width - 60)
-  expect(dont!.y, "Don't send sits below the main action").toBeGreaterThan(primary!.y + primary!.height - 1)
-  expect(dont!.height, "Don't send is a full tap target").toBeGreaterThanOrEqual(44)
+  expect(dont!.y, "More sits below the main action").toBeGreaterThan(primary!.y + primary!.height - 1)
+  expect(dont!.height, "More is a full tap target").toBeGreaterThanOrEqual(44)
   await shot(page, 'panel-actions-390')
 })

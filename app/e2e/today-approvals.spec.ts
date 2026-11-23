@@ -45,12 +45,12 @@ test('A draft with no text: Edit opens the panel on a note field, the note rides
   expect(done, 'Done is in the draft').not.toBeNull()
   expect(close!.y + close!.height, 'Close sits above the title').toBeLessThanOrEqual(title!.y)
   await expect(panel).toContainText(/\b\d of 6\b/)
-  // The footer holds two actions on one row, Don't send then the main action, inside the panel's box.
-  const actions = await Promise.all(["Don't send", 'Approve and restock'].map(n => panel.getByRole('button', { name: n, exact: true }).boundingBox()))
+  // The footer holds two buttons on one row, the main action then More (Don't send is inside More), inside the panel's box.
+  const actions = await Promise.all(['More', 'Approve and restock'].map(n => panel.getByRole('button', { name: n, exact: true }).boundingBox()))
   const box = await panel.boundingBox()
   for (const b of actions) expect(b).not.toBeNull()
-  expect(Math.abs(actions[0]!.y - actions[1]!.y), 'the two actions share one row').toBeLessThanOrEqual(4)
-  expect(actions[0]!.x, "Don't send comes first").toBeLessThan(actions[1]!.x)
+  expect(Math.abs(actions[0]!.y - actions[1]!.y), 'the two buttons share one row').toBeLessThanOrEqual(4)
+  expect(actions[1]!.x, 'the main action comes first').toBeLessThan(actions[0]!.x)
   expect(actions[1]!.y + actions[1]!.height, 'the actions stay inside the panel').toBeLessThanOrEqual(box!.y + box!.height)
 
   await panel.getByRole('button', { name: 'Approve and restock', exact: true }).click()

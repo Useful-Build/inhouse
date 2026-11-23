@@ -98,9 +98,11 @@ test('S2: Review draft opens the review window: the brief, what it checked, the 
   await doc.getByRole('button', { name: 'Edit', exact: true }).click()
   await expect(doc.getByRole('button', { name: 'Done', exact: true })).toBeVisible()
   await doc.getByRole('button', { name: 'Done', exact: true }).click()
-  // The approver note under the draft, Don't send and the main action with the amount it moves.
+  // The approver note under the draft, Don't send (in More) and the main action with the amount it moves.
   await expect(p).toContainText('Dana Kim usually signs off orders over $5,000')
-  await expect(p.getByRole('button', { name: "Don't send", exact: true })).toBeVisible()
+  await p.getByRole('button', { name: 'More', exact: true }).click()
+  await expect(p.page().getByRole('menuitem', { name: "Don't send" })).toBeVisible()
+  await p.page().keyboard.press('Escape')
   await p.getByRole('button', { name: /^Approve and send to Kestrel\s*\$9,600$/ }).click()
   // Approve moves straight on to the next card that needs you; the held toast keeps the Undo.
   await expect(p.getByRole('heading', { name: KESTREL })).toHaveCount(0)
