@@ -209,8 +209,8 @@ describe('the client: requests to the Inhouse team', () => {
     const snapshot = agent.getSnapshot()
     expect(snapshot.requestedTools).toEqual({})
     expect(snapshot.requestedSkills).toEqual({})
-    expect(snapshot.teamRequests.map(r => [r.closed, r.status, r.statusAt])).toEqual([
-      ['done', 'Done', undefined], ['declined', 'Declined', undefined], ['withdrawn', 'Withdrawn', undefined],
+    expect(snapshot.teamRequests.map(r => [r.closed, r.status])).toEqual([
+      ['done', 'Done'], ['declined', 'Declined'], ['withdrawn', 'Withdrawn'],
     ])
   })
 

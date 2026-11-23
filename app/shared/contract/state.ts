@@ -35,12 +35,12 @@ export type ApproveResult = z.infer<typeof ApproveResultSchema>
 
 /**
  * A request to the Inhouse team. `sub` is what and who ("New tool · Priya"), `at` when it was asked; `status`
- * is where it stands ("Live by", "With the team", "Done") and `statusAt` the date that goes with it. Shown as
- * "New tool · Priya, Nov 9" and "Live by Fri, Nov 20". `text` is the request in full, when there is more than the
+ * is where it stands ("With the team", "Done", "Declined", "Withdrawn"), never a date. Shown as
+ * "New tool · Priya, Nov 9". `text` is the request in full, when there is more than the
  * title; `closed` says how a closed request ended (absent while it's open).
  */
 export const TeamRequestSchema = z.object({
-  icon: z.string(), title: z.string(), sub: z.string(), at: InstantSchema, status: z.string(), statusAt: InstantSchema.optional(),
+  icon: z.string(), title: z.string(), sub: z.string(), at: InstantSchema, status: z.string(),
   /** The product's real client sends `kind` (the team window fills it); the mock ignores it. */
   kind: z.enum(['tool', 'job', 'change', 'bug', 'feedback']).optional(),
   /** The product's real client says whether the reader asked it; absent in the demo, where what was sent here is theirs. */
