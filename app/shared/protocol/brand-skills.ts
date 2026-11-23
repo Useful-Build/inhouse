@@ -28,7 +28,7 @@ export const RESERVED_SKILL_NAMES: readonly string[] = ['dataviz', 'pdf', 'word'
 
 const NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 // eslint-disable-next-line no-control-regex
-const FRONTMATTER_CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/
+const FRONTMATTER_CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\ufffe\uffff]/
 
 /** Why a name can't be a brand skill's, in words the agent can pass on; null when it can. */
 export function brandSkillNameProblem(name: string): string | null {
@@ -89,7 +89,7 @@ export const brandSkillBytes = (s: { name: string; description: string; body: st
 export function renderSkillFile(s: { name: string; description: string; body: string }): string {
   // JSON already escapes C0. Escape the remaining controls and Unicode line separators for YAML.
   const quoted = (value: string) => JSON.stringify(value).replace(
-    /[\u007f-\u009f\u2028\u2029]/g, ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`,
+    /[\u007f-\u009f\u2028\u2029\ufffe\uffff]/g, ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`,
   )
   const name = FRONTMATTER_CONTROL.test(s.name) ? quoted(s.name) : s.name
   return `---\nname: ${name}\ndescription: ${quoted(s.description)}\n---\n\n${s.body}\n`

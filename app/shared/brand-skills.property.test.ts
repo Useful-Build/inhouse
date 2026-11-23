@@ -33,7 +33,7 @@ const trailingSpace = fc.array(whitespace, { minLength: 1, maxLength: 12 }).map(
 const frontmatterControl = fc.oneof(
   fc.integer({ min: 0, max: 31 }).map(n => String.fromCharCode(n)),
   fc.integer({ min: 127, max: 159 }).map(n => String.fromCharCode(n)),
-  fc.constantFrom('\u2028', '\u2029'),
+  fc.constantFrom('\u2028', '\u2029', '\ufffe', '\uffff'),
 )
 const bodyInput = fc.oneof(
   fc.string({ unit: 'binary', maxLength: 200 }),
