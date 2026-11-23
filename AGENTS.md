@@ -29,15 +29,15 @@ React 19, TypeScript, Vite, Tailwind v4, shadcn/ui on Radix, zustand, Cloudflare
 
 Run in `app/` unless noted. Ports, env flags, and sandbox commands are in `VERIFY.md`.
 
-**Where checks run:** on Wasim's laptop, run only the light checks (typecheck, lint, unit and property tests, hub and runner unit tests). Builds, bundle guards, E2E, a11y, visual baselines, the product and test-build projects, and screenshots or live QA run in GitHub CI on the PR (or on the PR's preview or sandbox deploy), never locally. Read results from the CI logs and artifacts. Cloud and CI runners may run everything.
+**Where checks run:** on Wasim's laptop, run only the light checks (typecheck, lint, unit and property tests, hub and runner unit tests). Builds, bundle guards, E2E, a11y, visual baselines, the product and test-build projects, and screenshots or live QA run in GitHub CI on the PR (or on the PR's preview or sandbox deploy), never locally. Read results from the CI logs and artifacts. Cloud and CI runners may run everything. The one exception on the laptop: `npm run dev` only when Wasim asks to see the app on localhost, through `~/.agents/tools/heavy-lock.sh`.
 
-- Dev: `npm run dev` (port 5173)
-- Typecheck and lint: `npm run typecheck && npm run lint`
-- Unit and property tests: `npm run test:unit` (Vitest + in-process workerd)
-- Builds: `npm run build` (demo), `npm run build:product`, `npm run build:product-test`, `npm run build:product-eval`
-- Bundle and config guards: `node scripts/check-product-build.mjs`, `node scripts/check-hub-build.mjs`, `node scripts/check-hub-config.mjs wrangler.hub.jsonc`
-- E2E and a11y: `npm run test:e2e`, `npm run test:a11y`, `npm run test:visual:linux`
-- Hub and runner: `cd app/hub && npm run typecheck && npm run test:node`; `cd app/runner && npm test`
+- Dev (laptop only when Wasim asks): `npm run dev` (port 5173)
+- Typecheck and lint (local): `npm run typecheck && npm run lint`
+- Unit and property tests (local): `npm run test:unit` (Vitest + in-process workerd)
+- Hub and runner unit tests (local): `cd app/hub && npm run typecheck && npm run test:node`; `cd app/runner && npm test`
+- Builds (CI): `npm run build` (demo), `npm run build:product`, `npm run build:product-test`, `npm run build:product-eval`
+- Bundle and config guards (CI): `node scripts/check-product-build.mjs`, `node scripts/check-hub-build.mjs`, `node scripts/check-hub-config.mjs wrangler.hub.jsonc`
+- E2E, a11y and visual (CI): `npm run test:e2e`, `npm run test:a11y`, `npm run test:visual:linux`; baselines update through `baselines.yml`
 
 ## 5. How work lands here
 
