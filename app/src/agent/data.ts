@@ -177,7 +177,24 @@ const routineOf = (r: RawRoutine): Omit<RoutineDef, 'id'> => {
 export const routines = (routinesJson.routines as RawRoutine[]).map(routineOf)
 export const seedRoutine = routineOf(routinesJson.createdInSeedChat as RawRoutine)
 
-export const skills = (skillsJson.skills as SkillDef[]).map(x => ({ ...x, need: needOf(`the skill "${x.n}"`, x.need) }))
+/** A sample routine's id, from its name: "Morning check" is "routine-morning-check". */
+export const routineIdOf = (name: string) => 'routine-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+
+/** A skill as the sample data has it: its times as "-3d 10:00" and the routines that use it by name. */
+type RawSkill = Omit<SkillDef, 'need' | 'updatedAt' | 'versions'> & { need: number; updatedAt?: string; versions?: { by: string; at: string; note: string }[] }
+const skillOf = (x: RawSkill): SkillDef => {
+  const what = `the skill "${x.n}"`
+  const { updatedAt, versions, routines: usedBy, ...rest } = x
+  const names = [...routines.map(r => r.name), seedRoutine.name]
+  for (const r of usedBy ?? []) if (!names.includes(r)) throw new Error(`Sample data: ${what} is used by "${r}", which isn't a routine.`)
+  return {
+    ...rest, need: needOf(what, x.need),
+    ...(updatedAt !== undefined ? { updatedAt: sampleAt(what, updatedAt) } : {}),
+    ...(versions ? { versions: versions.map(v => ({ ...v, at: sampleAt(what, v.at) })) } : {}),
+    ...(usedBy ? { routines: usedBy.map(routineIdOf) } : {}),
+  }
+}
+export const skills = (skillsJson.skills as RawSkill[]).map(skillOf)
 export const skillSuggestions = skillsJson.suggested as SkillSuggestion[]
 export const skillSuggestionsTitle = skillsJson.suggestedTitle
 

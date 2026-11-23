@@ -3,7 +3,7 @@
 import { useMemo, useSyncExternalStore } from 'react'
 import { create } from 'zustand'
 import { agent, demo as demoControls, now } from '../agent'
-import type { AgentData, AgentState, Attachment, ChatMessage, Instant, LibraryFile, MessagePart, RunFrame, Scenario, SetAsideReason, Stage } from '../agent/types'
+import type { AgentData, AgentState, Attachment, ChatMessage, Instant, LibraryFile, MessagePart, RunFrame, Scenario, SetAsideReason, SkillDef, Stage } from '../agent/types'
 import { AgentError, SCENARIOS, STAGES, stageIndex } from '../agent/types'
 import { NOT_FOUND, REASON } from '../../shared/contract/error-codes'
 import type { ChatView } from '../screens/chat/view'
@@ -19,13 +19,18 @@ import { rememberTrigger } from '../ui/dialogs'
 import { activeMode, problemById } from './derive'
 import type { Ctx } from './derive'
 
-export type Page = 'today' | 'library' | 'chats' | 'approvals' | 'routines' | 'activity' | 'apps' | 'app' | 'skills' | 'usage' | 'settings'
+export type Page = 'today' | 'library' | 'chats' | 'approvals' | 'routines' | 'activity' | 'apps' | 'app' | 'skills' | 'skill' | 'usage' | 'settings'
 export type Pop = null | 'notif' | 'me' | 'team' | 'help'
 export type RequestType = 'tool' | 'job' | 'change' | 'bug' | 'feedback'
 export type Ambient = 'When Inhouse agent works' | 'Always' | 'Off'
 export type ActivityFilter = 'all' | 'change' | 'needs' | 'problem'
 export type UsageTab = 'person' | 'job' | 'model' | 'tool'
 export type SkillTab = 'all' | 'team' | 'mine'
+/** A skill's name as it shows in its page's link: "Morning check" is "morning-check". */
+export const skillSlug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'skill'
+/** The skill a page's slug names: the first by that slug, the team's own (made in a chat) before the Inhouse team's, as the list shows them. */
+export const skillBySlug = (data: { skills: SkillDef[] }, state: { skillsExtra: SkillDef[] }, key: string): SkillDef | undefined =>
+  state.skillsExtra.concat(data.skills).find(s => skillSlug(s.n) === key)
 export type TodaySort = 'default' | 'amount'
 export type ApprovalSort = 'oldest' | 'newest' | 'stake'
 
@@ -99,6 +104,8 @@ export interface UiState {
   // navigation
   page: Page
   appKey: string
+  /** The open skill's page (`skill`): the skill's slug, from `skillSlug`. */
+  skillKey: string
   setTab: string
   /** Problem panel. */
   openId: string | null
@@ -176,6 +183,8 @@ export interface UiActions {
   patch(p: Partial<UiState>): void
   go(page: Page, extra?: Partial<UiState>): void
   openTool(key: string): void
+  /** A skill's page, by the skill's name. */
+  openSkill(name: string): void
   openSettings(tab: string): void
   openProblem(id: string): void
   closeProblem(): void
@@ -591,7 +600,7 @@ function clearSession() {
 // ---------- end phase 1 memory ----------
 
 const initialUi = (): Omit<UiState, 'stage' | 'scenario' | 'ambient' | 'animateMark' | 'palette' | 'sideCollapsed'> => ({
-  demoOpen: false, page: 'today', appKey: 'shopify', setTab: 'you-general', openId: null, pop: null,
+  demoOpen: false, page: 'today', appKey: 'shopify', skillKey: '', setTab: 'you-general', openId: null, pop: null,
   team: { type: 'tool', text: '', shot: true }, traceId: null, toasts: [], phone: false, sideOpen: false,
   editing: null, todayDraft: '', chatDraft: '', atts: [], modelSel: null, toolOff: {},
   chatId: null, chatList: false, fresh: false, extras: [], hidden: {}, stash: {}, started: [], replyTo: null,
@@ -932,6 +941,7 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     ...composerActions(set),
     go: (page, extra) => set({ page, openId: null, pop: null, sideOpen: false, ...extra }),
     openTool: key => set({ page: 'app', appKey: key, pop: null, openId: null, sideOpen: false }),
+    openSkill: name => set({ page: 'skill', skillKey: skillSlug(name), pop: null, openId: null, sideOpen: false }),
     // The page itself, never the phone menu (openSettingsMenu asks for the menu).
     openSettings: tab => set({ page: 'settings', setTab: tab, setMenu: false, pop: null, openId: null, sideOpen: false }),
     openProblem: id => { rememberTrigger(); set({ openId: id }) },

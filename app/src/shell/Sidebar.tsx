@@ -28,7 +28,7 @@ export function Sidebar() {
   const { go, newChat, openChat, openChatList, patch } = useUi.getState()
   // The phone drawer opens with focus on itself, so no row shows a focus ring until someone tabs.
   const drawer = useRef<HTMLDivElement>(null)
-  const activeKey = page === 'app' ? 'apps' : page
+  const activeKey = page === 'app' ? 'apps' : page === 'skill' ? 'skills' : page
   const count = ctx.S >= 1 ? pendingIds(ctx).length : 0
 
   // The account row is selected on Settings and on Usage, which its menu opens.
