@@ -625,24 +625,40 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           EXPECTED: ${{ steps.go.outputs.deploy == 'true' && steps.version.outputs.version_id || needs.plan.outputs.rollback_to }}
+        # The status read can lag the promote (Cloudflare read-after-write, like 100146 above): the promote said the new
+        # version is at 100% while a read 2 s later still named the old one. Only "not the expected version yet" (exit 3)
+        # is retried, for about 30 s; no JSON or a bad answer fails at once.
         run: |
           out="$RUNNER_TEMP/deployment.json"
-          "$RUNNER_TEMP/wrangler.sh" deployments status --name inhouse-app --json > "$out"
-          node - "$out" <<'EOF'
+          for wait in 3 6 9 12 0; do
+            "$RUNNER_TEMP/wrangler.sh" deployments status --name inhouse-app --json > "$out"
+            rc=0
+            node - "$out" <<'EOF' || rc=$?
           const fs = require('node:fs');
-          const fail = (m) => { console.log(`::error::Active deployment: ${m}`); process.exit(1); };
+          const fail = (m, code = 1) => { console.log(`${code === 3 ? '::warning::' : '::error::'}Active deployment: ${m}`); process.exit(code); };
           const out = fs.readFileSync(process.argv[2], 'utf8');
           const start = out.indexOf('{');
           if (start < 0) fail('no JSON in the wrangler output');
           let d;
           try { d = JSON.parse(out.slice(start)); } catch (e) { fail(e.message); }
-          const versions = Array.isArray(d?.versions) ? d.versions : [];
+          if (!Array.isArray(d?.versions)) fail('no versions list in the wrangler output');
+          const versions = d.versions;
           const shown = versions.map((v) => `${v?.version_id}@${v?.percentage}%`).join(', ');
           console.log(`Active: ${shown || 'none'}`);
           if (versions.length !== 1 || versions[0].version_id !== process.env.EXPECTED || versions[0].percentage !== 100) {
-            fail(`expected ${process.env.EXPECTED}@100%`);
+            fail(`expected ${process.env.EXPECTED}@100%`, 3);
           }
           EOF
+            if [ "$rc" = 0 ]; then exit 0; fi
+            # Any other failure already printed its own error.
+            if [ "$rc" != 3 ]; then exit 1; fi
+            if [ "$wait" = 0 ]; then
+              echo "::error::Active deployment isn't ${EXPECTED}@100% after about 30 s."
+              exit 1
+            fi
+            echo "Not the new version yet; reading again in ${wait}s."
+            sleep "$wait"
+          done
 
       # The live hostname's edge can lag the promote: the page may name the new entry script while a node still
       # answers that script's path with the SPA page (issue #90). Waits by condition, bounded: the live page names

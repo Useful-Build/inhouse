@@ -20,6 +20,9 @@ The `deploy` workflow (`deploy.yml`) uploads a new Worker version, smokes its Ve
 - The promote retries only Cloudflare's "version not found" (code 100146) answer, which the API can give for a few
   seconds after an upload: after 3, 6, 9 and 12 s. A promote that failed with 100146 on every try left the old version
   live; re-run the job.
+- The active-deployment check reads again, after 3, 6, 9 and 12 s, only while Cloudflare still names the old version
+  (the status read can lag a promote that succeeded). After that it fails; the new version is probably live, so check
+  before re-running.
 - Failed at or after the promote (custom domain, active-deployment check or live smoke): the new version may be live.
   Check `npx wrangler deployments list --name inhouse-app` (in `app/`) before you decide.
 - The release is created last, only after every step passed. A failed run has no release. A red run whose `deploy`
