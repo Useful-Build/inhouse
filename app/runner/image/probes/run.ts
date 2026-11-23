@@ -1335,7 +1335,14 @@ async function probeBrandSkills() {
   record('brand-skills.init-lists-the-brand-skill', JSON.stringify([...(init?.skills ?? [])].sort()) === JSON.stringify(want), `skills ${JSON.stringify(init?.skills)}, want ${JSON.stringify(want)}`)
   const plugins = (init?.plugins ?? []).map((p) => p.name).sort()
   record('brand-skills.plugins-ours-and-the-brands', JSON.stringify(plugins) === JSON.stringify(['brand', PLUGIN_NAME].sort()), `plugins ${JSON.stringify(plugins)}`)
-  record('brand-skills.body-read-on-use', (result(r, 0)?.text ?? '').includes(marker), `the Skill call's result: ${result(r, 0)?.text.slice(0, 300)}`)
+  // Only the name and description are in context until the skill is used: the first model request never holds the body;
+  // the CLI adds it to the conversation once the Skill tool runs (its result itself only says the skill launched).
+  const asked = r.state.requests.map((q) => JSON.stringify(q))
+  record(
+    'brand-skills.body-read-on-use',
+    asked.length > 1 && !asked[0]!.includes(marker) && asked.slice(1).some((q) => q.includes(marker)),
+    `requests ${asked.length}; first holds the body: ${asked[0]?.includes(marker)}; a later one does: ${asked.slice(1).some((q) => q.includes(marker))}; the Skill call's result: ${result(r, 0)?.text.slice(0, 200)}`,
+  )
   const bashOut = result(r, 2)?.text ?? ''
   record('brand-skills.bash-cannot-read-it', !bashOut.includes(marker) && !bashOut.includes('name: '), `Bash saw: ${bashOut.replace(/\s+/g, ' ').slice(0, 300)}`)
   const written = readdirSync(USERS_ROOT).map(fileOf).filter((f) => existsSync(f)).map((f) => readFileSync(f, 'utf8'))

@@ -182,6 +182,7 @@ test('Brand skills: Create a skill starts a chat; a brand skill shows its maker,
   await expect(ask).toContainText('Delete "Stuck order nudge"?')
   await ask.getByRole('button', { name: 'Cancel' }).click()
   await expect(ask).toHaveCount(0)
+  await expect(more).toBeFocused()
   await expect(page.getByRole('heading', { level: 1, name: 'Stuck order nudge' })).toBeVisible()
 
   await more.click()

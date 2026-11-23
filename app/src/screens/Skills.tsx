@@ -15,6 +15,7 @@ import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { Button, CardGrid, EmptyState, Icon, IconButton, IconTile, LogoTile, MenuItem, Page, PageHeader, SectionHeader, Segmented, StageTag } from '../ui'
 import { Confirm, SearchBox, TAP } from '../ui/fields'
+import { rememberTrigger } from '../ui/dialogs'
 import { Markdown } from './chat/Markdown'
 
 const SECTION_HEAD = 'mb-1.5'
@@ -219,7 +220,7 @@ export function SkillPage() {
           {(switchable || canChange) && (
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
-                <IconButton icon="more_horiz" label={`More for ${s.n}`} size={18} box="icon-lg" className={cn(phone && TAP)} />
+                <IconButton data-skill-more icon="more_horiz" label={`More for ${s.n}`} size={18} box="icon-lg" className={cn(phone && TAP)} />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" collisionPadding={16} aria-label="Skill actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
                 {switchable && (
@@ -228,7 +229,8 @@ export function SkillPage() {
                   </MenuItem>
                 )}
                 {canChange && (
-                  <MenuItem variant="destructive" onSelect={() => setDeleting(true)}>
+                  // Cancel gives focus back to the More button, never to this item (gone with the menu).
+                  <MenuItem variant="destructive" onSelect={() => { rememberTrigger(document.querySelector<HTMLElement>('[data-skill-more]')); setDeleting(true) }}>
                     <Icon name="delete" size={18} />Delete skill
                   </MenuItem>
                 )}
