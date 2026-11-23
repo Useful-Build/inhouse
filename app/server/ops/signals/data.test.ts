@@ -143,4 +143,56 @@ describe('the data signals', () => {
     expect(await retentionPass({ db, bucket, nowMs: NOW + FRESH_MS, requestId: 'grace', from: 0, registry })).toMatchObject({ reached: 1, failed: [] })
     expect(await retentionOverdue(db, NOW + FRESH_MS)).toEqual({ ok: true })
   })
+
+  it('grants no grace for lengthened or unchanged saves, and repeated saves do not extend the grace window', async () => {
+    const db = env.DB
+    const { settings } = openStores(env)
+    await db.prepare("DELETE FROM library_marks WHERE file_id = 'f_orphan_current'").run()
+    await db.prepare("DELETE FROM settings WHERE owner = 'brand' AND key IN ('d:chats', 'd:steps')").run()
+    const revOf = async (key: 'd:chats' | 'd:steps') => (await settings.list('brand', 'technical')).find(s => s.key === key)?.rev ?? 0
+    const save = async (key: 'd:chats' | 'd:steps', value: string | null, nowMs: number, reqId: string) => {
+      const res = await settings.write({ owner: 'brand', scope: 'technical', key, value, ifRev: await revOf(key) }, {
+        actorId: seeded.members.admin, nowMs, requestId: reqId,
+      })
+      expect(res).toHaveProperty('ok')
+    }
+
+    // 1. Initial write equal to default ('12 months') or lengthened ('24 months') opens NO grace window.
+    await save('d:chats', '12 months', NOW, 'init-default')
+    await save('d:chats', '24 months', NOW + 1_000, 'len-24m')
+    const old24 = NOW - 740 * DAY
+    await db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms, deleted_at_ms) VALUES ('c_len24', ?, 'Lengthen', ?, ?, NULL)")
+      .bind(seeded.members.dana, old24, old24).run()
+    expect(await retentionOverdue(db, NOW + 1_000)).toEqual({ ok: false, detail: 'past retention: chats 1' })
+    await db.prepare("DELETE FROM chats WHERE id = 'c_len24'").run()
+
+    // 2. Lengthening ('3 months' -> '6 months', after any earlier grace expired) opens NO grace window.
+    await save('d:chats', '3 months', NOW + 2_000, 'short-3m')
+    const afterExpire = NOW + 2 * FRESH_MS
+    await save('d:chats', '6 months', afterExpire, 'len-up')
+    const oldChat = afterExpire - 185 * DAY
+    await db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms, deleted_at_ms) VALUES ('c_len', ?, 'Lengthen', ?, ?, NULL)")
+      .bind(seeded.members.dana, oldChat, oldChat).run()
+    expect(await retentionOverdue(db, afterExpire)).toEqual({ ok: false, detail: 'past retention: chats 1' })
+    await db.prepare("DELETE FROM chats WHERE id = 'c_len'").run()
+
+    // 3. Saving an unchanged value (still '6 months') opens NO grace window.
+    await save('d:chats', '6 months', afterExpire + 1_000, 'same-6m')
+    await db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms, deleted_at_ms) VALUES ('c_same', ?, 'Same', ?, ?, NULL)")
+      .bind(seeded.members.dana, oldChat, oldChat).run()
+    expect(await retentionOverdue(db, afterExpire + 1_000)).toEqual({ ok: false, detail: 'past retention: chats 1' })
+    await db.prepare("DELETE FROM chats WHERE id = 'c_same'").run()
+
+    // 4. Repeated saves of the same shortened value do not extend an active 26-hour grace window.
+    const t0 = afterExpire + 10_000
+    await save('d:steps', '6 months', t0 - 2 * FRESH_MS, 'rep-init')
+    await save('d:steps', '3 months', t0, 'rep-short')
+    await addActivity(db, { id: 'a_rep', actor: seeded.members.dana, subject: null, atMs: t0 - 120 * DAY })
+    expect(await retentionOverdue(db, t0)).toEqual({ ok: true })
+    // Re-saving '3 months' halfway through the grace window must NOT push its deadline past t0 + FRESH_MS.
+    await save('d:steps', '3 months', t0 + FRESH_MS / 2, 'rep-resave')
+    expect(await retentionOverdue(db, t0 + FRESH_MS - 1)).toEqual({ ok: true })
+    expect(await retentionOverdue(db, t0 + FRESH_MS)).toEqual({ ok: false, detail: 'past retention: activity_lines 1' })
+    await db.prepare("DELETE FROM activity_lines WHERE id = 'a_rep'").run()
+  })
 })

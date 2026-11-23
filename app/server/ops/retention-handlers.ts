@@ -14,13 +14,12 @@
 import { runRetention, planRetention } from '../../ops/retention/retention.ts'
 import { DEFAULT_DAYS, hasRetentionWork, periodsFor, retentionRules } from '../../ops/retention/rules.ts'
 import type { PeriodName } from '../../ops/retention/rules.ts'
-import { RETENTION } from '../../shared/contract/settings-table.ts'
 import { SERVED_BY } from '../../ops/coverage/chat-watch-connectors/retention-jobs.ts'
 import { tables } from '../../ops/tables/index.ts'
 import type { TableEntry } from '../../ops/tables/types.ts'
 import type { KeyedBucket } from '../db/r2-keys.ts'
 import { SYSTEM_MEMBER_ID } from '../db/ids.ts'
-import { BRAND_OWNER } from '../db/settings.ts'
+import { BRAND_OWNER, retentionDaysOf } from '../db/settings.ts'
 import { all, stmt } from '../db/sql.ts'
 import type { DueTask, TaskContext, TaskHandler, TaskResult } from '../do/brand-agent/scheduler.ts'
 import { withSeed } from '../do/brand-agent/scheduler.ts'
@@ -44,30 +43,18 @@ const COST = { d1: 30, r2: 12 }
 const CHATS_COST = { d1: 30, r2: 4 * CHATS_LIMIT + 6 }
 const LIMIT = 90
 
-const SETTING_DAYS = {
-  '3 months': 90,
-  '6 months': 180,
-  '12 months': DEFAULT_DAYS.chats,
-  '24 months': 730,
-  'Until deleted': null,
-} satisfies Record<(typeof RETENTION)[number], number | null>
-
 export async function brandRetentionSettings(db: D1Database) {
-  const rows = await all<{ key: 'd:chats' | 'd:steps'; value_json: string; updated_at_ms: number }>(db, stmt(
-    "SELECT key, value_json, updated_at_ms FROM settings WHERE owner = ? AND key IN ('d:chats', 'd:steps')", BRAND_OWNER,
+  const rows = await all<{ key: 'd:chats' | 'd:steps'; value_json: string; shortened_at_ms: number | null }>(db, stmt(
+    "SELECT key, value_json, shortened_at_ms FROM settings WHERE owner = ? AND key IN ('d:chats', 'd:steps')", BRAND_OWNER,
   ))
   const days: Record<PeriodName, number | null> = { ...DEFAULT_DAYS }
-  const updatedAt: Partial<Record<PeriodName, number>> = {}
+  const shortenedAt: Partial<Record<PeriodName, number>> = {}
   for (const row of rows) {
     const group = row.key === 'd:chats' ? 'chats' : 'steps'
-    updatedAt[group] = row.updated_at_ms
-    const value: unknown = JSON.parse(row.value_json)
-    if (value === null) continue // Reset to the default.
-    const choice = RETENTION.find(option => option === value)
-    if (choice === undefined) throw new Error(`retention: invalid ${row.key} setting`)
-    days[group] = SETTING_DAYS[choice]
+    if (row.shortened_at_ms !== null) shortenedAt[group] = row.shortened_at_ms
+    days[group] = retentionDaysOf(row.key, JSON.parse(row.value_json))
   }
-  return { days, updatedAt }
+  return { days, shortenedAt }
 }
 
 export const brandRetentionDays = async (db: D1Database) => (await brandRetentionSettings(db)).days

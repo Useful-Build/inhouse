@@ -15,8 +15,9 @@
 // BrandAgent recovery replay its side of a cascade after the chat has already gone from D1.
 //
 // A person run deletes the member again with the store rules person deletion uses (ops/delete/rules.ts), in its order:
-// pseudonymise the member row, then each custom store through its runner (the BrandAgent's `personData`, before the
-// D1 batch: C1's run order), then the D1 rows, then the R2 objects. A retention run applies its logged cutoffs again
+// pseudonymise the member row, then the BrandAgent's `personData` before every other custom store (such as `chats` and
+// `notices`, matching live deletion so `busy` stops before any chat or D1 row is removed), then the remaining custom
+// stores, then the D1 rows, then the R2 objects. A retention run applies its logged cutoffs again
 // (ops/retention/rules.ts). A run with a `refused` entry removed nothing and is skipped. A busy person run with
 // `stopped_after_pseudonymise` replays just the member update. A later deletion retry has its own log entries.
 // The whole replay is planned before anything is written: a custom rule with no runner refuses by name. Every step is
@@ -212,13 +213,14 @@ const ROUND = 500
 async function apply(deps: ReplayDeps, p: Planned): Promise<void> {
   const memberId = p.run.memberId as string
   const of = <K extends (PersonStep | RetentionStep)['do']>(k: K) => p.steps.filter((s): s is Extract<PersonStep | RetentionStep, { do: K }> => s.do === k)
-  // Person deletion's order: the member row, the custom stores (the BrandAgent before the D1 batch), the rows, the objects.
+  // Person deletion's order: the member row, the BrandAgent before every other custom store (matching live deletion), the rows, the objects.
   if (of('pseudonymise').length > 0) {
     const done = await memberStore({ db: deps.target }).pseudonymise(memberId, deps.at)
     // not_found: no row (a member added after the backup) or already pseudonymised; both leave nothing to do.
     if ('refused' in done && done.refused !== 'not_found') throw new RestoreRefusal('replay_stopped', `members: ${done.refused} (${memberId})`)
   }
-  for (const s of of('custom')) {
+  const custom = of('custom')
+  for (const s of [...custom.filter(c => c.store === 'BrandAgent'), ...custom.filter(c => c.store !== 'BrandAgent')]) {
     const done = await s.runner.deletePerson(memberId)
     if ('stop' in done) throw new RestoreRefusal('replay_stopped', `${s.store}: ${done.stop} (${memberId})`)
   }
