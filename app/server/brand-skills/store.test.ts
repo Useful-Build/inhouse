@@ -108,6 +108,12 @@ describe('saving (the store)', () => {
     expect(await saveSkill(racingDb, skill('weekly-report', { body: 'Raced.' }), at(actorId))).toEqual({ refused: 'inactive' })
     expect(await readRow('weekly-report')).toEqual(operation === 'update' ? { created_by: actorId, updated_by: actorId, rev: 1 } : null)
     expect(await auditLines()).toEqual(auditBefore)
+    if (operation === 'update') {
+      const row = await stores.brandSkills.get('weekly-report')
+      expect(await deleteSkill(db, { id: row!.id, ifRev: 1 }, at(actorId))).toEqual({ refused: 'not_owner' })
+      expect(await readRow('weekly-report')).toMatchObject({ rev: 1 })
+      expect(await auditLines()).toEqual(auditBefore)
+    }
   })
 
   it(`holds at most ${BRAND_SKILLS_MAX} skills and ${BRAND_SKILLS_BYTES_MAX} bytes together, in the write's own statement`, async () => {
@@ -168,6 +174,16 @@ describe('skill_save (the tool)', () => {
     expect(r.content[0]!.text).toBe(NEEDS_PERSON_TEXT)
     expect(await skillFiles(db)).toEqual([])
   })
+  it.each(['m_smoke', 'm_bs_removed_member'])('refuses a new skill from %s without a write or audit line', async (actorId) => {
+    if (actorId === 'm_bs_removed_member') {
+      await db.prepare("INSERT INTO members (id, kind, role, status, created_at_ms) VALUES (?, 'person', 'member', 'removed', 0)").bind(actorId).run()
+    }
+    expect(await call(skill('weekly-report'), scope(actorId))).toMatchObject({
+      isError: true, structuredContent: { error: 'forbidden' }, content: [{ text: 'Only an active team member can save a skill.' }],
+    })
+    expect(await skillFiles(db)).toEqual([])
+    expect(await auditLines()).toEqual([])
+  })
   it('a bad name is refused with what to change', async () => {
     const r = await call(skill('Weekly report'), scope(DANA))
     expect(r).toMatchObject({ isError: true, structuredContent: { error: 'invalid' } })
@@ -216,7 +232,7 @@ describe('routes 79, 84 and 85', () => {
     expect(await del(DANA, 'member', s.id, 7)).toMatchObject({ status: 409, body: { error: { code: 'conflict', current: { n: 'weekly-report', rev: 1, canChange: true } } } })
     expect((await del(DANA, 'member', 'bs_AAAAAAAAAAAAAAAAAAAAAA', 1)).status).toBe(404)
     expect((await del(DANA, 'member', 'not-an-id', 1)).status).toBe(404)
-    expect(await del(ADMIN, 'admin', s.id, 1)).toMatchObject({ status: 200, body: { n: 'weekly-report' } })
+    expect(await del(ADMIN, 'admin', s.id, 1)).toMatchObject({ status: 200, body: { n: 'weekly-report', by: 'Dana Example' } })
     expect(await skillFiles(db)).toEqual([])
   })
 })

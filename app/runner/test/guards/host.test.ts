@@ -117,6 +117,13 @@ describe('the brand plugin', () => {
     await h.writeBrandPlugin(user, [])
     expect(readdirSync(join(own.brandPlugin, 'skills'))).toEqual([])
   })
+
+  it('rejects an invalid skill name before replacing the plugin', async () => {
+    const h = host()
+    await h.writeBrandPlugin(user, [skill('kept')])
+    await expect(h.writeBrandPlugin(user, [skill('../outside')])).rejects.toThrow('invalid brand skill name')
+    expect(readdirSync(join(userPaths(user.user, users).brandPlugin, 'skills'))).toEqual(['kept'])
+  })
 })
 
 describe('session folders', () => {

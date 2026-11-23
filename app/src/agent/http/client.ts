@@ -819,7 +819,7 @@ export class HttpAgent implements AgentClient {
     send: () => Promise<T>
     done: (s: Slices, answer: T, others: boolean) => Slices
     undo: (now: Slices, before: Slices, others: boolean) => Slices
-    onConflict?: (s: Slices, current: Record<string, unknown>, others: boolean) => Slices
+    onConflict?: (s: Slices, current: Record<string, unknown> | null, others: boolean) => Slices
     after?: () => Promise<void>
   }): Promise<void> {
     const before = this.s
@@ -849,9 +849,9 @@ export class HttpAgent implements AgentClient {
         await o.after?.()
       } catch (e) {
         finished()
-        if (!prior && this.s === mine) this.commit(before); else this.commit(o.undo(this.s, before, others()))
         const err = e instanceof AgentError ? e : new AgentError('unknown', MESSAGE.unknown)
-        if (err.current && o.onConflict) this.commit(o.onConflict(this.s, err.current, others()))
+        const undone = !prior && this.s === mine ? before : o.undo(this.s, before, others())
+        this.commit(err.current !== undefined && o.onConflict ? o.onConflict(undone, err.current, others()) : undone)
         throw this.fail(err)
       } finally {
         finished()
@@ -957,6 +957,7 @@ export class HttpAgent implements AgentClient {
       done: (s, r, others) => { this.confirmed.set(record, r.photoUrl); this.confirmRowPhoto(memberId, r.photoUrl, r.rev); return this.bumpRev(others ? s : photoAs(s, r.photoUrl), memberId, r.rev) },
       undo: (s, _before, others) => (others ? s : photoAs(s, this.confirmed.get(record) as string | null)),
       onConflict: (s, current, others) => {
+        if (current === null) return s
         const photo = typeof current.photoUrl === 'string' ? current.photoUrl : null
         this.confirmed.set(record, photo)
         if (typeof current.rev === 'number') this.confirmRowPhoto(memberId, photo, current.rev)
@@ -1014,7 +1015,7 @@ export class HttpAgent implements AgentClient {
     return others || !was || !s.members.some(m => m.id === id) ? s : this.memberAs(id, m => ({ ...m, [field]: was[field] }))(s)
   }
   private memberAs = (id: string, f: (m: MemberRecord) => MemberRecord) => (s: Slices): Slices => ({ ...s, members: s.members.map(m => (m.id === id ? f(m) : m)) })
-  private conflictMember = (k: Contract, own: 'role' | 'status') => (s: Slices, current: Record<string, unknown>): Slices => {
+  private conflictMember = (k: Contract, own: 'role' | 'status') => (s: Slices, current: Record<string, unknown> | null): Slices => {
     const rec = k.ANSWERS.member.safeParse(current)
     return rec.success ? this.takeMember(s, rec.data, own) : s
   }
@@ -1415,13 +1416,25 @@ export class HttpAgent implements AgentClient {
     const s = this.s.skills.find(x => x.n === name)
     if (!s || !s.mine || s.id === undefined || s.rev === undefined) return this.refuseLocal('forbidden', "Only your team's own skills can be deleted.")
     const { id, rev } = s
+    const remove = (st: Slices): Slices => ({ ...st, skills: st.skills.filter(x => x.id !== id) })
     return this.write<SkillDef>({
       lane: 'skills',
-      apply: st => ({ ...st, skills: st.skills.filter(x => x.n !== name) }),
+      apply: remove,
       send: () => postSkillDelete(this.http, k, id, rev),
-      done: st => st,
-      undo: (now, before) => ({ ...now, skills: before.skills }),
-      onConflict: (st, current) => ({ ...st, skills: [...st.skills.filter(x => x.n !== name), current as unknown as SkillDef] }),
+      done: remove,
+      undo: (now, before) => {
+        if (now.skills.some(x => x.n === name)) return now
+        const skills = [...now.skills]
+        skills.splice(before.skills.indexOf(s), 0, s)
+        return { ...now, skills }
+      },
+      onConflict: (st, current) => {
+        if (current === null) return remove(st)
+        const skill = k.ANSWERS.skill.safeParse(current)
+        return skill.success && skill.data.id === id
+          ? { ...st, skills: st.skills.map(x => x.id === id ? skill.data : x) }
+          : st
+      },
     })
   })
   setToolPaused = (_key: string, _paused: boolean) => this.refuse()
@@ -1444,7 +1457,10 @@ export class HttpAgent implements AgentClient {
       send: () => putWithdrawn(this.http, k, mine.id, mine.rev),
       done: put,
       undo: s => s,
-      onConflict: (s, current) => put(s, current as unknown as TeamRequestRecord),
+      onConflict: (s, current) => {
+        const request = k.ANSWERS.teamRequest.safeParse(current)
+        return request.success && request.data.id === mine.id ? put(s, request.data) : s
+      },
     })
   })
   private fileRequest = this.needs((k, kind: TeamRequestRecord['kind'], subject: string | undefined, text: string): Promise<void> =>
@@ -1454,7 +1470,7 @@ export class HttpAgent implements AgentClient {
       send: () => postTeamRequest(this.http, k, { kind, ...(subject ? { subject } : {}), text }).then(
         r => {
           // The server answers the person's own open request when it already says this subject: other words back means this wasn't sent.
-          if (r.text !== text.trim()) throw new AgentError('conflict', `You already have an open request about this: "${r.text}". Your Inhouse team has it. Wait for an answer, or take it back before sending another.`, { current: r as unknown as Record<string, unknown> })
+          if (r.text !== text.trim()) throw new AgentError('conflict', `You already have an open request about this: "${r.text}". Your Inhouse team has it. Wait for an answer, or take it back before sending another.`, { current: r })
           return r
         },
         (e: unknown) => { throw HttpAgent.requestRefusal(e) },
@@ -1462,7 +1478,10 @@ export class HttpAgent implements AgentClient {
       done: (s, r) => this.withRequests(s, [r, ...s.requests.filter(x => x.id !== r.id)]),
       undo: (s, before) => ({ ...s, state: { ...s.state, requestedTools: before.state.requestedTools, requestedSkills: before.state.requestedSkills } }),
       // The person's own open request, as the server has it, joins the list: its Requested mark stays and Request isn't offered again.
-      onConflict: (s, current) => this.withRequests(s, [current as unknown as TeamRequestRecord, ...s.requests.filter(x => x.id !== (current as { id?: string }).id)]),
+      onConflict: (s, current) => {
+        const request = k.ANSWERS.teamRequest.safeParse(current)
+        return request.success ? this.withRequests(s, [request.data, ...s.requests.filter(x => x.id !== request.data.id)]) : s
+      },
     }))
   /** Route 83: the caller's own open request of this kind about `subject`, looked up when the write goes out (a request filed a moment ago is in the list by then). */
   private takeBack = this.needs((k, kind: TeamRequestRecord['kind'], subject: string): Promise<void> =>

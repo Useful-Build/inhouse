@@ -59,10 +59,10 @@ export const deleteBrandSkill: Handler = async c => {
   if ('error' in body) return body.error
   const o = await storesOf(c).brandSkills.remove({ id: id.data, ifRev: body.ok.ifRev }, writer(c))
   const may = changerOf(c)
-  if ('ok' in o) return apiJson(brandSkillDef({ ...o.ok, creator_name: null }, true))
+  if ('ok' in o) return apiJson(brandSkillDef(o.ok, true))
   if ('conflict' in o) {
     const now = await storesOf(c).brandSkills.get(o.conflict.name)
-    return apiError('conflict', { current: now ? brandSkillDef(now, may(now)) : null })
+    return apiError('conflict', { current: now?.id === id.data ? brandSkillDef(now, may(now)) : null })
   }
   if (o.refused === 'not_found') return apiError('not_found')
   return apiError('forbidden', { reason: 'not_owner' })

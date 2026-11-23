@@ -112,6 +112,20 @@ describe('the client: requests to the Inhouse team', () => {
     expect(s.teamRequests.map(r => [r.status, r.closed])).toEqual([['Done', 'done']])
   })
 
+  test('malformed conflict records leave the team requests unchanged on withdraw and file', async () => {
+    const mine = rec('m', { subject: 'shopify', text: 'Connect Shopify', mine: true })
+    const conflict = refusal(409, 'conflict', { current: { id: mine.id, rev: 2 } })
+    const { agent } = await loaded({
+      ...reads({ requests: [mine] }),
+      [`PUT /api/team-requests/${mine.id}/withdrawn`]: conflict,
+      'POST /api/team-requests': conflict,
+    })
+    await expect(agent.withdrawTeamRequest({ title: mine.text, at })).rejects.toMatchObject({ code: 'conflict' })
+    await expect(agent.requestSkill('pdf')).rejects.toMatchObject({ code: 'conflict' })
+    expect(agent.getSnapshot().teamRequests.map(r => r.title)).toEqual([mine.text])
+    expect(agent.getSnapshot().requestedSkills).toEqual({})
+  })
+
   test('a refresh that started before a withdrawal cannot put the request back in Open', async () => {
     const mine = rec('m', { text: 'Connect Shopify', mine: true })
     const withdrawn = { ...mine, status: 'withdrawn', rev: 2 }

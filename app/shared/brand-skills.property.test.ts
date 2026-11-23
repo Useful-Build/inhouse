@@ -30,6 +30,11 @@ const block = fc.tuple(fc.array(keyLine, { maxLength: 4 }), fc.constantFrom('---
 const text = fc.string({ minLength: 1, maxLength: 200 }).filter(t => !/^\s*---/.test(t) && !/^\uFEFF/.test(t))
 const whitespace = fc.constantFrom(' ', '\t', '\r', '\n', '\u00a0', '\u2003', '\u2028', '\u2029', '\u3000', '\ufeff')
 const trailingSpace = fc.array(whitespace, { minLength: 1, maxLength: 12 }).map(chs => chs.join(''))
+const frontmatterControl = fc.oneof(
+  fc.integer({ min: 0, max: 31 }).map(n => String.fromCharCode(n)),
+  fc.integer({ min: 127, max: 159 }).map(n => String.fromCharCode(n)),
+  fc.constantFrom('\u2028', '\u2029'),
+)
 const bodyInput = fc.oneof(
   fc.string({ unit: 'binary', maxLength: 200 }),
   fc.tuple(fc.array(block, { maxLength: 3 }), text, trailingSpace).map(([blocks, body, tail]) => blocks.join('') + body + tail),
@@ -75,13 +80,25 @@ const keysOf = (file: string): string[] => {
 }
 
 describe('renderSkillFile', () => {
-  const description = fc.string({ minLength: 1, maxLength: 200 }).filter(d => brandSkillDescriptionProblem(d) === null)
+  const description = fc.string({ minLength: 1, maxLength: 200, unit: 'binary' }).filter(d => brandSkillDescriptionProblem(d) === null)
   const body = fc.tuple(fc.array(block, { maxLength: 2 }), text).map(([b, t]) => cleanBody(b.join('') + t)).filter(b => brandSkillBodyProblem(b) === null)
   it.prop([goodName, description, body])('holds exactly `name` and `description`, the description read back as given, then the body', (name, d, b) => {
     const file = renderSkillFile({ name, description: d, body: b })
     expect(keysOf(file)).toEqual(['name', 'description'])
-    expect(JSON.parse(/^description: (.*)$/m.exec(file)![1]!)).toBe(d)
+    expect(JSON.parse(file.split('\n')[2]!.slice('description: '.length))).toBe(d)
     expect(file.endsWith(`\n\n${b}\n`)).toBe(true)
+  })
+
+  it.prop([frontmatterControl])('refuses controls in names and descriptions and escapes them even if validation was bypassed', ch => {
+    const value = `a${ch}b`
+    expect(brandSkillNameProblem(value)).not.toBeNull()
+    expect(brandSkillDescriptionProblem(value)).not.toBeNull()
+    const file = renderSkillFile({ name: value, description: value, body: 'Steps.' })
+    const head = file.split('\n').slice(0, 4)
+    expect(file).not.toContain(ch === '\n' ? value : ch)
+    expect(JSON.parse(head[1]!.slice('name: '.length))).toBe(value)
+    expect(JSON.parse(head[2]!.slice('description: '.length))).toBe(value)
+    expect(keysOf(file)).toEqual(['name', 'description'])
   })
 })
 

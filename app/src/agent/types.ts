@@ -78,9 +78,9 @@ export class AgentError extends Error {
   readonly code: AgentErrorCode
   /** Why, when the code alone doesn't say (not invited, the last Admin). */
   readonly reason?: ErrorReason
-  /** On a `conflict` from a stale `ifRev`: the record as it is now. The snapshot already holds it. */
-  readonly current?: Record<string, unknown>
-  constructor(code: AgentErrorCode, message: string, extra: { reason?: ErrorReason; current?: Record<string, unknown> } = {}) {
+  /** On a stale `ifRev`, the current record or null if it is gone. */
+  readonly current?: Record<string, unknown> | null
+  constructor(code: AgentErrorCode, message: string, extra: { reason?: ErrorReason; current?: Record<string, unknown> | null } = {}) {
     super(message); this.name = 'AgentError'; this.code = code
     if (extra.reason !== undefined) this.reason = extra.reason
     if (extra.current !== undefined) this.current = extra.current

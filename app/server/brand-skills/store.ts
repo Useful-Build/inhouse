@@ -36,7 +36,7 @@ export type SaveOutcome =
   | { ok: BrandSkillRow; created: boolean }
   | { refused: 'invalid'; why: string }
   | { refused: 'inactive' | 'not_owner' | 'limit' | 'too_large' | 'conflict' }
-export type DeleteOutcome = { ok: BrandSkillRow } | { conflict: BrandSkillRow } | { refused: 'not_found' | 'not_owner' }
+export type DeleteOutcome = { ok: BrandSkillListed } | { conflict: BrandSkillRow } | { refused: 'not_found' | 'not_owner' }
 
 const base64url = (bytes: Uint8Array): string => btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
 /** `bs_` + 128 random bits (the audit contract's `BrandSkillIdSchema`). */
@@ -44,9 +44,10 @@ export const newBrandSkillId = (): string => `bs_${base64url(crypto.getRandomVal
 
 /** The UTF-8 bytes a row counts against the budget, in SQL (the same sum as `brandSkillBytes`). */
 const ROW_BYTES = 'length(CAST(name AS BLOB)) + length(CAST(description AS BLOB)) + length(CAST(body AS BLOB))'
-/** The maker, or an admin who is still on the team. Binds the actor's id twice. */
-const MAY_CHANGE = `(created_by = ? OR EXISTS (SELECT 1 FROM members WHERE id = ? AND kind = 'person' AND role = 'admin' AND status = 'active'))`
-const ACTIVE_PERSON = `EXISTS (SELECT 1 FROM members WHERE id = ? AND kind = 'person' AND status = 'active' AND pseudonymised_at_ms IS NULL)`
+const ACTIVE_PERSON_ROW = "id = ? AND kind = 'person' AND status = 'active' AND pseudonymised_at_ms IS NULL"
+const ACTIVE_PERSON = `EXISTS (SELECT 1 FROM members WHERE ${ACTIVE_PERSON_ROW})`
+/** The maker or an admin, while still an active person. */
+const MAY_CHANGE = `EXISTS (SELECT 1 FROM members WHERE ${ACTIVE_PERSON_ROW} AND (members.id = brand_skills.created_by OR role = 'admin'))`
 const isActivePerson = (db: SkillDatabase, actorId: string) => db.prepare(`SELECT 1 WHERE ${ACTIVE_PERSON}`).bind(actorId).first()
 
 export interface SkillQueryResult<T = unknown> {
@@ -81,8 +82,8 @@ function auditStmt(db: SkillDatabase, at: At, args: AuditArgs, id: string, stamp
   return db.prepare(s.sql).bind(...s.params)
 }
 
-const written = (r: SkillQueryResult, what: string): BrandSkillRow => {
-  const row = (r.results as BrandSkillRow[] | undefined)?.[0]
+const written = <T extends BrandSkillRow = BrandSkillRow>(r: SkillQueryResult, what: string): T => {
+  const row = (r.results as T[] | undefined)?.[0]
   if (!row) throw new Error(`${what}: the write returned no row`)
   return row
 }
@@ -146,9 +147,9 @@ export async function saveSkill(db: SkillDatabase, input: SkillInput, at: At, { 
   const [changed] = await db.batch([
     db.prepare(
       `UPDATE brand_skills SET description = ?, body = ?, updated_by = ?, updated_at_ms = ?, rev = rev + 1, req_id = ?
-        WHERE id = ? AND rev = ? AND ${MAY_CHANGE} AND ${ACTIVE_PERSON}
+        WHERE id = ? AND rev = ? AND ${MAY_CHANGE}
           AND (SELECT COALESCE(SUM(${ROW_BYTES}), 0) FROM brand_skills WHERE id != ?) + ? <= ? RETURNING *`,
-    ).bind(s.description, s.body, at.actorId, at.nowMs, stamp, before.id, before.rev, at.actorId, at.actorId, at.actorId, before.id, bytes, BRAND_SKILLS_BYTES_MAX),
+    ).bind(s.description, s.body, at.actorId, at.nowMs, stamp, before.id, before.rev, at.actorId, before.id, bytes, BRAND_SKILLS_BYTES_MAX),
     auditStmt(db, at, { action: 'brand_skill.changed', skillId: before.id }, before.id, stamp),
   ])
   if (changed.meta.changes > 0) return { ok: written(changed, 'saveSkill'), created: false }
@@ -156,7 +157,7 @@ export async function saveSkill(db: SkillDatabase, input: SkillInput, at: At, { 
   if (!(await isActivePerson(db, at.actorId))) return { refused: 'inactive' }
   const now = await readById(db, before.id)
   if (!now || now.rev !== before.rev) return { refused: 'conflict' }
-  const may = await db.prepare(`SELECT 1 AS ok FROM brand_skills WHERE id = ? AND ${MAY_CHANGE}`).bind(before.id, at.actorId, at.actorId).first()
+  const may = await db.prepare(`SELECT 1 AS ok FROM brand_skills WHERE id = ? AND ${MAY_CHANGE}`).bind(before.id, at.actorId).first()
   return { refused: may ? 'too_large' : 'not_owner' }
 }
 
@@ -167,15 +168,18 @@ export async function saveSkill(db: SkillDatabase, input: SkillInput, at: At, { 
 export async function deleteSkill(db: SkillDatabase, i: { id: string; ifRev: number }, at: At): Promise<DeleteOutcome> {
   const stamp = writeStamp(at.requestId)
   const [stamped] = await db.batch([
-    db.prepare(`UPDATE brand_skills SET req_id = ? WHERE id = ? AND rev = ? AND ${MAY_CHANGE} RETURNING *`).bind(stamp, i.id, i.ifRev, at.actorId, at.actorId),
+    db.prepare(
+      `UPDATE brand_skills SET req_id = ? WHERE id = ? AND rev = ? AND ${MAY_CHANGE}
+        RETURNING *, (SELECT name FROM members WHERE id = brand_skills.created_by AND pseudonymised_at_ms IS NULL) AS creator_name`,
+    ).bind(stamp, i.id, i.ifRev, at.actorId),
     auditStmt(db, at, { action: 'brand_skill.deleted', skillId: i.id }, i.id, stamp),
     db.prepare('DELETE FROM brand_skills WHERE id = ? AND req_id = ?').bind(i.id, stamp),
   ])
-  if (stamped.meta.changes > 0) return { ok: written(stamped, 'deleteSkill') }
+  if (stamped.meta.changes > 0) return { ok: written<BrandSkillListed>(stamped, 'deleteSkill') }
   // Refused: an unknown id first, then who may delete it, then the row as it is now.
   const row = await readById(db, i.id)
   if (!row) return { refused: 'not_found' }
-  const may = await db.prepare(`SELECT 1 AS ok FROM brand_skills WHERE id = ? AND ${MAY_CHANGE}`).bind(i.id, at.actorId, at.actorId).first()
+  const may = await db.prepare(`SELECT 1 AS ok FROM brand_skills WHERE id = ? AND ${MAY_CHANGE}`).bind(i.id, at.actorId).first()
   if (!may) return { refused: 'not_owner' }
   return { conflict: row }
 }

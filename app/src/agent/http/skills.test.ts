@@ -65,6 +65,35 @@ describe('the client: skills', () => {
     expect(stale.agent.read().skills.find(s => s.n === 'weekly-report')).toMatchObject({ rev: 3, d: current.d })
   })
 
+  test.each([null, { id: 'bs_AAAAAAAAAAAAAAAAAAAAAA', rev: 3 }])('handles a gone or invalid conflict record (%j)', async current => {
+    const { agent } = await loaded({
+      ...reads(), 'GET /api/skills': { body: [OURS, brand()] },
+      'POST /api/skills/brand/bs_AAAAAAAAAAAAAAAAAAAAAA/delete': { status: 409, body: { error: { code: 'conflict', current } } },
+    })
+    await expect(agent.deleteSkill('weekly-report')).rejects.toMatchObject({ code: 'conflict', current })
+    expect(agent.read().skills).toEqual(current === null ? [OURS] : [OURS, brand()])
+  })
+
+  test('rolling back a failed delete restores only that skill after a refresh', async () => {
+    const added = brand({ n: 'returns-report', id: 'bs_BBBBBBBBBBBBBBBBBBBBBB' })
+    let list = [OURS, brand()]
+    const deletePath = '/api/skills/brand/bs_AAAAAAAAAAAAAAAAAAAAAA/delete'
+    const s = server({
+      ...reads(), 'GET /api/skills': () => ({ body: list }),
+      [`POST ${deletePath}`]: { status: 503, body: { error: { code: 'unavailable' } } },
+    })
+    const agent = new HttpAgent({ fetch: async (input, init) => {
+      if (String(input).endsWith(deletePath)) {
+        list = [{ ...OURS, d: 'Updated instructions.' }, added]
+        await agent.refresh('skills')
+      }
+      return s.fetch(input, init)
+    }, now: () => NOW })
+    await agent.whenLoaded()
+    await expect(agent.deleteSkill('weekly-report')).rejects.toMatchObject({ code: 'unavailable' })
+    expect(agent.read().skills).toEqual([list[0], brand(), added])
+  })
+
   test('the Inhouse team reads GET /api/skills on start without a grant, and does not read /api/skills/:name until asked', async () => {
     const { agent, calls } = await loaded({ ...reads(), 'GET /api/me': { body: me({ role: 'inhouse' }) }, 'GET /api/skills': { body: [OURS, brand({ canChange: false })] } })
     expect(calls.map(c => c.path)).toContain('/api/skills')

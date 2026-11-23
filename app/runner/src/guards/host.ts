@@ -23,7 +23,7 @@ import { spawn } from 'node:child_process'
 import { chmodSync, lchownSync, lstatSync, readdirSync } from 'node:fs'
 import { chmod, chown, lchown, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { BRAND_PLUGIN_NAME, renderSkillFile, type BrandSkillFile } from '../../../shared/protocol/brand-skills.ts'
+import { BRAND_PLUGIN_NAME, brandSkillNameProblem, renderSkillFile, type BrandSkillFile } from '../../../shared/protocol/brand-skills.ts'
 import { INPUTS, OUTPUTS, USERS_ROOT, WORK_ROOT, sessionPaths, userPaths } from './paths.ts'
 import type { PoolUser, SessionHost } from './users.ts'
 
@@ -235,6 +235,9 @@ export function createSessionHost(deps: HostDeps): SessionHost {
    * no session can put anything in its place. The names were checked on the wire (one plain segment each).
    */
   async function writeBrandPlugin(user: PoolUser, skills: readonly BrandSkillFile[]) {
+    for (const s of skills) {
+      if (brandSkillNameProblem(s.name) !== null) throw new Error('invalid brand skill name')
+    }
     const own = await ownFolders(user)
     await rm(own.brandPlugin, { recursive: true, force: true })
     const dirs = [own.brandPlugin, join(own.brandPlugin, '.claude-plugin'), join(own.brandPlugin, 'skills'), ...skills.map((s) => join(own.brandPlugin, 'skills', s.name))]

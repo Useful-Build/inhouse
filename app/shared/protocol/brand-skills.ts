@@ -27,11 +27,13 @@ export const BRAND_PLUGIN_NAME = 'brand'
 export const RESERVED_SKILL_NAMES: readonly string[] = ['dataviz', 'pdf', 'word', 'spreadsheet', 'skill-creator']
 
 const NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+// eslint-disable-next-line no-control-regex
+const FRONTMATTER_CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/
 
 /** Why a name can't be a brand skill's, in words the agent can pass on; null when it can. */
 export function brandSkillNameProblem(name: string): string | null {
   if (name.length === 0 || name.length > BRAND_SKILL_NAME_MAX) return `A skill name is 1 to ${BRAND_SKILL_NAME_MAX} characters.`
-  if (!NAME.test(name)) return 'A skill name uses lower-case letters and digits, with single hyphens between words (for example "weekly-stock-report").'
+  if (FRONTMATTER_CONTROL.test(name) || !NAME.test(name)) return 'A skill name uses lower-case letters and digits, with single hyphens between words (for example "weekly-stock-report").'
   if (name.includes('anthropic') || name.includes('claude')) return 'A skill name can\'t contain "anthropic" or "claude".'
   if (RESERVED_SKILL_NAMES.includes(name)) return `"${name}" is the name of one of the Inhouse team's skills. Pick another name.`
   return null
@@ -40,8 +42,7 @@ export function brandSkillNameProblem(name: string): string | null {
 /** Why a description can't be a brand skill's; null when it can. */
 export function brandSkillDescriptionProblem(description: string): string | null {
   if (description.length === 0 || description.length > BRAND_SKILL_DESCRIPTION_MAX) return `A skill description is 1 to ${BRAND_SKILL_DESCRIPTION_MAX} characters.`
-  // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f]/.test(description)) return 'A skill description is one line of plain text.'
+  if (FRONTMATTER_CONTROL.test(description)) return 'A skill description is one line of plain text.'
   if (/[<>]/.test(description)) return 'A skill description can\'t contain "<" or ">".'
   return null
 }
@@ -86,7 +87,12 @@ export const brandSkillBytes = (s: { name: string; description: string; body: st
  * reads as a double-quoted scalar, so nothing in it can start another key), then the body.
  */
 export function renderSkillFile(s: { name: string; description: string; body: string }): string {
-  return `---\nname: ${s.name}\ndescription: ${JSON.stringify(s.description)}\n---\n\n${s.body}\n`
+  // JSON already escapes C0. Escape the remaining controls and Unicode line separators for YAML.
+  const quoted = (value: string) => JSON.stringify(value).replace(
+    /[\u007f-\u009f\u2028\u2029]/g, ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  )
+  const name = FRONTMATTER_CONTROL.test(s.name) ? quoted(s.name) : s.name
+  return `---\nname: ${name}\ndescription: ${quoted(s.description)}\n---\n\n${s.body}\n`
 }
 
 /** A brand skill as a run's start carries it. */
