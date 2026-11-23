@@ -183,6 +183,13 @@ export interface AgentClient {
   /** A member's photo as a data URL. Null removes it, so initials show; Reset demo brings the sample photo back. */
   setPhoto(memberId: string, dataUrl: string | null): Promise<void>
   sendTeamRequest(req: TeamRequest): Promise<void>
+  /**
+   * The person withdraws their own open request, named as the team window's row names it (its title and when it was asked).
+   * Resolves once it is withdrawn. Rejects when it can't be: `forbidden` (not open any more, or not theirs), `conflict` (the team
+   * answered it meanwhile), or the network's. There is no way back: the product has no un-withdraw route, so only the demo's
+   * window offers an Undo.
+   */
+  withdrawTeamRequest(ref: { title: string; at: Instant }): Promise<void>
   /** The bell's notifications, newest first. Stable between changes. */
   listNotifications(): AgentNotification[]
   /** Bell notifications read: the one opened, or every listed one for Mark all as read. */

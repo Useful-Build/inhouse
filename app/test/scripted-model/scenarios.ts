@@ -306,6 +306,81 @@ export const LATE_ORDERS_TEXT = [
  */
 export const MORNING_CHECK_OUTAGE_ANSWER = { coverage: 'incomplete', gaps: ['orders', 'products', 'inventory', 'refunds', 'returns'], items: [] }
 
+/**
+ * P6a ship spec (memory): the memory scenarios below work on a fact whose words carry a reference the person's message names
+ * in square brackets (`[fx0a1b2c3d]`), so a run never meets another run's facts (a fact saved by the earlier project's run is
+ * still there, and a second save of the same words is "already saved"). The turns read the reference from the first user
+ * message (`contentFor`), and the memory id the reword needs from the search result.
+ */
+export const TEAM_FACT_REF = /\[(fx[0-9a-f]{8})\]/
+export const teamFactText = (ref: string): string => `We restock on Fridays (${ref}).`
+export const teamFactReworded = (ref: string): string => `We restock on Fridays and Mondays (${ref}).`
+export const TEAM_FACT_SAVED_ANSWER = 'Saved for the team.'
+export const TEAM_FACT_CHANGED_ANSWER = 'Changed it for the team.'
+/** What `memory-save-learning` says when "Learn from my chats" is off (the tool refuses) and when it is on (the fact is saved). */
+export const LEARNING_OFF_ANSWER = "I didn't save it: Learn from my chats is off."
+export const LEARNING_SAVED_ANSWER = 'Saved it for you.'
+
+const refIn = (r: MessagesRequest): string => {
+  const ref = TEAM_FACT_REF.exec(firstUserText(r))?.[1]
+  if (ref === undefined) throw new Error('the message names no reference like [fx0a1b2c3d]')
+  return ref
+}
+
+/** `memory_save` of the team fact with the message's reference, then one fixed answer. */
+function teamFactSave(id: string): Scenario {
+  const loop = mainLoop('mcp__inhouse__memory_save')
+  return {
+    turns: [
+      { content: [], contentFor: (r) => [{ type: 'tool_use', id, name: 'mcp__inhouse__memory_save', input: { scope: 'brand', text: teamFactText(refIn(r)) } }], expect: loop },
+      { content: [{ type: 'text', text: TEAM_FACT_SAVED_ANSWER }], expect: both(loop, resultOf(id)) },
+    ],
+  }
+}
+
+/**
+ * `memory_search` for the message's reference, then `From memory: <fact>` when the result holds the fact as `wording` gives it
+ * and `Nothing saved matches that.` when it doesn't (two branches, picked by the result, so it never says what it wasn't given).
+ */
+function teamFactRecall(id: string, wording: (ref: string) => string): Scenario {
+  const ask = mainLoop('mcp__inhouse__memory_search')
+  const answered = (found: boolean) => (r: MessagesRequest) => {
+    const block = resultBlock(r, id)
+    return block !== undefined && resultText(block).includes(wording(refIn(r))) === found
+  }
+  const reply = (text: (r: MessagesRequest) => string): ScriptedTurn => ({ content: [], contentFor: (r) => [{ type: 'text', text: text(r) }], expect: both(ask, resultOf(id)) })
+  return {
+    turns: [{ content: [], contentFor: (r) => [{ type: 'tool_use', id, name: 'mcp__inhouse__memory_search', input: { query: refIn(r) } }], expect: ask }],
+    branches: {
+      found: { match: answered(true), turns: [null, reply((r) => memoryRecallAnswer(wording(refIn(r))))] },
+      none: { match: answered(false), turns: [null, reply(() => MEMORY_RECALL_NONE)] },
+    },
+  }
+}
+
+/** Finds the team fact with `memory_search`, then rewords it with `memory_update` (the memory id comes from the search result). */
+function teamFactReword(): Scenario {
+  const loop = mainLoop()
+  const search = 'toolu_scripted_reword_search'
+  const update = 'toolu_scripted_reword_update'
+  return {
+    turns: [
+      { content: [], contentFor: (r) => [{ type: 'tool_use', id: search, name: 'mcp__inhouse__memory_search', input: { query: refIn(r) } }], expect: loop },
+      {
+        content: [],
+        contentFor: (r) => {
+          const block = resultBlock(r, search)
+          const memoryId = block === undefined ? undefined : /memory_id: (mem_[A-Za-z0-9_-]+)/.exec(resultText(block))?.[1] ?? /"memory_id":\s*"(mem_[A-Za-z0-9_-]+)"/.exec(resultText(block))?.[1]
+          if (memoryId === undefined) throw new Error('the search result names no team fact to reword')
+          return [{ type: 'tool_use', id: update, name: 'mcp__inhouse__memory_update', input: { memory_id: memoryId, text: teamFactReworded(refIn(r)) } }]
+        },
+        expect: both(loop, resultOf(search)),
+      },
+      { content: [{ type: 'text', text: TEAM_FACT_CHANGED_ANSWER }], expect: both(loop, resultOf(update)) },
+    ],
+  }
+}
+
 export const SCENARIOS: Record<string, Scenario> = {
   /** Answers with the SDK's StructuredOutput tool, matching STRUCTURED_SCHEMA (run it with that outputFormat). */
   structured: {
@@ -520,6 +595,20 @@ export const SCENARIOS: Record<string, Scenario> = {
       },
     },
   },
+
+  /** P6a ship spec: a team fact whose words carry the message's `[fx…]` reference (saved for the team, waiting for an admin by default). */
+  'memory-save-team-ref': teamFactSave('toolu_scripted_team_ref_save'),
+  /** Searches for that reference and says the fact, or that nothing matched. */
+  'memory-recall-team-ref': teamFactRecall('toolu_scripted_team_ref_recall', teamFactText),
+  /** The same for the reworded fact (`memory-reword-team-ref`'s new words). */
+  'memory-recall-team-ref-reworded': teamFactRecall('toolu_scripted_team_ref_recall_reworded', teamFactReworded),
+  /** Finds the active team fact and changes its words (it goes back to waiting while "Ask before saving a team rule" is on). */
+  'memory-reword-team-ref': teamFactReword(),
+  /** Saves the person's own preference: says why when "Learn from my chats" is off (the tool refuses), and that it saved when on. */
+  'memory-save-learning': scriptedBranchesOnResult(
+    { id: 'toolu_scripted_memory_learning', name: 'mcp__inhouse__memory_save', input: { scope: 'person', text: MEMORY_SAVE_TEXT } },
+    'Not saved: this person turned off', LEARNING_OFF_ANSWER, LEARNING_SAVED_ANSWER,
+  ),
 }
 
 /**
