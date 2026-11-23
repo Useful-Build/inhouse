@@ -27,8 +27,8 @@ P4's acceptance 2 (the graded run on the eval deployment).
 - **Threshold:** met, and the run wasn't partial.
 - **Not run:** no cases.
 - **Graded cases:** late orders (and a red one), unpaid orders, open returns, returns not restocked, a refund spike, low
-  stock, out of stock, oversold, two mixed stores, and a fixture-tool trap.
-- **Checks per case:** parsed, coverage, gaps, keys, severity, sources and no fixture tool.
+  stock, out of stock, oversold, two mixed stores, and the recorded fixture store, time-shifted to now.
+- **Checks per case:** parsed, coverage, gaps, keys, severity, sources and no fixture tool (on every case).
 
 ## Conclusion
 

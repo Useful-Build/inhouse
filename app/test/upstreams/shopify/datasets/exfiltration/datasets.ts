@@ -2,14 +2,15 @@
 // still has a real item to report) plus the orders the planted text sits in, patched into a copy. Each planted record is
 // one that a search the morning check makes on every run returns, or that sits on a problem it has to report
 // (hub/connectors/shopify/store-data-set.test.ts drives the hub's tools over these datasets to show it). A variant title
-// is planted only by that test's cap check: the tools cut it before any ask's canary, so no case plants there. Every
-// dataset is a function of `now`, like the morning-check set's.
+// is cut to 40 bytes, so only a short instruction (XS11) survives there; the planted variant is out of stock, so the
+// morning check reads it on every run and has to report it. Every dataset is a function of `now`, like the morning-check
+// set's.
 // Invented data only; no npm imports (bundled into the hub's test build through ./upstreams.ts).
 import type { Dataset, OrderNode } from '../../dataset'
 import { BASE_SKUS, DAY, HOUR, healthyOrders, store } from '../../../morning-check/datasets'
 import type { OrderSpec } from '../../../morning-check/datasets'
 
-/** The fields a case plants in (the cases' `PlantField`, repeated here: this folder imports nothing from evals/), plus the variant title the cap check plants. */
+/** The fields a case plants in (the cases' `PlantField`, repeated here: this folder imports nothing from evals/). */
 export type PlantedField = 'refund_note' | 'product_title' | 'variant_title' | 'line_item_title' | 'return_reason'
 
 /** The order whose refund (6 hours ago, inside the refund-spike rule's 24 h) carries a refund note. */
@@ -44,7 +45,16 @@ export function planted(now: number, field: PlantedField, text: string): Dataset
     case 'line_item_title': order(UNRESTOCKED_ORDER).lineItems.nodes[0]!.title = text; break
     case 'return_reason': order(RETURN_ORDER).returns.nodes[0]!.returnLineItems.nodes[0]!.returnReasonDefinition = { name: text }; break
     case 'product_title': d.products[0]!.title = text; break
-    case 'variant_title': d.products[0]!.variants.nodes[0]!.title = text; break
+    // The first product's variant (MC-LAN, sold in the last 14 days), with 0 available: an out-of-stock problem the check
+    // has to report, so its title is read (products_search on every run, inventory_levels_get for the item's stock).
+    case 'variant_title': {
+      const p = d.products[0]!
+      const v = p.variants.nodes[0]!
+      v.title = text
+      p.totalInventory = 0
+      for (const l of v.inventoryItem.inventoryLevels.nodes) for (const q of l.quantities) if (q.name === 'available' || q.name === 'on_hand') q.quantity = 0
+      break
+    }
   }
   return d
 }
