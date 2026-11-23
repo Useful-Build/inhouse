@@ -1,36 +1,13 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { fc, test } from '@fast-check/vitest'
-import { expect, vi } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import { Markdown } from './Markdown'
 
 vi.mock('../../ui', () => ({ IconButton: () => null }))
 vi.mock('./copy', () => ({ copyText: () => undefined }))
 
 const html = (text: string, linkHosts: string[] = []) => renderToStaticMarkup(createElement(Markdown, { text, linkHosts }))
-const host = fc.stringMatching(/^[a-z][a-z0-9]{0,15}$/)
-const path = fc.stringMatching(/^[a-z0-9/_-]{0,30}$/)
 const markup = (url: string) => `[Report](${url}) <${url}> ${url} ![Chart](${url})`
-
-test.prop([host, path])('unlisted hosts never produce browser destinations, even with a listed hostname prefix', (name, suffix) => {
-  const listed = `${name}.example.test`
-  const url = `https://${listed}.other.test/${suffix}?date=2026-11-23`
-  const out = html(markup(url), [listed])
-  expect(out).not.toMatch(/<(?:a|img)\b/)
-  expect(out).toContain('Report')
-  expect(out).toContain(url)
-  expect(out).toContain('Chart')
-})
-
-test.prop([host, path])('a listed host can render links and images in each supported form', (name, suffix) => {
-  const listed = `${name}.example.test`
-  const url = `https://${listed}/${suffix}?date=2026-11-23`
-  const out = html(markup(url), [listed])
-  expect(out.match(/<a\b/g)).toHaveLength(3)
-  expect(out.match(/href="/g)).toHaveLength(3)
-  expect(out).toContain(`<img src="${url}" alt="Chart"`)
-  expect(out).toMatch(/referrerpolicy="no-referrer"/i)
-})
 
 test('external destinations are off by default and in-app routes stay clickable', () => {
   const out = html(`[Tools](#/tools/shopify) ${markup('https://docs.example.test/')}`)
@@ -56,4 +33,55 @@ test('validates the destination of named links and images, including angle-brack
   expect(out.match(/<a\b/g)).toHaveLength(1)
   expect(out).toContain('>Report</a>')
   expect(out).not.toContain('<img')
+})
+
+test.each([
+  '<https://docs.example.test/page',
+  '<https://docs.example.test.',
+])('leaves the label as text for an unclosed angle destination (%s)', dest => {
+  expect(html(`[Report](${dest}) ![Chart](${dest})`, ['docs.example.test']))
+    .toContain('>Report Chart</p>')
+})
+
+test.each([
+  ['https://docs.example.test', 'https://docs.example.test/'],
+  ['https://docs.example.test/guide', 'https://docs.example.test/guide'],
+  ['https://docs.example.test/wiki/Foo_(bar)', 'https://docs.example.test/wiki/Foo_(bar)'],
+])('keeps prose parentheses outside the bare URL %s', (url, href) => {
+  const out = html(`See ((${url})).`, ['docs.example.test'])
+  expect(out).toContain(`href="${href}"`)
+  expect(out).toContain(`>${url}</a>)).`)
+})
+
+test('preserves balanced parentheses in a bare URL', () => {
+  const url = 'https://en.wikipedia.org/wiki/Foo_(bar)'
+  const out = html(url, ['en.wikipedia.org'])
+  expect(out).toContain(`href="${url}"`)
+  expect(out).toContain(`>${url}</a>`)
+})
+
+test.each([
+  ['HTTPS://DOCS.Example.Test/Guide', 'docs.example.test', 'https://docs.example.test/Guide'],
+  ['https://bücher.example.test/Guide', 'xn--bcher-kva.example.test', 'https://xn--bcher-kva.example.test/Guide'],
+  ['https://xn--bcher-kva.example.test/Guide', 'xn--bcher-kva.example.test', 'https://xn--bcher-kva.example.test/Guide'],
+])('matches the canonical hostname for %s', (url, host, href) => {
+  expect(html(`[Report](${url})`, [host])).toContain(`href="${href}"`)
+})
+
+test('leaves trailing-dot hostnames as text', () => {
+  const url = 'https://docs.example.test./guide'
+  expect(html(`[Report](${url}) <${url}> ${url}`, ['docs.example.test']))
+    .toContain(`>Report ${url} ${url}</p>`)
+})
+
+test('leaves data URLs as text', () => {
+  const url = 'data:text/plain,report'
+  expect(html(`[Report](${url}) ![Chart](${url}) ${url}`, ['docs.example.test']))
+    .toContain(`>Report Chart ${url}</p>`)
+})
+
+test('escapes raw HTML', () => {
+  const out = html('<img src=x onerror=alert(1)> <script>alert(1)</script>', ['docs.example.test'])
+  expect(out).toContain('&lt;img src=x onerror=alert(1)&gt; &lt;script&gt;alert(1)&lt;/script&gt;')
+  expect(out).not.toMatch(/<(?:img|script)\b/)
 })

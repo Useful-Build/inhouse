@@ -126,6 +126,25 @@ const HTTPS = /^https:\/\//i
 const SAFE_HREF = /^(https?:|mailto:|#)/i
 const WORD = /\w/
 
+function bareLinkLabel(token: string): string {
+  const label = token.replace(/[.,!?;:]+$/, '')
+  if (!label.endsWith(')')) return label
+
+  // Count unmatched closing parentheses so prose punctuation stays outside the link.
+  let open = 0
+  let end = 0
+  for (let i = 0; i < label.length; i++) {
+    const char = label[i]
+    if (char === '(') open++
+    else if (char === ')') {
+      if (open === 0) continue
+      open--
+    }
+    end = i + 1
+  }
+  return label.slice(0, end)
+}
+
 /** Plain text as words, each in its own span. A span keeps its key as the text grows, so only the words that are new mount, and the mount fades them in. */
 function words(text: string, key: string): ReactNode {
   return <Fragment key={key}>{(text.match(/\S+\s*|\s+/g) ?? []).map((w, i) => <span key={i} className="animate-word-in">{w}</span>)}</Fragment>
@@ -162,7 +181,7 @@ function renderer(fade: boolean, page: boolean, linkHosts: readonly string[]): I
       if (m[1]) out.push(<code key={k} className="rounded-sm bg-muted px-1 py-0.5 font-mono text-sm">{tok.slice(1, -1)}</code>)
       else if (m[2]) {
         const [, image, label, dest] = LINK.exec(tok)!
-        const href = !page && dest.startsWith('<') ? dest.slice(1, -1) : dest
+        const href = !page && dest.startsWith('<') && dest.endsWith('>') ? dest.slice(1, -1) : dest
         const external = page ? (/^https?:/i.test(href) ? href : null) : chatUrl(href, linkHosts)
         const internal = page ? SAFE_HREF.test(href) : HASH_ROUTE.test(href)
         if (inLabel) out.push(plain(tok))
@@ -177,7 +196,7 @@ function renderer(fade: boolean, page: boolean, linkHosts: readonly string[]): I
       else if (m[3]) out.push(<strong key={k} className="font-semibold">{inline(tok.slice(2, -2), k, inLabel)}</strong>)
       else if (m[4] || m[5]) out.push(<em key={k}>{inline(tok.slice(1, -1), k, inLabel)}</em>)
       else {
-        const label = m[6] ? tok.slice(1, -1) : tok.replace(/[.,!?;:]+$/, '')
+        const label = m[6] ? tok.slice(1, -1) : bareLinkLabel(tok)
         const href = !inLabel && !/[\w@./-]/.test(before) && chatUrl(/^www\./i.test(label) ? `https://${label}` : label, linkHosts)
         if (href) out.push(
           <a key={k} href={href} target="_blank" rel="noreferrer" className={ANCHOR}>{label}</a>,

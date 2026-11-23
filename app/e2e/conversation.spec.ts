@@ -43,14 +43,11 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, E
   await expect(log(page).locator('strong', { hasText: 'Shopify' })).toBeVisible()
   await expect(log(page).locator('ul > li')).toHaveCount(2)
   await expect(log(page).locator('ol > li')).toHaveCount(2)
-  await expect(log(page).locator('blockquote')).toContainText("Amazon orders aren't in this query")
   await expect(log(page).getByRole('link', { name: 'Shopify' })).toHaveAttribute('href', '#/tools/shopify')
-  // A heading is a heading, not "###" text, and it sits below the page's structure (### is an h4); a link to an unlisted host is plain text.
+  // Markdown headings sit below the page's structure (### is an h4).
   await expect(log(page).getByRole('heading', { name: 'Last week by SKU', level: 4 })).toBeVisible()
   await expect(log(page).locator('h1')).toHaveCount(0)
   await expect(log(page).getByText('###')).toHaveCount(0)
-  await expect(log(page).getByRole('link', { name: 'Amazon orders' })).toHaveCount(0)
-  await expect(log(page).locator('blockquote')).toContainText('Amazon orders')
   // The code block and the table are keyboard-scrollable regions, each with its own name.
   await expect(log(page).getByRole('region', { name: 'Code block 1, sql' })).toHaveAttribute('tabindex', '0')
   await expect(log(page).getByRole('region', { name: /^Table 1: SKU, Product, Units$/ })).toHaveAttribute('tabindex', '0')
@@ -58,6 +55,9 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, E
   // The answer's steps line names the tools it read and the step count; opened, the list ends with the mode that answered,
   // how long it took and when.
   await expect(stepsButtons(page).last()).toContainText(/Checked Shopify · \d+ steps/)
+  await expect(log(page)).not.toHaveAttribute('aria-busy', 'true')
+  await expect(log(page).locator('blockquote')).toContainText("Amazon orders aren't in this query")
+  await expect(log(page).getByRole('link', { name: 'Amazon orders' })).toHaveCount(0)
   await stepsButtons(page).last().click()
   await expect(stepsButtons(page).last()).toHaveAttribute('aria-expanded', 'true')
   await expect(log(page).locator('[data-steps-meta]').last()).toHaveText(/^Smart · [\d.]+m?s · \d{1,2}:\d\d\s[AP]M$/)
