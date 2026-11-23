@@ -60,6 +60,25 @@ describe('the P6a memory scenarios', () => {
     // The other wording of the same fact is not this scenario's fact.
     const otherWording = wording === teamFactText ? teamFactReworded : teamFactText
     expect((await answer(await model.handle(request(name, [call], [{ text: hit(otherWording(REF)) }]), name))).content).toEqual([{ type: 'text', text: MEMORY_RECALL_NONE }])
+    // A tool error (e.g. inhouse MCP didn't connect so memory_search isn't available) must miss loudly instead of
+    // silently answering "Nothing saved matches that."
+    const errored = await model.handle(request(name, [call], [{ text: 'Error: No such tool available: mcp__inhouse__memory_search', error: true }]), name)
+    expect(errored.status).toBe(400)
+    expect(model.misses.at(-1)?.reason).toContain('has is_error true, not false; it says: "Error: No such tool available: mcp__inhouse__memory_search"')
+  })
+
+  test('memory-recall-team-ref misses on turn 0 when mcp__inhouse__memory_search is absent even with DeferredToolPlaceholder', async () => {
+    const model = createScriptedModel(SCENARIOS)
+    const noInhouseMcp = new Request('http://scripted.invalid/v1/messages', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: HARNESS_MODEL,
+        tools: [{ name: 'Bash' }, { name: 'DeferredToolPlaceholder', defer_loading: true }],
+        messages: [{ role: 'user', content: `scenario:memory-recall-team-ref recall [${REF}]` }],
+      }),
+    })
+    expect((await model.handle(noInhouseMcp, 'memory-recall-team-ref')).status).toBe(400)
+    expect(model.misses.at(-1)?.reason).toContain("the tool list doesn't offer mcp__inhouse__memory_search")
   })
 
   test('memory-reword-team-ref finds the fact, rewords it by the memory id the search gave, and answers', async () => {

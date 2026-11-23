@@ -3,6 +3,7 @@
 // `createScriptedModel` directly.
 import type { MessagesRequest, Scenario, ScriptedBranch, ScriptedTurn } from './index.ts'
 import { BUILT_IN_TOOLS, INHOUSE_MCP_SERVER } from '../../runner/src/guards/lists.ts'
+import { INHOUSE_TOOLS } from '../../server/mcp/registry.ts'
 
 /** The model every harness run asks for (the harness's `RunStart`). */
 export const HARNESS_MODEL = 'claude-sonnet-5-5'
@@ -30,10 +31,18 @@ export const mainLoop =
  * The placeholder stands in only for a tool the runner gives the agent (its BUILT_IN_TOOLS or our MCP server's); a tool
  * taken off that allowlist is caught by runner/test/guards/lists.test.ts, which pins the list.
  */
+const ALWAYS_LOAD_INHOUSE_TOOLS = new Set(
+  INHOUSE_TOOLS.filter((t) => t.alwaysLoad).map((t) => `mcp__${INHOUSE_MCP_SERVER}__${t.name}`),
+)
+
 const offers = (r: MessagesRequest, tool: string): boolean =>
   Array.isArray(r.tools) && r.tools.some((t) => t.name === tool || (t.defer_loading === true && deferrable(tool)))
 
-const deferrable = (tool: string): boolean => (BUILT_IN_TOOLS as readonly string[]).includes(tool) || tool.startsWith(`mcp__${INHOUSE_MCP_SERVER}__`)
+// The six always-loaded `inhouse` tools must be present by name: if the `inhouse` MCP server didn't connect, the
+// placeholder must not hide their absence and let turn 0 emit a call the CLI rejects locally.
+const deferrable = (tool: string): boolean =>
+  (BUILT_IN_TOOLS as readonly string[]).includes(tool) ||
+  (tool.startsWith(`mcp__${INHOUSE_MCP_SERVER}__`) && !ALWAYS_LOAD_INHOUSE_TOOLS.has(tool))
 
 /** What the last message is, for a miss's reason. */
 const lastShape = (r: MessagesRequest): string => {
@@ -212,7 +221,7 @@ function memoryRecall(id: string, query: string, fact: string): Scenario {
     const block = resultBlock(r, id)
     return block !== undefined && resultText(block).includes(fact) === found
   }
-  const reply = (text: string): ScriptedTurn => ({ content: [{ type: 'text', text }], expect: both(ask, resultOf(id)) })
+  const reply = (text: string): ScriptedTurn => ({ content: [{ type: 'text', text }], expect: both(ask, resultIs(id, false)) })
   return {
     turns: [{ content: [{ type: 'tool_use', id, name: 'mcp__inhouse__memory_search', input: { query } }], expect: ask }],
     branches: {
@@ -245,7 +254,7 @@ const hitsOf = (text: string): number | '?' => {
  */
 function memoryRecallCounted(id: string, query: string, fact: string): Scenario {
   const ask = mainLoop('mcp__inhouse__memory_search')
-  const reply = (text: string): ScriptedTurn => ({ content: [{ type: 'text', text }], expect: both(ask, resultOf(id)) })
+  const reply = (text: string): ScriptedTurn => ({ content: [{ type: 'text', text }], expect: both(ask, resultIs(id, false)) })
   const branches: Record<string, ScriptedBranch> = {}
   for (const hits of [...Array.from({ length: 21 }, (_, n) => n), '?' as const]) {
     for (const match of [true, false]) {
@@ -341,7 +350,7 @@ function teamFactSave(id: string): Scenario {
   return {
     turns: [
       { content: [], contentFor: (r) => [{ type: 'tool_use', id, name: 'mcp__inhouse__memory_save', input: { scope: 'brand', text: teamFactText(refIn(r)) } }], expect: loop },
-      { content: [{ type: 'text', text: TEAM_FACT_SAVED_ANSWER }], expect: both(loop, resultOf(id)) },
+      { content: [{ type: 'text', text: TEAM_FACT_SAVED_ANSWER }], expect: both(loop, resultIs(id, false)) },
     ],
   }
 }
@@ -356,7 +365,7 @@ function teamFactRecall(id: string, wording: (ref: string) => string): Scenario 
     const block = resultBlock(r, id)
     return block !== undefined && resultText(block).includes(wording(refIn(r))) === found
   }
-  const reply = (text: (r: MessagesRequest) => string): ScriptedTurn => ({ content: [], contentFor: (r) => [{ type: 'text', text: text(r) }], expect: both(ask, resultOf(id)) })
+  const reply = (text: (r: MessagesRequest) => string): ScriptedTurn => ({ content: [], contentFor: (r) => [{ type: 'text', text: text(r) }], expect: both(ask, resultIs(id, false)) })
   return {
     turns: [{ content: [], contentFor: (r) => [{ type: 'tool_use', id, name: 'mcp__inhouse__memory_search', input: { query: refIn(r) } }], expect: ask }],
     branches: {
@@ -368,12 +377,13 @@ function teamFactRecall(id: string, wording: (ref: string) => string): Scenario 
 
 /** Finds the team fact with `memory_search`, then rewords it with `memory_update` (the memory id comes from the search result). */
 function teamFactReword(): Scenario {
+  const ask = mainLoop('mcp__inhouse__memory_search')
   const loop = mainLoop()
   const search = 'toolu_scripted_reword_search'
   const update = 'toolu_scripted_reword_update'
   return {
     turns: [
-      { content: [], contentFor: (r) => [{ type: 'tool_use', id: search, name: 'mcp__inhouse__memory_search', input: { query: refIn(r) } }], expect: loop },
+      { content: [], contentFor: (r) => [{ type: 'tool_use', id: search, name: 'mcp__inhouse__memory_search', input: { query: refIn(r) } }], expect: ask },
       {
         content: [],
         contentFor: (r) => {
@@ -382,9 +392,9 @@ function teamFactReword(): Scenario {
           if (memoryId === undefined) throw new Error('the search result names no team fact to reword')
           return [{ type: 'tool_use', id: update, name: 'mcp__inhouse__memory_update', input: { memory_id: memoryId, text: teamFactReworded(refIn(r)) } }]
         },
-        expect: both(loop, resultOf(search)),
+        expect: both(ask, resultIs(search, false)),
       },
-      { content: [{ type: 'text', text: TEAM_FACT_CHANGED_ANSWER }], expect: both(loop, resultOf(update)) },
+      { content: [{ type: 'text', text: TEAM_FACT_CHANGED_ANSWER }], expect: both(loop, resultIs(update, false)) },
     ],
   }
 }
@@ -420,7 +430,7 @@ export const SCENARIOS: Record<string, Scenario> = {
   'memory-save': {
     turns: [
       { content: [{ type: 'tool_use', id: 'toolu_scripted_memory', name: 'mcp__inhouse__memory_save', input: { scope: 'person', text: MEMORY_SAVE_TEXT } }], expect: mainLoop('mcp__inhouse__memory_save') },
-      { content: [{ type: 'text', text: 'Saved.' }], expect: both(mainLoop('mcp__inhouse__memory_save'), resultOf('toolu_scripted_memory')) },
+      { content: [{ type: 'text', text: 'Saved.' }], expect: both(mainLoop('mcp__inhouse__memory_save'), resultIs('toolu_scripted_memory', false)) },
     ],
   },
 
@@ -434,7 +444,7 @@ export const SCENARIOS: Record<string, Scenario> = {
   'memory-save-stem': {
     turns: [
       { content: [{ type: 'tool_use', id: 'toolu_scripted_memory_stem', name: 'mcp__inhouse__memory_save', input: { scope: 'person', text: MEMORY_STEM_TEXT } }], expect: mainLoop('mcp__inhouse__memory_save') },
-      { content: [{ type: 'text', text: 'Saved.' }], expect: both(mainLoop('mcp__inhouse__memory_save'), resultOf('toolu_scripted_memory_stem')) },
+      { content: [{ type: 'text', text: 'Saved.' }], expect: both(mainLoop('mcp__inhouse__memory_save'), resultIs('toolu_scripted_memory_stem', false)) },
     ],
   },
 
@@ -445,7 +455,7 @@ export const SCENARIOS: Record<string, Scenario> = {
   'memory-save-team': {
     turns: [
       { content: [{ type: 'tool_use', id: 'toolu_scripted_memory_team', name: 'mcp__inhouse__memory_save', input: { scope: 'brand', text: MEMORY_SAVE_TEAM_TEXT } }], expect: mainLoop('mcp__inhouse__memory_save') },
-      { content: [{ type: 'text', text: 'Saved for the team.' }], expect: both(mainLoop('mcp__inhouse__memory_save'), resultOf('toolu_scripted_memory_team')) },
+      { content: [{ type: 'text', text: 'Saved for the team.' }], expect: both(mainLoop('mcp__inhouse__memory_save'), resultIs('toolu_scripted_memory_team', false)) },
     ],
   },
 
