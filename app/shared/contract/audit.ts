@@ -31,6 +31,9 @@ export const AuditActionSchema = z.enum([
   // P6a (PR0, docs/plans/2026-11-22-p6a-memory-skills.md): an admin, or the Inhouse team under a live grant, approves
   // or rejects a waiting team fact (W2); a person sends the Inhouse team a request, and its status changes (W3).
   'memory.approved', 'memory.rejected', 'team_request.created', 'team_request.status',
+  // P6a brand skills (master plan standing decision 6): a person's agent saves a brand skill (new or changed), and its
+  // maker or an admin deletes it.
+  'brand_skill.created', 'brand_skill.changed', 'brand_skill.deleted',
 ])
 export type AuditAction = z.infer<typeof AuditActionSchema>
 
@@ -48,6 +51,8 @@ const RoutePatternSchema = z.enum([
   '/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download',
   // P6a (PR0, route 77): the waiting team facts, admins and the Inhouse team under a live grant.
   '/api/memory/waiting',
+  // P6a brand skills (routes 79 and 84): the skills list holds the brand's own, so it's brand data like a skill's text.
+  '/api/skills', '/api/skills/:name',
 ])
 /**
  * The `brand_data` PUT routes the Inhouse team may use under a live grant (item 19, p3-design section 10): forgetting
@@ -124,6 +129,8 @@ export const TeamRequestIdSchema = z.string().regex(new RegExp(`^tr_${RANDOM}$`)
 export const TeamRequestKindSchema = z.enum(['tool', 'job', 'change', 'bug', 'feedback'])
 /** Where a status change can move a request: it's created `open`, and only leaves it. */
 export const TeamRequestStatusChangeSchema = z.enum(['done', 'declined', 'withdrawn'])
+/** A brand skill: `bs_` + 128 random bits (the brand skills store makes it). Never its name, description or text. */
+export const BrandSkillIdSchema = z.string().regex(new RegExp(`^bs_${RANDOM}$`))
 
 const line = <A extends AuditAction, S extends z.ZodRawShape>(action: A, shape: S) => z.object({ action: z.literal(action), ...shape }).strict()
 const member = { memberId: MemberIdSchema }
@@ -195,6 +202,9 @@ const otherLines = [
   line('memory.rejected', { memoryId: MemoryIdArgSchema, rev: MemoryRevSchema }),
   line('team_request.created', { requestId: TeamRequestIdSchema, kind: TeamRequestKindSchema }),
   line('team_request.status', { requestId: TeamRequestIdSchema, status: TeamRequestStatusChangeSchema }),
+  line('brand_skill.created', { skillId: BrandSkillIdSchema }),
+  line('brand_skill.changed', { skillId: BrandSkillIdSchema }),
+  line('brand_skill.deleted', { skillId: BrandSkillIdSchema }),
 ] as const
 
 /**

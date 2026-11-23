@@ -69,7 +69,7 @@ export const PLUGIN_NAME = 'inhouse'
  * Our own skills, plugin-qualified (Q7: one per file type, PDF, Word, spreadsheet; P6a W3).
  * Each one added here must exist under image/plugin/skills/.
  */
-export const OUR_SKILLS: readonly string[] = ['inhouse:pdf', 'inhouse:word', 'inhouse:spreadsheet']
+export const OUR_SKILLS: readonly string[] = ['inhouse:pdf', 'inhouse:word', 'inhouse:spreadsheet', 'inhouse:skill-creator']
 
 /** The skills the agent may use: dataviz plus ours. */
 export const ALLOWED_SKILLS: readonly string[] = [...KEPT_BUNDLED_SKILLS, ...OUR_SKILLS]

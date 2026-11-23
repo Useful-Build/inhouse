@@ -51,6 +51,9 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   'memory.rejected': { action: 'memory.rejected', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA', rev: 1 },
   'team_request.created': { action: 'team_request.created', requestId: 'tr_AAAAAAAAAAAAAAAAAAAAAA', kind: 'tool' },
   'team_request.status': { action: 'team_request.status', requestId: 'tr_AAAAAAAAAAAAAAAAAAAAAA', status: 'done' },
+  'brand_skill.created': { action: 'brand_skill.created', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
+  'brand_skill.changed': { action: 'brand_skill.changed', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
+  'brand_skill.deleted': { action: 'brand_skill.deleted', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
 }
 const word = fc.stringMatching(/^[A-Z][a-z]{1,11}$/)
 const name = fc.oneof(word, fc.tuple(word, word).map(([a, b]) => `${a} ${b}`))
@@ -373,9 +376,23 @@ describe('P6a lines (PR0)', () => {
       for (const method of ['GET', 'PUT']) expect(access(method, route), `${method} ${route}`).toBe(false)
     }
     // Team requests are baseline (the Inhouse team needs no grant), so no support.access line names them.
-    for (const route of ['/api/team-requests', '/api/team-requests/:id/status', '/api/skills']) {
+    for (const route of ['/api/team-requests', '/api/team-requests/:id/status']) {
       for (const method of ['GET', 'PUT', 'POST']) expect(access(method, route), `${method} ${route}`).toBe(false)
     }
+  })
+
+  it('brand skill lines take the skill id only, never its name or text; support.access names the skills reads (GET only)', () => {
+    const bs = 'bs_AAAAAAAAAAAAAAAAAAAAAA'
+    for (const action of ['brand_skill.created', 'brand_skill.changed', 'brand_skill.deleted']) {
+      expect(ok({ action, skillId: bs }), action).toBe(true)
+      for (const skillId of ['weekly-report', 'bs_short', `bs_${'A'.repeat(23)}`, 'tr_AAAAAAAAAAAAAAAAAAAAAA', '']) expect(ok({ action, skillId }), `${action} ${skillId}`).toBe(false)
+      expect(ok({ action, skillId: bs, name: 'weekly-report' }), action).toBe(false)
+      expect(ok({ action, skillId: bs, body: 'Read the orders.' }), action).toBe(false)
+    }
+    expect(access('GET', '/api/skills')).toBe(true)
+    expect(access('GET', '/api/skills/:name')).toBe(true)
+    for (const method of ['PUT', 'POST']) for (const route of ['/api/skills', '/api/skills/:name', '/api/skills/brand/:id/delete']) expect(access(method, route), `${method} ${route}`).toBe(false)
+    expect(access('GET', '/api/skills/weekly-report')).toBe(false)
   })
 
   it("appends its block after P4's, in this order (failure 12)", () => {

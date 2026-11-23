@@ -295,11 +295,15 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   // withdraw only their own (the owner check).
   'GET /api/memory/waiting': ['no', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'PUT /api/memory/brand/:id/approved': ['no', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
-  'GET /api/skills': ['ok', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
+  'GET /api/skills': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'GET /api/team-requests': ['ok', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
   'POST /api/team-requests': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
   'PUT /api/team-requests/:id/status': ['no', 'no', 'ok', 'ok', 'no', 'no', 'no'],
   'PUT /api/team-requests/:id/withdrawn': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  // Rows 84 and 85 (P6a brand skills): a skill's text is brand data (the Inhouse team under a live grant, audited);
+  // people delete a brand skill, and its maker or an admin is the store's rule. The Inhouse team deletes none.
+  'GET /api/skills/:name': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/skills/brand/:id/delete': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },
@@ -620,12 +624,13 @@ describe('every Inhouse brand_data read has a support.access line (P3 W1 PR 1: "
   })
 })
 
-// Review fold (Sonnet L1, #328): the oracle answers rows 79 and 80 the same whether they're technical or baseline (every
-// principal gets `ok` either way), so their classes are pinned here, on both copies of the rows.
+// Review fold (Sonnet L1, #328): the oracle answers row 80 the same whether it's technical or baseline (every principal
+// gets `ok` either way), so its class is pinned here, on both copies of the rows. Row 79 became brand data with P6a's
+// brand skills (the list holds the brand's own), which the oracle sees: the Inhouse team needs a grant.
 describe('P6a rows whose class the oracle cannot see', () => {
-  it('row 79 is technical and row 80 is baseline', () => {
+  it('row 79 is brand data and row 80 is baseline', () => {
     for (const rows of [DESIGN_ROWS, accessMatrix]) {
-      expect(rowFor(rows, 'GET', '/api/skills')?.class).toBe('technical')
+      expect(rowFor(rows, 'GET', '/api/skills')?.class).toBe('brand_data')
       expect(rowFor(rows, 'GET', '/api/team-requests')?.class).toBe('baseline')
     }
   })

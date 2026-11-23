@@ -187,6 +187,26 @@ describe('protocol versions (literal wire fixtures)', () => {
     expect(c.requests.map(r => r.path)).toEqual(['/protocol'])
   }))
 
+  // v3 (P6a brand skills): a start's `brandSkills` reach a v3 runner, and a v2 runner (whose schema is strict) gets the
+  // start without them rather than a refusal.
+  it("brand skills go to a [3, 2] runner on 3, and are left out for a [2] runner on 2", t(async state => {
+    const skills = [{ name: 'weekly-report', description: 'Writes the weekly report.', body: 'Read the orders.' }]
+    const v3 = new FakeContainer()
+    v3.route = v2Runner([3, 2])
+    expect(await make(v3, state).core.admit({ ...RS, brandSkills: skills })).toEqual({ accepted: true, gen: 1, protocol: 3 })
+    const sent3 = v3.requests.find(r => r.path === '/runs')!
+    expect(headerOf(sent3.init)).toBe('3')
+    expect(JSON.parse(String(sent3.init?.body)).brandSkills).toEqual(skills)
+  }))
+  it('a [2] runner gets the start without brandSkills, and admits it', t(async state => {
+    const v2 = new FakeContainer()
+    v2.route = v2Runner([2])
+    expect(await make(v2, state).core.admit({ ...RS, brandSkills: [{ name: 'weekly-report', description: 'Writes it.', body: 'Steps.' }] })).toEqual({ accepted: true, gen: 1, protocol: 2 })
+    const sent2 = JSON.parse(String(v2.requests.find(r => r.path === '/runs')!.init?.body)) as Record<string, unknown>
+    expect(sent2).not.toHaveProperty('brandSkills')
+    expect(sent2.runId).toBe(RS.runId)
+  }))
+
   it('a 426 from the runner is `protocol`', t(async state => {
     const c = new FakeContainer()
     c.route = v2Runner([2], () => json(426, { error: 'unsupported protocol version', version: 2 }))

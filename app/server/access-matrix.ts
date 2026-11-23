@@ -88,8 +88,10 @@ export const accessMatrix: readonly AccessRow[] = [
   // live grant (support.access PUT, INHOUSE_BRAND_WRITES). Members are refused here.
   /* 77 */ { method: 'GET', pattern: '/api/memory/waiting', class: 'brand_data', allow: ['admin', 'inhouse'] },
   /* 78 */ { method: 'PUT', pattern: '/api/memory/brand/:id/approved', class: 'brand_data', allow: ['admin', 'inhouse'] },
-  // Skills (W3): the image's skill list, technical like the Tools page; everyone reads, nobody writes.
-  /* 79 */ { method: 'GET', pattern: '/api/skills', class: 'technical', allow: ['member', 'admin', 'inhouse'] },
+  // Skills (W3). Brand data since P6a's brand skills: the list holds the brand's own (made in its chats), so the Inhouse
+  // team reads it, and a skill's instructions (84), only under a live grant. People delete a brand skill (85); who may
+  // (its maker or an admin) is the store's, in its statement. The Inhouse team changes no brand skill.
+  /* 79 */ { method: 'GET', pattern: '/api/skills', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   // Team requests (W3). Row 80 is baseline: the Inhouse team reads a request's text without a grant. That's an accepted
   // exception to "brand data needs a grant", because a request is addressed to the Inhouse team (review L1, #328). An
   // agent can file a request carrying tool-result brand data, so W4's read-side set includes that case. People create
@@ -99,7 +101,9 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 81 */ { method: 'POST', pattern: '/api/team-requests', class: 'baseline', allow: ['member', 'admin'] },
   /* 82 */ { method: 'PUT', pattern: '/api/team-requests/:id/status', class: 'baseline', allow: ['inhouse'] },
   /* 83 */ { method: 'PUT', pattern: '/api/team-requests/:id/withdrawn', class: 'personal', allow: ['member', 'admin'] },
-  // Rows 84 to 89 stay P6a's spare numbers; line A holds 90 to 99.
+  /* 84 */ { method: 'GET', pattern: '/api/skills/:name', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  /* 85 */ { method: 'POST', pattern: '/api/skills/brand/:id/delete', class: 'brand_data', allow: ['member', 'admin'] },
+  // Rows 86 to 89 stay P6a's spare numbers; line A holds 90 to 99.
 ]
 
 /** Each `CanKey`'s row (section 3). */

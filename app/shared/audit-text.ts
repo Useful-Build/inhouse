@@ -43,6 +43,9 @@ const ROUTE: Record<string, string> = {
   // P6a (PR0).
   '/api/memory/waiting': 'Team memory waiting for an OK',
   '/api/memory/brand/:id/approved': 'Team memory',
+  // P6a brand skills.
+  '/api/skills': 'Skills',
+  '/api/skills/:name': 'A skill',
 }
 
 /** P4: what a routine edit changed, in a fixed order whatever order the line lists them. */
@@ -120,5 +123,9 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'memory.rejected': return { what: 'rejected a team memory', detail: '' }
     case 'team_request.created': return { what: 'sent the Inhouse team a request', detail: REQUEST_KIND[args.kind] }
     case 'team_request.status': return { what: REQUEST_STATUS[args.status], detail: '' }
+    // P6a brand skills. Never the skill's name, description or instructions.
+    case 'brand_skill.created': return { what: 'made a skill in a chat', detail: '' }
+    case 'brand_skill.changed': return { what: 'changed a skill in a chat', detail: '' }
+    case 'brand_skill.deleted': return { what: 'deleted a skill', detail: '' }
   }
 }

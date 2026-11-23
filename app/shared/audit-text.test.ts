@@ -43,6 +43,9 @@ const sample: Record<AuditArgs['action'], AuditArgs> = {
   'memory.rejected': { action: 'memory.rejected', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA', rev: 1 },
   'team_request.created': { action: 'team_request.created', requestId: 'tr_AAAAAAAAAAAAAAAAAAAAAA', kind: 'tool' },
   'team_request.status': { action: 'team_request.status', requestId: 'tr_AAAAAAAAAAAAAAAAAAAAAA', status: 'done' },
+  'brand_skill.created': { action: 'brand_skill.created', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
+  'brand_skill.changed': { action: 'brand_skill.changed', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
+  'brand_skill.deleted': { action: 'brand_skill.deleted', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
 }
 const names = (id: string) => ({ m_a: 'Ada Example' } as Record<string, string>)[id] ?? null
 
@@ -190,10 +193,17 @@ describe('P6a lines (PR0): literal texts, no id and no em dash', () => {
     expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'GET', route: '/api/memory/waiting' }, names)).toEqual({ what: 'looked at brand data', detail: 'Team memory waiting for an OK' })
     expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'PUT', route: '/api/memory/brand/:id/approved' }, names)).toEqual({ what: 'changed brand data', detail: 'Team memory' })
   })
+  it("says what happened to a brand skill, never which one, and names the skills routes in support.access", () => {
+    expect(auditText(sample['brand_skill.created'], names)).toEqual({ what: 'made a skill in a chat', detail: '' })
+    expect(auditText(sample['brand_skill.changed'], names)).toEqual({ what: 'changed a skill in a chat', detail: '' })
+    expect(auditText(sample['brand_skill.deleted'], names)).toEqual({ what: 'deleted a skill', detail: '' })
+    expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'GET', route: '/api/skills' }, names)).toEqual({ what: 'looked at brand data', detail: 'Skills' })
+    expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'GET', route: '/api/skills/:name' }, names)).toEqual({ what: 'looked at brand data', detail: 'A skill' })
+  })
   it('never shows an id, a revision or an em dash', () => {
-    for (const action of ['memory.approved', 'memory.rejected', 'team_request.created', 'team_request.status'] as const) {
+    for (const action of ['memory.approved', 'memory.rejected', 'team_request.created', 'team_request.status', 'brand_skill.created', 'brand_skill.changed', 'brand_skill.deleted'] as const) {
       const t = `${auditText(sample[action], names).what} ${auditText(sample[action], names).detail}`
-      expect(t, action).not.toMatch(/mem_|tr_|\d|\u2014/)
+      expect(t, action).not.toMatch(/mem_|tr_|bs_|\d|\u2014/)
     }
   })
 })

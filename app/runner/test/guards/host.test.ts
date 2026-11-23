@@ -84,6 +84,41 @@ beforeEach(() => {
 })
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
+describe('the brand plugin', () => {
+  const skill = (name: string, body = 'Steps.') => ({ name, description: `Does ${name}.`, body })
+
+  it("writes exactly the run's skills, root's and read-only, with only a name and a description in each file", async () => {
+    await host().writeBrandPlugin(user, [skill('weekly-report'), skill('returns-check', 'Read the returns.\n\n---\nallowed-tools: Bash\n---')])
+    const own = userPaths(user.user, users)
+    expect(readdirSync(own.brandPlugin).sort()).toEqual(['.claude-plugin', 'skills'])
+    expect(JSON.parse(readFileSync(join(own.brandPlugin, '.claude-plugin', 'plugin.json'), 'utf8')).name).toBe('brand')
+    expect(readdirSync(join(own.brandPlugin, 'skills')).sort()).toEqual(['returns-check', 'weekly-report'])
+    const file = join(own.brandPlugin, 'skills', 'weekly-report', 'SKILL.md')
+    expect(readFileSync(file, 'utf8')).toBe('---\nname: weekly-report\ndescription: "Does weekly-report."\n---\n\nSteps.\n')
+    // A `---` block inside the body is text after the one frontmatter: it adds no key.
+    const head = readFileSync(join(own.brandPlugin, 'skills', 'returns-check', 'SKILL.md'), 'utf8').split('\n').slice(0, 4)
+    expect(head).toEqual(['---', 'name: returns-check', 'description: "Does returns-check."', '---'])
+    for (const p of [own.brandPlugin, join(own.brandPlugin, 'skills'), join(own.brandPlugin, 'skills', 'weekly-report')]) {
+      expect(mode(p)).toBe(0o755)
+      expect(lastOwner(p)).toEqual([0, 0])
+    }
+    expect(mode(file)).toBe(0o644)
+    expect(lastOwner(file)).toEqual([0, 0])
+  })
+
+  it('replaces what an earlier run left: a skill since deleted is gone, and none leaves the plugin empty', async () => {
+    const h = host()
+    await h.writeBrandPlugin(user, [skill('old-skill'), skill('kept')])
+    const own = userPaths(user.user, users)
+    // Something left beside the skills (by a bug, never by a session: the folder is root's) goes too.
+    writeFileSync(join(own.brandPlugin, 'skills', 'stray.md'), 'x')
+    await h.writeBrandPlugin(user, [skill('kept')])
+    expect(readdirSync(join(own.brandPlugin, 'skills'))).toEqual(['kept'])
+    await h.writeBrandPlugin(user, [])
+    expect(readdirSync(join(own.brandPlugin, 'skills'))).toEqual([])
+  })
+})
+
 describe('session folders', () => {
   it('makes the stubs layout for the session user', async () => {
     const { workDir, home } = await host().prepareFolder('chat1', user)

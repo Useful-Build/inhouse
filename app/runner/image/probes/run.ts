@@ -197,7 +197,7 @@ async function releaseOf(r: Run): Promise<Release> {
 }
 
 /** Starts one run through the root's API; `done` settles once its stream has ended. */
-function startRun(opts: { chatId: string; script: Script; prompt?: string; webFetchDomains?: string[]; outputFormat?: RunStart['outputFormat'] }): { run: Run; done: Promise<Run> } {
+function startRun(opts: { chatId: string; script: Script; prompt?: string; webFetchDomains?: string[]; outputFormat?: RunStart['outputFormat']; brandSkills?: RunStart['brandSkills'] }): { run: Run; done: Promise<Run> } {
   const state = newScript(opts.script)
   const token = `probe_${randomBytes(24).toString('hex')}`
   const run: Run = { chatId: opts.chatId, via: VIA, state, events: [], status: 0, body: '', token, lines: [], cleanup: '' }
@@ -233,6 +233,7 @@ function startRun(opts: { chatId: string; script: Script; prompt?: string; webFe
         webFetchDomains: opts.webFetchDomains ?? [],
         fileCaps: { maxFileBytes: 1_000_000, maxFilesPerTurn: 10, maxRestoreBytes: 1_000_000, allowedTypes: ['text/plain'] },
         ...(opts.outputFormat ? { outputFormat: opts.outputFormat } : {}),
+        ...(opts.brandSkills ? { brandSkills: opts.brandSkills } : {}),
       } satisfies RunStart),
     })
     run.status = res.status
@@ -605,8 +606,8 @@ async function probeFacts() {
     { name: 'seccomp', cmd: 'grep -E "Seccomp|NoNewPrivs" /proc/self/status | tr "\\n" " "' },
     { name: 'ps', cmd: 'ps -eo pid,user,args --no-headers | head -20' },
     { name: 'sysctl', cmd: 'cat /proc/sys/fs/protected_hardlinks /proc/sys/fs/protected_symlinks | tr "\\n" " "' },
-    // P6a W3: our three skills reach the image, readable by the session, and not writable by it (Q7).
-    { name: 'skill-files', cmd: 'for s in pdf word spreadsheet; do f=/opt/inhouse/plugin/skills/$s/SKILL.md; d=/opt/inhouse/plugin/skills/$s; test -f "$f" && test -r "$f" && echo "$s readable"; test -w "$f" && echo "$s WRITABLE"; test -w "$d" && echo "$s FOLDER WRITABLE"; done; true' },
+    // P6a W3: our skills reach the image, readable by the session, and not writable by it (Q7; Skill Creator from P6a's brand skills).
+    { name: 'skill-files', cmd: 'for s in pdf word spreadsheet skill-creator; do f=/opt/inhouse/plugin/skills/$s/SKILL.md; d=/opt/inhouse/plugin/skills/$s; test -f "$f" && test -r "$f" && echo "$s readable"; test -w "$f" && echo "$s WRITABLE"; test -w "$d" && echo "$s FOLDER WRITABLE"; done; true' },
   ]
   const script = shellScript(probes)
   const { done } = startRun({ chatId: 'p-facts', script: { steps: [bash(script)] } })
@@ -619,7 +620,7 @@ async function probeFacts() {
   const skillFiles = real.get('skill-files')?.out ?? ''
   record(
     'facts.skill-files-present-and-read-only',
-    ['pdf', 'word', 'spreadsheet'].every((s) => skillFiles.includes(`${s} readable`)) && !skillFiles.includes('WRITABLE'),
+    ['pdf', 'word', 'spreadsheet', 'skill-creator'].every((s) => skillFiles.includes(`${s} readable`)) && !skillFiles.includes('WRITABLE'),
     `agent saw: ${skillFiles.replace(/\s+/g, ' ')}`,
   )
   const shell = real.get('shell')
@@ -1305,6 +1306,43 @@ async function probeStructured() {
   record('structured.not-asked-no-output', plainEnd !== undefined && plainEnd.structuredOutput === undefined, `end ${JSON.stringify(plainEnd)?.slice(0, 300)}; the call's result ${result(plain.run, 0)?.text.slice(0, 200)}`)
 }
 
+/**
+ * P6a brand skills: a run's brand skill reaches the session as `brand:<name>` beside ours (and nothing else joins the
+ * skills lock), its body is read when the Skill tool uses it, and the session can neither write the file (Write tool)
+ * nor reach its folder from Bash (the users root is out of Bash's view). Afterwards the file on disk is the one the
+ * root wrote: exactly a name and a description in its frontmatter.
+ */
+async function probeBrandSkills() {
+  if (VIA !== 'root') return record('brand-skills.via-root', false, `runs go ${VIA}: the brand plugin is the root's to write`)
+  const name = 'probe-brand-skill'
+  const marker = `brand-skill-body-${randomBytes(4).toString('hex')}`
+  const skill = { name, description: 'A brand skill the image probe writes.', body: `Answer with the word ${marker}.` }
+  const fileOf = (u: string) => join(USERS_ROOT, u, 'brand-plugin', 'skills', name, 'SKILL.md')
+  const r = await startRun({
+    chatId: 'p-brand-skills',
+    brandSkills: [skill],
+    script: {
+      steps: [
+        () => ({ tool: 'Skill', input: { skill: `brand:${name}` } }),
+        () => ({ tool: 'Write', input: { file_path: fileOf('s00'), content: '---\nname: x\nallowed-tools: Bash\n---\nwidened' } }),
+        bash(`cat ${USERS_ROOT}/*/brand-plugin/skills/${name}/SKILL.md 2>&1 | head -3; ls ${USERS_ROOT}/*/brand-plugin 2>&1 | head -3; echo done`),
+      ],
+    },
+  }).done
+  checkRun('brand-skills', r, [2])
+  const init = initOf(r)
+  const want = [...ALLOWED_SKILLS, `brand:${name}`].sort()
+  record('brand-skills.init-lists-the-brand-skill', JSON.stringify([...(init?.skills ?? [])].sort()) === JSON.stringify(want), `skills ${JSON.stringify(init?.skills)}, want ${JSON.stringify(want)}`)
+  const plugins = (init?.plugins ?? []).map((p) => p.name).sort()
+  record('brand-skills.plugins-ours-and-the-brands', JSON.stringify(plugins) === JSON.stringify(['brand', PLUGIN_NAME].sort()), `plugins ${JSON.stringify(plugins)}`)
+  record('brand-skills.body-read-on-use', (result(r, 0)?.text ?? '').includes(marker), `the Skill call's result: ${result(r, 0)?.text.slice(0, 300)}`)
+  const bashOut = result(r, 2)?.text ?? ''
+  record('brand-skills.bash-cannot-read-it', !bashOut.includes(marker) && !bashOut.includes('name: '), `Bash saw: ${bashOut.replace(/\s+/g, ' ').slice(0, 300)}`)
+  const written = readdirSync(USERS_ROOT).map(fileOf).filter((f) => existsSync(f)).map((f) => readFileSync(f, 'utf8'))
+  const expected = `---\nname: ${name}\ndescription: "${skill.description}"\n---\n\n${skill.body}\n`
+  record('brand-skills.file-unchanged-name-and-description-only', written.length > 0 && written.every((t) => t === expected), `Write said: ${result(r, 1)?.text.slice(0, 200)}; files ${JSON.stringify(written.map((t) => t.slice(0, 120)))}`)
+}
+
 async function probeInhouseTools() {
   if (VIA !== 'root') return record('inhouse-tools.via-root', false, `runs go ${VIA}: the proxy-URL server needs the root`)
   const prefix = `mcp__${INHOUSE_MCP_SERVER}__`
@@ -1457,6 +1495,7 @@ await step('process-limit', probeProcessLimit)
 await step('direct', probeDirect)
 await step('inhouse-tools', probeInhouseTools)
 await step('structured', probeStructured)
+await step('brand-skills', probeBrandSkills)
 await step('sysv', probeSysV)
 await step('closed-folder', probeClosedFolder)
 await step('zombie-leader', probeZombieLeader)

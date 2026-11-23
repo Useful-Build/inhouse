@@ -168,11 +168,15 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   // grant; withdrawing is personal, the requester's own.
   { method: 'GET', pattern: '/api/memory/waiting', class: 'brand_data', allow: ['admin', 'inhouse'] },
   { method: 'PUT', pattern: '/api/memory/brand/:id/approved', class: 'brand_data', allow: ['admin', 'inhouse'] },
-  { method: 'GET', pattern: '/api/skills', class: 'technical', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'GET', pattern: '/api/skills', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   { method: 'GET', pattern: '/api/team-requests', class: 'baseline', allow: ['member', 'admin', 'inhouse'] },
   { method: 'POST', pattern: '/api/team-requests', class: 'baseline', allow: ['member', 'admin'] },
   { method: 'PUT', pattern: '/api/team-requests/:id/status', class: 'baseline', allow: ['inhouse'] },
   { method: 'PUT', pattern: '/api/team-requests/:id/withdrawn', class: 'personal', allow: ['member', 'admin'] },
+  // Brand skills (P6a, rows 84 and 85): the list (79) and a skill's text are brand data; people delete one, the store
+  // decides whose.
+  { method: 'GET', pattern: '/api/skills/:name', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'POST', pattern: '/api/skills/brand/:id/delete', class: 'brand_data', allow: ['member', 'admin'] },
 ]
 
 /** `CanRows` as section 3 maps them. */

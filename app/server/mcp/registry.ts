@@ -8,7 +8,7 @@
 /** The `_meta` key that keeps a tool loaded on every turn. */
 export const ALWAYS_LOAD_META_KEY = 'anthropic/alwaysLoad'
 
-export type ToolCategory = 'memory' | 'approvals' | 'questions' | 'routines' | 'history' | 'notifications' | 'inhouse_team'
+export type ToolCategory = 'memory' | 'approvals' | 'questions' | 'routines' | 'history' | 'notifications' | 'inhouse_team' | 'skills'
 
 export interface InhouseTool {
   /** `resource_action`, lower snake case; inside the engine `mcp__inhouse__<name>`. */
@@ -53,4 +53,6 @@ export const INHOUSE_TOOLS: readonly InhouseTool[] = [
   // 7. Inhouse team (2)
   { name: 'team_request_create', category: 'inhouse_team', alwaysLoad: false, annotations: {}, description: "Ask the Inhouse team (the people who run this agent) for something you can't do: connect a new tool, fix a broken connection, build a skill." },
   { name: 'team_request_list', category: 'inhouse_team', alwaysLoad: false, annotations: read, description: 'List requests to the Inhouse team and their status.' },
+  // 8. Skills (1; P6a brand skills, master plan standing decision 6)
+  { name: 'skill_save', category: 'skills', alwaysLoad: false, annotations: {}, description: "Save one of this brand's own skills: `name`, `description` and `body` (the instructions, no frontmatter). A new name makes a new skill; an existing name replaces it (only its maker or an admin may). Live for the whole team at once. Use it only when the person has agreed to save, usually with the skill-creator skill. Never write a skill as a file." },
 ]

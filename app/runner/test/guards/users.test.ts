@@ -21,6 +21,8 @@ import type { SessionUser } from '../../src/session/seam.ts'
 const pool = (n: number): PoolUser[] => Array.from({ length: n }, (_, i) => ({ user: poolUserName(i), uid: 30000 + i, gid: 30000 + i }))
 
 type Op = { op: keyof SessionHost; key?: string; uid?: number }
+/** Never reached from allocate or release: only the root's run start calls it. */
+const unusedBrandPlugin = async () => { throw new Error('writeBrandPlugin is not part of allocate or release') }
 
 /** A host whose every step is a scheduled point (so fast-check picks the interleaving) and may fail. */
 function scheduledHost(s: fc.Scheduler, fail: (op: Op) => boolean) {
@@ -36,6 +38,7 @@ function scheduledHost(s: fc.Scheduler, fail: (op: Op) => boolean) {
     wipeUserFiles: (u) => step({ op: 'wipeUserFiles', uid: u.uid }, undefined),
     prepareFolder: (key, u) => step({ op: 'prepareFolder', key, uid: u.uid }, { workDir: `/work/${key}`, home: `/work/${key}/.home` }),
     parkFolder: (key) => step({ op: 'parkFolder', key }, undefined),
+    writeBrandPlugin: (u) => step({ op: 'writeBrandPlugin', uid: u.uid }, undefined),
   }
   return { host, log }
 }
@@ -112,7 +115,7 @@ describe('the session pool', () => {
       const users = pool(2)
       const left = [...failing]
       const { host } = scheduledHost(s, (op) => {
-        const i = left.indexOf(op.op)
+        const i = left.indexOf(op.op as (typeof left)[number])
         if (i === -1) return false
         left.splice(i, 1)
         return true
@@ -148,6 +151,7 @@ describe('the session pool', () => {
       },
       prepareFolder: async (k) => (order.push('prepare'), { workDir: `/work/${k}`, home: `/work/${k}/.home` }),
       parkFolder: async () => void order.push('park'),
+      writeBrandPlugin: unusedBrandPlugin,
     }
     const p = createSessionPool(pool(1), host, (e) => (order.push('logged'), void logged.push(e)))
     const u = await p.allocate('a')
@@ -178,6 +182,7 @@ describe('the session pool', () => {
       wipeUserFiles: async () => void order.push('wipe'),
       prepareFolder: async (k) => ({ workDir: `/work/${k}`, home: `/work/${k}/.home` }),
       parkFolder: async () => void order.push('park'),
+      writeBrandPlugin: unusedBrandPlugin,
     }
     const p = createSessionPool(pool(1), host, (e) => void logged.push(e))
     const u = await p.allocate('a')
@@ -201,6 +206,7 @@ describe('the session pool', () => {
       wipeUserFiles: async () => {},
       prepareFolder: async (k) => (prepared.push(k), { workDir: `/work/${k}`, home: `/work/${k}/.home` }),
       parkFolder: async () => {},
+      writeBrandPlugin: unusedBrandPlugin,
     }
     const p = createSessionPool(pool(3), host, () => {})
     const u = await p.allocate('a')
@@ -229,6 +235,7 @@ describe('the session pool', () => {
       },
       prepareFolder: async (k) => ({ workDir: `/work/${k}`, home: `/work/${k}/.home` }),
       parkFolder: async () => {},
+      writeBrandPlugin: unusedBrandPlugin,
     }
     const logged: Record<string, unknown>[] = []
     const p = createSessionPool(pool(3), host, (e) => void logged.push(e))
@@ -248,7 +255,7 @@ describe('the session pool', () => {
   })
 
   it('the same key gets the same user; an exhausted pool refuses with a typed error', async () => {
-    const host: SessionHost = { killAll: async () => {}, wipeUserFiles: async () => {}, prepareFolder: async (k) => ({ workDir: `/work/${k}`, home: `/work/${k}/.home` }), parkFolder: async () => {} }
+    const host: SessionHost = { killAll: async () => {}, wipeUserFiles: async () => {}, prepareFolder: async (k) => ({ workDir: `/work/${k}`, home: `/work/${k}/.home` }), parkFolder: async () => {}, writeBrandPlugin: unusedBrandPlugin }
     const p = createSessionPool(pool(1), host)
     const [a1, a2] = await Promise.all([p.allocate('a'), p.allocate('a')])
     expect(a1.uid).toBe(a2.uid)
@@ -258,6 +265,27 @@ describe('the session pool', () => {
     await expect(p.release('b', a1)).rejects.toThrow(SessionReleaseError)
     await expect(p.release('a', { ...a1, uid: 1 })).rejects.toThrow(SessionReleaseError)
     await expect(p.allocate('../x')).rejects.toThrow(InvalidSessionKeyError)
+  })
+
+  it("writes the brand plugin only for the live session's own uid, never another's or a released one's", async () => {
+    const wrote: [string, string[]][] = []
+    const host: SessionHost = {
+      killAll: async () => {}, wipeUserFiles: async () => {}, parkFolder: async () => {},
+      prepareFolder: async (k) => ({ workDir: `/work/${k}`, home: `/work/${k}/.home` }),
+      writeBrandPlugin: async (u, skills) => void wrote.push([u.user, skills.map((x) => x.name)]),
+    }
+    const p = createSessionPool(pool(2), host)
+    const a = await p.allocate('a')
+    const b = await p.allocate('b')
+    const skill = { name: 'weekly-report', description: 'Writes the weekly report.', body: 'Steps.' }
+    await p.writeBrandSkills('a', a, [skill])
+    expect(wrote).toEqual([[a.user, ['weekly-report']]])
+    await expect(p.writeBrandSkills('a', b, [])).rejects.toThrow(SessionReleaseError)
+    await expect(p.writeBrandSkills('c', a, [])).rejects.toThrow(SessionReleaseError)
+    await p.release('a', a)
+    await expect(p.writeBrandSkills('a', a, [])).rejects.toThrow(SessionReleaseError)
+    expect(wrote).toHaveLength(1)
+    await p.release('b', b)
   })
 
   it('a failed allocate whose reclaim succeeds frees the uid without a release event', async () => {
@@ -271,6 +299,7 @@ describe('the session pool', () => {
         return { workDir: `/work/${k}`, home: `/work/${k}/.home` }
       },
       parkFolder: async () => {},
+      writeBrandPlugin: unusedBrandPlugin,
     }
     const p = createSessionPool(pool(1), host, (e) => void logged.push(e))
     await expect(p.allocate('a')).rejects.toThrow(/prepare failed/)
@@ -295,6 +324,7 @@ describe('the session pool', () => {
       wipeUserFiles: async () => {},
       prepareFolder: async (k, u) => (prepared.push(u.uid), { workDir: `/work/${k}`, home: `/work/${k}/.home` }),
       parkFolder: async () => {},
+      writeBrandPlugin: unusedBrandPlugin,
     }
     const p = createSessionPool(pool(1), host)
     const u = await p.allocate('a')
