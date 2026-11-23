@@ -164,7 +164,9 @@ export function Approvals() {
                       <DropdownMenuTrigger asChild>
                         <Button variant="outline" size="lg" aria-label={`More actions for ${dv.draftTitle}`} className={cn('flex-none', tap)}>More<Icon name="expand_more" size={18} /></Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="start" collisionPadding={16} aria-label="Draft actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
+                      <DropdownMenuContent align="start" collisionPadding={16} aria-label="Draft actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input"
+                        // Escape closes only this menu, not every overlay (App's window listener hears it after Radix).
+                        onEscapeKeyDown={e => e.stopPropagation()}>
                         <MenuItem onSelect={() => setAside(id, 'declined')}>
                           <Icon name="cancel_schedule_send" size={18} /><span className="flex-1">Don't send</span>
                         </MenuItem>

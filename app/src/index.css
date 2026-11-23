@@ -165,7 +165,8 @@
   --app-side-offset: 0px;
   --app-window-center: calc(50% + var(--app-side-offset) / 2);
   --app-window-sm: min(420px, calc(100vw - var(--app-side-offset) - 40px));   /* a question (Confirm), a short notice */
-  --app-window-md: min(600px, calc(100vw - var(--app-side-offset) - 40px));   /* Help, the team window */
+  --app-window-md: min(600px, calc(100vw - var(--app-side-offset) - 40px));   /* Help */
+  --app-window-form: min(720px, calc(100vw - var(--app-side-offset) - 32px));  /* a form with a row of tiles (the team window), 16px clear each side */
   --app-window-lg: min(960px, calc(100vw - var(--app-side-offset) - 40px));   /* the file viewer, the review window */
   --app-window-xl: min(1120px, calc(100vw - var(--app-side-offset) - 40px));  /* the trace */
   --app-window-top: 6vh;
@@ -387,6 +388,7 @@
   --container-activity-panel: var(--app-activity-panel);
   --container-window-sm: var(--app-window-sm);
   --container-window-md: var(--app-window-md);
+  --container-window-form: var(--app-window-form);
   --container-window-lg: var(--app-window-lg);
   --container-window-xl: var(--app-window-xl);
   --inset-window: var(--app-window-top);

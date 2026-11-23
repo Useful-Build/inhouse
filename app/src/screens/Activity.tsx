@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils'
 import { Button, EmptyState, Icon, IconButton, Page, PageHeader, SectionHeader, Segmented } from '../ui'
 import { SearchBox, TAP } from '../ui/fields'
 import { NO_MOTION } from '../ui/motion'
-import { claimTrigger, keepForToast, restoreFocus } from '../ui/dialogs'
+import { claimTrigger, keepForToast, rememberTrigger, restoreFocus } from '../ui/dialogs'
 
 const TABS: [ActivityFilter, string][] = [['all', 'All'], ['needs', 'Needs you'], ['change', 'Changes']]
 
@@ -106,7 +106,9 @@ function ActivitySheet({ row: r, day, onClose }: { row: ActivityRow; day: string
     else if (type === 'handled') undoHandled(id)
     else void agent.setAside(id, null)
   }
-  const review = (id: string) => { onClose(); openProblem(id) }
+  // The sheet and its button go away, so the review window gives focus back to the Activity row that opened the sheet
+  // (after openProblem, which remembers what has focus now: this button).
+  const review = (id: string) => { onClose(); openProblem(id); rememberTrigger(before.current) }
 
   return (
     <Sheet open onOpenChange={o => { if (!o) onClose() }}>

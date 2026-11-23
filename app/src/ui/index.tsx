@@ -379,12 +379,14 @@ export function SkyspaceBackground({ mode = 'hero', offset = 'none' }: { mode?: 
 const windowVariants = cva('left-window-center flex max-w-none bg-window-surface -translate-x-1/2 translate-y-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-none', {
   variants: {
     /**
-     * sm 420px (a question, a short notice, set lower on the screen), md 600px (Help, the team window), lg 960px (the file
+     * sm 420px (a question, a short notice, set lower on the screen), md 600px (Help), form 720px (the team window: its
+     * five kind tiles sit in one row), lg 960px (the file
      * viewer), wide 960px set lower for a short window (the review window), xl 1120px (the trace).
      */
     size: {
       sm: 'top-window-sm max-h-window-max w-window-sm',
       md: 'top-window max-h-window-max w-window-md',
+      form: 'top-window max-h-window-max w-window-form',
       lg: 'top-window-lg max-h-window-max-lg w-window-lg',
       wide: 'top-window-wide max-h-window-max-wide w-window-lg',
       xl: 'top-window max-h-window-max w-window-xl',

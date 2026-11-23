@@ -1,8 +1,9 @@
 // The review window, opened from a Today or Approvals card: a short brief on the left, the draft on one sheet on the
 // right, the decision across the foot. "1 of N" steps through the list it was opened from.
+import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
-import { agent } from '../agent'
+import { agent, demo } from '../agent'
 import { draftView } from '../state/derive'
 import type { Ctx, DraftView } from '../state/derive'
 import { fmtMoney, fmtProse, fmtTime, hasAmount } from '../lib/format'
@@ -42,6 +43,12 @@ export function ProblemPanel() {
   const editing = useUi(s => s.editing)
   const phone = useUi(s => s.phone)
   const ctx = useCtx()
+  // Why the last Approve here was refused, by problem: the window stays on that draft and says so.
+  const [failed, setFailed] = useState<{ id: string; text: string } | null>(null)
+  const [approving, setApproving] = useState(false)
+  // A refusal belongs to the window as it was: stepping to another problem or closing clears it.
+  const [seenId, setSeenId] = useState(openId)
+  if (seenId !== openId) { setSeenId(openId); setFailed(null) }
   if (!openId) return null
 
   const { closeProblem, stepProblem, approve, unapprove, undoHandled, ask, setAside, openTrace, showToast, patch } = useUi.getState()
@@ -57,13 +64,20 @@ export function ProblemPanel() {
   const list = queue.filter(id => ctx.data.problems.some(q => q.id === id))
   const at = list.indexOf(openId)
   const stepping = list.length > 1 && at >= 0
-  const approveAndNext = () => {
-    approve(openId)
+  const approveAndNext = async () => {
+    if (approving) return
+    setApproving(true); setFailed(null)
+    const refused = await approve(openId)
+    setApproving(false)
+    // Refused: stay on this draft and say why. Moved on meanwhile (closed, stepped): leave the window where it is now.
+    if (refused !== null) { setFailed({ id: openId, text: refused }); return }
+    if (useUi.getState().openId !== openId) return
     // Straight on to the next one that still needs someone (the held toast keeps the Undo), or close at the end.
     const next = [...list.slice(at + 1), ...list.slice(0, Math.max(at, 0))].find(id => id !== openId && stillNeeds(ctx, id))
     if (next) stepProblem(next)
     else closeProblem()
   }
+  const refusal = failed?.id === openId ? failed.text : null
 
   // The draft's parts: who it goes to and its subject sit on the sheet's header line and title, not as rows.
   const items = p.draft.items?.length ? p.draft.items : null
@@ -196,21 +210,29 @@ export function ProblemPanel() {
   // Everything besides the main action, behind one "More" button: Don't send first (a problem already set aside keeps
   // its reason, so it isn't offered again), then asking someone, then snoozing or saying it isn't a problem.
   const putAside = (why: 'snoozed' | 'dismissed' | 'declined') => { setAside(openId, why); closeProblem() }
-  const more = (
+  const aside = !!ctx.agent.setAside[openId]
+  // Asking the approver isn't wired up anywhere yet: the demo says so in a toast, the product leaves it out.
+  const askApprover = dv.mode === 'waiting' && demo !== null ? dv.askApprover : null
+  // More shows only with something in it (Watch on a set-aside problem has nothing).
+  const hasMore = !watch || !aside
+  const more = hasMore && (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size="lg" className={cn('flex-none', phone && 'min-h-11', tap)}>More<Icon name="expand_more" size={18} /></Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="top" collisionPadding={16} aria-label="More actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
-        {dv.mode === 'waiting' && !ctx.agent.setAside[openId] && <>
+      <DropdownMenuContent align="start" side="top" collisionPadding={16} aria-label="More actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input"
+        // Escape closes only this menu: Radix hears it first, in the capture phase, so stopping it keeps App's Escape
+        // (close the whole window) from hearing it too.
+        onEscapeKeyDown={e => e.stopPropagation()}>
+        {dv.mode === 'waiting' && !aside && <>
           <MenuItem onSelect={() => putAside('declined')}>
             <Icon name="cancel_schedule_send" size={18} /><span className="flex-1">Don't send</span>
           </MenuItem>
           <DropdownMenuSeparator />
         </>}
-        {dv.mode === 'waiting' && dv.askApprover && (
-          <MenuItem onSelect={() => showToast(`${dv.askApprover?.replace(/^Ask\b/, 'Asking')} isn't connected in this demo.`, { icon: 'info', ms: 4000 })}>
-            <Icon name="person" size={18} /><span className="flex-1">{dv.askApprover}</span>
+        {askApprover && (
+          <MenuItem onSelect={() => showToast(`${askApprover.replace(/^Ask\b/, 'Asking')} isn't connected in this demo.`, { icon: 'info', ms: 4000 })}>
+            <Icon name="person" size={18} /><span className="flex-1">{askApprover}</span>
           </MenuItem>
         )}
         {!watch && (
@@ -218,7 +240,7 @@ export function ProblemPanel() {
             <Icon name="chat_bubble" size={18} /><span className="flex-1">Ask Inhouse</span>
           </MenuItem>
         )}
-        {!ctx.agent.setAside[openId] && <>
+        {!aside && <>
           <MenuItem onSelect={() => putAside('snoozed')}>
             <Icon name="snooze" size={18} /><span className="flex-1">Snooze until tomorrow</span>
           </MenuItem>
@@ -256,9 +278,11 @@ export function ProblemPanel() {
         <IconButton icon="close" label="Close" size={18} box="icon-sm" onClick={closeProblem} className={tap} />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto">
-        <div className={cn('flex', phone ? 'flex-col gap-5 px-5 pt-2 pb-5' : 'gap-9 px-8 pt-3 pb-6')}>
-          <div className={cn('flex flex-col', !phone && 'w-82.5 flex-none')}>
+      {/* Two columns only when the window itself has room for both (a container query): a narrow desktop window, beside
+          an open sidebar, stacks them as on a phone, so the draft never shrinks to a sliver. */}
+      <div className="@container min-h-0 flex-1 overflow-auto">
+        <div className={cn('flex flex-col', phone ? 'gap-5 px-5 pt-2 pb-5' : 'gap-5 px-8 pt-3 pb-6 @3xl:flex-row @3xl:gap-9')}>
+          <div className={cn('flex flex-col', !phone && '@3xl:w-82.5 @3xl:flex-none')}>
             <h2 className="text-window-title leading-card font-semibold tracking-tight text-pretty">{p.title}</h2>
             <p className="m-0 mt-3 text-md leading-prose text-foreground-2">{risk} {second}</p>
             {watch && foundList && <div className="mt-4">{foundList}</div>}
@@ -279,6 +303,9 @@ export function ProblemPanel() {
         </div>
       </div>
 
+      {refusal !== null && (
+        <p role="alert" className={cn('flex-none border-t border-divider pt-3 text-sm text-destructive-text', phone ? 'px-5' : 'pr-6 pl-8')}>It wasn't approved, and nothing went out. {refusal}</p>
+      )}
       <div className={cn('flex flex-none gap-2 border-t border-divider pt-3.5 pb-4', phone ? 'flex-wrap items-center px-5' : 'items-center pr-6 pl-8')}>
         {/* The decision reads left to right: the main action, then More (Don't send first, then everything else). */}
         {watch && <>
@@ -286,7 +313,7 @@ export function ProblemPanel() {
           {more}
         </>}
         {dv.mode === 'waiting' && <>
-          <Button variant="primary" size="lg" className={cn('h-auto min-h-10 min-w-0 py-2 whitespace-nowrap', phone && 'w-full')} onClick={approveAndNext}>
+          <Button variant="primary" size="lg" disabled={approving} className={cn('h-auto min-h-10 min-w-0 py-2 whitespace-nowrap', phone && 'w-full')} onClick={() => void approveAndNext()}>
             {dv.cta}{p.draft.amount && p.draft.money && <span className="font-normal tabular-nums">{fmtMoney(p.draft.amount.money, display())}</span>}
           </Button>
           {more}

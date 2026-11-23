@@ -4,7 +4,8 @@
 //  - a `---` further down (a rule) is taken for frontmatter and the text above it disappears;
 //  - the page look changes how a chat answer renders (its `##` must stay an h3, its `---` a rule);
 //  - a sample skill is missing a section, names a tool the demo doesn't have or a routine that doesn't exist, or two
-//    skills share a link (`skillSlug`), so one page can't be reached.
+//    skills share a link (`skillSlugs`), so one page can't be reached;
+//  - a team-made skill whose name makes a built-in's slug ("Reorder drafting") opens the built-in one.
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeAll, describe, expect, test, vi } from 'vitest'
@@ -78,5 +79,27 @@ describe('the sample skills', () => {
       expect(store.skillBySlug(data, { skillsExtra: [] }, store.skillSlug(s.n))?.n).toBe(s.n)
     }
     expect(new Set(data.skills.map(s => store.skillSlug(s.n))).size).toBe(data.skills.length)
+  })
+  test('a team-made skill named like a built-in gets its own link, the built-in keeps the plain one, and each link opens its own skill', () => {
+    const data = agentMod.agent.read()
+    const builtIn = data.skills.find(s => s.n === 'Reorder drafting')!
+    expect(builtIn).toBeDefined()
+    const mine = { ...builtIn, n: 'Reorder  Drafting', mine: true, by: 'You, in a chat' }
+    const again = { ...builtIn, n: 'reorder drafting', mine: true, by: 'You, in a chat' }
+    const state = { skillsExtra: [mine, again] }
+    const slugs = store.skillSlugs(data, state)
+    expect(slugs.get(builtIn)).toBe('reorder-drafting')
+    expect(slugs.get(mine)).toBe('reorder-drafting-2')
+    expect(slugs.get(again)).toBe('reorder-drafting-3')
+    for (const [s, slug] of slugs) expect(store.skillBySlug(data, state, slug)).toBe(s)
+  })
+  test('every skill gets a link no other skill has, whatever the names', () => {
+    const data = agentMod.agent.read()
+    fc.assert(fc.property(fc.array(fc.constantFrom('Reorder drafting', 'reorder-drafting', 'Reorder drafting 2', '!!', '', 'Morning check', 'x'), { maxLength: 8 }), names => {
+      const state = { skillsExtra: names.map(n => ({ ...data.skills[0], n, mine: true })) }
+      const slugs = [...store.skillSlugs(data, state).values()]
+      expect(new Set(slugs).size).toBe(data.skills.length + names.length)
+      for (const [s, slug] of store.skillSlugs(data, state)) expect(store.skillBySlug(data, state, slug)).toBe(s)
+    }))
   })
 })

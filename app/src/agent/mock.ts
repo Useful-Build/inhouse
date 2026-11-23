@@ -187,9 +187,10 @@ function draftTimes(): Record<string, Instant> {
 function routineDefs(): RoutineDef[] {
   const asked = (chatScript.seedThread.turns as RawTurn[]).find(t => t.user && /\bevery morning\b/.test(t.user))
   if (!asked?.user) throw new Error('chat-script.json: the seed thread has no request for the stuck orders routine.')
-  const { name, freq, day, time, next, need } = seedRoutine
+  const { name, freq, day, time, next, need, by } = seedRoutine
   if (![0, 1, 2].includes(need)) throw new Error(`Sample data: the routine "${name}" has an unknown stage "${String(need)}".`)
-  const fromChat: Omit<RoutineDef, 'id'> = { name, freq, day, time, next, need: need as RoutineDef['need'], what: `Created in a chat: "${asked.user}"`, inChat: true, rev: 1 }
+  // `by` stays: the routine's details say who made it ("Made by You" for the signed-in person).
+  const fromChat: Omit<RoutineDef, 'id'> = { name, freq, day, time, next, need: need as RoutineDef['need'], what: `Created in a chat: "${asked.user}"`, inChat: true, rev: 1, ...(by ? { by } : {}) }
   const out = [...routines, fromChat].map(r => ({ ...r, id: routineIdOf(r.name) }))
   const ids = new Set(out.map(r => r.id))
   if (ids.size !== out.length) throw new Error('Sample data: two routines have the same id.')

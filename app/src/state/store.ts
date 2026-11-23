@@ -28,9 +28,27 @@ export type UsageTab = 'person' | 'job' | 'model' | 'tool'
 export type SkillTab = 'all' | 'team' | 'mine'
 /** A skill's name as it shows in its page's link: "Morning check" is "morning-check". */
 export const skillSlug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'skill'
-/** The skill a page's slug names: the first by that slug, the team's own (made in a chat) before the Inhouse team's, as the list shows them. */
-export const skillBySlug = (data: { skills: SkillDef[] }, state: { skillsExtra: SkillDef[] }, key: string): SkillDef | undefined =>
-  state.skillsExtra.concat(data.skills).find(s => skillSlug(s.n) === key)
+/**
+ * Every skill's link, one per skill: the Inhouse team's skills first, then the team's own (made in a chat). A skill whose
+ * name makes a slug already taken gets "-2", "-3" and so on, so a team-made "Reorder drafting" never opens the built-in one.
+ */
+export const skillSlugs = (data: { skills: SkillDef[] }, state: { skillsExtra: SkillDef[] }): Map<SkillDef, string> => {
+  const out = new Map<SkillDef, string>()
+  const taken = new Set<string>()
+  for (const s of data.skills.concat(state.skillsExtra)) {
+    const base = skillSlug(s.n)
+    let slug = base
+    for (let i = 2; taken.has(slug); i++) slug = `${base}-${i}`
+    taken.add(slug)
+    out.set(s, slug)
+  }
+  return out
+}
+/** The skill a page's slug names (`skillSlugs`). */
+export const skillBySlug = (data: { skills: SkillDef[] }, state: { skillsExtra: SkillDef[] }, key: string): SkillDef | undefined => {
+  for (const [s, slug] of skillSlugs(data, state)) if (slug === key) return s
+  return undefined
+}
 export type TodaySort = 'default' | 'amount'
 export type ApprovalSort = 'oldest' | 'newest' | 'stake'
 
@@ -104,7 +122,7 @@ export interface UiState {
   // navigation
   page: Page
   appKey: string
-  /** The open skill's page (`skill`): the skill's slug, from `skillSlug`. */
+  /** The open skill's page (`skill`): the skill's slug, from `skillSlugs`. */
   skillKey: string
   setTab: string
   /** The review window. */
@@ -187,7 +205,8 @@ export interface UiActions {
   go(page: Page, extra?: Partial<UiState>): void
   openTool(key: string): void
   /** A skill's page, by the skill's name. */
-  openSkill(name: string): void
+  /** Opens a skill's page by its link slug (`skillSlugs`). */
+  openSkill(key: string): void
   openSettings(tab: string): void
   /** Opens the review window. `queue` is the list it was opened from, in its order, for stepping. */
   openProblem(id: string, queue?: string[]): void
@@ -233,7 +252,8 @@ export interface UiActions {
   sendEdit(): void
   /** Deletes messages from a chat, with Undo that works from any chat. */
   deleteMessages(chatId: string, ids: string[]): void
-  approve(id: string): void
+  /** Resolves with null once approved, or with why it wasn't (the agent's notice also says so); it never rejects. */
+  approve(id: string): Promise<string | null>
   unapprove(id: string): void
   undoHandled(id: string): void
   togglePause(): void
@@ -947,7 +967,7 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     ...composerActions(set),
     go: (page, extra) => set({ page, openId: null, pop: null, sideOpen: false, ...extra }),
     openTool: key => set({ page: 'app', appKey: key, pop: null, openId: null, sideOpen: false }),
-    openSkill: name => set({ page: 'skill', skillKey: skillSlug(name), pop: null, openId: null, sideOpen: false }),
+    openSkill: key => set({ page: 'skill', skillKey: key, pop: null, openId: null, sideOpen: false }),
     // The page itself, never the phone menu (openSettingsMenu asks for the menu).
     openSettings: tab => set({ page: 'settings', setTab: tab, setMenu: false, pop: null, openId: null, sideOpen: false }),
     openProblem: (id, queue) => { rememberTrigger(); set({ openId: id, queue: queue?.includes(id) ? queue : [] }) },
@@ -1103,11 +1123,15 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
 
     approve: id => {
       set({ editing: null })
-      agent.approve(id).then(({ held, doneText }) => {
+      return agent.approve(id).then(({ held, doneText }) => {
         // A held approval's toast stays until it goes out (no timer): pausing it would promise an Undo the agent no longer honours.
         if (held) showHeld([id], [id])
         else showToast(doneText, { undo: () => get().unapprove(id), key: `approve:${id}` })
-      }, logFailure('could not approve'))
+        return null
+      }, (e: unknown) => {
+        logFailure('could not approve')(e)
+        return e instanceof Error && e.message ? e.message : 'Something went wrong.'
+      })
     },
     unapprove: id => {
       if (agent.getSnapshot().sent[id] && !problemById(agent.read(), id).draft.rev) {

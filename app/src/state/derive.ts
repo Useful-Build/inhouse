@@ -89,8 +89,8 @@ export interface TeamRow extends OpenRequest {
   closed?: 'done' | 'declined' | 'withdrawn'
 }
 
-/** A request's key: what `withdrawn` holds. */
-export const teamRequestKey = (q: { title: string; at: Instant }) => `${q.title}|${q.at}`
+/** A request's key, what `withdrawn` holds: its instant and title, so two requests never share one. */
+export const teamRequestKey = (q: { title: string; at: Instant }) => `${q.at.ms}|${q.title}`
 
 /**
  * The team window's requests, open and closed. Open: what the person sent here, then the seeded ones, with "Connect
@@ -496,6 +496,12 @@ export interface DraftView {
   suggestedNext: string
 }
 
+/** The problem carries a draft someone can act on: lines, text or items (the server's Watch placeholder has none). */
+export const hasDraft = (p: Problem): boolean => {
+  const d = p.draft
+  return d.lines.length > 0 || !!d.body || !!d.items?.length || !!d.runLines?.length
+}
+
 export function draftView(ctx: Ctx, id: string): DraftView {
   const { S, agent } = ctx
   const p = problemById(ctx.data, id)
@@ -511,7 +517,9 @@ export function draftView(ctx: Ctx, id: string): DraftView {
   const lines = part && dr.runLines ? dr.runLines : dr.lines
   return {
     problem: p,
-    mode: S === 0 ? 'watch' : at ? 'approved' : isHandled(ctx, p) ? 'handled' : 'waiting',
+    // No real draft (the server's morning-check placeholder: no lines, no text, no items) reads as Watch at any stage:
+    // there's nothing to edit, approve or hold back, only the suggestion.
+    mode: S === 0 ? 'watch' : at ? 'approved' : isHandled(ctx, p) ? 'handled' : hasDraft(p) ? 'waiting' : 'watch',
     draftTitle: title,
     lines,
     // A draft with no text of its own takes a note once a person writes one.

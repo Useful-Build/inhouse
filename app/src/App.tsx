@@ -244,6 +244,7 @@ function useHashRoute() {
   const fallbackChat = newestChat(data, started, agentState)?.id ?? null
   const chatIsNew = started.some(c => c.id === chatKey)
   const skillKnown = !!skillBySlug(data, agentState, skillKey)
+  const skillsStatus = data.resources.skills.status
   useEffect(() => {
     const apply = () => {
       const r = fromHash(location.hash)
@@ -278,8 +279,9 @@ function useHashRoute() {
       notFound('Tools')
       return
     }
-    // An unknown skill likewise, once the skills have loaded (the product reads them after the first paint).
-    if (page === 'skill' && !skillKnown && data.status !== 'loading') {
+    // An unknown skill likewise, once the skills themselves have loaded (the product reads them after the first paint,
+    // and the app as a whole can be ready while they're still on their way).
+    if (page === 'skill' && !skillKnown && skillsStatus !== 'loading') {
       hashBar.replace(toHash('skills', appKey, setTab, chatKey))
       useUi.getState().patch({ page: 'skills' })
       notFound('Skills')
@@ -294,7 +296,7 @@ function useHashRoute() {
     if (chatUnknown) return // replaced above
     // The hash follows the app unless someone else just set one (see shell/route-sync.ts).
     hashSync.sync({ page, appKey, skillKey, setTab, chatKey, menu, phone, chatIsNew, defaultChat: defaultChatId(data) })
-  }, [page, appKey, skillKey, skillKnown, data.status, setTab, data.tools, chatKey, chatUnknown, chatIsNew, menu, phone])
+  }, [page, appKey, skillKey, skillKnown, skillsStatus, data.status, setTab, data.tools, chatKey, chatUnknown, chatIsNew, menu, phone])
 }
 
 function Shell() {

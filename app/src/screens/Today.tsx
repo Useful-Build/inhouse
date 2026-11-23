@@ -171,7 +171,9 @@ export function Today() {
                         <DropdownMenuTrigger asChild>
                           <IconButton icon="more_horiz" label={`More actions for ${p.title}`} size={18} variant="ghost" box="icon-sm" className={cn('relative z-raised -my-1.5 -mr-1', c.dimmed && done, tap)} />
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" collisionPadding={16} aria-label="Card actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
+                        <DropdownMenuContent align="end" collisionPadding={16} aria-label="Card actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input"
+                          // Escape closes only this menu, not every overlay (App's window listener hears it after Radix).
+                          onEscapeKeyDown={e => e.stopPropagation()}>
                           <MenuItem onSelect={askAbout}>
                             <Icon name="chat_bubble" size={18} /><span className="flex-1">Ask Inhouse</span>
                           </MenuItem>

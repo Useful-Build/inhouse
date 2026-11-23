@@ -16,6 +16,7 @@ import { Button, EmptyState, Icon, IconButton, MenuItem, Page, PageHeader, Stage
 import { Confirm, TAP } from '../ui/fields'
 import { NO_MOTION } from '../ui/motion'
 import { claimTrigger, rememberTrigger, restoreFocus, keepForToast } from '../ui/dialogs'
+import { routineSwitch } from './routine-switch'
 
 /** A routine as the page lists it: its id (the agent's), whether this stage has it, and whether it is switched on. */
 interface Item { r: RoutineDef; id: string; locked: boolean; on: boolean; key: string }
@@ -45,7 +46,7 @@ export function Routines() {
       agent.runRoutine(it.id).then(() => showToast(`${it.r.name} is running now`, { icon: 'play_arrow', ms: 4000 }), () => {})
     },
     pause: (it: Item) => {
-      agent.setToggle(it.key, !it.on)
+      agent.setToggle(it.key, routineSwitch(it, paused).turnsTo)
       showToast(it.on ? `Paused ${it.r.name}` : `${it.r.name} is back on its schedule`, { icon: it.on ? 'pause' : 'play_arrow', ms: 4000 })
     },
     edit: (it: Item) => { setOpenId(null); newChat(`Change the "${it.r.name}" routine: `) },
@@ -83,7 +84,7 @@ export function Routines() {
       )}
       <ul className="mt-6 flex list-none flex-col gap-2.5 p-0">
         {list.map(it => {
-          const { r, locked, on } = it
+          const { r, locked } = it
           const mode = modeOf(r, S, locked)
           const next = !locked && paused ? 'Paused' : fmtWeekdayAt(r.next, display())
           return (
@@ -108,7 +109,8 @@ export function Routines() {
                 <div className="flex items-center gap-1.5">
                   {!locked && <RoutineMenu item={it} phone={phone} paused={paused} actions={actions} />}
                   {/* The server says who may switch it (`canManage`: its creator, an Admin, the Inhouse team); absent means yes. */}
-                  <Switch on={on && !paused} label={`${r.name} on or off`} onChange={locked || !manages(it) ? undefined : () => agent.setToggle(it.key, !on)} />
+                  {/* The routine's own setting, paused or not: the pause shows as "Paused" beside it. */}
+                  <Switch on={routineSwitch(it, paused).on} label={`${r.name} on or off`} onChange={locked || !manages(it) ? undefined : () => agent.setToggle(it.key, routineSwitch(it, paused).turnsTo)} />
                 </div>
               </div>
               {/* A phone has no room beside the switch: the last run and the next run take the row's full width under it. */}
@@ -239,7 +241,7 @@ function RoutineSheet({ item, phone, paused, actions, onClose }: { item: Item; p
                 <div className="mt-1 text-sm text-muted-foreground">{next}</div>
               </div>
               {/* The same switch as the routine's row (the `r:<id>` toggle); the server says who may switch it (`canManage`). */}
-              {!locked && <Switch on={on && !paused} label={`${r.name} on or off`} onChange={manages(item) ? () => actions.pause(item) : undefined} />}
+              {!locked && <Switch on={routineSwitch(item, paused).on} label={`${r.name} on or off`} onChange={manages(item) ? () => actions.pause(item) : undefined} />}
             </div>
             {how && (
               <div className="mt-3.5 flex items-center gap-2.25 border-t border-divider pt-3.5 text-sm text-foreground-3">

@@ -4,7 +4,7 @@ import { keepUnitsTogether } from '../agent/clock'
 import { STAGE_TAGS, whenOf } from '../state/derive'
 import { display } from '../state/display'
 import { fmtDay } from '../lib/format'
-import { skillBySlug, useCtx, useUi } from '../state/store'
+import { skillBySlug, skillSlugs, useCtx, useUi } from '../state/store'
 import type { SkillTab } from '../state/store'
 import type { SkillDef } from '../agent'
 import type { ReactNode } from 'react'
@@ -39,6 +39,7 @@ export function Skills() {
   const [query, setQuery] = useState('')
   const needle = query.trim().toLowerCase()
   const hit = (name: string, desc: string) => !needle || `${name} ${desc}`.toLowerCase().includes(needle)
+  const slugs = skillSlugs(data, st)
   const list = st.skillsExtra.concat(data.skills).filter(s => (tab === 'all' || (tab === 'mine' ? s.mine : !s.mine)) && hit(s.n, s.d))
   const suggestions = data.skillSuggestions.filter(s => hit(s.n, s.d))
 
@@ -68,7 +69,7 @@ export function Skills() {
               <div className="min-w-0 flex-1">
                 <div className={`flex items-center gap-2 text-md font-strong ${locked ? 'text-foreground-3' : ''}`}>
                   {/* The name opens the skill's page; its tap area covers the whole row. */}
-                  <button type="button" onClick={() => openSkill(s.n)} className="min-w-0 text-left after:absolute after:inset-0 after:rounded-xl">{s.n}</button>
+                  <button type="button" onClick={() => openSkill(slugs.get(s)!)} className="min-w-0 text-left after:absolute after:inset-0 after:rounded-xl">{s.n}</button>
                   {locked && <StageTag tag={STAGE_TAGS[s.need]} />}
                   {off && <Badge variant="muted">Off</Badge>}
                 </div>

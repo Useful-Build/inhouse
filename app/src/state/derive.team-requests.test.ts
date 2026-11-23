@@ -5,7 +5,8 @@
 //  2. the signed-in person's request names them instead of "You", so Withdraw never shows;
 //  3. a withdrawn request stays in Open, or the menu's count still counts it;
 //  4. a request saved before the window dropped "asked by" / "sent by" shows those words as the name;
-//  5. "Connect Klaviyo" loses its "Live by" date.
+//  5. "Connect Klaviyo" loses its "Live by" date;
+//  6. two requests share a key (the instant read as "[object Object]"), so withdrawing one moves the other too.
 import { describe, expect, it, vi } from 'vitest'
 
 vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} })
@@ -41,5 +42,23 @@ describe('team requests', () => {
     const sent = { icon: 'bug_report', title: 'Export fails', sub: 'Report a bug · sent by Robin Okafor', at: { iso: new Date(now).toISOString(), ms: now }, status: 'Sent' }
     const { open } = teamRequests(ctx({ teamRequests: [sent] }), now, true)
     expect(open[0]).toMatchObject({ key: teamRequestKey(sent), kind: 'Report a bug', who: 'You', when: 'just now', mine: true })
+  })
+
+  it('keys each request by its instant and title, so withdrawing one never moves another, and taking it back restores only it', () => {
+    const at = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
+    const a = { icon: 'tune', title: 'Same words', sub: 'Change something · Sam Mercer', at: at(now - 60_000), status: 'With the team' }
+    const b = { ...a, at: at(now - 120_000) }
+    const c = ctx({ teamRequests: [a, b] })
+    expect(teamRequestKey(a)).not.toContain('[object')
+    expect(teamRequestKey(a)).not.toBe(teamRequestKey(b))
+    const before = teamRequests(c, now, true).open.length
+    const withdrawn = [teamRequestKey(a)]
+    const after = teamRequests(c, now, true, withdrawn)
+    expect(after.open).toHaveLength(before - 1)
+    expect(after.open.filter(r => r.title === 'Same words').map(r => r.key)).toEqual([teamRequestKey(b)])
+    expect(after.closed.filter(r => r.title === 'Same words').map(r => r.key)).toEqual([teamRequestKey(a)])
+    // Undo takes that one key back out of `withdrawn`: both are open again.
+    const undone = teamRequests(c, now, true, withdrawn.filter(k => k !== teamRequestKey(a)))
+    expect(undone.open.filter(r => r.title === 'Same words')).toHaveLength(2)
   })
 })

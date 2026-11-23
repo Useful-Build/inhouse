@@ -41,7 +41,7 @@ export function TeamWindow() {
   if (pop !== 'team') return null
   const close = () => patch({ pop: null })
   return (
-    <Window onClose={close} label="Your Inhouse team" size="md" className="w-today-column max-w-screen-gutter">
+    <Window onClose={close} label="Your Inhouse team" size="form">
       <TeamBody onClose={close} />
     </Window>
   )
@@ -83,17 +83,28 @@ function NewRequest({ onSent }: { onSent: () => void }) {
   const title = team.title.trim(), text = team.text.trim()
   // Whitespace alone is empty: Send waits for a title or details.
   const empty = !title && !text
-  const set = (p: Partial<typeof team>) => patch({ team: { ...team, ...p } })
-  const send = () => {
-    if (empty) return
-    agent.sendTeamRequest({
-      icon: RT[team.type][0], title: title || titleOf(text), sub: `${RT[team.type][1]} · ${sender}`, at: instantOf(nowOf()), status: 'With the team',
-      ...(text ? { text } : {}),
-    })
+  // While it sends, Send waits; a refusal keeps the window open, the draft as typed, and says why under the fields.
+  const [sending, setSending] = useState(false)
+  const [failed, setFailed] = useState<string | null>(null)
+  const set = (p: Partial<typeof team>) => { setFailed(null); patch({ team: { ...team, ...p } }) }
+  const send = async () => {
+    if (empty || sending) return
+    setSending(true); setFailed(null)
+    try {
+      await agent.sendTeamRequest({
+        icon: RT[team.type][0], title: title || titleOf(text), sub: `${RT[team.type][1]} · ${sender}`, at: instantOf(nowOf()), status: 'With the team',
+        ...(text ? { text } : {}),
+      })
+    } catch (e) {
+      setSending(false)
+      setFailed(e instanceof Error && e.message ? e.message : 'Something went wrong.')
+      return
+    }
+    setSending(false)
     // The reply-time promise is the demo's: the product makes no promise the team hasn't set (UI plan 3, D2).
     showToast(isBug ? 'Bug sent to your Inhouse team. Thank you.' : demo !== null ? 'Request sent. Your Inhouse team replies within one working day.' : 'Request sent to your Inhouse team.')
     onSent()
-    patch({ team: { ...team, title: '', text: '' } })
+    patch({ team: { ...useUi.getState().team, title: '', text: '' } })
   }
   return (
     <>
@@ -133,9 +144,12 @@ function NewRequest({ onSent }: { onSent: () => void }) {
           </div>
         )}
       </div>
+      {failed !== null && (
+        <p role="alert" className="px-7 pt-3 text-sm text-destructive-text max-sm:px-5">Your request wasn't sent. {failed}</p>
+      )}
       <div className="flex flex-wrap items-center gap-3 px-7 pt-4 pb-5.5 max-sm:px-5">
         <span className="grow basis-45 text-sm text-muted-foreground">{isBug ? 'Goes straight to the team, with the page you were on.' : 'Every tool and job is included in your plan.'}</span>
-        <Button size="lg" disabled={empty} onClick={send}>Send to the team</Button>
+        <Button size="lg" disabled={empty || sending} onClick={() => void send()}>Send to the team</Button>
       </div>
     </>
   )
@@ -188,7 +202,8 @@ function RequestRow({ q, first }: { q: TeamRow; first: boolean }) {
       {expanded && (
         <div id={id} className="pr-4.5 pb-4 pl-16.5 max-sm:pl-4.5">
           <p className="text-base leading-prose text-pretty text-foreground-2">{q.text ?? q.title}</p>
-          {q.mine && !q.closed && (
+          {/* Withdraw is the demo's stand-in: the product has no withdraw route yet (P6a), so it shows only in the demo. */}
+          {demo !== null && q.mine && !q.closed && (
             <Button variant="ghost" className="mt-3 -ml-3" onClick={withdraw}>Withdraw request</Button>
           )}
         </div>

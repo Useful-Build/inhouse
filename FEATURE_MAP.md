@@ -70,7 +70,7 @@ Approvals: a draft with no text
 Approvals: draft cards
   Path:     Approvals
   Selector: one card per draft: "Urgent" pill, risk tag ("Spends $9,600", "Claims $1,240", "Goes to customers", "Low risk", "Needs review"), "{area} · {time}", draft text on the sheet, approver line, "Review draft" or the one-tap approve, button "More" ("More actions for {draft}": menu "Draft actions" with Don't send first, then Review on a low-risk draft, then Edit), "From {sources}"
-  Expected: one column; "Review draft" opens the review window, which steps through the waiting drafts in the page's order; on a phone the tags sit above the title, detail rows stack and the primary is full width beside More
+  Expected: one column; "Review draft" opens the review window, which steps through the waiting drafts in the page's order; Escape on More closes the menu only; on a phone the tags sit above the title, detail rows stack and the primary is full width beside More
   Covered:  e2e/today-approvals.spec.ts, e2e/today-approvals-phone.spec.ts, e2e/ship/needs-you-cards.spec.ts
 
 Approvals: approve all low-risk
@@ -198,8 +198,8 @@ Library: select and delete
 Routines: details and actions
   Path:     Routines -> a routine
   Selector: row switch "<name> on or off"; the side panel: name and what it does, the schedule card (schedule sentence, next run, the same switch, one "how it works" line), Run now, Edit in a chat, "More for <name>" (Delete), list "Last runs" (time, outcome sentence, Steps or Activity), Made by
-  Expected: the panel leads with the schedule sentence and the next run; its switch replaces Pause, says "Off. It won't run until you turn it on." when off and agrees with the row; Run now lands in Last runs with its result and survives a reload; Steps opens the trace; Delete (in More) asks and Undo works; all of it survives a reload; at Watch a routine is locked, shows "Starts in Act" and has no Run now
-  Covered:  e2e/page-details.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts
+  Expected: the panel leads with the schedule sentence and the next run; its switch replaces Pause, says "Off. It won't run until you turn it on." when off and agrees with the row; while the agent is paused both switches still show the routine's own on or off (a click saves the other one) and the pause shows as "Paused" for the next run; Run now lands in Last runs with its result and survives a reload; Steps opens the trace; Delete (in More) asks and Undo works; all of it survives a reload; at Watch a routine is locked, shows "Starts in Act" and has no Run now
+  Covered:  e2e/page-details.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts, src/screens/routine-switch.test.ts
 
 Activity: log
   Path:     Activity
@@ -210,7 +210,7 @@ Activity: log
 Activity: a line's side sheet
   Path:     Activity -> a row
   Selector: dialog named by the line (440px on the right, a bottom sheet on a phone): status ("Needs you" in amber, "Needs a look", "Done", "Checked") and "{day}, {time}", the title, one paragraph, one action ("Review the draft" or "Undo"), toggle "How your agent worked it out", Close
-  Expected: the open row is selected; the paragraph joins why, result and who in plain words, with no timings, costs or the word "trace"; Review the draft closes the sheet and opens the review window on that draft; Undo takes the change back; the steps toggle lists plain step sentences; Escape or Close gives focus back to the row
+  Expected: the open row is selected; the paragraph joins why, result and who in plain words, with no timings, costs or the word "trace"; Review the draft closes the sheet and opens the review window on that draft, and closing that window gives focus back to the row; Undo takes the change back; the steps toggle lists plain step sentences (at least one line shows them); Escape or Close gives focus back to the row
   Covered:  e2e/page-actions.spec.ts, e2e/no-persona.spec.ts, e2e/ui-round-3.spec.ts, src/screens/activity/plain-steps.test.ts
 
 Tools: list and pages
@@ -232,7 +232,7 @@ Skills: list
   Covered:  e2e/page-details.spec.ts, e2e/sample-data.spec.ts
 
 Skills: a skill's page
-  Path:     Skills -> a skill (`#/skills/<slug>`, a link the app keeps; an unknown slug goes back to Skills)
+  Path:     Skills -> a skill (`#/skills/<slug>`, a link the app keeps, one per skill: the Inhouse team's keep the plain slug and a team-made skill with the same name gets "-2"; an unknown slug goes back to Skills once the skills have loaded)
   Selector: link "Skills" (back), the h1 with the icon tile and stage tag, Try in a chat, the try-it strip (`data-skill-try`), "Instructions" (the skill's body as clean text), complementary "About this skill" (Works from, Made by, Used; Tools it reads, Used by); demo only: Edit in a chat, "More for <name>" (Turn off, Turn on), "Who can change it", Versions with "Restore the Inhouse version"
   Expected: every one of the 9 sample skills has a full body (When to use, Inputs, Steps, Safety, What you get); Try in a chat starts a new chat holding `Use the "<name>" skill: `; the strip asks its example; turning a skill off shows "Off" and survives a reload; the product build shows the header and the rail only, with no Edit in a chat, More, Versions or Restore (UI plan 3, D3 and D5); Restore says it isn't connected in this demo
   Covered:  e2e/page-details.spec.ts, e2e/ui-round-3.spec.ts, src/screens/skills.test.ts, src/shell/route-sync.test.ts
@@ -441,9 +441,9 @@ Help and guides
 
 Problem panel
   Path:     Today or Approvals -> a card, or an Activity line's Review the draft
-  Selector: the review window (960px wide and short, centered in the room right of the sidebar), top line with the "Urgent" pill and the area (as on the cards), "Ask Inhouse" (the Watch main button and the More menu item), "{n} of {N}" with Previous and Next, the draft document with Edit, sources toggle "Checked ...", the main action and "More" (Don't send, Ask <approver>, Ask Inhouse, Snooze until tomorrow, Not a problem)
-  Expected: Previous and Next step through the cards that need you in the order the page shows them, and Approve moves straight to the next; the approval actions as in Approvals above; the footer (waiting only) holds only the buttons, left-aligned: the main action with the amount it moves and More; who usually approves, when it's someone else, is a quiet note (person icon) under the draft sheet, never in the footer; Ask <approver> says it isn't connected; Ask Inhouse (in the window and the card menu) starts a chat holding the question that a reload keeps; no risk tag, memory line, step timings or costs show; a purchase order shows its item table and total
-  Covered:  e2e/problem-panel.spec.ts, e2e/today-approvals.spec.ts, e2e/app.spec.ts, e2e/page-actions.spec.ts, e2e/sample-data.spec.ts, e2e/phone.spec.ts, e2e/ui-round-3.spec.ts
+  Selector: the review window (960px wide and short, centered in the room right of the sidebar), top line with the "Urgent" pill and the area (as on the cards), "Ask Inhouse" (the Watch main button and the More menu item), "{n} of {N}" with Previous and Next, the draft document with Edit, sources toggle "Checked ...", the main action and "More" (Don't send, Ask <approver> in the demo only, Ask Inhouse, Snooze until tomorrow, Not a problem; hidden when it would be empty)
+  Expected: Previous and Next step through the cards that need you in the order the page shows them, and Approve moves straight to the next once it's approved (a refused Approve stays on the draft and says why above the buttons); a problem with no real draft (the product's morning-check placeholder) shows the Watch view (suggestion, Ask Inhouse) at any stage; Escape on More closes the menu only; a window too narrow for two columns (a narrow desktop with the sidebar open) stacks the brief over the draft; the approval actions as in Approvals above; the footer (waiting only) holds only the buttons, left-aligned: the main action with the amount it moves and More; who usually approves, when it's someone else, is a quiet note (person icon) under the draft sheet, never in the footer; Ask <approver> says it isn't connected; Ask Inhouse (in the window and the card menu) starts a chat holding the question that a reload keeps; no risk tag, memory line, step timings or costs show; a purchase order shows its item table and total
+  Covered:  e2e/problem-panel.spec.ts, e2e/today-approvals.spec.ts, e2e/app.spec.ts, e2e/page-actions.spec.ts, e2e/sample-data.spec.ts, e2e/phone.spec.ts, e2e/ship/needs-you-cards.spec.ts, e2e/ui-round-3.spec.ts, src/state/derive.no-draft.test.ts
 
 Trace window
   Path:     an answer's steps line, or an Activity row
@@ -459,9 +459,9 @@ Notifications and team window
 
 Team window
   Path:     account menu -> Your Inhouse team (also Report a bug, Help's Ask the team, Request a tool, Book a check-in)
-  Selector: dialog "Your Inhouse team" (720px, beside the sidebar), radiogroup "Team window" (New request, "Your requests {N}"); New request: radio kind tiles (five), "Title", "Details" (a counter from 900 of 1000), "Send to the team"; Your requests: radiogroup "Show requests" ("Open · N", "Closed · N"), list "Open requests" or "Closed requests", each row a toggle with kind icon, title, "{kind} · {who}, {when}" and a status chip, "Withdraw request" in an open row you asked
-  Expected: Send waits for a title or details (a title is made from the details when none is typed), closes the window and lists the request as open; statuses are only With the team, Done, Declined and Withdrawn (and the demo's dated ones); a row opens to show its full text; Withdraw moves it to Closed as Withdrawn with an Undo toast and the account menu's count follows; the demo's toast promises a reply within one working day, the product's doesn't
-  Covered:  e2e/help-account-menu.spec.ts, e2e/report-bug.spec.ts, e2e/navigation.spec.ts, e2e/sample-data.spec.ts, e2e/ui-round-3.spec.ts, src/state/derive.team-requests.test.ts
+  Selector: dialog "Your Inhouse team" (the `form` window size: 720px, capped to the room right of the sidebar), radiogroup "Team window" (New request, "Your requests {N}"); New request: radio kind tiles (five), "Title", "Details" (a counter from 900 of 1000), "Send to the team"; Your requests: radiogroup "Show requests" ("Open · N", "Closed · N"), list "Open requests" or "Closed requests", each row a toggle with kind icon, title, "{kind} · {who}, {when}" and a status chip, "Withdraw request" in an open row you asked (demo only: the product has no withdraw route yet)
+  Expected: Send waits for a title or details (a title is made from the details when none is typed), closes the window and lists the request as open once the agent took it; a refused request keeps the window open with what was typed and says "Your request wasn't sent." with the reason; statuses are only With the team, Done, Declined and Withdrawn (and the demo's dated ones); a row opens to show its full text; Withdraw moves it to Closed as Withdrawn with an Undo toast and the account menu's count follows; the demo's toast promises a reply within one working day, the product's doesn't
+  Covered:  e2e/help-account-menu.spec.ts, e2e/report-bug.spec.ts, e2e/navigation.spec.ts, e2e/sample-data.spec.ts, e2e/ui-round-3.spec.ts, e2e/real/team-request-refused.spec.ts, src/state/derive.team-requests.test.ts
 
 Crashes and error reports
   Path:     ?demo&crash=screen (a screen throws), ?demo&crash=rejection; /api/client-error, /api/unknown
