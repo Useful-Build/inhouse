@@ -194,7 +194,7 @@ function RequestRow({ q, first }: { q: TeamRow; first: boolean }) {
   const clearToast = useUi(s => s.clearToast)
   const phone = useUi(s => s.phone)
   const id = `team-req-${q.key.replace(/[^\w-]/g, '-')}`
-  const chip = <Badge variant={q.closed ? 'status' : q.dated ? 'brand' : 'muted'} size="lg" className="flex-none">{q.status}</Badge>
+  const chip = <Badge variant={q.closed ? 'status' : 'muted'} size="lg" className="flex-none">{q.status}</Badge>
   // A failed withdraw says why under the request and keeps its row. While it goes, the button waits.
   const [failed, setFailed] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
