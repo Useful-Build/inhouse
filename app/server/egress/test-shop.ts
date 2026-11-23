@@ -53,8 +53,9 @@ export function withTestShop(hub: ReadGatewayLike, db: ShopDb, env: { INHOUSE_TE
 }
 
 /**
- * The prompt's account read (ConnectGateway.listAccounts), written out structurally: the egress's import boundary keeps
- * ConnectGateway's type out of this folder, and only the prompt (server/prompt/connected.ts) wraps one.
+ * The prompt's account read (the hub's connect gateway, its listAccounts), written out structurally: this folder never
+ * names or imports that gateway or its binding (e2e/api/fakes-kit.ts expectNoRunnerPathToDelivery scans for the names),
+ * and only the prompt (server/prompt/connected.ts) wraps one.
  */
 type ConnectAccountsLike = { listAccounts(scope: CallerScope, options?: CallToolOptions): Promise<HubResult<AccountSummary[]>> }
 
