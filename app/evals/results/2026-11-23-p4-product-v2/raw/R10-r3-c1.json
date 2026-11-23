@@ -1,0 +1,47 @@
+{
+ "row": {
+  "caseId": "R10",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answerNot": true
+  },
+  "called": [
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I don't have your invoice format preference. I checked saved memory and past cha",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_p5LmpNLoNPQlnW4fChZHBg",
+  "askedAs": "eval-45239772379-1-r10-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I don't have your invoice format preference. I checked saved memory and past cha",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "91466ea3456a7deff03dab14479ef125b6e75736f0183764edbe1c9b6ce3c74b",
+    "inputExcerpt": "{\"query\":\"invoice format preference\"}"
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "inputSha256": "a29fb293c73b325eb66cb2bf9a45a89a3a84e9ed7a0e82b99f18d547ac07338a",
+    "inputExcerpt": "{\"query\":\"invoice format\"}"
+   }
+  ]
+ }
+}

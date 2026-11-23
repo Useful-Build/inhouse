@@ -1,0 +1,39 @@
+{
+ "row": {
+  "caseId": "T08",
+  "cat": "choice",
+  "pair": "approval_request/notification_send",
+  "rep": 1,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": false,
+   "forbidden": true
+  },
+  "called": [],
+  "toolSearches": 1,
+  "answer": "I can't send this yet because I don't have Anna Weber's email address. The store",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_tcmu3y-CASSyD_8Hrfk8_g",
+  "askedAs": "eval-45239772379-1-t08-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I can't send this yet because I don't have Anna Weber's email address. The store",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "94af49282141249eb376d781fadea02b5235dd0f15a2fc685735e734a2ae753e",
+    "inputExcerpt": "{\"query\":\"select:mcp__apps__orders_search\",\"max_results\":3}"
+   }
+  ]
+ }
+}

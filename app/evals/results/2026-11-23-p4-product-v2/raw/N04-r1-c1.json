@@ -1,0 +1,32 @@
+{
+ "row": {
+  "caseId": "N04",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "Hello! Sounds like a long day, so I'll keep this short.\n\nIf you want to pick up ",
+  "costUsd": 0.015,
+  "runOk": true,
+  "turnId": "t_ezRa_duLeyV-5YQf6EAbkQ",
+  "askedAs": "eval-45239772379-1-n04-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.015,
+  "answer": "Hello! Sounds like a long day, so I'll keep this short.\n\nIf you want to pick up ",
+  "toolCalls": []
+ }
+}
