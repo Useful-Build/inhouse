@@ -155,16 +155,22 @@
   --app-select-menu: min(320px, calc(100vw - 32px));
   --app-problem-panel: min(540px, calc(100vw - 40px));
 
-  /* windows (Window sizes): the width, where the top sits and the tallest it gets */
-  --app-window-sm: min(420px, calc(100vw - 40px));   /* a question (Confirm), a short notice */
-  --app-window-md: min(600px, calc(100vw - 40px));   /* Help, the team window */
-  --app-window-lg: min(960px, calc(100vw - 40px));   /* the Library's file viewer */
-  --app-window-xl: min(1120px, calc(100vw - 40px));  /* the trace */
+  /* windows (Window sizes): the width, where the top sits and the tallest it gets. On desktop a window centers in the room
+   * right of the sidebar and never covers it: --app-side-offset is the sidebar and its margin (the Sidebar sets data-side
+   * on <html>), 0 on a phone. */
+  --app-side-offset: 0px;
+  --app-window-center: calc(50% + var(--app-side-offset) / 2);
+  --app-window-sm: min(420px, calc(100vw - var(--app-side-offset) - 40px));   /* a question (Confirm), a short notice */
+  --app-window-md: min(600px, calc(100vw - var(--app-side-offset) - 40px));   /* Help, the team window */
+  --app-window-lg: min(960px, calc(100vw - var(--app-side-offset) - 40px));   /* the file viewer, the review window */
+  --app-window-xl: min(1120px, calc(100vw - var(--app-side-offset) - 40px));  /* the trace */
   --app-window-top: 6vh;
+  --app-window-top-wide: 14vh;  /* a wide, short window (the review window) */
   --app-window-top-sm: 22vh;
   --app-window-top-lg: 5vh;
   --app-window-max: 88vh;
   --app-window-max-lg: 90vh;
+  --app-window-max-wide: 80vh;  /* under top-window-wide, so a long one still ends above the screen's foot */
 
   /* stacking layers, lowest first. A window's scrim sits one below its window. Windows, sheets, menus and the toast
    * stack portal to body, so z-toast floats over all of them. The demo switches render inside the app root (an isolated
@@ -241,6 +247,7 @@
 
   /* type: page and window heads, stats, prose */
   --app-text-hero: clamp(26px, 3.4vw, 34px);  /* Today's greeting */
+  --app-text-window-title: 22px;               /* the review window's title */
   --app-tracking-card: -0.01em;
   --app-tracking-section: -0.015em;
   --app-tracking-stat: -0.02em;
@@ -320,6 +327,10 @@
   --divider: var(--app-popup-divider);
 }
 
+/* The desktop sidebar's room (the Sidebar sets data-side on <html>): its width plus its 10px margin. */
+:root[data-side="full"] { --app-side-offset: calc(var(--app-sidebar) + 10px); }
+:root[data-side="rail"] { --app-side-offset: calc(var(--app-sidebar-rail) + 10px); }
+
 /* A window's and a side panel's ground (data-surface="window", with bg-window-surface): a hovered or picked row and an
  * inset well (bg-muted) each take a clear step off it. Menus portal out of it, so theirs are unchanged. */
 [data-surface="window"] {
@@ -376,9 +387,12 @@
   --inset-window: var(--app-window-top);
   --inset-window-sm: var(--app-window-top-sm);
   --inset-window-lg: var(--app-window-top-lg);
+  --inset-window-wide: var(--app-window-top-wide);
+  --inset-window-center: var(--app-window-center);
   /* max-h-window-max: not --spacing-window-lg, which w-window-lg would read before --container-window-lg */
   --spacing-window-max: var(--app-window-max);
   --spacing-window-max-lg: var(--app-window-max-lg);
+  --spacing-window-max-wide: var(--app-window-max-wide);
   --z-index-raised: var(--app-z-raised);
   --z-index-sidebar: var(--app-z-sidebar);
   --z-index-composer: var(--app-z-composer);
@@ -487,6 +501,7 @@
 /* App font sizes. After the block above, whose --text-*: initial would clear them. */
 @theme inline {
   --text-hero: var(--app-text-hero);
+  --text-window-title: var(--app-text-window-title);
   --text-parent: inherit;  /* a component's own text size gives way to its parent's */
 }
 

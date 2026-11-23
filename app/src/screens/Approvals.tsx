@@ -36,9 +36,11 @@ export function Approvals() {
     ? (a, b) => amountOf(draftView(ctx, b).problem) - amountOf(draftView(ctx, a).problem)
     : sort === 'newest' ? (a, b) => byTime(b, a) : byTime)
   const lowRisk = lowRiskIds(ctx)
+  // The review window steps through the waiting drafts in the order they're listed.
+  const review = (id: string) => openProblem(id, pending)
   // Edit always opens the panel with the draft in view: its text ready to change, or a note field when it has no text.
   const edit = (id: string) => {
-    openProblem(id)
+    review(id)
     patch({ editing: id })
   }
   const { noData, isFirst, isLoading } = flags(ctx)
@@ -155,7 +157,7 @@ export function Approvals() {
                   )}
                   {phone && <div className="px-4.5 pt-3.5">{sources}</div>}
                   <div className="flex items-center gap-2 px-4.5 pt-3.5 pb-4">
-                    <Button size="lg" className={cn('whitespace-nowrap', phone && 'min-w-0 flex-1', tap)} onClick={low ? () => approve(id) : () => openProblem(id)}>
+                    <Button size="lg" className={cn('whitespace-nowrap', phone && 'min-w-0 flex-1', tap)} onClick={low ? () => approve(id) : () => review(id)}>
                       {low ? <><Icon name="check" size={16} />{dv.cta}</> : <>Review draft<Icon name="arrow_forward" size={16} /></>}
                     </Button>
                     <DropdownMenu modal={false}>
@@ -164,7 +166,7 @@ export function Approvals() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" collisionPadding={16} aria-label="Draft actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
                         {low && (
-                          <MenuItem onSelect={() => openProblem(id)}>
+                          <MenuItem onSelect={() => review(id)}>
                             <Icon name="visibility" size={18} /><span className="flex-1">Review</span>
                           </MenuItem>
                         )}

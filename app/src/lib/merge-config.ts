@@ -7,7 +7,7 @@ import type { ConfigExtension } from 'tailwind-merge'
 export const appMergeConfig: ConfigExtension<string, string> = {
   extend: {
     theme: {
-      text: ['hero', 'parent'],
+      text: ['hero', 'parent', 'window-title'],
       shadow: ['page-xs', 'page-sm', 'page-md', 'page-lg', 'page-xl', 'composer-focus', 'selected'],
       tracking: ['card', 'section', 'stat', 'heading', 'display', 'caps'],
       leading: ['figure', 'hero', 'title', 'heading', 'icon', 'card', 'note', 'menu', 'prose', 'reading'],
@@ -19,7 +19,7 @@ export const appMergeConfig: ConfigExtension<string, string> = {
         'window-sm', 'window-md', 'window-lg', 'window-xl', /* PR 5 */ 'prose-measure', 'answer-measure'],
       spacing: ['select-height', 'below-topbar', 'playhead', 'playhead-offset', 'activity-indent', 'time-column', 'run-when', 'bar-tick', 'today-top', 'chat-empty-top',
         'viewer-image', 'card-name', 'card-meta', 'today-status', 'toast', 'trace-label', 'safe-bottom', 'composer-input', 'window', 'window-sm', 'window-lg',
-        'window-max', 'window-max-lg',
+        'window-max', 'window-max-lg', 'window-wide', 'window-center', 'window-max-wide',
         /* PR 5 */ 'selection-room'],
       // Documentation only: tailwind-merge v3 already reads any text-, bg- or border- name as a colour.
       color: ['done', 'destructive-solid', 'on-destructive', 'switch-off', 'window-surface', 'tag-edge-strong', 'draft-sheet', 'draft-kind', 'success', 'success-tint', 'success-text', /* PR 5 */ 'bubble'],
