@@ -201,7 +201,7 @@ async function pickFast(page: Page) {
 /** A person starts a chat from Today with a question, on the Fast model; returns the new chat's id. */
 async function askFromToday(page: Page, text: string): Promise<string> {
   await goTo(page, '#/today')
-  await expect(page.getByRole('textbox', { name: 'Ask your Inhouse agent' })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Ask Inhouse' })).toBeVisible()
   await page.locator('[data-composer] textarea').fill(text)
   await pickFast(page)
   await page.getByRole('button', { name: 'Send', exact: true }).click()
@@ -252,6 +252,8 @@ test('S2: Open an item and the problem panel shows the orders behind it from the
   const panel = page.getByRole('dialog')
   await expect(panel).toBeVisible()
   await expect(panel).toContainText(CARD_TITLE)
+  // The orders behind it sit under the one "Checked ..." line, closed until opened.
+  await panel.getByRole('button', { name: /^Checked / }).click()
   await expect(panel).toContainText(ORDER)
   await expect(panel).toContainText(ORDER_TEXT)
   await shot(page, 'S2-problem-panel')

@@ -40,7 +40,7 @@ for (const scenario of ['First day', 'Loading']) {
         await expect(side(page).locator('[data-chat-row]'), hash).toHaveCount(0)
         if (hash === '#/library') await expect(page.locator('[data-file-id]')).toHaveCount(0)
         if (hash === '#/usage') await expect(page.locator('main')).toContainText('$0.00')
-        if (hash === '#/chats') await expect(page.getByRole('heading', { name: 'What do you want to know?' })).toBeVisible()
+        if (hash === '#/chats') await expect(page.getByRole('heading', { name: 'What should we look into?' })).toBeVisible()
         if (hash === '#/chats/all') await expect(page.getByText('No chats yet', { exact: true })).toBeVisible()
         if (hash === '#/activity') await expect(page.locator('button[data-activity-row]')).toHaveCount(0)
       }
@@ -75,7 +75,7 @@ test('Tools: pausing a tool and a disconnected tool change the count, the tool p
   await side(page).getByRole('button', { name: 'New chat' }).click()
   await expect(composerTools(page)).toHaveAccessibleName(/5 of 6 tools connected$/)
   await expect(composerTools(page)).not.toHaveAccessibleName(/Shopify/)
-  await expect(page.locator('main')).not.toContainText('Your Inhouse agent reads Shopify')
+  await expect(page.locator('main')).not.toContainText('Connected to Shopify')
   await shot(page, 'tool-paused-composer')
 })
 

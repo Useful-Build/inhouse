@@ -13,7 +13,7 @@ import { settingSpec } from '../../../shared/contract/settings'
 vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} })
 // The app's agent (the demo one here): loading it also sets the clock the page reads.
 const { agent } = await import('../../agent')
-const { MENU, checkField, settingsPage } = await import('./content')
+const { SETTINGS_PAGES, checkField, settingsPage } = await import('./content')
 type Env = Parameters<typeof settingsPage>[1]
 type Row = ReturnType<typeof settingsPage>['sections'][number]['rows'][number]
 
@@ -27,7 +27,7 @@ function allRows(): Row[] {
     theme: 'system', setTheme: noop, toast: noop, forget: noop, download: noop, setRole: noop, setSupport: noop,
     me: agent.me(), invite: noop, removeMember: noop, grantUi: false, showGrant: true, loadingMore: false, loadMore: noop, exportFromServer: null,
   }
-  return MENU.flatMap(g => g.items).flatMap(([tab]) => settingsPage(tab, env).sections.flatMap(s => s.rows))
+  return SETTINGS_PAGES.flatMap(({ id }) => settingsPage(id, env).sections.flatMap(s => s.rows))
 }
 const rows = allRows()
 /** Never settings: a role, a grant. */

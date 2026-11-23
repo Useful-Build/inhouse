@@ -22,7 +22,8 @@ import { waitingList } from './settings/waiting-list'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { PHOTO_MAX_BYTES, PHOTO_TYPES, PhotoDecodeError, squarePhoto } from '../ui/photo'
-import { MENU, checkField, settingsPage } from './settings/content'
+import { SECTIONS, checkField, settingsPage } from './settings/content'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTheme } from '@/lib/theme'
 import { saveBlob } from '@/lib/save-file'
 import type { Env, FieldType, Row } from './settings/content'
@@ -327,7 +328,7 @@ export function Settings() {
   const found = (() => {
     if (!needle) return null
     const hits = new Map<string, string[]>()
-    for (const g of MENU) for (const [k, , label] of g.items) {
+    for (const { id: k, label } of SECTIONS.flatMap(sec => sec.pages)) {
       const p = settingsPage(k, env)
       const rows = p.sections.flatMap(sec => sec.rows).filter(r => `${r.title} ${r.desc} ${r.keywords ?? ''}`.toLowerCase().includes(needle)).map(r => r.title)
       const pageHit = `${label} ${p.title}`.toLowerCase().includes(needle)
@@ -342,23 +343,38 @@ export function Settings() {
       <nav aria-label="Settings" className={`box-border flex-none pt-3.5 ${phone ? 'w-full px-(--app-pad-x) pb-14' : 'w-settings-nav overflow-y-auto pr-3.5 pb-7.5 pl-6'}`}>
         {phone && <PageHeader title="Settings" className="mb-4" />}
         <SearchBox value={query} onChange={setQuery} placeholder="Search settings" label="Search settings" />
-        {MENU.map(g => {
-          const items = g.items.filter(([k]) => !found || found.has(k))
-          if (items.length === 0) return null
+        {SECTIONS.map(sec => {
+          const pages = sec.pages.filter(p => !found || found.has(p.id))
+          if (pages.length === 0) return null
+          // Brand settings: anyone who can't change them sees a lock on the heading, with the reason in a tooltip.
+          const lockedForMe = sec.team && me?.can.editBrandSettings === false
           return (
-            <div key={g.label}>
-              <div className="px-3 pt-5 pb-1.5 text-xs font-medium text-muted-foreground">{g.label}</div>
-              {items.map(([k, icon, label]) => {
+            <div key={sec.id} role="group" aria-labelledby={`settings-sec-${sec.id}`}>
+              <div className="flex items-center gap-1.5 px-3 pt-5 pb-1.5 text-xs font-medium text-muted-foreground">
+                <span id={`settings-sec-${sec.id}`}>{sec.label}</span>
+                {lockedForMe && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button type="button" aria-label="Admins change these" className="flex rounded-xs text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+                        <Icon name="lock" size={14} />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>Admins change these</TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
+              {pages.map(({ id: k, icon, label }) => {
                 const sel = setTab === k
                 const rows = found?.get(k) ?? []
                 return (
-                  <NavItem key={k} data-nav-row icon={icon} label={label} size={phone ? 'tap' : 'fit'} active={sel && !phone}
+                  <NavItem key={k} data-nav-row icon={icon} iconWeight={400} label={label} size={phone ? 'tap' : 'fit'} active={sel && !phone}
                     detail={rows.length > 0 ? rows.join(' · ') : undefined} onClick={() => pick(k)} />
                 )
               })}
             </div>
           )
         })}
+        {/* The search field's own Clear button takes it back to the full menu. */}
         {found && found.size === 0 && <p role="status" className="mx-3 mt-6 text-sm text-foreground-3">No settings match "{query.trim()}".</p>}
       </nav>
       )}

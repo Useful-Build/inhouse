@@ -191,28 +191,38 @@ for (const size of SIZES) {
         }
         await composerMenus(page, `${label} today`, phone)
 
-        // Activity: every row expanded, and every trace a row opens.
+        // Activity: every row opens its sheet, with its steps shown.
         await go(page, '#/activity')
         await expect(page.getByRole('heading', { level: 1, name: 'Activity' })).toBeVisible()
-        const rows = main.locator('button[data-activity-row][aria-expanded]')
+        const rows = main.locator('button[data-activity-row]')
         expect(await rows.count() > 0 || scenario === 'First day' || scenario === 'Loading', 'Activity lists rows').toBe(true)
         const nRows = await rows.count()
-        const seenTraces = new Set<string>()
+        // How many sheets showed their steps: a sheet whose steps never render would pass the loop alone.
+        let stepsShown = 0
         for (let i = 0; i < nRows; i++) {
           await rows.nth(i).click()
-          await expect(rows.nth(i)).toHaveAttribute('aria-expanded', 'true')
-          await check(page, `${label} activity row ${i}`)
-          const steps = main.getByRole('button', { name: /^See every step/ })
-          if (await steps.count()) {
-            const key = (await steps.first().innerText()).trim()
-            await steps.first().click()
-            await traceWindow(page, `${label} activity row ${i} trace`, !seenTraces.has(key))
-            seenTraces.add(key)
+          const sheet = page.getByRole('dialog')
+          await expect(sheet).toBeVisible()
+          const how = sheet.getByRole('button', { name: 'How your agent worked it out' })
+          if (await how.count()) {
+            await how.click()
+            // Each step is one plain sentence: a capital, a full stop, and no timings or costs.
+            const steps = sheet.locator('#activity-steps > li')
+            await expect(steps.first()).toBeVisible()
+            for (const text of await steps.allInnerTexts()) {
+              expect(text.trim(), `${label} activity row ${i}: a step reads as a sentence`).toMatch(/^[A-Z0-9#"].*[.!?]$/s)
+              expect(text, `${label} activity row ${i}: no mechanics in a step`).not.toMatch(/\bms\b|\btokens?\b|\$0\.\d/i)
+            }
+            stepsShown++
           }
+          await check(page, `${label} activity row ${i}`)
+          await page.keyboard.press('Escape')
+          await expect(page.getByRole('dialog')).toHaveCount(0)
         }
+        if (nRows > 0) expect(stepsShown, `${label}: at least one Activity line shows how the agent worked it out`).toBeGreaterThan(0)
 
         // Activity filters: every tab, including the empty states.
-        for (const tab of ['Changes', 'Waiting on you', 'Problems', 'All']) {
+        for (const tab of ['Needs you', 'Changes', 'All']) {
           await page.getByRole('radiogroup', { name: 'Filter activity' }).getByRole('radio', { name: tab, exact: true }).click()
           await expect(page.getByRole('radiogroup', { name: 'Filter activity' }).getByRole('radio', { name: tab, exact: true })).toHaveAttribute('aria-checked', 'true')
           await check(page, `${label} activity filter ${tab}`)
@@ -282,7 +292,7 @@ for (const size of SIZES) {
         } else {
           // No chats yet: a new chat and its composer menus.
           await go(page, '#/chats/new')
-          await expect(main.getByRole('heading', { name: 'What do you want to know?' })).toBeVisible()
+          await expect(main.getByRole('heading', { name: 'What should we look into?' })).toBeVisible()
           await check(page, `${label} new chat`)
           await composerMenus(page, `${label} new chat`, phone)
         }
@@ -293,7 +303,7 @@ for (const size of SIZES) {
           await go(page, noData ? '#/chats/new' : '#/chats/stuck')
           await expect(main.getByText('Which orders are stuck over 3 days?').first()).toBeVisible()
           const before = await main.getByRole('button', { name: /\d+ steps/ }).count()
-          await page.getByRole('textbox', { name: 'Message your Inhouse agent' }).fill('Every Monday at 7, check which products have under 3 weeks of stock')
+          await page.getByRole('textbox', { name: 'Message Inhouse' }).fill('Every Monday at 7, check which products have under 3 weeks of stock')
           // Send by button: on a phone width Enter adds a line instead of sending.
           await page.locator('[data-composer]').getByRole('button', { name: 'Send' }).click()
           if (scenario === 'Cap reached') {

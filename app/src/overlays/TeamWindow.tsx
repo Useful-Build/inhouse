@@ -1,18 +1,20 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { agent, demo } from '../agent'
 import type { RequestType } from '../state/store'
 import { useCtx, useUi } from '../state/store'
-import { openRequests, userName } from '../state/derive'
+import { teamRequests, userName } from '../state/derive'
+import type { TeamRow } from '../state/derive'
 import { instantOf } from '../lib/format'
 import { nowOf } from '../state/display'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { Button, EmptyState, Icon, IconButton, IconTile, Segmented, Window } from '../ui'
 import { TEAM_REQUEST_TEXT_MAX } from '../../shared/contract/keys'
-import { counterText, requestsView, sentToast, sendFromWindow, showScreenshotBox, teamHelper, windowIntro } from '../lib/product-flow'
-import { Button, ChoiceChips, Icon, IconTile, Window, WindowHeader } from '../ui'
+import { requestsView, sentToast, showScreenshotBox, teamHelper } from '../lib/product-flow'
 
 const RT: Record<RequestType, [icon: string, label: string, placeholder: string]> = {
   tool: ['add_link', 'New tool', 'Which tool, and what should your Inhouse agent do with it?'],
@@ -21,14 +23,17 @@ const RT: Record<RequestType, [icon: string, label: string, placeholder: string]
   bug: ['bug_report', 'Report a bug', 'What happened, and what did you expect?'],
   feedback: ['campaign', 'Feedback', 'What would make Inhouse better for you?'],
 }
+const KINDS = Object.keys(RT) as RequestType[]
 
-const SEEDED_STYLE: Record<number, { variant: 'muted' | 'secondary' }> = { 0: { variant: 'muted' }, 1: { variant: 'secondary' } }
+/**
+ * The title the team sees, and the details. The product keeps them as one text of at most 1000 (the title on its own
+ * line above the details), so the details stop where both still fit. The counter shows for the last 100.
+ */
+const TITLE_MAX = 64
+const TEXT_MAX = TEAM_REQUEST_TEXT_MAX - TITLE_MAX - 2
+const TEXT_COUNT_FROM = TEXT_MAX - 100
 
-/** A date in a request's line ("Nov 9", "Wed, Nov 11"): it never breaks inside itself. */
-const DATE = /((?:(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), )?(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2})/
-const wholeDates = (text: string) => text.split(DATE).map((part, i) => (i % 2 ? <span key={i} className="whitespace-nowrap">{part}</span> : part))
-
-/** A request's title: the first 60 characters, cut at a word and never inside one. */
+/** A title made from the details when none was typed: the first 60 characters, cut at a word and never inside one. */
 const titleOf = (text: string) => {
   if (text.length <= 60) return text
   const cut = text.slice(0, 57)
@@ -37,93 +42,185 @@ const titleOf = (text: string) => {
 
 export function TeamWindow() {
   const pop = useUi(s => s.pop)
+  const patch = useUi(s => s.patch)
+  if (pop !== 'team') return null
+  const close = () => patch({ pop: null })
+  return (
+    <Window onClose={close} label="Your Inhouse team" size="form">
+      <TeamBody onClose={close} />
+    </Window>
+  )
+}
+
+function TeamBody({ onClose }: { onClose: () => void }) {
+  const withdrawn = useUi(s => s.teamWithdrawn)
+  const ctx = useCtx()
+  const [tab, setTab] = useState<'new' | 'mine'>('new')
+  const { open, closed } = teamRequests(ctx, nowOf(), demo !== null, withdrawn)
+  // The product reads the open requests again each time the window opens (what the team answered since the first read).
+  useEffect(() => { if (!demo) void agent.refresh('requests') }, [])
+  return (
+    <>
+      <div className="flex items-start gap-3.5 pt-6 pr-4.5 pl-7 max-sm:pl-5">
+        <IconTile icon="support_agent" iconSize={22} size="xl" tone="outline" />
+        <div className="min-w-0 flex-1 pt-px">
+          <h2 className="text-xl font-semibold tracking-section">Your Inhouse team</h2>
+          <p className="mt-1 text-sm text-muted-foreground">They build, connect and run your Inhouse agent.</p>
+        </div>
+        <IconButton icon="close" label="Close" onClick={onClose} />
+      </div>
+      <div className="px-7 pt-5 max-sm:px-5">
+        <Segmented label="Team window" value={tab} onChange={setTab} className="w-full *:flex-1"
+          options={[['new', 'New request'], ['mine', <span key="mine">Your requests <span className="ml-1 text-xs text-muted-foreground tabular-nums">{open.length}</span></span>]]} />
+      </div>
+      {tab === 'new' ? <NewRequest onSent={onClose} /> : <YourRequests open={open} closed={closed} failed={requestsView(ctx.data.resources.requests) === 'error'} />}
+    </>
+  )
+}
+
+function NewRequest({ onSent }: { onSent: () => void }) {
   const team = useUi(s => s.team)
   const patch = useUi(s => s.patch)
   const showToast = useUi(s => s.showToast)
   const phone = useUi(s => s.phone)
   const ctx = useCtx()
-  const [sending, setSending] = useState(false)
-  // After a refusal the box is enabled again with the words in it: focus goes back to it, once it can take focus.
-  const box = useRef<HTMLTextAreaElement>(null)
-  const refocus = useRef(false)
-  useEffect(() => { if (!sending && refocus.current) { refocus.current = false; box.current?.focus() } }, [sending])
-  // The product reads the open requests again each time the window opens (what the team answered since the first read).
-  useEffect(() => { if (pop === 'team' && !demo) void agent.refresh('requests') }, [pop])
-  if (pop !== 'team') return null
-
-  const close = () => patch({ pop: null })
   const isBug = team.type === 'bug'
-  // A request as listed: "New tool · asked by Priya, Nov 9" and "Live by Fri, Nov 20" ("just now" for one the person
-  // sent here in the demo). The tool being connected takes its date from tools.json; on First day it isn't listed.
-  const requests = openRequests(ctx, nowOf(), demo !== null).map(q => ({ ...q, ...(SEEDED_STYLE[q.seed ?? 1] ?? SEEDED_STYLE[1]) }))
   // The sender is the signed-in person, by the name in Settings.
   const sender = userName(ctx)
-  // Whitespace alone is empty: Send waits for words.
-  const empty = !team.text.trim()
+  const title = team.title.trim(), text = team.text.trim()
+  // Whitespace alone is empty: Send waits for a title or details.
+  const empty = !title && !text
+  // While it sends, Send waits; a refusal keeps the window open, the draft as typed, and says why under the fields.
+  const [sending, setSending] = useState(false)
+  const [failed, setFailed] = useState<string | null>(null)
+  const set = (p: Partial<typeof team>) => { setFailed(null); patch({ team: { ...team, ...p } }) }
   const send = async () => {
-    const txt = team.text.trim()
-    if (!txt || sending) return
-    const req = { icon: RT[team.type][0], title: titleOf(txt), sub: `${RT[team.type][1]} · sent by ${sender}`, at: instantOf(nowOf()), status: 'Sent', kind: team.type, text: txt }
-    // The product waits for the server; the chips and the box are locked meanwhile, so nothing typed is wiped or reverted.
-    if (demo === null) setSending(true)
+    if (empty || sending) return
+    setSending(true); setFailed(null)
     try {
-      const outcome = await sendFromWindow({
-        product: demo === null,
-        send: () => agent.sendTeamRequest(req),
-        sent: () => showToast(sentToast(demo !== null, isBug)),
-        done: () => patch({ pop: null, team: { ...team, text: '' } }),
+      await agent.sendTeamRequest({
+        icon: RT[team.type][0], title: title || titleOf(text), sub: `${RT[team.type][1]} · ${sender}`, at: instantOf(nowOf()), status: 'With the team', kind: team.type,
+        ...(text ? { text } : {}),
       })
-      refocus.current = outcome === 'kept'
-    } finally { setSending(false) }
+    } catch (e) {
+      setSending(false)
+      setFailed(e instanceof Error && e.message ? e.message : 'Something went wrong.')
+      return
+    }
+    setSending(false)
+    // The reply-time promise is the demo's: the product makes no promise the team hasn't set (UI plan 3, D2).
+    showToast(sentToast(demo !== null, isBug))
+    onSent()
+    patch({ team: { ...useUi.getState().team, title: '', text: '' } })
   }
-
   return (
-    <Window onClose={close} label="Your Inhouse team" size="md">
-      <WindowHeader title="Your Inhouse team" description={windowIntro(demo !== null)}
-        leading={<IconTile icon="support_agent" iconSize={20} size="lg" tone="outline" />} onClose={close} />
-      <div className="flex-1 overflow-auto px-5.5 pt-3 pb-5.5">
-        <h3 className="mt-1.5 mb-2 text-base font-strong text-foreground-2">Open requests</h3>
-        {requestsView(ctx.data.resources.requests) === 'error' ? (
-          // A failed read is never shown as an empty list: it says so, and Retry reads again.
-          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3">
-            <span className="grow basis-45 text-sm text-foreground-2">Couldn't read your open requests.</span>
-            <Button variant="outline" onClick={() => void agent.retry('requests')}>Retry</Button>
+    <>
+      <div className="min-h-0 flex-1 overflow-auto px-7 pt-6 pb-2 max-sm:px-5 max-sm:pt-5">
+        <fieldset>
+          <legend className="mb-2 text-sm font-semibold">What do you need?</legend>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+            {KINDS.map(k => {
+              const on = team.type === k
+              return (
+                // The radio covers its whole tile, unseen, so a click or tap anywhere on the tile lands on the radio itself.
+                <label key={k} className={cn('relative flex cursor-pointer flex-col items-start justify-between gap-2 rounded-xl border bg-card p-3.5 pb-3 text-sm transition-colors has-focus-visible:shadow-halo',
+                  phone ? 'min-h-18' : 'h-23',
+                  on ? 'border-foreground font-semibold text-foreground shadow-selected' : 'border-border font-medium text-foreground-2 hover:border-border-strong')}>
+                  <input type="radio" name="team-kind" value={k} checked={on} onChange={() => set({ type: k })} className="absolute inset-0 m-0 size-full cursor-pointer appearance-none rounded-xl opacity-0" />
+                  <Icon name={RT[k][0]} size={20} weight={400} className={on ? 'text-foreground' : 'text-foreground-3'} />
+                  <span className="leading-card">{RT[k][1]}</span>
+                </label>
+              )
+            })}
           </div>
-        ) : (
-        <div className="rounded-2xl border border-border bg-card px-4">
-          {/* On a phone the status goes under the title, so the title keeps the row's width. */}
-          {requests.map((q, i) => (
-            <div key={`${q.title}|${q.sub}|${i}`} className={cn('flex min-h-13.5 gap-3 border-t', i === 0 ? 'border-transparent' : 'border-divider', phone ? 'items-start py-2' : 'items-center')}>
-              <Icon name={q.icon} size={18} className={cn('text-foreground-3', phone && 'mt-0.75')} />
-              <div className="min-w-0 flex-1">
-                <div className="text-base font-strong">{q.title}</div>
-                <div className="text-xs text-muted-foreground">{wholeDates(q.sub)}</div>
-                {phone && <Badge variant={q.variant} size="lg" className="mt-1">{q.status}</Badge>}
-              </div>
-              {!phone && <Badge variant={q.variant} size="lg">{q.status}</Badge>}
-            </div>
-          ))}
-        </div>
+        </fieldset>
+        <Label htmlFor="team-title" className="mt-5.5 mb-2 block text-sm font-semibold">Title</Label>
+        <Input id="team-title" value={team.title} maxLength={TITLE_MAX} autoComplete="off" onChange={e => set({ title: e.target.value })}
+          placeholder={isBug ? 'What went wrong?' : 'A few words the team will see first'} />
+        <Label htmlFor="team-text" className="mt-4.5 mb-2 block text-sm font-semibold">Details</Label>
+        <Textarea id="team-text" value={team.text} maxLength={TEXT_MAX} placeholder={RT[team.type][2]} onChange={e => set({ text: e.target.value })}
+          aria-describedby={team.text.length >= TEXT_COUNT_FROM ? 'team-text-count' : undefined}
+          className={cn('max-h-60 resize-none rounded-lg px-3.5 py-3 leading-prose', phone ? 'min-h-24' : 'min-h-32')} />
+        {team.text.length >= TEXT_COUNT_FROM && (
+          <p id="team-text-count" className="mt-1.5 text-right text-xs text-muted-foreground tabular-nums">{TEXT_MAX - team.text.length} characters left</p>
         )}
-        {/* On a phone the window is short: a little less room around the form keeps the card whole on screen. */}
-        <h3 className={cn('mb-2 text-base font-strong text-foreground-2', phone ? 'mt-4' : 'mt-5')}>New request</h3>
-        <div className={cn('rounded-2xl border border-border bg-card px-4', phone ? 'py-3' : 'py-3.5')}>
-          <ChoiceChips label="Request type" value={team.type} options={(Object.keys(RT) as RequestType[]).map(k => [k, RT[k][1], RT[k][0]])}
-            onChange={type => patch({ team: { ...team, type } })} disabled={sending} />
-          <Textarea ref={box} aria-label="Your request" disabled={sending} maxLength={TEAM_REQUEST_TEXT_MAX} value={team.text} placeholder={RT[team.type][2]} onChange={e => patch({ team: { ...team, text: e.target.value } })}
-            className={cn('mt-3 max-h-60 resize-none rounded-xl bg-muted px-3.5 py-3 leading-normal', phone ? 'min-h-18' : 'min-h-27.5')} />
-          {showScreenshotBox(demo !== null, isBug) && (
-            <div className="mt-2.5 flex items-center gap-2.5 text-sm text-foreground-2">
-              <Checkbox id="team-shot" checked={team.shot} onCheckedChange={v => patch({ team: { ...team, shot: v === true } })} className="size-4.5" />
-              <Label htmlFor="team-shot" className="text-sm leading-normal font-normal">Attach a screenshot of this page and what I was doing</Label>
-            </div>
-          )}
-          <div className="mt-3.5 flex flex-wrap items-center gap-2.5">
-            <span className="grow basis-45 text-xs text-muted-foreground">{teamHelper(demo !== null, isBug)}{demo === null && <span className="block tabular-nums">{counterText(team.text.length)}</span>}</span>
-            <Button size="lg" disabled={empty || sending} onClick={() => void send()}>Send to the team</Button>
+        {showScreenshotBox(demo !== null, isBug) && (
+          <div className="mt-3 flex items-center gap-2.5 text-sm text-foreground-2">
+            <Checkbox id="team-shot" checked={team.shot} onCheckedChange={v => set({ shot: v === true })} className="size-4.5" />
+            <Label htmlFor="team-shot" className="text-sm leading-normal font-normal">Attach a screenshot of this page and what I was doing</Label>
           </div>
-        </div>
+        )}
       </div>
-    </Window>
+      {failed !== null && (
+        <p role="alert" className="px-7 pt-3 text-sm text-destructive-text max-sm:px-5">Your request wasn't sent. {failed}</p>
+      )}
+      <div className="flex flex-wrap items-center gap-3 px-7 pt-4 pb-5.5 max-sm:px-5">
+        <span className="grow basis-45 text-sm text-muted-foreground">{teamHelper(demo !== null, isBug)}</span>
+        <Button size="lg" disabled={empty || sending} onClick={() => void send()}>Send to the team</Button>
+      </div>
+    </>
+  )
+}
+
+function YourRequests({ open, closed, failed }: { open: TeamRow[]; closed: TeamRow[]; failed: boolean }) {
+  const [show, setShow] = useState<'open' | 'closed'>('open')
+  const rows = show === 'open' ? open : closed
+  return (
+    <div className="min-h-0 flex-1 overflow-auto px-7 pt-5 pb-6.5 max-sm:px-5">
+      <Segmented label="Show requests" value={show} onChange={setShow}
+        options={[['open', `Open · ${open.length}`], ['closed', `Closed · ${closed.length}`]]} />
+      {/* A failed read is never shown as an empty list: it says so, and Retry reads again. */}
+      {failed ? (
+        <div className="mt-3.5 flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3">
+          <span className="grow basis-45 text-sm text-foreground-2">Couldn't read your requests.</span>
+          <Button variant="outline" onClick={() => void agent.retry('requests')}>Retry</Button>
+        </div>
+      ) : rows.length === 0
+        ? <EmptyState className="mt-3.5">{show === 'open' ? 'No open requests. Ask for a tool, a job or a change.' : 'Nothing closed yet.'}</EmptyState>
+        : (
+          <ul aria-label={show === 'open' ? 'Open requests' : 'Closed requests'} className="m-0 mt-3.5 list-none rounded-2xl border border-border bg-card p-0">
+            {rows.map((q, i) => <RequestRow key={q.key} q={q} first={i === 0} />)}
+          </ul>
+        )}
+    </div>
+  )
+}
+
+function RequestRow({ q, first }: { q: TeamRow; first: boolean }) {
+  const [expanded, setExpanded] = useState(false)
+  const withdrawn = useUi(s => s.teamWithdrawn)
+  const patch = useUi(s => s.patch)
+  const showToast = useUi(s => s.showToast)
+  const clearToast = useUi(s => s.clearToast)
+  const phone = useUi(s => s.phone)
+  const id = `team-req-${q.key.replace(/[^\w-]/g, '-')}`
+  const chip = <Badge variant={q.closed ? 'status' : q.dated ? 'brand' : 'muted'} size="lg" className="flex-none">{q.status}</Badge>
+  const withdraw = () => {
+    patch({ teamWithdrawn: [...withdrawn, q.key] })
+    showToast('Request withdrawn.', { icon: 'undo', undo: () => { patch({ teamWithdrawn: useUi.getState().teamWithdrawn.filter(k => k !== q.key) }); clearToast() } })
+  }
+  return (
+    <li className={cn(!first && 'border-t border-divider')}>
+      <button type="button" aria-expanded={expanded} aria-controls={expanded ? id : undefined} onClick={() => setExpanded(x => !x)}
+        className={cn('flex w-full gap-3.5 rounded-2xl px-4.5 py-4 text-left transition-colors hover:bg-accent', phone ? 'items-start' : 'items-center')}>
+        <IconTile icon={q.icon} size="md" tone="fill" />
+        <span className="min-w-0 flex-1">
+          <span className="block text-md font-semibold">{q.title}</span>
+          <span className="mt-0.5 block text-sm text-muted-foreground">{q.kind} · <span className="whitespace-nowrap">{q.who}, {q.when}</span></span>
+          {phone && <span className="mt-1.5 block">{chip}</span>}
+        </span>
+        {!phone && chip}
+        <Icon name={expanded ? 'expand_less' : 'expand_more'} size={20} className="flex-none text-muted-foreground" />
+      </button>
+      {expanded && (
+        <div id={id} className="pr-4.5 pb-4 pl-16.5 max-sm:pl-4.5">
+          <p className="text-base leading-prose text-pretty text-foreground-2">{q.text ?? q.title}</p>
+          {/* Withdraw is the demo's stand-in: the product has no withdraw route yet (P6a), so it shows only in the demo. */}
+          {demo !== null && q.mine && !q.closed && (
+            <Button variant="ghost" className="mt-3 -ml-3" onClick={withdraw}>Withdraw request</Button>
+          )}
+        </div>
+      )}
+    </li>
   )
 }

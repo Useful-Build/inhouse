@@ -22,7 +22,7 @@ test('A chat sent from the composer is answered over a same-origin socket, with 
   })
   await signInAs(context, 'dana')
   await open(page, 'dana', '#/today')
-  await page.getByRole('textbox', { name: 'Ask your Inhouse agent' }).fill('scenario:hello can you hear me?')
+  await page.getByRole('textbox', { name: 'Ask Inhouse' }).fill('scenario:hello can you hear me?')
   // Pick the model like a person would. The composer's default is Opus, but the scripted model answers only for the harness model
   // (Sonnet, the picker's "Fast"): on a phone the choices sit in the "+" menu, elsewhere in the model menu.
   // The model menu button ("Model: <label>", Composer.tsx) shows once the models are read, so wait for whichever control the

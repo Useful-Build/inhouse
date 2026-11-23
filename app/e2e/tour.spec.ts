@@ -20,7 +20,7 @@ const PAGES: [Stage, string, string, string][] = [
   ['Watch', 'Normal', '#/approvals', "In Act, today's 6 fixes would be waiting here"],
   ['Watch', 'Normal', '#/chats', 'Approvals and routines start in Act'],
   ['Act', 'Normal', '#/activity', 'Activity'],
-  ['Run', 'Normal', '#/activity', 'Inhouse agent, inside your limits'],
+  ['Run', 'Normal', '#/activity', 'Chased Kestrel'],
   ['Act', 'Normal', '#/routines', 'Routines'],
   ['Act', 'Normal', '#/tools', 'Being connected'],
   ['Act', 'Normal', '#/tools/shopify', 'What your Inhouse agent can do with Shopify'],
@@ -54,13 +54,14 @@ test('Pop-ups: notifications, account menu, team window, empty chat', async ({ f
   await shot(page, 'pop-notifications')
   await page.keyboard.press('Escape')
   await page.getByRole('button', { name: 'Settings' }).click()
-  await expect(page.getByText('sam@northline.example · Admin')).toBeVisible()
+  await expect(page.getByRole('menu').getByText('sam@northline.example', { exact: true })).toBeVisible()
+  await expect(page.getByRole('menu').getByText('Admin', { exact: true })).toBeVisible()
   await shot(page, 'pop-account')
   await page.getByRole('menuitem', { name: /^Your Inhouse team/ }).click()
   await expect(page.getByRole('dialog', { name: 'Your Inhouse team' })).toBeVisible()
   await shot(page, 'pop-team')
   await page.keyboard.press('Escape')
   await page.getByRole('button', { name: 'New chat' }).click()
-  await expect(page.getByText('What do you want to know?')).toBeVisible()
+  await expect(page.getByText('What should we look into?')).toBeVisible()
   await shot(page, 'chat-empty')
 })

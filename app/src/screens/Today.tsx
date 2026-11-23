@@ -10,7 +10,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
-import { AgentMark, Button, CardGrid, EmptyState, Icon, IconButton, LogoTile, MenuItem, SectionHeader } from '../ui'
+import { escapeClosesMenuOnly } from '../ui/dialogs'
+import { Button, CardGrid, EmptyState, Icon, IconButton, InhouseMark, LogoTile, MenuItem, SectionHeader } from '../ui'
 import { PromptBentoSlot } from '../ui/chat'
 import { Select, TAP } from '../ui/fields'
 
@@ -30,6 +31,8 @@ export function Today() {
   // Handled cards stay after the ones that need the person, in every sort.
   if (byAmount) cards.sort((a, b) => Number(a.handled) - Number(b.handled) || amountOf(b.problem) - amountOf(a.problem))
   const h = handled(ctx)
+  // The review window steps through the cards that need the person, in the order they're shown.
+  const needsYouIds = cards.filter(c => !c.handled && !ctx.agent.approved[c.problem.id]).map(c => c.problem.id)
   const empty = todayEmptyState(ctx)
   const setup = setupRows(ctx.data)
   // The first tool the agent doesn't have yet: the one Today waits for.
@@ -72,7 +75,7 @@ export function Today() {
 
       {f.isLoading && (
         <div className="mt-7">
-          <SectionHeader icon={<AgentMark />} title="Reading your tools" count={`${ctx.data.tools.readDone} of ${ctx.data.tools.connected.length} done`} className="mb-3" />
+          <SectionHeader icon={<InhouseMark size={16} />} title="Reading your tools" count={`${ctx.data.tools.readDone} of ${ctx.data.tools.connected.length} done`} className="mb-3" />
           <CardGrid size="wide" aria-hidden="true">
             {SKELETON_WIDTHS.map(w => (
               <div key={w} className="box-border flex min-h-47.5 flex-col gap-2.5 rounded-2xl border border-border bg-card p-4.5">
@@ -102,7 +105,7 @@ export function Today() {
             <button type="button" onClick={() => go('activity')}
               className={`mb-3 box-border flex w-full items-center rounded-xl bg-brand-tint px-4 py-3 text-sm text-brand-text transition-colors hover:bg-brand/12 ${phone ? 'flex-wrap gap-x-3 gap-y-1.5' : 'flex-nowrap gap-3'}`}>
               <Icon name="check_circle" size={18} weight={400} />
-              <b className="font-semibold whitespace-nowrap">{h.count} handled before you woke up</b>
+              <b className="font-semibold whitespace-nowrap">{h.count} handled today</b>
               {/* On a phone the list gets its own full-width lines under the title. */}
               <span className={`min-w-0 text-left text-brand-text ${phone ? 'order-3 grow basis-full' : 'ellipsis flex-1'}`}>{phone ? h.summary.split(' · ').map((item, i, all) => <Fragment key={item}><span className="whitespace-nowrap">{item}{i < all.length - 1 && ' ·'}</span>{' '}</Fragment>) : h.summary}</span>
               <span className={`font-semibold whitespace-nowrap ${phone ? 'order-2 ml-auto' : ''}`}>See activity</span>
@@ -135,7 +138,7 @@ export function Today() {
               )}
               <PromptBentoSlot suggestions={ctx.data.chat.suggestions} tools={readingTools(ctx)} onAsk={q => { void ask(q) }} showRoutine={false} />
               {ctx.data.tools.connected.length === 0 && ctx.data.chat.suggestions.length === 0 && (
-                <EmptyState>Nothing needs you today.</EmptyState>
+                <EmptyState>You're all caught up.</EmptyState>
               )}
             </div>
           )}
@@ -145,7 +148,7 @@ export function Today() {
               const dv = draftView(ctx, p.id)
               // Handled and approved cards are muted with the done token, never dimmed with opacity.
               const done = c.dimmed ? 'text-done' : ''
-              const open = () => openProblem(p.id)
+              const open = () => openProblem(p.id, needsYouIds)
               const askAbout = () => void ask('Tell me more about: ' + p.title)
               // Snooze and dismiss are for cards that still need the person, not ones approved or handled.
               const needsYou = !c.handled && !ctx.agent.approved[p.id]
@@ -167,11 +170,13 @@ export function Today() {
                       )}
                       <DropdownMenu modal={false}>
                         <DropdownMenuTrigger asChild>
-                          <IconButton icon="more_horiz" label={`More actions for ${p.title}`} size={18} variant={c.dimmed ? 'ghost' : 'card'} box="icon-sm" className={cn('relative z-raised -my-1.5 -mr-1', c.dimmed && done, tap)} />
+                          <IconButton icon="more_horiz" label={`More actions for ${p.title}`} size={18} variant="ghost" box="icon-sm" className={cn('relative z-raised -my-1.5 -mr-1', c.dimmed && done, tap)} />
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" collisionPadding={16} aria-label="Card actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
+                        <DropdownMenuContent align="end" collisionPadding={16} aria-label="Card actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input"
+                          // Escape closes only this menu, not every overlay (App's window listener hears it after Radix).
+                          onEscapeKeyDown={escapeClosesMenuOnly}>
                           <MenuItem onSelect={askAbout}>
-                            <Icon name="chat_bubble" size={18} /><span className="flex-1">Ask about this</span>
+                            <Icon name="chat_bubble" size={18} /><span className="flex-1">Ask Inhouse</span>
                           </MenuItem>
                           {needsYou && <>
                             <MenuItem onSelect={() => setAside(p.id, 'snoozed')}>
@@ -226,7 +231,7 @@ export function Today() {
                         <span className="min-w-0 flex-1 text-pretty">{c.status}</span>
                       </div>
                       {c.quiet && (
-                        <Button variant="secondary" className={cn('relative z-raised self-start', tap)} onClick={c.quiet === 'Ask about this' ? askAbout : c.quiet === 'Undo' ? () => undoHandled(p.id) : open}>{c.quiet}</Button>
+                        <Button variant="secondary" className={cn('relative z-raised self-start', tap)} onClick={c.quiet === 'Ask Inhouse' ? askAbout : c.quiet === 'Undo' ? () => undoHandled(p.id) : open}>{c.quiet}</Button>
                       )}
                     </div>
                   )}

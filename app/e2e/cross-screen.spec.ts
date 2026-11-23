@@ -16,12 +16,12 @@ const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' }
 const main = (page: Page) => page.locator('main')
 const hash = (page: Page) => page.evaluate(() => location.hash)
 const askInChat = async (page: Page, q: string) => {
-  await page.getByRole('textbox', { name: 'Message your Inhouse agent' }).fill(q)
+  await page.getByRole('textbox', { name: 'Message Inhouse' }).fill(q)
   await page.keyboard.press('Enter')
   await expect(main(page).locator('[data-chat-msg]').getByText(q, { exact: true })).toBeVisible()
 }
 const askFromToday = async (page: Page, q: string) => {
-  await page.getByRole('textbox', { name: 'Ask your Inhouse agent' }).fill(q)
+  await page.getByRole('textbox', { name: 'Ask Inhouse' }).fill(q)
   await page.keyboard.press('Enter')
   await expect(main(page).locator('[data-chat-msg]').getByText(q, { exact: true })).toBeVisible()
 }

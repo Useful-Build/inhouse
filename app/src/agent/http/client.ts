@@ -26,7 +26,7 @@ import { PLACES, libraryDownloadPath, postLibraryWrite, readLibrary, uploadLibra
 import { putAside, readToday } from './today'
 import { newRunKey, postRoutineRev, postRoutineRun, readRoutines, setRoutineToggle } from './routines'
 import { readSkills } from './skills'
-import { fromOpen, postTeamRequest, putWithdrawn, readOpenRequests } from './team-requests'
+import { fromOpen, postTeamRequest, putWithdrawn, readOpenRequests, requestWords } from './team-requests'
 import { findMemoryLine, forgetMemoryLine, readMemory, readWaitingMemory, reviewLanded, reviewMemoryLine } from './memory'
 import { listedModels, readModels } from './models'
 import type { ServedModels } from './models'
@@ -1386,10 +1386,12 @@ export class HttpAgent implements AgentClient {
     on ? this.fileRequest('tool', key, `Connect ${this.read().tools.catalog.find(c => c.k === key)?.name ?? key}`) : this.takeBack('tool', key)
   /** Route 81: a skill the team should add (a `job` about that skill). */
   requestSkill = (name: string): Promise<void> => this.fileRequest('job', name, `Add the skill "${name}"`)
+  // The agent has no read for a skill's instructions yet, so `body` stays undefined and the page shows its header and rail.
+  loadSkill = (_name: string): Promise<void> => Promise.resolve()
   setToolPaused = (_key: string, _paused: boolean) => this.refuse()
-  /** Route 81: what the team window sent (its type and words ride on the request as `kind` and `text`). */
+  /** Route 81: what the team window sent (its type rides on the request as `kind`; its title and details become the words). */
   sendTeamRequest = (req: Parameters<AgentClient['sendTeamRequest']>[0]): Promise<void> =>
-    req.kind && req.text ? this.fileRequest(req.kind, undefined, req.text) : rejected()
+    req.kind ? this.fileRequest(req.kind, undefined, requestWords(req.title, req.text)) : rejected()
   private fileRequest = this.needs((k, kind: TeamRequestRecord['kind'], subject: string | undefined, text: string): Promise<void> =>
     this.write({
       lane: 'requests',

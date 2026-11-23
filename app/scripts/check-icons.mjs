@@ -18,7 +18,7 @@ const FONT = path.join(root, 'public/fonts/material-symbols-rounded.woff2')
 // words (a name with an underscore is found by its shape). Every one must still appear as a string in src, or this
 // check fails, so the list can't go stale. A new plain-word name passed this way is caught at run time instead: the
 // Icon draws the fallback glyph and warns in dev.
-const TUPLE_NAMES = ['badge', 'build', 'code', 'description', 'group', 'hub', 'image', 'psychology', 'sort', 'stacks', 'stairs', 'straighten', 'person', 'schedule', 'history', 'tune', 'savings', 'work', 'campaign', 'logout', 'notifications', 'neurology']
+const TUPLE_NAMES = ['badge', 'build', 'code', 'description', 'group', 'hub', 'image', 'sort', 'stacks', 'stairs', 'straighten', 'person', 'schedule', 'history', 'tune', 'savings', 'work', 'campaign', 'logout', 'notifications', 'neurology']
 // Always drawn by the fallback.
 const FALLBACK = 'circle'
 

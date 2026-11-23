@@ -27,13 +27,14 @@ async function openAccount(page: Page) {
   await expect(account(page)).toBeVisible()
 }
 
-test('S1: The sidebar has two sections: the day (Today, Approvals, Activity) and "Your agent" (Routines, Skills, Tools, Library)', async ({ fx, page }) => {
+test('S1: The sidebar has two sections: the day (Today, Approvals, Activity, Library) and "Your agent" (Routines, Skills, Tools)', async ({ fx, page }) => {
   await start(page, fx)
   await openSidebar(page)
   const nav = side(page).getByRole('navigation', { name: 'Main' })
-  for (const name of ['Today', 'Approvals', 'Activity']) await expect(nav.getByRole('button', { name: new RegExp(`^${name}`) }).first()).toBeVisible()
+  for (const name of ['Today', 'Approvals', 'Activity', 'Library']) await expect(nav.getByRole('button', { name: new RegExp(`^${name}`) }).first()).toBeVisible()
   const agent = nav.getByRole('group', { name: 'Your agent' })
-  for (const name of ['Routines', 'Skills', 'Tools', 'Library']) await expect(agent.getByRole('button', { name })).toBeVisible()
+  for (const name of ['Routines', 'Skills', 'Tools']) await expect(agent.getByRole('button', { name })).toBeVisible()
+  await expect(agent.getByRole('button', { name: 'Library' })).toHaveCount(0)
   await expect(side(page).getByRole('button', { name: 'Usage' })).toHaveCount(0)
   await expect(side(page).getByRole('button', { name: /Message the team/ })).toHaveCount(0)
   await agent.getByRole('button', { name: 'Skills' }).click()

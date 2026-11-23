@@ -30,10 +30,16 @@ describe('the client: requests to the Inhouse team', () => {
     expect(s.requestedTools).toEqual({ zebra: true })
     expect(s.requestedSkills).toEqual({ pdf: true })
     expect(s.teamRequests.map(r => [r.title, r.sub, r.status])).toEqual([
-      ['Connect Zebra Ledger', 'New tool · sent by a teammate', 'Sent'],
-      ['Add the skill "pdf"', 'New job · sent by you', 'Sent'],
-      ['Something broke', 'Report a bug · sent by a teammate', 'Sent'],
+      ['Connect Zebra Ledger', 'New tool · sent by a teammate', 'With the team'],
+      ['Add the skill "pdf"', 'New job · sent by you', 'With the team'],
+      ['Something broke', 'Report a bug · sent by a teammate', 'With the team'],
     ])
+    expect(s.teamRequests.map(r => r.mine)).toEqual([false, true, false])
+  })
+
+  test('a request with a title lists the title, and opens to the words in full', async () => {
+    const { agent } = await loaded(reads({ requests: [rec('a', { kind: 'bug', subject: null, text: 'Export fails\n\nIt broke when I exported.', mine: true })] }))
+    expect(agent.getSnapshot().teamRequests.map(r => [r.title, r.text])).toEqual([['Export fails', 'Export fails\n\nIt broke when I exported.']])
   })
 
   test('requestTool posts a tool request with the tool as subject and a readable text, and marks it requested', async () => {
@@ -68,8 +74,13 @@ describe('the client: requests to the Inhouse team', () => {
     await agent.requestSkill('pdf')
     expect(body(calls.filter(c => c.method === 'POST')[0]!)).toEqual({ kind: 'job', subject: 'pdf', text: 'Add the skill "pdf"' })
     expect(agent.getSnapshot().requestedSkills).toEqual({ pdf: true })
-    await agent.sendTeamRequest({ icon: 'bug_report', title: 't', sub: 's', at, status: 'Sent', kind: 'bug', text: 'It broke when I sent a long request.' })
-    expect(body(calls.filter(c => c.method === 'POST')[1]!)).toEqual({ kind: 'bug', text: 'It broke when I sent a long request.' })
+    // A title typed in the window goes on its own line above the details; one made from the details isn't repeated; a title alone is the words.
+    await agent.sendTeamRequest({ icon: 'bug_report', title: 'Export fails', sub: 's', at, status: 'Sent', kind: 'bug', text: 'It broke when I sent a long request.' })
+    expect(body(calls.filter(c => c.method === 'POST')[1]!)).toEqual({ kind: 'bug', text: 'Export fails\n\nIt broke when I sent a long request.' })
+    await agent.sendTeamRequest({ icon: 'bug_report', title: 'It broke again.', sub: 's', at, status: 'Sent', kind: 'bug', text: 'It broke again.' })
+    expect(body(calls.filter(c => c.method === 'POST')[2]!)).toEqual({ kind: 'bug', text: 'It broke again.' })
+    await agent.sendTeamRequest({ icon: 'campaign', title: 'More reports', sub: 's', at, status: 'Sent', kind: 'feedback' })
+    expect(body(calls.filter(c => c.method === 'POST')[3]!)).toEqual({ kind: 'feedback', text: 'More reports' })
   })
 
   test('a refused request is taken back: not marked requested', async () => {
@@ -135,7 +146,7 @@ describe('the client: requests to the Inhouse team', () => {
 
   test('the different-words check ignores surrounding whitespace in what was sent', async () => {
     const { agent } = await loaded({ ...reads(), 'POST /api/team-requests': { status: 201, body: rec('n', { kind: 'bug', subject: null, text: 'It broke.', mine: true }) } })
-    await expect(agent.sendTeamRequest({ icon: 'bug_report', title: 't', sub: 's', at, status: 'Sent', kind: 'bug', text: '  It broke.  ' })).resolves.toBeUndefined()
+    await expect(agent.sendTeamRequest({ icon: 'bug_report', title: 'It broke.', sub: 's', at, status: 'Sent', kind: 'bug', text: '  It broke.  ' })).resolves.toBeUndefined()
   })
 
   test('the names are recomputed when the members arrive after the requests', async () => {

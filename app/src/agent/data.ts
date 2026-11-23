@@ -177,7 +177,36 @@ const routineOf = (r: RawRoutine): Omit<RoutineDef, 'id'> => {
 export const routines = (routinesJson.routines as RawRoutine[]).map(routineOf)
 export const seedRoutine = routineOf(routinesJson.createdInSeedChat as RawRoutine)
 
-export const skills = (skillsJson.skills as SkillDef[]).map(x => ({ ...x, need: needOf(`the skill "${x.n}"`, x.need) }))
+/** A sample routine's id, from its name: "Morning check" is "routine-morning-check". */
+export const routineIdOf = (name: string) => 'routine-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+
+/** A skill as the sample data has it: its times as "-3d 10:00" and the routines that use it by name. */
+type RawSkill = Omit<SkillDef, 'need' | 'updatedAt' | 'versions'> & { need: number; updatedAt?: string; versions?: { by: string; at: string; note: string }[] }
+const skillOf = (x: RawSkill): SkillDef => {
+  const what = `the skill "${x.n}"`
+  const { updatedAt, versions, routines: usedBy, ...rest } = x
+  const names = [...routines.map(r => r.name), seedRoutine.name]
+  for (const r of usedBy ?? []) if (!names.includes(r)) throw new Error(`Sample data: ${what} is used by "${r}", which isn't a routine.`)
+  return {
+    ...rest, need: needOf(what, x.need),
+    ...(updatedAt !== undefined ? { updatedAt: sampleAt(what, updatedAt) } : {}),
+    ...(versions ? { versions: versions.map(v => ({ ...v, at: sampleAt(what, v.at) })) } : {}),
+    ...(usedBy ? { routines: usedBy.map(routineIdOf) } : {}),
+  }
+}
+export const skills = (skillsJson.skills as RawSkill[]).map(skillOf)
+/**
+ * The sample skills' instructions (`body`), by skill name. A separate chunk, loaded when a skill's page first opens, so
+ * the long markdown isn't in Today's first load (scripts/check-bundle.mjs). A body for a skill skills.json doesn't have stops the app.
+ */
+export const loadSkillBodies = async (): Promise<Record<string, string>> => {
+  const raw = keepTimesTogether((await import('@sample/skill-bodies.json')).default.bodies) as Record<string, unknown>
+  for (const [n, body] of Object.entries(raw)) {
+    if (!skills.some(s => s.n === n)) throw new Error(`Sample data: skill-bodies.json has a body for "${n}", which isn't a skill.`)
+    if (typeof body !== 'string' || !body.trim()) throw new Error(`Sample data: the skill "${n}" has an empty body.`)
+  }
+  return raw as Record<string, string>
+}
 export const skillSuggestions = skillsJson.suggested as SkillSuggestion[]
 export const skillSuggestionsTitle = skillsJson.suggestedTitle
 
@@ -320,11 +349,20 @@ export const activityFixed = {
   today: (activityJson.today as RawActivityLine[]).map(activityLine),
   earlier: (activityJson.earlier as RawActivityLine[]).map(activityLine),
 }
+const CLOSED = ['done', 'declined', 'withdrawn'] as const
+/** How a sample team request ended: bad sample data stops the app with a message. */
+const closedOf = (title: string, v: string): NonNullable<TeamRequest['closed']> => {
+  const c = CLOSED.find(x => x === v)
+  if (!c) throw new Error(`Sample data: the team request "${title}" has closed "${v}"; use one of ${CLOSED.join(', ')}.`)
+  return c
+}
 export const notifications = {
   notifications: notificationsJson.notifications,
   teamRequests: notificationsJson.teamRequests.map((r): Omit<TeamRequest, 'icon'> => ({
     title: r.title, sub: r.sub, at: sampleAt(`the team request "${r.title}"`, r.at), status: r.status,
     ...(r.statusAt !== undefined ? { statusAt: sampleAt(`the team request "${r.title}"`, r.statusAt) } : {}),
+    ...(r.text !== undefined ? { text: r.text } : {}),
+    ...(r.closed !== undefined ? { closed: closedOf(r.title, r.closed) } : {}),
   })),
 }
 export const scenarios = scenariosJson.scenarios

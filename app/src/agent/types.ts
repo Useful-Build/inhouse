@@ -154,6 +154,9 @@ export interface AgentClient {
   setToggle(key: string, on: boolean): Promise<void>
   requestTool(key: string, on: boolean): Promise<void>
   requestSkill(name: string): Promise<void>
+  /** A skill's page is open: fetches its instructions (`body` in `read().skills`) if they aren't in yet. `read()` changes when
+   *  they arrive; it resolves then, or at once when there's nothing to fetch. */
+  loadSkill(name: string): Promise<void>
   setToolPaused(key: string, paused: boolean): Promise<void>
   forgetMemory(key: string, forgotten: boolean): Promise<void>
   /**

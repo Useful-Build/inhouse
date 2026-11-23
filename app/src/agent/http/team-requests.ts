@@ -33,6 +33,15 @@ const titleOf = (text: string) => {
   return `${cut.slice(0, Math.max(cut.lastIndexOf(' '), 20)).trimEnd()}…`
 }
 
+/**
+ * The words the server keeps for a request from the team window: the title on its own line above the details, or
+ * either alone. A title the window made from the details (nothing typed in Title) isn't repeated.
+ */
+export const requestWords = (title: string, text: string | undefined): string => {
+  const t = title.trim(), d = text?.trim() ?? ''
+  return !d ? t : t === titleOf(d) ? d : `${t}\n\n${d}`
+}
+
 /** What the pages read from the open requests. `nameOf`: a member's name by id, or null. */
 export function fromOpen(open: readonly TeamRequestRecord[], nameOf: (id: string) => string | null): { teamRequests: TeamRequest[]; requestedTools: Record<string, true>; requestedSkills: Record<string, true> } {
   const requestedTools: Record<string, true> = {}
@@ -43,7 +52,11 @@ export function fromOpen(open: readonly TeamRequestRecord[], nameOf: (id: string
     if (r.subject && r.kind === 'tool') requestedTools[r.subject] = true
     if (r.subject && r.kind === 'job') requestedSkills[r.subject] = true
     const [icon, label] = LABEL[r.kind]
-    teamRequests.push({ icon, title: titleOf(r.text), sub: `${label} · sent by ${r.mine ? 'you' : (r.requestedBy ? nameOf(r.requestedBy) : null) ?? 'a teammate'}`, at: r.at, status: 'Sent' })
+    // The title is the first line (the team window's Title, when one was typed); the row opens to the words in full.
+    teamRequests.push({
+      icon, title: titleOf(r.text.split('\n')[0]), sub: `${label} · sent by ${r.mine ? 'you' : (r.requestedBy ? nameOf(r.requestedBy) : null) ?? 'a teammate'}`, at: r.at,
+      status: 'With the team', kind: r.kind, text: r.text, mine: r.mine,
+    })
   }
   return { teamRequests, requestedTools, requestedSkills }
 }
