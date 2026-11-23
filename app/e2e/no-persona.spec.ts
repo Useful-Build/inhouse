@@ -191,28 +191,25 @@ for (const size of SIZES) {
         }
         await composerMenus(page, `${label} today`, phone)
 
-        // Activity: every row expanded, and every trace a row opens.
+        // Activity: every row opens its sheet, with its steps shown.
         await go(page, '#/activity')
         await expect(page.getByRole('heading', { level: 1, name: 'Activity' })).toBeVisible()
-        const rows = main.locator('button[data-activity-row][aria-expanded]')
+        const rows = main.locator('button[data-activity-row]')
         expect(await rows.count() > 0 || scenario === 'First day' || scenario === 'Loading', 'Activity lists rows').toBe(true)
         const nRows = await rows.count()
-        const seenTraces = new Set<string>()
         for (let i = 0; i < nRows; i++) {
           await rows.nth(i).click()
-          await expect(rows.nth(i)).toHaveAttribute('aria-expanded', 'true')
+          const sheet = page.getByRole('dialog')
+          await expect(sheet).toBeVisible()
+          const how = sheet.getByRole('button', { name: 'How your agent worked it out' })
+          if (await how.count()) await how.click()
           await check(page, `${label} activity row ${i}`)
-          const steps = main.getByRole('button', { name: /^See every step/ })
-          if (await steps.count()) {
-            const key = (await steps.first().innerText()).trim()
-            await steps.first().click()
-            await traceWindow(page, `${label} activity row ${i} trace`, !seenTraces.has(key))
-            seenTraces.add(key)
-          }
+          await page.keyboard.press('Escape')
+          await expect(page.getByRole('dialog')).toHaveCount(0)
         }
 
         // Activity filters: every tab, including the empty states.
-        for (const tab of ['Changes', 'Waiting on you', 'Problems', 'All']) {
+        for (const tab of ['Needs you', 'Changes', 'All']) {
           await page.getByRole('radiogroup', { name: 'Filter activity' }).getByRole('radio', { name: tab, exact: true }).click()
           await expect(page.getByRole('radiogroup', { name: 'Filter activity' }).getByRole('radio', { name: tab, exact: true })).toHaveAttribute('aria-checked', 'true')
           await check(page, `${label} activity filter ${tab}`)

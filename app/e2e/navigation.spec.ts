@@ -260,7 +260,7 @@ test('Team window: Send waits for words (whitespace is empty), and the request c
   await shot(page, 'team-sent-by-name')
 })
 
-test('Sidebar sections: Today, Approvals and Activity first, then the "Your agent" group announced as a group; Usage and the team live in the account menu', async ({ fx, page }) => {
+test('Sidebar sections: Today, Approvals, Activity and Library first, then the "Your agent" group announced as a group; Usage and the team live in the account menu', async ({ fx, page }) => {
   await start(page, fx)
   const nav = side(page).getByRole('navigation', { name: 'Main' })
   // Each row's label as shown: the icon ligatures (`.ms`) and the Approvals count left out.
@@ -272,8 +272,8 @@ test('Sidebar sections: Today, Approvals and Activity first, then the "Your agen
   // The label names the group for a screen reader.
   const agentGroup = nav.getByRole('group', { name: 'Your agent' })
   await expect(agentGroup).toBeVisible()
-  expect(await names(agentGroup)).toEqual(['Routines', 'Skills', 'Tools', 'Library'])
-  expect(await names(nav)).toEqual(['Today', 'Approvals', 'Activity', 'Routines', 'Skills', 'Tools', 'Library'])
+  expect(await names(agentGroup)).toEqual(['Routines', 'Skills', 'Tools'])
+  expect(await names(nav)).toEqual(['Today', 'Approvals', 'Activity', 'Library', 'Routines', 'Skills', 'Tools'])
   // Usage and the old team card left the sidebar; the palette still lists Usage.
   await expect(side(page).getByRole('button', { name: 'Usage' })).toHaveCount(0)
   await expect(side(page).getByRole('button', { name: /Message the team/ })).toHaveCount(0)

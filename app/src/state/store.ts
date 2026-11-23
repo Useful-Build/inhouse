@@ -23,7 +23,7 @@ export type Page = 'today' | 'library' | 'chats' | 'approvals' | 'routines' | 'a
 export type Pop = null | 'notif' | 'me' | 'team' | 'help'
 export type RequestType = 'tool' | 'job' | 'change' | 'bug' | 'feedback'
 export type Ambient = 'When Inhouse agent works' | 'Always' | 'Off'
-export type ActivityFilter = 'all' | 'change' | 'needs' | 'problem'
+export type ActivityFilter = 'all' | 'change' | 'needs'
 export type UsageTab = 'person' | 'job' | 'model' | 'tool'
 export type SkillTab = 'all' | 'team' | 'mine'
 export type TodaySort = 'default' | 'amount'
@@ -150,7 +150,6 @@ export interface UiState {
 
   // page filters
   actFilter: ActivityFilter
-  actOpen: string | null
   usageTab: UsageTab
   /** Index into the usage months, 0 being this month. */
   usageMonth: number
@@ -596,7 +595,7 @@ const initialUi = (): Omit<UiState, 'stage' | 'scenario' | 'ambient' | 'animateM
   editing: null, todayDraft: '', chatDraft: '', atts: [], modelSel: null, toolOff: {},
   chatId: null, chatList: false, fresh: false, extras: [], hidden: {}, stash: {}, started: [], replyTo: null,
   runs: {}, views: {}, history: {}, queued: {}, editMsg: null, libraryView: 'masonry',
-  actFilter: 'all', actOpen: null, usageTab: 'person', usageMonth: 0, skillTab: 'all', todaySort: 'default',
+  actFilter: 'all', usageTab: 'person', usageMonth: 0, skillTab: 'all', todaySort: 'default',
   drafts: {}, composerFocus: 0, modelMenuAsk: 0,
   feedback: {},
   approvalSort: 'oldest',

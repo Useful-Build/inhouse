@@ -15,7 +15,7 @@ export const appMergeConfig: ConfigExtension<string, string> = {
       animate: ['ih-wind', 'mark-1', 'mark-2', 'mark-3', 'step-in', 'word-in'],
       // --container-* (w-, max-w-, columns-) and --spacing-* (min-h-, max-h-, inset, margins) names.
       container: ['sidebar', 'sidebar-rail', 'settings-nav', 'library-nav', 'today-column', 'chat-column', 'page-narrow', 'page-default', 'page-wide',
-        'screen-gutter', 'screen-gutter-sm', 'menu-message', 'menu-attach', 'menu-tools', 'menu-mode', 'menu-mode-phone', 'menu-account', 'popover-notifications', 'select-menu', 'problem-panel', 'library',
+        'screen-gutter', 'screen-gutter-sm', 'menu-message', 'menu-attach', 'menu-tools', 'menu-mode', 'menu-mode-phone', 'menu-account', 'popover-notifications', 'select-menu', 'problem-panel', 'activity-panel', 'library',
         'window-sm', 'window-md', 'window-lg', 'window-xl', /* PR 5 */ 'prose-measure', 'answer-measure'],
       spacing: ['select-height', 'below-topbar', 'playhead', 'playhead-offset', 'activity-indent', 'time-column', 'run-when', 'bar-tick', 'today-top', 'chat-empty-top',
         'viewer-image', 'card-name', 'card-meta', 'today-status', 'toast', 'trace-label', 'safe-bottom', 'composer-input', 'window', 'window-sm', 'window-lg',
