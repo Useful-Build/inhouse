@@ -8,7 +8,8 @@ import type { Ctx, DraftView } from '../state/derive'
 import { fmtMoney, fmtProse, fmtTime, hasAmount } from '../lib/format'
 import { display } from '../state/display'
 import { useCtx, useUi } from '../state/store'
-import { Button, DetailList, Icon, IconButton, InhouseMark, LogoTile, Window } from '../ui'
+import { Button, DetailList, Icon, IconButton, InhouseMark, LogoTile, MenuItem, Window } from '../ui'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { isUrgent } from '../ui/severity'
 import { TAP } from '../ui/fields'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion'
@@ -195,6 +196,35 @@ export function ProblemPanel() {
   const dontSend = !ctx.agent.setAside[openId] && (
     <Button variant="ghost" size="lg" className={cn('flex-none text-foreground-3', tap)} onClick={() => { setAside(openId, 'declined'); closeProblem() }}>Don't send</Button>
   )
+  // Everything besides the decision: ask the usual approver, ask the agent, snooze, or say it isn't a problem.
+  const putAside = (why: 'snoozed' | 'dismissed') => { setAside(openId, why); closeProblem() }
+  const more = (
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <IconButton icon="more_horiz" label="More actions" size={18} variant="card" className={cn('flex-none', tap)} />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" side="top" collisionPadding={16} aria-label="More actions" className="w-menu-message max-w-screen-gutter border-input">
+        {dv.mode === 'waiting' && dv.askApprover && (
+          <MenuItem onSelect={() => showToast(`${dv.askApprover?.replace(/^Ask\b/, 'Asking')} isn't connected in this demo.`, { icon: 'info', ms: 4000 })}>
+            <Icon name="person" size={18} /><span className="flex-1">{dv.askApprover}</span>
+          </MenuItem>
+        )}
+        {!watch && (
+          <MenuItem onSelect={() => void ask('Tell me more about: ' + p.title)}>
+            <Icon name="chat_bubble" size={18} /><span className="flex-1">Ask about this</span>
+          </MenuItem>
+        )}
+        {!ctx.agent.setAside[openId] && <>
+          <MenuItem onSelect={() => putAside('snoozed')}>
+            <Icon name="snooze" size={18} /><span className="flex-1">Snooze until tomorrow</span>
+          </MenuItem>
+          <MenuItem onSelect={() => putAside('dismissed')}>
+            <Icon name="do_not_disturb_on" size={18} /><span className="flex-1">Not a problem</span>
+          </MenuItem>
+        </>}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
   const status = (icon: string, title: string, line: string, undo: (() => void) | null) => (
     <div className="flex items-center gap-2.5 text-base">
       <Icon name={icon} size={20} weight={400} className="flex-none text-foreground" />
@@ -240,26 +270,20 @@ export function ProblemPanel() {
         </div>
       </div>
 
-      <div className={cn('flex flex-none gap-2 border-t border-divider pt-3.5 pb-4', phone ? 'flex-col px-5' : 'items-center pr-5 pl-8')}>
+      <div className={cn('flex flex-none gap-2 border-t border-divider pt-3.5 pb-4', phone ? 'flex-wrap items-center px-5' : 'items-center pr-6 pl-8')}>
+        {/* The decision reads left to right: the main action, Don't send, then everything else in the "···" menu. */}
         {watch && <>
-          {!phone && <div className="flex-1" />}
-          <Button variant="ghost" size="lg" className={cn('flex-none text-foreground-3', phone && 'order-last', tap)} onClick={() => { setAside(openId, 'snoozed'); closeProblem() }}>Set aside</Button>
           <Button variant="primary" size="lg" className={tap} onClick={() => void ask('Tell me more about: ' + p.title)}>Ask about this</Button>
+          {more}
         </>}
         {dv.mode === 'waiting' && <>
-          {/* Who usually approves, when it's someone else, with a way to ask them. */}
-          {dv.approverNote ? (
-            <span className="min-w-0 flex-1 text-sm text-muted-foreground">
-              {dv.approverNote}
-              {dv.askApprover && <>{' '}<button type="button" className={cn('rounded-xs font-medium text-foreground hover:underline', tap)}
-                onClick={() => showToast(`${dv.askApprover?.replace(/^Ask\b/, 'Asking')} isn't connected in this demo.`, { icon: 'info', ms: 4000 })}>{dv.askApprover}</button></>}
-            </span>
-          ) : !phone && <div className="flex-1" />}
-          {!phone && dontSend}
-          <Button variant="primary" size="lg" className="h-auto min-h-10 min-w-0 py-2 whitespace-nowrap" onClick={approveAndNext}>
+          <Button variant="primary" size="lg" className={cn('h-auto min-h-10 min-w-0 py-2 whitespace-nowrap', phone && 'w-full')} onClick={approveAndNext}>
             {dv.cta}{p.draft.amount && p.draft.money && <span className="font-normal tabular-nums">{fmtMoney(p.draft.amount.money, display())}</span>}
           </Button>
-          {phone && dontSend}
+          {dontSend}
+          {more}
+          {/* Who usually approves, when it's someone else: a quiet note on the right. Asking them is in the menu. */}
+          {dv.approverNote && <span className={cn('min-w-0 flex-1 text-sm text-muted-foreground', phone ? 'basis-full' : 'max-w-sm pl-4 text-right')}>{dv.approverNote}</span>}
         </>}
         {dv.mode === 'approved' && <div className="flex-1">{status('check_circle', dv.doneText, dv.approvedLine, dv.canUndo ? () => unapprove(openId) : null)}</div>}
         {dv.mode === 'handled' && (
