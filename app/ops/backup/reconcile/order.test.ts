@@ -4,13 +4,14 @@
 //  2. step 3b applies a re-invite or a restore after a removal, giving a removed member access back;
 //  3. a deletion logged inside the 60 s skew margin before the backup's point isn't replayed;
 //  4. with no active Admin left in the restored database, nobody can confirm (L5), or a removed Admin still can.
-import { applyD1Migrations } from 'cloudflare:test'
+import { applyD1Migrations, runInDurableObject } from 'cloudflare:test'
 import type { D1Migration } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { beforeAll, expect, it } from 'vitest'
 import { SYSTEM_MEMBER_ID } from '../../../server/db/ids.ts'
 import { memberStore } from '../../../server/db/members.ts'
 import { openStores } from '../../../server/db/stores.ts'
+import type { PersonDataAnswer } from '../../../server/do/brand-agent/ports.ts'
 import { seedBrand } from '../../../server/seed/seed.ts'
 import { planPersonDeletion, runPersonDeletion } from '../../delete/person.ts'
 import { addPerson } from '../../delete/test-support.ts'
@@ -18,7 +19,7 @@ import { tables } from '../../tables/index.ts'
 import { backup } from '../backup.ts'
 import type { RestoreRecord } from '../manifest.ts'
 import { restore } from '../restore.ts'
-import { confirmRestore, reconcile } from './index.ts'
+import { brandAgentRunner, confirmRestore, reconcile } from './index.ts'
 import { readRecord } from './record.ts'
 import { SKEW_MARGIN_MS } from './replay.ts'
 import { ftsStub } from './test-support.ts'
@@ -91,4 +92,60 @@ it('with no active Admin left, an Inhouse operator approves; the removed Admin c
   expect(await confirm(ids.admin)).toMatchObject({ refused: 'not_admin' })
   expect(await confirm(ids.yan)).toMatchObject({ refused: 'not_admin' })
   expect(await confirm(ids.inhouse)).toMatchObject({ ok: { status: 'restored', reconcile: { confirm: { actorId: ids.inhouse, approvedBy: ids.inhouse } } } })
+})
+
+it('applies SKEW_MARGIN_MS to BrandAgent recoveredAtMs and watermarkMs when recoveredAtMs < d1Point', async () => {
+  const doRegistry = tables.filter(t => ['members', 'settings', 'support_grants', 'audit_log', 'photos/', 'backups/', 'restore/', 'deletion-log/', 'BrandAgent'].includes(t.name))
+  const liveAgent = e.BRAND_AGENT.getByName('skew-do-live')
+  const recAgent = e.BRAND_AGENT.getByName('skew-do-rec')
+  // Reset RESTORE_DB for this independent backup -> delete -> restore flow.
+  const tbls = (await e.RESTORE_DB.prepare("SELECT name, type FROM sqlite_master WHERE type IN ('trigger', 'view', 'table') AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'd1_%' AND name NOT LIKE '_cf_%'").all<{ name: string; type: string }>()).results
+  const stmts: string[] = []
+  for (const r of tbls.filter(x => x.type === 'trigger' || x.type === 'view')) stmts.push(`DROP ${r.type.toUpperCase()} IF EXISTS "${r.name}";`)
+  for (const r of tbls.filter(x => x.type === 'table' && /_fts$/.test(x.name))) stmts.push(`DROP TABLE IF EXISTS "${r.name}";`)
+  const regular = tbls.filter(x => x.type === 'table' && !/_fts/.test(x.name)).map(x => x.name)
+  const parents = new Map<string, Set<string>>()
+  for (const name of regular) {
+    const fks = (await e.RESTORE_DB.prepare(`PRAGMA foreign_key_list("${name}")`).all<{ table: string }>()).results
+    parents.set(name, new Set(fks.map(f => f.table).filter(p => p !== name)))
+  }
+  const dropped = new Set<string>()
+  while (dropped.size < regular.length) {
+    const leaf = regular.find(t => !dropped.has(t) && !regular.some(c => !dropped.has(c) && (parents.get(c)?.has(t) ?? false)))
+    if (!leaf) throw new Error('cyclic fk')
+    stmts.push(`DROP TABLE IF EXISTS "${leaf}";`)
+    dropped.add(leaf)
+  }
+  stmts.push('DELETE FROM d1_migrations;')
+  await e.RESTORE_DB.exec(stmts.join('\n'))
+  await applyD1Migrations(e.RESTORE_DB, e.TEST_MIGRATIONS)
+
+  const doRecovery = B + 120_000
+  const loggedAt = doRecovery - 30_000 // Inside the 60 s skew margin before DO recovery, well before B + 10 min backup.
+  const skewPerson = (await addPerson(e.DB, { role: 'member', status: 'active' }, ids.inhouse, T)).id
+  const laterBackup = await backup({ db: e.DB, bucket: e.FILES, nowMs: B + 600_000 })
+  const runId = await (async () => {
+    const plan = await planPersonDeletion({ db: e.DB, bucket: e.FILES, brandAgent: liveAgent as unknown as { personData(p: { personId: string; mode: 'count' | 'delete' }): Promise<PersonDataAnswer> }, at: at(loggedAt), clock: () => loggedAt, registry: doRegistry }, { memberId: skewPerson })
+    if (!('ok' in plan)) throw new Error(plan.refused)
+    const done = await runPersonDeletion({ db: e.DB, bucket: e.FILES, brandAgent: liveAgent as unknown as { personData(p: { personId: string; mode: 'count' | 'delete' }): Promise<PersonDataAnswer> }, at: at(loggedAt), clock: () => loggedAt, registry: doRegistry }, plan.ok)
+    if (!('ok' in done)) throw new Error(done.refused)
+    return done.ok.runId
+  })()
+  await runInDurableObject(recAgent, async (_i, state) => {
+    state.storage.sql.exec("INSERT INTO runs (run_id, chat_id, owner_id, state, started_at_ms, ended_at_ms) VALUES ('r_skew', 'c_skew', ?, 'ended', ?, ?)", skewPerson, T, T + 1)
+    state.storage.sql.exec('INSERT INTO chat_state (chat_id, owner_id, last_at_ms) VALUES (?, ?, ?)', 'c_skew', skewPerson, T)
+  })
+  const rec = await restore({
+    bucket: e.FILES, target: e.RESTORE_DB, live: e.DB, backupId: laterBackup.backupId, at: at(B + 605_000),
+    durableObjects: [{ name: 'BrandAgent', recoveredAtMs: doRecovery }],
+  })
+  const out = await reconcile({
+    bucket: e.FILES, target: e.RESTORE_DB, restoreId: rec.restoreId, rebuildFts: ftsStub().rebuildFts,
+    at: at(B + 610_000), registry: doRegistry,
+    runners: { BrandAgent: brandAgentRunner(recAgent as unknown as { personData(p: { personId: string; mode: 'count' | 'delete' }): Promise<PersonDataAnswer> }) },
+  })
+  if (!('ok' in out)) throw new Error(out.refused)
+  expect(out.ok.reconcile?.replay?.watermarkMs).toBe(doRecovery - SKEW_MARGIN_MS)
+  expect(out.ok.reconcile?.replay?.runs.map(r => r.runId)).toContain(runId)
+  expect(await runInDurableObject(recAgent, async (_i, state) => state.storage.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM runs WHERE owner_id = ?', skewPerson).one().n)).toBe(0)
 })

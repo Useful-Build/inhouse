@@ -14,7 +14,7 @@ import type { Seeded } from '../../seed/seed.ts'
 import { tables } from '../../../ops/tables/index.ts'
 import { retentionPass } from '../retention-handlers.ts'
 import { signals } from './index.ts'
-import { OVERDUE_SLACK_MS, backupFresh, retentionFresh, retentionOverdue } from './data.ts'
+import { FRESH_MS, OVERDUE_SLACK_MS, backupFresh, retentionFresh, retentionOverdue } from './data.ts'
 
 const DAY = 86_400_000
 const NOW = Date.UTC(2041, 5, 1, 4, 0)
@@ -87,7 +87,7 @@ describe('the data signals', () => {
     for (const [key, value] of [['d:chats', chats], ['d:steps', steps]]) {
       const ifRev = current.find(setting => setting.key === key)?.rev ?? 0
       const saved = await settings.write({ owner: 'brand', scope: 'technical', key, value, ifRev }, {
-        actorId: seeded.members.admin, nowMs: NOW, requestId: `retention-${chatAge}-${key}`,
+        actorId: seeded.members.admin, nowMs: NOW - FRESH_MS, requestId: `retention-${chatAge}-${key}`,
       })
       expect(saved).toHaveProperty('ok')
     }
@@ -114,5 +114,118 @@ describe('the data signals', () => {
       db.prepare("DELETE FROM chats WHERE id = 'c_period'"),
       db.prepare("DELETE FROM activity_lines WHERE id = 'a_period'"),
     ])
+  })
+
+  it.each(['d:chats', 'd:steps'])('gives a shortened %s one nightly pass before reporting overdue data', async key => {
+    const db = env.DB
+    const { settings } = openStores(env)
+    const current = (await settings.list('brand', 'technical')).find(setting => setting.key === key)
+    const saved = await settings.write({ owner: 'brand', scope: 'technical', key, value: '3 months', ifRev: current?.rev ?? 0 }, {
+      actorId: seeded.members.admin, nowMs: NOW, requestId: `shorten-${key}`,
+    })
+    expect(saved).toHaveProperty('ok')
+
+    const age = NOW - 120 * DAY
+    const chat = db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms, deleted_at_ms) VALUES (?, ?, 'Retention test', ?, ?, ?)")
+    if (key === 'd:chats') await chat.bind('c_grace', seeded.members.dana, age, age, null).run()
+    else await addActivity(db, { id: 'a_grace', actor: seeded.members.dana, subject: null, atMs: age })
+    expect(await retentionOverdue(db, NOW)).toEqual({ ok: true })
+    expect(await retentionOverdue(db, NOW + FRESH_MS - 1)).toEqual({ ok: true })
+
+    // An expired trashed chat still goes red during a grace window.
+    await chat.bind('c_grace_trash', seeded.members.dana, age, NOW, NOW - 33 * DAY).run()
+    expect(await retentionOverdue(db, NOW + 1)).toEqual({ ok: false, detail: 'past retention: chats 1' })
+    await db.prepare("DELETE FROM chats WHERE id = 'c_grace_trash'").run()
+
+    const store = key === 'd:chats' ? 'chats' : 'activity_lines'
+    expect(await retentionOverdue(db, NOW + FRESH_MS)).toEqual({ ok: false, detail: `past retention: ${store} 1` })
+    const registry = tables.filter(t => t.name === store)
+    expect(await retentionPass({ db, bucket, nowMs: NOW + FRESH_MS, requestId: 'grace', from: 0, registry })).toMatchObject({ reached: 1, failed: [] })
+    expect(await retentionOverdue(db, NOW + FRESH_MS)).toEqual({ ok: true })
+  })
+
+  it('grants no grace for lengthened or unchanged saves, and repeated saves do not extend the grace window', async () => {
+    const db = env.DB
+    const { settings } = openStores(env)
+    await db.prepare("DELETE FROM library_marks WHERE file_id = 'f_orphan_current'").run()
+    await db.prepare("DELETE FROM settings WHERE owner = 'brand' AND key IN ('d:chats', 'd:steps')").run()
+    const revOf = async (key: 'd:chats' | 'd:steps') => (await settings.list('brand', 'technical')).find(s => s.key === key)?.rev ?? 0
+    const save = async (key: 'd:chats' | 'd:steps', value: string | null, nowMs: number, reqId: string) => {
+      const res = await settings.write({ owner: 'brand', scope: 'technical', key, value, ifRev: await revOf(key) }, {
+        actorId: seeded.members.admin, nowMs, requestId: reqId,
+      })
+      expect(res).toHaveProperty('ok')
+    }
+
+    // 1. Initial write equal to default ('12 months') or lengthened ('24 months') opens NO grace window.
+    await save('d:chats', '12 months', NOW, 'init-default')
+    await save('d:chats', '24 months', NOW + 1_000, 'len-24m')
+    const old24 = NOW - 740 * DAY
+    await db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms, deleted_at_ms) VALUES ('c_len24', ?, 'Lengthen', ?, ?, NULL)")
+      .bind(seeded.members.dana, old24, old24).run()
+    expect(await retentionOverdue(db, NOW + 1_000)).toEqual({ ok: false, detail: 'past retention: chats 1' })
+    await db.prepare("DELETE FROM chats WHERE id = 'c_len24'").run()
+
+    // 2. Lengthening ('3 months' -> '6 months', after any earlier grace expired) opens NO grace window.
+    await save('d:chats', '3 months', NOW + 2_000, 'short-3m')
+    const afterExpire = NOW + 2 * FRESH_MS
+    await save('d:chats', '6 months', afterExpire, 'len-up')
+    const oldChat = afterExpire - 185 * DAY
+    await db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms, deleted_at_ms) VALUES ('c_len', ?, 'Lengthen', ?, ?, NULL)")
+      .bind(seeded.members.dana, oldChat, oldChat).run()
+    expect(await retentionOverdue(db, afterExpire)).toEqual({ ok: false, detail: 'past retention: chats 1' })
+    await db.prepare("DELETE FROM chats WHERE id = 'c_len'").run()
+
+    // 3. Saving an unchanged value (still '6 months') opens NO grace window.
+    await save('d:chats', '6 months', afterExpire + 1_000, 'same-6m')
+    await db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms, deleted_at_ms) VALUES ('c_same', ?, 'Same', ?, ?, NULL)")
+      .bind(seeded.members.dana, oldChat, oldChat).run()
+    expect(await retentionOverdue(db, afterExpire + 1_000)).toEqual({ ok: false, detail: 'past retention: chats 1' })
+    await db.prepare("DELETE FROM chats WHERE id = 'c_same'").run()
+
+    // 4. Repeated saves of the same shortened value do not extend an active 26-hour grace window.
+    const t0 = afterExpire + 10_000
+    await save('d:steps', '6 months', t0 - 2 * FRESH_MS, 'rep-init')
+    await save('d:steps', '3 months', t0, 'rep-short')
+    await addActivity(db, { id: 'a_rep', actor: seeded.members.dana, subject: null, atMs: t0 - 120 * DAY })
+    expect(await retentionOverdue(db, t0)).toEqual({ ok: true })
+    // Re-saving '3 months' halfway through the grace window must NOT push its deadline past t0 + FRESH_MS.
+    await save('d:steps', '3 months', t0 + FRESH_MS / 2, 'rep-resave')
+    expect(await retentionOverdue(db, t0 + FRESH_MS - 1)).toEqual({ ok: true })
+    expect(await retentionOverdue(db, t0 + FRESH_MS)).toEqual({ ok: false, detail: 'past retention: activity_lines 1' })
+    await db.prepare("DELETE FROM activity_lines WHERE id = 'a_rep'").run()
+  })
+
+  it('gives retention_fresh a 26-hour grace when d:steps or d:chats changes from Until deleted to a finite period', async () => {
+    const db = env.DB
+    const { settings } = openStores(env)
+    await db.prepare("DELETE FROM settings WHERE owner = 'brand' AND key IN ('d:chats', 'd:steps')").run()
+    const revOf = async (key: 'd:chats' | 'd:steps') => (await settings.list('brand', 'technical')).find(s => s.key === key)?.rev ?? 0
+    const save = async (key: 'd:chats' | 'd:steps', value: string | null, nowMs: number, reqId: string) => {
+      expect(await settings.write({ owner: 'brand', scope: 'technical', key, value, ifRev: await revOf(key) }, {
+        actorId: seeded.members.admin, nowMs, requestId: reqId,
+      })).toHaveProperty('ok')
+    }
+
+    // Use a time far past earlier tests' deletion-log runs so nothing in deletion-log/ matches within 26h.
+    const future = NOW + 100 * DAY
+    await save('d:steps', 'Until deleted', future - 10 * DAY, 'fresh-until-steps')
+    await save('d:chats', 'Until deleted', future - 10 * DAY, 'fresh-until-chats')
+
+    // Changing d:steps from 'Until deleted' to '12 months' graces steps stores for 26 hours.
+    await save('d:steps', '12 months', future, 'fresh-short-steps')
+    expect(await retentionFresh(db, bucket, future, ['activity_lines', 'notices'])).toEqual({ ok: true, detail: '2 stores' })
+    expect(await retentionFresh(db, bucket, future + FRESH_MS - 1, ['activity_lines', 'notices'])).toEqual({ ok: true, detail: '2 stores' })
+    // Unshortened fixed stores (library_uploads) are NOT graced.
+    expect(await retentionFresh(db, bucket, future + 1, ['activity_lines', 'library_uploads'])).toEqual({ ok: false, detail: 'no run in 26h: library_uploads' })
+    // Once the 26h window expires without a run, steps stores go red until a run finishes.
+    expect(await retentionFresh(db, bucket, future + FRESH_MS, ['activity_lines', 'notices'])).toEqual({ ok: false, detail: 'no run in 26h: activity_lines, notices' })
+
+    // Changing d:chats from 'Until deleted' to '12 months' similarly graces chats for 26 hours.
+    const tChats = future + 2 * FRESH_MS
+    await save('d:chats', '12 months', tChats, 'fresh-short-chats')
+    expect(await retentionFresh(db, bucket, tChats, ['chats'])).toEqual({ ok: true, detail: '1 stores' })
+    expect(await retentionFresh(db, bucket, tChats + FRESH_MS - 1, ['chats'])).toEqual({ ok: true, detail: '1 stores' })
+    expect(await retentionFresh(db, bucket, tChats + FRESH_MS, ['chats'])).toEqual({ ok: false, detail: 'no run in 26h: chats' })
   })
 })

@@ -140,4 +140,13 @@ describe('the table registry', () => {
     const keys = registry.map(e => `${e.kind} ${e.name}`)
     expect(keys.filter((k, i) => keys.indexOf(k) !== i)).toEqual([])
   })
+
+  it('requires person-export redaction for account rows that can reference another person', () => {
+    // These keys identify the person the row belongs to. Any additional key can match someone else's row.
+    const ownerKeys: Record<string, string> = { members: 'id', usage_turns: 'member_id' }
+    const shared = registry.filter(e => e.kind === 'd1' && e.retention === 'account'
+      && e.personKeys.some(key => key !== ownerKeys[e.name]))
+    // The exporter strips the other person's data only for members.
+    expect(shared.map(e => e.name)).toEqual(['members'])
+  })
 })

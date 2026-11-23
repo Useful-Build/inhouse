@@ -9,16 +9,18 @@
 // backup's start and its end. Its point is still the backup's start (`takenAtMs`, the D1 point here), and the replay
 // is inclusive, so every deletion logged during the read is applied again: none is missed, and nothing logged before
 // the read began is touched (M2). So a paged table needs no point of its own.
-// Clock skew (review L4): an entry's time is its Worker's clock and the backup's point another's, so the D1 and R2
-// point (and the watermark) is taken `SKEW_MARGIN_MS` early. An entry in that minute before the point is applied
-// again: safe, since the replay applies rules (a member id, a cutoff), never logged row ids, and each is idempotent.
+// Clock skew (review L4): an entry's time is its Worker's clock and the backup's point another's, so the D1, R2 and
+// Durable Object recovery points (and the watermark) are taken `SKEW_MARGIN_MS` early. An entry in that minute before
+// the point is applied again: the replay uses member ids and cutoffs. Chat ids from completed cascade rounds also let
+// an older BrandAgent recovery replay its side of a cascade after the chat has already gone from D1.
 //
 // A person run deletes the member again with the store rules person deletion uses (ops/delete/rules.ts), in its order:
-// pseudonymise the member row, then each custom store through its runner (the BrandAgent's `personData`, before the
-// D1 batch: C1's run order), then the D1 rows, then the R2 objects. A retention run applies its logged cutoffs again
-// (ops/retention/rules.ts). A run with a `refused` entry removed nothing and is skipped. The whole replay is planned
-// before anything is written: a store with a custom rule and no runner (the chat cascade, the bell's ordered delete,
-// until C1's runners land) refuses the replay by name, never skipped, and nothing is written. Every step is
+// pseudonymise the member row, then the BrandAgent's `personData` before every other custom store (such as `chats` and
+// `notices`, matching live deletion so `busy` stops before any chat or D1 row is removed), then the remaining custom
+// stores, then the D1 rows, then the R2 objects. A retention run applies its logged cutoffs again
+// (ops/retention/rules.ts). A run with a `refused` entry removed nothing and is skipped. A busy person run with
+// `stopped_after_pseudonymise` replays just the member update. A later deletion retry has its own log entries.
+// The whole replay is planned before anything is written: a custom rule with no runner refuses by name. Every step is
 // idempotent, so a replay stopped half way (a busy BrandAgent) is finished by a re-run. The replay writes no
 // deletion-log entry: it repeats logged deletions, it doesn't make new ones.
 import { memberStore } from '../../../server/db/members.ts'
@@ -26,6 +28,9 @@ import type { At } from '../../../server/db/members.ts'
 import { R2_PREFIXES } from '../../../server/db/r2-keys.ts'
 import { runBatch, stmt } from '../../../server/db/sql.ts'
 import type { PersonDataAnswer } from '../../../server/do/brand-agent/ports.ts'
+import { personRunners, replayChatRows, replayRetention } from '../../coverage/chat-watch-connectors/replay.ts'
+import { RETENTION_JOBS, SERVED_BY } from '../../coverage/chat-watch-connectors/retention-jobs.ts'
+import type { LoggedCutoff } from '../../coverage/chat-watch-connectors/retention-jobs.ts'
 import { listDeletionLog } from '../../delete/log.ts'
 import type { DeletionLogEntry } from '../../delete/log.ts'
 import { deleteKeys, ident, listAll, personPrefix } from '../../delete/r2.ts'
@@ -62,25 +67,39 @@ export interface LoggedRun {
   runId: string
   kind: DeletionLogEntry['kind']
   memberId?: string
-  cutoffs?: { store: string; cutoffMs: number }[]
+  cutoffs?: LoggedCutoff[]
   lastAtMs: number
   refused: boolean
+  pseudonymiseOnly?: true
+  agentChatRounds?: { atMs: number; ids: string[] }[]
 }
 
 /** The listed entries grouped by run, in order of each run's first listed key. */
 export function groupRuns(entries: readonly { key: string; entry: DeletionLogEntry }[]): LoggedRun[] {
   const runs = new Map<string, LoggedRun>()
   for (const { key, entry: e } of entries) {
-    const run = runs.get(e.runId)
+    let run = runs.get(e.runId)
     if (run === undefined) {
       if (e.kind === 'person' && e.memberId === undefined) throw new RestoreRefusal('deletion_log_invalid', `${key}: a person entry without a member id`)
       if (e.kind === 'retention' && e.cutoffs === undefined) throw new RestoreRefusal('deletion_log_invalid', `${key}: a retention entry without cutoffs`)
-      runs.set(e.runId, { runId: e.runId, kind: e.kind, memberId: e.memberId, cutoffs: e.cutoffs, lastAtMs: e.atMs, refused: e.phase === 'refused' })
-      continue
+      run = { runId: e.runId, kind: e.kind, memberId: e.memberId, cutoffs: e.cutoffs, lastAtMs: e.atMs, refused: false }
+      runs.set(e.runId, run)
+    } else if (run.kind !== e.kind || run.memberId !== e.memberId || JSON.stringify(run.cutoffs) !== JSON.stringify(e.cutoffs)) {
+      throw new RestoreRefusal('deletion_log_invalid', `${key}: its run's entries disagree`)
     }
-    if (run.kind !== e.kind || run.memberId !== e.memberId || JSON.stringify(run.cutoffs) !== JSON.stringify(e.cutoffs)) throw new RestoreRefusal('deletion_log_invalid', `${key}: its run's entries disagree`)
     run.lastAtMs = Math.max(run.lastAtMs, e.atMs)
     run.refused ||= e.phase === 'refused'
+    if (e.phase === 'stopped_after_pseudonymise') {
+      if (e.kind !== 'person') throw new RestoreRefusal('deletion_log_invalid', `${key}: stopped person phase on a retention entry`)
+      run.pseudonymiseOnly = true
+    }
+    if (e.kind === 'retention' && e.phase === 'progress' && e.removed?.some(r => r.store === 'chats')) {
+      for (const removed of e.removed ?? []) {
+        if (removed.store === 'BrandAgent' && removed.ids?.length) {
+          (run.agentChatRounds ??= []).push({ atMs: e.atMs, ids: removed.ids })
+        }
+      }
+    }
   }
   return [...runs.values()]
 }
@@ -104,6 +123,8 @@ type PersonStep =
 type RetentionStep =
   | { do: 'age_rows'; store: string; ageColumn: string; idColumn: string; cutoffMs: number }
   | { do: 'age_objects'; store: string; cutoffMs: number }
+  | { do: 'age_custom'; store: string; cutoffs: LoggedCutoff[]; sql?: SqlStorage }
+  | { do: 'retained_chat_rows'; sql: SqlStorage; ids: string[] }
 type Planned = { run: LoggedRun; stores: string[]; steps: (PersonStep | RetentionStep)[] }
 
 export interface ReplayDeps {
@@ -115,6 +136,8 @@ export interface ReplayDeps {
   retention?: Readonly<Record<string, RetentionRule>>
   /** By store name: the runner of each custom store the replay can reach. A custom store without one refuses. */
   runners?: Readonly<Record<string, PersonRunner>>
+  /** The recovered BrandAgent's SQLite, when replay runs inside that object. */
+  retentionSql?: SqlStorage
 }
 
 function planPerson(deps: ReplayDeps, run: LoggedRun, stores: readonly string[]): PersonStep[] {
@@ -148,16 +171,37 @@ function planPerson(deps: ReplayDeps, run: LoggedRun, stores: readonly string[])
   return steps
 }
 
-function planRetention(deps: ReplayDeps, run: LoggedRun, stores: readonly string[]): RetentionStep[] {
+function planRetention(deps: ReplayDeps, run: LoggedRun, stores: string[], agentPoint: number | undefined): RetentionStep[] {
   const rules = deps.retention ?? retentionRules
   const steps: RetentionStep[] = []
-  for (const { store, cutoffMs } of run.cutoffs ?? []) {
+  const sql = agentPoint !== undefined && run.lastAtMs >= agentPoint ? deps.retentionSql : undefined
+  const chatRounds = (run.agentChatRounds ?? []).filter(r => agentPoint !== undefined && r.atMs >= agentPoint)
+  const agentChats = agentPoint !== undefined && run.lastAtMs >= agentPoint && stores.includes('chats')
+  if ((stores.includes('BrandAgent') || agentChats || chatRounds.length > 0) && !sql) {
+    throw new RestoreRefusal('replay_custom_unrun', 'BrandAgent retention needs the recovered object storage')
+  }
+  // Replay logged cascades even when the D1 backup already reflects them. These ids are chat identities (not run ids),
+  // from a separate chats job; the daily handler logs one store per run.
+  if (sql && chatRounds.length > 0) {
+    for (const round of chatRounds) steps.push({ do: 'retained_chat_rows', sql, ids: round.ids })
+  }
+  const custom = new Map<string, Extract<RetentionStep, { do: 'age_custom' }>>()
+  for (const cutoff of run.cutoffs ?? []) {
+    const { store, cutoffMs } = cutoff
     if (!stores.includes(store)) continue
     const rule = rules[store]
     if (rule === undefined) throw new RestoreRefusal('replay_no_rule', store)
     if (rule.kind === 'derived') continue
-    if (rule.kind === 'custom') throw new RestoreRefusal('replay_custom_unrun', `${store}'s retention rule is custom and its job isn't built yet`)
-    if (rule.kind === 'd1') steps.push({ do: 'age_rows', store: ident(store), ageColumn: ident(rule.ageColumn), idColumn: ident(rule.idColumn), cutoffMs })
+    if (rule.kind === 'custom') {
+      if (!RETENTION_JOBS[store] && !SERVED_BY[store]) throw new RestoreRefusal('replay_custom_unrun', `${store}'s retention rule has no job`)
+      const existing = custom.get(store)
+      if (existing) existing.cutoffs.push(cutoff)
+      else {
+        const step = { do: 'age_custom' as const, store, cutoffs: [cutoff], sql }
+        steps.push(step)
+        custom.set(store, step)
+      }
+    } else if (rule.kind === 'd1') steps.push({ do: 'age_rows', store: ident(store), ageColumn: ident(rule.ageColumn), idColumn: ident(rule.idColumn), cutoffMs })
     else steps.push({ do: 'age_objects', store, cutoffMs })
   }
   return steps
@@ -169,13 +213,14 @@ const ROUND = 500
 async function apply(deps: ReplayDeps, p: Planned): Promise<void> {
   const memberId = p.run.memberId as string
   const of = <K extends (PersonStep | RetentionStep)['do']>(k: K) => p.steps.filter((s): s is Extract<PersonStep | RetentionStep, { do: K }> => s.do === k)
-  // Person deletion's order: the member row, the custom stores (the BrandAgent before the D1 batch), the rows, the objects.
+  // Person deletion's order: the member row, the BrandAgent before every other custom store (matching live deletion), the rows, the objects.
   if (of('pseudonymise').length > 0) {
     const done = await memberStore({ db: deps.target }).pseudonymise(memberId, deps.at)
     // not_found: no row (a member added after the backup) or already pseudonymised; both leave nothing to do.
     if ('refused' in done && done.refused !== 'not_found') throw new RestoreRefusal('replay_stopped', `members: ${done.refused} (${memberId})`)
   }
-  for (const s of of('custom')) {
+  const custom = of('custom')
+  for (const s of [...custom.filter(c => c.store === 'BrandAgent'), ...custom.filter(c => c.store !== 'BrandAgent')]) {
     const done = await s.runner.deletePerson(memberId)
     if ('stop' in done) throw new RestoreRefusal('replay_stopped', `${s.store}: ${done.stop} (${memberId})`)
   }
@@ -190,6 +235,11 @@ async function apply(deps: ReplayDeps, p: Planned): Promise<void> {
     }
   }
   for (const s of of('age_objects')) await deleteKeys(deps.bucket, (await listAll(deps.bucket, s.store)).filter(o => o.uploaded.getTime() < s.cutoffMs).map(o => o.key))
+  // The live planner runs plain age rules before the custom jobs (a retained Today item can still reference a slot).
+  for (const s of of('retained_chat_rows')) {
+    if (!replayChatRows(s.sql, s.ids)) throw new RestoreRefusal('replay_stopped', 'BrandAgent: busy retained chat')
+  }
+  for (const s of of('age_custom')) await replayRetention(s.store, { db: deps.target, bucket: deps.bucket, sql: s.sql }, s.cutoffs)
 }
 
 /**
@@ -201,9 +251,10 @@ export const SKEW_MARGIN_MS = 60_000
 
 export async function replayDeletionLog(deps: ReplayDeps, record: RestoreRecord): Promise<NonNullable<Reconcile['replay']>> {
   if (record.d1.restorePointMs === null || record.watermarkMs === null) throw new RestoreRefusal('record_invalid', 'no restore point')
-  const d1Point = Math.max(0, record.d1.restorePointMs - SKEW_MARGIN_MS)
-  const watermarkMs = Math.min(record.watermarkMs, d1Point)
-  const recovered = new Map(record.durableObjects.map(d => [d.name, d.recoveredAtMs]))
+  const skew = (ms: number) => Math.max(0, ms - SKEW_MARGIN_MS)
+  const d1Point = skew(record.d1.restorePointMs)
+  const recovered = new Map(record.durableObjects.map(d => [d.name, skew(d.recoveredAtMs)]))
+  const watermarkMs = Math.min(skew(record.watermarkMs), d1Point, ...recovered.values())
   // A Durable Object a person deletion reaches must have a recorded recovery time, or the replay can't know its point.
   const rules = deps.deletion ?? deletionRules
   for (const e of deps.registry) {
@@ -218,19 +269,26 @@ export async function replayDeletionLog(deps: ReplayDeps, record: RestoreRecord)
   }
 
   const listed = await listDeletionLog(deps.bucket, { after: watermarkStart(watermarkMs) })
+  const personDeps = { ...deps, runners: { ...personRunners({ db: deps.target, bucket: deps.bucket }), ...deps.runners } }
   const runs = groupRuns(listed)
   const planned: Planned[] = []
   const skippedRefused: string[] = []
   for (const run of runs) {
     if (run.refused) { skippedRefused.push(run.runId); continue }
     if (run.kind === 'person') {
-      const stores = storesReached(run, deps.registry.map(e => e.name), pointOf)
-      planned.push({ run, stores, steps: planPerson(deps, run, stores) })
+      const candidates = deps.registry.filter(e => !run.pseudonymiseOnly || rules[e.name]?.action === 'pseudonymise')
+      const stores = storesReached(run, candidates.map(e => e.name), pointOf)
+      planned.push({ run, stores, steps: planPerson(personDeps, run, stores) })
     } else {
-      const cutoffStores = (run.cutoffs ?? []).map(c => c.store)
+      const cutoffStores = [...new Set((run.cutoffs ?? []).map(c => c.store))]
       for (const s of cutoffStores) pointOf(s)
       const stores = storesReached(run, cutoffStores, pointOf)
-      planned.push({ run, stores, steps: planRetention(deps, run, stores) })
+      const agentPoint = deps.registry.some(e => e.name === 'BrandAgent') ? recovered.get('BrandAgent') : undefined
+      const steps = planRetention(deps, run, stores, agentPoint)
+      if (steps.some(s => s.do === 'retained_chat_rows' || (s.do === 'age_custom' && s.store === 'chats' && s.sql)) && !stores.includes('BrandAgent')) {
+        stores.push('BrandAgent')
+      }
+      planned.push({ run, stores, steps })
     }
   }
   for (const p of planned) await apply(deps, p)

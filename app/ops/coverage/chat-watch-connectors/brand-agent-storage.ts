@@ -47,6 +47,14 @@ export function endedRuns(sql: SqlStorage, cutoffMs: number, limit: number): { r
   return { runIds: rows.slice(0, limit).map(r => r.run_id), more: rows.length > limit }
 }
 
+/** Ended runs strictly before `cutoffMs` that are blocked by an unsafe turn or a live chat run. */
+export function blockedEndedRuns(sql: SqlStorage, cutoffMs: number): string[] {
+  return sql.exec<{ run_id: string }>(`SELECT r.run_id FROM runs r WHERE r.state = 'ended' AND r.ended_at_ms < ?
+    AND (EXISTS (SELECT 1 FROM turns t WHERE t.run_id = r.run_id AND ${UNSAFE_TURN})
+      OR EXISTS (SELECT 1 FROM chat_state cs WHERE cs.live_run_id = r.run_id))
+    ORDER BY r.run_id`, cutoffMs).toArray().map(r => r.run_id)
+}
+
 /** Of `chatIds`, the ones whose BrandAgent rows can go now (no live or waiting session, no unsafe turn). */
 export function quietChats(sql: SqlStorage, chatIds: readonly string[]): string[] {
   if (chatIds.length === 0) return []

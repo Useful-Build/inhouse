@@ -8,10 +8,11 @@
 import type { KeyedBucket } from '../../../server/db/r2-keys.ts'
 import { all, first, runBatch, stmt } from '../../../server/db/sql.ts'
 import type { SqlValue, Stmt } from '../../../server/db/sql.ts'
+import { RestoreRefusal } from '../../backup/errors.ts'
 import { deleteKeys } from '../../delete/r2.ts'
 import { DEFAULT_DAYS } from '../../retention/rules.ts'
 import type { PeriodName } from '../../retention/rules.ts'
-import { countChatRows, countRunRows, deleteChatRows, deleteRunRows, endedRuns, quietChats } from './brand-agent-storage.ts'
+import { blockedEndedRuns, countChatRows, countRunRows, deleteChatRows, deleteRunRows, endedRuns, quietChats } from './brand-agent-storage.ts'
 import { CASCADE_R2, cascadeRowStatements, chatsIn, countCascade, deleteCascadeObjects } from './chat-cascade.ts'
 
 const DAY_MS = 86_400_000
@@ -41,6 +42,10 @@ export interface JobContext {
   cutoffs?: Partial<Record<AgeTag, number>>
   /** At most this many units (chats, files, rows...) per run. */
   limit: number
+  /** Replay mode: refuses busy BrandAgent units and pages past skipped ones instead of silently dropping them. */
+  replay?: boolean
+  /** Exclusive id cursor used by `replay` when paging past busy units. */
+  after?: string
 }
 
 export interface JobPlan {
@@ -49,6 +54,10 @@ export interface JobPlan {
   units: readonly string[]
   cutoffs: LoggedCutoff[]
   more: boolean
+  /** Units skipped because DO state blocked them (set in `replay` mode). */
+  blocked?: readonly string[]
+  /** Cursor for the next `replay` page when paging past blocked units. */
+  nextAfter?: string
 }
 
 export interface JobRun {
@@ -69,10 +78,14 @@ function cut(ctx: JobContext, store: string, tag: AgeTag): number {
   const fixed = ctx.cutoffs?.[tag]
   if (fixed !== undefined) return fixed
   if (tag === 'own') {
-    if (ctx.cutoffMs === null) throw new Error(`retention: ${store}'s job needs its period`)
+    if (ctx.cutoffMs === null) {
+      const msg = `retention: ${store}'s job needs its period`
+      if (ctx.atMs === null) throw new RestoreRefusal('deletion_log_invalid', msg)
+      throw new Error(msg)
+    }
     return ctx.cutoffMs
   }
-  if (ctx.atMs === null) throw new Error(`retention: replaying ${store} needs its ${tag} cutoff`)
+  if (ctx.atMs === null) throw new RestoreRefusal('deletion_log_invalid', `retention: replaying ${store} needs its ${tag} cutoff`)
   return fixedCutoff(ctx.atMs, FIXED[tag])
 }
 const own = (ctx: JobContext, store: string) => cut(ctx, store, 'own')
@@ -112,16 +125,27 @@ function pastChats(ctx: JobContext) {
 export const chatCascade: RetentionJob = {
   async plan(ctx) {
     const past = pastChats(ctx)
-    const found = await ids(ctx.db, `SELECT c.id AS id FROM chats c WHERE ${past.where} ORDER BY c.id`, past.params, ctx.limit)
+    const afterSql = ctx.after === undefined ? '' : ' AND c.id > ?'
+    const afterParams = ctx.after === undefined ? [] : [ctx.after]
+    const found = await ids(ctx.db, `SELECT c.id AS id FROM chats c WHERE (${past.where})${afterSql} ORDER BY c.id`, [...past.params, ...afterParams], ctx.limit)
     // A chat whose BrandAgent rows are busy waits for a later run (with the object's storage; without it, no rows of the
     // object are touched, and the in-object run takes them).
     const units = ctx.sql ? quietChats(ctx.sql, found.units) : found.units
     const counts: Record<string, number> = await countCascade(ctx.db, ctx.bucket, chatsIn(units), units)
     if (ctx.sql) counts.BrandAgent = Object.values(countChatRows(ctx.sql, units)).reduce((a, b) => a + b, 0)
     // A busy chat is skipped, not waited on: `more` only when this run made progress, so a chat that stays busy can't
-    // keep the handler coming back every minute.
+    // keep the handler coming back every minute. In replay mode, report blocked units and keep paging past them.
     const cutoffs = past.chatsCut === null ? [] : [logged('chats', 'own', past.chatsCut)]
     cutoffs.push(logged('chats', 'trash', past.trashCut))
+    if (ctx.replay) {
+      const unitSet = new Set(units)
+      const blocked = found.units.filter(id => !unitSet.has(id))
+      return {
+        counts, units, cutoffs, more: found.more,
+        ...(blocked.length > 0 ? { blocked } : {}),
+        ...(found.units.length > 0 ? { nextAfter: found.units[found.units.length - 1] } : {}),
+      }
+    }
     return { counts, units, cutoffs, more: found.more && units.length > 0 }
   },
   async run(ctx, plan, round) {
@@ -131,6 +155,11 @@ export const chatCascade: RetentionJob = {
       // Still past retention (a chat with new activity since the plan stays).
       const still = (await all<{ id: string }>(ctx.db, stmt(`SELECT c.id AS id FROM chats c WHERE c.id IN (${marks(batchIds.length)}) AND (${past.where})`, ...batchIds, ...past.params))).map(r => r.id)
       const quiet = ctx.sql ? quietChats(ctx.sql, still) : still
+      if (ctx.replay && quiet.length < still.length) {
+        const quietSet = new Set(quiet)
+        const busy = still.find(id => !quietSet.has(id))
+        throw new RestoreRefusal('replay_stopped', `chats: busy (${busy})`)
+      }
       if (quiet.length === 0) continue
       const objects = await deleteCascadeObjects(ctx.bucket, quiet)
       const rows = await deleted(ctx.db, cascadeRowStatements(chatsIn(quiet)))
@@ -217,20 +246,39 @@ const RUNS_ROUND = 25
 
 export const brandAgentSteps: RetentionJob = {
   async plan(ctx) {
-    if (!ctx.sql) throw new Error("retention: the BrandAgent's job runs only inside the object (TaskContext.sql)")
+    if (!ctx.sql) {
+      const msg = "retention: the BrandAgent's job runs only inside the object (TaskContext.sql)"
+      if (ctx.replay) throw new RestoreRefusal('replay_custom_unrun', msg)
+      throw new Error(msg)
+    }
     const c = own(ctx, 'BrandAgent')
     const found = endedRuns(ctx.sql, c, ctx.limit)
     const counts = countRunRows(ctx.sql, found.runIds)
-    return { counts: { BrandAgent: Object.values(counts).reduce((a, b) => a + b, 0) }, units: found.runIds, cutoffs: [logged('BrandAgent', 'own', c)], more: found.more }
+    const blocked = ctx.replay && ctx.after === undefined ? blockedEndedRuns(ctx.sql, c) : undefined
+    return {
+      counts: { BrandAgent: Object.values(counts).reduce((a, b) => a + b, 0) },
+      units: found.runIds,
+      cutoffs: [logged('BrandAgent', 'own', c)],
+      more: found.more,
+      ...(blocked?.length ? { blocked } : {}),
+    }
   },
   async run(ctx, plan, round) {
-    if (!ctx.sql) throw new Error("retention: the BrandAgent's job runs only inside the object (TaskContext.sql)")
+    if (!ctx.sql) {
+      const msg = "retention: the BrandAgent's job runs only inside the object (TaskContext.sql)"
+      if (ctx.replay) throw new RestoreRefusal('replay_custom_unrun', msg)
+      throw new Error(msg)
+    }
     const c = own(ctx, 'BrandAgent')
     let n = 0
     for (const part of chunks(plan.units, RUNS_ROUND)) {
       // Still ended, still past the cutoff, still safe (re-read: a run is never revived, but a turn's hold may be).
       const safe = new Set(endedRuns(ctx.sql, c, Number.MAX_SAFE_INTEGER).runIds)
       const runs = part.filter(r => safe.has(r))
+      if (ctx.replay && runs.length < part.length) {
+        const unsafe = part.find(r => !safe.has(r))
+        throw new RestoreRefusal('replay_stopped', `BrandAgent: unsafe (${unsafe})`)
+      }
       const gone = Object.values(deleteRunRows(ctx.sql, runs)).reduce((a, b) => a + b, 0)
       n += gone
       await round([{ store: 'BrandAgent', ids: runs, count: gone }])

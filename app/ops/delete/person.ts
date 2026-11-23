@@ -9,7 +9,7 @@
 // their rows, children first), the bell's ordered delete (the person's member notices after their reads) and the
 // BrandAgent's rows through `personData` (its `busy` refusal). With them the run is: the recount (a D1 or R2 difference
 // refuses `plan_stale`, a BrandAgent one `busy`; nothing changes either way), `start`, `pseudonymise`, `personData`
-// delete (`busy`: a `refused` entry, then stop; a re-run after the person's turns end finishes), the chat cascade's
+// delete (`busy`: a `stopped_after_pseudonymise` entry; a re-run after the person's turns end finishes), the chat cascade's
 // objects, one D1 batch (the `delete_rows` steps, then the notices, then the cascade's rows, children before parents),
 // the objects under the person's pattern, `done`. personData's delete comes before the D1 batch: once it answers, no
 // later D1 write for the person comes from the object (shapes.md personData r4).
@@ -253,7 +253,7 @@ export async function runPersonDeletion(deps: DeletionDeps, plan: PersonDeletion
     if (!deps.brandAgent) throw new Error('person deletion: the BrandAgent part needs deps.brandAgent (BrandAgentRpc.personData)')
     const answer = await deps.brandAgent.personData({ personId: memberId, mode: 'delete' })
     if ('busy' in answer) {
-      // The member row is pseudonymised already: a distinct phase, so R's replay repeats the run (not `refused`).
+      // Replay repeats the completed member update. A later retry logs its own run.
       await log.write('stopped_after_pseudonymise', { reason: 'busy' })
       return { refused: 'busy' }
     }

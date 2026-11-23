@@ -19,7 +19,7 @@ export const deletionLogEntrySchema = z.strictObject({
   /**
    * `progress`: one bounded round of a retention run, with the ids or keys it removed. `stopped_after_pseudonymise`
    * (C1): a person run that pseudonymised the member row, then stopped (the BrandAgent answered `busy`): unlike
-   * `refused`, it changed something, so a replay after a restore repeats it.
+   * `refused`, it changed something, so a replay after a restore repeats the member update.
    */
   phase: z.enum(['start', 'progress', 'done', 'refused', 'stopped_after_pseudonymise']),
   kind: z.enum(['person', 'retention']),
