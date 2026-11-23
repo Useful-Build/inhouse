@@ -120,8 +120,10 @@ running it again. In order:
    doesn't come back with old access. Re-invites after a removal aren't replayed: invite them again.
 4. **Outbox hold.** Not built yet. The record says `outbox: 'p8b_pending'`. Until P8b, no approved or sending outbox row
    exists to hold.
-5. **Deletion-log replay.** Every deletion made after the restore point is made again, so a deleted person stays
-   deleted.
+5. **Deletion-log replay.** Apply each retention job at its logged cutoffs and repeat person deletions from each
+   store's recovery point. If a person deletion stopped after pseudonymisation, replay the member update. Any
+   later retry has its own log entries. Run reconcile in the recovered BrandAgent's context when replay reaches
+   its retention data. Pass its SQLite storage as `retentionSql` and its `personData` through `brandAgentRunner`.
 
 A refusal is stored on the record (`reconcile.refusal`) and returned. Read it by name. `record_changed` means another
 run wrote the record: stop the other run, then run the reconcile again.

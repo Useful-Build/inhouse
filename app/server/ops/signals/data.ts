@@ -8,15 +8,17 @@
 //   rare to exclude here: a chat with a live or waiting session has recent activity, so it isn't past its period.
 //   This is the detection the R2 lifecycle proposal leaves to retention: there's no age rule on files/, sessions/ or
 //   library/, so a job that stops shows here instead.
+//   An edited chats or steps period gets 26 hours for the next nightly pass and its continuations. Fixed ages and
+//   the freshness signal still apply during that window.
 // A deployment younger than 26 hours (its first migration, `d1_migrations.applied_at`) hasn't had its first nightly run
 // yet: backup_fresh and retention_fresh read green then, saying so, so a fresh brand's health route isn't red until 01:30.
 // `backup_failed` and `retention_failed` stay log lines too.
 import { listAll } from '../../../ops/delete/r2.ts'
 import { deletionLogEntrySchema } from '../../../ops/delete/log.ts'
-import { DEFAULT_DAYS, hasRetentionWork, periodsFor, retentionRules } from '../../../ops/retention/rules.ts'
-import type { RetentionPeriods } from '../../../ops/retention/rules.ts'
+import { DEFAULT_DAYS, hasRetentionWork, periodsFor, retentionGroups, retentionRules } from '../../../ops/retention/rules.ts'
+import type { PeriodName, RetentionPeriods } from '../../../ops/retention/rules.ts'
 import { tables } from '../../../ops/tables/index.ts'
-import { brandRetentionDays, retentionStores } from '../retention-handlers.ts'
+import { brandRetentionDays, brandRetentionSettings, retentionStores } from '../retention-handlers.ts'
 import { backupManifestKey } from '../../db/r2-keys.ts'
 import type { KeyedBucket } from '../../db/r2-keys.ts'
 import { first, stmt } from '../../db/sql.ts'
@@ -79,11 +81,12 @@ export async function retentionFresh(db: D1Database, bucket: Bucket, nowMs: numb
 }
 
 /** Per store, a count of rows older than its cutoff plus the slack (D1 stores only). */
-function overdueChecks(nowMs: number, periods: RetentionPeriods): { store: string; sql: string; params: (number | null)[] }[] {
+function overdueChecks(nowMs: number, periods: RetentionPeriods, updatedAt: Partial<Record<PeriodName, number>>): { store: string; sql: string; params: (number | null)[] }[] {
   const own = (store: string) => {
     const days = periods[store]
     if (days === undefined) throw new Error(`retention_overdue: no period for ${store}`)
-    return days === null ? null : nowMs - days * DAY - OVERDUE_SLACK_MS
+    const edited = updatedAt[retentionGroups[store]]
+    return days === null || (edited !== undefined && nowMs - edited < FRESH_MS) ? null : nowMs - days * DAY - OVERDUE_SLACK_MS
   }
   const fixed = (p: keyof typeof DEFAULT_DAYS) => nowMs - DEFAULT_DAYS[p] * DAY - OVERDUE_SLACK_MS
   const checks: ReturnType<typeof overdueChecks> = [
@@ -105,9 +108,10 @@ function overdueChecks(nowMs: number, periods: RetentionPeriods): { store: strin
 
 /** No store holds a row past its cutoff plus two days: red names each store that does, with its count. */
 export async function retentionOverdue(db: D1Database, nowMs: number): Promise<SignalResult> {
-  const periods = periodsFor(tables, await brandRetentionDays(db))
+  const { days, updatedAt } = await brandRetentionSettings(db)
+  const periods = periodsFor(tables, days)
   const late: string[] = []
-  for (const c of overdueChecks(nowMs, periods)) {
+  for (const c of overdueChecks(nowMs, periods, updatedAt)) {
     const r = await first<{ n: number }>(db, stmt(c.sql, ...c.params))
     if (!r) throw new Error(`retention_overdue: no count from ${c.store}`)
     if (r.n > 0) late.push(`${c.store} ${r.n}`)

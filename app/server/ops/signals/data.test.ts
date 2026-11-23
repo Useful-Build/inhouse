@@ -14,7 +14,7 @@ import type { Seeded } from '../../seed/seed.ts'
 import { tables } from '../../../ops/tables/index.ts'
 import { retentionPass } from '../retention-handlers.ts'
 import { signals } from './index.ts'
-import { OVERDUE_SLACK_MS, backupFresh, retentionFresh, retentionOverdue } from './data.ts'
+import { FRESH_MS, OVERDUE_SLACK_MS, backupFresh, retentionFresh, retentionOverdue } from './data.ts'
 
 const DAY = 86_400_000
 const NOW = Date.UTC(2041, 5, 1, 4, 0)
@@ -87,7 +87,7 @@ describe('the data signals', () => {
     for (const [key, value] of [['d:chats', chats], ['d:steps', steps]]) {
       const ifRev = current.find(setting => setting.key === key)?.rev ?? 0
       const saved = await settings.write({ owner: 'brand', scope: 'technical', key, value, ifRev }, {
-        actorId: seeded.members.admin, nowMs: NOW, requestId: `retention-${chatAge}-${key}`,
+        actorId: seeded.members.admin, nowMs: NOW - FRESH_MS, requestId: `retention-${chatAge}-${key}`,
       })
       expect(saved).toHaveProperty('ok')
     }
@@ -114,5 +114,33 @@ describe('the data signals', () => {
       db.prepare("DELETE FROM chats WHERE id = 'c_period'"),
       db.prepare("DELETE FROM activity_lines WHERE id = 'a_period'"),
     ])
+  })
+
+  it.each(['d:chats', 'd:steps'])('gives a shortened %s one nightly pass before reporting overdue data', async key => {
+    const db = env.DB
+    const { settings } = openStores(env)
+    const current = (await settings.list('brand', 'technical')).find(setting => setting.key === key)
+    const saved = await settings.write({ owner: 'brand', scope: 'technical', key, value: '3 months', ifRev: current?.rev ?? 0 }, {
+      actorId: seeded.members.admin, nowMs: NOW, requestId: `shorten-${key}`,
+    })
+    expect(saved).toHaveProperty('ok')
+
+    const age = NOW - 120 * DAY
+    const chat = db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms, deleted_at_ms) VALUES (?, ?, 'Retention test', ?, ?, ?)")
+    if (key === 'd:chats') await chat.bind('c_grace', seeded.members.dana, age, age, null).run()
+    else await addActivity(db, { id: 'a_grace', actor: seeded.members.dana, subject: null, atMs: age })
+    expect(await retentionOverdue(db, NOW)).toEqual({ ok: true })
+    expect(await retentionOverdue(db, NOW + FRESH_MS - 1)).toEqual({ ok: true })
+
+    // An expired trashed chat still goes red during a grace window.
+    await chat.bind('c_grace_trash', seeded.members.dana, age, NOW, NOW - 33 * DAY).run()
+    expect(await retentionOverdue(db, NOW + 1)).toEqual({ ok: false, detail: 'past retention: chats 1' })
+    await db.prepare("DELETE FROM chats WHERE id = 'c_grace_trash'").run()
+
+    const store = key === 'd:chats' ? 'chats' : 'activity_lines'
+    expect(await retentionOverdue(db, NOW + FRESH_MS)).toEqual({ ok: false, detail: `past retention: ${store} 1` })
+    const registry = tables.filter(t => t.name === store)
+    expect(await retentionPass({ db, bucket, nowMs: NOW + FRESH_MS, requestId: 'grace', from: 0, registry })).toMatchObject({ reached: 1, failed: [] })
+    expect(await retentionOverdue(db, NOW + FRESH_MS)).toEqual({ ok: true })
   })
 })

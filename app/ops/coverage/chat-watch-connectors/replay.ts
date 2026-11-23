@@ -1,10 +1,11 @@
 // What R's deletion-log replay (ops/backup/reconcile/replay.ts) needs from C1 to repeat C1's deletions after a restore
-// (#346 review H1). Line A wires these into R: a retention run's custom stores through `replayRetention`, a person
+// (#346 review H1). Reconcile calls a retention run's custom stores through `replayRetention`, and a person
 // run's chat cascade and bell through `personRunners` (R's `PersonRunner` shape; the BrandAgent's runner is R's own
 // `brandAgentRunner`). Both apply rules, never logged row ids, so each is idempotent and safe to repeat.
 import type { KeyedBucket } from '../../../server/db/r2-keys.ts'
 import { runBatch, stmt } from '../../../server/db/sql.ts'
 import type { PersonRunner } from '../../backup/reconcile/replay.ts'
+import { deleteChatRows, quietChats } from './brand-agent-storage.ts'
 import { cascadeRowStatements, chatIds, deleteCascadeObjects, ownedBy } from './chat-cascade.ts'
 import { MAX_LIMIT, RETENTION_JOBS, SERVED_BY } from './retention-jobs.ts'
 import type { AgeTag, LoggedCutoff } from './retention-jobs.ts'
@@ -21,7 +22,9 @@ export async function replayRetention(store: string, deps: { db: D1Database; buc
     throw new Error(`replay: ${store} has no retention job`)
   }
   const fixed = Object.fromEntries(cutoffs.map(c => [c.age ?? 'own', c.cutoffMs])) as Partial<Record<AgeTag, number>>
-  const ctx = { db: deps.db, bucket: deps.bucket, sql: deps.sql, atMs: null, cutoffMs: fixed.own ?? null, cutoffs: fixed, limit: MAX_LIMIT }
+  // The chat job checks each id twice in its BrandAgent safety query.
+  const limit = store === 'chats' && deps.sql ? Math.floor(MAX_LIMIT / 2) : MAX_LIMIT
+  const ctx = { db: deps.db, bucket: deps.bucket, sql: deps.sql, atMs: null, cutoffMs: fixed.own ?? null, cutoffs: fixed, limit }
   const removed: Record<string, number> = {}
   for (;;) {
     const plan = await job.plan(ctx)
@@ -31,6 +34,13 @@ export async function replayRetention(store: string, deps: { db: D1Database; buc
     if (!plan.more) break
   }
   return removed
+}
+
+/** Reapply the object side of one logged chat cascade round, even if D1 has already lost those chats. */
+export function replayChatRows(sql: SqlStorage, ids: readonly string[]): boolean {
+  if (quietChats(sql, ids).length !== ids.length) return false
+  deleteChatRows(sql, ids)
+  return true
 }
 
 /**

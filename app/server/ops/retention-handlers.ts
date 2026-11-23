@@ -52,20 +52,25 @@ const SETTING_DAYS = {
   'Until deleted': null,
 } satisfies Record<(typeof RETENTION)[number], number | null>
 
-export async function brandRetentionDays(db: D1Database): Promise<Record<PeriodName, number | null>> {
-  const rows = await all<{ key: 'd:chats' | 'd:steps'; value_json: string }>(db, stmt(
-    "SELECT key, value_json FROM settings WHERE owner = ? AND key IN ('d:chats', 'd:steps')", BRAND_OWNER,
+export async function brandRetentionSettings(db: D1Database) {
+  const rows = await all<{ key: 'd:chats' | 'd:steps'; value_json: string; updated_at_ms: number }>(db, stmt(
+    "SELECT key, value_json, updated_at_ms FROM settings WHERE owner = ? AND key IN ('d:chats', 'd:steps')", BRAND_OWNER,
   ))
   const days: Record<PeriodName, number | null> = { ...DEFAULT_DAYS }
+  const updatedAt: Partial<Record<PeriodName, number>> = {}
   for (const row of rows) {
+    const group = row.key === 'd:chats' ? 'chats' : 'steps'
+    updatedAt[group] = row.updated_at_ms
     const value: unknown = JSON.parse(row.value_json)
     if (value === null) continue // Reset to the default.
     const choice = RETENTION.find(option => option === value)
     if (choice === undefined) throw new Error(`retention: invalid ${row.key} setting`)
-    days[row.key === 'd:chats' ? 'chats' : 'steps'] = SETTING_DAYS[choice]
+    days[group] = SETTING_DAYS[choice]
   }
-  return days
+  return { days, updatedAt }
 }
+
+export const brandRetentionDays = async (db: D1Database) => (await brandRetentionSettings(db)).days
 
 /**
  * Every store retention acts on, in registry order: a `retention_period` entry that isn't derived, or a custom rule;

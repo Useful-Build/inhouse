@@ -44,8 +44,10 @@ export interface ReconcileDeps {
   registry?: readonly TableEntry[]
   deletionRules?: Readonly<Record<string, DeletionRule>>
   retentionRules?: Readonly<Record<string, RetentionRule>>
-  /** Each custom store's runner, by store name (`brandAgentRunner(brandAgent(env))` for `BrandAgent`). */
+  /** The recovered object's person runner (`brandAgentRunner`) and optional overrides by store name. */
   runners?: Readonly<Record<string, PersonRunner>>
+  /** The recovered BrandAgent's SQLite, when replay runs inside that object. */
+  retentionSql?: SqlStorage
   /** C1's FTS rebuild; tests pass a stand-in. It refuses unless the record is `restored_unreconciled`. */
   rebuildFts?: (p: RebuildDeps) => Promise<RebuildResult>
 }
@@ -87,7 +89,7 @@ export async function reconcile(deps: ReconcileDeps): Promise<ReconcileResult> {
     // 5. The deletion log past the watermark.
     const replay = await replayDeletionLog({
       bucket: deps.bucket, target: deps.target, at: deps.at, registry: deps.registry ?? realRegistry,
-      deletion: deps.deletionRules, retention: deps.retentionRules, runners: deps.runners,
+      deletion: deps.deletionRules, retention: deps.retentionRules, runners: deps.runners, retentionSql: deps.retentionSql,
     }, record)
     return { ok: await writeRecord(deps.bucket, { ...record, reconcile: { ...reconcile, fts, audit, members, replay, refusal: null } }, etag) }
   } catch (err) {

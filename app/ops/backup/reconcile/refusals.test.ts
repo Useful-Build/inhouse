@@ -82,12 +82,13 @@ it('returns, never throws, a record changed by another run while this one refuse
   await e.FILES.put(restoreKey(record.restoreId, 'record.json'), JSON.stringify(kept))
 })
 
-it('refuses by name a store whose runner isn\'t built, writes nothing of the replay, and stays unreconciled (real registry)', async () => {
+it('refuses by name when the recovered BrandAgent person runner is missing and writes nothing of the replay', async () => {
   expect(record.status).toBe('restored_unreconciled')
   const before = await row(ids.dana)
-  const out = await reconcile({ bucket: e.FILES, target: e.RESTORE_DB, restoreId: record.restoreId, rebuildFts: ftsStub().rebuildFts, at: at(T + 40), runners: runners() })
-  expect(out).toMatchObject({ refused: "replay_custom_unrun: chats's rule is custom and its runner isn't built yet" })
-  expect(await stored()).toMatchObject({ status: 'restored_unreconciled', reconciled: false, reconcile: { audit: null, replay: null, refusal: "replay_custom_unrun: chats's rule is custom and its runner isn't built yet" } })
+  const out = await reconcile({ bucket: e.FILES, target: e.RESTORE_DB, restoreId: record.restoreId, rebuildFts: ftsStub().rebuildFts, at: at(T + 40) })
+  const refusal = "replay_custom_unrun: BrandAgent's rule is custom and its runner isn't built yet"
+  expect(out).toMatchObject({ refused: refusal })
+  expect(await stored()).toMatchObject({ status: 'restored_unreconciled', reconciled: false, reconcile: { audit: null, replay: null, refusal } })
   expect(await row(ids.dana)).toEqual(before)
   expect(await confirm(T + 45, ids.inhouse, ids.admin)).toMatchObject({ refused: 'not_reconciled: audit' })
 })
