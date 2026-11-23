@@ -65,6 +65,6 @@ export const RoutineHistoryRunSchema = z.strictObject({
 })
 export type RoutineHistoryRun = z.infer<typeof RoutineHistoryRunSchema>
 
-/** Route 68, `GET /api/routines/:id/runs`: the routine's own recent runs, newest first, at most `ROUTINE_RUNS_MAX`. */
+/** Route 86, `GET /api/routines/:id/runs`: the routine's own recent runs, newest first, at most `ROUTINE_RUNS_MAX`. */
 export const RoutineRunHistorySchema = z.strictObject({ runs: z.array(RoutineHistoryRunSchema).max(ROUTINE_RUNS_MAX) })
 export type RoutineRunHistory = z.infer<typeof RoutineRunHistorySchema>

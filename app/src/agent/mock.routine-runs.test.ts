@@ -1,4 +1,4 @@
-// The demo answers route 68's shape from its sample data (master plan decision 8). Ways it can fail, written down first:
+// The demo answers route 86's shape from its sample data (master plan decision 8). Ways it can fail, written down first:
 //  1. an answer the server's schema would refuse (an extra field, an outcome off the list, oldest first, over the cap),
 //     so the panel works in the demo and breaks in the product;
 //  2. a Run now isn't the newest line, or one with no result claims it finished;

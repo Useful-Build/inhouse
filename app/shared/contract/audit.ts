@@ -43,7 +43,7 @@ const RoutePatternSchema = z.enum([
   // P4's brand_data GET routes (Sonnet M-4): the Routines page, Today, Activity and the Library, so Inhouse under a live
   // grant gets data, not 503 ("no line, no data").
   '/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download',
-  // Master plan decision 8 (route 68): a routine's recent runs.
+  // Master plan decision 8 (route 86): a routine's recent runs.
   '/api/routines/:id/runs',
 ])
 /**

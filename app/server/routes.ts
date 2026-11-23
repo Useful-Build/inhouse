@@ -180,7 +180,7 @@ export const routes: readonly Route[] = [
   /* 55 */ { method: 'POST', pattern: '/api/routines/:id/delete', handler: deleteRoutine },
   /* 56 */ { method: 'POST', pattern: '/api/routines/:id/restore', handler: restoreRoutine },
   // Master plan decision 8: a routine's own recent runs.
-  /* 68 */ { method: 'GET', pattern: '/api/routines/:id/runs', handler: listRoutineRuns },
+  /* 86 */ { method: 'GET', pattern: '/api/routines/:id/runs', handler: listRoutineRuns },
 ]
 
 /** The route for this method and path, with its params, or null (404 `not_found`). */

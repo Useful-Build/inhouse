@@ -177,7 +177,7 @@ const routineOf = (r: RawRoutine): Omit<RoutineDef, 'id'> => {
 }
 export const routines = (routinesJson.routines as RawRoutine[]).map(routineOf)
 export const seedRoutine = routineOf(routinesJson.createdInSeedChat as RawRoutine)
-/** Each sample routine's recent runs by its name, newest first, as route 68 answers them (none is a Run now). */
+/** Each sample routine's recent runs by its name, newest first, as route 86 answers them (none is a Run now). */
 export const sampleRuns: Record<string, RoutineHistoryRun[]> = Object.fromEntries((routinesJson.routines as RawRoutine[]).map(r => [
   r.name, (r.runs ?? []).map(x => ({ ...x, at: sampleAt(`a run of the routine "${r.name}"`, x.at), manual: false })),
 ]))

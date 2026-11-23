@@ -12,7 +12,7 @@
 //     into `routines`;
 //  6. route 33: a person can't read a routine run's trace, or can read another person's chat trace, or a chat owned by
 //     the routine principal with no slot row is readable;
-//  7. route 68: a routine's runs leak another routine's, come back oldest first or past the cap, show a run id other than
+//  7. route 86: a routine's runs leak another routine's, come back oldest first or past the cap, show a run id other than
 //     as the steps link, a failure code or a timing; a routine with no runs isn't an empty list; an unknown (another
 //     brand's), deleted or malformed id answers anything but 404; Inhouse reads without a grant or its support.access line.
 import { env } from 'cloudflare:workers'
@@ -314,7 +314,7 @@ describe('route 33: a routine run\'s trace (OC 6)', () => {
   })
 })
 
-describe('route 68: a routine\'s runs', () => {
+describe('route 86: a routine\'s runs', () => {
   const runs = async (p: Principal, id: string, query = '') => send(p, 'GET', `/api/routines/${id}/runs${query}`)
 
   it('answers its own runs newest first: when, outcome, one plain line, a Run now marked, the steps link only', async () => {

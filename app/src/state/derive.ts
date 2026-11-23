@@ -813,7 +813,7 @@ export function fillActivity(ctx: Ctx) {
 export interface RoutineRunLine { key: string; when: string; text: string; outcome: RoutineRunOutcome; trace?: string }
 
 /**
- * A routine's last runs (route 68's answer, newest first) as the panel's lines: "Today, 6:00 AM" or "Fri, Nov 13,
+ * A routine's last runs (route 86's answer, newest first) as the panel's lines: "Today, 6:00 AM" or "Fri, Nov 13,
  * 6:00 AM", and the result. A Run now reads "Run now · <result>", or plain "Run now" while it runs.
  */
 export function routineRunLines(runs: readonly RoutineHistoryRun[], now: number): RoutineRunLine[] {
