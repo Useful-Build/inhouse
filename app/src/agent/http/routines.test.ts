@@ -1,10 +1,10 @@
-// The Routines page over a fake `fetch` (P4 W2, routes 52 to 56, and route 68). Ways it could show a person the wrong thing, written
+// The Routines page over a fake `fetch` (P4 W2, routes 52 to 56, and route 86). Ways it could show a person the wrong thing, written
 // down first:
 //  - a routine's switch not read from the server (`r:<id>` missing), or lost when the settings reload;
 //  - a switch, a delete or an Undo that the server refused left on screen; a stale rev not taken in from the conflict;
 //  - a write sent with a rev older than the last answer's; a Run now sent with a key the route refuses (a ".");
 //  - the Inhouse team asked for the list on start (a grant would log every read);
-//  - route 68's answer taken in without its schema (a run id or an outcome off the list gets through).
+//  - route 86's answer taken in without its schema (a run id or an outcome off the list gets through).
 import { describe, expect, test } from 'vitest'
 import { HttpAgent } from './client'
 import { me, reads, record, refusal, server } from './testing/fake-server'
@@ -229,7 +229,7 @@ describe('the client: routines', () => {
     expect(refused.agent.read().resources.routines).toEqual({ status: 'ready' })
   })
 
-  test('route 68: a routine\'s runs as the server said them; a refusal, or an answer off the schema, rejects', async () => {
+  test('route 86: a routine\'s runs as the server said them; a refusal, or an answer off the schema, rejects', async () => {
     const runs = { runs: [{ at: at(NOW), outcome: 'done', result: 'Found 3 things', manual: false, trace: 'r_x' }] }
     const { agent, calls } = await loaded({
       ...reads({ routines: LIST }),

@@ -286,11 +286,11 @@ export function runOutcome(s: Pick<SlotRow, 'state' | 'failure' | 'outcome' | 'r
   }
 }
 
-/** The fields of a slot route 68 reads. */
+/** The fields of a slot route 86 reads. */
 export type RunSlot = Pick<SlotRow, 'kind' | 'state' | 'reason' | 'due_at_ms' | 'started_at_ms' | 'run_id' | 'outcome' | 'failure' | 'result_text'>
 
 /**
- * Route 68's read: a routine's own slots, newest first (`(local_date, claimed_at_ms)`, as 0200 orders them), at most
+ * Route 86's read: a routine's own slots, newest first (`(local_date, claimed_at_ms)`, as 0200 orders them), at most
  * `limit`. Null when the routine isn't this brand's or is deleted (each brand has its own D1, so another brand's id names
  * nothing here).
  */

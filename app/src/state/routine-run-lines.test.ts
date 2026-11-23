@@ -1,4 +1,4 @@
-// The routine panel's Last runs lines from route 68's answer (master plan decision 8). Ways it can fail, written down
+// The routine panel's Last runs lines from route 86's answer (master plan decision 8). Ways it can fail, written down
 // first: a run today not read "Today", an earlier one without its day; a Run now not marked, or one still running given
 // a result it doesn't have; the order changed; a steps link made up for a run with none.
 import { describe, expect, test } from 'vitest'

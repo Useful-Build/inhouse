@@ -177,7 +177,7 @@ export function historyRun(s: RunSlot): RoutineHistoryRun {
 }
 
 /**
- * Route 68, `GET /api/routines/:id/runs`: the routine's own last runs (its slots), newest first, at most
+ * Route 86, `GET /api/routines/:id/runs`: the routine's own last runs (its slots), newest first, at most
  * `ROUTINE_RUNS_MAX`. Read like route 52 (anyone who may read the routines); a deleted or unknown routine is 404.
  */
 export async function listRoutineRuns(c: HandlerContext): Promise<Response> {

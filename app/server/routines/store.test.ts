@@ -147,11 +147,11 @@ describe('a system routine', () => {
   })
 })
 
-// Route 68's read (master plan decision 8). Ways it can fail, written down first: another routine's slots get in; the
+// Route 86's read (master plan decision 8). Ways it can fail, written down first: another routine's slots get in; the
 // order isn't newest first by (local_date, claimed_at_ms) (a catch-up claimed late for an earlier day sorts above a
 // later day); more than the cap comes back; an unknown (another brand's) or deleted routine answers runs instead of
 // null; a routine with no runs answers null; a person reads a failure or refusal code instead of plain words.
-describe('a routine\'s runs (route 68)', () => {
+describe('a routine\'s runs (route 86)', () => {
   it('answers only its own slots, newest first by (local_date, claimed_at_ms), at most the limit', async () => {
     const a = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW }))
     const b = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW }))

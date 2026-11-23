@@ -1,4 +1,4 @@
-// Routines (P4 W2 routes 52 to 56, acceptance 1 and 8; p4-w2.md sections 4, 7 and 9, p4-w6.md sections 1 to 3; route 68,
+// Routines (P4 W2 routes 52 to 56, acceptance 1 and 8; p4-w2.md sections 4, 7 and 9, p4-w6.md sections 1 to 3; route 86,
 // master plan decision 8). Five groups:
 //   1. the routes: who may do what to which routine (Dana made it, Leo is another Member, the Admin, Inhouse with and
 //      without a live grant), `ifRev` conflicts answering the current record, Run now idempotent by `clientKey`;
@@ -7,7 +7,7 @@
 //   3. slots against the real scheduler: the BrandAgent's alarm driven through route 67's controls, with routines whose
 //      times are set relative to the spec's own start (the clock can't be moved);
 //   4. the next run the page shows for a schedule in the brand's zone (`next` is computed, not waited for);
-//   5. route 68: a routine's own recent runs, newest first, in plain words, read like route 52.
+//   5. route 86: a routine's own recent runs, newest first, in plain words, read like route 52.
 // The expected answers are written here from the briefs' tables, never read from the code. Every group needs the multi-config
 // test build (`needsWatchBuild`): the routines are seeded into the local D1, and the slot cases run a turn in a container.
 // The slot math across a skipped and a repeated local time is W2's workers test (`p4-w2.md` tests 1 to 3): a brand zone can't
@@ -210,7 +210,7 @@ test.describe('routes 52 to 56: who may do what to which routine', () => {
   })
 })
 
-test.describe('route 68: a routine\'s own recent runs', () => {
+test.describe('route 86: a routine\'s own recent runs', () => {
   needsLocalD1()
   test.describe.configure({ mode: 'serial' })
   let danaId: string
@@ -244,8 +244,8 @@ test.describe('route 68: a routine\'s own recent runs', () => {
   const at = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
 
   test('a routine with no runs is an empty list for every person; with runs, its own come back newest first in plain words', async ({ request }) => {
-    const id = quietRoutine('route 68 runs')
-    const other = quietRoutine('route 68 other')
+    const id = quietRoutine('route 86 runs')
+    const other = quietRoutine('route 86 other')
     for (const who of [dana, leo, admin]) {
       const r = await call(request, who, 'GET', `/api/routines/${id}/runs`)
       expect(r.status, r.text).toBe(200)
@@ -271,15 +271,15 @@ test.describe('route 68: a routine\'s own recent runs', () => {
   test('another brand\'s routine (an id this brand doesn\'t have), a deleted one or a bad id is 404; a query is invalid', async ({ request }) => {
     expectError(await call(request, dana, 'GET', '/api/routines/rt_e2eOtherBrandAAAAAAAAA/runs'), 404, 'not_found')
     expectError(await call(request, dana, 'GET', '/api/routines/not-an-id/runs'), 404, 'not_found')
-    const gone = quietRoutine('route 68 deleted')
+    const gone = quietRoutine('route 86 deleted')
     writeSql('UPDATE routines SET deleted_at_ms = ?, rev = rev + 1 WHERE id = ?', Date.now(), gone)
     expectError(await call(request, dana, 'GET', `/api/routines/${gone}/runs`), 404, 'not_found')
-    const id = quietRoutine('route 68 query')
+    const id = quietRoutine('route 86 query')
     expectError(await call(request, dana, 'GET', `/api/routines/${id}/runs?limit=50`), 400, 'invalid')
   })
 
   test('Inhouse: no live grant is 403 grant_required; under a live grant it reads, with a support.access line', async ({ request }) => {
-    const id = quietRoutine('route 68 inhouse')
+    const id = quietRoutine('route 86 inhouse')
     expectError(await call(request, inhouse, 'GET', `/api/routines/${id}/runs`), 403, 'forbidden', 'grant_required')
     const grant = await call(request, admin, 'POST', '/api/grants', { json: { hours: 1 } })
     expect(grant.status, grant.text).toBe(201)

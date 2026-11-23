@@ -1,4 +1,4 @@
-// The Routines page over HTTP (routes 52 to 56, P4 W2, and 68): the list, a routine's switch, Run now, delete and restore,
+// The Routines page over HTTP (routes 52 to 56, P4 W2, and 86): the list, a routine's switch, Run now, delete and restore,
 // and one routine's recent runs. Plain
 // request builders (no zod here: the entry's size budget); the transport parses every answer through the shared schema,
 // and the client (client.ts) makes the writes optimistic. A routine's switch is the `r:<id>` toggle (`setToggle`).
@@ -26,6 +26,6 @@ export const postRoutineRun = (http: Transport, k: Contract, id: string, clientK
 export const postRoutineRev = (http: Transport, k: Contract, id: string, what: 'delete' | 'restore', ifRev: number): Promise<RoutineState> =>
   http.call({ method: 'POST', path: path(id, what), schema: 'routineState', json: k.BODIES.routineRev.parse({ ifRev }) })
 
-/** Route 68: one routine's own recent runs, newest first. */
+/** Route 86: one routine's own recent runs, newest first. */
 export const readRoutineRuns = (http: Transport, id: string): Promise<RoutineRunHistory> =>
   http.call({ method: 'GET', path: path(id, 'runs'), schema: 'routineRuns' })
