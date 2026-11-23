@@ -1,5 +1,5 @@
 // Settings > Notifications and Memory (your own pages), at 1440. Each control does what it says; the picks survive a
-// reload and Reset demo clears them. At Watch both pages are locked until Act. The phone twin is
+// reload and Reset demo clears them. Memory is available at Watch and Notifications unlocks at Act. The phone twin is
 // settings-pages-phone.spec.ts.
 import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
@@ -33,7 +33,7 @@ const PERSONAL = [
   'You handle supplier emails yourself. Dana handles money.',
 ]
 
-test('Notifications and Memory at Watch: the alerts, the memory lines and the learn switch are locked until Act', async ({ fx, page }) => {
+test('At Watch, Notifications is locked and Memory is available', async ({ fx, page }) => {
   await start(page, fx, 'Watch', '#/settings/you-notif')
   await expect(page.getByRole('heading', { level: 1, name: 'Notifications', exact: true })).toBeVisible()
   await expect(main(page).getByRole('combobox', { name: /^Approvals waiting/ })).toBeDisabled()
@@ -42,11 +42,11 @@ test('Notifications and Memory at Watch: the alerts, the memory lines and the le
 
   await goTo(page, 'you-memory')
   await expect(page.getByRole('heading', { level: 1, name: 'Memory', exact: true })).toBeVisible()
-  // A locked row's text node also holds its screen-reader note ("Locked, included in a later stage: Act"), so match a substring.
-  for (const line of PERSONAL) await expect(main(page).getByText(line)).toBeVisible()
-  await expect(main(page).getByRole('button', { name: 'Forget', exact: true })).toHaveCount(3)
-  await expect(main(page).locator('button:not([disabled])', { hasText: /^Forget$/ })).toHaveCount(0)
-  await expect(main(page).getByRole('switch', { name: 'Learn from my chats' })).toBeDisabled()
+  for (const line of PERSONAL) await expect(main(page).getByText(line, { exact: true })).toBeVisible()
+  const forgets = main(page).getByRole('button', { name: 'Forget', exact: true })
+  await expect(forgets).toHaveCount(3)
+  for (const forget of await forgets.all()) await expect(forget).toBeEnabled()
+  await expect(sw(page, 'Learn from my chats')).toBeEnabled()
   // Privacy is a fact, not a control: it shows at every stage.
   await expect(main(page).getByText('Private', { exact: true })).toBeVisible()
 })

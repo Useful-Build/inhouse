@@ -282,7 +282,7 @@ Settings: Team memory
   Selector: buttons "Forget", switch "Ask before saving a team rule", button "Teach in a chat"
   Expected: usable at every stage (no stage tag), with a "Waiting for your OK" section for an Admin in the product (Approve, Reject after asking; a stale Approve is refused and says what the rule is now); Forget removes a line with an Undo toast and the Inhouse agent page's count follows; the switch turns off; both survive a reload and Reset demo clears them; Teach in a chat opens a new chat holding "Remember that "
   Covered:  e2e/settings-team-pages.spec.ts, e2e/ship/memory-skills.spec.ts (S2 to S5), e2e/support/memory-scenarios.test.ts
-  Gaps:     the ship spec doesn't show a routine's team fact waiting while Ask is off (a routine can't be made at Watch through the app; the store's tests prove it); the requester's Closed tab holds only what they withdrew this session, so an answered request just leaves Open
+  Gaps:     the ship spec doesn't show a routine's team fact waiting while Ask is off (a routine can't be made at Watch through the app; the store's tests prove it)
 
 Settings: Run limits
   Path:     Settings -> Run limits
