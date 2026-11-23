@@ -820,7 +820,8 @@ export function routineRunLines(runs: readonly RoutineHistoryRun[], now: number)
   const d0 = display()
   return runs.map((x, i): RoutineRunLine => {
     const t = fmtTime(x.at, d0)
-    const text = !x.manual ? x.result : x.outcome === 'running' ? 'Run now' : `Run now · ${x.result}`
+    // A Run now with no result of its own ("It finished", the words for a run with nothing to report) reads plain "Run now".
+    const text = !x.manual ? x.result : x.outcome === 'running' || x.result === 'It finished' ? 'Run now' : `Run now · ${x.result}`
     return {
       key: `${i}|${x.at.ms}`, when: daysBefore(x.at, now, d0) === 0 ? `Today, ${t}` : `${fmtWeekday(x.at, d0)}, ${t}`, text, outcome: x.outcome,
       ...(x.trace ? { trace: x.trace } : {}),

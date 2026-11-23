@@ -27,5 +27,6 @@ describe('routineRunLines', () => {
   test('a Run now reads "Run now · <result>", or plain "Run now" while it runs', () => {
     const lines = routineRunLines([run(NOW - 1000, { manual: true, outcome: 'running', result: "It's running" }), run(NOW - 9000, { manual: true, result: 'found 6 things' })], NOW)
     expect(lines.map(l => l.text)).toEqual(['Run now', 'Run now · found 6 things'])
+    expect(routineRunLines([run(NOW - 1000, { manual: true, result: 'It finished' })], NOW).map(l => l.text)).toEqual(['Run now'])
   })
 })
