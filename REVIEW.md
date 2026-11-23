@@ -42,7 +42,7 @@ Classify every finding by real user, agent, or system impact:
 3. Error handling: no silent `catch` blocks or fallback values (`?? 0`, `|| []`) that hide upstream bugs; no leaked stack traces.
 4. Check integrity: if the PR edits, skips, or deletes an existing test, lint rule, visual baseline, or workflow, the PR body must explain why. Reject weakened checks.
 5. Schema and prompts: migrations are forward-only and registered in `app/ops/tables/`; prompt edits include committed eval results.
-6. Scope: the diff delivers what the task asked without unrelated refactors or leftover debug code, and carries no temporary files (handoff notes, scratch files, mockups, screenshots, logs; see `AGENTS.md` §5 step 5).
+6. Scope: the diff delivers what the task asked without unrelated refactors or leftover debug code, and carries no temporary files from the work (handoff notes, scratch files, temporary mockups or screenshots, logs; see "Clean before review" in `AGENTS.md` §5).
 
 ## 6. What to skip and output format
 
