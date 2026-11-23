@@ -199,9 +199,9 @@ export function ProblemPanel() {
   const more = (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="lg" className={cn('flex-none', tap)}>More<Icon name="expand_more" size={18} /></Button>
+        <Button variant="outline" size="lg" className={cn('flex-none', phone && 'min-h-11', tap)}>More<Icon name="expand_more" size={18} /></Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="top" collisionPadding={16} aria-label="More actions" className="w-menu-message max-w-screen-gutter border-input">
+      <DropdownMenuContent align="start" side="top" collisionPadding={16} aria-label="More actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
         {dv.mode === 'waiting' && !ctx.agent.setAside[openId] && <>
           <MenuItem onSelect={() => putAside('declined')}>
             <Icon name="cancel_schedule_send" size={18} /><span className="flex-1">Don't send</span>
@@ -280,7 +280,7 @@ export function ProblemPanel() {
       </div>
 
       <div className={cn('flex flex-none gap-2 border-t border-divider pt-3.5 pb-4', phone ? 'flex-wrap items-center px-5' : 'items-center pr-6 pl-8')}>
-        {/* The decision reads left to right: the main action, Don't send, then everything else in the "···" menu. */}
+        {/* The decision reads left to right: the main action, then More (Don't send first, then everything else). */}
         {watch && <>
           <Button variant="primary" size="lg" className={tap} onClick={() => void ask('Tell me more about: ' + p.title)}>Ask Inhouse</Button>
           {more}

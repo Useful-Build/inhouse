@@ -90,7 +90,8 @@ function NewRequest({ onSent }: { onSent: () => void }) {
       icon: RT[team.type][0], title: title || titleOf(text), sub: `${RT[team.type][1]} · ${sender}`, at: instantOf(nowOf()), status: 'With the team',
       ...(text ? { text } : {}),
     })
-    showToast(isBug ? 'Bug sent to your Inhouse team. Thank you.' : 'Request sent. Your Inhouse team replies within one working day.')
+    // The reply-time promise is the demo's: the product makes no promise the team hasn't set (UI plan 3, D2).
+    showToast(isBug ? 'Bug sent to your Inhouse team. Thank you.' : demo !== null ? 'Request sent. Your Inhouse team replies within one working day.' : 'Request sent to your Inhouse team.')
     onSent()
     patch({ team: { ...team, title: '', text: '' } })
   }
@@ -103,10 +104,11 @@ function NewRequest({ onSent }: { onSent: () => void }) {
             {KINDS.map(k => {
               const on = team.type === k
               return (
-                <label key={k} className={cn('flex cursor-pointer flex-col items-start justify-between gap-2 rounded-xl border bg-card p-3.5 pb-3 text-sm transition-colors has-focus-visible:shadow-halo',
+                // The radio covers its whole tile, unseen, so a click or tap anywhere on the tile lands on the radio itself.
+                <label key={k} className={cn('relative flex cursor-pointer flex-col items-start justify-between gap-2 rounded-xl border bg-card p-3.5 pb-3 text-sm transition-colors has-focus-visible:shadow-halo',
                   phone ? 'min-h-18' : 'h-23',
                   on ? 'border-foreground font-semibold text-foreground shadow-selected' : 'border-border font-medium text-foreground-2 hover:border-border-strong')}>
-                  <input type="radio" name="team-kind" value={k} checked={on} onChange={() => set({ type: k })} className="sr-only" />
+                  <input type="radio" name="team-kind" value={k} checked={on} onChange={() => set({ type: k })} className="absolute inset-0 m-0 size-full cursor-pointer appearance-none rounded-xl opacity-0" />
                   <Icon name={RT[k][0]} size={20} weight={400} className={on ? 'text-foreground' : 'text-foreground-3'} />
                   <span className="leading-card">{RT[k][1]}</span>
                 </label>
