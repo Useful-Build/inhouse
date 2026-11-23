@@ -195,9 +195,27 @@ function RequestRow({ q, first }: { q: TeamRow; first: boolean }) {
   const phone = useUi(s => s.phone)
   const id = `team-req-${q.key.replace(/[^\w-]/g, '-')}`
   const chip = <Badge variant={q.closed ? 'status' : q.dated ? 'brand' : 'muted'} size="lg" className="flex-none">{q.status}</Badge>
-  const withdraw = () => {
-    patch({ teamWithdrawn: [...withdrawn, q.key] })
-    showToast('Request withdrawn.', { icon: 'undo', undo: () => { patch({ teamWithdrawn: useUi.getState().teamWithdrawn.filter(k => k !== q.key) }); clearToast() } })
+  // A failed withdraw says why under the request and keeps its row. While it goes, the button waits.
+  const [failed, setFailed] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const withdraw = async () => {
+    if (busy) return
+    setBusy(true); setFailed(null)
+    try {
+      await agent.withdrawTeamRequest({ title: q.title, at: q.at })
+    } catch (e) {
+      setBusy(false)
+      setFailed(e instanceof Error && e.message ? e.message : 'Something went wrong.')
+      return
+    }
+    // The demo shows it withdrawn for the session, and Undo puts it back. The product has no un-withdraw route (the team's
+    // window reads the server's open requests), so its toast offers no Undo: one that did nothing would be a lie.
+    if (demo !== null) {
+      patch({ teamWithdrawn: [...withdrawn, q.key] })
+      showToast('Request withdrawn.', { icon: 'undo', undo: () => { patch({ teamWithdrawn: useUi.getState().teamWithdrawn.filter(k => k !== q.key) }); clearToast() } })
+    } else {
+      showToast('Request withdrawn.', { icon: 'check' })
+    }
   }
   return (
     <li className={cn(!first && 'border-t border-divider')}>
@@ -215,10 +233,10 @@ function RequestRow({ q, first }: { q: TeamRow; first: boolean }) {
       {expanded && (
         <div id={id} className="pr-4.5 pb-4 pl-16.5 max-sm:pl-4.5">
           <p className="text-base leading-prose text-pretty text-foreground-2">{q.text ?? q.title}</p>
-          {/* Withdraw is the demo's stand-in: the product has no withdraw route yet (P6a), so it shows only in the demo. */}
-          {demo !== null && q.mine && !q.closed && (
-            <Button variant="ghost" className="mt-3 -ml-3" onClick={withdraw}>Withdraw request</Button>
+          {q.mine && !q.closed && (
+            <Button variant="ghost" className="mt-3 -ml-3" disabled={busy} onClick={() => void withdraw()}>Withdraw request</Button>
           )}
+          {failed !== null && <p role="alert" className="mt-2 text-sm text-destructive-text">Your request wasn't withdrawn. {failed}</p>}
         </div>
       )}
     </li>

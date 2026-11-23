@@ -1079,6 +1079,8 @@ export class MockAgent implements AgentClient {
     this.listeners.forEach(l => l())
   }
   sendTeamRequest(req: TeamRequest) { return this.write({ teamRequests: [req, ...this.state.teamRequests] }) }
+  /** The demo keeps nothing to withdraw on a server: the window shows the request as withdrawn for the session (its `teamWithdrawn`), and an Undo puts it back. */
+  withdrawTeamRequest(_ref: { title: string; at: Instant }) { return Promise.resolve() }
   markNoticesRead(ids: string[]) {
     const fresh = ids.filter(id => !this.state.readNotices[id])
     return fresh.length ? this.write({ readNotices: { ...this.state.readNotices, ...Object.fromEntries(fresh.map(id => [id, true as const])) } }) : Promise.resolve()

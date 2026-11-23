@@ -25,7 +25,7 @@ import { postNoticesRead, readNotifications } from './bell'
 import { PLACES, libraryDownloadPath, postLibraryWrite, readLibrary, uploadLibraryFile } from './library'
 import { putAside, readToday } from './today'
 import { postSkillDelete, readSkillPage, readSkills } from './skills'
-import { fromOpen, postTeamRequest, putWithdrawn, readOpenRequests, requestWords } from './team-requests'
+import { fromOpen, postTeamRequest, putWithdrawn, readOpenRequests, requestKey, requestWords } from './team-requests'
 import { findMemoryLine, forgetMemoryLine, readMemory, readWaitingMemory, reviewLanded, reviewMemoryLine } from './memory'
 import { newRunKey, postRoutineRev, postRoutineRun, readRoutineRuns, readRoutines, setRoutineToggle } from './routines'
 import { listedModels, readModels } from './models'
@@ -1425,6 +1425,25 @@ export class HttpAgent implements AgentClient {
   /** Route 81: what the team window sent (its type rides on the request as `kind`; its title and details become the words). */
   sendTeamRequest = (req: Parameters<AgentClient['sendTeamRequest']>[0]): Promise<void> =>
     req.kind ? this.fileRequest(req.kind, undefined, requestWords(req.title, req.text)) : rejected()
+  /**
+   * Route 83: the caller's own open request that the window's row names. Nothing leaves the list until the server says it is
+   * withdrawn (a failure keeps the row); then it shows as Closed, Withdrawn, until the open requests are read again. A conflict
+   * (the team answered it meanwhile) shows it as the server has it. There's no way back, so no undo.
+   */
+  withdrawTeamRequest = this.needs((k, ref: { title: string; at: Instant }): Promise<void> => {
+    const key = `${ref.at.ms}|${ref.title}`
+    const mine = this.s.requests.find(r => r.mine && r.status === 'open' && requestKey(r) === key)
+    if (!mine) return this.refuseLocal('forbidden', "That request isn't open any more, or it isn't yours.")
+    const put = (s: Slices, r: TeamRequestRecord): Slices => this.withRequests(s, [r, ...s.requests.filter(x => x.id !== r.id)])
+    return this.write<TeamRequestRecord>({
+      lane: 'requests',
+      apply: s => s,
+      send: () => putWithdrawn(this.http, k, mine.id, mine.rev),
+      done: put,
+      undo: (s, before) => this.withRequests(s, before.requests),
+      onConflict: (s, current) => put(s, current as unknown as TeamRequestRecord),
+    })
+  })
   private fileRequest = this.needs((k, kind: TeamRequestRecord['kind'], subject: string | undefined, text: string): Promise<void> =>
     this.write({
       lane: 'requests',
