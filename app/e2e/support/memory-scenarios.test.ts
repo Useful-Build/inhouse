@@ -8,7 +8,7 @@
 import { describe, expect, test } from 'vitest'
 import { createScriptedModel } from '../../test/scripted-model/index.ts'
 import {
-  HARNESS_MODEL, LEARNING_OFF_ANSWER, LEARNING_SAVED_ANSWER, MEMORY_RECALL_NONE, MEMORY_SAVE_TEXT, SCENARIOS, TEAM_FACT_CHANGED_ANSWER,
+  HARNESS_MODEL, LEARNING_OFF_ANSWER, MEMORY_REWORD_CHANGED_ANSWER, MEMORY_REWORD_LEARNING_OFF_ANSWER, LEARNING_SAVED_ANSWER, MEMORY_RECALL_NONE, MEMORY_SAVE_TEXT, SCENARIOS, TEAM_FACT_CHANGED_ANSWER,
   TEAM_FACT_SAVED_ANSWER, memoryRecallAnswer, teamFactReworded, teamFactText,
 } from '../../test/scripted-model/scenarios.ts'
 
@@ -104,5 +104,31 @@ describe('the P6a memory scenarios', () => {
     const refused = { text: 'Not saved: this person turned off "Learn from my chats" in Settings, so don\'t save their preferences.', error: true }
     expect((await answer(await model.handle(request(name, [call], [refused], null), name))).content).toEqual([{ type: 'text', text: LEARNING_OFF_ANSWER }])
     expect((await answer(await model.handle(request(name, [call], [{ text: 'Saved (memory_id: mem_x). It counts from now, for this person only.' }], null), name))).content).toEqual([{ type: 'text', text: LEARNING_SAVED_ANSWER }])
+  })
+
+  test('memory-save-reword-person: only the learning_off refusal says "off", a plain success says "changed", any other error is a loud miss', async () => {
+    const model = createScriptedModel(SCENARIOS)
+    const name = 'memory-save-reword-person'
+    const first = await answer(await model.handle(request(name, [], [], null), name))
+    const call = { id: first.content[0]!.id!, name: 'mcp__inhouse__memory_update', input: first.content[0]!.input! }
+    const off = { text: 'Not changed: this person turned off "Learn from my chats" in Settings.', error: true }
+    expect((await answer(await model.handle(request(name, [call], [off], null), name))).content).toEqual([{ type: 'text', text: MEMORY_REWORD_LEARNING_OFF_ANSWER }])
+    expect((await answer(await model.handle(request(name, [call], [{ text: 'Changed.' }], null), name))).content).toEqual([{ type: 'text', text: MEMORY_REWORD_CHANGED_ANSWER }])
+    // The refusal text without the error flag is not a refusal; an unrelated error is neither branch.
+    expect((await model.handle(request(name, [call], [{ text: off.text }], null), name)).status).toBe(400)
+    const broken = 'Error: No such tool available: mcp__inhouse__memory_update'
+    expect((await model.handle(request(name, [call], [{ text: broken, error: true }], null), name)).status).toBe(400)
+    expect(model.misses.at(-1)?.reason).toContain(broken)
+  })
+
+  test('memory-save-reword-team misses loudly, quoting the error, when memory_update errors', async () => {
+    const model = createScriptedModel(SCENARIOS)
+    const name = 'memory-save-reword-team'
+    const first = await answer(await model.handle(request(name, [], [], null), name))
+    const call = { id: first.content[0]!.id!, name: 'mcp__inhouse__memory_update', input: first.content[0]!.input! }
+    expect((await answer(await model.handle(request(name, [call], [{ text: 'Reworded (memory_id: mem_x).' }], null), name))).content).toEqual([{ type: 'text', text: 'Reworded.' }])
+    const broken = 'Error: No such tool available: mcp__inhouse__memory_update'
+    expect((await model.handle(request(name, [call], [{ text: broken, error: true }], null), name)).status).toBe(400)
+    expect(model.misses.at(-1)?.reason).toContain(broken)
   })
 })

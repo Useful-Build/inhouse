@@ -184,7 +184,7 @@ describe('what is forwarded', () => {
     expect(seen.map((s) => s.url)).toEqual(['/egress/model/v1/messages?q=%23x&r=%2e%2e&s=%5c'])
   })
 
-  it('uses a fresh upstream connection per request (never reuses a closing idle keep-alive socket)', async () => {
+  it('opens a non-keep-alive upstream connection per request', async () => {
     let upstreamSockets = 0
     const closingUpstream = http.createServer((req, res) => {
       req.resume()

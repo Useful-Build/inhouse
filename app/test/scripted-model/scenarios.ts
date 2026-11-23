@@ -465,12 +465,13 @@ export const SCENARIOS: Record<string, Scenario> = {
     const id = 'toolu_scripted_memory_reword_person'
     const ask = mainLoop('mcp__inhouse__memory_save')
     const refused = (r: MessagesRequest) => { const b = resultBlock(r, id); return b !== undefined && resultText(b).includes('turned off "Learn from my chats"') }
-    const reply = (text: string): ScriptedTurn => ({ content: [{ type: 'text', text }], expect: both(ask, resultOf(id)) })
+    // `off` is the tool's refusal (an error result); `changed` must be a call that went through. Any other error is a loud miss.
+    const reply = (text: string, error: boolean): ScriptedTurn => ({ content: [{ type: 'text', text }], expect: both(ask, resultIs(id, error)) })
     return {
       turns: [{ content: [{ type: 'tool_use', id, name: 'mcp__inhouse__memory_update', input: { memory_id: MEMORY_REWORD_PERSON_ID, text: MEMORY_REWORD_PERSON_TEXT } }], expect: ask }],
       branches: {
-        off: { match: refused, turns: [null, reply(MEMORY_REWORD_LEARNING_OFF_ANSWER)] },
-        changed: { match: (r: MessagesRequest) => resultBlock(r, id) !== undefined && !refused(r), turns: [null, reply(MEMORY_REWORD_CHANGED_ANSWER)] },
+        off: { match: refused, turns: [null, reply(MEMORY_REWORD_LEARNING_OFF_ANSWER, true)] },
+        changed: { match: (r: MessagesRequest) => resultBlock(r, id) !== undefined && !refused(r), turns: [null, reply(MEMORY_REWORD_CHANGED_ANSWER, false)] },
       },
     }
   })(),
@@ -478,7 +479,7 @@ export const SCENARIOS: Record<string, Scenario> = {
   'memory-save-reword-team': {
     turns: [
       { content: [{ type: 'tool_use', id: 'toolu_scripted_memory_reword', name: 'mcp__inhouse__memory_update', input: { memory_id: MEMORY_REWORD_TEAM_ID, text: MEMORY_REWORD_TEAM_TEXT } }], expect: mainLoop('mcp__inhouse__memory_save') },
-      { content: [{ type: 'text', text: 'Reworded.' }], expect: both(mainLoop('mcp__inhouse__memory_save'), resultOf('toolu_scripted_memory_reword')) },
+      { content: [{ type: 'text', text: 'Reworded.' }], expect: both(mainLoop('mcp__inhouse__memory_save'), resultIs('toolu_scripted_memory_reword', false)) },
     ],
   },
 
