@@ -107,8 +107,10 @@ export interface UiState {
   /** The open skill's page (`skill`): the skill's slug, from `skillSlug`. */
   skillKey: string
   setTab: string
-  /** Problem panel. */
+  /** The review window. */
   openId: string | null
+  /** The list the review window was opened from (Today's needs-you cards, Approvals' waiting drafts): what "1 of N" steps through. */
+  queue: string[]
   pop: Pop
   team: { type: RequestType; text: string; shot: boolean }
   traceId: string | null
@@ -185,7 +187,10 @@ export interface UiActions {
   /** A skill's page, by the skill's name. */
   openSkill(name: string): void
   openSettings(tab: string): void
-  openProblem(id: string): void
+  /** Opens the review window. `queue` is the list it was opened from, in its order, for stepping. */
+  openProblem(id: string, queue?: string[]): void
+  /** Moves the open review window to another problem in its queue. */
+  stepProblem(id: string): void
   closeProblem(): void
   openPop(pop: Pop): void
   openTeam(type: RequestType, text?: string): void
@@ -599,7 +604,7 @@ function clearSession() {
 // ---------- end phase 1 memory ----------
 
 const initialUi = (): Omit<UiState, 'stage' | 'scenario' | 'ambient' | 'animateMark' | 'palette' | 'sideCollapsed'> => ({
-  demoOpen: false, page: 'today', appKey: 'shopify', skillKey: '', setTab: 'you-general', openId: null, pop: null,
+  demoOpen: false, page: 'today', appKey: 'shopify', skillKey: '', setTab: 'you-general', openId: null, queue: [], pop: null,
   team: { type: 'tool', text: '', shot: true }, traceId: null, toasts: [], phone: false, sideOpen: false,
   editing: null, todayDraft: '', chatDraft: '', atts: [], modelSel: null, toolOff: {},
   chatId: null, chatList: false, fresh: false, extras: [], hidden: {}, stash: {}, started: [], replyTo: null,
@@ -943,8 +948,9 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     openSkill: name => set({ page: 'skill', skillKey: skillSlug(name), pop: null, openId: null, sideOpen: false }),
     // The page itself, never the phone menu (openSettingsMenu asks for the menu).
     openSettings: tab => set({ page: 'settings', setTab: tab, setMenu: false, pop: null, openId: null, sideOpen: false }),
-    openProblem: id => { rememberTrigger(); set({ openId: id }) },
-    closeProblem: () => set({ openId: null, editing: null }),
+    openProblem: (id, queue) => { rememberTrigger(); set({ openId: id, queue: queue?.includes(id) ? queue : [] }) },
+    stepProblem: id => set({ openId: id, editing: null }),
+    closeProblem: () => set({ openId: null, queue: [], editing: null }),
     // On a phone the drawer sits above these, so opening one closes the drawer.
     // Only pops that are focus-managed dialogs remember their trigger; the account menu is not one.
     // The account menu opens from the phone drawer, so it leaves the drawer open; every other pop-up closes it.

@@ -322,7 +322,7 @@ export function StageTag({ tag, icon = true, size = 'default', strong }: { tag: 
   )
 }
 
-/** The agent's three-dot mark. Animated (goo filter) while the agent works. Blue: running. `live` forces it on or off (the demo's animate switch otherwise decides). */
+/** The agent's three-dot mark, only while a chat answer loads (InhouseMark signs the agent's work everywhere else). Animated (goo filter) while the agent works. Blue: running. `live` forces it on or off (the demo's animate switch otherwise decides). */
 export function AgentMark({ color = 'var(--brand)', scale = 1, live: force }: { color?: string; scale?: number; live?: boolean }) {
   const demo = useUi(s => s.animateMark)
   const live = force ?? demo
@@ -352,10 +352,10 @@ export function GooDefs() {
   )
 }
 
-/** The Inhouse mark. */
-export function InhouseMark({ size = 18 }: { size?: number }) {
+/** The Inhouse mark: it signs the agent's work. `className` recolors it (`text-current` takes its parent's color). */
+export function InhouseMark({ size = 18, className }: { size?: number; className?: string }) {
   return (
-    <svg viewBox="0 0 32 32" width={size} height={size} aria-hidden="true" className="text-foreground">
+    <svg viewBox="0 0 32 32" width={size} height={size} aria-hidden="true" className={cn('flex-none text-foreground', className)}>
       <path d="M4 4H11V21H28V28H4Z" fill="currentColor" />
       <path d="M14 4H28V18H21V11H14Z" fill="currentColor" />
     </svg>
@@ -373,13 +373,18 @@ export function SkyspaceBackground({ mode = 'hero', offset = 'none' }: { mode?: 
   )
 }
 
-const windowVariants = cva('left-1/2 flex max-w-none bg-window-surface -translate-x-1/2 translate-y-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-none', {
+// left-window-center: on desktop the middle of the room right of the sidebar, so a window never covers it (index.css).
+const windowVariants = cva('left-window-center flex max-w-none bg-window-surface -translate-x-1/2 translate-y-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-none', {
   variants: {
-    /** sm 420px (a question, a short notice, set lower on the screen), md 600px (Help, the team window), lg 960px (the file viewer), xl 1120px (the trace). */
+    /**
+     * sm 420px (a question, a short notice, set lower on the screen), md 600px (Help, the team window), lg 960px (the file
+     * viewer), wide 960px set lower for a short window (the review window), xl 1120px (the trace).
+     */
     size: {
       sm: 'top-window-sm max-h-window-max w-window-sm',
       md: 'top-window max-h-window-max w-window-md',
       lg: 'top-window-lg max-h-window-max-lg w-window-lg',
+      wide: 'top-window-wide max-h-window-max-wide w-window-lg',
       xl: 'top-window max-h-window-max w-window-xl',
     },
     /** Where it stacks: `window` for most, `trace` over a window, `confirm` over every window and sheet. */

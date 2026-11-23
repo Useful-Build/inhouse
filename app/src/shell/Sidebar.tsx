@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useLayoutEffect, useRef } from 'react'
 import { pendingIds, STAGE_TAGS, userName } from '../state/derive'
 import { chatEntries, openChatKey, useCtx, useUi } from '../state/store'
 import { cn } from '@/lib/utils'
@@ -25,6 +25,12 @@ export function Sidebar() {
   const runs = useUi(s => s.runs)
   // The icon rail is desktop only: the phone drawer always shows the full sidebar.
   const rail = useUi(s => s.sideCollapsed) && !phone
+  // Windows portal to body and center in the room right of the sidebar: tell them how wide it is (index.css, --app-side-offset).
+  const side = phone ? 'none' : rail ? 'rail' : 'full'
+  useLayoutEffect(() => {
+    document.documentElement.dataset.side = side
+    return () => { delete document.documentElement.dataset.side }
+  }, [side])
   const { go, newChat, openChat, openChatList, patch } = useUi.getState()
   // The phone drawer opens with focus on itself, so no row shows a focus ring until someone tabs.
   const drawer = useRef<HTMLDivElement>(null)

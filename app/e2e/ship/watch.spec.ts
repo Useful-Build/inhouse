@@ -252,6 +252,8 @@ test('S2: Open an item and the problem panel shows the orders behind it from the
   const panel = page.getByRole('dialog')
   await expect(panel).toBeVisible()
   await expect(panel).toContainText(CARD_TITLE)
+  // The orders behind it sit under the one "Checked ..." line, closed until opened.
+  await panel.getByRole('button', { name: /^Checked / }).click()
   await expect(panel).toContainText(ORDER)
   await expect(panel).toContainText(ORDER_TEXT)
   await shot(page, 'S2-problem-panel')
