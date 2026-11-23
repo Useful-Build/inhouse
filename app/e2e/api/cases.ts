@@ -153,7 +153,7 @@ export const CASES: Record<string, RouteCase> = {
   'GET /api/team-requests': { design: d('baseline', ALL), path: '/api/team-requests', passes: 200 },
   'POST /api/team-requests': { design: d('baseline', PEOPLE), path: '/api/team-requests', json: {}, passes: 400 },
   'PUT /api/team-requests/:id/status': { design: d('baseline', ['inhouse']), path: `/api/team-requests/${NO_TEAM_REQUEST}/status`, json: { status: 'done', ifRev: 1 }, passes: 404 },
-  'PUT /api/team-requests/:id/withdrawn': { design: d('personal', PEOPLE), path: `/api/team-requests/${NO_TEAM_REQUEST}/withdrawn`, json: { withdrawn: true, ifRev: 1 }, passes: 404 },
+  'PUT /api/team-requests/:id/withdrawn': { design: d('personal', PEOPLE), path: `/api/team-requests/${NO_TEAM_REQUEST}/withdrawn`, json: { ifRev: 1 }, passes: 404 },
   // Rows 84 and 85 (P6a brand skills): a name and an id that name nothing, so a caller the matrix lets in gets 404.
   'GET /api/skills/:name': { design: d('brand_data', ALL), path: '/api/skills/no-such-skill', passes: 404 },
   'POST /api/skills/brand/:id/delete': { design: d('brand_data', PEOPLE), path: `/api/skills/brand/${NO_BRAND_SKILL}/delete`, json: { ifRev: 1 }, passes: 404 },
