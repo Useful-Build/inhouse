@@ -29,6 +29,10 @@ class Reject extends Error {}
 const reject = (why: string): never => { throw new Reject(why) }
 
 /** Caps: bytes inflated per stream. */
+/** A PDF `[...] TJ` text array. A backslash only starts an escape (`\\.`), never the plain branch, so it runs in
+ * linear time (CodeQL js/redos, PR #372). */
+export const PDF_TJ_ARRAY = /\[((?:\\.|[^\\\]])*)\]\s*TJ/g
+
 export const PDF_CAPS = { inflated: 32 * 1024 * 1024 }
 
 const isWs = (c: string | undefined) => c === '\0' || c === '\t' || c === '\n' || c === '\f' || c === '\r' || c === ' '
@@ -490,7 +494,7 @@ function parse(bytes: Uint8Array): FileEvidence {
     for (const n of c.names) noteName(n)
     const unesc = (x: string) => x.replace(/\\([\\()])/g, '$1')
     for (const m of c.text.matchAll(/\(((?:\\.|[^\\)])*)\)\s*(?:Tj|'|")/g)) textParts.push(unesc(m[1]!))
-    for (const m of c.text.matchAll(/\[((?:\\.|[^\]])*)\]\s*TJ/g)) textParts.push([...m[1]!.matchAll(/\(((?:\\.|[^\\)])*)\)/g)].map((x) => unesc(x[1]!)).join(''))
+    for (const m of c.text.matchAll(PDF_TJ_ARRAY)) textParts.push([...m[1]!.matchAll(/\(((?:\\.|[^\\)])*)\)/g)].map((x) => unesc(x[1]!)).join(''))
   }
   return { format: 'pdf', text: textParts.join('\n'), references, actions: [...actions] }
 }

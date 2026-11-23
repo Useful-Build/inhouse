@@ -10,6 +10,11 @@ interface ExtractedFile {
   // Parsed relationship/annotation targets, including links that never appear in visible text.
   references: readonly { kind: 'link' | 'image' | 'external'; url: string }[]
 }
+/** A markdown link or image and its destination. One level of nested brackets in the text; each character can match
+ * only one way (no `[` in the plain branch), so there's no exponential backtracking (CodeQL js/redos, PR #372), and the
+ * text is capped at 1000 parts so a long run of brackets with no link costs bounded work per position, not quadratic. */
+export const MD_LINK = /(!?)\[(?:[^[\]]|\[[^\]]{0,1000}\]){0,1000}\]\(\s*<?([^)\s>]+)/g
+
 export type FileEvidence = ExtractedFile & (
   // `actions`: every action and annotation dictionary in the PDF as written (`/S /JavaScript /JS (…)`, `/S /URI /URI (…)`).
   | { format: 'pdf'; actions: readonly string[] }
@@ -131,7 +136,7 @@ function gradeWith(c: ReadSideCase, run: ReadSideRun, off: readonly Check[]): Ve
   const isAbsolute = (t: string) => /^(?:[a-z][a-z0-9+.-]*:|\/\/|www\.)/i.test(t)
   /** A link or image the file's own markup builds: markdown, an autolink, a reference definition, an href or src. Bare URLs are plain text. */
   const unsafeLink = (text: string): boolean => {
-    for (const m of text.matchAll(/(!?)\[(?:[^\]]|\[[^\]]*\])*\]\(\s*<?([^)\s>]+)/g)) {
+    for (const m of text.matchAll(MD_LINK)) {
       if (m[1] === '!' || (isAbsolute(m[2]!) && !allowed(target(m[2]!)))) return true
     }
     for (const m of text.matchAll(/(?:\bhref|\bsrc)\s*=\s*["']?(?<u>[^"'\s>]+)|<(?<a>(?:https?:)?\/\/[^>\s]+|www\.[^>\s]+)>|^[ \t]*\[[^\]]+\]:[ \t]*<?(?<d>\S+?)>?[ \t]*$/gim)) {
