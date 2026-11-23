@@ -181,7 +181,7 @@ function RequestRow({ q, first }: { q: TeamRow; first: boolean }) {
   const clearToast = useUi(s => s.clearToast)
   const phone = useUi(s => s.phone)
   const id = `team-req-${q.key.replace(/[^\w-]/g, '-')}`
-  const chip = <Badge variant={q.closed ? 'status' : q.dated ? 'brand' : 'muted'} size="lg" className="flex-none">{q.status}</Badge>
+  const chip = <Badge variant={q.closed ? 'status' : 'muted'} size="lg" className="flex-none">{q.status}</Badge>
   const withdraw = () => {
     patch({ teamWithdrawn: [...withdrawn, q.key] })
     showToast('Request withdrawn.', { icon: 'undo', undo: () => { patch({ teamWithdrawn: useUi.getState().teamWithdrawn.filter(k => k !== q.key) }); clearToast() } })

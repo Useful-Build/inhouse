@@ -585,7 +585,7 @@ test('The Klaviyo request takes its date from the data and hides on First day; A
   // Two open requests: the Klaviyo connection and the weekly wholesale job.
   await openTeam(2)
   await team.getByRole('radio', { name: /^Your requests/ }).click()
-  await expect(team).toContainText('Live by Fri, Nov 20')
+  await expect(team.getByRole('list', { name: 'Open requests' })).not.toContainText(/Live by|Call on/)
   await page.keyboard.press('Escape')
   await expect(team).toHaveCount(0)
 

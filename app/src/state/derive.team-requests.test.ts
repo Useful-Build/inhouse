@@ -5,7 +5,7 @@
 //  2. the signed-in person's request names them instead of "You", so Withdraw never shows;
 //  3. a withdrawn request stays in Open, or the menu's count still counts it;
 //  4. a request saved before the window dropped "asked by" / "sent by" shows those words as the name;
-//  5. "Connect Klaviyo" loses its "Live by" date;
+//  5. a request's status shows a date ("Live by ...") instead of just "With the team";
 //  6. two requests share a key (the instant read as "[object Object]"), so withdrawing one moves the other too.
 import { describe, expect, it, vi } from 'vitest'
 
@@ -23,8 +23,8 @@ describe('team requests', () => {
     expect(open.map(r => r.title)).toEqual(['Connect Klaviyo', 'Weekly wholesale stock report'])
     expect(closed.map(r => [r.title, r.status])).toEqual([['Connect Gorgias', 'Done'], ['Morning check skips Faire orders', 'Done'], ['Reply to Instagram comments', 'Declined']])
     const [klaviyo, wholesale] = open
-    expect(klaviyo).toMatchObject({ kind: 'New tool', who: 'Priya', mine: false, dated: true })
-    expect(klaviyo.status).toMatch(/^Live by /)
+    expect(klaviyo).toMatchObject({ kind: 'New tool', who: 'Priya', mine: false})
+    expect(klaviyo.status).toBe('With the team')
     expect(wholesale).toMatchObject({ kind: 'New job', who: 'You', mine: true, icon: 'work' })
     expect(wholesale.text).toMatch(/^Every Monday/)
   })
@@ -34,7 +34,7 @@ describe('team requests', () => {
     const key = teamRequests(c, now, true).open[1].key
     const { open, closed } = teamRequests(c, now, true, [key])
     expect(open.map(r => r.title)).toEqual(['Connect Klaviyo'])
-    expect(closed[0]).toMatchObject({ title: 'Weekly wholesale stock report', status: 'Withdrawn', closed: 'withdrawn', dated: false })
+    expect(closed[0]).toMatchObject({ title: 'Weekly wholesale stock report', status: 'Withdrawn', closed: 'withdrawn' })
     expect(openRequests(c, now, true, [key])).toHaveLength(1)
   })
 
