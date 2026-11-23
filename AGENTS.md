@@ -29,20 +29,22 @@ React 19, TypeScript, Vite, Tailwind v4, shadcn/ui on Radix, zustand, Cloudflare
 
 Run in `app/` unless noted. Ports, env flags, and sandbox commands are in `VERIFY.md`.
 
-- Dev: `npm run dev` (port 5173)
-- Typecheck and lint: `npm run typecheck && npm run lint`
-- Unit and property tests: `npm run test:unit` (Vitest + in-process workerd)
-- Builds: `npm run build` (demo), `npm run build:product`, `npm run build:product-test`, `npm run build:product-eval`
-- Bundle and config guards: `node scripts/check-product-build.mjs`, `node scripts/check-hub-build.mjs`, `node scripts/check-hub-config.mjs wrangler.hub.jsonc`
-- E2E and a11y: `npm run test:e2e`, `npm run test:a11y`, `npm run test:visual:linux`
-- Hub and runner: `cd app/hub && npm run typecheck && npm run test:node`; `cd app/runner && npm test`
+**Where checks run:** on Wasim's laptop, run only the light checks (typecheck, lint, unit and property tests, hub and runner unit tests). Builds, bundle guards, E2E, a11y, visual baselines, the product and test-build projects, and screenshots or live QA run in GitHub CI on the PR (or on the PR's preview or sandbox deploy), never locally. Read results from the CI logs and artifacts. Cloud and CI runners may run everything. The one exception on the laptop: `npm run dev` only when Wasim asks to see the app on localhost, through `~/.agents/tools/heavy-lock.sh`.
+
+- Dev (laptop only when Wasim asks): `npm run dev` (port 5173)
+- Typecheck and lint (local): `npm run typecheck && npm run lint`
+- Unit and property tests (local): `npm run test:unit` (Vitest + in-process workerd)
+- Hub and runner unit tests (local): `cd app/hub && npm run typecheck && npm run test:node`; `cd app/runner && npm test`
+- Builds (CI): `npm run build` (demo), `npm run build:product`, `npm run build:product-test`, `npm run build:product-eval`
+- Bundle and config guards (CI): `node scripts/check-product-build.mjs`, `node scripts/check-hub-build.mjs`, `node scripts/check-hub-config.mjs wrangler.hub.jsonc`
+- E2E, a11y and visual (CI): the `e2e (1/2)` and `e2e (2/2)` jobs run every Playwright project (`npx playwright test --fully-parallel --shard=n/4`), visual and a11y included; baselines update through `baselines.yml`
 
 ## 5. How work lands here
 
 Work end to end without check-ins on routine steps. Use one strong model by default; fan out subagents only when a task cleanly splits into independent files. Fleet repo: no (`fleet/<topic>` is only an integration branch name here; global fleet rules and `--admin` merges do not apply).
 
 1. Branch and commits: always work on a feature branch (never commit or push directly to `main`). Use conventional commits. Every non-merge commit must end with a trailer-only last paragraph containing `Verified: <what you ran>` (no blank line between trailers; `.githooks/commit-msg` enforces this locally after `npm install` in `app/`, and `pr-gates` enforces it in CI).
-2. Build and prove: keep edits surgical and fail loud. Run the relevant checks before opening a PR and targeted live QA before merge (`VERIFY.md`). Never silence errors or weaken an existing check to make a change pass. Update `FEATURE_MAP.md` for any user-facing change.
+2. Build and prove: keep edits surgical and fail loud. Run the light checks locally before opening a PR, let CI run the heavy suites, and do targeted live QA on the PR's preview or sandbox deploy before merge (`VERIFY.md`). Never silence errors or weaken an existing check to make a change pass. Update `FEATURE_MAP.md` for any user-facing change.
 3. Clean before review: before asking for review (and again before merge), remove what only served the work on this branch: handoff notes, scratch files, temporary mockups and screenshots, logs, debug code, and work-in-progress notes or TODOs this branch added. Temporary material lives in gitignored `verify/<branch>/` or outside the repo, never in a commit. What stays is what the base branch needs: code, tests, baselines, `FEATURE_MAP.md` and docs updates, plans and the active multi-PR tracker, design references a plan or doc links to, decision records, and committed eval results. A finished multi-PR tracker moves to `docs/history/`. Run `git diff --name-status <base>...HEAD` against the PR's base branch and drop any file that doesn't belong.
 4. Review by risk: follow `REVIEW.md` on `main`. Low-risk PRs need no separate reviewer. Normal PRs get 1 fresh-context Opus 5.5 (high) review. High-risk (sensitive) PRs get Fable 5.2 (high) + Gemini 4 Neon (high, or fallback in `REVIEW.md`) + Wasim's OK.
 5. Stuck rule: if a check or bug fails twice (for CI, 1 fix push or re-run = 1 round per check; never change CI environment config without review and Wasim's OK), escalate once to **Fable 5.2 (high)** (or **Gemini 4 Carbon** if Fable is unavailable). If it still fails, stop and send Wasim a short plain report (what failed, what you tried, why it is stuck, user impact).

@@ -239,7 +239,7 @@ Two PRs, in order:
 - Light and dark, desktop and 390px phone, for Today, Approvals and the panel in each mode. Compare with the
   reference files and screenshots.
 - Keyboard: every card action, the `⋯` menus, the panel's Ask, Edit, the sources toggle, Don't send and Approve.
-- `npm run test:a11y` passes.
+- `npm run test:a11y` passes (in CI).
 - **E2E specs this changes on purpose.** `app/e2e/` is a sensitive path: list each one in the PR with its reason, and
   get Wasim's OK. Known today:
   - `problem-panel.spec.ts:25` and `today-approvals.spec.ts` (around line 42) use the panel's "Ask about this…" bar
@@ -248,7 +248,7 @@ Two PRs, in order:
   - `states.ts:126` finds the Approvals button by the exact name "Review"; the label becomes "Review draft".
     Lookups without `exact` (`app.spec.ts`, `state.spec.ts`, `navigation.spec.ts`, `phone.spec.ts`) still match.
   - `dots-and-today.spec.ts` and `dots-and-today-phone.spec.ts` use `.today-card`, which stays.
-  - The visual baselines: run `npm run test:visual:linux:update` and commit them with the change.
+  - The visual baselines: run the `baselines` workflow on the branch (`gh workflow run baselines --ref <branch>`), inspect each PNG and commit them with the change.
 - Update `.agents/skills/verify/feature-map.md` for the changed cards and panel.
 
 ## Not decided here

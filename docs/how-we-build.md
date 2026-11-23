@@ -21,7 +21,7 @@ The repo keeps 5 core markdown files in the root so any model or cloud runner lo
 
 1. **One strong agent owns the task end to end** on a feature branch (splitting into parallel subagents only when work cleanly separates by files).
 2. **Each commit says how it was verified.** The last paragraph of the commit message holds only trailers, and one of
-   them is `Verified:`, for example `Verified: navigation.spec.ts 8/8 locally; tsc, lint`. The `pr-gates` check fails a
+   them is `Verified:`, for example `Verified: tsc, lint, unit locally; e2e and visual in CI`. The `pr-gates` check fails a
    commit without it.
 3. **CI runs everything.** Type check, lint, property tests, build and every Playwright project, on every PR into `main`. A PR that
    changes an existing check (a spec, a baseline, a lint rule, a workflow) is flagged, and its description has to say
