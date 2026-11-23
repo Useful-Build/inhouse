@@ -157,6 +157,7 @@ export const CASES: Record<string, RouteCase> = {
   'GET /api/notify/channels': { design: d('baseline', ALL), path: '/api/notify/channels', passes: 200 },
   'GET /api/notify/channels/available': { design: d('baseline', ['admin', 'inhouse']), path: '/api/notify/channels/available', passes: 503 },
   'PUT /api/notify/channels': { design: d('baseline', ['admin', 'inhouse']), path: '/api/notify/channels', json: {}, passes: 400 },
+  'GET /api/routines/:id/runs': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/runs`, passes: 404 },
   'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: 404 },
 }
 

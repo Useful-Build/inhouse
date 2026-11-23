@@ -23,7 +23,7 @@ import { getUsage } from './usage/api.ts'
 import { forgetBrandMemory, forgetPersonalMemory, listMemory } from './api/memory.ts'
 import { drainState, startDrain, undrain } from './ops/drain.ts'
 // P4 W2 (p4-w2.md section 9): the Routines page's routes.
-import { deleteRoutine, listRoutines, restoreRoutine, runRoutineNow, setRoutineEnabled } from './api/routines.ts'
+import { deleteRoutine, listRoutineRuns, listRoutines, restoreRoutine, runRoutineNow, setRoutineEnabled } from './api/routines.ts'
 import { alarmNow } from './ops/alarm-now.ts'
 import { testFakes } from './ops/fakes-hook.ts'
 import { warmup } from './ops/warmup.ts'
@@ -203,6 +203,8 @@ export const routes: readonly Route[] = [
   /* 75 */ { method: 'PUT', pattern: '/api/notify/channels', handler: putNotifyChannels },
   // P5 W5: the test build's test-fakes hook (404 elsewhere), for the connector API specs.
   /* 76 */ { method: 'POST', pattern: '/api/ops/test-fakes', handler: testFakes },
+  // Master plan decision 8: a routine's own recent runs.
+  /* 86 */ { method: 'GET', pattern: '/api/routines/:id/runs', handler: listRoutineRuns },
 ]
 
 /** The route for this method and path, with its params, or null (404 `not_found`). */

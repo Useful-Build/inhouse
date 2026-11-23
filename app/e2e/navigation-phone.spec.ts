@@ -111,11 +111,11 @@ test('Phone: Skip to content is the first Tab stop and moves focus into main', a
   await shot(page, 'phone-skip-link')
 })
 
-test('Phone: every Activity time sits on one line in its column', async ({ page, fx }) => {
+test('Phone: every Activity time sits on one line', async ({ page, fx }) => {
   await fx.seed({ stage: 'Run', demo: { ambient: 'Always' } })
   await page.goto('/?demo#/activity')
   // Run shows the most lines, "10:12 AM" the widest time.
-  const times = page.locator('[data-activity-row] > span:first-child')
+  const times = page.locator('[data-activity-time]')
   await expect(times.first()).toBeVisible()
   await expect(page.locator('main')).toContainText('10:12 AM')
   const lines = await times.evaluateAll(els => els.map(e => ({ t: e.textContent, lines: Math.round(e.getBoundingClientRect().height / parseFloat(getComputedStyle(e).lineHeight)) })))

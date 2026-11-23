@@ -310,6 +310,7 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'GET /api/notify/channels/available': ['no', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
   'PUT /api/notify/channels': ['no', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
   'POST /api/ops/test-fakes': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
+  'GET /api/routines/:id/runs': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },

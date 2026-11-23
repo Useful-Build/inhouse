@@ -106,7 +106,7 @@ export function CommandPalette() {
               })}
             </CommandGroup>
             <CommandGroup heading="Settings">
-              {menuFor(ctx.data.tools).flatMap(g => g.items).map(([tab, icon, label]) => (
+              {menuFor(ctx.data.tools).flatMap(sec => sec.pages).map(({ id: tab, icon, label }) => (
                 <CommandItem key={tab} value={`settings:${tab}`} keywords={[label, 'Settings', ...(EXTRA[tab] ?? [])]} onSelect={() => run(() => openSettings(tab))}>
                   <Icon name={icon} size={18} className="text-foreground-3" />
                   <span className="flex-1">{label}</span>

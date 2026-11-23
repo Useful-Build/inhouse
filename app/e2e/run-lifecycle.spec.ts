@@ -17,7 +17,7 @@ const shot = async (page: Page, name: string) => { await settled(page); await pa
 const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' })
 const log = (page: Page) => page.getByRole('log', { name: 'Conversation' })
 const msgs = (page: Page, text: string) => log(page).locator('[data-chat-msg]').filter({ hasText: text })
-const composer = (page: Page) => page.getByRole('textbox', { name: 'Message your Inhouse agent' })
+const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Inhouse' })
 const stop = (page: Page) => page.locator('[data-composer]').getByRole('button', { name: 'Stop', exact: true })
 // The visible thinking line, and any live region with words in it (the empty ones stay mounted so they can announce).
 const thinkingRow = (page: Page) => page.locator('main').locator('[data-thinking]').or(page.locator('main').getByRole('status').filter({ hasText: /\S/ }))
@@ -98,7 +98,7 @@ test('Runs: two chats answer at once, each answer in its own chat, and Stop in o
 
 test('Runs: ask from Today, go to the Library mid-answer, and the chat has the full answer when you come back', async ({ fx, page }) => {
   await start(page, fx)
-  await page.getByRole('textbox', { name: 'Ask your Inhouse agent' }).fill(STUCK_Q)
+  await page.getByRole('textbox', { name: 'Ask Inhouse' }).fill(STUCK_Q)
   await page.keyboard.press('Enter')
   await expect(stop(page)).toBeVisible()
   await side(page).getByRole('button', { name: 'Library' }).click()

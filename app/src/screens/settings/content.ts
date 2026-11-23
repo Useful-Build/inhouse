@@ -100,7 +100,7 @@ const themeFromLabel = (label: string) => (Object.keys(THEME_LABELS) as Theme[])
 const ROLE_NAMES = { admin: 'Admin', member: 'Member', inhouse: 'Inhouse team' } as const
 const RETENTION = ['3 months', '6 months', '12 months', '24 months', 'Until deleted']
 
-export { MENU, hasSlack, menuFor } from './menu'
+export { SECTIONS, SETTINGS_PAGES, hasSlack, menuFor } from './menu'
 import { hasSlack } from './menu'
 
 export interface Env {

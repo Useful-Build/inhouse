@@ -175,6 +175,7 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'PUT', pattern: '/api/notify/channels', class: 'baseline', allow: ['admin', 'inhouse'] },
   // P5 W5: the test build's test-fakes hook, release only like route 67.
   { method: 'POST', pattern: '/api/ops/test-fakes', class: 'open', allow: [], services: ['release'] },
+  { method: 'GET', pattern: '/api/routines/:id/runs', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
 ]
 
 /** `CanRows` as section 3 maps them. */

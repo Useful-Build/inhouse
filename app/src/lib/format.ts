@@ -114,6 +114,11 @@ export const fmtNearDay = (at: At, now: At, d: Display): string => (Math.abs(day
 export const fmtWhen = (at: At, now: At, d: Display): string => (daysBefore(at, now, d) === 0 ? fmtTime(at, d) : fmtNearDay(at, now, d))
 /** A day said in a sentence: "today", else as `fmtNearDay`. */
 export const fmtDayWord = (at: At, now: At, d: Display): string => (daysBefore(at, now, d) === 0 ? 'today' : fmtNearDay(at, now, d))
+/** The part of the day a greeting names: morning 5:00 to 11:59, afternoon 12:00 to 16:59, evening 17:00 to 4:59. */
+export const partOfDay = (at: At, d: Display): 'morning' | 'afternoon' | 'evening' => {
+  const { hour } = calendarOf(at, d)
+  return hour >= 5 && hour < 12 ? 'morning' : hour >= 12 && hour < 17 ? 'afternoon' : 'evening'
+}
 /** The group a chat sits in: "Today", "Yesterday", "Last 7 days" (two to six days before) or "Earlier". */
 export const fmtDayGroup = (at: At, now: At, d: Display): string => {
   const n = daysBefore(at, now, d)

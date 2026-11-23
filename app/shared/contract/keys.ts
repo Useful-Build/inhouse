@@ -19,3 +19,9 @@ export const GRANT_HOURS = [1, 4, 24, 72] as const
 
 /** The most live (not deleted) team routines a brand may have (#312 review M2). System routines don't count. */
 export const MAX_TEAM_ROUTINES = 50
+
+/** The most runs route 86 answers for one routine (master plan decision 8). */
+export const ROUTINE_RUNS_MAX = 20
+
+/** How a routine's run went, in the panel's closed list (route 86). */
+export const ROUTINE_RUN_OUTCOMES = ['running', 'done', 'failed', 'skipped'] as const

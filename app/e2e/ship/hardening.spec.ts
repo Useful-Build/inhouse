@@ -149,5 +149,5 @@ test('S4: A broken screen shows its own error inside the app, and the sidebar an
   await main(page).getByRole('button', { name: 'Message the team', exact: true }).click()
   await expect(team(page)).toBeVisible()
   await expect(team(page).getByRole('radio', { name: /Report a bug/ })).toBeChecked()
-  await expect(team(page).getByRole('textbox', { name: 'Your request' })).toHaveValue(/screen crashed and showed "Something went wrong\."/)
+  await expect(team(page).getByRole('textbox', { name: 'Details' })).toHaveValue(/screen crashed and showed "Something went wrong\."/)
 })

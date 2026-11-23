@@ -16,8 +16,8 @@ const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnim
 const shot = async (page: Page, name: string) => { await settled(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' })
 const log = (page: Page) => page.getByRole('log', { name: 'Conversation' })
-const todayBox = (page: Page) => page.getByRole('textbox', { name: 'Ask your Inhouse agent' })
-const chatBox = (page: Page) => page.getByRole('textbox', { name: 'Message your Inhouse agent' })
+const todayBox = (page: Page) => page.getByRole('textbox', { name: 'Ask Inhouse' })
+const chatBox = (page: Page) => page.getByRole('textbox', { name: 'Message Inhouse' })
 const hash = (page: Page) => page.evaluate(() => location.hash)
 const go = (page: Page, h: string) => page.evaluate(x => { location.hash = x }, h)
 /** Waits out the session save (debounced 300 ms) before a reload. A reload also saves on pagehide; this keeps it honest. */

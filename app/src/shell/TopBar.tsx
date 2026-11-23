@@ -4,12 +4,11 @@ import { fmtTime } from '../lib/format'
 import { display } from '../state/display'
 import { chatEntries, openChatKey, useAgentState, useCtx, useUi } from '../state/store'
 import { cn } from '@/lib/utils'
-import { AgentMark, Button, Icon, IconButton } from '../ui'
+import { Button, Icon, IconButton, InhouseMark } from '../ui'
 import { Notifications, useNotices } from '../overlays/Menus'
 import { DemoButton } from './DevSwitcher'
 import { ChatMenu, ChatTitleInput } from '../ui/chat'
 import { TAP } from '../ui/fields'
-import { SHORTCUTS } from './nav'
 
 export function TopBar() {
   const ctx = useCtx()
@@ -22,8 +21,7 @@ export function TopBar() {
   const pop = useUi(s => s.pop)
   const phone = useUi(s => s.phone)
   const sideOpen = useUi(s => s.sideOpen)
-  const sideCollapsed = useUi(s => s.sideCollapsed)
-  const { patch, togglePause, renameChat, showToast, toggleSidebar } = useUi.getState()
+  const { patch, togglePause, renameChat, showToast } = useUi.getState()
   // The chat whose title is being edited in the bar, so moving to another chat ends it.
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const titleArea = useRef<HTMLDivElement>(null)
@@ -55,10 +53,6 @@ export function TopBar() {
       {phone && (
         <IconButton data-drawer-opener icon="menu" label="Menu" variant="chrome" size={21} aria-expanded={sideOpen} aria-controls={sideOpen ? 'sidebar' : undefined} onClick={() => patch({ sideOpen: true })} className={cn('-ml-2', TAP)} />
       )}
-      {!phone && (
-        <IconButton icon={sideCollapsed ? 'left_panel_open' : 'left_panel_close'} label="Sidebar" tip={sideCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} shortcut={SHORTCUTS.sidebar} variant="chrome" size={19}
-          aria-expanded={!sideCollapsed} aria-controls="sidebar" onClick={toggleSidebar} className="-ml-2" />
-      )}
       <div ref={titleArea} className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden text-sm whitespace-nowrap text-muted-foreground">
         {headerChat && renaming ? (
           <ChatTitleInput key={headerChat.id} title={headerChat.title} size="sm" className="max-w-page-narrow font-semibold"
@@ -77,8 +71,8 @@ export function TopBar() {
       </div>
       {showPill && (
         <div role="status" aria-label={paused ? 'Inhouse agent is paused' : 'Inhouse agent is running'} className={cn('mr-1.5 flex h-7.5 items-center gap-2 rounded-full py-0 pr-1 pl-2 text-xs font-strong whitespace-nowrap', paused ? 'bg-warning-tint text-warning-text' : 'bg-brand-tint text-brand-text')}>
-          {paused ? <Icon name="pause_circle" size={16} weight={400} /> : <AgentMark scale={0.75} />}
-          <span>{phone ? (paused ? 'Paused' : 'Running') : paused ? 'Inhouse agent is paused' : 'Inhouse agent is running'}</span>
+          {paused ? <Icon name="pause_circle" size={16} weight={400} /> : <InhouseMark size={14} className="text-current" />}
+          <span>{paused ? 'Paused' : 'Running'}</span>
           <Button variant="surface" size="xs" onClick={togglePause}>
             <Icon name={paused ? 'play_arrow' : 'pause'} size={14} />{paused ? 'Resume' : 'Pause'}
           </Button>

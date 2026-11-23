@@ -142,7 +142,7 @@ async function ask(page: Page, text: string, queue = false) {
 /** A person starts a chat from Today with a question. */
 async function askFromToday(page: Page, text: string) {
   await goTo(page, 'Today')
-  await expect(page.getByRole('textbox', { name: 'Ask your Inhouse agent' })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Ask Inhouse' })).toBeVisible()
   await ask(page, text)
 }
 

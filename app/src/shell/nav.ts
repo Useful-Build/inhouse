@@ -2,18 +2,18 @@
 import type { Page } from '../state/store'
 
 export type NavDef = { icon: string; label: string; key: Page; need: 0 | 1 | 2 }
-/** The sidebar's first group, no label: the day's work. */
+/** The sidebar's first group, no label: the day's work and the files it made. */
 export const DAILY: NavDef[] = [
   { icon: 'wb_twilight', label: 'Today', key: 'today', need: 0 },
   { icon: 'task_alt', label: 'Approvals', key: 'approvals', need: 1 },
   { icon: 'history', label: 'Activity', key: 'activity', need: 0 },
+  { icon: 'folder_open', label: 'Library', key: 'library', need: 0 },
 ]
 /** The sidebar's second group, "Your agent": what the agent runs on. */
 export const AGENT: NavDef[] = [
   { icon: 'event_repeat', label: 'Routines', key: 'routines', need: 1 },
   { icon: 'menu_book', label: 'Skills', key: 'skills', need: 0 },
   { icon: 'widgets', label: 'Tools', key: 'apps', need: 0 },
-  { icon: 'folder_open', label: 'Library', key: 'library', need: 0 },
 ]
 /** Usage lives in the account menu, not the sidebar. */
 export const USAGE: NavDef = { icon: 'monitoring', label: 'Usage', key: 'usage', need: 0 }

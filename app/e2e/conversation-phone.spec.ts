@@ -9,7 +9,7 @@ test('Phone conversation: every answer and question shows its actions', async ({
 
   // One more answer. Its steps line sits above its card, so the action row is Copy and More.
   const before = await log.getByRole('button', { name: 'More', exact: true }).count()
-  await page.getByRole('textbox', { name: 'Message your Inhouse agent' }).fill('Which orders are stuck?')
+  await page.getByRole('textbox', { name: 'Message Inhouse' }).fill('Which orders are stuck?')
   await page.locator('[data-composer]').getByRole('button', { name: 'Send' }).click()
   await expect(log.getByRole('button', { name: 'More', exact: true })).toHaveCount(before + 1, { timeout: 15_000 })
   await page.mouse.click(5, 300) // no hover or focus inside the thread

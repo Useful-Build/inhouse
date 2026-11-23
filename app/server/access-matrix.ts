@@ -99,6 +99,8 @@ export const accessMatrix: readonly AccessRow[] = [
   // P5 W5: the test build's test-fakes hook, release only like route 67 (its handler answers 404 outside the test build).
   // Close to auth: its ops call notification_send as a named member and the hub's ReadGateway as a run.
   /* 76 */ { method: 'POST', pattern: '/api/ops/test-fakes', class: 'open', allow: [], services: ['release'] },
+  // Master plan decision 8: a routine's recent runs, read like route 52.
+  /* 86 */ { method: 'GET', pattern: '/api/routines/:id/runs', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
 ]
 
 /** Each `CanKey`'s row (section 3). */

@@ -46,15 +46,18 @@ Then open http://localhost:5173. Add `?demo` to the URL to show the demo switche
 
 ## Check it
 
+On Wasim's laptop, run only `typecheck`, `lint` and `test:unit`. The build, E2E, visual and a11y suites run in GitHub CI on every PR, not on Wasim's laptop.
+
 ```bash
 cd app
 npm run typecheck   # tsc -b
 npm run lint        # oxlint plus the design token checks
-npm run build
-npm run test:e2e    # every Playwright project, against the production build
+npm run test:unit   # Vitest, property tests included
+npm run build       # CI
+npm run test:e2e    # CI: every Playwright project, against the production build
 ```
 
-The first E2E run needs a browser: `npx playwright install chromium`. The visual baselines are Linux renders, so run the visual projects with `npm run test:visual:linux` (Docker); on macOS `npm run test:e2e` skips them. See `app/README.md`.
+Outside Wasim's laptop, the first E2E run needs a browser: `npx playwright install chromium`. The visual baselines are Linux renders, so CI runs the visual projects in the Playwright image, and baselines update through the `baselines` workflow; on macOS `npm run test:e2e` skips them. See `app/README.md`.
 
 ## Contributing
 
