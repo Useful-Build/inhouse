@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
+import { escapeClosesMenuOnly } from '../ui/dialogs'
 import { agent, demo } from '../agent'
 import { draftView } from '../state/derive'
 import type { Ctx, DraftView } from '../state/derive'
@@ -223,7 +224,7 @@ export function ProblemPanel() {
       <DropdownMenuContent align="start" side="top" collisionPadding={16} aria-label="More actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input"
         // Escape closes only this menu: Radix hears it first, in the capture phase, so stopping it keeps App's Escape
         // (close the whole window) from hearing it too.
-        onEscapeKeyDown={e => e.stopPropagation()}>
+        onEscapeKeyDown={escapeClosesMenuOnly}>
         {dv.mode === 'waiting' && !aside && <>
           <MenuItem onSelect={() => putAside('declined')}>
             <Icon name="cancel_schedule_send" size={18} /><span className="flex-1">Don't send</span>

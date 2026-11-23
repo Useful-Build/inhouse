@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
+import { escapeClosesMenuOnly } from '../ui/dialogs'
 import { Button, CardGrid, EmptyState, Icon, IconButton, InhouseMark, LogoTile, MenuItem, SectionHeader } from '../ui'
 import { PromptBentoSlot } from '../ui/chat'
 import { Select, TAP } from '../ui/fields'
@@ -173,7 +174,7 @@ export function Today() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" collisionPadding={16} aria-label="Card actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input"
                           // Escape closes only this menu, not every overlay (App's window listener hears it after Radix).
-                          onEscapeKeyDown={e => e.stopPropagation()}>
+                          onEscapeKeyDown={escapeClosesMenuOnly}>
                           <MenuItem onSelect={askAbout}>
                             <Icon name="chat_bubble" size={18} /><span className="flex-1">Ask Inhouse</span>
                           </MenuItem>

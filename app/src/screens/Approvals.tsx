@@ -9,6 +9,7 @@ import type { ApprovalSort } from '../state/store'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
+import { escapeClosesMenuOnly } from '../ui/dialogs'
 import { Avatar, Button, DetailList, EmptyState, Icon, IconTile, LogoTile, MenuItem, Page, PageHeader, SectionHeader } from '../ui'
 import { Select, TAP } from '../ui/fields'
 
@@ -166,7 +167,7 @@ export function Approvals() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" collisionPadding={16} aria-label="Draft actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input"
                         // Escape closes only this menu, not every overlay (App's window listener hears it after Radix).
-                        onEscapeKeyDown={e => e.stopPropagation()}>
+                        onEscapeKeyDown={escapeClosesMenuOnly}>
                         <MenuItem onSelect={() => setAside(id, 'declined')}>
                           <Icon name="cancel_schedule_send" size={18} /><span className="flex-1">Don't send</span>
                         </MenuItem>

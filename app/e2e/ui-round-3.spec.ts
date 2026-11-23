@@ -196,6 +196,8 @@ test("Account menu and sidebar: the role is a badge beside the name; the collaps
   const label = page.getByRole('menu', { name: 'Account' }).locator('[data-slot="dropdown-menu-label"]')
   const badge = label.locator('[data-slot="badge"]')
   await expect(badge).toHaveText('Admin')
+  // Measure once the menu's open animation (a fade and a small zoom) has finished, not mid-zoom.
+  await label.evaluate(el => Promise.all(el.closest('[role="menu"]')!.getAnimations({ subtree: true }).map(a => a.finished)))
   const name = label.getByText('Sam Mercer', { exact: true })
   const b = (await badge.boundingBox())!, n = (await name.boundingBox())!
   expect(Math.abs((b.y + b.height / 2) - (n.y + n.height / 2)), 'the badge sits on the name line').toBeLessThanOrEqual(3)
