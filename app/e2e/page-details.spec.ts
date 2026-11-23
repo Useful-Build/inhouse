@@ -24,13 +24,16 @@ test('Routines: details, Pause, Run now, Delete with confirm and Undo, and all o
   await expect(sheet).toBeVisible()
   await expect(sheet).toContainText('Compares each Amazon payout with what Xero expected.')
   await expect(sheet).toContainText('Every day at 6:00 AM')
-  await expect(sheet.getByRole('list', { name: 'Last runs' })).toContainText('found a $1,240 gap')
+  await expect(sheet.getByRole('list', { name: 'Last runs' })).toContainText('Found a $1,240 gap')
   await shot(page, 'routine-sheet')
 
-  // Pause from the sheet: the toast says so and the sheet offers Resume.
-  await sheet.getByRole('button', { name: 'Pause', exact: true }).click()
+  // The sheet's On switch pauses it: the toast says so and the switch is off.
+  const sheetSwitch = sheet.getByRole('switch', { name: `${name} on or off` })
+  await expect(sheetSwitch).toBeChecked()
+  await sheetSwitch.click()
   await expect(toast(page, `Paused ${name}`)).toBeVisible()
-  await expect(sheet.getByRole('button', { name: 'Resume', exact: true })).toBeVisible()
+  await expect(sheetSwitch).not.toBeChecked()
+  await expect(sheet).toContainText("Off. It won't run until you turn it on.")
 
   // Run now adds a line at the top of the last runs.
   await sheet.getByRole('button', { name: 'Run now' }).click()
@@ -50,7 +53,7 @@ test('Routines: details, Pause, Run now, Delete with confirm and Undo, and all o
   // A Morning check run links to its steps.
   await page.getByRole('button', { name: 'Morning check', exact: true }).click()
   sheet = page.getByRole('dialog', { name: 'Morning check' })
-  await sheet.getByRole('button', { name: 'Steps →' }).first().click()
+  await sheet.getByRole('button', { name: 'Steps', exact: true }).first().click()
   await expect(page.getByRole('dialog', { name: /What your Inhouse agent did/ })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog')).toHaveCount(0)

@@ -337,11 +337,20 @@ export const activityFixed = {
   today: (activityJson.today as RawActivityLine[]).map(activityLine),
   earlier: (activityJson.earlier as RawActivityLine[]).map(activityLine),
 }
+const CLOSED = ['done', 'declined', 'withdrawn'] as const
+/** How a sample team request ended: bad sample data stops the app with a message. */
+const closedOf = (title: string, v: string): NonNullable<TeamRequest['closed']> => {
+  const c = CLOSED.find(x => x === v)
+  if (!c) throw new Error(`Sample data: the team request "${title}" has closed "${v}"; use one of ${CLOSED.join(', ')}.`)
+  return c
+}
 export const notifications = {
   notifications: notificationsJson.notifications,
   teamRequests: notificationsJson.teamRequests.map((r): Omit<TeamRequest, 'icon'> => ({
     title: r.title, sub: r.sub, at: sampleAt(`the team request "${r.title}"`, r.at), status: r.status,
     ...(r.statusAt !== undefined ? { statusAt: sampleAt(`the team request "${r.title}"`, r.statusAt) } : {}),
+    ...(r.text !== undefined ? { text: r.text } : {}),
+    ...(r.closed !== undefined ? { closed: closedOf(r.title, r.closed) } : {}),
   })),
 }
 export const scenarios = scenariosJson.scenarios

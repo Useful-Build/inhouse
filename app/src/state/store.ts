@@ -112,7 +112,9 @@ export interface UiState {
   /** The list the review window was opened from (Today's needs-you cards, Approvals' waiting drafts): what "1 of N" steps through. */
   queue: string[]
   pop: Pop
-  team: { type: RequestType; text: string; shot: boolean }
+  team: { type: RequestType; title: string; text: string; shot: boolean }
+  /** Team requests the person withdrew this session (`teamRequestKey`): there's no withdraw route on main yet (P6a), so it lives here. */
+  teamWithdrawn: string[]
   traceId: string | null
   /** The toast stack, oldest first. */
   toasts: Toast[]
@@ -605,7 +607,7 @@ function clearSession() {
 
 const initialUi = (): Omit<UiState, 'stage' | 'scenario' | 'ambient' | 'animateMark' | 'palette' | 'sideCollapsed'> => ({
   demoOpen: false, page: 'today', appKey: 'shopify', skillKey: '', setTab: 'you-general', openId: null, queue: [], pop: null,
-  team: { type: 'tool', text: '', shot: true }, traceId: null, toasts: [], phone: false, sideOpen: false,
+  team: { type: 'tool', title: '', text: '', shot: true }, teamWithdrawn: [], traceId: null, toasts: [], phone: false, sideOpen: false,
   editing: null, todayDraft: '', chatDraft: '', atts: [], modelSel: null, toolOff: {},
   chatId: null, chatList: false, fresh: false, extras: [], hidden: {}, stash: {}, started: [], replyTo: null,
   runs: {}, views: {}, history: {}, queued: {}, editMsg: null, libraryView: 'masonry',
@@ -955,7 +957,7 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     // Only pops that are focus-managed dialogs remember their trigger; the account menu is not one.
     // The account menu opens from the phone drawer, so it leaves the drawer open; every other pop-up closes it.
     openPop: pop => { if (pop === 'team' || pop === 'help') rememberTrigger(); set(pop === 'me' ? { pop } : { pop, sideOpen: false }) },
-    openTeam: (type, text = '') => { rememberTrigger(); set({ pop: 'team', team: { type, text, shot: true }, sideOpen: false }) },
+    openTeam: (type, text = '') => { rememberTrigger(); set({ pop: 'team', team: { type, title: '', text, shot: true }, sideOpen: false }) },
     closeOverlays: () => set({ openId: null, pop: null, traceId: null, sideOpen: false, editing: null }),
     showToast,
     dismissToast,

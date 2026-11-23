@@ -243,7 +243,7 @@ test('Team window: Send waits for words (whitespace is empty), and the request c
   const team = page.getByRole('dialog', { name: 'Your Inhouse team' })
   await expect(team).toBeVisible()
   const send = team.getByRole('button', { name: 'Send to the team' })
-  const text = team.getByRole('textbox', { name: 'Your request' })
+  const text = team.getByRole('textbox', { name: 'Details' })
   await expect(send).toBeDisabled()
   await text.fill('   \n  ')
   await expect(send).toBeDisabled()
@@ -255,8 +255,9 @@ test('Team window: Send waits for words (whitespace is empty), and the request c
 
   await side(page).getByRole('button', { name: /account and settings/i }).click()
   await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: /^Your Inhouse team/ }).click()
+  await team.getByRole('radio', { name: /^Your requests/ }).click()
   await expect(team.getByText('Connect our Gorgias macros')).toBeVisible()
-  await expect(team.getByText('New tool · sent by Robin Okafor, just now')).toBeVisible()
+  await expect(team.getByText('New tool · You, just now')).toBeVisible()
   await shot(page, 'team-sent-by-name')
 })
 

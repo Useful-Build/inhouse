@@ -584,6 +584,7 @@ test('The Klaviyo request takes its date from the data and hides on First day; A
   }
   // Two open requests: the Klaviyo connection and the weekly wholesale job.
   await openTeam(2)
+  await team.getByRole('radio', { name: /^Your requests/ }).click()
   await expect(team).toContainText('Live by Fri, Nov 20')
   await page.keyboard.press('Escape')
   await expect(team).toHaveCount(0)
@@ -610,6 +611,8 @@ test('The Klaviyo request takes its date from the data and hides on First day; A
   // The Klaviyo request is no longer listed or counted.
   await openTeam(1)
   await expect(team).toBeVisible()
+  await team.getByRole('radio', { name: /^Your requests/ }).click()
+  await expect(team.getByRole('list', { name: 'Open requests' }).getByRole('listitem')).toHaveCount(1)
   await expect(team).not.toContainText('Live by')
   await shot(page, 'team-window-first-day')
 })
