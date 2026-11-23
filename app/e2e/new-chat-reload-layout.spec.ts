@@ -1,6 +1,6 @@
 // New chat keeps its layout across a reload and on a direct load: the heading above the composer, the composer in the
-// middle band (never docked at the bottom), and the three suggestion cards plus the Routine row below it, never
-// flickering away once shown. A frame sampler (requestAnimationFrame) records every frame from page start.
+// middle band (never docked at the bottom) and steady, and the three suggestion cards plus the Routine row below it in
+// every frame the composer shows (the bug #355 fixed: the cards arrived late and the composer jumped). A frame sampler (requestAnimationFrame) records every frame from page start.
 import { expect, fxFor, test } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
@@ -9,7 +9,6 @@ type Frame = {
   composerTop: number | null
   docked: boolean
   headingTop: number | null
-  bento: boolean
   cards: number
   routine: number
   vh: number
@@ -24,14 +23,12 @@ const SAMPLER = `(() => {
   const tick = () => {
     const now = performance.now()
     const composer = document.querySelector('[data-composer]')
-    const heading = [...document.querySelectorAll('h2')].find(e => (e.textContent || '').includes('What do you want to know?'))
-    const bento = document.querySelector('[data-prompt-bento]')
+    const heading = [...document.querySelectorAll('h2')].find(e => (e.textContent || '').includes('What should we look into?'))
     frames.push({
       hash: location.hash,
       composerTop: composer ? composer.getBoundingClientRect().top : null,
       docked: !!document.querySelector('[data-bottom-dock]'),
       headingTop: heading ? heading.getBoundingClientRect().top : null,
-      bento: !!bento,
       cards: document.querySelectorAll('[data-prompt-card]').length,
       routine: document.querySelectorAll('[data-prompt-routine]').length,
       vh: innerHeight,
@@ -56,16 +53,18 @@ function assertLayout(frames: Frame[]) {
 
   for (const f of withComposer) {
     expect(f.docked, 'blank New chat never docks the composer at the bottom').toBe(false)
-    // A docked composer sits near 0.85-0.9 of the viewport; the lazy cards' placeholder puts early frames near 0.55.
+    // A docked composer sits near 0.85-0.9 of the viewport.
     expect(f.composerTop!, `composer top stays in the middle band (viewport ${f.vh})`).toBeLessThan(0.7 * f.vh)
     if (f.headingTop !== null) expect(f.headingTop, 'the heading is above the composer').toBeLessThan(f.composerTop!)
+    expect(f.cards, 'the suggestion cards are in place whenever the composer shows').toBeGreaterThan(0)
   }
-
-  const first = onNew.findIndex(f => f.cards > 0)
-  expect(first, 'the suggestion cards show').toBeGreaterThanOrEqual(0)
-  expect(onNew.slice(first).every(f => f.cards > 0), 'the cards never disappear once shown').toBe(true)
+  // The composer never drops and jumps back: its top holds within 8 px (sub-pixel and font settling) from its first frame (#355 measured
+  // jumps of 100 to 225 px before its fix).
+  const tops = withComposer.map(f => f.composerTop!)
+  expect(Math.max(...tops) - Math.min(...tops), 'the composer top holds steady').toBeLessThanOrEqual(8)
 
   const last = onNew[onNew.length - 1]
+  expect(last.headingTop, 'the heading shows').not.toBeNull()
   expect(last.cards, 'three suggestion cards').toBe(3)
   expect(last.routine, 'the Routine row').toBe(1)
 }
@@ -82,7 +81,7 @@ for (const [viewport, hasTouch] of [[{ width: 1440, height: 900 }, false], [{ wi
 
     test('after a reload of #/chats/new', async ({ page }) => {
       await page.goto('/?demo#/chats/new')
-      await expect(page.getByRole('heading', { name: 'What do you want to know?' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: 'What should we look into?' })).toBeVisible()
       await page.reload()
       assertLayout(await sampled(page))
     })

@@ -135,7 +135,7 @@ Chat: steps, sources and the answer's own cards
   Path:     a finished answer in a chat (`#/chats/stuck`)
   Selector: `[data-steps]` (its button, aria-expanded, and Details), `[data-steps-meta]`, `[data-sources]`, `[data-approval]`
   Expected: a finished answer has a collapsed steps line above its card ("Checked Shopify and ShipBob · 6 steps", or "3 steps" with no check when no connected tool was read; a step that saved or sent something is not "checked") that opens, in place, each step with its tool logo and time, ending with the mode, duration and time and a Details link to the trace window; the card ends with one quiet sources pill ("{N} sources", chevron) that opens a plain list, with no numbered chips and no pill when the answer cites nothing; a draft to approve is its own card after the answer's card; full-shell Skyspace runs hero intensity on Today and blank New chat (with centered composer, 3-column Bento prompt cards and Routine dock, all in place from the first frame of a load: the composer never drops and jumps back) and softly dims behind messages in an active chat; the chat column is 880px
-  Covered:  e2e/conversation.spec.ts, e2e/sample-data.spec.ts, e2e/conversation-polish.spec.ts, e2e/dots-and-today.spec.ts, e2e/dots-and-today-phone.spec.ts
+  Covered:  e2e/conversation.spec.ts, e2e/sample-data.spec.ts, e2e/conversation-polish.spec.ts, e2e/dots-and-today.spec.ts, e2e/dots-and-today-phone.spec.ts, e2e/new-chat-reload-layout.spec.ts
 
 Chat: queue and edit
   Path:     send two messages mid-answer, Edit a question
