@@ -2,9 +2,10 @@
 // decision's text, written out here and never read from the server's rows:
 //  - a member or an admin makes a skill in a chat; it's live at once (no approval), listed after ours with its maker's
 //    name, and its frontmatter is dropped;
-//  - its maker or an admin changes it (in a chat) or deletes it (route 85, at its rev); another member can't;
-//  - the Inhouse team reads the brand's skills only under a live grant, and changes or deletes none; a token for another
-//    brand's app is refused;
+//  - its maker or an admin changes it (in a chat) or deletes it (route 85, at its rev); another member can't; once the
+//    maker's personal data is deleted, the skill stays with no person id and only admins may change or delete it;
+//  - the Inhouse team reads the skills list without a grant (route 79 is technical) and a skill's full text only under
+//    a live grant (route 84), and changes or deletes none; a token for another brand's app is refused;
 //  - each write leaves one audit line that holds the skill's id only, never its name or text.
 // The chat part needs containers (the per-PR deployment); the rest seeds its rows in the local D1.
 import { expect, test } from '@playwright/test'
@@ -67,14 +68,14 @@ test.describe('routes (seeded in the local D1)', () => {
     expectError(await call(request, leo, 'GET', '/api/skills/e2e-no-such-skill'), 404, 'not_found')
   })
 
-  test('the Inhouse team reads only under a live grant and deletes nothing; another brand\'s token is refused', async ({ request }) => {
+  test('the Inhouse team reads the list without a grant, reads a skill\'s text only under a live grant, and deletes nothing; another brand\'s token is refused', async ({ request }) => {
     const id = seed('e2e-grant-skill', await memberIdOf(request, dana))
-    expectError(await call(request, inhouse, 'GET', '/api/skills'), 403, 'forbidden', 'grant_required')
+    expect((await list(request, inhouse)).find(s => s.n === 'e2e-grant-skill')).toMatchObject({ canChange: false })
     expectError(await call(request, inhouse, 'GET', '/api/skills/e2e-grant-skill'), 403, 'forbidden', 'grant_required')
     expect((await call(request, admin, 'POST', '/api/grants', { json: { hours: 1 } })).status).toBe(201)
     try {
-      const skills = await list(request, inhouse)
-      expect(skills.find(s => s.n === 'e2e-grant-skill')).toMatchObject({ canChange: false })
+      const page = await call(request, inhouse, 'GET', '/api/skills/e2e-grant-skill')
+      expect(page.status, page.text).toBe(200)
       expectError(await del(request, inhouse, id, 1), 403, 'forbidden')
     } finally {
       await endLiveGrants(request)

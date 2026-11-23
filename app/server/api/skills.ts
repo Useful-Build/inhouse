@@ -18,7 +18,7 @@ import { ourSkillPage } from '../skills/pages.ts'
 const SkillsAnswerSchema = z.array(SkillDefSchema)
 const instant = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
 
-/** Who may change a brand skill: a person who made it, or an admin. The Inhouse team reads them, and changes none. */
+/** Who may change a brand skill: a person who made it, or an admin (when its maker's data is cleared, only admins). The Inhouse team reads them, and changes none. */
 const changerOf = (c: ApiCtx): ((s: BrandSkillListed) => boolean) => {
   const p = c.principal
   if (p.kind !== 'person') return () => false
@@ -27,7 +27,7 @@ const changerOf = (c: ApiCtx): ((s: BrandSkillListed) => boolean) => {
 
 /** A brand skill as the Skills page lists it. */
 export const brandSkillDef = (s: BrandSkillListed, canChange: boolean): SkillDef => ({
-  n: s.name, d: s.description, icon: 'menu_book', need: 0, by: s.creator_name ?? 'A teammate', used: '', mine: true,
+  n: s.name, d: s.description, icon: 'menu_book', need: 0, by: s.creator_name ?? 'a former member', used: '', mine: true,
   updatedAt: instant(s.updated_at_ms), id: s.id, rev: s.rev, canChange,
 })
 

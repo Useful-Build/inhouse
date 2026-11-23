@@ -4,10 +4,10 @@
 //  - a refresh of the list drops instructions already read for a skill that hasn't changed, or keeps stale ones for one
 //    that has;
 //  - Delete is sent without the skill's rev, for one of ours, or leaves the skill listed; a refusal leaves it gone;
-//  - the Inhouse team reads the brand's skills on start (a support.access line for a read nobody asked for).
+//  - the Inhouse team cannot read the skills list on start without a grant (route 79 is technical; route 84's text stays grant-gated).
 import { describe, expect, test } from 'vitest'
 import { HttpAgent } from './client'
-import { reads, server } from './testing/fake-server'
+import { me, reads, server } from './testing/fake-server'
 import type { Req, Routes } from './testing/fake-server'
 
 const NOW = Date.UTC(2026, 5, 1, 12)
@@ -63,5 +63,15 @@ describe('the client: skills', () => {
     const stale = await loaded({ ...reads(), 'GET /api/skills': { body: [OURS, brand()] }, 'POST /api/skills/brand/bs_AAAAAAAAAAAAAAAAAAAAAA/delete': { status: 409, body: { error: { code: 'conflict', current } } } })
     await expect(stale.agent.deleteSkill('weekly-report')).rejects.toMatchObject({ code: 'conflict' })
     expect(stale.agent.read().skills.find(s => s.n === 'weekly-report')).toMatchObject({ rev: 3, d: current.d })
+  })
+
+  test('the Inhouse team reads GET /api/skills on start without a grant, and does not read /api/skills/:name until asked', async () => {
+    const { agent, calls } = await loaded({ ...reads(), 'GET /api/me': { body: me({ role: 'inhouse' }) }, 'GET /api/skills': { body: [OURS, brand({ canChange: false })] } })
+    expect(calls.map(c => c.path)).toContain('/api/skills')
+    expect(calls.some(c => c.path.startsWith('/api/skills/'))).toBe(false)
+    expect(agent.read().skills.map(s => [s.n, s.by, s.canChange])).toEqual([
+      ['pdf', 'Inhouse team', undefined],
+      ['weekly-report', 'Dana Example', false],
+    ])
   })
 })

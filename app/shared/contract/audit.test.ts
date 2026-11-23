@@ -381,7 +381,7 @@ describe('P6a lines (PR0)', () => {
     }
   })
 
-  it('brand skill lines take the skill id only, never its name or text; support.access names the skills reads (GET only)', () => {
+  it('brand skill lines take the skill id only, never its name or text; support.access names the skill page read (GET only)', () => {
     const bs = 'bs_AAAAAAAAAAAAAAAAAAAAAA'
     for (const action of ['brand_skill.created', 'brand_skill.changed', 'brand_skill.deleted']) {
       expect(ok({ action, skillId: bs }), action).toBe(true)
@@ -389,7 +389,7 @@ describe('P6a lines (PR0)', () => {
       expect(ok({ action, skillId: bs, name: 'weekly-report' }), action).toBe(false)
       expect(ok({ action, skillId: bs, body: 'Read the orders.' }), action).toBe(false)
     }
-    expect(access('GET', '/api/skills')).toBe(true)
+    expect(access('GET', '/api/skills')).toBe(false)
     expect(access('GET', '/api/skills/:name')).toBe(true)
     for (const method of ['PUT', 'POST']) for (const route of ['/api/skills', '/api/skills/:name', '/api/skills/brand/:id/delete']) expect(access(method, route), `${method} ${route}`).toBe(false)
     expect(access('GET', '/api/skills/weekly-report')).toBe(false)

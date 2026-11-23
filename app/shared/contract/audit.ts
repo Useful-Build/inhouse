@@ -51,8 +51,8 @@ const RoutePatternSchema = z.enum([
   '/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download',
   // P6a (PR0, route 77): the waiting team facts, admins and the Inhouse team under a live grant.
   '/api/memory/waiting',
-  // P6a brand skills (routes 79 and 84): the skills list holds the brand's own, so it's brand data like a skill's text.
-  '/api/skills', '/api/skills/:name',
+  // P6a brand skills (route 84): a skill's full text is brand data (the list, route 79, is technical and needs no grant).
+  '/api/skills/:name',
   // Master plan decision 8 (route 86): a routine's recent runs.
   '/api/routines/:id/runs',
 ])

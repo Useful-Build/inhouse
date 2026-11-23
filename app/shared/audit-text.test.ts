@@ -193,11 +193,10 @@ describe('P6a lines (PR0): literal texts, no id and no em dash', () => {
     expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'GET', route: '/api/memory/waiting' }, names)).toEqual({ what: 'looked at brand data', detail: 'Team memory waiting for an OK' })
     expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'PUT', route: '/api/memory/brand/:id/approved' }, names)).toEqual({ what: 'changed brand data', detail: 'Team memory' })
   })
-  it("says what happened to a brand skill, never which one, and names the skills routes in support.access", () => {
+  it("says what happened to a brand skill, never which one, and names the skill route in support.access", () => {
     expect(auditText(sample['brand_skill.created'], names)).toEqual({ what: 'made a skill in a chat', detail: '' })
     expect(auditText(sample['brand_skill.changed'], names)).toEqual({ what: 'changed a skill in a chat', detail: '' })
     expect(auditText(sample['brand_skill.deleted'], names)).toEqual({ what: 'deleted a skill', detail: '' })
-    expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'GET', route: '/api/skills' }, names)).toEqual({ what: 'looked at brand data', detail: 'Skills' })
     expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'GET', route: '/api/skills/:name' }, names)).toEqual({ what: 'looked at brand data', detail: 'A skill' })
   })
   it('never shows an id, a revision or an em dash', () => {

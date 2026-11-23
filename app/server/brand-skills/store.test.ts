@@ -54,6 +54,7 @@ const route = async (h: typeof listSkills, principal: Parameters<typeof ctx>[1],
   const res = await h(c as never)
   return { status: res.status, body: (await res.json()) as any }
 }
+const readRow = (name: string) => db.prepare('SELECT created_by, updated_by, rev FROM brand_skills WHERE name = ?').bind(name).first<{ created_by: string | null; updated_by: string | null; rev: number }>()
 
 describe('saving (the store)', () => {
   it('a member makes one, live at once; the frontmatter is dropped; the audit line holds the id only', async () => {
@@ -195,5 +196,60 @@ describe('routes 79, 84 and 85', () => {
     expect((await del(DANA, 'member', 'not-an-id', 1)).status).toBe(404)
     expect(await del(ADMIN, 'admin', s.id, 1)).toMatchObject({ status: 200, body: { n: 'weekly-report' } })
     expect(await skillFiles(db)).toEqual([])
+  })
+})
+
+describe('person deletion (members.pseudonymise)', () => {
+  it('keeps the brand skills the deleted person made, clears links to the person, shows "a former member", and leaves only admins able to edit or delete them', async () => {
+    const FORMER = 'm_bs_former'
+    await db.prepare(
+      "INSERT INTO members (id, kind, role, status, name, email_norm, subject, created_at_ms) VALUES (?, 'person', 'admin', 'active', 'Former Maker', 'former@example.test', 'sub_former', 0) ON CONFLICT (id) DO UPDATE SET role = 'admin', name = 'Former Maker', email_norm = 'former@example.test', subject = 'sub_former', status = 'active', pseudonymised_at_ms = NULL, removed_at_ms = NULL",
+    ).bind(FORMER).run()
+
+    const madeByFormer = await made(FORMER, skill('former-only'))
+    const editedByAdmin = await made(FORMER, skill('former-then-admin'))
+    expect(await saveSkill(db, skill('former-then-admin', { body: 'Admin updated.' }), at(ADMIN))).toMatchObject({ created: false })
+    const editedByFormer = await made(ADMIN, skill('admin-then-former'))
+    expect(await saveSkill(db, skill('admin-then-former', { body: 'Former updated.' }), at(FORMER))).toMatchObject({ created: false })
+    await made(ADMIN, skill('admin-only'))
+
+    const auditBefore = await lastLineId(db)
+    expect(await stores.members.pseudonymise(FORMER, at(ADMIN))).toMatchObject({ ok: { id: FORMER, name: 'Former member' } })
+    expect(await lastLineId(db)).toBe(auditBefore)
+
+    // Refused pseudonymisation (last active admin) changes no brand skill links.
+    expect(await stores.members.pseudonymise(ADMIN, at(ADMIN))).toEqual({ refused: 'last_admin' })
+
+    // Every skill stays live and runnable; all references to the deleted person are NULL.
+    expect((await skillFiles(db)).map(f => f.name)).toEqual(['admin-only', 'admin-then-former', 'former-only', 'former-then-admin'])
+    expect(await readRow('former-only')).toEqual({ created_by: null, updated_by: null, rev: 1 })
+    expect(await readRow('former-then-admin')).toEqual({ created_by: null, updated_by: ADMIN, rev: 2 })
+    expect(await readRow('admin-then-former')).toEqual({ created_by: ADMIN, updated_by: null, rev: 2 })
+    expect(await readRow('admin-only')).toEqual({ created_by: ADMIN, updated_by: ADMIN, rev: 1 })
+
+    // Routes 79 and 84: lists "a former member", and only active admins have canChange: true.
+    const asMember = (await route(listSkills, personPrincipal(LEO, 'member'), { path: '/api/skills' })).body as { n: string; by: string; canChange?: boolean }[]
+    expect(asMember.find(s => s.n === 'former-only')).toMatchObject({ by: 'a former member', mine: true, canChange: false })
+    expect(asMember.find(s => s.n === 'former-then-admin')).toMatchObject({ by: 'a former member', mine: true, canChange: false })
+    expect(asMember.find(s => s.n === 'admin-then-former')).toMatchObject({ by: 'Test person', mine: true, canChange: false })
+    const asFormer = (await route(listSkills, personPrincipal(FORMER, 'member'), { path: '/api/skills' })).body as { n: string; canChange?: boolean }[]
+    expect(asFormer.find(s => s.n === 'former-only')?.canChange).toBe(false)
+    const asAdmin = (await route(listSkills, personPrincipal(ADMIN, 'admin'), { path: '/api/skills' })).body as { n: string; by: string; canChange?: boolean }[]
+    expect(asAdmin.find(s => s.n === 'former-only')).toMatchObject({ by: 'a former member', canChange: true })
+    const noGrantInhouse = { ...inhouse, grant: null }
+    const asInhouse = (await route(listSkills, noGrantInhouse as never, { path: '/api/skills' })).body as { n: string; by: string; canChange?: boolean }[]
+    expect(asInhouse.find(s => s.n === 'former-only')).toMatchObject({ by: 'a former member', canChange: false })
+
+    // Only admins can edit or delete a skill whose maker's data was deleted.
+    expect(await saveSkill(db, skill('former-only', { body: 'Member edit.' }), at(LEO))).toEqual({ refused: 'not_owner' })
+    expect(await saveSkill(db, skill('former-only', { body: 'Former edit.' }), at(FORMER))).toEqual({ refused: 'not_owner' })
+    expect(await deleteSkill(db, { id: madeByFormer.id, ifRev: 1 }, at(LEO))).toEqual({ refused: 'not_owner' })
+    expect(await deleteSkill(db, { id: madeByFormer.id, ifRev: 1 }, at(FORMER))).toEqual({ refused: 'not_owner' })
+    expect(await saveSkill(db, skill('former-only', { body: 'Admin edit.' }), at(ADMIN))).toMatchObject({
+      created: false,
+      ok: { created_by: null, updated_by: ADMIN, rev: 2, body: 'Admin edit.' },
+    })
+    expect(await deleteSkill(db, { id: editedByAdmin.id, ifRev: 2 }, at(ADMIN))).toMatchObject({ ok: { id: editedByAdmin.id } })
+    expect(await deleteSkill(db, { id: editedByFormer.id, ifRev: 2 }, at(ADMIN))).toMatchObject({ ok: { id: editedByFormer.id } })
   })
 })
