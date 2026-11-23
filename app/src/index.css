@@ -128,7 +128,7 @@
  */
 :root {
   /* the page's side padding */
-  --app-pad-x: clamp(16px, 4vw, 40px);
+  --app-pad-x: clamp(16px, 3vw, 32px);
 
   /* columns and page widths */
   --app-sidebar: 252px;
@@ -138,8 +138,11 @@
   --app-today-column: 720px;      /* Today's column and its composer */
   --app-chat-column: 880px;       /* a chat and its composer */
   --app-page-narrow: 800px;       /* a Settings page's column, beside its menu */
-  --app-page-default: 900px;      /* page width steps (Page): every list page shares this one content edge */
+  --app-page-default: 1040px;     /* page width steps (Page): every list page shares this one content edge */
   --app-page-wide: 1000px;        /* Today, Usage, the top banner */
+  --app-page-detail: 1160px;      /* a skill's page: its instructions beside a side rail */
+  --app-detail-rail: 264px;       /* that side rail */
+  --app-reading-measure: 680px;   /* a document's paragraphs and lists on its own page (a skill's instructions) */
   --app-screen-below-topbar: calc(100vh - 58px);
   --app-screen-gutter: calc(100vw - 32px);    /* the widest a floating piece gets */
   --app-screen-gutter-sm: calc(100vw - 24px);
@@ -370,6 +373,9 @@
   --container-page-narrow: var(--app-page-narrow);
   --container-page-default: var(--app-page-default);
   --container-page-wide: var(--app-page-wide);
+  --container-page-detail: var(--app-page-detail);
+  --container-detail-rail: var(--app-detail-rail);
+  --container-reading-measure: var(--app-reading-measure);
   --container-screen-gutter: var(--app-screen-gutter);
   --container-screen-gutter-sm: var(--app-screen-gutter-sm);
   --container-menu-message: var(--app-menu-message);

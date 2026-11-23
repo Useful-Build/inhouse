@@ -158,7 +158,7 @@ export function SkillPage() {
   }
 
   return (
-    <Page width="wide" className="pt-4.5">
+    <Page width="detail" className="pt-4.5">
       <Button variant="quiet" onClick={() => go('skills')} className="gap-1">
         <Icon name="arrow_back" size={17} />Skills
       </Button>
@@ -221,12 +221,13 @@ export function SkillPage() {
           {s.body && (
             <div className="min-w-0 flex-1">
               <div id="skill-instructions" className="px-1 pb-3 text-base font-medium text-foreground-3">Instructions</div>
-              <article aria-labelledby="skill-instructions" className="rounded-3xl border border-border bg-card px-5 pt-8 pb-9 shadow-card sm:px-12 sm:pt-10 sm:pb-11">
+              <article aria-labelledby="skill-instructions" className="rounded-3xl border border-border bg-card px-5 pt-8 pb-9 shadow-card sm:px-10 sm:pt-10 sm:pb-11">
                 <Markdown text={s.body} look="page" />
               </article>
             </div>
           )}
-          <aside aria-label="About this skill" className={cn('flex flex-col gap-4', s.body && '@4xl:w-70 @4xl:flex-none')}>
+          {/* Stacked under the instructions, the rail's cards sit two to a row (one on a phone). */}
+          <aside aria-label="About this skill" className={cn('grid items-start gap-4 @xl:grid-cols-2', s.body && '@4xl:flex @4xl:w-detail-rail @4xl:flex-none @4xl:flex-col')}>
             <RailCard>
               <dl>
                 {facts.map(([k, v], i) => (
