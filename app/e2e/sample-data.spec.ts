@@ -561,10 +561,10 @@ test('Facts agree across screens: PO-1187, the waiting count and the stuck-order
   await expect(log).not.toContainText('in Watch')
 })
 
-test('Activity: every time sits on one line in its column', async ({ page, fx }) => {
+test('Activity: every time sits on one line', async ({ page, fx }) => {
   await start(fx, 'Run', '#/activity')
   // Run shows the most lines, "10:12 AM" the widest time.
-  const times = page.locator('[data-activity-row] > span:first-child')
+  const times = page.locator('[data-activity-time]')
   await expect(times.first()).toBeVisible()
   await expect(page.locator('main')).toContainText('10:12 AM')
   const lines = await times.evaluateAll(els => els.map(e => ({ t: e.textContent, lines: Math.round(e.getBoundingClientRect().height / parseFloat(getComputedStyle(e).lineHeight)) })))

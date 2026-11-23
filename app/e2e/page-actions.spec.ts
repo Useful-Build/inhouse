@@ -233,7 +233,6 @@ test('A set-aside problem approved from the chat card or the Library\'s approval
   await go(page, '#/activity')
   const notSent = actRow(page, `Not sent: ask ShipBob why #4821 hasn't shipped`)
   await expect(notSent).toBeVisible()
-  await expect(notSent).toContainText('Sam')
   await page.getByRole('searchbox', { name: 'Search activity' }).fill('left Approvals')
   await expect(page.locator('button[data-activity-row]')).toHaveCount(1)
   // A time typed with a plain space finds the row, whose time carries a no-break space.
@@ -242,7 +241,9 @@ test('A set-aside problem approved from the chat card or the Library\'s approval
   await expect(actRow(page, 'Saved the weekly numbers report')).toBeVisible()
   await page.getByRole('searchbox', { name: 'Search activity' }).fill('')
   await notSent.click()
-  await expect(page.getByRole('main').getByRole('button', { name: 'Undo', exact: true })).toBeVisible()
+  // The line opens as a sheet that says who did it, with its one action.
+  await expect(page.getByRole('dialog')).toContainText('Sam')
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Undo', exact: true })).toBeVisible()
   await shot(page, 'activity-not-sent-line')
 
   // The chat still offers its approval card; approving there clears the set-aside.
@@ -290,7 +291,7 @@ test('A set-aside problem approved from the chat card or the Library\'s approval
   await expect(card(page, '11 returns are not restocked')).toHaveCount(0)
   await go(page, '#/activity')
   await actRow(page, 'Dismissed: 11 returns are not restocked').click()
-  await page.getByRole('main').getByRole('button', { name: 'Undo', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Undo', exact: true }).click()
   await expect(actRow(page, 'Dismissed:')).toHaveCount(0)
   await go(page, '#/today')
   await expect(card(page, '11 returns are not restocked')).toBeVisible()

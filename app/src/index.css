@@ -154,6 +154,7 @@
   --app-popover-notifications: min(380px, calc(100vw - 36px));
   --app-select-menu: min(320px, calc(100vw - 32px));
   --app-problem-panel: min(540px, calc(100vw - 40px));
+  --app-activity-panel: min(440px, calc(100vw - 40px)); /* an Activity line, opened */
 
   /* windows (Window sizes): the width, where the top sits and the tallest it gets */
   --app-window-sm: min(420px, calc(100vw - 40px));   /* a question (Confirm), a short notice */
@@ -369,6 +370,7 @@
   --container-popover-notifications: var(--app-popover-notifications);
   --container-select-menu: var(--app-select-menu);
   --container-problem-panel: var(--app-problem-panel);
+  --container-activity-panel: var(--app-activity-panel);
   --container-window-sm: var(--app-window-sm);
   --container-window-md: var(--app-window-md);
   --container-window-lg: var(--app-window-lg);

@@ -20,7 +20,7 @@ const PAGES: [Stage, string, string, string][] = [
   ['Watch', 'Normal', '#/approvals', "In Act, today's 6 fixes would be waiting here"],
   ['Watch', 'Normal', '#/chats', 'Approvals and routines start in Act'],
   ['Act', 'Normal', '#/activity', 'Activity'],
-  ['Run', 'Normal', '#/activity', 'Inhouse agent, inside your limits'],
+  ['Run', 'Normal', '#/activity', 'Chased Kestrel'],
   ['Act', 'Normal', '#/routines', 'Routines'],
   ['Act', 'Normal', '#/tools', 'Being connected'],
   ['Act', 'Normal', '#/tools/shopify', 'What your Inhouse agent can do with Shopify'],
