@@ -272,12 +272,14 @@ export function resultWords(s: Pick<SlotRow, 'state' | 'result_text' | 'failure'
   }
 }
 
+const STOPPED_ON_PURPOSE = new Set(['stopped', 'interrupted', 'cancelled'])
+
 /** A slot's outcome in the panel's closed list (`RoutineRunOutcome`). */
 export function runOutcome(s: Pick<SlotRow, 'state' | 'failure' | 'outcome' | 'reason'>): RoutineRunOutcome {
   switch (s.state) {
     case 'claimed': case 'started': return 'running'
-    // A run someone stopped on purpose (`stopped`, no failure) is neutral, not a warning.
-    case 'ended': return s.failure !== null ? 'failed' : s.outcome === 'done' ? 'done' : s.outcome === 'stopped' ? 'skipped' : 'failed'
+    // A run someone stopped on purpose (stopped, interrupted or cancelled, with no failure) is neutral, not a warning.
+    case 'ended': return s.failure !== null ? 'failed' : s.outcome === 'done' ? 'done' : STOPPED_ON_PURPOSE.has(s.outcome ?? '') ? 'skipped' : 'failed'
     case 'lost': return 'failed'
     case 'missed': case 'skipped': return 'skipped'
     case 'refused': return s.reason === 'paused' ? 'skipped' : 'failed'

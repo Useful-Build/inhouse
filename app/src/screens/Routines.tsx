@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { agent } from '../agent'
 import { traceOf, useTraces } from './chat/traces'
 import { keepUnitsTogether } from '../agent/clock'
@@ -193,22 +193,30 @@ const outcomeOf = (text: string, name: string) => {
  * after each Run now (`runNows`), on Try again (`attempt`) and when the stage changes.
  */
 const RUN_RECHECK_MS = 15_000
+/** At most 10 minutes of rechecks per open panel. */
+const RUN_RECHECK_MAX = 40
 
-function useRunHistory(id: string, runNows: number, attempt: number, stage: number): readonly RoutineHistoryRun[] | 'failed' | undefined {
+function useRunHistory(id: string, runNows: number, attempt: number, stage: number, recheck: boolean): readonly RoutineHistoryRun[] | 'failed' | undefined {
   const [got, setGot] = useState<{ id: string; runs: readonly RoutineHistoryRun[] | 'failed' }>()
-  // While a run is still going, ask again every 15 s so the open panel sees it end.
+  // While a run is still going, ask again every 15 s so the open panel sees it end: never for the Inhouse team (each
+  // read under a grant writes an audit line), never while the tab is hidden, and for 10 minutes at most.
   const [tick, setTick] = useState(0)
   const running = got?.id === id && got.runs !== 'failed' && got.runs.some(x => x.outcome === 'running')
   useEffect(() => {
-    if (!running) return
-    const t = setTimeout(() => setTick(n => n + 1), RUN_RECHECK_MS)
-    return () => clearTimeout(t)
-  }, [running, got])
+    if (!running || !recheck || tick >= RUN_RECHECK_MAX) return
+    const fire = () => {
+      if (document.hidden) document.addEventListener('visibilitychange', fire, { once: true })
+      else setTick(n => n + 1)
+    }
+    const t = setTimeout(fire, RUN_RECHECK_MS)
+    return () => { clearTimeout(t); document.removeEventListener('visibilitychange', fire) }
+  }, [running, recheck, tick, got])
   useEffect(() => {
     let live = true
     agent.routineRunHistory(id).then(h => { if (live) setGot({ id, runs: h.runs }) }, (e: unknown) => {
       console.warn('Inhouse: could not read the last runs.', e)
-      if (live) setGot({ id, runs: 'failed' })
+      // A failed recheck keeps the list on screen; only a first read that fails shows the error.
+      if (live) setGot(prev => (prev?.id === id && prev.runs !== 'failed' ? prev : { id, runs: 'failed' }))
     })
     return () => { live = false }
   }, [id, runNows, attempt, stage, tick])
@@ -228,7 +236,8 @@ function RoutineSheet({ item, phone, paused, actions, onClose }: { item: Item; p
   const { openTrace } = useUi.getState()
   const { r, locked, on } = item
   const [attempt, setAttempt] = useState(0)
-  const history = useRunHistory(r.id, ctx.agent.routineRuns.filter(x => x.routine === r.id).length, attempt, ctx.S)
+  const signedIn = useSyncExternalStore(agent.subscribe, agent.me)
+  const history = useRunHistory(r.id, ctx.agent.routineRuns.filter(x => x.routine === r.id).length, attempt, ctx.S, signedIn?.role !== 'inhouse')
   const how = howOf(r, ctx.S, locked)
   const me = userName(ctx)
   // Closing gives focus back to the row that opened the sheet, as Window does.
@@ -295,7 +304,7 @@ function RoutineSheet({ item, phone, paused, actions, onClose }: { item: Item; p
 
           <h3 className="mt-7.5 mb-1 text-sm font-semibold">Last runs</h3>
           {history === 'failed' ? (
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-foreground-3">
+            <div role="status" className="mt-1 flex flex-wrap items-center gap-2 text-sm text-foreground-3">
               {"Couldn't load the last runs."}
               <Button variant="ghost" size="sm" onClick={() => setAttempt(n => n + 1)}>Try again</Button>
             </div>

@@ -48,7 +48,7 @@ describe('the demo: a routine\'s runs', () => {
     expect((await agent.routineRunHistory(MORNING)).runs).toEqual([])
   })
 
-  test('a Run now heads the list: done with the routine\'s result, or still running when there is none', async () => {
+  test('a Run now heads the list, finished, with the routine\'s result or "It finished" when there is none', async () => {
     const agent = fresh()
     agent.setDemo({ stage: 'Act', scenario: 'Normal' })
     const run = await agent.runRoutine(PAYOUT)
@@ -57,7 +57,7 @@ describe('the demo: a routine\'s runs', () => {
     expect(rest).toHaveLength(2)
     agent.setDemo({ stage: 'Act', scenario: 'First day' })
     await agent.runRoutine(MORNING)
-    expect((await agent.routineRunHistory(MORNING)).runs).toEqual([expect.objectContaining({ outcome: 'running', result: "It's running", manual: true, trace: 'morning' })])
+    expect((await agent.routineRunHistory(MORNING)).runs).toEqual([expect.objectContaining({ outcome: 'done', result: 'It finished', manual: true, trace: 'morning' })])
   })
 
   test('an unknown or deleted routine rejects as not found', async () => {

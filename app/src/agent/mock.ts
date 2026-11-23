@@ -1128,14 +1128,14 @@ export class MockAgent implements AgentClient {
     return this.writeThen({ routineRuns: [run, ...this.state.routineRuns] }, run)
   }
   /**
-   * Route 68's answer from the sample data: this session's Run nows (one with no result is still running), then the
+   * Route 68's answer from the sample data: this session's Run nows (each finished: the demo has no run to follow), then the
    * routine's sample runs where this scenario has them (not on day one) and the stage runs it.
    */
   routineRunHistory(id: string): Promise<RoutineRunHistory> {
     const r = DATA_FOR[this.demo.scenario].routines.find(x => x.id === id) ?? this.state.routinesExtra.find(x => x.id === id)
     if (!r || this.state.routinesDeleted[id]) return this.rejected(NOT_FOUND, "This routine isn't here any more.", false)
     const now = this.state.routineRuns.filter(x => x.routine === id).map((x): RoutineHistoryRun => ({
-      at: x.at, outcome: x.result ? 'done' : 'running', result: x.result ?? "It's running", manual: true, ...(x.trace ? { trace: x.trace } : {}),
+      at: x.at, outcome: 'done', result: x.result ?? 'It finished', manual: true, ...(x.trace ? { trace: x.trace } : {}),
     }))
     const need = 'need' in r ? r.need : 1
     const sample = 'last' in r && r.last && stageIndex(this.demo.stage) >= need ? sampleRuns[r.name] ?? [] : []
