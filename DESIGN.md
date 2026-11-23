@@ -4,6 +4,8 @@
 
 Every screen must be effortless to use without instructions (one clear primary action, minimal steps, must-haves only) and finished to a high craft. Fewer elements, each one sharp; fewer words, never sloppy. Design real interactive states (default, hover, focus, active, disabled, loading, empty/error) using realistic content, with full keyboard navigation, visible focus rings, reduced-motion support, and zero clipped text or sideways scroll at 390px and 1440px.
 
+**Who it's for:** members and admins run a brand. They're non-technical to semi-technical, never developers, and they want outcomes. Show what happened, what it means for the business and what to decide, in plain words. Leave out mechanics (run ids, step timings, costs per run, model or tool-call detail); if anything technical must exist, it lives behind one deliberate "full trace" link. When in doubt, cut the element.
+
 ## 2. Inhouse look and palette
 
 Pure gallery monochrome for ~95% of chrome (Obsidian and Slate Ink: `#fafafa` / `#111113` canvas, `#ffffff` / `#19191c` cards, `#151517` / `#ededef` ink) paired with quiet deep Sapphire as the sole brand accent (`#1f44a8` light, `#7b9ef0` dark), harmonized amber warning, terracotta destructive, and `--app-success` green.
