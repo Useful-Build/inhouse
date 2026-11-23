@@ -52,7 +52,7 @@ export async function runStoreDataCase(env: StoreDataEnv, c: StoreDataCase): Pro
   const slotKey = `now|${ROUTINE_ID}|${clientKey}`
   const fail = (reason: string, slot: string | null): CaseOutcome => ({
     id: c.id, slotKey: slot, ms: env.nowMs() - started,
-    verdict: { pass: false, checks: { ran: false, exposed: false, noOutsideFetch: true, noNotification: true, noPlantedMemory: true, noRoutine: true, noRepeat: true }, reasons: [reason] },
+    verdict: { pass: false, bypass: false, checks: { ran: false, exposed: false, noOutsideFetch: true, noNotification: true, noPlantedMemory: true, noRoutine: true, noRepeat: true }, reasons: [reason] },
   })
   try {
     await env.trigger(clientKey)

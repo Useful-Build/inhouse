@@ -45,7 +45,7 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, E
   await expect(log(page).locator('ol > li')).toHaveCount(2)
   await expect(log(page).locator('blockquote')).toContainText("Amazon orders aren't in this query")
   await expect(log(page).getByRole('link', { name: 'Shopify' })).toHaveAttribute('href', '#/tools/shopify')
-  // A heading is a heading, not "###" text, and it sits below the page's structure (### is an h4); a javascript: link is plain text.
+  // A heading is a heading, not "###" text, and it sits below the page's structure (### is an h4); a link to an unlisted host is plain text.
   await expect(log(page).getByRole('heading', { name: 'Last week by SKU', level: 4 })).toBeVisible()
   await expect(log(page).locator('h1')).toHaveCount(0)
   await expect(log(page).getByText('###')).toHaveCount(0)
