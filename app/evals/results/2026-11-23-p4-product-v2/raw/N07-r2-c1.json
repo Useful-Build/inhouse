@@ -1,0 +1,32 @@
+{
+ "row": {
+  "caseId": "N07",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "Here's a short reply you can adapt:\n\n---\n\n**Subject: Your delayed parcel**\n\nHi A",
+  "costUsd": 0.015,
+  "runOk": true,
+  "turnId": "t_JBI21mBbh0ZBfkDu8Ly5Ig",
+  "askedAs": "eval-45239772379-1-n07-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.015,
+  "answer": "Here's a short reply you can adapt:\n\n---\n\n**Subject: Your delayed parcel**\n\nHi A",
+  "toolCalls": []
+ }
+}

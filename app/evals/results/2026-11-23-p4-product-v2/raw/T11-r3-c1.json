@@ -1,0 +1,53 @@
+{
+ "row": {
+  "caseId": "T11",
+  "cat": "choice",
+  "pair": "routine_create/notification_send",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "routine_list",
+   "routine_create"
+  ],
+  "toolSearches": 1,
+  "answer": "I couldn't schedule it. Creating routines needs the Act stage, and this account ",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_9RKtD4MRj6lW3tL0iSeJCQ",
+  "askedAs": "eval-45239772379-1-t11-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "I couldn't schedule it. Creating routines needs the Act stage, and this account ",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "26daee9cb62c1ffccb5e9ea661a2a476ff6a057017a8f9728e18ded523a0632f",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__routine_create,mcp__inhouse__routine_list,mcp__ap"
+   },
+   {
+    "name": "mcp__inhouse__routine_list",
+    "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "inputExcerpt": "{}"
+   },
+   {
+    "name": "mcp__inhouse__routine_create",
+    "inputSha256": "e9042e4c2af1c47dd6be5dc614358d946f9c8c315482efea4d5453494f47b136",
+    "inputExcerpt": "{\"name\":\"Weekday low-stock check\",\"instruction\":\"Check stock for the brand's pro"
+   }
+  ]
+ }
+}

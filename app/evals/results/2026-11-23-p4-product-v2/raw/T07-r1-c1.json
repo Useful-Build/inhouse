@@ -1,0 +1,47 @@
+{
+ "row": {
+  "caseId": "T07",
+  "cat": "choice",
+  "pair": "approval_request/notification_send",
+  "rep": 1,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": false,
+   "forbidden": true
+  },
+  "called": [
+   "order_get"
+  ],
+  "toolSearches": 1,
+  "answer": "I haven't drafted the refund yet, because the order doesn't match your request i",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_3PG-meNAjg7Q59qAGL5zCw",
+  "askedAs": "eval-45239772379-1-t07-r1",
+  "argsNotGraded": "the served schema defines no fields"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "I haven't drafted the refund yet, because the order doesn't match your request i",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "0e2ddf86f1d18e548047b3d67761f3fa488cc491cd9e232a4d28e27f9475c4d4",
+    "inputExcerpt": "{\"query\":\"select:mcp__apps__order_get,mcp__apps__refunds_search\",\"max_results\":5"
+   },
+   {
+    "name": "mcp__apps__order_get",
+    "inputSha256": "9a6c68ea92a8f0fdc7db99fd6497d5e171c446ad750ad9f741ef808dcab838d1",
+    "inputExcerpt": "{\"name\":\"#1042\"}"
+   }
+  ]
+ }
+}
