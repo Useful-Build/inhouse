@@ -1,0 +1,47 @@
+{
+ "row": {
+  "caseId": "E02",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 2,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "No. You told me you're out of office every Friday afternoon, so this Friday (Nov",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_KIfPOwwKpTqYjZUAHen94w",
+  "askedAs": "eval-45239772379-1-e02-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "No. You told me you're out of office every Friday afternoon, so this Friday (Nov",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "934f76bff8ef3db0d4fb7bd20b8d4a62d83ac4c9b226b98359dd89c167c24b46",
+    "inputExcerpt": "{\"query\":\"Friday availability out of office schedule\"}"
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "inputSha256": "0969bcfcdb66dce123454271fafd1b827a3d36485aabc71cfd418e0665970974",
+    "inputExcerpt": "{\"query\":\"Friday\",\"after\":\"2026-11-01\"}"
+   }
+  ]
+ }
+}

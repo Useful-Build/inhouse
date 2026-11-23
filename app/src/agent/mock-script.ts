@@ -219,7 +219,7 @@ const QUERY_ANSWER = [
   '1. Copy the query to run it again.',
   '2. Open [Shopify](#/tools/shopify) to see the orders.',
   '',
-  "> These are Shopify orders only. [Amazon orders](javascript:void(0)) aren't in this query.",
+  "> These are Shopify orders only. [Amazon orders](https://orders.example.test/) aren't in this query.",
 ].join('\n')
 
 /** A seeded turn's own answer when the question is one a chat already asked: this chat's first, then any chat's. */

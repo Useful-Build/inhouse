@@ -1,0 +1,47 @@
+{
+ "row": {
+  "caseId": "T08",
+  "cat": "choice",
+  "pair": "approval_request/notification_send",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "orders_search",
+   "approval_request"
+  ],
+  "toolSearches": 0,
+  "answer": "I couldn't send the email or queue it for approval. The approval tool isn't avai",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_Kp6EKToQ-doW-bCPL7F5Dg",
+  "askedAs": "eval-45239772379-1-t08-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "I couldn't send the email or queue it for approval. The approval tool isn't avai",
+  "toolCalls": [
+   {
+    "name": "mcp__apps__orders_search",
+    "inputSha256": "5dc4efafd1495bd2a667ecbba152f64c6e7af792a187bc75e5c10e58af10dab9",
+    "inputExcerpt": "{\"query\":\"Anna Weber\"}"
+   },
+   {
+    "name": "mcp__inhouse__approval_request",
+    "inputSha256": "211290dd81c85930c6c610173b3b4b23ee7e1d47ac0f5c34ab2535354e5be6f8",
+    "inputExcerpt": "{\"action\":\"Send email to customer\",\"recipient\":\"Anna Weber (email address not ye"
+   }
+  ]
+ }
+}
