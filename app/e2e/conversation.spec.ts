@@ -200,7 +200,7 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, E
   await expect(up).toHaveAttribute('aria-pressed', 'true')
   await fresh.getByRole('button', { name: 'Bad answer' }).click()
   await expect(page.getByRole('dialog')).toBeVisible()
-  await expect(page.getByRole('dialog').getByRole('textbox').first()).toHaveValue(/This answer looks wrong/)
+  await expect(page.getByRole('dialog').getByRole('textbox', { name: 'Details' })).toHaveValue(/This answer looks wrong/)
   await page.keyboard.press('Escape')
   await expect(fresh.getByRole('button', { name: 'Bad answer' })).toHaveAttribute('aria-pressed', 'true')
   await expect(up).toHaveAttribute('aria-pressed', 'false')

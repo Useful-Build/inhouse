@@ -19,7 +19,7 @@ const palette = (page: Page) => page.getByRole('dialog', { name: 'Search' })
 const paletteInput = (page: Page) => palette(page).getByRole('combobox')
 /** The open tooltip with this text (one that is closing can still be in the page for a moment). */
 const tip = (page: Page, text: string | RegExp) => page.getByRole('tooltip').filter({ hasText: text })
-const composer = (page: Page) => page.getByRole('textbox', { name: /^(Ask|Message) your Inhouse agent$/ })
+const composer = (page: Page) => page.getByRole('textbox', { name: /^(Ask|Message) Inhouse$/ })
 
 test('Palette: open a chat and a settings page, run New chat, Escape gives focus back; shortcuts skip fields except ⌘K', async ({ fx, page }) => {
   await start(page, fx)

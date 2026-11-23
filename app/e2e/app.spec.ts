@@ -24,20 +24,26 @@ test('Act: money drafts need a review, the Kestrel reorder holds 10 s then is fi
   await kestrel.getByRole('button', { name: 'Review' }).click()
 
   const panel = page.getByRole('dialog')
-  await expect(panel).toContainText('Spends $9,600')
-  await expect(panel).toContainText('Remembered: Kestrel ships in 14 days')
+  // The main action names the amount it moves; the review window shows no risk tag or memory line (UI plan 3, round 4).
+  await expect(panel.getByRole('button', { name: /^Approve and send to Kestrel/ })).toContainText('$9,600')
+  await expect(panel).not.toContainText('Remembered')
   await expect(panel).toContainText('Dana Kim usually signs off orders over $5,000')
   await page.screenshot({ path: test.info().outputPath('act-panel-kestrel.png') })
-  await panel.getByRole('button', { name: 'Approve and send to Kestrel' }).click()
+  await panel.getByRole('button', { name: /^Approve and send to Kestrel/ }).click()
 
   const toast = page.getByRole('status').filter({ hasText: 'Approved. It goes out in 10 seconds.' })
   await expect(toast).toBeVisible()
   await expect(toast.getByRole('button', { name: 'Undo', exact: true })).toBeVisible()
-  await expect(panel).toContainText('Approved: reorder 600 ridge 30l packs'.replace('ridge 30l packs', 'Ridge 30L Packs'))
+  // Approve moves the window straight on to the next draft that needs you.
+  await expect(panel.getByRole('heading', { level: 2 })).not.toHaveText('Ridge 30L Pack runs out in 9 days')
   await page.keyboard.press('Escape')
   await expect(page.getByRole('heading', { level: 1 })).toContainText('5 left to approve today.')
   await expect(badge(page)).toContainText('5')
   await expect(kestrel).toContainText(/Approved by Sam at \d{1,2}:\d\d\s[AP]M · going out/)
+  // Opened again during the hold, its window says what was approved.
+  await kestrel.click({ position: { x: 12, y: 12 } })
+  await expect(panel).toContainText('Approved: reorder 600 Ridge 30L Packs')
+  await page.keyboard.press('Escape')
   await page.screenshot({ path: test.info().outputPath('act-hold.png') })
 
   // After 10 s: sent, final, no Undo anywhere.

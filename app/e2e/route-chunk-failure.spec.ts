@@ -27,7 +27,7 @@ const crashHeading = (page: Page) => page.getByRole('heading', { name: 'Somethin
 
 test('A lazy chunk that fails once reloads into the route, keeps the draft and never shows the crash screen', async ({ fx, page }) => {
   await start(page, fx, '#/today')
-  const composer = page.getByRole('textbox', { name: /^(Ask|Message) your Inhouse agent$/ })
+  const composer = page.getByRole('textbox', { name: /^(Ask|Message) Inhouse$/ })
   await composer.fill('A question I had half typed')
 
   let failed = 0

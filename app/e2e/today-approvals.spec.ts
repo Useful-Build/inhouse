@@ -44,7 +44,7 @@ test('A draft with no text: Edit opens the panel on a note field, the note rides
   const title = await panel.getByRole('heading', { name: '11 returns are not restocked' }).boundingBox()
   expect(done, 'Done is in the draft').not.toBeNull()
   expect(close!.y + close!.height, 'Close sits above the title').toBeLessThanOrEqual(title!.y)
-  await expect(panel).toContainText(/\b\d of 6\b/)
+  await expect(panel.getByText(/^\d of 6$/)).toBeVisible()
   // The footer holds two buttons on one row, the main action then More (Don't send is inside More), inside the panel's box.
   const actions = await Promise.all(['More', 'Approve and restock'].map(n => panel.getByRole('button', { name: n, exact: true }).boundingBox()))
   const box = await panel.boundingBox()

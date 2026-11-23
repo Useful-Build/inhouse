@@ -10,7 +10,7 @@ test('A lazy chunk that fails to load reloads the tab once and keeps the compose
   let loads = 0
   page.on('load', () => { loads++ })
   await page.goto('/?demo#/today')
-  const composer = page.getByRole('textbox', { name: /^(Ask|Message) your Inhouse agent$/ })
+  const composer = page.getByRole('textbox', { name: /^(Ask|Message) Inhouse$/ })
   await composer.fill('A question I had half typed')
 
   // From now on the first script request fails, like a chunk the new deploy deleted.

@@ -305,7 +305,9 @@ test('Routines: Cancel on a delete asked from the details gives focus back to th
   const name = 'Monday reorder list'
   const open = page.getByRole('button', { name, exact: true })
   await open.click()
-  await page.getByRole('dialog', { name }).getByRole('button', { name: 'Delete' }).click()
+  // Delete sits in the panel's "···" menu (UI plan 3).
+  await page.getByRole('dialog', { name }).getByRole('button', { name: `More for ${name}` }).click()
+  await page.getByRole('menu', { name: 'More routine actions' }).getByRole('menuitem', { name: 'Delete' }).click()
   const ask = page.getByRole('dialog', { name: 'Delete routine' })
   await expect(ask).toContainText(`Delete ${name}?`)
   await ask.getByRole('button', { name: 'Cancel' }).click()

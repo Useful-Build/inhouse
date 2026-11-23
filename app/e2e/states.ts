@@ -98,7 +98,7 @@ export const STATES: UiState[] = [
     name: 'pop-problem-panel', stage: 'Act', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
     act: async page => {
       await page.getByRole('article').filter({ hasText: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Review' }).click()
-      await expect(page.getByRole('dialog')).toContainText('Remembered: Kestrel ships in 14 days')
+      await expect(page.getByRole('dialog').getByRole('button', { name: /^Approve and send to Kestrel/ })).toContainText('$9,600')
     },
   },
   {

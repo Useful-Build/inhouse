@@ -295,7 +295,7 @@ test('Dark, by keyboard: F6 reaches the newest toast and goes back, traps nothin
 
 test('Skip to content works with the sidebar collapsed, and its link opened on its own lands on Today with no notice', async ({ fx, page }) => {
   await open(page, fx, '#/activity', 'Activity')
-  const toggle = header(page).getByRole('button', { name: 'Sidebar', exact: true })
+  const toggle = side(page).getByRole('button', { name: 'Sidebar', exact: true })
   await toggle.click()
   await expect(toggle).toHaveAttribute('aria-expanded', 'false')
   // Tab from the top of the page again: the body becomes the starting point for the next Tab.

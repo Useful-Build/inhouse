@@ -2,17 +2,19 @@
 
 Tracks the interface round Wasim asked for on 2026-11-23. Paths are relative to `app/`. Update this file in every PR of the plan: tick what landed, add the PR link, note anything moved or dropped and why.
 
-**Status: mockups in review, round 2.** Nothing is built until Wasim locks the mockups on the design canvas ("Inhouse UI round 3", his private artifact). The canvas is the visual source; where this file and a mockup disagree on data, this file wins.
+**Status: every surface locked and built on `feat/ui-round-3`, one PR.** Wasim approved the round (2026-11-23); the mockups live on the design canvas ("Inhouse UI round 3", his private artifact). The canvas was the visual source; where this file and a mockup disagree on data, this file wins. D2 to D5 below stay open: they're backend decisions, and the product build hides what waits on them.
 
-| Surface | Mockup status |
-|---|---|
-| Settings menu | **Locked** (round 1, 2026-11-23) |
-| Team window | **Locked** (round 1) |
-| Routine panel | **Locked** (round 1) |
-| Review window | Round 4: wide and short (960px), like the Approvals cards |
-| Approvals page | **Kept as it is in the app** (Wasim: "don't change the approval cards") |
-| Activity | **Locked** (round 3) |
-| Skill page | **Locked** (round 3: plain text body; editing is D5) |
+| Surface | Mockup | Built |
+|---|---|---|
+| Settings menu | **Locked** (round 1) | Yes: five sections, the lock and its tooltip |
+| Team window | **Locked** (round 1) | Yes: New request and Your requests tabs, Open and Closed, Withdraw |
+| Routine panel | **Locked** (round 1) | Yes: schedule sentence with the On switch, Run now, Edit in a chat, Delete in its "···" menu |
+| Review window | **Locked** (round 4, then the two-button footer) | Yes: wide, short, centered beside the sidebar, the main action and More |
+| Approvals page | **Kept** (Wasim: "don't change the approval cards") | Only the "···" became a More button, with Don't send first in it |
+| Activity | **Locked** (round 3, then "like All chats") | Yes: All chats rows, tabs, search, the side sheet |
+| Skill page | **Locked** (round 3) | Yes: `#/skills/<slug>`, the 9 full sample bodies |
+| Sidebar | **Decided** (D6) | Yes: Library in the first group, the collapse button in the bottom row |
+| Today cards, account menu, page widths, copy | Decided in chat (below) | Yes |
 
 **The agent's mark:** the Inhouse mark (`InhouseMark`) signs the agent's work wherever a mark is needed ("Your Inhouse agent suggests"). The three-dot `AgentMark` is used only while a chat answer is loading.
 
@@ -76,12 +78,14 @@ Tracks the interface round Wasim asked for on 2026-11-23. Paths are relative to 
 
 **Backend reality on `main`:** only Watch exists. The morning check produces `title`, `area`, `sev`, `cost` and `costNote`, `sources` (logo always Shopify), `found` rows as label and value pairs, `next` (suggested next step) and `trace` (the run id, not shown yet). **Everything from the stepper down (facts, draft, memory line, approver, approved and handled states) is [Mock]**; drafts, approvals, the 10 s send hold and the approver rules are **[Planned P6b]**, handled jobs with Undo **[Planned P7]**.
 
-Rounds 1 (side panel, split view) and 2 (a 760px memo window) were rejected as too big and too detailed for this audience. Round 3 (shaped with a Gemini 4 Neon consult) was a 580px window; Wasim asked for the card shape instead. **Round 4: a centered 960px window, wide and short like the Approvals cards**, the same from Today and Approvals. Two columns: on the left the top line, title, brief and the collapsed "Checked ..." line (at Watch also the found rows); on the right the draft on one white sheet (at Watch, the suggestion signed with the Inhouse mark). The footer spans both: who usually approves, Don't send, the outcome button. The parts below stay as listed.
+**As built:** see "Decisions taken while building": the footer is the main action and More, the approver note sits under the draft.
+
+Rounds 1 (side panel, split view) and 2 (a 760px memo window) were rejected as too big and too detailed for this audience. Round 3 (shaped with a Gemini 4 Neon consult) was a 580px window; Wasim asked for the card shape instead. **Round 4: a centered 960px window, wide and short like the Approvals cards**, the same from Today and Approvals. Two columns: on the left the top line, title, brief and the collapsed "Checked ..." line (at Watch also the found rows); on the right the draft on one white sheet (at Watch, the suggestion signed with the Inhouse mark). The footer spans both: the outcome button and More. The parts below stay as listed.
 1. **Top line:** "Urgent" in red text (only when urgent) and the area; "1 of 5" with up and down; Close.
 2. **Title** (22px) and a **two-sentence brief** in plain words: what's at risk and what the agent drafted (`cost`, `costNote`, the draft's title).
 3. **The draft on one white sheet:** an email (recipients, subject, body, Edit) or an order (supplier, items, total, Edit). At Watch: a tinted "Your Inhouse agent suggests" block with `next`.
 4. **One collapsed line**, "Checked Shopify and ShipBob at 6:05 AM", that opens the found rows and sources.
-5. **Footer:** the approver line when someone else usually signs off, Don't send, and a primary button that names the outcome ("Approve and email 5 customers", "Approve and send the $9,600 order"). At Watch: Set aside and Ask about this.
+5. **Footer:** a primary button that names the outcome ("Approve and email 5 customers", "Approve and send the $9,600 order") and More. At Watch: Ask Inhouse and More.
 - **After Approve** the window moves straight to the next draft; the existing toast holds the 10-second Undo.
 - **Never shown:** number tiles, footnotes, steppers, the memory line, keyboard badges, step timings, costs.
 
@@ -123,8 +127,8 @@ Rewrite `sample-data/skills.json` so each of the 9 skills has a full body: When 
 
 ## Decisions for Wasim
 
-- **D1 Review panel:** round 4 proposes one wide, short centered window for Today and Approvals.
-- **D6 Sidebar (decided by Wasim, 2026-11-23):** Library moves up into the first group (Today, Approvals, Activity, Library). Skills, Tools and Routines keep their names ("Skills" is the standard word for agents). Keep the current roomy row spacing. Activity stays top-level. Not decided: a visible "Your Inhouse team" row above the account row (Gemini and Fable both suggested it).
+- **D1 Review panel (decided):** one wide, short window centered beside the sidebar, the same from Today and Approvals, with two buttons (see below).
+- **D6 Sidebar (decided by Wasim, 2026-11-23):** Library moves up into the first group (Today, Approvals, Activity, Library). Skills, Tools and Routines keep their names ("Skills" is the standard word for agents). Keep the current roomy row spacing. Activity stays top-level. Not decided: a visible "Your Inhouse team" row above the account row (Gemini and Fable both suggested it). Not built.
 - **Windows sit beside the sidebar (Wasim, 2026-11-23):** on desktop every centered window (the review window, the team window and the rest) centers in the area right of the sidebar and never covers it.
 - **Activity looks like All chats (Wasim, 2026-11-23):** the same clean list rows as the All chats page: one icon for every row, the sentence, the time on the right. No per-kind colored icons or status words in the row.
 - **D2 Team requests:** add an optional `eta` date and a `note` from the Inhouse team to route 82 (and a small ops UI to set them), or show only Open, Done, Declined and Withdrawn.
@@ -132,15 +136,45 @@ Rewrite `sample-data/skills.json` so each of the 9 skills has a full body: When 
 - **D4 Routine run history API:** add it ([New]) or keep matching Activity by name.
 - **D5 Teams create and edit skills:** add brand skill versions (create, edit in a chat, members' edits wait for an admin, restore the Inhouse version) as a new backend item, and decide where it lands: Part 1 next to P6a, or Part 2 at the first client. Until it's built, the page hides Edit in a chat and Versions.
 
-## PRs (after the mockups are locked)
+## Decisions taken while building (Wasim, 2026-11-23)
 
-| PR | Scope | Status |
+- **Two buttons in the review window:** the main action (the outcome with its amount, or Ask Inhouse at Watch) and a More button with a chevron. More holds Don't send first (with a divider under it), then Ask <approver>, Ask Inhouse (outside Watch), Snooze until tomorrow and Not a problem. No separate Don't send button, no "···".
+- **Don't send lives in More** on the review window and on the Approvals cards (first item). The Approvals card's "···" is the same outlined More button.
+- **The approver note** ("Leo usually approves orders over $5,000") sits under the draft as a quiet note with a person icon, never in the footer. Asking them is in More.
+- **Ask Inhouse** names asking the agent everywhere: the card menu, the review window's Watch button and its More item, the composer's label ("Ask Inhouse", "Message Inhouse").
+- **Windows sit beside the sidebar:** on desktop every centered window centers in the room right of the sidebar and caps its width there (`--app-side-offset`, from `data-side` on `<html>`).
+- **Page widths:** list pages share one 1040px content edge (was 900px); a skill's page is 1160px with a 264px rail; side padding is 16 to 32px.
+- **The sidebar button** moved out of the top bar into the sidebar's bottom row, beside the account row (on the rail, above the avatar).
+- **Quieter Today cards:** a card's "···" is a ghost button, with no fill until hover.
+- **Account menu:** the role is a badge beside the name, the email on its own line.
+- **Copy:**
+
+| Where | Was | Now |
 |---|---|---|
-| 1 | Settings sections and data-driven menu | Not started |
-| 2 | Team window | Not started |
-| 3 | Review window (Today and Approvals) | Not started |
-| 4 | Activity | Not started |
-| 5 | Routines panel | Not started |
-| 6 | Skill page and the 9 skill bodies | Not started |
+| Card menu, review window | Ask about this | Ask Inhouse |
+| Today greeting | Good morning (always) | Good morning, Good afternoon or Good evening by the app's clock (Welcome on day one) |
+| Today, Run strip | N handled before you woke up | N handled today |
+| Today, nothing waiting | Nothing needs you today. / Nothing is waiting on you. | You're all caught up. |
+| Today, Act headline | N things need you. A fix is drafted for each. | N things need you. Drafts are ready. (1 thing needs you. A draft is ready.) |
+| Today, First day | Your Inhouse agent is being set up. | We're setting up your Inhouse agent. |
+| Today, Loading | Your Inhouse agent is reading your tools. | Your Inhouse agent is checking your tools. |
+| Composer | Message your Inhouse agent / Ask your Inhouse agent | Message Inhouse / Ask Inhouse |
+| New chat | What do you want to know? / Your Inhouse agent reads {tools}. | What should we look into? / Connected to {tools}. |
+| Settings menu | Your settings / Team settings · admins | You, Agent, Approvals and limits, Team, Workspace (a lock with "Admins change these" for members) |
+| Team window, sent (product) | Request sent. Your Inhouse team replies within one working day. | Request sent to your Inhouse team. (the promise stays demo-only) |
 
-Every PR: tokens only, `src/ui` parts, both themes, 390px and 1440px, `npm run lint`, `npm run typecheck`, unit, a11y and visual suites, a screenshot check in the running app, one E2E scenario, and the matching `FEATURE_MAP.md` lines.
+## PRs
+
+The round landed as one PR from `feat/ui-round-3` (its six parts were built on `ui3/*` branches and merged into it).
+
+| Part | Scope | Status |
+|---|---|---|
+| 1 | Settings sections and data-driven menu | Built on `feat/ui-round-3` |
+| 2 | Team window | Built on `feat/ui-round-3` |
+| 3 | Review window (Today and Approvals) | Built on `feat/ui-round-3` |
+| 4 | Activity | Built on `feat/ui-round-3` |
+| 5 | Routines panel | Built on `feat/ui-round-3` |
+| 6 | Skill page and the 9 skill bodies | Built on `feat/ui-round-3` |
+| 7 | Sidebar, page widths, account badge, copy pass | Built on `feat/ui-round-3` |
+
+Every part: tokens only, `src/ui` parts, both themes, 390px and 1440px, `npm run lint`, `npm run typecheck`, unit, a11y and visual suites, a screenshot check in the running app, an E2E scenario, and the matching `FEATURE_MAP.md` lines.

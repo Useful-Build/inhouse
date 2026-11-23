@@ -1,5 +1,5 @@
 // The problem panel's two ways out that aren't approvals, at 1440: "Ask Inhouse" (the panel header's Ask, and the card's
-// menu) starts a chat holding the question, which a reload keeps; the memory note's Manage opens Team memory. Approve,
+// menu) starts a chat holding the question, which a reload keeps; the window shows no memory line. Approve,
 // Edit, Don't send and Undo are in app.spec.ts, today-approvals.spec.ts and page-actions.spec.ts.
 import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
@@ -22,7 +22,9 @@ test('Problem panel: Ask starts a chat with the question, the panel closes, and 
   await start(page, fx)
   await card(page, STUCK).click({ position: { x: 12, y: 12 } })
   await expect(panel(page)).toBeVisible()
-  await panel(page).getByRole('button', { name: 'Ask Inhouse', exact: true }).click()
+  // Outside Watch, Ask Inhouse is in the window's More menu (the main button is the draft's outcome).
+  await panel(page).getByRole('button', { name: 'More', exact: true }).click()
+  await page.getByRole('menu', { name: 'More actions' }).getByRole('menuitem', { name: 'Ask Inhouse', exact: true }).click()
 
   const question = `Tell me more about: ${STUCK}`
   await expect(panel(page)).toHaveCount(0)
@@ -40,7 +42,7 @@ test('Problem panel: Ask starts a chat with the question, the panel closes, and 
   await expect(card(page, STUCK)).toBeVisible()
 })
 
-test("Card menu: Ask Inhouse starts the same chat without opening the panel; the panel's Manage opens Team memory", async ({ fx, page }) => {
+test("Card menu: Ask Inhouse starts the same chat without opening the panel; the review window shows no memory line", async ({ fx, page }) => {
   await start(page, fx)
   await card(page, STUCK).getByRole('button', { name: 'More' }).click()
   const menu = page.getByRole('menu', { name: 'Card actions' })
@@ -51,12 +53,11 @@ test("Card menu: Ask Inhouse starts the same chat without opening the panel; the
   await expect(page).toHaveURL(/#\/chats\/(?!new$|all$)[^/]+$/)
   await expect(sent(page, `Tell me more about: ${STUCK}`)).toHaveCount(1)
 
-  // A drafted fix that leans on memory says so, and Manage goes to Team memory, closing the panel.
+  // A drafted fix that leans on memory opens without the memory line or its Manage button: the review window leaves
+  // mechanics out (UI plan 3, round 4). Team memory stays one click away in Settings.
   await page.evaluate(() => { location.hash = '#/today' })
   await card(page, JACKET).click({ position: { x: 12, y: 12 } })
-  await expect(panel(page)).toContainText('Remembered: you offer a refund before a discount')
-  await panel(page).getByRole('button', { name: 'Manage', exact: true }).click()
-  await expect(page.getByRole('heading', { level: 1, name: 'Team memory', exact: true })).toBeVisible()
-  await expect(page).toHaveURL(/#\/settings\/team-memory$/)
-  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(panel(page).getByRole('heading', { level: 2, name: JACKET })).toBeVisible()
+  await expect(panel(page)).not.toContainText('Remembered')
+  await expect(panel(page).getByRole('button', { name: 'Manage', exact: true })).toHaveCount(0)
 })

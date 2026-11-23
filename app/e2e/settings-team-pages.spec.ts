@@ -105,7 +105,7 @@ test('Team memory: Forget (with Undo) and the rule switch work, survive a reload
 
   // Teach in a chat opens a new chat with the start of a rule in the field.
   await main(page).getByRole('button', { name: 'Teach in a chat', exact: true }).click()
-  await expect(page.getByRole('textbox', { name: /^(Ask|Message) your Inhouse agent$/ })).toHaveValue('Remember that ')
+  await expect(page.getByRole('textbox', { name: /^(Ask|Message) Inhouse$/ })).toHaveValue('Remember that ')
 })
 
 const JOBS = ['Restock returns', 'Chase late suppliers', 'Nudge ShipBob on stuck orders', 'Pause oversold variants']

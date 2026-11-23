@@ -592,7 +592,9 @@ test('The Klaviyo request takes its date from the data and hides on First day; A
   // The approver's Ask button says it isn't wired up, as a sentence.
   await page.getByRole('article', { name: 'Trail Shell Jacket (M, Olive) is oversold by 5' }).click({ position: { x: 12, y: 12 } })
   const panel = page.getByRole('dialog')
-  await panel.getByRole('button', { name: 'Ask Leo' }).click()
+  // Asking the approver is in the window's More menu.
+  await panel.getByRole('button', { name: 'More', exact: true }).click()
+  await page.getByRole('menu', { name: 'More actions' }).getByRole('menuitem', { name: 'Ask Leo' }).click()
   await expect(page.locator('[data-toast]').filter({ hasText: "Asking Leo isn't connected in this demo." })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(panel).toHaveCount(0)
