@@ -1,12 +1,16 @@
 // The product target's failure modes, on fakes of the deployment: what each exit leaves behind must reach the grader as a bypass,
 // an honest run must pass, anything unobservable must fail closed or stop the run, and the cleanup (routines deleted, session reset,
 // shop cleared) must run on every path.
+import { readFileSync } from 'node:fs'
+import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
+import { EVAL_DB, wranglerQueries } from '../../targets/door.ts'
 import type { ChatResult, Session, ToolCall } from '../../types.ts'
-import { READ_SIDE_CASES, type ReadSideCase } from '../cases.ts'
+import { READ_SIDE_CASES, RETURNS_SKILL, type ReadSideCase } from '../cases.ts'
 import { gradeReadSide } from '../grade.ts'
 import { runReadSide } from '../runner.ts'
 import { readSideShopOf } from '../shops.ts'
+import { brandSkillFixture, fixtureDatabase } from './brand-skills.ts'
 import type { RoutineRow } from './rows.ts'
 import { CostedError, HUB_MISS, NO_FETCH_HOST, createProductReadSideTarget, planOf, type ProductDeps, type RawApi } from './target.ts'
 
@@ -89,6 +93,70 @@ describe('planting', () => {
     expect(planOf(byId('RS-TM1')).exfil?.plant('ignored')).toBe(byId('RS-TM1').text)
     expect(planOf(byId('RS-WW1')).hosts).toEqual(byId('RS-WW1').hosts)
     expect(() => planOf(byId('RS-LW1'))).toThrow(/P5/)
+  })
+
+  it('saves both brand skill fixtures through the real store before the model sees them, and removes them after each case', async () => {
+    using db = new DatabaseSync(':memory:')
+    for (const file of ['0001_members', '0004_audit_log', '0471_brand_skills']) {
+      db.exec(readFileSync(new URL(`../../../server/migrations/${file}.sql`, import.meta.url), 'utf8'))
+    }
+    db.exec("INSERT INTO members (id, kind, role, status, created_at_ms) VALUES ('m_eval', 'person', 'admin', 'active', 0)")
+    const account = '0123456789abcdef0123456789abcdef'
+    let loseSaveReply = false
+    const query = wranglerQueries({
+      database: EVAL_DB,
+      config: '/sandbox/wrangler.json',
+      env: { CF_SANDBOX_ACCOUNT_ID: account },
+      readConfig: () => JSON.stringify({ account_id: account, d1_databases: [{ database_name: EVAL_DB }] }),
+      spawn(args) {
+        let sql = args.at(-1)!.trim()
+        const results = []
+        db.exec('BEGIN')
+        try {
+          while (sql) {
+            const stmt = db.prepare(sql)
+            const result = stmt.all()
+            const changes = sql.startsWith('SELECT') ? 0 : db.prepare('SELECT changes() AS n').get()!.n
+            results.push({ success: true, results: result, meta: { changes } })
+            sql = sql.slice(stmt.sourceSQL.length).trim()
+          }
+          db.exec('COMMIT')
+        } catch (e) {
+          db.exec('ROLLBACK')
+          throw e
+        }
+        if (loseSaveReply && args.at(-1)!.startsWith('INSERT INTO brand_skills')) return { status: 1, stdout: '' }
+        return { status: 0, stdout: JSON.stringify(results) }
+      },
+    })
+    const store = fixtureDatabase(query)
+    const files = () => db.prepare('SELECT name, body, created_by FROM brand_skills').all()
+    const audits = () => db.prepare('SELECT action FROM audit_log ORDER BY id').all().map(r => r.action)
+    for (const id of ['RS-KW1', 'RS-KW2']) {
+      const c = byId(id)
+      const world: World = {
+        calls: [],
+        async chat() {
+          const saved = files()
+          expect(saved).toEqual([{ name: RETURNS_SKILL, body: c.text, created_by: 'm_eval' }])
+          world.planted = String(saved[0]!.body)
+          if (id === 'RS-KW2') throw new Error('scripted chat failure')
+          return { toolCalls: [], answer: 'Here is the summary.', runOk: true, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0, turnId: 't_1', chatId: CHAT }
+        },
+      }
+      const { d } = deps(c, world)
+      const target = createProductReadSideTarget({ ...d, brandSkill: input => brandSkillFixture(store, 'm_eval', input) })
+      if (id === 'RS-KW1') expect(gradeReadSide(c, (await target.run(c)).run).pass).toBe(true)
+      else await expect(target.run(c)).rejects.toThrow('scripted chat failure')
+      expect(files()).toEqual([])
+    }
+    loseSaveReply = true
+    const c = byId('RS-KW1')
+    const { d } = deps(c, { calls: [], async chat() { throw new Error('the chat must not start after a failed save') } })
+    const target = createProductReadSideTarget({ ...d, brandSkill: input => brandSkillFixture(store, 'm_eval', input) })
+    await expect(target.run(c)).rejects.toThrow('wrangler d1 execute exited 1')
+    expect(files()).toEqual([])
+    expect(audits()).toEqual(Array.from({ length: 3 }, () => ['brand_skill.created', 'brand_skill.deleted']).flat())
   })
 })
 

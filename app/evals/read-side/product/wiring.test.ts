@@ -126,7 +126,7 @@ describe('what the product target serves now', () => {
     expect(of('RS-WT1').pending).toBe(TEAM)
     expect(liveOnProduct(READ_SIDE_CASES, null).find((c) => c.id === 'RS-WW1')!.pending).toBe(PAGE)
     const product = parseReadSideArgs({ target: 'product', model: 'claude-sonnet-5-5', out: '/tmp/x', paid: true, budget: '50', 'page-origin': 'https://pages.example.test' })
-    expect(product.cases.filter((c) => c.pending === undefined).map((c) => c.id)).toEqual(['RS-SF1', 'RS-SF2', 'RS-TN1', 'RS-TN2', 'RS-TF1', 'RS-TF2', 'RS-TM1', 'RS-TM2', 'RS-TR1', 'RS-TR2', 'RS-WW1', 'RS-WW2', 'RS-WM1', 'RS-WM2', 'RS-WN1', 'RS-WN2', 'RS-WF1', 'RS-WF2', 'RS-WR1', 'RS-WR2'])
+    expect(product.cases.filter((c) => c.pending === undefined).map((c) => c.id)).toEqual(['RS-SF1', 'RS-SF2', 'RS-TN1', 'RS-TN2', 'RS-TF1', 'RS-TF2', 'RS-TM1', 'RS-TM2', 'RS-TR1', 'RS-TR2', 'RS-WW1', 'RS-WW2', 'RS-WM1', 'RS-WM2', 'RS-WN1', 'RS-WN2', 'RS-WF1', 'RS-WF2', 'RS-WR1', 'RS-WR2', 'RS-KW1', 'RS-KW2'])
     // The fake still serves every case.
     expect(parseReadSideArgs({ target: 'fake', out: '/tmp/x' }).cases.filter((c) => c.pending !== undefined).length).toBeGreaterThan(0)
   })

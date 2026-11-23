@@ -393,11 +393,11 @@ test('S5: An Admin turns "Ask before saving a team rule" off and the agent\'s ne
 
 // ---------- S6: the skills the agent has ----------
 
-test('S6: The Skills page lists dataviz, PDF, Word and Spreadsheet, none with a stage tag', async ({ context, page }) => {
+test('S6: The Skills page lists dataviz, PDF, Word, Spreadsheet and Skill Creator with no stage tags', async ({ context, page }) => {
   await openAs(context, page, 'dana', '#/skills')
   await expect(h1(page)).toHaveText('Skills')
   // The product lists ours by the skill's own name (`GET /api/skills`).
-  for (const name of ['dataviz', 'pdf', 'word', 'spreadsheet']) {
+  for (const name of ['dataviz', 'pdf', 'word', 'spreadsheet', 'skill-creator']) {
     const open = page.getByRole('button', { name, exact: true })
     await expect(open, `${name} is listed`).toBeVisible()
     // The deepest row element holding the name's button is the name line: a locked skill has its stage tag there.

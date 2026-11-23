@@ -3,13 +3,15 @@
 // extract.ts, and setup.ts wires them to a deployment. Every collection the grader can't observe is null (the case fails
 // closed); a whole collection that can't be read throws, which stops the run (runner.ts) before more spend.
 // Per case, in order: the session (seeded memory or the attachment, the case person), the WebFetch list, the test shop
-// override (Shopify cases), the chat, the readers; then, whatever happened, the routines the agent made are deleted (route 55, so a
-// crash can't leave a scheduled spend), the session is reset and the shop override cleared.
+// override (Shopify cases) or skill fixture (brand skill cases), the chat, the readers. Then the session is reset, the
+// fixture and any routines the agent made are deleted, and the shop override is cleared.
+import type { SkillInput } from '../../../server/brand-skills/store.ts'
 import type { ChatResult, ExfilSpec, RunContext, SeedFact, Session } from '../../types.ts'
-import type { ReadSideCase } from '../cases.ts'
+import { RETURNS_SKILL, type ReadSideCase } from '../cases.ts'
 import type { FileEvidence, ReadSideRun } from '../grade.ts'
 import type { ReadSideTarget } from '../runner.ts'
 import { readSideShopOf } from '../shops.ts'
+import type { SkillFixture } from './brand-skills.ts'
 import { extractFile } from './extract.ts'
 import type { RowReader } from './rows.ts'
 import type { SessionReader } from './r2.ts'
@@ -38,6 +40,7 @@ export interface Plan {
   memory: SeedFact[]
   exfil?: ExfilSpec
   shop?: string
+  brandSkill?: SkillInput
   hosts: string[]
 }
 
@@ -57,7 +60,7 @@ export function planOf(c: ReadSideCase): Plan {
     case 'slack':
       throw new Error(`read-side: ${c.id} plants in Slack, which waits on P5`)
     case 'brand_skill':
-      throw new Error(`read-side: ${c.id} needs brand skill seeding, which the product target does not support yet`)
+      return { memory: [], hosts, brandSkill: { name: RETURNS_SKILL, description: 'Summarise the reasons on the latest returns.', body: c.text } }
   }
 }
 
@@ -66,6 +69,7 @@ export interface ProductDeps {
   seed(memory: SeedFact[], run: RunContext, exfil?: ExfilSpec): Promise<Session>
   setWebfetchHosts(hosts: string[]): Promise<void>
   shop: { set(host: string): Promise<void>; clear(): Promise<string | null> }
+  brandSkill?(input: SkillInput): SkillFixture
   rows: RowReader & { nowMs(): Promise<number> }
   sessions: SessionReader
   /** The case person's API (route 40 and 41 as the chat's owner). */
@@ -117,7 +121,7 @@ export async function deleteRoutines(rows: Pick<RowReader, 'routines'>, admin: R
 }
 
 export interface ProductTarget extends ReadSideTarget {
-  /** A stop's first step: resets the live case's session (stops its turns, puts the WebFetch list back, clears memory). Never throws. */
+  /** Resets the live case's session and removes its skill fixture. Never throws. */
   stop(): Promise<string[]>
   /**
    * Deletes every live routine made since `since` (deleteRoutines). Sweeps run one after another, never at once: a case's end
@@ -129,8 +133,17 @@ export interface ProductTarget extends ReadSideTarget {
 export function createProductReadSideTarget(d: ProductDeps, deleted: Set<string> = new Set()): ProductTarget {
   // `deleted`: routines this run deleted, so a later case's window never reads them as its own (shared with the stop handler's sweep).
   /** The live case's session, reset once by whichever comes first: the case's end or a stop. */
-  let active: { session: Session; reset: Promise<void> | null } | null = null
-  const resetActive = (a: NonNullable<typeof active>): Promise<void> => (a.reset ??= a.session.reset())
+  let active: { session: Session; cleanup?: Promise<string[]>; skill?: SkillFixture } | null = null
+  let stopped = false
+  const cleanActive = (a: NonNullable<typeof active>): Promise<string[]> => (a.cleanup ??= (async () => {
+    const errors: string[] = []
+    try { await a.session.reset() } catch (e) { errors.push(`the session could not be reset (its turns may still run): ${said(e)}`) }
+    try { await a.skill?.remove() } catch (e) { errors.push(`the brand skill fixture could not be cleared: ${said(e)}`) }
+    return errors
+  })())
+  const requireRunning = () => {
+    if (stopped) throw new Error('read-side: the target has stopped')
+  }
   let sweeps: Promise<unknown> = Promise.resolve()
   const sweep = (since: number): Promise<string[]> => {
     const next = sweeps.then(() => deleteRoutines(d.rows, d.adminApi, since, deleted))
@@ -143,29 +156,33 @@ export function createProductReadSideTarget(d: ProductDeps, deleted: Set<string>
     honorsPending: true,
     ...(d.spentUsd ? { spentUsd: d.spentUsd } : {}),
     async stop() {
-      if (!active) return []
-      try {
-        await resetActive(active)
-        return []
-      } catch (e) {
-        return [`the live session could not be reset (its turns may still run): ${said(e)}`]
-      }
+      stopped = true
+      return active ? cleanActive(active) : []
     },
     async run(c) {
       if (c.chats.length !== 1) throw new Error(`read-side: ${c.id} has ${c.chats.length} chats: the product target reads one chat's evidence per case`)
       const plan = planOf(c)
       const since = (await d.rows.nowMs()) - SINCE_MARGIN_MS
-            let result: ChatResult | null = null
+      let result: ChatResult | null = null
       let costUsd = 0
       const cleanup: string[] = []
       let evidence: ReadSideRun | null = null
       let failure: unknown = null
       try {
+        requireRunning()
         // The session first: on the eval deployment its first seed takes the lease and refuses any shop override already set.
         const session = await d.seed(plan.memory, { caseId: c.id, rep: 1, canary: c.canary }, plan.exfil)
-        active = { session, reset: null }
+        active = { session }
+        requireRunning()
         await d.setWebfetchHosts(plan.hosts)
         if (plan.shop) await d.shop.set(plan.shop)
+        requireRunning()
+        if (plan.brandSkill) {
+          if (!d.brandSkill) throw new Error('read-side: the target has no brand skill fixture store')
+          active.skill = d.brandSkill(plan.brandSkill)
+          await active.skill.save()
+          requireRunning()
+        }
         for (const chat of c.chats) {
           try {
             result = await session.chat(d.prompt ? d.prompt(c, chat.prompt) : chat.prompt)
@@ -204,11 +221,7 @@ export function createProductReadSideTarget(d: ProductDeps, deleted: Set<string>
         // Straight after the case, whatever it did: its turns stopped first (none can make a routine after the sweep), then no
         // routine it made may stay scheduled.
         if (active) {
-          try {
-            await resetActive(active)
-          } catch (e) {
-            cleanup.push(`the session could not be reset: ${said(e)}`)
-          }
+          cleanup.push(...(await cleanActive(active)))
           active = null
         }
         cleanup.push(...(await sweep(since)))

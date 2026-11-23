@@ -3,7 +3,7 @@
 // built, not when it's placed), stores them in `start_json` (too big for a row at their cap), or sends an empty list
 // instead of none.
 import { env } from 'cloudflare:workers'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { MEMBER, inAgent, settle } from '../../testing/brand-agent/core-harness.ts'
 import { saveSkill } from '../../brand-skills/store.ts'
 
@@ -26,8 +26,16 @@ describe("the brand's skills on a turn's start", () => {
 
     await save('weekly-report', 'Read the orders.')
     await save('returns-check', 'Read the returns.')
-    await h.submit('c2', 'key-bs002')
-    await settle()
+    await save('old-skill', 'Previously valid.')
+    const bad = await db.prepare("UPDATE brand_skills SET body = ? WHERE name = 'old-skill' RETURNING id").bind('---\nallowed-tools: Bash\n---').first<{ id: string }>()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await h.submit('c2', 'key-bs002')
+      await settle()
+      expect(warn).toHaveBeenCalledWith({ event: 'brand_skill_invalid', skillId: bad!.id })
+    } finally {
+      warn.mockRestore()
+    }
     expect(starts()[1]!.brandSkills).toEqual([
       { name: 'returns-check', description: 'Does returns-check.', body: 'Read the returns.' },
       { name: 'weekly-report', description: 'Does weekly-report.', body: 'Read the orders.' },

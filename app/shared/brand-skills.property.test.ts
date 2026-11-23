@@ -12,6 +12,7 @@
 // Here, not in shared/protocol/: the runner typechecks that folder with its own packages, which have no vitest.
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
+import { checkSkill } from '../server/brand-skills/store.ts'
 import {
   BRAND_SKILL_NAME_MAX, BRAND_SKILLS_BYTES_MAX, BrandSkillFile, BrandSkillFiles, RESERVED_SKILL_NAMES, brandSkillBodyProblem,
   brandSkillDescriptionProblem, brandSkillNameProblem, cleanBody, renderSkillFile, stripFrontmatter,
@@ -27,6 +28,13 @@ const block = fc.tuple(fc.array(keyLine, { maxLength: 4 }), fc.constantFrom('---
   .map(([lines, close, nl]) => `---${nl}${lines.map(l => `${l}${nl}`).join('')}${close}${nl}`)
 /** Text that doesn't start with a block: its first line isn't `---`. */
 const text = fc.string({ minLength: 1, maxLength: 200 }).filter(t => !/^\s*---/.test(t) && !/^\uFEFF/.test(t))
+const whitespace = fc.constantFrom(' ', '\t', '\r', '\n', '\u00a0', '\u2003', '\u2028', '\u2029', '\u3000', '\ufeff')
+const trailingSpace = fc.array(whitespace, { minLength: 1, maxLength: 12 }).map(chs => chs.join(''))
+const bodyInput = fc.oneof(
+  fc.string({ unit: 'binary', maxLength: 200 }),
+  fc.tuple(fc.array(block, { maxLength: 3 }), text, trailingSpace).map(([blocks, body, tail]) => blocks.join('') + body + tail),
+  fc.tuple(fc.array(block, { minLength: 1, maxLength: 3 }), trailingSpace).map(([blocks, tail]) => blocks.join('').trimEnd() + tail),
+)
 
 describe('stripFrontmatter', () => {
   it.prop([fc.array(block, { minLength: 1, maxLength: 3 }), text])('drops every leading block, keeps the text after them, and is steady', (blocks, t) => {
@@ -52,6 +60,10 @@ describe('stripFrontmatter', () => {
     expect(cleaned).not.toMatch(/\r/)
     expect(cleaned).not.toMatch(/^---/)
     expect(cleanBody(cleaned)).toBe(cleaned)
+  })
+
+  it.prop([bodyInput])('cleanBody is idempotent even with Unicode whitespace after a closing delimiter', body => {
+    expect(cleanBody(cleanBody(body))).toBe(cleanBody(body))
   })
 })
 
@@ -89,6 +101,13 @@ describe('the name rule', () => {
 })
 
 describe('the wire (BrandSkillFiles)', () => {
+  const nameInput = fc.oneof(goodName.map(n => ` ${n}\t`), fc.string())
+  const descriptionInput = fc.oneof(fc.string(), fc.constant('Summarises the returns.'))
+  it.prop([nameInput, descriptionInput, bodyInput])('every skill accepted by checkSkill matches BrandSkillFile', (name, description, body) => {
+    const checked = checkSkill({ name, description, body })
+    if ('ok' in checked) expect(BrandSkillFile.parse(checked.ok)).toEqual(checked.ok)
+  })
+
   const file = (name: string, body = 'Steps.') => ({ name, description: `Does ${name}.`, body })
   it('takes a clean set and refuses a body with frontmatter or a control character, a name twice, or past the byte budget', () => {
     expect(BrandSkillFiles.safeParse([file('a'), file('b')]).success).toBe(true)

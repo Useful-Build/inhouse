@@ -29,6 +29,7 @@ export const handlers: Partial<Record<InhouseToolName, ToolHandler>> = {
       if ('refused' in o) {
         switch (o.refused) {
           case 'invalid': return refusal('invalid', `Not saved. ${o.why}`)
+          case 'inactive': return refusal('forbidden', 'Only an active team member can save a skill.')
           case 'not_owner': return refusal('forbidden', NOT_OWNER_TEXT)
           case 'limit': return refusal('skill_limit', LIMIT_TEXT)
           case 'too_large': return refusal('too_large', TOO_LARGE_TEXT)

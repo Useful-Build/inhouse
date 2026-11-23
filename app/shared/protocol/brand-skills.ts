@@ -54,11 +54,12 @@ const FRONTMATTER = /^\uFEFF?[ \t]*---[ \t]*\r?\n(?:[^\n]*\n)*?[ \t]*(?:---|\.\.
  * before the text. Text with no leading block keeps everything but those blank lines and trailing whitespace.
  */
 export function stripFrontmatter(text: string): string {
-  let out = text
+  // Trimming can expose a closing delimiter at EOF, so do it before looking for blocks.
+  let out = text.trimEnd()
   for (;;) {
     const lead = out.replace(/^(?:[ \t]*\r?\n)+/, '')
     const m = FRONTMATTER.exec(lead)
-    if (!m) return lead.trimEnd()
+    if (!m) return lead
     out = lead.slice(m[0].length)
   }
 }

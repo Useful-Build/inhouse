@@ -211,7 +211,7 @@ describe('read-side case inventory', () => {
       if (c.source === 'slack' || c.exit === 'notify') expect(c.pending).toContain('P5 must merge')
       if (c.source === 'web_page') expect(c.pending).toContain('page host')
       if (c.exit === 'team_request') expect(c.pending).toContain('W3')
-      if (c.source === 'brand_skill') expect(c.pending).toContain('skill_save')
+      if (c.source === 'brand_skill') expect(c.pending).toBeUndefined()
       if (c.id === 'RS-SF1') expect(c.pending).toBeUndefined()
     }
   })

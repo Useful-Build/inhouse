@@ -68,7 +68,7 @@ describe('saving (the store)', () => {
   it('its maker and an admin change it; another member, a removed admin and the Inhouse team-less actor cannot', async () => {
     const s = await made(DANA)
     expect(await saveSkill(db, skill('weekly-report', { body: 'Leo was here.' }), at(LEO))).toEqual({ refused: 'not_owner' })
-    expect(await saveSkill(db, skill('weekly-report', { body: 'Gone admin.' }), at(GONE_ADMIN))).toEqual({ refused: 'not_owner' })
+    expect(await saveSkill(db, skill('weekly-report', { body: 'Gone admin.' }), at(GONE_ADMIN))).toEqual({ refused: 'inactive' })
     const byDana = await saveSkill(db, skill('weekly-report', { body: 'Dana changed it.' }), at(DANA))
     expect(byDana).toMatchObject({ created: false, ok: { body: 'Dana changed it.', rev: 2, created_by: DANA } })
     const byAdmin = await saveSkill(db, skill('weekly-report', { body: 'The admin changed it.' }), at(ADMIN))
@@ -86,6 +86,28 @@ describe('saving (the store)', () => {
     }
     expect((await db.prepare('SELECT count(*) AS n FROM brand_skills').first<{ n: number }>())!.n).toBe(0)
     expect(await auditLines()).toEqual([])
+  })
+
+  it.each(['insert', 'update'] as const)('refuses a save when membership ends immediately before the %s', async (operation) => {
+    const actorId = `m_bs_race_${operation}`
+    await db.prepare("INSERT INTO members (id, kind, role, status, name, created_at_ms) VALUES (?, 'person', 'member', 'active', 'Racing member', 0)").bind(actorId).run()
+    if (operation === 'update') await made(actorId)
+    const auditBefore = await auditLines()
+    const racingDb = {
+      prepare: (sql: string) => db.prepare(sql),
+      async batch(statements: D1PreparedStatement[]) {
+        if (operation === 'insert') {
+          expect(await stores.members.pseudonymise(actorId, at(ADMIN))).toMatchObject({ ok: { id: actorId } })
+        } else {
+          // A removed member can still be named as creator, so ownership alone would allow this write.
+          await db.prepare("UPDATE members SET status = 'removed' WHERE id = ?").bind(actorId).run()
+        }
+        return db.batch(statements)
+      },
+    }
+    expect(await saveSkill(racingDb, skill('weekly-report', { body: 'Raced.' }), at(actorId))).toEqual({ refused: 'inactive' })
+    expect(await readRow('weekly-report')).toEqual(operation === 'update' ? { created_by: actorId, updated_by: actorId, rev: 1 } : null)
+    expect(await auditLines()).toEqual(auditBefore)
   })
 
   it(`holds at most ${BRAND_SKILLS_MAX} skills and ${BRAND_SKILLS_BYTES_MAX} bytes together, in the write's own statement`, async () => {
@@ -242,7 +264,7 @@ describe('person deletion (members.pseudonymise)', () => {
 
     // Only admins can edit or delete a skill whose maker's data was deleted.
     expect(await saveSkill(db, skill('former-only', { body: 'Member edit.' }), at(LEO))).toEqual({ refused: 'not_owner' })
-    expect(await saveSkill(db, skill('former-only', { body: 'Former edit.' }), at(FORMER))).toEqual({ refused: 'not_owner' })
+    expect(await saveSkill(db, skill('former-only', { body: 'Former edit.' }), at(FORMER))).toEqual({ refused: 'inactive' })
     expect(await deleteSkill(db, { id: madeByFormer.id, ifRev: 1 }, at(LEO))).toEqual({ refused: 'not_owner' })
     expect(await deleteSkill(db, { id: madeByFormer.id, ifRev: 1 }, at(FORMER))).toEqual({ refused: 'not_owner' })
     expect(await saveSkill(db, skill('former-only', { body: 'Admin edit.' }), at(ADMIN))).toMatchObject({
