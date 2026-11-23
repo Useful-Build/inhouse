@@ -2,7 +2,7 @@
 import { z } from 'zod'
 import { ClockTimeSchema, InstantSchema, StageIndexSchema } from './common.ts'
 
-export const RoutineDefSchema = z.object({
+export const RoutineDefSchema = z.strictObject({
   /** The agent's own id for the routine: stable, and what runRoutine, deleteRoutine and restoreRoutine take. */
   id: z.string(),
   name: z.string(),
@@ -20,6 +20,8 @@ export const RoutineDefSchema = z.object({
   last: z.object({ at: InstantSchema, result: z.string() }).optional(),
   /** Made in a sample chat (the stuck orders chat): listed only from the stage it needs, since below it the chat couldn't make it. */
   inChat: z.boolean().optional(),
+  /** Who made it, as shown ("Inhouse team", a member's name). Absent: the panel leaves its "Made by" line out. */
+  by: z.string().optional(),
   /** Whether the signed-in person may switch, run or delete it. Absent means yes (the demo, and a server that doesn't say). */
   canManage: z.boolean().optional(),
   /** Revision of this routine (a switch, a delete or a restore bumps it): a write sends it back as `ifRev`. */

@@ -12,7 +12,7 @@
 import { fc, test as propTest } from '@fast-check/vitest'
 import { describe, expect, test } from 'vitest'
 import {
-  SandboxNameError, assertCandidateName, assertEvalName, assertPerPrName, assertPrNumber, assertSandboxHost, assertSandboxName,
+  CANDIDATE_HUB, SandboxNameError, assertCandidateName, assertEvalName, assertPerPrName, assertPrNumber, assertSandboxHost, assertSandboxName,
   evalNames, isEvalName, isPerPrName, isSandboxName, perPrNames, prNumberOf,
 } from './names.mjs'
 
@@ -70,7 +70,7 @@ describe('PR numbers, PR names and the candidate rule (failures 1, 2)', () => {
   test('perPrNames gives PR 12 its literal names, and refuses anything but a PR number', () => {
     expect(perPrNames(12)).toEqual({
       worker: 'inhouse-sbx-pr12', d1: 'inhouse-sbx-pr12-db', r2: 'inhouse-sbx-pr12-files', container: 'inhouse-sbx-pr12',
-      image: 'inhouse-sbx-pr12', brand: 'inhouse-sbx-pr12-brand', team: 'inhouse-sbx-pr12-team',
+      image: 'inhouse-sbx-pr12', brand: 'inhouse-sbx-pr12-brand', team: 'inhouse-sbx-pr12-team', hub: 'inhouse-sbx-pr12-hub',
     })
     expect(perPrNames(999999).d1).toBe('inhouse-sbx-pr999999-db')
     for (const pr of [0, -1, 1.5, 1_000_000, '12', NaN, undefined, null]) {
@@ -87,13 +87,13 @@ describe('PR numbers, PR names and the candidate rule (failures 1, 2)', () => {
 })
 
 describe('the eval deployment\'s names (failure 5)', () => {
-  const EVAL = ['inhouse-sbx-eval', 'inhouse-sbx-eval-db', 'inhouse-sbx-eval-files', 'inhouse-sbx-eval-brand', 'inhouse-sbx-eval-team']
+  const EVAL = ['inhouse-sbx-eval', 'inhouse-sbx-eval-db', 'inhouse-sbx-eval-files', 'inhouse-sbx-eval-brand', 'inhouse-sbx-eval-team', 'inhouse-sbx-eval-hub']
   const NEAR = ['inhouse-sbx-evals', 'inhouse-sbx-evaluation', 'inhouse-sbx-eval-', 'inhouse-sbx-eval-DB', 'inhouse-sbx-eval-db1',
-    'inhouse-sbx-eval-db-x', 'xinhouse-sbx-eval', 'inhouse-sbx-eval\n', 'inhouse-sbx-eval.db', 'inhouse-eval', '']
+    'inhouse-sbx-eval-db-x', 'xinhouse-sbx-eval', 'inhouse-sbx-eval\n', 'inhouse-sbx-eval.db', 'inhouse-eval', '', 'inhouse-sbx-eval-hubs', 'inhouse-sbx-eval-hub-x']
   test('evalNames gives its literal names', () => {
     expect(evalNames()).toEqual({
       worker: 'inhouse-sbx-eval', d1: 'inhouse-sbx-eval-db', r2: 'inhouse-sbx-eval-files', container: 'inhouse-sbx-eval',
-      image: 'inhouse-sbx-eval', brand: 'inhouse-sbx-eval-brand', team: 'inhouse-sbx-eval-team',
+      image: 'inhouse-sbx-eval', brand: 'inhouse-sbx-eval-brand', team: 'inhouse-sbx-eval-team', hub: 'inhouse-sbx-eval-hub',
     })
   })
   test('the eval rule takes the eval names and no near miss', () => {
@@ -203,5 +203,24 @@ describe('the rules agree with the reference parser', () => {
     const host = `${label}.${ZONE}`
     if (ok) expect(assertSandboxHost(host, ZONE, rule)).toBe(host)
     else expect(() => assertSandboxHost(host, ZONE, rule)).toThrow(SandboxNameError)
+  })
+})
+
+describe('(P4) the hub names and the eval names', () => {
+  test('the candidate hub and every PR\'s hub are shared or per-PR names, never an eval name', () => {
+    expect(assertCandidateName(CANDIDATE_HUB)).toBe(CANDIDATE_HUB)
+    expect(isEvalName(CANDIDATE_HUB)).toBe(false)
+    for (const pr of [1, 12, 999999]) expect(isEvalName(perPrNames(pr).hub)).toBe(false)
+    expect(Object.values(evalNames())).not.toContain(CANDIDATE_HUB)
+  })
+  // The eval hub: the eval deployment's own, so neither the candidate nor a PR may take it.
+  test('the eval hub is an eval name: never the candidate\'s, a PR\'s or the house\'s', () => {
+    const hub = evalNames().hub
+    expect(hub).toBe('inhouse-sbx-eval-hub')
+    expect(isEvalName(hub)).toBe(true)
+    expect(isPerPrName(hub)).toBe(false)
+    expect(() => assertCandidateName(hub)).toThrow(SandboxNameError)
+    expect(hub).not.toBe(CANDIDATE_HUB)
+    expect(hub).not.toBe('inhouse-hub')
   })
 })

@@ -11,7 +11,7 @@ async function start(page: Page, fx: Fx, hash = '#/today') {
 
 test('S1: Today shows what needs you', async ({ fx, page }) => {
   await start(page, fx)
-  await expect(page.getByText('6 things need you. A fix is drafted for each.')).toBeVisible()
+  await expect(page.getByText('6 things need you. Drafts are ready.')).toBeVisible()
 })
 
 test('S2: Settings opens on General', async ({ fx, page }) => {

@@ -17,10 +17,24 @@ import type { Handler, HandlerContext } from '../routes.ts'
 import type { AccountSummary, ConnectGateway, HubError } from '../../hub/index/contract.ts'
 import type { ConnectorAccount } from '../db/connector-accounts.ts'
 import { TOOL_CATALOG, catalogByAccount } from './tools-catalog.ts'
+import { withTestShopConnectInWorker } from '@test-shop'
 import type { CatalogEntry } from './tools-catalog.ts'
 
 /** The ConnectGateway methods these routes call (W1's contract, app/hub/index/contract.ts). */
 export type ToolsGateway = Pick<ConnectGateway, 'listAccounts' | 'setPaused' | 'disconnect'>
+
+/**
+ * Route 70's ports over the env's `HUB_CONNECT` (#337 rounds 3 and 4): `gateway` is the binding as it is, and `listView`
+ * is route C's read. In the test and eval builds only, that read carries the test shop override the turns' reads and
+ * prompt carry (`@test-shop` withTestShopConnectInWorker), so the graded runners' store check reads exactly the account
+ * the turns use; every other build gets the off module (the binding as it is). It takes no options of its own (route C
+ * sends none; the override is the only one). Pause and disconnect keep the binding's own read and write.
+ */
+export function toolsDepsOf(env: { HUB_CONNECT?: unknown; INHOUSE_TEST_BUILD?: string }): { gateway: ToolsGateway; listView: Pick<ToolsGateway, 'listAccounts'> } {
+  const gateway = env.HUB_CONNECT as ToolsGateway
+  const view = withTestShopConnectInWorker(gateway, env)
+  return { gateway, listView: { listAccounts: scope => view.listAccounts(scope) } }
+}
 // `disconnect` must be idempotent: route E calls it again on a retry after a failed row write (the hub is already
 // `disconnected`).
 
@@ -45,7 +59,13 @@ export interface ToolsAccounts {
 }
 
 export interface ToolsDeps {
+  /** The hub's own accounts: pause and disconnect act on them, and read them for their "before" state. */
   gateway: ToolsGateway
+  /**
+   * Route C's list read, when it differs from `gateway` (#337 round 4): in test and eval builds it carries the test shop
+   * override (toolsDepsOf), so the graded runners' store check reads the account the turns use. Absent: `gateway`.
+   */
+  listView?: Pick<ToolsGateway, 'listAccounts'>
   accounts: ToolsAccounts
 }
 
@@ -161,7 +181,7 @@ export function toolsHandlers(resolve: (c: HandlerContext) => ToolsDeps): { list
   /** Route C, `GET /api/tools`. A query string is ignored. */
   const listTools: Handler = async c => {
     const deps = resolve(c)
-    const hub = await deps.gateway.listAccounts(scopeOf(c, 'tools.list'))
+    const hub = await (deps.listView ?? deps.gateway).listAccounts(scopeOf(c, 'tools.list'))
     if (!hub.ok) return hubFailure(hub.error)
     const rows = await deps.accounts.list()
     return apiJson(buildToolsData({ accounts: hub.value, rows, nowMs: c.nowMs }))

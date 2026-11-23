@@ -2,7 +2,7 @@
 // filter tabs, three views (masonry, grid, list), Select for Download and Delete, and a viewer window.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { agent } from '../agent'
+import { agent, demo } from '../agent'
 import type { LibraryFile, LibraryKind, LibraryPlace } from '../agent'
 import type { LibraryView } from '../state/store'
 import { useAgentData, useLibraryFiles, useUi } from '../state/store'
@@ -16,6 +16,7 @@ import { FilterSheet } from './library/FilterSheet'
 import { closeFile, leaveFile, pushFile, replaceFile, useOpenFileId, useWide } from './library/route'
 import { OPEN, openSource } from './library/source'
 import { Viewer } from './library/Viewer'
+import { downloadAll } from './library/download'
 import { fmtWhen } from '../lib/format'
 import { display, nowOf } from '../state/display'
 
@@ -87,6 +88,8 @@ export function Library() {
   const title = place === 'all' ? 'All files' : placeOf(place).name
   const open = files.find(f => f.id === openId)
   const pickedIds = shown.filter(f => picked[f.id]).map(f => f.id)
+  // Delete shows only when every picked file may be deleted (`canDelete` absent means yes).
+  const mayDelete = shown.every(f => !picked[f.id] || f.canDelete !== false)
   // The viewer steps through what the page shows: this tab, place and search, in this order.
   const at = open ? shown.indexOf(open) : -1
   const prevId = at > 0 ? shown[at - 1].id : null
@@ -129,7 +132,23 @@ export function Library() {
     if (!selecting) { pushFile(f.id); return }
     setPicked(p => { const n = { ...p }; if (n[f.id]) delete n[f.id]; else n[f.id] = true; return n })
   }
-  const download = () => showToast("Download isn't connected in this demo.", { icon: 'info', ms: 4000 })
+  // Each file from its own download URL (an attachment, so the page stays); the demo has none.
+  const download = (ids: string[]) => {
+    const urls = ids.map(id => agent.fileDownloadUrl(id))
+    if (urls.some(u => u === null)) { showToast("Download isn't connected in this demo.", { icon: 'info', ms: 4000 }); return }
+    downloadAll(urls as string[])
+  }
+  // OC 5: the team's way into "Uploaded by the team". The demo keeps nothing, so it shows no Upload button.
+  const uploadInput = useRef<HTMLInputElement>(null)
+  const upload = async (picked: File[]) => {
+    // One file at a time, so the files kept before a refusal are counted too. A refusal is told by the client's own
+    // notice (which file, and why) and stops the rest.
+    let kept = 0
+    for (const file of picked) {
+      try { await agent.uploadFiles([file]); kept++ } catch { break }
+    }
+    if (kept) showToast(`Uploaded ${plural(kept)}`, { icon: 'upload_file', ms: 4000 })
+  }
   const remove = (gone: string[]) => {
     // A second delete while the first toast is still up joins it, so one Undo brings back both.
     const prev = lastDelete
@@ -167,8 +186,8 @@ export function Library() {
 
   // Each file's menu. None in Select mode, where a click picks.
   const menuFor = (f: LibraryFile) => selecting ? null : (
-    <FileMenu file={f} phone={phone} onOpen={() => pushFile(f.id)} onDownload={download}
-      onSource={f.link ? () => openSource(f) : undefined} onDelete={() => removeOne(f)} />
+    <FileMenu file={f} phone={phone} onOpen={() => pushFile(f.id)} onDownload={() => download([f.id])}
+      onSource={f.link ? () => openSource(f) : undefined} onDelete={f.canDelete === false ? undefined : () => removeOne(f)} />
   )
 
   const panelItem = (id: string, name: string, icon: string, n: number) => {
@@ -188,6 +207,12 @@ export function Library() {
   const empty = !loading && files.length === 0
   // A phone shows one list, whatever view was picked on a desktop.
   const shownView = phone ? 'list' : view
+  const uploadButton = demo === null ? (
+    <>
+      <input ref={uploadInput} type="file" multiple hidden aria-label="Files to upload" onChange={e => { void upload([...(e.target.files ?? [])]); e.target.value = '' }} />
+      <Button variant="outline" size="lg" className={cn(phone && TAP_ROW)} onClick={() => uploadInput.current?.click()}><Icon name="upload_file" size={17} />Upload</Button>
+    </>
+  ) : null
   const selectButton = (
     <Button variant="outline" size="lg" aria-pressed={selecting} className={cn(phone && TAP_ROW)} onClick={() => (selecting ? endSelect() : setSelecting(true))}>
       {selecting ? 'Done' : 'Select'}
@@ -208,10 +233,11 @@ export function Library() {
       </aside>
 
       <section ref={filesArea} aria-label={title} className={phone ? 'min-w-0 flex-1' : 'flex min-h-0 min-w-0 flex-1 flex-col'}>
-        <PageHeader title={title} truncate actions={phone || empty ? undefined : <>
+        <PageHeader title={title} truncate actions={phone || empty ? (uploadButton ?? undefined) : <>
           <Select label="Sort" value={sort} options={SORTS} onChange={v => setSort(v as Sort)} minWidth={120} />
           <Segmented label="View" value={view} options={VIEWS} onChange={setView} />
           {selectButton}
+          {uploadButton}
         </>} />
         {phone && !empty && (
           // Its own row in both modes, so Select and Done swap in place and the list doesn't move.
@@ -298,12 +324,12 @@ export function Library() {
       {selecting && (
         <SelectionBar label="Selected files" status={pickedIds.length ? `${pickedIds.length} selected` : 'Select files'} over={filesArea}>
           {!phone && <Button variant="inverse" onClick={() => setPicked(Object.fromEntries(shown.map(f => [f.id, true as const])))}>Select all</Button>}
-          <Button variant="inverse" disabled={!pickedIds.length} onClick={() => { download(); endSelect() }} className={cn(phone && TAP_ROW)}><Icon name="download" size={17} />Download</Button>
-          <Button variant={pickedIds.length ? 'destructive' : 'inverse'} disabled={!pickedIds.length} onClick={() => setConfirm(true)} className={cn(phone && TAP_ROW)}><Icon name="delete" size={17} />Delete</Button>
+          <Button variant="inverse" disabled={!pickedIds.length} onClick={() => { download(pickedIds); endSelect() }} className={cn(phone && TAP_ROW)}><Icon name="download" size={17} />Download</Button>
+          {mayDelete && <Button variant={pickedIds.length ? 'destructive' : 'inverse'} disabled={!pickedIds.length} onClick={() => setConfirm(true)} className={cn(phone && TAP_ROW)}><Icon name="delete" size={17} />Delete</Button>}
         </SelectionBar>
       )}
 
-      {open && <Viewer file={open} place={placeOf(open.place)} onClose={closeFile} onLeave={leaveFile} onDownload={download}
+      {open && <Viewer file={open} place={placeOf(open.place)} onClose={closeFile} onLeave={leaveFile} onDownload={() => download([open.id])}
         onPrev={prevId ? () => replaceFile(prevId) : undefined} onNext={nextId ? () => replaceFile(nextId) : undefined} />}
       {phone && filters && (
         <FilterSheet sort={sort} sorts={SORTS} onSort={setSort} tab={tab} tabs={TABS.map(([k, t, icon]) => [k, t, count(k), icon])} onTab={pickTab} onClose={() => setFilters(false)} />
@@ -412,8 +438,9 @@ function Row({ file: f, phone, selecting, on, onClick, menu }: { file: LibraryFi
 }
 
 /** A file's "···" menu: Open, Download, where it came from and Delete. Shown on hover and focus, always on a phone. */
+/** No `onDelete` (the file's `canDelete` is false): no Delete item. */
 function FileMenu({ file, phone, onOpen, onDownload, onSource, onDelete }: {
-  file: LibraryFile; phone: boolean; onOpen: () => void; onDownload: () => void; onSource?: () => void; onDelete: () => void
+  file: LibraryFile; phone: boolean; onOpen: () => void; onDownload: () => void; onSource?: () => void; onDelete?: () => void
 }) {
   const items: [string, string, () => void][] = [
     ['open_in_full', 'Open', onOpen],
@@ -432,10 +459,12 @@ function FileMenu({ file, phone, onOpen, onDownload, onSource, onDelete }: {
             <Icon name={icon} size={18} />{t}
           </MenuItem>
         ))}
-        <DropdownMenuSeparator className="mx-0 my-1" />
-        <MenuItem variant="destructive" onSelect={onDelete}>
-          <Icon name="delete" size={18} />Delete
-        </MenuItem>
+        {onDelete && <>
+          <DropdownMenuSeparator className="mx-0 my-1" />
+          <MenuItem variant="destructive" onSelect={onDelete}>
+            <Icon name="delete" size={18} />Delete
+          </MenuItem>
+        </>}
       </DropdownMenuContent>
     </DropdownMenu>
   )

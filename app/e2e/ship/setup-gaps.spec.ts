@@ -99,7 +99,7 @@ test('S4: Data and access: change how long chats are kept; Ask the team opens wi
   await main(page).getByRole('button', { name: 'Ask the team', exact: true }).click()
   await expect(team(page)).toBeVisible()
   await expect(team(page).getByRole('radio', { name: /Change something/ })).toBeChecked()
-  await expect(team(page).getByRole('textbox', { name: 'Your request' })).toHaveValue('Please delete the Inhouse agent and its data for Northline Outdoor.')
+  await expect(team(page).getByRole('textbox', { name: 'Details' })).toHaveValue('Please delete the Inhouse agent and its data for Northline Outdoor.')
 })
 
 test('S5: Audit log: pause the Inhouse agent, the audit log shows it at the top; resume', async ({ fx, page }) => {
@@ -136,11 +136,13 @@ test('S6: Help and guides: open a guide, then ask the team a question and see it
   await help.getByRole('button', { name: 'Ask the team' }).click()
   await expect(team(page)).toBeVisible()
   const question = 'I have a question: can a routine run twice a day?'
-  await team(page).getByRole('textbox', { name: 'Your request' }).fill(question)
+  await team(page).getByRole('textbox', { name: 'Details' }).fill(question)
   await team(page).getByRole('button', { name: 'Send to the team' }).click()
   await expect(team(page)).toHaveCount(0)
   await expect(toast(page, 'Request sent. Your Inhouse team replies within one working day.')).toBeVisible()
   if (phone()) await page.getByRole('button', { name: 'Menu' }).click()
-  await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: 'Message the team →' }).click()
+  // The team lives in the account menu (#226): "Your Inhouse team", with its open requests counted.
+  await page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: /account and settings/i }).click()
+  await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: /^Your Inhouse team/ }).click()
   await expect(team(page).getByText(question, { exact: true })).toBeVisible()
 })

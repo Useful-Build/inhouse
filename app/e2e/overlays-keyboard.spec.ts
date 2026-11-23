@@ -63,8 +63,8 @@ async function escapeTo(page: Page, overlay: Locator, trigger: Locator) {
 test('Dark, by keyboard: the palette, Help, the team window, the account menu and notifications open and give focus back', async ({ fx, page }) => {
   await open(page, fx, '#/today', '6 things need you')
 
-  // Command palette, from the top bar's Search: the field has focus, Escape gives it back.
-  const search = header(page).getByRole('button', { name: 'Search', exact: true })
+  // Command palette, from the sidebar's Search row: the field has focus, Escape gives it back.
+  const search = side(page).getByRole('button', { name: 'Search', exact: true })
   await press(search)
   const palette = page.getByRole('dialog', { name: 'Search' })
   await expect(palette.getByRole('combobox')).toBeFocused()
@@ -136,11 +136,11 @@ test('Dark, by keyboard: the palette, Help, the team window, the account menu an
 })
 
 test('Dark, by keyboard: the problem panel, the trace window, a file viewer and a confirm question open and give focus back', async ({ fx, page }) => {
-  // The problem panel, from a Today card's Review button: a sheet, opened with focus on itself.
+  // The review window, from a Today card's Review button: opened with focus on itself.
   await open(page, fx, '#/today', '6 things need you')
   const review = page.getByRole('article').filter({ hasText: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Review' })
   await press(review)
-  const panel = page.getByRole('dialog').filter({ hasText: 'Remembered: Kestrel ships in 14 days' })
+  const panel = page.getByRole('dialog', { name: 'Ridge 30L Pack runs out in 9 days' })
   await opensQuiet(page, panel)
   await attach(page, 'problem-panel')
   await escapeTo(page, panel, review)
@@ -248,7 +248,7 @@ test('Dark, by keyboard: F6 reaches the newest toast and goes back, traps nothin
   await snooze('PO-1187 from Kestrel is 6 days late')
   // 4 of its 7 seconds go by first, so a toast that F6 remounted (its countdown started again) would outlast the check below.
   await page.clock.runFor(4000)
-  const composer = page.getByRole('textbox', { name: 'Ask your Inhouse agent' })
+  const composer = page.getByRole('textbox', { name: 'Ask Inhouse' })
   await composer.focus()
   await page.keyboard.press('F6')
   await expect(newestUndo()).toBeFocused()
@@ -295,7 +295,7 @@ test('Dark, by keyboard: F6 reaches the newest toast and goes back, traps nothin
 
 test('Skip to content works with the sidebar collapsed, and its link opened on its own lands on Today with no notice', async ({ fx, page }) => {
   await open(page, fx, '#/activity', 'Activity')
-  const toggle = header(page).getByRole('button', { name: 'Sidebar', exact: true })
+  const toggle = side(page).getByRole('button', { name: 'Sidebar', exact: true })
   await toggle.click()
   await expect(toggle).toHaveAttribute('aria-expanded', 'false')
   // Tab from the top of the page again: the body becomes the starting point for the next Tab.

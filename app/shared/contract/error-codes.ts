@@ -18,6 +18,10 @@ export const REASON = {
   tooMany: 'too_many', badName: 'bad_name',
   // Route 39 (an attachment's upload).
   tooLarge: 'too_large', typeNotAllowed: 'type_not_allowed',
+  // P4 W2: route 54's refusals.
+  runOpen: 'run_open', stage: 'stage',
+  // #312 review: routine_create past the cap; an empty Library upload (row 63).
+  routineLimit: 'routine_limit', empty: 'empty',
   // P5 (p5-w3): the Tools routes' refusals.
   notConfigured: 'not_configured', notDisconnectable: 'not_disconnectable', notConnected: 'not_connected',
 } as const satisfies Record<string, ErrorReason>

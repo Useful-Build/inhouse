@@ -6,16 +6,18 @@
 // `internal` without its text and returned as `internal`. RPC error serialization is never the contract.
 // Docs read 2026-11-20: service bindings RPC (named entrypoints), RPC error handling.
 //
-// The test upstream seam (hub/testing/) is reached only from signin/signin.ts inside the guarded branch
+// The test upstream seam (hub/testing/) is reached only from signin/signin.ts and this file's shopFor (the test shop
+// override, test-shop.ts), each inside the guarded branch
 // `__INHOUSE_HUB_TEST__ && env.INHOUSE_TEST_BUILD === '1'`; wrangler.hub.jsonc defines it "false", so esbuild drops it.
 import { WorkerEntrypoint } from 'cloudflare:workers'
-import type { AccountStatus, CallerScope, HubResult, ReadGateway as ReadApi, ServerGateway as ServerApi, ToolInfo } from './contract'
+import type { AccountStatus, CallerScope, CallToolOptions, HubResult, ReadGateway as ReadApi, ServerGateway as ServerApi, ToolInfo } from './contract'
 import { err } from './errors'
 import { log } from './log'
 import { AccountIdSchema, CallerScopeSchema, ToolNameSchema } from './schemas'
 import { callReadyTool, listReadyTools, toolNameForLog } from '../registry/registry'
 import { loadRegistry, readyGatewayDeps } from '../signin/signin'
 import { codeModeFor } from '../codemode/run'
+import { decideTestShop } from './test-shop'
 
 export { SignIn } from '../signin/signin'
 export { ConnectGateway } from '../oauth/entry'
@@ -39,6 +41,20 @@ const scopeFields = (scope: CallerScope) =>
 
 const signInFor = (env: Env, accountId: string) => env.SIGNIN.get(env.SIGNIN.idFromName(accountId))
 
+type HubEnv = Env & { INHOUSE_TEST_BUILD?: string }
+
+/**
+ * The call's shop (test-shop.ts): the hub's own unless a test build is asked for a host its seam registers. The guard is
+ * written out in full (never behind a helper), so the deployable build drops the branch and its dynamic import.
+ */
+async function shopFor(env: HubEnv, options: unknown): Promise<HubResult<{ shop: string | null }>> {
+  if (__INHOUSE_HUB_TEST__ && env.INHOUSE_TEST_BUILD === '1') {
+    const { testUpstreams } = await import('../testing/index')
+    return decideTestShop(options, true, host => testUpstreams.has(host))
+  }
+  return decideTestShop(options, false, () => false)
+}
+
 async function guarded<T>(fn: () => Promise<HubResult<T>>): Promise<HubResult<T>> {
   try {
     return await fn()
@@ -56,15 +72,18 @@ export class ReadGateway extends WorkerEntrypoint<Env> implements ReadApi {
     })
   }
 
-  async callTool(scope: CallerScope, name: string, args: unknown): Promise<HubResult<{ data: unknown }>> {
+  async callTool(scope: CallerScope, name: string, args: unknown, options?: CallToolOptions): Promise<HubResult<{ data: unknown }>> {
     const started = Date.now()
     const parsedScope = CallerScopeSchema.safeParse(scope)
     const parsedName = ToolNameSchema.safeParse(name)
     const result = await guarded(async () => {
       if (!parsedScope.success) return err('invalid_args', 'scope')
       if (!parsedName.success) return err('invalid_args', 'name')
-      // P5 (p5-w2): code mode over env.LOADER, read only by shopify_script_run.
-      return callReadyTool({ ...(await readyGatewayDeps(this.env)), codemode: codeModeFor(this.env) }, parsedScope.data, parsedName.data, args)
+      const shop = await shopFor(this.env, options)
+      if (!shop.ok) return shop
+      // P5 (p5-w2): code mode over env.LOADER, read only by shopify_script_run. Its reads go through the same shopifyFor,
+      // so a test shop (shopFor) holds for scripts too and the hub's SHOPIFY_SHOP is never read while one is set.
+      return callReadyTool({ ...(await readyGatewayDeps(this.env, shop.value.shop)), codemode: codeModeFor(this.env) }, parsedScope.data, parsedName.data, args)
     })
     // A malformed registry already logged hub_config_invalid; this line then names no tool.
     const registry = await loadRegistry(this.env).catch(() => null)

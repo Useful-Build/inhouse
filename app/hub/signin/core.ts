@@ -505,6 +505,21 @@ export class SignInCore {
     return err('credentials_rejected')
   }
 
+  /**
+   * A client credentials account's token, granted now if it has none (P5 #337: a test shop's object before the turn's
+   * prompt reads its status, so the prompt names what the turn's reads will use). The token endpoint only, no read.
+   */
+  async warm(accountId: string): Promise<HubResult<{ state: SignInState }>> {
+    if ((await this.#kind(accountId)) !== 'client_credentials') return err('not_configured')
+    if (!this.#recordFor(accountId)) return err('internal')
+    if (!this.#d.shopify()) return err('not_configured')
+    const ring = await this.#d.keyring()
+    if (!ring.ok) return err('key_unavailable')
+    const got = await this.#acquire(accountId, ring.ring, true)
+    if (!got.ok) return err(got.code, got.detail)
+    return ok({ state: this.#recordFor(accountId)!.state })
+  }
+
   status(accountId: string): HubResult<CoreStatus> {
     const r = this.#recordFor(accountId)
     if (!r) return err('internal')

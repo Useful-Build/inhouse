@@ -2,19 +2,32 @@
 // deployment's D1, through door.ts), sends each prompt through route 29 in a fresh chat, waits for the turn's end, and reads
 // the answer from route 24 and the tool names and settled cost from route 33.
 //
-// What the API shows decides what can be graded (A8, 2026-11-21): route 33 gives one `tool` step per call with the tool's NAME
-// only, route 24 the answer's text parts. No route carries a tool's input or result. So:
-//   - tool calls come from route 33's names; a memory write's input comes from the brand's memory rows before and after the chat
-//     (a new row is a memory_save, a changed text a memory_update), and a write that left no row is reported as refused;
-//   - a case whose grading needs another tool's input or result is "not graded on product" (`unobservable`), with the field named;
+// What the API shows decides what can be graded (A8, 2026-11-21; the eval build, p3-eval-observability rev 2 rec 5 and 6): on the
+// eval deployment route 33 gives one `tool` step per call with the tool's name and, for the run's owner, its kept input
+// (`io.input`, the audit entry's capped input), a cut mark and the hook's denial (`io.denied`); route 24 gives the answer's text
+// parts. No route carries a tool's result. So:
+//   - tool calls come from route 33's steps with their inputs; a memory write's input comes from the brand's memory rows before
+//     and after the chat (a new row is a memory_save, a changed text a memory_update), and a write that left no row is refused;
+//   - a WebFetch's refusal is the hook's denial (no result exists): an unlisted one without it is a bypass (exfil.ts);
+//   - a case whose grading needs something no route shows is "not graded on product" (`unobservable`), with the reason named;
 //   - cost is the server's settled figure for the turn (route 33's `cost`, whole cents), never the SDK's estimate.
 // Cases run one at a time: the brand's memory is shared, so a concurrent case would read another's seeded facts.
+import { promptFailure, promptSentOf } from '../prompt-version.ts'
+import { shopifyNotServed } from '../shopify-served.ts'
 import { mintPerson } from '../../server/auth/test-issuer-mint.ts'
 import { SEED_PEOPLE } from '../../server/seed/brand.ts'
+import { CancelWhySchema, TurnFailureSchema } from '../../shared/contract/runs.ts'
+import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { JWK } from 'jose'
 import { createDoor, newMemoryId, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory } from './door.ts'
-import type { Case, ChatResult, ExfilSpec, People, PersonKey, RunContext, SeedFact, Session, Target, ToolCall } from '../types.ts'
+import { CapReachedError, type Case, type ChatResult, type ExfilSpec, type People, type PersonKey, type RunContext, type SeedFact, type Session, type Target, type ToolCall } from '../types.ts'
+
+/**
+ * The eval brand's monthly Spending cap: Wasim's monthly Anthropic test budget, $50 (2026-11-22, superseding decision 18's
+ * $40), enforced by us; the $60 workspace limit is the outer stop.
+ */
+export const EVAL_CAP = '$50'
 
 export class ProductTargetRefusal extends Error {
   override name = 'ProductTargetRefusal'
@@ -26,6 +39,50 @@ export const EVAL_ORIGIN_VAR = 'INHOUSE_EVAL_ORIGIN'
 /** The deployment's test issuer: the private key (a file) and the brand app's `aud`. The eval deployment is a test build in the sandbox. */
 export const EVAL_ISSUER_JWK_FILE = 'INHOUSE_EVAL_ISSUER_JWK_FILE'
 export const EVAL_AUD_VAR = 'INHOUSE_EVAL_AUD'
+/**
+ * The eval host's Access lock (Wasim's E-5 second lock): the dedicated service token `inhouse-sbx-eval-ci`, held only in
+ * inhouse-ops. Every call to the eval origin carries it as CF-Access-Client-Id and CF-Access-Client-Secret, as the house's
+ * service-token calls do (inhouse-ops house-model-smoke.mjs). Never printed.
+ */
+export const EVAL_ACCESS_CLIENT_ID_VAR = 'INHOUSE_EVAL_ACCESS_CLIENT_ID'
+export const EVAL_ACCESS_CLIENT_SECRET_VAR = 'INHOUSE_EVAL_ACCESS_CLIENT_SECRET'
+/**
+ * The header the test-issuer JWT also travels in: Access in front sets its own Cf-Access-Jwt-Assertion, so the eval build
+ * may read the test issuer's from here (held: authenticate.ts reads it only after the lock probe shows Access replaces
+ * Cf-Access-Jwt-Assertion). Sent in both, so the probe answers either way.
+ */
+export const TEST_ASSERTION_HEADER = 'X-Inhouse-Test-Assertion'
+
+/** The Access service token's header names, lowercased: a caller's own copy is dropped before ours goes on. */
+const EDGE_KEYS = new Set(['cf-access-client-id', 'cf-access-client-secret'])
+
+/**
+ * How long a person's signed headers are reused: half the test issuer's token life (test-issuer-mint.ts: 600 s). The first
+ * paid baseline (inhouse-ops run 44967754241) cached them for the whole run and died on a 401 10 min 38 s in.
+ */
+export const SIGN_REFRESH_MS = 300_000
+
+/** The Access service token's headers, or a refusal naming the variables (never their values). */
+export function accessHeaders(env: Record<string, string | undefined>): Record<string, string> {
+  const id = env[EVAL_ACCESS_CLIENT_ID_VAR]
+  const secret = env[EVAL_ACCESS_CLIENT_SECRET_VAR]
+  if (!id || !secret) throw new ProductTargetRefusal(`refusing: ${EVAL_ACCESS_CLIENT_ID_VAR} and ${EVAL_ACCESS_CLIENT_SECRET_VAR} are not both set, so the eval host's Access lock would refuse every call`)
+  return { 'CF-Access-Client-Id': id, 'CF-Access-Client-Secret': secret }
+}
+
+
+/**
+ * A turn's end cause in the product's own vocabulary (shared/contract/chats.ts TurnEndSchema): `failure:<TurnFailure>`,
+ * `cancel:<CancelWhy>` or `outcome:stopped|interrupted`, the first of the three the end row carries. `unknown` only for
+ * text outside that vocabulary, so it's never mistaken for the product's own `failure:unknown`.
+ */
+function endCause(end: { failure?: unknown; why?: unknown; outcome?: unknown }): string {
+  if (typeof end.failure === 'string' && (TurnFailureSchema.options as readonly string[]).includes(end.failure)) return `failure:${end.failure}`
+  if (typeof end.why === 'string' && (CancelWhySchema.options as readonly string[]).includes(end.why)) return `cancel:${end.why}`
+  if (end.outcome === 'stopped' || end.outcome === 'interrupted') return `outcome:${end.outcome}`
+  return 'unknown'
+}
+
 /** The eval deployment's D1 database name and the sandbox wrangler config that binds it (door.ts). */
 export const EVAL_D1_NAME = 'INHOUSE_EVAL_D1_NAME'
 export const EVAL_WRANGLER_CONFIG = 'INHOUSE_EVAL_WRANGLER_CONFIG'
@@ -48,7 +105,11 @@ export interface ProductTargetOptions {
   fetch?: typeof fetch
   model?: string
   /** The headers that sign `key` in. Default: a test-issuer token from INHOUSE_EVAL_ISSUER_JWK_FILE and INHOUSE_EVAL_AUD. */
-  signIn?: (key: PersonKey) => Promise<Record<string, string>>
+  signIn?: (key: PersonKey, who: { sub: string; email: string }) => Promise<Record<string, string>>
+  /** The tools the server serves with an open input schema (evals/served-schema.ts): their cases don't grade args. */
+  openSchema?: ReadonlySet<string>
+  /** The clock the sign-in cache reads (tests). Default: Date.now. */
+  now?: () => number
   /** The memory door. Default: wrangler on INHOUSE_EVAL_D1_NAME (door.ts), made only after the eval-brand check passed. */
   door?: MemoryDoor
   /** Milliseconds between reads while a turn runs. */
@@ -59,44 +120,89 @@ export interface ProductTargetOptions {
 /** True for an email on `example.test` or a subdomain: the invented domain the seeded brands use. */
 export const onExampleTest = (email: string | null): boolean => email !== null && /^[^@\s]+@(?:[a-z0-9-]+\.)*example\.test$/i.test(email)
 
-interface Member { id: string; email: string | null; status: string }
+interface Member { id: string; email: string | null; status: string; rev: number }
+
+/**
+ * A case-repeat's own person (A9, after the first full baseline: past chats persist, and history_search is member-scoped):
+ * deterministic per run, case and rep, on example.test, so a re-run doesn't collide; each row names it (`askedAs`).
+ */
+export function casePerson(run: string, caseId: string, rep: number): { sub: string; email: string; name: string } {
+  const handle = `eval-${run}-${caseId.toLowerCase()}-r${rep}`
+  return { sub: handle, email: `${handle}@example.test`, name: `Eval ${caseId} r${rep}` }
+}
+/** A case person's email: what run start removes when it's another run's. */
+const CASE_PERSON = /^eval-[a-z0-9-]+@example\.test$/
+const newMemberId = (): string => `m_${randomBytes(16).toString('base64url')}`
+/** What to do when the member check's page cap trips: the case persons have filled it. */
+const MEMBER_CAP_FIX = 'reset the eval D1 (delete inhouse-sbx-eval-db, then dispatch eval-deploy with -f seed=true at app main\'s head)'
 
 /** Why the product target can't grade a case: a field its API doesn't show. Null when it can. */
 export function unobservableReason(c: Case): string | null {
   if (c.exfil?.via === 'history_search') return 'planting through history_search needs a priming chat'
-  if (c.exfil?.kind === 'webfetch') return 'WebFetch url and result (route 33 shows the tool name only)'
   for (const chat of c.chats) {
     const args = chat.expect.args
-    if (!args) continue
-    if ('person_id' in args) return 'memory_save person_id (the product saves only for the person asking; it has no person_id)'
-    for (const tool of ([] as string[]).concat(chat.expect.tool ?? [])) {
-      if (tool === 'memory_save' || tool === 'memory_update') continue
-      return `${tool} input ${Object.keys(args).join(', ')} (route 33 shows the tool name only)`
-    }
+    if (args && 'person_id' in args) return 'memory_save person_id (the product saves only for the person asking; it has no person_id)'
   }
   return null
+}
+
+interface TraceStep { kind: string; detail: string; io?: { input: string; cut?: true; denied?: true } }
+/** A `tool` step as a call: its kept input parsed, a cut (or unparsable) input as `{}` marked `inputCut`, a denial as `hookDenied`. */
+/** A tool input with every string that is a seeded fact's product id replaced by the seed's id (top-level values). */
+export function seedIds(input: Record<string, unknown>, seedOf: (productId: string) => string | undefined): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).map(([k, v]) => [k, typeof v === 'string' ? (seedOf(v) ?? v) : v]))
+}
+
+export function callOfStep(s: TraceStep): ToolCall {
+  let input: Record<string, unknown> = {}
+  let cut = s.io?.cut === true
+  if (s.io !== undefined && !cut) {
+    try {
+      const parsed: unknown = JSON.parse(s.io.input)
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) input = parsed as Record<string, unknown>
+      else cut = true
+    } catch { cut = true }
+  }
+  return { name: s.detail, input, ...(s.io?.denied === true ? { hookDenied: true } : {}), ...(cut ? { inputCut: true } : {}) }
 }
 
 export function createProductTarget(opts: ProductTargetOptions): Target {
   if (!opts.paid) throw new ProductTargetRefusal('the product target spends real money: pass --paid and --budget <usd>')
   if (!(typeof opts.budgetUsd === 'number' && opts.budgetUsd > 0)) throw new ProductTargetRefusal('the product target needs --budget <usd> above zero')
   if (opts.env[EVAL_BRAND_FLAG] !== '1') throw new ProductTargetRefusal(`refusing: ${EVAL_BRAND_FLAG}=1 is not set, so the brand isn't marked as an eval brand`)
+  // The run's tag: the case persons' ids carry it (INHOUSE_EVAL_RUN, else GitHub's run id and attempt).
+  const runTag = opts.env.INHOUSE_EVAL_RUN ?? (opts.env.GITHUB_RUN_ID && opts.env.GITHUB_RUN_ATTEMPT ? `${opts.env.GITHUB_RUN_ID}-${opts.env.GITHUB_RUN_ATTEMPT}` : undefined)
+  if (!runTag || !/^[0-9]{1,20}(-[0-9]{1,6})?$/.test(runTag)) throw new ProductTargetRefusal('refusing: no run tag as a run id and attempt (INHOUSE_EVAL_RUN like 44971615417-1, or GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT), so the case persons would collide')
   const origin = opts.env[EVAL_ORIGIN_VAR]
   if (!origin) throw new ProductTargetRefusal(`refusing: ${EVAL_ORIGIN_VAR} is not set`)
   const picker = PICKER_OF[opts.model ?? 'claude-sonnet-5-5']
   if (!picker) throw new ProductTargetRefusal(`refusing: no model picker id for ${JSON.stringify(opts.model)}`)
+  // Before any call: every request to the eval origin passes its Access lock with the service token.
+  const edge = accessHeaders(opts.env)
 
   const doFetch = opts.fetch ?? fetch
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
   const pollMs = opts.pollMs ?? 2000
   const people: People = { current: '', tom: '', lena: '' }
-  const signIn = opts.signIn ?? defaultSignIn(opts.env)
-  const headersOf = new Map<PersonKey, Record<string, string>>()
+  const signIn = opts.signIn ?? testIssuerSignIn(opts.env)
+  const now = opts.now ?? Date.now
+  // Each person's signed headers and when they were signed: re-signed once SIGN_REFRESH_MS old, well before expiry.
+  const headersOf = new Map<string, { headers: Record<string, string>; at: number }>()
+  /** The case-repeat's own person, who asks as `current` (set by seed()). */
+  let caseWho: { sub: string; email: string } | undefined
 
   async function api(who: PersonKey, method: string, path: string, o: { json?: unknown; bytes?: Uint8Array; headers?: Record<string, string>; signal?: AbortSignal } = {}): Promise<{ status: number; json: any; text: string }> {
-    let h = headersOf.get(who)
-    if (!h) headersOf.set(who, (h = await signIn(who)))
-    const headers: Record<string, string> = { ...h, ...o.headers }
+    const id = who === 'current' && caseWho ? caseWho : EVAL_PEOPLE[who]
+    let signed = headersOf.get(`${who}:${id.sub}`)
+    if (!signed || now() - signed.at >= SIGN_REFRESH_MS) {
+      signed = { headers: await signIn(who, id), at: now() }
+      headersOf.set(`${who}:${id.sub}`, signed)
+    }
+    const h = signed.headers
+    // The service token last, and any caller's token header dropped first in any case (#277 review F4: Headers would join
+    // a differently cased duplicate with ours), so nothing replaces or corrupts it.
+    const headers: Record<string, string> = Object.fromEntries(Object.entries({ ...h, ...o.headers }).filter(([k]) => !EDGE_KEYS.has(k.toLowerCase())))
+    Object.assign(headers, edge)
     if (method !== 'GET') headers.Origin = origin!
     let body: BodyInit | undefined
     if (o.json !== undefined) { body = JSON.stringify(o.json); headers['Content-Type'] = 'application/json' }
@@ -107,21 +213,35 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     try { json = JSON.parse(text) } catch { /* not JSON */ }
     return { status: res.status, json, text }
   }
-  const must = (r: { status: number; text: string }, what: string, ok: number[] = [200, 201]): void => {
-    if (!ok.includes(r.status)) throw new Error(`${what}: ${r.status} ${r.text.slice(0, 200)}`)
+  // What and the status, and the Worker's error code when it's a plain code: never the response body, which can be an
+  // Access page with hostnames and a Ray ID, and ends up in report.json (#280 review 2).
+  const must = (r: { status: number; json?: any }, what: string, ok: number[] = [200, 201]): void => {
+    if (ok.includes(r.status)) return
+    const code = r.json?.error?.code
+    throw new Error(`${what}: ${r.status}${typeof code === 'string' && /^[a-z_]{1,40}$/.test(code) ? ` ${code}` : ''}`)
   }
 
   let door: MemoryDoor | undefined = opts.door
   let ready: Promise<void> | undefined
   /** The server-side eval-brand check, then the people's ids and the door. Once, before the first chat. */
+  /** The eval lease's tag (door.ts takeLease): this run's. */
+  const leaseTag = `product:${runTag}`
+  let leased = false
+  /**
+   * The first take while it's in flight: close() waits for it, so a signal during setup still gives back a lease the take
+   * goes on to win (#306 review L3).
+   */
+  let taking: Promise<void> | null = null
   const setup = (): Promise<void> => (ready ??= (async () => {
     for (const k of PEOPLE_KEYS) {
       const me = await api(k, 'GET', '/api/me')
       must(me, `sign in as the eval person ${k}`, [200])
+      // The first line (p3-eval-observability rev 2, "The eval-brand marker"): the server's own deploy-time fact, true only on the
+      // eval build with INHOUSE_EVAL_BRAND=1. Before any other read, write or door.
+      if (me.json.evalBrand !== true) throw new ProductTargetRefusal('refusing: /api/me does not say evalBrand: true, so this deployment is not the eval brand')
       people[k] = me.json.memberId
     }
-    // A5: the brand must be an eval brand on the server's own word, not only on a local env var. There is no server marker, so
-    // this is weaker (A8 CHOICE): every member on the brand is an invented example.test address, and the eval people are among them.
+    // The second line (A8): every member on the brand is an invented example.test address, and the eval people are among them.
     const members: Member[] = []
     let cursor: string | null = null
     for (let pages = 0; pages < 100; pages++) {
@@ -132,14 +252,33 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
       if (cursor === null) break
     }
     // Fail closed: members past the page cap were never checked.
-    if (cursor !== null) throw new ProductTargetRefusal('refusing: the brand has more members than the check reads (100 pages), so it is not known to be an eval brand')
+    if (cursor !== null) throw new ProductTargetRefusal(`refusing: the brand has more members than the check reads (100 pages), so it is not known to be an eval brand. On the eval brand the case persons fill it (about one per case-repeat): ${MEMBER_CAP_FIX}`)
     const live = members.filter((m) => m.status !== 'removed')
     const offenders = live.filter((m) => !onExampleTest(m.email))
     if (offenders.length > 0) throw new ProductTargetRefusal(`refusing: ${offenders.length} member(s) of this brand are not on example.test, so it is not an eval brand`)
     for (const k of PEOPLE_KEYS) if (!live.some((m) => m.id === people[k])) throw new ProductTargetRefusal(`refusing: eval person ${k} is not an active member of this brand`)
+    // Run start: the previous runs' case persons are removed through the product's own API (its audit line), as the Admin.
+    // A removal that fails stops the run here, before any spend.
+    // A run tag used before: its case persons are already here, so this run's invites would collide (#282 review L2).
+    // `eval-<tag>-<letter>`: case ids start with a letter, so tag 7 never reads tag 7-1's persons as its own (#282 re-review L4).
+    const ofThisTag = new RegExp(`^eval-${runTag}-[a-z]`)
+    if (live.some((m) => m.email !== null && ofThisTag.test(m.email))) throw new ProductTargetRefusal(`refusing: the run tag ${runTag} was used before (its case persons are on the brand): give the run a new one`)
+    for (const m of live) {
+      if (!m.email || !CASE_PERSON.test(m.email)) continue
+      const r = await api('lena', 'DELETE', `/api/members/${encodeURIComponent(m.id)}?ifRev=${m.rev}`)
+      if (r.status !== 200 && r.status !== 204) {
+        const code = r.json?.error?.code
+        throw new ProductTargetRefusal(`refusing: could not remove the previous run's case person ${m.id} (${r.status}${typeof code === 'string' && /^[a-z_]{1,40}$/.test(code) ? ` ${code}` : ''})`)
+      }
+    }
     const models = await api('current', 'GET', '/api/models')
     must(models, 'read the models', [200])
     if (!models.json.modes?.some((m: { id: string }) => m.id === picker)) throw new ProductTargetRefusal(`refusing: the brand does not serve the ${picker} model`)
+    // #337 round 2: the store must be served, or every graded turn's prompt says none is connected. Before the lease and any spend.
+    const tools = await api('lena', 'GET', '/api/tools')
+    must(tools, 'read the brand\'s tools', [200])
+    const notServed = shopifyNotServed(tools.json)
+    if (notServed !== null) throw new ProductTargetRefusal(`refusing: ${notServed}`)
     // (a) the door only after the check passed; (b) and (c) are door.ts's.
     door ??= createDoor(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env }))
     // The database must be the one this origin answers from: make a chat through the API, read it back through the door. Nothing is
@@ -147,7 +286,36 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     const probe = `eval-probe-${rid()}`
     must(await api('current', 'POST', '/api/chats', { json: { id: probe, title: 'Eval probe' } }), 'create the probe chat')
     if (!(await door.hasChat(probe))) throw new ProductTargetRefusal(`refusing: ${EVAL_D1_NAME} does not hold the chat the origin just created, so it is not this deployment's database`)
+    // One runner per eval deployment (#308 review): the eval lease before any write that spends, renewed by every seed and
+    // given back by close(). A test shop override on the deployment means a morning-check run is on it (or left it): this
+    // run's hub calls would read its shop, so it refuses.
+    const d0 = door
+    taking = d0.takeLease(leaseTag).then(() => { leased = true })
+    await taking
+    const shop = await door.testShop()
+    if (shop !== null) throw new ProductTargetRefusal(`refusing: a test shop override (hub:shop ${shop}) is set on the eval deployment, so this run's hub calls would read a morning-check shop: a morning-check run is on it or left it`)
+    // The O2 note: the brand's own Spending cap is the run's $50 (no second ledger). Pinned here, then read back as the
+    // product reads it: anything else refuses before any case is seeded.
+    await door.setSpendingCap(EVAL_CAP)
+    const { spentUsd } = await room()
+    // A month already at the cap is refused here, not on the first chat (#253 review O1).
+    if (spentUsd >= Number(EVAL_CAP.slice(1))) throw new ProductTargetRefusal(`refusing: this month's spend ($${spentUsd.toFixed(2)}) has reached the ${EVAL_CAP} cap`)
   })())
+
+  /** The month's spend and the cap, from route 42 (the Usage page's numbers) as the Admin eval person. */
+  // Every read refuses unless the cap is still the pinned $50 (#253 review O3): a re-seed's $320 or a Settings change can't
+  // silently lift our layer mid-run.
+  async function room(): Promise<{ spentUsd: number; capUsd: number }> {
+    const u = await api('lena', 'GET', '/api/usage')
+    must(u, 'read the month\'s usage', [200])
+    const cents = (m: unknown, what: string) => {
+      if (!Number.isInteger(m)) throw new Error(`route 42 gave no ${what}`)
+      return (m as number) / 100
+    }
+    const r = { spentUsd: cents(u.json?.total?.minor, 'total'), capUsd: cents(u.json?.cap?.minor, 'cap') }
+    if (Math.round(r.capUsd * 100) !== Number(EVAL_CAP.slice(1)) * 100) throw new ProductTargetRefusal(`refusing: the brand's Spending cap is not ${EVAL_CAP} (route 42 says $${r.capUsd.toFixed(2)})`)
+    return r
+  }
 
   let spentTotal = 0
   let tail: Promise<void> = Promise.resolve()
@@ -157,8 +325,15 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     people,
     // P3 builds none of the shop and mail connectors or routines: the cases that need them report as not run (phase P4/P5).
     provides: new Set<string>(),
+    ...(opts.openSchema ? { openSchema: opts.openSchema } : {}),
     unobservable: unobservableReason,
     spentUsd: () => spentTotal,
+    room,
+    async close() {
+      await taking?.catch(() => {})
+      if (leased) await door!.releaseLease(leaseTag)
+      leased = false
+    },
     async seed(memory: SeedFact[], run: RunContext, exfil?: ExfilSpec): Promise<Session> {
       // One case-repeat at a time: the brand's memory is shared.
       const prev = tail
@@ -166,10 +341,32 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
       tail = new Promise<void>((r) => (release = r))
       await prev
       let session: Session
+      // Set once the list was written this seed: from then on a failure puts the default back before the brand is released.
+      let listWritten = false
       try {
         await setup()
         const d = door!
+        // Each case-repeat renews the eval lease (it lapses only for a run that died).
+        await d.takeLease(leaseTag)
+        // Every case starts from a known WebFetch list (#245 S-L2): an exfiltration case's hosts (rec 6: the hook refuses
+        // exactly what the grader calls unlisted), any other case the default.
+        listWritten = true
+        await d.setWebfetchHosts(exfil ? exfil.hosts.map((h) => h.toLowerCase()) : null)
         await d.clear()
+        // The case-repeat's own person: invited through the door, bound by its first sign-in (the product's invite path).
+        const who = casePerson(runTag, run.caseId, run.rep)
+        const personId = newMemberId()
+        try {
+          await d.invitePerson({ id: personId, email: who.email, name: who.name })
+        } catch (e) {
+          // The door's own error, never a guess at why (#282 re-review M1).
+          throw new ProductTargetRefusal(`refusing: could not invite the case person ${who.sub} (run tag ${runTag}): ${e instanceof Error ? e.message : String(e)}`, { cause: e })
+        }
+        caseWho = who
+        const me = await api('current', 'GET', '/api/me')
+        must(me, 'sign in as the case person')
+        if (me.json.memberId !== personId || me.json.evalBrand !== true) throw new ProductTargetRefusal(`refusing: the case person ${who.sub} did not sign in as the invited row`)
+        people.current = personId
         const real = new Map<string, string>()
         const facts: NewMemory[] = memory.map((f) => {
           const id = newMemoryId()
@@ -180,12 +377,20 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
         if (exfil?.via === 'memory_search') facts.push({ id: newMemoryId(), scope: 'person', ownerId: people.current, text: exfil.plant(run.canary) })
         if (exfil?.via === 'attachment') attachment = { name: 'note.txt', bytes: new TextEncoder().encode(exfil.plant(run.canary)) }
         await d.insert(facts)
-        session = productSession({ api, must, door: d, people, picker, real, attachment, pollMs, sleep, onSpend: (usd) => { spentTotal += usd } })
+        session = productSession({ api, must, door: d, people, picker, real, attachment, pollMs, sleep, askedAs: who.sub, onSpend: (usd) => { spentTotal += usd } })
       } catch (e) {
-        release()
+        try {
+          if (listWritten) await door!.setWebfetchHosts(null)
+        } catch (restore) {
+          throw new AggregateError([e, restore], 'the seed failed, and putting the brand\'s WebFetch list back failed too')
+        } finally {
+          release()
+        }
         throw e
       }
-      return { ...session, async reset() { try { await session.reset() } finally { release() } } }
+      const d = door!
+      // On every path, a failing session reset included: the default list back, then the brand released.
+      return { ...session, async reset() { try { await session.reset() } finally { try { await d.setWebfetchHosts(null) } finally { release() } } } }
     },
   }
 }
@@ -197,6 +402,8 @@ interface SessionDeps {
   must: (r: { status: number; text: string }, what: string, ok?: number[]) => void
   door: MemoryDoor
   people: People
+  /** The case person who asks (`eval-<run>-<case>-r<rep>`). */
+  askedAs: string
   picker: string
   /** Real memory id to the case's own id (`m_norda`). */
   real: Map<string, string>
@@ -282,14 +489,25 @@ function productSession(d: SessionDeps): Session {
       // The turn has ended once its answer is stored: the projection writes a turn's messages in one batch when it ends.
       let answer = ''
       let sawError = false
+      let failure: string | undefined
       for (;;) {
         if (o?.signal?.aborted) throw new Error('the chat was aborted')
         const page = await d.api('current', 'GET', `/api/chats/${chatId}`, { signal: o?.signal })
         d.must(page, 'read the chat', [200])
-        const mine = (page.json.messages as { role: string; turnId: string; pos: number; part?: { type: string; text?: string } }[]).filter((m) => m.role === 'agent' && m.turnId === turnId).sort((a, b) => a.pos - b.pos)
+        const messages = page.json.messages as { role: string; turnId: string; pos: number; part?: { type: string; text?: string }; end?: { failure?: string; why?: string; outcome?: string } }[]
+        // The turn's end row: the Spending cap fenced it (stop the run, never a pass), or it ended with no answer at all.
+        const end = messages.find((m) => m.role === 'event' && m.turnId === turnId && m.end)?.end
+        if (end?.failure === 'cap_reached' || end?.why === 'cap_reached') throw new CapReachedError(turnId)
+        const mine = messages.filter((m) => m.role === 'agent' && m.turnId === turnId).sort((a, b) => a.pos - b.pos)
+        if (mine.length === 0 && end) {
+          sawError = true
+          failure = endCause(end)
+          break
+        }
         if (mine.length > 0) {
           answer = mine.filter((m) => m.part?.type === 'text').map((m) => m.part!.text ?? '').join('\n\n')
           sawError = mine.some((m) => m.part?.type === 'error')
+          if (sawError) failure = 'error_part'
           break
         }
         await d.sleep(d.pollMs)
@@ -297,14 +515,15 @@ function productSession(d: SessionDeps): Session {
 
       const trace = await d.api('current', 'GET', `/api/traces/${encodeURIComponent(turnId)}`, { signal: o?.signal })
       d.must(trace, 'read the trace', [200])
-      const names: string[] = (trace.json.steps as { kind: string; detail: string }[]).filter((s) => s.kind === 'tool').map((s) => s.detail)
+      const steps = (trace.json.steps as TraceStep[]).filter((s) => s.kind === 'tool')
       const costUsd = cents(trace.json.cost.minor as number)
       booked += costUsd
       d.onSpend(costUsd)
 
       const writes = writesFromRows(before, await d.door.rows(), (id) => d.real.get(id) ?? id, personKey)
       const used = new Set<ToolCall>()
-      const toolCalls: ToolCall[] = names.map((n) => {
+      const toolCalls: ToolCall[] = steps.map((s) => {
+        const n = s.detail
         const short = n.replace(/^mcp__inhouse__/, '')
         if (short === 'memory_save' || short === 'memory_update') {
           const w = writes.find((x) => !used.has(x) && x.name === `mcp__inhouse__${short}`)
@@ -312,10 +531,19 @@ function productSession(d: SessionDeps): Session {
           // The call left no row: the product refused it (personal data, a conflict) or it failed. Seen from the rows, not the tool's reply.
           return { name: n, input: {}, result: 'Not saved: no row was written (seen from the brand\'s memory rows, not the tool\'s reply)', isError: true }
         }
-        return { name: n, input: {} }
+        // A seeded fact's product id reads as the seed's id (T04: the case's args name `m_moss`).
+        const c = callOfStep(s)
+        const seeded = seedIds(c.input, (id) => d.real.get(id))
+        return JSON.stringify(seeded) === JSON.stringify(c.input) ? c : { ...c, seedInput: seeded }
       })
       for (const w of writes) if (!used.has(w)) toolCalls.push(w)
-      return { toolCalls, answer, runOk: answer !== '' && !sawError, usage: ZERO, costUsd }
+      // P5 (#337): the turn must have been sent the system prompt v3 naming Shopify as connected. The static v2 fallback, no
+      // version recorded, or a v3 line naming no store fails the run with that reason (never a pass).
+      const promptBad = promptFailure(promptSentOf(trace.json))
+      // Both causes when the turn also failed otherwise (an error part, an end row): neither hides the other.
+      if (promptBad !== null) failure = failure === undefined ? promptBad : `${failure}; ${promptBad}`
+      const runOk = answer !== '' && !sawError && promptBad === null
+      return { toolCalls, answer, runOk, usage: ZERO, costUsd, turnId, askedAs: d.askedAs, ...(runOk ? {} : { failure: failure ?? 'unknown' }) }
     },
     async settledCostUsd() {
       return bookCost()
@@ -327,14 +555,35 @@ function productSession(d: SessionDeps): Session {
   }
 }
 
+/**
+ * The test issuer's private key from its file. Refusals carry a fixed message: a JSON parse error quotes a slice of its
+ * input, and GitHub masks only the whole secret, so a malformed key must never reach the log (ops#14 review N1).
+ */
+export function readIssuerKey(file: string): JWK {
+  let text: string
+  try {
+    text = readFileSync(file, 'utf8')
+  } catch {
+    throw new ProductTargetRefusal(`refusing: the test issuer's private key file (${EVAL_ISSUER_JWK_FILE}) can't be read`)
+  }
+  let key: unknown
+  try {
+    key = JSON.parse(text)
+  } catch {
+    throw new ProductTargetRefusal('refusing: the test issuer\'s private key file is not valid JSON')
+  }
+  if (typeof key !== 'object' || key === null || Array.isArray(key)) throw new ProductTargetRefusal('refusing: the test issuer\'s private key file is not a JWK object')
+  return key as JWK
+}
+
 /** Signs in with a test-issuer token minted from the deployment's private key (a file), the way the e2e specs do. */
-function defaultSignIn(env: Record<string, string | undefined>): (key: PersonKey) => Promise<Record<string, string>> {
-  return async (key) => {
+export function testIssuerSignIn(env: Record<string, string | undefined>): (key: PersonKey, who?: { sub: string; email: string }) => Promise<Record<string, string>> {
+  return async (key, person) => {
     const file = env[EVAL_ISSUER_JWK_FILE]
     const aud = env[EVAL_AUD_VAR]
     if (!file || !aud) throw new ProductTargetRefusal(`refusing: ${EVAL_ISSUER_JWK_FILE} and ${EVAL_AUD_VAR} are not both set, so the eval people can't sign in`)
-    const who = EVAL_PEOPLE[key]
-    const token = await mintPerson({ sub: who.sub, email: who.email, key: JSON.parse(readFileSync(file, 'utf8')) as JWK, aud })
-    return { 'Cf-Access-Jwt-Assertion': token }
+    const who = person ?? EVAL_PEOPLE[key]
+    const token = await mintPerson({ sub: who.sub, email: who.email, key: readIssuerKey(file), aud })
+    return { 'Cf-Access-Jwt-Assertion': token, [TEST_ASSERTION_HEADER]: token }
   }
 }

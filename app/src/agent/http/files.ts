@@ -57,5 +57,6 @@ export function uploadRefusalText(name: string, e: unknown): string {
   if (reason === REASON.tooLarge) return `${name} is over the 20 MB limit.`
   if (reason === REASON.typeNotAllowed) return `${name} isn't a type Inhouse can read. Use a PDF, an image, a spreadsheet, a document or plain text.`
   if (reason === REASON.badName) return `${name} has a name Inhouse can't keep. Rename it and try again.`
+  if (reason === REASON.empty) return `${name} is empty. Pick a file with something in it.`
   return `Couldn't upload ${name}. Try again.`
 }

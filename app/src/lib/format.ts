@@ -114,6 +114,11 @@ export const fmtNearDay = (at: At, now: At, d: Display): string => (Math.abs(day
 export const fmtWhen = (at: At, now: At, d: Display): string => (daysBefore(at, now, d) === 0 ? fmtTime(at, d) : fmtNearDay(at, now, d))
 /** A day said in a sentence: "today", else as `fmtNearDay`. */
 export const fmtDayWord = (at: At, now: At, d: Display): string => (daysBefore(at, now, d) === 0 ? 'today' : fmtNearDay(at, now, d))
+/** The part of the day a greeting names: morning 5:00 to 11:59, afternoon 12:00 to 16:59, evening 17:00 to 4:59. */
+export const partOfDay = (at: At, d: Display): 'morning' | 'afternoon' | 'evening' => {
+  const { hour } = calendarOf(at, d)
+  return hour >= 5 && hour < 12 ? 'morning' : hour >= 12 && hour < 17 ? 'afternoon' : 'evening'
+}
 /** The group a chat sits in: "Today", "Yesterday", "Last 7 days" (two to six days before) or "Earlier". */
 export const fmtDayGroup = (at: At, now: At, d: Display): string => {
   const n = daysBefore(at, now, d)
@@ -166,6 +171,8 @@ export interface MoneyOptions {
   /** False for a typed field's saved value ("$1200.50"): no thousands separator. */
   grouping?: boolean
 }
+/** Whether a problem's cost is worth showing: the server serves an unknown cost as `minor: 0`, which must never read "$0.00". */
+export const hasAmount = (m: Money): boolean => m.minor > 0
 /** An amount: "$1,190", "$0.03", "$250.00". */
 export const fmtMoney = (m: Money, d: Display, o: MoneyOptions = {}): string => {
   const digits = minorDigits(m.currency)

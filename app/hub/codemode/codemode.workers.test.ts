@@ -12,7 +12,7 @@
 import { env, reset } from 'cloudflare:test'
 import { exports } from 'cloudflare:workers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { CallerScope, ConnectGateway, HubResult, ReadGateway, ToolInfo } from '../index/contract'
+import type { AccountSummary, CallerScope, ConnectGateway, HubResult, ReadGateway, ToolInfo } from '../index/contract'
 import { testUpstreams } from '../testing/index'
 import { readyGatewayDeps } from '../signin/signin'
 import type { ToolContext } from '../registry/registry'
@@ -368,6 +368,85 @@ describe('A.7.10 pause and readiness by account (through ReadGateway)', () => {
     expect(after).not.toContain('orders_search')
     expect(await gateways.ReadGateway.callTool(run, 'shopify_script_run', { code: 'return 1' })).toMatchObject({ ok: false, error: { code: 'paused' } })
     expect(seen.graphql).toBe(0)
+  })
+})
+
+// P4's test shop override (index/test-shop.ts) holds for code mode too (P5 main merge). This project is the hub's test
+// build; the deployable build's refusal is index/test-shop.test.ts. Failure modes: a script's shop.graphql reaches
+// SHOPIFY_SHOP while a test shop is set, or an override the hub can't honour still runs the script.
+describe('the test shop override (through ReadGateway)', () => {
+  const OTHER = 'example-mc-codemode-check.myshopify.com'
+  let otherGraphql = 0
+  let otherOther = 0
+  beforeEach(() => {
+    otherGraphql = 0
+    otherOther = 0
+    const base = createShopifyUpstream(dataset)
+    testUpstreams.set(OTHER, async req => {
+      if (new URL(req.url).pathname.endsWith('/graphql.json')) otherGraphql++
+      else otherOther++
+      return base(req)
+    })
+  })
+  afterEach(() => {
+    testUpstreams.delete(OTHER)
+  })
+  const code = `const r = await shop.graphql(${PRODUCTS_PAGE}, { first: 1 }); return r.data.products.nodes.length`
+
+  it('a registered test shop is what the script reads; SHOPIFY_SHOP is never reached', async () => {
+    const r = (await gateways.ReadGateway.callTool(run, 'shopify_script_run', { code }, { testShopHost: OTHER })) as HubResult<{ data: { result?: unknown; error?: string } }>
+    expect(r).toMatchObject({ ok: true, value: { data: { result: 1 } } })
+    expect(otherGraphql).toBe(1)
+    expect(seen.graphql).toBe(0)
+    // Without the option the same script reads the configured shop.
+    expect(await gateways.ReadGateway.callTool(run, 'shopify_script_run', { code })).toMatchObject({ ok: true, value: { data: { result: 1 } } })
+    expect(seen.graphql).toBe(1)
+    expect(otherGraphql).toBe(1)
+  })
+
+  // #337 review (Sonnet L3): a test-shop read asks the test shop's own SignIn object whether it's ready, never the real
+  // account's, so pausing the real account neither blocks nor changes a test-shop read (and the real shop stays unread).
+  it('with the real account paused, a registered test shop still reads; without the option the call is paused', async () => {
+    expect(await gateways.ConnectGateway.setPaused(server, 'shopify:store', true)).toMatchObject({ ok: true })
+    expect(await gateways.ReadGateway.callTool(run, 'shopify_script_run', { code }, { testShopHost: OTHER })).toMatchObject({ ok: true, value: { data: { result: 1 } } })
+    expect(otherGraphql).toBe(1)
+    expect(await gateways.ReadGateway.callTool(run, 'shopify_script_run', { code })).toMatchObject({ ok: false, error: { code: 'paused' } })
+    expect(seen.graphql).toBe(0)
+  })
+
+  // #337 round 2 (Opus H1): the prompt's account read resolves through the test shop like the reads do, so the turn's
+  // "Connected apps" line names Shopify when the test shop will serve it, whatever the real account's object says (empty
+  // here, or paused). The test shop's object is granted first (its token endpoint only, no GraphQL read).
+  it('listAccounts with a registered test shop reports Shopify from the test shop: connected, even with the real account empty or paused', async () => {
+    const shopify = (rows: AccountSummary[]) => rows.find(r => r.accountId === 'shopify:store')!
+    const plain = (await gateways.ConnectGateway.listAccounts(server)) as HubResult<AccountSummary[]>
+    if (!plain.ok) throw new Error(plain.error.code)
+    expect(shopify(plain.value).status.state).toBe('empty')
+    for (const pause of [false, true]) {
+      if (pause) expect(await gateways.ConnectGateway.setPaused(server, 'shopify:store', true)).toMatchObject({ ok: true })
+      const r = (await gateways.ConnectGateway.listAccounts(server, { testShopHost: OTHER })) as HubResult<AccountSummary[]>
+      if (!r.ok) throw new Error(r.error.code)
+      expect(shopify(r.value), `real paused ${pause}`).toMatchObject({ configured: true, status: { state: 'active', paused: false, needsReconnect: false } })
+    }
+    expect(otherGraphql).toBe(0)
+    expect(seen.graphql).toBe(0)
+    // An override the hub can't honour is refused, never answered from the real account.
+    expect(await gateways.ConnectGateway.listAccounts(server, { testShopHost: 'example-mc-not-registered.myshopify.com' })).toMatchObject({ ok: false, error: { code: 'invalid_args' } })
+  })
+
+  // #337 round 3 (L5): the caller's scope is checked before the test shop's object is granted: a run scope (the runner's)
+  // is refused and reaches no upstream, not even the token endpoint.
+  it('listAccounts with a test shop refuses a run scope before any grant', async () => {
+    expect(await gateways.ConnectGateway.listAccounts(run, { testShopHost: OTHER })).toMatchObject({ ok: false, error: { code: 'invalid_args' } })
+    expect(otherOther + otherGraphql).toBe(0)
+  })
+
+  it('an unregistered or malformed test shop is invalid_args before the script runs, and no shop is read', async () => {
+    for (const options of [{ testShopHost: 'example-mc-not-registered.myshopify.com' }, { testShopHost: 'evil.example' }, 'x']) {
+      expect(await gateways.ReadGateway.callTool(run, 'shopify_script_run', { code }, options as never), JSON.stringify(options)).toMatchObject({ ok: false, error: { code: 'invalid_args' } })
+    }
+    expect(seen.graphql + otherGraphql).toBe(0)
+    expect(lines.some(l => l.includes('hub_codemode'))).toBe(false)
   })
 })
 

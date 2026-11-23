@@ -214,11 +214,92 @@ function memoryRecall(id: string, query: string, fact: string): Scenario {
   }
 }
 
+/**
+ * The fact the `memory-save-stem` scenario saves (a person's own, active at once). A made-up word, so on any D1, seeded or
+ * not, only a form of it matches: `memory-recall-stem` searches "zorblat", which finds "Zorblats" only by its stem.
+ */
+export const MEMORY_STEM_TEXT = 'Zorblats are accepted within 45 days.'
+/** What `memory-recall-stem` answers: how many facts the search returned ("?" when unreadable) and whether the fact was among them. */
+export const memoryRecallCount = (hits: number | '?', match: boolean): string => `hits=${hits} match=${match ? 'yes' : 'no'}`
+/**
+ * memory_search's count, from its text ("Nothing saved matches" is 0, "1 saved fact matches" or "N saved facts match" is
+ * N) or, when the CLI hands over only its structured answer (`{"facts":[...]}`), from the facts' `memory_id` keys.
+ */
+const hitsOf = (text: string): number | '?' => {
+  if (text.includes('Nothing saved matches')) return 0
+  const m = /\b(\d+) saved facts? match/.exec(text)
+  if (m) return Number(m[1])
+  return text.includes('"facts"') ? (text.match(/"memory_id"/g) ?? []).length : '?'
+}
+/**
+ * Searches memory for `query` and answers memoryRecallCount for what came back, so a failing check says what the search saw.
+ * One branch per answer (memory_search returns at most 20 facts), so the scenario still says only fixed text.
+ */
+function memoryRecallCounted(id: string, query: string, fact: string): Scenario {
+  const ask = mainLoop('mcp__inhouse__memory_search')
+  const reply = (text: string): ScriptedTurn => ({ content: [{ type: 'text', text }], expect: both(ask, resultOf(id)) })
+  const branches: Record<string, ScriptedBranch> = {}
+  for (const hits of [...Array.from({ length: 21 }, (_, n) => n), '?' as const]) {
+    for (const match of [true, false]) {
+      branches[`hits-${hits}-${match}`] = {
+        match: (r) => {
+          const block = resultBlock(r, id)
+          return block !== undefined && hitsOf(resultText(block)) === hits && resultText(block).includes(fact) === match
+        },
+        turns: [null, reply(memoryRecallCount(hits, match))],
+      }
+    }
+  }
+  return { turns: [{ content: [{ type: 'tool_use', id, name: 'mcp__inhouse__memory_search', input: { query } }], expect: ask }], branches }
+}
+
 /** How long the `slow-bash` scenario's one Bash call sleeps: long enough to act on the live turn, short enough to end on its own. */
 export const SLOW_BASH_SECONDS = 20
 
 /** The fact the `memory-save` scenario saves (a person's own, active at once). */
 export const MEMORY_SAVE_TEXT = 'Likes the weekly stock report as a table.'
+
+/** What the `routine-create` scenario sends and says (the refusal text is `server/mcp/tools/routines/index.ts`'s `STAGE_TEXT`, written out here so a change to it fails loudly). */
+export const ROUTINE_STAGE_TEXT = 'Routines you set up need the Act stage. Ask an admin to move to Act.'
+export const ROUTINE_CREATE_INPUT = { name: 'Stock check', instruction: 'scenario:hello Check stock and say what is low.', days: 'daily', time: '06:00' }
+export const ROUTINE_REFUSED_ANSWER = 'The routine was refused.'
+export const ROUTINE_CREATED_ANSWER = 'The routine was created.'
+/** The `hub-write-refused` scenario's document and answers. */
+export const HUB_MUTATION_DOCUMENT = 'mutation { orderCancel(orderId: "1") { job { id } } }'
+export const HUB_WRITE_REFUSED_ANSWER = 'The hub refused the write: write_refused.'
+export const HUB_WRITE_NOT_REFUSED_ANSWER = 'The hub did not refuse the write.'
+/** The `morning-check` scenario's result: one item, every field the schema asks for. */
+export const MORNING_CHECK_ANSWER = {
+  coverage: 'complete',
+  gaps: [],
+  items: [
+    {
+      key: 'late-orders', sev: '#b97a14', area: 'Orders', title: 'Orders waiting to ship', sub: 'Unfulfilled for more than 3 days',
+      cost: { minor: 13681, currency: 'USD' }, costNote: 'Value of the orders waiting', next: 'Ship the oldest orders today',
+      found: [['Orders', '1']], sources: [{ n: '#1001', text: 'Lite Trekking Poles, unfulfilled' }], since: null,
+    },
+  ],
+}
+
+/** The `late-orders` scenario's answer (the P4 ship spec's S3): a table of at most LATE_ORDERS_BOUND rows, then the sources it read. */
+export const LATE_ORDERS_BOUND = 3
+export const LATE_ORDERS_ORDERS = ['#1001', '#1002', '#1003']
+export const LATE_ORDERS_SOURCES = 'Sources: Shopify orders, the 3 oldest unfulfilled.'
+export const LATE_ORDERS_TEXT = [
+  'These orders are late (the 3 oldest, not all of them):',
+  '',
+  '| Order | Waiting | Why |',
+  '| --- | --- | --- |',
+  ...LATE_ORDERS_ORDERS.map((o, i) => `| ${o} | ${i + 4} days | Unfulfilled |`),
+  '',
+  LATE_ORDERS_SOURCES,
+].join('\n')
+
+/**
+ * The `morning-check` scenario's result when its read failed (the case's shop answers errors, as the graded set's
+ * `outage-all` does): nothing read, so no items, and every area a gap (shared/contract/today.ts GAP_AREAS).
+ */
+export const MORNING_CHECK_OUTAGE_ANSWER = { coverage: 'incomplete', gaps: ['orders', 'products', 'inventory', 'refunds', 'returns'], items: [] }
 
 /**
  * The code mode script the `connectors-codemode` scenario runs: a literal copy of the measured "lowest stock" reference script
@@ -276,6 +357,17 @@ export const SCENARIOS: Record<string, Scenario> = {
 
   /** The same for the team's Friday restock fact: it waits for an admin, so a search can't find it and the answer says nothing is saved. */
   'memory-recall-team': memoryRecall('toolu_scripted_recall_team', 'restock Fridays', MEMORY_SAVE_TEAM_TEXT),
+
+  /** Saves the made-up "Zorblats" fact for the person (active at once), for the remote stemming check (e2e/api/memory-search.spec.ts). */
+  'memory-save-stem': {
+    turns: [
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_memory_stem', name: 'mcp__inhouse__memory_save', input: { scope: 'person', text: MEMORY_STEM_TEXT } }], expect: mainLoop('mcp__inhouse__memory_save') },
+      { content: [{ type: 'text', text: 'Saved.' }], expect: both(mainLoop('mcp__inhouse__memory_save'), resultOf('toolu_scripted_memory_stem')) },
+    ],
+  },
+
+  /** Searches memory for "zorblat" (the saved "Zorblats" only by its stem) and says how many facts came back and whether it was one. */
+  'memory-recall-stem': memoryRecallCounted('toolu_scripted_recall_stem', 'zorblat', MEMORY_STEM_TEXT),
 
   /**
    * The connector tools through the runner (P5 W5's canary spec): a Slack search, a notice to a listed channel and a Shopify read,
@@ -413,4 +505,98 @@ export const SCENARIOS: Record<string, Scenario> = {
       { content: [{ type: 'text', text: 'Noted, thanks.' }], expect: both(mainLoop('mcp__inhouse__question_ask'), resultOf('toolu_scripted_ask')) },
     ],
   },
+
+  // ---------- P4 W6 (the Watch API specs, e2e/api/{routines,hub}.spec.ts). Scenarios only. ----------
+
+  /**
+   * One `routine_create` call, then an answer that says which way it went (picked by the result's text, so the scenario never
+   * says what it wasn't told): at Watch the call is refused with STAGE_TEXT, at Act it creates the routine.
+   */
+  'routine-create': scriptedBranchesOnResult(
+    { id: 'toolu_scripted_routine_create', name: 'mcp__inhouse__routine_create', input: ROUTINE_CREATE_INPUT },
+    ROUTINE_STAGE_TEXT,
+    ROUTINE_REFUSED_ANSWER,
+    ROUTINE_CREATED_ANSWER,
+  ),
+
+  /**
+   * One read-only hub tool call with a GraphQL mutation document (`fixture_query`): the hub answers `write_refused` before any
+   * upstream call, and the answer says whether the result held that code. The hub tools aren't listed up front (tool search),
+   * so the turn checks only the main loop, not an offered tool.
+   */
+  'hub-write-refused': scriptedBranchesOnResult(
+    { id: 'toolu_scripted_hub_write', name: 'mcp__apps__fixture_query', input: { document: HUB_MUTATION_DOCUMENT } },
+    'write_refused',
+    HUB_WRITE_REFUSED_ANSWER,
+    HUB_WRITE_NOT_REFUSED_ANSWER,
+  ),
+
+  /** One bounded read of the orders through the hub, then a table of the late ones with its sources (the P4 ship spec's S3). */
+  'late-orders': {
+    turns: [
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_late_read', name: 'mcp__apps__orders_search', input: { first: LATE_ORDERS_BOUND } }], expect: mainLoop() },
+      { content: [{ type: 'text', text: LATE_ORDERS_TEXT }], expect: both(mainLoop(), resultIs('toolu_scripted_late_read', false)) },
+    ],
+  },
+
+  /** Prints the runner's environment into a file the spec reads back through the Library (`outputs/env.txt`), then answers. */
+  'env-to-file': {
+    turns: [
+      {
+        content: [
+          { type: 'text', text: 'Writing the environment.' },
+          { type: 'tool_use', id: 'toolu_scripted_env', name: 'Bash', input: { command: 'env > outputs/env.txt', description: 'Write the environment' } },
+        ],
+        expect: mainLoop('Bash'),
+      },
+      { content: [{ type: 'text', text: 'Saved outputs/env.txt.' }], expect: both(mainLoop('Bash'), resultOf('toolu_scripted_env')) },
+    ],
+  },
+
+  /**
+   * The morning check's run on the recorded upstream: one read through the hub (orders), then the structured result with one
+   * item (valid against `MorningCheckResultSchema`), so Today fills. The routine's prompt carries no `scenario:` marker, so
+   * the orchestrator's test build names this scenario for the system routine (p4-w6 PR body, "Needs from the orchestrator").
+   * A read the hub answered `upstream_unavailable` (the morning-check set's remote proof points the hub at the outage-all
+   * shop through the test shop override, e2e/api/morning-check-remote.spec.ts) takes the `read-failed` branch: the outage
+   * result. Any other error (`internal`, a refused override's `invalid_args`) matches no branch and misses, so the proof
+   * can't pass on a failure that isn't the outage shop's.
+   */
+  'morning-check': {
+    turns: [
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_mc_read', name: 'mcp__apps__orders_search', input: { first: 5 } }], expect: mainLoop() },
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_mc_result', name: 'StructuredOutput', input: MORNING_CHECK_ANSWER }], expect: both(mainLoop(), resultIs('toolu_scripted_mc_read', false)) },
+      { content: [{ type: 'text', text: 'Done.' }], expect: both(mainLoop('StructuredOutput'), resultOf('toolu_scripted_mc_result')) },
+    ],
+    branches: {
+      'read-failed': {
+        match: r => {
+          const block = resultBlock(r, 'toolu_scripted_mc_read')
+          return block?.is_error === true && resultText(block).includes('upstream_unavailable')
+        },
+        turns: [null, { content: [{ type: 'tool_use', id: 'toolu_scripted_mc_result', name: 'StructuredOutput', input: MORNING_CHECK_OUTAGE_ANSWER }], expect: both(mainLoop(), resultIs('toolu_scripted_mc_read', true)) }],
+      },
+    },
+  },
+}
+
+/**
+ * One tool call, then one of two answers picked by whether the call's result text holds `needle`: a branch each, the way
+ * `memoryRecall` does it, so the scenario never reports something the result didn't say.
+ */
+function scriptedBranchesOnResult(call: { id: string; name: string; input: Record<string, unknown> }, needle: string, hit: string, miss: string): Scenario {
+  const loop = mainLoop()
+  const said = (yes: boolean) => (r: MessagesRequest) => {
+    const block = resultBlock(r, call.id)
+    return block !== undefined && resultText(block).includes(needle) === yes
+  }
+  // The answer that says "refused" also needs the result flagged as an error, and the other needs it not to be one.
+  const reply = (text: string, error: boolean): ScriptedTurn => ({ content: [{ type: 'text', text }], expect: both(loop, resultIs(call.id, error)) })
+  return {
+    turns: [{ content: [{ type: 'tool_use', id: call.id, name: call.name, input: call.input }], expect: loop }],
+    branches: {
+      hit: { match: said(true), turns: [null, reply(hit, true)] },
+      miss: { match: said(false), turns: [null, reply(miss, false)] },
+    },
+  }
 }

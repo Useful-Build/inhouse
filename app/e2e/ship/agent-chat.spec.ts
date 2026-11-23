@@ -47,6 +47,11 @@ const MEMORY_TEAM = 'We restock on Fridays.'
 
 /** Waits for menus and windows to finish their finite animations, then attaches a screenshot named by the item. */
 async function shot(page: Page, name: string) {
+  // An answer's new words fade in on spans (`animate-word-in`, Markdown.tsx) that are swapped for plain text when the
+  // reveal ends (reveal.ts), and a span swapped or re-mounted mid-fade cancels its animation, whose `finished` then rejects
+  // with "AbortError: The user aborted a request" (what S8's "resumed and answered" shot hit). So the shot waits for the
+  // reveal to end first: with no word spans left, every animation it waits on below runs to its end.
+  await expect(page.locator('.animate-word-in')).toHaveCount(0)
   await page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
   await test.info().attach(name, { body: await page.screenshot(), contentType: 'image/png' })
 }
@@ -106,7 +111,14 @@ async function closeDrawer(page: Page) {
 }
 
 async function goTo(page: Page, name: string) {
-  await (await sidebar(page)).getByRole('button', { name, exact: true }).click()
+  const side = await sidebar(page)
+  // Usage lives in the account menu, not the sidebar's nav (#226).
+  if (name === 'Usage') {
+    await side.getByRole('button', { name: /account and settings/i }).click()
+    await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: 'Usage', exact: true }).click()
+    return
+  }
+  await side.getByRole('button', { name, exact: true }).click()
 }
 
 /** Chooses the Fast model (Sonnet): the composer's default is Opus, and the scripted model answers only for Sonnet. */
@@ -130,7 +142,7 @@ async function ask(page: Page, text: string, queue = false) {
 /** A person starts a chat from Today with a question. */
 async function askFromToday(page: Page, text: string) {
   await goTo(page, 'Today')
-  await expect(page.getByRole('textbox', { name: 'Ask your Inhouse agent' })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Ask Inhouse' })).toBeVisible()
   await ask(page, text)
 }
 
@@ -477,7 +489,7 @@ test('S9: At the cap a new question gets the cap notice, and Usage shows the cap
     await expect(main(member)).toContainText('$0.01')
     // At the cap (the server reads it so once less than a start hold is left): Usage says so in the words of usageSummary.
     await expect(main(member)).toContainText(/Cap reached with \d+ days of the month left/)
-    await expect(main(member)).toContainText('Cap reached today. Routines and jobs are paused until an admin raises it.')
+    await expect(main(member)).toContainText('Cap reached today. Chats, routines and jobs are paused until next month or until an admin raises the cap.')
     await shot(member, 'S9-usage-shows-the-cap')
   } finally {
     await setCap((before?.value as string | null | undefined) ?? null)

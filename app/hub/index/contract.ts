@@ -60,10 +60,19 @@ export type AccountStatus = {
 /** One row per account id (two modules naming one account give one row). */
 export type AccountSummary = { accountId: string; connector: string; configured: boolean; status: AccountStatus }
 
+/**
+ * A read call's options. `testShopHost` is the test and eval builds' shop override (the morning-check set, P4): the Shopify
+ * host (`<handle>.myshopify.com`) this one call reads instead of the hub's SHOPIFY_SHOP. Only the product Worker's test and
+ * eval builds ever send it (server/egress/test-shop.ts); a hub honours it only when built for tests (`__INHOUSE_HUB_TEST__`
+ * and INHOUSE_TEST_BUILD=1) and only for a host its test seam registers (hub/testing/index.ts). Anything else is refused
+ * (`invalid_args`), never read from SHOPIFY_SHOP instead.
+ */
+export type CallToolOptions = { testShopHost?: string }
+
 /** Bound by the runner's egress route (H1) and by product server code that reads. Lists and runs read tools only. */
 export interface ReadGateway {
   listTools(scope: CallerScope): Promise<HubResult<ToolInfo[]>>
-  callTool(scope: CallerScope, name: string, args: unknown): Promise<HubResult<{ data: unknown }>>
+  callTool(scope: CallerScope, name: string, args: unknown, options?: CallToolOptions): Promise<HubResult<{ data: unknown }>>
 }
 
 /** Product Worker server code only. H1's egress route never holds this binding. */
@@ -83,7 +92,11 @@ export interface ConnectGateway {
   failConnect(scope: CallerScope, req: { state: string; memberId: string; error: string }): Promise<HubResult<{ accountId: string | null }>>
   disconnect(scope: CallerScope, accountId: string): Promise<HubResult<{ revoked: boolean }>>
   setPaused(scope: CallerScope, accountId: string, paused: boolean): Promise<HubResult<{ paused: boolean }>>
-  listAccounts(scope: CallerScope): Promise<HubResult<AccountSummary[]>>
+  /**
+   * `options.testShopHost` (P5 #337, test and eval builds only, as ReadGateway.callTool's): a Shopify account's row comes
+   * from that test shop's own SignIn object (granted first), the one the turn's reads will use. Refused elsewhere.
+   */
+  listAccounts(scope: CallerScope, options?: CallToolOptions): Promise<HubResult<AccountSummary[]>>
   /**
    * TEST BUILD ONLY, optional (W5's test-fakes hook, the product's `POST /api/ops/test-fakes`): reads and flips the
    * fake upstreams in the hub's test bundle (hub/testing/fakes.ts). A `server` scope only. The deployable hub answers

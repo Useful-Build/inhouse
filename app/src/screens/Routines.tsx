@@ -1,21 +1,23 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { agent } from '../agent'
 import { traceOf, useTraces } from './chat/traces'
 import { keepUnitsTogether } from '../agent/clock'
 import type { RoutineDef } from '../agent'
-import { flags, lastRunLine, routineRuns, STAGE_TAGS, whenOf } from '../state/derive'
+import type { RoutineHistoryRun, RoutineRunOutcome } from '../agent/types'
+import { flags, lastRunLine, routineRunLines, STAGE_TAGS, userName, whenOf } from '../state/derive'
 import type { Instant } from '../agent/types'
-import { fmtWeekdayAt } from '../lib/format'
+import { fmtNextRun, fmtWeekdayAt } from '../lib/format'
 import { display, nowOf } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import { Badge } from '@/components/ui/badge'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { cn } from '@/lib/utils'
-import { Button, DetailList, EmptyState, Icon, IconButton, MenuItem, Page, PageHeader, StageTag, Switch } from '../ui'
+import { Button, EmptyState, Icon, IconButton, MenuItem, Page, PageHeader, StageTag, Switch } from '../ui'
 import { Confirm, TAP } from '../ui/fields'
 import { NO_MOTION } from '../ui/motion'
 import { claimTrigger, rememberTrigger, restoreFocus, keepForToast } from '../ui/dialogs'
+import { routineSwitch } from './routine-switch'
 
 /** A routine as the page lists it: its id (the agent's), whether this stage has it, and whether it is switched on. */
 interface Item { r: RoutineDef; id: string; locked: boolean; on: boolean; key: string }
@@ -30,7 +32,7 @@ export function Routines() {
   const [deleting, setDeleting] = useState<Item | null>(null)
   const all: RoutineDef[] = [
     ...data.routines,
-    ...st.routinesExtra.map(r => ({ need: 1 as const, rev: 1, ...r, what: `Created in a chat: "${r.what}"` })),
+    ...st.routinesExtra.map(r => ({ need: 1 as const, rev: 1, by: userName(ctx), ...r, what: `Created in a chat: "${r.what}"` })),
   ]
   const list: Item[] = all.filter(r => !st.routinesDeleted[r.id] && !(r.inChat && S < r.need)).map(r => {
     const locked = S < r.need
@@ -41,12 +43,11 @@ export function Routines() {
 
   const actions = {
     run: (it: Item) => {
-      // The agent has already sent the person a notice if the run failed; this only keeps the rejection from going unhandled.
-      agent.runRoutine(it.id).catch(() => {})
-      showToast(`${it.r.name} is running now`, { icon: 'play_arrow', ms: 4000 })
+      // Shown once the run is taken; a refused run (one still going, the stage) has its own notice from the agent instead.
+      agent.runRoutine(it.id).then(() => showToast(`${it.r.name} is running now`, { icon: 'play_arrow', ms: 4000 }), () => {})
     },
     pause: (it: Item) => {
-      agent.setToggle(it.key, !it.on)
+      agent.setToggle(it.key, routineSwitch(it, paused).turnsTo)
       showToast(it.on ? `Paused ${it.r.name}` : `${it.r.name} is back on its schedule`, { icon: it.on ? 'pause' : 'play_arrow', ms: 4000 })
     },
     edit: (it: Item) => { setOpenId(null); newChat(`Change the "${it.r.name}" routine: `) },
@@ -84,7 +85,7 @@ export function Routines() {
       )}
       <ul className="mt-6 flex list-none flex-col gap-2.5 p-0">
         {list.map(it => {
-          const { r, locked, on } = it
+          const { r, locked } = it
           const mode = modeOf(r, S, locked)
           const next = !locked && paused ? 'Paused' : fmtWeekdayAt(r.next, display())
           return (
@@ -108,7 +109,9 @@ export function Routines() {
                 {!phone && <div className="text-xs text-muted-foreground">Next run<span className={`block text-sm font-medium ${locked ? 'text-foreground-3' : 'text-foreground'}`}>{next}</span></div>}
                 <div className="flex items-center gap-1.5">
                   {!locked && <RoutineMenu item={it} phone={phone} paused={paused} actions={actions} />}
-                  <Switch on={on && !paused} label={`${r.name} on or off`} onChange={locked ? undefined : () => agent.setToggle(it.key, !on)} />
+                  {/* The server says who may switch it (`canManage`: its creator, an Admin, the Inhouse team); absent means yes. */}
+                  {/* The routine's own setting, paused or not: the pause shows as "Paused" beside it. */}
+                  <Switch on={routineSwitch(it, paused).on} label={`${r.name} on or off`} onChange={locked || !manages(it) ? undefined : () => agent.setToggle(it.key, routineSwitch(it, paused).turnsTo)} />
                 </div>
               </div>
               {/* A phone has no room beside the switch: the last run and the next run take the row's full width under it. */}
@@ -143,10 +146,13 @@ const modeOf = (r: RoutineDef, S: number, locked: boolean) =>
 
 type Actions = Record<'run' | 'pause' | 'edit' | 'remove', (it: Item) => void>
 
+/** Whether this person may switch or delete it: the server's `canManage` (its creator, an Admin, the Inhouse team); absent means yes. */
+const manages = (it: Item) => it.r.canManage !== false
+
 function RoutineMenu({ item, phone, paused, actions }: { item: Item; phone: boolean; paused: boolean; actions: Actions }) {
   const items: [string, string, () => void, boolean?][] = [
     ['play_arrow', 'Run now', () => actions.run(item), paused],
-    [item.on ? 'pause' : 'play_circle', item.on ? 'Pause' : 'Resume', () => actions.pause(item)],
+    [item.on ? 'pause' : 'play_circle', item.on ? 'Pause' : 'Resume', () => actions.pause(item), !manages(item)],
     ['edit', 'Edit in a chat', () => actions.edit(item)],
   ]
   return (
@@ -161,7 +167,7 @@ function RoutineMenu({ item, phone, paused, actions }: { item: Item; phone: bool
           </MenuItem>
         ))}
         <DropdownMenuSeparator className="mx-0 my-1" />
-        <MenuItem variant="destructive" onSelect={() => actions.remove(item)}>
+        <MenuItem variant="destructive" disabled={!manages(item)} onSelect={() => actions.remove(item)}>
           <Icon name="delete" size={18} />Delete
         </MenuItem>
       </DropdownMenuContent>
@@ -169,17 +175,76 @@ function RoutineMenu({ item, phone, paused, actions }: { item: Item; phone: bool
   )
 }
 
+/** How it works, in plain words: one line under the schedule. Empty for a routine this stage doesn't have yet. */
+const howOf = (r: RoutineDef, S: number, locked: boolean): [icon: string, text: string] | null =>
+  locked ? null
+    : r.need === 0 ? ['visibility', S === 0 ? 'Read only at Watch. It never changes a tool.' : 'It reads your tools and never changes them.']
+      : S === 2 && !r.money ? ['bolt', 'It acts by itself, within your run limits.']
+        : ['task_alt', 'Anything it drafts waits for your approval.']
+
+/** A run's outcome as a sentence: "Morning check: read 5 tools, found 3 things" reads "Read 5 tools, found 3 things" under its name. */
+const outcomeOf = (text: string, name: string) => {
+  const t = text.toLowerCase().startsWith(`${name.toLowerCase()}:`) ? text.slice(name.length + 1).trim() : text
+  return t.charAt(0).toUpperCase() + t.slice(1)
+}
+
+/**
+ * The open routine's last runs (route 86): undefined while they load, 'failed' when they couldn't be read. Asked again
+ * after each Run now (`runNows`), on Try again (`attempt`) and when the stage changes.
+ */
+const RUN_RECHECK_MS = 15_000
+/** At most 10 minutes of rechecks per open panel. */
+const RUN_RECHECK_MAX = 40
+
+function useRunHistory(id: string, runNows: number, attempt: number, stage: number, recheck: boolean): readonly RoutineHistoryRun[] | 'failed' | undefined {
+  const [got, setGot] = useState<{ id: string; runs: readonly RoutineHistoryRun[] | 'failed' }>()
+  // While a run is still going, ask again every 15 s so the open panel sees it end: never for the Inhouse team (each
+  // read under a grant writes an audit line), never while the tab is hidden, and for 10 minutes at most.
+  const [tick, setTick] = useState(0)
+  const running = got?.id === id && got.runs !== 'failed' && got.runs.some(x => x.outcome === 'running')
+  useEffect(() => {
+    if (!running || !recheck || tick >= RUN_RECHECK_MAX) return
+    const fire = () => {
+      if (document.hidden) document.addEventListener('visibilitychange', fire, { once: true })
+      else setTick(n => n + 1)
+    }
+    const t = setTimeout(fire, RUN_RECHECK_MS)
+    return () => { clearTimeout(t); document.removeEventListener('visibilitychange', fire) }
+  }, [running, recheck, tick, got])
+  useEffect(() => {
+    let live = true
+    agent.routineRunHistory(id).then(h => { if (live) setGot({ id, runs: h.runs }) }, (e: unknown) => {
+      console.warn('Inhouse: could not read the last runs.', e)
+      // A failed recheck keeps the list on screen; only a first read that fails shows the error.
+      if (live) setGot(prev => (prev?.id === id && prev.runs !== 'failed' ? prev : { id, runs: 'failed' }))
+    })
+    return () => { live = false }
+  }, [id, runNows, attempt, stage, tick])
+  return got?.id === id ? got.runs : undefined
+}
+
+const RUN_ICON: Record<RoutineRunOutcome, [string, string]> = {
+  done: ['check_circle', 'text-success'],
+  failed: ['error', 'text-warning-text'],
+  skipped: ['do_not_disturb_on', 'text-foreground-3'],
+  running: ['progress_activity', 'text-brand'],
+}
+
 function RoutineSheet({ item, phone, paused, actions, onClose }: { item: Item; phone: boolean; paused: boolean; actions: Actions; onClose: () => void }) {
   useTraces()
   const ctx = useCtx()
-  const { openTrace, go } = useUi.getState()
+  const { openTrace } = useUi.getState()
   const { r, locked, on } = item
-  const runs = routineRuns(ctx, r)
+  const [attempt, setAttempt] = useState(0)
+  const signedIn = useSyncExternalStore(agent.subscribe, agent.me)
+  const history = useRunHistory(r.id, ctx.agent.routineRuns.filter(x => x.routine === r.id).length, attempt, ctx.S, signedIn?.role !== 'inhouse')
+  const how = howOf(r, ctx.S, locked)
+  const me = userName(ctx)
   // Closing gives focus back to the row that opened the sheet, as Window does.
   const before = useRef<HTMLElement | null>(null)
   // It opens with focus on the sheet itself, so Close shows no focus ring or tooltip until someone tabs to it.
   const panel = useRef<HTMLDivElement>(null)
-  const status = locked ? `Starts in ${STAGE_TAGS[r.need]}` : paused ? 'Paused with your Inhouse agent' : on ? 'On' : 'Paused'
+  const next = locked ? `Starts in ${STAGE_TAGS[r.need]}` : paused ? 'Paused with your Inhouse agent' : on ? fmtNextRun(r.next, display()) : "Off. It won't run until you turn it on."
   return (
     <Sheet open onOpenChange={o => { if (!o) onClose() }}>
       <SheetContent ref={panel} side={phone ? 'bottom' : 'right'} showCloseButton={false} aria-describedby={undefined}
@@ -193,46 +258,80 @@ function RoutineSheet({ item, phone, paused, actions, onClose }: { item: Item; p
         <div className="flex items-center gap-2 pt-3.5 pr-3.5 pl-6 text-xs text-muted-foreground">
           <Icon name="event_repeat" size={16} />Routine
           <div className="flex-1" />
+          {!locked && (
+            <DropdownMenu modal={false}>
+              <DropdownMenuTrigger asChild>
+                <IconButton icon="more_horiz" label={`More for ${r.name}`} className={cn(phone && TAP)} />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" collisionPadding={16} aria-label="More routine actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
+                <MenuItem variant="destructive" disabled={!manages(item)} onSelect={() => actions.remove(item)}>
+                  <Icon name="delete" size={18} />Delete
+                </MenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           <IconButton icon="close" label="Close" onClick={onClose} className={cn(phone && TAP)} />
         </div>
         <div className="min-h-0 flex-1 overflow-auto px-6 pt-3 pb-6">
           <div className="flex flex-wrap items-center gap-2">
-            <SheetTitle className="text-2xl leading-heading font-medium tracking-heading">{r.name}</SheetTitle>
+            <SheetTitle className="text-2xl leading-heading font-semibold tracking-heading">{r.name}</SheetTitle>
             {locked && <StageTag tag={STAGE_TAGS[r.need]} />}
           </div>
-          <p className="mt-2 text-base text-foreground-3">{r.what}</p>
+          <p className="mt-1.5 text-base leading-note text-pretty text-foreground-3">{r.what}</p>
+
+          <div className="mt-5.5 rounded-2xl border border-border bg-card px-5 py-4.5">
+            <div className="flex items-center gap-3.5">
+              <div className="min-w-0 flex-1">
+                <div className={cn('text-lg font-semibold tracking-card', locked && 'text-foreground-3')}>{whenOf(r)}</div>
+                <div className="mt-1 text-sm text-muted-foreground">{next}</div>
+              </div>
+              {/* The same switch as the routine's row (the `r:<id>` toggle); the server says who may switch it (`canManage`). */}
+              {!locked && <Switch on={routineSwitch(item, paused).on} label={`${r.name} on or off`} onChange={manages(item) ? () => actions.pause(item) : undefined} />}
+            </div>
+            {how && (
+              <div className="mt-3.5 flex items-center gap-2.25 border-t border-divider pt-3.5 text-sm text-foreground-3">
+                <Icon name={how[0]} size={16} weight={400} className="flex-none text-brand" />{how[1]}
+              </div>
+            )}
+          </div>
+
           {!locked && (
-            <div className="mt-5 flex flex-wrap gap-2">
+            <div className="mt-3.5 flex flex-wrap gap-2">
               <Button size="lg" disabled={paused} onClick={() => actions.run(item)}><Icon name="play_arrow" size={18} />Run now</Button>
-              <Button variant="outline" size="lg" onClick={() => actions.pause(item)}>{on ? 'Pause' : 'Resume'}</Button>
               <Button variant="outline" size="lg" onClick={() => actions.edit(item)}><Icon name="edit" size={17} />Edit in a chat</Button>
-              <Button variant="outline" size="lg" onClick={() => actions.remove(item)}><Icon name="delete" size={17} />Delete</Button>
             </div>
           )}
-          <h3 className="mono-label mt-6">Schedule</h3>
-          <DetailList variant="ruled" className="mt-1 text-sm" items={([
-            ['When', whenOf(r)],
-            ['Next run', locked ? '' : paused ? 'Paused' : fmtWeekdayAt(r.next, display())],
-            ['Status', status],
-            ['How it works', modeOf(r, ctx.S, locked)],
-          ] as [string, string][]).filter(([, v]) => v)} />
-          <h3 className="mono-label mt-6">Last runs</h3>
-          {runs.length === 0 ? <p className="mt-2 text-sm text-foreground-3">Not run yet.</p> : (
-            <ul aria-label="Last runs" className="m-0 mt-1 list-none p-0">
-              {runs.map(l => {
+
+          <h3 className="mt-7.5 mb-1 text-sm font-semibold">Last runs</h3>
+          {history === 'failed' ? (
+            <div role="status" className="mt-1 flex flex-wrap items-center gap-2 text-sm text-foreground-3">
+              {"Couldn't load the last runs."}
+              <Button variant="ghost" size="sm" onClick={() => setAttempt(n => n + 1)}>Try again</Button>
+            </div>
+          ) : history === undefined ? null : history.length === 0 ? <p className="mt-2 text-sm text-foreground-3">Not run yet.</p> : (
+            <ul aria-label="Last runs" className="m-0 list-none p-0">
+              {routineRunLines(history, nowOf()).map((l, i) => {
                 const trace = l.trace && traceOf(l.trace) ? l.trace : undefined
+                const [icon, tone] = RUN_ICON[l.outcome]
                 return (
-                  <li key={l.key} data-run-line className="flex min-h-11.25 items-center gap-3 border-b border-divider py-1 text-sm">
-                    <Icon name="check_circle" size={18} className="flex-none text-done" />
-                    {runs.some(x => x.t) && <span className="w-run-when flex-none whitespace-nowrap text-foreground-3 tabular-nums">{l.t ? (l.day === 'Today' ? l.t : `${l.day.replace(/^\w+day /, '')}, ${l.t}`) : ''}</span>}
-                    <span className="min-w-0 flex-1">{l.text}</span>
-                    {trace
-                      ? <Button variant="link" className="flex-none text-sm" onClick={() => { onClose(); openTrace(trace) }}>Steps →</Button>
-                      : l.inActivity && <Button variant="link" className="flex-none text-sm" onClick={() => { onClose(); go('activity') }}>Activity →</Button>}
+                  <li key={l.key} data-run-line className={cn('flex items-center gap-3 py-3', i > 0 && 'border-t border-divider')}>
+                    <Icon name={icon} size={18} weight={400} className={cn('flex-none', tone)} />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium tabular-nums">{l.when}</div>
+                      <div className={cn('mt-0.5 text-sm text-pretty', l.outcome === 'failed' ? 'text-warning-text' : 'text-muted-foreground')}>{outcomeOf(l.text, r.name)}</div>
+                    </div>
+                    {trace && <Button variant="ghost" size="sm" className="flex-none" onClick={() => { onClose(); openTrace(trace) }}>Steps<Icon name="chevron_right" size={16} /></Button>}
                   </li>
                 )
               })}
             </ul>
+          )}
+
+          {r.by && (
+            <>
+              <h3 className="mt-7 mb-1.5 text-sm font-semibold">Made by</h3>
+              <p className="text-base text-foreground-2">{r.by === me ? 'You' : r.by}</p>
+            </>
           )}
         </div>
       </SheetContent>

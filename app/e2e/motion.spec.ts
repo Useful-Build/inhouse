@@ -16,7 +16,7 @@ const NEAR_BOTTOM_PX = 80
 const JUMP_PX = 4
 const GAP_PX = 12
 
-const composer = (page: Page) => page.getByRole('textbox', { name: 'Message your Inhouse agent' })
+const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Inhouse' })
 const stop = (page: Page) => page.locator('[data-composer]').getByRole('button', { name: 'Stop', exact: true })
 
 async function open(page: Page) {

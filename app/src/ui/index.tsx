@@ -13,7 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { agent } from '../agent'
 import { pickPhoto } from './photo'
 import { initials, memberFor, photoOf, userName } from '../state/derive'
-import { openRun, useAgentData, useAgentState, useUi } from '../state/store'
+import { useAgentData, useAgentState, useUi } from '../state/store'
 import { Icon as BaseIcon } from '@/components/ui/icon'
 import { ICON_NAMES, type IconName } from './icon-manifest'
 import { logoSrc } from './logo'
@@ -74,8 +74,8 @@ export function Button({ variant = 'primary', size, className, type = 'button', 
 const CHROME = 'flex-none text-foreground-3 hover:bg-foreground/5 hover:text-foreground-2 data-[state=open]:bg-foreground/5'
 // The small actions under a message (Copy, Reply, Rate...): a tighter corner and a stronger fill on hover and while open.
 const ACTION = 'rounded-md hover:bg-fill-hover aria-expanded:bg-fill-hover'
-// A card's own menu button: a resting border and fill so it reads as a button, a stronger fill on hover and while open.
-const CARD = 'border border-border bg-card shadow-xs hover:bg-fill-hover aria-expanded:bg-fill-hover'
+// A card's own menu button: a circular resting border and fill so it reads as a button, a stronger fill on hover and while open.
+const CARD = 'rounded-full border border-border bg-card shadow-xs hover:bg-fill-hover aria-expanded:bg-fill-hover'
 // On the dark toast: light glyph, a faint light fill on hover (the inverse Button's fill).
 const INVERSE = 'text-primary-foreground/70 hover:bg-primary-foreground/15 hover:text-primary-foreground'
 
@@ -83,12 +83,14 @@ const INVERSE = 'text-primary-foreground/70 hover:bg-primary-foreground/15 hover
  * An icon-only button. `label` is its accessible name and its tooltip. `size` is the glyph's size in px; `box` is the button's own size step (`icon` 32px, `icon-sm` 28px, `icon-lg`).
  * `shortcut` (from `SHORTCUTS` in `src/shell/nav.ts`) shows after the label in the tooltip and sets `aria-keyshortcuts`.
  */
-export function IconButton({ icon, label, tip = label, size = 20, box = 'icon', variant = 'ghost', filled, shortcut, className, onFocus, ...rest }: ComponentProps<'button'> & {
+export function IconButton({ icon, label, tip = label, tipSide, size = 20, box = 'icon', variant = 'ghost', filled, shortcut, className, onFocus, ...rest }: ComponentProps<'button'> & {
   icon: string; label: string; /** The tooltip's text when it says more than the name (the action a toggle will do). */ tip?: string; size?: number; box?: 'icon' | 'icon-sm' | 'icon-lg'; shortcut?: { label: string; aria: string }
   /** `chrome` for the app's frame: the top bar and the sidebar header. `action` for the small actions under a message (with `box="icon-sm"`). `card` for a card's own menu button. `inverse` on the dark toast. */
   variant?: 'ghost' | 'chrome' | 'action' | 'card' | 'inverse'
   /** The filled glyph (a picked rating). */
   filled?: boolean
+  /** Where the tooltip opens (`right` in the collapsed sidebar). */
+  tipSide?: 'top' | 'right' | 'bottom' | 'left'
 }) {
   // A message's 28px actions keep their look on a phone, each with a 44px-tall tap area as wide as the button, so
   // neighbours' areas don't overlap.
@@ -103,7 +105,7 @@ export function IconButton({ icon, label, tip = label, size = 20, box = 'icon', 
           <Icon name={icon} size={size} fill={filled} />
         </UiButton>
       </TooltipTrigger>
-      <TooltipContent>{tip}{shortcut && <kbd className="ml-1.5 font-sans text-primary-foreground/70">{shortcut.label}</kbd>}</TooltipContent>
+      <TooltipContent side={tipSide}>{tip}{shortcut && <kbd className="ml-1.5 font-sans text-primary-foreground/70">{shortcut.label}</kbd>}</TooltipContent>
     </Tooltip>
   )
 }
@@ -322,7 +324,7 @@ export function StageTag({ tag, icon = true, size = 'default', strong }: { tag: 
   )
 }
 
-/** The agent's three-dot mark. Animated (goo filter) while the agent works. Blue: running. `live` forces it on or off (the demo's animate switch otherwise decides). */
+/** The agent's three-dot mark, only while a chat answer loads (InhouseMark signs the agent's work everywhere else). Animated (goo filter) while the agent works. Blue: running. `live` forces it on or off (the demo's animate switch otherwise decides). */
 export function AgentMark({ color = 'var(--brand)', scale = 1, live: force }: { color?: string; scale?: number; live?: boolean }) {
   const demo = useUi(s => s.animateMark)
   const live = force ?? demo
@@ -352,43 +354,41 @@ export function GooDefs() {
   )
 }
 
-/** The Inhouse mark. */
-export function InhouseMark({ size = 18 }: { size?: number }) {
+/** The Inhouse mark: it signs the agent's work. `className` recolors it (`text-current` takes its parent's color). */
+export function InhouseMark({ size = 18, className }: { size?: number; className?: string }) {
   return (
-    <svg viewBox="0 0 32 32" width={size} height={size} aria-hidden="true" className="text-foreground">
+    <svg viewBox="0 0 32 32" width={size} height={size} aria-hidden="true" className={cn('flex-none text-foreground', className)}>
       <path d="M4 4H11V21H28V28H4Z" fill="currentColor" />
       <path d="M14 4H28V18H21V11H14Z" fill="currentColor" />
     </svg>
   )
 }
 
-/** Dotted page background with the slow blue light sweep. */
-export function DotsBackground() {
-  const ambient = useUi(s => s.ambient)
-  const live = useUi(s => s.animateMark)
-  const thinking = useUi(s => !!openRun(s))
-  // The agent is still reading: its data's status says so (a real client starts there), not the demo's scenario switch.
-  const loading = useAgentData().status === 'loading'
-  const sweep = live && (ambient === 'Always' || (ambient === 'When Inhouse agent works' && (thinking || loading)))
-  // Masks only read alpha: black shows, transparent hides. The band's color hints (35%, 65%) give it the same soft
-  // edges as the old 35% stops at 30% and 70%.
+/** Full-shell Turrell Skyspace skylight cove: hero intensity on Today and blank New chat, softly quieted in an active chat. */
+export function SkyspaceBackground({ mode = 'hero', offset = 'none' }: { mode?: 'hero' | 'subtle'; offset?: 'full' | 'rail' | 'none' }) {
   return (
-    <div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-1 mask-(--app-dots-mask)">
-      <div className="absolute inset-0 bg-dot-grid bg-size-(--app-dot-grid-size)" />
-      {sweep && (
-        <div className="absolute inset-0 animate-ih-wind bg-dot-grid-live bg-size-(--app-dot-grid-size) opacity-42 mask-(--app-sweep-mask) mask-size-(--app-sweep-mask-size) mask-no-repeat" />
-      )}
+    <div aria-hidden="true" data-skyspace={mode} data-skyspace-offset={offset} className={cn('pointer-events-none absolute inset-0 -z-1 overflow-hidden transition-opacity duration-300', mode === 'subtle' && 'opacity-35')}>
+      <div className="skyspace-room absolute inset-0" />
+      <div className="skyspace-cove" />
+      <div className="skyspace-inner" />
     </div>
   )
 }
 
-const windowVariants = cva('left-1/2 flex max-w-none bg-window-surface -translate-x-1/2 translate-y-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-none', {
+// left-window-center: on desktop the middle of the room right of the sidebar, so a window never covers it (index.css).
+const windowVariants = cva('left-window-center flex max-w-none bg-window-surface -translate-x-1/2 translate-y-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-none', {
   variants: {
-    /** sm 420px (a question, a short notice, set lower on the screen), md 600px (Help, the team window), lg 960px (the file viewer), xl 1120px (the trace). */
+    /**
+     * sm 420px (a question, a short notice, set lower on the screen), md 600px (Help), form 720px (the team window: its
+     * five kind tiles sit in one row), lg 960px (the file
+     * viewer), wide 960px set lower for a short window (the review window), xl 1120px (the trace).
+     */
     size: {
       sm: 'top-window-sm max-h-window-max w-window-sm',
       md: 'top-window max-h-window-max w-window-md',
+      form: 'top-window max-h-window-max w-window-form',
       lg: 'top-window-lg max-h-window-max-lg w-window-lg',
+      wide: 'top-window-wide max-h-window-max-wide w-window-lg',
       xl: 'top-window max-h-window-max w-window-xl',
     },
     /** Where it stacks: `window` for most, `trace` over a window, `confirm` over every window and sheet. */

@@ -14,15 +14,20 @@
 //     doesn't carry `expect` with `lastUuidIndex` (5);
 //  6. the watchdog fails a turn on one `unknown` or one `unreachable`, fails an `ending` turn a second time, or leaves
 //     a chat blocked; a reset leaves a turn that never starts or starts twice;
-//  7. `budget_busy` holds the turn in `starting`, retries early or never fails it.
+//  7. `budget_busy` holds the turn in `starting`, retries early or never fails it;
+//  8. a platform stop (an un-asked `failed stopped` or `session_crashed`) before anything ran: shows a `turn.finished`
+//     before the re-run, isn't re-run, is re-run twice, re-runs a person's stop or a turn whose query ran, strands a
+//     held turn whose `released` never comes, shows a stop nobody pressed, or books the hold twice across the re-run.
 import { env } from 'cloudflare:workers'
+import { fc, test } from '@fast-check/vitest'
 import { describe, expect, it, vi } from 'vitest'
-import { GRACE_MS, INACTIVITY_MS, PUSH_SILENT_MS } from './core.ts'
+import { GRACE_MS, INACTIVITY_MS, PUSH_SILENT_MS, RELEASE_WAIT_MS } from './core.ts'
 import type { Refusal } from './ports.ts'
 import { hashRunToken } from './tokens.ts'
-import { SYSTEM_PROMPT_V1 } from '../../prompt/system.ts'
+import { SYSTEM_PROMPT_V2 } from '../../prompt/system.ts'
 import { StoreUnavailableError } from '../../db/sql.ts'
 import { MEMBER, MIN, OTHER, SEC, deferred, ev, fullAnswer, inAgent, settle, typesOf } from '../../testing/brand-agent/core-harness.ts'
+import type { Harness } from '../../testing/brand-agent/core-harness.ts'
 import type { SendTurnResult } from '../../../shared/contract/runs.ts'
 
 const ok = (r: SendTurnResult | Refusal): SendTurnResult => {
@@ -35,6 +40,10 @@ describe('admission (4.3)', () => {
   it('a new chat opens a run, queues the turn and starts it at once', () => inAgent(async h => {
     const a = ok(await h.submit('c1', 'key-aaaa1'))
     await settle()
+    // A fixed prompt carries no version: only a versioned builder records one (#337 review).
+    expect(h.turn(a.turnId).prompt_version).toBeNull()
+    expect(h.turn(a.turnId).prompt_apps).toBeNull()
+    expect(h.core.readTrace(a.turnId, { all: true })).not.toHaveProperty('promptVersions')
     expect(a.position).toBe('starting')
     expect(typesOf(h.events(a.runId))).toEqual(['run.started', 'turn.queued', 'turn.started'])
     expect(h.turn(a.turnId).state).toBe('live')
@@ -135,7 +144,7 @@ describe('claim before await (4.2.1, 4.4)', () => {
     expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'stopped', start_json: null })
     expect(h.usage.calls.map(c => c.method)).not.toContain('reserve')
     expect(h.usage.holds.get(a.turnId) ?? 0).toBe(0)
-  }, { systemPrompt: async () => 'built' }))
+  }, { systemPrompt: async () => ({ text: 'built', version: 3, apps: ['Shopify'] }) }))
 
   it('a pause while the prompt is built (P5): no reserve, nothing placed, the turn cancelled cleanly', () => inAgent(async h => {
     const gate = deferred()
@@ -150,16 +159,20 @@ describe('claim before await (4.2.1, 4.4)', () => {
     expect(h.turn(a.turnId).state).toBe('cancelled')
     expect(h.usage.calls.map(c => c.method)).not.toContain('reserve')
     expect(h.usage.holds.get(a.turnId) ?? 0).toBe(0)
-  }, { systemPrompt: async () => 'built' }))
+  }, { systemPrompt: async () => ({ text: 'built', version: 3, apps: ['Shopify'] }) }))
 
-  it('a prompt builder that rejects (P5): logged, the static v1 prompt goes and the turn is placed', () => inAgent(async h => {
+  it('a prompt builder that rejects (P5): logged, the static v2 prompt goes and the turn is placed', () => inAgent(async h => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
       const a = ok(await h.submit('c1', 'key-bar07'))
       await settle()
       expect(h.placed()).toEqual([a.turnId])
-      expect((JSON.parse(h.turn(a.turnId).start_json!) as { systemPrompt: string }).systemPrompt).toBe(SYSTEM_PROMPT_V1)
+      expect((JSON.parse(h.turn(a.turnId).start_json!) as { systemPrompt: string }).systemPrompt).toBe(SYSTEM_PROMPT_V2)
+      expect(h.turn(a.turnId).prompt_version).toBe(2)
+      expect(h.turn(a.turnId).prompt_apps).toBeNull()
       expect(errors).toHaveBeenCalledWith(expect.objectContaining({ event: 'turn_prompt_failed', turnId: a.turnId }))
+      // The error's name, never its message.
+      expect(JSON.stringify(errors.mock.calls)).not.toContain('builder broke')
     } finally {
       errors.mockRestore()
     }
@@ -465,6 +478,8 @@ describe('ingest and the session (4.5, 4.7)', () => {
     h.push(a.turnId, ...fullAnswer('one', 2))
     const b = ok(await h.submit('c1', 'key-ing10'))
     await settle()
+    // The person's own stop: an un-asked `stopped` with nothing run is re-run once instead (the platform stop, below).
+    h.core.stop(b.turnId, { kind: 'person', memberId: MEMBER })
     h.push(b.turnId, ev.started(), ev.failed('stopped'), ev.released(null, false))
     expect(h.sql.exec('SELECT session, checkpoint_main_entries AS m FROM chat_state').one()).toMatchObject({ session: 'resumable', m: 2 })
     // A root timeout before the query: the same.
@@ -970,4 +985,197 @@ describe('tokens, count_tokens and the audit row', () => {
     expect(rows).toEqual([expect.objectContaining({ n: 0, chat_id: 'c1', member_id: MEMBER, hook: 'PreToolUse', tool: 'WebFetch', decision: 'allow', input_bytes: 31, input_sha256: 'adcda36e7e491755172fab765e4ce4c026677ceec109930865bdfbae9f733614' })])
     expect(JSON.stringify(rows)).not.toContain('example.test')
   }))
+})
+
+describe('a platform stop before anything ran: one re-run (A9)', () => {
+  const ends = (h: Harness, runId: string, turnId: string) =>
+    h.events(runId).filter(e => (e.type === 'turn.finished' || e.type === 'turn.cancelled') && e.turnId === turnId)
+
+  for (const reason of ['stopped', 'session_crashed'] as const) {
+    it(`an un-asked failed ${reason}, then released with nothing run: no turn.finished, placed again, the re-run ends done`, () => inAgent(async h => {
+      const a = ok(await h.submit('c1', `key-rr-${reason.slice(0, 4)}`))
+      await settle()
+      h.push(a.turnId, ev.started(), ev.failed(reason))
+      expect(ends(h, a.runId, a.turnId)).toEqual([])
+      expect(h.turn(a.turnId)).toMatchObject({ state: 'ending', outcome: null })
+      h.nextRunner.name = 'runner-1'
+      h.pool.placeAnswer = { admitted: 'runner-1' }
+      h.push(a.turnId, ev.released(null, false))
+      await settle()
+      expect(ends(h, a.runId, a.turnId)).toEqual([])
+      expect(h.placed()).toEqual([a.turnId, a.turnId])
+      expect(h.turn(a.turnId)).toMatchObject({ state: 'live', runner: 'runner-1', requeues: 1, runner_last_seq: -1 })
+      h.push(a.turnId, ...fullAnswer('the answer', 2))
+      await settle()
+      expect(ends(h, a.runId, a.turnId)).toEqual([expect.objectContaining({ type: 'turn.finished', outcome: 'done' })])
+      expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'done', requeues: 1 })
+      expect(typesOf(h.events(a.runId))).toEqual(['run.started', 'turn.queued', 'turn.started', 'turn.started', 'part', 'turn.finished', 'run.finished'])
+    }))
+  }
+
+  it('a second platform stop on the re-run ends it failed session_crashed (a try-again), with no second re-run', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-rr-twice'))
+    await settle()
+    h.push(a.turnId, ev.started(), ev.failed('stopped'), ev.released(null, false))
+    await settle()
+    h.push(a.turnId, ev.started(), ev.failed('stopped'), ev.released(null, false))
+    await settle()
+    expect(ends(h, a.runId, a.turnId)).toEqual([expect.objectContaining({ type: 'turn.finished', outcome: 'failed', reason: 'session_crashed' })])
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'failed', failure: 'session_crashed', requeues: 1 })
+    expect(h.placed()).toEqual([a.turnId, a.turnId])
+  }))
+
+  it('released with queryRan true ends it as today (no re-run), shown as failed session_crashed', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-rr-ran01'))
+    await settle()
+    h.push(a.turnId, ev.started(), ev.failed('session_crashed'), ev.released(null, true))
+    expect(ends(h, a.runId, a.turnId)).toEqual([expect.objectContaining({ type: 'turn.finished', outcome: 'failed', reason: 'session_crashed' })])
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', requeues: 0 })
+    // Something already shown: ended at once, and a stop nobody pressed shows as a try-again, never as `stopped`.
+    const b = ok(await h.submit('c2', 'key-rr-ran02'))
+    await settle()
+    h.push(b.turnId, ev.started(), ev.text('half an answer'), ev.failed('stopped'))
+    expect(ends(h, b.runId, b.turnId)).toEqual([expect.objectContaining({ type: 'turn.finished', outcome: 'failed', reason: 'session_crashed' })])
+    h.push(b.turnId, ev.released(null, false))
+    expect(h.turn(b.turnId)).toMatchObject({ state: 'ended', outcome: 'failed', failure: 'session_crashed', requeues: 0 })
+    expect(h.placed()).toEqual([a.turnId, b.turnId])
+  }))
+
+  it("a person's stop is never re-run: before the runner's stop, and while a platform stop is held", () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-rr-stp01'))
+    await settle()
+    expect(h.core.stop(a.turnId, { kind: 'person', memberId: MEMBER })).toEqual({ ok: true })
+    h.push(a.turnId, ev.started(), ev.failed('stopped'), ev.released(null, false))
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'stopped', requeues: 0 })
+    const b = ok(await h.submit('c2', 'key-rr-stp02'))
+    await settle()
+    h.push(b.turnId, ev.started(), ev.failed('stopped'))
+    expect(h.core.stop(b.turnId, { kind: 'person', memberId: MEMBER })).toEqual({ ok: true })
+    h.push(b.turnId, ev.released(null, false))
+    expect(ends(h, b.runId, b.turnId)).toEqual([expect.objectContaining({ type: 'turn.finished', outcome: 'stopped' })])
+    expect(h.turn(b.turnId)).toMatchObject({ state: 'ended', outcome: 'stopped', requeues: 0 })
+    // An interrupt while held ends it `interrupted`; a delete ends it `deleted`. Neither is re-run.
+    const c = ok(await h.submit('c3', 'key-rr-int03'))
+    await settle()
+    h.push(c.turnId, ev.started(), ev.failed('session_crashed'))
+    expect(h.core.interrupt(c.turnId, { kind: 'person', memberId: MEMBER })).toEqual({ ok: true })
+    h.push(c.turnId, ev.released(null, false))
+    expect(h.turn(c.turnId)).toMatchObject({ state: 'ended', outcome: 'interrupted', requeues: 0 })
+    const d = ok(await h.submit('c4', 'key-rr-del04'))
+    await settle()
+    h.push(d.turnId, ev.started(), ev.failed('stopped'))
+    h.core.endChats([{ id: 'c4', rev: 2 }])
+    h.push(d.turnId, ev.released(null, false))
+    expect(ends(h, d.runId, d.turnId)).toEqual([expect.objectContaining({ type: 'turn.cancelled', why: 'deleted' })])
+    expect(h.turn(d.turnId)).toMatchObject({ state: 'ended', requeues: 0 })
+    expect(h.placed()).toEqual([a.turnId, b.turnId, c.turnId, d.turnId])
+  }))
+
+  it('a held end whose released never comes resolves through the watchdog with its own outcome', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-rr-nore1'))
+    await settle()
+    h.push(a.turnId, ev.started(), ev.failed('stopped'))
+    h.pool.statusAnswer = { state: 'unknown', containerGone: false }
+    await h.tick(RELEASE_WAIT_MS)
+    expect(ends(h, a.runId, a.turnId)).toEqual([expect.objectContaining({ type: 'turn.finished', outcome: 'failed', reason: 'session_crashed' })])
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'failed', failure: 'session_crashed', requeues: 0 })
+    expect(h.placed()).toEqual([a.turnId])
+  }))
+
+  it('the re-run books the hold once: the same reservation answers both attempts, one settle', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-rr-cost1'))
+    await settle()
+    h.push(a.turnId, ev.started(), ev.failed('stopped'), ev.released(null, false))
+    await settle()
+    h.push(a.turnId, ...fullAnswer('the answer', 2))
+    await settle()
+    await h.tick(0)
+    const methods = h.usage.calls.map(c => c.method)
+    expect(methods.filter(m => m === 'reserve')).toHaveLength(2)
+    expect(methods.filter(m => m === 'settle' || m === 'release')).toHaveLength(1)
+    expect(h.usage.final.has(a.turnId)).toBe(true)
+    expect(h.usage.monthReserved).toBe(0)
+    expect(h.turn(a.turnId)).toMatchObject({ settled: 1, start_hold_micro: 250_000 })
+  }))
+
+  it('a model call that reached the gate is never re-run, whatever the runner says of queryRan', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-rr-call1'))
+    await settle()
+    h.push(a.turnId, ev.started())
+    expect(await h.core.admitModelCall(a.turnId, 'call-1', { model: 'claude-sonnet-5-5', inputTokens: 1000, maxTokens: 1000, modifiers: {}, micro: 1 })).toEqual({ granted: true })
+    h.push(a.turnId, ev.failed('stopped'), ev.released(null, false))
+    await settle()
+    expect(ends(h, a.runId, a.turnId)).toEqual([expect.objectContaining({ type: 'turn.finished', outcome: 'failed', reason: 'session_crashed' })])
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', requeues: 0 })
+    expect(h.placed()).toEqual([a.turnId])
+  }))
+
+  it('a now send during the hold ends the held turn interrupted: the old question is not re-run after the new answer', () => inAgent(async h => {
+    const a = ok(await h.submit('c1', 'key-rr-now01'))
+    await settle()
+    h.push(a.turnId, ev.started(), ev.failed('stopped'))
+    const b = ok(await h.submit('c1', 'key-rr-now02', { priority: 'now' }))
+    expect(ends(h, a.runId, a.turnId)).toEqual([expect.objectContaining({ type: 'turn.finished', outcome: 'interrupted' })])
+    h.push(a.turnId, ev.released(null, false))
+    await settle()
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'interrupted', requeues: 0 })
+    expect(h.turn(b.turnId).state).toBe('live')
+    h.push(b.turnId, ...fullAnswer('the new answer', 2))
+    await settle()
+    expect(h.placed()).toEqual([a.turnId, b.turnId])
+  }))
+
+  type Op = 'failedStopped' | 'failedCrashed' | 'released' | 'releasedRan' | 'stop' | 'exited' | 'text' | 'interrupt' | 'pause' | 'deleted' | 'restart'
+  const opArb = fc.constantFrom<Op>('failedStopped', 'failedCrashed', 'released', 'releasedRan', 'stop', 'exited', 'text', 'interrupt', 'pause', 'deleted', 'restart')
+  test.prop([fc.array(opArb, { minLength: 1, maxLength: 12 })], { numRuns: 80 })(
+    "any order of failed, released, a person's stop, interrupt, pause, delete, containerExited and a reset: every turn ends once and is re-run at most once",
+    ops => inAgent(async h0 => {
+      let h = h0
+      const finals: string[] = []
+      const watchFinals = () => { h.core.onFinal = t => { finals.push(t.turn_id) } }
+      watchFinals()
+      const a = ok(await h.submit('c1', 'key-rr-prop1'))
+      await settle()
+      let gen = 0
+      let rev = 1
+      // The requeue count when the current attempt's query ran (a text or a releasedRan landed on it): it never moves.
+      let ranAt: number | null = null
+      for (const o of ops) {
+        const t = h.turn(a.turnId)
+        const onRunner = t.state === 'live' || t.state === 'ending'
+        if (o === 'stop') h.core.stop(a.turnId, { kind: 'person', memberId: MEMBER })
+        else if (o === 'interrupt') h.core.interrupt(a.turnId, { kind: 'person', memberId: MEMBER })
+        else if (o === 'pause') void h.core.pause({ kind: 'person', memberId: 'm_admin' })
+        else if (o === 'deleted') h.core.endChats([{ id: 'c1', rev: ++rev }])
+        else if (o === 'restart') { h = h.restart(); watchFinals() }
+        else if (o === 'exited') {
+          const runner = t.runner ?? 'runner-0'
+          h.pool.runnerTurns.set(runner, [a.turnId])
+          h.core.containerExited(runner, ++gen, true)
+        } else if (onRunner) {
+          if (o === 'failedStopped') h.push(a.turnId, ev.failed('stopped'))
+          else if (o === 'failedCrashed') h.push(a.turnId, ev.failed('session_crashed'))
+          else if (o === 'released') h.push(a.turnId, ev.released(null, false))
+          else if (o === 'releasedRan') h.push(a.turnId, ev.released(null, true))
+          else h.push(a.turnId, ev.text('x'))
+          if ((o === 'text' || o === 'releasedRan') && ranAt === null) ranAt = t.requeues
+        }
+        await settle()
+        expect(ends(h, a.runId, a.turnId).length).toBeLessThanOrEqual(1)
+        expect(h.turn(a.turnId).requeues).toBeLessThanOrEqual(1)
+        if (ranAt !== null) expect(h.turn(a.turnId).requeues).toBe(ranAt)
+      }
+      // Then the runner answers whatever is left and the clock runs out every wait: the turn always ends.
+      for (let i = 0; i < 6 && !['ended', 'cancelled'].includes(h.turn(a.turnId).state); i++) {
+        const t = h.turn(a.turnId)
+        if (t.state === 'live') h.push(a.turnId, ev.success(), ev.released(null, true))
+        else if (t.state === 'ending') h.push(a.turnId, ev.released(null, true))
+        await settle()
+        await h.tick(10 * MIN)
+      }
+      expect(['ended', 'cancelled']).toContain(h.turn(a.turnId).state)
+      expect(ends(h, a.runId, a.turnId)).toHaveLength(1)
+      expect(finals).toEqual([a.turnId])
+      expect(h.turn(a.turnId).requeues).toBeLessThanOrEqual(1)
+    }))
 })

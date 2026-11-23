@@ -16,8 +16,8 @@ const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnim
 const shot = async (page: Page, name: string) => { await settled(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' })
 const log = (page: Page) => page.getByRole('log', { name: 'Conversation' })
-const todayBox = (page: Page) => page.getByRole('textbox', { name: 'Ask your Inhouse agent' })
-const chatBox = (page: Page) => page.getByRole('textbox', { name: 'Message your Inhouse agent' })
+const todayBox = (page: Page) => page.getByRole('textbox', { name: 'Ask Inhouse' })
+const chatBox = (page: Page) => page.getByRole('textbox', { name: 'Message Inhouse' })
 const hash = (page: Page) => page.evaluate(() => location.hash)
 const go = (page: Page, h: string) => page.evaluate(x => { location.hash = x }, h)
 /** Waits out the session save (debounced 300 ms) before a reload. A reload also saves on pagehide; this keeps it honest. */
@@ -104,6 +104,21 @@ test('Memory: a chat answering when the page reloads keeps its question and says
   await page.reload()
   await expect(log(page).getByText('Your Inhouse agent stopped when the page reloaded.')).toHaveCount(1)
   await shot(page, 'memory-reload-mid-answer')
+})
+
+test('Cap reached: a chat is refused with the cap notice, and a waiting draft can still be approved (decision L-A8)', async ({ page }) => {
+  await start(page, '#/today', 'Act', 'Cap reached')
+  // Chats stop at the cap: the question gets the cap notice and no answer.
+  await todayBox(page).fill(Q)
+  await page.keyboard.press('Enter')
+  await page.clock.runFor(4000)
+  await expect(log(page).getByText("Your team has reached its spending cap, so this answer didn't run.")).toBeVisible()
+  await expect(log(page).getByText(A)).toHaveCount(0)
+  // Waiting drafts can still be approved at the cap.
+  await go(page, '#/today')
+  await page.getByRole('article').filter({ hasText: 'Ridge 30L Pack runs out in 9 days' }).getByRole('button', { name: 'Review' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Approve and send to Kestrel' }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Approved. It goes out in 10 seconds.' })).toBeVisible()
 })
 
 test('Reset demo puts the stage and scenario back to Act and Normal, clears the change, and stays so after a reload', async ({ page }) => {

@@ -29,7 +29,7 @@ const log = (page: Page) => page.getByRole('log', { name: 'Conversation' })
 const msg = (page: Page, text: string) => log(page).locator('[data-chat-msg]').filter({ hasText: text })
 /** A message the person sent: the answer card carries data-answer on the same element, so hasNot can't skip it. */
 const sent = (page: Page, text: string) => log(page).locator('[data-chat-msg]:not([data-answer])').filter({ hasText: text })
-const field = (page: Page) => page.getByRole('textbox', { name: 'Message your Inhouse agent' })
+const field = (page: Page) => page.getByRole('textbox', { name: 'Message Inhouse' })
 const dock = (page: Page) => page.locator('[data-composer]')
 const stop = (page: Page) => dock(page).getByRole('button', { name: 'Stop', exact: true })
 const stepsButtons = (page: Page) => log(page).getByRole('button', { name: /\d+ steps/ })
@@ -281,7 +281,7 @@ test.describe('desktop', () => {
 
     // Today and back: the edit is over, nothing was asked, and the box holds the draft, its file and its quote again.
     await page.evaluate(() => { location.hash = '#/today' })
-    await expect(page.getByRole('textbox', { name: 'Ask your Inhouse agent' })).toBeVisible()
+    await expect(page.getByRole('textbox', { name: 'Ask Inhouse' })).toBeVisible()
     await page.evaluate(h => { location.hash = h }, mine)
     await expect(field(page)).toHaveValue('Draft I keep')
     await expect(editing).toHaveCount(0)
@@ -335,7 +335,7 @@ test.describe('desktop', () => {
     // A new chat mid-edit: no reply bar either.
     await replyThenEdit()
     await page.getByRole('button', { name: 'New chat' }).click()
-    await expect(page.getByRole('heading', { name: 'What do you want to know?' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'What should we look into?' })).toBeVisible()
     await expect(editing).toHaveCount(0)
     await expect(replying).toHaveCount(0)
     await expect(dock(page)).not.toContainText('Refund requests rose')
@@ -344,7 +344,7 @@ test.describe('desktop', () => {
     await page.evaluate(h => { location.hash = h }, mine)
     await replyThenEdit()
     await page.evaluate(() => { location.hash = '#/today' })
-    await expect(page.getByRole('textbox', { name: 'Ask your Inhouse agent' })).toBeVisible()
+    await expect(page.getByRole('textbox', { name: 'Ask Inhouse' })).toBeVisible()
     await page.evaluate(h => { location.hash = h }, mine)
     await expect(editing).toHaveCount(0)
     await expect(replying).toBeVisible()

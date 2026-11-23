@@ -31,7 +31,11 @@ async function sidebar(page: Page) {
 
 async function goTo(page: Page, name: string, heading: string | RegExp = name === 'Today' ? TODAY : name) {
   const side = await sidebar(page)
-  await side.getByRole('button', { name, exact: true }).click()
+  // Usage lives in the account menu, not the sidebar's nav (#226).
+  if (name === 'Usage') {
+    await side.getByRole('button', { name: /account and settings/i }).click()
+    await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: 'Usage', exact: true }).click()
+  } else await side.getByRole('button', { name, exact: true }).click()
   await expect(h1(page, heading)).toBeVisible()
 }
 
@@ -145,5 +149,5 @@ test('S4: A broken screen shows its own error inside the app, and the sidebar an
   await main(page).getByRole('button', { name: 'Message the team', exact: true }).click()
   await expect(team(page)).toBeVisible()
   await expect(team(page).getByRole('radio', { name: /Report a bug/ })).toBeChecked()
-  await expect(team(page).getByRole('textbox', { name: 'Your request' })).toHaveValue(/screen crashed and showed "Something went wrong\."/)
+  await expect(team(page).getByRole('textbox', { name: 'Details' })).toHaveValue(/screen crashed and showed "Something went wrong\."/)
 })

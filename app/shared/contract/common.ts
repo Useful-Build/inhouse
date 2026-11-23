@@ -32,6 +32,10 @@ export const ErrorReasonSchema = z.enum([
   'waiting_answer', 'pool_full', 'budget_busy', 'too_many', 'bad_name',
   // Route 39's refusals (the server sends them as `invalid`; the client tells them apart).
   'type_not_allowed', 'length_required', 'length_mismatch', 'hash',
+  // P4 W2 (p4-w2.md section 9, route 54): a Run now while another is open; a team routine below its stage.
+  'run_open', 'stage',
+  // #312 review: a team routine past the brand's cap (the routine_create tool); an empty Library upload (row 63).
+  'routine_limit', 'empty',
   // P5 (p5-w3): the Tools routes' refusals.
   'not_configured', 'not_disconnectable', 'not_connected',
   // P5 (p5-w4): the notice channel list's refusals (route 75 conflicts, route 74 while Slack can't be used).

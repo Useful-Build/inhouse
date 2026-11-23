@@ -20,6 +20,7 @@ import type { ActiveRun } from '../../../shared/contract/runs.ts'
 import type { Trace, TraceStep } from '../../../shared/contract/trace.ts'
 import type { ModelCallUsage, RunScope, RunsHealth } from './ports.ts'
 import { callsMicro } from './turn-calls.ts'
+import { ioFrom } from '@eval-trace'
 
 const HOUR_MS = 3_600_000
 const DAY_MS = 24 * HOUR_MS
@@ -36,7 +37,7 @@ interface RunRow { [k: string]: SqlStorageValue; run_id: string; chat_id: string
 interface TurnRead {
   [k: string]: SqlStorageValue
   turn_id: string; run_id: string; owner_id: string; text: string; outcome: string | null; failure: string | null
-  created_at_ms: number; started_at_ms: number | null; ended_at_ms: number | null
+  created_at_ms: number; started_at_ms: number | null; ended_at_ms: number | null; prompt_version: number | null; prompt_apps: string | null
 }
 
 const inScope = (owner: string, scope: RunScope) => ('all' in scope ? scope.all === true : owner === scope.owner)
@@ -54,8 +55,13 @@ export function activeRuns(sql: SqlStorage, scope: RunScope, chatIds?: string[])
 
 const fmtTokens = (n: number) => (n < 1000 ? String(n) : n < 1_000_000 ? `${(n / 1000).toFixed(1)}k` : `${(n / 1_000_000).toFixed(1)}M`)
 
-/** A run's (`r_…`) or a turn's (`t_…`) trace, or null when it isn't there or isn't in the scope. */
-export function traceOf(sql: SqlStorage, id: string, scope: RunScope, nowMs: number): Trace | null {
+/**
+ * A run's (`r_…`) or a turn's (`t_…`) trace, or null when it isn't there or isn't in the scope. `evalIo`: the eval build
+ * (core.ts passes it), where a `tool` step carries its call's kept input (`io`) for the run's owner only, never for
+ * Inhouse's `all` scope (BD7, BD11; p3-eval-observability rev 2 rec 5), and `io.denied` when a hook denied that call
+ * (rec 6: the eval harness's WebFetch refusal, matched by tool_use id, not by name).
+ */
+export function traceOf(sql: SqlStorage, id: string, scope: RunScope, nowMs: number, evalIo = false): Trace | null {
   let turns: TurnRead[]
   let startMs: number
   let endMs: number
@@ -76,15 +82,33 @@ export function traceOf(sql: SqlStorage, id: string, scope: RunScope, nowMs: num
   let micro = 0
   let tokens = 0
   const steps: TraceStep[] = []
+  const withIo = evalIo && 'owner' in scope
   for (const t of turns) {
     micro += callsMicro(sql, t.turn_id)
+    // A call's kept input may be recorded before or after its step (the audit post and the SDK message race), so the
+    // turn's inputs are matched to its steps after the pass.
+    const io = new Map<string, NonNullable<TraceStep['io']>>()
+    const denied = new Set<string>()
+    const toolSteps: [TraceStep, string][] = []
     for (const r of sql.exec<{ at_ms: number; json: string }>('SELECT at_ms, json FROM turn_trace WHERE turn_id = ? ORDER BY n', t.turn_id).toArray()) {
       const rec = JSON.parse(r.json) as Record<string, string>
       if (rec.step !== undefined) {
-        steps.push({ label: rec.step, kind: 'tool', startMs: at(r.at_ms), endMs: at(r.at_ms), depth: 1, detail: rec.tool ?? '' })
+        const step: TraceStep = { label: rec.step, kind: 'tool', startMs: at(r.at_ms), endMs: at(r.at_ms), depth: 1, detail: rec.tool ?? '' }
+        steps.push(step)
+        if (withIo && rec.id !== undefined) toolSteps.push([step, rec.id])
+      } else if (rec.io !== undefined) {
+        const kept = withIo ? ioFrom(rec) : null
+        if (kept !== null) io.set(kept[0], kept[1])
       } else if (rec.audit !== undefined && rec.decision !== 'allow') {
+        if (withIo && rec.decision === 'deny' && rec.id !== undefined) denied.add(rec.id)
         steps.push({ label: rec.audit, kind: rec.decision === 'deny' ? 'fail' : 'approval', startMs: at(r.at_ms), endMs: at(r.at_ms), depth: 1, detail: `${rec.hook} · ${rec.decision}` })
       }
+    }
+    for (const [step, toolUseId] of toolSteps) {
+      const kept = io.get(toolUseId)
+      // A denied call with no kept input still says so: an empty input marked cut, never a listed-looking one.
+      if (denied.has(toolUseId)) step.io = { ...(kept ?? { input: '', cut: true }), denied: true }
+      else if (kept !== undefined) step.io = kept
     }
     const calls = sql.exec<{ model: string; granted_at_ms: number; closed_at_ms: number | null; state: string; usage_json: string | null }>(
       'SELECT model, granted_at_ms, closed_at_ms, state, usage_json FROM model_calls WHERE turn_id = ? AND granted_at_ms IS NOT NULL ORDER BY n', t.turn_id).toArray()
@@ -108,9 +132,13 @@ export function traceOf(sql: SqlStorage, id: string, scope: RunScope, nowMs: num
   // Stable: records of one moment keep their order (steps, then hooks, then calls).
   steps.sort((a, b) => a.startMs - b.startMs)
   const root: TraceStep = { label: 'Inhouse agent', kind: 'root', startMs: 0, endMs: durationMs, depth: 0, detail: `${turns.length} ${turns.length === 1 ? 'question' : 'questions'}` }
+  // The prompt version each turn was sent (P5, #337), when any turn recorded one: additive, so older traces read the same.
+  const promptVersions = turns.map(t => t.prompt_version ?? null)
+  // And the apps each built prompt named as connected (#337 round 3), beside it: null where none was recorded.
+  const promptApps = turns.map(t => (t.prompt_apps == null ? null : JSON.parse(t.prompt_apps) as string[]))
   return {
     id, title: (turns[0]?.text ?? '').slice(0, 120), durationMs, cost: { minor: Math.round(micro / 10_000), currency: 'USD' },
-    tokens: fmtTokens(tokens), steps: [root, ...steps],
+    tokens: fmtTokens(tokens), steps: [root, ...steps], ...(promptVersions.some(v => v !== null) ? { promptVersions, promptApps } : {}),
   }
 }
 

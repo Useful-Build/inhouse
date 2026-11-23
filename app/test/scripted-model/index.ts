@@ -12,6 +12,8 @@
 
 export const SCRIPTED_MODEL_CANARY = 'inhouse-scripted-model-canary-7f3c9b21'
 export { SCENARIOS } from './scenarios.ts'
+export { routesFor } from './routes.ts'
+export type { ScenarioRoute } from './routes.ts'
 
 export type ScriptedBlock = { type: 'text'; text: string } | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
 

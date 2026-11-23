@@ -11,11 +11,12 @@ import { describe, expect, it } from 'vitest'
 import { createHashBar, createHashSync } from './route-sync'
 import type { Parsed, Place } from './route-sync'
 
-const SLUGS: Record<string, string> = { today: 'today', usage: 'usage', chats: 'chats', settings: 'settings', library: 'library' }
-const toHash = (p: Place) => '#/' + SLUGS[p.page] + (p.page === 'settings' ? (p.menu ? '' : '/' + p.setTab) : p.page === 'chats' ? '/' + p.chatKey : '')
+const SLUGS: Record<string, string> = { today: 'today', usage: 'usage', chats: 'chats', settings: 'settings', library: 'library', skills: 'skills' }
+const toHash = (p: Place) => '#/' + (p.page === 'skill' ? 'skills/' + p.skillKey : SLUGS[p.page] + (p.page === 'settings' ? (p.menu ? '' : '/' + p.setTab) : p.page === 'chats' ? '/' + p.chatKey : ''))
 const fromHash = (h: string): Parsed | null => {
   if (!h.startsWith('#/')) return null
   const [slug, sub] = h.slice(2).split('/')
+  if (slug === 'skills' && sub) return { page: 'skill', skillKey: sub }
   const page = Object.keys(SLUGS).find(k => SLUGS[k] === slug)
   if (!page) return null
   return page === 'settings' ? (sub ? { page, setTab: sub, setMenu: false } : { page, setMenu: true }) : page === 'chats' ? (sub ? { page, chat: sub } : { page }) : { page }
@@ -150,5 +151,25 @@ describe('a real move still writes, and only the same place is "here" (failure 5
     b.sync.sync(place({ page: 'chats', chatKey: 'new' }))
     b.sync.sync(place({ page: 'chats', chatKey: 'c9', chatIsNew: true }))
     expect(b.entries).toEqual(['#/chats/c9'])
+  })
+})
+
+describe("a skill's page has its own entry", () => {
+  it('pushes a move from one skill to another, and from the list to a skill', () => {
+    const b = bar('#/skills')
+    b.sync.sync(place({ page: 'skills' }))
+    b.sync.sync(place({ page: 'skill', skillKey: 'morning-check' }))
+    b.sync.sync(place({ page: 'skill', skillKey: 'payout-check' }))
+    expect(b.entries).toEqual(['#/skills', '#/skills/morning-check', '#/skills/payout-check'])
+  })
+  it("leaves a typed skill link alone until it's read, then follows the app", () => {
+    const b = bar('#/skills/morning-check')
+    b.sync.sync(place({ page: 'skill', skillKey: 'morning-check' }))
+    b.setHash('#/skills/payout-check')
+    b.sync.sync(place({ page: 'skill', skillKey: 'morning-check', phone: true }))
+    expect(b.entries).toEqual(['#/skills/payout-check'])
+    b.hashchange()
+    b.sync.sync(place({ page: 'skill', skillKey: 'payout-check', phone: true }))
+    expect(b.entries).toEqual(['#/skills/payout-check'])
   })
 })

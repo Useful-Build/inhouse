@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs'
 import { fc, it } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import { createScriptedModel, type MessagesRequest, type ScriptedBranch, type ScriptedTurn } from '../../../test/scripted-model/index.ts'
-import { HARNESS_MODEL, SCENARIOS, mainLoop, resultOf, STRUCTURED_BAD_TURNS, STRUCTURED_SCHEMA, openParallelHold, parallelSubagents, subagentMarker } from '../../../test/scripted-model/scenarios.ts'
+import { HARNESS_MODEL, MORNING_CHECK_ANSWER, MORNING_CHECK_OUTAGE_ANSWER, SCENARIOS, mainLoop, resultOf, STRUCTURED_BAD_TURNS, STRUCTURED_SCHEMA, openParallelHold, parallelSubagents, subagentMarker } from '../../../test/scripted-model/scenarios.ts'
 
 type Msg = { role: 'user' | 'assistant'; content: unknown }
 const req = (messages: Msg[], stream = false, extra: Record<string, unknown> = {}) =>
@@ -327,6 +327,45 @@ describe('structured scenarios', () => {
   })
 })
 
+// The morning check's two endings (P4): the read's own `is_error` picks the answer. Ways it could fail: a failed read (the
+// remote proof's outage shop) still answers the one-item result, a read that went through answers the outage result, or the
+// closing turn after the outage result misses (the branch's position past its own turns).
+describe('morning-check: the answer follows whether the read failed', () => {
+  const READ = 'toolu_scripted_mc_read'
+  const RESULT = 'toolu_scripted_mc_result'
+  const mcReq = (messages: Msg[]) => req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'StructuredOutput' }] })
+  const afterRead = (isError: boolean): Msg[] => [
+    { role: 'user', content: 'the morning check' },
+    { role: 'assistant', content: [{ type: 'tool_use', id: READ, name: 'mcp__apps__orders_search', input: { first: 5 } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: READ, content: isError ? 'upstream_unavailable: upstream unavailable' : '{"orders":[]}', ...(isError ? { is_error: true } : {}) }] },
+  ]
+  const afterResult = (isError: boolean): Msg[] => [
+    ...afterRead(isError),
+    { role: 'assistant', content: [{ type: 'tool_use', id: RESULT, name: 'StructuredOutput', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: RESULT, content: 'ok' }] },
+  ]
+  it.each([[false, MORNING_CHECK_ANSWER], [true, MORNING_CHECK_OUTAGE_ANSWER]])('read is_error %s: its result, then Done.', async (isError, answer) => {
+    const model = createScriptedModel(SCENARIOS)
+    const body = (await (await model.handle(mcReq(afterRead(isError)), 'morning-check')).json()) as { content: { name?: string; id?: string; input?: unknown }[] }
+    expect(body.content).toEqual([{ type: 'tool_use', id: RESULT, name: 'StructuredOutput', input: answer }])
+    const done = (await (await model.handle(mcReq(afterResult(isError)), 'morning-check')).json()) as { content: { text?: string }[] }
+    expect(done.content[0]!.text).toBe('Done.')
+    expect(model.misses).toEqual([])
+  })
+  it('a read that failed another way (internal: internal error) takes no branch: a miss, never the outage answer', async () => {
+    const model = createScriptedModel(SCENARIOS)
+    const messages = afterRead(true)
+    ;(messages[2]!.content as { content: string }[])[0]!.content = 'internal: internal error'
+    const res = await model.handle(mcReq(messages), 'morning-check')
+    expect(res.status).toBe(400)
+    expect(JSON.stringify(await res.json())).not.toContain('"coverage":"incomplete"')
+    expect(model.misses).toHaveLength(1)
+  })
+  it('the outage result names every gap area and no item (the graded set\'s outage-all expectation)', () => {
+    expect(MORNING_CHECK_OUTAGE_ANSWER).toEqual({ coverage: 'incomplete', gaps: ['orders', 'products', 'inventory', 'refunds', 'returns'], items: [] })
+  })
+})
+
 // The requests the real CLI sent (fixtures/cli-requests.json: SDK 0.3.328, the runner's tool list, captured over
 // loopback). Each must take its scripted turn on the first try: a miss there is a 400 the CLI's step-down retries
 // (Q2 saw 3 refused calls before turn 0, and turn 1 never matching).
@@ -394,6 +433,28 @@ describe("the real CLI's requests", () => {
       const r = withResult('turn1', 'toolu_scripted_recall', FACT)
       const noResult = { ...r, messages: r.messages.slice(0, -1) }
       expect((await answer(model, noResult, 'memory-recall')).status).toBe(400)
+    })
+    it('memory-recall-stem: searches "zorblat" and says how many facts came back and whether the saved one was among them', async () => {
+      const STEM = 'Zorblats are accepted within 45 days.'
+      const id = 'toolu_scripted_recall_stem'
+      const cases: [string, string][] = [
+        [`1 saved fact matches:\n- [person] ${STEM} (memory_id: m)`, 'hits=1 match=yes'],
+        [`2 saved facts match:\n- [person] ${STEM} (memory_id: m)\n- [person] Zorblat colours (memory_id: n)`, 'hits=2 match=yes'],
+        ['1 saved fact matches:\n- [person] Something else (memory_id: m)', 'hits=1 match=no'],
+        ['Nothing saved matches "zorblat". Try other words.', 'hits=0 match=no'],
+        [`20 saved facts match:\n- [person] ${STEM} (memory_id: m)`, 'hits=20 match=yes'],
+        [JSON.stringify({ facts: [{ memory_id: 'm', scope: 'person', text: STEM, saved: '2026-11-22' }] }), 'hits=1 match=yes'],
+        [JSON.stringify({ facts: [] }), 'hits=0 match=no'],
+        [`an answer in another shape: ${STEM}`, 'hits=? match=yes'],
+      ]
+      for (const key of ['turn1', 'turn1-budget'] as const) {
+        const model = createScriptedModel(SCENARIOS)
+        expect(await answer(model, captured['memory-save']!.turn0!, 'memory-recall-stem')).toEqual({ status: 200, content: ['mcp__inhouse__memory_search'] })
+        for (const [result, said] of cases) {
+          expect(await answer(model, withResult(key, id, result), 'memory-recall-stem'), result).toEqual({ status: 200, content: [said] })
+        }
+        expect(model.misses).toEqual([])
+      }
     })
   })
 

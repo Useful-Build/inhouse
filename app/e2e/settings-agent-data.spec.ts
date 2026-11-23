@@ -105,7 +105,7 @@ test('Data and access: retention and access switches are saved, survive a reload
   await main(page).getByRole('button', { name: 'Ask the team', exact: true }).click()
   await expect(team(page)).toBeVisible()
   await expect(team(page).getByRole('radio', { name: /Change something/ })).toBeChecked()
-  await expect(team(page).getByRole('textbox', { name: 'Your request' })).toHaveValue('Please delete the Inhouse agent and its data for Northline Outdoor.')
+  await expect(team(page).getByRole('textbox', { name: 'Details' })).toHaveValue('Please delete the Inhouse agent and its data for Northline Outdoor.')
   await page.keyboard.press('Escape')
   await expect(team(page)).toHaveCount(0)
 
@@ -131,7 +131,7 @@ test('Audit log: pausing the agent adds a row at the top that survives a reload,
   await expect(page.getByRole('status', { name: 'Inhouse agent is paused' })).toBeVisible()
   await goTo(page, 'team-audit')
   await expect(paused).toBeVisible()
-  await expect(main(page).getByText(/^Routines and jobs stopped\s·\s/)).toBeVisible()
+  await expect(main(page).getByText(/^Chats, routines and jobs stopped\s·\s/)).toBeVisible()
   const top = async (loc: typeof paused) => (await loc.boundingBox())!.y
   expect(await top(paused)).toBeLessThan(await top(seeded))
 

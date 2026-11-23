@@ -48,7 +48,7 @@ for (const [stage, current, next, nextName] of STAGE_ROWS) {
     const team = page.getByRole('dialog', { name: 'Your Inhouse team' })
     await expect(team).toBeVisible()
     await expect(team.getByRole('radio', { name: /Change something/ })).toBeChecked()
-    await expect(team.getByRole('textbox', { name: 'Your request' })).toHaveValue('')
+    await expect(team.getByRole('textbox', { name: 'Details' })).toHaveValue('')
     await page.keyboard.press('Escape')
     await expect(team).toHaveCount(0)
   })
@@ -105,7 +105,7 @@ test('Team memory: Forget (with Undo) and the rule switch work, survive a reload
 
   // Teach in a chat opens a new chat with the start of a rule in the field.
   await main(page).getByRole('button', { name: 'Teach in a chat', exact: true }).click()
-  await expect(page.getByRole('textbox', { name: /^(Ask|Message) your Inhouse agent$/ })).toHaveValue('Remember that ')
+  await expect(page.getByRole('textbox', { name: /^(Ask|Message) Inhouse$/ })).toHaveValue('Remember that ')
 })
 
 const JOBS = ['Restock returns', 'Chase late suppliers', 'Nudge ShipBob on stuck orders', 'Pause oversold variants']
@@ -150,7 +150,7 @@ test('Run limits: switches, limits and Pause work, survive a reload and Reset de
 
   // Pause stops the agent, says so in the top bar and flips the button; Resume undoes it.
   await pause.click()
-  await expect(toast(page, 'Your Inhouse agent is paused. Routines, jobs and questions are stopped.')).toBeVisible()
+  await expect(toast(page, 'Your Inhouse agent is paused. Chats, routines and jobs are stopped.')).toBeVisible()
   await expect(resume).toBeVisible()
   await expect(status('paused')).toBeVisible()
   await resume.click()

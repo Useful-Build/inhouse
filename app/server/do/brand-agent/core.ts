@@ -39,13 +39,14 @@ import { ModelGate } from './gate.ts'
 import { callsMicro } from './turn-calls.ts'
 import { ensureUsageTasks } from '../../usage/seeds.ts'
 import { activeRuns, runsHealth, traceOf } from './runs-read.ts'
+import { ioRecord } from '@eval-trace'
 import type { RunScope, RunsHealth } from './ports.ts'
 import type { ActiveRun } from '../../../shared/contract/runs.ts'
 import type { Trace } from '../../../shared/contract/trace.ts'
 import type { AdmitAnswer, LeaseAnswer, ModelCallUsage, ModelCallWorst } from './ports.ts'
 import { SWEEP_EVERY_MS, ensureGrantExpiry, runAuthoritySweep, runGrantExpiry, sweepBy } from './authority.ts'
 import type { AuthorityDeps, SocketAuthority } from './authority.ts'
-import { SYSTEM_PROMPT_V1 } from '../../prompt/system.ts'
+import { SYSTEM_PROMPT_V2 } from '../../prompt/system.ts'
 
 // ---------- numbers (p3-design 1.3, 4.3, 4.4, 4.6, 4.11) ----------
 export const STARTING_DEADLINE_MS = 3 * 60_000
@@ -103,7 +104,7 @@ export interface TurnRow {
   steps_n: number; outcome: string | null; failure: string | null; cancel_why: string | null
   pos_from: number | null; pos_to: number | null; d1_flushed: number
   output_format_json: string | null; on_end_json: string | null; structured_output_json: string | null
-  resume_json: string | null; abandoned: string | null
+  resume_json: string | null; abandoned: string | null; held_json: string | null; prompt_version: number | null; prompt_apps: string | null
   created_at_ms: number; claimed_at_ms: number | null; started_at_ms: number | null; ended_at_ms: number | null
 }
 
@@ -131,9 +132,10 @@ export interface CoreDeps {
   now: () => number
   /**
    * The system prompt every run carries (the orchestrator's `app/server/prompt/`): fixed, or built when each turn starts
-   * (P5: the connected apps and listed channels). The builder never throws; it logs a failed read and leaves its line out.
+   * (P5: the connected apps and listed channels), with the version it sent and the apps it named (prompt/connected.ts
+   * TurnPrompt), which the turn's row keeps as `prompt_version` and `prompt_apps` (JSON). The builder never throws; it logs a failed read and sends the static v2.
    */
-  systemPrompt: string | ((turnId: string) => Promise<string>)
+  systemPrompt: string | ((turnId: string) => Promise<{ text: string; version: number; apps?: readonly string[] | null }>)
   /** D1, for the redacted `tool_calls` rows (8.7). */
   db: D1Database
   /** A new session id (a UUID); tests pass literal ones. */
@@ -154,7 +156,15 @@ export interface CoreDeps {
    * person's chat and every resume read it, since only route 29 reads D1. Throws when D1 can't answer.
    */
   chatGone: (chatId: string) => Promise<boolean>
+  /**
+   * Whether this is the eval build, which keeps each tool call's capped input for the owner's trace (server/eval-trace/,
+   * p3-eval-observability rev 2 rec 5). Default: the compile-time `__INHOUSE_EVAL_BUILD__` (false in every other build,
+   * where `@eval-trace` keeps nothing anyway); tests pass it.
+   */
+  evalTrace?: boolean
 }
+
+declare const __INHOUSE_EVAL_BUILD__: boolean
 
 const refuse = (code: Refusal['refused']['code'], reason?: Refusal['refused']['reason']): Refusal =>
   ({ refused: reason === undefined ? { code } : { code, reason } })
@@ -400,6 +410,10 @@ export class AgentCore {
     if (t.input.priority === 'now') {
       const live = this.sql.exec<TurnRow>("SELECT * FROM turns WHERE run_id = ? AND state = 'live' AND interrupt_asked = 0 AND fenced = 0", runId).toArray()[0]
       if (live) this.askInterrupt(live)
+      // A held platform stop (A9) is the person's earlier question: `now` ends it `interrupted`, as `interrupt` does,
+      // so it isn't placed again after the new answer.
+      const held = this.sql.exec<TurnRow>("SELECT * FROM turns WHERE run_id = ? AND state = 'ending' AND outcome IS NULL AND held_json IS NOT NULL", runId).toArray()[0]
+      if (held) this.fence(held, { outcome: 'interrupted' })
     }
     // While a turn exists the authority sweep runs every 5 minutes (4.10).
     sweepBy(this.sql, this.d.scheduler, now + SWEEP_EVERY_MS)
@@ -493,17 +507,25 @@ export class AgentCore {
     t = this.current(turnId, gen, 'starting')
     if (!t) return
     if (!usable) return this.failUnstarted(t, { outcome: 'failed', reason: 'model_off' })
-    // The turn's system prompt (P5: built per turn). A builder that rejects falls back to the static v1 prompt, so the
+    // The turn's system prompt (P5: built per turn, v3). A builder that rejects falls back to the static v2 prompt, so the
     // turn is never stranded in `starting`.
     await this.beforeStep?.('prompt', turnId)
+    // The version sent is kept beside the start record (`prompt_version`, #337 review): null for a fixed prompt.
     let systemPrompt: string
+    let promptVersion: number | null = null
+    let promptApps: string | null = null
     if (typeof this.d.systemPrompt === 'string') systemPrompt = this.d.systemPrompt
     else {
       try {
-        systemPrompt = await this.d.systemPrompt(turnId)
+        const built = await this.d.systemPrompt(turnId)
+        systemPrompt = built.text
+        promptVersion = built.version
+        promptApps = built.apps === undefined || built.apps === null ? null : JSON.stringify(built.apps)
       } catch (err) {
-        console.error({ event: 'turn_prompt_failed', turnId, error: errorText(err) })
-        systemPrompt = SYSTEM_PROMPT_V1
+        // The error's name only: a builder's message could carry hub or D1 text (P8a's log guard, A10).
+        console.error({ event: 'turn_prompt_failed', turnId, error: err instanceof Error ? err.name : typeof err })
+        systemPrompt = SYSTEM_PROMPT_V2
+        promptVersion = 2
       }
     }
     t = this.current(turnId, gen, 'starting')
@@ -562,7 +584,7 @@ export class AgentCore {
       console.error({ event: 'turn_start_unbuildable', error: errorText(err) })
       return this.failUnstarted(t, { outcome: 'failed', reason: 'protocol' })
     }
-    this.sql.exec('UPDATE turns SET session_id = ?, start_json = ? WHERE turn_id = ?', sessionId, JSON.stringify(start), turnId)
+    this.sql.exec('UPDATE turns SET session_id = ?, start_json = ?, prompt_version = ?, prompt_apps = ? WHERE turn_id = ?', sessionId, JSON.stringify(start), promptVersion, promptApps, turnId)
     await this.mintAndPlace(turnId, gen)
   }
 
@@ -683,7 +705,8 @@ export class AgentCore {
 
   /**
    * Back to `queued` for another attempt (1.3): the attempt's tokens are revoked first; past 2 requeues (counted when
-   * `counts`) the turn fails `session_crashed`.
+   * `counts`) the turn fails `session_crashed`. Reachable from a held live attempt too (A9, `released`), so that
+   * attempt's timings, held end and checkpoint mark are cleared: the next attempt starts its own.
    */
   private requeue(t: TurnRow, counts: boolean, advanceNow = true) {
     this.d.tokens.revokeTurn(t.turn_id, 'requeued')
@@ -692,7 +715,8 @@ export class AgentCore {
     if (t.pool_queued === 1) this.d.ports.pool.dequeue(t.turn_id)
     this.sql.exec(
       `UPDATE turns SET state = 'queued', gen = gen + 1, placed = 0, pool_queued = 0, runner = NULL, runner_last_seq = -1,
-        watch_json = NULL, starting_deadline_ms = NULL, requeues = requeues + ? WHERE turn_id = ?`, counts ? 1 : 0, t.turn_id)
+        watch_json = NULL, starting_deadline_ms = NULL, started_at_ms = NULL, last_push_ms = NULL, last_progress_ms = NULL,
+        ending_since_ms = NULL, held_json = NULL, saw_checkpoint = 0, requeues = requeues + ? WHERE turn_id = ?`, counts ? 1 : 0, t.turn_id)
     this.d.scheduler.cancel(`turn-watch:${t.turn_id}`)
     if (advanceNow) this.advance(t.run_id)
     else this.d.scheduler.schedule({ id: `run-advance:${t.run_id}`, kind: 'run-advance', dueAtMs: this.d.now() + BUDGET_RETRY_MS })
@@ -807,7 +831,8 @@ export class AgentCore {
     }
     if (t.state === 'ended' || t.state === 'cancelled' || t.fenced === 1) return
     const now = this.d.now()
-    const terminalAlready = t.state === 'ending'
+    // A held turn (A9) is `ending` with no outcome and no `turn.finished` yet: the fence shows its own.
+    const terminalAlready = t.state === 'ending' && t.outcome !== null
     if (!terminalAlready) {
       if ('cancel' in end) this.emit(t.run_id, t.turn_id, { type: 'turn.cancelled', turnId: t.turn_id, why: end.cancel })
       else this.emit(t.run_id, t.turn_id, { type: 'turn.finished', turnId: t.turn_id, ...end })
@@ -834,9 +859,11 @@ export class AgentCore {
     const now = this.d.now()
     if (noCheckpointMeansDamage && t.query_ran === 1 && t.saw_checkpoint === 0 && t.mirror_error === 0) this.damage(t)
     if (t.outcome === null) {
-      // The runner released without a terminal event: a protocol break, never a silent success.
-      this.emit(t.run_id, t.turn_id, { type: 'turn.finished', turnId: t.turn_id, outcome: 'failed', reason: 'protocol' })
-      this.sql.exec("UPDATE turns SET outcome = 'failed', failure = 'protocol' WHERE turn_id = ?", t.turn_id)
+      // A held platform stop (A9) not placed again ends with its own outcome, a try-again. Otherwise the runner released
+      // without a terminal event: a protocol break, never a silent success.
+      const reason: TurnFailure = t.held_json !== null ? 'session_crashed' : 'protocol'
+      this.emit(t.run_id, t.turn_id, { type: 'turn.finished', turnId: t.turn_id, outcome: 'failed', reason })
+      this.sql.exec("UPDATE turns SET outcome = 'failed', failure = ? WHERE turn_id = ?", reason, t.turn_id)
     }
     this.storeFinal(t.turn_id, 'ended', { outcome: null, failure: null, why: null }, now)
     this.d.tokens.closeRoutes(t.turn_id, [...FIRST_ROUTES, ...LAST_ROUTES], 'ended')
@@ -874,7 +901,7 @@ export class AgentCore {
   // ---------- reads (routes 32, 33; the runs signal; runs-read.ts) ----------
 
   activeRuns(scope: RunScope): ActiveRun[] { return activeRuns(this.sql, scope) }
-  readTrace(id: string, scope: RunScope): Trace | null { return traceOf(this.sql, id, scope, this.d.now()) }
+  readTrace(id: string, scope: RunScope): Trace | null { return traceOf(this.sql, id, scope, this.d.now(), this.d.evalTrace ?? __INHOUSE_EVAL_BUILD__) }
   runsHealth(quarantined: number): RunsHealth { return runsHealth(this.sql, this.d.now(), quarantined) }
 
   // ---------- the model gate (8.2; the egress's calls) ----------
@@ -954,7 +981,7 @@ export class AgentCore {
         this.emit(t.run_id, t.turn_id, { type: 'files.restored', turnId: t.turn_id, restored: ev.restored, leftOut: ev.leftOut })
         return false
       case 'audit':
-        this.trace(t.turn_id, now, { audit: ev.entry.toolName, hook: ev.entry.hook, decision: ev.entry.decision })
+        this.trace(t.turn_id, now, { audit: ev.entry.toolName, hook: ev.entry.hook, decision: ev.entry.decision, ...(ev.entry.toolUseId === undefined ? {} : { id: ev.entry.toolUseId }) })
         return false
       case 'deferred':
         progress()
@@ -977,6 +1004,14 @@ export class AgentCore {
         if (ev.checkpoint !== null) this.checkpoint(t, ev.checkpoint)
         const fresh = this.turn(t.turn_id)!
         if (!ev.queryRan && fresh.query_ran === 0) {
+          // A held platform stop (A9) before the query started: placed once more, only on the turn's first attempt
+          // (`requeues` 0: one re-run, though MAX_REQUEUES allows 2) and only when no model call reached the gate (the
+          // runner's `queryRan` alone isn't trusted for that). No `turn.finished` was shown for it.
+          const noCall = this.sql.exec('SELECT 1 FROM model_calls WHERE turn_id = ? LIMIT 1', fresh.turn_id).toArray().length === 0
+          if (this.held(fresh) && fresh.requeues === 0 && noCall) {
+            this.requeue(fresh, true)
+            return true
+          }
           // Nothing ran: the session keeps its last good state (a stop during the file restore, a root timeout).
           this.endTurn(fresh, false)
         } else {
@@ -1000,7 +1035,7 @@ export class AgentCore {
         parts++
       } else {
         this.emit(t.run_id, t.turn_id, { type: 'step', turnId: t.turn_id, stepId: `${t.turn_id}.s${steps}`, label: b.label, tool: b.tool })
-        this.trace(t.turn_id, now, { step: b.label, tool: b.tool })
+        this.trace(t.turn_id, now, { step: b.label, tool: b.tool, ...(b.toolUseId === undefined ? {} : { id: b.toolUseId }) })
         steps++
       }
     }
@@ -1077,17 +1112,41 @@ export class AgentCore {
     this.sql.exec('UPDATE turns SET on_end_json = NULL WHERE turn_id = ?', t.turn_id)
   }
 
-  /** The terminal event (terminal once): the outcome, `ending`, the first routes closed, `turn.finished`. */
+  /**
+   * The terminal event (terminal once): the outcome, `ending`, the first routes closed, `turn.finished`.
+   *
+   * A9: a `failed stopped|session_crashed` that reaches here was never asked for by a person. A person's stop and every
+   * stop of ours that ends the turn (pause, delete, removal, the live and ending watchdog, `containerExited`, the gate)
+   * fence first, and a fenced turn's terminal event never gets here (`ingestOne`). The one unfenced stop of ours is
+   * `watchStarting`'s ambiguous path, which stops a placement it isn't sure was admitted and requeues the turn itself,
+   * so a re-run there is what that path wants. What's left is the platform stopping the runner (a rollout, a host
+   * restart) or the session crashing (it couldn't start, or it died): it shows as `failed session_crashed` (a
+   * try-again), never as a stop nobody pressed. With nothing shown yet (no query, part or step), the event is held
+   * instead (`held_json`, no outcome, no `turn.finished`): `released` places the turn once more if its query never
+   * started and no model call reached the gate, else `endTurn` ends it with the held end. An interrupt the person asked
+   * for is theirs, never held.
+   */
   private terminal(t: TurnRow, ev: Extract<RunEventBody, { type: 'finished' | 'failed' }>) {
     if (t.outcome !== null || t.state !== 'live') return
-    const o = outcomeOf(ev, t.interrupt_asked === 1)
+    const unasked = ev.type === 'failed' && (ev.reason === 'stopped' || ev.reason === 'session_crashed') && t.interrupt_asked === 0
+    const o: TurnOutcome = unasked ? { outcome: 'failed', reason: 'session_crashed' } : outcomeOf(ev, t.interrupt_asked === 1)
+    const hold = unasked && t.query_ran === 0 && t.parts_n === 0 && t.steps_n === 0
     const now = this.d.now()
-    this.sql.exec("UPDATE turns SET state = 'ending', ending_since_ms = ?, outcome = ?, failure = ? WHERE turn_id = ?",
-      now, o.outcome, 'reason' in o ? o.reason : null, t.turn_id)
+    if (hold) {
+      this.sql.exec("UPDATE turns SET state = 'ending', ending_since_ms = ?, held_json = ? WHERE turn_id = ?", now, JSON.stringify(ev), t.turn_id)
+    } else {
+      this.sql.exec("UPDATE turns SET state = 'ending', ending_since_ms = ?, outcome = ?, failure = ? WHERE turn_id = ?",
+        now, o.outcome, 'reason' in o ? o.reason : null, t.turn_id)
+    }
     this.d.tokens.closeRoutes(t.turn_id, FIRST_ROUTES, 'terminal')
     this.gate.stopWaiters(t.turn_id)
-    this.emit(t.run_id, t.turn_id, { type: 'turn.finished', turnId: t.turn_id, ...o })
+    if (!hold) this.emit(t.run_id, t.turn_id, { type: 'turn.finished', turnId: t.turn_id, ...o })
     this.watchTask(t.turn_id, now + RELEASE_WAIT_MS)
+  }
+
+  /** A held platform stop (A9, `terminal`): `ending` with no outcome yet and no `turn.finished` shown. */
+  private held(t: TurnRow): boolean {
+    return t.state === 'ending' && t.outcome === null && t.held_json !== null
   }
 
   /** File confirms, one at a time per turn, each idempotent by `(turnId, seq)` (4.2.6). */
@@ -1312,8 +1371,9 @@ export class AgentCore {
   interrupt(turnId: string, by: Actor): { ok: true } | Refusal {
     const t = this.turn(turnId)
     if (!t || t.owner_id !== by.memberId) return refuse('not_found')
-    // A turn not yet running (queued, or starting anywhere short of live) is ended `interrupted` instead.
-    if (t.state === 'queued' || t.state === 'starting') {
+    // A turn not yet running (queued, or starting anywhere short of live, or a held platform stop: A9) is ended
+    // `interrupted` instead.
+    if (t.state === 'queued' || t.state === 'starting' || this.held(t)) {
       this.fence(t, { outcome: 'interrupted' })
       return { ok: true }
     }
@@ -1328,7 +1388,8 @@ export class AgentCore {
   stop(turnId: string, by: Actor): { ok: true } | Refusal {
     const t = this.turn(turnId)
     if (!t || t.owner_id !== by.memberId) return refuse('not_found')
-    if (t.state === 'queued' || t.state === 'starting' || (t.state === 'live' && t.fenced === 0)) {
+    // A held platform stop (A9) is stopped too, so the person's stop wins over its re-run.
+    if (t.state === 'queued' || t.state === 'starting' || (t.state === 'live' && t.fenced === 0) || this.held(t)) {
       this.fence(t, { outcome: 'stopped' })
       return { ok: true }
     }
@@ -1389,10 +1450,12 @@ export class AgentCore {
     for (const r of runs) this.holding.add(r)
     try {
       const turns = this.sql.exec<{ turn_id: string }>(
-        `SELECT turn_id FROM turns WHERE chat_id IN (${marks}) AND state IN ('queued', 'starting', 'live') ORDER BY created_at_ms, ord`, ...chatIds).toArray()
+        `SELECT turn_id FROM turns WHERE chat_id IN (${marks}) AND (state IN ('queued', 'starting', 'live')
+          OR (state = 'ending' AND outcome IS NULL AND held_json IS NOT NULL)) ORDER BY created_at_ms, ord`, ...chatIds).toArray()
       for (const { turn_id } of turns) {
         const fresh = this.turn(turn_id)
-        if (fresh && fresh.fenced === 0 && (fresh.state === 'queued' || fresh.state === 'starting' || fresh.state === 'live')) this.fence(fresh, { cancel: 'deleted' })
+        // A held platform stop (A9) too: deleted, never placed again in a deleted chat.
+        if (fresh && fresh.fenced === 0 && (fresh.state === 'queued' || fresh.state === 'starting' || fresh.state === 'live' || this.held(fresh))) this.fence(fresh, { cancel: 'deleted' })
       }
     } finally {
       for (const r of runs) this.holding.delete(r)
@@ -1565,10 +1628,17 @@ export class AgentCore {
     return noteCountTokens(this.sql, turnId)
   }
 
-  /** The redacted `tool_calls` row (8.7): the input's byte length and SHA-256, never the input. */
+  /**
+   * The redacted `tool_calls` row (8.7): the input's byte length and SHA-256, never the input. The eval build alone also
+   * keeps the (already capped) input in `turn_trace` for the owner's trace (server/eval-trace/on.ts).
+   */
   async writeToolCall(turnId: string, n: number, entry: AuditEntry): Promise<void> {
     const t = this.turn(turnId)
     if (!t) throw new Error('writeToolCall: unknown turn')
+    if (this.d.evalTrace ?? __INHOUSE_EVAL_BUILD__) {
+      const io = ioRecord(this.sql, turnId, entry)
+      if (io !== null) this.trace(turnId, this.d.now(), io)
+    }
     const input = new TextEncoder().encode(JSON.stringify(entry.input ?? null))
     const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', input))].map(b => b.toString(16).padStart(2, '0')).join('')
     await this.d.db.prepare(

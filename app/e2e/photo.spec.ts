@@ -85,7 +85,7 @@ test('Sample photos show for Sam and the team; Sam uploads, reloads, removes and
   await expect(sidebarImg(page)).toHaveAttribute('src', '/avatars/sam.svg')
 })
 
-test('Who approves what, Activity and Usage show photos; bad files get an error toast', async ({ fx, page }) => {
+test('Who approves what and Usage show photos; bad files get an error toast', async ({ fx, page }) => {
   await start(page, fx, '#/settings/team-approvals')
   await expect(page.locator('img[src="/avatars/dana.svg"]')).toHaveCount(1) // Orders over $5,000 is Dana
   await page.goto('/?demo#/settings/you-general')
@@ -104,8 +104,6 @@ test('Who approves what, Activity and Usage show photos; bad files get an error 
   await expect(page.getByRole('status').filter({ hasText: "isn't a readable image" })).toBeVisible()
   await expect(sidebarImg(page)).toHaveAttribute('src', '/avatars/sam.svg')
 
-  await page.goto('/?demo#/activity')
-  await expect(page.locator('img[src="/avatars/dana.svg"]').first()).toBeVisible()
   await page.goto('/?demo#/usage')
   await page.getByRole('radiogroup', { name: 'Break down by' }).getByRole('radio', { name: 'Person' }).click()
   await expect(page.locator('[data-usage-row] img')).toHaveCount(4)

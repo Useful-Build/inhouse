@@ -1,0 +1,45 @@
+{
+ "row": {
+  "caseId": "T06",
+  "cat": "choice",
+  "pair": "history_search/memory_search",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "history_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I couldn't find a chat about returns from last month. I searched your chat histo",
+  "costUsd": 0.025,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I couldn't find a chat about returns from last month. I searched your chat histo",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__history_search",
+    "inputSha256": "f02752f9cb602abd711cc29d0504b2f6bcd550bd8206e965721a45c3e8af7a60",
+    "inputExcerpt": "{\"query\":\"returns\",\"after\":\"2026-10-01\",\"before\":\"2026-11-01\"}"
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "f9fb0d8cf71c744877baf8eb93bd6a7716f4d987905117003ea42b3627c22054",
+    "inputExcerpt": "{\"query\":\"returns policy\"}"
+   }
+  ]
+ }
+}

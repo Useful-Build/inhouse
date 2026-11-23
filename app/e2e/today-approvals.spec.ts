@@ -38,22 +38,25 @@ test('A draft with no text: Edit opens the panel on a note field, the note rides
   await note.fill('Olive units first, the rest after the count.')
   await shot(page, 'panel-note-1440')
 
-  // Done (Edit while not editing) sits in the draft's own header; Ask sits in the panel's header, above the title.
+  // Done (Edit while not editing) sits in the draft's own header; "1 of 6" and Close sit on the window's top line, above the title.
   const done = await panel.getByRole('article', { name: 'Shopify change draft' }).getByRole('button', { name: 'Done', exact: true }).boundingBox()
-  const ask = await panel.getByRole('button', { name: 'Ask about this', exact: true }).boundingBox()
+  const close = await panel.getByRole('button', { name: 'Close', exact: true }).boundingBox()
   const title = await panel.getByRole('heading', { name: '11 returns are not restocked' }).boundingBox()
   expect(done, 'Done is in the draft').not.toBeNull()
-  expect(ask!.y + ask!.height, 'Ask sits above the title').toBeLessThanOrEqual(title!.y)
-  // The footer holds two actions on one row, Don't send then the main action, inside the panel's box.
-  const actions = await Promise.all(["Don't send", 'Approve and restock'].map(n => panel.getByRole('button', { name: n, exact: true }).boundingBox()))
+  expect(close!.y + close!.height, 'Close sits above the title').toBeLessThanOrEqual(title!.y)
+  await expect(panel.getByText(/^\d of 6$/)).toBeVisible()
+  // The footer holds two buttons on one row, the main action then More (Don't send is inside More), inside the panel's box.
+  const actions = await Promise.all(['More', 'Approve and restock'].map(n => panel.getByRole('button', { name: n, exact: true }).boundingBox()))
   const box = await panel.boundingBox()
   for (const b of actions) expect(b).not.toBeNull()
-  expect(Math.abs(actions[0]!.y - actions[1]!.y), 'the two actions share one row').toBeLessThanOrEqual(4)
-  expect(actions[0]!.x, "Don't send comes first").toBeLessThan(actions[1]!.x)
+  expect(Math.abs(actions[0]!.y - actions[1]!.y), 'the two buttons share one row').toBeLessThanOrEqual(4)
+  expect(actions[1]!.x, 'the main action comes first').toBeLessThan(actions[0]!.x)
   expect(actions[1]!.y + actions[1]!.height, 'the actions stay inside the panel').toBeLessThanOrEqual(box!.y + box!.height)
 
   await panel.getByRole('button', { name: 'Approve and restock', exact: true }).click()
-  await expect(panel).toContainText('11 units restocked on Shopify')
+  // Approve moves straight on to the next waiting draft (the toast holds the Undo).
+  await expect(panel.getByRole('heading', { name: '11 returns are not restocked' })).toHaveCount(0)
+  await expect(panel.getByRole('heading', { level: 2 })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(panel).toHaveCount(0)
   await expect(waiting(page)).toHaveText(/·\s5$/)
@@ -90,12 +93,12 @@ test('Today: the whole card opens the panel from one real button, and the "··�
   // The title is a real button; the card has no click handler of its own.
   await card.getByRole('button', { name: 'Ridge 30L Pack runs out in 9 days', exact: true }).focus()
   await page.keyboard.press('Enter')
-  await expect(page.getByRole('dialog')).toContainText('How your Inhouse agent worked it out')
+  await expect(page.getByRole('dialog')).toContainText(/Checked Shopify and PO sheet at /)
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog')).toHaveCount(0)
   // A click on the card's blank area lands on the title's stretched hit area and opens it too.
   await card.click({ position: { x: 200, y: 100 } })
-  await expect(page.getByRole('dialog')).toContainText('How your Inhouse agent worked it out')
+  await expect(page.getByRole('dialog')).toContainText(/Checked Shopify and PO sheet at /)
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await card.getByRole('button', { name: 'More actions for Ridge 30L Pack runs out in 9 days' }).click()

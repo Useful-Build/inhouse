@@ -100,7 +100,7 @@ const themeFromLabel = (label: string) => (Object.keys(THEME_LABELS) as Theme[])
 const ROLE_NAMES = { admin: 'Admin', member: 'Member', inhouse: 'Inhouse team' } as const
 const RETENTION = ['3 months', '6 months', '12 months', '24 months', 'Until deleted']
 
-export { MENU, hasSlack, menuFor } from './menu'
+export { SECTIONS, SETTINGS_PAGES, hasSlack, menuFor } from './menu'
 import { hasSlack } from './menu'
 
 export interface Env {
@@ -258,7 +258,7 @@ export function settingsPage(tab: string, env: Env): Page {
   const auditRow = (e: AuditLine) => withAvatar(R(`${e.who} ${e.what}`, `${e.detail} · ${fmtWhen(e.at, now, d0)}`, 'value'), e.who)
   /** The audit log's two groups: changes made today, and earlier ones. */
   const auditDay = (e: AuditLine) => fmtAuditDay(e.at, now, d0)
-  const pausedRow = agent.paused ? [withAvatar(R(`${me.name} paused your Inhouse agent`, `Routines and jobs stopped · ${fmtTime(agent.paused, d0)}`, 'value'), me.id)] : []
+  const pausedRow = agent.paused ? [withAvatar(R(`${me.name} paused your Inhouse agent`, `Chats, routines and jobs stopped · ${fmtTime(agent.paused, d0)}`, 'value'), me.id)] : []
   const nextStage = S < 2
     ? [`Act adds ${listNames(['drafted work', 'memory', 'routines', ...(channel ? [channel] : [])])}.`, 'Run adds agreed jobs it finishes by itself, within your limits.'][S]
     : 'You have every stage. Money and customer actions still wait for a person.'
@@ -348,10 +348,10 @@ export function settingsPage(tab: string, env: Env): Page {
     'team-limits': { title: 'Run limits', sections: [
       { label: 'Jobs your Inhouse agent may finish by itself', rows: lim.jobsAgentMayFinish.map(({ id, name, desc }) => R(name, desc, 'toggle', '', 2, `l:${id}`, true)) },
       { label: 'How far your Inhouse agent can go', rows: [sel('Daily limit', 'After this many actions in one day, it stops and asks.', 'l:daily', `${lim.dailyActionLimit} actions`, ['10 actions', '25 actions', '50 actions', '100 actions', '200 actions'], 2), sel('Largest restock', 'Bigger restocks wait for a person.', 'l:restock', `${lim.largestRestockUnits} units`, ['25 units', '50 units', '100 units', '250 units', '500 units'], 2)] },
-      { label: 'Always waits for a person', rows: [R('Money', 'Orders, refunds, claims and budget changes.', 'value', 'Always'), R('Customers', 'Any message to a customer.', 'value', 'Always'), R('Pause Inhouse agent', 'Stops every routine, job and question at once.', 'button', agent.paused ? 'Resume Inhouse agent' : 'Pause Inhouse agent', 1, undefined, undefined, env.togglePause)] },
+      { label: 'Always waits for a person', rows: [R('Money', 'Orders, refunds, claims and budget changes.', 'value', 'Always'), R('Customers', 'Any message to a customer.', 'value', 'Always'), R('Pause Inhouse agent', 'Stops every chat, routine and job at once.', 'button', agent.paused ? 'Resume Inhouse agent' : 'Pause Inhouse agent', 1, undefined, undefined, env.togglePause)] },
     ] },
     'team-spend': { title: 'Spending cap', sections: [
-      { label: 'This month', rows: [{ ...txt('Monthly cap', 'Jobs pause when the cap is reached.', 's:cap', fmtCapSetting(usage.cap, d0)), type: 'money' }, sel('Alert at', 'Admins get an email.', 's:alert', `${usage.alertAt}%`, ['50%', '70%', '80%', '90%', '100%']), sel('Show amounts in', 'The currency used for amounts in reports and emails.', 's:currency', 'USD ($)', ['USD ($)', 'GBP (£)', 'EUR (€)', 'CAD ($)', 'AUD ($)']), R('Spent so far', `${usage.month} ${usage.monthKey?.slice(0, 4) ?? calendarOf(now, d0).year}.`, 'value', fmtSpentSetting(env.spent, d0))] },
+      { label: 'This month', rows: [{ ...txt('Monthly cap', 'Chats, routines and jobs pause when the cap is reached.', 's:cap', fmtCapSetting(usage.cap, d0)), type: 'money' }, sel('Alert at', 'Admins get an email.', 's:alert', `${usage.alertAt}%`, ['50%', '70%', '80%', '90%', '100%']), sel('Show amounts in', 'The currency used for amounts in reports and emails.', 's:currency', 'USD ($)', ['USD ($)', 'GBP (£)', 'EUR (€)', 'CAD ($)', 'AUD ($)']), R('Spent so far', `${usage.month} ${usage.monthKey?.slice(0, 4) ?? calendarOf(now, d0).year}.`, 'value', fmtSpentSetting(env.spent, d0))] },
       { label: 'Accounts', rows: [R('AI', 'Your Anthropic account, billed at cost.', 'value', 'Anthropic'), R('Hosting', 'Your Cloudflare account, billed at cost.', 'value', 'Cloudflare')] },
     ] },
     'team-data': { title: 'Data and access', sections: [

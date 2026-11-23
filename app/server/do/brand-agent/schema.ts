@@ -32,6 +32,11 @@
 //   `RunStart.deferred`); `turns.abandoned` (a deferred turn whose wait was given up before it was final: its end fires
 //   `cancelled` with this reason, and no later checkpoint parks it again); `chat_state.waiting_json` now holds
 //   `{ questionId, turnId, toolUseId, toolName, input }` (no older shape exists on a deployed object: pre-launch).
+// - A9 (the platform stop): `turns.held_json`, an un-asked `failed stopped|session_crashed` that came before anything
+//   ran, held without a `turn.finished` until `released` says whether the turn is placed once more (core.ts `terminal`).
+// - P5 (#337 review): `turns.prompt_version`, the system prompt version the turn's start sent (3 built, 2 the static
+//   fallback; null for a fixed prompt), beside `start_json`; `turns.prompt_apps` (#337 round 3), the JSON list of the
+//   apps its built line named as connected (null for the fallback or a fixed prompt).
 
 import { TURN_ROWS_TABLE } from './projection.ts'
 
@@ -58,15 +63,17 @@ export function createAgentTables(sql: SqlStorage): void {
     runner_cost_micro INTEGER, parts_n INTEGER NOT NULL DEFAULT 0,
     steps_n INTEGER NOT NULL DEFAULT 0, count_tokens_calls INTEGER NOT NULL DEFAULT 0,
     outcome TEXT, failure TEXT, cancel_why TEXT, output_format_json TEXT, on_end_json TEXT, structured_output_json TEXT,
-    resume_json TEXT, abandoned TEXT,
+    resume_json TEXT, abandoned TEXT, held_json TEXT, prompt_version INTEGER, prompt_apps TEXT,
     pos_from INTEGER, pos_to INTEGER, d1_flushed INTEGER NOT NULL DEFAULT 0,
     created_at_ms INTEGER NOT NULL, claimed_at_ms INTEGER, started_at_ms INTEGER, ended_at_ms INTEGER,
     UNIQUE (chat_id, client_key))`)
-  // PR 5's and PR 6's columns on an object whose `turns` predates them (CREATE IF NOT EXISTS leaves an existing table as it is).
+  // PR 5's, PR 6's, A9's and P5's columns on an object whose `turns` predates them (CREATE IF NOT EXISTS leaves an existing table as it is).
   const have = new Set(sql.exec<{ name: string }>("SELECT name FROM pragma_table_info('turns')").toArray().map(r => r.name))
-  for (const col of ['output_format_json', 'on_end_json', 'structured_output_json', 'resume_json', 'abandoned']) {
+  for (const col of ['output_format_json', 'on_end_json', 'structured_output_json', 'resume_json', 'abandoned', 'held_json']) {
     if (!have.has(col)) sql.exec(`ALTER TABLE turns ADD COLUMN ${col} TEXT`)
   }
+  if (!have.has('prompt_version')) sql.exec('ALTER TABLE turns ADD COLUMN prompt_version INTEGER')
+  if (!have.has('prompt_apps')) sql.exec('ALTER TABLE turns ADD COLUMN prompt_apps TEXT')
   sql.exec('CREATE INDEX IF NOT EXISTS turns_run ON turns(run_id, state)')
   sql.exec('CREATE INDEX IF NOT EXISTS turns_state ON turns(state)')
   sql.exec('CREATE INDEX IF NOT EXISTS turns_owner ON turns(owner_id, state)')

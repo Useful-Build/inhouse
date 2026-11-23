@@ -19,7 +19,7 @@ const palette = (page: Page) => page.getByRole('dialog', { name: 'Search' })
 const paletteInput = (page: Page) => palette(page).getByRole('combobox')
 /** The open tooltip with this text (one that is closing can still be in the page for a moment). */
 const tip = (page: Page, text: string | RegExp) => page.getByRole('tooltip').filter({ hasText: text })
-const composer = (page: Page) => page.getByRole('textbox', { name: /^(Ask|Message) your Inhouse agent$/ })
+const composer = (page: Page) => page.getByRole('textbox', { name: /^(Ask|Message) Inhouse$/ })
 
 test('Palette: open a chat and a settings page, run New chat, Escape gives focus back; shortcuts skip fields except ⌘K', async ({ fx, page }) => {
   await start(page, fx)
@@ -58,10 +58,9 @@ test('Palette: open a chat and a settings page, run New chat, Escape gives focus
   await expect.poll(() => hash(page)).toBe('#/chats/new')
   await expect(header(page)).toContainText('New chat')
 
-  // The visible entry: the top bar's Search, with ⌘K in its tooltip. Escape closes the palette and focus goes back to it.
-  const search = header(page).getByRole('button', { name: 'Search' })
-  await search.hover()
-  await expect(tip(page, /Search\s*(⌘K|Ctrl\+K)/)).toBeVisible()
+  // The visible entry: the sidebar's Search row, with ⌘K shown on the row. Escape closes the palette and focus goes back to it.
+  const search = side(page).getByRole('button', { name: 'Search', exact: true })
+  await expect(search).toContainText(/⌘\s*K|Ctrl\+K/)
   await search.click()
   await expect(palette(page)).toBeVisible()
   await page.keyboard.press('Escape')
@@ -244,7 +243,7 @@ test('Team window: Send waits for words (whitespace is empty), and the request c
   const team = page.getByRole('dialog', { name: 'Your Inhouse team' })
   await expect(team).toBeVisible()
   const send = team.getByRole('button', { name: 'Send to the team' })
-  const text = team.getByRole('textbox', { name: 'Your request' })
+  const text = team.getByRole('textbox', { name: 'Details' })
   await expect(send).toBeDisabled()
   await text.fill('   \n  ')
   await expect(send).toBeDisabled()
@@ -256,12 +255,13 @@ test('Team window: Send waits for words (whitespace is empty), and the request c
 
   await side(page).getByRole('button', { name: /account and settings/i }).click()
   await page.getByRole('menu', { name: 'Account' }).getByRole('menuitem', { name: /^Your Inhouse team/ }).click()
+  await team.getByRole('radio', { name: /^Your requests/ }).click()
   await expect(team.getByText('Connect our Gorgias macros')).toBeVisible()
-  await expect(team.getByText('New tool · sent by Robin Okafor, just now')).toBeVisible()
+  await expect(team.getByText('New tool · You, just now')).toBeVisible()
   await shot(page, 'team-sent-by-name')
 })
 
-test('Sidebar sections: Today, Approvals and Activity first, then the "Your agent" group announced as a group; Usage and the team live in the account menu', async ({ fx, page }) => {
+test('Sidebar sections: Today, Approvals, Activity and Library first, then the "Your agent" group announced as a group; Usage and the team live in the account menu', async ({ fx, page }) => {
   await start(page, fx)
   const nav = side(page).getByRole('navigation', { name: 'Main' })
   // Each row's label as shown: the icon ligatures (`.ms`) and the Approvals count left out.
@@ -273,8 +273,8 @@ test('Sidebar sections: Today, Approvals and Activity first, then the "Your agen
   // The label names the group for a screen reader.
   const agentGroup = nav.getByRole('group', { name: 'Your agent' })
   await expect(agentGroup).toBeVisible()
-  expect(await names(agentGroup)).toEqual(['Routines', 'Skills', 'Tools', 'Library'])
-  expect(await names(nav)).toEqual(['Today', 'Approvals', 'Activity', 'Routines', 'Skills', 'Tools', 'Library'])
+  expect(await names(agentGroup)).toEqual(['Routines', 'Skills', 'Tools'])
+  expect(await names(nav)).toEqual(['Today', 'Approvals', 'Activity', 'Library', 'Routines', 'Skills', 'Tools'])
   // Usage and the old team card left the sidebar; the palette still lists Usage.
   await expect(side(page).getByRole('button', { name: 'Usage' })).toHaveCount(0)
   await expect(side(page).getByRole('button', { name: /Message the team/ })).toHaveCount(0)

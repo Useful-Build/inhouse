@@ -4,6 +4,7 @@
 // schemas, so each is defined once. What stays here: the client interface, its inputs, the error class and constants.
 import type { Stage, StageIndex, Scenario, AgentErrorCode, Instant } from '../../shared/contract/common'
 import type { RoutineRun } from '../../shared/contract/routine'
+import type { RoutineRunHistory } from '../../shared/contract/routines'
 import type { Trace } from '../../shared/contract/trace'
 import type { ModelMode } from '../../shared/contract/model'
 import type { LibraryFile } from '../../shared/contract/library'
@@ -22,10 +23,13 @@ import type { RunFrame } from '../../shared/contract/run-event'
 
 export type { Stage, StageIndex, Scenario, Effort, AgentErrorCode, ErrorReason, ResourceKey, ResourceStatus, Instant, Money, ClockTime, Prose } from '../../shared/contract/common'
 export type { AgentMeta } from '../../shared/contract/meta'
+/** The lists the agent's work fills, which `refresh` reads again (the resource each shows by). */
+export type RefreshList = Extract<ResourceKey, 'library' | 'problems' | 'activity' | 'notifications'>
 export type { ProblemSource, ProblemFact, Draft, DraftItem, Problem } from '../../shared/contract/problem'
 export type { AvailableChannel, AvailableChannels, NotifyChannel, NotifyChannelList, PutNotifyChannels } from '../../shared/contract/notify-slack'
 export type { ToolDetail, CatalogTool, ToolChannel, ToolSetup, ToolsData } from '../../shared/contract/tools'
 export type { RoutineDef, RoutineRun } from '../../shared/contract/routine'
+export type { RoutineHistoryRun, RoutineRunHistory, RoutineRunOutcome } from '../../shared/contract/routines'
 export type { SkillDef, SkillSuggestion } from '../../shared/contract/skill'
 export type { TraceStepKind, TraceStep, Trace } from '../../shared/contract/trace'
 export type { ModelMode } from '../../shared/contract/model'
@@ -152,6 +156,9 @@ export interface AgentClient {
   setToggle(key: string, on: boolean): Promise<void>
   requestTool(key: string, on: boolean): Promise<void>
   requestSkill(name: string): Promise<void>
+  /** A skill's page is open: fetches its instructions (`body` in `read().skills`) if they aren't in yet. `read()` changes when
+   *  they arrive; it resolves then, or at once when there's nothing to fetch. */
+  loadSkill(name: string): Promise<void>
   setToolPaused(key: string, paused: boolean): Promise<void>
   /** The Inhouse team connects (or reconnects) a tool: resolves to the address the page navigates to, to sign in at the tool. */
   connectTool(key: string): Promise<{ authorizeUrl: string }>
@@ -183,6 +190,8 @@ export interface AgentClient {
   setAside(id: string, reason: SetAsideReason | null): Promise<void>
   /** Run a routine now, outside its schedule. `id` is the routine's own `id`. */
   runRoutine(id: string): Promise<RoutineRun>
+  /** A routine's own recent runs, newest first (at most `ROUTINE_RUNS_MAX`). Rejects (not found) for a routine it doesn't have. */
+  routineRunHistory(id: string): Promise<RoutineRunHistory>
   deleteRoutine(id: string): Promise<void>
   /** Undo a routine delete. */
   restoreRoutine(id: string): Promise<void>
@@ -218,6 +227,8 @@ export interface AgentClient {
   retry(resource: ResourceKey): Promise<void>
   /** Reads the Memory pages' lines again, without the page showing as loading: a fact the agent saved since the last read shows. One read at a time (an open while one runs joins it). Nothing to read in the demo. */
   refreshMemory(): Promise<void>
+  /** Reads a list the agent's work fills again, without the page showing as loading: what it made since the last read shows. One read at a time per list; nothing before the list's first read is in. Nothing to read in the demo. */
+  refresh(list: RefreshList): Promise<void>
   /** Where the audit log downloads from, or null when the client builds the file itself (the demo, with shared/csv.ts). */
   auditExportUrl(): string | null
   /** Route 41: one chat file's bytes, and the name the server gave it (null when it gave none). Rejects with an `AgentError`. The demo serves a sample file. */

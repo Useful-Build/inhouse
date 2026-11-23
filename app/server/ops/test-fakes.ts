@@ -20,7 +20,7 @@
 //   that member's chat, and an `as.runId` or `as.turnId` given with it one of that chat's (both: a pair of one row).
 //   Answers `{ result }`:
 //   the tool's CallToolResult (text, structuredContent.recipients, isError on a refusal).
-// - `prompt`: the string turnSystemPrompt builds now, for a synthetic turn id. Answers `{ prompt }`.
+// - `prompt`: the prompt turnSystemPrompt builds now, for a synthetic turn id. Answers `{ prompt, version }`.
 // - `systemNotice`: { notice }: sendSystemNotice(env, notice) with the real env. Answers its SystemNoticeResult.
 // - `logs`: { since?: { product?, hub? } }: the captured log lines of this isolate and the hub's. Answers
 //   `{ lines: [{ worker: 'product' | 'hub', line }], next: { product, hub } }`: the product's lines, then the hub's.
@@ -251,7 +251,8 @@ export async function runTestFakes(body: unknown, env: TestFakesEnv): Promise<Te
     case 'notify':
       return notifyOp(env, op)
     case 'prompt':
-      return ok({ prompt: await turnSystemPrompt(turnPromptDeps(env), `t_fakes_${tail()}`) })
+      const built = await turnSystemPrompt(turnPromptDeps(env), `t_fakes_${tail()}`)
+      return ok({ prompt: built.text, version: built.version })
     case 'systemNotice':
       return ok(await sendSystemNotice(env, op.notice as SystemNoticeInput))
     case 'logs':

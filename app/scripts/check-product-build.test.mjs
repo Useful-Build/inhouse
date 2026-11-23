@@ -1,5 +1,6 @@
 // scripts/check-product-build.mjs part 4: the test-build proof is always hard (exit 1 when the test build has no canary),
-// whatever the server folder holds. Part 6: the eval trace in the eval build only. Builds are fixtures in temp dirs.
+// whatever the server folder holds. Part 6: the eval trace in the eval build only. Part 7: the test shop. Part 8: the test
+// issuer's header. Builds are fixtures in temp dirs.
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -9,10 +10,14 @@ import { expect, test } from 'vitest'
 import { SCRIPTED_MODEL_CANARY } from '../test/scripted-model/index.ts'
 import { TEST_CONTROLS_CANARY } from '../server/ops/test-controls.ts'
 import { EVAL_TRACE_CANARY } from '../server/eval-trace/on.ts'
+import { TEST_SHOP_CANARY } from '../server/egress/test-shop.ts'
+import { TEST_ASSERTION_HEADER } from '../server/auth/test-issuer.ts'
 import { TEST_FAKES_CANARY } from '../server/ops/test-fakes.ts'
 
 const script = fileURLToPath(new URL('./check-product-build.mjs', import.meta.url))
 const CANARY = 'INHOUSE_TEST_ISSUER_CANARY_7f3c'
+/** Part 8: the test and eval builds name the test issuer's header (authenticate.ts reads it behind Access). */
+const HEADER = 'X-Inhouse-Test-Assertion'
 const put = (file, text) => { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, text) }
 
 /** A build folder as the Vite plugin writes it: client/, client-modules.json, one Worker folder, server-modules.json. */
@@ -29,7 +34,7 @@ function build(dir, { html = '<p>ok</p>', clientModules = ['src/main.tsx'], work
 // The eval build as vite.config.ts makes it: the eval trace's module in its graph and its canary in its Worker.
 const EVAL = 'inhouse-eval-trace-canary-5d1e8a40'
 const EVAL_MODULE = 'server/eval-trace/on.ts'
-const EVAL_OK = { workerJs: `const f = 'eval (${EVAL})'`, serverModules: ['server/index.ts', EVAL_MODULE, 'server/eval-trace/off.ts'] }
+const EVAL_OK = { workerJs: `const f = 'eval (${EVAL})'; const h = '${HEADER}'`, serverModules: ['server/index.ts', EVAL_MODULE, 'server/eval-trace/off.ts'] }
 
 function run({ server = {}, productTest = {}, product: productOpts = {}, productEval = EVAL_OK } = {}) {
   const tmp = mkdtempSync(join(tmpdir(), 'check-product-build-'))
@@ -60,7 +65,7 @@ test.each([
 })
 
 test('the issuer exists and the test build has the canary: the proof passes', () => {
-  const r = run({ server: { 'auth/test-issuer.ts': `export const c = '${CANARY}'` }, productTest: { workerJs: `const c = '${CANARY}'` } })
+  const r = run({ server: { 'auth/test-issuer.ts': `export const c = '${CANARY}'` }, productTest: { workerJs: `const c = '${CANARY}'; const h = '${HEADER}'` } })
   expect(r.stdout).toContain('ok    server bundle: caught the test build')
   expect(r.status).toBe(0)
 })
@@ -68,7 +73,7 @@ test('the issuer exists and the test build has the canary: the proof passes', ()
 // P3 PR0: the scripted model (app/test/scripted-model/) never ships, and once the server imports it the test build must
 // carry its canary. The canary is written out here, and checked against the module's own constant and the script's.
 const SCRIPTED = 'inhouse-scripted-model-canary-7f3c9b21'
-const ISSUER_OK = { server: { 'auth/test-issuer.ts': `export const c = '${CANARY}'` }, productTest: { workerJs: `const c = '${CANARY}'` } }
+const ISSUER_OK = { server: { 'auth/test-issuer.ts': `export const c = '${CANARY}'` }, productTest: { workerJs: `const c = '${CANARY}'; const h = '${HEADER}'` } }
 
 test('the scripted canary is the module\'s and the script\'s', () => {
   expect(SCRIPTED_MODEL_CANARY).toBe(SCRIPTED)
@@ -90,7 +95,7 @@ test('the server imports @scripted-model: the test build must carry its canary',
   const without = run({ ...ISSUER_OK, server })
   expect(without.stderr).toContain(`the server imports @scripted-model but the test build`)
   expect(without.status).toBe(1)
-  const withIt = run({ server, productTest: { workerJs: `const c = '${CANARY}'; const s = '${SCRIPTED}'` } })
+  const withIt = run({ server, productTest: { workerJs: `const c = '${CANARY}'; const s = '${SCRIPTED}'; const h = '${HEADER}'` } })
   expect(withIt.stdout).toContain('ok    server bundle: caught the scripted model in the test build.')
   expect(withIt.status).toBe(0)
 })
@@ -133,9 +138,15 @@ test('the server imports @test-controls: the test build must carry their canary'
   const without = run({ ...ISSUER_OK, server: IMPORTS_CONTROLS })
   expect(without.stderr).toContain('the server imports @test-controls but the test build')
   expect(without.status).toBe(1)
-  const withIt = run({ server: IMPORTS_CONTROLS, productTest: { workerJs: `const c = '${CANARY}'; const t = '${CONTROLS}'` } })
+  const withIt = run({ server: IMPORTS_CONTROLS, productTest: { workerJs: `const c = '${CANARY}'; const t = '${CONTROLS}'; const h = '${HEADER}'` } })
   expect(withIt.stdout).toContain('ok    server bundle: caught the test controls in the test build.')
   expect(withIt.status).toBe(0)
+})
+
+test('the routine tick\'s hook alone (routines/tick.ts) also makes the test build carry the controls\' canary', () => {
+  const r = run({ ...ISSUER_OK, server: { ...ISSUER_OK.server, 'routines/tick.ts': "import { afterTickBatch } from '@test-controls'" } })
+  expect(r.stderr).toContain('the server imports @test-controls but the test build')
+  expect(r.status).toBe(1)
 })
 
 // P4 (p4-h1.md OC 4): the hub is its own Worker. The product Worker names hub/index/contract.ts as types only.
@@ -244,7 +255,93 @@ test('no eval build folder: a usage failure (exit 2), never a pass (failure 3)',
   expect(r.status).toBe(2)
 })
 
-// Part 8: the test-fakes hook (server/ops/test-fakes.ts, `@test-fakes`, route 76). Ways it can fail, written down first:
+// Part 7: the test shop override (server/egress/test-shop.ts, `@test-shop`). Ways it can fail, written down first: the
+// deployable Worker carries its module, its canary or the hub option's name (the product could then send an override);
+// once the server imports `@test-shop`, the test or the eval build lacks the canary or the module, so the scan proves
+// nothing; the script's canary or module path drifts from the module's and vite.config.ts's alias.
+const SHOP = 'inhouse-test-shop-canary-9c4e17b2'
+const SHOP_MODULE = 'server/egress/test-shop.ts'
+const SHOP_IMPORT = { 'egress/index.ts': "import { withTestShop } from '@test-shop'" }
+const shopIn = (opts) => ({ ...opts, workerJs: `${opts.workerJs ?? ''}; const t = '${SHOP}'; o.testShopHost = h`, serverModules: [...(opts.serverModules ?? ['server/index.ts']), SHOP_MODULE] })
+const SHOP_OK = { server: { ...ISSUER_OK.server, ...SHOP_IMPORT }, productTest: shopIn(ISSUER_OK.productTest), productEval: shopIn(EVAL_OK) }
+
+test('the test shop canary and module are the module\'s, the script\'s and the alias\'s (part 7)', () => {
+  expect(TEST_SHOP_CANARY).toBe(SHOP)
+  const source = readFileSync(script, 'utf8')
+  expect(source).toContain(`const TEST_SHOP_CANARY = '${SHOP}'`)
+  expect(source).toContain("const TEST_SHOP_OPTION = 'testShopHost'")
+  const app = fileURLToPath(new URL('..', import.meta.url))
+  expect(existsSync(join(app, SHOP_MODULE))).toBe(true)
+  expect(readFileSync(join(app, 'vite.config.ts'), 'utf8')).toContain(`'./${SHOP_MODULE}'`)
+  expect(readFileSync(join(app, 'hub/index/contract.ts'), 'utf8')).toContain('export type CallToolOptions = { testShopHost?: string }')
+})
+test('the test and eval builds carry the override and the deployable Worker doesn\'t: the check passes (part 7)', () => {
+  const r = run(SHOP_OK)
+  expect(r.stdout).toContain('ok    test shop: not in the deployable Worker')
+  expect(r.stdout).toContain('ok    test shop: caught the test build.')
+  expect(r.stdout).toContain('ok    test shop: caught the eval build.')
+  expect(r.status).toBe(0)
+})
+test.each([
+  ['its canary', { workerJs: `const t = '${SHOP}'` }],
+  ['the option\'s name', { workerJs: 'o.testShopHost = h' }],
+  ['its module', { serverModules: ['server/index.ts', SHOP_MODULE] }],
+])('the deployable Worker carrying %s fails the check (part 7)', (_label, product) => {
+  const r = run({ ...SHOP_OK, product })
+  expect(r.stderr).toContain('FAIL  test shop: the deployable Worker')
+  expect(r.status).toBe(1)
+})
+test('the off stand-in in the deployable Worker\'s graph passes (part 7)', () => {
+  const r = run({ ...SHOP_OK, product: { serverModules: ['server/index.ts', 'server/egress/test-shop-off.ts'] } })
+  expect(r.stdout).toContain('ok    test shop: not in the deployable Worker')
+  expect(r.status).toBe(0)
+})
+test.each([
+  ['the test build', 'no "inhouse-test-shop-canary-9c4e17b2"', { productTest: { ...ISSUER_OK.productTest, serverModules: ['server/index.ts', SHOP_MODULE] } }],
+  ['the test build', 'no server/egress/test-shop.ts module', { productTest: { workerJs: `const c = '${CANARY}'; const t = '${SHOP}'` } }],
+  ['the eval build', 'no "inhouse-test-shop-canary-9c4e17b2"', { productEval: { ...EVAL_OK, serverModules: [...EVAL_OK.serverModules, SHOP_MODULE] } }],
+  ['the eval build', 'no server/egress/test-shop.ts module', { productEval: { ...EVAL_OK, workerJs: `${EVAL_OK.workerJs}; const t = '${SHOP}'` } }],
+])('the server imports @test-shop and %s has %s: the scan proves nothing (part 7)', (label, missing, opts) => {
+  const r = run({ ...SHOP_OK, ...opts })
+  expect(r.stderr).toContain(`FAIL  test shop: the server imports @test-shop but ${label}`)
+  expect(r.stderr).toContain(missing)
+  expect(r.status).toBe(1)
+})
+test('nothing imports @test-shop: a note, and builds without it pass (part 7)', () => {
+  const r = run(ISSUER_OK)
+  expect(r.stdout).toContain('note  test shop: no server source imports @test-shop')
+  expect(r.status).toBe(0)
+})
+
+// Part 8: the test issuer's header (eval behind Access). Ways it can fail, written down first: the deployable Worker names
+// it, in any case (its authenticate.ts would read a second token source); the test or the eval build lacks it, so the
+// scan proves nothing and the eval build can't sign its people in behind Access; the script's name drifts from the module's.
+test('the header is the module\'s and the script\'s (part 8)', () => {
+  expect(TEST_ASSERTION_HEADER).toBe(HEADER)
+  expect(readFileSync(script, 'utf8')).toContain(`const TEST_ASSERTION = '${HEADER}'`)
+})
+test('the test and eval builds name the header and the deployable Worker doesn\'t: the check passes (part 8)', () => {
+  const r = run(ISSUER_OK)
+  expect(r.stdout).toContain('ok    test issuer\'s header: not in the deployable Worker')
+  expect(r.stdout).toContain('ok    test issuer\'s header: caught the test build.')
+  expect(r.stdout).toContain('ok    test issuer\'s header: caught the eval build.')
+  expect(r.status).toBe(0)
+})
+test.each([HEADER, HEADER.toLowerCase()])('the deployable Worker naming %s fails the check (part 8)', (name) => {
+  const r = run({ ...ISSUER_OK, product: { workerJs: `h.get('${name}')` } })
+  expect(r.stderr).toContain('FAIL  test issuer\'s header: the deployable Worker')
+  expect(r.status).toBe(1)
+})
+test.each([
+  ['the test build', { productTest: { workerJs: `const c = '${CANARY}'` } }],
+  ['the eval build', { productEval: { ...EVAL_OK, workerJs: `const f = 'eval (${EVAL})'` } }],
+])('%s without the header fails: the scan proves nothing (part 8)', (label, opts) => {
+  const r = run({ ...ISSUER_OK, ...opts })
+  expect(r.stderr).toContain(`FAIL  test issuer's header: no "${HEADER}" in ${label}`)
+  expect(r.status).toBe(1)
+})
+
+// Part 9: the test-fakes hook (server/ops/test-fakes.ts, `@test-fakes`, route 76). Ways it can fail, written down first:
 // the deployable Worker or the eval build (deployed) carries its module or its canary (the impersonating `notify` and
 // run-scoped `hub` ops could then run there); once the server imports `@test-fakes`, the test build lacks the canary
 // or the module, so the scan proves nothing; the script's canary or module path drifts from the module's and the alias's.
@@ -252,9 +349,9 @@ const FAKES = 'inhouse-test-fakes-canary-6b2f90d4'
 const FAKES_MODULE = 'server/ops/test-fakes.ts'
 const FAKES_IMPORT = { 'ops/fakes-hook.ts': "import { runTestFakesInWorker } from '@test-fakes'" }
 const PRINCIPAL = 'm_test_fakes'
-const FAKES_OK = { server: { ...ISSUER_OK.server, ...FAKES_IMPORT }, productTest: { workerJs: `const c = '${CANARY}'; const f = '${FAKES}'; const p = '${PRINCIPAL}'`, serverModules: ['server/index.ts', FAKES_MODULE] } }
+const FAKES_OK = { server: { ...ISSUER_OK.server, ...FAKES_IMPORT }, productTest: { workerJs: `const c = '${CANARY}'; const h = '${HEADER}'; const f = '${FAKES}'; const p = '${PRINCIPAL}'`, serverModules: ['server/index.ts', FAKES_MODULE] } }
 
-test('the test-fakes canary and module are the module\'s, the script\'s and the alias\'s (part 8)', () => {
+test('the test-fakes canary and module are the module\'s, the script\'s and the alias\'s (part 9)', () => {
   expect(TEST_FAKES_CANARY).toBe(FAKES)
   const source = readFileSync(script, 'utf8')
   expect(source).toContain(`const TEST_FAKES_CANARY = '${FAKES}'`)
@@ -265,7 +362,7 @@ test('the test-fakes canary and module are the module\'s, the script\'s and the 
   // The alias picks the real module for the test build alone (PRODUCT_TEST), never the eval build.
   expect(readFileSync(join(app, 'vite.config.ts'), 'utf8')).toContain(`'@test-fakes': fileURLToPath(new URL(mode === PRODUCT_TEST ? './${FAKES_MODULE}' : './server/ops/test-fakes-off.ts'`)
 })
-test('the test build carries the hook and the deployable Worker and the eval build don\'t: the check passes (part 8)', () => {
+test('the test build carries the hook and the deployable Worker and the eval build don\'t: the check passes (part 9)', () => {
   const r = run(FAKES_OK)
   expect(r.stdout).toContain('ok    test fakes: not in the deployable Worker')
   expect(r.stdout).toContain('ok    test fakes: not in the eval build')
@@ -280,27 +377,27 @@ test.each([
   ['the deployable Worker', 'the synthetic principal in its script', { product: { workerJs: `const p = '${PRINCIPAL}'` } }],
   ['the deployable Worker', 'the synthetic principal in its source map', { product: { extra: { 'inhouse_product/index.js.map': `{"sourcesContent":["memberId: '${PRINCIPAL}'"]}` } } }],
   ['the eval build', 'the synthetic principal in its source map', { productEval: { ...EVAL_OK, extra: { 'inhouse_product/index.js.map': `{"sourcesContent":["${PRINCIPAL}"]}` } } }],
-])('%s carrying %s fails the check (part 8)', (label, _what, opts) => {
+])('%s carrying %s fails the check (part 9)', (label, _what, opts) => {
   const r = run({ ...FAKES_OK, ...opts })
   expect(r.stderr).toContain(`FAIL  test fakes: ${label}`)
   expect(r.status).toBe(1)
 })
-test('the off stand-in in the deployable Worker\'s graph passes (part 8)', () => {
+test('the off stand-in in the deployable Worker\'s graph passes (part 9)', () => {
   const r = run({ ...FAKES_OK, product: { serverModules: ['server/index.ts', 'server/ops/test-fakes-off.ts'] } })
   expect(r.stdout).toContain('ok    test fakes: not in the deployable Worker')
   expect(r.status).toBe(0)
 })
 test.each([
-  ['no "inhouse-test-fakes-canary-6b2f90d4"', { productTest: { workerJs: `const c = '${CANARY}'; const p = '${PRINCIPAL}'`, serverModules: ['server/index.ts', FAKES_MODULE] } }],
-  ['no "m_test_fakes"', { productTest: { workerJs: `const c = '${CANARY}'; const f = '${FAKES}'`, serverModules: ['server/index.ts', FAKES_MODULE] } }],
-  ['no server/ops/test-fakes.ts module', { productTest: { workerJs: `const c = '${CANARY}'; const f = '${FAKES}'; const p = '${PRINCIPAL}'` } }],
-])('the server imports @test-fakes and the test build has %s: the scan proves nothing (part 8)', (missing, opts) => {
+  ['no "inhouse-test-fakes-canary-6b2f90d4"', { productTest: { workerJs: `const c = '${CANARY}'; const h = '${HEADER}'; const p = '${PRINCIPAL}'`, serverModules: ['server/index.ts', FAKES_MODULE] } }],
+  ['no "m_test_fakes"', { productTest: { workerJs: `const c = '${CANARY}'; const h = '${HEADER}'; const f = '${FAKES}'`, serverModules: ['server/index.ts', FAKES_MODULE] } }],
+  ['no server/ops/test-fakes.ts module', { productTest: { workerJs: `const c = '${CANARY}'; const h = '${HEADER}'; const f = '${FAKES}'; const p = '${PRINCIPAL}'` } }],
+])('the server imports @test-fakes and the test build has %s: the scan proves nothing (part 9)', (missing, opts) => {
   const r = run({ ...FAKES_OK, ...opts })
   expect(r.stderr).toContain('FAIL  test fakes: the server imports @test-fakes but the test build')
   expect(r.stderr).toContain(missing)
   expect(r.status).toBe(1)
 })
-test('nothing imports @test-fakes: a note, and builds without it pass (part 8)', () => {
+test('nothing imports @test-fakes: a note, and builds without it pass (part 9)', () => {
   const r = run(ISSUER_OK)
   expect(r.stdout).toContain('note  test fakes: no server source imports @test-fakes')
   expect(r.status).toBe(0)

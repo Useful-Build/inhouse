@@ -6,7 +6,7 @@ import type { ChangeEvent, ClipboardEvent, DragEvent, ReactElement } from 'react
 import { agent } from '../agent'
 import type { Attachment } from '../agent/types'
 import { dropFile, keepFile } from '../state/pending-files'
-import { activeMode, readingTools, thinkingModes, toolCounts, toolDetail } from '../state/derive'
+import { activeMode, noToolsYet, readingTools, thinkingModes, toolCounts, toolDetail } from '../state/derive'
 import { openChatKey, openRun, useCtx, useUi } from '../state/store'
 import { cn } from '@/lib/utils'
 import { AttachmentChip, Button, Icon, IconButton, LogoCount, LogoTile, SwitchLook } from '../ui'
@@ -28,7 +28,7 @@ function Tip({ label, children }: { label: string; children: ReactElement }) {
 }
 
 type Pop = null | 'attach' | 'tools' | 'model'
-const PAGE_TITLES: Record<string, string> = { today: 'Today', chats: 'Chats', approvals: 'Approvals', routines: 'Routines', activity: 'Activity', apps: 'Tools', app: 'Tools', skills: 'Skills', usage: 'Usage', settings: 'Settings' }
+const PAGE_TITLES: Record<string, string> = { today: 'Today', chats: 'Chats', approvals: 'Approvals', routines: 'Routines', activity: 'Activity', apps: 'Tools', app: 'Tools', skills: 'Skills', skill: 'Skills', usage: 'Usage', settings: 'Settings' }
 const MAX_LOGOS = 3
 
 const MENU = 'box-border max-w-screen-gutter border-input'
@@ -209,13 +209,16 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   const holders = TOOL_KEYS.filter(k => attachExample?.sources.includes(k)).map(k => toolDetail(data, k).name)
   const orderSources = holders.length < 2 ? `From ${holders[0] ?? 'your connected tools'}` : `From ${holders.slice(0, -1).join(', ')} or ${holders[holders.length - 1]}`
   const offHere = TOOL_KEYS.length - onTools.length
-  const toolsLabel = counts.connected === 0 ? 'No tools connected yet'
+  // With cards or a run on the server but no connected list (the real client before P5) nothing is claimed about tools.
+  const claimNone = counts.connected === 0 && noToolsYet(data)
+  const toolsLabel = counts.connected === 0 ? (claimNone ? 'No tools connected yet' : '')
     : offHere > 0 ? `${onTools.length} of ${TOOL_KEYS.length} tools on in this chat`
       : counts.reading < counts.connected ? `${counts.reading} of ${counts.connected} tools connected` : `${counts.reading} tools connected`
   // The logos and their +N already say how many tools are read, so the plain "6 tools connected" isn't shown; the label
   // shows only when it says what the logos can't: none connected, some turned off in this chat, or some not read yet.
   // The button's name always carries it.
-  const toolsNote = counts.connected === 0 || offHere > 0 || counts.reading < counts.connected
+  const toolsNote = claimNone || offHere > 0 || (counts.connected > 0 && counts.reading < counts.connected)
+  const toolsName = `${logosOn.length ? `${logosOn.map(k => toolDetail(data, k).name).join(', ')}${moreCount > 0 ? ` +${moreCount} ` : ', '}` : ''}${toolsLabel}`
   const everyMode = thinkingModes(data, ctx.agent.settings)
   const modes = everyMode.filter(m => m.on)
   // A model the person picked that an Admin has since switched off stays in the list, greyed, until they pick another.
@@ -229,7 +232,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
     <>
       <DropdownMenuLabel id={toolsHead} className={cn('text-sm font-normal', slim ? 'px-2.5 pt-2 pb-1 text-muted-foreground' : 'pt-2 pb-1.5')}>Tools read in this chat</DropdownMenuLabel>
       <DropdownMenuGroup aria-labelledby={toolsHead}>
-      {TOOL_KEYS.length === 0 && (
+      {TOOL_KEYS.length === 0 && (counts.connected > 0 || claimNone) && (
         <DropdownMenuLabel className="pt-0 pb-2 text-sm font-normal text-muted-foreground">{counts.connected === 0 ? 'No tools are connected yet.' : "Your Inhouse agent can't read any of your tools right now."}</DropdownMenuLabel>
       )}
       {TOOL_KEYS.map(k => {
@@ -308,7 +311,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
           if (e.key !== 'Enter' || e.shiftKey || touch || e.nativeEvent.isComposing || e.keyCode === 229) return
           e.preventDefault(); send()
         }}
-        placeholder={variant === 'today' ? (phone ? 'Ask about orders, stock or numbers' : 'Ask about orders, stock, customers or numbers…') : 'Message your Inhouse agent'} aria-label={variant === 'today' ? 'Ask your Inhouse agent' : 'Message your Inhouse agent'}
+        placeholder={variant === 'today' && !claimNone ? (phone ? 'Ask about orders, stock or numbers' : 'Ask about orders, stock, customers or numbers') : 'Message Inhouse'} aria-label={variant === 'today' ? 'Ask Inhouse' : 'Message Inhouse'}
         className="block max-h-composer-input min-h-8.5 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 py-(--app-composer-input-pad-y) text-md text-foreground shadow-none outline-0 focus:shadow-none data-scrolled:mask-(--app-composer-fade)" />
 
       <div className="relative mt-2.5 flex items-center gap-2">
@@ -358,7 +361,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
         {!slim && <DropdownMenu modal={false} open={pop === 'tools'} onOpenChange={onOpen('tools')}>
           <Tip label="Tools read in this chat">
             <DropdownMenuTrigger asChild>
-              <button type="button" aria-label={`Tools read in this chat: ${logosOn.length ? `${logosOn.map(k => toolDetail(data, k).name).join(', ')}${moreCount > 0 ? ` +${moreCount} ` : ', '}` : ''}${toolsLabel}`}
+              <button type="button" aria-label={toolsName ? `Tools read in this chat: ${toolsName}` : 'Tools read in this chat'}
                 className={cn('flex h-8.5 min-w-0 items-center gap-2.5 rounded-full pr-2.5 pl-1.5 hover:bg-accent', pop === 'tools' && 'bg-accent')}>
                 <span className="flex flex-none">
                   {logosOn.map(k => (

@@ -27,7 +27,7 @@ export type ConnectDeps = {
 
 const instant = (ms: number): Instant => ({ iso: new Date(ms).toISOString(), ms })
 
-function serverScope(scope: unknown): boolean {
+export function serverScope(scope: unknown): boolean {
   const parsed = CallerScopeSchema.safeParse(scope)
   return parsed.success && parsed.data.kind === 'server'
 }

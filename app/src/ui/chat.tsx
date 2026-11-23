@@ -14,6 +14,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuSeparator, DropdownMenuT
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Icon, IconButton, MenuItem } from './index'
 import { NO_CLOSE_MOTION } from './motion'
+import { PromptBento } from './PromptBento'
 
 /** Set by Pin and Delete for the menu's close, which may come after the row (and its menu) was replaced. One menu is open at a time. */
 let restoreFocusAfterMenu: (() => void) | null = null
@@ -242,10 +243,21 @@ export function ChatRow({ chat, place = 'sidebar', open = false, running = false
   )
 }
 
-/** A suggested question as a chip: the empty chat's suggestions and the off-script answer's (decision D8). Clicking asks it. */
+/** A suggested question as a chip: the off-script answer's suggestions (decision D8) and All chats' empty state. Clicking asks it. */
 export function SuggestionChip({ question, onAsk }: { question: string; onAsk: (q: string) => void }) {
   return (
     <button type="button" onClick={() => onAsk(question)}
       className="inline-flex min-h-9 items-center rounded-full border border-border bg-card px-3.5 py-1.5 text-center text-sm hover:border-border-strong">{question}</button>
   )
+}
+
+/**
+ * PromptBento, loaded with the screen (not lazily): blank New chat centres its composer between the heading and these
+ * cards, so cards that arrived a moment after the first paint made the composer drop and then jump up on every load.
+ */
+export function PromptBentoSlot(props: {
+  suggestions: string[]; tools: string[]; onAsk: (q: string) => void; showRoutine?: boolean; className?: string
+}) {
+  if (!props.suggestions.length) return null
+  return <PromptBento {...props} />
 }

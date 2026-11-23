@@ -282,6 +282,22 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'GET /api/activity': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'GET /api/notifications': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
   'POST /api/notifications/read': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  // Rows 57 and 58 (P4 W3): Today is brand data like Activity; setting an item aside is a write the Inhouse team may make under a live grant (audited).
+  'GET /api/today': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'PUT /api/today/:id/aside': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  // Rows 62 to 66 (P4 W5): the Library is brand data (Inhouse under a grant may list, download, delete and restore); the
+  // upload is people only.
+  'GET /api/library': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/library/uploads': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  'GET /api/library/:id/download': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/library/delete': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/library/restore': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  // Rows 52 to 56 (P4 W2): brand data for every person; the Inhouse team reads and writes only under a live grant.
+  'GET /api/routines': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'PUT /api/routines/:id/enabled': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/routines/:id/run': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/routines/:id/delete': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/routines/:id/restore': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   // Routes 68 and 69 (P5 W1): the Inhouse team alone, grant or not; a Member or an Admin is refused even a GET.
   'POST /api/connect/:accountId/start': ['no', 'ro', 'ok', 'ok', 'no', 'no', 'no'],
   'GET /api/connect/callback': ['no', 'no', 'ok', 'ok', 'no', 'no', 'no'],
@@ -294,6 +310,7 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'GET /api/notify/channels/available': ['no', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
   'PUT /api/notify/channels': ['no', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
   'POST /api/ops/test-fakes': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
+  'GET /api/routines/:id/runs': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },

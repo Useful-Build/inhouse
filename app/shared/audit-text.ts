@@ -33,6 +33,7 @@ const ROUTE: Record<string, string> = {
   '/api/activity': 'Activity',
   '/api/library': 'The Library',
   '/api/library/:id/download': 'A Library file',
+  '/api/routines/:id/runs': "A routine's runs",
   '/api/routines/:id/enabled': 'A routine',
   '/api/routines/:id/run': 'A routine',
   '/api/routines/:id/delete': 'A routine',
