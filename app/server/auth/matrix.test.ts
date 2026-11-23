@@ -289,6 +289,7 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'POST /api/routines/:id/run': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'POST /api/routines/:id/delete': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'POST /api/routines/:id/restore': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'GET /api/routines/:id/runs': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },

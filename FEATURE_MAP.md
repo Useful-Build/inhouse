@@ -21,7 +21,7 @@ No entry is `Covered: gap`. Not checked by any spec, or only in part:
 
 ## Today
 
-In the product build Today, Activity, the bell, the Library and Routines are real, backed by the API (P4 routes 52 to 66), not demo data. The `?demo` entries below describe the demo build. Product proof: `e2e/api/{today,activity,bell,library,routines}.spec.ts` on the test build and the ship spec `e2e/ship/watch.spec.ts` (S1 to S8).
+In the product build Today, Activity, the bell, the Library and Routines are real, backed by the API (P4 routes 52 to 66, and route 68 for a routine's own runs), not demo data. The `?demo` entries below describe the demo build. Product proof: `e2e/api/{today,activity,bell,library,routines}.spec.ts` on the test build and the ship spec `e2e/ship/watch.spec.ts` (S1 to S8).
 
 Today: needs-you cards
   Path:     Today
@@ -197,9 +197,10 @@ Library: select and delete
 
 Routines: details and actions
   Path:     Routines -> a routine
-  Selector: row switch "<name> on or off"; the side panel: name and what it does, the schedule card (schedule sentence, next run, the same switch, one "how it works" line), Run now, Edit in a chat, "More for <name>" (Delete), list "Last runs" (time, outcome sentence, Steps or Activity), Made by
-  Expected: the panel leads with the schedule sentence and the next run; its switch replaces Pause, says "Off. It won't run until you turn it on." when off and agrees with the row; while the agent is paused both switches still show the routine's own on or off (a click saves the other one) and the pause shows as "Paused" for the next run; Run now lands in Last runs with its result and survives a reload; Steps opens the trace; Delete (in More) asks and Undo works; all of it survives a reload; at Watch a routine is locked, shows "Starts in Act" and has no Run now
-  Covered:  e2e/page-details.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts, src/screens/routine-switch.test.ts
+  Selector: row switch "<name> on or off"; the side panel: name and what it does, the schedule card (schedule sentence, next run, the same switch, one "how it works" line), Run now, Edit in a chat, "More for <name>" (Delete), list "Last runs" (`data-run-line`: an outcome icon, "Today, <time>" or "<weekday>, <date>, <time>", one plain line, Steps when the run has steps), Made by
+  Expected: the panel leads with the schedule sentence and the next run; its switch replaces Pause, says "Off. It won't run until you turn it on." when off and agrees with the row; while the agent is paused both switches still show the routine's own on or off (a click saves the other one) and the pause shows as "Paused" for the next run; Last runs are the routine's own runs from `GET /api/routines/:id/runs` (route 68), newest first, at most 20, never matched from Activity by name: each shows when it ran, done, failed, skipped or running, and one plain line with no run ids, timings, costs or codes; a routine with none says "Not run yet."; a list that can't load says so with Try again (announced; a failed recheck keeps the list); while a run is going the open panel rechecks every 15 s for up to 10 minutes, not while the tab is hidden and never for the Inhouse team; a run stopped on purpose reads as skipped, not failed; Run now lands at the top of Last runs ("Run now · <result>", or "Run now" while it runs; the demo's Run nows finish at once) and survives a reload; Steps opens the trace; Delete (in More) asks and Undo works; all of it survives a reload; at Watch a routine is locked, shows "Starts in Act" and has no Run now
+  Covered:  e2e/page-details.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts, src/screens/routine-switch.test.ts, src/state/routine-run-lines.test.ts, src/agent/mock.routine-runs.test.ts, src/agent/http/routines.test.ts, server/api/routines.test.ts, server/routines/store.test.ts, e2e/api/routines.spec.ts (route 68)
+  Gaps:     the Try again state and the failed and skipped icons are proven by unit tests only (the demo's sample runs all finished)
 
 Activity: log
   Path:     Activity
@@ -284,7 +285,7 @@ Settings: Team memory
 Settings: Run limits
   Path:     Settings -> Run limits
   Selector: job switches, "Daily limit", "Largest restock", button "Pause Inhouse agent"
-  Expected: switches and limits are locked until Run; each works, lists its options and survives a reload; Pause stops the agent (button, toast and top bar agree, Resume undoes it) and survives a reload; Reset demo clears all of it
+  Expected: switches and limits are locked until Run; each works, lists its options and survives a reload; Pause stops the agent (button, toast and top bar agree: the top bar's status reads "Running" or "Paused", named "Inhouse agent is running" or "... paused" for screen readers; Resume undoes it) and survives a reload; Reset demo clears all of it
   Covered:  e2e/settings-team-pages.spec.ts
 
 Settings: Notifications
@@ -423,8 +424,8 @@ Palette: Report a bug
 
 Sidebar
   Path:     sidebar -> collapse
-  Selector: Search row (`⌘K` / `Ctrl+K`) above nav "Main": Today, Approvals (count), Activity, Library, then group "Your agent" (Routines, Skills, Tools); Recent chats; the bottom row: the account row and button "Sidebar" (tooltip "Collapse sidebar" or "Expand sidebar" with `⌘\`); rail tooltips
-  Expected: Search opens the command palette from the expanded sidebar (and rail/phone drawer), keeping the top bar uncluttered; two nav sections, the second labelled and announced as a group; no team card, no Tools/Skills/Usage list at the bottom; the collapse button sits in the sidebar's bottom row beside the account row (desktop only; the top bar has none), and on the rail above the avatar; the rail shows group 1, a divider, group 2 and the avatar; the account row is selected on Settings and Usage; a skill's page keeps Skills selected; collapses to a rail with focus kept on the button, stays collapsed after a reload, expands with the shortcut; on desktop windows center in the room right of the sidebar
+  Selector: Search row (`⌘K` / `Ctrl+K`) above nav "Main": Today, Approvals (count), Activity, Library, then group "Your agent" (Routines, Skills, Tools); Recent chats; the bottom row: the account row, button "Your Inhouse team" (`support_agent`) and button "Sidebar" (tooltip "Collapse sidebar" or "Expand sidebar" with `⌘\`); rail tooltips
+  Expected: Search opens the command palette from the expanded sidebar (and rail/phone drawer), keeping the top bar uncluttered; two nav sections, the second labelled and announced as a group; no team card, no Tools/Skills/Usage list at the bottom; the Inhouse team button and the collapse button sit in the sidebar's bottom row beside the account row (the collapse button desktop only; the top bar has none), and on the rail above the avatar; the team button opens the team window (on a phone the drawer closes first); the rail shows group 1, a divider, group 2 and the avatar; the account row is selected on Settings and Usage; a skill's page keeps Skills selected; collapses to a rail with focus kept on the button, stays collapsed after a reload, expands with the shortcut; on desktop windows center in the room right of the sidebar
   Covered:  e2e/navigation.spec.ts, e2e/models-and-scroll.spec.ts, e2e/help-account-menu.spec.ts, e2e/library.spec.ts, e2e/ui-round-3.spec.ts
 
 Account menu
@@ -458,8 +459,8 @@ Notifications and team window
   Covered:  e2e/navigation.spec.ts
 
 Team window
-  Path:     account menu -> Your Inhouse team (also Report a bug, Help's Ask the team, Request a tool, Book a check-in)
-  Selector: dialog "Your Inhouse team" (the `form` window size: 720px, capped to the room right of the sidebar), radiogroup "Team window" (New request, "Your requests {N}"); New request: radio kind tiles (five), "Title", "Details" (a counter from 900 of 1000), "Send to the team"; Your requests: radiogroup "Show requests" ("Open · N", "Closed · N"), list "Open requests" or "Closed requests", each row a toggle with kind icon, title, "{kind} · {who}, {when}" and a status chip, "Withdraw request" in an open row you asked (demo only: the product has no withdraw route yet)
+  Path:     sidebar button "Your Inhouse team" or account menu -> Your Inhouse team (also Report a bug, Help's Ask the team, Request a tool, Book a check-in)
+  Selector: dialog "Your Inhouse team" (the `form` window size: 720px, capped to the room right of the sidebar), radiogroup "Team window" (New request, "Your requests {N}"); New request: radio kind tiles (five, compact, the picked one with a 1px dark border), "Title", "Details" (a counter from 900 of 1000), "Send to the team"; Your requests: radiogroup "Show requests" ("Open · N", "Closed · N"), list "Open requests" or "Closed requests", each row a toggle with kind icon, title, "{kind} · {who}, {when}" and a status chip, "Withdraw request" in an open row you asked (demo only: the product has no withdraw route yet)
   Expected: Send waits for a title or details (a title is made from the details when none is typed), closes the window and lists the request as open once the agent took it; a refused request keeps the window open with what was typed and says "Your request wasn't sent." with the reason; statuses are only With the team, Done, Declined and Withdrawn (and the demo's dated ones); a row opens to show its full text; Withdraw moves it to Closed as Withdrawn with an Undo toast and the account menu's count follows; the demo's toast promises a reply within one working day, the product's doesn't
   Covered:  e2e/help-account-menu.spec.ts, e2e/report-bug.spec.ts, e2e/navigation.spec.ts, e2e/sample-data.spec.ts, e2e/ui-round-3.spec.ts, e2e/real/team-request-refused.spec.ts, src/state/derive.team-requests.test.ts
 

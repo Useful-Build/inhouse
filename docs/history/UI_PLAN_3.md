@@ -1,7 +1,8 @@
 # UI plan 3: settings, team window, review panel, Activity, Routines and Skills
 
-> History. This tracker is finished and kept as written. Paths in it are relative to `app/`. Its backend decisions D2 to
-> D5 are still open (see "Decisions for Wasim"); the product build hides what waits on them.
+> History. This tracker is finished and kept as written. Paths in it are relative to `app/`. Wasim settled D2 to D5 on
+> 2026-11-23: see standing decisions 6 to 8 in `docs/plans/2026-11-22-master-plan.md` (D2 dropped, D3 and D5 in P6a,
+> D4 a PR into `main`).
 
 Tracks the interface round Wasim asked for on 2026-11-23. Paths are relative to `app/`. Update this file in every PR of the plan: tick what landed, add the PR link, note anything moved or dropped and why.
 

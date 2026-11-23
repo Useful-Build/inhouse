@@ -1,9 +1,10 @@
-// The Routines page over a fake `fetch` (P4 W2, routes 52 to 56). Ways it could show a person the wrong thing, written
+// The Routines page over a fake `fetch` (P4 W2, routes 52 to 56, and route 68). Ways it could show a person the wrong thing, written
 // down first:
 //  - a routine's switch not read from the server (`r:<id>` missing), or lost when the settings reload;
 //  - a switch, a delete or an Undo that the server refused left on screen; a stale rev not taken in from the conflict;
 //  - a write sent with a rev older than the last answer's; a Run now sent with a key the route refuses (a ".");
-//  - the Inhouse team asked for the list on start (a grant would log every read).
+//  - the Inhouse team asked for the list on start (a grant would log every read);
+//  - route 68's answer taken in without its schema (a run id or an outcome off the list gets through).
 import { describe, expect, test } from 'vitest'
 import { HttpAgent } from './client'
 import { me, reads, record, refusal, server } from './testing/fake-server'
@@ -226,5 +227,21 @@ describe('the client: routines', () => {
     const refused = await loaded({ ...reads(), 'GET /api/me': { body: me({ role: 'inhouse' }) }, 'GET /api/routines': refusal(403, 'forbidden', { reason: 'grant_required' }) })
     await refused.agent.retry('routines')
     expect(refused.agent.read().resources.routines).toEqual({ status: 'ready' })
+  })
+
+  test('route 68: a routine\'s runs as the server said them; a refusal, or an answer off the schema, rejects', async () => {
+    const runs = { runs: [{ at: at(NOW), outcome: 'done', result: 'Found 3 things', manual: false, trace: 'r_x' }] }
+    const { agent, calls } = await loaded({
+      ...reads({ routines: LIST }),
+      'GET /api/routines/rt_a/runs': { body: runs },
+      'GET /api/routines/rt_gone/runs': refusal(404, 'not_found'),
+      'GET /api/routines/rt_b/runs': { body: { runs: [{ ...runs.runs[0], runId: 'r_x' }] } },
+    })
+    expect(await agent.routineRunHistory('rt_a')).toEqual(runs)
+    await expect(agent.routineRunHistory('rt_gone')).rejects.toMatchObject({ code: 'not_found' })
+    await expect(agent.routineRunHistory('rt_b')).rejects.toBeInstanceOf(Error)
+    expect(calls.filter(c => c.path.endsWith('/runs')).map(c => [c.method, c.path])).toEqual([
+      ['GET', '/api/routines/rt_a/runs'], ['GET', '/api/routines/rt_gone/runs'], ['GET', '/api/routines/rt_b/runs'],
+    ])
   })
 })

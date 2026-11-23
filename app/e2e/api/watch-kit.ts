@@ -164,6 +164,7 @@ export async function setStage(request: APIRequestContext, stage: 'Watch' | 'Act
 /** Every P4 route (access rows 52 to 66) as `<method> <pattern>`: the specs' 401 sweep keys on these, with cases.ts's requests. */
 export const P4_ROUTES: readonly string[] = [
   'GET /api/routines', 'PUT /api/routines/:id/enabled', 'POST /api/routines/:id/run', 'POST /api/routines/:id/delete', 'POST /api/routines/:id/restore',
+  'GET /api/routines/:id/runs',
   'GET /api/today', 'PUT /api/today/:id/aside',
   'GET /api/activity', 'GET /api/notifications', 'POST /api/notifications/read',
   'GET /api/library', 'POST /api/library/uploads', 'GET /api/library/:id/download', 'POST /api/library/delete', 'POST /api/library/restore',

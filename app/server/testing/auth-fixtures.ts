@@ -162,6 +162,7 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'POST', pattern: '/api/routines/:id/run', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   { method: 'POST', pattern: '/api/routines/:id/delete', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   { method: 'POST', pattern: '/api/routines/:id/restore', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'GET', pattern: '/api/routines/:id/runs', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
 ]
 
 /** `CanRows` as section 3 maps them. */

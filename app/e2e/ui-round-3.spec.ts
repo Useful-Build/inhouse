@@ -203,3 +203,20 @@ test("Account menu and sidebar: the role is a badge beside the name; the collaps
   expect(Math.abs((b.y + b.height / 2) - (n.y + n.height / 2)), 'the badge sits on the name line').toBeLessThanOrEqual(3)
   await expect(label).not.toContainText('·')
 })
+
+test('Sidebar: the Inhouse team button sits between the account row and the collapse button and opens the team window', async ({ fx, page }) => {
+  await start(page, fx, '#/today')
+  const team = side(page).getByRole('button', { name: 'Your Inhouse team', exact: true })
+  const account = side(page).getByRole('button', { name: /account and settings/i })
+  const toggle = side(page).getByRole('button', { name: 'Sidebar', exact: true })
+  const t = (await team.boundingBox())!, a = (await account.boundingBox())!, g = (await toggle.boundingBox())!
+  expect(Math.abs((t.y + t.height / 2) - (a.y + a.height / 2)), 'beside the account row').toBeLessThanOrEqual(4)
+  expect(t.x).toBeGreaterThan(a.x + a.width - 1)
+  expect(g.x).toBeGreaterThan(t.x + t.width - 1)
+  await team.click()
+  const dialog = page.getByRole('dialog', { name: 'Your Inhouse team' })
+  await expect(dialog).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  await expect(team).toBeFocused()
+})

@@ -72,7 +72,7 @@ export function TopBar() {
       {showPill && (
         <div role="status" aria-label={paused ? 'Inhouse agent is paused' : 'Inhouse agent is running'} className={cn('mr-1.5 flex h-7.5 items-center gap-2 rounded-full py-0 pr-1 pl-2 text-xs font-strong whitespace-nowrap', paused ? 'bg-warning-tint text-warning-text' : 'bg-brand-tint text-brand-text')}>
           {paused ? <Icon name="pause_circle" size={16} weight={400} /> : <InhouseMark size={14} className="text-current" />}
-          <span>{phone ? (paused ? 'Paused' : 'Running') : paused ? 'Inhouse agent is paused' : 'Inhouse agent is running'}</span>
+          <span>{paused ? 'Paused' : 'Running'}</span>
           <Button variant="surface" size="xs" onClick={togglePause}>
             <Icon name={paused ? 'play_arrow' : 'pause'} size={14} />{paused ? 'Resume' : 'Pause'}
           </Button>

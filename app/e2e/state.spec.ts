@@ -79,15 +79,15 @@ test('Run: Undo on a handled card sends it back to you, and the toast Undo resto
 
 test('Run: Pause, then Undo in the toast, puts Inhouse agent back to running', async ({ fx, page }) => {
   await start(page, fx, 'Run')
-  await expect(page.getByText('Inhouse agent is running', { exact: true })).toBeVisible()
+  await expect(page.getByRole('status', { name: 'Inhouse agent is running', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Pause', exact: true }).click()
-  await expect(page.getByText('Inhouse agent is paused', { exact: true })).toBeVisible()
+  await expect(page.getByRole('status', { name: 'Inhouse agent is paused', exact: true })).toBeVisible()
 
   const toast = page.getByRole('status').filter({ hasText: 'Inhouse agent is paused. Chats, routines and jobs are stopped.' })
   await expect(toast).toBeVisible()
   await toast.getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect(page.getByText('Inhouse agent is running', { exact: true })).toBeVisible()
-  await expect(page.getByText('Inhouse agent is paused', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('status', { name: 'Inhouse agent is running', exact: true })).toBeVisible()
+  await expect(page.getByRole('status', { name: 'Inhouse agent is paused', exact: true })).toHaveCount(0)
 })
 
 test('Act: Reset demo during the hold clears the approval and nothing is sent', async ({ fx, page }) => {

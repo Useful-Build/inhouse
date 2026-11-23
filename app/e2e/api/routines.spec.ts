@@ -1,11 +1,13 @@
-// Routines (P4 W2 routes 52 to 56, acceptance 1 and 8; p4-w2.md sections 4, 7 and 9, p4-w6.md sections 1 to 3). Four groups:
+// Routines (P4 W2 routes 52 to 56, acceptance 1 and 8; p4-w2.md sections 4, 7 and 9, p4-w6.md sections 1 to 3; route 68,
+// master plan decision 8). Five groups:
 //   1. the routes: who may do what to which routine (Dana made it, Leo is another Member, the Admin, Inhouse with and
 //      without a live grant), `ifRev` conflicts answering the current record, Run now idempotent by `clientKey`;
 //   2. stage gating: at Watch a chat's `routine_create` is refused with the design's words and makes no row, the morning
 //      check's Run now still works, at Act the same call creates the routine, back at Watch its next slot is `skipped`;
 //   3. slots against the real scheduler: the BrandAgent's alarm driven through route 67's controls, with routines whose
 //      times are set relative to the spec's own start (the clock can't be moved);
-//   4. the next run the page shows for a schedule in the brand's zone (`next` is computed, not waited for).
+//   4. the next run the page shows for a schedule in the brand's zone (`next` is computed, not waited for);
+//   5. route 68: a routine's own recent runs, newest first, in plain words, read like route 52.
 // The expected answers are written here from the briefs' tables, never read from the code. Every group needs the multi-config
 // test build (`needsWatchBuild`): the routines are seeded into the local D1, and the slot cases run a turn in a container.
 // The slot math across a skipped and a repeated local time is W2's workers test (`p4-w2.md` tests 1 to 3): a brand zone can't
@@ -205,6 +207,88 @@ test.describe('routes 52 to 56: who may do what to which routine', () => {
       expect(open.json.error).toMatchObject({ code: 'conflict', reason: 'run_open', current: { routine: id } })
     }
     expect(slotsOf(id), 'the refused calls wrote nothing').toHaveLength(1)
+  })
+})
+
+test.describe('route 68: a routine\'s own recent runs', () => {
+  needsLocalD1()
+  test.describe.configure({ mode: 'serial' })
+  let danaId: string
+
+  test.beforeAll(async ({ request }) => {
+    await endLiveGrants(request)
+    danaId = await memberIdOf(request, dana)
+  })
+  test.afterAll(async ({ request }) => {
+    await endLiveGrants(request)
+    retireRoutines()
+  })
+
+  /** A routine the tick leaves alone (switched off), so the only slots it has are the spec's. */
+  const quietRoutine = (what: string) => {
+    const id = seedRoutine({ creatorId: danaId, hour: 6, minute: 0, instruction: `scenario:hello E2E ${what}`, need: 0 })
+    writeSql('UPDATE routines SET enabled = 0 WHERE id = ?', id)
+    return id
+  }
+  /** One slot as the tick leaves it: `state`, and its end's fields when it ran. */
+  const slot = (id: string, n: number, ms: number, o: { state: string; reason?: string; outcome?: string; failure?: string; result?: string; runId?: string }) => {
+    const day = new Date(ms).toISOString().slice(0, 10)
+    const ran = o.state === 'ended'
+    writeSql(
+      `INSERT INTO routine_slots (slot_key, routine_id, kind, local_date, local_time, tz, due_at_ms, deadline_ms, state, reason, chat_id, client_key, prompt_text, submit_json, routine_rev, creator_id, claimed_at_ms, started_at_ms, ended_at_ms, run_id, outcome, failure, result_text)
+       VALUES (?, ?, 'scheduled', ?, '06:00', ?, ?, ?, ?, ?, ?, ?, 'x', '{}', 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `${id}|${day}|06:00|${n}`, id, day, BRAND_TZ, ms, ms + 600_000, o.state, o.reason ?? null, `rc_e2eRuns${id.slice(3, 15)}${n}`, `rs_e2eruns${n}`, danaId,
+      ms, ran ? ms : null, ran ? ms + 60_000 : null, o.runId ?? null, o.outcome ?? null, o.failure ?? null, o.result ?? null,
+    )
+  }
+  const at = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
+
+  test('a routine with no runs is an empty list for every person; with runs, its own come back newest first in plain words', async ({ request }) => {
+    const id = quietRoutine('route 68 runs')
+    const other = quietRoutine('route 68 other')
+    for (const who of [dana, leo, admin]) {
+      const r = await call(request, who, 'GET', `/api/routines/${id}/runs`)
+      expect(r.status, r.text).toBe(200)
+      expect(r.json).toEqual({ runs: [] })
+    }
+    const day = 86_400_000
+    const t0 = Date.now() - 3 * day
+    slot(id, 1, t0, { state: 'missed', reason: 'late' })
+    slot(id, 2, t0 + day, { state: 'ended', outcome: 'failed', failure: 'run_failed', runId: 'r_e2eRunsFailedAAAAAAAAA' })
+    slot(id, 3, t0 + 2 * day, { state: 'ended', outcome: 'done', result: 'Found 2 low-stock items', runId: 'r_e2eRunsDoneAAAAAAAAAAA' })
+    slot(other, 4, t0 + 2 * day, { state: 'ended', outcome: 'done', result: 'Not this routine' })
+    const r = await call(request, leo, 'GET', `/api/routines/${id}/runs`)
+    expect(r.status, r.text).toBe(200)
+    expect(r.json).toEqual({
+      runs: [
+        { at: at(t0 + 2 * day), outcome: 'done', result: 'Found 2 low-stock items', manual: false, trace: 'r_e2eRunsDoneAAAAAAAAAAA' },
+        { at: at(t0 + day), outcome: 'failed', result: 'It stopped before it finished', manual: false, trace: 'r_e2eRunsFailedAAAAAAAAA' },
+        { at: at(t0), outcome: 'skipped', result: 'It missed its time', manual: false },
+      ],
+    })
+  })
+
+  test('another brand\'s routine (an id this brand doesn\'t have), a deleted one or a bad id is 404; a query is invalid', async ({ request }) => {
+    expectError(await call(request, dana, 'GET', '/api/routines/rt_e2eOtherBrandAAAAAAAAA/runs'), 404, 'not_found')
+    expectError(await call(request, dana, 'GET', '/api/routines/not-an-id/runs'), 404, 'not_found')
+    const gone = quietRoutine('route 68 deleted')
+    writeSql('UPDATE routines SET deleted_at_ms = ?, rev = rev + 1 WHERE id = ?', Date.now(), gone)
+    expectError(await call(request, dana, 'GET', `/api/routines/${gone}/runs`), 404, 'not_found')
+    const id = quietRoutine('route 68 query')
+    expectError(await call(request, dana, 'GET', `/api/routines/${id}/runs?limit=50`), 400, 'invalid')
+  })
+
+  test('Inhouse: no live grant is 403 grant_required; under a live grant it reads, with a support.access line', async ({ request }) => {
+    const id = quietRoutine('route 68 inhouse')
+    expectError(await call(request, inhouse, 'GET', `/api/routines/${id}/runs`), 403, 'forbidden', 'grant_required')
+    const grant = await call(request, admin, 'POST', '/api/grants', { json: { hours: 1 } })
+    expect(grant.status, grant.text).toBe(201)
+    const before = auditWhere('support.access').length
+    const read = await call(request, inhouse, 'GET', `/api/routines/${id}/runs`)
+    expect(read.status, `a 503 here means support.access lacks the route pattern: ${read.text}`).toBe(200)
+    expect(read.json).toEqual({ runs: [] })
+    expect(auditWhere('support.access').slice(before).map(l => (JSON.parse(l.args_json) as { route: string }).route)).toContain('/api/routines/:id/runs')
+    await endLiveGrants(request)
   })
 })
 

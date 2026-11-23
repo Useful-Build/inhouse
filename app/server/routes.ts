@@ -23,7 +23,7 @@ import { getUsage } from './usage/api.ts'
 import { forgetBrandMemory, forgetPersonalMemory, listMemory } from './api/memory.ts'
 import { drainState, startDrain, undrain } from './ops/drain.ts'
 // P4 W2 (p4-w2.md section 9): the Routines page's routes.
-import { deleteRoutine, listRoutines, restoreRoutine, runRoutineNow, setRoutineEnabled } from './api/routines.ts'
+import { deleteRoutine, listRoutineRuns, listRoutines, restoreRoutine, runRoutineNow, setRoutineEnabled } from './api/routines.ts'
 import { alarmNow } from './ops/alarm-now.ts'
 import { warmup } from './ops/warmup.ts'
 import { reviveTask } from './ops/revive.ts'
@@ -179,6 +179,8 @@ export const routes: readonly Route[] = [
   /* 54 */ { method: 'POST', pattern: '/api/routines/:id/run', handler: runRoutineNow },
   /* 55 */ { method: 'POST', pattern: '/api/routines/:id/delete', handler: deleteRoutine },
   /* 56 */ { method: 'POST', pattern: '/api/routines/:id/restore', handler: restoreRoutine },
+  // Master plan decision 8: a routine's own recent runs.
+  /* 68 */ { method: 'GET', pattern: '/api/routines/:id/runs', handler: listRoutineRuns },
 ]
 
 /** The route for this method and path, with its params, or null (404 `not_found`). */
