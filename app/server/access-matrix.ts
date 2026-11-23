@@ -89,10 +89,10 @@ export const accessMatrix: readonly AccessRow[] = [
   // live grant (support.access PUT, INHOUSE_BRAND_WRITES). Members are refused here.
   /* 77 */ { method: 'GET', pattern: '/api/memory/waiting', class: 'brand_data', allow: ['admin', 'inhouse'] },
   /* 78 */ { method: 'PUT', pattern: '/api/memory/brand/:id/approved', class: 'brand_data', allow: ['admin', 'inhouse'] },
-  // Skills (W3). Brand data since P6a's brand skills: the list holds the brand's own (made in its chats), so the Inhouse
-  // team reads it, and a skill's instructions (84), only under a live grant. People delete a brand skill (85); who may
-  // (its maker or an admin) is the store's, in its statement. The Inhouse team changes no brand skill.
-  /* 79 */ { method: 'GET', pattern: '/api/skills', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  // Skills (W3): `technical`, everyone reads (names and short summaries aren't sensitive). A skill's full text (84) is
+  // brand data, read by the Inhouse team only under a live grant; people delete a brand skill (85), and who may (its
+  // maker or an admin, or admins only after the maker's data is deleted) is the store's, in its statement.
+  /* 79 */ { method: 'GET', pattern: '/api/skills', class: 'technical', allow: ['member', 'admin', 'inhouse'] },
   // Team requests (W3). Row 80 is baseline: the Inhouse team reads a request's text without a grant. That's an accepted
   // exception to "brand data needs a grant", because a request is addressed to the Inhouse team (review L1, #328). An
   // agent can file a request carrying tool-result brand data, so W4's read-side set includes that case. People create

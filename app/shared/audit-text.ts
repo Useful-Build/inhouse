@@ -44,8 +44,7 @@ const ROUTE: Record<string, string> = {
   // P6a (PR0).
   '/api/memory/waiting': 'Team memory waiting for an OK',
   '/api/memory/brand/:id/approved': 'Team memory',
-  // P6a brand skills.
-  '/api/skills': 'Skills',
+  // P6a brand skills (route 84).
   '/api/skills/:name': 'A skill',
 }
 

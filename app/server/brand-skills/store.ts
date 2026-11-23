@@ -4,7 +4,8 @@
 // writes no line. The audit detail holds the skill's id only, never its name, description or instructions.
 //
 // Who may change or delete a skill: the person who made it, or an admin (read from `members` in the same statement, so
-// a role change can't race the write). Saving needs a person: a routine's own run (`m_system`) is refused by the tool.
+// a role change can't race the write). Once the maker's personal data is deleted (`created_by` cleared to NULL), only
+// an active admin can change or delete the skill. Saving needs a person: a routine's own run (`m_system`) is refused by the tool.
 import {
   BRAND_SKILLS_BYTES_MAX, BRAND_SKILLS_MAX, brandSkillBodyProblem, brandSkillBytes, brandSkillDescriptionProblem, brandSkillNameProblem, cleanBody,
 } from '../../shared/protocol/brand-skills.ts'
@@ -18,9 +19,9 @@ export interface BrandSkillRow {
   name: string
   description: string
   body: string
-  created_by: string
+  created_by: string | null
   created_at_ms: number
-  updated_by: string
+  updated_by: string | null
   updated_at_ms: number
   rev: number
   req_id: string | null
@@ -70,17 +71,17 @@ const written = (r: D1Result, what: string): BrandSkillRow => {
   return row
 }
 
-/** The brand's skills by name, each with its maker's name. */
+/** The brand's skills by name, each with its maker's name (null once cleared or pseudonymised). */
 export async function listSkills(db: D1Database): Promise<BrandSkillListed[]> {
   const res = await db.prepare(
-    `SELECT s.*, m.name AS creator_name FROM brand_skills s LEFT JOIN members m ON m.id = s.created_by ORDER BY s.name LIMIT ?`,
+    `SELECT s.*, CASE WHEN m.pseudonymised_at_ms IS NULL THEN m.name END AS creator_name FROM brand_skills s LEFT JOIN members m ON m.id = s.created_by ORDER BY s.name LIMIT ?`,
   ).bind(BRAND_SKILLS_MAX).all<BrandSkillListed>()
   return res.results
 }
 
-/** One skill by name, with its maker's name, or null. */
+/** One skill by name, with its maker's name (null once cleared or pseudonymised), or null. */
 export const getSkill = (db: D1Database, name: string): Promise<BrandSkillListed | null> =>
-  db.prepare('SELECT s.*, m.name AS creator_name FROM brand_skills s LEFT JOIN members m ON m.id = s.created_by WHERE s.name = ?').bind(name).first<BrandSkillListed>()
+  db.prepare('SELECT s.*, CASE WHEN m.pseudonymised_at_ms IS NULL THEN m.name END AS creator_name FROM brand_skills s LEFT JOIN members m ON m.id = s.created_by WHERE s.name = ?').bind(name).first<BrandSkillListed>()
 
 /** What a run's start carries: every skill, by name. */
 export async function skillFiles(db: D1Database): Promise<BrandSkillFile[]> {

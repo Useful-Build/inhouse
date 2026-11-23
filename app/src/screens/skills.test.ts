@@ -19,10 +19,12 @@ vi.hoisted(() => {
 })
 
 let Markdown: typeof import('./chat/Markdown').Markdown
+let SkillsScreen: typeof import('./Skills')
 let store: typeof import('../state/store')
 let agentMod: typeof import('../agent')
 beforeAll(async () => {
   ;({ Markdown } = await import('./chat/Markdown'))
+  SkillsScreen = await import('./Skills')
   store = await import('../state/store')
   agentMod = await import('../agent')
 })
@@ -102,5 +104,22 @@ describe('the sample skills', () => {
       expect(new Set(slugs).size).toBe(data.skills.length + names.length)
       for (const [s, slug] of store.skillSlugs(data, state)) expect(store.skillBySlug(data, state, slug)).toBe(s)
     }))
+  })
+})
+
+describe('a brand skill whose maker had their personal data deleted', () => {
+  test('shows "Made by a former member" on the Skills page and skill page, and "Admins" for who can change it', () => {
+    const active = { n: 'weekly-report', d: 'Writes it.', icon: 'menu_book', need: 0 as const, by: 'Dana Example', used: '', mine: true, canChange: true }
+    const former = { ...active, by: 'a former member', canChange: false }
+    expect(SkillsScreen.madeBy(active)).toBe('Made by Dana Example')
+    expect(SkillsScreen.madeBy(former)).toBe('Made by a former member')
+    expect(SkillsScreen.byline(former)).toBe('Made by a former member in a chat.')
+    expect(SkillsScreen.skillFacts(active, false)).toEqual([['Made by', 'Dana Example'], ['Who can change it', 'Dana Example and admins']])
+    expect(SkillsScreen.skillFacts(former, false)).toEqual([['Made by', 'a former member'], ['Who can change it', 'Admins']])
+    // Demo mock skill with the same "a former member" attribution behaves identically.
+    const mockFormer = { ...former, by: 'a former member, in a chat', canChange: true }
+    expect(SkillsScreen.madeBy(mockFormer)).toBe('Made by a former member')
+    expect(SkillsScreen.byline(mockFormer)).toBe('Made by a former member in a chat.')
+    expect(SkillsScreen.skillFacts(mockFormer, true)).toEqual([['Works from', 'Watch'], ['Made by', 'a former member'], ['Who can change it', 'Admins']])
   })
 })

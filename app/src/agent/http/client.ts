@@ -572,12 +572,11 @@ export class HttpAgent implements AgentClient {
     return e
   }
   /**
-   * Route 79: the skills the agent has, ours then the brand's own (brand data: the Inhouse team reads it only when asked,
-   * under a grant, as routines). A skill's instructions already read stay while it hasn't changed. `quiet` (a refresh):
-   * a failure leaves what is shown.
+   * Route 79: the skills the agent has, ours then the brand's own (technical: everyone reads without a grant; route 84's
+   * full text is brand data). A skill's instructions already read stay while it hasn't changed. `quiet` (a refresh): a
+   * failure leaves what is shown.
    */
-  private async loadSkills(asked = false, quiet = false) {
-    if (this.s.me?.role === 'inhouse' && !asked) return this.setStatus('skills', { status: 'ready' })
+  private async loadSkills(_asked = false, quiet = false) {
     try {
       const list = await readSkills(this.http)
       const before = new Map(this.s.skills.map(s => [s.n, s]))

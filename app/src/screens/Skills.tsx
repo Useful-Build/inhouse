@@ -123,9 +123,21 @@ export function Skills() {
 
 
 /** Who made it, and who changed it last: "By the Inhouse team. Priya Shah changed it on Nov 20." */
-function byline(s: SkillDef): string {
+export function byline(s: SkillDef): string {
   const made = s.mine ? `${madeBy(s)} in a chat.` : `By the ${s.by}.`
   return s.updatedAt ? `${made} Changed on ${fmtDay(s.updatedAt, display())}.` : made
+}
+
+/** The side rail's key-value rows for a skill's page. */
+export function skillFacts(s: SkillDef, isDemo: boolean): [string, string][] {
+  // On the product "Works from" is dropped at need 0 (every skill starts at Watch), and "Used" shows only when there is one.
+  const facts: [string, string][] = isDemo || s.need > 0 ? [['Works from', STAGE_TAGS[s.need]]] : []
+  const maker = s.by.replace(/, in a chat$/, '')
+  facts.push(['Made by', s.mine ? maker : s.by])
+  // A brand skill: its maker and admins change it in a chat, or admins only once the maker's data is deleted. The Inhouse team's: only the Inhouse team.
+  facts.push(['Who can change it', s.mine ? (maker === 'a former member' ? 'Admins' : `${maker} and admins`) : 'Inhouse team'])
+  if (s.used) facts.push(['Used', s.used])
+  return facts
 }
 
 /** A card in the page's side rail, titled when it has a title. */
@@ -164,12 +176,7 @@ export function SkillPage() {
   const example = s.example && !locked ? `Use the "${s.n}" skill: ${s.example}` : null
   const toolsOf = (s.tools ?? []).map(k => ({ k, name: data.tools.details[k]?.name ?? data.tools.catalog.find(c => c.k === k)?.name ?? k }))
   const usedBy = (s.routines ?? []).flatMap(id => data.routines.filter(r => r.id === id && !st.routinesDeleted[r.id] && !(r.inChat && S < r.need)))
-  // On the product "Works from" is dropped at need 0 (every skill starts at Watch), and "Used" shows only when there is one.
-  const facts: [string, string][] = demo !== null || s.need > 0 ? [['Works from', STAGE_TAGS[s.need]]] : []
-  facts.push(['Made by', s.mine ? s.by.replace(/, in a chat$/, '') : s.by])
-  // A brand skill: its maker and admins change it in a chat. The Inhouse team's: only the Inhouse team.
-  facts.push(['Who can change it', s.mine ? `${s.by.replace(/, in a chat$/, '')} and admins` : 'Inhouse team'])
-  if (s.used) facts.push(['Used', s.used])
+  const facts = skillFacts(s, demo !== null)
   const canChange = !!s.mine && s.canChange === true
   // The switch is the demo's; the product has none. Delete is for a brand skill its maker or an admin may change.
   const switchable = demo !== null
