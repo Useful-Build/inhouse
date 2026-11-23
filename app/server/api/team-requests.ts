@@ -31,18 +31,18 @@ function answer(o: WriteOutcome, readerId: string | null): Response {
   return apiError('forbidden', { reason: 'not_owner' })
 }
 
-/** Route 80, `GET /api/team-requests` (`?status=open` and the other three): newest first, at most 200. */
+/** Route 80 lists requests, optionally filtered by `status`. `?view=window` reads open and recently closed together. */
 export const listTeamRequests: Handler = async c => {
   const params = [...new URL(c.request.url).searchParams]
-  let status: 'open' | 'done' | 'declined' | 'withdrawn' | undefined
-  if (params.length > 1 || (params.length === 1 && params[0]![0] !== 'status')) return apiError('invalid')
-  if (params.length === 1) {
-    const v = params[0]![1]
-    if (v !== 'open' && v !== 'done' && v !== 'declined' && v !== 'withdrawn') return apiError('invalid')
-    status = v
-  }
-  const rows = await storesOf(c).teamRequests.list(status)
-  return apiJson(TeamRequestsListSchema.parse({ items: rows.map(r => recordOf(r, readerOf(c))) }))
+  if (params.length > 1) return apiError('invalid')
+  const [key, value] = params[0] ?? []
+  const store = storesOf(c).teamRequests
+  const reader = readerOf(c)
+  const list = (rows: TeamRequestRow[]) => apiJson(TeamRequestsListSchema.parse({ items: rows.map(r => recordOf(r, reader)) }))
+  if (key === 'view' && value === 'window') return list(await store.listWindow())
+  if (key === undefined) return list(await store.list())
+  if (key === 'status' && (value === 'open' || value === 'done' || value === 'declined' || value === 'withdrawn')) return list(await store.list(value))
+  return apiError('invalid')
 }
 
 /** Route 81, `POST /api/team-requests` `{ kind, subject?, text }`. 403 `request_limit` at 50 open ones. */

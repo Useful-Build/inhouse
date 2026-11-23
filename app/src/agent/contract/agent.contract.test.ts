@@ -989,6 +989,30 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.getSnapshot().teamRequests[0]).toEqual(fx.teamRequest)
     })
 
+    only('withdrawTeamRequest')('withdraw an open team request and leave it open on a refusal', async () => {
+      const c = t.client
+      const title = `Contract request ${crypto.randomUUID()}`
+      await c.sendTeamRequest({ ...fx.teamRequest, kind: 'job', title })
+      const row = () => c.getSnapshot().teamRequests.find(r => r.title === title)
+      const open = row()
+      if (!open) throw new Error('The filed request is missing.')
+      const ref = { title, at: open.at }
+      await t.injectError('withdrawTeamRequest', 'unavailable')
+      try {
+        await expect(c.withdrawTeamRequest(ref)).rejects.toMatchObject({ code: 'unavailable' })
+        expect(row()).toEqual(open)
+      } finally {
+        await t.injectError('withdrawTeamRequest', null)
+        await c.withdrawTeamRequest(ref)
+      }
+      // The demo's window manages the withdrawal and Undo. The HTTP client applies the saved status.
+      if (t.name === 'mock') expect(row()).toEqual(open)
+      else {
+        await c.refresh('requests')
+        expect(row()).toMatchObject({ status: 'Withdrawn', closed: 'withdrawn' })
+      }
+    })
+
     only('requestTool', 'requestSkill', 'setToolPaused', 'forgetMemory')('requests, tool pauses and memory', async () => {
       const c = t.client
       await c.requestTool(fx.toolKey, true)

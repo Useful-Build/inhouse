@@ -25,7 +25,7 @@ import { postNoticesRead, readNotifications } from './bell'
 import { PLACES, libraryDownloadPath, postLibraryWrite, readLibrary, uploadLibraryFile } from './library'
 import { putAside, readToday } from './today'
 import { postSkillDelete, readSkillPage, readSkills } from './skills'
-import { fromOpen, postTeamRequest, putWithdrawn, readOpenRequests, requestKey, requestWords } from './team-requests'
+import { fromRequests, postTeamRequest, putWithdrawn, readTeamRequests, requestKey, requestWords } from './team-requests'
 import { findMemoryLine, forgetMemoryLine, readMemory, readWaitingMemory, reviewLanded, reviewMemoryLine } from './memory'
 import { newRunKey, postRoutineRev, postRoutineRun, readRoutineRuns, readRoutines, setRoutineToggle } from './routines'
 import { listedModels, readModels } from './models'
@@ -165,7 +165,7 @@ interface Slices {
   routinesGone: RoutineDef[]
   /** Route 79: the skills the agent has (P6a W3). */
   skills: SkillDef[]
-  /** Route 80: the brand's open requests to the Inhouse team; `state.teamRequests`, `requestedTools` and `requestedSkills` are made from them. */
+  /** Route 80: the brand's open and recently closed requests. */
   requests: TeamRequestRecord[]
   /** Route 57: Today's cards (set aside ones left out), the records of every card of the shown run (their `rev` is what the next set-aside sends), and the cards this client set aside (out of `problems` until put back). */
   problems: Problem[]
@@ -551,20 +551,23 @@ export class HttpAgent implements AgentClient {
     }
   }
 
-  /** Route 80: the open requests. A failed read leaves "Requested" unmarked and the window's list empty; told in the console. */
+  /** Route 80: the open and recently closed requests. */
   private async loadTeamRequests(asked = false) {
     try {
-      const { items } = await readOpenRequests(this.http)
+      const read = () => readTeamRequests(this.http)
+      const list = await this.unraced('requests', read) ?? (asked ? null : await this.plainRead('requests', read))
+      if (!list) return
+      const { items } = list
       this.commit(this.withRequests({ ...this.s, res: { ...this.s.res, requests: { status: 'ready' } } }, items))
     } catch (e) {
       // A refresh that fails leaves what is shown (the window's list); the first read and Retry show it.
       if (!asked || this.s.res.requests.status !== 'ready') this.failStatus('requests', e)
     }
   }
-  /** The open requests as the pages read them: the list, and the "Requested" marks, all from the one list. */
+  /** The team window's list and the "Requested" marks, all from the same records. */
   private withRequests(s: Slices, requests: TeamRequestRecord[]): Slices {
     const name = (id: string) => s.members.find(m => m.id === id)?.name ?? null
-    return { ...s, requests, state: { ...s.state, ...fromOpen(requests, name) } }
+    return { ...s, requests, state: { ...s.state, ...fromRequests(requests, name) } }
   }
   /** Route 81's cap refusal in the page's words. */
   private static requestRefusal(e: unknown): unknown {
@@ -770,23 +773,24 @@ export class HttpAgent implements AgentClient {
    * The very objects come back only for a write that found nothing queued before it and saw nothing change since.
    */
   /**
-   * Writes to Today's cards (`today:<id>` lanes) and to the bell (`notices`), and how many have finished: what `unraced`
+   * Writes to Today's cards, the bell and team requests, and how many have finished: what `unraced`
    * checks. `queued` holds each from its call, `inFlight` only once the write ahead of it in its lane is done (it is
    * sending). A write counts as finished once its answer (or refusal) is in, before its `after`, which may read.
    */
   private listWrites = {
     problems: { queued: new Set<Promise<void>>(), inFlight: new Set<Promise<void>>(), done: 0, dirty: false },
     notifications: { queued: new Set<Promise<void>>(), inFlight: new Set<Promise<void>>(), done: 0, dirty: false },
+    requests: { queued: new Set<Promise<void>>(), inFlight: new Set<Promise<void>>(), done: 0, dirty: false },
   }
-  private static guardedList(lane: string | undefined): 'problems' | 'notifications' | null {
-    return lane?.startsWith('today:') ? 'problems' : lane === 'notices' ? 'notifications' : null
+  private static guardedList(lane: string | undefined): 'problems' | 'notifications' | 'requests' | null {
+    return lane?.startsWith('today:') ? 'problems' : lane === 'notices' ? 'notifications' : lane === 'requests' ? 'requests' : null
   }
   /**
    * A read no write to its list overlapped: read again once the writes sending are done, a few times at most (null: none
    * was). It waits only for writes sending, never for queued ones: a queued write may wait on a write whose `after` is this
    * very read. A read given up on marks the list `dirty`: the last of those writes to finish reads it again (`write`).
    */
-  private async unraced<T>(list: 'problems' | 'notifications', read: () => Promise<T>): Promise<T | null> {
+  private async unraced<T>(list: keyof HttpAgent['listWrites'], read: () => Promise<T>): Promise<T | null> {
     const w = this.listWrites[list]
     for (let tries = 0; tries < 3; tries++) {
       await Promise.all(w.inFlight)
@@ -800,7 +804,7 @@ export class HttpAgent implements AgentClient {
     return null
   }
   /** A read taken as it comes (a first read or a Retry every guarded try missed): a write it overlapped marks the list `dirty`. */
-  private async plainRead<T>(list: 'problems' | 'notifications', read: () => Promise<T>): Promise<T> {
+  private async plainRead<T>(list: keyof HttpAgent['listWrites'], read: () => Promise<T>): Promise<T> {
     const w = this.listWrites[list]
     const done = w.done
     const answer = await read()
@@ -1425,21 +1429,21 @@ export class HttpAgent implements AgentClient {
   sendTeamRequest = (req: Parameters<AgentClient['sendTeamRequest']>[0]): Promise<void> =>
     req.kind ? this.fileRequest(req.kind, undefined, requestWords(req.title, req.text)) : rejected()
   /**
-   * Route 83: the caller's own open request that the window's row names. Nothing leaves the list until the server says it is
-   * withdrawn (a failure keeps the row); then it shows as Closed, Withdrawn, until the open requests are read again. A conflict
-   * (the team answered it meanwhile) shows it as the server has it. There's no way back, so no undo.
+   * Route 83: the caller's own request that the window's row names. The server's answer moves it to Closed, Withdrawn.
+   * A conflict shows it as the server has it.
    */
   withdrawTeamRequest = this.needs((k, ref: { title: string; at: Instant }): Promise<void> => {
     const key = `${ref.at.ms}|${ref.title}`
-    const mine = this.s.requests.find(r => r.mine && r.status === 'open' && requestKey(r) === key)
-    if (!mine) return this.refuseLocal('forbidden', "That request isn't open any more, or it isn't yours.")
+    const mine = this.s.requests.find(r => r.mine && requestKey(r) === key)
+    if (!mine) return this.refuseLocal('not_found', "That request isn't there, or it isn't yours.")
+    if (mine.status !== 'open') return this.refuseLocal('conflict', "That request is already closed.")
     const put = (s: Slices, r: TeamRequestRecord): Slices => this.withRequests(s, [r, ...s.requests.filter(x => x.id !== r.id)])
     return this.write<TeamRequestRecord>({
       lane: 'requests',
       apply: s => s,
       send: () => putWithdrawn(this.http, k, mine.id, mine.rev),
       done: put,
-      undo: (s, before) => this.withRequests(s, before.requests),
+      undo: s => s,
       onConflict: (s, current) => put(s, current as unknown as TeamRequestRecord),
     })
   })
@@ -1472,7 +1476,7 @@ export class HttpAgent implements AgentClient {
         const mine = this.s.requests.find(r => r.mine && r.status === 'open' && r.kind === kind && r.subject === subject)
         return mine ? putWithdrawn(this.http, k, mine.id, mine.rev) : null
       },
-      done: (s, r) => (r ? this.withRequests(s, s.requests.filter(x => x.id !== r.id)) : s),
+      done: (s, r) => (r ? this.withRequests(s, [r, ...s.requests.filter(x => x.id !== r.id)]) : s),
       undo: (s, before) => ({ ...s, state: { ...s.state, requestedTools: before.state.requestedTools } }),
     }))
   listNotifications = () => this.s.notifications

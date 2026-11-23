@@ -57,7 +57,7 @@ function TeamBody({ onClose }: { onClose: () => void }) {
   const ctx = useCtx()
   const [tab, setTab] = useState<'new' | 'mine'>('new')
   const { open, closed } = teamRequests(ctx, nowOf(), demo !== null, withdrawn)
-  // The product reads the open requests again each time the window opens (what the team answered since the first read).
+  // Opening the window again picks up requests the team has answered or another session has withdrawn.
   useEffect(() => { if (!demo) void agent.refresh('requests') }, [])
   return (
     <>
@@ -208,8 +208,7 @@ function RequestRow({ q, first }: { q: TeamRow; first: boolean }) {
       setFailed(e instanceof Error && e.message ? e.message : 'Something went wrong.')
       return
     }
-    // The demo shows it withdrawn for the session, and Undo puts it back. The product has no un-withdraw route (the team's
-    // window reads the server's open requests), so its toast offers no Undo: one that did nothing would be a lie.
+    // The demo manages withdrawals and Undo in session state. The product shows the server's saved withdrawal.
     if (demo !== null) {
       patch({ teamWithdrawn: [...withdrawn, q.key] })
       showToast('Request withdrawn.', { icon: 'undo', undo: () => { patch({ teamWithdrawn: useUi.getState().teamWithdrawn.filter(k => k !== q.key) }); clearToast() } })

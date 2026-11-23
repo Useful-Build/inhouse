@@ -60,6 +60,7 @@ describe('the client: requests to the Inhouse team', () => {
     expect(put.path).toBe(`/api/team-requests/${mine.id}/withdrawn`)
     expect(body(put)).toEqual({ ifRev: 3 })
     expect(agent.getSnapshot().requestedTools).toEqual({ zebra: true })
+    expect(agent.getSnapshot().teamRequests).toContainEqual(expect.objectContaining({ closed: 'withdrawn', status: 'Withdrawn' }))
     // Someone else's request is never withdrawn from here: nothing is sent, and its "Requested" mark stays.
     const before = calls.length
     await agent.requestTool('zebra', false)
@@ -80,14 +81,16 @@ describe('the client: requests to the Inhouse team', () => {
     expect(s.teamRequests.map(r => [r.title, r.status, r.closed])).toEqual([['Connect Shopify', 'Withdrawn', 'withdrawn'], ['Connect Zebra Ledger', 'With the team', undefined]])
   })
 
-  test('withdrawTeamRequest sends nothing for a request that is someone else\'s or not open', async () => {
+  test('withdrawTeamRequest sends nothing for a missing, another person\'s or already closed request', async () => {
     const theirs = rec('t', { text: 'Connect Zebra Ledger', mine: false })
-    const { agent, calls } = await loaded(reads({ requests: [theirs] }))
+    const done = rec('d', { text: 'Connect Shopify', mine: true, status: 'done', rev: 2 })
+    const { agent, calls } = await loaded(reads({ requests: [theirs, done] }))
     const before = calls.length
-    await expect(agent.withdrawTeamRequest({ title: 'Connect Zebra Ledger', at })).rejects.toMatchObject({ code: 'forbidden' })
-    await expect(agent.withdrawTeamRequest({ title: 'No such request', at })).rejects.toMatchObject({ code: 'forbidden' })
+    await expect(agent.withdrawTeamRequest({ title: 'Connect Zebra Ledger', at })).rejects.toMatchObject({ code: 'not_found' })
+    await expect(agent.withdrawTeamRequest({ title: 'No such request', at })).rejects.toMatchObject({ code: 'not_found' })
+    await expect(agent.withdrawTeamRequest({ title: 'Connect Shopify', at })).rejects.toMatchObject({ code: 'conflict' })
     expect(calls.length).toBe(before)
-    expect(agent.getSnapshot().teamRequests).toHaveLength(1)
+    expect(agent.getSnapshot().teamRequests).toHaveLength(2)
   })
 
   test('a failed withdraw rejects and keeps the request open and requested', async () => {
@@ -107,6 +110,34 @@ describe('the client: requests to the Inhouse team', () => {
     const s = agent.getSnapshot()
     expect(s.requestedTools).toEqual({})
     expect(s.teamRequests.map(r => [r.status, r.closed])).toEqual([['Done', 'done']])
+  })
+
+  test('a refresh that started before a withdrawal cannot put the request back in Open', async () => {
+    const mine = rec('m', { text: 'Connect Shopify', mine: true })
+    const withdrawn = { ...mine, status: 'withdrawn', rev: 2 }
+    let current = mine
+    const listPath = '/api/team-requests?view=window'
+    const s = server({
+      ...reads(),
+      [`GET ${listPath}`]: () => ({ body: { items: [current] } }),
+      [`PUT /api/team-requests/${mine.id}/withdrawn`]: () => { current = withdrawn; return { body: current } },
+    })
+    let duringRead: (() => Promise<void>) | undefined
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const response = await s.fetch(input, init)
+      if (String(input).endsWith(listPath) && duringRead) {
+        const withdraw = duringRead
+        duringRead = undefined
+        await withdraw()
+      }
+      return response
+    }
+    const agent = new HttpAgent({ fetch, now: () => NOW })
+    await agent.whenLoaded()
+    duringRead = () => agent.withdrawTeamRequest({ title: mine.text, at })
+    await agent.refresh('requests')
+    expect(agent.getSnapshot().requestedTools).toEqual({})
+    expect(agent.getSnapshot().teamRequests.map(r => r.closed)).toEqual(['withdrawn'])
   })
 
   test('requestSkill posts a job about the skill; sendTeamRequest posts the window\'s type and words', async () => {
@@ -138,17 +169,35 @@ describe('the client: requests to the Inhouse team', () => {
     expect(agent.getSnapshot().requestedTools).toEqual({})
   })
 
-  test('the open requests have a resource status: ready on load, error on a failed read, Retry recovers, refresh reads again', async () => {
+  test('the team requests have a resource status: ready on load, error on a failed read, Retry recovers, refresh reads again', async () => {
     let n = 0
-    const { agent, calls } = await loaded({ ...reads(), 'GET /api/team-requests?status=open': () => (++n === 1 ? refusal(503, 'unavailable') : { body: { items: [rec('a')] } }) })
+    const { agent, calls } = await loaded({ ...reads(), 'GET /api/team-requests?view=window': () => (++n === 1 ? refusal(503, 'unavailable') : { body: { items: [rec('a')] } }) })
     expect(agent.read().resources.requests).toMatchObject({ status: 'error' })
     await agent.retry('requests')
     expect(agent.read().resources.requests).toEqual({ status: 'ready' })
     expect(agent.getSnapshot().requestedTools).toEqual({ zebra: true })
-    const reads_ = () => calls.filter(c => c.path === '/api/team-requests?status=open').length
+    const reads_ = () => calls.filter(c => c.path === '/api/team-requests?view=window').length
     const before = reads_()
     await agent.refresh('requests')
     expect(reads_()).toBe(before + 1)
+  })
+
+  test('refresh shows recently closed requests with status only, and only open requests stay marked Requested', async () => {
+    const tool = rec('t', { subject: 'zebra', mine: true })
+    const skill = rec('s', { kind: 'job', subject: 'spreadsheet', text: 'Add spreadsheet', mine: true })
+    const withdrawn = rec('w', { kind: 'job', subject: 'pdf', text: 'Add PDF', status: 'withdrawn' })
+    let items = [tool, skill, withdrawn]
+    const { agent } = await loaded({ ...reads(), 'GET /api/team-requests?view=window': () => ({ body: { items } }) })
+    expect(agent.getSnapshot().requestedTools).toEqual({ zebra: true })
+    expect(agent.getSnapshot().requestedSkills).toEqual({ spreadsheet: true })
+    items = [{ ...tool, status: 'done', rev: 2 }, { ...skill, status: 'declined', rev: 2 }, withdrawn]
+    await agent.refresh('requests')
+    const snapshot = agent.getSnapshot()
+    expect(snapshot.requestedTools).toEqual({})
+    expect(snapshot.requestedSkills).toEqual({})
+    expect(snapshot.teamRequests.map(r => [r.closed, r.status, r.statusAt])).toEqual([
+      ['done', 'Done', undefined], ['declined', 'Declined', undefined], ['withdrawn', 'Withdrawn', undefined],
+    ])
   })
 
   test('the requests\' names come from the members once they are read, whichever read lands last', async () => {
