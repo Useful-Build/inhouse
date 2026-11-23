@@ -284,7 +284,7 @@ Settings: Team memory
 Settings: Run limits
   Path:     Settings -> Run limits
   Selector: job switches, "Daily limit", "Largest restock", button "Pause Inhouse agent"
-  Expected: switches and limits are locked until Run; each works, lists its options and survives a reload; Pause stops the agent (button, toast and top bar agree, Resume undoes it) and survives a reload; Reset demo clears all of it
+  Expected: switches and limits are locked until Run; each works, lists its options and survives a reload; Pause stops the agent (button, toast and top bar agree: the top bar's status reads "Running" or "Paused", named "Inhouse agent is running" or "... paused" for screen readers; Resume undoes it) and survives a reload; Reset demo clears all of it
   Covered:  e2e/settings-team-pages.spec.ts
 
 Settings: Notifications
@@ -423,8 +423,8 @@ Palette: Report a bug
 
 Sidebar
   Path:     sidebar -> collapse
-  Selector: Search row (`⌘K` / `Ctrl+K`) above nav "Main": Today, Approvals (count), Activity, Library, then group "Your agent" (Routines, Skills, Tools); Recent chats; the bottom row: the account row and button "Sidebar" (tooltip "Collapse sidebar" or "Expand sidebar" with `⌘\`); rail tooltips
-  Expected: Search opens the command palette from the expanded sidebar (and rail/phone drawer), keeping the top bar uncluttered; two nav sections, the second labelled and announced as a group; no team card, no Tools/Skills/Usage list at the bottom; the collapse button sits in the sidebar's bottom row beside the account row (desktop only; the top bar has none), and on the rail above the avatar; the rail shows group 1, a divider, group 2 and the avatar; the account row is selected on Settings and Usage; a skill's page keeps Skills selected; collapses to a rail with focus kept on the button, stays collapsed after a reload, expands with the shortcut; on desktop windows center in the room right of the sidebar
+  Selector: Search row (`⌘K` / `Ctrl+K`) above nav "Main": Today, Approvals (count), Activity, Library, then group "Your agent" (Routines, Skills, Tools); Recent chats; the bottom row: the account row, button "Your Inhouse team" (`support_agent`) and button "Sidebar" (tooltip "Collapse sidebar" or "Expand sidebar" with `⌘\`); rail tooltips
+  Expected: Search opens the command palette from the expanded sidebar (and rail/phone drawer), keeping the top bar uncluttered; two nav sections, the second labelled and announced as a group; no team card, no Tools/Skills/Usage list at the bottom; the Inhouse team button and the collapse button sit in the sidebar's bottom row beside the account row (the collapse button desktop only; the top bar has none), and on the rail above the avatar; the team button opens the team window (on a phone the drawer closes first); the rail shows group 1, a divider, group 2 and the avatar; the account row is selected on Settings and Usage; a skill's page keeps Skills selected; collapses to a rail with focus kept on the button, stays collapsed after a reload, expands with the shortcut; on desktop windows center in the room right of the sidebar
   Covered:  e2e/navigation.spec.ts, e2e/models-and-scroll.spec.ts, e2e/help-account-menu.spec.ts, e2e/library.spec.ts, e2e/ui-round-3.spec.ts
 
 Account menu
@@ -458,8 +458,8 @@ Notifications and team window
   Covered:  e2e/navigation.spec.ts
 
 Team window
-  Path:     account menu -> Your Inhouse team (also Report a bug, Help's Ask the team, Request a tool, Book a check-in)
-  Selector: dialog "Your Inhouse team" (the `form` window size: 720px, capped to the room right of the sidebar), radiogroup "Team window" (New request, "Your requests {N}"); New request: radio kind tiles (five), "Title", "Details" (a counter from 900 of 1000), "Send to the team"; Your requests: radiogroup "Show requests" ("Open · N", "Closed · N"), list "Open requests" or "Closed requests", each row a toggle with kind icon, title, "{kind} · {who}, {when}" and a status chip, "Withdraw request" in an open row you asked (demo only: the product has no withdraw route yet)
+  Path:     sidebar button "Your Inhouse team" or account menu -> Your Inhouse team (also Report a bug, Help's Ask the team, Request a tool, Book a check-in)
+  Selector: dialog "Your Inhouse team" (the `form` window size: 720px, capped to the room right of the sidebar), radiogroup "Team window" (New request, "Your requests {N}"); New request: radio kind tiles (five, compact, the picked one with a 1px dark border), "Title", "Details" (a counter from 900 of 1000), "Send to the team"; Your requests: radiogroup "Show requests" ("Open · N", "Closed · N"), list "Open requests" or "Closed requests", each row a toggle with kind icon, title, "{kind} · {who}, {when}" and a status chip, "Withdraw request" in an open row you asked (demo only: the product has no withdraw route yet)
   Expected: Send waits for a title or details (a title is made from the details when none is typed), closes the window and lists the request as open once the agent took it; a refused request keeps the window open with what was typed and says "Your request wasn't sent." with the reason; statuses are only With the team, Done, Declined and Withdrawn (and the demo's dated ones); a row opens to show its full text; Withdraw moves it to Closed as Withdrawn with an Undo toast and the account menu's count follows; the demo's toast promises a reply within one working day, the product's doesn't
   Covered:  e2e/help-account-menu.spec.ts, e2e/report-bug.spec.ts, e2e/navigation.spec.ts, e2e/sample-data.spec.ts, e2e/ui-round-3.spec.ts, e2e/real/team-request-refused.spec.ts, src/state/derive.team-requests.test.ts
 

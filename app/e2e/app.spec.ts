@@ -122,7 +122,7 @@ test('Run: 4 handled, 3 need you; the jacket is paused by Inhouse agent with 5 e
   await page.screenshot({ path: test.info().outputPath('run-today.png'), fullPage: true })
 
   await page.getByRole('button', { name: 'Pause', exact: true }).click()
-  await expect(page.getByText('Inhouse agent is paused', { exact: true })).toBeVisible()
+  await expect(page.getByRole('status', { name: 'Inhouse agent is paused', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeVisible()
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Routines' }).click()
   await expect(page.getByText('Paused', { exact: true }).first()).toBeVisible()

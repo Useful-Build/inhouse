@@ -116,11 +116,11 @@ function NewRequest({ onSent }: { onSent: () => void }) {
               const on = team.type === k
               return (
                 // The radio covers its whole tile, unseen, so a click or tap anywhere on the tile lands on the radio itself.
-                <label key={k} className={cn('relative flex cursor-pointer flex-col items-start justify-between gap-2 rounded-xl border bg-card p-3.5 pb-3 text-sm transition-colors has-focus-visible:shadow-halo',
-                  phone ? 'min-h-18' : 'h-23',
-                  on ? 'border-foreground font-semibold text-foreground shadow-selected' : 'border-border font-medium text-foreground-2 hover:border-border-strong')}>
-                  <input type="radio" name="team-kind" value={k} checked={on} onChange={() => set({ type: k })} className="absolute inset-0 m-0 size-full cursor-pointer appearance-none rounded-xl opacity-0" />
-                  <Icon name={RT[k][0]} size={20} weight={400} className={on ? 'text-foreground' : 'text-foreground-3'} />
+                <label key={k} className={cn('relative flex cursor-pointer flex-col items-start justify-between gap-1.5 rounded-lg border bg-card p-3 text-sm transition-colors has-focus-visible:shadow-halo',
+                  phone ? 'min-h-16' : 'h-20',
+                  on ? 'border-foreground font-semibold text-foreground' : 'border-border font-medium text-foreground-2 hover:border-border-strong')}>
+                  <input type="radio" name="team-kind" value={k} checked={on} onChange={() => set({ type: k })} className="absolute inset-0 m-0 size-full cursor-pointer appearance-none rounded-lg opacity-0" />
+                  <Icon name={RT[k][0]} size={18} weight={400} className={on ? 'text-foreground' : 'text-foreground-3'} />
                   <span className="leading-card">{RT[k][1]}</span>
                 </label>
               )
