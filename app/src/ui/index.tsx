@@ -83,12 +83,14 @@ const INVERSE = 'text-primary-foreground/70 hover:bg-primary-foreground/15 hover
  * An icon-only button. `label` is its accessible name and its tooltip. `size` is the glyph's size in px; `box` is the button's own size step (`icon` 32px, `icon-sm` 28px, `icon-lg`).
  * `shortcut` (from `SHORTCUTS` in `src/shell/nav.ts`) shows after the label in the tooltip and sets `aria-keyshortcuts`.
  */
-export function IconButton({ icon, label, tip = label, size = 20, box = 'icon', variant = 'ghost', filled, shortcut, className, onFocus, ...rest }: ComponentProps<'button'> & {
+export function IconButton({ icon, label, tip = label, tipSide, size = 20, box = 'icon', variant = 'ghost', filled, shortcut, className, onFocus, ...rest }: ComponentProps<'button'> & {
   icon: string; label: string; /** The tooltip's text when it says more than the name (the action a toggle will do). */ tip?: string; size?: number; box?: 'icon' | 'icon-sm' | 'icon-lg'; shortcut?: { label: string; aria: string }
   /** `chrome` for the app's frame: the top bar and the sidebar header. `action` for the small actions under a message (with `box="icon-sm"`). `card` for a card's own menu button. `inverse` on the dark toast. */
   variant?: 'ghost' | 'chrome' | 'action' | 'card' | 'inverse'
   /** The filled glyph (a picked rating). */
   filled?: boolean
+  /** Where the tooltip opens (`right` in the collapsed sidebar). */
+  tipSide?: 'top' | 'right' | 'bottom' | 'left'
 }) {
   // A message's 28px actions keep their look on a phone, each with a 44px-tall tap area as wide as the button, so
   // neighbours' areas don't overlap.
@@ -103,7 +105,7 @@ export function IconButton({ icon, label, tip = label, size = 20, box = 'icon', 
           <Icon name={icon} size={size} fill={filled} />
         </UiButton>
       </TooltipTrigger>
-      <TooltipContent>{tip}{shortcut && <kbd className="ml-1.5 font-sans text-primary-foreground/70">{shortcut.label}</kbd>}</TooltipContent>
+      <TooltipContent side={tipSide}>{tip}{shortcut && <kbd className="ml-1.5 font-sans text-primary-foreground/70">{shortcut.label}</kbd>}</TooltipContent>
     </Tooltip>
   )
 }

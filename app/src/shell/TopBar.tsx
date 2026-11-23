@@ -9,7 +9,6 @@ import { Notifications, useNotices } from '../overlays/Menus'
 import { DemoButton } from './DevSwitcher'
 import { ChatMenu, ChatTitleInput } from '../ui/chat'
 import { TAP } from '../ui/fields'
-import { SHORTCUTS } from './nav'
 
 export function TopBar() {
   const ctx = useCtx()
@@ -22,8 +21,7 @@ export function TopBar() {
   const pop = useUi(s => s.pop)
   const phone = useUi(s => s.phone)
   const sideOpen = useUi(s => s.sideOpen)
-  const sideCollapsed = useUi(s => s.sideCollapsed)
-  const { patch, togglePause, renameChat, showToast, toggleSidebar } = useUi.getState()
+  const { patch, togglePause, renameChat, showToast } = useUi.getState()
   // The chat whose title is being edited in the bar, so moving to another chat ends it.
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const titleArea = useRef<HTMLDivElement>(null)
@@ -54,10 +52,6 @@ export function TopBar() {
     <header className={cn('relative flex h-14.5 items-center gap-1.5 pr-4.5 pl-6', !onSkyspace && 'bg-topbar-fade')}>
       {phone && (
         <IconButton data-drawer-opener icon="menu" label="Menu" variant="chrome" size={21} aria-expanded={sideOpen} aria-controls={sideOpen ? 'sidebar' : undefined} onClick={() => patch({ sideOpen: true })} className={cn('-ml-2', TAP)} />
-      )}
-      {!phone && (
-        <IconButton icon={sideCollapsed ? 'left_panel_open' : 'left_panel_close'} label="Sidebar" tip={sideCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} shortcut={SHORTCUTS.sidebar} variant="chrome" size={19}
-          aria-expanded={!sideCollapsed} aria-controls="sidebar" onClick={toggleSidebar} className="-ml-2" />
       )}
       <div ref={titleArea} className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden text-sm whitespace-nowrap text-muted-foreground">
         {headerChat && renaming ? (
