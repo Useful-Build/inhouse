@@ -276,7 +276,8 @@ export function resultWords(s: Pick<SlotRow, 'state' | 'result_text' | 'failure'
 export function runOutcome(s: Pick<SlotRow, 'state' | 'failure' | 'outcome' | 'reason'>): RoutineRunOutcome {
   switch (s.state) {
     case 'claimed': case 'started': return 'running'
-    case 'ended': return s.outcome === 'done' && s.failure === null ? 'done' : 'failed'
+    // A run someone stopped on purpose (`stopped`, no failure) is neutral, not a warning.
+    case 'ended': return s.failure !== null ? 'failed' : s.outcome === 'done' ? 'done' : s.outcome === 'stopped' ? 'skipped' : 'failed'
     case 'lost': return 'failed'
     case 'missed': case 'skipped': return 'skipped'
     case 'refused': return s.reason === 'paused' ? 'skipped' : 'failed'

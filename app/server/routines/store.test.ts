@@ -194,7 +194,7 @@ describe('a routine\'s runs (route 68)', () => {
       [row('ended', { outcome: 'done', result_text: 'Found 3 things (fixed: 1 cut)' }), 'done', 'Found 3 things'],
       [row('ended', { outcome: 'failed', failure: 'run_failed' }), 'failed', 'It stopped before it finished'],
       [row('ended', { outcome: 'done', failure: 'not_connected', result_text: 'Shopify isn\'t connected' }), 'failed', 'Shopify isn\'t connected'],
-      [row('ended', { outcome: 'stopped' }), 'failed', 'It was stopped before it finished'],
+      [row('ended', { outcome: 'stopped' }), 'skipped', 'It was stopped before it finished'],
       [row('lost', { reason: 'no_end' }), 'failed', 'It stopped before it finished'],
       [row('missed', { reason: 'late' }), 'skipped', 'It missed its time'],
       [row('skipped', { reason: 'disabled' }), 'skipped', 'It was off at its time'],

@@ -125,7 +125,8 @@ test('Run: 4 handled, 3 need you; the jacket is paused by Inhouse agent with 5 e
   await expect(page.getByRole('status', { name: 'Inhouse agent is paused', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeVisible()
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Routines' }).click()
-  await expect(page.getByText('Paused', { exact: true }).first()).toBeVisible()
+  // On the Routines page itself: the top bar's status also reads "Paused" now.
+  await expect(page.getByRole('main').getByText('Paused', { exact: true }).first()).toBeVisible()
   await page.screenshot({ path: test.info().outputPath('run-paused-routines.png'), fullPage: true })
 })
 

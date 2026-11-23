@@ -36,9 +36,9 @@ describe('the demo: a routine\'s runs', () => {
     agent.setDemo({ stage: 'Act', scenario: 'Normal' })
     const morning = (await agent.routineRunHistory(MORNING)).runs
     expect(morning.map(x => [x.outcome, x.result, x.manual, x.trace])).toEqual([
-      ['done', 'Read 5 tools, found 6 things', false, 'morning'],
-      ['done', 'Read 5 tools, found 3 things', false, 'morning'],
-      ['done', 'Read 4 tools, found 4 things', false, 'morning'],
+      ['done', 'found 6 things', false, 'morning'],
+      ['done', 'found 3 things', false, 'morning'],
+      ['done', 'found 4 things', false, 'morning'],
     ])
     expect((await agent.routineRunHistory(PAYOUT)).runs.map(x => x.result)).toEqual(['Found a $1,240 gap', 'Every payout matched what Xero expected'])
     agent.setDemo({ stage: 'Watch', scenario: 'Normal' })

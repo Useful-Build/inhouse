@@ -192,8 +192,18 @@ const outcomeOf = (text: string, name: string) => {
  * The open routine's last runs (route 68): undefined while they load, 'failed' when they couldn't be read. Asked again
  * after each Run now (`runNows`), on Try again (`attempt`) and when the stage changes.
  */
+const RUN_RECHECK_MS = 15_000
+
 function useRunHistory(id: string, runNows: number, attempt: number, stage: number): readonly RoutineHistoryRun[] | 'failed' | undefined {
   const [got, setGot] = useState<{ id: string; runs: readonly RoutineHistoryRun[] | 'failed' }>()
+  // While a run is still going, ask again every 15 s so the open panel sees it end.
+  const [tick, setTick] = useState(0)
+  const running = got?.id === id && got.runs !== 'failed' && got.runs.some(x => x.outcome === 'running')
+  useEffect(() => {
+    if (!running) return
+    const t = setTimeout(() => setTick(n => n + 1), RUN_RECHECK_MS)
+    return () => clearTimeout(t)
+  }, [running, got])
   useEffect(() => {
     let live = true
     agent.routineRunHistory(id).then(h => { if (live) setGot({ id, runs: h.runs }) }, (e: unknown) => {
@@ -201,7 +211,7 @@ function useRunHistory(id: string, runNows: number, attempt: number, stage: numb
       if (live) setGot({ id, runs: 'failed' })
     })
     return () => { live = false }
-  }, [id, runNows, attempt, stage])
+  }, [id, runNows, attempt, stage, tick])
   return got?.id === id ? got.runs : undefined
 }
 

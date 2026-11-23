@@ -16,9 +16,9 @@
       "need": 0,
       "last": { "at": "0d 06:00", "result": "found 6 things" },
       "runs": [
-        { "at": "0d 06:00", "outcome": "done", "result": "Read 5 tools, found 6 things", "trace": "morning" },
-        { "at": "-3d 06:00", "outcome": "done", "result": "Read 5 tools, found 3 things", "trace": "morning" },
-        { "at": "-4d 06:00", "outcome": "done", "result": "Read 4 tools, found 4 things", "trace": "morning" }
+        { "at": "0d 06:00", "outcome": "done", "result": "found 6 things", "trace": "morning" },
+        { "at": "-3d 06:00", "outcome": "done", "result": "found 3 things", "trace": "morning" },
+        { "at": "-4d 06:00", "outcome": "done", "result": "found 4 things", "trace": "morning" }
       ]
     },
     {
