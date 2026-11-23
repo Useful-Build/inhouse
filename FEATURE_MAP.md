@@ -178,7 +178,7 @@ Chat: the product's chat (real client)
 Library: browse and filter
   Path:     Library (`#/library`)
   Selector: tabs, places panel, search, view switch
-  Expected: tabs and places filter with matching counts; search has an empty state with Clear; masonry, grid and list show the same files; grid tiles are all one height (a name shows on at most two lines there)
+  Expected: tabs and places filter with matching counts; search has an empty state with Clear; masonry, grid and list show the same files
   Covered:  e2e/library.spec.ts, e2e/library-polish.spec.ts
 
 Library: viewer

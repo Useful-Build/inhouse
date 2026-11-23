@@ -392,8 +392,7 @@ function Card({ file: f, grid, selecting, on, onClick, menu }: { file: LibraryFi
       <div className={cn(visual ? 'px-3 pt-2.5 pb-3' : 'px-3.5 pt-2 pb-3.25')}>
         {visual && (
           <div className="flex items-center gap-2">
-            {/* A grid tile keeps two lines for the name, no more, so its tiles stay even; the viewer shows the name in full. */}
-            <span className={`min-w-0 flex-1 text-sm leading-card font-strong wrap-anywhere ${grid ? 'line-clamp-2 min-h-card-name' : ''}`}>{f.name}</span>
+            <span className={`min-w-0 flex-1 text-sm leading-card font-strong wrap-anywhere ${grid ? 'min-h-card-name' : ''}`}>{f.name}</span>
             {!f.src && <TypeChip type={f.type} />}
           </div>
         )}
