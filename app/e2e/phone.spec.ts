@@ -203,7 +203,7 @@ test('Phone: with ?demo nothing sits under the switcher, and Library file names 
 
 test('Phone: reopening the open chat from See all keeps what was added', async ({ fx, page }) => {
   await start(page, fx, '#/chats/refunds')
-  await page.getByRole('textbox', { name: 'Message your Inhouse agent' }).fill('And what about last week?')
+  await page.getByRole('textbox', { name: 'Message Inhouse' }).fill('And what about last week?')
   await page.locator('[data-composer]').getByRole('button', { name: 'Send' }).click()
   await expect(page.getByText('And what about last week?', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Menu' }).click()

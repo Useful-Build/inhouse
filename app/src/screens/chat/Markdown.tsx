@@ -3,6 +3,7 @@
 // (which scroll sideways when wide). No HTML is ever passed through: everything renders as React text.
 import { Fragment } from 'react'
 import type { ReactNode } from 'react'
+import { cn } from '@/lib/utils'
 import { IconButton } from '../../ui'
 import { copyText } from './copy'
 import { FENCE, ROW, SEP } from './md-syntax'
@@ -159,40 +160,57 @@ const withBreaks = (lines: string[], key: string, fade: boolean) =>
 
 const HEADING_LOOK = ['text-xl font-semibold tracking-section', 'text-lg font-semibold', 'text-md font-semibold']
 
-function ListView({ list, k, fade }: { list: List; k: string; fade: boolean }) {
+/** `page`: a document read on its own page (a skill's instructions), in larger type with room between sections. */
+type Look = 'chat' | 'page'
+
+function ListView({ list, k, fade, look }: { list: List; k: string; fade: boolean; look: Look }) {
   const items = list.items.map((it, j) => (
-    <li key={j}>
+    <li key={j} className={cn(look === 'page' && 'pl-1')}>
       {inline(it.text, `${k}-${j}`, fade)}
-      {it.sub && <ListView list={it.sub} k={`${k}-${j}s`} fade={fade} />}
+      {it.sub && <ListView list={it.sub} k={`${k}-${j}s`} fade={fade} look={look} />}
     </li>
   ))
+  const cls = look === 'page' ? 'flex max-w-reading-measure flex-col gap-2.5 pl-6.5 marker:text-foreground-3 marker:tabular-nums [li_&]:mt-2.5' : 'flex flex-col gap-1 pl-5 [li_&]:mt-1'
   return list.ordered
-    ? <ol start={list.start} className="flex list-decimal flex-col gap-1 pl-5 [li_&]:mt-1">{items}</ol>
-    : <ul className="flex list-disc flex-col gap-1 pl-5 [li_&]:mt-1">{items}</ul>
+    ? <ol start={list.start} className={cn('list-decimal', cls)}>{items}</ol>
+    : <ul className={cn('list-disc', cls)}>{items}</ul>
 }
+
+/** A SKILL.md's frontmatter (a `---` block at the very top): not part of what a person reads. */
+const FRONTMATTER = /^\uFEFF?---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/
+const stripFrontmatter = (text: string) => text.replace(FRONTMATTER, '')
 
 /** The blocks of a text part. A blank line between paragraphs keeps its old height (one line). */
 /** `fade`: the text is being revealed, so its plain words each fade in as they first show (reveal.ts). */
-export function Markdown({ text, fade = false }: { text: string; fade?: boolean }) {
-  const blocks = parseBlocks(text)
+/** `look`: `chat` for an answer, `page` for a document on its own page (frontmatter stripped, larger type, its headings from h2). */
+export function Markdown({ text, fade = false, look = 'chat' }: { text: string; fade?: boolean; look?: Look }) {
+  const page = look === 'page'
+  const blocks = parseBlocks(page ? stripFrontmatter(text) : text)
   // Code blocks and tables are numbered, so each scroll area and Copy button has its own name.
   const numbered = (kind: Block['k']) => { let n = 0; return blocks.map(b => (b.k === kind ? ++n : 0)) }
   const codeNo = numbered('code'), tableNo = numbered('table')
+  // On a page, text keeps a readable measure while tables and code blocks use the full width.
+  const measure = page && 'max-w-reading-measure'
   return (
-    <div className="flex min-w-0 flex-col gap-6">
+    <div className={cn('flex min-w-0 flex-col', page ? 'gap-4 text-lg leading-reading' : 'gap-6')}>
       {blocks.map((b, i) => {
         const key = `b${i}`
         switch (b.k) {
-          case 'p': return <p key={key}>{withBreaks(b.lines, key, fade)}</p>
+          case 'p': return <p key={key} className={cn(measure)}>{withBreaks(b.lines, key, fade)}</p>
           case 'h': {
             // The chat page has no h1 or h2 of its own (its title is in the top bar), so an answer's # is an h2, ## an h3
             // and so on down to h6.
             const Tag = (['h2', 'h3', 'h4', 'h5', 'h6', 'h6'] as const)[b.level - 1]
+            // A page's document has its own h1 above it, so # and ## are both its h2, a section heading, with room above it.
+            if (page) {
+              const PageTag = (['h2', 'h2', 'h3', 'h4', 'h5', 'h6'] as const)[b.level - 1]
+              return <PageTag key={key} className={cn('leading-card font-semibold tracking-section not-first:mt-6', measure, b.level <= 2 ? 'text-xl' : 'text-lg')}>{inline(b.text, key, fade)}</PageTag>
+            }
             return <Tag key={key} className={`-mb-3 leading-heading ${HEADING_LOOK[Math.min(b.level, 3) - 1]}`}>{inline(b.text, key, fade)}</Tag>
           }
           case 'hr': return <hr key={key} className="border-0 border-t border-divider" />
-          case 'quote': return <blockquote key={key} className="border-l-2 border-border-strong pl-3.5 text-foreground-2">{withBreaks(b.lines, key, fade)}</blockquote>
-          case 'list': return <ListView key={key} list={b.list} k={key} fade={fade} />
+          case 'quote': return <blockquote key={key} className={cn('border-l-2 border-border-strong pl-3.5 text-foreground-2', measure)}>{withBreaks(b.lines, key, fade)}</blockquote>
+          case 'list': return <ListView key={key} list={b.list} k={key} fade={fade} look={look} />
           case 'code': {
             const label = `Code block ${codeNo[i]}${b.lang ? `, ${b.lang}` : ''}`
             return (

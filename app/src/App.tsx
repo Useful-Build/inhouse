@@ -6,7 +6,7 @@ import { AgentError } from './agent/types'
 import type { AgentErrorCode, RefreshList, ToolsData } from './agent/types'
 import { NOT_FOUND } from '../shared/contract/error-codes'
 import type { Page } from './state/store'
-import { FROM_SETTINGS_MENU, chatEntries, defaultChatId, newestChat, openChatKey, takeReplaceEntry, useAgentData, useAgentState, useUi } from './state/store'
+import { FROM_SETTINGS_MENU, chatEntries, defaultChatId, newestChat, openChatKey, skillBySlug, takeReplaceEntry, useAgentData, useAgentState, useUi } from './state/store'
 import { Sidebar } from './shell/Sidebar'
 import { Banner, TopBar } from './shell/TopBar'
 import { Toasts } from './shell/Toasts'
@@ -26,8 +26,7 @@ import { GooDefs, Page as PageBox, SkyspaceBackground } from './ui'
 import { Today } from './screens/Today'
 import { Chats } from './screens/Chats'
 import { useChatIsBlank } from './screens/chat/open-messages'
-import { MENU } from './screens/settings/menu'
-import { ProblemPanel } from './overlays/ProblemPanel'
+import { SETTINGS_PAGES } from './screens/settings/menu'
 import { CommandPalette } from './overlays/CommandPalette'
 
 /**
@@ -52,49 +51,53 @@ const Activity = lazyRoute(() => import('./screens/Activity'), m => m.Activity)
 const Tools = lazyRoute(() => import('./screens/Tools'), m => m.Tools)
 const ToolPage = lazyRoute(() => import('./screens/Tools'), m => m.ToolPage)
 const Skills = lazyRoute(() => import('./screens/Skills'), m => m.Skills)
+const SkillPage = lazyRoute(() => import('./screens/Skills'), m => m.SkillPage)
 // Once the shell has painted and the browser is idle, these five load in the background, so a first visit finds its chunk
 // already there (the skeleton shows only on a slow link). Library, Usage and Settings stay on first visit: they are the big ones.
 const PREFETCH: (() => Promise<unknown>)[] = [
   () => import('./screens/Approvals'), () => import('./screens/Routines'), () => import('./screens/Activity'), () => import('./screens/Tools'), () => import('./screens/Skills'),
+  () => import('./overlays/ProblemPanel'), () => import('./overlays/TeamWindow'),
 ]
 const Library = lazyRoute(() => import('./screens/Library'), m => m.Library)
 const Usage = lazyRoute(() => import('./screens/Usage'), m => m.Usage)
 const Settings = lazyRoute(() => import('./screens/Settings'), m => m.Settings)
 const NotOnTeam = lazyRoute(() => import('./shell/NotOnTeam'), m => m.NotOnTeam)
 const TraceWindow = lazyRoute(() => import('./overlays/TraceWindow'), m => m.TraceWindow)
-// The Inhouse team and Help windows load when first opened: Today doesn't need them (first-load budget, check-bundle).
+// The problem window and the team window open only on a click, so they load then (or with the idle prefetch above), not with Today.
+const ProblemPanel = lazyRoute(() => import('./overlays/ProblemPanel'), m => m.ProblemPanel)
 const TeamWindow = lazyRoute(() => import('./overlays/TeamWindow'), m => m.TeamWindow)
+// Help loads when first opened too: Today doesn't need it (first-load budget, check-bundle).
 const HelpWindow = lazyRoute(() => import('./overlays/HelpWindow'), m => m.HelpWindow)
 
-/** A window whose chunk can't load closes and says so, instead of taking the app down. */
-class WindowBoundary extends Component<{ children: ReactNode; name: string }, { failed: boolean }> {
+/** True from the first render where `on` is: a lazy overlay stays mounted once it has opened, so its own state lives on as it did when it loaded with the page. */
+function useOpenedOnce(on: boolean) {
+  const [opened, setOpened] = useState(on)
+  if (on && !opened) setOpened(true)
+  return opened || on
+}
+
+/** A lazy window (the trace, a problem, the team window) whose chunk can't load closes and says so, instead of taking the app down. */
+class OverlayBoundary extends Component<{ children: ReactNode; name: string; what: string; open: boolean; close: () => void }, { failed: boolean }> {
   state = { failed: false }
   static getDerivedStateFromError() { return { failed: true } }
+  // Once it has closed, the next open tries again (a window that stays mounted keeps its boundary).
+  static getDerivedStateFromProps(props: { open: boolean }, state: { failed: boolean }) { return state.failed && !props.open ? { failed: false } : null }
   componentDidCatch(error: unknown) {
     console.error(`Inhouse: the ${this.props.name} window crashed and was closed.`, error instanceof Error ? error.message : error, error)
     reportError('boundary', error)
-    useUi.getState().patch({ pop: null })
-    useUi.getState().showToast(`Couldn't open the ${this.props.name} window. Reload and try again.`, { icon: 'info', key: 'window-error' })
+    this.props.close()
+    useUi.getState().showToast(`Couldn't open ${this.props.what}. Reload and try again.`, { icon: 'info', key: `${this.props.name}-error` })
   }
   render() { return this.state.failed ? null : this.props.children }
 }
-
-/** A trace window whose chunk can't load closes and says so, instead of taking the app down. */
-class TraceBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
-  state = { failed: false }
-  static getDerivedStateFromError() { return { failed: true } }
-  componentDidCatch(error: unknown) {
-    console.error('Inhouse: the trace window crashed and was closed.', error instanceof Error ? error.message : error, error)
-    reportError('boundary', error)
-    useUi.getState().patch({ traceId: null })
-    useUi.getState().showToast("Couldn't open the trace. Reload and try again.", { icon: 'info', key: 'trace-error' })
-  }
-  render() { return this.state.failed ? null : this.props.children }
-}
+const closeTrace = () => useUi.getState().patch({ traceId: null })
+const closeProblem = () => useUi.getState().closeProblem()
+const closeTeam = () => useUi.getState().patch({ pop: null })
+const closeHelp = closeTeam
 
 const SCREENS: Record<Page, React.ComponentType> = {
   today: Today, library: Library, chats: Chats, approvals: Approvals, routines: Routines, activity: Activity,
-  apps: Tools, app: ToolPage, skills: Skills, usage: Usage, settings: Settings,
+  apps: Tools, app: ToolPage, skills: Skills, skill: SkillPage, usage: Usage, settings: Settings,
 }
 
 // A tab left open across a deploy (or a rollback) asks for a chunk the new build no longer has. Vite fires
@@ -156,24 +159,24 @@ function RouteFocus({ slug }: { slug: string }) {
 /** A tool's or channel's name, or undefined for a key that is neither (a stale or typed link). */
 const toolName = (t: ToolsData, k: string) => t.channels.find(c => c.key === k)?.name ?? (Object.hasOwn(t.details, k) ? t.details[k].name : undefined)
 
-// ---------- hash routes: #/today, #/tools/shopify, #/settings/team-memory, #/chats/all, #/chats/<id> ----------
+// ---------- hash routes: #/today, #/tools/shopify, #/skills/morning-check, #/settings/team-memory, #/chats/all, #/chats/<id> ----------
 // On a phone, #/settings alone is the settings menu, so Back from a settings page returns to it.
-const PAGE_SLUG: Record<Page, string> = { today: 'today', library: 'library', chats: 'chats', approvals: 'approvals', routines: 'routines', activity: 'activity', apps: 'tools', app: 'tools', skills: 'skills', usage: 'usage', settings: 'settings' }
-const toHash = (page: Page, appKey: string, setTab: string, chat: string, menu = false) =>
-  '#/' + PAGE_SLUG[page] + (page === 'app' ? '/' + appKey : page === 'settings' ? (menu ? '' : '/' + setTab) : page === 'chats' ? '/' + encodeURIComponent(chat) : '')
-const SETTINGS_TABS = MENU.flatMap(g => g.items.map(([k]) => k))
+const PAGE_SLUG: Record<Page, string> = { today: 'today', library: 'library', chats: 'chats', approvals: 'approvals', routines: 'routines', activity: 'activity', apps: 'tools', app: 'tools', skills: 'skills', skill: 'skills', usage: 'usage', settings: 'settings' }
+const toHash = (page: Page, appKey: string, setTab: string, chat: string, menu = false, skill = '') =>
+  '#/' + PAGE_SLUG[page] + (page === 'app' ? '/' + appKey : page === 'skill' ? '/' + skill : page === 'settings' ? (menu ? '' : '/' + setTab) : page === 'chats' ? '/' + encodeURIComponent(chat) : '')
+const SETTINGS_TABS = SETTINGS_PAGES.map(p => p.id)
 /** The list each page shows that the agent's work fills (read again when the page opens). */
-const PAGE_LIST: Partial<Record<Page, RefreshList>> = { today: 'problems', approvals: 'problems', library: 'library', activity: 'activity' }
-const PAGE_LABEL: Record<Page, string> = { today: 'Today', library: 'Library', chats: 'Chats', approvals: 'Approvals', routines: 'Routines', activity: 'Activity', apps: 'Tools', app: 'Tools', skills: 'Skills', usage: 'Usage', settings: 'Settings' }
+const PAGE_LIST: Partial<Record<Page, RefreshList>> = { today: 'problems', approvals: 'problems', library: 'library', activity: 'activity', skills: 'skills', skill: 'skills' }
+const PAGE_LABEL: Record<Page, string> = { today: 'Today', library: 'Library', chats: 'Chats', approvals: 'Approvals', routines: 'Routines', activity: 'Activity', apps: 'Tools', app: 'Tools', skills: 'Skills', skill: 'Skills', usage: 'Usage', settings: 'Settings' }
 /** A link that names a page, tool or tab that doesn't exist lands where it did before, and says so. */
 const notFound = (where: string) => useUi.getState().showToast(`That page doesn't exist. You're on ${where}.`, { icon: 'info', key: 'route-notice' })
 const SETTINGS_DEFAULT = 'you-general'
-/** A settings tab's label: MENU items are [key, icon, label]. */
-const settingsLabel = (tab: string) => MENU.flatMap(g => g.items).find(([k]) => k === tab)?.[2] ?? 'Settings'
+/** A settings tab's label. */
+const settingsLabel = (tab: string) => SETTINGS_PAGES.find(p => p.id === tab)?.label ?? 'Settings'
 /** The hash names something (as opposed to an empty hash). */
 const hasSlug = (hash: string) => hash.startsWith('#/') && !!hash.slice(2).split('/')[0]
 /** `chat` is `all` (See all), `new` (a chat with nothing asked yet) or a chat id. */
-type Route = Partial<{ page: Page; appKey: string; setTab: string; chat: string; setMenu: boolean }>
+type Route = Partial<{ page: Page; appKey: string; skillKey: string; setTab: string; chat: string; setMenu: boolean }>
 /** A chat id as written in the hash: percent-encoded, like Copy link's URL. A malformed escape is read as typed, and names no chat. */
 function chatIdFrom(raw: string | undefined): string | undefined {
   if (!raw) return raw
@@ -191,6 +194,7 @@ function fromHash(hash: string): Route | null {
   if (!slug) return null
   const sub = slug === 'chats' ? chatIdFrom(rawSub) : rawSub
   if (slug === 'tools') return sub ? { page: 'app', appKey: sub } : { page: 'apps' }
+  if (slug === 'skills') return sub ? { page: 'skill', skillKey: sub } : { page: 'skills' }
   if (slug === 'settings') return sub ? { page: 'settings', setTab: sub, setMenu: false } : { page: 'settings', setMenu: true }
   if (slug === 'chats') return sub ? { page: 'chats', chat: sub } : { page: 'chats' }
   const page = (Object.keys(PAGE_SLUG) as Page[]).find(p => PAGE_SLUG[p] === slug)
@@ -220,12 +224,13 @@ if (initialRoute) applyRoute(initialRoute, true)
 const bootUnknownPage = !initialRoute && hasSlug(location.hash)
 
 const hashSync = createHashSync(hashBar, {
-  toHash: p => toHash(p.page as Page, p.appKey, p.setTab, p.chatKey, p.menu), fromHash, takeReplaceEntry, fromMenuState: FROM_SETTINGS_MENU,
+  toHash: p => toHash(p.page as Page, p.appKey, p.setTab, p.chatKey, p.menu, p.skillKey), fromHash, takeReplaceEntry, fromMenuState: FROM_SETTINGS_MENU,
 })
 
 function useHashRoute() {
   const page = useUi(s => s.page)
   const appKey = useUi(s => s.appKey)
+  const skillKey = useUi(s => s.skillKey)
   const setTab = useUi(s => s.setTab)
   const chatId = useUi(s => s.chatId)
   const chatList = useUi(s => s.chatList)
@@ -254,6 +259,8 @@ function useHashRoute() {
   const chatUnknown = isChatUnknown({ page, chatList, openKey, ids, serverList: demo ? null : data.resources.chat.status, looked: openKey !== null && looked[openKey] === true })
   const fallbackChat = newestChat(data, started, agentState)?.id ?? null
   const chatIsNew = started.some(c => c.id === chatKey)
+  const skillKnown = !!skillBySlug(data, agentState, skillKey)
+  const skillsStatus = data.resources.skills.status
   useEffect(() => {
     const apply = () => {
       const r = fromHash(location.hash)
@@ -261,7 +268,7 @@ function useHashRoute() {
       hashBar.adopt()
       if (r) { applyRoute(r, false); return }
       const named = hasSlug(location.hash)
-      hashBar.replace(toHash(ui.page, ui.appKey, ui.setTab, ui.chatList ? 'all' : openChatKey(ui, agent.read()) ?? 'new', ui.phone && ui.setMenu))
+      hashBar.replace(toHash(ui.page, ui.appKey, ui.setTab, ui.chatList ? 'all' : openChatKey(ui, agent.read()) ?? 'new', ui.phone && ui.setMenu, ui.skillKey))
       if (named) notFound(ui.page === 'app' ? toolName(agent.read().tools, ui.appKey) ?? 'Tools' : ui.page === 'settings' ? settingsLabel(ui.setTab) : PAGE_LABEL[ui.page])
     }
     window.addEventListener('hashchange', apply)
@@ -288,6 +295,14 @@ function useHashRoute() {
       notFound('Tools')
       return
     }
+    // An unknown skill likewise, once the skills themselves have loaded (the product reads them after the first paint,
+    // and the app as a whole can be ready while they're still on their way).
+    if (page === 'skill' && !skillKnown && skillsStatus !== 'loading') {
+      hashBar.replace(toHash('skills', appKey, setTab, chatKey))
+      useUi.getState().patch({ page: 'skills' })
+      notFound('Skills')
+      return
+    }
     if (page === 'settings' && !SETTINGS_TABS.includes(setTab)) {
       hashBar.replace(toHash('settings', appKey, SETTINGS_DEFAULT, chatKey))
       useUi.getState().patch({ setTab: SETTINGS_DEFAULT })
@@ -296,8 +311,8 @@ function useHashRoute() {
     }
     if (chatUnknown) return // replaced above
     // The hash follows the app unless someone else just set one (see shell/route-sync.ts).
-    hashSync.sync({ page, appKey, setTab, chatKey, menu, phone, chatIsNew, defaultChat: defaultChatId(data) })
-  }, [page, appKey, setTab, data.tools, chatKey, chatUnknown, chatIsNew, menu, phone])
+    hashSync.sync({ page, appKey, skillKey, setTab, chatKey, menu, phone, chatIsNew, defaultChat: defaultChatId(data) })
+  }, [page, appKey, skillKey, skillKnown, skillsStatus, data.status, setTab, data.tools, chatKey, chatUnknown, chatIsNew, menu, phone])
 }
 
 function Shell() {
@@ -324,11 +339,17 @@ function Shell() {
   }, [page])
   const appKey = useUi(s => s.appKey)
   const toolKnown = !!toolName(useAgentData().tools, appKey)
+  const skillKey = useUi(s => s.skillKey)
+  const skill = skillBySlug(useAgentData(), useAgentState(), skillKey)
   const phone = useUi(s => s.phone)
   const sideCollapsed = useUi(s => s.sideCollapsed)
   const chatList = useUi(s => s.chatList)
   const traceId = useUi(s => s.traceId)
-  const pop = useUi(s => s.pop)
+  const problemOpen = useUi(s => s.openId) !== null
+  const teamOpen = useUi(s => s.pop) === 'team'
+  const helpOpen = useUi(s => s.pop) === 'help'
+  const problemOpened = useOpenedOnce(problemOpen)
+  const teamOpened = useOpenedOnce(teamOpen)
   const chatId = useUi(s => s.chatId)
   const fresh = useUi(s => s.fresh)
   const chatBlank = useChatIsBlank()
@@ -383,13 +404,13 @@ function Shell() {
   // The tab's title names the page ("Usage · Inhouse"), a tool or a settings page by its own name.
   // Settings pages read "<Page> · Settings · Inhouse". A layout effect runs before RouteFocus's effect, so the title is
   // already the new page's when its h1 takes focus.
-  const label = page === 'app' ? toolName(tools, appKey) ?? 'Tools' : page === 'settings' ? (phone && setMenu ? 'Settings' : `${settingsLabel(setTab)} · Settings`) : PAGE_LABEL[page]
+  const label = page === 'app' ? toolName(tools, appKey) ?? 'Tools' : page === 'skill' ? skill?.n ?? 'Skills' : page === 'settings' ? (phone && setMenu ? 'Settings' : `${settingsLabel(setTab)} · Settings`) : PAGE_LABEL[page]
   useLayoutEffect(() => { document.title = `${label} · Inhouse` }, [label])
-  const focusKey = PAGE_SLUG[page] + (page === 'app' ? (toolKnown ? `/${appKey}` : '') : page === 'settings' && phone && setMenu ? '/menu' : '')
+  const focusKey = PAGE_SLUG[page] + (page === 'app' ? (toolKnown ? `/${appKey}` : '') : page === 'skill' ? (skill ? `/${skillKey}` : '') : page === 'settings' && phone && setMenu ? '/menu' : '')
 
   // An unknown tool key shows the Tools list until `useHashRoute` has moved the route there.
-  const Screen = page === 'app' && !toolKnown ? Tools : SCREENS[page]
-  const subKey = page === 'app' ? appKey : page === 'settings' ? setTab : page === 'chats' ? (chatList ? 'all' : fresh ? 'new' : chatId ?? '') : ''
+  const Screen = page === 'app' && !toolKnown ? Tools : page === 'skill' && !skill ? Skills : SCREENS[page]
+  const subKey = page === 'app' ? appKey : page === 'skill' ? skillKey : page === 'settings' ? setTab : page === 'chats' ? (chatList ? 'all' : fresh ? 'new' : chatId ?? '') : ''
   // Full-shell Turrell Skyspace behind both the floating sidebar and main: hero on Today and blank New chat, softly quieted in an active chat, off on other pages.
   const skyspace = page === 'today' || (page === 'chats' && !chatList && chatBlank) ? 'hero' : page === 'chats' && !chatList ? 'subtle' : null
   const skyspaceOffset = phone ? 'none' : sideCollapsed ? 'rail' : 'full'
@@ -421,10 +442,10 @@ function Shell() {
           </div>
         </main>
       </div>
-      <ProblemPanel />
-      {traceId && <TraceBoundary><Suspense fallback={null}><TraceWindow /></Suspense></TraceBoundary>}
-      {pop === 'team' && <WindowBoundary name="Inhouse team"><Suspense fallback={null}><TeamWindow /></Suspense></WindowBoundary>}
-      {pop === 'help' && <WindowBoundary name="Help"><Suspense fallback={null}><HelpWindow /></Suspense></WindowBoundary>}
+      {problemOpened && <OverlayBoundary name="problem" what="this problem" open={problemOpen} close={closeProblem}><Suspense fallback={null}><ProblemPanel /></Suspense></OverlayBoundary>}
+      {traceId && <OverlayBoundary name="trace" what="the trace" open close={closeTrace}><Suspense fallback={null}><TraceWindow /></Suspense></OverlayBoundary>}
+      {teamOpened && <OverlayBoundary name="team" what="your Inhouse team" open={teamOpen} close={closeTeam}><Suspense fallback={null}><TeamWindow /></Suspense></OverlayBoundary>}
+      {helpOpen && <OverlayBoundary name="help" what="help" open close={closeHelp}><Suspense fallback={null}><HelpWindow /></Suspense></OverlayBoundary>}
       <CommandPalette />
       <Toasts />
       <DevSwitcher />

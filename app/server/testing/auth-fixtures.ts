@@ -163,9 +163,9 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'POST', pattern: '/api/routines/:id/delete', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   { method: 'POST', pattern: '/api/routines/:id/restore', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   // Rows 77 to 83 (P6a PR0; rows 68 to 76 are P5's). Team memory approval: brand data, admins and the Inhouse team
-  // (the PUT under a live grant, INHOUSE_BRAND_WRITES). Skills: technical, everyone reads. Team requests: baseline,
-  // since a request is addressed to the Inhouse team, which reads it and alone marks it done or declined without a
-  // grant; withdrawing is personal, the requester's own.
+  // (the PUT under a live grant, INHOUSE_BRAND_WRITES). Skills: technical, everyone reads (names only, no instructions).
+  // Team requests: baseline, since a request is addressed to the Inhouse team, which reads it and alone marks it done
+  // or declined without a grant; withdrawing is personal, the requester's own.
   { method: 'GET', pattern: '/api/memory/waiting', class: 'brand_data', allow: ['admin', 'inhouse'] },
   { method: 'PUT', pattern: '/api/memory/brand/:id/approved', class: 'brand_data', allow: ['admin', 'inhouse'] },
   { method: 'GET', pattern: '/api/skills', class: 'technical', allow: ['member', 'admin', 'inhouse'] },
@@ -173,6 +173,10 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'POST', pattern: '/api/team-requests', class: 'baseline', allow: ['member', 'admin'] },
   { method: 'PUT', pattern: '/api/team-requests/:id/status', class: 'baseline', allow: ['inhouse'] },
   { method: 'PUT', pattern: '/api/team-requests/:id/withdrawn', class: 'personal', allow: ['member', 'admin'] },
+  // Brand skills (P6a, rows 84 and 85): a skill's full text is brand data; people delete one, the store decides whose.
+  { method: 'GET', pattern: '/api/skills/:name', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'POST', pattern: '/api/skills/brand/:id/delete', class: 'brand_data', allow: ['member', 'admin'] },
+  { method: 'GET', pattern: '/api/routines/:id/runs', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
 ]
 
 /** `CanRows` as section 3 maps them. */

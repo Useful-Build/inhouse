@@ -1,7 +1,7 @@
 // Today empty-state regressions (P7 W2 items):
-// 1. Run headline at h = 0 / n = 0 reads cleanly (never "0 handled before you woke up. 0 need you.").
+// 1. Run headline at h = 0 / n = 0 reads cleanly (never "0 handled today. 0 need you.").
 // 2. Act countLabel at total = 0 is not "all approved".
-// 3. Run "N handled before you woke up" banner only shows when h.count > 0.
+// 3. Run "N handled today" banner only shows when h.count > 0.
 // 4. Today with cards.length === 0 shows the set-aside empty line only when aside > 0, and a calm
 //    "nothing needs you" state when there are zero problems.
 import { describe, expect, test } from 'vitest'
@@ -9,6 +9,10 @@ import { HttpAgent } from '../agent/http/client'
 import type { AgentData, Instant, Problem, StageIndex, ToolDetail } from '../agent/types'
 import { handled, todayCopy, todayEmptyState } from './derive'
 import type { Ctx } from './derive'
+import { setNow } from './display'
+
+// The greeting reads the app's clock; any time does for these headlines.
+setNow(() => Date.UTC(2031, 2, 3, 15))
 
 const stub = new HttpAgent()
 const EMPTY = stub.read()
@@ -49,7 +53,7 @@ const ctxOf = (data: AgentData, S: StageIndex, setAside: Ctx['agent']['setAside'
 describe('Today empty-state copy and view state (zero problems)', () => {
   test('Run headline reads cleanly when h = 0 and n = 0 (no "0 need you" or "0 handled")', () => {
     const copy = todayCopy(ctxOf(clearDay(), 2))
-    expect(copy.headline).toBe('Nothing needs you today.')
+    expect(copy.headline).toBe("You're all caught up.")
     expect(copy.headline).not.toMatch(/\b0\s+need/i)
     expect(copy.headline).not.toMatch(/\b0\s+handled/i)
     expect(copy.countLabel).toBe('')
@@ -57,7 +61,7 @@ describe('Today empty-state copy and view state (zero problems)', () => {
 
   test('Act countLabel is empty (not "all approved") when total === 0', () => {
     const copy = todayCopy(ctxOf(clearDay(), 1))
-    expect(copy.headline).toBe('Nothing is waiting on you.')
+    expect(copy.headline).toBe("You're all caught up.")
     expect(copy.countLabel).not.toContain('approved')
     expect(copy.countLabel).toBe('')
   })
@@ -85,7 +89,7 @@ describe('Today empty-state copy and view state (zero problems)', () => {
   test('Watch with zero problems shows calm headline, empty countLabel and clear emptyKind', () => {
     const ctx = ctxOf(clearDay(), 0)
     const copy = todayCopy(ctx)
-    expect(copy.headline).toBe('Nothing needs you today.')
+    expect(copy.headline).toBe("You're all caught up.")
     expect(copy.countLabel).toBe('')
     expect(todayEmptyState(ctx)).toEqual({ showHandledBanner: false, emptyKind: 'clear', asideCount: 0 })
   })
@@ -110,7 +114,7 @@ describe('Today empty-state copy and view state (zero problems)', () => {
     })
     const waitingProblem = makeProblem({
       id: 'p-wait', sev: 'med',
-      draft: { title: 'Reorder', lines: [], kind: 'Purchase order', summary: 'Send PO', cta: 'Approve', rev: true, money: true, customer: false },
+      draft: { title: 'Reorder', lines: [['To', 'Kestrel Supply']], kind: 'Purchase order', summary: 'Send PO', cta: 'Approve', rev: true, money: true, customer: false },
       draftedAt: at('2031-03-03T07:00:00.000Z'),
       wait: 'Waiting on your approval',
     })
@@ -118,7 +122,7 @@ describe('Today empty-state copy and view state (zero problems)', () => {
     // h > 0, n = 0: overnight banner shows and headline states handled count cleanly
     const handledOnly = ctxOf(clearDay({ problems: [handledProblem] }), 2)
     expect(todayEmptyState(handledOnly).showHandledBanner).toBe(true)
-    expect(todayCopy(handledOnly).headline).toBe('1 handled before you woke up. Nothing needs you.')
+    expect(todayCopy(handledOnly).headline).toBe("1 handled today. You're all caught up.")
     expect(todayCopy(handledOnly).countLabel).toBe('1 handled')
 
     // h = 0, n > 0: overnight banner stays hidden and headline omits "0 handled"

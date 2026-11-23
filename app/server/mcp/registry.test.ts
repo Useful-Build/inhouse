@@ -13,6 +13,8 @@ const THE_20 = [
   'history_search', 'history_read',
   'notification_send',
   'team_request_create', 'team_request_list',
+  // P6a brand skills (master plan standing decision 6).
+  'skill_save',
 ]
 const THE_6 = ['memory_search', 'memory_save', 'approval_request', 'question_ask', 'history_search', 'notification_send']
 

@@ -6,7 +6,7 @@ import {
   problems, routines, scenarios, seedRoutine, seedTable, skillSuggestions, skillSuggestionsTitle, skills, traceDisconnectedVariant,
   traces, tools as sampleTools, usage, usageAtCap, usageHistory,
 } from './data'
-import { sampleAt } from './data'
+import { loadSkillBodies, routineIdOf, sampleAt, sampleRuns } from './data'
 import type { ProblemSeed, TraceKey } from './data'
 import type {
   CreateChatInput, ApprovalRule, AuditLine, MemberRecord, MemberRole, Me, ResourceKey, ResourceStatus,
@@ -22,7 +22,8 @@ import { instantOf } from '../lib/format'
 import { INVALID, NOT_FOUND, REASON } from '../../shared/contract/error-codes'
 import type { ErrorReason } from '../../shared/contract/common'
 import type { SupportGrant } from '../../shared/contract/grants'
-import { CAN_KEYS, GRANT_HOURS, RESOURCE_KEYS } from '../../shared/contract/keys'
+import { CAN_KEYS, GRANT_HOURS, RESOURCE_KEYS, ROUTINE_RUNS_MAX } from '../../shared/contract/keys'
+import type { RoutineHistoryRun, RoutineRunHistory } from '../../shared/contract/routines'
 import type { Can } from '../../shared/contract/me'
 import type { InviteInput } from '../../shared/contract/members'
 import { MEMBER_ID_PATTERN, meetsRule, settingRow } from '../../shared/contract/settings-table'
@@ -113,9 +114,6 @@ const initialState = (): AgentState => ({
 
 // ---------- the read-only snapshot ----------
 
-/** A sample routine's id, from its name: "Morning check" is "routine-morning-check". */
-const routineIdOf = (name: string) => 'routine-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
-
 type RawTurn = { user?: string; stage?: string; agent?: Record<string, unknown>[]; trace?: string; model?: string }
 /** A seeded answer's recorded trace: every one has its own, so its footer and steps are its own. */
 const needTrace = (turn: RawTurn, where: string): string => {
@@ -190,9 +188,10 @@ function draftTimes(): Record<string, Instant> {
 function routineDefs(): RoutineDef[] {
   const asked = (chatScript.seedThread.turns as RawTurn[]).find(t => t.user && /\bevery morning\b/.test(t.user))
   if (!asked?.user) throw new Error('chat-script.json: the seed thread has no request for the stuck orders routine.')
-  const { name, freq, day, time, next, need } = seedRoutine
+  const { name, freq, day, time, next, need, by } = seedRoutine
   if (![0, 1, 2].includes(need)) throw new Error(`Sample data: the routine "${name}" has an unknown stage "${String(need)}".`)
-  const fromChat: Omit<RoutineDef, 'id'> = { name, freq, day, time, next, need: need as RoutineDef['need'], what: `Created in a chat: "${asked.user}"`, inChat: true, rev: 1 }
+  // `by` stays: the routine's details say who made it ("Made by You" for the signed-in person).
+  const fromChat: Omit<RoutineDef, 'id'> = { name, freq, day, time, next, need: need as RoutineDef['need'], what: `Created in a chat: "${asked.user}"`, inChat: true, rev: 1, ...(by ? { by } : {}) }
   const out = [...routines, fromChat].map(r => ({ ...r, id: routineIdOf(r.name) }))
   const ids = new Set(out.map(r => r.id))
   if (ids.size !== out.length) throw new Error('Sample data: two routines have the same id.')
@@ -352,7 +351,10 @@ const savedRequest = (r: unknown, now: Instant): TeamRequest | null => {
   if (!hasStrs(r, ['icon', 'title', 'sub', 'status'])) return null
   // In the order `sendTeamRequest` writes them, so a state saved now loads as it was saved.
   const sub = isInstant(r.at) ? r.sub as string : (r.sub as string).replace(/, just now$/, '')
-  return { icon: r.icon as string, title: r.title as string, sub, at: isInstant(r.at) ? r.at : now, status: r.status as string, ...(isInstant(r.statusAt) ? { statusAt: r.statusAt } : {}) }
+  return {
+    icon: r.icon as string, title: r.title as string, sub, at: isInstant(r.at) ? r.at : now, status: r.status as string, ...(isInstant(r.statusAt) ? { statusAt: r.statusAt } : {}),
+    ...(typeof r.text === 'string' ? { text: r.text } : {}),
+  }
 }
 /** A stamp (when and who), saved now or before C1. */
 const savedStamp = (x: unknown, idOf: (by: string) => string): StampRecord | null => {
@@ -389,6 +391,9 @@ interface Server {
    */
   memoryWaiting: MemoryLine[]
   memoryApproved: MemoryLine[]
+  /** P6a brand skills: the sample's own skills deleted (by name), and when one was last changed in a chat. */
+  skillsDeleted: Record<string, true>
+  skillsChanged: Record<string, Instant>
 }
 /** What the mock says to someone without `approveMemory` (the server's matrix refuses routes 77 and 78 the same way). */
 const WAITING_REFUSED = 'Only admins and the Inhouse team can see what waits for an OK.'
@@ -404,7 +409,7 @@ const DEMO_GRANT_HOURS = 72
 const defaultServer = (startedAt: number): Server => {
   const now = demoNow(startedAt).getTime()
   return {
-    roles: {}, photos: {}, removed: {}, invited: [], grantSeq: 1, revs: {}, memoryWaiting: [], memoryApproved: [],
+    roles: {}, photos: {}, removed: {}, invited: [], grantSeq: 1, revs: {}, memoryWaiting: [], memoryApproved: [], skillsDeleted: {}, skillsChanged: {},
     grant: { id: 'g_demo-1', createdBy: ME_ID, createdAt: instantOf(now), endsAt: instantOf(now + DEMO_GRANT_HOURS * 3_600_000), endedAt: null, endedBy: null },
   }
 }
@@ -444,6 +449,8 @@ const savedServer = (v: unknown, startedAt: number): Server => {
     revs: recOf(v.revs, (x): x is number => typeof x === 'number' && Number.isInteger(x) && x >= 0),
     memoryWaiting: (isArr(v.memoryWaiting) ? v.memoryWaiting : []).filter(isTeamLine).map(teamLineOf),
     memoryApproved: (isArr(v.memoryApproved) ? v.memoryApproved : []).filter(isTeamLine).map(teamLineOf),
+    skillsDeleted: flagsOf(v.skillsDeleted),
+    skillsChanged: recOf(v.skillsChanged, isInstant),
   }
 }
 
@@ -611,6 +618,9 @@ export class MockAgent implements AgentClient {
    *  state under the same key, as it always was, but not part of `AgentState`: the real agent has no demo start. */
   private startedAt: number
   private listeners = new Set<() => void>()
+  /** The sample skills' instructions once `loadSkill` has loaded them (by skill name), and the load while it runs. */
+  private skillBodies: Record<string, string> | null = null
+  private skillBodiesLoad: Promise<void> | null = null
   private noticeListeners = new Set<(n: AgentNotice) => void>()
   private holdTimers: Record<string, ReturnType<typeof setTimeout>> = {}
   private mockRuns = new Map<string, MockRun>()
@@ -620,7 +630,7 @@ export class MockAgent implements AgentClient {
   /** The chat engine (mock-chat.ts): runs, turns and the chat reads. Loads with the first send, so it isn't in Today's first load. */
   private engine: ChatEngine | null = null
   private sendDelayMs = 0
-  readonly k = { chats, ME_ID, SESSION, FINISHED, THINKING_STEP_MS, tools, traceKey, meName: () => this.meName() }
+  readonly k = { chats, ME_ID, SESSION, FINISHED, THINKING_STEP_MS, tools, traceKey, meName: () => this.meName(), changeSkill: (name: string) => this.changeSkill(name) }
   private linkState: LinkState = 'live'
   private linkListeners = new Set<(l: LinkState) => void>()
   /** Run id to what it replayed and made, saved (bounded) so a saved chat's run ids keep their steps after a reload. */
@@ -743,7 +753,7 @@ export class MockAgent implements AgentClient {
   read = (): AgentData => {
     const base = DATA_FOR[this.demo.scenario]
     // Whether the grant is live changes with the clock alone, so it is part of what a view is built from.
-    const key = [this.server, this.state.settings, this.failed, this.grantNow()?.live]
+    const key = [this.server, this.state.settings, this.failed, this.grantNow()?.live, this.skillBodies]
     const hit = this.views.find(x => x.base === base && x.key.every((k, i) => k === key[i]))
     if (hit) return hit.v
     const v = this.overlay(base)
@@ -778,8 +788,21 @@ export class MockAgent implements AgentClient {
     const failed = this.failed
     const status = (k: ResourceKey): ResourceStatus => (failed[k] ? { status: 'error', error: failed[k] } : base.resources[k])
     const revs = this.server.revs
+    const bodies = this.skillBodies
+    const { skillsDeleted, skillsChanged } = this.server
     return {
       ...base,
+      // The sample's own skills (`mine`) as the demo's people left them: deleted ones gone, changed ones dated. Who may
+      // change one: its maker or an admin, so the demo's admin may change them all.
+      skills: base.skills.filter(s => !(s.mine && skillsDeleted[s.n])).map(s => {
+        const changed = s.mine && Object.hasOwn(skillsChanged, s.n) ? skillsChanged[s.n] : undefined
+        return {
+          ...s,
+          ...(bodies && Object.hasOwn(bodies, s.n) ? { body: bodies[s.n] } : {}),
+          ...(changed ? { updatedAt: changed, used: 'Changed today' } : {}),
+          ...(s.mine ? { canChange: true } : {}),
+        }
+      }),
       people: {
         ...base.people,
         members: failed.members ? [] : this.members(),
@@ -1056,6 +1079,8 @@ export class MockAgent implements AgentClient {
     this.listeners.forEach(l => l())
   }
   sendTeamRequest(req: TeamRequest) { return this.write({ teamRequests: [req, ...this.state.teamRequests] }) }
+  /** The demo keeps nothing to withdraw on a server: the window shows the request as withdrawn for the session (its `teamWithdrawn`), and an Undo puts it back. */
+  withdrawTeamRequest(_ref: { title: string; at: Instant }) { return Promise.resolve() }
   markNoticesRead(ids: string[]) {
     const fresh = ids.filter(id => !this.state.readNotices[id])
     return fresh.length ? this.write({ readNotices: { ...this.state.readNotices, ...Object.fromEntries(fresh.map(id => [id, true as const])) } }) : Promise.resolve()
@@ -1164,6 +1189,21 @@ export class MockAgent implements AgentClient {
     const run: RoutineRun = { routine: id, at, ...(note ? { result: note } : {}), ...(id === routineIdOf('Morning check') ? { trace: 'morning' } : {}) }
     return this.writeThen({ routineRuns: [run, ...this.state.routineRuns] }, run)
   }
+  /**
+   * Route 86's answer from the sample data: this session's Run nows (each finished: the demo has no run to follow), then the
+   * routine's sample runs where this scenario has them (not on day one) and the stage runs it.
+   */
+  routineRunHistory(id: string): Promise<RoutineRunHistory> {
+    const r = DATA_FOR[this.demo.scenario].routines.find(x => x.id === id) ?? this.state.routinesExtra.find(x => x.id === id)
+    if (!r || this.state.routinesDeleted[id]) return this.rejected(NOT_FOUND, "This routine isn't here any more.", false)
+    const now = this.state.routineRuns.filter(x => x.routine === id).map((x): RoutineHistoryRun => ({
+      at: x.at, outcome: 'done', result: x.result ?? 'It finished', manual: true, ...(x.trace ? { trace: x.trace } : {}),
+    }))
+    const need = 'need' in r ? r.need : 1
+    const sample = 'last' in r && r.last && stageIndex(this.demo.stage) >= need ? sampleRuns[r.name] ?? [] : []
+    const runs = [...now, ...sample].sort((a, b) => b.at.ms - a.at.ms).slice(0, ROUTINE_RUNS_MAX)
+    return Promise.resolve({ runs })
+  }
   deleteRoutine(id: string) {
     const stale = this.staleAmong('routine', [id])
     if (stale) return stale
@@ -1267,6 +1307,40 @@ export class MockAgent implements AgentClient {
   downloadFile = (): Promise<{ blob: Blob; name: string | null }> => Promise.resolve({ blob: new Blob(['A sample file from the demo.\n'], { type: 'text/plain' }), name: null })
   signOutUrl = (): string | null => null
   disconnect = (): void => undefined
+
+  // ----- skills -----
+
+  /** P6a brand skills: one of the brand's own (made in a chat this session, or the sample's) is deleted; ours never are. */
+  deleteSkill(name: string): Promise<void> {
+    const extra = this.state.skillsExtra.find(s => s.n === name)
+    if (extra) return this.write({ skillsExtra: this.state.skillsExtra.filter(s => s.n !== name) })
+    const sample = this.read().skills.find(s => s.n === name)
+    // Already gone (another tab deleted it): a conflict with what this page showed.
+    if (!sample) return this.rejected('conflict', 'That skill is already gone.', true)
+    if (!sample.mine) return this.rejected('forbidden', "Only your team's own skills can be deleted.", true)
+    return this.write({}, { ...this.server, skillsDeleted: { ...this.server.skillsDeleted, [name]: true } })
+  }
+
+  /** A chat changed one of the brand's own skills (mock-script's "Change the ... skill"): dated now. */
+  private changeSkill(name: string): void {
+    const at = instantOf(demoNow(this.startedAt).getTime())
+    const extra = this.state.skillsExtra.find(s => s.n === name)
+    if (extra) {
+      this.commit({ skillsExtra: this.state.skillsExtra.map(s => (s.n === name ? { ...s, updatedAt: at, used: 'Changed today' } : s)) })
+      return
+    }
+    this.commit({}, false, { ...this.server, skillsChanged: { ...this.server.skillsChanged, [name]: at } })
+  }
+
+  /** Loads every sample skill's instructions at once (their own chunk), the first time any skill's page asks. */
+  loadSkill(_name: string): Promise<void> {
+    if (this.skillBodies) return Promise.resolve()
+    this.skillBodiesLoad ??= loadSkillBodies().then(
+      bodies => { this.skillBodies = bodies; this.listeners.forEach(l => l()) },
+      (err: unknown) => { this.skillBodiesLoad = null; throw err },
+    )
+    return this.skillBodiesLoad
+  }
 
   // ----- traces -----
 

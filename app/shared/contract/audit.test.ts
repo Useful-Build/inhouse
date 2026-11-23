@@ -51,6 +51,9 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   'memory.rejected': { action: 'memory.rejected', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA', rev: 1 },
   'team_request.created': { action: 'team_request.created', requestId: 'tr_AAAAAAAAAAAAAAAAAAAAAA', kind: 'tool' },
   'team_request.status': { action: 'team_request.status', requestId: 'tr_AAAAAAAAAAAAAAAAAAAAAA', status: 'done' },
+  'brand_skill.created': { action: 'brand_skill.created', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
+  'brand_skill.changed': { action: 'brand_skill.changed', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
+  'brand_skill.deleted': { action: 'brand_skill.deleted', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
 }
 const word = fc.stringMatching(/^[A-Z][a-z]{1,11}$/)
 const name = fc.oneof(word, fc.tuple(word, word).map(([a, b]) => `${a} ${b}`))
@@ -169,17 +172,17 @@ describe('P3 memory lines (W6, item 19)', () => {
 //  7. a count or a list goes out of its bounds (need 0 to 2, 1 to 3 changes each once, 1 to 100 files, bytes 1 to the cap);
 //  8. the Library's type list drifts from P3's chat file type list.
 describe('P4 lines (wave-4 PR0)', () => {
-  const P4_GET = ['/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download']
+  const P4_GET = ['/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download', '/api/routines/:id/runs']
   const rt = 'rt_AAAAAAAAAAAAAAAAAAAAAA'
   const f = 'f_AAAAAAAAAAAAAAAAAAAAAA'
   const texts = ['Morning check', 'Check refunds every morning and tell me', 'Q3 invoices.pdf', 'Refund spike on order 1001', 'routine morning check']
 
-  it('support.access takes the five P4 read patterns with GET only, and nothing concrete (failure 5)', () => {
+  it('support.access takes the six P4 read patterns with GET only, and nothing concrete (failure 5)', () => {
     for (const route of P4_GET) {
       expect(ok({ action: 'support.access', grantId: g, method: 'GET', route }), route).toBe(true)
       expect(ok({ action: 'support.access', grantId: g, method: 'PUT', route }), route).toBe(false)
     }
-    for (const route of ['/api/routines/rt_AAAAAAAAAAAAAAAAAAAAAA', '/api/library/f_AAAAAAAAAAAAAAAAAAAAAA/download', '/api/library?kind=images', '/api/routines/:id', '/api/library/:id', '/api/today/:id/aside']) {
+    for (const route of ['/api/routines/rt_AAAAAAAAAAAAAAAAAAAAAA', '/api/library/f_AAAAAAAAAAAAAAAAAAAAAA/download', '/api/routines/rt_AAAAAAAAAAAAAAAAAAAAAA/runs', '/api/library?kind=images', '/api/routines/:id', '/api/library/:id', '/api/today/:id/aside']) {
       expect(ok({ action: 'support.access', grantId: g, method: 'GET', route }), route).toBe(false)
     }
   })
@@ -295,7 +298,7 @@ describe('support.access write pairs (P4 review fold)', () => {
     // P6a PR0: approving or rejecting a waiting team fact (route 78).
     ['PUT', '/api/memory/brand/:id/approved'],
   ] as const
-  const READS = ['/api/members', '/api/memory', '/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download', '/api/memory/waiting']
+  const READS = ['/api/members', '/api/memory', '/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download', '/api/memory/waiting', '/api/routines/:id/runs']
 
   it('takes each write pair, and its route with no other method', () => {
     for (const [method, route] of WRITES) {
@@ -373,9 +376,23 @@ describe('P6a lines (PR0)', () => {
       for (const method of ['GET', 'PUT']) expect(access(method, route), `${method} ${route}`).toBe(false)
     }
     // Team requests are baseline (the Inhouse team needs no grant), so no support.access line names them.
-    for (const route of ['/api/team-requests', '/api/team-requests/:id/status', '/api/skills']) {
+    for (const route of ['/api/team-requests', '/api/team-requests/:id/status']) {
       for (const method of ['GET', 'PUT', 'POST']) expect(access(method, route), `${method} ${route}`).toBe(false)
     }
+  })
+
+  it('brand skill lines take the skill id only, never its name or text; support.access names the skill page read (GET only)', () => {
+    const bs = 'bs_AAAAAAAAAAAAAAAAAAAAAA'
+    for (const action of ['brand_skill.created', 'brand_skill.changed', 'brand_skill.deleted']) {
+      expect(ok({ action, skillId: bs }), action).toBe(true)
+      for (const skillId of ['weekly-report', 'bs_short', `bs_${'A'.repeat(23)}`, 'tr_AAAAAAAAAAAAAAAAAAAAAA', '']) expect(ok({ action, skillId }), `${action} ${skillId}`).toBe(false)
+      expect(ok({ action, skillId: bs, name: 'weekly-report' }), action).toBe(false)
+      expect(ok({ action, skillId: bs, body: 'Read the orders.' }), action).toBe(false)
+    }
+    expect(access('GET', '/api/skills')).toBe(false)
+    expect(access('GET', '/api/skills/:name')).toBe(true)
+    for (const method of ['PUT', 'POST']) for (const route of ['/api/skills', '/api/skills/:name', '/api/skills/brand/:id/delete']) expect(access(method, route), `${method} ${route}`).toBe(false)
+    expect(access('GET', '/api/skills/weekly-report')).toBe(false)
   })
 
   it("appends its block after P4's, in this order (failure 12)", () => {

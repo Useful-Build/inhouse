@@ -30,10 +30,16 @@ describe('the client: requests to the Inhouse team', () => {
     expect(s.requestedTools).toEqual({ zebra: true })
     expect(s.requestedSkills).toEqual({ pdf: true })
     expect(s.teamRequests.map(r => [r.title, r.sub, r.status])).toEqual([
-      ['Connect Zebra Ledger', 'New tool · sent by a teammate', 'Sent'],
-      ['Add the skill "pdf"', 'New job · sent by you', 'Sent'],
-      ['Something broke', 'Report a bug · sent by a teammate', 'Sent'],
+      ['Connect Zebra Ledger', 'New tool · sent by a teammate', 'With the team'],
+      ['Add the skill "pdf"', 'New job · sent by you', 'With the team'],
+      ['Something broke', 'Report a bug · sent by a teammate', 'With the team'],
     ])
+    expect(s.teamRequests.map(r => r.mine)).toEqual([false, true, false])
+  })
+
+  test('a request with a title lists the title, and opens to the words in full', async () => {
+    const { agent } = await loaded(reads({ requests: [rec('a', { kind: 'bug', subject: null, text: 'Export fails\n\nIt broke when I exported.', mine: true })] }))
+    expect(agent.getSnapshot().teamRequests.map(r => [r.title, r.text])).toEqual([['Export fails', 'Export fails\n\nIt broke when I exported.']])
   })
 
   test('requestTool posts a tool request with the tool as subject and a readable text, and marks it requested', async () => {
@@ -54,11 +60,98 @@ describe('the client: requests to the Inhouse team', () => {
     expect(put.path).toBe(`/api/team-requests/${mine.id}/withdrawn`)
     expect(body(put)).toEqual({ ifRev: 3 })
     expect(agent.getSnapshot().requestedTools).toEqual({ zebra: true })
+    expect(agent.getSnapshot().teamRequests).toContainEqual(expect.objectContaining({ closed: 'withdrawn', status: 'Withdrawn' }))
     // Someone else's request is never withdrawn from here: nothing is sent, and its "Requested" mark stays.
     const before = calls.length
     await agent.requestTool('zebra', false)
     expect(calls.length).toBe(before)
     expect(agent.getSnapshot().requestedTools).toEqual({ zebra: true })
+  })
+
+  test('withdrawTeamRequest puts the caller\'s own open request (named by the window\'s row) at its rev, then shows it Closed, Withdrawn, and no longer requested', async () => {
+    const mine = rec('m', { subject: 'shopify', text: 'Connect Shopify', mine: true, rev: 3 })
+    const other = rec('t', { subject: 'zebra', mine: false })
+    const { agent, calls } = await loaded({ ...reads({ requests: [mine, other] }), [`PUT /api/team-requests/${mine.id}/withdrawn`]: { body: { ...mine, status: 'withdrawn', rev: 4 } } })
+    await agent.withdrawTeamRequest({ title: 'Connect Shopify', at })
+    const put = calls.find(c => c.method === 'PUT')!
+    expect(put.path).toBe(`/api/team-requests/${mine.id}/withdrawn`)
+    expect(body(put)).toEqual({ ifRev: 3 })
+    const s = agent.getSnapshot()
+    expect(s.requestedTools).toEqual({ zebra: true })
+    expect(s.teamRequests.map(r => [r.title, r.status, r.closed])).toEqual([['Connect Shopify', 'Withdrawn', 'withdrawn'], ['Connect Zebra Ledger', 'With the team', undefined]])
+  })
+
+  test('withdrawTeamRequest sends nothing for a missing, another person\'s or already closed request', async () => {
+    const theirs = rec('t', { text: 'Connect Zebra Ledger', mine: false })
+    const done = rec('d', { text: 'Connect Shopify', mine: true, status: 'done', rev: 2 })
+    const { agent, calls } = await loaded(reads({ requests: [theirs, done] }))
+    const before = calls.length
+    await expect(agent.withdrawTeamRequest({ title: 'Connect Zebra Ledger', at })).rejects.toMatchObject({ code: 'not_found' })
+    await expect(agent.withdrawTeamRequest({ title: 'No such request', at })).rejects.toMatchObject({ code: 'not_found' })
+    await expect(agent.withdrawTeamRequest({ title: 'Connect Shopify', at })).rejects.toMatchObject({ code: 'conflict' })
+    expect(calls.length).toBe(before)
+    expect(agent.getSnapshot().teamRequests).toHaveLength(2)
+  })
+
+  test('a failed withdraw rejects and keeps the request open and requested', async () => {
+    const mine = rec('m', { subject: 'shopify', text: 'Connect Shopify', mine: true })
+    const { agent } = await loaded({ ...reads({ requests: [mine] }), [`PUT /api/team-requests/${mine.id}/withdrawn`]: refusal(503, 'unavailable') })
+    await expect(agent.withdrawTeamRequest({ title: 'Connect Shopify', at })).rejects.toMatchObject({ code: 'unavailable' })
+    const s = agent.getSnapshot()
+    expect(s.requestedTools).toEqual({ shopify: true })
+    expect(s.teamRequests.map(r => [r.title, r.closed])).toEqual([['Connect Shopify', undefined]])
+  })
+
+  test('a withdraw that finds the team already answered rejects with conflict and shows the request as the team left it', async () => {
+    const mine = rec('m', { subject: 'shopify', text: 'Connect Shopify', mine: true })
+    const answered = { ...mine, status: 'done', rev: 2 }
+    const { agent } = await loaded({ ...reads({ requests: [mine] }), [`PUT /api/team-requests/${mine.id}/withdrawn`]: refusal(409, 'conflict', { current: answered }) })
+    await expect(agent.withdrawTeamRequest({ title: 'Connect Shopify', at })).rejects.toMatchObject({ code: 'conflict' })
+    const s = agent.getSnapshot()
+    expect(s.requestedTools).toEqual({})
+    expect(s.teamRequests.map(r => [r.status, r.closed])).toEqual([['Done', 'done']])
+  })
+
+  test('malformed conflict records leave the team requests unchanged on withdraw and file', async () => {
+    const mine = rec('m', { subject: 'shopify', text: 'Connect Shopify', mine: true })
+    const conflict = refusal(409, 'conflict', { current: { id: mine.id, rev: 2 } })
+    const { agent } = await loaded({
+      ...reads({ requests: [mine] }),
+      [`PUT /api/team-requests/${mine.id}/withdrawn`]: conflict,
+      'POST /api/team-requests': conflict,
+    })
+    await expect(agent.withdrawTeamRequest({ title: mine.text, at })).rejects.toMatchObject({ code: 'conflict' })
+    await expect(agent.requestSkill('pdf')).rejects.toMatchObject({ code: 'conflict' })
+    expect(agent.getSnapshot().teamRequests.map(r => r.title)).toEqual([mine.text])
+    expect(agent.getSnapshot().requestedSkills).toEqual({})
+  })
+
+  test('a refresh that started before a withdrawal cannot put the request back in Open', async () => {
+    const mine = rec('m', { text: 'Connect Shopify', mine: true })
+    const withdrawn = { ...mine, status: 'withdrawn', rev: 2 }
+    let current = mine
+    const listPath = '/api/team-requests?view=window'
+    const s = server({
+      ...reads(),
+      [`GET ${listPath}`]: () => ({ body: { items: [current] } }),
+      [`PUT /api/team-requests/${mine.id}/withdrawn`]: () => { current = withdrawn; return { body: current } },
+    })
+    let duringRead: (() => Promise<void>) | undefined
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const response = await s.fetch(input, init)
+      if (String(input).endsWith(listPath) && duringRead) {
+        const withdraw = duringRead
+        duringRead = undefined
+        await withdraw()
+      }
+      return response
+    }
+    const agent = new HttpAgent({ fetch, now: () => NOW })
+    await agent.whenLoaded()
+    duringRead = () => agent.withdrawTeamRequest({ title: mine.text, at })
+    await agent.refresh('requests')
+    expect(agent.getSnapshot().requestedTools).toEqual({})
+    expect(agent.getSnapshot().teamRequests.map(r => r.closed)).toEqual(['withdrawn'])
   })
 
   test('requestSkill posts a job about the skill; sendTeamRequest posts the window\'s type and words', async () => {
@@ -68,8 +161,13 @@ describe('the client: requests to the Inhouse team', () => {
     await agent.requestSkill('pdf')
     expect(body(calls.filter(c => c.method === 'POST')[0]!)).toEqual({ kind: 'job', subject: 'pdf', text: 'Add the skill "pdf"' })
     expect(agent.getSnapshot().requestedSkills).toEqual({ pdf: true })
-    await agent.sendTeamRequest({ icon: 'bug_report', title: 't', sub: 's', at, status: 'Sent', kind: 'bug', text: 'It broke when I sent a long request.' })
-    expect(body(calls.filter(c => c.method === 'POST')[1]!)).toEqual({ kind: 'bug', text: 'It broke when I sent a long request.' })
+    // A title typed in the window goes on its own line above the details; one made from the details isn't repeated; a title alone is the words.
+    await agent.sendTeamRequest({ icon: 'bug_report', title: 'Export fails', sub: 's', at, status: 'Sent', kind: 'bug', text: 'It broke when I sent a long request.' })
+    expect(body(calls.filter(c => c.method === 'POST')[1]!)).toEqual({ kind: 'bug', text: 'Export fails\n\nIt broke when I sent a long request.' })
+    await agent.sendTeamRequest({ icon: 'bug_report', title: 'It broke again.', sub: 's', at, status: 'Sent', kind: 'bug', text: 'It broke again.' })
+    expect(body(calls.filter(c => c.method === 'POST')[2]!)).toEqual({ kind: 'bug', text: 'It broke again.' })
+    await agent.sendTeamRequest({ icon: 'campaign', title: 'More reports', sub: 's', at, status: 'Sent', kind: 'feedback' })
+    expect(body(calls.filter(c => c.method === 'POST')[3]!)).toEqual({ kind: 'feedback', text: 'More reports' })
   })
 
   test('a refused request is taken back: not marked requested', async () => {
@@ -85,17 +183,35 @@ describe('the client: requests to the Inhouse team', () => {
     expect(agent.getSnapshot().requestedTools).toEqual({})
   })
 
-  test('the open requests have a resource status: ready on load, error on a failed read, Retry recovers, refresh reads again', async () => {
+  test('the team requests have a resource status: ready on load, error on a failed read, Retry recovers, refresh reads again', async () => {
     let n = 0
-    const { agent, calls } = await loaded({ ...reads(), 'GET /api/team-requests?status=open': () => (++n === 1 ? refusal(503, 'unavailable') : { body: { items: [rec('a')] } }) })
+    const { agent, calls } = await loaded({ ...reads(), 'GET /api/team-requests?view=window': () => (++n === 1 ? refusal(503, 'unavailable') : { body: { items: [rec('a')] } }) })
     expect(agent.read().resources.requests).toMatchObject({ status: 'error' })
     await agent.retry('requests')
     expect(agent.read().resources.requests).toEqual({ status: 'ready' })
     expect(agent.getSnapshot().requestedTools).toEqual({ zebra: true })
-    const reads_ = () => calls.filter(c => c.path === '/api/team-requests?status=open').length
+    const reads_ = () => calls.filter(c => c.path === '/api/team-requests?view=window').length
     const before = reads_()
     await agent.refresh('requests')
     expect(reads_()).toBe(before + 1)
+  })
+
+  test('refresh shows recently closed requests with status only, and only open requests stay marked Requested', async () => {
+    const tool = rec('t', { subject: 'zebra', mine: true })
+    const skill = rec('s', { kind: 'job', subject: 'spreadsheet', text: 'Add spreadsheet', mine: true })
+    const withdrawn = rec('w', { kind: 'job', subject: 'pdf', text: 'Add PDF', status: 'withdrawn' })
+    let items = [tool, skill, withdrawn]
+    const { agent } = await loaded({ ...reads(), 'GET /api/team-requests?view=window': () => ({ body: { items } }) })
+    expect(agent.getSnapshot().requestedTools).toEqual({ zebra: true })
+    expect(agent.getSnapshot().requestedSkills).toEqual({ spreadsheet: true })
+    items = [{ ...tool, status: 'done', rev: 2 }, { ...skill, status: 'declined', rev: 2 }, withdrawn]
+    await agent.refresh('requests')
+    const snapshot = agent.getSnapshot()
+    expect(snapshot.requestedTools).toEqual({})
+    expect(snapshot.requestedSkills).toEqual({})
+    expect(snapshot.teamRequests.map(r => [r.closed, r.status, r.statusAt])).toEqual([
+      ['done', 'Done', undefined], ['declined', 'Declined', undefined], ['withdrawn', 'Withdrawn', undefined],
+    ])
   })
 
   test('the requests\' names come from the members once they are read, whichever read lands last', async () => {
@@ -135,7 +251,7 @@ describe('the client: requests to the Inhouse team', () => {
 
   test('the different-words check ignores surrounding whitespace in what was sent', async () => {
     const { agent } = await loaded({ ...reads(), 'POST /api/team-requests': { status: 201, body: rec('n', { kind: 'bug', subject: null, text: 'It broke.', mine: true }) } })
-    await expect(agent.sendTeamRequest({ icon: 'bug_report', title: 't', sub: 's', at, status: 'Sent', kind: 'bug', text: '  It broke.  ' })).resolves.toBeUndefined()
+    await expect(agent.sendTeamRequest({ icon: 'bug_report', title: 'It broke.', sub: 's', at, status: 'Sent', kind: 'bug', text: '  It broke.  ' })).resolves.toBeUndefined()
   })
 
   test('the names are recomputed when the members arrive after the requests', async () => {

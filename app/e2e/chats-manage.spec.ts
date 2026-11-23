@@ -39,7 +39,7 @@ test('Chats: rename, pin, copy link, delete with Undo and bulk delete, kept acro
   await start(page)
 
   // A question from Today starts a chat; its row is marked as running while the answer streams.
-  await page.getByRole('textbox', { name: 'Ask your Inhouse agent' }).fill('Where is order 4821?')
+  await page.getByRole('textbox', { name: 'Ask Inhouse' }).fill('Where is order 4821?')
   await page.keyboard.press('Enter')
   const startedRow = side(page).getByRole('button', { name: 'Where is order 4821?', exact: true })
   await expect(startedRow).toHaveAccessibleDescription('Answering now')

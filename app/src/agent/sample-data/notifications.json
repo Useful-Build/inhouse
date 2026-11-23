@@ -38,17 +38,43 @@
   "teamRequests": [
     {
       "title": "Connect Klaviyo",
-      "sub": "New tool · asked by Priya",
+      "sub": "New tool · Priya",
       "at": "-7d 11:00",
       "status": "Live by",
-      "statusAt": "+4d 09:00"
+      "statusAt": "+4d 09:00",
+      "text": "We send every campaign from Klaviyo. Read flows and campaign results so the morning check can flag a drop in revenue per email."
     },
     {
       "title": "Weekly wholesale stock report",
-      "sub": "New job · asked by Sam",
+      "sub": "New job · Sam",
       "at": "-5d 11:00",
       "status": "Call on",
-      "statusAt": "+3d 09:00"
+      "statusAt": "+3d 09:00",
+      "text": "Every Monday, a PDF of stock on hand for the 40 wholesale SKUs, with weeks of cover at the current rate. Send it to Dana and me."
+    },
+    {
+      "title": "Connect Gorgias",
+      "sub": "New tool · Dana",
+      "at": "-21d 10:00",
+      "status": "Done",
+      "closed": "done",
+      "text": "Our support team answers everything in Gorgias. Read tickets so the agent can spot products with a rise in complaints."
+    },
+    {
+      "title": "Morning check skips Faire orders",
+      "sub": "Report a bug · Sam",
+      "at": "-16d 08:30",
+      "status": "Done",
+      "closed": "done",
+      "text": "Today showed no wholesale orders on Monday, but Faire had three. Faire orders should count with the rest."
+    },
+    {
+      "title": "Reply to Instagram comments",
+      "sub": "New job · Leo",
+      "at": "-12d 14:00",
+      "status": "Declined",
+      "closed": "declined",
+      "text": "Draft a reply to every comment on our posts so we can send them in one go."
     }
   ]
 }

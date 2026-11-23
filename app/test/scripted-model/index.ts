@@ -19,6 +19,12 @@ export type ScriptedBlock = { type: 'text'; text: string } | { type: 'tool_use';
 
 export type ScriptedTurn = {
   content: ScriptedBlock[]
+  /**
+   * The answer worked out from the request, when part of it can't be written down in advance (an id an earlier tool result
+   * gave, a tag the person's message carries). It wins over `content`, which stays as the turn's fixed shape for readers of the
+   * script. A throw is a miss that says why.
+   */
+  contentFor?: (request: MessagesRequest) => ScriptedBlock[]
   /** Default: `tool_use` when the content has a tool call, else `end_turn`. */
   stopReason?: 'end_turn' | 'tool_use' | 'max_tokens'
   usage?: { input_tokens: number; output_tokens: number }
@@ -151,7 +157,13 @@ export function createScriptedModel(scenarios: Record<string, Scenario>): Script
       } catch (e) {
         return miss(scenario, turn, path, `the turn's hold threw: ${errorText(e)}`, entry)
       }
-      const message = messageFor(t, body.model, `${scenario}-${branch ?? 'main'}-${turn}`)
+      let content: ScriptedBlock[]
+      try {
+        content = t.contentFor ? t.contentFor(body) : t.content
+      } catch (e) {
+        return miss(scenario, turn, path, `the turn's contentFor threw: ${errorText(e)}`, entry)
+      }
+      const message = messageFor(t, content, body.model, `${scenario}-${branch ?? 'main'}-${turn}`)
       return body.stream ? new Response(sse(message), { headers: { 'content-type': 'text/event-stream' } }) : Response.json(message)
     },
   }
@@ -190,14 +202,14 @@ type Message = {
   usage: { input_tokens: number; output_tokens: number }
 }
 
-function messageFor(t: ScriptedTurn, model: string, id: string): Message {
+function messageFor(t: ScriptedTurn, content: ScriptedBlock[], model: string, id: string): Message {
   return {
     id: `msg_scripted_${id.replace(/[^A-Za-z0-9_]/g, '_')}`,
     type: 'message',
     role: 'assistant',
     model,
-    content: t.content,
-    stop_reason: t.stopReason ?? (t.content.some((b) => b.type === 'tool_use') ? 'tool_use' : 'end_turn'),
+    content,
+    stop_reason: t.stopReason ?? (content.some((b) => b.type === 'tool_use') ? 'tool_use' : 'end_turn'),
     stop_sequence: null,
     usage: t.usage ?? { input_tokens: 10, output_tokens: 5 },
   }

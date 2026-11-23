@@ -1,15 +1,13 @@
-Status: approved by Wasim, 2026-11-19 (revised map, PR #20).
-
 # Inhouse feature map
 
-Format and workflow: global `verification` skill, `references/feature-map.md`. Each entry has a `Covered:` line naming its spec files, or `gap`. Seed every path with `?demo` at Stage Act and Scenario Normal unless it says otherwise (see [SKILL.md](SKILL.md)). Gaps are listed first.
+Every screen, flow, selector, expected behavior, and E2E spec coverage in one place. Read the relevant section before changing a screen, user flow, or spec, and update its `Expected:`, `Covered:`, or `Gaps` lines in the same PR for any user-facing change. Each entry uses four fields (`Path`, `Selector`, `Expected`, `Covered` or `gap`). Unless noted, demo paths start at `?demo` with Stage Act and Scenario Normal (see [VERIFY.md](VERIFY.md)). Gaps are listed first.
 
 ## Gaps
 
 No entry is `Covered: gap`. Not checked by any spec, or only in part:
 
 - Motion: `e2e/motion.spec.ts` is manual only (`MOTION=1`, the `motion` workflow), never in CI's normal run.
-- Ship specs: `e2e/ship/agent-seam.spec.ts`, `e2e/ship/example.spec.ts`, `e2e/ship/setup-gaps.spec.ts`, `e2e/ship/hardening.spec.ts` and `e2e/ship/backend-core.spec.ts`, `e2e/ship/agent-chat.spec.ts` (projects `ship-desktop` and `ship-phone`) are manual only, run by `ship.yml` against a PR's preview (`backend-core.spec.ts` and `agent-chat.spec.ts`: on the test build, `build=test`), never in CI's normal run.
+- Ship specs: `e2e/ship/agent-seam.spec.ts`, `e2e/ship/example.spec.ts`, `e2e/ship/setup-gaps.spec.ts`, `e2e/ship/hardening.spec.ts` and `e2e/ship/backend-core.spec.ts`, `e2e/ship/agent-chat.spec.ts`, `e2e/ship/memory-skills.spec.ts` (projects `ship-desktop` and `ship-phone`) are manual only, run by `ship.yml` against a PR's preview (`backend-core.spec.ts`, `agent-chat.spec.ts` and `memory-skills.spec.ts`: on the test build, `build=test`), never in CI's normal run.
 - Chat while it writes: the working line (agent mark, tool logo, sweep) and the word-by-word reveal are checked by no spec (the reveal's step sizes are property-tested in `src/screens/chat/reveal.test.ts`); an answer's text width (about 620px) and your message's (about 520px) are not measured; sources of an answer that cites nothing are not asserted.
 - Trace window: Replay is only clicked, never asserted; the replay speed, Pause replay, Restart, Stop and show everything, Replay result and a step's details are opened by no spec.
 - Settings > General: Language and Text size are opened and closed by `menus.spec.ts`, but no spec picks one and checks it saves.
@@ -19,17 +17,18 @@ No entry is `Covered: gap`. Not checked by any spec, or only in part:
 - Export everything is a stub, and so is Sign out in the demo: specs check they say so and change nothing. In the product Sign out goes to Access's logout; `e2e/real/sign-out.spec.ts` checks the account menu goes to that path on the test build (no Access there); the real Access logout is checked on the candidate deploy (pending).
 - The chat WebSocket under the enforced CSP (`e2e/real/socket-csp.spec.ts`) needs a run, so it is checked on the sandbox deploy (`E2E_TEST_BUILD_REMOTE=1`), not on the local test build, which has no container. `e2e/real/csp-download-photo.spec.ts` covers the audit CSV download and a member photo on both.
 - A failed or never-run chat turn's words after a reload (its stored end row, P3) and a trace's "up to" cost while a model call is open are proven only by unit tests (`server/do/brand-agent/projection.test.ts`, `src/screens/chat/history.test.ts`, `src/lib/trace-cost.test.ts`): the test build has no container and no way to force a placement failure or hold a call open without new test code in the deployable bundle.
+- Brand skills (P6a): making and changing one through `skill_save` in a chat runs only on the container deploy (`e2e/api/brand-skills.spec.ts`'s chat part); that a skill loads as `brand:<name>`, is read when used and can't be written by the session is the runner job's container probe (`brand-skills.*` in `app/runner/image/probes/run.ts`). The read-side cases RS-KW1 and RS-KW2 (a skill's body that tries to widen tools or send data out) are wired into the product target, with fixture setup and cleanup covered by a unit test. Paid model results are pending.
 - "A failed audit write leaves no change" (Acceptance 6) is proven only by the server unit tests on the vitest workerd (compat 2026-11-11), not on the test build's: forcing an audit write to fail there needs test code in the deployable bundle.
 
 ## Today
 
-In the product build Today, Activity, the bell, the Library and Routines are real, backed by the API (P4 routes 52 to 66), not demo data. The `?demo` entries below describe the demo build. Product proof: `e2e/api/{today,activity,bell,library,routines}.spec.ts` on the test build and the ship spec `e2e/ship/watch.spec.ts` (S1 to S8).
+In the product build Today, Activity, the bell, the Library and Routines are real, backed by the API (P4 routes 52 to 66, and route 86 for a routine's own runs), not demo data. The `?demo` entries below describe the demo build. Product proof: `e2e/api/{today,activity,bell,library,routines}.spec.ts` on the test build and the ship spec `e2e/ship/watch.spec.ts` (S1 to S8).
 
 Today: needs-you cards
   Path:     Today
   Selector: article cards (two columns on desktop, one on a phone), "Urgent" pill, draft sheet, button "Review draft" or "{cta}"
-  Expected: only the title, the composer and the Needs you cards show, at every stage; no card cuts text; a waiting card shows its draft on the slate-sapphire sheet (kind, risk, title, one summary line); approved, handled and Watch cards show the status line instead, muted, with no Urgent pill; with zero problems and tools connected, shows connected tools (no status dots) and prompt cards instead of the set-aside message; in Run, the overnight handled strip shows only when at least one job was handled
-  Covered:  e2e/dots-and-today.spec.ts, e2e/today-approvals.spec.ts, src/state/today-empty.test.ts
+  Expected: only the title, the composer and the Needs you cards show, at every stage; no card cuts text; a waiting card shows its draft on the slate-sapphire sheet (kind, risk, title, one summary line); approved, handled and Watch cards show the status line instead, muted, with no Urgent pill; with zero problems and tools connected, shows connected tools (no status dots) and prompt cards instead of the set-aside message; in Run, the "{N} handled today" strip shows only when at least one job was handled; the greeting follows the app's clock (Good morning 5:00 to 11:59, Good afternoon 12:00 to 16:59, Good evening otherwise; Welcome on day one) and a clear day reads "You're all caught up."
+  Covered:  e2e/dots-and-today.spec.ts, e2e/today-approvals.spec.ts, src/state/today-empty.test.ts, src/state/derive.first-day.test.ts
 
 Today: snooze and dismiss
   Path:     Today -> card "···" menu -> Snooze or Dismiss
@@ -71,8 +70,8 @@ Approvals: a draft with no text
 
 Approvals: draft cards
   Path:     Approvals
-  Selector: one card per draft: "Urgent" pill, risk tag ("Spends $9,600", "Claims $1,240", "Goes to customers", "Low risk", "Needs review"), "{area} · {time}", draft text on the sheet, approver line, "Review draft" or the one-tap approve, "From {sources}"
-  Expected: one column; on a phone the tags sit above the title, detail rows stack and the primary is full width beside "···"
+  Selector: one card per draft: "Urgent" pill, risk tag ("Spends $9,600", "Claims $1,240", "Goes to customers", "Low risk", "Needs review"), "{area} · {time}", draft text on the sheet, approver line, "Review draft" or the one-tap approve, button "More" ("More actions for {draft}": menu "Draft actions" with Don't send first, then Review on a low-risk draft, then Edit), "From {sources}"
+  Expected: one column; "Review draft" opens the review window, which steps through the waiting drafts in the page's order; Escape on More closes the menu only; on a phone the tags sit above the title, detail rows stack and the primary is full width beside More
   Covered:  e2e/today-approvals.spec.ts, e2e/today-approvals-phone.spec.ts, e2e/ship/needs-you-cards.spec.ts
 
 Approvals: approve all low-risk
@@ -82,8 +81,8 @@ Approvals: approve all low-risk
   Covered:  e2e/today-approvals.spec.ts, e2e/toasts.spec.ts
 
 Approvals: Don't send and sort
-  Path:     Approvals -> Don't send, sort control
-  Selector: card menu, sort
+  Path:     Approvals -> More -> Don't send, sort control
+  Selector: card's More menu, sort
   Expected: card leaves with an Undo; sort reorders; counts leave set-aside problems out
   Covered:  e2e/page-actions.spec.ts
 
@@ -136,7 +135,7 @@ Chat: answer actions
 Chat: steps, sources and the answer's own cards
   Path:     a finished answer in a chat (`#/chats/stuck`)
   Selector: `[data-steps]` (its button, aria-expanded, and Details), `[data-steps-meta]`, `[data-sources]`, `[data-approval]`
-  Expected: a finished answer has a collapsed steps line above its card ("Checked Shopify and ShipBob · 6 steps", or "3 steps" with no check when no connected tool was read; a step that saved or sent something is not "checked") that opens, in place, each step with its tool logo and time, ending with the mode, duration and time and a Details link to the trace window; the card ends with one quiet sources pill ("{N} sources", chevron) that opens a plain list, with no numbered chips and no pill when the answer cites nothing; a draft to approve is its own card after the answer's card; full-shell Skyspace runs hero intensity on Today and blank New chat (with centered composer, 3-column Bento prompt cards and Routine dock) and softly dims behind messages in an active chat; the chat column is 880px
+  Expected: a finished answer has a collapsed steps line above its card ("Checked Shopify and ShipBob · 6 steps", or "3 steps" with no check when no connected tool was read; a step that saved or sent something is not "checked") that opens, in place, each step with its tool logo and time, ending with the mode, duration and time and a Details link to the trace window; the card ends with one quiet sources pill ("{N} sources", chevron) that opens a plain list, with no numbered chips and no pill when the answer cites nothing; a draft to approve is its own card after the answer's card; full-shell Skyspace runs hero intensity on Today and blank New chat (with centered composer, 3-column Bento prompt cards and Routine dock, all in place from the first frame of a load: the composer never drops and jumps back) and softly dims behind messages in an active chat; the chat column is 880px
   Covered:  e2e/conversation.spec.ts, e2e/sample-data.spec.ts, e2e/conversation-polish.spec.ts, e2e/dots-and-today.spec.ts, e2e/dots-and-today-phone.spec.ts
 
 Chat: queue and edit
@@ -199,21 +198,28 @@ Library: select and delete
 
 Routines: details and actions
   Path:     Routines -> a routine
-  Selector: switch "<name> on or off", Pause, Run now, Delete, Last runs
-  Expected: details show; Delete asks and Undo works; all of it survives a reload; at Watch a routine is locked and shows its stage; a Run now lands in Last runs with its result and survives a reload
-  Covered:  e2e/page-details.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts
+  Selector: row switch "<name> on or off"; the side panel: name and what it does, the schedule card (schedule sentence, next run, the same switch, one "how it works" line), Run now, Edit in a chat, "More for <name>" (Delete), list "Last runs" (`data-run-line`: an outcome icon, "Today, <time>" or "<weekday>, <date>, <time>", one plain line, Steps when the run has steps), Made by
+  Expected: the panel leads with the schedule sentence and the next run; its switch replaces Pause, says "Off. It won't run until you turn it on." when off and agrees with the row; while the agent is paused both switches still show the routine's own on or off (a click saves the other one) and the pause shows as "Paused" for the next run; Last runs are the routine's own runs from `GET /api/routines/:id/runs` (route 86), newest first, at most 20, never matched from Activity by name: each shows when it ran, done, failed, skipped or running, and one plain line with no run ids, timings, costs or codes; a routine with none says "Not run yet."; a list that can't load says so with Try again (announced; a failed recheck keeps the list); while a run is going the open panel rechecks every 15 s for up to 10 minutes, not while the tab is hidden and never for the Inhouse team; a run stopped on purpose reads as skipped, not failed; Run now lands at the top of Last runs ("Run now · <result>", or "Run now" while it runs; the demo's Run nows finish at once) and survives a reload; Steps opens the trace; Delete (in More) asks and Undo works; all of it survives a reload; at Watch a routine is locked, shows "Starts in Act" and has no Run now
+  Covered:  e2e/page-details.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts, src/screens/routine-switch.test.ts, src/state/routine-run-lines.test.ts, src/agent/mock.routine-runs.test.ts, src/agent/http/routines.test.ts, server/api/routines.test.ts, server/routines/store.test.ts, e2e/api/routines.spec.ts (route 86)
+  Gaps:     the Try again state and the failed and skipped icons are proven by unit tests only (the demo's sample runs all finished)
 
 Activity: log
   Path:     Activity
-  Selector: rows, times
-  Expected: every time sits on one line; the Klaviyo line takes its date from the data
-  Covered:  e2e/sample-data.spec.ts
+  Selector: search "Search activity", radiogroup "Filter activity" (All, Needs you, Changes), a section per day, rows (`data-activity-row`: one icon, the sentence, the time on the right)
+  Expected: rows look like All chats' rows (the same icon on every row, no per-kind colours or status words); every time sits on one line; the tabs and the search filter the days, with an empty line for none; the Klaviyo line takes its date from the data
+  Covered:  e2e/sample-data.spec.ts, e2e/page-actions.spec.ts, e2e/no-persona.spec.ts, e2e/ui-round-3.spec.ts
+
+Activity: a line's side sheet
+  Path:     Activity -> a row
+  Selector: dialog named by the line (440px on the right, a bottom sheet on a phone): status ("Needs you" in amber, "Needs a look", "Done", "Checked") and "{day}, {time}", the title, one paragraph, one action ("Review the draft" or "Undo"), toggle "How your agent worked it out", Close
+  Expected: the open row is selected; the paragraph joins why, result and who in plain words, with no timings, costs or the word "trace"; Review the draft closes the sheet and opens the review window on that draft, and closing that window gives focus back to the row; Undo takes the change back; the steps toggle lists plain step sentences (at least one line shows them); Escape or Close gives focus back to the row
+  Covered:  e2e/page-actions.spec.ts, e2e/no-persona.spec.ts, e2e/ui-round-3.spec.ts, src/screens/activity/plain-steps.test.ts
 
 Tools: list and pages
   Path:     Tools (`#/tools`) -> a tool
   Selector: search, Pause access, Reconnect, Request a tool
-  Expected: pausing or disconnecting changes the count, the tool page (Read, Draft, Access) and the composer alike; Pause access has Undo and Resume brings it all back; Request a tool opens the team window
-  Covered:  e2e/data-states.spec.ts, e2e/page-actions.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts
+  Expected: pausing or disconnecting changes the count, the tool page (Read, Draft, Access) and the composer alike; Pause access has Undo and Resume brings it all back; Request a tool opens the team window; a catalogue tool's Request (Add a tool) shows "Requested" and a toast starting "Request sent" (the product's once the server has it), stays "Requested" after a reload, and the toast's Undo withdraws it (the product withdraws through route 83)
+  Covered:  e2e/data-states.spec.ts, e2e/page-actions.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts, e2e/ship/memory-skills.spec.ts (S8)
 
 Tools: Slack channel
   Path:     Tools -> Slack
@@ -221,11 +227,17 @@ Tools: Slack channel
   Expected: its own page with channel details and no tool abilities; before Act it says "included from Act"; Back returns to Tools
   Covered:  e2e/slack-channel.spec.ts
 
-Skills
-  Path:     Skills -> a skill
-  Selector: switch in details
-  Expected: turn a skill off and back on; search filters the list
-  Covered:  e2e/page-details.spec.ts, e2e/sample-data.spec.ts
+Skills: list
+  Path:     Skills (`#/skills`)
+  Selector: tabs "Show skills" (All, By Inhouse team, By your team), search, "Create a skill", skill rows, the "Request a skill" link under the list
+  Expected: search filters the list; a row opens the skill's page; Create a skill opens a new chat holding `Create a skill that ` (the agent's Skill Creator makes it with the person and saves it with `skill_save`, live for the team at once); a brand skill's row says "Made by <name>" (or "Made by a former member" once the maker's personal data is deleted); Request a skill opens the team window on New job; the product lists the five built-ins (dataviz, PDF, Word, Spreadsheet and Skill Creator), then the brand's own from `GET /api/skills` (read again each time the page opens, and after every run; the Inhouse team reads the list without a grant) with no Off badge
+  Covered:  e2e/page-details.spec.ts, e2e/sample-data.spec.ts, e2e/ui-round-3.spec.ts, e2e/api/skills.spec.ts, e2e/api/brand-skills.spec.ts, src/agent/http/skills.test.ts, e2e/ship/memory-skills.spec.ts (S6, S7, S9, S10)
+
+Skills: a skill's page
+  Path:     Skills -> a skill (`#/skills/<slug>`, a link the app keeps, one per skill: the Inhouse team's keep the plain slug and a team-made skill with the same name gets "-2"; an unknown slug goes back to Skills once the skills have loaded)
+  Selector: link "Skills" (back), the h1 with the icon tile and stage tag, Try in a chat, the try-it strip (`data-skill-try`), "Instructions" (the skill's body as clean text), complementary "About this skill" (Works from, Made by, Who can change it, Used; Tools it reads, Used by); a brand skill its maker or an admin may change: "Edit in a chat", and "Delete skill" in "More for <name>" with the "Delete skill" window; demo only: "More for <name>" (Turn off, Turn on)
+  Expected: every one of the 9 sample skills has a full body (When to use, Inputs, Steps, Safety, What you get); Try in a chat starts a new chat holding `Use the "<name>" skill: `; the strip asks its example; turning a skill off shows "Off" and survives a reload; the product reads the instructions from `GET /api/skills/:name` (frontmatter dropped; dataviz shows our own summary; the Inhouse team reads a skill's text only under a live grant) and shows no "Works from" at Watch and no "Used" when there is none; "Made by a former member" shows when the maker's personal data was deleted; "Who can change it" says "<maker> and admins" for a brand skill ("Admins" once the maker's data is deleted) and "Inhouse team" for ours; Edit in a chat opens a new chat holding `Change the "<name>" skill: ` (the demo saves the change and dates it); Delete skill asks in the page's own window (Cancel keeps it and gives focus back to More, which opens the menu again at once), then deletes at the skill's rev, goes back to Skills and says so; a concurrent deletion keeps the skill out of the list, and a refused deletion preserves any other skills refreshed while it was pending; another member (and, after maker deletion, non-admin members) sees neither; ours have no Edit, Delete or Versions
+  Covered:  e2e/page-details.spec.ts, e2e/ui-round-3.spec.ts, e2e/api/brand-skills.spec.ts, src/screens/skills.test.ts, src/shell/route-sync.test.ts, src/agent/mock.brand-skills.test.ts, src/agent/http/skills.test.ts, server/brand-skills/store.test.ts, e2e/ship/memory-skills.spec.ts (S9, S10)
 
 Usage
   Path:     account menu -> Usage (it isn't in the sidebar; the palette lists it)
@@ -234,6 +246,12 @@ Usage
   Covered:  e2e/app.spec.ts, e2e/page-actions.spec.ts, e2e/edge-cases.spec.ts
 
 ## Settings
+
+Settings: menu
+  Path:     Settings (`#/settings/<page>`), the menu beside the app's sidebar (on a phone the menu is the first screen)
+  Selector: search "Search settings", groups You (General, Notifications, Memory), Agent (Inhouse agent, Models, Team memory), Approvals and limits (Who approves what, Run limits, Spending cap), Team (Members), Workspace (Stage and plan, Data and access, Audit log); a lock button "Admins change these" on a team group's heading
+  Expected: five groups, each announced by its heading, in this order; the command palette lists the same pages; search filters pages and rows (a page's matching rows show under it) and "No settings match" shows for none; for someone who can't change brand settings (a Member, test build) every team group's heading has the lock with the tooltip "Admins change these", and an Admin (and the demo) sees none
+  Covered:  e2e/sample-data.spec.ts, e2e/navigation.spec.ts, e2e/ui-round-3.spec.ts, e2e/real/settings-lock.spec.ts, src/screens/settings/settings-registry.test.ts
 
 Settings: dropdowns and fields
   Path:     Settings -> any page
@@ -262,13 +280,14 @@ Settings: Stage and plan
 Settings: Team memory
   Path:     Settings -> Team memory
   Selector: buttons "Forget", switch "Ask before saving a team rule", button "Teach in a chat"
-  Expected: locked at Watch; Forget removes a line with an Undo toast and the Inhouse agent page's count follows; the switch turns off; both survive a reload and Reset demo clears them; Teach in a chat opens a new chat holding "Remember that "
-  Covered:  e2e/settings-team-pages.spec.ts
+  Expected: usable at every stage (no stage tag), with a "Waiting for your OK" section for an Admin in the product (Approve, Reject after asking; a stale Approve is refused and says what the rule is now); Forget removes a line with an Undo toast and the Inhouse agent page's count follows; the switch turns off; both survive a reload and Reset demo clears them; Teach in a chat opens a new chat holding "Remember that "
+  Covered:  e2e/settings-team-pages.spec.ts, e2e/ship/memory-skills.spec.ts (S2 to S5), e2e/support/memory-scenarios.test.ts
+  Gaps:     the ship spec doesn't show a routine's team fact waiting while Ask is off (a routine can't be made at Watch through the app; the store's tests prove it)
 
 Settings: Run limits
   Path:     Settings -> Run limits
   Selector: job switches, "Daily limit", "Largest restock", button "Pause Inhouse agent"
-  Expected: switches and limits are locked until Run; each works, lists its options and survives a reload; Pause stops the agent (button, toast and top bar agree, Resume undoes it) and survives a reload; Reset demo clears all of it
+  Expected: switches and limits are locked until Run; each works, lists its options and survives a reload; Pause stops the agent (button, toast and top bar agree: the top bar's status reads "Running" or "Paused", named "Inhouse agent is running" or "... paused" for screen readers; Resume undoes it) and survives a reload; Reset demo clears all of it
   Covered:  e2e/settings-team-pages.spec.ts
 
 Settings: Notifications
@@ -280,8 +299,8 @@ Settings: Notifications
 Settings: Memory
   Path:     Settings -> Memory
   Selector: buttons "Forget", switch "Learn from my chats"
-  Expected: locked at Watch; Forget removes a line with an Undo toast; the switch turns off; both survive a reload and Reset demo clears them; Team memory is not touched; Forget works on a phone
-  Covered:  e2e/settings-your-pages.spec.ts, e2e/settings-pages-phone.spec.ts
+  Expected: usable at every stage (no stage tag); Forget removes a line with an Undo toast; the switch turns off (and in the product the agent then refuses to save your preferences, and says why); both survive a reload and Reset demo clears them; Team memory is not touched; Forget works on a phone
+  Covered:  e2e/settings-your-pages.spec.ts, e2e/settings-pages-phone.spec.ts, e2e/ship/memory-skills.spec.ts (S1), e2e/support/memory-scenarios.test.ts
 
 Settings: Inhouse agent
   Path:     Settings -> Inhouse agent
@@ -335,7 +354,7 @@ Test build: the product Worker's API and app (P2)
 
 Backend core: account menu, name and role (P2, test build)
   Path:     sign in as a seeded person -> sidebar -> account and settings
-  Selector: menu "Account" (name, `<email> · <role>`), items Your settings, Team settings, Sign out
+  Selector: menu "Account" (the name with the role as a badge beside it, the email on its own line), items Your settings, Team settings, Sign out
   Expected: the menu shows the signed-in person's own name, email and role (Admin, Member or Inhouse team); Sign out goes to Access's logout (not checked in e2e)
   Covered:  e2e/ship/backend-core.spec.ts (S1, S5, S7, S8)
 
@@ -407,14 +426,14 @@ Palette: Report a bug
 
 Sidebar
   Path:     sidebar -> collapse
-  Selector: Search row (`⌘K` / `Ctrl+K`) above nav "Main": Today, Approvals (count), Activity, then group "Your agent" (Routines, Skills, Tools, Library); Recent chats; the account row; rail tooltips
-  Expected: Search opens the command palette from the expanded sidebar (and rail/phone drawer), keeping the top bar uncluttered; two nav sections, the second labelled and announced as a group; no team card, no Tools/Skills/Usage list at the bottom; the rail shows group 1, a divider, group 2 and the avatar; the account row is selected on Settings and Usage; collapses to a rail, stays collapsed after a reload, expands with the shortcut
-  Covered:  e2e/navigation.spec.ts, e2e/models-and-scroll.spec.ts, e2e/help-account-menu.spec.ts, e2e/library.spec.ts
+  Selector: Search row (`⌘K` / `Ctrl+K`) above nav "Main": Today, Approvals (count), Activity, Library, then group "Your agent" (Routines, Skills, Tools); Recent chats; the bottom row: the account row, button "Your Inhouse team" (`support_agent`) and button "Sidebar" (tooltip "Collapse sidebar" or "Expand sidebar" with `⌘\`); rail tooltips
+  Expected: Search opens the command palette from the expanded sidebar (and rail/phone drawer), keeping the top bar uncluttered; two nav sections, the second labelled and announced as a group; no team card, no Tools/Skills/Usage list at the bottom; the Inhouse team button and the collapse button sit in the sidebar's bottom row beside the account row (the collapse button desktop only; the top bar has none), and on the rail above the avatar; the team button opens the team window (on a phone the drawer closes first); the rail shows group 1, a divider, group 2 and the avatar; the account row is selected on Settings and Usage; a skill's page keeps Skills selected; collapses to a rail with focus kept on the button, stays collapsed after a reload, expands with the shortcut; on desktop windows center in the room right of the sidebar
+  Covered:  e2e/navigation.spec.ts, e2e/models-and-scroll.spec.ts, e2e/help-account-menu.spec.ts, e2e/library.spec.ts, e2e/ui-round-3.spec.ts
 
 Account menu
   Path:     sidebar -> account and settings
-  Selector: menu "Account", items Your settings, Team settings, Usage | Your Inhouse team ("N open"), Help and guides | Sign out
-  Expected: Your settings opens General and Team settings Stage and plan (on a phone the settings menu first); Usage opens the Usage page; Your Inhouse team opens the team window and its count equals the "Open requests" rows (shown only above 0); Report a bug and Feedback are request types in that window; Sign out says it isn't connected
+  Selector: menu "Account" (name with the role badge, the email under it), items Your settings, Team settings, Usage | Your Inhouse team ("N open"), Help and guides | Sign out
+  Expected: the role (Admin, Member or Inhouse team) is a badge beside the name, the email on its own line, both cut with an ellipsis when long; Your settings opens General and Team settings Stage and plan (on a phone the settings menu first); Usage opens the Usage page; Your Inhouse team opens the team window and its count equals the open rows under Your requests (shown only above 0); Report a bug and Feedback are request types in that window; Sign out says it isn't connected
   Covered:  e2e/help-account-menu.spec.ts, e2e/report-bug.spec.ts, e2e/tour.spec.ts, e2e/sample-data.spec.ts, e2e/phone.spec.ts, e2e/overlays-keyboard.spec.ts
 
 Help and guides
@@ -424,10 +443,10 @@ Help and guides
   Covered:  e2e/help-account-menu.spec.ts, e2e/sample-data.spec.ts, e2e/overlays-keyboard.spec.ts, e2e/cross-screen.spec.ts, e2e/no-persona.spec.ts, e2e/settings-pages-phone.spec.ts
 
 Problem panel
-  Path:     Today or Approvals -> a card
-  Selector: panel dialog, header "Ask" (named "Ask about this"), progress list, facts strip, sources toggle, the draft document with Edit, Don't send, Approve, Ask <approver>, Manage
-  Expected: the approval actions as in Approvals above; the footer (waiting only) holds Don't send and the main action with the amount it moves; Ask <approver> says it isn't connected; Ask (and the card menu's Ask about this) starts a chat holding the question that a reload keeps; Manage on a memory note opens Team memory; a purchase order shows its item table and total
-  Covered:  e2e/problem-panel.spec.ts, e2e/today-approvals.spec.ts, e2e/app.spec.ts, e2e/page-actions.spec.ts, e2e/sample-data.spec.ts, e2e/phone.spec.ts
+  Path:     Today or Approvals -> a card, or an Activity line's Review the draft
+  Selector: the review window (960px wide and short, centered in the room right of the sidebar), top line with the "Urgent" pill and the area (as on the cards), "Ask Inhouse" (the Watch main button and the More menu item), "{n} of {N}" with Previous and Next, the draft document with Edit, sources toggle "Checked ...", the main action and "More" (Don't send, Ask <approver> in the demo only, Ask Inhouse, Snooze until tomorrow, Not a problem; hidden when it would be empty)
+  Expected: Previous and Next step through the cards that need you in the order the page shows them, and Approve moves straight to the next once it's approved (a refused Approve stays on the draft and says why above the buttons); a problem with no real draft (the product's morning-check placeholder) shows the Watch view (suggestion, Ask Inhouse) at any stage; Escape on More closes the menu only; a window too narrow for two columns (a narrow desktop with the sidebar open) stacks the brief over the draft; the approval actions as in Approvals above; the footer (waiting only) holds only the buttons, left-aligned: the main action with the amount it moves and More; who usually approves, when it's someone else, is a quiet note (person icon) under the draft sheet, never in the footer; Ask <approver> says it isn't connected; Ask Inhouse (in the window and the card menu) starts a chat holding the question that a reload keeps; no risk tag, memory line, step timings or costs show; a purchase order shows its item table and total
+  Covered:  e2e/problem-panel.spec.ts, e2e/today-approvals.spec.ts, e2e/app.spec.ts, e2e/page-actions.spec.ts, e2e/sample-data.spec.ts, e2e/phone.spec.ts, e2e/ship/needs-you-cards.spec.ts, e2e/ui-round-3.spec.ts, src/state/derive.no-draft.test.ts
 
 Trace window
   Path:     an answer's steps line, or an Activity row
@@ -440,6 +459,12 @@ Notifications and team window
   Selector: bell count, window Send
   Expected: reading a line drops the count, Mark all as read empties it; Send waits for words and carries the name from Settings
   Covered:  e2e/navigation.spec.ts
+
+Team window
+  Path:     sidebar button "Your Inhouse team" or account menu -> Your Inhouse team (also Report a bug, Help's Ask the team, Request a tool, Book a check-in)
+  Selector: dialog "Your Inhouse team" (the `form` window size: 720px, capped to the room right of the sidebar), radiogroup "Team window" (New request, "Your requests {N}"); New request: radio kind tiles (five, compact, the picked one with a 1px dark border), "Title", "Details" (at most 934, so the title and details fit the server's 1000 together; a counter for the last 100), "Send to the team"; Your requests: radiogroup "Show requests" ("Open · N", "Closed · N"), list "Open requests" or "Closed requests", each row a toggle with kind icon, title, "{kind} · {who}, {when}" and a status chip, "Withdraw request" in an open row you asked (demo and product)
+  Expected: Send waits for a title or details (a title is made from the details when none is typed), closes the window and lists the request as open once the agent took it; a refused request keeps the window open with what was typed and says "Your request wasn't sent." with the reason; statuses are only With the team, Done, Declined and Withdrawn (and the demo's dated ones); a row opens to show its full text; Withdraw moves it to Closed as Withdrawn and the account menu's count follows (the demo's toast has an Undo; the product withdraws through route 83 with no way back, so its toast has none, and the withdrawn request stays in Closed across refreshes); a withdraw that fails keeps the row open and says "Your request wasn't withdrawn." with the reason under it (one the team answered meanwhile moves to Closed as the team left it); the demo's toast promises a reply within one working day, the product's doesn't; on the product a request goes to route 81 as one text (the title on its own line above the details), Your requests refreshes all open requests and the 50 most recently closed on each open (a failed read shows "Couldn't read your requests." with Retry), a teammate's request shows their name, and a bug has no screenshot box
+  Covered:  e2e/help-account-menu.spec.ts, e2e/report-bug.spec.ts, e2e/navigation.spec.ts, e2e/sample-data.spec.ts, e2e/ui-round-3.spec.ts, e2e/real/team-request.spec.ts, src/state/derive.team-requests.test.ts, src/agent/http/team-requests.test.ts, src/lib/product-flow.test.ts, e2e/real/team-request-refused.spec.ts, e2e/api/team-requests.spec.ts, e2e/ship/memory-skills.spec.ts (S7)
 
 Crashes and error reports
   Path:     ?demo&crash=screen (a screen throws), ?demo&crash=rejection; /api/client-error, /api/unknown

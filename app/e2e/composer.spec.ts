@@ -11,8 +11,8 @@ async function start(page: Page, hash = '#/today') {
 
 const shot = async (page: Page, name: string) => { await atRest(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const composer = (page: Page) => page.locator('[data-composer]')
-const chatField = (page: Page) => page.getByRole('textbox', { name: 'Message your Inhouse agent' })
-const todayField = (page: Page) => page.getByRole('textbox', { name: 'Ask your Inhouse agent' })
+const chatField = (page: Page) => page.getByRole('textbox', { name: 'Message Inhouse' })
+const todayField = (page: Page) => page.getByRole('textbox', { name: 'Ask Inhouse' })
 const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' })
 const openChat = (page: Page, title: string) => side(page).getByRole('button', { name: title, exact: true }).click()
 const height = (l: Locator) => l.evaluate(el => el.getBoundingClientRect().height)

@@ -43,6 +43,7 @@ const mint = (role: string, aud: string) => mintPerson({ key: good.key.privateJw
 beforeAll(async () => { good = await issuer() })
 beforeEach(async () => {
   await reset(db)
+  await db.prepare('DELETE FROM team_requests').run()
   k++
   const stores = openStores(env)
   for (const role of ['admin', 'member', 'other'] as const) {
@@ -87,12 +88,20 @@ describe('the role rules on the real path', () => {
     expect((await call(`/api/team-requests/${MISSING}/status`, 'PUT', tokens.member, { status: 'done', ifRev: 1 })).status).toBe(403)
     expect((await call(`/api/team-requests/${MISSING}/withdrawn`, 'PUT', tokens.inhouse, { ifRev: 1 }, true)).status).toBe(403)
   })
-  it('80: the Inhouse team lists with no member ids; a Member sees `mine`', async () => {
-    await filed()
-    const ih = await call('/api/team-requests', 'GET', tokens.inhouse, undefined, true)
+  it('80: the window lists open and closed with no member ids for the Inhouse team; the requester sees `mine`', async () => {
+    const r = await filed()
+    expect((await call(`/api/team-requests/${r.id}/status`, 'PUT', tokens.inhouse, { status: 'done', ifRev: 1 }, true)).status).toBe(200)
+    const open = await filed()
+    const path = '/api/team-requests?view=window'
+    const ih = await call(path, 'GET', tokens.inhouse, undefined, true)
     expect(ih.status).toBe(200)
     expect(JSON.stringify(ih.body)).not.toContain(who.member)
-    const m = await call('/api/team-requests', 'GET', tokens.member)
-    expect([m.body.items[0].mine, m.body.items[0].requestedBy]).toEqual([true, who.member])
+    expect(ih.body.items.map((item: { status: string; mine: boolean }) => [item.status, item.mine])).toEqual([['open', false], ['done', false]])
+    const m = await call(path, 'GET', tokens.member)
+    expect(m.status).toBe(200)
+    expect(m.body.items).toMatchObject([
+      { id: open.id, status: 'open', mine: true, requestedBy: who.member },
+      { id: r.id, status: 'done', mine: true, requestedBy: who.member },
+    ])
   })
 })

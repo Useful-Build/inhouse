@@ -105,11 +105,12 @@ describe('the scripted model', () => {
 
   it.each(Object.keys(SCENARIOS))('%s: a side request on turn 0 (no tool list, or another model) is a miss', async (name) => {
     const model = createScriptedModel(SCENARIOS)
-    expect((await model.handle(req(convo(0), false, { model: HARNESS_MODEL }), name)).status).toBe(400)
-    expect((await model.handle(req(convo(0), false, { model: 'claude-haiku-5-5', tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__question_ask' }] }), name)).status).toBe(400)
+    const messages: Msg[] = [{ role: 'user', content: 'q [fx0a1b2c3d]' }]
+    expect((await model.handle(req(messages, false, { model: HARNESS_MODEL }), name)).status).toBe(400)
+    expect((await model.handle(req(messages, false, { model: 'claude-haiku-5-5', tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__question_ask' }] }), name)).status).toBe(400)
     // The miss names the failed check (#tool-turns): no tool list, then the wrong model.
     expect(model.misses.map((m) => m.reason)).toEqual(['the request does not match the turn: no tool list (a side request)', `the request does not match the turn: model claude-haiku-5-5, not ${HARNESS_MODEL}`])
-    expect((await model.handle(mainFor(name)(convo(0)), name)).status).toBe(200)
+    expect((await model.handle(mainFor(name)(messages), name)).status).toBe(200)
   })
 
   it.each([

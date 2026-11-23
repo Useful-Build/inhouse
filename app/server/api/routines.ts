@@ -1,11 +1,13 @@
-// Routes 52 to 56 (P4 W2, p4-w2.md section 9): the Routines page. brand_data: members, Admins and the Inhouse team under
+// Routes 52 to 56 (P4 W2, p4-w2.md section 9) and 68 (master plan decision 8): the Routines page. brand_data: members, Admins and the Inhouse team under
 // a live grant (the matrix decides, and writes Inhouse's `support.access` line). Switching, deleting and restoring is the
 // creator's, an Admin's or Inhouse's (OC 5; part of each write's statement); Run now is anyone's. Every write is one
 // `rev`-guarded batch with its audit and Activity lines (routines/store.ts); a write that the tick must see pokes it.
 import { RoutineIdSchema } from '../../shared/contract/audit.ts'
 import type { AgentErrorCode, Instant } from '../../shared/contract/common.ts'
 import type { RoutineDef, RoutineRun } from '../../shared/contract/routine.ts'
-import { RoutineEnabledInputSchema, RoutineRevInputSchema, RoutineRunAnswerSchema, RoutineRunInputSchema, RoutineStateSchema, RoutinesListSchema } from '../../shared/contract/routines.ts'
+import type { RoutineHistoryRun } from '../../shared/contract/routines.ts'
+import { ROUTINE_RUNS_MAX } from '../../shared/contract/keys.ts'
+import { RoutineEnabledInputSchema, RoutineRevInputSchema, RoutineRunAnswerSchema, RoutineRunHistorySchema, RoutineRunInputSchema, RoutineStateSchema, RoutinesListSchema } from '../../shared/contract/routines.ts'
 import { readBody, storesOf, writer } from '../db/handler-kit.ts'
 import type { ApiCtx } from '../db/handler-kit.ts'
 import { brandAgent } from '../do/brand-agent/client.ts'
@@ -13,8 +15,8 @@ import { apiError, apiJson } from '../http.ts'
 import type { HandlerContext } from '../routes.ts'
 import { freqAndDay } from '../routines/schedule.ts'
 import { nextSlot } from '../routines/slots.ts'
-import type { At, ListedOutcome, ListedRoutine } from '../routines/store.ts'
-import { resultWords } from '../routines/store.ts'
+import type { At, ListedOutcome, ListedRoutine, RunSlot } from '../routines/store.ts'
+import { resultWords, runOutcome } from '../routines/store.ts'
 import type { SlotRow } from '../routines/rows.ts'
 import { systemDescription } from '../routines/prompts.ts'
 
@@ -161,4 +163,29 @@ export async function runRoutineNow(c: HandlerContext): Promise<Response> {
   if (o.refused === 'stage') return apiError('forbidden', { reason: 'stage' })
   if (o.refused === 'settings') return apiError(o.code as AgentErrorCode, o.reason === undefined ? {} : { reason: o.reason })
   return apiError('unavailable')
+}
+
+/** One slot as the panel's run line: when it ran (else was due), how it went, one plain line, and its steps' id. */
+export function historyRun(s: RunSlot): RoutineHistoryRun {
+  return {
+    at: instant(s.started_at_ms ?? s.due_at_ms),
+    outcome: runOutcome(s),
+    result: resultWords(s),
+    manual: s.kind === 'manual',
+    ...(s.run_id !== null ? { trace: s.run_id } : {}),
+  }
+}
+
+/**
+ * Route 86, `GET /api/routines/:id/runs`: the routine's own last runs (its slots), newest first, at most
+ * `ROUTINE_RUNS_MAX`. Read like route 52 (anyone who may read the routines); a deleted or unknown routine is 404.
+ */
+export async function listRoutineRuns(c: HandlerContext): Promise<Response> {
+  if (new URL(c.request.url).search !== '') return apiError('invalid')
+  if (!viewerOf(c)) return apiError('forbidden')
+  const id = routineIdOf(c)
+  if (!id) return apiError('not_found')
+  const slots = await storesOf(c).routines.runs(id, ROUTINE_RUNS_MAX)
+  if (slots === null) return apiError('not_found')
+  return apiJson(RoutineRunHistorySchema.parse({ runs: slots.map(historyRun) }))
 }

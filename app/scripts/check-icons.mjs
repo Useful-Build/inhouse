@@ -18,7 +18,7 @@ const FONT = path.join(root, 'public/fonts/material-symbols-rounded.woff2')
 // words (a name with an underscore is found by its shape). Every one must still appear as a string in src, or this
 // check fails, so the list can't go stale. A new plain-word name passed this way is caught at run time instead: the
 // Icon draws the fallback glyph and warns in dev.
-const TUPLE_NAMES = ['badge', 'build', 'code', 'description', 'group', 'hub', 'image', 'psychology', 'sort', 'stacks', 'stairs', 'straighten', 'person', 'schedule', 'history', 'tune', 'savings', 'work', 'campaign', 'logout', 'notifications', 'neurology']
+const TUPLE_NAMES = ['badge', 'build', 'code', 'description', 'group', 'hub', 'image', 'sort', 'stacks', 'stairs', 'straighten', 'person', 'schedule', 'history', 'tune', 'savings', 'work', 'campaign', 'logout', 'notifications', 'neurology']
 // Always drawn by the fallback.
 const FALLBACK = 'circle'
 
@@ -50,7 +50,11 @@ function usedNames() {
     for (const m of s.matchAll(/<Icon\b[^>]*?\bname=(?:"([^"]+)"|\{([^}]*)\})/g)) (m[1] ? [m[1]] : results(m[2])).forEach(n => add(n, f))
     for (const m of s.matchAll(/\b\w*[iI]con=(?:"([^"]+)"|\{([^}]*)\})/g)) (m[1] ? [m[1]] : results(m[2])).forEach(n => add(n, f))
     for (const m of s.matchAll(/\b\w*[iI]con:\s*([^,}\n;]+)/g)) results(m[1]).forEach(n => add(n, f))
-    for (const n of lits(s)) if (n.includes('_') && /^[a-z]+(_[a-z0-9]+)+$/.test(n)) add(n, f)
+    // The first argument to the HTTP client's refuseLocal is an error code. Keep checking the same string in icon positions.
+    const loose = path.relative(root, f) === 'src/agent/http/client.ts'
+      ? s.replace(/\bthis\.refuseLocal\(\s*(['"])not_found\1\s*,/g, '')
+      : s
+    for (const n of lits(loose)) if (n.includes('_') && /^[a-z]+(_[a-z0-9]+)+$/.test(n)) add(n, f)
   }
   const strings = new Set(srcFiles.flatMap(f => (f.endsWith('.json') ? [] : lits(fs.readFileSync(f, 'utf8')))))
   const stale = TUPLE_NAMES.filter(n => !strings.has(n))

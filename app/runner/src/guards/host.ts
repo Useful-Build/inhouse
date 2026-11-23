@@ -16,12 +16,14 @@
 //   /users/<user>/         root 0755           root's, so the session can't rename or swap what's in it
 //   /users/<user>/home/    <user> 0700         the session's HOME
 //   /users/<user>/tmp/     <user> 0700         the session's TMPDIR
+//   /users/<user>/brand-plugin/  root 0755     the run's brand skills (`brand:<name>`), its files root 0644
 // They belong to the uid, not the chat: the wipe empties both (as the uid itself), so a uid's next session finds
 // nothing of the last one. What a chat keeps is its session folder, and its transcript in the session store.
 import { spawn } from 'node:child_process'
 import { chmodSync, lchownSync, lstatSync, readdirSync } from 'node:fs'
 import { chmod, chown, lchown, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { BRAND_PLUGIN_NAME, brandSkillNameProblem, renderSkillFile, type BrandSkillFile } from '../../../shared/protocol/brand-skills.ts'
 import { INPUTS, OUTPUTS, USERS_ROOT, WORK_ROOT, sessionPaths, userPaths } from './paths.ts'
 import type { PoolUser, SessionHost } from './users.ts'
 
@@ -227,7 +229,35 @@ export function createSessionHost(deps: HostDeps): SessionHost {
     }
   }
 
-  return { killAll, wipeUserFiles, prepareFolder, parkFolder }
+  /**
+   * The run's brand skills, as a plugin: removed whole and made again, every folder root 0755 and every file root
+   * 0644, so the session (another uid) can read them and change nothing. Its parent is root's 0755 (`ownFolders`), so
+   * no session can put anything in its place. The names were checked on the wire (one plain segment each).
+   */
+  async function writeBrandPlugin(user: PoolUser, skills: readonly BrandSkillFile[]) {
+    for (const s of skills) {
+      if (brandSkillNameProblem(s.name) !== null) throw new Error('invalid brand skill name')
+    }
+    const own = await ownFolders(user)
+    await rm(own.brandPlugin, { recursive: true, force: true })
+    const dirs = [own.brandPlugin, join(own.brandPlugin, '.claude-plugin'), join(own.brandPlugin, 'skills'), ...skills.map((s) => join(own.brandPlugin, 'skills', s.name))]
+    for (const dir of dirs) {
+      await mkdir(dir, { mode: 0o755 })
+      await doChown(dir, 0, 0)
+      await chmod(dir, 0o755)
+    }
+    const files: [string, string][] = [
+      [join(own.brandPlugin, '.claude-plugin', 'plugin.json'), `${JSON.stringify({ name: BRAND_PLUGIN_NAME, description: "This brand's own skills, made in its chats." })}\n`],
+      ...skills.map((s): [string, string] => [join(own.brandPlugin, 'skills', s.name, 'SKILL.md'), renderSkillFile(s)]),
+    ]
+    for (const [file, text] of files) {
+      await writeFile(file, text, { mode: 0o644, flag: 'wx' })
+      await doChown(file, 0, 0)
+      await chmod(file, 0o644)
+    }
+  }
+
+  return { killAll, wipeUserFiles, prepareFolder, parkFolder, writeBrandPlugin }
 }
 
 function existsOk(e: NodeJS.ErrnoException) {

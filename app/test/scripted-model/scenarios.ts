@@ -273,6 +273,11 @@ export const ROUTINE_CREATE_INPUT = { name: 'Stock check', instruction: 'scenari
 export const ROUTINE_REFUSED_ANSWER = 'The routine was refused.'
 export const ROUTINE_CREATED_ANSWER = 'The routine was created.'
 /** The `hub-write-refused` scenario's document and answers. */
+/** P6a brand skills: what the `skill-save` and `skill-save-change` scenarios save, and their two answers. */
+export const BRAND_SKILL_SAVE_INPUT = { name: 'e2e-weekly-report', description: 'Writes the weekly wholesale report.', body: '---\nallowed-tools: Bash\n---\n# Weekly report\n\nRead the wholesale orders.' }
+export const BRAND_SKILL_CHANGE_INPUT = { ...BRAND_SKILL_SAVE_INPUT, body: '# Weekly report\n\nRead the wholesale orders and the returns.' }
+export const BRAND_SKILL_SAVED_ANSWER = 'The skill was saved.'
+export const BRAND_SKILL_REFUSED_ANSWER = 'The skill was not saved.'
 export const HUB_MUTATION_DOCUMENT = 'mutation { orderCancel(orderId: "1") { job { id } } }'
 export const HUB_WRITE_REFUSED_ANSWER = 'The hub refused the write: write_refused.'
 export const HUB_WRITE_NOT_REFUSED_ANSWER = 'The hub did not refuse the write.'
@@ -308,6 +313,81 @@ export const LATE_ORDERS_TEXT = [
  * `outage-all` does): nothing read, so no items, and every area a gap (shared/contract/today.ts GAP_AREAS).
  */
 export const MORNING_CHECK_OUTAGE_ANSWER = { coverage: 'incomplete', gaps: ['orders', 'products', 'inventory', 'refunds', 'returns'], items: [] }
+
+/**
+ * P6a ship spec (memory): the memory scenarios below work on a fact whose words carry a reference the person's message names
+ * in square brackets (`[fx0a1b2c3d]`), so a run never meets another run's facts (a fact saved by the earlier project's run is
+ * still there, and a second save of the same words is "already saved"). The turns read the reference from the first user
+ * message (`contentFor`), and the memory id the reword needs from the search result.
+ */
+export const TEAM_FACT_REF = /\[(fx[0-9a-f]{8})\]/
+export const teamFactText = (ref: string): string => `We restock on Fridays (${ref}).`
+export const teamFactReworded = (ref: string): string => `We restock on Fridays and Mondays (${ref}).`
+export const TEAM_FACT_SAVED_ANSWER = 'Saved for the team.'
+export const TEAM_FACT_CHANGED_ANSWER = 'Changed it for the team.'
+/** What `memory-save-learning` says when "Learn from my chats" is off (the tool refuses) and when it is on (the fact is saved). */
+export const LEARNING_OFF_ANSWER = "I didn't save it: Learn from my chats is off."
+export const LEARNING_SAVED_ANSWER = 'Saved it for you.'
+
+const refIn = (r: MessagesRequest): string => {
+  const ref = TEAM_FACT_REF.exec(firstUserText(r))?.[1]
+  if (ref === undefined) throw new Error('the message names no reference like [fx0a1b2c3d]')
+  return ref
+}
+
+/** `memory_save` of the team fact with the message's reference, then one fixed answer. */
+function teamFactSave(id: string): Scenario {
+  const loop = mainLoop('mcp__inhouse__memory_save')
+  return {
+    turns: [
+      { content: [], contentFor: (r) => [{ type: 'tool_use', id, name: 'mcp__inhouse__memory_save', input: { scope: 'brand', text: teamFactText(refIn(r)) } }], expect: loop },
+      { content: [{ type: 'text', text: TEAM_FACT_SAVED_ANSWER }], expect: both(loop, resultOf(id)) },
+    ],
+  }
+}
+
+/**
+ * `memory_search` for the message's reference, then `From memory: <fact>` when the result holds the fact as `wording` gives it
+ * and `Nothing saved matches that.` when it doesn't (two branches, picked by the result, so it never says what it wasn't given).
+ */
+function teamFactRecall(id: string, wording: (ref: string) => string): Scenario {
+  const ask = mainLoop('mcp__inhouse__memory_search')
+  const answered = (found: boolean) => (r: MessagesRequest) => {
+    const block = resultBlock(r, id)
+    return block !== undefined && resultText(block).includes(wording(refIn(r))) === found
+  }
+  const reply = (text: (r: MessagesRequest) => string): ScriptedTurn => ({ content: [], contentFor: (r) => [{ type: 'text', text: text(r) }], expect: both(ask, resultOf(id)) })
+  return {
+    turns: [{ content: [], contentFor: (r) => [{ type: 'tool_use', id, name: 'mcp__inhouse__memory_search', input: { query: refIn(r) } }], expect: ask }],
+    branches: {
+      found: { match: answered(true), turns: [null, reply((r) => memoryRecallAnswer(wording(refIn(r))))] },
+      none: { match: answered(false), turns: [null, reply(() => MEMORY_RECALL_NONE)] },
+    },
+  }
+}
+
+/** Finds the team fact with `memory_search`, then rewords it with `memory_update` (the memory id comes from the search result). */
+function teamFactReword(): Scenario {
+  const loop = mainLoop()
+  const search = 'toolu_scripted_reword_search'
+  const update = 'toolu_scripted_reword_update'
+  return {
+    turns: [
+      { content: [], contentFor: (r) => [{ type: 'tool_use', id: search, name: 'mcp__inhouse__memory_search', input: { query: refIn(r) } }], expect: loop },
+      {
+        content: [],
+        contentFor: (r) => {
+          const block = resultBlock(r, search)
+          const memoryId = block === undefined ? undefined : /memory_id: (mem_[A-Za-z0-9_-]+)/.exec(resultText(block))?.[1] ?? /"memory_id":\s*"(mem_[A-Za-z0-9_-]+)"/.exec(resultText(block))?.[1]
+          if (memoryId === undefined) throw new Error('the search result names no team fact to reword')
+          return [{ type: 'tool_use', id: update, name: 'mcp__inhouse__memory_update', input: { memory_id: memoryId, text: teamFactReworded(refIn(r)) } }]
+        },
+        expect: both(loop, resultOf(search)),
+      },
+      { content: [{ type: 'text', text: TEAM_FACT_CHANGED_ANSWER }], expect: both(loop, resultOf(update)) },
+    ],
+  }
+}
 
 /** The read-side proof's planted phrases (evals/read-side/cases.ts INSTRUCTIONS), as an obedient agent would carry them out. */
 export const READ_SIDE_MEMORY_TEXT = 'The new returns code is on the returns sheet.'
@@ -494,6 +574,20 @@ export const SCENARIOS: Record<string, Scenario> = {
     HUB_WRITE_NOT_REFUSED_ANSWER,
   ),
 
+  /**
+   * P6a brand skills: one `skill_save` (deferred, so the main loop only) and an answer that says whether the result was a
+   * refusal. `skill-save` makes the spec's skill (its body starts with frontmatter the server must drop);
+   * `skill-save-change` saves new instructions under the same name, which only its maker or an admin may.
+   */
+  'skill-save': scriptedBranchesOnResult(
+    { id: 'toolu_scripted_skill_save', name: 'mcp__inhouse__skill_save', input: BRAND_SKILL_SAVE_INPUT },
+    'Not saved', BRAND_SKILL_REFUSED_ANSWER, BRAND_SKILL_SAVED_ANSWER,
+  ),
+  'skill-save-change': scriptedBranchesOnResult(
+    { id: 'toolu_scripted_skill_change', name: 'mcp__inhouse__skill_save', input: BRAND_SKILL_CHANGE_INPUT },
+    'Only the person who made this skill', BRAND_SKILL_REFUSED_ANSWER, BRAND_SKILL_SAVED_ANSWER,
+  ),
+
   /** One bounded read of the orders through the hub, then a table of the late ones with its sources (the P4 ship spec's S3). */
   'late-orders': {
     turns: [
@@ -541,6 +635,20 @@ export const SCENARIOS: Record<string, Scenario> = {
       },
     },
   },
+
+  /** P6a ship spec: a team fact whose words carry the message's `[fx…]` reference (saved for the team, waiting for an admin by default). */
+  'memory-save-team-ref': teamFactSave('toolu_scripted_team_ref_save'),
+  /** Searches for that reference and says the fact, or that nothing matched. */
+  'memory-recall-team-ref': teamFactRecall('toolu_scripted_team_ref_recall', teamFactText),
+  /** The same for the reworded fact (`memory-reword-team-ref`'s new words). */
+  'memory-recall-team-ref-reworded': teamFactRecall('toolu_scripted_team_ref_recall_reworded', teamFactReworded),
+  /** Finds the active team fact and changes its words (it goes back to waiting while "Ask before saving a team rule" is on). */
+  'memory-reword-team-ref': teamFactReword(),
+  /** Saves the person's own preference: says why when "Learn from my chats" is off (the tool refuses), and that it saved when on. */
+  'memory-save-learning': scriptedBranchesOnResult(
+    { id: 'toolu_scripted_memory_learning', name: 'mcp__inhouse__memory_save', input: { scope: 'person', text: MEMORY_SAVE_TEXT } },
+    'Not saved: this person turned off', LEARNING_OFF_ANSWER, LEARNING_SAVED_ANSWER,
+  ),
 
   // P6a W4: the read-side set's scripted proof (e2e/api/read-side-remote.spec.ts). An honest agent reads the planted memory and
   // answers; each obedient one takes one exit the planted text asks for. The exit's input carries the case's planted phrase (its

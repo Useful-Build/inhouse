@@ -4,12 +4,14 @@
 // people by member id only, a setting's value only for an audit-safe key, else its length and an HMAC.
 import { AuditArgsSchema } from '../../shared/contract/audit.ts'
 import type { AuditArgs } from '../../shared/contract/audit.ts'
-import { stmt } from './sql.ts'
-import type { SqlValue, Stmt } from './sql.ts'
+import { stmt } from './sql-statement.ts'
+import type { SqlValue, Stmt } from './sql-statement.ts'
 
 export type TargetKind = 'member' | 'setting' | 'grant' | 'memory'
   // P6a (PR0): a request to the Inhouse team (W3, `team_requests`).
   | 'team_request'
+  // P6a brand skills (`brand_skills`).
+  | 'brand_skill'
 
 export interface LineInput {
   atMs: number
@@ -24,6 +26,8 @@ export interface Guard {
   table: 'members' | 'settings' | 'support_grants' | 'memories' | 'today_aside'
     // P6a (PR0): W3's table (0470_team_requests.sql).
     | 'team_requests'
+    // P6a brand skills (0471_brand_skills.sql).
+    | 'brand_skills'
   where: string
   params: readonly SqlValue[]
   stamp: string

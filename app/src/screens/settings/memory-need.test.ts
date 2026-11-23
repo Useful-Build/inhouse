@@ -5,7 +5,8 @@ import { expect, it, vi } from 'vitest'
 
 vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} })
 const { agent } = await import('../../agent')
-const { MENU, settingsPage } = await import('./content')
+const { settingsPage } = await import('./content')
+const { SETTINGS_PAGES } = await import('./menu')
 type Env = Parameters<typeof settingsPage>[1]
 
 function rows() {
@@ -17,7 +18,7 @@ function rows() {
     theme: 'system', setTheme: noop, toast: noop, forget: noop, download: noop, setRole: noop, setSupport: noop,
     me: agent.me(), invite: noop, removeMember: noop, grantUi: false, showGrant: true, loadingMore: false, loadMore: noop, exportFromServer: null,
   }
-  return MENU.flatMap(g => g.items).flatMap(([tab]) => settingsPage(tab, env).sections.flatMap(s => s.rows))
+  return SETTINGS_PAGES.flatMap(p => settingsPage(p.id, env).sections.flatMap(s => s.rows))
 }
 
 it('the five memory rows need no stage', () => {

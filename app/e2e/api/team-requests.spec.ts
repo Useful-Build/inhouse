@@ -128,11 +128,32 @@ test('the list filters by status, and refuses an unknown status or any other que
   expect(w.status, w.text).toBe(200)
   expect((await list(request, dana, '?status=open')).map(x => x.id)).not.toContain(r.id)
   expect((await list(request, dana, '?status=withdrawn')).map(x => x.id)).toContain(r.id)
-  for (const q of ['?status=nope', '?status=', '?limit=5', '?status=open&status=done']) {
+  for (const q of ['?status=nope', '?status=', '?limit=5', '?status=open&status=done', '?view=nope', '?view=window&status=open']) {
     const bad = await call(request, dana, 'GET', `/api/team-requests${q}`)
     expect([bad.status, bad.json?.error?.code], q).toEqual([400, 'invalid'])
   }
   expectError(await call(request, dana, 'GET', '/api/team-requests', { token: null }), 401, 'unauthorized')
+})
+
+test("the team window lists open, done, declined and withdrawn with the reader's permissions", async ({ request }) => {
+  const done = await made(request, dana)
+  const declined = await made(request, dana)
+  const withdrawn = await made(request, dana)
+  const open = await made(request, dana)
+  expect((await setStatus(request, inhouse, done.id, 'done', done.rev)).status).toBe(200)
+  expect((await setStatus(request, inhouse, declined.id, 'declined', declined.rev)).status).toBe(200)
+  expect((await withdraw(request, dana, withdrawn.id, withdrawn.rev)).status).toBe(200)
+  const ids = [done.id, declined.id, withdrawn.id, open.id]
+
+  for (const who of [dana, leo, admin, inhouse]) {
+    const items = await list(request, who, '?view=window')
+    expect(ids.map(id => items.find(item => item.id === id)?.status)).toEqual(['done', 'declined', 'withdrawn', 'open'])
+    for (const item of items.filter(item => ids.includes(item.id))) {
+      expect(item.mine).toBe(who === dana)
+      if (who === inhouse) expect(item).not.toHaveProperty('requestedBy')
+    }
+  }
+  expect((await list(request, dana, '?status=open')).filter(item => ids.includes(item.id)).map(item => item.id)).toEqual([open.id])
 })
 
 test('route 82: the Inhouse team sets done or declined from open; an Admin and a Member can\'t, and nothing changes', async ({ request }) => {
@@ -182,6 +203,7 @@ test('route 83: only the requester withdraws, from open; another Member, the Adm
   expectForbidden(await withdraw(request, admin, r.id, 1))
   expectForbidden(await withdraw(request, inhouse, r.id, 1))
   expect((await list(request, inhouse)).find(x => x.id === r.id)).toMatchObject({ status: 'open', rev: 1 })
+  expect(expectConflict(await withdraw(request, dana, r.id, 2))).toMatchObject({ id: r.id, status: 'open', rev: 1 })
   const mine = await withdraw(request, dana, r.id, 1)
   expect(mine.status, mine.text).toBe(200)
   expect(mine.json).toMatchObject({ id: r.id, status: 'withdrawn', rev: 2, mine: true })
@@ -243,7 +265,7 @@ test('each write leaves one audit line with the id and the kind or status, never
   expect(JSON.parse(line2.args_json)).toEqual({ requestId: w.id, status: 'withdrawn' })
 })
 
-test('at most 50 requests are open for the brand: the 51st is refused, and room comes back when one closes', async ({ request }) => {
+test('the 51st open request is refused, and the team window keeps all open and the latest 50 closed', async ({ request }) => {
   test.setTimeout(180_000)
   await closeAllOpen(request)
   const ids: string[] = []
@@ -255,11 +277,28 @@ test('at most 50 requests are open for the brand: the 51st is refused, and room 
   const over = await create(request, dana, { kind: 'feedback', text: words('the 51st') })
   expectError(over, 403, 'forbidden', 'request_limit')
   expect((await list(request, inhouse, '?status=open')).length).toBe(50)
+  const fullWindow = await list(request, inhouse, '?view=window')
+  expect(fullWindow.filter(r => r.status === 'open').map(r => r.id).sort()).toEqual(ids.slice().sort())
   // Closed ones don't count: the Inhouse team answers one, a requester takes one back.
-  expect((await setStatus(request, inhouse, ids[0]!, 'done', 1)).status).toBe(200)
+  const done = await setStatus(request, inhouse, ids[0]!, 'done', 1)
+  expect(done.status, done.text).toBe(200)
   expect((await create(request, dana, { kind: 'feedback', text: words('after one is done') })).status).toBe(201)
   expectError(await create(request, leo, { kind: 'feedback', text: words('full again') }), 403, 'forbidden', 'request_limit')
-  expect((await withdraw(request, leo, ids[1]!, 1)).status).toBe(200)
+  const withdrawn = await withdraw(request, leo, ids[1]!, 1)
+  expect(withdrawn.status, withdrawn.text).toBe(200)
   expect((await create(request, leo, { kind: 'feedback', text: words('after a withdraw') })).status).toBe(201)
+
+  const closed: Rec[] = [done.json, withdrawn.json]
+  const [stillOpen, ...toClose] = await list(request, inhouse, '?status=open')
+  // Close older requests last, so ordering by creation time would give the wrong window.
+  for (const r of toClose) {
+    const declined = await setStatus(request, inhouse, r.id, 'declined', r.rev)
+    expect(declined.status, declined.text).toBe(200)
+    closed.push(declined.json)
+  }
+  expect(closed).toHaveLength(51)
+  closed.sort((a, b) => b.updatedAt.ms - a.updatedAt.ms || (a.id < b.id ? 1 : -1))
+  const window = await list(request, inhouse, '?view=window')
+  expect(window.map(r => r.id)).toEqual([stillOpen!.id, ...closed.slice(0, 50).map(r => r.id)])
   await closeAllOpen(request)
 })

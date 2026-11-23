@@ -9,7 +9,7 @@ for (const width of [390, 360]) {
     await fx.seed({ stage: 'Act', demo: { ambient: 'Always' } })
     await page.setViewportSize({ width, height: 844 })
     await page.goto('/?demo#/today')
-    const input = page.getByRole('textbox', { name: 'Ask your Inhouse agent' })
+    const input = page.getByRole('textbox', { name: 'Ask Inhouse' })
     await expect(input).toHaveAttribute('placeholder', 'Ask about orders, stock or numbers')
     const r = await input.evaluate((el: HTMLInputElement) => {
       const cs = getComputedStyle(el)

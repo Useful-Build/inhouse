@@ -21,13 +21,15 @@ test('Phone: team settings read as text with a note, your own settings keep thei
   // Your own settings keep their controls.
   await page.evaluate(() => { location.hash = '#/settings/you-general' })
   await expect(page.getByRole('textbox', { name: 'Name' })).toBeVisible()
-  // Activity: a line carries its time and person under it, and an opened line has no 72px indent.
+  // Activity: a line keeps its time on the right, and opens as a bottom sheet inside the screen.
   await page.evaluate(() => { location.hash = '#/activity' })
   const row = page.locator('button[data-activity-row]').first()
-  await expect(row).toContainText(/\d:\d\d\s?[AP]M · /)
+  await expect(row.locator('[data-activity-time]')).toHaveText(/\d:\d\d\s?[AP]M/)
   await row.click()
-  const box = await row.boundingBox()
-  const fb = await row.locator('xpath=..').locator('dl').boundingBox()
-  expect(box && fb && Math.abs(fb.x - box.x) < 40).toBe(true)
+  const sheet = page.getByRole('dialog')
+  await expect(sheet).toBeVisible()
+  const sb = await sheet.boundingBox(), vp = page.viewportSize()
+  expect(sb && vp && sb.x >= 0 && sb.x + sb.width <= vp.width && sb.y + sb.height <= vp.height).toBe(true)
+  await page.keyboard.press('Escape')
   expect(await page.evaluate(() => [document.documentElement, document.querySelector('main')!].every(e => e.scrollWidth - e.clientWidth <= 1))).toBe(true)
 })

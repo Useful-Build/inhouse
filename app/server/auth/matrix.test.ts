@@ -290,9 +290,9 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'POST /api/routines/:id/delete': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'POST /api/routines/:id/restore': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   // Rows 77 to 83 (P6a PR0). Team memory approval: Admins, and the Inhouse team only under a live grant (audited);
-  // members never. Skills: everyone reads. Team requests are addressed to the Inhouse team: it reads them and alone
-  // marks one done or declined, with or without a grant, and never files or withdraws one; people read and file, and
-  // withdraw only their own (the owner check).
+  // members never. Skills list: everyone reads, no grant needed (the text is route 84). Team requests are addressed to
+  // the Inhouse team: it reads them and alone marks one done or declined, with or without a grant, and never files or
+  // withdraws one; people read and file, and withdraw only their own (the owner check).
   'GET /api/memory/waiting': ['no', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'PUT /api/memory/brand/:id/approved': ['no', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'GET /api/skills': ['ok', 'ok', 'ok', 'ok', 'no', 'no', 'no'],
@@ -300,6 +300,11 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'POST /api/team-requests': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
   'PUT /api/team-requests/:id/status': ['no', 'no', 'ok', 'ok', 'no', 'no', 'no'],
   'PUT /api/team-requests/:id/withdrawn': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  // Rows 84 and 85 (P6a brand skills): a skill's text is brand data (the Inhouse team under a live grant, audited);
+  // people delete a brand skill, and its maker or an admin is the store's rule. The Inhouse team deletes none.
+  'GET /api/skills/:name': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  'POST /api/skills/brand/:id/delete': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  'GET /api/routines/:id/runs': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },
@@ -620,8 +625,8 @@ describe('every Inhouse brand_data read has a support.access line (P3 W1 PR 1: "
   })
 })
 
-// Review fold (Sonnet L1, #328): the oracle answers rows 79 and 80 the same whether they're technical or baseline (every
-// principal gets `ok` either way), so their classes are pinned here, on both copies of the rows.
+// Review fold (Sonnet L1, #328): the oracle answers rows 79 and 80 the same whether they are technical or baseline
+// (every principal gets `ok` either way), so their classes are pinned here, on both copies of the rows.
 describe('P6a rows whose class the oracle cannot see', () => {
   it('row 79 is technical and row 80 is baseline', () => {
     for (const rows of [DESIGN_ROWS, accessMatrix]) {

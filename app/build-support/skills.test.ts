@@ -2,11 +2,15 @@
 //  1. the Skills page's list and the runner's allowlist drift (a skill listed but never loadable, or loadable but hidden);
 //  2. an `OUR_SKILLS` entry has no SKILL.md, or its front matter names another skill;
 //  3. a SKILL.md names a tool the agent doesn't have, or drops the outside-reference rule or the data rule;
-//  4. the spreadsheet's escape rule mangles an honest negative number, or lets a formula through.
+//  4. the spreadsheet's escape rule mangles an honest negative number, or lets a formula through;
+//  5. a SKILL.md changes and the product's page keeps the old date (the Worker's copy pins each file by its hash);
+//  6. Skill Creator ships without its licence and notice, tells the agent to write a skill as a file, or drops the rule
+//     against skills that send data out.
+import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { ALLOWED_SKILLS, BUILT_IN_TOOLS, OUR_SKILLS, PLUGIN_NAME } from '../runner/src/guards/lists.ts'
-import { SKILLS } from '../server/skills/list.ts'
+import { OUR_SKILL_CHANGES, SKILLS } from '../server/skills/list.ts'
 
 const dir = new URL('../runner/image/plugin/skills/', import.meta.url)
 const ours = OUR_SKILLS.map(s => s.slice(PLUGIN_NAME.length + 1))
@@ -18,13 +22,41 @@ const ALLOWED_TOOLS = ['Bash', 'Read', 'Write', 'Edit']
 describe('the skills list', () => {
   it("the page's list is exactly the runner's allowed skills (plugin prefix dropped)", () => {
     expect(SKILLS.map(s => s.n).sort()).toEqual(ALLOWED_SKILLS.map(s => s.replace(`${PLUGIN_NAME}:`, '')).sort())
-    expect(SKILLS.map(s => s.n).sort()).toEqual(['dataviz', 'pdf', 'spreadsheet', 'word'])
+    expect(SKILLS.map(s => s.n).sort()).toEqual(['dataviz', 'pdf', 'skill-creator', 'spreadsheet', 'word'])
   })
   it('every entry shows on the product with no stage tag', () => {
     for (const s of SKILLS) expect(s.need).toBe(0)
   })
   it('the skill folders on disk are exactly ours', () => {
     expect(readdirSync(dir).sort()).toEqual([...ours].sort())
+  })
+  it("each SKILL.md's date on its page changed with the file (update both in server/skills/list.ts when a file changes)", () => {
+    expect(Object.keys(OUR_SKILL_CHANGES).sort()).toEqual(SKILLS.map(s => s.n).sort())
+    for (const name of ours) {
+      const c = OUR_SKILL_CHANGES[name]!
+      expect(createHash('sha256').update(text(name)).digest('hex'), `${name}: the SKILL.md changed; set its changedOn and sha256 in server/skills/list.ts`).toBe(c.sha256)
+      expect(c.changedOn, name).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    }
+  })
+})
+
+describe('Skill Creator (vendored from anthropics/skills, Apache 2.0)', () => {
+  const folder = new URL('skill-creator/', dir)
+  const t = text('skill-creator')
+  it('ships with its licence and a notice of what changed, and the file says it was changed', () => {
+    expect(readdirSync(folder).sort()).toEqual(['LICENSE.txt', 'NOTICE', 'SKILL.md'])
+    expect(readFileSync(new URL('LICENSE.txt', folder), 'utf8')).toContain('Apache License')
+    const notice = readFileSync(new URL('NOTICE', folder), 'utf8')
+    expect(notice).toContain('github.com/anthropics/skills')
+    expect(notice).toContain('Changes made by Inhouse')
+    expect(t).toMatch(/^---\nname: skill-creator\ndescription: .{10,}\n---\n\n<!-- Adapted by Inhouse from Anthropic's skill-creator/)
+  })
+  it('saves through skill_save, never as a file, and refuses skills that send data out', () => {
+    expect(t).toContain('`skill_save`')
+    expect(t).toContain('Never write a skill as a file')
+    expect(t).toContain("send the brand's data somewhere the person didn't ask for")
+    // What the guards refuse is gone: subagent eval runs, scripts, a browser viewer, `claude -p`, packaging.
+    for (const cut of ['claude -p', 'run_loop', 'generate_review', 'package_skill', 'nohup', 'present_files', 'webbrowser']) expect(t, cut).not.toContain(cut)
   })
 })
 

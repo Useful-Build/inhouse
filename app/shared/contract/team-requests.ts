@@ -29,7 +29,7 @@ export const TeamRequestRecordSchema = z.strictObject({
 })
 export type TeamRequestRecord = z.infer<typeof TeamRequestRecordSchema>
 
-/** Route 80: newest first, at most 200. */
+/** Route 80: newest first, at most 200. The window view lists open first, then recently closed. */
 export const TeamRequestsListSchema = z.strictObject({ items: z.array(TeamRequestRecordSchema) })
 export type TeamRequestsList = z.infer<typeof TeamRequestsListSchema>
 

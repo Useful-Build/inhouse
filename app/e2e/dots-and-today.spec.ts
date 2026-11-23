@@ -52,14 +52,14 @@ test('All chats has the plain background; full-shell Skyspace sits behind sideba
 
   // A chat with messages keeps a softly quieted Skyspace background behind messages.
   await page.goto('/?demo#/chats')
-  await expect(page.getByRole('textbox', { name: 'Message your Inhouse agent' })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Message Inhouse' })).toBeVisible()
   await expect(page.locator('[data-chat-msg]').first()).toBeVisible()
   await skyspaceBehind(page, 'subtle', ['#sidebar', '[data-chat-msg]', '[data-composer]'])
   await shot(page, 'chat-1440')
 
   // An empty new chat keeps the full hero Skyspace with centered composer.
   await page.goto('/?demo#/chats/new')
-  await expect(page.getByRole('heading', { name: 'What do you want to know?' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'What should we look into?' })).toBeVisible()
   await skyspaceBehind(page, 'hero', ['#sidebar', '[data-composer]'])
 })
 

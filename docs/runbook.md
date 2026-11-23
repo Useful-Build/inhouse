@@ -17,6 +17,9 @@ The monitor comments on the open issue instead of opening a second one. A passin
 The `deploy` workflow (`deploy.yml`) uploads a new Worker version, smokes its Version URL, then promotes it to 100%.
 
 - Failed before "Promote the version to 100%" (build, upload or the Version URL smoke): the old version is still live.
+- The promote retries only Cloudflare's "version not found" (code 100146) answer, which the API can give for a few
+  seconds after an upload: after 3, 6, 9 and 12 s. A promote that failed with 100146 on every try left the old version
+  live; re-run the job.
 - Failed at or after the promote (custom domain, active-deployment check or live smoke): the new version may be live.
   Check `npx wrangler deployments list --name inhouse-app` (in `app/`) before you decide.
 - The release is created last, only after every step passed. A failed run has no release. A red run whose `deploy`
@@ -87,3 +90,14 @@ Within a day, open an issue that holds:
 - The test or check that would have caught it before it shipped. Write that test, or file it as its own issue.
 
 Then revert or fix the bad commit on a branch and let the normal change loop ship it.
+
+## Rotate `HUB_TOKEN_KEYS` (connector hub)
+
+Rotate the connector hub's token encryption keys without downtime:
+
+1. Add the new key to `keys` in `HUB_TOKEN_KEYS`, keeping `current` unchanged. Set it with `wrangler secret put HUB_TOKEN_KEYS` (through a secret card; this deploys a new version).
+2. Update `current` to the new `kid` and put again. New envelopes seal under the new key while old envelopes still decrypt.
+3. Wait for scheduled refreshes to re-seal existing records (Shopify refreshes about every 12 h; reads also re-seal lazily), or call `ServerGateway.reencrypt(scope, accountId)` per account.
+4. Once `ServerGateway.status` shows the new `kid` for every account, remove the old key from `keys` and put again.
+
+Removing a key still in use marks that record `key_unavailable`: a client-credentials account discards it and re-grants (`signin_key_missing`); an OAuth account requires a reconnect.

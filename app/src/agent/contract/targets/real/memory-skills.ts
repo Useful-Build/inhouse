@@ -22,7 +22,7 @@ export const MS_SERVED = ['waitingMemory', 'reviewMemory', 'requestTool', 'reque
  * is held by `src/agent/http/team-requests.test.ts` and the API specs instead.
  */
 export const MS_EXEMPT: Readonly<Record<string, string>> = {
-  sendTeamRequest: "the shared case compares `getSnapshot().teamRequests[0]` with a mock-shaped fixture (its title, 'From Settings' and status 'Requested'), but the real client makes that list from the server's open requests (title from the words, status 'Sent', the server's time)",
+  sendTeamRequest: "the shared case compares `getSnapshot().teamRequests[0]` with a mock-shaped fixture (its title, 'From Settings' and status 'Requested'), but the real client maps route 80's open and recently closed records (title from the words, an open status of 'With the team', the server's time)",
 }
 
 /** The paths the client reads P6a's resources from (route 79 and route 80's list). */

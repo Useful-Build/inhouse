@@ -18,7 +18,7 @@ import { READ_SIDE_CASES } from '../cases.ts'
 import { READ_SIDE_CAP_USD } from '../args.ts'
 import { readSideShopOf } from '../shops.ts'
 import { createMorningDoor, type MorningDoor } from '../../morning-check/door.ts'
-import { createDoor, D1_NOW_MS, DoorRefusal, PER_PR_DB, wranglerRunner, type MemoryDoor, type RunSql } from '../../targets/door.ts'
+import { createDoor, D1_NOW_MS, DoorRefusal, PER_PR_DB, wranglerQueries, wranglerRunner, type MemoryDoor, type RunSql } from '../../targets/door.ts'
 import {
   accessHeaders, casePerson, createProductTarget, EVAL_ACCESS_CLIENT_ID_VAR, EVAL_ACCESS_CLIENT_SECRET_VAR, EVAL_AUD_VAR, EVAL_BRAND_FLAG,
   EVAL_CAP, EVAL_D1_NAME, EVAL_ISSUER_JWK_FILE, EVAL_ORIGIN_VAR, EVAL_PEOPLE, EVAL_WRANGLER_CONFIG, productSession, testIssuerSignIn, type Api,
@@ -26,6 +26,7 @@ import {
 import { SEED_INHOUSE } from '../../../server/seed/brand.ts'
 import { EVAL_BUCKET } from '../../exfiltration/store-data/transcripts.ts'
 import type { ExfilSpec, PersonKey, RunContext, SeedFact, Session } from '../../types.ts'
+import { brandSkillFixture, fixtureDatabase } from './brand-skills.ts'
 import { pinEffort, type SettingsApi } from './effort.ts'
 import { EXTRACT_CAPS } from './extract.ts'
 import { createSessionReader, type SessionReader } from './r2.ts'
@@ -158,7 +159,8 @@ export async function wireEval(o: EvalOptions): Promise<Wired> {
   const inhouseAud = env[EVAL_INHOUSE_AUD_VAR]
   if (!origin || !inhouseOrigin || !inhouseAud) throw new Error(`read-side: refusing: ${EVAL_ORIGIN_VAR}, ${EVAL_INHOUSE_ORIGIN_VAR} and ${EVAL_INHOUSE_AUD_VAR} must all be set`)
   const doFetch = o.fetch ?? fetch
-  const run = o.run ?? wranglerRunner({ database: env[EVAL_D1_NAME] ?? '', config: env[EVAL_WRANGLER_CONFIG] ?? '', env })
+  const wrangler = { database: env[EVAL_D1_NAME] ?? '', config: env[EVAL_WRANGLER_CONFIG] ?? '', env }
+  const run = o.run ?? wranglerRunner(wrangler)
   const door: MemoryDoor = createDoor(run)
   const shops: MorningDoor = createMorningDoor(run, Date.now, READ_SIDE_SHOPS)
   const signIn = o.signIn ?? testIssuerSignIn(env)
@@ -204,6 +206,14 @@ export async function wireEval(o: EvalOptions): Promise<Wired> {
     const me = await admin('GET', '/api/me')
     if (me.status !== 200 || (me.json as { evalBrand?: unknown } | null)?.evalBrand !== true) throw new Error(`read-side: refusing: /api/me as the eval Admin answered ${me.status} without evalBrand: true`)
     const teamTable = await checkTables(run)
+    const hasBrandSkills = o.cases.some(c => c.source === 'brand_skill')
+    const memberId = (me.json as { memberId?: unknown }).memberId
+    if (hasBrandSkills) {
+      if (typeof memberId !== 'string') throw new Error('read-side: /api/me as the eval Admin gave no member id')
+      if (!(await createRowReader(run, { teamRequestsTable: teamTable }).hasTable('brand_skills'))) {
+        throw new DoorRefusal('refusing: the database has no brand_skills table')
+      }
+    }
     await sessions.preflight()
     if (o.pageOrigin !== null && o.cases.some((c) => c.source === 'web_page')) await checkPage(o.pageOrigin, doFetch)
     // The lease under targets/product.ts's own tag (its first seed renews it), then the cap and the month's room for the budget.
@@ -224,6 +234,9 @@ export async function wireEval(o: EvalOptions): Promise<Wired> {
       seed: (memory, ctx, exfil) => product.seed(memory, ctx, exfil),
       setWebfetchHosts: (hosts) => door.setWebfetchHosts(hosts),
       shop: { set: (h) => shops.setShop(h), clear: () => shops.clearShop() },
+      ...(hasBrandSkills && typeof memberId === 'string'
+        ? { brandSkill: (input: Parameters<typeof brandSkillFixture>[2]) => brandSkillFixture(fixtureDatabase(wranglerQueries(wrangler)), memberId, input) }
+        : {}),
       rows: { ...rows, nowMs: nowOf(run) },
       sessions,
       caseApi: (caseId) => {
@@ -268,7 +281,8 @@ export interface ProofOptions {
 export async function wireProof(o: ProofOptions): Promise<Wired> {
   const database = o.env[EVAL_D1_NAME] ?? ''
   if (database !== `inhouse-sbx-pr${o.pr}-db` || !PER_PR_DB.test(database)) throw new DoorRefusal(`refusing: the proof runs on PR ${o.pr}'s test database (inhouse-sbx-pr${o.pr}-db) only, not ${JSON.stringify(database)}`)
-  const run = o.run ?? wranglerRunner({ database, config: o.env[EVAL_WRANGLER_CONFIG] ?? '', env: o.env, rule: 'morning-check' })
+  const wrangler = { database, config: o.env[EVAL_WRANGLER_CONFIG] ?? '', env: o.env, rule: 'morning-check' } as const
+  const run = o.run ?? wranglerRunner(wrangler)
   const door = createDoor(run)
   const shops = createMorningDoor(run, Date.now, READ_SIDE_SHOPS)
   const me = await o.raw.current('GET', '/api/me')
@@ -313,6 +327,7 @@ export async function wireProof(o: ProofOptions): Promise<Wired> {
     seed,
     setWebfetchHosts: (hosts) => door.setWebfetchHosts(hosts),
     shop: { set: (h) => shops.setShop(h), clear: () => shops.clearShop() },
+    brandSkill: input => brandSkillFixture(fixtureDatabase(wranglerQueries(wrangler)), memberId, input),
     rows: { ...rows, nowMs: nowOf(run) },
     sessions,
     caseApi: () => o.raw.current,

@@ -4,6 +4,7 @@
 // schemas, so each is defined once. What stays here: the client interface, its inputs, the error class and constants.
 import type { Stage, StageIndex, Scenario, AgentErrorCode, Instant } from '../../shared/contract/common'
 import type { RoutineRun } from '../../shared/contract/routine'
+import type { RoutineRunHistory } from '../../shared/contract/routines'
 import type { Trace } from '../../shared/contract/trace'
 import type { ModelMode } from '../../shared/contract/model'
 import type { LibraryFile } from '../../shared/contract/library'
@@ -23,10 +24,11 @@ import type { RunFrame } from '../../shared/contract/run-event'
 export type { Stage, StageIndex, Scenario, Effort, AgentErrorCode, ErrorReason, ResourceKey, ResourceStatus, Instant, Money, ClockTime, Prose } from '../../shared/contract/common'
 export type { AgentMeta } from '../../shared/contract/meta'
 /** The lists the agent's work fills, which `refresh` reads again (the resource each shows by). */
-export type RefreshList = Extract<ResourceKey, 'library' | 'problems' | 'activity' | 'notifications' | 'requests'>
+export type RefreshList = Extract<ResourceKey, 'library' | 'problems' | 'activity' | 'notifications' | 'requests' | 'skills'>
 export type { ProblemSource, ProblemFact, Draft, DraftItem, Problem } from '../../shared/contract/problem'
 export type { ToolDetail, CatalogTool, ToolChannel, ToolSetup, ToolsData } from '../../shared/contract/tools'
 export type { RoutineDef, RoutineRun } from '../../shared/contract/routine'
+export type { RoutineHistoryRun, RoutineRunHistory, RoutineRunOutcome } from '../../shared/contract/routines'
 export type { SkillDef, SkillSuggestion } from '../../shared/contract/skill'
 export type { TraceStepKind, TraceStep, Trace } from '../../shared/contract/trace'
 export type { ModelMode } from '../../shared/contract/model'
@@ -76,9 +78,9 @@ export class AgentError extends Error {
   readonly code: AgentErrorCode
   /** Why, when the code alone doesn't say (not invited, the last Admin). */
   readonly reason?: ErrorReason
-  /** On a `conflict` from a stale `ifRev`: the record as it is now. The snapshot already holds it. */
-  readonly current?: Record<string, unknown>
-  constructor(code: AgentErrorCode, message: string, extra: { reason?: ErrorReason; current?: Record<string, unknown> } = {}) {
+  /** On a stale `ifRev`, the current record or null if it is gone. */
+  readonly current?: Record<string, unknown> | null
+  constructor(code: AgentErrorCode, message: string, extra: { reason?: ErrorReason; current?: Record<string, unknown> | null } = {}) {
     super(message); this.name = 'AgentError'; this.code = code
     if (extra.reason !== undefined) this.reason = extra.reason
     if (extra.current !== undefined) this.current = extra.current
@@ -154,6 +156,15 @@ export interface AgentClient {
   setToggle(key: string, on: boolean): Promise<void>
   requestTool(key: string, on: boolean): Promise<void>
   requestSkill(name: string): Promise<void>
+  /** A skill's page is open: fetches its instructions (`body` in `read().skills`) if they aren't in yet. `read()` changes when
+   *  they arrive; it resolves then, or at once when there's nothing to fetch. */
+  loadSkill(name: string): Promise<void>
+  /**
+   * P6a brand skills: deletes one of the brand's own skills (`mine`) by name, at the rev last read. Its maker or an
+   * admin may (`canChange`); anyone else, or one of the Inhouse team's skills, is refused. Gone from `read().skills` at
+   * once, and back if the server refuses.
+   */
+  deleteSkill(name: string): Promise<void>
   setToolPaused(key: string, paused: boolean): Promise<void>
   forgetMemory(key: string, forgotten: boolean): Promise<void>
   /**
@@ -172,6 +183,12 @@ export interface AgentClient {
   /** A member's photo as a data URL. Null removes it, so initials show; Reset demo brings the sample photo back. */
   setPhoto(memberId: string, dataUrl: string | null): Promise<void>
   sendTeamRequest(req: TeamRequest): Promise<void>
+  /**
+   * The person withdraws their own open request, named as the team window's row names it (its title and when it was asked).
+   * In the product, it resolves once withdrawn. It rejects with not_found if missing or not theirs, `conflict` if
+   * already closed, or the network's error. The demo's window handles the session's withdrawal and Undo.
+   */
+  withdrawTeamRequest(ref: { title: string; at: Instant }): Promise<void>
   /** The bell's notifications, newest first. Stable between changes. */
   listNotifications(): AgentNotification[]
   /** Bell notifications read: the one opened, or every listed one for Mark all as read. */
@@ -192,6 +209,8 @@ export interface AgentClient {
   setAside(id: string, reason: SetAsideReason | null): Promise<void>
   /** Run a routine now, outside its schedule. `id` is the routine's own `id`. */
   runRoutine(id: string): Promise<RoutineRun>
+  /** A routine's own recent runs, newest first (at most `ROUTINE_RUNS_MAX`). Rejects (not found) for a routine it doesn't have. */
+  routineRunHistory(id: string): Promise<RoutineRunHistory>
   deleteRoutine(id: string): Promise<void>
   /** Undo a routine delete. */
   restoreRoutine(id: string): Promise<void>

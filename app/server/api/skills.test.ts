@@ -1,5 +1,6 @@
-// Route 79, `GET /api/skills` (P6a W3). Ways it can fail, written first: the list isn't the four literals below (an extra,
-// a missing one, a stage tag on any); a query string is accepted.
+// Route 79, `GET /api/skills` (P6a W3, and Skill Creator from P6a's brand skills). Ways it can fail, written first: the
+// list isn't the five literals below with no brand skill saved (an extra, a missing one, a stage tag on any); a query
+// string is accepted. The brand's own skills after ours: server/brand-skills/store.test.ts.
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import { openStores } from '../db/stores.ts'
@@ -14,11 +15,12 @@ const get = async (path: string) => {
 }
 
 describe('route 79', () => {
-  it('lists dataviz and our three, none with a stage tag', async () => {
+  it('lists dataviz and our four, none with a stage tag', async () => {
     const { status, body } = await get('/api/skills')
     expect(status).toBe(200)
     expect((body as { n: string; need: number; by: string }[]).map(s => [s.n, s.need, s.by])).toEqual([
       ['dataviz', 0, 'Inhouse team'], ['pdf', 0, 'Inhouse team'], ['word', 0, 'Inhouse team'], ['spreadsheet', 0, 'Inhouse team'],
+      ['skill-creator', 0, 'Inhouse team'],
     ])
   })
   it('refuses a query string', async () => {

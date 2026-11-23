@@ -20,7 +20,7 @@ export interface ToolResult {
   isError?: true
 }
 
-/** The 20 tool names of the registry (agent-tools); `tools/index.ts` checks at load that they equal the registry's. */
+/** The 21 tool names of the registry (agent-tools, plus P6a's `skill_save`); `tools/index.ts` checks at load that they equal the registry's. */
 export const INHOUSE_TOOL_NAMES = [
   'memory_search', 'memory_save', 'memory_update', 'memory_forget', 'memory_list',
   'approval_request', 'approval_get', 'approval_list', 'approval_withdraw',
@@ -29,6 +29,7 @@ export const INHOUSE_TOOL_NAMES = [
   'history_search', 'history_read',
   'notification_send',
   'team_request_create', 'team_request_list',
+  'skill_save',
 ] as const
 export type InhouseToolName = (typeof INHOUSE_TOOL_NAMES)[number]
 
