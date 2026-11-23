@@ -46,6 +46,38 @@ test('Review window: Previous and Next step through the cards that need you, in 
   expect(box.x).toBeGreaterThanOrEqual(sidebar.x + sidebar.width)
   const room = 1440 - (sidebar.x + sidebar.width)
   expect(Math.abs(box.x + box.width / 2 - (sidebar.x + sidebar.width + room / 2)), 'centred in that room').toBeLessThanOrEqual(12)
+
+  // Escape on the window's More menu closes the menu only; the next Escape closes the window.
+  await win.getByRole('button', { name: 'More', exact: true }).click()
+  const more = page.getByRole('menu', { name: 'More actions' })
+  await expect(more).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(more).toHaveCount(0)
+  await expect(win).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+})
+
+test('At 800 wide with the sidebar open, the review window stacks its brief over the draft and the team window keeps clear of the sidebar', async ({ fx, page }) => {
+  await page.setViewportSize({ width: 800, height: 900 })
+  await start(page, fx, '#/today')
+  const sidebarRight = async () => { const b = (await page.locator('#sidebar').boundingBox())!; return b.x + b.width }
+  await page.getByRole('main').getByRole('article').first().getByRole('button', { name: /^Review/ }).first().click()
+  const win = page.getByRole('dialog')
+  const draft = win.getByRole('article', { name: /draft$/ })
+  await expect(draft).toBeVisible()
+  const w = (await win.boundingBox())!, d = (await draft.boundingBox())!, h = (await win.getByRole('heading', { level: 2 }).boundingBox())!
+  expect(w.x, 'the window sits right of the sidebar').toBeGreaterThanOrEqual(await sidebarRight())
+  // One column: the draft sits under the title and takes the window's width less its padding, never a sliver beside it.
+  expect(d.y).toBeGreaterThan(h.y + h.height)
+  expect(d.width).toBeGreaterThan(w.width * 0.75)
+  await page.keyboard.press('Escape')
+  await expect(win).toHaveCount(0)
+
+  await accountItem(page, /^Your Inhouse team/)
+  const t = (await team(page).boundingBox())!
+  expect(t.x, 'the team window sits right of the sidebar').toBeGreaterThanOrEqual(await sidebarRight())
+  expect(t.x + t.width).toBeLessThanOrEqual(800)
 })
 
 test("Activity: a line that needs you opens a side sheet whose Review the draft opens that draft's review window", async ({ fx, page }) => {
@@ -66,6 +98,10 @@ test("Activity: a line that needs you opens a side sheet whose Review the draft 
   const win = page.getByRole('dialog')
   await expect(win.getByRole('heading', { level: 2 })).toBeVisible()
   await expect(win.getByRole('button', { name: 'More', exact: true })).toBeVisible()
+  // Closing the review window gives focus back to the Activity line the sheet was opened from.
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(row).toBeFocused()
 })
 
 test('Team window: Withdraw moves your open request to Closed with an Undo, and the account menu counts it', async ({ fx, page }) => {

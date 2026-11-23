@@ -167,7 +167,17 @@ test('S5: Watch shows what the agent suggests and Ask starts a chat; in Run a ha
   await expect(panel(page)).toContainText('Your Inhouse agent suggests')
   await expect(panel(page)).toContainText('Reorder 600 from Kestrel Supply today.')
   await expect(panel(page)).toContainText("For now your agent only suggests. It doesn't send anything.")
-  await expect(panel(page).getByRole('button', { name: 'Set aside', exact: true })).toBeVisible()
+  // Watch's footer: Ask Inhouse, then More holding the ways to set it aside (no draft, so no Don't send).
+  await expect(panel(page).getByRole('button', { name: 'Set aside', exact: true })).toHaveCount(0)
+  await panel(page).getByRole('button', { name: 'More', exact: true }).click()
+  const more = page.getByRole('menu', { name: 'More actions' })
+  await expect(more.getByRole('menuitem')).toHaveCount(2)
+  await expect(more.getByRole('menuitem').nth(0)).toHaveAccessibleName('Snooze until tomorrow')
+  await expect(more.getByRole('menuitem').nth(1)).toHaveAccessibleName('Not a problem')
+  // Escape closes only the menu; the window stays.
+  await page.keyboard.press('Escape')
+  await expect(more).toHaveCount(0)
+  await expect(panel(page)).toBeVisible()
   // Ask Inhouse starts a chat about the problem.
   await panel(page).getByRole('button', { name: 'Ask Inhouse', exact: true }).click()
   await expect(panel(page)).toHaveCount(0)

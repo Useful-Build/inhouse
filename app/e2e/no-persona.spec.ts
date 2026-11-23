@@ -197,16 +197,29 @@ for (const size of SIZES) {
         const rows = main.locator('button[data-activity-row]')
         expect(await rows.count() > 0 || scenario === 'First day' || scenario === 'Loading', 'Activity lists rows').toBe(true)
         const nRows = await rows.count()
+        // How many sheets showed their steps: a sheet whose steps never render would pass the loop alone.
+        let stepsShown = 0
         for (let i = 0; i < nRows; i++) {
           await rows.nth(i).click()
           const sheet = page.getByRole('dialog')
           await expect(sheet).toBeVisible()
           const how = sheet.getByRole('button', { name: 'How your agent worked it out' })
-          if (await how.count()) await how.click()
+          if (await how.count()) {
+            await how.click()
+            // Each step is one plain sentence: a capital, a full stop, and no timings or costs.
+            const steps = sheet.locator('#activity-steps > li')
+            await expect(steps.first()).toBeVisible()
+            for (const text of await steps.allInnerTexts()) {
+              expect(text.trim(), `${label} activity row ${i}: a step reads as a sentence`).toMatch(/^[A-Z0-9#"].*[.!?]$/s)
+              expect(text, `${label} activity row ${i}: no mechanics in a step`).not.toMatch(/\bms\b|\btokens?\b|\$0\.\d/i)
+            }
+            stepsShown++
+          }
           await check(page, `${label} activity row ${i}`)
           await page.keyboard.press('Escape')
           await expect(page.getByRole('dialog')).toHaveCount(0)
         }
+        if (nRows > 0) expect(stepsShown, `${label}: at least one Activity line shows how the agent worked it out`).toBeGreaterThan(0)
 
         // Activity filters: every tab, including the empty states.
         for (const tab of ['Needs you', 'Changes', 'All']) {
