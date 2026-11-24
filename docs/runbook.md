@@ -8,6 +8,7 @@ Use this when the live site is broken or looks wrong. Read it top to bottom. Rol
 |---|---|---|
 | `Production check failing` issue, label `monitor`, assigned to the owner | GitHub issues, with the usual issue email | The hourly check (workflow `monitor`, `monitor.yml`) failed: the live page didn't answer 200, isn't the app's page, a deep link or its entry script didn't load. A `deploy` run that fails at or after the promote also opens or comments on this issue. |
 | Failed `deploy` run | GitHub Actions, with the failed-run email | A push to `main` didn't fully ship (see "What a failed deploy leaves live"). |
+| `House health alert` issue, label `house-health`, assigned to the owner, in the private `inhouse-ops` repo | GitHub issues, with the usual issue email | The ops repo's `house-health.yml` (every 6 hours, on the ops runner) read the house's `/api/health` and found a red signal, amber on `privacy_requests`, `shopify_webhook_secrets` or `egress_record_failed`, a backup or retention signal that isn't ok, or no usable answer. It comments only when the alerts change (a signal, its status or its counts) and closes the issue when health is clean. Silent while the Mac or its runner is off. |
 | `client_error` lines | Workers Logs | Browsers reported a crash or an unhandled error (`POST /api/client-error`). Nobody is paged on these. Look at them in triage. |
 
 The monitor comments on the open issue instead of opening a second one. A passing check comments and closes it.
