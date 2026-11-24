@@ -68,6 +68,7 @@ export const retentionRules: Readonly<Record<string, RetentionRule>> = {
   // P4 W2, W3 (the steps group).
   routine_slots: { kind: 'custom', ages: [steps('claimed_at_ms')], why: 'skips a slot a today_items row still references (today_items.slot_key, no ON DELETE: 0220)' },
   today_items: { kind: 'd1', ageColumn: 'created_at_ms', idColumn: 'id' },
+  notify_sends: { kind: 'd1', ageColumn: 'at_ms', idColumn: 'id' },
   today_aside: { kind: 'd1', ageColumn: 'at_ms', idColumn: 'item_id' },
   // P4 W4 (the steps group). `activity_no_update` forbids UPDATE only, so DELETE works.
   activity_lines: { kind: 'd1', ageColumn: 'at_ms', idColumn: 'n' },
@@ -107,6 +108,7 @@ export const retentionGroups: Readonly<Record<string, PeriodName>> = {
   routine_slots: 'steps',
   today_items: 'steps',
   today_aside: 'steps',
+  notify_sends: 'steps',
   activity_lines: 'steps',
   notices: 'steps',
   notice_reads: 'steps',

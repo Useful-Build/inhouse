@@ -28,6 +28,7 @@
 //   and the object). On the remote per-PR deploy the object may run in another isolate, so its lines may be missing.
 // - `transcripts`: the R2 session store's objects (`sessions/`, the runner's transcripts) as texts. Answers `{ texts }`.
 //   Empty in the local test build (no container writes a session); filled on the per-PR remote deploy.
+import { ACT } from '../stage/watch.ts'
 import { z } from 'zod'
 import type { CallerScope, ConnectGateway, HubResult } from '../../hub/index/contract.ts'
 import type { RunGrant } from '../do/brand-agent/tokens.ts'
@@ -148,7 +149,8 @@ async function hubOp(env: TestFakesEnv, op: Extract<ProductOp, { op: 'hub' }>): 
   const res = await handleHub(
     new Request('https://egress.invalid/hub/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(message) }),
     grant,
-    hubRouteDeps(recorder, entry => console.log(entry)),
+    // This hook exercises the hub binding’s own tool rules. The production egress tests cover the Watch gate.
+    hubRouteDeps(recorder, entry => console.log(entry), async () => ACT),
   )
   // The route's own answer is read so the call completes as the egress would; the spec gets the binding's HubResult.
   await res.text()

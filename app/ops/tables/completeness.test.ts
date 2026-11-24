@@ -12,6 +12,7 @@ import hubConfig from '../../wrangler.hub.jsonc?raw'
 import productConfig from '../../wrangler.product.jsonc?raw'
 import * as r2Keys from '../../server/db/r2-keys.ts'
 import { R2_PREFIXES } from '../../server/db/r2-keys.ts'
+import { PERSON_EXPORT_SHARED_CONFIG } from '../export/export.ts'
 import { tables } from './index.ts'
 import type { TableEntry } from './types.ts'
 
@@ -156,7 +157,7 @@ describe('the table registry', () => {
     const ownerKeys: Record<string, string> = { members: 'id', usage_turns: 'member_id' }
     const shared = registry.filter(e => e.kind === 'd1' && e.retention === 'account'
       && e.personKeys.some(key => key !== ownerKeys[e.name]))
-    // The exporter strips the other person's data only for members.
-    expect(shared.map(e => e.name)).toEqual(['members'])
+    // Member rows and shared connector config have explicit person-export projections.
+    expect(shared.map(e => e.name)).toEqual(['members', ...PERSON_EXPORT_SHARED_CONFIG.filter(name => name === 'connector_accounts')])
   })
 })

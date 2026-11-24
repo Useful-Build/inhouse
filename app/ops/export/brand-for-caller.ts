@@ -1,6 +1,6 @@
 // "Export everything" for the person asking (route 95, P8a D): the brand's shared data, and nothing of another person's
-// that the access matrix wouldn't show this caller. Interim default (master plan, standing decision 10: option 1,
-// pending Wasim). C1's other two scopes stay as they were: `person` (one member's own export) and `brand` (the ops CLI's
+// that the access matrix wouldn't show this caller (master plan, standing decision 10, option 1).
+// C1 also has `person` (one member's own export) and `brand` (the ops CLI's
 // whole-brand export).
 //
 // Every `export: true` store in the registry declares here how this scope reads it (brand-for-caller.test.ts fails on a store
@@ -105,5 +105,31 @@ export const BRAND_FOR_CALLER: Readonly<Record<string, CallerPolicy>> = {
       return rest
     },
   },
+  // Routes 70 and 73: shared connection and channel metadata. Allowlist fields independently of the stored schema.
+  connector_accounts: {
+    kind: 'rows',
+    why: 'route 70: connection metadata without attribution or internal request ids',
+    where: () => ({ where: '1', params: [] }),
+    project: ({ account_id, connector, last_state, last_state_at_ms, connected_at_ms, disconnected_at_ms }) =>
+      ({ account_id, connector, last_state, last_state_at_ms, connected_at_ms, disconnected_at_ms }),
+  },
+  notify_channels: {
+    kind: 'rows',
+    why: 'route 73: listed channels without attribution or internal request ids',
+    where: () => ({ where: 'removed_at_ms IS NULL', params: [] }),
+    project: ({ channel_id, name, alerts }) => ({ channel_id, name, alerts }),
+  },
+  notify_channel_list: {
+    kind: 'rows',
+    why: 'route 73: shared channel list revision',
+    where: () => ({ where: '1', params: [] }),
+    project: ({ rev, updated_at_ms }) => ({ rev, updated_at_ms }),
+  },
   brand_skills: { kind: 'whole', why: 'route 84: brand data' },
 }
+
+/** P5 stores excluded from every export by the registry. */
+export const P5_EXPORT_EXCLUSIONS = {
+  notify_sends: 'internal caps and delivery deduplication, with personal recipient ids',
+  SignIn: 'sealed connector credentials and pending OAuth state',
+} as const

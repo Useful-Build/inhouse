@@ -529,7 +529,7 @@ export class AgentCore {
         promptApps = built.apps === undefined || built.apps === null ? null : JSON.stringify(built.apps)
       } catch (err) {
         // The error's name only: a builder's message could carry hub or D1 text (P8a's log guard, A10).
-        console.error({ event: 'turn_prompt_failed', turnId, error: err instanceof Error ? err.name : typeof err })
+        console.error({ event: 'turn_prompt_failed', turnId, error: safeError(err) })
         systemPrompt = SYSTEM_PROMPT_V2
         promptVersion = 2
       }

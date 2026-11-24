@@ -54,6 +54,21 @@ beforeAll(async () => {
   seeded = await seedBrand(db, openStores(env), base)
 })
 
+it('ages the notice send ledger strictly at the Activity and steps cutoff', async () => {
+  const now = nextClock()
+  const cutoff = now - DEFAULT_DAYS.steps * DAY
+  const old = token()
+  const edge = token()
+  for (const [id, at] of [[old, cutoff - 1], [edge, cutoff]] as const) {
+    await db.prepare("INSERT INTO notify_sends (id, source, system_key, notice_kind, actor_id, kind, target, day, notice_sha256, outcome, at_ms) VALUES (?, 'routines', ?, 'routine_failed', ?, 'bell', 'admins', '2026-11-24', 'invented', 'posted', ?)")
+      .bind(id, id, SYSTEM_MEMBER_ID, at).run()
+  }
+  const { result } = await retain(['notify_sends'], now)
+  expect(result.removed.notify_sends).toBe(1)
+  expect(await has('notify_sends', 'id = ?', old)).toBe(0)
+  expect(await has('notify_sends', 'id = ?', edge)).toBe(1)
+})
+
 describe('chats (failure 1)', () => {
   it('removes a chat whose last activity is past the cutoff, with its messages, files and transcripts; keeps every message and transcript part of a chat with recent activity, however old its first message', async () => {
     const now = nextClock()

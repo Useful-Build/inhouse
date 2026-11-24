@@ -587,7 +587,7 @@ describe('canRowsProblems', () => {
 describe('P3 auth: release, smoke and ownerObject', () => {
   const key = (r: AccessRow) => `${r.method} ${r.pattern}`
   /** The rows the release job may call, and the ones smoke may call, as section 3's table lists them. */
-  const RELEASE_ROWS = ['POST /api/ops/drain', 'GET /api/ops/drain', 'DELETE /api/ops/drain', 'POST /api/ops/warmup', 'POST /api/ops/tasks/revive', 'POST /api/ops/alarm', 'POST /api/ops/privacy-requests/:id/close', 'POST /api/ops/test-fakes']
+  const RELEASE_ROWS = ['POST /api/ops/drain', 'GET /api/ops/drain', 'DELETE /api/ops/drain', 'POST /api/ops/warmup', 'POST /api/ops/tasks/revive', 'POST /api/ops/alarm', 'POST /api/ops/test-fakes', 'POST /api/ops/privacy-requests/:id/close']
   const SMOKE_ROWS = [
     'GET /api/me', 'GET /api/settings/personal', 'GET /api/settings/brand',
     'GET /api/chats', 'POST /api/chats', 'GET /api/chats/:id', 'POST /api/chats/:id/turns', 'GET /api/runs/active', 'GET /api/socket', 'GET /api/models',

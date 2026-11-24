@@ -92,9 +92,12 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   library_uploads: { action: 'keep', why: 'the brand\'s own files: created_by is pseudonymous', kept: ['created_by'] },
   library_marks: { action: 'keep', why: 'the brand\'s trash: deleted_by is pseudonymous; a chat output\'s mark goes with the chat cascade', kept: ['deleted_by'] },
   'library/': { action: 'keep', why: 'the brand\'s own files, with their library_uploads rows (keys name files, not people)' },
-  // The connector hub (P4 H0; wrangler.hub.jsonc): no member id today (client credentials). P5's per-person connectors
-  // add `connectedBy`; the runbook then revokes the connection before a person's deletion runs (C1's PR C).
-  SignIn: { action: 'keep', why: 'the brand\'s connector token (client credentials): no person connects it on P4; pending items sweep themselves' },
+  // P5: keep brand connections and notice configuration. Member references resolve through the pseudonymised member row.
+  connector_accounts: { action: 'keep', why: 'the brand owns the connection; attribution stays pseudonymous', kept: ['connected_by', 'disconnected_by'] },
+  notify_channels: { action: 'keep', why: 'the brand owns the channel list and its history; attribution stays pseudonymous', kept: ['added_by', 'removed_by'] },
+  notify_channel_list: { action: 'keep', why: 'the brand channel list revision contains no member data' },
+  notify_sends: { action: 'keep', why: 'keep caps and deduplication intact through retention; member references stay pseudonymous', kept: ['actor_id', 'target'] },
+  SignIn: { action: 'keep', why: 'the brand owns the sealed credential; connectedBy resolves through the pseudonymised member row and pending items expire', kept: ['connectedBy', 'pending.memberId'] },
   // P8a: the egress record names a host, a runner and a container generation, never a member, a run or a turn (one
   // container serves several sessions at once), so no row is a person's; it goes by age in 30 days.
   egress_fetches: { action: 'keep', why: 'no member id: the egress knows the container, not the run; retention removes rows after 30 days. A host can carry data in a subdomain from a refused exfil attempt: kept 30 days, ops-only and not exported. A host over 253 characters is not recorded, only logged' },

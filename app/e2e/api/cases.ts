@@ -174,6 +174,8 @@ export const CASES: Record<string, RouteCase> = {
   // Rows 84 and 85 (P6a brand skills): a name and an id that name nothing, so a caller the matrix lets in gets 404.
   'GET /api/skills/:name': { design: d('brand_data', ALL), path: '/api/skills/no-such-skill', passes: 404 },
   'POST /api/skills/brand/:id/delete': { design: d('brand_data', PEOPLE), path: `/api/skills/brand/${NO_BRAND_SKILL}/delete`, json: { ifRev: 1 }, passes: 404 },
+  // Row 86: routine runs.
+  'GET /api/routines/:id/runs': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/runs`, passes: 404 },
   // Rows 91 to 93 (P8a F2): Shopify's privacy webhooks, outside sign-in. A JWT counts for nothing there: without Shopify's
   // signature every caller gets 401 (webhooks.spec.ts sends signed deliveries).
   'POST /api/webhooks/shopify/customers-data-request': { design: d('webhook', []), path: '/api/webhooks/shopify/customers-data-request', json: {}, passes: 401 },

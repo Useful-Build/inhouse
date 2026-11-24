@@ -62,6 +62,10 @@ export const TABLE_RULES: readonly TableRule[] = [
   { name: 'usage_extends', orderBy: ['turn_id', 'call_id'], mode: 'paged', createdColumn: 'at_ms', after: ['usage_turns'] },
   // The audit copy's cursor; its reset after a restore is F1's.
   { name: 'audit_copy_state', orderBy: ['id'], mode: 'snapshot' },
+  { name: 'connector_accounts', orderBy: ['account_id'], mode: 'snapshot', after: ['members'] },
+  { name: 'notify_channels', orderBy: ['channel_id'], mode: 'snapshot', after: ['members'] },
+  { name: 'notify_channel_list', orderBy: ['id'], mode: 'snapshot' },
+  { name: 'notify_sends', orderBy: ['id'], mode: 'paged', createdColumn: 'at_ms' },
   { name: 'team_requests', orderBy: ['id'], mode: 'paged', createdColumn: 'created_at_ms', after: ['members'] },
   { name: 'brand_skills', orderBy: ['id'], mode: 'snapshot', after: ['members'] },
   { name: 'memories', orderBy: ['n'], mode: 'snapshot', after: ['members'] },

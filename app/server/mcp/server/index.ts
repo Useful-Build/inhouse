@@ -4,6 +4,7 @@
 // is 405 (no SSE stream, no sessions). The egress calls it with the run token's grant, so every call acts as the run's
 // person and nobody else. Spec: https://modelcontextprotocol.io/specification/2025-11-25/basic/transports and
 // .../basic/lifecycle (version negotiation), .../server/tools (results, `isError`), read 2026-11-20.
+import { safeError } from '../../safe-error.ts'
 import { z } from 'zod'
 import { readCapped } from '../../db/handler-kit.ts'
 import { StoreUnavailableError } from '../../db/sql.ts'
@@ -129,10 +130,10 @@ export async function handleMcp(request: Request, scope: McpScope, deps: McpDeps
         return rpcResult(id, await impl.call(parsed.data, call, { db: deps.db, ...(deps.notify ? { notify: deps.notify } : {}) }))
       } catch (err) {
         if (err instanceof StoreUnavailableError) {
-          console.error({ event: 'mcp_store_unavailable', tool: name, error: err.name })
+          console.error({ event: 'mcp_store_unavailable', tool: name, error: safeError(err) })
           return rpcResult(id, refusal('unavailable', 'Saved memory and chat history are unavailable for a moment. Try once more; if it fails again, carry on without them and say so.'))
         }
-        console.error({ event: 'mcp_tool_failed', tool: name, error: err instanceof Error ? err.name : 'unknown' })
+        console.error({ event: 'mcp_tool_failed', tool: name, error: safeError(err) })
         return rpcError(id, INTERNAL_ERROR, 'Internal error')
       }
     }

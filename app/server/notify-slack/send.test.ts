@@ -276,6 +276,16 @@ describe('test 6: the stage', () => {
     expect((await notices('audience_member_id = ?', s.owner)).length).toBe(1)
   })
 
+  it('uses the Watch delivery rule when the stored stage is malformed', async () => {
+    const s = await scene('Act')
+    await db.prepare("UPDATE settings SET value_json = ? WHERE owner = 'brand' AND key = 'stage'").bind('{').run()
+    const { delivery, calls } = fakeDelivery()
+    const out = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), msg({ to: { channels: ['ops-alerts'] } }))
+    expect(out.stage).toBe('Watch')
+    expect(out.recipients).toMatchObject([{ kind: 'bell', outcome: 'posted', detail: 'to_bell' }])
+    expect(calls).toEqual([])
+  })
+
   it("an Inhouse member's chat, a removed owner and an unknown chat go to the admins' bell, no member id", async () => {
     for (const ownerKind of ['inhouse', 'removed', 'none'] as const) {
       const s = await scene('Watch')

@@ -4,6 +4,7 @@
 // one place that may hold the guarded test branch: node tests never import this file (it imports cloudflare:workers).
 // Docs read 2026-11-20: SQLite storage API (ctx.storage.kv, transactionSync), Alarms, Durable Objects rules, lifecycle.
 import { DurableObject } from 'cloudflare:workers'
+import { safeError } from '../../server/safe-error'
 import { connectors } from '../connectors/index'
 import type { HubResult } from '../index/contract'
 import { err } from '../index/errors'
@@ -97,7 +98,7 @@ export function flushTestLogs(env: HubEnv): Promise<void> {
       try {
         await env.SIGNIN.get(env.SIGNIN.idFromName(TEST_FAKES_DO_NAME)).testAppendLogs(lines)
       } catch (e) {
-        console.error(`hub test logs: flushing ${lines.length} line${lines.length === 1 ? '' : 's'} failed and they are lost (${e instanceof Error ? e.name : typeof e})`)
+        console.error(`hub test logs: flushing ${lines.length} line${lines.length === 1 ? '' : 's'} failed and they are lost (${safeError(e)})`)
       }
     })
     testLogFlushChain = mine
@@ -332,7 +333,7 @@ export class SignIn extends DurableObject<Env> {
       } catch (e) {
         // Tunnel an intentional network throw (FakeSlackWeb.throwNextPost, FakeMcpServer refreshModes:'unreachable')
         // back to upstreamFor without letting an unhandled DO exception reset the DO's in-memory fake state.
-        const msg = e instanceof Error ? e.message : String(e)
+        const msg = safeError(e)
         return new Response(msg, { status: TEST_THROW_STATUS, headers: { [TEST_THROW_HEADER]: '1' } })
       }
     }

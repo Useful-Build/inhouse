@@ -29,6 +29,7 @@ const GRANT: RunGrant = {
 const ERROR_CODES: HubErrorCode[] = [
   'invalid_args', 'unknown_tool', 'write_refused', 'not_configured', 'credentials_rejected', 'scope_mismatch', 'key_unavailable',
   'upstream_unavailable', 'upstream_rejected', 'upstream_version_mismatch', 'rate_limited', 'result_too_large', 'internal',
+  'state_invalid', 'workspace_mismatch', 'connect_stale', 'connect_refused', 'paused',
 ]
 const TOOLS: ToolInfo[] = [
   { name: 'orders_search', connector: 'shopify', description: 'Search orders.', inputSchema: { type: 'object', properties: { q: { type: 'string' } } } },

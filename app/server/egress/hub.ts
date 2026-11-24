@@ -74,6 +74,7 @@ type Id = string | number
 const HUB_ERROR_CODES: readonly HubErrorCode[] = [
   'invalid_args', 'unknown_tool', 'write_refused', 'not_configured', 'credentials_rejected', 'scope_mismatch', 'key_unavailable',
   'upstream_unavailable', 'upstream_rejected', 'upstream_version_mismatch', 'rate_limited', 'result_too_large', 'internal',
+  'state_invalid', 'workspace_mismatch', 'connect_stale', 'connect_refused', 'paused',
 ]
 const isHubCode = (c: string): c is HubErrorCode => (HUB_ERROR_CODES as readonly string[]).includes(c)
 const HubErrorMirror = z.object({ code: z.string(), message: z.string(), retryAfterMs: z.number().optional() })

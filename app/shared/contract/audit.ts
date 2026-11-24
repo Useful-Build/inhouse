@@ -28,6 +28,12 @@ export const AuditActionSchema = z.enum([
   'routine.created', 'routine.updated', 'routine.enabled', 'routine.deleted', 'routine.restored', 'routine.run_now',
   'library.uploaded', 'library.deleted', 'library.restored',
   'today.set_aside',
+  // P5 (p5-w1): the Inhouse team starts connecting a tool, and how the connect ended.
+  'tools.connect_start', 'tools.connect',
+  // P5 (p5-w3): the Inhouse team pauses, resumes or disconnects a tool.
+  'tools.pause', 'tools.disconnect',
+  // P5 (p5-w4): a notice to one recipient (the agent's or the server's own), and a change to the listed Slack channels.
+  'notify.send', 'notify.channels',
   // P8a R: an admin confirmed a restore once its audit re-append and deletion-log replay were done (ops/backup/reconcile).
   'restore.confirmed',
   // P8a R: the restore's audit re-append put back a pseudonymised member row for an actor added after the backup.
@@ -35,12 +41,6 @@ export const AuditActionSchema = z.enum([
   // P8a F2: a Shopify privacy webhook arrived (Shopify's signature checked), and the release job closed one once the
   // Inhouse team had acted on it. Our request id and the topic only: never a Shopify customer id, email or phone.
   'privacy.requested', 'privacy.closed',
-  // P5 (p5-w1): the Inhouse team starts connecting a tool, and how the connect ended.
-  'tools.connect_start', 'tools.connect',
-  // P5 (p5-w3): the Inhouse team pauses, resumes or disconnects a tool.
-  'tools.pause', 'tools.disconnect',
-  // P5 (p5-w4): a notice to one recipient (the agent's or the server's own), and a change to the listed Slack channels.
-  'notify.send', 'notify.channels',
   // P6a (PR0, docs/plans/2026-11-22-p6a-memory-skills.md): an admin, or the Inhouse team under a live grant, approves
   // or rejects a waiting team fact (W2); a person sends the Inhouse team a request, and its status changes (W3).
   'memory.approved', 'memory.rejected', 'team_request.created', 'team_request.status',

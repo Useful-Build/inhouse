@@ -5,6 +5,7 @@
 // Connected means active, not paused and not `needsReconnect` (an account whose scopes no longer match has every tool
 // hidden). A failed account read sends neither line but the static v2 (system.ts), whose store line is hedged ("when the
 // brand has connected it"): the prompt never claims an app we couldn't check. Each turn reports the version it sent.
+import { safeError } from '../safe-error.ts'
 import type { AccountSummary, ConnectGateway } from '../../hub/index/contract.ts'
 import { catalogByAccount } from '../api/tools-catalog.ts'
 import { listedChannels } from '../notify-slack/send.ts'
@@ -85,7 +86,6 @@ export function turnPromptDeps(env: { DB: D1Database; HUB_CONNECT?: unknown; HUB
 
 /** A log line, dropped once the turn's deadline has passed (the turn already went out without this read). */
 type Log = (line: Record<string, unknown>) => void
-const errorName = (err: unknown): string => (err instanceof Error ? err.name : typeof err)
 
 async function readAccounts(deps: TurnPromptDeps, turnId: string, log: Log): Promise<readonly AccountSummary[] | null> {
   if (deps.gateway === null) {
@@ -98,7 +98,7 @@ async function readAccounts(deps: TurnPromptDeps, turnId: string, log: Log): Pro
     if (r.ok) return r.value
     log({ event: 'prompt_accounts_unread', turnId, code: r.error.code })
   } catch (err) {
-    log({ event: 'prompt_accounts_unread', turnId, code: 'threw', error: errorName(err) })
+    log({ event: 'prompt_accounts_unread', turnId, code: 'threw', error: safeError(err) })
   }
   return null
 }
@@ -107,7 +107,7 @@ async function readChannels(deps: TurnPromptDeps, turnId: string, log: Log): Pro
   try {
     return await deps.channels()
   } catch (err) {
-    log({ event: 'prompt_channels_unread', turnId, error: errorName(err) })
+    log({ event: 'prompt_channels_unread', turnId, error: safeError(err) })
     return []
   }
 }
@@ -157,7 +157,7 @@ export async function turnSystemPrompt(deps: TurnPromptDeps, turnId: string): Pr
     const { lines, apps } = connectedParts(accounts, channels)
     return lines === '' ? FALLBACK : { text: systemPromptV3(lines), version: 3, apps }
   } catch (err) {
-    console.error({ event: 'prompt_build_failed', turnId, error: errorName(err) })
+    console.error({ event: 'prompt_build_failed', turnId, error: safeError(err) })
     return FALLBACK
   } finally {
     clearTimeout(timer)

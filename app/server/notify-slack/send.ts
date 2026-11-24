@@ -8,6 +8,8 @@
 // - Model text goes only in the bell's `body` and the hub's title and text; never a template, `fields`, a link, a log,
 //   an audit line or a D1 table we own (`notify_sends` keeps a hash).
 // - One send, no retry: a hub call that throws leaves the row `reserved` and answers `unknown: not retried`.
+import { STAGES } from '../../shared/contract/settings-table.ts'
+import { brandStage, deliveryRefusal } from '../stage/watch.ts'
 import type { DeliveryGateway, HubResult } from '../../hub/index/contract.ts'
 import type { AuditArgs } from '../../shared/contract/audit.ts'
 import { boundBody, boundNotice, SYSTEM_BODY_MAX } from '../../shared/notify/bound.ts'
@@ -53,7 +55,6 @@ export type RecipientOutcome = {
 }
 
 const SLACK_ACCOUNT = 'slack:workspace' as const
-const ACT_STAGES = new Set(['Act', 'Run'])
 
 const base64url = (bytes: Uint8Array): string => btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
 /** A notice id: `n_` + 128 random bits (the `notify_sends` row and its bell notice share it). */
@@ -67,14 +68,6 @@ async function sha256Hex(text: string): Promise<string> {
 const cp = (s: string) => [...s].length
 
 // ---------- reads ----------
-
-/** The server's stage (P2's technical setting); no row reads as Watch, the safe side. */
-export async function readStage(db: D1Database): Promise<string> {
-  const row = await first<{ value_json: string }>(db, stmt("SELECT value_json FROM settings WHERE owner = 'brand' AND key = 'stage'"))
-  if (!row) return 'Watch'
-  const v: unknown = JSON.parse(row.value_json)
-  return typeof v === 'string' ? v : 'Watch'
-}
 
 /** The ids among `ids` that are active brand people (kind `person`, status `active`, either role). */
 export async function activePeople(db: D1Database, ids: readonly string[]): Promise<Set<string>> {
@@ -278,10 +271,10 @@ export async function notifyAgent(ctx: NotifyCtx, scope: AgentScope, input: Agen
     changed: bounded.ok ? changedList(bounded.changed, linkDropped) : [],
     audit: { source: 'agent', runId: scope.runId },
   }
-  const [listed, stage] = await Promise.all([listedChannels(ctx.db), readStage(ctx.db)])
+  const [listed, stage] = await Promise.all([listedChannels(ctx.db), brandStage(ctx.db)])
   const byKey = new Map(listed.map(l => [channelKey(l.name), l]))
   const listedNames = listed.map(l => `#${l.name}`)
-  const out: AgentNoticeResult = { recipients: [], changed: c.changed, listed: listedNames, stage }
+  const out: AgentNoticeResult = { recipients: [], changed: c.changed, listed: listedNames, stage: STAGES[stage]! }
 
   const people = await activePeople(ctx.db, members)
   if (!bounded.ok) {
@@ -318,8 +311,8 @@ export async function notifyAgent(ctx: NotifyCtx, scope: AgentScope, input: Agen
     }
     out.recipients.push(await toBell(c, agentReserve('bell'), m, m, bell))
   }
-  const atLeastAct = ACT_STAGES.has(stage)
-  const person = !atLeastAct && channels.length > 0 ? await runPerson(ctx.db, scope.chatId) : null
+  const slackRefused = deliveryRefusal(stage, 'slack') !== null
+  const person = slackRefused && channels.length > 0 ? await runPerson(ctx.db, scope.chatId) : null
   for (const name of channels) {
     const l = byKey.get(channelKey(name))
     if (!l) {
@@ -328,7 +321,7 @@ export async function notifyAgent(ctx: NotifyCtx, scope: AgentScope, input: Agen
       out.recipients.push({ kind: 'slack', to: name, outcome: 'refused', detail: 'not_listed' })
       continue
     }
-    if (!atLeastAct) {
+    if (slackRefused) {
       out.recipients.push(await toBell(c, agentReserve('bell'), name, person!, bell, 'to_bell'))
       continue
     }
@@ -408,7 +401,7 @@ export async function sendSystemNotice(
   const recipients: RecipientOutcome[] = []
 
   const alerts = input.to.alertsChannel ? (await listedChannels(ctx.db)).find(l => l.alerts) ?? null : null
-  const stage = input.to.alertsChannel ? await readStage(ctx.db) : null
+  const slackRefused = input.to.alertsChannel && deliveryRefusal(await brandStage(ctx.db), 'slack') !== null
 
   if (bounded && !bounded.ok) {
     const lines: Stmt[] = []
@@ -441,7 +434,7 @@ export async function sendSystemNotice(
   }
   if (input.to.alertsChannel) {
     if (!alerts) recipients.push({ kind: 'slack', to: 'alerts', outcome: 'skipped', detail: 'no_alerts_channel' })
-    else if (!ACT_STAGES.has(stage!)) recipients.push({ kind: 'slack', to: 'alerts', outcome: 'skipped', detail: 'below_act' })
+    else if (slackRefused) recipients.push({ kind: 'slack', to: 'alerts', outcome: 'skipped', detail: 'below_act' })
     else recipients.push(await toSlack(c, systemReserve('slack'), 'alerts', alerts.channelId, { title, text: body ?? NO_BODY_TEXT, link: checked.link }, `system:${input.source}`))
   }
   return { ok: true, recipients }
