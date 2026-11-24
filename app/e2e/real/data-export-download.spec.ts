@@ -32,6 +32,10 @@ test('Export downloads the brand\'s own export as one NDJSON file, says it is on
   const download = page.waitForEvent('download')
   await page.getByRole('main').getByRole('button', { name: 'Export', exact: true }).click()
   const file = await download
+  // The toast lives 6 s from the click, so it is looked at first, before the file is waited for and parsed.
+  await expect(page.locator('[data-toast]').filter({ hasText: 'Your export is downloading. Big brands can take a few minutes.' })).toBeVisible()
+  await expect(page.locator('[data-toast]').filter({ hasText: 'Sample export downloaded' })).toHaveCount(0)
+  await expect(page.getByRole('heading', { level: 1, name: 'Data and access' })).toBeVisible()
   expect(file.suggestedFilename()).toMatch(/^inhouse-export-\d{4}-\d{2}-\d{2}\.ndjson$/)
   expect(await file.failure(), 'the download finished').toBeNull()
 
@@ -49,10 +53,6 @@ test('Export downloads the brand\'s own export as one NDJSON file, says it is on
   // The seeded team is in it as the Members page shows them: no sign-in subject.
   expect(lines.some(l => l.store === 'members' && l.row.id === adminId)).toBe(true)
   expect(lines.filter(l => l.store === 'members').every(l => !('subject' in l.row))).toBe(true)
-
-  await expect(page.locator('[data-toast]').filter({ hasText: 'Your export is downloading. Big brands can take a few minutes.' })).toBeVisible()
-  await expect(page.locator('[data-toast]').filter({ hasText: 'Sample export downloaded' })).toHaveCount(0)
-  await expect(page.getByRole('heading', { level: 1, name: 'Data and access' })).toBeVisible()
 
   // One audit line for it, counts only (the file has been received in full, so the line was written).
   await expect.poll(async () => {

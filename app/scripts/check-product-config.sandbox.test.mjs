@@ -540,34 +540,46 @@ describe('(P4) --hub: the connector hub\'s sandbox config (failure 13)', () => {
     expect(checkP5HubVars(source.vars)).toEqual([])
   })
 
-  test('accepts shaped P5 values and refuses mutations of each shape', () => {
-    const digits = fc.string({ unit: fc.constantFrom(...'0123456789'), minLength: 1 })
-    const team = fc.string({ unit: fc.constantFrom(...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'), minLength: 1 })
-    fc.assert(fc.property(digits, digits, team, fc.boolean(), (left, right, teamSuffix, privateSearch) => {
-      const origin = `https://brand-${left}.example.test`
-      const callback = `${origin}/api/connect/callback`
-      const vars = {
-        SLACK_CLIENT_ID: `${left}.${right}`,
-        SLACK_TEAM_ID: `T${teamSuffix}`,
-        SLACK_PRIVATE_SEARCH: privateSearch ? 'on' : 'off',
-        APP_ORIGIN: origin,
-        CONNECT_REDIRECT_URI: callback,
+  // Master plan standing decision 11: the candidate is the reduced smoke with no Slack, so each of these is exactly the default.
+  test.each([
+    ['SLACK_CLIENT_ID', '0000000000.0000000001'],
+    ['SLACK_CLIENT_ID', 'x'],
+    ['SLACK_TEAM_ID', 'T0TEST0001'],
+    ['SLACK_TEAM_ID', ' '],
+    ['SLACK_PRIVATE_SEARCH', 'on'],
+    ['SLACK_PRIVATE_SEARCH', ''],
+    ['SLACK_PRIVATE_SEARCH', 'OFF'],
+    ['APP_ORIGIN', 'https://inhouse.example.com'],
+    ['APP_ORIGIN', 'https://brand.some-other-zone.example'],
+    ['CONNECT_REDIRECT_URI', 'https://inhouse.example.com/api/connect/callback'],
+    ['CONNECT_REDIRECT_URI', 'x'],
+  ])('refuses %s = %j in candidate hub vars', (key, value) => {
+    expect(checkP5HubVars({ [key]: value })).toContainEqual(expect.stringContaining(`vars.${key} must`))
+  })
+
+  test('refuses a configured Slack pair (each var alone, and together)', () => {
+    const origin = 'https://inhouse.example.com'
+    expect(checkP5HubVars({ APP_ORIGIN: origin })).toContainEqual(expect.stringContaining('vars.APP_ORIGIN must be empty'))
+    expect(checkP5HubVars({ CONNECT_REDIRECT_URI: `${origin}/api/connect/callback` })).toContainEqual(expect.stringContaining('vars.CONNECT_REDIRECT_URI must be empty'))
+    const both = checkP5HubVars({ APP_ORIGIN: origin, CONNECT_REDIRECT_URI: `${origin}/api/connect/callback` })
+    expect(both).toContainEqual(expect.stringContaining('vars.APP_ORIGIN must be empty'))
+    expect(both).toContainEqual(expect.stringContaining('vars.CONNECT_REDIRECT_URI must be empty'))
+  })
+
+  test('refuses a non-string value for each P5 var', () => {
+    for (const key of ['SLACK_CLIENT_ID', 'SLACK_TEAM_ID', 'SLACK_PRIVATE_SEARCH', 'APP_ORIGIN', 'CONNECT_REDIRECT_URI']) {
+      for (const value of [null, 0, false, [], {}]) {
+        expect(checkP5HubVars({ [key]: value })).toContainEqual(expect.stringContaining(`vars.${key} must`))
       }
-      expect(checkP5HubVars(vars)).toEqual([])
-      const malformed = {
-        SLACK_CLIENT_ID: [`${left}-${right}`, `${left}.${right}\n`, Number(left)],
-        SLACK_TEAM_ID: [`U${teamSuffix}`, `T${teamSuffix} `, 'T', [vars.SLACK_TEAM_ID]],
-        SLACK_PRIVATE_SEARCH: [vars.SLACK_PRIVATE_SEARCH.toUpperCase(), '', privateSearch],
-        APP_ORIGIN: [`${origin}/`, `http://brand-${left}.example.test`, `${origin}?x`, `${origin}#x`, `https://user@brand-${left}.example.test`, null],
-        CONNECT_REDIRECT_URI: [`${callback}?x`, `${callback}#x`, `${callback}/`, callback.replace('brand-', 'other-'), ''],
-      }
-      for (const [key, values] of Object.entries(malformed)) {
-        for (const value of values) {
-          expect(checkP5HubVars({ ...vars, [key]: value })).toContainEqual(expect.stringContaining(`vars.${key} must`))
-        }
-      }
-      expect(checkP5HubVars({ CONNECT_REDIRECT_URI: callback })).toContainEqual(expect.stringContaining('vars.CONNECT_REDIRECT_URI must'))
-    }))
+    }
+  })
+
+  test.each(['toString', 'constructor', 'hasOwnProperty', '__proto__'])('refuses the inherited name %s as a var key', key => {
+    const config = load('pass-candidate-hub.json')
+    const vars = JSON.parse(`{ ${JSON.stringify(key)}: "" }`)
+    expect(checkSandboxConfig({ ...config, vars: { ...config.vars, ...vars } }, {
+      accountId: ACCOUNT, zone: ZONE, mode: { candidate: true, hub: true }, configDir: tmp,
+    })).toContainEqual(expect.stringContaining(`vars.${key} is set`))
   })
 
   test.each(['SLACK_CLIENT_SECRET', 'HUB_TOKEN_KEYS'])('refuses %s in candidate hub vars', key => {
@@ -839,6 +851,15 @@ describe('(P4) the eval deployment\'s own hub (failures 12 and 13)', () => {
   test('EVAL_TEST_HUB_VARS is exactly app/wrangler.hub.test.jsonc\'s vars', () => {
     const testConfig = JSON.parse(stripJsonc(readFileSync(fileURLToPath(new URL('../wrangler.hub.test.jsonc', import.meta.url)), 'utf8')))
     expect({ ...EVAL_TEST_HUB_VARS }).toEqual(testConfig.vars)
+  })
+  test('the eval hub keeps passing with the P5 test vars the candidate refuses (EVAL_TEST_HUB_VARS)', () => {
+    for (const key of ['SLACK_CLIENT_ID', 'SLACK_TEAM_ID', 'CONNECT_REDIRECT_URI', 'APP_ORIGIN']) expect(EVAL_TEST_HUB_VARS[key]).not.toBe('')
+    const config = load('pass-eval-hub.json')
+    config.vars = { ...EVAL_TEST_HUB_VARS }
+    const r = run([...EVAL_HUB, write(config)])
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('may deploy to the sandbox (eval hub)')
   })
   test('the eval hub passes with exactly the test config\'s vars (the hub\'s test build)', () => {
     const config = load('pass-eval-hub.json')

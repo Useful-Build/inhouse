@@ -96,8 +96,8 @@
 // migrations, observability, `rules`, `python_modules`, `limits`, `send_metrics`, `$schema`; not `keep_vars`): no route,
 // custom domain, assets, D1, R2, container or version metadata; `main` is set and `no_bundle` is true (the bundle that
 // was built deploys as it is); per-PR: vars.INHOUSE_TEST_BUILD is "1" (the hub's test build) and INHOUSE_ACCESS isn't
-// needed; candidate and eval: `vars`, when set, is a plain object holding only empty Shopify values and P5 Slack and
-// connect settings with the shapes below. The product rules do not apply to the hub. The eval hub may instead
+// needed; candidate and eval: `vars`, when set, is a plain object holding only the empty Shopify, Slack and connect values and
+// SLACK_PRIVATE_SEARCH "off" (no Slack on the candidate: master plan standing decision 11; Slack there needs its own reviewed change). The product rules do not apply to the hub. The eval hub may instead
 // carry exactly app/wrangler.hub.test.jsonc's vars (EVAL_TEST_HUB_VARS:
 // the hub's test build, invented test values only, for the morning-check graded run); eval: the name is exactly the eval
 // hub's (`evalNames().hub`, `inhouse-sbx-eval-hub`), and
@@ -424,17 +424,21 @@ function hubLoaderFault(value) {
   if (e.binding !== 'LOADER') return `${HUB_LOADER_SHAPE}: its binding is ${JSON.stringify(e.binding)}, not "LOADER"`
   return null
 }
-/** Public settings the deployable hub may carry. Empty IDs and URLs are the unconfigured source defaults. */
+/**
+ * Public settings the candidate hub may carry: exactly the unconfigured source defaults (app/wrangler.hub.jsonc). The
+ * candidate is the reduced smoke with no Slack (master plan standing decision 11), so every Slack and connect var must be
+ * the empty string and SLACK_PRIVATE_SEARCH exactly "off". A candidate with Slack needs its own reviewed change to this
+ * lock. Secret names (SLACK_CLIENT_SECRET, HUB_TOKEN_KEYS) aren't listed, so they stay refused. The eval hub's test build
+ * is not read here: it passes as exactly EVAL_TEST_HUB_VARS (below).
+ */
 const CANDIDATE_HUB_VARS = {
   SHOPIFY_SHOP: [v => v === '', 'must be empty: no store credential in the sandbox account'],
   SHOPIFY_CLIENT_ID: [v => v === '', 'must be empty: no store credential in the sandbox account'],
-  SLACK_CLIENT_ID: [v => v === '' || /^[0-9]+\.[0-9]+$/.test(v), 'must be empty or two digit groups separated by a dot'],
-  SLACK_TEAM_ID: [v => v === '' || /^T[A-Z0-9]+$/.test(v), 'must be empty or a Slack team ID starting with T'],
-  SLACK_PRIVATE_SEARCH: [v => v === 'off' || v === 'on', 'must be "off" or "on"'],
-  APP_ORIGIN: [v => v === '' || (v.startsWith('https://') && URL.parse(v)?.origin === v), 'must be empty or a bare HTTPS origin'],
-  CONNECT_REDIRECT_URI: [(v, { APP_ORIGIN = '' }) => typeof APP_ORIGIN === 'string' &&
-    v === (APP_ORIGIN === '' ? '' : `${APP_ORIGIN}/api/connect/callback`),
-    'must be empty when APP_ORIGIN is unset, or APP_ORIGIN followed by /api/connect/callback'],
+  SLACK_CLIENT_ID: [v => v === '', 'must be empty: the candidate hub has no Slack (master plan decision 11)'],
+  SLACK_TEAM_ID: [v => v === '', 'must be empty: the candidate hub has no Slack (master plan decision 11)'],
+  SLACK_PRIVATE_SEARCH: [v => v === 'off', 'must be "off": the candidate hub has no Slack (master plan decision 11)'],
+  APP_ORIGIN: [v => v === '', 'must be empty: the candidate hub has no Slack connect flow (master plan decision 11)'],
+  CONNECT_REDIRECT_URI: [v => v === '', 'must be empty: the candidate hub has no Slack connect flow (master plan decision 11)'],
 }
 /**
  * (P4, the morning-check graded run) The one other set of vars the eval hub may carry: exactly app/wrangler.hub.test.jsonc's
