@@ -355,7 +355,7 @@ export function settingsPage(tab: string, env: Env): Page {
   const grant = people.supportGrant
   const self = people.members.find(m => m.id === me.id)
 
-  const supportRow: Row = { ...R('Inhouse team access', 'Alex and the team can sign in to fix and improve your Inhouse agent. Every visit is in the audit log.', env.grantUi ? 'grant' : 'toggle', env.grantUi ? grantStatus(grant, now, d0) : '', 0, 'd:support', true), can: 'grantSupport', on: !!grant?.live, toggle: next => env.setSupport(next, grant?.id) }
+  const supportRow: Row = { ...R('Inhouse team access', 'Your Inhouse team can sign in to fix and improve your Inhouse agent. Every visit is in the audit log.', env.grantUi ? 'grant' : 'toggle', env.grantUi ? grantStatus(grant, now, d0) : '', 0, 'd:support', true), can: 'grantSupport', on: !!grant?.live, toggle: next => env.setSupport(next, grant?.id) }
   const pages: Record<string, Page> = {
     'you-general': { title: 'General', sections: [
       { label: 'Profile', rows: [withAvatar({ title: 'Photo', desc: '', kind: 'photo', value: '', need: 0 }, me.id), txt('Name', 'Shown to your team and in approvals.', 'g:name', me.name), R('Email', 'Used to sign in.', 'value', env.me ? env.me.email ?? '' : me.email), R('Role', 'Admins can change team settings.', 'value', [self?.title ?? me.title, env.me ? ROLE_NAMES[env.me.role] : me.role].filter(Boolean).join(' · '))] },
