@@ -33,8 +33,9 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import fc from 'fast-check'
 import { describe, expect, test } from 'vitest'
-import { EVAL_TEST_HUB_VARS, stripJsonc } from './check-product-config.mjs'
+import { checkSandboxConfig, EVAL_TEST_HUB_VARS, stripJsonc } from './check-product-config.mjs'
 
 const script = fileURLToPath(new URL('./check-product-config.mjs', import.meta.url))
 const fixtures = fileURLToPath(new URL('./check-product-config-fixtures/', import.meta.url))
@@ -527,6 +528,64 @@ describe('(P4) --hub: the connector hub\'s sandbox config (failure 13)', () => {
     expect(r2.status).toBe(0)
     expect(r2.stdout).toContain('may deploy to the sandbox (candidate hub)')
   })
+  const checkP5HubVars = vars => {
+    const config = load('pass-candidate-hub.json')
+    return checkSandboxConfig({ ...config, vars: { ...config.vars, ...vars } }, {
+      accountId: ACCOUNT, zone: ZONE, mode: { candidate: true, hub: true }, configDir: tmp,
+    })
+  }
+
+  test('accepts the unconfigured P5 hub defaults from the deployable source', () => {
+    const source = JSON.parse(stripJsonc(readFileSync(new URL('../wrangler.hub.jsonc', import.meta.url), 'utf8')))
+    expect(checkP5HubVars(source.vars)).toEqual([])
+  })
+
+  // Master plan standing decision 11: the candidate is the reduced smoke with no Slack, so each of these is exactly the default.
+  test.each([
+    ['SLACK_CLIENT_ID', '0000000000.0000000001'],
+    ['SLACK_CLIENT_ID', 'x'],
+    ['SLACK_TEAM_ID', 'T0TEST0001'],
+    ['SLACK_TEAM_ID', ' '],
+    ['SLACK_PRIVATE_SEARCH', 'on'],
+    ['SLACK_PRIVATE_SEARCH', ''],
+    ['SLACK_PRIVATE_SEARCH', 'OFF'],
+    ['APP_ORIGIN', 'https://inhouse.example.com'],
+    ['APP_ORIGIN', 'https://brand.some-other-zone.example'],
+    ['CONNECT_REDIRECT_URI', 'https://inhouse.example.com/api/connect/callback'],
+    ['CONNECT_REDIRECT_URI', 'x'],
+  ])('refuses %s = %j in candidate hub vars', (key, value) => {
+    expect(checkP5HubVars({ [key]: value })).toContainEqual(expect.stringContaining(`vars.${key} must`))
+  })
+
+  test('refuses a configured Slack pair (each var alone, and together)', () => {
+    const origin = 'https://inhouse.example.com'
+    expect(checkP5HubVars({ APP_ORIGIN: origin })).toContainEqual(expect.stringContaining('vars.APP_ORIGIN must be empty'))
+    expect(checkP5HubVars({ CONNECT_REDIRECT_URI: `${origin}/api/connect/callback` })).toContainEqual(expect.stringContaining('vars.CONNECT_REDIRECT_URI must be empty'))
+    const both = checkP5HubVars({ APP_ORIGIN: origin, CONNECT_REDIRECT_URI: `${origin}/api/connect/callback` })
+    expect(both).toContainEqual(expect.stringContaining('vars.APP_ORIGIN must be empty'))
+    expect(both).toContainEqual(expect.stringContaining('vars.CONNECT_REDIRECT_URI must be empty'))
+  })
+
+  test('refuses a non-string value for each P5 var', () => {
+    for (const key of ['SLACK_CLIENT_ID', 'SLACK_TEAM_ID', 'SLACK_PRIVATE_SEARCH', 'APP_ORIGIN', 'CONNECT_REDIRECT_URI']) {
+      for (const value of [null, 0, false, [], {}]) {
+        expect(checkP5HubVars({ [key]: value })).toContainEqual(expect.stringContaining(`vars.${key} must`))
+      }
+    }
+  })
+
+  test.each(['toString', 'constructor', 'hasOwnProperty', '__proto__'])('refuses the inherited name %s as a var key', key => {
+    const config = load('pass-candidate-hub.json')
+    const vars = JSON.parse(`{ ${JSON.stringify(key)}: "" }`)
+    expect(checkSandboxConfig({ ...config, vars: { ...config.vars, ...vars } }, {
+      accountId: ACCOUNT, zone: ZONE, mode: { candidate: true, hub: true }, configDir: tmp,
+    })).toContainEqual(expect.stringContaining(`vars.${key} is set`))
+  })
+
+  test.each(['SLACK_CLIENT_SECRET', 'HUB_TOKEN_KEYS'])('refuses %s in candidate hub vars', key => {
+    expect(checkP5HubVars({ [key]: 'invented' })).toContainEqual(expect.stringContaining(`vars.${key} is set`))
+  })
+
   const HUB_CASES = [
     // [case, mode, fixture, change, failure text]
     ['the house hub\'s name', PR12_HUB, 'pass-per-pr-hub.json', c => { c.name = 'inhouse-hub' }, 'name: "inhouse-hub" is not PR 12\'s hub name (inhouse-sbx-pr12-hub)'],
@@ -560,7 +619,7 @@ describe('(P4) --hub: the connector hub\'s sandbox config (failure 13)', () => {
     ['no test switch in a PR\'s hub', PR12_HUB, 'pass-per-pr-hub.json', c => { delete c.vars.INHOUSE_TEST_BUILD }, 'vars.INHOUSE_TEST_BUILD must be "1"'],
     ['a store in the candidate', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.vars.SHOPIFY_SHOP = 'real-store' }, 'vars.SHOPIFY_SHOP must be empty: no store credential in the sandbox account'],
     ['a client id in the candidate', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.vars.SHOPIFY_CLIENT_ID = 'abc' }, 'vars.SHOPIFY_CLIENT_ID must be empty'],
-    ['a secret in the candidate\'s vars', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.vars.SHOPIFY_CLIENT_SECRET = 'x' }, 'vars.SHOPIFY_CLIENT_SECRET is set: the candidate hub\'s vars are SHOPIFY_SHOP and SHOPIFY_CLIENT_ID only'],
+    ['a secret in the candidate\'s vars', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.vars.SHOPIFY_CLIENT_SECRET = 'x' }, 'vars.SHOPIFY_CLIENT_SECRET is set: the candidate hub\'s vars allow only public Shopify, Slack and connect settings'],
     ['the test switch in the candidate', CANDIDATE_HUB, 'pass-candidate-hub.json', c => { c.vars.INHOUSE_TEST_BUILD = '1' }, 'vars.INHOUSE_TEST_BUILD is set: the candidate hub\'s vars'],
   ]
   for (const [name, mode, fixture, change, text] of HUB_CASES) {
@@ -763,7 +822,7 @@ describe('(P4) the eval deployment\'s own hub (failures 12 and 13)', () => {
     ['the eval product\'s name', c => { c.name = 'inhouse-sbx-eval' }, 'name: "inhouse-sbx-eval" is not the eval deployment\'s hub name'],
     ['a store', c => { c.vars.SHOPIFY_SHOP = 'real-store' }, 'vars.SHOPIFY_SHOP must be empty: no store credential in the sandbox account'],
     ['a client id', c => { c.vars.SHOPIFY_CLIENT_ID = 'abc' }, 'vars.SHOPIFY_CLIENT_ID must be empty'],
-    ['a secret in its vars', c => { c.vars.SHOPIFY_CLIENT_SECRET = 'x' }, 'vars.SHOPIFY_CLIENT_SECRET is set: the eval hub\'s vars are SHOPIFY_SHOP and SHOPIFY_CLIENT_ID only'],
+    ['a secret in its vars', c => { c.vars.SHOPIFY_CLIENT_SECRET = 'x' }, 'vars.SHOPIFY_CLIENT_SECRET is set: the eval hub\'s vars allow only public Shopify, Slack and connect settings'],
     ['the test switch', c => { c.vars.INHOUSE_TEST_BUILD = '1' }, 'vars.INHOUSE_TEST_BUILD is set: the eval hub\'s vars'],
     ['the eval brand marker', c => { c.vars.INHOUSE_EVAL_BRAND = '1' }, 'vars.INHOUSE_EVAL_BRAND is set: the eval hub\'s vars'],
     ['the gateway id', c => { c.vars.AI_GATEWAY_ID = 'inhouse-eval' }, 'vars.AI_GATEWAY_ID is set: the eval hub\'s vars'],
@@ -792,6 +851,15 @@ describe('(P4) the eval deployment\'s own hub (failures 12 and 13)', () => {
   test('EVAL_TEST_HUB_VARS is exactly app/wrangler.hub.test.jsonc\'s vars', () => {
     const testConfig = JSON.parse(stripJsonc(readFileSync(fileURLToPath(new URL('../wrangler.hub.test.jsonc', import.meta.url)), 'utf8')))
     expect({ ...EVAL_TEST_HUB_VARS }).toEqual(testConfig.vars)
+  })
+  test('the eval hub keeps passing with the P5 test vars the candidate refuses (EVAL_TEST_HUB_VARS)', () => {
+    for (const key of ['SLACK_CLIENT_ID', 'SLACK_TEAM_ID', 'CONNECT_REDIRECT_URI', 'APP_ORIGIN']) expect(EVAL_TEST_HUB_VARS[key]).not.toBe('')
+    const config = load('pass-eval-hub.json')
+    config.vars = { ...EVAL_TEST_HUB_VARS }
+    const r = run([...EVAL_HUB, write(config)])
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('may deploy to the sandbox (eval hub)')
   })
   test('the eval hub passes with exactly the test config\'s vars (the hub\'s test build)', () => {
     const config = load('pass-eval-hub.json')
@@ -825,7 +893,7 @@ describe('(P4) the eval deployment\'s own hub (failures 12 and 13)', () => {
     config.vars = { ...EVAL_TEST_HUB_VARS }
     const r = run([...CANDIDATE_HUB, write(config)])
     expect(r.status).toBe(1)
-    expect(r.stderr).toContain('vars.INHOUSE_TEST_BUILD is set: the candidate hub\'s vars are SHOPIFY_SHOP and SHOPIFY_CLIENT_ID only')
+    expect(r.stderr).toContain('vars.INHOUSE_TEST_BUILD is set: the candidate hub\'s vars allow only public Shopify, Slack and connect settings')
     expect(r.stderr).not.toContain('wrangler.hub.test.jsonc')
   })
   test('the eval hub passes as no other hub, no other hub as the eval\'s, and the eval product fails as its hub', () => {

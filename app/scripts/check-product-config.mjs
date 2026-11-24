@@ -96,9 +96,9 @@
 // migrations, observability, `rules`, `python_modules`, `limits`, `send_metrics`, `$schema`; not `keep_vars`): no route,
 // custom domain, assets, D1, R2, container or version metadata; `main` is set and `no_bundle` is true (the bundle that
 // was built deploys as it is); per-PR: vars.INHOUSE_TEST_BUILD is "1" (the hub's test build) and INHOUSE_ACCESS isn't
-// needed; candidate and eval: `vars`, when set, is a plain object holding only SHOPIFY_SHOP and SHOPIFY_CLIENT_ID, both
-// empty (no store credential in the sandbox account, p4 plan "Must not"), and the product rules don't apply (the hub
-// isn't the product Worker); the eval hub may instead carry exactly app/wrangler.hub.test.jsonc's vars (EVAL_TEST_HUB_VARS:
+// needed; candidate and eval: `vars`, when set, is a plain object holding only the empty Shopify, Slack and connect values and
+// SLACK_PRIVATE_SEARCH "off" (no Slack on the candidate: master plan standing decision 11; Slack there needs its own reviewed change). The product rules do not apply to the hub. The eval hub may instead
+// carry exactly app/wrangler.hub.test.jsonc's vars (EVAL_TEST_HUB_VARS:
 // the hub's test build, invented test values only, for the morning-check graded run); eval: the name is exactly the eval
 // hub's (`evalNames().hub`, `inhouse-sbx-eval-hub`), and
 // the eval product's rules (the AI binding, the gateway, the eval brand marker) don't apply: the hub runs no model.
@@ -424,8 +424,22 @@ function hubLoaderFault(value) {
   if (e.binding !== 'LOADER') return `${HUB_LOADER_SHAPE}: its binding is ${JSON.stringify(e.binding)}, not "LOADER"`
   return null
 }
-/** (P4) The candidate hub's vars: the store's shop and client id, both empty (no store in the sandbox account). */
-const CANDIDATE_HUB_VARS = new Set(['SHOPIFY_SHOP', 'SHOPIFY_CLIENT_ID'])
+/**
+ * Public settings the candidate hub may carry: exactly the unconfigured source defaults (app/wrangler.hub.jsonc). The
+ * candidate is the reduced smoke with no Slack (master plan standing decision 11), so every Slack and connect var must be
+ * the empty string and SLACK_PRIVATE_SEARCH exactly "off". A candidate with Slack needs its own reviewed change to this
+ * lock. Secret names (SLACK_CLIENT_SECRET, HUB_TOKEN_KEYS) aren't listed, so they stay refused. The eval hub's test build
+ * is not read here: it passes as exactly EVAL_TEST_HUB_VARS (below).
+ */
+const CANDIDATE_HUB_VARS = {
+  SHOPIFY_SHOP: [v => v === '', 'must be empty: no store credential in the sandbox account'],
+  SHOPIFY_CLIENT_ID: [v => v === '', 'must be empty: no store credential in the sandbox account'],
+  SLACK_CLIENT_ID: [v => v === '', 'must be empty: the candidate hub has no Slack (master plan decision 11)'],
+  SLACK_TEAM_ID: [v => v === '', 'must be empty: the candidate hub has no Slack (master plan decision 11)'],
+  SLACK_PRIVATE_SEARCH: [v => v === 'off', 'must be "off": the candidate hub has no Slack (master plan decision 11)'],
+  APP_ORIGIN: [v => v === '', 'must be empty: the candidate hub has no Slack connect flow (master plan decision 11)'],
+  CONNECT_REDIRECT_URI: [v => v === '', 'must be empty: the candidate hub has no Slack connect flow (master plan decision 11)'],
+}
 /**
  * (P4, the morning-check graded run) The one other set of vars the eval hub may carry: exactly app/wrangler.hub.test.jsonc's
  * (a test pins the two equal), the hub's TEST build (the test bundle, its seam on: test upstreams only). Every value is
@@ -657,7 +671,6 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
   } else if (hub) {
     // vars set but not a plain object (a list, a string, null) is refused, so nothing hides behind a shape this loop skips.
     const plain = config.vars !== null && typeof config.vars === 'object' && !Array.isArray(config.vars)
-    // The candidate's and the eval deployment's hubs alike: main's hub config, the store vars empty.
     const which = evalMode ? 'eval' : 'candidate'
     if (config.vars !== undefined && !plain) fail(`vars must be a plain object in the ${which} hub config`)
     const vars = plain ? config.vars : {}
@@ -665,8 +678,12 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
     if (!(evalMode && isEvalTestHubVars(vars))) {
       const or = evalMode ? ', or exactly app/wrangler.hub.test.jsonc\'s vars (the hub\'s test build)' : ''
       for (const [k, v] of Object.entries(vars)) {
-        if (!CANDIDATE_HUB_VARS.has(k)) fail(`vars.${k} is set: the ${which} hub's vars are SHOPIFY_SHOP and SHOPIFY_CLIENT_ID only (no test switch, no secret)${or}`)
-        else if (v !== '') fail(`vars.${k} must be empty: no store credential in the sandbox account${or}`)
+        if (!Object.hasOwn(CANDIDATE_HUB_VARS, k)) {
+          fail(`vars.${k} is set: the ${which} hub's vars allow only public Shopify, Slack and connect settings${or}`)
+          continue
+        }
+        const [valid, message] = CANDIDATE_HUB_VARS[k]
+        if (typeof v !== 'string' || !valid(v, vars)) fail(`vars.${k} ${message}${or}`)
       }
     }
   } else if (evalMode) {
