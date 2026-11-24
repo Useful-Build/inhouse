@@ -67,7 +67,7 @@ test('at Act a notice to a listed channel posts once: four parameters, no unfurl
   expect(post.text).not.toContain('evil.test')
   const urls = post.text.match(/https?:\/\/[^\s>|]+/g) ?? []
   expect(urls.length, 'the app link is the one URL').toBeGreaterThan(0)
-  for (const u of urls) expect(u.startsWith('https://inhouse.example.com'), `${u} is the app's own address`).toBe(true)
+  for (const u of urls) expect(new URL(u).origin, `${u} is the app's own address`).toBe('https://inhouse.example.com')
 })
 
 test("the server's own notice posts to the alerts channel and doesn't reduce the agent's remaining daily count", async ({ request }) => {

@@ -15,7 +15,7 @@
 // reads with the v2 defaults (`normalize`). `connectEpoch` guards only the connect callback's write (`#connectCurrent`).
 import type { AccountStatus, HubErrorCode, HubResult, Instant, SignInState } from '../index/contract'
 import type { McpClientConfig, McpConnectorModule, McpToolResult } from '../registry/registry'
-import { requestedScopes, sameScopeSet, type Readiness } from '../registry/registry'
+import { MCP_SCOPE, requestedScopes, sameScopeSet, type Readiness } from '../registry/registry'
 import { callMcpTool, type McpSession } from '../connectors/mcp/client'
 import { constantTimeEqual } from '../oauth/http'
 import {
@@ -1446,7 +1446,7 @@ export class SignInCore {
 
 /** Scope handles for a message: handle-shaped values only, so nothing odd from an upstream rides along. */
 export function describeMcpScopes(granted: readonly string[], requested: readonly string[]): string {
-  const safe = (list: string[]) => list.filter(s => /^[a-z]+(?:[:.][a-z.]+)+$/.test(s) && s.length <= 64).slice(0, 20)
+  const safe = (list: string[]) => list.filter(s => s.length <= 64 && MCP_SCOPE.test(s)).slice(0, 20)
   const g = new Set(granted)
   const q = new Set(requested)
   const extra = safe([...g].filter(s => !q.has(s)))

@@ -1,6 +1,6 @@
 import { fc, test } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { BACKOFF_MS, EXPIRY_MARGIN_MS, MAX_PENDING_TTL_MS, REJECTED_COOLDOWN_MS, SignInCore } from './core'
+import { BACKOFF_MS, describeMcpScopes, EXPIRY_MARGIN_MS, MAX_PENDING_TTL_MS, REJECTED_COOLDOWN_MS, SignInCore } from './core'
 import { ACCOUNT, API, harness, LIFETIME_S, MemStore, readQuery, ringJson, SCOPES, START_MS, type Harness } from './testing/kit'
 import { parseKeyRing } from '../crypto/keyring'
 
@@ -10,6 +10,31 @@ afterEach(() => vi.restoreAllMocks())
 
 const ok = { ok: true, value: { data: { shop: { name: 'Example Fixture' } } } }
 const codeOf = (r: { ok: boolean; error?: { code: string } }) => (r.ok ? 'ok' : r.error!.code)
+
+describe('MCP scope mismatch messages', () => {
+  it.each([
+    ['channels:history', true],
+    ['search:read.public', true],
+    ['search.read', true],
+    ['a..', true],
+    ['history', false],
+    ['channels::history', false],
+    ['Channels:history', false],
+    ['a:' + 'b'.repeat(62), true],
+    ['a:' + 'b'.repeat(63), false],
+  ])('describes %j only when safe to display', (scope, expected) => {
+    expect(describeMcpScopes([scope], [])).toBe(expected ? `extra ${scope}` : '')
+    expect(describeMcpScopes([], [scope])).toBe(expected ? `missing ${scope}` : '')
+  })
+
+  it('omits long malformed scopes with repeated dots in under 500 ms', () => {
+    const scope = 'a.' + '..'.repeat(20_000) + '!'
+    const start = performance.now()
+    const message = describeMcpScopes([scope, 'channels:history'], ['search:read.public'])
+    expect(performance.now() - start).toBeLessThan(500)
+    expect(message).toBe('extra channels:history; missing search:read.public')
+  })
+})
 
 describe('grants and reads', () => {
   it('grants once, stores only an envelope, sets the alarm at half the lifetime and reads', async () => {

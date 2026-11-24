@@ -230,7 +230,7 @@ describe('A.7.6 caps', () => {
   })
 
   it('Promise.all over 10 calls: the upstream never sees two in flight', async () => {
-    const r = await script(`const all = await Promise.all(Array.from({ length: 10 }, () => shop.graphql(${PRODUCTS_PAGE}, { first: 1 }))); return all.length`)
+    const r = await script(`const all = await Promise.all(Array.from({ length: 10 }, () => shop.graphql(${JSON.stringify(RECORD_PRODUCTS)}, { first: 1 }))); return all.length`)
     expect(r.result).toBe(10)
     expect(seen.graphql).toBe(10)
     expect(seen.maxInFlight).toBe(1)
