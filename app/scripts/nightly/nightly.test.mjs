@@ -296,6 +296,12 @@ describe('nightly.yml', () => {
     expect(fs.existsSync(path.join(here, '../../test/connectors/mcp/slack.live.ts'))).toBe(true)
     expect(gate).not.toMatch(/run=false|::notice title=Slack connector check skipped/)
   })
+  // The pre-P4 skip (no hub on main) went once the hub was on main: the Shopify gate may not skip either.
+  it('the Shopify connector gate has no skip', () => {
+    const gate = step(job(wf(), 'connectors'), 'Live project and secrets present')
+    expect(fs.existsSync(path.join(here, '../../hub/package.json'))).toBe(true)
+    expect(gate).not.toMatch(/run=false|::notice title=Connector check skipped/)
+  })
   // The fixture's and the test workspace's credentials never reach ci.yml (PR code runs there).
   it('ci.yml holds none of the read fixture\'s or the test workspace\'s credentials', () => {
     const ci = fs.readFileSync(path.join(here, '../../../.github/workflows/ci.yml'), 'utf8')
