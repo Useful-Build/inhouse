@@ -41,10 +41,10 @@ export function toUsageData(v: UsageMonthView): UsageData {
     total: money(v.spentMicro),
     conversations: v.conversations,
     questionsAsked: v.questions,
-    // Jobs are P4's.
+    // The usage ledger does not count routine runs separately.
     jobsRun: 0,
     daily: v.dailyMicro.map(money),
-    // `job` and `tool` stay empty until P4 and P5.
+    // The ledger groups spend by person and model.
     breakdown: { person: v.people.map(personRow), job: [], model: v.models.map(modelRow), tool: [] },
     // This month: "new chats are refused", the ledger's own reserve rule (cap − spent < the start hold), so the page and
     // the ledger never disagree (no cap reads as reached). A finished month: spend at or past the cap its ledger recorded.

@@ -76,7 +76,7 @@ export type FieldType = 'money' | 'email' | 'hosts'
 export function checkField(type: FieldType, raw: string): { error: string } | { value: string } {
   const v = raw.trim()
   if (type === 'hosts') {
-    // One host a line (commas and spaces count as line breaks), lowercase, each once. Empty is fine: any public host.
+    // One host a line (commas and spaces count as line breaks), lowercase, each once. An empty list blocks all websites.
     const hosts = [...new Set(v.toLowerCase().split(/[\s,]+/).filter(Boolean))]
     return parseHostlist(hosts.join('\n')) ? { value: hosts.join('\n') } : { error: `Use website names like example.com, up to ${HOSTLIST_MAX_HOSTS}.` }
   }
@@ -394,7 +394,7 @@ export function settingsPage(tab: string, env: Env): Page {
       { label: 'How your Inhouse agent learns', rows: [R('Ask before saving a team rule', 'On: new and changed team rules wait until an admin approves them. Off: they count at once.', 'toggle', '', 0, 'm:ask', true), teach] },
     ] },
     'team-members': { title: 'Members', sections: [
-      { label: `${team.length} people`, rows: [...team.map(m => {
+      { label: team.length === 1 ? '1 person' : `${team.length} people`, rows: [...team.map(m => {
         const label = roleLabel(m)
         const first = m.name.split(' ')[0]
         const named = namedOnRules(m.id)
@@ -417,7 +417,7 @@ export function settingsPage(tab: string, env: Env): Page {
     'team-data': { title: 'Data and access', sections: [
       { label: 'Where your data stays', rows: [R('Your tools', 'Orders, customers and money stay in your own tools. Your Inhouse agent reads what a job needs.', 'value', 'Stays in each tool'), R('Inhouse agent', 'Chats, memory, routines and logs are stored on your own Cloudflare account.', 'value', 'Your Cloudflare'), R('AI models', 'Questions go to Anthropic through your own account.', 'value', 'Your Anthropic')] },
       { label: 'How long things are kept', rows: [sel('Chats', `Older chats are deleted automatically.${setByTeam}`, 'd:chats', '12 months', RETENTION), sel('Activity and steps', `Every step it took, kept for checking later.${setByTeam}`, 'd:steps', '12 months', RETENTION), R('Next cleanup', 'Anything older than these periods is deleted then.', 'value', nextCleanup), R('Audit log', 'Changes to settings, rules and people. Cannot be shortened.', 'value', '12 months')] },
-      { label: 'Who can get in', rows: [R('Your team', 'People sign in with their work email.', 'value', `${team.length} members`), ...(env.showGrant ? [supportRow] : []), R('Two-step sign-in', 'Everyone confirms with a code when they sign in.', 'toggle', '', 0, 'd:2fa', true)] },
+      { label: 'Who can get in', rows: [R('Your team', 'People sign in with their work email.', 'value', team.length === 1 ? '1 member' : `${team.length} members`), ...(env.showGrant ? [supportRow] : []), R('Two-step sign-in', 'Everyone confirms with a code when they sign in.', 'toggle', '', 0, 'd:2fa', true)] },
       { label: 'Take it with you', rows: [{ ...R('Export everything', 'Chats, files, memory, routines, skills, settings and logs in one file. It downloads as it is gathered, which can take a few minutes.', 'button', 'Export', 0, undefined, undefined, exportEverything), can: 'exportData' as const }, R('Delete Inhouse agent and its data', 'Removes chats, memory and logs from your Cloudflare account. Your tools are not touched.', 'button', 'Ask the team', 0, undefined, undefined, () => env.openTeam('change', `Please delete the Inhouse agent and its data for ${meta.brand.name}.`))] },
     ] },
     'team-audit': { title: 'Audit log', sections: [

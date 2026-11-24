@@ -33,6 +33,6 @@ describe('the read-only text of the row (a phone)', () => {
   const row = (value: string) => ({ title: 't', desc: '', kind: 'text' as const, value, need: 0, type: 'hosts' as const })
   it('lists the sites on one line, and says "any" for none', () => {
     expect(readParts(row('a.example.com\nb.example.com'), false)).toBe('a.example.com, b.example.com')
-    expect(readParts(row(''), false)).toBe('Any public website')
+    expect(readParts(row(''), false)).toBe('No websites')
   })
 })

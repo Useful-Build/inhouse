@@ -122,7 +122,7 @@ export const PATTERN_ROWS: [RegExp, SettingRow][] = [
   [new RegExp(`^tm:${ID}:effort$`), safe('technical', oneOf(EFFORT_LABELS))],
   [new RegExp(`^tm:${ID}:on$`), safe('technical', oneOf(['off', 'on']))],
   [new RegExp(`^l:${ID}$`), safe('technical', bool)],
-  // An approval rule's approver: a member id or anyone (P6 builds the page).
+  // A stored approval rule can name a member or allow anyone.
   [/^a:(0|[1-9]\d{0,3})$/, safe('brand', { t: 'member' })],
 ]
 

@@ -1,6 +1,5 @@
-// The registered tools no phase has built yet (p3-design section 10): each answers a typed `not_available_yet` refusal,
-// so the agent sees all 20 and tells the person plainly instead of guessing. A phase that builds one adds its area after
-// `stubs` in ../index.ts, and its handler replaces the stub (approvals and questions P5, routines P4, notifications P5).
+// The tool map in ../index.ts installs these fallbacks first, then replaces them with live handlers where available.
+// Transactional approvals and questions currently return `not_available_yet`.
 import { z } from 'zod'
 import { refusal, tool } from '../../server/tool.ts'
 import type { InhouseToolName, ToolHandler } from '../../server/tool.ts'
@@ -17,7 +16,7 @@ export function notAvailableYet(name: string): ToolHandler {
   })
 }
 
-/** The unbuilt tools. A later area may replace any of these; only these. */
+/** Initial fallback entries and the names a live handler may override. */
 export const STUB_NAMES: readonly InhouseToolName[] = [
   'approval_request', 'approval_get', 'approval_list', 'approval_withdraw',
   'question_ask',

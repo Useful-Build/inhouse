@@ -4,7 +4,7 @@ import type { LibraryFiles, LibraryPage } from '../../../shared/contract/files'
 import type { LibraryFile, LibraryPlace } from '../types'
 import type { Contract, Transport } from './transport'
 
-/** The Library's places, in the screen's order (the one list of them; the server sends only a file's place id). Approvals stays empty until P6. */
+/** The Library's places in screen order. The server sends only a file's place id. */
 export const PLACES: LibraryPlace[] = [
   { id: 'chats', name: 'Chats', icon: 'chat_bubble' },
   { id: 'routines', name: 'Routines', icon: 'event_repeat' },

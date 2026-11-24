@@ -33,9 +33,9 @@ The contract is shaped like a real agent:
 - A question streams `RunEvent`s: `run.started`, `step`, `part`, `approval.requested`, `run.finished` and so on. A
   running answer takes messages (`send` with a priority), `interrupt` and `stop`.
 
-The mock is deterministic: no randomness and no model calls. Answers come from a script in `sample-data/`, timed
-against one demo clock ([0005](decisions/0005-us-formats-one-demo-clock.md)). The backend plan replaces it with a real
-client behind the same seam, and the same contract suite will run on both.
+The demo uses the deterministic `MockAgent`. Answers come from a script in `sample-data/`, timed against one
+demo clock ([0005](decisions/0005-us-formats-one-demo-clock.md)). The product uses `HttpAgent` to talk to the Worker
+through the same `AgentClient` interface. The shared contract suite runs against both clients.
 
 ### State and persistence
 
@@ -46,7 +46,7 @@ client behind the same seam, and the same contract suite will run on both.
   ([0009](decisions/0009-leaving-a-chat-finishes-the-answer.md)).
 - **Derived views** (a tool's state, counts, the chat list) come from selectors in `app/src/state/derive.ts`, so every
   screen shows the same fact.
-- Reset demo (open any build with `?demo`) clears every key and returns to the starting state.
+- In the demo build, open `?demo` to use Reset demo. It clears the demo state and restores the starting state.
 
 ## The Worker
 
