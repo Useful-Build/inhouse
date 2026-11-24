@@ -212,7 +212,8 @@ export function toolView(ctx: Ctx, key: string): ToolView {
   // A first login that failed (never connected, so `off`): the same failed-login status and line as a lost one.
   const failedFirst = state === 'off' && d.loginFailedAt ? fmtTime(d.loginFailedAt, d0) : null
   const lastRead = ctx.data.tools.lastRead[key] ?? ctx.data.tools.lastRead.default
-  const readAt = fmtTime(lastRead, d0)
+  const hasLastRead = lastRead.ms > 0
+  const readAt = hasLastRead ? fmtTime(lastRead, d0) : ''
   const tagOf = { connected: 'On', paused: 'Paused', disconnected: 'Off', connecting: 'Not yet', off: 'Off' }[state]
   const setup = Object.hasOwn(ctx.data.tools.setup, key) ? SETUP_DUE[ctx.data.tools.setup[key].due] : null
   const ability = (k: ToolAbility['key'], icon: string, title: string, text: string, need: StageIndex): ToolAbility =>
@@ -221,9 +222,9 @@ export function toolView(ctx: Ctx, key: string): ToolView {
     key, name: d.name, state,
     statusText: failedFirst !== null ? `Disconnected · login expired at ${failedFirst}` : { connecting: 'Being connected', connected: 'Connected', paused: 'Access paused', disconnected: `Disconnected · login expired at ${lostAt}`, off: 'Not connected' }[state],
     // Being connected: on day one, when Today's setup list says it connects; else when it goes live ("Live by Fri, Nov 20").
-    listLine: state === 'connecting' ? setup ?? sinceLine(d, d0) : failedFirst !== null ? 'Needs reconnecting' : { connected: `Read ${readAt}`, paused: 'Access paused', disconnected: 'Needs reconnecting', off: 'Not connected' }[state],
+    listLine: state === 'connecting' ? setup ?? sinceLine(d, d0) : failedFirst !== null ? 'Needs reconnecting' : { connected: hasLastRead ? `Read ${readAt}` : 'Connected', paused: 'Access paused', disconnected: 'Needs reconnecting', off: 'Not connected' }[state],
     connectedRow: state === 'connecting' ? 'Not yet' : state === 'off' ? 'Not connected' : `${sinceLine(d, d0)}, by your Inhouse team`,
-    lastRead: state === 'connecting' || state === 'off' ? 'Not yet' : state === 'disconnected' ? `${fmtWeekday(lastCheckBefore(lastRead, d0), d0)}, ${readAt}` : `Today, ${readAt}`,
+    lastRead: state === 'connecting' || state === 'off' || !hasLastRead ? 'Not yet' : state === 'disconnected' ? `${fmtWeekday(lastCheckBefore(lastRead, d0), d0)}, ${readAt}` : `Today, ${readAt}`,
     abilities: [
       ability('read', 'visibility', 'Read', d.read, 0),
       ability('draft', 'edit_note', 'Draft for your approval', d.draft, 1),
@@ -285,23 +286,37 @@ export function capStatus(ctx: Ctx): CapStatus {
   }
 }
 
+/** Days in the calendar month for a `"YYYY-MM"` key, 30 when absent (the demo's months carry no key). A malformed key throws. */
+function monthLength(monthKey?: string): number {
+  if (monthKey === undefined) return 30
+  const m = monthKey.match(/^(\d{4})-(0[1-9]|1[0-2])$/)
+  if (!m) throw new Error(`usageSummary: malformed month key ${JSON.stringify(monthKey)}`)
+  return new Date(Date.UTC(Number(m[1]), Number(m[2]), 0)).getUTCDate()
+}
+
 /**
  * The sentence under a month's amount on Usage and the note beside its cap bar. `thisMonth` with `reached`: at the cap.
- * A month's projection is its average day times 30.
+ * Uses the real length of `monthKey` when present, defaulting to 30 for demo months with no key.
  */
-export function usageSummary(m: { total: Money; cap: Money; alertAt: number; daily: Money[] }, thisMonth: boolean, reached: boolean): { hint: string; capNote: string } {
+export function usageSummary(m: { monthKey?: string; total: Money; cap: Money; alertAt: number; daily: Money[] }, thisMonth: boolean, reached: boolean): { hint: string; capNote: string } {
   const d0 = display()
   const total = majorOf(m.total), cap = majorOf(m.cap), days = m.daily.length
-  const pct = Math.min(100, Math.round(total / cap * 100)) + '%'
-  const over = total > cap
+  const monthLen = monthLength(m.monthKey)
+  const pctNum = cap > 0 ? Math.round(total / cap * 100) : 0
+  const pct = Math.min(100, pctNum) + '%'
+  const over = cap > 0 && total > cap
   const capText = fmtMoney(m.cap, d0)
+  const projected = days > 0 ? total / days * monthLen : 0
+  const daysLeft = Math.max(0, monthLen - days)
   const hint = !thisMonth
     ? over ? `Went over your ${capText} cap` : `Finished under your ${capText} cap`
     : reached
-      ? `Cap reached with ${30 - days} days of the month left`
-      : `On track for about ${fmtMoney(moneyOf(Math.round(total / days * 30), m.total.currency), d0)} this month, ${total / days * 30 > cap ? 'over' : 'under'} your cap`
+      ? `Cap reached with ${daysLeft} days of the month left`
+      : days === 0
+        ? 'Nothing spent yet this month'
+        : `On track for about ${fmtMoney(moneyOf(Math.round(projected), m.total.currency), d0)} this month, ${projected > cap ? 'over' : 'under'} your cap`
   const capNote = !thisMonth
-    ? over ? `Closed at ${Math.round(total / cap * 100)}% of the cap.` : `Closed at ${pct} of the cap. Nothing was paused.`
+    ? over ? `Closed at ${pctNum}% of the cap.` : `Closed at ${pct} of the cap. Nothing was paused.`
     : reached
       ? 'Cap reached today. Chats, routines and jobs are paused until next month or until an admin raises the cap.'
       : `Admins get an email at ${m.alertAt}%. Your Inhouse agent pauses chats, routines and jobs at the cap.`

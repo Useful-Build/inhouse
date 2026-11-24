@@ -1,7 +1,5 @@
-// The `inhouse` MCP server's tool list (P3, p3-design section 10): the 20 tools of the approved tool list (agent-tools,
-// approved 2026-11-14), their names, categories and the descriptions the model reads, and the six always loaded. The
-// other 14 stay deferred until the agent finds them through tool search. Orchestrator only; each tool's input schema and
-// handler are its owner's (W6 for memory and history; the rest answer `not_available_yet` until their phase builds them).
+// The `inhouse` MCP server registry defines tool names, categories, descriptions and which tools load up front.
+// Deferred tools are available through tool search. Input schemas and handlers live in the tool modules.
 // The server marks an always-loaded tool with `_meta: { "anthropic/alwaysLoad": true }` in `tools/list` (the MCP docs'
 // "Mark a tool to load upfront or stay deferred", https://code.claude.com/docs/en/mcp, read 2026-11-14 for the tool list).
 

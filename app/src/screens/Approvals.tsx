@@ -1,6 +1,6 @@
 import { amountOf, channelFrom, draftView, flags, lowRiskIds, memberFor, pendingIds, problemById, riskLabel, userName, visibleProblems } from '../state/derive'
 import { isUrgent } from '../ui/severity'
-import { fmtMoney, fmtTime } from '../lib/format'
+import { fmtMoney, fmtTime, hasAmount } from '../lib/format'
 import { display } from '../state/display'
 import { Skeleton } from '@/components/ui/skeleton'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -79,7 +79,7 @@ export function Approvals() {
                 <li key={p.id} className="flex min-h-9.75 items-center gap-2.5 border-b border-border text-sm">
                   <Icon name="edit_note" size={16} />
                   <span className="min-w-0 flex-1 text-foreground-2">{p.draft.title}</span>
-                  <span className="whitespace-nowrap text-muted-foreground tabular-nums">{fmtMoney(p.cost, display())}</span>
+                  {hasAmount(p.cost) && <span className="whitespace-nowrap text-muted-foreground tabular-nums">{fmtMoney(p.cost, display())}</span>}
                 </li>
               ))}
             </ul>}

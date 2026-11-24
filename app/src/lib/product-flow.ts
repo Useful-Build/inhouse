@@ -23,3 +23,16 @@ export function askForTool(o: { product: boolean; request: () => Promise<void>; 
   if (!o.product) { o.say(); void sent.catch(() => undefined); return }
   void sent.then(o.say, () => undefined)
 }
+
+/** Chat export in the top-bar menu: demo only while product has no export endpoint. */
+export const showChatExport = (demo: boolean): boolean => demo
+/** Unwired composer stubs (Google Drive, page screenshot, Dictate): demo only. */
+export const showComposerDemoStubs = (demo: boolean): boolean => demo
+/** Account menu's Help and guides entry: demo only (guide entries are empty in product). */
+export const showHelpAndGuides = (demo: boolean): boolean => demo
+/** Per-message Delete and Good/Bad answer controls: demo only (local-only until backed by routes). */
+export const showLocalAnswerControls = (demo: boolean): boolean => demo
+
+/** Usage screen state: error renders LoadError, product loading waits instead of showing empty $0 cards, demo keeps its Loading scenario layout. */
+export const usageView = (demo: boolean, s: Pick<ResourceStatus, 'status'>): 'error' | 'loading' | 'ready' =>
+  s.status === 'error' ? 'error' : !demo && s.status === 'loading' ? 'loading' : 'ready'

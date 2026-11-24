@@ -3,8 +3,9 @@
 // On a phone both boxes keep attach and send: the tools and the model move into "+", the logo stack and dictate leave (M27).
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { ChangeEvent, ClipboardEvent, DragEvent, ReactElement } from 'react'
-import { agent } from '../agent'
+import { agent, demo } from '../agent'
 import type { Attachment } from '../agent/types'
+import { showComposerDemoStubs } from '../lib/product-flow'
 import { dropFile, keepFile } from '../state/pending-files'
 import { activeMode, emptyToolsNote, readingTools, thinkingModes, toolCounts, toolDetail } from '../state/derive'
 import { openChatKey, openRun, useCtx, useUi } from '../state/store'
@@ -183,6 +184,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   }, [])
 
   // Stubs say what they are (M36).
+  const demoStubs = showComposerDemoStubs(demo !== null)
   const notConnected = (what: string) => useUi.getState().showToast(`${what} isn't connected in this demo.`, { icon: 'info', ms: 4000 })
   const noModel = thinkingModes(data, ctx.agent.settings).every(m => !m.on)
   const canSend = !!draft.trim() && !noModel
@@ -331,18 +333,24 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
             <DropdownMenuItem className={cn(ATTACH_ITEM, 'cursor-pointer')} onSelect={() => fileRef.current?.click()}>
               <AttachRow icon="upload_file" title="Upload files" sub="PDF, spreadsheets, images, invoices" />
             </DropdownMenuItem>
-            <DropdownMenuItem className={ATTACH_ITEM} onSelect={() => notConnected('Google Drive')}>
-              <AttachRow icon="add_to_drive" title="From Google Drive" sub="Sheets, docs and PDFs you can open" />
-            </DropdownMenuItem>
+            {demoStubs && (
+              <DropdownMenuItem className={ATTACH_ITEM} onSelect={() => notConnected('Google Drive')}>
+                <AttachRow icon="add_to_drive" title="From Google Drive" sub="Sheets, docs and PDFs you can open" />
+              </DropdownMenuItem>
+            )}
             {attachExample && (
               <DropdownMenuItem className={ATTACH_ITEM} onSelect={() => addAtts([{ name: attachExample.name, meta: attachExample.meta, icon: attachExample.icon }])}>
                 <AttachRow icon={attachExample.icon} title={attachExample.label ?? 'A record from your tools'} sub={orderSources} />
               </DropdownMenuItem>
             )}
-            <DropdownMenuSeparator className="mx-1.5 my-1" />
-            <DropdownMenuItem className={ATTACH_ITEM} onSelect={() => addAtts([{ name: `Screenshot of ${PAGE_TITLES[page] ?? 'this page'}`, meta: 'PNG · just now', icon: 'screenshot_region' }])}>
-              <AttachRow icon="screenshot_region" title="Screenshot of this page" sub="Useful when something looks wrong" />
-            </DropdownMenuItem>
+            {demoStubs && (
+              <>
+                <DropdownMenuSeparator className="mx-1.5 my-1" />
+                <DropdownMenuItem className={ATTACH_ITEM} onSelect={() => addAtts([{ name: `Screenshot of ${PAGE_TITLES[page] ?? 'this page'}`, meta: 'PNG · just now', icon: 'screenshot_region' }])}>
+                  <AttachRow icon="screenshot_region" title="Screenshot of this page" sub="Useful when something looks wrong" />
+                </DropdownMenuItem>
+              </>
+            )}
             {slim && (
               <>
                 <DropdownMenuSeparator className="mx-1.5 my-1" />
@@ -395,7 +403,7 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
             <div className="mt-1 border-t border-divider px-2.5 pt-2 pb-1.5 text-xs text-muted-foreground">Admins choose which models the team can use, in Settings.</div>
           </DropdownMenuContent>
         </DropdownMenu>}
-        {!slim && (
+        {!slim && demoStubs && (
           <Tip label="Dictate">
             <button type="button" aria-label="Dictate" onClick={() => notConnected('Dictation')}
               className={cn(ROUND, 'bg-secondary text-foreground-2 hover:bg-fill-hover')}>

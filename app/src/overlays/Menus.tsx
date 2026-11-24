@@ -1,7 +1,8 @@
 import { Fragment, useRef, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
-import { agent } from '../agent'
+import { agent, demo } from '../agent'
 import type { AgentNotification } from '../agent'
+import { showHelpAndGuides } from '../lib/product-flow'
 import { useAgentData, useAgentState, useCtx, useUi } from '../state/store'
 import { openRequests, userName } from '../state/derive'
 import { fmtWhen } from '../lib/format'
@@ -96,7 +97,7 @@ export function AccountMenu({ children }: { children: ReactNode }) {
   ], [
     ['support_agent', 'Your Inhouse team', () => { focusTrigger(); openTeam('tool') },
       open > 0 ? <span className="ml-auto text-xs text-muted-foreground tabular-nums">{open} open</span> : undefined],
-    ['menu_book', 'Help and guides', () => { focusTrigger(); openPop('help') }],
+    ...(showHelpAndGuides(demo !== null) ? [['menu_book', 'Help and guides', () => { focusTrigger(); openPop('help') }] as Item] : []),
   ], [
     // The product signs out through Access (`signOutUrl()`); the demo has no sign-in.
     ['logout', 'Sign out', () => {

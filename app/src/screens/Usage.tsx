@@ -1,7 +1,8 @@
 // Usage: spend against the cap, daily bars, totals and breakdown.
 import { useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
-import { demo } from '../agent'
+import { agent, demo } from '../agent'
+import { usageView } from '../lib/product-flow'
 import { activeChannel, capStatus, usageSummary } from '../state/derive'
 import { calendarOf, fmtCapFill, fmtCount, fmtShare, fmtSpentOfCap, fmtUsageMoney, majorOf } from '../lib/format'
 import { display, nowOf } from '../state/display'
@@ -9,6 +10,7 @@ import { useCtx, useUi } from '../state/store'
 import type { UsageTab } from '../state/store'
 import { Avatar, CardGrid, EmptyState, InhouseMark, Page, PageHeader, Segmented } from '../ui'
 import { Select, TAP } from '../ui/fields'
+import { LoadError } from '../ui/retry'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
@@ -49,6 +51,26 @@ export function Usage() {
   const [barAt, setBarAt] = useState(0)
   const bars = useRef<(HTMLDivElement | null)[]>([])
 
+  const usageRes = ctx.data.resources.usage
+  const view = usageView(demo !== null, usageRes)
+  const headerDesc = 'What your Inhouse agent cost to run. AI and hosting are billed at cost, to your own accounts.'
+  if (view === 'error') {
+    return (
+      <Page width="wide">
+        <PageHeader title="Usage" description={headerDesc} />
+        <LoadError what="usage" error={usageRes.error} onRetry={() => { void agent.retry('usage') }} />
+      </Page>
+    )
+  }
+  if (view === 'loading') {
+    return (
+      <Page width="wide">
+        <PageHeader title="Usage" description={headerDesc} />
+        <EmptyState className="mt-7" variant="inline">Loading usage.</EmptyState>
+      </Page>
+    )
+  }
+
   const d0 = display()
   const currency = usage.total.currency
   /** An amount here always shows its cents ("$182.43"). */
@@ -57,13 +79,14 @@ export function Usage() {
   // The arithmetic below is on dollars; every amount is shown through `money`.
   const days = usage.daily.map(majorOf)
   const total = majorOf(usage.total)
-  const maxD = Math.max(...days)
+  const maxD = days.length > 0 ? Math.max(...days) : 0
   // A day's bar as a share of the peak day. A month with nothing spent yet (day one) draws every bar flat.
   const barHeight = (v: number) => (maxD > 0 ? Math.round(v / maxD * 100) : 0) + '%'
   const dayLabel = (i: number) => `${mon} ${i + 1}`
-  const bar = Math.min(barAt, days.length - 1)
+  const bar = days.length > 0 ? Math.min(barAt, days.length - 1) : 0
   const barKey = (e: KeyboardEvent, i: number) => {
     const last = days.length - 1
+    if (last < 0) return
     const to = { ArrowRight: i + 1, ArrowDown: i + 1, ArrowLeft: i - 1, ArrowUp: i - 1, Home: 0, End: last }[e.key]
     if (to === undefined) return
     e.preventDefault()
@@ -71,7 +94,7 @@ export function Usage() {
     setBarAt(t)
     bars.current[t]?.focus()
   }
-  const peakAt = days.indexOf(maxD) + 1
+  const peakAt = maxD > 0 ? days.indexOf(maxD) + 1 : 0
   const pct = fmtCapFill(total, majorOf(usage.cap), cap)
   const over = total > majorOf(usage.cap)
   const { hint, capNote } = usageSummary(usage, thisMonth, cap)
@@ -131,9 +154,13 @@ export function Usage() {
             ))}
             </div>
           </div>
-          <div className="mt-2 flex justify-between font-mono text-xs font-medium text-muted-foreground">
-            <span>{dayLabel(0).toUpperCase()}</span><span>{dayLabel(7).toUpperCase()}</span><span>{dayLabel(days.length - 1).toUpperCase()}</span>
-          </div>
+          {days.length > 0 && (
+            <div className="mt-2 flex justify-between font-mono text-xs font-medium text-muted-foreground">
+              <span>{dayLabel(0).toUpperCase()}</span>
+              {days.length > 7 && <span>{dayLabel(7).toUpperCase()}</span>}
+              {days.length > 1 && <span>{dayLabel(days.length - 1).toUpperCase()}</span>}
+            </div>
+          )}
         </div>
       </CardGrid>
 

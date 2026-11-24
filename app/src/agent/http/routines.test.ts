@@ -136,10 +136,10 @@ describe('the client: routines', () => {
     expect(agent.getSnapshot().routineRuns[0]).toEqual(run)
     expect(body(calls.find(c => c.path === '/api/routines/rt_a/run')!).clientKey).toMatch(/^[A-Za-z0-9_-]{8,64}$/)
     await expect(agent.runRoutine('rt_b')).rejects.toMatchObject({ code: 'conflict', reason: 'run_open', message: 'A run is still going. Try again when it finishes.' })
-    await expect(agent.runRoutine('rt_gone')).rejects.toMatchObject({ code: 'forbidden', reason: 'stage', message: 'This routine runs from the Act stage. Ask an admin to move to Act.' })
+    await expect(agent.runRoutine('rt_gone')).rejects.toMatchObject({ code: 'forbidden', reason: 'stage', message: 'This routine runs from the Act stage. Ask your Inhouse team about moving to Act.' })
     expect(heard).toEqual([
       { type: 'error', code: 'conflict', text: 'A run is still going. Try again when it finishes.' },
-      { type: 'error', code: 'forbidden', text: 'This routine runs from the Act stage. Ask an admin to move to Act.' },
+      { type: 'error', code: 'forbidden', text: 'This routine runs from the Act stage. Ask your Inhouse team about moving to Act.' },
     ])
     expect(agent.getSnapshot().routineRuns).toHaveLength(1)
   })

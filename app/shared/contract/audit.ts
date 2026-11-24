@@ -1,4 +1,4 @@
-// The audit log: changes to how the agent may work. W2 owns this file in P2 (its actions and the `AuditEntry` it becomes).
+// The audit log records changes to how the agent may work.
 import { z } from 'zod'
 import { InstantSchema } from './common.ts'
 import { pageOf } from './paging.ts'
@@ -7,10 +7,11 @@ import { FileIdSchema, RunIdSchema } from './chat-ids.ts'
 import { MemberIdSchema, MemberRoleSchema } from './members.ts'
 import { SettingKeySchema, SettingScopeSchema, SettingValueSchema, settingSpec } from './settings.ts'
 
+/** An audit row formatted for display, also used by the demo. */
 export const AuditEntrySchema = z.object({ at: InstantSchema, who: z.string(), what: z.string(), detail: z.string() })
 export type AuditEntry = z.infer<typeof AuditEntrySchema>
 
-// ---------- P2: the audit log the product keeps (p2-design.md section 8, decision Q3). `AuditEntrySchema` stays until W3 switches data.ts over. ----------
+// The product audit API returns paginated records with typed actions and details.
 
 /** Every action the log records. Closed: a new one is a contract change. */
 export const AuditActionSchema = z.enum([

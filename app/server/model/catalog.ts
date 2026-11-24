@@ -1,8 +1,6 @@
 // The model catalogue (p3-design 4.9 and 8.2): the models a turn may run on, their API ids, default efforts and prices,
 // and `resolveModel`, the one function route 29 (send a turn) and route 38 (the model list) decide a model with.
-// W1's first PR writes the ids, labels, efforts and `resolveModel`; W3 fills the prices and owns this file afterwards. A
-// model without a price is refused (`model_off`): fail closed, so a model never runs before the spend gate can price
-// its calls.
+// A missing price returns `model_off` so every selectable model can be priced by the spend gate.
 //
 // Prices: https://platform.claude.com/docs/en/about-claude/pricing (read 2026-11-20). Fable 5.2, Opus 5.5 and Sonnet 5.5
 // have no long-context premium ("include the full 1M token context window at standard pricing"). Haiku 5.5 "is priced
@@ -26,7 +24,7 @@ export interface PriceTier {
   cacheRead: number
 }
 
-/** A model's price card (8.3). W3 fills these. */
+/** A model's price card (8.3). */
 export interface Price {
   tiers: readonly PriceTier[]
   /** null: fast mode is refused for this model. */
@@ -49,7 +47,7 @@ export interface CatalogModel {
   apiId: string
   /** The effort used when the brand set none (`tm:<id>:effort`). */
   defaultEffort: Effort
-  /** null until W3 prices it: `resolveModel` then refuses the model. */
+  /** When null, `resolveModel` refuses the model. */
   price: Price | null
 }
 

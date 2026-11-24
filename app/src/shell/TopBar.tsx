@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { demo } from '../agent'
+import { showChatExport } from '../lib/product-flow'
 import { capStatus, flags, lostTool, toolDetail } from '../state/derive'
 import { fmtTime } from '../lib/format'
 import { display } from '../state/display'
@@ -63,7 +65,7 @@ export function TopBar() {
             // The open chat may be gone: land on the menu of the chat the bar shows now, else the new chat's composer.
             (titleArea.current?.querySelector<HTMLElement>('[aria-haspopup="menu"]') ?? document.querySelector<HTMLElement>('main [data-composer] textarea'))?.focus()
           }} className={cn('flex-none', renaming && 'invisible')} onRename={() => setRenamingId(headerChat.id)}
-            onExport={() => showToast("Export isn't connected in this demo.", { icon: 'info', ms: 4000 })}>
+            onExport={showChatExport(demo !== null) ? () => showToast("Export isn't connected in this demo.", { icon: 'info', ms: 4000 }) : undefined}>
             {/* On a phone the title opens the menu, so a "···" button doesn't take the title's room. */}
             {phone ? <button type="button" aria-label={`Chat actions, ${headerChat.title}`} className={cn('-ml-1 flex min-h-11 min-w-0 items-center rounded-md px-1 focus-visible:-outline-offset-2', renaming && 'hidden')}>{titleEl}</button> : undefined}
           </ChatMenu>

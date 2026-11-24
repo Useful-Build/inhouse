@@ -190,7 +190,7 @@ export function memberStore({ db, hook = s => s }: MemberStoreDeps) {
       if (found) return { kind: 'inhouse', memberId: found.id, subject: signIn.subject, requestId: signIn.requestId }
       const id = newMemberId()
       const stamp = writeStamp(signIn.requestId)
-      // The email's local part stands in for a name until P3 shows the team's names.
+      // Use the email local part as the initial display name on first sign-in.
       const name = signIn.email.split('@')[0].slice(0, 80) || 'Inhouse team'
       await write([
         stmt(
