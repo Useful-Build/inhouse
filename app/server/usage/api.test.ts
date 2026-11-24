@@ -2,7 +2,9 @@
 //  1. totals, counts or rows built from unsettled turns, or a refused turn counted;
 //  2. money rounded wrongly (micro-USD to cents), a day taken in UTC rather than the brand's zone;
 //  3. `capReached` / `alertCrossed` taken from stored marks instead of the cap as it is now (a raised cap must clear);
-//  4. a bad, future or extra query parameter reaching the store.
+//  4. a bad, future or extra query parameter reaching the store;
+//  5. a routine's turns (chats `m_system` owns) counted as questions or a person's row, left out of Jobs run and the Job
+//     breakdown, or the split not adding up (spend by person + spend by job = total, spend by model = total).
 import { env } from 'cloudflare:workers'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { UsageDataSchema } from '../../shared/contract/usage.ts'
@@ -10,6 +12,7 @@ import { openStores } from '../db/stores.ts'
 import { ctx, personPrincipal } from '../db/test-support.ts'
 import { getUsage, toUsageData } from './api.ts'
 import { createUsageLedger } from './ledger.ts'
+import { insertRoutine, insertSlot, routine } from '../routines/test-kit.ts'
 import { db, resetUsage, setSetting, turnIn } from './test-fixtures.ts'
 
 const stores = openStores(env)
@@ -88,7 +91,7 @@ describe('route 42', () => {
     await setSetting('s:cap', '$4.99')
     expect(await usage()).toMatchObject({ capReached: false })
     await setSetting('s:cap', '$10')
-    const view = { month: '2026-11', current: true, capMicro: 250_000_000, alertPct: 80, spentMicro: 249_800_000, conversations: 0, questions: 0, dailyMicro: [], people: [], models: [], months: ['2026-11'] }
+    const view = { month: '2026-11', current: true, capMicro: 250_000_000, alertPct: 80, spentMicro: 249_800_000, conversations: 0, questions: 0, jobsRun: 0, dailyMicro: [], people: [], jobs: [], models: [], months: ['2026-11'] }
     expect(toUsageData(view).capReached).toBe(true)
   })
 
@@ -104,6 +107,42 @@ describe('route 42', () => {
     expect(u).toMatchObject({ month: 'October', monthKey: '2026-10', cap: usd(1000), total: usd(200), questionsAsked: 1, capReached: false })
     expect(u.daily).toHaveLength(31)
     expect(u.daily[19]).toEqual(usd(200))
+  })
+
+  it('a routine\'s turns are jobs: Jobs run and the Job rows by routine, never questions or a person (failure 5)', async () => {
+    // August: no other test reads it. Ada asks one question ($1.00, Sonnet); two routines run: Morning check twice ($0.40,
+    // $0.10, Sonnet) and Stock sweep once ($0.30, Haiku), each run in its own chat that `m_system` owns.
+    const aug = Date.UTC(2026, 7, 10, 12)
+    const morning = await insertRoutine(routine({ name: 'Morning check', creator_id: 'm_u_ada', checked_until_ms: aug }))
+    const sweep = await insertRoutine(routine({ name: 'Stock sweep', creator_id: 'm_u_ada', checked_until_ms: aug }))
+    await insertSlot({ routine_id: morning.id, local_date: '2026-08-10', claimed_at_ms: aug, chat_id: 'rc_aug_1' })
+    await insertSlot({ routine_id: morning.id, local_date: '2026-08-11', claimed_at_ms: aug, chat_id: 'rc_aug_2' })
+    await insertSlot({ routine_id: sweep.id, local_date: '2026-08-10', claimed_at_ms: aug, chat_id: 'rc_aug_3' })
+    const settle = async (t: string, o: Parameters<typeof turnIn>[1], micro: number) => {
+      await ledger.reserve(turnIn(t, o))
+      await ledger.settle(t, micro, NOW)
+    }
+    await settle('t_a1', { memberId: 'm_u_ada', chatId: 'c_aug_q', nowMs: aug }, 1_000_000)
+    await settle('t_a2', { memberId: 'm_system', chatId: 'rc_aug_1', nowMs: aug }, 400_000)
+    await settle('t_a3', { memberId: 'm_system', chatId: 'rc_aug_2', nowMs: aug }, 100_000)
+    await settle('t_a4', { memberId: 'm_system', chatId: 'rc_aug_3', nowMs: aug, model: 'claude-haiku-5-5' }, 300_000)
+    const u = await usage('?month=2026-08')
+    expect(u).toMatchObject({ total: usd(180), conversations: 1, questionsAsked: 1, jobsRun: 3 })
+    expect(u.breakdown.person).toEqual([{ name: 'Ada Example', sub: '1 question', spent: usd(100), conversations: 1 }])
+    expect(u.breakdown.job).toEqual([
+      { name: 'Morning check', sub: '2 runs', spent: usd(50), conversations: 2 },
+      { name: 'Stock sweep', sub: '1 run', spent: usd(30), conversations: 1 },
+    ])
+    // The model rows keep every turn's spend and count the person's question only.
+    expect(u.breakdown.model).toEqual([
+      { name: 'Sonnet 5.5', sub: 'Fast', spent: usd(150), conversations: 1 },
+      { name: 'Haiku 5.5', sub: 'Instant', spent: usd(30), conversations: 0 },
+    ])
+    const sum = (rows: { spent: { minor: number } }[]) => rows.reduce((n, r) => n + r.spent.minor, 0)
+    expect(sum(u.breakdown.person) + sum(u.breakdown.job)).toBe(u.total.minor)
+    expect(sum(u.breakdown.model)).toBe(u.total.minor)
+    // The month a routine runs in is a month with usage: it is offered in the picker.
+    expect((await usage()).months).toContain('2026-08')
   })
 
   it('refuses a future month, a bad month and an extra parameter (failure 4)', async () => {

@@ -1,6 +1,7 @@
 // Usage: spend against the cap, daily bars, totals and breakdown.
 import { useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
+import { demo } from '../agent'
 import { activeChannel, capStatus, usageSummary } from '../state/derive'
 import { calendarOf, fmtCapFill, fmtCount, fmtShare, fmtSpentOfCap, fmtUsageMoney, majorOf } from '../lib/format'
 import { display, nowOf } from '../state/display'
@@ -12,6 +13,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 
 const TABS: [UsageTab, string][] = [['person', 'Person'], ['job', 'Job'], ['model', 'Model'], ['tool', 'Tool']]
+// The product's ledger holds no spend per tool, so its Tool tab would always read "Nothing spent yet": the demo has it alone.
+const SHOWN_TABS = TABS.filter(([t]) => t !== 'tool' || demo !== null)
 const COL: Record<UsageTab, string> = { person: 'Person', job: 'Job', model: 'Model', tool: 'Tool read' }
 
 /** A person's avatar on the Person tab; the agent's own row wears the agent's mark. */
@@ -145,7 +148,7 @@ export function Usage() {
 
       <div className="mt-9 flex flex-wrap items-center gap-3">
         <h2 className="flex-1 text-xl font-semibold tracking-section">Breakdown</h2>
-        <Segmented label="Break down by" value={tab} options={TABS} onChange={v => patch({ usageTab: v })} />
+        <Segmented label="Break down by" value={tab} options={SHOWN_TABS} onChange={v => patch({ usageTab: v })} />
       </div>
       {rows.length === 0 ? (
         <EmptyState className="mt-3">{ctx.data.status === 'loading' ? 'Still reading your tools. Costs show here once your Inhouse agent has worked.' : 'Nothing spent yet. Costs show here once your Inhouse agent starts working.'}</EmptyState>

@@ -317,7 +317,8 @@ export class HttpAgent implements AgentClient {
     if (hit && hit.live === live) return hit.data
     // A change to what read() doesn't carry (a setting, a switch) leaves its object alone, so nothing re-renders for it.
     const last = this.lastBuilt
-    const same = last && last.live === live && (['me', 'members', 'membersNext', 'audit', 'auditNext', 'grant', 'memory', 'chats', 'modelList', 'served', 'usage', 'usageMonths', 'activity', 'routines', 'skills', 'problems', 'tools', 'res'] as const).every(k => last.s[k] === this.s[k])
+    // The brand's name is the one setting `build()` reads for `meta` (`b:name`), so a change to it rebuilds.
+    const same = last && last.live === live && last.s.state.settings['b:name'] === this.s.state.settings['b:name'] && (['me', 'members', 'membersNext', 'audit', 'auditNext', 'grant', 'memory', 'chats', 'modelList', 'served', 'usage', 'usageMonths', 'activity', 'routines', 'skills', 'problems', 'tools', 'res'] as const).every(k => last.s[k] === this.s[k])
     const data = same ? last.data : this.build(live)
     this.dataCache.set(this.s, { live, data })
     this.lastBuilt = { s: this.s, live, data }
@@ -330,7 +331,8 @@ export class HttpAgent implements AgentClient {
     return {
       ...EMPTY_DATA,
       status: meta.status === 'ready' ? 'ready' : 'loading',
-      meta: { ...EMPTY_DATA.meta, brand: { ...EMPTY_DATA.meta.brand, staff: members.filter(m => m.status === 'active').length }, currentUser: person },
+      // The brand's name is its `b:name` setting (an Admin edits it on the Inhouse agent page); unset reads as empty.
+      meta: { ...EMPTY_DATA.meta, brand: { ...EMPTY_DATA.meta.brand, name: this.s.state.settings['b:name'] ?? '', staff: members.filter(m => m.status === 'active').length }, currentUser: person },
       people: { ...EMPTY_DATA.people, members, supportGrant: grant ? { ...grant, live } : null },
       auditLog: this.s.audit,
       memory: this.s.memory,

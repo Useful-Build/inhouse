@@ -30,12 +30,14 @@ async function resetDemo(page: Page) {
   await page.getByRole('button', { name: 'Close demo switches' }).click()
 }
 
-test('Inhouse agent: tone and sign-off are saved, survive a reload and Reset demo clears them; its links open Team memory and Skills', async ({ fx, page }) => {
+test('Inhouse agent: brand name, tone and sign-off are saved, survive a reload and Reset demo clears them; its links open Team memory and Skills', async ({ fx, page }) => {
   await start(page, fx, 'Act', '#/settings/team-agent')
   await expect(h1(page, 'Inhouse agent')).toBeVisible()
   const signs = main(page).getByRole('textbox', { name: 'Signs emails as', exact: true })
+  const brand = main(page).getByRole('textbox', { name: 'Brand name', exact: true })
   await expect(combo(page, 'Tone: Friendly and short')).toBeVisible()
   await expect(signs).toHaveValue('The Northline team')
+  await expect(brand).toHaveValue('Northline Outdoor')
 
   await combo(page, 'Tone: Friendly and short').click()
   await expect(page.getByRole('listbox', { name: 'Tone' }).getByRole('option')).toHaveText([/^Friendly and short(\s*check)?$/, /^Warm and detailed(\s*check)?$/, /^Formal and brief(\s*check)?$/, /^Plain and direct(\s*check)?$/])
@@ -43,10 +45,12 @@ test('Inhouse agent: tone and sign-off are saved, survive a reload and Reset dem
   await expect(combo(page, 'Tone: Formal and brief')).toBeVisible()
   await signs.fill('Sam at Northline')
   await expect(toast(page, 'Saved')).toBeVisible()
+  await brand.fill('Northline Trail')
 
   await page.reload()
   await expect(combo(page, 'Tone: Formal and brief')).toBeVisible()
   await expect(signs).toHaveValue('Sam at Northline')
+  await expect(brand).toHaveValue('Northline Trail')
 
   // Open memory goes to Team memory; View skills goes to the Skills page.
   await main(page).getByRole('button', { name: 'Open memory', exact: true }).click()
@@ -61,6 +65,7 @@ test('Inhouse agent: tone and sign-off are saved, survive a reload and Reset dem
   await goTo(page, 'team-agent')
   await expect(combo(page, 'Tone: Friendly and short')).toBeVisible()
   await expect(signs).toHaveValue('The Northline team')
+  await expect(brand).toHaveValue('Northline Outdoor')
 })
 
 test('Data and access: retention and access switches are saved, survive a reload and Reset demo clears them; Next cleanup shows; Export downloads a sample and delete answers', async ({ fx, page }) => {
@@ -134,8 +139,8 @@ test('Audit log: pausing the agent adds a row at the top that survives a reload,
   await expect(seeded).toBeVisible()
   await expect(paused).toHaveCount(0)
 
-  // Pause from Run limits: the log gets a row above the seeded one.
-  await goTo(page, 'team-limits')
+  // Pause from Spending cap: the log gets a row above the seeded one.
+  await goTo(page, 'team-spend')
   await main(page).getByRole('button', { name: 'Pause Inhouse agent', exact: true }).click()
   await expect(page.getByRole('status', { name: 'Inhouse agent is paused' })).toBeVisible()
   await goTo(page, 'team-audit')
@@ -148,7 +153,7 @@ test('Audit log: pausing the agent adds a row at the top that survives a reload,
   await expect(paused).toBeVisible()
 
   // Resume: the row goes, the seeded rows stay.
-  await goTo(page, 'team-limits')
+  await goTo(page, 'team-spend')
   await main(page).getByRole('button', { name: 'Resume Inhouse agent', exact: true }).click()
   await expect(toast(page, 'Your Inhouse agent is running again')).toBeVisible()
   await goTo(page, 'team-audit')

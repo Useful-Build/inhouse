@@ -51,7 +51,7 @@ export const dataOverrideActive = !!override.brandName || override.channels === 
 export const memberIdOf = (sampleId: string) => `m_${sampleId}`
 /** The signed-in person's member id: the sample Admin. */
 export const ME_ID = memberIdOf(sampleMeta.currentUser.id)
-/** The sample people as members: Approver is not a role (a member named on an approval rule is labelled Approver by the page), so it becomes member. */
+/** The sample people as members: a member is an Admin or a Member (approving is a job per rule, by member id, not a role). */
 const SAMPLE_MEMBERS: MemberRecord[] = people.members.map(m => ({
   id: memberIdOf(m.id), name: m.name, email: m.email, title: m.title, role: m.role === 'Admin' ? 'admin' : 'member', status: 'active', photo: m.photo ?? null, rev: 1,
 }))

@@ -28,7 +28,7 @@ import { GooDefs, Page as PageBox, SkyspaceBackground } from './ui'
 import { Today } from './screens/Today'
 import { Chats } from './screens/Chats'
 import { useChatIsBlank } from './screens/chat/open-messages'
-import { SETTINGS_PAGES } from './screens/settings/menu'
+import { SETTINGS_PAGES, settingsTabs } from './screens/settings/menu'
 import { CommandPalette } from './overlays/CommandPalette'
 
 /**
@@ -165,7 +165,8 @@ function RouteFocus({ slug }: { slug: string }) {
 const PAGE_SLUG: Record<Page, string> = { today: 'today', library: 'library', chats: 'chats', approvals: 'approvals', routines: 'routines', activity: 'activity', apps: 'tools', app: 'tools', skills: 'skills', skill: 'skills', usage: 'usage', settings: 'settings' }
 const toHash = (page: Page, appKey: string, setTab: string, chat: string, menu = false, skill = '') =>
   '#/' + PAGE_SLUG[page] + (page === 'app' ? '/' + appKey : page === 'skill' ? '/' + skill : page === 'settings' ? (menu ? '' : '/' + setTab) : page === 'chats' ? '/' + encodeURIComponent(chat) : '')
-const SETTINGS_TABS = SETTINGS_PAGES.map(p => p.id)
+/** The pages a `#/settings/<id>` link may name: the product has no "Who approves what" or "Run limits", so a link to one lands on General. */
+const SETTINGS_TABS = settingsTabs(demo === null)
 /** The list each page shows that the agent's work fills (read again when the page opens). */
 const PAGE_LIST: Partial<Record<Page, RefreshList>> = { today: 'problems', approvals: 'problems', library: 'library', activity: 'activity', skills: 'skills', skill: 'skills' }
 const PAGE_LABEL: Record<Page, string> = { today: 'Today', library: 'Library', chats: 'Chats', approvals: 'Approvals', routines: 'Routines', activity: 'Activity', apps: 'Tools', app: 'Tools', skills: 'Skills', skill: 'Skills', usage: 'Usage', settings: 'Settings' }

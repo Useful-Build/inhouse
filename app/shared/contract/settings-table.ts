@@ -91,6 +91,8 @@ export const EXACT_ROWS: Record<string, SettingRow> = {
   'n:weekly': safe('personal', bool),
   'm:learn': safe('personal', bool),
   // brand
+  // The brand's name (the sidebar, the delete request): free text an Admin writes, so it is redacted in the log.
+  'b:name': spec('brand', text(1, 80)),
   'g:tz': safe('brand', oneOf(TIME_ZONE_IDS)),
   'm:ask': safe('brand', bool),
   's:cap': safe('brand', { t: 'cap' }),

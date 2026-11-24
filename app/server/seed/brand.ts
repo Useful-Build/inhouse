@@ -25,6 +25,7 @@ export const SEED_INHOUSE = { subject: 'seed-subject-alex', email: 'alex@inhouse
 
 /** The settings the seed writes: [scope, key, value, who writes it]. */
 export const SEED_SETTINGS = [
+  ['brand', 'b:name', 'Northline Outdoor', 'admin'],
   ['brand', 'g:tz', 'America/New_York', 'admin'],
   ['brand', 's:cap', '$320', 'admin'],
   ['brand', 's:currency', 'USD ($)', 'admin'],

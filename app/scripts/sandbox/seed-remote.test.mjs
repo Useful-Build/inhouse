@@ -187,7 +187,7 @@ describe('the rendered SQL replays to the same rows (failure 2)', () => {
       { role: 'admin', status: 'active', subject: 'seed-subject-sam', email_norm: 'sam@example.test' },
     ])
     const actions = replay.prepare('SELECT action, COUNT(*) AS n FROM audit_log GROUP BY action ORDER BY action').all().map(r => [r.action, r.n])
-    expect(actions).toEqual([['inhouse.first_sign_in', 1], ['member.bound', 3], ['member.invited', 4], ['setting.changed', 8]])
+    expect(actions).toEqual([['inhouse.first_sign_in', 1], ['member.bound', 3], ['member.invited', 4], ['setting.changed', 9]])
     expect(replay.prepare("SELECT value_json FROM settings WHERE key = 's:cap'").get()).toBeDefined()
     expect(dump(replay)).toEqual(dump(recorded))
   })

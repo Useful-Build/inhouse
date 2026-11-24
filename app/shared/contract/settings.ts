@@ -61,7 +61,7 @@ export const SETTING_KEY_EXAMPLES: readonly string[] = [...Object.keys(EXACT_ROW
 
 /** Each exact key's name as the settings page shows it (src/screens/settings/content.ts), for the audit log's text. */
 const SETTING_LABELS: Record<string, string> = {
-  'g:name': 'Name', 'g:theme': 'Theme', 'g:lang': 'Language', 'g:size': 'Text size', 'g:tz': 'Time zone',
+  'g:name': 'Name', 'b:name': 'Brand name', 'g:theme': 'Theme', 'g:lang': 'Language', 'g:size': 'Text size', 'g:tz': 'Time zone',
   'n:wait': 'Approvals waiting', 'n:channel': 'Send alerts to', 'n:slack': 'Chat app alerts', 'n:weekly': 'Weekly report',
   'm:learn': 'Learn from my chats', 'm:ask': 'Ask before saving a team rule', 's:cap': 'Monthly cap', 's:alert': 'Alert at',
   's:currency': 'Show amounts in', 'stage': 'Stage', 't:tone': 'Tone', 't:signs': 'Signs emails as', 'g:mode': 'Default model',

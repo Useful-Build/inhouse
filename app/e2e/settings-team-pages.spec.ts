@@ -111,15 +111,18 @@ test('Team memory: Forget (with Undo) and the rule switch work, survive a reload
 
 const JOBS = ['Restock returns', 'Chase late suppliers', 'Nudge ShipBob on stuck orders', 'Pause oversold variants']
 
-test('Run limits at Act: the job switches and limits are locked until Run, Pause still works', async ({ fx, page }) => {
+test('Run limits at Act: the job switches and limits are locked until Run, and Pause (now on Spending cap) still works', async ({ fx, page }) => {
   await start(page, fx, 'Act', '#/settings/team-limits')
   for (const job of JOBS) await expect(main(page).getByRole('switch', { name: job, exact: true })).toBeDisabled()
   await expect(main(page).getByRole('combobox', { name: /^Daily limit: / })).toBeDisabled()
   await expect(main(page).getByRole('combobox', { name: /^Largest restock: / })).toBeDisabled()
+  // Pause moved to the page that keeps the Spending cap: Run limits no longer has it.
+  await expect(main(page).getByRole('button', { name: 'Pause Inhouse agent', exact: true })).toHaveCount(0)
+  await goTo(page, 'team-spend')
   await expect(main(page).getByRole('button', { name: 'Pause Inhouse agent', exact: true })).toBeEnabled()
 })
 
-test('Run limits: switches, limits and Pause work, survive a reload and Reset demo clears them', async ({ fx, page }) => {
+test('Run limits and Spending cap: switches, limits and Pause work, survive a reload and Reset demo clears them', async ({ fx, page }) => {
   await start(page, fx, 'Run', '#/settings/team-limits')
   const job = (name: string) => main(page).getByRole('switch', { name, exact: true })
   const daily = (value: string) => main(page).getByRole('combobox', { name: `Daily limit: ${value}`, exact: true })
@@ -149,7 +152,8 @@ test('Run limits: switches, limits and Pause work, survive a reload and Reset de
   await page.getByRole('option', { name: '250 units', exact: true }).click()
   await expect(restock('250 units')).toBeVisible()
 
-  // Pause stops the agent, says so in the top bar and flips the button; Resume undoes it.
+  // Pause (on the Spending cap page) stops the agent, says so in the top bar and flips the button; Resume undoes it.
+  await goTo(page, 'team-spend')
   await pause.click()
   await expect(toast(page, 'Your Inhouse agent is paused. Chats, routines and jobs are stopped.')).toBeVisible()
   await expect(resume).toBeVisible()
@@ -163,12 +167,13 @@ test('Run limits: switches, limits and Pause work, survive a reload and Reset de
 
   // Everything survives a reload, the pause included.
   await page.reload()
+  await expect(resume).toBeVisible()
+  await expect(status('paused')).toBeVisible()
+  await goTo(page, 'team-limits')
   await expect(job('Chase late suppliers')).not.toBeChecked()
   await expect(job('Restock returns')).toBeChecked()
   await expect(daily('100 actions')).toBeVisible()
   await expect(restock('250 units')).toBeVisible()
-  await expect(resume).toBeVisible()
-  await expect(status('paused')).toBeVisible()
 
   // Reset demo puts every default back, and a reload keeps them.
   await resetDemo(page, 'Run')
@@ -176,8 +181,10 @@ test('Run limits: switches, limits and Pause work, survive a reload and Reset de
   for (const name of JOBS) await expect(job(name)).toBeChecked()
   await expect(daily('25 actions')).toBeVisible()
   await expect(restock('50 units')).toBeVisible()
+  await goTo(page, 'team-spend')
   await expect(pause).toBeVisible()
   await expect(status('running')).toBeVisible()
+  await goTo(page, 'team-limits')
   await page.reload()
   await expect(daily('25 actions')).toBeVisible()
   await expect(job('Chase late suppliers')).toBeChecked()

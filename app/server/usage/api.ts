@@ -27,6 +27,10 @@ const modelName = (apiId: string) => {
 const personRow = (r: UsageGroupRow): UsageRow => ({
   name: r.name ?? 'Former member', sub: questions(r.questions), spent: money(r.micro), conversations: r.conversations,
 })
+const runs = (n: number) => `${n} ${n === 1 ? 'run' : 'runs'}`
+const jobRow = (r: UsageGroupRow): UsageRow => ({
+  name: r.name ?? 'Other routines', sub: runs(r.questions), spent: money(r.micro), conversations: r.conversations,
+})
 const modelRow = (r: UsageGroupRow): UsageRow => ({
   name: modelName(r.key), sub: CATALOG.find(m => m.apiId === r.key)?.label ?? questions(r.questions), spent: money(r.micro), conversations: r.conversations,
 })
@@ -41,11 +45,12 @@ export function toUsageData(v: UsageMonthView): UsageData {
     total: money(v.spentMicro),
     conversations: v.conversations,
     questionsAsked: v.questions,
-    // Jobs are P4's.
-    jobsRun: 0,
+    jobsRun: v.jobsRun,
     daily: v.dailyMicro.map(money),
-    // `job` and `tool` stay empty until P4 and P5.
-    breakdown: { person: v.people.map(personRow), job: [], model: v.models.map(modelRow), tool: [] },
+    // A routine's turns are jobs: `jobsRun` and the Job rows (by routine). They are not questions and not a person's row, so
+    // spend by person plus spend by job is the month's total, as is spend by model. `tool` stays empty: the ledger holds no
+    // per-tool spend, and the product's Usage page doesn't offer the tab.
+    breakdown: { person: v.people.map(personRow), job: v.jobs.map(jobRow), model: v.models.map(modelRow), tool: [] },
     // This month: "new chats are refused", the ledger's own reserve rule (cap − spent < the start hold), so the page and
     // the ledger never disagree (no cap reads as reached). A finished month: spend at or past the cap its ledger recorded.
     capReached: v.current ? v.capMicro - v.spentMicro < START_HOLD_MICRO : v.capMicro > 0 && v.spentMicro >= v.capMicro,

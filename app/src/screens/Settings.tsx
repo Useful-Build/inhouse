@@ -307,16 +307,10 @@ export function Settings() {
     setSupport: (on, grantId) => { tell(on ? agent.grantSupport(24) : agent.endSupportGrant(grantId ?? '')) },
     me,
     invite: () => setInviting(true),
-    removeMember: id => {
-      const m = data.people.members.find(x => x.id === id)
-      const named = data.people.approvalRules.filter(r => r.approver === id).length
-      agent.removeMember(id).then(() => {
-        // A removed person stays named on the rules that chose them (tagged "Not an approver"), so say so.
-        if (m && named > 0) ui.showToast(`${m.name.split(' ')[0]} is still named on ${named} approval ${named === 1 ? 'rule' : 'rules'}.`, { ms: 7000 })
-      }, (e: unknown) => { tell(Promise.reject(e)) })
-    },
+    removeMember: id => { agent.removeMember(id).catch((e: unknown) => { tell(Promise.reject(e)) }) },
     // The demo keeps its one switch for Inhouse team access (Data and access looks as it always did); the product shows the grant.
     grantUi: demo === null,
+    product: demo === null,
     showGrant,
     loadingMore,
     loadMore: list => { more(list) },
@@ -335,7 +329,7 @@ export function Settings() {
   }
   const page = settingsPage(setTab, env)
   // P5 W4: Slack notices is listed only for a brand with Slack connected.
-  const menu = menuFor(data.tools)
+  const menu = menuFor(data.tools, demo === null)
   const readOnly = phone && setTab.startsWith('team-')
   // The note is for a page where a control became text; a page of buttons and plain facts has nothing to explain.
   const hidesControls = readOnly && page.sections.some(sec => sec.rows.some(r => r.kind === 'toggle' || r.kind === 'select' || r.kind === 'text' || r.kind === 'mode'))

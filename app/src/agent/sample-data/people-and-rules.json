@@ -14,7 +14,7 @@
       "name": "Dana Kim",
       "email": "dana@northline.example",
       "title": "Finance",
-      "role": "Approver"
+      "role": "Member"
     },
     {
       "id": "leo",
@@ -22,7 +22,7 @@
       "name": "Leo Park",
       "email": "leo@northline.example",
       "title": "Customer service",
-      "role": "Approver"
+      "role": "Member"
     },
     {
       "id": "priya",

@@ -105,7 +105,7 @@ test('S4: Data and access: change how long chats are kept; Ask the team opens wi
 test('S5: Audit log: pause the Inhouse agent, the audit log shows it at the top; resume', async ({ fx, page }) => {
   await start(page, fx)
   await accountItem(page, 'Team settings')
-  await pickPage(page, 'Run limits')
+  await pickPage(page, 'Spending cap')
   await main(page).getByRole('button', { name: 'Pause Inhouse agent', exact: true }).click()
   await expect(toast(page, 'Your Inhouse agent is paused.')).toBeVisible()
   // The top bar's pill shows on every desktop page; on a phone only on Today.
@@ -117,7 +117,7 @@ test('S5: Audit log: pause the Inhouse agent, the audit log shows it at the top;
   await expect(seeded).toBeVisible()
   const top = async (l: typeof paused) => (await l.boundingBox())!.y
   expect(await top(paused)).toBeLessThan(await top(seeded))
-  await pickPage(page, 'Run limits')
+  await pickPage(page, 'Spending cap')
   await main(page).getByRole('button', { name: 'Resume Inhouse agent', exact: true }).click()
   await expect(toast(page, 'Your Inhouse agent is running again')).toBeVisible()
   await pickPage(page, 'Audit log')

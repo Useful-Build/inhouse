@@ -255,16 +255,16 @@ Skills: a skill's page
 Usage
   Path:     account menu -> Usage (it isn't in the sidebar; the palette lists it)
   Selector: month picker, daily bars
-  Expected: totals agree in every breakdown; bars are one tab stop with arrow, Home and End; a cap below spend shows the capped state
-  Covered:  e2e/app.spec.ts, e2e/page-actions.spec.ts, e2e/edge-cases.spec.ts
+  Expected: totals agree in every breakdown; bars are one tab stop with arrow, Home and End; a cap below spend shows the capped state. In the product a routine's turn (a turn in a chat the Inhouse system owns) counts as a job run: Jobs run counts it, the Job tab lists one row per routine with its spend and runs, and it is not a question and not a row on the Person tab, so Person and Job together add up to the month's spend and Model alone does too; the product has no Tool tab (the demo keeps it)
+  Covered:  e2e/app.spec.ts, e2e/page-actions.spec.ts, e2e/edge-cases.spec.ts, e2e/api/usage.spec.ts, server/usage/api.test.ts
 
 ## Settings
 
 Settings: menu
   Path:     Settings (`#/settings/<page>`), the menu beside the app's sidebar (on a phone the menu is the first screen)
   Selector: search "Search settings", groups You (General, Notifications, Memory), Agent (Inhouse agent, Models, Team memory), Approvals and limits (Who approves what, Run limits, Spending cap), Team (Members; Slack notices when Slack is connected), Workspace (Stage and plan, Data and access, Audit log); a lock button "Admins change these" on a team group's heading
-  Expected: five groups, each announced by its heading, in this order; the command palette lists the same pages; Slack notices appears only when Slack is connected (`hasSlack`); search filters pages and rows (a page's matching rows show under it) and "No settings match" shows for none; for someone who can't change brand settings (a Member, test build) every team group's heading has the lock with the tooltip "Admins change these", and an Admin (and the demo) sees none
-  Covered:  e2e/sample-data.spec.ts, e2e/navigation.spec.ts, e2e/ui-round-3.spec.ts, e2e/real/settings-lock.spec.ts, src/screens/settings/settings-registry.test.ts, src/screens/settings/slack-page.test.ts
+  Expected: five groups, each announced by its heading, in this order; the product leaves out Who approves what, Run limits and Notifications (a link to one lands on General with "That page doesn't exist. You're on General.") and calls the group that is left holding the Spending cap "Spending"; the command palette lists the same pages; Slack notices appears only when Slack is connected (`hasSlack`); search filters pages and rows (a page's matching rows show under it) and "No settings match" shows for none; for someone who can't change brand settings (a Member, test build) every team group's heading has the lock with the tooltip "Admins change these", and an Admin (and the demo) sees none
+  Covered:  e2e/sample-data.spec.ts, e2e/navigation.spec.ts, e2e/ui-round-3.spec.ts, e2e/real/settings-lock.spec.ts, e2e/real/product-settings.spec.ts, src/screens/settings/settings-registry.test.ts, src/screens/settings/slack-page.test.ts, src/screens/settings/product-settings.test.ts
 
 Settings: dropdowns and fields
   Path:     Settings -> any page
@@ -285,9 +285,9 @@ Settings: Models
   Covered:  e2e/models-and-scroll.spec.ts, e2e/pages-polish.spec.ts
 
 Settings: Members and approvers
-  Path:     Settings -> Members, Who approves what
+  Path:     Settings -> Members, Who approves what (the demo only)
   Selector: role control, Remove
-  Expected: removing Admin asks first; a demoted approver stays on rules that name them with a tag; a wrong cap shows why and isn't saved
+  Expected: a member is an Admin or a Member, never labelled "Approver", and the Members page says nothing about approval rules (Remove's question and a removed member's toast don't mention them); removing Admin asks first; a removed member stays on the rules that name them with a "Removed" tag (the demo's Who approves what); a wrong cap shows why and isn't saved
   Covered:  e2e/page-details.spec.ts, e2e/edge-cases.spec.ts, e2e/cross-screen.spec.ts
 
 Settings: Slack notices
@@ -310,13 +310,13 @@ Settings: Team memory
   Gaps:     on a phone a team page is read-only, so S5's phone run turns Ask off through the API and checks the page shows Off; the ship spec doesn't show a routine's team fact waiting while Ask is off (a routine can't be made at Watch through the app; the store's tests prove it)
 
 Settings: Run limits
-  Path:     Settings -> Run limits
-  Selector: job switches, "Daily limit", "Largest restock", button "Pause Inhouse agent"
-  Expected: switches and limits are locked until Run; each works, lists its options and survives a reload; Pause stops the agent (button, toast and top bar agree: the top bar's status reads "Running" or "Paused", named "Inhouse agent is running" or "... paused" for screen readers; Resume undoes it) and survives a reload; Reset demo clears all of it
-  Covered:  e2e/settings-team-pages.spec.ts
+  Path:     Settings -> Run limits (the demo only; the product has no such page yet, and the stored `a:<n>` and `l:*` settings and their server checks stay)
+  Selector: job switches, "Daily limit", "Largest restock"; button "Pause Inhouse agent" on Settings -> Spending cap (both builds)
+  Expected: switches and limits are locked until Run; each works, lists its options and survives a reload; Pause (on the Spending cap page, a section of its own, locked until Act) stops the agent (button, toast and top bar agree: the top bar's status reads "Running" or "Paused", named "Inhouse agent is running" or "... paused" for screen readers; Resume undoes it) and survives a reload; Reset demo clears all of it
+  Covered:  e2e/settings-team-pages.spec.ts, e2e/settings-agent-data.spec.ts, e2e/ship/setup-gaps.spec.ts, e2e/real/product-settings.spec.ts
 
 Settings: Notifications
-  Path:     Settings -> Notifications
+  Path:     Settings -> Notifications (the demo only: every row is Act-stage work nothing sends yet, so the product leaves the page out)
   Selector: dropdowns "Approvals waiting" and "Send alerts to", switches "Slack" and "Weekly report"
   Expected: locked at Watch; each dropdown lists its choices and saves a pick, the switches turn off; a reload keeps all of it and Reset demo clears it; the dropdown works by keyboard; with no channel connected alerts default to Email and there is no channel switch; on a phone the controls stay
   Covered:  e2e/settings-your-pages.spec.ts, e2e/sample-data.spec.ts, e2e/brand-data.spec.ts, e2e/settings-pages-phone.spec.ts
@@ -329,20 +329,20 @@ Settings: Memory
 
 Settings: Inhouse agent
   Path:     Settings -> Inhouse agent
-  Selector: dropdown "Tone", text field "Signs emails as", buttons "Open memory" and "View skills"
-  Expected: the tone and sign-off save, survive a reload and Reset demo clears them; Open memory opens Team memory, View skills opens Skills; the memory count follows Team memory; on a phone the values read as text and the buttons work
-  Covered:  e2e/settings-agent-data.spec.ts, e2e/settings-team-pages.spec.ts, e2e/page-details.spec.ts, e2e/settings-pages-phone.spec.ts
+  Selector: text field "Brand name", demo only: dropdown "Tone" and text field "Signs emails as"; buttons "Open memory" and "View skills"
+  Expected: the brand name is the brand's `b:name` setting (an Admin edits it; the product's sidebar subtitle, the delete request on Data and access and Library previews read it; the test seed sets it, a new brand starts empty); the tone and sign-off (demo only: nothing reads them in the product) save, survive a reload and Reset demo clears them; Open memory opens Team memory, View skills opens Skills; the memory count follows Team memory; on a phone the values read as text and the buttons work
+  Covered:  e2e/settings-agent-data.spec.ts, e2e/settings-team-pages.spec.ts, e2e/page-details.spec.ts, e2e/settings-pages-phone.spec.ts, e2e/real/product-settings.spec.ts, src/agent/http/client.test.ts
 
 Settings: Spending cap
   Path:     Settings -> Spending cap
-  Selector: field "Monthly cap", dropdowns "Alert at" and "Show amounts in"
-  Expected: a cap and alert level show on Usage; a wrong amount says why and isn't saved; a cap below spend shows the cap banner and the capped state; the currency pick saves; values survive a reload; on a phone it reads as text
+  Selector: field "Monthly cap", dropdowns "Alert at" and "Show amounts in", button "Pause Inhouse agent"
+  Expected: Pause Inhouse agent (locked until Act, then as in Run limits) sits here in both builds, so the product can pause at Act and Run; a cap and alert level show on Usage; a wrong amount says why and isn't saved; a cap below spend shows the cap banner and the capped state; the currency pick saves; values survive a reload; on a phone it reads as text
   Covered:  e2e/cross-screen.spec.ts, e2e/edge-cases.spec.ts, e2e/data-states.spec.ts, e2e/page-details.spec.ts, e2e/sample-data.spec.ts, e2e/pages-polish-phone.spec.ts, e2e/phone.spec.ts
 
 Settings: Data and access
   Path:     Settings -> Data and access
-  Selector: dropdowns "Chats" and "Activity and steps", row "Next cleanup", switches "Inhouse team access" and "Two-step sign-in", buttons "Export" and "Ask the team"
-  Expected: retention picks and the switches save, survive a reload and Reset demo clears them; in product, Chats and Activity and steps set the age rules for nightly retention, and the overdue health signal gives an edited period 26 hours for the job to catch up; Until deleted turns off the corresponding age rule while the trash period still applies; the audit log's retention is fixed; only the Inhouse team changes the two periods (route 12): an Admin and a Member read them as text with "The Inhouse team sets this."; Next cleanup shows the nightly cleanup's next run (03:30 UTC, in the brand's time) to everyone; Export (P8a D) is offered to an Admin and the Inhouse team under a live grant, never a Member: in product it first checks the export would start (route 96, nothing written), then downloads the brand's export for the caller as one NDJSON file (route 95, streamed; a header naming every registry store and whether the caller gets all, part or none of it, a line per row or file, an end line with counts) with a toast that it can take a few minutes, and the audit log gets one "downloaded all brand data" line with counts only; the export holds the brand's shared data and the caller's own, never another person's personal memories, personal settings, photo or chats, and members as the Members page shows them (no sign-in subject, no Inhouse team or service row); the Inhouse team gets no chats and no requester ids (ops/export/brand-for-caller.ts); the export includes shared connector status and listed Slack channels without attribution and excludes credentials and delivery history; a brand too big for one request, a grant that ended or storage down shows a plain toast in the app, no download and no audit line; in the demo it downloads a small invented sample in the same shape with a toast saying so; Ask the team opens the team window on "Change something" with the delete request written; on a phone it reads as text and Export still downloads
+  Selector: dropdowns "Chats" and "Activity and steps", row "Next cleanup", switches "Inhouse team access" and (demo only) "Two-step sign-in", buttons "Export" and "Ask the team"
+  Expected: retention picks and the switches save, survive a reload and Reset demo clears them; in product, Chats and Activity and steps set the age rules for nightly retention, and the overdue health signal gives an edited period 26 hours for the job to catch up; Until deleted turns off the corresponding age rule while the trash period still applies; the audit log's retention is fixed; only the Inhouse team changes the two periods (route 12): an Admin and a Member read them as text with "The Inhouse team sets this."; Next cleanup shows the nightly cleanup's next run (03:30 UTC, in the brand's time) to everyone; Export (P8a D) is offered to an Admin and the Inhouse team under a live grant, never a Member: in product it first checks the export would start (route 96, nothing written), then downloads the brand's export for the caller as one NDJSON file (route 95, streamed; a header naming every registry store and whether the caller gets all, part or none of it, a line per row or file, an end line with counts) with a toast that it can take a few minutes, and the audit log gets one "downloaded all brand data" line with counts only; the export holds the brand's shared data and the caller's own, never another person's personal memories, personal settings, photo or chats, and members as the Members page shows them (no sign-in subject, no Inhouse team or service row); the Inhouse team gets no chats and no requester ids (ops/export/brand-for-caller.ts); the export includes shared connector status and listed Slack channels without attribution and excludes credentials and delivery history; a brand too big for one request, a grant that ended or storage down shows a plain toast in the app, no download and no audit line; in the demo it downloads a small invented sample in the same shape with a toast saying so; Ask the team opens the team window on "Change something" with the delete request written ("... for <brand name>.", or without the name while none is set); on a phone it reads as text and Export still downloads
   Covered:  e2e/settings-agent-data.spec.ts, e2e/settings-pages-phone.spec.ts, e2e/no-persona.spec.ts, e2e/api/data-access.spec.ts, e2e/api/matrix.spec.ts, e2e/real/data-export-download.spec.ts (an Admin clicks Export on the test build: a browser download of the NDJSON file with the caller's header, counts and end line, the toast (asserted right after the download event, inside its 6 s life), and the audit line), server/api/data-access.test.ts, src/screens/settings/data-access.test.ts, ops/export/brand-for-caller.test.ts, ops/export/export.test.ts
   Gaps:     a refused export (route 96's 409, 403 or 503) isn't clicked in a browser (P8a's S1 and S4 in e2e/ship/production-readiness.spec.ts are the orchestrator's); a brand past one request's budget (900 D1 queries, about 200,000 rows, and 9,000 R2 calls, ops/export/export.ts `REQUEST_BUDGET`) is refused rather than exported, and needs the Inhouse team's export; other members' chat outputs that show in the Library aren't in the caller's export
 
@@ -354,8 +354,8 @@ Settings: Audit log
 
 Settings: General
   Path:     Settings -> General
-  Selector: text field "Name", dropdowns "Theme", "Language", "Text size" and "Time zone", photo upload
-  Expected: the name saves, shows in the account menu and Reset demo clears it; a time zone pick saves, survives a reload and Reset demo clears it, on a phone too; Theme as in "Palette: theme switch" below; every dropdown opens a real list (Language and Text size partial, see Gaps); the photo as in "Settings: photos"
+  Selector: text field "Name", dropdowns "Theme", "Time zone" and (demo only) "Language" and "Text size", photo upload
+  Expected: the name saves, shows in the account menu and Reset demo clears it; the Role row reads the job title and role ("Head of Ops · Admin"), or the role alone when there is no title; a time zone pick saves, survives a reload and Reset demo clears it, on a phone too; Theme as in "Palette: theme switch" below; every dropdown opens a real list (Language and Text size, demo only: nothing reads them in the product, partial, see Gaps); the photo as in "Settings: photos"
   Covered:  e2e/sample-data.spec.ts, e2e/cross-screen.spec.ts, e2e/phone.spec.ts, e2e/menus.spec.ts, e2e/photo.spec.ts
 
 Settings: photos
