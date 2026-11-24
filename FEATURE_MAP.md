@@ -273,6 +273,12 @@ Settings: dropdowns and fields
   Expected: a dropdown opens a real list, works by keyboard, Escape cancels; a pick survives a reload and Reset demo clears it; text fields save and show in the account menu
   Covered:  e2e/sample-data.spec.ts, e2e/menus.spec.ts
 
+Settings: Inhouse agent web tools
+  Path:     Settings -> Inhouse agent
+  Selector: Websites it may open, Search the web
+  Expected: an empty host list blocks WebFetch; WebSearch is off by default and has a separate switch
+  Covered:  server/api/resolve-turn.test.ts, server/egress/webfetch.test.ts, runner/test/guards/options.test.ts
+
 Settings: Models
   Path:     Settings -> Models
   Selector: effort picker, on switch

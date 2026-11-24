@@ -65,6 +65,8 @@ const OWN_CHATS = 'SELECT id FROM chats WHERE owner_id = ?'
 
 /** A D1 entry's rows for one person: rows that name them or belong to their chats. */
 function personScope(entry: TableEntry, memberId: string): { where: string; params: SqlValue[] } | null {
+  // Skill ownership belongs to its maker. An editor link alone does not expose the skill body in their export.
+  if (entry.name === 'brand_skills') return { where: 'created_by = ?', params: [memberId] }
   const person = personFilter(entry, memberId)
   const column = CHAT_SCOPED[entry.name]
   if (column === undefined) return person

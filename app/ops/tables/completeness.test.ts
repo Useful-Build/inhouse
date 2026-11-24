@@ -72,6 +72,16 @@ describe('the table registry', () => {
     expect(R2_PREFIXES).toContain('photos/')
   })
 
+  it('records retention and export for the stores added by the P6a migrations', () => {
+    const p6aMigrations = Object.fromEntries(Object.entries(migrations).filter(([file]) => /\/047[0-9]_/.test(file)))
+    const registered = registry.filter(entry => entry.kind === 'd1' && d1Tables(p6aMigrations).includes(entry.name))
+    expect(registered.map(entry => [entry.name, entry.retention, entry.export]).sort()).toEqual([
+      ['brand_skills', 'config', true],
+      ['team_requests', 'config', true],
+    ])
+    expect(d1Tables(p6aMigrations).sort()).toEqual(registered.map(entry => entry.name).sort())
+  })
+
   it('reads Durable Object classes from a config that has them (the reader is proven, not vacuous)', () => {
     const fixture = `{
       // a comment with "class_name": "Commented"

@@ -7,6 +7,7 @@
 import { env } from 'cloudflare:workers'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { SYSTEM_MEMBER_ID } from '../../../server/db/ids.ts'
+import { memoryStore, newMemoryId } from '../../../server/mcp/tools/memory/store.ts'
 import { openStores } from '../../../server/db/stores.ts'
 import { seedBrand } from '../../../server/seed/seed.ts'
 import type { Seeded } from '../../../server/seed/seed.ts'
@@ -59,6 +60,34 @@ describe('export coverage', () => {
     // Nothing of Q's anywhere.
     expect(JSON.stringify(lines)).not.toContain(marker.q)
     expect(JSON.stringify(lines)).not.toContain(qChat)
+  })
+
+  it('exports request text, a maker’s skill, every memory state and its audit decisions, and Today set-asides', async () => {
+    const at = { actorId: p, requestId: `req-${token()}`, nowMs: T }
+    const ids = Array.from({ length: 3 }, newMemoryId)
+    for (const id of ids) await addMemory(db, { id, owner: null, createdBy: p, marker: id, status: 'waiting', updatedAtMs: T })
+    for (const [id, approved] of [[ids[1], true], [ids[2], false]] as const) {
+      expect(await memoryStore({ db }).setBrandApproved({ id, approved, ifRev: 1 }, at)).toHaveProperty('ok')
+    }
+    const requests = db.prepare("INSERT INTO team_requests (id, kind, text, requested_by, status, created_at_ms, updated_at_ms) VALUES (?, 'job', ?, ?, 'open', ?, ?)")
+    const skills = db.prepare("INSERT INTO brand_skills (id, name, description, body, created_by, created_at_ms, updated_by, updated_at_ms) VALUES (?, ?, 'Invented skill', ?, ?, ?, ?, ?)")
+    const aside = db.prepare("INSERT INTO today_aside (item_id, reason, by, at_ms) VALUES (?, 'dismissed', ?, ?)")
+    await db.batch([
+      requests.bind('tr_example_p', 'Restock example', p, T, T),
+      requests.bind('tr_example_q', 'Invoice example', q, T, T),
+      skills.bind('bs_example_p', 'stock-check', 'Count stock', p, T, q, T),
+      skills.bind('bs_example_q', 'returns-check', 'Count returns', q, T, p, T),
+      aside.bind('p_example_p', p, T),
+      aside.bind('p_example_q', q, T),
+    ])
+    const lines = await exportOf({ kind: 'person', memberId: p })
+    const rows = (store: string) => lines.filter(l => l.store === store).map(l => l.row as Record<string, unknown>)
+    expect(rows('team_requests').map(r => r.text)).toEqual(['Restock example'])
+    expect(rows('brand_skills').map(r => r.body)).toEqual(['Count stock'])
+    expect(rows('today_aside').map(r => r.item_id)).toEqual(['p_example_p'])
+    expect(ids.map(id => rows('memories').find(r => r.id === id)?.status)).toEqual(['waiting', 'active', 'forgotten'])
+    expect(rows('audit_log').filter(r => String(r.action).startsWith('memory.')).map(r => [r.action, r.actor_id]).sort())
+      .toEqual([['memory.approved', p], ['memory.rejected', p]])
   })
 
   it('the brand export header lists every registry entry and holds every export: true store in full', async () => {

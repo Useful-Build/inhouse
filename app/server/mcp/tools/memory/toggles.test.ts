@@ -269,7 +269,7 @@ describe('races (failure 1)', () => {
   it('the batch committed but the reply was lost: the same save sent again finds the first', async () => {
     await reset(); await ask(false)
     const lost = withBarrier(/^\s*INSERT INTO memories/, async () => {}, async () => { throw new Error('reply lost') })
-    await expect(memoryStore({ db: lost }).save({ memberId: P1, scope: 'brand', text: 'Lost reply fact', chatId: null, nowMs: 1, requestId: 'r-lost' })).rejects.toThrow('reply lost')
+    await expect(memoryStore({ db: lost }).save({ memberId: P1, scope: 'brand', text: 'Lost reply fact', chatId: null, nowMs: 1, requestId: 'r-lost' })).rejects.toMatchObject({ name: 'StoreUnavailableError', cause: { message: 'reply lost' } })
     const again = await call(P1, 'memory_save', { scope: 'brand', text: 'Lost reply fact' })
     expect(again.structuredContent).toMatchObject({ already_saved: true })
     expect(await db.prepare("SELECT COUNT(*) AS n FROM memories WHERE text = 'Lost reply fact'").first<number>('n')).toBe(1)

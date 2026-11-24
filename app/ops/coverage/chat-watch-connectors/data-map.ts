@@ -38,7 +38,7 @@ export const NOTES: Readonly<Record<string, Note>> = {
   usage_extends: { holds: 'Each model call\'s hold and cost', personal: 'None', retention: 'Kept while the deployment lives', deletion: 'Kept: no personal data' },
   audit_copy_state: { holds: 'Where the audit log\'s daily copy has reached', personal: 'None', retention: 'Kept while the deployment lives', deletion: 'Kept: no personal data' },
   'audit-copy/': { holds: 'The audit log\'s daily copy', personal: 'Member ids only', retention: 'Never shortened', deletion: 'Kept: the audit log\'s copy is never shortened', backup: 'Not backed up (it is itself a copy)' },
-  memories: { holds: 'Remembered facts, brand and personal', personal: 'Fact text, owner and creator ids', retention: 'Forgotten facts 30 days after their last change; others kept', keeps: 'Brand facts a person saved' },
+  memories: { holds: 'Remembered facts, including waiting, approved and rejected brand facts', personal: 'Fact text, owner and creator ids; the audit log records who approved or rejected a fact', retention: 'Forgotten facts, including rejected ones, 30 days after their last change; waiting and active facts kept', keeps: 'Brand facts a person saved' },
   memories_fts: { holds: 'The search index over facts', personal: 'A copy of fact text', retention: 'Follows its source' },
   chat_messages_fts: { holds: 'The search index over messages', personal: 'A copy of message text', retention: 'Follows its source' },
   Runner: { holds: 'The agent runners\' working state', personal: 'None', retention: 'Holds nothing kept', deletion: 'Kept: no personal data', backup: 'Nothing to restore' },
@@ -58,6 +58,8 @@ export const NOTES: Readonly<Record<string, Note>> = {
   'deletion-log/': { holds: 'What each deletion and retention run removed', personal: 'Member ids and counts only', retention: 'Never shortened', deletion: 'Kept: the deletion log is never shortened', backup: 'Not backed up (replayed after a restore)' },
   egress_fetches: { holds: 'Outbound web requests by host', personal: 'None', retention: '30 days', deletion: 'Kept: no member id; removed after 30 days' },
   SignIn: { holds: 'The connector hub\'s sealed tokens', personal: 'None', retention: 'Kept while the connection is', deletion: 'Kept: no personal data', backup: 'Not restored: reconnect' },
+  team_requests: { holds: 'Requests to the support team', personal: 'Requester id, request text and subject', retention: 'Kept while the deployment lives or until the requester is deleted' },
+  brand_skills: { holds: 'Skills written by the brand', personal: 'Maker and editor ids, skill description and instructions', retention: 'Kept until the skill is deleted', deletion: 'The skill stays; the deleted member’s maker and editor links are cleared', keeps: 'Skill description and instructions' },
   privacy_requests: { holds: 'Shopify privacy requests and their status', personal: 'Shopify customer and order IDs while open', retention: 'Request record kept while the deployment lives; customer and order IDs cleared on close', deletion: 'Kept: no team member ID' },
 }
 

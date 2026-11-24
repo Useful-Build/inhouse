@@ -45,7 +45,7 @@ const acted = (e: TableEntry, r: DeletionRule): readonly string[] => {
     case 'delete_rows': return [r.column]
     case 'delete_objects': return e.personKeys
     case 'custom': return r.deletes
-    case 'keep':
+    case 'keep': return r.clearedByPseudonymise ?? []
     case 'derived': return []
   }
 }

@@ -269,7 +269,8 @@ export function settingsPage(tab: string, env: Env): Page {
       { label: 'About', rows: [sel('Tone', 'How it writes to suppliers, customers and your team.', 't:tone', meta.agent.tone, ['Friendly and short', 'Warm and detailed', 'Formal and brief', 'Plain and direct']), txt('Signs emails as', 'Used on supplier and customer emails.', 't:signs', meta.agent.signsEmailsAs)] },
       { label: 'Answers', rows: [
         sel('Most steps in one answer', 'An answer that needs more steps than this stops and says so.', 't:max_turns', '25', [...MAX_TURNS]),
-        { ...txt('Websites it may open', 'One website name a line. Leave empty and it may open any public website.', 't:webfetch', ''), type: 'hosts', keywords: 'webfetch hosts domains allowlist' },
+        { ...txt('Websites it may open', 'Enter one website name per line. Leave empty to block all websites.', 't:webfetch', ''), type: 'hosts', keywords: 'webfetch hosts domains allowlist' },
+        R('Search the web', 'Allow your Inhouse agent to search the web. Off by default.', 'toggle', '', 0, 't:websearch', false),
       ] },
       { label: 'What your Inhouse agent knows', rows: [R('Team memory', `Supplier, customer and stock rules the whole team shares. ${memCount} things remembered.`, 'button', 'Open memory', 0, undefined, undefined, () => env.openSettings('team-memory')), R('Skills', `The jobs it knows how to do. ${skills.length} skills, added by your Inhouse team.`, 'button', 'View skills', 0, undefined, undefined, env.goSkills)] },
     ] },

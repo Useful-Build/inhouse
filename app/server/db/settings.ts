@@ -114,9 +114,12 @@ export function settingStore({ db, hashKey, members, hook = s => s }: SettingSto
       const approverGuard = approver === null ? '' : " AND EXISTS (SELECT 1 FROM members WHERE id = ? AND kind = 'person' AND status IN ('invited', 'active'))"
       const approverParams = approver === null ? [] : [approver]
       let shortened = false
+      let enabledRetention = false
+      let disabledRetention = false
       if (w.owner === BRAND_OWNER && isRetentionKey(w.key)) {
         const group = w.key === 'd:chats' ? 'chats' : 'steps'
         const newDays = retentionDaysOf(w.key, w.value)
+        disabledRetention = newDays === null
         if (w.ifRev === 0) {
           shortened = (newDays ?? Infinity) < DEFAULT_DAYS[group]
         } else {
@@ -124,6 +127,7 @@ export function settingStore({ db, hashKey, members, hook = s => s }: SettingSto
           if (!prev || prev.rev !== w.ifRev) return { conflict: prev ? record(prev) : unset(w.key) }
           const oldDays = retentionDaysOf(w.key, JSON.parse(prev.value_json))
           shortened = (newDays ?? Infinity) < (oldDays ?? Infinity)
+          enabledRetention = oldDays === null && !disabledRetention
         }
       }
       const stamp = writeStamp(at.requestId)
@@ -136,9 +140,10 @@ export function settingStore({ db, hashKey, members, hook = s => s }: SettingSto
         )
         : stmt(
           `UPDATE settings SET value_json = ?, rev = rev + 1, updated_at_ms = ?, updated_by = ?, req_id = ?,
-             shortened_at_ms = CASE WHEN ? = 1 THEN ? ELSE shortened_at_ms END
+             shortened_at_ms = CASE WHEN ? = 1 THEN ? ELSE shortened_at_ms END,
+             retention_enabled_at_ms = CASE WHEN ? = 1 THEN ? ELSE retention_enabled_at_ms END
            WHERE owner = ? AND key = ? AND rev = ?${approverGuard}`,
-          json, at.nowMs, at.actorId, stamp, shortened ? 1 : 0, shortened ? at.nowMs : null, w.owner, w.key, w.ifRev, ...approverParams,
+          json, at.nowMs, at.actorId, stamp, shortened ? 1 : 0, shortened ? at.nowMs : null, enabledRetention || disabledRetention ? 1 : 0, enabledRetention ? at.nowMs : null, w.owner, w.key, w.ifRev, ...approverParams,
         )
       const line = auditInsert(
         { atMs: at.nowMs, actorId: at.actorId, args: await lineArgs(w.scope, w.key, w.value), target: { kind: 'setting', id: w.key }, requestId: at.requestId },

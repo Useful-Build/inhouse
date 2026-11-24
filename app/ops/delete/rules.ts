@@ -14,7 +14,7 @@ export type DeletionRule =
   /** R2: every object under the entry's `<memberId>` pattern is deleted. */
   | { action: 'delete_objects' }
   /** Nothing changes; `why` says so for the reviewer. */
-  | { action: 'keep'; why: string; kept?: readonly string[] }
+  | { action: 'keep'; why: string; kept?: readonly string[]; clearedByPseudonymise?: readonly string[] }
   /** A derived index (FTS5): not a store of its own. Its triggers follow its source's deletes, and a restore rebuilds it. */
   | { action: 'derived'; why: string }
   /**
@@ -70,6 +70,9 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   memories: { action: 'delete_rows', column: 'owner_id', kept: ['created_by'] },
   memories_fts: { action: 'derived', why: 'rebuilt from memories; its triggers follow the deletes' },
   chat_messages_fts: { action: 'derived', why: 'rebuilt from chat_messages; its triggers follow the deletes' },
+  // P6a: remove the requester’s text; skills stay after memberStore.pseudonymise clears the member links.
+  team_requests: { action: 'delete_rows', column: 'requested_by' },
+  brand_skills: { action: 'keep', why: 'the brand keeps the skill; member pseudonymisation clears its maker and editor links', clearedByPseudonymise: ['created_by', 'updated_by'] },
   // P4 W2, W3: routines run on after their creator is removed (Wasim, 2026-11-19).
   routines: { action: 'keep', why: 'a routine runs on after its creator is removed (Wasim, 2026-11-19): creator_id is pseudonymous; instruction is an accepted keep', kept: ['creator_id'] },
   routine_slots: { action: 'keep', why: 'routine history and Today\'s foreign key: the ids are pseudonymous; prompt_text and result_text are accepted keeps', kept: ['creator_id', 'requested_by'] },

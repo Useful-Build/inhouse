@@ -576,7 +576,7 @@ export class AgentCore {
     try {
       brandSkills = await this.d.brandSkills()
     } catch (err) {
-      console.error({ event: 'turn_brand_skills_failed', error: errorText(err) })
+      console.error({ event: 'turn_brand_skills_failed', error: safeError(err) })
       return
     }
     t = this.current(turnId, gen, 'starting')

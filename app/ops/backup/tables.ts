@@ -62,6 +62,8 @@ export const TABLE_RULES: readonly TableRule[] = [
   { name: 'usage_extends', orderBy: ['turn_id', 'call_id'], mode: 'paged', createdColumn: 'at_ms', after: ['usage_turns'] },
   // The audit copy's cursor; its reset after a restore is F1's.
   { name: 'audit_copy_state', orderBy: ['id'], mode: 'snapshot' },
+  { name: 'team_requests', orderBy: ['id'], mode: 'paged', createdColumn: 'created_at_ms', after: ['members'] },
+  { name: 'brand_skills', orderBy: ['id'], mode: 'snapshot', after: ['members'] },
   { name: 'memories', orderBy: ['n'], mode: 'snapshot', after: ['members'] },
   { name: 'routines', orderBy: ['id'], mode: 'snapshot', after: ['members'] },
   // A slot is created when it's claimed.

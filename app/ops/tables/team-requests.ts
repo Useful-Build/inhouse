@@ -1,5 +1,5 @@
 // P6a W3's registry entry: requests to the Inhouse team (0470_team_requests.sql). `requested_by` is a person key; the
-// table is the brand's own record of what it asked, kept while the brand is (config), exported with the brand's data.
+// text is deleted with the requester. The store has no age rule and is exported with the brand's data.
 import type { TableEntry } from './types.ts'
 
 export const teamRequestTables: readonly TableEntry[] = [

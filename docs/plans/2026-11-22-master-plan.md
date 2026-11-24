@@ -92,7 +92,7 @@ GitHub Actions billing in `Useful-Build/inhouse-ops` blocked ops workflows; the 
 - Complete remaining P8a implementation items:
   - **Restore + C1 replay wiring:** wire C1's exported per-job replays into restore, replay pseudonymisation for the new phase, and add the differential test (`backup -> retention + deletion -> restore + replay == live`).
   - **Data and access screen:** retention row and "Export everything" for P2–P6a stores (edit `Settings.tsx` / `content.ts` / `mock.ts` cleanly after P6a merges).
-  - **C1 PR C (post-P5/P6a coverage):** cover P5/P6a stores (`team_requests`, memory `waiting`/`approved`/`rejected` states, `today_aside`, `SignIn.connectedBy`).
+  - **C1 PR C:** cover P6a requests, brand skills, memory states and their audit decisions, and Today set-asides. TODO after P5 lands in main: cover `connector_accounts`, `notify_channels`, `notify_sends` and `SignIn.connectedBy` for person deletion, export, retention and the data map.
   - **Teardown script (sensitive):** delete every container application explicitly, list before and after, and fail if any remain.
   - **Small P8a follow-ups:** `no-raw-error-text` L-2 shapes, `egress_record_failed` health signal + refusal-rate guard, and web-tool eval `t:websearch` reset.
 - Rehearse runbook procedures (pause, key/token rotation, member removal, restore, teardown, rollback redeploy) and candidate deploy.

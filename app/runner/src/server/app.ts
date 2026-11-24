@@ -311,7 +311,7 @@ export function createRoot(deps: RootDeps): Root {
     try {
       await deps.users.writeBrandSkills(config.chatId, user, config.brandSkills ?? [])
     } catch (e) {
-      deps.log({ type: 'brand_skills_failed', runId: live.runId, error: errorText(e).slice(0, 200) })
+      deps.log({ type: 'brand_skills_failed', runId: live.runId, error: safeError(e) })
       stream.emit({ type: 'failed', reason: 'files', message: "the brand's skills could not be written" })
       return end()
     }

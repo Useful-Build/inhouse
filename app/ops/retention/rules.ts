@@ -63,7 +63,7 @@ export const retentionRules: Readonly<Record<string, RetentionRule>> = {
   memories: {
     kind: 'custom',
     ages: [{ column: 'updated_at_ms', period: 'forgottenMemory', when: "status = 'forgotten'" }],
-    why: 'active and waiting facts are kept (config); the index follows through its triggers',
+    why: 'waiting and active (including approved) facts are kept; rejected facts become forgotten and age by this rule; the index follows through its triggers',
   },
   // P4 W2, W3 (the steps group).
   routine_slots: { kind: 'custom', ages: [steps('claimed_at_ms')], why: 'skips a slot a today_items row still references (today_items.slot_key, no ON DELETE: 0220)' },

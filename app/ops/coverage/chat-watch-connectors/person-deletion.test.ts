@@ -17,6 +17,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { SYSTEM_MEMBER_ID } from '../../../server/db/ids.ts'
 import { FORMER_MEMBER } from '../../../server/db/members.ts'
 import { openStores } from '../../../server/db/stores.ts'
+import { memoryStore, newMemoryId } from '../../../server/mcp/tools/memory/store.ts'
 import { PERSON_DATA_TABLES } from '../../../server/do/brand-agent/ports.ts'
 import { seedBrand } from '../../../server/seed/seed.ts'
 import type { Seeded } from '../../../server/seed/seed.ts'
@@ -181,6 +182,39 @@ describe('the parts (failures 1, 2, 4)', () => {
     expect((await db.prepare("SELECT COUNT(*) AS n FROM notices WHERE person_id = ? AND audience IN ('team', 'member')").bind(w.p).first<{ n: number }>())!.n).toBe(2)
     expect((await db.prepare('SELECT COUNT(*) AS n FROM notice_reads WHERE member_id = ?').bind(w.p).first<{ n: number }>())!.n).toBe(0)
     expect((await db.prepare('SELECT COUNT(*) AS n FROM notice_reads WHERE member_id = ?').bind(w.q).first<{ n: number }>())!.n).toBe(1)
+  })
+
+  it('deletes request text, clears skill links, and preserves Today set-asides and memory decisions', async () => {
+    const w = await world(0, false)
+    const request = db.prepare("INSERT INTO team_requests (id, kind, text, requested_by, status, created_at_ms, updated_at_ms) VALUES (?, 'job', ?, ?, 'open', ?, ?)")
+    const skill = db.prepare("INSERT INTO brand_skills (id, name, description, body, created_by, created_at_ms, updated_by, updated_at_ms) VALUES (?, ?, 'Invented skill', 'Count stock', ?, ?, ?, ?)")
+    await db.batch([
+      request.bind('tr_delete_p', 'Restock example', w.p, T, T),
+      request.bind('tr_keep_q', 'Invoice example', w.q, T, T),
+      skill.bind('bs_made', 'made-example', w.p, T, w.q, T),
+      skill.bind('bs_edited', 'edited-example', w.q, T, w.p, T),
+      db.prepare("INSERT INTO today_aside (item_id, reason, by, at_ms) VALUES ('p_deletion_example', 'dismissed', ?, ?)").bind(w.p, T),
+    ])
+    const memoryId = newMemoryId()
+    await addMemory(db, { id: memoryId, owner: null, createdBy: w.q, marker: 'Keep example', status: 'waiting', updatedAtMs: T })
+    expect(await memoryStore({ db }).setBrandApproved({ id: memoryId, approved: true, ifRev: 1 }, {
+      actorId: w.p, requestId: `req-${token()}`, nowMs: T,
+    })).toHaveProperty('ok')
+    const d = deps({ brandAgent: w.agent })
+    const plan = await planOk(d, w.p)
+    expect(plan.counts.team_requests).toBe(1)
+    expect(await runPersonDeletion(d, plan)).toHaveProperty('ok')
+    expect(await db.prepare("SELECT text FROM team_requests WHERE id = 'tr_delete_p'").first()).toBeNull()
+    expect(await db.prepare("SELECT text FROM team_requests WHERE id = 'tr_keep_q'").first()).toEqual({ text: 'Invoice example' })
+    const skills = await db.prepare("SELECT id, body, created_by, updated_by FROM brand_skills WHERE id IN ('bs_made', 'bs_edited') ORDER BY id").all()
+    expect(skills.results).toEqual([
+      { id: 'bs_edited', body: 'Count stock', created_by: w.q, updated_by: null },
+      { id: 'bs_made', body: 'Count stock', created_by: null, updated_by: w.q },
+    ])
+    expect(await db.prepare("SELECT by FROM today_aside WHERE item_id = 'p_deletion_example'").first()).toEqual({ by: w.p })
+    expect(await db.prepare('SELECT status FROM memories WHERE id = ?').bind(memoryId).first()).toEqual({ status: 'active' })
+    expect(await db.prepare("SELECT actor_id FROM audit_log WHERE action = 'memory.approved' AND target_id = ?").bind(memoryId).first()).toEqual({ actor_id: w.p })
+    expect(await db.prepare('SELECT name FROM members WHERE id = ?').bind(w.p).first()).toEqual({ name: FORMER_MEMBER })
   })
 
   it('after the run Activity lines and notices that name P by id keep the id, and the id\'s member row is pseudonymised (A former member)', async () => {

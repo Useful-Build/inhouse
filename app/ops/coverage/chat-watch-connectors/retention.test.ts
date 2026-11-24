@@ -13,6 +13,7 @@
 import { runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { memoryStore, newMemoryId } from '../../../server/mcp/tools/memory/store.ts'
 import { SYSTEM_MEMBER_ID } from '../../../server/db/ids.ts'
 import { libraryKey } from '../../../server/db/r2-keys.ts'
 import { openStores } from '../../../server/db/stores.ts'
@@ -110,14 +111,20 @@ describe('chats (failure 1)', () => {
 })
 
 describe('memories and the Library (failures 2 and 3)', () => {
-  it('removes a forgotten memory 30 days after its last update and never an active or waiting one', async () => {
+  it('removes a forgotten memory 30 days after its last update and never a waiting or approved one', async () => {
     const now = nextClock()
     const cut = now - DEFAULT_DAYS.forgottenMemory * DAY
-    const ids = { gone: `m1_${token()}`, edge: `m2_${token()}`, active: `m3_${token()}`, waiting: `m4_${token()}` }
-    await addMemory(db, { id: ids.gone, owner: null, createdBy: SYSTEM_MEMBER_ID, marker: 'f1', status: 'forgotten', updatedAtMs: cut - 1 })
+    const ids = { gone: newMemoryId(), edge: newMemoryId(), active: newMemoryId(), waiting: newMemoryId() }
+    await addMemory(db, { id: ids.gone, owner: null, createdBy: SYSTEM_MEMBER_ID, marker: 'f1', status: 'waiting', updatedAtMs: cut - 1 })
     await addMemory(db, { id: ids.edge, owner: null, createdBy: SYSTEM_MEMBER_ID, marker: 'f2', status: 'forgotten', updatedAtMs: cut })
-    await addMemory(db, { id: ids.active, owner: null, createdBy: SYSTEM_MEMBER_ID, marker: 'f3', status: 'active', updatedAtMs: cut - 999 * DAY })
+    await addMemory(db, { id: ids.active, owner: null, createdBy: SYSTEM_MEMBER_ID, marker: 'f3', status: 'waiting', updatedAtMs: cut - 999 * DAY })
     await addMemory(db, { id: ids.waiting, owner: null, createdBy: SYSTEM_MEMBER_ID, marker: 'f4', status: 'waiting', updatedAtMs: cut - 999 * DAY })
+    const memory = memoryStore({ db })
+    for (const [id, approved] of [[ids.gone, false], [ids.active, true]] as const) {
+      expect(await memory.setBrandApproved({ id, approved, ifRev: 1 }, {
+        actorId: seeded.members.admin, requestId: `req-${token()}`, nowMs: cut - 1,
+      })).toHaveProperty('ok')
+    }
     await retain(['memories'], now)
     expect(await has('memories', 'id = ?', ids.gone)).toBe(0)
     for (const id of [ids.edge, ids.active, ids.waiting]) expect(await has('memories', 'id = ?', id), id).toBe(1)

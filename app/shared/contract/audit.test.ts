@@ -285,6 +285,10 @@ describe('P4 lines (wave-4 PR0)', () => {
       'routine.created', 'routine.updated', 'routine.enabled', 'routine.deleted', 'routine.restored', 'routine.run_now',
       'library.uploaded', 'library.deleted', 'library.restored',
       'today.set_aside',
+    ])
+    const restore = all.indexOf('restore.confirmed')
+    expect(restore).toBeGreaterThan(all.indexOf('today.set_aside'))
+    expect(all.slice(restore, restore + 4)).toEqual([
       'restore.confirmed', 'restore.member_placeholder',
       'privacy.requested', 'privacy.closed',
     ])
