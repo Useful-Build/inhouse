@@ -5,8 +5,12 @@ import { describe, expect, it } from 'vitest'
 import { MD_LINK } from './grade.ts'
 import { PDF_TJ_ARRAY } from './product/pdf.ts'
 
-/** Runs `fn` and fails if it takes longer than `ms` (the old patterns took minutes on these inputs). */
-const fast = (fn: () => unknown, ms = 500) => {
+/**
+ * Runs `fn` and fails if it takes longer than `ms`. The old patterns took minutes on these inputs; the nested-bracket
+ * MD_LINK input takes about 90 ms alone (linear, bounded repeats) and went past 500 ms once under the full parallel
+ * unit suite, so the budget is 2 s: still far below any backtracking regression.
+ */
+const fast = (fn: () => unknown, ms = 2_000) => {
   const t0 = performance.now()
   fn()
   expect(performance.now() - t0).toBeLessThan(ms)
