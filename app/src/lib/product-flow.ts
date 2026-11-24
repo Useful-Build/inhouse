@@ -1,6 +1,7 @@
 // What differs on the product from the demo in the Inhouse team window, the help window and the Tools page's Request,
 // kept as plain functions so each decision has a test (the repo has no DOM test setup). `demo` is `demo !== null`, `product` its opposite.
 import type { ResourceStatus } from '../../shared/contract/common'
+import type { Can } from '../agent/types'
 
 /** The screenshot box on a bug report: the demo's only (the product sends no screenshot). */
 export const showScreenshotBox = (demo: boolean, isBug: boolean): boolean => demo && isBug
@@ -36,3 +37,10 @@ export const showLocalAnswerControls = (demo: boolean): boolean => demo
 /** Usage screen state: error renders LoadError, product loading waits instead of showing empty $0 cards, demo keeps its Loading scenario layout. */
 export const usageView = (demo: boolean, s: Pick<ResourceStatus, 'status'>): 'error' | 'loading' | 'ready' =>
   s.status === 'error' ? 'error' : !demo && s.status === 'loading' ? 'loading' : 'ready'
+
+/**
+ * Whether the Pause or Resume button shows (Settings and the top bar): the `editBrandSettings` key, as for the Spending cap
+ * (access-matrix rows 36 and 37 share its class and allow list). With no `me()` yet the demo allows it and the product doesn't.
+ * Kept here, not in settings/allowance.ts, so the top bar doesn't pull the settings table into the initial bundle.
+ */
+export const mayPause = (can: Can | undefined, failClosed = false): boolean => (can ? can.editBrandSettings : !failClosed)

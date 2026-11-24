@@ -19,7 +19,8 @@ const { agent } = await import('../../agent')
 const { settingsPage } = await import('./content')
 const { SECTIONS, SETTINGS_PAGES, menuFor, pageShown, settingsTabs } = await import('./menu')
 const { settingRow } = await import('../../../shared/contract/settings-table')
-const { allowance, mayPause } = await import('./allowance')
+const { allowance } = await import('./allowance')
+const { mayPause } = await import('../../lib/product-flow')
 const { CAN_KEYS } = await import('../../../shared/contract/keys')
 type Env = Parameters<typeof settingsPage>[1]
 

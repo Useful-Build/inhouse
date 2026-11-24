@@ -25,11 +25,6 @@ export function allowance(row: Row, can: Can | undefined, failClosed = false, ro
 /** P5 W4: whether this person may change the Slack notice channels (route 75): the `editBrandSettings` key, never a role name. */
 export const mayEditNotify = (can: Can | undefined): boolean => !!can?.editBrandSettings
 
-/**
- * Whether the Pause or Resume button shows (Settings and the top bar): the `editBrandSettings` key, as for the Spending cap
- * (access-matrix rows 36 and 37 share its class and allow list). With no `me()` yet the demo allows it and the product doesn't.
- */
-export const mayPause = (can: Can | undefined, failClosed = false): boolean => (can ? can.editBrandSettings : !failClosed)
 
 /** Whether a row's Remove button shows: the key the row names (a channel: `editBrandSettings`), else a member's removal. */
 export const showsRemove = (row: Row, can: Can | undefined): boolean => !!row.remove && can?.[row.remove.can ?? 'remove'] !== false

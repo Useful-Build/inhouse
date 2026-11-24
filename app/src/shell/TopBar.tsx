@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { agent, demo } from '../agent'
-import { mayPause } from '../screens/settings/allowance'
-import { showChatExport } from '../lib/product-flow'
+import { mayPause, showChatExport } from '../lib/product-flow'
 import { capStatus, flags, lostTool, toolDetail } from '../state/derive'
 import { fmtTime } from '../lib/format'
 import { display } from '../state/display'
