@@ -4,6 +4,7 @@
 // is 405 (no SSE stream, no sessions). The egress calls it with the run token's grant, so every call acts as the run's
 // person and nobody else. Spec: https://modelcontextprotocol.io/specification/2025-11-25/basic/transports and
 // .../basic/lifecycle (version negotiation), .../server/tools (results, `isError`), read 2026-11-20.
+import { safeError } from '../../safe-error.ts'
 import { z } from 'zod'
 import { readCapped } from '../../db/handler-kit.ts'
 import { StoreUnavailableError } from '../../db/sql.ts'
@@ -12,6 +13,7 @@ import { TOOL_HANDLERS } from '../tools/index.ts'
 import { brandStage, INHOUSE_EXTERNAL_WRITE_TOOLS, toolWriteRefusal } from '../../stage/watch.ts'
 import { refusal } from './tool.ts'
 import type { ToolScope } from './tool.ts'
+import type { NotifyDeps } from '../tools/notifications/deps.ts'
 
 /** The protocol versions this server speaks, newest first; an `initialize` asking for another gets the newest. */
 export const MCP_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'] as const
@@ -26,6 +28,8 @@ export interface McpScope {
 
 export interface McpDeps {
   db: D1Database
+  // P5 (p5-w4): passed on to the tools as it is (opaque; built by `notifyDeps(env)`).
+  notify?: NotifyDeps
   /** Epoch ms; the real clock by default (tests pass their own). */
   now?: () => number
 }
@@ -123,13 +127,13 @@ export async function handleMcp(request: Request, scope: McpScope, deps: McpDeps
       const now = deps.now ?? Date.now
       const call: ToolScope = { ...scope, nowMs: now(), requestId: `mcp-${crypto.randomUUID()}` }
       try {
-        return rpcResult(id, await impl.call(parsed.data, call, { db: deps.db }))
+        return rpcResult(id, await impl.call(parsed.data, call, { db: deps.db, ...(deps.notify ? { notify: deps.notify } : {}) }))
       } catch (err) {
         if (err instanceof StoreUnavailableError) {
-          console.error({ event: 'mcp_store_unavailable', tool: name, error: err.name })
+          console.error({ event: 'mcp_store_unavailable', tool: name, error: safeError(err) })
           return rpcResult(id, refusal('unavailable', 'Saved memory and chat history are unavailable for a moment. Try once more; if it fails again, carry on without them and say so.'))
         }
-        console.error({ event: 'mcp_tool_failed', tool: name, error: err instanceof Error ? err.name : 'unknown' })
+        console.error({ event: 'mcp_tool_failed', tool: name, error: safeError(err) })
         return rpcError(id, INTERNAL_ERROR, 'Internal error')
       }
     }

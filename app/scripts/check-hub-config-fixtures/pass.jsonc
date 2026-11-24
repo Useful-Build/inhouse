@@ -17,6 +17,7 @@
       }
     ]
   },
+  "worker_loaders": [{ "binding": "LOADER" }],
   "migrations": [
     {
       "tag": "v1",
@@ -30,7 +31,11 @@
   },
   "vars": {
     "SHOPIFY_SHOP": "",
-    "SHOPIFY_CLIENT_ID": ""
+    "SHOPIFY_CLIENT_ID": "",
+    "SLACK_CLIENT_ID": "",
+    "SLACK_TEAM_ID": "",
+    "SLACK_PRIVATE_SEARCH": "off",
+    "CONNECT_REDIRECT_URI": ""
   },
   "secrets": {
     "required": [

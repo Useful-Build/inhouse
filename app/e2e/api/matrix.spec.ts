@@ -47,6 +47,9 @@ function verdict(row: Row, who: Principal): Verdict {
   }
   // A person: the design's allow list names the role. Admin's technical write goes on to the object rule (adminWrite).
   const role = who === 'admin' ? 'admin' : 'member'
+  // P5 W1 (route 68, the first technical write that doesn't list admin): an Admin's technical write is refused as
+  // read-only, whether or not the row lists admin (p2-design section 3: Member and Admin GET technical rows only).
+  if (design.class === 'technical' && !read && role === 'admin' && !design.allow.includes('admin')) return { allowed: false, reason: 'admin_read_only' }
   if (!design.allow.includes(role)) return { allowed: false }
   if (design.class === 'technical' && !read && role === 'admin' && !design.adminWrite) return { allowed: false }
   if (design.class === 'technical' && !read && role === 'member') return { allowed: false }

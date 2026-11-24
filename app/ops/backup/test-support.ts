@@ -2,14 +2,32 @@
 import fc from 'fast-check'
 
 /**
- * P2's four tables with their primary keys, written out here rather than read from tables.ts: the oracle the round
+ * The P2 and P5 fixture tables with their primary keys, written out here rather than read from tables.ts: the oracle the round
  * trip compares with must not share the rules it checks.
  */
 const ORACLE_TABLES: readonly [string, string][] = [
   ['members', 'id'], ['settings', 'owner, key'], ['support_grants', 'id'], ['audit_log', 'id'],
+  ['connector_accounts', 'account_id'], ['notify_channels', 'channel_id'], ['notify_channel_list', 'id'], ['notify_sends', 'id'],
 ]
 
-/** Every canonical table, every column, in primary-key order: what a restore must reproduce. */
+/** Invented P5 rows with member attribution and one send on each side of the retention boundary. */
+export async function seedNotificationBackupRows(db: D1Database, memberId: string, atMs: number, oldAtMs: number): Promise<void> {
+  const send = db.prepare(`INSERT INTO notify_sends
+    (id, source, run_id, actor_id, kind, target, day, notice_sha256, outcome, at_ms)
+    VALUES (?, 'agent', 'r_backup', ?, 'bell', ?, ?, ?, 'posted', ?)`)
+  await db.batch([
+    db.prepare(`INSERT INTO connector_accounts
+      (account_id, connector, last_state, last_state_at_ms, connected_by, connected_at_ms)
+      VALUES ('slack:backup', 'slack', 'connected', ?, ?, ?)`).bind(atMs, memberId, atMs),
+    db.prepare(`INSERT INTO notify_channels (channel_id, name, added_by, added_at_ms)
+      VALUES ('Cbackup', 'Backup notices', ?, ?)`).bind(memberId, atMs),
+    db.prepare('INSERT INTO notify_channel_list (id, rev, updated_at_ms) VALUES (1, 2, ?)').bind(atMs),
+    ...([['n_old', oldAtMs], ['n_keep', atMs]] as const).map(([id, timestamp]) =>
+      send.bind(id, memberId, memberId, new Date(timestamp).toISOString().slice(0, 10), id, timestamp)),
+  ])
+}
+
+/** Every fixture table, every column, in primary-key order: what a restore must reproduce. */
 export async function dumpCanonical(db: D1Database): Promise<Record<string, unknown[]>> {
   const out: Record<string, unknown[]> = {}
   for (const [name, orderBy] of ORACLE_TABLES) out[name] = (await db.prepare(`SELECT * FROM ${name} ORDER BY ${orderBy}`).all()).results

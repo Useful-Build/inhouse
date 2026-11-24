@@ -1,7 +1,7 @@
 // Data and access (P8a D) on the test build: the retention row's settings and Export everything (route 95).
 // - Retention: everyone reads `d:chats` and `d:steps` (route 11); only the Inhouse team writes them (route 12). An Admin
 //   is refused `admin_read_only` and a Member `forbidden`, and neither refusal writes a line.
-// - Export everything: one NDJSON download naming every store in the registry, the P2 to P6a stores in it. Admins get
+// - Export everything: one NDJSON download naming every store in the registry and including the exportable P2 to P6a stores. Admins get
 //   it; the Inhouse team only under a live grant (its support.access line first); Members and service tokens never. Its
 //   audit line holds counts, never a store's rows.
 // Stored audit arguments aren't in any API answer, so they're read from the test build's local D1 (db.ts).
@@ -22,7 +22,7 @@ test.afterAll(async ({ request }) => { await endLiveGrants(request) })
 
 /** The registry's stores, by name, as the export's header lists them, and which of them it includes. */
 const P2_TO_P6A = ['members', 'settings', 'support_grants', 'audit_log', 'photos/', 'chats', 'chat_messages', 'tool_calls', 'chat_files', 'files/', 'memories', 'usage_months', 'usage_turns',
-  'activity_lines', 'today_items', 'today_aside', 'library_uploads', 'library_marks', 'library/', 'routines', 'routine_slots', 'team_requests', 'brand_skills']
+  'activity_lines', 'today_items', 'today_aside', 'library_uploads', 'library_marks', 'library/', 'routines', 'routine_slots', 'team_requests', 'brand_skills', 'connector_accounts', 'notify_channels', 'notify_channel_list']
 
 const lines = (text: string) => text.trimEnd().split('\n').map(l => JSON.parse(l) as Record<string, any>)
 
@@ -74,6 +74,11 @@ test('Export everything: an Admin downloads one file holding every P2 to P6a sto
   for (const store of P2_TO_P6A) expect(named.find(s => s.name === store), store).toMatchObject({ export: true })
   const end = out.at(-1)!
   expect(end.end).toBe(true)
+  for (const store of ['notify_sends', 'SignIn']) {
+    expect(named.find(s => s.name === store), store).toMatchObject({ export: false })
+    expect(out.some(l => l.store === store), store).toBe(false)
+    expect(end.counts, store).not.toHaveProperty(store)
+  }
   for (const store of P2_TO_P6A) expect(end.counts[store], store).toBe(out.filter(l => l.store === store).length)
   // The seeded team is in it, as the Members page shows them: no sign-in subject, no Inhouse team row, and no other
   // member's chat (P8a D review, option 1).

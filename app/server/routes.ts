@@ -28,6 +28,7 @@ import { deleteBrandSkill, listSkills, readSkill } from './api/skills.ts'
 import { createTeamRequest, listTeamRequests, setTeamRequestStatus, withdrawTeamRequest } from './api/team-requests.ts'
 import { deleteRoutine, listRoutineRuns, listRoutines, restoreRoutine, runRoutineNow, setRoutineEnabled } from './api/routines.ts'
 import { alarmNow } from './ops/alarm-now.ts'
+import { testFakes } from './ops/fakes-hook.ts'
 import { warmup } from './ops/warmup.ts'
 import { reviveTask } from './ops/revive.ts'
 // P4 W4: Activity and the bell (rows 59 to 61).
@@ -43,6 +44,13 @@ import type { WebhookHandler } from './webhooks/shopify-privacy/handler.ts'
 import { closePrivacyRequest } from './webhooks/shopify-privacy/close.ts'
 // P8a D: Data and access's Export everything (row 95).
 import { checkExport, exportEverything } from './api/data-access.ts'
+// P5 (p5-w1 section 9): the Inhouse team connects an OAuth tool through the hub's ConnectGateway.
+import { connectCallback, startConnect } from './api/connect.ts'
+import { toolsDepsOf, toolsHandlers } from './api/tools.ts'
+import { toolsAccounts } from './api/tools-accounts.ts'
+import { storesOf } from './db/handler-kit.ts'
+// P5 (p5-w4 section 10): the notice channel list.
+import { availableNotifyChannels, listNotifyChannels, putNotifyChannels } from './notify-slack/routes.ts'
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
@@ -112,6 +120,9 @@ export async function reportClientError(request: Request): Promise<Response> {
     default: return res
   }
 }
+
+/** P5 W3's Tools handlers: the hub's `HUB_CONNECT` binding (route C's read carrying the test shop in test and eval builds, #337) and W1's connector store. */
+const tools = toolsHandlers(c => ({ ...toolsDepsOf(c.env), accounts: toolsAccounts(storesOf(c).connectors) }))
 
 /** One route per access-matrix row, in the table's order (the row numbers of p2-design section 3). */
 export const routes: readonly Route[] = [
@@ -188,7 +199,20 @@ export const routes: readonly Route[] = [
   /* 54 */ { method: 'POST', pattern: '/api/routines/:id/run', handler: runRoutineNow },
   /* 55 */ { method: 'POST', pattern: '/api/routines/:id/delete', handler: deleteRoutine },
   /* 56 */ { method: 'POST', pattern: '/api/routines/:id/restore', handler: restoreRoutine },
-  // P6a: rows 77 to 83 (rows 68 to 76 are P5's; P6a holds 77 to 85 and 87 to 89; 86 is main's routine runs). W2's 77 and 78 (wired): the waiting team facts and
+  // P5 W1 (p5-w1.md section 9): connect start and the OAuth callback. P5's rows start at 68.
+  /* 68 */ { method: 'POST', pattern: '/api/connect/:accountId/start', handler: startConnect },
+  /* 69 */ { method: 'GET', pattern: '/api/connect/callback', handler: connectCallback },
+  // P5 W3: the Tools page (route C reads, D pauses or resumes, E disconnects), over W1's ConnectGateway and connector store.
+  /* 70 */ { method: 'GET', pattern: '/api/tools', handler: tools.listTools },
+  /* 71 */ { method: 'PUT', pattern: '/api/tools/:accountId/paused', handler: tools.setToolPaused },
+  /* 72 */ { method: 'POST', pattern: '/api/tools/:accountId/disconnect', handler: tools.disconnectTool },
+  // P5 W4 (p5-w4.md section 10): the Slack channels listed for notices (F reads, G picks through HUB_DELIVERY, H saves).
+  /* 73 */ { method: 'GET', pattern: '/api/notify/channels', handler: listNotifyChannels },
+  /* 74 */ { method: 'GET', pattern: '/api/notify/channels/available', handler: availableNotifyChannels },
+  /* 75 */ { method: 'PUT', pattern: '/api/notify/channels', handler: putNotifyChannels },
+  // P5 W5: the test build's test-fakes hook (404 elsewhere), for the connector API specs.
+  /* 76 */ { method: 'POST', pattern: '/api/ops/test-fakes', handler: testFakes },
+  // P6a: rows 77 to 85 (rows 68 to 76 are P5's; P6a holds 77 to 85 and 87 to 89; 86 is main's routine runs). W2's 77 and 78 (wired): the waiting team facts and
   // their approve or reject.
   /* 77 */ { method: 'GET', pattern: '/api/memory/waiting', handler: listWaitingMemory },
   /* 78 */ { method: 'PUT', pattern: '/api/memory/brand/:id/approved', handler: approveBrandMemory },

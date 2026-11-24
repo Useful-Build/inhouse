@@ -37,7 +37,7 @@ interface RunRow { [k: string]: SqlStorageValue; run_id: string; chat_id: string
 interface TurnRead {
   [k: string]: SqlStorageValue
   turn_id: string; run_id: string; owner_id: string; text: string; outcome: string | null; failure: string | null
-  created_at_ms: number; started_at_ms: number | null; ended_at_ms: number | null
+  created_at_ms: number; started_at_ms: number | null; ended_at_ms: number | null; prompt_version: number | null; prompt_apps: string | null
 }
 
 const inScope = (owner: string, scope: RunScope) => ('all' in scope ? scope.all === true : owner === scope.owner)
@@ -132,9 +132,13 @@ export function traceOf(sql: SqlStorage, id: string, scope: RunScope, nowMs: num
   // Stable: records of one moment keep their order (steps, then hooks, then calls).
   steps.sort((a, b) => a.startMs - b.startMs)
   const root: TraceStep = { label: 'Inhouse agent', kind: 'root', startMs: 0, endMs: durationMs, depth: 0, detail: `${turns.length} ${turns.length === 1 ? 'question' : 'questions'}` }
+  // The prompt version each turn was sent (P5, #337), when any turn recorded one: additive, so older traces read the same.
+  const promptVersions = turns.map(t => t.prompt_version ?? null)
+  // And the apps each built prompt named as connected (#337 round 3), beside it: null where none was recorded.
+  const promptApps = turns.map(t => (t.prompt_apps == null ? null : JSON.parse(t.prompt_apps) as string[]))
   return {
     id, title: (turns[0]?.text ?? '').slice(0, 120), durationMs, cost: { minor: Math.round(micro / 10_000), currency: 'USD' },
-    tokens: fmtTokens(tokens), steps: [root, ...steps],
+    tokens: fmtTokens(tokens), steps: [root, ...steps], ...(promptVersions.some(v => v !== null) ? { promptVersions, promptApps } : {}),
   }
 }
 

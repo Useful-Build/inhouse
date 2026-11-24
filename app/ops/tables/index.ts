@@ -5,6 +5,7 @@
 import { activityTables } from './activity.ts'
 import { brandSkillTables } from './brand-skills.ts'
 import { chatTables } from './chat.ts'
+import { connectorTables } from './connector-accounts.ts'
 import { coreTables } from './core.ts'
 import { egressTables } from './egress.ts'
 import { filesTables } from './files.ts'
@@ -13,6 +14,7 @@ import { libraryTables } from './library.ts'
 import { memoryTables } from './memory.ts'
 import { noticeTables } from './notices.ts'
 import { p8Tables } from './p8.ts'
+import { notifyTables } from './notify.ts'
 import { poolTables } from './pool.ts'
 import { privacyTables } from './privacy.ts'
 import { routineTables } from './routines.ts'
@@ -21,4 +23,4 @@ import { todayTables } from './today.ts'
 import type { TableEntry } from './types.ts'
 import { usageTables } from './usage.ts'
 
-export const tables: readonly TableEntry[] = [...coreTables, ...chatTables, ...filesTables, ...usageTables, ...memoryTables, ...poolTables, ...activityTables, ...noticeTables, ...routineTables, ...libraryTables, ...todayTables, ...p8Tables, ...egressTables, ...hubTables, ...privacyTables, ...teamRequestTables, ...brandSkillTables]
+export const tables: readonly TableEntry[] = [...coreTables, ...chatTables, ...filesTables, ...usageTables, ...memoryTables, ...poolTables, ...activityTables, ...noticeTables, ...routineTables, ...libraryTables, ...todayTables, ...connectorTables, ...notifyTables, ...p8Tables, ...egressTables, ...hubTables, ...privacyTables, ...teamRequestTables, ...brandSkillTables]

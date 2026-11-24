@@ -36,12 +36,12 @@ afterEach(() => {
 })
 
 describe('ReadGateway through the Worker exports', () => {
-  it('lists the registered read tools: the fixture connector and Shopify', async () => {
+  it('lists the registered read tools: the fixture connector and Shopify (with code mode, P5 W2)', async () => {
     // RPC result types intersect with Disposable, which defeats narrowing: cast to the contract type.
     const r = (await exports.ReadGateway.listTools(run)) as HubResult<ToolInfo[]>
     if (!r.ok) throw new Error(`listTools failed: ${r.error.code}`)
     expect(r.value.map(t => t.name).sort()).toEqual(
-      ['fixture_query', 'fixture_read', 'inventory_levels_get', 'order_get', 'orders_search', 'products_search', 'refunds_search', 'returns_search'],
+      ['fixture_query', 'fixture_read', 'inventory_levels_get', 'order_get', 'orders_search', 'products_search', 'refunds_search', 'returns_search', 'shopify_script_run'],
     )
   })
 

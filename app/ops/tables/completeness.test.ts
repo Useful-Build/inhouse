@@ -12,6 +12,7 @@ import hubConfig from '../../wrangler.hub.jsonc?raw'
 import productConfig from '../../wrangler.product.jsonc?raw'
 import * as r2Keys from '../../server/db/r2-keys.ts'
 import { R2_PREFIXES } from '../../server/db/r2-keys.ts'
+import { PERSON_EXPORT_SHARED_CONFIG } from '../export/export.ts'
 import { tables } from './index.ts'
 import type { TableEntry } from './types.ts'
 
@@ -151,12 +152,12 @@ describe('the table registry', () => {
     expect(keys.filter((k, i) => keys.indexOf(k) !== i)).toEqual([])
   })
 
-  it('requires person-export redaction for account rows that can reference another person', () => {
+  it('requires person-export redaction for account and shared connector rows that can reference another person', () => {
     // These keys identify the person the row belongs to. Any additional key can match someone else's row.
     const ownerKeys: Record<string, string> = { members: 'id', usage_turns: 'member_id' }
-    const shared = registry.filter(e => e.kind === 'd1' && e.retention === 'account'
+    const shared = registry.filter(e => e.kind === 'd1' && e.export && (e.retention === 'account' || e.name === 'notify_channels')
       && e.personKeys.some(key => key !== ownerKeys[e.name]))
-    // The exporter strips the other person's data only for members.
-    expect(shared.map(e => e.name)).toEqual(['members'])
+    // Member rows and shared connector config have explicit person-export projections.
+    expect(shared.map(e => e.name).sort()).toEqual(['members', ...PERSON_EXPORT_SHARED_CONFIG].sort())
   })
 })

@@ -8,6 +8,10 @@ import { stmt } from './sql-statement.ts'
 import type { SqlValue, Stmt } from './sql-statement.ts'
 
 export type TargetKind = 'member' | 'setting' | 'grant' | 'memory'
+  // P5 (p5-w1)
+  | 'connector'
+  // P5 (p5-w4)
+  | 'channel'
   // P6a (PR0): a request to the Inhouse team (W3, `team_requests`).
   | 'team_request'
   // P6a brand skills (`brand_skills`).
@@ -24,6 +28,10 @@ export interface LineInput {
 /** The row the change touched, found by `where` (with `params`) and the write's `stamp` on its `req_id`. */
 export interface Guard {
   table: 'members' | 'settings' | 'support_grants' | 'memories' | 'today_aside' | 'privacy_requests'
+    // P5 (p5-w1)
+    | 'connector_accounts'
+    // P5 (p5-w4)
+    | 'notify_channels'
     // P6a (PR0): W3's table (0470_team_requests.sql).
     | 'team_requests'
     // P6a brand skills (0471_brand_skills.sql).

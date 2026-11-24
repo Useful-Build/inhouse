@@ -235,6 +235,9 @@ export default defineConfig(({ mode }) => {
         // The test shop override (P4, the morning-check set run remotely) in the test and eval builds, as the test issuer:
         // every other build gets server/egress/test-shop-off.ts (check-product-build.mjs proves it).
         '@test-shop': fileURLToPath(new URL(testIssuer ? './server/egress/test-shop.ts' : './server/egress/test-shop-off.ts', import.meta.url)),
+        // P5 W5's test-fakes hook (server/ops/test-fakes.ts, route 76) in the test build only: every other build, the eval
+        // build included, gets server/ops/test-fakes-off.ts (check-product-build.mjs part 9 proves it).
+        '@test-fakes': fileURLToPath(new URL(mode === PRODUCT_TEST ? './server/ops/test-fakes.ts' : './server/ops/test-fakes-off.ts', import.meta.url)),
         // The eval trace (p3-eval-observability rev 2, rec 5) only in the eval build; every other build, the test build
         // included, gets server/eval-trace/off.ts (check-product-build.mjs proves the module and its canary absent).
         '@eval-trace': fileURLToPath(new URL(mode === PRODUCT_EVAL ? './server/eval-trace/on.ts' : './server/eval-trace/off.ts', import.meta.url)),

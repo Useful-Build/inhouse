@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Icon, StageTag } from '../ui'
 import { keepForToast } from '../ui/dialogs'
 import { NO_MOTION } from '../ui/motion'
-import { SETTINGS_PAGES } from '../screens/settings/menu'
+import { menuFor } from '../screens/settings/menu'
 import { mac, PAGES, SHORTCUTS } from '../shell/nav'
 import { demoEnabled } from '../shell/demo'
 
@@ -106,7 +106,7 @@ export function CommandPalette() {
               })}
             </CommandGroup>
             <CommandGroup heading="Settings">
-              {SETTINGS_PAGES.map(({ id: tab, icon, label }) => (
+              {menuFor(ctx.data.tools).flatMap(sec => sec.pages).map(({ id: tab, icon, label }) => (
                 <CommandItem key={tab} value={`settings:${tab}`} keywords={[label, 'Settings', ...(EXTRA[tab] ?? [])]} onSelect={() => run(() => openSettings(tab))}>
                   <Icon name={icon} size={18} className="text-foreground-3" />
                   <span className="flex-1">{label}</span>

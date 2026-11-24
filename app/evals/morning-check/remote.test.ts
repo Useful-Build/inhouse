@@ -219,6 +219,85 @@ describe('the remote runner env', () => {
     expect(file.summary.thresholdMet).toBe(false)
   })
 
+  // P5 (#337): with promptVersions set (run.mjs: route 33's trace), each case keeps the system prompt version its turn was
+  // sent, and a turn not sent v3 (the static v2 fallback, or no version recorded) fails its case with that reason.
+  // #337 round 3 (M4): the store check reads exactly what the turns use: after the case's shop is set (route 70 then carries
+  // the test shop, as the turns' reads and prompt do) and before Run now. A store not served stops the run there, before
+  // that case's spend: the case is not run, never graded.
+  it('with storeTools, route 70 is read after the case\'s shop is set and before Run now', async () => {
+    const { door, log } = fakes(false)
+    let now = 0
+    const env = remoteEnv({ door, runNow: async () => void log.push('run'), alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {},
+      storeTools: async () => { log.push('tools'); return { connected: ['shopify'], details: { shopify: { name: 'Shopify' } }, connection: {} } } })
+    const file = await runAll(env, [META.find(c => c.id === 'clean-empty')!], meta)
+    expect(file.stopped).toBeUndefined()
+    expect(log.filter(l => l.startsWith('set ') || l.startsWith('tools') || l === 'run')).toEqual([`set ${hostOf('clean-empty')}`, 'tools', 'run'])
+  })
+
+  it('with storeTools, a store not served stops the run at that case, before Run now: it and the rest are not run', async () => {
+    for (const [tools, text] of [
+      [{ connected: [], details: {}, connection: {} }, 'Shopify is not connected on the brand\'s Tools page'],
+      [{ connected: ['shopify'], details: { shopify: { name: 'Shopify', paused: true } }, connection: {} }, 'Shopify is paused on the brand\'s Tools page'],
+    ] as const) {
+      const { door, log } = fakes(false)
+      let now = 0
+      const env = remoteEnv({ door, runNow: async () => void log.push('run'), alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {}, storeTools: async () => tools })
+      const file = await runAll(env, twoCases(), meta)
+      expect(log.includes('run'), text).toBe(false)
+      expect(file.cases).toEqual([])
+      expect(file.notRun).toEqual(['clean-empty', 'outage-all'])
+      expect(file.stopped).toEqual({ at: 'clean-empty', reason: expect.stringContaining(text) })
+      expect(log.at(-1), 'the override cleared').toBe('clear')
+    }
+  })
+
+  it('with promptTrace, a case whose turn was sent v3 passes as before and keeps prompt 3', async () => {
+    const { door } = fakes(false)
+    const slot = door.slot
+    door.slot = async (k: string) => ({ ...(await slot(k))!, turn_id: 't_AAAAAAAAAAAAAAAAAAAAAA' })
+    const asked: string[] = []
+    let now = 0
+    const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {}, promptTrace: async t => { asked.push(t); return { promptVersions: [3], promptApps: [['Shopify']] } } })
+    const file = await runAll(env, twoCases(), meta)
+    expect(file.cases.map(c => [c.id, c.prompt, c.verdict.pass])).toEqual([['clean-empty', 3, true], ['outage-all', 3, false]])
+    expect(asked).toEqual(['t_AAAAAAAAAAAAAAAAAAAAAA', 't_AAAAAAAAAAAAAAAAAAAAAA'])
+  })
+
+  it('with promptTrace, a turn sent v2 or with none recorded fails its case naming why (never a pass)', async () => {
+    for (const [versions, sent] of [[[2], 2], [undefined, 'missing'], [[null], 'missing']] as const) {
+      const { door } = fakes(false)
+      const slot = door.slot
+      door.slot = async (k: string) => ({ ...(await slot(k))!, turn_id: 't_AAAAAAAAAAAAAAAAAAAAAA' })
+      let now = 0
+      const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {}, promptTrace: async () => (versions === undefined ? {} : { promptVersions: versions, promptApps: [['Shopify']] }) })
+      const file = await runAll(env, [META.find(c => c.id === 'clean-empty')!], meta)
+      expect(file.cases[0], String(sent)).toMatchObject({ prompt: sent, verdict: { pass: false, reasons: [`prompt_version:${sent}: the turn was not sent the system prompt v3`] } })
+    }
+  })
+
+  // #337 round 3 (M3): a v3 turn whose prompt didn't name Shopify fails its case too, naming the apps it named.
+  it('with promptTrace, a v3 turn whose prompt named no store fails as prompt_apps', async () => {
+    for (const [apps, code] of [[[[]], 'prompt_apps:none'], [[['Slack']], 'prompt_apps:Slack'], [undefined, 'prompt_apps:missing']] as const) {
+      const { door } = fakes(false)
+      const slot = door.slot
+      door.slot = async (k: string) => ({ ...(await slot(k))!, turn_id: 't_AAAAAAAAAAAAAAAAAAAAAA' })
+      let now = 0
+      const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {}, promptTrace: async () => ({ promptVersions: [3], ...(apps === undefined ? {} : { promptApps: apps }) }) })
+      const file = await runAll(env, [META.find(c => c.id === 'clean-empty')!], meta)
+      expect(file.cases[0], code).toMatchObject({ prompt: 3, verdict: { pass: false, reasons: [`${code}: the turn's prompt did not name Shopify as connected`] } })
+    }
+  })
+
+  // #337 round 2 (Sonnet M3): a slot that ended with no turn has no prompt to check, so it fails as missing (it would
+  // otherwise grade on its stored rows alone), and no trace is read for it.
+  it('with promptTrace, a slot with no turn reads no trace and fails as prompt_version:missing', async () => {
+    const { door } = fakes(false)
+    let now = 0
+    const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {}, promptTrace: async () => { throw new Error('trace read') } })
+    const file = await runAll(env, [META.find(c => c.id === 'clean-empty')!], meta)
+    expect(file.cases[0]).toMatchObject({ prompt: 'missing', verdict: { pass: false, reasons: ['prompt_version:missing: the turn was not sent the system prompt v3'] } })
+  })
+
   it('without checkModel (the scripted proof\'s spec), no slot model is read nor kept', async () => {
     const { env, door } = fakes(false)
     door.model = async () => { throw new Error('model read') }
@@ -759,7 +838,7 @@ describe('the graded run (failure 10)', () => {
     expect(readFileSync(new URL('./remote.ts', import.meta.url), 'utf8')).toContain("\nexport const MORNING_CHECK_CAP = '$50'\n")
   })
 
-  function fakes(o: { spent?: readonly number[]; capMinor?: number; shop?: string | null; otherLease?: boolean; elsewhere?: boolean; chatStatus?: number; takeGate?: Promise<void> } = {}) {
+  function fakes(o: { spent?: readonly number[]; capMinor?: number; shop?: string | null; otherLease?: boolean; elsewhere?: boolean; chatStatus?: number; takeGate?: Promise<void>; tools?: unknown } = {}) {
     const log: string[] = []
     const spent = [...(o.spent ?? [1000])]
     let last = spent[0]!
@@ -779,6 +858,7 @@ describe('the graded run (failure 10)', () => {
         if (!o.elsewhere) chats.add((body as { id: string }).id)
         return { status: o.chatStatus ?? 201, json: {} }
       }
+      if (path === '/api/tools') return { status: 200, json: o.tools ?? { connected: ['shopify'], details: { shopify: { name: 'Shopify' } }, connection: {} } }
       last = spent.length ? spent.shift()! : last
       return { status: 200, json: { total: { minor: last }, cap: { minor: o.capMinor ?? 5000 } } }
     }

@@ -16,6 +16,12 @@ const TEXT: Record<HubErrorCode, string> = {
   rate_limited: 'rate limited by the upstream',
   result_too_large: 'result too large',
   internal: 'internal error',
+  // P5 (p5-w1)
+  state_invalid: 'connect state invalid, used or expired',
+  workspace_mismatch: 'connected to another workspace',
+  connect_stale: 'connect superseded by a newer change',
+  connect_refused: 'connect refused by the provider',
+  paused: 'connector paused',
 }
 
 export const isHubErrorCode = (code: unknown): code is HubErrorCode => typeof code === 'string' && Object.hasOwn(TEXT, code)

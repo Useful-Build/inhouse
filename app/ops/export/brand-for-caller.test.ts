@@ -19,7 +19,7 @@ import { seedBrand } from '../../server/seed/seed.ts'
 import type { Seeded } from '../../server/seed/seed.ts'
 import { addPhoto, addSetting, readLines, token } from '../delete/test-support.ts'
 import { tables } from '../tables/index.ts'
-import { BRAND_FOR_CALLER } from './brand-for-caller.ts'
+import { BRAND_FOR_CALLER, P5_EXPORT_EXCLUSIONS } from './brand-for-caller.ts'
 import type { ExportCaller } from './brand-for-caller.ts'
 import { planExport, runExport } from './export.ts'
 
@@ -89,6 +89,31 @@ describe('every exported store declares how (failure 1)', () => {
       if (p.kind === 'own_chat_files') expect(t.name).toBe('files/')
       expect(p.why.length, t.name).toBeGreaterThan(0)
     }
+  })
+
+  it('keeps connector credentials and the notice ledger out of every export', () => {
+    for (const [name, why] of Object.entries(P5_EXPORT_EXCLUSIONS)) {
+      expect(tables.find(t => t.name === name), why).toMatchObject({ export: false })
+      expect(BRAND_FOR_CALLER).not.toHaveProperty(name)
+    }
+  })
+
+  it.each(['person', 'inhouse'] as const)('exports shared P5 configuration for %s with only safe fields', async kind => {
+    await db.batch([
+      db.prepare("INSERT OR REPLACE INTO connector_accounts (account_id, connector, last_state, last_state_at_ms, connected_by, connected_at_ms, req_id) VALUES ('slack:workspace', 'slack', 'connected', ?, ?, ?, 'connector-request-marker')").bind(BASE, seeded.members.dana, BASE),
+      db.prepare("INSERT OR REPLACE INTO notify_channels (channel_id, name, added_by, added_at_ms, req_id) VALUES ('CEXPORT1', 'ops-example', ?, ?, 'channel-request-marker')").bind(seeded.members.dana, BASE),
+      db.prepare("INSERT OR REPLACE INTO notify_channels (channel_id, name, added_by, added_at_ms, removed_at_ms) VALUES ('CEXPORT2', 'removed-example', ?, ?, ?)").bind(seeded.members.dana, BASE, BASE),
+      db.prepare('INSERT OR REPLACE INTO notify_channel_list (id, rev, updated_at_ms) VALUES (1, 2, ?)').bind(BASE),
+    ])
+    const { rows, lines, text } = await exportFor({ kind, memberId: seeded.members.admin })
+    expect(rows('connector_accounts').find(r => r.account_id === 'slack:workspace')).toEqual({
+      account_id: 'slack:workspace', connector: 'slack', last_state: 'connected', last_state_at_ms: BASE, connected_at_ms: BASE, disconnected_at_ms: null,
+    })
+    expect(rows('notify_channels').find(r => r.channel_id === 'CEXPORT1')).toEqual({ channel_id: 'CEXPORT1', name: 'ops-example', alerts: 0 })
+    expect(rows('notify_channels').some(r => r.channel_id === 'CEXPORT2')).toBe(false)
+    expect(rows('notify_channel_list')).toEqual([{ rev: 2, updated_at_ms: BASE }])
+    expect(lines.some(l => l.store === 'SignIn' || l.store === 'notify_sends')).toBe(false)
+    expect(text).not.toContain('request-marker')
   })
 
   it('refuses to plan an exported store that has no policy, by name', async () => {

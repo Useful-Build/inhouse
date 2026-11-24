@@ -44,6 +44,10 @@ import { dataHealth } from '../ops/signals/data.ts'
 import type { KeyedBucket } from './r2-keys.ts'
 import type { DataHealth } from '../ops/signals/data.ts'
 import type { RoutineStore } from '../routines/store.ts'
+import { connectorAccountStore } from './connector-accounts.ts'
+import type { ConnectorAccountStore } from './connector-accounts.ts'
+import { notifyChannelStore } from '../notify-slack/channels.ts'
+import type { NotifyChannelStore } from '../notify-slack/channels.ts'
 import { teamRequestStore } from '../team-requests/store.ts'
 import type { TeamRequestStore } from '../team-requests/store.ts'
 import { brandSkillStore } from '../brand-skills/store.ts'
@@ -95,6 +99,10 @@ export interface Stores extends AuthStores {
 
   /** P4 W5 (p4-w5.md): the Library's uploads, marks and listed files. */
   library: LibraryStore
+  /** P5 W1 (p5-w1.md section 9): connector accounts, the Tools page's lifecycle record. */
+  connectors: ConnectorAccountStore
+  /** P5 W4 (p5-w4.md section 10): the Slack channels listed for notices. */
+  notify: NotifyChannelStore
 
   /** P8 C1: what the data jobs' health signals read (server/ops/signals/data.ts). */
   dataHealth: DataHealth
@@ -176,6 +184,8 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
     routines: routineStore({ db }),
 
     library: libraryStore({ db, bucket: env.FILES }),
+    connectors: connectorAccountStore({ db, hook }),
+    notify: notifyChannelStore({ db, hook }),
 
     // P8 C1's slot.
     dataHealth: dataHealth({ db, bucket: env.FILES }),

@@ -1,7 +1,8 @@
 import { fc, test } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { BACKOFF_MS, EXPIRY_MARGIN_MS, MAX_PENDING_TTL_MS, REJECTED_COOLDOWN_MS } from './core'
-import { ACCOUNT, API, harness, LIFETIME_S, MemStore, readQuery, ringJson, START_MS, type Harness } from './testing/kit'
+import { BACKOFF_MS, describeMcpScopes, EXPIRY_MARGIN_MS, MAX_PENDING_TTL_MS, REJECTED_COOLDOWN_MS, SignInCore } from './core'
+import { ACCOUNT, API, harness, LIFETIME_S, MemStore, readQuery, ringJson, SCOPES, START_MS, type Harness } from './testing/kit'
+import { parseKeyRing } from '../crypto/keyring'
 
 // Quiet the JSON log lines; tests that inspect them install their own spy.
 beforeEach(() => void vi.spyOn(console, 'log').mockImplementation(() => {}))
@@ -9,6 +10,31 @@ afterEach(() => vi.restoreAllMocks())
 
 const ok = { ok: true, value: { data: { shop: { name: 'Example Fixture' } } } }
 const codeOf = (r: { ok: boolean; error?: { code: string } }) => (r.ok ? 'ok' : r.error!.code)
+
+describe('MCP scope mismatch messages', () => {
+  it.each([
+    ['channels:history', true],
+    ['search:read.public', true],
+    ['search.read', true],
+    ['a..', true],
+    ['history', false],
+    ['channels::history', false],
+    ['Channels:history', false],
+    ['a:' + 'b'.repeat(62), true],
+    ['a:' + 'b'.repeat(63), false],
+  ])('describes %j only when safe to display', (scope, expected) => {
+    expect(describeMcpScopes([scope], [])).toBe(expected ? `extra ${scope}` : '')
+    expect(describeMcpScopes([], [scope])).toBe(expected ? `missing ${scope}` : '')
+  })
+
+  it('omits long malformed scopes with repeated dots in under 500 ms', () => {
+    const scope = 'a.' + '..'.repeat(20_000) + '!'
+    const start = performance.now()
+    const message = describeMcpScopes([scope, 'channels:history'], ['search:read.public'])
+    expect(performance.now() - start).toBeLessThan(500)
+    expect(message).toBe('extra channels:history; missing search:read.public')
+  })
+})
 
 describe('grants and reads', () => {
   it('grants once, stores only an envelope, sets the alarm at half the lifetime and reads', async () => {
@@ -35,9 +61,19 @@ describe('grants and reads', () => {
 
   it('validates the request', async () => {
     const h = harness()
-    expect(codeOf(await h.core.query({ accountId: ACCOUNT, document: '{ a }', apiVersion: '2026-11' }))).toBe('invalid_args')
-    expect(codeOf(await h.core.query({ accountId: ACCOUNT, document: '{ a }', apiVersion: API, variables: [] as never }))).toBe('invalid_args')
+    expect(codeOf(await h.core.query({ accountId: ACCOUNT, document: '{ shop { currencyCode } }', apiVersion: '2026-11' }))).toBe('invalid_args')
+    expect(codeOf(await h.core.query({ accountId: ACCOUNT, document: '{ shop { currencyCode } }', apiVersion: API, variables: [] as never }))).toBe('invalid_args')
     expect(codeOf(await h.core.query(null as never))).toBe('invalid_args')
+  })
+
+  it('P5 W2 (review H1): junk, undeclared, function and oversize variables are refused before any token or upstream call', async () => {
+    const h = harness()
+    const doc = 'query Q($q: String) { orders(first: 1, query: $q) { nodes { id } } }'
+    const q = (variables: unknown) => h.core.query({ accountId: ACCOUNT, document: doc, apiVersion: API, variables: variables as never })
+    expect(await q({ q: 'sku:"a"', junk: 'x'.repeat(1000) })).toMatchObject({ ok: false, error: { code: 'invalid_args', message: 'invalid arguments: field not allowed' } })
+    expect(await q({ q: () => 'sku:"a"' })).toMatchObject({ ok: false, error: { code: 'invalid_args', message: 'invalid arguments: variables' } })
+    expect(await q({ q: 'x'.repeat(16 * 1024) })).toMatchObject({ ok: false, error: { code: 'invalid_args', message: 'invalid arguments: variables' } })
+    expect(h.shop.grants + h.shop.reads.length).toBe(0)
   })
 
   it('a call naming another account is internal and logged', async () => {
@@ -45,7 +81,7 @@ describe('grants and reads', () => {
     await readQuery(h)
     const lines: string[] = []
     vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => void lines.push(a.join(' ')))
-    expect(codeOf(await h.core.query({ accountId: 'shopify:other', document: '{ a }', apiVersion: API }))).toBe('internal')
+    expect(codeOf(await h.core.query({ accountId: 'shopify:other', document: '{ shop { currencyCode } }', apiVersion: API }))).toBe('internal')
     expect(codeOf(h.core.status('shopify:other'))).toBe('internal')
     expect(lines.some(l => l.includes('"hub_internal"'))).toBe(true)
   })
@@ -55,7 +91,7 @@ describe('grants and reads', () => {
     h.config.value = null
     expect(codeOf(await readQuery(h))).toBe('not_configured')
     const h2 = harness()
-    expect(codeOf(await h2.core.query({ accountId: 'shopify:nobody', document: '{ a }', apiVersion: API }))).toBe('not_configured')
+    expect(codeOf(await h2.core.query({ accountId: 'shopify:nobody', document: '{ shop { currencyCode } }', apiVersion: API }))).toBe('not_configured')
     for (const json of [undefined, '{}', JSON.stringify({ current: 'k1', keys: {} })]) {
       const h3 = harness({ ring: { json } })
       expect(codeOf(await readQuery(h3))).toBe('key_unavailable')
@@ -518,7 +554,7 @@ describe('the canary token (property 8)', () => {
           h.shop.nextToken = () => `${canary}x`
           h.shop.revokeAll()
           results.push(await readQuery(h))
-          results.push(await h.core.query({ accountId: 'shopify:other', document: '{ a }', apiVersion: API }))
+          results.push(await h.core.query({ accountId: 'shopify:other', document: '{ shop { currencyCode } }', apiVersion: API }))
           h.clock.ms += LIFETIME_S * 1000
           await h.core.alarm()
         },
@@ -528,4 +564,74 @@ describe('the canary token (property 8)', () => {
       expect(all).not.toContain(secret)
     },
   )
+})
+
+// P5 fix (Tools screen crash): the Tools page lists an active account as connected only with a "since" date, and a
+// client-credentials account (Shopify) never passes completeConnect, so the hub must give it a stable connectedAt.
+// Ways it can fail, first: connectedAt stays null after a grant; it moves with every refresh grant (it would read as
+// "connected today" every morning); it is the clock at read time; a legacy active record (granted before this field)
+// stays null forever; a first grant that failed gets a date though nothing was ever connected.
+/** The harness's deps over the same store, clock and fakes, for a second core with one dependency changed. */
+const depsOf = (h: Harness) => ({
+  store: h.store, now: () => h.clock.ms, alarm: h.alarm, upstream: async () => h.shop.upstream,
+  keyring: () => parseKeyRing(h.ring.json), shopify: () => h.config.value,
+  scopesFor: async (id: string) => (id === ACCOUNT ? SCOPES : null),
+})
+
+describe('connectedAt for a client-credentials account', () => {
+  const connectedAtOf = async (h: Harness) => {
+    const s = await h.core.accountStatus(ACCOUNT)
+    if (!s.ok) throw new Error(s.error.code)
+    return s.value.connectedAt
+  }
+  const at = (ms: number) => ({ ms, iso: new Date(ms).toISOString() })
+
+  it('is the first grant, and stays there through a refresh grant, a failed refresh and later reads', async () => {
+    const h = harness()
+    expect(await connectedAtOf(h)).toBeNull()
+    await readQuery(h)
+    expect(await connectedAtOf(h)).toEqual(at(START_MS))
+    h.clock.ms = START_MS + (LIFETIME_S * 1000) / 2
+    await h.core.alarm()
+    expect(h.shop.grants).toBe(2)
+    expect(await connectedAtOf(h)).toEqual(at(START_MS))
+    h.shop.grantMode = { kind: 'status', status: 403 }
+    h.clock.ms += LIFETIME_S * 1000
+    await h.core.alarm()
+    expect(h.store.record()).toMatchObject({ state: 'failed' })
+    expect(await connectedAtOf(h)).toEqual(at(START_MS))
+  })
+
+  it('a first grant that failed gives no date: nothing was ever connected', async () => {
+    const h = harness()
+    h.shop.grantMode = { kind: 'status', status: 403 }
+    expect(codeOf(await readQuery(h))).not.toBe('ok')
+    expect(h.store.record()).toMatchObject({ state: 'failed' })
+    expect(await connectedAtOf(h)).toBeNull()
+  })
+
+  // #321 review L3: kind is resolved before the backfill, so an OAuth account never gets a token-time date.
+  it('a record with no stored kind that kindFor says is OAuth gets no backfilled date', async () => {
+    const h = harness()
+    await readQuery(h)
+    const { connectedAtMs: _drop, ...legacy } = h.store.record()!
+    h.store.put('record', legacy)
+    const oauth = new SignInCore({ ...depsOf(h), kindFor: async () => 'oauth_mcp' })
+    const s = await oauth.accountStatus(ACCOUNT)
+    expect(s.ok && s.value.connectedAt).toBeNull()
+    expect(h.store.record()!.connectedAtMs).toBeUndefined()
+  })
+
+  it('a legacy active record (granted before connectedAt was kept) reads its token time once, then keeps it', async () => {
+    const h = harness()
+    await readQuery(h)
+    const r = h.store.record()!
+    const { connectedAtMs: _drop, ...legacy } = r
+    h.store.put('record', { ...legacy, obtainedAtMs: START_MS - 3_600_000 })
+    expect(await connectedAtOf(h)).toEqual(at(START_MS - 3_600_000))
+    h.clock.ms = START_MS + (LIFETIME_S * 1000) / 2
+    await h.core.alarm()
+    expect(h.store.record()!.obtainedAtMs).toBe(h.clock.ms)
+    expect(await connectedAtOf(h)).toEqual(at(START_MS - 3_600_000))
+  })
 })

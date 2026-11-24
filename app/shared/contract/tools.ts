@@ -17,10 +17,26 @@ export const ToolDetailSchema = z.object({
   since: InstantSchema.optional(),
   /** A tool being connected: when it goes live. */
   liveBy: InstantSchema.optional(),
+  /** P5: the hub's account id (`slack:workspace`). The client sends this, never the connector key, to the connect, pause and disconnect routes. */
+  accountId: z.string().optional(),
+  /** P5: the member id of who connected it. */
+  connectedBy: z.string().optional(),
+  /** P5: the Inhouse team can disconnect it here (OAuth tools only; a tool set up in the deployment's config can't be). */
+  canDisconnect: z.boolean().optional(),
+  /** P5: the last disconnect couldn't revoke the tool's access at its source: the team removes the app there too. */
+  revokeFailed: z.boolean().optional(),
+  /** P5: the Inhouse team paused it: still connected, not read. */
+  paused: z.boolean().optional(),
+  /** P5: its first login failed and it was never connected (so it isn't in `connected`): when, from the hub's error. */
+  loginFailedAt: InstantSchema.optional(),
 })
 export type ToolDetail = z.infer<typeof ToolDetailSchema>
 
-export const CatalogToolSchema = z.object({ k: z.string(), name: z.string(), desc: z.string(), need: StageIndexSchema.optional() })
+export const CatalogToolSchema = z.object({
+  k: z.string(), name: z.string(), desc: z.string(), need: StageIndexSchema.optional(),
+  /** P5: the hub's account id, on a tool the Inhouse team can connect here. The client sends it to the connect route. */
+  accountId: z.string().optional(),
+})
 export type CatalogTool = z.infer<typeof CatalogToolSchema>
 
 /** A channel the team hears from the agent on (Slack): not a tool it reads. Decision D6. */
@@ -77,3 +93,18 @@ export const ToolsDataSchema = z.object({
   readDone: z.number().int().nonnegative(),
 })
 export type ToolsData = z.infer<typeof ToolsDataSchema>
+
+/** Route D's body: `PUT /api/tools/:accountId/paused`. A boolean set, so a repeat changes nothing. */
+export const ToolPausedInputSchema = z.object({ paused: z.boolean() }).strict()
+export type ToolPausedInput = z.infer<typeof ToolPausedInputSchema>
+/** Route D's answer: the state after the change. */
+export const ToolPausedResultSchema = z.object({ paused: z.boolean() })
+export type ToolPausedResult = z.infer<typeof ToolPausedResultSchema>
+
+/** Route E's answer. `revoked: false`: the tool's access wasn't revoked at its source (the team removes the app there). */
+export const ToolDisconnectResultSchema = z.object({ revoked: z.boolean() })
+export type ToolDisconnectResult = z.infer<typeof ToolDisconnectResultSchema>
+
+/** Route A's answer (W1): where the browser goes to sign in to the tool. */
+export const ToolConnectResultSchema = z.object({ authorizeUrl: z.string().min(1) })
+export type ToolConnectResult = z.infer<typeof ToolConnectResultSchema>

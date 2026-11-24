@@ -5,7 +5,8 @@
 import type { KeyRing } from './keyring'
 
 export type Envelope = { kid: string; iv: string; ct: string }
-export type EnvelopeField = 'token' | 'refresh'
+/** P5 (p5-w1) adds `client` (a dynamic client's registration) and `pkce` (a pending connect's verifier). */
+export type EnvelopeField = 'token' | 'refresh' | 'client' | 'pkce'
 export type OpenResult = { ok: true; plaintext: string; kid: string } | { ok: false; reason: 'key_missing' | 'invalid' }
 
 const enc = new TextEncoder()

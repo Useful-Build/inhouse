@@ -18,6 +18,8 @@
 		"bindings": [{ "name": "SIGNIN", "class_name": "SignIn" }]
 	},
 	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SignIn"] }],
+	// P5 W2: code mode runs scripts in Dynamic Workers (env.LOADER). Exactly this one binding (check-hub-config.mjs).
+	"worker_loaders": [{ "binding": "LOADER" }],
 	// Turns on the test upstream seam (hub/testing/), together with INHOUSE_TEST_BUILD below.
 	"define": {
 		"__INHOUSE_HUB_TEST__": "true"
@@ -30,6 +32,14 @@
 		// paths run in tests. A real deployment sets HUB_TOKEN_KEYS as a secret through a secret card.
 		"HUB_TOKEN_KEYS": "{\"current\":\"ktest-2\",\"keys\":{\"ktest-1\":\"1Fza49LBSBNRAEZcdP+XApWhY8ZgCJilqS4O7FoBju4=\",\"ktest-2\":\"E32MH18U9aWDv8hY9zmavoxETTkRY4Xad0NJiBsPw2A=\"}}",
 		// TEST-ONLY, invented. The recorded upstream accepts it; no real app has it.
-		"SHOPIFY_CLIENT_SECRET": "test-only-client-secret-0RW9rVbhXFbVnJw6t1jyOWrJ1E7bMlc6"
+		"SHOPIFY_CLIENT_SECRET": "test-only-client-secret-0RW9rVbhXFbVnJw6t1jyOWrJ1E7bMlc6",
+		// TEST-ONLY, invented, matching the fake Slack and notes upstreams (test/upstreams/mcp/).
+		"SLACK_CLIENT_ID": "0000000000.0000000001",
+		"SLACK_CLIENT_SECRET": "test-only-slack-client-secret-9f3b",
+		"SLACK_TEAM_ID": "T0TEST0001",
+		"SLACK_PRIVATE_SEARCH": "off",
+		"CONNECT_REDIRECT_URI": "https://inhouse.example.com/api/connect/callback",
+		// P5 W4: invented, the product origin Slack notices link to.
+		"APP_ORIGIN": "https://inhouse.example.com"
 	}
 }

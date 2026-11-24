@@ -13,6 +13,8 @@
 // - An unregistered host answers 599 with a clear message. Never a real fetch.
 
 import { createShopifyUpstream } from '../../test/upstreams/shopify/server'
+import { createMcpUpstream, SLACK_OAUTH_PATHS } from '../../test/upstreams/mcp/server'
+import { createSlackWebUpstream, SLACK_WEB_PATHS } from '../../test/upstreams/slack/server'
 import { MORNING_CHECK_UPSTREAMS } from '../../test/upstreams/morning-check/upstreams'
 import { dataset as shopifyFixtureDataset } from '../../test/upstreams/shopify/recordings/fixture/dataset'
 import { STORE_DATA_UPSTREAMS } from '../../test/upstreams/shopify/datasets/exfiltration/upstreams'
@@ -31,7 +33,21 @@ export const testUpstreams = new Map<string, TestUpstream>()
 //
 // P4 W6 (canary sweep, p4-w6.md section 4): the upstream answers 401 to its first GraphQL request, once per start of the hub, so the error path and the hub's refresh run before the sweep reads the logs. The hub then asks
 // for a fresh token and carries on (Opus F13); a test of the hub's own that reads through this host sees only the final answer.
-testUpstreams.set('example-fixture.myshopify.com', createShopifyUpstream(shopifyFixtureDataset, { faults: ['unauthorized-once'] }))
+// Its requests (path and method only) and the access tokens it issues are kept for the test-fakes hook's `state`
+// (./fakes.ts, P5 W5); the token is read from the upstream's own answer, so the fake itself is unchanged.
+export const shopifyRequests: { path: string; method: string }[] = []
+export const shopifyIssuedTokens: string[] = []
+const shopifyFixture = createShopifyUpstream(shopifyFixtureDataset, { faults: ['unauthorized-once'] })
+testUpstreams.set('example-fixture.myshopify.com', async req => {
+  const path = new URL(req.url).pathname
+  shopifyRequests.push({ path, method: req.method })
+  const res = await shopifyFixture(req)
+  if (path === '/admin/oauth/access_token' && res.ok) {
+    const token = ((await res.clone().json()) as { access_token?: unknown }).access_token
+    if (typeof token === 'string') shopifyIssuedTokens.push(token)
+  }
+  return res
+})
 
 // The graded morning-check set (P4 W3): one invented shop per case (evals/morning-check/), each with its own dataset and
 // fault. The runner points the product Worker's SHOPIFY_SHOP at a case's host.
@@ -40,6 +56,23 @@ for (const [host, upstream] of Object.entries(MORNING_CHECK_UPSTREAMS)) testUpst
 // The store-data exfiltration set (P4 W6): one invented shop per case, each with the instruction planted in a field the read
 // tools return (evals/exfiltration/store-data/).
 for (const [host, upstream] of Object.entries(STORE_DATA_UPSTREAMS)) testUpstreams.set(host, upstream)
+
+// The fake OAuth MCP servers (P5 W1): Slack's profile and the generic `notes` server. slack.com answers only the OAuth
+// paths; W4's Web API paths join it with their fake.
+// Exported for the test-fakes hook (./fakes.ts, W5): it reads their logs and flips their switches in this isolate.
+export const slackMcp = createMcpUpstream('slack')
+export const notesMcp = createMcpUpstream('notes')
+testUpstreams.set('mcp.slack.com', slackMcp.fetch)
+testUpstreams.set('notes.example.com', notesMcp.fetch)
+testUpstreams.set('auth.notes.example.com', notesMcp.fetch)
+// slack.com by path: W1's OAuth paths, then W4's fake Web API (P5 W4).
+export const slackWeb = createSlackWebUpstream()
+testUpstreams.set('slack.com', req => {
+  const path = new URL(req.url).pathname
+  if ((SLACK_OAUTH_PATHS as readonly string[]).includes(path)) return slackMcp.fetch(req)
+  if ((SLACK_WEB_PATHS as readonly string[]).includes(path)) return slackWeb.fetch(req)
+  return Promise.resolve(new Response('no fake', { status: 599 }))
+})
 
 // The read-side set (P6a W4): one invented shop per Shopify case, its instruction planted in the field the case names
 // (evals/read-side/shops.ts).

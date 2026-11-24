@@ -289,17 +289,12 @@ describe('nightly.yml', () => {
       expect(loop[1]).toContain(`"${name}=$${short}"`)
     }
   })
-  // #317 review (M2): the pre-P5 skip is for main today only. Once P5's live file is in the repo (P5's squash), the gate
-  // may not skip at all, so a later move of the connector can't switch the check off quietly.
-  it('the Slack gate has no skip once slack.live.ts is in the repo', () => {
+  // #317 review (M2): the pre-P5 skip went with P5's main merge. The gate may not skip at all, so a later move of the
+  // connector can't switch the check off quietly.
+  it('the Slack gate has no skip', () => {
     const gate = step(job(wf(), 'slack-connectors'), 'Slack live file, secrets and variables present')
-    if (fs.existsSync(path.join(here, '../../test/connectors/mcp/slack.live.ts'))) {
-      expect(gate).not.toMatch(/run=false|::notice title=Slack connector check skipped/)
-    } else {
-      // Before P5 (no hub or no Slack connector on main) is the only skip.
-      expect(gate).toContain('if [ ! -f app/hub/package.json ] || [ ! -d app/hub/connectors/mcp/slack ]; then')
-      expect(gate.match(/echo "run=false"/g)).toHaveLength(1)
-    }
+    expect(fs.existsSync(path.join(here, '../../test/connectors/mcp/slack.live.ts'))).toBe(true)
+    expect(gate).not.toMatch(/run=false|::notice title=Slack connector check skipped/)
   })
   // The fixture's and the test workspace's credentials never reach ci.yml (PR code runs there).
   it('ci.yml holds none of the read fixture\'s or the test workspace\'s credentials', () => {

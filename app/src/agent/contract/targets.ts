@@ -12,11 +12,13 @@ import { realTargets } from './targets/real/index'
 /** Every client method that writes and returns a promise: the ones `injectError` can fail. */
 export type WriteMethod =
   | 'approve' | 'undo' | 'editDraft' | 'undoHandled' | 'redoHandled' | 'createChat' | 'pause' | 'resume' | 'setToggle'
-  | 'requestTool' | 'requestSkill' | 'setToolPaused' | 'forgetMemory' | 'setSetting' | 'setPhoto' | 'sendTeamRequest'
+  | 'requestTool' | 'requestSkill' | 'setToolPaused' | 'connectTool' | 'disconnectTool' | 'forgetMemory' | 'setSetting' | 'setPhoto' | 'sendTeamRequest'
   | 'withdrawTeamRequest'
   | 'markNoticesRead' | 'deleteFiles' | 'restoreFiles' | 'setAside' | 'runRoutine' | 'deleteRoutine' | 'restoreRoutine'
   | 'renameChat' | 'pinChat' | 'deleteChats' | 'restoreChats'
   | 'inviteMember' | 'setMemberRole' | 'removeMember' | 'grantSupport' | 'endSupportGrant' | 'reviewMemory'
+  // P5 (p5-w4): the Slack notice channel list.
+  | 'saveNotifyChannels'
 
 /** A record a test changes behind the client (`writeElsewhere`), so the client's next write to it is stale. */
 export type RecordRef =
@@ -172,10 +174,11 @@ const MOCK_STORAGE_KEY = 'inhouse.demo.v2'
 
 const WRITE_METHODS: ReadonlySet<string> = new Set<WriteMethod>([
   'approve', 'undo', 'editDraft', 'undoHandled', 'redoHandled', 'createChat', 'pause', 'resume', 'setToggle', 'requestTool',
-  'requestSkill', 'setToolPaused', 'forgetMemory', 'setSetting', 'setPhoto', 'sendTeamRequest', 'markNoticesRead', 'deleteFiles',
+  'requestSkill', 'setToolPaused', 'connectTool', 'disconnectTool', 'forgetMemory', 'setSetting', 'setPhoto', 'sendTeamRequest', 'markNoticesRead', 'deleteFiles',
   'withdrawTeamRequest',
   'restoreFiles', 'setAside', 'runRoutine', 'deleteRoutine', 'restoreRoutine', 'renameChat', 'pinChat', 'deleteChats', 'restoreChats',
   'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant', 'reviewMemory',
+  'saveNotifyChannels',
 ])
 
 /** The parts of the mock an injected failure has to undo. Test-only access: the mock has no hook for a server's refusal. */

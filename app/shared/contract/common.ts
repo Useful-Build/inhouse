@@ -38,6 +38,10 @@ export const ErrorReasonSchema = z.enum([
   'routine_limit', 'empty',
   // P8a P-auth: a brand-app sign-in whose subject is an Inhouse team (or service) member.
   'wrong_kind',
+  // P5 (p5-w3): the Tools routes' refusals.
+  'not_configured', 'not_disconnectable', 'not_connected',
+  // P5 (p5-w4): the notice channel list's refusals (route 75 conflicts, route 74 while Slack can't be used).
+  'shared_channel', 'archived', 'not_public', 'not_member', 'not_found', 'name_taken', 'slack_not_connected',
   // P6a W3: a request to the Inhouse team past 50 open ones.
   'request_limit',
 ])

@@ -21,12 +21,13 @@ function page(o: Partial<Env> = {}, approve = true) {
   const data = agent.read()
   const noop = () => {}
   const me = agent.me()
+  const notify: Env['notify'] = { status: 'idle', list: null, available: null, pickerError: null, pickerLoading: false, truncated: false, canEdit: false, busy: false, add: noop, remove: noop, setAlerts: noop, retry: noop }
   const env: Env = {
     S: 0, stage: 'Watch', agent: agent.getSnapshot(), data, spent: data.usage.total, phone: false,
     openTeam: noop, openPop: noop, openSettings: noop, newChat: noop, goSkills: noop, togglePause: noop,
     theme: 'system', setTheme: noop, toast: noop, forget: noop, download: noop, setRole: noop, setSupport: noop,
     me: me && { ...me, can: { ...me.can, approveMemory: approve } }, invite: noop, removeMember: noop, grantUi: false, showGrant: true,
-    loadingMore: false, loadMore: noop, exportFromServer: null, exportDataFromServer: null, ...o,
+    loadingMore: false, loadMore: noop, exportFromServer: null, exportDataFromServer: null, notify, ...o,
   }
   return settingsPage('team-memory', env)
 }

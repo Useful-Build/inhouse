@@ -2,6 +2,8 @@ import { CapReachedError } from './types.ts'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { CASES } from './cases.ts'
+import { SLACK_SEARCH_CASE } from './connectors/slack-search/case.ts'
+import { CODEMODE_CASES } from './connectors/codemode/cases.ts'
 import { CANNED, createFakeTarget } from './targets/fake.ts'
 import { createFixtureTarget } from './targets/fixture.ts'
 import { createProductTarget, ProductTargetRefusal } from './targets/product.ts'
@@ -11,6 +13,10 @@ import { S5_PEOPLE } from './s5-fixtures.ts'
 import type { ChatResult, Target } from './types.ts'
 
 const USAGE = { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }
+// The Slack search case (P5) needs the hub's live Slack tool, and the code-mode cases (P5 W2) the live Shopify store: no
+// S5 canned transcript, the fake and fixture targets don't serve them.
+const LIVE_ONLY = new Set([SLACK_SEARCH_CASE.id, ...CODEMODE_CASES.map((c) => c.id)])
+const S5_SET = CASES.filter((c) => !LIVE_ONLY.has(c.id))
 const META = { target: 'fake', model: 'claude-sonnet-5-5', effort: 'medium', reps: 3, notRun: [] }
 
 describe('the fake target, full set end to end', () => {
@@ -19,12 +25,12 @@ describe('the fake target, full set end to end', () => {
 
   it('has a canned transcript for every S5 case and a declared failure list that is literal', () => {
     expect(declaredFailures).toEqual(['N04', 'T05'])
-    for (const c of CASES.filter((x) => x.cat !== 'exfil')) expect(CANNED[c.id], c.id).toBeDefined()
+    for (const c of S5_SET.filter((x) => x.cat !== 'exfil')) expect(CANNED[c.id], c.id).toBeDefined()
   })
 
   it('gives the report the canned transcripts dictate (52 cases x 3 reps, clean exfiltration)', async () => {
-    const out = await runEvals({ target: createFakeTarget(), cases: CASES, reps: 3, concurrency: 4 })
-    const report = buildReport(CASES, out.rows, META)
+    const out = await runEvals({ target: createFakeTarget(), cases: S5_SET, reps: 3, concurrency: 4 })
+    const report = buildReport(S5_SET, out.rows, META)
     expect(out.notRun).toEqual([])
     expect(report.summary.all.runs).toBe(156)
     expect(report.summary.all.pass).toBe(156 - declaredFailures.length * 3)
@@ -64,10 +70,10 @@ describe('the fake target, full set end to end', () => {
 })
 
 describe('the fixture target replays S5', () => {
-  it('serves only the 43 S5 cases and reports the rest as not run', async () => {
+  it('serves only the 43 S5 cases and reports the rest (the Slack case, the code-mode cases, the exfiltration cases) as not run', async () => {
     const out = await runEvals({ target: createFixtureTarget(), cases: CASES, reps: 3, concurrency: 3 })
     expect(out.rows).toHaveLength(138)
-    expect(out.notRun.map((n) => n.id).sort()).toEqual(['X01', 'X02', 'X03', 'X04', 'X05', 'X06', 'X07', 'X08', 'X09'])
+    expect(out.notRun.map((n) => n.id).sort()).toEqual(['C-CODEMODE-01', 'C-CODEMODE-02', 'C-CODEMODE-03', 'C-CODEMODE-04', 'C-SLACK-01', 'X01', 'X02', 'X03', 'X04', 'X05', 'X06', 'X07', 'X08', 'X09'])
     const report = buildReport(CASES, out.rows, META)
     // T09 and T11 (r1-r3) flip to fail: S5 recorded its own mock tools' inputs (to: [ids], schedule: "weekdays 06:00"),
     // and the cases now follow P4/P5's real schemas (to.members, days and time; line B), which S5 never served.
@@ -199,7 +205,7 @@ describe('budget, timeout and failures', () => {
   })
 
   it('estimates S5\'s price: about $0.011 a chat, $1.5 for the 43 x 3 set', () => {
-    const s5 = CASES.filter((c) => c.cat !== 'exfil')
+    const s5 = S5_SET.filter((c) => c.cat !== 'exfil')
     expect(estimateUsd(s5, 3)).toBeCloseTo(0.011 * 138, 9)
   })
 })
@@ -362,5 +368,23 @@ describe('unbuilt tools and the cause of a failed run', () => {
     t.seed = async (...a) => { const s = await seed(...a); return { ...s, chat: async () => ({ toolCalls: [], answer: '', runOk: false, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0.4, failure: 'runner_lost', turnId: 't_BBBBBBBBBBBBBBBBBBBBBB' }) } }
     const out = await runEvals({ target: t, cases: [CASES.find((c) => c.id === 'R02')!], reps: 1, concurrency: 1 })
     expect(out.rows[0]).toMatchObject({ runOk: false, err: 'the turn ended without an answer: runner_lost', turnId: 't_BBBBBBBBBBBBBBBBBBBBBB' })
+  })
+  // #337 round 3: a v3 turn whose prompt didn't name Shopify says that instead.
+  it('a turn whose prompt did not name Shopify fails its row with that reason', async () => {
+    const t = createFakeTarget()
+    const seed = t.seed
+    t.seed = async (...a) => { const s = await seed(...a); return { ...s, chat: async () => ({ toolCalls: [], answer: 'Hello.', runOk: false, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0.4, failure: 'prompt_apps:none', turnId: 't_BBBBBBBBBBBBBBBBBBBBBB' }) } }
+    const out = await runEvals({ target: t, cases: [CASES.find((c) => c.id === 'R02')!], reps: 1, concurrency: 1 })
+    expect(out.rows[0]).toMatchObject({ runOk: false, pass: false, err: 'the turn\'s prompt did not name Shopify as connected: prompt_apps:none' })
+  })
+  // P5 (#337): a turn that answered but wasn't sent prompt v3 is a failed row that says so, never a pass.
+  it('a turn not sent the system prompt v3 fails its row with that reason, even with an answer', async () => {
+    for (const failure of ['prompt_version:2', 'prompt_version:missing']) {
+      const t = createFakeTarget()
+      const seed = t.seed
+      t.seed = async (...a) => { const s = await seed(...a); return { ...s, chat: async () => ({ toolCalls: [], answer: 'Hello.', runOk: false, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0.4, failure, turnId: 't_BBBBBBBBBBBBBBBBBBBBBB' }) } }
+      const out = await runEvals({ target: t, cases: [CASES.find((c) => c.id === 'R02')!], reps: 1, concurrency: 1 })
+      expect(out.rows[0], failure).toMatchObject({ runOk: false, pass: false, err: `the turn was not sent the system prompt v3: ${failure}` })
+    }
   })
 })

@@ -124,6 +124,9 @@ export const CASES: Record<string, RouteCase> = {
   // Route 67 (P4 wave 4): the test build's alarm-now control runs one scheduler pass (200); the product build answers 404
   // (server/ops/alarm-now.test.ts).
   'POST /api/ops/alarm': { design: d('open', [], ['release']), path: '/api/ops/alarm', json: {}, passes: 200 },
+  // Route 76 (P5 W5): the test build's test-fakes hook, release token only (a person's session is refused by the matrix before the handler).
+  // An empty body passes access, then fails the op parse (400), so the sweep changes no fake; the product build answers 404 (server/ops/test-fakes.test.ts).
+  'POST /api/ops/test-fakes': { design: d('open', [], ['release']), path: '/api/ops/test-fakes', json: {}, passes: 400 },
   // Rows 59 to 61 (P4 W4): Activity (brand data) and the bell (personal, no Inhouse). Reading an id nobody has is a 200 that marks nothing.
   'GET /api/activity': { design: d('brand_data', ALL), path: '/api/activity', passes: 200 },
   'GET /api/notifications': { design: d('personal', PEOPLE), path: '/api/notifications', passes: 200 },
@@ -143,7 +146,21 @@ export const CASES: Record<string, RouteCase> = {
   'POST /api/routines/:id/run': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/run`, json: { clientKey: 'e2e-run-key-1' }, passes: 404 },
   'POST /api/routines/:id/delete': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/delete`, json: { ifRev: 1 }, passes: 404 },
   'POST /api/routines/:id/restore': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/restore`, json: { ifRev: 1 }, passes: 404 },
-  'GET /api/routines/:id/runs': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/runs`, passes: 404 },
+  // P5 W1, routes 68 and 69. The start names an account no connector has, so the hub answers unknown_tool (404) and
+  // nothing is written; the callback with no code or state redirects to /tools?connect_error=state_invalid (303) and
+  // writes nothing (connect.test.ts proves both).
+  'POST /api/connect/:accountId/start': { design: d('technical', ['inhouse']), path: '/api/connect/nothing:here/start', json: {}, passes: 404 },
+  'GET /api/connect/callback': { design: d('technical', ['inhouse']), path: '/api/connect/callback', passes: 303 },
+  // P5 W3, routes 70 to 72. The read answers 200 from the hub's account list; the writes name an account no connector has, so
+  // they are 404 before any hub call and nothing is written (tools.test.ts proves it).
+  'GET /api/tools': { design: d('technical', ALL), path: '/api/tools', passes: 200 },
+  'PUT /api/tools/:accountId/paused': { design: d('technical', ['inhouse']), path: '/api/tools/nothing:here/paused', json: { paused: true }, passes: 404 },
+  'POST /api/tools/:accountId/disconnect': { design: d('technical', ['inhouse']), path: '/api/tools/nothing:here/disconnect', json: {}, passes: 404 },
+  // P5 W4, routes 73 to 75. The list reads 200; the picker reaches the test hub, where Slack isn't connected (503
+  // slack_not_connected); the save's empty body is 400 before any hub call or write (routes.test.ts proves the rest).
+  'GET /api/notify/channels': { design: d('baseline', ALL), path: '/api/notify/channels', passes: 200 },
+  'GET /api/notify/channels/available': { design: d('baseline', ['admin', 'inhouse']), path: '/api/notify/channels/available', passes: 503 },
+  'PUT /api/notify/channels': { design: d('baseline', ['admin', 'inhouse']), path: '/api/notify/channels', json: {}, passes: 400 },
   'POST /api/chats/:id/session/reset': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/session/reset`, json: {}, passes: 404 },
   // Rows 77 to 83: lists return 200, an empty create body returns 400, and writes to unknown ids return 404.
   // Row 83 is personal: with a well-formed { ifRev } body, an unknown id returns 404 before the owner check.
@@ -157,6 +174,8 @@ export const CASES: Record<string, RouteCase> = {
   // Rows 84 and 85 (P6a brand skills): a name and an id that name nothing, so a caller the matrix lets in gets 404.
   'GET /api/skills/:name': { design: d('brand_data', ALL), path: '/api/skills/no-such-skill', passes: 404 },
   'POST /api/skills/brand/:id/delete': { design: d('brand_data', PEOPLE), path: `/api/skills/brand/${NO_BRAND_SKILL}/delete`, json: { ifRev: 1 }, passes: 404 },
+  // Row 86: routine runs.
+  'GET /api/routines/:id/runs': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/runs`, passes: 404 },
   // Rows 91 to 93 (P8a F2): Shopify's privacy webhooks, outside sign-in. A JWT counts for nothing there: without Shopify's
   // signature every caller gets 401 (webhooks.spec.ts sends signed deliveries).
   'POST /api/webhooks/shopify/customers-data-request': { design: d('webhook', []), path: '/api/webhooks/shopify/customers-data-request', json: {}, passes: 401 },

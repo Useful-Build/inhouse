@@ -151,12 +151,18 @@ function filterOf(entry: TableEntry, scope: ExportScope): RowFilter | null {
 
 type Row = Record<string, unknown>
 
+/** Shared connector config may match the caller through either attribution column. */
+export const PERSON_EXPORT_SHARED_CONFIG = ['connector_accounts', 'notify_channels'] as const
+
 /** What a D1 row becomes in this scope's export. */
 function projectOf(entry: TableEntry, scope: ExportScope, pkCols: readonly string[]): (row: Row) => Row {
   if (scope.kind === 'person' && entry.name === 'members') {
     // Another person's account row that only references this one: its key columns only.
     const keep = [...new Set([...pkCols, ...plainKeys(entry)])]
     return row => (row.id !== scope.memberId ? Object.fromEntries(keep.map(c => [c, row[c]])) : row)
+  }
+  if (scope.kind === 'person' && PERSON_EXPORT_SHARED_CONFIG.some(name => name === entry.name)) {
+    return row => Object.fromEntries(Object.entries(row).filter(([key, value]) => !entry.personKeys.includes(key) || value === null || value === scope.memberId))
   }
   if (scope.kind === 'brandForCaller') {
     const p = policyOf(entry)

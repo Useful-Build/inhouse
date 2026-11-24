@@ -206,7 +206,7 @@ test('Settings: five sections in order, each announced, and no lock for an Admin
     ['You', ['General', 'Notifications', 'Memory']],
     ['Agent', ['Inhouse agent', 'Models', 'Team memory']],
     ['Approvals and limits', ['Who approves what', 'Run limits', 'Spending cap']],
-    ['Team', ['Members']],
+    ['Team', ['Members', 'Slack notices']],
     ['Workspace', ['Stage and plan', 'Data and access', 'Audit log']],
   ]
   for (const [i, [label, pages]] of sections.entries()) {

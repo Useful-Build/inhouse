@@ -21,6 +21,7 @@ import { DEFAULT_DAYS, hasRetentionWork, periodsFor } from '../../retention/rule
 import { tables } from '../../tables/index.ts'
 import { backup } from '../backup.ts'
 import { restore } from '../restore.ts'
+import { seedNotificationBackupRows } from '../test-support.ts'
 import { brandAgentRunner, confirmRestore, reconcile } from './index.ts'
 
 const e = env as Env & { RESTORE_DB: D1Database; TEST_MIGRATIONS: D1Migration[] }
@@ -32,7 +33,7 @@ const DAY = 86_400_000
 const AGENT_TABLES = [...CHAT_TABLES, 'authority', 'flags'] as const
 const RETENTION_STORES = [
   'chats', 'tool_calls', 'chat_files', 'BrandAgent', 'memories',
-  'routine_slots', 'today_items', 'today_aside', 'activity_lines', 'notices', 'library_uploads',
+  'routine_slots', 'today_items', 'today_aside', 'activity_lines', 'notices', 'library_uploads', 'notify_sends',
 ] as const
 
 const at = (nowMs: number, actorId = SYSTEM_MEMBER_ID) => ({ actorId, nowMs, requestId: `differential-${nowMs}` })
@@ -146,6 +147,7 @@ it('backup, live retention and person deletion, restore and replay converge acro
     const trashCut = AFTER - DEFAULT_DAYS.trash * DAY
     const pendingCut = AFTER - DEFAULT_DAYS.pendingUpload * DAY
     const memoryCut = AFTER - DEFAULT_DAYS.forgottenMemory * DAY
+    await seedNotificationBackupRows(e.DB, retry, B - DAY, stepCut - 1)
     const offsets = [-1, 0, 1, ...generated.offsets]
 
     interface ChatCase { id: string; owner: string; lastAtMs: number; deletedAtMs?: number; fileMarkedAtMs?: number; runEndMs?: number }
@@ -299,7 +301,8 @@ it('backup, live retention and person deletion, restore and replay converge acro
       // Production (`retentionPass`) plans and runs one store at a time; run a second `routine_slots` pass after `today_items`
       // so the slot freed by `today_items` deletion is also reclaimed while an active `today_items` still protects its slot.
       for (const store of [...RETENTION_STORES, 'routine_slots']) {
-        await retain([store], AFTER, sql, tick++)
+        const result = await retain([store], AFTER, sql, tick++)
+        if (store === 'notify_sends') expect(result.removed.notify_sends).toBe(1)
       }
       for (const [i, memberId] of [stopped, retry, retry].entries()) {
         const nowMs = AFTER + 50 + i
@@ -321,6 +324,10 @@ it('backup, live retention and person deletion, restore and replay converge acro
     expect(expected.d1.library_uploads.map(row => row.id)).not.toContain('up_p_0')
     expect(expected.d1.library_uploads.map(row => row.id)).not.toContain('up_t_0')
     expect(expected.d1.tool_calls.filter(r => r.chat_id === 'c_step_only').map(r => r.n)).toEqual([0, 2])
+    expect(expected.d1.notify_sends).toMatchObject([{ id: 'n_keep', actor_id: retry, target: retry }])
+    expect(expected.d1.connector_accounts).toMatchObject([{ account_id: 'slack:backup', last_state: 'connected', connected_by: retry }])
+    expect(expected.d1.notify_channels).toMatchObject([{ channel_id: 'Cbackup', added_by: retry }])
+    expect(expected.d1.notify_channel_list).toMatchObject([{ id: 1, rev: 2 }])
     expect(expected.d1.settings.some(r => r.owner === retry)).toBe(false)
     expect(expected.d1.notice_reads.some(r => r.member_id === retry)).toBe(false)
     expect(Object.keys(expected.r2).some(k => k.startsWith(`photos/${retry}/`))).toBe(false)

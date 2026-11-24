@@ -2,9 +2,12 @@
 // `origin`. targets.ts appends these when CONTRACT_REAL_ORIGIN is set; from P3 this file is the orchestrator's. One file
 // per resource group beside this one holds what is particular to it (me.ts signs in, members.ts resets the team, ...).
 //
-// It serves exactly the P2 methods. Its client is the product's `HttpAgent` with two additions a browser doesn't need: the
-// test issuer's sign-in header and an `Origin` on every request (Node sends neither by itself), and a clock the suite can
-// move on (`advance`), which only the client's own notion of "now" follows (a grant stops being live at its end).
+// It serves the P2 methods and P5's connector methods (connectors.ts: the Tools write requests go to the Inhouse origin as
+// the Inhouse member from this one client, and Slack is put in the state each case reads before the call).
+//
+// Its client is the product's `HttpAgent` with two additions a browser doesn't need: the test issuer's sign-in header and
+// an `Origin` on every request (Node sends neither by itself), and a clock the suite can move on (`advance`), which only
+// the client's own notion of "now" follows (a grant stops being live at its end).
 import { settingRow } from '../../../../../shared/contract/settings-table'
 import { HttpAgent } from '../../../http/client'
 import type { AgentClient, AgentErrorCode, ResourceKey } from '../../../types'
@@ -15,13 +18,14 @@ import { discover, signer } from './me'
 import type { Seeded, Signer } from './me'
 import { resetTeam } from './members'
 import { resetSettings, settingFixtures } from './settings'
+import { CONNECTOR_METHODS, CONNECTOR_TOOL_KEY, connectorRoute, connectorWorld, isToolsWrite } from './connectors'
 import { MS_EXEMPT, MS_READ_PATH, MS_SERVED, changeMemoryElsewhere, memorySkillsRoute, resetOpenRequests, resetWaitingMemory, seedWaitingMemory } from './memory-skills'
 import { WATCH_READ_PATH, WATCH_SERVED, changeRoutineElsewhere, settleRuns, WATCH_EXEMPT, WATCH_ONLY_ON_WATCH_BUILD, watchBuild, watchRoute } from './watch'
 
-/** The P2 methods: what this target's client serves over HTTP. */
 /** How many live Library files `reset()` leaves (the shared Library cases delete one or two). */
 const LIBRARY_FILES = 2
 
+/** The P2 methods, P4's Watch methods and P5's connector methods: what this target's client serves over HTTP. */
 const SERVED: ReadonlySet<keyof AgentClient> = new Set<keyof AgentClient>([
   'me', 'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant', 'loadMore', 'retry', 'auditExportUrl', 'dataExportUrl', 'signOutUrl',
   'setSetting', 'setToggle', 'setPhoto',
@@ -31,15 +35,18 @@ const SERVED: ReadonlySet<keyof AgentClient> = new Set<keyof AgentClient>([
   'withdrawTeamRequest',
   // P4 W6 (watch.ts): the routines, the bell and Today's set-aside.
   ...WATCH_SERVED,
+  // P5 (connectors.ts): connect, disconnect and pause a tool; the notice channels.
+  ...CONNECTOR_METHODS,
   // P6a W4 (memory-skills.ts): the Team memory page's two methods and the Request buttons.
   ...MS_SERVED,
 ])
 
 const WRITES: ReadonlySet<string> = new Set<WriteMethod>([
-  'approve', 'undo', 'editDraft', 'undoHandled', 'redoHandled', 'createChat', 'pause', 'resume', 'setToggle', 'requestTool', 'requestSkill', 'setToolPaused',
+  'approve', 'undo', 'editDraft', 'undoHandled', 'redoHandled', 'createChat', 'pause', 'resume', 'setToggle', 'requestTool', 'requestSkill', 'setToolPaused', 'connectTool', 'disconnectTool',
   'forgetMemory', 'setSetting', 'setPhoto', 'sendTeamRequest', 'markNoticesRead', 'deleteFiles', 'restoreFiles', 'setAside', 'runRoutine', 'deleteRoutine',
   'withdrawTeamRequest',
   'restoreRoutine', 'reviewMemory', 'renameChat', 'pinChat', 'deleteChats', 'restoreChats', 'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant',
+  'saveNotifyChannels',
 ])
 
 /** The verbs and path for a served write. Withdrawal's id is resolved by the client from the displayed title and instant. */
@@ -59,7 +66,7 @@ function routeOf(method: WriteMethod, args: unknown[]): { verbs: string[]; path:
     case 'deleteFiles': return { verbs: ['POST'], path: '/api/library/delete' }
     case 'restoreFiles': return { verbs: ['POST'], path: '/api/library/restore' }
     case 'withdrawTeamRequest': return { verbs: ['PUT'], path: /^\/api\/team-requests\/tr_[A-Za-z0-9_-]{22}\/withdrawn$/ }
-    default: return watchRoute(method, args) ?? memorySkillsRoute(method, args)
+    default: return watchRoute(method, args) ?? connectorRoute(method, args) ?? memorySkillsRoute(method, args)
   }
 }
 
@@ -76,6 +83,9 @@ function realTarget(origin: string): ContractTarget {
   for (const [method, why] of Object.entries({ ...WATCH_EXEMPT, ...MS_EXEMPT })) console.warn(`CONTRACT METHOD NOT SERVED on the real target: ${method}: ${why}`)
   if (!watchBuild()) console.warn('CONTRACT METHOD NOT SERVED on the real target: setAside: it needs a morning check run (a container): set E2E_WATCH_BUILD=1 on the multi-config build')
   const s: Signer = signer(origin)
+  const world = connectorWorld(origin)
+  /** The Slack state the world is known to be in: `reset()` leaves it disconnected; `unknown` until then. */
+  let slack: 'connected' | 'disconnected' | 'unknown' = 'unknown'
   let ids: Awaited<ReturnType<typeof discover>> | undefined
   const ready = async () => (ids ??= await discover(s))
 
@@ -102,6 +112,8 @@ function realTarget(origin: string): ContractTarget {
         if ((READ_PATH[resource] ?? WATCH_READ_PATH[resource] ?? MS_READ_PATH[resource]) === url.pathname) { armedReads.delete(resource); return fetch(origin + FORBIDDEN_PATH, init) }
       }
     }
+    // The Tools writes: Inhouse-only routes, sent from this client as the Inhouse member (after the refusals above).
+    if (isToolsWrite(method, url.pathname)) return world.inhouseFetch(url.pathname + url.search, init)
     if (staleGrantEnd && method === 'POST' && /^\/api\/grants\/[^/]+\/end$/.test(url.pathname) && typeof init?.body === 'string') {
       staleGrantEnd = false
       return fetch(input, { ...init, body: JSON.stringify(staleRev(JSON.parse(init.body))) })
@@ -118,15 +130,29 @@ function realTarget(origin: string): ContractTarget {
       const member: unknown = Reflect.get(target, prop, target)
       if (typeof member !== 'function') return member
       const method = (member as (...a: unknown[]) => unknown).bind(target)
-      if (typeof prop !== 'string' || !WRITES.has(prop)) return method
+      if (typeof prop !== 'string') return method
+      const connector = (CONNECTOR_METHODS as readonly string[]).includes(prop)
+      if (!WRITES.has(prop) && !connector) return method
+      // A connector method: Slack put in the state its case reads first. When the world is already in it, the call goes out
+      // at once, so its change shows before the write settles, as the shared cases check.
+      const needs = world.needs(prop)
+      const ready = !connector || needs === null || needs === slack ? method : async (...args: unknown[]): Promise<unknown> => {
+        await world.prepare(prop)
+        slack = needs
+        return method(...args)
+      }
+      // A case's own connect or disconnect that went through may have moved Slack: its state is unknown until the next prepare.
+      const call = prop !== 'connectTool' && prop !== 'disconnectTool' ? ready : (...args: unknown[]) =>
+        (ready(...args) as Promise<unknown>).then(v => { slack = 'unknown'; return v })
+      if (!WRITES.has(prop)) return call
       // On the watch build a Run now is settled before the call returns (its manual slot ends), so the next one can't hit a run-open conflict (watch.ts settleRuns); a containerless build can't end one, so it does not wait.
       const settled = (p: Promise<unknown>): Promise<unknown> => (prop === 'runRoutine' && watchBuild() ? p.then(async v => { await settleRuns(); return v }, async e => { await settleRuns(); throw e }) : p)
       return (...args: unknown[]) => {
         const code = armedErrors.get(prop)
-        if (!code) return settled(method(...args) as Promise<unknown>)
+        if (!code) return settled(call(...args) as Promise<unknown>)
         const route = routeOf(prop as WriteMethod, args)
         forced = route ? { code, ...route } : null
-        const done = method(...args) as Promise<unknown>
+        const done = call(...args) as Promise<unknown>
         const clear = () => { forced = null }
         done.then(clear, clear)
         return settled(done)
@@ -163,7 +189,8 @@ function realTarget(origin: string): ContractTarget {
         followUp: 'And which are over $500?',
         tooLate: 'Too late',
       },
-      toolKey: 'klaviyo',
+      // Slack, the one OAuth tool the test build connects (connectors.ts).
+      toolKey: CONNECTOR_TOOL_KEY,
       skillName: 'Stock check',
       memoryKey: 'some-line',
       ...settingFixtures,
@@ -198,6 +225,10 @@ function realTarget(origin: string): ContractTarget {
       await resetTeam(s)
       await endLiveGrant(s)
       await resetSettings(s)
+      // Unknown until the world's reset is through: one that throws leaves no stale state behind.
+      slack = 'unknown'
+      await world.reset()
+      slack = 'disconnected'
       await resetWaitingMemory(s)
       await resetOpenRequests(s)
       // Only a build with containers can end a Run now: a containerless one (CI's contract step) would wait out the deadline.
