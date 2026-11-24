@@ -1,4 +1,4 @@
-// The BrandAgent carries the turn's system prompt v3 (P5): the prompt is built when each turn starts, so a turn started
+// The BrandAgent carries the turn's system prompt (P5, built since v3): the prompt is built when each turn starts, so a turn started
 // after Slack is paused no longer names it. Ways it can fail, written down first: the prompt is read once at the
 // object's start and every later turn carries a stale line; a turn's start carries v1 without the turn lines; a failed
 // hub read stops the turn; a turn requeued for a re-run (#287) sends its first attempt's prompt instead of a new build.
@@ -85,6 +85,6 @@ describe("the turn's system prompt", () => {
       expect((JSON.parse(h.turn(a.turnId).start_json!) as { systemPrompt: string }).systemPrompt).toBe('prompt build 2')
       // The version recorded follows the rebuild too (#337 round 2 L1): the second build said 2.
       expect(h.turn(a.turnId).prompt_version).toBe(2)
-    }, { systemPrompt: async () => ({ text: `prompt build ${++builds}`, version: builds === 1 ? 3 : 2, apps: builds === 1 ? ['Shopify'] : null }) })
+    }, { systemPrompt: async () => ({ text: `prompt build ${++builds}`, version: builds === 1 ? SYSTEM_PROMPT_VERSION : 2, apps: builds === 1 ? ['Shopify'] : null }) })
   })
 })

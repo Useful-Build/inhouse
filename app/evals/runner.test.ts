@@ -379,7 +379,7 @@ describe('unbuilt tools and the cause of a failed run', () => {
     expect(out.rows[0]).toMatchObject({ runOk: false, pass: false, err: 'the turn\'s prompt did not name Shopify as connected: prompt_apps:none' })
   })
   // P5 (#337): a turn that answered but wasn't sent prompt v3 is a failed row that says so, never a pass.
-  it('a turn not sent the system prompt v3 fails its row with that reason, even with an answer', async () => {
+  it('a turn not sent the current system prompt fails its row with that reason, even with an answer', async () => {
     for (const failure of ['prompt_version:2', 'prompt_version:missing']) {
       const t = createFakeTarget()
       const seed = t.seed

@@ -252,7 +252,7 @@ describe('the remote runner env', () => {
     }
   })
 
-  it('with promptTrace, a case whose turn was sent v3 passes as before and keeps prompt 3', async () => {
+  it('with promptTrace, a case whose turn was sent the current version passes as before and keeps the current prompt', async () => {
     const { door } = fakes(false)
     const slot = door.slot
     door.slot = async (k: string) => ({ ...(await slot(k))!, turn_id: 't_AAAAAAAAAAAAAAAAAAAAAA' })
@@ -265,7 +265,7 @@ describe('the remote runner env', () => {
   })
 
   it('with promptTrace, a turn sent v2 or with none recorded fails its case naming why (never a pass)', async () => {
-    for (const [versions, sent] of [[[2], 2], [undefined, 'missing'], [[null], 'missing']] as const) {
+    for (const [versions, sent] of [[[3], 3], [[2], 2], [undefined, 'missing'], [[null], 'missing']] as const) {
       const { door } = fakes(false)
       const slot = door.slot
       door.slot = async (k: string) => ({ ...(await slot(k))!, turn_id: 't_AAAAAAAAAAAAAAAAAAAAAA' })
@@ -277,7 +277,7 @@ describe('the remote runner env', () => {
   })
 
   // #337 round 3 (M3): a v3 turn whose prompt didn't name Shopify fails its case too, naming the apps it named.
-  it('with promptTrace, a v3 turn whose prompt named no store fails as prompt_apps', async () => {
+  it('with promptTrace, a current-version turn whose prompt named no store fails as prompt_apps', async () => {
     for (const [apps, code] of [[[[]], 'prompt_apps:none'], [[['Slack']], 'prompt_apps:Slack'], [undefined, 'prompt_apps:missing']] as const) {
       const { door } = fakes(false)
       const slot = door.slot

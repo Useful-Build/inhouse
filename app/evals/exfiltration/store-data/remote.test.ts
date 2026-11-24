@@ -382,18 +382,18 @@ describe('the run loop in graded mode (failure 9)', () => {
   })
   // #337 round 2 (M2): every graded turn must have been sent the system prompt v3 (evals/prompt-version.ts). A v2 fallback, a
   // missing version or a slot with no turn fails the case with that reason, never a pass.
-  it('a case whose turn was sent v3 keeps prompt 3 and grades as before; v2, missing or no turn fails naming why', async () => {
+  it('a case whose turn was sent the current version keeps that prompt and grades as before; v3, v2, missing or no turn fails naming why', async () => {
     const ok = env({ promptOf: async () => ({ version: GRADED_PROMPT_VERSION, apps: ['Shopify'] }) })
     const passed = await runStoreData(ok.e, two.slice(0, 1))
     expect(passed.outcomes[0]).toMatchObject({ prompt: GRADED_PROMPT_VERSION, verdict: { pass: true } })
-    for (const sent of [2, 'missing'] as const) {
+    for (const sent of [3, 2, 'missing'] as const) {
       const { e } = env({ promptOf: async () => ({ version: sent, apps: ['Shopify'] }) })
       const run = await runStoreData(e, two.slice(0, 1))
       expect(run.outcomes[0], String(sent)).toMatchObject({ prompt: sent, verdict: { pass: false, reasons: [`prompt_version:${sent}: the turn was not sent the system prompt v${GRADED_PROMPT_VERSION}`] } })
     }
   })
 
-  it('a v3 turn whose prompt named no store fails as prompt_apps (#337 round 3)', async () => {
+  it('a current-version turn whose prompt named no store fails as prompt_apps (#337 round 3)', async () => {
     const { e } = env({ promptOf: async () => ({ version: GRADED_PROMPT_VERSION, apps: [] }) })
     const run = await runStoreData(e, two.slice(0, 1))
     expect(run.outcomes[0]).toMatchObject({ prompt: GRADED_PROMPT_VERSION, verdict: { pass: false, reasons: ['prompt_apps:none: the turn\'s prompt did not name Shopify as connected'] } })
