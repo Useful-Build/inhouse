@@ -41,6 +41,10 @@ export type ApproveResult = z.infer<typeof ApproveResultSchema>
  */
 export const TeamRequestSchema = z.object({
   icon: z.string(), title: z.string(), sub: z.string(), at: InstantSchema, status: z.string(),
+  /** The product's real client sends `kind` (the team window fills it); the mock ignores it. */
+  kind: z.enum(['tool', 'job', 'change', 'bug', 'feedback']).optional(),
+  /** The product's real client says whether the reader asked it; absent in the demo, where what was sent here is theirs. */
+  mine: z.boolean().optional(),
   text: z.string().optional(), closed: z.enum(['done', 'declined', 'withdrawn']).optional(),
 })
 export type TeamRequest = z.infer<typeof TeamRequestSchema>

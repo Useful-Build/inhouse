@@ -56,6 +56,7 @@ import {
   parseRunEventLine,
   type RunEvent,
 } from '../../../shared/protocol/index.ts'
+import { BRAND_SKILL_BODY_MAX, BRAND_SKILLS_BYTES_MAX } from '../../../shared/protocol/brand-skills.ts'
 
 const id = fc.stringMatching(/^[A-Za-z0-9_-]{1,64}$/)
 const runStartFields = fc.record({
@@ -139,8 +140,8 @@ describe('RunStart', () => {
     },
   )
 
-  // outputFormat and webSearch are the optional fields (v2, additive: structured output; P8a S, absent is off).
-  it.prop([runStartArb, fc.constantFrom(...Object.keys(RunStart.shape).filter((k) => k !== 'outputFormat' && k !== 'webSearch'))])('refuses a missing field', (start, key) => {
+  // outputFormat, webSearch and brandSkills are the optional fields (v2, additive: structured output; P8a S, absent is off).
+  it.prop([runStartArb, fc.constantFrom(...Object.keys(RunStart.shape).filter((k) => k !== 'outputFormat' && k !== 'webSearch' && k !== 'brandSkills'))])('refuses a missing field', (start, key) => {
     const copy: Record<string, unknown> = { ...start }
     delete copy[key]
     expect(RunStart.safeParse(copy).success).toBe(false)
@@ -188,6 +189,13 @@ describe('RunStart', () => {
       runToken: '!'.repeat(512),
       webFetchDomains: Array.from({ length: 200 }, (_, i) => `${String(i).padStart(3, '0')}${'a'.repeat(57)}.${'b'.repeat(63)}.${'c'.repeat(63)}.${'d'.repeat(61)}`),
       fileCaps: { maxFileBytes: 1e15, maxFilesPerTurn: 1e15, maxRestoreBytes: 1e15, allowedTypes: Array.from({ length: 64 }, () => `application/${'x'.repeat(100)}`) },
+      // v3: the brand skills at their byte budget, every character a quote (one byte of UTF-8, two in JSON: the most a
+      // character allowed in them gets). 16 bodies at the body cap, the rest of the budget in the descriptions.
+      brandSkills: Array.from({ length: 16 }, (_, i) => ({
+        name: `s-${String(i).padStart(2, '0')}`,
+        description: '"'.repeat(Math.floor((BRAND_SKILLS_BYTES_MAX - 16 * BRAND_SKILL_BODY_MAX - 16 * 4) / 16)),
+        body: '"'.repeat(BRAND_SKILL_BODY_MAX),
+      })),
     }
     expect(RunStart.safeParse(start).success).toBe(true)
     expect(new TextEncoder().encode(JSON.stringify(start)).length).toBeLessThanOrEqual(RUN_START_MAX_BYTES)
@@ -220,9 +228,10 @@ describe('run events', () => {
 })
 
 describe('versions', () => {
-  it('v2 accepts only itself: v1 was never deployed, so current-and-previous starts at v2', () => {
-    expect(PROTOCOL_VERSION).toBe(2)
-    expect(ACCEPTED_VERSIONS).toEqual([2])
+  it('v3 accepts itself and v2 (current and previous; v1 was never deployed)', () => {
+    expect(PROTOCOL_VERSION).toBe(3)
+    expect(ACCEPTED_VERSIONS).toEqual([3, 2])
+    expect(acceptsVersion('3')).toBe(true)
     expect(acceptsVersion('2')).toBe(true)
     expect(acceptsVersion('1')).toBe(false)
   })

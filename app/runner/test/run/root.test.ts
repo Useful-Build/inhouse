@@ -688,6 +688,32 @@ describe('streams', () => {
     expect(events.at(-1)?.type).toBe('finished')
   })
 
+  it("writes the run's brand skills before the session starts; a write that fails ends the run as files, with no session", async () => {
+    const users = testSessionUsers()
+    const own = await startTestRoot(spawnFixture('fake-session.ts'), { users })
+    try {
+      const skill = { name: 'weekly-report', description: 'Writes the weekly report.', body: 'Steps.' }
+      const start = runStart({ brandSkills: [skill] })
+      expect((await postRun(own, start)).at(-1)?.type).toBe('finished')
+      expect(users.brandSkills.get(start.chatId)).toEqual([[skill]])
+      // None given: an empty plugin, so nothing of an earlier run stays.
+      const plain = runStart()
+      await postRun(own, plain)
+      expect(users.brandSkills.get(plain.chatId)).toEqual([[]])
+    } finally {
+      await own.close()
+    }
+    const failing = await startTestRoot(spawnFixture('fake-session.ts'), { users: { ...testSessionUsers(), writeBrandSkills: async () => { throw new Error('disk full') } } })
+    try {
+      const events = await postRun(failing, runStart())
+      expectOneEnd(events)
+      expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'files' })
+      expect(events.some((e) => e.type === 'sdk')).toBe(false)
+    } finally {
+      await failing.close()
+    }
+  })
+
   it('one live run per chat', async () => {
     const first = runStart({ prompt: 'obey-stop' })
     const pending = postRun(root, first)

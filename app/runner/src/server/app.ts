@@ -307,6 +307,15 @@ export function createRoot(deps: RootDeps): Root {
       return end()
     }
 
+    // The brand's skills, as a root-owned plugin the session can read and never change (none: an empty one).
+    try {
+      await deps.users.writeBrandSkills(config.chatId, user, config.brandSkills ?? [])
+    } catch (e) {
+      deps.log({ type: 'brand_skills_failed', runId: live.runId, error: errorText(e).slice(0, 200) })
+      stream.emit({ type: 'failed', reason: 'files', message: "the brand's skills could not be written" })
+      return end()
+    }
+
     let child: ChildProcess | undefined
     let handle: SessionHandle
     try {

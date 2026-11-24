@@ -172,7 +172,11 @@ function forward(deps: ProxyDeps, path: string, req: IncomingMessage, res: Serve
 
   let callerGone = false
   let failed = false
-  const up = send(target, { method: req.method, headers, timeout: deps.upstreamTimeoutMs ?? PROXY_UPSTREAM_TIMEOUT_MS }, (upRes) => {
+  // `agent: false`: Node's globalAgent pools keep-alive sockets (`keepAlive: true`), and `forward()` streams `req`
+  // directly into `up`, so it cannot retry if the upstream closes an idle socket just as we reuse it (which surfaces
+  // as an immediate ECONNRESET -> 502 and breaks MCP startup or a tool call). The upstream is the container's local
+  // `http://egress.internal` intercept, so a fresh connection per request avoids stale-socket 502s cleanly.
+  const up = send(target, { method: req.method, headers, agent: false, timeout: deps.upstreamTimeoutMs ?? PROXY_UPSTREAM_TIMEOUT_MS }, (upRes) => {
     const out: Record<string, string | string[]> = {}
     for (const [k, v] of Object.entries(upRes.headers)) if (v !== undefined && !RESPONSE_DROP.has(k)) out[k] = v
     res.writeHead(upRes.statusCode ?? 502, out)

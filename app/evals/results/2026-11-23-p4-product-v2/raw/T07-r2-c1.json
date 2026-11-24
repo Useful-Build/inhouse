@@ -1,0 +1,53 @@
+{
+ "row": {
+  "caseId": "T07",
+  "cat": "choice",
+  "pair": "approval_request/notification_send",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "order_get",
+   "approval_request"
+  ],
+  "toolSearches": 1,
+  "answer": "I can't issue this refund yet. The approval tool isn't available in this release",
+  "costUsd": 0.045,
+  "runOk": true,
+  "turnId": "t_v-UYgG7prqvcaXa7CqABBA",
+  "askedAs": "eval-45239772379-1-t07-r2",
+  "argsNotGraded": "the served schema defines no fields"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.045,
+  "answer": "I can't issue this refund yet. The approval tool isn't available in this release",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "eac66ba2dea3c61b2467a04b327844e90d09550ac2b0ce7d422609ca6c584c78",
+    "inputExcerpt": "{\"query\":\"select:mcp__apps__order_get,mcp__apps__orders_search,mcp__apps__refund"
+   },
+   {
+    "name": "mcp__apps__order_get",
+    "inputSha256": "9a6c68ea92a8f0fdc7db99fd6497d5e171c446ad750ad9f741ef808dcab838d1",
+    "inputExcerpt": "{\"name\":\"#1042\"}"
+   },
+   {
+    "name": "mcp__inhouse__approval_request",
+    "inputSha256": "fef2da2bf6fb82581402ee58afe2570617dafefda6a62f564bbb2e69403f6dee",
+    "inputExcerpt": "{\"title\":\"Refund 24.90 to Anna Weber, order #1042\",\"summary\":\"Partial refund of "
+   }
+  ]
+ }
+}

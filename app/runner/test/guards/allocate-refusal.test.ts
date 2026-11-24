@@ -29,6 +29,7 @@ async function startWith(failure: () => unknown) {
     },
     release: async () => {},
     quarantined: () => 0,
+    writeBrandSkills: async () => {},
   }
   const root = createRoot({
     users,

@@ -63,17 +63,23 @@ export function sessionPaths(key: string, root: string = WORK_ROOT): SessionPath
 export const USERS_ROOT = '/users'
 export const HOME = 'home'
 export const TMP = 'tmp'
+/**
+ * The brand's own skills for the user's current run, as a plugin (`brand:<name>`): root 0755, its files root 0644,
+ * rewritten by the root before each run (src/guards/host.ts). Beside the home, never in it: the session can't write
+ * it, swap it or reach it from Bash (the users root is out of Bash's view).
+ */
+export const BRAND_PLUGIN = 'brand-plugin'
 
 /** A pool user's name as one plain path segment (the names useradd takes): no `/`, no `.`. */
 const USER_NAME = /^[a-z_][a-z0-9_-]{0,31}$/
 
 export class InvalidUserNameError extends Error {}
 
-export type UserPaths = { dir: string; home: string; tmp: string }
+export type UserPaths = { dir: string; home: string; tmp: string; brandPlugin: string }
 
 /** A pool user's own folders. Throws on a name that isn't a single safe segment. */
 export function userPaths(user: unknown, root: string = USERS_ROOT): UserPaths {
   if (typeof user !== 'string' || !USER_NAME.test(user)) throw new InvalidUserNameError('a user name must be 1 to 32 of a-z, 0-9, _ and -, starting with a letter or _')
   const dir = join(root, user)
-  return { dir, home: join(dir, HOME), tmp: join(dir, TMP) }
+  return { dir, home: join(dir, HOME), tmp: join(dir, TMP), brandPlugin: join(dir, BRAND_PLUGIN) }
 }

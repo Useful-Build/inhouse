@@ -13,7 +13,7 @@
 // https://developers.cloudflare.com/durable-objects/concepts/durable-object-lifecycle/ (an operation keeps the object
 // in memory for at most 15 minutes, so nothing here waits on a long read: the runner pushes, and every push touches).
 import {
-  ACCEPTED_VERSIONS, ErrorBody, Health, PROTOCOL_HEADER, ProtocolInfo, RunRefusal, RunStatus, negotiateVersion,
+  ACCEPTED_VERSIONS, BRAND_SKILLS_VERSION, ErrorBody, Health, PROTOCOL_HEADER, ProtocolInfo, RunRefusal, RunStatus, negotiateVersion,
   type RunRefusalCode, type RunStart,
 } from '../../../shared/protocol/index.ts'
 import type { RunnerTurnStatus } from '../brand-agent/ports.ts'
@@ -178,12 +178,16 @@ export class RunnerCore<B> {
     }
     if (up.protocol === null) return { protocol: 'none', gen: up.gen }
     const { gen } = up
+    // A v2 runner doesn't know `brandSkills` (its schema is strict): the run starts without them.
+    const { brandSkills, ...v2 } = rs
+    if (up.protocol < BRAND_SKILLS_VERSION && brandSkills !== undefined) this.#log({ event: 'brand_skills_dropped', turnId: rs.runId, protocol: up.protocol })
+    const start = up.protocol < BRAND_SKILLS_VERSION ? v2 : rs
     let res: Response
     try {
       res = await this.#port().fetch(`http://runner/runs`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', [PROTOCOL_HEADER]: String(up.protocol) },
-        body: JSON.stringify(rs),
+        body: JSON.stringify(start),
         signal: this.#timeout(ADMIT_TIMEOUT_MS),
       })
     } catch (e) {

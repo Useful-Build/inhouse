@@ -43,7 +43,7 @@ const SHELL_TOOLS = new Set(['Bash'])
  * host, ping), ssh and scp, git push, a socket or an http(s) client in a script (socket, urllib, requests, http.get or
  * http.request), or any URL.
  */
-const NETWORK_COMMAND = /\b(?:curl|wget|nc|ncat|netcat|dig|nslookup|host|ping|ssh|scp|socket|urllib|requests)\b|\/dev\/(?:tcp|udp)\/|\bhttps?\.(?:get|request)\b|\bgit\s+push\b|(?:https?:)?\/\//i
+export const NETWORK_COMMAND = /\b(?:curl|wget|nc|ncat|netcat|dig|nslookup|host|ping|ssh|scp|socket|urllib|requests)\b|\/dev\/(?:tcp|udp)\/|\bhttps?\.(?:get|request)\b|\bgit\s+push\b|(?:https?:)?\/\//i
 
 /** The product's two refusals of a WebFetch, both on an `isError` result (a 200 page that merely says so is not one): the
  *  runner hook's deny reason (the first line of defence, text from shared/protocol/webfetch-denials.ts, which the hook imports too)

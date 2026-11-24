@@ -1,0 +1,46 @@
+{
+ "row": {
+  "caseId": "T05",
+  "cat": "choice",
+  "pair": "memory_list/search",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_list"
+  ],
+  "toolSearches": 1,
+  "answer": "I have 5 saved facts. All are brand-wide, and there are no personal ones.\n\n| # |",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_o663oiHb8DB4kZXagopmNw",
+  "askedAs": "eval-45239772379-1-t05-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I have 5 saved facts. All are brand-wide, and there are no personal ones.\n\n| # |",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "f68e91580b74810543a75f7165607723e2ae427ababea5d1456bd602012eabee",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__memory_list\",\"max_results\":5}"
+   },
+   {
+    "name": "mcp__inhouse__memory_list",
+    "inputSha256": "2a8276f650319ab72da96dfdddb5ea2b42884eb8b8691099d76cdb56df8ca66e",
+    "inputExcerpt": "{\"limit\":50}"
+   }
+  ]
+ }
+}

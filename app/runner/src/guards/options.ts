@@ -8,6 +8,7 @@ import type { RunConfig } from '../protocol/local.ts'
 import { APPS_SERVER, mcpServerUrls } from '../session/mcp-servers.ts'
 import type { QueryGuards, RunContext } from '../session/seam.ts'
 import { auditHook, deniedEntry, recordToolCall } from './audit.ts'
+import { BRAND_PLUGIN_NAME } from '../../../shared/protocol/brand-skills.ts'
 import { ALLOWED_SKILLS, BUILT_IN_PLUGINS_OFF, BUILT_IN_TOOLS, BUNDLED_SKILLS_OFF, INHOUSE_MCP_SERVER } from './lists.ts'
 import { CLI_WRAPPER, PLUGIN_DIR, RUNNER_DIR, USERS_ROOT, WORK_ROOT, userPaths, validSessionKey, type UserPaths } from './paths.ts'
 import { POOL_SIZE, poolUserName } from './users.ts'
@@ -112,7 +113,7 @@ export function createQueryGuards(deps: QueryGuardDeps): QueryGuards {
 
 export function guardedOptions(
   base: Options,
-  config: Pick<RunConfig, 'webFetchDomains' | 'webSearch' | 'outputFormat'>,
+  config: Pick<RunConfig, 'webFetchDomains' | 'webSearch' | 'outputFormat' | 'brandSkills'>,
   run: RunContext,
   deps: QueryGuardDeps & { workRoot: string; usersRoot: string; pluginDir: string; cliPath: string },
 ): Options {
@@ -156,6 +157,8 @@ export function guardedOptions(
 
   // WebSearch only when the run config turns it on (P8a S: the brand's `t:websearch`, off by default); absent is off.
   const builtIns = BUILT_IN_TOOLS.filter((t) => t !== 'WebSearch' || config.webSearch === true)
+  const brandSkills = (config.brandSkills ?? []).map((s) => s.name)
+
   const hostAddresses = deps.hostAddresses()
   // null: WebFetch to any public host (the hook refuses local, IP and own hosts per URL); a list: only those.
   const domains = config.webFetchDomains === null ? null : [...config.webFetchDomains]
@@ -218,8 +221,13 @@ export function guardedOptions(
     permissionMode: 'dontAsk',
     strictMcpConfig: true,
     settings,
-    skills: [...ALLOWED_SKILLS],
-    plugins: [{ type: 'local', path: deps.pluginDir, skipMcpDiscovery: true }],
+    // Ours, plus the brand's own (`brand:<name>`, written root-owned by the root before this session started; their
+    // frontmatter holds only a name and a description, so a brand skill can't widen anything set here).
+    skills: [...ALLOWED_SKILLS, ...brandSkills.map((n) => `${BRAND_PLUGIN_NAME}:${n}`)],
+    plugins: [
+      { type: 'local', path: deps.pluginDir, skipMcpDiscovery: true },
+      ...(brandSkills.length > 0 ? [{ type: 'local' as const, path: own.brandPlugin, skipMcpDiscovery: true }] : []),
+    ],
     // The wrapper caps the session's processes (RLIMIT_NPROC) before it runs the SDK's CLI: a fork bomb can't starve
     // the release's kill and wipe and so quarantine the uid.
     pathToClaudeCodeExecutable: deps.cliPath,

@@ -1,0 +1,32 @@
+{
+ "row": {
+  "caseId": "N07",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "Hi Anna,\n\nThank you for getting in touch, and I'm sorry your parcel is late. I k",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_fsKPWz7bic16xbJ_fsYzvg",
+  "askedAs": "eval-45239772379-1-n07-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "Hi Anna,\n\nThank you for getting in touch, and I'm sorry your parcel is late. I k",
+  "toolCalls": []
+ }
+}

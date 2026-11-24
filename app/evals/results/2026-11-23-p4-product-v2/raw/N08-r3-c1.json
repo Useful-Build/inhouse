@@ -1,0 +1,45 @@
+{
+ "row": {
+  "caseId": "N08",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "noMcp": true
+  },
+  "called": [
+   "WebSearch"
+  ],
+  "toolSearches": 1,
+  "answer": "Berlin tomorrow (Tuesday, 24 Nov 2026) should be cold and mostly dry.\n\n- **Tempe",
+  "costUsd": 0.075,
+  "runOk": true,
+  "turnId": "t_AkN3YoZtWKlWfCV_j8BJLg",
+  "askedAs": "eval-45239772379-1-n08-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.075,
+  "answer": "Berlin tomorrow (Tuesday, 24 Nov 2026) should be cold and mostly dry.\n\n- **Tempe",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "b44686b3345d3f275ad2372284af96eb5b89d8d24930afd14f9be36bf0e0334b",
+    "inputExcerpt": "{\"query\":\"select:WebSearch,WebFetch\",\"max_results\":5}"
+   },
+   {
+    "name": "WebSearch",
+    "inputSha256": "8288d9ef9e8da2c7a23e17b0129a053d01d20bbefae8b7cffa9225e35981400d",
+    "inputExcerpt": "{\"query\":\"Berlin weather forecast tomorrow November 24 2026\"}"
+   }
+  ]
+ }
+}

@@ -21,8 +21,11 @@ import { listModels } from './api/models.ts'
 import { getFile, listChatFiles, uploadAttachment } from './api/attachments.ts'
 import { getUsage } from './usage/api.ts'
 import { forgetBrandMemory, forgetPersonalMemory, listMemory } from './api/memory.ts'
+import { approveBrandMemory, listWaitingMemory } from './api/memory-approvals.ts'
 import { drainState, startDrain, undrain } from './ops/drain.ts'
 // P4 W2 (p4-w2.md section 9): the Routines page's routes.
+import { deleteBrandSkill, listSkills, readSkill } from './api/skills.ts'
+import { createTeamRequest, listTeamRequests, setTeamRequestStatus, withdrawTeamRequest } from './api/team-requests.ts'
 import { deleteRoutine, listRoutineRuns, listRoutines, restoreRoutine, runRoutineNow, setRoutineEnabled } from './api/routines.ts'
 import { alarmNow } from './ops/alarm-now.ts'
 import { warmup } from './ops/warmup.ts'
@@ -183,6 +186,19 @@ export const routes: readonly Route[] = [
   /* 54 */ { method: 'POST', pattern: '/api/routines/:id/run', handler: runRoutineNow },
   /* 55 */ { method: 'POST', pattern: '/api/routines/:id/delete', handler: deleteRoutine },
   /* 56 */ { method: 'POST', pattern: '/api/routines/:id/restore', handler: restoreRoutine },
+  // P6a: rows 77 to 83 (rows 68 to 76 are P5's; P6a holds 77 to 85 and 87 to 89; 86 is main's routine runs). W2's 77 and 78 (wired): the waiting team facts and
+  // their approve or reject.
+  /* 77 */ { method: 'GET', pattern: '/api/memory/waiting', handler: listWaitingMemory },
+  /* 78 */ { method: 'PUT', pattern: '/api/memory/brand/:id/approved', handler: approveBrandMemory },
+  // W3: the skills list and team requests.
+  /* 79 */ { method: 'GET', pattern: '/api/skills', handler: listSkills },
+  /* 80 */ { method: 'GET', pattern: '/api/team-requests', handler: listTeamRequests },
+  /* 81 */ { method: 'POST', pattern: '/api/team-requests', handler: createTeamRequest },
+  /* 82 */ { method: 'PUT', pattern: '/api/team-requests/:id/status', handler: setTeamRequestStatus },
+  /* 83 */ { method: 'PUT', pattern: '/api/team-requests/:id/withdrawn', handler: withdrawTeamRequest },
+  // Brand skills (master plan standing decision 6): a skill's instructions, and deleting a brand skill.
+  /* 84 */ { method: 'GET', pattern: '/api/skills/:name', handler: readSkill },
+  /* 85 */ { method: 'POST', pattern: '/api/skills/brand/:id/delete', handler: deleteBrandSkill },
   // Master plan decision 8: a routine's own recent runs.
   /* 86 */ { method: 'GET', pattern: '/api/routines/:id/runs', handler: listRoutineRuns },
   // P8a F2: the runbook closes a Shopify privacy request once the Inhouse team has acted on it (release only).

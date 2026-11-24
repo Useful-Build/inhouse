@@ -11,6 +11,7 @@ import type { LibraryFile } from '../../shared/contract/library'
 import type { ApproveResult, TeamRequest, SetAsideReason, AgentState } from '../../shared/contract/state'
 import type { AgentNotice, AgentNotification } from '../../shared/contract/notice'
 import type { AgentData } from '../../shared/contract/data'
+import type { WaitingMemory } from '../../shared/contract/memory-approvals'
 import type { ErrorReason, ResourceKey } from '../../shared/contract/common'
 import type { Me } from '../../shared/contract/me'
 import type { InviteInput, MemberRole } from '../../shared/contract/members'
@@ -23,7 +24,7 @@ import type { RunFrame } from '../../shared/contract/run-event'
 export type { Stage, StageIndex, Scenario, Effort, AgentErrorCode, ErrorReason, ResourceKey, ResourceStatus, Instant, Money, ClockTime, Prose } from '../../shared/contract/common'
 export type { AgentMeta } from '../../shared/contract/meta'
 /** The lists the agent's work fills, which `refresh` reads again (the resource each shows by). */
-export type RefreshList = Extract<ResourceKey, 'library' | 'problems' | 'activity' | 'notifications'>
+export type RefreshList = Extract<ResourceKey, 'library' | 'problems' | 'activity' | 'notifications' | 'requests' | 'skills'>
 export type { ProblemSource, ProblemFact, Draft, DraftItem, Problem } from '../../shared/contract/problem'
 export type { ToolDetail, CatalogTool, ToolChannel, ToolSetup, ToolsData } from '../../shared/contract/tools'
 export type { RoutineDef, RoutineRun } from '../../shared/contract/routine'
@@ -32,6 +33,7 @@ export type { SkillDef, SkillSuggestion } from '../../shared/contract/skill'
 export type { TraceStepKind, TraceStep, Trace } from '../../shared/contract/trace'
 export type { ModelMode } from '../../shared/contract/model'
 export type { MemoryLine, MemoryData } from '../../shared/contract/memory'
+export type { WaitingMemory } from '../../shared/contract/memory-approvals'
 export type { UsageRow, UsageData } from '../../shared/contract/usage'
 export type { PeopleData, ApprovalRule, Approver } from '../../shared/contract/people'
 export type { MemberRecord, MemberRole, MemberId, InviteInput } from '../../shared/contract/members'
@@ -76,9 +78,9 @@ export class AgentError extends Error {
   readonly code: AgentErrorCode
   /** Why, when the code alone doesn't say (not invited, the last Admin). */
   readonly reason?: ErrorReason
-  /** On a `conflict` from a stale `ifRev`: the record as it is now. The snapshot already holds it. */
-  readonly current?: Record<string, unknown>
-  constructor(code: AgentErrorCode, message: string, extra: { reason?: ErrorReason; current?: Record<string, unknown> } = {}) {
+  /** On a stale `ifRev`, the current record or null if it is gone. */
+  readonly current?: Record<string, unknown> | null
+  constructor(code: AgentErrorCode, message: string, extra: { reason?: ErrorReason; current?: Record<string, unknown> | null } = {}) {
     super(message); this.name = 'AgentError'; this.code = code
     if (extra.reason !== undefined) this.reason = extra.reason
     if (extra.current !== undefined) this.current = extra.current
@@ -157,13 +159,36 @@ export interface AgentClient {
   /** A skill's page is open: fetches its instructions (`body` in `read().skills`) if they aren't in yet. `read()` changes when
    *  they arrive; it resolves then, or at once when there's nothing to fetch. */
   loadSkill(name: string): Promise<void>
+  /**
+   * P6a brand skills: deletes one of the brand's own skills (`mine`) by name, at the rev last read. Its maker or an
+   * admin may (`canChange`); anyone else, or one of the Inhouse team's skills, is refused. Gone from `read().skills` at
+   * once, and back if the server refuses.
+   */
+  deleteSkill(name: string): Promise<void>
   setToolPaused(key: string, paused: boolean): Promise<void>
   forgetMemory(key: string, forgotten: boolean): Promise<void>
+  /**
+   * P6a: the team facts waiting for an OK, newest first. Read when the Team memory page opens, for someone with
+   * `me().can.approveMemory` (an Admin, or the Inhouse team under a grant); anyone else is refused. The demo has none.
+   */
+  waitingMemory(): Promise<WaitingMemory[]>
+  /**
+   * P6a: approves (`true`) or rejects a waiting team fact, at the rev the last `waitingMemory()` read. Approved, it joins the
+   * team's memory; rejected, it's gone. A stale rev rejects with `conflict` carrying the fact as it is now (read the list
+   * again). A conflict showing this same decision already landed (an earlier send's answer was lost) resolves as done.
+   */
+  reviewMemory(key: string, approved: boolean): Promise<void>
   /** A settings dropdown or text field. Null puts it back to the default. Rejects with `invalid` for a key or value the settings registry (shared/contract/settings.ts) refuses. */
   setSetting(key: string, value: string | null): Promise<void>
   /** A member's photo as a data URL. Null removes it, so initials show; Reset demo brings the sample photo back. */
   setPhoto(memberId: string, dataUrl: string | null): Promise<void>
   sendTeamRequest(req: TeamRequest): Promise<void>
+  /**
+   * The person withdraws their own open request, named as the team window's row names it (its title and when it was asked).
+   * In the product, it resolves once withdrawn. It rejects with not_found if missing or not theirs, `conflict` if
+   * already closed, or the network's error. The demo's window handles the session's withdrawal and Undo.
+   */
+  withdrawTeamRequest(ref: { title: string; at: Instant }): Promise<void>
   /** The bell's notifications, newest first. Stable between changes. */
   listNotifications(): AgentNotification[]
   /** Bell notifications read: the one opened, or every listed one for Mark all as read. */
