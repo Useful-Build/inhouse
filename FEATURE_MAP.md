@@ -131,19 +131,21 @@ Chat: Google Drive and Slack stubs
   Selector: menuitem "From Google Drive", menuitem "Send to Slack", toast
   Expected: demo-only Attach items (`From Google Drive`, `Screenshot of this page`) and `Send to Slack` in the demo say "<What> isn't connected in this demo." and change nothing; the approver's "Ask Leo" button says the same (`sample-data.spec.ts`). In the product build `From Google Drive` and `Screenshot of this page` are hidden (`src/lib/product-flow.ts`)
   Covered:  e2e/not-connected-stubs.spec.ts, src/lib/product-flow.test.ts
+  Gaps:     the product-side hide isn't checked in a browser (the product-flow helpers are plain flags, so dropping a guard at its call site fails no test)
 
 Chat: Dictate
   Path:     composer -> Dictate
   Selector: button "Dictate", toast
   Expected: in the demo it says "Dictation isn't connected in this demo." and leaves the field alone; hidden in the product build until dictation is wired (`src/lib/product-flow.ts`)
   Covered:  e2e/not-connected-stubs.spec.ts, src/lib/product-flow.test.ts
+  Gaps:     the product-side hide isn't checked in a browser (the product-flow helpers are plain flags, so dropping a guard at its call site fails no test)
 
 Chat: answer actions
   Path:     answer -> hover or Tab into the row -> Reply, Copy, Regenerate, thumbs, More; More -> Send to #channel, Report a wrong answer, Delete
   Selector: answer row buttons, `[data-answer-actions]`, menu "Message actions"
   Expected: at rest every answer (the newest too) hides its actions; hover or keyboard focus shows them and an open More menu keeps them; in the demo the menu has Send to #channel (when a channel is connected), Report a wrong answer and Delete, and the row includes Good/Bad answer thumbs; in the product build per-message `Delete` and `Good answer` / `Bad answer` are hidden (`src/lib/product-flow.ts`); the phone row is Copy and More; markdown renders; both builds make in-app hash routes and HTTPS destinations on exact hosts explicitly listed in the brand’s WebFetch setting clickable. An empty, missing or invalid list leaves all external destinations as text. External links and images wait for the complete answer. Unlisted images display text and listed images remain subject to the site’s CSP; Jump to latest appears when scrolled up mid-stream
   Covered:  e2e/conversation.spec.ts (including unlisted links in the completed answer), e2e/conversation-polish.spec.ts, e2e/brand-data.spec.ts, e2e/conversation-links.spec.ts (the demo's answer with the WebFetch setting seeded: a listed host's link is clickable in the finished answer, with a new tab and noreferrer; an unlisted host, or only its parent or a sibling listed, stays text), src/lib/product-flow.test.ts. Chat tests parts.test.ts, markdown-links.test.ts and markdown-links.property.test.ts cover WebFetch settings, the streaming gate, link parsing and exact-host matching.
-  Gaps:     the product's own setting (route 11) isn't driven through a browser: a product chat answer needs a container turn, so the link check runs on the demo's saved setting only; a link waiting for the finished answer is not browser-tested (the demo answer shows its link and last words in one step), only the streaming half by parts.test.ts
+  Gaps:     the product's own setting (route 11) isn't driven through a browser: a product chat answer needs a container turn, so the link check runs on the demo's saved setting only; a link waiting for the finished answer is not browser-tested (the demo answer shows its link and last words in one step), only the streaming half by parts.test.ts; the product-side hide isn't checked in a browser (the product-flow helpers are plain flags, so dropping a guard at its call site fails no test)
 
 Chat: steps, sources and the answer's own cards
   Path:     a finished answer in a chat (`#/chats/stuck`)
@@ -168,6 +170,7 @@ Chat: See all and management
   Selector: search box, row menu, Select
   Expected: search filters by title; rename, pin, copy link, delete with Undo, bulk delete; demo open-chat bar offers Export (hidden in product); a reload keeps changes until Reset demo
   Covered:  e2e/chats-manage.spec.ts, e2e/sample-data.spec.ts, src/lib/product-flow.test.ts
+  Gaps:     the product-side hide isn't checked in a browser (the product-flow helpers are plain flags, so dropping a guard at its call site fails no test)
 
 Chat: links
   Path:     `#/chats/<id>`, an unknown id or page
@@ -371,6 +374,7 @@ Product build: startup and initial loading screen
   Selector: neutral loading status (`Loading…`) while the initial account read runs; alert "Couldn't load Inhouse." and button "Retry" on failure, the product project (`E2E_PRODUCT=1`)
   Expected: one neutral loading screen in place of every page during the initial account read. With Access unconfigured, the read returns 503 and the load error with Retry replaces the requested page. The screen has no sample names, demo switches or Reset demo. The build ignores `?demo` (`scripts/check-product-build.mjs` checks for the absence of the demo clock).
   Covered:  e2e/product/no-demo.spec.ts, e2e/real/start-errors.spec.ts
+  Gaps:     no browser spec sees the loading screen itself (no-demo.spec.ts only reaches the load error; start-errors.spec.ts only checks the retry path)
 
 Test build: the product Worker's API and app (P2)
   Path:     `npm run build:product-test`, then `/api/*` with no Access JWT, and `/` in a browser
@@ -467,12 +471,14 @@ Account menu
   Selector: menu "Account" (name with the role badge, the email under it), items Your settings, Team settings, Usage | Your Inhouse team ("N open"), Help and guides (demo only) | Sign out
   Expected: the role (Admin, Member or Inhouse team) is a badge beside the name, the email on its own line, both cut with an ellipsis when long; Your settings opens General and Team settings Stage and plan (on a phone the settings menu first); Usage opens the Usage page; Your Inhouse team opens the team window and its count equals the open rows under Your requests (shown only above 0); Report a bug and Feedback are request types in that window; Help and guides is hidden in the product build; Sign out says it isn't connected in the demo
   Covered:  e2e/help-account-menu.spec.ts, e2e/report-bug.spec.ts, e2e/tour.spec.ts, e2e/sample-data.spec.ts, e2e/phone.spec.ts, e2e/overlays-keyboard.spec.ts, src/lib/product-flow.test.ts
+  Gaps:     the product-side hide isn't checked in a browser (the product-flow helpers are plain flags, so dropping a guard at its call site fails no test)
 
 Help and guides
   Path:     account menu -> Help and guides (demo only)
   Selector: dialog "Help and guides", guide buttons, button "Ask the team"
   Expected: one guide open at a time and its text shows; Ask the team swaps Help for the team window on Feedback with "I have a question: " written, and the sent question is listed and survives a reload; by keyboard it opens quiet and Escape gives focus back; on a phone it fits 390; hidden from the account menu in the product build (`src/lib/product-flow.ts`)
   Covered:  e2e/help-account-menu.spec.ts, e2e/sample-data.spec.ts, e2e/overlays-keyboard.spec.ts, e2e/cross-screen.spec.ts, e2e/no-persona.spec.ts, e2e/settings-pages-phone.spec.ts, src/lib/product-flow.test.ts
+  Gaps:     the product-side hide isn't checked in a browser (the product-flow helpers are plain flags, so dropping a guard at its call site fails no test)
 
 Problem panel
   Path:     Today or Approvals -> a card, or an Activity line's Review the draft

@@ -25,6 +25,11 @@ describe('usageSummary', () => {
     expect(janOrFeb(undefined)).toContain('$300')
   })
 
+  test('a malformed month key throws instead of guessing 30 days', () => {
+    const run = (monthKey: string) => () => usageSummary({ monthKey, total: usd(1), cap: usd(500), alertAt: 80, daily: [usd(1)] }, true, false)
+    for (const bad of ['2026-13', '2026-00', '2026-1', 'November', '']) expect(run(bad)).toThrow(/malformed month key/)
+  })
+
   test('never reports negative days left when cap is reached on day 31', () => {
     const dec31 = usageSummary({ monthKey: '2026-12', total: usd(500), cap: usd(500), alertAt: 80, daily: Array(31).fill(usd(16)) }, true, true)
     expect(dec31.hint).toBe('Cap reached with 0 days of the month left')

@@ -286,12 +286,12 @@ export function capStatus(ctx: Ctx): CapStatus {
   }
 }
 
-/** Days in the calendar month for a `"YYYY-MM"` key, defaulting to 30 when absent (the demo's months carry no key). */
+/** Days in the calendar month for a `"YYYY-MM"` key, 30 when absent (the demo's months carry no key). A malformed key throws. */
 function monthLength(monthKey?: string): number {
-  const m = monthKey?.match(/^(\d{4})-(\d{2})$/)
-  if (!m) return 30
-  const year = Number(m[1]), month = Number(m[2])
-  return month >= 1 && month <= 12 ? new Date(Date.UTC(year, month, 0)).getUTCDate() : 30
+  if (monthKey === undefined) return 30
+  const m = monthKey.match(/^(\d{4})-(0[1-9]|1[0-2])$/)
+  if (!m) throw new Error(`usageSummary: malformed month key ${JSON.stringify(monthKey)}`)
+  return new Date(Date.UTC(Number(m[1]), Number(m[2]), 0)).getUTCDate()
 }
 
 /**
