@@ -436,3 +436,151 @@ describe('streams that break', () => {
     }
   })
 })
+
+describe('MCP startup handshake retries', () => {
+  const rpc = (method: string, id?: number) => JSON.stringify({ jsonrpc: '2.0', ...(id === undefined ? {} : { id }), method })
+
+  async function withFlakyUpstream(
+    onRequest: (attempt: number, req: http.IncomingMessage, res: http.ServerResponse, body: string) => void,
+    proxyOpts: Partial<ProxyDeps> = {},
+  ) {
+    let attempts = 0
+    const flaky = http.createServer((req, res) => {
+      let body = ''
+      req.on('data', (c) => (body += c))
+      req.on('end', () => {
+        attempts++
+        onRequest(attempts, req, res, body)
+      })
+    })
+    await new Promise<void>((r) => flaky.listen(0, '127.0.0.1', r))
+    const p = await makeProxy({
+      upstream: new URL(`http://127.0.0.1:${(flaky.address() as AddressInfo).port}/egress`),
+      mcpRetryDelaysMs: [5, 5],
+      ...proxyOpts,
+    })
+    const close = async () => {
+      p.server.closeAllConnections()
+      flaky.closeAllConnections()
+      await new Promise((r) => p.server.close(r))
+      await new Promise((r) => flaky.close(r))
+    }
+    return { url: p.url, attempts: () => attempts, close }
+  }
+
+  it.each([
+    ['/mcp/', 'initialize', 'reset'],
+    ['/mcp/', 'tools/list', '502'],
+    ['/mcp/', 'notifications/initialized', '503'],
+    ['/hub/', 'tools/list', 'cut'],
+    ['/hub/', 'ping', '504'],
+  ] as const)('retries %s %s after transient %s and recovers', async (routePath, method, mode) => {
+    const u = await withFlakyUpstream((n, _req, res) => {
+      if (n === 1) {
+        if (mode === 'reset') return void res.socket!.destroy()
+        if (mode === 'cut') {
+          res.writeHead(200, { 'content-type': 'application/json', 'content-length': '100' })
+          res.write('{"jsonrpc":', () => res.socket!.destroy())
+          return
+        }
+        res.writeHead(Number(mode), { 'content-type': 'application/json' }).end('{"error":"transient"}')
+        return
+      }
+      res.writeHead(200, { 'content-type': 'application/json', [RUN_TOKEN_HEADER]: 'tok_must_not_leak_xxxxxxx' }).end('{"jsonrpc":"2.0","id":1,"result":{"ok":true}}')
+    })
+    try {
+      const res = await fetch(`${u.url}${routePath}`, {
+        method: 'POST',
+        headers: { connection: 'close', 'content-type': 'application/json' },
+        body: rpc(method, method === 'notifications/initialized' ? undefined : 1),
+      })
+      expect(res.status).toBe(200)
+      expect(res.headers.get(RUN_TOKEN_HEADER)).toBeNull()
+      expect(await res.text()).toBe('{"jsonrpc":"2.0","id":1,"result":{"ok":true}}')
+      expect(u.attempts()).toBe(2)
+      expect(logs.some((l) => l.type === 'proxy_upstream_error')).toBe(true)
+      expect(JSON.stringify(logs)).not.toMatch(/tok_/)
+    } finally {
+      await u.close()
+    }
+  })
+
+  it.each(['reset', '503'] as const)('never retries tools/call on transient %s', async (mode) => {
+    const u = await withFlakyUpstream((_n, _req, res) => {
+      if (mode === 'reset') return void res.socket!.destroy()
+      res.writeHead(503, { 'content-type': 'application/json' }).end('{"error":"busy"}')
+    })
+    try {
+      const res = await fetch(`${u.url}/mcp/`, {
+        method: 'POST',
+        headers: { connection: 'close', 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'memory_save', arguments: {} } }),
+      })
+      expect(res.status).toBe(mode === 'reset' ? 502 : 503)
+      expect(u.attempts()).toBe(1)
+    } finally {
+      await u.close()
+    }
+  })
+
+  it('rechecks tokenForUid before retrying so a closed run is refused with 403 instead of retried', async () => {
+    let allowToken = true
+    const u = await withFlakyUpstream(
+      (_n, _req, res) => {
+        allowToken = false
+        res.writeHead(503, { 'content-type': 'application/json' }).end('{"error":"transient"}')
+      },
+      { tokenForUid: (uid) => (allowToken && uid === 1001 ? 'tok_live_run_1001_aaaaaaaa' : null) },
+    )
+    try {
+      const res = await fetch(`${u.url}/mcp/`, {
+        method: 'POST',
+        headers: { connection: 'close', 'content-type': 'application/json' },
+        body: rpc('tools/list', 1),
+      })
+      expect(res.status).toBe(403)
+      expect(u.attempts()).toBe(1)
+    } finally {
+      await u.close()
+    }
+  })
+
+  it('stops retrying when the caller disconnects during backoff', async () => {
+    const u = await withFlakyUpstream(
+      (_n, _req, res) => res.writeHead(503).end('busy'),
+      { mcpRetryDelaysMs: [100] },
+    )
+    try {
+      const ac = new AbortController()
+      const pending = fetch(`${u.url}/mcp/`, {
+        method: 'POST',
+        headers: { connection: 'close', 'content-type': 'application/json' },
+        body: rpc('initialize', 1),
+        signal: ac.signal,
+      })
+      await waitFor(() => u.attempts() === 1, 'first attempt reached upstream')
+      ac.abort()
+      await expect(pending).rejects.toThrow()
+      await new Promise((r) => setTimeout(r, 140))
+      expect(u.attempts()).toBe(1)
+    } finally {
+      await u.close()
+    }
+  })
+
+  it('still enforces maxBodyBytes (413) on /mcp/ and /hub/', async () => {
+    const small = await makeProxy({ maxBodyBytes: 64 })
+    try {
+      const res = await fetch(`${small.url}/mcp/`, {
+        method: 'POST',
+        headers: { connection: 'close', 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { pad: 'x'.repeat(128) } }),
+      })
+      expect(res.status).toBe(413)
+      expect(seen).toHaveLength(0)
+    } finally {
+      small.server.closeAllConnections()
+      await new Promise((r) => small.server.close(r))
+    }
+  })
+})
