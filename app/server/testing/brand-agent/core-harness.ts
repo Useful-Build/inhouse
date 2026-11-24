@@ -1,6 +1,7 @@
 // The turn engine's test harness: an `AgentCore` over a fresh BrandAgent's real SQLite, with the port fakes, the real
 // run tokens and scheduler, a fake clock and an alarm that only the test fires (`tick`). Everything runs inside one
 // `runInDurableObject` callback: the object's storage can't be used from outside it.
+import { skillFiles } from '../../brand-skills/store.ts'
 import { runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import type { ChatEvent, SendTurnInput } from '../../../shared/contract/runs.ts'
@@ -162,6 +163,8 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: nu
           if (modelCheck.throws) throw new Error('settings read failed')
           return !modelsOff.has(id)
         },
+        // The brand's skills as the real object reads them (index.ts): D1's `brand_skills`.
+        brandSkills: () => skillFiles(env.DB),
       })
       const h: Harness = {
         core, sql, clock, pool, nextRunner, usage, files, tokens, sched, modelsOff, modelCheck, chatCheck, registry, hub, sockets, attachAudit,

@@ -40,15 +40,17 @@ export const ErrorReasonSchema = z.enum([
   'not_configured', 'not_disconnectable', 'not_connected',
   // P5 (p5-w4): the notice channel list's refusals (route 75 conflicts, route 74 while Slack can't be used).
   'shared_channel', 'archived', 'not_public', 'not_member', 'not_found', 'name_taken', 'slack_not_connected',
+  // P6a W3: a request to the Inhouse team past 50 open ones.
+  'request_limit',
 ])
 export type ErrorReason = z.infer<typeof ErrorReasonSchema>
 
-/** The body of every refused `/api/*` request: `{ error: { code, reason?, current? } }`. `current` is the record as it is now, on a stale `ifRev`. */
+/** A refused request can include the current record on a stale `ifRev`, or null if the record is gone. */
 export const ErrorBodySchema = z.object({
   error: z.object({
     code: AgentErrorCodeSchema,
     reason: ErrorReasonSchema.optional(),
-    current: z.record(z.string(), z.unknown()).optional(),
+    current: z.record(z.string(), z.unknown()).nullable().optional(),
   }),
 })
 export type ErrorBody = z.infer<typeof ErrorBodySchema>

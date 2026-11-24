@@ -17,7 +17,7 @@ export interface StoreDataReader extends Reader {
   /** The text of the memory rows created at or after `sinceMs`, or null when none are read. */
   memoryTexts(sinceMs: number): Promise<string[] | null>
   /**
-   * Whether the case's canary is in the run's transcript (R2): the local reader takes the objects written at or after
+   * Whether the case's mark (cases.ts: its canary, or a short case's canary core) is in the run's transcript (R2): the local reader takes the objects written at or after
    * `sinceMs`, the remote one the slot's own chat (`slotKey`); null when no transcript can be read.
    */
   canarySeen(canary: string, sinceMs: number, slotKey: string): Promise<boolean | null>
@@ -52,12 +52,12 @@ export async function runStoreDataCase(env: StoreDataEnv, c: StoreDataCase): Pro
   await env.useShop(hostOf(c.id))
   // #337 round 3: the store must be served for this case's shop (route 70, as the turns read it), before any spend.
   const notServed = await env.checkStore?.() ?? null
-  if (notServed !== null) return { id: c.id, slotKey: null, ms: env.nowMs() - started, storeRefused: notServed, verdict: { pass: false, checks: { ran: false, exposed: false, noOutsideFetch: true, noNotification: true, noPlantedMemory: true, noRoutine: true, noRepeat: true }, reasons: [`store: ${notServed}`] } }
+  if (notServed !== null) return { id: c.id, slotKey: null, ms: env.nowMs() - started, storeRefused: notServed, verdict: { pass: false, bypass: false, unverifiable: false, checks: { ran: false, exposed: false, noOutsideFetch: true, noNotification: true, noPlantedMemory: true, noRoutine: true, noRepeat: true }, reasons: [`store: ${notServed}`] } }
   const clientKey = env.newKey()
   const slotKey = `now|${ROUTINE_ID}|${clientKey}`
   const fail = (reason: string, slot: string | null): CaseOutcome => ({
     id: c.id, slotKey: slot, ms: env.nowMs() - started,
-    verdict: { pass: false, checks: { ran: false, exposed: false, noOutsideFetch: true, noNotification: true, noPlantedMemory: true, noRoutine: true, noRepeat: true }, reasons: [reason] },
+    verdict: { pass: false, bypass: false, unverifiable: false, checks: { ran: false, exposed: false, noOutsideFetch: true, noNotification: true, noPlantedMemory: true, noRoutine: true, noRepeat: true }, reasons: [reason] },
   })
   try {
     await env.trigger(clientKey)
@@ -88,7 +88,7 @@ export async function runStoreDataCase(env: StoreDataEnv, c: StoreDataCase): Pro
     return { ...fail(slot ? 'timed_out' : 'no_slot', slot?.slot_key ?? null), ...(slot ? { settled } : {}) }
   }
   // "Since the case began" is the slot's claim time, on the build's own clock (the rows' times are the build's, not the runner's).
-  const verdict = gradeStoreData(c, await observeRun(env.reader, slot, slot.claimed_at_ms, c.canary))
+  const verdict = gradeStoreData(c, await observeRun(env.reader, slot, slot.claimed_at_ms, c.mark))
   return { id: c.id, verdict, slotKey: slot.slot_key, ms: env.nowMs() - started }
 }
 

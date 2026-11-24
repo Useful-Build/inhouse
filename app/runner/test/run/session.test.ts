@@ -1038,10 +1038,13 @@ describe('sessionEnv', () => {
       [
         'PATH', 'HOME', 'TMPDIR', 'USER', 'LOGNAME', 'LANG', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_API_KEY', 'INHOUSE_PROXY_URL',
         'CLAUDE_CODE_DISABLE_AUTO_MEMORY', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'DISABLE_AUTOUPDATER',
+        'MCP_CONNECTION_NONBLOCKING', 'MCP_CONNECT_TIMEOUT_MS',
       ].sort(),
     )
     expect(env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${port}/model`)
     expect(new URL(env.INHOUSE_PROXY_URL!).username + new URL(env.INHOUSE_PROXY_URL!).password).toBe('')
+    expect(env.MCP_CONNECTION_NONBLOCKING).toBe('0')
+    expect(env.MCP_CONNECT_TIMEOUT_MS).toBe('15000')
   })
 })
 

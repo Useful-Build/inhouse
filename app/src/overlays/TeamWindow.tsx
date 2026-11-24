@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { agent, demo } from '../agent'
 import type { RequestType } from '../state/store'
 import { useCtx, useUi } from '../state/store'
@@ -13,6 +13,8 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { Button, EmptyState, Icon, IconButton, IconTile, Segmented, Window } from '../ui'
+import { TEAM_REQUEST_TEXT_MAX } from '../../shared/contract/keys'
+import { requestsView, sentToast, showScreenshotBox, teamHelper } from '../lib/product-flow'
 
 const RT: Record<RequestType, [icon: string, label: string, placeholder: string]> = {
   tool: ['add_link', 'New tool', 'Which tool, and what should your Inhouse agent do with it?'],
@@ -23,10 +25,13 @@ const RT: Record<RequestType, [icon: string, label: string, placeholder: string]
 }
 const KINDS = Object.keys(RT) as RequestType[]
 
-/** The title the team sees (`subject`, 64 on the server), and the request in full (1000). The counter shows from 900. */
+/**
+ * The title the team sees, and the details. The product keeps them as one text of at most 1000 (the title on its own
+ * line above the details), so the details stop where both still fit. The counter shows for the last 100.
+ */
 const TITLE_MAX = 64
-const TEXT_MAX = 1000
-const TEXT_COUNT_FROM = 900
+const TEXT_MAX = TEAM_REQUEST_TEXT_MAX - TITLE_MAX - 2
+const TEXT_COUNT_FROM = TEXT_MAX - 100
 
 /** A title made from the details when none was typed: the first 60 characters, cut at a word and never inside one. */
 const titleOf = (text: string) => {
@@ -52,6 +57,8 @@ function TeamBody({ onClose }: { onClose: () => void }) {
   const ctx = useCtx()
   const [tab, setTab] = useState<'new' | 'mine'>('new')
   const { open, closed } = teamRequests(ctx, nowOf(), demo !== null, withdrawn)
+  // Opening the window again picks up requests the team has answered or another session has withdrawn.
+  useEffect(() => { if (!demo) void agent.refresh('requests') }, [])
   return (
     <>
       <div className="flex items-start gap-3.5 pt-6 pr-4.5 pl-7 max-sm:pl-5">
@@ -66,7 +73,7 @@ function TeamBody({ onClose }: { onClose: () => void }) {
         <Segmented label="Team window" value={tab} onChange={setTab} className="w-full *:flex-1"
           options={[['new', 'New request'], ['mine', <span key="mine">Your requests <span className="ml-1 text-xs text-muted-foreground tabular-nums">{open.length}</span></span>]]} />
       </div>
-      {tab === 'new' ? <NewRequest onSent={onClose} /> : <YourRequests open={open} closed={closed} />}
+      {tab === 'new' ? <NewRequest onSent={onClose} /> : <YourRequests open={open} closed={closed} failed={requestsView(ctx.data.resources.requests) === 'error'} />}
     </>
   )
 }
@@ -92,7 +99,7 @@ function NewRequest({ onSent }: { onSent: () => void }) {
     setSending(true); setFailed(null)
     try {
       await agent.sendTeamRequest({
-        icon: RT[team.type][0], title: title || titleOf(text), sub: `${RT[team.type][1]} · ${sender}`, at: instantOf(nowOf()), status: 'With the team',
+        icon: RT[team.type][0], title: title || titleOf(text), sub: `${RT[team.type][1]} · ${sender}`, at: instantOf(nowOf()), status: 'With the team', kind: team.type,
         ...(text ? { text } : {}),
       })
     } catch (e) {
@@ -102,7 +109,7 @@ function NewRequest({ onSent }: { onSent: () => void }) {
     }
     setSending(false)
     // The reply-time promise is the demo's: the product makes no promise the team hasn't set (UI plan 3, D2).
-    showToast(isBug ? 'Bug sent to your Inhouse team. Thank you.' : demo !== null ? 'Request sent. Your Inhouse team replies within one working day.' : 'Request sent to your Inhouse team.')
+    showToast(sentToast(demo !== null, isBug))
     onSent()
     patch({ team: { ...useUi.getState().team, title: '', text: '' } })
   }
@@ -137,7 +144,7 @@ function NewRequest({ onSent }: { onSent: () => void }) {
         {team.text.length >= TEXT_COUNT_FROM && (
           <p id="team-text-count" className="mt-1.5 text-right text-xs text-muted-foreground tabular-nums">{TEXT_MAX - team.text.length} characters left</p>
         )}
-        {isBug && (
+        {showScreenshotBox(demo !== null, isBug) && (
           <div className="mt-3 flex items-center gap-2.5 text-sm text-foreground-2">
             <Checkbox id="team-shot" checked={team.shot} onCheckedChange={v => set({ shot: v === true })} className="size-4.5" />
             <Label htmlFor="team-shot" className="text-sm leading-normal font-normal">Attach a screenshot of this page and what I was doing</Label>
@@ -148,21 +155,27 @@ function NewRequest({ onSent }: { onSent: () => void }) {
         <p role="alert" className="px-7 pt-3 text-sm text-destructive-text max-sm:px-5">Your request wasn't sent. {failed}</p>
       )}
       <div className="flex flex-wrap items-center gap-3 px-7 pt-4 pb-5.5 max-sm:px-5">
-        <span className="grow basis-45 text-sm text-muted-foreground">{isBug ? 'Goes straight to the team, with the page you were on.' : 'Every tool and job is included in your plan.'}</span>
+        <span className="grow basis-45 text-sm text-muted-foreground">{teamHelper(demo !== null, isBug)}</span>
         <Button size="lg" disabled={empty || sending} onClick={() => void send()}>Send to the team</Button>
       </div>
     </>
   )
 }
 
-function YourRequests({ open, closed }: { open: TeamRow[]; closed: TeamRow[] }) {
+function YourRequests({ open, closed, failed }: { open: TeamRow[]; closed: TeamRow[]; failed: boolean }) {
   const [show, setShow] = useState<'open' | 'closed'>('open')
   const rows = show === 'open' ? open : closed
   return (
     <div className="min-h-0 flex-1 overflow-auto px-7 pt-5 pb-6.5 max-sm:px-5">
       <Segmented label="Show requests" value={show} onChange={setShow}
         options={[['open', `Open · ${open.length}`], ['closed', `Closed · ${closed.length}`]]} />
-      {rows.length === 0
+      {/* A failed read is never shown as an empty list: it says so, and Retry reads again. */}
+      {failed ? (
+        <div className="mt-3.5 flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3">
+          <span className="grow basis-45 text-sm text-foreground-2">Couldn't read your requests.</span>
+          <Button variant="outline" onClick={() => void agent.retry('requests')}>Retry</Button>
+        </div>
+      ) : rows.length === 0
         ? <EmptyState className="mt-3.5">{show === 'open' ? 'No open requests. Ask for a tool, a job or a change.' : 'Nothing closed yet.'}</EmptyState>
         : (
           <ul aria-label={show === 'open' ? 'Open requests' : 'Closed requests'} className="m-0 mt-3.5 list-none rounded-2xl border border-border bg-card p-0">
@@ -182,9 +195,26 @@ function RequestRow({ q, first }: { q: TeamRow; first: boolean }) {
   const phone = useUi(s => s.phone)
   const id = `team-req-${q.key.replace(/[^\w-]/g, '-')}`
   const chip = <Badge variant={q.closed ? 'status' : 'muted'} size="lg" className="flex-none">{q.status}</Badge>
-  const withdraw = () => {
-    patch({ teamWithdrawn: [...withdrawn, q.key] })
-    showToast('Request withdrawn.', { icon: 'undo', undo: () => { patch({ teamWithdrawn: useUi.getState().teamWithdrawn.filter(k => k !== q.key) }); clearToast() } })
+  // A failed withdraw says why under the request and keeps its row. While it goes, the button waits.
+  const [failed, setFailed] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const withdraw = async () => {
+    if (busy) return
+    setBusy(true); setFailed(null)
+    try {
+      await agent.withdrawTeamRequest({ title: q.title, at: q.at })
+    } catch (e) {
+      setBusy(false)
+      setFailed(e instanceof Error && e.message ? e.message : 'Something went wrong.')
+      return
+    }
+    // The demo manages withdrawals and Undo in session state. The product shows the server's saved withdrawal.
+    if (demo !== null) {
+      patch({ teamWithdrawn: [...withdrawn, q.key] })
+      showToast('Request withdrawn.', { icon: 'undo', undo: () => { patch({ teamWithdrawn: useUi.getState().teamWithdrawn.filter(k => k !== q.key) }); clearToast() } })
+    } else {
+      showToast('Request withdrawn.', { icon: 'check' })
+    }
   }
   return (
     <li className={cn(!first && 'border-t border-divider')}>
@@ -202,10 +232,10 @@ function RequestRow({ q, first }: { q: TeamRow; first: boolean }) {
       {expanded && (
         <div id={id} className="pr-4.5 pb-4 pl-16.5 max-sm:pl-4.5">
           <p className="text-base leading-prose text-pretty text-foreground-2">{q.text ?? q.title}</p>
-          {/* Withdraw is the demo's stand-in: the product has no withdraw route yet (P6a), so it shows only in the demo. */}
-          {demo !== null && q.mine && !q.closed && (
-            <Button variant="ghost" className="mt-3 -ml-3" onClick={withdraw}>Withdraw request</Button>
+          {q.mine && !q.closed && (
+            <Button variant="ghost" className="mt-3 -ml-3" disabled={busy} onClick={() => void withdraw()}>Withdraw request</Button>
           )}
+          {failed !== null && <p role="alert" className="mt-2 text-sm text-destructive-text">Your request wasn't withdrawn. {failed}</p>}
         </div>
       )}
     </li>

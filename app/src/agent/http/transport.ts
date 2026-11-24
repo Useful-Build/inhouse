@@ -161,7 +161,7 @@ export class Transport {
     const err = (await k).ErrorBodySchema.safeParse(data)
     if (err.success) {
       const { code, reason, current } = err.data.error
-      throw new AgentError(code, MESSAGE[code], { ...(reason ? { reason } : {}), ...(current ? { current } : {}) })
+      throw new AgentError(code, MESSAGE[code], { reason, current })
     }
     const code = CODE_BY_STATUS[res.status] ?? 'unknown'
     throw new AgentError(code, MESSAGE[code])

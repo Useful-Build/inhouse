@@ -395,9 +395,9 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
   }
 }
 
-type Api = (who: PersonKey, method: string, path: string, o?: { json?: unknown; bytes?: Uint8Array; headers?: Record<string, string>; signal?: AbortSignal }) => Promise<{ status: number; json: any; text: string }>
+export type Api = (who: PersonKey, method: string, path: string, o?: { json?: unknown; bytes?: Uint8Array; headers?: Record<string, string>; signal?: AbortSignal }) => Promise<{ status: number; json: any; text: string }>
 
-interface SessionDeps {
+export interface SessionDeps {
   api: Api
   must: (r: { status: number; text: string }, what: string, ok?: number[]) => void
   door: MemoryDoor
@@ -431,7 +431,8 @@ export function writesFromRows(before: MemoryRow[], after: MemoryRow[], caseId: 
   return out
 }
 
-function productSession(d: SessionDeps): Session {
+/** One case-repeat's chats (exported for the read-side set's scripted proof, which signs in on a PR's test build). */
+export function productSession(d: SessionDeps): Session {
   const turns: string[] = []
   let booked = 0
   let attachment = d.attachment
@@ -543,7 +544,7 @@ function productSession(d: SessionDeps): Session {
       // Both causes when the turn also failed otherwise (an error part, an end row): neither hides the other.
       if (promptBad !== null) failure = failure === undefined ? promptBad : `${failure}; ${promptBad}`
       const runOk = answer !== '' && !sawError && promptBad === null
-      return { toolCalls, answer, runOk, usage: ZERO, costUsd, turnId, askedAs: d.askedAs, ...(runOk ? {} : { failure: failure ?? 'unknown' }) }
+      return { toolCalls, answer, runOk, usage: ZERO, costUsd, turnId, chatId, askedAs: d.askedAs, ...(runOk ? {} : { failure: failure ?? 'unknown' }) }
     },
     async settledCostUsd() {
       return bookCost()

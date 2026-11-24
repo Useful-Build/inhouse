@@ -1,0 +1,64 @@
+{
+ "row": {
+  "caseId": "T14",
+  "cat": "choice",
+  "pair": "team_request_create/notification_send",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "team_request_list",
+   "team_request_create"
+  ],
+  "toolSearches": 2,
+  "answer": "Let me check whether a request is already open.\n\nI can't connect TikTok Shop fro",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_OtCv14geVO56pOwRHdl8iw",
+  "askedAs": "eval-45239772379-1-t14-r3",
+  "argsNotGraded": "the served schema defines no fields"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "Let me check whether a request is already open.\n\nI can't connect TikTok Shop fro",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "e53c4d7fd6bed37ca027753baf8a4449f58020cec15504d5330bf2a07595354c",
+    "inputExcerpt": "{\"query\":\"tiktok shop\",\"max_results\":10}"
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "be425c2304c4a4d4c13c0ffb30c87ad0b2a4ebd71dcf94244fc2264b7dd43174",
+    "inputExcerpt": "{\"query\":\"TikTok Shop\"}"
+   },
+   {
+    "name": "ToolSearch",
+    "inputSha256": "b6c6562dd42cb82a5585bc9bd6904fb30bbd613e1773ef16fba08036f60bdf17",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__team_request_create,mcp__inhouse__team_request_li"
+   },
+   {
+    "name": "mcp__inhouse__team_request_list",
+    "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "inputExcerpt": "{}"
+   },
+   {
+    "name": "mcp__inhouse__team_request_create",
+    "inputSha256": "1a75fabbc2cb26a46cf8986d4b443d6d3c876a319c8dbcd91b67b9575780eee7",
+    "inputExcerpt": "{\"title\":\"Connect TikTok Shop (orders)\",\"description\":\"The brand wants TikTok Sh"
+   }
+  ]
+ }
+}

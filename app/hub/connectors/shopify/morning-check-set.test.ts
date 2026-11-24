@@ -99,6 +99,44 @@ describe('the time-shifted fixture', () => {
   })
 })
 
+// The refund-spike rule is read through refunds_search, which asks only for refunded or partially refunded orders updated in
+// its window (as Shopify marks an order when it refunds it). A dataset whose refunds sit on orders marked paid, or last
+// updated before the refund, would hide them from the check whatever the model did.
+describe('refunds_search, through the hub\'s own tools, returns every refund the eight rules count', () => {
+  const iso = (ms: number) => new Date(ms).toISOString()
+  async function refunds(c: (typeof CASES)[number], fromMs: number): Promise<string[]> {
+    const client = signInClient(upstreamFor(c, NOW)).client
+    const seen: string[] = []
+    let after: string | null = null
+    do {
+      const r = await call('refunds_search', { createdFrom: iso(fromMs), ...(after === null ? {} : { after }) }, client, NOW)
+      if (!r.ok) throw new Error(`${c.id} refunds_search: ${r.error.code}`)
+      const v = r.value as { items: { orderName: string; createdAt: { ms: number } }[]; nextCursor: string | null }
+      for (const i of v.items) seen.push(`${i.orderName}@${i.createdAt.ms}`)
+      after = v.nextCursor
+    } while (after !== null)
+    return seen.sort()
+  }
+  const inDataset = (c: (typeof CASES)[number], fromMs: number) =>
+    c.build(NOW).orders.flatMap(o => o.refunds.filter(r => Date.parse(r.createdAt!) >= fromMs).map(r => `${o.name}@${Date.parse(r.createdAt!)}`)).sort()
+
+  for (const c of CASES.filter(x => !x.fault)) {
+    it(`${c.id}: the last 24 h and the 14 days before, as the dataset holds them`, async () => {
+      for (const from of [NOW - DAY, NOW - 15 * DAY]) expect(await refunds(c, from), `${c.id} from ${iso(from)}`).toEqual(inDataset(c, from))
+    })
+  }
+
+  it('refund-spike: the four orders the spike names come back for the last 24 h, refunded and updated at refund time', async () => {
+    const c = CASES.find(x => x.id === 'refund-spike')!
+    const names = [...new Set((await refunds(c, NOW - DAY)).map(k => k.split('@')[0]))]
+    expect(names).toEqual(['#2051', '#2052', '#2053', '#2054'])
+    for (const o of c.build(NOW).orders.filter(x => names.includes(x.name))) {
+      expect(['REFUNDED', 'PARTIALLY_REFUNDED'], o.name).toContain(o.displayFinancialStatus)
+      expect(o.updatedAt, o.name).toBe(o.refunds[0]!.createdAt)
+    }
+  })
+})
+
 describe('the outage upstreams, through the hub\'s own tools', () => {
   const lateOrders = CASES.find(c => c.id === 'outage-credentials')!
   const client = (id: string) => signInClient(upstreamFor(CASES.find(c => c.id === id)!, NOW)).client

@@ -183,6 +183,41 @@ describe('what is forwarded', () => {
     expect(res.status).toBe(200)
     expect(seen.map((s) => s.url)).toEqual(['/egress/model/v1/messages?q=%23x&r=%2e%2e&s=%5c'])
   })
+
+  it('opens a non-keep-alive upstream connection per request', async () => {
+    let upstreamSockets = 0
+    const closingUpstream = http.createServer((req, res) => {
+      req.resume()
+      req.on('end', () => {
+        seen.push({ method: req.method!, url: req.url!, headers: req.headers, body: '' })
+        res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}')
+      })
+    })
+    // Destroy any socket kept alive right after its response finishes: a proxy pooling keep-alive sockets via
+    // http.globalAgent hits ECONNRESET -> 502 when it reuses one.
+    closingUpstream.on('connection', (socket) => {
+      upstreamSockets++
+      socket.setTimeout(10, () => socket.destroy())
+    })
+    await new Promise<void>((r) => closingUpstream.listen(0, '127.0.0.1', r))
+    const p = await makeProxy({ upstream: new URL(`http://127.0.0.1:${(closingUpstream.address() as AddressInfo).port}/egress`) })
+    try {
+      for (let i = 0; i < 4; i++) {
+        const res = await fetch(`${p.url}/mcp/`, { method: 'POST', headers: { connection: 'close', 'content-type': 'application/json' }, body: '{}' })
+        expect(res.status).toBe(200)
+        expect(await res.text()).toBe('{"ok":true}')
+        await new Promise((r) => setTimeout(r, 15))
+      }
+      expect(seen.map((s) => s.headers.connection)).toEqual(['close', 'close', 'close', 'close'])
+      expect(upstreamSockets).toBe(4)
+      expect(logs.filter((l) => l.type === 'proxy_upstream_error')).toEqual([])
+    } finally {
+      p.server.closeAllConnections()
+      closingUpstream.closeAllConnections()
+      await new Promise((r) => p.server.close(r))
+      await new Promise((r) => closingUpstream.close(r))
+    }
+  })
 })
 
 describe('targetFor (the last check on where a path goes)', () => {

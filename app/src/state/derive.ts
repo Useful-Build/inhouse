@@ -82,6 +82,8 @@ export interface OpenRequest { icon: string; title: string; sub: string; status:
 export interface TeamRow extends OpenRequest {
   /** Stable while the request exists: its title and when it was asked. */
   key: string
+  /** When it was asked: with `title`, what `withdrawTeamRequest` names it by. */
+  at: Instant
   kind: string
   who: string
   when: string
@@ -108,10 +110,10 @@ export const teamRequests = (ctx: Ctx, now: number, sentHereJustNow: boolean, wi
     const [kind, asker = ''] = q.sub.split(' · ')
     // "asked by Priya" and "sent by Sam Mercer": requests saved before the window said just the name.
     const name = asker.replace(/^(asked|sent) by /, '')
-    const mine = sentHere || name === me || name === me.split(' ')[0]
+    const mine = q.mine ?? (sentHere || name === me || name === me.split(' ')[0])
     const withdrew = !q.closed && withdrawn.includes(teamRequestKey(q))
     return {
-      key: teamRequestKey(q), icon: q.icon ?? KIND_ICON[kind] ?? 'add_link', title: q.title, kind, who: mine ? 'You' : name,
+      key: teamRequestKey(q), at: q.at, icon: q.icon ?? KIND_ICON[kind] ?? 'add_link', title: q.title, kind, who: mine ? 'You' : name,
       when: line.sub.slice(q.sub.length + 2), sub: line.sub, text: q.text, mine, seed,
       status: withdrew ? 'Withdrawn' : line.status, closed: withdrew ? 'withdrawn' : q.closed,
     }

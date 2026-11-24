@@ -64,8 +64,8 @@ describe('stage (test 8)', () => {
 })
 
 describe('the routine tools (test 9)', () => {
-  it('the server still serves exactly the 20 tools, the five routine ones built', () => {
-    expect(TOOL_HANDLERS.size).toBe(20)
+  it('the server still serves exactly the 21 tools (P6a added skill_save), the five routine ones built', () => {
+    expect(TOOL_HANDLERS.size).toBe(21)
     for (const name of ['routine_create', 'routine_list', 'routine_update', 'routine_delete', 'routine_run_now']) {
       expect(TOOL_HANDLERS.get(name)!.input.safeParse({ anything: 1 }).success, name).toBe(false)
     }

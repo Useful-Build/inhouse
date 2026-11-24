@@ -45,6 +45,10 @@ import { connectorAccountStore } from './connector-accounts.ts'
 import type { ConnectorAccountStore } from './connector-accounts.ts'
 import { notifyChannelStore } from '../notify-slack/channels.ts'
 import type { NotifyChannelStore } from '../notify-slack/channels.ts'
+import { teamRequestStore } from '../team-requests/store.ts'
+import type { TeamRequestStore } from '../team-requests/store.ts'
+import { brandSkillStore } from '../brand-skills/store.ts'
+import type { BrandSkillStore } from '../brand-skills/store.ts'
 
 export interface Stores extends AuthStores {
   members: MemberDirectory & MemberStore
@@ -89,6 +93,12 @@ export interface Stores extends AuthStores {
   connectors: ConnectorAccountStore
   /** P5 W4 (p5-w4.md section 10): the Slack channels listed for notices. */
   notify: NotifyChannelStore
+
+  /** P6a W3: requests to the Inhouse team (routes 80 to 83 and the `team_request_*` tools). */
+  teamRequests: TeamRequestStore
+
+  /** P6a brand skills: the brand's own skills (routes 79, 84 and 85, the `skill_save` tool and each run's start). */
+  brandSkills: BrandSkillStore
 }
 
 /** What the stores read from the Worker's env. `AUDIT_HASH_KEY` is a secret on the product Worker (a var in the test build). */
@@ -159,5 +169,9 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
     library: libraryStore({ db, bucket: env.FILES }),
     connectors: connectorAccountStore({ db, hook }),
     notify: notifyChannelStore({ db, hook }),
+
+    teamRequests: teamRequestStore({ db }),
+
+    brandSkills: brandSkillStore({ db }),
   }
 }

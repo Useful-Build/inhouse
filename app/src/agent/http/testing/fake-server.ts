@@ -41,7 +41,7 @@ export const ALL_MODELS = [
 
 export const chatRow = (id: string, o: Record<string, unknown> = {}) => ({ id, title: `Chat ${id}`, customTitle: null, pinned: false, deleted: false, at: iso(1000), rev: 1, running: false, ...o })
 
-export const reads = (o: { chats?: unknown[]; models?: unknown; usage?: unknown; pause?: unknown; activity?: unknown[]; notifications?: unknown[]; library?: unknown[]; routines?: unknown; today?: unknown } = {}): Record<string, Answer> => ({
+export const reads = (o: { chats?: unknown[]; models?: unknown; usage?: unknown; pause?: unknown; activity?: unknown[]; notifications?: unknown[]; library?: unknown[]; routines?: unknown; today?: unknown; requests?: unknown[] } = {}): Record<string, Answer> => ({
   'GET /api/me': { body: me() },
   'GET /api/settings/personal': { body: { items: [] } },
   'GET /api/settings/brand': { body: { items: [] } },
@@ -61,4 +61,7 @@ export const reads = (o: { chats?: unknown[]; models?: unknown; usage?: unknown;
   'GET /api/routines': { body: o.routines ?? { routines: [], deleted: [], enabled: {} } },
   // P4 W3: route 57.
   'GET /api/today': { body: o.today ?? { items: [], aside: {} } },
+  // P6a W3: routes 79 and 80.
+  'GET /api/skills': { body: [] },
+  'GET /api/team-requests?view=window': { body: { items: o.requests ?? [] } },
 })

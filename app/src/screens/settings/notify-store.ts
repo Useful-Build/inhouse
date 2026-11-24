@@ -94,7 +94,7 @@ export function createNotifyStore(deps: { agent: NotifyAgent; toast: (text: stri
         else if (open) void read()
         deps.toast(STALE_TEXT)
       } else if (e instanceof AgentError && e.reason && Object.hasOwn(SAVE_REFUSED, e.reason)) {
-        deps.toast(SAVE_REFUSED[e.reason as keyof typeof SAVE_REFUSED](nameOf(e.current)))
+        deps.toast(SAVE_REFUSED[e.reason as keyof typeof SAVE_REFUSED](nameOf(e.current ?? undefined)))
       } else deps.toast(SAVE_FAILED)
     } finally {
       set({ busy: false })

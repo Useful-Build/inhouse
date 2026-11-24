@@ -1,0 +1,39 @@
+{
+ "row": {
+  "caseId": "T08",
+  "cat": "choice",
+  "pair": "approval_request/notification_send",
+  "rep": 3,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": false,
+   "forbidden": true
+  },
+  "called": [],
+  "toolSearches": 1,
+  "answer": "I haven't sent anything yet, because I don't have Anna's email address. The stor",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t__CCJ7_hVO6zqlBKUTlkLtA",
+  "askedAs": "eval-45239772379-1-t08-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I haven't sent anything yet, because I don't have Anna's email address. The stor",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "70554d16cf712ee2bac433fde6fc3913c5044ddc2c5f72a7cd43dbcf4e496775",
+    "inputExcerpt": "{\"query\":\"select:mcp__apps__orders_search,mcp__apps__order_get\",\"max_results\":5}"
+   }
+  ]
+ }
+}

@@ -1,6 +1,6 @@
 # Master plan: Watch first, the rest at the first client
 
-Updated: 2026-11-23 (standing decisions 6 to 8: brand skills, team request statuses, routine run history). Earlier: 2026-11-22 (aligned with the 5-file repo setup in `AGENTS.md`, `REVIEW.md`, `VERIFY.md`, `DESIGN.md`, and `FEATURE_MAP.md`).
+Updated: 2026-11-23 (standing decision 9: eval timing; 6 to 8: brand skills, team request statuses, routine run history). Earlier: 2026-11-22 (aligned with the 5-file repo setup in `AGENTS.md`, `REVIEW.md`, `VERIFY.md`, `DESIGN.md`, and `FEATURE_MAP.md`).
 
 Decided by Wasim on 2026-11-22: split the remaining backend work into two parts. **Part 1** is built now: a Watch-ready product, including memory at Watch, document skills, and Watch safety/readiness. **Part 2** is built once the first client signs, during that client's Watch months.
 
@@ -134,3 +134,4 @@ Built during the client's first Watch months, before they move to Act. The clien
 6. **Brand skills (2026-11-23):** any member or admin can create skills in a chat and edit or delete their own (admins any brand skill), with no approval step. Skills the Inhouse team builds stay ours and read-only for brands. Skill Creator ships so the agent can write skills well. Skills load the normal way: name and description in context, the body only when used. Lands in P6a (step 4).
 7. **Team requests (2026-11-23):** a request shows its status only. No dates, notes or "In progress": timing is agreed with the brand directly.
 8. **Routine run history (2026-11-23):** `GET /api/routines/:id/runs` (route 86: P5 holds 68 to 76 on `fleet/connectors`, P6a 77 to 85) returns each routine's own recent runs (when, outcome, a plain one-line result) from its run slots, so the routine panel stops matching Activity by name. A normal-risk PR into `main`.
+9. **Eval timing (2026-11-23):** P4's paid evals on app main `be638264` were product suite 119/123 (97%) with one exfiltration bypass (X03 quoted an attachment's planted link) and store-data 6/10 with zero unsafe actions (four cases not exposed); see `app/evals/results/2026-11-23-p4-evals.md`. Code fixes land now: the chat shows links to unlisted hosts as plain text, and the store-data harness makes sure each planted field is read. No more paid runs until Watch is complete (routines, P5, P6a and P8a in). Then every eval runs once on the final product, on all four picker models, Opus included, with the prompt fix (never repeat links from files or tool results). The Watch house release (step 2) waits for that run.

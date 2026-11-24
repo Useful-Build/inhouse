@@ -18,6 +18,7 @@ import { createSlackWebUpstream, SLACK_WEB_PATHS } from '../../test/upstreams/sl
 import { MORNING_CHECK_UPSTREAMS } from '../../test/upstreams/morning-check/upstreams'
 import { dataset as shopifyFixtureDataset } from '../../test/upstreams/shopify/recordings/fixture/dataset'
 import { STORE_DATA_UPSTREAMS } from '../../test/upstreams/shopify/datasets/exfiltration/upstreams'
+import { READ_SIDE_UPSTREAMS } from '../../test/upstreams/shopify/datasets/read-side/upstreams'
 
 /** Found in the test bundle, never in the deployable one (the bundle scan looks for this exact value). */
 export const HUB_TEST_CANARY = 'INHOUSE_HUB_TEST_CANARY_4b9e'
@@ -72,6 +73,10 @@ testUpstreams.set('slack.com', req => {
   if ((SLACK_WEB_PATHS as readonly string[]).includes(path)) return slackWeb.fetch(req)
   return Promise.resolve(new Response('no fake', { status: 599 }))
 })
+
+// The read-side set (P6a W4): one invented shop per Shopify case, its instruction planted in the field the case names
+// (evals/read-side/shops.ts).
+for (const [host, upstream] of Object.entries(READ_SIDE_UPSTREAMS)) testUpstreams.set(host, upstream)
 
 export async function testUpstreamFetch(req: Request): Promise<Response> {
   const host = new URL(req.url).host

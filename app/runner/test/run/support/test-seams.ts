@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { BrandSkillFile } from '../../../../shared/protocol/brand-skills.ts'
 import type { QueryGuards, SessionUser, SessionUsers } from '../../../src/session/seam.ts'
 import { spawnSessionProcess, type SpawnSession } from '../../../src/server/session-host.ts'
 
@@ -19,7 +20,14 @@ export type TestUsersOpts = {
   gidFor?: (sessionKey: string) => number
 }
 
-export type TestUsers = SessionUsers & { dirs: Map<string, string>; uids: Map<string, number>; allocated: string[]; released: string[] }
+export type TestUsers = SessionUsers & {
+  dirs: Map<string, string>
+  uids: Map<string, number>
+  allocated: string[]
+  released: string[]
+  /** The brand skills each run was given, by session key, in order. */
+  brandSkills: Map<string, (readonly BrandSkillFile[])[]>
+}
 
 let nextUid = 20000
 
@@ -28,6 +36,7 @@ export function testSessionUsers(opts: TestUsersOpts = {}): TestUsers {
   const uids = new Map<string, number>()
   const allocated: string[] = []
   const released: string[] = []
+  const brandSkills = new Map<string, (readonly BrandSkillFile[])[]>()
   return {
     kind: 'test',
     quarantined: () => 0,
@@ -35,6 +44,10 @@ export function testSessionUsers(opts: TestUsersOpts = {}): TestUsers {
     uids,
     allocated,
     released,
+    brandSkills,
+    async writeBrandSkills(sessionKey, _user, skills) {
+      brandSkills.set(sessionKey, [...(brandSkills.get(sessionKey) ?? []), skills])
+    },
     async allocate(sessionKey) {
       let dir = dirs.get(sessionKey)
       if (dir === undefined) {

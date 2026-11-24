@@ -12,10 +12,13 @@ import { GrantCreateInputSchema, GrantEndInputSchema, GrantsListSchema, SupportG
 import { MeSchema } from '../../../shared/contract/me'
 import { InviteInputSchema, MemberRecordSchema, MemberRoleSchema, PhotoResultSchema, RoleChangeInputSchema } from '../../../shared/contract/members'
 import { MemoryDataSchema, MemoryForgetInputSchema, MemoryLineSchema } from '../../../shared/contract/memory'
+import { MemoryApproveInputSchema, WaitingMemoryListSchema } from '../../../shared/contract/memory-approvals'
 import { NotificationsListSchema, NotificationsReadInputSchema } from '../../../shared/contract/notifications'
 import { pageOf } from '../../../shared/contract/paging'
 import { SettingRecordSchema, SettingWriteInputSchema, SettingsListSchema } from '../../../shared/contract/settings'
 import { UsageDataSchema } from '../../../shared/contract/usage'
+import { BrandSkillDeleteInputSchema, SkillDefSchema, SkillPageSchema } from '../../../shared/contract/skill'
+import { TeamRequestCreateInputSchema, TeamRequestRecordSchema, TeamRequestWithdrawInputSchema, TeamRequestsListSchema } from '../../../shared/contract/team-requests'
 import { RoutineEnabledInputSchema, RoutineRevInputSchema, RoutineRunAnswerSchema, RoutineRunHistorySchema, RoutineRunInputSchema, RoutineStateSchema, RoutinesListSchema } from '../../../shared/contract/routines'
 import { SetAsideBodySchema, TodayAnswerSchema, TodayAsideSchema } from '../../../shared/contract/today'
 import { z } from 'zod'
@@ -33,6 +36,8 @@ export const ANSWERS = {
   audit: AuditPageSchema, grants: GrantsListSchema, grant: SupportGrantSchema, photo: PhotoResultSchema, usage: UsageDataSchema,
   // P3 (W6): routes 43 to 45.
   memory: MemoryDataSchema, memoryLine: MemoryLineSchema,
+  // P6a (W2): the waiting team facts (route 77; route 78 answers `memoryLine`).
+  waitingMemory: WaitingMemoryListSchema,
   // P3 (W5): chats (routes 22 to 28 and 49), turns (29 to 33), pause (35 to 37) and the model list (38).
   chatList: ChatListSchema, chatPage: ChatPageSchema, chat: ChatSummarySchema, chatItems: z.object({ items: z.array(ChatSummarySchema) }),
   chatFile: UploadResultSchema, sendTurn: SendTurnResultSchema, ack: z.looseObject({}), activeRuns: ActiveRunsSchema, trace: TraceSchema, pause: PauseStateSchema,
@@ -49,6 +54,10 @@ export const ANSWERS = {
   today: TodayAnswerSchema, todayAside: TodayAsideSchema,
   // P5 (W4): the Slack notice channels, routes 73 to 75.
   notifyChannels: NotifyChannelListSchema, availableChannels: AvailableChannelsSchema,
+  // P6a (W3): the skills list (route 79); a skill's instructions (route 84) and a deleted brand skill (route 85).
+  skills: z.array(SkillDefSchema), skillPage: SkillPageSchema, skill: SkillDefSchema,
+  // P6a (W3): requests to the Inhouse team (routes 80, 81 and 83).
+  teamRequests: TeamRequestsListSchema, teamRequest: TeamRequestRecordSchema,
 }
 
 /** What each write sends. */
@@ -56,10 +65,13 @@ export const BODIES = {
   invite: InviteInputSchema, role: MemberRoleSchema, roleChange: RoleChangeInputSchema, grantCreate: GrantCreateInputSchema,
   grantEnd: GrantEndInputSchema, settingWrite: SettingWriteInputSchema,
   memoryForget: MemoryForgetInputSchema,
+  memoryApprove: MemoryApproveInputSchema,
   notificationsRead: NotificationsReadInputSchema,
   libraryWrite: LibraryWriteSchema,
   todayAside: SetAsideBodySchema,
+  teamRequestCreate: TeamRequestCreateInputSchema, teamRequestWithdraw: TeamRequestWithdrawInputSchema,
   routineEnabled: RoutineEnabledInputSchema, routineRun: RoutineRunInputSchema, routineRev: RoutineRevInputSchema,
+  skillDelete: BrandSkillDeleteInputSchema,
   createChat: CreateChatInputSchema, chatRename: ChatRenameInputSchema, chatPin: ChatPinInputSchema, chatIds: ChatIdsInputSchema, sendTurn: SendTurnInputSchema,
   toolPaused: ToolPausedInputSchema,
   notifyChannels: PutNotifyChannelsSchema,
