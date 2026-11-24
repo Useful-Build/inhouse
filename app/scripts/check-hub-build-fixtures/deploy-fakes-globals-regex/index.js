@@ -4,7 +4,7 @@ function log(text) {
     const buf = globalThis.__inhouseHubTestLogs ??= { lines: [] };
     buf.lines.push(text.replace(quote, ""));
   }
-  const g = globalThis.__inhouseHubTestVars;
+  const g = globalThis.__inhouseHubTestLogs;
   console.log(text, g, '}');
 }
 export default { log }

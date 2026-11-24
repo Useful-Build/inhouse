@@ -78,14 +78,28 @@ export async function upstreamFor(env: HubEnv): Promise<Upstream> {
   return req => fetch(req)
 }
 
-/** Flushes this isolate's queued hub test log lines to the singleton test-fakes DO (test build only). */
-export async function flushTestLogs(env: HubEnv): Promise<void> {
-  if (__INHOUSE_HUB_TEST__ && env.INHOUSE_TEST_BUILD === '1') {
+/** Tail of this isolate's flush chain (test build only). Never rejects: every link catches its own failure. */
+let testLogFlushChain: Promise<void> = Promise.resolve()
+
+/**
+ * Flushes this isolate's queued hub test log lines to the singleton test-fakes DO (test build only). Flushes chain per
+ * isolate: each waits for the one before it, so when this returns, every line queued by any flush started earlier in
+ * this isolate has reached the DO (a second request can't return while the first's lines are still in flight). Runs in
+ * `finally` blocks, so it never throws; a failed append is logged loudly (error name and line count, never content).
+ */
+export function flushTestLogs(env: HubEnv): Promise<void> {
+  if (!(__INHOUSE_HUB_TEST__ && env.INHOUSE_TEST_BUILD === '1')) return Promise.resolve()
+  const mine = testLogFlushChain.then(async () => {
     const lines = drainPendingTestLogs()
-    if (lines.length > 0) {
-      await env.SIGNIN.get(env.SIGNIN.idFromName(TEST_FAKES_DO_NAME)).testAppendLogs(lines).catch(() => {})
+    if (lines.length === 0) return
+    try {
+      await env.SIGNIN.get(env.SIGNIN.idFromName(TEST_FAKES_DO_NAME)).testAppendLogs(lines)
+    } catch (e) {
+      console.error(`hub test logs: flushing ${lines.length} line${lines.length === 1 ? '' : 's'} failed and they are lost (${e instanceof Error ? e.name : typeof e})`)
     }
-  }
+  })
+  testLogFlushChain = mine
+  return mine
 }
 
 /** Env with any test-build `op: 'var'` overrides read from the singleton test-fakes DO. */

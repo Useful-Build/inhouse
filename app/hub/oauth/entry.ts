@@ -34,7 +34,12 @@ async function guarded<T>(env: Env, fn: () => Promise<HubResult<T>>): Promise<Hu
 async function answered<T>(env: Env, fn: () => Promise<HubResult<T>>): Promise<HubResult<T>> {
   const r = await guarded(env, fn)
   if (__INHOUSE_HUB_TEST__ && (env as HubEnv).INHOUSE_TEST_BUILD === '1') {
-    await env.SIGNIN.get(env.SIGNIN.idFromName(TEST_FAKES_DO_NAME)).testRecordConnectBody(JSON.stringify(r))
+    // Must not turn a HubResult into a throw: a failed record is logged loudly (error name only) and the answer still returns.
+    try {
+      await env.SIGNIN.get(env.SIGNIN.idFromName(TEST_FAKES_DO_NAME)).testRecordConnectBody(JSON.stringify(r))
+    } catch (e) {
+      console.error(`hub test: recording a ConnectGateway answer failed and it is lost (${e instanceof Error ? e.name : typeof e})`)
+    }
   }
   return r
 }
