@@ -7,7 +7,7 @@ import { DurableObject } from 'cloudflare:workers'
 import { connectors } from '../connectors/index'
 import type { HubResult } from '../index/contract'
 import { err } from '../index/errors'
-import { log } from '../index/log'
+import { drainPendingTestLogs, log } from '../index/log'
 import { keyRingFor } from '../crypto/keyring'
 import {
   buildRegistry,
@@ -50,34 +50,64 @@ export function loadRegistry(env: HubEnv): Promise<Registry> {
   return registry
 }
 
-/** globalThis.fetch, except in the test build, where PR0's seam answers from recorded upstreams. */
+/**
+ * The singleton SignIn Durable Object name holding the test build's fake upstreams, var overrides, ConnectGateway
+ * answer log and hub log buffer. Cannot collide with any account id (`AccountIdSchema` starts with a letter).
+ */
+export const TEST_FAKES_DO_NAME = '__test-fakes__'
+/** Storage key inside the singleton test-fakes DO holding `op: 'var'` overrides so they survive DO eviction. */
+export const TEST_FAKES_VARS_KEY = 'test-fakes:vars'
+const TEST_THROW_STATUS = 598
+const TEST_THROW_HEADER = 'X-Inhouse-Test-Throw'
+
+/**
+ * globalThis.fetch, except in the test build, where PR0's seam answers from recorded upstreams. Routed through the one
+ * singleton test-fakes DO so every SignIn DO and Worker isolate shares the exact same fake servers, switches, seeds and logs.
+ */
 export async function upstreamFor(env: HubEnv): Promise<Upstream> {
   if (__INHOUSE_HUB_TEST__ && env.INHOUSE_TEST_BUILD === '1') {
-    const { testUpstreamFetch } = await import('../testing/index')
-    return testUpstreamFetch
+    const stub = env.SIGNIN.get(env.SIGNIN.idFromName(TEST_FAKES_DO_NAME))
+    return async req => {
+      const res = await stub.fetch(req)
+      if (res.status === TEST_THROW_STATUS && res.headers.get(TEST_THROW_HEADER) === '1') {
+        throw new TypeError(await res.text())
+      }
+      return res
+    }
   }
   return req => fetch(req)
 }
 
-/** Env only, synchronous. Shopify: H0's three settings. An oauth_mcp connector: its own `configure(env)` (P5 W1). */
-export const isConfigured = (env: HubEnv, connector: HubConnector): boolean =>
-  isMcpConnector(connector) ? connector.configure(envRecord(env)) !== null : connector.id === 'shopify' && parseShopifyConfig(env) !== null
-
-function envRecord(env: HubEnv): Readonly<Record<string, unknown>> {
-  // The hub's TEST bundle only: the test-fakes hook's var overrides (hub/testing/fakes.ts, op `var`), kept in this
-  // isolate and cleared by its reset. The deployable bundle drops the branch (the define is "false").
+/** Flushes this isolate's queued hub test log lines to the singleton test-fakes DO (test build only). */
+export async function flushTestLogs(env: HubEnv): Promise<void> {
   if (__INHOUSE_HUB_TEST__ && env.INHOUSE_TEST_BUILD === '1') {
-    const vars = (globalThis as { __inhouseHubTestVars?: Record<string, string> }).__inhouseHubTestVars
-    if (vars && Object.keys(vars).length > 0) return { ...(env as unknown as Record<string, unknown>), ...vars }
+    const lines = drainPendingTestLogs()
+    if (lines.length > 0) {
+      await env.SIGNIN.get(env.SIGNIN.idFromName(TEST_FAKES_DO_NAME)).testAppendLogs(lines).catch(() => {})
+    }
+  }
+}
+
+/** Env with any test-build `op: 'var'` overrides read from the singleton test-fakes DO. */
+export async function envRecord(env: HubEnv): Promise<Readonly<Record<string, unknown>>> {
+  // The hub's TEST bundle only: the test-fakes hook's var overrides (hub/testing/fakes.ts, op `var`), held in the
+  // singleton test-fakes DO's SQLite KV and cleared by its reset. The deployable bundle drops the branch (the define is "false").
+  if (__INHOUSE_HUB_TEST__ && env.INHOUSE_TEST_BUILD === '1') {
+    const vars = await env.SIGNIN.get(env.SIGNIN.idFromName(TEST_FAKES_DO_NAME)).testGetVars()
+    if (Object.keys(vars).length > 0) return { ...(env as unknown as Record<string, unknown>), ...vars }
   }
   return env as unknown as Readonly<Record<string, unknown>>
 }
+
+/** Env only, synchronous over a pre-loaded env record. Shopify: H0's three settings. An oauth_mcp connector: its own `configure(env)` (P5 W1). */
+export const isConfiguredFrom = (env: HubEnv, record: Readonly<Record<string, unknown>>, connector: HubConnector): boolean =>
+  isMcpConnector(connector) ? connector.configure(record) !== null : connector.id === 'shopify' && parseShopifyConfig(env) !== null
 
 /** The OAuth provider for an account: its module and this deployment's client settings. Null when unconfigured. */
 export async function providerFor(env: HubEnv, accountId: string): Promise<McpProvider | null> {
   const connector = mcpConnectorFor(await loadRegistry(env), accountId)
   if (!connector) return null
-  const clientConfig = connector.configure(envRecord(env))
+  const clientConfig = connector.configure(await envRecord(env))
   return clientConfig ? { kind: 'oauth_mcp', connector, clientConfig } : null
 }
 
@@ -88,10 +118,10 @@ export const signInFor = (env: Env, accountId: string) => env.SIGNIN.get(env.SIG
  * orchestrator's wiring line: `listReadyTools(await readyGatewayDeps(this.env))`, `callReadyTool(...)`.
  */
 export async function readyGatewayDeps(env: Env, testShop: string | null = null): Promise<ReadyGatewayDeps> {
-  const registry = await loadRegistry(env)
+  const [registry, record] = await Promise.all([loadRegistry(env), envRecord(env)])
   return {
     registry,
-    isConfigured: c => isConfigured(env, c),
+    isConfigured: c => isConfiguredFrom(env, record, c),
     // `testShop` (P4): a test build's override handle (index.ts shopFor), read by its own SignIn object (signInName).
     // Every Shopify read (the read tools and code mode's shop.graphql) comes through here, so none reaches SHOPIFY_SHOP.
     shopifyFor: (c: HubConnector): ShopifyReadClient => ({
@@ -176,6 +206,10 @@ export class SignIn extends DurableObject<Env> {
     } catch {
       log('hub_internal', { code: 'internal' })
       return err('internal')
+    } finally {
+      if (__INHOUSE_HUB_TEST__ && (this.env as HubEnv).INHOUSE_TEST_BUILD === '1') {
+        if (!this.ctx.id.equals(this.env.SIGNIN.idFromName(TEST_FAKES_DO_NAME))) await flushTestLogs(this.env)
+      }
     }
   }
 
@@ -259,7 +293,68 @@ export class SignIn extends DurableObject<Env> {
     return this.#guard(() => this.#core.slackPost(accountId, req))
   }
   override async alarm(): Promise<void> {
-    await this.#core.alarm()
+    try {
+      await this.#core.alarm()
+    } finally {
+      if (__INHOUSE_HUB_TEST__ && (this.env as HubEnv).INHOUSE_TEST_BUILD === '1') {
+        if (!this.ctx.id.equals(this.env.SIGNIN.idFromName(TEST_FAKES_DO_NAME))) await flushTestLogs(this.env)
+      }
+    }
+  }
+  /**
+   * TEST BUILD ONLY (singleton `__test-fakes__` DO): serves recorded upstream HTTP requests so every SignIn DO and
+   * Worker isolate hits the same fake servers. Any other build or DO id answers 404.
+   */
+  override async fetch(request: Request): Promise<Response> {
+    if (__INHOUSE_HUB_TEST__ && (this.env as HubEnv).INHOUSE_TEST_BUILD === '1') {
+      if (!this.ctx.id.equals(this.env.SIGNIN.idFromName(TEST_FAKES_DO_NAME))) return new Response('not found', { status: 404 })
+      const { testUpstreamFetch } = await import('../testing/index')
+      try {
+        return await testUpstreamFetch(request)
+      } catch (e) {
+        // Tunnel an intentional network throw (FakeSlackWeb.throwNextPost, FakeMcpServer refreshModes:'unreachable')
+        // back to upstreamFor without letting an unhandled DO exception reset the DO's in-memory fake state.
+        const msg = e instanceof Error ? e.message : String(e)
+        return new Response(msg, { status: TEST_THROW_STATUS, headers: { [TEST_THROW_HEADER]: '1' } })
+      }
+    }
+    return new Response('not found', { status: 404 })
+  }
+  /**
+   * TEST BUILD ONLY (singleton `__test-fakes__` DO): runs a leaf test-fakes op (`state`, `reset`, `set`, `var`, `logs`,
+   * `seed`) in the same DO isolate that serves upstream fetches. Refused outside the test build or on any account DO.
+   */
+  async testFakesOp(op: unknown): Promise<HubResult<unknown>> {
+    if (__INHOUSE_HUB_TEST__ && (this.env as HubEnv).INHOUSE_TEST_BUILD === '1') {
+      if (!this.ctx.id.equals(this.env.SIGNIN.idFromName(TEST_FAKES_DO_NAME))) return err('not_configured', 'testFakesOp')
+      const { runHubFakesInDo } = await import('../testing/fakes')
+      return runHubFakesInDo(this.ctx.storage.kv, op)
+    }
+    return err('not_configured', 'testFakesOp')
+  }
+  /** TEST BUILD ONLY (singleton `__test-fakes__` DO): reads `op: 'var'` overrides persisted in this DO's SQLite KV. */
+  async testGetVars(): Promise<Record<string, string>> {
+    if (__INHOUSE_HUB_TEST__ && (this.env as HubEnv).INHOUSE_TEST_BUILD === '1') {
+      if (!this.ctx.id.equals(this.env.SIGNIN.idFromName(TEST_FAKES_DO_NAME))) return {}
+      return this.ctx.storage.kv.get<Record<string, string>>(TEST_FAKES_VARS_KEY) ?? {}
+    }
+    return {}
+  }
+  /** TEST BUILD ONLY (singleton `__test-fakes__` DO): appends a ConnectGateway answer JSON string for `state.connect.bodies`. */
+  async testRecordConnectBody(body: string): Promise<void> {
+    if (__INHOUSE_HUB_TEST__ && (this.env as HubEnv).INHOUSE_TEST_BUILD === '1') {
+      if (!this.ctx.id.equals(this.env.SIGNIN.idFromName(TEST_FAKES_DO_NAME))) return
+      const { recordConnectBody } = await import('../testing/fakes')
+      recordConnectBody(body)
+    }
+  }
+  /** TEST BUILD ONLY (singleton `__test-fakes__` DO): appends flushed hub log lines from any gateway or SignIn DO isolate. */
+  async testAppendLogs(lines: string[]): Promise<void> {
+    if (__INHOUSE_HUB_TEST__ && (this.env as HubEnv).INHOUSE_TEST_BUILD === '1') {
+      if (!this.ctx.id.equals(this.env.SIGNIN.idFromName(TEST_FAKES_DO_NAME))) return
+      const { appendHubLogs } = await import('../testing/fakes')
+      appendHubLogs(lines)
+    }
   }
   /**
    * TEST BUILD ONLY (W5's test-fakes hook, op `alarm`): runs this account's alarm body once now. Anywhere else (the

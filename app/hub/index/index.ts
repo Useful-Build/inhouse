@@ -15,7 +15,7 @@ import { err } from './errors'
 import { log } from './log'
 import { AccountIdSchema, CallerScopeSchema, ToolNameSchema } from './schemas'
 import { callReadyTool, listReadyTools, toolNameForLog } from '../registry/registry'
-import { loadRegistry, readyGatewayDeps } from '../signin/signin'
+import { flushTestLogs, loadRegistry, readyGatewayDeps } from '../signin/signin'
 import { codeModeFor } from '../codemode/run'
 import { decideTestShop } from './test-shop'
 
@@ -55,18 +55,20 @@ async function shopFor(env: HubEnv, options: unknown): Promise<HubResult<{ shop:
   return decideTestShop(options, false, () => false)
 }
 
-async function guarded<T>(fn: () => Promise<HubResult<T>>): Promise<HubResult<T>> {
+async function guarded<T>(env: Env, fn: () => Promise<HubResult<T>>): Promise<HubResult<T>> {
   try {
     return await fn()
   } catch {
     log('hub_internal', { code: 'internal' })
     return err('internal')
+  } finally {
+    await flushTestLogs(env)
   }
 }
 
 export class ReadGateway extends WorkerEntrypoint<Env> implements ReadApi {
   async listTools(scope: CallerScope): Promise<HubResult<ToolInfo[]>> {
-    return guarded(async () => {
+    return guarded(this.env, async () => {
       if (!CallerScopeSchema.safeParse(scope).success) return err('invalid_args', 'scope')
       return { ok: true, value: await listReadyTools(await readyGatewayDeps(this.env)) }
     })
@@ -76,7 +78,7 @@ export class ReadGateway extends WorkerEntrypoint<Env> implements ReadApi {
     const started = Date.now()
     const parsedScope = CallerScopeSchema.safeParse(scope)
     const parsedName = ToolNameSchema.safeParse(name)
-    const result = await guarded(async () => {
+    const result = await guarded(this.env, async () => {
       if (!parsedScope.success) return err('invalid_args', 'scope')
       if (!parsedName.success) return err('invalid_args', 'name')
       const shop = await shopFor(this.env, options)
@@ -93,13 +95,14 @@ export class ReadGateway extends WorkerEntrypoint<Env> implements ReadApi {
       code: result.ok ? 'ok' : result.error.code,
       ms: Date.now() - started,
     })
+    await flushTestLogs(this.env)
     return result
   }
 }
 
 export class ServerGateway extends WorkerEntrypoint<Env> implements ServerApi {
   async status(scope: CallerScope, accountId: string): Promise<HubResult<AccountStatus>> {
-    return guarded(async () => {
+    return guarded(this.env, async () => {
       if (!CallerScopeSchema.safeParse(scope).success) return err('invalid_args', 'scope')
       if (!AccountIdSchema.safeParse(accountId).success) return err('invalid_args', 'accountId')
       return (await signInFor(this.env, accountId).status(accountId)) as HubResult<AccountStatus>
@@ -107,7 +110,7 @@ export class ServerGateway extends WorkerEntrypoint<Env> implements ServerApi {
   }
 
   async reencrypt(scope: CallerScope, accountId: string): Promise<HubResult<{ kid: string; changed: boolean }>> {
-    return guarded(async () => {
+    return guarded(this.env, async () => {
       if (!CallerScopeSchema.safeParse(scope).success) return err('invalid_args', 'scope')
       if (!AccountIdSchema.safeParse(accountId).success) return err('invalid_args', 'accountId')
       return (await signInFor(this.env, accountId).reencrypt(accountId)) as HubResult<{ kid: string; changed: boolean }>

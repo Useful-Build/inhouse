@@ -8,8 +8,7 @@
 // (`scenario:connectors-supplier`, `-codemode`, `-notice`, `-notice-unlisted`; test/scripted-model/scenarios.ts), so every answer
 // is fixed and each test proves the PATH: the run's own record shows the named tool calls (the owner's trace: each tool step's detail
 // is the tool's name) and, for alerts, the audit lines; and the answer the person reads is on screen. The fakes' own logs are NOT read
-// here: on the sandbox the hook can't see them (the hub's SignIn Durable Object makes the upstream calls in its own isolate). So "no link
-// preview" and "only the app link" in a Slack post (four parameters, `unfurl_links` and `unfurl_media` false) are proved by
+// here: "no link preview" and "only the app link" in a Slack post (four parameters, `unfurl_links` and `unfurl_media` false) are proved by
 // e2e/api/notify-slack.spec.ts, not by this recording; S4 proves that the right alert reached Slack, the bell or nothing, and said so.
 // The hook (`POST /api/ops/test-fakes`, release token) is used for what the product itself decides: the hub's tool list, the prompt.
 //
@@ -165,7 +164,7 @@ async function pickFast(page: Page) {
 /** A person starts a chat from Today with a question, on the Fast model; returns the new chat's id. */
 async function askFromToday(page: Page, text: string): Promise<string> {
   await goTo(page, '#/today')
-  await expect(page.getByRole('textbox', { name: 'Ask your Inhouse agent' })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Ask Inhouse' })).toBeVisible()
   await page.locator('[data-composer] textarea').fill(text)
   await pickFast(page)
   await page.getByRole('button', { name: 'Send', exact: true }).click()

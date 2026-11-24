@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { CallerScope, ConnectGateway, HubResult } from '../index/contract'
 import { notesMcp, shopifyIssuedTokens, slackMcp, slackWeb, testUpstreamFetch, testUpstreams } from './index'
 import { HUB_FAKES_CANARY, MCP_SWITCHES, WEB_SWITCHES } from './fakes'
+import { TEST_FAKES_DO_NAME, upstreamFor } from '../signin/signin'
 import { FakeMcpServer, mintTestCode, SLACK_MESSAGES } from '../../test/upstreams/mcp/server'
 import { TEST_CLIENT_ID, TEST_CLIENT_SECRET } from '../../test/upstreams/shopify/server'
 import { dataset as fixture } from '../../test/upstreams/shopify/recordings/fixture/dataset'
@@ -166,7 +167,7 @@ describe('reset (failure 4)', () => {
       shopify: { requests: [] },
       connect: { bodies: [] },
     })
-    expect((globalThis as { __inhouseHubTestVars?: unknown }).__inhouseHubTestVars).toBeUndefined()
+    expect(await env.SIGNIN.get(env.SIGNIN.idFromName(TEST_FAKES_DO_NAME)).testGetVars()).toEqual({})
   })
 
   it('reset clears the stale flag staleSessions set on every live session (Sonnet 9)', async () => {
@@ -273,5 +274,31 @@ describe('seed and the rest of state (failure 8)', () => {
     const status = await env.SIGNIN.get(env.SIGNIN.idFromName(NOTES_ACCOUNT)).status(NOTES_ACCOUNT)
     expect(status.ok && notes!.scopes).toEqual(status.ok ? status.value.scopes : null)
     expect(s.accounts.every(a => a.accountId !== 'slack:workspace')).toBe(true)
+  })
+})
+
+describe('singleton test-fakes DO isolation', () => {
+  it('an account SignIn DO refuses test-fakes DO methods and fetch', async () => {
+    const accountDo = env.SIGNIN.get(env.SIGNIN.idFromName('slack:workspace'))
+    expect((await accountDo.fetch(new Request('https://mcp.slack.com/.well-known/oauth-protected-resource'))).status).toBe(404)
+    expect(await accountDo.testFakesOp({ op: 'state' })).toMatchObject({ ok: false, error: { code: 'not_configured' } })
+    expect(await accountDo.testGetVars()).toEqual({})
+  })
+
+  it('a fake upstream throw tunnels back as TypeError without crashing the singleton DO', async () => {
+    const started = await gw.ConnectGateway.startConnect(server, { accountId: 'slack:workspace', memberId: 'mem_test_0001' })
+    if (!started.ok) throw new Error(started.error.code)
+    const { code, state } = await mintTestCode(started.value.authorizeUrl)
+    expect(await gw.ConnectGateway.completeConnect(server, { state, code, memberId: 'mem_test_0001' })).toEqual({ ok: true, value: { accountId: 'slack:workspace' } })
+    await value({ op: 'set', web: { throwNextPost: true } })
+    const upstream = await upstreamFor(env)
+    await expect(upstream(new Request('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Bearer ${slackMcp.liveTokens()[0]}` },
+      body: new URLSearchParams({ channel: 'C0TEST0001', text: 'hi', unfurl_links: 'false', unfurl_media: 'false' }).toString(),
+    }))).rejects.toThrow(TypeError)
+    // The singleton DO kept its state intact (not reset by an unhandled DO exception).
+    expect((await value<{ web: { posts: unknown[] } }>({ op: 'state' })).web.posts).toHaveLength(1)
+    await gw.ConnectGateway.disconnect(server, 'slack:workspace')
   })
 })
