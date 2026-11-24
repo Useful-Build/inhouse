@@ -776,7 +776,9 @@ export const SCENARIOS: Record<string, Scenario> = {
  * `memoryRecall` does it, so the scenario never reports something the result didn't say.
  */
 function scriptedBranchesOnResult(call: { id: string; name: string; input: Record<string, unknown> }, needle: string, hit: string, miss: string): Scenario {
-  const loop = mainLoop()
+  // Always-loaded `inhouse` tools must be present by name on turn 0 (same as `memory-save` and `memory-recall*`),
+  // so a missing `inhouse` MCP connection misses loudly at turn 0 instead of emitting an uncallable tool_use.
+  const loop = mainLoop(ALWAYS_LOAD_INHOUSE_TOOLS.has(call.name) ? call.name : undefined)
   const said = (yes: boolean) => (r: MessagesRequest) => {
     const block = resultBlock(r, call.id)
     return block !== undefined && resultText(block).includes(needle) === yes

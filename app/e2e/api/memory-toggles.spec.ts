@@ -4,16 +4,17 @@
 //  - `m:ask` (the brand's setting) on or unset: every brand save by a person's agent waits for an admin. Off: it is active at
 //    once. A routine's brand save always waits, an admin's restore (route 45's undo) always waits, and turning `m:ask` off
 //    approves nothing that already waits.
-// The facts are made by the agent's own tool through scripted scenarios (app/test/scripted-model/scenarios.ts), so the
-// checks read the pages (routes 43 and 77), never the scenario's fixed answer text. The turns need containers (the per-PR
-// deployment, or the local multi-config build for the routine and the restore, which also read the local D1).
+// The facts are made by the agent's own tool through scripted scenarios (app/test/scripted-model/scenarios.ts). Each turn
+// checks its scripted answer (so a scripted model miss or MCP error fails loud with the error text, and a refused save
+// proves `learning_off` rather than passing on an error) and then reads the pages (routes 43 and 77). The turns need
+// containers (the per-PR deployment, or the local multi-config build for the routine and the restore, which also read the local D1).
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 import { actor, call, putSetting, me } from './kit.ts'
 import type { Actor } from './kit.ts'
 import { readSql, writeSql } from './db.ts'
 import { answerOf, createChat, needsContainer, send, textOf } from './chat-kit.ts'
-import { MEMORY_REWORD_CHANGED_ANSWER, MEMORY_REWORD_LEARNING_OFF_ANSWER, MEMORY_REWORD_PERSON_ID, MEMORY_REWORD_PERSON_TEXT, MEMORY_REWORD_TEAM_ID, MEMORY_REWORD_TEAM_TEXT } from '../../test/scripted-model/scenarios.ts'
+import { LEARNING_OFF_ANSWER, LEARNING_SAVED_ANSWER, MEMORY_REWORD_CHANGED_ANSWER, MEMORY_REWORD_LEARNING_OFF_ANSWER, MEMORY_REWORD_PERSON_ID, MEMORY_REWORD_PERSON_TEXT, MEMORY_REWORD_TEAM_ID, MEMORY_REWORD_TEAM_TEXT } from '../../test/scripted-model/scenarios.ts'
 import { memberIdOf, needsLocalD1, needsWatchBuild, retireRoutines, seedRoutine } from './watch-kit.ts'
 import { randomBytes } from 'node:crypto'
 
@@ -81,16 +82,16 @@ test('`m:learn` off: the agent\'s person save is refused and the Memory page sta
   await reset(request)
   try {
     await put(request, dana, 'personal', 'm:learn', false)
-    await turn(request, 'memory-save')
+    expect(await turn(request, 'memory-save-learning'), 'the tool refused with learning_off').toBe(LEARNING_OFF_ANSWER)
     expect(await personalTexts(request), 'a refused save leaves nothing on the page').not.toContain(PERSON_FACT)
 
     await put(request, dana, 'personal', 'm:learn', true)
-    await turn(request, 'memory-save')
+    expect(await turn(request, 'memory-save-learning'), 'on again, the tool saved').toBe(LEARNING_SAVED_ANSWER)
     expect((await personalTexts(request)).filter(t => t === PERSON_FACT), 'on again, it saves once').toHaveLength(1)
     await clean(request)
 
     await put(request, dana, 'personal', 'm:learn', null)
-    await turn(request, 'memory-save')
+    expect(await turn(request, 'memory-save-learning'), 'unset means on, the tool saved').toBe(LEARNING_SAVED_ANSWER)
     expect((await personalTexts(request)).filter(t => t === PERSON_FACT), 'unset means on').toHaveLength(1)
   } finally {
     await reset(request)
@@ -103,7 +104,7 @@ test('`m:learn` off leaves team facts alone: they follow `m:ask`, so the agent\'
   await reset(request)
   try {
     await put(request, dana, 'personal', 'm:learn', false)
-    await turn(request, 'memory-save-team')
+    expect(await turn(request, 'memory-save-team')).toBe('Saved for the team.')
     expect(await waitingLines(request, TEAM_FACT)).toHaveLength(1)
     expect(await teamLines(request, TEAM_FACT)).toHaveLength(0)
   } finally {
@@ -117,7 +118,7 @@ test('`m:ask` on or unset: a person\'s agent\'s team save waits; turning it off 
   await reset(request)
   try {
     // Unset (the default) is on.
-    await turn(request, 'memory-save-team')
+    expect(await turn(request, 'memory-save-team')).toBe('Saved for the team.')
     const [waited] = await waitingLines(request, TEAM_FACT)
     expect(waited, 'unset: the team fact waits').toBeTruthy()
     expect(waited!.rev).toBe(1)
@@ -130,7 +131,7 @@ test('`m:ask` on or unset: a person\'s agent\'s team save waits; turning it off 
     await clean(request)
 
     // Off: active at once, on the page for a Member, not waiting.
-    await turn(request, 'memory-save-team')
+    expect(await turn(request, 'memory-save-team')).toBe('Saved for the team.')
     expect(await waitingLines(request, TEAM_FACT)).toHaveLength(0)
     const page = await call(request, dana, 'GET', '/api/memory')
     expect((page.json.team as { lines: { text: string }[] }[]).flatMap(g => g.lines).filter(l => l.text === TEAM_FACT)).toHaveLength(1)
@@ -138,7 +139,7 @@ test('`m:ask` on or unset: a person\'s agent\'s team save waits; turning it off 
 
     // On explicitly: waits again.
     await put(request, admin, 'brand', 'm:ask', true)
-    await turn(request, 'memory-save-team')
+    expect(await turn(request, 'memory-save-team')).toBe('Saved for the team.')
     expect(await waitingLines(request, TEAM_FACT)).toHaveLength(1)
     expect(await teamLines(request, TEAM_FACT)).toHaveLength(0)
   } finally {
@@ -224,7 +225,7 @@ test('`m:ask` off: a person\'s agent\'s team reword is active at once; a routine
   try {
     await put(request, admin, 'brand', 'm:ask', false)
     seedFact(MEMORY_REWORD_TEAM_ID, 'brand', null, old, danaId)
-    await turn(request, 'memory-save-reword-team')
+    expect(await turn(request, 'memory-save-reword-team')).toBe('Reworded.')
     expect(factRow(MEMORY_REWORD_TEAM_ID), 'a person\'s agent\'s reword is active with the switch off').toEqual({ status: 'active', rev: 2, text: MEMORY_REWORD_TEAM_TEXT })
 
     seedFact(MEMORY_REWORD_TEAM_ID, 'brand', null, old, danaId)
