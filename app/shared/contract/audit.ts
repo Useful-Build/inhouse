@@ -41,6 +41,8 @@ export const AuditActionSchema = z.enum([
   // P6a brand skills (master plan standing decision 6): a person's agent saves a brand skill (new or changed), and its
   // maker or an admin deletes it.
   'brand_skill.created', 'brand_skill.changed', 'brand_skill.deleted',
+  // P8a D (route 95): an Admin, or the Inhouse team under a live grant, downloaded the brand's whole export.
+  'data.exported',
 ])
 export type AuditAction = z.infer<typeof AuditActionSchema>
 
@@ -62,6 +64,8 @@ const RoutePatternSchema = z.enum([
   '/api/skills/:name',
   // Master plan decision 8 (route 86): a routine's recent runs.
   '/api/routines/:id/runs',
+  // P8a D (route 95): Export everything.
+  '/api/data-access/export',
 ])
 /**
  * The `brand_data` PUT routes the Inhouse team may use under a live grant (item 19, p3-design section 10): forgetting
@@ -231,6 +235,9 @@ const otherLines = [
   line('brand_skill.created', { skillId: BrandSkillIdSchema }),
   line('brand_skill.changed', { skillId: BrandSkillIdSchema }),
   line('brand_skill.deleted', { skillId: BrandSkillIdSchema }),
+  // P8a D (route 95). Counts only: how many stores and how many rows and files the export planned. Never a store's
+  // name, a row, a file name or anything a row holds.
+  line('data.exported', { scope: z.literal('brand'), stores: z.number().int().min(0).max(1000), items: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) }),
 ] as const
 
 /**

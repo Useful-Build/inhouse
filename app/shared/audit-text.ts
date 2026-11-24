@@ -47,6 +47,8 @@ const ROUTE: Record<string, string> = {
   '/api/memory/brand/:id/approved': 'Team memory',
   // P6a brand skills (route 84).
   '/api/skills/:name': 'A skill',
+  // P8a D (route 95).
+  '/api/data-access/export': 'Export everything',
 }
 
 /** P4: what a routine edit changed, in a fixed order whatever order the line lists them. */
@@ -133,5 +135,6 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'brand_skill.created': return { what: 'made a skill in a chat', detail: '' }
     case 'brand_skill.changed': return { what: 'changed a skill in a chat', detail: '' }
     case 'brand_skill.deleted': return { what: 'deleted a skill', detail: '' }
+    case 'data.exported': return { what: 'downloaded all brand data', detail: `${String(args.items).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} ${args.items === 1 ? 'item' : 'items'}` }
   }
 }

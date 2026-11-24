@@ -25,10 +25,12 @@ import type { DueTask, TaskContext, TaskHandler, TaskResult } from '../do/brand-
 import { withSeed } from '../do/brand-agent/scheduler.ts'
 import { safeError } from '../safe-error.ts'
 import { nextDaily } from './backup-handlers.ts'
+import { RETENTION_AT } from '../../shared/contract/data-access.ts'
 
 export const RETENTION_TASK_ID = 'retention'
 export const RETENTION_MORE_ID = 'retention-more'
-export const RETENTION_AT = { hour: 3, minute: 30 } as const
+// The cleanup's time lives in the shared contract, so Data and access shows the same next cleanup the scheduler sets.
+export { RETENTION_AT } from '../../shared/contract/data-access.ts'
 export const MORE_AFTER_MS = 60_000
 export const MAX_D1 = 200
 export const MAX_R2 = 100

@@ -58,6 +58,7 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   'brand_skill.created': { action: 'brand_skill.created', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
   'brand_skill.changed': { action: 'brand_skill.changed', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
   'brand_skill.deleted': { action: 'brand_skill.deleted', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
+  'data.exported': { action: 'data.exported', scope: 'brand', stores: 24, items: 1234 },
 }
 const word = fc.stringMatching(/^[A-Z][a-z]{1,11}$/)
 const name = fc.oneof(word, fc.tuple(word, word).map(([a, b]) => `${a} ${b}`))
@@ -308,7 +309,7 @@ describe('support.access write pairs (P4 review fold)', () => {
     // P6a PR0: approving or rejecting a waiting team fact (route 78).
     ['PUT', '/api/memory/brand/:id/approved'],
   ] as const
-  const READS = ['/api/members', '/api/memory', '/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download', '/api/memory/waiting', '/api/routines/:id/runs']
+  const READS = ['/api/members', '/api/memory', '/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download', '/api/memory/waiting', '/api/routines/:id/runs', '/api/data-access/export']
 
   it('takes each write pair, and its route with no other method', () => {
     for (const [method, route] of WRITES) {

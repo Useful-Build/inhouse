@@ -1,6 +1,7 @@
 // Settings > Inhouse agent, Data and access and Audit log (desktop: on a phone these team pages are read-only, see
 // settings-pages-phone.spec.ts). Each control does what it says; the picks the app keeps survive a reload and Reset demo
 // clears them. The audit log's download is checked in sample-data.spec.ts.
+import { readFileSync } from 'node:fs'
 import { expect, test, type Fx } from './support/fx.js'
 import type { Page } from '@playwright/test'
 
@@ -62,7 +63,7 @@ test('Inhouse agent: tone and sign-off are saved, survive a reload and Reset dem
   await expect(signs).toHaveValue('The Northline team')
 })
 
-test('Data and access: retention and access switches are saved, survive a reload and Reset demo clears them; Export and delete answer', async ({ fx, page }) => {
+test('Data and access: retention and access switches are saved, survive a reload and Reset demo clears them; Next cleanup shows; Export downloads a sample and delete answers', async ({ fx, page }) => {
   await start(page, fx, 'Act', '#/settings/team-data')
   await expect(h1(page, 'Data and access')).toBeVisible()
   await expect(combo(page, 'Chats: 12 months')).toBeVisible()
@@ -95,9 +96,17 @@ test('Data and access: retention and access switches are saved, survive a reload
   await expect(sw(page, 'Inhouse team access')).not.toBeChecked()
   await expect(sw(page, 'Two-step sign-in')).not.toBeChecked()
 
-  // Export says it isn't wired up, and changes nothing.
-  await main(page).getByRole('button', { name: 'Export', exact: true }).click()
-  await expect(toast(page, "Export isn't connected in this demo.")).toBeVisible()
+  // Next cleanup says when the nightly cleanup runs next (03:30 UTC, in the brand's time).
+  await expect(main(page).getByText('Next cleanup', { exact: true })).toBeVisible()
+  await expect(main(page).getByText(/^(Today|[A-Z][a-z]{2}, .+) at \d{1,2}:\d{2}\s?[AP]M$/)).toBeVisible()
+
+  // Export downloads the demo's invented sample, in the product export's shape, and changes nothing.
+  const [file] = await Promise.all([page.waitForEvent('download'), main(page).getByRole('button', { name: 'Export', exact: true }).click()])
+  expect(file.suggestedFilename()).toMatch(/^inhouse-export-\d{4}-\d{2}-\d{2}\.ndjson$/)
+  const sample = readFileSync(await file.path(), 'utf8').trimEnd().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
+  expect(sample[0]).toMatchObject({ format: 1, kind: 'brand', sample: true })
+  expect(sample.at(-1)).toMatchObject({ end: true })
+  await expect(toast(page, 'Sample export downloaded. The demo uses invented data.')).toBeVisible()
   await expect(h1(page, 'Data and access')).toBeVisible()
   await expect(team(page)).toHaveCount(0)
 

@@ -182,6 +182,8 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'POST', pattern: '/api/webhooks/shopify/customers-redact', class: 'webhook', allow: [] },
   { method: 'POST', pattern: '/api/webhooks/shopify/shop-redact', class: 'webhook', allow: [] },
   { method: 'POST', pattern: '/api/ops/privacy-requests/:id/close', class: 'open', allow: [], services: ['release'] },
+  // P8a D: Export everything (row 95): brand data, Admins and the Inhouse team under a live grant.
+  { method: 'GET', pattern: '/api/data-access/export', class: 'brand_data', allow: ['admin', 'inhouse'] },
 ]
 
 /** `CanRows` as section 3 maps them. */
@@ -197,6 +199,7 @@ export const DESIGN_CAN_ROWS: CanRows = {
   viewAudit: { method: 'GET', pattern: '/api/audit' },
   exportAudit: { method: 'GET', pattern: '/api/audit/export.csv' },
   approveMemory: { method: 'PUT', pattern: '/api/memory/brand/:id/approved' },
+  exportData: { method: 'GET', pattern: '/api/data-access/export' },
 }
 
 const unwired = () => Promise.reject(new Error('stores not wired'))

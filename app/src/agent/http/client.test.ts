@@ -118,6 +118,7 @@ describe('reads', () => {
     expect(Object.values(agent.read().resources).every(r => r.status === 'ready')).toBe(true)
     expect(agent.read()).toBe(agent.read())
     expect(agent.auditExportUrl()).toBe('/api/audit/export.csv')
+    expect(agent.dataExportUrl()).toBe('/api/data-access/export')
     expect(agent.signOutUrl()).toBe('/cdn-cgi/access/logout')
   })
 

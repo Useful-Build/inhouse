@@ -190,16 +190,16 @@ describe('checkAccess cases', () => {
   })
   it('can: an Admin may switch a model but not edit technical; Inhouse has every Admin control but granting, and the audit log only under a grant', () => {
     const admin = canFor(principals.admin(), DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
-    expect(admin).toMatchObject({ switchModel: true, editTechnical: false, invite: true, grantSupport: true, approveMemory: true })
+    expect(admin).toMatchObject({ switchModel: true, editTechnical: false, invite: true, grantSupport: true, approveMemory: true, exportData: true })
     const member = canFor(principals.member(), DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
     expect(Object.values(member).filter(Boolean)).toHaveLength(3) // viewMembers, viewAudit, exportAudit
     const inhouse = canFor(principals.inhouse(), DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
     expect(inhouse).toEqual({
       invite: true, changeRole: false, remove: true, editBrandSettings: true, editTechnical: true, switchModel: true, grantSupport: false,
-      viewMembers: true, viewAudit: false, exportAudit: false, approveMemory: false,
+      viewMembers: true, viewAudit: false, exportAudit: false, approveMemory: false, exportData: false,
     })
     const granted = canFor(principals.inhouse({ id: 'g', endsAtMs: NOW + 1 }), DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
-    expect(granted).toMatchObject({ grantSupport: false, viewAudit: true, exportAudit: true, approveMemory: true })
+    expect(granted).toMatchObject({ grantSupport: false, viewAudit: true, exportAudit: true, approveMemory: true, exportData: true })
   })
 })
 
@@ -314,6 +314,8 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'POST /api/webhooks/shopify/shop-redact': ['no', 'no', 'no', 'no', 'no', 'no', 'no'],
   // Row 94 (P8a F2): the runbook closes a privacy request, release only.
   'POST /api/ops/privacy-requests/:id/close': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
+  // Row 95 (P8a D): Export everything. Admins; the Inhouse team only under a live grant (audited); members and tokens never.
+  'GET /api/data-access/export': ['no', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },

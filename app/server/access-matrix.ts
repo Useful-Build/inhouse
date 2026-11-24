@@ -114,6 +114,9 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 93 */ { method: 'POST', pattern: '/api/webhooks/shopify/shop-redact', class: 'webhook', allow: [] },
   // P8a F2: the runbook closes a privacy request, release only like revive.
   /* 94 */ { method: 'POST', pattern: '/api/ops/privacy-requests/:id/close', class: 'open', allow: [], services: ['release'] },
+  // P8a D: Data and access's "Export everything", the brand's whole export (ops/export, brand scope) as one download.
+  // Brand data: Admins, and the Inhouse team only under a live grant (support.access). Members never.
+  /* 95 */ { method: 'GET', pattern: '/api/data-access/export', class: 'brand_data', allow: ['admin', 'inhouse'] },
 ]
 
 /** Each `CanKey`'s row (section 3). */
@@ -129,4 +132,5 @@ export const canRows: CanRows = {
   viewAudit: { method: 'GET', pattern: '/api/audit' },
   exportAudit: { method: 'GET', pattern: '/api/audit/export.csv' },
   approveMemory: { method: 'PUT', pattern: '/api/memory/brand/:id/approved' },
+  exportData: { method: 'GET', pattern: '/api/data-access/export' },
 }

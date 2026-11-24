@@ -23,7 +23,7 @@ import { WATCH_READ_PATH, WATCH_SERVED, changeRoutineElsewhere, settleRuns, WATC
 const LIBRARY_FILES = 2
 
 const SERVED: ReadonlySet<keyof AgentClient> = new Set<keyof AgentClient>([
-  'me', 'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant', 'loadMore', 'retry', 'auditExportUrl', 'signOutUrl',
+  'me', 'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant', 'loadMore', 'retry', 'auditExportUrl', 'dataExportUrl', 'signOutUrl',
   'setSetting', 'setToggle', 'setPhoto',
   // P4 W5 (p4-w5.md addendum, #256 review): the Library.
   // (`deleteFiles` and `restoreFiles` are in WATCH_EXEMPT: the real client's writes don't fill the state the shared cases observe.)

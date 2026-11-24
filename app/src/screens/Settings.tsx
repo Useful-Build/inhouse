@@ -315,6 +315,8 @@ export function Settings() {
     loadingMore,
     loadMore: list => { more(list) },
     exportFromServer: agent.auditExportUrl() ? () => { window.location.assign(agent.auditExportUrl()!) } : null,
+    // Route 95 streams its own download (Content-Disposition), so the page stays where it is while the file arrives.
+    exportDataFromServer: agent.dataExportUrl() ? () => { window.location.assign(agent.dataExportUrl()!) } : null,
     waiting: approves ? { state: waitingState, decide: waitingStore.decide, retry: () => { void waitingStore.read() } } : undefined,
   }
   const page = settingsPage(setTab, env)

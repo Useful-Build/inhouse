@@ -13,7 +13,7 @@ export type Role = z.infer<typeof RoleSchema>
  * The closed list of actions the UI asks about, each tied to one access-matrix row (p2-design section 3):
  * `invite` (row 4), `changeRole` (5), `remove` (6), `editBrandSettings` (10), `editTechnical` (12, for Inhouse),
  * `switchModel` (12 via its `adminWrite` flag: an Admin turns a model off or back on), `grantSupport` (17), `viewMembers` (3), `viewAudit` (19),
- * `exportAudit` (20), `approveMemory` (78, P6a).
+ * `exportAudit` (20), `approveMemory` (78, P6a), `exportData` (95, P8a: Export everything).
  */
 export const CanKeySchema = z.enum(CAN_KEYS)
 export type CanKey = z.infer<typeof CanKeySchema>

@@ -41,6 +41,8 @@ import { deleteLibraryFiles, downloadLibraryFile, listLibrary, restoreLibraryFil
 import { customersDataRequest, customersRedact, shopRedact } from './webhooks/shopify-privacy/handler.ts'
 import type { WebhookHandler } from './webhooks/shopify-privacy/handler.ts'
 import { closePrivacyRequest } from './webhooks/shopify-privacy/close.ts'
+// P8a D: Data and access's Export everything (row 95).
+import { exportEverything } from './api/data-access.ts'
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
@@ -203,6 +205,8 @@ export const routes: readonly Route[] = [
   /* 86 */ { method: 'GET', pattern: '/api/routines/:id/runs', handler: listRoutineRuns },
   // P8a F2: the runbook closes a Shopify privacy request once the Inhouse team has acted on it (release only).
   /* 94 */ { method: 'POST', pattern: '/api/ops/privacy-requests/:id/close', handler: closePrivacyRequest },
+  // P8a D: Data and access's Export everything, the brand's whole export as one streamed download.
+  /* 95 */ { method: 'GET', pattern: '/api/data-access/export', handler: exportEverything },
 ]
 
 /** A webhook route: served by server/index.ts before sign-in, its handler authenticating the request itself. */

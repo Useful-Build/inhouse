@@ -164,6 +164,9 @@ export const CASES: Record<string, RouteCase> = {
   'POST /api/webhooks/shopify/shop-redact': { design: d('webhook', []), path: '/api/webhooks/shopify/shop-redact', json: {}, passes: 401 },
   // Row 94 (P8a F2): the runbook's close, release only. A well-formed id nobody has: 404, nothing written.
   'POST /api/ops/privacy-requests/:id/close': { design: d('open', [], ['release']), path: `/api/ops/privacy-requests/pr_${'0'.repeat(22)}/close`, json: {}, passes: 404 },
+  // Row 95 (P8a D): Export everything. A caller the matrix lets in gets the whole export as a 200 download (it changes
+  // nothing; its audit line holds counts only).
+  'GET /api/data-access/export': { design: d('brand_data', ['admin', 'inhouse']), path: '/api/data-access/export', passes: 200 },
 }
 
 /** The case for a row, or an error naming it (routes.spec.ts reports the gap on its own; this is for the specs that use it). */

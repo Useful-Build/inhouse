@@ -50,6 +50,7 @@ const sample: Record<AuditArgs['action'], AuditArgs> = {
   'brand_skill.created': { action: 'brand_skill.created', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
   'brand_skill.changed': { action: 'brand_skill.changed', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
   'brand_skill.deleted': { action: 'brand_skill.deleted', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
+  'data.exported': { action: 'data.exported', scope: 'brand', stores: 24, items: 1234 },
 }
 const names = (id: string) => ({ m_a: 'Ada Example' } as Record<string, string>)[id] ?? null
 
@@ -202,6 +203,11 @@ describe('P6a lines (PR0): literal texts, no id and no em dash', () => {
     expect(auditText(sample['brand_skill.changed'], names)).toEqual({ what: 'changed a skill in a chat', detail: '' })
     expect(auditText(sample['brand_skill.deleted'], names)).toEqual({ what: 'deleted a skill', detail: '' })
     expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'GET', route: '/api/skills/:name' }, names)).toEqual({ what: 'looked at brand data', detail: 'A skill' })
+  })
+  it('says an export happened and how big it was, and names route 95 in support.access (P8a D)', () => {
+    expect(auditText(sample['data.exported'], names)).toEqual({ what: 'downloaded all brand data', detail: '1,234 items' })
+    expect(auditText({ action: 'data.exported', scope: 'brand', stores: 24, items: 1 }, names)).toEqual({ what: 'downloaded all brand data', detail: '1 item' })
+    expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'GET', route: '/api/data-access/export' }, names)).toEqual({ what: 'looked at brand data', detail: 'Export everything' })
   })
   it('never shows an id, a revision or an em dash', () => {
     for (const action of ['memory.approved', 'memory.rejected', 'team_request.created', 'team_request.status', 'brand_skill.created', 'brand_skill.changed', 'brand_skill.deleted'] as const) {

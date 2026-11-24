@@ -35,6 +35,7 @@ import { postTurn, postTurnAction, readActiveRuns, readTrace } from './runs'
 import { ChatSocket } from './stream/socket'
 import type { SocketLike, SocketParts } from './stream/socket'
 import { readUsage, readUsageMonths } from './usage'
+import { dataExportUrl as dataExportPath } from './data-access'
 import { MESSAGE, Transport } from './transport'
 import type { Contract, TransportOptions } from './transport'
 
@@ -1181,6 +1182,8 @@ export class HttpAgent implements AgentClient {
 
   /** Where the audit log downloads from. A relative path: the browser sends it to its own origin, with its sign-in. */
   auditExportUrl = (): string | null => '/api/audit/export.csv'
+  /** Where Export everything downloads from (route 95, data-access.ts). */
+  dataExportUrl = (): string | null => dataExportPath()
   signOutUrl = (): string | null => '/cdn-cgi/access/logout'
   uploadsFiles = (): boolean => true
   /** Route 39, after the chat's own save (`createChat`) has answered: the route is a 404 for a chat the server doesn't have yet. */

@@ -11,6 +11,8 @@ import { display, nowOf } from '../../state/display'
 import { AUDIT_CSV_HEADER, csvCell } from '../../../shared/csv'
 import { grantStatus } from './grant-status'
 import { HOSTLIST_MAX_HOSTS, MAX_TURNS, parseHostlist } from '../../../shared/contract/settings-table'
+import { dataExportFileName, nextCleanupMs } from '../../../shared/contract/data-access'
+import { demoExport } from './demo-export'
 
 export type RowKind = 'select' | 'text' | 'value' | 'button' | 'toggle' | 'mode' | 'photo' | 'grant'
 export interface Row {
@@ -148,6 +150,8 @@ export interface Env {
   loadMore: (list: 'audit' | 'members') => void
   /** Downloads the audit log from where the client says (`auditExportUrl()`), or null when the file is built here. */
   exportFromServer: (() => void) | null
+  /** Starts Export everything's download from the server (`dataExportUrl()`, route 95), or null when the demo builds its sample here. */
+  exportDataFromServer: (() => void) | null
   /**
    * P6a: the team facts waiting for an OK (waiting-list.ts) and what the page does with them: approve (`true`) or reject one,
    * and read the list again after a failed read. Unset for someone who can't approve.
@@ -207,6 +211,20 @@ export function settingsPage(tab: string, env: Env): Page {
   /** The audit log's two groups: changes made today, and earlier ones. */
   const auditDay = (e: AuditLine) => fmtAuditDay(e.at, now, d0)
   const pausedRow = agent.paused ? [withAvatar(R(`${me.name} paused your Inhouse agent`, `Chats, routines and jobs stopped · ${fmtTime(agent.paused, d0)}`, 'value'), me.id)] : []
+  // Data and access (P8a D). The retention periods are the Inhouse team's to set; anyone else reads them as text, so say who.
+  const setByTeam = env.me && !env.me.can.editTechnical ? ' The Inhouse team sets this.' : ''
+  const cleanupAt = nextCleanupMs(now)
+  const cleanupDay = fmtDayWord(cleanupAt, now, d0)
+  const nextCleanup = `${cleanupDay.charAt(0).toUpperCase()}${cleanupDay.slice(1)} at ${fmtTime(cleanupAt, d0)}`
+  const exportEverything = () => {
+    if (env.exportDataFromServer) {
+      env.exportDataFromServer()
+      env.toast('Your export is downloading. Big brands can take a few minutes.', 6000)
+      return
+    }
+    env.download(dataExportFileName(now), demoExport(people.members, agent.settings, now), 'application/x-ndjson')
+    env.toast('Sample export downloaded. The demo uses invented data.', 4000, 'info')
+  }
   const nextStage = S < 2
     ? [`Act adds ${listNames(['drafted work', 'memory', 'routines', ...(channel ? [channel] : [])])}.`, 'Run adds agreed jobs it finishes by itself, within your limits.'][S]
     : 'You have every stage. Money and customer actions still wait for a person.'
@@ -306,9 +324,9 @@ export function settingsPage(tab: string, env: Env): Page {
     ] },
     'team-data': { title: 'Data and access', sections: [
       { label: 'Where your data stays', rows: [R('Your tools', 'Orders, customers and money stay in your own tools. Your Inhouse agent reads what a job needs.', 'value', 'Stays in each tool'), R('Inhouse agent', 'Chats, memory, routines and logs are stored on your own Cloudflare account.', 'value', 'Your Cloudflare'), R('AI models', 'Questions go to Anthropic through your own account.', 'value', 'Your Anthropic')] },
-      { label: 'How long things are kept', rows: [sel('Chats', 'Older chats are deleted automatically.', 'd:chats', '12 months', RETENTION), sel('Activity and steps', 'Every step it took, kept for checking later.', 'd:steps', '12 months', RETENTION), R('Audit log', 'Changes to settings, rules and people. Cannot be shortened.', 'value', '12 months')] },
+      { label: 'How long things are kept', rows: [sel('Chats', `Older chats are deleted automatically.${setByTeam}`, 'd:chats', '12 months', RETENTION), sel('Activity and steps', `Every step it took, kept for checking later.${setByTeam}`, 'd:steps', '12 months', RETENTION), R('Next cleanup', 'Anything older than these periods is deleted then.', 'value', nextCleanup), R('Audit log', 'Changes to settings, rules and people. Cannot be shortened.', 'value', '12 months')] },
       { label: 'Who can get in', rows: [R('Your team', 'People sign in with their work email.', 'value', `${team.length} members`), ...(env.showGrant ? [supportRow] : []), R('Two-step sign-in', 'Everyone confirms with a code when they sign in.', 'toggle', '', 0, 'd:2fa', true)] },
-      { label: 'Take it with you', rows: [R('Export everything', 'Chats, memory, routines, skills and logs as one download.', 'button', 'Export', 0, undefined, undefined, () => env.toast("Export isn't connected in this demo.", 4000, 'info')), R('Delete Inhouse agent and its data', 'Removes chats, memory and logs from your Cloudflare account. Your tools are not touched.', 'button', 'Ask the team', 0, undefined, undefined, () => env.openTeam('change', `Please delete the Inhouse agent and its data for ${meta.brand.name}.`))] },
+      { label: 'Take it with you', rows: [{ ...R('Export everything', 'Chats, files, memory, routines, skills, settings and logs in one file. It downloads as it is gathered, which can take a few minutes.', 'button', 'Export', 0, undefined, undefined, exportEverything), can: 'exportData' as const }, R('Delete Inhouse agent and its data', 'Removes chats, memory and logs from your Cloudflare account. Your tools are not touched.', 'button', 'Ask the team', 0, undefined, undefined, () => env.openTeam('change', `Please delete the Inhouse agent and its data for ${meta.brand.name}.`))] },
     ] },
     'team-audit': { title: 'Audit log', sections: [
       { label: 'Today', rows: [...pausedRow, ...auditLog.filter(e => auditDay(e) === 'Today').map(auditRow)] },
