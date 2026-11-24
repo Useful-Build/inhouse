@@ -1,7 +1,7 @@
 # UI plan 3: settings, team window, review panel, Activity, Routines and Skills
 
 > History. This tracker is finished and kept as written. Paths in it are relative to `app/`. Wasim settled D2 to D5 on
-> 2026-11-23: see standing decisions 6 to 8 in `docs/plans/2026-11-22-master-plan.md` (D2 dropped, D3 and D5 in P6a,
+> 2026-11-23: see standing decisions 6 to 8 in `docs/history/2026-11-22-master-plan.md` (D2 dropped, D3 and D5 in P6a,
 > D4 a PR into `main`).
 
 Tracks the interface round Wasim asked for on 2026-11-23. Paths are relative to `app/`. Update this file in every PR of the plan: tick what landed, add the PR link, note anything moved or dropped and why.
@@ -28,7 +28,7 @@ Tracks the interface round Wasim asked for on 2026-11-23. Paths are relative to 
 
 - **[Live]** produced by the server on `main` today.
 - **[Branch]** built on an unmerged `fleet/*` branch (lands with that milestone).
-- **[Planned P6b / P7 / P8]** in the master plan (`docs/plans/2026-11-22-master-plan.md`), Part 2 unless noted.
+- **[Planned P6b / P7 / P8]** in the master plan (`docs/history/2026-11-22-master-plan.md`), Part 2 unless noted.
 - **[Mock]** only in `src/agent/sample-data/` today, with no backend and no plan. The design keeps a slot for it only if it's hidden cleanly when absent.
 - **[New]** a small backend addition this plan proposes (needs Wasim's OK before it's built).
 
