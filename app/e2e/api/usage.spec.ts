@@ -6,7 +6,7 @@
 //            cents: 700, 534.5678 -> 535, total 1234.5678 -> 1235
 //   2025-02: cap $10, spent 10,000,000: at the cap, so capReached and alertCrossed
 //   2025-03: cap $100, spent 8,000,000 = a question 5,000,000 (Dana, Sonnet) + a routine's run 3,000,000 (a chat `m_system`
-//            owns, Sonnet): the run is a job (Jobs run 1, one Job row "E2E usage routine"), not a question or a person's row
+//            owns, Sonnet): the run is a job (Conversations 2 = Questions 1 + Jobs run 1, one Job row "E2E usage routine"), not a question or a person's row
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 import { actor, allPages, call, expectError, me } from './kit.ts'
@@ -37,7 +37,7 @@ test.beforeAll(async ({ request }) => {
   // March: a question, and a routine's run. The routine is soft-deleted and its slot ended, so no other spec or the tick sees it.
   writeSql('INSERT INTO usage_months (month, cap_micro, spent_micro) VALUES (?, ?, ?)', '2025-03', 100_000_000, 8_000_000)
   writeSql("INSERT INTO routines (id, origin, kind, name, instruction, days_mask, hour, minute, missed, need, enabled, deleted_at_ms, creator_id, checked_until_ms, created_at_ms, updated_at_ms) VALUES (?, 'team', 'agent', 'E2E usage routine', 'Check the stock levels.', 127, 6, 0, 'skip', 0, 0, ?, ?, ?, ?, ?)", ROUTINE.id, at, d.memberId, at, at, at)
-  writeSql("INSERT INTO routine_slots (slot_key, routine_id, kind, local_date, local_time, tz, due_at_ms, deadline_ms, state, chat_id, client_key, prompt_text, submit_json, routine_rev, creator_id, claimed_at_ms) VALUES (?, ?, 'scheduled', '2025-03-10', '06:00', 'America/New_York', ?, ?, 'ended', ?, 'rs_e2eUsageRoutineKey001', 'x', '{}', 1, 'm_system', ?)", ROUTINE.slotKey, ROUTINE.id, at, at + 600_000, ROUTINE.chat, at)
+  writeSql("INSERT INTO routine_slots (slot_key, routine_id, kind, local_date, local_time, tz, due_at_ms, deadline_ms, state, chat_id, turn_id, client_key, prompt_text, submit_json, routine_rev, creator_id, claimed_at_ms) VALUES (?, ?, 'scheduled', '2025-03-10', '06:00', 'America/New_York', ?, ?, 'ended', ?, ?, 'rs_e2eUsageRoutineKey001', 'x', '{}', 1, 'm_system', ?)", ROUTINE.slotKey, ROUTINE.id, at, at + 600_000, ROUTINE.chat, TURNS[4]!, Date.now())
   turn(TURNS[3]!, CHATS[0]!, d.memberId, 'claude-sonnet-5-5', '2025-03', 5_000_000)
   turn(TURNS[4]!, ROUTINE.chat, 'm_system', 'claude-sonnet-5-5', '2025-03', 3_000_000)
 })
@@ -78,7 +78,9 @@ test('a finished month: money in cents rounded half up, counts from settled turn
 
 test("a routine's turn is a job run: not a question, not a person's row, and the split adds up", async ({ request }) => {
   const r = await usage(request, dana, '2025-03')
-  expect(r.json).toMatchObject({ monthKey: '2025-03', total: { minor: 800 }, conversations: 1, questionsAsked: 1, jobsRun: 1 })
+  expect(r.json).toMatchObject({ monthKey: '2025-03', total: { minor: 800 }, conversations: 2, questionsAsked: 1, jobsRun: 1 })
+  // A routine run's chat is a conversation too: conversations = questions + runs, so the page's cost per conversation is $8.00 / 2.
+  expect(r.json.conversations).toBe(r.json.questionsAsked + r.json.jobsRun)
   const dName = (await me(request, dana)).name
   const people = r.json.breakdown.person as { name: string; spent: { minor: number }; conversations: number }[]
   expect(people.map(p => [p.name, p.spent.minor, p.conversations])).toEqual([[dName, 500, 1]])

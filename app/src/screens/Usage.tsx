@@ -181,11 +181,11 @@ export function Usage() {
         <EmptyState className="mt-3">{ctx.data.status === 'loading' ? 'Still reading your tools. Costs show here once your Inhouse agent has worked.' : 'Nothing spent yet. Costs show here once your Inhouse agent starts working.'}</EmptyState>
       ) : phone ? (
         <div className="mt-3 border-t border-border">
-          {rows.map(r => {
+          {rows.map((r, i) => {
             const cost = majorOf(r.spent)
             const share = fmtShare(cost, total)
             return (
-              <div key={r.name} className="flex items-start gap-3 border-b border-border py-3 text-base tabular-nums" data-usage-row data-cost={cost.toFixed(2)} data-conv={r.conversations}>
+              <div key={`${r.name}:${i}`} className="flex items-start gap-3 border-b border-border py-3 text-base tabular-nums" data-usage-row data-cost={cost.toFixed(2)} data-conv={r.conversations}>
                 {tab === 'person' && <span className="inline-flex"><RowMark who={r.name} /></span>}
                 <div className="min-w-0 flex-1">
                   <div className="font-medium">{r.name}</div>
@@ -212,11 +212,11 @@ export function Usage() {
             <span className="w-40 text-right">Share</span>
             <span className="w-30 text-right">Conversations</span>
           </div>
-          {rows.map(r => {
+          {rows.map((r, i) => {
             const cost = majorOf(r.spent)
             const share = fmtShare(cost, total)
             return (
-              <div key={r.name} className="flex min-h-13.5 items-center border-b border-border text-base tabular-nums" data-usage-row data-cost={cost.toFixed(2)} data-conv={r.conversations}>
+              <div key={`${r.name}:${i}`} className="flex min-h-13.5 items-center border-b border-border text-base tabular-nums" data-usage-row data-cost={cost.toFixed(2)} data-conv={r.conversations}>
                 {tab === 'person' && <span className="mr-3 inline-flex"><RowMark who={r.name} /></span>}
                 <span className="min-w-0 flex-1">
                   <span className="block font-medium">{r.name}</span>

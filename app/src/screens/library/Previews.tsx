@@ -41,7 +41,7 @@ export function DocPage({ doc }: { doc: DocPreview }) {
   return (
     <div aria-hidden="true" className="@container relative aspect-[3/4] w-full overflow-hidden bg-[#fff] text-[#171717]">
       <div className="px-[7.5cqw] py-[7cqw] text-[3cqw] leading-[1.4]">
-        <div className={label}>{brand} · {doc.tag}</div>
+        <div className={label}>{[brand, doc.tag].filter(Boolean).join(' · ')}</div>
         <div className="mt-[3.2cqw] mb-[4cqw] text-[6.2cqw] leading-[1.12] font-strong tracking-[-0.03em]">{doc.title}</div>
         <div className="grid grid-cols-[auto_1fr] gap-x-[3cqw] gap-y-[.8cqw] text-[#3d3d3d]">
           {doc.meta.map(([k, v]) => <span key={k} className="contents"><span className="text-[#6b6b6b]">{k}</span><span>{v}</span></span>)}

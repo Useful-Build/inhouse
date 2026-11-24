@@ -4,7 +4,10 @@
 //  3. `capReached` / `alertCrossed` taken from stored marks instead of the cap as it is now (a raised cap must clear);
 //  4. a bad, future or extra query parameter reaching the store;
 //  5. a routine's turns (chats `m_system` owns) counted as questions or a person's row, left out of Jobs run and the Job
-//     breakdown, or the split not adding up (spend by person + spend by job = total, spend by model = total).
+//     breakdown, or the split not adding up (spend by person + spend by job = total, spend by model = total);
+//  6. a routine run counted per turn (a run that parks on a question and resumes adds a second turn in the same chat), or
+//     routine chats left out of `conversations` (the page's cost per conversation is total / conversations, and the total
+//     holds the routines' spend).
 import { env } from 'cloudflare:workers'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { UsageDataSchema } from '../../shared/contract/usage.ts'
@@ -110,33 +113,41 @@ describe('route 42', () => {
   })
 
   it('a routine\'s turns are jobs: Jobs run and the Job rows by routine, never questions or a person (failure 5)', async () => {
-    // August: no other test reads it. Ada asks one question ($1.00, Sonnet); two routines run: Morning check twice ($0.40,
-    // $0.10, Sonnet) and Stock sweep once ($0.30, Haiku), each run in its own chat that `m_system` owns.
+    // August: no other test reads it. Ada asks one question ($0.80, Sonnet); two routines run: Morning check twice ($0.60,
+    // $0.20, Sonnet) and Stock sweep once ($0.30, Haiku), each run in its own chat that `m_system` owns. The Stock sweep run
+    // parked on a question and resumed: a second turn ($0.10, Haiku) in the same chat, which is still one run.
     const aug = Date.UTC(2026, 7, 10, 12)
     const morning = await insertRoutine(routine({ name: 'Morning check', creator_id: 'm_u_ada', checked_until_ms: aug }))
     const sweep = await insertRoutine(routine({ name: 'Stock sweep', creator_id: 'm_u_ada', checked_until_ms: aug }))
-    await insertSlot({ routine_id: morning.id, local_date: '2026-08-10', claimed_at_ms: aug, chat_id: 'rc_aug_1' })
-    await insertSlot({ routine_id: morning.id, local_date: '2026-08-11', claimed_at_ms: aug, chat_id: 'rc_aug_2' })
-    await insertSlot({ routine_id: sweep.id, local_date: '2026-08-10', claimed_at_ms: aug, chat_id: 'rc_aug_3' })
+    // A slot names its chat's first turn (`turn_id`); the resume turn is in the chat only.
+    await insertSlot({ routine_id: morning.id, local_date: '2026-08-10', claimed_at_ms: aug, chat_id: 'rc_aug_1', turn_id: 't_a2' })
+    await insertSlot({ routine_id: morning.id, local_date: '2026-08-11', claimed_at_ms: aug, chat_id: 'rc_aug_2', turn_id: 't_a3' })
+    await insertSlot({ routine_id: sweep.id, local_date: '2026-08-10', claimed_at_ms: aug, chat_id: 'rc_aug_3', turn_id: 't_a4' })
     const settle = async (t: string, o: Parameters<typeof turnIn>[1], micro: number) => {
       await ledger.reserve(turnIn(t, o))
       await ledger.settle(t, micro, NOW)
     }
-    await settle('t_a1', { memberId: 'm_u_ada', chatId: 'c_aug_q', nowMs: aug }, 1_000_000)
-    await settle('t_a2', { memberId: 'm_system', chatId: 'rc_aug_1', nowMs: aug }, 400_000)
-    await settle('t_a3', { memberId: 'm_system', chatId: 'rc_aug_2', nowMs: aug }, 100_000)
+    await settle('t_a1', { memberId: 'm_u_ada', chatId: 'c_aug_q', nowMs: aug }, 800_000)
+    await settle('t_a2', { memberId: 'm_system', chatId: 'rc_aug_1', nowMs: aug }, 600_000)
+    await settle('t_a3', { memberId: 'm_system', chatId: 'rc_aug_2', nowMs: aug }, 200_000)
     await settle('t_a4', { memberId: 'm_system', chatId: 'rc_aug_3', nowMs: aug, model: 'claude-haiku-5-5' }, 300_000)
+    await settle('t_a5', { memberId: 'm_system', chatId: 'rc_aug_3', nowMs: aug, model: 'claude-haiku-5-5' }, 100_000)
     const u = await usage('?month=2026-08')
-    expect(u).toMatchObject({ total: usd(180), conversations: 1, questionsAsked: 1, jobsRun: 3 })
-    expect(u.breakdown.person).toEqual([{ name: 'Ada Example', sub: '1 question', spent: usd(100), conversations: 1 }])
+    // Three runs (not four turns); the routine chats are conversations too, so conversations = questions + runs here (one
+    // question per person chat) and the cost per conversation is $2.00 / 4 = $0.50.
+    expect(u).toMatchObject({ total: usd(200), conversations: 4, questionsAsked: 1, jobsRun: 3 })
+    expect(u.conversations).toBe(u.questionsAsked + u.jobsRun)
+    expect(u.total.minor / u.conversations).toBe(50)
+    expect(u.breakdown.person).toEqual([{ name: 'Ada Example', sub: '1 question', spent: usd(80), conversations: 1 }])
     expect(u.breakdown.job).toEqual([
-      { name: 'Morning check', sub: '2 runs', spent: usd(50), conversations: 2 },
-      { name: 'Stock sweep', sub: '1 run', spent: usd(30), conversations: 1 },
+      { name: 'Morning check', sub: '2 runs', spent: usd(80), conversations: 2 },
+      { name: 'Stock sweep', sub: '1 run', spent: usd(40), conversations: 1 },
     ])
-    // The model rows keep every turn's spend and count the person's question only.
+    expect(u.breakdown.job.map(r => r.conversations).reduce((a, b) => a + b, 0)).toBe(u.jobsRun)
+    // The model rows keep every turn's spend and count every chat they worked in.
     expect(u.breakdown.model).toEqual([
-      { name: 'Sonnet 5.5', sub: 'Fast', spent: usd(150), conversations: 1 },
-      { name: 'Haiku 5.5', sub: 'Instant', spent: usd(30), conversations: 0 },
+      { name: 'Sonnet 5.5', sub: 'Fast', spent: usd(160), conversations: 3 },
+      { name: 'Haiku 5.5', sub: 'Instant', spent: usd(40), conversations: 1 },
     ])
     const sum = (rows: { spent: { minor: number } }[]) => rows.reduce((n, r) => n + r.spent.minor, 0)
     expect(sum(u.breakdown.person) + sum(u.breakdown.job)).toBe(u.total.minor)

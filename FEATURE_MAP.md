@@ -258,8 +258,9 @@ Skills: a skill's page
 Usage
   Path:     account menu -> Usage (it isn't in the sidebar; the palette lists it)
   Selector: month picker, daily bars
-  Expected: totals agree in every breakdown; bars are one tab stop with arrow, Home and End; a cap below spend shows the capped state; product loading waits (`Loading usage.`) and failed reads show `LoadError` with Retry; `usageSummary` uses the real month length from `monthKey` and guards empty `daily` arrays and `$0` caps without `$NaN`. In the product a routine's turn (a turn in a chat the Inhouse system owns) counts as a job run: Jobs run counts it, the Job tab lists one row per routine with its spend and runs, and it is not a question and not a row on the Person tab, so Person and Job together add up to the month's spend and Model alone does too; the product has no Tool tab (the demo keeps it)
+  Expected: totals agree in every breakdown; bars are one tab stop with arrow, Home and End; a cap below spend shows the capped state; product loading waits (`Loading usage.`) and failed reads show `LoadError` with Retry; `usageSummary` uses the real month length from `monthKey` and guards empty `daily` arrays and `$0` caps without `$NaN`. In the product a routine's turn (a turn in a chat the Inhouse system owns) counts as a job run: Jobs run counts it (one run per chat, so a run that parks on a question and resumes is still one run, while its spend counts every turn), the Job tab lists one row per routine with its spend and runs, the routine's chat counts as a conversation (Conversations = Questions asked + Jobs run when each person's chat holds one question), and it is not a question and not a row on the Person tab, so Person and Job together add up to the month's spend and Model alone does too; the product has no Tool tab (the demo keeps it)
   Covered:  e2e/app.spec.ts, e2e/page-actions.spec.ts, e2e/edge-cases.spec.ts, e2e/api/usage.spec.ts, server/usage/api.test.ts, src/lib/product-flow.test.ts, src/state/usage-summary.test.ts
+  Gaps:     a past month can show "Other routines" in place of a routine's name: routine slots are deleted after the steps retention period while usage turns are kept, so the name can no longer be found; a run whose first turn is in an earlier month also shows there (follow-up filed)
 
 ## Settings
 
@@ -339,7 +340,7 @@ Settings: Inhouse agent
 Settings: Spending cap
   Path:     Settings -> Spending cap
   Selector: field "Monthly cap", dropdowns "Alert at" and "Show amounts in", button "Pause Inhouse agent"
-  Expected: Pause Inhouse agent (locked until Act, then as in Run limits) sits here in both builds, so the product can pause at Act and Run; a cap and alert level show on Usage; a wrong amount says why and isn't saved; a cap below spend shows the cap banner and the capped state; the currency pick saves; values survive a reload; on a phone it reads as text
+  Expected: Pause Inhouse agent (locked until Act, then as in Run limits) sits here in both builds, so the product can pause at Act and Run; only an Admin or the Inhouse team gets the button (a Member can't pause: the server refuses it); a cap and alert level show on Usage; a wrong amount says why and isn't saved; a cap below spend shows the cap banner and the capped state; the currency pick saves; values survive a reload; on a phone it reads as text
   Covered:  e2e/cross-screen.spec.ts, e2e/edge-cases.spec.ts, e2e/data-states.spec.ts, e2e/page-details.spec.ts, e2e/sample-data.spec.ts, e2e/pages-polish-phone.spec.ts, e2e/phone.spec.ts
 
 Settings: Data and access

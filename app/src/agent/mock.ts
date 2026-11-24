@@ -791,8 +791,11 @@ export class MockAgent implements AgentClient {
     const revs = this.server.revs
     const bodies = this.skillBodies
     const { skillsDeleted, skillsChanged } = this.server
+    // The brand's name is its `b:name` setting as in the product (trimmed; unset or blank keeps the sample's name).
+    const brandName = this.state.settings['b:name']?.trim() || base.meta.brand.name
     return {
       ...base,
+      ...(brandName === base.meta.brand.name ? {} : { meta: { ...base.meta, brand: { ...base.meta.brand, name: brandName } } }),
       // The sample's own skills (`mine`) as the demo's people left them: deleted ones gone, changed ones dated. Who may
       // change one: its maker or an admin, so the demo's admin may change them all.
       skills: base.skills.filter(s => !(s.mine && skillsDeleted[s.n])).map(s => {

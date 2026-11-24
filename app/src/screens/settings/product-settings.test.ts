@@ -7,14 +7,20 @@
 //  3. the limits section keeps its "Approvals and limits" name in the product with only the Spending cap left in it;
 //  4. Pause Inhouse agent is missing from the page that keeps the Spending cap (nothing else in the product can pause at
 //     Act or Run), or still sits on Run limits;
-//  5. the Brand name row is missing, writes under another key, or the delete request reads "for ." with no name.
+//  5. the Brand name row is missing, writes under another key, or the delete request reads "for ." with no name, or the demo's
+//     sidebar ignores a saved Brand name (the product reads it from `b:name`, the demo must too);
+//  6. a product deep link to a page the product leaves out renders that page for a frame before the redirect;
+//  7. a Member sees an enabled Pause button the server refuses (POST /api/pause and /api/resume: Admin and Inhouse team only).
 import { describe, expect, it, vi } from 'vitest'
+import type { Can } from '../../agent/types'
 
 vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} })
 const { agent } = await import('../../agent')
 const { settingsPage } = await import('./content')
 const { SECTIONS, SETTINGS_PAGES, menuFor, pageShown, settingsTabs } = await import('./menu')
 const { settingRow } = await import('../../../shared/contract/settings-table')
+const { allowance } = await import('./allowance')
+const { CAN_KEYS } = await import('../../../shared/contract/keys')
 type Env = Parameters<typeof settingsPage>[1]
 
 const noop = () => {}
@@ -48,7 +54,9 @@ describe('rows only the demo shows (failure 1)', () => {
   it('the product keeps the rest of each page, and the chat-app switch goes with the alerts', () => {
     expect(titles('you-general', env(true))).toEqual(expect.arrayContaining(['Photo', 'Name', 'Email', 'Role', 'Theme', 'Time zone']))
     expect(titles('team-data', env(true))).toEqual(expect.arrayContaining(['Inhouse team access', 'Your team', 'Export everything']))
-    expect(rows('you-notif', env(true))).toEqual([])
+    // The Notifications page is not in the product: a link to it renders the default page, never its rows.
+    expect(titles('you-notif', env(true))).toEqual(titles('you-general', env(true)))
+    expect(rows('you-notif', env(true)).some(r => r.key === 'n:slack')).toBe(false)
     expect(rows('you-notif', env(false)).some(r => r.key === 'n:slack')).toBe(true)
   })
 })
@@ -103,7 +111,36 @@ describe('Pause Inhouse agent (failure 4)', () => {
   })
 })
 
+describe('a page the product leaves out (failure 6)', () => {
+  it('a hidden page renders the default page in the product, and itself in the demo', () => {
+    for (const id of ['team-approvals', 'team-limits', 'you-notif']) {
+      expect(settingsPage(id, env(true)).title, id).toBe(settingsPage('you-general', env(true)).title)
+      expect(settingsPage(id, env(false)).title, id).not.toBe(settingsPage('you-general', env(false)).title)
+    }
+  })
+})
+
+describe('Pause row permissions (failure 7)', () => {
+  const canOf = (on: string[]) => Object.fromEntries(CAN_KEYS.map(k => [k, on.includes(k)])) as Can
+  it('shows for the roles the server lets pause (Admin, Inhouse team) and not for a Member; the demo allows it', () => {
+    const pause = rows('team-spend', env(true)).find(r => r.title === 'Pause Inhouse agent')!
+    // `invite` is the can key with the same allow list as pause and resume (access-matrix rows 4, 36, 37).
+    expect(pause.can).toBe('invite')
+    expect(allowance(pause, canOf(['invite']), true, 'admin').control).toBe(true)
+    expect(allowance(pause, canOf(['invite']), true, 'inhouse').control).toBe(true)
+    expect(allowance(pause, canOf([]), true, 'member').control).toBe(false)
+    expect(allowance(pause, undefined, false).control).toBe(true)
+  })
+})
+
 describe('Brand name (failure 5)', () => {
+  it('the demo shows a saved Brand name in the sidebar data (trimmed), and the sample name when none or blank', async () => {
+    const sample = agent.read().meta.brand.name
+    await agent.setSetting('b:name', '  Trailhead Supply  ')
+    expect(agent.read().meta.brand.name).toBe('Trailhead Supply')
+    await agent.setSetting('b:name', null)
+    expect(agent.read().meta.brand.name).toBe(sample)
+  })
   it('is an Admin-editable brand setting on the Inhouse agent page, in both builds', () => {
     for (const product of [true, false]) {
       const row = rows('team-agent', env(product)).find(r => r.title === 'Brand name')!

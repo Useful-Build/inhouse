@@ -419,7 +419,7 @@ function Shell() {
   // The tab's title names the page ("Usage · Inhouse"), a tool or a settings page by its own name.
   // Settings pages read "<Page> · Settings · Inhouse". A layout effect runs before RouteFocus's effect, so the title is
   // already the new page's when its h1 takes focus.
-  const label = page === 'app' ? toolName(tools, appKey) ?? 'Tools' : page === 'skill' ? skill?.n ?? 'Skills' : page === 'settings' ? (phone && setMenu ? 'Settings' : `${settingsLabel(setTab)} · Settings`) : PAGE_LABEL[page]
+  const label = page === 'app' ? toolName(tools, appKey) ?? 'Tools' : page === 'skill' ? skill?.n ?? 'Skills' : page === 'settings' ? (phone && setMenu ? 'Settings' : `${settingsLabel(SETTINGS_TABS.includes(setTab) ? setTab : SETTINGS_DEFAULT)} · Settings`) : PAGE_LABEL[page]
   useLayoutEffect(() => { document.title = `${label} · Inhouse` }, [label])
   const focusKey = PAGE_SLUG[page] + (page === 'app' ? (toolKnown ? `/${appKey}` : '') : page === 'skill' ? (skill ? `/${skillKey}` : '') : page === 'settings' && phone && setMenu ? '/menu' : '')
 

@@ -17,10 +17,14 @@ test('the first read in flight shows the neutral loading screen, then the app', 
   const held = new Promise<void>(r => { release = r })
   await page.route('**/api/me', async route => { await held; await route.continue() })
   await open(page, 'admin', '#/settings/team-plan')
-  await expect(loadingScreen(page)).toBeVisible()
-  await expect(loadingHeading(page)).toBeAttached()
-  await expect(page.getByRole('heading', { name: 'Stage and plan', exact: true })).toHaveCount(0)
-  release()
+  // A failed assertion must not leave /api/me held for the rest of the run: release in a finally.
+  try {
+    await expect(loadingScreen(page)).toBeVisible()
+    await expect(loadingHeading(page)).toBeAttached()
+    await expect(page.getByRole('heading', { name: 'Stage and plan', exact: true })).toHaveCount(0)
+  } finally {
+    release()
+  }
   await expect(page.getByRole('heading', { level: 1, name: 'Stage and plan', exact: true })).toBeVisible()
   await expect(loadingScreen(page)).toHaveCount(0)
   await expect(loadingHeading(page)).toHaveCount(0)
