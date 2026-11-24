@@ -11,7 +11,8 @@ Ground rules for every section:
   command line, a log, an issue or this repo.
 - The ops jobs (`app/ops/backup`, `app/ops/delete`, `app/ops/retention`) are library entry points. The private ops repo
   holds the workflows and scripts that call them, with each brand's names and ids. Steps below name the entry point; the
-  ops repo's script name is a placeholder until it's rehearsed (see each Rehearsal record).
+  ops repo's script name is a placeholder until it's rehearsed (see each Rehearsal record). The restore has one: the
+  ops repo's hand-dispatched `house-restore-drill.yml` runs steps 2 to 5 on the house (see Restore).
 - Never rehearse on the house deployment from an unapproved head, and never with real brand data.
 - Write down who approved what, and when, before you act. The audit log records the action, not the reason.
 
@@ -94,6 +95,13 @@ Roles: the **operator** is an Inhouse team member running the steps. The **Admin
 3. Get the Admin's approval **in writing** (the brand's chat with the Inhouse team, or email). Save the message. The
    confirm in step 4 names the Admin as `approvedBy`, so the approval must exist before it runs.
 4. Pick the backup id and write down why.
+
+**On the house: the drill.** After step 1, dispatch the ops repo's `house-restore-drill.yml` from `main`
+(`backup_id`, `operator_id`, `approved_by`). It runs steps 2 to 5 with app main's code into a new D1
+`inhouse-house-restore-r<run>-<attempt>`, reads the live database only, writes R2 only under `restore/<restoreId>/`,
+rewinds no Durable Object and stops after `checkBeforeSwitch`; its summary says what the switch would do. It refuses to
+start while an earlier `inhouse-house-restore-*` copy exists: delete that copy by hand first (it holds brand data that
+later deletions don't reach). The switch is a separate, separately approved change.
 
 ### 2. Snapshot, write and prove (`app/ops/backup/restore.ts`)
 Run the restore against a freshly migrated target database. Pass each Durable Object's recovery time from point-in-time

@@ -51,6 +51,7 @@ P4, P5, P6a and P8a are all in `main` (P8a `149fe323`). What's left of Part 1 ru
 
 ### Stage 1: Build (the product itself)
 The agent, our own agent tools (the Inhouse MCP server and the hub), the backend, the app and the delivery tooling. Done when nothing is left to build for Watch.
+**Status (2026-11-24): built.** Items 2 and 5 are in `main` (#392); items 3 and 4 are in `inhouse-ops` (#41: `house-restore-drill.yml`, and `house-health.yml` every 6 hours into a private issue); item 6 needed no change (#380 had already dropped the Slack skip). Item 1 is #391, reviewed and open: it merges with stage 3's eval run, which commits its results.
 1. **Prompt fix:** the agent never repeats links that came from files or tool results (standing decision 9). Proven by the stage 3 evals, which every prompt change runs.
 2. **Candidate deploy lock:** `CANDIDATE_HUB_VARS` (`app/scripts/check-product-config.mjs`) learns P5's hub vars, so the fresh-account install can deploy.
 3. **Restore-drill workflow** in `inhouse-ops`: runs the runbook's restore (snapshot, write, reconcile, confirm, `checkBeforeSwitch`) with the house token in CI, never from a laptop; the switch stays a separate, approved step. Sensitive (High tier).
@@ -83,7 +84,7 @@ GitHub Actions billing in `Useful-Build/inhouse-ops` blocked ops workflows; the 
   - `ops#32` (eval pages + `read-side` suite args from #340).
   - Eval `HUB_CONNECT` binding (`ReadGateway` + `ConnectGateway`, never `HUB_DELIVERY`) before P5 eval deploys.
   - `HOUSE_SLACK_*` vars for P5 house release.
-  - Private monitor alerts on `/api/health` amber/red signals (`privacy_requests`, C1 freshness, `egress_record_failed`).
+  - Private monitor alerts on `/api/health` amber/red signals (`privacy_requests`, C1 freshness, `egress_record_failed`). Done: ops #41 (`house-health.yml`).
 
 ### 2. Finish P4 tail and release P4 to house (starts Watch soak)
 - Merge **#313**, **#323**, and **#351** into `main`.
