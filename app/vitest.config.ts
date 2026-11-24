@@ -52,6 +52,14 @@ export default defineConfig({
   test: {
     // The slowest property takes about 7 s at 1000 cases (the whole file about 41 s), so 25 s fails a hang fast and leaves room.
     testTimeout: 25_000,
+    // When CONTRACT_REAL_ORIGIN is set (e2e/support/test-build/serve.ts, CI's test-build contract step), the live
+    // contract files (`agent.contract.test.ts`, `targets/real/watch.live.test.ts`) share one `wrangler dev` instance
+    // and one local D1 SQLite file, and write directly to that file via `node:sqlite` (`seedWaitingMemory`,
+    // `seedUnreadNotice`). Miniflare's local D1 runs inside a workerd Durable Object (`D1DatabaseObject`) with no
+    // `busy_timeout` for an external OS process holding `BEGIN IMMEDIATE`, so parallel test files fail with
+    // `D1_ERROR: database is locked: SQLITE_BUSY` and race on shared routines/files/notices. Serialise test files
+    // whenever CONTRACT_REAL_ORIGIN is set; normal `npm run test:unit` runs stay parallel.
+    fileParallelism: !process.env.CONTRACT_REAL_ORIGIN,
     projects: [
       {
         extends: true,

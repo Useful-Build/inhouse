@@ -31,7 +31,7 @@ describe.skipIf(!origin)('the real client\'s P4 methods', () => {
   const loaded = async (fetchOver?: typeof fetch) => { const a = agentFor(fetchOver); await a.whenLoaded(); return a }
   /** The routine as the server has it (the client's `read()` drops a deleted one): its rev, whether it is deleted, and its switch. */
   const server = async () => {
-    // A restore or a switch pokes the routine tick, which writes D1 from the BrandAgent a moment later: let it finish before the next write, or local D1 answers SQLITE_BUSY (watch.ts settleTick).
+    // A restore or a switch pokes the routine tick, which moves the routine cursor in the background: let it finish before the next read/write (watch.ts settleTick).
     await settleTick()
     const r = await s.api('admin', 'GET', WATCH_READ_PATH.routines!)
     const list = r.json as { routines: { id: string; rev: number }[]; deleted: { id: string; rev: number }[]; enabled: Record<string, boolean> }
