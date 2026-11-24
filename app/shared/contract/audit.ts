@@ -64,8 +64,8 @@ const RoutePatternSchema = z.enum([
   '/api/skills/:name',
   // Master plan decision 8 (route 86): a routine's recent runs.
   '/api/routines/:id/runs',
-  // P8a D (route 95): Export everything.
-  '/api/data-access/export',
+  // P8a D (route 95): Export everything; (route 96) its check.
+  '/api/data-access/export', '/api/data-access/export/check',
 ])
 /**
  * The `brand_data` PUT routes the Inhouse team may use under a live grant (item 19, p3-design section 10): forgetting

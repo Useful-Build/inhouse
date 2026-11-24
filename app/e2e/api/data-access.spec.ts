@@ -60,6 +60,7 @@ test('Export everything: a Member, a service token and the Inhouse team without 
 
 test('Export everything: an Admin downloads one file holding every P2 to P6a store, with a counts-only line', async ({ request }) => {
   const adminId = (await me(request, admin)).memberId
+  const alexId = (await me(request, alex)).memberId
   const mark = auditMax()
   const r = await call(request, admin, 'GET', '/api/data-access/export')
   expect(r.status, r.text.slice(0, 200)).toBe(200)
@@ -68,14 +69,18 @@ test('Export everything: an Admin downloads one file holding every P2 to P6a sto
   expect(r.headers['cache-control']).toContain('no-store')
   const out = lines(r.text)
   const header = out[0]
-  expect(header).toMatchObject({ format: 1, kind: 'brand' })
+  expect(header).toMatchObject({ format: 1, kind: 'brandForCaller', memberId: adminId })
   const named = (header.stores as { name: string; export: boolean }[])
   for (const store of P2_TO_P6A) expect(named.find(s => s.name === store), store).toMatchObject({ export: true })
   const end = out.at(-1)!
   expect(end.end).toBe(true)
   for (const store of P2_TO_P6A) expect(end.counts[store], store).toBe(out.filter(l => l.store === store).length)
-  // The seeded team is in it.
+  // The seeded team is in it, as the Members page shows them: no sign-in subject, no Inhouse team row, and no other
+  // member's chat (P8a D review, option 1).
   expect(out.some(l => l.store === 'members' && l.row.id === adminId)).toBe(true)
+  expect(out.filter(l => l.store === 'members').every(l => !('subject' in l.row))).toBe(true)
+  expect(out.filter(l => l.store === 'members').some(l => l.row.id === alexId)).toBe(false)
+  expect(out.filter(l => l.store === 'chats').every(l => l.row.owner_id === adminId)).toBe(true)
 
   const logged = auditAfter(mark)
   expect(logged.map(l => [l.action, l.actor_id])).toEqual([['data.exported', adminId]])
@@ -96,4 +101,15 @@ test('Export everything: the Inhouse team under a live grant gets it, its suppor
   const logged = auditAfter(mark)
   expect(logged.map(l => [l.action, l.actor_id])).toEqual([['support.access', alexId], ['data.exported', alexId]])
   expect(JSON.parse(logged[0].args_json)).toMatchObject({ method: 'GET', route: '/api/data-access/export' })
+})
+
+test('Export everything\'s check (route 96): its size for an Admin, nothing written; refused like route 95', async ({ request }) => {
+  const mark = auditMax()
+  const r = await call(request, admin, 'GET', '/api/data-access/export/check')
+  expect(r.status, r.text).toBe(200)
+  const size = JSON.parse(r.text) as { stores: number; items: number }
+  expect(size.stores).toBeGreaterThanOrEqual(P2_TO_P6A.length)
+  expect(size.items).toBeGreaterThan(0)
+  expect(auditAfter(mark)).toEqual([])
+  expectError(await call(request, dana, 'GET', '/api/data-access/export/check'), 403, 'forbidden')
 })

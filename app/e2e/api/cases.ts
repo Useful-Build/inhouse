@@ -167,6 +167,8 @@ export const CASES: Record<string, RouteCase> = {
   // Row 95 (P8a D): Export everything. A caller the matrix lets in gets the whole export as a 200 download (it changes
   // nothing; its audit line holds counts only).
   'GET /api/data-access/export': { design: d('brand_data', ['admin', 'inhouse']), path: '/api/data-access/export', passes: 200 },
+  // Row 96 (P8a D): Export everything's check. It plans only: a 200 with the size, nothing written.
+  'GET /api/data-access/export/check': { design: d('brand_data', ['admin', 'inhouse']), path: '/api/data-access/export/check', passes: 200 },
 }
 
 /** The case for a row, or an error naming it (routes.spec.ts reports the gap on its own; this is for the specs that use it). */

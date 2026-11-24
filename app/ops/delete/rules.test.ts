@@ -7,7 +7,9 @@
 //  4. a rule its store's class doesn't allow (the audit log or its copy anything but kept);
 //  5. a custom rule no runner serves (or the BrandAgent part with no personData) is planned anyway, so a deletion would
 //     run half way: one store's rows gone, another's left;
-//  6. a derived index is acted on as a store, or a derived rule hides a store that isn't derived.
+//  6. a derived index is acted on as a store, or a derived rule hides a store that isn't derived;
+//  7. a keep rule claims `clearedByPseudonymise` for a column memberStore.pseudonymise() never clears (so failure 1's
+//     check passes on a claim, and the person's id stays), or pseudonymise clears another person's link with theirs.
 import { env } from 'cloudflare:workers'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { openStores } from '../../server/db/stores.ts'
@@ -21,7 +23,7 @@ import { planPersonDeletion } from './person.ts'
 import type { DeletionDeps } from './person.ts'
 import { ALLOWED, deletionRules } from './rules.ts'
 import type { DeletionRule } from './rules.ts'
-import { snapshotAll, token } from './test-support.ts'
+import { addPerson, snapshotAll, token } from './test-support.ts'
 
 const db = env.DB
 const bucket = env.FILES as R2Bucket
@@ -125,5 +127,40 @@ describe('the run refuses what it can\'t finish (failures 5 and 6)', () => {
     expect(Object.keys(r.ok.counts).sort()).toEqual(['members', 'photos/', 'settings'])
     await expect(planPersonDeletion(deps({ registry, rules: { ...deletionRules, memories_fts: { action: 'keep', why: 'x' } } }), { memberId: seeded.members.dana })).rejects.toThrow(/memories_fts is derived/)
     await expect(planPersonDeletion(deps({ registry: [...coreTables, ...p8Tables], rules: { ...deletionRules, support_grants: { action: 'derived', why: 'x' } } }), { memberId: seeded.members.dana })).rejects.toThrow(/support_grants/)
+  })
+})
+
+/**
+ * Per keep rule that claims `clearedByPseudonymise`: a row naming `memberId` in every claimed column and `other` in none,
+ * and how to read it back. A new claim needs a fixture here, so the test below runs pseudonymise over it.
+ */
+const CLEARED_FIXTURES: Record<string, (memberId: string) => { insert: D1PreparedStatement; read: D1PreparedStatement }> = {
+  brand_skills: memberId => {
+    const id = `bs_${token()}`
+    return {
+      insert: db.prepare("INSERT INTO brand_skills (id, name, description, body, created_by, created_at_ms, updated_by, updated_at_ms) VALUES (?, ?, 'd', 'b', ?, 1, ?, 1)").bind(id, `skill-${token()}`, memberId, memberId),
+      read: db.prepare('SELECT * FROM brand_skills WHERE id = ?').bind(id),
+    }
+  },
+}
+
+describe('what pseudonymise clears (failure 7)', () => {
+  it('clears every column a keep rule claims, for the person alone', async () => {
+    const claims = Object.entries(deletionRules).flatMap(([store, r]) => (r.action === 'keep' && r.clearedByPseudonymise ? [[store, r.clearedByPseudonymise] as const] : []))
+    expect(claims.map(([store]) => store).sort()).toEqual(Object.keys(CLEARED_FIXTURES).sort())
+    const gone = await addPerson(db, { role: 'member', status: 'active' }, seeded.members.admin, BASE)
+    const stays = await addPerson(db, { role: 'member', status: 'active' }, seeded.members.admin, BASE)
+    const rows = claims.map(([store, cols]) => ({ store, cols, mine: CLEARED_FIXTURES[store](gone.id), theirs: CLEARED_FIXTURES[store](stays.id) }))
+    await db.batch(rows.flatMap(r => [r.mine.insert, r.theirs.insert]))
+    const done = await openStores(env).members.pseudonymise(gone.id, { actorId: seeded.members.admin, requestId: `req-${token()}`, nowMs: BASE })
+    expect(done).toMatchObject({ ok: { id: gone.id } })
+    for (const r of rows) {
+      const mine = await r.mine.read.first<Record<string, unknown>>()
+      const theirs = await r.theirs.read.first<Record<string, unknown>>()
+      for (const col of r.cols) {
+        expect(mine?.[col], `${r.store}.${col}`).toBeNull()
+        expect(theirs?.[col], `${r.store}.${col} (another person's)`).toBe(stays.id)
+      }
+    }
   })
 })

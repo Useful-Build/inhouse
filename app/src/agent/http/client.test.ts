@@ -122,6 +122,16 @@ describe('reads', () => {
     expect(agent.signOutUrl()).toBe('/cdn-cgi/access/logout')
   })
 
+  test('Export everything\'s check (route 96) resolves on its size and rejects with the refusal, reason included', async () => {
+    const ok = await loaded({ ...reads(), 'GET /api/data-access/export/check': { body: { stores: 24, items: 1234 } } })
+    await expect(ok.agent.checkDataExport()).resolves.toBeUndefined()
+    expect(ok.calls.map(c => `${c.method} ${c.path}`)).toContain('GET /api/data-access/export/check')
+    const big = await loaded({ ...reads(), 'GET /api/data-access/export/check': refusal(409, 'conflict', { reason: 'too_large' }) })
+    await expect(big.agent.checkDataExport()).rejects.toMatchObject({ code: 'conflict', reason: 'too_large' })
+    // A refusal isn't the signed-out state.
+    expect(big.agent.read().resources.meta.status).toBe('ready')
+  })
+
   test('me() is there before read().status is ready', async () => {
     const seen: string[] = []
     const r = reads()

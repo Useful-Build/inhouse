@@ -1,5 +1,7 @@
 // Settings content. Pure data: the screen renders it.
 import type { AgentData, AgentState, AuditLine, CanKey, Me, MemberRecord, MemberRole, MemoryLine, Money, StageIndex } from '../../agent/types'
+import { AgentError } from '../../agent/types'
+import { CONFLICT, FORBIDDEN, REASON } from '../../../shared/contract/error-codes'
 import type { WaitingState } from './waiting-list'
 import { STAGE_TAGS, channelFrom, listNames } from '../../state/derive'
 import { EFFORTS, defaultModeId, modeEffortKey, modeOnKey, thinkingModes } from '../../state/derive'
@@ -150,8 +152,12 @@ export interface Env {
   loadMore: (list: 'audit' | 'members') => void
   /** Downloads the audit log from where the client says (`auditExportUrl()`), or null when the file is built here. */
   exportFromServer: (() => void) | null
-  /** Starts Export everything's download from the server (`dataExportUrl()`, route 95), or null when the demo builds its sample here. */
-  exportDataFromServer: (() => void) | null
+  /**
+   * Starts Export everything's download from the server, or null when the demo builds its sample here: asks route 96
+   * first and navigates to route 95 only when it would start. Resolves once the download has started; rejects with the
+   * check's `AgentError` (nothing navigated).
+   */
+  exportDataFromServer: (() => Promise<void>) | null
   /**
    * P6a: the team facts waiting for an OK (waiting-list.ts) and what the page does with them: approve (`true`) or reject one,
    * and read the list again after a failed read. Unset for someone who can't approve.
@@ -175,6 +181,16 @@ const TXT = (title: string, desc: string, key: string, value: string, need = 0):
 export const memorySource = (l: MemoryLine, now: number): string => {
   const d0 = display()
   return l.source + (l.at ? `, ${fmtNearDay(l.at, now, d0)}` : '') + (l.used ? ` · ${l.used}` : '') + (l.lastUsed ? `, last ${fmtDayWord(l.lastUsed, now, d0)}` : '')
+}
+
+/** What the person reads when Export everything's check (route 96) refuses: the download never started. */
+export function exportRefused(e: unknown): string {
+  const code = e instanceof AgentError ? e.code : null
+  const reason = e instanceof AgentError ? e.reason : undefined
+  if (code === CONFLICT && reason === REASON.tooLarge) return 'Your brand has too much data for one download. Ask the Inhouse team to export it for you.'
+  if (code === FORBIDDEN && reason === REASON.grantRequired) return 'Support access has ended, so the export didn\'t start. Ask an admin to grant it again.'
+  if (code === FORBIDDEN) return "You can't export this brand's data."
+  return "The export didn't start. Try again in a minute."
 }
 
 export function settingsPage(tab: string, env: Env): Page {
@@ -218,8 +234,10 @@ export function settingsPage(tab: string, env: Env): Page {
   const nextCleanup = `${cleanupDay.charAt(0).toUpperCase()}${cleanupDay.slice(1)} at ${fmtTime(cleanupAt, d0)}`
   const exportEverything = () => {
     if (env.exportDataFromServer) {
-      env.exportDataFromServer()
-      env.toast('Your export is downloading. Big brands can take a few minutes.', 6000)
+      env.exportDataFromServer().then(
+        () => { env.toast('Your export is downloading. Big brands can take a few minutes.', 6000) },
+        (e: unknown) => { env.toast(exportRefused(e), 8000, 'info') },
+      )
       return
     }
     env.download(dataExportFileName(now), demoExport(people.members, agent.settings, now), 'application/x-ndjson')

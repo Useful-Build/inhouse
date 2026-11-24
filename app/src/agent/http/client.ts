@@ -35,7 +35,7 @@ import { postTurn, postTurnAction, readActiveRuns, readTrace } from './runs'
 import { ChatSocket } from './stream/socket'
 import type { SocketLike, SocketParts } from './stream/socket'
 import { readUsage, readUsageMonths } from './usage'
-import { dataExportUrl as dataExportPath } from './data-access'
+import { checkDataExport, dataExportUrl as dataExportPath } from './data-access'
 import { MESSAGE, Transport } from './transport'
 import type { Contract, TransportOptions } from './transport'
 
@@ -1184,6 +1184,13 @@ export class HttpAgent implements AgentClient {
   auditExportUrl = (): string | null => '/api/audit/export.csv'
   /** Where Export everything downloads from (route 95, data-access.ts). */
   dataExportUrl = (): string | null => dataExportPath()
+  /** Route 96, before the page navigates to route 95. A 401, or a 403 for a person who was removed, is the signed-out state. */
+  checkDataExport = async (): Promise<void> => {
+    try { await checkDataExport(this.http) } catch (e) {
+      if (e instanceof AgentError && HttpAgent.gone(e)) this.failStatus('meta', e)
+      throw e
+    }
+  }
   signOutUrl = (): string | null => '/cdn-cgi/access/logout'
   uploadsFiles = (): boolean => true
   /** Route 39, after the chat's own save (`createChat`) has answered: the route is a 404 for a chat the server doesn't have yet. */

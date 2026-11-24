@@ -309,7 +309,7 @@ describe('support.access write pairs (P4 review fold)', () => {
     // P6a PR0: approving or rejecting a waiting team fact (route 78).
     ['PUT', '/api/memory/brand/:id/approved'],
   ] as const
-  const READS = ['/api/members', '/api/memory', '/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download', '/api/memory/waiting', '/api/routines/:id/runs', '/api/data-access/export']
+  const READS = ['/api/members', '/api/memory', '/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download', '/api/memory/waiting', '/api/routines/:id/runs', '/api/data-access/export', '/api/data-access/export/check']
 
   it('takes each write pair, and its route with no other method', () => {
     for (const [method, route] of WRITES) {

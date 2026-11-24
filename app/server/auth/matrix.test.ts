@@ -316,6 +316,8 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'POST /api/ops/privacy-requests/:id/close': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
   // Row 95 (P8a D): Export everything. Admins; the Inhouse team only under a live grant (audited); members and tokens never.
   'GET /api/data-access/export': ['no', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  // Row 96 (P8a D): Export everything's check, row 95's access.
+  'GET /api/data-access/export/check': ['no', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },

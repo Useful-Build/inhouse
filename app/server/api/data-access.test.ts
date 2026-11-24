@@ -9,7 +9,11 @@
 //  5. an R2 or D1 failure before the answer starts is a 200 with a cut-off file instead of a 503 (and leaves an audit
 //     line for an export that never started);
 //  6. a failure mid-download logs a storage message, or ends the file as if it were whole;
-//  7. Data and access's next cleanup isn't the time the retention task schedules itself for.
+//  7. Data and access's next cleanup isn't the time the retention task schedules itself for;
+//  8. the download holds what the matrix wouldn't show its caller: a sign-in subject, an Inhouse team email, another
+//     member's personal memory or setting, or another member's chat (P8a D review, option 1);
+//  9. a brand too big for one request starts a 200 that stops part way (with an audit line) instead of a plain refusal;
+// 10. route 96 (the page's check) writes an audit line of its own, or answers differently from route 95.
 import { env } from 'cloudflare:workers'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { fc, test } from '@fast-check/vitest'
@@ -19,7 +23,8 @@ import type { ApiParts } from '../api.ts'
 import { checkAccess } from '../auth/matrix.ts'
 import type { Principal } from '../auth/principal.ts'
 import { openStores } from '../db/stores.ts'
-import type { StoresEnv } from '../db/stores.ts'
+import type { Stores, StoresEnv } from '../db/stores.ts'
+import { dataExportStore } from '../data-access/store.ts'
 import { lastLineId, linesSince } from '../db/test-support.ts'
 import { routes } from '../routes.ts'
 import { addPerson } from '../routines/test-kit.ts'
@@ -36,13 +41,17 @@ const IH = 'm_dx_ih'
 const GRANT = 'g_dxtest'
 const SECRET_TITLE = 'Refund plan for Dana'
 const FILE_KEY = 'library/dx/report.csv'
+const IH_EMAIL = 'ian@inhouse.example'
+const MEMBER_FACT = 'Dana prefers decaf'
+const MEMBER_SETTING = 'MEMBERSETTINGVALUE'
+const ADMIN_CHAT = 'Admin weekly plan'
 
 const person = (memberId: string, role: 'member' | 'admin'): Principal => ({ kind: 'person', memberId, role, subject: `s-${memberId}`, requestId: `req-${Math.random()}`, expMs: NOW + 600_000 })
 const inhouse = (live: boolean): Principal => ({ kind: 'inhouse', memberId: IH, subject: 's-ih', grant: live ? { id: GRANT, endsAtMs: NOW + 60_000 } : null, requestId: `req-${Math.random()}`, expMs: NOW + 600_000 })
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as unknown as ExecutionContext
 
-async function send(principal: Principal, files: StoresEnv['FILES'] = env.FILES, path = '/api/data-access/export') {
-  const parts: ApiParts = { authenticate: async () => ({ principal }), checkOrigin: () => null, checkAccess, stores: e => openStores({ ...(e as unknown as StoresEnv), FILES: files }), routes, accessMatrix }
+async function send(principal: Principal, files: StoresEnv['FILES'] = env.FILES, path = '/api/data-access/export', over: Partial<Stores> = {}) {
+  const parts: ApiParts = { authenticate: async () => ({ principal }), checkOrigin: () => null, checkAccess, stores: e => ({ ...openStores({ ...(e as unknown as StoresEnv), FILES: files }), ...over }), routes, accessMatrix }
   return api(parts, new Request(`http://brand.localhost:8787${path}`), env, ctx, `req-${Math.random()}`)
 }
 const ndjson = async (res: Response) => new TextDecoder().decode(await res.arrayBuffer()).trimEnd().split('\n').map(l => JSON.parse(l) as Record<string, any>)
@@ -52,9 +61,13 @@ beforeAll(async () => {
   vi.setSystemTime(NOW)
   await addPerson(ADMIN, 'admin')
   await addPerson(MEMBER)
-  await db.prepare("INSERT INTO members (id, kind, status, name, subject, created_at_ms) VALUES (?, 'inhouse', 'active', 'Ian', 's-ih', 1) ON CONFLICT DO NOTHING").bind(IH).run()
+  await db.prepare("INSERT INTO members (id, kind, status, name, subject, email_norm, created_at_ms) VALUES (?, 'inhouse', 'active', 'Ian', 's-ih', ?, 1) ON CONFLICT DO NOTHING").bind(IH, IH_EMAIL).run()
+  await db.prepare("UPDATE members SET subject = 's-' || id, email_norm = id || '@brand.example' WHERE id IN (?, ?)").bind(ADMIN, MEMBER).run()
   await db.prepare('INSERT INTO support_grants (id, created_by, created_at_ms, ends_at_ms) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING').bind(GRANT, ADMIN, NOW - 1000, NOW + 60_000).run()
   await db.prepare('INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING').bind('c_dx_one', MEMBER, SECRET_TITLE, NOW - 1000, NOW - 1000).run()
+  await db.prepare('INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING').bind('c_dx_admin', ADMIN, ADMIN_CHAT, NOW - 1000, NOW - 1000).run()
+  await db.prepare("INSERT INTO memories (id, scope, owner_id, text, status, created_by, created_at_ms, updated_at_ms) VALUES ('mem_dx_member', 'person', ?, ?, 'active', ?, ?, ?) ON CONFLICT DO NOTHING").bind(MEMBER, MEMBER_FACT, MEMBER, NOW, NOW).run()
+  await db.prepare("INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES (?, 'p:dx', ?, 1, ?, ?, 'req-dx') ON CONFLICT DO NOTHING").bind(MEMBER, JSON.stringify(MEMBER_SETTING), NOW, MEMBER).run()
   await env.FILES.put(FILE_KEY, 'sku,qty\nA1,3\n', { httpMetadata: { contentType: 'text/csv' } })
 })
 afterAll(() => {
@@ -98,7 +111,7 @@ describe('an Admin downloads everything (failures 2 and 3)', () => {
 
     // The header names every store in the registry, included or not; the end line counts every included one.
     const header = lines[0]
-    expect(header).toMatchObject({ format: 1, kind: 'brand', atMs: NOW })
+    expect(header).toMatchObject({ format: 1, kind: 'brandForCaller', memberId: ADMIN, atMs: NOW })
     expect((header.stores as { name: string }[]).map(s => s.name)).toEqual(tables.map(t => t.name))
     const end = lines.at(-1)!
     expect(end.end).toBe(true)
@@ -106,8 +119,8 @@ describe('an Admin downloads everything (failures 2 and 3)', () => {
     expect(Object.keys(end.counts).sort()).toEqual([...exported].sort())
     for (const name of exported) expect(end.counts[name], name).toBe(lines.filter(l => l.store === name).length)
 
-    // The chat and the Library file are in it.
-    expect(lines.find(l => l.store === 'chats' && l.row.id === 'c_dx_one')?.row.title).toBe(SECRET_TITLE)
+    // The Admin's own chat and the Library file are in it; another member's chat isn't.
+    expect(lines.filter(l => l.store === 'chats').map(l => l.row.title)).toEqual([ADMIN_CHAT])
     const file = lines.find(l => l.store === 'library/' && l.key === FILE_KEY)
     expect(file).toMatchObject({ contentType: 'text/csv', size: 13 })
     expect(atob(file!.base64)).toBe('sku,qty\nA1,3\n')
@@ -126,6 +139,57 @@ describe('an Admin downloads everything (failures 2 and 3)', () => {
   it('refuses a query it does not take', async () => {
     const res = await send(person(ADMIN, 'admin'), env.FILES, '/api/data-access/export?scope=person')
     expect(res.status).toBe(400)
+  })
+})
+
+describe('what the download never holds (failure 8)', () => {
+  it.each([
+    ['an Admin', () => person(ADMIN, 'admin')],
+    ['the Inhouse team under a grant', () => inhouse(true)],
+  ] as const)('%s gets no subject, no Inhouse team email, and no other member\'s memory, setting or chat', async (_, who) => {
+    const res = await send(who())
+    expect(res.status).toBe(200)
+    const text = new TextDecoder().decode(await res.arrayBuffer())
+    for (const secret of ['s-ih', `s-${ADMIN}`, `s-${MEMBER}`, IH_EMAIL, MEMBER_FACT, MEMBER_SETTING, SECRET_TITLE]) expect(text.includes(secret), secret).toBe(false)
+    const lines = text.trimEnd().split('\n').map(l => JSON.parse(l) as Record<string, any>)
+    expect(lines.filter(l => l.store === 'members').every(l => l.row.id !== IH && !('subject' in l.row))).toBe(true)
+    // The Members page's fields, so the Admin and the member are there with their emails as route 3 shows them.
+    expect(lines.find(l => l.store === 'members' && l.row.id === MEMBER)?.row).toMatchObject({ id: MEMBER, email: `${MEMBER}@brand.example`, role: 'member' })
+  })
+})
+
+describe('a brand too big for one request (failure 9)', () => {
+  const tiny = (files: StoresEnv['FILES'] = env.FILES) => ({ dataExport: dataExportStore({ db, bucket: files, budget: { d1: 1, r2: 1 } }) })
+  it.each(['/api/data-access/export', '/api/data-access/export/check'])('%s is a 409 too_large before the answer starts, with no audit line', async path => {
+    const since = await lastLineId(db)
+    const res = await send(person(ADMIN, 'admin'), env.FILES, path, tiny())
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: { code: 'conflict', reason: 'too_large' } })
+    expect(await linesSince(db, since)).toEqual([])
+  })
+})
+
+describe('route 96, the page\'s check (failure 10)', () => {
+  it('answers the size route 95 would plan, and writes nothing', async () => {
+    const since = await lastLineId(db)
+    const res = await send(person(ADMIN, 'admin'), env.FILES, '/api/data-access/export/check')
+    expect(res.status).toBe(200)
+    const size = await res.json() as { stores: number; items: number }
+    expect(size.stores).toBe(tables.filter(t => t.export).length)
+    expect(await linesSince(db, since)).toEqual([])
+    const exported = await send(person(ADMIN, 'admin'))
+    const logged = await linesSince(db, since)
+    expect(JSON.parse(logged[0].args_json)).toEqual({ scope: 'brand', ...size })
+    await exported.arrayBuffer()
+  })
+
+  it('refuses whom route 95 refuses; the Inhouse team under a grant gets only its support.access line', async () => {
+    expect((await send(person(MEMBER, 'member'), env.FILES, '/api/data-access/export/check')).status).toBe(403)
+    const none = await send(inhouse(false), env.FILES, '/api/data-access/export/check')
+    expect(await none.json()).toEqual({ error: { code: 'forbidden', reason: 'grant_required' } })
+    const since = await lastLineId(db)
+    expect((await send(inhouse(true), env.FILES, '/api/data-access/export/check')).status).toBe(200)
+    expect((await linesSince(db, since)).map(l => l.action)).toEqual(['support.access'])
   })
 })
 

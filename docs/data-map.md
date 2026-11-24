@@ -62,7 +62,15 @@ The block below is generated from the table registry (`app/ops/tables`) by `data
 - **Retention**: `chats` and `steps` follow the brand's Data and access settings (default 12 months). The audit log and
   the deletion log are never shortened. Backups are kept 30 days by the bucket's lifecycle rule, so a deleted person
   leaves them within that window.
-- **Export**: "Export everything" holds every store marked yes, whole. A person's export holds what names them.
+- **Export**: "Export everything" (Data and access, route 95) holds the stores marked yes, for the person asking: the
+  brand's shared data whole (the audit log, the deletion log, grants, usage, activity, routines, Today, the Library,
+  brand skills, team requests) and only the brand's own part of the rest: brand settings and memory (active or
+  waiting), and the caller's own personal settings, memories, photo and chats (with their messages, tool calls, files
+  and file bytes). Never another person's personal rows. `members` holds person rows only, with the Members page's
+  fields (no sign-in subject, no Inhouse team or service row). The Inhouse team under a grant gets no chats, no
+  personal rows and no requester ids. Each store's rule is in `app/ops/export/brand-for-caller.ts` (interim default,
+  master plan standing decision 10). The ops CLI's brand export holds every store marked yes, whole. A person's export
+  holds what names them.
 - **Deletion**: a person's deletion pseudonymises their member row (the id stays, so the audit log keeps naming them by
   id only), removes what they own and keeps references to their id. The accepted keeps say where free text that may
   name them stays, and why.

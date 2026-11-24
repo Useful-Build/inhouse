@@ -5,16 +5,19 @@
 //  4. a Member is offered Export everything (route 95 is Admins and the Inhouse team under a grant);
 //  5. the product's Export builds a file in the page instead of starting the server's download, or the demo's reaches a
 //     server or holds no sample;
+//  5b. the product says the export is downloading before its check (route 96) passed, or a refusal (too big, a grant
+//     that ended, storage down) shows nothing, or raw text, instead of a plain sentence;
 //  6. the demo's sample isn't the product export's shape: no header first, no end line last, or counts that disagree.
 import { describe, expect, it, vi } from 'vitest'
 import { fc, test } from '@fast-check/vitest'
 import { CAN_KEYS } from '../../../shared/contract/keys'
 import { nextCleanupMs } from '../../../shared/contract/data-access'
 import type { Can, Me, MemberRecord } from '../../agent/types'
+import { AgentError } from '../../agent/types'
 
 vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} })
 const { agent } = await import('../../agent')
-const { settingsPage } = await import('./content')
+const { exportRefused, settingsPage } = await import('./content')
 const { allowance } = await import('./allowance')
 const { demoExport } = await import('./demo-export')
 const { fmtTime } = await import('../../lib/format')
@@ -79,12 +82,31 @@ describe('Export everything', () => {
     expect(allowance(r, viewer('inhouse', ['exportData']).can, true, 'inhouse').control).toBe(true)
     expect(allowance(r, INHOUSE.can, true, 'inhouse').control).toBe(false)
   })
-  it('in the product, starts the server download and says it can take a while; nothing is built here', () => {
-    const server = vi.fn(), download = vi.fn(), toast = vi.fn()
+  it('in the product, starts the server download and says it can take a while once it has started; nothing is built here', async () => {
+    let started!: () => void
+    const server = vi.fn(() => new Promise<void>(r => { started = r })), download = vi.fn(), toast = vi.fn()
     row(env({ exportDataFromServer: server, download, toast }), 'Export everything').onClick!()
     expect(server).toHaveBeenCalledOnce()
     expect(download).not.toHaveBeenCalled()
+    // The check hasn't answered yet: nothing claims a download.
+    await Promise.resolve()
+    expect(toast).not.toHaveBeenCalled()
+    started()
+    await vi.waitFor(() => expect(toast).toHaveBeenCalledOnce())
     expect(toast.mock.calls[0][0]).toBe('Your export is downloading. Big brands can take a few minutes.')
+  })
+  it.each([
+    ['too big for one download', new AgentError('conflict', 'x', { reason: 'too_large' }), 'Your brand has too much data for one download. Ask the Inhouse team to export it for you.'],
+    ['a grant that ended', new AgentError('forbidden', 'x', { reason: 'grant_required' }), "Support access has ended, so the export didn't start. Ask an admin to grant it again."],
+    ['a refusal', new AgentError('forbidden', 'x'), "You can't export this brand's data."],
+    ['storage down', new AgentError('unavailable', 'x'), "The export didn't start. Try again in a minute."],
+    ['no connection', new AgentError('offline', 'x'), "The export didn't start. Try again in a minute."],
+  ])('in the product, a check refused as %s says so plainly and never that it is downloading', async (_, err, text) => {
+    const toast = vi.fn()
+    row(env({ exportDataFromServer: () => Promise.reject(err), toast }), 'Export everything').onClick!()
+    await vi.waitFor(() => expect(toast).toHaveBeenCalledOnce())
+    expect(toast.mock.calls[0][0]).toBe(text)
+    expect(exportRefused(err)).toBe(text)
   })
   it('in the demo, downloads an invented sample in the export\'s shape and says so', () => {
     const download = vi.fn(), toast = vi.fn()

@@ -42,7 +42,7 @@ import { customersDataRequest, customersRedact, shopRedact } from './webhooks/sh
 import type { WebhookHandler } from './webhooks/shopify-privacy/handler.ts'
 import { closePrivacyRequest } from './webhooks/shopify-privacy/close.ts'
 // P8a D: Data and access's Export everything (row 95).
-import { exportEverything } from './api/data-access.ts'
+import { checkExport, exportEverything } from './api/data-access.ts'
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
@@ -207,6 +207,8 @@ export const routes: readonly Route[] = [
   /* 94 */ { method: 'POST', pattern: '/api/ops/privacy-requests/:id/close', handler: closePrivacyRequest },
   // P8a D: Data and access's Export everything, the brand's whole export as one streamed download.
   /* 95 */ { method: 'GET', pattern: '/api/data-access/export', handler: exportEverything },
+  // P8a D: the page's check before it starts that download (the same plan, its size or refusal, nothing written).
+  /* 96 */ { method: 'GET', pattern: '/api/data-access/export/check', handler: checkExport },
 ]
 
 /** A webhook route: served by server/index.ts before sign-in, its handler authenticating the request itself. */

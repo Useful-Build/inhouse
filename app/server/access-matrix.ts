@@ -117,6 +117,8 @@ export const accessMatrix: readonly AccessRow[] = [
   // P8a D: Data and access's "Export everything", the brand's whole export (ops/export, brand scope) as one download.
   // Brand data: Admins, and the Inhouse team only under a live grant (support.access). Members never.
   /* 95 */ { method: 'GET', pattern: '/api/data-access/export', class: 'brand_data', allow: ['admin', 'inhouse'] },
+  // P8a D: the check the page makes before route 95 (its plan only: the size or the `too_large` refusal). Row 95's access.
+  /* 96 */ { method: 'GET', pattern: '/api/data-access/export/check', class: 'brand_data', allow: ['admin', 'inhouse'] },
 ]
 
 /** Each `CanKey`'s row (section 3). */

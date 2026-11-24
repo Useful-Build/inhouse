@@ -184,6 +184,8 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'POST', pattern: '/api/ops/privacy-requests/:id/close', class: 'open', allow: [], services: ['release'] },
   // P8a D: Export everything (row 95): brand data, Admins and the Inhouse team under a live grant.
   { method: 'GET', pattern: '/api/data-access/export', class: 'brand_data', allow: ['admin', 'inhouse'] },
+  // P8a D: Export everything's check (row 96): row 95's access.
+  { method: 'GET', pattern: '/api/data-access/export/check', class: 'brand_data', allow: ['admin', 'inhouse'] },
 ]
 
 /** `CanRows` as section 3 maps them. */

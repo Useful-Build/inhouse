@@ -49,6 +49,8 @@ const ROUTE: Record<string, string> = {
   '/api/skills/:name': 'A skill',
   // P8a D (route 95).
   '/api/data-access/export': 'Export everything',
+  // P8a D (route 96).
+  '/api/data-access/export/check': 'The size of Export everything',
 }
 
 /** P4: what a routine edit changed, in a fixed order whatever order the line lists them. */

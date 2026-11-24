@@ -252,6 +252,8 @@ export interface AgentClient {
   auditExportUrl(): string | null
   /** Where Data and access's "Export everything" downloads from (route 95), or null when the client builds the file itself (the demo's invented sample). */
   dataExportUrl(): string | null
+  /** Route 96: resolves when Export everything (route 95) would start now; rejects with an `AgentError` (a conflict for a brand too big for one download, a refusal, storage down). Nothing is checked in the demo, which builds its sample itself. */
+  checkDataExport(): Promise<void>
   /** Route 41: one chat file's bytes, and the name the server gave it (null when it gave none). Rejects with an `AgentError`. The demo serves a sample file. */
   downloadFile(fileId: string): Promise<{ blob: Blob; name: string | null }>
   /** Whether this client keeps attachments on the server (the real one). The demo doesn't: its files stay in the composer and the send names them by a made-up id. */
