@@ -103,7 +103,8 @@ function backupText(e: TableEntry, note: Note): string {
   return note.backup
 }
 
-const cell = (s: string) => s.replace(/\|/g, '\\|').replace(/\n/g, ' ')
+/** A Markdown table cell: backslashes first, so an existing `\|` can't turn into an unescaped pipe. */
+const cell = (s: string) => s.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, ' ')
 
 /** The rows (with their header), one per entry, in registry order. Throws by name on an entry with no note or rule. */
 export function dataMapRows(registry: readonly TableEntry[]): string {
