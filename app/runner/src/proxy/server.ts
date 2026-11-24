@@ -5,6 +5,9 @@
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import https from 'node:https'
 import type { Socket } from 'node:net'
+import { safeError } from '../safe-error.ts'
+
+class UpstreamTimeout extends Error {}
 
 export const RUN_TOKEN_HEADER = 'x-inhouse-run-token'
 export const PROXY_ROUTES = ['model', 'mcp', 'store', 'files', 'hub'] as const
@@ -72,7 +75,7 @@ export function createProxy(deps: ProxyDeps): http.Server {
   const uids = new WeakMap<Socket, Promise<number | null>>()
   const server = http.createServer((req, res) => {
     void handle(req, res).catch((e) => {
-      deps.log({ type: 'proxy_failed', error: String(e instanceof Error ? e.stack : e) })
+      deps.log({ type: 'proxy_failed', error: safeError(e) })
       if (!res.headersSent) refuse(res, 500, 'internal error')
       else res.destroy()
     })
@@ -87,7 +90,7 @@ export function createProxy(deps: ProxyDeps): http.Server {
       Promise.resolve()
         .then(() => deps.lookupUid(socket))
         .catch((e) => {
-          deps.log({ type: 'proxy_uid_lookup_failed', error: String(e instanceof Error ? e.message : e) })
+          deps.log({ type: 'proxy_uid_lookup_failed', error: safeError(e) })
           return null
         })
         .then((uid) => {
@@ -404,8 +407,8 @@ function forwardBuffered(
       })
     })
     activeUp = up
-    up.on('timeout', () => up.destroy(new Error('upstream timeout')))
-    up.on('error', (e) => retryOrFail(e.message, e.message === 'upstream timeout' ? 504 : 502))
+    up.on('timeout', () => up.destroy(new UpstreamTimeout('upstream timeout')))
+    up.on('error', (e) => retryOrFail(e instanceof UpstreamTimeout ? 'upstream timeout' : safeError(e), e instanceof UpstreamTimeout ? 504 : 502))
     up.end(body)
   }
 
@@ -446,12 +449,14 @@ function forwardStream(
       res.destroy()
     })
   })
-  up.on('timeout', () => up.destroy(new Error('upstream timeout')))
+  up.on('timeout', () => up.destroy(new UpstreamTimeout('upstream timeout')))
   up.on('error', (e) => {
     if (callerGone || failed) return
     failed = true
-    logError(e.message)
-    if (!res.headersSent) refuse(res, e.message === 'upstream timeout' ? 504 : 502, 'upstream failed')
+    // A Node request error names the target URL, whose path can be an output's file name: the log gets our own
+    // timeout's fixed text, or the error's name and code.
+    logError(e instanceof UpstreamTimeout ? 'upstream timeout' : safeError(e))
+    if (!res.headersSent) refuse(res, e instanceof UpstreamTimeout ? 504 : 502, 'upstream failed')
     else res.destroy()
   })
   // The caller went away (or its connection broke): the upstream request is dropped with it.

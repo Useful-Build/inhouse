@@ -12,6 +12,7 @@ export interface AuditText {
 
 const ROLE = { member: 'Member', admin: 'Admin' } as const
 const REVIVE = { revived: 'restarted', not_quarantined: 'wasn’t stuck', not_found: 'not found' } as const
+const PRIVACY_TOPIC = { 'customers/data_request': 'A customer asked for their data', 'customers/redact': 'A customer asked to be erased', 'shop/redact': 'The store asked to be erased' } as const
 
 const ROUTE: Record<string, string> = {
   '/api/members': 'The team',
@@ -46,6 +47,10 @@ const ROUTE: Record<string, string> = {
   '/api/memory/brand/:id/approved': 'Team memory',
   // P6a brand skills (route 84).
   '/api/skills/:name': 'A skill',
+  // P8a D (route 95).
+  '/api/data-access/export': 'Export everything',
+  // P8a D (route 96).
+  '/api/data-access/export/check': 'The size of Export everything',
 }
 
 /** P4: what a routine edit changed, in a fixed order whatever order the line lists them. */
@@ -154,6 +159,11 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'library.deleted': return { what: 'deleted Library files', detail: files(args.fileIds.length) }
     case 'library.restored': return { what: 'brought back Library files', detail: files(args.fileIds.length) }
     case 'today.set_aside': return args.reason === null ? { what: 'put back an item on Today', detail: '' } : { what: SET_ASIDE[args.reason], detail: '' }
+    case 'restore.confirmed': return { what: 'confirmed a restore from a backup', detail: `Approved by ${who(args.approvedBy)}` }
+    case 'restore.member_placeholder': return { what: 'kept a former member’s history after a restore', detail: who(args.memberId) }
+    // P8a F2. The topic only: the line never says whom a request was about.
+    case 'privacy.requested': return { what: 'received a privacy request from Shopify', detail: args.parsed ? PRIVACY_TOPIC[args.topic] : `${PRIVACY_TOPIC[args.topic]} (couldn’t be read)` }
+    case 'privacy.closed': return { what: 'closed a privacy request from Shopify', detail: `${PRIVACY_TOPIC[args.topic]} (release job)` }
     // P5 (p5-w1)
     case 'tools.connect_start': return { what: 'started connecting a tool', detail: connectorName(args.accountId) }
     case 'tools.connect':
@@ -187,5 +197,6 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'brand_skill.created': return { what: 'made a skill in a chat', detail: '' }
     case 'brand_skill.changed': return { what: 'changed a skill in a chat', detail: '' }
     case 'brand_skill.deleted': return { what: 'deleted a skill', detail: '' }
+    case 'data.exported': return { what: 'downloaded all brand data', detail: `${String(args.items).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} ${args.items === 1 ? 'item' : 'items'}` }
   }
 }

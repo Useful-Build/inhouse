@@ -24,6 +24,9 @@ if (testConfigDate !== PIN_CHECKED_AGAINST) {
     'supports, then update the pin and PIN_CHECKED_AGAINST.',
   )
 }
+// P8's backup, retention, export and deletion jobs (ops/{backup,retention,export,delete}) and C1's coverage of P3 to P5's
+// stores (ops/coverage) run in the Workers runtime.
+const OPS_JOB_TESTS = ['ops/{backup,retention,export,delete,coverage}/**/*.test.ts']
 const alias = {
   // The demo client entry, as in tsconfig.app.json; vite.config.ts picks it by mode.
   '@client': fileURLToPath(new URL('./src/agent/client.demo.ts', import.meta.url)),
@@ -51,6 +54,14 @@ export default defineConfig({
   test: {
     // The slowest property takes about 7 s at 1000 cases (the whole file about 41 s), so 25 s fails a hang fast and leaves room.
     testTimeout: 25_000,
+    // When CONTRACT_REAL_ORIGIN is set (e2e/support/test-build/serve.ts, CI's test-build contract step), the live
+    // contract files (`agent.contract.test.ts`, `targets/real/watch.live.test.ts`) share one `wrangler dev` instance
+    // and one local D1 SQLite file, and write directly to that file via `node:sqlite` (`seedWaitingMemory`,
+    // `seedUnreadNotice`). Miniflare's local D1 runs inside a workerd Durable Object (`D1DatabaseObject`) with no
+    // `busy_timeout` for an external OS process holding `BEGIN IMMEDIATE`, so parallel test files fail with
+    // `D1_ERROR: database is locked: SQLITE_BUSY` and race on shared routines/files/notices. Serialise test files
+    // whenever CONTRACT_REAL_ORIGIN is set; normal `npm run test:unit` runs stay parallel.
+    fileParallelism: !process.env.CONTRACT_REAL_ORIGIN,
     projects: [
       {
         extends: true,
@@ -60,9 +71,10 @@ export default defineConfig({
             'src/**/*.property.test.ts', 'src/**/*.test.ts', 'build-support/**/*.test.ts', 'e2e/support/**/*.test.ts',
             'ops/**/*.test.ts', 'shared/**/*.test.ts', 'evals/**/*.test.ts', 'scripts/**/*.test.mjs',
           ],
+          // P8's ops jobs import `cloudflare:test`, so they run in the `server` project.
           // The hub's two script tests use Node's built-in runner (node:test) and run in the `hub` CI job with `node --test`
           // (P4, fleet/watch); vitest finds no suite in them.
-          exclude: ['scripts/check-hub-build.test.mjs', 'scripts/check-hub-config.test.mjs'],
+          exclude: ['**/node_modules/**', ...OPS_JOB_TESTS, 'scripts/check-hub-build.test.mjs', 'scripts/check-hub-config.test.mjs'],
           environment: 'node',
           // The contract suite's real target (src/agent/contract/targets.ts reads it with `inject`): the test build's
           // origin, set by e2e/support/test-build/serve.ts. Read here from the environment, so it can't be dropped on the way.
@@ -83,6 +95,8 @@ export default defineConfig({
             miniflare: {
               compatibilityDate: '2026-11-11',
               bindings: { TEST_MIGRATIONS: await readD1Migrations(fileURLToPath(new URL('./server/migrations', import.meta.url))) },
+              // Test-only: the restore's target (P8 G1). A second local D1, never in any wrangler config.
+              d1Databases: { RESTORE_DB: '00000000-0000-4000-8000-000000000002' },
               // P4: wrangler.test.jsonc binds the hub's ReadGateway as HUB (p4-h1.md OC 4), and workerd refuses to start
               // with a binding to a Worker it doesn't run. The server tests never reach the hub (H1's route takes a
               // `ReadGatewayLike` it's handed), so HUB here is a stand-in that answers 503 and names itself.
@@ -98,7 +112,7 @@ export default defineConfig({
         ],
         test: {
           name: 'server',
-          include: ['server/**/*.test.ts'],
+          include: ['server/**/*.test.ts', ...OPS_JOB_TESTS],
           setupFiles: ['server/testing/apply-migrations.ts'],
         },
       },

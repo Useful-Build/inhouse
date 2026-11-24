@@ -34,12 +34,21 @@ export const AuditActionSchema = z.enum([
   'tools.pause', 'tools.disconnect',
   // P5 (p5-w4): a notice to one recipient (the agent's or the server's own), and a change to the listed Slack channels.
   'notify.send', 'notify.channels',
+  // P8a R: an admin confirmed a restore once its audit re-append and deletion-log replay were done (ops/backup/reconcile).
+  'restore.confirmed',
+  // P8a R: the restore's audit re-append put back a pseudonymised member row for an actor added after the backup.
+  'restore.member_placeholder',
+  // P8a F2: a Shopify privacy webhook arrived (Shopify's signature checked), and the release job closed one once the
+  // Inhouse team had acted on it. Our request id and the topic only: never a Shopify customer id, email or phone.
+  'privacy.requested', 'privacy.closed',
   // P6a (PR0, docs/plans/2026-11-22-p6a-memory-skills.md): an admin, or the Inhouse team under a live grant, approves
   // or rejects a waiting team fact (W2); a person sends the Inhouse team a request, and its status changes (W3).
   'memory.approved', 'memory.rejected', 'team_request.created', 'team_request.status',
   // P6a brand skills (master plan standing decision 6): a person's agent saves a brand skill (new or changed), and its
   // maker or an admin deletes it.
   'brand_skill.created', 'brand_skill.changed', 'brand_skill.deleted',
+  // P8a D (route 95): an Admin, or the Inhouse team under a live grant, downloaded the brand's whole export.
+  'data.exported',
 ])
 export type AuditAction = z.infer<typeof AuditActionSchema>
 
@@ -61,6 +70,8 @@ const RoutePatternSchema = z.enum([
   '/api/skills/:name',
   // Master plan decision 8 (route 86): a routine's recent runs.
   '/api/routines/:id/runs',
+  // P8a D (route 95): Export everything; (route 96) its check.
+  '/api/data-access/export', '/api/data-access/export/check',
 ])
 /**
  * The `brand_data` PUT routes the Inhouse team may use under a live grant (item 19, p3-design section 10): forgetting
@@ -179,6 +190,14 @@ const settingChanged = line('setting.changed', {
   redacted: RedactedValueSchema.optional(),
 })
 
+/** A backup's or a restore's id (ops/backup/backup.ts `timeId`): `<yyyymmdd>T<hhmmssSSS>Z-<8 hex>`. */
+const RestoreIdSchema = z.string().regex(/^\d{8}T\d{9}Z-[0-9a-f]{8}$/)
+
+/** A privacy request (server/webhooks/shopify-privacy): `pr_` + the first 128 bits of a SHA-256 over Shopify's webhook id, base64url. */
+export const PrivacyRequestIdSchema = z.string().regex(new RegExp(`^pr_${RANDOM}$`))
+/** Shopify's three compliance topics (https://shopify.dev/docs/apps/build/compliance/privacy-law-compliance). */
+export const PrivacyTopicSchema = z.enum(['customers/data_request', 'customers/redact', 'shop/redact'])
+
 const otherLines = [
   line('member.invited', { ...member, role: MemberRoleSchema }),
   line('member.reinvited', { ...member, role: MemberRoleSchema }),
@@ -233,6 +252,15 @@ const otherLines = [
   line('library.restored', { fileIds: FileIdsSchema }),
   /** `reason: null`: the item was put back (a snooze or a dismissal undone). */
   line('today.set_aside', { itemId: TodayItemIdSchema, reason: z.enum(['snoozed', 'dismissed', 'declined']).nullable() }),
+  // P8a R. The restore's and the backup's ids only (`timeId`: a UTC stamp and 8 hex characters), never a row of either.
+  /** `approvedBy`: the brand's Admin who approved it (an Inhouse operator only when none is left); the actor ran it. */
+  line('restore.confirmed', { restoreId: RestoreIdSchema, backupId: RestoreIdSchema, approvedBy: MemberIdSchema }),
+  /** The member id the placeholder row keeps (its actor's audit lines need it), and the restore that wrote it. */
+  line('restore.member_placeholder', { memberId: MemberIdSchema, restoreId: RestoreIdSchema }),
+  // P8a F2. The actor is `m_system` on both: Shopify and the release token have no member row.
+  /** `parsed: false`: Shopify signed it but the body wasn't the topic's shape; recorded with no ids, for the team to read. */
+  line('privacy.requested', { requestId: PrivacyRequestIdSchema, topic: PrivacyTopicSchema, parsed: z.boolean() }),
+  line('privacy.closed', { requestId: PrivacyRequestIdSchema, topic: PrivacyTopicSchema, by: z.literal('release') }),
   // P5 (p5-w1): connect start (route A) and its end (route B), the account id and the outcome code only.
   line('tools.connect_start', { accountId: ConnectorAccountIdSchema }),
   line('tools.connect', { accountId: ConnectorAccountIdSchema, outcome: ConnectOutcomeSchema }),
@@ -272,6 +300,9 @@ const otherLines = [
   line('brand_skill.created', { skillId: BrandSkillIdSchema }),
   line('brand_skill.changed', { skillId: BrandSkillIdSchema }),
   line('brand_skill.deleted', { skillId: BrandSkillIdSchema }),
+  // P8a D (route 95). Counts only: how many stores and how many rows and files the export planned. Never a store's
+  // name, a row, a file name or anything a row holds.
+  line('data.exported', { scope: z.literal('brand'), stores: z.number().int().min(0).max(1000), items: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) }),
 ] as const
 
 /**

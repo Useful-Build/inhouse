@@ -7,7 +7,7 @@ import { CONNECTION_TEXT, NOTICE_TEXT, historyWanted } from './chat/notes'
 import type { ChatMessage } from '../agent/types'
 import { Composer, PHONE_QUERY } from '../components/Composer'
 import { fileIcon, fileSize } from '@/lib/file-meta'
-import { listNames, noToolsYet, readingTools, toolDetail } from '../state/derive'
+import { emptyToolsNote, listNames, readingTools, toolDetail } from '../state/derive'
 import { cn } from '@/lib/utils'
 import { isStoppedNote, openChatKey, openRun, useCtx, useUi } from '../state/store'
 import type { QueuedMsg } from '../state/store'
@@ -279,6 +279,7 @@ function Thread() {
 
   // The tools the agent can read now: not paused, not disconnected, none on day one.
   const connected = readingTools(ctx).map(k => toolDetail(ctx.data, k).name)
+  const emptyTools = connected.length === 0 ? emptyToolsNote(ctx.data) : null
 
   const copy = (text: string) => copyText(text)
   /** What follows a question up to the next one: its answer and a stopped note, hidden with it when it's asked again. */
@@ -436,10 +437,9 @@ function Thread() {
               <h2 className="text-3xl leading-title font-medium tracking-title">What should we look into?</h2>
               {connected.length > 0
                 ? <p className="mt-2.5 text-md text-foreground-3">Connected to {listNames(connected)}.</p>
-                // Not claimed when the list is only unknown (cards or a run on the server, no connected list: the real client before P5).
-                : (ctx.data.tools.connected.length > 0 || noToolsYet(ctx.data)) && <>
-                    <p className="mt-2.5 text-md text-foreground-3">No tools are connected yet.</p>
-                    <Button variant="outline" className="mt-3" onClick={() => go('apps')}>Connect tools</Button>
+                : emptyTools && <>
+                    <p className="mt-2.5 text-md text-foreground-3">{emptyTools.text}</p>
+                    <Button variant="outline" className="mt-3" onClick={() => go('apps')}>{emptyTools.kind === 'none' ? 'Connect tools' : 'Manage tools'}</Button>
                   </>}
             </>
           ) : (

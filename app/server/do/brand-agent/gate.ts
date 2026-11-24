@@ -29,6 +29,7 @@
 import type { AdmitAnswer, LeaseAnswer, ModelCallUsage, ModelCallWorst, UsageLedgerPort } from './ports.ts'
 import type { Scheduler, TaskResult } from './scheduler.ts'
 import { StoreUnavailableError } from '../../db/sql.ts'
+import { safeError } from '../../safe-error.ts'
 
 /** Calls of one turn in flight at once (Wasim, item 21(c)). */
 export const MAX_CALLS = 4
@@ -80,7 +81,6 @@ export interface GateDeps {
   refuseTurn(turnId: string, reason: GateRefusal): void
 }
 
-const errorText = (err: unknown) => (err instanceof Error ? `${err.name}: ${err.message}` : 'unknown').slice(0, 300)
 const refusalOf = (r: 'cap_reached' | 'turn_budget' | 'held'): GateRefusal => (r === 'held' ? 'budget_busy' : r)
 
 export class ModelGate {
@@ -352,13 +352,13 @@ export class ModelGate {
       if (!(err instanceof StoreUnavailableError)) {
         // Not storage being down: the ledger refused the call for good (no row for the turn, e.g. after a D1 restore).
         // Sending it again would only spin, so it's dropped, loudly, and the queue goes on (#154's review).
-        console.error({ event: 'ledger_call_dropped', op: q.op, turnId, callId: q.call_id, error: errorText(err) })
+        console.error({ event: 'ledger_call_dropped', op: q.op, turnId, callId: q.call_id, error: safeError(err) })
         this.drop(q)
         return true
       }
       const fails = t.ledger_fails + 1
       const wait = Math.min(LEDGER_RETRY_MS * 2 ** (fails - 1), LEDGER_RETRY_MAX_MS)
-      console.error({ event: 'ledger_call_failed', op: q.op, fails, error: errorText(err) })
+      console.error({ event: 'ledger_call_failed', op: q.op, fails, error: safeError(err) })
       this.sql.exec('UPDATE turns SET ledger_fails = ?, ledger_retry_at_ms = ? WHERE turn_id = ?', fails, this.d.now() + wait, turnId)
       this.arm(turnId)
       return false

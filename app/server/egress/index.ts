@@ -15,12 +15,14 @@ import { eventsRoute } from './events.ts'
 import { filesRoute } from './files.ts'
 import { gatewayUpstream, scriptedUpstream } from './gateway.ts'
 import { handleHub, hubRouteDeps, type ReadGatewayLike } from './hub.ts'
+import { brandStage } from '../stage/watch.ts'
 import { withTestShop } from '@test-shop'
 import { jsonAnswer, messagesError, RUN_TOKEN_HEADER } from './http.ts'
 import { mcpHandler } from '../mcp/server/index.ts'
 import { notifyDeps } from '../mcp/tools/notifications/deps.ts'
 import { modelRoute } from './model.ts'
 import { storeRoute } from './store.ts'
+import { safeError } from '../safe-error.ts'
 
 /** The test issuer's compile-time switch (vite.config.ts); true in the test and eval builds only. */
 declare const __INHOUSE_TEST_BUILD__: boolean
@@ -45,7 +47,21 @@ function withoutToken(request: Request): Request {
   return new Request(request, { headers })
 }
 
+/**
+ * The egress's one entry. Its last catch answers a fixed 500 and logs the error's name only (P8a P-auth): an uncaught
+ * throw would put its message in the runtime's own exception log. A failure inside a streamed body, after the answer
+ * left, is the route's own to handle.
+ */
 export async function handleEgress(request: Request, d: EgressDeps): Promise<Response> {
+  try {
+    return await routeEgress(request, d)
+  } catch (e) {
+    d.log({ event: 'egress_failed', error: safeError(e), runner: d.runner })
+    return jsonAnswer({ error: 'internal' }, 500)
+  }
+}
+
+async function routeEgress(request: Request, d: EgressDeps): Promise<Response> {
   const url = new URL(request.url)
   if (url.hostname !== EGRESS_HOST) return jsonAnswer({ error: 'not_found' }, 404)
   const name = /^\/([a-z]+)\//.exec(url.pathname)?.[1]
@@ -81,9 +97,9 @@ export async function handleEgress(request: Request, d: EgressDeps): Promise<Res
   }
 }
 
-/** The brand's technical settings the egress reads (`tm:*` for the model gate). */
+/** The brand's technical settings the egress reads (`tm:*` and `t:websearch` for the model gate). */
 export async function brandSettings(db: D1Database): Promise<SettingsView> {
-  const rows = await db.prepare("SELECT key, value_json FROM settings WHERE owner = 'brand' AND key LIKE 'tm:%'").all<{ key: string; value_json: string }>()
+  const rows = await db.prepare("SELECT key, value_json FROM settings WHERE owner = 'brand' AND (key LIKE 'tm:%' OR key = 't:websearch')").all<{ key: string; value_json: string }>()
   const out: Record<string, string | boolean | null> = {}
   for (const r of rows.results) out[r.key] = JSON.parse(r.value_json) as string | boolean | null
   return out
@@ -121,7 +137,7 @@ export function egressDeps(env: EgressEnv, ctx: ExecutionContext, props: EgressP
     mcp: mcpHandler({ db: env.DB, notify: notifyDeps(env) }),
     // The hub's ReadGateway (P4 H1, OC 4: the only hub entrypoint the product Worker binds). In the test and eval builds
     // only, each read carries the test shop override the eval harness set (`@test-shop`; the off module returns the hub as is).
-    hub: hubRouteDeps(withTestShop(env.HUB as unknown as ReadGatewayLike, env.DB, env), entry => console.log(entry)),
+    hub: hubRouteDeps(withTestShop(env.HUB as unknown as ReadGatewayLike, env.DB, env), entry => console.log(entry), () => brandStage(env.DB)),
     waitUntil: p => ctx.waitUntil(p),
     setInterval: (fn, ms) => setInterval(fn, ms),
     clearInterval: t => clearInterval(t),

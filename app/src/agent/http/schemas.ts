@@ -27,6 +27,7 @@ import { ModelModeSchema } from '../../../shared/contract/model'
 import { CreateChatInputSchema } from '../../../shared/contract/requests'
 import { ActiveRunsSchema, ChatEventSchema, PauseStateSchema, SendTurnInputSchema, SendTurnResultSchema, SocketServerMsgSchema, acceptsChatVersion } from '../../../shared/contract/runs'
 import { TraceSchema } from '../../../shared/contract/trace'
+import { DataExportCheckSchema } from '../../../shared/contract/data-access-check'
 import { ToolConnectResultSchema, ToolDisconnectResultSchema, ToolPausedInputSchema, ToolPausedResultSchema, ToolsDataSchema } from '../../../shared/contract/tools'
 import { AvailableChannelsSchema, NotifyChannelListSchema, PutNotifyChannelsSchema } from '../../../shared/contract/notify-slack'
 
@@ -58,6 +59,8 @@ export const ANSWERS = {
   skills: z.array(SkillDefSchema), skillPage: SkillPageSchema, skill: SkillDefSchema,
   // P6a (W3): requests to the Inhouse team (routes 80, 81 and 83).
   teamRequests: TeamRequestsListSchema, teamRequest: TeamRequestRecordSchema,
+  // P8a D: Export everything's check (route 96).
+  dataExportCheck: DataExportCheckSchema,
 }
 
 /** What each write sends. */

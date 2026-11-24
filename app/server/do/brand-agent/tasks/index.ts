@@ -17,6 +17,8 @@ import { poolRetry } from '../../runner/pool-retry.ts'
 import { chatFileSweep } from '../../../files-io/orphan-sweep.ts'
 import { routineTick } from '../../../routines/tick.ts'
 import { routineEnd } from '../../../routines/end.ts'
+import { backupTask } from '../../../ops/backup-handlers.ts'
+import { retentionTask } from '../../../ops/retention-handlers.ts'
 import { EVAL_TASKS } from '@eval-trace'
 
 declare const __INHOUSE_EVAL_BUILD__: boolean
@@ -48,6 +50,10 @@ export function buildTaskHandlers(evalBuild: boolean): Readonly<Record<string, T
     // P4 W2
     'routine-tick': withSeed(routineTick, { id: 'routine-tick' }),
     'routine-end': routineEnd,
+    // P8 C1 (its named exception in this file; line A pinged): the nightly backup at 01:30 UTC and the daily retention at
+    // 03:30 UTC, each seeded (ensure semantics).
+    backup: backupTask,
+    retention: retentionTask,
     // The eval build only (p3-eval-observability rev 2 rec 5): the kept inputs' 7-day TTL (server/eval-trace/on.ts).
     ...(evalBuild ? EVAL_TASKS : {}),
   }

@@ -66,7 +66,7 @@ export async function resetOpenRequests(s: Signer): Promise<void> {
 }
 
 /** The slice of node:sqlite the seeding uses (this program has no Node types; the module is loaded by name at run time). */
-interface Sqlite { DatabaseSync: new (file: string) => { prepare(sql: string): { get(...p: unknown[]): unknown; run(...p: unknown[]): unknown }; close(): void } }
+interface Sqlite { DatabaseSync: new (file: string, options?: { readOnly?: boolean }) => { prepare(sql: string): { get(...p: unknown[]): unknown; run(...p: unknown[]): unknown }; close(): void } }
 interface Fs { readdirSync(dir: string, o: { recursive: true; withFileTypes: true }): { isFile(): boolean; name: string; parentPath: string }[] }
 const node = async <T>(name: string): Promise<T> => (await import(/* @vite-ignore */ name)) as T
 
@@ -87,9 +87,17 @@ export async function seedWaitingMemory(s: Signer, createdBy: string, texts: str
   const files = readdirSync(dir, { recursive: true, withFileTypes: true }).filter(d => d.isFile() && d.name.endsWith('.sqlite')).map(d => `${d.parentPath}/${d.name}`)
   const start = o.now ?? Date.now()
   for (const file of files) {
+    const probe = new DatabaseSync(file, { readOnly: true })
+    let hasTable = false
+    try {
+      probe.prepare('PRAGMA busy_timeout = 10000').run()
+      hasTable = probe.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memories'").get() !== undefined
+    } finally {
+      probe.close()
+    }
+    if (!hasTable) continue
     const db = new DatabaseSync(file)
     try {
-      if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memories'").get() === undefined) continue
       db.prepare('PRAGMA busy_timeout = 10000').run()
       db.prepare('BEGIN IMMEDIATE').run()
       try {

@@ -64,6 +64,14 @@ export const isFirstDay = (data: AgentData): boolean => data.status === 'ready' 
  */
 export const noToolsYet = (data: AgentData): boolean =>
   data.tools.connected.length === 0 && data.problems.length === 0 && !data.routines.some(r => r.last !== undefined)
+
+/** What to say when there are no readable tools. An unknown list makes no claim. */
+export function emptyToolsNote(data: AgentData): { kind: 'none' | 'unreadable'; text: string } | null {
+  if (data.tools.connected.length > 0) return { kind: 'unreadable', text: "Your Inhouse agent can't read any of your tools right now." }
+  if (noToolsYet(data)) return { kind: 'none', text: 'No tools are connected yet.' }
+  return null
+}
+
 /**
  * The tool the Inhouse team is connecting now (it has a `liveBy` date), with that date as shown ("Fri, Nov 20"), or null:
  * none is, or it's day one, when nothing is live yet and Today lists the setup instead.

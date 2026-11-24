@@ -64,6 +64,7 @@ const Library = lazyRoute(() => import('./screens/Library'), m => m.Library)
 const Usage = lazyRoute(() => import('./screens/Usage'), m => m.Usage)
 const Settings = lazyRoute(() => import('./screens/Settings'), m => m.Settings)
 const NotOnTeam = lazyRoute(() => import('./shell/NotOnTeam'), m => m.NotOnTeam)
+const InhouseAccount = lazyRoute(() => import('./shell/InhouseAccount'), m => m.InhouseAccount)
 const TraceWindow = lazyRoute(() => import('./overlays/TraceWindow'), m => m.TraceWindow)
 // The problem window and the team window open only on a click, so they load then (or with the idle prefetch above), not with Today.
 const ProblemPanel = lazyRoute(() => import('./overlays/ProblemPanel'), m => m.ProblemPanel)
@@ -470,7 +471,7 @@ function Shell() {
 
 /**
  * The product build shows one screen in place of the pages until its first read (`meta`) is in (start-screen.ts): "Not
- * connected yet" while it loads, "You're not on this team", the signed-out screen, or the load error with Retry. The
+ * connected yet" while it loads, "You're not on this team", "This is an Inhouse team account", the signed-out screen, or the load error with Retry. The
  * demo has `demo` set and never shows them.
  */
 export default function App() {
@@ -484,6 +485,7 @@ export default function App() {
   const error = retrying ? last.error : data.resources.meta.error
   if (shown !== last.screen || error !== last.error) setLast({ screen: shown, error })
   if (shown === 'not-on-team') return <Suspense fallback={null}><NotOnTeam /></Suspense>
+  if (shown === 'inhouse-account') return <Suspense fallback={null}><InhouseAccount /></Suspense>
   if (shown === 'signed-out') return <SignedOut />
   if (shown === 'load-error') return <StartError error={error} retrying={retrying} />
   if (shown === 'not-connected') return <NotConnected />

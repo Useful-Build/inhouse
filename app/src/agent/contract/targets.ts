@@ -65,8 +65,8 @@ export interface Fixtures {
   invite: InviteInput
   /** A second setting, so two writes can be told apart (`settingKey` is the first). */
   otherSetting: { key: string; value: string }
-  /** What `auditExportUrl()` and `signOutUrl()` return on this target: the demo builds the CSV itself and has no sign-in (null, null); the product names both paths. */
-  links: { auditExport: string | null; signOut: string | null }
+  /** What `auditExportUrl()`, `dataExportUrl()` and `signOutUrl()` return on this target: the demo builds both files itself and has no sign-in (null, null, null); the product names each path. */
+  links: { auditExport: string | null; dataExport: string | null; signOut: string | null }
   /** One setting key with three valid values, for the stale-write property. */
   choices: { key: string; values: [string, string, string] }
   photoDataUrl: string
@@ -284,7 +284,7 @@ function mockTarget(): ContractTarget {
       otherMemberId: memberIdOf('priya'),
       invite: { name: 'Robin Example', email: 'robin@example.test', title: 'Operations', role: 'member' },
       otherSetting: { key: 'g:lang', value: 'Français' },
-      links: { auditExport: null, signOut: null },
+      links: { auditExport: null, dataExport: null, signOut: null },
       choices: { key: 'g:tz', values: ['Europe/London', 'America/Chicago', 'Australia/Sydney'] },
       photoDataUrl: 'data:image/png;base64,AAAA',
       photoAfterSet: 'data:image/png;base64,AAAA',

@@ -119,7 +119,7 @@ export async function changeRoutineElsewhere(other: RoutineSession, id: string, 
 // ---------- an unread notice for the `markNoticesRead` case ----------
 
 /** The slice of node:sqlite the seeding uses (this program has no Node types; the module is loaded by name at run time). */
-interface Sqlite { DatabaseSync: new (file: string) => { prepare(sql: string): { get(...p: unknown[]): unknown; run(...p: unknown[]): unknown }; close(): void } }
+interface Sqlite { DatabaseSync: new (file: string, options?: { readOnly?: boolean }) => { prepare(sql: string): { get(...p: unknown[]): unknown; run(...p: unknown[]): unknown }; close(): void } }
 interface Fs { readdirSync(dir: string, o: { recursive: true; withFileTypes: true }): { isFile(): boolean; name: string; parentPath: string }[] }
 const node = async <T>(name: string): Promise<T> => (await import(/* @vite-ignore */ name)) as T
 const proc = (globalThis as unknown as { process?: { env: Record<string, string | undefined>; cwd(): string } }).process
@@ -151,9 +151,17 @@ export async function seedUnreadNotice(o: { dir?: string; now?: number } = {}): 
   const at = o.now ?? Date.now()
   const id = `contract-unread-${at}-${Math.floor(Math.random() * 1e9)}`
   for (const file of files) {
+    const probe = new DatabaseSync(file, { readOnly: true })
+    let hasTable = false
+    try {
+      probe.prepare('PRAGMA busy_timeout = 10000').run()
+      hasTable = probe.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notices'").get() !== undefined
+    } finally {
+      probe.close()
+    }
+    if (!hasTable) continue
     const db = new DatabaseSync(file)
     try {
-      if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notices'").get() === undefined) continue
       db.prepare('PRAGMA busy_timeout = 10000').run()
       db.prepare(NOTICE_SQL).run(id, NOTICE_TEMPLATE, at)
       return id
@@ -181,8 +189,9 @@ export async function settleRuns(o: { dir?: string; timeoutMs?: number; interval
   const deadline = now() + (o.timeoutMs ?? 600_000)
   const open = (): string[] => {
     for (const file of readdirSync(dir, { recursive: true, withFileTypes: true }).filter(d => d.isFile() && d.name.endsWith('.sqlite')).map(d => `${d.parentPath}/${d.name}`)) {
-      const db = new DatabaseSync(file)
+      const db = new DatabaseSync(file, { readOnly: true })
       try {
+        db.prepare('PRAGMA busy_timeout = 10000').run()
         if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '${SLOTS}'`).get() === undefined) continue
         return (db.prepare(`SELECT slot_key FROM ${SLOTS} WHERE kind = 'manual' AND state IN ('claimed', 'started')`) as unknown as { all(): { slot_key: string }[] }).all().map(r => r.slot_key)
       } finally {
@@ -205,11 +214,9 @@ const POKE_ID = 'routine-poke'
 
 /**
  * Waits until the routine tick a routine write poked has run (the BrandAgent's `routine-poke` task is gone from its
- * scheduler table: the scheduler deletes it when the handler's work, its D1 batches included, is done). A restore or a switch
- * pokes the tick, which runs in the BrandAgent object a moment after the write answers and writes D1 itself (the cursor
- * move). Local D1 has no queue between that object and the Worker: a Worker write that lands in the middle gets
- * `SQLITE_BUSY`, which answers 500. So a case that writes in a row settles the tick before each write. Polls with a
- * deadline, like `settleRuns`. No scheduler table in any local database means nothing was ever poked: nothing to wait for.
+ * scheduler table: the scheduler deletes it when the handler's work, its D1 batches included, is done). Polls read-only
+ * with a deadline, like `settleRuns`. No scheduler table in any local database means nothing was ever poked: nothing to
+ * wait for. (File-level isolation for the live contract suite lives in `vitest.config.ts`: `fileParallelism: !process.env.CONTRACT_REAL_ORIGIN`.)
  */
 export async function settleTick(o: { dir?: string; timeoutMs?: number; intervalMs?: number; now?: () => number; sleep?: (ms: number) => Promise<void> } = {}): Promise<void> {
   const { DatabaseSync } = await node<Sqlite>('node:sqlite')
@@ -220,8 +227,9 @@ export async function settleTick(o: { dir?: string; timeoutMs?: number; interval
   const deadline = now() + (o.timeoutMs ?? 30_000)
   const pending = (): boolean => {
     for (const file of readdirSync(dir, { recursive: true, withFileTypes: true }).filter(d => d.isFile() && d.name.endsWith('.sqlite')).map(d => `${d.parentPath}/${d.name}`)) {
-      const db = new DatabaseSync(file)
+      const db = new DatabaseSync(file, { readOnly: true })
       try {
+        db.prepare('PRAGMA busy_timeout = 10000').run()
         if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '${DUE}'`).get() === undefined) continue
         if (db.prepare(`SELECT 1 FROM ${DUE} WHERE id = ?`).get(POKE_ID) !== undefined) return true
       } finally {

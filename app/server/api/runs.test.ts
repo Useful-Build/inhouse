@@ -67,7 +67,7 @@ const call = async (h: (c: HandlerContext) => Promise<Response>, principal: Prin
 const send = (h: typeof sendPriced, who: string, chatId: string, body: unknown) =>
   call(h, personPrincipal(who, 'member'), { method: 'POST', path: `/api/chats/${chatId}/turns`, params: { id: chatId }, body })
 const turnRow = (turnId: string) => runInDurableObject(brandAgent(env), (_i, s) =>
-  ({ ...s.storage.sql.exec('SELECT model, picker_id, effort, side_model, max_turns, web_fetch_json, state FROM turns WHERE turn_id = ?', turnId).one() }))
+  ({ ...s.storage.sql.exec('SELECT model, picker_id, effort, side_model, max_turns, web_fetch_json, web_search, state FROM turns WHERE turn_id = ?', turnId).one() }))
 const key = () => `key-${uniq().replace(/[^A-Za-z0-9]/g, '')}`
 
 describe('route 29: send a turn', () => {
@@ -120,12 +120,20 @@ describe('route 29: send a turn', () => {
     })
   })
 
-  it('an empty t:webfetch is any public host (null), and the default maxTurns is 25', async () => {
+  it('an empty t:webfetch is no host ([]), web search is off, and the default maxTurns is 25 (P8a S)', async () => {
     await setting('t:webfetch', '')
     const id = `c-${uniq()}`
     await chat(id, alice)
     const r = await send(sendPriced, alice, id, { clientTurnKey: key(), text: 'hi', model: 'haiku' })
-    expect(await turnRow(r.body.turnId as string)).toMatchObject({ model: 'claude-haiku-5-5', effort: 'low', max_turns: 25, web_fetch_json: null })
+    expect(await turnRow(r.body.turnId as string)).toMatchObject({ model: 'claude-haiku-5-5', effort: 'low', max_turns: 25, web_fetch_json: '[]', web_search: null })
+  })
+
+  it("the Inhouse team's t:websearch switch reaches the turn (P8a S)", async () => {
+    await db.prepare("INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 't:websearch', 'true', 1, ?, 'm_inhouse', 'r')").bind(T).run()
+    const id = `c-${uniq()}`
+    await chat(id, alice)
+    const r = await send(sendPriced, alice, id, { clientTurnKey: key(), text: 'hi', model: 'haiku' })
+    expect(await turnRow(r.body.turnId as string)).toMatchObject({ web_search: 'on' })
   })
 })
 

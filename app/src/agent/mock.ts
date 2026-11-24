@@ -1303,6 +1303,9 @@ export class MockAgent implements AgentClient {
   }
 
   auditExportUrl = (): string | null => null
+  /** The demo has no server export: Data and access builds a small invented file instead (settings/content.ts). */
+  dataExportUrl = (): string | null => null
+  checkDataExport = (): Promise<void> => Promise.resolve()
   refreshMemory = (): Promise<void> => Promise.resolve()
   refresh = (): Promise<void> => Promise.resolve()
   uploadsFiles = (): boolean => false

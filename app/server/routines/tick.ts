@@ -17,6 +17,7 @@ import { nextSlot, slotsDue } from './slots.ts'
 import { BACKSTOP_MS, ON_TIME_MS } from './limits.ts'
 import type { Slot } from './slots.ts'
 import { afterTickBatch } from '@test-controls'
+import { safeError } from '../safe-error.ts'
 
 export const TICK_KIND = 'routine-tick'
 export const TICK_ID = 'routine-tick'
@@ -60,8 +61,6 @@ interface PassResult {
   nextAttemptAt: number | null
 }
 
-const errorText = (err: unknown) => (err instanceof Error ? `${err.name}: ${err.message}` : String(err)).slice(0, 300)
-
 /** The `routine-tick` handler (both ids). */
 export async function routineTick(task: DueTask, ctx: TickContext): Promise<TaskResult> {
   const now = ctx.nowMs
@@ -73,7 +72,7 @@ export async function routineTick(task: DueTask, ctx: TickContext): Promise<Task
     const pass = await runPass(ctx, now)
     if (heartbeat) ctx.scheduler.schedule({ id: TICK_ID, kind: TICK_KIND, dueAtMs: rearmAt(pass, now) })
   } catch (err) {
-    console.error({ event: 'routine_tick_failed', id: task.id, error: errorText(err) })
+    console.error({ event: 'routine_tick_failed', id: task.id, error: safeError(err) })
   }
   return { done: true }
 }
@@ -134,7 +133,7 @@ async function decideAll(db: D1Database, brand: BrandFacts, routines: RoutineRow
     try {
       moved += await decideRoutine(db, r, { stage: brand.stage, tz: brand.tz }, settings, now)
     } catch (err) {
-      console.error({ event: 'routine_decide_failed', routineId: r.id, error: errorText(err) })
+      console.error({ event: 'routine_decide_failed', routineId: r.id, error: safeError(err) })
     }
   }
   return { moved, stoppedEarly: behind.length > DECIDE_LIMIT }
@@ -228,7 +227,7 @@ async function sweepStarted(db: D1Database, ctx: TickContext, now: number): Prom
         ])
         moved += res.meta.changes
       } catch (err) {
-        console.error({ event: 'routine_sweep_failed', error: errorText(err) })
+        console.error({ event: 'routine_sweep_failed', error: safeError(err) })
       }
     }
     if (rows.length < SWEEP_LIMIT) return { moved, stoppedEarly: false }
@@ -261,7 +260,7 @@ async function workClaimed(db: D1Database, ctx: TickContext, now: number): Promi
     try {
       moved += await workOne(db, ctx, k, now)
     } catch (err) {
-      console.error({ event: 'routine_work_failed', error: errorText(err) })
+      console.error({ event: 'routine_work_failed', error: safeError(err) })
     }
   }
   return { moved, stoppedEarly: keys.length > SUBMIT_LIMIT }
@@ -269,7 +268,7 @@ async function workClaimed(db: D1Database, ctx: TickContext, now: number): Promi
 
 /** A thrown submit (or chat): one more failure, tried again after the delay; the third makes it `refused` (internal). */
 async function failedOnce(db: D1Database, slotKey: string, now: number, err: unknown): Promise<number> {
-  console.error({ event: 'routine_submit_failed', error: errorText(err) })
+  console.error({ event: 'routine_submit_failed', error: safeError(err) })
   const row = await db.prepare(
     `UPDATE routine_slots SET submit_failures = submit_failures + 1, next_attempt_ms = ?,
         state = CASE WHEN submit_failures + 1 >= ? THEN 'refused' ELSE state END,

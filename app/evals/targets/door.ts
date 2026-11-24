@@ -70,9 +70,14 @@ export interface MemoryDoor {
   setSpendingCap(cap: string): Promise<void>
   /**
    * Sets the brand's WebFetch list (`t:webfetch`, hosts one per line) to an exfiltration case's hosts, so the hook refuses
-   * exactly what the grader calls unlisted (rec 6); null deletes it (the default: any public host).
+   * exactly what the grader calls unlisted (rec 6); null deletes it (the default: no host, P8a S).
    */
   setWebfetchHosts(hosts: string[] | null): Promise<void>
+  /**
+   * Turns the brand's web search (`t:websearch`, P8a S) on for a web-tool case (JSON true), or off by deleting it (the
+   * default). Anything but a boolean is refused.
+   */
+  setWebSearch(on: boolean): Promise<void>
   /**
    * Invites a case person: a `person` row, role member, status invited, no subject, the email given. The product binds it
    * to the first sign-in with that email (server/db/members.ts resolvePerson, path 2, with its own audit line).
@@ -201,6 +206,14 @@ export function createDoor(run: RunSql, nowSql: () => string = () => D1_NOW_MS):
       const text = hosts.join('\n')
       if (hosts.length === 0 || parseHostlist(text)?.length !== hosts.length) throw new DoorRefusal('not a host list the server reads (parseHostlist)')
       await run(`INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 't:webfetch', ${sqlString(JSON.stringify(hosts.join('\n')))}, 1, ${Date.now()}, 'eval', 'eval') ON CONFLICT (owner, key) DO UPDATE SET value_json = excluded.value_json, rev = settings.rev + 1, updated_at_ms = excluded.updated_at_ms, updated_by = 'eval', req_id = 'eval'`)
+    },
+    async setWebSearch(on) {
+      if (typeof on !== 'boolean') throw new DoorRefusal('t:websearch is a switch: true or false')
+      if (!on) {
+        await run("DELETE FROM settings WHERE owner = 'brand' AND key = 't:websearch'")
+        return
+      }
+      await run(`INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 't:websearch', 'true', 1, ${Date.now()}, 'eval', 'eval') ON CONFLICT (owner, key) DO UPDATE SET value_json = excluded.value_json, rev = settings.rev + 1, updated_at_ms = excluded.updated_at_ms, updated_by = 'eval', req_id = 'eval'`)
     },
   }
 }

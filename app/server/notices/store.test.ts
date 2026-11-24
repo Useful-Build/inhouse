@@ -39,7 +39,7 @@ describe('notices', () => {
     await seed()
     // P4's own rows only: P5's notify and system rows take a body (p5-w4 section 3).
     for (const template of Object.keys(NOTICE_TEMPLATES).filter(t => !NOTICE_TEMPLATES[t]!.body)) {
-      expect(() => addNotice(db, { ...base, id: `n-body-${template}`, template, fields: template === 'routine_failed' ? { code: 'x' } : { items: 1 }, body: 'hi' })).toThrow(/takes no body/)
+      expect(() => addNotice(db, { ...base, id: `n-body-${template}`, template, fields: template === 'routine_failed' ? { code: 'x' } : template === 'morning_check_found' ? { items: 1 } : {}, body: 'hi' })).toThrow(/takes no body/)
     }
     await db.batch([addNotice(db, { ...base, id: 'n-names', audience: 'member', audienceMemberId: 'm_dana' })])
     const dump = JSON.stringify((await db.prepare('SELECT * FROM notices').all()).results)

@@ -197,8 +197,13 @@ export interface SubmitTurn {
   effort: Effort
   sideModel: string
   maxTurns: number
-  /** null: any public host (an empty `t:webfetch`); a list narrows WebFetch to it. */
+  /**
+   * The hosts WebFetch may reach. Route 29 always sends a list (empty: none, P8a S); null comes only from a turn or a
+   * routine slot stored before P8a and is sent to the runner as `[]`, no host (run-start.ts).
+   */
   webFetchDomains: string[] | null
+  /** Web search (P8a S): on only when true; absent (a turn stored before P8a) is off. */
+  webSearch?: boolean
 }
 
 /** The due task a turn's end schedules (PR 5, ask B): `{ id, kind }`, a registered kind. */
@@ -261,7 +266,12 @@ export interface DeferredQuestion {
  * P6's `onDeferred` (ask 4), run by the `deferred-hook:<questionId>` task, never inline: `{ ok: true }` ends it; a
  * `retry` (or a throw) runs it again with the default backoff, and 10 failures quarantine it.
  */
-export type OnDeferredHook = (q: DeferredQuestion, ctx: TaskContext) => Promise<{ ok: true } | { retry: string }>
+/**
+ * Why the hook asks for a retry, stored as `due_tasks.last_error`: a code, never text (P8a P-auth: no message or
+ * content in a stored error). P6 adds codes here.
+ */
+export type DeferredRetryCode = 'unavailable' | 'not_ready'
+export type OnDeferredHook = (q: DeferredQuestion, ctx: TaskContext) => Promise<{ ok: true } | { retry: DeferredRetryCode }>
 
 /** `TaskContext.chats.status` (P4, B2): whether the chat waits on a question, and its live run. */
 export interface ChatStatus { waiting: boolean; liveRunId: string | null }

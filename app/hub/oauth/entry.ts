@@ -3,6 +3,7 @@
 // returns a HubResult; an unexpected exception is logged as `internal` without its text.
 // Keeping the runner off this binding is code discipline plus checks, not structure (brief section 3): this entrypoint
 // refuses a `run` scope, the import-boundary lint and the product config check are the orchestrator's.
+import { safeError } from '../../server/safe-error'
 import { WorkerEntrypoint } from 'cloudflare:workers'
 import type { AccountSummary, CallToolOptions, CallerScope, ConnectGateway as ConnectApi, HubResult, Instant } from '../index/contract'
 import { err } from '../index/errors'
@@ -38,7 +39,7 @@ async function answered<T>(env: Env, fn: () => Promise<HubResult<T>>): Promise<H
     try {
       await env.SIGNIN.get(env.SIGNIN.idFromName(TEST_FAKES_DO_NAME)).testRecordConnectBody(JSON.stringify(r))
     } catch (e) {
-      console.error(`hub test: recording a ConnectGateway answer failed and it is lost (${e instanceof Error ? e.name : typeof e})`)
+      console.error(`hub test: recording a ConnectGateway answer failed and it is lost (${safeError(e)})`)
     }
   }
   return r

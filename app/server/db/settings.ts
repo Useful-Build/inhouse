@@ -1,8 +1,10 @@
 // Settings (p2-design sections 5 and 6): rows keyed by (owner, key), owner a member id (personal) or 'brand' (brand and
 // technical). A write is guarded by `rev` in the statement (ifRev 0: the row must not exist yet); rows are never
 // deleted, so a reset stores null and still counts `rev` up. `g:name` lives on the member row (members.ts `rename`).
+import { DEFAULT_DAYS } from '../../ops/retention/rules.ts'
 import { settingSpec } from '../../shared/contract/settings.ts'
 import type { SettingRecord, SettingScope, SettingValue } from '../../shared/contract/settings.ts'
+import { RETENTION } from '../../shared/contract/settings-table.ts'
 import type { AuditArgs } from '../../shared/contract/audit.ts'
 import { auditInsert, redact } from './audit.ts'
 import type { AuditHook } from './audit.ts'
@@ -14,6 +16,23 @@ import type { Stmt } from './sql.ts'
 /** The owner of every brand and technical setting. */
 export const BRAND_OWNER = 'brand'
 
+export const SETTING_DAYS = {
+  '3 months': 90,
+  '6 months': 180,
+  '12 months': DEFAULT_DAYS.chats,
+  '24 months': 730,
+  'Until deleted': null,
+} satisfies Record<(typeof RETENTION)[number], number | null>
+
+export function retentionDaysOf(key: 'd:chats' | 'd:steps', value: unknown): number | null {
+  if (value === null) return DEFAULT_DAYS[key === 'd:chats' ? 'chats' : 'steps']
+  const choice = RETENTION.find(option => option === value)
+  if (choice === undefined) throw new Error(`retention: invalid ${key} setting`)
+  return SETTING_DAYS[choice]
+}
+
+const isRetentionKey = (key: string): key is 'd:chats' | 'd:steps' => key === 'd:chats' || key === 'd:steps'
+
 interface SettingRow {
   owner: string
   key: string
@@ -21,6 +40,7 @@ interface SettingRow {
   rev: number
   updated_at_ms: number
   updated_by: string
+  shortened_at_ms: number | null
 }
 
 const instant = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
@@ -93,18 +113,37 @@ export function settingStore({ db, hashKey, members, hook = s => s }: SettingSto
       const approver = /^a:/.test(w.key) && typeof w.value === 'string' && w.value !== 'anyone' ? w.value : null
       const approverGuard = approver === null ? '' : " AND EXISTS (SELECT 1 FROM members WHERE id = ? AND kind = 'person' AND status IN ('invited', 'active'))"
       const approverParams = approver === null ? [] : [approver]
+      let shortened = false
+      let enabledRetention = false
+      let disabledRetention = false
+      if (w.owner === BRAND_OWNER && isRetentionKey(w.key)) {
+        const group = w.key === 'd:chats' ? 'chats' : 'steps'
+        const newDays = retentionDaysOf(w.key, w.value)
+        disabledRetention = newDays === null
+        if (w.ifRev === 0) {
+          shortened = (newDays ?? Infinity) < DEFAULT_DAYS[group]
+        } else {
+          const prev = await read(w.owner, w.key)
+          if (!prev || prev.rev !== w.ifRev) return { conflict: prev ? record(prev) : unset(w.key) }
+          const oldDays = retentionDaysOf(w.key, JSON.parse(prev.value_json))
+          shortened = (newDays ?? Infinity) < (oldDays ?? Infinity)
+          enabledRetention = oldDays === null && !disabledRetention
+        }
+      }
       const stamp = writeStamp(at.requestId)
       const json = JSON.stringify(w.value)
       const change = w.ifRev === 0
         ? stmt(
-          `INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id)
-           SELECT ?, ?, ?, 1, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM settings WHERE owner = ? AND key = ?)${approverGuard}`,
-          w.owner, w.key, json, at.nowMs, at.actorId, stamp, w.owner, w.key, ...approverParams,
+          `INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id, shortened_at_ms)
+           SELECT ?, ?, ?, 1, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM settings WHERE owner = ? AND key = ?)${approverGuard}`,
+          w.owner, w.key, json, at.nowMs, at.actorId, stamp, shortened ? at.nowMs : null, w.owner, w.key, ...approverParams,
         )
         : stmt(
-          `UPDATE settings SET value_json = ?, rev = rev + 1, updated_at_ms = ?, updated_by = ?, req_id = ?
+          `UPDATE settings SET value_json = ?, rev = rev + 1, updated_at_ms = ?, updated_by = ?, req_id = ?,
+             shortened_at_ms = CASE WHEN ? = 1 THEN ? ELSE shortened_at_ms END,
+             retention_enabled_at_ms = CASE WHEN ? = 1 THEN ? ELSE retention_enabled_at_ms END
            WHERE owner = ? AND key = ? AND rev = ?${approverGuard}`,
-          json, at.nowMs, at.actorId, stamp, w.owner, w.key, w.ifRev, ...approverParams,
+          json, at.nowMs, at.actorId, stamp, shortened ? 1 : 0, shortened ? at.nowMs : null, enabledRetention || disabledRetention ? 1 : 0, enabledRetention ? at.nowMs : null, w.owner, w.key, w.ifRev, ...approverParams,
         )
       const line = auditInsert(
         { atMs: at.nowMs, actorId: at.actorId, args: await lineArgs(w.scope, w.key, w.value), target: { kind: 'setting', id: w.key }, requestId: at.requestId },

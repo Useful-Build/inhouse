@@ -63,6 +63,8 @@ async function sweep(request: APIRequestContext, row: Row, who: Principal): Prom
     ...(c.bytes ? { bytes: c.bytes.content, contentType: c.bytes.contentType } : {}),
   }
   const r = await call(request, actor(who === 'inhouseGrant' ? 'inhouse' : who), row.method, c.path, options)
+  // P8a F2: a webhook row takes no sign-in at all; unsigned by Shopify, every caller is 401 (webhooks.spec.ts).
+  if (c.design.class === 'webhook') return expectError(r, 401, 'unauthorized')
   const v = verdict(row, who)
   if (v.allowed) expect([c.passes, ...(c.alsoPasses ?? [])], `${who} ${rowKey(row)}: ${r.status} ${r.text}`).toContain(r.status)
   else expectError(r, 403, 'forbidden', v.reason)
@@ -205,7 +207,8 @@ test.describe('what the rows alone do not say', () => {
     for (const who of ['admin', 'memberA', 'memberB', 'inhouse', 'smoke', 'release'] as const) {
       expectError(await call(request, actor(who), 'GET', '/api/health'), 403, 'forbidden')
     }
-    for (const row of rows.filter(r => r.pattern !== '/api/health')) {
+    // P8a F2's webhook rows answer 401 to anyone without Shopify's signature (the sweep checks them).
+    for (const row of rows.filter(r => r.pattern !== '/api/health' && r.class !== 'webhook')) {
       const c = caseFor(row)
       const r = await call(request, monitor, row.method, c.path, { origin: appOrigin('brand'), ...(c.json !== undefined ? { json: c.json } : {}) })
       expect(r.status, `monitor ${rowKey(row)}`).toBe(403)

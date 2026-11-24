@@ -450,7 +450,8 @@ describe('the wipe', () => {
     writeFileSync(join(sysv, 'shm'), '       key      shmid perms       size  cpid  lpid nattch   uid   gid  cuid  cgid\n         0          7   600       4096    10    10      0 30001 30001 30001 30001\n')
     writeFileSync(join(sysv, 'sem'), '       key      semid perms      nsems   uid   gid  cuid  cgid\n         0          3   600          1 30002 30002 30002 30002\n')
     const h = createSessionHost({ workRoot: root, poolUids: new Set(), procDir: join(dir, 'proc'), runAsUser: quiet, runAsRoot: async () => ({ code: 0, stdout: '' }) })
-    await expect(h.wipeUserFiles(user)).rejects.toThrow(/SysV/)
+    // The thrown text names the place and the error's name only (P8a P-auth: a wipe's own message names a leftover file).
+    await expect(h.wipeUserFiles(user)).rejects.toThrow(/^sysv:Error$/)
     await expect(h.wipeUserFiles({ ...user, uid: 30003 })).resolves.toBeUndefined()
   })
 
@@ -469,7 +470,8 @@ describe('the wipe', () => {
     const own = userPaths(user.user)
     expect(looked).toEqual([own.home, own.tmp, ...SHARED_WRITABLE])
     expect(k.left.size).toBe(0)
-    for (const d of [own.home, own.tmp, SHARED_WRITABLE[0]]) expect(err?.message).toContain(`${d}/stuck`)
+    // Every failure, as its place and the error's name: never the leftover's path (P8a P-auth: a file name is chat content).
+    expect(err?.message).toBe(`home:Error; tmp:Error; ${SHARED_WRITABLE[0]}:Error`)
   })
 
   it("a row that only names the uid as owner never fails its wipe; a row it created does, whoever owns it now (the kernel's own text)", async () => {

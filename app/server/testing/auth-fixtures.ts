@@ -190,6 +190,15 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'GET', pattern: '/api/skills/:name', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   { method: 'POST', pattern: '/api/skills/brand/:id/delete', class: 'brand_data', allow: ['member', 'admin'] },
   { method: 'GET', pattern: '/api/routines/:id/runs', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  // P8a F2: Shopify's privacy webhooks (outside sign-in, HMAC-authenticated) and the runbook's close, release only.
+  { method: 'POST', pattern: '/api/webhooks/shopify/customers-data-request', class: 'webhook', allow: [] },
+  { method: 'POST', pattern: '/api/webhooks/shopify/customers-redact', class: 'webhook', allow: [] },
+  { method: 'POST', pattern: '/api/webhooks/shopify/shop-redact', class: 'webhook', allow: [] },
+  { method: 'POST', pattern: '/api/ops/privacy-requests/:id/close', class: 'open', allow: [], services: ['release'] },
+  // P8a D: Export everything (row 95): brand data, Admins and the Inhouse team under a live grant.
+  { method: 'GET', pattern: '/api/data-access/export', class: 'brand_data', allow: ['admin', 'inhouse'] },
+  // P8a D: Export everything's check (row 96): row 95's access.
+  { method: 'GET', pattern: '/api/data-access/export/check', class: 'brand_data', allow: ['admin', 'inhouse'] },
 ]
 
 /** `CanRows` as section 3 maps them. */
@@ -205,6 +214,7 @@ export const DESIGN_CAN_ROWS: CanRows = {
   viewAudit: { method: 'GET', pattern: '/api/audit' },
   exportAudit: { method: 'GET', pattern: '/api/audit/export.csv' },
   approveMemory: { method: 'PUT', pattern: '/api/memory/brand/:id/approved' },
+  exportData: { method: 'GET', pattern: '/api/data-access/export' },
 }
 
 const unwired = () => Promise.reject(new Error('stores not wired'))

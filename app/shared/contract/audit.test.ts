@@ -48,6 +48,10 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   'library.deleted': { action: 'library.deleted', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA'] },
   'library.restored': { action: 'library.restored', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA', 'f_BBBBBBBBBBBBBBBBBBBBBB'] },
   'today.set_aside': { action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason: 'snoozed' },
+  'restore.confirmed': { action: 'restore.confirmed', restoreId: '20261122T191611123Z-0a1b2c3d', backupId: '20261121T020000000Z-ffee0011', approvedBy: m },
+  'privacy.requested': { action: 'privacy.requested', requestId: 'pr_AAAAAAAAAAAAAAAAAAAAAA', topic: 'customers/redact', parsed: true },
+  'privacy.closed': { action: 'privacy.closed', requestId: 'pr_AAAAAAAAAAAAAAAAAAAAAA', topic: 'shop/redact', by: 'release' },
+  'restore.member_placeholder': { action: 'restore.member_placeholder', memberId: m, restoreId: '20261122T191611123Z-0a1b2c3d' },
   // P5 (p5-w1)
   'tools.connect_start': { action: 'tools.connect_start', accountId: 'slack:workspace' },
   'tools.connect': { action: 'tools.connect', accountId: 'slack:workspace', outcome: 'scope_mismatch' },
@@ -64,6 +68,7 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   'brand_skill.created': { action: 'brand_skill.created', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
   'brand_skill.changed': { action: 'brand_skill.changed', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
   'brand_skill.deleted': { action: 'brand_skill.deleted', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
+  'data.exported': { action: 'data.exported', scope: 'brand', stores: 24, items: 1234 },
 }
 const word = fc.stringMatching(/^[A-Z][a-z]{1,11}$/)
 const name = fc.oneof(word, fc.tuple(word, word).map(([a, b]) => `${a} ${b}`))
@@ -292,6 +297,12 @@ describe('P4 lines (wave-4 PR0)', () => {
       'library.uploaded', 'library.deleted', 'library.restored',
       'today.set_aside',
     ])
+    const restore = all.indexOf('restore.confirmed')
+    expect(restore).toBeGreaterThan(all.indexOf('today.set_aside'))
+    expect(all.slice(restore, restore + 4)).toEqual([
+      'restore.confirmed', 'restore.member_placeholder',
+      'privacy.requested', 'privacy.closed',
+    ])
   })
 })
 
@@ -308,7 +319,7 @@ describe('support.access write pairs (P4 review fold)', () => {
     // P6a PR0: approving or rejecting a waiting team fact (route 78).
     ['PUT', '/api/memory/brand/:id/approved'],
   ] as const
-  const READS = ['/api/members', '/api/memory', '/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download', '/api/memory/waiting', '/api/routines/:id/runs']
+  const READS = ['/api/members', '/api/memory', '/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download', '/api/memory/waiting', '/api/routines/:id/runs', '/api/data-access/export', '/api/data-access/export/check']
 
   it('takes each write pair, and its route with no other method', () => {
     for (const [method, route] of WRITES) {

@@ -171,3 +171,17 @@ describe('descriptions promise only what P3 does (failure 5)', () => {
     expect(d.notification_send.replace('never email', '')).not.toMatch(/email/i)
   })
 })
+
+describe('the Watch switch (P8a S)', () => {
+  it("memory_save and team_request_create run at Watch", async () => {
+    await db.prepare("DELETE FROM settings WHERE owner = 'brand' AND key = 'stage'").run()
+    await db.prepare("INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 'stage', '\"Watch\"', 1, 0, 'm_x', 'r-watch')").run()
+    const saved = await call('memory_save', { scope: 'brand', text: 'We restock on Fridays at Watch.' })
+    expect(saved.isError).toBeFalsy()
+    const memberId = 'm_watch_requester'
+    await db.prepare("INSERT INTO members (id, kind, role, status, name, created_at_ms) VALUES (?, 'person', 'member', 'active', 'Avery Example', ?)").bind(memberId, NOW).run()
+    const team = await call('team_request_create', { kind: 'tool', text: 'Connect our helpdesk' }, { ...SCOPE, memberId })
+    expect(team.isError).toBeFalsy()
+    expect(team.structuredContent).toMatchObject({ created: true, text: 'Connect our helpdesk' })
+  })
+})

@@ -36,6 +36,7 @@ import { ChatSocket } from './stream/socket'
 import type { SocketLike, SocketParts } from './stream/socket'
 import { postToolConnect, postToolDisconnect, putToolPaused, readTools } from './tools'
 import { readUsage, readUsageMonths } from './usage'
+import { checkDataExport, dataExportUrl as dataExportPath } from './data-access'
 import type { AvailableChannels, NotifyChannelList, PutNotifyChannels } from '../../../shared/contract/notify-slack'
 import { MESSAGE, Transport } from './transport'
 import type { Contract, TransportOptions } from './transport'
@@ -372,9 +373,9 @@ export class HttpAgent implements AgentClient {
   }
 
   private setStatus(k: ResourceKey, status: ResourceStatus) { this.patch({ res: { ...this.s.res, [k]: status } }) }
-  /** A 401, or a 403 that says the person isn't on the team (never invited, or removed): the signed-out state, whichever request met it. */
+  /** A 401, or a 403 that says the person isn't on the team (never invited, removed, or an Inhouse team sign-in): the signed-out state, whichever request met it. */
   private static gone(err: AgentError): boolean {
-    return err.code === 'unauthorized' || (err.code === 'forbidden' && (err.reason === REASON.notInvited || err.reason === REASON.removed))
+    return err.code === 'unauthorized' || (err.code === 'forbidden' && (err.reason === REASON.notInvited || err.reason === REASON.removed || err.reason === REASON.wrongKind))
   }
   private failStatus(k: ResourceKey, e: unknown) {
     const err = e instanceof AgentError ? e : new AgentError('unknown', MESSAGE.unknown)
@@ -1217,6 +1218,15 @@ export class HttpAgent implements AgentClient {
 
   /** Where the audit log downloads from. A relative path: the browser sends it to its own origin, with its sign-in. */
   auditExportUrl = (): string | null => '/api/audit/export.csv'
+  /** Where Export everything downloads from (route 95, data-access.ts). */
+  dataExportUrl = (): string | null => dataExportPath()
+  /** Route 96, before the page navigates to route 95. A 401, or a 403 for a person who was removed, is the signed-out state. */
+  checkDataExport = async (): Promise<void> => {
+    try { await checkDataExport(this.http) } catch (e) {
+      if (e instanceof AgentError && HttpAgent.gone(e)) this.failStatus('meta', e)
+      throw e
+    }
+  }
   signOutUrl = (): string | null => '/cdn-cgi/access/logout'
 
   // P5 (p5-w4): the Slack notice channels, routes 73 to 75. The Settings page holds the list; a refusal rejects as it came.
@@ -1400,6 +1410,9 @@ export class HttpAgent implements AgentClient {
   activeRuns = async (): Promise<Awaited<ReturnType<AgentClient['activeRuns']>>> => {
     if (!ACTIVE_RUNS_WIRED) return []
     await this.whenLoaded()
+    // The first read was refused (signed out, not on the team, an Inhouse team account): `whenLoaded` resolves then too,
+    // and the start screen is up, so nothing more is asked.
+    if (this.s.res.meta.status !== 'ready') return []
     // A run of a chat the first page didn't hold is followed when that chat opens (route 24 names it in `runs`).
     return readActiveRuns(this.http)
   }

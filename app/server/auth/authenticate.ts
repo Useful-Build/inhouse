@@ -22,7 +22,7 @@ import type { AuthStores } from './stores.ts'
 export type AuthOutcome =
   | { principal: Principal }
   | { refused: 'unauthorized' }
-  | { refused: 'forbidden'; reason: 'not_invited' | 'removed' | 'bad_origin' }
+  | { refused: 'forbidden'; reason: 'not_invited' | 'removed' | 'wrong_kind' | 'bad_origin' }
   | { refused: 'unavailable' }
 
 /** Compile-time: true only in `vite build --mode product-test` (server/build-flags.d.ts; declared here too so the
@@ -169,7 +169,6 @@ export async function authenticate(request: Request, env: AuthEnv, stores: AuthS
     }
     const found = await stores.members.resolvePerson(signIn)
     if ('ok' in found) return { principal: { ...found.ok, expMs } }
-    if (found.refused === 'wrong_kind') return refuse({ refused: 'unauthorized' }, 'wrong_kind', requestId)
     return refuse({ refused: 'forbidden', reason: found.refused }, found.refused, requestId)
   } catch (err) {
     console.error({ event: 'auth_store_failed', requestId, error: err instanceof Error ? err.name : 'unknown' })

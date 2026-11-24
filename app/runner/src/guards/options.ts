@@ -113,7 +113,7 @@ export function createQueryGuards(deps: QueryGuardDeps): QueryGuards {
 
 export function guardedOptions(
   base: Options,
-  config: Pick<RunConfig, 'webFetchDomains' | 'outputFormat' | 'brandSkills'>,
+  config: Pick<RunConfig, 'webFetchDomains' | 'webSearch' | 'outputFormat' | 'brandSkills'>,
   run: RunContext,
   deps: QueryGuardDeps & { workRoot: string; usersRoot: string; pluginDir: string; cliPath: string },
 ): Options {
@@ -155,6 +155,8 @@ export function guardedOptions(
     if (!proxy || server.url !== mcpServerUrls(proxy)[name]) throw new GuardConfigError(`the "${name}" MCP server must be the proxy's own route for it`)
   }
 
+  // WebSearch only when the run config turns it on (P8a S: the brand's `t:websearch`, off by default); absent is off.
+  const builtIns = BUILT_IN_TOOLS.filter((t) => t !== 'WebSearch' || config.webSearch === true)
   const brandSkills = (config.brandSkills ?? []).map((s) => s.name)
 
   const hostAddresses = deps.hostAddresses()
@@ -205,11 +207,11 @@ export function guardedOptions(
   return {
     ...base,
     // The SDK's StructuredOutput tool only with structured output asked for (outputFormat); never otherwise.
-    tools: [...BUILT_IN_TOOLS, ...(config.outputFormat ? [STRUCTURED_OUTPUT_TOOL] : [])],
+    tools: [...builtIns, ...(config.outputFormat ? [STRUCTURED_OUTPUT_TOOL] : [])],
     // Pre-approved; `dontAsk` refuses everything else. Edits only inside the session folder (the deny rules above
     // carve out .claude/ and .mcp.json, and name the home); WebFetch to the listed domains, or any (null: the hook decides).
     allowedTools: [
-      ...BUILT_IN_TOOLS.filter((t) => t !== 'Edit' && t !== 'Write' && t !== 'WebFetch'),
+      ...builtIns.filter((t) => t !== 'Edit' && t !== 'Write' && t !== 'WebFetch'),
       `Edit(${abs(cwd)}/**)`,
       ...webFetchAllowRules(domains),
       `mcp__${INHOUSE_MCP_SERVER}`,

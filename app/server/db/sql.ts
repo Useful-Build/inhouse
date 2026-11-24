@@ -8,13 +8,17 @@ export { renderStmt, sqlLiteral, stmt, type SqlValue, type Stmt } from './sql-st
 
 /**
  * A D1 or R2 call that failed (p2-design section 4: 503 `unavailable`). The stores' one boundary to storage throws it,
- * so api.ts can tell a storage failure from a bug in the code (500 `unknown`). `message` keeps the storage error's own
- * message (a constraint name, never a value); `cause` keeps the error.
+ * so api.ts can tell a storage failure from a bug in the code (500 `unknown`). `message` names what failed, in fixed text;
+ * `cause` keeps the storage error, whose message never goes into this one (P8a P-auth: a D1 or R2 message can name a
+ * value, and every log above a store would carry it).
  */
 export class StoreUnavailableError extends Error {
+  /** Which store, as a code logs can carry (`StoreUnavailableError:R2` through safeError). */
+  readonly code: string
   constructor(what: string, cause: unknown) {
-    super(`${what} failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause })
+    super(`${what} failed`, { cause })
     this.name = 'StoreUnavailableError'
+    this.code = what.replace(/\W+/g, '_')
   }
 }
 

@@ -75,7 +75,9 @@
 	// AI_GATEWAY_TOKEN is the authenticated gateway's token (p3-design section 8.2). Under `wrangler dev` only these keys
 	// are read from the local secrets file, and a missing one is a warning, not a failure.
 	// https://developers.cloudflare.com/workers/wrangler/configuration/ (secrets, read 2026-11-20)
-	"secrets": { "required": ["AUDIT_HASH_KEY", "AI_GATEWAY_TOKEN"] },
+	// P8a F2: SHOPIFY_WEBHOOK_SECRETS, a JSON array of the brand's Shopify app client secrets (the read and the write
+	// app), which sign Shopify's privacy webhooks (server/webhooks/shopify-privacy).
+	"secrets": { "required": ["AUDIT_HASH_KEY", "AI_GATEWAY_TOKEN", "SHOPIFY_WEBHOOK_SECRETS"] },
 	"vars": {
 		// JSON text, filled by the ops repo: { teamDomain, apps: [{ name, origin, aud }], serviceTokens } (p2-design section 2).
 		// Empty here, so a release that doesn't fill it fails the config check.

@@ -28,6 +28,7 @@
 import type { RunStart } from '../../../shared/protocol/index.ts'
 import type { BrandAgentParts, DrainState, PoolHealth, Refusal, RunnerPoolPort } from '../brand-agent/ports.ts'
 import type { AdmitResult, StatusResult, WarmResult } from './runner.ts'
+import { safeError } from '../../safe-error.ts'
 
 /** Turns per runner (decision log: 25 per container). */
 export const PER_RUNNER = 25
@@ -497,7 +498,7 @@ export class RunnerPool implements RunnerPoolPort {
         try {
           return await this.#d.runner(n).warm(drainGen)
         } catch (e) {
-          return { ok: false, why: 'start', detail: e instanceof Error ? e.message : String(e) }
+          return { ok: false, why: 'start', detail: safeError(e) }
         }
       }),
     )

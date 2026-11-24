@@ -123,6 +123,18 @@ export const accessMatrix: readonly AccessRow[] = [
   // Rows 87 to 89 stay P6a's spare numbers (86 is main's, below); line A holds 90 to 99.
   // Master plan decision 8: a routine's recent runs, read like route 52.
   /* 86 */ { method: 'GET', pattern: '/api/routines/:id/runs', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  // P8a F2: Shopify's privacy webhooks, the closed exception outside sign-in (routes.ts `webhookRoutes`): no principal
+  // passes these rows; server/index.ts serves them before sign-in, authenticated by Shopify's HMAC.
+  /* 91 */ { method: 'POST', pattern: '/api/webhooks/shopify/customers-data-request', class: 'webhook', allow: [] },
+  /* 92 */ { method: 'POST', pattern: '/api/webhooks/shopify/customers-redact', class: 'webhook', allow: [] },
+  /* 93 */ { method: 'POST', pattern: '/api/webhooks/shopify/shop-redact', class: 'webhook', allow: [] },
+  // P8a F2: the runbook closes a privacy request, release only like revive.
+  /* 94 */ { method: 'POST', pattern: '/api/ops/privacy-requests/:id/close', class: 'open', allow: [], services: ['release'] },
+  // P8a D: Data and access's "Export everything", the brand's whole export (ops/export, brand scope) as one download.
+  // Brand data: Admins, and the Inhouse team only under a live grant (support.access). Members never.
+  /* 95 */ { method: 'GET', pattern: '/api/data-access/export', class: 'brand_data', allow: ['admin', 'inhouse'] },
+  // P8a D: the check the page makes before route 95 (its plan only: the size or the `too_large` refusal). Row 95's access.
+  /* 96 */ { method: 'GET', pattern: '/api/data-access/export/check', class: 'brand_data', allow: ['admin', 'inhouse'] },
 ]
 
 /** Each `CanKey`'s row (section 3). */
@@ -138,4 +150,5 @@ export const canRows: CanRows = {
   viewAudit: { method: 'GET', pattern: '/api/audit' },
   exportAudit: { method: 'GET', pattern: '/api/audit/export.csv' },
   approveMemory: { method: 'PUT', pattern: '/api/memory/brand/:id/approved' },
+  exportData: { method: 'GET', pattern: '/api/data-access/export' },
 }

@@ -70,6 +70,8 @@
 		"INHOUSE_ACCESS": "{\"teamDomain\":\"https://test-issuer.invalid\",\"apps\":[{\"name\":\"brand\",\"origin\":\"http://brand.localhost:8787\",\"aud\":\"b1a2c3d4e5f60718293a4b5c6d7e8f90b1a2c3d4e5f60718293a4b5c6d7e8f90\"},{\"name\":\"inhouse\",\"origin\":\"http://inhouse.localhost:8787\",\"aud\":\"0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0\"}],\"serviceTokens\":{\"monitor-test-client.access\":\"monitor\",\"smoke-test-client.access\":\"smoke\",\"release-test-client.access\":\"release\"}}",
 		// Test-only: the deployed Worker gets AUDIT_HASH_KEY as a secret, never a var.
 		"AUDIT_HASH_KEY": "test-only-audit-hash-key-not-a-secret",
+		// Test-only, as AUDIT_HASH_KEY: invented Shopify app secrets the e2e webhook spec signs with (e2e/api/webhooks.spec.ts).
+		"SHOPIFY_WEBHOOK_SECRETS": "[\"test-only-shopify-read-app-secret\",\"test-only-shopify-write-app-secret\"]",
 		// As the product's. No AI binding and no gateway here, ever (the config check refuses one): tests use the scripted model.
 		"RUNNER_POOL": "2"
 	},

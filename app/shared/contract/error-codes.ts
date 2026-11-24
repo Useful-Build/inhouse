@@ -22,10 +22,14 @@ export const REASON = {
   runOpen: 'run_open', stage: 'stage',
   // #312 review: routine_create past the cap; an empty Library upload (row 63).
   routineLimit: 'routine_limit', empty: 'empty',
+  // P8a P-auth: an Inhouse team sign-in on the brand app.
+  wrongKind: 'wrong_kind',
   // P5 (p5-w3): the Tools routes' refusals.
   notConfigured: 'not_configured', notDisconnectable: 'not_disconnectable', notConnected: 'not_connected',
   // P6a W3: a request to the Inhouse team past 50 open ones.
   requestLimit: 'request_limit',
+  // P8a D: Export everything's check refused the Inhouse team once its grant ended.
+  grantRequired: 'grant_required',
 } as const satisfies Record<string, ErrorReason>
 /**
  * P5 (p5-w4): the notice channel list's refusals. Kept apart from REASON because a bundler keeps a used object literal

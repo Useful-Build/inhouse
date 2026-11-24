@@ -2,8 +2,8 @@
 // a template, its fields and member ids. Written from the brief's tables: who may read (every Member, the Admin, Inhouse only
 // under a live grant), what a line says for each template (the fixed texts below, written out here, not read from the code),
 // newest first with every line once across pages, a table that never changes a line, and no member name stored. Lines are
-// seeded into the test build's local D1 (no route writes one: the producers are the routines, Today and the Library), far in
-// the past (1970) so they never mix with real lines and are told apart by their `at.ms`. Skips anywhere but the local build.
+// seeded into the test build's local D1 (no route writes one: the producers are the routines, Today and the Library).
+// The fixture instants are inside the retention window and older than activity produced during the spec. Skips anywhere but the local build.
 import { randomBytes } from 'node:crypto'
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
@@ -19,8 +19,9 @@ const inhouse = actor('inhouse')
 test.describe.configure({ mode: 'serial' })
 
 const run = randomBytes(6).toString('hex')
-/** 1970 instants: distinct, far older than any real line, so a page walk meets them last and in a known order. */
-const AT = (i: number) => 1_000_000 + i * 1000
+const fixtureStart = Date.now() - 60 * 60 * 1000
+const AT = (i: number) => fixtureStart + i * 1000
+const fixtureTimes = new Set([0, 1, 2, 3, 4, 5, 6].map(AT))
 interface Line { at: { ms: number }; kind: string; text: string; who: string; why: string; result: string; actorId?: string; minStage?: number; trace?: string }
 let danaId: string
 let leoId: string
@@ -55,10 +56,10 @@ const page = async (request: APIRequestContext, who: typeof dana, query = '') =>
   expect(r.status, r.text).toBe(200)
   return r.json as { items: Line[]; nextCursor: string | null }
 }
-/** Every page of the feed, with the seeded lines picked out by their 1970 instants. */
+/** Every page of the feed, with the seeded lines picked out by their fixture instants. */
 const walk = async (request: APIRequestContext, who: typeof dana, limit: number) => {
   const { items, pages } = await allPages<Line>(request, who, '/api/activity', limit)
-  return { items, pages, seeded: items.filter(l => l.at.ms < 100_000_000) }
+  return { items, pages, seeded: items.filter(l => fixtureTimes.has(l.at.ms)) }
 }
 
 test('without a JWT, or with a garbage one, route 59 is 401 unauthorized', async ({ request }) => {

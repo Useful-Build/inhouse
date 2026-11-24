@@ -85,7 +85,7 @@ describe('the release token (failures 1 and 2)', () => {
     // outside the test build (this harness's handlers are all `ok`, so it reads 200 here like the others).
     // POST /api/ops/alarm (route 67, P4) is the test build's alarm-now control, 404 outside the test build in the same way.
     // POST /api/ops/test-fakes (route 76, P5 W5) is the test build's test-fakes hook, 404 outside the test build likewise.
-    const allowed = ['POST /api/ops/drain', 'GET /api/ops/drain', 'DELETE /api/ops/drain', 'POST /api/ops/warmup', 'POST /api/ops/tasks/revive', 'POST /api/ops/alarm', 'POST /api/ops/test-fakes']
+    const allowed = ['POST /api/ops/drain', 'GET /api/ops/drain', 'DELETE /api/ops/drain', 'POST /api/ops/warmup', 'POST /api/ops/tasks/revive', 'POST /api/ops/alarm', 'POST /api/ops/privacy-requests/:id/close', 'POST /api/ops/test-fakes']
     for (const r of DESIGN_ROWS) {
       const res = await call(BRAND.origin, r.pattern.replace(/:[A-Za-z]+/g, 'x1'), { method: r.method, headers: h })
       expect(res.status, `${r.method} ${r.pattern}`).toBe(allowed.includes(`${r.method} ${r.pattern}`) ? 200 : 403)

@@ -47,6 +47,7 @@ import type { Trace } from '../../../shared/contract/trace.ts'
 import type { AdmitAnswer, LeaseAnswer, ModelCallUsage, ModelCallWorst } from './ports.ts'
 import { SWEEP_EVERY_MS, ensureGrantExpiry, runAuthoritySweep, runGrantExpiry, sweepBy } from './authority.ts'
 import type { AuthorityDeps, SocketAuthority } from './authority.ts'
+import { safeError } from '../../safe-error.ts'
 import { SYSTEM_PROMPT_V2 } from '../../prompt/system.ts'
 
 // ---------- numbers (p3-design 1.3, 4.3, 4.4, 4.6, 4.11) ----------
@@ -95,7 +96,7 @@ export interface TurnRow {
   turn_id: string; run_id: string; chat_id: string; owner_id: string; ord: number; client_key: string; payload_hash: string
   gen: number; state: TurnState; priority: 'now' | 'next' | 'later'; text: string; quote: string | null
   attachments_json: string; model: string; picker_id: string; side_model: string; effort: string; max_turns: number
-  web_fetch_json: string | null; answer_position: 'starting' | 'queued'; runner: string | null; runner_last_seq: number
+  web_fetch_json: string | null; web_search: string | null; answer_position: 'starting' | 'queued'; runner: string | null; runner_last_seq: number
   session_id: string | null; last_push_ms: number | null; last_progress_ms: number | null
   starting_deadline_ms: number | null; placed: number; pool_queued: number; query_ran: number; reserved: number
   interrupt_asked: number; budget_wait_since_ms: number | null; requeues: number; fenced: number
@@ -213,8 +214,6 @@ interface Extra {
 const waitRefusal = (r: Refusal) =>
   (r.refused.code === 'forbidden' && r.refused.reason === 'paused') || (r.refused.code === 'unavailable' && r.refused.reason === 'draining')
   || (r.refused.code === 'rate_limited' && r.refused.reason === 'queue_full')
-
-const errorText = (err: unknown) => (err instanceof Error ? `${err.name}: ${err.message}` : 'unknown').slice(0, 300)
 
 export class AgentCore {
   private readonly d: CoreDeps
@@ -391,8 +390,8 @@ export class AgentCore {
     this.sql.exec(
       `INSERT INTO turns (turn_id, run_id, chat_id, owner_id, ord, client_key, payload_hash, gen, state, priority, text, quote,
         attachments_json, model, picker_id, side_model, effort, max_turns, web_fetch_json, answer_position, created_at_ms,
-        output_format_json, on_end_json, resume_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+        output_format_json, on_end_json, resume_json, web_search)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
       turnId, runId, t.chatId, member, ord + 1, t.input.clientTurnKey, hash, t.input.priority, t.input.text,
       t.input.quote ?? null, JSON.stringify(atts), t.model, t.pickerId, t.sideModel, t.effort, t.maxTurns,
       t.webFetchDomains === null ? null : JSON.stringify(t.webFetchDomains), now,
@@ -400,6 +399,7 @@ export class AgentCore {
       extra?.onEnd === undefined ? null : JSON.stringify({ kind: extra.onEnd.kind, id: extra.onEnd.id }),
       extra?.resume === undefined ? null
         : JSON.stringify({ questionId: extra.resume.questionId, decision: extra.resume.decision, toolUseId: extra.resume.toolUseId } satisfies Resume),
+      t.webSearch === true ? 'on' : null,
     )
     if (extra?.resume !== undefined) {
       // The resume takes the question over, in this same step (A8: the end fires exactly once): the chat leaves
@@ -478,7 +478,7 @@ export class AgentCore {
       `UPDATE turns SET state = 'starting', gen = ?, starting_deadline_ms = ?, claimed_at_ms = ?, placed = 0, pool_queued = 0,
         runner = NULL, runner_last_seq = -1, watch_json = NULL WHERE turn_id = ?`, gen, now + STARTING_DEADLINE_MS, now, t.turn_id)
     this.watchTask(t.turn_id, now + WATCH_EVERY_MS)
-    void this.start(t.turn_id, gen).catch(err => console.error({ event: 'turn_start_failed', error: errorText(err) }))
+    void this.start(t.turn_id, gen).catch(err => console.error({ event: 'turn_start_failed', error: safeError(err) }))
   }
 
   // ---------- start (4.4) ----------
@@ -507,7 +507,7 @@ export class AgentCore {
     try {
       usable = await this.d.modelUsable(t.picker_id)
     } catch (err) {
-      console.error({ event: 'turn_model_check_failed', error: errorText(err) })
+      console.error({ event: 'turn_model_check_failed', error: safeError(err) })
       return
     }
     t = this.current(turnId, gen, 'starting')
@@ -529,7 +529,7 @@ export class AgentCore {
         promptApps = built.apps === undefined || built.apps === null ? null : JSON.stringify(built.apps)
       } catch (err) {
         // The error's name only: a builder's message could carry hub or D1 text (P8a's log guard, A10).
-        console.error({ event: 'turn_prompt_failed', turnId, error: err instanceof Error ? err.name : typeof err })
+        console.error({ event: 'turn_prompt_failed', turnId, error: safeError(err) })
         systemPrompt = SYSTEM_PROMPT_V2
         promptVersion = 2
       }
@@ -583,11 +583,12 @@ export class AgentCore {
       start = buildStart({
         turnId, chatId: t.chat_id, sessionId, expect, text: t.text, quote: t.quote, attachments: atts, model: t.model,
         sideModel: t.side_model, effort: t.effort as StartWithoutToken['effort'], maxTurns: t.max_turns,
-        webFetchDomains: t.web_fetch_json === null ? null : JSON.parse(t.web_fetch_json) as string[], systemPrompt,
+        webFetchDomains: t.web_fetch_json === null ? null : JSON.parse(t.web_fetch_json) as string[], webSearch: t.web_search === 'on',
+        systemPrompt,
         outputFormat: t.output_format_json === null ? undefined : JSON.parse(t.output_format_json) as OutputFormat,
       })
     } catch (err) {
-      console.error({ event: 'turn_start_unbuildable', error: errorText(err) })
+      console.error({ event: 'turn_start_unbuildable', error: safeError(err) })
       return this.failUnstarted(t, { outcome: 'failed', reason: 'protocol' })
     }
     this.sql.exec('UPDATE turns SET session_id = ?, start_json = ?, prompt_version = ?, prompt_apps = ? WHERE turn_id = ?', sessionId, JSON.stringify(start), promptVersion, promptApps, turnId)
@@ -603,7 +604,7 @@ export class AgentCore {
     try {
       brandSkills = await this.d.brandSkills()
     } catch (err) {
-      console.error({ event: 'turn_brand_skills_failed', error: errorText(err) })
+      console.error({ event: 'turn_brand_skills_failed', error: safeError(err) })
       return
     }
     t = this.current(turnId, gen, 'starting')
@@ -624,7 +625,7 @@ export class AgentCore {
       rs = RunStartSchema.parse({ ...JSON.parse(t.start_json!), ...(brandSkills.length > 0 ? { brandSkills } : {}), runToken: token })
     } catch (err) {
       this.d.tokens.revokeToken(tokenHash, 'unbuildable')
-      console.error({ event: 'turn_start_unbuildable', error: errorText(err) })
+      console.error({ event: 'turn_start_unbuildable', error: safeError(err) })
       return this.failUnstarted(t, { outcome: 'failed', reason: 'protocol' })
     }
     this.sql.exec('UPDATE turns SET placed = 1, pool_queued = 0 WHERE turn_id = ? AND gen = ?', turnId, gen)
@@ -653,7 +654,7 @@ export class AgentCore {
         // admitted there (a 404 the runner takes as done), so stop it again now that it is (round 2 low). The token
         // stays: the grace still flushes through `store` and `events`.
         if (named !== null && t.fenced === 1) {
-          void this.d.ports.pool.stop(named, turnId).catch(err => console.error({ event: 'turn_fenced_stop_failed', error: errorText(err) }))
+          void this.d.ports.pool.stop(named, turnId).catch(err => console.error({ event: 'turn_fenced_stop_failed', error: safeError(err) }))
         }
         return
       }
@@ -662,7 +663,7 @@ export class AgentCore {
       this.d.tokens.revokeToken(tokenHash, 'fenced')
       const newerThere = t.runner === named && (t.state === 'starting' || t.state === 'live' || t.state === 'ending')
       if (named !== null && !newerThere) {
-        void this.d.ports.pool.stop(named, turnId).catch(err => console.error({ event: 'turn_undo_stop_failed', error: errorText(err) }))
+        void this.d.ports.pool.stop(named, turnId).catch(err => console.error({ event: 'turn_undo_stop_failed', error: safeError(err) }))
       }
       return
     }
@@ -827,7 +828,7 @@ export class AgentCore {
       this.d.scheduler.cancel(`${FLUSH_TURN_PREFIX}${turnId}`)
       return true
     } catch (err) {
-      console.error({ event: 'flush_turn_failed', turnId, error: errorText(err) })
+      console.error({ event: 'flush_turn_failed', turnId, error: safeError(err) })
       return false
     }
   }
@@ -863,7 +864,7 @@ export class AgentCore {
     this.watchTask(t.turn_id, now + GRACE_MS)
     if (t.runner !== null) {
       const runner = t.runner
-      void this.d.ports.pool.stop(runner, t.turn_id).catch(err => console.error({ event: 'turn_stop_failed', error: errorText(err) }))
+      void this.d.ports.pool.stop(runner, t.turn_id).catch(err => console.error({ event: 'turn_stop_failed', error: safeError(err) }))
     }
   }
 
@@ -1180,7 +1181,7 @@ export class AgentCore {
         try {
           file = await this.d.ports.files.confirm(row.chat_id, turnId, path, sha256, this.d.now())
         } catch (err) {
-          console.error({ event: 'file_confirm_failed', error: errorText(err) })
+          console.error({ event: 'file_confirm_failed', error: safeError(err) })
           this.d.scheduler.schedule({ id: `run-advance:${row.run_id}`, kind: 'run-advance', dueAtMs: this.d.now() + EFFECT_RETRY_MS })
           return
         }
@@ -1238,7 +1239,7 @@ export class AgentCore {
       try {
         await this.d.ports.pool.stop(runner, t.turn_id)
       } catch (err) {
-        console.error({ event: 'turn_ambiguous_stop_failed', error: errorText(err) })
+        console.error({ event: 'turn_ambiguous_stop_failed', error: safeError(err) })
       }
       if (!this.current(t.turn_id, t.gen, 'starting')) return { done: true }
       w.stopped = true
@@ -1248,7 +1249,7 @@ export class AgentCore {
     try {
       st = await this.d.ports.pool.status(runner, t.turn_id)
     } catch (err) {
-      console.error({ event: 'turn_status_failed', error: errorText(err) })
+      console.error({ event: 'turn_status_failed', error: safeError(err) })
       st = { state: 'unreachable', containerGone: false }
     }
     const fresh = this.current(t.turn_id, t.gen, 'starting')
@@ -1378,7 +1379,7 @@ export class AgentCore {
     if (runner === null) return
     const gen = t.gen
     void this.d.ports.pool.interrupt(runner, t.turn_id).catch(err => {
-      console.error({ event: 'turn_interrupt_failed', error: errorText(err) })
+      console.error({ event: 'turn_interrupt_failed', error: safeError(err) })
       this.sql.exec("UPDATE turns SET interrupt_asked = 0 WHERE turn_id = ? AND gen = ? AND state = 'live' AND outcome IS NULL", t.turn_id, gen)
     })
   }
@@ -1682,7 +1683,7 @@ export class AgentCore {
     if (this.onDeferred === null) return { retryAtMs: ctx.nowMs + backoffMs(task.attempts), error: 'no onDeferred hook' }
     const answer = await this.onDeferred(q, ctx)
     if ('ok' in answer) return { done: true }
-    return { retryAtMs: ctx.nowMs + backoffMs(task.attempts), error: answer.retry.slice(0, 300) }
+    return { retryAtMs: ctx.nowMs + backoffMs(task.attempts), error: answer.retry }
   }
 
   /**
@@ -1728,6 +1729,7 @@ export class AgentCore {
       by: owner === SYSTEM_MEMBER_ID ? { kind: 'service', memberId: owner } : { kind: 'person', memberId: owner },
       model: parked.model, pickerId: parked.picker_id, effort: parked.effort as SubmitTurn['effort'], sideModel: parked.side_model,
       maxTurns: parked.max_turns, webFetchDomains: parked.web_fetch_json === null ? null : JSON.parse(parked.web_fetch_json) as string[],
+      webSearch: parked.web_search === 'on',
     }
     const answer = this.admit(turn, hash, [], {
       ...(parked.output_format_json === null ? {} : { outputFormat: JSON.parse(parked.output_format_json) as OutputFormat }),

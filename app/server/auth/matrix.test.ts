@@ -7,7 +7,10 @@
 import { fc, test } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
 import { accessMatrix, canRows as committedCanRows } from '../access-matrix.ts'
-import { routes } from '../routes.ts'
+import { routes as signedInRoutes, webhookRoutes } from '../routes.ts'
+
+/** Every route: the signed-in table and P8a F2's webhook routes (the closed exception outside sign-in). */
+const routes = [...signedInRoutes, ...webhookRoutes]
 import type { Principal } from './principal.ts'
 import { ADMIN_WRITE_OBJECT, AccessRefusedError, canFor, canRowsProblems, checkAccess, objectGate, rowFor } from './matrix.ts'
 import type { AccessObject, AccessRow, CanRows } from './matrix.ts'
@@ -187,16 +190,16 @@ describe('checkAccess cases', () => {
   })
   it('can: an Admin may switch a model but not edit technical; Inhouse has every Admin control but granting, and the audit log only under a grant', () => {
     const admin = canFor(principals.admin(), DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
-    expect(admin).toMatchObject({ switchModel: true, editTechnical: false, invite: true, grantSupport: true, approveMemory: true })
+    expect(admin).toMatchObject({ switchModel: true, editTechnical: false, invite: true, grantSupport: true, approveMemory: true, exportData: true })
     const member = canFor(principals.member(), DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
     expect(Object.values(member).filter(Boolean)).toHaveLength(3) // viewMembers, viewAudit, exportAudit
     const inhouse = canFor(principals.inhouse(), DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
     expect(inhouse).toEqual({
       invite: true, changeRole: false, remove: true, editBrandSettings: true, editTechnical: true, switchModel: true, grantSupport: false,
-      viewMembers: true, viewAudit: false, exportAudit: false, approveMemory: false,
+      viewMembers: true, viewAudit: false, exportAudit: false, approveMemory: false, exportData: false,
     })
     const granted = canFor(principals.inhouse({ id: 'g', endsAtMs: NOW + 1 }), DESIGN_ROWS, DESIGN_CAN_ROWS, NOW)
-    expect(granted).toMatchObject({ grantSupport: false, viewAudit: true, exportAudit: true, approveMemory: true })
+    expect(granted).toMatchObject({ grantSupport: false, viewAudit: true, exportAudit: true, approveMemory: true, exportData: true })
   })
   it('P5 W3: the Tools page shows its controls on `can.editTechnical`, which is true exactly for the principals that may write routes 71 and 72', () => {
     const writes = [r('PUT', '/api/tools/:accountId/paused'), r('POST', '/api/tools/:accountId/disconnect')]
@@ -326,6 +329,16 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'GET /api/skills/:name': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   'POST /api/skills/brand/:id/delete': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
   'GET /api/routines/:id/runs': ['ok', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  // Rows 91 to 93 (P8a F2): Shopify's privacy webhooks. No principal passes; Shopify's HMAC is their authentication.
+  'POST /api/webhooks/shopify/customers-data-request': ['no', 'no', 'no', 'no', 'no', 'no', 'no'],
+  'POST /api/webhooks/shopify/customers-redact': ['no', 'no', 'no', 'no', 'no', 'no', 'no'],
+  'POST /api/webhooks/shopify/shop-redact': ['no', 'no', 'no', 'no', 'no', 'no', 'no'],
+  // Row 94 (P8a F2): the runbook closes a privacy request, release only.
+  'POST /api/ops/privacy-requests/:id/close': ['no', 'no', 'no', 'no', 'no', 'no', 'ok'],
+  // Row 95 (P8a D): Export everything. Admins; the Inhouse team only under a live grant (audited); members and tokens never.
+  'GET /api/data-access/export': ['no', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  // Row 96 (P8a D): Export everything's check, row 95's access.
+  'GET /api/data-access/export/check': ['no', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },
@@ -386,10 +399,28 @@ const shadowProblems = (table: readonly { method: string; pattern: string }[]) =
 }
 
 /** The closed list of `open` rows (matrix.ts): the health check, and P3's drain and warm-up (p3-design section 3). */
-const OPEN_ROWS = ['GET /api/health', 'POST /api/ops/drain', 'GET /api/ops/drain', 'DELETE /api/ops/drain', 'POST /api/ops/warmup', 'POST /api/ops/tasks/revive', 'POST /api/ops/alarm', 'POST /api/ops/test-fakes']
+const OPEN_ROWS = ['GET /api/health', 'POST /api/ops/drain', 'GET /api/ops/drain', 'DELETE /api/ops/drain', 'POST /api/ops/warmup', 'POST /api/ops/tasks/revive', 'POST /api/ops/alarm', 'POST /api/ops/privacy-requests/:id/close', 'POST /api/ops/test-fakes']
 const openProblems = (rows: readonly AccessRow[]) => {
   const keys = rows.filter(x => x.class === 'open').map(x => `${x.method} ${x.pattern}`)
   return [...keys.filter(k => !OPEN_ROWS.includes(k)).map(k => `${k} is open`), ...OPEN_ROWS.filter(k => !keys.includes(k)).map(k => `${k} is not open`)]
+}
+
+/**
+ * The closed list of `webhook` rows (matrix.ts, P8a F2): Shopify's three privacy webhooks, POST, no `allow`, no service,
+ * each served by `webhookRoutes` (never the signed-in table).
+ */
+const WEBHOOK_ROWS = ['POST /api/webhooks/shopify/customers-data-request', 'POST /api/webhooks/shopify/customers-redact', 'POST /api/webhooks/shopify/shop-redact']
+const webhookProblems = (rows: readonly AccessRow[]) => {
+  const hooks = rows.filter(x => x.class === 'webhook')
+  const keys = hooks.map(x => `${x.method} ${x.pattern}`)
+  const problems = [...keys.filter(k => !WEBHOOK_ROWS.includes(k)).map(k => `${k} is webhook`)]
+  if (rows.length) for (const k of WEBHOOK_ROWS) if (!keys.includes(k)) problems.push(`${k} is not webhook`)
+  for (const x of hooks) {
+    if (x.allow.length || (x.services ?? []).length) problems.push(`${x.method} ${x.pattern} lets a principal in`)
+    if (!webhookRoutes.some(r => r.method === x.method && r.pattern === x.pattern)) problems.push(`${x.method} ${x.pattern} is not a webhook route`)
+  }
+  for (const r of signedInRoutes) if (keys.includes(`${r.method} ${r.pattern}`)) problems.push(`${r.method} ${r.pattern} is a webhook row on a signed-in route`)
+  return problems
 }
 
 /** The closed list of `report` rows (matrix.ts): only the error reporter's POST. */
@@ -405,6 +436,16 @@ const reportProblems = (rows: readonly AccessRow[]) => {
 }
 
 describe('the invariant checks catch a bad row', () => {
+  it('webhook on a signed-in route, a webhook row that allows someone, or one of the three not webhook', () => {
+    const members = rowFor(DESIGN_ROWS, 'GET', '/api/members')!
+    expect(webhookProblems(DESIGN_ROWS.map(r => (r === members ? { ...r, class: 'webhook' as const } : r)))).toEqual([
+      'GET /api/members is webhook', 'GET /api/members lets a principal in', 'GET /api/members is not a webhook route', 'GET /api/members is a webhook row on a signed-in route',
+    ])
+    const redact = rowFor(DESIGN_ROWS, 'POST', '/api/webhooks/shopify/customers-redact')!
+    expect(webhookProblems(DESIGN_ROWS.map(r => (r === redact ? { ...r, allow: ['admin' as const] } : r)))).toEqual(['POST /api/webhooks/shopify/customers-redact lets a principal in'])
+    expect(webhookProblems(DESIGN_ROWS.map(r => (r === redact ? { ...r, class: 'open' as const } : r)))).toEqual(['POST /api/webhooks/shopify/customers-redact is not webhook'])
+    expect(webhookProblems(DESIGN_ROWS)).toEqual([])
+  })
   it('report on POST /api/members/invites, client-error not report, or a report row naming a service', () => {
     const invites = rowFor(DESIGN_ROWS, 'POST', '/api/members/invites')!
     const bad = DESIGN_ROWS.map(r => (r === invites ? { ...r, class: 'report' as const } : r))
@@ -418,7 +459,7 @@ describe('the invariant checks catch a bad row', () => {
   it('open on GET /api/members, or health, drain or warm-up not open', () => {
     const members = rowFor(DESIGN_ROWS, 'GET', '/api/members')!
     expect(openProblems(DESIGN_ROWS.map(r => (r === members ? { ...r, class: 'open' as const } : r)))).toEqual(['GET /api/members is open'])
-    expect(openProblems(DESIGN_ROWS.map(r => (r.class === 'open' ? { ...r, class: 'baseline' as const } : r)))).toEqual(['GET /api/health is not open', 'POST /api/ops/drain is not open', 'GET /api/ops/drain is not open', 'DELETE /api/ops/drain is not open', 'POST /api/ops/warmup is not open', 'POST /api/ops/tasks/revive is not open', 'POST /api/ops/alarm is not open', 'POST /api/ops/test-fakes is not open'])
+    expect(openProblems(DESIGN_ROWS.map(r => (r.class === 'open' ? { ...r, class: 'baseline' as const } : r)))).toEqual(['GET /api/health is not open', 'POST /api/ops/drain is not open', 'GET /api/ops/drain is not open', 'DELETE /api/ops/drain is not open', 'POST /api/ops/warmup is not open', 'POST /api/ops/tasks/revive is not open', 'POST /api/ops/alarm is not open', 'POST /api/ops/privacy-requests/:id/close is not open', 'POST /api/ops/test-fakes is not open'])
     expect(openProblems(DESIGN_ROWS)).toEqual([])
   })
   it('a route that shadows another: GET /api/members/:id beside GET /api/members/invites', () => {
@@ -487,6 +528,10 @@ function invariants(name: string, rows: readonly AccessRow[], canRows: CanRows |
     it('the report rows are exactly POST /api/client-error (a closed list), naming no service', () => {
       expect(reportProblems(rows)).toEqual([])
     })
+    it('the webhook rows are exactly Shopify\'s three privacy webhooks (a closed list), each a webhook route, and no principal passes one', () => {
+      expect(webhookProblems(rows)).toEqual([])
+      for (const x of rows.filter(y => y.class === 'webhook')) for (const [, p] of COLUMNS) expect(checkAccess(p(), x, undefined, NOW)).toEqual({ refused: 'forbidden' })
+    })
     // Changed in P3: "smoke only on GET rows" became "smoke never on open or report rows" (p3-design section 3).
     it('monitor only on open GET rows, release only on open rows, smoke never on open or report rows; each open row names one service', () => {
       for (const x of rows) {
@@ -542,7 +587,7 @@ describe('canRowsProblems', () => {
 describe('P3 auth: release, smoke and ownerObject', () => {
   const key = (r: AccessRow) => `${r.method} ${r.pattern}`
   /** The rows the release job may call, and the ones smoke may call, as section 3's table lists them. */
-  const RELEASE_ROWS = ['POST /api/ops/drain', 'GET /api/ops/drain', 'DELETE /api/ops/drain', 'POST /api/ops/warmup', 'POST /api/ops/tasks/revive', 'POST /api/ops/alarm', 'POST /api/ops/test-fakes']
+  const RELEASE_ROWS = ['POST /api/ops/drain', 'GET /api/ops/drain', 'DELETE /api/ops/drain', 'POST /api/ops/warmup', 'POST /api/ops/tasks/revive', 'POST /api/ops/alarm', 'POST /api/ops/test-fakes', 'POST /api/ops/privacy-requests/:id/close']
   const SMOKE_ROWS = [
     'GET /api/me', 'GET /api/settings/personal', 'GET /api/settings/brand',
     'GET /api/chats', 'POST /api/chats', 'GET /api/chats/:id', 'POST /api/chats/:id/turns', 'GET /api/runs/active', 'GET /api/socket', 'GET /api/models',

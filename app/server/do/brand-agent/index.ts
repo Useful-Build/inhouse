@@ -163,8 +163,8 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   // ---------- the API (routes 24, 27, 29-31, 35-37, 49) ----------
   /** Route 29's turn only: a structured-output format or an end task sent over RPC is dropped (`TaskContext.runs.submit` adds them). */
   async submitTurn(turn: SubmitTurn): Promise<SendTurnResult | Refusal> {
-    const { chatId, input, by, model, pickerId, effort, sideModel, maxTurns, webFetchDomains } = turn
-    return this.core.submitTurn({ chatId, input, by, model, pickerId, effort, sideModel, maxTurns, webFetchDomains })
+    const { chatId, input, by, model, pickerId, effort, sideModel, maxTurns, webFetchDomains, webSearch } = turn
+    return this.core.submitTurn({ chatId, input, by, model, pickerId, effort, sideModel, maxTurns, webFetchDomains, webSearch })
   }
   /** The member who owns a turn, or null: route 30 and 31 answer another person's turn 404 before acting. */
   async turnOwner(turnId: string): Promise<string | null> {
@@ -231,6 +231,16 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   /** The runs signal (ops/signals/runs.ts): failures, stuck turns, damaged sessions, quarantined tasks. */
   async runsHealth(): Promise<RunsHealth> {
     return this.core.runsHealth(this.sched.quarantinedCount())
+  }
+  /** Keep the last failure in this object's flags so a D1 write failure is observable after D1 recovers. */
+  async noteEgressRecordFailure(): Promise<void> {
+    this.ctx.storage.sql.exec(
+      "INSERT INTO flags (key, value) VALUES ('egress_record_failed_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      Date.now(),
+    )
+  }
+  async lastEgressRecordFailure(): Promise<number | null> {
+    return this.ctx.storage.sql.exec<{ value: number }>("SELECT value FROM flags WHERE key = 'egress_record_failed_at'").toArray()[0]?.value ?? null
   }
   async drain(): Promise<DrainState> {
     return this.core.drain()

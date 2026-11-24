@@ -89,8 +89,10 @@ test('Phone: Inhouse agent, Data and access and Audit log read as text, and thei
   await expectRow(page, 'Activity and steps', '12 months', 'Chats')
   await expectRow(page, 'Inhouse team access', /On$/, 'Two-step sign-in')
   await expectRow(page, 'Two-step sign-in', /On$/, 'Inhouse team access')
-  await main(page).getByRole('button', { name: 'Export', exact: true }).click()
-  await expect(toast(page, "Export isn't connected in this demo.")).toBeVisible()
+  await expectRow(page, 'Next cleanup', /at \d{1,2}:\d{2}\s?[AP]M$/, 'Audit log')
+  const [file] = await Promise.all([page.waitForEvent('download'), main(page).getByRole('button', { name: 'Export', exact: true }).click()])
+  expect(file.suggestedFilename()).toMatch(/^inhouse-export-\d{4}-\d{2}-\d{2}\.ndjson$/)
+  await expect(toast(page, 'Sample export downloaded. The demo uses invented data.')).toBeVisible()
   await noSidewaysScroll(page)
 
   // The audit log is facts and a button: no note, the rows show, Download CSV is there.

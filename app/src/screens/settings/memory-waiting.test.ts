@@ -27,7 +27,7 @@ function page(o: Partial<Env> = {}, approve = true) {
     openTeam: noop, openPop: noop, openSettings: noop, newChat: noop, goSkills: noop, togglePause: noop,
     theme: 'system', setTheme: noop, toast: noop, forget: noop, download: noop, setRole: noop, setSupport: noop,
     me: me && { ...me, can: { ...me.can, approveMemory: approve } }, invite: noop, removeMember: noop, grantUi: false, showGrant: true,
-    loadingMore: false, loadMore: noop, exportFromServer: null, notify, ...o,
+    loadingMore: false, loadMore: noop, exportFromServer: null, exportDataFromServer: null, notify, ...o,
   }
   return settingsPage('team-memory', env)
 }

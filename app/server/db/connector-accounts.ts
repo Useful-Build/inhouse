@@ -10,7 +10,6 @@ import type { AuditHook } from './audit.ts'
 import { writeStamp } from './ids.ts'
 import type { At } from './members.ts'
 import { all, first, runBatch, stmt } from './sql.ts'
-import type { Stmt } from './sql.ts'
 
 export type ConnectorLastState = 'never' | 'connecting' | 'connected' | 'failed' | 'disconnected'
 
@@ -60,8 +59,6 @@ export interface ConnectorAccountStoreDeps {
 type Change = { last_state: ConnectorLastState } & Partial<Pick<ConnectorAccountRow, 'connected_by' | 'connected_at_ms' | 'disconnected_by' | 'disconnected_at_ms'>>
 
 export function connectorAccountStore({ db, hook = s => s }: ConnectorAccountStoreDeps) {
-  const write = (stmts: Stmt[]) => runBatch(db, stmts.map(s => (s.sql.startsWith('INSERT INTO audit_log') ? hook(s) : s)))
-
   /** One upsert (rev + 1 on an existing row) and its audit line, in one batch. */
   const change = async (accountId: string, connector: string, c: Change, line: AuditArgs, at: At): Promise<void> => {
     const stamp = writeStamp(at.requestId)
@@ -69,16 +66,16 @@ export function connectorAccountStore({ db, hook = s => s }: ConnectorAccountSto
     const cols = ['account_id', 'connector', 'last_state', 'last_state_at_ms', ...extra, 'req_id']
     const values = [accountId, connector, c.last_state, at.nowMs, ...extra.map(k => c[k] ?? null), stamp]
     const updates = ['last_state = excluded.last_state', 'last_state_at_ms = excluded.last_state_at_ms', ...extra.map(k => `${k} = excluded.${k}`), 'rev = connector_accounts.rev + 1', 'req_id = excluded.req_id']
-    await write([
+    await runBatch(db, [
       stmt(
         `INSERT INTO connector_accounts (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})
          ON CONFLICT (account_id) DO UPDATE SET ${updates.join(', ')}`,
         ...values,
       ),
-      auditInsert(
+      hook(auditInsert(
         { atMs: at.nowMs, actorId: at.actorId, args: line, target: { kind: 'connector', id: accountId }, requestId: at.requestId },
         { table: 'connector_accounts', where: 'account_id = ?', params: [accountId], stamp },
-      ),
+      )),
     ])
   }
 
@@ -110,7 +107,7 @@ export function connectorAccountStore({ db, hook = s => s }: ConnectorAccountSto
 
     /** W3: a pause or resume is the hub's (SignIn `paused`); here only its audit line, unguarded (no row changes). */
     async recordPause(accountId: string, line: AuditArgs, at: At): Promise<void> {
-      await write([auditInsert({ atMs: at.nowMs, actorId: at.actorId, args: line, target: { kind: 'connector', id: accountId }, requestId: at.requestId }, null)])
+      await runBatch(db, [hook(auditInsert({ atMs: at.nowMs, actorId: at.actorId, args: line, target: { kind: 'connector', id: accountId }, requestId: at.requestId }, null))])
     },
 
     /** W3: a disconnect, as one batch: `disconnected`, who and when, rev + 1, and W3's audit line. */

@@ -212,4 +212,15 @@ describe('settling the routine tick', () => {
     let t = 0
     await expect(settleTick({ dir, timeoutMs: 100, now: () => t, sleep: async () => { t += 60 } })).rejects.toThrow(/did not finish before the deadline/)
   })
+  it('opens SQLite files read-only when polling', async () => {
+    const { dir } = await make(['routine-tick'])
+    const fs = await load<{ chmodSync(p: string, mode: number): void }>('node:fs')
+    const file = `${dir}/v3/do/x.sqlite`
+    fs.chmodSync(file, 0o444)
+    try {
+      await settleTick({ dir, sleep: async () => { throw new Error('should not wait') } })
+    } finally {
+      fs.chmodSync(file, 0o644)
+    }
+  })
 })

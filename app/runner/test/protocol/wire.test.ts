@@ -140,8 +140,8 @@ describe('RunStart', () => {
     },
   )
 
-  // outputFormat (v2, additive: structured output) and brandSkills (v3, additive) are the optional fields.
-  it.prop([runStartArb, fc.constantFrom(...Object.keys(RunStart.shape).filter((k) => k !== 'outputFormat' && k !== 'brandSkills'))])('refuses a missing field', (start, key) => {
+  // outputFormat, webSearch and brandSkills are the optional fields (v2, additive: structured output; P8a S, absent is off).
+  it.prop([runStartArb, fc.constantFrom(...Object.keys(RunStart.shape).filter((k) => k !== 'outputFormat' && k !== 'webSearch' && k !== 'brandSkills'))])('refuses a missing field', (start, key) => {
     const copy: Record<string, unknown> = { ...start }
     delete copy[key]
     expect(RunStart.safeParse(copy).success).toBe(false)
@@ -552,6 +552,17 @@ describe('push, audit, status and admission', () => {
 // another type, or an extra key, passes; a cap counted in characters rather than UTF-8 bytes lets multibyte text past it;
 // a schema or an output nested past 64 levels passes (the local channel would then refuse it), or a deep one throws; the
 // failure code is missing.
+// The WebSearch switch (P8a S). Ways it could fail: a run start without it (a Worker from before P8a) is refused, or a
+// value other than a boolean passes.
+describe('webSearch on the wire', () => {
+  const first = fixture('run-start.first.json')
+  it('optional; true or false only', () => {
+    expect(RunStart.safeParse(first).success).toBe(true)
+    for (const v of [true, false]) expect(RunStart.safeParse({ ...first, webSearch: v }).success).toBe(true)
+    for (const v of ['true', 1, null, 'on']) expect(RunStart.safeParse({ ...first, webSearch: v }).success, String(v)).toBe(false)
+  })
+})
+
 describe('structured output on the wire', () => {
   const first = fixture('run-start.first.json')
   const ok = (v: Record<string, unknown>) => RunStart.safeParse(v).success

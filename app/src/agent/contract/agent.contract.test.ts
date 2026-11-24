@@ -1824,6 +1824,7 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
 
     test('the export and sign out links are what the target names', async () => {
       expect(t.client.auditExportUrl()).toBe(fx.links.auditExport)
+      expect(t.client.dataExportUrl()).toBe(fx.links.dataExport)
       expect(t.client.signOutUrl()).toBe(fx.links.signOut)
     })
 

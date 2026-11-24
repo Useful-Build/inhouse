@@ -27,7 +27,7 @@ const LIBRARY_FILES = 2
 
 /** The P2 methods, P4's Watch methods and P5's connector methods: what this target's client serves over HTTP. */
 const SERVED: ReadonlySet<keyof AgentClient> = new Set<keyof AgentClient>([
-  'me', 'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant', 'loadMore', 'retry', 'auditExportUrl', 'signOutUrl',
+  'me', 'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant', 'loadMore', 'retry', 'auditExportUrl', 'dataExportUrl', 'signOutUrl',
   'setSetting', 'setToggle', 'setPhoto',
   // P4 W5 (p4-w5.md addendum, #256 review): the Library.
   // (`deleteFiles` and `restoreFiles` are in WATCH_EXEMPT: the real client's writes don't fill the state the shared cases observe.)

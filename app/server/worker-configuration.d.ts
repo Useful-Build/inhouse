@@ -12,6 +12,7 @@ interface __BaseEnv_Env {
 	AI_GATEWAY_ID: string;
 	AUDIT_HASH_KEY: string;
 	AI_GATEWAY_TOKEN: string;
+	SHOPIFY_WEBHOOK_SECRETS: string;
 	BRAND_AGENT: DurableObjectNamespace<import("./index").BrandAgent>;
 	RUNNER: DurableObjectNamespace<import("./index").Runner>;
 	HUB: Service /* entrypoint ReadGateway from inhouse-hub */;
@@ -30,7 +31,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "INHOUSE_ACCESS" | "RUNNER_POOL" | "AI_GATEWAY_ID" | "AUDIT_HASH_KEY" | "AI_GATEWAY_TOKEN">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "INHOUSE_ACCESS" | "RUNNER_POOL" | "AI_GATEWAY_ID" | "AUDIT_HASH_KEY" | "AI_GATEWAY_TOKEN" | "SHOPIFY_WEBHOOK_SECRETS">> {}
 }
 declare module "*.txt" {
 	const value: string;

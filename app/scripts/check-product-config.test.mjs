@@ -39,6 +39,8 @@ const RULE_TEXT = {
   'version-metadata-missing': 'version_metadata needs a binding name',
   'secret-var-named': 'vars.AUDIT_HASH_KEY looks like a secret',
   'secret-var-pattern': 'vars.SESSION_TOKEN looks like a secret',
+  // P8a F2: the Shopify webhook secrets are a Worker secret, never a var (its name ends in SECRETS, which the pattern misses).
+  'secret-var-webhook': 'vars.SHOPIFY_WEBHOOK_SECRETS looks like a secret',
   // P3 (p3-design section 7).
   'pool-mismatch': "the Runner container's max_instances (4) must be 3 x RUNNER_POOL (6)",
   'pool-not-number': 'vars.RUNNER_POOL must be a whole number of 2 or more',
@@ -160,7 +162,7 @@ describe('check-product-config', () => {
     const product = JSON.parse(stripJsonc(readFileSync(template, 'utf8')))
     expect(checkPool(product)).toEqual([])
     expect(product.vars.AI_GATEWAY_ID).toBe('')
-    expect(product.secrets.required).toEqual(['AUDIT_HASH_KEY', 'AI_GATEWAY_TOKEN'])
+    expect(product.secrets.required).toEqual(['AUDIT_HASH_KEY', 'AI_GATEWAY_TOKEN', 'SHOPIFY_WEBHOOK_SECRETS'])
   })
   test('the two Worker configs carry the same pool: RUNNER_POOL 2, one Runner container of standard-4 with 6 instances from ./runner/Dockerfile', () => {
     for (const c of [testConfig(), JSON.parse(stripJsonc(readFileSync(template, 'utf8')))]) {

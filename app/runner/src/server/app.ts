@@ -29,6 +29,7 @@ import type { SessionUser, SessionUsers } from '../session/seam.ts'
 import { createPusher, realTimers, type PushFetch, type Pusher, type Timers } from './pusher.ts'
 import { RunStream } from './run-stream.ts'
 import { hostSession, type SessionHandle, type SpawnSession } from './session-host.ts'
+import { safeError } from '../safe-error.ts'
 
 type CheckpointState = { mainEntries: number; lastUuid: string | null; lastUuidIndex: number | null }
 
@@ -110,8 +111,6 @@ export function pickToken(runs: Iterable<{ uid: number | null; token: string | n
   return found.length === 1 ? found[0]!.token : null
 }
 
-const errorText = (e: unknown) => String(e instanceof Error ? e.message : e)
-
 /** Open connections the API takes at once (the Worker's calls); past it new ones are dropped by Node. */
 export const API_MAX_CONNECTIONS = 512
 /** How many released runs `GET /runs/:id` still knows (oldest forgotten first); past that a run reads `unknown`. */
@@ -141,7 +140,7 @@ export function createRoot(deps: RootDeps): Root {
     try {
       await deps.users.release(live.chatId, user)
     } catch (e) {
-      deps.log({ type: 'session_user_release_failed', runId: live.runId, error: errorText(e) })
+      deps.log({ type: 'session_user_release_failed', runId: live.runId, error: safeError(e) })
     }
   }
 
@@ -199,7 +198,7 @@ export function createRoot(deps: RootDeps): Root {
       user = await deps.users.allocate(config.chatId)
     } catch (e) {
       unlist(live)
-      deps.log({ type: 'session_user_failed', runId: live.runId, error: errorText(e) })
+      deps.log({ type: 'session_user_failed', runId: live.runId, error: safeError(e) })
       // A refusal the Worker can route on (the pool is full, or this chat's folder is parked for good). Anything else is
       // the runner's fault: 500. Either way the run was never admitted.
       const code = (e as { code?: unknown } | null)?.code
@@ -254,7 +253,7 @@ export function createRoot(deps: RootDeps): Root {
     json(res, 202, { accepted: true })
 
     await runLifecycle(live, config, user)
-      .catch((e: unknown) => deps.log({ type: 'run_lifecycle_failed', runId: live.runId, error: errorText(e) }))
+      .catch((e: unknown) => deps.log({ type: 'run_lifecycle_failed', runId: live.runId, error: safeError(e) }))
       .finally(() => {
         // The session has exited, its store flush is over (its terminal event came after it) and its user is
         // released: the chat is free now, and only then does `released` go out.
@@ -288,7 +287,7 @@ export function createRoot(deps: RootDeps): Root {
       if (res.status !== 204) deps.log({ type: 'audit_refused', runId: live.runId, n: post.n, status: res.status })
       return res.status === 204
     } catch (e) {
-      deps.log({ type: 'audit_failed', runId: live.runId, n: post.n, error: errorText(e).slice(0, 200) })
+      deps.log({ type: 'audit_failed', runId: live.runId, n: post.n, error: safeError(e) })
       return false
     } finally {
       timers.clearTimeout(deadline)
@@ -312,7 +311,7 @@ export function createRoot(deps: RootDeps): Root {
     try {
       await deps.users.writeBrandSkills(config.chatId, user, config.brandSkills ?? [])
     } catch (e) {
-      deps.log({ type: 'brand_skills_failed', runId: live.runId, error: errorText(e).slice(0, 200) })
+      deps.log({ type: 'brand_skills_failed', runId: live.runId, error: safeError(e) })
       stream.emit({ type: 'failed', reason: 'files', message: "the brand's skills could not be written" })
       return end()
     }
@@ -333,7 +332,7 @@ export function createRoot(deps: RootDeps): Root {
       })
     } catch (e) {
       // A synchronous spawn failure (EPERM from the uid switch, E2BIG, ...): one terminal event, and nothing left over.
-      deps.log({ type: 'session_spawn_failed', runId: live.runId, error: errorText(e) })
+      deps.log({ type: 'session_spawn_failed', runId: live.runId, error: safeError(e) })
       if (child?.pid !== undefined) {
         try {
           process.kill(-child.pid, 'SIGKILL')
@@ -371,7 +370,7 @@ export function createRoot(deps: RootDeps): Root {
   const peers = new WeakMap<Socket, Promise<boolean>>()
   const server = http.createServer((req, res) => {
     serve(req, res).catch((e) => {
-      deps.log({ type: 'root_request_failed', error: String(e instanceof Error ? e.stack : e) })
+      deps.log({ type: 'root_request_failed', error: safeError(e) })
       if (!res.headersSent) json(res, 500, { error: 'internal error' })
       else res.destroy()
     })
@@ -379,7 +378,7 @@ export function createRoot(deps: RootDeps): Root {
   server.maxConnections = API_MAX_CONNECTIONS
   server.on('connection', (socket: Socket) => {
     const allowed = Promise.resolve().then(() => deps.apiPeerAllowed(socket)).catch((e) => {
-      deps.log({ type: 'api_peer_check_failed', error: errorText(e) })
+      deps.log({ type: 'api_peer_check_failed', error: safeError(e) })
       return false
     })
     peers.set(socket, allowed)

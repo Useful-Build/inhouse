@@ -12,7 +12,7 @@ type Role = 'member' | 'admin' | 'inhouse'
 
 /** The design's rule for the route (section 3's table and its classes). */
 export interface Design {
-  class: 'open' | 'baseline' | 'brand_data' | 'personal' | 'technical' | 'report'
+  class: 'open' | 'baseline' | 'brand_data' | 'personal' | 'technical' | 'report' | 'webhook'
   allow: readonly Role[]
   services: readonly ('monitor' | 'smoke' | 'release')[]
   /** Row 12 only: an Admin may write, through the object rule. */
@@ -28,7 +28,7 @@ export interface RouteCase {
   json?: unknown
   /** Bytes sent with this `Content-Type` instead of JSON (the photo route). */
   bytes?: { content: Buffer; contentType: string }
-  /** The status of a caller the matrix lets through. */
+  /** The status of a caller the matrix lets through (a `webhook` row lets none: its sweep expects 401). */
   passes: number
   /** Other statuses that are right too (the warm-up route while a container deployment is still warming). */
   alsoPasses?: number[]
@@ -174,8 +174,20 @@ export const CASES: Record<string, RouteCase> = {
   // Rows 84 and 85 (P6a brand skills): a name and an id that name nothing, so a caller the matrix lets in gets 404.
   'GET /api/skills/:name': { design: d('brand_data', ALL), path: '/api/skills/no-such-skill', passes: 404 },
   'POST /api/skills/brand/:id/delete': { design: d('brand_data', PEOPLE), path: `/api/skills/brand/${NO_BRAND_SKILL}/delete`, json: { ifRev: 1 }, passes: 404 },
-  // Row 86 (main): routine runs.
+  // Row 86: routine runs.
   'GET /api/routines/:id/runs': { design: d('brand_data', ALL), path: `/api/routines/${NO_ROUTINE}/runs`, passes: 404 },
+  // Rows 91 to 93 (P8a F2): Shopify's privacy webhooks, outside sign-in. A JWT counts for nothing there: without Shopify's
+  // signature every caller gets 401 (webhooks.spec.ts sends signed deliveries).
+  'POST /api/webhooks/shopify/customers-data-request': { design: d('webhook', []), path: '/api/webhooks/shopify/customers-data-request', json: {}, passes: 401 },
+  'POST /api/webhooks/shopify/customers-redact': { design: d('webhook', []), path: '/api/webhooks/shopify/customers-redact', json: {}, passes: 401 },
+  'POST /api/webhooks/shopify/shop-redact': { design: d('webhook', []), path: '/api/webhooks/shopify/shop-redact', json: {}, passes: 401 },
+  // Row 94 (P8a F2): the runbook's close, release only. A well-formed id nobody has: 404, nothing written.
+  'POST /api/ops/privacy-requests/:id/close': { design: d('open', [], ['release']), path: `/api/ops/privacy-requests/pr_${'0'.repeat(22)}/close`, json: {}, passes: 404 },
+  // Row 95 (P8a D): Export everything. A caller the matrix lets in gets the whole export as a 200 download (it changes
+  // nothing; its audit line holds counts only).
+  'GET /api/data-access/export': { design: d('brand_data', ['admin', 'inhouse']), path: '/api/data-access/export', passes: 200 },
+  // Row 96 (P8a D): Export everything's check. It plans only: a 200 with the size, nothing written.
+  'GET /api/data-access/export/check': { design: d('brand_data', ['admin', 'inhouse']), path: '/api/data-access/export/check', passes: 200 },
 }
 
 /** The case for a row, or an error naming it (routes.spec.ts reports the gap on its own; this is for the specs that use it). */
