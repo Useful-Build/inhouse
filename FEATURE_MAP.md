@@ -233,7 +233,6 @@ Tools: list and pages
   Selector: search, Pause access, Reconnect, Request a tool
   Expected: pausing or disconnecting changes the count, the tool page (Read, Draft, Access) and the composer alike; Pause access has Undo and Resume brings it all back; Request a tool opens the team window; a catalogue tool's Request (Add a tool) shows "Requested" and a toast starting "Request sent" (the product's once the server has it), stays "Requested" after a reload, and the toast's Undo withdraws it (the product withdraws through route 83)
   Covered:  e2e/data-states.spec.ts, e2e/page-actions.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts, e2e/api/connect.spec.ts, e2e/api/tools.spec.ts, e2e/real/tools-return.spec.ts, e2e/real/tools-catalogue-request.spec.ts (a Member's Request on the catalogue's Slack: route 81 "Connect Slack", the toast, Requested after a reload, Undo withdraws through route 83), e2e/ship/connectors.spec.ts, e2e/ship/memory-skills.spec.ts (S8)
-  Gaps:     the P6a ship spec's S8 still uses "Request a tool" (open after a reload, Withdraw) and its comment says the product's Tools page has no catalogue, which is no longer true while a tool is disconnected
 
 Tools: Slack channel
   Path:     Tools -> Slack

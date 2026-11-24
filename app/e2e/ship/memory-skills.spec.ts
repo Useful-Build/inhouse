@@ -463,10 +463,10 @@ test('S7: Request a skill from the Skills page; it shows in the team window, and
 })
 
 test('S8: Request a tool from the Tools page; "Request sent" says so, it stays open after a reload, and Withdraw takes it back', async ({ context, page }) => {
-  // The product's Tools page has no catalogue of tools to request (that list is the demo's invented data), so its one
-  // way to ask for a tool is "Request a tool", which opens the team window on a tool request.
+  // "Request a tool" opens the team window on a free-text tool request (for a tool the catalogue doesn't list). Since
+  // P5 the product's Tools page can also show a catalogue (route 70) whenever a tool isn't connected; requesting a
+  // catalogue tool is e2e/real/tools-catalogue-request.spec.ts's, so this test doesn't depend on what is connected.
   await openAs(context, page, 'dana', '#/tools')
-  await expect(main(page).getByRole('heading', { name: 'Add a tool' })).toHaveCount(0)
   const title = `Connect our Faire account ${uid()}`
   const openRequests = () => teamWindow(page).getByRole('list', { name: 'Open requests' }).getByRole('listitem').filter({ hasText: title })
   const openYourRequests = async () => {
