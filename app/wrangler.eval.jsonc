@@ -55,7 +55,11 @@
 	// eval deployment's own hub (scripts/sandbox/names.mjs evalNames().hub, inhouse-sbx-eval-hub); the sandbox lock admits
 	// exactly that (scripts/check-product-config.mjs --sandbox --eval).
 	// https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/rpc/ (named entrypoints, read 2026-11-21)
-	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }],
+	"services": [
+		{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" },
+		// P5 (#337): the per-turn prompt v3 reads the connected accounts through it. Never HUB_DELIVERY (the eval brand is at Watch).
+		{ "binding": "HUB_CONNECT", "service": "inhouse-hub", "entrypoint": "ConnectGateway" }
+	],
 	// The runner image, built from app/ as CI's runner job builds it (it bundles app/shared/protocol). max_instances is
 	// 3 x RUNNER_POOL (scripts/check-product-config.mjs compares them).
 	// https://developers.cloudflare.com/containers/ and the Wrangler configuration's `containers` (read 2026-11-20)

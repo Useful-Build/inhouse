@@ -4,9 +4,14 @@
 // The deployable hub carries no test seam: app/hub/testing/ (and the recorded upstreams it bundles from
 // app/test/upstreams/) is reached only inside `if (__INHOUSE_HUB_TEST__ && ...)`, which wrangler.hub.jsonc defines as
 // "false" so esbuild drops it. Two parts, each run on both bundles:
-//   1. The canaries: HUB_TEST_CANARY's value (read from app/hub/testing/index.ts) and the recorded Shopify upstream's
+//   1. The canaries: HUB_TEST_CANARY's value (read from app/hub/testing/index.ts), the recorded Shopify upstream's
 //      SHOPIFY_UPSTREAM_CANARY (read from app/test/upstreams/shopify/server.ts), each in any output file but the
-//      metafile. Both are read from their source, so the scan and the code can't drift.
+//      metafile, and the recorded MCP upstream's MCP_UPSTREAM_CANARY (P5, read from app/test/upstreams/mcp/server.ts).
+//      Each is read from its source, so the scan and the code can't drift.
+//      The test-fakes hook (W5): HUB_FAKES_CANARY (read from app/hub/testing/fakes.ts), and the hook's three in-isolate
+//      globals (`__inhouseHubTestVars`, `__inhouseHubTestLogs`, `__inhouseHubTestConnectBodies`), which must sit only
+//      inside `if (false)` blocks of the deployable script (the define's dead branches: wrangler doesn't minify, so their
+//      text stays). So the deployable hub's ConnectGateway.testFakes and SignIn.testFireAlarm can only refuse.
 //   2. The module graph: the esbuild metafile `wrangler deploy --dry-run --metafile` writes (<dir>/bundle-meta.json).
 //      Fails when any input sits in a `testing/` folder anywhere under app/hub/ (app/hub/testing/, and later ones such
 //      as app/hub/registry/testing/), under app/test/upstreams/, or is a test module (`*.test.ts`). A string scan alone
@@ -46,6 +51,24 @@ const read = path => {
 }
 
 // ---------- the canaries, from their sources ----------
+// The test-fakes hook (W5, hub/testing/fakes.ts): its canary, and the names it shares with code outside hub/testing/ (the
+// singleton `__test-fakes__` SignIn DO in signin/signin.ts and oauth/entry.ts, the log queue in index/log.ts). Each needle
+// is a quoted string or a call site (`.name(`), never a bare method name: the deployable SignIn class still defines the
+// refusing `testFakesOp` / `testGetVars` / `testRecordConnectBody` / `testAppendLogs` methods, but every string and call
+// to them sits in a branch the deployable define drops. The deployable bundle must hold none of these outside an
+// `if (false)` block; the test bundle must hold every one (a needle it lacks means the name changed and the guard went
+// stale). The names are fixed here: the code under hub/ is what must match them.
+const FAKES_GLOBALS = [
+  '__inhouseHubTestLogs',
+  '"__test-fakes__"',
+  '"test-fakes:vars"',
+  '"X-Inhouse-Test-Throw"',
+  '.testFakesOp(',
+  '.testGetVars(',
+  '.testRecordConnectBody(',
+  '.testAppendLogs(',
+]
+
 function readCanaries() {
   const seam = join(hubDir, 'testing/index.ts')
   if (!existsSync(seam)) fail(`${relative(root, seam)} is missing: there's no canary to look for.`)
@@ -55,7 +78,15 @@ function readCanaries() {
   if (!existsSync(shopifyUpstream)) fail(`${relative(root, shopifyUpstream)} is missing: there's no Shopify upstream canary to look for.`)
   const shopifyMatch = read(shopifyUpstream).match(/export const SHOPIFY_UPSTREAM_CANARY = '([^']+)'/)
   if (!shopifyMatch) fail(`no \`export const SHOPIFY_UPSTREAM_CANARY = '...'\` in ${relative(root, shopifyUpstream)}; the upstream's shape changed.`)
-  return { CANARY: canaryMatch[1], SHOPIFY_CANARY: shopifyMatch[1] }
+  const mcpUpstream = join(root, 'test/upstreams/mcp/server.ts')
+  if (!existsSync(mcpUpstream)) fail(`${relative(root, mcpUpstream)} is missing: there's no MCP upstream canary to look for.`)
+  const mcpMatch = read(mcpUpstream).match(/export const MCP_UPSTREAM_CANARY = '([^']+)'/)
+  if (!mcpMatch) fail(`no \`export const MCP_UPSTREAM_CANARY = '...'\` in ${relative(root, mcpUpstream)}; the upstream's shape changed.`)
+  const fakesHook = join(hubDir, 'testing/fakes.ts')
+  if (!existsSync(fakesHook)) fail(`${relative(root, fakesHook)} is missing: there's no test-fakes canary to look for.`)
+  const fakesMatch = read(fakesHook).match(/export const HUB_FAKES_CANARY = '([^']+)'/)
+  if (!fakesMatch) fail(`no \`export const HUB_FAKES_CANARY = '...'\` in ${relative(root, fakesHook)}; the hook's shape changed.`)
+  return { CANARY: canaryMatch[1], SHOPIFY_CANARY: shopifyMatch[1], MCP_CANARY: mcpMatch[1], FAKES_CANARY: fakesMatch[1] }
 }
 
 // ---------- a bundle's files ----------
@@ -106,8 +137,17 @@ function open(dir, label) {
 }
 
 // ---------- the two parts: each returns what it found ----------
-/** 1. A canary in any output file (the script, its source map, anything else wrangler wrote). */
-const canary = value => ({ files }) => files.filter(f => read(f).includes(value)).map(f => `"${value}" in ${relative(root, f)}`)
+/**
+ * 1. A canary in any output file (the script, its source map, anything else wrangler wrote). Each file is read once and
+ * kept for every canary: re-reading the multi-MB bundle and map once per canary made node 26.13.1 hang at exit (a
+ * worker thread never joined, about 3 runs in 4), so the scan allocates each file's text one time.
+ */
+const texts = new Map()
+const textOf = f => {
+  if (!texts.has(f)) texts.set(f, read(f))
+  return texts.get(f)
+}
+const canary = value => ({ files }) => files.filter(f => textOf(f).includes(value)).map(f => `"${value}" in ${relative(root, f)}`)
 
 /**
  * 2. Forbidden modules in the metafile's inputs: an input counts when it resolves, from app/ or app/hub/, into a
@@ -120,6 +160,61 @@ const forbidden = p =>
   under(p, UPSTREAMS) ||
   (!p.split(sep).includes('node_modules') &&
     ((under(p, hubDir) && relative(hubDir, p).split(sep).includes('testing')) || TEST_MODULE.test(p)))
+/**
+ * The [start, end) spans of every `if (false) { ... }` block in a script, or `unclosed` when one never closes, or
+ * `ambiguous` when a line inside one is no deeper than its opener. wrangler
+ * doesn't minify, so esbuild keeps a branch the define turned into `if (false)` as text (it only skips bundling the
+ * imports inside it). esbuild prints the opener alone on its line and the block's `}` at the opener's indentation, so
+ * the span is found by lines, never by reading the code: a quote in a regex or a string can't stretch it. A block with
+ * no closing line at its indentation fails the part (it would otherwise count the rest of the file as dead).
+ */
+function deadSpans(text) {
+  const spans = []
+  const lines = text.split('\n')
+  const starts = []
+  let at = 0
+  for (const line of lines) {
+    starts.push(at)
+    at += line.length + 1
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const open = /^(\s*)(?:\} else )?if \(false\) \{$/.exec(lines[i])
+    if (!open) continue
+    const close = new RegExp(`^${open[1]}\\}`)
+    let j = i + 1
+    while (j < lines.length && !close.test(lines[j])) {
+      // Every line inside a real block sits deeper than its opener. One that doesn't (an opener-looking line inside a
+      // template literal, say) makes the span ambiguous: fail rather than count it dead.
+      if (lines[j].trim() !== '' && !lines[j].startsWith(`${open[1]} `)) return { ambiguous: i + 1 }
+      j++
+    }
+    if (j === lines.length) return { unclosed: i + 1 }
+    spans.push([starts[i], starts[j] + lines[j].length])
+  }
+  return { spans }
+}
+/**
+ * The test-fakes hook's globals in a script outside every `if (false)` block (reachable code), and any block that never
+ * closes. Scripts only: a source map carries the sources' own text, dead branches included.
+ */
+const fakesGlobals = ({ files }) =>
+  files.filter(f => /\.[cm]?js$/.test(f)).flatMap(f => {
+    const text = textOf(f)
+    const dead = deadSpans(text)
+    if (dead.ambiguous) return [`an \`if (false)\` block at line ${dead.ambiguous} of ${relative(root, f)} has a line no deeper than its opener, so its extent is ambiguous`]
+    if (dead.unclosed) return [`an \`if (false)\` block at line ${dead.unclosed} of ${relative(root, f)} never closes at its indentation, so nothing after it can be judged`]
+    const hits = []
+    for (const n of FAKES_GLOBALS) {
+      for (let i = text.indexOf(n); i !== -1; i = text.indexOf(n, i + n.length)) {
+        if (!dead.spans.some(([a, b]) => i >= a && i < b)) {
+          hits.push(`"${n}" in ${relative(root, f)} outside an \`if (false)\` block`)
+          break
+        }
+      }
+    }
+    return hits
+  })
+
 function moduleGraph({ inputs }) {
   return inputs.filter(id => candidates(id).some(forbidden)).map(id => `module ${id}`)
 }
@@ -127,11 +222,14 @@ function moduleGraph({ inputs }) {
 function main() {
   const deployDir = flag('--deploy', join(root, 'dist-hub'))
   const testDir = flag('--test', join(root, 'dist-hub-test'))
-  const { CANARY, SHOPIFY_CANARY } = readCanaries()
+  const { CANARY, SHOPIFY_CANARY, MCP_CANARY, FAKES_CANARY } = readCanaries()
 
   const PARTS = [
     ['canary string', canary(CANARY)],
     ['shopify upstream canary', canary(SHOPIFY_CANARY)],
+    ['mcp upstream canary', canary(MCP_CANARY)],
+    ['test-fakes canary', canary(FAKES_CANARY)],
+    ['test-fakes globals', fakesGlobals],
     ['module graph', moduleGraph],
   ]
 
@@ -152,6 +250,14 @@ function main() {
       console.error(`FAIL  ${name}: found nothing in the test bundle (${relative(root, testDir)}), so it proves nothing: it scanned the wrong folder or looks for the wrong thing.`)
     } else console.log(`ok    ${name}: caught the test bundle (${inTest.length} hit${inTest.length === 1 ? '' : 's'}).`)
   }
+
+  // Every test-fakes needle must be in the test bundle's script, or the guard has gone stale for it.
+  const testScripts = testBundle.files.filter(f => /\.[cm]?js$/.test(f))
+  const missing = FAKES_GLOBALS.filter(n => !testScripts.some(f => textOf(f).includes(n)))
+  if (missing.length) {
+    bad = true
+    console.error(`FAIL  test-fakes names: the test bundle (${relative(root, testDir)}) lacks ${missing.map(n => `"${n}"`).join(', ')}, so the guard no longer looks for what the code uses.`)
+  } else console.log('ok    test-fakes names: every name is in the test bundle.')
 
   return bad ? 1 : 0
 }

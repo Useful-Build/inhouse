@@ -107,7 +107,9 @@ describe('slot parity with the writers (failure 6)', () => {
     for (const [id, t] of Object.entries(NOTICE_TEMPLATES)) {
       const person = new Set([t.text, t.who].flatMap(slotsOf)).has('person') ? 'm_ada' : undefined
       const fields = sampleFields(t.fields)
-      expect(() => checkNotice(NOTICE_TEMPLATES, { id: 'n', audience: 'team', template: id, fields, ...(person ? { personId: person } : {}), icon: 'x', link: { to: 'page', page: 'today' }, atMs: 1 }), id).not.toThrow()
+      // P5 W4's rows with a required body get one (p5-w4 section 3).
+      const body = t.body && !t.body.optional ? { body: 'x' } : {}
+      expect(() => checkNotice(NOTICE_TEMPLATES, { id: 'n', audience: 'team', template: id, fields, ...(person ? { personId: person } : {}), ...body, icon: 'x', link: { to: 'page', page: 'today' }, atMs: 1 }), id).not.toThrow()
       expect(() => renderNotice({ id: 'n', audience: 'team', template: id, fields_json: JSON.stringify(fields), body: null, icon: 'x', person_id: person ?? null, at_ms: 1, waiting: 0, link_json: '{"to":"page","page":"today"}', unread: 1 }, new Map()), id).not.toThrow()
     }
   })

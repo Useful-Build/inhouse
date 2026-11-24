@@ -49,7 +49,7 @@ export const INHOUSE_TOOLS: readonly InhouseTool[] = [
   { name: 'history_search', category: 'history', alwaysLoad: true, annotations: read, description: 'Search your own past chats by keywords and date, such as "what did we decide about returns last month". Returns short matches with each chat\'s `chat_id`.' },
   { name: 'history_read', category: 'history', alwaysLoad: false, annotations: read, description: 'Read one of your past chats in full, by the `chat_id` `history_search` returned.' },
   // 6. Notifications (1)
-  { name: 'notification_send', category: 'notifications', alwaysLoad: true, annotations: {}, description: 'Sends a notification: to the bell for members; to admin-listed Slack channels from the Act stage. `format: "message"` for a short note, `"report"` for a formatted report. Never to customers.' },
+  { name: 'notification_send', category: 'notifications', alwaysLoad: true, annotations: {}, description: "Tell people on the team or a Slack channel the brand listed. `to.members` takes member ids and reaches their bell in the app (never a Slack DM, never email). `to.channels` takes the names of channels the brand's admin listed and posts there from the Act stage; at Watch it reaches the bell instead. Links are removed except the app's own `link`, and mentions don't notify. Never to customers." },
   // 7. Inhouse team (2)
   { name: 'team_request_create', category: 'inhouse_team', alwaysLoad: false, annotations: {}, description: "Ask the Inhouse team (the people who run this agent) for something you can't do: connect a new tool, fix a broken connection, build a skill." },
   { name: 'team_request_list', category: 'inhouse_team', alwaysLoad: false, annotations: read, description: 'List requests to the Inhouse team and their status.' },

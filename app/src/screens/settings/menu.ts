@@ -36,6 +36,7 @@ export const SECTIONS: SettingsSection[] = [
   ] },
   { id: 'team', label: 'Team', team: true, pages: [
     { id: 'team-members', icon: 'group', label: 'Members' },
+    { id: 'team-slack', icon: 'campaign', label: 'Slack notices' },
   ] },
   { id: 'workspace', label: 'Workspace', team: true, pages: [
     { id: 'team-plan', icon: 'stairs', label: 'Stage and plan' },
@@ -46,3 +47,13 @@ export const SECTIONS: SettingsSection[] = [
 
 /** Every settings page, in menu order. */
 export const SETTINGS_PAGES: SettingsPage[] = SECTIONS.flatMap(s => s.pages)
+
+/** The tools data the menu reads: the tools the agent reads and the channels it talks on. */
+type SlackSignals = { connected: readonly string[]; channels: readonly { key: string }[] }
+
+/** P5 W4: whether the brand has Slack connected (a tool it reads, or its chat channel). Slack notices shows only then. */
+export const hasSlack = (tools: SlackSignals): boolean => tools.connected.includes('slack') || tools.channels.some(c => c.key === 'slack')
+
+/** The menu as this brand sees it: Slack notices only with Slack connected. */
+export const menuFor = (tools: SlackSignals): SettingsSection[] =>
+  hasSlack(tools) ? SECTIONS : SECTIONS.map(s => (s.id === 'team' ? { ...s, pages: s.pages.filter(p => p.id !== 'team-slack') } : s))

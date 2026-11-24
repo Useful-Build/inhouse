@@ -183,7 +183,7 @@ export async function handleHub(request: Request, grant: RunGrant, deps: HubRout
       try {
         answer = await deps.hub.listTools(scope())
       } catch {
-        return done('binding_failed', rpcError(id, INTERNAL_ERROR, 'hub: internal'))
+        return done('binding_failed', rpcError(id, INTERNAL_ERROR, 'hub: internal', 503))
       }
       const parsed = listMirror.safeParse(answer)
       if (!parsed.success) return done('binding_failed', rpcError(id, INTERNAL_ERROR, 'hub: internal'))

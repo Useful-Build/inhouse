@@ -10,7 +10,7 @@ import { FakeShop } from './testing/kit'
 const HOST = 'example-fixture.myshopify.com'
 const ok = { ok: true, value: { data: { shop: { name: 'Example Fixture' } } } }
 const stub = () => env.SIGNIN.get(env.SIGNIN.idFromName(FIXTURE_ACCOUNT))
-const query = (document = '{ shop { name } }') => stub().query({ accountId: FIXTURE_ACCOUNT, document, apiVersion: FIXTURE_API_VERSION })
+const query = (document = '{ shop { currencyCode } }') => stub().query({ accountId: FIXTURE_ACCOUNT, document, apiVersion: FIXTURE_API_VERSION })
 const record = () => runInDurableObject(stub(), (_i, state) => state.storage.kv.get<SignInRecord>('record'))
 
 let shop: FakeShop

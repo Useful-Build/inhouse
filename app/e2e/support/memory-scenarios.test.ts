@@ -95,15 +95,29 @@ describe('the P6a memory scenarios', () => {
     expect((await answer(await model.handle(request(name, [search], [{ text: `Nothing saved matches "${REF}".` }]), name))).status).toBe(400)
   })
 
-  test('memory-save-learning tells a refusal apart from a save', async () => {
+  test('memory-save-learning tells a refusal apart from a save, and misses loudly if the tool is absent or errors another way', async () => {
     const model = createScriptedModel(SCENARIOS)
     const name = 'memory-save-learning'
+    const noInhouseMcp = new Request('http://scripted.invalid/v1/messages', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: HARNESS_MODEL,
+        tools: [{ name: 'Bash' }, { name: 'DeferredToolPlaceholder', defer_loading: true }],
+        messages: [{ role: 'user', content: `scenario:${name} please remember that` }],
+      }),
+    })
+    expect((await model.handle(noInhouseMcp, name)).status).toBe(400)
+    expect(model.misses.at(-1)?.reason).toContain("the tool list doesn't offer mcp__inhouse__memory_save")
     const first = await answer(await model.handle(request(name, [], [], null), name))
     expect(first.content).toEqual([expect.objectContaining({ type: 'tool_use', name: 'mcp__inhouse__memory_save', input: { scope: 'person', text: MEMORY_SAVE_TEXT } })])
     const call = { id: first.content[0]!.id!, name: 'mcp__inhouse__memory_save', input: first.content[0]!.input! }
     const refused = { text: 'Not saved: this person turned off "Learn from my chats" in Settings, so don\'t save their preferences.', error: true }
     expect((await answer(await model.handle(request(name, [call], [refused], null), name))).content).toEqual([{ type: 'text', text: LEARNING_OFF_ANSWER }])
     expect((await answer(await model.handle(request(name, [call], [{ text: 'Saved (memory_id: mem_x). It counts from now, for this person only.' }], null), name))).content).toEqual([{ type: 'text', text: LEARNING_SAVED_ANSWER }])
+    // An unrelated tool error is neither branch and misses loudly quoting the error.
+    const broken = 'Error: No such tool available: mcp__inhouse__memory_save'
+    expect((await model.handle(request(name, [call], [{ text: broken, error: true }], null), name)).status).toBe(400)
+    expect(model.misses.at(-1)?.reason).toContain(broken)
   })
 
   test('memory-save-reword-person: only the learning_off refusal says "off", a plain success says "changed", any other error is a loud miss', async () => {

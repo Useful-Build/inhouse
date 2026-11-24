@@ -7,7 +7,7 @@ import { env } from 'cloudflare:workers'
 import type { ChatEvent, SendTurnInput } from '../../../shared/contract/runs.ts'
 import type { RunEvent, RunEventBody } from '../../../shared/protocol/index.ts'
 import { AgentCore } from '../../do/brand-agent/core.ts'
-import type { TurnRow } from '../../do/brand-agent/core.ts'
+import type { CoreDeps, TurnRow } from '../../do/brand-agent/core.ts'
 import type { SubmitTurn } from '../../do/brand-agent/ports.ts'
 import { createAgentTables } from '../../do/brand-agent/schema.ts'
 import { createScheduler, registrySeeds } from '../../do/brand-agent/scheduler.ts'
@@ -92,8 +92,9 @@ export const OTHER = 'm_other'
 /**
  * `db`: the D1 the engine writes its projection and `tool_calls` to (default the test D1; tests pass a failing one).
  * `handlers`: kinds a test adds to the real registry (the scheduler runs them; `runs.submit` and the seeds see them).
+ * `systemPrompt`: the engine's prompt (default a fixed test line; P5's turn-prompt test passes a per-turn builder).
  */
-export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: number; db?: D1Database; handlers?: Readonly<Record<string, TaskHandler>>; evalTrace?: boolean } = {}): Promise<void> {
+export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: number; db?: D1Database; handlers?: Readonly<Record<string, TaskHandler>>; systemPrompt?: CoreDeps['systemPrompt']; evalTrace?: boolean } = {}): Promise<void> {
   const registry: Readonly<Record<string, TaskHandler>> = { ...taskHandlers, ...o.handlers }
   const stub = env.BRAND_AGENT.getByName(`core-${++objects}-${Math.random()}`)
   await runInDurableObject(stub, async (_i, state) => {
@@ -147,7 +148,7 @@ export async function inAgent(fn: (h: Harness) => Promise<void>, o: { burst?: nu
       })
       core = new AgentCore({
         onEvent: e => hub.onEvent(e), sockets: hub,
-        sql, scheduler: sched, tokens, ports: { pool, usage, files }, now, systemPrompt: 'You are a test agent.', db: o.db ?? env.DB,
+        sql, scheduler: sched, tokens, ports: { pool, usage, files }, now, systemPrompt: o.systemPrompt ?? 'You are a test agent.', db: o.db ?? env.DB,
         // The eval build's trace (server/eval-trace/), off unless a test asks for it.
         evalTrace: o.evalTrace ?? false,
         taskSeeds: registrySeeds(registry),

@@ -20,6 +20,7 @@ import type { Principal } from '../auth/index.ts'
 import { brandAgent } from '../do/brand-agent/client.ts'
 import { activeRuns, getTrace, interruptTurn, sendTurnWith, stopTurn } from './runs.ts'
 import { TraceSchema } from '../../shared/contract/trace.ts'
+import { insertRoutine, routine } from '../routines/test-kit.ts'
 import { ActiveRunsSchema } from '../../shared/contract/runs.ts'
 import { getPause, pauseAgent, resumeAgent } from './pause.ts'
 import { resetSession } from './chats.ts'
@@ -260,3 +261,34 @@ describe('routes 32 and 33: active runs and traces (failure 6)', () => {
     expect((await call(getTrace, inhouse(null), { path: `/api/traces/${runId}`, params: { id: runId } })).status).toBe(403)
   })
 })
+
+// #337 round 2 (Opus M1): the eval runners read a routine turn's prompt version through route 33 as a person (run.mjs; the
+// routine fallback in runs.ts admits a routine run's trace to any person). Ways it can fail: the handler drops the additive
+// `promptVersions` field, or the routine fallback reads the trace without it.
+describe('route 33: a routine (m_system) turn\'s trace carries promptVersions over HTTP', () => {
+  it('a person reads it through the routine fallback, with the version the turn recorded', async () => {
+    const id = `c-${uniq()}`
+    await chat(id, alice)
+    const sent = await send(sendPriced, alice, id, { clientTurnKey: key(), text: 'morning check', model: 'sonnet' })
+    const runId = sent.body.runId as string
+    const turnId = sent.body.turnId as string
+    // The turn as a routine left it: the routine principal's, with v3 recorded beside its start record.
+    await runInDurableObject(brandAgent(env), (_i, st) => {
+      st.storage.sql.exec("UPDATE turns SET owner_id = 'm_system', prompt_version = 3 WHERE turn_id = ?", turnId)
+      st.storage.sql.exec("UPDATE runs SET owner_id = 'm_system' WHERE run_id = ?", runId)
+    })
+    await db.prepare("UPDATE chats SET owner_id = 'm_system' WHERE id = ?").bind(id).run()
+    const r = await insertRoutine(routine({ creator_id: alice, checked_until_ms: 0 }))
+    await db.prepare(
+      `INSERT INTO routine_slots (slot_key, routine_id, kind, local_date, local_time, tz, due_at_ms, deadline_ms, state, chat_id, client_key,
+          prompt_text, submit_json, routine_rev, creator_id, claimed_at_ms, run_id, turn_id)
+        VALUES (?, ?, 'manual', '2026-06-01', '06:00', 'America/New_York', 0, 0, 'ended', ?, 'rs_key_prompt', 'x', '{}', 1, ?, 0, ?, ?)`,
+    ).bind(`now|${r.id}|${uniq().replace(/[^A-Za-z0-9]/g, '')}`, r.id, id, alice, runId, turnId).run()
+    for (const traceId of [turnId, runId]) {
+      const got = await call(getTrace, personPrincipal(bob, 'member'), { path: `/api/traces/${traceId}`, params: { id: traceId } })
+      expect(got.status, traceId).toBe(200)
+      expect(TraceSchema.parse(got.body).promptVersions, traceId).toEqual([3])
+    }
+  })
+})
+

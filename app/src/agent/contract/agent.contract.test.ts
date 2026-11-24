@@ -1032,6 +1032,45 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       checkWorld('after the plain writes')
     })
 
+    // The shared shape only; each target's exact answer is its own (the mock's is in mock.tools.test.ts).
+    only('connectTool', 'disconnectTool')('connect answers an address the page can read; a disconnect that cannot happen is an AgentError', async () => {
+      const { authorizeUrl } = await t.client.connectTool(fx.toolKey)
+      expect(() => new URL(authorizeUrl, 'https://app.example.test')).not.toThrow()
+      expect(authorizeUrl.length).toBeGreaterThan(0)
+      const refused = await t.client.disconnectTool(fx.toolKey).then(() => null, (e: unknown) => e)
+      expect(refused).toBeInstanceOf(AgentError)
+      checkWorld('after connect and a refused disconnect')
+    })
+
+    // P5 (p5-w4): the Slack notice channels. The shared shape: a list with a rev, a picker page, a save that answers the
+    // new list at rev + 1, and every refusal an AgentError (a body the schema refuses is `invalid`, never a raw error).
+    only('listNotifyChannels', 'availableNotifyChannels', 'saveNotifyChannels')('the Slack notice channel list: read, pick, save, refuse', async () => {
+      const c = t.client
+      const start = await c.listNotifyChannels()
+      expect(Number.isInteger(start.rev)).toBe(true)
+      const page = await c.availableNotifyChannels()
+      const open = page.channels.filter(ch => !ch.disabled)
+      const blocked = page.channels.find(ch => ch.disabled)
+      expect(open.length).toBeGreaterThan(0)
+      const saved = await c.saveNotifyChannels({ channelIds: [open[0]!.channelId], alertsChannelId: open[0]!.channelId, ifRev: start.rev })
+      expect(saved).toEqual({ rev: start.rev + 1, channels: [{ channelId: open[0]!.channelId, name: open[0]!.name, alerts: true }] })
+      const stale = await c.saveNotifyChannels({ channelIds: [], ifRev: start.rev }).then(() => null, (e: unknown) => e)
+      expect(stale).toBeInstanceOf(AgentError)
+      expect(stale).toMatchObject({ code: 'conflict', current: { rev: saved.rev } })
+      if (blocked) {
+        const refused = await c.saveNotifyChannels({ channelIds: [blocked.channelId], ifRev: saved.rev }).then(() => null, (e: unknown) => e)
+        expect(refused).toMatchObject({ code: 'conflict', reason: blocked.disabled })
+      }
+      const outside = await c.saveNotifyChannels({ channelIds: [open[0]!.channelId], alertsChannelId: 'C9NOTLISTED', ifRev: saved.rev }).then(() => null, (e: unknown) => e)
+      expect(outside).toBeInstanceOf(AgentError)
+      expect(outside).toMatchObject({ code: 'invalid' })
+      const many = await c.saveNotifyChannels({ channelIds: Array.from({ length: 51 }, (_, i) => `C1TEST${String(i).padStart(4, '0')}`), ifRev: saved.rev }).then(() => null, (e: unknown) => e)
+      expect(many).toMatchObject({ code: 'invalid' })
+      expect(await c.listNotifyChannels()).toEqual(saved)
+      // Put it back for the tests after this one.
+      await c.saveNotifyChannels({ channelIds: [], ifRev: saved.rev })
+    })
+
     // P6a W2. Ways it could break: the list shows a fact out of order or misses one; an approve that doesn't reach the
     // team's memory, or a reject that does; a decided fact still listed; a decision at a stale rev that applies instead
     // of rejecting with the fact as it is now; a fresh read of the list that doesn't make the next decision go through.

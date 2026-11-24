@@ -1,6 +1,6 @@
 // check-product-config fixture: the product rules pass but the Worker has a sandbox name.
 {
-	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }],
+	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }, { "binding": "HUB_CONNECT", "service": "inhouse-hub", "entrypoint": "ConnectGateway" }, { "binding": "HUB_DELIVERY", "service": "inhouse-hub", "entrypoint": "DeliveryGateway" }],
 	"name": "inhouse-sbx-product",
 	"main": "server/index.ts",
 	"vars": {

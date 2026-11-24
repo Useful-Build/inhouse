@@ -39,7 +39,7 @@ export function sessionEnv(user: SessionUser, proxyPort: number, extraCaCerts?: 
     DISABLE_AUTOUPDATER: '1',
     // Wait for `inhouse` and `apps` MCP servers to finish connecting before turn 0. The runner passes prompts as a
     // stream (`--input-format stream-json`), where the CLI defaults to non-blocking MCP startup and `inhouse` marks
-    // only six tools `anthropic/alwaysLoad` per tool (leaving the other 14 deferred); without this, a slow connect
+    // only six tools to load up front using per-tool metadata (leaving the other 14 deferred); without this, a slow connect
     // drops every `mcp__inhouse__*` tool from turn 0.
     // `MCP_CONNECTION_NONBLOCKING=0` is documented (code.claude.com/docs/en/env-vars). `MCP_CONNECT_TIMEOUT_MS` is not on the
     // public env-var docs: it was read from the pinned CLI 2.1.328 (agent SDK 0.3.328) source, where it is the blocking-startup

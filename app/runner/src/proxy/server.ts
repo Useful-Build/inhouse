@@ -47,6 +47,8 @@ export type ProxyDeps = {
   maxConnections?: number
   /** Open connections one uid may hold (default `PROXY_MAX_CONNECTIONS_PER_UID`). */
   maxConnectionsPerUid?: number
+  /** Delays before retrying a failed idempotent MCP startup handshake on `/mcp/` or `/hub/` (default `MCP_HANDSHAKE_RETRY_DELAYS_MS`). */
+  mcpRetryDelaysMs?: readonly number[]
 }
 
 export const PROXY_MAX_BODY_BYTES = 64 * 1024 * 1024
@@ -55,6 +57,17 @@ export const PROXY_MAX_CONNECTIONS = 1024
 /** Open connections one session user may hold, so one session can't take every slot above; past it they're closed. */
 export const PROXY_MAX_CONNECTIONS_PER_UID = 256
 export const PROXY_UPSTREAM_TIMEOUT_MS = 10 * 60_000
+/**
+ * Strictly idempotent, read-only MCP startup/handshake methods that may be retried on a transient upstream error.
+ * This defends against confirmed startup behavior in the pinned Claude Code CLI 2.1.328 binary:
+ * with `MCP_CONNECTION_NONBLOCKING=0`, `F()` resolves the startup wait on a `failed` result,
+ * and the `zBn` retry ([500, 1500, 4000] ms) runs unawaited. `tools/call` is never retried here.
+ */
+const RETRYABLE_MCP_METHODS = new Set(['initialize', 'notifications/initialized', 'tools/list', 'ping'])
+const RETRYABLE_UPSTREAM_STATUSES = new Set([500, 502, 503, 504])
+export const MCP_HANDSHAKE_MAX_BODY_BYTES = 16 * 1024
+export const MCP_HANDSHAKE_MAX_RESPONSE_BYTES = 1024 * 1024
+export const MCP_HANDSHAKE_RETRY_DELAYS_MS: readonly number[] = [150, 400]
 
 export function createProxy(deps: ProxyDeps): http.Server {
   const uids = new WeakMap<Socket, Promise<number | null>>()
@@ -153,9 +166,20 @@ function refuseLogged(deps: ProxyDeps, res: ServerResponse, route: string, uid: 
   refuse(res, 403, reason)
 }
 
+function isRetryableMcpHandshake(body: Buffer): boolean {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(body.toString('utf8'))
+  } catch {
+    return false
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return false
+  const msg = parsed as { jsonrpc?: unknown; method?: unknown }
+  return msg.jsonrpc === '2.0' && typeof msg.method === 'string' && RETRYABLE_MCP_METHODS.has(msg.method)
+}
+
 function forward(deps: ProxyDeps, path: string, req: IncomingMessage, res: ServerResponse, token: string, route: string, uid: number) {
   const maxBody = deps.maxBodyBytes ?? PROXY_MAX_BODY_BYTES
-  const logError = (error: string) => deps.log({ type: 'proxy_upstream_error', route, uid, error })
   const tooLarge = () => {
     deps.log({ type: 'proxy_refused', route, uid, reason: 'body too large' })
     if (!res.headersSent) refuse(res, 413, 'body too large')
@@ -164,22 +188,257 @@ function forward(deps: ProxyDeps, path: string, req: IncomingMessage, res: Serve
   const declared = req.headers['content-length']
   if (declared !== undefined && Number(declared) > maxBody) return tooLarge()
 
+  const retryCap = Math.min(maxBody, MCP_HANDSHAKE_MAX_BODY_BYTES)
+  const mayRetryHandshake =
+    (route === 'mcp' || route === 'hub') &&
+    req.method === 'POST' &&
+    (declared === undefined || Number(declared) <= retryCap)
+  if (mayRetryHandshake) {
+    bufferOrStreamMcp(deps, path, req, res, token, route, uid, maxBody, retryCap, tooLarge)
+    return
+  }
+  forwardStream(deps, path, req, res, token, route, uid, maxBody, tooLarge)
+}
+
+function buildForwardHeaders(req: IncomingMessage, token: string): Record<string, string | string[]> {
   const headers: Record<string, string | string[]> = {}
   for (const [k, v] of Object.entries(req.headers)) if (v !== undefined && forwardsRequestHeader(k)) headers[k] = v
   headers[RUN_TOKEN_HEADER] = token
+  return headers
+}
+
+function responseHeaders(upRes: IncomingMessage): Record<string, string | string[]> {
+  const out: Record<string, string | string[]> = {}
+  for (const [k, v] of Object.entries(upRes.headers)) if (v !== undefined && !RESPONSE_DROP.has(k)) out[k] = v
+  return out
+}
+
+function bufferOrStreamMcp(
+  deps: ProxyDeps,
+  path: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+  token: string,
+  route: string,
+  uid: number,
+  maxBody: number,
+  retryCap: number,
+  tooLarge: () => void,
+) {
+  const chunks: Buffer[] = []
+  let size = 0
+  let callerGone = false
+  let switched = false
+
+  const onClose = () => {
+    if (res.writableFinished) return
+    callerGone = true
+  }
+  res.on('close', onClose)
+
+  const onData = (chunk: Buffer) => {
+    if (callerGone || switched) return
+    size += chunk.length
+    if (size > maxBody) {
+      switched = true
+      cleanup()
+      tooLarge()
+      return
+    }
+    chunks.push(chunk)
+    if (size > retryCap) {
+      switched = true
+      cleanup()
+      forwardStream(deps, path, req, res, token, route, uid, maxBody, tooLarge, chunks, size)
+    }
+  }
+  const onEnd = () => {
+    if (callerGone || switched) return
+    cleanup()
+    const body = Buffer.concat(chunks, size)
+    const delays = isRetryableMcpHandshake(body) ? (deps.mcpRetryDelaysMs ?? MCP_HANDSHAKE_RETRY_DELAYS_MS) : []
+    forwardBuffered(deps, path, req, res, token, route, uid, body, delays)
+  }
+  const onError = () => {
+    callerGone = true
+    cleanup()
+  }
+  const cleanup = () => {
+    req.off('data', onData)
+    req.off('end', onEnd)
+    req.off('error', onError)
+    res.off('close', onClose)
+  }
+  req.on('data', onData)
+  req.on('end', onEnd)
+  req.on('error', onError)
+}
+
+function forwardBuffered(
+  deps: ProxyDeps,
+  path: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+  initialToken: string,
+  route: string,
+  uid: number,
+  body: Buffer,
+  retryDelaysMs: readonly number[],
+) {
+  const logError = (error: string) => deps.log({ type: 'proxy_upstream_error', route, uid, error })
+  const target = targetFor(deps.upstream, path, route)!
+  const send = target.protocol === 'https:' ? https.request : http.request
+  const timeout = deps.upstreamTimeoutMs ?? PROXY_UPSTREAM_TIMEOUT_MS
+  const tokenRoute = tokenRouteFor(route)
+
+  let callerGone = false
+  let activeUp: http.ClientRequest | null = null
+  let retryTimer: NodeJS.Timeout | undefined
+
+  res.on('close', () => {
+    if (res.writableFinished) return
+    callerGone = true
+    if (retryTimer !== undefined) {
+      clearTimeout(retryTimer)
+      retryTimer = undefined
+    }
+    activeUp?.destroy()
+  })
+
+  const attempt = (index: number) => {
+    if (callerGone) return
+    const headers = buildForwardHeaders(req, initialToken)
+    headers['content-length'] = String(body.length)
+    let settled = false
+    const canRetry = index < retryDelaysMs.length
+
+    const retryOrFail = (error: string, status: number) => {
+      if (settled || callerGone) return
+      settled = true
+      logError(error)
+      if (!canRetry || res.headersSent) {
+        if (!res.headersSent) refuse(res, status, 'upstream failed')
+        else res.destroy()
+        return
+      }
+      scheduleRetry(index + 1, status)
+    }
+
+    const scheduleRetry = (nextIndex: number, status: number) => {
+      const delay = retryDelaysMs[nextIndex - 1] ?? 0
+      retryTimer = setTimeout(() => {
+        retryTimer = undefined
+        if (callerGone) return
+        const freshToken = deps.tokenForUid(uid, tokenRoute)
+        if (freshToken === null) {
+          refuseLogged(deps, res, route, uid, 'no live run for this user (or its stream has ended)')
+          return
+        }
+        if (freshToken !== initialToken) {
+          refuse(res, status, 'upstream failed')
+          return
+        }
+        attempt(nextIndex)
+      }, delay)
+    }
+
+    // `agent: false`: fresh connection per request avoids stale idle keep-alive socket 502s against `egress.internal`.
+    const up = send(target, { method: req.method, headers, agent: false, timeout }, (upRes) => {
+      const status = upRes.statusCode ?? 502
+      if (canRetry && RETRYABLE_UPSTREAM_STATUSES.has(status)) {
+        retryOrFail(`upstream status ${status}`, status)
+        up.destroy()
+        return
+      }
+      if (!canRetry) {
+        settled = true
+        res.writeHead(status, responseHeaders(upRes))
+        upRes.pipe(res)
+        upRes.on('close', () => {
+          if (upRes.complete || callerGone) return
+          logError('the upstream ended mid-body')
+          res.destroy()
+        })
+        return
+      }
+      // Buffer small handshake responses so a mid-body cut from `egress.internal` retries cleanly too.
+      const resChunks: Buffer[] = []
+      let resBytes = 0
+      let streaming = false
+      upRes.on('data', (chunk: Buffer) => {
+        if (settled || callerGone) return
+        if (streaming) {
+          if (!res.write(chunk)) {
+            upRes.pause()
+            res.once('drain', () => upRes.resume())
+          }
+          return
+        }
+        resBytes += chunk.length
+        resChunks.push(chunk)
+        if (resBytes > MCP_HANDSHAKE_MAX_RESPONSE_BYTES) {
+          streaming = true
+          res.writeHead(status, responseHeaders(upRes))
+          for (const c of resChunks) res.write(c)
+          resChunks.length = 0
+        }
+      })
+      upRes.on('end', () => {
+        if (settled || callerGone) return
+        settled = true
+        if (streaming) {
+          res.end()
+          return
+        }
+        res.writeHead(status, responseHeaders(upRes))
+        res.end(Buffer.concat(resChunks, resBytes))
+      })
+      upRes.on('close', () => {
+        if (settled || callerGone || upRes.complete) return
+        if (streaming) {
+          settled = true
+          logError('the upstream ended mid-body')
+          res.destroy()
+          return
+        }
+        retryOrFail('the upstream ended mid-body', 502)
+      })
+    })
+    activeUp = up
+    up.on('timeout', () => up.destroy(new Error('upstream timeout')))
+    up.on('error', (e) => retryOrFail(e.message, e.message === 'upstream timeout' ? 504 : 502))
+    up.end(body)
+  }
+
+  attempt(0)
+}
+
+function forwardStream(
+  deps: ProxyDeps,
+  path: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+  token: string,
+  route: string,
+  uid: number,
+  maxBody: number,
+  tooLarge: () => void,
+  prefix: readonly Buffer[] = [],
+  initialSize = 0,
+) {
+  const logError = (error: string) => deps.log({ type: 'proxy_upstream_error', route, uid, error })
+  const headers = buildForwardHeaders(req, token)
   const target = targetFor(deps.upstream, path, route)!
   const send = target.protocol === 'https:' ? https.request : http.request
 
   let callerGone = false
   let failed = false
-  // `agent: false`: Node's globalAgent pools keep-alive sockets (`keepAlive: true`), and `forward()` streams `req`
+  // `agent: false`: Node's globalAgent pools keep-alive sockets (`keepAlive: true`), and `forwardStream()` streams `req`
   // directly into `up`, so it cannot retry if the upstream closes an idle socket just as we reuse it (which surfaces
   // as an immediate ECONNRESET -> 502 and breaks MCP startup or a tool call). The upstream is the container's local
   // `http://egress.internal` intercept, so a fresh connection per request avoids stale-socket 502s cleanly.
   const up = send(target, { method: req.method, headers, agent: false, timeout: deps.upstreamTimeoutMs ?? PROXY_UPSTREAM_TIMEOUT_MS }, (upRes) => {
-    const out: Record<string, string | string[]> = {}
-    for (const [k, v] of Object.entries(upRes.headers)) if (v !== undefined && !RESPONSE_DROP.has(k)) out[k] = v
-    res.writeHead(upRes.statusCode ?? 502, out)
+    res.writeHead(upRes.statusCode ?? 502, responseHeaders(upRes))
     upRes.pipe(res)
     // The upstream cut the body short: the caller must not take a partial body for a whole one.
     upRes.on('close', () => {
@@ -205,7 +464,14 @@ function forward(deps: ProxyDeps, path: string, req: IncomingMessage, res: Serve
     up.destroy()
   })
 
-  let size = 0
+  const write = (chunk: Buffer) => {
+    if (!up.write(chunk) && !req.isPaused()) {
+      req.pause()
+      up.once('drain', () => req.resume())
+    }
+  }
+
+  let size = initialSize
   req.on('data', (chunk: Buffer) => {
     if (failed) return
     size += chunk.length
@@ -215,12 +481,11 @@ function forward(deps: ProxyDeps, path: string, req: IncomingMessage, res: Serve
       tooLarge()
       return
     }
-    if (!up.write(chunk)) {
-      req.pause()
-      up.once('drain', () => req.resume())
-    }
+    write(chunk)
   })
   req.on('end', () => {
     if (!failed) up.end()
   })
+  // Attach the data listener before writing the prefix so it cannot resume a backpressured request.
+  for (const chunk of prefix) write(chunk)
 }

@@ -152,7 +152,8 @@ test('Settings: search filters the menu to matching pages and rows', async ({ pa
   const nav = page.getByRole('navigation', { name: 'Settings' })
   const menu = nav.locator('button[data-nav-row]')
   const search = page.getByRole('searchbox', { name: 'Search settings' })
-  await expect(menu).toHaveCount(13)
+  // 14 with P5 W4's Slack notices: the sample brand has Slack connected (a brand without it keeps 13, brand-data.spec.ts).
+  await expect(menu).toHaveCount(14)
 
   await search.fill('time zone')
   await expect(menu).toHaveCount(1)
@@ -173,7 +174,7 @@ test('Settings: search filters the menu to matching pages and rows', async ({ pa
   // Escape clears the box and the whole menu comes back.
   await search.press('Escape')
   await expect(search).toHaveValue('')
-  await expect(menu).toHaveCount(13)
+  await expect(menu).toHaveCount(14)
 })
 
 test('Chats: there is no Chats item in the nav; New chat and Recent chats stay', async ({ page, fx }) => {

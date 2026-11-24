@@ -51,7 +51,7 @@ export function checkNotice(table: Readonly<Record<string, NoticeTemplate>>, n: 
   if ((n.audience === 'member') !== (n.audienceMemberId !== undefined)) throw new TemplateError("audienceMemberId is required exactly when the audience is 'member'")
   for (const id of [n.audienceMemberId, n.personId]) if (id !== undefined && !MEMBER_ID.test(id)) throw new TemplateError('audienceMemberId and personId are member ids')
   if (n.body === undefined) {
-    if (t.body) throw new TemplateError(`template ${n.template} needs a body`)
+    if (t.body && !t.body.optional) throw new TemplateError(`template ${n.template} needs a body`)
   } else {
     if (!t.body) throw new TemplateError(`template ${n.template} takes no body`)
     if (n.body.includes('\0')) throw new TemplateError('a body can\'t hold a NUL')

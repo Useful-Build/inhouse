@@ -13,8 +13,11 @@ export interface NoticeTemplate {
   /** The notice's `who` line. */
   who: string
   fields: FieldSpec
-  /** Present on the templates whose notices carry a `body`: the most code points it may hold. */
-  body?: { max: number }
+  /**
+   * Present on the templates whose notices carry a `body`: the most code points it may hold, and `optional` when a notice
+   * of this template may also come without one (P5 W4's system notices; B2, 2026-11-21).
+   */
+  body?: { max: number; optional?: true }
 }
 
 export const NOTICE_TEMPLATES: Readonly<Record<string, NoticeTemplate>> = {
@@ -34,4 +37,17 @@ export const NOTICE_TEMPLATES: Readonly<Record<string, NoticeTemplate>> = {
   privacy_shop_redact: {
     source: 'shopify-privacy', text: "Shopify asked to erase this store's data. The Inhouse team will follow up with you", who: 'Inhouse', fields: {},
   },
+  // P5 (p5-w4): the agent's notification_send (title and text in `body`) and the server's own notices (sendSystemNotice;
+  // the title is the row's, model text only ever in `body`).
+  notify_message: { source: 'notify', text: 'Message from your Inhouse agent', who: 'Your Inhouse agent', fields: {}, body: { max: 1622 } },
+  notify_report: { source: 'notify', text: 'Report from your Inhouse agent', who: 'Your Inhouse agent', fields: {}, body: { max: 1622 } },
+  approval_waiting: { source: 'approvals', text: 'Approval waiting', who: 'Inhouse', fields: {}, body: { max: 300, optional: true } },
+  approval_lapsed: { source: 'approvals', text: 'Approval sent back', who: 'Inhouse', fields: {}, body: { max: 300, optional: true } },
+  approval_sent: { source: 'approvals', text: 'Approved action sent', who: 'Inhouse', fields: {}, body: { max: 300, optional: true } },
+  approval_failed: { source: 'approvals', text: "An approved action didn't go out", who: 'Inhouse', fields: {}, body: { max: 300, optional: true } },
+  needs_check: { source: 'approvals', text: 'A send needs a check', who: 'Inhouse', fields: {}, body: { max: 300, optional: true } },
+  approval_expired: { source: 'approvals', text: 'An approval expired', who: 'Inhouse', fields: {}, body: { max: 300, optional: true } },
+  restore_reconciled: { source: 'approvals', text: 'Sends checked after a restore', who: 'Inhouse', fields: {}, body: { max: 300, optional: true } },
+  question_waiting: { source: 'questions', text: 'A question is waiting', who: 'Inhouse', fields: {}, body: { max: 300, optional: true } },
+  question_closed: { source: 'questions', text: 'A question was closed', who: 'Inhouse', fields: {}, body: { max: 300, optional: true } },
 }

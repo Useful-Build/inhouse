@@ -58,7 +58,21 @@ await new Promise<void>((resolve, reject) => {
   process.exit(1)
 })
 
-child = spawn(command[0], command.slice(1), { stdio: 'inherit', detached: true, env: { ...process.env, CONTRACT_REAL_ORIGIN: appOrigin('brand'), CONTRACT_REAL_BRAND_AUD: testAccessConfig().apps.find(a => a.name === 'brand')!.aud } })
+// The Inhouse host and the release token too (P5 W5's connector cases: the Tools writes are Inhouse-only, and the
+// target reaches the test-fakes hook as the release service).
+const access = testAccessConfig()
+child = spawn(command[0], command.slice(1), {
+  stdio: 'inherit',
+  detached: true,
+  env: {
+    ...process.env,
+    CONTRACT_REAL_ORIGIN: appOrigin('brand'),
+    CONTRACT_REAL_BRAND_AUD: access.apps.find(a => a.name === 'brand')!.aud,
+    CONTRACT_REAL_INHOUSE_ORIGIN: appOrigin('inhouse'),
+    CONTRACT_REAL_INHOUSE_AUD: access.apps.find(a => a.name === 'inhouse')!.aud,
+    CONTRACT_REAL_RELEASE_CLIENT_ID: Object.entries(access.serviceTokens).find(([, name]) => name === 'release')![0],
+  },
+})
 const started = child
 const code = await new Promise<number>(resolve => started.once('exit', c => resolve(c ?? signalled ?? 1)))
 stop()

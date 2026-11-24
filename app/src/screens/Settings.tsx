@@ -14,15 +14,16 @@ import { Badge } from '@/components/ui/badge'
 import { GRANT_HOURS } from '../../shared/contract/keys'
 import { LoadError } from '../ui/retry'
 import { InviteDialog } from './settings/InviteDialog'
-import { allowance, pageResources } from './settings/allowance'
+import { allowance, mayEditNotify, pageResources, showsRemove } from './settings/allowance'
 import { readParts } from './settings/read-text'
 import { single } from './settings/single'
 import { tell } from './settings/write'
+import { useNotifyChannels } from './settings/notify-channels'
 import { waitingList } from './settings/waiting-list'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { PHOTO_MAX_BYTES, PHOTO_TYPES, PhotoDecodeError, squarePhoto } from '../ui/photo'
-import { SECTIONS, checkField, settingsPage } from './settings/content'
+import { checkField, hasSlack, menuFor, settingsPage } from './settings/content'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTheme } from '@/lib/theme'
 import { saveBlob } from '@/lib/save-file'
@@ -281,6 +282,8 @@ export function Settings() {
     contentRef.current.scrollTop = positions.current.get(setTab) ?? 0
   }, [setTab, phone])
 
+  // P5 W4: the Slack notices page reads its channels while it's open; an Admin or the Inhouse team also reads the picker.
+  const notify = useNotifyChannels(setTab === 'team-slack' && hasSlack(data.tools), mayEditNotify(me?.can))
   const pick = (k: string) => ui.patch({ setTab: k, setMenu: false })
   const { theme, setTheme } = useTheme()
   // Export everything's check-then-download, one at a time: a second click while route 96 is still planning shares the
@@ -327,9 +330,12 @@ export function Settings() {
       })().finally(() => { exportInFlight.current = null })
       return exportInFlight.current
     } : null,
+    notify,
     waiting: approves ? { state: waitingState, decide: waitingStore.decide, retry: () => { void waitingStore.read() } } : undefined,
   }
   const page = settingsPage(setTab, env)
+  // P5 W4: Slack notices is listed only for a brand with Slack connected.
+  const menu = menuFor(data.tools)
   const readOnly = phone && setTab.startsWith('team-')
   // The note is for a page where a control became text; a page of buttons and plain facts has nothing to explain.
   const hidesControls = readOnly && page.sections.some(sec => sec.rows.some(r => r.kind === 'toggle' || r.kind === 'select' || r.kind === 'text' || r.kind === 'mode'))
@@ -340,7 +346,7 @@ export function Settings() {
   const found = (() => {
     if (!needle) return null
     const hits = new Map<string, string[]>()
-    for (const { id: k, label } of SECTIONS.flatMap(sec => sec.pages)) {
+    for (const { id: k, label } of menu.flatMap(sec => sec.pages)) {
       const p = settingsPage(k, env)
       const rows = p.sections.flatMap(sec => sec.rows).filter(r => `${r.title} ${r.desc} ${r.keywords ?? ''}`.toLowerCase().includes(needle)).map(r => r.title)
       const pageHit = `${label} ${p.title}`.toLowerCase().includes(needle)
@@ -355,7 +361,7 @@ export function Settings() {
       <nav aria-label="Settings" className={`box-border flex-none pt-3.5 ${phone ? 'w-full px-(--app-pad-x) pb-14' : 'w-settings-nav overflow-y-auto pr-3.5 pb-7.5 pl-6'}`}>
         {phone && <PageHeader title="Settings" className="mb-4" />}
         <SearchBox value={query} onChange={setQuery} placeholder="Search settings" label="Search settings" />
-        {SECTIONS.map(sec => {
+        {menu.map(sec => {
           const pages = sec.pages.filter(p => !found || found.has(p.id))
           if (pages.length === 0) return null
           // Brand settings: anyone who can't change them sees a lock on the heading, with the reason in a tooltip.
@@ -444,7 +450,7 @@ export function Settings() {
                       {row.avatar?.at === 'control' && memberFor(data, row.avatar.who, userName(ctx)) && <span className={cn('flex flex-none', locked && 'grayscale')}><Avatar who={row.avatar.who} size={28} fontSize={11} /></span>}
                       <Control readOnly={readOnly || denied} denied={denied} effortOk={al.effort} switchOk={al.switch} grant={data.people.supportGrant} row={row} locked={locked} on={on} onToggle={() => (row.toggle ? row.toggle(!on) : tell(agent.setToggle(row.key!, !on), row))} onAsk={setAsk} caption={i === 0 && !readOnly ? sec.caption : undefined} />
                       {row.also && !denied && <Button variant="outline" size="lg" aria-label={row.also.ariaLabel} disabled={row.busy} onClick={() => (row.also!.ask ? setAsk({ ...row.also!.ask, go: row.also!.go }) : row.also!.go())}>{row.also.label}</Button>}
-                      {row.remove && me?.can.remove !== false && !readOnly && <Button variant="outline" size="lg" aria-label={row.remove.label} onClick={() => setAsk({ title: row.remove!.title, text: row.remove!.text, action: row.remove!.action, go: row.remove!.go })}>Remove</Button>}
+                      {row.remove && showsRemove(row, me?.can) && !readOnly && <Button variant="outline" size="lg" aria-label={row.remove.label} onClick={() => setAsk({ title: row.remove!.title, text: row.remove!.text, action: row.remove!.action, go: row.remove!.go })}>Remove</Button>}
                     </div>
                   )
                 })}

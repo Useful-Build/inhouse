@@ -145,14 +145,22 @@ describe('JSON-RPC mapping against literal pairs (failure 2)', () => {
   })
 
   it('a throwing or malformed binding: internal error, never its text; logged binding_failed', async () => {
-    for (const bad of [async () => { throw new Error('binding exploded') }, async () => ({ ok: 'yes' }), async () => ({ ok: false, error: { code: 1, message: 'x' } })]) {
+    const failures = [
+      { bad: async () => { throw new Error('binding exploded') }, listStatus: 503 },
+      { bad: async () => ({ ok: 'yes' }), listStatus: 200 },
+      { bad: async () => ({ ok: false, error: { code: 1, message: 'x' } }), listStatus: 200 },
+    ]
+    for (const { bad, listStatus } of failures) {
       const f = fake()
       f.call = bad
       f.list = bad
       expect((await call(f, { jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'orders_search' } })).body).toEqual({
         jsonrpc: '2.0', id: 10, result: { content: [{ type: 'text', text: 'internal: internal error' }], isError: true },
       })
-      expect((await call(f, { jsonrpc: '2.0', id: 11, method: 'tools/list' })).body).toEqual({ jsonrpc: '2.0', id: 11, error: { code: -32603, message: 'hub: internal' } })
+      expect(await call(f, { jsonrpc: '2.0', id: 11, method: 'tools/list' })).toMatchObject({
+        status: listStatus,
+        body: { jsonrpc: '2.0', id: 11, error: { code: -32603, message: 'hub: internal' } },
+      })
       expect(f.logs.map(l => l.code)).toEqual(['binding_failed', 'binding_failed'])
     }
   })

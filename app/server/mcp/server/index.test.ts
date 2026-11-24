@@ -31,6 +31,8 @@ const THE_6 = ['memory_search', 'memory_save', 'approval_request', 'question_ask
 const BUILT = ['memory_search', 'memory_save', 'memory_update', 'memory_forget', 'memory_list', 'history_search', 'history_read',
   // P4 W2: the routine tools.
   'routine_create', 'routine_list', 'routine_update', 'routine_delete', 'routine_run_now',
+  // P5 W4: notification_send.
+  'notification_send',
   // P6a W3: the Inhouse team tools.
   'team_request_create', 'team_request_list',
   // P6a brand skills.
@@ -163,8 +165,10 @@ describe('descriptions promise only what P3 does (failure 5)', () => {
     const d = Object.fromEntries((body as { result: { tools: { name: string; description: string }[] } }).result.tools.map(t => [t.name, t.description]))
     expect(d.history_search).not.toMatch(/routine|run\b|activity/i)
     expect(d.history_read).not.toMatch(/routine|run\b/i)
-    expect(d.notification_send).toContain('Sends a notification: to the bell for members; to admin-listed Slack channels from the Act stage.')
-    expect(d.notification_send).not.toMatch(/email/i)
+    // P5 W4's description (p5-w4.md section 2): the bell for members, listed channels from Act; email named only to rule it out.
+    expect(d.notification_send).toContain('reaches their bell in the app (never a Slack DM, never email)')
+    expect(d.notification_send).toContain('posts there from the Act stage; at Watch it reaches the bell instead')
+    expect(d.notification_send.replace('never email', '')).not.toMatch(/email/i)
   })
 })
 

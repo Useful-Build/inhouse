@@ -13,7 +13,7 @@ No entry is `Covered: gap`. Not checked by any spec, or only in part:
 - Settings > General: Language and Text size are opened and closed by `menus.spec.ts`, but no spec picks one and checks it saves.
 - Icons: the fallback glyph for a name outside the manifest is drawn by `src/ui/index.tsx` but no spec checks it; a name
   missing from the font fails lint (`scripts/check-icons.mjs`), not a spec.
-- Connector hub (`app/hub/`, P4): no screen. Its default export answers 404 to every request and it has no public route (`hub/index/index.workers.test.ts`); it answers only the product Worker's service binding; the `hub` CI job runs its checks.
+- Connector hub (`app/hub/`, P4-P5): no screen. Its default export answers 404 to every request and it has no public route (`hub/index/index.workers.test.ts`); it answers only the product Worker's service bindings (`HUB` / `ReadGateway`, `HUB_CONNECT` / `ConnectGateway`, `HUB_DELIVERY` / `DeliveryGateway`); the `hub` CI job and test-build connector specs (`e2e/api/{connect,tools,notify-slack,canary,notices-injection}.spec.ts`) run its checks. Transient MCP startup retries, including a thrown hub tool-list RPC, are covered by runner proxy and egress unit tests.
 - Export everything is a stub, and so is Sign out in the demo: specs check they say so and change nothing. In the product Sign out goes to Access's logout; `e2e/real/sign-out.spec.ts` checks the account menu goes to that path on the test build (no Access there); the real Access logout is checked on the candidate deploy (pending).
 - The chat WebSocket under the enforced CSP (`e2e/real/socket-csp.spec.ts`) needs a run, so it is checked on the sandbox deploy (`E2E_TEST_BUILD_REMOTE=1`), not on the local test build, which has no container. `e2e/real/csp-download-photo.spec.ts` covers the audit CSV download and a member photo on both.
 - A failed or never-run chat turn's words after a reload (its stored end row, P3) and a trace's "up to" cost while a model call is open are proven only by unit tests (`server/do/brand-agent/projection.test.ts`, `src/screens/chat/history.test.ts`, `src/lib/trace-cost.test.ts`): the test build has no container and no way to force a placement failure or hold a call open without new test code in the deployable bundle.
@@ -232,8 +232,8 @@ Tools: list and pages
   Path:     Tools (`#/tools`) -> a tool
   Selector: search, Pause access, Reconnect, Request a tool
   Expected: pausing or disconnecting changes the count, the tool page (Read, Draft, Access) and the composer alike; Pause access has Undo and Resume brings it all back; Request a tool opens the team window; a catalogue tool's Request (Add a tool) shows "Requested" and a toast starting "Request sent" (the product's once the server has it), stays "Requested" after a reload, and the toast's Undo withdraws it (the product withdraws through route 83)
-  Covered:  e2e/data-states.spec.ts, e2e/page-actions.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts, e2e/ship/memory-skills.spec.ts (S8)
-  Gaps:     the product's Tools page has no catalogue ("Add a tool" is the demo's invented list), so the ship spec's S8 shows "Request a tool" (open after a reload, Withdraw) instead of a catalogue tool's Request
+  Covered:  e2e/data-states.spec.ts, e2e/page-actions.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts, e2e/api/connect.spec.ts, e2e/api/tools.spec.ts, e2e/real/tools-return.spec.ts, e2e/ship/connectors.spec.ts, e2e/ship/memory-skills.spec.ts (S8)
+  Gaps:     with P5, the product's Tools page lists a catalogue (route 70), and a Member's "Request" on a catalogue tool files a route 81 team request ("Connect <tool>"); that combined flow has no spec yet. The P6a ship spec's S8 still uses "Request a tool" (open after a reload, Withdraw)
 
 Tools: Slack channel
   Path:     Tools -> Slack
@@ -263,9 +263,9 @@ Usage
 
 Settings: menu
   Path:     Settings (`#/settings/<page>`), the menu beside the app's sidebar (on a phone the menu is the first screen)
-  Selector: search "Search settings", groups You (General, Notifications, Memory), Agent (Inhouse agent, Models, Team memory), Approvals and limits (Who approves what, Run limits, Spending cap), Team (Members), Workspace (Stage and plan, Data and access, Audit log); a lock button "Admins change these" on a team group's heading
-  Expected: five groups, each announced by its heading, in this order; the command palette lists the same pages; search filters pages and rows (a page's matching rows show under it) and "No settings match" shows for none; for someone who can't change brand settings (a Member, test build) every team group's heading has the lock with the tooltip "Admins change these", and an Admin (and the demo) sees none
-  Covered:  e2e/sample-data.spec.ts, e2e/navigation.spec.ts, e2e/ui-round-3.spec.ts, e2e/real/settings-lock.spec.ts, src/screens/settings/settings-registry.test.ts
+  Selector: search "Search settings", groups You (General, Notifications, Memory), Agent (Inhouse agent, Models, Team memory), Approvals and limits (Who approves what, Run limits, Spending cap), Team (Members; Slack notices when Slack is connected), Workspace (Stage and plan, Data and access, Audit log); a lock button "Admins change these" on a team group's heading
+  Expected: five groups, each announced by its heading, in this order; the command palette lists the same pages; Slack notices appears only when Slack is connected (`hasSlack`); search filters pages and rows (a page's matching rows show under it) and "No settings match" shows for none; for someone who can't change brand settings (a Member, test build) every team group's heading has the lock with the tooltip "Admins change these", and an Admin (and the demo) sees none
+  Covered:  e2e/sample-data.spec.ts, e2e/navigation.spec.ts, e2e/ui-round-3.spec.ts, e2e/real/settings-lock.spec.ts, src/screens/settings/settings-registry.test.ts, src/screens/settings/slack-page.test.ts
 
 Settings: dropdowns and fields
   Path:     Settings -> any page
@@ -290,6 +290,12 @@ Settings: Members and approvers
   Selector: role control, Remove
   Expected: removing Admin asks first; a demoted approver stays on rules that name them with a tag; a wrong cap shows why and isn't saved
   Covered:  e2e/page-details.spec.ts, e2e/edge-cases.spec.ts, e2e/cross-screen.spec.ts
+
+Settings: Slack notices
+  Path:     Settings -> Slack notices
+  Selector: channel rows "#<name>" with Remove, dropdowns "Add a channel" and "Alerts channel", rows "Before the Act stage", "While Slack is paused", "Who can read them"
+  Expected: an Admin or the Inhouse team adds a public channel the connected Slack account is in, removes one (asks first) and picks one alerts channel; shared and non-member channels aren't offered; a Member reads the list and the rules only; while Slack isn't connected or is paused the picker says so with Try again; a stale save shows the latest list. The demo keeps the list until a reload
+  Covered:  src/screens/settings/slack-page.test.ts, src/agent/http/notifications.test.ts, server/notify-slack/routes.test.ts (no e2e spec yet)
 
 Settings: Stage and plan
   Path:     Settings -> Stage and plan

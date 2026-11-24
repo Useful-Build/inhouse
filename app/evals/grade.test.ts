@@ -227,9 +227,10 @@ describe('T09, T11 and open served schemas', () => {
   })
   it('the open set is what the server serves: the stubs today, never a built tool', async () => {
     const open = await openSchemaTools()
-    for (const n of ['notification_send', 'question_ask', 'approval_request']) expect(open.has(n), n).toBe(true)
-    // P4 built the routine tools (line B, fleet/watch): their real schemas have fields, so they're closed now.
-    for (const n of ['memory_search', 'memory_forget', 'history_search', 'routine_create', 'routine_run_now']) expect(open.has(n), n).toBe(false)
+    for (const n of ['question_ask', 'approval_request']) expect(open.has(n), n).toBe(true)
+    // P4 built the routine tools (line B, fleet/watch) and P5 notification_send (W4): their real schemas have fields, so
+    // they're closed now.
+    for (const n of ['memory_search', 'memory_forget', 'history_search', 'routine_create', 'routine_run_now', 'notification_send']) expect(open.has(n), n).toBe(false)
   })
 })
 

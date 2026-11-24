@@ -15,3 +15,6 @@ export const readTestShop: Real['readTestShop'] = () => {
 }
 /** The hub as it is: every read call goes to the hub's own shop. */
 export const withTestShop: Real['withTestShop'] = hub => hub
+/** The gateway as it is: the prompt's account read names the hub's own accounts. */
+export const withTestShopConnect: Real['withTestShopConnect'] = gateway => gateway
+export const withTestShopConnectInWorker: Real['withTestShopConnectInWorker'] = gateway => gateway

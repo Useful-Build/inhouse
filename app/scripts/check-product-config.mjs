@@ -126,10 +126,13 @@
 // The generic product, per-PR and candidate rules are unchanged by it; checkPool's "no gateway on a test build" rule is
 // the one it lifts.
 // Eval and the hub (P4, line A's eval hub): the eval deployment has its own hub, `evalNames().hub`
-// (`inhouse-sbx-eval-hub`). An eval product config's `services` is nothing (a build before P4) or exactly
-// `{ binding: "HUB", service: "inhouse-sbx-eval-hub", entrypoint: "ReadGateway" }`: never P5's HUB_CONNECT or
-// HUB_DELIVERY (the eval brand connects no store and delivers nothing), and never the candidate's, a PR's or the house's
-// hub; `--eval --hub` locks the eval hub's own config by the hub rules above.
+// (`inhouse-sbx-eval-hub`). An eval product config's `services` is nothing (a build before P4) or exactly the pair
+// `{ binding: "HUB", service: "inhouse-sbx-eval-hub", entrypoint: "ReadGateway" }` and
+// `{ binding: "HUB_CONNECT", service: "inhouse-sbx-eval-hub", entrypoint: "ConnectGateway" }` (P5's main merge, #337:
+// the per-turn prompt v3 reads the accounts through it, and the read binding alone would leave every eval turn on the
+// static v2; the eval hub is the hub's test bundle, which exports ConnectGateway): never
+// P5's HUB_DELIVERY (the eval brand is at Watch and delivers nothing to Slack), and never the candidate's, a PR's or the
+// house's hub; `--eval --hub` locks the eval hub's own config by the hub rules above.
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, isAbsolute, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -293,36 +296,43 @@ export function checkPool(config, { sandbox = false, evalMode = false } = {}) {
 
 /** The connector hub's Worker name (app/wrangler.hub.jsonc), the one entrypoint the product Worker may bind in P4, and its binding name. */
 const HUB_SERVICE = 'inhouse-hub'
-const HUB_ENTRYPOINT = 'ReadGateway'
-const HUB_BINDING = 'HUB'
-const HUB_ENTRY_KEYS = new Set(['binding', 'service', 'entrypoint'])
-
 /**
- * P4's service rule (p4-h1.md OC 4), on any product-mode config: `services` is exactly the hub's `ReadGateway` as
- * `HUB`, and nothing else. Every entrypoint of a Worker shares its env, so a binding left out is the only way to keep
- * the runner's route off the hub's server methods; any other service is a door this phase didn't plan.
+ * The hub entrypoints the product Worker binds, by binding name, and nothing else (P4 H1's ReadGateway; P5 W1's
+ * ConnectGateway and P5 W4's DeliveryGateway, product server code only). ServerGateway is never bound. Keeping the runner off HUB_CONNECT and HUB_DELIVERY is code
+ * discipline plus checks (the import-boundary rule, W5's runtime tests), not this config: every module shares `env`.
  */
+const HUB_BINDINGS = { HUB: 'ReadGateway', HUB_CONNECT: 'ConnectGateway', HUB_DELIVERY: 'DeliveryGateway' }
+const HUB_ENTRY_KEYS = new Set(['binding', 'service', 'entrypoint'])
+const HUB_LIST = Object.entries(HUB_BINDINGS).map(([b, e]) => `${b} → ${e}`).join(', ')
+
+/** The services list is exactly the hub's bindings above, each once, with binding, service and entrypoint only. */
 export function checkHub(config) {
   const failures = []
   if (config.services !== undefined && !Array.isArray(config.services)) return ['services must be a list']
   const services = config.services ?? []
   services.forEach((s, i) => {
     if (s?.entrypoint === 'ServerGateway') {
-      failures.push(`services[${i}] binds ServerGateway: in P4 the product Worker binds the hub's ${HUB_ENTRYPOINT} only`)
+      failures.push(`services[${i}] binds ServerGateway: the product Worker binds the hub's ${HUB_LIST} only`)
       return
     }
     if (s?.service !== HUB_SERVICE) {
-      failures.push(`services[${i}] binds ${JSON.stringify(s?.service)}: in P4 the product Worker binds the hub (${HUB_BINDING}) only`)
+      failures.push(`services[${i}] binds ${JSON.stringify(s?.service)}: the product Worker binds the hub (${HUB_LIST}) only`)
       return
     }
-    if (s.binding !== HUB_BINDING) failures.push(`services[${i}] binds ${HUB_SERVICE} as ${JSON.stringify(s.binding)}: its binding is ${HUB_BINDING}`)
+    const expected = Object.hasOwn(HUB_BINDINGS, s.binding) ? HUB_BINDINGS[s.binding] : null
+    if (!expected) {
+      failures.push(`services[${i}] binds ${HUB_SERVICE} as ${JSON.stringify(s.binding)}: its bindings are ${Object.keys(HUB_BINDINGS).slice(0, -1).join(', ')} and ${Object.keys(HUB_BINDINGS).at(-1)}`)
+      return
+    }
     const extra = Object.keys(s).filter(k => !HUB_ENTRY_KEYS.has(k))
     if (extra.length) failures.push(`services[${i}] has ${extra.join(', ')}: the hub entry is binding, service and entrypoint only`)
-    if (s.entrypoint === undefined) failures.push(`services[${i}] binds ${HUB_SERVICE} with no entrypoint (its default export): bind ${HUB_ENTRYPOINT}`)
-    else if (s.entrypoint !== HUB_ENTRYPOINT) failures.push(`services[${i}].entrypoint must be ${HUB_ENTRYPOINT}, not ${JSON.stringify(s.entrypoint)}`)
+    if (s.entrypoint === undefined) failures.push(`services[${i}] binds ${HUB_SERVICE} with no entrypoint (its default export): bind ${expected}`)
+    else if (s.entrypoint !== expected) failures.push(`services[${i}].entrypoint must be ${expected} for ${s.binding}, not ${JSON.stringify(s.entrypoint)}`)
   })
-  const named = services.filter(s => s?.service === HUB_SERVICE).length
-  if (named !== 1) failures.push(`services must name ${HUB_SERVICE} exactly once (found ${named})`)
+  for (const binding of Object.keys(HUB_BINDINGS)) {
+    const n = services.filter(s => s?.service === HUB_SERVICE && s?.binding === binding).length
+    if (n !== 1) failures.push(`services must bind ${binding} exactly once (found ${n})`)
+  }
   return failures
 }
 
@@ -392,9 +402,9 @@ const OBSERVABILITY_PART_KEYS = new Set(['enabled', 'head_sampling_rate', 'invoc
 const SANDBOX_HUB_ENTRYPOINTS = { HUB: 'ReadGateway', HUB_CONNECT: 'ConnectGateway', HUB_DELIVERY: 'DeliveryGateway' }
 /** (P4, P5) The allowed sets of those bindings, exactly: P4's read binding alone, or P5's three. */
 const SANDBOX_HUB_SETS = [['HUB'], ['HUB', 'HUB_CONNECT', 'HUB_DELIVERY']]
-/** (eval hub) The eval deployment's one allowed set: its own hub's read binding alone, never P5's connect or delivery. */
-const EVAL_HUB_SETS = [['HUB']]
-const EVAL_SERVICES_SHAPE = 'services is set: the eval deployment may bind exactly { HUB -> ReadGateway } to its own hub, entry { binding, service, entrypoint } and nothing else (no P5 bindings)'
+/** (eval hub) The eval deployment's one allowed set: its own hub's read and connect bindings together (#337); never delivery. */
+const EVAL_HUB_SETS = [['HUB', 'HUB_CONNECT']]
+const EVAL_SERVICES_SHAPE = 'services is set: the eval deployment may bind exactly { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway } to its own hub, each entry { binding, service, entrypoint } and nothing else (never HUB_DELIVERY)'
 const SERVICES_SHAPE = 'services is set: a sandbox config may not use it, but for exactly { HUB -> ReadGateway } or { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway, HUB_DELIVERY -> DeliveryGateway }, each entry { binding, service: <its own hub>, entrypoint } and nothing else'
 /** (P4) The keys a sandbox hub config may give a value (a subset of SANDBOX_KEYS). */
 const HUB_KEYS = new Set([
@@ -429,6 +439,13 @@ export const EVAL_TEST_HUB_VARS = Object.freeze({
   SHOPIFY_CLIENT_ID: 'test-client',
   HUB_TOKEN_KEYS: '{"current":"ktest-2","keys":{"ktest-1":"1Fza49LBSBNRAEZcdP+XApWhY8ZgCJilqS4O7FoBju4=","ktest-2":"E32MH18U9aWDv8hY9zmavoxETTkRY4Xad0NJiBsPw2A="}}',
   SHOPIFY_CLIENT_SECRET: 'test-only-client-secret-0RW9rVbhXFbVnJw6t1jyOWrJ1E7bMlc6',
+  // P5 (main merge): the test config's invented Slack and connect values (fake upstreams in test/upstreams/mcp/).
+  SLACK_CLIENT_ID: '0000000000.0000000001',
+  SLACK_CLIENT_SECRET: 'test-only-slack-client-secret-9f3b',
+  SLACK_TEAM_ID: 'T0TEST0001',
+  SLACK_PRIVATE_SEARCH: 'off',
+  CONNECT_REDIRECT_URI: 'https://inhouse.example.com/api/connect/callback',
+  APP_ORIGIN: 'https://inhouse.example.com',
 })
 /** True when `vars` holds exactly EVAL_TEST_HUB_VARS: the same keys, each the same string. */
 const isEvalTestHubVars = vars => {
@@ -511,7 +528,7 @@ export function checkSandboxConfig(config, { accountId, zone, mode, configDir })
   if (!perPr && !hub && config.name === CANDIDATE_HUB) fail(`name: the candidate product may not take the hub's name (${CANDIDATE_HUB})`)
   // (P4, P5) services: nothing for the hub; for the product, nothing, HUB -> ReadGateway alone, or HUB -> ReadGateway,
   // HUB_CONNECT -> ConnectGateway and HUB_DELIVERY -> DeliveryGateway together, each naming its own hub (the eval
-  // deployment: nothing or HUB -> ReadGateway alone).
+  // deployment: nothing, or HUB -> ReadGateway and HUB_CONNECT -> ConnectGateway together).
   const services = list('services')
   if (hub) {
     if (!isEmpty(services)) fail('services is set: a sandbox hub config binds no other Worker')

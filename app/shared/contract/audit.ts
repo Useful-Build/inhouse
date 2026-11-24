@@ -35,6 +35,12 @@ export const AuditActionSchema = z.enum([
   // P8a F2: a Shopify privacy webhook arrived (Shopify's signature checked), and the release job closed one once the
   // Inhouse team had acted on it. Our request id and the topic only: never a Shopify customer id, email or phone.
   'privacy.requested', 'privacy.closed',
+  // P5 (p5-w1): the Inhouse team starts connecting a tool, and how the connect ended.
+  'tools.connect_start', 'tools.connect',
+  // P5 (p5-w3): the Inhouse team pauses, resumes or disconnects a tool.
+  'tools.pause', 'tools.disconnect',
+  // P5 (p5-w4): a notice to one recipient (the agent's or the server's own), and a change to the listed Slack channels.
+  'notify.send', 'notify.channels',
   // P6a (PR0, docs/plans/2026-11-22-p6a-memory-skills.md): an admin, or the Inhouse team under a live grant, approves
   // or rejects a waiting team fact (W2); a person sends the Inhouse team a request, and its status changes (W3).
   'memory.approved', 'memory.rejected', 'team_request.created', 'team_request.status',
@@ -132,6 +138,34 @@ export const LibraryTypeSchema = z.enum([
 /** P3's chat file cap (20 MiB, caps.ts `maxFileBytes`). */
 const LIBRARY_MAX_BYTES = 20_971_520
 const FileIdsSchema = z.array(FileIdSchema).min(1).max(100)
+// P5 (p5-w1): a connector account and how a connect ended. W3's audit block reuses both.
+/** The hub's account id (H0's pattern, app/hub/index/schemas.ts `ACCOUNT_ID`): `slack:workspace`, `shopify:store`. */
+export const ConnectorAccountIdSchema = z.string().regex(/^[a-z]+(:[a-z0-9-]{1,40})?$/)
+/** `ok`, or one of the hub's closed error codes (app/hub/index/contract.ts `HubErrorCode`), never upstream text. */
+export const ConnectOutcomeSchema = z.enum([
+  'ok', 'invalid_args', 'unknown_tool', 'write_refused', 'not_configured', 'credentials_rejected', 'scope_mismatch',
+  'key_unavailable', 'upstream_unavailable', 'upstream_rejected', 'upstream_version_mismatch', 'rate_limited',
+  'result_too_large', 'internal', 'state_invalid', 'workspace_mismatch', 'connect_stale', 'connect_refused', 'paused',
+])
+export type ConnectOutcome = z.infer<typeof ConnectOutcomeSchema>
+// P5 (p5-w4): notices. Ids, closed codes, a length and a hash only; never the notice's text, a title or a name.
+export const NotifySourceSchema = z.enum(['agent', 'approvals', 'questions', 'routines'])
+/** The server's own notice kinds (p5-w4 section 3a); `question_asked` is stored as `question_waiting`. */
+export const SystemNoticeKindSchema = z.enum([
+  'approval_waiting', 'approval_lapsed', 'approval_sent', 'approval_failed', 'needs_check', 'approval_expired',
+  'restore_reconciled', 'question_waiting', 'question_closed',
+])
+/** A public Slack channel id (never `U…`, `D…` or `G…`). */
+export const SlackChannelIdSchema = z.string().regex(/^C[A-Z0-9]{8,}$/)
+/** `posted`: delivered (a Slack post, or a bell notice written); `unknown`: the hub call threw after the reservation. */
+export const NotifyOutcomeSchema = z.enum(['posted', 'refused', 'failed', 'unknown'])
+/** Why a recipient didn't get it, or where it went instead: a closed list, never upstream text. */
+export const NotifyDetailSchema = z.enum([
+  'not_listed', 'shared_channel', 'archived', 'not_public', 'not_member', 'not_found', 'run_cap', 'day_cap', 'too_long',
+  'empty', 'unknown_member', 'slack_not_connected', 'slack_unavailable', 'rate_limited', 'to_bell', 'no_alerts_channel', 'below_act',
+  // The hub's APP_ORIGIN is unset or malformed, so a post carrying the app link is refused (review round 1).
+  'app_origin_missing',
+])
 
 // ---------- P6a's argument shapes (PR0): ids, a revision and closed lists; never a fact's or a request's text ----------
 /** The revision a team fact was decided at (memory.ts `MemoryForgetInputSchema`'s `ifRev` bounds). */
@@ -227,6 +261,37 @@ const otherLines = [
   /** `parsed: false`: Shopify signed it but the body wasn't the topic's shape; recorded with no ids, for the team to read. */
   line('privacy.requested', { requestId: PrivacyRequestIdSchema, topic: PrivacyTopicSchema, parsed: z.boolean() }),
   line('privacy.closed', { requestId: PrivacyRequestIdSchema, topic: PrivacyTopicSchema, by: z.literal('release') }),
+  // P5 (p5-w1): connect start (route A) and its end (route B), the account id and the outcome code only.
+  line('tools.connect_start', { accountId: ConnectorAccountIdSchema }),
+  line('tools.connect', { accountId: ConnectorAccountIdSchema, outcome: ConnectOutcomeSchema }),
+  // P5 (p5-w3): a pause or resume that changed something (route D), and a disconnect (route E) with whether the access was revoked.
+  line('tools.pause', { accountId: ConnectorAccountIdSchema, paused: z.boolean() }),
+  line('tools.disconnect', { accountId: ConnectorAccountIdSchema, revoked: z.boolean() }),
+  // P5 (p5-w4): one line per recipient per call (`repeat`: the same notice again, answered with the first outcome), and
+  // the channel list's change (route H). `target` is a channel id, a member id, `admins`, or `unlisted` for a channel name
+  // the agent gave that isn't listed (never the name itself: it's the agent's text).
+  line('notify.send', {
+    source: NotifySourceSchema,
+    runId: RunIdSchema.optional(),
+    systemKey: z.string().regex(/^[A-Za-z0-9:_.-]{1,128}$/).optional(),
+    noticeKind: SystemNoticeKindSchema.optional(),
+    kind: z.enum(['slack', 'bell']),
+    target: z.union([SlackChannelIdSchema, MemberIdSchema, z.literal('admins'), z.literal('unlisted')]),
+    outcome: NotifyOutcomeSchema,
+    detail: NotifyDetailSchema.optional(),
+    changed: z.array(z.enum(['links', 'mentions', 'link_dropped'])).min(1).max(3).optional(),
+    repeat: z.literal(true).optional(),
+    textLength: z.number().int().min(0).max(2000),
+    noticeSha256: z.string().regex(/^[0-9a-f]{64}$/),
+  }).superRefine((a, ctx) => {
+    // `unlisted` only ever names a refused Slack recipient: nothing is sent to it, and it is no bell.
+    if (a.target === 'unlisted' && (a.kind !== 'slack' || a.outcome !== 'refused')) ctx.addIssue({ code: 'custom', path: ['target'], message: 'unlisted is a refused Slack recipient only' })
+  }),
+  line('notify.channels', {
+    added: z.array(SlackChannelIdSchema).max(100),
+    removed: z.array(SlackChannelIdSchema).max(100),
+    alerts: SlackChannelIdSchema.nullable().optional(),
+  }),
   // P6a (PR0). `rev`: the revision the admin decided (the one the fact had while it waited).
   line('memory.approved', { memoryId: MemoryIdArgSchema, rev: MemoryRevSchema }),
   line('memory.rejected', { memoryId: MemoryIdArgSchema, rev: MemoryRevSchema }),

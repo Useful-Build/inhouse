@@ -15,7 +15,8 @@ export default defineConfig({
         test: {
           name: 'node',
           environment: 'node',
-          include: ['**/*.test.ts'],
+          // P5 W5: the nightly connector cases' own test (test/connectors/mcp/run.test.ts) runs here too.
+          include: ['**/*.test.ts', '../test/connectors/mcp/**/*.test.ts'],
           exclude: ['**/*.workers.test.ts', '**/node_modules/**'],
         },
       },
@@ -35,7 +36,8 @@ export default defineConfig({
           name: 'live',
           environment: 'node',
           globals: true,
-          include: ['../test/connectors/shopify/**/*.live.ts', '../test/upstreams/shopify/**/*.live.ts'],
+          // P5 W5: the Slack nightly (test/connectors/mcp/slack.live.ts).
+          include: ['../test/connectors/shopify/**/*.live.ts', '../test/upstreams/shopify/**/*.live.ts', '../test/connectors/mcp/**/*.live.ts'],
         },
       },
     ],

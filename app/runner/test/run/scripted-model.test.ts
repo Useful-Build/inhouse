@@ -34,11 +34,17 @@ const memoryReq = (messages: Msg[]) =>
 /** A main-loop request with the memory search tool in its list, as `memory-recall` and the read-side search scenarios expect. */
 const recallReq = (messages: Msg[]) =>
   req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__memory_search' }] })
+/** A main-loop request with the first connector tool in its list, as `connectors` expects. */
+const connectorsReq = (name: string) => (messages: Msg[]) => {
+  const first = (SCENARIOS[name]!.turns[0]!.content as { type: string; name?: string }[]).find(b => b.type === 'tool_use')!.name!
+  return req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: first }] })
+}
 /** Read-side proof scenarios whose turn 0 searches memory (`mainLoop('mcp__inhouse__memory_search')`). */
 const readSideSearch = new Set(['rs-honest', 'rs-obedient-memory', 'rs-obedient-routine', 'rs-obedient-file'])
-/** The main-loop request a scenario expects: a structured one for the structured scenarios, a WebFetch one for those, the memory one for `memory-save`, and the memory-search one for `memory-recall` and the read-side search scenarios. */
+/** The main-loop request a scenario expects: connectors for `connectors*`, structured, WebFetch, memory-save, or memory-search/read-side. */
 const mainFor = (name: string) =>
-  name.startsWith('structured') ? structuredReq
+  name.startsWith('connectors') ? connectorsReq(name)
+  : name.startsWith('structured') ? structuredReq
   : name.startsWith('webfetch') ? webReq
   : name.startsWith('memory-save') ? memoryReq
   : name.startsWith('memory-recall') || name === 'memory-reword-team-ref' || readSideSearch.has(name) ? recallReq

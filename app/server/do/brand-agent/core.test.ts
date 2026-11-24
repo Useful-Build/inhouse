@@ -20,10 +20,11 @@
 //     held turn whose `released` never comes, shows a stop nobody pressed, or books the hold twice across the re-run.
 import { env } from 'cloudflare:workers'
 import { fc, test } from '@fast-check/vitest'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { GRACE_MS, INACTIVITY_MS, PUSH_SILENT_MS, RELEASE_WAIT_MS } from './core.ts'
 import type { Refusal } from './ports.ts'
 import { hashRunToken } from './tokens.ts'
+import { SYSTEM_PROMPT_V2 } from '../../prompt/system.ts'
 import { StoreUnavailableError } from '../../db/sql.ts'
 import { MEMBER, MIN, OTHER, SEC, deferred, ev, fullAnswer, inAgent, settle, typesOf } from '../../testing/brand-agent/core-harness.ts'
 import type { Harness } from '../../testing/brand-agent/core-harness.ts'
@@ -39,6 +40,10 @@ describe('admission (4.3)', () => {
   it('a new chat opens a run, queues the turn and starts it at once', () => inAgent(async h => {
     const a = ok(await h.submit('c1', 'key-aaaa1'))
     await settle()
+    // A fixed prompt carries no version: only a versioned builder records one (#337 review).
+    expect(h.turn(a.turnId).prompt_version).toBeNull()
+    expect(h.turn(a.turnId).prompt_apps).toBeNull()
+    expect(h.core.readTrace(a.turnId, { all: true })).not.toHaveProperty('promptVersions')
     expect(a.position).toBe('starting')
     expect(typesOf(h.events(a.runId))).toEqual(['run.started', 'turn.queued', 'turn.started'])
     expect(h.turn(a.turnId).state).toBe('live')
@@ -125,6 +130,53 @@ describe('claim before await (4.2.1, 4.4)', () => {
     expect(h.usage.calls.map(c => c.method)).toEqual(['release', 'reserve', 'release'])
     expect(h.usage.holds.get(a.turnId) ?? 0).toBe(0)
   }))
+
+  it('a stop while the prompt is built (P5): no reserve, nothing placed, the turn ended stopped with no start', () => inAgent(async h => {
+    const gate = deferred()
+    h.core.beforeStep = async step => { if (step === 'prompt') await gate.promise }
+    const a = ok(await h.submit('c1', 'key-bar05'))
+    await settle()
+    expect(h.core.stop(a.turnId, { kind: 'person', memberId: MEMBER })).toEqual({ ok: true })
+    gate.resolve()
+    await settle()
+    await h.tick(0)
+    expect(h.placed()).toEqual([])
+    expect(h.turn(a.turnId)).toMatchObject({ state: 'ended', outcome: 'stopped', start_json: null })
+    expect(h.usage.calls.map(c => c.method)).not.toContain('reserve')
+    expect(h.usage.holds.get(a.turnId) ?? 0).toBe(0)
+  }, { systemPrompt: async () => ({ text: 'built', version: 3, apps: ['Shopify'] }) }))
+
+  it('a pause while the prompt is built (P5): no reserve, nothing placed, the turn cancelled cleanly', () => inAgent(async h => {
+    const gate = deferred()
+    h.core.beforeStep = async step => { if (step === 'prompt') await gate.promise }
+    const a = ok(await h.submit('c1', 'key-bar06'))
+    await settle()
+    h.core.pause({ kind: 'person', memberId: 'm_admin' })
+    gate.resolve()
+    await settle()
+    await h.tick(0)
+    expect(h.placed()).toEqual([])
+    expect(h.turn(a.turnId).state).toBe('cancelled')
+    expect(h.usage.calls.map(c => c.method)).not.toContain('reserve')
+    expect(h.usage.holds.get(a.turnId) ?? 0).toBe(0)
+  }, { systemPrompt: async () => ({ text: 'built', version: 3, apps: ['Shopify'] }) }))
+
+  it('a prompt builder that rejects (P5): logged, the static v2 prompt goes and the turn is placed', () => inAgent(async h => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const a = ok(await h.submit('c1', 'key-bar07'))
+      await settle()
+      expect(h.placed()).toEqual([a.turnId])
+      expect((JSON.parse(h.turn(a.turnId).start_json!) as { systemPrompt: string }).systemPrompt).toBe(SYSTEM_PROMPT_V2)
+      expect(h.turn(a.turnId).prompt_version).toBe(2)
+      expect(h.turn(a.turnId).prompt_apps).toBeNull()
+      expect(errors).toHaveBeenCalledWith(expect.objectContaining({ event: 'turn_prompt_failed', turnId: a.turnId }))
+      // The error's name, never its message.
+      expect(JSON.stringify(errors.mock.calls)).not.toContain('builder broke')
+    } finally {
+      errors.mockRestore()
+    }
+  }, { systemPrompt: async () => { throw new Error('builder broke') } }))
 
   it('a stop while the token is minted: the new token is revoked and nothing is placed (obligation 2)', () => inAgent(async h => {
     const gate = deferred()

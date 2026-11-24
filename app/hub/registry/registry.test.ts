@@ -12,6 +12,7 @@ import {
   callReadTool,
   listReadTools,
   MAX_RESULT_BYTES,
+  MCP_SCOPE,
   toolNameForLog,
   type ConnectorModule,
   type GatewayDeps,
@@ -19,6 +20,34 @@ import {
   type ToolDef,
 } from './registry'
 import { FIXTURE_ACCOUNT, fixtureConnector } from './testing/fixture-connector'
+
+describe('MCP scope handles', () => {
+  it.each([
+    ['channels:history', true],
+    ['search:read.public', true],
+    ['search.read', true],
+    ['search:read:public', true],
+    ['a..', true],
+    ['a:.:b', true],
+    ['history', false],
+    ['Channels:history', false],
+    ['channels:history2', false],
+    ['channels:', false],
+    ['channels::history', false],
+    ['channels.:history', false],
+    ['channels:history\n', false],
+  ])('matches %j → %j', (scope, accepted) => {
+    expect(MCP_SCOPE.test(scope)).toBe(accepted)
+  })
+
+  it('rejects a long malformed scope with repeated dots in under 500 ms', () => {
+    const scope = 'a.' + '..'.repeat(20_000) + '!'
+    const start = performance.now()
+    const accepted = MCP_SCOPE.test(scope)
+    expect(performance.now() - start).toBeLessThan(500)
+    expect(accepted).toBe(false)
+  })
+})
 
 const HUB = fileURLToPath(new URL('..', import.meta.url).href)
 /** Where a connector's route lives, relative to app/hub. */

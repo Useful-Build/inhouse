@@ -8,6 +8,8 @@ import type { MorningCaseMeta } from './expected.ts'
 import { grade, summarise } from './grade.ts'
 import type { Fixed, Observed } from './grade.ts'
 import type { CaseResult, ResultFile } from './results.ts'
+import { promptFailure, promptReason } from '../prompt-version.ts'
+import type { PromptSent } from '../prompt-version.ts'
 
 export const ROUTINE_ID = 'routine-morning-check'
 export const TERMINAL = new Set(['ended', 'lost', 'missed', 'skipped', 'refused'])
@@ -66,6 +68,19 @@ export interface RunnerEnv {
    */
   modelOf?(slotKey: string): Promise<string | null>
   /**
+   * The remote mode only (run.mjs, P5 #337): the system prompt a slot's turn was sent (route 33's trace: its version and the
+   * apps it named), `missing` where the trace names none or the slot has no turn. Set, runAll records it on the case
+   * (`prompt`, `promptApps`), and a case whose turn wasn't sent v3 naming Shopify fails with that reason: the static v2
+   * fallback, a line naming no store, or no turn at all is never graded as a pass.
+   */
+  promptOf?(slotKey: string): Promise<PromptSent>
+  /**
+   * The remote mode only (P5 #337 round 3): after the case's shop is set and before Run now, why the store isn't served
+   * (route 70, which then carries the test shop as the turns do), or null when it is. A reason stops the run at that case,
+   * before its spend: the case and the rest are listed as not run.
+   */
+  checkStore?(): Promise<string | null>
+  /**
    * The graded run only (remote.ts gradedRun): before each case, a reason to stop there (its --budget spent, the cap
    * reached), or null. A reason stops the run with that case and the rest as `notRun`; so does a failure (the lease
    * taken by another run, route 42 down), with the failure as the reason, so the partial results say where it happened.
@@ -109,6 +124,11 @@ export async function runCase(env: RunnerEnv, c: MorningCaseMeta): Promise<CaseR
     // The shop couldn't be switched or confirmed: no Run now on the wrong store. This case is refused and the run goes on.
     const observed = { ok: false as const, cause: `shop: ${e instanceof Error ? e.message : String(e)}`, calls: [], fixed: null }
     return { id: c.id, group: c.group, verdict: grade(c, observed), observed, slotKey: null, failure: null, resultText: null, ms: env.nowMs() - started }
+  }
+  const notServed = await env.checkStore?.() ?? null
+  if (notServed !== null) {
+    const observed = { ok: false as const, cause: `store: ${notServed}`, calls: [], fixed: null }
+    return { id: c.id, group: c.group, verdict: grade(c, observed), observed, slotKey: null, failure: null, resultText: null, ms: env.nowMs() - started, storeRefused: notServed }
   }
   try {
     await env.trigger(clientKey)
@@ -198,6 +218,12 @@ export async function runAll(
           r = { ...r, verdict: { ...r.verdict, pass: false, reasons: [`ran on ${ranOn}, not ${meta.model}`, ...r.verdict.reasons] } }
         }
       }
+      const sent = r.slotKey !== null && env.promptOf ? await env.promptOf(r.slotKey) : null
+      if (sent !== null) {
+        r = { ...r, prompt: sent.version, promptApps: sent.apps === 'missing' ? 'missing' : [...sent.apps] }
+        const bad = promptFailure(sent)
+        if (bad !== null) r = { ...r, verdict: { ...r.verdict, pass: false, reasons: [promptReason(bad), ...r.verdict.reasons] } }
+      }
     } catch (e) {
       // The case itself threw (the door or the build failed): clear the override, then fail loud with both causes.
       const unclear = await release()
@@ -205,6 +231,12 @@ export async function runAll(
       throw e
     }
     const unclear = await release()
+    if (r.storeRefused !== undefined) {
+      // The store isn't served for this case's shop: stop before its spend, the case not run (never graded).
+      stopped = { at: c.id, reason: `${c.id}: ${r.storeRefused}, so the run stops before this case's Run now${unclear !== null ? `; and the test shop override could not be cleared (${unclear})` : ''}` }
+      onCase?.(file())
+      break
+    }
     results.push(r)
     if (r.settled === false) {
       stopped = { at: c.id, reason: `${c.id} timed out and its slot (${r.slotKey}) is still open: every later Run now would answer run_open, so the run stops here` }

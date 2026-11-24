@@ -228,6 +228,19 @@ const env = door ? remoteEnv({
   caseTimeoutMs: Number(a['timeout-min']) * 60_000,
   settleMs: Number(a['settle-min']) * 60_000,
   checkModel: true,
+  // P5 (#337): each case's turn must have been sent the system prompt v3 naming Shopify, read from route 33's trace as the person.
+  // #337 round 3: route 70 after each case's shop is set (the eval build's Tools read then carries the test shop): the
+  // store check reads what the case's turns will use, and stops the run before that case's spend when it isn't served.
+  storeTools: async () => {
+    const { status, text } = await http.send('GET', new URL('/api/tools', m.baseUrl), await personAuth())
+    if (status !== 200) throw new Error(`morning-check: GET /api/tools answered ${status}, so the store can't be checked`)
+    return JSON.parse(text)
+  },
+  promptTrace: async turnId => {
+    const { status, text } = await http.send('GET', new URL(`/api/traces/${encodeURIComponent(turnId)}`, m.baseUrl), await personAuth())
+    if (status !== 200) throw new Error(`morning-check: the trace of ${turnId} could not be read (${status}), so its prompt is unknown`)
+    return JSON.parse(text)
+  },
   ...(graded ? { beforeCase: () => graded.beforeCase() } : {}),
   ...(m.modelSetting ? { defaultModel: () => ensureDefaultModel(settingsApi(), m.modelSetting.label) } : {}),
 }) : {

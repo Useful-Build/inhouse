@@ -7,7 +7,8 @@
 import { fc, test } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
 import { AuditActionSchema, AuditArgsSchema, LibraryTypeSchema } from './audit.ts'
-import type { AuditAction, AuditArgs } from './audit.ts'
+import type { AuditAction, AuditArgs, ConnectOutcome } from './audit.ts'
+import type { HubErrorCode } from '../../hub/index/contract.ts'
 import { settingSpec } from './settings.ts'
 import { FILE_CAPS } from '../../server/files-io/caps.ts'
 import { INHOUSE_BRAND_WRITES } from '../../server/testing/inhouse-brand-writes.ts'
@@ -51,6 +52,15 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   'privacy.requested': { action: 'privacy.requested', requestId: 'pr_AAAAAAAAAAAAAAAAAAAAAA', topic: 'customers/redact', parsed: true },
   'privacy.closed': { action: 'privacy.closed', requestId: 'pr_AAAAAAAAAAAAAAAAAAAAAA', topic: 'shop/redact', by: 'release' },
   'restore.member_placeholder': { action: 'restore.member_placeholder', memberId: m, restoreId: '20261122T191611123Z-0a1b2c3d' },
+  // P5 (p5-w1)
+  'tools.connect_start': { action: 'tools.connect_start', accountId: 'slack:workspace' },
+  'tools.connect': { action: 'tools.connect', accountId: 'slack:workspace', outcome: 'scope_mismatch' },
+  // P5 (p5-w3)
+  'tools.pause': { action: 'tools.pause', accountId: 'slack:workspace', paused: false },
+  'tools.disconnect': { action: 'tools.disconnect', accountId: 'shopify:store', revoked: false },
+  // P5 (p5-w4)
+  'notify.send': { action: 'notify.send', source: 'agent', runId: 'r_AAAAAAAAAAAAAAAAAAAAAA', kind: 'slack', target: 'C0TEST0001', outcome: 'posted', textLength: 5, noticeSha256: '0'.repeat(64) },
+  'notify.channels': { action: 'notify.channels', added: ['C0TEST0001'], removed: [], alerts: null },
   'memory.approved': { action: 'memory.approved', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA', rev: 3 },
   'memory.rejected': { action: 'memory.rejected', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA', rev: 1 },
   'team_request.created': { action: 'team_request.created', requestId: 'tr_AAAAAAAAAAAAAAAAAAAAAA', kind: 'tool' },
@@ -280,7 +290,7 @@ describe('P4 lines (wave-4 PR0)', () => {
 
   it('appends its block after P3\'s, in this order', () => {
     const all = AuditActionSchema.options
-    // P6a PR0: P4's block now ends at today.set_aside, and later phases append after it (their own tests pin theirs).
+    // P5 W1 and P6a PR0 append their blocks after this one, so the check ends at P4's last action rather than at the list's end.
     expect(all.slice(all.indexOf('ops_task_revive'), all.indexOf('today.set_aside') + 1)).toEqual([
       'ops_task_revive',
       'routine.created', 'routine.updated', 'routine.enabled', 'routine.deleted', 'routine.restored', 'routine.run_now',
@@ -334,6 +344,67 @@ describe('support.access write pairs (P4 review fold)', () => {
 
   it('INHOUSE_BRAND_WRITES is exactly the write pairs support.access takes', () => {
     expect([...INHOUSE_BRAND_WRITES].sort()).toEqual(WRITES.map(([m, r]) => `${m} ${r}`).sort())
+  })
+})
+
+describe('P5 (p5-w1): connect lines carry an account id and a closed outcome only', () => {
+  it("appends its block after P4's, in this order", () => {
+    const all = AuditActionSchema.options
+    // Later phases append their blocks after this one, so the check ends at P5's last action rather than at the list's end.
+    expect(all.slice(all.indexOf('today.set_aside'), all.indexOf('notify.channels') + 1)).toEqual(['today.set_aside', 'tools.connect_start', 'tools.connect', 'tools.pause', 'tools.disconnect', 'notify.send', 'notify.channels'])
+  })
+
+  it("refuses a pause or disconnect line with free text, a non-boolean or an extra field (P5 W3)", () => {
+    expect(ok({ action: 'tools.pause', accountId: 'slack:workspace', paused: true })).toBe(true)
+    expect(ok({ action: 'tools.disconnect', accountId: 'slack:workspace', revoked: false })).toBe(true)
+    expect(ok({ action: 'tools.pause', accountId: 'slack:workspace', paused: 'yes' })).toBe(false)
+    expect(ok({ action: 'tools.disconnect', accountId: 'Slack Workspace', revoked: true })).toBe(false)
+    expect(ok({ action: 'tools.disconnect', accountId: 'slack:workspace', revoked: true, reason: 'x' })).toBe(false)
+  })
+
+  it('refuses free text, an unknown outcome and an extra field', () => {
+    expect(ok({ action: 'tools.connect_start', accountId: 'slack:workspace' })).toBe(true)
+    expect(ok({ action: 'tools.connect', accountId: 'shopify:store', outcome: 'ok' })).toBe(true)
+    expect(ok({ action: 'tools.connect_start', accountId: 'Slack Workspace' })).toBe(false)
+    expect(ok({ action: 'tools.connect', accountId: 'slack:workspace', outcome: 'invalid_code from slack' })).toBe(false)
+    expect(ok({ action: 'tools.connect', accountId: 'slack:workspace', outcome: 'ok', code: 'abc' })).toBe(false)
+    expect(ok({ action: 'tools.connect_start', accountId: 'slack:workspace', memberId: m, email: 'a@example.com' })).toBe(false)
+  })
+})
+
+// Review fold (#251): ConnectOutcomeSchema is the hub's HubErrorCode plus `ok`, both ways, so a new hub code can't
+// silently become `internal` at route B. A type check: tsc fails here on any drift.
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
+const outcomesAreHubCodes: Same<Exclude<ConnectOutcome, 'ok'>, HubErrorCode> = true
+describe('P5 (p5-w1): ConnectOutcomeSchema and HubErrorCode', () => {
+  it('match both ways (checked by the type above)', () => expect(outcomesAreHubCodes).toBe(true))
+})
+
+describe('P5 (p5-w4): notice lines carry ids, closed codes, a length and a hash only', () => {
+  const okLine = (a: unknown) => AuditArgsSchema.safeParse(a).success
+  const send = { action: 'notify.send', source: 'agent', runId: 'r_AAAAAAAAAAAAAAAAAAAAAA', kind: 'slack', target: 'C0TEST0001', outcome: 'refused', detail: 'not_listed', textLength: 40, noticeSha256: '0'.repeat(64) }
+  it('takes a well-formed line', () => {
+    expect(okLine(send)).toBe(true)
+    expect(okLine({ ...send, source: 'approvals', runId: undefined, systemKey: 'p6:n_1:2026112109', noticeKind: 'approval_waiting', kind: 'bell', target: 'admins', outcome: 'posted', detail: undefined })).toBe(true)
+    expect(okLine({ action: 'notify.channels', added: ['C0TEST0001'], removed: ['C0TEST0002'], alerts: null })).toBe(true)
+  })
+  it("takes 'unlisted' as a target, never the agent's channel name", () => {
+    expect(okLine({ ...send, target: 'unlisted' })).toBe(true)
+    expect(okLine({ ...send, target: 'unlisted', kind: 'bell' })).toBe(false)
+    expect(okLine({ ...send, target: 'unlisted', outcome: 'posted', detail: undefined })).toBe(false)
+    expect(okLine({ ...send, target: '#design' })).toBe(false)
+    expect(okLine({ ...send, target: 'design' })).toBe(false)
+    expect(okLine({ ...send, target: 'unlisted:#design' })).toBe(false)
+  })
+  it('refuses text, a DM or user id as a target, free-text detail and extra fields', () => {
+    expect(okLine({ ...send, text: 'hello' })).toBe(false)
+    expect(okLine({ ...send, title: 'Stock' })).toBe(false)
+    expect(okLine({ ...send, target: 'U0TEST0001' })).toBe(false)
+    expect(okLine({ ...send, target: 'D0TEST0001' })).toBe(false)
+    expect(okLine({ ...send, detail: 'channel_not_found from slack' })).toBe(false)
+    expect(okLine({ ...send, noticeSha256: 'xyz' })).toBe(false)
+    expect(okLine({ ...send, systemKey: 'has spaces in it' })).toBe(false)
+    expect(okLine({ action: 'notify.channels', added: ['general'], removed: [] })).toBe(false)
   })
 })
 

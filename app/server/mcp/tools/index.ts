@@ -9,6 +9,7 @@ import { INHOUSE_TOOL_NAMES } from '../server/tool.ts'
 import type { InhouseToolName, ToolHandler } from '../server/tool.ts'
 import { handlers as history } from './history/index.ts'
 import { handlers as memory } from './memory/index.ts'
+import { handlers as notifications } from './notifications/index.ts'
 import { handlers as routines } from './routines/index.ts'
 import { STUB_NAMES, handlers as stubs } from './stubs/index.ts'
 import { handlers as skills } from './skills/index.ts'
@@ -21,6 +22,7 @@ const AREAS: readonly Area[] = [
   ['stubs', stubs],
   ['memory', memory],
   ['history', history],
+  ['notifications', notifications],
   ['routines', routines],
   ['team', team],
   ['skills', skills],

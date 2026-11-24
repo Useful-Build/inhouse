@@ -37,7 +37,8 @@ describe('notices', () => {
 
   it("refuses a body on P4's own templates and keeps names out (failure 2)", async () => {
     await seed()
-    for (const template of Object.keys(NOTICE_TEMPLATES)) {
+    // P4's own rows only: P5's notify and system rows take a body (p5-w4 section 3).
+    for (const template of Object.keys(NOTICE_TEMPLATES).filter(t => !NOTICE_TEMPLATES[t]!.body)) {
       expect(() => addNotice(db, { ...base, id: `n-body-${template}`, template, fields: template === 'routine_failed' ? { code: 'x' } : template === 'morning_check_found' ? { items: 1 } : {}, body: 'hi' })).toThrow(/takes no body/)
     }
     await db.batch([addNotice(db, { ...base, id: 'n-names', audience: 'member', audienceMemberId: 'm_dana' })])
@@ -57,5 +58,21 @@ describe('notices', () => {
     ])
     expect(await n('n-del')).toBe(0)
     expect(await db.prepare('SELECT COUNT(*) AS c FROM notice_reads').first<number>('c')).toBe(0)
+  })
+
+  it('a body-optional row takes a notice without a body; a required one still refuses it (P5 W4, B2 2026-11-21)', async () => {
+    await seed()
+    const table = {
+      ...NOTICE_TEMPLATES,
+      opt_row: { source: 'test', text: 'Optional', who: 'W', fields: {}, body: { max: 10, optional: true as const } },
+      req_row: { source: 'test', text: 'Required', who: 'W', fields: {}, body: { max: 10 } },
+    }
+    await db.batch([
+      noticeInsert(db, table, { ...base, id: 'n-opt-none', template: 'opt_row', fields: {} }),
+      noticeInsert(db, table, { ...base, id: 'n-opt-body', template: 'opt_row', fields: {}, body: 'ten chars!' }),
+    ])
+    expect(await n('n-opt-none') + await n('n-opt-body')).toBe(2)
+    expect(() => noticeInsert(db, table, { ...base, id: 'n-req-none', template: 'req_row', fields: {} })).toThrow(/needs a body/)
+    expect(() => noticeInsert(db, table, { ...base, id: 'n-opt-long', template: 'opt_row', fields: {}, body: 'eleven char' })).toThrow(/1 to 10 code points/)
   })
 })
