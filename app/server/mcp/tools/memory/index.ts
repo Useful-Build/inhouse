@@ -25,10 +25,13 @@ const line = (f: Fact) => `- [${f.scope}] ${f.text} (memory_id: ${f.id})`
 const NOT_FOUND = (id: string) => refusal('not_found', `No saved fact you can see has memory_id "${id}". Use memory_search to find the fact and its memory_id, then try again.`)
 const CONFLICT = refusal('conflict', 'That fact changed while you were working on it. Search for it again and retry with what it says now.')
 
-function refused(r: WriteRefusal): ToolResult {
+function refused(r: WriteRefusal, saving = true): ToolResult {
   switch (r.refused) {
     case 'personal_data': return refusal('personal_data', personalDataRefusal(r.kind))
     case 'service_person_fact': return refusal('person_scope_in_routine', 'Not saved: a routine runs for nobody in particular, so it can\'t save a "person" fact. Save it with scope "brand" if the whole team should know it, or leave it.')
+    case 'learning_off': return saving
+      ? refusal('learning_off', 'Not saved: this person turned off "Learn from my chats" in Settings, so don\'t save their preferences. Don\'t save it for the team instead. If they want it saved, they can turn it back on.')
+      : refusal('learning_off', 'Not changed: this person turned off "Learn from my chats" in Settings, so don\'t change their saved preferences. If they want that, they can turn it back on.')
     case 'no_member': return refusal('no_member', "Not saved: the person you're helping is no longer on the team.")
   }
 }
@@ -51,7 +54,7 @@ export const handlers: Partial<Record<InhouseToolName, ToolHandler>> = {
 
   memory_save: tool({
     input: z.object({
-      scope: z.enum(['brand', 'person']).describe('"brand": the whole team shares it (waits for an admin\'s OK). "person": the preference of the person you\'re helping (counts at once).'),
+      scope: z.enum(['brand', 'person']).describe('"brand": the whole team shares it (usually waits for an admin\'s OK). "person": the preference of the person you\'re helping (counts at once).'),
       text,
     }).strict(),
     async call({ scope: factScope, text: t }, scope, deps) {
@@ -61,7 +64,9 @@ export const handlers: Partial<Record<InhouseToolName, ToolHandler>> = {
       const f = r.saved
       return answer(
         f.scope === 'brand'
-          ? `Saved for the team (memory_id: ${f.id}). It waits for an admin's OK, so don't rely on it until then.`
+          ? f.status === 'active'
+            ? `Saved for the team (memory_id: ${f.id}). It counts from now.`
+            : `Saved for the team (memory_id: ${f.id}). It waits for an admin's OK, so don't rely on it until then.`
           : `Saved (memory_id: ${f.id}). It counts from now, for this person only.`,
         { fact: shown(f) },
       )
@@ -72,14 +77,16 @@ export const handlers: Partial<Record<InhouseToolName, ToolHandler>> = {
     input: z.object({ memory_id: memoryId, text }).strict(),
     async call({ memory_id, text: t }, scope, deps) {
       const r = await storeOf(deps).update({ memberId: scope.memberId, id: memory_id, text: t, nowMs: scope.nowMs, requestId: scope.requestId })
-      if ('refused' in r) return refused(r)
+      if ('refused' in r) return refused(r, false)
       if ('notFound' in r) return NOT_FOUND(memory_id)
       if ('conflict' in r) return CONFLICT
       if ('unchanged' in r) return answer(`It already says that, nothing changed (memory_id: ${memory_id}).`, { fact: shown(r.unchanged) })
       const f = r.updated
       return answer(
         f.scope === 'brand'
-          ? `Changed (memory_id: ${f.id}). A team fact waits for an admin's OK again after a change, so don't rely on it until then.`
+          ? f.status === 'active'
+            ? `Changed (memory_id: ${f.id}). It counts from now.`
+            : `Changed (memory_id: ${f.id}). A team fact waits for an admin's OK again after a change, so don't rely on it until then.`
           : `Changed (memory_id: ${f.id}).`,
         { fact: shown(f) },
       )

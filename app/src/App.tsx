@@ -27,7 +27,6 @@ import { Today } from './screens/Today'
 import { Chats } from './screens/Chats'
 import { useChatIsBlank } from './screens/chat/open-messages'
 import { SETTINGS_PAGES } from './screens/settings/menu'
-import { HelpWindow } from './overlays/HelpWindow'
 import { CommandPalette } from './overlays/CommandPalette'
 
 /**
@@ -67,6 +66,8 @@ const TraceWindow = lazyRoute(() => import('./overlays/TraceWindow'), m => m.Tra
 // The problem window and the team window open only on a click, so they load then (or with the idle prefetch above), not with Today.
 const ProblemPanel = lazyRoute(() => import('./overlays/ProblemPanel'), m => m.ProblemPanel)
 const TeamWindow = lazyRoute(() => import('./overlays/TeamWindow'), m => m.TeamWindow)
+// Help loads when first opened too: Today doesn't need it (first-load budget, check-bundle).
+const HelpWindow = lazyRoute(() => import('./overlays/HelpWindow'), m => m.HelpWindow)
 
 /** True from the first render where `on` is: a lazy overlay stays mounted once it has opened, so its own state lives on as it did when it loaded with the page. */
 function useOpenedOnce(on: boolean) {
@@ -92,6 +93,7 @@ class OverlayBoundary extends Component<{ children: ReactNode; name: string; wha
 const closeTrace = () => useUi.getState().patch({ traceId: null })
 const closeProblem = () => useUi.getState().closeProblem()
 const closeTeam = () => useUi.getState().patch({ pop: null })
+const closeHelp = closeTeam
 
 const SCREENS: Record<Page, React.ComponentType> = {
   today: Today, library: Library, chats: Chats, approvals: Approvals, routines: Routines, activity: Activity,
@@ -164,7 +166,7 @@ const toHash = (page: Page, appKey: string, setTab: string, chat: string, menu =
   '#/' + PAGE_SLUG[page] + (page === 'app' ? '/' + appKey : page === 'skill' ? '/' + skill : page === 'settings' ? (menu ? '' : '/' + setTab) : page === 'chats' ? '/' + encodeURIComponent(chat) : '')
 const SETTINGS_TABS = SETTINGS_PAGES.map(p => p.id)
 /** The list each page shows that the agent's work fills (read again when the page opens). */
-const PAGE_LIST: Partial<Record<Page, RefreshList>> = { today: 'problems', approvals: 'problems', library: 'library', activity: 'activity' }
+const PAGE_LIST: Partial<Record<Page, RefreshList>> = { today: 'problems', approvals: 'problems', library: 'library', activity: 'activity', skills: 'skills', skill: 'skills' }
 const PAGE_LABEL: Record<Page, string> = { today: 'Today', library: 'Library', chats: 'Chats', approvals: 'Approvals', routines: 'Routines', activity: 'Activity', apps: 'Tools', app: 'Tools', skills: 'Skills', skill: 'Skills', usage: 'Usage', settings: 'Settings' }
 /** A link that names a page, tool or tab that doesn't exist lands where it did before, and says so. */
 const notFound = (where: string) => useUi.getState().showToast(`That page doesn't exist. You're on ${where}.`, { icon: 'info', key: 'route-notice' })
@@ -345,6 +347,7 @@ function Shell() {
   const traceId = useUi(s => s.traceId)
   const problemOpen = useUi(s => s.openId) !== null
   const teamOpen = useUi(s => s.pop) === 'team'
+  const helpOpen = useUi(s => s.pop) === 'help'
   const problemOpened = useOpenedOnce(problemOpen)
   const teamOpened = useOpenedOnce(teamOpen)
   const chatId = useUi(s => s.chatId)
@@ -442,7 +445,7 @@ function Shell() {
       {problemOpened && <OverlayBoundary name="problem" what="this problem" open={problemOpen} close={closeProblem}><Suspense fallback={null}><ProblemPanel /></Suspense></OverlayBoundary>}
       {traceId && <OverlayBoundary name="trace" what="the trace" open close={closeTrace}><Suspense fallback={null}><TraceWindow /></Suspense></OverlayBoundary>}
       {teamOpened && <OverlayBoundary name="team" what="your Inhouse team" open={teamOpen} close={closeTeam}><Suspense fallback={null}><TeamWindow /></Suspense></OverlayBoundary>}
-      <HelpWindow />
+      {helpOpen && <OverlayBoundary name="help" what="help" open close={closeHelp}><Suspense fallback={null}><HelpWindow /></Suspense></OverlayBoundary>}
       <CommandPalette />
       <Toasts />
       <DevSwitcher />

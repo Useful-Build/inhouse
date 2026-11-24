@@ -15,6 +15,7 @@ import { discover, signer } from './me'
 import type { Seeded, Signer } from './me'
 import { resetTeam } from './members'
 import { resetSettings, settingFixtures } from './settings'
+import { MS_EXEMPT, MS_READ_PATH, MS_SERVED, changeMemoryElsewhere, memorySkillsRoute, resetOpenRequests, resetWaitingMemory, seedWaitingMemory } from './memory-skills'
 import { WATCH_READ_PATH, WATCH_SERVED, changeRoutineElsewhere, settleRuns, WATCH_EXEMPT, WATCH_ONLY_ON_WATCH_BUILD, watchBuild, watchRoute } from './watch'
 
 /** The P2 methods: what this target's client serves over HTTP. */
@@ -27,18 +28,22 @@ const SERVED: ReadonlySet<keyof AgentClient> = new Set<keyof AgentClient>([
   // P4 W5 (p4-w5.md addendum, #256 review): the Library.
   // (`deleteFiles` and `restoreFiles` are in WATCH_EXEMPT: the real client's writes don't fill the state the shared cases observe.)
   'listFiles', 'uploadFiles', 'fileDownloadUrl',
+  'withdrawTeamRequest',
   // P4 W6 (watch.ts): the routines, the bell and Today's set-aside.
   ...WATCH_SERVED,
+  // P6a W4 (memory-skills.ts): the Team memory page's two methods and the Request buttons.
+  ...MS_SERVED,
 ])
 
 const WRITES: ReadonlySet<string> = new Set<WriteMethod>([
   'approve', 'undo', 'editDraft', 'undoHandled', 'redoHandled', 'createChat', 'pause', 'resume', 'setToggle', 'requestTool', 'requestSkill', 'setToolPaused',
   'forgetMemory', 'setSetting', 'setPhoto', 'sendTeamRequest', 'markNoticesRead', 'deleteFiles', 'restoreFiles', 'setAside', 'runRoutine', 'deleteRoutine',
-  'restoreRoutine', 'renameChat', 'pinChat', 'deleteChats', 'restoreChats', 'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant',
+  'withdrawTeamRequest',
+  'restoreRoutine', 'reviewMemory', 'renameChat', 'pinChat', 'deleteChats', 'restoreChats', 'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant',
 ])
 
-/** The route a served write method's call sends to: its verbs and the exact path (the key or the id in it too), from the call's arguments. */
-function routeOf(method: WriteMethod, args: unknown[]): { verbs: string[]; path: string } | null {
+/** The verbs and path for a served write. Withdrawal's id is resolved by the client from the displayed title and instant. */
+function routeOf(method: WriteMethod, args: unknown[]): { verbs: string[]; path: string | RegExp } | null {
   const enc = (v: unknown) => encodeURIComponent(String(v))
   switch (method) {
     case 'setSetting': case 'setToggle': {
@@ -53,7 +58,8 @@ function routeOf(method: WriteMethod, args: unknown[]): { verbs: string[]; path:
     case 'endSupportGrant': return { verbs: ['POST'], path: `/api/grants/${enc(args[0])}/end` }
     case 'deleteFiles': return { verbs: ['POST'], path: '/api/library/delete' }
     case 'restoreFiles': return { verbs: ['POST'], path: '/api/library/restore' }
-    default: return watchRoute(method, args)
+    case 'withdrawTeamRequest': return { verbs: ['PUT'], path: /^\/api\/team-requests\/tr_[A-Za-z0-9_-]{22}\/withdrawn$/ }
+    default: return watchRoute(method, args) ?? memorySkillsRoute(method, args)
   }
 }
 
@@ -67,7 +73,7 @@ const PNG_1X1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfF
 
 function realTarget(origin: string): ContractTarget {
   // Said once per target: the P4 methods whose shared cases can't hold against the real client, and the one that needs containers.
-  for (const [method, why] of Object.entries(WATCH_EXEMPT)) console.warn(`CONTRACT METHOD NOT SERVED on the real target: ${method}: ${why}`)
+  for (const [method, why] of Object.entries({ ...WATCH_EXEMPT, ...MS_EXEMPT })) console.warn(`CONTRACT METHOD NOT SERVED on the real target: ${method}: ${why}`)
   if (!watchBuild()) console.warn('CONTRACT METHOD NOT SERVED on the real target: setAside: it needs a morning check run (a container): set E2E_WATCH_BUILD=1 on the multi-config build')
   const s: Signer = signer(origin)
   let ids: Awaited<ReturnType<typeof discover>> | undefined
@@ -76,7 +82,7 @@ function realTarget(origin: string): ContractTarget {
   // What the target does to the client's requests, the way a failing network or server would.
   let clockOffset = 0
   let failAllSaves = false
-  let forced: { code: AgentErrorCode; verbs: string[]; path: string } | null = null
+  let forced: { code: AgentErrorCode; verbs: string[]; path: string | RegExp } | null = null
   const armedErrors = new Map<string, AgentErrorCode>()
   const armedReads = new Set<ResourceKey>()
   let staleGrantEnd = false
@@ -86,10 +92,14 @@ function realTarget(origin: string): ContractTarget {
     const method = (init?.method ?? 'GET').toUpperCase()
     if (method !== 'GET' && failAllSaves) return refusal('unavailable')
     // An armed refusal answers the next request to the armed call's own URL (the key or id in it too), so a write to another record, made meanwhile, isn't refused.
-    if (forced !== null && forced.verbs.includes(method) && forced.path === url.pathname) { const code = forced.code; forced = null; return refusal(code) }
+    if (forced !== null && forced.verbs.includes(method) && (typeof forced.path === 'string' ? forced.path === url.pathname : forced.path.test(url.pathname))) {
+      const code = forced.code
+      forced = null
+      return refusal(code)
+    }
     if (method === 'GET') {
       for (const resource of armedReads) {
-        if ((READ_PATH[resource] ?? WATCH_READ_PATH[resource]) === url.pathname) { armedReads.delete(resource); return fetch(origin + FORBIDDEN_PATH, init) }
+        if ((READ_PATH[resource] ?? WATCH_READ_PATH[resource] ?? MS_READ_PATH[resource]) === url.pathname) { armedReads.delete(resource); return fetch(origin + FORBIDDEN_PATH, init) }
       }
     }
     if (staleGrantEnd && method === 'POST' && /^\/api\/grants\/[^/]+\/end$/.test(url.pathname) && typeof init?.body === 'string') {
@@ -188,6 +198,8 @@ function realTarget(origin: string): ContractTarget {
       await resetTeam(s)
       await endLiveGrant(s)
       await resetSettings(s)
+      await resetWaitingMemory(s)
+      await resetOpenRequests(s)
       // Only a build with containers can end a Run now: a containerless one (CI's contract step) would wait out the deadline.
       if (watchBuild()) await settleRuns()
       this.fixtures.personId = seeded.admin
@@ -209,6 +221,7 @@ function realTarget(origin: string): ContractTarget {
         await agent.whenLoaded()
       }
     },
+    async seedWaitingMemory(texts) { return seedWaitingMemory(s, (await ready()).admin, texts) },
     async failSaves(on) { failAllSaves = on },
     async injectError(method, code) { if (code) armedErrors.set(method, code); else armedErrors.delete(method) },
     serves: method => SERVED.has(method) && (!WATCH_ONLY_ON_WATCH_BUILD.has(method) || watchBuild()),
@@ -228,10 +241,12 @@ function realTarget(origin: string): ContractTarget {
         await other.restoreFiles([record.id])
       } else if (record.kind === 'routine') {
         await changeRoutineElsewhere(other, record.id)
+      } else if (record.kind === 'memory') {
+        await changeMemoryElsewhere(s, record.id)
       } else throw new Error(`The real target has no ${record.kind} to change elsewhere.`)
     },
     async failRead(resource) {
-      if (!READ_PATH[resource] && !WATCH_READ_PATH[resource]) throw new Error(`The real client reads no "${resource}" resource in P2, so none can fail.`)
+      if (!READ_PATH[resource] && !WATCH_READ_PATH[resource] && !MS_READ_PATH[resource]) throw new Error(`The real client reads no "${resource}" resource in P2, so none can fail.`)
       armedReads.add(resource)
       await agent.retry(resource)
     },

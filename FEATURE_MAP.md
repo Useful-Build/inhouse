@@ -7,7 +7,7 @@ Every screen, flow, selector, expected behavior, and E2E spec coverage in one pl
 No entry is `Covered: gap`. Not checked by any spec, or only in part:
 
 - Motion: `e2e/motion.spec.ts` is manual only (`MOTION=1`, the `motion` workflow), never in CI's normal run.
-- Ship specs: `e2e/ship/agent-seam.spec.ts`, `e2e/ship/example.spec.ts`, `e2e/ship/setup-gaps.spec.ts`, `e2e/ship/hardening.spec.ts` and `e2e/ship/backend-core.spec.ts`, `e2e/ship/agent-chat.spec.ts` (projects `ship-desktop` and `ship-phone`) are manual only, run by `ship.yml` against a PR's preview (`backend-core.spec.ts` and `agent-chat.spec.ts`: on the test build, `build=test`), never in CI's normal run.
+- Ship specs: `e2e/ship/agent-seam.spec.ts`, `e2e/ship/example.spec.ts`, `e2e/ship/setup-gaps.spec.ts`, `e2e/ship/hardening.spec.ts` and `e2e/ship/backend-core.spec.ts`, `e2e/ship/agent-chat.spec.ts`, `e2e/ship/memory-skills.spec.ts` (projects `ship-desktop` and `ship-phone`) are manual only, run by `ship.yml` against a PR's preview (`backend-core.spec.ts`, `agent-chat.spec.ts` and `memory-skills.spec.ts`: on the test build, `build=test`), never in CI's normal run.
 - Chat while it writes: the working line (agent mark, tool logo, sweep) and the word-by-word reveal are checked by no spec (the reveal's step sizes are property-tested in `src/screens/chat/reveal.test.ts`); an answer's text width (about 620px) and your message's (about 520px) are not measured; sources of an answer that cites nothing are not asserted.
 - Trace window: Replay is only clicked, never asserted; the replay speed, Pause replay, Restart, Stop and show everything, Replay result and a step's details are opened by no spec.
 - Settings > General: Language and Text size are opened and closed by `menus.spec.ts`, but no spec picks one and checks it saves.
@@ -17,6 +17,7 @@ No entry is `Covered: gap`. Not checked by any spec, or only in part:
 - Export everything is a stub, and so is Sign out in the demo: specs check they say so and change nothing. In the product Sign out goes to Access's logout; `e2e/real/sign-out.spec.ts` checks the account menu goes to that path on the test build (no Access there); the real Access logout is checked on the candidate deploy (pending).
 - The chat WebSocket under the enforced CSP (`e2e/real/socket-csp.spec.ts`) needs a run, so it is checked on the sandbox deploy (`E2E_TEST_BUILD_REMOTE=1`), not on the local test build, which has no container. `e2e/real/csp-download-photo.spec.ts` covers the audit CSV download and a member photo on both.
 - A failed or never-run chat turn's words after a reload (its stored end row, P3) and a trace's "up to" cost while a model call is open are proven only by unit tests (`server/do/brand-agent/projection.test.ts`, `src/screens/chat/history.test.ts`, `src/lib/trace-cost.test.ts`): the test build has no container and no way to force a placement failure or hold a call open without new test code in the deployable bundle.
+- Brand skills (P6a): making and changing one through `skill_save` in a chat runs only on the container deploy (`e2e/api/brand-skills.spec.ts`'s chat part); that a skill loads as `brand:<name>`, is read when used and can't be written by the session is the runner job's container probe (`brand-skills.*` in `app/runner/image/probes/run.ts`). The read-side cases RS-KW1 and RS-KW2 (a skill's body that tries to widen tools or send data out) are wired into the product target, with fixture setup and cleanup covered by a unit test. Paid model results are pending.
 - "A failed audit write leaves no change" (Acceptance 6) is proven only by the server unit tests on the vitest workerd (compat 2026-11-11), not on the test build's: forcing an audit write to fail there needs test code in the deployable bundle.
 
 ## Today
@@ -218,8 +219,9 @@ Activity: a line's side sheet
 Tools: list and pages
   Path:     Tools (`#/tools`) -> a tool
   Selector: search, Pause access, Reconnect, Request a tool
-  Expected: pausing or disconnecting changes the count, the tool page (Read, Draft, Access) and the composer alike; Pause access has Undo and Resume brings it all back; Request a tool opens the team window
-  Covered:  e2e/data-states.spec.ts, e2e/page-actions.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts
+  Expected: pausing or disconnecting changes the count, the tool page (Read, Draft, Access) and the composer alike; Pause access has Undo and Resume brings it all back; Request a tool opens the team window; a catalogue tool's Request (Add a tool) shows "Requested" and a toast starting "Request sent" (the product's once the server has it), stays "Requested" after a reload, and the toast's Undo withdraws it (the product withdraws through route 83)
+  Covered:  e2e/data-states.spec.ts, e2e/page-actions.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts, e2e/ship/memory-skills.spec.ts (S8)
+  Gaps:     the product's Tools page has no catalogue ("Add a tool" is the demo's invented list), so the ship spec's S8 shows "Request a tool" (open after a reload, Withdraw) instead of a catalogue tool's Request
 
 Tools: Slack channel
   Path:     Tools -> Slack
@@ -229,15 +231,15 @@ Tools: Slack channel
 
 Skills: list
   Path:     Skills (`#/skills`)
-  Selector: search, skill rows
-  Expected: search filters the list; a row opens the skill's page
-  Covered:  e2e/page-details.spec.ts, e2e/sample-data.spec.ts
+  Selector: tabs "Show skills" (All, By Inhouse team, By your team), search, "Create a skill", skill rows, the "Request a skill" link under the list
+  Expected: search filters the list; a row opens the skill's page; Create a skill opens a new chat holding `Create a skill that ` (the agent's Skill Creator makes it with the person and saves it with `skill_save`, live for the team at once); a brand skill's row says "Made by <name>" (or "Made by a former member" once the maker's personal data is deleted); Request a skill opens the team window on New job; the product lists the five built-ins (dataviz, PDF, Word, Spreadsheet and Skill Creator), then the brand's own from `GET /api/skills` (read again each time the page opens, and after every run; the Inhouse team reads the list without a grant) with no Off badge
+  Covered:  e2e/page-details.spec.ts, e2e/sample-data.spec.ts, e2e/ui-round-3.spec.ts, e2e/api/skills.spec.ts, e2e/api/brand-skills.spec.ts, src/agent/http/skills.test.ts, e2e/ship/memory-skills.spec.ts (S6, S7, S9, S10)
 
 Skills: a skill's page
   Path:     Skills -> a skill (`#/skills/<slug>`, a link the app keeps, one per skill: the Inhouse team's keep the plain slug and a team-made skill with the same name gets "-2"; an unknown slug goes back to Skills once the skills have loaded)
-  Selector: link "Skills" (back), the h1 with the icon tile and stage tag, Try in a chat, the try-it strip (`data-skill-try`), "Instructions" (the skill's body as clean text), complementary "About this skill" (Works from, Made by, Used; Tools it reads, Used by); demo only: Edit in a chat, "More for <name>" (Turn off, Turn on), "Who can change it", Versions with "Restore the Inhouse version"
-  Expected: every one of the 9 sample skills has a full body (When to use, Inputs, Steps, Safety, What you get); Try in a chat starts a new chat holding `Use the "<name>" skill: `; the strip asks its example; turning a skill off shows "Off" and survives a reload; the product build shows the header and the rail only, with no Edit in a chat, More, Versions or Restore (UI plan 3, D3 and D5); Restore says it isn't connected in this demo
-  Covered:  e2e/page-details.spec.ts, e2e/ui-round-3.spec.ts, src/screens/skills.test.ts, src/shell/route-sync.test.ts
+  Selector: link "Skills" (back), the h1 with the icon tile and stage tag, Try in a chat, the try-it strip (`data-skill-try`), "Instructions" (the skill's body as clean text), complementary "About this skill" (Works from, Made by, Who can change it, Used; Tools it reads, Used by); a brand skill its maker or an admin may change: "Edit in a chat", and "Delete skill" in "More for <name>" with the "Delete skill" window; demo only: "More for <name>" (Turn off, Turn on)
+  Expected: every one of the 9 sample skills has a full body (When to use, Inputs, Steps, Safety, What you get); Try in a chat starts a new chat holding `Use the "<name>" skill: `; the strip asks its example; turning a skill off shows "Off" and survives a reload; the product reads the instructions from `GET /api/skills/:name` (frontmatter dropped; dataviz shows our own summary; the Inhouse team reads a skill's text only under a live grant) and shows no "Works from" at Watch and no "Used" when there is none; "Made by a former member" shows when the maker's personal data was deleted; "Who can change it" says "<maker> and admins" for a brand skill ("Admins" once the maker's data is deleted) and "Inhouse team" for ours; Edit in a chat opens a new chat holding `Change the "<name>" skill: ` (the demo saves the change and dates it); Delete skill asks in the page's own window (Cancel keeps it and gives focus back to More, which opens the menu again at once), then deletes at the skill's rev, goes back to Skills and says so; a concurrent deletion keeps the skill out of the list, and a refused deletion preserves any other skills refreshed while it was pending; another member (and, after maker deletion, non-admin members) sees neither; ours have no Edit, Delete or Versions
+  Covered:  e2e/page-details.spec.ts, e2e/ui-round-3.spec.ts, e2e/api/brand-skills.spec.ts, src/screens/skills.test.ts, src/shell/route-sync.test.ts, src/agent/mock.brand-skills.test.ts, src/agent/http/skills.test.ts, server/brand-skills/store.test.ts, e2e/ship/memory-skills.spec.ts (S9, S10)
 
 Usage
   Path:     account menu -> Usage (it isn't in the sidebar; the palette lists it)
@@ -280,8 +282,9 @@ Settings: Stage and plan
 Settings: Team memory
   Path:     Settings -> Team memory
   Selector: buttons "Forget", switch "Ask before saving a team rule", button "Teach in a chat"
-  Expected: locked at Watch; Forget removes a line with an Undo toast and the Inhouse agent page's count follows; the switch turns off; both survive a reload and Reset demo clears them; Teach in a chat opens a new chat holding "Remember that "
-  Covered:  e2e/settings-team-pages.spec.ts
+  Expected: usable at every stage (no stage tag), with a "Waiting for your OK" section for an Admin in the product (Approve, Reject after asking; a stale Approve is refused and says what the rule is now); Forget removes a line with an Undo toast and the Inhouse agent page's count follows; the switch turns off; both survive a reload and Reset demo clears them; Teach in a chat opens a new chat holding "Remember that "
+  Covered:  e2e/settings-team-pages.spec.ts, e2e/ship/memory-skills.spec.ts (S2 to S5), e2e/support/memory-scenarios.test.ts
+  Gaps:     on a phone a team page is read-only, so S5's phone run turns Ask off through the API and checks the page shows Off; the ship spec doesn't show a routine's team fact waiting while Ask is off (a routine can't be made at Watch through the app; the store's tests prove it)
 
 Settings: Run limits
   Path:     Settings -> Run limits
@@ -298,8 +301,8 @@ Settings: Notifications
 Settings: Memory
   Path:     Settings -> Memory
   Selector: buttons "Forget", switch "Learn from my chats"
-  Expected: locked at Watch; Forget removes a line with an Undo toast; the switch turns off; both survive a reload and Reset demo clears them; Team memory is not touched; Forget works on a phone
-  Covered:  e2e/settings-your-pages.spec.ts, e2e/settings-pages-phone.spec.ts
+  Expected: usable at every stage (no stage tag); Forget removes a line with an Undo toast; the switch turns off (and in the product the agent then refuses to save your preferences, and says why); both survive a reload and Reset demo clears them; Team memory is not touched; Forget works on a phone
+  Covered:  e2e/settings-your-pages.spec.ts, e2e/settings-pages-phone.spec.ts, e2e/ship/memory-skills.spec.ts (S1), e2e/support/memory-scenarios.test.ts
 
 Settings: Inhouse agent
   Path:     Settings -> Inhouse agent
@@ -461,9 +464,9 @@ Notifications and team window
 
 Team window
   Path:     sidebar button "Your Inhouse team" or account menu -> Your Inhouse team (also Report a bug, Help's Ask the team, Request a tool, Book a check-in)
-  Selector: dialog "Your Inhouse team" (the `form` window size: 720px, capped to the room right of the sidebar), radiogroup "Team window" (New request, "Your requests {N}"); New request: radio kind tiles (five, compact, the picked one with a 1px dark border), "Title", "Details" (a counter from 900 of 1000), "Send to the team"; Your requests: radiogroup "Show requests" ("Open · N", "Closed · N"), list "Open requests" or "Closed requests", each row a toggle with kind icon, title, "{kind} · {who}, {when}" and a status chip, "Withdraw request" in an open row you asked (demo only: the product has no withdraw route yet)
-  Expected: Send waits for a title or details (a title is made from the details when none is typed), closes the window and lists the request as open once the agent took it; a refused request keeps the window open with what was typed and says "Your request wasn't sent." with the reason; statuses are only With the team, Done, Declined and Withdrawn; a status never carries a date; a row opens to show its full text; Withdraw moves it to Closed as Withdrawn with an Undo toast and the account menu's count follows; the demo's toast promises a reply within one working day, the product's doesn't
-  Covered:  e2e/help-account-menu.spec.ts, e2e/report-bug.spec.ts, e2e/navigation.spec.ts, e2e/sample-data.spec.ts, e2e/ui-round-3.spec.ts, e2e/real/team-request-refused.spec.ts, src/state/derive.team-requests.test.ts
+  Selector: dialog "Your Inhouse team" (the `form` window size: 720px, capped to the room right of the sidebar), radiogroup "Team window" (New request, "Your requests {N}"); New request: radio kind tiles (five, compact, the picked one with a 1px dark border), "Title", "Details" (at most 934, so the title and details fit the server's 1000 together; a counter for the last 100), "Send to the team"; Your requests: radiogroup "Show requests" ("Open · N", "Closed · N"), list "Open requests" or "Closed requests", each row a toggle with kind icon, title, "{kind} · {who}, {when}" and a status chip, "Withdraw request" in an open row you asked (demo and product)
+  Expected: Send waits for a title or details (a title is made from the details when none is typed), closes the window and lists the request as open once the agent took it; a refused request keeps the window open with what was typed and says "Your request wasn't sent." with the reason; statuses are only With the team, Done, Declined and Withdrawn; a status never carries a date; a row opens to show its full text; Withdraw moves it to Closed as Withdrawn and the account menu's count follows (the demo's toast has an Undo; the product withdraws through route 83 with no way back, so its toast has none, and the withdrawn request stays in Closed across refreshes); a withdraw that fails keeps the row open and says "Your request wasn't withdrawn." with the reason under it (one the team answered meanwhile moves to Closed as the team left it); the demo's toast promises a reply within one working day, the product's doesn't; on the product a request goes to route 81 as one text (the title on its own line above the details), Your requests refreshes all open requests and the 50 most recently closed on each open (a failed read shows "Couldn't read your requests." with Retry), a teammate's request shows their name, and a bug has no screenshot box
+  Covered:  e2e/help-account-menu.spec.ts, e2e/report-bug.spec.ts, e2e/navigation.spec.ts, e2e/sample-data.spec.ts, e2e/ui-round-3.spec.ts, e2e/real/team-request.spec.ts, src/state/derive.team-requests.test.ts, src/agent/http/team-requests.test.ts, src/lib/product-flow.test.ts, e2e/real/team-request-refused.spec.ts, e2e/api/team-requests.spec.ts, e2e/ship/memory-skills.spec.ts (S7)
 
 Crashes and error reports
   Path:     ?demo&crash=screen (a screen throws), ?demo&crash=rejection; /api/client-error, /api/unknown

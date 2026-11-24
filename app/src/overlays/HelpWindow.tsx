@@ -1,4 +1,6 @@
 // Help and guides, opened from the account menu. One guide open at a time, on the Radix accordion.
+import { demo } from '../agent'
+import { helpLine } from '../lib/product-flow'
 import { useAgentData, useUi } from '../state/store'
 import { Accordion } from '@/components/ui/accordion'
 import { Button, Guide, Window, WindowHeader } from '../ui'
@@ -17,7 +19,7 @@ export function HelpWindow() {
           {help.map(g => <Guide key={g.title} title={g.title} icon={g.icon}>{g.text}</Guide>)}
         </Accordion>
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          <span className="grow basis-55 text-sm text-muted-foreground">Can't find it? Your Inhouse team replies within one working day.</span>
+          <span className="grow basis-55 text-sm text-muted-foreground">{helpLine(demo !== null)}</span>
           <Button variant="outline" size="lg" onClick={() => useUi.getState().openTeam('feedback', 'I have a question: ')}>Ask the team</Button>
         </div>
       </div>

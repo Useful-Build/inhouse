@@ -11,6 +11,8 @@ import { handlers as history } from './history/index.ts'
 import { handlers as memory } from './memory/index.ts'
 import { handlers as routines } from './routines/index.ts'
 import { STUB_NAMES, handlers as stubs } from './stubs/index.ts'
+import { handlers as skills } from './skills/index.ts'
+import { handlers as team } from './team/index.ts'
 
 export type Area = readonly [name: string, handlers: Partial<Record<InhouseToolName, ToolHandler>>]
 
@@ -20,6 +22,8 @@ const AREAS: readonly Area[] = [
   ['memory', memory],
   ['history', history],
   ['routines', routines],
+  ['team', team],
+  ['skills', skills],
 ]
 
 /** The map the server serves, or a thrown error naming what breaks the rules. Exported for its tests. */

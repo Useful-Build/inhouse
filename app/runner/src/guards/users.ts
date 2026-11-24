@@ -12,6 +12,7 @@
 // - the session folder is parked whatever the kill did: a uid whose processes survived never keeps its folder open;
 // - a folder whose session's processes survived the kill is parked for good: a survivor may still hold it open, and
 //   root's take-over walks a folder by path, so root never prepares that folder again in this container's life.
+import type { BrandSkillFile } from '../../../shared/protocol/brand-skills.ts'
 import type { SessionUser, SessionUsers } from '../session/seam.ts'
 import { assertSessionKey } from './paths.ts'
 
@@ -28,6 +29,8 @@ export interface SessionHost {
   prepareFolder(sessionKey: string, user: PoolUser): Promise<{ workDir: string; home: string }>
   /** Hands the session's folder back to root, closed to every session user. */
   parkFolder(sessionKey: string): Promise<void>
+  /** Rewrites the user's brand plugin (root-owned, read-only) with exactly these skills; none leaves it empty. */
+  writeBrandPlugin(user: PoolUser, skills: readonly BrandSkillFile[]): Promise<void>
 }
 
 export class SessionPoolExhaustedError extends Error {
@@ -190,11 +193,20 @@ export function createSessionPool(pool: readonly PoolUser[], host: SessionHost, 
     return entry.releasing
   }
 
+  async function writeBrandSkills(sessionKey: string, user: SessionUser, skills: readonly BrandSkillFile[]): Promise<void> {
+    assertSessionKey(sessionKey)
+    const entry = live.get(sessionKey)
+    // Only for the live session that holds this uid: never another uid's folder.
+    if (entry === undefined || entry.user.uid !== user.uid || entry.releasing !== null) throw new SessionReleaseError(`no live session ${sessionKey} as uid ${user.uid}`)
+    await host.writeBrandPlugin(entry.user, skills)
+  }
+
   return {
     kind: 'production',
     quarantined: () => quarantined.size,
     allocate,
     release,
+    writeBrandSkills,
     state: () => ({
       free: free.map((u) => u.uid),
       live: new Map([...live].map(([k, v]) => [k, v.user.uid])),

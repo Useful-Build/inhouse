@@ -36,15 +36,17 @@ export const ErrorReasonSchema = z.enum([
   'run_open', 'stage',
   // #312 review: a team routine past the brand's cap (the routine_create tool); an empty Library upload (row 63).
   'routine_limit', 'empty',
+  // P6a W3: a request to the Inhouse team past 50 open ones.
+  'request_limit',
 ])
 export type ErrorReason = z.infer<typeof ErrorReasonSchema>
 
-/** The body of every refused `/api/*` request: `{ error: { code, reason?, current? } }`. `current` is the record as it is now, on a stale `ifRev`. */
+/** A refused request can include the current record on a stale `ifRev`, or null if the record is gone. */
 export const ErrorBodySchema = z.object({
   error: z.object({
     code: AgentErrorCodeSchema,
     reason: ErrorReasonSchema.optional(),
-    current: z.record(z.string(), z.unknown()).optional(),
+    current: z.record(z.string(), z.unknown()).nullable().optional(),
   }),
 })
 export type ErrorBody = z.infer<typeof ErrorBodySchema>

@@ -2,6 +2,7 @@
 // test/ only, and the production wiring (src/server/production.ts) refuses anything that isn't marked production.
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import type { AuditEntry } from '../../../shared/protocol/index.ts'
+import type { BrandSkillFile } from '../../../shared/protocol/brand-skills.ts'
 import type { RunConfig } from '../protocol/local.ts'
 
 /** The OS user a session runs as. `workDir` is the session's work folder (the process's cwd). */
@@ -27,6 +28,12 @@ export interface SessionUsers {
   release(sessionKey: string, user: SessionUser): Promise<void>
   /** How many uids a failed cleanup took out of the pool for good (reported on /health). */
   quarantined(): number
+  /**
+   * Before the session's process starts, for the live session that holds `user`: writes the run's brand skills as a
+   * root-owned, read-only plugin the session can't change (none: an empty one, so nothing of an earlier run stays).
+   * Rejects when it can't; the run then doesn't start.
+   */
+  writeBrandSkills(sessionKey: string, user: SessionUser, skills: readonly BrandSkillFile[]): Promise<void>
 }
 
 /**

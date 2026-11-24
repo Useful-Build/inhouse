@@ -33,7 +33,7 @@ describe('the composed map', () => {
     expect([...TOOL_HANDLERS.keys()].sort()).toEqual([
       'approval_get', 'approval_list', 'approval_request', 'approval_withdraw', 'history_read', 'history_search', 'memory_forget', 'memory_list',
       'memory_save', 'memory_search', 'memory_update', 'notification_send', 'question_ask', 'routine_create', 'routine_delete', 'routine_list',
-      'routine_run_now', 'routine_update', 'team_request_create', 'team_request_list',
+      'routine_run_now', 'routine_update', 'skill_save', 'team_request_create', 'team_request_list',
     ])
     for (const name of ['memory_search', 'memory_save', 'memory_update', 'memory_forget', 'memory_list', 'history_search', 'history_read']) {
       expect(TOOL_HANDLERS.get(name)!.input.safeParse({ anything: 1 }).success, name).toBe(false)

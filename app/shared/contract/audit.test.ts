@@ -47,6 +47,13 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   'library.deleted': { action: 'library.deleted', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA'] },
   'library.restored': { action: 'library.restored', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA', 'f_BBBBBBBBBBBBBBBBBBBBBB'] },
   'today.set_aside': { action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason: 'snoozed' },
+  'memory.approved': { action: 'memory.approved', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA', rev: 3 },
+  'memory.rejected': { action: 'memory.rejected', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA', rev: 1 },
+  'team_request.created': { action: 'team_request.created', requestId: 'tr_AAAAAAAAAAAAAAAAAAAAAA', kind: 'tool' },
+  'team_request.status': { action: 'team_request.status', requestId: 'tr_AAAAAAAAAAAAAAAAAAAAAA', status: 'done' },
+  'brand_skill.created': { action: 'brand_skill.created', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
+  'brand_skill.changed': { action: 'brand_skill.changed', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
+  'brand_skill.deleted': { action: 'brand_skill.deleted', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
 }
 const word = fc.stringMatching(/^[A-Z][a-z]{1,11}$/)
 const name = fc.oneof(word, fc.tuple(word, word).map(([a, b]) => `${a} ${b}`))
@@ -268,7 +275,8 @@ describe('P4 lines (wave-4 PR0)', () => {
 
   it('appends its block after P3\'s, in this order', () => {
     const all = AuditActionSchema.options
-    expect(all.slice(all.indexOf('ops_task_revive'))).toEqual([
+    // P6a PR0: P4's block now ends at today.set_aside, and later phases append after it (their own tests pin theirs).
+    expect(all.slice(all.indexOf('ops_task_revive'), all.indexOf('today.set_aside') + 1)).toEqual([
       'ops_task_revive',
       'routine.created', 'routine.updated', 'routine.enabled', 'routine.deleted', 'routine.restored', 'routine.run_now',
       'library.uploaded', 'library.deleted', 'library.restored',
@@ -287,8 +295,10 @@ describe('support.access write pairs (P4 review fold)', () => {
     ['PUT', '/api/routines/:id/enabled'], ['POST', '/api/routines/:id/run'], ['POST', '/api/routines/:id/delete'], ['POST', '/api/routines/:id/restore'],
     ['PUT', '/api/today/:id/aside'],
     ['POST', '/api/library/delete'], ['POST', '/api/library/restore'],
+    // P6a PR0: approving or rejecting a waiting team fact (route 78).
+    ['PUT', '/api/memory/brand/:id/approved'],
   ] as const
-  const READS = ['/api/members', '/api/memory', '/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download', '/api/routines/:id/runs']
+  const READS = ['/api/members', '/api/memory', '/api/routines', '/api/today', '/api/activity', '/api/library', '/api/library/:id/download', '/api/memory/waiting', '/api/routines/:id/runs']
 
   it('takes each write pair, and its route with no other method', () => {
     for (const [method, route] of WRITES) {
@@ -313,5 +323,85 @@ describe('support.access write pairs (P4 review fold)', () => {
 
   it('INHOUSE_BRAND_WRITES is exactly the write pairs support.access takes', () => {
     expect([...INHOUSE_BRAND_WRITES].sort()).toEqual(WRITES.map(([m, r]) => `${m} ${r}`).sort())
+  })
+})
+
+// P6a PR0 (docs/plans/2026-11-22-p6a-memory-skills.md, "PR0"). Ways it can fail, written down first:
+//  9. memory.approved or memory.rejected takes the fact's text, a person, or a revision out of bounds, or no revision
+//     (the line must say which wording was decided);
+// 10. a team_request line takes the request's text or subject, a kind or status outside the closed lists, or `open`
+//     as a status change (a request is created open; a change only moves it to done, declined or withdrawn);
+// 11. support.access misses the waiting list (GET) or the approve route (PUT): Inhouse under a live grant then gets
+//     503 ("no line, no data"); or pairs either with another method, or takes a concrete path;
+// 12. the block lands anywhere but after P4's, or in another order.
+describe('P6a lines (PR0)', () => {
+  const mem = 'mem_AAAAAAAAAAAAAAAAAAAAAA'
+  const tr = 'tr_AAAAAAAAAAAAAAAAAAAAAA'
+  const access = (method: unknown, route: unknown) => ok({ action: 'support.access', grantId: g, method, route })
+
+  it('memory.approved and memory.rejected name a memory id and the revision decided, never the text (failure 9)', () => {
+    for (const action of ['memory.approved', 'memory.rejected']) {
+      for (const rev of [1, 2, 999_999_999]) expect(ok({ action, memoryId: mem, rev }), `${action} ${rev}`).toBe(true)
+      for (const rev of [0, -1, 1.5, '2', null, 1_000_000_000]) expect(ok({ action, memoryId: mem, rev }), `${action} ${String(rev)}`).toBe(false)
+      expect(ok({ action, memoryId: mem }), `${action} no rev`).toBe(false)
+      expect(ok({ action, rev: 1 }), `${action} no id`).toBe(false)
+      for (const memoryId of ['We restock on Fridays', 'mem_short', `mem_${'A'.repeat(23)}`, '']) expect(ok({ action, memoryId, rev: 1 }), `${action} ${memoryId}`).toBe(false)
+      expect(ok({ action, memoryId: mem, rev: 1, text: 'We restock on Fridays' })).toBe(false)
+      expect(ok({ action, memoryId: mem, rev: 1, memberId: m })).toBe(false)
+    }
+  })
+
+  it('team_request.created takes a request id and a closed kind, never the text or subject (failure 10)', () => {
+    for (const kind of ['tool', 'job', 'change', 'bug', 'feedback']) expect(ok({ action: 'team_request.created', requestId: tr, kind }), kind).toBe(true)
+    for (const kind of ['skill', 'Tool', '', null]) expect(ok({ action: 'team_request.created', requestId: tr, kind }), String(kind)).toBe(false)
+    for (const requestId of ['Connect our wholesale tool', 'tr_short', `tr_${'A'.repeat(23)}`, 'rt_AAAAAAAAAAAAAAAAAAAAAA', '']) {
+      expect(ok({ action: 'team_request.created', requestId, kind: 'job' }), requestId).toBe(false)
+    }
+    expect(ok({ action: 'team_request.created', requestId: tr, kind: 'tool', subject: 'shopify' })).toBe(false)
+    expect(ok({ action: 'team_request.created', requestId: tr, kind: 'tool', text: 'Please connect it' })).toBe(false)
+  })
+
+  it('team_request.status takes done, declined or withdrawn only (failure 10)', () => {
+    for (const status of ['done', 'declined', 'withdrawn']) expect(ok({ action: 'team_request.status', requestId: tr, status }), status).toBe(true)
+    for (const status of ['open', 'Done', 'closed', '', null]) expect(ok({ action: 'team_request.status', requestId: tr, status }), String(status)).toBe(false)
+    expect(ok({ action: 'team_request.status', requestId: tr, status: 'done', text: 'Done, connected' })).toBe(false)
+  })
+
+  it('support.access pairs GET with the waiting list and PUT with the approve route, and nothing concrete (failure 11)', () => {
+    expect(access('GET', '/api/memory/waiting')).toBe(true)
+    expect(access('PUT', '/api/memory/brand/:id/approved')).toBe(true)
+    for (const method of ['PUT', 'POST']) expect(access(method, '/api/memory/waiting'), method).toBe(false)
+    for (const method of ['GET', 'POST', 'DELETE']) expect(access(method, '/api/memory/brand/:id/approved'), method).toBe(false)
+    for (const route of [`/api/memory/brand/${mem}/approved`, '/api/memory/personal/:id/approved', '/api/memory/waiting?limit=5']) {
+      for (const method of ['GET', 'PUT']) expect(access(method, route), `${method} ${route}`).toBe(false)
+    }
+    // Team requests are baseline (the Inhouse team needs no grant), so no support.access line names them.
+    for (const route of ['/api/team-requests', '/api/team-requests/:id/status']) {
+      for (const method of ['GET', 'PUT', 'POST']) expect(access(method, route), `${method} ${route}`).toBe(false)
+    }
+  })
+
+  it('brand skill lines take the skill id only, never its name or text; support.access names the skill page read (GET only)', () => {
+    const bs = 'bs_AAAAAAAAAAAAAAAAAAAAAA'
+    for (const action of ['brand_skill.created', 'brand_skill.changed', 'brand_skill.deleted']) {
+      expect(ok({ action, skillId: bs }), action).toBe(true)
+      for (const skillId of ['weekly-report', 'bs_short', `bs_${'A'.repeat(23)}`, 'tr_AAAAAAAAAAAAAAAAAAAAAA', '']) expect(ok({ action, skillId }), `${action} ${skillId}`).toBe(false)
+      expect(ok({ action, skillId: bs, name: 'weekly-report' }), action).toBe(false)
+      expect(ok({ action, skillId: bs, body: 'Read the orders.' }), action).toBe(false)
+    }
+    expect(access('GET', '/api/skills')).toBe(false)
+    expect(access('GET', '/api/skills/:name')).toBe(true)
+    for (const method of ['PUT', 'POST']) for (const route of ['/api/skills', '/api/skills/:name', '/api/skills/brand/:id/delete']) expect(access(method, route), `${method} ${route}`).toBe(false)
+    expect(access('GET', '/api/skills/weekly-report')).toBe(false)
+  })
+
+  it("appends its block after P4's, in this order (failure 12)", () => {
+    // After P4's, not right after: P5's block (fleet/connectors) lands between the two when P5 merges.
+    const all = AuditActionSchema.options
+    const at = all.indexOf('memory.approved')
+    expect(at).toBeGreaterThan(all.indexOf('today.set_aside'))
+    expect(all.slice(at, at + 4)).toEqual([
+      'memory.approved', 'memory.rejected', 'team_request.created', 'team_request.status',
+    ])
   })
 })

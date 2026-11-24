@@ -242,11 +242,12 @@ export function Segmented<T extends string>({ value, options, onChange, label, s
 }
 
 /** Wrapping pill choices (one pick), for a short set of options that may wrap onto two lines. A radio group underneath. */
-export function ChoiceChips<T extends string>({ value, options, onChange, label }: {
+export function ChoiceChips<T extends string>({ value, options, onChange, label, disabled }: {
   value: T
   /** `[value, label, icon]` */
   options: [T, string, string][]
   onChange: (v: T) => void; label: string
+  disabled?: boolean
 }) {
   // Same as Segmented: a click focuses first, then clicks, and the focus picks only after an arrow key.
   const pick = (v: T) => { if (v !== value) onChange(v) }
@@ -254,7 +255,7 @@ export function ChoiceChips<T extends string>({ value, options, onChange, label 
   // On a phone each 32px chip has a 44px-tall tap area that reaches into the 6px gaps; every gap is 6px, and each chip stays fully tappable.
   const phone = useUi(s => s.phone)
   return (
-    <ToggleGroup type="single" value={value} onValueChange={v => { if (v) pick(v as T) }} aria-label={label} onKeyDown={focusPick.onKeyDown} className="flex flex-wrap gap-1.5 rounded-none bg-transparent p-0">
+    <ToggleGroup type="single" value={value} disabled={disabled} onValueChange={v => { if (v) pick(v as T) }} aria-label={label} onKeyDown={focusPick.onKeyDown} className="flex flex-wrap gap-1.5 rounded-none bg-transparent p-0">
       {options.map(([k, t, icon]) => (
         <ToggleGroupItem key={k} value={k} onFocus={focusPick.onFocusOf(k)}
           className={cn('h-8 gap-1.25 rounded-full border border-input bg-card px-3 py-0 text-foreground data-[state=on]:border-foreground data-[state=on]:bg-foreground data-[state=on]:text-primary-foreground data-[state=on]:hover:text-primary-foreground data-[state=on]:shadow-none', phone && TAP_Y)}>

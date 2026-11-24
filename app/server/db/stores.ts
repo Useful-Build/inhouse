@@ -41,6 +41,10 @@ import type { TodayStore } from '../today/store.ts'
 
 import { routineStore } from '../routines/store.ts'
 import type { RoutineStore } from '../routines/store.ts'
+import { teamRequestStore } from '../team-requests/store.ts'
+import type { TeamRequestStore } from '../team-requests/store.ts'
+import { brandSkillStore } from '../brand-skills/store.ts'
+import type { BrandSkillStore } from '../brand-skills/store.ts'
 
 export interface Stores extends AuthStores {
   members: MemberDirectory & MemberStore
@@ -81,6 +85,12 @@ export interface Stores extends AuthStores {
 
   /** P4 W5 (p4-w5.md): the Library's uploads, marks and listed files. */
   library: LibraryStore
+
+  /** P6a W3: requests to the Inhouse team (routes 80 to 83 and the `team_request_*` tools). */
+  teamRequests: TeamRequestStore
+
+  /** P6a brand skills: the brand's own skills (routes 79, 84 and 85, the `skill_save` tool and each run's start). */
+  brandSkills: BrandSkillStore
 }
 
 /** What the stores read from the Worker's env. `AUDIT_HASH_KEY` is a secret on the product Worker (a var in the test build). */
@@ -149,5 +159,9 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
     routines: routineStore({ db }),
 
     library: libraryStore({ db, bucket: env.FILES }),
+
+    teamRequests: teamRequestStore({ db }),
+
+    brandSkills: brandSkillStore({ db }),
   }
 }

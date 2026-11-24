@@ -21,8 +21,20 @@ export const SkillDefSchema = z.object({
   routines: z.array(z.string()).optional(),
   /** Its saved versions, newest first. */
   versions: z.array(SkillVersionSchema).optional(),
+  // A brand skill (`mine`, P6a): its id and revision (route 85 deletes at that rev), and whether the reader may change
+  // or delete it (its maker or an admin).
+  id: z.string().optional(),
+  rev: z.number().int().min(1).optional(),
+  canChange: z.boolean().optional(),
 })
 export type SkillDef = z.infer<typeof SkillDefSchema>
+
+/** Route 84, `GET /api/skills/:name`: a skill's instructions (no frontmatter), the tools it reads and when it last changed. */
+export const SkillPageSchema = z.strictObject({ body: z.string(), tools: z.array(z.string()), updatedAt: InstantSchema })
+export type SkillPage = z.infer<typeof SkillPageSchema>
+
+/** Route 85, `POST /api/skills/brand/:id/delete`: the brand skill at the revision last read. */
+export const BrandSkillDeleteInputSchema = z.strictObject({ ifRev: z.number().int().min(1).max(999_999_999) })
 
 export const SkillSuggestionSchema = z.object({ n: z.string(), d: z.string(), icon: z.string() })
 export type SkillSuggestion = z.infer<typeof SkillSuggestionSchema>

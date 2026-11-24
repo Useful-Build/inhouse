@@ -41,6 +41,11 @@ const ROUTE: Record<string, string> = {
   '/api/today/:id/aside': 'An item on Today',
   '/api/library/delete': 'The Library',
   '/api/library/restore': 'The Library',
+  // P6a (PR0).
+  '/api/memory/waiting': 'Team memory waiting for an OK',
+  '/api/memory/brand/:id/approved': 'Team memory',
+  // P6a brand skills (route 84).
+  '/api/skills/:name': 'A skill',
 }
 
 /** P4: what a routine edit changed, in a fixed order whatever order the line lists them. */
@@ -63,6 +68,10 @@ function size(bytes: number): string {
   const [n, unit] = bytes < 1024 * 1024 ? [bytes / 1024, 'KB'] : [bytes / (1024 * 1024), 'MB']
   return `${n < 10 ? (Math.floor(n * 10) / 10).toString() : Math.floor(n).toString()} ${unit}`
 }
+
+/** P6a: a team request's kind, as the Inhouse team window names it. */
+const REQUEST_KIND = { tool: 'New tool', job: 'New job', change: 'Change something', bug: 'Bug report', feedback: 'Feedback' } as const
+const REQUEST_STATUS = { done: 'marked a request done', declined: 'declined a request', withdrawn: 'withdrew a request' } as const
 
 const hours = (h: number) => (h === 1 ? '1 hour' : `${h} hours`)
 
@@ -109,5 +118,14 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'library.deleted': return { what: 'deleted Library files', detail: files(args.fileIds.length) }
     case 'library.restored': return { what: 'brought back Library files', detail: files(args.fileIds.length) }
     case 'today.set_aside': return args.reason === null ? { what: 'put back an item on Today', detail: '' } : { what: SET_ASIDE[args.reason], detail: '' }
+    // P6a (PR0). Never the fact's or the request's text, and no revision number: the line keeps those for the record.
+    case 'memory.approved': return { what: 'approved a team memory', detail: '' }
+    case 'memory.rejected': return { what: 'rejected a team memory', detail: '' }
+    case 'team_request.created': return { what: 'sent the Inhouse team a request', detail: REQUEST_KIND[args.kind] }
+    case 'team_request.status': return { what: REQUEST_STATUS[args.status], detail: '' }
+    // P6a brand skills. Never the skill's name, description or instructions.
+    case 'brand_skill.created': return { what: 'made a skill in a chat', detail: '' }
+    case 'brand_skill.changed': return { what: 'changed a skill in a chat', detail: '' }
+    case 'brand_skill.deleted': return { what: 'deleted a skill', detail: '' }
   }
 }
