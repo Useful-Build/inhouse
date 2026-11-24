@@ -106,8 +106,10 @@ export type HubConnector = ConnectorModule | McpConnectorModule
 
 export const isMcpConnector = (c: HubConnector): c is McpConnectorModule => c.kind === 'oauth_mcp'
 
-/** Scope handles as Slack writes them: `channels:history`, `search:read.public`. */
-export const MCP_SCOPE = /^[a-z]+(?:[:.][a-z.]+)+$/
+/** Scope handles as Slack writes them: `channels:history`, `search:read.public`.
+ * After the first separator, dots are ordinary characters and each colon must be followed by a letter or dot.
+ */
+export const MCP_SCOPE = /^[a-z]+[:.][a-z.](?:[a-z.]|:[a-z.])*$/
 
 /** `scopes.base` plus every enabled policy's extras, sorted and unique. */
 export function requestedScopes(connector: McpConnectorModule, config: McpClientConfig): string[] {

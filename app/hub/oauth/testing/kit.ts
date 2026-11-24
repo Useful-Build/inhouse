@@ -88,8 +88,9 @@ export function world(opts: { rotation?: boolean; modules?: HubConnector[]; seed
   const random = counterRandom(opts.seed ?? 1)
   const hostsSeen: string[] = []
   const upstream = async (req: Request) => {
-    const host = new URL(req.url).host
-    hostsSeen.push(host)
+    const url = new URL(req.url)
+    const host = url.host
+    hostsSeen.push(url.hostname)
     if (slack.hosts.includes(host)) return slack.fetch(req)
     if (notes.hosts.includes(host)) return notes.fetch(req)
     return new Response('no fake for host', { status: 599 })

@@ -526,7 +526,7 @@ describe('test 13: the path by kind', () => {
     expect(codeOf(await w.core(SLACK).query({ accountId: SLACK, document: '{ shop { currencyCode } }', apiVersion: '2026-10' }))).toBe('not_configured')
     expect(codeOf(await search(w))).toBe('not_configured')
     await w.core(SLACK).alarm()
-    expect(w.hostsSeen.filter(h => h.endsWith('myshopify.com'))).toEqual([])
+    expect(w.hostsSeen.filter(h => h === 'myshopify.com' || h.endsWith('.myshopify.com'))).toEqual([])
     expect(w.hostsSeen).toEqual([])
   })
 })
