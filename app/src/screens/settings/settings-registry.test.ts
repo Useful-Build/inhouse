@@ -25,7 +25,7 @@ function allRows(): Row[] {
     S: 2, stage: 'Run', agent: agent.getSnapshot(), data, spent: data.usage.total, phone: false,
     openTeam: noop, openPop: noop, openSettings: noop, newChat: noop, goSkills: noop, togglePause: noop,
     theme: 'system', setTheme: noop, toast: noop, forget: noop, download: noop, setRole: noop, setSupport: noop,
-    me: agent.me(), invite: noop, removeMember: noop, grantUi: false, showGrant: true, loadingMore: false, loadMore: noop, exportFromServer: null, exportDataFromServer: null,
+    me: agent.me(), invite: noop, removeMember: noop, grantUi: false, product: false, showGrant: true, loadingMore: false, loadMore: noop, exportFromServer: null, exportDataFromServer: null,
     // P5 W4: Slack notices as an Admin sees it, so its rows are checked too.
     notify: {
       status: 'ready', list: { rev: 1, channels: [{ channelId: 'C0DEMO0001', name: 'ops-alerts', alerts: true }] },
@@ -71,11 +71,11 @@ describe('the page and the registry (failures 1 to 3)', () => {
     for (const k of [...Object.keys(saved.settings), ...Object.keys(saved.toggles)]) expect(refused(k), `${k} was saved`).toBe(false)
   })
 
-  it('offers every member Admin or Member, and shows Approver as a label, never a choice', () => {
-    for (const r of rows.filter(r => r.key?.startsWith('p:'))) expect(r.options, r.key).toEqual(['Admin', 'Member'])
-    const approver = rows.find(r => r.key?.startsWith('p:') && r.display === 'Approver')
-    expect(approver, 'a sample Approver row exists').toBeDefined()
-    expect(approver!.value).toBe('Member')
+  it('offers every member Admin or Member, and no row is labelled Approver', () => {
+    const members = rows.filter(r => r.key?.startsWith('p:'))
+    expect(members.length).toBeGreaterThan(0)
+    for (const r of members) { expect(r.options, r.key).toEqual(['Admin', 'Member']); expect(['Admin', 'Member'], r.key).toContain(r.display ?? r.value) }
+    for (const r of rows) expect(`${r.display ?? ''} ${r.tag ?? ''}`, r.title).not.toMatch(/approver/i)
   })
 
   it('puts each key in the scope section 6 names', () => {

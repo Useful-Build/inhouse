@@ -51,7 +51,7 @@ export const dataOverrideActive = !!override.brandName || override.channels === 
 export const memberIdOf = (sampleId: string) => `m_${sampleId}`
 /** The signed-in person's member id: the sample Admin. */
 export const ME_ID = memberIdOf(sampleMeta.currentUser.id)
-/** The sample people as members: Approver is not a role (a member named on an approval rule is labelled Approver by the page), so it becomes member. */
+/** The sample people as members: a member is an Admin or a Member (approving is a job per rule, by member id, not a role). */
 const SAMPLE_MEMBERS: MemberRecord[] = people.members.map(m => ({
   id: memberIdOf(m.id), name: m.name, email: m.email, title: m.title, role: m.role === 'Admin' ? 'admin' : 'member', status: 'active', photo: m.photo ?? null, rev: 1,
 }))
@@ -791,8 +791,11 @@ export class MockAgent implements AgentClient {
     const revs = this.server.revs
     const bodies = this.skillBodies
     const { skillsDeleted, skillsChanged } = this.server
+    // The brand's name is its `b:name` setting as in the product (trimmed; unset or blank keeps the sample's name).
+    const brandName = this.state.settings['b:name']?.trim() || base.meta.brand.name
     return {
       ...base,
+      ...(brandName === base.meta.brand.name ? {} : { meta: { ...base.meta, brand: { ...base.meta.brand, name: brandName } } }),
       // The sample's own skills (`mine`) as the demo's people left them: deleted ones gone, changed ones dated. Who may
       // change one: its maker or an admin, so the demo's admin may change them all.
       skills: base.skills.filter(s => !(s.mine && skillsDeleted[s.n])).map(s => {

@@ -4,7 +4,8 @@
 import { expect, test } from '../support/test-build/index.js'
 import { open, signInAs } from '../support/clients/real.js'
 
-const TEAM_SECTIONS = ['Agent', 'Approvals and limits', 'Team', 'Workspace']
+// The product's limits section holds only the Spending cap and Pause, so it is called Spending (the demo keeps "Approvals and limits").
+const TEAM_SECTIONS = ['Agent', 'Spending', 'Team', 'Workspace']
 const phone = (w: number | undefined) => (w ?? 1440) < 600
 
 test('A Member sees a lock with "Admins change these" on every team section, and none on You', async ({ page, context }) => {

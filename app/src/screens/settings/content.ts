@@ -37,7 +37,7 @@ export interface Row {
   switchKey?: string
   switchOn?: boolean
   switchTip?: string
-  /** A small tag shown beside the control (for example "Not an approver"). */
+  /** A small tag shown beside the control (for example "Invited"). */
   tag?: string
   tagVariant?: 'warning' | 'muted'
   /** What the setting is when nothing was saved, as the row shows it ("the default" in a stale-save notice). */
@@ -59,7 +59,7 @@ export interface Row {
   toggle?: (on: boolean) => void
   /** A `select` row: the question to ask before saving this value, or null to save it straight away. */
   confirm?: (value: string) => { title: string; text: string; action: string } | null
-  /** A `select` row: what the button says when it isn't the value's own name (a member named on an approval rule reads "Approver"). */
+  /** A `select` row: what the button says when it isn't the value's own name ("Choose a channel" before one is picked). */
   display?: string
   /** The `me().can` key the row's control needs. Without it the control follows the setting's scope (brand or technical). Not allowed: it shows as text. */
   can?: CanKey
@@ -110,7 +110,7 @@ const ROLE_NAMES = { admin: 'Admin', member: 'Member', inhouse: 'Inhouse team' }
 const RETENTION = ['3 months', '6 months', '12 months', '24 months', 'Until deleted']
 
 export { SECTIONS, SETTINGS_PAGES, hasSlack, menuFor } from './menu'
-import { hasSlack } from './menu'
+import { hasSlack, pageShown } from './menu'
 
 export interface Env {
   S: StageIndex
@@ -146,6 +146,8 @@ export interface Env {
   removeMember: (id: string) => void
   /** Whether Data and access shows the grant (status, hours, End now) instead of the demo's one switch. */
   grantUi: boolean
+  /** The product build (no demo): the demo-only rows (settings nothing reads yet, Act-stage alerts) are left out of the pages. */
+  product: boolean
   /** Whether the viewer sees the support grant at all: an Admin or the Inhouse team (route 16), or anyone in the demo. */
   showGrant: boolean
   /** The audit log's next page is being read. */
@@ -326,6 +328,8 @@ export function settingsPage(tab: string, env: Env): Page {
   const saved = agent.settings
   const sel = (title: string, desc: string, key: string, def: string, options: string[], need = 0) => ({ ...SEL(title, desc, key, saved[key] ?? def, options, need), defaultValue: def })
   const txt = (title: string, desc: string, key: string, def: string, need = 0) => ({ ...TXT(title, desc, key, saved[key] ?? def, need), defaultValue: def })
+  // The brand's name as saved (the product fills `meta.brand.name` from the same setting; the demo has its sample name).
+  const brandName = (saved['b:name'] ?? meta.brand.name).trim()
   const modes = thinkingModes(data, saved)
   const modeLabels = modes.filter(m => m.on).map(m => m.label)
   const defaultMode = modes.find(m => m.id === defaultModeId(data, saved))?.label ?? modeLabels[0]
@@ -333,18 +337,12 @@ export function settingsPage(tab: string, env: Env): Page {
     title: m.label, desc: `${m.model} · ${m.sub}${m.label === defaultMode ? ' · stays on as the default' : ''}`, kind: 'mode', need: 0, key: modeEffortKey(m.id), value: EFFORTS.find(([e]) => e === m.effort)![1], options: EFFORTS.map(([, label]) => label),
     switchKey: modeOnKey(m.id), switchOn: m.on, switchTip: m.label === defaultMode ? 'This is the default model. Pick another default to turn it off.' : undefined, keywords: 'effort how hard it thinks',
   }))
-  // Approving is a job per rule, by member id (not a role): a member named on a rule shows as "Approver".
+  // A member is an Admin or a Member. Approving is a job per rule, by member id, so the Members page says nothing about rules.
   const team = people.members.filter(m => m.status !== 'removed')
-  const namedOnRules = (id: string) => people.approvalRules.filter(r => r.approver === id).length
-  const roleLabel = (m: MemberRecord) => (m.role === 'admin' ? 'Admin' : namedOnRules(m.id) > 0 ? 'Approver' : 'Member')
   const approverIds = [...team.map(m => m.id), 'anyone']
   const approverLabels: Record<string, string> = { anyone: 'Anyone who approves', ...Object.fromEntries(people.members.map(m => [m.id, m.name])) }
-  // Moving a named approver to Member leaves the rules that name them as they are, so say so.
-  const demoted = (m: MemberRecord, label: string) => {
-    if (label !== 'Member' || roleLabel(m) === 'Member') return
-    const n = namedOnRules(m.id)
-    if (n > 0) env.toast(`${m.name.split(' ')[0]} is still named on ${n} approval ${n === 1 ? 'rule' : 'rules'}.`, 7000)
-  }
+  // What only the demo offers: rows for settings nothing reads yet, and for work that starts at Act.
+  const demoOnly = (...rows: Row[]): Row[] => (env.product ? [] : rows)
 
   // Taking Admin away asks first, and says so plainly when it's your own.
   const removesAdmin = (m: MemberRecord, label: string) => {
@@ -357,15 +355,15 @@ export function settingsPage(tab: string, env: Env): Page {
   const grant = people.supportGrant
   const self = people.members.find(m => m.id === me.id)
 
-  const supportRow: Row = { ...R('Inhouse team access', 'Alex and the team can sign in to fix and improve your Inhouse agent. Every visit is in the audit log.', env.grantUi ? 'grant' : 'toggle', env.grantUi ? grantStatus(grant, now, d0) : '', 0, 'd:support', true), can: 'grantSupport', on: !!grant?.live, toggle: next => env.setSupport(next, grant?.id) }
+  const supportRow: Row = { ...R('Inhouse team access', 'Your Inhouse team can sign in to fix and improve your Inhouse agent. Every visit is in the audit log.', env.grantUi ? 'grant' : 'toggle', env.grantUi ? grantStatus(grant, now, d0) : '', 0, 'd:support', true), can: 'grantSupport', on: !!grant?.live, toggle: next => env.setSupport(next, grant?.id) }
   const pages: Record<string, Page> = {
     'you-general': { title: 'General', sections: [
-      { label: 'Profile', rows: [withAvatar({ title: 'Photo', desc: '', kind: 'photo', value: '', need: 0 }, me.id), txt('Name', 'Shown to your team and in approvals.', 'g:name', me.name), R('Email', 'Used to sign in.', 'value', env.me ? env.me.email ?? '' : me.email), R('Role', 'Admins can change team settings.', 'value', `${self?.title ?? me.title} · ${env.me ? ROLE_NAMES[env.me.role] : me.role}`)] },
-      { label: 'Appearance', rows: [{ ...SEL('Theme', 'Light or dark. System follows your device.', 'g:theme', THEME_LABELS[env.theme], Object.values(THEME_LABELS)), onChange: v => env.setTheme(themeFromLabel(v)) }, sel('Language', 'Inhouse shows menus and messages in this language.', 'g:lang', 'English (US)', ['English (US)', 'English (UK)', 'Español', 'Français', 'Deutsch']), sel('Text size', 'The size of text and controls.', 'g:size', '100%', ['90%', '100%', '110%', '125%'])] },
+      { label: 'Profile', rows: [withAvatar({ title: 'Photo', desc: '', kind: 'photo', value: '', need: 0 }, me.id), txt('Name', 'Shown to your team and in approvals.', 'g:name', me.name), R('Email', 'Used to sign in.', 'value', env.me ? env.me.email ?? '' : me.email), R('Role', 'Admins can change team settings.', 'value', [self?.title ?? me.title, env.me ? ROLE_NAMES[env.me.role] : me.role].filter(Boolean).join(' · '))] },
+      { label: 'Appearance', rows: [{ ...SEL('Theme', 'Light or dark. System follows your device.', 'g:theme', THEME_LABELS[env.theme], Object.values(THEME_LABELS)), onChange: v => env.setTheme(themeFromLabel(v)) }, ...demoOnly(sel('Language', 'Inhouse shows menus and messages in this language.', 'g:lang', 'English (US)', ['English (US)', 'English (UK)', 'Español', 'Français', 'Deutsch']), sel('Text size', 'The size of text and controls.', 'g:size', '100%', ['90%', '100%', '110%', '125%']))] },
       { label: 'Region', rows: [{ ...sel('Time zone', "Your team's time zone.", 'g:tz', 'America/New_York', Object.keys(TIME_ZONES)), labels: TIME_ZONES }] },
     ] },
     'you-notif': { title: 'Notifications', sections: [
-      { label: 'Alerts', rows: [sel('Approvals waiting', 'When your Inhouse agent drafts something for you.', 'n:wait', 'Right away', ['Right away', 'Once an hour', 'Once a day'], 1), SEL('Send alerts to', 'Where your Inhouse agent tells you about approvals and problems.', 'n:channel', alertsTo, alertOptions, 1), ...(channel ? [R(channel, `Ask your Inhouse agent and approve work in ${channel}.`, 'toggle', '', 1, 'n:slack' /* the channel toggle: the key stays so saved demo state still lines up */, true)] : []), R('Weekly report', 'Fridays at 4:00\u00a0PM.', 'toggle', '', 1, 'n:weekly', true)] },
+      { label: 'Alerts', rows: demoOnly(sel('Approvals waiting', 'When your Inhouse agent drafts something for you.', 'n:wait', 'Right away', ['Right away', 'Once an hour', 'Once a day'], 1), SEL('Send alerts to', 'Where your Inhouse agent tells you about approvals and problems.', 'n:channel', alertsTo, alertOptions, 1), ...(channel ? [R(channel, `Ask your Inhouse agent and approve work in ${channel}.`, 'toggle', '', 1, 'n:slack' /* the channel toggle: the key stays so saved demo state still lines up */, true)] : []), R('Weekly report', 'Fridays at 4:00\u00a0PM.', 'toggle', '', 1, 'n:weekly', true)) },
     ] },
     'you-memory': { title: 'Memory', sections: [
       { label: 'What your Inhouse agent knows about you', rows: forgetRows(memory.personal) },
@@ -376,7 +374,10 @@ export function settingsPage(tab: string, env: Env): Page {
       { label: 'Running costs', rows: [R('AI and hosting', 'Paid at cost, to accounts you own, with a spending cap.', 'value', 'Anthropic · Cloudflare')] },
     ] },
     'team-agent': { title: 'Inhouse agent', sections: [
-      { label: 'About', rows: [sel('Tone', 'How it writes to suppliers, customers and your team.', 't:tone', meta.agent.tone, ['Friendly and short', 'Warm and detailed', 'Formal and brief', 'Plain and direct']), txt('Signs emails as', 'Used on supplier and customer emails.', 't:signs', meta.agent.signsEmailsAs)] },
+      { label: 'About', rows: [
+        txt('Brand name', 'Shown in the sidebar and in requests to your Inhouse team.', 'b:name', meta.brand.name),
+        ...demoOnly(sel('Tone', 'How it writes to suppliers, customers and your team.', 't:tone', meta.agent.tone, ['Friendly and short', 'Warm and detailed', 'Formal and brief', 'Plain and direct']), txt('Signs emails as', 'Used on supplier and customer emails.', 't:signs', meta.agent.signsEmailsAs)),
+      ] },
       { label: 'Answers', rows: [
         sel('Most steps in one answer', 'An answer that needs more steps than this stops and says so.', 't:max_turns', '25', [...MAX_TURNS]),
         { ...txt('Websites it may open', 'Enter one website name per line. Leave empty to block all websites.', 't:webfetch', ''), type: 'hosts', keywords: 'webfetch hosts domains allowlist' },
@@ -395,30 +396,32 @@ export function settingsPage(tab: string, env: Env): Page {
     ] },
     'team-members': { title: 'Members', sections: [
       { label: team.length === 1 ? '1 person' : `${team.length} people`, rows: [...team.map(m => {
-        const label = roleLabel(m)
         const first = m.name.split(' ')[0]
-        const named = namedOnRules(m.id)
-        return withAvatar({ ...SEL(m.name, [m.email, m.title].filter(Boolean).join(' · '), `p:${m.id}`, m.role === 'admin' ? 'Admin' : 'Member', ['Admin', 'Member']), display: label === 'Approver' ? label : undefined, tag: m.status === 'invited' ? 'Invited' : undefined, tagVariant: 'muted', can: 'changeRole', save: v => env.setRole(m.id, v === 'Admin' ? 'admin' : 'member'), onChange: v => demoted(m, v), confirm: v => removesAdmin(m, v),
-          remove: m.id === me.id || (env.me?.role === 'inhouse' && m.role === 'admin') ? undefined : { label: `Remove ${m.name}`, title: `Remove ${m.name}?`, text: `${first} loses access to Inhouse.${named > 0 ? ` ${first} stays named on ${named} approval ${named === 1 ? 'rule' : 'rules'}, tagged "Not an approver".` : ''} The audit log keeps what ${first} did.`, action: 'Remove', go: () => env.removeMember(m.id) } }, m.id)
+        return withAvatar({ ...SEL(m.name, [m.email, m.title].filter(Boolean).join(' · '), `p:${m.id}`, m.role === 'admin' ? 'Admin' : 'Member', ['Admin', 'Member']), tag: m.status === 'invited' ? 'Invited' : undefined, tagVariant: 'muted', can: 'changeRole', save: v => env.setRole(m.id, v === 'Admin' ? 'admin' : 'member'), confirm: v => removesAdmin(m, v),
+          remove: m.id === me.id || (env.me?.role === 'inhouse' && m.role === 'admin') ? undefined : { label: `Remove ${m.name}`, title: `Remove ${m.name}?`, text: `${first} loses access to Inhouse. The audit log keeps what ${first} did.`, action: 'Remove', go: () => env.removeMember(m.id) } }, m.id)
       }), { ...R('Invite someone', 'They sign in with their work email.', 'button', 'Invite', 0, undefined, undefined, env.invite), can: 'invite' }] },
     ] },
     'team-approvals': { title: 'Who approves what', sections: [
-      { label: 'Rules', rows: people.approvalRules.map((r, i) => withAvatar({ ...SEL(r.what, r.detail, `a:${i}`, r.approver, approverIds, 1), labels: approverLabels, tag: people.members.find(m => m.id === r.approver)?.status === 'removed' ? 'Not an approver' : undefined }, r.approver, 'control')) },
+      { label: 'Rules', rows: people.approvalRules.map((r, i) => withAvatar({ ...SEL(r.what, r.detail, `a:${i}`, r.approver, approverIds, 1), labels: approverLabels, tag: people.members.find(m => m.id === r.approver)?.status === 'removed' ? 'Removed' : undefined }, r.approver, 'control')) },
     ] },
     'team-limits': { title: 'Run limits', sections: [
       { label: 'Jobs your Inhouse agent may finish by itself', rows: lim.jobsAgentMayFinish.map(({ id, name, desc }) => R(name, desc, 'toggle', '', 2, `l:${id}`, true)) },
       { label: 'How far your Inhouse agent can go', rows: [sel('Daily limit', 'After this many actions in one day, it stops and asks.', 'l:daily', `${lim.dailyActionLimit} actions`, ['10 actions', '25 actions', '50 actions', '100 actions', '200 actions'], 2), sel('Largest restock', 'Bigger restocks wait for a person.', 'l:restock', `${lim.largestRestockUnits} units`, ['25 units', '50 units', '100 units', '250 units', '500 units'], 2)] },
-      { label: 'Always waits for a person', rows: [R('Money', 'Orders, refunds, claims and budget changes.', 'value', 'Always'), R('Customers', 'Any message to a customer.', 'value', 'Always'), R('Pause Inhouse agent', 'Stops every chat, routine and job at once.', 'button', agent.paused ? 'Resume Inhouse agent' : 'Pause Inhouse agent', 1, undefined, undefined, env.togglePause)] },
+      { label: 'Always waits for a person', rows: [R('Money', 'Orders, refunds, claims and budget changes.', 'value', 'Always'), R('Customers', 'Any message to a customer.', 'value', 'Always')] },
     ] },
     'team-spend': { title: 'Spending cap', sections: [
       { label: 'This month', rows: [{ ...txt('Monthly cap', 'Chats, routines and jobs pause when the cap is reached.', 's:cap', fmtCapSetting(usage.cap, d0)), type: 'money' }, sel('Alert at', 'Admins get an email.', 's:alert', `${usage.alertAt}%`, ['50%', '70%', '80%', '90%', '100%']), sel('Show amounts in', 'The currency used for amounts in reports and emails.', 's:currency', 'USD ($)', ['USD ($)', 'GBP (£)', 'EUR (€)', 'CAD ($)', 'AUD ($)']), R('Spent so far', `${usage.month} ${usage.monthKey?.slice(0, 4) ?? calendarOf(now, d0).year}.`, 'value', fmtSpentSetting(env.spent, d0))] },
+      // The one stop for everything at once, next to the cap that stops it by itself.
+      // Pause and Resume are Admin and Inhouse team only (access-matrix rows 36 and 37). `editBrandSettings` is the `me().can` key
+      // with the same class and allow list (row 10, pause-can.test.ts); a Member sees no button instead of one the server refuses.
+      { label: 'Pause', rows: [{ ...R('Pause Inhouse agent', 'Stops every chat, routine and job at once.', 'button', agent.paused ? 'Resume Inhouse agent' : 'Pause Inhouse agent', 1, undefined, undefined, env.togglePause), can: 'editBrandSettings' as const }] },
       { label: 'Accounts', rows: [R('AI', 'Your Anthropic account, billed at cost.', 'value', 'Anthropic'), R('Hosting', 'Your Cloudflare account, billed at cost.', 'value', 'Cloudflare')] },
     ] },
     'team-data': { title: 'Data and access', sections: [
       { label: 'Where your data stays', rows: [R('Your tools', 'Orders, customers and money stay in your own tools. Your Inhouse agent reads what a job needs.', 'value', 'Stays in each tool'), R('Inhouse agent', 'Chats, memory, routines and logs are stored on your own Cloudflare account.', 'value', 'Your Cloudflare'), R('AI models', 'Questions go to Anthropic through your own account.', 'value', 'Your Anthropic')] },
       { label: 'How long things are kept', rows: [sel('Chats', `Older chats are deleted automatically.${setByTeam}`, 'd:chats', '12 months', RETENTION), sel('Activity and steps', `Every step it took, kept for checking later.${setByTeam}`, 'd:steps', '12 months', RETENTION), R('Next cleanup', 'Anything older than these periods is deleted then.', 'value', nextCleanup), R('Audit log', 'Changes to settings, rules and people. Cannot be shortened.', 'value', '12 months')] },
-      { label: 'Who can get in', rows: [R('Your team', 'People sign in with their work email.', 'value', team.length === 1 ? '1 member' : `${team.length} members`), ...(env.showGrant ? [supportRow] : []), R('Two-step sign-in', 'Everyone confirms with a code when they sign in.', 'toggle', '', 0, 'd:2fa', true)] },
-      { label: 'Take it with you', rows: [{ ...R('Export everything', 'Chats, files, memory, routines, skills, settings and logs in one file. It downloads as it is gathered, which can take a few minutes.', 'button', 'Export', 0, undefined, undefined, exportEverything), can: 'exportData' as const }, R('Delete Inhouse agent and its data', 'Removes chats, memory and logs from your Cloudflare account. Your tools are not touched.', 'button', 'Ask the team', 0, undefined, undefined, () => env.openTeam('change', `Please delete the Inhouse agent and its data for ${meta.brand.name}.`))] },
+      { label: 'Who can get in', rows: [R('Your team', 'People sign in with their work email.', 'value', team.length === 1 ? '1 member' : `${team.length} members`), ...(env.showGrant ? [supportRow] : []), ...demoOnly(R('Two-step sign-in', 'Everyone confirms with a code when they sign in.', 'toggle', '', 0, 'd:2fa', true))] },
+      { label: 'Take it with you', rows: [{ ...R('Export everything', 'Chats, files, memory, routines, skills, settings and logs in one file. It downloads as it is gathered, which can take a few minutes.', 'button', 'Export', 0, undefined, undefined, exportEverything), can: 'exportData' as const }, R('Delete Inhouse agent and its data', 'Removes chats, memory and logs from your Cloudflare account. Your tools are not touched.', 'button', 'Ask the team', 0, undefined, undefined, () => env.openTeam('change', brandName ? `Please delete the Inhouse agent and its data for ${brandName}.` : 'Please delete the Inhouse agent and its data.'))] },
     ] },
     'team-audit': { title: 'Audit log', sections: [
       { label: 'Today', rows: [...pausedRow, ...auditLog.filter(e => auditDay(e) === 'Today').map(auditRow)] },
@@ -437,5 +440,6 @@ export function settingsPage(tab: string, env: Env): Page {
   }
   // P5 W4: built only when it's asked for, from what Settings.tsx read.
   if (tab === 'team-slack' && hasSlack(data.tools)) return slackPage(env.notify)
-  return Object.hasOwn(pages, tab) ? pages[tab] : pages['you-general']
+  // A page the product leaves out never renders, even for the frame before a deep link to it is redirected (App.tsx).
+  return Object.hasOwn(pages, tab) && pageShown(tab, env.product) ? pages[tab] : pages['you-general']
 }

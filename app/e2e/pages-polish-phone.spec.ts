@@ -16,7 +16,8 @@ test('Phone: team settings read as text with a note, your own settings keep thei
   await expect(page.getByRole('heading', { level: 1, name: 'Members' })).toBeVisible()
   // A button opens something, so it keeps working on a phone (D4 is for controls that change a value).
   await expect(page.getByRole('button', { name: 'Invite' })).toBeVisible()
-  await page.evaluate(() => { location.hash = '#/settings/team-limits' })
+  // Pause lives on the page that keeps Spending cap (it moved off Run limits); a button opens or does something, so it stays on a phone.
+  await page.evaluate(() => { location.hash = '#/settings/team-spend' })
   await expect(page.getByRole('button', { name: /^(Pause|Resume) Inhouse agent$/ })).toBeVisible()
   // Your own settings keep their controls.
   await page.evaluate(() => { location.hash = '#/settings/you-general' })

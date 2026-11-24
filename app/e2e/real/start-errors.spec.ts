@@ -1,16 +1,42 @@
 // The first read (`/api/me`) failing: a sign-in the Worker refuses (401) is the signed-out screen with "Sign in again",
 // an Inhouse team account on the brand app (403 wrong_kind) is its own final screen with Sign out only, and a server
-// error is the load error whose Retry brings the app back without a reload. None is "Not connected yet".
+// error is the load error whose Retry brings the app back without a reload. None is the neutral loading screen (NotConnected), which shows only while the first read is in flight.
+import type { Page } from '@playwright/test'
 import { expect, test } from '../support/test-build/index.js'
 import { inhouse, open, people, signInAs } from '../support/clients/real.js'
 import { appOrigin, signIn } from '../support/test-build/index.js'
+
+// The loading screen (src/shell/NotConnected.tsx): a status "Loading…" and an sr-only h1 "Loading Inhouse". A failure or a
+// final screen replaces it, so none of these may show beside one.
+const loadingScreen = (page: Page) => page.getByRole('status').filter({ hasText: 'Loading…' })
+const loadingHeading = (page: Page) => page.getByRole('heading', { level: 1, name: 'Loading Inhouse', exact: true })
+
+test('the first read in flight shows the neutral loading screen, then the app', async ({ page, context }) => {
+  await signInAs(context, 'admin')
+  let release!: () => void
+  const held = new Promise<void>(r => { release = r })
+  await page.route('**/api/me', async route => { await held; await route.continue() })
+  await open(page, 'admin', '#/settings/team-plan')
+  // A failed assertion must not leave /api/me held for the rest of the run: release in a finally.
+  try {
+    await expect(loadingScreen(page)).toBeVisible()
+    await expect(loadingHeading(page)).toBeAttached()
+    await expect(page.getByRole('heading', { name: 'Stage and plan', exact: true })).toHaveCount(0)
+  } finally {
+    release()
+  }
+  await expect(page.getByRole('heading', { level: 1, name: 'Stage and plan', exact: true })).toBeVisible()
+  await expect(loadingScreen(page)).toHaveCount(0)
+  await expect(loadingHeading(page)).toHaveCount(0)
+})
 
 test('a token for another app (wrong audience) shows that the sign-in ended, and Sign in again reloads the page', async ({ page, context }) => {
   // The Inhouse app's token on the brand app: the Worker answers 401, as it does when the Access session has expired.
   await context.setExtraHTTPHeaders(await signIn(people.admin.subject, 'inhouse'))
   await open(page, 'admin')
   await expect(page.getByRole('heading', { level: 1, name: 'Your sign-in ended', exact: true })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Not connected yet' })).toHaveCount(0)
+  await expect(loadingScreen(page)).toHaveCount(0)
+  await expect(loadingHeading(page)).toHaveCount(0)
   const again = page.getByRole('button', { name: 'Sign in again', exact: true })
   await Promise.all([page.waitForEvent('load'), again.click()])
   await expect(page.getByRole('heading', { level: 1, name: 'Your sign-in ended', exact: true })).toBeVisible()
@@ -48,9 +74,10 @@ test('a 503 on the first read shows the load error, and Retry lands in the app',
   await open(page, 'admin', '#/settings/team-plan')
   const alert = page.getByRole('alert').filter({ hasText: "Couldn't load Inhouse." })
   await expect(alert).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Not connected yet' })).toHaveCount(0)
+  await expect(loadingScreen(page)).toHaveCount(0)
+  await expect(loadingHeading(page)).toHaveCount(0)
   // The read Retry makes is held until the checks below have run: while it is under way the load error stays, with
-  // Retry disabled, and "Not connected yet" never shows.
+  // Retry disabled, and the loading screen never shows.
   await page.unroute('**/api/me')
   let release!: () => void
   const held = new Promise<void>(r => { release = r })
@@ -61,7 +88,8 @@ test('a 503 on the first read shows the load error, and Retry lands in the app',
   await Promise.all([page.waitForRequest(r => new URL(r.url()).pathname === '/api/me'), retry.click()])
   await expect(retry).toBeDisabled()
   await expect(alert).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Not connected yet' })).toHaveCount(0)
+  await expect(loadingScreen(page)).toHaveCount(0)
+  await expect(loadingHeading(page)).toHaveCount(0)
   release()
   await expect(page.getByRole('heading', { level: 1, name: 'Stage and plan', exact: true })).toBeVisible()
   expect(loads).toEqual([])

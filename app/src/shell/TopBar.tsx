@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
-import { demo } from '../agent'
-import { showChatExport } from '../lib/product-flow'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { agent, demo } from '../agent'
+import { mayPause, showChatExport } from '../lib/product-flow'
 import { capStatus, flags, lostTool, toolDetail } from '../state/derive'
 import { fmtTime } from '../lib/format'
 import { display } from '../state/display'
@@ -30,6 +30,9 @@ export function TopBar() {
   // Set when a key ends the rename: focus then goes back to the chat's menu trigger (the title on a phone).
   const refocus = useRef(false)
   const f = flags(ctx)
+  const me = useSyncExternalStore(agent.subscribe, agent.me)
+  // Pause and Resume are Admin and Inhouse team only (the server refuses a Member); everyone still sees the status.
+  const canPause = mayPause(me?.can, demo === null)
   const paused = !!agentState.paused
   const openKey = openChatKey({ fresh, chatId }, ctx.data)
   const openChat = openKey === null ? undefined : chatEntries(ctx.data, started, agentState).find(c => c.id === openKey)
@@ -75,9 +78,11 @@ export function TopBar() {
         <div role="status" aria-label={paused ? 'Inhouse agent is paused' : 'Inhouse agent is running'} className={cn('mr-1.5 flex h-7.5 items-center gap-2 rounded-full py-0 pr-1 pl-2 text-xs font-strong whitespace-nowrap', paused ? 'bg-warning-tint text-warning-text' : 'bg-brand-tint text-brand-text')}>
           {paused ? <Icon name="pause_circle" size={16} weight={400} /> : <InhouseMark size={14} className="text-current" />}
           <span>{paused ? 'Paused' : 'Running'}</span>
-          <Button variant="surface" size="xs" onClick={togglePause}>
-            <Icon name={paused ? 'play_arrow' : 'pause'} size={14} />{paused ? 'Resume' : 'Pause'}
-          </Button>
+          {canPause && (
+            <Button variant="surface" size="xs" onClick={togglePause}>
+              <Icon name={paused ? 'play_arrow' : 'pause'} size={14} />{paused ? 'Resume' : 'Pause'}
+            </Button>
+          )}
         </div>
       )}
       <div className="relative flex-none">

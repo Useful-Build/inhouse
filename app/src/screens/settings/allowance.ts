@@ -25,6 +25,7 @@ export function allowance(row: Row, can: Can | undefined, failClosed = false, ro
 /** P5 W4: whether this person may change the Slack notice channels (route 75): the `editBrandSettings` key, never a role name. */
 export const mayEditNotify = (can: Can | undefined): boolean => !!can?.editBrandSettings
 
+
 /** Whether a row's Remove button shows: the key the row names (a channel: `editBrandSettings`), else a member's removal. */
 export const showsRemove = (row: Row, can: Can | undefined): boolean => !!row.remove && can?.[row.remove.can ?? 'remove'] !== false
 

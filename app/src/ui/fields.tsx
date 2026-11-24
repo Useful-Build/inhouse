@@ -54,7 +54,7 @@ function scrollAreaOf(el: HTMLElement | null) {
  */
 export function Select({ value, options, onChange, label, disabled, align = 'right', minWidth = 150, style, className, display }: {
   value: string; options: string[]; onChange: (v: string) => void; label: string; disabled?: boolean; align?: 'left' | 'right'; minWidth?: number; style?: CSSProperties; className?: string
-  /** What the button says when that isn't the value's own name (a member's role: "Approver" while the value is Member). The list still offers the options. */
+  /** What the button says when that isn't the value's own name ("Choose a channel" before one is picked). The list still offers the options. */
   display?: string
 }) {
   const trigger = useRef<HTMLButtonElement>(null)

@@ -5,6 +5,8 @@
 //   2025-01: cap $100, spent 12,345,678 micro = turns 7,000,000 (Dana, Sonnet) + 5,345,678 (Leo, Haiku)
 //            cents: 700, 534.5678 -> 535, total 1234.5678 -> 1235
 //   2025-02: cap $10, spent 10,000,000: at the cap, so capReached and alertCrossed
+//   2025-03: cap $100, spent 8,000,000 = a question 5,000,000 (Dana, Sonnet) + a routine's run 3,000,000 (a chat `m_system`
+//            owns, Sonnet): the run is a job (Conversations 2 = Questions 1 + Jobs run 1, one Job row "E2E usage routine"), not a question or a person's row
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 import { actor, allPages, call, expectError, me } from './kit.ts'
@@ -18,13 +20,13 @@ const smoke = actor('smoke')
 test.describe.configure({ mode: 'serial' })
 
 const CHATS = ['e2e-usage-chat-1', 'e2e-usage-chat-2']
-const TURNS = ['t_e2eUsageTurn0000000001', 't_e2eUsageTurn0000000002', 't_e2eUsageTurn0000000003']
+const TURNS = ['t_e2eUsageTurn0000000001', 't_e2eUsageTurn0000000002', 't_e2eUsageTurn0000000003', 't_e2eUsageTurn0000000004', 't_e2eUsageTurn0000000005']
+const ROUTINE = { id: 'rt_e2eUsageRoutine000001', slotKey: 'rt_e2eUsageRoutine000001|2025-03-10|06:00|e2e', chat: 'rc_e2eUsageRoutineChat1' }
 const at = Date.UTC(2025, 0, 10, 12)
 
 test.beforeAll(async ({ request }) => {
   const [d, l] = await Promise.all([me(request, dana), me(request, leo)])
-  for (const t of TURNS) writeSql('DELETE FROM usage_turns WHERE turn_id = ?', t)
-  for (const m of ['2025-01', '2025-02']) writeSql('DELETE FROM usage_months WHERE month = ?', m)
+  clean()
   writeSql('INSERT INTO usage_months (month, cap_micro, spent_micro) VALUES (?, ?, ?)', '2025-01', 100_000_000, 12_345_678)
   writeSql('INSERT INTO usage_months (month, cap_micro, spent_micro) VALUES (?, ?, ?)', '2025-02', 10_000_000, 10_000_000)
   const turn = (id: string, chat: string, member: string, model: string, month: string, micro: number) =>
@@ -32,12 +34,23 @@ test.beforeAll(async ({ request }) => {
   turn(TURNS[0]!, CHATS[0]!, d.memberId, 'claude-sonnet-5-5', '2025-01', 7_000_000)
   turn(TURNS[1]!, CHATS[1]!, l.memberId, 'claude-haiku-5-5', '2025-01', 5_345_678)
   turn(TURNS[2]!, CHATS[0]!, d.memberId, 'claude-sonnet-5-5', '2025-02', 10_000_000)
+  // March: a question, and a routine's run. The routine is soft-deleted and its slot ended, so no other spec or the tick sees it.
+  writeSql('INSERT INTO usage_months (month, cap_micro, spent_micro) VALUES (?, ?, ?)', '2025-03', 100_000_000, 8_000_000)
+  writeSql("INSERT INTO routines (id, origin, kind, name, instruction, days_mask, hour, minute, missed, need, enabled, deleted_at_ms, creator_id, checked_until_ms, created_at_ms, updated_at_ms) VALUES (?, 'team', 'agent', 'E2E usage routine', 'Check the stock levels.', 127, 6, 0, 'skip', 0, 0, ?, ?, ?, ?, ?)", ROUTINE.id, at, d.memberId, at, at, at)
+  writeSql("INSERT INTO routine_slots (slot_key, routine_id, kind, local_date, local_time, tz, due_at_ms, deadline_ms, state, chat_id, turn_id, client_key, prompt_text, submit_json, routine_rev, creator_id, claimed_at_ms) VALUES (?, ?, 'scheduled', '2025-03-10', '06:00', 'America/New_York', ?, ?, 'ended', ?, ?, 'rs_e2eUsageRoutineKey001', 'x', '{}', 1, 'm_system', ?)", ROUTINE.slotKey, ROUTINE.id, at, at + 600_000, ROUTINE.chat, TURNS[4]!, Date.now())
+  turn(TURNS[3]!, CHATS[0]!, d.memberId, 'claude-sonnet-5-5', '2025-03', 5_000_000)
+  turn(TURNS[4]!, ROUTINE.chat, 'm_system', 'claude-sonnet-5-5', '2025-03', 3_000_000)
 })
 test.afterAll(() => {
   if (process.env.E2E_TEST_BUILD_REMOTE) return // nothing was seeded: writeSql skips there, and a skip inside a hook is not relied on
-  for (const t of TURNS) writeSql('DELETE FROM usage_turns WHERE turn_id = ?', t)
-  for (const m of ['2025-01', '2025-02']) writeSql('DELETE FROM usage_months WHERE month = ?', m)
+  clean()
 })
+function clean() {
+  for (const t of TURNS) writeSql('DELETE FROM usage_turns WHERE turn_id = ?', t)
+  writeSql('DELETE FROM routine_slots WHERE slot_key = ?', ROUTINE.slotKey)
+  writeSql('DELETE FROM routines WHERE id = ?', ROUTINE.id)
+  for (const m of ['2025-01', '2025-02', '2025-03']) writeSql('DELETE FROM usage_months WHERE month = ?', m)
+}
 
 const usage = async (request: APIRequestContext, who: typeof dana, month: string) => {
   const r = await call(request, who, 'GET', `/api/usage?month=${month}`)
@@ -58,8 +71,24 @@ test('a finished month: money in cents rounded half up, counts from settled turn
   const people = r.json.breakdown.person as { name: string; spent: { minor: number }; conversations: number }[]
   expect(people.map(p => [p.name, p.spent.minor, p.conversations]).sort()).toEqual([[nameOf(danaId), 700, 1], [nameOf(leoId), 535, 1]].sort())
   expect((r.json.breakdown.model as { spent: { minor: number } }[]).map(m => m.spent.minor).sort((a, b) => a - b)).toEqual([535, 700])
-  // Jobs and tools are P4 and P5's: empty.
+  // No routine ran in this month: no jobs. The ledger holds no per-tool spend: the Tool breakdown stays empty.
   expect(r.json.breakdown.job).toEqual([])
+  expect(r.json.breakdown.tool).toEqual([])
+})
+
+test("a routine's turn is a job run: not a question, not a person's row, and the split adds up", async ({ request }) => {
+  const r = await usage(request, dana, '2025-03')
+  expect(r.json).toMatchObject({ monthKey: '2025-03', total: { minor: 800 }, conversations: 2, questionsAsked: 1, jobsRun: 1 })
+  // A routine run's chat is a conversation too: conversations = questions + runs, so the page's cost per conversation is $8.00 / 2.
+  expect(r.json.conversations).toBe(r.json.questionsAsked + r.json.jobsRun)
+  const dName = (await me(request, dana)).name
+  const people = r.json.breakdown.person as { name: string; spent: { minor: number }; conversations: number }[]
+  expect(people.map(p => [p.name, p.spent.minor, p.conversations])).toEqual([[dName, 500, 1]])
+  expect(r.json.breakdown.job).toEqual([{ name: 'E2E usage routine', sub: '1 run', spent: { minor: 300, currency: 'USD' }, conversations: 1 }])
+  const sum = (rows: { spent: { minor: number } }[]) => rows.reduce((n, x) => n + x.spent.minor, 0)
+  // Person and Job split the month's spend between them; Model covers all of it.
+  expect(sum(r.json.breakdown.person) + sum(r.json.breakdown.job)).toBe(r.json.total.minor)
+  expect(sum(r.json.breakdown.model)).toBe(r.json.total.minor)
   expect(r.json.breakdown.tool).toEqual([])
 })
 
@@ -80,6 +109,8 @@ test('the month picker lists this month first, then the earlier months newest fi
 test('no chat data: the answer holds no chat or turn id', async ({ request }) => {
   const r = await usage(request, admin, '2025-01')
   for (const id of [...CHATS, ...TURNS]) expect(r.text).not.toContain(id)
+  const routine = await usage(request, admin, '2025-03')
+  for (const id of [ROUTINE.chat, ROUTINE.slotKey, ...TURNS]) expect(routine.text).not.toContain(id)
 })
 
 test('every member, the Admin and Inhouse (no grant needed) read the same page; smoke does not', async ({ request }) => {

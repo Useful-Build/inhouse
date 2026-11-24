@@ -98,22 +98,22 @@ test('A photo that cannot be saved is told and reverted, and a failure that is n
   await keep(page, 'photo-generic-failure-1440')
 })
 
-test('A removed approver stays on the rules that name them, with a tag', async ({ page, fx }) => {
-  // Call 3 (P2): Approver isn't a role, so the page can't demote Dana; a removed member is the one who stops being an approver.
+test('A removed member stays on the rules that name them, with a Removed tag', async ({ page, fx }) => {
+  // Call 3 (P2): approving is a job per rule, not a role, so the page can't demote Dana; a removed member is the one a rule can't keep.
   await fx.seedSaved({ stage: 'Act', scenario: 'Normal', demo: { ambient: 'Always' } }, { server: { removed: { m_dana: true } } })
   await fx.open('#/settings/team-approvals')
   const rule = page.getByRole('combobox', { name: 'Orders over $5,000: Dana Kim' })
   await expect(rule).toBeVisible()
-  await expect(page.getByText('Not an approver')).toHaveCount(1)
-  await expect(page.getByText('Not an approver').locator('xpath=following-sibling::*').first()).toBeVisible()
+  await expect(page.getByText('Removed', { exact: true })).toHaveCount(1)
+  await expect(page.getByText('Removed', { exact: true }).locator('xpath=following-sibling::*').first()).toBeVisible()
   await keep(page, 'settings-removed-approver-1440')
-  // Naming someone who still approves clears the tag.
+  // Naming someone who is still on the team clears the tag.
   await rule.click()
   await page.getByRole('option', { name: 'Sam Mercer' }).click()
-  await expect(page.getByText('Not an approver')).toHaveCount(0)
+  await expect(page.getByText('Removed', { exact: true })).toHaveCount(0)
 })
 
-test('Members: Invite adds a person, Remove asks first and names them, and a removed approver is told about', async ({ page }) => {
+test('Members: Invite adds a person, Remove asks first and names them, and says nothing about approval rules', async ({ page }) => {
   await start(page, '#/settings/team-members')
   await main(page).getByRole('button', { name: 'Invite', exact: true }).click()
   const invite = page.getByRole('dialog', { name: 'Invite someone' })
@@ -141,13 +141,15 @@ test('Members: Invite adds a person, Remove asks first and names them, and a rem
   await ask.getByRole('button', { name: 'Remove', exact: true }).click()
   await expect(page.getByRole('combobox', { name: 'Robin Lee: Member' })).toHaveCount(0)
 
-  // Dana is named on an approval rule: removing her says so, and the rule keeps her name with a tag.
+  // Dana is named on an approval rule: removing her says nothing about it (no note, no toast), and the rule keeps her name with a tag.
   await main(page).getByRole('button', { name: 'Remove Dana Kim' }).click()
-  await expect(page.getByRole('dialog', { name: 'Remove Dana Kim?' })).toContainText('stays named on 1 approval rule')
+  await expect(page.getByRole('dialog', { name: 'Remove Dana Kim?' })).toContainText('Dana loses access to Inhouse. The audit log keeps what Dana did.')
+  await expect(page.getByRole('dialog', { name: 'Remove Dana Kim?' })).not.toContainText(/approval rule|approver/i)
   await page.getByRole('dialog', { name: 'Remove Dana Kim?' }).getByRole('button', { name: 'Remove', exact: true }).click()
-  await expect(page.getByRole('status').filter({ hasText: 'Dana is still named on 1 approval rule.' })).toBeVisible()
+  await expect(page.getByRole('combobox', { name: 'Dana Kim: Member' })).toHaveCount(0)
+  await expect(page.getByRole('status').filter({ hasText: /still named on/ })).toHaveCount(0)
   await page.goto('/?demo#/settings/team-approvals')
-  await expect(page.getByText('Not an approver')).toHaveCount(1)
+  await expect(page.getByText('Removed', { exact: true })).toHaveCount(1)
 })
 
 test("Usage: a saved cap below this month's spend shows the capped state, and there's no month picker", async ({ page }) => {

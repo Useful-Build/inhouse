@@ -278,6 +278,17 @@ describe('writes', () => {
     expect(agent.read()).not.toBe(data)
   })
 
+  test("the brand's name is its b:name setting: empty until set, and a save rebuilds read() with the new name", async () => {
+    const unset = await loaded(reads())
+    expect(unset.agent.read().meta.brand.name).toBe('')
+    const { agent } = await loaded({ ...reads({ settings: { brand: [record('b:name', 'Northline Outdoor', 2)] } }), [put('b:name', 'brand')]: { body: record('b:name', 'Northline Trail', 3) } })
+    expect(agent.read().meta.brand.name).toBe('Northline Outdoor')
+    const before = agent.read()
+    await agent.setSetting('b:name', 'Northline Trail')
+    expect(agent.read()).not.toBe(before)
+    expect(agent.read().meta.brand.name).toBe('Northline Trail')
+  })
+
   test('each scope has its own route, by the key', async () => {
     const paths: string[] = []
     const all = (k: string, v: unknown): Answer => ({ body: record(k, v, 1) })

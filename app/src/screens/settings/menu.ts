@@ -54,6 +54,26 @@ type SlackSignals = { connected: readonly string[]; channels: readonly { key: st
 /** P5 W4: whether the brand has Slack connected (a tool it reads, or its chat channel). Slack notices shows only then. */
 export const hasSlack = (tools: SlackSignals): boolean => tools.connected.includes('slack') || tools.channels.some(c => c.key === 'slack')
 
-/** The menu as this brand sees it: Slack notices only with Slack connected. */
-export const menuFor = (tools: SlackSignals): SettingsSection[] =>
-  hasSlack(tools) ? SECTIONS : SECTIONS.map(s => (s.id === 'team' ? { ...s, pages: s.pages.filter(p => p.id !== 'team-slack') } : s))
+/**
+ * The pages only the demo offers. The product has no approval rules or run limits to show yet (the stored `a:<n>` and `l:*`
+ * settings and their server checks stay), and every Notifications row is Act-stage work nothing sends yet, so it hides the
+ * three pages, their menu entries and their deep links.
+ */
+const DEMO_ONLY_PAGES: readonly string[] = ['team-approvals', 'team-limits', 'you-notif']
+/** Whether a page is offered: every page in the demo, all but the demo-only ones in the product. */
+export const pageShown = (id: string, product: boolean): boolean => !(product && DEMO_ONLY_PAGES.includes(id))
+/** The ids a `#/settings/<id>` link may name. */
+export const settingsTabs = (product: boolean): string[] => SETTINGS_PAGES.filter(p => pageShown(p.id, product)).map(p => p.id)
+
+/**
+ * The menu as this brand sees it: Slack notices only with Slack connected, and in the product (`product`: the build has no
+ * demo) no demo-only pages. What stays of the limits section is the Spending cap and Pause, so the product calls it "Spending".
+ */
+export const menuFor = (tools: SlackSignals, product = false): SettingsSection[] => {
+  const slack = hasSlack(tools)
+  if (slack && !product) return SECTIONS
+  return SECTIONS.map(s => {
+    const pages = s.pages.filter(p => (slack || p.id !== 'team-slack') && pageShown(p.id, product))
+    return { ...s, pages, ...(product && s.id === 'limits' ? { label: 'Spending' } : {}) }
+  })
+}
