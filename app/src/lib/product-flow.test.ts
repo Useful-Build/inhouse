@@ -5,7 +5,7 @@
 //  - a failed read of the open requests shows an empty list as if there were none;
 //  - "Request sent" shows on the Tools page before the server has it, or after a refusal.
 import { describe, expect, it } from 'vitest'
-import { askForTool, requestsView, showScreenshotBox, teamHelper, sentToast, helpLine } from './product-flow'
+import { askForTool, helpLine, requestsView, sentToast, showChatExport, showComposerDemoStubs, showHelpAndGuides, showLocalAnswerControls, showScreenshotBox, teamHelper, usageView } from './product-flow'
 
 const tick = () => new Promise<void>(r => setTimeout(r, 0))
 
@@ -51,5 +51,26 @@ describe('askForTool', () => {
     const log: string[] = []
     askForTool({ product: false, request: () => new Promise<void>(() => {}), say: () => log.push('toast') })
     expect(log).toEqual(['toast'])
+  })
+})
+
+describe('PR-2 product-only surface guards', () => {
+  it('hides demo stubs, Help and guides, chat export and local answer controls in product while keeping them in demo', () => {
+    expect(showChatExport(false)).toBe(false)
+    expect(showChatExport(true)).toBe(true)
+    expect(showComposerDemoStubs(false)).toBe(false)
+    expect(showComposerDemoStubs(true)).toBe(true)
+    expect(showHelpAndGuides(false)).toBe(false)
+    expect(showHelpAndGuides(true)).toBe(true)
+    expect(showLocalAnswerControls(false)).toBe(false)
+    expect(showLocalAnswerControls(true)).toBe(true)
+  })
+
+  it('Usage shows LoadError on error, waits while loading in product, and keeps demo Loading skeletons ready', () => {
+    expect(usageView(false, { status: 'error' })).toBe('error')
+    expect(usageView(true, { status: 'error' })).toBe('error')
+    expect(usageView(false, { status: 'loading' })).toBe('loading')
+    expect(usageView(true, { status: 'loading' })).toBe('ready')
+    expect(usageView(false, { status: 'ready' })).toBe('ready')
   })
 })
