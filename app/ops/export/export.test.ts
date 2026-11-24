@@ -20,7 +20,7 @@ import { addGrant, addLine, addPerson, addPhoto, addSetting, readLines, recordin
 import type { Snapshot } from '../delete/test-support.ts'
 import { tables } from '../tables/index.ts'
 import type { TableEntry } from '../tables/types.ts'
-import { B64_PIECE, PAGE, planExport, runExport } from './export.ts'
+import { B64_PIECE, PAGE, PERSON_EXPORT_SHARED_CONFIG, planExport, runExport } from './export.ts'
 import type { ExportPlan, ExportScope } from './export.ts'
 
 const db = env.DB
@@ -31,6 +31,18 @@ let seeded: Seeded
 
 beforeAll(async () => {
   seeded = await seedBrand(db, openStores(env), BASE)
+  const { dana, leo } = seeded.members
+  const account = db.prepare(`INSERT INTO connector_accounts
+    (account_id, connector, last_state, last_state_at_ms, connected_by, connected_at_ms, disconnected_by, disconnected_at_ms)
+    VALUES (?, 'slack', ?, ?, ?, ?, ?, ?)`)
+  const channel = db.prepare(`INSERT INTO notify_channels
+    (channel_id, name, added_by, added_at_ms, removed_by, removed_at_ms) VALUES (?, ?, ?, ?, ?, ?)`)
+  await db.batch([
+    account.bind('slack:active', 'connected', BASE, dana, BASE, null, null),
+    account.bind('slack:former', 'disconnected', BASE, dana, BASE - 1, leo, BASE),
+    channel.bind('Cactive', 'Active notices', dana, BASE, null, null),
+    channel.bind('Cformer', 'Former notices', dana, BASE - 1, leo, BASE),
+  ])
   await bucket.put('backups/d1/b1/manifest.json', '{"tables":[]}')
   await writeLogEntry(bucket, { format: 1, runId: newRunId(), step: 0, phase: 'done', kind: 'person', atMs: BASE, actorId: SYSTEM_MEMBER_ID, memberId: seeded.members.leo, removed: [] })
 })
@@ -64,6 +76,15 @@ function expected(s: Snapshot, scope: Exclude<ExportScope, { kind: 'brandForCall
       let rows = s.d1[e.name]
       if (scope.kind === 'person') {
         rows = rows.filter(r => names(e, r, scope.memberId))
+        if (PERSON_EXPORT_SHARED_CONFIG.some(name => name === e.name)) {
+          rows = rows.map(r => {
+            const projected = { ...r }
+            for (const key of e.personKeys) {
+              if (r[key] !== null && r[key] !== scope.memberId) delete projected[key]
+            }
+            return projected
+          })
+        }
         if (e.name === 'members') rows = rows.map(r => (r.id === scope.memberId ? r : { id: r.id, invited_by: r.invited_by }))
       }
       out[e.name] = rows
@@ -99,6 +120,35 @@ const worldArb = fc.record({
 })
 
 describe('export completeness (failures 1 to 4, property)', () => {
+  it('keeps null attribution and projects shared connector rows for each member', async () => {
+    const { dana, leo } = seeded.members
+    for (const [memberId, otherId] of [[dana, leo], [leo, dana]]) {
+      const plan = await planOk({ kind: 'person', memberId })
+      const { lines } = await readLines(runExport(d(), plan))
+      const { connector_accounts: accounts, notify_channels: channels } = got(lines)
+      expect(JSON.stringify([accounts, channels])).not.toContain(otherId)
+      expect(accounts).toHaveLength(memberId === dana ? 2 : 1)
+      expect(channels).toHaveLength(memberId === dana ? 2 : 1)
+      if (memberId === dana) {
+        expect(accounts).toMatchObject([
+          { account_id: 'slack:active', connected_by: dana, disconnected_by: null },
+          { account_id: 'slack:former', connected_by: dana },
+        ])
+        expect(channels).toMatchObject([
+          { channel_id: 'Cactive', added_by: dana, removed_by: null },
+          { channel_id: 'Cformer', added_by: dana },
+        ])
+        expect(accounts[1]).not.toHaveProperty('disconnected_by')
+        expect(channels[1]).not.toHaveProperty('removed_by')
+      } else {
+        expect(accounts).toMatchObject([{ account_id: 'slack:former', disconnected_by: leo }])
+        expect(channels).toMatchObject([{ channel_id: 'Cformer', removed_by: leo }])
+        expect(accounts[0]).not.toHaveProperty('connected_by')
+        expect(channels[0]).not.toHaveProperty('added_by')
+      }
+    }
+  })
+
   it('exports every column of the person’s usage turns and excludes other people’s turns', async () => {
     const insert = db.prepare(`INSERT INTO usage_turns
       (turn_id, run_id, chat_id, member_id, model, month, reserved_micro, created_at_ms, source)

@@ -162,7 +162,7 @@ function projectOf(entry: TableEntry, scope: ExportScope, pkCols: readonly strin
     return row => (row.id !== scope.memberId ? Object.fromEntries(keep.map(c => [c, row[c]])) : row)
   }
   if (scope.kind === 'person' && PERSON_EXPORT_SHARED_CONFIG.some(name => name === entry.name)) {
-    return row => Object.fromEntries(Object.entries(row).filter(([key, value]) => !entry.personKeys.includes(key) || value === scope.memberId))
+    return row => Object.fromEntries(Object.entries(row).filter(([key, value]) => !entry.personKeys.includes(key) || value === null || value === scope.memberId))
   }
   if (scope.kind === 'brandForCaller') {
     const p = policyOf(entry)

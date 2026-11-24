@@ -20,7 +20,7 @@ import { backup, listBackups } from './backup.ts'
 import { RestoreRecordSchema, SnapshotManifestSchema } from './manifest.ts'
 import { restore } from './restore.ts'
 import { tables as realRegistry } from '../tables/index.ts'
-import { FORBIDDEN_SQL, derivedEntry, dumpCanonical, generatedArb, insertRows, recordingDb, testSeed } from './test-support.ts'
+import { FORBIDDEN_SQL, derivedEntry, dumpCanonical, generatedArb, insertRows, recordingDb, seedNotificationBackupRows, testSeed } from './test-support.ts'
 
 const e = env as Env & { RESTORE_DB: D1Database; TEST_MIGRATIONS: D1Migration[] }
 const T = 1_800_000_000_000
@@ -36,6 +36,7 @@ it(`restores the seeded brand plus generated rows exactly, and the target works 
   await e.DB.prepare("INSERT INTO search_rt (body) VALUES ('indexed text')").run()
   const stores = openStores(e)
   const seeded = await seedBrand(e.DB, stores, T)
+  await seedNotificationBackupRows(e.DB, seeded.members.dana, T, T - 1)
   const gen = fc.sample(generatedArb(Object.values(seeded.members)), { seed, numRuns: 1 })[0]
   await insertRows(e.DB, 'members', gen.members)
   await insertRows(e.DB, 'settings', gen.settings)
@@ -78,7 +79,7 @@ it(`restores the seeded brand plus generated rows exactly, and the target works 
   expect(record.status).toBe('restored_unreconciled')
   expect(record.reason).toBeUndefined()
 
-  // Failure 1: every canonical table, row for row, in primary-key order.
+  // Failure 1: every fixture table, row for row, in primary-key order.
   expect(await dumpCanonical(e.RESTORE_DB)).toEqual(await dumpCanonical(e.DB))
 
   // Failure 2: the stores over the target read what they read over the source.

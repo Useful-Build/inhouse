@@ -220,18 +220,26 @@ describe('the parts (failures 1, 2, 4)', () => {
   it('keeps P5 brand configuration and send deduplication with pseudonymous attribution', async () => {
     const w = await world(1, false)
     const account = `slack:${token()}`
+    const liveAccount = `shopify:${token()}`
     const channel = `C${token()}`
     const notice = `n_${token()}`
     await db.batch([
       db.prepare("INSERT INTO connector_accounts (account_id, connector, last_state, last_state_at_ms, connected_by, disconnected_by) VALUES (?, 'slack', 'disconnected', ?, ?, ?)").bind(account, T, w.p, w.p),
+      db.prepare("INSERT INTO connector_accounts (account_id, connector, last_state, last_state_at_ms, connected_by, connected_at_ms) VALUES (?, 'shopify', 'connected', ?, ?, ?)").bind(liveAccount, T, w.p, T),
       db.prepare('INSERT INTO notify_channels (channel_id, name, added_by, added_at_ms, removed_by, removed_at_ms) VALUES (?, ?, ?, ?, ?, ?)').bind(channel, channel, w.p, T, w.p, T),
       db.prepare("INSERT INTO notify_sends (id, source, run_id, actor_id, kind, target, day, notice_sha256, outcome, at_ms) VALUES (?, 'agent', ?, ?, 'bell', ?, '2026-11-24', 'invented', 'posted', ?)").bind(notice, notice, w.p, w.p, T),
+      db.prepare("INSERT INTO notify_sends (id, source, system_key, notice_kind, actor_id, kind, target, day, notice_sha256, outcome, at_ms) VALUES (?, 'routines', ?, 'routine_failed', ?, 'bell', ?, '2026-11-24', 'invented', 'posted', ?)").bind(`${notice}_system`, notice, w.p, w.p, T),
     ])
+    const sends = () => db.prepare('SELECT * FROM notify_sends WHERE id IN (?, ?) ORDER BY id').bind(notice, `${notice}_system`).all()
+    const before = (await sends()).results
+    expect(before).toHaveLength(2)
     const d = deps({ brandAgent: w.agent })
     expect(await runPersonDeletion(d, await planOk(d, w.p))).toHaveProperty('ok')
     expect(await db.prepare('SELECT connected_by, disconnected_by FROM connector_accounts WHERE account_id = ?').bind(account).first()).toEqual({ connected_by: w.p, disconnected_by: w.p })
+    expect(await db.prepare('SELECT last_state, connected_by, disconnected_by FROM connector_accounts WHERE account_id = ?').bind(liveAccount).first())
+      .toEqual({ last_state: 'connected', connected_by: w.p, disconnected_by: null })
     expect(await db.prepare('SELECT added_by, removed_by FROM notify_channels WHERE channel_id = ?').bind(channel).first()).toEqual({ added_by: w.p, removed_by: w.p })
-    expect(await db.prepare('SELECT actor_id, target FROM notify_sends WHERE id = ?').bind(notice).first()).toEqual({ actor_id: w.p, target: w.p })
+    expect((await sends()).results).toEqual(before)
     expect(await db.prepare('SELECT name FROM members WHERE id = ?').bind(w.p).first()).toEqual({ name: FORMER_MEMBER })
   })
 
