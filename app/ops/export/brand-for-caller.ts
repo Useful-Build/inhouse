@@ -3,7 +3,7 @@
 // pending Wasim). C1's other two scopes stay as they were: `person` (one member's own export) and `brand` (the ops CLI's
 // whole-brand export).
 //
-// Every `export: true` store in the registry declares here how this scope reads it (policies.test.ts fails on a store
+// Every `export: true` store in the registry declares here how this scope reads it (brand-for-caller.test.ts fails on a store
 // with no policy, or a policy for a store that isn't exported), and `planExport` refuses a store it finds none for:
 // - `whole`: every row or object; brand data the matrix shows every caller of route 95.
 // - `rows`: D1 rows matching `where` (null: none for this caller), each optionally cut by `project`.

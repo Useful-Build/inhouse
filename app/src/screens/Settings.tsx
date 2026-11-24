@@ -283,6 +283,9 @@ export function Settings() {
 
   const pick = (k: string) => ui.patch({ setTab: k, setMenu: false })
   const { theme, setTheme } = useTheme()
+  // Export everything's check-then-download, one at a time: a second click while route 96 is still planning shares the
+  // first click's promise, so it never starts a second export (and a second audit line).
+  const exportInFlight = useRef<Promise<void> | null>(null)
   const env: Env = {
     S, stage, agent: st, data,
     spent: usage.total,
@@ -317,9 +320,12 @@ export function Settings() {
     exportFromServer: agent.auditExportUrl() ? () => { window.location.assign(agent.auditExportUrl()!) } : null,
     // Route 96 first: a refusal stays in the app (content.ts says why) instead of replacing it with a JSON page. Then route
     // 95 streams its own download (Content-Disposition), so the page stays where it is while the file arrives.
-    exportDataFromServer: agent.dataExportUrl() ? async () => {
-      await agent.checkDataExport()
-      window.location.assign(agent.dataExportUrl()!)
+    exportDataFromServer: agent.dataExportUrl() ? () => {
+      exportInFlight.current ??= (async () => {
+        await agent.checkDataExport()
+        window.location.assign(agent.dataExportUrl()!)
+      })().finally(() => { exportInFlight.current = null })
+      return exportInFlight.current
     } : null,
     waiting: approves ? { state: waitingState, decide: waitingStore.decide, retry: () => { void waitingStore.read() } } : undefined,
   }

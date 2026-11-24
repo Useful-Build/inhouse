@@ -321,12 +321,14 @@ async function* objectLine(bucket: R2Bucket, store: string, key: string): AsyncG
   const obj = await bucket.get(key)
   if (obj === null) throw new Error(`export: ${key} vanished while it was read`)
   const head = JSON.stringify({ store, key, contentType: obj.httpMetadata?.contentType ?? null, size: obj.size })
-  yield encoder.encode(`${head.slice(0, -1)},"base64":"`)
+  // The reader is taken before the first yield, and every yield sits inside the try, so a download cancelled at any
+  // point (the prefix included) reaches the finally and lets R2 stop sending.
   const reader = obj.body.getReader()
   let carry: Uint8Array = new Uint8Array(0)
   let read = 0
   let ended = false
   try {
+    yield encoder.encode(`${head.slice(0, -1)},"base64":"`)
     for (;;) {
       const next = await reader.read()
       if (next.done) break
