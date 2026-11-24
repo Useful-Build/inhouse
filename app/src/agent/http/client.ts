@@ -1,5 +1,4 @@
-// The product's agent client. P2 connects the account, settings, team, support-access and audit parts to the Worker over
-// HTTP (transport.ts); every other method stays the P1 stub (`unavailable`) until its phase, and a run never starts.
+// The product's agent client talks to the Worker over HTTP (transport.ts) and streams chat runs over a socket.
 // Reads: one fetch per resource on start (`me` and the settings first, `meta`), each with its own `status`. Writes:
 // optimistic, then saved; on failure taken back, rejected with the `AgentError` and an `error` notice. The client keeps
 // each record's last `rev` and sends it as `ifRev`; a `conflict` puts `current` into the snapshot.
@@ -58,12 +57,6 @@ export interface HttpAgentOptions extends TransportOptions {
   /** The socket's reconnect timer (a test moves it on). */
   after?: (fn: () => void, ms: number) => unknown
 }
-
-/**
- * Route 32 (the run replay) is served since W1's history PR (#163, which flushes a turn's rows before it answers) is in
- * `fleet/agent-chat`: `activeRuns()` reads it, and a reload follows the runs it names. A test pins it on.
- */
-export const ACTIVE_RUNS_WIRED = true
 
 /** The chat socket's version in the URL (`?v=`): the contract's `CHAT_PROTOCOL_VERSION`, which this plain file can't import. */
 const SOCKET_VERSION = 1
@@ -1408,7 +1401,6 @@ export class HttpAgent implements AgentClient {
   stop = (turnId: string): Promise<void> => guard(postTurnAction(this.http, turnId, 'stop').then(() => undefined, (e: unknown) => { throw this.fail(e) }))
   // Read after the first reads, so the chats the runs belong to are known when the app follows them.
   activeRuns = async (): Promise<Awaited<ReturnType<AgentClient['activeRuns']>>> => {
-    if (!ACTIVE_RUNS_WIRED) return []
     await this.whenLoaded()
     // The first read was refused (signed out, not on the team, an Inhouse team account): `whenLoaded` resolves then too,
     // and the start screen is up, so nothing more is asked.
@@ -1802,7 +1794,7 @@ export class HttpAgent implements AgentClient {
   /** Route 54's refusals in the page's words (section 9). */
   private static runRefusal(e: AgentError): AgentError {
     if (e.code === 'conflict' && e.reason === REASON.runOpen) return new AgentError('conflict', 'A run is still going. Try again when it finishes.', { reason: e.reason })
-    if (e.code === 'forbidden' && e.reason === REASON.stage) return new AgentError('forbidden', 'This routine runs from the Act stage. Ask an admin to move to Act.', { reason: e.reason })
+    if (e.code === 'forbidden' && e.reason === REASON.stage) return new AgentError('forbidden', 'This routine runs from the Act stage. Ask your Inhouse team about moving to Act.', { reason: e.reason })
     return e
   }
 

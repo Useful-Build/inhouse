@@ -212,7 +212,7 @@ Library: select and delete
 Routines: details and actions
   Path:     Routines -> a routine
   Selector: row switch "<name> on or off"; the side panel: name and what it does, the schedule card (schedule sentence, next run, the same switch, one "how it works" line), Run now, Edit in a chat, "More for <name>" (Delete), list "Last runs" (`data-run-line`: an outcome icon, "Today, <time>" or "<weekday>, <date>, <time>", one plain line, Steps when the run has steps), Made by
-  Expected: the panel leads with the schedule sentence and the next run; its switch replaces Pause, says "Off. It won't run until you turn it on." when off and agrees with the row; while the agent is paused both switches still show the routine's own on or off (a click saves the other one) and the pause shows as "Paused" for the next run; Last runs are the routine's own runs from `GET /api/routines/:id/runs` (route 86), newest first, at most 20, never matched from Activity by name: each shows when it ran, done, failed, skipped or running, and one plain line with no run ids, timings, costs or codes; a routine with none says "Not run yet."; a list that can't load says so with Try again (announced; a failed recheck keeps the list); while a run is going the open panel rechecks every 15 s for up to 10 minutes, not while the tab is hidden and never for the Inhouse team; a run stopped on purpose reads as skipped, not failed; Run now lands at the top of Last runs ("Run now · <result>", or "Run now" while it runs; the demo's Run nows finish at once) and survives a reload; Steps opens the trace; Delete (in More) asks and Undo works; all of it survives a reload; at Watch a routine is locked, shows "Starts in Act" and has no Run now
+  Expected: the panel leads with the schedule sentence and the next run; its switch replaces Pause, says "Off. It won't run until you turn it on." when off and agrees with the row; while the agent is paused both switches still show the routine's own on or off (a click saves the other one) and the pause shows as "Paused" for the next run; Last runs are the routine's own runs from `GET /api/routines/:id/runs` (route 86), newest first, at most 20, never matched from Activity by name: each shows when it ran, done, failed, skipped or running, and one plain line with no run ids, timings, costs or codes; a routine with none says "Not run yet."; a list that can't load says so with Try again (announced; a failed recheck keeps the list); while a run is going the open panel rechecks every 15 s for up to 10 minutes, not while the tab is hidden and never for the Inhouse team; a run stopped on purpose reads as skipped, not failed; Run now lands at the top of Last runs ("Run now · <result>", or "Run now" while it runs; the demo's Run nows finish at once) and survives a reload; Steps opens the trace; Delete (in More) asks and Undo works; all of it survives a reload; at Watch a routine is locked, shows "Starts in Act" and has no Run now. If the server refuses Run now because of the stage, the message directs the person to their Inhouse team
   Covered:  e2e/page-details.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts, src/screens/routine-switch.test.ts, src/state/routine-run-lines.test.ts, src/agent/mock.routine-runs.test.ts, src/agent/http/routines.test.ts, server/api/routines.test.ts, server/routines/store.test.ts, e2e/api/routines.spec.ts (route 86), e2e/real/routine-last-runs.spec.ts (the failed, skipped and done icons and lines, and the error line with Try again, on the test build with route 86 answered by the spec)
   Gaps:     no browser spec ends a real run in failure or skipping (the demo's sample runs all finished, and e2e/real/routine-last-runs.spec.ts answers route 86 itself)
 
@@ -275,8 +275,8 @@ Settings: dropdowns and fields
 Settings: Inhouse agent web tools
   Path:     Settings -> Inhouse agent
   Selector: Websites it may open, Search the web
-  Expected: an empty host list blocks WebFetch; WebSearch is off by default and has a separate switch
-  Covered:  server/api/resolve-turn.test.ts, server/egress/webfetch.test.ts, runner/test/guards/options.test.ts
+  Expected: an empty host list blocks WebFetch and reads as "No websites" when read-only; WebSearch is off by default and has a separate switch
+  Covered:  server/api/resolve-turn.test.ts, server/egress/webfetch.test.ts, runner/test/guards/options.test.ts, src/screens/settings/hosts-field.test.ts
 
 Settings: Models
   Path:     Settings -> Models
@@ -287,7 +287,7 @@ Settings: Models
 Settings: Members and approvers
   Path:     Settings -> Members, Who approves what
   Selector: role control, Remove
-  Expected: removing Admin asks first; a demoted approver stays on rules that name them with a tag; a wrong cap shows why and isn't saved
+  Expected: a one-person team is headed "1 person"; removing Admin asks first; a demoted approver stays on rules that name them with a tag; a wrong cap shows why and isn't saved
   Covered:  e2e/page-details.spec.ts, e2e/edge-cases.spec.ts, e2e/cross-screen.spec.ts
 
 Settings: Slack notices
@@ -342,7 +342,7 @@ Settings: Spending cap
 Settings: Data and access
   Path:     Settings -> Data and access
   Selector: dropdowns "Chats" and "Activity and steps", row "Next cleanup", switches "Inhouse team access" and "Two-step sign-in", buttons "Export" and "Ask the team"
-  Expected: retention picks and the switches save, survive a reload and Reset demo clears them; in product, Chats and Activity and steps set the age rules for nightly retention, and the overdue health signal gives an edited period 26 hours for the job to catch up; Until deleted turns off the corresponding age rule while the trash period still applies; the audit log's retention is fixed; only the Inhouse team changes the two periods (route 12): an Admin and a Member read them as text with "The Inhouse team sets this."; Next cleanup shows the nightly cleanup's next run (03:30 UTC, in the brand's time) to everyone; Export (P8a D) is offered to an Admin and the Inhouse team under a live grant, never a Member: in product it first checks the export would start (route 96, nothing written), then downloads the brand's export for the caller as one NDJSON file (route 95, streamed; a header naming every registry store and whether the caller gets all, part or none of it, a line per row or file, an end line with counts) with a toast that it can take a few minutes, and the audit log gets one "downloaded all brand data" line with counts only; the export holds the brand's shared data and the caller's own, never another person's personal memories, personal settings, photo or chats, and members as the Members page shows them (no sign-in subject, no Inhouse team or service row); the Inhouse team gets no chats and no requester ids (ops/export/brand-for-caller.ts); the export includes shared connector status and listed Slack channels without attribution and excludes credentials and delivery history; a brand too big for one request, a grant that ended or storage down shows a plain toast in the app, no download and no audit line; in the demo it downloads a small invented sample in the same shape with a toast saying so; Ask the team opens the team window on "Change something" with the delete request written; on a phone it reads as text and Export still downloads
+  Expected: Your team shows "1 member" for a one-person team; retention picks and the switches save, survive a reload and Reset demo clears them; in product, Chats and Activity and steps set the age rules for nightly retention, and the overdue health signal gives an edited period 26 hours for the job to catch up; Until deleted turns off the corresponding age rule while the trash period still applies; the audit log's retention is fixed; only the Inhouse team changes the two periods (route 12): an Admin and a Member read them as text with "The Inhouse team sets this."; Next cleanup shows the nightly cleanup's next run (03:30 UTC, in the brand's time) to everyone; Export (P8a D) is offered to an Admin and the Inhouse team under a live grant, never a Member: in product it first checks the export would start (route 96, nothing written), then downloads the brand's export for the caller as one NDJSON file (route 95, streamed; a header naming every registry store and whether the caller gets all, part or none of it, a line per row or file, an end line with counts) with a toast that it can take a few minutes, and the audit log gets one "downloaded all brand data" line with counts only; the export holds the brand's shared data and the caller's own, never another person's personal memories, personal settings, photo or chats, and members as the Members page shows them (no sign-in subject, no Inhouse team or service row); the Inhouse team gets no chats and no requester ids (ops/export/brand-for-caller.ts); the export includes shared connector status and listed Slack channels without attribution and excludes credentials and delivery history; a brand too big for one request, a grant that ended or storage down shows a plain toast in the app, no download and no audit line; in the demo it downloads a small invented sample in the same shape with a toast saying so; Ask the team opens the team window on "Change something" with the delete request written; on a phone it reads as text and Export still downloads
   Covered:  e2e/settings-agent-data.spec.ts, e2e/settings-pages-phone.spec.ts, e2e/no-persona.spec.ts, e2e/api/data-access.spec.ts, e2e/api/matrix.spec.ts, e2e/real/data-export-download.spec.ts (an Admin clicks Export on the test build: a browser download of the NDJSON file with the caller's header, counts and end line, the toast (asserted right after the download event, inside its 6 s life), and the audit line), server/api/data-access.test.ts, src/screens/settings/data-access.test.ts, ops/export/brand-for-caller.test.ts, ops/export/export.test.ts
   Gaps:     a refused export (route 96's 409, 403 or 503) isn't clicked in a browser (P8a's S1 and S4 in e2e/ship/production-readiness.spec.ts are the orchestrator's); a brand past one request's budget (900 D1 queries, about 200,000 rows, and 9,000 R2 calls, ops/export/export.ts `REQUEST_BUDGET`) is refused rather than exported, and needs the Inhouse team's export; other members' chat outputs that show in the Library aren't in the caller's export
 
@@ -366,23 +366,23 @@ Settings: photos
 
 ## Shell and states
 
-Product build: Not connected yet
+Product build: startup without Access configured
   Path:     `npm run build:product`, any URL (`?demo` and `?demo=<anything>` included)
-  Selector: heading "Not connected yet", the product project (`E2E_PRODUCT=1`)
-  Expected: one "Not connected yet" screen in place of every page; no sample name, no demo switches or Reset demo, `?demo` ignored (the demo clock's absence is proved by `scripts/check-product-build.mjs`)
+  Selector: alert "Couldn't load Inhouse." and button "Retry", the product project (`E2E_PRODUCT=1`)
+  Expected: "Not connected yet" appears during the initial account read. With Access unconfigured, the read returns 503 and the load error with Retry replaces the requested page. The screen has no sample names, demo switches or Reset demo. The build ignores `?demo` (`scripts/check-product-build.mjs` checks for the absence of the demo clock).
   Covered:  e2e/product/no-demo.spec.ts
 
 Test build: the product Worker's API and app (P2)
   Path:     `npm run build:product-test`, then `/api/*` with no Access JWT, and `/` in a browser
-  Selector: the `api` project (status and body), the `real-desktop` and `real-phone` projects (heading "Not connected yet")
-  Expected: every `/api/*` path (an unknown one too) answers 401 `{"error":{"code":"unauthorized"}}` with the security headers and `no-store`; the app loads under the enforced CSP with no violation
-  Covered:  e2e/api/skeleton.spec.ts, e2e/real/skeleton.spec.ts
+  Selector: the `api` project (status and body), the `real-desktop` and `real-phone` projects (heading "Your sign-in ended", wrong-account heading and load-error alert)
+  Expected: every `/api/*` path (an unknown one too) answers 401 `{"error":{"code":"unauthorized"}}` with the security headers and `no-store`; the app loads under the enforced CSP. The first account read shows "Your sign-in ended" on 401 and "This is an Inhouse team account" on 403 wrong_kind. On 503, "Couldn't load Inhouse." stays visible during Retry. A successful retry opens the requested page without a reload.
+  Covered:  e2e/api/skeleton.spec.ts, e2e/real/skeleton.spec.ts, e2e/real/start-errors.spec.ts
 
 Backend core: account menu, name and role (P2, test build)
   Path:     sign in as a seeded person -> sidebar -> account and settings
   Selector: menu "Account" (the name with the role as a badge beside it, the email on its own line), items Your settings, Team settings, Sign out
-  Expected: the menu shows the signed-in person's own name, email and role (Admin, Member or Inhouse team); Sign out goes to Access's logout (not checked in e2e)
-  Covered:  e2e/ship/backend-core.spec.ts (S1, S5, S7, S8)
+  Expected: the menu shows the signed-in person's own name, email and role (Admin, Member or Inhouse team); Sign out navigates to the Access logout path
+  Covered:  e2e/ship/backend-core.spec.ts (S1, S5, S7, S8), e2e/real/sign-out.spec.ts (local test-build navigation)
 
 Backend core: Members page, invite and remove (P2, test build)
   Path:     Settings -> Members
