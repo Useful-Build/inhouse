@@ -470,15 +470,15 @@ function Shell() {
 }
 
 /**
- * The product build shows one screen in place of the pages until its first read (`meta`) is in (start-screen.ts): "Not
- * connected yet" while it loads, "You're not on this team", "This is an Inhouse team account", the signed-out screen, or the load error with Retry. The
+ * The product build shows one screen in place of the pages until its first read (`meta`) is in (start-screen.ts): a neutral
+ * loading screen while it loads, "You're not on this team", "This is an Inhouse team account", the signed-out screen, or the load error with Retry. The
  * demo has `demo` set and never shows them.
  */
 export default function App() {
   const data = useAgentData()
   const screen = demo === null ? startScreen(data) : 'app'
   // Retry sets `meta` loading again: the load error stays up while it reads, with the last error's words and Retry
-  // disabled, not "Not connected yet".
+  // disabled, rather than flashing back to the initial loading screen.
   const [last, setLast] = useState<{ screen: StartScreen; error?: AgentErrorCode }>({ screen })
   const retrying = screen === 'not-connected' && last.screen === 'load-error'
   const shown = retrying ? 'load-error' : screen

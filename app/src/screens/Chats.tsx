@@ -1,7 +1,8 @@
 // Chats: the thread (one card per answer, D2), hover actions under each answer and your own messages, the "···" menu,
 // long messages that fold, Retry on a stopped answer, Jump to latest, the queued messages and the ask box.
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { agent } from '../agent'
+import { agent, demo } from '../agent'
+import { showLocalAnswerControls } from '../lib/product-flow'
 import { traceOf, useTraces } from './chat/traces'
 import { CONNECTION_TEXT, NOTICE_TEXT, historyWanted } from './chat/notes'
 import type { ChatMessage } from '../agent/types'
@@ -332,6 +333,7 @@ function Thread() {
     const again = question && (() => regenerate([question.id, ...(ask0?.between ?? []), ...turnIds, ...tail], { text: question.text, quote: question.quote, atts: question.atts }))
     const S = ctx.S
     const sendChannel = ctx.data.tools.channels[0]
+    const localControls = showLocalAnswerControls(demo !== null)
     const items: { icon: string; t: string; go: () => void; destructive?: boolean; sep?: boolean; locked?: boolean; disabled?: boolean }[] = [
       // A phone's row keeps Copy, the steps and "···": the rest of the row moves into the menu (D3), the thumbs as a
       // radio pair after these.
@@ -342,7 +344,7 @@ function Thread() {
       ...(sendChannel ? [{ icon: 'tag', t: `Send to ${sendChannel.name}`, sep: phone, go: () => { if (S >= sendChannel.need) showToast(`Send to ${sendChannel.name} isn't connected in this demo.`, { icon: 'info', ms: 4000 }) }, locked: S < sendChannel.need }] : []),
       { icon: 'flag', t: 'Report a wrong answer', sep: phone && !sendChannel, go: () => openTeam('bug', 'This answer looks wrong: "' + txt.slice(0, 120) + '"') },
       // Undo works from any chat: the store finds this chat wherever it is by then (M5).
-      { icon: 'delete', t: 'Delete', destructive: true, sep: true, go: () => { if (openId !== null) deleteMessages(openId, [...turnIds, ...tail]) } },
+      ...(localControls ? [{ icon: 'delete', t: 'Delete', destructive: true, sep: true, go: () => { if (openId !== null) deleteMessages(openId, [...turnIds, ...tail]) } }] : []),
     ]
     const more = (
       <DropdownMenu modal={false} open={menuOpen} onOpenChange={o => setMenuId(o ? m.id : null)}>
@@ -361,7 +363,7 @@ function Thread() {
                 {it.locked && <StageTag tag="Act" icon={false} />}
               </MenuItem>
               {/* A phone's thumbs: one pick or none, announced as checked. Picking the one that's on takes it back. */}
-              {phone && j === (again ? 1 : 0) && (
+              {localControls && phone && j === (again ? 1 : 0) && (
                 <DropdownMenuRadioGroup aria-label="Rate this answer" value={feedback[turnId] ?? ''}>
                   {([['up', 'thumb_up', 'Good answer'], ['down', 'thumb_down', 'Bad answer']] as const).map(([v, icon, t]) => (
                     <DropdownMenuRadioItem key={v} value={v} onSelect={() => rateAnswer(turnId, v, txt)} className={RATE_ITEM}>
@@ -394,8 +396,8 @@ function Thread() {
           <IconButton icon="reply" label="Reply" size={17} variant="action" box="icon-sm" onClick={() => patch({ replyTo: txt.slice(0, 140) })} />
           {copyBtn}
           {again && <IconButton icon="refresh" label="Regenerate" size={17} variant="action" box="icon-sm" disabled={thinking} onClick={again} />}
-          <Rate icon="thumb_up" label="Good answer" on={feedback[turnId] === 'up'} onClick={() => rateAnswer(turnId, 'up', txt)} />
-          <Rate icon="thumb_down" label="Bad answer" on={feedback[turnId] === 'down'} onClick={() => rateAnswer(turnId, 'down', txt)} />
+          {localControls && <Rate icon="thumb_up" label="Good answer" on={feedback[turnId] === 'up'} onClick={() => rateAnswer(turnId, 'up', txt)} />}
+          {localControls && <Rate icon="thumb_down" label="Bad answer" on={feedback[turnId] === 'down'} onClick={() => rateAnswer(turnId, 'down', txt)} />}
           {more}
         </span>
       </div>

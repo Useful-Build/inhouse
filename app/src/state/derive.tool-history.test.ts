@@ -55,4 +55,19 @@ describe('a tool with a history here', () => {
     const ctx = ctxOf({ details: { ads: detail({ progress: true, liveBy: at('2026-11-21T10:00:00.000Z') }) } })
     expect(toolState(ctx, 'ads')).toBe('connecting')
   })
+
+  test('unrecorded lastRead (epoch 0) reads "Connected" on lists and "Not yet" on the tool page', () => {
+    const connected = ctxOf({
+      connected: ['shopify'],
+      details: { shopify: detail({ name: 'Shopify', since: at('2026-11-01T09:00:00.000Z') }) },
+    })
+    expect(toolView(connected, 'shopify')).toMatchObject({ state: 'connected', listLine: 'Connected', lastRead: 'Not yet' })
+
+    const lost = ctxOf({
+      connected: ['slack'],
+      connection: { slack: { status: 'disconnected', since: at('2026-11-20T09:00:00.000Z') } },
+      details: { slack: detail({ since: at('2026-11-01T09:00:00.000Z') }) },
+    })
+    expect(toolView(lost, 'slack')).toMatchObject({ state: 'disconnected', listLine: 'Needs reconnecting', lastRead: 'Not yet' })
+  })
 })

@@ -77,7 +77,7 @@ Approvals: a draft with no text
 Approvals: draft cards
   Path:     Approvals
   Selector: one card per draft: "Urgent" pill, risk tag ("Spends $9,600", "Claims $1,240", "Goes to customers", "Low risk", "Needs review"), "{area} · {time}", draft text on the sheet, approver line, "Review draft" or the one-tap approve, button "More" ("More actions for {draft}": menu "Draft actions" with Don't send first, then Review on a low-risk draft, then Edit), "From {sources}"
-  Expected: one column; "Review draft" opens the review window, which steps through the waiting drafts in the page's order; Escape on More closes the menu only; on a phone the tags sit above the title, detail rows stack and the primary is full width beside More
+  Expected: one column; "Review draft" opens the review window, which steps through the waiting drafts in the page's order; Escape on More closes the menu only; on a phone the tags sit above the title, detail rows stack and the primary is full width beside More; in Watch, list rows omit `$0` when there is no money at stake (`hasAmount`)
   Covered:  e2e/today-approvals.spec.ts, e2e/today-approvals-phone.spec.ts, e2e/ship/needs-you-cards.spec.ts
 
 Approvals: approve all low-risk
@@ -129,20 +129,20 @@ Chat: composer files
 Chat: Google Drive and Slack stubs
   Path:     composer -> Attach -> From Google Drive; answer -> More -> Send to Slack
   Selector: menuitem "From Google Drive", menuitem "Send to Slack", toast
-  Expected: each says "<What> isn't connected in this demo." and changes nothing; the approver's "Ask Leo" button says the same (`sample-data.spec.ts`)
-  Covered:  e2e/not-connected-stubs.spec.ts
+  Expected: demo-only Attach items (`From Google Drive`, `Screenshot of this page`) and `Send to Slack` in the demo say "<What> isn't connected in this demo." and change nothing; the approver's "Ask Leo" button says the same (`sample-data.spec.ts`). In the product build `From Google Drive` and `Screenshot of this page` are hidden (`src/lib/product-flow.ts`)
+  Covered:  e2e/not-connected-stubs.spec.ts, src/lib/product-flow.test.ts
 
 Chat: Dictate
   Path:     composer -> Dictate
   Selector: button "Dictate", toast
-  Expected: for now it says "Dictation isn't connected in this demo." and leaves the field alone. Dictation stays a feature: a model gets connected later, and this check changes when it lands
-  Covered:  e2e/not-connected-stubs.spec.ts
+  Expected: in the demo it says "Dictation isn't connected in this demo." and leaves the field alone; hidden in the product build until dictation is wired (`src/lib/product-flow.ts`)
+  Covered:  e2e/not-connected-stubs.spec.ts, src/lib/product-flow.test.ts
 
 Chat: answer actions
   Path:     answer -> hover or Tab into the row -> Reply, Copy, Regenerate, thumbs, More; More -> Send to #channel, Report a wrong answer, Delete
   Selector: answer row buttons, `[data-answer-actions]`, menu "Message actions"
-  Expected: at rest every answer (the newest too) hides its actions; hover or keyboard focus shows them and an open More menu keeps them; the menu has exactly Send to #channel (when a channel is connected), Report a wrong answer and Delete; the phone row is Copy and More; markdown renders; both builds make in-app hash routes and HTTPS destinations on exact hosts explicitly listed in the brand’s WebFetch setting clickable. An empty, missing or invalid list leaves all external destinations as text. External links and images wait for the complete answer. Unlisted images display text and listed images remain subject to the site’s CSP; Jump to latest appears when scrolled up mid-stream
-  Covered:  e2e/conversation.spec.ts (including unlisted links in the completed answer), e2e/conversation-polish.spec.ts, e2e/brand-data.spec.ts, e2e/conversation-links.spec.ts (the demo's answer with the WebFetch setting seeded: a listed host's link is clickable in the finished answer, with a new tab and noreferrer; an unlisted host, or only its parent or a sibling listed, stays text). Chat tests parts.test.ts, markdown-links.test.ts and markdown-links.property.test.ts cover WebFetch settings, the streaming gate, link parsing and exact-host matching.
+  Expected: at rest every answer (the newest too) hides its actions; hover or keyboard focus shows them and an open More menu keeps them; in the demo the menu has Send to #channel (when a channel is connected), Report a wrong answer and Delete, and the row includes Good/Bad answer thumbs; in the product build per-message `Delete` and `Good answer` / `Bad answer` are hidden (`src/lib/product-flow.ts`); the phone row is Copy and More; markdown renders; both builds make in-app hash routes and HTTPS destinations on exact hosts explicitly listed in the brand’s WebFetch setting clickable. An empty, missing or invalid list leaves all external destinations as text. External links and images wait for the complete answer. Unlisted images display text and listed images remain subject to the site’s CSP; Jump to latest appears when scrolled up mid-stream
+  Covered:  e2e/conversation.spec.ts (including unlisted links in the completed answer), e2e/conversation-polish.spec.ts, e2e/brand-data.spec.ts, e2e/conversation-links.spec.ts (the demo's answer with the WebFetch setting seeded: a listed host's link is clickable in the finished answer, with a new tab and noreferrer; an unlisted host, or only its parent or a sibling listed, stays text), src/lib/product-flow.test.ts. Chat tests parts.test.ts, markdown-links.test.ts and markdown-links.property.test.ts cover WebFetch settings, the streaming gate, link parsing and exact-host matching.
   Gaps:     the product's own setting (route 11) isn't driven through a browser: a product chat answer needs a container turn, so the link check runs on the demo's saved setting only; a link waiting for the finished answer is not browser-tested (the demo answer shows its link and last words in one step), only the streaming half by parts.test.ts
 
 Chat: steps, sources and the answer's own cards
@@ -166,8 +166,8 @@ Chat: runs in the background
 Chat: See all and management
   Path:     sidebar -> See all (`#/chats/all`)
   Selector: search box, row menu, Select
-  Expected: search filters by title; rename, pin, copy link, delete with Undo, bulk delete; a reload keeps it until Reset demo
-  Covered:  e2e/chats-manage.spec.ts, e2e/sample-data.spec.ts
+  Expected: search filters by title; rename, pin, copy link, delete with Undo, bulk delete; demo open-chat bar offers Export (hidden in product); a reload keeps changes until Reset demo
+  Covered:  e2e/chats-manage.spec.ts, e2e/sample-data.spec.ts, src/lib/product-flow.test.ts
 
 Chat: links
   Path:     `#/chats/<id>`, an unknown id or page
@@ -231,8 +231,8 @@ Activity: a line's side sheet
 Tools: list and pages
   Path:     Tools (`#/tools`) -> a tool
   Selector: search, Pause access, Reconnect, Request a tool
-  Expected: pausing or disconnecting changes the count, the tool page (Read, Draft, Access) and the composer alike; Pause access has Undo and Resume brings it all back; Request a tool opens the team window; a catalogue tool's Request (Add a tool) shows "Requested" and a toast starting "Request sent" (the product's once the server has it), stays "Requested" after a reload, and the toast's Undo withdraws it (the product withdraws through route 83)
-  Covered:  e2e/data-states.spec.ts, e2e/page-actions.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts, e2e/api/connect.spec.ts, e2e/api/tools.spec.ts, e2e/real/tools-return.spec.ts, e2e/real/tools-catalogue-request.spec.ts (a Member's Request on the catalogue's Slack, with the Request buttons counted from `GET /api/tools`' catalogue, not assuming Slack is its only tool: route 81 "Connect Slack", no toast while the request is held at the browser and the toast once the server has it, Requested after a reload, Undo withdraws through route 83), e2e/ship/connectors.spec.ts, e2e/ship/memory-skills.spec.ts (S8)
+  Expected: pausing or disconnecting changes the count, the tool page (Read, Draft, Access) and the composer alike; connected tools with no recorded `lastRead` (`ms <= 0`) read `Connected` on Today and Tools lists and `Not yet` for Last read; Pause access has Undo and Resume brings it all back; Request a tool opens the team window; a catalogue tool's Request (Add a tool) shows "Requested" and a toast starting "Request sent" (the product's once the server has it), stays "Requested" after a reload, and the toast's Undo withdraws it (the product withdraws through route 83)
+  Covered:  e2e/data-states.spec.ts, e2e/page-actions.spec.ts, e2e/pages-polish.spec.ts, e2e/pages-polish-phone.spec.ts, e2e/api/connect.spec.ts, e2e/api/tools.spec.ts, e2e/real/tools-return.spec.ts, e2e/real/tools-catalogue-request.spec.ts (a Member's Request on the catalogue's Slack, with the Request buttons counted from `GET /api/tools`' catalogue, not assuming Slack is its only tool: route 81 "Connect Slack", no toast while the request is held at the browser and the toast once the server has it, Requested after a reload, Undo withdraws through route 83), e2e/ship/connectors.spec.ts, e2e/ship/memory-skills.spec.ts (S8), src/state/derive.tool-history.test.ts
 
 Tools: Slack channel
   Path:     Tools -> Slack
@@ -255,8 +255,8 @@ Skills: a skill's page
 Usage
   Path:     account menu -> Usage (it isn't in the sidebar; the palette lists it)
   Selector: month picker, daily bars
-  Expected: totals agree in every breakdown; bars are one tab stop with arrow, Home and End; a cap below spend shows the capped state
-  Covered:  e2e/app.spec.ts, e2e/page-actions.spec.ts, e2e/edge-cases.spec.ts
+  Expected: totals agree in every breakdown; bars are one tab stop with arrow, Home and End; a cap below spend shows the capped state; product loading waits (`Loading usage.`) and failed reads show `LoadError` with Retry; `usageSummary` uses the real month length from `monthKey` and guards empty `daily` arrays and `$0` caps without `$NaN`
+  Covered:  e2e/app.spec.ts, e2e/page-actions.spec.ts, e2e/edge-cases.spec.ts, src/lib/product-flow.test.ts, src/state/usage-summary.test.ts
 
 ## Settings
 
@@ -366,11 +366,11 @@ Settings: photos
 
 ## Shell and states
 
-Product build: startup without Access configured
+Product build: startup and initial loading screen
   Path:     `npm run build:product`, any URL (`?demo` and `?demo=<anything>` included)
-  Selector: alert "Couldn't load Inhouse." and button "Retry", the product project (`E2E_PRODUCT=1`)
-  Expected: "Not connected yet" appears during the initial account read. With Access unconfigured, the read returns 503 and the load error with Retry replaces the requested page. The screen has no sample names, demo switches or Reset demo. The build ignores `?demo` (`scripts/check-product-build.mjs` checks for the absence of the demo clock).
-  Covered:  e2e/product/no-demo.spec.ts
+  Selector: neutral loading status (`Loading…`) while the initial account read runs; alert "Couldn't load Inhouse." and button "Retry" on failure, the product project (`E2E_PRODUCT=1`)
+  Expected: one neutral loading screen in place of every page during the initial account read. With Access unconfigured, the read returns 503 and the load error with Retry replaces the requested page. The screen has no sample names, demo switches or Reset demo. The build ignores `?demo` (`scripts/check-product-build.mjs` checks for the absence of the demo clock).
+  Covered:  e2e/product/no-demo.spec.ts, e2e/real/start-errors.spec.ts
 
 Test build: the product Worker's API and app (P2)
   Path:     `npm run build:product-test`, then `/api/*` with no Access JWT, and `/` in a browser
@@ -464,15 +464,15 @@ Sidebar
 
 Account menu
   Path:     sidebar -> account and settings
-  Selector: menu "Account" (name with the role badge, the email under it), items Your settings, Team settings, Usage | Your Inhouse team ("N open"), Help and guides | Sign out
-  Expected: the role (Admin, Member or Inhouse team) is a badge beside the name, the email on its own line, both cut with an ellipsis when long; Your settings opens General and Team settings Stage and plan (on a phone the settings menu first); Usage opens the Usage page; Your Inhouse team opens the team window and its count equals the open rows under Your requests (shown only above 0); Report a bug and Feedback are request types in that window; Sign out says it isn't connected
-  Covered:  e2e/help-account-menu.spec.ts, e2e/report-bug.spec.ts, e2e/tour.spec.ts, e2e/sample-data.spec.ts, e2e/phone.spec.ts, e2e/overlays-keyboard.spec.ts
+  Selector: menu "Account" (name with the role badge, the email under it), items Your settings, Team settings, Usage | Your Inhouse team ("N open"), Help and guides (demo only) | Sign out
+  Expected: the role (Admin, Member or Inhouse team) is a badge beside the name, the email on its own line, both cut with an ellipsis when long; Your settings opens General and Team settings Stage and plan (on a phone the settings menu first); Usage opens the Usage page; Your Inhouse team opens the team window and its count equals the open rows under Your requests (shown only above 0); Report a bug and Feedback are request types in that window; Help and guides is hidden in the product build; Sign out says it isn't connected in the demo
+  Covered:  e2e/help-account-menu.spec.ts, e2e/report-bug.spec.ts, e2e/tour.spec.ts, e2e/sample-data.spec.ts, e2e/phone.spec.ts, e2e/overlays-keyboard.spec.ts, src/lib/product-flow.test.ts
 
 Help and guides
-  Path:     account menu -> Help and guides
+  Path:     account menu -> Help and guides (demo only)
   Selector: dialog "Help and guides", guide buttons, button "Ask the team"
-  Expected: one guide open at a time and its text shows; Ask the team swaps Help for the team window on Feedback with "I have a question: " written, and the sent question is listed and survives a reload; by keyboard it opens quiet and Escape gives focus back; on a phone it fits 390
-  Covered:  e2e/help-account-menu.spec.ts, e2e/sample-data.spec.ts, e2e/overlays-keyboard.spec.ts, e2e/cross-screen.spec.ts, e2e/no-persona.spec.ts, e2e/settings-pages-phone.spec.ts
+  Expected: one guide open at a time and its text shows; Ask the team swaps Help for the team window on Feedback with "I have a question: " written, and the sent question is listed and survives a reload; by keyboard it opens quiet and Escape gives focus back; on a phone it fits 390; hidden from the account menu in the product build (`src/lib/product-flow.ts`)
+  Covered:  e2e/help-account-menu.spec.ts, e2e/sample-data.spec.ts, e2e/overlays-keyboard.spec.ts, e2e/cross-screen.spec.ts, e2e/no-persona.spec.ts, e2e/settings-pages-phone.spec.ts, src/lib/product-flow.test.ts
 
 Problem panel
   Path:     Today or Approvals -> a card, or an Activity line's Review the draft
