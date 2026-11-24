@@ -1,6 +1,6 @@
 # Master plan: Watch first, the rest at the first client
 
-Updated: 2026-11-24 (standing decision 10: Export everything holds brand-shared data and the caller’s own data). Earlier: 2026-11-23 (standing decision 9: eval timing; 6 to 8: brand skills, team request statuses, routine run history). Earlier: 2026-11-22 (aligned with the 5-file repo setup in `AGENTS.md`, `REVIEW.md`, `VERIFY.md`, `DESIGN.md`, and `FEATURE_MAP.md`).
+Updated: 2026-11-24 (Part 1's remaining work in three stages: build, connection, proving it live; standing decision 10: Export everything holds brand-shared data and the caller’s own data). Earlier: 2026-11-23 (standing decision 9: eval timing; 6 to 8: brand skills, team request statuses, routine run history). Earlier: 2026-11-22 (aligned with the 5-file repo setup in `AGENTS.md`, `REVIEW.md`, `VERIFY.md`, `DESIGN.md`, and `FEATURE_MAP.md`).
 
 Decided by Wasim on 2026-11-22: split the remaining backend work into two parts. **Part 1** is built now: a Watch-ready product, including memory at Watch, document skills, and Watch safety/readiness. **Part 2** is built once the first client signs, during that client's Watch months.
 
@@ -44,6 +44,34 @@ Decided by Wasim on 2026-11-22: split the remaining backend work into two parts.
 *(Also open on `main`: Dependabot PRs **#52**, **#53** (failing e2e), and **#54** — triage separately when convenient.)*
 
 ---
+
+## Part 1 from here: three stages (Wasim, 2026-11-24)
+
+P4, P5, P6a and P8a are all in `main` (P8a `149fe323`). What's left of Part 1 runs in three stages, in this order. Each stage starts once the one before is done, so the 3-day soak counts only finished, connected code. Steps 1 to 6 below are the history of how we got here; this section is the plan from now on.
+
+### Stage 1: Build (the product itself)
+The agent, our own agent tools (the Inhouse MCP server and the hub), the backend, the app and the delivery tooling. Done when nothing is left to build for Watch.
+1. **Prompt fix:** the agent never repeats links that came from files or tool results (standing decision 9). Proven by the stage 3 evals, which every prompt change runs.
+2. **Candidate deploy lock:** `CANDIDATE_HUB_VARS` (`app/scripts/check-product-config.mjs`) learns P5's hub vars, so the fresh-account install can deploy.
+3. **Restore-drill workflow** in `inhouse-ops`: runs the runbook's restore (snapshot, write, reconcile, confirm, `checkBeforeSwitch`) with the house token in CI, never from a laptop; the switch stays a separate, approved step. Sensitive (High tier).
+4. **Private health alerts:** amber and red `/api/health` signals (`privacy_requests`, C1 freshness, `egress_record_failed`, `shopify_webhook_secrets`) reach the Inhouse team.
+5. **Browser test gaps** that `FEATURE_MAP.md` still lists (for example the Tools catalogue, route 70).
+6. **Slack nightly job:** remove its skip in `.github/workflows/nightly.yml` now that P5 is in `main`.
+
+### Stage 2: Connection (outside tools, on house)
+Linking house to the real Shopify and Slack through the hub. Our own agent tools are built in stage 1; this stage is only the outside apps.
+1. **House release** of `main` (`inhouse-ops` `house-release.yml`). Needs `SHOPIFY_WEBHOOK_SECRETS` set by card on `inhouse-house` first; the release refuses early without it.
+2. **Shopify:** house test store reads (orders, products, customers) through the hub; the Access exception for `/api/webhooks/shopify/*` (Wasim's decision: the house deploy lock refuses any bypass today) and one test privacy webhook.
+3. **Slack:** the Slack app in Wasim's test workspace, its ids (`HOUSE_SLACK_*`) in the house hub config and its secret by card, then P5 live checks 1 to 9 (4, 6 and 7 are paid).
+4. **Other tools:** connected at client onboarding (BD4), not now.
+
+### Stage 3: Proving it live
+Showing the whole product works over days and is safe, before any client's data.
+1. **Final evals:** every suite once, on all 4 picker models with the prompt fix (standing decisions 2 and 9; needs Wasim's cost cap). Runs alongside the soak.
+2. **Watch soak:** 3 consecutive clean days on house with everything live (standing decision 3).
+3. **House restore drill:** restore house from a backup taken after the release; deletions stay deleted (each step with Wasim's OK).
+4. **Runbook rehearsals:** pause, key and token rotation, member removal, teardown and a rollback redeploy.
+5. **Fresh-account install** on a second Cloudflare account (needs Wasim's account).
 
 ## Part 1: remaining steps to Watch-ready (in order)
 
