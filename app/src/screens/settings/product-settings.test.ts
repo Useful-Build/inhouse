@@ -19,7 +19,7 @@ const { agent } = await import('../../agent')
 const { settingsPage } = await import('./content')
 const { SECTIONS, SETTINGS_PAGES, menuFor, pageShown, settingsTabs } = await import('./menu')
 const { settingRow } = await import('../../../shared/contract/settings-table')
-const { allowance } = await import('./allowance')
+const { allowance, mayPause } = await import('./allowance')
 const { CAN_KEYS } = await import('../../../shared/contract/keys')
 type Env = Parameters<typeof settingsPage>[1]
 
@@ -124,12 +124,20 @@ describe('Pause row permissions (failure 7)', () => {
   const canOf = (on: string[]) => Object.fromEntries(CAN_KEYS.map(k => [k, on.includes(k)])) as Can
   it('shows for the roles the server lets pause (Admin, Inhouse team) and not for a Member; the demo allows it', () => {
     const pause = rows('team-spend', env(true)).find(r => r.title === 'Pause Inhouse agent')!
-    // `invite` is the can key with the same allow list as pause and resume (access-matrix rows 4, 36, 37).
-    expect(pause.can).toBe('invite')
-    expect(allowance(pause, canOf(['invite']), true, 'admin').control).toBe(true)
-    expect(allowance(pause, canOf(['invite']), true, 'inhouse').control).toBe(true)
+    // `editBrandSettings` is the can key with the same class and allow list as pause and resume (access-matrix rows 10, 36, 37;
+    // server/auth/pause-can.test.ts fails if they drift).
+    expect(pause.can).toBe('editBrandSettings')
+    expect(allowance(pause, canOf(['editBrandSettings']), true, 'admin').control).toBe(true)
+    expect(allowance(pause, canOf(['editBrandSettings']), true, 'inhouse').control).toBe(true)
+    expect(allowance(pause, canOf(['invite']), true, 'member').control).toBe(false)
     expect(allowance(pause, canOf([]), true, 'member').control).toBe(false)
     expect(allowance(pause, undefined, false).control).toBe(true)
+  })
+  it("the top bar's Pause and Resume button follows the same key: Admin and Inhouse yes, a Member and an unknown person in the product no", () => {
+    expect(mayPause(canOf(['editBrandSettings']), true)).toBe(true)
+    expect(mayPause(canOf([]), true)).toBe(false)
+    expect(mayPause(undefined, true)).toBe(false)
+    expect(mayPause(undefined, false)).toBe(true)
   })
 })
 

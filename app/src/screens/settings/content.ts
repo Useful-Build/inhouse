@@ -412,9 +412,9 @@ export function settingsPage(tab: string, env: Env): Page {
     'team-spend': { title: 'Spending cap', sections: [
       { label: 'This month', rows: [{ ...txt('Monthly cap', 'Chats, routines and jobs pause when the cap is reached.', 's:cap', fmtCapSetting(usage.cap, d0)), type: 'money' }, sel('Alert at', 'Admins get an email.', 's:alert', `${usage.alertAt}%`, ['50%', '70%', '80%', '90%', '100%']), sel('Show amounts in', 'The currency used for amounts in reports and emails.', 's:currency', 'USD ($)', ['USD ($)', 'GBP (£)', 'EUR (€)', 'CAD ($)', 'AUD ($)']), R('Spent so far', `${usage.month} ${usage.monthKey?.slice(0, 4) ?? calendarOf(now, d0).year}.`, 'value', fmtSpentSetting(env.spent, d0))] },
       // The one stop for everything at once, next to the cap that stops it by itself.
-      // Pause and Resume are Admin and Inhouse team only (access-matrix rows 36 and 37). `invite` is the `me().can` key with the
-      // same two roles (row 4); a Member sees no button instead of one the server refuses.
-      { label: 'Pause', rows: [{ ...R('Pause Inhouse agent', 'Stops every chat, routine and job at once.', 'button', agent.paused ? 'Resume Inhouse agent' : 'Pause Inhouse agent', 1, undefined, undefined, env.togglePause), can: 'invite' as const }] },
+      // Pause and Resume are Admin and Inhouse team only (access-matrix rows 36 and 37). `editBrandSettings` is the `me().can` key
+      // with the same class and allow list (row 10, pause-can.test.ts); a Member sees no button instead of one the server refuses.
+      { label: 'Pause', rows: [{ ...R('Pause Inhouse agent', 'Stops every chat, routine and job at once.', 'button', agent.paused ? 'Resume Inhouse agent' : 'Pause Inhouse agent', 1, undefined, undefined, env.togglePause), can: 'editBrandSettings' as const }] },
       { label: 'Accounts', rows: [R('AI', 'Your Anthropic account, billed at cost.', 'value', 'Anthropic'), R('Hosting', 'Your Cloudflare account, billed at cost.', 'value', 'Cloudflare')] },
     ] },
     'team-data': { title: 'Data and access', sections: [

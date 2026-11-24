@@ -156,6 +156,31 @@ describe('route 42', () => {
     expect((await usage()).months).toContain('2026-08')
   })
 
+  it('a routine turn with no slot row is one run under "Other routines" and still adds up (failure 5)', async () => {
+    // July: no other test reads it. Ada asks one question ($0.50). Digest runs once ($0.30, its slot names the first turn).
+    // A second run's slot was deleted after the steps retention period (the turns outlive the slots), so its system turn
+    // matches no `routine_slots` row ($0.20). The cross-month case (first turn in June, resume turn in July) takes the same path.
+    const jul = Date.UTC(2026, 6, 10, 12)
+    const digest = await insertRoutine(routine({ name: 'Digest', creator_id: 'm_u_ada', checked_until_ms: jul }))
+    await insertSlot({ routine_id: digest.id, local_date: '2026-07-10', claimed_at_ms: jul, chat_id: 'rc_jul_1', turn_id: 't_j2' })
+    const settle = async (t: string, o: Parameters<typeof turnIn>[1], micro: number) => {
+      await ledger.reserve(turnIn(t, o))
+      await ledger.settle(t, micro, NOW)
+    }
+    await settle('t_j1', { memberId: 'm_u_ada', chatId: 'c_jul_q', nowMs: jul }, 500_000)
+    await settle('t_j2', { memberId: 'm_system', chatId: 'rc_jul_1', nowMs: jul }, 300_000)
+    await settle('t_j3', { memberId: 'm_system', chatId: 'rc_jul_2', nowMs: jul }, 200_000)
+    const u = await usage('?month=2026-07')
+    expect(u).toMatchObject({ total: usd(100), conversations: 3, questionsAsked: 1, jobsRun: 2 })
+    expect(u.breakdown.job).toEqual([
+      { name: 'Digest', sub: '1 run', spent: usd(30), conversations: 1 },
+      { name: 'Other routines', sub: '1 run', spent: usd(20), conversations: 1 },
+    ])
+    const sum = (rows: { spent: { minor: number } }[]) => rows.reduce((n, r) => n + r.spent.minor, 0)
+    expect(sum(u.breakdown.person) + sum(u.breakdown.job)).toBe(u.total.minor)
+    expect(sum(u.breakdown.model)).toBe(u.total.minor)
+  })
+
   it('refuses a future month, a bad month and an extra parameter (failure 4)', async () => {
     for (const q of ['?month=2026-12', '?month=2026-13', '?month=nov', '?month=2026-11&x=1', '?month=2026-11&month=2026-10']) {
       expect((await read(q)).status).toBe(400)

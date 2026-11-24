@@ -316,7 +316,7 @@ Settings: Team memory
 Settings: Run limits
   Path:     Settings -> Run limits (the demo only; the product has no such page yet, and the stored `a:<n>` and `l:*` settings and their server checks stay)
   Selector: job switches, "Daily limit", "Largest restock"; button "Pause Inhouse agent" on Settings -> Spending cap (both builds)
-  Expected: switches and limits are locked until Run; each works, lists its options and survives a reload; Pause (on the Spending cap page, a section of its own, locked until Act) stops the agent (button, toast and top bar agree: the top bar's status reads "Running" or "Paused", named "Inhouse agent is running" or "... paused" for screen readers; Resume undoes it) and survives a reload; Reset demo clears all of it
+  Expected: switches and limits are locked until Run; each works, lists its options and survives a reload; Pause (on the Spending cap page, a section of its own, locked until Act) stops the agent (button, toast and top bar agree: the top bar's status reads "Running" or "Paused", named "Inhouse agent is running" or "... paused" for screen readers; Resume undoes it; the top bar's Pause and Resume button, like the Settings button, shows only for an Admin or the Inhouse team, so a Member sees the status text with no button) and survives a reload; Reset demo clears all of it
   Covered:  e2e/settings-team-pages.spec.ts, e2e/settings-agent-data.spec.ts, e2e/ship/setup-gaps.spec.ts, e2e/real/product-settings.spec.ts
 
 Settings: Notifications
