@@ -373,8 +373,7 @@ Product build: startup and initial loading screen
   Path:     `npm run build:product`, any URL (`?demo` and `?demo=<anything>` included)
   Selector: neutral loading status (`Loading…`) while the initial account read runs; alert "Couldn't load Inhouse." and button "Retry" on failure, the product project (`E2E_PRODUCT=1`)
   Expected: one neutral loading screen in place of every page during the initial account read. With Access unconfigured, the read returns 503 and the load error with Retry replaces the requested page. The screen has no sample names, demo switches or Reset demo. The build ignores `?demo` (`scripts/check-product-build.mjs` checks for the absence of the demo clock).
-  Covered:  e2e/product/no-demo.spec.ts, e2e/real/start-errors.spec.ts
-  Gaps:     no browser spec sees the loading screen itself (no-demo.spec.ts only reaches the load error; start-errors.spec.ts only checks the retry path)
+  Covered:  e2e/product/no-demo.spec.ts, e2e/real/start-errors.spec.ts (the held first read shows the loading screen, then the app; no failure or retry screen shows it)
 
 Test build: the product Worker's API and app (P2)
   Path:     `npm run build:product-test`, then `/api/*` with no Access JWT, and `/` in a browser
