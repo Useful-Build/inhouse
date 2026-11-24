@@ -11,6 +11,7 @@ import { CAP_CHAT_USD, estimateUsd, runEvals } from './runner.ts'
 import { buildReport } from './report.ts'
 import { S5_PEOPLE } from './s5-fixtures.ts'
 import type { ChatResult, Target } from './types.ts'
+import { GRADED_PROMPT_VERSION } from './prompt-version.ts'
 
 const USAGE = { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }
 // The Slack search case (P5) needs the hub's live Slack tool, and the code-mode cases (P5 W2) the live Shopify store: no
@@ -384,7 +385,7 @@ describe('unbuilt tools and the cause of a failed run', () => {
       const seed = t.seed
       t.seed = async (...a) => { const s = await seed(...a); return { ...s, chat: async () => ({ toolCalls: [], answer: 'Hello.', runOk: false, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0.4, failure, turnId: 't_BBBBBBBBBBBBBBBBBBBBBB' }) } }
       const out = await runEvals({ target: t, cases: [CASES.find((c) => c.id === 'R02')!], reps: 1, concurrency: 1 })
-      expect(out.rows[0], failure).toMatchObject({ runOk: false, pass: false, err: `the turn was not sent the system prompt v3: ${failure}` })
+      expect(out.rows[0], failure).toMatchObject({ runOk: false, pass: false, err: `the turn was not sent the system prompt v${GRADED_PROMPT_VERSION}: ${failure}` })
     }
   })
 })

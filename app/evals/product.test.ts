@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CapReachedError } from './types.ts'
 import { runEvals } from './runner.ts'
+import { GRADED_PROMPT_VERSION } from './prompt-version.ts'
 import { buildReport, renderReadme } from './report.ts'
 import { writeResults } from './write.ts'
 import type { Case, ChatResult, Target } from './types.ts'
@@ -98,7 +99,7 @@ interface Server {
   endRow?: { failure?: string; why?: string; outcome?: string }
   /** Route 70's answer (default: Shopify connected, not paused, readable). */
   tools?: unknown
-  /** The trace's `promptVersions` (default [3], v3 sent); null leaves the field out (no version recorded). */
+  /** The trace's `promptVersions` (default [GRADED_PROMPT_VERSION], the current prompt sent); null leaves the field out (no version recorded). */
   promptVersions?: (number | null)[] | null
   /** The trace's `promptApps` (default [['Shopify']]); null leaves the field out. */
   promptApps?: (string[] | null)[] | null
@@ -155,7 +156,7 @@ const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } 
     }
     if (url.pathname.startsWith('/api/traces/') && s.traceStatus && s.traceStatus !== 200) return json({ error: { code: 'unavailable' } }, s.traceStatus)
     if (url.pathname.startsWith('/api/traces/')) {
-      const versions = s.promptVersions === undefined ? [3] : s.promptVersions
+      const versions = s.promptVersions === undefined ? [GRADED_PROMPT_VERSION] : s.promptVersions
       const apps = s.promptApps === undefined ? [['Shopify']] : s.promptApps
       return json({ cost: { minor: s.costMinor, currency: 'USD' }, steps: [{ kind: 'root', detail: '' }, ...s.steps], ...(versions === null ? {} : { promptVersions: versions }), ...(apps === null ? {} : { promptApps: apps }) })
     }

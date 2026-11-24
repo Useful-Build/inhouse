@@ -29,6 +29,7 @@ import { createMorningDoor, type MorningDoor } from './door.ts'
 import { AMBER, META, hostOf } from './expected.ts'
 import { clearOnSignals, ensureDefaultModel, gradedRun, MORNING_CHECK_CAP, remoteEnv, remoteHttp, type ApiCall, type GradedDoor, type SettingsApi } from './remote.ts'
 import { ROUTINE_ID, runAll } from './runner.ts'
+import { GRADED_PROMPT_VERSION } from '../prompt-version.ts'
 
 const migrations = fileURLToPath(new URL('../../server/migrations/', import.meta.url))
 function database() {
@@ -257,9 +258,9 @@ describe('the remote runner env', () => {
     door.slot = async (k: string) => ({ ...(await slot(k))!, turn_id: 't_AAAAAAAAAAAAAAAAAAAAAA' })
     const asked: string[] = []
     let now = 0
-    const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {}, promptTrace: async t => { asked.push(t); return { promptVersions: [3], promptApps: [['Shopify']] } } })
+    const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {}, promptTrace: async t => { asked.push(t); return { promptVersions: [GRADED_PROMPT_VERSION], promptApps: [['Shopify']] } } })
     const file = await runAll(env, twoCases(), meta)
-    expect(file.cases.map(c => [c.id, c.prompt, c.verdict.pass])).toEqual([['clean-empty', 3, true], ['outage-all', 3, false]])
+    expect(file.cases.map(c => [c.id, c.prompt, c.verdict.pass])).toEqual([['clean-empty', GRADED_PROMPT_VERSION, true], ['outage-all', GRADED_PROMPT_VERSION, false]])
     expect(asked).toEqual(['t_AAAAAAAAAAAAAAAAAAAAAA', 't_AAAAAAAAAAAAAAAAAAAAAA'])
   })
 
@@ -271,7 +272,7 @@ describe('the remote runner env', () => {
       let now = 0
       const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {}, promptTrace: async () => (versions === undefined ? {} : { promptVersions: versions, promptApps: [['Shopify']] }) })
       const file = await runAll(env, [META.find(c => c.id === 'clean-empty')!], meta)
-      expect(file.cases[0], String(sent)).toMatchObject({ prompt: sent, verdict: { pass: false, reasons: [`prompt_version:${sent}: the turn was not sent the system prompt v3`] } })
+      expect(file.cases[0], String(sent)).toMatchObject({ prompt: sent, verdict: { pass: false, reasons: [`prompt_version:${sent}: the turn was not sent the system prompt v${GRADED_PROMPT_VERSION}`] } })
     }
   })
 
@@ -282,9 +283,9 @@ describe('the remote runner env', () => {
       const slot = door.slot
       door.slot = async (k: string) => ({ ...(await slot(k))!, turn_id: 't_AAAAAAAAAAAAAAAAAAAAAA' })
       let now = 0
-      const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {}, promptTrace: async () => ({ promptVersions: [3], ...(apps === undefined ? {} : { promptApps: apps }) }) })
+      const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {}, promptTrace: async () => ({ promptVersions: [GRADED_PROMPT_VERSION], ...(apps === undefined ? {} : { promptApps: apps }) }) })
       const file = await runAll(env, [META.find(c => c.id === 'clean-empty')!], meta)
-      expect(file.cases[0], code).toMatchObject({ prompt: 3, verdict: { pass: false, reasons: [`${code}: the turn's prompt did not name Shopify as connected`] } })
+      expect(file.cases[0], code).toMatchObject({ prompt: GRADED_PROMPT_VERSION, verdict: { pass: false, reasons: [`${code}: the turn's prompt did not name Shopify as connected`] } })
     }
   })
 
@@ -295,7 +296,7 @@ describe('the remote runner env', () => {
     let now = 0
     const env = remoteEnv({ door, runNow: async () => {}, alarm: null, pause: async () => { now += 1000 }, nowMs: () => now, caseTimeoutMs: 60_000, settleMs: 10_000, warn: () => {}, promptTrace: async () => { throw new Error('trace read') } })
     const file = await runAll(env, [META.find(c => c.id === 'clean-empty')!], meta)
-    expect(file.cases[0]).toMatchObject({ prompt: 'missing', verdict: { pass: false, reasons: ['prompt_version:missing: the turn was not sent the system prompt v3'] } })
+    expect(file.cases[0]).toMatchObject({ prompt: 'missing', verdict: { pass: false, reasons: [`prompt_version:missing: the turn was not sent the system prompt v${GRADED_PROMPT_VERSION}`] } })
   })
 
   it('without checkModel (the scripted proof\'s spec), no slot model is read nor kept', async () => {

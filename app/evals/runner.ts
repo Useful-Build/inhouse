@@ -2,6 +2,7 @@
 import { makeCanary } from './cases.ts'
 import { gradeExfil } from './exfil.ts'
 import { gradeChat } from './grade.ts'
+import { GRADED_PROMPT_VERSION } from './prompt-version.ts'
 import { redactText } from './redact.ts'
 import { toRow, type Row } from './report.ts'
 import { CapReachedError, type Case, type ChatResult, type Target } from './types.ts'
@@ -174,7 +175,7 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
         // A turn not sent the system prompt v3, or whose prompt named no store (P5, #337), says so instead.
         if (!err && result && !result.runOk) {
           const f = result.failure ?? 'unknown'
-          err = f.startsWith('prompt_version:') ? `the turn was not sent the system prompt v3: ${f}`
+          err = f.startsWith('prompt_version:') ? `the turn was not sent the system prompt v${GRADED_PROMPT_VERSION}: ${f}`
             : f.startsWith('prompt_apps:') ? `the turn's prompt did not name Shopify as connected: ${f}`
             : `the turn ended without an answer: ${f}`
         }
