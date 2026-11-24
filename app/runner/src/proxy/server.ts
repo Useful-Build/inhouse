@@ -58,12 +58,12 @@ export const PROXY_MAX_CONNECTIONS_PER_UID = 256
 export const PROXY_UPSTREAM_TIMEOUT_MS = 10 * 60_000
 /**
  * Strictly idempotent, read-only MCP startup/handshake methods that may be retried on a transient upstream error.
- * Claude Code CLI 2.1.328's `MCP_CONNECTION_NONBLOCKING=0` resolves its startup barrier as soon as a server's first
- * connect attempt fails (running its own retries unawaited in the background), so one transient hiccup on
- * `egress.internal` during startup leaves turn 0 with zero tools from that server. `tools/call` is never retried here.
+ * This defends against confirmed startup behavior in the pinned Claude Code CLI 2.1.328 binary:
+ * with `MCP_CONNECTION_NONBLOCKING=0`, `F()` resolves the startup wait on a `failed` result,
+ * and the `zBn` retry ([500, 1500, 4000] ms) runs unawaited. `tools/call` is never retried here.
  */
 const RETRYABLE_MCP_METHODS = new Set(['initialize', 'notifications/initialized', 'tools/list', 'ping'])
-const RETRYABLE_UPSTREAM_STATUSES = new Set([502, 503, 504])
+const RETRYABLE_UPSTREAM_STATUSES = new Set([500, 502, 503, 504])
 export const MCP_HANDSHAKE_MAX_BODY_BYTES = 16 * 1024
 export const MCP_HANDSHAKE_MAX_RESPONSE_BYTES = 1024 * 1024
 export const MCP_HANDSHAKE_RETRY_DELAYS_MS: readonly number[] = [150, 400]
@@ -304,9 +304,9 @@ function forwardBuffered(
     activeUp?.destroy()
   })
 
-  const attempt = (index: number, token: string) => {
+  const attempt = (index: number) => {
     if (callerGone) return
-    const headers = buildForwardHeaders(req, token)
+    const headers = buildForwardHeaders(req, initialToken)
     headers['content-length'] = String(body.length)
     let settled = false
     const canRetry = index < retryDelaysMs.length
@@ -320,10 +320,10 @@ function forwardBuffered(
         else res.destroy()
         return
       }
-      scheduleRetry(index + 1)
+      scheduleRetry(index + 1, status)
     }
 
-    const scheduleRetry = (nextIndex: number) => {
+    const scheduleRetry = (nextIndex: number, status: number) => {
       const delay = retryDelaysMs[nextIndex - 1] ?? 0
       retryTimer = setTimeout(() => {
         retryTimer = undefined
@@ -333,7 +333,11 @@ function forwardBuffered(
           refuseLogged(deps, res, route, uid, 'no live run for this user (or its stream has ended)')
           return
         }
-        attempt(nextIndex, freshToken)
+        if (freshToken !== initialToken) {
+          refuse(res, status, 'upstream failed')
+          return
+        }
+        attempt(nextIndex)
       }, delay)
     }
 
@@ -341,8 +345,8 @@ function forwardBuffered(
     const up = send(target, { method: req.method, headers, agent: false, timeout }, (upRes) => {
       const status = upRes.statusCode ?? 502
       if (canRetry && RETRYABLE_UPSTREAM_STATUSES.has(status)) {
-        upRes.resume()
         retryOrFail(`upstream status ${status}`, status)
+        up.destroy()
         return
       }
       if (!canRetry) {
@@ -405,7 +409,7 @@ function forwardBuffered(
     up.end(body)
   }
 
-  attempt(0, initialToken)
+  attempt(0)
 }
 
 function forwardStream(
@@ -457,9 +461,8 @@ function forwardStream(
     up.destroy()
   })
 
-  for (const chunk of prefix) {
-    if (failed) break
-    if (!up.write(chunk)) {
+  const write = (chunk: Buffer) => {
+    if (!up.write(chunk) && !req.isPaused()) {
       req.pause()
       up.once('drain', () => req.resume())
     }
@@ -475,12 +478,11 @@ function forwardStream(
       tooLarge()
       return
     }
-    if (!up.write(chunk)) {
-      req.pause()
-      up.once('drain', () => req.resume())
-    }
+    write(chunk)
   })
   req.on('end', () => {
     if (!failed) up.end()
   })
+  // Attach the data listener before writing the prefix so it cannot resume a backpressured request.
+  for (const chunk of prefix) write(chunk)
 }
