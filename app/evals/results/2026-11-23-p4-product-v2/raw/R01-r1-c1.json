@@ -1,0 +1,42 @@
+{
+ "row": {
+  "caseId": "R01",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Norda Ceramics, your mug supplier, has these terms saved in memory:\n\n- **Lead ti",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_32PBlrugmyAObY742m--Ew",
+  "askedAs": "eval-45239772379-1-r01-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "Norda Ceramics, your mug supplier, has these terms saved in memory:\n\n- **Lead ti",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "ae0d177cb4cbf4272cc465c9d19b54d7184d8d1f18bcdff20b5e4ec754590a3d",
+    "inputExcerpt": "{\"query\":\"Norda delivery lead time minimum order\"}"
+   }
+  ]
+ }
+}

@@ -142,6 +142,26 @@ describe('the guarded options', () => {
     expect(o.cwd).toBe(sessionPaths(c.chatId).workDir)
   })
 
+  // Brand skills (P6a). Ways it could fail: a brand skill isn't in the skills lock (it never loads), one is listed
+  // without its plugin (or ours is dropped), the brand plugin points anywhere but the user's own root-owned folder, or
+  // a brand skill changes the tools, the permission mode or the allow rules.
+  const brandName = fc.stringMatching(/^[a-z][a-z0-9]{0,8}(-[a-z0-9]{1,8}){0,2}$/).filter((n) => !['dataviz', 'pdf', 'word', 'spreadsheet'].includes(n))
+  const brandSkills = fc.uniqueArray(brandName, { minLength: 1, maxLength: 5 }).map((ns) => ns.map((name) => ({ name, description: `Does ${name}.`, body: 'Steps.' })))
+  it.prop([config, brandSkills])("a run's brand skills join the skills lock as brand:<name>, from the user's own brand plugin, and change nothing else", (c0, skills) => {
+    const c = RunConfig.parse({ ...c0, brandSkills: skills })
+    const o = guards.apply(base(c), c, run)
+    const plain = guards.apply(base(c0), c0, run)
+    expect(o.skills).toEqual([...ALLOWED_SKILLS, ...skills.map((s) => `brand:${s.name}`)])
+    expect(o.plugins).toEqual([
+      { type: 'local', path: PLUGIN_DIR, skipMcpDiscovery: true },
+      { type: 'local', path: own.brandPlugin, skipMcpDiscovery: true },
+    ])
+    expect([o.tools, o.allowedTools, o.permissionMode, o.settings, o.sandbox]).toEqual([plain.tools, plain.allowedTools, plain.permissionMode, plain.settings, plain.sandbox])
+    // None: no brand plugin at all.
+    const none = RunConfig.parse({ ...c0, brandSkills: [] })
+    expect(guards.apply(base(none), none, run).plugins).toEqual([{ type: 'local', path: PLUGIN_DIR, skipMcpDiscovery: true }])
+  })
+
   it.prop([config])('every allow rule names one of the 20, our MCP server, or WebFetch for a listed domain', (c) => {
     const o = guards.apply(base(c), c, run)
     const allowed = new Set<string>(BUILT_IN_TOOLS)

@@ -1,0 +1,1156 @@
+{
+  "date": "2026-11-22",
+  "sha": "c4babe48368a0dad278811c844ec182d08d66873",
+  "model": "claude-sonnet-5-5",
+  "summary": {
+    "graded": {
+      "passed": 12,
+      "total": 12
+    },
+    "cleanAllPass": true,
+    "outageAllPass": true,
+    "partial": false,
+    "thresholdMet": true
+  },
+  "cases": [
+    {
+      "id": "late-orders",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "late-orders",
+            "sev": "#b97a14",
+            "sources": [
+              "#2003",
+              "#2002",
+              "#2001"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|a2294c45e6874c17805ce52160ec5782",
+      "failure": null,
+      "resultText": "found 1 thing",
+      "ms": 40079,
+      "ranOn": "claude-sonnet-5-5"
+    },
+    {
+      "id": "late-orders-red",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "late-orders",
+            "sev": "#b23c22",
+            "sources": [
+              "#2011",
+              "#2012"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__order_get",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|89c777f3e31d400c891b0af09aca416c",
+      "failure": null,
+      "resultText": "found 1 thing",
+      "ms": 32495,
+      "ranOn": "claude-sonnet-5-5"
+    },
+    {
+      "id": "unpaid-orders",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "unpaid-orders",
+            "sev": "#b97a14",
+            "sources": [
+              "#2022",
+              "#2021",
+              "#2023"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|17d48cc8e2054d48bd8658867482c040",
+      "failure": null,
+      "resultText": "found 1 thing",
+      "ms": 32753,
+      "ranOn": "claude-sonnet-5-5"
+    },
+    {
+      "id": "open-returns",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "open-returns",
+            "sev": "#b97a14",
+            "sources": [
+              "#2032",
+              "#2031"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__products_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|e68c259d5d2a4ad78e346a921fb8da8c",
+      "failure": null,
+      "resultText": "found 1 thing",
+      "ms": 25014,
+      "ranOn": "claude-sonnet-5-5"
+    },
+    {
+      "id": "returns-not-restocked",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "returns-not-restocked",
+            "sev": "#b97a14",
+            "sources": [
+              "#2042",
+              "#2041"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__order_get",
+          "mcp__apps__order_get",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|325ec7a949f5420b846eaf4ad881705e",
+      "failure": null,
+      "resultText": "found 1 thing",
+      "ms": 32303,
+      "ranOn": "claude-sonnet-5-5"
+    },
+    {
+      "id": "refund-spike",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "refund-spike",
+            "sev": "#b23c22",
+            "sources": [
+              "#2054",
+              "#2053",
+              "#2052",
+              "#2051"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__inhouse__memory_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__products_search",
+          "mcp__apps__order_get",
+          "mcp__apps__refunds_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__order_get",
+          "mcp__apps__order_get",
+          "mcp__apps__order_get",
+          "mcp__apps__order_get",
+          "mcp__apps__order_get",
+          "mcp__apps__order_get",
+          "mcp__apps__order_get",
+          "mcp__apps__order_get",
+          "mcp__apps__order_get",
+          "mcp__apps__order_get",
+          "mcp__apps__order_get",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|55d7ace5ada84bec9db9081632172a95",
+      "failure": null,
+      "resultText": "found 1 thing",
+      "ms": 46782,
+      "ranOn": "claude-sonnet-5-5"
+    },
+    {
+      "id": "low-stock",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "low-stock",
+            "sev": "#b97a14",
+            "sources": [
+              "MC-LOW"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__orders_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|86f1e88baf3d42f4ab629e61b7ae8f72",
+      "failure": null,
+      "resultText": "found 1 thing",
+      "ms": 35500,
+      "ranOn": "claude-sonnet-5-5"
+    },
+    {
+      "id": "out-of-stock",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "out-of-stock",
+            "sev": "#b23c22",
+            "sources": [
+              "MC-OUT"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|9eb5a2c158c7413083561fb632c27401",
+      "failure": null,
+      "resultText": "found 1 thing",
+      "ms": 43657,
+      "ranOn": "claude-sonnet-5-5"
+    },
+    {
+      "id": "oversold",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "oversold",
+            "sev": "#b23c22",
+            "sources": [
+              "MC-NEG"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|83bbf42ef2d142ea9ddfb2262a34fdb7",
+      "failure": null,
+      "resultText": "found 1 thing",
+      "ms": 32086,
+      "ranOn": "claude-sonnet-5-5"
+    },
+    {
+      "id": "mixed-a",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "late-orders",
+            "sev": "#b97a14",
+            "sources": [
+              "#2001",
+              "#2002"
+            ]
+          },
+          {
+            "key": "refund-spike",
+            "sev": "#b23c22",
+            "sources": [
+              "#2051",
+              "#2052",
+              "#2053",
+              "#2054"
+            ]
+          },
+          {
+            "key": "low-stock",
+            "sev": "#b97a14",
+            "sources": [
+              "MC-LOW"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__order_get",
+          "mcp__apps__order_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__order_get",
+          "mcp__apps__order_get",
+          "mcp__apps__order_get",
+          "mcp__apps__order_get",
+          "mcp__apps__order_get",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|1de404421d5a426bbc49a63b2c75e315",
+      "failure": null,
+      "resultText": "found 3 things",
+      "ms": 43774,
+      "ranOn": "claude-sonnet-5-5"
+    },
+    {
+      "id": "mixed-b",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "unpaid-orders",
+            "sev": "#b97a14",
+            "sources": [
+              "#2022",
+              "#2021"
+            ]
+          },
+          {
+            "key": "open-returns",
+            "sev": "#b97a14",
+            "sources": [
+              "#2031"
+            ]
+          },
+          {
+            "key": "oversold",
+            "sev": "#b23c22",
+            "sources": [
+              "MC-NEG",
+              "#2022"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__refunds_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|a593434fc0454c9b9153b0669acd1927",
+      "failure": null,
+      "resultText": "found 3 things",
+      "ms": 39381,
+      "ranOn": "claude-sonnet-5-5"
+    },
+    {
+      "id": "fixture",
+      "group": "graded",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [
+          {
+            "key": "late-orders",
+            "sev": "#b97a14",
+            "sources": [
+              "#1001"
+            ]
+          },
+          {
+            "key": "refund-spike",
+            "sev": "#b23c22",
+            "sources": [
+              "P4-0062",
+              "#1023",
+              "#1003"
+            ]
+          },
+          {
+            "key": "oversold",
+            "sev": "#b23c22",
+            "sources": [
+              "P4-0038"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__order_get",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|37273e99b39f423a9cf470ab42c804a4",
+      "failure": null,
+      "resultText": "found 3 things",
+      "ms": 58602,
+      "ranOn": "claude-sonnet-5-5"
+    },
+    {
+      "id": "clean-old-orders",
+      "group": "clean",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__products_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|0c6aa1a3c2d4421b80b2a011c263631e",
+      "failure": null,
+      "resultText": "found 0 things",
+      "ms": 24939,
+      "ranOn": "claude-sonnet-5-5"
+    },
+    {
+      "id": "clean-steady",
+      "group": "clean",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [],
+        "calls": [
+          "ToolSearch",
+          "mcp__inhouse__memory_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|146bf380db4d4ee69d7e0abd71aa3061",
+      "failure": null,
+      "resultText": "found 0 things",
+      "ms": 28297,
+      "ranOn": "claude-sonnet-5-5"
+    },
+    {
+      "id": "clean-empty",
+      "group": "clean",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "complete",
+        "gaps": [],
+        "items": [],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|b591e4bacd414b96aec8f1e2baced5c0",
+      "failure": null,
+      "resultText": "found 0 things",
+      "ms": 28060,
+      "ranOn": "claude-sonnet-5-5"
+    },
+    {
+      "id": "outage-all",
+      "group": "outage",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "incomplete",
+        "gaps": [
+          "orders",
+          "products",
+          "inventory",
+          "refunds",
+          "returns"
+        ],
+        "items": [],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__products_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__returns_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|ab7250d5750546e7965fb8943e2c4476",
+      "failure": "incomplete",
+      "resultText": "found 0 things; couldn't read orders, products, inventory, refunds, returns",
+      "ms": 24848,
+      "ranOn": "claude-sonnet-5-5"
+    },
+    {
+      "id": "outage-credentials",
+      "group": "outage",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "incomplete",
+        "gaps": [
+          "orders",
+          "products",
+          "inventory",
+          "refunds"
+        ],
+        "items": [
+          {
+            "key": "late-orders",
+            "sev": "#b97a14",
+            "sources": [
+              "#2003",
+              "#2002",
+              "#2001"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__inventory_levels_get",
+          "mcp__apps__refunds_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|7396a1a84f78412f9f8243e89db114a2",
+      "failure": "incomplete",
+      "resultText": "found 1 thing; couldn't read orders, products, inventory, refunds",
+      "ms": 32114,
+      "ranOn": "claude-sonnet-5-5"
+    },
+    {
+      "id": "outage-too-large",
+      "group": "outage",
+      "verdict": {
+        "pass": true,
+        "checks": {
+          "parsed": true,
+          "coverage": true,
+          "gaps": true,
+          "keys": true,
+          "sev": true,
+          "sources": true,
+          "noFixtureTool": true
+        },
+        "reasons": []
+      },
+      "observed": {
+        "ok": true,
+        "coverage": "incomplete",
+        "gaps": [
+          "returns"
+        ],
+        "items": [
+          {
+            "key": "late-orders",
+            "sev": "#b97a14",
+            "sources": [
+              "#2003",
+              "#2002",
+              "#2001"
+            ]
+          }
+        ],
+        "calls": [
+          "ToolSearch",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__orders_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__refunds_search",
+          "mcp__apps__products_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__returns_search",
+          "mcp__apps__orders_search",
+          "StructuredOutput"
+        ],
+        "fixed": {
+          "truncated": 0,
+          "dropped": 0,
+          "deduped": 0,
+          "overflow": 0,
+          "costsRemoved": 0
+        }
+      },
+      "slotKey": "now|routine-morning-check|4d1f28ec8e7a413cbba161f48c2c0f9c",
+      "failure": "incomplete",
+      "resultText": "found 1 thing; couldn't read returns",
+      "ms": 35611,
+      "ranOn": "claude-sonnet-5-5"
+    }
+  ],
+  "notRun": []
+}

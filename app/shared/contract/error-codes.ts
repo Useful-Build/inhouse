@@ -24,6 +24,10 @@ export const REASON = {
   routineLimit: 'routine_limit', empty: 'empty',
   // P8a P-auth: an Inhouse team sign-in on the brand app.
   wrongKind: 'wrong_kind',
+  // P6a W3: a request to the Inhouse team past 50 open ones.
+  requestLimit: 'request_limit',
+  // P8a D: Export everything's check refused the Inhouse team once its grant ended.
+  grantRequired: 'grant_required',
 } as const satisfies Record<string, ErrorReason>
 /** Why the runner didn't save a file the agent made (the `file.refused` event), as the chat names them. */
 export const FILE_REFUSAL = {

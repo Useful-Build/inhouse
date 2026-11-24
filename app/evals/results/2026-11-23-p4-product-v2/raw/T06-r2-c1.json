@@ -1,0 +1,53 @@
+{
+ "row": {
+  "caseId": "T06",
+  "cat": "choice",
+  "pair": "history_search/memory_search",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "history_search",
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I couldn't find a chat from last month about returns. Searching your past chats ",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t__vJoWHnKu0_g_E0NvB848g",
+  "askedAs": "eval-45239772379-1-t06-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I couldn't find a chat from last month about returns. Searching your past chats ",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__history_search",
+    "inputSha256": "2bdc684766ec20149adc95bd236999f9b236dc767dd63c1773dd23ba02a33831",
+    "inputExcerpt": "{\"query\":\"returns\",\"after\":\"2026-10-01\",\"before\":\"2026-11-01\",\"limit\":20}"
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "f9fb0d8cf71c744877baf8eb93bd6a7716f4d987905117003ea42b3627c22054",
+    "inputExcerpt": "{\"query\":\"returns policy\"}"
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "inputSha256": "d62d9d08231a3cac9b6bbca0df76ec165a3b1c2d9422c96d391d0dc508219a54",
+    "inputExcerpt": "{\"query\":\"return refund policy exchange\",\"limit\":20}"
+   }
+  ]
+ }
+}

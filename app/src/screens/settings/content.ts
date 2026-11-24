@@ -1,5 +1,8 @@
 // Settings content. Pure data: the screen renders it.
 import type { AgentData, AgentState, AuditLine, CanKey, Me, MemberRecord, MemberRole, MemoryLine, Money, StageIndex } from '../../agent/types'
+import { AgentError } from '../../agent/types'
+import { CONFLICT, FORBIDDEN, REASON } from '../../../shared/contract/error-codes'
+import type { WaitingState } from './waiting-list'
 import { STAGE_TAGS, channelFrom, listNames } from '../../state/derive'
 import { EFFORTS, defaultModeId, modeEffortKey, modeOnKey, thinkingModes } from '../../state/derive'
 import type { Pop, RequestType } from '../../state/store'
@@ -10,6 +13,8 @@ import { display, nowOf } from '../../state/display'
 import { AUDIT_CSV_HEADER, csvCell } from '../../../shared/csv'
 import { grantStatus } from './grant-status'
 import { HOSTLIST_MAX_HOSTS, MAX_TURNS, parseHostlist } from '../../../shared/contract/settings-table'
+import { dataExportFileName, nextCleanupMs } from '../../../shared/contract/data-access'
+import { demoExport } from './demo-export'
 
 export type RowKind = 'select' | 'text' | 'value' | 'button' | 'toggle' | 'mode' | 'photo' | 'grant'
 export interface Row {
@@ -59,6 +64,10 @@ export interface Row {
   can?: CanKey
   /** A Remove button beside the control: the question that names the person, and what confirming does. */
   remove?: { label: string; title: string; text: string; action: string; go: () => void }
+  /** A `button` row's accessible name, when its visible label alone doesn't say which row it acts on (a waiting fact's Approve). */
+  ariaLabel?: string
+  /** A second button beside a `button` row's own (a waiting fact's Reject): its label, its accessible name, the question asked first, and what it does. */
+  also?: { label: string; ariaLabel: string; ask?: { title: string; text: string; action: string }; go: () => void }
 }
 
 export type FieldType = 'money' | 'email' | 'hosts'
@@ -143,6 +152,17 @@ export interface Env {
   loadMore: (list: 'audit' | 'members') => void
   /** Downloads the audit log from where the client says (`auditExportUrl()`), or null when the file is built here. */
   exportFromServer: (() => void) | null
+  /**
+   * Starts Export everything's download from the server, or null when the demo builds its sample here: asks route 96
+   * first and navigates to route 95 only when it would start. Resolves once the download has started; rejects with the
+   * check's `AgentError` (nothing navigated).
+   */
+  exportDataFromServer: (() => Promise<void>) | null
+  /**
+   * P6a: the team facts waiting for an OK (waiting-list.ts) and what the page does with them: approve (`true`) or reject one,
+   * and read the list again after a failed read. Unset for someone who can't approve.
+   */
+  waiting?: { state: WaitingState; decide: (key: string, approved: boolean) => void; retry: () => void }
 }
 
 const withAvatar = (row: Row, who: string, at: 'row' | 'control' = 'row'): Row => ({ ...row, avatar: { who, at } })
@@ -163,6 +183,16 @@ export const memorySource = (l: MemoryLine, now: number): string => {
   return l.source + (l.at ? `, ${fmtNearDay(l.at, now, d0)}` : '') + (l.used ? ` · ${l.used}` : '') + (l.lastUsed ? `, last ${fmtDayWord(l.lastUsed, now, d0)}` : '')
 }
 
+/** What the person reads when Export everything's check (route 96) refuses: the download never started. */
+export function exportRefused(e: unknown): string {
+  const code = e instanceof AgentError ? e.code : null
+  const reason = e instanceof AgentError ? e.reason : undefined
+  if (code === CONFLICT && reason === REASON.tooLarge) return 'Your brand has too much data for one download. Ask the Inhouse team to export it for you.'
+  if (code === FORBIDDEN && reason === REASON.grantRequired) return 'Support access has ended, so the export didn\'t start. Ask an admin to grant it again.'
+  if (code === FORBIDDEN) return "You can't export this brand's data."
+  return "The export didn't start. Try again in a minute."
+}
+
 export function settingsPage(tab: string, env: Env): Page {
   const { S, stage, agent, data } = env
   const { auditLog, memory, meta, people, skills, usage } = data
@@ -170,10 +200,22 @@ export function settingsPage(tab: string, env: Env): Page {
   const d0 = display()
   const now = nowOf()
   const forgetRows = (lines: MemoryLine[]) =>
-    lines.filter(l => !agent.forgot[l.key]).map(l => R(l.text, memorySource(l, now), 'button', 'Forget', 1, undefined, undefined, () => env.forget(l.key)))
+    lines.filter(l => !agent.forgot[l.key]).map(l => R(l.text, memorySource(l, now), 'button', 'Forget', 0, undefined, undefined, () => env.forget(l.key)))
   const teamMem = memory.team.map(g => ({ label: g.group, rows: forgetRows(g.lines) }))
+  // P6a: what waits for an admin's OK, above the team's rules, for someone who may approve. Nothing waiting: no section.
+  const w = env.me?.can.approveMemory ? env.waiting : undefined
+  const waitingRows: Row[] = !w ? [] : w.state.status === 'failed'
+    ? [{ ...R("Couldn't load what waits for your OK.", '', 'button', 'Retry', 0, undefined, undefined, w.retry), can: 'approveMemory' as const, busy: w.state.reading }]
+    : w.state.facts.map(l => ({
+      ...R(l.text, memorySource(l, now), 'button', 'Approve', 0, undefined, undefined, () => w.decide(l.key, true)),
+      can: 'approveMemory' as const,
+      ariaLabel: `Approve: ${l.text}`,
+      busy: w.state.deciding.has(l.key),
+      also: { label: 'Reject', ariaLabel: `Reject: ${l.text}`, ask: { title: 'Reject this rule?', text: "Your Inhouse agent won't use it.", action: 'Reject' }, go: () => w.decide(l.key, false) },
+    }))
+  const waitingMem = waitingRows.length > 0 ? [{ label: 'Waiting for your OK', rows: waitingRows }] : []
   const memCount = teamMem.reduce((n, g) => n + g.rows.length, 0)
-  const teach = R('Teach it something', 'Tell it a rule in a chat, in your own words. It appears here.', 'button', 'Teach in a chat', 1, undefined, undefined, () => env.newChat('Remember that '))
+  const teach = R('Teach it something', "Tell it a rule in a chat, in your own words. It shows here, after an admin's OK if Ask is on.", 'button', 'Teach in a chat', 0, undefined, undefined, () => env.newChat('Remember that '))
   const lim = people.runLimits
   // These rows start at Act, so they name the channel Act connects. None: no channel wording or option.
   const channel = channelFrom(data, 1)?.name
@@ -185,6 +227,22 @@ export function settingsPage(tab: string, env: Env): Page {
   /** The audit log's two groups: changes made today, and earlier ones. */
   const auditDay = (e: AuditLine) => fmtAuditDay(e.at, now, d0)
   const pausedRow = agent.paused ? [withAvatar(R(`${me.name} paused your Inhouse agent`, `Chats, routines and jobs stopped · ${fmtTime(agent.paused, d0)}`, 'value'), me.id)] : []
+  // Data and access (P8a D). The retention periods are the Inhouse team's to set; anyone else reads them as text, so say who.
+  const setByTeam = env.me && !env.me.can.editTechnical ? ' The Inhouse team sets this.' : ''
+  const cleanupAt = nextCleanupMs(now)
+  const cleanupDay = fmtDayWord(cleanupAt, now, d0)
+  const nextCleanup = `${cleanupDay.charAt(0).toUpperCase()}${cleanupDay.slice(1)} at ${fmtTime(cleanupAt, d0)}`
+  const exportEverything = () => {
+    if (env.exportDataFromServer) {
+      env.exportDataFromServer().then(
+        () => { env.toast('Your export is downloading. Big brands can take a few minutes.', 6000) },
+        (e: unknown) => { env.toast(exportRefused(e), 8000, 'info') },
+      )
+      return
+    }
+    env.download(dataExportFileName(now), demoExport(people.members, agent.settings, now), 'application/x-ndjson')
+    env.toast('Sample export downloaded. The demo uses invented data.', 4000, 'info')
+  }
   const nextStage = S < 2
     ? [`Act adds ${listNames(['drafted work', 'memory', 'routines', ...(channel ? [channel] : [])])}.`, 'Run adds agreed jobs it finishes by itself, within your limits.'][S]
     : 'You have every stage. Money and customer actions still wait for a person.'
@@ -237,7 +295,7 @@ export function settingsPage(tab: string, env: Env): Page {
     ] },
     'you-memory': { title: 'Memory', sections: [
       { label: 'What your Inhouse agent knows about you', rows: forgetRows(memory.personal) },
-      { label: 'Privacy', rows: [R('Only you can see this', 'Teammates and admins cannot read your personal memory.', 'value', 'Private'), R('Learn from my chats', 'Your Inhouse agent saves your preferences as you work. Turn off to stop.', 'toggle', '', 1, 'm:learn', true)] },
+      { label: 'Privacy', rows: [R('Only you can see this', 'Teammates and admins cannot read your personal memory.', 'value', 'Private'), R('Learn from my chats', 'Your Inhouse agent saves your preferences as you work. Turn off to stop.', 'toggle', '', 0, 'm:learn', true)] },
     ] },
     'team-plan': { title: 'Stage and plan', sections: [
       { label: 'Your stage', rows: [R('Current stage', stageDesc, 'value', stage), R('Next stage', nextStage, 'value', S < 2 ? STAGE_TAGS[S + 1] : 'None'), R('Talk to your Inhouse team', 'Move up when you are ready. Every stage includes all your tools.', 'button', 'Book a check-in', 0, undefined, undefined, () => env.openTeam('change', ''))] },
@@ -247,17 +305,19 @@ export function settingsPage(tab: string, env: Env): Page {
       { label: 'About', rows: [sel('Tone', 'How it writes to suppliers, customers and your team.', 't:tone', meta.agent.tone, ['Friendly and short', 'Warm and detailed', 'Formal and brief', 'Plain and direct']), txt('Signs emails as', 'Used on supplier and customer emails.', 't:signs', meta.agent.signsEmailsAs)] },
       { label: 'Answers', rows: [
         sel('Most steps in one answer', 'An answer that needs more steps than this stops and says so.', 't:max_turns', '25', [...MAX_TURNS]),
-        { ...txt('Websites it may open', 'One website name a line. Leave empty and it may open any public website.', 't:webfetch', ''), type: 'hosts', keywords: 'webfetch hosts domains allowlist' },
+        { ...txt('Websites it may open', 'Enter one website name per line. Leave empty to block all websites.', 't:webfetch', ''), type: 'hosts', keywords: 'webfetch hosts domains allowlist' },
+        R('Search the web', 'Allow your Inhouse agent to search the web. Off by default.', 'toggle', '', 0, 't:websearch', false),
       ] },
-      { label: 'What your Inhouse agent knows', rows: [R('Team memory', `Supplier, customer and stock rules the whole team shares. ${memCount} things remembered.`, 'button', 'Open memory', 1, undefined, undefined, () => env.openSettings('team-memory')), R('Skills', `The jobs it knows how to do. ${skills.length} skills, added by your Inhouse team.`, 'button', 'View skills', 0, undefined, undefined, env.goSkills)] },
+      { label: 'What your Inhouse agent knows', rows: [R('Team memory', `Supplier, customer and stock rules the whole team shares. ${memCount} things remembered.`, 'button', 'Open memory', 0, undefined, undefined, () => env.openSettings('team-memory')), R('Skills', `The jobs it knows how to do. ${skills.length} skills, added by your Inhouse team.`, 'button', 'View skills', 0, undefined, undefined, env.goSkills)] },
     ] },
     'team-modes': { title: 'Models', sections: [
       { label: '', caption: 'How hard it thinks', rows: modeRows },
       { label: '', rows: [sel('Default model', '', 'g:mode', defaultMode, modeLabels)] },
     ] },
     'team-memory': { title: 'Team memory', sections: [
+      ...waitingMem,
       ...teamMem,
-      { label: 'How your Inhouse agent learns', rows: [R('Ask before saving a team rule', 'Your Inhouse agent shows the rule in the chat and an approver confirms it.', 'toggle', '', 1, 'm:ask', true), teach] },
+      { label: 'How your Inhouse agent learns', rows: [R('Ask before saving a team rule', 'On: new and changed team rules wait until an admin approves them. Off: they count at once.', 'toggle', '', 0, 'm:ask', true), teach] },
     ] },
     'team-members': { title: 'Members', sections: [
       { label: `${team.length} people`, rows: [...team.map(m => {
@@ -282,9 +342,9 @@ export function settingsPage(tab: string, env: Env): Page {
     ] },
     'team-data': { title: 'Data and access', sections: [
       { label: 'Where your data stays', rows: [R('Your tools', 'Orders, customers and money stay in your own tools. Your Inhouse agent reads what a job needs.', 'value', 'Stays in each tool'), R('Inhouse agent', 'Chats, memory, routines and logs are stored on your own Cloudflare account.', 'value', 'Your Cloudflare'), R('AI models', 'Questions go to Anthropic through your own account.', 'value', 'Your Anthropic')] },
-      { label: 'How long things are kept', rows: [sel('Chats', 'Older chats are deleted automatically.', 'd:chats', '12 months', RETENTION), sel('Activity and steps', 'Every step it took, kept for checking later.', 'd:steps', '12 months', RETENTION), R('Audit log', 'Changes to settings, rules and people. Cannot be shortened.', 'value', '12 months')] },
+      { label: 'How long things are kept', rows: [sel('Chats', `Older chats are deleted automatically.${setByTeam}`, 'd:chats', '12 months', RETENTION), sel('Activity and steps', `Every step it took, kept for checking later.${setByTeam}`, 'd:steps', '12 months', RETENTION), R('Next cleanup', 'Anything older than these periods is deleted then.', 'value', nextCleanup), R('Audit log', 'Changes to settings, rules and people. Cannot be shortened.', 'value', '12 months')] },
       { label: 'Who can get in', rows: [R('Your team', 'People sign in with their work email.', 'value', `${team.length} members`), ...(env.showGrant ? [supportRow] : []), R('Two-step sign-in', 'Everyone confirms with a code when they sign in.', 'toggle', '', 0, 'd:2fa', true)] },
-      { label: 'Take it with you', rows: [R('Export everything', 'Chats, memory, routines, skills and logs as one download.', 'button', 'Export', 0, undefined, undefined, () => env.toast("Export isn't connected in this demo.", 4000, 'info')), R('Delete Inhouse agent and its data', 'Removes chats, memory and logs from your Cloudflare account. Your tools are not touched.', 'button', 'Ask the team', 0, undefined, undefined, () => env.openTeam('change', `Please delete the Inhouse agent and its data for ${meta.brand.name}.`))] },
+      { label: 'Take it with you', rows: [{ ...R('Export everything', 'Chats, files, memory, routines, skills, settings and logs in one file. It downloads as it is gathered, which can take a few minutes.', 'button', 'Export', 0, undefined, undefined, exportEverything), can: 'exportData' as const }, R('Delete Inhouse agent and its data', 'Removes chats, memory and logs from your Cloudflare account. Your tools are not touched.', 'button', 'Ask the team', 0, undefined, undefined, () => env.openTeam('change', `Please delete the Inhouse agent and its data for ${meta.brand.name}.`))] },
     ] },
     'team-audit': { title: 'Audit log', sections: [
       { label: 'Today', rows: [...pausedRow, ...auditLog.filter(e => auditDay(e) === 'Today').map(auditRow)] },

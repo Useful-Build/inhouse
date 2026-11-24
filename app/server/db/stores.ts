@@ -44,6 +44,13 @@ import { dataHealth } from '../ops/signals/data.ts'
 import type { KeyedBucket } from './r2-keys.ts'
 import type { DataHealth } from '../ops/signals/data.ts'
 import type { RoutineStore } from '../routines/store.ts'
+import { teamRequestStore } from '../team-requests/store.ts'
+import type { TeamRequestStore } from '../team-requests/store.ts'
+import { brandSkillStore } from '../brand-skills/store.ts'
+import type { BrandSkillStore } from '../brand-skills/store.ts'
+// P8a D's slot.
+import { dataExportStore } from '../data-access/store.ts'
+import type { DataExportStore } from '../data-access/store.ts'
 
 // P8a F2's slot.
 import { privacyRequestStore } from '../webhooks/shopify-privacy/store.ts'
@@ -93,6 +100,14 @@ export interface Stores extends AuthStores {
   dataHealth: DataHealth
   /** P8a F2: Shopify's privacy requests: route 94's close and the `privacy_requests` signal (the webhooks write their own). */
   privacyRequests: PrivacyRequestStore
+  /** P6a W3: requests to the Inhouse team (routes 80 to 83 and the `team_request_*` tools). */
+  teamRequests: TeamRequestStore
+
+  /** P6a brand skills: the brand's own skills (routes 79, 84 and 85, the `skill_save` tool and each run's start). */
+  brandSkills: BrandSkillStore
+
+  /** P8a D: Data and access's Export everything (route 95), C1's brand export as one streamed download. */
+  dataExport: DataExportStore
 }
 
 /** What the stores read from the Worker's env. `AUDIT_HASH_KEY` is a secret on the product Worker (a var in the test build). */
@@ -165,5 +180,10 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
     // P8 C1's slot.
     dataHealth: dataHealth({ db, bucket: env.FILES }),
     privacyRequests: privacyRequestStore(db),
+    teamRequests: teamRequestStore({ db }),
+
+    brandSkills: brandSkillStore({ db }),
+
+    dataExport: dataExportStore({ db, bucket: env.FILES }),
   }
 }

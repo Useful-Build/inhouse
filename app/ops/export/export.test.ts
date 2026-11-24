@@ -4,7 +4,10 @@
 //     that doesn't name them, or another person's name or email;
 //  3. the header doesn't list every registry entry, so what isn't exported is invisible;
 //  4. the dry run writes something, or counts other than the stream holds;
-//  5. it runs without a plan, exports a malformed or non-person id, or skips a store it can't read without saying.
+//  5. it runs without a plan, exports a malformed or non-person id, or skips a store it can't read without saying;
+//  6. an object is held whole (or read ahead of the download) on its way out, or its base64 pieces don't join back into
+//     its bytes, or a short read passes as the whole object;
+//  7. the plan's cost isn't the calls the plan and the run make, or a plan past its budget isn't refused.
 import { fc, test } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -17,7 +20,7 @@ import { addGrant, addLine, addPerson, addPhoto, addSetting, readLines, recordin
 import type { Snapshot } from '../delete/test-support.ts'
 import { tables } from '../tables/index.ts'
 import type { TableEntry } from '../tables/types.ts'
-import { planExport, runExport } from './export.ts'
+import { B64_PIECE, PAGE, planExport, runExport } from './export.ts'
 import type { ExportPlan, ExportScope } from './export.ts'
 
 const db = env.DB
@@ -54,7 +57,7 @@ function names(entry: TableEntry, row: Record<string, unknown>, id: string): boo
 }
 
 /** What a scope's export must hold, per store, from the snapshot alone. */
-function expected(s: Snapshot, scope: ExportScope): Record<string, unknown[]> {
+function expected(s: Snapshot, scope: Exclude<ExportScope, { kind: 'brandForCaller' }>): Record<string, unknown[]> {
   const out: Record<string, unknown[]> = {}
   for (const e of tables.filter(t => t.export)) {
     if (e.kind === 'd1') {
@@ -198,7 +201,123 @@ describe('what export refuses (failure 5)', () => {
   it('throws by name on a store it has no reader for, and runs only from its own plan', async () => {
     const extra: TableEntry = { kind: 'do', name: 'LaterObject', retention: 'retention_period', personKeys: ['memberId'], export: true }
     await expect(planExport({ ...d(), registry: [...tables, extra] }, { kind: 'brand' })).rejects.toThrow(/LaterObject/)
-    const forged: ExportPlan = { scope: { kind: 'brand' }, atMs: BASE, registry: tables, counts: {} }
+    const forged: ExportPlan = { scope: { kind: 'brand' }, atMs: BASE, registry: tables, counts: {}, cost: { d1: 0, r2: 0 } }
     expect(() => runExport(d(), forged)).toThrow(/only from a plan/)
+  })
+})
+
+/** A fake bucket holding one object whose body is made a chunk at a time as it's pulled, counting what it made. */
+function lazyBucket(key: string, size: number, chunk: number, byteAt: (i: number) => number, opts: { short?: number } = {}) {
+  const made = { bytes: 0 }
+  const body = () => {
+    let at = 0
+    const end = size - (opts.short ?? 0)
+    return new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (at >= end) return c.close()
+        const n = Math.min(chunk, end - at)
+        const b = new Uint8Array(n)
+        for (let j = 0; j < n; j++) b[j] = byteAt(at + j)
+        at += n
+        made.bytes += n
+        c.enqueue(b)
+      },
+    }, { highWaterMark: 0 })
+  }
+  const bucket = {
+    list: async () => ({ objects: [{ key, size }], truncated: false, delimitedPrefixes: [] }),
+    get: async (k: string) => (k === key ? { key, size, httpMetadata: { contentType: 'application/octet-stream' }, body: body() } : null),
+  } as unknown as R2Bucket
+  return { bucket, made }
+}
+const bigRegistry: TableEntry[] = [{ kind: 'r2', name: 'big/', retention: 'config', personKeys: [], export: true }]
+const fromBase64 = (s: string) => Uint8Array.from(atob(s), c => c.charCodeAt(0))
+
+describe('bounded memory (failure 6)', () => {
+  it('streams a 20 MiB object in pieces as the download pulls it, never holding it whole', async () => {
+    const MiB = 1 << 20
+    const SIZE = 20 * MiB
+    // Not a multiple of 3, so pieces straddle the source's chunks.
+    const CHUNK = MiB + 1
+    const byteAt = (i: number) => (i * 7 + 3) % 251
+    const { bucket: big, made } = lazyBucket('big/one.bin', SIZE, CHUNK, byteAt)
+    const deps = { ...d(), bucket: big, registry: bigRegistry }
+    const plan = await planOk({ kind: 'brand' }, deps)
+    const reader = runExport(deps, plan).getReader()
+    const text = new TextDecoder()
+    const header = await reader.read()
+    expect(text.decode(header.value)).toMatch(/^\{"format":1,/)
+    expect(made.bytes, 'nothing is read before the download asks').toBe(0)
+    const prefix = text.decode((await reader.read()).value)
+    expect(prefix).toBe('{"store":"big/","key":"big/one.bin","contentType":"application/octet-stream","size":20971520,"base64":"')
+    let decoded = 0
+    let pieces = 0
+    let largest = 0
+    for (;;) {
+      const { value, done } = await reader.read()
+      expect(done).toBe(false)
+      const piece = text.decode(value)
+      if (piece === '"}\n') break
+      largest = Math.max(largest, value!.byteLength)
+      const bytes = fromBase64(piece)
+      for (let j = 0; j < bytes.length; j++) if (bytes[j] !== byteAt(decoded + j)) throw new Error(`byte ${decoded + j} differs`)
+      decoded += bytes.length
+      pieces++
+      // The body is pulled one source chunk at a time, only as the pieces go out: never more than a chunk ahead.
+      expect(made.bytes - decoded).toBeLessThanOrEqual(CHUNK + 2)
+    }
+    expect(decoded).toBe(SIZE)
+    expect(largest).toBeLessThanOrEqual((B64_PIECE / 3) * 4)
+    expect(pieces).toBeGreaterThan(SIZE / B64_PIECE)
+    const end = JSON.parse(text.decode((await reader.read()).value)) as Record<string, unknown>
+    expect(end).toEqual({ end: true, counts: { 'big/': 1 } })
+    expect((await reader.read()).done).toBe(true)
+  })
+
+  test.prop([fc.uint8Array({ maxLength: 200 }), fc.integer({ min: 1, max: 7 })], { numRuns: 60 })(
+    'the pieces join into the object\'s base64 whatever its length and the body\'s chunk size', async (bytes, chunk) => {
+      const { bucket: small } = lazyBucket('big/x', bytes.length, chunk, i => bytes[i])
+      const deps = { ...d(), bucket: small, registry: bigRegistry }
+      const { lines } = await readLines(runExport(deps, await planOk({ kind: 'brand' }, deps)))
+      expect(lines[1]).toEqual({ store: 'big/', key: 'big/x', contentType: 'application/octet-stream', size: bytes.length, base64: btoa(String.fromCharCode(...bytes)) })
+    },
+  )
+
+  it('fails the stream (no end line) when the body is shorter than the object', async () => {
+    const { bucket: short } = lazyBucket('big/short', 10, 4, i => i, { short: 2 })
+    const deps = { ...d(), bucket: short, registry: bigRegistry }
+    await expect(readLines(runExport(deps, await planOk({ kind: 'brand' }, deps)))).rejects.toThrow(/read 8 bytes of 10/)
+  })
+})
+
+describe('the plan\'s cost and budget (failure 7)', () => {
+  const costRegistry: TableEntry[] = [
+    { kind: 'd1', name: 'export_cost', retention: 'config', personKeys: [], export: true },
+    { kind: 'r2', name: 'costtest/', retention: 'config', personKeys: [], export: true },
+  ]
+  it('is exactly the D1 queries and R2 calls the plan and the run make', async () => {
+    await db.prepare('CREATE TABLE IF NOT EXISTS export_cost (id INTEGER PRIMARY KEY, v TEXT)').run()
+    await db.prepare('DELETE FROM export_cost').run()
+    // Two full pages and one row more: three page reads.
+    const rows = 2 * PAGE + 1
+    for (let i = 0; i < rows; i += 100) await db.batch(Array.from({ length: Math.min(100, rows - i) }, (_, j) => db.prepare('INSERT INTO export_cost (id, v) VALUES (?, ?)').bind(i + j, 'x')))
+    for (const k of ['a', 'b', 'c']) await bucket.put(`costtest/${k}`, k)
+    const rec = recordingDb(db)
+    let r2 = 0
+    const counting = { list: (o?: R2ListOptions) => { r2++; return bucket.list(o) }, get: (k: string) => { r2++; return bucket.get(k) } } as unknown as R2Bucket
+    const deps = { ...d(), db: rec.db, bucket: counting, registry: costRegistry }
+    const plan = await planOk({ kind: 'brand' }, deps)
+    // Count and PRAGMA, then three pages; two lists (plan and run) and three gets.
+    expect(plan.cost).toEqual({ d1: 1 + 1 + 3, r2: 2 + 3 })
+    await readLines(runExport(deps, plan))
+    expect({ d1: rec.sql.length, r2 }).toEqual(plan.cost)
+  })
+
+  it('refuses too_large once past either budget, and plans when it fits exactly', async () => {
+    const deps = { ...d(), registry: costRegistry }
+    const cost = (await planOk({ kind: 'brand' }, deps)).cost
+    expect(await planExport(deps, { kind: 'brand' }, { budget: { d1: cost.d1 - 1, r2: cost.r2 } })).toEqual({ refused: 'too_large' })
+    expect(await planExport(deps, { kind: 'brand' }, { budget: { d1: cost.d1, r2: cost.r2 - 1 } })).toEqual({ refused: 'too_large' })
+    expect(await planExport(deps, { kind: 'brand' }, { budget: cost })).toMatchObject({ ok: { cost } })
   })
 })

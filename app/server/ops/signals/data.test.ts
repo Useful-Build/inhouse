@@ -196,7 +196,7 @@ describe('the data signals', () => {
     await db.prepare("DELETE FROM activity_lines WHERE id = 'a_rep'").run()
   })
 
-  it('gives retention_fresh a 26-hour grace when d:steps or d:chats changes from Until deleted to a finite period', async () => {
+  it('gives retention_fresh a 26-hour grace only for newly enabled retention work', async () => {
     const db = env.DB
     const { settings } = openStores(env)
     await db.prepare("DELETE FROM settings WHERE owner = 'brand' AND key IN ('d:chats', 'd:steps')").run()
@@ -209,8 +209,16 @@ describe('the data signals', () => {
 
     // Use a time far past earlier tests' deletion-log runs so nothing in deletion-log/ matches within 26h.
     const future = NOW + 100 * DAY
+    await save('d:steps', '3 months', future - 11 * DAY, 'fresh-first-shortening')
+    expect(await retentionFresh(db, bucket, future - 11 * DAY, ['activity_lines'])).toEqual({ ok: false, detail: 'no run in 26h: activity_lines' })
     await save('d:steps', 'Until deleted', future - 10 * DAY, 'fresh-until-steps')
     await save('d:chats', 'Until deleted', future - 10 * DAY, 'fresh-until-chats')
+
+    // Once the earlier activation grace expires, another finite shortening grants none.
+    await save('d:steps', '12 months', future - 3 * FRESH_MS, 'fresh-enable-old')
+    await save('d:steps', '3 months', future - 1, 'fresh-finite-shortening')
+    expect(await retentionFresh(db, bucket, future - 1, ['activity_lines'])).toEqual({ ok: false, detail: 'no run in 26h: activity_lines' })
+    await save('d:steps', 'Until deleted', future - 1, 'fresh-disable-again')
 
     // Changing d:steps from 'Until deleted' to '12 months' graces steps stores for 26 hours.
     await save('d:steps', '12 months', future, 'fresh-short-steps')
@@ -221,11 +229,9 @@ describe('the data signals', () => {
     // Once the 26h window expires without a run, steps stores go red until a run finishes.
     expect(await retentionFresh(db, bucket, future + FRESH_MS, ['activity_lines', 'notices'])).toEqual({ ok: false, detail: 'no run in 26h: activity_lines, notices' })
 
-    // Changing d:chats from 'Until deleted' to '12 months' similarly graces chats for 26 hours.
+    // Chats still clean up trash under 'Until deleted', so the setting change grants no freshness grace.
     const tChats = future + 2 * FRESH_MS
     await save('d:chats', '12 months', tChats, 'fresh-short-chats')
-    expect(await retentionFresh(db, bucket, tChats, ['chats'])).toEqual({ ok: true, detail: '1 stores' })
-    expect(await retentionFresh(db, bucket, tChats + FRESH_MS - 1, ['chats'])).toEqual({ ok: true, detail: '1 stores' })
-    expect(await retentionFresh(db, bucket, tChats + FRESH_MS, ['chats'])).toEqual({ ok: false, detail: 'no run in 26h: chats' })
+    expect(await retentionFresh(db, bucket, tChats, ['chats'])).toEqual({ ok: false, detail: 'no run in 26h: chats' })
   })
 })

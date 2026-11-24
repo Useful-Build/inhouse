@@ -14,6 +14,14 @@
 export const escapeClosesMenuOnly = (e: KeyboardEvent) => {
   if (e.target instanceof Element && e.target.closest('[role="menu"][data-state="open"]')) e.stopPropagation()
 }
+/**
+ * A menu's `onInteractOutside`: a press on the menu's own trigger (a CSS selector) isn't a press outside it, since the
+ * trigger opens and closes the menu itself. A menu that's fading out still hears presses, so without this a press on
+ * the trigger in that moment reopens the menu and closes it again at once, and nothing opens.
+ */
+export const triggerTogglesMenu = (trigger: string) => (e: Event) => {
+  if (e.target instanceof Element && e.target.closest(trigger)) e.preventDefault()
+}
 export const keepForToast = (e: Event) => { if (e.target instanceof Element && e.target.closest('[data-toast]')) e.preventDefault() }
 
 /** What had focus when the person clicked to open a dialog. Taken by the next dialog that opens. */

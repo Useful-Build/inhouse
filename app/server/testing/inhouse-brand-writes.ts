@@ -4,10 +4,11 @@
 // closed to the Inhouse team. Plain data, no imports, so the Playwright specs can load it.
 // P4 (wave-4 PR0): the routine rows (routes.ts rows 53 to 56), Today's set-aside (row 58) and the Library's delete
 // and restore (rows 65 and 66). shared/contract/audit.test.ts keeps this list and the
-// support.access write pairs equal.
+// support.access write pairs equal. P6a (PR0): approving or rejecting a waiting team fact (row 78).
 export const INHOUSE_BRAND_WRITES: readonly string[] = [
   'PUT /api/memory/brand/:id/forgotten',
   'PUT /api/routines/:id/enabled', 'POST /api/routines/:id/run', 'POST /api/routines/:id/delete', 'POST /api/routines/:id/restore',
   'PUT /api/today/:id/aside',
   'POST /api/library/delete', 'POST /api/library/restore',
+  'PUT /api/memory/brand/:id/approved',
 ]

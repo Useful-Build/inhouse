@@ -524,7 +524,7 @@ function Thread() {
                         the thinking line at its foot, so no second card shows. */}
                     {(inCard.length > 0 || streaming) && (
                       <div className={cn(CARD, phone ? 'px-4' : 'px-5')}>
-                        {inCard.map(x => <AgentPart key={x.id} id={x.id} chat={openId ?? undefined} part={x.part} trace={x.trace} animate={seenNow.ids.has(x.trace)} onBusy={onBusy} />)}
+                        {inCard.map(x => <AgentPart key={x.id} id={x.id} chat={openId ?? undefined} part={x.part} trace={x.trace} animate={seenNow.ids.has(x.trace)} streaming={streaming} onBusy={onBusy} />)}
                         {streaming && <Thinking text={thinkingText} />}
                         {endsTurn && <SourcesRow parts={inCard.map(x => x.part)} trace={tr} onToggle={onToggleLong} />}
                       </div>

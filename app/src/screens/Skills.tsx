@@ -13,12 +13,19 @@ import { Badge } from '@/components/ui/badge'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
-import { Avatar, Button, CardGrid, EmptyState, Icon, IconButton, IconTile, LogoTile, MenuItem, Page, PageHeader, SectionHeader, Segmented, StageTag } from '../ui'
-import { SearchBox, TAP } from '../ui/fields'
+import { Button, CardGrid, EmptyState, Icon, IconButton, IconTile, LogoTile, MenuItem, Page, PageHeader, SectionHeader, Segmented, StageTag } from '../ui'
+import { Confirm, SearchBox, TAP } from '../ui/fields'
+import { rememberTrigger, triggerTogglesMenu } from '../ui/dialogs'
 import { Markdown } from './chat/Markdown'
 
 const SECTION_HEAD = 'mb-1.5'
 const TABS: [SkillTab, string][] = [['all', 'All'], ['team', 'By Inhouse team'], ['mine', 'By your team']]
+/** What a new chat starts with to make a skill: the agent's Skill Creator takes it from there. */
+export const CREATE_SKILL_PROMPT = 'Create a skill that '
+/** What a brand skill's "Edit in a chat" starts with. */
+export const editSkillPrompt = (name: string) => `Change the "${name}" skill: `
+/** Who made a brand skill, as its row and page say it ("Made by Sam Mercer"). */
+export const madeBy = (s: SkillDef) => `Made by ${s.by.replace(/, in a chat$/, '')}`
 /** Where a skill's on switch is saved in `AgentState.toggles`. Missing means on. */
 const skillKey = (name: string) => `s:${name}`
 
@@ -28,6 +35,7 @@ export function Skills() {
   const tab = useUi(s => s.skillTab)
   const patch = useUi(s => s.patch)
   const newChat = useUi(s => s.newChat)
+  const openTeam = useUi(s => s.openTeam)
   const showToast = useUi(s => s.showToast)
   const phone = useUi(s => s.phone)
   const openSkill = useUi(s => s.openSkill)
@@ -45,13 +53,12 @@ export function Skills() {
 
   return (
     <Page>
-      <PageHeader title="Skills" description="Instructions that teach your Inhouse agent a job. Your Inhouse team writes and tests each one."
+      <PageHeader title="Skills" description="Instructions that teach your Inhouse agent a job. Make your own in a chat, or use the ones your Inhouse team writes."
         actions={<Segmented label="Show skills" value={tab} options={TABS} onChange={v => patch({ skillTab: v })} className={cn(phone && '*:min-h-11')} />} />
       <div className="mt-5.5 flex gap-2.5">
         <SearchBox value={query} onChange={setQuery} placeholder="Search skills" label="Search skills" />
-        <Button size="lg" onClick={() => newChat('Create a skill that ')}>
-          <Icon name="add" size={18} />Create skill
-        </Button>
+        {/* The agent's Skill Creator makes it with the person in a new chat, and saves it for the whole team. */}
+        <Button size="lg" onClick={() => newChat(CREATE_SKILL_PROMPT)}><Icon name="add" size={18} />Create a skill</Button>
       </div>
       <Separator className="mt-6.5 mb-4 bg-border" />
       <SectionHeader title="Your skills" count={list.length} className={SECTION_HEAD} />
@@ -62,7 +69,7 @@ export function Skills() {
         {list.map(s => {
           const locked = S < s.need
           const key = listKey(s.n)
-          const off = !locked && st.toggles[skillKey(s.n)] === false
+          const off = !!demo && !locked && st.toggles[skillKey(s.n)] === false
           return (
             <div key={key} className="relative flex items-start gap-3.5 rounded-xl p-3 hover:bg-card">
               <IconTile icon={s.icon} iconSize={22} size="xl" tone={locked ? 'locked' : s.need === 2 && S === 2 ? 'brand' : 'ink'} />
@@ -74,12 +81,17 @@ export function Skills() {
                   {off && <Badge variant="muted">Off</Badge>}
                 </div>
                 <div className="text-sm text-pretty text-muted-foreground">{keepUnitsTogether(s.d)}</div>
-                <div className="mt-0.5 text-xs text-muted-foreground">{s.by} · {s.used}</div>
+                <div className="mt-0.5 text-xs text-muted-foreground">{[s.mine ? madeBy(s) : s.by, s.used].filter(Boolean).join(' · ')}</div>
               </div>
             </div>
           )
         })}
       </CardGrid>
+      {/* A skill the team can't make in a chat (a new tool, a bigger job) is a request to the Inhouse team. */}
+      <p className="mt-3 px-3 text-sm text-muted-foreground">
+        Need one your team can't make in a chat?{' '}
+        <Button variant="link" className="h-auto p-0 align-baseline text-sm" onClick={() => openTeam('job')}>Request a skill</Button>
+      </p>
       {suggestions.length > 0 && <>
       <Separator className="mt-4.5 mb-4 bg-border" />
       <SectionHeader title={data.skillSuggestionsTitle ?? 'Suggested for you'} className={SECTION_HEAD} />
@@ -111,13 +123,21 @@ export function Skills() {
 
 
 /** Who made it, and who changed it last: "By the Inhouse team. Priya Shah changed it on Nov 20." */
-function byline(s: SkillDef): string {
-  const made = s.mine ? `Made by ${s.by}.` : `By the ${s.by}.`
-  const last = s.versions?.[0]
-  const when = s.updatedAt ?? last?.at
-  if (!when) return made
-  const who = last && last.by !== s.by && !s.by.startsWith(last.by) ? `${last.by} changed it` : 'Changed'
-  return `${made} ${who} on ${fmtDay(when, display())}.`
+export function byline(s: SkillDef): string {
+  const made = s.mine ? `${madeBy(s)} in a chat.` : `By the ${s.by}.`
+  return s.updatedAt ? `${made} Changed on ${fmtDay(s.updatedAt, display())}.` : made
+}
+
+/** The side rail's key-value rows for a skill's page. */
+export function skillFacts(s: SkillDef, isDemo: boolean): [string, string][] {
+  // On the product "Works from" is dropped at need 0 (every skill starts at Watch), and "Used" shows only when there is one.
+  const facts: [string, string][] = isDemo || s.need > 0 ? [['Works from', STAGE_TAGS[s.need]]] : []
+  const maker = s.by.replace(/, in a chat$/, '')
+  facts.push(['Made by', s.mine ? maker : s.by])
+  // A brand skill: its maker and admins change it in a chat, or admins only once the maker's data is deleted. The Inhouse team's: only the Inhouse team.
+  facts.push(['Who can change it', s.mine ? (maker === 'a former member' ? 'Admins' : `${maker} and admins`) : 'Inhouse team'])
+  if (s.used) facts.push(['Used', s.used])
+  return facts
 }
 
 /** A card in the page's side rail, titled when it has a title. */
@@ -140,6 +160,8 @@ export function SkillPage() {
   const showToast = useUi(s => s.showToast)
   const phone = useUi(s => s.phone)
   const s = skillBySlug(data, st, key)
+  // Deleting a brand skill asks first, in the page's own window (never the browser's confirm()).
+  const [deleting, setDeleting] = useState(false)
   // The instructions come separately (the demo's are their own chunk): ask for them once the page knows its skill.
   const want = s && s.body === undefined ? s.n : null
   useEffect(() => {
@@ -149,15 +171,24 @@ export function SkillPage() {
   if (!s) return null
   const locked = S < s.need
   const toggle = skillKey(s.n)
-  const on = !locked && st.toggles[toggle] !== false
+  // The product has no skill switch: every skill is on.
+  const on = !locked && (demo === null || st.toggles[toggle] !== false)
   const example = s.example && !locked ? `Use the "${s.n}" skill: ${s.example}` : null
   const toolsOf = (s.tools ?? []).map(k => ({ k, name: data.tools.details[k]?.name ?? data.tools.catalog.find(c => c.k === k)?.name ?? k }))
   const usedBy = (s.routines ?? []).flatMap(id => data.routines.filter(r => r.id === id && !st.routinesDeleted[r.id] && !(r.inChat && S < r.need)))
-  const facts: [string, string][] = [['Works from', STAGE_TAGS[s.need]], ['Made by', s.mine ? s.by.replace(/, in a chat$/, '') : s.by]]
-  // Who may change a skill is planned with teams editing skills (UI plan 3, D5): the demo shows where it goes.
-  if (demo !== null) facts.push(['Who can change it', 'Admins'])
-  facts.push(['Used', s.used])
-  const versions = demo !== null ? s.versions ?? [] : []
+  const facts = skillFacts(s, demo !== null)
+  const canChange = !!s.mine && s.canChange === true
+  // The switch is the demo's; the product has none. Delete is for a brand skill its maker or an admin may change.
+  const switchable = demo !== null
+  const remove = () => {
+    const name = s.n
+    setDeleting(false)
+    agent.deleteSkill(name).then(
+      () => { go('skills'); showToast(`Deleted "${name}". Your Inhouse agent stops using it from the next chat.`, { icon: 'delete' }) },
+      // The client has told the person why (a notice); the skill stays on its page.
+      (err: unknown) => console.warn(`Inhouse: could not delete ${name}.`, err instanceof Error ? err.message : err),
+    )
+  }
   const switchIt = () => {
     agent.setToggle(toggle, !on)
     showToast(on ? `${s.n} is off. Your Inhouse agent won't use it.` : `${s.n} is on again`, { icon: on ? 'pause' : 'play_arrow', ms: 4000 })
@@ -185,23 +216,33 @@ export function SkillPage() {
           <span className="mt-2.5 block text-sm text-muted-foreground">{byline(s)}</span>
         </>}
         actions={!locked && <>
-          {demo !== null && (
-            <Button variant="outline" size="lg" onClick={() => newChat(`Change the "${s.n}" skill: `)}>
+          {canChange && (
+            <Button variant="outline" size="lg" onClick={() => newChat(editSkillPrompt(s.n))}>
               <Icon name="edit" size={17} />Edit in a chat
             </Button>
           )}
           <Button size="lg" onClick={() => newChat(`Use the "${s.n}" skill: `)}>
             <Icon name="chat_bubble" size={17} />Try in a chat
           </Button>
-          {demo !== null && (
+          {(switchable || canChange) && (
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
-                <IconButton icon="more_horiz" label={`More for ${s.n}`} size={18} box="icon-lg" className={cn(phone && TAP)} />
+                <IconButton data-skill-more icon="more_horiz" label={`More for ${s.n}`} size={18} box="icon-lg" className={cn(phone && TAP)} />
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" collisionPadding={16} aria-label="Skill actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input">
-                <MenuItem onSelect={switchIt}>
-                  <Icon name={on ? 'pause_circle' : 'play_circle'} size={18} />{on ? 'Turn off' : 'Turn on'}
-                </MenuItem>
+              <DropdownMenuContent align="end" collisionPadding={16} aria-label="Skill actions" aria-labelledby={undefined} className="w-menu-message max-w-screen-gutter border-input"
+                // More reopens the menu even while it's still fading out (after Delete skill, then Cancel).
+                onInteractOutside={triggerTogglesMenu('[data-skill-more]')}>
+                {switchable && (
+                  <MenuItem onSelect={switchIt}>
+                    <Icon name={on ? 'pause_circle' : 'play_circle'} size={18} />{on ? 'Turn off' : 'Turn on'}
+                  </MenuItem>
+                )}
+                {canChange && (
+                  // Cancel gives focus back to the More button, never to this item (gone with the menu).
+                  <MenuItem variant="destructive" onSelect={() => { rememberTrigger(document.querySelector<HTMLElement>('[data-skill-more]')); setDeleting(true) }}>
+                    <Icon name="delete" size={18} />Delete skill
+                  </MenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -270,35 +311,14 @@ export function SkillPage() {
                 </ul>
               </RailCard>
             )}
-            {versions.length > 0 && (
-              <RailCard title="Versions">
-                <ol className="mt-3.5 flex flex-col gap-3.5">
-                  {versions.map((v, i) => {
-                    const team = v.by === 'Inhouse team'
-                    return (
-                      <li key={`${v.by}|${v.at.ms}`} className="flex gap-2.5">
-                        {team
-                          ? <span aria-hidden="true" className="flex size-6 flex-none items-center justify-center rounded-full bg-fill-hover"><Icon name="support_agent" size={14} /></span>
-                          : <Avatar who={v.by} size={24} />}
-                        <span className="min-w-0 flex-1 text-sm leading-note">
-                          <span className="font-semibold">{v.by}</span> <span className="text-muted-foreground">{team ? '' : 'in a chat, '}{fmtDay(v.at, display())}</span>
-                          <span className="mt-0.5 block text-foreground-3">{v.note}</span>
-                        </span>
-                        {i === 0 && <Badge variant="secondary" className="flex-none self-start">Now</Badge>}
-                      </li>
-                    )
-                  })}
-                </ol>
-                {versions[0].by !== 'Inhouse team' && versions.some(v => v.by === 'Inhouse team') && (
-                  <Button variant="ghost" size="sm" className="-ml-2.5 mt-3.5" onClick={() => showToast("Restoring a version isn't connected in this demo.", { icon: 'info', ms: 4000 })}>
-                    <Icon name="history" size={16} />Restore the Inhouse version
-                  </Button>
-                )}
-              </RailCard>
-            )}
           </aside>
         </div>
       </div>
+      {deleting && (
+        <Confirm label="Delete skill" title={`Delete "${s.n}"?`} action="Delete skill" onCancel={() => setDeleting(false)} onConfirm={remove}>
+          Your Inhouse agent stops using it for everyone on the team, from the next chat. This can't be undone.
+        </Confirm>
+      )}
     </Page>
   )
 }

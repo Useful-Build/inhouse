@@ -251,8 +251,8 @@ nothing from a worker.
 
 No team fact `active` without an admin's approval of that revision while `m:ask` is on; no routine's team fact ever
 `active` without approval; no change to P3's visibility rule; no person fact saved while `m:learn` is off; no outbox,
-approval tool or C7; no write to any outside tool; no skill loaded from a writable path; no copied third-party skill
-text (judged by the reviewer); no Inhouse approval without a live grant; no request text, fact text or model text in an audit line; no model on
+approval tool or C7; no write to any outside tool; no skill loaded from a path the agent can write; no copied third-party
+skill text (judged by the reviewer), except Skill Creator under its licence; no Inhouse approval without a live grant; no request text, fact text or model text in an audit line; no model on
 for clients without a passing run.
 
 ## Risks

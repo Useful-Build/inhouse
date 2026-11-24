@@ -19,6 +19,11 @@ export const MemoryLineSchema = z.object({
   scope: z.enum(['brand', 'person']).optional(),
   /** P3 (W6): true once forgotten (a write's answer, or a conflict's `current`); a list never holds a forgotten line. */
   forgotten: z.boolean().optional(),
+  /**
+   * P6a (W2): true while a team line waits for an admin's OK (the waiting list, or a write's answer or `current`), so a
+   * client can tell an approved line from one that still waits. Route 43's lists never hold a waiting line.
+   */
+  waiting: z.literal(true).optional(),
 })
 export type MemoryLine = z.infer<typeof MemoryLineSchema>
 

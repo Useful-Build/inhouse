@@ -27,17 +27,16 @@ import { fileURLToPath } from 'node:url'
 const root = fileURLToPath(new URL('..', import.meta.url))
 const hubDir = join(root, 'hub')
 
+class Fatal extends Error {}
+const fail = msg => { throw new Fatal(msg) }
+
 const args = process.argv.slice(2)
 const flag = (name, fallback) => {
   const i = args.indexOf(name)
   if (i === -1) return fallback
-  if (!args[i + 1] || args[i + 1].startsWith('--')) { console.error(`check-hub-build: ${name} needs a folder.`); process.exit(2) }
+  if (!args[i + 1] || args[i + 1].startsWith('--')) fail(`${name} needs a folder.`)
   return resolve(args[i + 1])
 }
-const deployDir = flag('--deploy', join(root, 'dist-hub'))
-const testDir = flag('--test', join(root, 'dist-hub-test'))
-
-const fail = msg => { console.error(`check-hub-build: ${msg}`); process.exit(2) }
 const read = path => {
   try {
     return readFileSync(path, 'utf8')
@@ -46,17 +45,18 @@ const read = path => {
   }
 }
 
-// ---------- the canary, from its source ----------
-const seam = join(hubDir, 'testing/index.ts')
-if (!existsSync(seam)) fail(`${relative(root, seam)} is missing: there's no canary to look for.`)
-const canaryMatch = read(seam).match(/export const HUB_TEST_CANARY = '([^']+)'/)
-if (!canaryMatch) fail(`no \`export const HUB_TEST_CANARY = '...'\` in ${relative(root, seam)}; the seam's shape changed.`)
-const CANARY = canaryMatch[1]
-const shopifyUpstream = join(root, 'test/upstreams/shopify/server.ts')
-if (!existsSync(shopifyUpstream)) fail(`${relative(root, shopifyUpstream)} is missing: there's no Shopify upstream canary to look for.`)
-const shopifyMatch = read(shopifyUpstream).match(/export const SHOPIFY_UPSTREAM_CANARY = '([^']+)'/)
-if (!shopifyMatch) fail(`no \`export const SHOPIFY_UPSTREAM_CANARY = '...'\` in ${relative(root, shopifyUpstream)}; the upstream's shape changed.`)
-const SHOPIFY_CANARY = shopifyMatch[1]
+// ---------- the canaries, from their sources ----------
+function readCanaries() {
+  const seam = join(hubDir, 'testing/index.ts')
+  if (!existsSync(seam)) fail(`${relative(root, seam)} is missing: there's no canary to look for.`)
+  const canaryMatch = read(seam).match(/export const HUB_TEST_CANARY = '([^']+)'/)
+  if (!canaryMatch) fail(`no \`export const HUB_TEST_CANARY = '...'\` in ${relative(root, seam)}; the seam's shape changed.`)
+  const shopifyUpstream = join(root, 'test/upstreams/shopify/server.ts')
+  if (!existsSync(shopifyUpstream)) fail(`${relative(root, shopifyUpstream)} is missing: there's no Shopify upstream canary to look for.`)
+  const shopifyMatch = read(shopifyUpstream).match(/export const SHOPIFY_UPSTREAM_CANARY = '([^']+)'/)
+  if (!shopifyMatch) fail(`no \`export const SHOPIFY_UPSTREAM_CANARY = '...'\` in ${relative(root, shopifyUpstream)}; the upstream's shape changed.`)
+  return { CANARY: canaryMatch[1], SHOPIFY_CANARY: shopifyMatch[1] }
+}
 
 // ---------- a bundle's files ----------
 const METAFILE = 'bundle-meta.json'
@@ -124,28 +124,48 @@ function moduleGraph({ inputs }) {
   return inputs.filter(id => candidates(id).some(forbidden)).map(id => `module ${id}`)
 }
 
-const PARTS = [
-  ['canary string', canary(CANARY)],
-  ['shopify upstream canary', canary(SHOPIFY_CANARY)],
-  ['module graph', moduleGraph],
-]
+function main() {
+  const deployDir = flag('--deploy', join(root, 'dist-hub'))
+  const testDir = flag('--test', join(root, 'dist-hub-test'))
+  const { CANARY, SHOPIFY_CANARY } = readCanaries()
 
-const deploy = open(deployDir, 'deployable')
-const testBundle = open(testDir, 'test')
-let bad = false
-const show = list => list.slice(0, 5).map(x => `    ${x}`).join('\n') + (list.length > 5 ? `\n    ... and ${list.length - 5} more` : '')
+  const PARTS = [
+    ['canary string', canary(CANARY)],
+    ['shopify upstream canary', canary(SHOPIFY_CANARY)],
+    ['module graph', moduleGraph],
+  ]
 
-for (const [name, run] of PARTS) {
-  const inDeploy = run(deploy)
-  if (inDeploy.length) {
-    bad = true
-    console.error(`FAIL  ${name}: the deployable hub bundle (${relative(root, deployDir)}) has what it must not:\n${show(inDeploy)}`)
-  } else console.log(`ok    ${name}: clean in the deployable hub bundle.`)
-  const inTest = run(testBundle)
-  if (!inTest.length) {
-    bad = true
-    console.error(`FAIL  ${name}: found nothing in the test bundle (${relative(root, testDir)}), so it proves nothing: it scanned the wrong folder or looks for the wrong thing.`)
-  } else console.log(`ok    ${name}: caught the test bundle (${inTest.length} hit${inTest.length === 1 ? '' : 's'}).`)
+  const deploy = open(deployDir, 'deployable')
+  const testBundle = open(testDir, 'test')
+  let bad = false
+  const show = list => list.slice(0, 5).map(x => `    ${x}`).join('\n') + (list.length > 5 ? `\n    ... and ${list.length - 5} more` : '')
+
+  for (const [name, run] of PARTS) {
+    const inDeploy = run(deploy)
+    if (inDeploy.length) {
+      bad = true
+      console.error(`FAIL  ${name}: the deployable hub bundle (${relative(root, deployDir)}) has what it must not:\n${show(inDeploy)}`)
+    } else console.log(`ok    ${name}: clean in the deployable hub bundle.`)
+    const inTest = run(testBundle)
+    if (!inTest.length) {
+      bad = true
+      console.error(`FAIL  ${name}: found nothing in the test bundle (${relative(root, testDir)}), so it proves nothing: it scanned the wrong folder or looks for the wrong thing.`)
+    } else console.log(`ok    ${name}: caught the test bundle (${inTest.length} hit${inTest.length === 1 ? '' : 's'}).`)
+  }
+
+  return bad ? 1 : 0
 }
 
-process.exit(bad ? 1 : 0)
+// Set process.exitCode and let Node exit naturally instead of calling process.exit(): in Node 26, process.exit() from
+// top-level ESM tears down the V8 platform (joining background compiler threads) before disposing the Isolate, which
+// deadlocks when a concurrent Maglev job is waiting on the main thread for GC.
+try {
+  process.exitCode = main()
+} catch (e) {
+  if (e instanceof Fatal) {
+    console.error(`check-hub-build: ${e.message}`)
+    process.exitCode = 2
+  } else {
+    throw e
+  }
+}

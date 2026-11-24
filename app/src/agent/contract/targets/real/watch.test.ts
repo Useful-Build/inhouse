@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { WATCH_EXEMPT, WATCH_ONLY_ON_WATCH_BUILD, WATCH_READ_PATH, seedUnreadNotice, settleRuns, WATCH_SERVED, changeRoutineElsewhere, resetRoutines, watchRoute } from './watch'
+import { WATCH_EXEMPT, WATCH_ONLY_ON_WATCH_BUILD, WATCH_READ_PATH, seedUnreadNotice, settleRuns, settleTick, WATCH_SERVED, changeRoutineElsewhere, resetRoutines, watchRoute } from './watch'
 import type { Signer } from './me'
 
 describe('the real target\'s P4 parts', () => {
@@ -177,3 +177,39 @@ describe('settling Run now', () => {
   })
 })
 
+
+describe('settling the routine tick', () => {
+  const load = async <T>(name: string): Promise<T> => (await import(/* @vite-ignore */ name)) as T
+  type Db = { exec(sql: string): void; close(): void }
+  const make = async (tasks: string[] | null) => {
+    const fs = await load<{ mkdtempSync(p: string): string; mkdirSync(p: string, o: { recursive: true }): void }>('node:fs')
+    const os = await load<{ tmpdir(): string }>('node:os')
+    const { DatabaseSync } = await load<{ DatabaseSync: new (f: string) => Db }>('node:sqlite')
+    const dir = fs.mkdtempSync(`${os.tmpdir()}/w6-tick-`)
+    fs.mkdirSync(`${dir}/v3/do`, { recursive: true })
+    const file = `${dir}/v3/do/x.sqlite`
+    const db = new DatabaseSync(file)
+    db.exec(tasks === null ? 'CREATE TABLE unrelated (x TEXT)' : 'CREATE TABLE due_tasks (id TEXT PRIMARY KEY, kind TEXT NOT NULL)')
+    for (const id of tasks ?? []) db.exec(`INSERT INTO due_tasks VALUES ('${id}', 'routine-tick')`)
+    db.close()
+    const remove = (id: string) => { const d = new DatabaseSync(file); d.exec(`DELETE FROM due_tasks WHERE id = '${id}'`); d.close() }
+    return { dir, remove }
+  }
+
+  it('returns at once when no poke is waiting (the heartbeat task does not count) or no scheduler table exists', async () => {
+    const throws = async () => { throw new Error('should not wait') }
+    await settleTick({ dir: (await make(['routine-tick'])).dir, sleep: throws })
+    await settleTick({ dir: (await make(null)).dir, sleep: throws })
+  })
+  it('waits while the poke is in due_tasks and returns when the scheduler deletes it', async () => {
+    const { dir, remove } = await make(['routine-poke'])
+    const slept: number[] = []
+    await settleTick({ dir, intervalMs: 5, sleep: async ms => { slept.push(ms); if (slept.length === 2) remove('routine-poke') } })
+    expect(slept).toEqual([5, 5])
+  })
+  it('fails loud once the deadline passes', async () => {
+    const { dir } = await make(['routine-poke'])
+    let t = 0
+    await expect(settleTick({ dir, timeoutMs: 100, now: () => t, sleep: async () => { t += 60 } })).rejects.toThrow(/did not finish before the deadline/)
+  })
+})

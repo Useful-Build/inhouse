@@ -25,10 +25,12 @@ import type { DueTask, TaskContext, TaskHandler, TaskResult } from '../do/brand-
 import { withSeed } from '../do/brand-agent/scheduler.ts'
 import { safeError } from '../safe-error.ts'
 import { nextDaily } from './backup-handlers.ts'
+import { RETENTION_AT } from '../../shared/contract/data-access.ts'
 
 export const RETENTION_TASK_ID = 'retention'
 export const RETENTION_MORE_ID = 'retention-more'
-export const RETENTION_AT = { hour: 3, minute: 30 } as const
+// The cleanup's time lives in the shared contract, so Data and access shows the same next cleanup the scheduler sets.
+export { RETENTION_AT } from '../../shared/contract/data-access.ts'
 export const MORE_AFTER_MS = 60_000
 export const MAX_D1 = 200
 export const MAX_R2 = 100
@@ -44,17 +46,19 @@ const CHATS_COST = { d1: 30, r2: 4 * CHATS_LIMIT + 6 }
 const LIMIT = 90
 
 export async function brandRetentionSettings(db: D1Database) {
-  const rows = await all<{ key: 'd:chats' | 'd:steps'; value_json: string; shortened_at_ms: number | null }>(db, stmt(
-    "SELECT key, value_json, shortened_at_ms FROM settings WHERE owner = ? AND key IN ('d:chats', 'd:steps')", BRAND_OWNER,
+  const rows = await all<{ key: 'd:chats' | 'd:steps'; value_json: string; shortened_at_ms: number | null; retention_enabled_at_ms: number | null }>(db, stmt(
+    "SELECT key, value_json, shortened_at_ms, retention_enabled_at_ms FROM settings WHERE owner = ? AND key IN ('d:chats', 'd:steps')", BRAND_OWNER,
   ))
   const days: Record<PeriodName, number | null> = { ...DEFAULT_DAYS }
   const shortenedAt: Partial<Record<PeriodName, number>> = {}
+  const enabledAt: Partial<Record<PeriodName, number>> = {}
   for (const row of rows) {
     const group = row.key === 'd:chats' ? 'chats' : 'steps'
     if (row.shortened_at_ms !== null) shortenedAt[group] = row.shortened_at_ms
+    if (row.retention_enabled_at_ms !== null) enabledAt[group] = row.retention_enabled_at_ms
     days[group] = retentionDaysOf(row.key, JSON.parse(row.value_json))
   }
-  return { days, shortenedAt }
+  return { days, shortenedAt, enabledAt }
 }
 
 export const brandRetentionDays = async (db: D1Database) => (await brandRetentionSettings(db)).days

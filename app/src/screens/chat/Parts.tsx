@@ -4,6 +4,7 @@
 // exception: it is its own card after the answer's (`ApprovalCard`), drawn by the thread. The sources row is `SourcesRow`.
 import { useLayoutEffect } from 'react'
 import type { MessagePart } from '../../agent/types'
+import { parseHostlist } from '../../../shared/contract/settings-table'
 import { draftView, whenOf } from '../../state/derive'
 import { fmtNextRun, fmtTime } from '../../lib/format'
 import { display } from '../../state/display'
@@ -91,30 +92,32 @@ export function ApprovalCard({ problemId }: { problemId: string }) {
  * region, so while words are still coming the part tells the log it is busy (`onBusy`, which sets aria-busy on the log
  * itself: the one place a screen reader looks), and the whole text is announced once, when it is all there.
  */
-function TextPart({ id, chat, text, animate, onBusy }: { id: string; chat: string | undefined; text: string; animate: boolean; onBusy?: (id: string, busy: boolean) => void }) {
+function TextPart({ id, chat, text, animate, streaming, webFetchHosts, onBusy }: { id: string; chat: string | undefined; text: string; animate: boolean; streaming: boolean; webFetchHosts?: string; onBusy?: (id: string, busy: boolean) => void }) {
   const { shown, done, fading } = useRevealed(text, animate, chat === undefined ? undefined : { chat, id })
   useLayoutEffect(() => {
     if (done || !onBusy) return
     onBusy(id, true)
     return () => onBusy(id, false)
   }, [id, done, onBusy])
+  // A partially streamed or revealed bare URL can look like a different destination.
+  const linkHosts = streaming || !done ? [] : parseHostlist(webFetchHosts ?? '') ?? []
   return (
-    <div className="max-w-answer-measure min-w-0 text-md leading-reading text-pretty wrap-anywhere"><Markdown text={shown} fade={fading} /></div>
+    <div className="max-w-answer-measure min-w-0 text-md leading-reading text-pretty wrap-anywhere"><Markdown text={shown} fade={fading} linkHosts={linkHosts} /></div>
   )
 }
 
 /** `animate`: this part is of a turn the view saw running, so its text is revealed (a part from a saved chat isn't). `chat`: the chat's id, so a part revealed once is not revealed again. `onBusy`: see TextPart. */
-export function AgentPart({ part, trace, id, chat, animate = false, onBusy }: { part: MessagePart; trace: string; id: string; chat?: string; animate?: boolean; onBusy?: (id: string, busy: boolean) => void }) {
+export function AgentPart({ part, trace, id, chat, animate = false, streaming = false, onBusy }: { part: MessagePart; trace: string; id: string; chat?: string; animate?: boolean; streaming?: boolean; onBusy?: (id: string, busy: boolean) => void }) {
   const go = useUi(s => s.go)
   const ask = useUi(s => s.ask)
   const retryAnswer = useUi(s => s.retryAnswer)
   const openModelMenu = useUi(s => s.openModelMenu)
   const openTrace = useUi(s => s.openTrace)
-  const S = useCtx().S
+  const { S, agent } = useCtx()
 
   switch (part.type) {
     case 'text':
-      return <TextPart id={id} chat={chat} text={part.text} animate={animate} onBusy={onBusy} />
+      return <TextPart id={id} chat={chat} text={part.text} animate={animate} streaming={streaming} webFetchHosts={agent.settings['t:webfetch']} onBusy={onBusy} />
 
     case 'table': {
       const t = part.table

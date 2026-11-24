@@ -18,7 +18,7 @@ export interface ScriptHost {
   state: AgentState
   startedAt: number
   runInfo: Map<string, RunInfo>
-  k: { chats: ChatThread[]; tools: ToolsData; traceKey(t: string): TraceKey; meName(): string }
+  k: { chats: ChatThread[]; tools: ToolsData; traceKey(t: string): TraceKey; meName(): string; changeSkill(name: string): void }
   read(): AgentData
   commit(next: Partial<AgentState>): boolean
 }
@@ -219,7 +219,7 @@ const QUERY_ANSWER = [
   '1. Copy the query to run it again.',
   '2. Open [Shopify](#/tools/shopify) to see the orders.',
   '',
-  "> These are Shopify orders only. [Amazon orders](javascript:void(0)) aren't in this query.",
+  "> These are Shopify orders only. [Amazon orders](https://orders.example.test/) aren't in this query.",
 ].join('\n')
 
 /** A seeded turn's own answer when the question is one a chat already asked: this chat's first, then any chat's. */
@@ -276,6 +276,20 @@ export function buildScript(h: ScriptHost, q: string, chatId: string): Script {
     const s = pick('Tell me more about: {problem title}') as { thinking: string[]; delayMs: number }
     const found = p.found.map(([t]) => t).join('')
     return { thinking: s.thinking, delayMs: s.delayMs, trace: 'generic', parts: [text(`${found} Suggested next step: ${p.next}.`)] }
+  }
+  // A skill's page's "Edit in a chat": the brand's own skill is changed (dated now); ours are the Inhouse team's to change.
+  const edit = /^change the "([^"]+)" skill\b/i.exec(q.trim())
+  if (edit) {
+    const name = edit[1]!
+    const skill = [...h.state.skillsExtra, ...h.read().skills].find(s => s.n === name)
+    if (skill?.mine) {
+      return {
+        thinking: ['Reading the skill…', 'Saving the changes…'], delayMs: fb.delayMs, trace: 'generic',
+        parts: [text(`Saved the changes to "${name}". Your Inhouse agent uses them from your next chat.`)],
+        after: () => h.k.changeSkill(name),
+      }
+    }
+    if (skill) return { thinking: fb.thinking.slice(0, 1), delayMs: fb.delayMs, trace: 'generic', parts: [text(`"${name}" is one of the Inhouse team's skills, so it can't be changed from a chat. I can send them a request to change it.`)] }
   }
   // The same guard as routines: "Any new skill ideas?" is a question, not a request to make one.
   if (isRequest(q) && /\b(create|make|build|add|new|teach)\b.{0,14}\bskill\b/i.test(q)) {

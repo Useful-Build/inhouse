@@ -18,6 +18,7 @@ import { allowance, pageResources } from './settings/allowance'
 import { readParts } from './settings/read-text'
 import { single } from './settings/single'
 import { tell } from './settings/write'
+import { waitingList } from './settings/waiting-list'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { PHOTO_MAX_BYTES, PHOTO_TYPES, PhotoDecodeError, squarePhoto } from '../ui/photo'
@@ -198,7 +199,7 @@ function Control({ row, locked, on, onToggle, onAsk, readOnly, denied, effortOk,
     case 'value':
       return row.value ? <span className="text-right text-base text-foreground-2">{row.value}</span> : null
     case 'button':
-      return <Button variant="outline" disabled={locked || !row.onClick || row.busy} onClick={row.onClick} size="lg">{row.value}</Button>
+      return <Button variant="outline" aria-label={row.ariaLabel} disabled={locked || !row.onClick || row.busy} onClick={row.onClick} size="lg">{row.value}</Button>
     case 'toggle':
       return <Switch on={on} label={row.title} onChange={locked ? undefined : onToggle} />
     case 'mode':
@@ -253,6 +254,17 @@ export function Settings() {
   // A Memory page re-reads memory when it opens: what the agent saved since the app started isn't in the first read.
   const readsMemory = pageResources(setTab, false).includes('memory')
   useEffect(() => { if (readsMemory) agent.refreshMemory().catch(() => undefined) }, [readsMemory, setTab])
+  // P6a: Team memory reads what waits for an OK when it opens, for someone who may approve. Unread (or refused): no section.
+  const approves = setTab === 'team-memory' && !!me?.can.approveMemory
+  const [waitingStore] = useState(() => waitingList({
+    waitingMemory: () => agent.waitingMemory(),
+    reviewMemory: (key, approved) => agent.reviewMemory(key, approved),
+    refreshMemory: () => agent.refreshMemory(),
+    toast: (text, opts) => ui.showToast(text, opts),
+  }))
+  const waitingState = useSyncExternalStore(waitingStore.subscribe, waitingStore.get)
+  // The list shows only while `approves` (see `waiting` in env), so leaving the page needs no reset here.
+  useEffect(() => { if (approves) void waitingStore.open() }, [approves, waitingStore])
   // Phone: the menu alone, or the picked page alone with Back to the menu (the store forgets which when Settings is left).
   const atMenu = phone && ui.setMenu
   // A new screen starts at its top.
@@ -271,6 +283,9 @@ export function Settings() {
 
   const pick = (k: string) => ui.patch({ setTab: k, setMenu: false })
   const { theme, setTheme } = useTheme()
+  // Export everything's check-then-download, one at a time: a second click while route 96 is still planning shares the
+  // first click's promise, so it never starts a second export (and a second audit line).
+  const exportInFlight = useRef<Promise<void> | null>(null)
   const env: Env = {
     S, stage, agent: st, data,
     spent: usage.total,
@@ -303,6 +318,16 @@ export function Settings() {
     loadingMore,
     loadMore: list => { more(list) },
     exportFromServer: agent.auditExportUrl() ? () => { window.location.assign(agent.auditExportUrl()!) } : null,
+    // Route 96 first: a refusal stays in the app (content.ts says why) instead of replacing it with a JSON page. Then route
+    // 95 streams its own download (Content-Disposition), so the page stays where it is while the file arrives.
+    exportDataFromServer: agent.dataExportUrl() ? () => {
+      exportInFlight.current ??= (async () => {
+        await agent.checkDataExport()
+        window.location.assign(agent.dataExportUrl()!)
+      })().finally(() => { exportInFlight.current = null })
+      return exportInFlight.current
+    } : null,
+    waiting: approves ? { state: waitingState, decide: waitingStore.decide, retry: () => { void waitingStore.read() } } : undefined,
   }
   const page = settingsPage(setTab, env)
   const readOnly = phone && setTab.startsWith('team-')
@@ -418,6 +443,7 @@ export function Settings() {
                       </div>
                       {row.avatar?.at === 'control' && memberFor(data, row.avatar.who, userName(ctx)) && <span className={cn('flex flex-none', locked && 'grayscale')}><Avatar who={row.avatar.who} size={28} fontSize={11} /></span>}
                       <Control readOnly={readOnly || denied} denied={denied} effortOk={al.effort} switchOk={al.switch} grant={data.people.supportGrant} row={row} locked={locked} on={on} onToggle={() => (row.toggle ? row.toggle(!on) : tell(agent.setToggle(row.key!, !on), row))} onAsk={setAsk} caption={i === 0 && !readOnly ? sec.caption : undefined} />
+                      {row.also && !denied && <Button variant="outline" size="lg" aria-label={row.also.ariaLabel} disabled={row.busy} onClick={() => (row.also!.ask ? setAsk({ ...row.also!.ask, go: row.also!.go }) : row.also!.go())}>{row.also.label}</Button>}
                       {row.remove && me?.can.remove !== false && !readOnly && <Button variant="outline" size="lg" aria-label={row.remove.label} onClick={() => setAsk({ title: row.remove!.title, text: row.remove!.text, action: row.remove!.action, go: row.remove!.go })}>Remove</Button>}
                     </div>
                   )

@@ -233,64 +233,75 @@ test('Dark, by keyboard: F6 reaches the newest toast and goes back, traps nothin
   // Time runs on the page clock, held while the toasts are made, so no toast times out on a slow run.
   await page.clock.install()
   await open(page, fx, '#/today', '6 things need you')
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 500))
-  const toasts = page.locator('[data-toast-stack] [data-toast]')
-  const newestUndo = () => toasts.last().getByRole('button', { name: 'Undo', exact: true })
-  const inDialog = () => page.evaluate(() => !!document.activeElement?.closest('[role="dialog"], [role="alertdialog"]'))
-  /** A toast with Undo, from a Today card's Snooze. */
-  async function snooze(title: string) {
-    await page.getByRole('article').filter({ hasText: title }).getByRole('button', { name: 'More' }).click()
-    await page.getByRole('menuitem', { name: 'Snooze until tomorrow' }).click()
-    await expect(page.getByRole('menu')).toHaveCount(0)
-  }
-
-  // F6 from a focused control on the page, then Escape: focus is back on it, and Escape closed nothing.
-  await snooze('PO-1187 from Kestrel is 6 days late')
-  // 4 of its 7 seconds go by first, so a toast that F6 remounted (its countdown started again) would outlast the check below.
-  await page.clock.runFor(4000)
-  const composer = page.getByRole('textbox', { name: 'Ask Inhouse' })
-  await composer.focus()
-  await page.keyboard.press('F6')
-  await expect(newestUndo()).toBeFocused()
-  await attach(page, 'f6-toast')
-  await page.keyboard.press('Escape')
-  await expect(composer).toBeFocused()
-  // The regression check: after F6 and Escape no focus or hover state is left pausing it, and it kept the time it had
-  // left, so it times out in the 3 seconds it had.
-  await page.clock.runFor(3500)
-  await expect(toasts).toHaveCount(0)
-
-  // F6 again goes back too. No trap: after F6 a click elsewhere just works, and the toast times out after it.
-  await snooze('Order #4821 is stuck for 4 days')
-  await composer.focus()
-  await page.keyboard.press('F6')
-  await expect(newestUndo()).toBeFocused()
-  await page.keyboard.press('F6')
-  await expect(composer).toBeFocused()
-  await page.keyboard.press('F6')
-  await expect(newestUndo()).toBeFocused()
-  await page.getByRole('heading', { level: 1 }).click()
-  await composer.click()
-  await expect(composer).toBeFocused()
-  await page.keyboard.type('still typing')
-  await expect(composer).toHaveValue('still typing')
-  await page.clock.runFor(7500)
-  await expect(toasts).toHaveCount(0)
-
-  // Over a modal (a window, a sheet) F6 does nothing: focus stays in it, and the toast is still there with its Undo.
-  await snooze('Ridge 30L Pack runs out in 9 days')
-  await press(account(page))
-  await page.getByRole('menuitem', { name: 'Help and guides' }).click()
   const help = page.getByRole('dialog', { name: 'Help and guides' })
-  await expect.poll(inDialog).toBe(true)
-  await page.keyboard.press('F6')
-  await expect.poll(inDialog).toBe(true)
-  await expect(newestUndo()).not.toBeFocused()
-  await expect(help).toBeVisible()
-  await attach(page, 'f6-over-window')
-  await page.keyboard.press('Escape')
-  await expect(help).toHaveCount(0)
-  await page.clock.resume()
+  async function openHelp() {
+    await press(account(page))
+    await press(page.getByRole('menuitem', { name: 'Help and guides' }))
+    await expect(help).toBeFocused()
+  }
+  // Let the lazy Help window load with its timers running before exercising F6 on a paused clock.
+  await openHelp()
+  await escapeTo(page, help, account(page))
+
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 500))
+  try {
+    const toasts = page.locator('[data-toast-stack] [data-toast]')
+    const newestUndo = () => toasts.last().getByRole('button', { name: 'Undo', exact: true })
+    /** A toast with Undo, from a Today card's Snooze. */
+    async function snooze(title: string) {
+      await page.getByRole('article').filter({ hasText: title }).getByRole('button', { name: 'More' }).click()
+      await page.getByRole('menuitem', { name: 'Snooze until tomorrow' }).click()
+      await expect(page.getByRole('menu')).toHaveCount(0)
+    }
+
+    // F6 from a focused control on the page, then Escape: focus is back on it, and Escape closed nothing.
+    await snooze('PO-1187 from Kestrel is 6 days late')
+    // 4 of its 7 seconds go by first, so a toast that F6 remounted (its countdown started again) would outlast the check below.
+    await page.clock.runFor(4000)
+    const composer = page.getByRole('textbox', { name: 'Ask Inhouse' })
+    await composer.focus()
+    await page.keyboard.press('F6')
+    await expect(newestUndo()).toBeFocused()
+    await attach(page, 'f6-toast')
+    await page.keyboard.press('Escape')
+    await expect(composer).toBeFocused()
+    // The regression check: after F6 and Escape no focus or hover state is left pausing it, and it kept the time it had
+    // left, so it times out in the 3 seconds it had.
+    await page.clock.runFor(3500)
+    await expect(toasts).toHaveCount(0)
+
+    // F6 again goes back too. No trap: after F6 a click elsewhere just works, and the toast times out after it.
+    await snooze('Order #4821 is stuck for 4 days')
+    await composer.focus()
+    await page.keyboard.press('F6')
+    await expect(newestUndo()).toBeFocused()
+    await page.keyboard.press('F6')
+    await expect(composer).toBeFocused()
+    await page.keyboard.press('F6')
+    await expect(newestUndo()).toBeFocused()
+    await page.getByRole('heading', { level: 1 }).click()
+    await composer.click()
+    await expect(composer).toBeFocused()
+    await page.keyboard.type('still typing')
+    await expect(composer).toHaveValue('still typing')
+    await page.clock.runFor(7500)
+    await expect(toasts).toHaveCount(0)
+
+    // Over a modal (a window, a sheet) F6 does nothing: focus stays in it, and the toast is still there with its Undo.
+    await snooze('Ridge 30L Pack runs out in 9 days')
+    await expect(newestUndo()).toBeVisible()
+    await openHelp()
+    await page.keyboard.press('F6')
+    await expect(help).toBeFocused()
+    await expect(newestUndo()).not.toBeFocused()
+    await expect(help).toBeVisible()
+    await attach(page, 'f6-over-window')
+    await page.keyboard.press('Escape')
+    await expect(help).toHaveCount(0)
+    await expect(newestUndo()).toBeVisible()
+  } finally {
+    await page.clock.resume()
+  }
 })
 
 test('Skip to content works with the sidebar collapsed, and its link opened on its own lands on Today with no notice', async ({ fx, page }) => {

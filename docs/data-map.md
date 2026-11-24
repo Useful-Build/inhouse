@@ -32,7 +32,7 @@ The block below is generated from the table registry (`app/ops/tables`) by `data
 | `usage_extends` | D1 table | Each model call's hold and cost | None | Kept while the deployment lives | No | Kept: no personal data | Nightly, copied in pages (may lag the snapshot by minutes) |  |
 | `audit_copy_state` | D1 table | Where the audit log's daily copy has reached | None | Kept while the deployment lives | No | Kept: no personal data | Nightly, exact |  |
 | `audit-copy/` | R2 prefix | The audit log's daily copy | Member ids only | Never shortened | No | Kept: the audit log's copy is never shortened | Not backed up (it is itself a copy) |  |
-| `memories` | D1 table | Remembered facts, brand and personal | Fact text, owner and creator ids | Forgotten facts 30 days after their last change; others kept | Yes | Rows that belong to the person deleted | Nightly, exact | Brand facts a person saved |
+| `memories` | D1 table | Remembered facts, including waiting, approved and rejected brand facts | Fact text, owner and creator ids; the audit log records who approved or rejected a fact | Forgotten facts, including rejected ones, 30 days after their last change; waiting and active facts kept | Yes | Rows that belong to the person deleted | Nightly, exact | Brand facts a person saved |
 | `memories_fts` | D1 table | The search index over facts | A copy of fact text | Follows its source | No | Follows its source | Rebuilt from its source after a restore |  |
 | `chat_messages_fts` | D1 table | The search index over messages | A copy of message text | Follows its source | No | Follows its source | Rebuilt from its source after a restore |  |
 | `Runner` | Durable Object | The agent runners' working state | None | Holds nothing kept | No | Kept: no personal data | Nothing to restore |  |
@@ -53,6 +53,8 @@ The block below is generated from the table registry (`app/ops/tables`) by `data
 | `egress_fetches` | D1 table | Outbound web requests by host | None | 30 days | No | Kept: no member id; removed after 30 days | Nightly, exact (rows only added) |  |
 | `SignIn` | Durable Object | The connector hub's sealed tokens | None | Kept while the connection is | No | Kept: no personal data | Not restored: reconnect |  |
 | `privacy_requests` | D1 table | Shopify privacy requests and their status | Shopify customer and order IDs while open | Request record kept while the deployment lives; customer and order IDs cleared on close | No | Kept: no team member ID | Nightly, exact |  |
+| `team_requests` | D1 table | Requests to the support team | Requester id, request text and subject | Kept while the deployment lives or until the requester is deleted | Yes | Rows that belong to the person deleted | Nightly, copied in pages (may lag the snapshot by minutes) |  |
+| `brand_skills` | D1 table | Skills written by the brand | Maker and editor ids, skill description and instructions | Kept until the skill is deleted | Yes | The skill stays; the deleted member’s maker and editor links are cleared | Nightly, exact | Skill description and instructions |
 <!-- stores:end -->
 
 ## Terms
@@ -60,7 +62,15 @@ The block below is generated from the table registry (`app/ops/tables`) by `data
 - **Retention**: `chats` and `steps` follow the brand's Data and access settings (default 12 months). The audit log and
   the deletion log are never shortened. Backups are kept 30 days by the bucket's lifecycle rule, so a deleted person
   leaves them within that window.
-- **Export**: "Export everything" holds every store marked yes, whole. A person's export holds what names them.
+- **Export**: "Export everything" (Data and access, route 95) holds the stores marked yes, for the person asking: the
+  brand's shared data whole (the audit log, the deletion log, grants, usage, activity, routines, Today, the Library,
+  brand skills, team requests) and only the brand's own part of the rest: brand settings and memory (active or
+  waiting), and the caller's own personal settings, memories, photo and chats (with their messages, tool calls, files
+  and file bytes). Never another person's personal rows. `members` holds person rows only, with the Members page's
+  fields (no sign-in subject, no Inhouse team or service row). The Inhouse team under a grant gets no chats, no
+  personal rows and no requester ids. Each store's rule is in `app/ops/export/brand-for-caller.ts` (interim default,
+  master plan standing decision 10). The ops CLI's brand export holds every store marked yes, whole. A person's export
+  holds what names them.
 - **Deletion**: a person's deletion pseudonymises their member row (the id stays, so the audit log keeps naming them by
   id only), removes what they own and keeps references to their id. The accepted keeps say where free text that may
   name them stays, and why.

@@ -24,11 +24,17 @@ const THE_20 = [
   'history_search', 'history_read',
   'notification_send',
   'team_request_create', 'team_request_list',
+  // P6a brand skills (master plan standing decision 6).
+  'skill_save',
 ]
 const THE_6 = ['memory_search', 'memory_save', 'approval_request', 'question_ask', 'history_search', 'notification_send']
 const BUILT = ['memory_search', 'memory_save', 'memory_update', 'memory_forget', 'memory_list', 'history_search', 'history_read',
   // P4 W2: the routine tools.
-  'routine_create', 'routine_list', 'routine_update', 'routine_delete', 'routine_run_now']
+  'routine_create', 'routine_list', 'routine_update', 'routine_delete', 'routine_run_now',
+  // P6a W3: the Inhouse team tools.
+  'team_request_create', 'team_request_list',
+  // P6a brand skills.
+  'skill_save']
 
 const post = (body: string, headers: Record<string, string> = {}, scope = SCOPE) =>
   handleMcp(new Request('http://egress.internal/mcp/', { method: 'POST', body, headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...headers } }), scope, { db, now: () => NOW })
@@ -163,13 +169,15 @@ describe('descriptions promise only what P3 does (failure 5)', () => {
 })
 
 describe('the Watch switch (P8a S)', () => {
-  it("memory_save runs at Watch; team_request_create (a stub until P6a) isn't refused by the stage gate", async () => {
+  it("memory_save and team_request_create run at Watch", async () => {
     await db.prepare("DELETE FROM settings WHERE owner = 'brand' AND key = 'stage'").run()
     await db.prepare("INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 'stage', '\"Watch\"', 1, 0, 'm_x', 'r-watch')").run()
     const saved = await call('memory_save', { scope: 'brand', text: 'We restock on Fridays at Watch.' })
     expect(saved.isError).toBeFalsy()
-    // A stub today: it answers not_available_yet. This proves only that the Watch gate lets it through, not that it works.
-    const team = await call('team_request_create', { text: 'Connect our helpdesk' })
-    expect(team.structuredContent).toEqual({ error: 'not_available_yet' })
+    const memberId = 'm_watch_requester'
+    await db.prepare("INSERT INTO members (id, kind, role, status, name, created_at_ms) VALUES (?, 'person', 'member', 'active', 'Avery Example', ?)").bind(memberId, NOW).run()
+    const team = await call('team_request_create', { kind: 'tool', text: 'Connect our helpdesk' }, { ...SCOPE, memberId })
+    expect(team.isError).toBeFalsy()
+    expect(team.structuredContent).toMatchObject({ created: true, text: 'Connect our helpdesk' })
   })
 })

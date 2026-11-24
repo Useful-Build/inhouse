@@ -31,11 +31,18 @@ const webReq = (messages: Msg[]) =>
 /** A main-loop request with the memory tool in its list, as `memory-save` expects. */
 const memoryReq = (messages: Msg[]) =>
   req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__memory_save' }] })
-/** The main-loop request a scenario expects: a structured one for the structured scenarios, a WebFetch one for those, the memory one for `memory-save`. */
-/** A main-loop request with the memory search tool in its list, as `memory-recall` expects. */
+/** A main-loop request with the memory search tool in its list, as `memory-recall` and the read-side search scenarios expect. */
 const recallReq = (messages: Msg[]) =>
   req(messages, false, { model: HARNESS_MODEL, tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__memory_search' }] })
-const mainFor = (name: string) => (name.startsWith('structured') ? structuredReq : name.startsWith('webfetch') ? webReq : name.startsWith('memory-save') ? memoryReq : name.startsWith('memory-recall') ? recallReq : mainReq)
+/** Read-side proof scenarios whose turn 0 searches memory (`mainLoop('mcp__inhouse__memory_search')`). */
+const readSideSearch = new Set(['rs-honest', 'rs-obedient-memory', 'rs-obedient-routine', 'rs-obedient-file'])
+/** The main-loop request a scenario expects: a structured one for the structured scenarios, a WebFetch one for those, the memory one for `memory-save`, and the memory-search one for `memory-recall` and the read-side search scenarios. */
+const mainFor = (name: string) =>
+  name.startsWith('structured') ? structuredReq
+  : name.startsWith('webfetch') ? webReq
+  : name.startsWith('memory-save') ? memoryReq
+  : name.startsWith('memory-recall') || name === 'memory-reword-team-ref' || readSideSearch.has(name) ? recallReq
+  : mainReq
 const convo = (assistants: number) => [{ role: 'user' as const, content: 'q' }, ...Array.from({ length: assistants }, () => [{ role: 'assistant' as const, content: 'a' }, { role: 'user' as const, content: 'r' }]).flat()]
 
 const turn = (i: number): ScriptedTurn => ({ content: [{ type: 'text', text: `turn ${i}` }] })
@@ -98,11 +105,12 @@ describe('the scripted model', () => {
 
   it.each(Object.keys(SCENARIOS))('%s: a side request on turn 0 (no tool list, or another model) is a miss', async (name) => {
     const model = createScriptedModel(SCENARIOS)
-    expect((await model.handle(req(convo(0), false, { model: HARNESS_MODEL }), name)).status).toBe(400)
-    expect((await model.handle(req(convo(0), false, { model: 'claude-haiku-5-5', tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__question_ask' }] }), name)).status).toBe(400)
+    const messages: Msg[] = [{ role: 'user', content: 'q [fx0a1b2c3d]' }]
+    expect((await model.handle(req(messages, false, { model: HARNESS_MODEL }), name)).status).toBe(400)
+    expect((await model.handle(req(messages, false, { model: 'claude-haiku-5-5', tools: [{ name: 'Bash' }, { name: 'mcp__inhouse__question_ask' }] }), name)).status).toBe(400)
     // The miss names the failed check (#tool-turns): no tool list, then the wrong model.
     expect(model.misses.map((m) => m.reason)).toEqual(['the request does not match the turn: no tool list (a side request)', `the request does not match the turn: model claude-haiku-5-5, not ${HARNESS_MODEL}`])
-    expect((await model.handle(mainFor(name)(convo(0)), name)).status).toBe(200)
+    expect((await model.handle(mainFor(name)(messages), name)).status).toBe(200)
   })
 
   it.each([
@@ -429,6 +437,17 @@ describe("the real CLI's requests", () => {
       const noResult = { ...r, messages: r.messages.slice(0, -1) }
       expect((await answer(model, noResult, 'memory-recall')).status).toBe(400)
     })
+    it('turn 1 with an errored search result (is_error: true) misses loudly and quotes the error', async () => {
+      const model = createScriptedModel(SCENARIOS)
+      const r = withResult('turn1', 'toolu_scripted_recall', 'Error: No such tool available: mcp__inhouse__memory_search')
+      for (const m of r.messages) {
+        for (const b of Array.isArray(m.content) ? (m.content as { type?: string; tool_use_id?: string; is_error?: boolean }[]) : []) {
+          if (b.type === 'tool_result' && b.tool_use_id === 'toolu_scripted_recall') b.is_error = true
+        }
+      }
+      expect((await answer(model, r, 'memory-recall')).status).toBe(400)
+      expect(model.misses.at(-1)!.reason).toContain('has is_error true, not false; it says: "Error: No such tool available: mcp__inhouse__memory_search"')
+    })
     it('memory-recall-stem: searches "zorblat" and says how many facts came back and whether the saved one was among them', async () => {
       const STEM = 'Zorblats are accepted within 45 days.'
       const id = 'toolu_scripted_recall_stem'
@@ -532,11 +551,15 @@ describe("the real CLI's requests", () => {
     ])
   })
 
-  it('the placeholder stands in only for a tool the runner gives the agent: an unknown tool is still a miss', () => {
+  it('the placeholder stands in only for deferred tools: unknown tools and missing always-load inhouse tools still miss', () => {
     const turn0 = captured['webfetch-allowed']!.turn0!
     expect(mainLoop('WebFetch')(turn0)).toBe(true)
     expect(mainLoop('mcp__inhouse__routine_create')(turn0)).toBe(true)
     expect(mainLoop('NoSuchTool')(turn0)).toBe("the tool list doesn't offer NoSuchTool")
+    const withoutInhouse: MessagesRequest = { ...turn0, tools: turn0.tools!.filter((t) => !t.name.startsWith('mcp__inhouse__')) }
+    expect(mainLoop('mcp__inhouse__memory_search')(withoutInhouse)).toBe("the tool list doesn't offer mcp__inhouse__memory_search")
+    expect(mainLoop('mcp__inhouse__memory_save')(withoutInhouse)).toBe("the tool list doesn't offer mcp__inhouse__memory_save")
+    expect(mainLoop('mcp__inhouse__routine_create')(withoutInhouse)).toBe(true)
   })
 
   it.each([

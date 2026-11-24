@@ -66,11 +66,19 @@ export async function listAll(bucket: R2Bucket, prefix: string, startAfter?: str
   return out.slice(0, max)
 }
 
-/** One object's bytes and content type; throws by key when it's gone (it was listed a moment before). */
-export async function readObject(bucket: R2Bucket, key: string): Promise<{ bytes: Uint8Array; contentType: string | null }> {
-  const body = await bucket.get(key)
-  if (body === null) throw new Error(`ops: ${key} vanished while it was read`)
-  return { bytes: new Uint8Array(await body.arrayBuffer()), contentType: body.httpMetadata?.contentType ?? null }
+/**
+ * Every object under `prefix`, a listing page (up to 1,000) at a time, following the cursor: the caller holds one page,
+ * never the whole listing.
+ */
+export async function* listPages(bucket: R2Bucket, prefix: string): AsyncGenerator<R2Object[]> {
+  let cursor: string | undefined
+  for (;;) {
+    const page = await bucket.list({ prefix, cursor, limit: 1000 })
+    yield page.objects
+    if (!page.truncated) return
+    if (page.cursor === undefined) throw new Error(`ops: R2 listed ${prefix} as truncated with no cursor`)
+    cursor = page.cursor
+  }
 }
 
 /** Deletes `keys`, 1,000 per call. Refuses, before deleting anything, a key under the backup set or the deletion log. */

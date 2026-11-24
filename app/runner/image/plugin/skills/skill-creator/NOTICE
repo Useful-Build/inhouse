@@ -1,0 +1,14 @@
+Inhouse skill-creator
+
+This skill is adapted from Anthropic's skill-creator skill:
+  https://github.com/anthropics/skills/tree/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/skill-creator
+Copyright 2026 Anthropic, PBC. Licensed under the Apache License, Version 2.0 (LICENSE.txt in this folder).
+
+Changes made by Inhouse (2026-11-23):
+- SKILL.md is rewritten for this product: the name and description rules are the server's, skills are saved with the
+  inhouse skill_save tool, and the guidance is in plain words for people running a brand.
+- Removed, because the agent's container doesn't allow them or brand skills don't use them: the subagent test runs and
+  their workspace, the grader, comparator and analyzer agents (agents/), the eval viewer and review page
+  (eval-viewer/, assets/eval_review.html), the benchmark and report scripts, the description optimiser (run_loop.py,
+  run_eval.py, improve_description.py: they start `claude -p`), packaging (package_skill.py), quick_validate.py and
+  references/schemas.md.

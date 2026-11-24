@@ -2,14 +2,14 @@
 // its detail is counts, ages and store names only.
 // - `backup_fresh`: the newest complete backup (a manifest) is at most 26 hours old.
 // - `retention_fresh`: every retention store has a `done` run in the deletion log within 26 hours (the handler runs
-//   store by store, so each store's own newest `done` counts), or belongs to a chats or steps group shortened within 26h.
+//   store by store, so each store's own newest `done` counts), with 26 hours of grace for a store whose retention work was just enabled.
 // - `retention_overdue`: no store holds a row older than its cutoff plus two days (the daily run's slack). It reads D1
 //   only, so the BrandAgent's own storage isn't in it (its job's freshness is), and a chat busy in the object is too
 //   rare to exclude here: a chat with a live or waiting session has recent activity, so it isn't past its period.
 //   This is the detection the R2 lifecycle proposal leaves to retention: there's no age rule on files/, sessions/ or
 //   library/, so a job that stops shows here instead.
 //   A shortened chats or steps period gets 26 hours for the next nightly pass and its continuations. Fixed ages and
-//   the freshness signal still apply during that window.
+//   freshness for stores already doing retention work still apply during that window.
 // A deployment younger than 26 hours (its first migration, `d1_migrations.applied_at`) hasn't had its first nightly run
 // yet: backup_fresh and retention_fresh read green then, saying so, so a fresh brand's health route isn't red until 01:30.
 // `backup_failed` and `retention_failed` stay log lines too.
@@ -63,7 +63,7 @@ export async function backupFresh(db: D1Database, bucket: Bucket, nowMs: number)
 
 /** Every retention store has a `done` run within 26 hours: red names the ones that don't. */
 export async function retentionFresh(db: D1Database, bucket: Bucket, nowMs: number, stores: readonly string[] = retentionStores().map(e => e.name)): Promise<SignalResult> {
-  const { days, shortenedAt } = await brandRetentionSettings(db)
+  const { days, enabledAt } = await brandRetentionSettings(db)
   const periods = periodsFor(tables, days)
   const enabled = stores.filter(store => hasRetentionWork(store, periods))
   const since = `deletion-log/${String(nowMs - FRESH_MS - 1).padStart(13, '0')}.`
@@ -77,8 +77,8 @@ export async function retentionFresh(db: D1Database, bucket: Bucket, nowMs: numb
     if (e.kind === 'retention') for (const c of e.cutoffs ?? []) seen.add(c.store)
   }
   const graced = (store: string) => {
-    const at = shortenedAt[retentionGroups[store]]
-    return at !== undefined && nowMs - at < FRESH_MS
+    const at = enabledAt[retentionGroups[store]]
+    return at !== undefined && nowMs - at < FRESH_MS && !hasRetentionWork(store, { [store]: null })
   }
   const stale = enabled.filter(s => !seen.has(s) && !graced(s))
   if (stale.length > 0 && young(await deployedAtMs(db), nowMs)) return { ok: true, detail: 'no run yet (deployed under 26h ago)' }

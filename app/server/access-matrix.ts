@@ -83,6 +83,28 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 54 */ { method: 'POST', pattern: '/api/routines/:id/run', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 55 */ { method: 'POST', pattern: '/api/routines/:id/delete', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 56 */ { method: 'POST', pattern: '/api/routines/:id/restore', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  // P6a PR0 (docs/plans/2026-11-22-p6a-memory-skills.md). Rows 68 to 76 are P5's (fleet/connectors), so P6a holds 77 to 85 and 87 to 89 (86 is main's
+  // routine runs, master plan decision 8).
+  // Team memory approval (W2): brand data, admins and the Inhouse team; the Inhouse team's approve is a write under a
+  // live grant (support.access PUT, INHOUSE_BRAND_WRITES). Members are refused here.
+  /* 77 */ { method: 'GET', pattern: '/api/memory/waiting', class: 'brand_data', allow: ['admin', 'inhouse'] },
+  /* 78 */ { method: 'PUT', pattern: '/api/memory/brand/:id/approved', class: 'brand_data', allow: ['admin', 'inhouse'] },
+  // Skills (W3): `technical`, everyone reads (names and short summaries aren't sensitive). A skill's full text (84) is
+  // brand data, read by the Inhouse team only under a live grant; people delete a brand skill (85), and who may (its
+  // maker or an admin, or admins only after the maker's data is deleted) is the store's, in its statement.
+  /* 79 */ { method: 'GET', pattern: '/api/skills', class: 'technical', allow: ['member', 'admin', 'inhouse'] },
+  // Team requests (W3). Row 80 is baseline: the Inhouse team reads a request's text without a grant. That's an accepted
+  // exception to "brand data needs a grant", because a request is addressed to the Inhouse team (review L1, #328). An
+  // agent can file a request carrying tool-result brand data, so W4's read-side set includes that case. People create
+  // (81). The Inhouse team alone marks a request done or declined (82, no grant). The requester alone withdraws their own
+  // (83: personal, so the owner check on `requested_by` is mandatory and the Inhouse team never reaches it).
+  /* 80 */ { method: 'GET', pattern: '/api/team-requests', class: 'baseline', allow: ['member', 'admin', 'inhouse'] },
+  /* 81 */ { method: 'POST', pattern: '/api/team-requests', class: 'baseline', allow: ['member', 'admin'] },
+  /* 82 */ { method: 'PUT', pattern: '/api/team-requests/:id/status', class: 'baseline', allow: ['inhouse'] },
+  /* 83 */ { method: 'PUT', pattern: '/api/team-requests/:id/withdrawn', class: 'personal', allow: ['member', 'admin'] },
+  /* 84 */ { method: 'GET', pattern: '/api/skills/:name', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  /* 85 */ { method: 'POST', pattern: '/api/skills/brand/:id/delete', class: 'brand_data', allow: ['member', 'admin'] },
+  // Rows 87 to 89 stay P6a's spare numbers (86 is main's, below); line A holds 90 to 99.
   // Master plan decision 8: a routine's recent runs, read like route 52.
   /* 86 */ { method: 'GET', pattern: '/api/routines/:id/runs', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   // P8a F2: Shopify's privacy webhooks, the closed exception outside sign-in (routes.ts `webhookRoutes`): no principal
@@ -92,6 +114,11 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 93 */ { method: 'POST', pattern: '/api/webhooks/shopify/shop-redact', class: 'webhook', allow: [] },
   // P8a F2: the runbook closes a privacy request, release only like revive.
   /* 94 */ { method: 'POST', pattern: '/api/ops/privacy-requests/:id/close', class: 'open', allow: [], services: ['release'] },
+  // P8a D: Data and access's "Export everything", the brand's whole export (ops/export, brand scope) as one download.
+  // Brand data: Admins, and the Inhouse team only under a live grant (support.access). Members never.
+  /* 95 */ { method: 'GET', pattern: '/api/data-access/export', class: 'brand_data', allow: ['admin', 'inhouse'] },
+  // P8a D: the check the page makes before route 95 (its plan only: the size or the `too_large` refusal). Row 95's access.
+  /* 96 */ { method: 'GET', pattern: '/api/data-access/export/check', class: 'brand_data', allow: ['admin', 'inhouse'] },
 ]
 
 /** Each `CanKey`'s row (section 3). */
@@ -106,4 +133,6 @@ export const canRows: CanRows = {
   viewMembers: { method: 'GET', pattern: '/api/members' },
   viewAudit: { method: 'GET', pattern: '/api/audit' },
   exportAudit: { method: 'GET', pattern: '/api/audit/export.csv' },
+  approveMemory: { method: 'PUT', pattern: '/api/memory/brand/:id/approved' },
+  exportData: { method: 'GET', pattern: '/api/data-access/export' },
 }
