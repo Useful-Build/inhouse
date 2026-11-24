@@ -75,7 +75,8 @@ export function log(event: LogEvent, fields: LogFields = {}): void {
   }
   const text = JSON.stringify(line)
   // The hub's TEST bundle only (wrangler.hub.jsonc defines the switch "false", so esbuild drops this): every line also
-  // goes to a bounded in-isolate buffer the test-fakes hook reads (hub/testing/fakes.ts, op `logs`).
+  // goes to a bounded per-isolate queue that entrypoint and SignIn DO boundaries flush into the singleton test-fakes DO
+  // (hub/testing/fakes.ts, op `logs`).
   if (__INHOUSE_HUB_TEST__) {
     const g = globalThis as { __inhouseHubTestLogs?: { lines: string[]; dropped: number } }
     const buf = (g.__inhouseHubTestLogs ??= { lines: [], dropped: 0 })
@@ -86,4 +87,17 @@ export function log(event: LogEvent, fields: LogFields = {}): void {
     }
   }
   console.log(text)
+}
+
+/**
+ * TEST BUILD ONLY: drains lines queued in this isolate since the last flush so the caller can forward them to the
+ * singleton test-fakes DO. Always empty outside the test bundle.
+ */
+export function drainPendingTestLogs(): string[] {
+  if (__INHOUSE_HUB_TEST__) {
+    const g = globalThis as { __inhouseHubTestLogs?: { lines: string[]; dropped: number } }
+    const buf = g.__inhouseHubTestLogs
+    if (buf && buf.lines.length > 0) return buf.lines.splice(0, buf.lines.length)
+  }
+  return []
 }

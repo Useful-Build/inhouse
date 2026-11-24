@@ -7,16 +7,18 @@ import { WorkerEntrypoint } from 'cloudflare:workers'
 import type { CallerScope, HubResult } from '../../index/contract'
 import { err } from '../../index/errors'
 import { log } from '../../index/log'
-import { signInFor } from '../../signin/signin'
+import { flushTestLogs, signInFor } from '../../signin/signin'
 import type { DeliveryGateway as DeliveryApi, PostNoticeRequest, SlackChannel } from './contract'
 import { checkChannel, listChannels, postNotice, type DeliveryDeps, type DeliveryStub } from './gateway'
 
-async function guarded<T>(fn: () => Promise<HubResult<T>>): Promise<HubResult<T>> {
+async function guarded<T>(env: Env, fn: () => Promise<HubResult<T>>): Promise<HubResult<T>> {
   try {
     return await fn()
   } catch {
     log('hub_internal', { code: 'internal' })
     return err('internal')
+  } finally {
+    await flushTestLogs(env)
   }
 }
 
@@ -26,14 +28,14 @@ export class DeliveryGateway extends WorkerEntrypoint<Env> implements DeliveryAp
   }
 
   async postNotice(scope: CallerScope, req: PostNoticeRequest): Promise<HubResult<{ ts: string }>> {
-    return guarded(() => postNotice(this.#deps(), scope, req))
+    return guarded(this.env, () => postNotice(this.#deps(), scope, req))
   }
 
   async listChannels(scope: CallerScope, req: { accountId: 'slack:workspace'; cursor?: string }): Promise<HubResult<{ channels: SlackChannel[]; nextCursor: string | null }>> {
-    return guarded(() => listChannels(this.#deps(), scope, req))
+    return guarded(this.env, () => listChannels(this.#deps(), scope, req))
   }
 
   async checkChannel(scope: CallerScope, req: { accountId: 'slack:workspace'; channelId: string }): Promise<HubResult<SlackChannel>> {
-    return guarded(() => checkChannel(this.#deps(), scope, req))
+    return guarded(this.env, () => checkChannel(this.#deps(), scope, req))
   }
 }

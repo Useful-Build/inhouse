@@ -1,20 +1,23 @@
 // The test-fakes hook, hub side (W5's API specs, through the product's test-build route `POST /api/ops/test-fakes` and
-// ConnectGateway.testFakes). Reads and flips the fake upstreams this isolate's test seam serves (./index.ts): the fake
-// OAuth MCP servers (FakeMcpServer, `slack` and `notes`) and the fake Slack Web API (FakeSlackWeb).
+// ConnectGateway.testFakes). Reads and flips the fake upstreams the singleton `__test-fakes__` SignIn Durable Object
+// serves (./index.ts): the fake OAuth MCP servers (FakeMcpServer, `slack` and `notes`), the fake Slack Web API
+// (FakeSlackWeb) and the recorded Shopify store.
 //
 // Rules: as ./index.ts. Reached only by a dynamic import inside `if (__INHOUSE_HUB_TEST__ && env.INHOUSE_TEST_BUILD
-// === '1')` (oauth/entry.ts), so the deployable bundle drops it; scripts/check-hub-build.mjs fails a deployable bundle
-// carrying HUB_FAKES_CANARY or this module, and fails unless the test bundle carries the canary.
+// === '1')` (oauth/entry.ts and signin/signin.ts), so the deployable bundle drops it; scripts/check-hub-build.mjs fails
+// a deployable bundle carrying HUB_FAKES_CANARY or this module, and fails unless the test bundle carries the canary.
 //
 // Every op validates its whole input before it changes anything (an unknown switch, a wrong type or an unknown channel
-// id is `invalid_args`, nothing applied). The fakes, the var overrides and the log buffer live in this isolate: in the
-// local multi-config `wrangler dev` the hub's entrypoints and its Durable Objects share one isolate, so they all see
-// the same fakes.
+// id is `invalid_args`, nothing applied). All upstream requests, fake switches/seeds, ConnectGateway answer bodies, hub
+// logs and var overrides live in the one singleton `__test-fakes__` DO (with var overrides in its SQLite KV), so on a
+// real Cloudflare deployment every stateless Worker isolate and every account SignIn DO isolate shares the same fakes.
+// The DO is strictly a leaf: `alarm` and `state`'s `connectedAccounts` run in `runHubFakesOp` (ConnectGateway), never
+// from inside the singleton DO, so no DO-to-DO cycle is possible.
 import { z } from 'zod'
 import type { HubResult } from '../index/contract'
 import { err } from '../index/errors'
 import { AccountIdSchema } from '../index/schemas'
-import { loadRegistry, signInFor } from '../signin/signin'
+import { flushTestLogs, loadRegistry, signInFor, TEST_FAKES_DO_NAME, TEST_FAKES_VARS_KEY } from '../signin/signin'
 import { FakeMcpServer, SLACK_CHANNELS, SLACK_MESSAGES } from '../../test/upstreams/mcp/server'
 import { FakeSlackWeb, WEB_CHANNELS } from '../../test/upstreams/slack/server'
 import { dataset as shopifyFixtureValue } from '../../test/upstreams/shopify/recordings/fixture/dataset'
@@ -91,12 +94,29 @@ export const HubFakesOpSchema = z.discriminatedUnion('op', [
 ])
 export type HubFakesOp = z.infer<typeof HubFakesOpSchema>
 
-type Globals = {
-  __inhouseHubTestVars?: Record<string, string>
-  __inhouseHubTestLogs?: { lines: string[]; dropped: number }
-  __inhouseHubTestConnectBodies?: string[]
+const CONNECT_BODIES_CAP = 500
+const HUB_LOGS_CAP = 5000
+/** Bounded ConnectGateway answer log held in the singleton `__test-fakes__` DO isolate. */
+const connectBodies: string[] = []
+/** Bounded hub log buffer held in the singleton `__test-fakes__` DO isolate. */
+const hubLogBuf: { lines: string[]; dropped: number } = { lines: [], dropped: 0 }
+
+/** Appends one ConnectGateway answer JSON text (called by ConnectGateway via the singleton DO). */
+export function recordConnectBody(body: string): void {
+  connectBodies.push(body)
+  if (connectBodies.length > CONNECT_BODIES_CAP) connectBodies.shift()
 }
-const g = globalThis as Globals
+
+/** Appends flushed hub log lines from any Worker or SignIn DO isolate (called via the singleton DO). */
+export function appendHubLogs(lines: string[]): void {
+  for (const line of lines) {
+    hubLogBuf.lines.push(line)
+    if (hubLogBuf.lines.length > HUB_LOGS_CAP) {
+      hubLogBuf.lines.shift()
+      hubLogBuf.dropped++
+    }
+  }
+}
 
 /** A JSON copy, so the answer can't alias the fake's live arrays. */
 const copy = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T
@@ -124,18 +144,16 @@ async function connectedAccounts(env: Env): Promise<{ accountId: string; scopes:
 }
 
 /**
- * What `state` answers: `mcp` is the Slack MCP fake, `notes` the generic one, `web` the Slack Web API fake, `shopify`
- * the recorded store's request log (path and method) and the access tokens it issued, `connect.bodies` each
- * ConnectGateway answer as JSON text (oauth/entry.ts), `accounts` the connected accounts' granted scopes.
+ * The singleton DO's own portion of `state`: `mcp` is the Slack MCP fake, `notes` the generic one, `web` the Slack Web
+ * API fake, `shopify` the recorded store's request log and issued tokens, `connect.bodies` each ConnectGateway answer.
  */
-export async function fakesState(env: Env) {
+function fakesStateLocal() {
   return {
     mcp: mcpLogs(slackMcp),
     notes: mcpLogs(notesMcp),
     web: copy({ requests: slackWeb.requests, posts: slackWeb.posts, violations: slackWeb.violations }),
     shopify: copy({ requests: shopifyRequests, issuedTokens: shopifyIssuedTokens }),
-    connect: { bodies: [...(g.__inhouseHubTestConnectBodies ?? [])] },
-    accounts: await connectedAccounts(env),
+    connect: { bodies: [...connectBodies] },
   }
 }
 
@@ -184,7 +202,7 @@ function clearSeeds(): void {
  * Clears the fakes' logs (and the ConnectGateway answers kept), restores every switch to a fresh fake's value and the
  * channels to the fixture's, drops the var overrides and the seeds. Issued tokens stay (a live connection keeps working).
  */
-export function resetFakes(): void {
+export function resetFakes(kv?: Pick<SyncKvStorage, 'delete'>): void {
   for (const f of [slackMcp, notesMcp]) {
     const fresh = new FakeMcpServer(f.profile) as unknown as Record<string, unknown>
     const live = f as unknown as Record<string, unknown>
@@ -205,8 +223,8 @@ export function resetFakes(): void {
   slackWeb.posts = []
   slackWeb.violations = []
   shopifyRequests.length = 0
-  delete g.__inhouseHubTestConnectBodies
-  delete g.__inhouseHubTestVars
+  connectBodies.length = 0
+  kv?.delete(TEST_FAKES_VARS_KEY)
   clearSeeds()
 }
 
@@ -231,32 +249,61 @@ function applySet(op: Extract<HubFakesOp, { op: 'set' }>): HubResult<{ set: true
 
 /** The hub's captured log lines from sequence number `since` on, and the number to pass next time. */
 export function hubLogs(since = 0): { lines: string[]; next: number } {
-  const buf = g.__inhouseHubTestLogs ?? { lines: [], dropped: 0 }
-  const from = Math.max(0, since - buf.dropped)
-  return { lines: buf.lines.slice(from), next: buf.dropped + buf.lines.length }
+  const from = Math.max(0, since - hubLogBuf.dropped)
+  return { lines: hubLogBuf.lines.slice(from), next: hubLogBuf.dropped + hubLogBuf.lines.length }
 }
 
-/** One hub op. `env.SIGNIN` for `alarm`. */
-export async function runHubFakesOp(env: Env, input: unknown): Promise<HubResult<unknown>> {
+/** Leaf ops executed inside the singleton `__test-fakes__` SignIn Durable Object (zero outbound DO calls). */
+export function runHubFakesInDo(kv: Pick<SyncKvStorage, 'get' | 'put' | 'delete'>, input: unknown): HubResult<unknown> {
   const parsed = HubFakesOpSchema.safeParse(input)
   if (!parsed.success) return err('invalid_args', parsed.error.issues[0]?.path.join('.') || 'op')
   const op = parsed.data
   switch (op.op) {
     case 'state':
-      return { ok: true, value: await fakesState(env) }
+      return { ok: true, value: fakesStateLocal() }
     case 'reset':
-      resetFakes()
+      resetFakes(kv)
       return { ok: true, value: { reset: true } }
     case 'set':
       return applySet(op)
-    case 'alarm':
-      return env.SIGNIN.get(env.SIGNIN.idFromName(op.accountId)).testFireAlarm()
-    case 'var':
-      g.__inhouseHubTestVars = { ...(g.__inhouseHubTestVars ?? {}), [op.name]: op.value }
+    case 'var': {
+      const cur = kv.get<Record<string, string>>(TEST_FAKES_VARS_KEY) ?? {}
+      kv.put(TEST_FAKES_VARS_KEY, { ...cur, [op.name]: op.value })
       return { ok: true, value: { name: op.name, value: op.value } }
+    }
     case 'logs':
       return { ok: true, value: hubLogs(op.since) }
     case 'seed':
       return applySeed(op)
+    case 'alarm':
+      return err('invalid_args', 'op')
+  }
+}
+
+/**
+ * One hub op (called from ConnectGateway.testFakes). Dispatches leaf ops to the singleton `__test-fakes__` DO and
+ * keeps account-DO fan-out (`alarm`, `state.accounts`) in this gateway so DO calls form a strict DAG with no cycles.
+ */
+export async function runHubFakesOp(env: Env, input: unknown): Promise<HubResult<unknown>> {
+  const parsed = HubFakesOpSchema.safeParse(input)
+  if (!parsed.success) return err('invalid_args', parsed.error.issues[0]?.path.join('.') || 'op')
+  const op = parsed.data
+  const fakes = env.SIGNIN.get(env.SIGNIN.idFromName(TEST_FAKES_DO_NAME))
+  switch (op.op) {
+    case 'alarm':
+      return env.SIGNIN.get(env.SIGNIN.idFromName(op.accountId)).testFireAlarm()
+    case 'state': {
+      const local = (await fakes.testFakesOp(op)) as HubResult<Record<string, unknown>>
+      if (!local.ok) return local
+      return { ok: true, value: { ...local.value, accounts: await connectedAccounts(env) } }
+    }
+    case 'logs':
+      await flushTestLogs(env)
+      return (await fakes.testFakesOp(op)) as HubResult<unknown>
+    case 'reset':
+    case 'set':
+    case 'var':
+    case 'seed':
+      return (await fakes.testFakesOp(op)) as HubResult<unknown>
   }
 }

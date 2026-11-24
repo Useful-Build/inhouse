@@ -51,11 +51,23 @@ const read = path => {
 }
 
 // ---------- the canaries, from their sources ----------
-// The test-fakes hook (W5, hub/testing/fakes.ts): its canary, and the three in-isolate globals it shares with code outside
-// hub/testing/ (the var overrides in signin/signin.ts, the log buffer in index/log.ts, the ConnectGateway answers in
-// oauth/entry.ts), each inside a branch the
-// deployable define drops. The names are fixed here: the code under hub/ is what must match them.
-const FAKES_GLOBALS = ['__inhouseHubTestVars', '__inhouseHubTestLogs', '__inhouseHubTestConnectBodies']
+// The test-fakes hook (W5, hub/testing/fakes.ts): its canary, and the names it shares with code outside hub/testing/ (the
+// singleton `__test-fakes__` SignIn DO in signin/signin.ts and oauth/entry.ts, the log queue in index/log.ts). Each needle
+// is a quoted string or a call site (`.name(`), never a bare method name: the deployable SignIn class still defines the
+// refusing `testFakesOp` / `testGetVars` / `testRecordConnectBody` / `testAppendLogs` methods, but every string and call
+// to them sits in a branch the deployable define drops. The deployable bundle must hold none of these outside an
+// `if (false)` block; the test bundle must hold every one (a needle it lacks means the name changed and the guard went
+// stale). The names are fixed here: the code under hub/ is what must match them.
+const FAKES_GLOBALS = [
+  '__inhouseHubTestLogs',
+  '"__test-fakes__"',
+  '"test-fakes:vars"',
+  '"X-Inhouse-Test-Throw"',
+  '.testFakesOp(',
+  '.testGetVars(',
+  '.testRecordConnectBody(',
+  '.testAppendLogs(',
+]
 
 function readCanaries() {
   const seam = join(hubDir, 'testing/index.ts')
@@ -238,6 +250,14 @@ function main() {
       console.error(`FAIL  ${name}: found nothing in the test bundle (${relative(root, testDir)}), so it proves nothing: it scanned the wrong folder or looks for the wrong thing.`)
     } else console.log(`ok    ${name}: caught the test bundle (${inTest.length} hit${inTest.length === 1 ? '' : 's'}).`)
   }
+
+  // Every test-fakes needle must be in the test bundle's script, or the guard has gone stale for it.
+  const testScripts = testBundle.files.filter(f => /\.[cm]?js$/.test(f))
+  const missing = FAKES_GLOBALS.filter(n => !testScripts.some(f => textOf(f).includes(n)))
+  if (missing.length) {
+    bad = true
+    console.error(`FAIL  test-fakes names: the test bundle (${relative(root, testDir)}) lacks ${missing.map(n => `"${n}"`).join(', ')}, so the guard no longer looks for what the code uses.`)
+  } else console.log('ok    test-fakes names: every name is in the test bundle.')
 
   return bad ? 1 : 0
 }

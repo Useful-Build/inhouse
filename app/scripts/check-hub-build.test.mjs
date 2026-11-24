@@ -27,7 +27,7 @@ const EXPECTED = {
   // The deployable script keeps the define's dead branches as text: names inside `if (false)` only are fine.
   'deploy-fakes-globals-dead': [0, /ok {4}test-fakes globals: clean/],
   // A quote inside a regex in a dead block doesn't stretch the block: a global after it is still reachable code.
-  'deploy-fakes-globals-regex': [1, /FAIL {2}test-fakes globals: the deployable.*\n.*__inhouseHubTestVars.*outside/],
+  'deploy-fakes-globals-regex': [1, /FAIL {2}test-fakes globals: the deployable.*\n.*__inhouseHubTestLogs.*outside/],
   // A dead block that never closes at its indentation fails the part, never counts the rest of the file as dead.
   'deploy-fakes-globals-unclosed': [1, /FAIL {2}test-fakes globals: the deployable.*\n.*never closes/],
   // An opener-looking line inside a template literal: the "block" holds a line no deeper than it, so the part fails as
@@ -58,6 +58,47 @@ for (const [dir, [status, pattern]] of Object.entries(EXPECTED)) {
     const r = run('--deploy', `${FIXTURES}/${dir}`, '--test', TEST)
     assert.equal(r.status, status, r.out)
     assert.match(r.out, pattern)
+  })
+}
+
+// Every shared test-fakes name, one by one: reachable in a deployable bundle it fails the scan naming it, and a test
+// bundle that lacks it fails the scan too, so each name is proven present in the test bundle and absent from the deployable.
+const FAKES_NAMES = [
+  '__inhouseHubTestLogs',
+  '"__test-fakes__"',
+  '"test-fakes:vars"',
+  '"X-Inhouse-Test-Throw"',
+  '.testFakesOp(',
+  '.testGetVars(',
+  '.testRecordConnectBody(',
+  '.testAppendLogs(',
+]
+const bundleFolder = (tmp, name, script) => {
+  const dir = join(tmp, name)
+  mkdirSync(dir)
+  writeFileSync(join(dir, 'index.js'), script)
+  const meta = JSON.parse(readFileSync(join(app, FIXTURES, 'deploy-clean/bundle-meta.json'), 'utf8'))
+  writeFileSync(join(dir, 'bundle-meta.json'), JSON.stringify({ ...meta, outputs: { [join(dir, 'index.js')]: { bytes: script.length } } }))
+  return dir
+}
+for (const name of FAKES_NAMES) {
+  test(`test-fakes name ${name}: refused in the deployable bundle, required in the test bundle`, () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'check-hub-build-name-'))
+    try {
+      const seam = readFileSync(join(app, TEST, 'index.js'), 'utf8')
+      const clean = bundleFolder(tmp, 'clean', 'export default 1\n')
+      const leaky = bundleFolder(tmp, 'leaky', `const probe = 1\n${name}\n`)
+      const found = run('--deploy', leaky, '--test', TEST)
+      assert.equal(found.status, 1, found.out)
+      assert.match(found.out, /FAIL {2}test-fakes globals: the deployable/)
+      // The test bundle with this one name removed fails the names check.
+      const without = bundleFolder(tmp, 'without', seam.split(name).join('REMOVED'))
+      const stale = run('--deploy', clean, '--test', without)
+      assert.equal(stale.status, 1, stale.out)
+      assert.match(stale.out, /FAIL {2}test-fakes names: the test bundle .* lacks/)
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
   })
 }
 
