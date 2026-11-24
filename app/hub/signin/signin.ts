@@ -88,18 +88,22 @@ let testLogFlushChain: Promise<void> = Promise.resolve()
  * `finally` blocks, so it never throws; a failed append is logged loudly (error name and line count, never content).
  */
 export function flushTestLogs(env: HubEnv): Promise<void> {
-  if (!(__INHOUSE_HUB_TEST__ && env.INHOUSE_TEST_BUILD === '1')) return Promise.resolve()
-  const mine = testLogFlushChain.then(async () => {
-    const lines = drainPendingTestLogs()
-    if (lines.length === 0) return
-    try {
-      await env.SIGNIN.get(env.SIGNIN.idFromName(TEST_FAKES_DO_NAME)).testAppendLogs(lines)
-    } catch (e) {
-      console.error(`hub test logs: flushing ${lines.length} line${lines.length === 1 ? '' : 's'} failed and they are lost (${e instanceof Error ? e.name : typeof e})`)
-    }
-  })
-  testLogFlushChain = mine
-  return mine
+  // The whole test path sits inside the `if`, never after an early return: the deployable build folds the flag to
+  // `false` and drops the block, so no test-fakes name or call reaches dist-hub (check-hub-build.mjs proves it).
+  if (__INHOUSE_HUB_TEST__ && env.INHOUSE_TEST_BUILD === '1') {
+    const mine = testLogFlushChain.then(async () => {
+      const lines = drainPendingTestLogs()
+      if (lines.length === 0) return
+      try {
+        await env.SIGNIN.get(env.SIGNIN.idFromName(TEST_FAKES_DO_NAME)).testAppendLogs(lines)
+      } catch (e) {
+        console.error(`hub test logs: flushing ${lines.length} line${lines.length === 1 ? '' : 's'} failed and they are lost (${e instanceof Error ? e.name : typeof e})`)
+      }
+    })
+    testLogFlushChain = mine
+    return mine
+  }
+  return Promise.resolve()
 }
 
 /** Env with any test-build `op: 'var'` overrides read from the singleton test-fakes DO. */
