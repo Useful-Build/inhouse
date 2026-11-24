@@ -1,0 +1,46 @@
+{
+ "row": {
+  "caseId": "T15",
+  "cat": "choice",
+  "pair": "approval_get/list",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true
+  },
+  "called": [
+   "approval_get"
+  ],
+  "toolSearches": 1,
+  "answer": "I can't check approval ap_204 yet. The tool that looks up an approval's status i",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_NpTqoEbNs2an6bDdzzsbTA",
+  "askedAs": "eval-45239772379-1-t15-r1",
+  "argsNotGraded": "the served schema defines no fields"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I can't check approval ap_204 yet. The tool that looks up an approval's status i",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "449383900fe89516d5c894a549e7deaaaa8e40feb33cbd63746d569560016893",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__approval_get\",\"max_results\":1}"
+   },
+   {
+    "name": "mcp__inhouse__approval_get",
+    "inputSha256": "cca582ba3e642228ae7188af5c82ef50e7ed094d5803159776ac64e238b921b1",
+    "inputExcerpt": "{\"approval_id\":\"ap_204\"}"
+   }
+  ]
+ }
+}

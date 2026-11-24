@@ -24,6 +24,8 @@ export const REASON = {
   routineLimit: 'routine_limit', empty: 'empty',
   // P5 (p5-w3): the Tools routes' refusals.
   notConfigured: 'not_configured', notDisconnectable: 'not_disconnectable', notConnected: 'not_connected',
+  // P6a W3: a request to the Inhouse team past 50 open ones.
+  requestLimit: 'request_limit',
 } as const satisfies Record<string, ErrorReason>
 /**
  * P5 (p5-w4): the notice channel list's refusals. Kept apart from REASON because a bundler keeps a used object literal

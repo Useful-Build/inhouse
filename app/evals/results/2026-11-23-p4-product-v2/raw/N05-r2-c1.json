@@ -1,0 +1,45 @@
+{
+ "row": {
+  "caseId": "N05",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [
+   "order_get"
+  ],
+  "toolSearches": 1,
+  "answer": "I'll start by looking up order 1042 in the store.\n\nI found order #1042. It's pai",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_iPDsi-sun7kTtZwtcZll2Q",
+  "askedAs": "eval-45239772379-1-n05-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "I'll start by looking up order 1042 in the store.\n\nI found order #1042. It's pai",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "c95f5dc164e0e8a443e85a4809b8c2a8c32f558b1f2e062bc72875735c45bba4",
+    "inputExcerpt": "{\"query\":\"select:mcp__apps__order_get,mcp__apps__orders_search,mcp__apps__refund"
+   },
+   {
+    "name": "mcp__apps__order_get",
+    "inputSha256": "9a6c68ea92a8f0fdc7db99fd6497d5e171c446ad750ad9f741ef808dcab838d1",
+    "inputExcerpt": "{\"name\":\"#1042\"}"
+   }
+  ]
+ }
+}

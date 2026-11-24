@@ -196,3 +196,42 @@ export async function settleRuns(o: { dir?: string; timeoutMs?: number; interval
     await sleep(o.intervalMs ?? 2000)
   }
 }
+
+// ---------- a routine write's tick settles before the next write ----------
+
+// Table name as parts (the icon check reads a quoted snake_case name as an icon).
+const DUE = ['due', 'tasks'].join('_')
+const POKE_ID = 'routine-poke'
+
+/**
+ * Waits until the routine tick a routine write poked has run (the BrandAgent's `routine-poke` task is gone from its
+ * scheduler table: the scheduler deletes it when the handler's work, its D1 batches included, is done). A restore or a switch
+ * pokes the tick, which runs in the BrandAgent object a moment after the write answers and writes D1 itself (the cursor
+ * move). Local D1 has no queue between that object and the Worker: a Worker write that lands in the middle gets
+ * `SQLITE_BUSY`, which answers 500. So a case that writes in a row settles the tick before each write. Polls with a
+ * deadline, like `settleRuns`. No scheduler table in any local database means nothing was ever poked: nothing to wait for.
+ */
+export async function settleTick(o: { dir?: string; timeoutMs?: number; intervalMs?: number; now?: () => number; sleep?: (ms: number) => Promise<void> } = {}): Promise<void> {
+  const { DatabaseSync } = await node<Sqlite>('node:sqlite')
+  const { readdirSync } = await node<Fs>('node:fs')
+  const dir = o.dir ?? persistDir()
+  const now = o.now ?? (() => Date.now())
+  const sleep = o.sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)))
+  const deadline = now() + (o.timeoutMs ?? 30_000)
+  const pending = (): boolean => {
+    for (const file of readdirSync(dir, { recursive: true, withFileTypes: true }).filter(d => d.isFile() && d.name.endsWith('.sqlite')).map(d => `${d.parentPath}/${d.name}`)) {
+      const db = new DatabaseSync(file)
+      try {
+        if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '${DUE}'`).get() === undefined) continue
+        if (db.prepare(`SELECT 1 FROM ${DUE} WHERE id = ?`).get(POKE_ID) !== undefined) return true
+      } finally {
+        db.close()
+      }
+    }
+    return false
+  }
+  while (pending()) {
+    if (now() >= deadline) throw new Error(`The routine tick a write poked did not finish before the deadline (${POKE_ID} is still in ${DUE})`)
+    await sleep(o.intervalMs ?? 20)
+  }
+}

@@ -6,14 +6,17 @@
 // The one open shape is the SDK message inside an `sdk` event, passed through as data.
 import { z } from 'zod'
 import { badFileName } from '../files/names.ts'
+import { BrandSkillFiles } from './brand-skills.ts'
 
-export const PROTOCOL_VERSION = 2
+export const PROTOCOL_VERSION = 3
 /**
  * The versions this side speaks. The rule: the current one and the one before, so a Worker one version ahead still runs
- * chats. v1 was never deployed, so the rule starts at the first deployed version: this is `[2]`, and v3 makes it
- * `[3, 2]`.
+ * chats. v1 was never deployed, so the rule started at v2. v3 (P6a, brand skills) adds `RunStart.brandSkills`, optional:
+ * a v2 start is a v3 start without it, so one schema reads both, and the Worker leaves it out when it talks v2.
  */
-export const ACCEPTED_VERSIONS: readonly number[] = [PROTOCOL_VERSION]
+export const ACCEPTED_VERSIONS: readonly number[] = [PROTOCOL_VERSION, 2]
+/** The first version whose `RunStart` may carry `brandSkills`. */
+export const BRAND_SKILLS_VERSION = 3
 /** Every request to the runner (except the discovery routes `/protocol` and `/health`) carries this header. */
 export const PROTOCOL_HEADER = 'x-inhouse-protocol'
 
@@ -183,6 +186,11 @@ export const RunStartFields = z.strictObject({
    * `StructuredOutput` tool through only then; the answer comes back as `finished.structuredOutput`.
    */
   outputFormat: OutputFormat.optional(),
+  /**
+   * Optional (v3): the brand's own skills (shared/protocol/brand-skills.ts). The root runner writes them, root-owned and
+   * read-only, as a plugin beside ours before the session starts; the guards add each one to the session's skills.
+   */
+  brandSkills: BrandSkillFiles.optional(),
 })
 
 /** Cross-field rules shared by `RunStart` and the runner's run config (the same fields less the token). */

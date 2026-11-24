@@ -989,6 +989,30 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(t.client.getSnapshot().teamRequests[0]).toEqual(fx.teamRequest)
     })
 
+    only('withdrawTeamRequest')('withdraw an open team request and leave it open on a refusal', async () => {
+      const c = t.client
+      const title = `Contract request ${crypto.randomUUID()}`
+      await c.sendTeamRequest({ ...fx.teamRequest, kind: 'job', title })
+      const row = () => c.getSnapshot().teamRequests.find(r => r.title === title)
+      const open = row()
+      if (!open) throw new Error('The filed request is missing.')
+      const ref = { title, at: open.at }
+      await t.injectError('withdrawTeamRequest', 'unavailable')
+      try {
+        await expect(c.withdrawTeamRequest(ref)).rejects.toMatchObject({ code: 'unavailable' })
+        expect(row()).toEqual(open)
+      } finally {
+        await t.injectError('withdrawTeamRequest', null)
+        await c.withdrawTeamRequest(ref)
+      }
+      // The demo's window manages the withdrawal and Undo. The HTTP client applies the saved status.
+      if (t.name === 'mock') expect(row()).toEqual(open)
+      else {
+        await c.refresh('requests')
+        expect(row()).toMatchObject({ status: 'Withdrawn', closed: 'withdrawn' })
+      }
+    })
+
     only('requestTool', 'requestSkill', 'setToolPaused', 'forgetMemory')('requests, tool pauses and memory', async () => {
       const c = t.client
       await c.requestTool(fx.toolKey, true)
@@ -1045,6 +1069,34 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(await c.listNotifyChannels()).toEqual(saved)
       // Put it back for the tests after this one.
       await c.saveNotifyChannels({ channelIds: [], ifRev: saved.rev })
+    })
+
+    // P6a W2. Ways it could break: the list shows a fact out of order or misses one; an approve that doesn't reach the
+    // team's memory, or a reject that does; a decided fact still listed; a decision at a stale rev that applies instead
+    // of rejecting with the fact as it is now; a fresh read of the list that doesn't make the next decision go through.
+    const team = () => t.client.read().memory.team.flatMap(g => g.lines.map(l => l.text))
+    ;(t.seedWaitingMemory ? only('waitingMemory', 'reviewMemory') : test.skip)('team memory approval: list, approve, reject, and a stale rev', async () => {
+      const c = t.client
+      const [first, second, third] = await t.seedWaitingMemory!(['Kestrel wants PDFs', 'Restock gift boxes on Mondays', 'Ship heavy orders by courier'])
+      expect((await c.waitingMemory()).map(l => [l.key, l.kind, l.waiting])).toEqual([[third, 'memory', true], [second, 'memory', true], [first, 'memory', true]])
+      await c.reviewMemory(first, true)
+      expect(team()).toContain('Kestrel wants PDFs')
+      await c.reviewMemory(second, false)
+      expect(team()).not.toContain('Restock gift boxes on Mondays')
+      const listed = await c.waitingMemory()
+      expect(listed.map(l => l.key)).toEqual([third])
+      // Changed behind the client (still waiting): the decision rejects with the fact as it is now, and nothing moves.
+      await t.writeElsewhere({ kind: 'memory', id: third })
+      const e = await c.reviewMemory(third, true).then(() => null, (x: unknown) => x)
+      expect(e).toMatchObject({ code: 'conflict', current: { key: third } })
+      const currentRev = (e as AgentError).current!.rev as number
+      expect(currentRev).toBeGreaterThan(listed[0].rev)
+      expect(team()).not.toContain('Ship heavy orders by courier')
+      // Read again, at the rev the conflict showed, the same decision goes through.
+      expect((await c.waitingMemory()).map(l => [l.key, l.rev])).toEqual([[third, currentRev]])
+      await c.reviewMemory(third, true)
+      expect(team()).toContain('Ship heavy orders by courier')
+      expect(await c.waitingMemory()).toEqual([])
     })
 
     only('setToggle', 'setSetting', 'setPhoto')('toggles, settings and photos', async () => {

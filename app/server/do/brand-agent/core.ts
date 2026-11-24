@@ -24,6 +24,7 @@ import type {
 } from './ports.ts'
 import { PERSON_DATA_TABLES } from './ports.ts'
 import type { OutputFormat } from '../../../shared/protocol/index.ts'
+import type { BrandSkillFile } from '../../../shared/protocol/brand-skills.ts'
 import { SYSTEM_MEMBER_ID } from '../../db/ids.ts'
 import type { DueTask, Scheduler, TaskContext, TaskResult } from './scheduler.ts'
 import type { EgressRoute, RunGrant, RunTokens, TokenRefusal } from './tokens.ts'
@@ -145,6 +146,11 @@ export interface CoreDeps {
    * (it may have waited in the queue since route 29 resolved it). Throws when the settings can't be read.
    */
   modelUsable: (pickerId: string) => Promise<boolean>
+  /**
+   * The brand's own skills (P6a brand skills), read fresh for each placement so an attempt carries what the brand has
+   * then. Never stored on the turn: at their cap they're too big for a row. Throws when D1 can't answer.
+   */
+  brandSkills: () => Promise<BrandSkillFile[]>
   /** The seed tasks the registry declares (`registrySeeds(taskHandlers)`), ensured by `ensureSeeds()` (PR 5, ask D). */
   taskSeeds: readonly { id: string; kind: string }[]
   /** Every stored chat event, for the sockets (PR 4). */
@@ -592,6 +598,16 @@ export class AgentCore {
   private async mintAndPlace(turnId: string, gen: number): Promise<void> {
     let t = this.current(turnId, gen, 'starting')
     if (!t || t.start_json === null || t.session_id === null) return
+    // The brand's skills. A read that fails leaves the turn `starting`, as the model check does: the watchdog requeues it.
+    let brandSkills: BrandSkillFile[]
+    try {
+      brandSkills = await this.d.brandSkills()
+    } catch (err) {
+      console.error({ event: 'turn_brand_skills_failed', error: errorText(err) })
+      return
+    }
+    t = this.current(turnId, gen, 'starting')
+    if (!t || t.start_json === null || t.session_id === null) return
     await this.beforeStep?.('mint', turnId)
     const token = await this.d.tokens.mint({
       turnId, runId: t.run_id, chatId: t.chat_id, memberId: t.owner_id, sessionId: t.session_id, model: t.model, sideModel: t.side_model,
@@ -605,7 +621,7 @@ export class AgentCore {
     }
     let rs
     try {
-      rs = RunStartSchema.parse({ ...JSON.parse(t.start_json!), runToken: token })
+      rs = RunStartSchema.parse({ ...JSON.parse(t.start_json!), ...(brandSkills.length > 0 ? { brandSkills } : {}), runToken: token })
     } catch (err) {
       this.d.tokens.revokeToken(tokenHash, 'unbuildable')
       console.error({ event: 'turn_start_unbuildable', error: errorText(err) })

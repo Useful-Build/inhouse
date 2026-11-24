@@ -1,7 +1,7 @@
 // The access matrix, from outside: every row against every principal (Admin, Member A, Member B, Inhouse without a
 // grant, Inhouse with a live grant, `smoke`, `monitor`, and P3's `release`). The expectation is worked out here from the design's classes
 // (p2-design section 3), not by the Worker's own `checkAccess`, so the two can disagree and fail. The requests change
-// nothing (cases.ts): a caller the matrix lets through gets the handler's 400 or 404, a refused one 403 before it.
+// nothing (cases.ts): a caller the matrix lets through gets the handler's expected status, a refused one 403 before it.
 // Rows come from access-matrix.ts, so a new row is swept as soon as it has a case, and routes.spec.ts fails until it has.
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'

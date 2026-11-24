@@ -8,7 +8,7 @@
 /** The `_meta` key that keeps a tool loaded on every turn. */
 export const ALWAYS_LOAD_META_KEY = 'anthropic/alwaysLoad'
 
-export type ToolCategory = 'memory' | 'approvals' | 'questions' | 'routines' | 'history' | 'notifications' | 'inhouse_team'
+export type ToolCategory = 'memory' | 'approvals' | 'questions' | 'routines' | 'history' | 'notifications' | 'inhouse_team' | 'skills'
 
 export interface InhouseTool {
   /** `resource_action`, lower snake case; inside the engine `mcp__inhouse__<name>`. */
@@ -28,7 +28,7 @@ const destructive = { destructiveHint: true } as const
 export const INHOUSE_TOOLS: readonly InhouseTool[] = [
   // 1. Memory (5)
   { name: 'memory_search', category: 'memory', alwaysLoad: true, annotations: read, description: "Search what you remember about this brand and the person you're helping, by keywords. Use it when the answer could depend on saved context: suppliers, policies, people's preferences or past decisions. Returns matching facts with their scope and `memory_id`." },
-  { name: 'memory_save', category: 'memory', alwaysLoad: true, annotations: {}, description: 'Save one new lasting fact, in one sentence. `scope: "brand"` for facts the whole team shares (waits for an admin\'s OK), `"person"` for one person\'s preference. Don\'t save one-off details, secrets or customer personal data. To correct a fact, use `memory_update`.' },
+  { name: 'memory_save', category: 'memory', alwaysLoad: true, annotations: {}, description: 'Save one new lasting fact, in one sentence. `scope: "brand"` for facts the whole team shares (usually waits for an admin\'s OK), `"person"` for one person\'s preference. Don\'t save one-off details, secrets or customer personal data. To correct a fact, use `memory_update`.' },
   { name: 'memory_update', category: 'memory', alwaysLoad: false, annotations: {}, description: 'Correct or reword a saved fact by `memory_id`. Use it instead of saving a second, conflicting fact.' },
   { name: 'memory_forget', category: 'memory', alwaysLoad: false, annotations: destructive, description: 'Delete a saved fact by `memory_id`, when a person asks or the fact is wrong or stale.' },
   { name: 'memory_list', category: 'memory', alwaysLoad: false, annotations: read, description: 'List saved facts page by page, for review or tidying. To find something specific, use `memory_search`.' },
@@ -53,4 +53,6 @@ export const INHOUSE_TOOLS: readonly InhouseTool[] = [
   // 7. Inhouse team (2)
   { name: 'team_request_create', category: 'inhouse_team', alwaysLoad: false, annotations: {}, description: "Ask the Inhouse team (the people who run this agent) for something you can't do: connect a new tool, fix a broken connection, build a skill." },
   { name: 'team_request_list', category: 'inhouse_team', alwaysLoad: false, annotations: read, description: 'List requests to the Inhouse team and their status.' },
+  // 8. Skills (1; P6a brand skills, master plan standing decision 6)
+  { name: 'skill_save', category: 'skills', alwaysLoad: false, annotations: {}, description: "Save one of this brand's own skills: `name`, `description` and `body` (the instructions, no frontmatter). A new name makes a new skill; an existing name replaces it (only its maker or an admin may). Live for the whole team at once. Use it only when the person has agreed to save, usually with the skill-creator skill. Never write a skill as a file." },
 ]

@@ -228,6 +228,18 @@ const defaultSpawn: NonNullable<WranglerOptions['spawn']> = (args, env) => {
 
 /** `wrangler d1 execute <name> --remote --json --command <sql>`, for a database that passes its rule (`rule`) only. */
 export function wranglerRunner(o: WranglerOptions): RunSql {
+  const query = wranglerQueries(o)
+  return async (sql) => (await query(sql))[0]?.results ?? []
+}
+
+interface QueryResult {
+  results: Record<string, unknown>[]
+  meta: { changes: number }
+  success: boolean
+}
+
+/** D1 executes semicolon-joined statements passed to --command as a single batch. */
+export function wranglerQueries(o: WranglerOptions): (sql: string) => Promise<QueryResult[]> {
   const database = o.rule === 'morning-check' ? assertMorningCheckDatabase(o.database, o.env) : assertSandboxDatabase(o.database, o.env)
   if (!o.config) throw new DoorRefusal('refusing: INHOUSE_EVAL_WRANGLER_CONFIG is not set (the sandbox config that binds the database)')
   // One absolute path, made once, goes to the checks and to wrangler (which runs with cwd app/): they can't read two different files.
@@ -244,8 +256,7 @@ export function wranglerRunner(o: WranglerOptions): RunSql {
     const r = spawn(['d1', 'execute', database, '--remote', '--config', configPath, '--json', '--yes', '--command', sql], env)
     if (r.status !== 0) throw new DoorRefusal(`wrangler d1 execute exited ${r.status}`)
     try {
-      const parsed = JSON.parse(r.stdout) as { results?: Record<string, unknown>[] }[]
-      return parsed[0]?.results ?? []
+      return JSON.parse(r.stdout) as QueryResult[]
     } catch {
       throw new DoorRefusal('wrangler d1 execute answered something that is not JSON')
     }

@@ -40,9 +40,10 @@ for (const row of writes) {
     })
   }
   test(`${rowKey(row)} with the right Origin and Sec-Fetch-Site: same-origin gets past the check`, async ({ request }) => {
-    // P3's drain and warm-up are the release token's (open rows): it sends the brand Origin like any client. P5 W1's
-    // route 68 lists the Inhouse team alone: it sends the Inhouse app's Origin from its own host, as the client does.
-    const who = row.services.includes('release') ? actor('release') : row.allow.includes('admin') ? admin : row.allow.includes('inhouse') ? actor('inhouse') : admin
+    // P3's drain and warm-up are the release token's (open rows): it sends the brand Origin like any client. A row the
+    // Admin isn't allowed on (P5 W1's route 68, P6a's route 82 — the Inhouse team only) goes as the Inhouse team, so the
+    // role check's 403 isn't read as the Origin check's.
+    const who = row.services.includes('release') ? actor('release') : row.allow.includes('admin') ? admin : actor('inhouse')
     const r = await call(request, who, row.method, caseFor(row).path, { ...bodyOf(row), headers: { 'Sec-Fetch-Site': 'same-origin' } })
     expect(r.status, r.text).not.toBe(403)
   })

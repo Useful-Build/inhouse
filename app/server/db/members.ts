@@ -334,17 +334,29 @@ export function memberStore({ db, hook = s => s }: MemberStoreDeps) {
 
     /**
      * P8's person deletion (no route until then): the row keeps its id and becomes "Former member"; title, email,
-     * photo key and Access subject go (the identity can be invited again as someone new); the audit log is untouched (decision Q3). Never the last active Admin. Writes no audit line.
+     * photo key and Access subject go (the identity can be invited again as someone new); the audit log is untouched
+     * (decision Q3). Brand skills keep running with their `created_by` and `updated_by` links cleared to NULL so no
+     * person id stays on the skill. Never the last active Admin. Writes no audit line.
      */
     async pseudonymise(id: string, at: At): Promise<{ ok: MemberRecord } | { refused: 'not_found' | 'last_admin' }> {
       const stamp = writeStamp(at.requestId)
-      const [change] = await runBatch(db, [stmt(
-        `UPDATE members SET name = ?, title = NULL, email_norm = NULL, photo_key = NULL, subject = NULL, status = 'removed',
-           removed_at_ms = COALESCE(removed_at_ms, ?), pseudonymised_at_ms = ?, rev = rev + 1, req_id = ?
-         WHERE id = ? AND kind = 'person' AND pseudonymised_at_ms IS NULL
-           AND (role <> 'admin' OR status <> 'active' OR ${ANOTHER_ADMIN})`,
-        FORMER_MEMBER, at.nowMs, at.nowMs, stamp, id, id,
-      )])
+      const [change] = await runBatch(db, [
+        stmt(
+          `UPDATE members SET name = ?, title = NULL, email_norm = NULL, photo_key = NULL, subject = NULL, status = 'removed',
+             removed_at_ms = COALESCE(removed_at_ms, ?), pseudonymised_at_ms = ?, rev = rev + 1, req_id = ?
+           WHERE id = ? AND kind = 'person' AND pseudonymised_at_ms IS NULL
+             AND (role <> 'admin' OR status <> 'active' OR ${ANOTHER_ADMIN})`,
+          FORMER_MEMBER, at.nowMs, at.nowMs, stamp, id, id,
+        ),
+        stmt(
+          `UPDATE brand_skills
+           SET created_by = CASE WHEN created_by = ? THEN NULL ELSE created_by END,
+               updated_by = CASE WHEN updated_by = ? THEN NULL ELSE updated_by END
+           WHERE (created_by = ? OR updated_by = ?)
+             AND EXISTS (SELECT 1 FROM members WHERE id = ? AND req_id = ?)`,
+          id, id, id, id, id, stamp,
+        ),
+      ])
       const r = await person(id)
       if (!r) return { refused: 'not_found' }
       if (change.meta.changes > 0) return { ok: memberRecord(r) }

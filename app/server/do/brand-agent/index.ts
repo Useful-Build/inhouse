@@ -16,6 +16,7 @@ import type {
 } from './ports.ts'
 import { createAgentTables } from './schema.ts'
 import { modelUsable } from './model-check.ts'
+import { skillFiles } from '../../brand-skills/store.ts'
 import { openStores } from '../../db/stores.ts'
 import { chatStore } from '../../db/chats.ts'
 import { alarmPort, createScheduler, registrySeeds } from './scheduler.ts'
@@ -63,7 +64,7 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
       })
       this.core = new AgentCore({
         sql, scheduler: sched, tokens, ports: this.ports, now, systemPrompt: turnId => turnSystemPrompt(turnPromptDeps(env), turnId), db: env.DB,
-        modelUsable: modelUsable(openStores(env)), taskSeeds: registrySeeds(taskHandlers),
+        modelUsable: modelUsable(openStores(env)), brandSkills: () => skillFiles(env.DB), taskSeeds: registrySeeds(taskHandlers),
         onEvent: e => this.hub.onEvent(e),
         sockets: this.hub,
         chatGone: async chatId => {

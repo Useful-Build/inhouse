@@ -1,6 +1,7 @@
 // Settings content. Pure data: the screen renders it.
 import type { AvailableChannel, NotifyChannelList } from '../../agent/types'
 import type { AgentData, AgentState, AuditLine, CanKey, Me, MemberRecord, MemberRole, MemoryLine, Money, StageIndex } from '../../agent/types'
+import type { WaitingState } from './waiting-list'
 import { STAGE_TAGS, channelFrom, listNames } from '../../state/derive'
 import { EFFORTS, defaultModeId, modeEffortKey, modeOnKey, thinkingModes } from '../../state/derive'
 import type { Pop, RequestType } from '../../state/store'
@@ -60,6 +61,10 @@ export interface Row {
   can?: CanKey
   /** A Remove button beside the control: the question that names the person, and what confirming does. */
   remove?: { label: string; title: string; text: string; action: string; go: () => void; /** The `me().can` key Remove needs (P5 W4); without it, `remove` (a member's removal). */ can?: CanKey }
+  /** A `button` row's accessible name, when its visible label alone doesn't say which row it acts on (a waiting fact's Approve). */
+  ariaLabel?: string
+  /** A second button beside a `button` row's own (a waiting fact's Reject): its label, its accessible name, the question asked first, and what it does. */
+  also?: { label: string; ariaLabel: string; ask?: { title: string; text: string; action: string }; go: () => void }
 }
 
 export type FieldType = 'money' | 'email' | 'hosts'
@@ -147,6 +152,11 @@ export interface Env {
   exportFromServer: (() => void) | null
   /** P5 W4: the Slack channels listed for notices (Settings.tsx reads them while the page is open). */
   notify: NotifyView
+  /**
+   * P6a: the team facts waiting for an OK (waiting-list.ts) and what the page does with them: approve (`true`) or reject one,
+   * and read the list again after a failed read. Unset for someone who can't approve.
+   */
+  waiting?: { state: WaitingState; decide: (key: string, approved: boolean) => void; retry: () => void }
 }
 
 /** The Slack notices page's data and its writes. Every write sends the whole list with the rev it was read at. */
@@ -244,10 +254,22 @@ export function settingsPage(tab: string, env: Env): Page {
   const d0 = display()
   const now = nowOf()
   const forgetRows = (lines: MemoryLine[]) =>
-    lines.filter(l => !agent.forgot[l.key]).map(l => R(l.text, memorySource(l, now), 'button', 'Forget', 1, undefined, undefined, () => env.forget(l.key)))
+    lines.filter(l => !agent.forgot[l.key]).map(l => R(l.text, memorySource(l, now), 'button', 'Forget', 0, undefined, undefined, () => env.forget(l.key)))
   const teamMem = memory.team.map(g => ({ label: g.group, rows: forgetRows(g.lines) }))
+  // P6a: what waits for an admin's OK, above the team's rules, for someone who may approve. Nothing waiting: no section.
+  const w = env.me?.can.approveMemory ? env.waiting : undefined
+  const waitingRows: Row[] = !w ? [] : w.state.status === 'failed'
+    ? [{ ...R("Couldn't load what waits for your OK.", '', 'button', 'Retry', 0, undefined, undefined, w.retry), can: 'approveMemory' as const, busy: w.state.reading }]
+    : w.state.facts.map(l => ({
+      ...R(l.text, memorySource(l, now), 'button', 'Approve', 0, undefined, undefined, () => w.decide(l.key, true)),
+      can: 'approveMemory' as const,
+      ariaLabel: `Approve: ${l.text}`,
+      busy: w.state.deciding.has(l.key),
+      also: { label: 'Reject', ariaLabel: `Reject: ${l.text}`, ask: { title: 'Reject this rule?', text: "Your Inhouse agent won't use it.", action: 'Reject' }, go: () => w.decide(l.key, false) },
+    }))
+  const waitingMem = waitingRows.length > 0 ? [{ label: 'Waiting for your OK', rows: waitingRows }] : []
   const memCount = teamMem.reduce((n, g) => n + g.rows.length, 0)
-  const teach = R('Teach it something', 'Tell it a rule in a chat, in your own words. It appears here.', 'button', 'Teach in a chat', 1, undefined, undefined, () => env.newChat('Remember that '))
+  const teach = R('Teach it something', "Tell it a rule in a chat, in your own words. It shows here, after an admin's OK if Ask is on.", 'button', 'Teach in a chat', 0, undefined, undefined, () => env.newChat('Remember that '))
   const lim = people.runLimits
   // These rows start at Act, so they name the channel Act connects. None: no channel wording or option.
   const channel = channelFrom(data, 1)?.name
@@ -311,7 +333,7 @@ export function settingsPage(tab: string, env: Env): Page {
     ] },
     'you-memory': { title: 'Memory', sections: [
       { label: 'What your Inhouse agent knows about you', rows: forgetRows(memory.personal) },
-      { label: 'Privacy', rows: [R('Only you can see this', 'Teammates and admins cannot read your personal memory.', 'value', 'Private'), R('Learn from my chats', 'Your Inhouse agent saves your preferences as you work. Turn off to stop.', 'toggle', '', 1, 'm:learn', true)] },
+      { label: 'Privacy', rows: [R('Only you can see this', 'Teammates and admins cannot read your personal memory.', 'value', 'Private'), R('Learn from my chats', 'Your Inhouse agent saves your preferences as you work. Turn off to stop.', 'toggle', '', 0, 'm:learn', true)] },
     ] },
     'team-plan': { title: 'Stage and plan', sections: [
       { label: 'Your stage', rows: [R('Current stage', stageDesc, 'value', stage), R('Next stage', nextStage, 'value', S < 2 ? STAGE_TAGS[S + 1] : 'None'), R('Talk to your Inhouse team', 'Move up when you are ready. Every stage includes all your tools.', 'button', 'Book a check-in', 0, undefined, undefined, () => env.openTeam('change', ''))] },
@@ -323,15 +345,16 @@ export function settingsPage(tab: string, env: Env): Page {
         sel('Most steps in one answer', 'An answer that needs more steps than this stops and says so.', 't:max_turns', '25', [...MAX_TURNS]),
         { ...txt('Websites it may open', 'One website name a line. Leave empty and it may open any public website.', 't:webfetch', ''), type: 'hosts', keywords: 'webfetch hosts domains allowlist' },
       ] },
-      { label: 'What your Inhouse agent knows', rows: [R('Team memory', `Supplier, customer and stock rules the whole team shares. ${memCount} things remembered.`, 'button', 'Open memory', 1, undefined, undefined, () => env.openSettings('team-memory')), R('Skills', `The jobs it knows how to do. ${skills.length} skills, added by your Inhouse team.`, 'button', 'View skills', 0, undefined, undefined, env.goSkills)] },
+      { label: 'What your Inhouse agent knows', rows: [R('Team memory', `Supplier, customer and stock rules the whole team shares. ${memCount} things remembered.`, 'button', 'Open memory', 0, undefined, undefined, () => env.openSettings('team-memory')), R('Skills', `The jobs it knows how to do. ${skills.length} skills, added by your Inhouse team.`, 'button', 'View skills', 0, undefined, undefined, env.goSkills)] },
     ] },
     'team-modes': { title: 'Models', sections: [
       { label: '', caption: 'How hard it thinks', rows: modeRows },
       { label: '', rows: [sel('Default model', '', 'g:mode', defaultMode, modeLabels)] },
     ] },
     'team-memory': { title: 'Team memory', sections: [
+      ...waitingMem,
       ...teamMem,
-      { label: 'How your Inhouse agent learns', rows: [R('Ask before saving a team rule', 'Your Inhouse agent shows the rule in the chat and an approver confirms it.', 'toggle', '', 1, 'm:ask', true), teach] },
+      { label: 'How your Inhouse agent learns', rows: [R('Ask before saving a team rule', 'On: new and changed team rules wait until an admin approves them. Off: they count at once.', 'toggle', '', 0, 'm:ask', true), teach] },
     ] },
     'team-members': { title: 'Members', sections: [
       { label: `${team.length} people`, rows: [...team.map(m => {

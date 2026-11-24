@@ -13,9 +13,10 @@ import { realTargets } from './targets/real/index'
 export type WriteMethod =
   | 'approve' | 'undo' | 'editDraft' | 'undoHandled' | 'redoHandled' | 'createChat' | 'pause' | 'resume' | 'setToggle'
   | 'requestTool' | 'requestSkill' | 'setToolPaused' | 'connectTool' | 'disconnectTool' | 'forgetMemory' | 'setSetting' | 'setPhoto' | 'sendTeamRequest'
+  | 'withdrawTeamRequest'
   | 'markNoticesRead' | 'deleteFiles' | 'restoreFiles' | 'setAside' | 'runRoutine' | 'deleteRoutine' | 'restoreRoutine'
   | 'renameChat' | 'pinChat' | 'deleteChats' | 'restoreChats'
-  | 'inviteMember' | 'setMemberRole' | 'removeMember' | 'grantSupport' | 'endSupportGrant'
+  | 'inviteMember' | 'setMemberRole' | 'removeMember' | 'grantSupport' | 'endSupportGrant' | 'reviewMemory'
   // P5 (p5-w4): the Slack notice channel list.
   | 'saveNotifyChannels'
 
@@ -141,6 +142,8 @@ export interface ContractTarget {
   scriptNextTurn?(kind: ScriptedTurn | null): Promise<void>
   /** Make the next read of a resource fail (`read().resources[resource].status` is `error` until `client.retry(resource)`). */
   failRead(resource: ResourceKey): Promise<void>
+  /** P6a: team facts waiting for an OK, oldest first, as an agent's saves would leave them; answers their keys. A target that can't seed them leaves this out and the suite skips those cases. */
+  seedWaitingMemory?(texts: string[]): Promise<string[]>
 }
 
 // The mock saves to the browser's storage. Vitest runs in node, so a Map stands in, with a switch that makes a write throw.
@@ -172,8 +175,9 @@ const MOCK_STORAGE_KEY = 'inhouse.demo.v2'
 const WRITE_METHODS: ReadonlySet<string> = new Set<WriteMethod>([
   'approve', 'undo', 'editDraft', 'undoHandled', 'redoHandled', 'createChat', 'pause', 'resume', 'setToggle', 'requestTool',
   'requestSkill', 'setToolPaused', 'connectTool', 'disconnectTool', 'forgetMemory', 'setSetting', 'setPhoto', 'sendTeamRequest', 'markNoticesRead', 'deleteFiles',
+  'withdrawTeamRequest',
   'restoreFiles', 'setAside', 'runRoutine', 'deleteRoutine', 'restoreRoutine', 'renameChat', 'pinChat', 'deleteChats', 'restoreChats',
-  'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant',
+  'inviteMember', 'setMemberRole', 'removeMember', 'grantSupport', 'endSupportGrant', 'reviewMemory',
   'saveNotifyChannels',
 ])
 
@@ -311,6 +315,14 @@ function mockTarget(): ContractTarget {
     async writeElsewhere(record, value) { mockAgent.changeElsewhere(record, value) },
     async failRead(resource) { mockAgent.failRead(resource) },
     async scriptNextTurn(kind) { mockAgent.scriptNextTurn(kind) },
+    async seedWaitingMemory(texts) {
+      const inner = mockAgent as unknown as MockInternals
+      const lines = texts.map((text, i) => ({ key: `mem_contractWaiting${String(i).padStart(7, '0')}`, text, source: 'Sam told your Inhouse agent in a chat', rev: 1, scope: 'brand' as const }))
+      inner.server = { ...(inner.server as Record<string, unknown>), memoryWaiting: lines }
+      storage.set(MOCK_STORAGE_KEY, inner.saved())
+      inner.listeners.forEach(l => l())
+      return lines.map(l => l.key)
+    },
   }
 }
 
