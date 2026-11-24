@@ -47,6 +47,7 @@ import type { Trace } from '../../../shared/contract/trace.ts'
 import type { AdmitAnswer, LeaseAnswer, ModelCallUsage, ModelCallWorst } from './ports.ts'
 import { SWEEP_EVERY_MS, ensureGrantExpiry, runAuthoritySweep, runGrantExpiry, sweepBy } from './authority.ts'
 import type { AuthorityDeps, SocketAuthority } from './authority.ts'
+import { SYSTEM_PROMPT_V2 } from '../../prompt/system.ts'
 
 // ---------- numbers (p3-design 1.3, 4.3, 4.4, 4.6, 4.11) ----------
 export const STARTING_DEADLINE_MS = 3 * 60_000
@@ -104,7 +105,7 @@ export interface TurnRow {
   steps_n: number; outcome: string | null; failure: string | null; cancel_why: string | null
   pos_from: number | null; pos_to: number | null; d1_flushed: number
   output_format_json: string | null; on_end_json: string | null; structured_output_json: string | null
-  resume_json: string | null; abandoned: string | null; held_json: string | null
+  resume_json: string | null; abandoned: string | null; held_json: string | null; prompt_version: number | null; prompt_apps: string | null
   created_at_ms: number; claimed_at_ms: number | null; started_at_ms: number | null; ended_at_ms: number | null
 }
 
@@ -130,8 +131,12 @@ export interface CoreDeps {
   tokens: RunTokens
   ports: BrandAgentPorts
   now: () => number
-  /** The system prompt every run carries (the orchestrator's `app/server/prompt/`). */
-  systemPrompt: string
+  /**
+   * The system prompt every run carries (the orchestrator's `app/server/prompt/`): fixed, or built when each turn starts
+   * (P5: the connected apps and listed channels), with the version it sent and the apps it named (prompt/connected.ts
+   * TurnPrompt), which the turn's row keeps as `prompt_version` and `prompt_apps` (JSON). The builder never throws; it logs a failed read and sends the static v2.
+   */
+  systemPrompt: string | ((turnId: string) => Promise<{ text: string; version: number; apps?: readonly string[] | null }>)
   /** D1, for the redacted `tool_calls` rows (8.7). */
   db: D1Database
   /** A new session id (a UUID); tests pass literal ones. */
@@ -479,7 +484,7 @@ export class AgentCore {
   // ---------- start (4.4) ----------
 
   /** Testing seam: runs before each awaited step of a start (a barrier, or a reset injected there). */
-  beforeStep?: (step: 'files' | 'model' | 'reserve' | 'mint' | 'place', turnId: string) => Promise<void>
+  beforeStep?: (step: 'files' | 'model' | 'prompt' | 'reserve' | 'mint' | 'place', turnId: string) => Promise<void>
 
   private async start(turnId: string, gen: number): Promise<void> {
     let t = this.current(turnId, gen, 'starting')
@@ -508,6 +513,29 @@ export class AgentCore {
     t = this.current(turnId, gen, 'starting')
     if (!t) return
     if (!usable) return this.failUnstarted(t, { outcome: 'failed', reason: 'model_off' })
+    // The turn's system prompt (P5: built per turn, v3). A builder that rejects falls back to the static v2 prompt, so the
+    // turn is never stranded in `starting`.
+    await this.beforeStep?.('prompt', turnId)
+    // The version sent is kept beside the start record (`prompt_version`, #337 review): null for a fixed prompt.
+    let systemPrompt: string
+    let promptVersion: number | null = null
+    let promptApps: string | null = null
+    if (typeof this.d.systemPrompt === 'string') systemPrompt = this.d.systemPrompt
+    else {
+      try {
+        const built = await this.d.systemPrompt(turnId)
+        systemPrompt = built.text
+        promptVersion = built.version
+        promptApps = built.apps === undefined || built.apps === null ? null : JSON.stringify(built.apps)
+      } catch (err) {
+        // The error's name only: a builder's message could carry hub or D1 text (P8a's log guard, A10).
+        console.error({ event: 'turn_prompt_failed', turnId, error: err instanceof Error ? err.name : typeof err })
+        systemPrompt = SYSTEM_PROMPT_V2
+        promptVersion = 2
+      }
+    }
+    t = this.current(turnId, gen, 'starting')
+    if (!t) return
 
     // The start hold (section 9). `reserved = 1` before the await: a cancel during it gives the hold back.
     this.sql.exec('UPDATE turns SET reserved = MAX(reserved, 1) WHERE turn_id = ?', turnId)
@@ -555,14 +583,14 @@ export class AgentCore {
       start = buildStart({
         turnId, chatId: t.chat_id, sessionId, expect, text: t.text, quote: t.quote, attachments: atts, model: t.model,
         sideModel: t.side_model, effort: t.effort as StartWithoutToken['effort'], maxTurns: t.max_turns,
-        webFetchDomains: t.web_fetch_json === null ? null : JSON.parse(t.web_fetch_json) as string[], systemPrompt: this.d.systemPrompt,
+        webFetchDomains: t.web_fetch_json === null ? null : JSON.parse(t.web_fetch_json) as string[], systemPrompt,
         outputFormat: t.output_format_json === null ? undefined : JSON.parse(t.output_format_json) as OutputFormat,
       })
     } catch (err) {
       console.error({ event: 'turn_start_unbuildable', error: errorText(err) })
       return this.failUnstarted(t, { outcome: 'failed', reason: 'protocol' })
     }
-    this.sql.exec('UPDATE turns SET session_id = ?, start_json = ? WHERE turn_id = ?', sessionId, JSON.stringify(start), turnId)
+    this.sql.exec('UPDATE turns SET session_id = ?, start_json = ?, prompt_version = ?, prompt_apps = ? WHERE turn_id = ?', sessionId, JSON.stringify(start), promptVersion, promptApps, turnId)
     await this.mintAndPlace(turnId, gen)
   }
 

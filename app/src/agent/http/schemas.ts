@@ -27,6 +27,8 @@ import { ModelModeSchema } from '../../../shared/contract/model'
 import { CreateChatInputSchema } from '../../../shared/contract/requests'
 import { ActiveRunsSchema, ChatEventSchema, PauseStateSchema, SendTurnInputSchema, SendTurnResultSchema, SocketServerMsgSchema, acceptsChatVersion } from '../../../shared/contract/runs'
 import { TraceSchema } from '../../../shared/contract/trace'
+import { ToolConnectResultSchema, ToolDisconnectResultSchema, ToolPausedInputSchema, ToolPausedResultSchema, ToolsDataSchema } from '../../../shared/contract/tools'
+import { AvailableChannelsSchema, NotifyChannelListSchema, PutNotifyChannelsSchema } from '../../../shared/contract/notify-slack'
 
 /** What each route answers with. */
 export const ANSWERS = {
@@ -40,6 +42,8 @@ export const ANSWERS = {
   chatList: ChatListSchema, chatPage: ChatPageSchema, chat: ChatSummarySchema, chatItems: z.object({ items: z.array(ChatSummarySchema) }),
   chatFile: UploadResultSchema, sendTurn: SendTurnResultSchema, ack: z.looseObject({}), activeRuns: ActiveRunsSchema, trace: TraceSchema, pause: PauseStateSchema,
   models: z.object({ default: z.string().nullable(), modes: z.array(ModelModeSchema) }),
+  // P5 (W3): the Tools page, routes C to E and W1's connect start.
+  tools: ToolsDataSchema, toolPaused: ToolPausedResultSchema, toolDisconnect: ToolDisconnectResultSchema, toolConnect: ToolConnectResultSchema,
   // P4 (W4): Activity (route 59) and the bell (route 60; route 61 answers `ack`).
   activityPage: ActivityPageSchema, notifications: NotificationsListSchema,
   // P4 (W5): the Library (rows 62, 63, 65 and 66).
@@ -48,6 +52,8 @@ export const ANSWERS = {
   routines: RoutinesListSchema, routineState: RoutineStateSchema, routineRun: RoutineRunAnswerSchema, routineRuns: RoutineRunHistorySchema,
   // P4 (W3): Today (routes 57 and 58).
   today: TodayAnswerSchema, todayAside: TodayAsideSchema,
+  // P5 (W4): the Slack notice channels, routes 73 to 75.
+  notifyChannels: NotifyChannelListSchema, availableChannels: AvailableChannelsSchema,
   // P6a (W3): the skills list (route 79); a skill's instructions (route 84) and a deleted brand skill (route 85).
   skills: z.array(SkillDefSchema), skillPage: SkillPageSchema, skill: SkillDefSchema,
   // P6a (W3): requests to the Inhouse team (routes 80, 81 and 83).
@@ -67,6 +73,8 @@ export const BODIES = {
   routineEnabled: RoutineEnabledInputSchema, routineRun: RoutineRunInputSchema, routineRev: RoutineRevInputSchema,
   skillDelete: BrandSkillDeleteInputSchema,
   createChat: CreateChatInputSchema, chatRename: ChatRenameInputSchema, chatPin: ChatPinInputSchema, chatIds: ChatIdsInputSchema, sendTurn: SendTurnInputSchema,
+  toolPaused: ToolPausedInputSchema,
+  notifyChannels: PutNotifyChannelsSchema,
 }
 
 /** What the socket sends the browser and the events inside its frames; `accepts` is whether this build reads a frame's version. */

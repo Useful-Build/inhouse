@@ -83,6 +83,22 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 54 */ { method: 'POST', pattern: '/api/routines/:id/run', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 55 */ { method: 'POST', pattern: '/api/routines/:id/delete', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   /* 56 */ { method: 'POST', pattern: '/api/routines/:id/restore', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  // P5 W1 (p5-w1.md section 9): technical, the Inhouse team alone. Route B is a GET the AS redirects the browser to, on
+  // the Inhouse team's host (OC-W1-11): it needs that host's Access session like any route (401 before routing without
+  // one; a top-level redirect carries it), so no open row. Its CSRF guard is the state's member binding at the hub.
+  /* 68 */ { method: 'POST', pattern: '/api/connect/:accountId/start', class: 'technical', allow: ['inhouse'] },
+  /* 69 */ { method: 'GET', pattern: '/api/connect/callback', class: 'technical', allow: ['inhouse'] },
+  // P5 W3 (p5-w3.md): the Tools page. Everyone reads; only the Inhouse team pauses, resumes and disconnects (an Admin's write is read-only).
+  /* 70 */ { method: 'GET', pattern: '/api/tools', class: 'technical', allow: ['member', 'admin', 'inhouse'] },
+  /* 71 */ { method: 'PUT', pattern: '/api/tools/:accountId/paused', class: 'technical', allow: ['inhouse'] },
+  /* 72 */ { method: 'POST', pattern: '/api/tools/:accountId/disconnect', class: 'technical', allow: ['inhouse'] },
+  // P5 W4 (p5-w4.md section 10): the Slack channels listed for notices. Everyone reads; an Admin or the Inhouse team picks and saves.
+  /* 73 */ { method: 'GET', pattern: '/api/notify/channels', class: 'baseline', allow: ['member', 'admin', 'inhouse'] },
+  /* 74 */ { method: 'GET', pattern: '/api/notify/channels/available', class: 'baseline', allow: ['admin', 'inhouse'] },
+  /* 75 */ { method: 'PUT', pattern: '/api/notify/channels', class: 'baseline', allow: ['admin', 'inhouse'] },
+  // P5 W5: the test build's test-fakes hook, release only like route 67 (its handler answers 404 outside the test build).
+  // Close to auth: its ops call notification_send as a named member and the hub's ReadGateway as a run.
+  /* 76 */ { method: 'POST', pattern: '/api/ops/test-fakes', class: 'open', allow: [], services: ['release'] },
   // P6a PR0 (docs/plans/2026-11-22-p6a-memory-skills.md). Rows 68 to 76 are P5's (fleet/connectors), so P6a holds 77 to 85 and 87 to 89 (86 is main's
   // routine runs, master plan decision 8).
   // Team memory approval (W2): brand data, admins and the Inhouse team; the Inhouse team's approve is a write under a

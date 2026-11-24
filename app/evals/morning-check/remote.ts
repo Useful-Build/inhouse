@@ -9,6 +9,8 @@
 import type { MemoryDoor } from '../targets/door.ts'
 import type { MorningDoor } from './door.ts'
 import type { RunnerEnv } from './runner.ts'
+import { NO_PROMPT, promptSentOf } from '../prompt-version.ts'
+import { shopifyNotServed } from '../shopify-served.ts'
 
 export interface RemoteDeps {
   door: MorningDoor
@@ -33,6 +35,16 @@ export interface RemoteDeps {
    * the turns ran on and a run whose slots ran on another model than --model stops. The scripted proof's spec leaves it out.
    */
   checkModel?: boolean
+  /**
+   * run.mjs sets it (P5 #337): route 33's trace of a turn (its JSON as read, unchecked). Each case's turn is then checked
+   * to have been sent the system prompt v3 naming Shopify (runner.ts promptOf). The scripted proof's spec leaves it out.
+   */
+  promptTrace?: (turnId: string) => Promise<unknown>
+  /**
+   * run.mjs and the store-data run set it (#337 round 3): route 70's answer, read after the case's shop is set (in the eval
+   * build it then carries the test shop), so the store check reads exactly the account the case's turns will use.
+   */
+  storeTools?: () => Promise<unknown>
   /** The graded run's check before each case (gradedRun's beforeCase): a reason stops the run there. */
   beforeCase?: () => Promise<string | null>
 }
@@ -161,6 +173,14 @@ export function remoteEnv(d: RemoteDeps): RunnerEnv {
   return {
     ...(d.defaultModel ? { beforeCases: d.defaultModel } : {}),
     ...(d.checkModel ? { modelOf: (slotKey: string) => d.door.model(slotKey) } : {}),
+    ...(d.storeTools ? { checkStore: async () => shopifyNotServed(await d.storeTools!()) } : {}),
+    ...(d.promptTrace ? {
+      promptOf: async (slotKey: string) => {
+        // A slot with no turn has no prompt to check: `missing`, so it can never pass (#337 round 2, Sonnet M3).
+        const turnId = (await d.door.slot(slotKey))?.turn_id ?? null
+        return turnId === null ? NO_PROMPT : promptSentOf(await d.promptTrace!(turnId))
+      },
+    } : {}),
     ...(d.beforeCase ? { beforeCase: d.beforeCase } : {}),
     nowMs: d.nowMs,
     useShop: host => d.door.setShop(host),

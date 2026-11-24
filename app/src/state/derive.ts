@@ -28,11 +28,15 @@ export const toolDetail = (data: AgentData, key: string): ToolDetail => {
 
 /**
  * A tool's state now. `connecting`: the Inhouse team is still connecting it. `disconnected`: its login failed (the agent's
+
  * data says so, in `tools.connection`). `paused`: a person paused the agent's access. `connected`: the agent reads it.
+ * `off`: the tool has a history here (it was disconnected, or a first connect failed) and nothing is connected or being
+ * connected now; its page offers Connect (P5 W3).
  */
-export type ToolState = 'connecting' | 'connected' | 'paused' | 'disconnected'
+export type ToolState = 'connecting' | 'connected' | 'paused' | 'disconnected' | 'off'
 export const toolState = (ctx: Ctx, key: string): ToolState => {
   const d = toolDetail(ctx.data, key)
+  if (!ctx.data.tools.connected.includes(key) && !d.progress && !ctx.data.tools.beingConnected.includes(key)) return 'off'
   if (d.progress || !ctx.data.tools.connected.includes(key)) return 'connecting'
   if (ctx.data.tools.connection[key]?.status === 'disconnected') return 'disconnected'
   if (ctx.agent.toolPaused[key]) return 'paused'
@@ -49,14 +53,14 @@ export const lostTool = (ctx: Ctx): { key: string; since: Instant } | null => {
 /**
  * Day one: the agent's data has arrived, no tool is connected yet and the server holds nothing for Today (no cards, and no
  * routine has run, a failed run included), so the agent has nothing to read. Today lists the setup instead of problems. A
- * client that is still loading isn't there yet: it doesn't know its tools. The real client has no tools read until P5, so
- * `connected` stays empty: what the server already holds for Today is what ends day one there.
+ * client that is still loading isn't there yet: it doesn't know its tools. The real client reads its tools since P5 (route
+ * 70); until that read lands (or when it fails) `connected` is empty, and what the server already holds for Today ends day one.
  */
 export const isFirstDay = (data: AgentData): boolean => data.status === 'ready' && noToolsYet(data)
 /**
  * Whether a screen may say "no tools are connected yet": none is connected and the server holds nothing for Today (no cards,
- * no routine run). With `connected` empty but cards or a run present (the real client before P5), the list is unknown, not
- * empty, so such copy stays out.
+ * no routine run). With `connected` empty but cards or a run present (the real client's tools read not landed or failed),
+ * the list is unknown, not empty, so such copy stays out.
  */
 export const noToolsYet = (data: AgentData): boolean =>
   data.tools.connected.length === 0 && data.problems.length === 0 && !data.routines.some(r => r.last !== undefined)
@@ -197,19 +201,21 @@ export function toolView(ctx: Ctx, key: string): ToolView {
   const d0 = display()
   // `disconnected` means `tools.connection` has this tool (toolState), with when its login failed.
   const lostAt = state === 'disconnected' ? fmtTime(ctx.data.tools.connection[key]!.since, d0) : ''
+  // A first login that failed (never connected, so `off`): the same failed-login status and line as a lost one.
+  const failedFirst = state === 'off' && d.loginFailedAt ? fmtTime(d.loginFailedAt, d0) : null
   const lastRead = ctx.data.tools.lastRead[key] ?? ctx.data.tools.lastRead.default
   const readAt = fmtTime(lastRead, d0)
-  const tagOf = { connected: 'On', paused: 'Paused', disconnected: 'Off', connecting: 'Not yet' }[state]
+  const tagOf = { connected: 'On', paused: 'Paused', disconnected: 'Off', connecting: 'Not yet', off: 'Off' }[state]
   const setup = Object.hasOwn(ctx.data.tools.setup, key) ? SETUP_DUE[ctx.data.tools.setup[key].due] : null
   const ability = (k: ToolAbility['key'], icon: string, title: string, text: string, need: StageIndex): ToolAbility =>
     ({ key: k, icon, title, text, need, locked: ctx.S < need, tag: ctx.S < need ? STAGE_TAGS[need] : tagOf })
   return {
     key, name: d.name, state,
-    statusText: { connecting: 'Being connected', connected: 'Connected', paused: 'Access paused', disconnected: `Disconnected · login expired at ${lostAt}` }[state],
+    statusText: failedFirst !== null ? `Disconnected · login expired at ${failedFirst}` : { connecting: 'Being connected', connected: 'Connected', paused: 'Access paused', disconnected: `Disconnected · login expired at ${lostAt}`, off: 'Not connected' }[state],
     // Being connected: on day one, when Today's setup list says it connects; else when it goes live ("Live by Fri, Nov 20").
-    listLine: { connecting: setup ?? sinceLine(d, d0), connected: `Read ${readAt}`, paused: 'Access paused', disconnected: 'Needs reconnecting' }[state],
-    connectedRow: state === 'connecting' ? 'Not yet' : `${sinceLine(d, d0)}, by your Inhouse team`,
-    lastRead: state === 'connecting' ? 'Not yet' : state === 'disconnected' ? `${fmtWeekday(lastCheckBefore(lastRead, d0), d0)}, ${readAt}` : `Today, ${readAt}`,
+    listLine: state === 'connecting' ? setup ?? sinceLine(d, d0) : failedFirst !== null ? 'Needs reconnecting' : { connected: `Read ${readAt}`, paused: 'Access paused', disconnected: 'Needs reconnecting', off: 'Not connected' }[state],
+    connectedRow: state === 'connecting' ? 'Not yet' : state === 'off' ? 'Not connected' : `${sinceLine(d, d0)}, by your Inhouse team`,
+    lastRead: state === 'connecting' || state === 'off' ? 'Not yet' : state === 'disconnected' ? `${fmtWeekday(lastCheckBefore(lastRead, d0), d0)}, ${readAt}` : `Today, ${readAt}`,
     abilities: [
       ability('read', 'visibility', 'Read', d.read, 0),
       ability('draft', 'edit_note', 'Draft for your approval', d.draft, 1),
@@ -393,7 +399,7 @@ export function todayCopy(ctx: Ctx): TodayCopy {
         ? `Your Inhouse agent read ${read.length} of your ${connected.length} tools and changed nothing. ${listNames(missed)} ${missed.length === 1 ? 'needs' : 'need'} reconnecting.`
         : read.length
           ? `Your Inhouse agent read ${listNames(read.map(k => toolDetail(ctx.data, k).name))} and changed nothing.`
-          // Cards but no connected list (the real client before P5): don't name tools it can't list.
+          // Cards but no connected list (the real client's tools read not landed or failed): don't name tools it can't list.
           : 'Your Inhouse agent checked this morning and changed nothing.',
       countLabel: shown ? `${shown} to look at` : '', sortLabel: 'Most urgent first',
     },

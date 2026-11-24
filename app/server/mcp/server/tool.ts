@@ -1,6 +1,7 @@
 // What a tool handler of the `inhouse` MCP server is (p3-design section 10): its input schema and its call. The call
 // runs as the run's person only (`memberId` from the run token's grant, never from the arguments).
 import type { z } from 'zod'
+import type { NotifyDeps } from '../tools/notifications/deps.ts'
 
 /** Who and what a call runs for: the run token's grant (the egress), plus this call's clock and request id. */
 export interface ToolScope {
@@ -36,6 +37,8 @@ export type InhouseToolName = (typeof INHOUSE_TOOL_NAMES)[number]
 /** What a handler gets besides its arguments: the Worker's bindings it reads through (each area opens its own store). */
 export interface ToolDeps {
   db: D1Database
+  // P5 (p5-w4): notification_send's hub delivery, opaque here (B2, 2026-11-21). Absent: Slack answers slack_unavailable.
+  notify?: NotifyDeps
 }
 
 /**

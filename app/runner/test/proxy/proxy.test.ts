@@ -9,10 +9,11 @@
 // - the caller goes away and the upstream request carries on; the upstream cuts the body and the caller takes the
 //   part for a whole one; an upstream that never answers holds the caller forever; a body of any size is forwarded.
 import http from 'node:http'
+import { once } from 'node:events'
 import type { AddressInfo } from 'node:net'
 import { fc, it } from '@fast-check/vitest'
-import { afterAll, beforeAll, beforeEach, describe, expect } from 'vitest'
-import { PROXY_MAX_CONNECTIONS, PROXY_MAX_CONNECTIONS_PER_UID, RUN_TOKEN_HEADER, createProxy, targetFor, type ProxyDeps } from '../../src/proxy/server.ts'
+import { afterAll, beforeAll, beforeEach, describe, expect, vi } from 'vitest'
+import { MCP_HANDSHAKE_MAX_BODY_BYTES, MCP_HANDSHAKE_MAX_RESPONSE_BYTES, PROXY_MAX_CONNECTIONS, PROXY_MAX_CONNECTIONS_PER_UID, RUN_TOKEN_HEADER, createProxy, targetFor, type ProxyDeps } from '../../src/proxy/server.ts'
 import { waitFor } from '../run/support/root-client.ts'
 
 type Seen = { method: string; url: string; headers: http.IncomingHttpHeaders; body: string }
@@ -429,6 +430,294 @@ describe('streams that break', () => {
         } else req.end(body)
       })
       expect(status).toBe(413)
+      expect(seen).toHaveLength(0)
+    } finally {
+      small.server.closeAllConnections()
+      await new Promise((r) => small.server.close(r))
+    }
+  })
+})
+
+describe('MCP startup handshake retries', () => {
+  const rpc = (method: string, id?: number) => JSON.stringify({ jsonrpc: '2.0', ...(id === undefined ? {} : { id }), method })
+
+  async function withFlakyUpstream(
+    onRequest: (attempt: number, req: http.IncomingMessage, res: http.ServerResponse, body: Buffer) => void,
+    proxyOpts: Partial<ProxyDeps> = {},
+  ) {
+    let attempts = 0
+    const flaky = http.createServer((req, res) => {
+      const chunks: Buffer[] = []
+      req.on('data', (chunk: Buffer) => chunks.push(chunk))
+      req.on('end', () => {
+        attempts++
+        onRequest(attempts, req, res, Buffer.concat(chunks))
+      })
+    })
+    await new Promise<void>((r) => flaky.listen(0, '127.0.0.1', r))
+    const p = await makeProxy({
+      upstream: new URL(`http://127.0.0.1:${(flaky.address() as AddressInfo).port}/egress`),
+      mcpRetryDelaysMs: [5, 5],
+      ...proxyOpts,
+    })
+    const close = async () => {
+      p.server.closeAllConnections()
+      flaky.closeAllConnections()
+      await new Promise((r) => p.server.close(r))
+      await new Promise((r) => flaky.close(r))
+    }
+    return { server: p.server, url: p.url, attempts: () => attempts, close }
+  }
+
+  it.each([
+    ['/mcp/', 'initialize', 'reset'],
+    ['/mcp/', 'tools/list', '502'],
+    ['/hub/', 'tools/list', '503'],
+    ...['initialize', 'notifications/initialized', 'tools/list', 'ping'].map(method => ['/mcp/', method, '500'] as const),
+    ['/mcp/', 'notifications/initialized', '503'],
+    ['/hub/', 'tools/list', 'cut'],
+    ['/hub/', 'ping', '504'],
+  ] as const)('retries %s %s after transient %s and recovers', async (routePath, method, mode) => {
+    const u = await withFlakyUpstream((n, _req, res) => {
+      if (n === 1) {
+        if (mode === 'reset') return void res.socket!.destroy()
+        if (mode === 'cut') {
+          res.writeHead(200, { 'content-type': 'application/json', 'content-length': '100' })
+          res.write('{"jsonrpc":', () => res.socket!.destroy())
+          return
+        }
+        res.writeHead(Number(mode), { 'content-type': 'application/json' }).end('{"error":"transient"}')
+        return
+      }
+      res.writeHead(200, { 'content-type': 'application/json', [RUN_TOKEN_HEADER]: 'tok_must_not_leak_xxxxxxx' }).end('{"jsonrpc":"2.0","id":1,"result":{"ok":true}}')
+    })
+    try {
+      const res = await fetch(`${u.url}${routePath}`, {
+        method: 'POST',
+        headers: { connection: 'close', 'content-type': 'application/json' },
+        body: rpc(method, method === 'notifications/initialized' ? undefined : 1),
+      })
+      expect(res.status).toBe(200)
+      expect(res.headers.get(RUN_TOKEN_HEADER)).toBeNull()
+      expect(await res.text()).toBe('{"jsonrpc":"2.0","id":1,"result":{"ok":true}}')
+      expect(u.attempts()).toBe(2)
+      expect(logs.some((l) => l.type === 'proxy_upstream_error')).toBe(true)
+      expect(JSON.stringify(logs)).not.toMatch(/tok_/)
+    } finally {
+      await u.close()
+    }
+  })
+
+  it.each(['reset', '500', '503'] as const)('never retries tools/call on transient %s', async (mode) => {
+    const u = await withFlakyUpstream((_n, _req, res) => {
+      if (mode === 'reset') return void res.socket!.destroy()
+      res.writeHead(Number(mode), { 'content-type': 'application/json' }).end('{"error":"busy"}')
+    })
+    try {
+      const res = await fetch(`${u.url}/mcp/`, {
+        method: 'POST',
+        headers: { connection: 'close', 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'memory_save', arguments: {} } }),
+      })
+      expect(res.status).toBe(mode === 'reset' ? 502 : Number(mode))
+      expect(u.attempts()).toBe(1)
+    } finally {
+      await u.close()
+    }
+  })
+
+  it('rechecks tokenForUid before retrying so a closed run is refused with 403 instead of retried', async () => {
+    let allowToken = true
+    const u = await withFlakyUpstream(
+      (_n, _req, res) => {
+        allowToken = false
+        res.writeHead(503, { 'content-type': 'application/json' }).end('{"error":"transient"}')
+      },
+      { tokenForUid: (uid) => (allowToken && uid === 1001 ? 'tok_live_run_1001_aaaaaaaa' : null) },
+    )
+    try {
+      const res = await fetch(`${u.url}/mcp/`, {
+        method: 'POST',
+        headers: { connection: 'close', 'content-type': 'application/json' },
+        body: rpc('tools/list', 1),
+      })
+      expect(res.status).toBe(403)
+      expect(u.attempts()).toBe(1)
+    } finally {
+      await u.close()
+    }
+  })
+
+  function post(url: string, body: string, signal?: AbortSignal) {
+    return fetch(`${url}/mcp/`, {
+      method: 'POST',
+      headers: { connection: 'close', 'content-type': 'application/json' },
+      body,
+      signal,
+    })
+  }
+
+  it('closes the stalled 503 socket and replays the exact body bytes and headers', async () => {
+    const closed = Promise.withResolvers<void>()
+    const requests: { body: Buffer; headers: string[] }[] = []
+    const body = '{ "jsonrpc": "2.0", "id": "café", "method": "tools/list" }'
+    const u = await withFlakyUpstream((n, req, res, bytes) => {
+      requests.push({ body: bytes, headers: req.rawHeaders })
+      if (n === 1) {
+        req.socket.once('close', () => closed.resolve())
+        res.writeHead(503).flushHeaders()
+      } else {
+        res.end('ok')
+      }
+    })
+    try {
+      const res = await post(u.url, body)
+      expect(await res.text()).toBe('ok')
+      await closed.promise
+      expect(requests).toHaveLength(2)
+      expect(requests[0]?.body).toEqual(Buffer.from(body))
+      expect(requests[1]).toEqual(requests[0])
+    } finally {
+      await u.close()
+    }
+  })
+
+  it('returns the upstream failure when the run token changes during backoff', async () => {
+    const closed = Promise.withResolvers<void>()
+    const u = await withFlakyUpstream((_n, req, res) => {
+      req.socket.once('close', () => closed.resolve())
+      res.writeHead(503).flushHeaders()
+    }, { mcpRetryDelaysMs: [150] })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const pending = post(u.url, rpc('tools/list', 1))
+      await closed.promise
+      tokens.set(1001, 'tok_replacement_run_bbbbbbbb')
+      await vi.advanceTimersByTimeAsync(150)
+      const res = await pending
+      expect(res.status).toBe(503)
+      expect(await res.json()).toEqual({ error: 'upstream failed' })
+      expect(u.attempts()).toBe(1)
+    } finally {
+      vi.useRealTimers()
+      await u.close()
+    }
+  })
+
+  it('clears the retry timer when the caller disconnects during backoff', async () => {
+    const upstreamClosed = Promise.withResolvers<void>()
+    const u = await withFlakyUpstream((_n, req, res) => {
+      req.socket.once('close', () => upstreamClosed.resolve())
+      res.writeHead(503).flushHeaders()
+    }, { mcpRetryDelaysMs: [100] })
+    const callerClosed = Promise.withResolvers<void>()
+    u.server.once('request', (_req, res) => res.once('close', () => callerClosed.resolve()))
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const caller = http.request(`${u.url}/mcp/`, { method: 'POST', agent: false })
+      const error = once(caller, 'error')
+      caller.end(rpc('initialize', 1))
+      await upstreamClosed.promise
+      expect(vi.getTimerCount()).toBe(1)
+      caller.destroy()
+      await Promise.all([error, callerClosed.promise])
+      expect(vi.getTimerCount()).toBe(0)
+      expect(u.attempts()).toBe(1)
+    } finally {
+      vi.useRealTimers()
+      await u.close()
+    }
+  })
+
+  it('streams a chunked handshake over the buffer cap with its entire prefix and never retries it', async () => {
+    const body = JSON.stringify({ jsonrpc: '2.0', method: 'initialize', id: 1, params: { pad: 'x'.repeat(MCP_HANDSHAKE_MAX_BODY_BYTES) } })
+    const requests: Buffer[] = []
+    const u = await withFlakyUpstream((_n, req, res, bytes) => {
+      expect(req.headers['transfer-encoding']).toBe('chunked')
+      requests.push(bytes)
+      res.writeHead(503).end('busy')
+    })
+    try {
+      const caller = http.request(`${u.url}/mcp/`, { method: 'POST', agent: false })
+      const response = once(caller, 'response')
+      caller.write(body.slice(0, 1024))
+      caller.write(body.slice(1024, -2))
+      caller.end(body.slice(-2))
+      const [res] = await response
+      res.resume()
+      await once(res, 'end')
+      expect(res.statusCode).toBe(503)
+      expect(requests).toEqual([Buffer.from(body)])
+    } finally {
+      await u.close()
+    }
+  })
+
+  it('rejects a chunked handshake over maxBodyBytes with 413', async () => {
+    const small = await makeProxy({ maxBodyBytes: 64 })
+    try {
+      const caller = http.request(`${small.url}/mcp/`, { method: 'POST', agent: false })
+      const response = once(caller, 'response')
+      caller.write(rpc('initialize', 1))
+      caller.end(' '.repeat(64))
+      const [res] = await response
+      res.resume()
+      await once(res, 'end')
+      expect(res.statusCode).toBe(413)
+      expect(seen).toHaveLength(0)
+    } finally {
+      small.server.closeAllConnections()
+      await new Promise((r) => small.server.close(r))
+    }
+  })
+
+  it('never retries a JSON-RPC batch, even when every method is read-only', async () => {
+    const u = await withFlakyUpstream((_n, _req, res) => res.writeHead(500).end('busy'))
+    try {
+      const res = await post(u.url, `[${rpc('initialize', 1)},${rpc('ping', 2)}]`)
+      expect(res.status).toBe(500)
+      expect(await res.text()).toBe('busy')
+      expect(u.attempts()).toBe(1)
+    } finally {
+      await u.close()
+    }
+  })
+
+  it('destroys the caller connection if a response over the buffer cap is cut mid-body', async () => {
+    const socket = Promise.withResolvers<NonNullable<http.ServerResponse['socket']>>()
+    const bytes = MCP_HANDSHAKE_MAX_RESPONSE_BYTES + 1
+    const u = await withFlakyUpstream((_n, _req, res) => {
+      socket.resolve(res.socket!)
+      res.writeHead(200, { 'content-length': String(bytes + 100) })
+      res.write(Buffer.alloc(bytes))
+    })
+    try {
+      const res = await post(u.url, rpc('tools/list', 1))
+      expect(res.status).toBe(200)
+      const reader = res.body!.getReader()
+      let received = 0
+      while (received < bytes) {
+        const chunk = await reader.read()
+        expect(chunk.done).toBe(false)
+        received += chunk.value!.length
+      }
+      ;(await socket.promise).destroy()
+      await expect(reader.read()).rejects.toThrow()
+      expect(u.attempts()).toBe(1)
+    } finally {
+      await u.close()
+    }
+  })
+
+  it('still enforces maxBodyBytes (413) on /mcp/ and /hub/', async () => {
+    const small = await makeProxy({ maxBodyBytes: 64 })
+    try {
+      const res = await fetch(`${small.url}/mcp/`, {
+        method: 'POST',
+        headers: { connection: 'close', 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { pad: 'x'.repeat(128) } }),
+      })
+      expect(res.status).toBe(413)
       expect(seen).toHaveLength(0)
     } finally {
       small.server.closeAllConnections()

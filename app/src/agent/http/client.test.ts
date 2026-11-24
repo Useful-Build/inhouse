@@ -77,7 +77,15 @@ const reads = (o: { me?: unknown; members?: unknown[]; settings?: Record<string,
   'GET /api/team-requests?view=window': { body: { items: [] } },
   // P4 W3: route 57.
   'GET /api/today': { body: { items: [], aside: {} } },
+  // P5 (W3): the Tools page.
+  'GET /api/tools': { body: TOOLS },
 })
+const TOOLS = {
+  connected: ['slack'], channels: [], beingConnected: [], lastRead: { default: iso(0) },
+  catalog: [{ k: 'shopify', name: 'Shopify', desc: 'd', need: 0, accountId: 'shopify:store' }],
+  details: { slack: { accountId: 'slack:workspace', name: 'Slack', desc: 'd', ex: [], read: 'r', draft: 'd', run: 'r', conn: 'c', site: 'slack.com', since: iso(1000), paused: false, canDisconnect: true } },
+  connection: {}, setup: {}, readDone: 1,
+}
 const EMPTY_USAGE = {
   month: 'November', cap: { minor: 32000, currency: 'USD' }, alertAt: 80, total: { minor: 0, currency: 'USD' }, conversations: 0, questionsAsked: 0, jobsRun: 0,
   daily: [], breakdown: { person: [], job: [], model: [], tool: [] }, monthKey: '2026-11', months: ['2026-11'],
@@ -138,8 +146,8 @@ describe('reads', () => {
     const staff = await loaded(reads({ me: me({ role: 'inhouse', can: can(false) }) }))
     // The Inhouse team reads the grants (route 16) though it can't grant; members and audit are skipped by its `can`.
     // It isn't asked for chats or memory on start (each read under a grant writes an audit line), but models, spending,
-    // the skills list (technical, route 79) and the pause state are for everyone.
-    expect(staff.calls.map(c => c.path).sort()).toEqual(['/api/grants', '/api/me', '/api/models', '/api/pause', '/api/settings/brand', '/api/settings/technical', '/api/skills', '/api/team-requests?view=window', '/api/usage'])
+    // the skills list (technical, route 79), open team requests, the tools list and the pause state are for everyone.
+    expect(staff.calls.map(c => c.path).sort()).toEqual(['/api/grants', '/api/me', '/api/models', '/api/pause', '/api/settings/brand', '/api/settings/technical', '/api/skills', '/api/team-requests?view=window', '/api/tools', '/api/usage'])
   })
 
   test('a 403 on the grants reads as "not for you", not an error', async () => {
@@ -1121,8 +1129,7 @@ describe('paging', () => {
 describe('the parts that stay the stub until their phase', () => {
   const STUBS: [string, (c: AgentClient) => Promise<unknown>][] = [
     ['approve', c => c.approve('p')], ['undo', c => c.undo('p')], ['editDraft', c => c.editDraft('p', 'x')],
-    // A routine's switch and Run now (P4 W2) and the Library's writes (P4 W5) are built.
-    ['setToolPaused', c => c.setToolPaused('k', true)],
+    // A routine's switch and Run now (P4 W2), the Library's writes (P4 W5), tools pause (P5), and tool/skill requests (P6a) are built.
   ]
   test.each(STUBS)('%s rejects with AgentError("unavailable") and sends one error notice', async (_n, call) => {
     const { agent, heard } = await loaded(reads())
@@ -1368,5 +1375,125 @@ describe('files (route 41)', () => {
     const { agent } = await loaded({ ...reads(), [`GET /api/files/${FILE}`]: refusal(404, 'not_found') })
     expect(await errorOf(agent.downloadFile(FILE))).toMatchObject({ code: 'not_found' })
     expect(agent.read().resources.meta).toMatchObject({ status: 'ready' })
+  })
+})
+
+describe('tools (routes C to E and the connect start)', () => {
+  const SLACK = 'slack:workspace'
+  test('the list is read with the rest, and a paused tool shows in the snapshot', async () => {
+    const paused = { ...TOOLS, details: { slack: { ...TOOLS.details.slack, paused: true } } }
+    const { agent } = await loaded({ ...reads(), 'GET /api/tools': { body: paused } })
+    expect(agent.read().tools.connected).toEqual(['slack'])
+    expect(agent.getSnapshot().toolPaused).toEqual({ slack: true })
+    expect(agent.read().resources.tools.status).toBe('ready')
+  })
+
+  test('a pause shows at once, is sent to the account id (never the key), and the answer settles it', async () => {
+    const { agent, calls } = await loaded({ ...reads(), [`PUT /api/tools/${SLACK}/paused`]: { body: { paused: true } } })
+    const done = agent.setToolPaused('slack', true)
+    expect(agent.getSnapshot().toolPaused).toEqual({ slack: true })
+    await done
+    expect(calls.filter(c => c.method === 'PUT').map(c => [c.path, JSON.parse(c.body!)])).toEqual([[`/api/tools/${SLACK}/paused`, { paused: true }]])
+    expect(agent.read().tools.details.slack.paused).toBe(true)
+  })
+
+  test('a refused pause is taken back, rejects with the code and tells once', async () => {
+    const { agent, heard } = await loaded({ ...reads(), [`PUT /api/tools/${SLACK}/paused`]: refusal(403, 'forbidden') })
+    expect(await errorOf(agent.setToolPaused('slack', true))).toMatchObject({ code: 'forbidden' })
+    expect(agent.getSnapshot().toolPaused).toEqual({})
+    expect(heard.filter(n => n.type === 'error')).toHaveLength(1)
+  })
+
+  // A rolled-back write hands back the very snapshot it found (useSyncExternalStore and the contract's rollback cases read
+  // identity): the paused flags derived from the tools must not be rebuilt when they come back unchanged.
+  test('a refused or failed pause hands back the identical snapshot; one that works gives a new state with the pause', async () => {
+    for (const answer of [refusal(403, 'forbidden'), refusal(503, 'unavailable'), (): Answer => { throw new TypeError('network down') }]) {
+      const { agent } = await loaded({ ...reads(), [`PUT /api/tools/${SLACK}/paused`]: answer })
+      const before = agent.getSnapshot()
+      const data = agent.read()
+      expect(await errorOf(agent.setToolPaused('slack', true))).toBeInstanceOf(AgentError)
+      expect(agent.getSnapshot()).toBe(before)
+      expect(agent.read()).toBe(data)
+    }
+    const { agent } = await loaded({ ...reads(), [`PUT /api/tools/${SLACK}/paused`]: { body: { paused: true } } })
+    const before = agent.getSnapshot()
+    await agent.setToolPaused('slack', true)
+    expect(agent.getSnapshot()).not.toBe(before)
+    expect(agent.getSnapshot().toolPaused).toEqual({ slack: true })
+  })
+
+  test('a tools read that changes the tools but no pause keeps the snapshot; read() moves', async () => {
+    let n = 0
+    const { agent } = await loaded({ ...reads(), 'GET /api/tools': () => { n += 1; return { body: n === 1 ? TOOLS : { ...TOOLS, connected: [], beingConnected: ['slack'] } } } })
+    const before = agent.getSnapshot()
+    const data = agent.read()
+    await agent.retry('tools')
+    expect(n).toBe(2)
+    expect(agent.read()).not.toBe(data)
+    expect(agent.read().tools.beingConnected).toEqual(['slack'])
+    expect(agent.getSnapshot()).toBe(before)
+  })
+
+  test('the undo path (a write committed in between): a stale pause flag is replaced by what the tools say', async () => {
+    let n = 0
+    const { agent } = await loaded({
+      ...reads(),
+      [`PUT /api/tools/${SLACK}/paused`]: () => { n += 1; return n === 1 ? refusal(403, 'forbidden') : { body: { paused: true } } },
+    })
+    const flags = () => Object.fromEntries(Object.entries(agent.read().tools.details).filter(([, d]) => d.paused === true).map(([k]) => [k, true]))
+    // Two pauses of the same tool: the second's change is on screen when the first is refused, so its rollback takes the
+    // undo path (the tools go back to unpaused) and the derived flag must follow, not keep the stale { slack: true }.
+    const first = agent.setToolPaused('slack', true)
+    const second = agent.setToolPaused('slack', true)
+    expect(agent.getSnapshot().toolPaused).toEqual({ slack: true })
+    expect(await errorOf(first)).toMatchObject({ code: 'forbidden' })
+    expect(agent.read().tools.details.slack.paused).toBe(false)
+    expect(agent.getSnapshot().toolPaused).toEqual({})
+    expect(agent.getSnapshot().toolPaused).toEqual(flags())
+    await second
+    expect(agent.getSnapshot().toolPaused).toEqual({ slack: true })
+    expect(agent.getSnapshot().toolPaused).toEqual(flags())
+    expect(n).toBe(2)
+  })
+
+  test('a key the read does not list is refused before anything is sent', async () => {
+    const { agent, calls } = await loaded(reads())
+    const before = calls.length
+    expect(await errorOf(agent.setToolPaused('zendesk', true))).toMatchObject({ code: 'not_found' })
+    expect(await errorOf(agent.disconnectTool('zendesk'))).toMatchObject({ code: 'not_found' })
+    expect(await errorOf(agent.connectTool('zendesk'))).toMatchObject({ code: 'not_found' })
+    expect(calls).toHaveLength(before)
+  })
+
+  test('connect sends the account id of a connected or a catalog tool and answers the address', async () => {
+    const { agent, calls } = await loaded({
+      ...reads(),
+      [`POST /api/connect/${SLACK}/start`]: { body: { authorizeUrl: 'https://slack.com/oauth/v2/authorize?x=1', expiresAt: iso(9000) } },
+      'POST /api/connect/shopify:store/start': { body: { authorizeUrl: 'https://shop.example/auth' } },
+    })
+    expect(await agent.connectTool('slack')).toEqual({ authorizeUrl: 'https://slack.com/oauth/v2/authorize?x=1' })
+    expect(await agent.connectTool('shopify')).toEqual({ authorizeUrl: 'https://shop.example/auth' })
+    expect(calls.filter(c => c.method === 'POST').map(c => c.path)).toEqual([`/api/connect/${SLACK}/start`, '/api/connect/shopify:store/start'])
+  })
+
+  test('disconnect sends the account id, reads the tools again and answers revoked as the server said', async () => {
+    let reads_ = 0
+    const { agent, calls } = await loaded({
+      ...reads(),
+      'GET /api/tools': () => { reads_ += 1; return { body: reads_ === 1 ? TOOLS : { ...TOOLS, connected: [], details: { slack: { ...TOOLS.details.slack, paused: undefined, canDisconnect: false, revokeFailed: true } } } } },
+      [`POST /api/tools/${SLACK}/disconnect`]: { body: { revoked: false } },
+    })
+    expect(await agent.disconnectTool('slack')).toEqual({ revoked: false })
+    expect(calls.filter(c => c.method === 'POST').map(c => c.path)).toEqual([`/api/tools/${SLACK}/disconnect`])
+    expect(agent.read().tools.connected).toEqual([])
+    // The open tool page stays: its details are kept, with the failed revoke, so nothing bounces to the list.
+    expect(agent.read().tools.details.slack).toMatchObject({ canDisconnect: false, revokeFailed: true })
+    expect(agent.getSnapshot().toolPaused).toEqual({})
+  })
+
+  test('a refused disconnect rejects with the code and tells once', async () => {
+    const { agent, heard } = await loaded({ ...reads(), [`POST /api/tools/${SLACK}/disconnect`]: refusal(409, 'conflict', { reason: 'not_connected' }) })
+    expect(await errorOf(agent.disconnectTool('slack'))).toMatchObject({ code: 'conflict' })
+    expect(heard.filter(n => n.type === 'error')).toHaveLength(1)
   })
 })

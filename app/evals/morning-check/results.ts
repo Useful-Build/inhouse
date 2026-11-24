@@ -16,6 +16,12 @@ export interface CaseResult {
   ms: number
   /** Remote mode: the API model id the case's slot was submitted with (door.ts model), when the slot exists. */
   ranOn?: string
+  /** The system prompt version the case's turn was sent (remote mode, route 33's trace; P5 #337): 3, another number, or `missing`. */
+  prompt?: number | 'missing'
+  /** The apps that prompt named as connected (#337 round 3), or `missing`. */
+  promptApps?: string[] | 'missing'
+  /** Set when the case was refused before its Run now because the store wasn't served (#337 round 3): never kept in a file. */
+  storeRefused?: string
   /** A timed-out case only: whether its manual slot reached a terminal state before the next case (false: the next Run now meets `run_open`). */
   settled?: boolean
 }

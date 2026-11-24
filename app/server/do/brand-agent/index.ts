@@ -4,7 +4,7 @@
 // 34's socket (`fetch`, then the hibernation handlers) runs on the socket hub (sockets.ts, 4.10).
 import { DurableObject } from 'cloudflare:workers'
 import { apiError } from '../../http.ts'
-import { SYSTEM_PROMPT_V2 } from '../../prompt/system.ts'
+import { turnPromptDeps, turnSystemPrompt } from '../../prompt/connected.ts'
 import type { AuditEntry, PushAck, RunEvent } from '../../../shared/protocol/index.ts'
 import type { ActiveRun, PauseState, SendTurnResult } from '../../../shared/contract/runs.ts'
 import type { Trace } from '../../../shared/contract/trace.ts'
@@ -63,7 +63,7 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
         wakeBy: atMs => sweepBy(sql, sched, Math.min(atMs, now() + SWEEP_EVERY_MS)),
       })
       this.core = new AgentCore({
-        sql, scheduler: sched, tokens, ports: this.ports, now, systemPrompt: SYSTEM_PROMPT_V2, db: env.DB,
+        sql, scheduler: sched, tokens, ports: this.ports, now, systemPrompt: turnId => turnSystemPrompt(turnPromptDeps(env), turnId), db: env.DB,
         modelUsable: modelUsable(openStores(env)), brandSkills: () => skillFiles(env.DB), taskSeeds: registrySeeds(taskHandlers),
         onEvent: e => this.hub.onEvent(e),
         sockets: this.hub,

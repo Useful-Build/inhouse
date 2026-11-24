@@ -25,6 +25,12 @@ export const HubErrorCodeSchema = z.enum([
   'rate_limited',
   'result_too_large',
   'internal',
+  // P5 (p5-w1)
+  'state_invalid',
+  'workspace_mismatch',
+  'connect_stale',
+  'connect_refused',
+  'paused',
 ])
 
 export const HubErrorSchema = z.strictObject({
@@ -55,12 +61,33 @@ export const AccountStatusSchema = z.strictObject({
   expiresAt: InstantSchema.nullable(),
   scopes: z.array(z.string()),
   lastError: z.strictObject({ code: HubErrorCodeSchema, at: InstantSchema }).nullable(),
+  // P5 (p5-w1)
+  paused: z.boolean(),
+  kind: z.enum(['client_credentials', 'oauth_mcp']),
+  connectedBy: z.string().nullable(),
+  connectedAt: InstantSchema.nullable(),
+  revokeFailedAt: InstantSchema.nullable(),
+  needsReconnect: z.boolean(),
+})
+
+export const AccountSummarySchema = z.strictObject({
+  accountId: z.string(),
+  connector: z.string(),
+  configured: z.boolean(),
+  status: AccountStatusSchema,
 })
 
 /** A connector id or account id: `shopify`, `shopify:store`. */
 export const ACCOUNT_ID = /^[a-z]+(:[a-z0-9-]{1,40})?$/
 export const AccountIdSchema = z.string().regex(ACCOUNT_ID)
 export const ToolNameSchema = z.string().min(1).max(200)
+
+// P5 (p5-w1): ConnectGateway arguments.
+export const MemberIdSchema = z.string().min(1).max(200)
+/** A state is base64url(accountId) + '.' + base64url(32 bytes); the bound keeps odd input out of the hash. */
+export const ConnectStateSchema = z.string().min(3).max(512)
+export const AuthCodeSchema = z.string().min(1).max(4096)
+export const ConnectErrorSchema = z.string().max(512)
 
 /** A Shopify shop host: `<handle>.myshopify.com`, the handle as parseShopifyConfig takes it (signin/providers/shopify.ts). */
 export const SHOP_HOST = /^[a-z0-9][a-z0-9-]{0,59}\.myshopify\.com$/

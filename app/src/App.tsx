@@ -3,7 +3,7 @@ import type { ComponentType, ReactNode } from 'react'
 import { agent, demo } from './agent'
 import { isChatUnknown } from './state/chat-known'
 import { AgentError } from './agent/types'
-import type { AgentErrorCode, RefreshList, ToolsData } from './agent/types'
+import type { AgentErrorCode, RefreshList } from './agent/types'
 import { NOT_FOUND } from '../shared/contract/error-codes'
 import type { Page } from './state/store'
 import { FROM_SETTINGS_MENU, chatEntries, defaultChatId, newestChat, openChatKey, skillBySlug, takeReplaceEntry, useAgentData, useAgentState, useUi } from './state/store'
@@ -16,7 +16,9 @@ import { StartError } from './shell/StartError'
 import { startScreen } from './shell/start-screen'
 import type { StartScreen } from './shell/start-screen'
 import { createHashSync } from './shell/route-sync'
-import { hashBar } from './shell/hash-bar'
+import { hashBar, leaveSignInReturn } from './shell/hash-bar'
+import { parseConnectReturn } from './screens/tools/connect-return'
+import { toolName, toolRoute } from './shell/tool-route'
 import { CRASH_KEY, RouteBoundary } from './ErrorBoundary'
 import { reportError } from './report-error'
 import { DevSwitcher } from './shell/DevSwitcher'
@@ -156,8 +158,6 @@ function RouteFocus({ slug }: { slug: string }) {
   return null
 }
 
-/** A tool's or channel's name, or undefined for a key that is neither (a stale or typed link). */
-const toolName = (t: ToolsData, k: string) => t.channels.find(c => c.key === k)?.name ?? (Object.hasOwn(t.details, k) ? t.details[k].name : undefined)
 
 // ---------- hash routes: #/today, #/tools/shopify, #/skills/morning-check, #/settings/team-memory, #/chats/all, #/chats/<id> ----------
 // On a phone, #/settings alone is the settings menu, so Back from a settings page returns to it.
@@ -218,8 +218,17 @@ function applyRoute(r: Route, first: boolean) {
 }
 
 // Apply a deep link before the first render.
-const initialRoute = fromHash(location.hash)
+// The sign-in at a tool sends the browser back to /tools/<tool>?connected=1 (or ?connect_error=<code>): open that tool, say what
+// happened from a closed list of lines, and drop the query from the address.
+const connectReturn = parseConnectReturn(location.pathname, location.search)
+// The return's own route wins over any hash in the same address: one consistent place, and the hash is rewritten to it.
+const initialRoute: Route | null = connectReturn ? (connectReturn.key ? { page: 'app', appKey: connectReturn.key } : { page: 'apps' }) : fromHash(location.hash)
 if (initialRoute) applyRoute(initialRoute, true)
+if (connectReturn) {
+  leaveSignInReturn(connectReturn.key ? `#/tools/${connectReturn.key}` : '#/tools')
+  hashBar.adopt()
+  useUi.getState().showToast(connectReturn.text, connectReturn.ok ? { key: 'connect-return' } : { icon: 'error', key: 'connect-return' })
+}
 /** The first link named a page that doesn't exist: App says so once it has mounted. */
 const bootUnknownPage = !initialRoute && hasSlug(location.hash)
 
@@ -289,7 +298,9 @@ function useHashRoute() {
   }, [chatUnknown, appKey, setTab, fallbackChat])
   useEffect(() => {
     // An unknown tool or settings tab (a stale or typed link) is replaced in place, so it adds no history entry.
-    if (page === 'app' && !toolName(data.tools, appKey)) {
+    // Not before the tools read has answered: a link to a tool (the sign-in's return among them) is judged on what the
+    // server says, not on the empty list the app starts with.
+    if (page === 'app' && toolRoute(data.tools, appKey, data.resources.tools.status) === 'unknown') {
       hashBar.replace(toHash('apps', appKey, setTab, chatKey))
       useUi.getState().patch({ page: 'apps' })
       notFound('Tools')
@@ -312,7 +323,7 @@ function useHashRoute() {
     if (chatUnknown) return // replaced above
     // The hash follows the app unless someone else just set one (see shell/route-sync.ts).
     hashSync.sync({ page, appKey, skillKey, setTab, chatKey, menu, phone, chatIsNew, defaultChat: defaultChatId(data) })
-  }, [page, appKey, skillKey, skillKnown, skillsStatus, data.status, setTab, data.tools, chatKey, chatUnknown, chatIsNew, menu, phone])
+  }, [page, appKey, skillKey, skillKnown, skillsStatus, data.status, setTab, data.tools, data.resources.tools.status, chatKey, chatUnknown, chatIsNew, menu, phone])
 }
 
 function Shell() {
@@ -338,9 +349,11 @@ function Shell() {
     void agent.refresh('notifications')
   }, [page])
   const appKey = useUi(s => s.appKey)
-  const toolKnown = !!toolName(useAgentData().tools, appKey)
+  const shellData = useAgentData()
+  const route = toolRoute(shellData.tools, appKey, shellData.resources.tools.status)
+  const toolKnown = route === 'known'
   const skillKey = useUi(s => s.skillKey)
-  const skill = skillBySlug(useAgentData(), useAgentState(), skillKey)
+  const skill = skillBySlug(shellData, useAgentState(), skillKey)
   const phone = useUi(s => s.phone)
   const sideCollapsed = useUi(s => s.sideCollapsed)
   const chatList = useUi(s => s.chatList)
@@ -409,7 +422,8 @@ function Shell() {
   const focusKey = PAGE_SLUG[page] + (page === 'app' ? (toolKnown ? `/${appKey}` : '') : page === 'skill' ? (skill ? `/${skillKey}` : '') : page === 'settings' && phone && setMenu ? '/menu' : '')
 
   // An unknown tool key shows the Tools list until `useHashRoute` has moved the route there.
-  const Screen = page === 'app' && !toolKnown ? Tools : page === 'skill' && !skill ? Skills : SCREENS[page]
+  // While the tools are still being read, the tool page itself says so (it knows nothing of the key yet).
+  const Screen = page === 'app' && route === 'unknown' ? Tools : page === 'skill' && !skill ? Skills : SCREENS[page]
   const subKey = page === 'app' ? appKey : page === 'skill' ? skillKey : page === 'settings' ? setTab : page === 'chats' ? (chatList ? 'all' : fresh ? 'new' : chatId ?? '') : ''
   // Full-shell Turrell Skyspace behind both the floating sidebar and main: hero on Today and blank New chat, softly quieted in an active chat, off on other pages.
   const skyspace = page === 'today' || (page === 'chats' && !chatList && chatBlank) ? 'hero' : page === 'chats' && !chatList ? 'subtle' : null

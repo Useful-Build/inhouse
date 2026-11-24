@@ -12,6 +12,8 @@
 //   - a case whose grading needs something no route shows is "not graded on product" (`unobservable`), with the reason named;
 //   - cost is the server's settled figure for the turn (route 33's `cost`, whole cents), never the SDK's estimate.
 // Cases run one at a time: the brand's memory is shared, so a concurrent case would read another's seeded facts.
+import { promptFailure, promptSentOf } from '../prompt-version.ts'
+import { shopifyNotServed } from '../shopify-served.ts'
 import { mintPerson } from '../../server/auth/test-issuer-mint.ts'
 import { SEED_PEOPLE } from '../../server/seed/brand.ts'
 import { CancelWhySchema, TurnFailureSchema } from '../../shared/contract/runs.ts'
@@ -272,6 +274,11 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     const models = await api('current', 'GET', '/api/models')
     must(models, 'read the models', [200])
     if (!models.json.modes?.some((m: { id: string }) => m.id === picker)) throw new ProductTargetRefusal(`refusing: the brand does not serve the ${picker} model`)
+    // #337 round 2: the store must be served, or every graded turn's prompt says none is connected. Before the lease and any spend.
+    const tools = await api('lena', 'GET', '/api/tools')
+    must(tools, 'read the brand\'s tools', [200])
+    const notServed = shopifyNotServed(tools.json)
+    if (notServed !== null) throw new ProductTargetRefusal(`refusing: ${notServed}`)
     // (a) the door only after the check passed; (b) and (c) are door.ts's.
     door ??= createDoor(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env }))
     // The database must be the one this origin answers from: make a chat through the API, read it back through the door. Nothing is
@@ -531,7 +538,12 @@ export function productSession(d: SessionDeps): Session {
         return JSON.stringify(seeded) === JSON.stringify(c.input) ? c : { ...c, seedInput: seeded }
       })
       for (const w of writes) if (!used.has(w)) toolCalls.push(w)
-      const runOk = answer !== '' && !sawError
+      // P5 (#337): the turn must have been sent the system prompt v3 naming Shopify as connected. The static v2 fallback, no
+      // version recorded, or a v3 line naming no store fails the run with that reason (never a pass).
+      const promptBad = promptFailure(promptSentOf(trace.json))
+      // Both causes when the turn also failed otherwise (an error part, an end row): neither hides the other.
+      if (promptBad !== null) failure = failure === undefined ? promptBad : `${failure}; ${promptBad}`
+      const runOk = answer !== '' && !sawError && promptBad === null
       return { toolCalls, answer, runOk, usage: ZERO, costUsd, turnId, chatId, askedAs: d.askedAs, ...(runOk ? {} : { failure: failure ?? 'unknown' }) }
     },
     async settledCostUsd() {

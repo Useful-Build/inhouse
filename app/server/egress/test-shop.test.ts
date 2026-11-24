@@ -7,10 +7,11 @@
 // The deployable Worker not carrying the module, the canary or the option's name is check-product-build.mjs part 7.
 import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { CallToolOptions, CallerScope, HubResult } from '../../hub/index/contract.ts'
+import type { AccountSummary, CallToolOptions, CallerScope, HubResult } from '../../hub/index/contract.ts'
+import { turnSystemPrompt } from '../prompt/connected.ts'
 import { reset } from '../db/test-support.ts'
 import type { ReadGatewayLike } from './hub.ts'
-import { TEST_SHOP_KEY, TEST_SHOP_OWNER, SHOP_HOST, readTestShop, withTestShop } from './test-shop.ts'
+import { TEST_SHOP_KEY, TEST_SHOP_OWNER, SHOP_HOST, readTestShop, withTestShop, withTestShopConnect } from './test-shop.ts'
 import * as real from './test-shop.ts'
 import * as off from './test-shop-off.ts'
 import { SHOP_HOST as HUB_SHOP_HOST } from '../../hub/index/schemas.ts'
@@ -78,6 +79,54 @@ describe('withTestShop (test and eval builds)', () => {
     await setRow(TEST_SHOP_OWNER, JSON.stringify(HOST))
     await withTestShop(hub, env.DB, { INHOUSE_TEST_BUILD: '1' }).listTools(scope)
     expect(calls).toEqual([])
+  })
+})
+
+// #337 round 2 (Opus H1): the prompt's account read (ConnectGateway.listAccounts) carries the same override as the reads, so
+// the "Connected apps" line names what the turn's reads will use. Ways it can fail: the account read goes to the real
+// account while reads go to the test shop (a fresh real account then reads "No apps are connected yet"); the option
+// rides when no row is set; a build that isn't switched on reads the row.
+describe('withTestShopConnect (the prompt\'s account read)', () => {
+  const server: CallerScope = { kind: 'server', job: 'prompt.turn', requestId: 't_1' }
+  const shopify = (state: 'empty' | 'active'): AccountSummary => ({
+    accountId: 'shopify:store', connector: 'shopify', configured: true,
+    status: { accountId: 'shopify:store', state, kid: null, expiresAt: null, scopes: [], lastError: null, paused: false, kind: 'client_credentials', connectedBy: null, connectedAt: null, revokeFailedAt: null, needsReconnect: false },
+  })
+  /** The hub as the test build answers it: the real account fresh (empty), the test shop's granted (active). */
+  function recordingConnect() {
+    const calls: (CallToolOptions | undefined)[] = []
+    const gateway = {
+      listAccounts: async (...a: [CallerScope, CallToolOptions?]) => {
+        calls.push(a[1])
+        return { ok: true, value: [shopify(a[1]?.testShopHost ? 'active' : 'empty')] } satisfies HubResult<AccountSummary[]>
+      },
+    }
+    return { gateway, calls }
+  }
+
+  it('with a row set, the account read carries the override, and the built line names Shopify as connected', async () => {
+    const { gateway, calls } = recordingConnect()
+    const wrapped = withTestShopConnect(gateway, env.DB, { INHOUSE_TEST_BUILD: '1' })
+    const before = await turnSystemPrompt({ gateway: wrapped, delivery: false, channels: async () => [] }, 't_1')
+    expect(before.text).toContain('No apps are connected yet.')
+    await setRow(TEST_SHOP_OWNER, JSON.stringify(HOST))
+    const built = await turnSystemPrompt({ gateway: wrapped, delivery: false, channels: async () => [] }, 't_2')
+    expect(built).toMatchObject({ version: 3 })
+    expect(built.text).toContain('Connected apps: Shopify. Search for their tools')
+    expect(calls).toEqual([undefined, { testShopHost: HOST }])
+    await wrapped.listAccounts(server)
+    expect(calls.at(-1)).toEqual({ testShopHost: HOST })
+  })
+
+  it.each([[undefined], ['0']])('INHOUSE_TEST_BUILD=%s: the gateway as it is, nothing read', async flag => {
+    const { gateway } = recordingConnect()
+    expect(withTestShopConnect(gateway, env.DB, { INHOUSE_TEST_BUILD: flag })).toBe(gateway)
+  })
+
+  it('the off stand-in returns the gateway as it is', async () => {
+    const { gateway } = recordingConnect()
+    await setRow(TEST_SHOP_OWNER, JSON.stringify(HOST))
+    expect(off.withTestShopConnect(gateway, env.DB, { INHOUSE_TEST_BUILD: '1' })).toBe(gateway)
   })
 })
 

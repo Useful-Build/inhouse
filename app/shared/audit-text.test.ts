@@ -39,6 +39,15 @@ const sample: Record<AuditArgs['action'], AuditArgs> = {
   'library.deleted': { action: 'library.deleted', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA'] },
   'library.restored': { action: 'library.restored', fileIds: ['f_AAAAAAAAAAAAAAAAAAAAAA'] },
   'today.set_aside': { action: 'today.set_aside', itemId: 'p_AAAAAAAAAAAAAAAAAAAAAA', reason: 'snoozed' },
+  // P5 (p5-w1)
+  'tools.connect_start': { action: 'tools.connect_start', accountId: 'slack:workspace' },
+  'tools.connect': { action: 'tools.connect', accountId: 'slack:workspace', outcome: 'ok' },
+  // P5 (p5-w3)
+  'tools.pause': { action: 'tools.pause', accountId: 'slack:workspace', paused: true },
+  'tools.disconnect': { action: 'tools.disconnect', accountId: 'slack:workspace', revoked: true },
+  // P5 (p5-w4)
+  'notify.send': { action: 'notify.send', source: 'agent', runId: 'r_AAAAAAAAAAAAAAAAAAAAAA', kind: 'bell', target: 'm_a', outcome: 'posted', textLength: 12, noticeSha256: 'ab'.repeat(32) },
+  'notify.channels': { action: 'notify.channels', added: ['C0TEST0001'], removed: [], alerts: 'C0TEST0001' },
   'memory.approved': { action: 'memory.approved', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA', rev: 3 },
   'memory.rejected': { action: 'memory.rejected', memoryId: 'mem_AAAAAAAAAAAAAAAAAAAAAA', rev: 1 },
   'team_request.created': { action: 'team_request.created', requestId: 'tr_AAAAAAAAAAAAAAAAAAAAAA', kind: 'tool' },
@@ -167,6 +176,33 @@ describe('support.access writes (P4 review fold): a write reads as a change, nev
       ['PUT', '/api/today/:id/aside', 'An item on Today'],
       ['POST', '/api/library/delete', 'The Library'], ['POST', '/api/library/restore', 'The Library'],
     ] as const) expect(auditText({ action: 'support.access', grantId: 'g_1', method, route }, names), `${method} ${route}`).toEqual({ what: 'changed brand data', detail })
+  })
+})
+
+describe('P5 (p5-w3): pause and disconnect lines', () => {
+  it('name the tool, and say when the access was not revoked', () => {
+    expect(auditText({ action: 'tools.pause', accountId: 'slack:workspace', paused: true }, names)).toEqual({ what: 'paused a tool', detail: 'Slack' })
+    expect(auditText({ action: 'tools.pause', accountId: 'slack:workspace', paused: false }, names)).toEqual({ what: 'resumed a tool', detail: 'Slack' })
+    expect(auditText({ action: 'tools.disconnect', accountId: 'slack:workspace', revoked: true }, names)).toEqual({ what: 'disconnected a tool', detail: 'Slack' })
+    expect(auditText({ action: 'tools.disconnect', accountId: 'slack:workspace', revoked: false }, names)).toEqual({
+      what: 'disconnected a tool', detail: 'Slack: its access wasn’t removed on the tool’s side, so remove the app there too',
+    })
+  })
+})
+
+describe('P5 (p5-w1): connect lines', () => {
+  it('names the connector and the outcome in words, never upstream text', () => {
+    expect(auditText({ action: 'tools.connect_start', accountId: 'slack:workspace' }, names)).toEqual({ what: 'started connecting a tool', detail: 'Slack' })
+    expect(auditText({ action: 'tools.connect', accountId: 'slack:workspace', outcome: 'ok' }, names)).toEqual({ what: 'connected a tool', detail: 'Slack' })
+    expect(auditText({ action: 'tools.connect', accountId: 'slack:workspace', outcome: 'workspace_mismatch' }, names)).toEqual({ what: 'couldn’t connect a tool', detail: 'Slack: another workspace was chosen' })
+    expect(auditText({ action: 'tools.connect', accountId: 'notes:test', outcome: 'rate_limited' }, names)).toEqual({ what: 'couldn’t connect a tool', detail: 'notes:test: rate_limited' })
+  })
+})
+
+describe('P5 (p5-w4): a notice to a channel that is not listed', () => {
+  it('reads in plain words and names no channel', () => {
+    const line = { action: 'notify.send', source: 'agent', runId: 'r_AAAAAAAAAAAAAAAAAAAAAA', kind: 'slack', target: 'unlisted', outcome: 'refused', detail: 'not_listed', textLength: 12, noticeSha256: 'ab'.repeat(32) } as const
+    expect(auditText(line, names)).toEqual({ what: 'a notice didn’t go out', detail: 'Slack: a channel that isn’t listed' })
   })
 })
 

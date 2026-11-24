@@ -26,6 +26,7 @@ import { CAN_KEYS, GRANT_HOURS, RESOURCE_KEYS, ROUTINE_RUNS_MAX } from '../../sh
 import type { RoutineHistoryRun, RoutineRunHistory } from '../../shared/contract/routines'
 import type { Can } from '../../shared/contract/me'
 import type { InviteInput } from '../../shared/contract/members'
+import type { AvailableChannels, NotifyChannelList, PutNotifyChannels } from '../../shared/contract/notify-slack'
 import { MEMBER_ID_PATTERN, meetsRule, settingRow } from '../../shared/contract/settings-table'
 import { pendingIds, visibleProblems } from '../state/derive'
 
@@ -970,6 +971,9 @@ export class MockAgent implements AgentClient {
     if (paused) toolPaused[key] = true; else delete toolPaused[key]
     return this.write({ toolPaused })
   }
+  /** The demo has no sign-in at a tool: the address is this app's own, which the Tools page reads as "connected" (no navigation). */
+  connectTool(key: string): Promise<{ authorizeUrl: string }> { return Promise.resolve({ authorizeUrl: `/tools/${encodeURIComponent(key)}?connected=1` }) }
+  disconnectTool(_key: string): Promise<{ revoked: boolean }> { return this.rejected('unavailable', "Disconnecting isn't connected in this demo.", true) }
   forgetMemory(key: string, forgotten: boolean) {
     const rec = `memory:${key}`
     const stale = this.conflict(rec, 1, () => ({ key, rev: this.rev(rec, 1) }))
@@ -1306,6 +1310,12 @@ export class MockAgent implements AgentClient {
   /** The demo has no stored files: every id answers a small sample, named by the chip that asked. */
   downloadFile = (): Promise<{ blob: Blob; name: string | null }> => Promise.resolve({ blob: new Blob(['A sample file from the demo.\n'], { type: 'text/plain' }), name: null })
   signOutUrl = (): string | null => null
+
+  // ---------- P5 (p5-w4): the Slack channels listed for notices ----------
+  // The demo's list lives in ./mock-notify, loaded on first use, so none of it weighs on Today's first load.
+  listNotifyChannels = (): Promise<NotifyChannelList> => import('./mock-notify').then(m => m.demoNotify.list())
+  availableNotifyChannels = (): Promise<AvailableChannels> => import('./mock-notify').then(m => m.demoNotify.available())
+  saveNotifyChannels = (input: PutNotifyChannels): Promise<NotifyChannelList> => import('./mock-notify').then(m => m.demoNotify.save(input))
   disconnect = (): void => undefined
 
   // ----- skills -----

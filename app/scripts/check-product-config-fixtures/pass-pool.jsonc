@@ -1,6 +1,6 @@
 // check-product-config fixture: the runner pool, 3 x 4 instances (invented values).
 {
-	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }],
+	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }, { "binding": "HUB_CONNECT", "service": "inhouse-hub", "entrypoint": "ConnectGateway" }, { "binding": "HUB_DELIVERY", "service": "inhouse-hub", "entrypoint": "DeliveryGateway" }],
 	"name": "inhouse-product",
 	"main": "server/index.ts",
 	"vars": {

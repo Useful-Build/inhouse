@@ -36,6 +36,10 @@ export const ErrorReasonSchema = z.enum([
   'run_open', 'stage',
   // #312 review: a team routine past the brand's cap (the routine_create tool); an empty Library upload (row 63).
   'routine_limit', 'empty',
+  // P5 (p5-w3): the Tools routes' refusals.
+  'not_configured', 'not_disconnectable', 'not_connected',
+  // P5 (p5-w4): the notice channel list's refusals (route 75 conflicts, route 74 while Slack can't be used).
+  'shared_channel', 'archived', 'not_public', 'not_member', 'not_found', 'name_taken', 'slack_not_connected',
   // P6a W3: a request to the Inhouse team past 50 open ones.
   'request_limit',
 ])

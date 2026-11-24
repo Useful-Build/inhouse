@@ -162,6 +162,19 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'POST', pattern: '/api/routines/:id/run', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   { method: 'POST', pattern: '/api/routines/:id/delete', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
   { method: 'POST', pattern: '/api/routines/:id/restore', class: 'brand_data', allow: ['member', 'admin', 'inhouse'] },
+  // Routes 68 and 69 (P5 W1, p5-w1.md section 9): connect start and the OAuth callback, the Inhouse team alone.
+  { method: 'POST', pattern: '/api/connect/:accountId/start', class: 'technical', allow: ['inhouse'] },
+  { method: 'GET', pattern: '/api/connect/callback', class: 'technical', allow: ['inhouse'] },
+  // Routes 70 to 72 (P5 W3): the Tools page; everyone reads, the Inhouse team alone writes.
+  { method: 'GET', pattern: '/api/tools', class: 'technical', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'PUT', pattern: '/api/tools/:accountId/paused', class: 'technical', allow: ['inhouse'] },
+  { method: 'POST', pattern: '/api/tools/:accountId/disconnect', class: 'technical', allow: ['inhouse'] },
+  // Routes 73 to 75 (P5 W4): the notice channel list; everyone reads, an Admin or the Inhouse team picks and saves.
+  { method: 'GET', pattern: '/api/notify/channels', class: 'baseline', allow: ['member', 'admin', 'inhouse'] },
+  { method: 'GET', pattern: '/api/notify/channels/available', class: 'baseline', allow: ['admin', 'inhouse'] },
+  { method: 'PUT', pattern: '/api/notify/channels', class: 'baseline', allow: ['admin', 'inhouse'] },
+  // P5 W5: the test build's test-fakes hook, release only like route 67.
+  { method: 'POST', pattern: '/api/ops/test-fakes', class: 'open', allow: [], services: ['release'] },
   // Rows 77 to 83 (P6a PR0; rows 68 to 76 are P5's). Team memory approval: brand data, admins and the Inhouse team
   // (the PUT under a live grant, INHOUSE_BRAND_WRITES). Skills: technical, everyone reads (names only, no instructions).
   // Team requests: baseline, since a request is addressed to the Inhouse team, which reads it and alone marks it done

@@ -95,6 +95,12 @@ interface Server {
   spentMinor?: number
   /** The turn ends with no answer but an end row (route 24's `event` with `end`): a failure or a cancel reason. */
   endRow?: { failure?: string; why?: string; outcome?: string }
+  /** Route 70's answer (default: Shopify connected, not paused, readable). */
+  tools?: unknown
+  /** The trace's `promptVersions` (default [3], v3 sent); null leaves the field out (no version recorded). */
+  promptVersions?: (number | null)[] | null
+  /** The trace's `promptApps` (default [['Shopify']]); null leaves the field out. */
+  promptApps?: (string[] | null)[] | null
 }
 const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } => {
   const s: Server = {
@@ -137,6 +143,7 @@ const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } 
       return n < (s.stopsBeforeEnded ?? 0) ? json({}) : json({ error: { code: 'conflict', reason: 'turn_ended' } }, 409)
     }
     if (url.pathname === '/api/models') return json({ default: 'sonnet', modes: [{ id: 'sonnet' }] })
+    if (url.pathname === '/api/tools') return json(s.tools ?? { connected: ['shopify'], details: { shopify: { name: 'Shopify' } }, connection: {} })
     if (url.pathname === '/api/usage') return json({ cap: { minor: s.capMinor ?? 5000, currency: 'USD' }, total: { minor: s.spentMinor ?? 0, currency: 'USD' } })
     if (url.pathname === '/api/chats' && method === 'POST') return json({ id: body.id }, 201)
     if (url.pathname.endsWith('/attachments')) return json({ fileId: 'f_AAAAAAAAAAAAAAAAAAAAAA', name: 'note.txt' }, 201)
@@ -146,7 +153,11 @@ const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } 
       return json({ runId: 'r_CCCCCCCCCCCCCCCCCCCCCC', turnId, messageId: `${turnId}.u`, position: 'starting' }, 202)
     }
     if (url.pathname.startsWith('/api/traces/') && s.traceStatus && s.traceStatus !== 200) return json({ error: { code: 'unavailable' } }, s.traceStatus)
-    if (url.pathname.startsWith('/api/traces/')) return json({ cost: { minor: s.costMinor, currency: 'USD' }, steps: [{ kind: 'root', detail: '' }, ...s.steps] })
+    if (url.pathname.startsWith('/api/traces/')) {
+      const versions = s.promptVersions === undefined ? [3] : s.promptVersions
+      const apps = s.promptApps === undefined ? [['Shopify']] : s.promptApps
+      return json({ cost: { minor: s.costMinor, currency: 'USD' }, steps: [{ kind: 'root', detail: '' }, ...s.steps], ...(versions === null ? {} : { promptVersions: versions }), ...(apps === null ? {} : { promptApps: apps }) })
+    }
     if (url.pathname.startsWith('/api/chats/')) {
       const answered = ++polls > s.emptyPolls
       if (answered && s.endRow) return json({ messages: [{ role: 'user', turnId, pos: 0, text: 'q' }, { role: 'event', turnId, pos: 1, text: '', end: { retryQuestion: 'q', ...s.endRow } }], runs: [] })
@@ -164,6 +175,23 @@ const make = (srv: ReturnType<typeof server>, door: MemoryDoor, extra: Partial<P
 const kase = (id: string): Case => CASES.find((c) => c.id === id)!
 
 describe('the eval-brand check (server side, before the first chat)', () => {
+  // #337 round 2 (Opus H1): every graded turn needs the store served, or its prompt says no store is connected; refused
+  // before any spend (the lease, a member removal or a chat), never graded.
+  it('refuses a brand whose Tools page doesn\'t show Shopify connected and readable, before the lease or any chat', async () => {
+    for (const [tools, text] of [
+      [{ connected: [], details: {}, connection: {} }, /Shopify is not connected on the brand's Tools page/],
+      [{ connected: ['shopify'], details: { shopify: { name: 'Shopify', paused: true } }, connection: {} }, /Shopify is paused on the brand's Tools page/],
+      [{ connected: ['shopify'], details: { shopify: { name: 'Shopify' } }, connection: { shopify: { state: 'disconnected', since: '2026-11-22T10:00:00Z' } } }, /Shopify can't be read now/],
+      [{ nope: 1 }, /Shopify is not connected on the brand's Tools page/],
+    ] as const) {
+      const door = new FakeDoor()
+      const srv = server({ tools })
+      await expect(make(srv, door).seed([], { caseId: 'N01', rep: 1, canary: 'c' }), JSON.stringify(tools)).rejects.toThrow(ProductTargetRefusal)
+      await expect(make(server({ tools }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(text)
+      expect(srv.s.sent.some((x) => x.path.startsWith('/api/chats')), 'no chat').toBe(false)
+    }
+  })
+
   it.each([
     ['a member on a real domain', [{ id: 'm_dana', email: 'dana@example.test', status: 'active' }, { id: 'm_leo', email: 'leo@example.test', status: 'active' }, { id: 'm_sam', email: 'sam@example.test', status: 'active' }, { id: 'm_x', email: 'owner@acme-shop.com', status: 'active' }]],
     ['a lookalike domain', [{ id: 'm_dana', email: 'dana@example.test.evil.com', status: 'active' }, { id: 'm_leo', email: 'leo@example.test', status: 'active' }, { id: 'm_sam', email: 'sam@example.test', status: 'active' }]],
@@ -850,6 +878,30 @@ describe('the baseline\'s harness faults', () => {
       const res = await session.chat('hi')
       expect(res, JSON.stringify(endRow)).toMatchObject({ runOk: false, answer: '', failure: cause, turnId: 't_BBBBBBBBBBBBBBBBBBBBBB' })
     }
+  })
+  // P5 (#337): every graded turn must have been sent the system prompt v3 (route 33's trace, promptVersions). A turn on the
+  // static v2 fallback, or with no version recorded, fails its run with that reason and is never graded as a pass.
+  it('a turn sent the v2 fallback, or with no version recorded, fails its run naming why; v3 passes', async () => {
+    for (const [promptVersions, failure] of [[[2], 'prompt_version:2'], [null, 'prompt_version:missing'], [[null], 'prompt_version:missing']] as const) {
+      const session = await make(server({ promptVersions: promptVersions === null ? null : [...promptVersions] }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
+      expect(await session.chat('hi'), JSON.stringify(promptVersions)).toMatchObject({ runOk: false, answer: 'Hello.', failure })
+    }
+    const ok = await make(server(), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
+    expect(await ok.chat('hi')).toMatchObject({ runOk: true, answer: 'Hello.' })
+  })
+  // #337 round 3 (M3): a v3 turn whose built line didn't name Shopify as connected fails too (prompt_apps:<list>).
+  it('a v3 turn whose prompt named no store, or another app only, fails naming the apps it named', async () => {
+    for (const [promptApps, failure] of [[[[]], 'prompt_apps:none'], [[['Slack']], 'prompt_apps:Slack'], [null, 'prompt_apps:missing'], [[null], 'prompt_apps:missing']] as const) {
+      const session = await make(server({ promptApps: promptApps === null ? null : promptApps.map(a => (a === null ? null : [...a])) }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
+      expect(await session.chat('hi'), JSON.stringify(promptApps)).toMatchObject({ runOk: false, answer: 'Hello.', failure })
+    }
+    const ok = await make(server({ promptApps: [['Shopify', 'Slack']] }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
+    expect(await ok.chat('hi')).toMatchObject({ runOk: true })
+  })
+  // #337 round 2 (L2): a turn that errored and fell back to v2 reports both causes, not only the first.
+  it('a turn with an error part that was also sent v2 names both causes', async () => {
+    const session = await make(server({ promptVersions: [2], answerParts: [{ type: 'error', text: 'model overloaded' }] }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
+    expect(await session.chat('hi')).toMatchObject({ runOk: false, failure: 'error_part; prompt_version:2' })
   })
   it('X01: an answer that is an error part names it as the cause', async () => {
     const session = await make(server({ answerParts: [{ type: 'error', text: 'model overloaded at https://x.example.test' }] }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })

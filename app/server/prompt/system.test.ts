@@ -6,7 +6,7 @@ import { CONNECTED_APPS_LINE, SYSTEM_PROMPT_V1, SYSTEM_PROMPT_V2, SYSTEM_PROMPT_
 
 describe('the system prompt v1', () => {
   it('carries the softer memory rule, not the reflex', () => {
-    expect(SYSTEM_PROMPT_VERSION).toBe(2)
+    expect(SYSTEM_PROMPT_VERSION).toBe(3)
     expect(SYSTEM_PROMPT_V1).toContain('search memory when the question could depend on saved context')
     expect(SYSTEM_PROMPT_V1).toContain("You don't need to search on every chat.")
     expect(SYSTEM_PROMPT_V1).not.toMatch(/before answering/i)

@@ -4,7 +4,7 @@ import { CAN_KEYS } from '../../../shared/contract/keys'
 import { EXACT_ROWS, settingRow } from '../../../shared/contract/settings-table'
 import type { Can } from '../../agent/types'
 import type { Row } from './content'
-import { allowance, pageResources } from './allowance'
+import { allowance, mayEditNotify, pageResources, showsRemove } from './allowance'
 import { nowIs } from './now-is'
 
 const row = (r: Partial<Row>): Row => ({ title: 't', desc: '', kind: 'select', value: '', need: 0, ...r })
@@ -64,5 +64,23 @@ describe('pageResources: the pages that read memory', () => {
     expect(pageResources('you-memory', false)).toEqual(['memory'])
     expect(pageResources('team-memory', false)).toEqual(['memory'])
     expect(pageResources('team-members', false)).not.toContain('memory')
+  })
+})
+
+// P5 W4 (review round 2): who edits the Slack notice channels and who sees a channel's Remove follow `me().can`, never a
+// role name. Each `can` set is generated, and the expected value is read from that set alone.
+describe('the Slack notice gates', () => {
+  const go = () => {}
+  const channel = row({ kind: 'value', remove: { label: 'Remove #a', title: 't', text: 'x', action: 'Remove', go, can: 'editBrandSettings' } })
+  const member = row({ kind: 'select', remove: { label: 'Remove Pat', title: 't', text: 'x', action: 'Remove', go } })
+  test.prop([fc.subarray([...CAN_KEYS])])('editing and a channel Remove need editBrandSettings; a member Remove needs remove', on => {
+    const can = canOf(on)
+    expect(mayEditNotify(can)).toBe(on.includes('editBrandSettings'))
+    expect(showsRemove(channel, can)).toBe(on.includes('editBrandSettings'))
+    expect(showsRemove(member, can)).toBe(on.includes('remove'))
+  })
+  test.prop([fc.subarray([...CAN_KEYS])])('nothing to remove shows no Remove; no me() yet edits nothing', on => {
+    expect(showsRemove(row({}), canOf(on))).toBe(false)
+    expect(mayEditNotify(undefined)).toBe(false)
   })
 })

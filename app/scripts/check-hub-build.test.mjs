@@ -5,7 +5,7 @@
 // test bundle, 1 for a refusal, 2 when the scan can't run.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -21,6 +21,18 @@ const EXPECTED = {
   'deploy-dependency-testing': [0, /ok {4}module graph: clean/],
   'deploy-canary': [1, /FAIL {2}canary string: the deployable/],
   'deploy-shopify-canary': [1, /FAIL {2}shopify upstream canary: the deployable.*\n.*INHOUSE_SHOPIFY_UPSTREAM_CANARY_7c2d/],
+  'deploy-mcp-canary': [1, /FAIL {2}mcp upstream canary: the deployable.*\n.*INHOUSE_MCP_UPSTREAM_CANARY_7c2d/],
+  'deploy-fakes-canary': [1, /FAIL {2}test-fakes canary: the deployable.*\n.*INHOUSE_HUB_FAKES_CANARY_3a6f/],
+  'deploy-fakes-globals': [1, /FAIL {2}test-fakes globals: the deployable.*\n.*__inhouseHubTestLogs/],
+  // The deployable script keeps the define's dead branches as text: names inside `if (false)` only are fine.
+  'deploy-fakes-globals-dead': [0, /ok {4}test-fakes globals: clean/],
+  // A quote inside a regex in a dead block doesn't stretch the block: a global after it is still reachable code.
+  'deploy-fakes-globals-regex': [1, /FAIL {2}test-fakes globals: the deployable.*\n.*__inhouseHubTestLogs.*outside/],
+  // A dead block that never closes at its indentation fails the part, never counts the rest of the file as dead.
+  'deploy-fakes-globals-unclosed': [1, /FAIL {2}test-fakes globals: the deployable.*\n.*never closes/],
+  // An opener-looking line inside a template literal: the "block" holds a line no deeper than it, so the part fails as
+  // ambiguous instead of counting the live global inside it as dead.
+  'deploy-fakes-globals-template': [1, /FAIL {2}test-fakes globals: the deployable.*\n.*ambiguous/],
   'deploy-hub-testing': [1, /module hub\/testing\/index\.ts/],
   'deploy-registry-testing': [1, /module hub\/registry\/testing\/fake-registry\.ts/],
   'deploy-test-module': [1, /module hub\/scope\/scope\.test\.ts/],
@@ -49,6 +61,47 @@ for (const [dir, [status, pattern]] of Object.entries(EXPECTED)) {
   })
 }
 
+// Every shared test-fakes name, one by one: reachable in a deployable bundle it fails the scan naming it, and a test
+// bundle that lacks it fails the scan too, so each name is proven present in the test bundle and absent from the deployable.
+const FAKES_NAMES = [
+  '__inhouseHubTestLogs',
+  '"__test-fakes__"',
+  '"test-fakes:vars"',
+  '"X-Inhouse-Test-Throw"',
+  '.testFakesOp(',
+  '.testGetVars(',
+  '.testRecordConnectBody(',
+  '.testAppendLogs(',
+]
+const bundleFolder = (tmp, name, script) => {
+  const dir = join(tmp, name)
+  mkdirSync(dir)
+  writeFileSync(join(dir, 'index.js'), script)
+  const meta = JSON.parse(readFileSync(join(app, FIXTURES, 'deploy-clean/bundle-meta.json'), 'utf8'))
+  writeFileSync(join(dir, 'bundle-meta.json'), JSON.stringify({ ...meta, outputs: { [join(dir, 'index.js')]: { bytes: script.length } } }))
+  return dir
+}
+for (const name of FAKES_NAMES) {
+  test(`test-fakes name ${name}: refused in the deployable bundle, required in the test bundle`, () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'check-hub-build-name-'))
+    try {
+      const seam = readFileSync(join(app, TEST, 'index.js'), 'utf8')
+      const clean = bundleFolder(tmp, 'clean', 'export default 1\n')
+      const leaky = bundleFolder(tmp, 'leaky', `const probe = 1\n${name}\n`)
+      const found = run('--deploy', leaky, '--test', TEST)
+      assert.equal(found.status, 1, found.out)
+      assert.match(found.out, /FAIL {2}test-fakes globals: the deployable/)
+      // The test bundle with this one name removed fails the names check.
+      const without = bundleFolder(tmp, 'without', seam.split(name).join('REMOVED'))
+      const stale = run('--deploy', clean, '--test', without)
+      assert.equal(stale.status, 1, stale.out)
+      assert.match(stale.out, /FAIL {2}test-fakes names: the test bundle .* lacks/)
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+}
+
 test('a test bundle that is clean fails the scan: it proves nothing', () => {
   const r = run('--deploy', `${FIXTURES}/deploy-clean`, '--test', `${FIXTURES}/deploy-clean`)
   assert.equal(r.status, 1, r.out)
@@ -58,6 +111,19 @@ test('a test bundle that is clean fails the scan: it proves nothing', () => {
 test('a missing folder or a flag with no value exits 2, never 0 or 1', () => {
   assert.equal(run('--deploy', `${FIXTURES}/does-not-exist`, '--test', TEST).status, 2)
   assert.equal(run('--deploy').status, 2)
+})
+
+// The scan once hung at exit on the real bundles (node 26.13.1: a worker thread never joined, about 3 runs in 4) while
+// every fixture passed: the fixtures are a few hundred bytes, the real script and map are megabytes and were read once
+// per canary. Synthetic padded bundles never reproduced it, so this runs the real scan on the real bundles (CI builds
+// them just before this test), 8 times, each under a time bound. Skipped, saying so, where the bundles aren't built.
+const built = existsSync(join(app, 'dist-hub/bundle-meta.json')) && existsSync(join(app, 'dist-hub-test/bundle-meta.json'))
+test('the scan finishes on the real hub bundles, every time', { skip: built ? false : 'run `npm run bundle` and `npm run bundle:test` in app/hub first' }, () => {
+  for (let i = 0; i < 8; i++) {
+    const r = spawnSync(process.execPath, ['scripts/check-hub-build.mjs'], { cwd: app, encoding: 'utf8', timeout: 20000 })
+    assert.equal(r.error, undefined, `run ${i} did not finish in 20 s: ${r.error?.message}`)
+    assert.equal(r.status, 0, `run ${i}: ${r.stdout}${r.stderr}`)
+  }
 })
 
 // Regression: realistic multi-MB bundles with ~260 metafile inputs trigger concurrent Maglev compilation right before
