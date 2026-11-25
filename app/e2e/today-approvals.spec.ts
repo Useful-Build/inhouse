@@ -6,7 +6,7 @@ import type { Page } from '@playwright/test'
 import { cutText, expectNothingCut, start, STAGES } from './today-approvals-helpers.js'
 
 const shot = async (page: Page, name: string) => {
-  await page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
+  await page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.timeline instanceof DocumentTimeline && a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
   await page.screenshot({ path: test.info().outputPath(`${name}.png`), fullPage: true })
 }
 const waiting = (page: Page) => page.getByRole('heading', { level: 2, name: /^Waiting for you/ })

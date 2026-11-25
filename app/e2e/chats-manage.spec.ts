@@ -9,7 +9,7 @@ async function start(page: Page, hash = '#/today') {
 }
 
 /** Waits for menus, windows and the toast to finish their finite animations, so a screenshot catches them fully drawn. */
-const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
+const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.timeline instanceof DocumentTimeline && a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
 const shot = async (page: Page, name: string) => { await settled(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' })
 const main = (page: Page) => page.locator('main')

@@ -21,7 +21,7 @@ async function open(page: Page, fx: Fx, hash: string, ready: string) {
 }
 
 // A toast that leaves mid-shot cancels its animation: cancelled counts as settled.
-const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => undefined))))
+const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.timeline instanceof DocumentTimeline && a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => undefined))))
 /** The repeatable artifact: the open overlay, attached to the report under its name. */
 async function attach(page: Page, name: string) {
   await settled(page)

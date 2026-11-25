@@ -30,7 +30,7 @@ for (const theme of THEMES) {
     test(`${theme} · ${s.name}`, async ({ page }) => {
       await openState(page, s, theme)
       // Radix pop-ups fade and zoom in; axe reads colors mid-animation as low contrast, so wait for finite animations to end.
-      await page.waitForFunction(() => document.getAnimations().every(a => a.playState !== 'running' || a.effect?.getTiming().iterations === Infinity))
+      await page.waitForFunction(() => document.getAnimations().every(a => a.playState !== 'running' || !(a.timeline instanceof DocumentTimeline) || a.effect?.getTiming().iterations === Infinity))
       const { violations } = await new AxeBuilder({ page })
         .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
         .analyze()

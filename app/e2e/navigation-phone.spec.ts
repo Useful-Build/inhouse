@@ -9,7 +9,7 @@ async function start(page: Page, fx: Fx, hash: string) {
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
 }
 
-const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
+const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.timeline instanceof DocumentTimeline && a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
 const shot = async (page: Page, name: string) => { await settled(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const header = (page: Page) => page.getByRole('banner')
 const hash = (page: Page) => page.evaluate(() => location.hash)

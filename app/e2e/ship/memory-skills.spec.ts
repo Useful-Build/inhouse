@@ -57,7 +57,7 @@ async function shot(page: Page, name: string) {
   // The words of an answer are revealed over about a second (reveal.ts) and the log is busy until they are all there: shoot the finished answer.
   await expect(page.locator('[role="log"][aria-busy="true"]')).toHaveCount(0)
   // allSettled: a cancelled animation rejects `finished`, which is not a failure here.
-  await page.evaluate(() => Promise.allSettled(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
+  await page.evaluate(() => Promise.allSettled(document.getAnimations().filter(a => a.timeline instanceof DocumentTimeline && a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
   await test.info().attach(name, { body: await page.screenshot(), contentType: 'image/png' })
 }
 
