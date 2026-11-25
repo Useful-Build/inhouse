@@ -255,6 +255,8 @@ function TraceSteps({ trace }: { trace: TraceData }) {
                 <TraceTitle data-step-name className={cn(kind === 'root' && 'font-semibold', vis ? 'text-foreground' : 'text-muted-foreground')}>
                   {row.label}
                 </TraceTitle>
+                {/* Beside the name, not after the bar: a long last step's bar ends at the window's edge. */}
+                {row.slowest && t == null && <Badge variant="warning" size="lg" className="flex-none">Slowest</Badge>}
               </TraceLine>
             </TraceCollapsibleTrigger>
             <div onClick={() => setSel(open ? null : row.id)} className="relative cursor-pointer">
@@ -268,7 +270,6 @@ function TraceSteps({ trace }: { trace: TraceData }) {
                     className="absolute top-1/2 ml-2 flex -translate-y-1/2 items-center gap-2 text-sm whitespace-nowrap text-muted-foreground tabular-nums"
                     style={{ left: `${(endT / M) * 100}%` }}>
                     {dur}
-                    {row.slowest && t == null && <Badge variant="warning" size="lg">Slowest</Badge>}
                   </span>
                 </>
               )}

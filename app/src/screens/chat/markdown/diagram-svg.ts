@@ -46,8 +46,14 @@ export function tidySvg(markup: string, label: string): string {
     // HTML inside the figure (in a <title> or <desc>, say): Mermaid's sanitizer strips it today; refuse it if that ever slips.
     if (el.namespaceURI !== SVG_NS) throw new Error(`The diagram holds a non-SVG element (${name})`)
     if (REMOVE.has(name)) el.remove()
-    // A link: its content stays (Mermaid wraps a linked node's shape in it), the link goes.
-    else if (name === 'a') el.replaceWith(...el.childNodes)
+    // A link: it becomes a plain group. Mermaid wraps a linked node in it and puts the node's place (`transform`) and
+    // classes on the link itself, so those stay; the address goes (with every other attribute the pass below drops).
+    else if (name === 'a') {
+      const g = document.createElementNS(SVG_NS, 'g')
+      for (const attr of [...el.attributes]) if (!HREF.test(attr.name) && attr.name.toLowerCase() !== 'target') g.setAttribute(attr.name, attr.value)
+      g.append(...el.childNodes)
+      el.replaceWith(g)
+    }
   }
   for (const el of [svg, ...svg.querySelectorAll('*')]) {
     for (const attr of [...el.attributes]) {
