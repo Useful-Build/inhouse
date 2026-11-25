@@ -11,7 +11,7 @@ import { display } from '../../state/display'
 import { useCtx, useUi } from '../../state/store'
 import { Button, Icon } from '../../ui'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { Markdown } from './Markdown'
+import { Markdown } from './markdown'
 import { useRevealed } from './reveal'
 import { MODEL_OFF_TEXTS } from './notes'
 import { cn } from '@/lib/utils'
@@ -93,16 +93,17 @@ export function ApprovalCard({ problemId }: { problemId: string }) {
  * itself: the one place a screen reader looks), and the whole text is announced once, when it is all there.
  */
 function TextPart({ id, chat, text, animate, streaming, webFetchHosts, onBusy }: { id: string; chat: string | undefined; text: string; animate: boolean; streaming: boolean; webFetchHosts?: string; onBusy?: (id: string, busy: boolean) => void }) {
-  const { shown, done, fading } = useRevealed(text, animate, chat === undefined ? undefined : { chat, id })
+  const { shown, done } = useRevealed(text, animate, chat === undefined ? undefined : { chat, id })
   useLayoutEffect(() => {
     if (done || !onBusy) return
     onBusy(id, true)
     return () => onBusy(id, false)
   }, [id, done, onBusy])
-  // A partially streamed or revealed bare URL can look like a different destination.
-  const linkHosts = streaming || !done ? [] : parseHostlist(webFetchHosts ?? '') ?? []
+  // A partially streamed or revealed bare URL can look like a different destination. While the text is still coming, half-written markdown is closed for the moment.
+  const live = streaming || !done
+  const linkHosts = live ? [] : parseHostlist(webFetchHosts ?? '') ?? []
   return (
-    <div className="max-w-answer-measure min-w-0 text-md leading-reading text-pretty wrap-anywhere"><Markdown text={shown} fade={fading} linkHosts={linkHosts} /></div>
+    <div className="max-w-answer-measure min-w-0 text-md leading-reading text-pretty wrap-anywhere"><Markdown text={shown} linkHosts={linkHosts} live={live} /></div>
   )
 }
 

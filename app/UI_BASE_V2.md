@@ -80,11 +80,11 @@ Opus (this thread) coordinates, checks each PR against this file and merges into
 ### PR A: pull v2 + markdown (Sonnet)
 Files: `components/ui/*` (from the update), `components/ui/icon.tsx`, `screens/chat/markdown/` (new), `Markdown.tsx`, `md-syntax.ts`, `reveal.ts`, `screens/Skills.tsx` (if D3), `docs/adopted-libraries.md`, `DESIGN.md` and `DESIGN_SYSTEM.md` update command (use `Useful-Build/ui-base/update`; the `ui-base/update` shorthand has no `registries` entry).
 - [x] Map the 3 new icons in `icon.tsx`, then `npx shadcn@4.23.0 add Useful-Build/ui-base/update#v2.0.0 -y --overwrite`; typecheck, lint.
-- [ ] Streamdown behind the existing `Markdown({ text, linkHosts, look })` seam so `markdown-links*.test.ts`, `parts.test.ts` and `skills.test.ts` keep working. The `a` override reuses `linkHosts` (exact hosts, no mailto, images only when listed). Fix `adopted-libraries.md`, which says mailto and `['*']`.
-- [ ] Keep: `#` renders as h2, single newline is a break (`remark-breaks`), `>100` stays text, numbered regions ("Code block N", "Table N"), Copy buttons, `data-md-code`, `data-md-table`. Fenced code goes to Code Block, no highlighting.
-- [ ] Write the guards the doc names: `streamed.property.test.ts`, `markdown.differential.test.ts` (wide table rows will differ from GFM: pin the decision).
-- [ ] Slim `reveal.ts` (decision 9); delete `md-syntax.ts` and the `--animate-word-in` CSS.
-- [ ] Streamdown entry in `adopted-libraries.md` moves to "In use" (`@shadcn/react` landed with the pull).
+- [x] Streamdown behind the existing `Markdown({ text, linkHosts, look })` seam so `markdown-links*.test.ts`, `parts.test.ts` and `skills.test.ts` keep working. The `a` override reuses `linkHosts` (exact hosts, no mailto, images only when listed). Fix `adopted-libraries.md`, which says mailto and `['*']`.
+- [x] Keep: `#` renders as h2, single newline is a break (`remark-breaks`), `>100` stays text, numbered regions ("Code block N", "Table N"), Copy buttons, `data-md-code`, `data-md-table`. Fenced code goes to Code Block, no highlighting.
+- [x] Write the guards the doc names: `streamed.property.test.ts`, `markdown.differential.test.ts` (wide table rows will differ from GFM: pin the decision).
+- [x] Slim `reveal.ts` (decision 9); delete `md-syntax.ts` and the `--animate-word-in` CSS.
+- [x] Streamdown entry in `adopted-libraries.md` moves to "In use" (`@shadcn/react` landed with the pull).
 
 ### PR B: thread + markers (Opus medium)
 Files: `screens/Chats.tsx`, `screens/chat/view.ts`, `shared/contract/chat.ts`, `src/agent/sample-data/mock-chat.ts`, `src/ui/agent/` (new: thread parts).
@@ -103,10 +103,11 @@ Files: `screens/chat/step-data.ts`, `screens/chat/Steps.tsx`, `overlays/TraceWin
 
 ### PR D: composer (Sonnet)
 Files: `components/Composer.tsx`, `ui/chrome.tsx` (`AttachmentChip`), `screens/chat/FileChip.tsx`.
-- [ ] Shell on `InputGroup` + `InputGroupTextarea`, our card look (`rounded-2xl`, `shadow-float`); rewrite the `has-[>textarea:focus]` focus selector against InputGroup's `data-slot`.
-- [ ] Attach and Send/Stop as `InputGroupButton`s; chips in a `block-start` addon as `Attachment size="sm"`, rejected files `state="error"` with `role=alert`.
-- [ ] Stays ours: tools chip, model and thinking menu, dictate, reply-to quote, editing bar, the hidden file input and `takeFiles`, drag state, Enter and IME rules. Keep `data-composer`, `data-composer-send` and every aria-label.
-- [ ] `AttachmentChip` replaced by `Attachment`.
+- [x] Shell on `InputGroup` + `InputGroupTextarea`, our card look (`rounded-2xl`, `shadow-float`); rewrite the `has-[>textarea:focus]` focus selector against InputGroup's `data-slot`.
+- [x] Attach and Send/Stop as `InputGroupButton`s; chips in a `block-start` addon as `Attachment size="sm"`, rejected files `state="error"` with `role=alert`.
+- [x] Stays ours: tools chip, model and thinking menu, dictate, reply-to quote, editing bar, the hidden file input and `takeFiles`, drag state, Enter and IME rules. Keep `data-composer`, `data-composer-send` and every aria-label.
+- [x] `AttachmentChip` replaced by `Attachment`.
+- Note (as built): `Composer.tsx` is an `InputGroup` with `data-composer` on the group; the textarea is `InputGroupTextarea`; the notes, chips and button row are `InputGroupAddon`s (`block-start`, `block-end`) that pass `onClick={undefined}` because the addon's stock click handler focuses the group's first `<input>`, which here is the hidden file input. A disabled Send would fade the whole group through InputGroup's `has-disabled:opacity-50`: the composer sets `has-disabled:opacity-100`. Attach, Queue, Send and Stop are `InputGroupButton`s (`size="icon-sm"`, `variant={null}` for Attach and Queue); the tools chip, model button and Dictate stay plain buttons. `AttachmentChip` keeps its export (Chats.tsx uses it for sent files) and its props, and is now a wrapper over `Attachment size="sm"`: state `error` for a rejected file, `processing` while a download runs, else `done`. The composer holds files until Send, so it has no `uploading` chip; upload progress stays in the thread. The Remove, Dismiss and Download buttons stay `IconButton`s (28px with a 44px phone tap area) inside `AttachmentActions`, not `AttachmentAction`.
 
 ### PR E: confirmation (Sonnet, after B)
 Files: `screens/chat/Parts.tsx` (`ApprovalCard`).
@@ -126,8 +127,8 @@ Files: `screens/chat/Parts.tsx` (`ApprovalCard`).
 | Markdown | `Markdown.tsx` 310 + `md-syntax.ts` 4, own parser | ~60 on Streamdown + Code Block |
 | Reveal | `reveal.ts` 155 + per-word fade CSS | ~70, pacing only |
 | Thread | `Chats.tsx` 616 with ~70 lines of hand scroll logic | ~500; scroll on Message Scroller |
-| Composer | 468 | ~400 on Input Group + Attachment |
-| Chips | `AttachmentChip` ~45 | Attachment |
+| Composer | 468 | ~400 on Input Group + Attachment (built: 472, the shell changed but the menus and rules are ours) |
+| Chips | `AttachmentChip` ~45 | Attachment (built: ~35, a wrapper over the base) |
 | Steps and sources | `Steps.tsx` 119 + `step-data.ts` 99 | ~105 + ~150 (the mapper moves logic out of the JSX) |
 | Trace window | 266 | ~220 |
 | **Net** | | **about 600 fewer lines of hand-built UI** |
@@ -150,5 +151,13 @@ The bigger gain is behavior we stop owning:
 
 - **Wave 1 deviations (ui-base#4):** Button gains `icon-xs` (24px). Bubble's `default` is a soft neutral fill (`bg-fill-hover`), `tinted` uses `bg-brand-tint`; upstream's primary-filled look is gone. Trace text steps up a shade for axe contrast. Body text in Message, Bubble, Item and Tabs is our `text-base` (14px). Code Block logs a failed copy instead of swallowing it.
 - **The pull (PR into the fleet):** the update bundle also adds `lucide-react` and the two `@fontsource-variable/geist*` packages to `package.json`. Inhouse uses Material Symbols and its own fonts, so they were dropped again, and `@shadcn/react` re-pinned exactly. Follow-up for ui-base: an `update` bundle shouldn't add deps an app replaced. `DESIGN_SYSTEM.md` took the base's text (it already said `Useful-Build/ui-base/update`, fixing our stale `ui-base/update` shorthand).
+- **JS budget (Wasim, 2026-11-25):** PR D measured 242.3 KB against Today's 241 KB first-load budget (Chats shares the entry chunk). Raised to 252 KB for this round; the final fleet PR tightens it to the measured size plus 1 KB. Streamdown (PR A) loads on demand, outside the entry chunk.
 - **For PR B:** inhouse's user bubble (`bg-bubble`, `rounded-3xl`, `px-4.5 py-3`, `text-md`) differs from Bubble's default: pass our classes through a wrapper in `src/ui/agent/`. Tabs now ship from the base and look like the segmented control.
 - **PR B (thread + markers):** the thread's parts live in `src/ui/agent/thread.tsx` (`ThreadScroller`, `ThreadViewport`, `ThreadLog`, `ThreadRow`, `UserTurn`, `LongText`, `ThreadMarker`, `NoteMarker`, `JumpToLatest`) and `hold-view.ts`; the markers are a pure `screens/chat/markers.ts` with a fast-check test. Message Scroller now owns where a chat opens (its last question), pinning a new question near the top, following the live edge, the reader's scroll signals and prepend; we still own Jump to latest's look (it renders only while there is more below, from `useMessageScrollerScrollable`), the hold when a fold opens (a synthetic wheel event, `holdView`: @shadcn/react 0.3.1 has no public "let go" call), the thinking card (inside the log, so it sits above the spacer) and the markers. Deviations: only the newest question is a `scrollAnchor` (a row redrawn under a new key, a sent question taking its stored id, would otherwise send the view back to the oldest unhandled anchor); rows paint in full (`content-visibility: visible` in `index.css`), since `auto` clips the steps line, hover fills and focus outlines that hang past a row; the sent question and the sample chats' questions get `at` too (`store.ts` at the send, `derive.ts` from the chat's time), so the marker shows from the first frame and in the demo. Known gap: a Retry that hides more rows than it adds doesn't pin the new question.
+- **PR A (markdown):** Streamdown 2.8.1 + `remark-breaks` 4.0.0 behind `Markdown({ text, linkHosts, look, live })` in `src/screens/chat/markdown/`. `Markdown.tsx` (310 lines) and `md-syntax.ts` are gone; `reveal.ts` is 77 lines (was 155).
+  - **Bundle budget (not in the plan):** Streamdown and its parsers measure about 170 KB gzip (a one-off esbuild bundle of the package), and Chats is in the entry chunk, so the renderer is its own chunk (`markdown/renderer.tsx`) behind a lazy `markdown/index.tsx`: idle prefetch, plain lines until it loads, `build-support/markdown-entry.test.ts` pins that nothing imports it up front. Tests import `renderer.tsx` directly.
+  - **New seam prop:** `live` (the text is still being written or revealed) turns on Streamdown's incomplete-markdown handling; `Parts.tsx` passes `streaming || !done`, and drops `fade`.
+  - **Link rules:** the old rules, enforced twice (`harden` with `https://<host>/` prefixes, then the components via `policy.ts`). `adopted-libraries.md` was wrong about mailto and `['*']` in chat (`['*']` is only for a page). Issue #767 is closed and 2.8.1 passes `#/` through, so the `#user-content-/` workaround is not needed. A `HTTPS://` scheme with capitals is lowercased by one small rehype step, since the sanitizer would drop it.
+  - **Kept by plugin:** raw HTML shows as text (a `<order-id>` placeholder stays visible), and a table row wider than the header widens it instead of losing cells (GFM would drop them), so the "wide rows" difference the plan expected did not happen.
+  - **Intended differences** (pinned with reasons in `markdown.differential.test.ts`): CommonMark emphasis and setext headings, strikethrough, task boxes, indented code, reference links, entities and escapes, tables without edge pipes (and a text line right under a table becomes a row), blockquotes hold paragraphs, loose lists are one list, a wrapped list line is a break, and a page shows no images. The Skills page uses the same renderer (D3).
+  - **Look:** fenced code is the base Code Block (size sm) through `src/ui/code-snippet.tsx`, with the old rounded fill and an always-visible Copy button. It gains the base's edge fade while it scrolls sideways. The per-word fade (`--animate-word-in`, `ih-word-in`) is gone; the reveal only paces.

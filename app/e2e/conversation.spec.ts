@@ -41,6 +41,9 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, the tim
   const code = log(page).locator('[data-md-code]')
   await expect(code).toBeVisible({ timeout: 15_000 })
   await expect(code).toContainText('GROUP BY sku, product')
+  // A fenced block is the base Code Block, in plain text (no highlighting spans inside).
+  await expect(code).toHaveAttribute('data-slot', 'code-block')
+  await expect(code.locator('[data-slot="code-block-code"] span')).toHaveCount(0)
   await expect(log(page).locator('strong', { hasText: 'Shopify' })).toBeVisible()
   await expect(log(page).locator('ul > li')).toHaveCount(2)
   await expect(log(page).locator('ol > li')).toHaveCount(2)

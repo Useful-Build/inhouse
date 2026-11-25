@@ -1,4 +1,4 @@
-// The ask box on Today and in Chats: attach (also by paste and drop), tools chip, model picker, dictate, send or stop.
+// The ask box on Today and in Chats, built on InputGroup (the card, the field and its addons): attach (also by paste and drop), tools chip, model picker, dictate, send or stop.
 // In a chat it also queues a message while the answer streams, and shows "Editing" while a sent question is changed.
 // On a phone both boxes keep attach and send: the tools and the model move into "+", the logo stack and dictate leave (M27).
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
@@ -16,7 +16,7 @@ import { fileIcon, fileSize } from '@/lib/file-meta'
 import { ATTACHMENT_NAME_TOO_LONG, NO_MODEL_NOTE, NO_MODEL_YET, attachmentNameTooLong } from '../screens/chat/notes'
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { Textarea } from '@/components/ui/textarea'
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/components/ui/input-group'
 
 // The tooltip shows for keyboard focus only, not when a menu closes and puts focus back on its button.
 function Tip({ label, children }: { label: string; children: ReactElement }) {
@@ -37,9 +37,13 @@ const ATTACH_ITEM = 'rounded-xl px-2'
 // Radix draws its own check or dot at the left of checkbox and radio items; these rows show their own marker.
 const OWN_MARK = 'pl-2.5 [&>span:first-child]:hidden'
 const ROUND = 'flex size-8.5 flex-none items-center justify-center rounded-full'
-const SEND = 'flex size-9 flex-none items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-fill-strong disabled:text-muted-foreground'
-// The bar over the field that says what Send will do (replying to an answer, editing a question).
-const NOTE_BAR = 'mb-2 -ml-1.5 flex items-center gap-2 rounded-lg bg-accent py-1.75 pr-2 pl-2.5 text-sm text-foreground-3'
+// A disabled Send keeps its flat look, not Button's faded one, and still takes the pointer (its tooltip says why it's off).
+const SEND = 'size-9 flex-none rounded-full disabled:bg-fill-strong disabled:text-muted-foreground disabled:opacity-100 disabled:pointer-events-auto'
+// The bar over the field that says what Send will do (replying to an answer, editing a question). A `block-start` addon.
+const NOTE_BAR = 'mb-2 -ml-1.5 w-auto cursor-default gap-2 rounded-lg bg-accent px-0 py-1.75 pr-2 pl-2.5 text-sm font-normal text-foreground-3'
+// The addons carry the box's padding on the box itself (our card look), so they add none, and a click on them focuses nothing:
+// InputGroupAddon's own click handler would focus the first <input> in the group, which here is the hidden file input.
+const ADDON = { onClick: undefined } as const
 
 // Phase 1 limits on files a person adds. A file over them shows why and isn't added.
 const MAX_FILES = 10
@@ -259,37 +263,37 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
   const onOpen = (name: Exclude<Pop, null>) => (open: boolean) => setPop(open ? name : p => (p === name ? null : p))
 
   return (
-    <div data-composer data-dragging={dragging || undefined}
-      className={cn('relative z-composer box-border w-full rounded-2xl border border-border bg-card pt-3 pb-2.5 pr-2.5 pl-4.5 text-left shadow-float has-[>textarea:focus]:border-ring/45 has-[>textarea:focus]:shadow-composer-focus',
+    <InputGroup data-composer data-dragging={dragging || undefined}
+      className={cn('relative z-composer box-border h-auto w-full items-stretch rounded-2xl border-border bg-card pt-3 pb-2.5 pr-2.5 pl-4.5 text-left shadow-float has-disabled:opacity-100 has-[[data-slot=input-group-control]:focus]:border-ring/45 has-[[data-slot=input-group-control]:focus]:shadow-composer-focus',
         variant === 'today' ? 'max-w-today-column' : 'mx-auto mb-safe-bottom max-w-chat-column',
-        dragging && 'border-dashed border-border-strong has-[>textarea:focus]:border-border-strong')}
+        dragging && 'border-dashed border-border-strong has-[[data-slot=input-group-control]:focus]:border-border-strong')}
       onDragEnter={e => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth.current++; setDragging(true) }}
       onDragOver={e => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy' }}
       onDragLeave={e => { if (!hasFiles(e)) return; dragDepth.current = Math.max(0, dragDepth.current - 1); if (!dragDepth.current) setDragging(false) }}
       onDrop={e => { if (!hasFiles(e)) return; e.preventDefault(); endDrag(); takeFiles(Array.from(e.dataTransfer.files)) }}>
       {editing && (
-        <div className={NOTE_BAR}>
+        <InputGroupAddon align="block-start" className={NOTE_BAR} {...ADDON}>
           <Icon name="edit" size={15} />
           <b id={editNote} className="min-w-0 flex-1 font-semibold text-foreground">Editing your message</b>
           <Button variant="ghost" size="sm" onClick={cancelEdit} className={cn('-my-1.5 flex-none', phone && TAP)}>Cancel</Button>
-        </div>
+        </InputGroupAddon>
       )}
       {noModel && (
-        <div className={NOTE_BAR}>
+        <InputGroupAddon align="block-start" className={NOTE_BAR} {...ADDON}>
           <Icon name="info" size={15} />
           <b className="min-w-0 flex-1 font-semibold text-foreground">{NO_MODEL_NOTE}</b>
-        </div>
+        </InputGroupAddon>
       )}
       {variant === 'chat' && replyTo && (
-        <div className={NOTE_BAR}>
+        <InputGroupAddon align="block-start" className={NOTE_BAR} {...ADDON}>
           <Icon name="reply" size={15} />
           <b className="font-semibold whitespace-nowrap text-foreground">Replying to Inhouse agent</b>
           <span className="ellipsis min-w-0 flex-1">{replyTo}</span>
           <IconButton icon="close" label="Stop replying" size={16} box="icon-sm" onClick={() => patch({ replyTo: null })} className={cn('-my-1.5 flex-none', phone && TAP)} />
-        </div>
+        </InputGroupAddon>
       )}
       {(atts.length > 0 || rejected.length > 0) && (
-        <div className="mb-2.5 -ml-1.5 flex flex-wrap gap-1.5">
+        <InputGroupAddon align="block-start" className="mb-2.5 -ml-1.5 w-auto cursor-default flex-wrap gap-1.5 p-0 font-normal" {...ADDON}>
           {atts.map((a, i) => (
             <AttachmentChip key={a.name + i} icon={a.icon} name={a.name} meta={a.meta} tap={phone} onRemove={() => { if (a.pending !== undefined) dropFile(a.pending); patch({ atts: atts.filter((_, j) => j !== i) }) }} />
           ))}
@@ -301,9 +305,9 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
               ))}
             </div>
           )}
-        </div>
+        </InputGroupAddon>
       )}
-      <Textarea ref={inputRef} rows={1} value={draft} onChange={e => setDraft(e.target.value)} onPaste={onPaste} enterKeyHint={touch ? 'enter' : 'send'}
+      <InputGroupTextarea ref={inputRef} rows={1} value={draft} onChange={e => setDraft(e.target.value)} onPaste={onPaste} enterKeyHint={touch ? 'enter' : 'send'}
         aria-describedby={editing ? editNote : undefined}
         data-scrolled={scrolled || undefined} onScroll={e => setScrolled(e.currentTarget.scrollTop > 0)}
         onKeyDown={e => {
@@ -314,9 +318,9 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
           e.preventDefault(); send()
         }}
         placeholder={variant === 'today' && !claimNone ? (phone ? 'Ask about orders, stock or numbers' : 'Ask about orders, stock, customers or numbers') : 'Message Inhouse'} aria-label={variant === 'today' ? 'Ask Inhouse' : 'Message Inhouse'}
-        className="block max-h-composer-input min-h-8.5 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 py-(--app-composer-input-pad-y) text-md text-foreground shadow-none outline-0 focus:shadow-none data-scrolled:mask-(--app-composer-fade)" />
+        className="block max-h-composer-input min-h-8.5 flex-none resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 py-(--app-composer-input-pad-y) text-md text-foreground shadow-none outline-0 focus:shadow-none data-scrolled:mask-(--app-composer-fade)" />
 
-      <div className="relative mt-2.5 flex items-center gap-2">
+      <InputGroupAddon align="block-end" className="relative mt-2.5 cursor-default gap-2 p-0 font-normal text-foreground" {...ADDON}>
         <input ref={fileRef} type="file" multiple className="sr-only" tabIndex={-1} aria-hidden="true" onChange={(e: ChangeEvent<HTMLInputElement>) => {
           takeFiles(Array.from(e.target.files ?? []))
           e.target.value = ''
@@ -324,9 +328,9 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
         <DropdownMenu modal={false} open={pop === 'attach'} onOpenChange={onOpen('attach')}>
           <Tip label="Attach">
             <DropdownMenuTrigger asChild>
-              <button type="button" aria-label={slim ? 'Attach, tools and model' : 'Attach'} className={cn(ROUND, 'text-foreground-2', pop === 'attach' ? 'bg-fill-hover' : 'bg-secondary hover:bg-fill-hover')}>
+              <InputGroupButton variant={null} size="icon-sm" aria-label={slim ? 'Attach, tools and model' : 'Attach'} className={cn(ROUND, 'text-foreground-2', pop === 'attach' ? 'bg-fill-hover' : 'bg-secondary hover:bg-fill-hover')}>
                 <Icon name="add" size={20} />
-              </button>
+              </InputGroupButton>
             </DropdownMenuTrigger>
           </Tip>
           <DropdownMenuContent {...menuProps} align="start" alignOffset={-8} className={cn(MENU, 'w-menu-attach')}>
@@ -415,26 +419,26 @@ export function Composer({ variant, showToolsLabel }: { variant: 'today' | 'chat
             waits above the box for the answer to end (H8). Editing sends at once, in place of the old question. */}
         {running && canSend && (
           <Tip label={editing ? 'Send' : 'Send when this answer ends'}>
-            <button type="button" aria-label={editing ? 'Send' : 'Queue message'} onClick={send} className={cn(ROUND, 'size-9 bg-secondary text-foreground-2 hover:bg-fill-hover')}>
+            <InputGroupButton variant={null} size="icon-sm" aria-label={editing ? 'Send' : 'Queue message'} onClick={send} className={cn(ROUND, 'size-9 bg-secondary text-foreground-2 hover:bg-fill-hover')}>
               <Icon name={editing ? 'arrow_upward' : 'schedule_send'} size={19} weight={400} />
-            </button>
+            </InputGroupButton>
           </Tip>
         )}
         {running ? (
           <Tip label="Stop">
-            <button type="button" data-composer-send aria-label="Stop" onClick={() => stopRun()} className={SEND}>
+            <InputGroupButton variant="default" size="icon-sm" data-composer-send aria-label="Stop" onClick={() => stopRun()} className={SEND}>
               <Icon name="stop" size={19} weight={400} fill />
-            </button>
+            </InputGroupButton>
           </Tip>
         ) : (
           <Tip label={noModel ? NO_MODEL_YET : 'Send'}>
-            <button type="button" data-composer-send aria-label={noModel ? `Send, ${NO_MODEL_YET}` : 'Send'} onClick={send} disabled={!canSend} className={SEND}>
+            <InputGroupButton variant="default" size="icon-sm" data-composer-send aria-label={noModel ? `Send, ${NO_MODEL_YET}` : 'Send'} onClick={send} disabled={!canSend} className={SEND}>
               <Icon name="arrow_upward" size={19} weight={400} />
-            </button>
+            </InputGroupButton>
           </Tip>
         )}
-      </div>
-    </div>
+      </InputGroupAddon>
+    </InputGroup>
   )
 }
 
