@@ -4,7 +4,7 @@
 // answer grows under it (D1), following the live edge only while the reader is there, the reader's own scrolls (wheel, touch,
 // keys) and keeping place when earlier messages load above.
 import { useId, useLayoutEffect, useRef, useState } from 'react'
-import type { ComponentProps, ReactNode } from 'react'
+import type { ComponentProps, MouseEvent, ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { Bubble, BubbleContent } from '@/components/ui/bubble'
 import { Button } from '@/components/ui/button'
@@ -50,17 +50,26 @@ export function ThreadRow({ id, anchor = false, ...props }: Omit<ComponentProps<
   return <MessageScrollerItem data-thread-row messageId={id} scrollAnchor={anchor} {...props} />
 }
 
-/** Centred above the composer while there is more below: back to the newest message, and the view follows it again. */
-export function JumpToLatest() {
+/**
+ * Centred above the composer while there is more below: back to the newest message, and the view follows it again.
+ * The button goes once the view is at the end, so when a keyboard pressed it, focus moves to `focusAfter` (the composer)
+ * instead of dropping to the page.
+ */
+export function JumpToLatest({ focusAfter }: { focusAfter: () => HTMLElement | null }) {
   const { end } = useMessageScrollerScrollable()
   const { scrollToEnd } = useMessageScroller()
   if (!end) return null
+  const jump = (e: MouseEvent<HTMLButtonElement>) => {
+    // From a keyboard only (`detail` 0): a tap must not open a phone's keyboard.
+    if (e.detail === 0 && document.activeElement === e.currentTarget) focusAfter()?.focus({ preventScroll: true })
+    scrollToEnd()
+  }
   return (
     // Clear of an answer's sources at the left and your messages at the right (M12).
     <div className="absolute bottom-2 left-1/2 -translate-x-1/2">
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button type="button" variant="outline" size="icon-round" aria-label="Jump to latest" onClick={() => scrollToEnd()}>
+          <Button type="button" variant="outline" size="icon-round" aria-label="Jump to latest" onClick={jump}>
             <Icon name="arrow_downward" size={18} />
           </Button>
         </TooltipTrigger>

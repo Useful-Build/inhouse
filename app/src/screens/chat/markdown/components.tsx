@@ -1,6 +1,7 @@
 // How each markdown element looks, on the app's tokens. One set per look, built once (Streamdown re-renders only what
 // changed, and only while the components keep their identity). Every element Streamdown knows is set here, so none of
 // its own Tailwind classes (which this app's build never generates) reach the page.
+import { createContext, useContext } from 'react'
 import type { ComponentProps } from 'react'
 import type { Components, ExtraProps } from 'streamdown'
 import { cn } from '@/lib/utils'
@@ -30,8 +31,25 @@ const listClass = (page: boolean, ordered: boolean) => cn(
   page ? 'flex max-w-reading-measure flex-col gap-2.5 pl-6.5 marker:text-foreground-3 marker:tabular-nums [li_&]:mt-2.5' : 'flex flex-col gap-1 pl-5 [li_&]:mt-1',
 )
 
-function build(look: Look, linkHosts: readonly string[]): Components {
+/**
+ * The hosts a link or image may go to, read by the `a` and `img` overrides. A context rather than part of the component
+ * set: a set built per host list would give every element a new component type when the list fills in at the end of an
+ * answer, and React would remount the whole answer (a drawn diagram would draw again, focus and scroll inside it lost).
+ */
+export const LinkHostsContext = createContext<readonly string[]>([])
+
+function build(look: Look): Components {
   const page = look === 'page'
+  function Link({ href, children, node }: Props<'a'>) {
+    const to = linkTarget(href, look, useContext(LinkHostsContext), textOf(node))
+    if (!to) return <>{children}</>
+    return <a href={to.href} {...(to.external ? { target: '_blank', rel: 'noreferrer' } : {})} className={ANCHOR}>{children}</a>
+  }
+  function Image({ src, alt }: Props<'img'>) {
+    const hosts = useContext(LinkHostsContext)
+    const url = typeof src === 'string' ? imageSrc(src, look, hosts) : null
+    return url ? <img src={url} alt={alt} loading="lazy" referrerPolicy="no-referrer" /> : <>{alt || (typeof src === 'string' ? src : '')}</>
+  }
   // On a page, text keeps a readable measure while tables and code blocks use the full width.
   const measure = page && 'max-w-reading-measure'
   const heading = (level: number) => function Heading({ children }: Props<'h2'>) {
@@ -50,15 +68,8 @@ function build(look: Look, linkHosts: readonly string[]): Components {
     ol: ({ children, start }: Props<'ol'>) => <ol start={start} className={listClass(page, true)}>{children}</ol>,
     li: ({ children }: Props<'li'>) => <li className={cn(page && 'pl-1')}>{children}</li>,
     code: ({ children }: Props<'code'>) => <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-sm">{children}</code>,
-    a: ({ href, children, node }: Props<'a'>) => {
-      const to = linkTarget(href, look, linkHosts, textOf(node))
-      if (!to) return <>{children}</>
-      return <a href={to.href} {...(to.external ? { target: '_blank', rel: 'noreferrer' } : {})} className={ANCHOR}>{children}</a>
-    },
-    img: ({ src, alt }: Props<'img'>) => {
-      const url = typeof src === 'string' ? imageSrc(src, look, linkHosts) : null
-      return url ? <img src={url} alt={alt} loading="lazy" referrerPolicy="no-referrer" /> : <>{alt || (typeof src === 'string' ? src : '')}</>
-    },
+    a: Link,
+    img: Image,
     // The sanitizer step turns a link or image it blocks into a span of its text: plain text, as the old renderer showed it.
     span: ({ children }: Props<'span'>) => <>{children}</>,
     // A task list's box (`- [ ] x`): shown, not editable, and named.
@@ -102,12 +113,8 @@ function textOfCells(thead: HastNode | undefined): string[] {
   return (row?.children ?? []).filter(c => c.type === 'element').map(c => textOf(c as never).trim())
 }
 
-// One set of components per look and host list: the same hosts give the same objects.
-const built = new Map<string, Components>()
-export function componentsFor(look: Look, linkHosts: readonly string[]): Components {
-  const key = `${look}|${linkHosts.join(',')}`
-  let c = built.get(key)
-  if (!c) { c = build(look, linkHosts); built.set(key, c); if (built.size > 50) built.delete(built.keys().next().value as string) }
-  return c
+// One set of components per look, built once, so every element keeps its component type for the life of the page.
+const built = { chat: build('chat'), page: build('page') } satisfies Record<Look, Components>
+export function componentsFor(look: Look): Components {
+  return built[look]
 }
-

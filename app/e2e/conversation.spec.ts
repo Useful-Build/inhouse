@@ -10,7 +10,7 @@ async function start(page: Page, scenario: string, hash: string) {
   await page.goto('/?demo' + hash)
 }
 
-const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
+const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.timeline instanceof DocumentTimeline && a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
 const shot = async (page: Page, name: string) => { await settled(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 // The sample agent's chat channel (tools.json).
 const CHANNEL = 'Slack'
@@ -30,6 +30,7 @@ const NEAR_BOTTOM_PX = 80
 const MD_Q = "Give me the query for last week's orders by SKU"
 const REFUNDS_Q = 'Why did refunds jump?'
 const DIAGRAM_Q = 'Show me a diagram of how a refund moves through the team'
+const HOSTILE_DIAGRAM_Q = 'Show me a diagram of the refund steps with links'
 const REFUNDS_A = 'Refund requests rose from 14 last week to 31 this week'
 
 test('Conversation: markdown, scroll-up while streaming, Jump to latest, the time and model markers, Copy, Edit, Regenerate, thumbs and the mode and time', async ({ page, context }) => {
@@ -331,4 +332,42 @@ test('Conversation: a mermaid fence is drawn as a diagram, with its source one c
   await expect(diagram.locator('[data-md-code]')).toContainText('flowchart LR')
   await expect(diagram.getByRole('button', { name: 'Hide diagram 1 source' })).toHaveAttribute('aria-pressed', 'true')
   await shot(page, 'mermaid-diagram')
+})
+
+test('Conversation: a diagram that tries links, HTML labels and addresses in its style is drawn clean, its linked node kept', async ({ page }) => {
+  // Every address the sample's diagrams name (mock-script.ts HOSTILE_DIAGRAM_ANSWER): none may be requested.
+  const hostile: string[] = []
+  page.on('request', r => { if (/\/hostile-|help\.example\.test/.test(r.url())) hostile.push(r.url()) })
+  await start(page, 'Normal', '#/today')
+  await page.getByRole('textbox', { name: 'Ask Inhouse' }).fill(HOSTILE_DIAGRAM_Q)
+  await page.keyboard.press('Enter')
+  const diagrams = log(page).locator('[data-md-diagram]')
+  await expect(diagrams).toHaveCount(2, { timeout: 30_000 })
+  // Both drawn: the config lock kept HTML labels off, so neither needs a foreignObject (which would fail it to its source).
+  for (const n of [1, 2]) {
+    const diagram = diagrams.nth(n - 1)
+    await expect(diagram).toHaveAttribute('data-state', 'ready', { timeout: 30_000 })
+    await expect(diagram.locator('svg[role="img"]')).toHaveAttribute('aria-label', `Diagram ${n}`)
+    await expect(diagram.locator('a, image, foreignObject, script, feImage, animate, set')).toHaveCount(0)
+    // No address anywhere in the figure: not in its <style>, not in a style attribute, not in any other attribute.
+    const leaks = await diagram.locator('svg').evaluate(svg => {
+      const bad = /url\(\s*(?!['"]?#)|image-set\(|image\(|src\(|@import|\\/i
+      const found: string[] = []
+      for (const el of [svg, ...svg.querySelectorAll('*')]) {
+        for (const a of el.attributes) if (bad.test(a.value)) found.push(`${el.localName}[${a.name}]=${a.value}`)
+        if (el.localName === 'style' && bad.test(el.textContent ?? '')) found.push(`style: ${el.textContent}`)
+      }
+      return found
+    })
+    expect(leaks).toEqual([])
+  }
+  // The linked node is still drawn: the link is gone, its shape and text stay.
+  await expect(diagrams.nth(0).locator('svg')).toContainText('Refund policy')
+  await expect(diagrams.nth(1).locator('svg')).toContainText('Refunded')
+  // The finished answer keeps the figure it drew (no remount, no redraw at the end of the answer).
+  const figure = await diagrams.nth(0).locator('svg').elementHandle()
+  await expect(log(page)).not.toHaveAttribute('aria-busy', 'true')
+  expect(await figure!.evaluate(el => el.isConnected)).toBe(true)
+  await expect(diagrams.nth(0)).toHaveAttribute('data-state', 'ready')
+  expect(hostile).toEqual([])
 })

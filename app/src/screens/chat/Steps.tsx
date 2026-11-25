@@ -24,7 +24,9 @@ import { mapTraceToTraceRows, sourcesOf, stepRows, toolNames, type TraceRow } fr
 
 function StepBranch({ rows, d }: { rows: readonly TraceRow[]; d: Display }) {
   return (
-    <Trace className="gap-1.5">
+    // Full-width rows, so durations line up down the column: Trace sizes a row that holds a line to its content (`w-fit`,
+    // through a child selector a plain `w-full` on the row can't beat), and `cn` swaps that one class for this.
+    <Trace className="gap-1.5 *:has-[>[data-slot=trace-line]]:w-full">
       {rows.map(r => {
         const ms = r.endMs !== undefined && r.startMs !== undefined ? Math.max(0, r.endMs - r.startMs) : 0
         return (

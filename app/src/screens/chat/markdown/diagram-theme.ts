@@ -3,15 +3,29 @@
 // fallback, so a test can load it. Never imports `mermaid` (that stays a dynamic import, diagram-engine.ts).
 import type { MermaidConfig } from 'mermaid'
 
+/** Mermaid's own default `secure` keys (12.3.0): a diagram can never set these. */
+const MERMAID_SECURE = ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering', 'maxEdges']
+const SECURE: string[] = [
+  ...MERMAID_SECURE, 'htmlLabels', 'flowchart', 'theme', 'themeCSS', 'themeVariables', 'fontFamily', 'altFontFamily',
+  'look', 'layout', 'arrowMarkerAbsolute', 'darkMode',
+]
+
 /**
  * - `securityLevel: 'strict'`: no click handlers, no links to scripts, and Mermaid runs its own sanitizer on the output.
- * - `htmlLabels: false`: labels are SVG text, never HTML (the root setting wins over each diagram's own).
+ * - `htmlLabels: false`: labels are SVG text, never HTML. A diagram's own `%%{init}%%` or frontmatter can't turn it back
+ *   on, because it is in `secure` (below). Some diagram types draw text in a `foreignObject` whatever this says:
+ *   `tidySvg` refuses those, and the card shows the source.
+ * - `secure`: Mermaid's defaults plus every key that changes the look or how labels are drawn, so only this config sets
+ *   them: HTML labels (root and `flowchart`, which holds the deprecated `flowchart.htmlLabels`), the theme and its CSS,
+ *   fonts, the look, the layout engine, and absolute marker addresses. Mermaid drops a secure key from a diagram's own
+ *   config at any depth.
  * - `suppressErrorRendering`: a bad diagram throws and the caller shows the source; Mermaid draws no error figure of its own.
  * - `theme: 'base'`: the only theme that takes `themeVariables`, set per draw (below).
  * - `startOnLoad: false`: nothing scans the page; only what the renderer hands it is drawn.
  */
 export const MERMAID_CONFIG = {
   startOnLoad: false, securityLevel: 'strict', htmlLabels: false, suppressErrorRendering: true, theme: 'base', logLevel: 'error',
+  secure: SECURE,
 } as const satisfies MermaidConfig
 
 /** Mermaid's theme variable to the app's CSS custom property that feeds it. */

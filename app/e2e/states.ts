@@ -252,11 +252,13 @@ export async function openState(page: Page, s: UiState, theme: Theme) {
 /**
  * Every finite animation and transition has ended (a menu's fade-out, a guide's open height, a button's colour change
  * after a pick), so a shot never catches a frame on the way. The screenshot's `animations: 'disabled'` doesn't cover
- * them reliably. Infinite ones (a pulsing dot) are left to the screenshot, which stops them.
+ * them reliably. Infinite ones (a pulsing dot) are left to the screenshot, which stops them. Scroll-driven ones (ui-base's
+ * `scroll-fade` edges run on a ScrollTimeline) follow the scroll position, not time, so they never end: they're skipped,
+ * and every other spec's wait for finished animations skips them the same way.
  */
 export async function atRest(page: Page) {
   await page.waitForFunction(() => document.getAnimations().every(a =>
-    a.playState !== 'running' || a.effect?.getComputedTiming().endTime === Infinity))
+    a.playState !== 'running' || !(a.timeline instanceof DocumentTimeline) || a.effect?.getComputedTiming().endTime === Infinity))
 }
 
 /** The self-hosted fonts (public/fonts) are loaded: Geist, Geist Mono and Material Symbols, so no shot has fallback glyphs or ligature text. */

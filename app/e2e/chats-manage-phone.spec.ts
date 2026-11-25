@@ -49,7 +49,7 @@ test('Phone: the chat row menu opens from the drawer and renames in place; Escap
   for (const [i, n] of names.entries()) await expect(barMenu.getByRole('menuitem').nth(i)).toHaveAccessibleName(n)
   const barBox = await barMenu.boundingBox()
   expect(barBox && barBox.x >= 0 && barBox.x + barBox.width <= 390, 'top bar menu fits 390 px').toBe(true)
-  await page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
+  await page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.timeline instanceof DocumentTimeline && a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
   await page.screenshot({ path: test.info().outputPath('phone-chat-title-menu.png') })
   await page.keyboard.press('Escape')
   await expect(barMenu).toHaveCount(0)

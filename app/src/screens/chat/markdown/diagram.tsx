@@ -2,7 +2,7 @@
 // States: while the fence is still open (the answer is streaming) or Mermaid is drawing, a quiet line; once drawn, a
 // bordered card with the figure (scrolls sideways when wide), Copy and Show source; if the diagram can't be drawn, a note
 // above its source as a plain code block, and the error is logged.
-import { useContext, useEffect, useId, useState, useSyncExternalStore } from 'react'
+import { useContext, useEffect, useState, useSyncExternalStore } from 'react'
 import { IconButton } from '../../../ui'
 import { CodeSnippet } from '../../../ui/code-snippet'
 import { copyText } from '../copy'
@@ -21,26 +21,44 @@ const subscribeTheme = (onChange: () => void) => {
 const isDark = () => document.documentElement.classList.contains('dark')
 function useDark() { return useSyncExternalStore(subscribeTheme, isDark, () => false) }
 
+// Figures already drawn, by diagram number, theme and source, so a part drawn again (a chat opened again, the answer
+// re-rendered) shows its figure at once instead of drawing it again. Kept small: oldest out first.
+const drawn = new Map<string, string>()
+const DRAWN_MAX = 40
+const drawnKey = (n: number, dark: boolean, source: string) => `${n}|${dark ? 'dark' : 'light'}|${source}`
+function remember(key: string, svg: string) {
+  drawn.delete(key)
+  drawn.set(key, svg)
+  if (drawn.size > DRAWN_MAX) drawn.delete(drawn.keys().next().value as string)
+}
+
+// A fresh id for every draw: `mermaid.render(id)` first removes any element with that id, which would take a figure on
+// screen (its root carries the id) away while its redraw runs.
+let draws = 0
+const nextId = () => `ih-diagram-${++draws}`
+
 export function Diagram({ source, n, last }: { source: string; n: number; last: boolean }) {
   const open = useContext(OpenFenceContext) && last
   const dark = useDark()
-  const id = `ih-diagram-${useId().replace(/\W/g, '')}`
+  const key = drawnKey(n, dark, source)
+  const cached = drawn.get(key)
   const [view, setView] = useState<DiagramView>({ kind: 'drawing' })
   useEffect(() => {
-    if (open) return
+    if (open || drawn.has(key)) return
     let stale = false
     const draw = async () => {
       const style = getComputedStyle(document.documentElement)
-      return drawDiagram(source, id, `Diagram ${n}`, readTheme(name => style.getPropertyValue(name), dark))
+      return drawDiagram(source, nextId(), `Diagram ${n}`, readTheme(name => style.getPropertyValue(name), dark))
     }
-    // The last good figure stays up while a redraw (a theme change) runs.
+    // The last good figure stays up while a redraw (a theme change) runs: it keeps its own id, and the redraw takes a new one.
     draw().then(
-      svg => { if (!stale) setView({ kind: 'ready', svg }) },
+      svg => { remember(key, svg); if (!stale) setView({ kind: 'ready', svg }) },
       err => { if (stale) return; console.error(`Inhouse: could not draw diagram ${n}.`, err); setView({ kind: 'failed' }) },
     )
     return () => { stale = true }
-  }, [source, n, open, dark, id])
-  return <DiagramCard n={n} source={source} view={open ? { kind: 'drawing' } : view} />
+  }, [source, n, open, dark, key])
+  // A figure drawn before for this source and theme shows at once, from the first render.
+  return <DiagramCard n={n} source={source} view={open ? { kind: 'drawing' } : cached ? { kind: 'ready', svg: cached } : view} />
 }
 
 const SOURCE_COPIED = 'Diagram source copied'
