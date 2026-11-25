@@ -18,6 +18,8 @@ export interface QueuedTurn { turnId: string; messageId: string; text: string; q
 
 export type TurnState = 'queued' | 'live' | 'done' | 'interrupted' | 'stopped' | 'failed' | 'cancelled'
 export interface TurnInfo { turnId: string; runId: string; state: TurnState; text: string; quote?: string; atts: Attachment[]; failure?: TurnFailure }
+/** One live step emitted while a turn is running. */
+export interface LiveStep { id: string; label: string; tool?: string }
 
 export interface ChatView {
   messages: ChatMessage[]
@@ -27,6 +29,8 @@ export interface ChatView {
   live: string | null
   /** The newest step's label while a turn is live ("Reading your question…"). */
   thinking: string | null
+  /** The live steps accumulated during the current running turn, in arrival order. */
+  liveSteps: LiveStep[]
   /** The latest notice that still holds, as its text. Cleared when a turn starts or the run ends. */
   notice: { code: NoticeCode; text: string } | null
   /** A turn waits for others to finish because of the spending cap (the budget is busy): shown as waiting, not failed. */
@@ -85,14 +89,19 @@ export function reduce(v: ChatView, ev: ChatEvent, at: Instant, runId = ''): Cha
       if (!t) return v
       const msgId = v.queued.find(x => x.turnId === ev.turnId)?.messageId ?? `${ev.turnId}.u`
       return {
-        ...v, live: ev.turnId, thinking: 'Reading your question…', notice: null, budgetWait: false,
+        ...v, live: ev.turnId, thinking: 'Reading your question…', liveSteps: [], notice: null, budgetWait: false,
         turns: setTurn(v, ev.turnId, { state: 'live' }), queued: withoutTurn(v.queued, ev.turnId), messages: upsert(v.messages, userMessage(t, msgId)),
       }
     }
     case 'part':
       return { ...v, messages: upsert(v.messages, { id: ev.messageId, role: 'agent', part: ev.part, trace: ev.turnId, model: ev.model, at: ev.at }) }
-    case 'step':
-      return v.live === ev.turnId ? { ...v, thinking: ev.label } : v
+    case 'step': {
+      if (v.live !== ev.turnId) return v
+      const nextStep: LiveStep = { id: ev.stepId, label: ev.label, ...(ev.tool !== undefined ? { tool: ev.tool } : {}) }
+      const idx = v.liveSteps.findIndex(s => s.id === ev.stepId)
+      const liveSteps = idx < 0 ? [...v.liveSteps, nextStep] : v.liveSteps.map((s, i) => (i === idx ? nextStep : s))
+      return { ...v, thinking: ev.label, liveSteps }
+    }
     case 'file':
       return v.files.some(f => f.fileId === ev.fileId) ? v : { ...v, files: [...v.files, { turnId: ev.turnId, fileId: ev.fileId, name: ev.name, bytes: ev.bytes, contentType: ev.contentType }] }
     case 'file.refused':
@@ -113,7 +122,10 @@ export function reduce(v: ChatView, ev: ChatEvent, at: Instant, runId = ''): Cha
         messages = upsert(messages, { id: `${ev.turnId}.x`, role: 'event', text: STOPPED_NOTE })
       }
       return {
-        ...v, messages, queued: withoutTurn(v.queued, ev.turnId), live: v.live === ev.turnId ? null : v.live, thinking: v.live === ev.turnId ? null : v.thinking,
+        ...v, messages, queued: withoutTurn(v.queued, ev.turnId),
+        live: v.live === ev.turnId ? null : v.live,
+        thinking: v.live === ev.turnId ? null : v.thinking,
+        liveSteps: v.live === ev.turnId ? [] : v.liveSteps,
         budgetWait: false, turns: setTurn(v, ev.turnId, { state, ...(ev.reason ? { failure: ev.reason } : {}) }),
       }
     }
@@ -130,7 +142,7 @@ export function reduce(v: ChatView, ev: ChatEvent, at: Instant, runId = ''): Cha
       const wasLive = v.live === ev.turnId
       return {
         ...v, messages, queued: withoutTurn(v.queued, ev.turnId), budgetWait: false, turns: setTurn(v, ev.turnId, { state: 'cancelled' }),
-        ...(wasLive ? { live: null, thinking: null } : {}),
+        ...(wasLive ? { live: null, thinking: null, liveSteps: [] } : {}),
       }
     }
     case 'notice': {
@@ -139,7 +151,7 @@ export function reduce(v: ChatView, ev: ChatEvent, at: Instant, runId = ''): Cha
       return { ...v, notice, budgetWait: ev.code === NOTICE.budgetBusy ? true : v.budgetWait, damaged: v.damaged || damaged }
     }
     case 'run.finished':
-      return { ...v, openRuns: v.openRuns.filter(r => r !== ev.runId), thinking: null, live: null, notice: v.damaged ? v.notice : null, budgetWait: false }
+      return { ...v, openRuns: v.openRuns.filter(r => r !== ev.runId), thinking: null, live: null, liveSteps: [], notice: v.damaged ? v.notice : null, budgetWait: false }
   }
 }
 

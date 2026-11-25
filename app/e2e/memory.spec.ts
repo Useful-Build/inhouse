@@ -186,28 +186,31 @@ test('Memory: the demo clock never runs backwards after a reload, even with noth
   await todayBox(page).fill(Q)
   await page.keyboard.press('Enter')
   await expect(log(page).getByText(A)).toBeVisible({ timeout: 15_000 })
-  // The answer's step list, opened from its steps line, ends with "Smart · 9.4s · 8:30 AM".
-  const stepsLines = log(page).locator('[data-steps]')
-  const stampOf = async (i: number) => {
-    const meta = stepsLines.nth(i).locator('[data-steps-meta]')
-    if (await meta.count() === 0) await stepsLines.nth(i).getByRole('button', { name: /\d+ steps/ }).click()
-    const m = /(\d{1,2}):(\d\d)\s(AM|PM)$/.exec((await meta.innerText()).trim())
-    expect(m, 'the answer footer ends with its time').not.toBeNull()
-    return (Number(m![1]) % 12 + (m![3] === 'PM' ? 12 : 0)) * 60 + Number(m![2])
-  }
-  const first = await stampOf(-1)
-  expect(first).toBeGreaterThanOrEqual(8 * 60 + 30)
+  // Read the stamped time on the latest saved agent message via fx (timestamps left [data-steps-meta] for chat Markers).
   const chatLink = await hash(page)
+  const chatId = chatLink.replace(/^#\/chats\//, '')
+  const stampOf = async () => {
+    await saved(page)
+    const state = await fxFor(page, undefined).saved()
+    const extras = state.session.chats?.[chatId]?.extras ?? []
+    const last = extras.filter(m => m.role === 'agent' && m.at).at(-1)
+    expect(last?.at, 'saved agent message carries its timestamp').toBeDefined()
+    const ms = typeof last!.at === 'string' ? Date.parse(last!.at) : last!.at!.ms
+    expect(typeof ms).toBe('number')
+    const d = new Date(ms!)
+    return d.getHours() * 60 + d.getMinutes()
+  }
+  const first = await stampOf()
+  expect(first).toBeGreaterThanOrEqual(8 * 60 + 30)
 
   // Reload with no other write, then ask again in the same chat.
-  await saved(page)
   await page.reload()
   await go(page, chatLink)
   await expect(log(page).getByText(A)).toHaveCount(1)
   await chatBox(page).fill(Q)
   await page.keyboard.press('Enter')
   await expect(log(page).getByText(A)).toHaveCount(2, { timeout: 15_000 })
-  const second = await stampOf(-1)
+  const second = await stampOf()
   expect(second).toBeGreaterThanOrEqual(first)
   await shot(page, 'memory-clock-after-reload')
 })
