@@ -532,6 +532,8 @@
  * SVG text too: Mermaid measures some labels (a sequence diagram's) in its own throwaway <svg> on <body>, outside the
  * figure's own style (MERMAID_CONFIG.themeCSS in screens/chat/markdown/diagram-theme.ts), so both must agree. */
 @layer base { code, kbd, samp, pre, .font-mono, svg text { font-variant-ligatures: none; } }
+/* Unlayered: ui-base's `mono-label` utility sets the `font` shorthand, which resets the property in the utilities layer. */
+.mono-label { font-variant-ligatures: none; }
 
 /* Turrell Skyspace architectural skylight cove: spans the full app shell behind both the floating sidebar and main.
  * The room fills the entire viewport (zero seam behind the sidebar), while the skylight cove centres on the main column. */
