@@ -133,7 +133,11 @@ test('Composer: pasted and dropped files become chips, a file over the limit say
   await expect(field).toBeFocused()
 
   // The card (an InputGroup) takes the focus look while its field has focus, and drops it when the field loses it.
-  const boxShadow = () => composer(page).evaluate(el => getComputedStyle(el).boxShadow)
+  // Read once the card's own transition has finished: a read mid-transition caught the ring at 2.999px of 3px.
+  const boxShadow = () => composer(page).evaluate(async el => {
+    await Promise.all(el.getAnimations().filter(a => a.timeline instanceof DocumentTimeline).map(a => a.finished.catch(() => undefined)))
+    return getComputedStyle(el).boxShadow
+  })
   const focusedShadow = await boxShadow()
   await field.blur()
   await expect.poll(boxShadow).not.toBe(focusedShadow)
