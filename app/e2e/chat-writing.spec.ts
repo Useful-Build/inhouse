@@ -17,6 +17,19 @@ const lines = (page: Page) => thinking(page).locator('[data-slot=trace-line]')
 /** The answer card's text box (Parts.tsx: the text's measure). */
 const answerText = (answer: Locator) => answer.locator('.max-w-answer-measure').first()
 
+/**
+ * Moves the paused clock `ms` at a time until `done` holds, checking before each move, so it never runs past the moment it
+ * waits for. Polled in real time too: the chat's run code loads in its own chunk on the first send, and React draws (and
+ * schedules the next reveal step) on its own task, so a fixed jump could fire before the timer it means to fire exists.
+ */
+async function advanceUntil(page: Page, done: () => Promise<boolean>, ms: number, message: string) {
+  await expect.poll(async () => {
+    if (await done()) return true
+    await page.clock.runFor(ms)
+    return done()
+  }, { intervals: [25], timeout: 15_000, message }).toBe(true)
+}
+
 // The clock is paused mid-test: let it run again before the fixtures tear down (the CSP guard waits for an animation frame).
 test.afterEach(async ({ page }) => { await page.clock.resume() })
 
@@ -31,7 +44,6 @@ test('Chat while it writes: the steps build up row by row, the words show a few 
   await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 1000)
   await field.fill(QUESTION)
   await page.keyboard.press('Enter')
-  await page.clock.runFor(1)
 
   // First step: one row, running (the agent mark in place of its icon, the title shimmering).
   await expect(lines(page)).toHaveCount(1)
@@ -45,7 +57,8 @@ test('Chat while it writes: the steps build up row by row, the words show a few 
 
   // Each step adds a row: the newest runs, every earlier one is done (no status, no shimmer).
   for (const n of [2, 3]) {
-    await page.clock.runFor(STEP_MS)
+    // Steps come STEP_MS apart, so moves of an eighth of that can't skip one.
+    await advanceUntil(page, async () => (await lines(page).count()) >= n, STEP_MS / 8, `step ${n} shows`)
     await expect(lines(page)).toHaveCount(n)
     await expect(thinking(page).locator('[data-slot=trace-line][data-status="running"]')).toHaveCount(1)
     await expect(lines(page).last()).toHaveAttribute('data-status', 'running')
@@ -59,16 +72,15 @@ test('Chat while it writes: the steps build up row by row, the words show a few 
 
   // The text arrives, then shows a few words at a time: it grows on each 50 ms step, never all at once, and the words
   // don't fade in (nothing animates in the text box).
-  await page.clock.runFor(STEP_MS * 2)
   const answer = log(page).locator('[data-answer]').last()
   const box = answerText(answer)
-  await expect(box).toBeVisible()
+  const words = async () => ((await box.count()) === 0 ? 0 : ((await box.innerText()).match(/\S+/g) ?? []).length)
+  await advanceUntil(page, async () => (await words()) > 0, 50, 'the first words show')
   await expect(log(page)).toHaveAttribute('aria-busy', 'true')
-  const words = async () => ((await box.innerText()).match(/\S+/g) ?? []).length
   const seen = [await words()]
   for (let i = 0; i < 4; i++) {
-    await page.clock.runFor(50)
-    await expect.poll(words).toBeGreaterThan(seen.at(-1)!)
+    const before = seen.at(-1)!
+    await advanceUntil(page, async () => (await words()) > before, 10, `reveal step ${i + 2} shows`)
     seen.push(await words())
     expect(await box.evaluate(el => el.getAnimations({ subtree: true }).length)).toBe(0)
   }
@@ -77,11 +89,8 @@ test('Chat while it writes: the steps build up row by row, the words show a few 
   await expect(log(page)).toHaveAttribute('aria-busy', 'true')
 
   // Then all of it. Each reveal step schedules the next after React draws it, so a long runFor fires only one: step the
-  // clock 50 ms at a time until the log is no longer busy (at most MAX_STEPS steps, screens/chat/reveal.ts).
-  await expect.poll(async () => {
-    await page.clock.runFor(50)
-    return log(page).getAttribute('aria-busy')
-  }, { message: 'the reveal finishes' }).toBeNull()
+  // clock until the log is no longer busy (at most MAX_STEPS steps, screens/chat/reveal.ts).
+  await advanceUntil(page, async () => (await log(page).getAttribute('aria-busy')) === null, 50, 'the reveal finishes')
   await expect(answer).toContainText("can't answer that from your tools yet")
   expect(await words()).toBeGreaterThan(seen.at(-1)!)
   await expect(thinking(page)).toHaveCount(0)
