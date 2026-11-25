@@ -17,7 +17,8 @@ export type NoticeCode = Extract<ChatEvent, { type: 'notice' }>['code']
 export interface QueuedTurn { turnId: string; messageId: string; text: string; quote?: string; atts: Attachment[]; priority: 'now' | 'next' | 'later' }
 
 export type TurnState = 'queued' | 'live' | 'done' | 'interrupted' | 'stopped' | 'failed' | 'cancelled'
-export interface TurnInfo { turnId: string; runId: string; state: TurnState; text: string; quote?: string; atts: Attachment[]; failure?: TurnFailure }
+/** `at`: when the question was sent (the `turn.queued` frame's time), shown as the person's message time. */
+export interface TurnInfo { turnId: string; runId: string; state: TurnState; text: string; quote?: string; atts: Attachment[]; at: Instant; failure?: TurnFailure }
 
 export interface ChatView {
   messages: ChatMessage[]
@@ -60,7 +61,7 @@ export function refOf(a: Attachment): AttachmentRef {
 }
 
 const userMessage = (t: TurnInfo, messageId: string): ChatMessage => ({
-  id: messageId, role: 'user', text: t.text, ...(t.quote !== undefined ? { quote: t.quote } : {}), ...(t.atts.length ? { atts: t.atts } : {}),
+  id: messageId, role: 'user', text: t.text, ...(t.quote !== undefined ? { quote: t.quote } : {}), ...(t.atts.length ? { atts: t.atts } : {}), at: t.at,
 })
 const withoutTurn = (q: QueuedTurn[], turnId: string) => q.filter(x => x.turnId !== turnId)
 const setTurn = (v: ChatView, turnId: string, patch: Partial<TurnInfo>): ChatView['turns'] => {
@@ -76,7 +77,7 @@ export function reduce(v: ChatView, ev: ChatEvent, at: Instant, runId = ''): Cha
     case 'turn.queued': {
       if (v.turns[ev.turnId]) return v
       const atts = ev.attachments.map(a => ({ ...attOf(a.name), fileId: a.fileId }))
-      const info: TurnInfo = { turnId: ev.turnId, runId, state: 'queued', text: ev.text, ...(ev.quote !== undefined ? { quote: ev.quote } : {}), atts }
+      const info: TurnInfo = { turnId: ev.turnId, runId, state: 'queued', text: ev.text, ...(ev.quote !== undefined ? { quote: ev.quote } : {}), atts, at }
       const q: QueuedTurn = { turnId: ev.turnId, messageId: ev.messageId, text: ev.text, ...(ev.quote !== undefined ? { quote: ev.quote } : {}), atts, priority: ev.priority }
       return { ...v, turns: { ...v.turns, [ev.turnId]: info }, queued: [...v.queued, q] }
     }

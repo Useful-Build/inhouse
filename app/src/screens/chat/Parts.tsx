@@ -6,7 +6,7 @@ import { useLayoutEffect } from 'react'
 import type { MessagePart } from '../../agent/types'
 import { parseHostlist } from '../../../shared/contract/settings-table'
 import { draftView, whenOf } from '../../state/derive'
-import { fmtNextRun, fmtTime } from '../../lib/format'
+import { fmtNextRun } from '../../lib/format'
 import { display } from '../../state/display'
 import { useCtx, useUi } from '../../state/store'
 import { Button, Icon } from '../../ui'
@@ -176,14 +176,14 @@ export function AgentPart({ part, trace, id, chat, animate = false, streaming = 
       )
 
     case 'workRow':
+      // No time of its own: the thread's time markers say when (UI_BASE_V2 decision 7), so a time never shows twice.
       return (
         <Tooltip>
           <TooltipTrigger asChild>
-            <button type="button" onClick={() => openTrace(trace)} aria-label={`${part.text}, ${fmtTime(part.at, display())}. See every step`}
+            <button type="button" onClick={() => openTrace(trace)} aria-label={`${part.text}. See every step`}
               className="-ml-2 flex h-7.5 items-center gap-2 self-start rounded-md pr-1.5 pl-2 text-sm text-foreground-3 hover:bg-fill-hover hover:text-foreground">
               <Icon name="check" size={16} />
-              <span>{part.text}</span>{' '}
-              <span className="text-muted-foreground tabular-nums">{fmtTime(part.at, display())}</span>
+              <span>{part.text}</span>
               <Icon name="chevron_right" size={17} />
             </button>
           </TooltipTrigger>

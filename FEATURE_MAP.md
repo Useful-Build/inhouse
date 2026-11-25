@@ -143,7 +143,7 @@ Chat: Dictate
 Chat: answer actions
   Path:     answer -> hover or Tab into the row -> Reply, Copy, Regenerate, thumbs, More; More -> Send to #channel, Report a wrong answer, Delete
   Selector: answer row buttons, `[data-answer-actions]`, menu "Message actions"
-  Expected: at rest every answer (the newest too) hides its actions; hover or keyboard focus shows them and an open More menu keeps them; in the demo the menu has Send to #channel (when a channel is connected), Report a wrong answer and Delete, and the row includes Good/Bad answer thumbs; in the product build per-message `Delete` and `Good answer` / `Bad answer` are hidden (`src/lib/product-flow.ts`); the phone row is Copy and More; markdown renders; both builds make in-app hash routes and HTTPS destinations on exact hosts explicitly listed in the brand’s WebFetch setting clickable. An empty, missing or invalid list leaves all external destinations as text. External links and images wait for the complete answer. Unlisted images display text and listed images remain subject to the site’s CSP; Jump to latest appears when scrolled up mid-stream
+  Expected: at rest every answer (the newest too) hides its actions; hover or keyboard focus shows them and an open More menu keeps them; in the demo the menu has Send to #channel (when a channel is connected), Report a wrong answer and Delete, and the row includes Good/Bad answer thumbs; in the product build per-message `Delete` and `Good answer` / `Bad answer` are hidden (`src/lib/product-flow.ts`); the phone row is Copy and More; markdown renders; both builds make in-app hash routes and HTTPS destinations on exact hosts explicitly listed in the brand’s WebFetch setting clickable. An empty, missing or invalid list leaves all external destinations as text. External links and images wait for the complete answer. Unlisted images display text and listed images remain subject to the site’s CSP; Jump to latest appears when scrolled up mid-stream (see "Chat: scrolling")
   Covered:  e2e/conversation.spec.ts (including unlisted links in the completed answer), e2e/conversation-polish.spec.ts, e2e/brand-data.spec.ts, e2e/conversation-links.spec.ts (the demo's answer with the WebFetch setting seeded: a listed host's link is clickable in the finished answer, with a new tab and noreferrer; an unlisted host, or only its parent or a sibling listed, stays text), src/lib/product-flow.test.ts. Chat tests parts.test.ts, markdown-links.test.ts and markdown-links.property.test.ts cover WebFetch settings, the streaming gate, link parsing and exact-host matching.
   Gaps:     the product's own setting (route 11) isn't driven through a browser: a product chat answer needs a container turn, so the link check runs on the demo's saved setting only; a link waiting for the finished answer is not browser-tested (the demo answer shows its link and last words in one step), only the streaming half by parts.test.ts; the product-side hide isn't checked in a browser (the product-flow helpers are plain flags, so dropping a guard at its call site fails no test)
 
@@ -152,6 +152,32 @@ Chat: steps, sources and the answer's own cards
   Selector: `[data-steps]` (its button, aria-expanded, and Details), `[data-steps-meta]`, `[data-sources]`, `[data-approval]`
   Expected: a finished answer has a collapsed steps line above its card ("Checked Shopify and ShipBob · 6 steps", or "3 steps" with no check when no connected tool was read; a step that saved or sent something is not "checked") that opens, in place, each step with its tool logo and time, ending with the mode, duration and time and a Details link to the trace window; the card ends with one quiet sources pill ("{N} sources", chevron) that opens a plain list, with no numbered chips and no pill when the answer cites nothing; a draft to approve is its own card after the answer's card; full-shell Skyspace runs hero intensity on Today and blank New chat (with centered composer, 3-column Bento prompt cards and Routine dock, all in place from the first frame of a load: the composer never drops and jumps back) and softly dims behind messages in an active chat; the chat column is 880px
   Covered:  e2e/conversation.spec.ts, e2e/sample-data.spec.ts, e2e/conversation-polish.spec.ts, e2e/dots-and-today.spec.ts, e2e/dots-and-today-phone.spec.ts, e2e/new-chat-reload-layout.spec.ts
+
+Chat: scrolling (Message Scroller, UI_BASE_V2 D1)
+  Path:     a chat -> ask a question -> scroll up while it streams -> Jump to latest; Show more on a long message
+  Selector: role "log" "Conversation" (`aria-busy` while an answer's words still come), its scroll box (`closest('.overflow-auto')`, role "region" "Messages"), `[data-scroll-anchor="true"]` (the newest question), button "Jump to latest"
+  Expected: a chat opens at its last question (at the end when the rest fits); a new question (an ask, Regenerate, Retry, a queued one starting) settles near the top with a peek of the turn before, and its answer grows under it without moving it; once the answer fills the view the view follows the live edge; a scroll up (wheel, touch, keys) holds while the answer streams and shows Jump to latest, which goes back and follows again; opening Show more, an answer's steps or its sources holds the view; Show earlier messages loads above and the view keeps its place
+  Covered:  e2e/conversation.spec.ts (scroll up holds, Jump to latest, Regenerate pins the question with no room below), e2e/conversation-polish.spec.ts (Show more holds the view), e2e/motion.spec.ts (MOTION=1 only: the question settles in the top 40%, the pinned question and the view never jump more than 4px, Jump to latest follows to the end)
+  Gaps:     Show earlier messages keeping the place isn't browser-tested; a Retry that hides more rows than it adds (question, answer and note) doesn't pin the new question (Message Scroller only anchors a row added past the old count)
+
+Chat: your message
+  Path:     a chat -> ask a question (a long one, a reply, with files)
+  Selector: `[data-chat-msg]` with `[data-slot=bubble]`, `[data-long-text]`, button "Show more" / "Show less" (aria-expanded, aria-controls), Copy message, Edit message
+  Expected: your message is a Message at the end with a Bubble in the app's look (the `bubble` fill, rounded, the reading size, up to the prose measure); a long one shows eight lines with Show more on Bubble's collapsible; Copy and Edit sit beside it on desktop (hover or focus) and under it on a phone or touch screen; files show under it
+  Covered:  e2e/conversation.spec.ts, e2e/conversation-polish.spec.ts
+
+Chat: time markers
+  Path:     a chat (`#/chats/refunds`), or a new question
+  Selector: `[data-thread-marker="time"]` (a Marker separator inside the row it heads)
+  Expected: a centred line with the time ("Today 8:03 AM", "Yesterday 8:03 AM", "Mon, Nov 16, 8:03 AM", "Nov 2, 8:03 AM", through `fmtMarkerTime`) before the first message with a time, before any block that starts an hour or more after the last time, and at a day change; the person's message time comes from the `turn.queued` frame (live), `at` on the stored message (history) or the chat's time (sample chats); answers' work rows show no time of their own
+  Covered:  src/screens/chat/markers.test.ts (rules and properties: only before a block, never twice in a row, a day change always marks), src/screens/chat/view.test.ts (the question's time), e2e/conversation.spec.ts (one marker heads a new chat, none for a question a minute later)
+  Gaps:     the steps list's meta still shows the time (UI_BASE_V2 PR C removes it)
+
+Chat: model switch marker
+  Path:     a chat -> Model: Smart -> Fast -> ask
+  Selector: `[data-thread-marker="model"]`
+  Expected: "Switched to <model label>" above an answer turn whose model differs from the answer before it (answers without a model don't count; a change inside one card isn't marked)
+  Covered:  src/screens/chat/markers.test.ts, e2e/conversation.spec.ts
 
 Chat: queue and edit
   Path:     send two messages mid-answer, Edit a question

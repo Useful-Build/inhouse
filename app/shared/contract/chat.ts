@@ -53,7 +53,8 @@ export const MessagePartSchema = z.discriminatedUnion('type', [
 export type MessagePart = z.infer<typeof MessagePartSchema>
 
 export const ChatMessageSchema = z.discriminatedUnion('role', [
-  z.object({ id: z.string(), role: z.literal('user'), text: z.string(), quote: z.string().optional(), atts: z.array(AttachmentSchema).optional() }),
+  /** `at`: when the person sent it (the thread's time markers). Sample turns and messages saved before it existed have none. */
+  z.object({ id: z.string(), role: z.literal('user'), text: z.string(), quote: z.string().optional(), atts: z.array(AttachmentSchema).optional(), at: InstantSchema.optional() }),
   /**
    * `model` (the model id from models.json, shown by its label) and `at` (when it answered) are set
    * on answers given in this session; seed answers have neither. Phase 1 stamps them in the store; in phase 2 the agent

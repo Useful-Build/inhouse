@@ -525,6 +525,10 @@
 /* Text sitting straight on the dotted page gets a page-coloured soft patch. */
 @utility on-page { background: var(--background); box-shadow: 0 0 10px 8px var(--background); border-radius: 8px; }
 @utility page { position: relative; margin: 0 auto; padding: 24px var(--app-pad-x) 56px; box-sizing: border-box; }
+/* A chat thread's row (src/ui/agent/thread.tsx): Message Scroller's rows skip offscreen work with content-visibility: auto,
+ * which also clips their paint to the row. Ours hang hover fills, focus outlines and the steps line a few px past the row's
+ * edge, so they paint in full. */
+[data-slot='message-scroller-item'][data-thread-row] { content-visibility: visible; contain-intrinsic-size: none; }
 
 /* Turrell Skyspace architectural skylight cove: spans the full app shell behind both the floating sidebar and main.
  * The room fills the entire viewport (zero seam behind the sidebar), while the skylight cove centres on the main column. */

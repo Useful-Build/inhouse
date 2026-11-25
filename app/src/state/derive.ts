@@ -754,8 +754,10 @@ export function chatMessages(ctx: Ctx, chatId: string): ChatMessage[] {
   const { S, agent } = ctx
   const stage = STAGE_TAGS[S]
   const out: ChatMessage[] = []
-  ctx.data.chat.chats.find(c => c.id === chatId)?.turns.forEach((turn, t) => {
-    if (turn.role === 'user') { out.push({ id: `${chatId}-t${t}`, role: 'user', text: turn.text }); return }
+  const thread = ctx.data.chat.chats.find(c => c.id === chatId)
+  thread?.turns.forEach((turn, t) => {
+    // A sample question is stamped with its chat's time (the sample has no time per turn), for the thread's time marker.
+    if (turn.role === 'user') { out.push({ id: `${chatId}-t${t}`, role: 'user', text: turn.text, at: thread.at }); return }
     if (turn.stage && turn.stage !== stage) return
     // The approval note goes after the whole turn, so the turn's parts stay together (one set of thumbs, one Regenerate).
     let note: ChatMessage | undefined
