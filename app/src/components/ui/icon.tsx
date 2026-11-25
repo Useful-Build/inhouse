@@ -6,8 +6,9 @@ import { cn } from '@/lib/utils'
 // each base name maps to itself. `satisfies` makes the type check fail when a ui-base release adds a name, until it's
 // mapped here.
 const BASE_ICONS = {
-  check: 'check', chevron_right: 'chevron_right', close: 'close', expand_less: 'expand_less',
-  expand_more: 'expand_more', search: 'search', unfold_more: 'unfold_more',
+  arrow_downward: 'arrow_downward', check: 'check', chevron_right: 'chevron_right', close: 'close',
+  content_copy: 'content_copy', expand_less: 'expand_less', expand_more: 'expand_more',
+  progress_activity: 'progress_activity', search: 'search', unfold_more: 'unfold_more',
 } satisfies Record<IconName, string>
 
 /**

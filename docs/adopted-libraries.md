@@ -14,6 +14,8 @@ entry when a new base library is adopted. Versions live in `app/package.json`, n
 
 **shadcn/ui base and Radix** (`radix-ui`, caret range; shadcn is copy-in code, config in `app/components.json`, style `new-york`). Layer: `app/src/components/ui/` (the base's components, built on Radix primitives). Changelog: https://ui.shadcn.com/docs/changelog and https://www.radix-ui.com/primitives/docs/overview/releases. Companions: `class-variance-authority` and `tailwind-merge`.
 
+**@shadcn/react** (`@shadcn/react`, exact pin; it's 0.x). Layer: the headless behavior under ui-base v2's `message-scroller` and `questionnaire` (`app/src/components/ui/`), shipped by the `Useful-Build/ui-base` update bundle. Why: shadcn keeps the chat scroll logic (turn anchoring, following the live edge, keeping place on prepend, jump to message) in one tested package instead of copy-in code; adopted 2026-11-25 with ui-base v2.0.0 (`app/UI_BASE_V2.md`). The update writes a caret range: re-pin it exactly after every ui-base update. Changelog: https://ui.shadcn.com/docs/changelog.
+
 **zustand** (`zustand`, caret range). Layer: UI state, `app/src/state/store.ts`. Changelog: https://github.com/pmndrs/zustand/releases.
 
 **zod** (`zod`, exact pin). Layer: schemas at the Worker and the agent HTTP boundary (`app/server/auth/config.ts`, `app/server/db/handler-kit.ts`, `app/src/agent/http/transport.ts`). Changelog: https://github.com/colinhacks/zod/releases.
