@@ -358,7 +358,7 @@ async function traceWindow(page: Page, where: string, steps: boolean) {
     const n = await rows.count()
     for (let i = 0; i < n; i++) {
       await rows.nth(i).click()
-      await expect(rows.nth(i)).toHaveAttribute('aria-pressed', 'true')
+      await expect(rows.nth(i)).toHaveAttribute('aria-expanded', 'true')
       await check(page, `${where} technical step ${i}`)
     }
   }

@@ -8,8 +8,8 @@ No entry is `Covered: gap`. Not checked by any spec, or only in part:
 
 - Motion: `e2e/motion.spec.ts` is manual only (`MOTION=1`, the `motion` workflow), never in CI's normal run.
 - Ship specs: `e2e/ship/agent-seam.spec.ts`, `e2e/ship/example.spec.ts`, `e2e/ship/setup-gaps.spec.ts`, `e2e/ship/hardening.spec.ts` and `e2e/ship/backend-core.spec.ts`, `e2e/ship/agent-chat.spec.ts`, `e2e/ship/memory-skills.spec.ts` (projects `ship-desktop` and `ship-phone`) are manual only, run by `ship.yml` against a PR's preview (`backend-core.spec.ts`, `agent-chat.spec.ts` and `memory-skills.spec.ts`: on the test build, `build=test`), never in CI's normal run.
-- Chat while it writes: the working line (agent mark, tool logo, sweep) and the word-by-word reveal (a few words at a time, no fade) are checked by no spec (the reveal's step sizes are property-tested in `src/screens/chat/reveal.test.ts`); an answer's text width (about 620px) and your message's (about 520px) are not measured; sources of an answer that cites nothing are not asserted.
-- Trace window: Replay is only clicked, never asserted; the replay speed, Pause replay, Restart, Stop and show everything, Replay result and a step's details are opened by no spec.
+- Chat while it writes: the progressive live steps (`[data-thinking]`, agent mark, shimmer on the active row, earlier done rows) and the word-by-word reveal (a few words at a time, no fade) are checked by no spec beyond presence/count (the reveal's step sizes are property-tested in `src/screens/chat/reveal.test.ts`, and `step-data.test.ts` covers the trace-row mapper); an answer's text width (about 620px) and your message's (about 520px) are not measured; sources of an answer that cites nothing are not asserted.
+- Trace window: Replay is only clicked, never asserted; the replay speed, Pause replay, Restart, Stop and show everything, Replay result and Technical `CodeBlock` badges (`cut`, `denied`) are not all opened across specs (`no-persona.spec.ts` checks expanding every Technical row).
 - Settings > General: Language and Text size are opened and closed by `menus.spec.ts`, but no spec picks one and checks it saves.
 - Icons: the fallback glyph for a name outside the manifest is drawn by `src/ui/index.tsx` but no spec checks it; a name
   missing from the font fails lint (`scripts/check-icons.mjs`), not a spec.
@@ -149,8 +149,8 @@ Chat: answer actions
 
 Chat: steps, sources and the answer's own cards
   Path:     a finished answer in a chat (`#/chats/stuck`)
-  Selector: `[data-steps]` (its button, aria-expanded, and Details), `[data-steps-meta]`, `[data-sources]`, `[data-approval]`
-  Expected: a finished answer has a collapsed steps line above its card ("Checked Shopify and ShipBob · 6 steps", or "3 steps" with no check when no connected tool was read; a step that saved or sent something is not "checked") that opens, in place, each step with its tool logo and time, ending with the mode, duration and time and a Details link to the trace window; the card ends with one quiet sources pill ("{N} sources", chevron) that opens a plain list, with no numbered chips and no pill when the answer cites nothing; a draft to approve is its own card after the answer's card; full-shell Skyspace runs hero intensity on Today and blank New chat (with centered composer, 3-column Bento prompt cards and Routine dock, all in place from the first frame of a load: the composer never drops and jumps back) and softly dims behind messages in an active chat; the chat column is 880px
+  Selector: `[data-steps]` (`TraceCollapsible` button, `aria-expanded`, and Details), `[data-steps-meta]`, `[data-sources]`, `[data-approval]`
+  Expected: a finished answer has a collapsed Chain of Thought steps line above its card ("Checked Shopify and ShipBob · 6 steps", or "3 steps" with no check when no connected tool was read; a step that saved or sent something is not "checked") that opens, in place, nested `Trace` rows with tool logos or kind icons and durations, ending with Details and `[data-steps-meta]` (mode and duration only, no timestamp); while streaming, `[data-thinking]` builds progressive `Trace` rows with `AgentMark` and shimmer on the active step; the card ends with one quiet Sources pill ("{N} sources", chevron) that opens a list of internal tool records (no links, no numbered chips, and no pill when the answer cites nothing); a draft to approve is its own card after the answer's card; full-shell Skyspace runs hero intensity on Today and blank New chat (with centered composer, 3-column Bento prompt cards and Routine dock, all in place from the first frame of a load: the composer never drops and jumps back) and softly dims behind messages in an active chat; the chat column is 880px
   Covered:  e2e/conversation.spec.ts, e2e/sample-data.spec.ts, e2e/conversation-polish.spec.ts, e2e/dots-and-today.spec.ts, e2e/dots-and-today-phone.spec.ts, e2e/new-chat-reload-layout.spec.ts
 
 Chat: scrolling (Message Scroller, UI_BASE_V2 D1)
@@ -514,8 +514,8 @@ Problem panel
 
 Trace window
   Path:     an answer's steps line, or an Activity row
-  Selector: dialog "What your Inhouse agent did", radio "Technical", button "Replay", `trace-row`
-  Expected: the plain view shows the question and the time with no model or token words; Technical shows tokens; Replay is clicked, its result not asserted; an answer sent mid-run opens its own steps
+  Selector: dialog "What your Inhouse agent did", radio "Technical", button "Replay", `trace-row` (`aria-expanded`)
+  Expected: nested `Trace` rows from `mapTraceToTraceRows`; the plain view shows the question, time, and expanded `plainIo` prose only (never mounts `CodeBlock`, raw `detail`, `io`, model ids, or token words); Technical shows tokens, a slim duration bar per row aligned to ticks/playhead (D2), and expands each row into a `CodeBlock size="sm"` with `detail`, kind, duration, `io.input`, and `cut`/`denied` badges; Replay maps `t` to pending, running, or done and updates stats and playhead; an answer sent mid-run opens its own steps
   Covered:  e2e/app.spec.ts, e2e/conversation-polish.spec.ts, e2e/no-persona.spec.ts, e2e/overlays-keyboard.spec.ts
 
 Notifications and team window

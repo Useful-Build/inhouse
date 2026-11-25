@@ -56,15 +56,15 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, the tim
   await expect(log(page).getByRole('region', { name: 'Code block 1, sql' })).toHaveAttribute('tabindex', '0')
   await expect(log(page).getByRole('region', { name: /^Table 1: SKU, Product, Units$/ })).toHaveAttribute('tabindex', '0')
 
-  // The answer's steps line names the tools it read and the step count; opened, the list ends with the mode that answered,
-  // how long it took and when.
+  // The answer's steps line names the tools it read and the step count; opened, the list ends with the mode that answered
+  // and how long it took.
   await expect(stepsButtons(page).last()).toContainText(/Checked Shopify · \d+ steps/)
   await expect(log(page)).not.toHaveAttribute('aria-busy', 'true')
   await expect(log(page).locator('blockquote')).toContainText("Amazon orders aren't in this query")
   await expect(log(page).getByRole('link', { name: 'Amazon orders' })).toHaveCount(0)
   await stepsButtons(page).last().click()
   await expect(stepsButtons(page).last()).toHaveAttribute('aria-expanded', 'true')
-  await expect(log(page).locator('[data-steps-meta]').last()).toHaveText(/^Smart · [\d.]+m?s · \d{1,2}:\d\d\s[AP]M$/)
+  await expect(log(page).locator('[data-steps-meta]').last()).toHaveText(/^Smart · [\d.]+m?s$/)
 
   // A time marker heads the thread, a line across it with the time centred, in the first question's row; no model marker yet.
   const timeMarkers = log(page).locator('[data-thread-marker="time"]')
@@ -247,10 +247,10 @@ test('Conversation: an error turn has a steps line that opens the trace, and the
   await expect(err).toBeVisible({ timeout: 15_000 })
   const steps = err.getByRole('button', { name: /\d+ steps/ })
   await expect(steps).toBeVisible()
-  // No tool was read, so the line is only the step count; opened, the list ends with how long it took and when.
-  await expect(steps).toContainText(/^\d+ stepsexpand_more$/)
+  // No tool was read, so the line is only the step count; opened, the list ends with how long it took.
+  await expect(steps).toContainText(/^\d+ stepschevron_right$/)
   await steps.click()
-  await expect(err.locator('[data-steps-meta]')).toHaveText(/^(?:[\w ]+ · )?[\d.]+m?s · \d{1,2}:\d\d\s[AP]M$/)
+  await expect(err.locator('[data-steps-meta]')).toHaveText(/^(?:[\w ]+ · )?[\d.]+m?s$/)
   await shot(page, 'error-turn-steps')
   await err.getByRole('button', { name: 'Details', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'What your Inhouse agent did' })).toBeVisible()
