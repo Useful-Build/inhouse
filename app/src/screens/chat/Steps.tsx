@@ -69,7 +69,8 @@ export function StepsLine({ trace, traceId, model, at: _at, onToggle }: { trace:
   const meta = [model, fmtDuration(trace.durationMs, d)].filter(Boolean).join(' · ')
 
   return (
-    <TraceCollapsible data-steps open={open} onOpenChange={o => { onToggle?.(); setOpen(o) }} className="mb-1.5 items-start">
+    // The list spans the column (its rows' durations line up at the right); the trigger stays its own width.
+    <TraceCollapsible data-steps open={open} onOpenChange={o => { onToggle?.(); setOpen(o) }} className="mb-1.5 items-start *:data-[slot=trace-collapsible-content]:w-full">
       <TraceCollapsibleTrigger
         className={cn('-ml-1.5 h-7 gap-1.5 pr-1 pl-1.5 text-sm hover:bg-fill-hover', phone && TAP)}>
         {/* The check and "Checked" only when the run read from a tool; the count never gets cut, the tool names do. */}
