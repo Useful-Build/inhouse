@@ -16,10 +16,9 @@ import { useRevealed } from './reveal'
 import { MODEL_OFF_TEXTS } from './notes'
 import { cn } from '@/lib/utils'
 import { SuggestionChip } from '../../ui/chat'
+import { CONFIRMATION_SHEET, Confirmation, ConfirmationButtons, ConfirmationResult } from '../../ui/agent'
 
 const OPEN_LINK = 'flex flex-none items-center gap-0.5 text-base text-foreground-3 hover:text-foreground'
-/** A draft to approve: its own card after the answer's, as the brand-tint sheet on Today's cards. */
-const SHEET = 'box-border max-w-full self-start rounded-3xl bg-draft-sheet px-5 py-4'
 /** A routine or skill inside the answer's card: an inset block a step off the card. */
 const INSET = 'box-border max-w-full rounded-2xl border border-divider bg-muted px-4 py-3.5'
 
@@ -50,40 +49,30 @@ export function ApprovalCard({ problemId }: { problemId: string }) {
   const openProblem = useUi(s => s.openProblem)
   // A saved chat can name a draft the agent's data doesn't have now (another scenario, day one): say so, don't crash.
   if (!ctx.data.problems.some(p => p.id === problemId)) {
-    return <div className={cn(SHEET, 'text-sm text-muted-foreground')}>This draft isn't in today's list.</div>
+    return <div className={cn(CONFIRMATION_SHEET, 'text-sm text-muted-foreground')}>This draft isn't in today's list.</div>
   }
   const dv = draftView(ctx, problemId)
   const done = !!dv.approvedAt
   // Money and customer messages are approved from the panel, never with one tap.
   const sensitive = !!(dv.problem.draft.money || dv.problem.draft.customer)
   return (
-    <div data-approval className={cn(SHEET, 'w-prose-measure')}>
-      <CardHead icon="edit_note" tile="border border-border bg-draft-kind text-foreground-3" iconSize={20} kicker="Drafted for your approval" title={dv.draftTitle} openLabel="Open draft" onOpen={() => openProblem(problemId)} />
-      {dv.body && (
-        <div className="mt-3 rounded-xl bg-draft-kind px-3.5 py-3 text-sm leading-prose text-foreground-2 wrap-anywhere">
-          <div className="mono-label mb-1.5 tracking-caps">{dv.bodyLabel ?? 'Your note'}</div>{dv.body}
-        </div>
-      )}
+    <Confirmation data-approval icon="edit_note" kicker="Drafted for your approval" title={dv.draftTitle} openLabel="Open draft"
+      onOpen={() => openProblem(problemId)} body={dv.body} bodyLabel={dv.bodyLabel ?? undefined}>
       {!done && (
-        <div className="mt-3 flex flex-wrap gap-2">
+        <ConfirmationButtons>
           {sensitive
             ? <Button onClick={() => openProblem(problemId)}>Review</Button>
             : <>
                 <Button onClick={() => approve(problemId)}>{dv.cta}</Button>
                 <Button variant="soft" onClick={() => openProblem(problemId)}>Review and edit</Button>
               </>}
-        </div>
+        </ConfirmationButtons>
       )}
       {done && (
-        <div className="mt-3 flex items-center gap-2 text-sm font-strong">
-          <Icon name="check_circle" size={17} />
-          <span className="min-w-0 flex-1">{dv.approvedLine.replace(' · logged in Activity', '')}</span>
-          {dv.canUndo && (
-            <Button variant="soft" size="sm" onClick={() => unapprove(problemId)}>Undo</Button>
-          )}
-        </div>
+        <ConfirmationResult line={dv.approvedLine.replace(' · logged in Activity', '')}
+          action={dv.canUndo && <Button variant="soft" size="sm" onClick={() => unapprove(problemId)}>Undo</Button>} />
       )}
-    </div>
+    </Confirmation>
   )
 }
 
