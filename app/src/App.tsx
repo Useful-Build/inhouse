@@ -83,11 +83,15 @@ function useOpenedOnce(on: boolean) {
 }
 
 /** A lazy window (the trace, a problem, the team window) whose chunk can't load closes and says so, instead of taking the app down. */
-class OverlayBoundary extends Component<{ children: ReactNode; name: string; what: string; open: boolean; close: () => void }, { failed: boolean }> {
-  state = { failed: false }
+class OverlayBoundary extends Component<{ children: ReactNode; name: string; what: string; open: boolean; close: () => void }, { failed: boolean; wasOpen: boolean }> {
+  state = { failed: false, wasOpen: this.props.open }
   static getDerivedStateFromError() { return { failed: true } }
-  // Once it has closed, the next open tries again (a window that stays mounted keeps its boundary).
-  static getDerivedStateFromProps(props: { open: boolean }, state: { failed: boolean }) { return state.failed && !props.open ? { failed: false } : null }
+  // The next open tries again (a window that stays mounted keeps its boundary). Only an open clears the failure, not the
+  // close that follows it: rendering a lazy window whose chunk failed while it is closed would throw again in the same pass.
+  static getDerivedStateFromProps(props: { open: boolean }, state: { failed: boolean; wasOpen: boolean }) {
+    if (props.open === state.wasOpen) return null
+    return { wasOpen: props.open, failed: props.open ? false : state.failed }
+  }
   componentDidCatch(error: unknown) {
     console.error(`Inhouse: the ${this.props.name} window crashed and was closed.`, error instanceof Error ? error.message : error, error)
     reportError('boundary', error)
