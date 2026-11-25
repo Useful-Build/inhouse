@@ -7,7 +7,9 @@
 //  6. the waiting list holds an active, forgotten or person fact, is in the wrong order or passes its limit;
 //  7. over any history of saves, rewords, forgets, restores, approves, rejects and `m:ask` switches, a team fact is
 //     `active` without an approve of its then-current revision (or, once W1's switches land, a person's agent's save or
-//     reword while `m:ask` is off).
+//     reword while `m:ask` is off);
+//  8. a save of a text a reword or a restore left live twice answers the waiting copy (an id the agent can't read or
+//     change) while an active one exists, or answers whichever row the query plan happens to return (#404).
 // Expected values are literals or the reference model below (written here, never the store's code).
 import { env } from 'cloudflare:workers'
 import { fc, test } from '@fast-check/vitest'
@@ -236,6 +238,35 @@ describe('waiting: the only read of waiting facts (failure 6)', () => {
   })
 })
 
+describe('a save of a text that is live twice (failure 8, #404)', () => {
+  const save = (memberId: string, text: string) => store.save({ memberId, scope: 'brand', text, chatId: null, nowMs: 1, requestId: `r-${Math.random()}` })
+  const id = (r: Awaited<ReturnType<typeof save>>) => (r as { saved: { id: string } }).saved.id
+  it('with m:ask off, reworded onto a routine\'s waiting text: the duplicate is the active one', async () => {
+    await setAsk('off')
+    const routine = id(await save(SYSTEM_MEMBER_ID, 'Ship orders before noon'))
+    const mine = await seed('brand', 'active', 'We restock on Fridays')
+    expect(await store.update({ memberId: A, id: mine, text: 'Ship orders before noon', nowMs: 2, requestId: 'r-rw' })).toMatchObject({ updated: { id: mine } })
+    expect([await row(routine), await row(mine)]).toMatchObject([{ status: 'waiting' }, { status: 'active' }])
+    expect(await save(A, 'Ship orders before noon')).toMatchObject({ duplicate: { id: mine, status: 'active' } })
+  })
+  it('a restore beside an approved copy: the duplicate is the active one, though the restored one is older', async () => {
+    const old = id(await save(A, 'Use the blue box for gifts'))
+    await store.setBrandApproved({ id: old, approved: false, ifRev: 1 }, at())
+    const again = id(await save(A, 'Use the blue box for gifts'))
+    await store.setBrandApproved({ id: again, approved: true, ifRev: 1 }, at())
+    expect(await store.setBrandForgotten({ id: old, forgotten: false, ifRev: 2 }, at())).toMatchObject({ ok: { status: 'waiting' } })
+    expect(await save(A, 'Use the blue box for gifts')).toMatchObject({ duplicate: { id: again, status: 'active' } })
+  })
+  it('two waiting copies: the duplicate is the oldest', async () => {
+    const old = id(await save(A, 'Returns take five days'))
+    await store.setBrandApproved({ id: old, approved: false, ifRev: 1 }, at())
+    const again = id(await save(A, 'Returns take five days'))
+    await store.setBrandForgotten({ id: old, forgotten: false, ifRev: 2 }, at())
+    expect([await row(old), await row(again)]).toMatchObject([{ status: 'waiting' }, { status: 'waiting' }])
+    expect(await save(A, 'Returns take five days')).toMatchObject({ duplicate: { id: old, status: 'waiting' } })
+  })
+})
+
 // ---------- failure 7: the history property. ----------
 
 /**
@@ -276,6 +307,14 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
 
 interface ModelFact { id: string; text: string; status: 'active' | 'waiting' | 'forgotten'; rev: number; why: string | null }
 
+/** Histories CI found (#404) that leave one text live twice, run before the random ones every time. */
+const ISSUE_404: [Op[]][] = [
+  // m:ask off: a routine's save waits, a person's save of another text is active and is reworded to the routine's text.
+  [[{ op: 'ask', to: 'off' }, { op: 'save', who: 'routine', t: 1 }, { op: 'save', who: 'person', t: 0 }, { op: 'reword', who: 'person', i: 3, t: 1 }, { op: 'save', who: 'person', t: 1 }]],
+  // A rejected fact's text is saved again and approved, then an admin restores the rejected one.
+  [[{ op: 'save', who: 'person', t: 2 }, { op: 'save', who: 'person', t: 0 }, { op: 'decide', i: 0, approved: false, off: 0 }, { op: 'save', who: 'person', t: 2 }, { op: 'decide', i: 8, approved: true, off: 0 }, { op: 'restore', i: 0, off: 0 }, { op: 'save', who: 'person', t: 2 }]],
+]
+
 describe('the history property (failure 7)', () => {
   beforeAll(async () => {
     await db.prepare('DELETE FROM memories').run()
@@ -286,7 +325,7 @@ describe('the history property (failure 7)', () => {
     await db.prepare('DELETE FROM memories').run()
     await setAsk('unset')
   })
-  test.prop([fc.array(opArb, { minLength: 1, maxLength: 30 })], { numRuns: 40 })(
+  test.prop([fc.array(opArb, { minLength: 1, maxLength: 30 })], { numRuns: 40, examples: ISSUE_404 })(
     'a team fact is active only through an approve of its revision (or, with the switches, an agent save while m:ask is off)',
     async ops => {
       await db.batch([db.prepare('DELETE FROM memories'), db.prepare("DELETE FROM settings WHERE key = 'm:ask'")])
@@ -301,7 +340,9 @@ describe('the history property (failure 7)', () => {
       for (const o of ops) {
         if (o.op === 'save') {
           const text = TEXTS[o.t]
-          const same = facts.find(f => f.text === text && f.status !== 'forgotten')
+          // A reword or a restore can leave one text live twice; the duplicate is the active one, else the oldest.
+          const live = facts.filter(f => f.text === text && f.status !== 'forgotten')
+          const same = live.find(f => f.status === 'active') ?? live[0]
           const r = await store.save({ memberId: member(o.who), scope: 'brand', text, chatId: null, nowMs: ++clock, requestId: req() })
           if (same) {
             expect(r).toMatchObject({ duplicate: { id: same.id } })
