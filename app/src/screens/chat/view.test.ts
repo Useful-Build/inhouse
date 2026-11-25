@@ -181,3 +181,31 @@ describe('a live turn cancelled (a pause stops the answer being written)', () =>
     expect(reduce(done, { type: 'turn.cancelled', turnId: T, why: 'paused' }, AT)).toBe(done)
   })
 })
+
+describe('liveSteps track the running turn', () => {
+  const started: ChatEvent = { type: 'turn.started', turnId: T, model: 'sonnet' }
+  const step = (stepId: string, label: string, tool?: string): ChatEvent => ({ type: 'step', turnId: T, stepId, label, ...(tool ? { tool } : {}) })
+
+  test('accumulates steps in order, updates thinking label, deduplicates by stepId, and ignores non-live turns', () => {
+    const v = run(
+      queued,
+      started,
+      step('s1', 'Reading Shopify orders…', 'Shopify'),
+      step('s2', 'Checking ShipBob shipments…', 'ShipBob'),
+      step('s2', 'Checking ShipBob shipments (retry)…', 'ShipBob'),
+      { type: 'step', turnId: 't_Other00000000000000000', stepId: 's3', label: 'Other turn' },
+    )
+    expect(v.thinking).toBe('Checking ShipBob shipments (retry)…')
+    expect(v.liveSteps).toEqual([
+      { id: 's1', label: 'Reading Shopify orders…', tool: 'Shopify' },
+      { id: 's2', label: 'Checking ShipBob shipments (retry)…', tool: 'ShipBob' },
+    ])
+  })
+
+  test('clears liveSteps when the turn finishes, cancels, or the run finishes', () => {
+    const s1 = step('s1', 'Reading Shopify orders…', 'Shopify')
+    expect(run(queued, started, s1, { type: 'turn.finished', turnId: T, outcome: 'done' }).liveSteps).toEqual([])
+    expect(run(queued, started, s1, { type: 'turn.cancelled', turnId: T, why: 'paused' }).liveSteps).toEqual([])
+    expect(run(queued, started, s1, { type: 'run.finished', runId: 'r_Rrrrrrrrrrrrrrrrrrrrrr', turns: 1, durationMs: 1, cost: { minor: 0, currency: 'USD' } }).liveSteps).toEqual([])
+  })
+})

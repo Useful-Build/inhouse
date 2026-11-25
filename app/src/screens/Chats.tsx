@@ -13,14 +13,14 @@ import { cn } from '@/lib/utils'
 import { isStoppedNote, openChatKey, openRun, useCtx, useUi } from '../state/store'
 import type { QueuedMsg } from '../state/store'
 import { Confirm, TAP } from '../ui/fields'
-import { AgentMark, AttachmentChip, Button, Icon, IconButton, LogoTile, MenuItem, StageTag } from '../ui'
+import { AttachmentChip, Button, Icon, IconButton, MenuItem, StageTag } from '../ui'
 import { PromptBentoSlot } from '../ui/chat'
 import { Button as UiButton } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { AgentPart, ApprovalCard } from './chat/Parts'
+import { LiveSteps } from './chat/LiveSteps'
 import { SourcesRow, StepsLine } from './chat/Steps'
-import { toolInText } from './chat/step-data'
 import { useOpenChatMessages } from './chat/open-messages'
 import { FileChip } from './chat/FileChip'
 import { filesOfTurns } from './chat/view'
@@ -119,24 +119,6 @@ function QueuedChip({ q, editing, onEdit, onSendNow, onRemove }: { q: QueuedMsg;
 const NO_QUEUE: QueuedMsg[] = []
 /** An answer turn's card (D2). */
 const CARD = 'box-border flex max-w-full min-w-0 flex-col gap-3.5 self-start rounded-3xl bg-card py-4'
-
-/**
- * The working line while an answer streams, always one line: the agent's mark (moving, whatever the demo's switch says),
- * the logo of the tool the step names, and the step's text with a light sweep across it. New text fades up. Hidden from the
- * log: the status line reads it out.
- */
-function Thinking({ text }: { text: string }) {
-  const ctx = useCtx()
-  // The logo only of a tool the agent can read now, the one the text names first.
-  const tool = toolInText(ctx.data, text, readingTools(ctx))
-  return (
-    <div data-thinking aria-hidden="true" className="flex min-w-0 items-center gap-2.5">
-      <AgentMark live />
-      {tool !== null && <LogoTile k={tool} size="sm" round />}
-      <span key={text} className="min-w-0 animate-step-in"><span className="shimmer-text ellipsis block text-base">{text}</span></span>
-    </div>
-  )
-}
 
 function Thread() {
   useTraces()
@@ -527,7 +509,7 @@ function Thread() {
                     {(inCard.length > 0 || streaming) && (
                       <div className={cn(CARD, phone ? 'px-4' : 'px-5')}>
                         {inCard.map(x => <AgentPart key={x.id} id={x.id} chat={openId ?? undefined} part={x.part} trace={x.trace} animate={seenNow.ids.has(x.trace)} streaming={streaming} onBusy={onBusy} />)}
-                        {streaming && <Thinking text={thinkingText} />}
+                        {streaming && <LiveSteps steps={view?.liveSteps} fallback={thinkingText} />}
                         {endsTurn && <SourcesRow parts={inCard.map(x => x.part)} trace={tr} onToggle={onToggleLong} />}
                       </div>
                     )}
@@ -554,7 +536,7 @@ function Thread() {
 
               {/* Before the answer's first part, its card holds the thinking line: the parts then fill that same card. */}
               {thinking && blocks.at(-1)?.kind !== 'turn' && (
-                <div className={cn(CARD, 'mt-5.5', phone ? 'px-4' : 'px-5')}><Thinking text={thinkingText} /></div>
+                <div className={cn(CARD, 'mt-5.5', phone ? 'px-4' : 'px-5')}><LiveSteps steps={view?.liveSteps} fallback={thinkingText} /></div>
               )}
             </>
           )}

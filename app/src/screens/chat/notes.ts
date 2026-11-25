@@ -79,4 +79,4 @@ export const historyWanted = (chats: readonly { id: string; turns: readonly unkn
 }
 
 /** A chat with nothing in it yet. */
-export const emptyView = (): ChatView => ({ messages: [], queued: [], turns: {}, live: null, thinking: null, notice: null, budgetWait: false, damaged: false, openRuns: [], files: [] })
+export const emptyView = (): ChatView => ({ messages: [], queued: [], turns: {}, live: null, thinking: null, liveSteps: [], notice: null, budgetWait: false, damaged: false, openRuns: [], files: [] })
