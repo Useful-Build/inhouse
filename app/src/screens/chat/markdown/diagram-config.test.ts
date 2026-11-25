@@ -33,3 +33,13 @@ describe('a diagram cannot change the locked config', () => {
     expect(c.securityLevel).toBe('strict')
   })
 })
+
+describe('a journey draws its text as SVG', () => {
+  // Its default text placement is a foreignObject per section and task, which tidySvg refuses: every journey would fail.
+  it('uses tspan text, and a diagram cannot switch it back', async () => {
+    const mermaid = (await import('mermaid')).default
+    mermaid.initialize({ ...MERMAID_CONFIG })
+    await mermaid.parse('%%{init: {"journey": {"textPlacement": "fo"}}}%%\njourney\n  title Refund\n  section Ask\n    Customer writes: 3: Customer')
+    expect(mermaid.mermaidAPI.getConfig().journey?.textPlacement).toBe('tspan')
+  })
+})

@@ -6,6 +6,8 @@
 // figure with missing text. (The page's CSP is the backstop, not the plan.)
 // Then it makes the figure an image for a screen reader and gives it its natural size, so a wide one scrolls sideways.
 
+const SVG_NS = 'http://www.w3.org/2000/svg'
+
 /** Elements removed with what they hold (lower-cased local names). */
 const REMOVE = new Set(['image', 'feimage', 'script', 'iframe', 'object', 'embed', 'animate', 'set', 'animatetransform', 'animatemotion'])
 const HREF = /^(xlink:)?href$/i
@@ -29,6 +31,8 @@ export function tidySvg(markup: string, label: string): string {
   for (const el of [...svg.querySelectorAll('*')]) {
     const name = el.localName.toLowerCase()
     if (name === 'foreignobject') throw new Error('The diagram needs HTML labels, which are not drawn')
+    // HTML inside the figure (in a <title> or <desc>, say): Mermaid's sanitizer strips it today; refuse it if that ever slips.
+    if (el.namespaceURI !== SVG_NS) throw new Error(`The diagram holds a non-SVG element (${name})`)
     if (REMOVE.has(name)) el.remove()
     // A link: its content stays (Mermaid wraps a linked node's shape in it), the link goes.
     else if (name === 'a') el.replaceWith(...el.childNodes)

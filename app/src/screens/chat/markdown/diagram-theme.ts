@@ -7,7 +7,7 @@ import type { MermaidConfig } from 'mermaid'
 const MERMAID_SECURE = ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering', 'maxEdges']
 const SECURE: string[] = [
   ...MERMAID_SECURE, 'htmlLabels', 'flowchart', 'theme', 'themeCSS', 'themeVariables', 'fontFamily', 'altFontFamily',
-  'look', 'layout', 'arrowMarkerAbsolute', 'darkMode',
+  'look', 'layout', 'arrowMarkerAbsolute', 'darkMode', 'journey',
 ]
 
 /**
@@ -25,6 +25,8 @@ const SECURE: string[] = [
  */
 export const MERMAID_CONFIG = {
   startOnLoad: false, securityLevel: 'strict', htmlLabels: false, suppressErrorRendering: true, theme: 'base', logLevel: 'error',
+  // A journey draws its section and task text in a `foreignObject` by default ("fo"), which `tidySvg` refuses: SVG text instead.
+  journey: { textPlacement: 'tspan' },
   secure: SECURE,
 } as const satisfies MermaidConfig
 

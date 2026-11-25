@@ -42,9 +42,12 @@ export function Diagram({ source, n, last }: { source: string; n: number; last: 
   const dark = useDark()
   const key = drawnKey(n, dark, source)
   const cached = drawn.get(key)
-  const [view, setView] = useState<DiagramView>({ kind: 'drawing' })
+  const [view, setView] = useState<DiagramView>(() => (cached ? { kind: 'ready', svg: cached } : { kind: 'drawing' }))
   useEffect(() => {
-    if (open || drawn.has(key)) return
+    if (open) return
+    const hit = drawn.get(key)
+    // Drawn before for this source and theme: keep it in this card's own state, so a later eviction can't take it away.
+    if (hit) { setView({ kind: 'ready', svg: hit }); return }
     let stale = false
     const draw = async () => {
       const style = getComputedStyle(document.documentElement)

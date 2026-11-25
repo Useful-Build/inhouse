@@ -75,6 +75,11 @@ describe('tidySvg', () => {
     expect(text).toContain('{')
   })
 
+  it('refuses HTML inside the figure (a <title> or <desc> is an HTML integration point)', () => {
+    expect(() => tidySvg('<svg viewBox="0 0 10 10"><title><img src="/x"></title><rect/></svg>', 'Diagram 1')).toThrow(/non-SVG/)
+    expect(() => tidySvg('<svg viewBox="0 0 10 10"><desc><video poster="/x"></video></desc></svg>', 'Diagram 1')).toThrow(/non-SVG/)
+  })
+
   it('keeps the rest of the style, and #fragment url()s (markers, filters)', () => {
     const out = tidy('<style>.a { stroke-width: 2; background: url(/x); opacity: 0.5; } .b { filter: url(#drop-shadow); }</style>')
     const text = out.querySelector('style')!.textContent ?? ''
