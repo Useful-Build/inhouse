@@ -1,6 +1,7 @@
 // Chats: the thread (one card per answer, D2), hover actions under each answer and your own messages, the "···" menu,
-// long messages that fold, Retry on a stopped answer, Jump to latest, the queued messages and the ask box.
-import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+// long messages that fold, Retry on a stopped answer, the time and model markers, Jump to latest, the queued messages and
+// the ask box. Scrolling is Message Scroller's (src/ui/agent/thread.tsx).
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { agent, demo } from '../agent'
 import { showLocalAnswerControls } from '../lib/product-flow'
 import { traceOf, useTraces } from './chat/traces'
@@ -15,9 +16,7 @@ import type { QueuedMsg } from '../state/store'
 import { Confirm, TAP } from '../ui/fields'
 import { AttachmentChip, Button, Icon, IconButton, MenuItem, StageTag } from '../ui'
 import { PromptBentoSlot } from '../ui/chat'
-import { Button as UiButton } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { AgentPart, ApprovalCard } from './chat/Parts'
 import { LiveSteps } from './chat/LiveSteps'
 import { SourcesRow, StepsLine } from './chat/Steps'
@@ -26,9 +25,12 @@ import { FileChip } from './chat/FileChip'
 import { filesOfTurns } from './chat/view'
 import { ChatList } from './chat/ChatList'
 import { copyText } from './chat/copy'
+import { threadMarkers } from './chat/markers'
+import { fmtMarkerTime } from '@/lib/format'
+import { display, nowOf } from '../state/display'
+import { JumpToLatest, LongText, NoteMarker, ThreadLog, ThreadMarker, ThreadRow, ThreadScroller, ThreadViewport, UserTurn } from '../ui/agent/thread'
+import { holdView } from '../ui/agent/hold-view'
 
-/** Within this many px of the bottom, new messages and thinking steps keep the view at the bottom. */
-const NEAR_BOTTOM = 80
 /** Shown on hover and focus, always on a phone or a touch screen. */
 const REVEAL = 'opacity-0 transition-opacity duration-120 group-focus-within/msg:opacity-100 group-hover/msg:opacity-100 pointer-coarse:opacity-100 data-[on=1]:opacity-100'
 
@@ -61,36 +63,6 @@ function blocksOf(msgs: ChatMessage[]): Block[] {
     else out.push({ kind: 'event', m, at })
   })
   return out
-}
-
-/** A long message shows about eight lines, with Show more (M8). Expanding keeps the reader's place. */
-function LongText({ text, onToggle }: { text: string; onToggle: () => void }) {
-  const ref = useRef<HTMLDivElement>(null)
-  const id = useId()
-  const [open, setOpen] = useState(false)
-  const [long, setLong] = useState(false)
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el || open) return
-    const check = () => setLong(el.scrollHeight > el.clientHeight + 1)
-    check()
-    if (typeof ResizeObserver === 'undefined') return
-    const ro = new ResizeObserver(check)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [open, text])
-  return (
-    <>
-      <div ref={ref} id={id} data-long-text className={cn(!open && 'line-clamp-8')}>{text}</div>
-      {(long || open) && (
-        // Its visible words are its name (label in name); aria-expanded carries the state.
-        <button type="button" aria-expanded={open} aria-controls={id} onClick={() => { onToggle(); setOpen(o => !o) }}
-          className="-ml-1 mt-1.5 flex h-7 items-center gap-0.5 rounded-md pr-1.5 pl-1 text-sm font-medium text-foreground-3 hover:bg-fill-strong hover:text-foreground">
-          {open ? 'Show less' : 'Show more'}<Icon name={open ? 'expand_less' : 'expand_more'} size={17} />
-        </button>
-      )}
-    </>
-  )
 }
 
 /** A message's first words, to tell its buttons apart from the next message's. */
@@ -136,8 +108,7 @@ function Thread() {
   const [replacing, setReplacing] = useState<QueuedMsg | null>(null)
   // Replace puts focus in the composer; closing the question must not take it back to the Edit button.
   const replaced = useRef(false)
-  const scroller = useRef<HTMLDivElement>(null)
-  const column = useRef<HTMLDivElement>(null)
+  const viewport = useRef<HTMLDivElement>(null)
 
   // Null for a new chat, and when there are no chats at all (day one): the thread then starts empty.
   const openId = openChatKey({ fresh, chatId }, ctx.data)
@@ -201,64 +172,17 @@ function Thread() {
     return next
   }), [])
 
-  // Keep the view at the bottom as messages and thinking steps arrive, but only while the person is near it:
-  // once they scroll up, their place stays and Jump to latest shows. Asking a question goes back to the bottom.
   const threadKey = openId ?? 'new'
-  const stick = useRef(true)
-  // This visit to the chat (a new one each time it opens, so X, Y, then X again starts at the bottom) and the visit the
-  // person scrolled up in: opening a chat starts without Jump to latest.
-  const visit = useMemo(() => ({ key: threadKey }), [threadKey])
-  const [awayIn, setAwayIn] = useState<object | null>(null)
-  const away = awayIn === visit
-  // The newest question seen, so a new one (an ask, or a regenerate that also hides older messages) goes to the bottom.
-  const seenQuestion = useRef<string | undefined>(undefined)
-  // The scroll event for our own scroll arrives a frame later, when content may have grown again: it isn't the person
-  // scrolling up. Only that one event is skipped.
-  const pinnedTop = useRef(-1)
-  const scrollDown = () => {
-    const el = scroller.current
-    if (el) {
-      const before = el.scrollTop
-      el.scrollTop = el.scrollHeight
-      // Only a scroll that moved the view sends an event to skip.
-      if (el.scrollTop !== before) pinnedTop.current = el.scrollTop
-    }
-    stick.current = true
-  }
-  const toBottom = () => { scrollDown(); setAwayIn(null) }
-  /** Whether the view is near the bottom now, and Jump to latest with it. */
-  const recheck = () => {
-    const el = scroller.current
-    if (!el) return
-    stick.current = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM
-    setAwayIn(stick.current ? null : visit)
-  }
-  const onScroll = () => {
-    const el = scroller.current
-    if (!el) return
-    if (el.scrollTop === pinnedTop.current) { pinnedTop.current = -1; return }
-    recheck()
-  }
   // Show more or less, and opening an answer's steps or sources, keeps the reader where they are: it grows below, the view doesn't follow it down.
-  const onToggleLong = () => { stick.current = false; requestAnimationFrame(recheck) }
-  const last = msgs[msgs.length - 1]
-  const lastQuestion = last?.role === 'user' ? last.id : undefined
-  useLayoutEffect(() => { scrollDown() }, [threadKey])
-  // Content keeps settling after first paint (fonts, markdown, cards), and the composer grows or shrinks the scroll
-  // area: while at the bottom, stay there.
-  useEffect(() => {
-    const col = column.current, sc = scroller.current
-    if (!col || !sc || typeof ResizeObserver === 'undefined') return
-    const ro = new ResizeObserver(() => { if (stick.current) scrollDown() })
-    ro.observe(col)
-    ro.observe(sc)
-    return () => ro.disconnect()
-  }, [])
-  useLayoutEffect(() => {
-    if (lastQuestion && lastQuestion !== seenQuestion.current) { stick.current = true; setAwayIn(null) }
-    seenQuestion.current = lastQuestion ?? seenQuestion.current
-    if (stick.current) scrollDown()
-  }, [msgs.length, lastQuestion, thinking, thinkingText])
+  const onToggleLong = () => holdView(viewport.current)
+  // The newest question: a new ask pins it near the top while its answer grows under it (D1).
+  const newestQuestion = msgs.findLast(m => m.role === 'user')?.id
+  const markers = useMemo(() => threadMarkers(msgs, display()), [msgs])
+  const marks = (id: string) => markers.get(id)?.map(k => (
+    k.kind === 'time'
+      ? <ThreadMarker key="time" kind="time">{fmtMarkerTime(k.at, nowOf(), display())}</ThreadMarker>
+      : <ThreadMarker key="model" kind="model">Switched to {ctx.data.models.find(x => x.id === k.model)?.label ?? k.model}</ThreadMarker>
+  ))
 
   // The tools the agent can read now: not paused, not disconnected, none on day one.
   const connected = readingTools(ctx).map(k => toolDetail(ctx.data, k).name)
@@ -414,22 +338,24 @@ function Thread() {
 
   return (
     <div className={cn('relative flex min-h-0 flex-1 flex-col', isBlank && 'overflow-auto')}>
-      <div ref={scroller} onScroll={onScroll} className={isBlank ? 'flex grow shrink-0 flex-col justify-end px-(--app-pad-x) pt-8' : 'flex-1 overflow-auto px-(--app-pad-x) pt-2 pb-14'}>
-        <div ref={column} className={cn('mx-auto flex w-full flex-col', isBlank ? 'max-w-today-column items-center text-center' : 'max-w-chat-column')}>
-          {isBlank ? (
-            <>
-              <h2 className="text-3xl leading-title font-medium tracking-title">What should we look into?</h2>
-              {connected.length > 0
-                ? <p className="mt-2.5 text-md text-foreground-3">Connected to {listNames(connected)}.</p>
-                : emptyTools && <>
-                    <p className="mt-2.5 text-md text-foreground-3">{emptyTools.text}</p>
-                    <Button variant="outline" className="mt-3" onClick={() => go('apps')}>{emptyTools.kind === 'none' ? 'Connect tools' : 'Manage tools'}</Button>
-                  </>}
-            </>
-          ) : (
-            <>
-              {/* The conversation as a log, so screen readers hear each new answer once (not every thinking step).
-                  Keyed by chat, so opening a chat doesn't read out its whole history. */}
+      {isBlank ? (
+        <div className="flex grow shrink-0 flex-col justify-end px-(--app-pad-x) pt-8">
+          <div className="mx-auto flex w-full max-w-today-column flex-col items-center text-center">
+            <h2 className="text-3xl leading-title font-medium tracking-title">What should we look into?</h2>
+            {connected.length > 0
+              ? <p className="mt-2.5 text-md text-foreground-3">Connected to {listNames(connected)}.</p>
+              : emptyTools && <>
+                  <p className="mt-2.5 text-md text-foreground-3">{emptyTools.text}</p>
+                  <Button variant="outline" className="mt-3" onClick={() => go('apps')}>{emptyTools.kind === 'none' ? 'Connect tools' : 'Manage tools'}</Button>
+                </>}
+          </div>
+        </div>
+      ) : (
+        // Keyed by chat: each chat opens on its own (at its last question), and opening one doesn't read out its whole history.
+        <ThreadScroller key={threadKey} className="min-h-0 flex-1">
+          <ThreadViewport ref={viewport} className="px-(--app-pad-x)">
+            <div className="mx-auto flex w-full max-w-chat-column flex-col pt-2">
+              {/* Outside the log: earlier messages load above the first row, and the view keeps its place. */}
               {history && (history.next !== null || history.state === 'error') && (
                 <div className="mt-2 flex justify-center">
                   <Button variant="soft" size="sm" disabled={history.state === 'loading'} onClick={() => loadHistory(openId!, history.state !== 'error' || history.next !== null)}>
@@ -437,31 +363,32 @@ function Thread() {
                   </Button>
                 </div>
               )}
-              <div key={threadKey} role="log" aria-label="Conversation" aria-busy={revealing.size > 0 || undefined} className="flex flex-col">
+              {/* The conversation as a log, so screen readers hear each new answer once (not every thinking step). */}
+              <ThreadLog aria-busy={revealing.size > 0 || undefined} className="pb-14">
               {blocks.map((b, k) => {
                 const mt = k === 0 ? 'mt-2' : b.kind === 'event' ? 'mt-3.5' : 'mt-5.5'
                 if (b.kind === 'user') {
                   const m = b.m
                   return (
-                    <div key={m.id} data-chat-msg className={`group/msg relative flex flex-col ${mt}`}>
+                    <ThreadRow key={m.id} id={m.id} anchor={m.id === newestQuestion} data-chat-msg className={`group/msg relative flex flex-col ${mt}`}>
+                      {marks(m.id)}
                       {/* Desktop: the actions sit beside the bubble, out of the flow, so they cost no space at rest.
                           Phone and touch: in the flow under the bubble, always visible. */}
-                      <div className={`relative flex flex-col items-end self-end ${bubbleMax}`}>
-                        <div className={cn('max-w-prose-measure rounded-3xl bg-bubble px-4.5 py-3 text-md leading-prose text-pretty whitespace-pre-wrap wrap-anywhere', editingId === m.id && 'shadow-selected')}>
-                          {m.quote && (
-                            <div className="mb-2 flex gap-2 overflow-hidden rounded-lg bg-fill px-2.5 py-1.5 text-sm whitespace-nowrap text-foreground-3">
-                              <Icon name="reply" size={15} />
-                              <span className="overflow-hidden text-ellipsis">{m.quote}</span>
-                            </div>
-                          )}
-                          <LongText text={m.text} onToggle={onToggleLong} />
-                        </div>
+                      <UserTurn max={bubbleMax} selected={editingId === m.id} actions={
                         <div data-on={phone ? '1' : undefined} className={cn(phone ? 'mt-1' : 'absolute right-full bottom-0 mr-1.5 pointer-coarse:static pointer-coarse:mr-0 pointer-coarse:mt-1', 'flex items-center gap-0.5 rounded-md px-0.5 text-foreground-3', REVEAL)}>
                           <IconButton icon="content_copy" label="Copy message" size={17} variant="action" box="icon-sm" onClick={() => copy(m.text)} />
                           {/* Editing sends the new question in place of this one and its answer, so not while one is being written. */}
                           <IconButton icon="edit" label="Edit message" size={17} variant="action" box="icon-sm" disabled={thinking} onClick={() => startEdit(m, [m.id, ...answerOf(b.at)])} />
                         </div>
-                      </div>
+                      }>
+                        {m.quote && (
+                          <div className="mb-2 flex gap-2 overflow-hidden rounded-lg bg-fill px-2.5 py-1.5 text-sm whitespace-nowrap text-foreground-3">
+                            <Icon name="reply" size={15} />
+                            <span className="overflow-hidden text-ellipsis">{m.quote}</span>
+                          </div>
+                        )}
+                        <LongText text={m.text} onToggle={onToggleLong} />
+                      </UserTurn>
                       {m.atts && m.atts.length > 0 && (
                         <div className="mt-1.5 flex flex-wrap justify-end gap-1.5 self-end">
                           {m.atts.map((f, j) => (
@@ -471,7 +398,7 @@ function Thread() {
                           ))}
                         </div>
                       )}
-                    </div>
+                    </ThreadRow>
                   )
                 }
                 if (b.kind === 'event') {
@@ -479,8 +406,9 @@ function Thread() {
                   // A stopped answer can be asked again (M11).
                   const stopped = isStoppedNote(m) ? questionBefore(b.at) : null
                   return (
-                    <div key={m.id} data-chat-msg className={`group/msg relative flex flex-col ${mt}`}>
-                      <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 self-center rounded-md px-2 py-0.5 text-center text-sm text-muted-foreground">
+                    <ThreadRow key={m.id} id={m.id} data-chat-msg className={`group/msg relative flex flex-col ${mt}`}>
+                      {marks(m.id)}
+                      <NoteMarker>
                         <span>{m.text}</span>
                         {stopped && (
                           <Button variant="soft" size="sm" disabled={thinking} className={cn('-my-0.5', phone && TAP)}
@@ -488,8 +416,8 @@ function Thread() {
                             <Icon name="refresh" size={16} />Retry
                           </Button>
                         )}
-                      </div>
-                    </div>
+                      </NoteMarker>
+                    </ThreadRow>
                   )
                 }
                 const streaming = thinking && b.at + b.ms.length === msgs.length
@@ -501,7 +429,8 @@ function Thread() {
                 const inCard = b.ms.filter(x => x.part.type !== 'approval')
                 const drafts = b.ms.filter(x => x.part.type === 'approval')
                 return (
-                  <div key={b.ms[0].id} data-chat-msg data-answer className={`group/msg relative flex flex-col ${mt}`}>
+                  <ThreadRow key={b.ms[0].id} id={b.ms[0].id} data-chat-msg data-answer className={`group/msg relative flex flex-col ${mt}`}>
+                    {marks(b.ms[0].id)}
                     {/* The finished steps, collapsed above the card. */}
                     {tr && <StepsLine trace={tr} traceId={traceId} model={ctx.data.models.find(x => x.id === lastMsg.model)?.label} at={lastMsg.at} onToggle={onToggleLong} />}
                     {/* One white card per answer (D2): its text and tables inside, then its sources, and while it streams
@@ -529,39 +458,29 @@ function Thread() {
                     })()}
                     {/* The actions show once the turn is done, so the live log announces them once, not with every streamed part. */}
                     {endsTurn && answerBar(b)}
-                  </div>
+                  </ThreadRow>
                 )
               })}
-              </div>
 
-              {/* Before the answer's first part, its card holds the thinking line: the parts then fill that same card. */}
+              {/* Before the answer's first part, its card holds the thinking line: the parts then fill that same card.
+                  Inside the log's box, so it sits under the new question and not under Message Scroller's spacer. */}
               {thinking && blocks.at(-1)?.kind !== 'turn' && (
                 <div className={cn(CARD, 'mt-5.5', phone ? 'px-4' : 'px-5')}><LiveSteps steps={view?.liveSteps} fallback={thinkingText} /></div>
               )}
-            </>
-          )}
-          {/* What the agent is doing, read out once per step (the visible line is in the card, hidden from the log). */}
-          <div role="status" className="sr-only">{thinkingText}</div>
-        </div>
-      </div>
+              </ThreadLog>
+            </div>
+          </ThreadViewport>
+          <JumpToLatest />
+        </ThreadScroller>
+      )}
+      {/* What the agent is doing, read out once per step (the visible line is in the card, hidden from the log). In one tree
+          slot across blank and active states, so the first step of a first question is heard. */}
+      <div role="status" className="sr-only">{thinkingText}</div>
 
       {/* The bottom dock: toasts stack above it (data-bottom-dock). Kept in one tree slot across blank and active
-          states so scroller/column stay observed and Composer never unmounts or drops focus on the first send. */}
+          states so Composer never unmounts or drops focus on the first send. */}
       <div data-bottom-dock={!isBlank ? '' : undefined} className={cn('relative z-composer flex-none px-(--app-pad-x)', isBlank ? 'pt-6' : 'pb-5')}>
         <div className={cn('relative mx-auto w-full', isBlank ? 'max-w-today-column' : 'max-w-chat-column')}>
-          {/* Centred above the box: clear of an answer's sources at the left and your messages at the right (M12). */}
-          {!isBlank && away && (
-            <div className="absolute bottom-full left-1/2 mb-2 -translate-x-1/2">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <UiButton type="button" variant="outline" size="icon-round" aria-label="Jump to latest" onClick={toBottom}>
-                    <Icon name="arrow_downward" size={18} />
-                  </UiButton>
-                </TooltipTrigger>
-                <TooltipContent>Jump to latest</TooltipContent>
-              </Tooltip>
-            </div>
-          )}
           {queue.length > 0 && (
             <div ref={queueList} role="list" aria-label="Queued messages" className="mb-2 flex flex-col gap-1.5">
               {queue.map(q => (
