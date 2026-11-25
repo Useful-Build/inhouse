@@ -6,7 +6,7 @@
 // lets those load with the session's cookies); a backslash escape spells one; a figure that needs HTML labels shows with
 // its text missing instead of failing.
 import { describe, expect, it } from 'vitest'
-import { cleanCss, tidySvg } from './diagram-svg'
+import { checkSource, cleanCss, tidySvg } from './diagram-svg'
 
 const svg = (inner: string, attrs = '') => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100" ${attrs}>${inner}</svg>`
 const tidy = (inner: string, attrs = '') => {
@@ -118,5 +118,19 @@ describe('cleanCss', () => {
   it('never joins the parts around a removed one into a new address', () => {
     expect(cleanCss('a{x:u@import "y";rl(/z)}')).not.toMatch(/url\(/)
     expect(cleanCss('a{x:ur;l(/z)}')).toBe('a{x:ur;l(/z)}')
+  })
+})
+
+describe('checkSource', () => {
+  it.each([
+    ['a classDef url()', 'stateDiagram-v2\n  classDef x background-image:url(/cdn-cgi/access/logout)'],
+    ['a style url() with spaces', 'flowchart LR\n  style A background: url ( "https://evil.example" )'],
+    ['image-set()', 'flowchart LR\n  classDef x background:image-set("/x" 1x)'],
+    ['an @import', '%%{init: {"themeCSS": "@import \'/x\'"}}%%\nflowchart LR\n A-->B'],
+    ['a backslash escape', 'flowchart LR\n  classDef x background:\\75 rl(/x)'],
+  ])('refuses %s', (_, source) => { expect(() => checkSource(source)).toThrow(/address/) })
+
+  it('lets an ordinary diagram through', () => {
+    expect(() => checkSource('flowchart LR\n  A[Customer asks for a refund] --> B{Approved?}\n  classDef warm stroke-width:2px')).not.toThrow()
   })
 })

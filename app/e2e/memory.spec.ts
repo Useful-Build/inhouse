@@ -214,7 +214,7 @@ test('Memory: the demo clock never runs backwards after a reload, even with noth
   await go(page, chatLink)
   await expect(log(page).getByText(A)).toHaveCount(1)
   // The time marker heading the chat reads the demo's time, in the browser's zone (the demo shows the device's).
-  await expect(log(page).locator('[data-thread-marker="time"]').first()).toHaveText(/^Today 8:[3-5]\d AM$/)
+  await expect(log(page).locator('[data-thread-marker="time"]').first()).toHaveText(/^Today 8:[3-5]\d\sAM$/)
   await chatBox(page).fill(Q)
   await page.keyboard.press('Enter')
   await expect(log(page).getByText(A)).toHaveCount(2, { timeout: 15_000 })

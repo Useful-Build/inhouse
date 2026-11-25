@@ -17,6 +17,18 @@ const HREF = /^(xlink:)?href$/i
  */
 const UNSAFE_CSS = /url\(\s*(?!['"]?#)|image-set\(|image\(|src\(|@import|\\/i
 
+/**
+ * Refuses a diagram whose own text names an address in CSS (`url(`, `image-set(`, `image(`, `src(`, `@import`) or holds a
+ * backslash (a CSS escape can spell any of those). Mermaid lays a figure out in the live page before returning it, so a
+ * `classDef` or `style` line's address would be fetched (same-origin ones with the session's cookies) before `tidySvg`
+ * ever sees the figure: such a diagram is not drawn at all, and the card shows its source.
+ */
+export function checkSource(source: string): void {
+  if (/url\s*\(|image-set\s*\(|image\s*\(|src\s*\(|@import|\\/i.test(source)) {
+    throw new Error('The diagram names an address in its style, so it is not drawn')
+  }
+}
+
 /** CSS text without any rule part or declaration that holds unsafe CSS. Parts are cut at `{`, `}` and `;`, so removing one can't join its neighbours into a new token. */
 export function cleanCss(css: string): string {
   return css.replace(/[^{};]+/g, part => (UNSAFE_CSS.test(part) ? '' : part))

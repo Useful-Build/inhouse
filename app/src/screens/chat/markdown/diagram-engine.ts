@@ -3,7 +3,7 @@
 // them (not in the entry chunk, not in the renderer chunk; build-support/markdown-entry.test.ts pins both).
 import { MERMAID_CONFIG } from './diagram-theme'
 import type { DiagramTheme } from './diagram-theme'
-import { tidySvg } from './diagram-svg'
+import { checkSource, tidySvg } from './diagram-svg'
 
 type Mermaid = typeof import('mermaid').default
 
@@ -20,6 +20,7 @@ let queue: Promise<unknown> = Promise.resolve()
 /** The sanitized figure for `source`, in `theme`. Throws what Mermaid throws for a diagram it can't parse or draw. */
 export function drawDiagram(source: string, id: string, label: string, theme: DiagramTheme): Promise<string> {
   const run = queue.then(async () => {
+    checkSource(source)
     const mermaid = await loadMermaid()
     // Per draw: the colours change with the theme.
     mermaid.initialize({ ...MERMAID_CONFIG, fontFamily: theme.fontFamily, themeVariables: theme.themeVariables })

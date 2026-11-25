@@ -7,7 +7,7 @@ const mermaid = vi.hoisted(() => ({ loaded: 0, initialize: vi.fn(), render: vi.f
 vi.mock('mermaid', () => { mermaid.loaded++; return { default: { initialize: mermaid.initialize, render: mermaid.render } } })
 vi.mock('../../../ui', () => ({ IconButton: () => null }))
 vi.mock('../copy', () => ({ copyText: () => undefined }))
-vi.mock('./diagram-svg', () => ({ tidySvg: (svg: string, label: string) => `${label}|${svg}` }))
+vi.mock('./diagram-svg', async orig => ({ ...(await orig<typeof import('./diagram-svg')>()), tidySvg: (svg: string, label: string) => `${label}|${svg}` }))
 
 const theme: DiagramTheme = { dark: false, fontFamily: 'Geist', themeVariables: { primaryColor: 'fill-value' } }
 
@@ -25,6 +25,14 @@ describe('the diagram engine', () => {
     await drawDiagram('flowchart LR\n A-->B', 'ih-diagram-x', 'Diagram 1', theme)
     await drawDiagram('flowchart LR\n A-->B', 'ih-diagram-y', 'Diagram 2', theme)
     expect(mermaid.loaded).toBe(1)
+  })
+
+  it('never hands Mermaid a diagram that names an address in its style (Mermaid lays it out in the live page first)', async () => {
+    const { drawDiagram } = await import('./diagram-engine')
+    mermaid.render.mockResolvedValue({ svg: '<svg/>' })
+    await expect(drawDiagram('stateDiagram-v2\n  classDef x background-image:url(/logout)\n  class A x', 'ih-diagram-h', 'Diagram 1', theme)).rejects.toThrow(/address/)
+    expect(mermaid.render).not.toHaveBeenCalled()
+    expect(mermaid.initialize).not.toHaveBeenCalled()
   })
 
   it('draws with the strict config and the theme of the moment, and returns the tidied figure', async () => {
