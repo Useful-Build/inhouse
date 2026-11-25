@@ -7,14 +7,30 @@ import { openState, STATES, THEMES } from './states.js'
 
 // The app scrolls inside main (and, on desktop, inside the Settings page and the Library file list), not the
 // document, so a full-page shot alone stops at the fold. For page states, grow the viewport's height until those
-// areas show everything. Widths, and so the layout breakpoints, stay as they are.
+// areas show everything. Widths, and so the layout breakpoints, stay as they are. Each measure waits until the hidden
+// height holds for 3 frames in a row: a chat's Message Scroller resizes its spacer a frame or two after the viewport
+// grows, and measuring before that grew the same chat to different heights from run to run.
 async function growToContent(page: Page) {
   const { width } = page.viewportSize()!
   let last = Infinity
   for (let i = 0; i < 4; i++) {
-    const extra = await page.evaluate(() => Math.max(0, ...[...document.querySelectorAll('main, main *')]
-      .filter(e => /auto|scroll/.test(getComputedStyle(e).overflowY) && e.clientHeight >= 200)
-      .map(e => e.scrollHeight - e.clientHeight)))
+    const extra = await page.evaluate(() => new Promise<number>((resolve, reject) => {
+      const measure = () => Math.max(0, ...[...document.querySelectorAll('main, main *')]
+        .filter(e => /auto|scroll/.test(getComputedStyle(e).overflowY) && e.clientHeight >= 200)
+        .map(e => e.scrollHeight - e.clientHeight))
+      let prev = measure()
+      let same = 0
+      let frames = 0
+      const tick = () => {
+        const now = measure()
+        same = now === prev ? same + 1 : 0
+        prev = now
+        if (same >= 3) return resolve(now)
+        if (++frames > 120) return reject(new Error(`The hidden height never settled (last ${now}px)`))
+        requestAnimationFrame(tick)
+      }
+      requestAnimationFrame(tick)
+    }))
     if (extra <= 1 || extra >= last) break
     last = extra
     await page.setViewportSize({ width, height: page.viewportSize()!.height + extra })

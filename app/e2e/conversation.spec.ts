@@ -128,8 +128,9 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, the tim
   const x = async (l: Locator) => (await l.boundingBox())!.x
   const atRest = await x(actions)
   expect(atRest - await x(bar)).toBeLessThanOrEqual(8)
-  await bar.hover()
-  await expect.poll(() => opacity(actions)).toBe('1')
+  // Hover again on each poll: the thread can still shift a few pixels after Jump to latest, moving the row out from
+  // under a pointer that hovered once.
+  await expect.poll(async () => { await bar.hover(); return opacity(actions) }).toBe('1')
   expect(await x(actions)).toBe(atRest)
   // Opening More doesn't move the actions or the More button under the pointer.
   const more = bar.getByRole('button', { name: 'More' })
