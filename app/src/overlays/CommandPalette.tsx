@@ -1,6 +1,6 @@
-// The command palette (⌘K or Ctrl+K): jump to a page, a settings page or a chat, or run an action. Also the app's
-// keyboard shortcuts, since they live and die with it: ⌘K, ⌘⇧O (new chat) and ⌘\ (collapse the sidebar).
-import { useEffect, useRef } from 'react'
+// The command palette (⌘K or Ctrl+K): jump to a page, a settings page or a chat, or run an action. It loads the first time
+// it opens (or when the browser is idle, App.tsx's prefetch), not with Today; the shortcuts that open it are in shell/shortcuts.ts.
+import { useRef } from 'react'
 import { flushSync } from 'react-dom'
 import { STAGE_TAGS } from '../state/derive'
 import { chatEntries, useCtx, useUi } from '../state/store'
@@ -12,44 +12,17 @@ import { Icon, StageTag } from '../ui'
 import { keepForToast } from '../ui/dialogs'
 import { NO_MOTION } from '../ui/motion'
 import { menuFor } from '../screens/settings/menu'
-import { mac, PAGES, SHORTCUTS } from '../shell/nav'
+import { PAGES, SHORTCUTS } from '../shell/nav'
 import { demo } from '../agent'
 import { demoEnabled } from '../shell/demo'
 
 /** Words a settings page is also found by, by its tab: Models was called Thinking modes. */
 const EXTRA: Record<string, string[]> = { 'team-modes': ['thinking', 'models'] }
 
-/** Typing in a field: shortcuts other than ⌘K leave the keys to it. */
-const typing = (t: EventTarget | null) =>
-  t instanceof HTMLElement && (t.isContentEditable || t.matches('input, textarea, select, [role="textbox"]'))
-
-/** Whether the event is this letter: by the key, else by its place on the keyboard when the key isn't a Latin letter (a non-Latin layout). */
-const isKey = (e: KeyboardEvent, letter: string) => {
-  const k = e.key.toLowerCase()
-  return k === letter || (!/^[a-z]$/.test(k) && e.code === `Key${letter.toUpperCase()}`)
-}
-
 /** Search matches what an item shows and its keywords, not its internal value (an id). */
 const filter = (_value: string, search: string, keywords?: string[]) => defaultFilter(keywords?.join(' ') ?? '', search)
 
-function useShortcuts() {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      // ⌘ on a Mac, Ctrl elsewhere, as SHORTCUTS writes them: Ctrl+K stays the Mac's delete-to-end-of-line in a field.
-      if (!(mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) || e.altKey) return
-      const ui = useUi.getState()
-      if (isKey(e, 'k') && !e.shiftKey) { e.preventDefault(); if (!e.repeat) ui.patch({ palette: !ui.palette }); return }
-      if (typing(e.target)) return
-      if (isKey(e, 'o') && e.shiftKey) { e.preventDefault(); if (!e.repeat) ui.newChat(); return }
-      if ((e.code === 'Backslash' || e.key === '\\') && !e.shiftKey && !ui.phone) { e.preventDefault(); if (!e.repeat) ui.toggleSidebar() }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
-}
-
 export function CommandPalette() {
-  useShortcuts()
   const open = useUi(s => s.palette)
   const started = useUi(s => s.started)
   const ctx = useCtx()
