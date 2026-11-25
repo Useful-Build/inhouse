@@ -339,6 +339,9 @@ test('Conversation: a mermaid fence is drawn as a diagram, with its source one c
   await diagram.getByRole('button', { name: 'Show diagram 1 source' }).click()
   await expect(diagram.locator('[data-md-code]')).toContainText('flowchart LR')
   await expect(diagram.getByRole('button', { name: 'Hide diagram 1 source' })).toHaveAttribute('aria-pressed', 'true')
+  // `-->` shows as typed, never as a ligature arrow: in the code block and in the figure's own text.
+  expect(await diagram.locator('[data-md-code] pre').evaluate(el => getComputedStyle(el).fontVariantLigatures)).toBe('none')
+  expect(await figure.locator('text').first().evaluate(el => getComputedStyle(el).fontVariantLigatures)).toBe('none')
   await shot(page, 'mermaid-diagram')
 })
 

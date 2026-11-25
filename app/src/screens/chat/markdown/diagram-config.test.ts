@@ -22,7 +22,7 @@ describe('a diagram cannot change the locked config', () => {
     expect(c.htmlLabels).toBe(false)
     expect(c.flowchart?.htmlLabels).toBeUndefined()
     expect(c.theme).toBe('base')
-    expect(c.themeCSS).toBeUndefined()
+    expect(c.themeCSS).toBe(MERMAID_CONFIG.themeCSS)
     expect(c.themeVariables?.fontSize).toBe('13px')
     expect(c.fontFamily).not.toBe('x')
     expect(c.altFontFamily).not.toBe('y')
