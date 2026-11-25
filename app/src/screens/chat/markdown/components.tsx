@@ -6,7 +6,8 @@ import type { Components, ExtraProps } from 'streamdown'
 import { cn } from '@/lib/utils'
 import { CodeSnippet } from '../../../ui/code-snippet'
 import { copyText } from '../copy'
-import { imageSrc, linkTarget } from './policy'
+import { Diagram } from './diagram'
+import { DIAGRAM_LANGUAGE, imageSrc, linkTarget } from './policy'
 import type { Look } from './policy'
 
 type HastNode = NonNullable<ExtraProps['node']>
@@ -70,6 +71,8 @@ function build(look: Look, linkHosts: readonly string[]): Components {
       const cls = code?.properties?.className
       const lang = (Array.isArray(cls) ? cls.map(String) : []).find(c => c.startsWith('language-'))?.slice('language-'.length) ?? ''
       const n = Number(node?.properties?.dataMdN)
+      // A mermaid fence is a diagram (Mermaid loads with the first one drawn); its numbering is its own.
+      if (lang === DIAGRAM_LANGUAGE) return <Diagram source={text} n={n} last={node?.properties?.dataMdLast === true} />
       const name = `code block ${n}${lang ? `, ${lang}` : ''}`
       return <CodeSnippet text={text} label={`Code block ${n}${lang ? `, ${lang}` : ''}`} copyLabel={`Copy ${name}`} onCopy={t => copyText(t, 'Code copied')} />
     },

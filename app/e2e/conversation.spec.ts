@@ -28,6 +28,7 @@ const scrollState = (page: Page) => page.evaluate(() => {
 const NEAR_BOTTOM_PX = 80
 const MD_Q = "Give me the query for last week's orders by SKU"
 const REFUNDS_Q = 'Why did refunds jump?'
+const DIAGRAM_Q = 'Show me a diagram of how a refund moves through the team'
 const REFUNDS_A = 'Refund requests rose from 14 last week to 31 this week'
 
 test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, Edit, Regenerate, thumbs and the mode and time', async ({ page, context }) => {
@@ -288,4 +289,28 @@ test('Conversation: the steps line expands and collapses and opens the trace, so
   // The chat column is 880px at 1440 (the thread and the composer).
   expect((await log(page).boundingBox())!.width).toBe(880)
   expect((await page.locator('[data-composer]').boundingBox())!.width).toBeLessThanOrEqual(880)
+})
+
+test('Conversation: a mermaid fence is drawn as a diagram, with its source one click away', async ({ page }) => {
+  await start(page, 'Normal', '#/today')
+  await page.getByRole('textbox', { name: 'Ask Inhouse' }).fill(DIAGRAM_Q)
+  await page.keyboard.press('Enter')
+  // Mermaid loads with the first diagram, so allow for the chunk; the figure is an image with a name, inside a keyboard-scrollable region.
+  const diagram = log(page).locator('[data-md-diagram][data-state="ready"]')
+  await expect(diagram).toBeVisible({ timeout: 30_000 })
+  const figure = diagram.locator('svg[role="img"]')
+  await expect(figure).toHaveAttribute('aria-label', 'Diagram 1')
+  await expect(figure).toContainText('Customer asks for a refund')
+  await expect(log(page).getByRole('region', { name: 'Diagram 1', exact: true })).toHaveAttribute('tabindex', '0')
+  // No link, image or embedded page can come from a diagram, and it is not shown as a code block.
+  await expect(diagram.locator('a, image, foreignObject, script')).toHaveCount(0)
+  await expect(log(page).locator('[data-md-code]')).toHaveCount(0)
+  // The diagram stays inside the answer column.
+  const box = await diagram.evaluate(el => ({ right: el.getBoundingClientRect().right, col: el.closest('[role="log"]')!.getBoundingClientRect().right }))
+  expect(box.right).toBeLessThanOrEqual(box.col + 0.5)
+  // Show source reveals the fence's text as a code block.
+  await diagram.getByRole('button', { name: 'Show diagram 1 source' }).click()
+  await expect(diagram.locator('[data-md-code]')).toContainText('flowchart LR')
+  await expect(diagram.getByRole('button', { name: 'Hide diagram 1 source' })).toHaveAttribute('aria-pressed', 'true')
+  await shot(page, 'mermaid-diagram')
 })
