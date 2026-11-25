@@ -72,11 +72,17 @@ test('Trace window: Replay, Pause replay, the speed, the replay result, Restart 
   await speed.click()
   await expect(speed).toHaveAccessibleName('Replay speed 5×. Change speed')
 
-  // Replay goes on from where it was held and, at 5×, reaches the end: the full result, every step reached, and it stops
-  // by itself (Replay again, Stop still there until it is pressed).
+  // Replay goes on from where it was held (not from the start), at 5×: the trace is 9.4 s and the playhead was held at
+  // 1 s, so one more second of clock is 5 s of replay (still playing, at 1× it would be 2 s) and a second after that
+  // passes the end (at 1× it would be 3 s). It stops by itself on the full result (Replay again, Stop still there).
   await dialog.getByRole('button', { name: 'Replay', exact: true }).click()
   await expect(pause).toBeVisible()
-  await page.clock.runFor(60_000)
+  await expect(timeTaken).toHaveText(held)
+  await page.clock.runFor(1000)
+  await expect(timeTaken).not.toHaveText(held)
+  await expect(timeTaken).not.toHaveText(fullTime)
+  await expect(pause).toBeVisible()
+  await page.clock.runFor(1000)
   await expect(dialog.getByRole('button', { name: 'Replay', exact: true })).toBeVisible()
   await expect(timeTaken).toHaveText(fullTime)
   await expect(toolsUsed).toHaveText(fullTools)

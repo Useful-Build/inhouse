@@ -53,6 +53,16 @@ test('Diagram: a theme change draws the figure again in the new colours, in the 
   }))
   const light = await figure()
   expect(light.fill).not.toBe('')
+  // Every state the card shows from here, so a flash of the loading line or the source between the figures is caught:
+  // the old figure stays up while the new one draws (diagram.tsx). The card is one element throughout (checked below).
+  const card = await diagram.elementHandle()
+  await diagram.evaluate(el => {
+    const w = window as unknown as { diagramStates: string[] }
+    w.diagramStates = []
+    new MutationObserver(() => {
+      w.diagramStates.push(`${el.getAttribute('data-state')}${el.textContent?.includes('Drawing diagram') ? ' drawing' : ''}${el.querySelector('svg') ? '' : ' no-figure'}`)
+    }).observe(el, { attributes: true, childList: true, subtree: true, characterData: true })
+  })
 
   await page.keyboard.press('ControlOrMeta+k')
   await palette(page).getByRole('option', { name: 'Switch to dark theme' }).click()
@@ -67,6 +77,10 @@ test('Diagram: a theme change draws the figure again in the new colours, in the 
   await expect(diagram).toHaveAttribute('data-state', 'ready')
   await expect(diagram).toHaveCount(1)
   await expect(diagram.locator('svg[role="img"]')).toHaveAttribute('aria-label', 'Diagram 1')
+  expect(await card!.evaluate(el => el.isConnected)).toBe(true)
+  const states = await page.evaluate(() => (window as unknown as { diagramStates: string[] }).diagramStates)
+  expect(states.length).toBeGreaterThan(0)
+  expect(states.filter(s => s !== 'ready')).toEqual([])
 
   // And back: light draws its light colours again (from the cache of figures already drawn, at once).
   await page.keyboard.press('ControlOrMeta+k')

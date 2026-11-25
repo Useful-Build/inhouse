@@ -39,6 +39,9 @@ test('Chat while it writes: the steps build up row by row, the words show a few 
   await expect(lines(page).first()).toContainText('Reading your question')
   const shimmering = (line: Locator) => line.locator('[data-slot=trace-title]').evaluate(el => getComputedStyle(el).animationName !== 'none')
   expect(await shimmering(lines(page).first())).toBe(true)
+  /** The mark before a row's line: the agent mark (its three dots) while it runs, the step's icon once done. */
+  const agentMark = (line: Locator) => line.locator('xpath=preceding-sibling::*[1]').locator('.agent-dot-1')
+  await expect(agentMark(lines(page).first())).toHaveCount(1)
 
   // Each step adds a row: the newest runs, every earlier one is done (no status, no shimmer).
   for (const n of [2, 3]) {
@@ -46,9 +49,11 @@ test('Chat while it writes: the steps build up row by row, the words show a few 
     await expect(lines(page)).toHaveCount(n)
     await expect(thinking(page).locator('[data-slot=trace-line][data-status="running"]')).toHaveCount(1)
     await expect(lines(page).last()).toHaveAttribute('data-status', 'running')
+    await expect(agentMark(lines(page).last())).toHaveCount(1)
     for (let i = 0; i < n - 1; i++) {
       await expect(lines(page).nth(i)).not.toHaveAttribute('data-status', /.+/)
       expect(await shimmering(lines(page).nth(i))).toBe(false)
+      await expect(agentMark(lines(page).nth(i))).toHaveCount(0)
     }
   }
 
