@@ -18,12 +18,12 @@ vi.hoisted(() => {
   g.window = Object.assign(globalThis, { addEventListener: () => undefined, removeEventListener: () => undefined, matchMedia: () => ({ matches: false, addEventListener: () => undefined, removeEventListener: () => undefined }), localStorage: storage, sessionStorage: storage })
 })
 
-let Markdown: typeof import('./chat/Markdown').Markdown
+let Markdown: typeof import('./chat/markdown/renderer').Markdown
 let SkillsScreen: typeof import('./Skills')
 let store: typeof import('../state/store')
 let agentMod: typeof import('../agent')
 beforeAll(async () => {
-  ;({ Markdown } = await import('./chat/Markdown'))
+  ;({ Markdown } = await import('./chat/markdown/renderer'))
   SkillsScreen = await import('./Skills')
   store = await import('../state/store')
   agentMod = await import('../agent')
@@ -46,7 +46,10 @@ describe('the page look', () => {
   })
   test("leaves a chat answer as it was: ## is an h3 and a leading --- block isn't stripped", () => {
     const out = html(SKILL_MD)
-    expect(out.match(/<h3[ >]/g)).toHaveLength(2)
+    // The two sections are h3s. (CommonMark reads the line above the frontmatter's closing --- as a setext heading too, so a chat answer shows that as a heading as well.)
+    expect(out).toMatch(/<h3[^>]*>When to use<\/h3>/)
+    expect(out).toMatch(/<h3[^>]*>Steps<\/h3>/)
+    expect(out).not.toMatch(/<h[12][ >]/)
     expect(out).toContain('Reads every tool.')
     expect(out).toBe(renderToStaticMarkup(createElement(Markdown, { text: SKILL_MD })))
   })

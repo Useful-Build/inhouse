@@ -47,11 +47,8 @@ const MEMORY_TEAM = 'We restock on Fridays.'
 
 /** Waits for menus and windows to finish their finite animations, then attaches a screenshot named by the item. */
 async function shot(page: Page, name: string) {
-  // An answer's new words fade in on spans (`animate-word-in`, Markdown.tsx) that are swapped for plain text when the
-  // reveal ends (reveal.ts), and a span swapped or re-mounted mid-fade cancels its animation, whose `finished` then rejects
-  // with "AbortError: The user aborted a request" (what S8's "resumed and answered" shot hit). So the shot waits for the
-  // reveal to end first: with no word spans left, every animation it waits on below runs to its end.
-  await expect(page.locator('.animate-word-in')).toHaveCount(0)
+  // The words of an answer are revealed over about a second (reveal.ts) and the log is busy until they are all there: shoot the finished answer.
+  await expect(page.locator('[role="log"][aria-busy="true"]')).toHaveCount(0)
   await page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
   await test.info().attach(name, { body: await page.screenshot(), contentType: 'image/png' })
 }

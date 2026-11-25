@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { fc, test } from '@fast-check/vitest'
 import { expect, vi } from 'vitest'
-import { Markdown } from './Markdown'
+import { Markdown } from './markdown/renderer'
 
 vi.mock('../../ui', () => ({ IconButton: () => null }))
 vi.mock('./copy', () => ({ copyText: () => undefined }))
