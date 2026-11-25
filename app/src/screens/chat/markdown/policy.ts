@@ -63,3 +63,23 @@ export function keepBareGreaterThan(text: string): string {
 /** A SKILL.md's frontmatter (a `---` block at the very top): not part of what a person reads. */
 const FRONTMATTER = /^\uFEFF?---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/
 export const stripFrontmatter = (text: string) => text.replace(FRONTMATTER, '')
+
+/**
+ * Whether the text ends inside a code fence that is still open (a half-written block while an answer streams). Loose about
+ * indentation and quote marks: a fence inside a list or quote counts. A wrong guess only changes what a diagram shows
+ * for a moment, never what the answer says.
+ */
+export function endsInOpenFence(text: string): boolean {
+  let open: { char: string; length: number } | null = null
+  for (const line of text.split('\n')) {
+    const m = /^[ \t>]*(`{3,}|~{3,})(.*)$/.exec(line)
+    if (!m) continue
+    const char = m[1][0], length = m[1].length
+    if (!open) { if (char !== '`' || !m[2].includes('`')) open = { char, length } }
+    else if (char === open.char && length >= open.length && m[2].trim() === '') open = null
+  }
+  return open !== null
+}
+
+/** The fence language that draws a diagram. */
+export const DIAGRAM_LANGUAGE = 'mermaid'

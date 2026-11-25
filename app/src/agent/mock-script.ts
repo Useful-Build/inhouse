@@ -222,6 +222,23 @@ const QUERY_ANSWER = [
   "> These are Shopify orders only. [Amazon orders](https://orders.example.test/) aren't in this query.",
 ].join('\n')
 
+/** Asked for a diagram or flowchart, the agent answers with a Mermaid diagram: the one sample answer that has a ```mermaid fence. */
+const DIAGRAM_ASK = /\b(diagram|flowchart)\b/i
+const DIAGRAM_ANSWER = [
+  "Here's how a refund request moves through the team:",
+  '',
+  '```mermaid',
+  'flowchart LR',
+  '  A[Customer asks for a refund] --> B{Order under 30 days old}',
+  '  B -->|Yes| C[Approve in Shopify]',
+  '  B -->|No| D[Ask the team]',
+  '  C --> E[Send the refund email]',
+  '  D --> E',
+  '```',
+  '',
+  'Most refunds take the top path.',
+].join('\n')
+
 /** A seeded turn's own answer when the question is one a chat already asked: this chat's first, then any chat's. */
 export function seeded(h: ScriptHost, q: string, chatId: string): Script | null {
   const stage = h.demo.stage
@@ -330,6 +347,9 @@ export function buildScript(h: ScriptHost, q: string, chatId: string): Script {
   }
   if (QUERY_ASK.test(q)) {
     return { thinking: fb.thinking, delayMs: fb.delayMs, trace: 'query', parts: [text(QUERY_ANSWER)] }
+  }
+  if (DIAGRAM_ASK.test(q)) {
+    return { thinking: fb.thinking, delayMs: fb.delayMs, trace: 'generic', parts: [text(DIAGRAM_ANSWER)] }
   }
   const plain = (match: string, re: RegExp): Script | null => {
     const s = pick(match) as { thinking: string[]; delayMs: number; reply: { text: string }[]; trace: string }

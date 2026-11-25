@@ -1,6 +1,8 @@
 // The small remark and rehype steps around Streamdown's own: what the old renderer did that GFM does not.
 // Structural types only (the trees are mdast and hast): no unified or unist import, none is a direct dependency.
 
+import { DIAGRAM_LANGUAGE } from './policy'
+
 interface Node { type: string; value?: string; children?: Node[]; tagName?: string; properties?: Record<string, unknown>; align?: (string | null)[] }
 
 /** Raw HTML is never passed through: it shows as the text it was written as (an answer that names `<order-id>` keeps it). */
@@ -49,16 +51,31 @@ export function rehypeLowercaseSchemes() {
   }
 }
 
-/** Numbers the code blocks and tables of the text in order (`dataMdN`), so each region and Copy button has its own name. */
+/** The fence language of a `pre` node (its `code` child's `language-x` class), or ''. */
+function languageOf(pre: Node): string {
+  const code = pre.children?.find(c => c.type === 'element' && c.tagName === 'code')
+  const cls = code?.properties?.className
+  return (Array.isArray(cls) ? cls.map(String) : []).find(c => c.startsWith('language-'))?.slice('language-'.length) ?? ''
+}
+
+/**
+ * Numbers the code blocks and tables of the text in order (`dataMdN`), so each region and Copy button has its own name.
+ * A diagram (a mermaid fence) has its own count, so "Diagram 1" does not take a code block's number. The last `pre` is
+ * marked (`dataMdLast`): while an answer streams, it is the only one that can still be open.
+ */
 export function rehypeNumberBlocks() {
   return (tree: Node) => {
-    let code = 0, table = 0
+    let code = 0, table = 0, diagram = 0
+    let last: Node | undefined
     const walk = (node: Node) => {
       if (node.type === 'element' && (node.tagName === 'pre' || node.tagName === 'table')) {
-        node.properties = { ...node.properties, dataMdN: node.tagName === 'pre' ? ++code : ++table }
+        const n = node.tagName === 'table' ? ++table : languageOf(node) === DIAGRAM_LANGUAGE ? ++diagram : ++code
+        node.properties = { ...node.properties, dataMdN: n }
+        if (node.tagName === 'pre') last = node
       }
       node.children?.forEach(walk)
     }
     walk(tree)
+    if (last) last.properties = { ...last.properties, dataMdLast: true }
   }
 }

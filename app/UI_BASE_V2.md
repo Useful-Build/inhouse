@@ -86,6 +86,24 @@ Files: `components/ui/*` (from the update), `components/ui/icon.tsx`, `screens/c
 - [x] Slim `reveal.ts` (decision 9); delete `md-syntax.ts` and the `--animate-word-in` CSS.
 - [x] Streamdown entry in `adopted-libraries.md` moves to "In use" (`@shadcn/react` landed with the pull).
 
+### PR A2: Mermaid diagrams (Sonnet, asked for by Wasim 2026-11-25)
+Files: `screens/chat/markdown/` (`diagram.tsx`, `diagram-engine.ts`, `diagram-svg.ts`, `diagram-theme.ts`, edits to `components.tsx`, `plugins.ts`, `policy.ts`, `renderer.tsx`), `build-support/markdown-entry.test.ts`, `src/agent/mock-script.ts` (one sample answer), `e2e/conversation.spec.ts`, `docs/adopted-libraries.md`, `FEATURE_MAP.md`.
+- [x] `mermaid` 12.3.0 (exact pin) installed; `@streamdown/mermaid` is not (see the note).
+- [x] A ` ```mermaid ` fence in chat and on the Skills page is a diagram; no other surface changes.
+- [x] Mermaid loads only when a diagram is drawn: one `import('mermaid')` in `diagram-engine.ts`, not in the entry chunk and not in the renderer chunk; `markdown-entry.test.ts` and `diagram-engine.test.ts` pin it.
+- [x] Strict config: `securityLevel: 'strict'`, `htmlLabels: false`, no links, images or embedded pages in the figure; the CSP is not loosened.
+- [x] Our tokens as `themeVariables` at each draw; redraws on a light or dark change; a bordered card that scrolls sideways and stays inside the column.
+- [x] While the fence is open (`live`) a quiet "Drawing diagram…" line, never an error; a diagram that fails after it closes shows "Couldn't draw this diagram." over its source and logs with `console.error`.
+- [x] `svg[role=img]` with an `aria-label`; Show source and Copy; no animation of its own (the global reduced-motion rule covers Mermaid's animated edges).
+- [x] Unit tests (fence detection, states, config, theme, engine), a fast-check property (any text renders while live), one E2E test on a new invented sample answer ("Show me a diagram of how a refund moves through the team").
+- [x] Docs: `adopted-libraries.md` (new Mermaid entry, Streamdown entry updated), `FEATURE_MAP.md`.
+- Note (as built):
+  - **No `@streamdown/mermaid`.** Its `index.js` is `import a from 'mermaid'` at the top, so loading the plugin loads Mermaid; and its diagram block brings Streamdown's own Tailwind classes, which this build never generates. Our `pre` override already replaces Streamdown's code block, so the plugin would have sat unused. The brief's "wrap it so the import happens on first use" is met by the engine's dynamic import of `mermaid` itself, with the plugin's config (strict, no error figure) kept.
+  - **Version:** `mermaid` 12.3.0 (3 weeks old), root-level `htmlLabels` (the per-diagram setting is deprecated).
+  - **Not run here:** no browser. Whether Mermaid draws under the real CSP, its chunk size, and the look in both themes are for CI's E2E and the PR's preview. Estimated weight: about 3.3 MB of unminified chunks in the package, loaded per diagram type; expect a few hundred KB gzip for the core plus flowchart.
+  - **Token colours:** `themeVariables` need hex or rgb (Mermaid's colour maths cannot read oklch or `color-mix`); a token in another format goes through a 1-pixel canvas to 8-digit hex.
+  - **Follow-ups:** add `mermaid` to the `registered` Dependabot group (`.github/dependabot.yml`); the agent's prompt does not yet tell it when a diagram helps (prompt edits need the eval suite, so not here).
+
 ### PR B: thread + markers (Opus medium)
 Files: `screens/Chats.tsx`, `screens/chat/view.ts`, `shared/contract/chat.ts`, `src/agent/sample-data/mock-chat.ts`, `src/ui/agent/` (new: thread parts).
 - [x] Message Scroller replaces the scroll code (`Chats.tsx` 30-31, 157-158, 222-279, 435-436, 571-582); keep `aria-label="Conversation"`, `aria-busy`, a hold when a fold opens at the live edge (`onToggleLong`), and the `overflow-auto` class the E2E helpers find (or update the helpers).
