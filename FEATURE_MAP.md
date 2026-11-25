@@ -470,8 +470,8 @@ Demo upgrade: a stored demo
 Navigation: palette and shortcuts
   Path:     Cmd+K or Search -> type
   Selector: palette, shortcuts Cmd+Shift+O, Cmd+\
-  Expected: pages, settings pages and chats open; Escape returns focus; shortcuts skip fields except Cmd+K
-  Covered:  e2e/navigation.spec.ts
+  Expected: pages, settings pages and chats open; Escape returns focus; shortcuts skip fields except Cmd+K; the palette loads the first time it opens or once the browser is idle (not with Today's first load), and Cmd+K works before it has loaded
+  Covered:  e2e/navigation.spec.ts, build-support/entry-graph.test.ts (the palette, cmdk and the base Code Block stay out of the entry)
 
 Palette: theme switch
   Path:     Cmd+K -> Switch to dark theme (or light); Settings -> General -> Theme

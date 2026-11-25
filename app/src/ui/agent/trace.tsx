@@ -1,17 +1,9 @@
-// Shared agent row compositions on top of shadcn/ui's Trace and Code Block primitives (UI_BASE_V2 decision 3).
+// Shared agent row compositions on top of shadcn/ui's Trace primitives (UI_BASE_V2 decision 3). The Code Block parts are
+// in code.tsx, so the steps line doesn't bring them into Today's first load.
 // Screens and overlays import from `src/ui/agent`, never directly from `src/components/ui`.
 import type { ComponentProps } from 'react'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
-import {
-  CodeBlock,
-  CodeBlockActions,
-  CodeBlockContent,
-  CodeBlockCopyButton,
-  CodeBlockFooter,
-  CodeBlockHeader,
-  CodeBlockTitle,
-} from '@/components/ui/code-block'
 import {
   Trace,
   TraceCollapsible,
@@ -26,13 +18,6 @@ import { Icon, LogoTile } from '../index'
 
 export {
   Badge,
-  CodeBlock,
-  CodeBlockActions,
-  CodeBlockContent,
-  CodeBlockCopyButton,
-  CodeBlockFooter,
-  CodeBlockHeader,
-  CodeBlockTitle,
   Trace,
   TraceCollapsible,
   TraceCollapsibleContent,
