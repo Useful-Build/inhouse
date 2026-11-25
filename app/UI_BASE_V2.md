@@ -111,8 +111,10 @@ Files: `components/Composer.tsx`, `ui/chrome.tsx` (`AttachmentChip`), `screens/c
 
 ### PR E: confirmation (Sonnet, after B)
 Files: `screens/chat/Parts.tsx` (`ApprovalCard`).
-- [ ] `ApprovalCard` on the Confirmation pattern (`Item` + `Button`s). Keep `bg-draft-sheet`, the draft body, sensitive gating (1-tap Approve vs Review), the Undo row, `data-approval`. Sets up M2's Allow once / Always allow.
-- [ ] Approvals page and review window stay hand-built.
+- [x] `ApprovalCard` on the Confirmation pattern (`Item` + `Button`s). Keep `bg-draft-sheet`, the draft body, sensitive gating (1-tap Approve vs Review), the Undo row, `data-approval`. Sets up M2's Allow once / Always allow.
+- [x] Approvals page and review window stay hand-built.
+- Dropped: the Queue part of PR E. shadcn's Queue is the agent's to-do list, not queued messages, and our `QueuedChip` stays (see the PR B notes). Nothing to build.
+- Note (as built): the composition is `ui/agent/confirmation.tsx` (`Confirmation`, `ConfirmationButtons`, `ConfirmationResult`); `ApprovalCard` in `Parts.tsx` keeps the logic (not-found line, sensitive gating, Approve, Review, Undo) and passes buttons in as children. shadcn's Confirmation is only a documented pattern (an outline `Item` with Deny and Approve), so ours is `Item` with the sheet look: `ItemMedia` is the icon tile, `ItemContent` holds the kicker (`ItemDescription`, `order-first`) over the title (`ItemTitle`, unclamped), `ItemActions` holds the "Open" link, and each button row is an `ItemFooter` with `ItemActions`. The `Item` is a column (`flex-col`) so the draft text box and the button row sit under the head. No Deny button: "Review and edit" is the other answer. No E2E selector changed (`data-approval`, button names and the `.bg-card` check hold).
 
 ### Every PR
 - [ ] `FEATURE_MAP.md` lines for the surface (chat 143-160, composer 123-127, trace window 489-493, gaps 11-12) updated in the same PR.
