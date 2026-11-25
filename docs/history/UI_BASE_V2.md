@@ -2,7 +2,7 @@
 
 Tracks the ui-base v2 round Wasim asked for on 2026-11-25. Paths are relative to `app/` unless they start with `ui-base/`. Update this file in every PR of the plan: tick what landed, add the PR link, note anything moved or dropped and why.
 
-**Status: Waves 0 to 3 merged into `fleet/ui-base-v2` on 2026-11-25: the v2 pull (#398), D composer (#399), B thread (#400), A markdown (#401), C steps (#402), A2 Mermaid (#403, added at Wasim's ask), E confirmation (#405). Final PR into `main`: full CI, High-tier review, live QA, then ship (Wasim gave overnight approval to merge and deploy once everything is green).**
+**Status: Done. Shipped to `main` on 2026-11-25 as #407 (squash 52771a4): the v2 pull (#398), D composer (#399), B thread (#400), A markdown (#401), C steps (#402), A2 Mermaid (#403, added at Wasim's ask), E confirmation (#405), then cleanup and fixes from the full runs, reviews and live QA (#406, #408 to #414). Moved to `docs/history/`.**
 
 ## What and why
 
