@@ -21,12 +21,16 @@ const SECURE: string[] = [
  *   config at any depth.
  * - `suppressErrorRendering`: a bad diagram throws and the caller shows the source; Mermaid draws no error figure of its own.
  * - `theme: 'base'`: the only theme that takes `themeVariables`, set per draw (below).
+ * - `themeCSS`: ligatures off, so `-->` shows as typed (no address, and a diagram can't replace it: it is in `secure`).
  * - `startOnLoad: false`: nothing scans the page; only what the renderer hands it is drawn.
  */
 export const MERMAID_CONFIG = {
   startOnLoad: false, securityLevel: 'strict', htmlLabels: false, suppressErrorRendering: true, theme: 'base', logLevel: 'error',
   // A journey draws its section and task text in a `foreignObject` by default ("fo"), which `tidySvg` refuses: SVG text instead.
   journey: { textPlacement: 'tspan' },
+  // Geist can draw `-->` or `->` as one arrow glyph: a diagram's text shows the characters as typed. Mermaid puts this
+  // in the figure's own <style> before it lays the text out, so the sizes it measures match what is drawn.
+  themeCSS: 'text, tspan { font-variant-ligatures: none; }',
   secure: SECURE,
 } as const satisfies MermaidConfig
 

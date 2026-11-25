@@ -41,6 +41,8 @@ describe('the diagram engine', () => {
     const out = await drawDiagram('flowchart LR\n A-->B', 'ih-diagram-x', 'Diagram 1', theme)
     expect(mermaid.initialize).toHaveBeenCalledWith(expect.objectContaining({
       securityLevel: 'strict', htmlLabels: false, theme: 'base', fontFamily: 'Geist', themeVariables: { primaryColor: 'fill-value' },
+      // `-->` shows as typed, not as a ligature arrow.
+      themeCSS: expect.stringContaining('font-variant-ligatures: none'),
     }))
     // A diagram's own init or frontmatter can't change how labels are drawn, the theme or its CSS (Mermaid's defaults kept).
     const { secure } = mermaid.initialize.mock.calls[0][0] as { secure: string[] }
