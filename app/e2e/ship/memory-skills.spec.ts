@@ -54,8 +54,9 @@ const SKILL_BODY_LINE = 'Read the wholesale orders.'
 
 /** Waits for menus and windows to finish their finite animations, then attaches a screenshot named by the item. */
 async function shot(page: Page, name: string) {
-  // allSettled: a cancelled animation rejects `finished`, which is not a failure here. The words of an answer fade in on spans.
-  await expect(page.locator('.animate-word-in')).toHaveCount(0)
+  // The words of an answer are revealed over about a second (reveal.ts) and the log is busy until they are all there: shoot the finished answer.
+  await expect(page.locator('[role="log"][aria-busy="true"]')).toHaveCount(0)
+  // allSettled: a cancelled animation rejects `finished`, which is not a failure here.
   await page.evaluate(() => Promise.allSettled(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
   await test.info().attach(name, { body: await page.screenshot(), contentType: 'image/png' })
 }

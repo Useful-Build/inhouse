@@ -1,7 +1,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { expect, test, vi } from 'vitest'
-import { Markdown } from './Markdown'
+import { Markdown } from './markdown/renderer'
 
 vi.mock('../../ui', () => ({ IconButton: () => null }))
 vi.mock('./copy', () => ({ copyText: () => undefined }))
@@ -38,9 +38,15 @@ test('validates the destination of named links and images, including angle-brack
 test.each([
   '<https://docs.example.test/page',
   '<https://docs.example.test.',
-])('leaves the label as text for an unclosed angle destination (%s)', dest => {
-  expect(html(`[Report](${dest}) ![Chart](${dest})`, ['docs.example.test']))
-    .toContain('>Report Chart</p>')
+])('an unclosed angle destination is no link or image of its own (%s)', dest => {
+  // CommonMark shows it as written; the only link is the bare listed address inside it (a listed host may be linked bare).
+  const out = html(`[Report](${dest}) ![Chart](${dest})`, ['docs.example.test'])
+  expect(out).not.toContain('<img')
+  expect(out).toContain('[Report](&lt;')
+  for (const m of out.matchAll(/<a [^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/g)) {
+    expect(m[1]).toMatch(/^https:\/\/docs\.example\.test\//)
+    expect(m[2]).toMatch(/^https:\/\/docs\.example\.test/)
+  }
 })
 
 test.each([
