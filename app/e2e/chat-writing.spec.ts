@@ -17,6 +17,9 @@ const lines = (page: Page) => thinking(page).locator('[data-slot=trace-line]')
 /** The answer card's text box (Parts.tsx: the text's measure). */
 const answerText = (answer: Locator) => answer.locator('.max-w-answer-measure').first()
 
+// The clock is paused mid-test: let it run again before the fixtures tear down (the CSP guard waits for an animation frame).
+test.afterEach(async ({ page }) => { await page.clock.resume() })
+
 test('Chat while it writes: the steps build up row by row, the words show a few at a time, then the measures and no Sources pill', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.clock.install()
@@ -68,9 +71,12 @@ test('Chat while it writes: the steps build up row by row, the words show a few 
   for (let i = 1; i < seen.length; i++) expect(seen[i] - seen[i - 1]).toBeGreaterThanOrEqual(3)
   await expect(log(page)).toHaveAttribute('aria-busy', 'true')
 
-  // Then all of it.
-  await page.clock.runFor(5000)
-  await expect(log(page)).not.toHaveAttribute('aria-busy', 'true')
+  // Then all of it. Each reveal step schedules the next after React draws it, so a long runFor fires only one: step the
+  // clock 50 ms at a time until the log is no longer busy (at most MAX_STEPS steps, screens/chat/reveal.ts).
+  await expect.poll(async () => {
+    await page.clock.runFor(50)
+    return log(page).getAttribute('aria-busy')
+  }, { message: 'the reveal finishes' }).toBeNull()
   await expect(answer).toContainText("can't answer that from your tools yet")
   expect(await words()).toBeGreaterThan(seen.at(-1)!)
   await expect(thinking(page)).toHaveCount(0)

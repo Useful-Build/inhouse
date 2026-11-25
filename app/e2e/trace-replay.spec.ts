@@ -9,6 +9,9 @@ const trace = (page: Page) => page.getByRole('dialog', { name: 'What your Inhous
 const stat = (dialog: Locator, label: string) => dialog.getByText(label, { exact: true }).locator('xpath=following-sibling::div[1]')
 const notReached = (dialog: Locator) => dialog.getByRole('list', { name: 'Steps' }).getByText('Not reached yet', { exact: true })
 
+// The clock is paused mid-test: let it run again before the fixtures tear down (the CSP guard waits for an animation frame).
+test.afterEach(async ({ page }) => { await page.clock.resume() })
+
 test('Trace window: Replay, Pause replay, the speed, the replay result, Restart and Stop and show everything', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.clock.install()
