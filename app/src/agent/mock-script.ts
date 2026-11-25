@@ -224,7 +224,7 @@ const QUERY_ANSWER = [
 
 /** Asked for a diagram or flowchart, the agent answers with a Mermaid diagram: the one sample answer that has a ```mermaid fence. */
 const DIAGRAM_ASK = /\b(diagram|flowchart)\b/i
-const DIAGRAM_ANSWER = [
+export const DIAGRAM_ANSWER = [
   "Here's how a refund request moves through the team:",
   '',
   '```mermaid',
@@ -268,6 +268,21 @@ const HOSTILE_DIAGRAM_ANSWER = [
   '  Asked --> Refunded',
   '  classDef hostile background-image:url(/hostile-classdef)',
   '  class Refunded hostile',
+  '```',
+].join('\n')
+
+/**
+ * Asked for a rough diagram, the agent answers with a Mermaid fence Mermaid can't parse (an arrow with nothing after it).
+ * The E2E test checks the card says it couldn't draw it and shows the source instead.
+ */
+const BROKEN_DIAGRAM_ASK = /\brough diagram\b/i
+export const BROKEN_DIAGRAM_ANSWER = [
+  "Here's a rough sketch of the returns queue:",
+  '',
+  '```mermaid',
+  'flowchart LR',
+  '  A[Return arrives] -->',
+  '  B[Check the item] --> -->',
   '```',
 ].join('\n')
 
@@ -379,6 +394,9 @@ export function buildScript(h: ScriptHost, q: string, chatId: string): Script {
   }
   if (QUERY_ASK.test(q)) {
     return { thinking: fb.thinking, delayMs: fb.delayMs, trace: 'query', parts: [text(QUERY_ANSWER)] }
+  }
+  if (BROKEN_DIAGRAM_ASK.test(q)) {
+    return { thinking: fb.thinking, delayMs: fb.delayMs, trace: 'generic', parts: [text(BROKEN_DIAGRAM_ANSWER)] }
   }
   if (HOSTILE_DIAGRAM_ASK.test(q)) {
     return { thinking: fb.thinking, delayMs: fb.delayMs, trace: 'generic', parts: [text(HOSTILE_DIAGRAM_ANSWER)] }
