@@ -26,6 +26,16 @@ describe('tidySvg', () => {
     expect(attrValues(out).join(' ')).not.toContain('evil.example')
   })
 
+  it("keeps a link's place: Mermaid puts a linked node's transform and classes on the <a> itself", () => {
+    const out = tidy('<a href="https://help.example.test" target="_blank" transform="translate(40, 20)" class="node-link"><rect width="10" height="10"/><text>Refund policy</text></a>')
+    const g = out.querySelector('g')!
+    expect(g.getAttribute('transform')).toBe('translate(40, 20)')
+    expect(g.getAttribute('class')).toBe('node-link')
+    expect(g.hasAttribute('href') || g.hasAttribute('target')).toBe(false)
+    expect(g.querySelector('text')!.textContent).toBe('Refund policy')
+    expect(out.querySelector('a')).toBeNull()
+  })
+
   it('removes images, embedded pages, scripts and animations with what they hold', () => {
     // The rect and filter come first: in HTML, an `<embed>` or `<object>` inside an svg ends the svg.
     const out = tidy([

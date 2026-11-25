@@ -369,6 +369,13 @@ test('Conversation: a diagram that tries links, HTML labels and addresses in its
   }
   // The linked node is still drawn: the link is gone, its shape and text stay.
   await expect.poll(() => diagrams.nth(0).locator('svg').evaluate(svg => [...svg.querySelectorAll('text')].map(t => t.textContent).join('').replace(/\s+/g, ''))).toContain('Refundpolicy')
+  // ...in its place: every label sits inside the figure (a link's own transform is kept when the link is dropped).
+  const outside = await diagrams.nth(0).locator('svg').evaluate(svg => {
+    const box = svg.getBoundingClientRect()
+    return [...svg.querySelectorAll('text')].map(t => t.getBoundingClientRect())
+      .filter(r => r.width > 0 && (r.left < box.left - 1 || r.top < box.top - 1 || r.right > box.right + 1 || r.bottom > box.bottom + 1)).length
+  })
+  expect(outside).toBe(0)
   // The finished answer keeps the figure it drew (no remount, no redraw at the end of the answer).
   const figure = await diagrams.nth(0).locator('svg').elementHandle()
   await expect(log(page)).not.toHaveAttribute('aria-busy', 'true')
