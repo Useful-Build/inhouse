@@ -2,7 +2,7 @@
 
 Tracks the ui-base v2 round Wasim asked for on 2026-11-25. Paths are relative to `app/` unless they start with `ui-base/`. Update this file in every PR of the plan: tick what landed, add the PR link, note anything moved or dropped and why.
 
-**Status: plan approved by Wasim 2026-11-25, D1 to D3 settled as recommended. Wave 0 (scoping) done. Wave 1 done: ui-base v2.0.0 merged and tagged ([ui-base#4](https://github.com/Useful-Build/ui-base/pull/4)), pulled into `fleet/ui-base-v2`. Wave 2 next.**
+**Status: Waves 0 to 3 merged into `fleet/ui-base-v2` on 2026-11-25: the v2 pull (#398), D composer (#399), B thread (#400), A markdown (#401), C steps (#402), A2 Mermaid (#403, added at Wasim's ask), E confirmation (#405). Final PR into `main`: full CI, High-tier review, live QA, then ship (Wasim gave overnight approval to merge and deploy once everything is green).**
 
 ## What and why
 
@@ -135,10 +135,10 @@ Files: `screens/chat/Parts.tsx` (`ApprovalCard`).
 - Note (as built): the composition is `ui/agent/confirmation.tsx` (`Confirmation`, `ConfirmationButtons`, `ConfirmationResult`); `ApprovalCard` in `Parts.tsx` keeps the logic (not-found line, sensitive gating, Approve, Review, Undo) and passes buttons in as children. shadcn's Confirmation is only a documented pattern (an outline `Item` with Deny and Approve), so ours is `Item` with the sheet look: `ItemMedia` is the icon tile, `ItemContent` holds the kicker (`ItemDescription`, `order-first`) over the title (`ItemTitle`, unclamped), `ItemActions` holds the "Open" link, and each button row is an `ItemFooter` with `ItemActions`. The `Item` is a column (`flex-col`) so the draft text box and the button row sit under the head. No Deny button: "Review and edit" is the other answer. No E2E selector changed (`data-approval`, button names and the `.bg-card` check hold).
 
 ### Every PR
-- [ ] `FEATURE_MAP.md` lines for the surface (chat 143-160, composer 123-127, trace window 489-493, gaps 11-12) updated in the same PR.
-- [ ] Light checks green: `npm run typecheck && npm run lint && npm run test:unit` through `light-lock.sh`.
-- [ ] Commit trailer `Verified: <what ran>`.
-- [ ] This file updated.
+- [x] `FEATURE_MAP.md` lines for the surface (chat 143-160, composer 123-127, trace window 489-493, gaps 11-12) updated in the same PR.
+- [x] Light checks green: `npm run typecheck && npm run lint && npm run test:unit` through `light-lock.sh`.
+- [x] Commit trailer `Verified: <what ran>`.
+- [x] This file updated.
 
 ## Before and after (estimates from scoping)
 
