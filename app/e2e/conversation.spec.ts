@@ -108,6 +108,9 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, the tim
   await jump.click()
   expect((await scrollState(page)).fromBottom).toBeLessThanOrEqual(1)
   await expect(jump).toHaveCount(0)
+  // Message Scroller follows the bottom while its jump settles (data-autoscrolling, about 180ms); a programmatic scroll
+  // in that window (the hover below scrolls the first answer into view) is snapped back to the end on the next resize.
+  await expect(page.locator('[data-autoscrolling]')).toHaveCount(0)
 
   // The answer on Fast says so above its steps line, once; a question a minute later gets no second time marker.
   const switched = log(page).locator('[data-thread-marker="model"]')
