@@ -8,7 +8,8 @@
 // and Chats share the entry chunk, so the composer's Input Group and Attachment (+1.3 KB), the thread's Message Scroller
 // with `@shadcn/react` and the trace rows load with Today. Streamdown loads on demand, outside it. The final fleet PR
 // tightens this to the measured size plus 1 KB. Raised again to 257 the same day (Wasim's OK): the thread (B), steps (C) and
-// composer (D) together measured 255.1 KB, and the approval cards (E) add about 1 KB.
+// composer (D) together measured 255.1 KB, and the approval cards (E) add about 1 KB. The final fleet PR measured 256.7 KB,
+// so the budget stays at 257 (0.3 KB of room) rather than measured plus 1 KB.
 // The budget covers Today's first load only: a deep link to a lazy route adds that route's chunk on top. Raise it only on purpose, with the reason.
 // DIST overrides the build folder (for trying the script on a fake build).
 import { existsSync, readFileSync } from 'node:fs'
