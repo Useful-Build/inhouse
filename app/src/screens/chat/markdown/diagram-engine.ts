@@ -13,11 +13,20 @@ function loadMermaid(): Promise<Mermaid> {
   return (loading ??= import('mermaid').then(m => m.default, err => { loading = undefined; throw err }))
 }
 
+// Mermaid keeps one global config, and `initialize` changes it at once, outside the queue `render` keeps. So each draw
+// (initialize, then render) waits for the one before it: two diagrams, or a theme change mid-draw, can't swap colours.
+let queue: Promise<unknown> = Promise.resolve()
+
 /** The sanitized figure for `source`, in `theme`. Throws what Mermaid throws for a diagram it can't parse or draw. */
-export async function drawDiagram(source: string, id: string, label: string, theme: DiagramTheme): Promise<string> {
-  const mermaid = await loadMermaid()
-  // Per draw: the colours change with the theme. Mermaid keeps one global config, and queues its renders.
-  mermaid.initialize({ ...MERMAID_CONFIG, fontFamily: theme.fontFamily, themeVariables: theme.themeVariables })
-  const { svg } = await mermaid.render(id, source)
-  return tidySvg(svg, label)
+export function drawDiagram(source: string, id: string, label: string, theme: DiagramTheme): Promise<string> {
+  const run = queue.then(async () => {
+    const mermaid = await loadMermaid()
+    // Per draw: the colours change with the theme.
+    mermaid.initialize({ ...MERMAID_CONFIG, fontFamily: theme.fontFamily, themeVariables: theme.themeVariables })
+    const { svg } = await mermaid.render(id, source)
+    return tidySvg(svg, label)
+  })
+  // The next draw waits for this one whether it worked or not; its error reaches its own caller through `run`.
+  queue = run.then(() => undefined, () => undefined)
+  return run
 }

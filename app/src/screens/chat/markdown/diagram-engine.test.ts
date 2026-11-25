@@ -34,8 +34,45 @@ describe('the diagram engine', () => {
     expect(mermaid.initialize).toHaveBeenCalledWith(expect.objectContaining({
       securityLevel: 'strict', htmlLabels: false, theme: 'base', fontFamily: 'Geist', themeVariables: { primaryColor: 'fill-value' },
     }))
+    // A diagram's own init or frontmatter can't change how labels are drawn, the theme or its CSS (Mermaid's defaults kept).
+    const { secure } = mermaid.initialize.mock.calls[0][0] as { secure: string[] }
+    for (const key of ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering', 'maxEdges',
+      'htmlLabels', 'flowchart', 'theme', 'themeCSS', 'themeVariables', 'fontFamily', 'altFontFamily', 'look', 'layout', 'arrowMarkerAbsolute']) {
+      expect(secure, key).toContain(key)
+    }
     expect(mermaid.render).toHaveBeenCalledWith('ih-diagram-x', 'flowchart LR\n A-->B')
     expect(out).toBe('Diagram 1|<svg/>')
+  })
+
+  it('draws one at a time, so two draws in different themes never swap configs', async () => {
+    const { drawDiagram } = await import('./diagram-engine')
+    // Mermaid's config is global: `initialize` sets it at once, `render` reads it while it runs (across awaits).
+    let config: unknown
+    mermaid.initialize.mockImplementation(c => { config = c })
+    mermaid.render.mockImplementation(async (id: string) => {
+      const before = config
+      await new Promise(r => setTimeout(r, 5))
+      return { svg: `<svg data-id="${id}" data-same="${before === config}" data-dark="${(config as { themeVariables: { darkMode: boolean } }).themeVariables.darkMode}"/>` }
+    })
+    const light: DiagramTheme = { dark: false, fontFamily: 'Geist', themeVariables: { darkMode: false } }
+    const dark: DiagramTheme = { dark: true, fontFamily: 'Geist', themeVariables: { darkMode: true } }
+    const [a, b] = await Promise.all([
+      drawDiagram('flowchart LR\n A-->B', 'ih-diagram-a', 'Diagram 1', light),
+      drawDiagram('flowchart LR\n A-->B', 'ih-diagram-b', 'Diagram 2', dark),
+    ])
+    expect(a).toBe('Diagram 1|<svg data-id="ih-diagram-a" data-same="true" data-dark="false"/>')
+    expect(b).toBe('Diagram 2|<svg data-id="ih-diagram-b" data-same="true" data-dark="true"/>')
+  })
+
+  it('a failed draw does not stop the next one', async () => {
+    const { drawDiagram } = await import('./diagram-engine')
+    mermaid.render.mockRejectedValueOnce(new Error('Parse error')).mockResolvedValueOnce({ svg: '<svg/>' })
+    const [bad, good] = await Promise.allSettled([
+      drawDiagram('nope', 'ih-diagram-c', 'Diagram 1', theme),
+      drawDiagram('flowchart LR\n A-->B', 'ih-diagram-d', 'Diagram 2', theme),
+    ])
+    expect(bad.status).toBe('rejected')
+    expect(good).toEqual({ status: 'fulfilled', value: 'Diagram 2|<svg/>' })
   })
 
   it('throws what Mermaid throws for a diagram it cannot parse', async () => {

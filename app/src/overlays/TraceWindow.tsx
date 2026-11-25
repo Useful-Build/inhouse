@@ -221,9 +221,9 @@ function TraceSteps({ trace }: { trace: TraceData }) {
           </TraceCollapsibleContent>
         </TraceCollapsible>
         {row.children.length > 0 && (
-          <ul role="group" className="flex flex-col">
+          <ol role="list" className="flex flex-col">
             {row.children.map(renderListNode)}
-          </ul>
+          </ol>
         )}
       </li>
     )

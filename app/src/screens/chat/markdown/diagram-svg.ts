@@ -1,37 +1,56 @@
 // The finishing pass over the figure Mermaid returns, in the browser (it needs a DOM). Mermaid's strict mode already runs
-// its own sanitizer over the output; this removes what that one allows and a diagram has no business holding: links, images,
-// embedded pages, external addresses in the figure or its style, and event handlers. (The page's CSP is the backstop, not the plan.)
+// its own sanitizer over the output; this removes what that one allows and a diagram has no business holding: links
+// (unwrapped, so a linked node stays drawn), images, embedded pages, animations, any address in the figure's style or
+// attributes (same-origin ones too: the CSP lets a same-origin or data: image load, with the session's cookies), and
+// event handlers. A figure that needs HTML (a `foreignObject`) is refused, so the card shows the source instead of a
+// figure with missing text. (The page's CSP is the backstop, not the plan.)
 // Then it makes the figure an image for a screen reader and gives it its natural size, so a wide one scrolls sideways.
 
-const REMOVE = 'a, image, foreignObject, script, iframe, object, embed'
+/** Elements removed with what they hold (lower-cased local names). */
+const REMOVE = new Set(['image', 'feimage', 'script', 'iframe', 'object', 'embed', 'animate', 'set', 'animatetransform', 'animatemotion'])
 const HREF = /^(xlink:)?href$/i
-// `@import` and any url() that is not a #fragment (a marker or gradient inside the figure).
-const EXTERNAL_CSS = /@import[^;]*;?|url\(\s*(?!['"]?#)[^)]*\)/gi
+/**
+ * CSS that can reach an address or hide one: a `url()` that is not a `#fragment` (a marker or gradient inside the figure),
+ * `image-set()`, `image()`, `src()`, `@import`, and any backslash escape (which can spell any of those).
+ */
+const UNSAFE_CSS = /url\(\s*(?!['"]?#)|image-set\(|image\(|src\(|@import|\\/i
 
-/** The sanitized figure as markup, named for a screen reader: `label` plus the diagram's own title when it has one. */
+/** CSS text without any rule part or declaration that holds unsafe CSS. Parts are cut at `{`, `}` and `;`, so removing one can't join its neighbours into a new token. */
+export function cleanCss(css: string): string {
+  return css.replace(/[^{};]+/g, part => (UNSAFE_CSS.test(part) ? '' : part))
+}
+
+/** The sanitized figure as markup, named for a screen reader: `label` plus the diagram's own title when it has one. Throws for a figure that needs HTML. */
 export function tidySvg(markup: string, label: string): string {
   const holder = document.createElement('template')
   holder.innerHTML = markup
   const svg = holder.content.querySelector('svg')
   if (!svg) throw new Error('Mermaid returned no figure')
-  svg.querySelectorAll(REMOVE).forEach(el => el.remove())
+  for (const el of [...svg.querySelectorAll('*')]) {
+    const name = el.localName.toLowerCase()
+    if (name === 'foreignobject') throw new Error('The diagram needs HTML labels, which are not drawn')
+    if (REMOVE.has(name)) el.remove()
+    // A link: its content stays (Mermaid wraps a linked node's shape in it), the link goes.
+    else if (name === 'a') el.replaceWith(...el.childNodes)
+  }
   for (const el of [svg, ...svg.querySelectorAll('*')]) {
     for (const attr of [...el.attributes]) {
       const name = attr.name.toLowerCase()
-      if (name.startsWith('on') || (HREF.test(name) && !attr.value.startsWith('#'))) el.removeAttribute(attr.name)
+      if (name === 'style') el.setAttribute(attr.name, attr.value.split(';').filter(d => !UNSAFE_CSS.test(d)).join(';'))
+      else if (name.startsWith('on') || (HREF.test(name) && !attr.value.startsWith('#')) || UNSAFE_CSS.test(attr.value)) el.removeAttribute(attr.name)
     }
   }
-  svg.querySelectorAll('style').forEach(style => { style.textContent = (style.textContent ?? '').replace(EXTERNAL_CSS, '') })
+  svg.querySelectorAll('style').forEach(style => { style.textContent = cleanCss(style.textContent ?? '') })
   const title = svg.querySelector(':scope > title')?.textContent?.trim()
   svg.setAttribute('role', 'img')
   svg.setAttribute('aria-label', title ? `${label}: ${title}` : label)
   svg.removeAttribute('aria-roledescription')
   svg.removeAttribute('aria-labelledby')
   // Natural size (Mermaid sets width to 100% and a max-width), so the card scrolls a wide diagram instead of shrinking it.
-  const box = svg.viewBox.baseVal
-  if (box && box.width > 0 && box.height > 0) {
-    svg.setAttribute('width', String(Math.ceil(box.width)))
-    svg.setAttribute('height', String(Math.ceil(box.height)))
+  const [, , width, height] = (svg.getAttribute('viewBox') ?? '').trim().split(/[\s,]+/).map(Number)
+  if (width > 0 && height > 0) {
+    svg.setAttribute('width', String(Math.ceil(width)))
+    svg.setAttribute('height', String(Math.ceil(height)))
   }
   svg.style.maxWidth = 'none'
   return svg.outerHTML

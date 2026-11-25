@@ -7,7 +7,7 @@ import { useMemo } from 'react'
 import { Streamdown, defaultRehypePlugins, defaultRemarkPlugins } from 'streamdown'
 import remarkBreaks from 'remark-breaks'
 import { cn } from '@/lib/utils'
-import { componentsFor } from './components'
+import { LinkHostsContext, componentsFor } from './components'
 import { OpenFenceContext } from './open-fence'
 import { rehypeLowercaseSchemes, rehypeNumberBlocks, remarkHtmlAsText, remarkTableWidth } from './plugins'
 import { endsInOpenFence, hostPrefixes, keepBareGreaterThan, stripFrontmatter } from './policy'
@@ -54,21 +54,30 @@ export function Markdown({ text, look = 'chat', linkHosts = NO_HOSTS, live = fal
       ...NUMBER,
     ]
   }, [page, hosts]) // eslint-disable-line react-hooks/exhaustive-deps
-  const components = useMemo(() => componentsFor(look, linkHosts), [look, hosts]) // eslint-disable-line react-hooks/exhaustive-deps
+  // The same component set for the life of the page: hosts reach the link and image overrides through a context (components.tsx).
+  const components = componentsFor(look)
+  const hostList = useMemo(() => linkHosts, [hosts]) // eslint-disable-line react-hooks/exhaustive-deps
   // A diagram waits for its closing fence: while the text streams and ends inside an open one, its last code block is unfinished.
   const openFence = live && endsInOpenFence(text)
   return (
-    <OpenFenceContext value={openFence}>
-      <Streamdown
-        // One block, so the numbering and the quote and table rules see the whole text. `static` leaves the text as it is.
-        mode={live ? 'streaming' : 'static'} isAnimating={live} parseMarkdownIntoBlocksFn={single}
-        skipHtml controls={false} lineNumbers={false} linkSafety={{ enabled: false }} disableAutolinkProtocols={['mailto']}
-        remarkPlugins={REMARK} rehypePlugins={rehype as never} components={components}
-        // The default root is `space-y-4`: ours is a column with its own gap.
-        className={cn('flex min-w-0 flex-col space-y-0', page ? 'gap-4 text-lg leading-reading' : 'gap-6')}
-      >
-        {keepBareGreaterThan(page ? stripFrontmatter(text) : text)}
-      </Streamdown>
-    </OpenFenceContext>
+    <LinkHostsContext value={hostList}>
+      <OpenFenceContext value={openFence}>
+        <Streamdown
+          // One block, so the numbering and the quote and table rules see the whole text. Always `streaming`: Streamdown's
+          // `static` mode is a different tree, so switching to it when the answer finishes would remount the whole answer (a
+          // drawn diagram would draw again). Once the text is done, `parseIncompleteMarkdown` off leaves it as it is.
+          mode="streaming" isAnimating={live} parseIncompleteMarkdown={live} parseMarkdownIntoBlocksFn={single}
+          skipHtml controls={false} lineNumbers={false} linkSafety={{ enabled: false }} disableAutolinkProtocols={['mailto']}
+          remarkPlugins={REMARK} rehypePlugins={rehype as never} components={components}
+          // Streamdown's memo compares the text, the components and `data-*` props, not the rehype plugins: the host list
+          // as a `data-*` prop makes a new list (and so a new `harden` step) render.
+          data-link-hosts={hosts}
+          // The default root is `space-y-4`: ours is a column with its own gap.
+          className={cn('flex min-w-0 flex-col space-y-0', page ? 'gap-4 text-lg leading-reading' : 'gap-6')}
+        >
+          {keepBareGreaterThan(page ? stripFrontmatter(text) : text)}
+        </Streamdown>
+      </OpenFenceContext>
+    </LinkHostsContext>
   )
 }

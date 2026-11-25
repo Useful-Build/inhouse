@@ -178,11 +178,12 @@ function Thread() {
   // The newest question: a new ask pins it near the top while its answer grows under it (D1).
   const newestQuestion = msgs.findLast(m => m.role === 'user')?.id
   const markers = useMemo(() => threadMarkers(msgs, display()), [msgs])
-  const marks = (id: string) => markers.get(id)?.map(k => (
-    k.kind === 'time'
-      ? <ThreadMarker key="time" kind="time">{fmtMarkerTime(k.at, nowOf(), display())}</ThreadMarker>
-      : <ThreadMarker key="model" kind="model">Switched to {ctx.data.models.find(x => x.id === k.model)?.label ?? k.model}</ThreadMarker>
-  ))
+  const marks = (id: string) => markers.get(id)?.map(k => {
+    if (k.kind === 'time') return <ThreadMarker key="time" kind="time">{fmtMarkerTime(k.at, nowOf(), display())}</ThreadMarker>
+    // A model the Models list doesn't name (retired, or a raw id) gets no marker: a raw model id is never shown.
+    const label = ctx.data.models.find(x => x.id === k.model)?.label
+    return label ? <ThreadMarker key="model" kind="model">Switched to {label}</ThreadMarker> : null
+  })
 
   // The tools the agent can read now: not paused, not disconnected, none on day one.
   const connected = readingTools(ctx).map(k => toolDetail(ctx.data, k).name)
@@ -470,7 +471,7 @@ function Thread() {
               </ThreadLog>
             </div>
           </ThreadViewport>
-          <JumpToLatest />
+          <JumpToLatest focusAfter={() => document.querySelector<HTMLElement>('[data-composer] textarea')} />
         </ThreadScroller>
       )}
       {/* What the agent is doing, read out once per step (the visible line is in the card, hidden from the log). In one tree
