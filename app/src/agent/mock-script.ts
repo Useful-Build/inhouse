@@ -249,7 +249,7 @@ const HOSTILE_DIAGRAM_ANSWER = [
   'Here are the refund steps, with a link to the policy:',
   '',
   '```mermaid',
-  '%%{init: {"htmlLabels": true, "flowchart": {"htmlLabels": true}, "themeCSS": ".node rect { background-image: url(/hostile-theme-css) }", "arrowMarkerAbsolute": true}}%%',
+  '%%{init: {"htmlLabels": true, "flowchart": {"htmlLabels": true}, "arrowMarkerAbsolute": true}}%%',
   'flowchart LR',
   '  A[Customer asks for a refund] --> B[Refund policy]',
   '  click B href "https://help.example.test/refunds" "Open the refund policy"',

@@ -10,7 +10,7 @@ async function start(page: Page, scenario: string, hash: string) {
   await page.goto('/?demo' + hash)
 }
 
-const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.timeline instanceof DocumentTimeline && a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
+const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.timeline instanceof DocumentTimeline && a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => undefined))))
 const shot = async (page: Page, name: string) => { await settled(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 // The sample agent's chat channel (tools.json).
 const CHANNEL = 'Slack'
@@ -319,7 +319,8 @@ test('Conversation: a mermaid fence is drawn as a diagram, with its source one c
   await expect(diagram).toBeVisible({ timeout: 30_000 })
   const figure = diagram.locator('svg[role="img"]')
   await expect(figure).toHaveAttribute('aria-label', 'Diagram 1')
-  await expect(figure).toContainText('Customer asks for a refund')
+  // SVG labels set each word in its own <tspan>, with no spaces between them in the text: compare the words.
+  await expect.poll(() => figure.evaluate(svg => [...svg.querySelectorAll('text')].map(t => t.textContent).join(' ').replace(/\s+/g, ''))).toContain('Customerasksforarefund')
   await expect(log(page).getByRole('region', { name: 'Diagram 1', exact: true })).toHaveAttribute('tabindex', '0')
   // No link, image or embedded page can come from a diagram, and it is not shown as a code block.
   await expect(diagram.locator('a, image, foreignObject, script')).toHaveCount(0)
@@ -343,8 +344,13 @@ test('Conversation: a diagram that tries links, HTML labels and addresses in its
   await page.keyboard.press('Enter')
   const diagrams = log(page).locator('[data-md-diagram]')
   await expect(diagrams).toHaveCount(2, { timeout: 30_000 })
-  // Both drawn: the config lock kept HTML labels off, so neither needs a foreignObject (which would fail it to its source).
-  for (const n of [1, 2]) {
+  // The second names an address in its classDef: it is never handed to Mermaid (which lays a figure out in the live page,
+  // where that address would be fetched), so it shows its source.
+  await expect(diagrams.nth(1)).toHaveAttribute('data-state', 'failed', { timeout: 30_000 })
+  await expect(diagrams.nth(1)).toContainText("Couldn't draw this diagram.")
+  await expect(diagrams.nth(1).locator('[data-md-code]')).toContainText('classDef hostile')
+  // The first is drawn: the config lock kept HTML labels off, so it needs no foreignObject (which would fail it to its source).
+  for (const n of [1]) {
     const diagram = diagrams.nth(n - 1)
     await expect(diagram).toHaveAttribute('data-state', 'ready', { timeout: 30_000 })
     await expect(diagram.locator('svg[role="img"]')).toHaveAttribute('aria-label', `Diagram ${n}`)
@@ -362,8 +368,7 @@ test('Conversation: a diagram that tries links, HTML labels and addresses in its
     expect(leaks).toEqual([])
   }
   // The linked node is still drawn: the link is gone, its shape and text stay.
-  await expect(diagrams.nth(0).locator('svg')).toContainText('Refund policy')
-  await expect(diagrams.nth(1).locator('svg')).toContainText('Refunded')
+  await expect.poll(() => diagrams.nth(0).locator('svg').evaluate(svg => [...svg.querySelectorAll('text')].map(t => t.textContent).join('').replace(/\s+/g, ''))).toContain('Refundpolicy')
   // The finished answer keeps the figure it drew (no remount, no redraw at the end of the answer).
   const figure = await diagrams.nth(0).locator('svg').elementHandle()
   await expect(log(page)).not.toHaveAttribute('aria-busy', 'true')

@@ -6,6 +6,8 @@
 // figure with missing text. (The page's CSP is the backstop, not the plan.)
 // Then it makes the figure an image for a screen reader and gives it its natural size, so a wide one scrolls sideways.
 
+const SVG_NS = 'http://www.w3.org/2000/svg'
+
 /** Elements removed with what they hold (lower-cased local names). */
 const REMOVE = new Set(['image', 'feimage', 'script', 'iframe', 'object', 'embed', 'animate', 'set', 'animatetransform', 'animatemotion'])
 const HREF = /^(xlink:)?href$/i
@@ -14,6 +16,18 @@ const HREF = /^(xlink:)?href$/i
  * `image-set()`, `image()`, `src()`, `@import`, and any backslash escape (which can spell any of those).
  */
 const UNSAFE_CSS = /url\(\s*(?!['"]?#)|image-set\(|image\(|src\(|@import|\\/i
+
+/**
+ * Refuses a diagram whose own text names an address in CSS (`url(`, `image-set(`, `image(`, `src(`, `@import`) or holds a
+ * backslash (a CSS escape can spell any of those). Mermaid lays a figure out in the live page before returning it, so a
+ * `classDef` or `style` line's address would be fetched (same-origin ones with the session's cookies) before `tidySvg`
+ * ever sees the figure: such a diagram is not drawn at all, and the card shows its source.
+ */
+export function checkSource(source: string): void {
+  if (/url\s*\(|image-set\s*\(|image\s*\(|src\s*\(|@import|\\/i.test(source)) {
+    throw new Error('The diagram names an address in its style, so it is not drawn')
+  }
+}
 
 /** CSS text without any rule part or declaration that holds unsafe CSS. Parts are cut at `{`, `}` and `;`, so removing one can't join its neighbours into a new token. */
 export function cleanCss(css: string): string {
@@ -29,6 +43,8 @@ export function tidySvg(markup: string, label: string): string {
   for (const el of [...svg.querySelectorAll('*')]) {
     const name = el.localName.toLowerCase()
     if (name === 'foreignobject') throw new Error('The diagram needs HTML labels, which are not drawn')
+    // HTML inside the figure (in a <title> or <desc>, say): Mermaid's sanitizer strips it today; refuse it if that ever slips.
+    if (el.namespaceURI !== SVG_NS) throw new Error(`The diagram holds a non-SVG element (${name})`)
     if (REMOVE.has(name)) el.remove()
     // A link: its content stays (Mermaid wraps a linked node's shape in it), the link goes.
     else if (name === 'a') el.replaceWith(...el.childNodes)
