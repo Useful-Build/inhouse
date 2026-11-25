@@ -29,7 +29,7 @@ import { Today } from './screens/Today'
 import { Chats } from './screens/Chats'
 import { useChatIsBlank } from './screens/chat/open-messages'
 import { SETTINGS_PAGES, settingsTabs } from './screens/settings/menu'
-import { CommandPalette } from './overlays/CommandPalette'
+import { useShortcuts } from './shell/shortcuts'
 
 /**
  * Loads a heavy route on first use. After `vite:preloadError` is handled (see below) Vite's preload helper resolves the
@@ -58,7 +58,7 @@ const SkillPage = lazyRoute(() => import('./screens/Skills'), m => m.SkillPage)
 // already there (the skeleton shows only on a slow link). Library, Usage and Settings stay on first visit: they are the big ones.
 const PREFETCH: (() => Promise<unknown>)[] = [
   () => import('./screens/Approvals'), () => import('./screens/Routines'), () => import('./screens/Activity'), () => import('./screens/Tools'), () => import('./screens/Skills'),
-  () => import('./overlays/ProblemPanel'), () => import('./overlays/TeamWindow'),
+  () => import('./overlays/ProblemPanel'), () => import('./overlays/TeamWindow'), () => import('./overlays/CommandPalette'),
 ]
 const Library = lazyRoute(() => import('./screens/Library'), m => m.Library)
 const Usage = lazyRoute(() => import('./screens/Usage'), m => m.Usage)
@@ -71,6 +71,9 @@ const ProblemPanel = lazyRoute(() => import('./overlays/ProblemPanel'), m => m.P
 const TeamWindow = lazyRoute(() => import('./overlays/TeamWindow'), m => m.TeamWindow)
 // Help loads when first opened too: Today doesn't need it (first-load budget, check-bundle).
 const HelpWindow = lazyRoute(() => import('./overlays/HelpWindow'), m => m.HelpWindow)
+// The command palette (cmdk and its list) loads when ⌘K or Search first opens it, or with the idle prefetch: Today's first
+// paint doesn't need it (check-bundle). Its shortcuts stay in the shell (shell/shortcuts.ts), so ⌘K works before it loads.
+const CommandPalette = lazyRoute(() => import('./overlays/CommandPalette'), m => m.CommandPalette)
 
 /** True from the first render where `on` is: a lazy overlay stays mounted once it has opened, so its own state lives on as it did when it loaded with the page. */
 function useOpenedOnce(on: boolean) {
@@ -80,11 +83,15 @@ function useOpenedOnce(on: boolean) {
 }
 
 /** A lazy window (the trace, a problem, the team window) whose chunk can't load closes and says so, instead of taking the app down. */
-class OverlayBoundary extends Component<{ children: ReactNode; name: string; what: string; open: boolean; close: () => void }, { failed: boolean }> {
-  state = { failed: false }
+class OverlayBoundary extends Component<{ children: ReactNode; name: string; what: string; open: boolean; close: () => void }, { failed: boolean; wasOpen: boolean }> {
+  state = { failed: false, wasOpen: this.props.open }
   static getDerivedStateFromError() { return { failed: true } }
-  // Once it has closed, the next open tries again (a window that stays mounted keeps its boundary).
-  static getDerivedStateFromProps(props: { open: boolean }, state: { failed: boolean }) { return state.failed && !props.open ? { failed: false } : null }
+  // The next open tries again (a window that stays mounted keeps its boundary). Only an open clears the failure, not the
+  // close that follows it: rendering a lazy window whose chunk failed while it is closed would throw again in the same pass.
+  static getDerivedStateFromProps(props: { open: boolean }, state: { failed: boolean; wasOpen: boolean }) {
+    if (props.open === state.wasOpen) return null
+    return { wasOpen: props.open, failed: props.open ? false : state.failed }
+  }
   componentDidCatch(error: unknown) {
     console.error(`Inhouse: the ${this.props.name} window crashed and was closed.`, error instanceof Error ? error.message : error, error)
     reportError('boundary', error)
@@ -97,6 +104,7 @@ const closeTrace = () => useUi.getState().patch({ traceId: null })
 const closeProblem = () => useUi.getState().closeProblem()
 const closeTeam = () => useUi.getState().patch({ pop: null })
 const closeHelp = closeTeam
+const closePalette = () => useUi.getState().patch({ palette: false })
 
 const SCREENS: Record<Page, React.ComponentType> = {
   today: Today, library: Library, chats: Chats, approvals: Approvals, routines: Routines, activity: Activity,
@@ -329,6 +337,7 @@ function useHashRoute() {
 }
 
 function Shell() {
+  useShortcuts()
   useEffect(() => {
     const go = () => { for (const load of PREFETCH) load().catch(() => {}) }
     if (typeof requestIdleCallback === 'function') { const id = requestIdleCallback(go, { timeout: 4000 }); return () => cancelIdleCallback(id) }
@@ -365,6 +374,8 @@ function Shell() {
   const helpOpen = useUi(s => s.pop) === 'help'
   const problemOpened = useOpenedOnce(problemOpen)
   const teamOpened = useOpenedOnce(teamOpen)
+  const paletteOpen = useUi(s => s.palette)
+  const paletteOpened = useOpenedOnce(paletteOpen)
   const chatId = useUi(s => s.chatId)
   const fresh = useUi(s => s.fresh)
   const chatBlank = useChatIsBlank()
@@ -462,7 +473,7 @@ function Shell() {
       {traceId && <OverlayBoundary name="trace" what="the trace" open close={closeTrace}><Suspense fallback={null}><TraceWindow /></Suspense></OverlayBoundary>}
       {teamOpened && <OverlayBoundary name="team" what="your Inhouse team" open={teamOpen} close={closeTeam}><Suspense fallback={null}><TeamWindow /></Suspense></OverlayBoundary>}
       {helpOpen && <OverlayBoundary name="help" what="help" open close={closeHelp}><Suspense fallback={null}><HelpWindow /></Suspense></OverlayBoundary>}
-      <CommandPalette />
+      {paletteOpened && <OverlayBoundary name="palette" what="search" open={paletteOpen} close={closePalette}><Suspense fallback={null}><CommandPalette /></Suspense></OverlayBoundary>}
       <Toasts />
       <DevSwitcher />
       <GooDefs />

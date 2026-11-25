@@ -10,14 +10,9 @@ import { fmtDuration, fmtTraceCost, traceTicks, type Display } from '../lib/form
 import { display } from '../state/display'
 import { useCtx, useUi } from '../state/store'
 import { Button, Icon, IconButton, LogoTile, Segmented, Window } from '../ui'
+import { CodeBlock, CodeBlockActions, CodeBlockContent, CodeBlockCopyButton, CodeBlockHeader, CodeBlockTitle } from '../ui/agent/code'
 import {
   Badge,
-  CodeBlock,
-  CodeBlockActions,
-  CodeBlockContent,
-  CodeBlockCopyButton,
-  CodeBlockHeader,
-  CodeBlockTitle,
   Trace,
   TraceCollapsible,
   TraceCollapsibleContent,

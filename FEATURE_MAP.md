@@ -9,6 +9,7 @@ No entry is `Covered: gap`. Not checked by any spec, or only in part:
 - Motion: `e2e/motion.spec.ts` is manual only (`MOTION=1`, the `motion` workflow), never in CI's normal run.
 - Ship specs: `e2e/ship/agent-seam.spec.ts`, `e2e/ship/example.spec.ts`, `e2e/ship/setup-gaps.spec.ts`, `e2e/ship/hardening.spec.ts` and `e2e/ship/backend-core.spec.ts`, `e2e/ship/agent-chat.spec.ts`, `e2e/ship/memory-skills.spec.ts` (projects `ship-desktop` and `ship-phone`) are manual only, run by `ship.yml` against a PR's preview (`backend-core.spec.ts`, `agent-chat.spec.ts` and `memory-skills.spec.ts`: on the test build, `build=test`), never in CI's normal run.
 - Trace window: the Technical `CodeBlock` badges (`cut`, `denied`) aren't shown by any spec: they come from a product step's `io`, which the demo's recorded traces don't carry and the test build can't make without a container turn.
+- Command palette: no spec opens it before the idle prefetch has loaded its chunk; in that moment (up to about 4 s after a load) keys typed straight after Cmd+K land in what had focus, and Escape reaches the page under it.
 - Settings > General: Language and Text size are opened and closed by `menus.spec.ts`, but no spec picks one and checks it saves.
 - Icons: the fallback glyph for a name outside the manifest is drawn by `src/ui/index.tsx` but no spec checks it; a name
   missing from the font fails lint (`scripts/check-icons.mjs`), not a spec.
@@ -467,8 +468,8 @@ Demo upgrade: a stored demo
 Navigation: palette and shortcuts
   Path:     Cmd+K or Search -> type
   Selector: palette, shortcuts Cmd+Shift+O, Cmd+\
-  Expected: pages, settings pages and chats open; Escape returns focus; shortcuts skip fields except Cmd+K
-  Covered:  e2e/navigation.spec.ts
+  Expected: pages, settings pages and chats open; Escape returns focus; shortcuts skip fields except Cmd+K; the palette loads the first time it opens or once the browser is idle (not with Today's first load); Cmd+K before it has loaded opens it as soon as its chunk is in
+  Covered:  e2e/navigation.spec.ts, build-support/entry-graph.test.ts (the palette, cmdk and the base Code Block stay out of the entry)
 
 Palette: theme switch
   Path:     Cmd+K -> Switch to dark theme (or light); Settings -> General -> Theme
