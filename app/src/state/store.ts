@@ -476,7 +476,7 @@ const PART_OK: Record<MessagePart['type'], (p: Rec) => boolean> = {
 const isPart = (v: unknown): v is MessagePart => isRec(v) && Object.hasOwn(PART_OK, v.type as string) && PART_OK[v.type as MessagePart['type']](v)
 const isMsg = (m: unknown): m is ChatMessage => {
   if (!isRec(m) || !isStr(m.id)) return false
-  if (m.role === 'user') return isStr(m.text) && (m.quote === undefined || isStr(m.quote)) && (m.atts === undefined || isAtts(m.atts))
+  if (m.role === 'user') return isStr(m.text) && (m.quote === undefined || isStr(m.quote)) && (m.atts === undefined || isAtts(m.atts)) && (m.at === undefined || isInstant(m.at))
   if (m.role === 'event') return isStr(m.text)
   if (m.role === 'agent') return isStr(m.trace) && isPart(m.part) && (m.model === undefined || isStr(m.model)) && (m.at === undefined || isInstant(m.at))
   return false
@@ -883,7 +883,7 @@ export const useUi = create<UiState & UiActions>()((set, get) => {
     if (!mode) { failed(NO_MODEL_TEXT); return }
     if (!existing) {
       set(s => ({ runs: { ...s.runs, [cid]: { runId: null, turnId: null, text: 'Reading your question…', token, sent: [] } } }))
-      addTo(cid, { id: local, role: 'user', text: q, quote: o.quote, atts: o.atts.length ? o.atts : undefined })
+      addTo(cid, { id: local, role: 'user', text: q, quote: o.quote, atts: o.atts.length ? o.atts : undefined, at: at() })
     }
     // The real client keeps a file on the server before the message names it (route 39, which needs the chat to exist: its save
     // goes first). The demo names a made-up id and keeps nothing.

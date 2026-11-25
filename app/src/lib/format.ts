@@ -124,6 +124,11 @@ export const fmtDayGroup = (at: At, now: At, d: Display): string => {
   const n = daysBefore(at, now, d)
   return n === 0 ? 'Today' : n === 1 ? 'Yesterday' : n >= 2 && n <= 6 ? 'Last 7 days' : 'Earlier'
 }
+/** A time marker in a chat's thread: "Today 8:03 AM", "Yesterday 8:03 AM", "Mon, Nov 16, 8:03 AM" within six days, else "Nov 2, 8:03 AM". */
+export const fmtMarkerTime = (at: At, now: At, d: Display): string => {
+  const n = daysBefore(at, now, d)
+  return n === 0 ? `Today ${fmtTime(at, d)}` : n === 1 ? `Yesterday ${fmtTime(at, d)}` : `${fmtNearDay(at, now, d)}, ${fmtTime(at, d)}`
+}
 /** The audit log's group in Settings: "Today" for today's changes, else "Earlier". */
 export const fmtAuditDay = (at: At, now: At, d: Display): 'Today' | 'Earlier' => (daysBefore(at, now, d) === 0 ? 'Today' : 'Earlier')
 /** How long ago something was sent: "just now" within the hour, else as `fmtWhen`. */

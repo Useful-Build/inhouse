@@ -58,7 +58,7 @@ export type Saved = {
   theme?: Theme
   /** The app's UI session (open chats, queued messages). */
   session: {
-    chats?: Record<string, { extras: { role: string; text?: string; part?: { type: string } }[] }>
+    chats?: Record<string, { extras: { role: string; text?: string; part?: { type: string }; at?: { iso?: string; ms?: number } | string }[] }>
     answering?: string[]
     queued?: Record<string, unknown>
   } & Record<string, unknown>

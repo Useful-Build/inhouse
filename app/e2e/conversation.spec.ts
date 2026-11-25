@@ -1,6 +1,7 @@
-// PR 4, the conversation: auto-scroll only near the bottom with Jump to latest, Copy and Edit on your own messages,
-// Regenerate and thumbs on answers, the mode and time in the opened step list, the steps line on an error turn, and
-// markdown answers (a code block with Copy, a wide table that scrolls inside its wrapper).
+// PR 4, the conversation: a new question pinned near the top while the answer grows (UI_BASE_V2 D1), a scroll up that
+// holds with Jump to latest, the time and model markers, Copy and Edit on your own messages, Regenerate and thumbs on
+// answers, the mode and time in the opened step list, the steps line on an error turn, and markdown answers (a code block
+// with Copy, a wide table that scrolls inside its wrapper).
 import { expect, fxFor, test } from './support/fx.js'
 import type { Locator, Page } from '@playwright/test'
 
@@ -24,14 +25,14 @@ const scrollState = (page: Page) => page.evaluate(() => {
   return { top: el.scrollTop, fromBottom: el.scrollHeight - el.scrollTop - el.clientHeight, room: el.scrollHeight - el.clientHeight }
 })
 
-/** The app keeps the view at the bottom within 80px of it. */
+/** More than this much room to scroll: the thread is taller than its view. */
 const NEAR_BOTTOM_PX = 80
 const MD_Q = "Give me the query for last week's orders by SKU"
 const REFUNDS_Q = 'Why did refunds jump?'
 const DIAGRAM_Q = 'Show me a diagram of how a refund moves through the team'
 const REFUNDS_A = 'Refund requests rose from 14 last week to 31 this week'
 
-test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, Edit, Regenerate, thumbs and the mode and time', async ({ page, context }) => {
+test('Conversation: markdown, scroll-up while streaming, Jump to latest, the time and model markers, Copy, Edit, Regenerate, thumbs and the mode and time', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await start(page, 'Normal', '#/today')
 
@@ -56,15 +57,22 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, E
   await expect(log(page).getByRole('region', { name: 'Code block 1, sql' })).toHaveAttribute('tabindex', '0')
   await expect(log(page).getByRole('region', { name: /^Table 1: SKU, Product, Units$/ })).toHaveAttribute('tabindex', '0')
 
-  // The answer's steps line names the tools it read and the step count; opened, the list ends with the mode that answered,
-  // how long it took and when.
+  // The answer's steps line names the tools it read and the step count; opened, the list ends with the mode that answered
+  // and how long it took.
   await expect(stepsButtons(page).last()).toContainText(/Checked Shopify · \d+ steps/)
   await expect(log(page)).not.toHaveAttribute('aria-busy', 'true')
   await expect(log(page).locator('blockquote')).toContainText("Amazon orders aren't in this query")
   await expect(log(page).getByRole('link', { name: 'Amazon orders' })).toHaveCount(0)
   await stepsButtons(page).last().click()
   await expect(stepsButtons(page).last()).toHaveAttribute('aria-expanded', 'true')
-  await expect(log(page).locator('[data-steps-meta]').last()).toHaveText(/^Smart · [\d.]+m?s · \d{1,2}:\d\d\s[AP]M$/)
+  await expect(log(page).locator('[data-steps-meta]').last()).toHaveText(/^Smart · [\d.]+m?s$/)
+
+  // A time marker heads the thread, a line across it with the time centred, in the first question's row; no model marker yet.
+  const timeMarkers = log(page).locator('[data-thread-marker="time"]')
+  await expect(timeMarkers).toHaveCount(1)
+  await expect(timeMarkers).toHaveText(/^Today \d{1,2}:\d\d\s[AP]M$/)
+  await expect(msg(page, MD_Q).first().locator('[data-thread-marker="time"]')).toHaveCount(1)
+  await expect(log(page).locator('[data-thread-marker="model"]')).toHaveCount(0)
 
   // Copy code puts the query on the clipboard.
   await code.getByRole('button', { name: 'Copy code block 1, sql' }).click()
@@ -79,8 +87,10 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, E
   expect(await table.evaluate(el => el.scrollLeft)).toBeGreaterThan(0)
   await shot(page, 'markdown-answer')
 
-  // Ask again and scroll up while the answer streams: the view keeps its place and Jump to latest shows.
+  // Ask again on another model and scroll up while the answer streams: the view keeps its place and Jump to latest shows.
   const before = await stepsButtons(page).count()
+  await page.getByRole('button', { name: 'Model: Smart' }).click()
+  await page.getByRole('menuitemradio', { name: /Fast/ }).click()
   await composer(page).fill(REFUNDS_Q)
   await page.keyboard.press('Enter')
   await expect(page.locator('[data-composer]').getByRole('button', { name: 'Stop', exact: true })).toBeVisible()
@@ -97,6 +107,13 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, E
   await jump.click()
   expect((await scrollState(page)).fromBottom).toBeLessThanOrEqual(1)
   await expect(jump).toHaveCount(0)
+
+  // The answer on Fast says so above its steps line, once; a question a minute later gets no second time marker.
+  const switched = log(page).locator('[data-thread-marker="model"]')
+  await expect(switched).toHaveCount(1)
+  await expect(switched).toHaveText('Switched to Fast')
+  await expect(msg(page, REFUNDS_A).last().locator('[data-thread-marker="model"]')).toHaveCount(1)
+  await expect(timeMarkers).toHaveCount(1)
 
   // An earlier answer: its actions hide until hover, sit at the row's left edge, and don't move when they show. Its steps
   // line is above its card, so it is not part of the row.
@@ -142,7 +159,8 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, Copy, E
   await expect(composer(page)).toHaveValue('Draft I keep')
   await expect(msg(page, REFUNDS_A)).toHaveCount(1)
 
-  // Scrolled up, Regenerate still goes to the bottom like a new question.
+  // Scrolled up, Regenerate still goes to the question like a new ask: pinned near the top with the answer growing under it,
+  // which leaves no room below.
   await log(page).hover()
   await page.mouse.wheel(0, -2000)
   await expect(jump).toBeVisible()
@@ -230,10 +248,10 @@ test('Conversation: an error turn has a steps line that opens the trace, and the
   await expect(err).toBeVisible({ timeout: 15_000 })
   const steps = err.getByRole('button', { name: /\d+ steps/ })
   await expect(steps).toBeVisible()
-  // No tool was read, so the line is only the step count; opened, the list ends with how long it took and when.
-  await expect(steps).toContainText(/^\d+ stepsexpand_more$/)
+  // No tool was read, so the line is only the step count; opened, the list ends with how long it took.
+  await expect(steps).toContainText(/^\d+ stepschevron_right$/)
   await steps.click()
-  await expect(err.locator('[data-steps-meta]')).toHaveText(/^(?:[\w ]+ · )?[\d.]+m?s · \d{1,2}:\d\d\s[AP]M$/)
+  await expect(err.locator('[data-steps-meta]')).toHaveText(/^(?:[\w ]+ · )?[\d.]+m?s$/)
   await shot(page, 'error-turn-steps')
   await err.getByRole('button', { name: 'Details', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'What your Inhouse agent did' })).toBeVisible()
