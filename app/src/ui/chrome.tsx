@@ -5,6 +5,7 @@ import type { ComponentProps, ReactNode, RefObject } from 'react'
 import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/utils'
 import { AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion'
+import { Attachment, AttachmentActions, AttachmentContent, AttachmentDescription, AttachmentMedia, AttachmentTitle } from '@/components/ui/attachment'
 import { Badge } from '@/components/ui/badge'
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -239,20 +240,6 @@ export function Guide({ title, icon, children }: { title: string; icon: string; 
   )
 }
 
-const attachmentChipVariants = cva('inline-flex items-center gap-2 rounded-xl text-sm', {
-  variants: {
-    /** `removable` is the chip in the composer, before sending (bigger, with Remove); the other sits in a sent message. */
-    removable: {
-      true: 'h-10.5 max-w-70 pr-1 pl-1.5',
-      false: 'h-9.5 max-w-full border border-border bg-card pr-3 pl-1.5',
-    },
-    /** `error` is a file that wasn't added (over a limit): the reason in place of the size, Dismiss in place of Remove. */
-    tone: { default: '', error: 'bg-destructive-tint text-destructive-text' },
-  },
-  compoundVariants: [{ removable: true, tone: 'default', class: 'bg-accent' }],
-  defaultVariants: { removable: false, tone: 'default' },
-})
-
 /** The chip's dismiss button: its colours follow the chip's tone, and `tap` widens its hit area to 44px (phone). */
 const attachmentDismissVariants = cva('flex-none', {
   variants: {
@@ -263,36 +250,37 @@ const attachmentDismissVariants = cva('flex-none', {
 })
 
 /**
- * A file chip: icon, name and size. With `onRemove` it shows a Remove button. `error` is a file that wasn't added:
- * `meta` says why and its button is Dismiss; the caller groups rejected chips in one `role="alert"` region. `tap` gives the
- * button a 44px hit area (phone).
+ * A file chip on the base `Attachment` (size `sm`): icon, name and size. With `onRemove` it shows a Remove button (the
+ * composer's chip, before sending). `error` is a file that wasn't added: `meta` says why and its button is Dismiss; the
+ * caller groups rejected chips in one `role="alert"` region. `onDownload` is a saved file's chip; `downloading` marks
+ * it processing and disables the button while the file is on its way. `tap` gives the button a 44px hit area (phone).
  */
 export function AttachmentChip({ icon, name, meta, onRemove, onDownload, downloading, error, tap }: { icon: string; name: string; meta: string; onRemove?: () => void; /** A saved file's chip: shows Download. `downloading` disables it while the file is on its way. */ onDownload?: () => void; downloading?: boolean; error?: boolean; tap?: boolean }) {
   const removable = !!onRemove
   return (
-    <span className={cn(attachmentChipVariants({ removable, tone: error ? 'error' : 'default' }), onDownload && !error && 'pr-1')} {...(error ? { 'data-rejected': '' } : {})}>
-      <span className={cn('flex flex-none items-center justify-center rounded-md', error ? 'size-7.5' : removable ? 'size-7.5 border border-border bg-card' : 'size-7 bg-accent')}>
+    <Attachment size="sm" state={error ? 'error' : downloading ? 'processing' : 'done'} {...(error ? { 'data-rejected': '' } : {})}
+      className={cn('flex-nowrap items-center data-[state=error]:bg-destructive-tint data-[state=error]:text-destructive-text',
+        removable ? 'max-w-70 border-transparent bg-accent pr-1' : 'max-w-full pr-2', onDownload && !error && 'pr-1')}>
+      <AttachmentMedia className={cn(removable && !error && 'border border-border bg-card')}>
         <Icon name={error ? 'error' : icon} size={removable ? 17 : 16} />
-      </span>
-      {removable ? (
-        <span className="flex min-w-0 flex-col leading-tight">
-          <b className="ellipsis font-strong">{name}</b>
-          <span className={cn('text-xs', !error && 'text-muted-foreground')}>{meta}</span>
-        </span>
-      ) : (
-        <>
-          <b className="ellipsis font-strong">{name}</b>
-          <span className={cn('flex-none', !error && 'text-muted-foreground')}>{meta}</span>
-        </>
+      </AttachmentMedia>
+      {/* A removable chip stacks the name over the size or the reason; the one in a message keeps them on a line. */}
+      <AttachmentContent className={cn(!removable && 'flex items-baseline gap-2')}>
+        <AttachmentTitle className={cn(!removable && 'min-w-0 flex-1')}>{name}</AttachmentTitle>
+        <AttachmentDescription className={cn(!removable && 'mt-0 flex-none')}>{meta}</AttachmentDescription>
+      </AttachmentContent>
+      {((onDownload && !error) || onRemove) && (
+        <AttachmentActions>
+          {onDownload && !error && (
+            <IconButton icon="download" label={`Download ${name}`} size={16} box="icon-sm" onClick={onDownload} disabled={downloading} aria-busy={downloading || undefined}
+              className={attachmentDismissVariants({ tone: 'default', tap })} />
+          )}
+          {onRemove && (
+            <IconButton icon="close" label={`${error ? 'Dismiss' : 'Remove'} ${name}`} size={16} box="icon-sm" onClick={onRemove}
+              className={attachmentDismissVariants({ tone: error ? 'error' : 'default', tap })} />
+          )}
+        </AttachmentActions>
       )}
-      {onDownload && !error && (
-        <IconButton icon="download" label={`Download ${name}`} size={16} box="icon-sm" onClick={onDownload} disabled={downloading} aria-busy={downloading || undefined}
-          className={attachmentDismissVariants({ tone: 'default', tap })} />
-      )}
-      {onRemove && (
-        <IconButton icon="close" label={`${error ? 'Dismiss' : 'Remove'} ${name}`} size={16} box="icon-sm" onClick={onRemove}
-          className={attachmentDismissVariants({ tone: error ? 'error' : 'default', tap })} />
-      )}
-    </span>
+    </Attachment>
   )
 }

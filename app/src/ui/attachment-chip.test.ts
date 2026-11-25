@@ -3,7 +3,9 @@
 //  - the button is missing, or its accessible name isn't `Download <file name>` (a screen reader and the e2e spec find it by it);
 //  - it shows on a chip with nothing to fetch (the composer's chip before sending, a rejected file);
 //  - it stays enabled while a download runs (a second click saves the file twice) or isn't marked busy;
-//  - it takes the place of Remove or Dismiss, which the composer's chip still needs.
+//  - it takes the place of Remove or Dismiss, which the composer's chip still needs;
+//  - the chip's state (done, processing while a download runs, error for a rejected file) doesn't reach the base Attachment,
+//    or a rejected chip loses `data-rejected`, which the composer spec and the alert region rely on.
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeAll, describe, expect, test, vi } from 'vitest'
@@ -52,5 +54,19 @@ describe('AttachmentChip download', () => {
   test('the composer chip keeps Remove, and a downloadable one never loses its own button to it', () => {
     expect(buttons(html({ onRemove: () => undefined }))[0]).toContain('aria-label="Remove orders.csv"')
     expect(buttons(html({ onRemove: () => undefined, onDownload: () => undefined })).map(b => /aria-label="([^"]*)"/.exec(b)?.[1])).toEqual(['Download orders.csv', 'Remove orders.csv'])
+  })
+})
+
+describe('AttachmentChip state', () => {
+  const state = (h: string) => /data-state="([^"]*)"/.exec(h)?.[1]
+  test('is done, processing while downloading, and error for a rejected file', () => {
+    expect(state(html({}))).toBe('done')
+    expect(state(html({ onDownload: () => undefined, downloading: true }))).toBe('processing')
+    expect(state(html({ error: true }))).toBe('error')
+  })
+
+  test('only a rejected chip is marked data-rejected', () => {
+    expect(html({ error: true, onRemove: () => undefined })).toContain('data-rejected')
+    expect(html({ onRemove: () => undefined })).not.toContain('data-rejected')
   })
 })

@@ -103,10 +103,11 @@ Files: `screens/chat/step-data.ts`, `screens/chat/Steps.tsx`, `overlays/TraceWin
 
 ### PR D: composer (Sonnet)
 Files: `components/Composer.tsx`, `ui/chrome.tsx` (`AttachmentChip`), `screens/chat/FileChip.tsx`.
-- [ ] Shell on `InputGroup` + `InputGroupTextarea`, our card look (`rounded-2xl`, `shadow-float`); rewrite the `has-[>textarea:focus]` focus selector against InputGroup's `data-slot`.
-- [ ] Attach and Send/Stop as `InputGroupButton`s; chips in a `block-start` addon as `Attachment size="sm"`, rejected files `state="error"` with `role=alert`.
-- [ ] Stays ours: tools chip, model and thinking menu, dictate, reply-to quote, editing bar, the hidden file input and `takeFiles`, drag state, Enter and IME rules. Keep `data-composer`, `data-composer-send` and every aria-label.
-- [ ] `AttachmentChip` replaced by `Attachment`.
+- [x] Shell on `InputGroup` + `InputGroupTextarea`, our card look (`rounded-2xl`, `shadow-float`); rewrite the `has-[>textarea:focus]` focus selector against InputGroup's `data-slot`.
+- [x] Attach and Send/Stop as `InputGroupButton`s; chips in a `block-start` addon as `Attachment size="sm"`, rejected files `state="error"` with `role=alert`.
+- [x] Stays ours: tools chip, model and thinking menu, dictate, reply-to quote, editing bar, the hidden file input and `takeFiles`, drag state, Enter and IME rules. Keep `data-composer`, `data-composer-send` and every aria-label.
+- [x] `AttachmentChip` replaced by `Attachment`.
+- Note (as built): `Composer.tsx` is an `InputGroup` with `data-composer` on the group; the textarea is `InputGroupTextarea`; the notes, chips and button row are `InputGroupAddon`s (`block-start`, `block-end`) that pass `onClick={undefined}` because the addon's stock click handler focuses the group's first `<input>`, which here is the hidden file input. A disabled Send would fade the whole group through InputGroup's `has-disabled:opacity-50`: the composer sets `has-disabled:opacity-100`. Attach, Queue, Send and Stop are `InputGroupButton`s (`size="icon-sm"`, `variant={null}` for Attach and Queue); the tools chip, model button and Dictate stay plain buttons. `AttachmentChip` keeps its export (Chats.tsx uses it for sent files) and its props, and is now a wrapper over `Attachment size="sm"`: state `error` for a rejected file, `processing` while a download runs, else `done`. The composer holds files until Send, so it has no `uploading` chip; upload progress stays in the thread. The Remove, Dismiss and Download buttons stay `IconButton`s (28px with a 44px phone tap area) inside `AttachmentActions`, not `AttachmentAction`.
 
 ### PR E: confirmation (Sonnet, after B)
 Files: `screens/chat/Parts.tsx` (`ApprovalCard`).
@@ -126,8 +127,8 @@ Files: `screens/chat/Parts.tsx` (`ApprovalCard`).
 | Markdown | `Markdown.tsx` 310 + `md-syntax.ts` 4, own parser | ~60 on Streamdown + Code Block |
 | Reveal | `reveal.ts` 155 + per-word fade CSS | ~70, pacing only |
 | Thread | `Chats.tsx` 616 with ~70 lines of hand scroll logic | ~500; scroll on Message Scroller |
-| Composer | 468 | ~400 on Input Group + Attachment |
-| Chips | `AttachmentChip` ~45 | Attachment |
+| Composer | 468 | ~400 on Input Group + Attachment (built: 472, the shell changed but the menus and rules are ours) |
+| Chips | `AttachmentChip` ~45 | Attachment (built: ~35, a wrapper over the base) |
 | Steps and sources | `Steps.tsx` 119 + `step-data.ts` 99 | ~105 + ~150 (the mapper moves logic out of the JSX) |
 | Trace window | 266 | ~220 |
 | **Net** | | **about 600 fewer lines of hand-built UI** |
@@ -150,4 +151,5 @@ The bigger gain is behavior we stop owning:
 
 - **Wave 1 deviations (ui-base#4):** Button gains `icon-xs` (24px). Bubble's `default` is a soft neutral fill (`bg-fill-hover`), `tinted` uses `bg-brand-tint`; upstream's primary-filled look is gone. Trace text steps up a shade for axe contrast. Body text in Message, Bubble, Item and Tabs is our `text-base` (14px). Code Block logs a failed copy instead of swallowing it.
 - **The pull (PR into the fleet):** the update bundle also adds `lucide-react` and the two `@fontsource-variable/geist*` packages to `package.json`. Inhouse uses Material Symbols and its own fonts, so they were dropped again, and `@shadcn/react` re-pinned exactly. Follow-up for ui-base: an `update` bundle shouldn't add deps an app replaced. `DESIGN_SYSTEM.md` took the base's text (it already said `Useful-Build/ui-base/update`, fixing our stale `ui-base/update` shorthand).
+- **JS budget (Wasim, 2026-11-25):** PR D measured 242.3 KB against Today's 241 KB first-load budget (Chats shares the entry chunk). Raised to 252 KB for this round; the final fleet PR tightens it to the measured size plus 1 KB. Streamdown (PR A) loads on demand, outside the entry chunk.
 - **For PR B:** inhouse's user bubble (`bg-bubble`, `rounded-3xl`, `px-4.5 py-3`, `text-md`) differs from Bubble's default: pass our classes through a wrapper in `src/ui/agent/`. Tabs now ship from the base and look like the segmented control.
