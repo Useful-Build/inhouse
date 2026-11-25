@@ -145,7 +145,7 @@ const part: fc.Arbitrary<MessagePart> = fc.oneof(
 )
 
 const message: fc.Arbitrary<ChatMessage> = fc.oneof(
-  fc.record({ id: str, role: fc.constant('user' as const), text: str, quote: optional(str), atts: optional(fc.array(attachment, { maxLength: 3 })) }, { requiredKeys: ['id', 'role', 'text'] }),
+  fc.record({ id: str, role: fc.constant('user' as const), text: str, quote: optional(str), atts: optional(fc.array(attachment, { maxLength: 3 })), at: optional(instant) }, { requiredKeys: ['id', 'role', 'text'] }),
   fc.record({ id: str, role: fc.constant('event' as const), text: str }),
   fc.record({ id: str, role: fc.constant('agent' as const), part, trace: str, model: optional(str), at: optional(instant) }, { requiredKeys: ['id', 'role', 'part', 'trace'] }),
 )
@@ -280,7 +280,7 @@ function validPart(p: MessagePart): boolean {
 }
 function validMsg(m: ChatMessage): boolean {
   if (typeof m.id !== 'string') return false
-  if (m.role === 'user') return strs(m, ['text']) && (m.quote === undefined || typeof m.quote === 'string') && (m.atts === undefined || validAtts(m.atts))
+  if (m.role === 'user') return strs(m, ['text']) && (m.quote === undefined || typeof m.quote === 'string') && (m.atts === undefined || validAtts(m.atts)) && (m.at === undefined || validInstant(m.at))
   if (m.role === 'event') return strs(m, ['text'])
   if (m.role === 'agent') return typeof m.trace === 'string' && validPart(m.part) && (m.model === undefined || typeof m.model === 'string') && (m.at === undefined || validInstant(m.at))
   return false

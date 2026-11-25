@@ -7,9 +7,9 @@
 //  1. a listed link is plain text for good, or its anchor lacks the new-tab and noreferrer attributes;
 //  2. an unlisted host, or a parent or sibling of a listed one, becomes a link.
 // NOT covered here: that a link waits for the finished answer (Parts.tsx's `streaming || !done` gate). The demo answer is one part
-// and the turn ends as it lands; the reveal (reveal.ts) shows it in 8 steps and its last takes everything after "Shopify" (the
-// link and the last words together), so the link and the last words always arrive in one render and deleting the gate could not
-// fail a spec here. parts.test.ts holds the `streaming` half; the mid-reveal half has no test until the demo has an answer with
+// and the turn ends as it lands; the reveal (reveal.ts) shows it a few words at a time, about a second in all, and the link
+// can show a step before the last words; no spec can pin a render that short, so deleting the gate could not fail a spec here.
+// parts.test.ts holds the `streaming` half; the mid-reveal half has no test until the demo has an answer with
 // text after a listed link or a part that keeps streaming.
 import { expect, test } from './support/fx.js'
 import type { Fx } from './support/fx.js'

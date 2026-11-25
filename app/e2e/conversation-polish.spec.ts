@@ -23,7 +23,7 @@ async function start(page: Page, hash: string) {
   await page.goto('/?demo' + hash)
 }
 
-const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => null))))
+const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.timeline instanceof DocumentTimeline && a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => null))))
 const shot = async (page: Page, name: string) => { await settled(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const log = (page: Page) => page.getByRole('log', { name: 'Conversation' })
 const msg = (page: Page, text: string) => log(page).locator('[data-chat-msg]').filter({ hasText: text })
@@ -74,9 +74,12 @@ test.describe('desktop', () => {
     const more = bubble.getByRole('button', { name: /^Show (more|less)$/ })
     await expect(more).toHaveAccessibleName('Show more')
     await expect(more).toHaveAttribute('aria-expanded', 'false')
+    // Bubble's collapsible: the trigger names the text it opens (always there, clamped while closed).
+    await expect(more).toHaveAttribute('aria-controls', (await text.getAttribute('id'))!)
     await shot(page, 'long-message-folded')
 
-    // Show more opens the whole page where it is: the view doesn't move, and Jump to latest offers the way down.
+    // Show more opens the whole page where it is: the view doesn't move (Message Scroller lets go of the live edge, as for
+    // the reader's own scroll), and Jump to latest offers the way down.
     await more.scrollIntoViewIfNeeded()
     const top = await scroller(page).evaluate(el => el.scrollTop)
     await more.click()

@@ -6,20 +6,19 @@ import { useLayoutEffect } from 'react'
 import type { MessagePart } from '../../agent/types'
 import { parseHostlist } from '../../../shared/contract/settings-table'
 import { draftView, whenOf } from '../../state/derive'
-import { fmtNextRun, fmtTime } from '../../lib/format'
+import { fmtNextRun } from '../../lib/format'
 import { display } from '../../state/display'
 import { useCtx, useUi } from '../../state/store'
 import { Button, Icon } from '../../ui'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { Markdown } from './Markdown'
+import { Markdown } from './markdown'
 import { useRevealed } from './reveal'
 import { MODEL_OFF_TEXTS } from './notes'
 import { cn } from '@/lib/utils'
 import { SuggestionChip } from '../../ui/chat'
+import { CONFIRMATION_SHEET, Confirmation, ConfirmationButtons, ConfirmationResult } from '../../ui/agent'
 
 const OPEN_LINK = 'flex flex-none items-center gap-0.5 text-base text-foreground-3 hover:text-foreground'
-/** A draft to approve: its own card after the answer's, as the brand-tint sheet on Today's cards. */
-const SHEET = 'box-border max-w-full self-start rounded-3xl bg-draft-sheet px-5 py-4'
 /** A routine or skill inside the answer's card: an inset block a step off the card. */
 const INSET = 'box-border max-w-full rounded-2xl border border-divider bg-muted px-4 py-3.5'
 
@@ -50,40 +49,30 @@ export function ApprovalCard({ problemId }: { problemId: string }) {
   const openProblem = useUi(s => s.openProblem)
   // A saved chat can name a draft the agent's data doesn't have now (another scenario, day one): say so, don't crash.
   if (!ctx.data.problems.some(p => p.id === problemId)) {
-    return <div className={cn(SHEET, 'text-sm text-muted-foreground')}>This draft isn't in today's list.</div>
+    return <div className={cn(CONFIRMATION_SHEET, 'text-sm text-muted-foreground')}>This draft isn't in today's list.</div>
   }
   const dv = draftView(ctx, problemId)
   const done = !!dv.approvedAt
   // Money and customer messages are approved from the panel, never with one tap.
   const sensitive = !!(dv.problem.draft.money || dv.problem.draft.customer)
   return (
-    <div data-approval className={cn(SHEET, 'w-prose-measure')}>
-      <CardHead icon="edit_note" tile="border border-border bg-draft-kind text-foreground-3" iconSize={20} kicker="Drafted for your approval" title={dv.draftTitle} openLabel="Open draft" onOpen={() => openProblem(problemId)} />
-      {dv.body && (
-        <div className="mt-3 rounded-xl bg-draft-kind px-3.5 py-3 text-sm leading-prose text-foreground-2 wrap-anywhere">
-          <div className="mono-label mb-1.5 tracking-caps">{dv.bodyLabel ?? 'Your note'}</div>{dv.body}
-        </div>
-      )}
+    <Confirmation data-approval icon="edit_note" kicker="Drafted for your approval" title={dv.draftTitle} openLabel="Open draft"
+      onOpen={() => openProblem(problemId)} body={dv.body} bodyLabel={dv.bodyLabel ?? undefined}>
       {!done && (
-        <div className="mt-3 flex flex-wrap gap-2">
+        <ConfirmationButtons>
           {sensitive
             ? <Button onClick={() => openProblem(problemId)}>Review</Button>
             : <>
                 <Button onClick={() => approve(problemId)}>{dv.cta}</Button>
                 <Button variant="soft" onClick={() => openProblem(problemId)}>Review and edit</Button>
               </>}
-        </div>
+        </ConfirmationButtons>
       )}
       {done && (
-        <div className="mt-3 flex items-center gap-2 text-sm font-strong">
-          <Icon name="check_circle" size={17} />
-          <span className="min-w-0 flex-1">{dv.approvedLine.replace(' · logged in Activity', '')}</span>
-          {dv.canUndo && (
-            <Button variant="soft" size="sm" onClick={() => unapprove(problemId)}>Undo</Button>
-          )}
-        </div>
+        <ConfirmationResult line={dv.approvedLine.replace(' · logged in Activity', '')}
+          action={dv.canUndo && <Button variant="soft" size="sm" onClick={() => unapprove(problemId)}>Undo</Button>} />
       )}
-    </div>
+    </Confirmation>
   )
 }
 
@@ -93,16 +82,17 @@ export function ApprovalCard({ problemId }: { problemId: string }) {
  * itself: the one place a screen reader looks), and the whole text is announced once, when it is all there.
  */
 function TextPart({ id, chat, text, animate, streaming, webFetchHosts, onBusy }: { id: string; chat: string | undefined; text: string; animate: boolean; streaming: boolean; webFetchHosts?: string; onBusy?: (id: string, busy: boolean) => void }) {
-  const { shown, done, fading } = useRevealed(text, animate, chat === undefined ? undefined : { chat, id })
+  const { shown, done } = useRevealed(text, animate, chat === undefined ? undefined : { chat, id })
   useLayoutEffect(() => {
     if (done || !onBusy) return
     onBusy(id, true)
     return () => onBusy(id, false)
   }, [id, done, onBusy])
-  // A partially streamed or revealed bare URL can look like a different destination.
-  const linkHosts = streaming || !done ? [] : parseHostlist(webFetchHosts ?? '') ?? []
+  // A partially streamed or revealed bare URL can look like a different destination. While the text is still coming, half-written markdown is closed for the moment.
+  const live = streaming || !done
+  const linkHosts = live ? [] : parseHostlist(webFetchHosts ?? '') ?? []
   return (
-    <div className="max-w-answer-measure min-w-0 text-md leading-reading text-pretty wrap-anywhere"><Markdown text={shown} fade={fading} linkHosts={linkHosts} /></div>
+    <div className="max-w-answer-measure min-w-0 text-md leading-reading text-pretty wrap-anywhere"><Markdown text={shown} linkHosts={linkHosts} live={live} /></div>
   )
 }
 
@@ -176,14 +166,14 @@ export function AgentPart({ part, trace, id, chat, animate = false, streaming = 
       )
 
     case 'workRow':
+      // No time of its own: the thread's time markers say when (UI_BASE_V2 decision 7), so a time never shows twice.
       return (
         <Tooltip>
           <TooltipTrigger asChild>
-            <button type="button" onClick={() => openTrace(trace)} aria-label={`${part.text}, ${fmtTime(part.at, display())}. See every step`}
+            <button type="button" onClick={() => openTrace(trace)} aria-label={`${part.text}. See every step`}
               className="-ml-2 flex h-7.5 items-center gap-2 self-start rounded-md pr-1.5 pl-2 text-sm text-foreground-3 hover:bg-fill-hover hover:text-foreground">
               <Icon name="check" size={16} />
-              <span>{part.text}</span>{' '}
-              <span className="text-muted-foreground tabular-nums">{fmtTime(part.at, display())}</span>
+              <span>{part.text}</span>
               <Icon name="chevron_right" size={17} />
             </button>
           </TooltipTrigger>

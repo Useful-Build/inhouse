@@ -14,7 +14,7 @@ updates:
       default-days: 14
     groups:
       registered:
-        patterns: ["streamdown", "@streamdown/*", "remark-breaks"]
+        patterns: ["streamdown", "@streamdown/*", "remark-breaks", "mermaid", "@shadcn/react"]
       app-minor-and-patch:
         patterns: ["*"]
         update-types: [minor, patch]

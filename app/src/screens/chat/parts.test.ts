@@ -8,6 +8,8 @@ vi.mock('../../state/store', () => ({
   useUi: () => undefined,
 }))
 vi.mock('../../ui/chat', () => ({ SuggestionChip: () => null }))
+// The app loads the renderer lazily (markdown/index.tsx); this test renders it directly.
+vi.mock('./markdown', async () => ({ Markdown: (await import('./markdown/renderer')).Markdown }))
 
 test('AgentPart enables links to WebFetch hosts only after streaming ends', () => {
   const text = '[Listed](https://docs.example.test/guide) [Unlisted](https://other.example.test/guide) [HTTP](http://docs.example.test/guide)'

@@ -248,7 +248,7 @@ test('Chats: every seeded answer has its steps line and, opened, its model and s
     }
     await page.evaluate(id => { location.hash = `#/chats/${id}` }, c.id)
     const lines = page.getByRole('log', { name: 'Conversation' }).locator('[data-steps] > button')
-    await expect(lines, c.id).toHaveText(expected.map(l => new RegExp(`^${l.startsWith('Checked') ? 'check' : ''}${l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}expand_more$`)))
+    await expect(lines, c.id).toHaveText(expected.map(l => new RegExp(`^${l.startsWith('Checked') ? 'check' : ''}${l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}chevron_right$`)))
     await expect(lines.first(), c.id).toBeVisible()
     for (const line of await lines.all()) await line.click()
     await expect(page.getByRole('log', { name: 'Conversation' }).locator('[data-steps-meta]'), c.id).toHaveText(expectedMeta)

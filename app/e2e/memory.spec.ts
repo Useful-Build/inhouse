@@ -12,7 +12,7 @@ async function start(page: Page, hash = '#/today', stage: Stage = 'Act', scenari
   await page.goto('/?demo' + hash)
 }
 
-const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
+const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.timeline instanceof DocumentTimeline && a.effect?.getTiming().iterations !== Infinity).map(a => a.finished)))
 const shot = async (page: Page, name: string) => { await settled(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' })
 const log = (page: Page) => page.getByRole('log', { name: 'Conversation' })
@@ -186,28 +186,43 @@ test('Memory: the demo clock never runs backwards after a reload, even with noth
   await todayBox(page).fill(Q)
   await page.keyboard.press('Enter')
   await expect(log(page).getByText(A)).toBeVisible({ timeout: 15_000 })
-  // The answer's step list, opened from its steps line, ends with "Smart · 9.4s · 8:30 AM".
-  const stepsLines = log(page).locator('[data-steps]')
-  const stampOf = async (i: number) => {
-    const meta = stepsLines.nth(i).locator('[data-steps-meta]')
-    if (await meta.count() === 0) await stepsLines.nth(i).getByRole('button', { name: /\d+ steps/ }).click()
-    const m = /(\d{1,2}):(\d\d)\s(AM|PM)$/.exec((await meta.innerText()).trim())
-    expect(m, 'the answer footer ends with its time').not.toBeNull()
-    return (Number(m![1]) % 12 + (m![3] === 'PM' ? 12 : 0)) * 60 + Number(m![2])
-  }
-  const first = await stampOf(-1)
-  expect(first).toBeGreaterThanOrEqual(8 * 60 + 30)
+  // The stamps of the saved agent messages, as epoch ms (read via fx). Compared as instants, never as a time of day in
+  // the test runner's own zone (the demo clock runs in the browser's).
   const chatLink = await hash(page)
+  const chatId = chatLink.replace(/^#\/chats\//, '')
+  // An answer is saved as one agent message per part (the text, then the table), each stamped.
+  const stamps = async () => {
+    await expect(log(page)).not.toHaveAttribute('aria-busy', 'true')
+    await saved(page)
+    const state = await fxFor(page, undefined).saved()
+    const extras = state.session.chats?.[chatId]?.extras ?? []
+    return extras.filter(m => m.role === 'agent' && m.at).map(m => {
+      const ms = typeof m.at === 'string' ? Date.parse(m.at) : m.at!.ms
+      if (typeof ms !== 'number' || Number.isNaN(ms)) throw new Error(`A saved stamp that isn't a time: ${JSON.stringify(m.at)}`)
+      return ms
+    })
+  }
+  // The demo starts at 8:00 AM on Monday, November 16, 2026 in the browser's local time (src/agent/demo-clock.ts).
+  const demoStart = await page.evaluate(() => new Date(2026, 10, 16, 8, 0, 0, 0).getTime())
+  const firstAnswer = await stamps()
+  expect(firstAnswer.length, 'the first answer is saved with its stamps').toBeGreaterThan(0)
+  const first = Math.max(...firstAnswer)
+  expect(Math.min(...firstAnswer)).toBeGreaterThanOrEqual(demoStart + 30 * 60_000)
 
   // Reload with no other write, then ask again in the same chat.
-  await saved(page)
   await page.reload()
   await go(page, chatLink)
   await expect(log(page).getByText(A)).toHaveCount(1)
+  // The time marker heading the chat reads the demo's time, in the browser's zone (the demo shows the device's).
+  await expect(log(page).locator('[data-thread-marker="time"]').first()).toHaveText(/^Today 8:[3-5]\d\sAM$/)
   await chatBox(page).fill(Q)
   await page.keyboard.press('Enter')
   await expect(log(page).getByText(A)).toHaveCount(2, { timeout: 15_000 })
-  const second = await stampOf(-1)
-  expect(second).toBeGreaterThanOrEqual(first)
+  const both = await stamps()
+  // The first answer's stamps are unchanged, and the second answer's are saved after them: never one stamp compared with itself.
+  expect(both.slice(0, firstAnswer.length)).toEqual(firstAnswer)
+  const secondAnswer = both.slice(firstAnswer.length)
+  expect(secondAnswer.length, 'the second answer is saved with its stamps').toBeGreaterThan(0)
+  expect(Math.min(...secondAnswer)).toBeGreaterThanOrEqual(first)
   await shot(page, 'memory-clock-after-reload')
 })

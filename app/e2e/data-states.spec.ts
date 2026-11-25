@@ -11,7 +11,7 @@ async function start(page: Page, stage: Stage, scenario: string, hash: string) {
 }
 
 // A toast that leaves mid-shot cancels its animation: cancelled counts as settled.
-const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => undefined))))
+const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.timeline instanceof DocumentTimeline && a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => undefined))))
 const shot = async (page: Page, name: string) => { await settled(page); await page.screenshot({ path: test.info().outputPath(`${name}.png`) }) }
 const side = (page: Page) => page.getByRole('complementary', { name: 'Sidebar' })
 const go = (page: Page, h: string) => page.evaluate(x => { location.hash = x }, h)

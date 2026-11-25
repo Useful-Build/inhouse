@@ -224,8 +224,11 @@ export function memoryStore({ db }: { db: D1Database }): MemoryStore {
         memberId, scope, ownerId, text, ...(scope === 'person' ? [memberId] : []),
       )
       if (changed > 0) return { saved: (await byId(id))! }
+      // A reword or an admin's restore can leave the same text live twice (one active, one waiting). The duplicate is
+      // then the active one, the oldest of those: the agent acts on this id next, and the tools see only active facts.
       const same = await first<FactRow>(db, stmt(
-        `SELECT ${COLUMNS} ${FROM} WHERE m.scope = ? AND m.owner_id IS ? AND m.text = ? AND m.status IN ('active', 'waiting')`, scope, ownerId, text,
+        `SELECT ${COLUMNS} ${FROM} WHERE m.scope = ? AND m.owner_id IS ? AND m.text = ? AND m.status IN ('active', 'waiting')
+         ORDER BY m.status <> 'active', m.n LIMIT 1`, scope, ownerId, text,
       ))
       if (same) return { duplicate: fact(same) }
       // Nothing was written and nothing is a duplicate: a person fact is refused for `m:learn` while the member is

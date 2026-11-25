@@ -132,6 +132,18 @@ test('Composer: pasted and dropped files become chips, a file over the limit say
   const field = chatField(page)
   await expect(field).toBeFocused()
 
+  // The card (an InputGroup) takes the focus look while its field has focus, and drops it when the field loses it.
+  // Read once the card's own transition has finished: a read mid-transition caught the ring at 2.999px of 3px.
+  const boxShadow = () => composer(page).evaluate(async el => {
+    await Promise.all(el.getAnimations().filter(a => a.timeline instanceof DocumentTimeline).map(a => a.finished.catch(() => undefined)))
+    return getComputedStyle(el).boxShadow
+  })
+  const focusedShadow = await boxShadow()
+  await field.blur()
+  await expect.poll(boxShadow).not.toBe(focusedShadow)
+  await field.focus()
+  await expect.poll(boxShadow).toBe(focusedShadow)
+
   // Pasting plain text types it, with no chip.
   await page.evaluate(() => navigator.clipboard.writeText('Orders from the sheet'))
   await page.keyboard.press('ControlOrMeta+V')
@@ -155,6 +167,10 @@ test('Composer: pasted and dropped files become chips, a file over the limit say
   await expect(note).toHaveCount(1)
   await expect(note).toContainText('warehouse-walkthrough.mov')
   await expect(note).toContainText('Over the 20 MB limit')
+  // The chips are Attachments: the added files are done, the rejected one is in the error state.
+  await expect(note).toHaveAttribute('data-slot', 'attachment')
+  await expect(note).toHaveAttribute('data-state', 'error')
+  await expect(composer(page).locator('[data-slot=attachment][data-state=done]')).toHaveCount(2)
   // Rejected files are announced once, together, in one alert region.
   await expect(composer(page).locator('[role=alert]')).toHaveCount(1)
   await expect(composer(page).locator('[role=alert] [data-rejected]')).toHaveCount(1)

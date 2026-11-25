@@ -1,10 +1,15 @@
 // The JS budget for Today's first load (production plan P-2). Run after `npm run build`.
 // Reads the built index.html, takes its module script and modulepreload links, follows each chunk's static imports
 // (dynamic `import()` calls are the lazy routes and don't count), and gzips what the browser needs before Today shows.
-// Fails when the total is over BUDGET_KB (default 241, in KiB gzipped): the split measured 226 KB on 2026-11-19
+// Fails when the total is over BUDGET_KB (default 257, in KiB gzipped): the split measured 226 KB on 2026-11-19
 // (247 KB before the split), with about 6% of room then. Raised to 241 on 2026-11-23 (Wasim's OK): blank New chat's
 // prompt cards load with the page (+0.7 KB, 240.3 KB, so 0.7 KB of room), because loading them lazily made the composer
-// jump on every load.
+// jump on every load. Raised to 252 on 2026-11-25 (Wasim's OK) for the ui-base v2 round (`app/UI_BASE_V2.md`): Today
+// and Chats share the entry chunk, so the composer's Input Group and Attachment (+1.3 KB), the thread's Message Scroller
+// with `@shadcn/react` and the trace rows load with Today. Streamdown loads on demand, outside it. The final fleet PR
+// tightens this to the measured size plus 1 KB. Raised again to 257 the same day (Wasim's OK): the thread (B), steps (C) and
+// composer (D) together measured 255.1 KB, and the approval cards (E) add about 1 KB. The final fleet PR measured 256.7 KB,
+// so the budget stays at 257 (0.3 KB of room) rather than measured plus 1 KB.
 // The budget covers Today's first load only: a deep link to a lazy route adds that route's chunk on top. Raise it only on purpose, with the reason.
 // DIST overrides the build folder (for trying the script on a fake build).
 import { existsSync, readFileSync } from 'node:fs'
@@ -13,7 +18,7 @@ import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const budgetKb = Number(process.env.BUDGET_KB ?? 241)
+const budgetKb = Number(process.env.BUDGET_KB ?? 257)
 if (!Number.isFinite(budgetKb) || budgetKb <= 0) {
   console.error(`check-bundle: BUDGET_KB must be a positive number, got "${process.env.BUDGET_KB}".`)
   process.exit(1)

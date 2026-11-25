@@ -16,7 +16,7 @@ import { cn } from '@/lib/utils'
 import { Button, CardGrid, EmptyState, Icon, IconButton, IconTile, LogoTile, MenuItem, Page, PageHeader, SectionHeader, Segmented, StageTag } from '../ui'
 import { Confirm, SearchBox, TAP } from '../ui/fields'
 import { rememberTrigger, triggerTogglesMenu } from '../ui/dialogs'
-import { Markdown } from './chat/Markdown'
+import { Markdown } from './chat/markdown'
 
 const SECTION_HEAD = 'mb-1.5'
 const TABS: [SkillTab, string][] = [['all', 'All'], ['team', 'By Inhouse team'], ['mine', 'By your team']]

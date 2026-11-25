@@ -222,6 +222,55 @@ const QUERY_ANSWER = [
   "> These are Shopify orders only. [Amazon orders](https://orders.example.test/) aren't in this query.",
 ].join('\n')
 
+/** Asked for a diagram or flowchart, the agent answers with a Mermaid diagram: the one sample answer that has a ```mermaid fence. */
+const DIAGRAM_ASK = /\b(diagram|flowchart)\b/i
+const DIAGRAM_ANSWER = [
+  "Here's how a refund request moves through the team:",
+  '',
+  '```mermaid',
+  'flowchart LR',
+  '  A[Customer asks for a refund] --> B{Order under 30 days old}',
+  '  B -->|Yes| C[Approve in Shopify]',
+  '  B -->|No| D[Ask the team]',
+  '  C --> E[Send the refund email]',
+  '  D --> E',
+  '```',
+  '',
+  'Most refunds take the top path.',
+].join('\n')
+
+/**
+ * Asked for a diagram with links, the agent answers with diagrams that try what an untrusted answer could: their own config
+ * turning on HTML labels and setting theme CSS with addresses, a linked node, and a style with a same-origin address. The
+ * E2E test checks the figures come out clean (no link, image, HTML, script or address) with the linked node still drawn.
+ */
+const HOSTILE_DIAGRAM_ASK = /\bdiagram\b.*\blinks?\b/i
+const HOSTILE_DIAGRAM_ANSWER = [
+  'Here are the refund steps, with a link to the policy:',
+  '',
+  '```mermaid',
+  '%%{init: {"htmlLabels": true, "flowchart": {"htmlLabels": true}, "arrowMarkerAbsolute": true}}%%',
+  'flowchart LR',
+  '  A[Customer asks for a refund] --> B[Refund policy]',
+  '  click B href "https://help.example.test/refunds" "Open the refund policy"',
+  '```',
+  '',
+  'And where a request can stop:',
+  '',
+  '```mermaid',
+  '---',
+  'config:',
+  '  htmlLabels: true',
+  '  themeCSS: ".statediagram-state rect { background-image: image-set(\\"/hostile-image-set\\" 1x) }"',
+  '---',
+  'stateDiagram-v2',
+  '  [*] --> Asked',
+  '  Asked --> Refunded',
+  '  classDef hostile background-image:url(/hostile-classdef)',
+  '  class Refunded hostile',
+  '```',
+].join('\n')
+
 /** A seeded turn's own answer when the question is one a chat already asked: this chat's first, then any chat's. */
 export function seeded(h: ScriptHost, q: string, chatId: string): Script | null {
   const stage = h.demo.stage
@@ -330,6 +379,12 @@ export function buildScript(h: ScriptHost, q: string, chatId: string): Script {
   }
   if (QUERY_ASK.test(q)) {
     return { thinking: fb.thinking, delayMs: fb.delayMs, trace: 'query', parts: [text(QUERY_ANSWER)] }
+  }
+  if (HOSTILE_DIAGRAM_ASK.test(q)) {
+    return { thinking: fb.thinking, delayMs: fb.delayMs, trace: 'generic', parts: [text(HOSTILE_DIAGRAM_ANSWER)] }
+  }
+  if (DIAGRAM_ASK.test(q)) {
+    return { thinking: fb.thinking, delayMs: fb.delayMs, trace: 'generic', parts: [text(DIAGRAM_ANSWER)] }
   }
   const plain = (match: string, re: RegExp): Script | null => {
     const s = pick(match) as { thinking: string[]; delayMs: number; reply: { text: string }[]; trace: string }
