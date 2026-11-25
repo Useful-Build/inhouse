@@ -4,7 +4,7 @@
 // Fails when the total is over BUDGET_KB (default 257, in KiB gzipped): the split measured 226 KB on 2026-11-19
 // (247 KB before the split), with about 6% of room then. Raised to 241 on 2026-11-23 (Wasim's OK): blank New chat's
 // prompt cards load with the page (+0.7 KB, 240.3 KB, so 0.7 KB of room), because loading them lazily made the composer
-// jump on every load. Raised to 252 on 2026-11-25 (Wasim's OK) for the ui-base v2 round (`app/UI_BASE_V2.md`): Today
+// jump on every load. Raised to 252 on 2026-11-25 (Wasim's OK) for the ui-base v2 round (`docs/history/UI_BASE_V2.md`): Today
 // and Chats share the entry chunk, so the composer's Input Group and Attachment (+1.3 KB), the thread's Message Scroller
 // with `@shadcn/react` and the trace rows load with Today. Streamdown loads on demand, outside it. The final fleet PR
 // tightens this to the measured size plus 1 KB. Raised again to 257 the same day (Wasim's OK): the thread (B), steps (C) and
