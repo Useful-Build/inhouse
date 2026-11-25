@@ -103,10 +103,11 @@ Files: `screens/chat/step-data.ts`, `screens/chat/Steps.tsx`, `overlays/TraceWin
 
 ### PR D: composer (Sonnet)
 Files: `components/Composer.tsx`, `ui/chrome.tsx` (`AttachmentChip`), `screens/chat/FileChip.tsx`.
-- [ ] Shell on `InputGroup` + `InputGroupTextarea`, our card look (`rounded-2xl`, `shadow-float`); rewrite the `has-[>textarea:focus]` focus selector against InputGroup's `data-slot`.
-- [ ] Attach and Send/Stop as `InputGroupButton`s; chips in a `block-start` addon as `Attachment size="sm"`, rejected files `state="error"` with `role=alert`.
-- [ ] Stays ours: tools chip, model and thinking menu, dictate, reply-to quote, editing bar, the hidden file input and `takeFiles`, drag state, Enter and IME rules. Keep `data-composer`, `data-composer-send` and every aria-label.
-- [ ] `AttachmentChip` replaced by `Attachment`.
+- [x] Shell on `InputGroup` + `InputGroupTextarea`, our card look (`rounded-2xl`, `shadow-float`); rewrite the `has-[>textarea:focus]` focus selector against InputGroup's `data-slot`.
+- [x] Attach and Send/Stop as `InputGroupButton`s; chips in a `block-start` addon as `Attachment size="sm"`, rejected files `state="error"` with `role=alert`.
+- [x] Stays ours: tools chip, model and thinking menu, dictate, reply-to quote, editing bar, the hidden file input and `takeFiles`, drag state, Enter and IME rules. Keep `data-composer`, `data-composer-send` and every aria-label.
+- [x] `AttachmentChip` replaced by `Attachment`.
+- Note (as built): `Composer.tsx` is an `InputGroup` with `data-composer` on the group; the textarea is `InputGroupTextarea`; the notes, chips and button row are `InputGroupAddon`s (`block-start`, `block-end`) that pass `onClick={undefined}` because the addon's stock click handler focuses the group's first `<input>`, which here is the hidden file input. A disabled Send would fade the whole group through InputGroup's `has-disabled:opacity-50`: the composer sets `has-disabled:opacity-100`. Attach, Queue, Send and Stop are `InputGroupButton`s (`size="icon-sm"`, `variant={null}` for Attach and Queue); the tools chip, model button and Dictate stay plain buttons. `AttachmentChip` keeps its export (Chats.tsx uses it for sent files) and its props, and is now a wrapper over `Attachment size="sm"`: state `error` for a rejected file, `processing` while a download runs, else `done`. The composer holds files until Send, so it has no `uploading` chip; upload progress stays in the thread. The Remove, Dismiss and Download buttons stay `IconButton`s (28px with a 44px phone tap area) inside `AttachmentActions`, not `AttachmentAction`.
 
 ### PR E: confirmation (Sonnet, after B)
 Files: `screens/chat/Parts.tsx` (`ApprovalCard`).
@@ -126,8 +127,8 @@ Files: `screens/chat/Parts.tsx` (`ApprovalCard`).
 | Markdown | `Markdown.tsx` 310 + `md-syntax.ts` 4, own parser | ~60 on Streamdown + Code Block |
 | Reveal | `reveal.ts` 155 + per-word fade CSS | ~70, pacing only |
 | Thread | `Chats.tsx` 616 with ~70 lines of hand scroll logic | ~500; scroll on Message Scroller |
-| Composer | 468 | ~400 on Input Group + Attachment |
-| Chips | `AttachmentChip` ~45 | Attachment |
+| Composer | 468 | ~400 on Input Group + Attachment (built: 472, the shell changed but the menus and rules are ours) |
+| Chips | `AttachmentChip` ~45 | Attachment (built: ~35, a wrapper over the base) |
 | Steps and sources | `Steps.tsx` 119 + `step-data.ts` 99 | ~105 + ~150 (the mapper moves logic out of the JSX) |
 | Trace window | 266 | ~220 |
 | **Net** | | **about 600 fewer lines of hand-built UI** |

@@ -122,9 +122,9 @@ Chat: empty chat tool status
 
 Chat: composer files
   Path:     composer -> paste or drop files
-  Selector: file chips
-  Expected: chips appear; a file over the limit says why and isn't added; each chat keeps its own draft and files
-  Covered:  e2e/composer.spec.ts
+  Selector: file chips (`[data-slot=attachment]`; a rejected one is `data-state="error"` with `data-rejected`, inside one `role="alert"`)
+  Expected: chips appear (base `Attachment`, small, in the composer's top addon); a file over the limit says why and isn't added; each chat keeps its own draft and files. The composer is an `InputGroup` (`[data-composer]`): its field is the group's control, so the card takes the focus look while the field has focus, and the dashed border shows while files are dragged over it
+  Covered:  e2e/composer.spec.ts, src/ui/attachment-chip.test.ts
 
 Chat: Google Drive and Slack stubs
   Path:     composer -> Attach -> From Google Drive; answer -> More -> Send to Slack
