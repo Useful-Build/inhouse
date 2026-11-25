@@ -99,7 +99,8 @@ Roles: the **operator** is an Inhouse team member running the steps. The **Admin
 **On the house: the drill.** After step 1, dispatch the ops repo's `house-restore-drill.yml` from `main`
 (`backup_id`, `operator_id`, `approved_by`). It runs steps 2 to 5 with app main's code into a new D1
 `inhouse-house-restore-r<run>-<attempt>`, reads the live database only, writes R2 only under `restore/<restoreId>/`,
-rewinds no Durable Object and stops after `checkBeforeSwitch`; its summary says what the switch would do. It refuses to
+rewinds no Durable Object, stops instead of deleting a live R2 object when the deletion-log replay would (the stop names
+the key; those deletions belong to the switch), and stops after `checkBeforeSwitch`; its summary says what the switch would do. It refuses to
 start while an earlier `inhouse-house-restore-*` copy exists: delete that copy by hand first (it holds brand data that
 later deletions don't reach). The switch is a separate, separately approved change.
 
