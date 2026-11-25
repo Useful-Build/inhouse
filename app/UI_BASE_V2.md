@@ -2,7 +2,7 @@
 
 Tracks the ui-base v2 round Wasim asked for on 2026-11-25. Paths are relative to `app/` unless they start with `ui-base/`. Update this file in every PR of the plan: tick what landed, add the PR link, note anything moved or dropped and why.
 
-**Status: plan approved by Wasim 2026-11-25, D1 to D3 settled as recommended. Wave 0 (scoping) done. Wave 1 (ui-base v2.0.0) in progress.**
+**Status: plan approved by Wasim 2026-11-25, D1 to D3 settled as recommended. Wave 0 (scoping) done. Wave 1 done: ui-base v2.0.0 merged and tagged ([ui-base#4](https://github.com/Useful-Build/ui-base/pull/4)), pulled into `fleet/ui-base-v2`. Wave 2 next.**
 
 ## What and why
 
@@ -66,25 +66,25 @@ Opus (this thread) coordinates, checks each PR against this file and merges into
 
 ## Wave 1: ui-base v2.0.0 (`Useful-Build/ui-base`)
 
-- [ ] New `registry/ui/`: collapsible, hover-card, scroll-area, tabs, progress, spinner, item, input-group, message, bubble, marker, attachment, message-scroller, trace, code-block, questionnaire. Vendored from the `radix-nova` style (`/r/styles/radix-nova/<name>.json`), each file noting the upstream version it came from.
-- [ ] Restyle: lucide to `Icon`; role tokens only; `@/lib/utils`; global focus outline. Bubble's oklch tint fails `check-tokens`: its default variant matches today's user bubble look with existing tokens. `text-[0.625rem]`, `rounded-[4px]` and `rounded-[calc(var(--radius)-5px)]` map to `text-2xs`, `rounded-xs`. Spinner wraps `Icon` in a `span role="status"`.
-- [ ] `icon-names.ts`: add `content_copy`, `arrow_downward`, `progress_activity`.
-- [ ] `ui-base.css`: `data-open`, `data-closed`, `data-checked`, `data-disabled`, `data-active`, `data-horizontal`, `data-vertical` variants; `shimmer*` and `scroll-fade*` utilities copied from `shadcn/tailwind.css` (MIT, attributed). No `@import "shadcn/tailwind.css"`.
-- [ ] `registry.json`: an item each; all of them in `base`, `base-next`, `update`, `update-next`; `@shadcn/react` (exact pin) in those bundles. No `use-highlighted-code`.
-- [ ] Lint rule: no `from "cn"` in `components/ui/`.
-- [ ] Kitchen-sink fixtures for the new components in light and dark; regression suite green.
-- [ ] CHANGELOG v2.0.0: new components, 3 new icon names (breaking for the type check), new CSS, `@shadcn/react`, `cn` not adopted yet, `icon.tsx` is app-owned and needs the 3 names mapped.
+- [x] New `registry/ui/`: collapsible, hover-card, scroll-area, tabs, progress, spinner, item, input-group, message, bubble, marker, attachment, message-scroller, trace, code-block, questionnaire. Vendored from the `radix-nova` style (`/r/styles/radix-nova/<name>.json`), each file noting the upstream version it came from.
+- [x] Restyle: lucide to `Icon`; role tokens only; `@/lib/utils`; global focus outline. Bubble's oklch tint fails `check-tokens`: its default variant matches today's user bubble look with existing tokens. `text-[0.625rem]`, `rounded-[4px]` and `rounded-[calc(var(--radius)-5px)]` map to `text-2xs`, `rounded-xs`. Spinner wraps `Icon` in a `span role="status"`.
+- [x] `icon-names.ts`: add `content_copy`, `arrow_downward`, `progress_activity`.
+- [x] `ui-base.css`: `data-open`, `data-closed`, `data-checked`, `data-disabled`, `data-active`, `data-horizontal`, `data-vertical` variants; `shimmer*` and `scroll-fade*` utilities copied from `shadcn/tailwind.css` (MIT, attributed). No `@import "shadcn/tailwind.css"`.
+- [x] `registry.json`: an item each; all of them in `base`, `base-next`, `update`, `update-next`; `@shadcn/react` (exact pin) in those bundles. No `use-highlighted-code`.
+- [x] Lint rule: no `from "cn"` in `components/ui/`.
+- [x] Kitchen-sink fixtures for the new components in light and dark; regression suite green.
+- [x] CHANGELOG v2.0.0: new components, 3 new icon names (breaking for the type check), new CSS, `@shadcn/react`, `cn` not adopted yet, `icon.tsx` is app-owned and needs the 3 names mapped.
 
 ## Wave 2 and 3: inhouse PRs into `fleet/ui-base-v2`
 
 ### PR A: pull v2 + markdown (Sonnet)
 Files: `components/ui/*` (from the update), `components/ui/icon.tsx`, `screens/chat/markdown/` (new), `Markdown.tsx`, `md-syntax.ts`, `reveal.ts`, `screens/Skills.tsx` (if D3), `docs/adopted-libraries.md`, `DESIGN.md` and `DESIGN_SYSTEM.md` update command (use `Useful-Build/ui-base/update`; the `ui-base/update` shorthand has no `registries` entry).
-- [ ] Map the 3 new icons in `icon.tsx`, then `npx shadcn@4.23.0 add Useful-Build/ui-base/update#v2.0.0 -y --overwrite`; typecheck, lint.
+- [x] Map the 3 new icons in `icon.tsx`, then `npx shadcn@4.23.0 add Useful-Build/ui-base/update#v2.0.0 -y --overwrite`; typecheck, lint.
 - [ ] Streamdown behind the existing `Markdown({ text, linkHosts, look })` seam so `markdown-links*.test.ts`, `parts.test.ts` and `skills.test.ts` keep working. The `a` override reuses `linkHosts` (exact hosts, no mailto, images only when listed). Fix `adopted-libraries.md`, which says mailto and `['*']`.
 - [ ] Keep: `#` renders as h2, single newline is a break (`remark-breaks`), `>100` stays text, numbered regions ("Code block N", "Table N"), Copy buttons, `data-md-code`, `data-md-table`. Fenced code goes to Code Block, no highlighting.
 - [ ] Write the guards the doc names: `streamed.property.test.ts`, `markdown.differential.test.ts` (wide table rows will differ from GFM: pin the decision).
 - [ ] Slim `reveal.ts` (decision 9); delete `md-syntax.ts` and the `--animate-word-in` CSS.
-- [ ] `@shadcn/react` and Streamdown entries in `adopted-libraries.md`.
+- [ ] Streamdown entry in `adopted-libraries.md` moves to "In use" (`@shadcn/react` landed with the pull).
 
 ### PR B: thread + markers (Opus medium)
 Files: `screens/Chats.tsx`, `screens/chat/view.ts`, `shared/contract/chat.ts`, `src/agent/sample-data/mock-chat.ts`, `src/ui/agent/` (new: thread parts).
@@ -148,4 +148,6 @@ The bigger gain is behavior we stop owning:
 
 ## Notes from the build
 
-(empty)
+- **Wave 1 deviations (ui-base#4):** Button gains `icon-xs` (24px). Bubble's `default` is a soft neutral fill (`bg-fill-hover`), `tinted` uses `bg-brand-tint`; upstream's primary-filled look is gone. Trace text steps up a shade for axe contrast. Body text in Message, Bubble, Item and Tabs is our `text-base` (14px). Code Block logs a failed copy instead of swallowing it.
+- **The pull (PR into the fleet):** the update bundle also adds `lucide-react` and the two `@fontsource-variable/geist*` packages to `package.json`. Inhouse uses Material Symbols and its own fonts, so they were dropped again, and `@shadcn/react` re-pinned exactly. Follow-up for ui-base: an `update` bundle shouldn't add deps an app replaced. `DESIGN_SYSTEM.md` took the base's text (it already said `Useful-Build/ui-base/update`, fixing our stale `ui-base/update` shorthand).
+- **For PR B:** inhouse's user bubble (`bg-bubble`, `rounded-3xl`, `px-4.5 py-3`, `text-md`) differs from Bubble's default: pass our classes through a wrapper in `src/ui/agent/`. Tabs now ship from the base and look like the segmented control.
