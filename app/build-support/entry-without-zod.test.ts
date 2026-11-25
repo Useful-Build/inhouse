@@ -1,4 +1,4 @@
-// Today's first load has a 241 KB gzip budget (scripts/check-bundle.mjs), and zod's runtime is ~360 KB of source. The
+// Today's first load has a 252 KB gzip budget (scripts/check-bundle.mjs), and zod's runtime is ~360 KB of source. The
 // client files in the entry (the mock, the HTTP client, the types) therefore take only plain values from shared/contract:
 // the lists in keys.ts, the settings table, the error constants. A schema (anything from a file that imports zod) belongs
 // to the server and the tests. Fails when one of them imports a value from another contract file, or when a plain
