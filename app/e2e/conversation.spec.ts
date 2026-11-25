@@ -185,6 +185,10 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, the tim
   await expect(composer(page)).toHaveValue('Draft I keep')
 
   // The newest answer behaves like the earlier ones: at rest its actions are hidden; hover or keyboard focus shows them.
+  // At rest means its words have all shown (the log drops aria-busy) and Message Scroller has stopped moving the thread;
+  // a hover while the reveal still grew the card landed where the card no longer was.
+  await expect(log(page)).not.toHaveAttribute('aria-busy', 'true')
+  await expect(page.locator('[data-autoscrolling]')).toHaveCount(0)
   const fresh = msg(page, REFUNDS_A).last()
   const freshSteps = stepsButtons(page).last()
   const freshActions = fresh.locator('[data-answer-actions]')
