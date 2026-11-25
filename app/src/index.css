@@ -529,8 +529,9 @@
  * edge, so they paint in full. */
 [data-slot='message-scroller-item'][data-thread-row] { content-visibility: visible; contain-intrinsic-size: none; }
 /* Geist Mono draws `-->`, `=>` and `!=` as ligature glyphs: code and other monospaced text show the characters as typed.
- * (A diagram's SVG text turns them off in its own style, MERMAID_CONFIG.themeCSS in screens/chat/markdown/diagram-theme.ts.) */
-@layer base { code, kbd, samp, pre, .font-mono { font-variant-ligatures: none; } }
+ * SVG text too: Mermaid measures some labels (a sequence diagram's) in its own throwaway <svg> on <body>, outside the
+ * figure's own style (MERMAID_CONFIG.themeCSS in screens/chat/markdown/diagram-theme.ts), so both must agree. */
+@layer base { code, kbd, samp, pre, .font-mono, .mono-label, svg text { font-variant-ligatures: none; } }
 
 /* Turrell Skyspace architectural skylight cove: spans the full app shell behind both the floating sidebar and main.
  * The room fills the entire viewport (zero seam behind the sidebar), while the skylight cove centres on the main column. */

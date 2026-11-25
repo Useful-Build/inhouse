@@ -44,7 +44,7 @@ describe('the diagram engine', () => {
       // `-->` shows as typed, not as a ligature arrow.
       themeCSS: expect.stringContaining('font-variant-ligatures: none'),
     }))
-    // A diagram's own init or frontmatter can't change how labels are drawn, the theme or its CSS (Mermaid's defaults kept).
+    // A diagram's own init or frontmatter can't change how labels are drawn, the theme or its CSS (Mermaid's defaults kept, and our themeCSS).
     const { secure } = mermaid.initialize.mock.calls[0][0] as { secure: string[] }
     for (const key of ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering', 'maxEdges',
       'htmlLabels', 'flowchart', 'theme', 'themeCSS', 'themeVariables', 'fontFamily', 'altFontFamily', 'look', 'layout', 'arrowMarkerAbsolute']) {

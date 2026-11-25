@@ -29,7 +29,8 @@ export const MERMAID_CONFIG = {
   // A journey draws its section and task text in a `foreignObject` by default ("fo"), which `tidySvg` refuses: SVG text instead.
   journey: { textPlacement: 'tspan' },
   // Geist can draw `-->` or `->` as one arrow glyph: a diagram's text shows the characters as typed. Mermaid puts this
-  // in the figure's own <style> before it lays the text out, so the sizes it measures match what is drawn.
+  // in the figure's own <style> before it draws, so labels it measures inside the figure match what is drawn; labels it
+  // measures in a throwaway <svg> on <body> (a sequence diagram's) get the same from index.css's `svg text` rule.
   themeCSS: 'text, tspan { font-variant-ligatures: none; }',
   secure: SECURE,
 } as const satisfies MermaidConfig
