@@ -34,7 +34,7 @@ describe('the CLI wrapper', () => {
     })
     const p = sessionPaths(id)
     const env = sessionEnv({ uid: 30001, gid: 30001, user: 's01', home: userPaths('s01').home, workDir: p.workDir }, 8081)
-    const o = createQueryGuards({ hostAddresses: () => [] }).apply(baseOptions(c, p.workDir, cliEnv(env), new AbortController()), c, { audit: async () => {} })
+    const o = createQueryGuards({ hostAddresses: () => [] }).apply(baseOptions(c, p.workDir, cliEnv(env), new AbortController()), c, { loneToolCall: async () => false, audit: async () => {} })
     expect(o.pathToClaudeCodeExecutable).toBe(CLI_WRAPPER)
   })
 })

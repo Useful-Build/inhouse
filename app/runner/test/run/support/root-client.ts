@@ -162,8 +162,8 @@ export function runStart(over: Partial<RunStart> = {}): RunStart {
 export const protocolHeaders = { 'content-type': 'application/json', [PROTOCOL_HEADER]: String(PROTOCOL_VERSION) }
 
 /** POSTs a run (202) and waits for its `released`; the run's events as the egress holds them, `released` left out. */
-export async function postRun(root: TestRoot, start: RunStart): Promise<RunEvent[]> {
-  return openRun(root, start).done
+export async function postRun(root: TestRoot, start: RunStart, version = PROTOCOL_VERSION): Promise<RunEvent[]> {
+  return openRun(root, start, version).done
 }
 
 /**
@@ -171,9 +171,9 @@ export async function postRun(root: TestRoot, start: RunStart): Promise<RunEvent
  * included); `done` resolves once `released` is held, with every event before it (heartbeats left out too);
  * `released` with the `released` event itself.
  */
-export function openRun(root: TestRoot, start: RunStart) {
+export function openRun(root: TestRoot, start: RunStart, version = PROTOCOL_VERSION) {
   const admitted = (async () => {
-    const res = await fetch(`${root.url}/runs`, { method: 'POST', headers: protocolHeaders, body: JSON.stringify(start) })
+    const res = await fetch(`${root.url}/runs`, { method: 'POST', headers: { ...protocolHeaders, [PROTOCOL_HEADER]: String(version) }, body: JSON.stringify(start) })
     const text = await res.text()
     if (res.status !== 202) throw new Error(`POST /runs ${res.status}: ${text}`)
     RunAdmission.parse(JSON.parse(text))

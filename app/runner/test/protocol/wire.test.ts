@@ -43,7 +43,10 @@ import {
   SYSTEM_PROMPT_MAX_BYTES,
   DEFERRED_INPUT_MAX_BYTES,
   BRAND_SKILLS_VERSION,
+  AuditEntry,
   HELPERS_VERSION,
+  auditEntryForPeer,
+  startForPeer,
   HELPER_DESCRIPTION_MAX_BYTES,
   HELPER_PROMPT_MAX_BYTES,
   auditInputSha256,
@@ -272,21 +275,52 @@ describe('run events', () => {
 })
 
 describe('versions', () => {
-  it('v3 accepts itself and v2 (current and previous; v1 was never deployed)', () => {
-    expect(PROTOCOL_VERSION).toBe(3)
-    expect(ACCEPTED_VERSIONS).toEqual([3, 2])
+  it('v4 accepts itself and v3 (current and previous; v2 is no longer spoken, v1 was never deployed)', () => {
+    expect(PROTOCOL_VERSION).toBe(4)
+    expect(ACCEPTED_VERSIONS).toEqual([4, 3])
+    expect(acceptsVersion('4')).toBe(true)
     expect(acceptsVersion('3')).toBe(true)
-    expect(acceptsVersion('2')).toBe(true)
+    expect(acceptsVersion('2')).toBe(false)
     expect(acceptsVersion('1')).toBe(false)
   })
 
-  // Stage 1 (W0-A): the helper, actions and audit keys are gated on v4, which no side speaks yet, so no Worker or runner
-  // can send them to a peer whose strict schema would refuse them. M1-E bumps to 4.
-  it('the gates: brand skills from v3, the helper keys from v4 (above every accepted version for now)', () => {
+  // Stage 1 (M1-E): v4 is the helpers' version. Before the bump this pinned HELPERS_VERSION above every accepted version
+  // (no side could send the keys); now the current version is the gate, and the one before it is below it, so a v4 side
+  // must strip the keys for its v3 peer (startForPeer, auditEntryForPeer).
+  it('the gates: brand skills from v3, the helper keys from v4 (the current version; the previous one is below it)', () => {
     expect(BRAND_SKILLS_VERSION).toBe(3)
     expect(HELPERS_VERSION).toBe(4)
-    expect(Math.max(...ACCEPTED_VERSIONS)).toBeLessThan(HELPERS_VERSION)
+    expect(PROTOCOL_VERSION).toBe(HELPERS_VERSION)
+    expect(Math.min(...ACCEPTED_VERSIONS)).toBeLessThan(HELPERS_VERSION)
   })
+
+  const agents = { researcher: { description: 'Finds.', prompt: 'Research.' }, analyst: { description: 'Works.', prompt: 'Analyse.' } }
+  it('startForPeer: a v3 peer gets no helper key (all three or none), a v4 peer gets the start as it is', () => {
+    const start = { runId: 'r', brandSkills: [], agents, subagentModel: 'm', actions: false }
+    expect(startForPeer(start, 4)).toEqual({ start, dropped: [] })
+    const v3 = startForPeer(start, 3)
+    expect(v3.start).toEqual({ runId: 'r', brandSkills: [] })
+    expect(v3.dropped).toEqual(['agents', 'subagentModel', 'actions'])
+    expect(startForPeer({ runId: 'r' }, 3)).toEqual({ start: { runId: 'r' }, dropped: [] })
+    // The input is never changed.
+    expect(start).toHaveProperty('agents')
+  })
+
+  const helperKeys = fc.option(fc.record({ agentId: fc.option(fc.string({ minLength: 1, maxLength: 8 }), { nil: null }), inputSha256: fc.stringMatching(/^[0-9a-f]{64}$/) }), { nil: undefined })
+  it.prop([helperKeys, fc.integer({ min: 0, max: 10 })])(
+    'auditEntryForPeer: below v4 the entry carries neither agentId nor inputSha256; from v4 it is unchanged, and it always parses',
+    (extra, version) => {
+      const base = { hook: 'PreToolUse', toolName: 'Read', toolUseId: 'toolu_1', decision: 'allow', input: { cut: false, value: {} } }
+      const together = extra === undefined ? base : { ...base, ...extra }
+      const out = auditEntryForPeer(together, version)
+      if (version < HELPERS_VERSION) {
+        expect(out).not.toHaveProperty('agentId')
+        expect(out).not.toHaveProperty('inputSha256')
+        expect(out).toEqual(base)
+      } else expect(out).toBe(together)
+      expect(AuditEntry.safeParse(out).success).toBe(true)
+    },
+  )
 
   it.prop([fc.oneof(fc.integer({ min: -100, max: 1000 }).map(String), fc.string(), fc.nat(1000).map((n) => `0${n}`))])(
     'accepts exactly the canonical decimal of an accepted version',

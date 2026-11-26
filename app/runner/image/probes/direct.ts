@@ -7,6 +7,7 @@ import type { CanUseTool, Options, SDKMessage } from '@anthropic-ai/claude-agent
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { AUDIT_HOOK_TIMEOUT_S } from '../../src/guards/audit.ts'
 import { createQueryGuards } from '../../src/guards/options.ts'
 import { hostAddresses } from '../../src/proxy/proc-net.ts'
 import { baseOptions, cliEnv } from '../../src/session/core.ts'
@@ -30,7 +31,7 @@ export type DirectVariant =
   /** strictAllowlist on or off, with a canUseTool that allows (and records) every ask. */
   | 'strict-on'
   | 'strict-off'
-  /** The bundled skills not turned off (test-only): a typed /code-review must then expand. */
+  /** The bundled skills not turned off, built-in agents back on (test-only): a typed /code-review must then expand. */
   | 'skills-not-off'
   /** The same, and the `skills` allowlist taken out too (test-only): nothing of ours stands between /code-review and the CLI. */
   | 'skills-open'
@@ -89,6 +90,7 @@ if (input.variant === 'four-tools' && input.mcpProxyUrl) {
   base.mcpServers = { inhouse: mcpServers(input.mcpProxyUrl)!.inhouse! }
 }
 const run: RunContext = {
+  loneToolCall: async () => false,
   audit: input.variant === 'audit-refused' || input.variant === 'audit-hook-removed' ? async () => Promise.reject(new Error('probe: refused')) : async () => {},
 }
 const options: Options = createQueryGuards({ hostAddresses }).apply(base, config, run)
@@ -105,8 +107,8 @@ switch (input.variant) {
     options.canUseTool = allowAll
     break
   case 'audit-hook-removed':
-    // The audit hook is the one PreToolUse matcher with no `matcher` (it covers every tool).
-    options.hooks = { ...options.hooks, PreToolUse: (options.hooks?.PreToolUse ?? []).filter((m) => m.matcher !== undefined) }
+    // Only the audit hook (the every-tool matcher with the engine timeout); the helper hook, also every-tool, stays.
+    options.hooks = { ...options.hooks, PreToolUse: (options.hooks?.PreToolUse ?? []).filter((m) => m.timeout !== AUDIT_HOOK_TIMEOUT_S) }
     break
   case 'ip-allow':
   case 'ip-deny':
@@ -119,12 +121,17 @@ switch (input.variant) {
     options.permissionMode = 'default'
     options.canUseTool = allowAll
     break
+  // /code-review runs as a forked skill, which needs a built-in agent: with built-in agents off (Stage 1, HELPER_ENV) it
+  // ends "No agent available for forked execution" whatever the skill guards say. The control is for the skill guards
+  // alone, so these test-only variants put the built-ins back (CLI 2.1.328; PR #430).
   case 'skills-not-off':
     delete (options.settings as { skillOverrides?: unknown }).skillOverrides
+    options.env = { ...options.env, CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS: '0' }
     break
   case 'skills-open':
     delete (options.settings as { skillOverrides?: unknown }).skillOverrides
     delete options.skills
+    options.env = { ...options.env, CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS: '0' }
     break
   case 'tmp-rule-off':
   case 'proc-rule-off':
