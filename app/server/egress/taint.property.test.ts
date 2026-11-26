@@ -203,6 +203,7 @@ describe('fetch leak check property (failure 1): every type x encoding x placeme
                 const records: FetchRecord[] = []
                 const later: Promise<unknown>[] = []
                 const res = await handleWebFetch(new Request(url), {
+                  fetchOn: async () => true,
                   hostList: async () => hostList,
                   checkLeak: u => store.checkUrl(u),
                   fetch: net.fetch,
