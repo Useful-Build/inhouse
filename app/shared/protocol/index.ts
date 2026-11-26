@@ -237,8 +237,8 @@ export const RunStartFields = z.strictObject({
   brandSkills: BrandSkillFiles.optional(),
   /**
    * Optional (Stage 1, N6; additive like `webSearch`): the two helpers the turn may start. Absent: the Agent tool has
-   * nothing to start (built-in agents are off). The Worker sends it only when helpers are on (M1-P), so an older
-   * runner image still accepts every start until then.
+   * nothing to start (built-in agents are off). The Worker sends it only to a runner at `HELPERS_VERSION` or above, and
+   * only when helpers are on (M1-P), so an older runner image still accepts every start.
    */
   agents: HelperAgents.optional(),
   /** Optional (Stage 1, N6): the model `researcher` runs on; `analyst` inherits `model`. Sent with `agents`. */
@@ -362,7 +362,11 @@ export const AuditEntry = z.strictObject({
    * made the call, and the server never admits a write or an ask on it (N14).
    */
   agentId: z.string().min(1).max(256).nullable().optional(),
-  /** Optional (`HELPERS_VERSION`, N14): `auditInputSha256(input)`, the SHA-256 of the input's `canonicalJson`, lower-case hex. */
+  /**
+   * Optional (`HELPERS_VERSION`, N14): `auditInputSha256(tool_input)`, the SHA-256 of the `canonicalJson` of the hook's raw
+   * `tool_input`, lower-case hex. Never of this entry's wrapped or cut `input` (`{ cut, value }`): the egress hashes the
+   * raw call, so a hash of the wrapper would match nothing and every write would be refused.
+   */
   inputSha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
 }).superRefine((e, ctx) => {
   if ((e.agentId === undefined) !== (e.inputSha256 === undefined)) ctx.addIssue({ code: 'custom', path: ['agentId'], message: 'agentId and inputSha256 come together' })

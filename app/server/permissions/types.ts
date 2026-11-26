@@ -82,7 +82,7 @@ export interface ResolveFacts {
 /** One operation's row in `permission_ceiling`. A missing row means the operation doesn't exist for the brand (N2). */
 export interface CeilingFacts { enabled: boolean; perDayMax: number; loweredRev: number }
 
-/** A live grant that might cover the resolved action (`permission_grants`, not revoked). */
+/** A grant that might cover the resolved action (`permission_grants`); `decideCore` itself skips a revoked one (`revokedAtMs`). */
 export interface GrantFacts {
   id: string
   /** `member:<id>` or `brand`. */

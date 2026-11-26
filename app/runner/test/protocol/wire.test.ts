@@ -189,7 +189,7 @@ describe('RunStart', () => {
     expect(parses({ agents: { ...agents, analyst: { ...helper, prompt: 'x'.repeat(HELPER_PROMPT_MAX_BYTES + 1) } } })).toBe(false)
     expect(parses({ agents: { ...agents, analyst: { ...helper, prompt: '€'.repeat(Math.floor(HELPER_PROMPT_MAX_BYTES / 3) + 1) } } })).toBe(false)
     expect(parses({ agents: { ...agents, analyst: { ...helper, description: 'x'.repeat(HELPER_DESCRIPTION_MAX_BYTES + 1) } } })).toBe(false)
-    expect(parses({ actions: 'yes' })).toBe(false)
+    expect(parses({ agents, actions: 'yes' })).toBe(false)
     expect(parses({ agents, subagentModel: 'bad model' })).toBe(false)
   })
 

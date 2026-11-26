@@ -1,5 +1,5 @@
 // Stage 1 M2 (frozen by W0-A; M2-A fills the table, N9): one entry per write operation. The server types its table as
-// `Record<WriteOperationKey, OperationEntry>`, so it and the hub's `WRITE_OPERATIONS` can't drift. Types only.
+// `OperationTable` (each entry typed by its own key), so it and the hub's `WRITE_OPERATIONS` can't drift. Types only.
 import type { z } from 'zod'
 import type { WriteOperationKey } from '../../../hub/index/contract.ts'
 import type { ResolveFacts } from '../../permissions/types.ts'
