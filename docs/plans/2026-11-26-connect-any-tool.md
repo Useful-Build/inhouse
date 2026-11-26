@@ -325,7 +325,7 @@ Only Slack is live, on its own branch of this code, so nothing is broken today. 
 - **M7.** Note that a shared tool with no MCP server is a pack connector.
 - **Section 12 (risks).** Add the two risks in section 14.
 - **Section 13 (sources).** Add this plan's sources.
-Not yet done, outside the master plan:
+Also done 2026-11-26, outside the master plan:
 
 - **`docs/decisions/`.** Record the "learn from it, don't run it" decision as the next numbered record and link it from
   P0 S4's "Why not self-hosted Executor".
