@@ -1,7 +1,7 @@
 // Today: greeting, composer, then the problem cards (or the first-day and loading states).
 import { Fragment } from 'react'
 import { Composer } from '../components/Composer'
-import { amountOf, draftView, flags, handled, issueCards, kindIcon, pendingIds, readingTools, riskLabel, setupRows, todayCopy, todayEmptyState, TONE_TEXT, toolView } from '../state/derive'
+import { amountOf, draftView, flags, handled, issueCards, kindIcon, lookIds, pendingIds, readingTools, riskLabel, setupRows, todayCopy, todayEmptyState, TONE_TEXT, toolView } from '../state/derive'
 import { isUrgent } from '../ui/severity'
 import { fmtMoney, hasAmount } from '../lib/format'
 import { display } from '../state/display'
@@ -38,7 +38,8 @@ export function Today() {
   // The first tool the agent doesn't have yet: the one Today waits for.
   const next = setup.find(s => !ctx.data.tools.connected.includes(s.key))
   // The header follows the state: what needs you, or how the day ended.
-  const settled = ctx.S >= 1 && pendingIds(ctx).length === 0
+  // A product card with nothing to approve still needs a look (Stage 1 M2-I, `lookIds`): the day isn't settled.
+  const settled = ctx.S >= 1 && pendingIds(ctx).length === 0 && lookIds(ctx).length === 0
   const allApproved = settled && cards.length > 0 && cards.length === ctx.data.problems.length && cards.every(c => ctx.agent.approved[c.problem.id])
   const headTitle = !settled ? 'Needs you' : allApproved ? 'All approved' : 'Nothing waiting'
 

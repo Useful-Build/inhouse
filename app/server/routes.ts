@@ -129,7 +129,7 @@ export async function reportClientError(request: Request): Promise<Response> {
 }
 
 /** P5 W3's Tools handlers: the hub's `HUB_CONNECT` binding (route C's read carrying the test shop in test and eval builds, #337) and W1's connector store. */
-const tools = toolsHandlers(c => ({ ...toolsDepsOf(c.env), accounts: toolsAccounts(storesOf(c).connectors) }))
+const tools = toolsHandlers(c => ({ ...toolsDepsOf(c.env), accounts: toolsAccounts(storesOf(c).connectors, storesOf(c).permissions) }))
 
 /** One route per access-matrix row, in the table's order (the row numbers of p2-design section 3). */
 export const routes: readonly Route[] = [

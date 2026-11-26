@@ -1,10 +1,9 @@
 // What a routine reads from the brand's settings (p4-w2.md sections 3, 4 and 7): the zone (`g:tz`) and the turn
 // settings route 29 resolves (seam F, api/runs.ts `resolveTurnSettings`), so a routine's turn runs on the brand's model,
 // effort, side model, step cap, WebFetch hosts and web switches like a person's. Not the stage: since M2-F no routine
-// waits on it.
+// waits on it, and M2-I removed its last read here (the technical `stage` setting stays, unread).
 import { settingSpec } from '../../shared/contract/settings.ts'
 import type { SettingRecord, SettingScope } from '../../shared/contract/settings.ts'
-import { STAGES } from '../../shared/contract/settings-table.ts'
 // The two route modules load on first use: statically they would pull the request path's Vite-only imports into
 // everything that imports the routine store (the D1 stores, which Node scripts load: scripts/sandbox/seed-remote.mjs).
 import type { ResolvedTurn } from '../api/runs.ts'
@@ -30,12 +29,6 @@ const parse = (json: string): unknown => {
     return undefined
   }
 }
-
-/**
- * The stage index of a stored value; anything but a listed stage is Watch. Routines no longer read the stage (M2-F):
- * this stays only for server/stage/watch.ts (the egress's read), which goes with that folder (M2-D).
- */
-export const stageIndex = (value: unknown): number => Math.max(0, typeof value === 'string' ? (STAGES as readonly string[]).indexOf(value) : -1)
 
 /** Whether the runtime knows the zone (Intl throws `RangeError` for one it doesn't). */
 export function knownZone(tz: string): boolean {

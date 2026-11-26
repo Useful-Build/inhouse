@@ -2,7 +2,7 @@
 // it opens (or when the browser is idle, App.tsx's prefetch), not with Today; the shortcuts that open it are in shell/shortcuts.ts.
 import { useRef } from 'react'
 import { flushSync } from 'react-dom'
-import { STAGE_TAGS } from '../state/derive'
+import { STAGE_TAGS, stageLocked } from '../state/derive'
 import { chatEntries, useCtx, useUi } from '../state/store'
 import { defaultFilter } from 'cmdk'
 import { useTheme } from '@/lib/theme'
@@ -66,7 +66,7 @@ export function CommandPalette() {
             <CommandEmpty>No pages, chats or actions match.</CommandEmpty>
             <CommandGroup heading="Pages">
               {pages.map(n => {
-                const locked = ctx.S < n.need
+                const locked = stageLocked(ctx, n.need)
                 const tag = STAGE_TAGS[n.need]
                 return (
                   <CommandItem key={n.key} value={`page:${n.key}`} keywords={[n.label]}

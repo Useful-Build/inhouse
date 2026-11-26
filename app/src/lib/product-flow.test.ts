@@ -5,7 +5,7 @@
 //  - a failed read of the open requests shows an empty list as if there were none;
 //  - "Request sent" shows on the Tools page before the server has it, or after a refusal.
 import { describe, expect, it } from 'vitest'
-import { askForTool, helpLine, requestsView, sentToast, showChatExport, showComposerDemoStubs, showHelpAndGuides, showLocalAnswerControls, showScreenshotBox, teamHelper, usageView } from './product-flow'
+import { askForTool, helpLine, requestsView, sentToast, showChatExport, showComposerDemoStubs, showHelpAndGuides, showLocalAnswerControls, showScreenshotBox, showSendToChannel, teamHelper, usageView } from './product-flow'
 
 const tick = () => new Promise<void>(r => setTimeout(r, 0))
 
@@ -64,6 +64,9 @@ describe('PR-2 product-only surface guards', () => {
     expect(showHelpAndGuides(true)).toBe(true)
     expect(showLocalAnswerControls(false)).toBe(false)
     expect(showLocalAnswerControls(true)).toBe(true)
+    // Stage 1 M2-I: pinned to Act, the product would otherwise offer a send that only toasts the demo's words.
+    expect(showSendToChannel(false)).toBe(false)
+    expect(showSendToChannel(true)).toBe(true)
   })
 
   it('Usage shows LoadError on error, waits while loading in product, and keeps demo Loading skeletons ready', () => {

@@ -400,9 +400,11 @@ test('S7: The Admin grants the Inhouse team support access; the Inhouse principa
   await expect(main(alex).getByRole('button', { name: 'Download CSV' })).toHaveCount(0)
   await settingsPage(alex, 'Team settings', 'Data and access')
   await expect(row(alex, 'Inhouse team access')).toContainText('Ended')
-  // What the grant never covered still opens: Stage and plan reads the technical settings, and the seeded stage shows.
-  await settingsPage(alex, 'Team settings', 'Stage and plan')
-  await expect(row(alex, 'Current stage')).toContainText('Watch')
+  // What the grant never covered still opens: the Inhouse agent page reads the technical settings, and the seeded host shows
+  // (Stage 1 M2-I: the product has no Stage and plan page). The Inhouse team edits it in a field on a computer.
+  await settingsPage(alex, 'Team settings', 'Inhouse agent')
+  if (phone()) await expect(row(alex, 'Websites it may open')).toContainText('example.com')
+  else await expect(main(alex).getByRole('textbox', { name: 'Websites it may open', exact: true })).toHaveValue('example.com')
   const sign = await signIn(inhouse.subject, 'inhouse')
   const at = (path: string) => request.get(`${appOrigin('inhouse')}${path}`, { headers: sign })
   expect((await at('/api/audit')).status()).toBe(403)

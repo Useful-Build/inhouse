@@ -16,16 +16,16 @@ test('the first read in flight shows the neutral loading screen, then the app', 
   let release!: () => void
   const held = new Promise<void>(r => { release = r })
   await page.route('**/api/me', async route => { await held; await route.continue() })
-  await open(page, 'admin', '#/settings/team-plan')
+  await open(page, 'admin', '#/settings/team-data')
   // A failed assertion must not leave /api/me held for the rest of the run: release in a finally.
   try {
     await expect(loadingScreen(page)).toBeVisible()
     await expect(loadingHeading(page)).toBeAttached()
-    await expect(page.getByRole('heading', { name: 'Stage and plan', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'Data and access', exact: true })).toHaveCount(0)
   } finally {
     release()
   }
-  await expect(page.getByRole('heading', { level: 1, name: 'Stage and plan', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: 'Data and access', exact: true })).toBeVisible()
   await expect(loadingScreen(page)).toHaveCount(0)
   await expect(loadingHeading(page)).toHaveCount(0)
 })
@@ -71,7 +71,7 @@ test('an Inhouse team account on the brand app shows its own final screen: no Si
 test('a 503 on the first read shows the load error, and Retry lands in the app', async ({ page, context }) => {
   await signInAs(context, 'admin')
   await page.route('**/api/me', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'unavailable' } }) }))
-  await open(page, 'admin', '#/settings/team-plan')
+  await open(page, 'admin', '#/settings/team-data')
   const alert = page.getByRole('alert').filter({ hasText: "Couldn't load Inhouse." })
   await expect(alert).toBeVisible()
   await expect(loadingScreen(page)).toHaveCount(0)
@@ -91,6 +91,6 @@ test('a 503 on the first read shows the load error, and Retry lands in the app',
   await expect(loadingScreen(page)).toHaveCount(0)
   await expect(loadingHeading(page)).toHaveCount(0)
   release()
-  await expect(page.getByRole('heading', { level: 1, name: 'Stage and plan', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: 'Data and access', exact: true })).toBeVisible()
   expect(loads).toEqual([])
 })

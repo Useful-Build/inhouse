@@ -253,6 +253,8 @@ interface FakeOpts {
   hubFails?: HubError
   slack?: Partial<AccountSummary['status']>
   rows?: ConnectorAccountRow[]
+  /** The write operations enabled for the brand (`permission_ceiling`). None by default (N2). */
+  enabled?: string[]
   /** The first row write throws (a failed D1 batch). */
   rowWriteFailsOnce?: boolean
 }
@@ -272,6 +274,7 @@ function fake(o: FakeOpts = {}) {
     gateway,
     accounts: {
       list: async () => o.rows ?? [],
+      enabledOperations: async () => o.enabled ?? [],
       recordPause: async (at, target, line) => { lines.push({ at, target, line }) },
       recordDisconnect: async (at, accountId, connector, line) => {
         if (failNext) { failNext = false; throw new Error('D1 batch failed') }
@@ -346,6 +349,17 @@ describe('route C handler', () => {
     expect((await down.handlers.listTools(ctx(member, 'GET', '/api/tools', {}))).status).toBe(503)
     const bad = fake({ hubFails: { code: 'internal', message: 'm' } })
     expect((await bad.handlers.listTools(ctx(member, 'GET', '/api/tools', {}))).status).toBe(500)
+  })
+  // Stage 1 M2-I: the product's tool page offers drafting only for a tool the agent may act on.
+  it('a tool acts only while one of its write operations is enabled; none is the default (N2)', async () => {
+    const acts = async (enabled?: string[]) => {
+      const body = (await (await fake({ enabled }).handlers.listTools(ctx(member, 'GET', '/api/tools', {}))).json()) as { details: Record<string, { acts?: boolean }> }
+      return { shopify: body.details.shopify?.acts, slack: body.details.slack?.acts }
+    }
+    expect(await acts()).toEqual({ shopify: undefined, slack: undefined })
+    expect(await acts(['shopify.order.tag_add'])).toEqual({ shopify: true, slack: undefined })
+    expect(await acts(['shopify.order.tag_add', 'slack.channel.post'])).toEqual({ shopify: true, slack: true })
+    expect(ToolsDataSchema.safeParse(buildToolsData({ accounts: [acct('shopify:store', { connectedAt: inst(NOW - MIN) })], rows: [], nowMs: NOW, enabled: ['shopify.order.tag_add'] })).success).toBe(true)
   })
   it('the hub rate limit is a 429 rate_limited carrying Retry-After in whole seconds', async () => {
     const f = fake({ hubFails: { code: 'rate_limited', message: 'm', retryAfterMs: 2500 } })
