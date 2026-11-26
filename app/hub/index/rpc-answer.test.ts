@@ -1,4 +1,4 @@
-// Every ConnectGateway and DeliveryGateway method answers plain data and releases the SignIn object's answer. Workers RPC
+// Every ConnectGateway, DeliveryGateway and WriteGateway path answers plain data and releases the SignIn object's answer. Workers RPC
 // gives each object an RPC returns a disposer, and the call stays open until it runs
 // (https://developers.cloudflare.com/workers/runtime-apis/rpc/lifecycle/, read 2026-11-26): a gateway that passed a
 // SignIn answer on as is handed that open call to the product, where BrandAgent then never went idle. Ways it can fail:
@@ -7,10 +7,12 @@
 //  3. the copy changes what the method answered.
 // The stubs here hand answers over as Workers RPC does: the data plus a counted disposer.
 import { describe, expect, it } from 'vitest'
-import * as G from './gateway'
-import { connectDeps, MEMBER, SERVER, SLACK, world } from './testing/kit'
+import * as G from '../oauth/gateway'
+import { connectDeps, MEMBER, SERVER, SLACK, world } from '../oauth/testing/kit'
 import { checkChannel, listChannels, postNotice, type DeliveryDeps } from '../connectors/slack/gateway'
+import { postSlackOutboxAction } from '../connectors/slack/outbox'
 import { connectSlack, deliveryWorld } from '../connectors/slack/testing/kit'
+import { orderTagAddVia } from '../outbox-entry/gateway'
 
 const DISPOSE = (Symbol as unknown as { dispose: symbol }).dispose
 
@@ -137,6 +139,49 @@ describe('DeliveryGateway answers plain data and releases every SignIn answer', 
     const { d, ledger } = await setup()
     const r = await checkChannel(d, SERVER, { accountId: SLACK, channelId: 'C0TEST0003' })
     expect(r).toEqual({ ok: true, value: { id: 'C0TEST0003', name: 'partner-shared', isMember: true, shared: true, archived: false, private: false } })
+    expectPlain(r, ledger)
+  })
+})
+
+describe('WriteGateway answers plain data and releases every SignIn answer', () => {
+  it('the Slack outbox post: status, channel check, status again and the post, each released', async () => {
+    const w = deliveryWorld()
+    await connectSlack(w)
+    const status = await w.core.accountStatus(SLACK)
+    if (!status.ok || !status.value.connectedAt) throw new Error('expected a connected Slack account')
+    const ledger: Ledger = { handed: 0, released: 0 }
+    const stub = overRpc({
+      status: (id: string) => w.core.accountStatus(id),
+      slackChannelInfo: (id: string, ch: string) => w.core.slackChannelInfo(id, ch),
+      slackPost: w.stub.slackPost,
+    }, ledger)
+    const r = await postSlackOutboxAction(stub, { accountId: SLACK, expect: { connectedAtMs: status.value.connectedAt.ms }, args: { channelId: 'C0TEST0001', text: 'x' } })
+    expect(r).toMatchObject({ ok: true, value: { ref: expect.stringMatching(/^#ops-alerts \(\d+\.\d+\)$/) } })
+    expect(ledger.handed).toBe(4)
+    expectPlain(r, ledger)
+  })
+
+  it('the Slack outbox post refused at the channel check (its error read from the SignIn answer)', async () => {
+    const w = deliveryWorld()
+    await connectSlack(w)
+    const status = await w.core.accountStatus(SLACK)
+    if (!status.ok || !status.value.connectedAt) throw new Error('expected a connected Slack account')
+    const ledger: Ledger = { handed: 0, released: 0 }
+    const stub = overRpc({
+      status: (id: string) => w.core.accountStatus(id),
+      slackChannelInfo: async () => ({ ok: false as const, error: { code: 'upstream_rejected' as const, message: 'no' } }),
+      slackPost: w.stub.slackPost,
+    }, ledger)
+    const r = await postSlackOutboxAction(stub, { accountId: SLACK, expect: { connectedAtMs: status.value.connectedAt.ms }, args: { channelId: 'C0TEST0001', text: 'x' } })
+    expect(r).toEqual({ ok: false, error: { code: 'upstream_rejected', message: 'no' }, sent: 'no' })
+    expectPlain(r, ledger)
+  })
+
+  it("the test build's Shopify tag add (the SignIn answer, passed on before the fix)", async () => {
+    const ledger: Ledger = { handed: 0, released: 0 }
+    const stub = overRpc({ orderTagAdd: async () => ({ ok: true as const, value: { ref: 'order 9001' } }) }, ledger)
+    const r = await orderTagAddVia(stub, { accountId: 'shopify:store', expect: { connectedAtMs: 1 }, args: {} })
+    expect(r).toEqual({ ok: true, value: { ref: 'order 9001' } })
     expectPlain(r, ledger)
   })
 })

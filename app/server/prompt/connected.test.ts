@@ -186,6 +186,16 @@ describe('turnSystemPrompt, per turn from the gateway and the channel list', () 
     expect(errors).toHaveBeenCalledTimes(1)
   })
 
+  // The release is code only (PR #443): the prompt built from an answer as Workers RPC hands it over (with a disposer) is
+  // the one built from the same plain answer, on every input. The literal and reference-model cases above pin that text.
+  test.prop([accountsArb, fc.array(validName, { maxLength: 6 })])('the prompt is the same with or without a disposer on the answer', async (accounts, channels) => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const DISPOSE = (Symbol as unknown as { dispose: symbol }).dispose
+    const plain = await turnSystemPrompt(deps(async () => ({ ok: true, value: accounts }), { channels: async () => channels }), 't_p')
+    const handed = { ok: true as const, value: accounts, [DISPOSE]: () => {} }
+    expect(await turnSystemPrompt(deps(async () => handed, { channels: async () => channels }), 't_p')).toEqual(plain)
+  })
+
   it('a failed channel read: logged loud, the connected-apps line stays and the channel line goes', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
     const d = deps(async () => ({ ok: true, value: [account('slack:workspace')] }), { channels: async () => { throw new Error('d1') } })
