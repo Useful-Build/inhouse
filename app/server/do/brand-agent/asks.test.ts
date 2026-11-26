@@ -16,7 +16,7 @@ import type { AuditEntry } from '../../../shared/protocol/index.ts'
 import { d1Chat, ev, inAgent, settle } from '../../testing/brand-agent/core-harness.ts'
 import type { Harness } from '../../testing/brand-agent/core-harness.ts'
 import { ASKER, fresh, outbox, requestCtx, rowOf, tagArgs, world } from '../../outbox/test-support.ts'
-import { Asks, d1Reports, DELIVER_KIND, deliverTaskId, MAX_WAITS_PER_TURN, resumeKey } from './asks.ts'
+import { Asks, d1Reports, DELIVER_KIND, deliverTaskId, MAX_RESUME_TRIES, MAX_WAITS_PER_TURN, resumeKey, resumeKeyParts } from './asks.ts'
 import type { ActionTexts, AsksDeps } from './asks.ts'
 import { ACTIONS_TOOL_PREFIX, recordInvocation } from './invocations.ts'
 
@@ -330,6 +330,73 @@ describe('reports that must not be lost (M2-G)', () => {
     await a.sweep()
     expect(h.dueTasks().filter(t => t.id === deliverTaskId(id))).toEqual([])
   }))
+})
+
+// M2-G (from #444's final re-check, Fable and Neon). Ways it can fail: a resume turn cancelled before it started (a Pause,
+// a full pool, the chat starting to wait on a question while it was queued) is answered `submitted` on every keyed retry,
+// so the report is lost; or a try is made again after a final cancel, or without end.
+describe('a resume turn cancelled before it started (M2-G)', () => {
+  async function ended(h: Harness) {
+    const t = await liveTurn(h)
+    const id = await action(h, t.turnId, t.chat)
+    await db.prepare("UPDATE outbox_actions SET state = 'sent', report = 'later' WHERE id = ?").bind(id).run()
+    h.core.stop(t.turnId, { kind: 'person', memberId: ASKER })
+    await settle()
+    return { ...t, id }
+  }
+  const keys = (h: Harness, chat: string) => h.turns().filter(t => t.chat_id === chat && t.source === 'action').map(t => [t.client_key, t.state, t.cancel_why])
+
+  it('a Pause cancels the queued resume: its deliver task is due again, and once resumed the next try goes in, once', () => inAgent(async h => {
+    const { chat, id } = await ended(h)
+    const busy = await h.submit(chat, `key-${fresh('k').replace(/[^A-Za-z0-9_-]/g, '')}`.slice(0, 60), { member: ASKER })
+    if ('refused' in busy) throw new Error('refused')
+    await settle()
+    const a = asks(h, { texts: TEXTS })
+    h.core.addFinalHook(t => a.onTurnFinal(t))
+    await a.deliver(id)
+    expect(keys(h, chat)).toEqual([[resumeKey(id), 'queued', null]])
+    h.sched.cancel(deliverTaskId(id))
+    await h.core.pause({ kind: 'person', memberId: ASKER })
+    await settle()
+    expect(keys(h, chat)).toEqual([[resumeKey(id), 'cancelled', 'paused']])
+    expect(h.dueTasks()).toContainEqual(expect.objectContaining({ id: deliverTaskId(id) }))
+    await a.deliver(id)
+    expect(keys(h, chat)).toHaveLength(1)
+    await h.core.resume({ kind: 'person', memberId: ASKER })
+    await a.deliver(id)
+    await a.deliver(id)
+    expect(keys(h, chat).map(k => k[0])).toEqual([resumeKey(id), resumeKey(id, 1)])
+    expect((await rowOf(db, id))!.report).toBe('resume')
+  }))
+
+  it('a final cancel is never tried again; passing cancels stop after MAX_RESUME_TRIES, given up loud', () => inAgent(async h => {
+    const { chat, id } = await ended(h)
+    const a = asks(h, { texts: TEXTS })
+    const cancelLast = (why: string) => h.sql.exec("UPDATE turns SET state = 'cancelled', cancel_why = ? WHERE chat_id = ? AND source = 'action' AND state != 'cancelled'", why, chat)
+    await a.deliver(id)
+    cancelLast('removed')
+    await a.deliver(id)
+    expect(keys(h, chat).map(k => k[0])).toEqual([resumeKey(id)])
+    h.sql.exec("UPDATE turns SET cancel_why = 'pool_full' WHERE chat_id = ? AND source = 'action'", chat)
+    for (let n = 1; n < MAX_RESUME_TRIES; n++) {
+      await a.deliver(id)
+      expect(keys(h, chat).map(k => k[0])).toContain(resumeKey(id, n))
+      cancelLast('session_unusable')
+    }
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await a.deliver(id)
+    expect(errors).toHaveBeenCalledWith({ event: 'action_resume_given_up', actionId: id, tries: MAX_RESUME_TRIES })
+    errors.mockRestore()
+    expect(keys(h, chat)).toHaveLength(MAX_RESUME_TRIES)
+    expect((await rowOf(db, id))!.report).toBe('none')
+  }))
+
+  it('resume keys: act_<id>, then act_<id>-<n>; nothing else parses', () => {
+    const id = 'ac_0123456789abcdefghijkl'
+    expect(resumeKeyParts(resumeKey(id))).toEqual({ actionId: id, n: 0 })
+    expect(resumeKeyParts(resumeKey(id, 4))).toEqual({ actionId: id, n: 4 })
+    for (const k of [`act_${id}-0`, `act_${id}-`, `act_${id}x`, `resume_${id}`, 'act_ac_short']) expect(resumeKeyParts(k)).toBeNull()
+  })
 })
 
 describe('the asks sweep', () => {

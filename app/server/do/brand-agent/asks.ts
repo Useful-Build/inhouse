@@ -64,8 +64,24 @@ export const TURN_END_KIND = 'ask-turn-end'
 export const ASKS_SWEEP_KIND = 'asks-sweep'
 export const deliverTaskId = (actionId: string): string => `${DELIVER_KIND}:${actionId}`
 export const turnEndTaskId = (turnId: string): string => `${TURN_END_KIND}:${turnId}`
-/** A resume turn's key: one per action, so a retried submit answers the same turn. */
-export const resumeKey = (actionId: string): string => `act_${actionId}`
+/**
+ * A resume turn's key: one per action and try, so a retried submit answers the same turn. The first try is `act_<id>`;
+ * a try cancelled before it started (below) is followed by `act_<id>-<n>` (M2-G).
+ */
+export const resumeKey = (actionId: string, n = 0): string => (n === 0 ? `act_${actionId}` : `act_${actionId}-${n}`)
+/** The action and try a resume key names, or null. */
+export function resumeKeyParts(key: string): { actionId: string; n: number } | null {
+  const m = /^act_(ac_[A-Za-z0-9_-]{22})(?:-([1-9][0-9]?))?$/.exec(key)
+  return m ? { actionId: m[1]!, n: m[2] === undefined ? 0 : Number(m[2]) } : null
+}
+/**
+ * Why a resume turn may be cancelled before it starts and still be owed: the brand was paused, the pool was full, or the
+ * chat began waiting on a question while it was queued (`session_unusable`, as a job's continuation, jobs/rules.ts). Any
+ * other cancel (the chat deleted, the member removed, the spending cap) is final. From #444's re-check (Fable, Neon).
+ */
+export const RESUME_AGAIN = new Set(['paused', 'pool_full', 'session_unusable'])
+/** Tries of one action's resume turn before the report is given up (`none`, logged loud). */
+export const MAX_RESUME_TRIES = 5
 
 const isFinal = (state: ActionState): boolean => (FINAL_STATES as readonly string[]).includes(state)
 
@@ -312,8 +328,15 @@ export class Asks {
     return w ? { untilMs: w.until_ms, finished: w.finished === 1, delivered: w.delivered === 1 } : null
   }
 
-  /** `storeFinal`'s hook (core.ts `addFinalHook`): a turn that proposed a write gets its turn-end task. */
-  onTurnFinal(t: { turn_id: string }): void {
+  /**
+   * `storeFinal`'s hook (core.ts `addFinalHook`): a turn that proposed a write gets its turn-end task. A resume turn
+   * cancelled before it started for a passing cause gets its action's deliver task, which sends the next try (M2-G).
+   */
+  onTurnFinal(t: { turn_id: string; source?: string | null; state?: string; cancel_why?: string | null; client_key?: string }): void {
+    if (t.source === 'action' && t.state === 'cancelled' && t.cancel_why != null && RESUME_AGAIN.has(t.cancel_why)) {
+      const k = t.client_key === undefined ? null : resumeKeyParts(t.client_key)
+      if (k) this.changed(k.actionId)
+    }
     if (!turnProposed(this.p.sql, t.turn_id)) return
     this.p.scheduler.ensure({ id: turnEndTaskId(t.turn_id), kind: TURN_END_KIND, dueAtMs: this.p.now() })
   }
@@ -392,13 +415,15 @@ export class Asks {
       }
       settings = fallback
     }
+    const n = this.resumeTry(row)
+    if (n === null) return 'gone'
     const card = JSON.parse(full.card_json) as StoredCard
     const result = full.state === 'sent' && full.result_json !== null ? (JSON.parse(full.result_json) as { ref?: string }).ref ?? null : null
     const turn: SubmitTurn = {
       chatId: row.chatId, by: { kind: owner === SYSTEM_MEMBER_ID ? 'service' : 'person', memberId: owner },
       model: settings.model, pickerId: settings.pickerId, effort: settings.effort, sideModel: settings.sideModel,
       maxTurns: settings.maxTurns, webFetchDomains: settings.webFetchDomains, webSearch: settings.webSearch,
-      input: { clientTurnKey: resumeKey(row.id), text: texts.result({ title: card.title, lines: card.lines, state: full.state, result }), priority: 'next', model: settings.pickerId, attachments: [] },
+      input: { clientTurnKey: resumeKey(row.id, n), text: texts.result({ title: card.title, lines: card.lines, state: full.state, result }), priority: 'next', model: settings.pickerId, attachments: [] },
     }
     let answer: SendTurnResult | Refusal
     try {
@@ -413,6 +438,25 @@ export class Asks {
     if (code === 'not_found' || code === 'forbidden') return 'gone'
     console.error({ event: 'action_resume_refused', actionId: row.id, code, reason: reason ?? null })
     return 'gone'
+  }
+
+  /**
+   * Which try of the resume turn to submit: the last one's key again (a retried submit answers it), or the next once the
+   * last was cancelled before it started for a passing cause. Null: `MAX_RESUME_TRIES` used up (logged loud).
+   */
+  private resumeTry(row: ReportRow): number | null {
+    const tries = this.p.sql.exec<{ client_key: string; state: string; cancel_why: string | null }>(
+      'SELECT client_key, state, cancel_why FROM turns WHERE chat_id = ? AND (client_key = ? OR client_key LIKE ?)',
+      row.chatId, resumeKey(row.id), `${resumeKey(row.id)}-%`).toArray()
+      .flatMap(t => { const k = resumeKeyParts(t.client_key); return k && k.actionId === row.id ? [{ ...t, n: k.n }] : [] })
+    const last = tries.reduce<(typeof tries)[number] | null>((a, t) => (a === null || t.n > a.n ? t : a), null)
+    if (last === null) return 0
+    if (!(last.state === 'cancelled' && last.cancel_why !== null && RESUME_AGAIN.has(last.cancel_why))) return last.n
+    if (last.n + 1 >= MAX_RESUME_TRIES) {
+      console.error({ event: 'action_resume_given_up', actionId: row.id, tries: last.n + 1 })
+      return null
+    }
+    return last.n + 1
   }
 
   /**
