@@ -24,6 +24,8 @@ const q = query({
     settingSources: [],
     sessionStore: adapter.store,
     sessionStoreFlush: env.FLUSH as 'eager' | 'batched',
+    // W0-B spike only: let Bash run, so a kill can land while a tool is still running.
+    ...(env.SPIKE_BASH === '1' ? { permissionMode: 'bypassPermissions' as const, allowDangerouslySkipPermissions: true } : {}),
     ...(env.RESUME === '1' ? { resume: env.SESSION_ID! } : { sessionId: env.SESSION_ID! }),
   },
 })

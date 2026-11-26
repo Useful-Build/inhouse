@@ -62,7 +62,7 @@ const storeServer = (egress: FakeEgress) =>
 
 type Run = { child: ChildProcess; out: () => Promise<string>; exited: Promise<number | null>; stderr: () => string }
 
-function startSession(o: { storeUrl: string; modelUrl: string; flush: string; prompt: string; resume: boolean; work: string; configDir: string }): Run {
+function startSession(o: { storeUrl: string; modelUrl: string; flush: string; prompt: string; resume: boolean; work: string; configDir: string; bash?: boolean }): Run {
   const child = spawn(process.execPath, [bundle], {
     cwd: o.work,
     detached: true,
@@ -82,6 +82,7 @@ function startSession(o: { storeUrl: string; modelUrl: string; flush: string; pr
       SESSION_ID,
       RESUME: o.resume ? '1' : '0',
       WORK_DIR: o.work,
+      SPIKE_BASH: o.bash === true ? '1' : '0',
     },
   })
   let out = ''
@@ -115,6 +116,11 @@ const stored = (egress: FakeEgress) =>
     .map((k) => JSON.parse(k) as [string, string, string | null])
     .filter(([, s, sub]) => s === SESSION_ID && sub === null)
     .flatMap(([p, s]) => egress.entries({ projectKey: p, sessionId: s })) as { type?: string; uuid?: string; message?: { content?: unknown } }[]
+
+const liveTurnOf = (egress: FakeEgress, id: string) => {
+  const entries = stored(egress).map((e) => JSON.stringify(e.message?.content ?? null))
+  return { call: entries.findIndex((c) => c.includes(`"id":"${id}"`)), result: entries.findIndex((c) => c.includes(`"tool_use_id":"${id}"`)) }
+}
 
 /** Where the live turn's two entries sit in the stored transcript: the tool call, then its result (-1 when missing). */
 function liveTurn(egress: FakeEgress) {
@@ -225,6 +231,66 @@ describe("sessionStoreFlush: 'eager' against a hard kill", () => {
       k.release()
       k.store.close()
       k.modelServer.close()
+    }
+  }, 120_000)
+
+  // W0-B spike only (draft PR, never merged): a kill while a tool is still running leaves a tool_use with no result in
+  // the store. Does the SDK resume cleanly on that tail, and is the request it sends one a real API accepts?
+  it('W0-B spike: killed mid-tool, the resume from the store sends every tool_use with its result', async () => {
+    const egress = fakeEgress()
+    const toolId = 'toolu_spike_sleep'
+    const model = createScriptedModel({
+      cut: { turns: [{ content: [{ type: 'text', text: 'Waiting.' }, { type: 'tool_use', id: toolId, name: 'Bash', input: { command: 'sleep 20 && echo waited', description: 'Wait' } }] }, null] },
+    })
+    const store = await storeServer(egress)
+    const modelServer = await serve((req) => model.handle(req, 'cut'))
+    const work = temp('spike-work-')
+    const run = startSession({ storeUrl: store.url, modelUrl: modelServer.url, flush: 'eager', prompt: 'wait', resume: false, work, configDir: temp('spike-cfg-'), bash: true })
+    try {
+      await until(() => model.log.some((l) => l.turn === 0 && !l.missed), 'turn 0 answered')
+      await until(() => liveTurnOf(egress, toolId).call >= 0, 'the tool call in the store')
+      // Killed while the sleep runs: well inside its 20 s.
+      expect(liveTurnOf(egress, toolId).result).toBe(-1)
+      killGroup(run)
+      await run.exited
+    } catch (e) {
+      console.log('W0-B spike local cut failed', String(e), model.log, run.stderr().slice(-1500))
+      throw e
+    } finally {
+      try { killGroup(run) } catch { /* the group may already be gone (EPERM on macOS for a reaped group) */ }
+      modelServer.close()
+    }
+    const tail = stored(egress)
+    expect(liveTurnOf(egress, toolId).result, 'no result in the store: the tail ends on the open tool call').toBe(-1)
+    const bodies: MessagesRequest[] = []
+    const resumeModel = createScriptedModel({ r: { turns: Array.from({ length: 6 }, () => ({ content: [{ type: 'text' as const, text: 'resumed from the store' }] })) } })
+    const m2 = await serve(async (req) => {
+      if (new URL(req.url).pathname.endsWith('/v1/messages')) bodies.push((await req.clone().json()) as MessagesRequest)
+      return resumeModel.handle(req, 'r')
+    })
+    try {
+      const run2 = startSession({ storeUrl: store.url, modelUrl: m2.url, flush: 'eager', prompt: 'go on', resume: true, work, configDir: temp('spike-cfg2-'), bash: true })
+      const line = JSON.parse((await run2.out()).trim().split('\n').at(-1)!) as { result: string; checkpoint: { ok: boolean } }
+      const main = bodies.filter((b) => Array.isArray(b.tools) && b.tools.length > 0)
+      const msgs = main[0]!.messages
+      const blocks = (m: (typeof msgs)[number]) => (Array.isArray(m.content) ? (m.content as { type?: string; id?: string; tool_use_id?: string; is_error?: boolean; content?: unknown }[]) : [])
+      const unpaired: string[] = []
+      msgs.forEach((m, i) => {
+        if (m.role !== 'assistant') return
+        const next = msgs.slice(i + 1).find((n) => n.role !== 'system')
+        const got = new Set(next?.role === 'user' ? blocks(next).filter((b) => b.type === 'tool_result').map((b) => b.tool_use_id) : [])
+        unpaired.push(...blocks(m).filter((b) => b.type === 'tool_use').map((b) => b.id!).filter((id) => !got.has(id)))
+      })
+      const use = msgs.some((m) => blocks(m).some((b) => b.type === 'tool_use' && b.id === toolId))
+      const res = msgs.flatMap(blocks).find((b) => b.type === 'tool_result' && b.tool_use_id === toolId)
+      console.log('W0-B spike local', JSON.stringify({ storeTail: tail.length, roles: msgs.map((m) => m.role[0]).join(''), toolUseSent: use,
+        toolResult: res === undefined ? null : { isError: res.is_error === true, said: JSON.stringify(res.content).slice(0, 160) }, unpaired, result: line.result, checkpoint: line.checkpoint.ok }))
+      expect(resumeModel.misses).toEqual([])
+      expect(line).toMatchObject({ result: 'resumed from the store', checkpoint: { ok: true } })
+      expect(unpaired).toEqual([])
+    } finally {
+      m2.close()
+      store.close()
     }
   }, 120_000)
 })
