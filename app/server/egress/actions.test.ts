@@ -13,8 +13,7 @@ import { FakeBrandAgentRpc } from '../do/brand-agent/testing/fake-brand-agent-rp
 import type { Admitted } from '../do/brand-agent/invocations.ts'
 import type { RunGrant } from '../do/brand-agent/tokens.ts'
 import { WAIT_MAX_MS } from '../do/brand-agent/asks.ts'
-import { sendAction } from '../outbox/dispatch.ts'
-import { ASKER, HUB_FACTS, SHOP_GEN, fakeHub, fresh, notices, outbox, rowOf, tagArgs, world } from '../outbox/test-support.ts'
+import { ASKER, HUB_FACTS, SHOP_GEN, fresh, outbox, rowOf, sendNow, tagArgs, world } from '../outbox/test-support.ts'
 import { insertGrant } from '../permissions/test-support.ts'
 import { POLICY_REV } from '../permissions/policy.ts'
 import { ACTION_WORDS, callAction, handleActions } from './actions.ts'
@@ -59,11 +58,7 @@ const count = async () => (await db.prepare('SELECT COUNT(*) AS n FROM outbox_ac
 const methods = (rpc: FakeBrandAgentRpc) => rpc.calls.map(c => c.method)
 
 /** Sends an approved action as BrandAgent's task would, through the fake hub (its ref is always `vip`), at the clock's time. */
-async function send(id: string, now: number) {
-  const hub = fakeHub(db, () => 'ok')
-  await sendAction(id, { db, nowMs: now, hub: hub.gateway, notify: notices().notify, requestId: fresh('send'), again: () => {}, gate: { paused: false, pauseGen: 0 }, timeoutMs: 1_000 })
-  return hub
-}
+const send = (id: string, now: number) => sendNow(db, id, now)
 
 beforeEach(async () => {
   await world(db)

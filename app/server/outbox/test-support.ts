@@ -7,6 +7,7 @@ import type { HubAccountFacts } from './facts.ts'
 import { outboxFacts } from './facts.ts'
 import type { OutboxNotice } from './notify.ts'
 import { openOutbox } from './store.ts'
+import { sendAction } from './dispatch.ts'
 import type { OutboxActionRow, OutboxRequestCtx } from './types.ts'
 
 export const SHOP_GEN = 1_000
@@ -109,4 +110,15 @@ export function fakeHub(db: D1Database, next: () => HubMode, onCall?: () => void
 export const notices = (): { list: OutboxNotice[]; notify: (n: OutboxNotice) => Promise<void> } => {
   const list: OutboxNotice[] = []
   return { list, notify: async n => { list.push(n) } }
+}
+
+/**
+ * One send of an approved action as BrandAgent's `outbox-send` task runs it, through a fake hub that answers `ok` (ref
+ * `vip`), at `nowMs`, with the object neither paused nor ever paused. For tests outside the outbox (the egress's) that
+ * need a real send without naming the dispatcher (the egress's import boundary).
+ */
+export async function sendNow(db: D1Database, actionId: string, nowMs: number) {
+  const hub = fakeHub(db, () => 'ok')
+  await sendAction(actionId, { db, nowMs, hub: hub.gateway, notify: notices().notify, requestId: fresh('send'), again: () => {}, gate: { paused: false, pauseGen: 0 }, timeoutMs: 1_000 })
+  return hub
 }
