@@ -157,26 +157,55 @@ type Result = Extract<SDKMessage, { type: 'result' }>
  */
 export class TurnToolUses {
   #ids = new Set<string>()
-  /** Waiters for a call id (`lone`), woken whenever the turn's calls change. */
+  /** The API message each of the turn's calls came in (the SDK sends one `assistant` message per content block). */
+  #messageOf = new Map<string, string>()
+  /** API messages known to be complete: their `message_stop` stream event was seen. */
+  #closed = new Set<string>()
+  /** The API message being streamed (its `message_start`), for the `message_stop` that names no id. */
+  #streaming: string | null = null
+  /** Waiters for a call id (`lone`), woken whenever the turn's calls or a message's completeness change. */
   #waiters = new Set<() => void>()
   see(m: SDKMessage) {
     if ((m as { parent_tool_use_id?: unknown }).parent_tool_use_id !== null) return
-    const content = (m as { message?: { content?: unknown } }).message?.content
-    if (!Array.isArray(content)) return
-    if (m.type === 'user' && content.some((b) => (b as { type?: unknown })?.type === 'tool_result')) this.#ids.clear()
-    if (m.type === 'assistant') for (const b of content) if ((b as { type?: unknown })?.type === 'tool_use') this.#ids.add(String((b as { id?: unknown }).id))
+    if (m.type === 'stream_event') {
+      const event = (m as { event?: { type?: unknown; message?: { id?: unknown } } }).event
+      if (event?.type === 'message_start' && typeof event.message?.id === 'string') this.#streaming = event.message.id
+      if (event?.type === 'message_stop' && this.#streaming !== null) this.#closed.add(this.#streaming)
+    } else {
+      const message = (m as { message?: { id?: unknown; content?: unknown } }).message
+      const content = message?.content
+      if (!Array.isArray(content)) return
+      if (m.type === 'user' && content.some((b) => (b as { type?: unknown })?.type === 'tool_result')) this.#ids.clear()
+      if (m.type === 'assistant') {
+        for (const b of content) {
+          if ((b as { type?: unknown })?.type !== 'tool_use') continue
+          const id = String((b as { id?: unknown }).id)
+          this.#ids.add(id)
+          if (typeof message?.id === 'string') this.#messageOf.set(id, message.id)
+        }
+      }
+    }
     for (const wake of [...this.#waiters]) wake()
   }
   /**
-   * Resolves true once the turn holds `id` as its only call, false once it holds `id` beside another call, or false
-   * when `id` isn't seen within `withinMs`. Never rejects.
+   * Resolves true once the turn holds `id` as its only call AND the API message that carried it is complete; false
+   * once it holds `id` beside another call; false when neither is known within `withinMs`. Never rejects.
+   *
+   * Completeness matters: the SDK sends a turn's tool calls as separate `assistant` messages, one per block, with no
+   * stop reason on them, and the CLI runs a call's PreToolUse hook as soon as its block is streamed, before the blocks
+   * after it arrive (seen on CLI 2.1.328, PR #430). So "only one call so far" proves nothing until the message is
+   * complete, which only its `message_stop` stream event says. Stream events come only with `includePartialMessages`,
+   * which is off in M1-E: here `lone` never resolves true, so nothing can be deferred on it. M2-Q, which defers, turns
+   * stream events on (and keeps them off the wire).
    */
   lone(id: string, withinMs: number): Promise<boolean> {
     return new Promise((resolve) => {
       const check = () => {
         if (!this.#ids.has(id)) return false
-        done(this.#ids.size === 1)
-        return true
+        if (this.#ids.size > 1) return done(false), true
+        const message = this.#messageOf.get(id)
+        if (message === undefined || !this.#closed.has(message)) return false
+        return done(true), true
       }
       const done = (v: boolean) => {
         clearTimeout(timer)

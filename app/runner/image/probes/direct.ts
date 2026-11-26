@@ -7,6 +7,7 @@ import type { CanUseTool, Options, SDKMessage } from '@anthropic-ai/claude-agent
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { AUDIT_HOOK_TIMEOUT_S } from '../../src/guards/audit.ts'
 import { createQueryGuards } from '../../src/guards/options.ts'
 import { hostAddresses } from '../../src/proxy/proc-net.ts'
 import { baseOptions, cliEnv } from '../../src/session/core.ts'
@@ -106,8 +107,8 @@ switch (input.variant) {
     options.canUseTool = allowAll
     break
   case 'audit-hook-removed':
-    // The audit hook is the one PreToolUse matcher with no `matcher` (it covers every tool).
-    options.hooks = { ...options.hooks, PreToolUse: (options.hooks?.PreToolUse ?? []).filter((m) => m.matcher !== undefined) }
+    // Only the audit hook (the every-tool matcher with the engine timeout); the helper hook, also every-tool, stays.
+    options.hooks = { ...options.hooks, PreToolUse: (options.hooks?.PreToolUse ?? []).filter((m) => m.timeout !== AUDIT_HOOK_TIMEOUT_S) }
     break
   case 'ip-allow':
   case 'ip-deny':
