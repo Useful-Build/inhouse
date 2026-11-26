@@ -7,6 +7,7 @@
 import { INHOUSE_TOOLS } from '../registry.ts'
 import { INHOUSE_TOOL_NAMES } from '../server/tool.ts'
 import type { InhouseToolName, ToolHandler } from '../server/tool.ts'
+import { handlers as approvals } from './approvals/index.ts'
 import { handlers as history } from './history/index.ts'
 import { handlers as memory } from './memory/index.ts'
 import { handlers as notifications } from './notifications/index.ts'
@@ -29,6 +30,7 @@ const AREAS: readonly Area[] = [
   ['skills', skills],
   // Stage 1 M2-Q (N16).
   ['questions', questions],
+  ['approvals', approvals],
 ]
 
 /** The map the server serves, or a thrown error naming what breaks the rules. Exported for its tests. */

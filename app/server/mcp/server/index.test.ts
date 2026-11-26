@@ -37,7 +37,9 @@ const BUILT = ['memory_search', 'memory_save', 'memory_update', 'memory_forget',
   // P6a W3: the Inhouse team tools.
   'team_request_create', 'team_request_list',
   // P6a brand skills.
-  'skill_save']
+  'skill_save',
+  // Stage 1 M2-E: the approval tools (their own tests: tools/approvals/tools.test.ts).
+  'approval_request', 'approval_get', 'approval_list', 'approval_withdraw']
 
 /** `extra`: more of the handler's deps (Stage 1 M2-Q's `questions`). */
 type Extra = { questions?: boolean }

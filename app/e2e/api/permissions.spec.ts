@@ -4,12 +4,13 @@
 // or one already removed, is 404; a removal leaves one `permission.revoked` line that holds ids and codes only. No
 // route creates a permission (the outbox's "Always allow" does, M2-B), so the grants are written to the local D1.
 // The list shows only current grants (an enabled ceiling at the grant's revision, the account on the grant's
-// generation), so the spec also writes the operation's ceiling row and its own connector account, and removes both
-// after: writes stay off for every other spec (N2). It writes the ceiling row only when none exists, and removes only
-// the row it wrote.
+// generation), so the spec also turns the operation on and writes its own connector account, and turns the operation
+// off and removes the account after: writes stay off for every other spec (N2). The ceiling is set only through the
+// test-fakes hook (its one writer in the test build), never by hand.
 import { expect, test } from '@playwright/test'
 import { actor, call, expectConflict, me } from './kit.ts'
-import { auditMax, expectOneLine, readSql, writeSql } from './db.ts'
+import { auditMax, expectOneLine, writeSql } from './db.ts'
+import { setCeiling } from './fakes-kit.ts'
 
 const dana = actor('memberA')
 const leo = actor('memberB')
@@ -25,7 +26,6 @@ let leoId = ''
 
 /** This spec's own connector account, at generation 1: no other spec's account is touched. */
 const ACCOUNT = `shopify:e2e-perm-${stamp}`
-let wroteCeiling = false
 
 function grant(id: string, holder: string, scope: string): void {
   writeSql(
@@ -43,17 +43,14 @@ test.beforeAll(async ({ request }) => {
   writeSql("DELETE FROM permission_grants WHERE id LIKE 'pg_e2e%'")
   writeSql("DELETE FROM connector_accounts WHERE account_id LIKE 'shopify:e2e-perm-%'")
   writeSql("INSERT INTO connector_accounts (account_id, connector, last_state, last_state_at_ms, connected_at_ms) VALUES (?, 'shopify', 'connected', 1, 1)", ACCOUNT)
-  if (readSql("SELECT 1 FROM permission_ceiling WHERE operation = 'shopify.order.tag_add'").length === 0) {
-    writeSql("INSERT INTO permission_ceiling (operation, enabled, per_day_max, lowered_rev, updated_at_ms, updated_by) VALUES ('shopify.order.tag_add', 1, 50, 1, 1, 'm_system')")
-    wroteCeiling = true
-  }
+  await setCeiling(request, 'shopify.order.tag_add', true)
   grant(DANA_GRANT, danaId, `e2e-${stamp}-dana`)
   grant(LEO_GRANT, leoId, `e2e-${stamp}-leo`)
 })
-test.afterAll(() => {
+test.afterAll(async ({ request }) => {
+  await setCeiling(request, 'shopify.order.tag_add', false)
   writeSql("DELETE FROM permission_grants WHERE id LIKE 'pg_e2e%'")
   writeSql('DELETE FROM connector_accounts WHERE account_id = ?', ACCOUNT)
-  if (wroteCeiling) writeSql("DELETE FROM permission_ceiling WHERE operation = 'shopify.order.tag_add'")
 })
 
 const list = async (request: Parameters<typeof call>[0], who: typeof dana): Promise<{ id: string; rev: number; holder: unknown; title: string; scope: string; can: { remove: boolean } }[]> => {

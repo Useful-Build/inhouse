@@ -106,6 +106,12 @@ export const EXACT_ROWS: Record<string, SettingRow> = {
   's:job_cap': safe('brand', { t: 'cap', maxUsd: MAX_JOB_BUDGET_USD, minUsd: MIN_JOB_BUDGET_USD }),
   's:alert': safe('brand', oneOf(ALERT_AT)),
   's:currency': safe('brand', oneOf(CURRENCIES)),
+  // M1-F (N7): the brand's web switches, an Admin's to flip (before M1-F web search was a technical key; a stored row keeps
+  // its value, since rows are keyed by owner and key and the scope comes from here). Web search is off unless set to true;
+  // reading web pages is on unless set to false (`webSearchOn`, `webFetchOn`). Which hosts a page may come from stays the
+  // Inhouse team's (`t:webfetch`), so an Admin can switch reading off and back on but never widen it.
+  't:websearch': safe('brand', bool),
+  't:webfetch_on': safe('brand', bool),
   // technical
   'stage': safe('technical', oneOf(STAGES)),
   't:tone': safe('technical', oneOf(TONES)),
@@ -120,10 +126,15 @@ export const EXACT_ROWS: Record<string, SettingRow> = {
   // P3 (p3-design 4.9). A host list is free text, so it's redacted in the log like any text.
   't:max_turns': safe('technical', oneOf(MAX_TURNS)),
   't:webfetch': spec('technical', { t: 'hostlist' }),
-  // P8a S: the agent's web search, off unless the Inhouse team turns it on (a technical key: only they write it). Missing
-  // or anything but true is off.
-  't:websearch': safe('technical', bool),
 }
+
+/** Whether web search is on from `t:websearch` as stored: only true is on; missing, a reset or anything else is off. */
+export const webSearchOn = (stored: unknown): boolean => stored === true
+/**
+ * Whether reading web pages is on from `t:webfetch_on` as stored: missing (undefined) or a reset (null) is the default,
+ * on; true is on; false is off, and so is any other value (fail closed).
+ */
+export const webFetchOn = (stored: unknown): boolean => stored === undefined || stored === null || stored === true
 
 /** An id inside a key (a model, a run-limit job). */
 const ID = '[A-Za-z0-9][A-Za-z0-9_-]{0,63}'
