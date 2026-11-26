@@ -22,7 +22,7 @@ import { settingSpec } from '../../shared/contract/settings.ts'
 import { webFetchOn, webSearchOn } from '../../shared/contract/settings-table.ts'
 import { brandSettings, handleEgress } from './index.ts'
 import { egressRequest, harness, NO_CAPTURE } from './testing/harness.ts'
-import { handleWebFetch, storedFetchOn, type FetchRecord, type WebDeps } from './webfetch.ts'
+import { handleWebFetch, storedFetchOn, webEgressDeps, type FetchRecord, type WebDeps } from './webfetch.ts'
 
 const db = env.DB
 const stores = openStores(env)
@@ -60,23 +60,20 @@ function countingNet(onPage: (url: string) => Promise<Response> | Response = () 
   return { f, calls }
 }
 
-/** The egress's real deps for D1 (the switch and the list read as WebEgress reads them), over a counting network. */
+/**
+ * The egress's production deps (`webEgressDeps`, what WebEgress runs) over a counting network: only `fetch` is replaced.
+ * The leak check and the record still run as in production; they're watched on the way through.
+ */
 function webDeps(f: typeof fetch, over: Partial<WebDeps> = {}) {
   const leakChecks: string[] = []
   const records: FetchRecord[] = []
   const later: Promise<unknown>[] = []
+  const prod = webEgressDeps(env, { waitUntil: p => { later.push(p) } }, { runner: 'runner-web-switches', containerGen: 1 })
   const d: WebDeps = {
-    fetchOn: () => storedFetchOn(db),
-    hostList: async () => {
-      const row = await db.prepare("SELECT value_json FROM settings WHERE owner = 'brand' AND key = 't:webfetch'").first<{ value_json: string }>()
-      return row ? (JSON.parse(row.value_json) as string) : null
-    },
-    checkLeak: async url => { leakChecks.push(url.href); return false },
+    ...prod,
     fetch: f,
-    log: () => undefined,
-    record: async r => { records.push(r) },
-    noteRecordFailure: async () => undefined,
-    waitUntil: p => { later.push(p) },
+    checkLeak: url => { leakChecks.push(url.href); return prod.checkLeak(url) },
+    record: r => { records.push(r); return prod.record(r) },
     ...over,
   }
   return { d, leakChecks, records, settle: () => Promise.all(later) }
@@ -168,6 +165,17 @@ describe('what a turn is resolved with (failure 4)', () => {
     const want = { webSearch: true, webFetchDomains: ['docs.example.com', 'example.com'] }
     expect(await resolveTurnSettings(stores.settings, 'sonnet')).toMatchObject(want)
     expect(await submitSettings(db)).toMatchObject(want)
+  })
+  it('a routine turn reads a web switch row that does not parse as off (fail closed)', async () => {
+    await listHosts('example.com')
+    for (const key of ['t:webfetch_on', 't:websearch']) {
+      await db.prepare("INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', ?, 'not json', 1, 1, 'x', 'r')").bind(key).run()
+    }
+    expect(await submitSettings(db)).toMatchObject({ webSearch: false, webFetchDomains: [] })
+    // The egress refuses on the same row: its read throws, and a failed read refuses.
+    const net = countingNet()
+    expect(await (await handleWebFetch(new Request('https://example.com/'), webDeps(net.f).d)).text()).toBe('WebFetch refused: off')
+    expect(net.calls).toEqual([])
   })
   it('the defaults: search off, reading on (so the list decides)', async () => {
     await listHosts('example.com')

@@ -128,7 +128,7 @@ describe('route 29: send a turn', () => {
     expect(await turnRow(r.body.turnId as string)).toMatchObject({ model: 'claude-haiku-5-5', effort: 'low', max_turns: 25, web_fetch_json: '[]', web_search: null })
   })
 
-  it("the Inhouse team's t:websearch switch reaches the turn (P8a S)", async () => {
+  it("the brand's t:websearch switch (an Admin's since M1-F) reaches the turn", async () => {
     await db.prepare("INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 't:websearch', 'true', 1, ?, 'm_inhouse', 'r')").bind(T).run()
     const id = `c-${uniq()}`
     await chat(id, alice)

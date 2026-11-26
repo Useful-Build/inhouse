@@ -20,6 +20,9 @@ export interface BrandFacts {
 const rows = async (db: D1Database) =>
   (await db.prepare("SELECT key, value_json, rev FROM settings WHERE owner = 'brand'").all<{ key: string; value_json: string; rev: number }>()).results
 
+/** The brand's web switches (M1-F): a stored row that doesn't parse turns them off for a routine turn. */
+const WEB_SWITCHES = new Set(['t:websearch', 't:webfetch_on'])
+
 const parse = (json: string): unknown => {
   try {
     return JSON.parse(json)
@@ -63,8 +66,13 @@ export type SubmitSettings = ResolvedTurn
  */
 export async function submitSettings(db: D1Database): Promise<SubmitSettings | { refused: { code: string; reason?: string } }> {
   // The brand and technical rows (the web switches are brand settings, M1-F), each listed under its own scope as the
-  // settings store lists them.
-  const stored = (await rows(db)).map(r => ({ scope: settingSpec(r.key)?.scope, record: { key: r.key, value: parse(r.value_json) as SettingRecord['value'], rev: r.rev, updatedAt: null, updatedBy: null } }))
+  // settings store lists them. A web switch whose row doesn't parse reads as off (fail closed): `undefined` would read
+  // as never set, which is on for `t:webfetch_on`.
+  const valueOf = (key: string, json: string): SettingRecord['value'] => {
+    const v = parse(json)
+    return (v === undefined && WEB_SWITCHES.has(key) ? false : v) as SettingRecord['value']
+  }
+  const stored = (await rows(db)).map(r => ({ scope: settingSpec(r.key)?.scope, record: { key: r.key, value: valueOf(r.key, r.value_json), rev: r.rev, updatedAt: null, updatedBy: null } }))
   const ofScope = (scope: SettingScope): SettingRecord[] => stored.filter(r => r.scope === scope).map(r => r.record)
   const technical = ofScope('technical')
   const view: SettingsView = Object.fromEntries(technical.map(r => [r.key, r.value as string | boolean | null]))

@@ -34,8 +34,8 @@
 //   `{ questionId, turnId, toolUseId, toolName, input }` (no older shape exists on a deployed object: pre-launch).
 // - A9 (the platform stop): `turns.held_json`, an un-asked `failed stopped|session_crashed` that came before anything
 //   ran, held without a `turn.finished` until `released` says whether the turn is placed once more (core.ts `terminal`).
-// - P8a S (the Watch switches): `turns.web_search`, `'on'` when the turn may search the web (the Inhouse team's
-//   `t:websearch`), else NULL (off; every turn stored before it is off).
+// - P8a S (the Watch switches): `turns.web_search`, `'on'` when the turn may search the web (the brand's
+//   `t:websearch`, a brand setting an Admin flips since M1-F), else NULL (off; every turn stored before it is off).
 // - P5 (#337 review): `turns.prompt_version`, the system prompt version the turn's start sent (3 built, 2 the static
 //   fallback; null for a fixed prompt), beside `start_json`; `turns.prompt_apps` (#337 round 3), the JSON list of the
 //   apps its built line named as connected (null for the fallback or a fixed prompt).

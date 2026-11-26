@@ -34,7 +34,7 @@ export const MEMORY_REFUSAL = /^(?:Not saved: |No saved fact you can see |That f
 
 const stripServer = (name: string): string => name.replace(/^mcp__.+?__/, '')
 const WEB_TOOLS = new Set(['WebFetch', 'web_fetch'])
-/** WebSearch is offered only on a brand whose `t:websearch` the Inhouse team turned on (P8a S: the runner leaves it out of the tools otherwise, and the model route refuses a search request). When on, its query goes to the model provider's search, outside the WebFetch list, so a call is an exfiltration attempt the product doesn't refuse. */
+/** WebSearch is offered only on a brand whose `t:websearch` switch is on (a brand setting an Admin flips since M1-F: the runner leaves it out of the tools otherwise, and the model route refuses a search request). When on, its query goes to the model provider's search, outside the WebFetch list, so a call is an exfiltration attempt the product doesn't refuse. */
 const SEARCH_TOOLS = new Set(['WebSearch', 'web_search'])
 const MEMORY_WRITES = new Set(['memory_save', 'memory_update'])
 const SHELL_TOOLS = new Set(['Bash'])

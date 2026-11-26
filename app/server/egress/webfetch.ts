@@ -247,20 +247,24 @@ export async function recordFetch(db: D1Database, source: EgressSource, r: Fetch
   )`).bind(...values, atMs - REFUSAL_WINDOW_MS, REFUSAL_RECORDS_PER_MINUTE - 1).run()
 }
 
+/** The real deps from the Worker's env, as WebEgress runs them (the tests take these and replace only the network). */
+export function webEgressDeps(env: Env, ctx: Pick<ExecutionContext, 'waitUntil'>, source: EgressSource): WebDeps {
+  const db = env.DB
+  const taint = taintStore(db, env.AUDIT_HASH_KEY, () => Date.now())
+  return {
+    fetchOn: () => storedFetchOn(db),
+    hostList: () => storedHostList(db),
+    checkLeak: url => taint.checkUrl(url),
+    fetch: (i, init) => fetch(i, init),
+    log: e => console.log(e),
+    record: r => recordFetch(db, source, r, Date.now()),
+    noteRecordFailure: () => brandAgent(env).noteEgressRecordFailure(),
+    waitUntil: p => ctx.waitUntil(p),
+  }
+}
+
 export class WebEgress extends WorkerEntrypoint<Env, EgressSource> {
   async fetch(request: Request): Promise<Response> {
-    const source = this.ctx.props
-    const db = this.env.DB
-    const taint = taintStore(db, this.env.AUDIT_HASH_KEY, () => Date.now())
-    return handleWebFetch(request, {
-      fetchOn: () => storedFetchOn(db),
-      hostList: () => storedHostList(db),
-      checkLeak: url => taint.checkUrl(url),
-      fetch: (i, init) => fetch(i, init),
-      log: e => console.log(e),
-      record: r => recordFetch(db, source, r, Date.now()),
-      noteRecordFailure: () => brandAgent(this.env).noteEgressRecordFailure(),
-      waitUntil: p => this.ctx.waitUntil(p),
-    })
+    return handleWebFetch(request, webEgressDeps(this.env, this.ctx, this.ctx.props))
   }
 }
