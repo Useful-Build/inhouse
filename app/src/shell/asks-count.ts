@@ -53,13 +53,18 @@ export function readAsks(): Promise<void> {
     return again
   }
   const warn = (e: unknown) => { console.warn('Inhouse: could not read what waits for you.', e) }
-  // A list published after this read started (Approvals' own read) is newer: this read's answer for it is dropped.
+  // A list published after this read started (Approvals' own read) is newer: this read's answer for it is dropped, and
+  // the lists are read once more after it, so a count that changed since the publish can't stick.
   const started = gen
-  const fresh = (next: Partial<typeof parts>) => { if (gen === started) put(next) }
+  let dropped = false
+  const fresh = (next: Partial<typeof parts>) => { if (gen === started) put(next); else dropped = true }
   inFlight = Promise.all([
     agent.actions({ states: ['waiting', NEEDS_CHECK] }).then(a => fresh({ actions: countAsks(a, []) }), warn),
     agent.questions().then(q => fresh({ questions: countAsks([], q) }), warn),
-  ]).then(() => undefined).finally(() => { inFlight = null })
+  ]).then(() => undefined).finally(() => {
+    inFlight = null
+    if (dropped) void readAsks()
+  })
   return inFlight
 }
 

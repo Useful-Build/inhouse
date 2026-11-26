@@ -193,6 +193,7 @@ describe('answering', () => {
     await tick(2000)
     await flush()
     expect(text()).toContain("No longer there")
+    expect(host.querySelector('[data-action-card]')?.getAttribute('data-action-card')).toBe('gone')
     expect(text()).toContain("This isn't there any more.")
     expect(text()).not.toContain('going out')
     expect(text()).not.toContain('Going out')

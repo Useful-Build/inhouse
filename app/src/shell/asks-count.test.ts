@@ -155,9 +155,14 @@ describe('the badge', () => {
     // Approvals' newer read: one card waits.
     await act(async () => { publishAsks([card()], []) })
     expect(shown.at(-1)).toBe(1)
+    // The dropped read is read once more after it: the server now says two wait, and that sticks, not the old three.
+    const calls = fake.actions.mock.calls.length
+    fake.actions.mockResolvedValue([card(), card()])
     await act(async () => { release([card(), card(), card()]); await old })
     await flush()
-    expect(shown.at(-1)).toBe(1)
+    expect(fake.actions).toHaveBeenCalledTimes(calls + 1)
+    expect(shown).not.toContain(3)
+    expect(shown.at(-1)).toBe(2)
   })
   test('a change in the bell\'s list (a new notice, such as a question waiting) reads again; the same list does not', async () => {
     fake.actions.mockResolvedValue([]); fake.questions.mockResolvedValue([])

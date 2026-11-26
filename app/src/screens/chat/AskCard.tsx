@@ -19,6 +19,7 @@ import type { CardButton, Whose } from './ask-card'
 import { readAsks } from '../../shell/asks-count'
 
 const GONE_KICKER = 'No longer there'
+const GONE_ICON = 'info'
 const GONE_TEXT = "This isn't there any more."
 
 /** A card as read, and when (on the browser's clock), so the hold's countdown is the server's gap less the time since. */
@@ -154,14 +155,14 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
   const holdLine = !gone && left !== null ? holdText(left) : null
   const waitingLapse = card.state === 'waiting' && card.lapsed
   return (
-    <div role="group" aria-labelledby={titleId} data-action-card={card.state} data-action-id={card.id}
+    <div role="group" aria-labelledby={titleId} data-action-card={gone ? 'gone' : card.state} data-action-id={card.id}
       className={cn(CONFIRMATION_SHEET, 'flex w-prose-measure flex-col', className)}>
       <div className="flex items-center gap-3">
         <span aria-hidden="true" className="flex size-10 flex-none items-center justify-center rounded-full border border-border bg-draft-kind text-foreground-3">
-          <Icon name={ICON[card.state]} size={20} />
+          <Icon name={gone ? GONE_ICON : ICON[card.state]} size={20} />
         </span>
         <div className="min-w-0 flex-1">
-          <div className={cn('text-sm', card.state === NEEDS_CHECK ? 'font-medium text-warning-text' : 'text-muted-foreground')}>{gone ? GONE_KICKER : kickerOf(card, whose)}</div>
+          <div className={cn('text-sm', card.state === NEEDS_CHECK && !gone ? 'font-medium text-warning-text' : 'text-muted-foreground')}>{gone ? GONE_KICKER : kickerOf(card, whose)}</div>
           <h3 id={titleId} ref={headingRef} tabIndex={-1} className="text-md font-strong tracking-card wrap-anywhere outline-none">{card.title}</h3>
         </div>
         {onOpenChat && card.chatId && (
