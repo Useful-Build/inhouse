@@ -15,9 +15,15 @@
 		"enabled": true
 	},
 	"durable_objects": {
-		"bindings": [{ "name": "SIGNIN", "class_name": "SignIn" }]
+		"bindings": [
+			{ "name": "SIGNIN", "class_name": "SignIn" },
+			{ "name": "SHOPIFY_WRITE_SIGNIN", "class_name": "ShopifyWriteSignIn" }
+		]
 	},
-	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SignIn"] }],
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["SignIn"] },
+		{ "tag": "v2", "new_sqlite_classes": ["ShopifyWriteSignIn"] }
+	],
 	// P5 W2: code mode runs scripts in Dynamic Workers (env.LOADER). Exactly this one binding (check-hub-config.mjs).
 	"worker_loaders": [{ "binding": "LOADER" }],
 	// Turns on the test upstream seam (hub/testing/), together with INHOUSE_TEST_BUILD below.
@@ -40,6 +46,10 @@
 		"SLACK_PRIVATE_SEARCH": "off",
 		"CONNECT_REDIRECT_URI": "https://inhouse.example.com/api/connect/callback",
 		// P5 W4: invented, the product origin Slack notices link to.
-		"APP_ORIGIN": "https://inhouse.example.com"
+		"APP_ORIGIN": "https://inhouse.example.com",
+		// Stage 1 M2-C: TEST-ONLY invented write-scoped Shopify app on its own fake store (never the read fixture).
+		"SHOPIFY_WRITE_SHOP": "example-write",
+		"SHOPIFY_WRITE_CLIENT_ID": "test-write-client",
+		"SHOPIFY_WRITE_CLIENT_SECRET": "test-only-write-client-secret-8d4a2f1c9b0e"
 	}
 }

@@ -1,6 +1,6 @@
 // check-product-config fixture: refused, rule "hub-delivery-missing" (HUB_DELIVERY, the DeliveryGateway binding, missing; invented values).
 {
-	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }, { "binding": "HUB_CONNECT", "service": "inhouse-hub", "entrypoint": "ConnectGateway" }],
+	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }, { "binding": "HUB_CONNECT", "service": "inhouse-hub", "entrypoint": "ConnectGateway" }, { "binding": "HUB_WRITE", "service": "inhouse-hub", "entrypoint": "WriteGateway" }],
 	"name": "inhouse-product",
 	"main": "server/index.ts",
 	"vars": {

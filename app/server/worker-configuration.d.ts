@@ -18,6 +18,7 @@ interface __BaseEnv_Env {
 	HUB: Service /* entrypoint ReadGateway from inhouse-hub */;
 	HUB_CONNECT: Service /* entrypoint ConnectGateway from inhouse-hub */;
 	HUB_DELIVERY: Service /* entrypoint DeliveryGateway from inhouse-hub */;
+	HUB_WRITE: Service /* entrypoint WriteGateway from inhouse-hub */;
 }
 declare namespace Cloudflare {
 	interface GlobalProps {

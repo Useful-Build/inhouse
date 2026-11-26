@@ -254,6 +254,25 @@ After the topic's work is complete, use the `release` service token through the 
 is `closed` or `already_closed` and that the audit log has `privacy.closed`. Closing clears the request's customer,
 order and data request IDs.
 
+## Release the connector hub (from Stage 1 M2-C)
+
+**Order.** Deploy the hub before the product Worker. The product's `HUB_WRITE` binding names the hub's `WriteGateway`
+entrypoint, which only a hub from M2-C on exports.
+
+**No rollback across `v2`.** The hub's `v2` migration creates the `ShopifyWriteSignIn` Durable Object class.
+Cloudflare doesn't allow a rollback when a Durable Object class change (exports or the `migrations` array) lies between
+the active version and the target
+([Rollbacks, Bindings](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/rollbacks/),
+checked 2026-11-26). So once a hub with `v2` is live, it can't roll back to a pre-`v2` version: roll the product Worker
+back alone (the newer hub still serves every older product's bindings) or fix forward.
+
+**Eval hub.** The eval hub must carry exactly `app/wrangler.hub.test.jsonc`'s vars (`EVAL_TEST_HUB_VARS` in
+`check-product-config.mjs`), so its generated config needs the three test vars M2-C added: `SHOPIFY_WRITE_SHOP`,
+`SHOPIFY_WRITE_CLIENT_ID` and `SHOPIFY_WRITE_CLIENT_SECRET` (invented values for the fake write store). Without them the
+sandbox config check refuses the eval hub. Every generated hub config (sandbox and eval) also needs the `SHOPIFY_WRITE_SIGNIN` binding and the
+`v2` migration that creates `ShopifyWriteSignIn`; without them a write answers `internal` (`sent: 'unknown'`) instead of
+`not_configured`.
+
 ## Redeploy the previous release
 
 **When.** A release broke something that isn't a data problem.
@@ -261,7 +280,8 @@ order and data request IDs.
 **Steps.** Follow [runbook.md](runbook.md), "Roll back": find the last good Worker version id and run the `deploy`
 workflow with `rollback_to` set to it. A rollback doesn't undo a migration. If the bad release added one, check the
 release notes before you roll back: an older Worker on a newer schema is only safe when the migration was additive.
-If it wasn't, restore instead.
+If it wasn't, restore instead. The connector hub can't roll back across its `v2` migration (see "Release the connector
+hub" above).
 
 **Verify.** `wrangler deployments list` shows the old version at 100%. The workflow's live smoke passes. A chat message
 works.
