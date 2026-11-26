@@ -1,17 +1,22 @@
 // Notices from the server (p5-w4.md sections 1 to 9): the agent's `notification_send` (`notifyAgent`) and the server's
 // own notices (`sendSystemNotice`, P6's approver notice). Our server decides everything: it validates, resolves member
 // ids (the bell) and listed channel names, runs the bounds that don't escape, reserves the caps in one statement per
-// recipient, and audits one line per recipient per call. Both Slack legs are closed (`SLACK_DELIVERY_ENABLED`,
-// ./slack-legs.ts): a listed channel reaches the run person's bell and the alerts copy is skipped. When open, Slack posts
-// go only through the hub's DeliveryGateway (`HUB_DELIVERY`), whose Slack SignIn re-checks, escapes once and posts with
-// fixed parameters.
+// recipient, and audits one line per recipient per call.
+// - Stage 1 M2-N (Wasim, Q3 = A; decision "Slack posts without a card"): the agent's post to a listed channel follows the
+//   same rule as any Slack post. It is proposed through the outbox as `slack.channel.post` (the `SlackLeg` the tool
+//   builds: N14's admission, then `outbox.request()`), so it goes out only under a live grant (the brand's grant an admin
+//   gave by marking the channel for alerts, or a person's "Always allow") or once a person approves its card. With no
+//   operation enabled in the ceiling (N2, every deployable build) it is refused and nothing is asked or sent.
+// - The server's own fixed notices (an approval is waiting, a routine failed) post to the admin-marked alerts channel
+//   directly, through the hub's DeliveryGateway (`HUB_DELIVERY`), whose Slack SignIn re-checks, escapes once and posts
+//   with fixed parameters. Their title is a template; model text only ever in the bounded body.
 // - A member id reaches the bell only: never Slack in any form. An Inhouse member, a service row or anyone not an
 //   active person is `unknown_member`, so the agent is never told "sent" for a bell nobody reads.
-// - Model text goes only in the bell's `body` and the hub's title and text; never a template, `fields`, a link, a log,
-//   an audit line or a D1 table we own (`notify_sends` keeps a hash).
+// - Model text goes only in the bell's `body`, the hub's title and text and the outbox's action arguments; never a
+//   template, `fields`, a link, a log, an audit line or a D1 table we own besides the action (`notify_sends` keeps a hash).
 // - One send, no retry: a hub call that throws leaves the row `reserved` and answers `unknown: not retried`.
 import type { DeliveryGateway, HubResult } from '../../hub/index/contract.ts'
-import { SLACK_DELIVERY_ENABLED } from './slack-legs.ts'
+import type { ActionState } from '../../shared/contract/actions.ts'
 import { plainAnswer } from '../../shared/rpc-answer.ts'
 import type { AuditArgs } from '../../shared/contract/audit.ts'
 import { boundBody, boundNotice, SYSTEM_BODY_MAX } from '../../shared/notify/bound.ts'
@@ -20,7 +25,7 @@ import { bellLink, checkLink } from '../../shared/notify/links.ts'
 import type { NoticeLinkInput } from '../../shared/notify/links.ts'
 import { auditInsert } from '../db/audit.ts'
 import { SYSTEM_MEMBER_ID } from '../db/ids.ts'
-import { all, first, stmt, storage } from '../db/sql.ts'
+import { all, stmt, storage } from '../db/sql.ts'
 import type { Stmt } from '../db/sql.ts'
 import { addNotice } from '../notices/store.ts'
 import { agentRow, capHit, reserveAgent, reserveSystem, settle, systemRow } from './store.ts'
@@ -33,7 +38,7 @@ export type DeliveryBinding = Pick<DeliveryGateway, 'postNotice' | 'listChannels
 
 export interface NotifyCtx {
   db: D1Database
-  /** Null when this Worker has no delivery binding: channels answer `slack_unavailable`, the bell still works. */
+  /** Null when this Worker has no delivery binding: the alerts copy answers `slack_unavailable`, the bell still works. */
   delivery: DeliveryBinding | null
   nowMs: number
   requestId: string
@@ -42,20 +47,38 @@ export interface NotifyCtx {
 export type Detail =
   | 'not_listed' | 'shared_channel' | 'archived' | 'not_public' | 'not_member' | 'not_found' | 'run_cap' | 'day_cap'
   | 'too_long' | 'empty' | 'unknown_member' | 'slack_not_connected' | 'slack_unavailable' | 'rate_limited'
-  | 'no_alerts_channel' | 'channel_to_bell' | 'slack_off' | 'app_origin_missing'
-  // Written before M2-F (the stage rule); new rows never hold them, but a repeat can read one back.
-  | 'to_bell' | 'below_act'
+  | 'no_alerts_channel' | 'app_origin_missing'
+  // Written before M2-N (M2-F's closed Slack legs, or the stage rule before it); new rows never hold them, but a repeat
+  // can read one back.
+  | 'channel_to_bell' | 'slack_off' | 'to_bell' | 'below_act'
+
+/** The agent's post to a listed channel, as the outbox answered it (Stage 1 M2-N). */
+export type SlackLegAnswer =
+  /** Nothing was asked or sent. `reason` is the outbox's code (or the leg's own: no wiring, not admitted); `text` its words. */
+  | { kind: 'refused'; reason: string; text: string }
+  /** The action the outbox made (`created`) or found: a card waiting for a person, or approved under a grant. */
+  | { kind: 'action'; actionId: string; state: ActionState; verdict: 'run' | 'ask' | 'exact'; created: boolean }
+
+/** Proposes one post to one listed channel through the outbox (built by the notifications tool: notifications/slack-leg.ts). */
+export interface SlackLeg {
+  propose(channel: ListedChannel, post: { title: string; text: string }): Promise<SlackLegAnswer>
+}
 
 /** One recipient's outcome. `skipped`: nothing reserved or sent for it (the Slack part with no alerts channel). */
 export type RecipientOutcome = {
   kind: SendKind
   /** What the caller named: a member id, a channel name, or `alerts`. */
   to: string
-  outcome: 'posted' | 'refused' | 'failed' | 'unknown' | 'skipped'
+  /** `asked`: the agent's post to a listed channel is an outbox action now (`action`); nothing went out yet. */
+  outcome: 'posted' | 'refused' | 'failed' | 'unknown' | 'skipped' | 'asked'
   detail?: Detail
   /** Where a bell notice went when it wasn't the named recipient: a member id or `admins`. */
   bell?: string
   repeat?: true
+  /** The agent's post to a listed channel: the action the outbox made or found. */
+  action?: { id: string; state: ActionState; verdict: 'run' | 'ask' | 'exact'; created: boolean }
+  /** The agent's post to a listed channel, refused by the outbox: its code and plain words (nothing asked or sent). */
+  refusal?: { reason: string; text: string }
 }
 
 const SLACK_ACCOUNT = 'slack:workspace' as const
@@ -93,18 +116,6 @@ export async function listedChannels(db: D1Database): Promise<ListedChannel[]> {
 
 /** A channel name as the agent may write it: exact, case-insensitive, an optional leading `#`. */
 export const channelKey = (name: string): string => name.replace(/^#/, '').toLowerCase()
-
-/**
- * Whose bell a listed channel recipient reaches while the Slack legs are closed (OC-W4-2, B2 2026-11-21): the chat's
- * owner when that's an active brand person, else the admins (an Inhouse member's test chat, a routine whose creator is
- * gone, an unknown chat).
- */
-export async function runPerson(db: D1Database, chatId: string): Promise<string | 'admins'> {
-  const row = await first<{ id: string; kind: string; status: string }>(db, stmt(
-    'SELECT m.id AS id, m.kind AS kind, m.status AS status FROM chats c JOIN members m ON m.id = c.owner_id WHERE c.id = ?', chatId,
-  ))
-  return row && row.kind === 'person' && row.status === 'active' ? row.id : 'admins'
-}
 
 // ---------- the hub's answer ----------
 
@@ -267,7 +278,13 @@ export type AgentNoticeInput = {
 
 export type AgentNoticeResult = { recipients: RecipientOutcome[]; changed: string[]; listed: string[] }
 
-export async function notifyAgent(ctx: NotifyCtx, scope: AgentScope, input: AgentNoticeInput): Promise<AgentNoticeResult> {
+/** What `notifyAgent` needs: the database and this call's clock and id, and the Slack leg (null: no wiring, so refused). */
+export type AgentNotifyCtx = Omit<NotifyCtx, 'delivery'> & { slack: SlackLeg | null }
+
+/** The leg's own refusal when the tool has no wiring (a caller with no egress behind it): nothing asked or sent. */
+export const NO_SLACK_LEG: SlackLegAnswer = { kind: 'refused', reason: 'actions_unavailable', text: 'Slack posts can’t be asked for from here, so nothing was asked or sent.' }
+
+export async function notifyAgent(ctx: AgentNotifyCtx, scope: AgentScope, input: AgentNoticeInput): Promise<AgentNoticeResult> {
   const members = [...new Set(input.to.members ?? [])]
   const channels = [...new Set(input.to.channels ?? [])]
   const link = input.link === undefined ? null : checkLink(input.link)
@@ -275,7 +292,7 @@ export async function notifyAgent(ctx: NotifyCtx, scope: AgentScope, input: Agen
   const bounded = boundNotice({ title: input.title, text: input.text, format: input.format }, { escape: false })
   const sha = await sha256Hex(JSON.stringify(bounded.ok ? [bounded.title, bounded.text, link] : [input.title, input.text, link]))
   const c: Common = {
-    ctx,
+    ctx: { ...ctx, delivery: null },
     actorId: scope.memberId,
     sha,
     textLength: bounded.ok ? cp(bounded.text) : cp(input.text),
@@ -322,7 +339,6 @@ export async function notifyAgent(ctx: NotifyCtx, scope: AgentScope, input: Agen
     }
     out.recipients.push(await toBell(c, agentReserve('bell'), m, m, bell))
   }
-  const person = !SLACK_DELIVERY_ENABLED && channels.length > 0 ? await runPerson(ctx.db, scope.chatId) : null
   for (const name of channels) {
     const l = byKey.get(channelKey(name))
     if (!l) {
@@ -331,11 +347,12 @@ export async function notifyAgent(ctx: NotifyCtx, scope: AgentScope, input: Agen
       out.recipients.push({ kind: 'slack', to: name, outcome: 'refused', detail: 'not_listed' })
       continue
     }
-    if (!SLACK_DELIVERY_ENABLED) {
-      out.recipients.push(await toBell(c, agentReserve('bell'), name, person!, bell, 'channel_to_bell'))
-      continue
-    }
-    out.recipients.push(await toSlack(c, agentReserve('slack'), name, l.channelId, { title: bounded.title, text: bounded.text, link }, 'notification_send'))
+    // Q3 = A: the same rule as any Slack post. The outbox audits what it does (`action.requested`); a refusal writes
+    // nothing there, as for any write tool. The app link isn't part of a post the outbox makes.
+    const a = ctx.slack ? await ctx.slack.propose(l, { title: bounded.title, text: bounded.text }) : NO_SLACK_LEG
+    out.recipients.push(a.kind === 'refused'
+      ? { kind: 'slack', to: name, outcome: 'refused', refusal: { reason: a.reason, text: a.text } }
+      : { kind: 'slack', to: name, outcome: 'asked', action: { id: a.actionId, state: a.state, verdict: a.verdict, created: a.created } })
   }
   return out
 }
@@ -443,7 +460,7 @@ export async function sendSystemNotice(
   }
   if (input.to.alertsChannel) {
     if (!alerts) recipients.push({ kind: 'slack', to: 'alerts', outcome: 'skipped', detail: 'no_alerts_channel' })
-    else if (!SLACK_DELIVERY_ENABLED) recipients.push({ kind: 'slack', to: 'alerts', outcome: 'skipped', detail: 'slack_off' })
+    // Q3 = A: the server's own fixed notice goes to the alerts channel without a card.
     else recipients.push(await toSlack(c, systemReserve('slack'), 'alerts', alerts.channelId, { title, text: body ?? NO_BODY_TEXT, link: checked.link }, `system:${input.source}`))
   }
   return { ok: true, recipients }

@@ -4,32 +4,30 @@
 //  1. a member id reaches Slack in any parameter, or an Inhouse member's bell gets a notice;
 //  2. model text lands outside the bell's `body` (a template, fields, the link), or a URL, control character or Slack
 //     syntax lands in the body, or the body is cut instead of refused;
-//  3. a channel recipient reaches Slack while both Slack legs are closed (M2-F, whatever the stored stage), or reaches the
-//     wrong person's bell;
+//  3. the agent's post to a listed channel reaches the hub's delivery binding or anyone's bell instead of going to the
+//     outbox as a proposal (Stage 1 M2-N, Q3 = A), or a proposal carries a member id, a link or uncleaned text;
 //  4. concurrent sends pass a cap together, or one group's sends eat the other's allowance;
 //  5. a repeat re-sends, a thrown hub call is retried, or two notices differing only in title are deduped;
 //  6. an audit line, a log line or `notify_sends` holds the text;
-//  7. a system notice takes its title from the caller, or misses its key's dedupe, per-run or day cap.
+//  7. a system notice takes its title from the caller, or misses its key's dedupe, per-run or day cap, or doesn't reach
+//     the alerts channel (Q3 = A: the server's own fixed notices post there without a card).
 // Expected values are literals or come from the generator, never from the code under test.
-// The Slack legs are closed (./slack-legs.ts, until Wasim's Q3). Tests of the Slack path itself (the hub's answers, the
-// Slack caps, repeats and failures of a post) keep their assertions as they were and run only once that constant opens
-// (`slackOpen`); while it is closed they are skipped, and the `closed Slack legs` tests pin that nothing reaches the hub.
+// The agent's Slack leg is a fake here (`fakeLeg`): the real one, through the outbox, is the notifications tool's
+// (mcp/tools/notifications/send.test.ts) and the write-safety gate's (outbox/write-safety.property.test.ts). Until M2-N
+// both Slack legs were closed and the Slack path's tests skipped; the server's notice tests run again as they were, and
+// the agent's became proposal tests (the PR lists each).
 import { env } from 'cloudflare:workers'
 import { fc, test } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
 import type { HubResult, PostNoticeRequest } from '../../hub/index/contract.ts'
+import { SYSTEM_MEMBER_ID } from '../db/ids.ts'
 import { notifyDeps } from '../mcp/tools/notifications/deps.ts'
 import { NotificationSendInput, notificationSend } from '../mcp/tools/notifications/send.ts'
 import { NOTICE_TEMPLATES } from '../notices/templates.ts'
 import { renderNotice } from '../notices/render.ts'
 import type { NoticeRow } from '../notices/read.ts'
 import { notifyAgent, sendSystemNotice } from './send.ts'
-import type { AgentNoticeInput, DeliveryBinding, NotifyCtx } from './send.ts'
-import { SLACK_DELIVERY_ENABLED } from './slack-legs.ts'
-
-/** The Slack path's own tests: they need the legs open, so they run again when ./slack-legs.ts opens them. */
-const CLOSED = !SLACK_DELIVERY_ENABLED
-const slackOpen = { it: it.skipIf(CLOSED), describe: describe.skipIf(CLOSED) }
+import type { AgentNoticeInput, AgentNotifyCtx, DeliveryBinding, ListedChannel, SlackLeg, SlackLegAnswer } from './send.ts'
 
 const db = env.DB
 const DAY = 86_400_000
@@ -83,7 +81,19 @@ function fakeDelivery(answer: (req: PostNoticeRequest, n: number) => HubResult<{
   return { delivery, calls }
 }
 
-const ctxOf = (delivery: DeliveryBinding | null, nowMs: number): NotifyCtx => ({ db, delivery, nowMs, requestId: `req-${uniq()}` })
+/** A stand-in for the outbox leg: records each proposal and answers a waiting card (or what `answer` says). */
+function fakeLeg(answer: (channel: ListedChannel, n: number) => SlackLegAnswer = (_c, n) => ({ kind: 'action', actionId: `act_fake${n}`, state: 'waiting', verdict: 'ask', created: true })) {
+  const proposals: { channel: ListedChannel; post: { title: string; text: string } }[] = []
+  const leg: SlackLeg = {
+    async propose(channel, post) {
+      proposals.push({ channel, post })
+      return answer(channel, proposals.length)
+    },
+  }
+  return { leg, proposals }
+}
+
+const ctxOf = (slack: SlackLeg | null, nowMs: number): AgentNotifyCtx => ({ db, slack, nowMs, requestId: `req-${uniq()}` })
 const notices = async (where: string, ...p: unknown[]) => (await db.prepare(`SELECT * FROM notices WHERE ${where}`).bind(...p).all<NoticeRow & { audience: string; audience_member_id: string | null; template: string }>()).results
 const sends = async (where: string, ...p: unknown[]) => (await db.prepare(`SELECT * FROM notify_sends WHERE ${where}`).bind(...p).all<Record<string, unknown>>()).results
 const lines = async (since: number) => (await db.prepare("SELECT * FROM audit_log WHERE id > ? AND action = 'notify.send' ORDER BY id").bind(since).all<{ args_json: string; actor_id: string; target_kind: string | null; target_id: string | null }>()).results
@@ -107,15 +117,11 @@ async function permissionRows(): Promise<number> {
   return n
 }
 
-// M2-F's safety test (Stage 1 plan, M2-F "Tests"). Ways it can fail, written first: a stored stage (any value, or a
-// broken one) opens a Slack leg; the agent's tool or the server's alert reaches the hub's delivery binding; a listed
-// channel's notice is lost instead of reaching the bell; a Slack row is reserved in `notify_sends`.
-describe('closed Slack legs (M2-F; Q3 decides when they open)', () => {
-  it('the switch is closed: opening it is a deliberate change to this test', () => {
-    expect(SLACK_DELIVERY_ENABLED).toBe(false)
-  })
-
-  it('only ./send.ts calls postNotice(, so no caller goes around the switch', () => {
+// M2-F's safety test, as M2-N leaves it (Q3 = A). Ways it can fail, written first: a stored stage (any value, or a
+// broken one) changes either path; the agent's post reaches the hub's delivery binding, a bell, or `notify_sends`
+// instead of the outbox; the server's own notice doesn't reach the alerts channel, or reaches it more than once.
+describe('the agent posts through the outbox, the server posts its own notices (M2-N; Q3 = A)', () => {
+  it('only ./send.ts calls postNotice(, so no caller goes around it', () => {
     const sources = import.meta.glob<string>(
       ['../**/*.ts', '../../shared/**/*.ts', '../../src/**/*.{ts,tsx}', '../../runner/src/**/*.ts', '!../**/*.test.ts', '!../../shared/**/*.test.ts', '!../../src/**/*.test.{ts,tsx}', '!../../runner/**/*.test.ts'],
       { query: '?raw', import: 'default', eager: true },
@@ -125,42 +131,42 @@ describe('closed Slack legs (M2-F; Q3 decides when they open)', () => {
   })
 
   for (const stored of [null, 'Watch', 'Act', 'Run', '{'] as const) {
-    it(`no permission and a listed alerts channel, stage ${stored ?? 'unset'}: both notice paths reach the bell, never the hub's delivery binding`, async () => {
+    it(`no permission and a listed alerts channel, stage ${stored ?? 'unset'}: the agent's post never reaches the delivery binding; the server's notice posts once`, async () => {
       const s = await scene()
       if (stored === null) await db.prepare("DELETE FROM settings WHERE owner = 'brand' AND key = 'stage'").run()
       else if (stored === '{') await db.prepare("INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 'stage', '{', 1, 1, 'm_system', 'r') ON CONFLICT (owner, key) DO UPDATE SET value_json = excluded.value_json").run()
       else await setStage(stored)
       expect(await permissionRows()).toBe(0)
       const { delivery, calls } = fakeDelivery()
-      // The agent's path as the MCP route runs it: the tool handler, with the hub's delivery binding in its deps.
-      const agent = await notificationSend.call(NotificationSendInput.parse(msg()), { ...scopeOf(s), nowMs: s.nowMs, requestId: `m2-f-${uniq()}` }, { db, notify: notifyDeps({ HUB_DELIVERY: delivery }) })
+      // The agent's path as the MCP route runs it with no egress wiring: the post is refused, nothing is asked or sent.
+      const agent = await notificationSend.call(NotificationSendInput.parse(msg()), { ...scopeOf(s), nowMs: s.nowMs, requestId: `m2-n-${uniq()}` }, { db, notify: notifyDeps(null) })
       expect(calls, 'the agent path never calls the delivery binding').toEqual([])
-      expect(agent.content[0]!.text).toBe('#ops-alerts: sent to the bell (not Slack)')
-      expect(agent.structuredContent).toEqual({ recipients: [{ to: '#ops-alerts', kind: 'bell', outcome: 'posted', detail: 'channel_to_bell' }], changed: [] })
-      // The server's own notice to a member and the alerts channel.
+      expect(agent.content[0]!.text).toBe('#ops-alerts: refused: actions_unavailable (Slack posts can’t be asked for from here, so nothing was asked or sent.)')
+      expect(agent.structuredContent).toEqual({ recipients: [{ to: '#ops-alerts', kind: 'slack', outcome: 'refused', detail: 'actions_unavailable' }], changed: [] })
+      // The server's own notice to a member and the alerts channel: the channel's post goes out once, with no card.
       const system = await sendSystemNotice({ DB: db, HUB_DELIVERY: delivery }, {
-        key: `m2-f:${uniq()}`, source: 'approvals', kind: 'approval_waiting', to: { members: [s.owner], alertsChannel: true }, link: { kind: 'today' },
+        key: `m2-n:${uniq()}`, source: 'approvals', kind: 'approval_waiting', to: { members: [s.owner], alertsChannel: true }, link: { kind: 'today' },
       }, { nowMs: s.nowMs })
-      expect(calls, 'the system path never calls the delivery binding').toEqual([])
-      expect(system).toEqual({ ok: true, recipients: [{ kind: 'bell', to: s.owner, outcome: 'posted' }, { kind: 'slack', to: 'alerts', outcome: 'skipped', detail: 'slack_off' }] })
-      expect((await notices('audience_member_id = ?', s.owner)).map(n => n.template).sort()).toEqual(['approval_waiting', 'notify_message'])
-      expect(await sends("kind = 'slack' AND at_ms = ?", s.nowMs)).toEqual([])
+      expect(system).toEqual({ ok: true, recipients: [{ kind: 'bell', to: s.owner, outcome: 'posted' }, { kind: 'slack', to: 'alerts', outcome: 'posted' }] })
+      expect(calls.map(c => [c.req.channelId, c.req.title])).toEqual([['C0TEST0001', 'Approval waiting']])
+      expect((await notices('audience_member_id = ?', s.owner)).map(n => n.template)).toEqual(['approval_waiting'])
+      expect((await sends("kind = 'slack' AND at_ms = ?", s.nowMs)).map(r => r.source)).toEqual(['approvals'])
+      expect(await permissionRows(), 'nothing on the permission path was written').toBe(0)
     })
   }
 
-  it('one audit line per recipient, the run member as actor, never the text; the channel line names the bell it reached', async () => {
+  it('one audit line per own recipient, the run member as actor, never the text; a listed channel is the outbox\'s to audit', async () => {
     const s = await scene()
     const since = await lastLine()
     const canary = 'CANARY-TEXT-7e2a'
-    const { delivery, calls } = fakeDelivery()
-    await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), { to: { channels: ['ops-alerts', 'nope'] }, title: `${canary} title`, text: `${canary} https://x.example.com`, format: 'message' })
-    expect(calls).toEqual([])
+    const { leg, proposals } = fakeLeg()
+    await notifyAgent(ctxOf(leg, s.nowMs), scopeOf(s), { to: { channels: ['ops-alerts', 'nope'] }, title: `${canary} title`, text: `${canary} https://x.example.com`, format: 'message' })
+    // The proposal holds the cleaned text (the outbox's action keeps it; the card shows it); never in our own tables.
+    expect(proposals.map(p => [p.channel.channelId, p.post.title, p.post.text])).toEqual([['C0TEST0001', `${canary} title`, `${canary} [link removed]`]])
     const ls = await lines(since)
-    expect(ls.map(l => [l.actor_id, l.target_kind, l.target_id])).toEqual([[s.owner, 'member', s.owner], [s.owner, null, null]])
+    expect(ls.map(l => [l.actor_id, l.target_kind, l.target_id])).toEqual([[s.owner, null, null]])
     const args = ls.map(l => JSON.parse(l.args_json) as Record<string, unknown>)
-    expect(args.map(a => [a.source, a.runId, a.kind, a.outcome, a.detail, a.changed])).toEqual([
-      ['agent', s.runId, 'bell', 'posted', 'channel_to_bell', ['links']], ['agent', s.runId, 'slack', 'refused', 'not_listed', ['links']],
-    ])
+    expect(args.map(a => [a.source, a.runId, a.kind, a.outcome, a.detail, a.changed])).toEqual([['agent', s.runId, 'slack', 'refused', 'not_listed', ['links']]])
     const everything = JSON.stringify([(await db.prepare('SELECT * FROM audit_log').all()).results, (await db.prepare('SELECT * FROM notify_sends').all()).results])
     expect(everything).not.toContain(canary)
   })
@@ -170,8 +176,8 @@ describe('test 9: the bell, from notification_send', () => {
   it('one member notice per member, model text only in a bounded body, no Slack syntax', async () => {
     const s = await scene()
     const p2 = await member()
-    const { delivery, calls } = fakeDelivery()
-    const out = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), {
+    const { leg, proposals: calls } = fakeLeg()
+    const out = await notifyAgent(ctxOf(leg, s.nowMs), scopeOf(s), {
       to: { members: [s.owner, p2] },
       title: 'See https://canary-9f1.example.com <!here>',
       text: 'R&D a < b x > y \u202Eflip\u0007 www.canary-9f1.example.org <@U0TEST0001> mail@canary-9f1.example.net',
@@ -212,24 +218,24 @@ describe('test 9: the bell, from notification_send', () => {
     expect([ok.recipients[0]!.outcome, no.recipients[0]!.detail]).toEqual(['posted', 'too_long'])
   })
 
-  slackOpen.it('test 2, the bell side: R&D, a < b and x > y are stored as written; the hub gets them unescaped', async () => {
+  it('test 2, the bell side: R&D, a < b and x > y are stored as written; the proposal gets them unescaped (the hub escapes once)', async () => {
     const s = await scene()
-    const { delivery, calls } = fakeDelivery()
-    await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), { to: { members: [s.owner], channels: ['ops-alerts'] }, title: 'Q&A', text: 'R&D a < b x > y', format: 'message' })
+    const { leg, proposals } = fakeLeg()
+    await notifyAgent(ctxOf(leg, s.nowMs), scopeOf(s), { to: { members: [s.owner], channels: ['ops-alerts'] }, title: 'Q&A', text: 'R&D a < b x > y', format: 'message' })
     const [row] = await notices('audience_member_id = ?', s.owner)
     expect(row!.body).toBe('Q&A\n\nR&D a < b x > y')
-    expect(calls.map(c => [c.req.title, c.req.text])).toEqual([['Q&A', 'R&D a < b x > y']])
+    expect(proposals.map(p => [p.post.title, p.post.text])).toEqual([['Q&A', 'R&D a < b x > y']])
   })
 
   // A backstop (shared/rpc-answer.ts): an answer that carries a disposer keeps its call open until released, and this
   // sender can run inside BrandAgent.
-  slackOpen.it("the hub's answer is released once", async () => {
+  it("the hub's answer to the server's own notice is released once", async () => {
     const s = await scene()
     const DISPOSE = (Symbol as unknown as { dispose: symbol }).dispose
     let released = 0
     const { delivery } = fakeDelivery(() => Object.assign({ ok: true as const, value: { ts: '1.000042' } }, { [DISPOSE]: () => { released++ } }))
-    const out = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), msg())
-    expect(out.recipients.map(r => r.outcome)).toEqual(['posted'])
+    const out = await sendSystemNotice({ DB: db, HUB_DELIVERY: delivery }, { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_sent', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
+    expect(out.ok && out.recipients.map(r => r.outcome)).toEqual(['posted'])
     expect(released).toBe(1)
   })
 })
@@ -239,47 +245,51 @@ describe('test 8: no DM, no Inhouse bell', () => {
     const s = await scene()
     const ih = await member('inhouse')
     const gone = await member('person', 'removed')
-    const { delivery, calls } = fakeDelivery()
-    const out = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), msg({ to: { members: [s.owner, ih, gone, 'm_system', 'm_nobody'] } }))
+    const { leg, proposals } = fakeLeg()
+    const out = await notifyAgent(ctxOf(leg, s.nowMs), scopeOf(s), msg({ to: { members: [s.owner, ih, gone, 'm_system', 'm_nobody'] } }))
     expect(out.recipients.map(r => `${r.to}:${r.outcome}:${r.detail ?? ''}`)).toEqual([
       `${s.owner}:posted:`, `${ih}:refused:unknown_member`, `${gone}:refused:unknown_member`, 'm_system:refused:unknown_member', 'm_nobody:refused:unknown_member',
     ])
     expect(await notices('audience_member_id IN (?, ?, ?, ?)', ih, gone, 'm_system', 'm_nobody')).toEqual([])
     expect((await notices('audience_member_id = ?', s.owner)).length).toBe(1)
-    expect(calls).toEqual([])
+    expect(proposals).toEqual([])
   })
 
-  slackOpen.it('member ids never reach the hub in any parameter; Inhouse, service, removed and unknown ids are unknown_member', async () => {
+  it('member ids never reach a Slack proposal; Inhouse, service, removed and unknown ids are unknown_member', async () => {
     const s = await scene()
     const ih = await member('inhouse')
     const gone = await member('person', 'removed')
-    const { delivery, calls } = fakeDelivery()
-    const out = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), msg({ to: { members: [s.owner, ih, gone, 'm_system', 'm_nobody'], channels: ['ops-alerts', 'general'] } }))
+    const { leg, proposals } = fakeLeg()
+    const out = await notifyAgent(ctxOf(leg, s.nowMs), scopeOf(s), msg({ to: { members: [s.owner, ih, gone, 'm_system', 'm_nobody'], channels: ['ops-alerts', 'general'] } }))
     expect(out.recipients.map(r => `${r.to}:${r.outcome}:${r.detail ?? ''}`)).toEqual([
       `${s.owner}:posted:`, `${ih}:refused:unknown_member`, `${gone}:refused:unknown_member`, 'm_system:refused:unknown_member',
-      'm_nobody:refused:unknown_member', 'ops-alerts:posted:', 'general:posted:',
+      'm_nobody:refused:unknown_member', 'ops-alerts:asked:', 'general:asked:',
     ])
-    const sent = JSON.stringify(calls)
+    const sent = JSON.stringify(proposals)
     for (const id of [s.owner, ih, gone, 'm_system', 'm_nobody']) expect(sent).not.toContain(id)
-    expect(calls.map(c => c.req.channelId)).toEqual(['C0TEST0001', 'C0TEST0002'])
-    expect(calls.every(c => (c.scope as { kind: string }).kind === 'server')).toBe(true)
+    expect(proposals.map(p => p.channel.channelId)).toEqual(['C0TEST0001', 'C0TEST0002'])
     expect(await notices('audience_member_id IN (?, ?, ?)', ih, gone, 'm_system')).toEqual([])
   })
 })
 
 describe('test 5: channels', () => {
-  slackOpen.it('an unlisted name is refused with the listed names; a channel the hub refuses is refused and audited, never posted', async () => {
+  it('an unlisted name is refused with the listed names; each listed one is proposed by its id, as the outbox answers it', async () => {
     const s = await scene()
     const since = await lastLine()
-    const { delivery, calls } = fakeDelivery(req => (req.channelId === 'C0TEST0002' ? { ok: false, error: { code: 'connect_refused', message: 'connect refused by the provider: shared_channel' } } : { ok: true, value: { ts: '1.1' } }))
-    const out = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), msg({ to: { channels: ['#random', '#GENERAL', 'ops-alerts'] } }))
+    const { leg, proposals } = fakeLeg(c => (c.channelId === 'C0TEST0002'
+      ? { kind: 'refused', reason: 'over_ceiling', text: 'This kind of action is turned off for this brand, so nothing was asked or sent.' }
+      : { kind: 'action', actionId: 'act_fake1', state: 'approved', verdict: 'run', created: true }))
+    const out = await notifyAgent(ctxOf(leg, s.nowMs), scopeOf(s), msg({ to: { channels: ['#random', '#GENERAL', 'ops-alerts'] } }))
     expect(out.listed).toEqual(['#General', '#ops-alerts'])
-    expect(out.recipients.map(r => `${r.to}:${r.outcome}:${r.detail ?? ''}`)).toEqual(['#random:refused:not_listed', '#GENERAL:refused:shared_channel', 'ops-alerts:posted:'])
-    expect(calls.length).toBe(2)
-    const shared = await sends("run_id = ? AND target = 'C0TEST0002'", s.runId)
-    expect(shared.map(r => [r.outcome, r.detail])).toEqual([['refused', 'shared_channel']])
+    expect(out.recipients).toEqual([
+      { kind: 'slack', to: '#random', outcome: 'refused', detail: 'not_listed' },
+      { kind: 'slack', to: '#GENERAL', outcome: 'refused', refusal: { reason: 'over_ceiling', text: 'This kind of action is turned off for this brand, so nothing was asked or sent.' } },
+      { kind: 'slack', to: 'ops-alerts', outcome: 'asked', action: { id: 'act_fake1', state: 'approved', verdict: 'run', created: true } },
+    ])
+    expect(proposals.map(p => p.channel.channelId)).toEqual(['C0TEST0002', 'C0TEST0001'])
+    expect(await sends('run_id = ?', s.runId), 'no Slack row of ours for a proposal').toEqual([])
     expect((await lines(since)).map(l => JSON.parse(l.args_json) as { target: string; outcome: string; detail?: string }).map(a => `${a.target}:${a.outcome}:${a.detail ?? ''}`))
-      .toEqual(['unlisted:refused:not_listed', 'C0TEST0002:refused:shared_channel', 'C0TEST0001:posted:'])
+      .toEqual(['unlisted:refused:not_listed'])
   })
 
   // Ways the unlisted audit can fail, written first: no line for an unlisted name; a line that holds the name (untrusted
@@ -291,10 +301,10 @@ describe('test 5: channels', () => {
   it('an unlisted name is refused and audited once, with no channel id and never the name', async () => {
     const s = await scene()
     const since = await lastLine()
-    const { delivery, calls } = fakeDelivery()
-    const out = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), msg({ to: { channels: [INJECT] } }))
+    const { leg, proposals } = fakeLeg()
+    const out = await notifyAgent(ctxOf(leg, s.nowMs), scopeOf(s), msg({ to: { channels: [INJECT] } }))
     expect(out.recipients).toEqual([{ kind: 'slack', to: INJECT, outcome: 'refused', detail: 'not_listed' }])
-    expect(calls.length).toBe(0)
+    expect(proposals.length).toBe(0)
     const ls = await lines(since)
     expect(ls.map(l => [l.actor_id, l.target_kind, l.target_id])).toEqual([[s.owner, null, null]])
     const a = JSON.parse(ls[0]!.args_json) as Record<string, unknown>
@@ -310,12 +320,12 @@ describe('test 5: channels', () => {
     expect((await unlistedLines(since)).length).toBe(3)
   })
 
-  slackOpen.it('a listed channel the hub refuses (archived, private) keeps its own line', async () => {
+  it('the alerts channel the hub refuses (archived, private) keeps its own line for the server\'s notice', async () => {
     for (const reason of ['archived', 'not_public'] as const) {
       const s = await scene()
       const since = await lastLine()
       const { delivery } = fakeDelivery(() => ({ ok: false, error: { code: 'connect_refused', message: `connect refused by the provider: ${reason}` } }))
-      await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), msg())
+      await sendSystemNotice({ DB: db, HUB_DELIVERY: delivery }, { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_sent', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
       const ls = await lines(since)
       expect(ls.map(l => [l.target_kind, l.target_id])).toEqual([['channel', 'C0TEST0001']])
       const a = JSON.parse(ls[0]!.args_json) as { target: string; outcome: string; detail?: string }
@@ -326,7 +336,9 @@ describe('test 5: channels', () => {
   it('over the bounds: an unlisted name is audited too, a listed one keeps its line, never the name', async () => {
     const s = await scene()
     const since = await lastLine()
-    const out = await notifyAgent(ctxOf(null, s.nowMs), scopeOf(s), { to: { channels: [INJECT, 'ops-alerts'] }, title: 'T', text: 'y'.repeat(1501), format: 'report' })
+    const { leg, proposals } = fakeLeg()
+    const out = await notifyAgent(ctxOf(leg, s.nowMs), scopeOf(s), { to: { channels: [INJECT, 'ops-alerts'] }, title: 'T', text: 'y'.repeat(1501), format: 'report' })
+    expect(proposals, 'refused before any proposal').toEqual([])
     expect(out.recipients.map(r => `${r.outcome}:${r.detail}`)).toEqual(['refused:not_listed', 'refused:too_long'])
     const ls = await lines(since)
     expect(ls.map(l => [l.target_kind, l.target_id])).toEqual([[null, null], ['channel', 'C0TEST0001']])
@@ -334,7 +346,7 @@ describe('test 5: channels', () => {
     expect(JSON.stringify(ls)).not.toContain('CANARY-9f2e')
   })
 
-  slackOpen.describe('the hub\'s answers', () => it.each([
+  describe('the hub\'s answers to the server\'s own notice', () => it.each([
     ['not_in_channel at the hub', { code: 'connect_refused', message: 'connect refused by the provider: not_member' }, 'refused', 'not_member'],
     ['archived', { code: 'connect_refused', message: 'connect refused by the provider: archived' }, 'refused', 'archived'],
     ['paused', { code: 'paused', message: 'connector paused' }, 'refused', 'slack_not_connected'],
@@ -346,50 +358,49 @@ describe('test 5: channels', () => {
   ] as const)('%s maps to %s %s', async (_, error, outcome, detail) => {
     const s = await scene()
     const { delivery } = fakeDelivery(() => ({ ok: false, error }))
-    const out = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), msg())
-    expect(out.recipients).toEqual([{ kind: 'slack', to: '#ops-alerts', outcome, detail }])
+    const out = await sendSystemNotice({ DB: db, HUB_DELIVERY: delivery }, { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_sent', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
+    expect(out).toEqual({ ok: true, recipients: [{ kind: 'slack', to: 'alerts', outcome, detail }] })
   }))
 
-  slackOpen.it('no delivery binding: slack_unavailable, nothing reserved, the bell still goes', async () => {
+  it('no delivery binding: the alerts copy is slack_unavailable, nothing reserved, the bell still goes', async () => {
     const s = await scene()
-    const out = await notifyAgent(ctxOf(null, s.nowMs), scopeOf(s), msg({ to: { members: [s.owner], channels: ['ops-alerts'] } }))
-    expect(out.recipients.map(r => `${r.outcome}:${r.detail ?? ''}`)).toEqual(['posted:', 'failed:slack_unavailable'])
-    expect(await sends("run_id = ? AND kind = 'slack'", s.runId)).toEqual([])
+    const key = `k:${uniq()}`
+    const out = await sendSystemNotice({ DB: db }, { key, source: 'approvals', kind: 'approval_sent', to: { members: [s.owner], alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
+    expect(out.ok && out.recipients.map(r => `${r.outcome}:${r.detail ?? ''}`)).toEqual(['posted:', 'failed:slack_unavailable'])
+    expect(await sends("system_key = ? AND kind = 'slack'", key)).toEqual([])
   })
 })
 
-slackOpen.describe('review round 1: APP_ORIGIN missing has its own detail', () => {
-  it('the audit line and the outcome say app_origin_missing', async () => {
+describe('review round 1: APP_ORIGIN missing has its own detail', () => {
+  it("the audit line and the outcome say app_origin_missing (the server's notice carries the app link)", async () => {
     const s = await scene()
     const since = await lastLine()
     const { delivery } = fakeDelivery(() => ({ ok: false, error: { code: 'not_configured', message: 'connector not configured: APP_ORIGIN' } }))
-    const out = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), msg({ link: { kind: 'today' } }))
-    expect(out.recipients).toEqual([{ kind: 'slack', to: '#ops-alerts', outcome: 'refused', detail: 'app_origin_missing' }])
+    const out = await sendSystemNotice({ DB: db, HUB_DELIVERY: delivery }, { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_sent', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
+    expect(out).toEqual({ ok: true, recipients: [{ kind: 'slack', to: 'alerts', outcome: 'refused', detail: 'app_origin_missing' }] })
     expect((await lines(since)).map(l => (JSON.parse(l.args_json) as { detail?: string }).detail)).toEqual(['app_origin_missing'])
   })
 })
 
-describe('test 6: a listed channel reaches the bell while the Slack legs are closed', () => {
-  it("a channel recipient becomes the chat owner's bell notice and nothing is posted", async () => {
+describe('test 6, since M2-N: a listed channel is a proposal through the outbox, never a bell', () => {
+  it('each listed channel is proposed once with the cleaned title and text; no bell notice, no row of ours', async () => {
     const s = await scene()
-    const { delivery, calls } = fakeDelivery()
-    const out = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), msg({ to: { channels: ['ops-alerts', 'general'] } }))
-    expect(calls).toEqual([])
-    expect(out.recipients.map(r => `${r.to}:${r.outcome}:${r.detail ?? ''}:${r.bell}:${r.repeat ?? ''}`)).toEqual([
-      `ops-alerts:posted:channel_to_bell:${s.owner}:`, `general:posted:channel_to_bell:${s.owner}:true`,
-    ])
-    expect((await notices('audience_member_id = ?', s.owner)).length).toBe(1)
+    const { leg, proposals } = fakeLeg()
+    const out = await notifyAgent(ctxOf(leg, s.nowMs), scopeOf(s), msg({ to: { channels: ['ops-alerts', 'general'] }, text: 'Low https://x.example.com' }))
+    expect(out.recipients.map(r => `${r.to}:${r.outcome}:${r.action?.state ?? ''}`)).toEqual(['ops-alerts:asked:waiting', 'general:asked:waiting'])
+    expect(proposals.map(p => [p.channel.channelId, p.post.title, p.post.text])).toEqual([['C0TEST0001', 'Stock low', 'Low [link removed]'], ['C0TEST0002', 'Stock low', 'Low [link removed]']])
+    expect(await notices('audience_member_id = ?', s.owner)).toEqual([])
+    expect(await sends('run_id = ?', s.runId)).toEqual([])
   })
 
-  it("an Inhouse member's chat, a removed owner and an unknown chat go to the admins' bell, no member id", async () => {
-    for (const ownerKind of ['inhouse', 'removed', 'none'] as const) {
+  it("with no leg (no egress behind the call) a listed channel is refused and reaches nobody's bell, in any chat", async () => {
+    for (const ownerKind of ['person', 'inhouse', 'system'] as const) {
       const s = await scene()
-      const owner = ownerKind === 'inhouse' ? await member('inhouse') : ownerKind === 'removed' ? await member('person', 'removed') : null
-      const chatId = owner ? await chat(owner) : 'c_missing'
-      const text = `admins ${uniq()}`
-      await notifyAgent(ctxOf(null, s.nowMs), { ...scopeOf(s), memberId: owner ?? s.owner, chatId }, msg({ text }))
-      const rows = (await notices("audience = 'admins'")).filter(r => r.body?.includes(text))
-      expect(rows.map(r => [r.audience, r.audience_member_id]), ownerKind).toEqual([['admins', null]])
+      const owner = ownerKind === 'person' ? s.owner : ownerKind === 'inhouse' ? await member('inhouse') : SYSTEM_MEMBER_ID
+      const text = `nobody ${uniq()}`
+      const out = await notifyAgent(ctxOf(null, s.nowMs), { ...scopeOf(s), memberId: owner }, msg({ text }))
+      expect(out.recipients.map(r => `${r.outcome}:${r.refusal?.reason ?? ''}`), ownerKind).toEqual(['refused:actions_unavailable'])
+      expect((await notices('1 = 1')).filter(r => r.body?.includes(text)), ownerKind).toEqual([])
     }
   })
 })
@@ -405,67 +416,28 @@ describe('repeats, failures and audit (tests 7 and 10)', () => {
     expect((await notices('audience_member_id = ?', s.owner)).map(n => n.body).sort()).toEqual([`Stock low\n\n${m.text}`, `Stock low again\n\n${m.text}`])
   })
 
-  it("a repeat carries this call's own detail: a channel first, then the same text to the member, says no channel's words", async () => {
-    const s = await scene()
-    const since = await lastLine()
-    const m = msg()
-    const first = await notifyAgent(ctxOf(null, s.nowMs), scopeOf(s), m)
-    const second = await notifyAgent(ctxOf(null, s.nowMs), scopeOf(s), { ...m, to: { members: [s.owner] } })
-    expect(first.recipients).toEqual([{ kind: 'bell', to: '#ops-alerts', bell: s.owner, outcome: 'posted', detail: 'channel_to_bell' }])
-    expect(second.recipients).toEqual([{ kind: 'bell', to: s.owner, outcome: 'posted', repeat: true }])
-    expect((await lines(since)).map(l => (JSON.parse(l.args_json) as { detail?: string; repeat?: boolean }).detail ?? null)).toEqual(['channel_to_bell', null])
-    // And the other way round: the member first, then the channel, which still says it went to the bell.
-    const t = await scene()
-    const n = msg()
-    await notifyAgent(ctxOf(null, t.nowMs), scopeOf(t), { ...n, to: { members: [t.owner] } })
-    const back = await notifyAgent(ctxOf(null, t.nowMs), scopeOf(t), n)
-    expect(back.recipients).toEqual([{ kind: 'bell', to: '#ops-alerts', bell: t.owner, outcome: 'posted', detail: 'channel_to_bell', repeat: true }])
-  })
-
-  slackOpen.it('an identical call returns the first outcome with one post; a different title posts again', async () => {
-    const s = await scene()
-    const { delivery, calls } = fakeDelivery()
-    const m = msg()
-    const a = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), m)
-    const b = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), m)
-    const c = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), { ...m, title: 'Stock low again' })
-    expect([a, b, c].map(r => `${r.recipients[0]!.outcome}:${r.recipients[0]!.repeat ?? ''}`)).toEqual(['posted:', 'posted:true', 'posted:'])
-    expect(calls.length).toBe(2)
-  })
-
-  slackOpen.it('a thrown hub call answers unknown, keeps the row reserved, audits unknown and is never re-sent', async () => {
+  it("a thrown hub call on the server's notice answers unknown, keeps the row reserved, audits unknown and is never re-sent", async () => {
     const s = await scene()
     const since = await lastLine()
     const { delivery, calls } = fakeDelivery(() => 'throw')
-    const m = msg()
-    const a = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), m)
-    const b = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), m)
-    expect([a.recipients[0]!.outcome, b.recipients[0]!.outcome, b.recipients[0]!.repeat]).toEqual(['unknown', 'unknown', true])
+    const key = `k:${uniq()}`
+    const send = () => sendSystemNotice({ DB: db, HUB_DELIVERY: delivery }, { key, source: 'approvals', kind: 'approval_sent', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
+    const a = await send()
+    const b = await send()
+    expect([a, b].map(r => (r.ok ? `${r.recipients[0]!.outcome}:${r.recipients[0]!.repeat ?? ''}` : 'x'))).toEqual(['unknown:', 'unknown:true'])
     expect(calls.length).toBe(1)
-    expect((await sends('run_id = ?', s.runId)).map(r => r.outcome)).toEqual(['reserved'])
+    expect((await sends('system_key = ?', key)).map(r => r.outcome)).toEqual(['reserved'])
     expect((await lines(since)).map(l => (JSON.parse(l.args_json) as { outcome: string }).outcome)).toEqual(['unknown', 'unknown'])
-  })
-
-  slackOpen.it('one audit line per recipient, the run member as actor, never the text', async () => {
-    const s = await scene()
-    const since = await lastLine()
-    const canary = 'CANARY-TEXT-4c1d'
-    const { delivery } = fakeDelivery()
-    await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), { to: { members: [s.owner], channels: ['ops-alerts', 'nope'] }, title: `${canary} title`, text: `${canary} https://x.example.com`, format: 'message' })
-    const ls = await lines(since)
-    expect(ls.map(l => [l.actor_id, l.target_kind, l.target_id])).toEqual([[s.owner, 'member', s.owner], [s.owner, 'channel', 'C0TEST0001'], [s.owner, null, null]])
-    const args = ls.map(l => JSON.parse(l.args_json) as Record<string, unknown>)
-    expect(args.map(a => [a.source, a.runId, a.kind, a.outcome, a.changed])).toEqual([['agent', s.runId, 'bell', 'posted', ['links']], ['agent', s.runId, 'slack', 'posted', ['links']], ['agent', s.runId, 'slack', 'refused', ['links']]])
-    const everything = JSON.stringify([(await db.prepare('SELECT * FROM audit_log').all()).results, (await db.prepare('SELECT * FROM notify_sends').all()).results])
-    expect(everything).not.toContain(canary)
   })
 })
 
-slackOpen.describe('test 7: caps under concurrency (property, real local D1)', () => {
+describe('test 7: caps under concurrency (property, real local D1)', () => {
   type Op = { system: boolean; run: number | null }
   // Few runs and long lists, so runs overflow their cap and the day caps bind (fast-check's default size is small).
   const ops = fc.array(fc.record({ system: fc.boolean(), run: fc.option(fc.integer({ min: 0, max: 3 }), { nil: null }) }), { minLength: 8, maxLength: 120, size: 'max' })
-  test.prop([ops], { numRuns: 12 })('agent ≤ 3 per run and ≤ 20 a day; system ≤ 3 per known run and ≤ 50 a day; neither touches the other', async list => {
+  // Since M2-N the agent's posts are outbox proposals (their limit is the grant's day, N10), so they reserve no Slack row
+  // here: the agent's ops run beside the system's and must leave its counts alone.
+  test.prop([ops], { numRuns: 12 })('system ≤ 3 per known run and ≤ 50 a day; the agent\'s proposals reserve no Slack row and don\'t touch it', async list => {
     await resetChannels([{ id: 'C0TEST0001', name: 'ops-alerts', alerts: true }])
     const owner = await member()
     const chatId = await chat(owner)
@@ -475,7 +447,7 @@ slackOpen.describe('test 7: caps under concurrency (property, real local D1)', (
     // Agent ops always have a run (the run token's); a null run on an agent op uses run 0.
     const all = list.map((op: Op, i) => op.system
       ? sendSystemNotice({ DB: db, HUB_DELIVERY: delivery }, { key: `k:${i}:${uniq()}`, source: 'approvals', kind: 'approval_waiting', ...(op.run === null ? {} : { runId: runs[op.run]! }), to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs })
-      : notifyAgent(ctxOf(delivery, nowMs), { memberId: owner, chatId, runId: runs[op.run ?? 0]!, turnId: turnId() }, msg({ text: `op ${i}` })))
+      : notifyAgent(ctxOf(fakeLeg().leg, nowMs), { memberId: owner, chatId, runId: runs[op.run ?? 0]!, turnId: turnId() }, msg({ text: `op ${i}` })))
     await Promise.all(all)
     // The expected counts come from the generator.
     const perRun = (system: boolean) => {
@@ -483,24 +455,19 @@ slackOpen.describe('test 7: caps under concurrency (property, real local D1)', (
       for (const op of list) if (op.system === system) m.set(system ? op.run : op.run ?? 0, (m.get(system ? op.run : op.run ?? 0) ?? 0) + 1)
       return m
     }
-    const agentRuns = perRun(false)
-    const expectedAgent = Math.min(20, [...agentRuns.values()].reduce((a, n) => a + Math.min(3, n), 0))
     const systemRuns = perRun(true)
     const expectedSystem = Math.min(50, [...systemRuns.entries()].reduce((a, [r, n]) => a + (r === null ? n : Math.min(3, n)), 0))
     const day = new Date(nowMs).toISOString().slice(0, 10)
     const rows = await sends("day = ? AND kind = 'slack' AND outcome = 'posted'", day)
     const agentRows = rows.filter(r => r.source === 'agent')
     const systemRows = rows.filter(r => r.source !== 'agent')
-    expect(agentRows.length).toBe(expectedAgent)
+    expect(agentRows.length).toBe(0)
     expect(systemRows.length).toBe(expectedSystem)
-    for (const r of runs) {
-      expect(agentRows.filter(x => x.run_id === r).length).toBeLessThanOrEqual(3)
-      expect(systemRows.filter(x => x.run_id === r).length).toBeLessThanOrEqual(3)
-    }
+    for (const r of runs) expect(systemRows.filter(x => x.run_id === r).length).toBeLessThanOrEqual(3)
   })
 })
 
-slackOpen.describe("test 7: each group's day cap counts only its own rows", () => {
+describe("test 7: each group's day cap counts only its own rows", () => {
   async function fill(source: 'agent' | 'approvals', n: number, nowMs: number, kind: 'slack' | 'bell' = 'slack') {
     const day = new Date(nowMs).toISOString().slice(0, 10)
     for (let i = 0; i < n; i++) {
@@ -509,7 +476,9 @@ slackOpen.describe("test 7: each group's day cap counts only its own rows", () =
         .bind(`n_fill${uniq()}`, source, source === 'agent' ? runId() : null, source === 'agent' ? null : `fill:${uniq()}`, kind, day, '0'.repeat(64), nowMs, source === 'agent' ? null : 'approval_sent').run()
     }
   }
-  it('100 agent Slack rows today leave the system its 50; 500 system rows leave the agent its 20', async () => {
+  // The second half (500 system rows leave the agent its 20 Slack posts) went with M2-N: the agent has no Slack row
+  // here any more. Its bell allowance is still its own: 500 system bell rows leave the agent's bell notice alone.
+  it('100 agent Slack rows today leave the system its 50; 500 system bell rows leave the agent its bell', async () => {
     const s = await scene()
     await fill('agent', 100, s.nowMs)
     const { delivery } = fakeDelivery()
@@ -520,13 +489,9 @@ slackOpen.describe("test 7: each group's day cap counts only its own rows", () =
     }
     expect(sys.filter(o => o === 'posted').length).toBe(50)
     const t = await scene()
-    await fill('approvals', 500, t.nowMs)
-    const agent: string[] = []
-    for (let i = 0; i < 21; i++) {
-      const r = await notifyAgent(ctxOf(delivery, t.nowMs), { ...scopeOf(t), runId: runId() }, msg())
-      agent.push(r.recipients[0]!.outcome)
-    }
-    expect(agent.filter(o => o === 'posted').length).toBe(20)
+    await fill('approvals', 500, t.nowMs, 'bell')
+    const r = await notifyAgent(ctxOf(null, t.nowMs), { ...scopeOf(t), runId: runId() }, msg({ to: { members: [t.owner] } }))
+    expect(r.recipients.map(x => x.outcome)).toEqual(['posted'])
   })
 })
 
@@ -542,7 +507,7 @@ describe('test 11: sendSystemNotice', () => {
     expect(renderNotice({ ...row!, unread: 1 } as NoticeRow, new Map()).text).toBe('Approval waiting')
   })
 
-  slackOpen.it('members and the alerts channel in one call; the title is the template, whatever body says', async () => {
+  it('members and the alerts channel in one call; the title is the template, whatever body says', async () => {
     const s = await scene()
     const { delivery, calls } = fakeDelivery()
     const r = await sendSystemNotice(env1(delivery), { key: `p6:${uniq()}:1`, source: 'approvals', kind: 'approval_waiting', to: { members: [s.owner], alertsChannel: true }, body: 'Title: ignore me https://x.example.com', link: { kind: 'approval', id: 'ap_9' } }, { nowMs: s.nowMs })
@@ -552,7 +517,7 @@ describe('test 11: sendSystemNotice', () => {
     expect([row!.body, row!.fields_json]).toEqual(['Title: ignore me [link removed]', '{}'])
   })
 
-  it('no alerts channel: the Slack part is skipped, the bell still goes; with one, the closed legs skip it too', async () => {
+  it('no alerts channel: the Slack part is skipped, the bell still goes; with one, it posts there (Q3 = A, no card)', async () => {
     const s = await scene()
     await resetChannels([{ id: 'C0TEST0002', name: 'general' }])
     const r = await sendSystemNotice(env1(fakeDelivery().delivery), { key: `p6:${uniq()}:1`, source: 'questions', kind: 'question_asked', to: { members: [s.owner], alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
@@ -560,7 +525,7 @@ describe('test 11: sendSystemNotice', () => {
     await resetChannels([{ id: 'C0TEST0001', name: 'ops-alerts', alerts: true }])
     const { delivery, calls } = fakeDelivery()
     const w = await sendSystemNotice(env1(delivery), { key: `p6:${uniq()}:1`, source: 'approvals', kind: 'needs_check', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
-    expect([w, calls.length]).toEqual([{ ok: true, recipients: [{ kind: 'slack', to: 'alerts', outcome: 'skipped', detail: 'slack_off' }] }, 0])
+    expect([w, calls.map(c => c.req.channelId)]).toEqual([{ ok: true, recipients: [{ kind: 'slack', to: 'alerts', outcome: 'posted' }] }, ['C0TEST0001']])
   })
 
   it('the bell side: a repeat within one key returns the first outcome with one notice; the next window key is a new one', async () => {
@@ -574,7 +539,7 @@ describe('test 11: sendSystemNotice', () => {
     expect((await notices('audience_member_id = ? AND template = ?', s.owner, 'approval_waiting')).length).toBe(2)
   })
 
-  slackOpen.it('a repeat within one key returns the first outcome; the next window key posts again after a refusal', async () => {
+  it('a repeat within one key returns the first outcome; the next window key posts again after a refusal', async () => {
     const s = await scene()
     const notice = uniq()
     let refuse = true
@@ -631,7 +596,7 @@ describe('test 11: sendSystemNotice', () => {
     expect((await sends('1 = 1')).length).toBe(before)
   })
 
-  slackOpen.it('the 4th system Slack post for one run is refused, five with no run all go', async () => {
+  it('the 4th system Slack post for one run is refused, five with no run all go', async () => {
     const s = await scene()
     const { delivery } = fakeDelivery()
     const go = (runId?: string) => sendSystemNotice(env1(delivery), { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_sent', ...(runId ? { runId } : {}), to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
@@ -649,16 +614,16 @@ describe('test 11: sendSystemNotice', () => {
     expect(without).toEqual(['posted', 'posted', 'posted', 'posted', 'posted'])
   })
 
-  slackOpen.it('past the 50th system Slack post in a day the Slack copy is dropped and the bell copy still goes', async () => {
+  it('past the 50th system Slack post in a day the Slack copy is dropped and the bell copy still goes', async () => {
     const s = await scene()
     const { delivery, calls } = fakeDelivery()
     for (let i = 0; i < 50; i++) await sendSystemNotice(env1(delivery), { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_sent', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
     const r = await sendSystemNotice(env1(delivery), { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_waiting', to: { members: [s.owner], alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
     expect(r).toEqual({ ok: true, recipients: [{ kind: 'bell', to: s.owner, outcome: 'posted' }, { kind: 'slack', to: 'alerts', outcome: 'refused', detail: 'day_cap' }] })
     expect(calls.length).toBe(50)
-    // The agent's allowance is untouched by the system's 50.
-    const a = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), msg())
-    expect(a.recipients[0]!.outcome).toBe('posted')
+    // The agent's post is untouched by the system's 50: it's still proposed through the outbox.
+    const a = await notifyAgent(ctxOf(fakeLeg().leg, s.nowMs), scopeOf(s), msg())
+    expect(a.recipients[0]!.outcome).toBe('asked')
   })
 })
 

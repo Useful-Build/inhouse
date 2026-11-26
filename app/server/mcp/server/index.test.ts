@@ -187,15 +187,17 @@ describe("a routine's run (the system row, A1's ask H) (failure 4)", () => {
 })
 
 describe('descriptions promise only what P3 does (failure 5)', () => {
-  it('history covers own chats only; notifications go to the bell, a listed channel to the bell for now, never email', async () => {
+  it('history covers own chats only; notifications go to the bell, a listed channel by the Slack post rule, never email', async () => {
     const { body } = await rpc({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
     const d = Object.fromEntries((body as { result: { tools: { name: string; description: string }[] } }).result.tools.map(t => [t.name, t.description]))
     expect(d.history_search).not.toMatch(/routine|run\b|activity/i)
     expect(d.history_read).not.toMatch(/routine|run\b/i)
-    // P5 W4's description (p5-w4.md section 2): the bell for members; a listed channel reaches the bell while both Slack legs are
-    // closed (M2-F, server/notify-slack/slack-legs.ts), and no stage is named; email named only to rule it out.
+    // P5 W4's description (p5-w4.md section 2): the bell for members; since M2-N (Q3 = A) a listed channel's post follows the
+    // same rule as any Slack post (a person's OK unless a standing permission covers it), and no stage is named; email named
+    // only to rule it out. It never promises a post goes out on its own.
     expect(d.notification_send).toContain('reaches their bell in the app (never a Slack DM, never email)')
-    expect(d.notification_send).toContain("`to.channels` takes the names of channels the brand's admin listed and reaches the bell for now, not Slack.")
+    expect(d.notification_send).toContain("`to.channels` takes the names of channels the brand's admin listed: each post follows the same rule as any Slack post, so it waits for a person's OK in Approvals unless a standing permission covers that channel (then it posts after a short hold), and it's refused while Slack posts are off.")
+    expect(d.notification_send).not.toMatch(/reaches the bell for now|posts (?:right away|at once|immediately)/)
     expect(d.notification_send).not.toMatch(/\b(?:Watch|Act|Run|stage)\b/)
     expect(d.notification_send.replace('never email', '')).not.toMatch(/email/i)
   })

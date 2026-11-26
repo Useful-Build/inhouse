@@ -18,6 +18,11 @@
 // expiry), a dispatch (a crash before or after each of its D1 calls, a fast Pause and Resume at each of its reads, a
 // permit reached late, the binding throwing or hanging), a scheduler pass, a sweep, every fault switch of the fake
 // upstreams, late results, and a person resolving "Needs a check".
+// Stage 1 M2-N (Q3 = A) adds two steps on the same path: the agent's `notification_send` to the listed channel (the real
+// tool handler and its Slack leg, with a stand-in for N14's admission: a fresh call, a replay of the last one, or a call
+// admission refuses), from any asker and origin, a team routine and a system routine included; and an admin or a member
+// moving the alerts mark on or off the channel (the real store: the brand's grant follows the mark). The oracle is the
+// same: a notice's post is an effect like any other and must meet W1 to W7.
 //
 // The oracle reads the upstream's log (every write request the fake Shopify store received, every post the Slack SignIn
 // sent on), maps each effect to its action by the unique tag or text its request carried, and holds, written before the
@@ -51,6 +56,10 @@ import {
 import type { WriteFault } from '../../test/upstreams/shopify/write/server.ts'
 import type { MemberRole } from '../../shared/contract/members.ts'
 import { connectorAccountStore } from '../db/connector-accounts.ts'
+import { SYSTEM_MEMBER_ID } from '../db/ids.ts'
+import { notifyDeps } from '../mcp/tools/notifications/deps.ts'
+import type { NotifyAdmitted } from '../mcp/tools/notifications/deps.ts'
+import { NotificationSendInput, notificationSend } from '../mcp/tools/notifications/send.ts'
 import { memberStore } from '../db/members.ts'
 import { runBatch } from '../db/sql.ts'
 import { setCeilingStmt } from '../permissions/ceiling.ts'
@@ -131,6 +140,8 @@ const PERMIT_MS = 40_000
 /** The hub's own write deadline in the stand-in (the real one is 15 s); the dispatcher's own limit is longer. */
 const HUB_DEADLINE_MS = 40
 const DISPATCH_TIMEOUT_MS = 120
+/** The notices' run (the audit line of an unlisted channel names it, so it has a real run id's shape). */
+const NOTICE_RUN = 'r_wsNoticeRun00000000000'
 
 const PEOPLE = ['m_ws_a', 'm_ws_b', 'm_ws_d', 'm_ws_e'] as const
 type Person = (typeof PEOPLE)[number]
@@ -324,6 +335,8 @@ type Step =
   | { k: 'fault'; shop: WriteFault; slack: SlackFault }
   | { k: 'late' }
   | { k: 'resolve'; i: number; by: Target; outcome: 'sent' | 'failed' }
+  | { k: 'notice'; who: Who | 'system'; origin: 'chat' | 'job' | 'routine'; replay: 'none' | 'same' | 'refused' }
+  | { k: 'alerts'; marked: boolean; by: Who }
 
 const who = fc.constantFrom<Who>(0, 1, 2, 3)
 const target = fc.oneof({ weight: 3, arbitrary: fc.constant('own' as const) }, { weight: 1, arbitrary: who })
@@ -374,6 +387,13 @@ const stepArb: fc.Arbitrary<Step> = fc.oneof(
   W(2, fc.record({ k: fc.constant('fault' as const), shop: fc.constantFrom<WriteFault>('succeed', 'succeed', 'succeed', 'succeed', 'refuse', 'timeout', 'broken_body'), slack: fc.constantFrom<SlackFault>('succeed', 'succeed', 'succeed', 'refuse', 'throw') })),
   W(1, fc.constant({ k: 'late' as const })),
   W(2, fc.record({ k: fc.constant('resolve' as const), i: idx, by: target, outcome: fc.constantFrom('sent' as const, 'failed' as const) })),
+  // M2-N: notification_send to the listed channel (`refused`: admission finds no matching call), and the alerts mark.
+  W(5, fc.record({
+    k: fc.constant('notice' as const), who: fc.oneof(W(4, fc.constant<Who>(0)), W(2, fc.constant<Who>(2)), W(1, fc.constant<Who>(1)), W(1, fc.constant('system' as const))),
+    origin: fc.constantFrom('chat' as const, 'chat' as const, 'job' as const, 'routine' as const),
+    replay: fc.constantFrom('none' as const, 'none' as const, 'none' as const, 'same' as const, 'refused' as const),
+  })),
+  W(3, fc.record({ k: fc.constant('alerts' as const), marked: fc.constantFrom(true, true, false), by: fc.constantFrom<Who>(2, 2, 3, 0) })),
 )
 
 // ---------- the world ----------
@@ -459,6 +479,10 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
   let token = 0
   type LastRequest = { invocation: OutboxInvocation; args: Record<string, unknown>; op: Op; ctx: Omit<OutboxRequestCtx, 'invocation' | 'nowMs'> }
   const last: { request: LastRequest | null } = { request: null }
+  type LastNotice = { toolUseId: string; jobId: string | null; args: Record<string, unknown>; memberId: string; chatId: string; routineAsker: string | null }
+  const lastNotice: { notice: LastNotice | null } = { notice: null }
+  /** Actions a routine's notice made, in the test's own words (W4 doesn't trust the row's `origin` for these). */
+  const routineActions = new Set<string>()
   let permitClock = () => now
   let flipInCall = false
   const late: Promise<void>[] = []
@@ -760,6 +784,54 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
         await port.resolve(await by(s.by, row), id, { outcome: s.outcome, ifRev: row.rev })
         break
       }
+      case 'notice': {
+        // The agent's notification_send to the listed channel, through the real tool handler and its Slack leg.
+        const replay = s.replay === 'same' ? lastNotice.notice : null
+        const n = ++token
+        const t = `ws${n}`
+        const system = s.who === 'system' || s.origin === 'routine'
+        const fresh1: LastNotice = {
+          toolUseId: fresh('tu'), jobId: s.origin === 'job' ? 'j_ws' : null, args: { to: { channels: ['#ops'] }, title: 'Restock', text: `${t} restock is in`, format: 'message' },
+          memberId: system ? SYSTEM_MEMBER_ID : PEOPLE[s.who as Who], chatId: `c_ws_${s.who}`, routineAsker: s.who === 'system' ? null : system ? PEOPLE[s.who as Who] : null,
+        }
+        const call = replay ?? fresh1
+        const admission: NotifyAdmitted | null = s.replay === 'refused' ? null : { toolUseId: call.toolUseId, jobId: call.jobId, replay: replay !== null }
+        const deps = notifyDeps({
+          hubAccounts: async () => [
+            { accountId: SHOP, paused: hub.accounts.get(SHOP)?.paused ?? true, label: 'Shopify' },
+            { accountId: SLACK, paused: hub.accounts.get(SLACK)?.paused ?? true, label: 'Slack' },
+          ],
+          admit: async () => admission,
+          routineAsker: async () => (call.routineAsker ? actor(call.routineAsker) : null),
+          noted: async () => {},
+          schedule: async () => {},
+        })
+        const r = await notificationSend.call(NotificationSendInput.parse(call.args), { memberId: call.memberId, chatId: call.chatId, runId: NOTICE_RUN, turnId: 't_ws', nowMs: now, requestId: fresh('mcp') }, { db, notify: deps })
+        const recipients = (r.structuredContent as { recipients: { approval_id?: string; status?: string; created?: boolean }[] }).recipients
+        for (const x of recipients) {
+          if (x.approval_id === undefined) continue
+          if (admission === null) problems.push('a notice that admission refused still made an action')
+          admitted++
+          if (!ids.includes(x.approval_id)) ids.push(x.approval_id)
+          if (call.memberId === SYSTEM_MEMBER_ID) routineActions.add(x.approval_id)
+          const carried = String(call.args.text).split(' ')[0] ?? ''
+          if (!tokens.has(carried)) tokens.set(carried, x.approval_id)
+          if (x.created && x.status === 'approved') {
+            const row = (await rowOf(x.approval_id))!
+            approvals.set(x.approval_id, { rev: row.approved_rev ?? -1, by: 'grant', era })
+          }
+          if (replay && x.created) problems.push('a replayed notice made a new action')
+        }
+        if (!replay) lastNotice.notice = fresh1
+        break
+      }
+      case 'alerts': {
+        // An admin (or a member, whose save makes no grant) moves the alerts mark on or off the channel, if it's listed.
+        const current = await channels.list()
+        if (!current.channels.some(c => c.channelId === CHANNEL_ID)) break
+        await channels.save({ channels: current.channels.map(c => ({ channelId: c.channelId, name: c.name })), alertsChannelId: s.marked ? CHANNEL_ID : null, ifRev: current.rev }, { ...at(), actorId: PEOPLE[s.by] })
+        break
+      }
     }
   }
   for (const release of hub.hung.splice(0)) release()
@@ -789,7 +861,7 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
     if (count > 1) problems.push(`W1: ${count} effects for one action (${id})`)
     if (!calls.some(c => c.actionId === id)) problems.push(`W1: an effect with no hub call (${id})`)
     const row = await rowOf(id)
-    if (row?.origin === 'routine' && approvals.get(id)?.by === 'grant') problems.push(`W4: a routine's effect with no person's approval (${id})`)
+    if ((row?.origin === 'routine' || routineActions.has(id)) && approvals.get(id)?.by === 'grant') problems.push(`W4: a routine's effect with no person's approval (${id})`)
   }
   // W2 and W3 for every call (an effect needs one; a call that the hub refused must still have come from a sound claim).
   const callsPer = new Map<string, number>()
@@ -858,6 +930,39 @@ describe('the write-safety gate (M2-S): no outside write without a live grant or
     expect(out.effects).toBe(1)
   })
 
+  it("M2-N: a notice to the alerts channel goes out once under the brand's grant; without the mark it waits for its card", async () => {
+    const granted = await runSequence([
+      { k: 'alerts', marked: true, by: 2 },
+      { k: 'notice', who: 0, origin: 'chat', replay: 'none' },
+      { k: 'notice', who: 0, origin: 'chat', replay: 'same' },
+      { k: 'tick', ms: 11_000, alarm: { crash: null, flipAt: 0, latePermit: false, binding: 'ok' } },
+    ], { ceiling: true })
+    expect(granted.problems).toEqual([])
+    expect([granted.admitted, granted.effects]).toEqual([2, 1])
+    const carded = await runSequence([
+      { k: 'notice', who: 0, origin: 'chat', replay: 'none' },
+      { k: 'tick', ms: 11_000, alarm: { crash: null, flipAt: 0, latePermit: false, binding: 'ok' } },
+    ], { ceiling: true })
+    expect([carded.problems, carded.effects]).toEqual([[], 0])
+    const answered = await runSequence([
+      { k: 'notice', who: 0, origin: 'chat', replay: 'none' },
+      { k: 'answer', i: 0, by: 'own', choice: 'once', stale: false, twice: false },
+      { k: 'tick', ms: 11_000, alarm: { crash: null, flipAt: 0, latePermit: false, binding: 'ok' } },
+    ], { ceiling: true })
+    expect([answered.problems, answered.effects]).toEqual([[], 1])
+    // A member's mark gives no grant, and a routine never runs under the brand's: neither goes out without a card. (The
+    // admin unmarks first: a save that doesn't move the mark gives no grant.)
+    const noGrant = await runSequence([
+      { k: 'alerts', marked: true, by: 0 },
+      { k: 'notice', who: 0, origin: 'chat', replay: 'none' },
+      { k: 'alerts', marked: false, by: 2 },
+      { k: 'alerts', marked: true, by: 2 },
+      { k: 'notice', who: 1, origin: 'routine', replay: 'none' },
+      { k: 'tick', ms: 11_000, alarm: { crash: null, flipAt: 0, latePermit: false, binding: 'ok' } },
+    ], { ceiling: true })
+    expect([noGrant.problems, noGrant.admitted, noGrant.effects]).toEqual([[], 2, 0])
+  })
+
   it('holds W1 to W7 over random sequences of every kind of step', async () => {
     let effects = 0
     const runs = 400
@@ -890,7 +995,7 @@ describe('the write-safety gate (M2-S): no outside write without a live grant or
       { k: 'answer', i: 0, by: 'own', choice: 'fit_once', stale: false, twice: false },
       { k: 'tick', ms: 11_000, alarm: false },
     ]
-    const sendPath = stepArb.filter(s => ['tick', 'dispatch', 'sweep', 'flip', 'late', 'resolve', 'fault', 'undo', 'revoke', 'account', 'ceiling', 'channel'].includes(s.k))
+    const sendPath = stepArb.filter(s => ['tick', 'dispatch', 'sweep', 'flip', 'late', 'resolve', 'fault', 'undo', 'revoke', 'account', 'ceiling', 'channel', 'alerts'].includes(s.k))
     let effects = 0
     await fc.assert(fc.asyncProperty(PER_DAY_MAX, fc.array(sendPath, { minLength: 5, maxLength: 30 }), async (perDayMax, tail) => {
       const out = await runSequence([...prefix, ...tail], { ceiling: true, perDayMax })

@@ -1,48 +1,77 @@
-// notification_send as the model sees it (p5-w4.md section 2), in the Workers runtime on the real migrations: the
-// input schema's limits and the result text's closed list. Ways it can fail, written down first:
+// notification_send as the model sees it (p5-w4.md section 2; Stage 1 M2-N, Q3 = A), in the Workers runtime on the real
+// migrations, with the real outbox behind the Slack leg: the input schema's limits and the result text's closed list.
+// Ways it can fail, written down first:
 //  1. the schema lets through more recipients than the design allows, an unknown key, or a free-form link;
-//  2. the result text says "sent" for something that wasn't, or leaks anything but the closed reasons and listed names;
-//  3. without the hub's deps the tool throws instead of answering slack_unavailable (and the bell must still go);
-//  4. while the Slack legs are closed (server/notify-slack/slack-legs.ts, M2-F), a channel is posted to, or the text
-//     promises Slack. The tests that need the legs open run again when that constant opens them (`slackOpen`).
+//  2. the result text says "sent" for a Slack post that only waits for a person, or leaks anything but the closed
+//     reasons, the outbox's own words, ids and listed names;
+//  3. a post to a listed channel goes anywhere but the outbox: the hub, a bell, or a row of ours; or the outbox is asked
+//     without N14's admission, or for a channel a replay's first try never asked for;
+//  4. a post runs without a live grant: no grant gives a card; only the brand's grant (the alerts mark) or the person's
+//     own "Always allow" approves it, and a routine's post never runs under a grant;
+//  5. with the operation off (N2: every deployable build) anything is asked or written.
 import { env } from 'cloudflare:workers'
-import { describe, expect, it } from 'vitest'
-import type { PostNoticeRequest } from '../../../../hub/index/contract.ts'
-import { SLACK_DELIVERY_ENABLED } from '../../../notify-slack/slack-legs.ts'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { SYSTEM_MEMBER_ID } from '../../../db/ids.ts'
+import { notifyChannelStore } from '../../../notify-slack/channels.ts'
+import { HUB_FACTS, resetOutbox } from '../../../outbox/test-support.ts'
+import type { OutboxActionRow } from '../../../outbox/types.ts'
+import { account, ceiling, person } from '../../../permissions/test-support.ts'
 import type { ToolScope } from '../../server/tool.ts'
 import { notifyDeps } from './deps.ts'
+import type { NotifyAdmitted, NotifyWiring } from './deps.ts'
 import { NotificationSendInput, notificationSend } from './send.ts'
 
 const db = env.DB
 let u = 0
 const uniq = () => `${++u}q${Math.random().toString(36).slice(2, 8)}`
+const SLACK_GEN = 2_000
+const OWNER = 'm_ns_owner'
+const ADMIN = 'm_ns_admin'
+const CREATOR = 'm_ns_creator'
 
-const slackOpen = it.skipIf(!SLACK_DELIVERY_ENABLED)
-
-/** `stage`: a stored value nothing reads any more (M2-F); a test that stores one shows it changes nothing. */
-async function setup(stage: string) {
-  const owner = `m_${uniq()}`
-  await db.prepare("INSERT INTO members (id, kind, role, status, name, created_at_ms) VALUES (?, 'person', 'admin', 'active', 'N', 1)").bind(owner).run()
-  const chatId = `c_${uniq()}`
-  await db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms) VALUES (?, ?, 'T', 1, 1)").bind(chatId, owner).run()
-  await db.prepare("INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 'stage', ?, 1, 1, 'm_system', 'r') ON CONFLICT (owner, key) DO UPDATE SET value_json = excluded.value_json").bind(JSON.stringify(stage)).run()
-  await db.prepare('DELETE FROM notify_channels').run()
-  await db.prepare("INSERT INTO notify_channels (channel_id, name, alerts, added_by, added_at_ms) VALUES ('C0TEST0001', 'ops-alerts', 0, 'm_system', 1), ('C0TEST0002', 'general', 0, 'm_system', 1)").run()
-  const scope: ToolScope = { memberId: owner, chatId, runId: `r_${uniq().padEnd(22, 'Z').slice(0, 22)}`, turnId: `t_${uniq().padEnd(22, 'Z').slice(0, 22)}`, nowMs: Date.UTC(2026, 5, 1) + u * 86_400_000, requestId: `mcp-${uniq()}` }
-  return { owner, scope }
+/** The egress's wiring with a stand-in admission: each call admitted as a fresh main-agent call, or as `next` says. */
+function wiring(o: { admit?: (input: unknown) => NotifyAdmitted | null; routineAsker?: string | null } = {}) {
+  const scheduled: { actionId: string; atMs: number }[] = []
+  const noted: string[] = []
+  const admitted: unknown[] = []
+  const w: NotifyWiring = {
+    hubAccounts: async () => HUB_FACTS,
+    admit: async (_scope, input) => {
+      admitted.push(input)
+      return o.admit ? o.admit(input) : { toolUseId: `toolu_${uniq()}`, jobId: null, replay: false }
+    },
+    routineAsker: async () => (o.routineAsker ? { memberId: o.routineAsker, role: 'member' } : null),
+    noted: async (_scope, actionId) => { noted.push(actionId) },
+    schedule: async (actionId, atMs) => { scheduled.push({ actionId, atMs }) },
+  }
+  return { deps: notifyDeps(w), scheduled, noted, admitted }
 }
 
-const posts: PostNoticeRequest[] = []
-const HUB_DELIVERY = {
-  async postNotice(_scope: unknown, req: PostNoticeRequest) {
-    posts.push(req)
-    return req.channelId === 'C0TEST0002'
-      ? { ok: false, error: { code: 'connect_refused', message: 'connect refused by the provider: not_member' } }
-      : { ok: true, value: { ts: '1.1' } }
-  },
+async function setup(o: { ceiling?: boolean } = {}) {
+  await resetOutbox(db)
+  await person(db, OWNER, 'member')
+  await person(db, ADMIN, 'admin')
+  await person(db, CREATOR, 'member')
+  await account(db, 'slack:workspace', SLACK_GEN)
+  if (o.ceiling ?? true) await ceiling(db, 'slack.channel.post', { enabled: true, perDayMax: 50, loweredRev: 1 })
+  await db.prepare("INSERT INTO notify_channels (channel_id, name, alerts, added_by, added_at_ms) VALUES ('C0TEST0001', 'ops-alerts', 0, 'm_system', 1), ('C0TEST0002', 'general', 0, 'm_system', 1)").run()
+  const chatId = `c_${uniq()}`
+  await db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms) VALUES (?, ?, 'T', 1, 1)").bind(chatId, OWNER).run()
+  const scope: ToolScope = { memberId: OWNER, chatId, runId: `r_${uniq().padEnd(22, 'Z').slice(0, 22)}`, turnId: `t_${uniq().padEnd(22, 'Z').slice(0, 22)}`, nowMs: Date.UTC(2026, 5, 1) + u * 1_000, requestId: `mcp-${uniq()}` }
+  return { scope }
+}
+
+/** The admin marks a channel for alerts through the real store: the brand's grant follows the mark (M2-N). */
+async function markAlerts(channelId: string | null, actorId = ADMIN) {
+  const store = notifyChannelStore({ db })
+  const current = await store.list()
+  return store.save({ channels: current.channels.map(c => ({ channelId: c.channelId, name: c.name })), alertsChannelId: channelId, ifRev: current.rev }, { actorId, requestId: `req-${uniq()}`, nowMs: Date.UTC(2026, 5, 1) })
 }
 
 const text = (r: { content: { text: string }[] }) => r.content[0]!.text
+const actions = async () => (await db.prepare('SELECT * FROM outbox_actions ORDER BY created_at_ms, id').all<OutboxActionRow>()).results
+const send = (args: unknown, scope: ToolScope, deps: ReturnType<typeof wiring>['deps'] | undefined) =>
+  notificationSend.call(NotificationSendInput.parse(args), scope, { db, ...(deps ? { notify: deps } : {}) })
 
 describe('the input schema', () => {
   const ok = (v: unknown) => NotificationSendInput.safeParse(v).success
@@ -66,72 +95,127 @@ describe('the input schema', () => {
   ])('refuses %s', (_, v) => expect(ok(v)).toBe(false))
 })
 
-describe('the result text', () => {
-  slackOpen('at Act: sent, refused with the listed names, not_member, the bell, and what changed', async () => {
-    const { owner, scope } = await setup('Act')
-    const args = NotificationSendInput.parse({ to: { members: [owner, 'm_nobody'], channels: ['#ops-alerts', 'random', 'General'] }, title: 'Low stock', text: 'See https://x.example.com <!here>', format: 'message', link: { kind: 'today' } })
-    const r = await notificationSend.call(args, scope, { db, notify: notifyDeps({ HUB_DELIVERY }) })
+describe('a post to a listed channel follows the same rule as any Slack post (M2-N, Q3 = A)', () => {
+  beforeEach(() => { u += 1 })
+
+  it('no grant: a card waits for the person, with the cleaned headline and text; nothing is scheduled', async () => {
+    const { scope } = await setup()
+    const w = wiring()
+    const args = { to: { members: [OWNER, 'm_nobody'], channels: ['#ops-alerts', 'random'] }, title: 'Low stock', text: 'See https://x.example.com <!here>', format: 'message', link: { kind: 'today' } }
+    const r = await send(args, scope, w.deps)
+    const [row] = await actions()
     expect(text(r).split('\n')).toEqual([
-      `${owner}: sent`,
+      `${OWNER}: sent`,
       'm_nobody: refused: unknown_member',
-      '#ops-alerts: sent',
+      `#ops-alerts: waiting for a person's OK: nothing goes to Slack until they approve it in Approvals (approval_id: ${row!.id})`,
       '#random: refused: not_listed (listed: #general, #ops-alerts)',
-      '#General: refused: not_member',
       'changed: links removed',
       'changed: mentions escaped',
     ])
     expect(r.isError).toBeUndefined()
+    expect([row!.state, row!.verdict, row!.operation, row!.origin, row!.asked_by, row!.approver, row!.chat_id, row!.scope_key]).toEqual(['waiting', 'ask', 'slack.channel.post', 'chat', OWNER, OWNER, scope.chatId, 'channelId=C0TEST0001'])
+    expect(JSON.parse(row!.args_json)).toEqual({ channel: 'C0TEST0001', text: 'See [link removed] <!here>', title: 'Low stock' })
+    expect(JSON.parse(row!.card_json)).toMatchObject({ title: 'Post to #ops-alerts in Slack', lines: ['Low stock', 'See [link removed] <!here>'] })
+    expect(w.admitted, 'admitted once, on the call as the model sent it').toEqual([NotificationSendInput.parse(args)])
+    expect(w.noted).toEqual([row!.id])
+    expect(w.scheduled).toEqual([])
+    expect((await db.prepare("SELECT COUNT(*) AS n FROM notify_sends WHERE kind = 'slack'").first<number>('n'))).toBe(0)
   })
 
-  it('the same call while the Slack legs are closed: a listed channel reaches the bell and says so, nothing is posted', async () => {
-    const { scope } = await setup('Act')
-    const before = posts.length
-    const args = NotificationSendInput.parse({ to: { members: ['m_nobody'], channels: ['#ops-alerts', 'random', 'General'] }, title: 'Low stock', text: 'See https://x.example.com <!here>', format: 'message', link: { kind: 'today' } })
-    const r = await notificationSend.call(args, scope, { db, notify: notifyDeps({ HUB_DELIVERY }) })
+  it("the brand's grant (the admin marked the channel for alerts): approved, scheduled after the hold, its use reserved", async () => {
+    const { scope } = await setup()
+    await markAlerts('C0TEST0001')
+    const grant = await db.prepare("SELECT * FROM permission_grants WHERE holder = 'brand' AND revoked_at_ms IS NULL").first<{ id: string; scope_key: string; per_day: number; granted_by: string }>()
+    expect(grant).toMatchObject({ scope_key: 'channelId=C0TEST0001', per_day: 50, granted_by: ADMIN })
+    const w = wiring()
+    const r = await send({ to: { channels: ['ops-alerts', '#general'] }, title: 'T', text: 'x', format: 'report' }, scope, w.deps)
+    const all = await actions()
+    const ops = all.find(a => a.scope_key === 'channelId=C0TEST0001')
+    const general = all.find(a => a.scope_key === 'channelId=C0TEST0002')
     expect(text(r).split('\n')).toEqual([
-      'm_nobody: refused: unknown_member',
-      '#ops-alerts: sent to the bell (not Slack)',
-      '#random: refused: not_listed (listed: #general, #ops-alerts)',
-      '#General: sent to the bell (not Slack) (the same notice again: nothing new sent)',
-      'changed: links removed',
-      'changed: mentions escaped',
+      `#ops-alerts: approved under a standing permission: it posts to Slack after a short hold (approval_id: ${ops!.id})`,
+      `#general: waiting for a person's OK: nothing goes to Slack until they approve it in Approvals (approval_id: ${general!.id})`,
     ])
-    expect(r.isError).toBeUndefined()
-    expect(posts.length).toBe(before)
+    expect([ops!.state, ops!.verdict, ops!.grant_id, ops!.approved_by]).toEqual(['approved', 'run', grant!.id, `grant:${grant!.id}`])
+    expect([general!.state, general!.grant_id]).toEqual(['waiting', null])
+    expect(w.scheduled).toEqual([{ actionId: ops!.id, atMs: ops!.send_at_ms }])
+    expect(await db.prepare('SELECT grant_id FROM permission_uses WHERE action_id = ?').bind(ops!.id).first<string>('grant_id')).toBe(grant!.id)
+    // One call, two channels: each action keyed on the invocation plus its channel.
+    expect(ops!.tool_use_id!.endsWith('#C0TEST0001') && general!.tool_use_id!.endsWith('#C0TEST0002')).toBe(true)
+    expect(ops!.tool_use_id!.split('#')[0]).toBe(general!.tool_use_id!.split('#')[0])
   })
 
-  for (const stage of ['Watch', 'Act', 'Run']) {
-    it(`with ${stage} stored a channel reaches the bell and says so`, async () => {
-      const { scope } = await setup(stage)
-      const before = posts.length
-      const args = NotificationSendInput.parse({ to: { channels: ['ops-alerts'] }, title: 'T', text: 'x', format: 'report' })
-      const r = await notificationSend.call(args, scope, { db, notify: notifyDeps({ HUB_DELIVERY }) })
-      expect(text(r)).toBe('#ops-alerts: sent to the bell (not Slack)')
-      expect(posts.length).toBe(before)
-    })
-  }
-
-  it('without the delivery deps a channel still reaches the bell', async () => {
-    const { owner, scope } = await setup('Act')
-    const args = NotificationSendInput.parse({ to: { members: [owner], channels: ['ops-alerts'] }, title: 'T', text: 'y', format: 'message' })
-    const r = await notificationSend.call(args, scope, { db })
-    expect(text(r).split('\n')).toEqual([`${owner}: sent`, '#ops-alerts: sent to the bell (not Slack) (the same notice again: nothing new sent)'])
+  it('the operation off (no ceiling row, the product\'s state): refused in the outbox\'s words, nothing written, even with the alerts mark', async () => {
+    const { scope } = await setup({ ceiling: false })
+    await markAlerts('C0TEST0001')
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM permission_grants').first<number>('n'), 'no grant without the operation').toBe(0)
+    const w = wiring()
+    const r = await send({ to: { channels: ['ops-alerts'] }, title: 'T', text: 'x', format: 'message' }, scope, w.deps)
+    expect(text(r)).toBe('#ops-alerts: refused: over_ceiling (This kind of action is turned off for this brand, so nothing was asked or sent.)')
+    expect(await actions()).toEqual([])
+    expect(w.scheduled).toEqual([])
   })
 
-  slackOpen('without the delivery deps, channels answer slack_unavailable and the bell still goes', async () => {
-    const { owner, scope } = await setup('Act')
-    const args = NotificationSendInput.parse({ to: { members: [owner], channels: ['ops-alerts'] }, title: 'T', text: 'y', format: 'message' })
-    const r = await notificationSend.call(args, scope, { db })
-    expect(text(r).split('\n')).toEqual([`${owner}: sent`, '#ops-alerts: refused: slack_unavailable'])
+  it('without the egress wiring a channel is refused and the bell still goes', async () => {
+    const { scope } = await setup()
+    const r = await send({ to: { members: [OWNER], channels: ['ops-alerts'] }, title: 'T', text: 'y', format: 'message' }, scope, undefined)
+    expect(text(r).split('\n')).toEqual([`${OWNER}: sent`, '#ops-alerts: refused: actions_unavailable (Slack posts can’t be asked for from here, so nothing was asked or sent.)'])
+    expect(await actions()).toEqual([])
   })
 
-  slackOpen('the 4th Slack post in one run is refused with the run cap named', async () => {
-    const { scope } = await setup('Act')
-    const out: string[] = []
-    for (let i = 0; i < 4; i++) {
-      const args = NotificationSendInput.parse({ to: { channels: ['ops-alerts'] }, title: `T${i}`, text: 'z', format: 'message' })
-      out.push(text(await notificationSend.call(args, scope, { db, notify: notifyDeps({ HUB_DELIVERY }) })))
-    }
-    expect(out).toEqual(['#ops-alerts: sent', '#ops-alerts: sent', '#ops-alerts: sent', '#ops-alerts: refused: run_cap (3 Slack posts per run)'])
+  it('a call admission refuses (a helper\'s call, a hand-made request) asks nothing; a bell-only call needs no admission', async () => {
+    const { scope } = await setup()
+    const w = wiring({ admit: () => null })
+    const r = await send({ to: { channels: ['ops-alerts', 'general'] }, title: 'T', text: 'x', format: 'message' }, scope, w.deps)
+    expect(text(r).split('\n')).toEqual([
+      "#ops-alerts: refused: not_admitted (That call couldn't be matched to this turn, so nothing was asked or sent.)",
+      "#general: refused: not_admitted (That call couldn't be matched to this turn, so nothing was asked or sent.)",
+    ])
+    expect(w.admitted.length, 'admitted once per call').toBe(1)
+    expect(await actions()).toEqual([])
+    const bell = wiring({ admit: () => null })
+    await send({ to: { members: [OWNER] }, title: 'T', text: 'bell only', format: 'message' }, scope, bell.deps)
+    expect(bell.admitted).toEqual([])
+  })
+
+  it('a replay answers each channel\'s own action as it is, and refuses a channel the first try never asked for', async () => {
+    const { scope } = await setup()
+    const toolUseId = `toolu_${uniq()}`
+    const first = wiring({ admit: () => ({ toolUseId, jobId: null, replay: false }) })
+    await send({ to: { channels: ['ops-alerts'] }, title: 'T', text: 'x', format: 'message' }, scope, first.deps)
+    const [row] = await actions()
+    const again = wiring({ admit: () => ({ toolUseId, jobId: null, replay: true }) })
+    const r = await send({ to: { channels: ['ops-alerts', 'general'] }, title: 'T', text: 'x', format: 'message' }, scope, again.deps)
+    expect(text(r).split('\n')).toEqual([
+      `#ops-alerts: already asked: waiting (approval_id: ${row!.id})`,
+      "#general: refused: not_admitted (That call couldn't be matched to this turn, so nothing was asked or sent.)",
+    ])
+    expect((await actions()).length).toBe(1)
+  })
+
+  it("a routine's post asks its creator even under the brand's grant; a system routine has no one to ask", async () => {
+    const { scope } = await setup()
+    await markAlerts('C0TEST0001')
+    const routine = { ...scope, memberId: SYSTEM_MEMBER_ID }
+    const team = wiring({ routineAsker: CREATOR })
+    await send({ to: { channels: ['ops-alerts'] }, title: 'T', text: 'routine', format: 'message' }, routine, team.deps)
+    const [row] = await actions()
+    expect([row!.state, row!.verdict, row!.origin, row!.asked_by, row!.grant_id]).toEqual(['waiting', 'ask', 'routine', CREATOR, null])
+    expect(team.scheduled).toEqual([])
+    const system = wiring({ routineAsker: null })
+    const r = await send({ to: { channels: ['ops-alerts'] }, title: 'T', text: 'system routine', format: 'message' }, routine, system.deps)
+    expect(text(r)).toBe('#ops-alerts: refused: no_one_to_ask (There’s no one to ask for an approval here, so nothing was asked or sent.)')
+    expect((await actions()).length).toBe(1)
+  })
+
+  it("a job's post is the job's; a removed person is no one to ask", async () => {
+    const { scope } = await setup()
+    const job = wiring({ admit: () => ({ toolUseId: `toolu_${uniq()}`, jobId: 'j_ns_1', replay: false }) })
+    await send({ to: { channels: ['ops-alerts'] }, title: 'T', text: 'job', format: 'message' }, scope, job.deps)
+    const [row] = await actions()
+    expect([row!.origin, row!.job_id]).toEqual(['job', 'j_ns_1'])
+    await person(db, OWNER, 'member', 'removed')
+    const r = await send({ to: { channels: ['ops-alerts'] }, title: 'T', text: 'gone', format: 'message' }, scope, wiring().deps)
+    expect(text(r)).toBe('#ops-alerts: refused: no_one_to_ask (There’s no one to ask for an approval here, so nothing was asked or sent.)')
   })
 })

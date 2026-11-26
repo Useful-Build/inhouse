@@ -281,10 +281,8 @@ export const SLOW_BASH_SECONDS = 20
 /** The fact the `memory-save` scenario saves (a person's own, active at once). */
 export const MEMORY_SAVE_TEXT = 'Likes the weekly stock report as a table.'
 
-/** What the `routine-create` scenario sends and says (the refusal text is `server/mcp/tools/routines/index.ts`'s `STAGE_TEXT`, written out here so a change to it fails loudly). */
-export const ROUTINE_STAGE_TEXT = 'Routines you set up need the Act stage. Ask an admin to move to Act.'
+/** What the `routine-create` scenario sends and says. */
 export const ROUTINE_CREATE_INPUT = { name: 'Stock check', instruction: 'scenario:hello Check stock and say what is low.', days: 'daily', time: '06:00' }
-export const ROUTINE_REFUSED_ANSWER = 'The routine was refused.'
 export const ROUTINE_CREATED_ANSWER = 'The routine was created.'
 /** The `hub-write-refused` scenario's document and answers. */
 /** P6a brand skills: what the `skill-save` and `skill-save-change` scenarios save, and their two answers. */
@@ -522,10 +520,10 @@ export const SCENARIOS: Record<string, Scenario> = {
     'I sent the stock alert to #ops-alerts.',
   ),
 
-  /** The same alert at Watch (P5 ship S4): the notice reaches the bell, not Slack, and the answer says so. */
+  /** The same alert while Slack posts are off (P5 ship S4; Stage 1 M2-N: the post is refused, nothing is asked or sent). */
   'connectors-notice-watch': toolsThenAnswer(
     [{ id: 'toolu_scripted_notice_watch', name: 'mcp__inhouse__notification_send', input: { to: { channels: ['#ops-alerts'] }, title: 'Stock alert', text: 'The Fern mug is almost out. Restock it this week.', format: 'message', link: { kind: 'today' } } }],
-    'I sent the stock alert to your bell. It reaches Slack from the Act stage.',
+    "I couldn't post the stock alert to #ops-alerts: Slack posts are turned off for this brand.",
   ),
 
   /** The same alert to a channel the admin did not list (P5 ship S4): the server refuses it. */
@@ -646,15 +644,20 @@ export const SCENARIOS: Record<string, Scenario> = {
   // ---------- P4 W6 (the Watch API specs, e2e/api/{routines,hub}.spec.ts). Scenarios only. ----------
 
   /**
-   * One `routine_create` call, then an answer that says which way it went (picked by the result's text, so the scenario never
-   * says what it wasn't told): at Watch the call is refused with STAGE_TEXT, at Act it creates the routine.
+   * One `routine_create` call, then an answer that it was created. The answer turn expects a result that isn't an error, so
+   * a refused call misses loudly and the scenario never says what it wasn't told. (Its refused branch keyed on the stage's
+   * refusal text, which M2-F retired: no result could reach it, so it went with M2-N.)
    */
-  'routine-create': scriptedBranchesOnResult(
-    { id: 'toolu_scripted_routine_create', name: 'mcp__inhouse__routine_create', input: ROUTINE_CREATE_INPUT },
-    ROUTINE_STAGE_TEXT,
-    ROUTINE_REFUSED_ANSWER,
-    ROUTINE_CREATED_ANSWER,
-  ),
+  'routine-create': (() => {
+    const call = { id: 'toolu_scripted_routine_create', name: 'mcp__inhouse__routine_create', input: ROUTINE_CREATE_INPUT }
+    const loop = mainLoop(ALWAYS_LOAD_INHOUSE_TOOLS.has(call.name) ? call.name : undefined)
+    return {
+      turns: [
+        { content: [{ type: 'tool_use', id: call.id, name: call.name, input: call.input }], expect: loop },
+        { content: [{ type: 'text', text: ROUTINE_CREATED_ANSWER }], expect: both(loop, resultIs(call.id, false)) },
+      ],
+    }
+  })(),
 
   /**
    * One read-only hub tool call with a GraphQL mutation document (`fixture_query`): the hub answers `write_refused` before any

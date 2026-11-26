@@ -9,7 +9,6 @@
 //  5. a paused Slack still takes a post;
 //  6. a hub tool is always loaded, or a runner route reaches the delivery binding.
 import { expect, test } from '@playwright/test'
-import { SLACK_DELIVERY_ENABLED } from '../../server/notify-slack/slack-legs.ts'
 import { actor, call, expectError } from './kit.ts'
 import { ToolsDataSchema } from '../../shared/contract/tools.ts'
 import {
@@ -152,8 +151,8 @@ test('a same-token reconnect keeps an active account working and revokes nothing
   await fakeSet(request, { mcp: { sameToken: false } })
 })
 
-test('with Slack paused, notification_send to a listed channel at Act answers slack_not_connected and the fake records no post', async ({ request }) => {
-  test.skip(!SLACK_DELIVERY_ENABLED, 'the Slack legs are closed until Q3 (server/notify-slack/slack-legs.ts): a channel reaches the bell, never the hub; this runs again when they open')
+// Since M2-N (Q3 = A) the post goes through the outbox, whose `resolve` refuses a paused account before anything is asked.
+test('with Slack paused, notification_send to a listed channel answers account_unavailable and the fake records no post', async ({ request }) => {
   await freshConnect(request)
   await setStage(request, 'Act')
   await setListedChannels(request, [CHANNEL.opsAlerts], true)
@@ -162,7 +161,7 @@ test('with Slack paused, notification_send to a listed channel at Act answers sl
   expect(paused.json).toEqual({ paused: true })
   const postsBefore = (await fakeState(request)).web.posts.length
   const out = await notifySend(request, newRun(memberId), { to: { channels: ['#ops-alerts'] }, title: 'Stock low', text: `Fern mug ${crypto.randomUUID()}`, format: 'message' })
-  expect(JSON.stringify(out)).toContain('slack_not_connected')
+  expect(JSON.stringify(out)).toContain('account_unavailable')
   expect((await fakeState(request)).web.posts.length, 'the fake recorded no post').toBe(postsBefore)
   await call(request, inhouse, 'PUT', `/api/tools/${acct(SLACK_ACCOUNT)}/paused`, { json: { paused: false } })
   await setStage(request, 'Watch')

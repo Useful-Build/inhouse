@@ -3,7 +3,10 @@
 //  1. a Member reaches the hub or changes the list (the matrix refuses first; the handler refuses again);
 //  2. a shared, archived, private or non-member channel gets listed, or two listed channels share a lowercase name;
 //  3. a stale `ifRev` changes anything, or two alerts channels exist at once;
-//  4. a change lands without its one audit line, or a no-op save writes a line.
+//  4. a change lands without its one audit line, or a no-op save writes a line;
+//  5. (Stage 1 M2-N, Q3 = A) marking a channel for alerts doesn't give the brand's grant to post there, gives it when it
+//     mustn't (the operation off, Slack not connected, the Inhouse team's save, a re-save that doesn't move the mark),
+//     or moving the mark off doesn't take it back; the list doesn't show the grant with its scope and daily limit.
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import { ErrorBodySchema } from '../../shared/contract/common.ts'
@@ -11,6 +14,7 @@ import type { HubResult, SlackChannel } from '../../hub/index/contract.ts'
 import type { Principal } from '../auth/principal.ts'
 import { openStores } from '../db/stores.ts'
 import { ctx, person, personPrincipal, reqId } from '../db/test-support.ts'
+import { account, ceiling, resetPermissions } from '../permissions/test-support.ts'
 import { availableNotifyChannels, listNotifyChannels, putNotifyChannels } from './routes.ts'
 import type { ChannelsBinding, NotifyRouteCtx } from './routes.ts'
 
@@ -196,5 +200,101 @@ describe('routes F, G and H', () => {
     const shared = { ...hub, checkChannel: async (_s: unknown, req: { channelId: string }) => (req.channelId === 'C0TEST0001' ? { ok: true as const, value: { ...SLACK.C0TEST0001!, name: 'general-chat', shared: true } } : Promise.reject(new Error('hub down'))) }
     const kept = await json(await put(p, shared as never, { channelIds: ['C0TEST0001', 'C0TEST0002'], alertsChannelId: 'C0TEST0001', ifRev: r0 + 3 }))
     expect(kept.body).toEqual({ rev: r0 + 4, channels: [{ channelId: 'C0TEST0001', name: 'general-chat', alerts: true }, { channelId: 'C0TEST0002', name: 'ops-alerts', alerts: false }] })
+  })
+
+  describe('M2-N: the alerts mark is the brand\'s grant for that channel', () => {
+    const grants = async () => (await db.prepare(
+      "SELECT id, holder, holder_member, account_id, account_gen, operation, scope_key, per_day, granted_by, granted_role, ceiling_rev, revoked_at_ms, revoke_reason FROM permission_grants WHERE holder = 'brand' ORDER BY granted_at_ms, id",
+    ).all<Record<string, unknown>>()).results
+    const permissionLines = async (since: number) => (await db.prepare("SELECT action, args_json FROM audit_log WHERE id > ? AND action LIKE 'permission.%' ORDER BY id").bind(since).all<{ action: string; args_json: string }>()).results
+      .map(l => ({ action: l.action, ...(JSON.parse(l.args_json) as Record<string, unknown>) }) as Record<string, unknown>)
+    const lastLine = async () => (await db.prepare('SELECT COALESCE(MAX(id), 0) AS id FROM audit_log').first<number>('id'))!
+    async function brand(o: { ceiling?: boolean; slack?: boolean; perDayMax?: number } = {}) {
+      await resetPermissions(db)
+      if (o.ceiling ?? true) await ceiling(db, 'slack.channel.post', { enabled: true, perDayMax: o.perDayMax ?? 50, loweredRev: 3 })
+      if (o.slack ?? true) await account(db, 'slack:workspace', 7_000)
+    }
+    const list = async () => (await json(await listNotifyChannels(ctx(stores, await memberP(), { path: '/api/notify/channels' }).c))).body
+
+    it('an admin marking a channel creates the grant, listed with its scope and daily limit; moving the mark takes it back', async () => {
+      await brand({ perDayMax: 20 })
+      const { hub } = fakeHub()
+      const p = await admin()
+      const who = (p as Extract<Principal, { kind: 'person' }>).memberId
+      const since = await lastLine()
+      const r0 = await rev()
+      const marked = await json(await put(p, hub, { channelIds: ['C0TEST0001', 'C0TEST0002'], alertsChannelId: 'C0TEST0001', ifRev: r0 }))
+      const [g] = await grants()
+      expect(g).toMatchObject({
+        holder: 'brand', holder_member: null, account_id: 'slack:workspace', account_gen: 7_000, operation: 'slack.channel.post',
+        scope_key: 'channelId=C0TEST0001', per_day: 50, granted_by: who, granted_role: 'admin', ceiling_rev: 3, revoked_at_ms: null,
+      })
+      // The daily limit a post meets now: the smaller of the grant's 50 and the ceiling's 20.
+      const shown = { id: g!.id, scope: '#ops-alerts', perDay: 20 }
+      expect(marked.body).toEqual({ rev: r0 + 1, channels: [{ channelId: 'C0TEST0002', name: 'general', alerts: false }, { channelId: 'C0TEST0001', name: 'ops-alerts', alerts: true, permission: shown }] })
+      expect((await list()).channels).toEqual([{ channelId: 'C0TEST0002', name: 'general', alerts: false }, { channelId: 'C0TEST0001', name: 'ops-alerts', alerts: true, permission: shown }])
+      // A re-save that keeps the mark makes no second grant.
+      await put(p, hub, { channelIds: ['C0TEST0001', 'C0TEST0002'], alertsChannelId: 'C0TEST0001', ifRev: r0 + 1 })
+      expect((await grants()).length).toBe(1)
+      // Moving the mark: the old channel's grant ends (`removed`), the new one gets its own.
+      const moved = await json(await put(p, hub, { channelIds: ['C0TEST0001', 'C0TEST0002'], alertsChannelId: 'C0TEST0002', ifRev: r0 + 2 }))
+      const after = await grants()
+      expect(after.map(x => [x.scope_key, x.revoked_at_ms === null ? 'live' : 'revoked', x.revoke_reason]).sort()).toEqual([['channelId=C0TEST0001', 'revoked', 'removed'], ['channelId=C0TEST0002', 'live', null]])
+      expect((moved.body.channels as { channelId: string; permission?: unknown }[]).map(c => [c.channelId, c.permission !== undefined])).toEqual([['C0TEST0002', true], ['C0TEST0001', false]])
+      // Unmarking takes the grant back; nothing is left.
+      await put(p, hub, { channelIds: ['C0TEST0001', 'C0TEST0002'], alertsChannelId: null, ifRev: r0 + 3 })
+      expect((await grants()).filter(x => x.revoked_at_ms === null)).toEqual([])
+      expect((await permissionLines(since)).map(l => [l.action, l.holder ?? null, l.reason ?? null, l.perDay ?? null])).toEqual([
+        ['permission.granted', 'brand', null, 50],
+        ['permission.revoked', null, 'removed', null], ['permission.granted', 'brand', null, 50],
+        ['permission.revoked', null, 'removed', null],
+      ])
+    })
+
+    it('no grant without the operation on, without Slack connected, or from the Inhouse team; the list shows none', async () => {
+      const { hub } = fakeHub()
+      for (const [why, setup, p] of [
+        ['the operation is off', { ceiling: false }, await admin()],
+        ['Slack is not connected', { slack: false }, await admin()],
+        ['the Inhouse team saved it', {}, await inhouse()],
+      ] as const) {
+        await brand(setup)
+        await db.prepare('DELETE FROM notify_channels').run()
+        const r = await json(await put(p, hub, { channelIds: ['C0TEST0001'], alertsChannelId: 'C0TEST0001', ifRev: await rev() }))
+        expect(r.status, why).toBe(200)
+        expect(await grants(), why).toEqual([])
+        expect((await list()).channels, why).toEqual([{ channelId: 'C0TEST0001', name: 'ops-alerts', alerts: true }])
+      }
+    })
+
+    it('a grant removed in Permissions stays removed on a re-save; removing the channel ends it as channel_unlisted', async () => {
+      await brand()
+      const { hub } = fakeHub()
+      const p = await admin()
+      const r0 = await rev()
+      await put(p, hub, { channelIds: ['C0TEST0001', 'C0TEST0002'], alertsChannelId: 'C0TEST0001', ifRev: r0 })
+      const [g] = await grants()
+      await db.prepare("UPDATE permission_grants SET revoked_at_ms = 1, revoke_reason = 'removed' WHERE id = ?").bind(g!.id).run()
+      await put(p, hub, { channelIds: ['C0TEST0001', 'C0TEST0002'], alertsChannelId: 'C0TEST0001', ifRev: r0 + 1 })
+      expect((await grants()).filter(x => x.revoked_at_ms === null)).toEqual([])
+      expect((await list()).channels).toEqual([{ channelId: 'C0TEST0002', name: 'general', alerts: false }, { channelId: 'C0TEST0001', name: 'ops-alerts', alerts: true }])
+      // Marked again (off, then on): a fresh grant; then the channel leaves the list and its grant ends with it.
+      await put(p, hub, { channelIds: ['C0TEST0001', 'C0TEST0002'], alertsChannelId: null, ifRev: r0 + 2 })
+      await put(p, hub, { channelIds: ['C0TEST0001', 'C0TEST0002'], alertsChannelId: 'C0TEST0001', ifRev: r0 + 3 })
+      expect((await grants()).filter(x => x.revoked_at_ms === null).length).toBe(1)
+      await put(p, hub, { channelIds: ['C0TEST0002'], alertsChannelId: null, ifRev: r0 + 4 })
+      expect((await grants()).map(x => x.revoke_reason).sort()).toEqual(['channel_unlisted', 'removed'])
+    })
+
+    it('a stale save gives no grant', async () => {
+      await brand()
+      const { hub } = fakeHub()
+      await db.prepare('DELETE FROM notify_channels').run()
+      const r0 = await rev()
+      await put(await admin(), hub, { channelIds: ['C0TEST0002'], ifRev: r0 })
+      const stale = await put(await admin(), hub, { channelIds: ['C0TEST0001'], alertsChannelId: 'C0TEST0001', ifRev: r0 })
+      expect(stale.status).toBe(409)
+      expect(await grants()).toEqual([])
+    })
   })
 })

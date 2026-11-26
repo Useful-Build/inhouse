@@ -1,8 +1,8 @@
 // N14's admission (Stage 1 M2-D): every write proposal is bound to a real call by the main agent in a live turn. The
 // runner's audit hook posts each tool call to the egress's `/audit/` and blocks the call until the Worker has stored
 // it (egress/audit.ts); M1-E added who made the call (`agentId`, null for the main agent) and the SHA-256 of its raw
-// input (`inputSha256`). The calls that can propose a write (the `actions` server's tools, and `approval_request` on the
-// `inhouse` server) are kept here, in BrandAgent's SQLite, as `tool_invocations`.
+// input (`inputSha256`). The calls that can propose a write (the `actions` server's tools, and `approval_request` and,
+// since M2-N, `notification_send` on the `inhouse` server) are kept here, in BrandAgent's SQLite, as `tool_invocations`.
 //
 // `admitAction(turnId, tool, inputSha256)` is one synchronous step: the turn is live and not fenced, the brand isn't
 // paused, the turn's person isn't removed, and an unused invocation of this turn matches the tool name and the hash and
@@ -18,8 +18,12 @@ export const ACTIONS_TOOL_PREFIX = 'mcp__actions__'
 /** `approval_request` on the `inhouse` server, as the SDK names it. */
 export const APPROVAL_REQUEST_TOOL = 'mcp__inhouse__approval_request'
 
+/** `notification_send` on the `inhouse` server: since M2-N its post to a listed Slack channel goes through the outbox. */
+export const NOTIFICATION_SEND_TOOL = 'mcp__inhouse__notification_send'
+
 /** Whether a tool call can propose a write, so its invocation is kept for admission. */
-export const proposesWrite = (toolName: string): boolean => toolName.startsWith(ACTIONS_TOOL_PREFIX) || toolName === APPROVAL_REQUEST_TOOL
+export const proposesWrite = (toolName: string): boolean =>
+  toolName.startsWith(ACTIONS_TOOL_PREFIX) || toolName === APPROVAL_REQUEST_TOOL || toolName === NOTIFICATION_SEND_TOOL
 
 /** Invocations are kept a day: no turn lives that long (a job's turns are each shorter than its 8-hour cap). */
 export const INVOCATION_KEEP_MS = 24 * 60 * 60_000

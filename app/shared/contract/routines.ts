@@ -45,8 +45,8 @@ export type RoutineRevInput = z.infer<typeof RoutineRevInputSchema>
 
 /**
  * How a run went, in the panel's closed list: `running` (waiting to start or under way), `done`, `failed` (it stopped
- * before it finished, or couldn't start) and `skipped` (it missed its time, or wasn't due to run: off, below its stage,
- * the agent paused).
+ * before it finished, or couldn't start) and `skipped` (it missed its time, or wasn't due to run: off, or the agent
+ * paused; a run skipped for its stage before M2-F still reads that way).
  */
 export const RoutineRunOutcomeSchema = z.enum(ROUTINE_RUN_OUTCOMES)
 export type RoutineRunOutcome = z.infer<typeof RoutineRunOutcomeSchema>

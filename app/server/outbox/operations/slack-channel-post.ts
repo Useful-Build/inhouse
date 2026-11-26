@@ -3,8 +3,12 @@
 // `notification_send` (shared/notify/bound.ts steps 1, 2 and 4: control characters stripped, links removed, refused
 // over the limit, never cut); the hub escapes it once, which makes mentions silent (step 3). Parsing is idempotent, so
 // the hub's strict check of the cleaned arguments gives the same text.
+// Stage 1 M2-N (Q3 = A): `notification_send`'s post to a listed channel is this operation too, so it carries the
+// notice's headline as an optional `title` (one line, at most 120 characters, the same cleaning). The hub's post takes it
+// as its bold first line (hub/connectors/slack/outbox.ts), else its fixed "Inhouse". Arguments without a title parse,
+// hash and post exactly as before, so no grant or action made before it changes meaning.
 import { z } from 'zod'
-import { boundBody, TEXT_MAX } from '../../../shared/notify/bound.ts'
+import { boundBody, boundNotice, TEXT_MAX, TITLE_MAX } from '../../../shared/notify/bound.ts'
 import type { ListedChannel } from '../../permissions/types.ts'
 import type { OperationEntry } from './types.ts'
 
@@ -14,13 +18,23 @@ const channelKey = (name: string): string => name.replace(/^#/, '').toLowerCase(
 export const PostArgsSchema = z.strictObject({
   channel: z.string().min(1).max(81),
   text: z.string().min(1).max(TEXT_MAX * 4),
-}).transform((a, ctx) => {
-  const bounded = boundBody(a.text, { escape: false, max: TEXT_MAX })
+  title: z.string().min(1).max(TITLE_MAX * 2).optional(),
+}).transform((a, ctx): { channel: string; text: string; title?: string } => {
+  if (a.title === undefined) {
+    const bounded = boundBody(a.text, { escape: false, max: TEXT_MAX })
+    if (!bounded.ok) {
+      ctx.addIssue({ code: 'custom', path: ['text'], message: bounded.reason })
+      return z.NEVER
+    }
+    return { channel: a.channel, text: bounded.text }
+  }
+  // `report` keeps the text's line breaks, as `boundBody` does; the title is always one line.
+  const bounded = boundNotice({ title: a.title, text: a.text, format: 'report' }, { escape: false })
   if (!bounded.ok) {
     ctx.addIssue({ code: 'custom', path: ['text'], message: bounded.reason })
     return z.NEVER
   }
-  return { channel: a.channel, text: bounded.text }
+  return { channel: a.channel, text: bounded.text, title: bounded.title }
 })
 export type PostArgs = z.output<typeof PostArgsSchema>
 
@@ -49,6 +63,6 @@ export const slackChannelPost: OperationEntry<PostArgs> & { key: 'slack.channel.
     const c = listedChannel(f.listedChannels, a.channel)
     // `resolve` refuses an unlisted channel before it builds the card.
     if (!c) throw new Error('slack.channel.post: card asked for an unlisted channel')
-    return { title: `Post to #${c.name} in Slack`, lines: [a.text] }
+    return { title: `Post to #${c.name} in Slack`, lines: a.title === undefined ? [a.text] : [a.title, a.text] }
   },
 }

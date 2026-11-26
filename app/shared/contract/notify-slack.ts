@@ -2,9 +2,19 @@
 // channels the connected person can pick from) and H (save the list). Channel ids and names only; never notice text.
 import { z } from 'zod'
 import { SlackChannelIdSchema } from './audit.ts'
+import { PermissionIdSchema } from './permissions.ts'
+
+/**
+ * The brand's grant to post to the alerts channel (Stage 1 M2-N): an admin marking a channel for alerts gives it. Its
+ * scope in plain words ("#ops-alerts") and the daily limit a post meets now. Absent while there is none (the operation
+ * is off, Slack isn't connected, or the mark was set by the Inhouse team or before M2-N).
+ */
+export const AlertsPermissionSchema = z.object({ id: PermissionIdSchema, scope: z.string().min(1).max(81), perDay: z.number().int().min(1) })
 
 /** A listed channel. `name` is display only (re-read from Slack on every save); the id is the key. */
-export const NotifyChannelSchema = z.object({ channelId: SlackChannelIdSchema, name: z.string().min(1).max(80), alerts: z.boolean() })
+export const NotifyChannelSchema = z.object({
+  channelId: SlackChannelIdSchema, name: z.string().min(1).max(80), alerts: z.boolean(), permission: AlertsPermissionSchema.optional(),
+})
 export type NotifyChannel = z.infer<typeof NotifyChannelSchema>
 
 /** Route F's answer, and route H's (and H's `conflict` carries it as `current`). `rev` 0: never saved. */

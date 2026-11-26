@@ -1,6 +1,9 @@
 // The channel list's store (p5-w4.md sections 7 and 10): read the listed channels, and save a whole new list in one
 // batch with its audit line. The save is guarded on the rev it was read at: every statement checks the list's rev and
 // the rev bump runs last, so a stale save changes nothing and answers `conflict`. Member ids only; no notice text.
+// Stage 1 M2-N (Q3 = A): moving the alerts mark onto a channel gives the brand's grant to post there, and moving it off
+// takes that grant back, in the same batch (./alerts-grant.ts says when a grant is made). The list shows the alerts
+// channel's live grant with its scope and daily limit.
 import type { AuditArgs } from '../../shared/contract/audit.ts'
 import type { NotifyChannelList } from '../../shared/contract/notify-slack.ts'
 import { auditInsert } from '../db/audit.ts'
@@ -10,6 +13,7 @@ import type { At } from '../db/members.ts'
 import { all, first, runBatch, stmt } from '../db/sql.ts'
 import type { Stmt } from '../db/sql.ts'
 import { revokeChannelGrantsStmts } from '../permissions/grants.ts'
+import { alertsGrantOf, alertsGrantStmts, unmarkGrantStmts } from './alerts-grant.ts'
 
 const REV = 'COALESCE((SELECT rev FROM notify_channel_list WHERE id = 1), 0)'
 
@@ -21,7 +25,13 @@ export function notifyChannelStore({ db, hook = s => s }: { db: D1Database; hook
     const rows = await all<{ channel_id: string; name: string; alerts: number }>(db, stmt(
       'SELECT channel_id, name, alerts FROM notify_channels WHERE removed_at_ms IS NULL ORDER BY lower(name), channel_id',
     ))
-    return { rev, channels: rows.map(r => ({ channelId: r.channel_id, name: r.name, alerts: r.alerts === 1 })) }
+    const channels = await Promise.all(rows.map(async r => {
+      const c = { channelId: r.channel_id, name: r.name, alerts: r.alerts === 1 }
+      // Only the alerts channel can hold the brand's grant (the mark is what gives it).
+      const permission = c.alerts ? await alertsGrantOf(db, c) : null
+      return permission ? { ...c, permission } : c
+    }))
+    return { rev, channels }
   }
 
   return {
@@ -70,6 +80,17 @@ export function notifyChannelStore({ db, hook = s => s }: { db: D1Database; hook
         ))
       }
       const prevAlerts = current.channels.find(c => c.alerts)?.channelId ?? null
+      // M2-N: the brand's grant follows the mark, only where this write changed the rows (they carry its stamp).
+      if (prevAlerts !== input.alertsChannelId) {
+        if (prevAlerts !== null) {
+          stmts.push(...unmarkGrantStmts(prevAlerts, at, { sql: 'SELECT 1 FROM notify_channels WHERE channel_id = ? AND req_id = ?', params: [prevAlerts, stamp] }))
+        }
+        if (input.alertsChannelId !== null) {
+          stmts.push(...alertsGrantStmts(input.alertsChannelId, {
+            sql: 'SELECT 1 FROM notify_channels WHERE channel_id = ? AND req_id = ? AND alerts = 1 AND removed_at_ms IS NULL', params: [input.alertsChannelId, stamp],
+          }, at))
+        }
+      }
       const args: AuditArgs = {
         action: 'notify.channels',
         added: added.map(c => c.channelId),
