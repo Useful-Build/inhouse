@@ -91,6 +91,10 @@ export interface AgentTasks {
   deferredHook(task: DueTask, ctx: TaskContext): Promise<TaskResult>
   /** A `deferred-resume:<questionId>` task: a resume that waited out a pause, a drain or a full queue (PR 6). */
   deferredResume(task: DueTask): Promise<TaskResult>
+  /** Stage 1 M1-B (jobs/engine.ts): a job's next step, its 8-hour cap, and its ledger close and notice. */
+  jobStep(task: DueTask): Promise<TaskResult>
+  jobDeadline(task: DueTask): Promise<TaskResult>
+  jobEnd(task: DueTask): Promise<TaskResult>
 }
 
 /** What a handler gets: the BrandAgent's parts. */

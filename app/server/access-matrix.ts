@@ -139,6 +139,9 @@ export const accessMatrix: readonly AccessRow[] = [
   // decides the object). Brand people only: the Inhouse team sees none in M2.
   /* 110 */ { method: 'GET', pattern: '/api/permissions', class: 'baseline', allow: ['member', 'admin'] },
   /* 111 */ { method: 'POST', pattern: '/api/permissions/:id/remove', class: 'baseline', allow: ['member', 'admin'] },
+  // Stage 1 M1-B (N3): a chat's long job is its owner's (BD11), read and cancelled by brand people only.
+  /* 100 */ { method: 'GET', pattern: '/api/chats/:id/job', class: 'personal', allow: ['member', 'admin'] },
+  /* 101 */ { method: 'POST', pattern: '/api/jobs/:id/cancel', class: 'personal', allow: ['member', 'admin'] },
 ]
 
 /** Each `CanKey`'s row (section 3). */

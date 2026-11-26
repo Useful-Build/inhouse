@@ -7,12 +7,13 @@
 //   it as above): a busy chat is skipped and goes on a later run.
 // `turn_trace`, `ledger_queue` and the other per-turn tables go with their turn; `pool_queue` and `turn_effects` exist only while
 // a turn is live, so a safe run has none (deleted anyway). `flags`, `authority` and the pool's own tables hold no run.
+// Stage 1 M1-B: a chat's `jobs` go with the chat (a running job keeps the chat's run live, so its chat is busy).
 // Durable Objects SQLite storage: https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/ (read 2026-11-22)
 
 /** The per-turn tables, then the run-level ones, in delete order (children first). */
 export const PER_TURN_TABLES = ['model_calls', 'ledger_queue', 'pool_queue', 'turn_effects', 'turn_trace', 'turn_rows'] as const
 export const RUN_TABLES = ['events', 'run_tokens', ...PER_TURN_TABLES, 'turns', 'runs'] as const
-export const CHAT_TABLES = [...RUN_TABLES, 'chat_state', 'chat_deletion'] as const
+export const CHAT_TABLES = [...RUN_TABLES, 'chat_state', 'chat_deletion', 'jobs'] as const
 export type AgentTable = (typeof CHAT_TABLES)[number]
 
 /** The columns these functions read, per table: the schema-pin test checks the object still has each. */
@@ -29,6 +30,7 @@ export const USED_COLUMNS: Readonly<Record<AgentTable, readonly string[]>> = {
   turn_rows: ['turn_id', 'chat_id'],
   chat_state: ['chat_id', 'live_run_id', 'session'],
   chat_deletion: ['chat_id'],
+  jobs: ['chat_id'],
 }
 
 const exists = (sql: SqlStorage, table: string) => sql.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", table).toArray().length > 0

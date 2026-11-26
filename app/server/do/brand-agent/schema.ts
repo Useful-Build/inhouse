@@ -39,6 +39,12 @@
 // - P5 (#337 review): `turns.prompt_version`, the system prompt version the turn's start sent (3 built, 2 the static
 //   fallback; null for a fixed prompt), beside `start_json`; `turns.prompt_apps` (#337 round 3), the JSON list of the
 //   apps its built line named as connected (null for the fallback or a fixed prompt).
+// - Stage 1 M1-B (N3, N4, jobs/): `jobs`, one row per job (the fence: `gen`, `pending_n`, `judged_n`; jobs/types.ts
+//   names each column); on `turns`: `job_id` and `job_n` (the job a turn belongs to and its place, 0 for the root),
+//   `cut_cause` (`job_cut`, `job_deadline` or `message`: the server's own interrupt, written in the step that asks it),
+//   `person_stop` (a person's stop or interrupt, so a race with the cut never carries a job on), `recovered` (N4: a
+//   killed job turn whose session stayed resumable at its checkpoint) and `source` (`person` for route 29, `job`,
+//   `question` for a resume, `task` for any other in-object submit; NULL on a turn stored before M1-B).
 
 import { TURN_ROWS_TABLE } from './projection.ts'
 
@@ -66,6 +72,7 @@ export function createAgentTables(sql: SqlStorage): void {
     steps_n INTEGER NOT NULL DEFAULT 0, count_tokens_calls INTEGER NOT NULL DEFAULT 0,
     outcome TEXT, failure TEXT, cancel_why TEXT, output_format_json TEXT, on_end_json TEXT, structured_output_json TEXT,
     resume_json TEXT, abandoned TEXT, held_json TEXT, web_search TEXT, prompt_version INTEGER, prompt_apps TEXT,
+    job_id TEXT, job_n INTEGER, cut_cause TEXT, person_stop INTEGER NOT NULL DEFAULT 0, recovered INTEGER NOT NULL DEFAULT 0, source TEXT,
     pos_from INTEGER, pos_to INTEGER, d1_flushed INTEGER NOT NULL DEFAULT 0,
     created_at_ms INTEGER NOT NULL, claimed_at_ms INTEGER, started_at_ms INTEGER, ended_at_ms INTEGER,
     UNIQUE (chat_id, client_key))`)
@@ -76,9 +83,25 @@ export function createAgentTables(sql: SqlStorage): void {
   }
   if (!have.has('prompt_version')) sql.exec('ALTER TABLE turns ADD COLUMN prompt_version INTEGER')
   if (!have.has('prompt_apps')) sql.exec('ALTER TABLE turns ADD COLUMN prompt_apps TEXT')
+  // Stage 1 M1-B's columns, the same way (a pre-M1 object keeps its rows; each new column reads NULL or 0 on them).
+  for (const col of ['job_id', 'cut_cause', 'source']) if (!have.has(col)) sql.exec(`ALTER TABLE turns ADD COLUMN ${col} TEXT`)
+  if (!have.has('job_n')) sql.exec('ALTER TABLE turns ADD COLUMN job_n INTEGER')
+  for (const col of ['person_stop', 'recovered']) if (!have.has(col)) sql.exec(`ALTER TABLE turns ADD COLUMN ${col} INTEGER NOT NULL DEFAULT 0`)
   sql.exec('CREATE INDEX IF NOT EXISTS turns_run ON turns(run_id, state)')
   sql.exec('CREATE INDEX IF NOT EXISTS turns_state ON turns(state)')
   sql.exec('CREATE INDEX IF NOT EXISTS turns_owner ON turns(owner_id, state)')
+  sql.exec('CREATE INDEX IF NOT EXISTS turns_job ON turns(job_id) WHERE job_id IS NOT NULL')
+  sql.exec(`CREATE TABLE IF NOT EXISTS jobs (job_id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, owner_id TEXT NOT NULL,
+    root_turn_id TEXT NOT NULL, last_turn_id TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('running', 'waiting', 'ended')),
+    outcome TEXT CHECK (outcome IN ('done', 'failed', 'budget', 'cancelled', 'time', 'stuck', 'taken_over')),
+    gen INTEGER NOT NULL DEFAULT 0, pending_n INTEGER NOT NULL, judged_n INTEGER NOT NULL DEFAULT 0,
+    next_kind TEXT NOT NULL DEFAULT 'carry' CHECK (next_kind IN ('carry', 'cut')), opened INTEGER NOT NULL DEFAULT 0,
+    started_at_ms INTEGER NOT NULL, deadline_ms INTEGER NOT NULL, infra_retries INTEGER NOT NULL DEFAULT 0,
+    idle_steps INTEGER NOT NULL DEFAULT 0, progress_json TEXT, ended_at_ms INTEGER, cost_micro INTEGER,
+    result_sent INTEGER NOT NULL DEFAULT 0, CHECK ((state = 'ended') = (outcome IS NOT NULL)))`)
+  sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS jobs_one_live ON jobs(chat_id) WHERE state != 'ended'")
+  sql.exec('CREATE INDEX IF NOT EXISTS jobs_owner ON jobs(owner_id, state)')
   sql.exec(`CREATE TABLE IF NOT EXISTS events (run_id TEXT NOT NULL, seq INTEGER NOT NULL, turn_id TEXT,
     at_ms INTEGER NOT NULL, json TEXT NOT NULL, PRIMARY KEY (run_id, seq))`)
   sql.exec(`CREATE TABLE IF NOT EXISTS chat_state (chat_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, live_run_id TEXT,

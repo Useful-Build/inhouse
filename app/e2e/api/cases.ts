@@ -56,6 +56,8 @@ const NO_TEAM_REQUEST = 'tr_e2eNobodyAAAAAAAAAAAAA'
 const NO_BRAND_SKILL = 'bs_e2eNobodyAAAAAAAAAAAAA'
 /** A permission id nobody has (`pg_` + 22, permissions.ts `PermissionIdSchema`). */
 const NO_PERMISSION = 'pg_e2eNobodyAAAAAAAAAAAAA'
+/** A job id nobody has (`j_` + 22, jobs.ts `JobIdSchema`). */
+const NO_JOB = 'j_e2eNobodyAAAAAAAAAAAAA'
 const ALL: Role[] = ['member', 'admin', 'inhouse']
 const PEOPLE: Role[] = ['member', 'admin']
 
@@ -193,6 +195,9 @@ export const CASES: Record<string, RouteCase> = {
   // Stage 1 M2-A (N15): brand people only.
   'GET /api/permissions': { design: d('baseline', PEOPLE), path: '/api/permissions', passes: 200 },
   'POST /api/permissions/:id/remove': { design: d('baseline', PEOPLE), path: `/api/permissions/${NO_PERMISSION}/remove`, json: { ifRev: 1 }, passes: 404 },
+  // Stage 1 M1-B (N3): a chat nobody has is 404; a well-formed job id nobody has is 404, nothing written.
+  'GET /api/chats/:id/job': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/job`, passes: 404 },
+  'POST /api/jobs/:id/cancel': { design: d('personal', PEOPLE), path: `/api/jobs/${NO_JOB}/cancel`, json: {}, passes: 404 },
 }
 
 /** The case for a row, or an error naming it (routes.spec.ts reports the gap on its own; this is for the specs that use it). */

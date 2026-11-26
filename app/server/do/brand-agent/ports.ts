@@ -296,6 +296,8 @@ export interface ChatStatus { waiting: boolean; liveRunId: string | null }
 export const PERSON_DATA_TABLES = [
   'runs', 'turns', 'events', 'chat_state', 'run_tokens', 'model_calls', 'ledger_queue', 'pool_queue', 'due_tasks',
   'turn_effects', 'turn_trace', 'turn_rows', 'chat_deletion',
+  // Stage 1 M1-B: a person's jobs.
+  'jobs',
 ] as const
 export type PersonDataTable = (typeof PERSON_DATA_TABLES)[number]
 /** `refused: invalid` for the system member (`m_system`): its rows are every routine's, never one person's. */

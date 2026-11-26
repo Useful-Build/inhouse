@@ -10,6 +10,7 @@ import { runAdvance } from './run-advance.ts'
 import { turnWatch } from './turn-watch.ts'
 import { deferredHook } from './deferred-hook.ts'
 import { deferredResume } from './deferred-resume.ts'
+import { jobDeadline, jobEnd, jobStep } from '../jobs/tasks.ts'
 import { auditCopy } from '../../../audit-copy.ts'
 import { createUsageSweep } from '../../../usage/sweep.ts'
 import { turnCalls } from '../turn-calls.ts'
@@ -39,6 +40,10 @@ export function buildTaskHandlers(evalBuild: boolean): Readonly<Record<string, T
     // W1 PR 6 (the P6 seams, A2's brief): P6's `onDeferred` and a resume waiting out a pause.
     'deferred-hook': deferredHook,
     'deferred-resume': deferredResume,
+    // Stage 1 M1-B (N3): a job's steps, its 8-hour cap, and its ledger close and bell notice.
+    'job-step': jobStep,
+    'job-deadline': jobDeadline,
+    'job-end': jobEnd,
     // W4
     'audit-copy': auditCopy,
     // W1 PR 2b gives the sweep the BrandAgent's reader over `model_calls` (A4-approved line).

@@ -202,6 +202,9 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   // Stage 1 M2-A (N15).
   { method: 'GET', pattern: '/api/permissions', class: 'baseline', allow: ['member', 'admin'] },
   { method: 'POST', pattern: '/api/permissions/:id/remove', class: 'baseline', allow: ['member', 'admin'] },
+  // Stage 1 M1-B (N3): a chat's long job and its Cancel (rows 100 and 101), the owner's only.
+  { method: 'GET', pattern: '/api/chats/:id/job', class: 'personal', allow: ['member', 'admin'] },
+  { method: 'POST', pattern: '/api/jobs/:id/cancel', class: 'personal', allow: ['member', 'admin'] },
 ]
 
 /** `CanRows` as section 3 maps them. */
