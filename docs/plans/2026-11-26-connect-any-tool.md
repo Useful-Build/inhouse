@@ -1,7 +1,8 @@
 # Connecting any tool: three paths for the Inhouse team, and what we learn from Executor
 
-Status: **draft for Wasim's approval, 2026-11-26.** Feeds M4 of the [master plan](2026-11-24-master-plan.md)
-(sections 4.4, 4.5 and 4.9). Section 10 lists the exact edits for the main session to fold into the master plan.
+Status: **approved by Wasim on 2026-11-26, with every recommendation in section 12 (W1 to W4).** Folded into the
+[master plan](2026-11-24-master-plan.md) the same day: D6, sections 1, 4.4, 4.5, 4.9, 6, 12 and 13, M4 and M7.
+Section 10 lists those edits.
 
 Research base: Executor's public source at commit `d30f09c` (branch `v2`, release `2.0.0-beta.79`, 2026-11-26) and its
 docs, read on 2026-11-26. **Nothing was deployed or run.** Every rule taken from Executor is their description of a
@@ -76,8 +77,8 @@ pages").
 | Give the login once (sign in, or enter a key) | Whoever holds it: the Inhouse team, or the brand's Admin on a connection we prepared | Tools page, never chat or email |
 | See what's connected and who did it | Everyone (list), Admin (audit) | Tools page, Activity |
 
-The credential step needs a decision (section 12, W1): a brand's Admin usually holds the tool's login, and a key sent
-over Slack or email is the path we most want to avoid.
+**Decided (W1, 2026-11-26):** a brand's Admin may do the credential step on a connection the Inhouse team prepared.
+They usually hold the tool's login, and a key sent over Slack or email is the path we most want to avoid.
 
 ## 5. The connection ladder
 
@@ -300,17 +301,17 @@ Only Slack is live, on its own branch of this code, so nothing is broken today. 
 7. **Built connector.** A fixture REST API with no MCP address becomes a connected tool through the kit, with no
    change to hub code. Its key appears nowhere in the connector's source, bundle or logs. A call to a host off its list
    is refused. A tool the connector doesn't mark is treated as a write and asks.
-8. **Roles.** A Member can't start a connection or enter a key. If W1 is yes, an Admin can do the credential step on a
-   connection the Inhouse team prepared and nothing else. Every connect, key change and disconnect is in the audit log
+8. **Roles.** A Member can't start a connection or enter a key. An Admin can do the credential step on a connection
+   the Inhouse team prepared and nothing else (W1). Every connect, key change and disconnect is in the audit log
    with who did it.
 9. **Known-server settings.** A fixture standing in for a server with its own code mode is asked for plain tools.
 10. **Nothing regresses.** Slack's existing connector tests and the nightly connector cases pass unchanged.
 11. **Credit.** Any closely carried-over list or rule names Executor, its commit and its MIT notice (section 13).
 
-## 10. Edits to the master plan (for the main session)
+## 10. Edits to the master plan (done 2026-11-26)
 
 - **Section 1 and D6.** Say who connects: the Inhouse team by default; the brand's Admin may give the login on a
-  prepared connection (if W1 is yes). Move "an Admin pastes any URL without us" to Later (if W2 is yes).
+  prepared connection (W1). Move "an Admin pastes any URL without us" to Later (W2).
 - **Section 4.4.** Add the detect step, the three paths and the connection check. Add key-only and no-sign-in servers,
   which it doesn't mention.
 - **Section 4.5, item 5.** Add the client lookup order, the exceptions table, the renewal rule and the plain reasons.
@@ -324,6 +325,8 @@ Only Slack is live, on its own branch of this code, so nothing is broken today. 
 - **M7.** Note that a shared tool with no MCP server is a pack connector.
 - **Section 12 (risks).** Add the two risks in section 14.
 - **Section 13 (sources).** Add this plan's sources.
+Not yet done, outside the master plan:
+
 - **`docs/decisions/`.** Record the "learn from it, don't run it" decision as the next numbered record and link it from
   P0 S4's "Why not self-hosted Executor".
 - **`docs/adopted-libraries.md`.** Add a "learned from" entry: Executor, the pinned commit, and a re-scan of its
@@ -331,7 +334,7 @@ Only Slack is live, on its own branch of this code, so nothing is broken today. 
 
 ## 11. Build slices
 
-These fold into M4's own slices; the main session sets the order. Each is checkable on its own.
+These fold into M4's own slices; M4 sets the order. Each is checkable on its own.
 
 1. **Detect and plain reasons.** No token handling changes. Checklist 1 and 4.
 2. **Exceptions and renewal**, with M4's client swap. Checklist 2, 3 and 10. High tier (it touches `app/hub/signin/`).
@@ -340,12 +343,14 @@ These fold into M4's own slices; the main session sets the order. Each is checka
 4. **Connection check and known-server settings.** Checklist 6 and 9.
 5. **Connector kit and one fixture connector.** Checklist 7. Starts with a short proof of the guarded outbound call.
 
-## 12. Wasim decides
+## 12. Wasim's decisions (2026-11-26)
 
-| # | Question | Recommended |
+Wasim took every recommendation.
+
+| # | Question | Decided |
 |---|---|---|
 | W1 | May a brand's Admin give the login (sign in, or enter a key) on a connection the Inhouse team prepared? | **Yes.** They usually hold it, and it keeps keys out of Slack and email. |
-| W2 | Does "an Admin connects any URL without us" (D6 as written) stay in M4? | **Move to Later.** It's not how the product is run, and it shrinks the hostile-server risk. |
+| W2 | Does "an Admin connects any URL without us" (D6 as written) stay in M4? | **Moved to Later.** It's not how the product is run, and it shrinks the hostile-server risk. In M4 the Inhouse team connects any address for a brand. |
 | W3 | Where do built connectors live? | **Shared tools in this repo as pack connectors; a single brand's own tools in the private ops repo**, built from the kit here. Brand hosts and names stay out of this repo. |
 | W4 | Is one built connector in M4 enough, or does Path C wait for the operator tools after M7? | **One in M4.** A brand whose key tool has no MCP server can't be served without it. |
 
@@ -353,7 +358,7 @@ These fold into M4's own slices; the main session sets the order. Each is checka
 
 Executor is MIT, copyright 2026 Rhys Sullivan. We write our own code. Where a list or rule is carried over closely
 (the exceptions table, the failure reason list), the module names Executor and the commit it came from, and Executor's
-copyright line and MIT notice are kept with it. The main session picks where the notice sits.
+copyright line and MIT notice are kept with it, in that module's header comment (master plan, M4).
 
 ## 14. Cost, assumptions and risks
 
