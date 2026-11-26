@@ -267,6 +267,28 @@ describe('a post to a listed channel follows the same rule as any Slack post (M2
     expect((await db.prepare("SELECT COUNT(*) AS n FROM notices WHERE audience_member_id = ? AND body LIKE '%slack paused%'").bind(OWNER).first<number>('n'))).toBe(1)
   })
 
+  // Review round 3: a deleted chat's notice goes nowhere, even where the bell would otherwise take it.
+  it('a deleted chat with Slack paused: refused chat_deleted, no bell, no card', async () => {
+    const { scope } = await setup()
+    await db.prepare('UPDATE chats SET deleted_at_ms = 5 WHERE id = ?').bind(scope.chatId).run()
+    const w = wiring({ hub: [{ accountId: 'slack:workspace', paused: true, label: 'Slack' }] })
+    const r = await send({ to: { channels: ['ops-alerts'] }, title: 'T', text: 'deleted paused', format: 'message' }, scope, w.deps)
+    expect(text(r)).toBe('#ops-alerts: refused: chat_deleted (This chat was deleted, so nothing was asked or sent.)')
+    expect(await actions()).toEqual([])
+    expect((await db.prepare("SELECT COUNT(*) AS n FROM notices WHERE body LIKE '%deleted paused%'").first<number>('n'))).toBe(0)
+  })
+
+  it("an Inhouse member's deleted chat: refused chat_deleted, not the admins' bell", async () => {
+    const { scope } = await setup()
+    const IH = 'm_ns_inhouse_del'
+    await db.prepare("INSERT INTO members (id, kind, role, status, name, created_at_ms) VALUES (?, 'inhouse', NULL, 'active', 'I', 1) ON CONFLICT (id) DO NOTHING").bind(IH).run()
+    const chatId = `c_${uniq()}`
+    await db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms, deleted_at_ms) VALUES (?, ?, 'T', 1, 1, 5)").bind(chatId, IH).run()
+    const r = await send({ to: { channels: ['ops-alerts'] }, title: 'T', text: 'inhouse deleted', format: 'message' }, { ...scope, memberId: IH, chatId }, wiring().deps)
+    expect(text(r)).toBe('#ops-alerts: refused: chat_deleted (This chat was deleted, so nothing was asked or sent.)')
+    expect(await adminsBell('inhouse deleted')).toBe(0)
+  })
+
   it("an Inhouse member's chat (no one to ask): the admins' bell, never a card", async () => {
     const { scope } = await setup()
     const IH = 'm_ns_inhouse'

@@ -164,6 +164,7 @@ test("a fresh connect, then the alerts mark, then the first post: it runs under 
     const g = readSql<{ id: string; account_gen: number }>("SELECT id, account_gen FROM permission_grants WHERE holder = 'brand' AND revoked_at_ms IS NULL")
     const synced = readSql<{ connected_at_ms: number }>("SELECT connected_at_ms FROM connector_accounts WHERE account_id = 'slack:workspace'")[0]!.connected_at_ms
     await test.info().attach('dates', { body: JSON.stringify({ productDate, synced, grant: g }), contentType: 'application/json' })
+    expect(synced, "the mark copied the hub's date in (it differs from the product's own)").not.toBe(productDate)
     expect(g.map(x => x.account_gen), "the grant took the hub's date").toEqual([synced])
     const a = actionOf(await notifySend(request, newRun(owner), msg()))
     expect(a, 'the first post runs under the grant').toMatchObject({ outcome: 'asked', status: 'approved', created: true })

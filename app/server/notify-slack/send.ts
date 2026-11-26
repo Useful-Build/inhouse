@@ -137,7 +137,8 @@ export const SLACK_OFF_TEXT = 'Slack posts are turned off for this brand, so it 
  * The outbox's refusals that send a listed channel's notice to the bell instead (orchestrator, M2-N review rounds 1 and
  * 2): a notice must never vanish just because it can't be posted. Each with what the agent reads and its short code.
  * Every other refusal (not admitted, a replay, a deleted chat, no egress behind the call) means the call itself isn't
- * one to act on: it's refused, as for any write tool.
+ * one to act on: it's refused, as for any write tool. The Slack leg checks a deleted chat right after admission, before
+ * the outbox could answer one of these three, so a deleted chat's notice never reaches a bell.
  */
 export const TO_BELL_INSTEAD: Readonly<Record<string, { reason: string; text: string }>> = {
   // The operation is off (every deployable build today).

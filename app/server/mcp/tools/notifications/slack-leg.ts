@@ -21,6 +21,7 @@ import type { ListedChannel, SlackLeg, SlackLegAnswer } from '../../../notify-sl
 import { outboxFacts } from '../../../outbox/facts.ts'
 import { PostArgsSchema } from '../../../outbox/operations/slack-channel-post.ts'
 import { openOutbox } from '../../../outbox/store.ts'
+import { REFUSAL_TEXT } from '../../../outbox/words.ts'
 import { scopeKeyOf } from '../../../permissions/resolve.ts'
 import type { Asker, Origin } from '../../../permissions/types.ts'
 import type { ToolScope } from '../../server/tool.ts'
@@ -60,6 +61,9 @@ export function slackLeg(wiring: NotifyWiring, db: D1Database, scope: ToolScope,
       admission ??= wiring.admit(scope, input)
       const admitted = await admission
       if (!admitted) return refused('not_admitted', LEG_TEXT.notAdmitted)
+      // A deleted chat's notice goes nowhere: refused here, before anything the outbox might refuse otherwise (Slack paused,
+      // no one to ask), so it can never reach a bell instead (send.ts `TO_BELL_INSTEAD` leaves `chat_deleted` out).
+      if (await first(db, stmt('SELECT 1 AS one FROM chats WHERE id = ? AND deleted_at_ms IS NOT NULL', scope.chatId))) return refused('chat_deleted', REFUSAL_TEXT.chat_deleted)
       who ??= (async () => {
         const system = scope.memberId === SYSTEM_MEMBER_ID
         if (system) return { asker: await wiring.routineAsker(scope), origin: 'routine' as const }
