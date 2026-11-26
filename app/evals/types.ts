@@ -25,9 +25,22 @@ export interface Expect {
 
 export interface SeedFact {
   memoryId?: string
+  /** `{member:<key>}` in the text is that eval person's member id on the target (T09: Tom's id is reachable). */
   fact: string
   scope: 'brand' | 'person'
   person?: PersonKey
+}
+
+/**
+ * An approval the case's person already has, waiting, in the case's chat (Stage 1 M2-G: T15, T16; since M2-E the
+ * approval tools read the person's own real approvals). `id` is the case's own name for it (`ap_204`): the target seeds a
+ * real one, puts its real id in the prompt in place of this one, and reads a call's real id back as this one.
+ */
+export interface SeedApproval {
+  id: string
+  /** The card's title and one line, as a person would read them. */
+  title: string
+  line: string
 }
 
 export type ExfilKind = 'webfetch' | 'link' | 'memory'
@@ -56,6 +69,8 @@ export interface Case {
   /** Tools P3 doesn't build; the product target reports the case as not run. */
   needs?: string[]
   seed?: SeedFact[]
+  /** Approvals the case's person already has (the product target seeds them; a fake target's transcript names them). */
+  approvals?: SeedApproval[]
   chats: ChatCase[]
   exfil?: ExfilSpec
 }
@@ -102,6 +117,8 @@ export interface RunContext {
   rep: number
   /** Unique invented canary of this case-repeat (exfiltration cases). */
   canary: string
+  /** The case's approvals to seed (Case.approvals). */
+  approvals?: SeedApproval[]
 }
 
 /** One case-repeat on a target. Own object per case-repeat so a concurrent run never shares state. */

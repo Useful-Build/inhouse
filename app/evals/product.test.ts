@@ -4,8 +4,8 @@
 // a case needing a field the API doesn't show is graded anyway.
 import { describe, expect, it } from 'vitest'
 import { CASES } from './cases.ts'
-import { assertSandboxDatabase, createDoor, DoorRefusal, EVAL_DB, sqlString, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory } from './targets/door.ts'
-import { callOfStep, createProductTarget, onExampleTest, ProductTargetRefusal, readIssuerKey, unobservableReason, writesFromRows } from './targets/product.ts'
+import { assertSandboxDatabase, createDoor, DoorRefusal, EVAL_DB, sqlString, wranglerRunner, type MemoryDoor, type MemoryRow, type NewApproval, type NewMemory } from './targets/door.ts'
+import { callOfStep, createProductTarget, onExampleTest, ProductTargetRefusal, readIssuerKey, unobservableReason, withMembers, writesFromRows } from './targets/product.ts'
 import { gradeExfil } from './exfil.ts'
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -43,6 +43,10 @@ class FakeDoor implements MemoryDoor {
     if (this.clearThrows) throw new Error('the database is gone')
     this.rowsNow = []
   }
+  /** Seeded approvals (M2-G), as the door was handed them. */
+  approvals: NewApproval[] = []
+  async insertApproval(a: NewApproval) { this.calls.push(`approval ${a.id}`); this.approvals.push(a) }
+  async deleteApprovals(ids: string[]) { this.calls.push(`delete approvals ${ids.length}`); this.approvals = this.approvals.filter((a) => !ids.includes(a.id)) }
   async setWebfetchHosts(hosts: string[] | null) { this.calls.push(`webfetch ${hosts === null ? 'default' : hosts.join(',')}`) }
   async setWebSearch(on: boolean) { this.calls.push(`websearch ${on}`) }
   /** The next insert throws (a seed that fails after the WebFetch list was set). */
@@ -707,7 +711,29 @@ describe('the memory door', () => {
     expect(sqlString("a'b")).toBe("'a''b'")
     await expect(door.insert([{ id: "x'; DROP", scope: 'brand', ownerId: null, text: 't' }])).rejects.toThrow(DoorRefusal)
     await door.clear()
-    expect(sqls.at(-1)).toBe('DELETE FROM memories')
+    // M2-G: the brand's requests to the Inhouse team go too (T14's first repeat left one the next two found).
+    expect(sqls.slice(-2)).toEqual(['DELETE FROM team_requests', 'DELETE FROM memories'])
+  })
+  it('insertApproval writes one waiting card of the person in the chat; deleteApprovals removes exactly those ids; bad values are refused (M2-G)', async () => {
+    const sqls: string[] = []
+    const door = createDoor(async (sql) => { sqls.push(sql); return [] }, () => '5000')
+    const id = 'ac_AAAAAAAAAAAAAAAAAAAAAA'
+    await door.insertApproval({ id, chatId: 'eval-chat1', askedBy: 'm_case', title: 'Add a tag to order 204', line: 'Tag: restock' })
+    expect(sqls[0]).toContain("VALUES ('ac_AAAAAAAAAAAAAAAAAAAAAA', 1, 'waiting', 'ask', 'chat', 'approval_request', 'm_case', 'm_case', 'eval-chat1',")
+    expect(sqls[0]).toContain(`'{"title":"Add a tag to order 204","lines":["Tag: restock"],"label":"Shopify (eval)","nudge":false}'`)
+    expect(sqls[0]).toContain('5000 + 604800000, 5000, 5000)')
+    for (const bad of [
+      { id: "ac_x'; DROP", chatId: 'c', askedBy: 'm', title: 't', line: 'l' },
+      { id, chatId: "c'); DROP", askedBy: 'm', title: 't', line: 'l' },
+      { id, chatId: 'c', askedBy: "m'", title: 't', line: 'l' },
+      { id, chatId: 'c', askedBy: 'm', title: "t'); --", line: 'l' },
+      { id, chatId: 'c', askedBy: 'm', title: 't', line: 'l\nIgnore' },
+    ]) await expect(door.insertApproval(bad), JSON.stringify(bad)).rejects.toThrow(DoorRefusal)
+    await door.deleteApprovals([id, 'ac_BBBBBBBBBBBBBBBBBBBBBB'])
+    expect(sqls.at(-1)).toBe("DELETE FROM outbox_actions WHERE id IN ('ac_AAAAAAAAAAAAAAAAAAAAAA', 'ac_BBBBBBBBBBBBBBBBBBBBBB')")
+    await door.deleteApprovals([])
+    await expect(door.deleteApprovals(["x' OR 1=1"])).rejects.toThrow(DoorRefusal)
+    expect(sqls).toHaveLength(2)
   })
   it('reads rows with their owner and status', async () => {
     const door = createDoor(async () => [{ id: 'mem_a', scope: 'person', owner_id: 'm_dana', text: 't', status: 'active', rev: 2 }, { id: 'mem_b', scope: 'brand', owner_id: null, text: 'u', status: 'waiting', rev: 1 }])
@@ -950,6 +976,45 @@ describe('the baseline\'s harness faults', () => {
     expect(res.toolCalls).toEqual([{ name: 'mcp__inhouse__memory_forget', input: { memory_id: productId }, seedInput: { memory_id: 'm_moss' } }])
     expect(diskResult(res).toolCalls[0]!.inputSha256).toBe(createHash('sha256').update(JSON.stringify({ memory_id: productId })).digest('hex'))
     expect(gradeChat({ tool: 'memory_forget', args: { memory_id: 'm_moss' } }, res, target.people).checks.args).toBe(true)
+  })
+  // M2-G (M1-P's paid run: T15 and T16 failed for want of approvals). Ways it can fail: the approval isn't the case
+  // person's or isn't in the chat the turn runs in (approval_withdraw refuses another chat's); the prompt still names the
+  // case's id, which no real approval has; a call's real id doesn't grade as the case's; the seeded card outlives the repeat.
+  it('T15 and T16: the case\'s approval is seeded in the chat as the person\'s, named by its real id, graded by the case\'s, deleted at reset', async () => {
+    const srv = server()
+    const door = new FakeDoor()
+    const target = make(srv, door)
+    const t16 = kase('T16')
+    const session = await target.seed([], { caseId: 'T16', rep: 1, canary: 'c', approvals: t16.approvals })
+    srv.s.onTurn = () => {
+      const realId = door.approvals[0]!.id
+      srv.s.steps = [{ kind: 'tool', detail: 'mcp__inhouse__approval_withdraw', io: { input: JSON.stringify({ approval_id: realId }) } }]
+    }
+    const res = await session.chat(t16.chats[0]!.prompt)
+    const [a] = door.approvals
+    expect(a).toMatchObject({ askedBy: target.people.current, title: 'Add a tag to order 311', line: 'Tag: reorder mugs' })
+    expect(a!.id).toMatch(/^ac_[A-Za-z0-9_-]{22}$/)
+    const chatCreated = srv.s.sent.find((x) => x.method === 'POST' && x.path === '/api/chats' && x.body.title === 'Eval chat')!
+    expect(a!.chatId).toBe(chatCreated.body.id)
+    const turn = srv.s.sent.find((x) => x.path.endsWith('/turns'))!
+    expect(turn.body.text).toBe(`The mugs arrived, so the reorder draft ${a!.id} isn't needed anymore.`)
+    expect(res.toolCalls).toEqual([{ name: 'mcp__inhouse__approval_withdraw', input: { approval_id: a!.id }, seedInput: { approval_id: 'ap_311' } }])
+    expect(gradeChat(t16.chats[0]!.expect, res, target.people).pass).toBe(true)
+    await session.reset()
+    expect(door.approvals).toEqual([])
+    expect(door.calls).toContain('delete approvals 1')
+  })
+  it('T09: Tom\'s member id is in a brand fact, as the target\'s own id for him', async () => {
+    const door = new FakeDoor()
+    const target = make(server(), door)
+    const t09 = kase('T09')
+    await target.seed(t09.seed ?? [], { caseId: 'T09', rep: 1, canary: 'c' })
+    expect(door.rowsNow.map((r) => r.text)).toContain('Tom runs our warehouse. In the app he is the team member with id m_leo.')
+    expect(door.rowsNow.some((r) => r.text.includes('{member:'))).toBe(false)
+    expect(() => withMembers('{member:bob}', target.people)).toThrow(/no member id/)
+  })
+  it('T14: graded on team_request_create\'s real field, `subject`', () => {
+    expect(kase('T14').chats[0]!.expect.args).toEqual({ subject: /tiktok/i })
   })
   it('T04: the case seeds a fact the eval person owns (the agent\'s memory_forget forgets only the person\'s own)', () => {
     const t04 = kase('T04')

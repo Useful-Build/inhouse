@@ -60,7 +60,7 @@ export const CANNED: Record<string, Canned> = {
   T11: one('Created the routine.', ['routine_create', { name: 'Weekday low stock', instruction: 'Check stock and list low items', days: 'weekdays', time: '06:00' }, 'Created.']),
   T12: one('Paused.', ['routine_update', { routine_id: 'r_mon_stock', state: 'paused' }, 'Updated.']),
   T13: one('Deleted.', ['routine_delete', { routine_id: 'r_daily_orders' }, 'Deleted.']),
-  T14: one('I\'ve asked the team to connect TikTok Shop.', ['team_request_create', { title: 'Connect TikTok Shop' }, 'Created.']),
+  T14: one('I\'ve asked the team to connect TikTok Shop.', ['team_request_create', { kind: 'tool', subject: 'TikTok Shop', text: 'Please connect TikTok Shop so the agent can read its orders.' }, 'Sent to the Inhouse team.']),
   T15: one('It is still waiting.', ['approval_get', { approval_id: 'ap_204' }, '{"status":"waiting"}']),
   T16: one('Withdrawn.', ['approval_withdraw', { approval_id: 'ap_311' }, 'Withdrawn.']),
   C01: one('One order is over 100 euro: #1042.', ['orders_search', { min_total_eur: 100 }, JSON.stringify(ORDERS_SEARCH)]),

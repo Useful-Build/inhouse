@@ -83,8 +83,9 @@ describe('the fixture target replays S5', () => {
     // T09 and T11 (r1-r3) flip to fail: S5 recorded its own mock tools' inputs (to: [ids], schedule: "weekdays 06:00"),
     // and the cases now follow P4/P5's real schemas (to.members, days and time; line B), which S5 never served. T07 r1-r3
     // and T08 r2 flip the same way: S5 asked through a free-text `action`; M2-E's approval_request takes `{ operation, args }`.
-    // T07 and T08 are parked (`write_set`), so their 6 case-repeats (all failing now) leave the run: 115 of 123.
-    expect(report.summary.all).toMatchObject({ runs: 123, pass: 115 })
+    // T14 r1-r3 too (M2-G): S5's mock team_request_create took a `title`, P6a's real one takes `subject`.
+    // T07 and T08 are parked (`write_set`), so their 6 case-repeats (all failing now) leave the run: 112 of 123.
+    expect(report.summary.all).toMatchObject({ runs: 123, pass: 112 })
   })
 })
 

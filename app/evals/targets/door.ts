@@ -64,8 +64,18 @@ export interface MemoryDoor {
   rows(): Promise<MemoryRow[]>
   /** Puts facts in, active (the case's premise is that the agent knows them). */
   insert(facts: NewMemory[]): Promise<void>
-  /** Empties the brand's memory: the eval brand holds nothing a case-repeat should carry over. */
+  /**
+   * Empties the brand's memory and its requests to the Inhouse team: the eval brand holds nothing a case-repeat should
+   * carry over (Stage 1 M2-G: T14's repeat 1 left an open request that repeats 2 and 3 found).
+   */
   clear(): Promise<void>
+  /**
+   * Puts in one waiting approval of `askedBy` in `chatId` (Stage 1 M2-G: T15, T16), as the outbox would hold a card made
+   * through `approval_request` for a tag on an order: id, chat, person, title and line checked to their literal-safe shapes.
+   */
+  insertApproval(a: NewApproval): Promise<void>
+  /** Deletes the approvals with these ids (the ones a case-repeat seeded). */
+  deleteApprovals(ids: string[]): Promise<void>
   /** Sets the brand's monthly Spending cap (`s:cap`, its saved text, e.g. "$50"): the eval brand's $50 (O2 note). */
   setSpendingCap(cap: string): Promise<void>
   /**
@@ -106,6 +116,13 @@ export interface MemoryDoor {
 }
 
 export const newMemoryId = (): string => `mem_${randomBytes(16).toString('base64url')}`
+/** An outbox action id (`ac_` and 128 random bits), the form the approval tools take. */
+export const newActionId = (): string => `ac_${randomBytes(16).toString('base64url')}`
+const ACTION_ID = /^ac_[A-Za-z0-9_-]{22}$/
+const CHAT_ID = /^[A-Za-z0-9_-]{1,64}$/
+const CARD_TEXT = /^[A-Za-z0-9 :.,'-]{1,80}$/
+
+export interface NewApproval { id: string; chatId: string; askedBy: string; title: string; line: string }
 export const sqlString = (s: string): string => `'${s.replaceAll("'", "''")}'`
 
 /** Runs one SQL statement on the database and returns the rows it answered (none for a write). */
@@ -160,7 +177,27 @@ export function createDoor(run: RunSql, nowSql: () => string = () => D1_NOW_MS):
       await run(`INSERT INTO memories (id, scope, owner_id, text, status, created_by, created_at_ms, updated_at_ms) VALUES ${values.join(', ')}`)
     },
     async clear() {
+      await run('DELETE FROM team_requests')
       await run('DELETE FROM memories')
+    },
+    async insertApproval(a) {
+      if (!ACTION_ID.test(a.id)) throw new DoorRefusal('not an action id')
+      if (!CHAT_ID.test(a.chatId)) throw new DoorRefusal('not a chat id')
+      if (!MEMBER_ID.test(a.askedBy)) throw new DoorRefusal('not a member id')
+      if (!CARD_TEXT.test(a.title) || !CARD_TEXT.test(a.line)) throw new DoorRefusal('not a card title or line the door writes')
+      const now = nowSql()
+      const card = JSON.stringify({ title: a.title, lines: [a.line], label: 'Shopify (eval)', nudge: false })
+      const args = JSON.stringify({ orderId: 'gid://shopify/Order/1', tags: ['eval'] })
+      await run(`INSERT INTO outbox_actions (id, rev, state, verdict, origin, via, asked_by, approver, chat_id, account_id, account_gen, operation,
+        policy_rev, scope_json, scope_key, args_json, payload_hash, records, units, card_json, expires_at_ms, created_at_ms, updated_at_ms)
+        VALUES (${sqlString(a.id)}, 1, 'waiting', 'ask', 'chat', 'approval_request', ${sqlString(a.askedBy)}, ${sqlString(a.askedBy)}, ${sqlString(a.chatId)},
+        'shopify:store', 0, 'shopify.order.tag_add', 1, '{"shop":"eval"}', 'shop=eval', ${sqlString(args)}, ${sqlString(a.id)}, 1, 1, ${sqlString(card)},
+        ${now} + 604800000, ${now}, ${now})`)
+    },
+    async deleteApprovals(ids) {
+      if (ids.length === 0) return
+      for (const id of ids) if (!ACTION_ID.test(id)) throw new DoorRefusal('not an action id')
+      await run(`DELETE FROM outbox_actions WHERE id IN (${ids.map(sqlString).join(', ')})`)
     },
     async setSpendingCap(cap) {
       // The product's own rule for the field (settings-table.ts capOk): whole dollars or cents, above $0, at most $100,000.
