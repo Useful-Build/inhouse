@@ -13,7 +13,7 @@ export const NUDGE_AFTER = 3
 export const NUDGE_WINDOW_MS = 30 * 86_400_000
 
 /** Why a live grant was revoked (`permission_grants.revoke_reason`, the `permission.revoked` line). */
-export const REVOKE_REASONS = ['removed', 'member_removed', 'role_lowered', 'account_disconnected', 'account_reconnected', 'restore'] as const
+export const REVOKE_REASONS = ['removed', 'member_removed', 'role_lowered', 'account_disconnected', 'account_reconnected', 'restore', 'superseded', 'channel_unlisted'] as const
 export type RevokeReason = (typeof REVOKE_REASONS)[number]
 
 /** Why a reserved use was released (`permission_uses.release_reason`). */

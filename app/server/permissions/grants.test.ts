@@ -174,6 +174,49 @@ describe('"Always allow" (failure 3)', () => {
   })
 })
 
+describe('a dead grant never blocks a new "Always allow" (review round 1)', () => {
+  const resolved = { accountId: 'shopify:store', accountGen: SHOP_GEN, operation: 'shopify.order.tag_add' as const, scope: { shop: 'store-a' }, scopeKey: 'shop=store-a', policyRev: POLICY_REV }
+  const always = async (memberId: string, action: string) => {
+    const a = alwaysAllowStmts({ holderMemberId: memberId, grantedRole: 'member', resolved, perDay: 50, sourceAction: action, onlyIf: { sql: 'SELECT 1', params: [] }, at: at(memberId, NOW) })
+    await db.batch(a.stmts.map(x => db.prepare(x.sql).bind(...x.params)))
+    return a.id
+  }
+  const key = (memberId: string) => ({ holder: `member:${memberId}`, accountId: 'shopify:store', operation: 'shopify.order.tag_add' as const, scopeKey: 'shop=store-a' })
+
+  for (const [what, stale] of [
+    ['a lowered ceiling', async (g: GrantFacts) => { await insertGrant(db, g); await run(setCeilingStmt({ operation: 'shopify.order.tag_add', enabled: true, perDayMax: 10, actorId: 'm_system', nowMs: NOW })) }],
+    ['a policy bump', async (g: GrantFacts) => insertGrant(db, { ...g, policyRev: POLICY_REV - 1 })],
+    ['a reconnect left unrevoked', async (g: GrantFacts) => insertGrant(db, { ...g, accountGen: SHOP_GEN - 1 })],
+  ] as const) {
+    it(`after ${what}, Always allow again makes a fresh live grant and ends the dead one as superseded`, async () => {
+      await db.prepare('DELETE FROM permission_ceiling').run()
+      await run(setCeilingStmt({ operation: 'shopify.order.tag_add', enabled: true, perDayMax: 50, actorId: 'm_system', nowMs: NOW }))
+      await person(db, 'm_dead_a', 'member')
+      const old = shopGrant('member:m_dead_a', { perDay: 50 })
+      await stale(old)
+      // Dead: no reservation, not listed, not read back as live.
+      expect((await run(reserve(old.id, `ac_dead_${what.length}`))).meta.changes).toBe(0)
+      expect(await liveGrant(db, key('m_dead_a'))).toBeNull()
+      expect(await stores.permissions.list({ memberId: 'm_dead_a', role: 'member' })).toEqual([])
+      const mark = await lastLineId(db)
+      const id = await always('m_dead_a', 'ac_FFFFFFFFFFFFFFFFFFFFFF')
+      expect((await liveGrant(db, key('m_dead_a')))?.id).toBe(id)
+      expect(await revokedOf(old.id)).toEqual({ revoked_at_ms: NOW, revoke_reason: 'superseded' })
+      expect((await parsedSince(mark)).map(l => [l.action, 'reason' in l ? l.reason : null])).toEqual([['permission.revoked', 'superseded'], ['permission.granted', null]])
+      expect((await run(reserve(id, `ac_fresh_${what.length}`))).meta.changes).toBe(1)
+      expect((await stores.permissions.list({ memberId: 'm_dead_a', role: 'member' })).map(p => p.id)).toEqual([id])
+    })
+  }
+
+  it('leaves a current grant alone: a second Always allow reads the same one back', async () => {
+    await person(db, 'm_dead_b', 'member')
+    const first = await always('m_dead_b', 'ac_GGGGGGGGGGGGGGGGGGGGGG')
+    await always('m_dead_b', 'ac_HHHHHHHHHHHHHHHHHHHHHH')
+    expect((await liveGrant(db, key('m_dead_b')))?.id).toBe(first)
+    expect((await revokedOf(first))?.revoked_at_ms).toBeNull()
+  })
+})
+
 describe('lapses are written (failure 4)', () => {
   let n = 0
   const email = () => `perm-${uid()}-${++n}@example.com`
@@ -244,6 +287,7 @@ describe('lapses are written (failure 4)', () => {
 describe('the list and remove (failure 5)', () => {
   beforeEach(async () => {
     await account(db, 'slack:workspace', 2_000)
+    await ceiling(db, 'slack.channel.post', { enabled: true, perDayMax: 50, loweredRev: 1 })
     await person(db, 'm_list_a', 'member')
     await person(db, 'm_list_b', 'member')
     await person(db, 'm_list_admin', 'admin')

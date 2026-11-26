@@ -129,6 +129,8 @@ const REVOKED: Record<string, string> = {
   account_disconnected: 'the tool was disconnected',
   account_reconnected: 'the tool was connected again',
   restore: 'the brand’s data was restored from a backup',
+  superseded: 'the rules or the tool’s connection changed, and a new one took its place',
+  channel_unlisted: 'the channel was taken off the list',
 }
 const GUARDRAIL: Record<string, string> = {
   money: 'it moves money', customer: 'it reaches a customer', destructive: 'it can’t be undone', access: 'it changes who has access',
