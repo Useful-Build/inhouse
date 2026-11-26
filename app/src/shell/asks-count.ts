@@ -31,8 +31,12 @@ const put = (next: Partial<typeof parts>) => {
   listeners.forEach(l => l())
 }
 
+/** Bumped by each published read, so an older read still out can't overwrite it when it lands. */
+let gen = 0
+
 /** Puts a fresh read in the badge (Approvals' own read passes its lists here too). */
 export function publishAsks(actions: readonly ActionCard[], questions: readonly Question[]): void {
+  gen++
   put({ actions: countAsks(actions, []), questions: countAsks([], questions) })
 }
 
@@ -49,9 +53,12 @@ export function readAsks(): Promise<void> {
     return again
   }
   const warn = (e: unknown) => { console.warn('Inhouse: could not read what waits for you.', e) }
+  // A list published after this read started (Approvals' own read) is newer: this read's answer for it is dropped.
+  const started = gen
+  const fresh = (next: Partial<typeof parts>) => { if (gen === started) put(next) }
   inFlight = Promise.all([
-    agent.actions({ states: ['waiting', NEEDS_CHECK] }).then(a => put({ actions: countAsks(a, []) }), warn),
-    agent.questions().then(q => put({ questions: countAsks([], q) }), warn),
+    agent.actions({ states: ['waiting', NEEDS_CHECK] }).then(a => fresh({ actions: countAsks(a, []) }), warn),
+    agent.questions().then(q => fresh({ questions: countAsks([], q) }), warn),
   ]).then(() => undefined).finally(() => { inFlight = null })
   return inFlight
 }

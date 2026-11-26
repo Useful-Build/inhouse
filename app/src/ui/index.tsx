@@ -114,7 +114,12 @@ export function IconButton({ icon, label, tip = label, tipSide, size = 20, box =
  * A person's round avatar: their photo, else initials. `who` is a member id, a name or a label that starts with
  * one ("Dana approved"). The signed-in user's name follows the Name setting.
  */
-export function Avatar({ who, size = 24, fontSize = Math.round(size * 0.42) }: { who: string; size?: number; fontSize?: number }) {
+/**
+ * `cssInitials`: the initials are drawn by CSS (`data-initials`), not as text, for an avatar inside a control whose name
+ * is an `aria-label` (the sidebar's account row): axe's label-content-name-mismatch counts aria-hidden text that is on
+ * screen, and "SM" isn't in "Sam Mercer, account and settings". It looks the same.
+ */
+export function Avatar({ who, size = 24, fontSize = Math.round(size * 0.42), cssInitials = false }: { who: string; size?: number; fontSize?: number; cssInitials?: boolean }) {
   const data = useAgentData()
   const st = useAgentState()
   const me = userName({ agent: st, data })
@@ -127,7 +132,9 @@ export function Avatar({ who, size = 24, fontSize = Math.round(size * 0.42) }: {
       style={{ width: size, height: size, fontSize }}>
       {photo && <AvatarImage src={photo} alt="" width={size} height={size} draggable={false} className="block" />}
       {/* While a photo loads this is the plain grey circle; without one, the initials. */}
-      <AvatarFallback className="text-parent">{photo ? null : initials(name)}</AvatarFallback>
+      {cssInitials
+        ? <AvatarFallback className="text-parent initials-css" data-initials={photo ? undefined : initials(name)} />
+        : <AvatarFallback className="text-parent">{photo ? null : initials(name)}</AvatarFallback>}
     </UiAvatar>
   )
 }

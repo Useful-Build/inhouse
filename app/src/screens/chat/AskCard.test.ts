@@ -25,18 +25,21 @@ const fake = vi.hoisted(() => ({
   resolveAction: vi.fn(),
   listeners: new Set<(u: { actionId: string; rev: number }) => void>(),
   toasts: [] as string[],
+  role: 'member' as string,
 }))
 vi.mock('../../agent', () => ({
   agent: {
     action: fake.action, answerAction: fake.answerAction, undoAction: fake.undoAction, resolveAction: fake.resolveAction,
     onActionUpdated: (l: (u: { actionId: string; rev: number }) => void) => { fake.listeners.add(l); return () => fake.listeners.delete(l) },
+    subscribe: () => () => undefined,
+    me: () => ({ role: fake.role }),
   },
 }))
 const badge = vi.hoisted(() => ({ reads: 0 }))
 vi.mock('../../shell/asks-count', () => ({ readAsks: async () => { badge.reads++ } }))
 vi.mock('../../state/store', () => ({ useUi: (pick: (s: { showToast: (t: string) => void }) => unknown) => pick({ showToast: (t: string) => { fake.toasts.push(t) } }) }))
 
-const { AskCard } = await import('./AskCard')
+const { AskCard, AskPart } = await import('./AskCard')
 const { settleDelayMs } = await import('./ask-card')
 
 declare global { var IS_REACT_ACT_ENVIRONMENT: boolean }
@@ -183,6 +186,39 @@ describe('answering', () => {
     await press('Undo')
     expect(fake.toasts).toEqual(["Allowed. Your Inhouse agent won't ask next time.", 'Taken back. Nothing went out. Always allow stays on. Remove it in Settings, Always allowed.'])
     expect(text()).toContain('You took it back. Nothing went out.Always allow stays on. Remove it in Settings, Always allowed.')
+  })
+  test('a card gone while it settles stops saying it goes out, and offers nothing', async () => {
+    fake.action.mockRejectedValueOnce(new AgentError('not_found', 'x'))
+    await show({ actionId: AC, initial: card({ rev: 2, state: 'sending', can: { ...NONE, undo: true } }) })
+    await tick(2000)
+    await flush()
+    expect(text()).toContain("No longer there")
+    expect(text()).toContain("This isn't there any more.")
+    expect(text()).not.toContain('going out')
+    expect(text()).not.toContain('Going out')
+    expect(buttons()).toEqual([])
+    await tick(60_000)
+    expect(fake.action).toHaveBeenCalledTimes(1)
+  })
+  test('one badge read per answer', async () => {
+    fake.answerAction.mockResolvedValueOnce(card({ rev: 2, state: 'denied', can: NONE }))
+    await show({ actionId: AC, initial: card() })
+    const before = badge.reads
+    await press('No')
+    expect(badge.reads).toBe(before + 1)
+  })
+  test("the chat's part reads its card for a brand person; for the Inhouse team it says so and reads nothing", async () => {
+    fake.action.mockResolvedValueOnce(card())
+    await act(async () => root.render(createElement(AskPart, { actionId: AC })))
+    await flush()
+    expect(buttons()).toEqual(['Allow once', 'Always allow', 'No'])
+    act(() => root.unmount()); root = createRoot(host)
+    fake.role = 'inhouse'
+    await act(async () => root.render(createElement(AskPart, { actionId: AC })))
+    await flush()
+    expect(text()).toBe("Your Inhouse agent proposed an action here. Only the brand's team can see it.")
+    expect(fake.action).toHaveBeenCalledTimes(1)
+    fake.role = 'member'
   })
   test('a double click sends once', async () => {
     let settle: (c: ActionCard) => void = () => {}

@@ -84,6 +84,10 @@ describe('the menu, the palette and the deep links (failures 2 and 3)', () => {
     expect(settingsTabs(false)).not.toContain('you-permissions')
     expect(pageShown('you-permissions', false)).toBe(false)
   })
+  it("the Inhouse team's product menu has no Always allowed (they have no permissions); every other page stays", () => {
+    const inhouse = menuFor(noTools, true, true).flatMap(s => s.pages).map(p => p.id)
+    expect(inhouse).toEqual(ids(true).filter(id => id !== 'you-permissions'))
+  })
   it('the section that holds the Spending cap is called Spending in the product, and keeps its name in the demo', () => {
     const limits = (product: boolean) => menuFor(noTools, product).find(s => s.id === 'limits')!
     expect(limits(true).label).toBe('Spending')

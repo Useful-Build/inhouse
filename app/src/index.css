@@ -513,6 +513,8 @@
 @utility picked-muted { --muted-foreground: var(--app-picked-muted); }
 /* PR 6: a file preview (picture, page, poster) in dark steps down so it doesn't glare. */
 @utility preview-dim { filter: brightness(var(--app-preview-dim)); }
+/* An avatar's initials drawn by CSS, not as text (src/ui/index.tsx `Avatar` `cssInitials`). */
+@utility initials-css { &::before { content: attr(data-initials); } }
 @utility ms {
   font-family: 'Material Symbols Rounded';
   font-weight: normal; font-style: normal; line-height: 1;

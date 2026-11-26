@@ -68,14 +68,18 @@ export const pageShown = (id: string, product: boolean): boolean => (product ? !
 /** The ids a `#/settings/<id>` link may name. */
 export const settingsTabs = (product: boolean): string[] => SETTINGS_PAGES.filter(p => pageShown(p.id, product)).map(p => p.id)
 
+/** Stage 1 M2-H: the pages only a brand person has (the Inhouse team has no permissions: route 110 refuses them). */
+const BRAND_PERSON_PAGES: readonly string[] = ['you-permissions']
+
 /**
  * The menu as this brand sees it: Slack notices only with Slack connected, and in the product (`product`: the build has no
  * demo) no demo-only pages. What stays of the limits section is the Spending cap and Pause, so the product calls it "Spending".
+ * `inhouse`: the viewer is the Inhouse team, who has no Always allowed page.
  */
-export const menuFor = (tools: SlackSignals, product = false): SettingsSection[] => {
+export const menuFor = (tools: SlackSignals, product = false, inhouse = false): SettingsSection[] => {
   const slack = hasSlack(tools)
   return SECTIONS.map(s => {
-    const pages = s.pages.filter(p => (slack || p.id !== 'team-slack') && pageShown(p.id, product))
+    const pages = s.pages.filter(p => (slack || p.id !== 'team-slack') && pageShown(p.id, product) && !(inhouse && BRAND_PERSON_PAGES.includes(p.id)))
     return { ...s, pages, ...(product && s.id === 'limits' ? { label: 'Spending' } : {}) }
   })
 }

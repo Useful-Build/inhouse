@@ -375,7 +375,7 @@ Settings: Notifications
 Settings: Always allowed (Stage 1 M2-H, the product)
   Path:     test build -> Settings -> Always allowed (`#/settings/you-permissions`)
   Selector: section "Done without asking", rows `[data-permission]` (title; "{tool} · {scope} · Up to N a day", and "For {name}" on a teammate's), button "Remove: {title}", the question "Stop allowing this?"
-  Expected: a member sees their own permissions, an admin everyone's; Remove shows only where the permission's `can.remove` says so, asks first, sends the rev it read and shows the list after it with a toast; a stale Remove says "This permission changed first. Here it is now." and reads the list again; none: "Nothing yet. When you choose Always allow on an action, it shows here."; usable on a phone (a You page, not read-only)
+  Expected: a member sees their own permissions, an admin everyone's; Remove shows only where the permission's `can.remove` says so, asks first, sends the rev it read and shows the list after it with a toast; a stale Remove says "This permission changed first. Here it is now." and reads the list again; none: "Nothing yet. When you choose Always allow on an action, it shows here."; usable on a phone (a You page, not read-only); the Inhouse team has no Always allowed (not in its menu or the command palette, and the page reads nothing)
   Covered:  e2e/real/actions-ui.spec.ts, src/screens/approvals/agent-asks.test.ts, src/screens/settings/product-settings.test.ts
 
 Settings: Memory

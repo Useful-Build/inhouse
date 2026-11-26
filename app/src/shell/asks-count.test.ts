@@ -144,6 +144,21 @@ describe('the badge', () => {
     await flush()
     expect(shown.at(-1)).toBe(0)
   })
+  test("an older read still out when Approvals publishes its own doesn't overwrite it", async () => {
+    fake.actions.mockResolvedValue([]); fake.questions.mockResolvedValue([])
+    await act(async () => root.render(createElement(Badge)))
+    await flush()
+    expect(shown.at(-1)).toBe(0)
+    let release: (v: ActionCard[]) => void = () => {}
+    fake.actions.mockReturnValueOnce(new Promise<ActionCard[]>(r => { release = r }))
+    const old = readAsks()
+    // Approvals' newer read: one card waits.
+    await act(async () => { publishAsks([card()], []) })
+    expect(shown.at(-1)).toBe(1)
+    await act(async () => { release([card(), card(), card()]); await old })
+    await flush()
+    expect(shown.at(-1)).toBe(1)
+  })
   test('a change in the bell\'s list (a new notice, such as a question waiting) reads again; the same list does not', async () => {
     fake.actions.mockResolvedValue([]); fake.questions.mockResolvedValue([])
     await act(async () => root.render(createElement(Badge)))

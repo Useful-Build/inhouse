@@ -330,7 +330,7 @@ export function Settings() {
   }
   const page = settingsPage(setTab, env)
   // P5 W4: Slack notices is listed only for a brand with Slack connected.
-  const menu = menuFor(data.tools, demo === null)
+  const menu = menuFor(data.tools, demo === null, agent.me()?.role === 'inhouse')
   const readOnly = phone && setTab.startsWith('team-')
   // The note is for a page where a control became text; a page of buttons and plain facts has nothing to explain.
   const hidesControls = readOnly && page.sections.some(sec => sec.rows.some(r => r.kind === 'toggle' || r.kind === 'select' || r.kind === 'text' || r.kind === 'mode'))

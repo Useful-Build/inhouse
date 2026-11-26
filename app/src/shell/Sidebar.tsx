@@ -100,7 +100,7 @@ export function Sidebar() {
         {toggle}
         <AccountMenu>
           <NavItem rail tone="quiet" label={name} tip={name} aria-label={`${name}, account and settings`} active={meActive} className={OPEN_ROW}
-            leading={<Avatar who={ctx.data.meta.currentUser.id} size={24} fontSize={10} />} />
+            leading={<Avatar who={ctx.data.meta.currentUser.id} size={24} fontSize={10} cssInitials />} />
         </AccountMenu>
       </div>
     </aside>
@@ -156,7 +156,7 @@ export function Sidebar() {
         {/* The account row, the Inhouse team button and on desktop the collapse button, in line with New chat above. */}
         <div className="flex flex-none items-center gap-1 pr-1">
           <AccountMenu>
-            <NavItem tone="quiet" avatar label={name} aria-label={`${name}, account and settings`} active={meActive} className={cn(OPEN_ROW, 'min-w-0 flex-1')} leading={<Avatar who={ctx.data.meta.currentUser.id} size={24} fontSize={10} />}
+            <NavItem tone="quiet" avatar label={name} aria-label={`${name}, account and settings`} active={meActive} className={cn(OPEN_ROW, 'min-w-0 flex-1')} leading={<Avatar who={ctx.data.meta.currentUser.id} size={24} fontSize={10} cssInitials />}
               trailing={phone && <Icon name="unfold_more" size={16} className="text-faint" />} />
           </AccountMenu>
           {team}

@@ -3,7 +3,7 @@
 // card again when an `action.updated` names it or while it settles (the hold's end, the send: with backoff, through
 // failed reads, until it settles). The buttons send the rev the card was read at; a refusal says why, a conflict shows
 // the card as it is now, and a refusal with no card in it reads the card again.
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 import { agent } from '../../agent'
 import type { ActionCard } from '../../agent/types'
 import { AgentError } from '../../agent/types'
@@ -18,12 +18,27 @@ import { ALWAYS_STAYS, answeredToast, buttonsOf, factsOf, holdLeftMs, holdText, 
 import type { CardButton, Whose } from './ask-card'
 import { readAsks } from '../../shell/asks-count'
 
+const GONE_KICKER = 'No longer there'
+const GONE_TEXT = "This isn't there any more."
+
 /** A card as read, and when (on the browser's clock), so the hold's countdown is the server's gap less the time since. */
 interface Read { card: ActionCard; at: number }
 
 const ICON: Record<ActionCard['state'], string> = {
   waiting: 'front_hand', approved: 'schedule', sending: 'schedule_send', sent: 'check_circle', failed: 'error', needs_check: 'info',
   undone: 'undo', denied: 'block', withdrawn: 'block', expired: 'hourglass_empty',
+}
+
+/**
+ * The chat's `ask` part. The Inhouse team (reading a chat under a support grant) has no actions (route 120 refuses
+ * them): the part says an action was proposed and reads nothing.
+ */
+export function AskPart({ actionId }: { actionId: string }) {
+  const inhouse = useSyncExternalStore(agent.subscribe, () => agent.me()?.role === 'inhouse')
+  if (inhouse) {
+    return <div className={cn(CONFIRMATION_SHEET, 'w-prose-measure text-sm text-muted-foreground')} data-action-card="hidden">Your Inhouse agent proposed an action here. Only the brand's team can see it.</div>
+  }
+  return <AskCard actionId={actionId} />
 }
 
 /**
@@ -111,30 +126,32 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
     const sent = b.kind === 'answer' ? agent.answerAction(card.id, card.rev, b.choice)
       : b.kind === 'undo' ? agent.undoAction(card.id, card.rev)
         : agent.resolveAction(card.id, card.rev, b.outcome)
+    const before = state.current
     sent.then(next => {
       take(next)
       if (b.kind === 'answer' && b.choice === 'always') setAllowedAlways(true)
       // The pressed button is gone with the old state: keep the keyboard on the card.
       headingRef.current?.focus()
-      // The sidebar's badge counts what waits on this person: read it again.
-      void readAsks()
+      // The sidebar's badge counts what waits on this person: read it again (once: `take` already did if the state moved).
+      if (state.current === before) void readAsks()
       const words = answeredToast(b.kind === 'answer' ? b.choice : b.kind === 'undo' ? 'undo' : b.outcome)
       showToast(b.kind === 'undo' && allowedAlways ? `${words} ${ALWAYS_STAYS}` : words, { icon: 'check', ms: 4000 })
     }, (e: unknown) => {
       const r = refusalOf(e)
       setRefusal(r.text)
-      // A conflict: someone or something moved the card first, so what waits on this person may have changed.
-      if (e instanceof AgentError && e.code === 'conflict') void readAsks()
-      // The card as it is now: from the conflict, else read again (the buttons follow the server's card).
+      // The card as it is now: from the conflict, else read again (the buttons follow the server's card). A conflict means
+      // someone or something moved the card first, so the badge reads again (once: `take` already did if the state moved).
       if (r.current) take(r.current)
       else void load()
+      if (e instanceof AgentError && e.code === 'conflict' && state.current === before) void readAsks()
     }).finally(() => { pressing.current = false; setBusy(false) })
   }
 
   const buttons = gone ? [] : buttonsOf(card)
-  const outcome = outcomeOf(card, whose)
+  // A card gone from the server (not found on a read) no longer says where it was: it may have gone out or not.
+  const outcome = gone ? GONE_TEXT : outcomeOf(card, whose)
   const alwaysStays = allowedAlways && card.state === 'undone'
-  const holdLine = left !== null ? holdText(left) : null
+  const holdLine = !gone && left !== null ? holdText(left) : null
   const waitingLapse = card.state === 'waiting' && card.lapsed
   return (
     <div role="group" aria-labelledby={titleId} data-action-card={card.state} data-action-id={card.id}
@@ -144,7 +161,7 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
           <Icon name={ICON[card.state]} size={20} />
         </span>
         <div className="min-w-0 flex-1">
-          <div className={cn('text-sm', card.state === NEEDS_CHECK ? 'font-medium text-warning-text' : 'text-muted-foreground')}>{kickerOf(card, whose)}</div>
+          <div className={cn('text-sm', card.state === NEEDS_CHECK ? 'font-medium text-warning-text' : 'text-muted-foreground')}>{gone ? GONE_KICKER : kickerOf(card, whose)}</div>
           <h3 id={titleId} ref={headingRef} tabIndex={-1} className="text-md font-strong tracking-card wrap-anywhere outline-none">{card.title}</h3>
         </div>
         {onOpenChat && card.chatId && (
