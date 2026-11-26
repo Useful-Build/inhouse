@@ -21,7 +21,14 @@
 # - The account id and the zone come in as secrets, so GitHub masks them in every log line (a variable would print in
 #   the first step that reads it). The specs' output goes through a filter that hides any JWT it prints.
 # - Only same-repo PRs, open, at exactly the given head SHA (forks never deploy). Dispatching needs write access.
-# After a failure, dispatch again, never re-run: a re-run attempt is refused (its artifacts would clash).
+# - The sandbox account also holds live products (names.mjs). The token's reach is that account, not the inhouse-sbx-
+#   names: the lock and the name guard confine what this workflow does, not what the token could do if it leaked.
+# - `pr-code` runs on refs/heads/main, so the PR's code can write Actions caches in main's scope (its runtime token,
+#   which `permissions:` doesn't govern). So no job that holds a secret may restore a cache: no actions/cache, and every
+#   setup-node has package-manager-cache: false (app/scripts/sandbox/workflows.test.mjs holds every workflow to it).
+# - The `deploy` job is frozen in app/scripts/sandbox/workflows.test.mjs (SECRET_JOBS): changing it means changing that
+#   copy in the same PR, beside the rule checks that test makes.
+# After a failure, dispatch again, never re-run: every job refuses a re-run attempt (its artifacts would clash).
 name: sandbox-test-deploy
 
 on:
@@ -131,7 +138,12 @@ jobs:
       PR: ${{ needs.check.outputs.pr }}
       SHA: ${{ needs.check.outputs.sha }}
     steps:
-      # First, so the deploy job never waits for it. The private half stays in this job's temp folder, 0600.
+      - name: First attempt only
+        env:
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          [ "$ATTEMPT" = 1 ] || { echo "::error::dispatch again instead of re-running (attempt $ATTEMPT)"; exit 1; }
+      # Before the build, so the deploy job never waits for it. The private half stays in this job's temp folder, 0600.
       - name: The test issuer's key pair (the private half never leaves this job)
         run: |
           umask 077
@@ -285,11 +297,15 @@ jobs:
           if (JSON.parse(after.body).drainingUntilMs != null && (await call('DELETE', '/api/ops/drain')).status !== 200) fail('the undrain was refused')
           console.log(`runners ready ${Date.now() - start} ms after the step started`)
           EOF
-      # The set: with containers and without `full`, the agent set: every api and real spec file that calls
-      # needsContainer() (e2e/api/chat-kit.ts) or skips unless E2E_TEST_BUILD_REMOTE because it needs a container. With
-      # `full` (or no containers), every api and real spec. Discovered at the PR's head, never a fixed list, so a PR's new
-      # container spec joins the set. `only` narrows that set, and each named file must be in it. The run must execute
-      # (not skip) at least one test, and so must every file `only` names (JSON report, not the listing).
+      # The set. With containers and without `full`, the agent set, found at the PR's head (never a fixed list, so a spec the
+      # PR adds joins it): every api and real spec that carries the deployment gate (AGENT_GATE: chat-kit's
+      # needsContainer(), or test.skip(!process.env.E2E_TEST_BUILD_REMOTE, ...)), minus AGENT_SKIP (brand-skills: its
+      # container block's beforeAll calls writeSql, which skips on a deployed build, so nothing in it runs here). A spec
+      # that negates E2E_TEST_BUILD_REMOTE in any other form, or a helper other than chat-kit that gates on it, fails the
+      # run: the grep doesn't know it, and it would run nowhere. REMOTE_OUT is gated another way on purpose (it needs
+      # settings this workflow doesn't pass). With `full` (or no containers), every api and real spec; only that equals
+      # the ops repo's old run. `only` narrows the set, and each named file must be in it. Then the JSON report (not the
+      # listing) must show at least one test that ran, and, except with `full`, a test that ran in every file asked for.
       - name: Specs against the deployment
         if: inputs.specs
         working-directory: pr/app
@@ -298,13 +314,36 @@ jobs:
           FULL: ${{ inputs.full }}
           CONTAINERS: ${{ inputs.containers }}
           E2E_TEST_BUILD_REMOTE: "1"
+          AGENT_GATE: 'needsContainer\(\)|\.skip\(!process\.env\.E2E_TEST_BUILD_REMOTE[,)]'
+          ANY_GATE: '(^|[^!])!\s*process\.env\.E2E_TEST_BUILD_REMOTE'
+          AGENT_SKIP: e2e/api/brand-skills.spec.ts
+          REMOTE_OUT: e2e/api/read-side-remote.spec.ts e2e/api/morning-check-remote.spec.ts
         run: |
           export TEST_ISSUER_PRIVATE_JWK_FILE="$RUNNER_TEMP/issuer/private.jwk.json" PLAYWRIGHT_JSON_OUTPUT_NAME="$RUNNER_TEMP/report.json"
+          rc=0
+          gated=$(grep -lE -- "$AGENT_GATE" e2e/api/*.spec.ts e2e/real/*.spec.ts | LC_ALL=C sort) || rc=$?
+          [ "$rc" -le 1 ] || { echo "::error::the search for the deployment gate failed ($rc)"; exit 1; }
+          rc=0
+          loose=$(grep -lE -- "$ANY_GATE" e2e/api/*.spec.ts e2e/real/*.spec.ts | LC_ALL=C sort) || rc=$?
+          [ "$rc" -le 1 ] || { echo "::error::the search for other deployment gates failed ($rc)"; exit 1; }
+          for f in $loose; do
+            grep -qxF "$f" <<< "$gated" && continue
+            case " $REMOTE_OUT " in *" $f "*) continue ;; esac
+            echo "::error::$f negates E2E_TEST_BUILD_REMOTE in a form AGENT_GATE doesn't match: write it as test.skip(!process.env.E2E_TEST_BUILD_REMOTE, ...) or needsContainer(), or add it to REMOTE_OUT"; exit 1
+          done
+          rc=0
+          helpers=$(grep -rlE --include='*.ts' -- 'skip\(\s*!process\.env\.E2E_TEST_BUILD_REMOTE' e2e | grep -vE '\.spec\.ts$' | grep -vxF e2e/api/chat-kit.ts) || rc=$?
+          [ "$rc" -le 1 ] || { echo "::error::the search for gating helpers failed ($rc)"; exit 1; }
+          [ -z "$helpers" ] || { echo "::error::a helper gates on the deployment and AGENT_GATE doesn't know its call: $helpers"; exit 1; }
           if [ "$FULL" = true ] || [ "$CONTAINERS" != true ]; then
             mapfile -t base < <(ls e2e/api/*.spec.ts e2e/real/*.spec.ts)
             set_name="every api and real spec"
           else
-            mapfile -t base < <({ grep -lE 'needsContainer\(\)' e2e/api/*.spec.ts e2e/real/*.spec.ts; grep -lE 'skip\(\s*!process\.env\.E2E_TEST_BUILD_REMOTE.*container' e2e/api/*.spec.ts e2e/real/*.spec.ts; } | sort -u)
+            base=()
+            for f in $gated; do
+              case " $AGENT_SKIP " in *" $f "*) echo "Left out (AGENT_SKIP): $f"; continue ;; esac
+              base+=("$f")
+            done
             set_name="the agent set"
           fi
           [ "${#base[@]}" -gt 0 ] || { echo "::error::$set_name is empty at this commit"; exit 1; }
@@ -322,12 +361,26 @@ jobs:
           npx playwright test "${files[@]}" --project=api --project=real-desktop --project=real-phone --forbid-only --reporter=list,json 2>&1 \
             | sed -E 's/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/<jwt>/g' || rc=$?
           [ -f "$PLAYWRIGHT_JSON_OUTPUT_NAME" ] || { echo "::error::no JSON report (exit $rc)"; exit 1; }
-          jq -e '(.stats.expected + .stats.unexpected + .stats.flaky) >= 1' "$PLAYWRIGHT_JSON_OUTPUT_NAME" > /dev/null || { echo "::error::no test ran (all skipped or none matched)"; exit 1; }
-          # A file named in `only` must have run (not skipped) at least one test: listing isn't running.
-          for f in ${ONLY}; do
-            jq -e --arg f "$f" '[.suites[] | select(.file == $f) | .. | objects | select(has("tests")) | .tests[].status] | any(. != "skipped")' \
-              "$PLAYWRIGHT_JSON_OUTPUT_NAME" > /dev/null || { echo "::error::only: every test in e2e/$f skipped or none ran"; exit 1; }
-          done
+          per_file=("${files[@]}")
+          if [ "$FULL" = true ] && [ -z "$ONLY" ]; then per_file=(); fi
+          node --input-type=module - "$PLAYWRIGHT_JSON_OUTPUT_NAME" "${per_file[@]}" <<'EOF'
+          import { readFileSync } from 'node:fs'
+          const [file, ...specs] = process.argv.slice(2)
+          const report = JSON.parse(readFileSync(file, 'utf8'))
+          const walk = s => [...(s.specs ?? []).flatMap(sp => (sp.tests ?? []).map(t => ({ file: sp.file, status: t.status }))), ...(s.suites ?? []).flatMap(walk)]
+          const tests = (report.suites ?? []).flatMap(walk)
+          const { expected = 0, unexpected = 0, flaky = 0, skipped = 0 } = report.stats ?? {}
+          console.log(`ran ${expected + unexpected + flaky} tests (${expected} passed, ${unexpected} failed, ${flaky} flaky), ${skipped} skipped`)
+          let bad = expected + unexpected + flaky === 0
+          if (bad) console.log('::error::no test ran (all skipped or none matched)')
+          for (const spec of specs) {
+            const mine = tests.filter(t => t.file && (spec === t.file || spec.endsWith(`/${t.file}`)))
+            if (mine.some(t => t.status !== 'skipped')) continue
+            console.log(`::error::${spec}: no test ran (${mine.length} listed, all skipped)`)
+            bad = true
+          }
+          if (bad) process.exit(1)
+          EOF
           exit "$rc"
 
   # main's code only, and the token. Starts with pr-code (setup overlaps the build), then waits for the build.
@@ -346,11 +399,14 @@ jobs:
       SHA: ${{ needs.check.outputs.sha }}
       CONTAINERS: ${{ inputs.containers }}
     steps:
-      - name: Only from main
+      # "Re-run failed jobs" skips check: this job refuses attempt 2 itself, so it never deploys attempt 1's artifacts.
+      - name: Only from main, first attempt
         env:
           REF: ${{ github.ref }}
+          ATTEMPT: ${{ github.run_attempt }}
         run: |
           [ "$REF" = refs/heads/main ] || { echo "::error::sandbox-test-deploy runs only from main (this run: $REF)"; exit 1; }
+          [ "$ATTEMPT" = 1 ] || { echo "::error::dispatch again instead of re-running (attempt $ATTEMPT)"; exit 1; }
       # Secrets, not variables, so GitHub masks them in every line of this job.
       - name: The sandbox account and zone are set
         env:

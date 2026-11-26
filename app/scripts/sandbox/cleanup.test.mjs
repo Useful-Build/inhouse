@@ -14,9 +14,9 @@ import { runTeardown } from './teardown.mjs'
 import { ZONE, app } from './test-support.mjs'
 
 const LISTING = {
-  workers: ['wasimjalali-com', 'usefulapply', 'inhouse-app', 'inhouse-app-preview', 'inhouse-sbx-product', 'inhouse-sbx-pr12', 'inhouse-sbx-pr13', 'inhouse-sbx-pr14', 'inhouse-sbx-pr15-x'],
+  workers: ['live-site', 'live-product', 'inhouse-app', 'inhouse-app-preview', 'inhouse-sbx-product', 'inhouse-sbx-pr12', 'inhouse-sbx-pr13', 'inhouse-sbx-pr14', 'inhouse-sbx-pr15-x'],
   domains: [
-    { id: 'dom-live', hostname: 'shop.example.test', service: 'usefulapply' },
+    { id: 'dom-live', hostname: 'shop.example.test', service: 'live-product' },
     { id: 'dom-cand', hostname: `inhouse-sbx-brand.${ZONE}`, service: 'inhouse-sbx-product' },
     { id: 'dom-12b', hostname: `inhouse-sbx-pr12-brand.${ZONE}`, service: 'inhouse-sbx-pr12' },
     { id: 'dom-12t', hostname: `inhouse-sbx-pr12-team.${ZONE}`, service: 'inhouse-sbx-pr12' },
@@ -24,14 +24,15 @@ const LISTING = {
     { id: 'dom-13b', hostname: `inhouse-sbx-pr13-brand.${ZONE}`, service: 'inhouse-sbx-pr13' },
   ],
   d1: [
-    { name: 'usefulapply-db', uuid: 'u-live' }, { name: 'inhouse-sbx-db', uuid: 'u-cand' }, { name: 'inhouse-sbx-pr12-db', uuid: 'u-12' },
+    { name: 'live-product-db', uuid: 'u-live' }, { name: 'inhouse-sbx-db', uuid: 'u-cand' }, { name: 'inhouse-sbx-pr12-db', uuid: 'u-12' },
     { name: 'inhouse-sbx-pr13-db', uuid: 'u-13' }, { name: 'inhouse-sbx-pr15-db', uuid: 'u-15' },
   ],
-  r2: ['usefulapply-files', 'inhouse-sbx-files', 'inhouse-sbx-pr12-files', 'inhouse-sbx-pr15-files', 'inhouse-sbx-pr15-other'],
+  r2: ['live-product-files', 'inhouse-sbx-files', 'inhouse-sbx-pr12-files', 'inhouse-sbx-pr15-files', 'inhouse-sbx-pr15-other'],
   containers: [
     { id: 'c-live', name: 'live-product-runner' }, { id: 'c-cand', name: 'inhouse-sbx-product' }, { id: 'c-12', name: 'inhouse-sbx-pr12' },
     { id: 'c-13', name: 'inhouse-sbx-pr13' }, { id: 'c-15x', name: 'inhouse-sbx-pr15-runner' },
   ],
+  images: [{ name: 'live-product', tags: ['v1'] }],
 }
 // PR 12 and 15 closed, 13 open, 14 unreadable (deleted, private, rate limited).
 const STATES = new Map([[12, 'closed'], [13, 'open'], [14, 'unknown'], [15, 'closed']])
@@ -69,7 +70,7 @@ describe('planCleanup (failures 1 to 4)', () => {
     assert.equal(cleanupResult(planCleanup(LISTING, STATES, { app, zone: ZONE }), []).code, 1)
   })
   test('a closed PR whose only leftover is its container application is still found and cleaned', () => {
-    const only = { workers: [], domains: [], d1: [], r2: [], containers: [{ id: 'c-16', name: 'inhouse-sbx-pr16' }] }
+    const only = { workers: [], domains: [], d1: [], r2: [], containers: [{ id: 'c-16', name: 'inhouse-sbx-pr16' }], images: [] }
     const plan = planCleanup(only, new Map([[16, 'closed']]), { app, zone: ZONE })
     assert.deepEqual(plan.closed, [16])
     assert.deepEqual(plan.deletions, [{ pr: 16, kind: 'container', name: 'inhouse-sbx-pr16', id: 'c-16' }])
@@ -89,7 +90,7 @@ function fakeCf(objects = {}) {
     calls,
     async r2Keys(bucket) { calls.push(['r2Keys', bucket]); return objects[bucket] ?? [] },
     detachDomain: rec('detachDomain'), deleteWorker: rec('deleteWorker'), deleteD1: rec('deleteD1'), deleteContainerApp: rec('deleteContainerApp'),
-    deleteR2Object: rec('deleteR2Object'), deleteR2: rec('deleteR2'),
+    deleteR2Object: rec('deleteR2Object'), deleteR2: rec('deleteR2'), deleteImage: rec('deleteImage'),
   }
 }
 
@@ -136,13 +137,15 @@ describe('runTeardown (failures 5, 6)', () => {
   })
   test('a tampered deletion is refused before any call', async () => {
     for (const bad of [
-      { pr: 12, kind: 'worker', name: 'usefulapply' },
+      { pr: 12, kind: 'worker', name: 'live-product' },
       { pr: 12, kind: 'd1', name: 'inhouse-sbx-db', id: 'u-cand' },
       { pr: 12, kind: 'r2', name: 'inhouse-sbx-pr13-files' },
       { pr: 12, kind: 'domain', name: 'shop.example.test', id: 'dom-live' },
       { pr: 12, kind: 'unknown', name: 'inhouse-sbx-pr12' },
       { pr: 12, kind: 'container', name: 'inhouse-sbx-product', id: 'c-cand' },
       { pr: 12, kind: 'container', name: 'inhouse-sbx-pr13', id: 'c-13' },
+      { pr: 12, kind: 'image', name: 'inhouse-sbx-pr13', tag: 'x' },
+      { pr: 12, kind: 'image', name: 'live-product', tag: 'v1' },
     ]) {
       const cf = fakeCf()
       await assert.rejects(runTeardown(cf, [bad], { app, zone: ZONE, dryRun: false, log: () => {} }), /refusing to delete/)
@@ -164,5 +167,32 @@ describe('prStates', () => {
     assert.deepEqual([...states], [[12, 'closed'], [13, 'open'], [14, 'unknown'], [15, 'unknown']])
     assert.deepEqual(seen.map(s => s[0]), [12, 13, 14, 15].map(n => `https://api.github.com/repos/Useful-Build/inhouse/pulls/${n}`))
     assert.ok(seen.every(s => s[1] === null))
+  })
+})
+
+// The runner images a PR's deploys pushed (inhouse-sbx-pr<N>:<sha>) are torn down with the rest. Ways it could fail:
+// another PR's or a live product's image goes, a closed PR whose only leftover is an image is never found, the tag a
+// deploy just pushed is deleted before the deploy uses it.
+describe('runner images', () => {
+  const listing = {
+    workers: [], domains: [], d1: [], r2: [], containers: [],
+    images: [{ name: 'live-product', tags: ['v1'] }, { name: 'inhouse-sbx-product', tags: ['cand'] }, { name: 'inhouse-sbx-pr12', tags: ['aaa', 'bbb'] }, { name: 'inhouse-sbx-pr13', tags: ['ccc'] }, { name: 'inhouse-sbx-pr12-other', tags: ['x'] }],
+  }
+  test('a closed PR\'s tags go, found from the image alone; other PRs\' and live images stay', () => {
+    const plan = planCleanup(listing, new Map([[12, 'closed'], [13, 'open']]), { app, zone: ZONE })
+    assert.deepEqual(plan.closed, [12])
+    assert.deepEqual(plan.deletions, [{ pr: 12, kind: 'image', name: 'inhouse-sbx-pr12', tag: 'aaa' }, { pr: 12, kind: 'image', name: 'inhouse-sbx-pr12', tag: 'bbb' }])
+    assert.ok(plan.skipped.some(s => s.name === 'inhouse-sbx-pr12-other'))
+  })
+  test('keepImageTags keeps the tag a deploy just pushed', async () => {
+    const { planTeardown } = await import('./teardown.mjs')
+    const { deletions } = planTeardown(listing, [12], { app, zone: ZONE, keepImageTags: ['bbb'] })
+    assert.deepEqual(deletions, [{ pr: 12, kind: 'image', name: 'inhouse-sbx-pr12', tag: 'aaa' }])
+  })
+  test('runTeardown deletes each tag by name and tag', async () => {
+    const cf = fakeCf()
+    const plan = planCleanup(listing, new Map([[12, 'closed'], [13, 'open']]), { app, zone: ZONE })
+    await runTeardown(cf, plan.deletions, { app, zone: ZONE, dryRun: false, log: () => {} })
+    assert.deepEqual(cf.calls, [['deleteImage', 'inhouse-sbx-pr12', 'aaa'], ['deleteImage', 'inhouse-sbx-pr12', 'bbb']])
   })
 })

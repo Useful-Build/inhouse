@@ -183,3 +183,59 @@ describe('createR2 after a delete (10073: same-name recreation blocked)', () => 
     assert.deepEqual([s.sleeps, s.logs], [[], []])
   })
 })
+
+describe('custom domains', () => {
+  test('a second page fails loud rather than hiding a domain a teardown would skip', async () => {
+    const f = fakeFetch(() => ({ success: true, result: [{ id: 'd1', hostname: 'h', service: 's' }], result_info: { total_pages: 2 } }))
+    const cf = cloudflare({ token: TOKEN, accountId: ACCOUNT, fetchImpl: f.fetchImpl })
+    await assert.rejects(cf.domains(), /more than one page/)
+  })
+})
+
+// The registry, as wrangler 4.162 reaches it. Ways it could fail: the registry password reaches a URL or an error; a
+// name or tag that isn't plain builds another path; another account's repository is listed as ours; an image that is
+// already gone stops a teardown.
+describe('runner images in the registry', () => {
+  /** Answers the credentials call, then registry calls by method and path. */
+  function registry(answers) {
+    const seen = []
+    const fetchImpl = async (url, init) => {
+      const u = new URL(url)
+      seen.push([init.method, String(url), init.headers.authorization])
+      if (u.host === 'api.cloudflare.com') return { ok: true, status: 200, json: async () => ({ success: true, result: { password: 'registry-secret' } }) }
+      const [status, body] = answers(init.method, u.pathname) ?? [200, {}]
+      return { ok: status < 300, status, json: async () => body }
+    }
+    return { seen, fetchImpl }
+  }
+  const basic = `Basic ${Buffer.from('v1:registry-secret').toString('base64')}`
+  test('lists this account\'s repositories with their tags, the prefix dropped', async () => {
+    const r = registry(() => [200, { repositories: { [`${ACCOUNT}/inhouse-sbx-pr12`]: ['aaa'], [`/${ACCOUNT}/inhouse-sbx-pr13`]: ['b'], 'ffffffffffffffffffffffffffffffff/other': ['c'] } }])
+    const cf = cloudflare({ token: TOKEN, accountId: ACCOUNT, fetchImpl: r.fetchImpl })
+    assert.deepEqual(await cf.images(), [{ name: 'inhouse-sbx-pr12', tags: ['aaa'] }, { name: 'inhouse-sbx-pr13', tags: ['b'] }])
+    assert.deepEqual(r.seen.map(s => s.slice(0, 2)), [
+      ['POST', `${base}/containers/registries/registry.cloudflare.com/credentials`],
+      ['GET', 'https://registry.cloudflare.com/v2/_catalog?tags=true'],
+    ])
+    assert.equal(r.seen[1][2], basic)
+  })
+  test('deletes a tag: HEAD, DELETE the manifest, then collect layers; a tag already gone is skipped', async () => {
+    const r = registry((method, path) => (path.endsWith('/gone') && method === 'HEAD' ? [404, {}] : [200, {}]))
+    const cf = cloudflare({ token: TOKEN, accountId: ACCOUNT, fetchImpl: r.fetchImpl })
+    assert.deepEqual(await cf.deleteImage('inhouse-sbx-pr12', 'aaa'), { deleted: true })
+    assert.deepEqual(await cf.deleteImage('inhouse-sbx-pr12', 'gone'), { deleted: false })
+    const m = `https://registry.cloudflare.com/v2/${ACCOUNT}/inhouse-sbx-pr12/manifests`
+    assert.deepEqual(r.seen.filter(s => !s[1].includes('api.cloudflare.com')).map(s => s.slice(0, 2)), [
+      ['HEAD', `${m}/aaa`], ['DELETE', `${m}/aaa`], ['PUT', 'https://registry.cloudflare.com/v2/gc/layers'], ['HEAD', `${m}/gone`],
+    ])
+  })
+  test('refuses a name or tag that isn\'t plain, before any call; a failed delete names no password', async () => {
+    const r = registry(method => (method === 'DELETE' ? [500, {}] : [200, {}]))
+    const cf = cloudflare({ token: TOKEN, accountId: ACCOUNT, fetchImpl: r.fetchImpl })
+    for (const [name, tag] of [['../x', 'a'], ['inhouse-sbx-pr12', '../a'], ['inhouse-sbx-pr12', ''], ['Upper', 'a'], ['inhouse-sbx-pr12', 'a/b']]) {
+      await assert.rejects(cf.deleteImage(name, tag), /not a plain name and tag/)
+    }
+    assert.deepEqual(r.seen, [])
+    await assert.rejects(cf.deleteImage('inhouse-sbx-pr12', 'aaa'), err => !String(err.message).includes('registry-secret') && /answered 500/.test(err.message))
+  })
+})

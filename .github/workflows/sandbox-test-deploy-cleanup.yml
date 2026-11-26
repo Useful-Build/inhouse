@@ -2,8 +2,8 @@
 # sweep (a close whose run failed, or a deploy that finished after the close), and by hand:
 #   gh workflow run sandbox-test-deploy-cleanup                    (deletes)
 #   gh workflow run sandbox-test-deploy-cleanup -f dry_run=true    (only prints the plan)
-# app/scripts/sandbox/cleanup.mjs lists the account's Workers, custom domains, D1, R2 and container applications, keeps
-# only exact per-PR names (names.mjs perPrNames) whose PR is closed, empties each bucket before deleting it and logs
+# app/scripts/sandbox/cleanup.mjs lists the account's Workers, custom domains, D1, R2, container applications and registry
+# images, keeps only exact per-PR names (names.mjs perPrNames) whose PR is closed, empties each bucket before deleting it and logs
 # every deletion. Nothing from any PR runs here: pull_request_target runs this file and the scripts as they are on main
 # (the base branch), and the job never checks out the PR. The `sandbox` environment admits only main. (The private ops
 # repo's test-deploy-cleanup.yml sweeps the same names daily until it's retired; both delete only closed PRs' names.)

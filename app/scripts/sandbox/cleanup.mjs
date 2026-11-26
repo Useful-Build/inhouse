@@ -2,8 +2,8 @@
 //   node scripts/sandbox/cleanup.mjs --app <app repo main checkout>/app [--dry-run]
 // Env: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID (must equal CF_SANDBOX_ACCOUNT_ID), CF_SANDBOX_ACCOUNT_ID, SBX_ZONE;
 // GITHUB_TOKEN (optional, for the API rate limit; the app repo is public).
-// It lists the account's Workers, custom domains, D1 databases and R2 buckets, finds every PR a per-PR name belongs to
-// (app repo's names.mjs), reads each PR's state from GitHub, and deletes exactly the closed PRs' names
+// It lists the account's Workers, custom domains, D1 databases, R2 buckets, container applications and registry images,
+// finds every PR a per-PR name belongs to (app repo's names.mjs), reads each PR's state from GitHub, and deletes exactly the closed PRs' names
 // (lib/teardown.mjs). A PR whose state it can't read is kept, and the run then exits 1 after the safe deletions, so
 // the failure is seen. Every deletion and every skip is logged. Exit 0 done, 1 a deletion, a read or a PR state failed,
 // 2 usage.

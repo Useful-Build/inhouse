@@ -7,7 +7,8 @@
 //      lock (`--sandbox --per-pr N`) again, here, right before wrangler sees them;
 //   2. every name this run touches is PR N's (perPrNames), checked again right before each call;
 //   3. PR N's earlier deployment is torn down (teardown.mjs: its custom domains, Worker, hub, container application, D1,
-//      R2), so every deploy starts from an empty, freshly seeded database;
+//      R2, and its older runner image tags; the one this run pushed stays), so every deploy starts from an empty, freshly
+//      seeded database;
 //   4. its D1 and R2 are created (REST), `wrangler d1 migrations apply <d1> --remote` runs with the migrate config,
 //      seed-remote.mjs seeds the invented brand, and `wrangler deploy` runs with the checked config and nothing on the
 //      command line that could change it (no --name, --route, --var or --env).
@@ -45,6 +46,15 @@ export function checkHub({ app, dir, product, hubName, accountId, zone, mode }) 
   return file
 }
 
+/** The tag of the runner image a checked product config names (`registry.cloudflare.com/<account>/<image>:<tag>`), or null. */
+export function pushedImageTag(config) {
+  const image = config.containers?.[0]?.image
+  if (typeof image !== 'string') return null
+  const m = /^registry\.cloudflare\.com\/[0-9a-f]{32}\/[a-z0-9-]+:([A-Za-z0-9_][A-Za-z0-9_.-]{0,127})$/.exec(image)
+  if (!m) throw new Error(`the config's container image ${JSON.stringify(image)} is not a registry reference with a tag`)
+  return m[1]
+}
+
 // The product Worker's deploy replaces its containers at once: wrangler's default is a gradual rollout (steps [10, 100], grace 0)
 // that SIGTERMs old instances 1 to 2 minutes later, under live chat turns (developers.cloudflare.com/containers/configuration/rollouts).
 const ROLLOUT = '--containers-rollout=immediate'
@@ -69,7 +79,9 @@ export async function deploy({ app, pr, dir, accountId, zone, cf, wrangler, seed
   const hub = checkHub({ app, dir, product: configs[0], hubName: names.hub, accountId, zone, mode: { perPr: pr } })
   // 2 and 3. Tear down what's there, by exact name.
   const listing = await listAll(cf)
-  const { deletions, skipped } = planTeardown(listing, [pr], { app, zone })
+  // The image this deploy pushed (the checked config names it) stays; PR N's older tags go.
+  const pushed = pushedImageTag(configs[0])
+  const { deletions, skipped } = planTeardown(listing, [pr], { app, zone, keepImageTags: pushed ? [pushed] : [] })
   for (const s of skipped) log(`left alone: ${s.name} (${s.why})`)
   await runTeardown(cf, deletions, { app, zone, dryRun: false, log })
   // 4. Create, migrate, seed, deploy.

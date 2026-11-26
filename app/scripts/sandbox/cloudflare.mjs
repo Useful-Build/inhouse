@@ -7,6 +7,14 @@
 // .../r2/subresources/buckets/subresources/objects/methods/list/ (cursor, is_truncated), and the bucket and object
 // delete calls on .../r2/subresources/buckets/, and .../containers/ (list and delete applications).
 const BASE = 'https://api.cloudflare.com/client/v4'
+// The container registry, as wrangler 4.162's `containers images list` and `images delete` reach it (read in its source,
+// src/cloudchamber/images/images.ts): a 5-minute credential from POST .../containers/registries/<registry>/credentials
+// (Basic `v1:<password>`), then the registry's own API: /v2/_catalog?tags=true, HEAD and DELETE
+// /v2/<account>/<image>/manifests/<tag>, and PUT /v2/gc/layers.
+const REGISTRY = 'https://registry.cloudflare.com'
+const MANIFEST_ACCEPT = 'application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'
+const IMAGE_NAME = /^[a-z0-9][a-z0-9-]{0,127}$/
+const IMAGE_TAG = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/
 
 export class CloudflareError extends Error {
   /** `status` and `errors` ([{ code, message }]) are set on an API answer, for callers that act on one code. */
@@ -58,15 +66,23 @@ export function cloudflare({ token, accountId, fetchImpl = fetch, now = Date.now
     }
     return { status: res.status, json }
   }
+  /** A short-lived Basic header for the registry; the password is never logged. */
+  async function registryAuth() {
+    const { json } = await call('POST', '/containers/registries/registry.cloudflare.com/credentials', { body: { expiration_minutes: 5, permissions: ['pull', 'push'] } })
+    const password = json?.result?.password
+    if (typeof password !== 'string' || !password) throw new CloudflareError('the registry credentials answer has no password')
+    return `Basic ${Buffer.from(`v1:${password}`).toString('base64')}`
+  }
   return {
     /** Every Worker script's name. */
     async workers() {
       const { json } = await call('GET', '/workers/scripts')
       return (json.result ?? []).map(s => s.id)
     },
-    /** Every Worker custom domain: { id, hostname, service }. */
+    /** Every Worker custom domain: { id, hostname, service }. A second page fails rather than hides a domain. */
     async domains() {
       const { json } = await call('GET', '/workers/domains')
+      if ((json.result_info?.total_pages ?? 1) > 1) throw new CloudflareError('the custom domain listing has more than one page')
       return (json.result ?? []).map(d => ({ id: d.id, hostname: d.hostname, service: d.service }))
     },
     /** Every D1 database: { name, uuid }, all pages. */
@@ -145,5 +161,31 @@ export function cloudflare({ token, accountId, fetchImpl = fetch, now = Date.now
       return (json.result ?? []).map(a => ({ id: a.id, name: a.name }))
     },
     deleteContainerApp: id => call('DELETE', `/containers/applications/${seg(id)}`),
+    /** Every repository in the account's container registry with its tags: { name, tags }, the account prefix dropped. */
+    async images() {
+      const auth = await registryAuth()
+      const res = await fetchImpl(new URL(`${REGISTRY}/v2/_catalog?tags=true`), { method: 'GET', headers: { authorization: auth } })
+      if (!res.ok) throw new CloudflareError(`the registry catalog answered ${res.status}`, { status: res.status })
+      const repos = (await res.json())?.repositories ?? {}
+      const prefix = `${accountId}/`
+      return Object.entries(repos).map(([repo, tags]) => ({ name: repo.replace(/^\/+/, ''), tags: Array.isArray(tags) ? tags : [] }))
+        .filter(r => r.name.startsWith(prefix)).map(r => ({ name: r.name.slice(prefix.length), tags: r.tags }))
+    },
+    /** Deletes one image tag (its manifest), then asks the registry to collect unreferenced layers. */
+    async deleteImage(name, tag) {
+      if (!IMAGE_NAME.test(name ?? '') || !IMAGE_TAG.test(tag ?? '')) throw new CloudflareError(`refusing to delete image ${JSON.stringify(`${name}:${tag}`)}: not a plain name and tag`)
+      const auth = await registryAuth()
+      const manifest = new URL(`${REGISTRY}/v2/${accountId}/${name}/manifests/${tag}`)
+      if (manifest.pathname !== `/v2/${accountId}/${name}/manifests/${tag}`) throw new CloudflareError(`refusing to delete image ${name}:${tag}: the URL resolves elsewhere`)
+      const headers = { authorization: auth, accept: MANIFEST_ACCEPT }
+      const head = await fetchImpl(manifest, { method: 'HEAD', headers })
+      if (head.status === 404) return { deleted: false }
+      if (!head.ok) throw new CloudflareError(`HEAD image ${name}:${tag} answered ${head.status}`, { status: head.status })
+      const del = await fetchImpl(manifest, { method: 'DELETE', headers })
+      if (!del.ok) throw new CloudflareError(`DELETE image ${name}:${tag} answered ${del.status}`, { status: del.status })
+      const gc = await fetchImpl(new URL(`${REGISTRY}/v2/gc/layers`), { method: 'PUT', headers: { authorization: auth, 'content-type': 'application/json' } })
+      if (!gc.ok) throw new CloudflareError(`the registry's layer collection answered ${gc.status}`, { status: gc.status })
+      return { deleted: true }
+    },
   }
 }

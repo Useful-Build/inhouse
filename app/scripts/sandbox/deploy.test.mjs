@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, test } from 'vitest'
 import { main as writeConfig } from './deploy-config.mjs'
-import { checkHub, deploy, mainParts } from './deploy.mjs'
+import { checkHub, deploy, mainParts, pushedImageTag } from './deploy.mjs'
 import { ACCOUNT, APP_DIR, ZONE, app } from './test-support.mjs'
 
 const ENV = { CF_SANDBOX_ACCOUNT_ID: ACCOUNT, SBX_ZONE: ZONE }
@@ -53,6 +53,7 @@ const LISTING = {
   d1: [{ name: 'inhouse-sbx-db', uuid: 'u-cand' }, { name: 'inhouse-sbx-pr12-db', uuid: 'u-12' }, { name: 'inhouse-sbx-pr13-db', uuid: 'u-13' }],
   r2: ['inhouse-sbx-files', 'inhouse-sbx-pr12-files', 'inhouse-sbx-pr13-files'],
   containers: [{ id: 'c-cand', name: 'inhouse-sbx-product' }, { id: 'c-12', name: 'inhouse-sbx-pr12' }, { id: 'c-13', name: 'inhouse-sbx-pr13' }],
+  images: [{ name: 'inhouse-sbx-product', tags: ['cand'] }, { name: 'inhouse-sbx-pr13', tags: ['t13'] }],
 }
 
 /** Fakes for the outside world, recording every call in one ordered list. */
@@ -62,6 +63,7 @@ function world(listing = LISTING) {
   const cf = {
     workers: async () => listing.workers, domains: async () => listing.domains, d1: async () => listing.d1, r2: async () => listing.r2,
     containerApps: async () => listing.containers, deleteContainerApp: rec('deleteContainerApp'),
+    images: async () => listing.images, deleteImage: rec('deleteImage'),
     r2Keys: async b => { calls.push(['r2Keys', b]); return [] },
     detachDomain: rec('detachDomain'), deleteWorker: rec('deleteWorker'), deleteD1: rec('deleteD1'), deleteR2Object: rec('deleteR2Object'),
     deleteR2: rec('deleteR2'), createD1: rec('createD1'), createR2: rec('createR2'),
@@ -83,9 +85,20 @@ describe('deploy.mjs (failures 2 to 4)', () => {
       ['wrangler', 'deploy', '--config', worker, '--containers-rollout=immediate'],
     ])
   })
+  test('PR 12\'s older runner image tags go with the teardown; no other image is touched', async () => {
+    const dir = await deployDir()
+    const w = world({ ...LISTING, images: [...LISTING.images, { name: 'inhouse-sbx-pr12', tags: ['old1', 'old2'] }] })
+    await deploy({ app, pr: 12, dir, accountId: ACCOUNT, zone: ZONE, ...w })
+    assert.deepEqual(w.calls.filter(c => c[0] === 'deleteImage'), [['deleteImage', 'inhouse-sbx-pr12', 'old1'], ['deleteImage', 'inhouse-sbx-pr12', 'old2']])
+  })
+  test('pushedImageTag: the tag the checked config names, none without containers, loud on anything else', () => {
+    assert.equal(pushedImageTag({ containers: [{ image: `registry.cloudflare.com/${ACCOUNT}/inhouse-sbx-pr12:0123abc` }] }), '0123abc')
+    assert.equal(pushedImageTag({}), null)
+    assert.throws(() => pushedImageTag({ containers: [{ image: './Dockerfile' }] }), /not a registry reference/)
+  })
   test('a first deploy (nothing there yet) only creates', async () => {
     const dir = await deployDir()
-    const w = world({ workers: [], domains: [], d1: [], r2: [], containers: [] })
+    const w = world({ workers: [], domains: [], d1: [], r2: [], containers: [], images: [] })
     await deploy({ app, pr: 12, dir, accountId: ACCOUNT, zone: ZONE, ...w })
     assert.deepEqual(w.calls.map(c => c[0]), ['createD1', 'createR2', 'wrangler', 'seed', 'wrangler'])
   })

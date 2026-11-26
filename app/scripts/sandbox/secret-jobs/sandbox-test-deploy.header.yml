@@ -1,0 +1,75 @@
+# Deploys one same-repo PR's test build to the sandbox Cloudflare account and runs its specs there, on GitHub's hosted
+# runners (moved from the private ops repo's test-deploy.yml, which stays until this one is proven). By hand only:
+#   gh workflow run sandbox-test-deploy -f pr=<N> -f sha=<the PR's head SHA>                 (agent set on the container)
+#   gh workflow run sandbox-test-deploy -f pr=<N> -f sha=<head> -f only="api/runs.spec.ts"  (narrower)
+#   gh workflow run sandbox-test-deploy -f pr=<N> -f sha=<head> -f full=true                (every api and real spec)
+# PR N gets Worker inhouse-sbx-pr<N> (and its hub inhouse-sbx-pr<N>-hub) on https://inhouse-sbx-pr<N>-brand.<zone> and
+# -team.<zone>, its own D1, R2 and container application, all named by app/scripts/sandbox/names.mjs perPrNames(N). A
+# redeploy of the same PR tears the old one down first; sandbox-test-deploy-cleanup.yml deletes it when the PR closes.
+# Runs of different PRs go in parallel; runs of one PR queue (concurrency below).
+#
+# Trust. The PR's code is untrusted, and everything a run prints or uploads is public.
+# - Two jobs run side by side, never mixed. `pr-code` runs the PR's code (install, build, specs) with no secret and no
+#   token permission but `actions: read`. `deploy` holds CF_SANDBOX_TOKEN through the `sandbox` environment (deployment
+#   branches: main only) and runs only main's code: this workflow (dispatched from main; the first step refuses any
+#   other ref), main's scripts at the dispatched commit, main's lockfile with `npm ci --ignore-scripts`, main's wrangler
+#   by path. It never checks out or runs the PR: from the PR it takes only the build's plain files, copied out by an
+#   exact file list (scripts/sandbox/deploy-config.mjs), and only after the sandbox lock passes on the final config.
+# - The test issuer's key pair is made in `pr-code`, its only user. Only the public JWKS leaves it (an artifact); the
+#   private half stays in that job's temp folder. The build and the image cross the same way. Both are built from the
+#   public repo's code, so a public artifact holds nothing new; they live 1 day.
+# - The account id and the zone come in as secrets, so GitHub masks them in every log line (a variable would print in
+#   the first step that reads it). The specs' output goes through a filter that hides any JWT it prints.
+# - Only same-repo PRs, open, at exactly the given head SHA (forks never deploy). Dispatching needs write access.
+# - The sandbox account also holds live products (names.mjs). The token's reach is that account, not the inhouse-sbx-
+#   names: the lock and the name guard confine what this workflow does, not what the token could do if it leaked.
+# - `pr-code` runs on refs/heads/main, so the PR's code can write Actions caches in main's scope (its runtime token,
+#   which `permissions:` doesn't govern). So no job that holds a secret may restore a cache: no actions/cache, and every
+#   setup-node has package-manager-cache: false (app/scripts/sandbox/workflows.test.mjs holds every workflow to it).
+# - The `deploy` job is frozen in app/scripts/sandbox/workflows.test.mjs (SECRET_JOBS): changing it means changing that
+#   copy in the same PR, beside the rule checks that test makes.
+# After a failure, dispatch again, never re-run: every job refuses a re-run attempt (its artifacts would clash).
+name: sandbox-test-deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: The PR number (same repo, open).
+        required: true
+        type: string
+      sha:
+        description: The PR's head commit SHA (40 hex). The run refuses any other.
+        required: true
+        type: string
+      containers:
+        description: Build and push the runner image (the test build has the runner container).
+        type: boolean
+        default: true
+      specs:
+        description: Run specs against the deployment.
+        type: boolean
+        default: true
+      full:
+        description: Run every api and real spec, not only the agent set (the specs that drive the container).
+        type: boolean
+        default: false
+      only:
+        description: 'Narrow the set to these spec files, space-separated, e.g. "api/runs.spec.ts real/socket-csp.spec.ts".'
+        type: string
+        default: ''
+
+permissions: {}
+
+concurrency:
+  group: sandbox-test-deploy-pr-${{ inputs.pr }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  RUN_ID: ${{ github.run_id }}
+  REPO: ${{ github.repository }}
+

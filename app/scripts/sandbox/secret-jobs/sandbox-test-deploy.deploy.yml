@@ -1,0 +1,115 @@
+  deploy:
+    name: deploy
+    needs: check
+    runs-on: ubuntu-latest
+    # The wait for the build (up to 30 min) and the deploy (~10).
+    timeout-minutes: 45
+    environment: sandbox
+    permissions:
+      contents: read
+      actions: read
+    env:
+      PR: ${{ needs.check.outputs.pr }}
+      SHA: ${{ needs.check.outputs.sha }}
+      CONTAINERS: ${{ inputs.containers }}
+    steps:
+      # "Re-run failed jobs" skips check: this job refuses attempt 2 itself, so it never deploys attempt 1's artifacts.
+      - name: Only from main, first attempt
+        env:
+          REF: ${{ github.ref }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          [ "$REF" = refs/heads/main ] || { echo "::error::sandbox-test-deploy runs only from main (this run: $REF)"; exit 1; }
+          [ "$ATTEMPT" = 1 ] || { echo "::error::dispatch again instead of re-running (attempt $ATTEMPT)"; exit 1; }
+      # Secrets, not variables, so GitHub masks them in every line of this job.
+      - name: The sandbox account and zone are set
+        env:
+          CF_SANDBOX_ACCOUNT_ID: ${{ secrets.CF_SANDBOX_ACCOUNT_ID }}
+          SBX_ZONE: ${{ secrets.SBX_ZONE }}
+          CF_SANDBOX_TOKEN: ${{ secrets.CF_SANDBOX_TOKEN }}
+        run: |
+          for v in CF_SANDBOX_ACCOUNT_ID SBX_ZONE CF_SANDBOX_TOKEN; do [ -n "${!v}" ] || { echo "::error::the secret $v is not set"; exit 1; }; done
+      # main at the dispatched commit (this workflow's own), never the PR.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: main
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: main/app/.nvmrc
+          package-manager-cache: false
+      # main's lockfile, no install scripts: wrangler and what seed-remote imports.
+      - working-directory: main/app
+        run: npm ci --ignore-scripts
+      - name: Wait for the build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          want=(issuer-jwks build)
+          if [ "$CONTAINERS" = true ]; then want+=(image); fi
+          deadline=$((SECONDS + 1800))
+          while :; do
+            have=$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" --jq '.artifacts[].name')
+            missing=()
+            for n in "${want[@]}"; do grep -qxF "$n" <<< "$have" || missing+=("$n"); done
+            if [ "${#missing[@]}" -eq 0 ]; then echo "the build is in"; break; fi
+            state=$(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT/jobs" --paginate --jq '.jobs[] | select(.name == "pr-code") | .status')
+            [ "$state" != completed ] || { echo "::error::pr-code ended without ${missing[*]}"; exit 1; }
+            [ "$SECONDS" -lt "$deadline" ] || { echo "::error::no ${missing[*]} within 30 minutes"; exit 1; }
+            sleep 15
+          done
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: build
+          path: ${{ runner.temp }}/artifact
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: issuer-jwks
+          path: ${{ runner.temp }}/issuer
+      - if: inputs.containers
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image
+          path: ${{ runner.temp }}/image
+      - name: Write PR N's config (exact file list, the lock in process)
+        env:
+          CF_SANDBOX_ACCOUNT_ID: ${{ secrets.CF_SANDBOX_ACCOUNT_ID }}
+          SBX_ZONE: ${{ secrets.SBX_ZONE }}
+        run: |
+          tag=()
+          if [ "$CONTAINERS" = true ]; then tag=(--image-tag "$SHA"); fi
+          node main/app/scripts/sandbox/deploy-config.mjs --app main/app --pr "$PR" --artifact "$RUNNER_TEMP/artifact" \
+            --out "$RUNNER_TEMP/deploy" --jwks "$RUNNER_TEMP/issuer/jwks.json" "${tag[@]}"
+      - name: The sandbox lock on the final files
+        working-directory: main/app
+        env:
+          CF_SANDBOX_ACCOUNT_ID: ${{ secrets.CF_SANDBOX_ACCOUNT_ID }}
+          SBX_ZONE: ${{ secrets.SBX_ZONE }}
+        run: |
+          node scripts/check-product-config.mjs --sandbox --per-pr "$PR" "$RUNNER_TEMP/deploy/inhouse_product/wrangler.json"
+          node scripts/check-product-config.mjs --sandbox --per-pr "$PR" "$RUNNER_TEMP/deploy/migrate/wrangler.json"
+          if [ -f "$RUNNER_TEMP/deploy/hub/wrangler.json" ]; then node scripts/check-product-config.mjs --sandbox --per-pr "$PR" --hub "$RUNNER_TEMP/deploy/hub/wrangler.json"; fi
+      # Loading runs nothing from the image; it gets its own step, with no secret in it.
+      - name: Load the runner image
+        if: inputs.containers
+        run: |
+          zstd -dc "$RUNNER_TEMP/image/image.tar.zst" | docker load
+          docker image inspect "inhouse-sbx-pr$PR:$SHA" > /dev/null
+      # The config already names this reference, and the lock has passed on it. Any email address wrangler might print
+      # (its account listing on an auth error) is hidden.
+      - name: Push the runner image
+        if: inputs.containers
+        working-directory: main/app
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_SANDBOX_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_SANDBOX_ACCOUNT_ID }}
+          WRANGLER_SEND_METRICS: "false"
+        run: node node_modules/wrangler/bin/wrangler.js containers push "inhouse-sbx-pr$PR:$SHA" 2>&1 | sed -E 's/[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}/<email>/g'
+      - name: Tear down, create, migrate, seed, deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_SANDBOX_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_SANDBOX_ACCOUNT_ID }}
+          CF_SANDBOX_ACCOUNT_ID: ${{ secrets.CF_SANDBOX_ACCOUNT_ID }}
+          SBX_ZONE: ${{ secrets.SBX_ZONE }}
+        run: node main/app/scripts/sandbox/deploy.mjs --app main/app --pr "$PR" --deploy-dir "$RUNNER_TEMP/deploy" 2>&1 | sed -E 's/[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}/<email>/g'
