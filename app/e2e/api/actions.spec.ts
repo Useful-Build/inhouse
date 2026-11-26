@@ -90,34 +90,32 @@ const needsCheckDetail = async (request: APIRequestContext): Promise<string | un
   return s?.detail
 }
 
-// DIAGNOSTIC (temporary, M2-S review round 2): after each test, how long a removed member's socket takes to close.
-async function socketProbe(request: APIRequestContext, label: string): Promise<void> {
-  const who = newIdentity('ws-probe')
+/**
+ * A fresh member, signed in with a socket open, then removed: how the socket ends. BrandAgent closes it `4401` at once;
+ * the local runtime finishes the close when the object next goes idle (it evicts an object after 10 s with nothing to
+ * do), so the wait is the object's, not ours.
+ */
+async function removedMemberSocket(request: APIRequestContext): Promise<{ code: number | null }> {
+  const who = newIdentity('actions-socket')
   const invited = await call(request, admin, 'POST', '/api/members/invites', { json: { name: who.name, email: who.email, role: 'member' } })
-  await call(request, personActor(who), 'GET', '/api/me')
+  expect(invited.status, invited.text).toBe(201)
+  expect((await call(request, personActor(who), 'GET', '/api/me')).status).toBe(200)
   const tab = await Tab.open(personActor(who))
   let page = (await call(request, admin, 'GET', '/api/members?limit=100')).json as { items: { id: string; rev: number }[]; nextCursor: string | null }
-  let rev = 0
-  for (let k = 0; k < 100; k++) {
-    const found = page.items.find(m => m.id === invited.json.id)
-    if (found) { rev = found.rev; break }
-    if (page.nextCursor === null) break
-    page = (await call(request, admin, 'GET', `/api/members?limit=100&cursor=${encodeURIComponent(page.nextCursor)}`)).json
+  let rev: number | null = null
+  for (let k = 0; k < 100 && rev === null; k++) {
+    rev = page.items.find(m => m.id === invited.json.id)?.rev ?? null
+    if (rev === null && page.nextCursor !== null) page = (await call(request, admin, 'GET', `/api/members?limit=100&cursor=${encodeURIComponent(page.nextCursor)}`)).json
+    else if (rev === null) break
   }
-  const t0 = Date.now()
-  const del = await call(request, admin, 'DELETE', `/api/members/${invited.json.id}?ifRev=${rev}`)
-  try {
-    await tab.until(() => tab.closed !== null, 'close', 25_000)
-    console.log(`PROBE ${label}: delete ${del.status}, closed ${tab.closed?.code} after ${Date.now() - t0} ms`)
-  } catch {
-    console.log(`PROBE ${label}: delete ${del.status}, NOT closed after ${Date.now() - t0} ms`)
-    tab.close()
-  }
+  expect(rev, 'the invited member is listed').not.toBeNull()
+  const removed = await call(request, admin, 'DELETE', `/api/members/${invited.json.id}?ifRev=${rev}`)
+  expect(removed.status, removed.text).toBe(200)
+  await tab.until(() => tab.closed !== null, 'the socket to close', 30_000)
+  return { code: tab.closed?.code ?? null }
 }
-test.afterEach(async ({ request }, info) => { test.setTimeout(info.timeout + 40_000); await socketProbe(request, info.title.slice(0, 40)) })
 
 test.beforeAll(async ({ request }) => {
-  await socketProbe(request, 'before the spec')
   danaId = (await me(request, dana)).memberId
   adminId = (await me(request, admin)).memberId
   // A run that was killed may have left the operation on: turn it off (through the hook, never by hand).
@@ -327,4 +325,12 @@ test('turning the operation off refuses the next request and lapses an approval 
   expect((await card(request, id)).lapsed).toBe('This kind of action was turned off, so this needs your OK again.')
   expect(await requestAction(request, { memberId: danaId }, TAG_ADD, tagArgs(tag()), { shop: SHOP })).toMatchObject({ outcome: 'refused', reason: 'over_ceiling' })
   expect(await writesOf(request, offTag)).toEqual([])
+})
+
+// The dispatcher once kept every write binding's answer, and Workers RPC keeps a call's context open until its answer is
+// released, so after the first send BrandAgent never went idle again and a removed member's socket never finished closing
+// (socket.spec.ts's removal test, which runs after this spec). After the sends above it still closes.
+test('after real sends, removing a member still closes their socket with 4401', async ({ request }) => {
+  test.setTimeout(90_000)
+  expect(await removedMemberSocket(request)).toEqual({ code: 4401 })
 })
