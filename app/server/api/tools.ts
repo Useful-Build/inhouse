@@ -49,6 +49,8 @@ export type ToolsAuditArgs =
 /** The D1 side. Implemented over the stores by `tools-accounts.ts` (part 2; W1's store owns the table). */
 export interface ToolsAccounts {
   list(): Promise<ConnectorAccountRow[]>
+  /** Stage 1 M2-I: the write operations enabled for the brand (`permission_ceiling`); a tool with one `acts`. */
+  enabledOperations(): Promise<readonly string[]>
   /** The audit line for a pause that changed something, target kind `connector`. */
   recordPause(at: At, accountId: string, line: ToolsAuditArgs): Promise<void>
   /**
@@ -85,8 +87,10 @@ const SLACK_CHANNEL_NEED: StageIndex = 1
  * hub returned its account and says it's configured; every key in the lists names such an account. No timestamp is
  * invented: a time the hub and the row can't give is never replaced by the clock.
  */
-export function buildToolsData(input: { accounts: readonly AccountSummary[]; rows: readonly ConnectorAccountRow[]; nowMs: number }): ToolsData {
+export function buildToolsData(input: { accounts: readonly AccountSummary[]; rows: readonly ConnectorAccountRow[]; nowMs: number; enabled?: readonly string[] }): ToolsData {
   const { nowMs } = input
+  // An operation key starts with its connector (`shopify.order.tag_add`). None given: none enabled, the N2 default.
+  const acting = new Set((input.enabled ?? []).map(op => op.split('.')[0]))
   const hub = new Map(input.accounts.map(a => [a.accountId, a] as const))
   const rows = new Map(input.rows.map(r => [r.accountId, r] as const))
 
@@ -142,6 +146,7 @@ export function buildToolsData(input: { accounts: readonly AccountSummary[]; row
     if (e.oauth) d.canDisconnect = isConnected
     if (s.revokeFailedAt !== null) d.revokeFailed = true
     if (isConnected) d.paused = s.paused
+    if (acting.has(e.key)) d.acts = true
     details[e.key] = d
 
     // Slack is also a channel (decision 0006's successor): where notices reach the team, once it's usable.
@@ -184,8 +189,8 @@ export function toolsHandlers(resolve: (c: HandlerContext) => ToolsDeps): { list
     const deps = resolve(c)
     const hub = await (deps.listView ?? deps.gateway).listAccounts(scopeOf(c, 'tools.list'))
     if (!hub.ok) return hubFailure(hub.error)
-    const rows = await deps.accounts.list()
-    return apiJson(buildToolsData({ accounts: hub.value, rows, nowMs: c.nowMs }))
+    const [rows, enabled] = await Promise.all([deps.accounts.list(), deps.accounts.enabledOperations()])
+    return apiJson(buildToolsData({ accounts: hub.value, rows, nowMs: c.nowMs, enabled }))
   }
 
   /**

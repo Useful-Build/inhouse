@@ -5,12 +5,13 @@
 //     (a lock badge whose screen reader text says "included in a later stage");
 //  2. Stage and plan is still in the Settings menu, or a link to it still opens it;
 //  3. the view follows the stored Watch: Approvals shows the "In Act, ..." block, or Spending cap's Pause button is
-//     locked (it works from Act);
+//     locked (it works from Act), or a click on it doesn't pause and resume the brand;
 //  4. a skill's page still shows the stage it works from.
 // The audit log is not walked: it is history, and lines written before the retirement keep their words (N17).
 import type { Page } from '@playwright/test'
 import { expect, test } from '../support/test-build/index.js'
 import { open, signInAs } from '../support/clients/real.js'
+import { actor, call } from '../api/kit.ts'
 
 const phone = (page: Page) => (page.viewportSize()?.width ?? 1440) < 600
 /** A stage word as the old screens wrote one. "Run now" (a routine's button) is an action, not the stage. */
@@ -89,15 +90,35 @@ test('Stage and plan is gone: not in the Settings menu or the command palette, a
   expect(text).not.toMatch(STAGE_WORD)
 })
 
-test('The view is pinned to Act whatever the stored stage: Approvals lists what waits, and Pause works', async ({ page, context }) => {
+test('The view is pinned to Act whatever the stored stage: Approvals has no "In Act" block, and Pause pauses and resumes', async ({ page, context, request }) => {
   await signInAs(context, 'admin')
   await open(page, 'admin', '#/approvals')
   await expect(page.getByRole('heading', { level: 1, name: 'Approvals', exact: true })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Waiting for you' })).toBeVisible()
   await expect(page.locator('[data-watch-block]')).toHaveCount(0)
-  await open(page, 'admin', '#/settings/team-spend')
-  await expect(page.getByRole('heading', { level: 1, name: 'Spending cap', exact: true })).toBeVisible()
-  await expect(page.getByRole('main').getByRole('button', { name: 'Pause Inhouse agent', exact: true })).toBeEnabled()
+  await expectNoStageWords(page, 'Approvals')
+
+  // Pause is offered at Act (it was locked at the stored Watch): a click pauses the brand, the next resumes it, each
+  // through its route (36, 37). The specs run one at a time; the brand is resumed whatever happens.
+  const admin = actor('admin')
+  try {
+    await open(page, 'admin', '#/settings/team-spend')
+    await expect(page.getByRole('heading', { level: 1, name: 'Spending cap', exact: true })).toBeVisible()
+    const main = page.getByRole('main')
+    const pause = main.getByRole('button', { name: 'Pause Inhouse agent', exact: true })
+    await expect(pause).toBeEnabled()
+    const posted = (path: string) => page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === path)
+    const [paused] = await Promise.all([posted('/api/pause'), pause.click()])
+    expect(paused.status()).toBe(200)
+    await expect(page.locator('[data-toast]').filter({ hasText: 'Your Inhouse agent is paused.' })).toBeVisible()
+    expect(((await call(request, admin, 'GET', '/api/pause')).json as { paused: boolean }).paused).toBe(true)
+    const resume = main.getByRole('button', { name: 'Resume Inhouse agent', exact: true })
+    const [resumed] = await Promise.all([posted('/api/resume'), resume.click()])
+    expect(resumed.status()).toBe(200)
+    await expect(main.getByRole('button', { name: 'Pause Inhouse agent', exact: true })).toBeVisible()
+    expect(((await call(request, admin, 'GET', '/api/pause')).json as { paused: boolean }).paused).toBe(false)
+  } finally {
+    expect((await call(request, admin, 'POST', '/api/resume', { json: {} })).status).toBe(200)
+  }
 })
 
 test("The account menu's Team settings opens the Inhouse agent page, not Stage and plan", async ({ page, context }) => {

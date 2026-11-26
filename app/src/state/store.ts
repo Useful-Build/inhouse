@@ -640,8 +640,8 @@ const initialUi = (): Omit<UiState, 'stage' | 'scenario' | 'ambient' | 'animateM
 })
 
 export const useUi = create<UiState & UiActions>()((set, get) => {
-  // The demo's saved switches are the demo's alone. The product starts from the defaults and saves nothing: its stage comes
-  // from the client's `stage` setting (`useCtx`, `./stage`), so `stage` here is a placeholder there, and so is `scenario`.
+  // The demo's saved switches are the demo's alone. The product starts from the defaults and saves nothing: it has no
+  // stages (Stage 1 M2-I, `useCtx` pins its view to Act), so `stage` here is a placeholder there, and so is `scenario`.
   const demo = demoControls ? loadDemo() : DEFAULT_DEMO
   demoControls?.setDemo({ stage: demo.stage, scenario: demo.scenario })
   const session = restoreSession(loadSession())

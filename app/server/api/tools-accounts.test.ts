@@ -16,6 +16,8 @@ import type { HandlerContext } from '../routes.ts'
 import { toolsHandlers } from './tools.ts'
 import type { ToolsGateway } from './tools.ts'
 import { toolsAccounts } from './tools-accounts.ts'
+import { setCeilingStmt } from '../permissions/ceiling.ts'
+import { runBatch } from '../db/sql.ts'
 
 const db = env.DB
 const stores = openStores(env)
@@ -38,7 +40,7 @@ function hub(slack: Partial<AccountSummary['status']> = {}) {
   return { gateway, calls }
 }
 
-const handlers = (gateway: ToolsGateway, s: Stores) => toolsHandlers(() => ({ gateway, accounts: toolsAccounts(s.connectors) }))
+const handlers = (gateway: ToolsGateway, s: Stores) => toolsHandlers(() => ({ gateway, accounts: toolsAccounts(s.connectors, s.permissions) }))
 const call = (s: Stores, p: Principal, method: string, path: string, params: Record<string, string>, body?: unknown) =>
   ({ ...ctx(s, p, { method, path, params, body, nowMs: T }).c }) as unknown as HandlerContext
 
@@ -55,7 +57,7 @@ describe('the adapter on the real store', () => {
     const p = await inhouse()
     const mid = (p as { memberId: string }).memberId
     await stores.connectors.connectEnded(SLACK, 'slack', 'ok', 'connected', { actorId: mid, requestId: reqId(), nowMs: T })
-    expect(await toolsAccounts(stores.connectors).list()).toEqual([
+    expect(await toolsAccounts(stores.connectors, stores.permissions).list()).toEqual([
       { accountId: SLACK, connector: 'slack', lastState: 'connected', lastStateAtMs: T, connectedBy: mid, connectedAtMs: T },
     ])
   })
@@ -68,6 +70,27 @@ describe('the adapter on the real store', () => {
     const res = await handlers(h.gateway, stores).listTools(call(stores, await inhouse(), 'GET', '/api/tools', {}))
     const data = (await res.json()) as { beingConnected: string[]; catalog: { k: string }[] }
     expect([res.status, data.beingConnected, data.catalog.map(c => c.k)]).toEqual([200, ['slack'], []])
+  })
+})
+
+describe('Stage 1 M2-I: route C says which tools the agent may act on, from the real ceiling', () => {
+  it('Slack acts while slack.channel.post is enabled, and not once it is turned off or before it was ever set', async () => {
+    const h = hub()
+    const acts = async () => {
+      const res = await handlers(h.gateway, stores).listTools(call(stores, await inhouse(), 'GET', '/api/tools', {}))
+      return ((await res.json()) as { details: Record<string, { acts?: boolean }> }).details.slack?.acts
+    }
+    const set = (enabled: boolean) => runBatch(db, [setCeilingStmt({ operation: 'slack.channel.post', enabled, perDayMax: 5, actorId: 'm_test', nowMs: T })])
+    try {
+      expect(await acts()).toBeUndefined()
+      await set(true)
+      expect(await stores.permissions.enabledOperations()).toEqual(['slack.channel.post'])
+      expect(await acts()).toBe(true)
+      await set(false)
+      expect(await acts()).toBeUndefined()
+    } finally {
+      await db.prepare('DELETE FROM permission_ceiling').run()
+    }
   })
 })
 

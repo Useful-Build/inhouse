@@ -1,4 +1,4 @@
-import { amountOf, channelFrom, draftView, flags, lowRiskIds, memberFor, pendingIds, problemById, riskLabel, userName, visibleProblems } from '../state/derive'
+import { amountOf, channelFrom, draftView, flags, lowRiskIds, memberFor, pendingIds, problemById, riskLabel, showDraftsSection, userName, visibleProblems } from '../state/derive'
 import { isUrgent } from '../ui/severity'
 import { fmtMoney, fmtTime, hasAmount } from '../lib/format'
 import { display } from '../state/display'
@@ -13,6 +13,7 @@ import { escapeClosesMenuOnly } from '../ui/dialogs'
 import { Avatar, Button, DetailList, EmptyState, Icon, IconTile, LogoTile, MenuItem, Page, PageHeader, SectionHeader } from '../ui'
 import { Select, TAP } from '../ui/fields'
 import { AgentAsks } from './approvals/AgentAsks'
+import { useAsksCount } from '../shell/asks-count'
 
 const SORTS: [ApprovalSort, string][] = [['oldest', 'Oldest first'], ['newest', 'Newest first'], ['stake', 'Most at stake']]
 
@@ -27,6 +28,8 @@ export function Approvals() {
   const sort = useUi(s => s.approvalSort)
   const tap = phone ? TAP : undefined
   const { S, agent } = ctx
+  // The agent's actions and questions waiting on this person: with none of its drafts, they're all the page has (M2-I).
+  const asks = useAsksCount()
   // The copy describes Act, so it names the channel Act connects.
   const channel = channelFrom(ctx.data, 1)
   const where = channel ? `here or in ${channel.name}` : 'here'
@@ -91,7 +94,7 @@ export function Approvals() {
         </div>
       )}
 
-      {S >= 1 && (
+      {showDraftsSection(ctx, asks) && (
         <>
           {/* On a phone the header keeps one line: no sort, only Approve all low-risk. */}
           <SectionHeader title="Waiting for you" count={noData ? undefined : pending.length} className="mt-7.5 mb-3"

@@ -200,7 +200,7 @@ describe('a routine\'s runs (route 86)', () => {
       [row('lost', { reason: 'no_end' }), 'failed', 'It stopped before it finished'],
       [row('missed', { reason: 'late' }), 'skipped', 'It missed its time'],
       [row('skipped', { reason: 'disabled' }), 'skipped', 'It was off at its time'],
-      [row('skipped', { reason: 'stage' }), 'skipped', 'It starts at a later stage'],
+      [row('skipped', { reason: 'stage' }), 'skipped', "It wasn't available yet"],
       [row('skipped', { reason: 'chat_deleted' }), 'skipped', 'It was skipped'],
       [row('refused', { reason: 'paused' }), 'skipped', 'Your agent was paused'],
       [row('refused', { reason: 'cap_reached' }), 'failed', 'The spending cap was reached'],
@@ -216,7 +216,7 @@ describe('a routine\'s runs (route 86)', () => {
     const states: SlotState[] = ['claimed', 'started', 'ended', 'lost', 'missed', 'skipped', 'refused']
     const code = fc.stringMatching(/^[a-z][a-z0-9_]{5,30}$/)
     const fixed = new Set(["It's running", 'It finished', 'It stopped before it finished', 'It was stopped before it finished', 'It missed its time',
-      'It was off at its time', 'It starts at a later stage', 'It was skipped', 'Your agent was paused', 'The spending cap was reached', "It couldn't start"])
+      'It was off at its time', "It wasn't available yet", 'It was skipped', 'Your agent was paused', 'The spending cap was reached', "It couldn't start"])
     fc.assert(fc.property(fc.constantFrom(...states), fc.option(code), fc.option(code), fc.option(code), (state, outcome, failure, reason) => {
       const s = { state, outcome, failure, reason, result_text: null }
       expect(fixed.has(resultWords(s))).toBe(true)

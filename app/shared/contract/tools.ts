@@ -29,6 +29,11 @@ export const ToolDetailSchema = z.object({
   paused: z.boolean().optional(),
   /** P5: its first login failed and it was never connected (so it isn't in `connected`): when, from the hub's error. */
   loginFailedAt: InstantSchema.optional(),
+  /**
+   * Stage 1 M2-I: a write operation on this tool is enabled for the brand (`permission_ceiling`), so the agent may ask to
+   * act on it. Never in a deployable build in M1 and M2 (N2). The product's tool page offers drafting only then.
+   */
+  acts: z.boolean().optional(),
 })
 export type ToolDetail = z.infer<typeof ToolDetailSchema>
 

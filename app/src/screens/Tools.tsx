@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils'
 import { agent, demo } from '../agent'
 import { askForTool } from '../lib/product-flow'
 import { keepUnitsTogether } from '../agent/clock'
-import { STAGE_TAGS, stageLocked, toolCounts, toolDetail, toolView } from '../state/derive'
+import { STAGE_TAGS, stageLocked, toolAccess, toolCounts, toolDetail, toolView } from '../state/derive'
 import type { ToolState } from '../state/derive'
 import { useCtx, useUi } from '../state/store'
 import { useEffect, useState, useSyncExternalStore } from 'react'
@@ -223,15 +223,6 @@ export function Tools() {
   )
 }
 
-/** The Access row follows the tool's state: a paused or disconnected tool never claims the stage's access. */
-const accessOf = (state: ToolState, S: number, paused: boolean) => {
-  if (state === 'disconnected') return paused ? 'None. A person paused it, and the login needs renewing.' : 'None until the login is renewed.'
-  if (state === 'paused') return 'None. A person paused it.'
-  if (state === 'connecting') return 'None yet. Being connected.'
-  if (state === 'off') return "None. It isn't connected."
-  return ['Read only', 'Read, plus drafts you approve', 'Read, drafts and agreed jobs within limits'][S]
-}
-
 export function ToolPage() {
   const key = useUi(s => s.appKey)
   const { data } = useCtx()
@@ -300,7 +291,7 @@ function ChannelPage({ channel: c }: { channel: ToolChannel }) {
 
 function ToolDetailPage() {
   const ctx = useCtx()
-  const { S, agent: st, data } = ctx
+  const { agent: st, data } = ctx
   const key = useUi(s => s.appKey)
   const go = useUi(s => s.go)
   const ask = useUi(s => s.ask)
@@ -342,7 +333,7 @@ function ToolDetailPage() {
     tone: ab.locked || ab.tag !== 'On' ? 'bg-fill text-muted-foreground' : ab.need === 0 ? 'bg-secondary text-foreground' : 'bg-brand-tint text-brand' }))
   const info: [string, ReactNode][] = [
     ['Connected', view.connectedRow],
-    ['Access', accessOf(view.state, S, off)],
+    ['Access', toolAccess(ctx, key)],
     ['Last read', view.lastRead],
     ['Where the data stays', `In your ${A.name} account. Your Inhouse agent reads what its jobs need.`],
     ['Website', <a key="site" href={`https://${A.site}`} target="_blank" rel="noopener noreferrer" className="underline underline-offset-3">{A.site} ↗</a>],

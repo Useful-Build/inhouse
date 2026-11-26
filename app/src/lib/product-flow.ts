@@ -34,6 +34,9 @@ export const showHelpAndGuides = (demo: boolean): boolean => demo
 /** Per-message Delete and Good/Bad answer controls: demo only (local-only until backed by routes). */
 export const showLocalAnswerControls = (demo: boolean): boolean => demo
 
+/** An answer's "Send to <channel>" item: demo only (Stage 1 M2-I: the product has no send to a channel yet; it was a locked stub there). */
+export const showSendToChannel = (demo: boolean): boolean => demo
+
 /** Usage screen state: error renders LoadError, product loading waits instead of showing empty $0 cards, demo keeps its Loading scenario layout. */
 export const usageView = (demo: boolean, s: Pick<ResourceStatus, 'status'>): 'error' | 'loading' | 'ready' =>
   s.status === 'error' ? 'error' : !demo && s.status === 'loading' ? 'loading' : 'ready'
