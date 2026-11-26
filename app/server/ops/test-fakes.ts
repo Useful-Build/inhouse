@@ -46,7 +46,7 @@ import { sendSystemNotice, type SystemNoticeInput } from '../notify-slack/send.t
 import { utcDay } from '../notify-slack/store.ts'
 import { turnPromptDeps, turnSystemPrompt } from '../prompt/connected.ts'
 import { R2_PREFIXES, type KeyedBucket } from '../db/r2-keys.ts'
-import { WRITE_OPERATIONS } from '../../hub/index/contract.ts'
+import { WriteOperationArgSchema } from '../../shared/contract/audit.ts'
 import type { AccountSummary } from '../../hub/index/contract.ts'
 import { runBatch } from '../db/sql.ts'
 import { setCeilingStmt } from '../permissions/ceiling.ts'
@@ -75,9 +75,9 @@ const ProductOpSchema = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('systemNotice'), notice: z.unknown() }),
   z.strictObject({ op: z.literal('logs'), since: z.strictObject({ product: z.number().int().min(0).optional(), hub: z.number().int().min(0).optional() }).optional() }),
   z.strictObject({ op: z.literal('transcripts') }),
-  z.strictObject({ op: z.literal('ceiling'), operation: z.enum(WRITE_OPERATIONS), enabled: z.boolean(), perDayMax: z.number().int().min(1).max(10_000) }),
+  z.strictObject({ op: z.literal('ceiling'), operation: WriteOperationArgSchema, enabled: z.boolean(), perDayMax: z.number().int().min(1).max(10_000) }),
   z.strictObject({
-    op: z.literal('action'), as: z.strictObject({ memberId: id, chatId: id.optional() }), operation: z.enum(WRITE_OPERATIONS), args: z.unknown(),
+    op: z.literal('action'), as: z.strictObject({ memberId: id, chatId: id.optional() }), operation: WriteOperationArgSchema, args: z.unknown(),
     mode: z.enum(['tool', 'ask_only']).optional(), shop: z.string().min(1).max(100).optional(),
   }),
 ])
