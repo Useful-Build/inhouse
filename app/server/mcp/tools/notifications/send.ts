@@ -1,6 +1,7 @@
 // notification_send (p5-w4.md section 2): the agent's only way to tell people something outside the chat. Members get
-// their bell in the app (never a Slack DM, never email); listed Slack channels get a post from the Act stage, the run's
-// person's bell below it. The run comes from the run token's grant (the call's scope), never from the model.
+// their bell in the app (never a Slack DM, never email); a listed channel reaches the run person's bell for now, not
+// Slack (both Slack legs are closed: server/notify-slack/slack-legs.ts). The run comes from the run token's grant (the
+// call's scope), never from the model.
 import { z } from 'zod'
 import { LINK_KINDS } from '../../../../shared/notify/links.ts'
 import { notifyAgent } from '../../../notify-slack/send.ts'
@@ -31,11 +32,14 @@ const REASON: Record<string, string> = {
   app_origin_missing: "app_origin_missing (the app link isn't set up: send it without `link`, and tell the Inhouse team)",
 }
 
+/** A listed channel that went to the bell instead (`to_bell`: a repeat of a row written before M2-F). */
+const channelToBell = (r: RecipientOutcome) => r.detail === 'channel_to_bell' || r.detail === 'to_bell'
+
 function lineFor(r: RecipientOutcome, listed: string[]): string {
-  const who = r.kind === 'slack' || r.detail === 'to_bell' ? (r.to.startsWith('#') ? r.to : `#${r.to}`) : r.to
+  const who = r.kind === 'slack' || channelToBell(r) ? (r.to.startsWith('#') ? r.to : `#${r.to}`) : r.to
   const again = r.repeat ? ' (the same notice again: nothing new sent)' : ''
   if (r.outcome === 'unknown') return `${who}: unknown: not retried${again}`
-  if (r.outcome === 'posted') return `${who}: ${r.detail === 'to_bell' ? 'sent to the bell (Slack starts at Act)' : 'sent'}${again}`
+  if (r.outcome === 'posted') return `${who}: ${channelToBell(r) ? 'sent to the bell (not Slack)' : 'sent'}${again}`
   const reason = r.detail ?? 'slack_unavailable'
   const extra = reason === 'not_listed' ? ` (listed: ${listed.length > 0 ? listed.join(', ') : 'none'})` : ''
   return `${who}: refused: ${REASON[reason] ?? reason}${extra}${again}`

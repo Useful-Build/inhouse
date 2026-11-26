@@ -75,7 +75,7 @@ export async function mayManage(db: D1Database, r: RoutineRow, at: Pick<At, 'act
   ).bind(at.inhouseGrant ?? '', at.nowMs, at.actorId).first()) !== null
 }
 
-export type WriteOutcome = { ok: RoutineRow } | { conflict: RoutineRow } | { refused: 'not_found' | 'not_allowed' | 'stage' | 'routine_limit' }
+export type WriteOutcome = { ok: RoutineRow } | { conflict: RoutineRow } | { refused: 'not_found' | 'not_allowed' | 'routine_limit' }
 
 /** Why a guarded write matched nothing: gone, a newer `rev`, or not this person's to change. */
 async function whyNot(db: D1Database, id: string, ifRev: number, at: At, deleted: 'live' | 'deleted'): Promise<WriteOutcome> {
@@ -97,13 +97,12 @@ export interface NewRoutine {
 const LIVE_TEAM_COUNT = "SELECT COUNT(*) AS n FROM routines WHERE origin = 'team' AND deleted_at_ms IS NULL"
 
 /**
- * A team routine (section 8): needs Act or Run (section 7), `need` 1, the cursor at now. Refused at the cap: the count is
+ * A team routine (section 8): starts with its cursor at now. Refused at the cap: the count is
  * part of the insert's statement, so two creates at once can't both take the last slot, and its lines are guarded on it.
- * `tz`: the brand's zone, read before the write with the stage, so a caller answers the next run with no read after the commit.
+ * `tz`: the brand's zone, read before the write, so a caller answers the next run with no read after the commit.
  */
-export async function createRoutine(db: D1Database, n: NewRoutine, at: At, sourceChatId: string | null): Promise<{ ok: RoutineRow; tz: BrandFacts['tz'] } | { refused: 'stage' | 'routine_limit' }> {
+export async function createRoutine(db: D1Database, n: NewRoutine, at: At, sourceChatId: string | null): Promise<{ ok: RoutineRow; tz: BrandFacts['tz'] } | { refused: 'routine_limit' }> {
   const brand = await brandFacts(db)
-  if (brand.stage < 1) return { refused: 'stage' }
   const id = newRoutineId()
   const stamp = writeStamp(at.requestId)
   const [made] = await db.batch([
@@ -113,7 +112,7 @@ export async function createRoutine(db: D1Database, n: NewRoutine, at: At, sourc
         SELECT ?, 'team', 'agent', ?, ?, NULL, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, 1, ?
         WHERE (${LIVE_TEAM_COUNT}) < ? RETURNING *`,
     ).bind(id, n.name, n.instruction, n.days_mask, n.hour, n.minute, n.missed, at.actorId, sourceChatId, at.nowMs, at.nowMs, at.nowMs, stamp, MAX_TEAM_ROUTINES),
-    routineAudit(db, at, { action: 'routine.created', routineId: id, need: 1 }, id, stamped(id, stamp)),
+    routineAudit(db, at, { action: 'routine.created', routineId: id }, id, stamped(id, stamp)),
     personLine(db, 'routine_made', at, `${id}|created`, stamped(id, stamp)),
   ])
   if (made.meta.changes === 0) return { refused: 'routine_limit' }
@@ -214,14 +213,14 @@ export async function restoreRoutine(db: D1Database, id: string, ifRev: number, 
 export type RunNowOutcome =
   | { ok: SlotRow }
   | { conflict: SlotRow }
-  | { refused: 'not_found' | 'stage' | 'unavailable' }
+  | { refused: 'not_found' | 'unavailable' }
   | { refused: 'settings'; code: string; reason?: string }
 
 /**
  * Run now (route 54 and `routine_run_now`, section 9): never submits itself. One `claimed` manual row (key
  * `now|<id>|<clientKey>`, due now, 10 minutes to start), then the caller pokes the tick, which submits it like any slot.
  * The same `clientKey` again answers the same row; another open Run now of the routine answers it as a conflict
- * (`run_open`). A disabled routine may run (OC 10); a deleted one is not found; a team routine below its stage is refused.
+ * (`run_open`). A disabled routine may run (OC 10); a deleted one is not found.
  */
 export async function runNow(db: D1Database, routineId: string, clientKey: string, at: At): Promise<RunNowOutcome> {
   if (!CLIENT_KEY.test(clientKey)) throw new Error('runNow: a client key is 8 to 64 of A-Z a-z 0-9 _ -')
@@ -231,7 +230,6 @@ export async function runNow(db: D1Database, routineId: string, clientKey: strin
   const r = await readRoutine(db, routineId)
   if (!r || r.deleted_at_ms !== null) return { refused: 'not_found' }
   const brand = await brandFacts(db)
-  if (r.origin === 'team' && brand.stage < r.need) return { refused: 'stage' }
   if (typeof brand.tz !== 'string') return { refused: 'unavailable' }
   const settings = await submitSettings(db)
   if ('refused' in settings) return { refused: 'settings', code: settings.refused.code, ...(settings.refused.reason ? { reason: settings.refused.reason } : {}) }
@@ -267,6 +265,7 @@ export function resultWords(s: Pick<SlotRow, 'state' | 'result_text' | 'failure'
       return s.outcome === 'done' ? 'It finished' : 'It was stopped before it finished'
     case 'lost': return 'It stopped before it finished'
     case 'missed': return 'It missed its time'
+    // `stage`: only a row skipped before M2-F; no slot is skipped for the stage since.
     case 'skipped': return s.reason === 'disabled' ? 'It was off at its time' : s.reason === 'stage' ? 'It starts at a later stage' : 'It was skipped'
     case 'refused': return s.reason === 'paused' ? 'Your agent was paused' : s.reason === 'cap_reached' ? 'The spending cap was reached' : "It couldn't start"
   }
@@ -362,7 +361,7 @@ async function lastOf(db: D1Database, id: string): Promise<LastFields> {
   ).bind(id).first<LastFields>()) ?? NO_LAST
 }
 
-export type ListedOutcome = { ok: ListedRoutine } | { conflict: ListedRoutine } | { refused: 'not_found' | 'not_allowed' | 'stage' | 'routine_limit' }
+export type ListedOutcome = { ok: ListedRoutine } | { conflict: ListedRoutine } | { refused: 'not_found' | 'not_allowed' | 'routine_limit' }
 
 /** A route write with its routine's `last` (switching, deleting or restoring never changes which slot ended last). */
 async function withLast(db: D1Database, id: string, write: () => Promise<WriteOutcome>): Promise<ListedOutcome> {

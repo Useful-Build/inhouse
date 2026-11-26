@@ -21,7 +21,6 @@ import type { InhouseToolName, ToolHandler, ToolResult, ToolScope } from '../../
 const PAGE = 20
 const NEXT_WITHIN_MS = 8 * 86_400_000
 
-export const STAGE_TEXT = 'Routines you set up need the Act stage. Ask an admin to move to Act.'
 export const NOT_ALLOWED_TEXT = 'Only the person who set it up or an admin can change it'
 export const ROUTINE_LIMIT_TEXT = `This brand already has ${MAX_TEAM_ROUTINES} routines, the most it can have. Delete one on the Routines page, then try again.`
 export const SYSTEM_INSTRUCTION_TEXT = "This routine is built in, so its instructions can't be changed. Its schedule and on/off can."
@@ -52,7 +51,6 @@ const words = (r: RoutineRow) => scheduleWords(r.days_mask, scheduledTime(r))
 function writeRefused(o: Exclude<UpdateOutcome, { ok: RoutineRow }>, id: string): ToolResult {
   if ('conflict' in o) return CONFLICT
   if (o.refused === 'not_found') return NOT_FOUND(id)
-  if (o.refused === 'stage') return refusal('stage', STAGE_TEXT)
   if (o.refused === 'system_instruction') return refusal('system_instruction', SYSTEM_INSTRUCTION_TEXT)
   if (o.refused === 'routine_limit') return refusal(REASON.routineLimit, ROUTINE_LIMIT_TEXT)
   return refusal('not_allowed', NOT_ALLOWED_TEXT)
@@ -70,7 +68,7 @@ export const handlers: Partial<Record<InhouseToolName, ToolHandler>> = {
       if (scope.memberId === SYSTEM_MEMBER_ID) return IN_ROUTINE
       const { hour, minute } = parseTime(a.time)
       const made = await createRoutine(deps.db, { name: a.name, instruction: a.instruction, days_mask: daysMask(a.days), hour, minute, missed: a.missed ?? 'skip' }, at(scope), scope.chatId)
-      if ('refused' in made) return made.refused === 'stage' ? refusal('stage', STAGE_TEXT) : refusal(REASON.routineLimit, ROUTINE_LIMIT_TEXT)
+      if ('refused' in made) return refusal(REASON.routineLimit, ROUTINE_LIMIT_TEXT)
       const r = made.ok
       const next = nextIso(r, made.tz, scope.nowMs)
       return answer(`Set up "${r.name}": ${words(r)}.${next ? ` Next run: ${next}.` : ''} (routine_id: ${r.id})`, { routine_id: r.id, schedule: words(r), next })
@@ -167,7 +165,6 @@ export const handlers: Partial<Record<InhouseToolName, ToolHandler>> = {
       }
       if ('conflict' in o) return refusal('run_open', 'A run is still going. Try again when it finishes.')
       if (o.refused === 'not_found') return NOT_FOUND(routine_id)
-      if (o.refused === 'stage') return refusal('stage', STAGE_TEXT)
       return refusal('unavailable', "The routine can't run right now: the brand's settings don't allow a run. Tell the person and suggest they check Settings.")
     },
   }),

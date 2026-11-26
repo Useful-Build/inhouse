@@ -2,8 +2,7 @@
 // master plan decision 8). Five groups:
 //   1. the routes: who may do what to which routine (Dana made it, Leo is another Member, the Admin, Inhouse with and
 //      without a live grant), `ifRev` conflicts answering the current record, Run now idempotent by `clientKey`;
-//   2. stage gating: at Watch a chat's `routine_create` is refused with the design's words and makes no row, the morning
-//      check's Run now still works, at Act the same call creates the routine, back at Watch its next slot is `skipped`;
+//   2. a legacy Watch setting doesn't prevent creating a team routine, scheduling it, or running a routine now;
 //   3. slots against the real scheduler: the BrandAgent's alarm driven through route 67's controls, with routines whose
 //      times are set relative to the spec's own start (the clock can't be moved);
 //   4. the next run the page shows for a schedule in the brand's zone (`next` is computed, not waited for);
@@ -25,7 +24,7 @@ import {
 } from './watch-kit.ts'
 import { caseFor } from './cases.ts'
 import { expectedNextDaily } from '../support/watch-pure.ts'
-import { ROUTINE_CREATED_ANSWER, ROUTINE_REFUSED_ANSWER } from '../../test/scripted-model/scenarios.ts'
+import { ROUTINE_CREATED_ANSWER } from '../../test/scripted-model/scenarios.ts'
 
 const dana = actor('memberA')
 const leo = actor('memberB')
@@ -292,7 +291,7 @@ test.describe('route 86: a routine\'s own recent runs', () => {
   })
 })
 
-test.describe('stage gating (acceptance 8)', () => {
+test.describe('routines with a legacy Watch setting', () => {
   needsWatchBuild()
   test.describe.configure({ mode: 'serial', timeout: 600_000 })
 
@@ -301,12 +300,8 @@ test.describe('stage gating (acceptance 8)', () => {
     retireRoutines()
   })
 
-  test('at Watch a chat\'s routine_create is refused with the design\'s words and makes no routine; the morning check\'s Run now still works', async ({ request }) => {
+  test('the morning check can still run now', async ({ request }) => {
     await setStage(request, 'Watch')
-    const chat = await createChat(request, dana)
-    const sent = await send(request, dana, chat, 'scenario:routine-create please set up a daily stock check')
-    expect(textOf(await answerOf(request, dana, chat, sent.turnId))).toContain(ROUTINE_REFUSED_ANSWER)
-    expect(readSql('SELECT id FROM routines WHERE source_chat_id = ?', chat), 'no routine row exists afterwards').toEqual([])
 
     const key = runKey()
     const run = await call(request, dana, 'POST', `/api/routines/${MORNING_CHECK}/run`, { json: { clientKey: key } })
@@ -316,8 +311,8 @@ test.describe('stage gating (acceptance 8)', () => {
     await expect.poll(() => slotsOf(MORNING_CHECK).find(s => s.slot_key === slot)?.state, { timeout: 300_000, message: 'the morning check\'s manual slot to end' }).toBe('ended')
   })
 
-  test('at Act the same call creates the routine; back at Watch its next slot is skipped with reason stage', async ({ request }) => {
-    await setStage(request, 'Act')
+  test('a chat creates a team routine and its scheduled slot runs', async ({ request }) => {
+    await setStage(request, 'Watch')
     const chat = await createChat(request, dana)
     const sent = await send(request, dana, chat, 'scenario:routine-create please set up a daily stock check')
     expect(textOf(await answerOf(request, dana, chat, sent.turnId))).toContain(ROUTINE_CREATED_ANSWER)
@@ -327,20 +322,19 @@ test.describe('stage gating (acceptance 8)', () => {
     const id = made[0]!.id
     trackRoutine(id)
 
-    await setStage(request, 'Watch')
     // Make it due: its time is a minute ago in the brand's zone and its cursor is five minutes back.
     const due = localSlot(1)
     writeSql('UPDATE routines SET hour = ?, minute = ?, rev = rev + 1 WHERE id = ?', due.hour, due.minute, id)
     const seeded = await alarmControl(request, { action: 'seedCursor', routineId: id, checkedUntilMs: Date.now() - 5 * 60_000 })
     expect(seeded.status, seeded.text).toBe(200)
     await alarmAndTick(request)
-    const slot = await slotWhere(id, 'the team routine\'s slot at Watch', s => s.kind === 'scheduled', 60_000)
-    expect(slot).toMatchObject({ state: 'skipped', reason: 'stage', turn_id: null })
+    const slot = await slotWhere(id, 'the team routine starts with Watch still stored', s => s.kind === 'scheduled' && s.turn_id !== null, 300_000)
+    expect(slot.turn_id).toMatch(/^t_/)
     expect(slotsOf(id)).toHaveLength(1)
   })
 })
 
-test.describe('a team routine below its stage (acceptance 8)', () => {
+test.describe('a team routine runs now with a legacy Watch setting', () => {
   needsLocalD1()
   test.describe.configure({ mode: 'serial' })
   test.afterAll(async ({ request }) => {
@@ -348,14 +342,13 @@ test.describe('a team routine below its stage (acceptance 8)', () => {
     retireRoutines()
   })
 
-  test('a team routine\'s Run now below its stage is 403 stage, and allowed once the stage is Act', async ({ request }) => {
+  test('a member can request Run now regardless of the stored stage', async ({ request }) => {
     await setStage(request, 'Watch')
     const id = seedRoutine({ creatorId: await memberIdOf(request, dana), hour: 6, minute: 0, instruction: 'scenario:hello E2E staged', need: 1 })
-    expectError(await call(request, leo, 'POST', `/api/routines/${id}/run`, { json: { clientKey: runKey() } }), 403, 'forbidden', 'stage')
-    expect(slotsOf(id)).toEqual([])
-    await setStage(request, 'Act')
-    const run = await call(request, leo, 'POST', `/api/routines/${id}/run`, { json: { clientKey: runKey() } })
+    const key = runKey()
+    const run = await call(request, leo, 'POST', `/api/routines/${id}/run`, { json: { clientKey: key } })
     expect(run.status, run.text).toBe(200)
+    expect(slotsOf(id)).toEqual([expect.objectContaining({ slot_key: `now|${id}|${key}`, kind: 'manual' })])
   })
 })
 
