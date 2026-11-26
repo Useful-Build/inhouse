@@ -1,14 +1,15 @@
 // M1-P's helper scenario (N6, N19): the main agent starts the `researcher` helper once, the helper answers from its own
 // conversation (a branch, found by the marker in its prompt), and the main agent answers with the helper's report. The
 // helper's one model call reports a large, exact usage, so its spend stands out on the turn's trace and the month's
-// ledger (e2e/api/helpers.spec.ts). A miss, and so no answer, if the helper isn't one of ours: its request must carry the
-// server's researcher words as its system prompt and no Agent tool (one layer of helpers).
+// ledger (e2e/api/helpers.spec.ts). The helper's requests are the ones whose system prompt carries the server's researcher
+// words, so a helper that isn't ours never gets the report, and the main thread's last turn misses without it. A
+// researcher request offered the Agent tool misses too (one layer of helpers).
 import type { MessagesRequest, Scenario, ScriptedTurn } from '../index.ts'
 import { HELPER_AGENTS } from '../../../server/prompt/agents.ts'
 
 type Check = NonNullable<ScriptedTurn['expect']>
 
-/** The marker in the researcher's prompt, so its branch can find the helper's own requests. */
+/** A marker in the task the main agent gives the researcher (its first user message). */
 export const HELPER_MARKER = '[inhouse-helper-research]'
 /** The helper's one model call's usage: 100,000 input tokens on Sonnet 5.5 is $0.20 (20 cents) on the ledger. */
 export const HELPER_USAGE = { input_tokens: 100_000, output_tokens: 7 }
@@ -20,25 +21,14 @@ const CALL_ID = 'toolu_helper_research_1'
 const RESEARCHER_OPENING = HELPER_AGENTS.researcher.prompt.split('\n')[0]!
 
 /**
- * The text of the request's user messages before the first assistant message: the helper's prompt, wherever the CLI puts
- * it (it may send its own context as an earlier user message). Never a later message, so the main thread's tool result
- * that quotes the report can't match.
+ * A researcher's request: the server's researcher words in its system prompt (the definition's `prompt` is the helper's
+ * system prompt; the runner's container probe finds its helpers the same way, `runner/image/probes/lib.ts`).
  */
-const openingUserText = (r: MessagesRequest): string => {
-  const end = r.messages.findIndex((m) => m.role === 'assistant')
-  return r.messages.slice(0, end === -1 ? undefined : end).filter((m) => m.role === 'user').map((m) => {
-    const c = m.content
-    if (typeof c === 'string') return c
-    return Array.isArray(c) ? c.map((b) => (typeof b === 'object' && b !== null && 'text' in b ? String((b as { text: unknown }).text) : '')).join('\n') : ''
-  }).join('\n')
-}
+const isResearcher = (r: MessagesRequest): boolean => JSON.stringify(r.system ?? '').includes(RESEARCHER_OPENING.slice(0, 60))
 
-/** The helper's request: the server's researcher words as its system prompt, and no Agent tool to start a helper of its own. */
-const researcherRequest: Check = (r) => {
-  if (!JSON.stringify(r.system ?? '').includes(RESEARCHER_OPENING.slice(0, 60))) return "the helper's system prompt is not the server's researcher prompt"
-  if ((r.tools ?? []).some((t) => t.name === 'Agent' || t.name === 'Task')) return 'the helper was offered the Agent tool'
-  return true
-}
+/** The researcher's request offers no Agent tool, so it can't start a helper of its own. */
+const researcherRequest: Check = (r) =>
+  (r.tools ?? []).some((t) => t.name === 'Agent' || t.name === 'Task') ? 'the helper was offered the Agent tool' : true
 
 /**
  * The researcher's report reached the main thread as the Agent call's result. Otherwise a miss that quotes what the result
@@ -76,7 +66,7 @@ export function subagentScenarios(mainLoop: (tool?: string) => Check, resultIs: 
       ],
       branches: {
         researcher: {
-          match: (r) => openingUserText(r).includes(HELPER_MARKER),
+          match: isResearcher,
           turns: [{ content: [{ type: 'text', text: HELPER_REPORT }], usage: HELPER_USAGE, expect: researcherRequest }],
         },
       },

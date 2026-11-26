@@ -179,11 +179,12 @@ describe('the helper-research scenario', () => {
     const helperBody = { system: [{ type: 'text', text: HELPER_AGENTS.researcher.prompt }], tools: [{ name: 'Read' }, { name: 'WebFetch' }], messages: [{ role: 'user', content: String(call.input!.prompt) }] }
     const helper = await answer(m, helperBody)
     expect(helper).toMatchObject({ content: [{ type: 'text', text: HELPER_REPORT }], usage: HELPER_USAGE })
-    // Not ours: offered the Agent tool, or without the server's researcher words. Each is a miss, never an answer.
+    // Not ours: offered the Agent tool (a miss), or without the server's researcher words (not the researcher's branch).
     const m2 = createScriptedModel(SCENARIOS)
     await answer(m2, { tools, messages: [{ role: 'user', content: 'scenario:helper-research go' }] })
     expect((await answer(m2, { ...helperBody, tools: [{ name: 'Agent' }] })).error?.message).toContain('the helper was offered the Agent tool')
-    expect((await answer(m2, { ...helperBody, system: 'You are general-purpose.' })).error?.message).toContain("not the server's researcher prompt")
+    // Without the server's researcher words it is not the researcher's conversation: it never gets the report.
+    expect(JSON.stringify(await answer(m2, { ...helperBody, system: 'You are general-purpose.' }))).not.toContain(HELPER_REPORT)
     const last = await answer(m, { tools, messages: [
       { role: 'user', content: 'scenario:helper-research go' },
       { role: 'assistant', content: first.content },
