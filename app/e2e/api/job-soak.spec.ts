@@ -4,8 +4,8 @@
 //
 // Why one spec and not a start and a later check: every sandbox-test-deploy dispatch tears PR N's deployment down and
 // deploys it again (scripts/sandbox/deploy.mjs), so a second dispatch 2 hours later would check a fresh, empty one.
-// Within one dispatch the specs job has 150 minutes, about 140 of them after the build, deploy and warm-up: enough for
-// the job (2 hours of sleeps plus its turns' overheads) and the checks. This spec runs ONLY when named:
+// Within one dispatch the specs job has 210 minutes (#452), about 199 of them after the build, deploy and warm-up: room
+// for the job (2 hours of sleeps plus its turns' overheads, about 135 minutes) and the checks. It runs ONLY when named:
 //   gh workflow run sandbox-test-deploy -R Useful-Build/inhouse --ref main -f pr=<N> -f sha=<head> -f full=true -f only="api/job-soak.spec.ts"
 // It reads the workflow's `only` list (the step's ONLY environment) for its own name, and skips everywhere else (the
 // required test-build job, the default agent set and a full run without `only`), so no other run waits 2 hours.
@@ -26,12 +26,14 @@ const SELF = 'api/job-soak.spec.ts'
 const asked = (process.env.ONLY ?? '').split(/\s+/).includes(SELF)
 const dana = actor('memberA')
 const TWO_HOURS_MS = 2 * 60 * 60_000
+/** The spec's own limit: inside pr-code's 210 minutes less its ~11 of build, deploy and warm-up. */
+const SOAK_TIMEOUT_MS = 190 * 60_000
 /** When the kill comes: well inside the job, after it has carried on at least once. */
 const KILL_AFTER_MS = 55 * 60_000
 
 test('a scripted 2-hour job survives a closed tab and a killed container and ends with one result and one notice', async ({ request }) => {
   test.skip(!asked, `the 2-hour proof runs only when named: sandbox-test-deploy -f full=true -f only="${SELF}"`)
-  test.setTimeout(136 * 60_000)
+  test.setTimeout(SOAK_TIMEOUT_MS)
   const token = runToken()
   const prefix = stepIdPrefix('soak', token)
   const text = `scenario:long-job-soak run=${token} Do every soak step.`
@@ -54,7 +56,7 @@ test('a scripted 2-hour job survives a closed tab and a killed container and end
   expect(killed).not.toEqual([])
   const stepN = Number(step.slice(prefix.length).split('_')[0])
 
-  const ended = await jobWhen(request, dana, chatId, j => j.state === 'ended', 'the job ended', 136 * 60_000 - (Date.now() - t0) - 3 * 60_000)
+  const ended = await jobWhen(request, dana, chatId, j => j.state === 'ended', 'the job ended', SOAK_TIMEOUT_MS - (Date.now() - t0) - 3 * 60_000)
   const ranMs = ended.endedAt!.ms - ended.startedAt.ms
   expect(ended.outcome).toBe('done')
   expect(ranMs, 'the job ran 2 hours').toBeGreaterThanOrEqual(TWO_HOURS_MS)
