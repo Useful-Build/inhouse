@@ -216,6 +216,11 @@ export interface SubmitTurn {
   webFetchDomains: string[] | null
   /** Web search (P8a S): on only when true; absent (a turn stored before P8a) is off. */
   webSearch?: boolean
+  /**
+   * The helpers' model (Stage 1, N6; route 29's `pickSubagentModel`). Present: the turn gets both helpers and its run
+   * grant lets this model through. Absent (a routine's stored slot, a turn stored before M1-P): no helpers.
+   */
+  subagentModel?: string
 }
 
 /** The due task a turn's end schedules (PR 5, ask B): `{ id, kind }`, a registered kind. */

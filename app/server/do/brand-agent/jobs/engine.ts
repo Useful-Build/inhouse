@@ -287,7 +287,8 @@ export class JobEngine {
    * THE one synchronous step that ends a job: the row (gen + 1, the outcome, its cost from the tally), the pending
    * step and the deadline cancelled, one `job.ended`, the job's unfinished turns ended (at the deadline a live one is
    * interrupted with `cut_cause = 'job_deadline'`, else fenced `stopped`; `spare` is left to its own end), a waiting
-   * job's question closed at the deadline, `job-end` for the ledger and the notice, then the chat's run. Once per job.
+   * job's question closed (on every end, not only at the deadline), `job-end` for the ledger and the notice, then the
+   * chat's run. Once per job.
    */
   endJob(jobId: string, outcome: JobOutcome, spare?: string, cause?: EndCause): boolean {
     const job = this.job(jobId)
@@ -393,6 +394,7 @@ export class JobEngine {
       chatId: job.chat_id, by: { kind: 'person', memberId: job.owner_id },
       model: settings.model, pickerId: settings.pickerId, effort: settings.effort, sideModel: settings.sideModel,
       maxTurns: settings.maxTurns, webFetchDomains: settings.webFetchDomains, webSearch: settings.webSearch,
+      subagentModel: settings.subagentModel,
       input: { clientTurnKey: jobTurnKey(jobId, n), text, priority: 'next', model: settings.pickerId, attachments: [] },
     }
     const answer = await this.h.submit(turn, { onEnd: { kind: STEP_KIND, id: stepTaskId(jobId, n + 1) }, job: { jobId, gen, n } })

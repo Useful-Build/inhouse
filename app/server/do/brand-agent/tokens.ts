@@ -15,6 +15,11 @@ export interface RunGrant {
   sessionId: string
   model: string
   sideModel: string
+  /**
+   * The helpers' model (Stage 1, N6), or null when the turn has no helpers. The egress allows it beside the two above.
+   * A token read back always has it (null for none); a mint may leave it out (none).
+   */
+  subagentModel?: string | null
   expiresAtMs: number
 }
 
@@ -52,15 +57,18 @@ export async function hashRunToken(token: string): Promise<string> {
 export function createRunTokensTable(sql: SqlStorage): void {
   sql.exec(`CREATE TABLE IF NOT EXISTS run_tokens (
     token_hash TEXT PRIMARY KEY, turn_id TEXT NOT NULL, run_id TEXT NOT NULL, chat_id TEXT NOT NULL, member_id TEXT NOT NULL,
-    session_id TEXT NOT NULL, model TEXT NOT NULL, side_model TEXT NOT NULL, routes_open TEXT NOT NULL,
+    session_id TEXT NOT NULL, model TEXT NOT NULL, side_model TEXT NOT NULL, subagent_model TEXT, routes_open TEXT NOT NULL,
     issued_at_ms INTEGER NOT NULL, expires_at_ms INTEGER NOT NULL, revoked_at_ms INTEGER, revoke_reason TEXT)`)
+  // Stage 1 M1-P: `subagent_model` on a table that predates it (NULL on an older token: no helper model allowed).
+  const have = sql.exec<{ name: string }>("SELECT name FROM pragma_table_info('run_tokens')").toArray().map(r => r.name)
+  if (!have.includes('subagent_model')) sql.exec('ALTER TABLE run_tokens ADD COLUMN subagent_model TEXT')
   sql.exec('CREATE INDEX IF NOT EXISTS run_tokens_turn ON run_tokens(turn_id)')
   sql.exec('CREATE INDEX IF NOT EXISTS run_tokens_member ON run_tokens(member_id)')
 }
 
 type Row = {
   turn_id: string; run_id: string; chat_id: string; member_id: string; session_id: string; model: string; side_model: string
-  routes_open: string; expires_at_ms: number; revoked_at_ms: number | null
+  subagent_model: string | null; routes_open: string; expires_at_ms: number; revoked_at_ms: number | null
 }
 
 /** `routes_open` holds the open routes as `,model,mcp,…,` so one route is found as `,route,`. */
@@ -76,16 +84,16 @@ export function createRunTokens(sql: SqlStorage, now: () => number): RunTokens {
       const token = base64url(crypto.getRandomValues(new Uint8Array(32)))
       const hash = await hashRunToken(token)
       sql.exec(
-        `INSERT INTO run_tokens (token_hash, turn_id, run_id, chat_id, member_id, session_id, model, side_model, routes_open,
-          issued_at_ms, expires_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        hash, grant.turnId, grant.runId, grant.chatId, grant.memberId, grant.sessionId, grant.model, grant.sideModel,
+        `INSERT INTO run_tokens (token_hash, turn_id, run_id, chat_id, member_id, session_id, model, side_model, subagent_model,
+          routes_open, issued_at_ms, expires_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        hash, grant.turnId, grant.runId, grant.chatId, grant.memberId, grant.sessionId, grant.model, grant.sideModel, grant.subagentModel ?? null,
         routeList(EGRESS_ROUTES), nowMs, nowMs + RUN_TOKEN_TTL_MS,
       )
       return token
     },
     check(tokenHash, route, nowMs) {
       const row = sql.exec<Row>(
-        `SELECT turn_id, run_id, chat_id, member_id, session_id, model, side_model, routes_open, expires_at_ms, revoked_at_ms
+        `SELECT turn_id, run_id, chat_id, member_id, session_id, model, side_model, subagent_model, routes_open, expires_at_ms, revoked_at_ms
           FROM run_tokens WHERE token_hash = ?`, tokenHash,
       ).toArray()[0]
       if (!row) return { refused: 'unknown' }
@@ -94,7 +102,7 @@ export function createRunTokens(sql: SqlStorage, now: () => number): RunTokens {
       if (!row.routes_open.includes(`,${route},`)) return { refused: 'closed' }
       return {
         turnId: row.turn_id, runId: row.run_id, chatId: row.chat_id, memberId: row.member_id, sessionId: row.session_id,
-        model: row.model, sideModel: row.side_model, expiresAtMs: row.expires_at_ms,
+        model: row.model, sideModel: row.side_model, subagentModel: row.subagent_model, expiresAtMs: row.expires_at_ms,
       }
     },
     closeRoutes(turnId, routes, _why) {

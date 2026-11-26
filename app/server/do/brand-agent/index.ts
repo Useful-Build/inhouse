@@ -171,8 +171,8 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   // ---------- the API (routes 24, 27, 29-31, 35-37, 49) ----------
   /** Route 29's turn only: a structured-output format or an end task sent over RPC is dropped (`TaskContext.runs.submit` adds them). */
   async submitTurn(turn: SubmitTurn): Promise<SendTurnResult | Refusal> {
-    const { chatId, input, by, model, pickerId, effort, sideModel, maxTurns, webFetchDomains, webSearch } = turn
-    return this.core.submitTurn({ chatId, input, by, model, pickerId, effort, sideModel, maxTurns, webFetchDomains, webSearch })
+    const { chatId, input, by, model, pickerId, effort, sideModel, maxTurns, webFetchDomains, webSearch, subagentModel } = turn
+    return this.core.submitTurn({ chatId, input, by, model, pickerId, effort, sideModel, maxTurns, webFetchDomains, webSearch, ...(subagentModel === undefined ? {} : { subagentModel }) })
   }
   /** The member who owns a turn, or null: route 30 and 31 answer another person's turn 404 before acting. */
   async turnOwner(turnId: string): Promise<string | null> {

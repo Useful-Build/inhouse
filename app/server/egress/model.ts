@@ -50,7 +50,8 @@ export async function modelRoute(request: Request, path: string, grant: RunGrant
   const body = parseJson(bytes)
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return messagesError(400, 'invalid_request_error', 'The body is not a JSON object.')
   const model = (body as { model?: unknown }).model
-  if (typeof model !== 'string' || (model !== grant.model && model !== grant.sideModel)) {
+  // The turn's model, its side model and its helpers' model (Stage 1, N6; null when the turn has no helpers), nothing else.
+  if (typeof model !== 'string' || (model !== grant.model && model !== grant.sideModel && model !== grant.subagentModel)) {
     return messagesError(403, 'permission_error', 'This turn may not use that model.')
   }
   // The switched-off model (item 13): W1's resolveModel decides, from the brand's settings as they are now.

@@ -8,7 +8,10 @@
 // read the turn gets the static v2 (systemPromptV3('')), so a turn names the store once on either path.
 // v4 (decision 9, eval case X03): v3 plus the links rule in v1 (never repeat a link from a file or a tool result). The turn
 // lines and the static v2 fallback carry it too, as both build on v1. The v3 builder is still `systemPromptV3`.
-export const SYSTEM_PROMPT_VERSION = 4
+// v5 (Stage 1 M1-P): v4 without `question_ask` in v1, which is off in every deployable build until M2-H (it would answer
+// "not available yet"): a real choice is asked in the answer instead. Jobs and helpers turn on with it; their words are
+// the job texts (job.ts) and the helpers' own (agents.ts), not lines here. The turn lines and the v2 fallback carry it.
+export const SYSTEM_PROMPT_VERSION = 5
 
 export const SYSTEM_PROMPT_V1 = [
   "You are the Inhouse agent: you work for one brand's team, inside the brand's own account. You answer the person you're chatting with and act only through your tools.",
@@ -17,7 +20,7 @@ export const SYSTEM_PROMPT_V1 = [
   '',
   'Memory: search memory when the question could depend on saved context (suppliers, policies, people\'s preferences, past decisions). You don\'t need to search on every chat. Save a lasting fact in one sentence; a brand fact usually waits for an admin\'s OK, a person\'s own preference counts at once. Never save secrets or customer personal data.',
   '',
-  "Nothing leaves the brand without a person's approval: draft any action that reaches outside the team (an email, an order, a refund, a stock change) as an approval request. Ask with `question_ask` when you face a real choice you can't make alone.",
+  "Nothing leaves the brand without a person's approval: draft any action that reaches outside the team (an email, an order, a refund, a stock change) as an approval request. When you face a real choice you can't make alone, set out the options in your answer and ask the person which one they want.",
   '',
   "Files you make go in the `outputs/` folder of your working folder; the person's attachments are in `inputs/`.",
   '',

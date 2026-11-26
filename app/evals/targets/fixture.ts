@@ -8,7 +8,7 @@ export function createFixtureTarget(): Target {
   return {
     name: 'fixture',
     people: S5_PEOPLE,
-    provides: new Set(['shop', 'mail', 'routines']),
+    provides: new Set(['shop', 'mail', 'routines', 'questions']),
     canRun: (c: Case) => c.cat !== 'exfil' && byKey.has(`${c.id}-r1-c1`),
     async seed(_memory, run): Promise<Session> {
       let n = 0

@@ -45,6 +45,9 @@
 //   `person_stop` (a person's stop or interrupt, so a race with the cut never carries a job on), `recovered` (N4: a
 //   killed job turn whose session stayed resumable at its checkpoint) and `source` (`person` for route 29, `job`,
 //   `question` for a resume, `task` for any other in-object submit; NULL on a turn stored before M1-B).
+// - Stage 1 M1-P (N6): `turns.subagent_model`, the API id the `researcher` helper runs on (route 29's
+//   `pickSubagentModel`); set, the turn's start carries both helpers and its run grant lets the model through. NULL (a
+//   routine's turn, a turn stored before M1-P): no helpers.
 
 import { TURN_ROWS_TABLE } from './projection.ts'
 
@@ -73,6 +76,7 @@ export function createAgentTables(sql: SqlStorage): void {
     outcome TEXT, failure TEXT, cancel_why TEXT, output_format_json TEXT, on_end_json TEXT, structured_output_json TEXT,
     resume_json TEXT, abandoned TEXT, held_json TEXT, web_search TEXT, prompt_version INTEGER, prompt_apps TEXT,
     job_id TEXT, job_n INTEGER, cut_cause TEXT, person_stop INTEGER NOT NULL DEFAULT 0, recovered INTEGER NOT NULL DEFAULT 0, source TEXT,
+    subagent_model TEXT,
     pos_from INTEGER, pos_to INTEGER, d1_flushed INTEGER NOT NULL DEFAULT 0,
     created_at_ms INTEGER NOT NULL, claimed_at_ms INTEGER, started_at_ms INTEGER, ended_at_ms INTEGER,
     UNIQUE (chat_id, client_key))`)
@@ -87,6 +91,8 @@ export function createAgentTables(sql: SqlStorage): void {
   for (const col of ['job_id', 'cut_cause', 'source']) if (!have.has(col)) sql.exec(`ALTER TABLE turns ADD COLUMN ${col} TEXT`)
   if (!have.has('job_n')) sql.exec('ALTER TABLE turns ADD COLUMN job_n INTEGER')
   for (const col of ['person_stop', 'recovered']) if (!have.has(col)) sql.exec(`ALTER TABLE turns ADD COLUMN ${col} INTEGER NOT NULL DEFAULT 0`)
+  // Stage 1 M1-P's column, the same way (NULL on an older turn: it gets no helpers).
+  if (!have.has('subagent_model')) sql.exec('ALTER TABLE turns ADD COLUMN subagent_model TEXT')
   sql.exec('CREATE INDEX IF NOT EXISTS turns_run ON turns(run_id, state)')
   sql.exec('CREATE INDEX IF NOT EXISTS turns_state ON turns(state)')
   sql.exec('CREATE INDEX IF NOT EXISTS turns_owner ON turns(owner_id, state)')

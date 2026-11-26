@@ -15,6 +15,7 @@ import { resolveTurnSettings } from '../../api/runs.ts'
 import { openStores } from '../../db/stores.ts'
 import { createLagTable, outboxPauseHook } from '../../outbox/gate.ts'
 import { outboxNotifier } from '../../outbox/notify.ts'
+import { JOB_TEXTS } from '../../prompt/job.ts'
 
 /** The ports the BrandAgent runs on, built once per object from its env. */
 export function composePorts(env: Env, parts: BrandAgentParts): BrandAgentPorts {
@@ -81,11 +82,12 @@ export function wireP6(core: { registerPauseHook(h: PauseHook): void; setOnDefer
 }
 
 // ---------- M1-B's anchor (Stage 1, N3): the job engine's ports ----------
-// `texts` stays null until M1-P wires the job texts (N20): while it is null no turn ever becomes a job.
+// M1-P wired the job texts (N20, prompt/job.ts): with them a person's turn that hits a limit becomes a job, and the
+// 25-minute cut (JOB_CUT_MS) is on.
 
 export function jobDeps(env: Env): JobDeps {
   return {
-    texts: null,
+    texts: JOB_TEXTS,
     async memberActive(memberId) {
       const row = await env.DB.prepare('SELECT status FROM members WHERE id = ?').bind(memberId).first<{ status: string }>()
       return row !== null && row.status === 'active'

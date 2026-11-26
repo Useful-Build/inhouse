@@ -18,6 +18,8 @@ export interface JobTurnSettings {
   maxTurns: number
   webFetchDomains: string[]
   webSearch: boolean
+  /** The helpers' model (N6, M1-P): read again with the rest, so a continuation gets the helpers its root had. */
+  subagentModel: string
 }
 
 /** A job's one bell notice (N3: bell only, no Slack), keyed by the job so a repeat is one row. */

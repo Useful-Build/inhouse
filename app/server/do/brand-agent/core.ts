@@ -114,6 +114,8 @@ export interface TurnRow {
   resume_json: string | null; abandoned: string | null; held_json: string | null; prompt_version: number | null; prompt_apps: string | null
   // Stage 1 M1-B (jobs/, schema.ts).
   job_id: string | null; job_n: number | null; cut_cause: string | null; person_stop: number; recovered: number; source: string | null
+  // Stage 1 M1-P (N6): the helpers' model, null for a turn with no helpers.
+  subagent_model: string | null
   created_at_ms: number; claimed_at_ms: number | null; started_at_ms: number | null; ended_at_ms: number | null
 }
 
@@ -445,8 +447,8 @@ export class AgentCore {
     this.sql.exec(
       `INSERT INTO turns (turn_id, run_id, chat_id, owner_id, ord, client_key, payload_hash, gen, state, priority, text, quote,
         attachments_json, model, picker_id, side_model, effort, max_turns, web_fetch_json, answer_position, created_at_ms,
-        output_format_json, on_end_json, resume_json, web_search, source)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)`,
+        output_format_json, on_end_json, resume_json, web_search, source, subagent_model)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)`,
       turnId, runId, t.chatId, member, ord + 1, t.input.clientTurnKey, hash, t.input.priority, t.input.text,
       t.input.quote ?? null, JSON.stringify(atts), t.model, t.pickerId, t.sideModel, t.effort, t.maxTurns,
       t.webFetchDomains === null ? null : JSON.stringify(t.webFetchDomains), now,
@@ -456,6 +458,7 @@ export class AgentCore {
         : JSON.stringify({ questionId: extra.resume.questionId, decision: extra.resume.decision, toolUseId: extra.resume.toolUseId } satisfies Resume),
       t.webSearch === true ? 'on' : null,
       extra === undefined ? 'person' : extra.job !== undefined ? 'job' : extra.resume !== undefined ? 'question' : 'task',
+      t.subagentModel ?? null,
     )
     if (extra?.job !== undefined) this.jobs.admitted(extra.job, turnId)
     // A person's own message in a job's chat (Q4 = B: the job carries on; one rule in jobs/ M1-I could change).
@@ -665,6 +668,7 @@ export class AgentCore {
         webFetchDomains: t.web_fetch_json === null ? null : JSON.parse(t.web_fetch_json) as string[], webSearch: t.web_search === 'on',
         systemPrompt,
         outputFormat: t.output_format_json === null ? undefined : JSON.parse(t.output_format_json) as OutputFormat,
+        subagentModel: t.subagent_model,
       })
     } catch (err) {
       console.error({ event: 'turn_start_unbuildable', error: safeError(err) })
@@ -691,6 +695,7 @@ export class AgentCore {
     await this.beforeStep?.('mint', turnId)
     const token = await this.d.tokens.mint({
       turnId, runId: t.run_id, chatId: t.chat_id, memberId: t.owner_id, sessionId: t.session_id, model: t.model, sideModel: t.side_model,
+      subagentModel: t.subagent_model,
     }, this.d.now())
     const tokenHash = await hashRunToken(token)
     t = this.current(turnId, gen, 'starting')
@@ -1862,6 +1867,7 @@ export class AgentCore {
       model: parked.model, pickerId: parked.picker_id, effort: parked.effort as SubmitTurn['effort'], sideModel: parked.side_model,
       maxTurns: parked.max_turns, webFetchDomains: parked.web_fetch_json === null ? null : JSON.parse(parked.web_fetch_json) as string[],
       webSearch: parked.web_search === 'on',
+      ...(parked.subagent_model === null ? {} : { subagentModel: parked.subagent_model }),
     }
     const answer = this.admit(turn, hash, [], {
       ...(parked.output_format_json === null ? {} : { outputFormat: JSON.parse(parked.output_format_json) as OutputFormat }),
