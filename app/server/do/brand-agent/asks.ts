@@ -80,7 +80,10 @@ export function resumeKeyParts(key: string): { actionId: string; n: number } | n
  * other cancel (the chat deleted, the member removed, the spending cap) is final. From #444's re-check (Fable, Neon).
  */
 export const RESUME_AGAIN = new Set(['paused', 'pool_full', 'session_unusable'])
-/** Tries of one action's resume turn before the report is given up (`none`, logged loud). */
+/**
+ * Tries of one action's resume turn before the report is given up (`none`, logged loud). A try cancelled because the
+ * pool was full doesn't count (as a job's continuation, jobs/rules.ts): it's only tried again, `RESUME_RETRY_MS` later.
+ */
 export const MAX_RESUME_TRIES = 5
 
 const isFinal = (state: ActionState): boolean => (FINAL_STATES as readonly string[]).includes(state)
@@ -335,7 +338,8 @@ export class Asks {
   onTurnFinal(t: { turn_id: string; source?: string | null; state?: string; cancel_why?: string | null; client_key?: string }): void {
     if (t.source === 'action' && t.state === 'cancelled' && t.cancel_why != null && RESUME_AGAIN.has(t.cancel_why)) {
       const k = t.client_key === undefined ? null : resumeKeyParts(t.client_key)
-      if (k) this.changed(k.actionId)
+      // The next try waits RESUME_RETRY_MS: a pool that refuses at once must not burn every try in a moment (#454 review).
+      if (k) this.p.scheduler.schedule({ id: deliverTaskId(k.actionId), kind: DELIVER_KIND, dueAtMs: this.p.now() + RESUME_RETRY_MS })
     }
     if (!turnProposed(this.p.sql, t.turn_id)) return
     this.p.scheduler.ensure({ id: turnEndTaskId(t.turn_id), kind: TURN_END_KIND, dueAtMs: this.p.now() })
@@ -415,8 +419,9 @@ export class Asks {
       }
       settings = fallback
     }
-    const n = this.resumeTry(row)
-    if (n === null) return 'gone'
+    const next = this.resumeTry(row)
+    if ('done' in next) return next.done
+    const n = next.n
     const card = JSON.parse(full.card_json) as StoredCard
     const result = full.state === 'sent' && full.result_json !== null ? (JSON.parse(full.result_json) as { ref?: string }).ref ?? null : null
     const turn: SubmitTurn = {
@@ -441,22 +446,26 @@ export class Asks {
   }
 
   /**
-   * Which try of the resume turn to submit: the last one's key again (a retried submit answers it), or the next once the
-   * last was cancelled before it started for a passing cause. Null: `MAX_RESUME_TRIES` used up (logged loud).
+   * Which try of the resume turn to submit: the first, or the next once the last was cancelled before it started for a
+   * passing cause. A last try that is queued, ran or ended is never submitted again (`submitted`: its key could meet a
+   * changed text and be refused `key_reused`, #454 review); one cancelled for a final cause, or `MAX_RESUME_TRIES` used up
+   * (logged loud), is `gone`. A try cancelled because the pool was full doesn't count toward the limit.
    */
-  private resumeTry(row: ReportRow): number | null {
+  private resumeTry(row: ReportRow): { n: number } | { done: 'submitted' | 'gone' } {
     const tries = this.p.sql.exec<{ client_key: string; state: string; cancel_why: string | null }>(
       'SELECT client_key, state, cancel_why FROM turns WHERE chat_id = ? AND (client_key = ? OR client_key LIKE ?)',
       row.chatId, resumeKey(row.id), `${resumeKey(row.id)}-%`).toArray()
       .flatMap(t => { const k = resumeKeyParts(t.client_key); return k && k.actionId === row.id ? [{ ...t, n: k.n }] : [] })
     const last = tries.reduce<(typeof tries)[number] | null>((a, t) => (a === null || t.n > a.n ? t : a), null)
-    if (last === null) return 0
-    if (!(last.state === 'cancelled' && last.cancel_why !== null && RESUME_AGAIN.has(last.cancel_why))) return last.n
-    if (last.n + 1 >= MAX_RESUME_TRIES) {
-      console.error({ event: 'action_resume_given_up', actionId: row.id, tries: last.n + 1 })
-      return null
+    if (last === null) return { n: 0 }
+    if (last.state !== 'cancelled') return { done: 'submitted' }
+    if (last.cancel_why === null || !RESUME_AGAIN.has(last.cancel_why)) return { done: 'gone' }
+    const counted = tries.filter(t => !(t.state === 'cancelled' && t.cancel_why === 'pool_full')).length
+    if (counted >= MAX_RESUME_TRIES) {
+      console.error({ event: 'action_resume_given_up', actionId: row.id, tries: counted })
+      return { done: 'gone' }
     }
-    return last.n + 1
+    return { n: last.n + 1 }
   }
 
   /**

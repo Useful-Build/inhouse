@@ -16,7 +16,7 @@ import type { AuditEntry } from '../../../shared/protocol/index.ts'
 import { d1Chat, ev, inAgent, settle } from '../../testing/brand-agent/core-harness.ts'
 import type { Harness } from '../../testing/brand-agent/core-harness.ts'
 import { ASKER, fresh, outbox, requestCtx, rowOf, tagArgs, world } from '../../outbox/test-support.ts'
-import { Asks, d1Reports, DELIVER_KIND, deliverTaskId, MAX_RESUME_TRIES, MAX_WAITS_PER_TURN, resumeKey, resumeKeyParts } from './asks.ts'
+import { Asks, d1Reports, DELIVER_KIND, deliverTaskId, MAX_RESUME_TRIES, MAX_WAITS_PER_TURN, RESUME_RETRY_MS, resumeKey, resumeKeyParts } from './asks.ts'
 import type { ActionTexts, AsksDeps } from './asks.ts'
 import { ACTIONS_TOOL_PREFIX, recordInvocation } from './invocations.ts'
 
@@ -369,26 +369,63 @@ describe('a resume turn cancelled before it started (M2-G)', () => {
     expect((await rowOf(db, id))!.report).toBe('resume')
   }))
 
-  it('a final cancel is never tried again; passing cancels stop after MAX_RESUME_TRIES, given up loud', () => inAgent(async h => {
+  const cancelLast = (h: Harness, chat: string, why: string) =>
+    h.sql.exec("UPDATE turns SET state = 'cancelled', cancel_why = ? WHERE chat_id = ? AND source = 'action' AND state != 'cancelled'", why, chat)
+
+  it('a try queued, running or ended is never submitted again (no `key_reused` that would clobber the report)', () => inAgent(async h => {
     const { chat, id } = await ended(h)
-    const a = asks(h, { texts: TEXTS })
-    const cancelLast = (why: string) => h.sql.exec("UPDATE turns SET state = 'cancelled', cancel_why = ? WHERE chat_id = ? AND source = 'action' AND state != 'cancelled'", why, chat)
+    let calls = 0
+    const a = asks(h, { texts: { result: p => `${TEXTS.result(p)} ${++calls}` } })
     await a.deliver(id)
-    cancelLast('removed')
+    // The action moves on (its text would change); a second delivery leaves the queued try alone.
+    await db.prepare("UPDATE outbox_actions SET state = 'failed' WHERE id = ?").bind(id).run()
     await a.deliver(id)
     expect(keys(h, chat).map(k => k[0])).toEqual([resumeKey(id)])
-    h.sql.exec("UPDATE turns SET cancel_why = 'pool_full' WHERE chat_id = ? AND source = 'action'", chat)
-    for (let n = 1; n < MAX_RESUME_TRIES; n++) {
+    expect((await rowOf(db, id))!.report).toBe('resume')
+    expect(calls).toBe(1)
+  }))
+
+  it('a final cancel (the member removed) is never tried again: the report is given up', () => inAgent(async h => {
+    const { chat, id } = await ended(h)
+    const a = asks(h, { texts: TEXTS })
+    await a.deliver(id)
+    cancelLast(h, chat, 'removed')
+    await a.deliver(id)
+    expect(keys(h, chat).map(k => k[0])).toEqual([resumeKey(id)])
+    expect((await rowOf(db, id))!.report).toBe('none')
+  }))
+
+  it('passing cancels stop after MAX_RESUME_TRIES, given up loud; a full pool doesn\'t count', () => inAgent(async h => {
+    const { chat, id } = await ended(h)
+    const a = asks(h, { texts: TEXTS })
+    await a.deliver(id)
+    // Seven full-pool cancels in a row: none counts, each is tried again.
+    for (let n = 1; n <= 7; n++) {
+      cancelLast(h, chat, 'pool_full')
       await a.deliver(id)
       expect(keys(h, chat).map(k => k[0])).toContain(resumeKey(id, n))
-      cancelLast('session_unusable')
     }
+    for (let i = 0; i < MAX_RESUME_TRIES - 1; i++) {
+      cancelLast(h, chat, 'session_unusable')
+      await a.deliver(id)
+    }
+    cancelLast(h, chat, 'session_unusable')
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
     await a.deliver(id)
     expect(errors).toHaveBeenCalledWith({ event: 'action_resume_given_up', actionId: id, tries: MAX_RESUME_TRIES })
     errors.mockRestore()
-    expect(keys(h, chat)).toHaveLength(MAX_RESUME_TRIES)
+    expect(keys(h, chat)).toHaveLength(8 + MAX_RESUME_TRIES - 1)
     expect((await rowOf(db, id))!.report).toBe('none')
+  }))
+
+  it('a try cancelled for a passing cause gets its next delivery RESUME_RETRY_MS later, never at once', () => inAgent(async h => {
+    const { chat, id } = await ended(h)
+    const a = asks(h, { texts: TEXTS })
+    await a.deliver(id)
+    h.sched.cancel(deliverTaskId(id))
+    const [t] = h.turns().filter(x => x.chat_id === chat && x.source === 'action')
+    a.onTurnFinal({ ...t!, state: 'cancelled', cancel_why: 'pool_full' })
+    expect(h.dueTasks()).toContainEqual(expect.objectContaining({ id: deliverTaskId(id), due_at_ms: h.clock.now + RESUME_RETRY_MS }))
   }))
 
   it('resume keys: act_<id>, then act_<id>-<n>; nothing else parses', () => {
