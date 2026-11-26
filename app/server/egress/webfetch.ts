@@ -5,6 +5,10 @@
 // resolver, and any non-public answer refuses it; address literals are judged directly. Redirects: at most 3, each hop
 // checked the same way. Response bytes capped at 10 MB.
 //
+// The off switch (M1-F, N7): an Admin turns reading web pages off with the brand's `t:webfetch_on`. It's read from D1 at
+// the top of every hop, before the static checks, the leak check, DNS or any page request, so off means no web request
+// at all, also for a session that was already running and for the next hop of a redirect. A failed read refuses.
+//
 // The egress record (P8a): the container's HTTPS intercept (server/do/runner/runner.ts) records each hop by hostname
 // and verdict in `egress_fetches`, for WebFetch and Bash alike. Allowed hops are recorded before sending, and refused
 // hops in the background up to the per-brand rate limit. Never the path, query, headers or body. A request whose record
@@ -17,7 +21,7 @@
 // read 2026-11-20): `GET https://cloudflare-dns.com/dns-query?name=<n>&type=A|AAAA` with `accept: application/dns-json`;
 // `Status` 0 is success; `Answer[]` entries carry a numeric `type` (1 A, 28 AAAA, 5 CNAME) and `data`.
 import { WorkerEntrypoint } from 'cloudflare:workers'
-import { parseHostlist } from '../../shared/contract/settings-table.ts'
+import { parseHostlist, webFetchOn } from '../../shared/contract/settings-table.ts'
 import { brandAgent } from '../do/brand-agent/client.ts'
 import { safeError } from '../safe-error.ts'
 import type { EgressProps } from './index.ts'
@@ -43,6 +47,8 @@ export const FETCH_HEADERS: Readonly<Record<string, string>> = {
 const RESPONSE_HEADERS = ['content-type', 'content-language', 'last-modified', 'etag']
 
 export interface WebDeps {
+  /** Whether reading web pages is on now (the brand's `t:webfetch_on`, M1-F). Read before every hop; throws on a store failure. */
+  fetchOn(): Promise<boolean>
   /** The brand's `t:webfetch` as stored (a JSON string value), or null when it was never set. */
   hostList(): Promise<string | null>
   /** Leak check (M1-G, N8): returns true when `url` carries a stored private-data token. Throws on store failure (fail closed). */
@@ -58,7 +64,7 @@ export interface WebDeps {
   waitUntil(p: Promise<unknown>): void
 }
 
-export type WebRefusal = 'method' | 'scheme' | 'port' | 'not_listed' | 'address' | 'dns' | 'redirects' | 'too_large' | 'settings' | 'record' | 'leak'
+export type WebRefusal = 'method' | 'scheme' | 'port' | 'not_listed' | 'address' | 'dns' | 'redirects' | 'too_large' | 'settings' | 'record' | 'leak' | 'off'
 
 /** One outbound request as the egress record keeps it: the host only, and the verdict with its refusal code. */
 export type FetchRecord = { host: string; verdict: 'allowed'; code: null } | { host: string; verdict: 'refused'; code: WebRefusal }
@@ -154,7 +160,15 @@ export async function handleWebFetch(request: Request, d: WebDeps): Promise<Resp
 
   const headers = new Headers(FETCH_HEADERS)
   for (let hop = 0; ; hop++) {
-    // Seam for M1-F (N7): check the brand's `t:webfetch_on` switch at the top of each hop, before static checks, leak check, DNS or fetch.
+    // The off switch (M1-F, N7), read now for every hop: before the static checks, the leak check, DNS or the fetch.
+    let on: boolean
+    try {
+      on = await d.fetchOn()
+    } catch (err) {
+      d.log({ event: 'webfetch_switch_read_failed', error: safeError(err) })
+      return refuse('off', d, hostOf(url))
+    }
+    if (!on) return refuse('off', d, hostOf(url))
     const staticWhy = checkUrlStatic(url, list)
     if (staticWhy) return refuse(staticWhy, d, hostOf(url))
     let leaked: boolean
@@ -211,6 +225,12 @@ async function storedHostList(db: D1Database): Promise<string | null> {
   return typeof v === 'string' ? v : null
 }
 
+/** The brand's `t:webfetch_on` now (M1-F): on unless an Admin set it to false (`webFetchOn`). */
+export async function storedFetchOn(db: D1Database): Promise<boolean> {
+  const row = await db.prepare("SELECT value_json FROM settings WHERE owner = 'brand' AND key = 't:webfetch_on'").first<{ value_json: string }>()
+  return webFetchOn(row ? (JSON.parse(row.value_json) as unknown) : undefined)
+}
+
 /** The container a request came from: the intercept's props (never a token, chat or member). */
 export type EgressSource = EgressProps
 
@@ -227,19 +247,24 @@ export async function recordFetch(db: D1Database, source: EgressSource, r: Fetch
   )`).bind(...values, atMs - REFUSAL_WINDOW_MS, REFUSAL_RECORDS_PER_MINUTE - 1).run()
 }
 
+/** The real deps from the Worker's env, as WebEgress runs them (the tests take these and replace only the network). */
+export function webEgressDeps(env: Env, ctx: Pick<ExecutionContext, 'waitUntil'>, source: EgressSource): WebDeps {
+  const db = env.DB
+  const taint = taintStore(db, env.AUDIT_HASH_KEY, () => Date.now())
+  return {
+    fetchOn: () => storedFetchOn(db),
+    hostList: () => storedHostList(db),
+    checkLeak: url => taint.checkUrl(url),
+    fetch: (i, init) => fetch(i, init),
+    log: e => console.log(e),
+    record: r => recordFetch(db, source, r, Date.now()),
+    noteRecordFailure: () => brandAgent(env).noteEgressRecordFailure(),
+    waitUntil: p => ctx.waitUntil(p),
+  }
+}
+
 export class WebEgress extends WorkerEntrypoint<Env, EgressSource> {
   async fetch(request: Request): Promise<Response> {
-    const source = this.ctx.props
-    const db = this.env.DB
-    const taint = taintStore(db, this.env.AUDIT_HASH_KEY, () => Date.now())
-    return handleWebFetch(request, {
-      hostList: () => storedHostList(db),
-      checkLeak: url => taint.checkUrl(url),
-      fetch: (i, init) => fetch(i, init),
-      log: e => console.log(e),
-      record: r => recordFetch(db, source, r, Date.now()),
-      noteRecordFailure: () => brandAgent(this.env).noteEgressRecordFailure(),
-      waitUntil: p => this.ctx.waitUntil(p),
-    })
+    return handleWebFetch(request, webEgressDeps(this.env, this.ctx, this.ctx.props))
   }
 }

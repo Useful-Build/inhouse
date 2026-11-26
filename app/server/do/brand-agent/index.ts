@@ -8,7 +8,8 @@ import { turnPromptDeps, turnSystemPrompt } from '../../prompt/connected.ts'
 import type { AuditEntry, PushAck, RunEvent } from '../../../shared/protocol/index.ts'
 import type { ActiveRun, PauseState, SendTurnResult } from '../../../shared/contract/runs.ts'
 import type { Trace } from '../../../shared/contract/trace.ts'
-import { composePorts, p6Hooks, wireP6 } from './compose.ts'
+import type { Job } from '../../../shared/contract/jobs.ts'
+import { composePorts, jobDeps, p6Hooks, wireP6 } from './compose.ts'
 import { AgentCore } from './core.ts'
 import type {
   Actor, AdmitAnswer, BrandAgentParts, BrandAgentPorts, BrandAgentRpc, DeferDecision, DrainState, LeaseAnswer, ModelCallUsage, ModelCallWorst, PersonDataAnswer,
@@ -75,6 +76,7 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
         },
       })
       wireP6(this.core, p6Hooks(env, parts))
+      this.core.setJobs(jobDeps(env))
       this.core.ensureSeeds()
       await sched.syncAlarm()
     })
@@ -214,6 +216,20 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   /** Route 33: a run's or a turn's trace, null when it isn't there or isn't in the scope. */
   async getTrace(id: string, scope: RunScope): Promise<Trace | null> {
     return this.core.readTrace(id, scope)
+  }
+
+  // ---------- jobs (Stage 1 M1-B, N3) ----------
+  /** `GET /api/chats/:id/job`: the chat's newest job, or null. The route checked the reader's access to the chat. */
+  async chatJob(chatId: string): Promise<Job | null> {
+    return this.core.chatJob(chatId)
+  }
+  /** The member who owns a job, or null: route 101 answers another person's job 404 before acting. */
+  async jobOwner(jobId: string): Promise<string | null> {
+    return this.core.jobOwner(jobId)
+  }
+  /** `POST /api/jobs/:id/cancel`: the owner's Cancel, one synchronous step. */
+  async cancelJob(jobId: string, by: Actor): Promise<{ job: Job } | Refusal> {
+    return this.core.cancelJob(jobId, by)
   }
 
   // ---------- authority (4.10) ----------

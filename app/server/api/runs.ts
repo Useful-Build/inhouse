@@ -1,15 +1,15 @@
 // Turns, runs and traces (P3, p3-design sections 3, 4.3 and 4.9): routes 29 to 33. Owner: W1 (p3-w1.md).
 //
 // Route 29 resolves the turn first (4.9): the owner check (another person's chat is 404 before `requireObject`, a
-// deleted one too), the model from the picker's id and the brand's technical settings (unknown → 400, off or unpriced →
-// 403 `model_off`), the effort, the side model, `maxTurns`, WebFetch's hosts and web search; then the BrandAgent admits it (4.3)
+// deleted one too), the model from the picker's id and the brand's brand and technical settings (unknown → 400, off or
+// unpriced → 403 `model_off`), the effort, the side model, `maxTurns`, WebFetch's hosts and web search; then the BrandAgent admits it (4.3)
 // and answers at once, never waiting for placement. Attachments are checked by the BrandAgent against the stored input
 // rows (`files.inputsOf`), never taken from the client's names.
 import { ChatIdSchema } from '../../shared/contract/chat-ids.ts'
 import { RunIdSchema } from '../../shared/contract/chat-ids.ts'
 import { SendTurnInputSchema, TurnIdSchema } from '../../shared/contract/runs.ts'
 import type { ActiveRuns } from '../../shared/contract/runs.ts'
-import { MAX_TURNS, parseHostlist } from '../../shared/contract/settings-table.ts'
+import { MAX_TURNS, parseHostlist, webFetchOn, webSearchOn } from '../../shared/contract/settings-table.ts'
 import { apiError, apiJson } from '../http.ts'
 import { readCapped, storesOf } from '../db/handler-kit.ts'
 import { SYSTEM_MEMBER_ID } from '../db/ids.ts'
@@ -46,7 +46,7 @@ async function readJson(request: Request, max: number): Promise<unknown> {
 const refused = (r: { refused: { code: Parameters<typeof apiError>[0]; reason?: string } }) =>
   apiError(r.refused.code, r.refused.reason === undefined ? {} : { reason: r.refused.reason })
 
-/** What route 29 resolves from the picker's model id and the brand's technical settings (design 4.9). */
+/** What route 29 resolves from the picker's model id and the brand's brand and technical settings (design 4.9). */
 export interface ResolvedTurn {
   /** The turn model's API id, its picker id, its effort and the engine's background model. */
   model: string
@@ -54,9 +54,12 @@ export interface ResolvedTurn {
   effort: Effort
   sideModel: string
   maxTurns: number
-  /** The hosts WebFetch may reach: exactly `t:webfetch`'s list, so empty (the default) is none (P8a S). */
+  /**
+   * The hosts WebFetch may reach: exactly `t:webfetch`'s list, so empty (the default) is none (P8a S); none at all while
+   * an Admin has reading web pages off (`t:webfetch_on`, M1-F).
+   */
   webFetchDomains: string[]
-  /** Web search: only with the Inhouse team's `t:websearch` switch set to true (P8a S); off by default. */
+  /** Web search: only with the brand's `t:websearch` switch set to true (an Admin's, M1-F); off by default. */
   webSearch: boolean
 }
 
@@ -64,21 +67,24 @@ export interface ResolvedTurn {
  * Route 29's model and settings resolution (design 4.9; PR 5, ask F), the one function the route and a due-task handler
  * call: unknown model → `invalid`; switched off or unpriced → `forbidden`/`model_off`; the effort and side model from
  * the catalogue and `tm:<id>:*`; `maxTurns` from `t:max_turns` (else 25); WebFetch's hosts from `t:webfetch` (empty or
- * missing: none; a stored value that breaks the rule: none, fail closed); web search on only when `t:websearch` is true.
+ * missing: none; a stored value that breaks the rule: none, fail closed; none while `t:webfetch_on` is off); web search on
+ * only when `t:websearch` is true. The web switches are brand settings (an Admin's, M1-F) and the rest technical, so both
+ * scopes are read.
  */
 export async function resolveTurnSettings(
   settingsStore: Pick<Stores['settings'], 'list'>, pickerId: string, catalog: readonly CatalogModel[] = CATALOG,
 ): Promise<ResolvedTurn | { refused: ModelRefusal }> {
   const settings: Record<string, string | boolean | null> = {}
-  for (const s of await settingsStore.list(BRAND_OWNER, 'technical')) settings[s.key] = s.value as string | boolean | null
+  const [brand, technical] = await Promise.all([settingsStore.list(BRAND_OWNER, 'brand'), settingsStore.list(BRAND_OWNER, 'technical')])
+  for (const s of [...brand, ...technical]) settings[s.key] = s.value as string | boolean | null
   const resolved = resolveModel(pickerId, settings as SettingsView, catalog)
   if ('refused' in resolved) return resolved
   const maxTurnsSetting = settings['t:max_turns']
   const maxTurns = typeof maxTurnsSetting === 'string' && (MAX_TURNS as readonly string[]).includes(maxTurnsSetting) ? Number(maxTurnsSetting) : 25
   const hostSetting = settings['t:webfetch']
   const hosts = typeof hostSetting === 'string' ? parseHostlist(hostSetting) : []
-  const webFetchDomains = hosts ?? []
-  const webSearch = settings['t:websearch'] === true
+  const webFetchDomains = webFetchOn(settings['t:webfetch_on']) ? (hosts ?? []) : []
+  const webSearch = webSearchOn(settings['t:websearch'])
   return { model: resolved.model.apiId, pickerId: resolved.model.id, effort: resolved.effort, sideModel: resolved.sideApiId, maxTurns, webFetchDomains, webSearch }
 }
 
