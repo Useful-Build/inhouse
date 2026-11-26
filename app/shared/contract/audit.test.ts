@@ -506,3 +506,17 @@ describe('P6a lines (PR0)', () => {
     ])
   })
 })
+
+describe('M2-R: the restore hold\'s needs-check line', () => {
+  const id = 'ac_AAAAAAAAAAAAAAAAAAAAAA'
+  it('takes a restore line with or without an attempt, and refuses any other line without one', () => {
+    expect(ok({ action: 'action.needs_check', actionId: id, why: 'restore' })).toBe(true)
+    expect(ok({ action: 'action.needs_check', actionId: id, attempt: 2, why: 'restore' })).toBe(true)
+    for (const why of ['timeout', 'unknown', 'thrown', 'bad_result', 'stale']) {
+      expect(ok({ action: 'action.needs_check', actionId: id, why }), why).toBe(false)
+      expect(ok({ action: 'action.needs_check', actionId: id, attempt: 1, why }), why).toBe(true)
+    }
+    expect(ok({ action: 'action.needs_check', actionId: id, attempt: 0, why: 'restore' })).toBe(false)
+    expect(ok({ action: 'action.needs_check', actionId: id, why: 'restored' })).toBe(false)
+  })
+})

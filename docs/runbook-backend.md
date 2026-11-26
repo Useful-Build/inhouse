@@ -127,8 +127,15 @@ running it again. In order:
    `restore.member_placeholder` line.
 3. **Member changes again.** Removals and role changes recorded in those lines are applied again, so a removed member
    doesn't come back with old access. Re-invites after a removal aren't replayed: invite them again.
-4. **Outbox hold.** Not built yet. The record says `outbox: 'p8b_pending'`. Until P8b, no approved or sending outbox row
-   exists to hold.
+4. **Outbox hold** (`app/server/outbox/restore-hold.ts`). The restored database is the backup's, so it can name
+   actions the live brand sent after the backup, and grants it revoked since. The hold sets `outbox_gate.restore_hold`
+   (no answer and no send while it's set) and `do_gen = -1` (so the first sync after the switch re-seats the gate at the
+   recovered BrandAgent's generation). Every `approved` or `sending` action, and every `waiting` one the re-appended
+   audit lines show was approved after the backup, becomes "Needs a check" with an `action.needs_check` line
+   (`why: restore`). With an audit gap (lines read from the daily copy), every `waiting` action is held too. Every live
+   permission is revoked with reason `restore`. The record's `reconcile.outbox` lists the held action ids and the revoked
+   permission ids. Nothing held is ever sent by the system: after the switch, the approver (or an Admin) checks the tool
+   and says whether it went out. A Resume never lifts the hold; only the confirm does.
 5. **Deletion-log replay.** Apply each retention job at its logged cutoffs and repeat person deletions from each
    store's recovery point. If a person deletion stopped after pseudonymisation, replay the member update. Any
    later retry has its own log entries. Run reconcile in the recovered BrandAgent's context when replay reaches
@@ -164,8 +171,9 @@ run wrote the record: stop the other run, then run the reconcile again.
 Run the confirm (`confirmRestore`) with two ids: the actor is the Inhouse operator (an active `inhouse` row in the
 restored database), and `approvedBy` is the Admin whose written approval you hold. An operator approves only when the
 restored database has no active Admin. The confirm refuses unless every step is done, and refuses if anything was
-logged in the deletion log after the replay read it. It writes one `restore.confirmed` line and the record becomes
-`restored`.
+logged in the deletion log after the replay read it. It writes one `restore.confirmed` line, clears the outbox hold
+in the same batch, and the record becomes `restored`. A record from before the hold existed (`outbox: 'p8b_pending'`)
+is refused: run the reconcile again first.
 
 ### 5. Hard gate: `checkBeforeSwitch`
 Right before the switch, run `checkBeforeSwitch` against the live database. This is a **hard gate**: no switch on

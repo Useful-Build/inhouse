@@ -6,8 +6,10 @@
 //     the record and never writes it, so the etag read before it still guards the reconcile's own write;
 //  3. the audit re-append (audit.ts);
 //  3b. the member removals and role changes those lines record, applied again (members.ts);
-//  4. P8b: hold every `approved` and `sending` outbox row, keep the outbox paused, and check each held action against
-//     its tool's own record. Not built in P8a: the record says `outbox: 'p8b_pending'`, and this is where it goes;
+//  4. the outbox hold (M2-R, server/outbox/restore-hold.ts): the gate held and re-seated (`restore_hold = 1`,
+//     `do_gen = -1`), every `approved` or `sending` row, and every `waiting` row the re-appended lines show approved, to
+//     "Needs a check", every live grant revoked. After step 3, whose lines it reads; its own lines carry this restore's
+//     request id (`restoreStamp`), so step 3 on a re-run knows them. Only the confirm clears the hold;
 //  5. the deletion-log replay past the watermark (replay.ts).
 // The record stays `restored_unreconciled`; only an admin's audited confirm (confirm.ts) makes it `restored`. A refusal
 // is stored on the record (`reconcile.refusal`) and returned, never thrown.
@@ -24,7 +26,8 @@ import { RestoreRefusal } from '../errors.ts'
 import { FtsRecordSchema, rebuildAfterRestore } from '../fts/rebuild.ts'
 import type { RebuildDeps, RebuildResult } from '../fts/rebuild.ts'
 import type { RestoreRecord } from '../manifest.ts'
-import { reappendAudit } from './audit.ts'
+import { holdOutbox } from '../../../server/outbox/restore-hold.ts'
+import { reappendAudit, restoreStamp } from './audit.ts'
 import { reapplyMemberChanges } from './members.ts'
 import { emptyReconcile, readRecord, writeRecord } from './record.ts'
 import { replayDeletionLog } from './replay.ts'
@@ -85,20 +88,24 @@ export async function reconcile(deps: ReconcileDeps): Promise<ReconcileResult> {
     const audit = await reappendAudit(deps.bucket, deps.target, record, deps.at)
     // 3b. The member removals and role changes since the backup.
     const members = await reapplyMemberChanges(deps.target, audit.afterId)
-    // 4. P8b: the outbox hold and the tool check go here, before the replay and the confirm. Not built in P8a.
+    // 4. The outbox hold, before the replay and the confirm.
+    const outbox = await holdOutbox(deps.target, {
+      afterId: audit.afterId, gap: audit.gap !== null,
+      at: { nowMs: deps.at.nowMs, actorId: deps.at.actorId, requestId: restoreStamp(deps.restoreId) },
+    })
     // 5. The deletion log past the watermark.
     const replay = await replayDeletionLog({
       bucket: deps.bucket, target: deps.target, at: deps.at, registry: deps.registry ?? realRegistry,
       deletion: deps.deletionRules, retention: deps.retentionRules, runners: deps.runners, retentionSql: deps.retentionSql,
     }, record)
-    return { ok: await writeRecord(deps.bucket, { ...record, reconcile: { ...reconcile, fts, audit, members, replay, refusal: null } }, etag) }
+    return { ok: await writeRecord(deps.bucket, { ...record, reconcile: { ...reconcile, fts, audit, members, outbox, replay, refusal: null } }, etag) }
   } catch (err) {
     if (!(err instanceof RestoreRefusal)) throw err
     // Another run wrote the record since this one read it: nothing to record over it.
     if (err.reason.startsWith('record_changed')) return { refused: err.reason, record: null }
     // A step that refuses leaves the restore unreconciled: no step counts as done until a whole run gets through.
     try {
-      const saved = await writeRecord(deps.bucket, { ...record, reconcile: { ...reconcile, fts: null, audit: null, members: null, replay: null, refusal: err.reason } }, etag)
+      const saved = await writeRecord(deps.bucket, { ...record, reconcile: { ...reconcile, fts: null, audit: null, members: null, outbox: null, replay: null, refusal: err.reason } }, etag)
       return { refused: err.reason, record: saved }
     } catch (writeErr) {
       // Another run wrote the record meanwhile (review L-d): returned, never thrown, with the step's own refusal.

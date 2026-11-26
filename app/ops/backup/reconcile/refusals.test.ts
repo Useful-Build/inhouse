@@ -118,13 +118,15 @@ it('refuses a record from before the reconcile by name, and a write over a recor
 
 it('the record schema refuses restored without every step, with a refusal, or with an index not rebuilt', () => {
   const steps = {
-    fts: 'rebuilt', audit: { source: 'snapshot', afterId: 1, throughId: 1, appended: 0, gap: null, placeholders: [] }, members: { removed: [], roles: [] }, outbox: 'p8b_pending',
+    fts: 'rebuilt', audit: { source: 'snapshot', afterId: 1, throughId: 1, appended: 0, gap: null, placeholders: [] }, members: { removed: [], roles: [] }, outbox: { held: [], revoked: [] },
     replay: { watermarkMs: T, throughKey: null, runs: [], skippedRefused: [] }, confirm: { actorId: ids.inhouse, approvedBy: ids.admin, atMs: T, auditId: 2 }, refusal: null,
   } as const
   const base = { ...record, status: 'restored', reconciled: true, d1: { ...record.d1, derived: record.d1.derived.map(d => ({ ...d, state: 'rebuilt' })) } }
   expect(record.d1.derived.length).toBeGreaterThan(0)
   expect(RestoreRecordSchema.safeParse({ ...base, reconcile: steps }).success).toBe(true)
-  for (const missing of ['fts', 'audit', 'members', 'replay', 'confirm'] as const) expect(RestoreRecordSchema.safeParse({ ...base, reconcile: { ...steps, [missing]: null } }).success, missing).toBe(false)
+  // A record written before the outbox hold existed (`p8b_pending`) still parses as restored; a new confirm refuses it.
+  expect(RestoreRecordSchema.safeParse({ ...base, reconcile: { ...steps, outbox: 'p8b_pending' } }).success).toBe(true)
+  for (const missing of ['fts', 'audit', 'members', 'outbox', 'replay', 'confirm'] as const) expect(RestoreRecordSchema.safeParse({ ...base, reconcile: { ...steps, [missing]: null } }).success, missing).toBe(false)
   expect(RestoreRecordSchema.safeParse({ ...base, reconcile: { ...steps, refusal: 'x' } }).success).toBe(false)
   expect(RestoreRecordSchema.safeParse({ ...base, d1: record.d1, reconcile: steps }).success).toBe(false)
   expect(RestoreRecordSchema.safeParse({ ...base, reconcile: null }).success).toBe(false)

@@ -71,7 +71,7 @@ export const RESTORE_STATUSES = ['restored_unreconciled', 'restored', 'refused',
 /**
  * The reconcile (P8a R; plan "A restore, step by step", steps 3 to 5), on a `restored_unreconciled` restore. Each step's
  * field is null until it's done; `refusal` holds the last refusal (a step that stopped, by name), null once a run
- * gets through. Step 4 (the outbox hold and the tool check) is P8b's: `outbox` says so until it lands.
+ * gets through.
  */
 export const ReconcileSchema = z.object({
   /** Step 2b: C1's FTS rebuild, read back from its `fts.json`. */
@@ -101,8 +101,12 @@ export const ReconcileSchema = z.object({
     removed: z.array(z.string()),
     roles: z.array(z.object({ memberId: z.string(), role: z.enum(['member', 'admin']) })),
   }).nullable(),
-  /** Step 4, P8b: the outbox hold and the check against each tool's record. Not built in P8a. */
-  outbox: z.literal('p8b_pending'),
+  /**
+   * Step 4 (M2-R, server/outbox/restore-hold.ts): the outbox held (`outbox_gate.restore_hold = 1`, `do_gen = -1`), the
+   * actions it sent to "Needs a check" and the grants it revoked, by id. `'p8b_pending'` is only on records written
+   * before the hold existed; a new confirm refuses it.
+   */
+  outbox: z.union([z.literal('p8b_pending'), z.object({ held: z.array(z.string()), revoked: z.array(z.string()) })]).nullable(),
   /** Step 5: the deletion log replayed past the watermark. */
   replay: z.object({
     watermarkMs: Count,
@@ -175,9 +179,9 @@ export const RestoreRecordSchema = z.object({
 }).superRefine((r, ctx) => {
   // No path marks a restore done before the audit re-append, the deletion-log replay and the admin's confirm.
   const c = r.reconcile
-  const done = c !== null && c.fts !== null && c.audit !== null && c.members !== null && c.replay !== null && c.confirm !== null && c.refusal === null
+  const done = c !== null && c.fts !== null && c.audit !== null && c.members !== null && c.outbox !== null && c.replay !== null && c.confirm !== null && c.refusal === null
     && r.d1.derived.every(d => d.state === 'rebuilt')
-  if ((r.status === 'restored') !== done) ctx.addIssue({ code: 'custom', path: ['status'], message: 'restored needs the FTS rebuild, the audit re-append, the member changes, the replay, the confirm and no refusal' })
+  if ((r.status === 'restored') !== done) ctx.addIssue({ code: 'custom', path: ['status'], message: 'restored needs the FTS rebuild, the audit re-append, the member changes, the outbox hold, the replay, the confirm and no refusal' })
   if (r.status !== 'restored' && r.d1.derived.some(d => d.state === 'rebuilt')) ctx.addIssue({ code: 'custom', path: ['d1', 'derived'], message: 'rebuilt only on a restored record' })
   if (r.reconciled !== (r.status === 'restored')) ctx.addIssue({ code: 'custom', path: ['reconciled'], message: 'reconciled is true only when restored' })
   if (r.reconcile !== null && r.status !== 'restored_unreconciled' && r.status !== 'restored') ctx.addIssue({ code: 'custom', path: ['reconcile'], message: 'only a proven restore is reconciled' })
