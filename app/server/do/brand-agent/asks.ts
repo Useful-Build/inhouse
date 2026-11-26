@@ -15,8 +15,11 @@
 //     * when an action is final, `action-deliver:<id>` claims `resume` when the report is `later`, or NULL with the asking
 //       turn gone, or `tool` whose waiter died without returning the result; and submits one turn into the chat. A
 //       refused submit is tried again later with the same key.
-//  The resume turn's text comes from the action texts port (`ActionTexts`), `null` until M2-G: while it is null no resume
-//  turn is ever sent (the report stays `later` or NULL for M2-G to pick up).
+//  The resume turn's text comes from the action texts port (`ActionTexts`, wired by M2-G): while it is null no resume
+//  turn is sent, and the report stays `later` or NULL; the sweep picks such rows up again once it is wired (M2-G).
+//  M2-G (from #444's review): a resume turn goes in whenever the chat and its owner are there, even when the asking
+//  turn's row is gone (the chat's owner asks) or its model is off (the brand's default model); a turn's end flips every
+//  action that turn asked about or waited on, not only the ones it first made.
 import type { ActionState } from '../../../shared/contract/actions.ts'
 import type { SendTurnResult } from '../../../shared/contract/runs.ts'
 import { SYSTEM_MEMBER_ID } from '../../db/ids.ts'
@@ -192,10 +195,15 @@ export interface ActionTexts {
 }
 
 export interface AsksDeps {
-  /** `null` until M2-G: no resume turn is sent. */
+  /** Null: no resume turn is sent (M2-G wired it, compose.ts). */
   texts: ActionTexts | null
   /** Route 29's settings for the asking turn's picker id, read now (as a job's continuation, compose.ts `jobDeps`). */
   settings(pickerId: string): Promise<JobTurnSettings | { refused: 'model_off' | 'invalid' }>
+  /**
+   * M2-G: the brand's default settings (its Default model, as a routine's turn runs), for a resume whose asking turn is
+   * gone or whose model is off now. Refused: no model is usable at all.
+   */
+  defaultSettings(): Promise<JobTurnSettings | { refused: unknown }>
 }
 
 /** Whether any write operation is enabled for the brand (N2): the turn's start then carries `actions: true`. */
@@ -310,10 +318,17 @@ export class Asks {
     this.p.scheduler.ensure({ id: turnEndTaskId(t.turn_id), kind: TURN_END_KIND, dueAtMs: this.p.now() })
   }
 
-  /** The `ask-turn-end:<turnId>` task: N14's flip for a turn that didn't end `done`, then each of its actions delivered. */
+  /**
+   * The `ask-turn-end:<turnId>` task: N14's flip for a turn that didn't end `done`, then each of its actions delivered.
+   * Its actions are the ones it made (`outbox_actions.turn_id`) and the ones it asked about or waited on (its `ask` parts
+   * and waits): a card first made in an earlier turn and asked again in this one is this turn's to report (M2-G).
+   */
   async turnEnded(turnId: string): Promise<void> {
     const t = this.p.core.turn(turnId)
-    const ids = (await all<{ id: string }>(this.p.db, stmt('SELECT id FROM outbox_actions WHERE turn_id = ?', turnId))).map(r => r.id)
+    const made = (await all<{ id: string }>(this.p.db, stmt('SELECT id FROM outbox_actions WHERE turn_id = ?', turnId))).map(r => r.id)
+    const asked = this.p.sql.exec<{ action_id: string }>(
+      'SELECT action_id FROM ask_parts WHERE turn_id = ? UNION SELECT action_id FROM ask_waits WHERE turn_id = ?', turnId, turnId).toArray().map(r => r.action_id)
+    const ids = [...new Set([...made, ...asked])]
     await turnEndedReports(d1Reports(this.p.db), ids, t?.outcome ?? null)
     for (const id of ids) this.changed(id)
   }
@@ -355,17 +370,30 @@ export class Asks {
     return false
   }
 
-  /** The resume turn: by the chat's owner, priority `next`, key `act_<id>`, `source: 'action'`, the asking turn's model. */
+  /**
+   * The resume turn: by the chat's owner, priority `next`, key `act_<id>`, `source: 'action'`, the asking turn's model.
+   * The asking turn's row gone (pruned, or never in this object): the chat's owner and the brand's default model. Its
+   * model off now: the brand's default model. A chat this object never ran has no owner here: gone. No usable model at
+   * all: tried again later.
+   */
   private async submitResume(row: ReportRow, full: OutboxActionRow): Promise<'submitted' | 'retry' | 'gone'> {
     const texts = this.p.deps.texts
     if (!texts) throw new Error('asks: a resume claimed with no action texts')
     const asking = row.turnId === null ? null : this.p.core.turn(row.turnId)
-    if (!asking) return 'gone'
-    const settings = await this.p.deps.settings(asking.picker_id)
-    if ('refused' in settings) return 'gone'
+    const owner = asking?.owner_id
+      ?? this.p.sql.exec<{ owner_id: string }>('SELECT owner_id FROM chat_state WHERE chat_id = ?', row.chatId).toArray()[0]?.owner_id
+    if (owner === undefined) return 'gone'
+    let settings = asking ? await this.p.deps.settings(asking.picker_id) : null
+    if (settings === null || 'refused' in settings) {
+      const fallback = await this.p.deps.defaultSettings()
+      if ('refused' in fallback) {
+        console.error({ event: 'action_resume_no_model', actionId: row.id })
+        return 'retry'
+      }
+      settings = fallback
+    }
     const card = JSON.parse(full.card_json) as StoredCard
     const result = full.state === 'sent' && full.result_json !== null ? (JSON.parse(full.result_json) as { ref?: string }).ref ?? null : null
-    const owner = asking.owner_id
     const turn: SubmitTurn = {
       chatId: row.chatId, by: { kind: owner === SYSTEM_MEMBER_ID ? 'service' : 'person', memberId: owner },
       model: settings.model, pickerId: settings.pickerId, effort: settings.effort, sideModel: settings.sideModel,
@@ -414,6 +442,13 @@ export class Asks {
       sql.exec("INSERT INTO flags (key, value) VALUES ('asks_cursor_ms', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", nextMs)
       sql.exec("INSERT INTO flags (key, value) VALUES ('asks_cursor_id', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", nextId)
     }
+    // Final actions nobody has reported yet (`later`, or NULL): each pass gives them their deliver task again, so a row
+    // left while the texts port was null, or whose task was lost, is reported once the port is wired (M2-G). Each
+    // delivery moves the row on (`resume` or `none`), or waits on its live turn, so the set drains.
+    const unreported = await all<{ id: string }>(db, stmt(
+      `SELECT id FROM outbox_actions WHERE state IN (${FINAL_STATES.map(() => '?').join(', ')}) AND (report IS NULL OR report = 'later')
+       ORDER BY updated_at_ms, id LIMIT ?`, ...FINAL_STATES, ASKS_SWEEP_PAGE))
+    for (const r of unreported) this.changed(r.id)
     pruneInvocations(sql, now)
     sql.exec('DELETE FROM ask_waits WHERE until_ms < ?', now - ASKS_KEEP_MS)
     sql.exec('DELETE FROM ask_parts WHERE at_ms < ?', now - ASKS_KEEP_MS)
