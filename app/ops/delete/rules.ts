@@ -55,7 +55,8 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   // `turn.queued` event's `by` is the run's owner). It refuses `busy` while a turn of theirs is live.
   BrandAgent: {
     action: 'custom',
-    deletes: ['runs.owner_id', 'turns.owner_id', 'chat_state.owner_id', 'run_tokens.member_id', 'events.json:$.by'],
+    // Stage 1 M1-B: `jobs.owner_id`, the person's long jobs (busy while one runs or its notice is unwritten).
+    deletes: ['runs.owner_id', 'turns.owner_id', 'chat_state.owner_id', 'run_tokens.member_id', 'events.json:$.by', 'jobs.owner_id'],
     kept: ['authority.id', 'flags.value'],
     why: 'personData deletes the person\'s rows; authority.id keeps a removed member\'s id so their sends stay refused (an accepted keep, line A), flags.value (paused_by) keeps the pseudonymous id',
   },

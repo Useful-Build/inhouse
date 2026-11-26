@@ -49,6 +49,11 @@ import { SWEEP_EVERY_MS, ensureGrantExpiry, runAuthoritySweep, runGrantExpiry, s
 import type { AuthorityDeps, SocketAuthority } from './authority.ts'
 import { safeError } from '../../safe-error.ts'
 import { SYSTEM_PROMPT_V2 } from '../../prompt/system.ts'
+import { JobEngine } from './jobs/engine.ts'
+import type { JobSubmit } from './jobs/engine.ts'
+import type { JobDeps } from './jobs/types.ts'
+import { recoverable } from './jobs/rules.ts'
+import type { Job } from '../../../shared/contract/jobs.ts'
 
 // ---------- numbers (p3-design 1.3, 4.3, 4.4, 4.6, 4.11) ----------
 export const STARTING_DEADLINE_MS = 3 * 60_000
@@ -107,6 +112,8 @@ export interface TurnRow {
   pos_from: number | null; pos_to: number | null; d1_flushed: number
   output_format_json: string | null; on_end_json: string | null; structured_output_json: string | null
   resume_json: string | null; abandoned: string | null; held_json: string | null; prompt_version: number | null; prompt_apps: string | null
+  // Stage 1 M1-B (jobs/, schema.ts).
+  job_id: string | null; job_n: number | null; cut_cause: string | null; person_stop: number; recovered: number; source: string | null
   created_at_ms: number; claimed_at_ms: number | null; started_at_ms: number | null; ended_at_ms: number | null
 }
 
@@ -203,11 +210,12 @@ function endPayload(t: TurnRow): TurnEndPayload {
   }
 }
 
-/** What an in-object submit adds to route 29's turn: PR 5's format and end task, PR 6's resume of a parked question. */
+/** What an in-object submit adds to route 29's turn: PR 5's format and end task, PR 6's resume of a parked question, M1-B's job. */
 interface Extra {
   outputFormat?: OutputFormat
   onEnd?: OnEnd
   resume?: Resume & { parkedTurnId: string }
+  job?: JobSubmit
 }
 
 /** Refusals a resume waits out (A8): it's tried again by the `deferred-resume` task, never counted toward quarantine. */
@@ -224,6 +232,8 @@ export class AgentCore {
   private readonly holding = new Set<string>()
   /** The model gate and the per-turn ledger queue (8.2, gate.ts). */
   readonly gate: ModelGate
+  /** Stage 1 M1-B: long jobs (jobs/engine.ts). Off until `setJobs` wires its ports with the texts. */
+  readonly jobs: JobEngine
 
   constructor(deps: CoreDeps) {
     this.d = deps
@@ -236,7 +246,36 @@ export class AgentCore {
         if (t && t.fenced === 0 && (t.state === 'live' || t.state === 'starting')) this.fence(t, { outcome: 'failed', reason })
       },
     })
+    this.jobs = new JobEngine({
+      sql: deps.sql, scheduler: deps.scheduler, now: deps.now, usage: deps.ports.usage,
+      turn: id => this.turn(id),
+      emitChat: (chatId, event) => {
+        const run = this.sql.exec<{ run_id: string }>(
+          "SELECT run_id FROM runs WHERE chat_id = ? ORDER BY state = 'live' DESC, started_at_ms DESC LIMIT 1", chatId).toArray()[0]
+        if (!run) throw new Error('job event for a chat with no run')
+        this.emit(run.run_id, null, event)
+      },
+      stop: t => this.fence(t, { outcome: 'stopped' }),
+      askInterrupt: t => this.askInterrupt(t),
+      paused: () => this.paused(),
+      advanceChat: chatId => { const r = this.liveRun(chatId); if (r !== null) this.advance(r) },
+      submit: (t, extra) => this.submitTurn(t, extra),
+      abandonWait: (chatId, failure) => {
+        const cs = this.chatState(chatId)
+        if (cs?.session === 'waiting') this.abandonWait(cs, failure)
+      },
+      waitingTurn: chatId => {
+        const cs = this.chatState(chatId)
+        return cs?.session === 'waiting' ? this.waitingOf(cs)?.turnId ?? null : null
+      },
+      chatDeleted: chatId => this.sql.exec('SELECT 1 FROM chat_deletion WHERE chat_id = ? AND deleted = 1', chatId).toArray().length > 0,
+      memberRemoved: memberId => this.sql.exec("SELECT 1 FROM authority WHERE kind = 'member' AND id = ?", memberId).toArray().length > 0,
+      turnsMicro: ids => ids.reduce((sum, id) => sum + callsMicro(this.sql, id), 0),
+    })
   }
+
+  /** Wires the job engine's ports (index.ts once per object; tests with fakes). */
+  setJobs(d: JobDeps | null): void { this.jobs.setDeps(d) }
 
   /** A turn takes model calls while it runs on a runner, unfenced and not interrupted (8.2). */
   private admitsCalls(turnId: string): boolean {
@@ -317,7 +356,7 @@ export class AgentCore {
    * the end task. On that path the caller chose the effort too, so the hash covers it (A2's field list, run-start.ts);
    * route 29's effort is resolved from settings and isn't hashed.
    */
-  async submitTurn(t: SubmitTurn, extra?: { outputFormat?: OutputFormat; onEnd?: OnEnd }): Promise<SendTurnResult | Refusal> {
+  async submitTurn(t: SubmitTurn, extra?: { outputFormat?: OutputFormat; onEnd?: OnEnd; job?: JobSubmit }): Promise<SendTurnResult | Refusal> {
     const who = actorRefusal(t.by)
     if (who) return who
     // An internal submit into a person's chat reads D1 first, as route 29 does (A7): the object's own state can say live
@@ -356,6 +395,11 @@ export class AgentCore {
   private admit(t: SubmitTurn, hash: string, files: ChatFile[], extra?: Extra): SendTurnResult | Refusal {
     const prior = this.byKey(t.chatId, t.input.clientTurnKey)
     if (prior) return this.replay(prior, hash, t.by.memberId)
+    // A job's continuation (N3): only while its job runs, at its gen and step, before its cap. A stale one is `conflict`.
+    if (extra?.job !== undefined) {
+      const stale = this.jobs.admitRefusal(extra.job, t.chatId)
+      if (stale) return stale
+    }
     const member = t.by.memberId
     if (this.sql.exec("SELECT 1 FROM authority WHERE kind = 'member' AND id = ?", member).toArray().length > 0) {
       // A re-invited member keeps their id (P2) and nothing tells the object: the sweep checks D1 now (authority.ts).
@@ -401,8 +445,8 @@ export class AgentCore {
     this.sql.exec(
       `INSERT INTO turns (turn_id, run_id, chat_id, owner_id, ord, client_key, payload_hash, gen, state, priority, text, quote,
         attachments_json, model, picker_id, side_model, effort, max_turns, web_fetch_json, answer_position, created_at_ms,
-        output_format_json, on_end_json, resume_json, web_search)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
+        output_format_json, on_end_json, resume_json, web_search, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)`,
       turnId, runId, t.chatId, member, ord + 1, t.input.clientTurnKey, hash, t.input.priority, t.input.text,
       t.input.quote ?? null, JSON.stringify(atts), t.model, t.pickerId, t.sideModel, t.effort, t.maxTurns,
       t.webFetchDomains === null ? null : JSON.stringify(t.webFetchDomains), now,
@@ -411,26 +455,37 @@ export class AgentCore {
       extra?.resume === undefined ? null
         : JSON.stringify({ questionId: extra.resume.questionId, decision: extra.resume.decision, toolUseId: extra.resume.toolUseId } satisfies Resume),
       t.webSearch === true ? 'on' : null,
+      extra === undefined ? 'person' : extra.job !== undefined ? 'job' : extra.resume !== undefined ? 'question' : 'task',
     )
+    if (extra?.job !== undefined) this.jobs.admitted(extra.job, turnId)
+    // A person's own message in a job's chat (Q4 = B: the job carries on; one rule in jobs/ M1-I could change).
+    if (extra === undefined) this.jobs.personMessage(t.chatId)
     if (extra?.resume !== undefined) {
       // The resume takes the question over, in this same step (A8: the end fires exactly once): the chat leaves
       // `waiting` (its checkpoint stays, so the resume starts from it) and the parked turn's end task moves to this turn.
       this.sql.exec("UPDATE chat_state SET session = 'resumable', waiting_json = NULL WHERE chat_id = ?", t.chatId)
       this.sql.exec('UPDATE turns SET on_end_json = NULL WHERE turn_id = ?', extra.resume.parkedTurnId)
+      // A job's parked end moved to this turn: the job runs again (an ended one stays ended).
+      if (extra.onEnd !== undefined) this.jobs.resumed(extra.onEnd, turnId, this.turn(extra.resume.parkedTurnId)?.job_n ?? null)
     }
     this.emit(runId, turnId, {
       type: 'turn.queued', turnId, messageId: `${turnId}.u`, text: t.input.text,
       ...(t.input.quote === undefined ? {} : { quote: t.input.quote }),
       attachments: atts.map(a => ({ fileId: a.fileId, name: a.name })), priority: t.input.priority, by: member,
+      ...(extra?.job !== undefined ? { source: 'job' as const } : {}),
     })
     // `now` interrupts the live turn (not one already ending or interrupted) and goes next (4.3).
     if (t.input.priority === 'now') {
       const live = this.sql.exec<TurnRow>("SELECT * FROM turns WHERE run_id = ? AND state = 'live' AND interrupt_asked = 0 AND fenced = 0", runId).toArray()[0]
-      if (live) this.askInterrupt(live)
+      // A job's live turn interrupted by a person's message carries the job on after the answer (Q4 = B).
+      if (live && live.job_id !== null) this.sql.exec("UPDATE turns SET cut_cause = COALESCE(cut_cause, 'message') WHERE turn_id = ?", live.turn_id)
+      if (live) this.askInterrupt(this.turn(live.turn_id)!)
       // A held platform stop (A9) is the person's earlier question: `now` ends it `interrupted`, as `interrupt` does,
       // so it isn't placed again after the new answer.
       const held = this.sql.exec<TurnRow>("SELECT * FROM turns WHERE run_id = ? AND state = 'ending' AND outcome IS NULL AND held_json IS NOT NULL", runId).toArray()[0]
-      if (held) this.fence(held, { outcome: 'interrupted' })
+      // A held job turn ended by a person's message carries the job on too (Q4 = B).
+      if (held && held.job_id !== null) this.sql.exec("UPDATE turns SET cut_cause = COALESCE(cut_cause, 'message') WHERE turn_id = ?", held.turn_id)
+      if (held) this.fence(this.turn(held.turn_id)!, { outcome: 'interrupted' })
     }
     // While a turn exists the authority sweep runs every 5 minutes (4.10).
     sweepBy(this.sql, this.d.scheduler, now + SWEEP_EVERY_MS)
@@ -470,6 +525,8 @@ export class AgentCore {
     }
     const pending = this.sql.exec('SELECT 1 FROM turn_effects e JOIN turns t ON t.turn_id = e.turn_id WHERE t.run_id = ? LIMIT 1', runId).toArray()
     if (pending.length > 0) return null
+    // A running job keeps its run live between its turns (M1-B): its end advances the run again.
+    if (this.jobs.keepsRunLive(run.chat_id)) return null
     const now = this.d.now()
     const turns = this.count("run_id = ? AND state = 'ended'", runId)
     // The run's cost from the tally (8.3): closed calls at their price, any still open at their worst case; in cents.
@@ -500,6 +557,12 @@ export class AgentCore {
   private async start(turnId: string, gen: number): Promise<void> {
     let t = this.current(turnId, gen, 'starting')
     if (!t) return
+    // A job's turn starts only while its job runs and before its cap (N3: nothing starts past 8 hours).
+    if (t.job_id !== null && !this.jobs.mayStart(t.job_id)) {
+      const f = this.current(turnId, gen, 'starting')
+      if (f) this.fence(f, { outcome: 'stopped' })
+      return
+    }
     const atts = this.attachments(t)
     // The attachments are checked again when a queued turn starts (4.9).
     if (atts.length > 0) {
@@ -551,7 +614,10 @@ export class AgentCore {
     // The start hold (section 9). `reserved = 1` before the await: a cancel during it gives the hold back.
     this.sql.exec('UPDATE turns SET reserved = MAX(reserved, 1) WHERE turn_id = ?', turnId)
     await this.beforeStep?.('reserve', turnId)
-    const r = await this.d.ports.usage.reserve({ turnId, runId: t.run_id, chatId: t.chat_id, memberId: t.owner_id, model: t.model, nowMs: this.d.now() })
+    const r = await this.d.ports.usage.reserve({
+      turnId, runId: t.run_id, chatId: t.chat_id, memberId: t.owner_id, model: t.model, nowMs: this.d.now(),
+      ...(t.job_id === null ? {} : { jobId: t.job_id }),
+    })
     t = this.current(turnId, gen, 'starting')
     if (!t) {
       // Fenced while the reservation was in flight: it may have landed after the hold was given back, so give it back
@@ -566,6 +632,8 @@ export class AgentCore {
         this.emit(t.run_id, null, { type: 'notice', code: 'cap_reached' })
         return this.cancelUnstarted(t, 'cap_reached')
       }
+      // The job's budget can't take this turn's start hold (N5): cancelled, never retried; the job ends `budget`.
+      if (r.refused === 'job_budget') return this.cancelUnstarted(t, 'job_budget')
       return this.budgetBusy(t)
     }
     // The ledger's first answer is the start hold (the floor of every close's hold, 8.2); a later attempt's reserve
@@ -715,7 +783,8 @@ export class AgentCore {
         last_progress_ms = COALESCE(last_progress_ms, ?), started_at_ms = ?, watch_json = NULL WHERE turn_id = ?`,
       runner, now, now, now, t.turn_id)
     this.emit(t.run_id, t.turn_id, { type: 'turn.started', turnId: t.turn_id, model: t.picker_id })
-    this.watchTask(t.turn_id, now + WATCH_EVERY_MS)
+    // The first check no later than the server's cut (a short `JOB_CUT_MS` cuts on time).
+    this.watchTask(t.turn_id, Math.min(now + WATCH_EVERY_MS, this.jobs.cutAt(this.turn(t.turn_id)!) ?? Number.POSITIVE_INFINITY))
   }
 
   /** `budget_busy`: back to `queued`, tried again in 15 s, failed after 2 minutes of waiting (4.4 step 2). */
@@ -816,6 +885,9 @@ export class AgentCore {
       const onEnd = JSON.parse(t.on_end_json) as OnEnd
       this.d.scheduler.ensure({ id: onEnd.id, kind: onEnd.kind, dueAtMs: now, payload: endPayload(t) })
     }
+    // M1-B: a job's end task parked on a question makes the job wait; a person's turn that hit a limit becomes a job.
+    if (t.on_end_json !== null && deferredEnd) this.jobs.parked(JSON.parse(t.on_end_json) as OnEnd)
+    if (state === 'ended') this.jobs.promoteIfDue(t)
     // The D1 projection (4.8): the rows fixed here, the batch after; the task is its durable retry.
     fixTurnRows(this.sql, turnId, now)
     this.d.scheduler.schedule({ id: `${FLUSH_TURN_PREFIX}${turnId}`, kind: 'flush-turn', dueAtMs: now + FLUSH_RETRY_MS })
@@ -857,7 +929,13 @@ export class AgentCore {
       if ('cancel' in end) return this.cancelUnstarted(t, end.cancel)
       return this.failUnstarted(t, end)
     }
-    if (t.state === 'ended' || t.state === 'cancelled' || t.fenced === 1) return
+    if (t.state === 'ended' || t.state === 'cancelled') return
+    if (t.fenced === 1) {
+      // Fenced already (the gate's `turn_budget`, say): a later pause, removal or delete still says so, so the turn's
+      // end never reads as a clean limit (M1-B: a job never starts from it). The outcome stays the first fence's.
+      if ('cancel' in end) this.sql.exec('UPDATE turns SET cancel_why = COALESCE(cancel_why, ?) WHERE turn_id = ?', end.cancel, t.turn_id)
+      return
+    }
     const now = this.d.now()
     // A held turn (A9) is `ending` with no outcome and no `turn.finished` yet: the fence shows its own.
     const terminalAlready = t.state === 'ending' && t.outcome !== null
@@ -885,7 +963,14 @@ export class AgentCore {
    */
   private endTurn(t: TurnRow, noCheckpointMeansDamage: boolean) {
     const now = this.d.now()
-    if (noCheckpointMeansDamage && t.query_ran === 1 && t.saw_checkpoint === 0 && t.mirror_error === 0) this.damage(t)
+    if (noCheckpointMeansDamage && t.query_ran === 1 && t.saw_checkpoint === 0 && t.mirror_error === 0) {
+      // N4, the spike's variant A: a job turn killed after its checkpoint-to-be keeps the chat `resumable` at the
+      // checkpoint it started from (the store as it is; the next continuation resumes with the same `expect`). Every
+      // route of the attempt closes first, in this same step; anything else is `damaged`, as before.
+      this.d.tokens.closeRoutes(t.turn_id, [...FIRST_ROUTES, ...LAST_ROUTES], 'ended')
+      if (this.recovers(t)) this.sql.exec('UPDATE turns SET recovered = 1 WHERE turn_id = ?', t.turn_id)
+      else this.damage(t)
+    }
     if (t.outcome === null) {
       // A held platform stop (A9) not placed again ends with its own outcome, a try-again. Otherwise the runner released
       // without a terminal event: a protocol break, never a silent success.
@@ -902,6 +987,17 @@ export class AgentCore {
     if (t.reserved > 0) this.queueSettle(t.turn_id, false)
     this.sql.exec('UPDATE chat_state SET last_at_ms = MAX(last_at_ms, ?) WHERE chat_id = ?', now, t.chat_id)
     this.advance(t.run_id)
+  }
+
+  /** N4's recover rule's facts, read now (jobs/rules.ts `recoverable`). */
+  private recovers(t: TurnRow): boolean {
+    const cs = this.chatState(t.chat_id)
+    const start = t.start_json === null ? null : JSON.parse(t.start_json) as { expect?: { mainEntries: number } | null }
+    const open = this.sql.exec<{ routes_open: string }>('SELECT routes_open FROM run_tokens WHERE turn_id = ? AND revoked_at_ms IS NULL', t.turn_id).toArray()
+    return recoverable(t, {
+      expect: start?.expect ?? null, session: cs?.session ?? null, sessionId: cs?.session_id ?? null,
+      checkpointMainEntries: cs?.checkpoint_main_entries ?? null, tokensClosed: open.every(r => r.routes_open === ',,'),
+    })
   }
 
   private damage(t: TurnRow) {
@@ -1052,6 +1148,8 @@ export class AgentCore {
   }
 
   private mapSdk(t: TurnRow, ev: Extract<RunEvent, { type: 'sdk' }>, now: number) {
+    // A job turn's background tasks are its progress (N3).
+    if (t.job_id !== null) this.jobs.progress(t, ev.message, ev.truncated)
     const blocks = mapSdkMessage(ev.message, ev.truncated)
     if (blocks.length === 0) return
     let parts = t.parts_n
@@ -1089,7 +1187,8 @@ export class AgentCore {
     }
     // A deferral the chat waits on, unless its resume was already admitted (the parked turn's late `released`).
     const questionId = questionIdOf(t.turn_id)
-    const waiting = fresh.deferred_json !== null && this.byKey(t.chat_id, resumeKeyOf(questionId)) === null
+    // A job turn whose job has ended never parks the chat (M1-B): its question went with the job, so it saves `resumable`.
+    const waiting = fresh.deferred_json !== null && this.byKey(t.chat_id, resumeKeyOf(questionId)) === null && !this.jobs.endedJob(fresh.job_id)
     const before = this.chatState(t.chat_id)
     const waitingJson = waiting
       ? JSON.stringify({ questionId, turnId: t.turn_id, ...(JSON.parse(fresh.deferred_json!) as Omit<Waiting, 'questionId' | 'turnId'>) } satisfies Waiting)
@@ -1294,8 +1393,15 @@ export class AgentCore {
       this.fence(t, { outcome: 'failed', reason: 'timeout' })
       return { done: true }
     }
+    // N3: the server cuts a person's turn (and every job turn) at `JOB_CUT_MS`, before the runner's 30-minute hard stop.
+    const cutAt = this.jobs.cutAt(t)
+    if (cutAt !== null && now >= cutAt) {
+      this.jobs.cut(t, 'job_cut')
+      t = this.turn(t.turn_id)!
+    }
+    const nextCut = this.jobs.cutAt(t) ?? Number.POSITIVE_INFINITY
     const lastPush = t.last_push_ms ?? now
-    if (now - lastPush < PUSH_SILENT_MS) return this.again(t.turn_id, Math.min(now + WATCH_EVERY_MS, lastPush + PUSH_SILENT_MS))
+    if (now - lastPush < PUSH_SILENT_MS) return this.again(t.turn_id, Math.min(now + WATCH_EVERY_MS, lastPush + PUSH_SILENT_MS, Math.max(nextCut, now)))
     const w = this.watchOf(t)
     const st = await this.d.ports.pool.status(t.runner!, t.turn_id)
     const fresh = this.current(t.turn_id, t.gen, 'live')
@@ -1402,11 +1508,15 @@ export class AgentCore {
     // A turn not yet running (queued, or starting anywhere short of live, or a held platform stop: A9) is ended
     // `interrupted` instead.
     if (t.state === 'queued' || t.state === 'starting' || this.held(t)) {
-      this.fence(t, { outcome: 'interrupted' })
+      // M1-B: the person's own end, marked in the same step (a race with the server's cut never carries a job on).
+      this.jobs.personStopped(t, true)
+      this.fence(this.turn(turnId)!, { outcome: 'interrupted' })
       return { ok: true }
     }
     if (t.state === 'live' && t.fenced === 0) {
-      if (t.interrupt_asked === 0) this.askInterrupt(t)
+      this.jobs.personStopped(t, true)
+      const fresh = this.turn(turnId)!
+      if (fresh.interrupt_asked === 0) this.askInterrupt(fresh)
       return { ok: true }
     }
     return refuse('conflict', 'turn_ended')
@@ -1418,7 +1528,8 @@ export class AgentCore {
     if (!t || t.owner_id !== by.memberId) return refuse('not_found')
     // A held platform stop (A9) is stopped too, so the person's stop wins over its re-run.
     if (t.state === 'queued' || t.state === 'starting' || (t.state === 'live' && t.fenced === 0) || this.held(t)) {
-      this.fence(t, { outcome: 'stopped' })
+      this.jobs.personStopped(t, true)
+      this.fence(this.turn(turnId)!, { outcome: 'stopped' })
       return { ok: true }
     }
     return refuse('conflict', 'turn_ended')
@@ -1430,6 +1541,8 @@ export class AgentCore {
     if (!cs) return { ok: true }
     if (cs.owner_id !== by.memberId) return refuse('not_found')
     if (this.count(`chat_id = ? AND state IN ('queued', ${ACTIVE.slice(1, -1)})`, chatId) > 0) return refuse('conflict')
+    // A job between its turns would carry on in a fresh session it never saw: the person's reset ends it.
+    this.jobs.endWhere('chat_id = ?', [chatId], 'cancelled')
     this.fireParked(cs, 'session_reset')
     this.sql.exec(`UPDATE chat_state SET session = 'none', session_id = NULL, checkpoint_main_entries = NULL,
       checkpoint_last_uuid = NULL, checkpoint_last_uuid_index = NULL, waiting_json = NULL WHERE chat_id = ?`, chatId)
@@ -1479,15 +1592,18 @@ export class AgentCore {
     try {
       const turns = this.sql.exec<{ turn_id: string }>(
         `SELECT turn_id FROM turns WHERE chat_id IN (${marks}) AND (state IN ('queued', 'starting', 'live')
-          OR (state = 'ending' AND outcome IS NULL AND held_json IS NOT NULL)) ORDER BY created_at_ms, ord`, ...chatIds).toArray()
+          OR state = 'ending') ORDER BY created_at_ms, ord`, ...chatIds).toArray()
       for (const { turn_id } of turns) {
         const fresh = this.turn(turn_id)
-        // A held platform stop (A9) too: deleted, never placed again in a deleted chat.
-        if (fresh && fresh.fenced === 0 && (fresh.state === 'queued' || fresh.state === 'starting' || fresh.state === 'live' || this.held(fresh))) this.fence(fresh, { cancel: 'deleted' })
+        // A held platform stop (A9) too: deleted, never placed again in a deleted chat. An `ending` turn too (M1-B): the
+        // fence keeps its outcome and writes `cancel_why`, so a turn deleted at its limit never becomes a job (an already
+        // fenced one gets the reason through the fence's own path).
+        if (fresh && (fresh.state === 'queued' || fresh.state === 'starting' || fresh.state === 'live' || fresh.state === 'ending')) this.fence(fresh, { cancel: 'deleted' })
       }
     } finally {
       for (const r of runs) this.holding.delete(r)
     }
+    this.jobs.endWhere(`chat_id IN (${marks})`, chatIds, 'cancelled')
     for (const r of runs) this.advance(r)
   }
 
@@ -1567,6 +1683,8 @@ export class AgentCore {
         if (fresh) this.fence(fresh, { cancel: 'paused' })
       }
     }
+    // N3: Pause ends every job `cancelled`; Resume starts nothing.
+    this.jobs.endWhere('1 = 1', [], 'cancelled')
     return this.pauseState()
   }
 
@@ -1613,6 +1731,7 @@ export class AgentCore {
       const fresh = this.turn(t.turn_id)
       if (fresh) this.fence(fresh, { cancel: 'removed' })
     }
+    this.jobs.endWhere('owner_id = ?', [memberId], 'cancelled')
   }
 
   /** A grant ended (by hand, or its `grant-expiry`): into the ended set, its sockets closed `4403`. */
@@ -1807,6 +1926,8 @@ export class AgentCore {
       + this.count("owner_id = ? AND state IN ('ended', 'cancelled') AND d1_flushed = 0", personId)
       // A pending file confirm: `drainEffects` may be inside `files.confirm` (D1 and R2 writes after an await) (r1).
       + this.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM turn_effects WHERE turn_id IN (SELECT turn_id FROM turns WHERE owner_id = ?)', personId).one().n
+      // M1-B: a job not ended, or ended with its ledger close and notice still to write (`job-end` awaits D1).
+      + this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM jobs WHERE owner_id = ? AND (state != 'ended' OR result_sent = 0)", personId).one().n
     if (mode === 'delete' && live > 0) return { busy: true }
     const turnsOf = "SELECT turn_id FROM turns WHERE owner_id = ?"
     const byTurn = (table: string) => [`${table} WHERE turn_id IN (${turnsOf})`, [personId]] as const
@@ -1818,6 +1939,7 @@ export class AgentCore {
       turn_effects: byTurn('turn_effects'),
       turn_trace: byTurn('turn_trace'),
       turn_rows: byTurn('turn_rows'),
+      jobs: ['jobs WHERE owner_id = ?', [personId]],
       chat_deletion: ['chat_deletion WHERE chat_id IN (SELECT chat_id FROM chat_state WHERE owner_id = ? UNION SELECT chat_id FROM turns WHERE owner_id = ?)', [personId, personId]],
       run_tokens: ['run_tokens WHERE member_id = ?', [personId]],
       chat_state: ['chat_state WHERE owner_id = ?', [personId]],
@@ -1832,8 +1954,9 @@ export class AgentCore {
     }
     for (const r of this.sql.exec<{ chat_id: string }>('SELECT chat_id FROM chat_state WHERE owner_id = ?', personId)) ids.add(r.chat_id)
     for (const r of this.sql.exec<{ run_id: string; chat_id: string }>('SELECT run_id, chat_id FROM runs WHERE owner_id = ?', personId)) { ids.add(r.run_id); ids.add(r.chat_id) }
+    for (const r of this.sql.exec<{ job_id: string }>('SELECT job_id FROM jobs WHERE owner_id = ?', personId)) ids.add(r.job_id)
     const tasks = this.sql.exec<{ id: string; payload_json: string | null }>('SELECT id, payload_json FROM due_tasks').toArray()
-      .filter(t => [...ids].some(x => t.id === x || t.id.endsWith(`:${x}`) || (t.payload_json?.includes(JSON.stringify(x)) ?? false)))
+      .filter(t => [...ids].some(x => t.id === x || t.id.endsWith(`:${x}`) || t.id.includes(`:${x}:`) || (t.payload_json?.includes(JSON.stringify(x)) ?? false)))
     const exists = (table: string) => this.sql.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", table).toArray().length > 0
     const counts = Object.fromEntries(PERSON_DATA_TABLES.map(k => [k, 0])) as Record<PersonDataTable, number>
     counts.due_tasks = tasks.length
@@ -1848,6 +1971,21 @@ export class AgentCore {
     }
     return { counts }
   }
+
+  // ---------- jobs (Stage 1 M1-B, jobs/engine.ts) ----------
+
+  /** `GET /api/chats/:id/job`: the chat's newest job, so a reload shows it with no live turn. */
+  chatJob(chatId: string): Job | null { return this.jobs.chatJob(chatId) }
+  /** The member who owns a job, or null (route 101 answers another person's job 404 before acting). */
+  jobOwner(jobId: string): string | null { return this.jobs.jobOwner(jobId) }
+  /** `POST /api/jobs/:id/cancel`: the job ended `cancelled` in one synchronous step (an ended job answers as it is). */
+  cancelJob(jobId: string, by: Actor): { job: Job } | Refusal { return this.jobs.cancel(jobId, by) }
+  /** The `job-step:<jobId>:<n>` task. */
+  jobStep(task: DueTask): Promise<TaskResult> { return this.jobs.step(task, task.attempts) }
+  /** The `job-deadline:<jobId>` task. */
+  async jobDeadline(task: DueTask): Promise<TaskResult> { return this.jobs.deadline(task) }
+  /** The `job-end:<jobId>` task. */
+  jobEnd(task: DueTask): Promise<TaskResult> { return this.jobs.end(task, task.attempts) }
 
   // ---------- seeds (4.11) ----------
 
@@ -1870,6 +2008,7 @@ export class AgentCore {
       this.d.scheduler.ensure({ id: `call-lease:${r.turn_id}`, kind: 'call-lease', dueAtMs: now })
     }
     this.gate.seeds()
+    this.jobs.seeds()
     // The authority sweep at once: it seeds `grant-expiry` for each live grant from D1 (authority.ts).
     sweepBy(this.sql, this.d.scheduler, now)
     // W4's usage tasks: the hourly sweep and today's audit copy (ensure: never moves one that exists).

@@ -15,6 +15,7 @@ import { clientError } from '../worker/client-error.ts'
 // P3's routes (p3-design section 3): each in its owner's file.
 import { createChat, deleteChats, getChat, listChats, pinChat, renameChat, resetSession, restoreChats } from './api/chats.ts'
 import { activeRuns, getTrace, interruptTurn, sendTurn, stopTurn } from './api/runs.ts'
+import { cancelJob, getChatJob } from './api/jobs.ts'
 import { openSocket } from './api/socket.ts'
 import { getPause, pauseAgent, resumeAgent } from './api/pause.ts'
 import { listModels } from './api/models.ts'
@@ -240,6 +241,9 @@ export const routes: readonly Route[] = [
   // Stage 1 M2-A (rows 110 to 119): a person's "Always allow" permissions, and removing one.
   /* 110 */ { method: 'GET', pattern: '/api/permissions', handler: listPermissions },
   /* 111 */ { method: 'POST', pattern: '/api/permissions/:id/remove', handler: removePermission },
+  // Stage 1 M1-B (N3): a chat's long job, and its owner's Cancel.
+  /* 100 */ { method: 'GET', pattern: '/api/chats/:id/job', handler: getChatJob },
+  /* 101 */ { method: 'POST', pattern: '/api/jobs/:id/cancel', handler: cancelJob },
   // Stage 1 M2-B (rows 120 to 129): the outbox's cards; answering, undoing and resolving one.
   /* 120 */ { method: 'GET', pattern: '/api/actions', handler: listActions },
   /* 121 */ { method: 'GET', pattern: '/api/actions/:id', handler: getAction },

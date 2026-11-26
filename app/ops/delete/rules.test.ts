@@ -71,11 +71,11 @@ describe('the rules (failures 1 to 4)', () => {
     expect(gaps).toEqual([])
   })
 
-  it('accounts for the BrandAgent\'s seven person-key paths and both of memories\' person columns', () => {
+  it('accounts for the BrandAgent\'s eight person-key paths and both of memories\' person columns', () => {
     const agent = deletionRules.BrandAgent
     expect(agent.action).toBe('custom')
     expect([...acted(entry('BrandAgent'), agent), ...keptOf(agent)].sort()).toEqual([...entry('BrandAgent').personKeys].sort())
-    expect(entry('BrandAgent').personKeys).toHaveLength(7)
+    expect(entry('BrandAgent').personKeys).toHaveLength(8)
     expect(deletionRules.memories).toEqual(expect.objectContaining({ action: 'delete_rows', column: 'owner_id', kept: ['created_by'] }))
   })
 

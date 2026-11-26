@@ -72,10 +72,10 @@ describe('the tables (failure 2)', () => {
       const allowed = new Set([...Object.keys(t.fields), 'person'])
       for (const s of slotsOfRow([t.text, t.who])) expect(allowed.has(s), `${id} slot ${s}`).toBe(true)
     }
-    for (const id of ['morning_check_found', 'routine_failed', 'privacy_customer_redact', 'privacy_data_request', 'privacy_shop_redact']) expect(NOTICE_TEMPLATES[id]!.body, id).toBeUndefined()
+    for (const id of ['morning_check_found', 'routine_failed', 'privacy_customer_redact', 'privacy_data_request', 'privacy_shop_redact', 'job_finished']) expect(NOTICE_TEMPLATES[id]!.body, id).toBeUndefined()
     // P5 W4's eleven rows (p5-w4 section 3) carry a body; its own test checks them against a hand-copied list.
     expect(Object.keys(NOTICE_TEMPLATES).sort()).toEqual([
-      'approval_expired', 'approval_failed', 'approval_lapsed', 'approval_sent', 'approval_waiting', 'morning_check_found',
+      'approval_expired', 'approval_failed', 'approval_lapsed', 'approval_sent', 'approval_waiting', 'job_finished', 'job_stopped', 'morning_check_found',
       'needs_check', 'notify_message', 'notify_report', 'privacy_customer_redact', 'privacy_data_request', 'privacy_shop_redact', 'question_closed', 'question_waiting', 'restore_reconciled', 'routine_failed',
     ])
   })
@@ -116,12 +116,14 @@ describe('checkNotice (failures 3 and 4)', () => {
     ['notify_message', 1622], ['notify_report', 1622],
     ...['approval_waiting', 'approval_lapsed', 'approval_sent', 'approval_failed', 'needs_check', 'approval_expired', 'restore_reconciled', 'question_waiting', 'question_closed'].map(k => [k, 300] as [string, number]),
   ]
+  // Stage 1 M1-B: a stopped job's notice always says why (its own row's body, required).
+  const M1B: [string, number][] = [['job_stopped', 300]]
   const table: Record<string, NoticeTemplate> = { ...NOTICE_TEMPLATES, ...Object.fromEntries(P5.map(([k, max]) => [k, body(max)])) }
   const base: NoticeInput = { id: 'n1', audience: 'team', template: 'morning_check_found', fields: { items: 2 }, icon: 'x', link: { to: 'page', page: 'today' }, atMs: 1 }
 
   it('accepts a body exactly on the eleven kinds, at the maximum, and refuses it everywhere else', () => {
     for (const template of Object.keys(table)) {
-      const p5 = P5.find(([k]) => k === template)
+      const p5 = [...P5, ...M1B].find(([k]) => k === template)
       const fields: Record<string, string | number> = template === 'routine_failed' ? { code: 'x' } : template === 'morning_check_found' ? { items: 1 } : {}
       const n: NoticeInput = { ...base, template, fields }
       if (p5) {
