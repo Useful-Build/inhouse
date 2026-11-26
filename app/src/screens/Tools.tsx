@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils'
 import { agent, demo } from '../agent'
 import { askForTool } from '../lib/product-flow'
 import { keepUnitsTogether } from '../agent/clock'
-import { STAGE_TAGS, toolCounts, toolDetail, toolView } from '../state/derive'
+import { STAGE_TAGS, stageLocked, toolAccess, toolCounts, toolDetail, toolView } from '../state/derive'
 import type { ToolState } from '../state/derive'
 import { useCtx, useUi } from '../state/store'
 import { useEffect, useState, useSyncExternalStore } from 'react'
@@ -74,7 +74,7 @@ async function connectTool(key: string, label: string, say: (text: string) => vo
 
 export function Tools() {
   const ctx = useCtx()
-  const { S, agent: st, data } = ctx
+  const { agent: st, data } = ctx
   const { tools } = data
   const openTool = useUi(s => s.openTool)
   const showToast = useUi(s => s.showToast)
@@ -146,7 +146,7 @@ export function Tools() {
       <SectionHeader title="Channels" count={channels.length} className={SECTION_HEAD} />
       <CardGrid size="lg" variant="rows" className={ONE(channels.length)}>
         {channels.map(c => {
-          const locked = S < c.need
+          const locked = stageLocked(ctx, c.need)
           return (
             <button key={c.key} type="button" data-channel-row onClick={() => openTool(c.key)} className={ROW}>
               <LogoTile k={c.key} className={locked ? 'grayscale' : undefined} />
@@ -190,7 +190,7 @@ export function Tools() {
       <CardGrid size="lg" variant="rows" className={ONE(catalog.length)}>
         {catalog.map(c => {
           const need = c.need ?? 0
-          const locked = S < need
+          const locked = stageLocked(ctx, need)
           const req = !!st.requestedTools[c.k]
           const ask = () => {
             // The product says "sent" once the server has it; a refusal is told by the client and shows no toast.
@@ -221,15 +221,6 @@ export function Tools() {
 
     </Page>
   )
-}
-
-/** The Access row follows the tool's state: a paused or disconnected tool never claims the stage's access. */
-const accessOf = (state: ToolState, S: number, paused: boolean) => {
-  if (state === 'disconnected') return paused ? 'None. A person paused it, and the login needs renewing.' : 'None until the login is renewed.'
-  if (state === 'paused') return 'None. A person paused it.'
-  if (state === 'connecting') return 'None yet. Being connected.'
-  if (state === 'off') return "None. It isn't connected."
-  return ['Read only', 'Read, plus drafts you approve', 'Read, drafts and agreed jobs within limits'][S]
 }
 
 export function ToolPage() {
@@ -268,10 +259,10 @@ function ToolsFailed() {
 
 /** A channel's page (Slack): where the team hears from the agent. Not a tool it reads, so no abilities or questions (D6). */
 function ChannelPage({ channel: c }: { channel: ToolChannel }) {
-  const { S } = useCtx()
+  const ctx = useCtx()
   const go = useUi(s => s.go)
   const openSettings = useUi(s => s.openSettings)
-  const locked = S < c.need
+  const locked = stageLocked(ctx, c.need)
   const status = locked ? `Included from ${STAGE_TAGS[c.need]}` : `Connected · ${fmtDay(c.since, display())}`
   // Before Act the channel isn't live, so only the website shows.
   const info: [string, ReactNode][] = []
@@ -286,7 +277,8 @@ function ChannelPage({ channel: c }: { channel: ToolChannel }) {
       <PageHeader className="mt-4" title={c.name} description={c.desc}
         leading={<LogoTile k={c.key} size="xl" className={cn('shadow-card', locked && 'grayscale')} />}
         tag={<Badge variant="status" size="md">{status}</Badge>}
-        actions={!locked && (
+        // Notification settings is a page only the demo has (settings/menu.ts).
+        actions={!locked && demo !== null && (
           <Button variant="outline" size="lg" onClick={() => openSettings('you-notif')}>
             <Icon name="notifications" size={17} />Notification settings
           </Button>
@@ -299,7 +291,7 @@ function ChannelPage({ channel: c }: { channel: ToolChannel }) {
 
 function ToolDetailPage() {
   const ctx = useCtx()
-  const { S, agent: st, data } = ctx
+  const { agent: st, data } = ctx
   const key = useUi(s => s.appKey)
   const go = useUi(s => s.go)
   const ask = useUi(s => s.ask)
@@ -341,7 +333,7 @@ function ToolDetailPage() {
     tone: ab.locked || ab.tag !== 'On' ? 'bg-fill text-muted-foreground' : ab.need === 0 ? 'bg-secondary text-foreground' : 'bg-brand-tint text-brand' }))
   const info: [string, ReactNode][] = [
     ['Connected', view.connectedRow],
-    ['Access', accessOf(view.state, S, off)],
+    ['Access', toolAccess(ctx, key)],
     ['Last read', view.lastRead],
     ['Where the data stays', `In your ${A.name} account. Your Inhouse agent reads what its jobs need.`],
     ['Website', <a key="site" href={`https://${A.site}`} target="_blank" rel="noopener noreferrer" className="underline underline-offset-3">{A.site} ↗</a>],

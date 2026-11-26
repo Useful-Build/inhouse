@@ -3,7 +3,7 @@
 // the ask box. Scrolling is Message Scroller's (src/ui/agent/thread.tsx).
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { agent, demo } from '../agent'
-import { showLocalAnswerControls } from '../lib/product-flow'
+import { showLocalAnswerControls, showSendToChannel } from '../lib/product-flow'
 import { traceOf, useTraces } from './chat/traces'
 import { CONNECTION_TEXT, NOTICE_TEXT, historyWanted } from './chat/notes'
 import type { ChatMessage } from '../agent/types'
@@ -240,7 +240,8 @@ function Thread() {
     const turnIds = b.ms.map(x => x.id)
     const again = question && (() => regenerate([question.id, ...(ask0?.between ?? []), ...turnIds, ...tail], { text: question.text, quote: question.quote, atts: question.atts }))
     const S = ctx.S
-    const sendChannel = ctx.data.tools.channels[0]
+    // The send is a demo stub; the product has none (Stage 1 M2-I).
+    const sendChannel = showSendToChannel(demo !== null) ? ctx.data.tools.channels[0] : undefined
     const localControls = showLocalAnswerControls(demo !== null)
     const items: { icon: string; t: string; go: () => void; destructive?: boolean; sep?: boolean; locked?: boolean; disabled?: boolean }[] = [
       // A phone's row keeps Copy, the steps and "···": the rest of the row moves into the menu (D3), the thumbs as a

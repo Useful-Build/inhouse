@@ -126,3 +126,13 @@ describe('a brand skill whose maker had their personal data deleted', () => {
     expect(SkillsScreen.skillFacts(mockFormer, true)).toEqual([['Works from', 'Watch'], ['Made by', 'a former member'], ['Who can change it', 'Admins']])
   })
 })
+
+describe("a skill's facts in the product (Stage 1 M2-I: no stages)", () => {
+  test('the product never says which stage a skill works from, at any need; the demo always does', () => {
+    const base = { n: 'reorder', d: 'Drafts it.', icon: 'menu_book', by: 'Inhouse team', used: '' }
+    for (const need of [0, 1, 2] as const) {
+      expect(SkillsScreen.skillFacts({ ...base, need }, false).map(([k]) => k), `need ${need}`).not.toContain('Works from')
+      expect(SkillsScreen.skillFacts({ ...base, need }, true)[0], `need ${need}`).toEqual(['Works from', ['Watch', 'Act', 'Run'][need]])
+    }
+  })
+})

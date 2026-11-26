@@ -68,6 +68,17 @@ describe('Slack notices', () => {
     }
   })
 
+  it('the product (no stages, M2-I) says where alerts go now with no stage word, in every state', () => {
+    for (const status of ['loading', 'error', 'ready'] as const) {
+      const p = settingsPage('team-slack', { ...env(view({ status }).v), product: true })
+      const text = p.sections.flatMap(s => [s.label, ...s.rows.flatMap(x => [x.title, x.desc, x.value])]).join(' ')
+      expect(text, status).toContain("Alerts reach the bell in the app. Slack posts aren't on yet.")
+      expect(text, status).toContain('Alerts pause while Slack is paused or needs a reconnect.')
+      expect(text, status).not.toMatch(/\bstages?\b/i)
+      expect(text, status).not.toMatch(/\b(Watch|Act|Run)\b/)
+    }
+  })
+
   it('says when Slack is not connected, offers a retry, and an empty list says where posts go', () => {
     const { v, calls } = view({ pickerError: 'disconnected', list: { rev: 0, channels: [] } })
     const p = page(v)

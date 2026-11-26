@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from 'react'
-import { pendingIds, STAGE_TAGS, userName } from '../state/derive'
+import { pendingIds, STAGE_TAGS, stageLocked, userName } from '../state/derive'
 import { chatEntries, openChatKey, useCtx, useUi } from '../state/store'
 import { cn } from '@/lib/utils'
 import { Avatar, Button, Icon, IconButton, InhouseMark, NavItem } from '../ui'
@@ -66,7 +66,7 @@ export function Sidebar() {
   const name = userName(ctx)
   /** One nav row: a stage locks it (with its tag), and Approvals carries its waiting count. */
   const navItem = (n: NavDef, rail: boolean) => {
-    const locked = ctx.S < n.need, active = activeKey === n.key
+    const locked = stageLocked(ctx, n.need), active = activeKey === n.key
     const showCount = n.key === 'approvals' && (locked ? asks > 0 : count > 0)
     return <NavItem key={n.key} rail={rail} icon={n.icon} label={n.label} active={active} locked={locked} onClick={() => go(n.key)}
       count={showCount ? (locked ? asks : count) : undefined} countLabel={`${locked ? asks : count} waiting`} tag={locked ? STAGE_TAGS[n.need] : undefined} />

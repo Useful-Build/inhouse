@@ -4,7 +4,7 @@ import { traceOf, useTraces } from './chat/traces'
 import { keepUnitsTogether } from '../agent/clock'
 import type { RoutineDef } from '../agent'
 import type { RoutineHistoryRun, RoutineRunOutcome } from '../agent/types'
-import { flags, lastRunLine, routineRunLines, STAGE_TAGS, userName, whenOf } from '../state/derive'
+import { flags, lastRunLine, routineRunLines, STAGE_TAGS, stageLocked, userName, whenOf } from '../state/derive'
 import type { Instant } from '../agent/types'
 import { fmtNextRun, fmtWeekdayAt } from '../lib/format'
 import { display, nowOf } from '../state/display'
@@ -19,7 +19,7 @@ import { NO_MOTION } from '../ui/motion'
 import { claimTrigger, rememberTrigger, restoreFocus, keepForToast } from '../ui/dialogs'
 import { routineSwitch } from './routine-switch'
 
-/** A routine as the page lists it: its id (the agent's), whether this stage has it, and whether it is switched on. */
+/** A routine as the page lists it: its id (the agent's), whether the demo's stage has it, and whether it is switched on. */
 interface Item { r: RoutineDef; id: string; locked: boolean; on: boolean; key: string }
 
 export function Routines() {
@@ -34,8 +34,9 @@ export function Routines() {
     ...data.routines,
     ...st.routinesExtra.map(r => ({ need: 1 as const, rev: 1, by: userName(ctx), ...r, what: `Created in a chat: "${r.what}"` })),
   ]
-  const list: Item[] = all.filter(r => !st.routinesDeleted[r.id] && !(r.inChat && S < r.need)).map(r => {
-    const locked = S < r.need
+  // The product has no stages (M2-I): a routine there is never locked, so it shows no stage tag (the server runs it).
+  const list: Item[] = all.filter(r => !st.routinesDeleted[r.id] && !(r.inChat && stageLocked(ctx, r.need))).map(r => {
+    const locked = stageLocked(ctx, r.need)
     const key = `r:${r.id}`
     return { r, id: r.id, locked, key, on: !locked && (st.toggles[key] ?? true) }
   })

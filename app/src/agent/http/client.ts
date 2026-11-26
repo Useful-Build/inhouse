@@ -1853,7 +1853,6 @@ export class HttpAgent implements AgentClient {
   /** Route 54's refusals in the page's words (section 9). */
   private static runRefusal(e: AgentError): AgentError {
     if (e.code === 'conflict' && e.reason === REASON.runOpen) return new AgentError('conflict', 'A run is still going. Try again when it finishes.', { reason: e.reason })
-    if (e.code === 'forbidden' && e.reason === REASON.stage) return new AgentError('forbidden', 'This routine runs from the Act stage. Ask your Inhouse team about moving to Act.', { reason: e.reason })
     return e
   }
 

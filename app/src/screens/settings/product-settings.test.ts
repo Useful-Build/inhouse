@@ -17,7 +17,7 @@ import type { Can } from '../../agent/types'
 vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} })
 const { agent } = await import('../../agent')
 const { settingsPage } = await import('./content')
-const { SECTIONS, SETTINGS_PAGES, menuFor, pageShown, settingsTabs } = await import('./menu')
+const { SECTIONS, SETTINGS_PAGES, menuFor, pageShown, settingsTabs, teamSettingsTab } = await import('./menu')
 const { settingRow } = await import('../../../shared/contract/settings-table')
 const { allowance } = await import('./allowance')
 const { mayPause } = await import('../../lib/product-flow')
@@ -64,8 +64,8 @@ describe('rows only the demo shows (failure 1)', () => {
 
 describe('the menu, the palette and the deep links (failures 2 and 3)', () => {
   const ids = (product: boolean) => menuFor(noTools, product).flatMap(s => s.pages).map(p => p.id)
-  it('the product has no Who approves what, Run limits or Notifications; the demo has every page', () => {
-    for (const id of ['team-approvals', 'team-limits', 'you-notif']) {
+  it('the product has no Who approves what, Run limits, Notifications or Stage and plan (M2-I); the demo has every page', () => {
+    for (const id of ['team-approvals', 'team-limits', 'you-notif', 'team-plan']) {
       expect(ids(true), id).not.toContain(id)
       expect(settingsTabs(true), id).not.toContain(id)
       expect(pageShown(id, true), id).toBe(false)
@@ -74,7 +74,28 @@ describe('the menu, the palette and the deep links (failures 2 and 3)', () => {
     }
     // Stage 1 M2-H: every page but Always allowed, which only the product offers.
     expect(settingsTabs(false)).toEqual(SETTINGS_PAGES.map(p => p.id).filter(id => id !== 'you-permissions'))
-    expect(ids(true)).toEqual(expect.arrayContaining(['you-general', 'you-memory', 'you-permissions', 'team-agent', 'team-modes', 'team-memory', 'team-spend', 'team-members', 'team-plan', 'team-data', 'team-audit']))
+    expect(ids(true)).toEqual(expect.arrayContaining(['you-general', 'you-memory', 'you-permissions', 'team-agent', 'team-modes', 'team-memory', 'team-spend', 'team-members', 'team-data', 'team-audit']))
+  })
+  // Stage 1 M2-I: the product has no stages. Its Env is the Act view it is pinned to (store.ts `useCtx`). The audit log is
+  // history: a line written before the retirement keeps its words (N17), so it isn't read here.
+  it('no product Settings page, title or section names a stage', () => {
+    const product = env(true, { S: 1, stage: 'Act' })
+    const slack = { connected: ['slack'], channels: [] }
+    for (const sec of menuFor(slack, true)) {
+      expect(sec.label, sec.id).not.toMatch(/\bstages?\b/i)
+      for (const { id, label } of sec.pages.filter(p => p.id !== 'team-audit')) {
+        const page = settingsPage(id, product)
+        const text = [label, page.title, ...page.sections.flatMap(x => [x.label, x.empty ?? '', ...x.rows.flatMap(r => [r.title, r.desc, r.value, ...(r.options ?? [])])])].join(' | ')
+        expect(text, id).not.toMatch(/\bstages?\b/i)
+        expect(text, id).not.toMatch(/\b(Watch|Act|Run)\b/)
+        expect(page.sections.flatMap(x => x.rows).filter(r => r.need > 1).map(r => r.title), id).toEqual([])
+      }
+    }
+  })
+  it("the account menu's Team settings opens a page each build has (M2-I: the product has no Stage and plan)", () => {
+    expect(teamSettingsTab(false)).toBe('team-plan')
+    expect(teamSettingsTab(true)).toBe('team-agent')
+    for (const product of [true, false]) expect(settingsTabs(product)).toContain(teamSettingsTab(product))
   })
   it('Always allowed is in the product only (Stage 1 M2-H): the demo has no permissions', () => {
     expect(ids(true)).toContain('you-permissions')
