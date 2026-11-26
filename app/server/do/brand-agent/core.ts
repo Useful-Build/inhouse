@@ -267,6 +267,17 @@ export class AgentCore {
   /** `TaskContext.paused` (P6 ask 3): the flag as stored now, read synchronously. */
   isPaused(): boolean { return this.paused() }
   /**
+   * `TaskContext.pauseGen` (Stage 1, N12): raised by one in every pause and every resume, in their synchronous step,
+   * and kept in `flags`, so it survives a restart. 0 before the first. The outbox's claim compares it with its gate row.
+   */
+  pauseGen(): number {
+    const v = this.flag('pause_gen')
+    return typeof v === 'number' ? v : 0
+  }
+  private raisePauseGen(): void {
+    this.sql.exec("INSERT INTO flags (key, value) VALUES ('pause_gen', 1) ON CONFLICT(key) DO UPDATE SET value = value + 1")
+  }
+  /**
    * A drain holds only while its expiry is ahead (obligation 1), read through the pool (`drainState`, synchronous, the
    * owner of the drain's flags: obligation 11), never from the flag's presence.
    */
@@ -1532,6 +1543,7 @@ export class AgentCore {
 
   /** Flag; fence every turn on a runner; cancel every queued turn and the placement queue. Starts nothing on resume. */
   private pauseNow(by: Actor) {
+    this.raisePauseGen()
     if (!this.paused()) {
       const now = this.d.now()
       this.sql.exec("INSERT INTO flags (key, value) VALUES ('paused_at_ms', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", now)
@@ -1559,6 +1571,7 @@ export class AgentCore {
   }
 
   private resumeNow() {
+    this.raisePauseGen()
     this.sql.exec("DELETE FROM flags WHERE key IN ('paused_at_ms', 'paused_by')")
     return this.pauseState()
   }

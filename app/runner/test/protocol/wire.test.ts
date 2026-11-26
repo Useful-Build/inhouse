@@ -42,6 +42,8 @@ import {
   RunStatus,
   SYSTEM_PROMPT_MAX_BYTES,
   DEFERRED_INPUT_MAX_BYTES,
+  HELPER_DESCRIPTION_MAX_BYTES,
+  HELPER_PROMPT_MAX_BYTES,
   Health,
   PROMPT_MAX_CHARS,
   PROTOCOL_VERSION,
@@ -140,8 +142,10 @@ describe('RunStart', () => {
     },
   )
 
-  // outputFormat, webSearch and brandSkills are the optional fields (v2, additive: structured output; P8a S, absent is off).
-  it.prop([runStartArb, fc.constantFrom(...Object.keys(RunStart.shape).filter((k) => k !== 'outputFormat' && k !== 'webSearch' && k !== 'brandSkills'))])('refuses a missing field', (start, key) => {
+  // outputFormat, webSearch and brandSkills are the optional fields (v2, additive: structured output; P8a S, absent is off),
+  // and Stage 1's agents, subagentModel and actions (N6, additive the same way).
+  const OPTIONAL_START_KEYS = ['outputFormat', 'webSearch', 'brandSkills', 'agents', 'subagentModel', 'actions']
+  it.prop([runStartArb, fc.constantFrom(...Object.keys(RunStart.shape).filter((k) => !OPTIONAL_START_KEYS.includes(k)))])('refuses a missing field', (start, key) => {
     const copy: Record<string, unknown> = { ...start }
     delete copy[key]
     expect(RunStart.safeParse(copy).success).toBe(false)
@@ -155,6 +159,30 @@ describe('RunStart', () => {
     const refused = RunStart.safeParse({ ...start, prompt: '', resume: false, expect: null })
     expect(refused.success).toBe(false)
     expect(refused.error?.issues[0]?.path).toEqual(['prompt'])
+  })
+
+  // Stage 1 (N6), ways the helpers' keys can go wrong, written first: a third helper or a missing one rides in, a helper
+  // brings its own tools or model (the runner owns both), its words carry a control character (JSON's six-byte escape
+  // would break the body cap) or pass their byte caps, `actions` isn't a boolean, or a model name the start's own rule
+  // refuses.
+  it('takes the helpers, the subagent model and the actions switch only in their frozen shape', () => {
+    const start = fc.sample(runStartArb, 1)[0]!
+    const helper = { description: 'Finds facts on the web.', prompt: 'You research.\n\tCite every source.' }
+    const agents = { researcher: helper, analyst: helper }
+    const parses = (extra: Record<string, unknown>) => RunStart.safeParse({ ...start, ...extra }).success
+    expect(parses({ agents, subagentModel: 'claude-sonnet-5-5', actions: true })).toBe(true)
+    expect(parses({ actions: false })).toBe(true)
+    expect(parses({ agents: { researcher: helper } })).toBe(false)
+    expect(parses({ agents: { ...agents, writer: helper } })).toBe(false)
+    expect(parses({ agents: { ...agents, analyst: { ...helper, tools: ['Bash'] } } })).toBe(false)
+    expect(parses({ agents: { ...agents, analyst: { ...helper, model: 'opus' } } })).toBe(false)
+    expect(parses({ agents: { ...agents, analyst: { ...helper, prompt: 'a\u0001b' } } })).toBe(false)
+    expect(parses({ agents: { ...agents, analyst: { ...helper, prompt: '' } } })).toBe(false)
+    expect(parses({ agents: { ...agents, analyst: { ...helper, prompt: 'x'.repeat(HELPER_PROMPT_MAX_BYTES + 1) } } })).toBe(false)
+    expect(parses({ agents: { ...agents, analyst: { ...helper, prompt: '€'.repeat(Math.floor(HELPER_PROMPT_MAX_BYTES / 3) + 1) } } })).toBe(false)
+    expect(parses({ agents: { ...agents, analyst: { ...helper, description: 'x'.repeat(HELPER_DESCRIPTION_MAX_BYTES + 1) } } })).toBe(false)
+    expect(parses({ actions: 'yes' })).toBe(false)
+    expect(parses({ subagentModel: 'bad model' })).toBe(false)
   })
 
   /** A 1,024-character path under `inputs/` from segments of at most 255 UTF-8 bytes ('€' is three), `first` leading. */
@@ -196,6 +224,14 @@ describe('RunStart', () => {
         description: '"'.repeat(Math.floor((BRAND_SKILLS_BYTES_MAX - 16 * BRAND_SKILL_BODY_MAX - 16 * 4) / 16)),
         body: '"'.repeat(BRAND_SKILL_BODY_MAX),
       })),
+      // Stage 1 (N6): both helpers at their caps, every character a quote (two bytes in JSON, the most allowed), and the
+      // longest model name.
+      agents: {
+        researcher: { description: '"'.repeat(HELPER_DESCRIPTION_MAX_BYTES), prompt: '"'.repeat(HELPER_PROMPT_MAX_BYTES) },
+        analyst: { description: '"'.repeat(HELPER_DESCRIPTION_MAX_BYTES), prompt: '"'.repeat(HELPER_PROMPT_MAX_BYTES) },
+      },
+      subagentModel: 's'.repeat(128),
+      actions: false,
     }
     expect(RunStart.safeParse(start).success).toBe(true)
     expect(new TextEncoder().encode(JSON.stringify(start)).length).toBeLessThanOrEqual(RUN_START_MAX_BYTES)
@@ -528,6 +564,19 @@ describe('push, audit, status and admission', () => {
     expect(AuditPost.safeParse({ ...a, n: 0.5 }).success).toBe(false)
     expect(AuditPost.safeParse({ ...a, entry: { hook: 'PreToolUse' } }).success).toBe(false)
     expect(AuditPost.safeParse({ ...a, turnId: 'a b' }).success).toBe(false)
+  })
+
+  // Stage 1 (N6, N14): who made the call and the hash of its input ride on the entry, optional; a malformed hash or an
+  // empty helper id is refused, so the server never matches a proposal against a bad value.
+  it('an audit entry takes an optional helper id and input hash, in their shapes only', () => {
+    const a = fixture('audit-post.json') as { entry: Record<string, unknown> }
+    const sha = 'a'.repeat(64)
+    const entry = (extra: Record<string, unknown>) => AuditPost.safeParse({ ...a, entry: { ...a.entry, ...extra } }).success
+    expect(entry({ agentId: 'agent-1', inputSha256: sha })).toBe(true)
+    expect(entry({ inputSha256: sha })).toBe(true)
+    expect(entry({ agentId: '' })).toBe(false)
+    expect(entry({ inputSha256: 'A'.repeat(64) })).toBe(false)
+    expect(entry({ inputSha256: sha.slice(1) })).toBe(false)
   })
 
   it('a status: unknown carries no seqs, and nothing is acked past the last seq', () => {

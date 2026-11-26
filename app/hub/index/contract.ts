@@ -134,3 +134,35 @@ export interface DeliveryGateway {
   listChannels(scope: CallerScope, req: { accountId: 'slack:workspace'; cursor?: string }): Promise<HubResult<{ channels: SlackChannel[]; nextCursor: string | null }>>
   checkChannel(scope: CallerScope, req: { accountId: 'slack:workspace'; channelId: string }): Promise<HubResult<SlackChannel>>
 }
+
+// ---- Stage 1 M2 (W0-A): the write entrypoint's contract (N13). M2-C builds it. ----
+
+/** The only writes in M2. The server's operation table is typed `Record<WriteOperationKey, OperationEntry>`. */
+export const WRITE_OPERATIONS = ['shopify.order.tag_add', 'slack.channel.post'] as const
+export type WriteOperationKey = (typeof WRITE_OPERATIONS)[number]
+
+/**
+ * One send from the outbox dispatcher (`app/server/outbox/dispatch.ts`, the only holder of `HUB_WRITE`). `actionId` and
+ * `attempt` name the outbox row and its claim; `expect.connectedAtMs` is the account generation the action was approved
+ * on (the hub refuses when it changed). `args` is checked per operation by the hub, strictly.
+ */
+export type WriteRequest = {
+  actionId: string
+  attempt: number
+  requestId: string
+  accountId: string
+  expect: { connectedAtMs: number }
+  operation: WriteOperationKey
+  args: unknown
+}
+
+/**
+ * `value.ref` is a safe ref only (tag names, a channel name, a message time), never an upstream body. `sent: 'no'` only
+ * when the hub is sure nothing went out; everything else is `'unknown'`.
+ */
+export type WriteResult = { ok: true; value: { ref: string } } | { ok: false; error: HubError; sent: 'no' | 'unknown' }
+
+/** Bound as `HUB_WRITE`, its own named entrypoint. `ReadGateway` never writes. */
+export interface WriteGateway {
+  runAction(req: WriteRequest): Promise<WriteResult>
+}

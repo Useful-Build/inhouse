@@ -144,6 +144,32 @@ function checkLastUuid(v: { mainEntries: number; lastUuid: string | null; lastUu
   if (v.lastUuidIndex !== null && v.lastUuidIndex >= v.mainEntries) ctx.addIssue({ code: 'custom', path: ['lastUuidIndex'], message: 'lastUuidIndex is past mainEntries' })
 }
 
+/** The helpers' names (Stage 1, N6). The runner owns each one's tool list (`guards/agents.ts`); the server can't widen it. */
+export const HELPER_NAMES = ['researcher', 'analyst'] as const
+export type HelperName = (typeof HELPER_NAMES)[number]
+/**
+ * The caps on one helper's words, in UTF-8 bytes. With no control character but a newline or tab, JSON writes each byte
+ * at most twice over, so both helpers at their caps add under 19 KiB to a start, which keeps a start at every field's cap
+ * under `RUN_START_MAX_BYTES` (wire.test.ts).
+ */
+export const HELPER_DESCRIPTION_MAX_BYTES = 512
+export const HELPER_PROMPT_MAX_BYTES = 4 * 1024
+// eslint-disable-next-line no-control-regex
+const HELPER_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f]/
+const helperText = (max: number) =>
+  z.string().min(1).refine((t) => utf8.encode(t).length <= max && !HELPER_CONTROL.test(t), { message: `over ${max} bytes, or a control character` })
+
+/** One helper as the server defines it: its words only. No tools and no model: the runner owns those. */
+export const HelperDef = z.strictObject({
+  description: helperText(HELPER_DESCRIPTION_MAX_BYTES),
+  prompt: helperText(HELPER_PROMPT_MAX_BYTES),
+})
+export type HelperDef = z.infer<typeof HelperDef>
+
+/** `RunStart.agents`: both helpers, exactly these two names. */
+export const HelperAgents = z.strictObject({ researcher: HelperDef, analyst: HelperDef })
+export type HelperAgents = z.infer<typeof HelperAgents>
+
 /** The fields of a `POST /runs` body; `RunStart` adds the cross-field rules. */
 export const RunStartFields = z.strictObject({
   runId: Id,
@@ -197,6 +223,19 @@ export const RunStartFields = z.strictObject({
    * read-only, as a plugin beside ours before the session starts; the guards add each one to the session's skills.
    */
   brandSkills: BrandSkillFiles.optional(),
+  /**
+   * Optional (Stage 1, N6; additive like `webSearch`): the two helpers the turn may start. Absent: the Agent tool has
+   * nothing to start (built-in agents are off). The Worker sends it only when helpers are on (M1-P), so an older
+   * runner image still accepts every start until then.
+   */
+  agents: HelperAgents.optional(),
+  /** Optional (Stage 1, N6): the model `researcher` runs on; `analyst` inherits `model`. Sent with `agents`. */
+  subagentModel: Model.optional(),
+  /**
+   * Optional (Stage 1, N6): the `actions` MCP server (M2's write tools) is present only when this is `true`. Absent or
+   * `false` is off. Sent only when the brand has an enabled operation (N2), which no deployable build has in Stage 1.
+   */
+  actions: z.boolean().optional(),
 })
 
 /** Cross-field rules shared by `RunStart` and the runner's run config (the same fields less the token). */
@@ -282,6 +321,10 @@ export const AuditEntry = z.strictObject({
   /** What the hook decided, e.g. `allow`, `deny`, `defer`. */
   decision: z.string().max(64),
   input: z.unknown().refine((i) => jsonBytes(i) <= AUDIT_INPUT_MAX_BYTES, { message: `input over ${AUDIT_INPUT_MAX_BYTES} bytes` }),
+  /** Optional (Stage 1, N6): set when a helper made the call (the hook input's `agent_id`); absent for the main agent. */
+  agentId: z.string().min(1).max(256).optional(),
+  /** Optional (Stage 1, N14): SHA-256 of the call's input as the runner hashed it, lower-case hex. */
+  inputSha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
 })
 export type AuditEntry = z.infer<typeof AuditEntry>
 
