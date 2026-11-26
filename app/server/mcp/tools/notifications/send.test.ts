@@ -2,10 +2,13 @@
 // input schema's limits and the result text's closed list. Ways it can fail, written down first:
 //  1. the schema lets through more recipients than the design allows, an unknown key, or a free-form link;
 //  2. the result text says "sent" for something that wasn't, or leaks anything but the closed reasons and listed names;
-//  3. without the hub's deps the tool throws instead of answering slack_unavailable (and the bell must still go).
+//  3. without the hub's deps the tool throws instead of answering slack_unavailable (and the bell must still go);
+//  4. while the Slack legs are closed (server/notify-slack/slack-legs.ts, M2-F), a channel is posted to, or the text
+//     promises Slack. The tests that need the legs open run again when that constant opens them (`slackOpen`).
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import type { PostNoticeRequest } from '../../../../hub/index/contract.ts'
+import { SLACK_DELIVERY_ENABLED } from '../../../notify-slack/slack-legs.ts'
 import type { ToolScope } from '../../server/tool.ts'
 import { notifyDeps } from './deps.ts'
 import { NotificationSendInput, notificationSend } from './send.ts'
@@ -14,6 +17,9 @@ const db = env.DB
 let u = 0
 const uniq = () => `${++u}q${Math.random().toString(36).slice(2, 8)}`
 
+const slackOpen = it.skipIf(!SLACK_DELIVERY_ENABLED)
+
+/** `stage`: a stored value nothing reads any more (M2-F); a test that stores one shows it changes nothing. */
 async function setup(stage: string) {
   const owner = `m_${uniq()}`
   await db.prepare("INSERT INTO members (id, kind, role, status, name, created_at_ms) VALUES (?, 'person', 'admin', 'active', 'N', 1)").bind(owner).run()
@@ -61,7 +67,7 @@ describe('the input schema', () => {
 })
 
 describe('the result text', () => {
-  it('at Act: sent, refused with the listed names, not_member, the bell, and what changed', async () => {
+  slackOpen('at Act: sent, refused with the listed names, not_member, the bell, and what changed', async () => {
     const { owner, scope } = await setup('Act')
     const args = NotificationSendInput.parse({ to: { members: [owner, 'm_nobody'], channels: ['#ops-alerts', 'random', 'General'] }, title: 'Low stock', text: 'See https://x.example.com <!here>', format: 'message', link: { kind: 'today' } })
     const r = await notificationSend.call(args, scope, { db, notify: notifyDeps({ HUB_DELIVERY }) })
@@ -77,23 +83,49 @@ describe('the result text', () => {
     expect(r.isError).toBeUndefined()
   })
 
-  it('at Watch a channel reaches the bell and says so', async () => {
-    const { scope } = await setup('Watch')
+  it('the same call while the Slack legs are closed: a listed channel reaches the bell and says so, nothing is posted', async () => {
+    const { scope } = await setup('Act')
     const before = posts.length
-    const args = NotificationSendInput.parse({ to: { channels: ['ops-alerts'] }, title: 'T', text: 'x', format: 'report' })
+    const args = NotificationSendInput.parse({ to: { members: ['m_nobody'], channels: ['#ops-alerts', 'random', 'General'] }, title: 'Low stock', text: 'See https://x.example.com <!here>', format: 'message', link: { kind: 'today' } })
     const r = await notificationSend.call(args, scope, { db, notify: notifyDeps({ HUB_DELIVERY }) })
-    expect(text(r)).toBe('#ops-alerts: sent to the bell (Slack starts at Act)')
+    expect(text(r).split('\n')).toEqual([
+      'm_nobody: refused: unknown_member',
+      '#ops-alerts: sent to the bell (not Slack)',
+      '#random: refused: not_listed (listed: #general, #ops-alerts)',
+      '#General: sent to the bell (not Slack) (the same notice again: nothing new sent)',
+      'changed: links removed',
+      'changed: mentions escaped',
+    ])
+    expect(r.isError).toBeUndefined()
     expect(posts.length).toBe(before)
   })
 
-  it('without the delivery deps, channels answer slack_unavailable and the bell still goes', async () => {
+  for (const stage of ['Watch', 'Act', 'Run']) {
+    it(`with ${stage} stored a channel reaches the bell and says so`, async () => {
+      const { scope } = await setup(stage)
+      const before = posts.length
+      const args = NotificationSendInput.parse({ to: { channels: ['ops-alerts'] }, title: 'T', text: 'x', format: 'report' })
+      const r = await notificationSend.call(args, scope, { db, notify: notifyDeps({ HUB_DELIVERY }) })
+      expect(text(r)).toBe('#ops-alerts: sent to the bell (not Slack)')
+      expect(posts.length).toBe(before)
+    })
+  }
+
+  it('without the delivery deps a channel still reaches the bell', async () => {
+    const { owner, scope } = await setup('Act')
+    const args = NotificationSendInput.parse({ to: { members: [owner], channels: ['ops-alerts'] }, title: 'T', text: 'y', format: 'message' })
+    const r = await notificationSend.call(args, scope, { db })
+    expect(text(r).split('\n')).toEqual([`${owner}: sent`, '#ops-alerts: sent to the bell (not Slack) (the same notice again: nothing new sent)'])
+  })
+
+  slackOpen('without the delivery deps, channels answer slack_unavailable and the bell still goes', async () => {
     const { owner, scope } = await setup('Act')
     const args = NotificationSendInput.parse({ to: { members: [owner], channels: ['ops-alerts'] }, title: 'T', text: 'y', format: 'message' })
     const r = await notificationSend.call(args, scope, { db })
     expect(text(r).split('\n')).toEqual([`${owner}: sent`, '#ops-alerts: refused: slack_unavailable'])
   })
 
-  it('the 4th Slack post in one run is refused with the run cap named', async () => {
+  slackOpen('the 4th Slack post in one run is refused with the run cap named', async () => {
     const { scope } = await setup('Act')
     const out: string[] = []
     for (let i = 0; i < 4; i++) {

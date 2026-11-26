@@ -168,8 +168,8 @@ describe('the routine principal (test 7, OC 1)', () => {
   })
 })
 
-describe('stage (test 8)', () => {
-  it('at Watch a team routine slot is skipped (stage), the system routine runs', async () => {
+describe('legacy stage settings do not gate routines', () => {
+  it('runs both team and system routines with Watch still stored', async () => {
     await setStage('Watch')
     const h = harness()
     const team = await insertRoutine(routine({ creator_id: CREATOR, checked_until_ms: six(D1) - MIN }))
@@ -177,12 +177,15 @@ describe('stage (test 8)', () => {
       id: 'routine-test-check', origin: 'system', kind: 'agent', prompt_ref: 'test-system-check', need: 0, creator_id: 'm_system', checked_until_ms: six(D1) - MIN,
     }))
     await h.tick(six(D1))
-    expect((await slotsOf(team.id)).map(s => [s.state, s.reason])).toEqual([['skipped', 'stage']])
+    expect((await slotsOf(team.id)).map(s => [s.state, s.reason])).toEqual([['started', null]])
     expect((await slotsOf(sys.id)).map(s => s.state)).toEqual(['started'])
-    expect([...h.runs.turns.values()].map(t => t.submit.input.text)).toEqual([`Run the test system check.\n\nNow: ${new Date(six(D1)).toISOString()}`])
+    // One turn per slot, each in its slot's chat; the system check's text as before.
+    const slotChats = [...(await slotsOf(team.id)), ...(await slotsOf(sys.id))].map(s => s.chat_id).sort()
+    expect([...h.runs.turns.values()].map(t => t.chatId).sort()).toEqual(slotChats)
+    expect([...h.runs.turns.values()].map(t => t.submit.input.text)).toContain(`Run the test system check.\n\nNow: ${new Date(six(D1)).toISOString()}`)
   })
 
-  it('a stage drop between decision and submit skips the claimed row', async () => {
+  it('a legacy stage change between decision and submit does not skip the claimed row', async () => {
     const h = harness()
     h.runs.refuse = () => ({ refused: { code: 'unavailable', reason: 'draining' } })
     const r = await insertRoutine(routine({ creator_id: CREATOR, checked_until_ms: six(D1) - MIN }))
@@ -190,8 +193,8 @@ describe('stage (test 8)', () => {
     await setStage('Watch')
     h.runs.refuse = undefined
     await h.tick(six(D1) + MIN)
-    expect((await slotsOf(r.id)).map(s => [s.state, s.reason])).toEqual([['skipped', 'stage']])
-    expect(h.runs.turns.size).toBe(0)
+    expect((await slotsOf(r.id)).map(s => [s.state, s.reason])).toEqual([['started', null]])
+    expect(h.runs.turns.size).toBe(1)
   })
 })
 

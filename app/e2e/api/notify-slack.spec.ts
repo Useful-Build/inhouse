@@ -6,8 +6,13 @@
 //  2. a notice posts below Act, or a member id reaches Slack in any call;
 //  3. a refused channel (unlisted, shared, archived, private, not a member) is posted to, or the refusal isn't audited;
 //  4. a cap lets the 4th post of a run or the 21st of a day through, or a system notice eats the agent's allowance;
-//  5. the delivery binding or a Slack write is reachable from the runner.
+//  5. the delivery binding or a Slack write is reachable from the runner;
+//  6. while both Slack legs are closed (server/notify-slack/slack-legs.ts, M2-F, until Wasim's Q3), either notice path makes any
+//     Slack Web API call, whatever stage is stored.
+// The tests of a Slack post itself (1, 3 for the hub's refusals, 4) keep their assertions and run again when that constant opens
+// the legs; while it is closed they are skipped, and the closed-legs tests below stand in for them.
 import { expect, test } from '@playwright/test'
+import { SLACK_DELIVERY_ENABLED } from '../../server/notify-slack/slack-legs.ts'
 import { actor, call, me } from './kit.ts'
 import { auditAfter, auditMax, readSql, writeSql } from './db.ts'
 import { createChat } from './chat-kit.ts'
@@ -17,6 +22,8 @@ import {
 
 const dana = actor('memberA')
 test.describe.configure({ mode: 'serial' })
+const CLOSED = !SLACK_DELIVERY_ENABLED
+const CLOSED_WHY = 'the Slack legs are closed until Q3 (server/notify-slack/slack-legs.ts); this runs again when they open'
 
 /** The four parameters `chat.postMessage` may carry, sorted (the fake's own rule, written out here as the oracle). */
 const FOUR = ['channel', 'text', 'unfurl_links', 'unfurl_media']
@@ -29,7 +36,6 @@ test.beforeAll(async ({ request }) => {
   await fakeReset(request)
   await freshConnect(request)
   await setListedChannels(request, [CHANNEL.opsAlerts, CHANNEL.general], true)
-  await setStage(request, 'Act')
   owner = (await me(request, dana)).memberId as string
 })
 test.afterAll(async ({ request }) => {
@@ -43,8 +49,8 @@ const bell = async (request: Parameters<typeof call>[0]) => ((await call(request
 const audited = (mark: number, detail: string) =>
   auditAfter(mark).filter(l => l.action === 'notify.send').map(l => JSON.parse(l.args_json) as { outcome: string; detail?: string }).filter(a => a.detail === detail)
 
-test('at Act a notice to a listed channel posts once: four parameters, no unfurl, only the app link, mentions escaped, one escape level', async ({ request }) => {
-  await setStage(request, 'Act')
+test('with the legs open a notice to a listed channel posts once: four parameters, no unfurl, only the app link, mentions escaped, one escape level', async ({ request }) => {
+  test.skip(CLOSED, CLOSED_WHY)
   const before = (await fakeState(request)).web.posts.length
   const out = await notifySend(request, newRun(owner), msg({
     title: 'Stock R&D low',
@@ -71,6 +77,7 @@ test('at Act a notice to a listed channel posts once: four parameters, no unfurl
 })
 
 test("the server's own notice posts to the alerts channel and doesn't reduce the agent's remaining daily count", async ({ request }) => {
+  test.skip(CLOSED, CLOSED_WHY)
   const day = (await fakeState(request)).serverDay
   const agentToday = () => readSql<{ n: number }>("SELECT count(*) AS n FROM notify_sends WHERE source = 'agent' AND kind = 'slack' AND day = ?", day)[0]!.n
   const agentBefore = agentToday()
@@ -83,26 +90,49 @@ test("the server's own notice posts to the alerts channel and doesn't reduce the
   expect(agentToday(), 'the agent still has the same allowance').toBe(agentBefore)
 })
 
-test('at Watch the same call reaches the bell of the chat owner and the fake records no post', async ({ request }) => {
-  await setStage(request, 'Watch')
-  try {
-    const marker = `Watch notice ${uniq()}`
+for (const stage of ['Watch', 'Act', 'Run'] as const) {
+  test(`with ${stage} stored, both notice paths reach the bell and the fake Slack gets no call at all`, async ({ request }) => {
+    await setStage(request, stage)
+    const marker = `Notice ${uniq()}`
     const known = new Set((await bell(request)).map(i => i.id))
-    const before = (await fakeState(request)).web.posts.length
-    // The chat must be the owner's real one: below Act the notice goes to the bell of the person whose chat the run is in. (The hook
-    // refuses a chat that isn't the member's, and a run or turn that isn't the chat's, so only the chat is named.)
+    // The chat must be the owner's real one: a listed channel's notice goes to the bell of the person whose chat the run is in. (The
+    // hook refuses a chat that isn't the member's, and a run or turn that isn't the chat's, so only the chat is named.)
     const chatId = await createChat(request, dana)
-    const out = await notifySend(request, { memberId: owner, chatId }, msg({ text: marker }))
-    expect(asText(out)).toContain('sent to the bell')
-    expect((await fakeState(request)).web.posts.length, 'no Slack post at Watch').toBe(before)
+    const before = await fakeState(request)
+    const mark = auditMax()
+    const out = await notifySend(request, { memberId: owner, chatId }, msg({ text: `${marker} agent https://evil.test/x`, link: { kind: 'today' } }))
+    expect(asText(out)).toContain('sent to the bell (not Slack)')
+    expect(audited(mark, 'channel_to_bell').map(a => a.outcome)).toEqual(['posted'])
+    const system = await hook(request, { op: 'systemNotice', notice: {
+      key: `e2e:${uniq()}`, source: 'approvals', kind: 'approval_waiting', to: { members: [owner], alertsChannel: true },
+      body: `${marker} system`, link: { kind: 'today' },
+    } })
+    expect(system.status, system.text).toBe(200)
+    expect(system.json).toEqual({ ok: true, recipients: [{ kind: 'bell', to: owner, outcome: 'posted' }, { kind: 'slack', to: 'alerts', outcome: 'skipped', detail: 'slack_off' }] })
+    const after = await fakeState(request)
+    expect(after.web.requests, "no Slack Web API call: the hub's delivery binding was never used").toEqual(before.web.requests)
+    expect(after.web.posts).toEqual(before.web.posts)
+    expect(after.web.violations).toEqual([])
     const fresh = (await bell(request)).filter(i => !known.has(i.id))
-    expect(fresh.some(i => i.body?.includes(marker)), "the owner's bell holds the notice").toBe(true)
-  } finally {
-    await setStage(request, 'Act')
+    expect(fresh.find(i => i.body?.includes(`${marker} agent`))?.body).toContain('[link removed]')
+    expect(fresh.some(i => i.body?.includes(`${marker} system`))).toBe(true)
+  })
+}
+
+test('an unlisted channel is refused and audited, and the fake Slack gets no call', async ({ request }) => {
+  for (const channel of ['#design', '#partner-shared']) {
+    const mark = auditMax()
+    const before = await fakeState(request)
+    const out = asText(await notifySend(request, newRun(owner), msg({ to: { channels: [channel] } })))
+    expect(out, `${channel}: refused`).toContain('refused')
+    expect(out, `${channel}: says why`).toContain('not_listed')
+    expect((await fakeState(request)).web.requests, `${channel}: no Slack call`).toEqual(before.web.requests)
+    expect(audited(mark, 'not_listed').map(a => a.outcome), `${channel}: audited as refused`).toEqual(['refused'])
   }
 })
 
 test('an unlisted, shared, archived, private or non-member channel is refused with a clear message, no post, and an audit line', async ({ request }) => {
+  test.skip(CLOSED, CLOSED_WHY)
   const cases: { name: string; channel: string; patch?: Record<string, unknown>; detail: string }[] = [
     { name: '#design', channel: '#design', detail: 'not_listed' },
     { name: '#partner-shared', channel: '#partner-shared', detail: 'not_listed' },
@@ -155,6 +185,7 @@ test('a member id reaches the bell and never Slack; the stored text has no URL o
 })
 
 test('the 4th post in one run is refused (run_cap) and the 21st in a day is refused (day_cap), both audited', async ({ request }) => {
+  test.skip(CLOSED, CLOSED_WHY)
   await fakeReset(request)
   // A fresh day's worth of counts: the caps count today's rows, so earlier specs' rows are cleared (a local D1 only).
   writeSql("DELETE FROM notify_sends WHERE source = 'agent'")

@@ -5,7 +5,7 @@
 //     grant can't; Inhouse without a grant gets in; a grant write leaves no support.access line;
 //  2. a stale ifRev writes, or answers anything but conflict with the routine as it is now;
 //  3. Run now isn't idempotent by clientKey, opens a second run for one routine, runs a deleted routine, a team routine
-//     below its stage, or refuses a disabled one; a clientKey with a "." gets in;
+//     with a legacy Watch setting, or refuses a disabled one; a clientKey with a "." gets in;
 //  4. restore backfills the slots missed while deleted; a write's audit or Activity line is missing, doubled or names
 //     a routine's text;
 //  5. canManage says yes where the write would refuse (or no where it would pass); the list leaks a deleted routine
@@ -267,14 +267,14 @@ describe('route 54: Run now', () => {
     expect(lines.results).toEqual([{ actor_id: SAM }])
   })
 
-  it('a deleted routine is 404; a team routine below its stage is forbidden/stage; a key with a "." is invalid', async () => {
+  it('a deleted routine is 404; a team routine runs with Watch stored; a key with a "." is invalid', async () => {
     const gone = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW, deleted_at_ms: NOW - 1 }))
     expect((await send(person(ALEX), 'POST', `/api/routines/${gone.id}/run`, { clientKey: 'run-key-0003' })).status).toBe(404)
     const team = await insertRoutine(routine({ creator_id: ALEX, checked_until_ms: NOW }))
     expect((await send(person(ALEX), 'POST', `/api/routines/${team.id}/run`, { clientKey: 'run.key.0004' })).status).toBe(400)
     await setStage('Watch')
-    expect((await send(person(ALEX), 'POST', `/api/routines/${team.id}/run`, { clientKey: 'run-key-0005' })).body).toEqual({ error: { code: 'forbidden', reason: 'stage' } })
-    expect(await slotsOf(team.id)).toEqual([])
+    expect((await send(person(ALEX), 'POST', `/api/routines/${team.id}/run`, { clientKey: 'run-key-0005' })).status).toBe(200)
+    expect((await slotsOf(team.id)).map(s => [s.kind, s.state])).toEqual([['manual', 'claimed']])
   })
 })
 
