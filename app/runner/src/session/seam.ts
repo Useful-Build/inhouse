@@ -59,4 +59,10 @@ export type RunContext = {
    * timeout. The hook must not let the call run unless this resolved.
    */
   audit(entry: AuditEntry): Promise<void>
+  /**
+   * For the defer hook (src/guards/defer.ts, N16): resolves true once the main agent's current turn holds `toolUseId`
+   * as its only tool call; false when it holds others too, or when the call isn't seen within `withinMs` (the hook can
+   * fire before the run loop has read the assistant message that carries the call). Never rejects.
+   */
+  loneToolCall(toolUseId: string, withinMs: number): Promise<boolean>
 }

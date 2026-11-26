@@ -384,7 +384,7 @@ describe('a Worker that reads slowly', () => {
         if (slow) handle?.pause()
       })
       stream.emit({ type: 'started', sessionId: config.sessionId, resume: config.resume })
-      handle = hostSession({ child, stream, config, stopGraceMs: 200, log: (l) => logs.push(l), recordAudit: async () => true, onQueryStarted: () => {}, onStoreResult: () => {} })
+      handle = hostSession({ child, stream, config, protocol: PROTOCOL_VERSION, stopGraceMs: 200, log: (l) => logs.push(l), recordAudit: async () => true, onQueryStarted: () => {}, onStoreResult: () => {} })
       await waitFor(() => existsSync(join(user.workDir, 'got-run')), 'the session has its run')
       slow = true
       handle.pause()

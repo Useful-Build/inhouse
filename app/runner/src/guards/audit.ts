@@ -7,7 +7,7 @@
 // `onFailure: 'block'` turns the throw into a blocked call.
 import { createHash } from 'node:crypto'
 import type { HookCallbackMatcher, HookInput } from '@anthropic-ai/claude-agent-sdk'
-import { AUDIT_INPUT_MAX_BYTES, type AuditEntry } from '../../../shared/protocol/index.ts'
+import { AUDIT_INPUT_MAX_BYTES, auditInputSha256, type AuditEntry } from '../../../shared/protocol/index.ts'
 import { LOCAL_MAX_DEPTH, deeperThan } from '../protocol/ndjson.ts'
 import type { RunContext } from '../session/seam.ts'
 
@@ -64,17 +64,30 @@ export function capInput(input: unknown): unknown {
   return { cut: true, bytes, sha256, head: text.slice(0, AUDIT_EDGE_CHARS), tail: text.slice(-AUDIT_EDGE_CHARS) }
 }
 
-/** The entry for one PreToolUse call, in the shared shape the root checks. */
-export function auditEntry(input: HookInput & { hook_event_name: 'PreToolUse' }): AuditEntry {
-  return { hook: input.hook_event_name, toolName: input.tool_name, toolUseId: input.tool_use_id, decision: AUDIT_DECISION, input: capInput(input.tool_input) }
+/**
+ * The entry for one PreToolUse call, in the shared shape the root checks. With `agentId` (the hook input's `agent_id`:
+ * the helper that made the call, or null for the main agent) and `inputSha256` (N14), the hash of the hook's raw
+ * `tool_input`, never of the wrapped or cut `input` beside it: the egress hashes the raw call when it admits a write.
+ * A call with no input hashes as `{}`. The root drops both for a Worker below v4 (`auditEntryForPeer`).
+ */
+export async function auditEntry(input: HookInput & { hook_event_name: 'PreToolUse' }): Promise<AuditEntry> {
+  return {
+    hook: input.hook_event_name,
+    toolName: input.tool_name,
+    toolUseId: input.tool_use_id,
+    decision: AUDIT_DECISION,
+    input: capInput(input.tool_input),
+    agentId: input.agent_id ?? null,
+    inputSha256: await auditInputSha256(input.tool_input === undefined ? {} : input.tool_input),
+  }
 }
 
 /**
  * The entry a guard records when it denies a call (the WebFetch hook, p3-eval-observability rev 2 rec 6): the same
  * entry with `decision: 'deny'`, so the trace can say which call a hook refused (by its tool_use id).
  */
-export function deniedEntry(input: HookInput & { hook_event_name: 'PreToolUse' }): AuditEntry {
-  return { ...auditEntry(input), decision: 'deny' }
+export async function deniedEntry(input: HookInput & { hook_event_name: 'PreToolUse' }): Promise<AuditEntry> {
+  return { ...(await auditEntry(input)), decision: 'deny' }
 }
 
 /** A rejection's reason as text. Never throws: a value that can't be turned into a string mustn't change the error. */
@@ -113,7 +126,7 @@ export function auditHook(run: RunContext, timeoutMs = AUDIT_TIMEOUT_MS): HookCa
     hooks: [
       async (input: HookInput) => {
         if (input.hook_event_name !== 'PreToolUse') throw new AuditRefusedError(`audit hook got ${input.hook_event_name}`)
-        await recordToolCall(run, auditEntry(input), timeoutMs)
+        await recordToolCall(run, await auditEntry(input), timeoutMs)
         return {}
       },
     ],

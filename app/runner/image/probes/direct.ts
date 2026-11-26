@@ -89,6 +89,7 @@ if (input.variant === 'four-tools' && input.mcpProxyUrl) {
   base.mcpServers = { inhouse: mcpServers(input.mcpProxyUrl)!.inhouse! }
 }
 const run: RunContext = {
+  loneToolCall: async () => false,
   audit: input.variant === 'audit-refused' || input.variant === 'audit-hook-removed' ? async () => Promise.reject(new Error('probe: refused')) : async () => {},
 }
 const options: Options = createQueryGuards({ hostAddresses }).apply(base, config, run)

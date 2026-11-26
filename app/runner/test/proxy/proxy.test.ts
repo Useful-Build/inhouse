@@ -1,8 +1,10 @@
 // The loopback proxy. Ways it could fail, written first:
 // - it forwards for an unknown uid, a uid with no live run, root, or when the uid lookup itself fails;
 // - it forwards without a token, or passes on a token (or key) the caller made up;
-// - it forwards a route outside the five, or a path that climbs out of its route;
+// - it forwards a route outside the six, or a path that climbs out of its route;
 // - (P4 H1) `/hub/` asks for any token but the run's `mcp` one, or a hub path climbs out of `/hub/`;
+// - (Stage 1, N6) `/actions/` asks for any token but the run's `mcp` one, stays open once `mcp` has closed, or retries a
+//   `tools/call` (a second send could propose the same write twice);
 // - the token ends up in a log line;
 // - a header outside the allowlist is forwarded;
 // - the uid is looked up per request (or blocking) instead of once per connection;
@@ -155,7 +157,33 @@ describe('what is forwarded', () => {
     }
   })
 
-  it.each(['/model', '/other/x', '/', 'http://elsewhere/model/x', '/MODEL/x', '/hub', '/hubx/'])('%s: 404, nothing forwarded', async (path) => {
+  it('(N6) /actions/ is forwarded as it came, with the token the root gives for the mcp route, and closes with it', async () => {
+    const asked: string[] = []
+    let mcpOpen = true
+    const p = await makeProxy({ tokenForUid: (uid, route) => (asked.push(route), uid === 1001 && route === 'mcp' && mcpOpen ? 'tok_mcp_route_1001_aaaaaaaa' : null) })
+    try {
+      const body = '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+      const res = await fetch(`${p.url}/actions/`, { method: 'POST', headers: { connection: 'close', 'content-type': 'application/json' }, body })
+      expect(res.status).toBe(200)
+      expect(asked).toEqual(['mcp'])
+      expect(seen).toHaveLength(1)
+      expect(seen[0]).toMatchObject({ method: 'POST', url: '/egress/actions/', body })
+      expect(seen[0]!.headers[RUN_TOKEN_HEADER]).toBe('tok_mcp_route_1001_aaaaaaaa')
+      // The run's mcp token closed: /actions/ closes with it (and /hub/ too), and nothing more is forwarded.
+      mcpOpen = false
+      for (const path of ['/actions/', '/hub/', '/mcp/']) {
+        const closed = await fetch(`${p.url}${path}`, { method: 'POST', headers: { connection: 'close', 'content-type': 'application/json' }, body })
+        expect(closed.status).toBe(403)
+      }
+      expect(seen).toHaveLength(1)
+      expect(asked).toEqual(['mcp', 'mcp', 'mcp', 'mcp'])
+    } finally {
+      p.server.closeAllConnections()
+      await new Promise((r) => p.server.close(r))
+    }
+  })
+
+  it.each(['/model', '/other/x', '/', 'http://elsewhere/model/x', '/MODEL/x', '/hub', '/hubx/', '/actions', '/actionsx/'])('%s: 404, nothing forwarded', async (path) => {
     const res = await new Promise<number>((resolve, reject) => {
       const u = new URL(proxyUrl)
       http.request({ host: u.hostname, port: u.port, path, method: 'GET', headers: { connection: 'close' } }, (r) => {
@@ -167,7 +195,7 @@ describe('what is forwarded', () => {
     expect(seen).toHaveLength(0)
   })
 
-  it.each(['/hub/../model/', '/hub/%2e%2e/model/', '/model/../store/x', '/files/%2e%2e/x', '/mcp/a\\b', '/store/./x', '/model/..#x', '/model/.%2e#x', '/model/%23/../x', '/model/x#frag', '/model/..%23x', '/model/x?q=#..', '/model/..?x', '/files/a%2fb/%2E%2E?q=1'])('%s: 400, nothing forwarded', async (path) => {
+  it.each(['/actions/../model/', '/actions/%2e%2e/files/x', '/hub/../model/', '/hub/%2e%2e/model/', '/model/../store/x', '/files/%2e%2e/x', '/mcp/a\\b', '/store/./x', '/model/..#x', '/model/.%2e#x', '/model/%23/../x', '/model/x#frag', '/model/..%23x', '/model/x?q=#..', '/model/..?x', '/files/a%2fb/%2E%2E?q=1'])('%s: 400, nothing forwarded', async (path) => {
     const res = await new Promise<number>((resolve, reject) => {
       const u = new URL(proxyUrl)
       http.request({ host: u.hostname, port: u.port, path, method: 'GET', headers: { connection: 'close' } }, (r) => {
@@ -229,7 +257,7 @@ describe('targetFor (the last check on where a path goes)', () => {
   it.each(['/model/..#x', '/model/../x', '/model/./../store/x', '/model/x#y', '/model/%2e%2e/x/../../x'])('%s: refused', (path) => {
     expect(targetFor(base, path, 'model')).toBeNull()
   })
-  it.prop([fc.webPath(), fc.constantFrom('model', 'mcp', 'store', 'files', 'hub')])('anything it lets through sits under the base and the route', (path, route) => {
+  it.prop([fc.webPath(), fc.constantFrom('model', 'mcp', 'store', 'files', 'hub', 'actions')])('anything it lets through sits under the base and the route', (path, route) => {
     const t = targetFor(base, `/${route}/${path.replace(/^\//, '')}`, route)
     if (t !== null) {
       expect(t.origin).toBe(base.origin)
@@ -477,6 +505,8 @@ describe('MCP startup handshake retries', () => {
     ['/mcp/', 'notifications/initialized', '503'],
     ['/hub/', 'tools/list', 'cut'],
     ['/hub/', 'ping', '504'],
+    ['/actions/', 'initialize', '503'],
+    ['/actions/', 'tools/list', 'reset'],
   ] as const)('retries %s %s after transient %s and recovers', async (routePath, method, mode) => {
     const u = await withFlakyUpstream((n, _req, res) => {
       if (n === 1) {
@@ -508,13 +538,21 @@ describe('MCP startup handshake retries', () => {
     }
   })
 
-  it.each(['reset', '500', '503'] as const)('never retries tools/call on transient %s', async (mode) => {
+  it.each([
+    ['/mcp/', 'reset'],
+    ['/mcp/', '500'],
+    ['/mcp/', '503'],
+    ['/actions/', 'reset'],
+    ['/actions/', '502'],
+    ['/actions/', '503'],
+    ['/actions/', '504'],
+  ] as const)('never retries tools/call on %s after transient %s', async (routePath, mode) => {
     const u = await withFlakyUpstream((_n, _req, res) => {
       if (mode === 'reset') return void res.socket!.destroy()
       res.writeHead(Number(mode), { 'content-type': 'application/json' }).end('{"error":"busy"}')
     })
     try {
-      const res = await fetch(`${u.url}/mcp/`, {
+      const res = await fetch(`${u.url}${routePath}`, {
         method: 'POST',
         headers: { connection: 'close', 'content-type': 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'memory_save', arguments: {} } }),

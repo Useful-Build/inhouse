@@ -24,18 +24,19 @@
 import { fc, it } from '@fast-check/vitest'
 import type { HookCallbackMatcher, Options } from '@anthropic-ai/claude-agent-sdk'
 import { describe, expect } from 'vitest'
-import { AuditEntry } from '../../../shared/protocol/index.ts'
-import { AuditRefusedError } from '../../src/guards/audit.ts'
+import { AuditEntry, auditInputSha256 } from '../../../shared/protocol/index.ts'
+import { AUDIT_HOOK_TIMEOUT_S, AuditRefusedError } from '../../src/guards/audit.ts'
 import { RunConfig } from '../../src/protocol/local.ts'
 import { baseOptions, cliEnv } from '../../src/session/core.ts'
 import { sessionEnv } from '../../src/session/env.ts'
 import type { RunContext } from '../../src/session/seam.ts'
+import { HELPER_ENV, helperDefinitions } from '../../src/guards/agents.ts'
 import { ALLOWED_SKILLS, BUILT_IN_PLUGINS_OFF, BUILT_IN_TOOLS, BUNDLED_SKILLS_OFF } from '../../src/guards/lists.ts'
 import { GUARDED_OPTIONS, GuardConfigError, LOCAL_NAMES, LOCAL_SUFFIXES, assertFetchDomain, createQueryGuards } from '../../src/guards/options.ts'
 import { PLUGIN_DIR, sessionPaths, userPaths } from '../../src/guards/paths.ts'
 import { POOL_SIZE, poolUserName } from '../../src/guards/users.ts'
 
-const run: RunContext = { audit: async () => {} }
+const run: RunContext = { loneToolCall: async () => false, audit: async () => {} }
 /** Names inside a company or a cluster, with no local suffix a resolver would know. */
 const INTERNAL_NAMES = ['db.svc', 'api.prod.svc', 'api.prod.svc.cluster.local', 'wiki.corp', 'hr.intranet', 'nas.home', 'git.private', 'router.localdomain', 'xn--a.com']
 const ADDRS = ['172.17.0.5', 'fe80::1', '127.0.0.1']
@@ -218,10 +219,10 @@ describe('the guarded options', () => {
     expect(deny.sort()).toEqual(others.map((u) => `Read(/${userPaths(u).dir}/**)`).sort())
   })
 
-  it.prop([config])('the network: only the listed domains, never this container', (c) => {
+  // Stage 1 (N6): Bash has no network, whatever WebFetch may reach. Before, Bash reached the WebFetch list.
+  it.prop([config])('the network: none for Bash (not even the WebFetch list), never this container', (c) => {
     const net = guards.apply(base(c), c, run).sandbox!.network!
-    // With WebFetch open to any public host, Bash still reaches none.
-    expect(net.allowedDomains).toEqual(c.webFetchDomains ?? [])
+    expect(net.allowedDomains).toEqual([])
     expect(net.strictAllowlist).toBe(true)
     expect(net.allowLocalBinding).toBe(false)
     expect(net.allowAllUnixSockets).toBe(false)
@@ -246,11 +247,12 @@ describe('the guarded options', () => {
     const post: HookCallbackMatcher = { hooks: [async () => ({})] }
     const o = guards.apply({ ...base(c), hooks: { PreToolUse: [theirs], PostToolUse: [post] } }, c, run)
     const pre = o.hooks!.PreToolUse!
-    expect(pre).toHaveLength(3)
-    expect(pre[0]!.matcher).toBe('WebFetch')
-    expect(pre[1]!.matcher).toBeUndefined()
-    for (const m of pre.slice(0, 2)) expect(m.onFailure).toBe('block')
-    expect(pre[2]).toBe(theirs)
+    // Ours, in order: the helper hook (every tool), WebFetch's, the defer hook (question_ask), the audit hook (every tool).
+    expect(pre).toHaveLength(5)
+    expect(pre.map((m) => m.matcher)).toEqual([undefined, 'WebFetch', 'mcp__inhouse__question_ask', undefined, undefined])
+    for (const m of pre.slice(0, 4)) expect(m.onFailure).toBe('block')
+    expect(pre[3]!.timeout).toBe(AUDIT_HOOK_TIMEOUT_S)
+    expect(pre[4]).toBe(theirs)
     expect(o.hooks!.PostToolUse).toEqual([post])
   })
 
@@ -321,8 +323,10 @@ describe('the guarded options', () => {
     const c = fc.sample(config, 1)[0]!
     const sent: AuditEntry[] = []
     let settle!: { resolve: () => void; reject: (e: Error) => void }
-    const ctx: RunContext = { audit: (e) => (sent.push(e), new Promise<void>((resolve, reject) => (settle = { resolve, reject }))) }
-    const hook = guards.apply(base(c), c, ctx).hooks!.PreToolUse!.find((m) => m.matcher === undefined)!
+    const ctx: RunContext = { loneToolCall: async () => false, audit: (e) => (sent.push(e), new Promise<void>((resolve, reject) => (settle = { resolve, reject }))) }
+    // The audit hook: the fourth of ours (after the helper, WebFetch and defer hooks).
+    const hook = guards.apply(base(c), c, ctx).hooks!.PreToolUse![3]!
+    expect(hook.timeout).toBe(AUDIT_HOOK_TIMEOUT_S)
     expect(hook.onFailure).toBe('block')
     const call = (id: string) =>
       hook.hooks[0]!({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: id, session_id: 's', transcript_path: '', cwd: '/work/a' } as never, id, {
@@ -334,7 +338,9 @@ describe('the guarded options', () => {
     const first = call('u1').then((r) => ((allowed = true), r))
     for (let i = 0; i < 5; i++) await turn()
     expect(allowed).toBe(false)
-    expect(sent).toEqual([{ hook: 'PreToolUse', toolName: 'Bash', toolUseId: 'u1', decision: 'allow', input: { cut: false, value: { command: 'ls' } } }])
+    expect(sent).toEqual([
+      { hook: 'PreToolUse', toolName: 'Bash', toolUseId: 'u1', decision: 'allow', input: { cut: false, value: { command: 'ls' } }, agentId: null, inputSha256: await auditInputSha256({ command: 'ls' }) },
+    ])
     // The shape the root checks.
     expect(AuditEntry.safeParse(sent[0]).success).toBe(true)
     settle.resolve()
@@ -345,5 +351,74 @@ describe('the guarded options', () => {
     settle.reject(new Error('audit refused: the Worker has gone'))
     await expect(second).rejects.toThrow(AuditRefusedError)
     await expect(second).rejects.toThrow(/the Worker has gone/)
+  })
+})
+
+// Stage 1 (N6): the helpers and the actions server. Ways it could fail, written first:
+// - the Agent tool is pre-approved bare (any agent, a fork included), or a helper is approved on a run without helpers;
+// - a fork or a built-in agent isn't denied by rule; the definitions aren't ours (the base can't set `agents`);
+// - the session env lacks a cap or a foreground switch, holds another value, or forces the subagent model;
+// - the `actions` server is there, or pre-approved, on a run that didn't ask for it; or is off its proxy route;
+// - a start without `agents` or `actions` changes in any way beyond: no built-ins, no forks, Bash with no network.
+describe('helpers and the actions server', () => {
+  const AGENTS = { researcher: { description: 'Finds facts.', prompt: 'Research.' }, analyst: { description: 'Works numbers.', prompt: 'Analyse.' } }
+  const withHelpers = config.map((c) => RunConfig.parse({ ...c, agents: AGENTS, subagentModel: 'claude-sonnet-5-5' }))
+
+  it.prop([config])('without agents: no definitions, and no Agent rule at all in allowedTools; forks and built-ins denied by rule', (c) => {
+    const o = guards.apply(base(c), c, run)
+    expect(o.agents).toBeUndefined()
+    expect((o.allowedTools ?? []).filter((r) => r === 'Agent' || r.startsWith('Agent('))).toEqual([])
+    const deny = (o.settings as { permissions: { deny: string[] } }).permissions.deny
+    expect(deny).toEqual(expect.arrayContaining(['Agent(fork)', 'Agent(web-fetch)', 'Agent(general-purpose)', 'Agent(Explore)', 'Agent(Plan)']))
+  })
+
+  it.prop([withHelpers])('with agents: our two definitions, and exactly Agent(researcher) and Agent(analyst) pre-approved', (c) => {
+    const o = guards.apply(base(c), c, run)
+    expect(o.agents).toEqual(helperDefinitions(AGENTS, 'claude-sonnet-5-5', c.webSearch === true))
+    expect((o.allowedTools ?? []).filter((r) => r === 'Agent' || r.startsWith('Agent('))).toEqual(['Agent(researcher)', 'Agent(analyst)'])
+    expect((o.settings as { permissions: { deny: string[] } }).permissions.deny).toContain('Agent(fork)')
+  })
+
+  it.prop([config])('agents without subagentModel (or the other way round) is refused', (c) => {
+    expect(() => guards.apply(base(c), { ...c, agents: AGENTS }, run)).toThrow(/agents and subagentModel/)
+    expect(() => guards.apply(base(c), { ...c, subagentModel: 'claude-sonnet-5-5' }, run)).toThrow(/agents and subagentModel/)
+  })
+
+  it.prop([config, fc.constantFrom(...Object.keys(HELPER_ENV)), fc.option(fc.constantFrom('0', '2', '20', '120000', ''), { nil: undefined })])(
+    'a base env without each cap and switch at its value is refused; a forced subagent model is refused',
+    (c, k, v) => {
+      const b = base(c)
+      fc.pre(v !== HELPER_ENV[k as keyof typeof HELPER_ENV])
+      expect(() => guards.apply({ ...b, env: { ...b.env, [k]: v } }, c, run)).toThrow(new RegExp(k))
+      expect(() => guards.apply({ ...b, env: { ...b.env, CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1' } }, c, run)).toThrow(/CLAUDE_CODE_SUBAGENT_MODEL_FORCE/)
+    },
+  )
+
+  it.prop([config, fc.option(fc.boolean(), { nil: undefined })])('the actions server and its approval only when actions is true; at the proxy /actions/ only', (c, actions) => {
+    const asked = { ...c, actions }
+    const b = base(asked)
+    const proxy = b.env!.INHOUSE_PROXY_URL!
+    const o = guards.apply(b, asked, run)
+    const on = actions === true
+    expect(Object.keys(o.mcpServers ?? {}).sort()).toEqual(on ? ['actions', 'apps', 'inhouse'] : ['apps', 'inhouse'])
+    expect((o.allowedTools ?? []).filter((r) => r.startsWith('mcp__'))).toEqual(on ? ['mcp__inhouse', 'mcp__apps', 'mcp__actions'] : ['mcp__inhouse', 'mcp__apps'])
+    // A base that adds the server on a run that didn't ask for it is refused.
+    const extra = { ...b.mcpServers, actions: { type: 'http' as const, url: `${proxy}/actions/` } }
+    if (!on) expect(() => guards.apply({ ...b, mcpServers: extra }, asked, run)).toThrow(/MCP/)
+    else {
+      for (const url of [`${proxy}/mcp/`, `${proxy}/actions`, 'http://127.0.0.1:9999/actions/', `${proxy}/actions/../model/`]) {
+        expect(() => guards.apply({ ...b, mcpServers: { ...b.mcpServers, actions: { type: 'http', url } } }, asked, run), url).toThrow(/MCP/)
+      }
+      expect(() => guards.apply({ ...b, mcpServers: { ...b.mcpServers, actions: { type: 'stdio', command: 'sh' } } }, asked, run)).toThrow(/MCP/)
+    }
+  })
+
+  // The rule for a start without the new keys: everything as before except the three changes N6 names. Compared against
+  // the same start with each new key absent, false or present, the other guarded fields are the same.
+  it.prop([config])('a start with actions: false gets the same options as one without the key', (c) => {
+    const plain = guards.apply(base({ ...c, actions: undefined }), { ...c, actions: undefined }, run)
+    const off = guards.apply(base({ ...c, actions: false }), { ...c, actions: false }, run)
+    const strip = (o: Options) => ({ ...o, abortController: undefined, hooks: undefined, sessionStore: undefined })
+    expect(strip(off)).toEqual(strip(plain))
   })
 })

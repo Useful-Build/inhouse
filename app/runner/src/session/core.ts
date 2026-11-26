@@ -63,16 +63,18 @@ export function cliEnv(env: NodeJS.ProcessEnv): Record<string, string> {
 export const AUTO_COMPACT_WINDOW = 600_000
 
 /**
- * The engine's model settings for a run (Claude Code's env-vars page, read 2026-11-20). Every alias resolves to a model
- * the egress allows (the run's `model` or `sideModel`): `ANTHROPIC_DEFAULT_HAIKU_MODEL` is the `haiku` alias and the
- * background model; subagents run on the turn's model (`CLAUDE_CODE_SUBAGENT_MODEL`, forced so a model Claude names
- * when it spawns one doesn't win); the `sonnet`, `opus` and `fable` aliases resolve to the turn's model too.
+ * The engine's model settings for a run (Claude Code's env-vars page, read 2026-11-26). Every alias resolves to a model
+ * the egress allows (the run's `model`, `sideModel` or `subagentModel`): `ANTHROPIC_DEFAULT_HAIKU_MODEL` is the `haiku`
+ * alias and the background model; the `sonnet`, `opus` and `fable` aliases resolve to the turn's model.
+ * Helpers (Stage 1, N6): `CLAUDE_CODE_SUBAGENT_MODEL` is the turn's model, and ranks below a helper's definition
+ * (src/guards/agents.ts: `researcher` on `subagentModel`, `analyst` on `inherit`). It isn't forced
+ * (`CLAUDE_CODE_SUBAGENT_MODEL_FORCE` is gone): forcing would put `researcher` on the turn's model too. The one source
+ * that outranks a definition, a `model` the agent passes on its Agent call, is stripped by the helper hook.
  * `CLAUDE_CODE_AUTO_COMPACT_WINDOW` sets how full the context gets before compaction (no `CLAUDE_CODE_DISABLE_1M_CONTEXT`:
- * the 1M window stays). It binds subagents too: the subagents page (read 2026-11-20) says a subagent uses the lowest of
- * its own `autoCompactWindow`, the model's window and the window this variable sets. A per-subagent value can only
- * lower that, and would need custom agent definitions, which R2's guard refuses (`agents` is a guarded option), so
- * none is set. The CLI's own concurrency
- * (parallel subagents) isn't limited here: the Worker's gate holds a turn to 4 model calls in flight.
+ * the 1M window stays). It binds helpers too: the subagents page says a subagent uses the lowest of its own
+ * `autoCompactWindow`, the model's window and the window this variable sets, so the definitions set none. The helpers'
+ * caps (one layer, four at once) are in the session env (src/session/env.ts); the Worker's gate separately holds a turn
+ * to 4 model calls in flight.
  */
 export function modelEnv(config: Pick<RunConfig, 'model' | 'sideModel'>): Record<string, string> {
   return {
@@ -81,14 +83,13 @@ export function modelEnv(config: Pick<RunConfig, 'model' | 'sideModel'>): Record
     ANTHROPIC_DEFAULT_OPUS_MODEL: config.model,
     ANTHROPIC_DEFAULT_FABLE_MODEL: config.model,
     CLAUDE_CODE_SUBAGENT_MODEL: config.model,
-    CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1',
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(AUTO_COMPACT_WINDOW),
   }
 }
 
 export function baseOptions(config: RunConfig, cwd: string, env: Record<string, string>, abortController: AbortController, sessionStore?: Options['sessionStore']): Options {
-  // The `inhouse` and `apps` servers go through the root's proxy (sessionEnv() always sets INHOUSE_PROXY_URL; a bare
-  // test env without it gets no server).
+  // The `inhouse` and `apps` servers (and `actions`, only when the run asks for it) go through the root's proxy
+  // (sessionEnv() always sets INHOUSE_PROXY_URL; a bare test env without it gets no server).
   const proxy = env.INHOUSE_PROXY_URL
   return {
     cwd,
@@ -97,7 +98,7 @@ export function baseOptions(config: RunConfig, cwd: string, env: Record<string, 
     systemPrompt: config.systemPrompt,
     // Structured output: the SDK adds its StructuredOutput tool (the guards let it through only with this set).
     ...(config.outputFormat ? { outputFormat: { type: config.outputFormat.type, schema: config.outputFormat.schema } } : {}),
-    ...(proxy ? { mcpServers: mcpServers(proxy) } : {}),
+    ...(proxy ? { mcpServers: mcpServers(proxy, config.actions === true) } : {}),
     model: config.model,
     effort: config.effort,
     maxTurns: config.maxTurns,
@@ -154,14 +155,39 @@ type Result = Extract<SDKMessage, { type: 'result' }>
  * turn (P0 S1 saw it, though the docs say it can't happen) leaves the others' results unknown, so the runner defers only
  * when the turn's calls are exactly the deferred one.
  */
-class TurnToolUses {
+export class TurnToolUses {
   #ids = new Set<string>()
+  /** Waiters for a call id (`lone`), woken whenever the turn's calls change. */
+  #waiters = new Set<() => void>()
   see(m: SDKMessage) {
     if ((m as { parent_tool_use_id?: unknown }).parent_tool_use_id !== null) return
     const content = (m as { message?: { content?: unknown } }).message?.content
     if (!Array.isArray(content)) return
     if (m.type === 'user' && content.some((b) => (b as { type?: unknown })?.type === 'tool_result')) this.#ids.clear()
     if (m.type === 'assistant') for (const b of content) if ((b as { type?: unknown })?.type === 'tool_use') this.#ids.add(String((b as { id?: unknown }).id))
+    for (const wake of [...this.#waiters]) wake()
+  }
+  /**
+   * Resolves true once the turn holds `id` as its only call, false once it holds `id` beside another call, or false
+   * when `id` isn't seen within `withinMs`. Never rejects.
+   */
+  lone(id: string, withinMs: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const check = () => {
+        if (!this.#ids.has(id)) return false
+        done(this.#ids.size === 1)
+        return true
+      }
+      const done = (v: boolean) => {
+        clearTimeout(timer)
+        this.#waiters.delete(wake)
+        resolve(v)
+      }
+      const wake = () => void check()
+      const timer = setTimeout(() => done(false), withinMs)
+      timer.unref?.()
+      if (!check()) this.#waiters.add(wake)
+    })
   }
   get count() {
     return this.#ids.size
@@ -361,9 +387,11 @@ export async function runSession(deps: {
     // error before the resume's load) leaves the chat's session as it was (`released.queryRan: false`).
     onFirstCall: () => void channel.send({ type: 'query_started' }),
   })
+  // The main agent's tool calls in its current turn: the deferral check at the end, and the defer hook's `loneToolCall`.
+  const turn = new TurnToolUses()
   let options: Options
   try {
-    options = deps.guards.apply(baseOptions(config, deps.cwd, cliEnv(deps.env), abort, store.store), config, { audit })
+    options = deps.guards.apply(baseOptions(config, deps.cwd, cliEnv(deps.env), abort, store.store), config, { audit, loneToolCall: (id, withinMs) => turn.lone(id, withinMs) })
   } catch (e) {
     return setupFailed('guards', e)
   }
@@ -394,7 +422,6 @@ export async function runSession(deps: {
   // 3. The query.
   const text = config.prompt !== '' && leftOut.length > 0 ? `${config.prompt}\n\n${leftOutNote(leftOut)}` : config.prompt
   const prompt = text === '' ? '' : streamingPrompt(text, inputDone)
-  const turn = new TurnToolUses()
   let result: Result | null = null
   let thrown: unknown = null
   let threw = false

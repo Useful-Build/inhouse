@@ -1,6 +1,7 @@
 // The whole environment a session process (and so the CLI and Bash under it) sees. Built here and nowhere else.
 // It has no token, no key and no secret: every credentialed call goes to the root's loopback proxy, which finds the
 // caller's OS user and adds that run's token. The function takes no token, so it can't put one in.
+import { HELPER_ENV } from '../guards/agents.ts'
 import { userPaths } from '../guards/paths.ts'
 import type { SessionUser } from './seam.ts'
 
@@ -41,10 +42,12 @@ export function sessionEnv(user: SessionUser, proxyPort: number, extraCaCerts?: 
     // stream (`--input-format stream-json`), where the CLI defaults to non-blocking MCP startup and `inhouse` marks
     // only six tools to load up front using per-tool metadata (leaving the other 14 deferred); without this, a slow connect
     // drops every `mcp__inhouse__*` tool from turn 0.
-    // `MCP_CONNECTION_NONBLOCKING=0` is documented (code.claude.com/docs/en/env-vars). `MCP_CONNECT_TIMEOUT_MS` is not on the
-    // public env-var docs: it was read from the pinned CLI 2.1.328 (agent SDK 0.3.328) source, where it is the blocking-startup
-    // deadline (default 5000). Recheck both on an SDK bump.
+    // Both are on the env-vars page (code.claude.com/docs/en/env-vars, read 2026-11-26): `MCP_CONNECT_TIMEOUT_MS` is how
+    // long blocking startup waits for the connection batch before it snapshots the tool list (default 5000), and applies
+    // with `MCP_CONNECTION_NONBLOCKING=0`. Recheck both on an SDK bump (pinned: CLI 2.1.328, agent SDK 0.3.328).
     MCP_CONNECTION_NONBLOCKING: '0',
     MCP_CONNECT_TIMEOUT_MS: '15000',
+    // The helpers' caps, the foreground switches and the MCP tool timeout (Stage 1, N6 and N14; src/guards/agents.ts).
+    ...HELPER_ENV,
   }
 }
