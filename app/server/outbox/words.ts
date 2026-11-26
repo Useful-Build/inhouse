@@ -28,7 +28,7 @@ export const LAPSE_TEXT: Readonly<Record<LapseReason, string>> = {
   channel_not_listed: 'The channel isn’t listed any more, so this needs your OK again.',
   permission_removed: 'The permission was removed, so this needs your OK again.',
   count: 'Today’s allowance for this permission is used up, so this needs your OK.',
-  stale_approval: 'It wasn’t sent within 10 minutes of the OK, so it needs your OK again.',
+  stale_approval: 'It wasn’t sent in time after the OK, so it needs your OK again.',
 }
 
 /**

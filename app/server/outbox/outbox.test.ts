@@ -477,7 +477,7 @@ describe('review round 1', () => {
     await sync(true, 1)
     const paused = await gateRow()
     // A sweep that read the object before the Pause (open, generation 0) syncs after it.
-    expect(await sync(false, 0)).toEqual({ moved: false, lapsed: 0 })
+    expect(await sync(false, 0)).toMatchObject({ moved: false, lapsed: 0 })
     expect(await gateRow()).toEqual(paused)
     expect(await outbox(db, clock).answer(ASKER_ACTOR, (await waitingId()).id, { choice: 'once', ifRev: 1 })).toEqual({ refused: { code: 'conflict', reason: 'paused' } })
   })
@@ -488,7 +488,7 @@ describe('review round 1', () => {
     const open = await gateRow()
     const a = await approved()
     // A hook or sweep that read the object while it was paused (generation 1) syncs after the Resume's sync.
-    expect(await sync(true, 1)).toEqual({ moved: false, lapsed: 0 })
+    expect(await sync(true, 1)).toMatchObject({ moved: false, lapsed: 0 })
     expect(await gateRow()).toEqual(open)
     expect(await rowOf(db, a.id)).toMatchObject({ state: 'approved' })
     now += 10_000
@@ -594,7 +594,7 @@ describe('review round 1', () => {
     expect(await rowOf(db, b.id)).toMatchObject({ state: 'waiting', lapsed_reason: 'stale_approval' })
     expect(await unreleasedUses(db, b.id)).toEqual([])
     expect(told.list).toEqual([expect.objectContaining({ kind: 'approval_lapsed', actionId: b.id })])
-    expect(cardOf((await rowOf(db, b.id))!, ASKER_ACTOR, now).lapsed).toContain('10 minutes')
+    expect(cardOf((await rowOf(db, b.id))!, ASKER_ACTOR, now).lapsed).toContain('in time')
   })
 
   it('the permit: a Pause after the claim puts the row back with no call and tells the approver (should-fix 7)', async () => {
@@ -617,10 +617,19 @@ describe('review round 1', () => {
   it('the permit has a deadline: past it no call starts, so the sweep never races a send (nit 11)', async () => {
     const a = await approved()
     now += 10_000
-    const d = dispatch(a.id, { clock: () => now + 45_001 })
+    // The deadline is the claim + 60 s (stale) - 15 s (the hub's limit) - 5 s (the result's write): 40 s, inclusive.
+    const d = dispatch(a.id, { clock: () => now + 40_000 })
     expect(await d.run).toEqual({ kind: 'not_claimed' })
     expect(d.hub.calls).toEqual([])
     expect(await rowOf(db, a.id)).toMatchObject({ state: 'waiting', lapsed_reason: 'stale_approval' })
+  })
+
+  it('the permit just inside its deadline still sends (nit 11, round 2)', async () => {
+    const a = await approved()
+    now += 10_000
+    const d = dispatch(a.id, { clock: () => now + 39_999 })
+    expect(await d.run).toMatchObject({ kind: 'sent' })
+    expect(d.hub.calls).toHaveLength(1)
   })
 
   it('an expired card no sweep has reached yet stops nothing: a new request makes a new card (nit 10)', async () => {

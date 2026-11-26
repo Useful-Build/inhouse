@@ -7,6 +7,10 @@
 // gate's `epoch` (so no approval given before a Pause or a Resume is claimed after it) and the gate's `do_gen` to equal
 // the dispatcher's own `pauseGen` (so if a hook failed or hasn't run yet, nothing is claimed until a sync succeeds, and
 // that sync lapses every approved row). So resuming sends nothing, even when a hook fails.
+// The gate only moves forward (gateSyncStmts). So a gate *ahead* of the object, as after a restore that brought back
+// an older BrandAgent or a newer D1, never moves again on its own, and nothing is claimed until someone repairs it:
+// M2-R's restore step sets `do_gen = -1` with `restore_hold = 1`, so the next sync moves it forward from below, and only
+// the admin's audited restore confirm clears the hold.
 import { SYSTEM_MEMBER_ID, writeStamp } from '../db/ids.ts'
 import { all, first, runBatch, stmt } from '../db/sql.ts'
 import type { Stmt } from '../db/sql.ts'
@@ -79,7 +83,7 @@ export function gateSyncStmts(s: PauseState, at: { nowMs: number; requestId: str
  * One sync, from the object's state read now (not before an await), then a notice to each lapsed action's approver.
  * Returns whether the gate moved and how many approvals lapsed.
  */
-export async function syncGate(d: { db: D1Database; state: () => PauseState; nowMs: number; requestId: string; notify: OutboxNotifier }): Promise<{ moved: boolean; lapsed: number }> {
+export async function syncGate(d: { db: D1Database; state: () => PauseState; nowMs: number; requestId: string; notify: OutboxNotifier }): Promise<{ moved: boolean; lapsed: number; state: PauseState }> {
   const stamp = writeStamp(d.requestId)
   const state = d.state()
   await runBatch(d.db, gateSyncStmts(state, d, stamp))
@@ -90,31 +94,32 @@ export async function syncGate(d: { db: D1Database; state: () => PauseState; now
   await notifyAll(d.notify, lapsed.map(r => ({ kind: 'approval_lapsed' as const, to: r.approver, actionId: r.id, key: `lapsed:${r.id}:${r.rev}`, body: LAPSE_TEXT.paused })))
   const moved = gate.stamp === stamp
   console.log({ event: 'outbox_gate_sync', paused: state.paused, pauseGen: state.pauseGen, moved, lapsed: lapsed.length })
-  return { moved, lapsed: lapsed.length }
+  return { moved, lapsed: lapsed.length, state }
 }
 
 // ---------- how long the gate has been behind the object (BrandAgent's own SQLite; the `outbox_gate` health signal) ----------
 
-/** Creates the object's one-row record of a gate left behind (a sync that failed). */
+/**
+ * Creates the object's one-row record of a gate left behind (a sync that failed). Run once per object from compose.ts
+ * (`p6Hooks`, in the constructor), so the reads and writes below, the `outboxLag()` RPC among them, do no DDL. The
+ * registry's class-level `BrandAgent` entry covers it (no person key: a time and a generation).
+ */
 export function createLagTable(sql: SqlStorage): void {
   sql.exec('CREATE TABLE IF NOT EXISTS outbox_lag (id INTEGER PRIMARY KEY CHECK (id = 1), since_ms INTEGER NOT NULL, gen INTEGER NOT NULL)')
 }
 
 /** A sync failed or the sweep found the gate behind: keeps the first moment it was seen. */
 export function noteLag(sql: SqlStorage, gen: number, nowMs: number): void {
-  createLagTable(sql)
   sql.exec('INSERT INTO outbox_lag (id, since_ms, gen) VALUES (1, ?, ?) ON CONFLICT (id) DO UPDATE SET gen = excluded.gen', nowMs, gen)
 }
 
 /** A sync succeeded: the gate is caught up. */
 export function clearLag(sql: SqlStorage): void {
-  createLagTable(sql)
   sql.exec('DELETE FROM outbox_lag')
 }
 
 /** Since when the gate has been seen behind the object, or null. */
 export function lagSince(sql: SqlStorage): number | null {
-  createLagTable(sql)
   return sql.exec<{ since_ms: number }>('SELECT since_ms FROM outbox_lag WHERE id = 1').toArray()[0]?.since_ms ?? null
 }
 
@@ -126,8 +131,9 @@ export function lagSince(sql: SqlStorage): number | null {
 export function outboxPauseHook(d: { db: D1Database; sql: SqlStorage; notify: OutboxNotifier }): PauseHook {
   const run = async (atMs: number) => {
     try {
-      await syncGate({ db: d.db, state: () => doPauseState(d.sql), nowMs: atMs, requestId: `outbox-gate-${crypto.randomUUID()}`, notify: d.notify })
-      clearLag(d.sql)
+      const synced = await syncGate({ db: d.db, state: () => doPauseState(d.sql), nowMs: atMs, requestId: `outbox-gate-${crypto.randomUUID()}`, notify: d.notify })
+      // Caught up only if no later Pause or Resume came while the sync ran (the sweep checks the same).
+      if (synced.state.pauseGen === doPauseState(d.sql).pauseGen) clearLag(d.sql)
     } catch (err) {
       noteLag(d.sql, doPauseState(d.sql).pauseGen, atMs)
       throw err

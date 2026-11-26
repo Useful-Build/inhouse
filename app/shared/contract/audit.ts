@@ -214,7 +214,8 @@ export type RevokeReason = z.infer<typeof RevokeReasonSchema>
 export const LapseReasonSchema = z.enum([
   'paused', 'restore_hold', 'expired', 'over_ceiling', 'policy_changed', 'account_changed', 'asker_removed', 'approver_not_allowed',
   'channel_not_listed', 'permission_removed', 'count',
-  // Stage 1 M2-B (the orchestrator's approval age cap): an approval not sent within 10 minutes needs a person's OK again.
+  // Stage 1 M2-B: an approval not sent in time needs a person's OK again (the 10-minute approval age cap, or a send that
+  // missed its permit's deadline).
   'stale_approval',
 ])
 /** A failed send's code: the hub's closed error codes (app/hub/index/contract.ts `HubErrorCode`), never upstream text. */

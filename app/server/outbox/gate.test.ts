@@ -8,7 +8,9 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { inAgent } from '../testing/brand-agent/core-harness.ts'
 import { p6Hooks } from '../do/brand-agent/compose.ts'
 import type { BrandAgentParts } from '../do/brand-agent/ports.ts'
-import { doPauseState, outboxPauseHook, readGate } from './gate.ts'
+import { runInDurableObject } from 'cloudflare:test'
+import { createLagTable, doPauseState, lagSince, noteLag, outboxPauseHook, readGate } from './gate.ts'
+import { sweepOutbox } from './sweep.ts'
 import { notices, world } from './test-support.ts'
 
 const db = env.DB
@@ -76,3 +78,45 @@ describe("one task at a time (nit 11: the permit's deadline doesn't rely on it, 
     }, { handlers: { 'outbox-send': slow('send'), 'outbox-sweep': slow('sweep') } })
   })
 })
+
+describe('the lag record (round 2: the gate signal measures from here)', () => {
+  /** A D1 whose batches fail: the sync can't run. */
+  const broken = { batch: async () => { throw new Error('D1 down') }, prepare: (q: string) => db.prepare(q) } as unknown as D1Database
+
+  it('a failed hook sets it, a second failure keeps the first moment, a successful sync clears it', () => inAgent(async h => {
+    createLagTable(h.sql)
+    let failing = true
+    const hook = outboxPauseHook({ db: new Proxy(db, { get: (t, k) => (failing ? Reflect.get(broken, k) : Reflect.get(t, k)) }) as D1Database, sql: h.sql, notify: notices().notify })
+    h.core.registerPauseHook(hook)
+    expect(lagSince(h.sql)).toBeNull()
+    h.clock.now += 1_000
+    await expect(h.core.pause(ADMIN)).rejects.toThrow()
+    const first = lagSince(h.sql)
+    expect(first).toEqual(expect.any(Number))
+    h.clock.now += 60_000
+    await expect(h.core.resume(ADMIN)).rejects.toThrow()
+    expect(lagSince(h.sql)).toBe(first)
+    failing = false
+    await h.core.pause(ADMIN)
+    expect(lagSince(h.sql)).toBeNull()
+    expect(await readGate(db)).toMatchObject({ paused: 1, do_gen: h.core.pauseGen() })
+  }))
+
+  it('the sweep notes it when it finds the gate behind and clears it once synced', () => inAgent(async h => {
+    createLagTable(h.sql)
+    noteLag(h.sql, 3, 5)
+    await h.core.pause(ADMIN)
+    const lag = { note: (gen: number, at: number) => noteLag(h.sql, gen, at), clear: () => { createLagTable(h.sql); h.sql.exec('DELETE FROM outbox_lag') } }
+    await sweepOutbox({ db, nowMs: 10, state: () => doPauseState(h.sql), lag, scheduler: { ensure: () => {} }, notify: notices().notify, requestId: 'sweep-lag' })
+    expect(lagSince(h.sql)).toBeNull()
+    expect(await readGate(db)).toMatchObject({ paused: 1, do_gen: 1 })
+  }))
+
+  it("BrandAgent's outboxLag() returns its generation and the lag's first moment", async () => {
+    const stub = env.BRAND_AGENT.getByName(`lag-${Math.random()}`)
+    expect(await stub.outboxLag()).toEqual({ pauseGen: 0, lagSinceMs: null })
+    await runInDurableObject(stub, async (_i, state) => { noteLag(state.storage.sql, 2, 1_234) })
+    expect(await stub.outboxLag()).toEqual({ pauseGen: 0, lagSinceMs: 1_234 })
+  })
+})
+

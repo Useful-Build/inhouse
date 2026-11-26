@@ -142,7 +142,7 @@ const LAPSED: Record<string, string> = {
   over_ceiling: 'this kind of action is turned off', policy_changed: 'the rules changed', account_changed: 'the tool’s connection changed',
   asker_removed: 'the person who asked left the team', approver_not_allowed: 'the approver can no longer approve it',
   channel_not_listed: 'the channel isn’t listed any more', permission_removed: 'the permission was removed', count: 'today’s allowance is used up',
-  stale_approval: 'it wasn’t sent within 10 minutes of the OK',
+  stale_approval: 'it wasn’t sent in time after the OK',
 }
 const NEEDS_CHECK: Record<string, string> = {
   timeout: 'no answer in time', unknown: 'the tool couldn’t say whether it went out', thrown: 'the call broke off',

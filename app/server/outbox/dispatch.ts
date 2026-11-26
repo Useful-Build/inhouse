@@ -41,6 +41,9 @@ const ResultSchema = z.union([
   z.object({ ok: z.literal(false), error: z.object({ code: ActionFailCodeSchema }), sent: z.enum(['no', 'unknown']) }),
 ])
 
+/** Room left after the hub's limit for the result's own D1 write, so a send near the edge still lands before the sweep's stale mark. */
+export const PERMIT_RESULT_MARGIN_MS = 5_000
+
 export type SendOutcome =
   | { kind: 'not_claimed' }
   | { kind: 'sent'; ref: string }
@@ -191,8 +194,8 @@ export async function sendAction(actionId: string, d: DispatchDeps): Promise<Sen
   // The permit (step 3): the object's pause state unchanged since the claim, and the call still able to finish before
   // the sweep may call this row stale (so a sweep and a person's resolve can never race the send, whatever runs the
   // tasks). From this check to the call's start there is no await.
-  const permitBy = (claimed.claimed_at_ms ?? nowMs) + timing().staleSendingMs - timing().hubTimeoutMs
-  const late = d.gate.paused || d.gate.pauseGen !== gen ? 'paused' as const : (d.clock ?? (() => nowMs))() > permitBy ? 'stale_approval' as const : null
+  const permitBy = (claimed.claimed_at_ms ?? nowMs) + timing().staleSendingMs - timing().hubTimeoutMs - PERMIT_RESULT_MARGIN_MS
+  const late = d.gate.paused || d.gate.pauseGen !== gen ? 'paused' as const : (d.clock ?? (() => nowMs))() >= permitBy ? 'stale_approval' as const : null
   if (late !== null) {
     const back = writeStamp(d.requestId)
     await runBatch(db, lapseStmts({
