@@ -34,4 +34,4 @@ export async function writeRecord(bucket: R2Bucket, record: RestoreRecord, etag:
   return checked
 }
 
-export const emptyReconcile = (): Reconcile => ({ fts: null, audit: null, members: null, outbox: 'p8b_pending', replay: null, confirm: null, refusal: null })
+export const emptyReconcile = (): Reconcile => ({ fts: null, audit: null, members: null, outbox: null, replay: null, confirm: null, refusal: null })

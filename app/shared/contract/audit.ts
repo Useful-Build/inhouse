@@ -222,8 +222,11 @@ export const LapseReasonSchema = z.enum([
 ])
 /** A failed send's code: the hub's closed error codes (app/hub/index/contract.ts `HubErrorCode`), never upstream text. */
 export const ActionFailCodeSchema = ConnectOutcomeSchema.exclude(['ok'])
-/** Why a send needs a person's check: no answer in time, the hub wasn't sure, the call threw, the answer didn't parse, the sending row went stale. */
-export const NeedsCheckWhySchema = z.enum(['timeout', 'unknown', 'thrown', 'bad_result', 'stale'])
+/**
+ * Why a send needs a person's check: no answer in time, the hub wasn't sure, the call threw, the answer didn't parse, the
+ * sending row went stale, or (M2-R) a restore brought back an action the live brand may have sent after the backup.
+ */
+export const NeedsCheckWhySchema = z.enum(['timeout', 'unknown', 'thrown', 'bad_result', 'stale', 'restore'])
 const ACTION_RECORDS = z.number().int().min(1).max(1_000_000)
 const ACTION_ATTEMPT = z.number().int().min(1).max(1000)
 
@@ -371,7 +374,10 @@ const otherLines = [
   line('action.lapsed', { actionId: ActionIdSchema, reason: LapseReasonSchema, released: z.boolean() }),
   line('action.sent', { actionId: ActionIdSchema, attempt: ACTION_ATTEMPT }),
   line('action.failed', { actionId: ActionIdSchema, attempt: ACTION_ATTEMPT.optional(), code: ActionFailCodeSchema, released: z.boolean() }),
-  line('action.needs_check', { actionId: ActionIdSchema, attempt: ACTION_ATTEMPT, why: NeedsCheckWhySchema }),
+  /** `attempt` is left out only by a restore's hold, for a row that was never claimed (M2-R). */
+  line('action.needs_check', { actionId: ActionIdSchema, attempt: ACTION_ATTEMPT.optional(), why: NeedsCheckWhySchema }).superRefine((a, ctx) => {
+    if (a.attempt === undefined && a.why !== 'restore') ctx.addIssue({ code: 'custom', path: ['attempt'], message: 'Only a restore leaves out the attempt' })
+  }),
   /** A person said whether a "Needs a check" action went out. `released`: "it didn't" gave the use back. */
   line('action.resolved', { actionId: ActionIdSchema, outcome: ActionResolutionSchema, released: z.boolean() }),
   /** `askedOf`: the chat's owner, the routine's creator, or every admin (a routine whose creator is gone). No member id. */

@@ -149,6 +149,7 @@ const LAPSED: Record<string, string> = {
 const NEEDS_CHECK: Record<string, string> = {
   timeout: 'no answer in time', unknown: 'the tool couldn’t say whether it went out', thrown: 'the call broke off',
   bad_result: 'the answer couldn’t be read', stale: 'it was sending for too long',
+  restore: 'the brand’s data was restored from a backup, and it may have gone out since',
 }
 /** Why a send failed, from the hub's closed codes; any other code says the tool couldn't do it. */
 const FAILED: Record<string, string> = {
