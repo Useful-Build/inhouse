@@ -18,12 +18,11 @@ import { runWriteAction, type WriteGatewayDeps } from './gateway'
 
 export class WriteGateway extends WorkerEntrypoint<Env> implements WriteApi {
   #deps(): WriteGatewayDeps {
-    const hubEnv = this.env as HubWriteEnv
+    const hubEnv: HubWriteEnv = this.env
     if (__INHOUSE_HUB_TEST__ && hubEnv.INHOUSE_TEST_BUILD === '1') {
       return {
         shopifyOrderTagAdd: async input => {
           const ns = hubEnv.SHOPIFY_WRITE_SIGNIN
-          if (!ns) return { ok: false, error: hubError('not_configured', 'shopify_write'), sent: 'no' }
           const stub = ns.get(ns.idFromName(SHOPIFY_WRITE_SIGNIN_ACCOUNT))
           return (await stub.orderTagAdd(input)) as WriteResult
         },

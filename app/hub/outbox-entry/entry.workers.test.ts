@@ -77,7 +77,8 @@ describe('WriteGateway through Worker exports (workerd)', () => {
     await gw.ConnectGateway.testFakes(serverScope, { op: 'set', shopifyWrite: { faults: { 'shopify.order.tag_add': 'broken_body' } } })
     const brokenRes = await gw.WriteGateway.runAction({ ...req, attempt: 4 })
     expect(brokenRes).toMatchObject({ ok: false, error: { code: 'upstream_unavailable' }, sent: 'unknown' })
-  })
+    // The timeout fault hangs until the hub's real 15 s write deadline aborts it.
+  }, 30_000)
 
   it('executes slack.channel.post against FakeSlackWeb through postToSlack', async () => {
     const started = await gw.ConnectGateway.startConnect(serverScope, { accountId: 'slack:workspace', memberId: 'mem_test_0001' })

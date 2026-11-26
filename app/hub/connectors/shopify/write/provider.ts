@@ -98,11 +98,21 @@ async function readCapped(res: Response, limit: number): Promise<Capped> {
   }
 }
 
-async function withDeadline<T>(ms: number, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+/**
+ * Runs `fn` under a deadline: at `ms` the signal aborts and the answer is `onDeadline()`, even when the upstream ignores
+ * the signal (a race, not only an abort), so a hung write never holds the caller past the deadline.
+ */
+async function withDeadline<T>(ms: number, onDeadline: () => T, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(new DOMException('upstream deadline', 'TimeoutError')), ms)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<T>(resolve => {
+    timer = setTimeout(() => {
+      controller.abort(new DOMException('upstream deadline', 'TimeoutError'))
+      resolve(onDeadline())
+    }, ms)
+  })
   try {
-    return await fn(controller.signal)
+    return await Promise.race([fn(controller.signal), deadline])
   } finally {
     clearTimeout(timer)
   }
@@ -126,8 +136,9 @@ export function sendOrderTagsAdd(
   config: ShopifyConfig,
   token: string,
   args: ShopifyOrderTagAddArgs,
+  timeoutMs: number = WRITE_TIMEOUT_MS,
 ): Promise<WriteResult> {
-  return withDeadline(WRITE_TIMEOUT_MS, signal => send(upstream, config, token, args, signal))
+  return withDeadline(timeoutMs, () => writeErr('upstream_unavailable', 'unknown', 'deadline'), signal => send(upstream, config, token, args, signal))
 }
 
 async function send(
@@ -200,8 +211,11 @@ async function send(
     const codes = (body.errors as { extensions?: { code?: unknown } }[])
       .map(e => (typeof e?.extensions?.code === 'string' ? e.extensions.code : null))
       .filter((c): c is string => c !== null && /^[A-Z_]{1,64}$/.test(c))
-    if (codes.includes('THROTTLED')) return writeErr('rate_limited', 'no')
-    if (codes.length > 0 && codes.every(c => DEFINITE_GQL_REFUSALS.has(c))) {
+    // A partial result (errors next to a `tagsAdd` value) means the mutation may have run: never `sent: 'no'` then.
+    const noMutationResult = body.data === undefined || body.data === null
+      || (typeof body.data === 'object' && !Array.isArray(body.data) && (body.data as Record<string, unknown>).tagsAdd == null)
+    if (codes.includes('THROTTLED')) return writeErr('rate_limited', noMutationResult ? 'no' : 'unknown')
+    if (noMutationResult && codes.length > 0 && codes.every(c => DEFINITE_GQL_REFUSALS.has(c))) {
       const unique = [...new Set(codes)].slice(0, 10)
       return writeErr('upstream_rejected', 'no', unique.join(','))
     }

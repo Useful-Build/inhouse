@@ -20,7 +20,7 @@ import {
   SHOPIFY_WRITE_ACCOUNT,
 } from '../connectors/shopify/write/provider'
 import { postSlackOutboxAction, type SlackOutboxStub } from '../connectors/slack/outbox'
-import { connectSlack, deliveryWorld, SLACK } from '../connectors/slack/testing/kit'
+import { connectSlack, deliveryWorld, SLACK, type DeliveryWorld } from '../connectors/slack/testing/kit'
 import {
   createShopifyWriteUpstream,
   SHOPIFY_WRITE_SHOP,
@@ -80,6 +80,7 @@ function shopifyWorld(opts: {
   configured?: boolean
   status?: () => Promise<HubResult<AccountStatus>>
   upstreamWrap?: (inner: (req: Request) => Promise<Response>) => (req: Request) => Promise<Response>
+  writeTimeoutMs?: number
 } = {}) {
   const store = new MemStore()
   const fake = createShopifyWriteUpstream()
@@ -96,6 +97,7 @@ function shopifyWorld(opts: {
     keyring: async () => ring,
     config: () => config,
     accountStatus: opts.status ?? (async () => ok(makeAccountStatus())),
+    writeTimeoutMs: opts.writeTimeoutMs,
   })
   const deps: WriteGatewayDeps = {
     shopifyOrderTagAdd: input => core.orderTagAdd(input),
@@ -299,13 +301,24 @@ describe('Shopify write fault switches', () => {
     expect(w.fake.writes).toHaveLength(1)
   })
 
-  it('timeout: returns upstream_unavailable with sent: unknown and does not retry', async () => {
-    const w = shopifyWorld()
+  it('timeout: the write hangs past the deadline, answers upstream_unavailable with sent: unknown and does not retry', async () => {
+    const w = shopifyWorld({ writeTimeoutMs: 50 })
     w.fake.faults['shopify.order.tag_add'] = 'timeout'
     const r = await runWriteAction(w.deps, baseShopifyReq())
     expect(WriteResultSchema.safeParse(r).success).toBe(true)
-    expect(r).toMatchObject({ ok: false, error: { code: 'upstream_unavailable' }, sent: 'unknown' })
+    expect(r).toMatchObject({ ok: false, error: { code: 'upstream_unavailable', message: expect.stringContaining('deadline') }, sent: 'unknown' })
     expect(w.fake.writes).toHaveLength(1)
+    expect(w.fake.orders.get('gid://shopify/Order/9001')!.tags).toEqual(['existing'])
+  })
+
+  it('timeout: an upstream that ignores the abort signal still answers at the deadline', async () => {
+    const w = shopifyWorld({
+      writeTimeoutMs: 50,
+      upstreamWrap: inner => async req =>
+        new URL(req.url).pathname.endsWith('/graphql.json') ? new Promise<Response>(() => {}) : inner(req),
+    })
+    const r = await runWriteAction(w.deps, baseShopifyReq())
+    expect(r).toMatchObject({ ok: false, error: { code: 'upstream_unavailable' }, sent: 'unknown' })
   })
 
   it('broken_body: returns upstream_unavailable with sent: unknown', async () => {
@@ -327,6 +340,63 @@ describe('Shopify write fault switches', () => {
   })
 })
 
+describe('Shopify write GraphQL errors and a rejected token', () => {
+  const gqlWorld = (body: unknown) =>
+    shopifyWorld({
+      upstreamWrap: inner => async req =>
+        new URL(req.url).pathname.endsWith('/graphql.json')
+          ? new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json', 'X-Shopify-API-Version': '2026-10' } })
+          : inner(req),
+    })
+  const denied = [{ message: 'denied', extensions: { code: 'ACCESS_DENIED' } }]
+  const throttled = [{ message: 'throttled', extensions: { code: 'THROTTLED' } }]
+  const partial = { tagsAdd: { node: { id: 'gid://shopify/Order/9001' }, userErrors: [] } }
+
+  it.each([
+    ['a definite refusal with no data', { errors: denied }, 'upstream_rejected', 'no'],
+    ['a definite refusal with data null', { errors: denied, data: null }, 'upstream_rejected', 'no'],
+    ['a definite refusal with tagsAdd null', { errors: denied, data: { tagsAdd: null } }, 'upstream_rejected', 'no'],
+    ['a definite refusal next to a tagsAdd result', { errors: denied, data: partial }, 'upstream_unavailable', 'unknown'],
+    ['THROTTLED with no data', { errors: throttled }, 'rate_limited', 'no'],
+    ['THROTTLED with tagsAdd null', { errors: throttled, data: { tagsAdd: null } }, 'rate_limited', 'no'],
+    ['THROTTLED next to a tagsAdd result', { errors: throttled, data: partial }, 'rate_limited', 'unknown'],
+  ] as const)('%s answers %s, sent: %s', async (_, body, code, sent) => {
+    const w = gqlWorld(body)
+    const r = await runWriteAction(w.deps, baseShopifyReq())
+    expect(WriteResultSchema.safeParse(r).success).toBe(true)
+    expect(r).toMatchObject({ ok: false, error: { code }, sent })
+  })
+
+  it('a 401 on the write deletes the stored write token (sent: no, no retry) and the next write grants a new one', async () => {
+    let rejectNext = false
+    let graphqlCalls = 0
+    const w = shopifyWorld({
+      upstreamWrap: inner => async req => {
+        if (!new URL(req.url).pathname.endsWith('/graphql.json')) return inner(req)
+        graphqlCalls++
+        if (rejectNext) {
+          rejectNext = false
+          return new Response(JSON.stringify({ errors: '[API] Invalid API key or access token' }), { status: 401 })
+        }
+        return inner(req)
+      },
+    })
+    expect(await runWriteAction(w.deps, baseShopifyReq())).toMatchObject({ ok: true })
+    expect(w.fake.issuedTokens).toHaveLength(1)
+    expect(w.store.get('write_record')).toBeDefined()
+
+    rejectNext = true
+    const rejected = await runWriteAction(w.deps, baseShopifyReq())
+    expect(rejected).toMatchObject({ ok: false, error: { code: 'credentials_rejected' }, sent: 'no' })
+    expect(graphqlCalls).toBe(2)
+    expect(w.store.get('write_record')).toBeUndefined()
+
+    expect(await runWriteAction(w.deps, baseShopifyReq())).toMatchObject({ ok: true })
+    expect(w.fake.issuedTokens).toHaveLength(2)
+    expect(graphqlCalls).toBe(3)
+  })
+})
+
 describe('Slack outbox operation (slack.channel.post)', () => {
   async function slackOutboxWorld() {
     const w = deliveryWorld()
@@ -337,7 +407,7 @@ describe('Slack outbox operation (slack.channel.post)', () => {
     const stub: SlackOutboxStub = {
       status: id => w.core.accountStatus(id),
       slackChannelInfo: (id, ch) => w.core.slackChannelInfo(id, ch),
-      slackPost: (id, req) => w.core.slackPost(id, req),
+      slackPost: (id, req, e) => w.core.slackPost(id, req, e),
     }
     const deps: WriteGatewayDeps = {
       shopifyOrderTagAdd: async () => ({ ok: false, error: { code: 'not_configured', message: 'connector not configured' }, sent: 'no' }),
@@ -386,7 +456,7 @@ describe('Slack outbox operation (slack.channel.post)', () => {
         await w.core.setPaused(SLACK, true)
         return res
       },
-      slackPost: (id, req) => stub.slackPost(id, req),
+      slackPost: (id, req, e) => stub.slackPost(id, req, e),
     }
     const raceRes = await postSlackOutboxAction(raceStub, {
       accountId: SLACK,
@@ -395,6 +465,57 @@ describe('Slack outbox operation (slack.channel.post)', () => {
     })
     expect(raceRes).toMatchObject({ ok: false, error: { code: 'paused' }, sent: 'no' })
     expect(w.web.posts).toEqual([])
+  })
+
+  /** Runs `change` right after the SignIn's own `conversations.info` (the second one: the outbox's check is the first). */
+  function onSignInChannelInfo(w: DeliveryWorld, change: () => Promise<void>): () => number {
+    const inner: (req: Request) => Promise<Response> = w.web.fetch.bind(w.web)
+    let infos = 0
+    w.web.fetch = async (req: Request): Promise<Response> => {
+      const res = await inner(req)
+      if (new URL(req.url).pathname === '/api/conversations.info' && ++infos === 2) await change()
+      return res
+    }
+    return () => infos
+  }
+
+  it.each([
+    ['a pause', 'paused', async (w: DeliveryWorld): Promise<void> => { await w.core.setPaused(SLACK, true) }],
+    ['a disconnect', 'not_configured', async (w: DeliveryWorld): Promise<void> => { await w.core.disconnect(SLACK) }],
+    [
+      'a disconnect and reconnect',
+      'connect_stale',
+      async (w: DeliveryWorld): Promise<void> => {
+        await w.core.disconnect(SLACK)
+        w.clock.ms += 60_000
+        await connectSlack(w)
+      },
+    ],
+  ] as const)('%s landing during the SignIn\'s own conversations.info answers %s, sent: no, nothing posted', async (_, code, change) => {
+    const { w, deps, connectedAtMs } = await slackOutboxWorld()
+    const infos = onSignInChannelInfo(w, () => change(w))
+    const r = await runWriteAction(deps, baseSlackReq({ expect: { connectedAtMs } }))
+    expect(infos()).toBe(2)
+    expect(r).toMatchObject({ ok: false, error: { code }, sent: 'no' })
+    expect(w.web.posts).toEqual([])
+  })
+
+  it('Slack delivery (no expectation) posts exactly as before, even across a reconnect', async () => {
+    const { w } = await slackOutboxWorld()
+    await w.core.disconnect(SLACK)
+    w.clock.ms += 60_000
+    await connectSlack(w)
+    const r = await w.core.slackPost(SLACK, { channelId: 'C0TEST0001', title: 'T', text: 'x' })
+    expect(r).toMatchObject({ ok: true })
+    expect(w.web.posts).toHaveLength(1)
+  })
+
+  it('refuses a malformed expectation before any Slack call', async () => {
+    const { w } = await slackOutboxWorld()
+    const before = w.web.requests.length
+    const r = await w.core.slackPost(SLACK, { channelId: 'C0TEST0001', title: 'T', text: 'x' }, { connectedAtMs: Number.NaN })
+    expect(r).toMatchObject({ ok: false, error: { code: 'invalid_args' } })
+    expect(w.web.requests.length).toBe(before)
   })
 
   it('refuses shared, archived, private, non-member, and unknown channels with sent: no', async () => {

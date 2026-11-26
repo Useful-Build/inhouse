@@ -10,13 +10,8 @@ import { flushTestLogs, signInFor, upstreamFor } from '../../../signin/signin'
 import { ShopifyWriteCore } from './core'
 import { parseShopifyWriteConfig, writeErr } from './provider'
 
-export type HubWriteEnv = Env & {
-  INHOUSE_TEST_BUILD?: string
-  SHOPIFY_WRITE_SHOP?: string
-  SHOPIFY_WRITE_CLIENT_ID?: string
-  SHOPIFY_WRITE_CLIENT_SECRET?: string
-  SHOPIFY_WRITE_SIGNIN?: DurableObjectNamespace<ShopifyWriteSignIn>
-}
+/** `Env` (generated) plus what it can't name: the test build's flag and the optional write app secret. */
+export type HubWriteEnv = Env & { INHOUSE_TEST_BUILD?: string; SHOPIFY_WRITE_CLIENT_SECRET?: string }
 
 export class ShopifyWriteSignIn extends DurableObject<Env> {
   readonly #core: ShopifyWriteCore
@@ -24,7 +19,7 @@ export class ShopifyWriteSignIn extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
     const storage = ctx.storage
-    const hubEnv = env as HubWriteEnv
+    const hubEnv: HubWriteEnv = env
     const store: SyncStore = {
       get: key => storage.kv.get(key),
       put: (key, value) => storage.kv.put(key, value),
@@ -52,7 +47,7 @@ export class ShopifyWriteSignIn extends DurableObject<Env> {
     args: unknown
   }): Promise<WriteResult> {
     try {
-      const hubEnv = this.env as HubWriteEnv
+      const hubEnv: HubWriteEnv = this.env
       if (!(__INHOUSE_HUB_TEST__ && hubEnv.INHOUSE_TEST_BUILD === '1')) {
         return writeErr('not_configured', 'no', 'shopify_write')
       }

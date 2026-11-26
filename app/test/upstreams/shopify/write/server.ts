@@ -4,7 +4,7 @@
 // Bundled into the hub's TEST build through app/hub/testing/index.ts ONLY, so:
 // - NO npm packages (relative imports and runtime globals only).
 // - Deterministic: no clock, no randomness.
-// - Per-operation fault switch: 'succeed' | 'refuse' | 'timeout' | 'broken_body'.
+// - Per-operation fault switch: 'succeed' | 'refuse' | 'timeout' (hangs until the caller's deadline aborts) | 'broken_body'.
 // - scripts/check-hub-build.mjs proves SHOPIFY_WRITE_UPSTREAM_CANARY and this module are absent from the deployable bundle.
 
 /** Found in the hub's test bundle only (scripts/check-hub-build.mjs reads this exact value). */
@@ -120,7 +120,13 @@ export class FakeShopifyWriteUpstream {
     this.writes.push({ operation: 'shopify.order.tag_add', variables: JSON.parse(JSON.stringify(variables)) as Record<string, unknown>, outcome: fault })
 
     if (fault === 'timeout') {
-      throw new TypeError('fake: shopify write timed out')
+      // Hangs past the caller's deadline: answers only when the request's signal aborts, with the abort reason, as
+      // fetch does. The write was received (logged above), so the caller can't know whether it ran.
+      const signal = req.signal
+      return new Promise<Response>((_, reject) => {
+        if (signal.aborted) return reject(signal.reason)
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
     }
     if (fault === 'broken_body') {
       return new Response('{"data":{"tagsAdd":', {

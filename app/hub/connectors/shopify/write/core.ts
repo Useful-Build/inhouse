@@ -4,7 +4,7 @@
 //
 // Pure over injected store, clock, upstream, keyring, and config so the Node test project tests every branch and race.
 import type { AccountStatus, HubErrorCode, HubResult, WriteResult } from '../../../index/contract'
-import { open, seal, type Envelope } from '../../../crypto/envelope'
+import { open, sameEnvelope, seal, type Envelope } from '../../../crypto/envelope'
 import type { KeyRing, KeyRingResult } from '../../../crypto/keyring'
 import { log } from '../../../index/log'
 import { checkGrantedScopes, describeScopeMismatch } from '../../../scope/scopes'
@@ -35,6 +35,8 @@ export type ShopifyWriteDeps = {
   config: () => ShopifyConfig | null
   /** Reads the brand's Shopify account status (paused, disconnected, connectedAtMs) from the account SignIn DO. */
   accountStatus: (accountId: string) => Promise<HubResult<AccountStatus>>
+  /** The write's deadline; tests shorten it. Defaults to `WRITE_TIMEOUT_MS`. */
+  writeTimeoutMs?: number
 }
 
 const WRITE_RECORD_KEY = 'write_record'
@@ -98,13 +100,13 @@ export class ShopifyWriteCore {
     ring: KeyRing,
     config: ShopifyConfig,
     upstream: Upstream,
-  ): Promise<{ ok: true; token: string; scopes: string[] } | { ok: false; code: HubErrorCode; detail?: string }> {
+  ): Promise<{ ok: true; token: string; envelope: Envelope; scopes: string[] } | { ok: false; code: HubErrorCode; detail?: string }> {
     for (let attempt = 0; attempt < 2; attempt++) {
       const r = this.#read()
       if (r?.token && r.expiresAtMs !== null && this.#d.now() < r.expiresAtMs - EXPIRY_MARGIN_MS) {
         const opened = await open(ring, SHOPIFY_WRITE_SIGNIN_ACCOUNT, 'token', r.token)
         if (opened.ok && this.#d.now() < r.expiresAtMs - EXPIRY_MARGIN_MS) {
-          return { ok: true, token: opened.plaintext, scopes: [...r.scopes] }
+          return { ok: true, token: opened.plaintext, envelope: r.token, scopes: [...r.scopes] }
         }
       }
       const g = await this.#grant(ring, config, upstream)
@@ -150,6 +152,20 @@ export class ShopifyWriteCore {
     const rightBeforeSend = checkShopifyAccountState(await this.#d.accountStatus(req.accountId), req.expect.connectedAtMs)
     if (rightBeforeSend) return rightBeforeSend
 
-    return sendOrderTagsAdd(upstream, configNow, acquired.token, parsed.data)
+    const sent = await sendOrderTagsAdd(upstream, configNow, acquired.token, parsed.data, this.#d.writeTimeoutMs)
+    if (!sent.ok && sent.error.code === 'credentials_rejected') this.#dropRejected(acquired.envelope)
+    return sent
+  }
+
+  /**
+   * A 401 on the write: the token was revoked (or the app uninstalled), so it is deleted and the next write grants a new
+   * one instead of reusing it until it expires. Only when the stored token is still the one that was rejected, so a
+   * newer grant that landed during the send is kept. Synchronous: read and delete with no await in between.
+   */
+  #dropRejected(rejected: Envelope): void {
+    const r = this.#read()
+    if (!r?.token || !sameEnvelope(r.token, rejected)) return
+    this.#d.store.delete(WRITE_RECORD_KEY)
+    log('signin_grant', { accountId: SHOPIFY_WRITE_SIGNIN_ACCOUNT, code: 'credentials_rejected', state: 'failed' })
   }
 }
