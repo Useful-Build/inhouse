@@ -10,8 +10,9 @@ as coordinator) and `verify/agent-direction/doc-check.md` (every locked choice c
 ## 1. The product in plain words
 
 **Inhouse is an AI team member for a brand.** It's installed in the brand's own accounts, connected to the tools the
-team already uses (the store, Slack, email marketing, files and any other tool that offers an MCP connection), and run
-for the brand by Inhouse's AI expert (Wasim), who sets it up, watches it, fixes it and improves it.
+team already uses (the store, Slack, email marketing, files and any other tool, through its MCP address or a small
+connector we build), and run for the brand by Inhouse's AI expert (Wasim), who sets it up, connects its tools, watches
+it, fixes it and improves it.
 
 - **You talk to it like a colleague.** Ask "why did returns jump this week?" and it digs through orders, return reasons
   and Slack and answers with evidence and a chart. Say "tag those orders and tell the warehouse channel" and it does
@@ -60,7 +61,7 @@ to drive it, then prove it on the road."
 | D3 | **Hard guardrails that "Always allow" never unlocks** (each needs approval of that exact action, every time): moves money; reaches a customer or publishes publicly; deletes, cancels or can't be undone; changes permissions, apps, billing or connections; touches **more than 5 records** in one action, or would pass a grant's count limit; a write tool on an MCP server whose effect Inhouse hasn't reviewed; any step in a logged-in browser session. No exceptions for money or customer actions at launch; narrow, limit-bound exceptions can come later, only after the write-safety evals show zero bypasses. |
 | D4 | **Who grants what.** A member's "Always allow" covers only that member's own chats and only what their role may do. Only an admin can grant for the whole brand. Proactive runs use only admin (brand) grants, never a member's. Inhouse sets a per-brand ceiling above all of it (which actions exist, the bulk threshold, the largest budget). |
 | D5 | **"Powerful" comes first:** long-running jobs, subagents, any MCP server by URL, web search and fetch, browser use, and a capability eval that proves the agent finishes real multi-step tasks. |
-| D6 | **Any MCP URL.** Brand admins may connect any MCP server URL, unrestricted. Reads work after the admin confirms the tool list; writes follow D3 and D4. The hub speaks the current MCP spec (2026-07-28) and falls back to older servers (section 4.5). |
+| D6 | **Any tool** (amended 2026-11-26). The Inhouse team connects any tool for a brand: any MCP server address, with a sign-in, an API key or neither, and a tool with no MCP address through a connector we build. A brand's Admin may give the login (sign in, or enter an API key) on a connection the Inhouse team prepared. An Admin connecting an address without us is Later. Reads work after the Inhouse team confirms the tool list; writes follow D3 and D4. The hub speaks the current MCP spec (2026-07-28) and falls back to older servers (section 4.5). |
 | D7 | **Web search and web fetch** are the Agent SDK's built-in tools; the agent gets free use of them. Each stays a brand on/off toggle (`t:websearch`, `t:webfetch`). Fetch opens to any public site once the data-leak eval passes with it open. |
 | D8 | **Browser use is an optional add-on**, adopted not hand-built: Cloudflare Browser Run (in the brand's own account, about $0.09 an hour past 10 free hours a month), connected as one more MCP server, public pages only; logins by handing the live browser to a person. Dropped without harm if it proves hard. Swappable (Browserbase, Kernel, Steel, Playwright MCP) because it's just an MCP server. |
 | D9 | **Adoption first.** Keep what's built and works (Claude Agent SDK runner, BrandAgent, hub, D1 ledger); adopt maintained parts for the rest; hand-build only what is the product itself (permissions, outbox, findings, the app). A better maintained option may replace a built part only with a clear, verified reason. |
@@ -69,6 +70,11 @@ to drive it, then prove it on the road."
 | D12 | **Order.** Build (Stage 1) now. Connection (Stage 2) and proving it live (Stage 3) paused. Operator tools after the build. |
 | D13 | **Pack seam last.** Build against Shopify, then cut the sector "pack" out of working code (M7). |
 | D14 | **Code mode for every tool** (Wasim, 2026-11-26). The agent can use any connected tool (Shopify, Slack, any MCP server) from a short script that calls the tools and returns only what it needs, so large results never fill the context window. Built in M4 (section 4.9). |
+
+**Amended 2026-11-26:** D6 now says who connects a tool. Wasim took every recommendation in the
+[connect any tool plan](2026-11-26-connect-any-tool.md) (section 12): a brand's Admin may give the login on a
+connection the Inhouse team prepared (W1); an Admin connecting an address without us moves to Later (W2); shared
+built connectors live in this repo and one brand's own in the private ops repo (W3); M4 builds one connector (W4).
 
 ## 4. How it works
 
@@ -129,8 +135,26 @@ The council checked the alternatives on 2026-11-24 and kept this engine:
 
 ### 4.4 Any MCP server
 
-Admin flow: paste the server's URL, sign in to the tool once, review its tool list, done. Reads work in chat and in
-proactive work; writes go through permissions and the outbox.
+**Who connects** (D6): the Inhouse team sets up each connection on the Tools page. Whoever holds the tool's login
+gives it once, in the app, never by chat or email: the Inhouse team, or the brand's Admin on a connection the team
+prepared. Members and Admins ask for a tool with **Request a tool**. Reads work in chat and in proactive work; writes
+go through permissions and the outbox.
+
+**One connect flow, three paths** (details in the [connect any tool plan](2026-11-26-connect-any-tool.md), section 5):
+- **Detect.** From a pasted address the hub asks the server a few questions with no credential (`server/discover`,
+  then `initialize`) and reports one outcome: works with no sign-in, needs a sign-in, needs a key, blocked (a firewall
+  or web page answered), or no MCP address. It never follows a redirect, sends a credential or calls a tool.
+- **Path A, sign in:** section 4.5, item 5.
+- **Path B, API key or no sign-in.** The connection records where the key goes (header, prefix and exact hosts), not
+  the key. The key is entered once in a write-only field, stored encrypted in the SignIn DO and checked before it's
+  saved. No route returns it, and it never reaches the sandbox, a log or a script. A refusal on use marks the tool
+  "Needs a new key". A server that needs nothing skips the key.
+- **Path C, no MCP address.** A tool many brands share becomes a reviewed pack connector in this repo. One brand's own
+  tool gets a small connector Worker in that brand's account, built from a kit in this repo and kept in the private ops
+  repo. It has no public address, speaks MCP over a service binding, never holds the key and reaches only its tool's
+  hosts. Every tool it offers is marked read or write in code; unmarked means write.
+- **Check.** Before saving, the server lists tools with the credential and refuses the same call without it. No tool
+  is called.
 
 How it's built:
 - **Protocol: the official MCP TypeScript SDK** (`@modelcontextprotocol/client` 2.4.0, pinned), on the
@@ -140,8 +164,8 @@ How it's built:
 - **Logins stay in the hub** (SignIn DO). Not the Agent SDK's own MCP config (tokens would sit in the sandbox the agent
   runs in) and not Cloudflare's Agents MCP client (needs their Agent class and keeps tokens in its own storage).
 - **Tool snapshot.** On connect, the hub lists the server's tools and stores each with a hash of its definition. The
-  admin confirms the read list. If a tool's definition changes later, it's hidden until re-confirmed (guards against a
-  server swapping a safe tool for a harmful one).
+  Inhouse team confirms the read list. If a tool's definition changes later, it's hidden until re-confirmed (guards
+  against a server swapping a safe tool for a harmful one).
 - **Untrusted by default.** A tool's own annotations ("read only", "not destructive") are hints, never authority. Tool
   descriptions and results are treated as untrusted text. Unknown write tools always ask (D3) unless Inhouse has
   reviewed the server with a manifest that classifies its operations.
@@ -154,7 +178,7 @@ How it's built:
 the plug works. Before, the agent had to "dial in" first and keep a line open for each tool server. Now every request
 stands on its own, like a letter with the return address and rules written on the envelope. That's simpler to run and
 fits Cloudflare well. The catch: old-style and new-style servers can't understand each other unless the client speaks
-both. Since admins can paste any address, our hub must try the new style first and fall back to the old style for
+both. Since any address can be connected, our hub must try the new style first and fall back to the old style for
 servers that haven't upgraded. Sign-in changed too: instead of registering our app separately with every company, we
 publish one public "ID card" page that any login server can read, and we must check a new stamp on each login reply to
 be sure it came from the right company. Servers still describe their own tools, and those descriptions can change or
@@ -186,14 +210,22 @@ safer and simpler. Done wrong, new servers simply won't connect.
 2. **Our client ID document**: one public HTTPS page describing Inhouse's client, served per brand account (the hub has
    no public route, so it's served by the product Worker or a static path; decided in M4, High tier).
 3. **A runtime registry per brand** (D1): the server URL, its era, the login server's issuer, the tool snapshot with
-   definition hashes and `ttlMs`, the admin-confirmed read list, and reviewed operations. Today's compile-time registry
+   definition hashes and `ttlMs`, the confirmed read list, and reviewed operations. Today's compile-time registry
    (`app/hub/registry/registry.ts`) stays for Shopify, Slack and reviewed connectors.
 4. **Drift guard**: refresh `tools/list` by `ttlMs` and on `HeaderMismatch`; a changed definition hides the tool until
    re-confirmed.
 5. **Sign-in upgrade** in `app/hub/oauth/`: CIMD first, registration as fallback with `application_type: "web"`, the
-   `iss` check, issuer-keyed credentials, scopes from the challenge, step-up on `insufficient_scope`.
+   `iss` check, issuer-keyed credentials, scopes from the challenge, step-up on `insufficient_scope`. Plus, from the
+   [connect any tool plan](2026-11-26-connect-any-tool.md) (section 6):
+   - **Where the client comes from, in order:** a client saved for this server, our client ID document, registration,
+     then an app the Inhouse team registers with the service. Its ID and secret go in through Path B's write-only field.
+   - **The sign-in exceptions:** twelve ways real services break the standard (E1 to E12, learned from Executor). Test
+     first, then see what the official client does; add our handling only where the test fails.
+   - **The renewal rule:** only "this grant is over" (`invalid_grant`) ends a login. A fault with our client keeps it
+     and reports a client fault; an outage, timeout, 5xx or 429 is temporary.
+   - **Plain reasons:** a fixed list behind `connect_refused`, shown on the Tools page and safe to log.
 6. **Prove both eras** against fixture servers: one 2026-07-28-only, one 2025-11-25-only (the existing Slack shape),
-   one that asks for input mid-call, one that changes a tool.
+   one that asks for input mid-call, one that changes a tool. The fixture login server can plant each of E1 to E12.
 
 ### 4.6 Permissions: Allow once and Always allow
 
@@ -285,7 +317,8 @@ characters of raw order data to 199 to 1,131 for the model. Slack and other MCP 
    `escapeJsDoc`, `sanitizeToolName`; its core works with the v2 MCP client since 0.5.1). Don't adopt its executor or
    runtime: our runner is stricter (no network, outside deadline, CPU and return caps), and its approval flow runs an
    approved write when a script replays, which breaks item 4.
-3. **Same caps, shared across all tools** (calls, bytes read, deadline), one call in flight at a time.
+3. **Same caps, shared across all tools** (calls, bytes read, deadline), one call in flight at a time. A reviewed
+   manifest can carry a server's own settings: a server that offers its own code mode is asked for plain tools.
 4. **Writes from a script don't run in the script.** A script may *propose* writes (`tools.<server>.<tool>` on a write
    tool returns a proposal). When the script ends, the proposals go through `decide()` together: covered ones enter the
    outbox, the rest become one card, and more than 5 records is one batch card with the full list (D3). The sandbox
@@ -333,6 +366,7 @@ prompt change that runs evals (M2 removes "read only" from the prompt), and its 
 | Agent loop, sessions, subagents, web tools | Claude Agent SDK (kept) | Job layer, subagent definitions and caps |
 | Durable timing | Durable Object alarms and BrandAgent scheduler (kept) | Job continuation |
 | MCP protocol and sign-in | Official MCP TypeScript SDK, MCP 2026-07-28 spec | Hub connect flow, tool snapshot and drift guard |
+| Sign-in exceptions and connection rules | Learned from Executor (MIT), not run | Written and tested here |
 | Shopify, Slack | Shopify Admin GraphQL, Slack MCP and Web API (kept) | Write operations in the operation table |
 | Browser | Cloudflare Browser Run + Playwright MCP | Thin Worker, quotas, toggle |
 | Webhook buffering (later) | Cloudflare Queues | Verified, deduped intake |
@@ -400,18 +434,33 @@ prompts, migrations, `app/ops/`, `app/hub/{signin,crypto,scope}/`, routes or the
 
 ### M4: Any MCP (and the optional browser)
 
-- **Goal (plain):** a brand admin can connect any tool that offers MCP, by pasting a URL, and the agent can use it
-  safely.
+- **Goal (plain):** the Inhouse team can connect any tool a brand uses (an MCP address with a sign-in, an API key or
+  neither, or no MCP address through a connector we build), and the agent can use it safely.
 - **Adopts:** the official MCP TypeScript SDK on the 2026-07-28 spec (section 4.5); later Cloudflare Browser Run.
 - **Builds:** code mode for every tool (section 4.9); section 4.5's list: the client swap with `mode: 'auto'`; the client ID document; the runtime registry
   per brand; the sign-in upgrade (CIMD, `application_type`, `iss` check, issuer-keyed credentials, scope step-up);
-  connect by URL with tool snapshot, definition hashes and admin confirmation; drift hides a tool; untrusted-text
-  handling; MCP writes through the outbox; optional reviewed manifests for known servers; fixture servers for both
-  eras, mid-call input and a changing tool (one Gorgias-shaped). Then, optionally, the browser Worker (D8).
+  connect by URL with tool snapshot, definition hashes and Inhouse team confirmation; drift hides a tool;
+  untrusted-text handling; MCP writes through the outbox; optional reviewed manifests for known servers, with
+  per-server settings; fixture servers for both eras, mid-call input and a changing tool (one Gorgias-shaped). From
+  the [connect any tool plan](2026-11-26-connect-any-tool.md): the detect step; Path B (an API key or no sign-in); the
+  connection check; the client lookup order; the sign-in exceptions E1 to E12 and the renewal rule as table-driven
+  fixture tests; plain failure reasons; the four sign-in flaws in `app/hub/oauth/` and `app/hub/signin/core.ts` (F1 to
+  F4: a missing `token_type`, any 400 or 401 on renewal ending a login, an exact issuer match and errors sent with a
+  success status, a missing or comma-separated `scope`); the Admin's credential step on a prepared connection (High
+  tier: routes, the access matrix, `signin`, `crypto`); the connector kit and one built connector on a fixture API
+  (Path C). Where a list or rule is carried over closely from Executor (the exceptions table, the reason list), the
+  module's header comment names Executor and commit `d30f09c` and keeps Executor's copyright line and MIT notice.
+  Then, optionally, the browser Worker (D8).
 - **Done when:** a 2026-07-28-only fixture server and a 2025-11-25 one both connect by URL with no code change, and
   their reads work in chat, in a proactive check and from a code-mode script; a login reply with a wrong `iss` is refused; a changed tool
   definition hides the tool; an MCP write asks and goes through the outbox; Slack keeps working on the new client.
-  Browser (if built): its capability case passes; logins only by handoff.
+  Items 1 to 9 of the connect plan's acceptance checklist pass: six fixture addresses give the six detect outcomes
+  with no redirect, credential or tool call; each of E1 to E12 gives its row's reaction; on renewal only
+  `invalid_grant` ends a login (property test); every refusal shows a plain reason and the logs hold no secret; a key
+  entered once works, is never returned, is refused if wrong and turns "Needs a new key" when revoked; the check is
+  refused without the credential; the built connector works with no hub change, holds no key and treats an unmarked
+  tool as a write; a Member can't connect and an Admin can only give the login on a prepared connection; a server with
+  its own code mode is asked for plain tools. Browser (if built): its capability case passes; logins only by handoff.
 
 ### M5: Proactive mode
 
@@ -439,7 +488,8 @@ prompts, migrations, `app/ops/`, `app/hub/{signin,crypto,scope}/`, routes or the
 
 - **Goal (plain):** Shopify becomes the first "costume" the core can wear, so a second sector needs no core changes.
 - **Builds:** the pack manifest and loader; Shopify's operations, checks, prompt material, skills, card words and
-  fixtures moved into `app/packs/ecommerce-shopify/`; a lint rule; a toy second pack.
+  fixtures moved into `app/packs/ecommerce-shopify/`; a lint rule; a toy second pack. A tool many brands share that
+  has no MCP server becomes a pack connector.
 - **Done when:** core imports nothing from Shopify; both packs pass their evals.
 
 ## 8. Stage 2: Connection (paused)
@@ -481,8 +531,12 @@ From the [2026-11-22 plan](../history/2026-11-22-master-plan.md):
   before any real write.
 - **Background cost.** Waking the full agent on every check would burn the budget. Answer: free signals, triage before
   spend, daily pace, the pool.
-- **Any-MCP trust.** An admin can connect a hostile server. Answer: tokens stay in the hub, tool text is untrusted,
-  writes ask, definitions are pinned.
+- **Any-MCP trust.** Any address can be connected, so a server can be hostile. Answer: in M4 only the Inhouse team
+  connects one (D6), tokens stay in the hub, tool text is untrusted, writes ask, definitions are pinned.
+- **Second-hand sign-in exceptions.** E1 to E12 are Executor's reading of each service, and services change. Answer:
+  fixture tests now, live sign-ins in Stage 2, and a re-scan of Executor's exceptions when a milestone touches sign-in.
+- **The connector's guarded outbound call** is the least-proven part of Path C. Answer: M4's connector slice proves it
+  first on a fixture, with the hub's existing no-network sandbox (`app/hub/codemode/`) as the fallback.
 - **Engine coupling.** The Agent SDK's session store is still alpha. Answer: keep `RunConfig` and `SessionEvent` as
   the one engine seam so a later move (for example to Managed Agents at GA) isn't a rewrite.
 - **Differentiation.** Answer: lean into the team, the brand's own account and the operator.
@@ -522,3 +576,6 @@ All primary sources, checked 2026-11-24 (WebFetch and Exa full-page reads); note
   Claude; ours adds member-level grants for their own chats),
   [Claude chat and Cowork merged](https://support.claude.com/en/articles/16761823),
   [OpenClaw heartbeat retired into automation jobs](https://docs.openclaw.ai/gateway/heartbeat).
+- Connecting any tool (read 2026-11-26): Executor's source at commit `d30f09c` and its docs, `@modelcontextprotocol/sdk`
+  1.32.1, and Cloudflare's remote MCP server, service binding and Containers pages; full list in the
+  [connect any tool plan](2026-11-26-connect-any-tool.md), section 16.
