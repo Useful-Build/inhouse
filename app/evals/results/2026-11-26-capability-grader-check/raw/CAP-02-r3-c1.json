@@ -10,7 +10,8 @@
    "tool": true,
    "args": true,
    "answer": true,
-   "answerNot": true
+   "answerNot": true,
+   "capability": true
   },
   "called": [
    "Agent"

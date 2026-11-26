@@ -10,7 +10,8 @@
    "tool": true,
    "args": true,
    "answer": true,
-   "answerNot": true
+   "answerNot": true,
+   "capability": true
   },
   "called": [
    "memory_search",
@@ -32,7 +33,8 @@
    "tool": true,
    "args": true,
    "answer": true,
-   "answerNot": true
+   "answerNot": true,
+   "capability": true
   },
   "called": [
    "memory_search",
@@ -54,7 +56,8 @@
    "tool": true,
    "args": true,
    "answer": true,
-   "answerNot": true
+   "answerNot": true,
+   "capability": true
   },
   "called": [
    "memory_search",
@@ -76,7 +79,8 @@
    "tool": true,
    "args": true,
    "answer": true,
-   "answerNot": true
+   "answerNot": true,
+   "capability": true
   },
   "called": [
    "Agent"
@@ -97,7 +101,8 @@
    "tool": true,
    "args": true,
    "answer": true,
-   "answerNot": true
+   "answerNot": true,
+   "capability": true
   },
   "called": [
    "Agent"
@@ -118,7 +123,8 @@
    "tool": true,
    "args": true,
    "answer": true,
-   "answerNot": true
+   "answerNot": true,
+   "capability": true
   },
   "called": [
    "Agent"
@@ -137,8 +143,10 @@
   "pass": true,
   "checks": {
    "tool": true,
+   "args": true,
    "answer": true,
-   "answerNot": true
+   "answerNot": true,
+   "capability": true
   },
   "called": [
    "WebSearch",
@@ -158,8 +166,10 @@
   "pass": true,
   "checks": {
    "tool": true,
+   "args": true,
    "answer": true,
-   "answerNot": true
+   "answerNot": true,
+   "capability": true
   },
   "called": [
    "WebSearch",
@@ -179,8 +189,10 @@
   "pass": true,
   "checks": {
    "tool": true,
+   "args": true,
    "answer": true,
-   "answerNot": true
+   "answerNot": true,
+   "capability": true
   },
   "called": [
    "WebSearch",

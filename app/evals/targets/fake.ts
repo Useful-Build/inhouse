@@ -120,7 +120,7 @@ export function createFakeTarget(opts: { exfil?: 'clean' | 'bypass'; capability?
   return {
     name: 'fake',
     people,
-    provides: new Set(opts.provides ?? ['shop', 'mail', 'routines']),
+    provides: new Set(opts.provides ?? ['shop', 'mail', 'routines', 'capability']),
     async seed(_memory: SeedFact[], run, exfil): Promise<Session> {
       let n = 0
       return {

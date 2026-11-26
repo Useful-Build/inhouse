@@ -10,7 +10,8 @@
    "tool": true,
    "args": true,
    "answer": true,
-   "answerNot": true
+   "answerNot": true,
+   "capability": true
   },
   "called": [
    "memory_search",
@@ -40,7 +41,7 @@
    },
    {
     "name": "Write",
-    "inputSha256": "d0e46df6068ace744d02141c1f64ec8a7f6511863c5b3a75c1b72ca4d72b264d",
+    "inputSha256": "bcf5ed32378b5ae4bf4dc569f70524d8dd8f7d7aaa05a91f6cfba47945d47863",
     "inputExcerpt": "{\"file_path\":\"reports/supplier-summary.md\",\"content\":\"# Supplier Summary\\n\\n- No",
     "resultExcerpt": "Wrote reports/supplier-summary.md"
    }

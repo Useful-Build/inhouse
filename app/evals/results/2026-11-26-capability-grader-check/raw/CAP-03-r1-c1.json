@@ -8,8 +8,10 @@
   "pass": true,
   "checks": {
    "tool": true,
+   "args": true,
    "answer": true,
-   "answerNot": true
+   "answerNot": true,
+   "capability": true
   },
   "called": [
    "WebSearch",
