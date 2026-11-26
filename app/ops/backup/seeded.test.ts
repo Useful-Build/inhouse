@@ -34,8 +34,11 @@ beforeAll(async () => {
   good = await backup({ db: e.DB, bucket: e.FILES, nowMs: T + 1 })
 })
 
-it('names the morning-check routine 0221 inserts', () => {
-  expect(SEEDED_ROWS).toEqual([{ table: 'routines', key: ['routine-morning-check'], migration: '0221_morning_check.sql', pristine: { rev: 1, last_slot_key: null } }])
+it('names the morning-check routine 0221 inserts and the outbox gate 0730 inserts', () => {
+  expect(SEEDED_ROWS).toEqual([
+    { table: 'routines', key: ['routine-morning-check'], migration: '0221_morning_check.sql', pristine: { rev: 1, last_slot_key: null } },
+    { table: 'outbox_gate', key: [1], migration: '0730_outbox.sql', pristine: { paused: 0, restore_hold: 0, epoch: 1, do_gen: 0, updated_at_ms: 0, stamp: null } },
+  ])
 })
 
 it('still refuses any other differing row, or a row the backup lacks, and writes nothing', async () => {

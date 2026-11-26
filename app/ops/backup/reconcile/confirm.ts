@@ -1,6 +1,7 @@
 // The confirm (P8a R; plan "A restore, step by step", end of step 5): the only way a restore becomes `restored`. It
-// refuses unless every reconcile step is done with no refusal (step 4, the outbox hold, joins this check in P8b) and
-// nothing was logged in the deletion log since the replay read it. Who (review M3, A10's option i): the actor is the
+// refuses unless every reconcile step is done with no refusal (the outbox hold included: a record from before the hold
+// existed says `p8b_pending` and is refused) and nothing was logged in the deletion log since the replay read it. It is
+// also the only thing that clears the outbox's restore hold (M2-R, N12), in the batch of its audit line. Who (review M3, A10's option i): the actor is the
 // Inhouse operator running it (an active `inhouse` row in the restored database); `approvedBy` is the brand's Admin
 // whose approval the runbook has in writing before the confirm runs, checked as an active Admin person there. Only when
 // the restored database has no active Admin at all (the restore removed or demoted the last one: the deadlock the
@@ -11,6 +12,7 @@
 // the deployment at it, after the confirm and `checkBeforeSwitch` (switch.ts).
 import { auditInsert } from '../../../server/db/audit.ts'
 import { first, runBatch, stmt } from '../../../server/db/sql.ts'
+import { releaseHoldStmts } from '../../../server/outbox/restore-hold.ts'
 import { listDeletionLog } from '../../delete/log.ts'
 import { RestoreRefusal } from '../errors.ts'
 import type { RestoreRecord } from '../manifest.ts'
@@ -39,7 +41,7 @@ export async function confirmRestore(deps: ConfirmDeps): Promise<ConfirmResult> 
   if (record.status !== 'restored_unreconciled') return { refused: `not_reconcilable: ${record.status}`, record }
   const r = record.reconcile
   if (r === null || r.refusal !== null) return { refused: 'not_reconciled: audit', record }
-  for (const step of ['fts', 'audit', 'members', 'replay'] as const) if (r[step] === null) return { refused: `not_reconciled: ${step}`, record }
+  for (const step of ['fts', 'audit', 'members', 'outbox', 'replay'] as const) if (r[step] === null || r[step] === 'p8b_pending') return { refused: `not_reconciled: ${step}`, record }
   const replay = r.replay as NonNullable<typeof r.replay>
   // A deletion logged after the replay read the log would be lost: the reconcile must run again first.
   const after = replay.throughKey ?? watermarkStart(replay.watermarkMs)
@@ -53,15 +55,20 @@ export async function confirmRestore(deps: ConfirmDeps): Promise<ConfirmResult> 
     if (!noAdmin || await count(`id = ? AND ${ACTIVE_INHOUSE}`, deps.approvedBy) === 0) return { refused: 'not_admin', record }
   }
 
+  // The line, then the hold's release only where this restore's line is (a re-run after a failed record write finds
+  // the line and releases the hold if it's still set).
   let line = await confirmedLine(deps.target, record.restoreId)
-  if (!line) {
-    await runBatch(deps.target, [auditInsert({
+  await runBatch(deps.target, [
+    ...(line ? [] : [auditInsert({
       atMs: deps.at.nowMs, actorId: deps.at.actorId, args: { action: 'restore.confirmed', restoreId: record.restoreId, backupId: record.backup.backupId, approvedBy: deps.approvedBy },
       target: null, requestId: deps.at.requestId,
-    }, null)])
-    line = await confirmedLine(deps.target, record.restoreId)
-    if (!line) throw new Error('confirm: the audit line was not written')
-  }
+    }, null)]),
+    ...releaseHoldStmts({ restoreId: record.restoreId, nowMs: deps.at.nowMs }),
+  ])
+  line ??= await confirmedLine(deps.target, record.restoreId)
+  if (!line) throw new Error('confirm: the audit line was not written')
+  const held = await first<{ restore_hold: number }>(deps.target, stmt('SELECT restore_hold FROM outbox_gate WHERE id = 1'))
+  if (held?.restore_hold !== 0) throw new Error('confirm: the outbox restore hold was not released')
   return {
     ok: await writeRecord(deps.bucket, {
       ...record, status: 'restored', reconciled: true,
