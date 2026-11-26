@@ -20,7 +20,7 @@ import { AFTER_CUT_OFF, CARRY_ON, allEvents, fakeJobDeps, jobsOf, wireJobs } fro
 import type { FakeJobDeps } from '../../../testing/brand-agent/job-kit.ts'
 import { createAgentTables } from '../schema.ts'
 import type { RunEventBody } from '../../../../shared/protocol/index.ts'
-import { JOB_STOPPED_BODY, jobNoticeInput } from './notice.ts'
+import { JOB_STOPPED_BODY, MONTH_CAP_BODY, jobNoticeInput } from './notice.ts'
 import { checkNotice } from '../../../notices/store.ts'
 import { NOTICE_TEMPLATES } from '../../../notices/templates.ts'
 
@@ -168,6 +168,7 @@ describe('the server\'s cut (N3: 25 minutes)', () => {
   it('never cuts a routine\'s turn', () => inAgent(async h => {
     setTimings({ JOB_CUT_MS: MIN })
     try {
+      wireJobs(h)
       const r = await h.core.submitTurn({
         chatId: 'c_routine', by: { kind: 'service', memberId: 'm_system' }, model: 'claude-sonnet-5-5', pickerId: 'sonnet', effort: 'medium',
         sideModel: 'claude-haiku-5-5', maxTurns: 25, webFetchDomains: null,
@@ -195,7 +196,7 @@ describe('after each job turn (N3\'s table)', () => {
     expect(jobEvents(h).map(e => e.type)).toEqual(['job.started', 'job.ended'])
     expect(jobEvents(h)[1]).toMatchObject({ jobId, outcome: 'done', cost: { currency: 'USD' } })
     expect(h.usage.calls.filter(c => c.method === 'closeJob').map(c => c.args[0])).toEqual([jobId])
-    expect(deps.sent).toEqual([{ id: `job_${jobId}`, jobId, chatId: CHAT, ownerId: MEMBER, outcome: 'done', atMs: h.clock.now }])
+    expect(deps.sent).toEqual([{ id: `job_${jobId}`, jobId, chatId: CHAT, ownerId: MEMBER, outcome: 'done', cause: null, atMs: h.clock.now }])
     expect(h.events(runOf(h)).at(-1)!.type).toBe('run.finished')
     // A late second end task (an at-least-once alarm) changes nothing.
     await h.core.jobEnd({ id: `job-end:${jobId}`, kind: 'job-end', gen: 1, dueAtMs: h.clock.now, payload: null, attempts: 0 })
@@ -467,6 +468,126 @@ describe('a person\'s message during a job (Q4 = B)', () => {
     h.push(liveTurn(h)!.turn_id, ...fullAnswer('answered', 6))
     await settle()
     expect(liveTurn(h)).toMatchObject({ job_id: jobId, job_n: 2, text: CARRY_ON(2) })
+  }))
+})
+
+describe('review round 1', () => {
+  const deferredEnd = (n: number): RunEventBody[] => [ev.started(), ev.tool('Bash'), ev.deferred(), ev.checkpoint(n, `u${n}`, n - 1), ev.success(), ev.released(cp(n))]
+  const questionOf = (h: Harness) => (JSON.parse(h.sql.exec<{ waiting_json: string }>('SELECT waiting_json FROM chat_state WHERE chat_id = ?', CHAT).one().waiting_json) as { questionId: string }).questionId
+
+  it('a deferred job turn\'s resume is the job\'s turn: its hold names the job, Cancel stops it, a now message carries the job on', () => inAgent(async h => {
+    const { jobId } = await startJob(h)
+    const parked = liveTurn(h)!
+    h.push(parked.turn_id, ...deferredEnd(5))
+    await settle()
+    expect(jobsOf(h)[0].state).toBe('waiting')
+    const r = await h.core.resumeDeferred(CHAT, 'allow', questionOf(h))
+    if (!('turnId' in r)) throw new Error(`refused ${JSON.stringify(r)}`)
+    await settle()
+    expect(h.turn(r.turnId)).toMatchObject({ job_id: jobId, job_n: 1, state: 'live' })
+    expect(jobsOf(h)[0]).toMatchObject({ state: 'running', last_turn_id: r.turnId })
+    expect(h.usage.calls.filter(c => c.method === 'reserve').at(-1)!.args[0]).toMatchObject({ turnId: r.turnId, jobId })
+    // Q4 = B reaches it: a now message interrupts it as the job's own, and the job carries on after the answer.
+    await h.submit(CHAT, 'key-nowres1', { priority: 'now' })
+    expect(h.turn(r.turnId)).toMatchObject({ cut_cause: 'message', interrupt_asked: 1 })
+    h.push(r.turnId, ev.checkpoint(6, 'u6', 5), ev.finished('error_during_execution'), ev.released(cp(6)))
+    await settle()
+    await h.tick(0)
+    h.push(liveTurn(h)!.turn_id, ...fullAnswer('answered', 7))
+    await settle()
+    expect(liveTurn(h)).toMatchObject({ job_id: jobId, job_n: 2 })
+    // Cancel reaches the job's live turn.
+    h.core.cancelJob(jobId, by)
+    expect(liveTurn(h)).toBeUndefined()
+  }))
+
+  it('two quick now messages that cut idle job turns never end the job stuck', () => inAgent(async h => {
+    const { jobId } = await startJob(h)
+    for (let i = 0; i < 2; i++) {
+      const jt = liveTurn(h)!
+      await h.submit(CHAT, `key-quick${i}000`, { priority: 'now' })
+      h.push(jt.turn_id, ev.started(), ev.checkpoint(5 + 2 * i, `u${5 + 2 * i}`, 4 + 2 * i), ev.finished('error_during_execution'), ev.released(cp(5 + 2 * i)))
+      await settle()
+      await h.tick(0)
+      h.push(liveTurn(h)!.turn_id, ...fullAnswer('answered', 6 + 2 * i))
+      await settle()
+    }
+    expect(jobsOf(h)[0]).toMatchObject({ job_id: jobId, state: 'running', idle_steps: 0 })
+    expect(liveTurn(h)).toMatchObject({ job_id: jobId, job_n: 3 })
+  }))
+
+  it('Cancel on a waiting job closes its question: the chat takes messages again and an answer resumes nothing', () => inAgent(async h => {
+    const { jobId } = await startJob(h)
+    h.push(liveTurn(h)!.turn_id, ...deferredEnd(5))
+    await settle()
+    const q = questionOf(h)
+    h.core.cancelJob(jobId, by)
+    expect(h.sql.exec('SELECT session, waiting_json FROM chat_state WHERE chat_id = ?', CHAT).one()).toEqual({ session: 'none', waiting_json: null })
+    expect(await h.core.resumeDeferred(CHAT, 'allow', q)).toEqual({ refused: { code: 'not_found' } })
+    expect(await h.submit(CHAT, 'key-afterq1')).toMatchObject({ position: 'starting' })
+  }))
+
+  it('Pause while a person\'s turn is ending at max_turns, then Resume: no job', () => inAgent(async h => {
+    await d1Chat(CHAT, MEMBER)
+    wireJobs(h)
+    const r = await h.submit(CHAT, 'key-pausend')
+    await settle()
+    if (!('turnId' in r)) throw new Error('refused')
+    h.push(r.turnId, ev.started(), ev.tool('Bash'), ev.checkpoint(3, 'u3', 2), ev.finished('error_max_turns'))
+    expect(h.turn(r.turnId)).toMatchObject({ state: 'ending', outcome: 'failed', failure: 'max_turns' })
+    await h.core.pause({ kind: 'person', memberId: 'm_admin' })
+    h.push(r.turnId, ev.released(cp(3)))
+    await settle()
+    expect(h.turn(r.turnId)).toMatchObject({ state: 'ended', failure: 'max_turns', cancel_why: 'paused' })
+    await h.core.resume({ kind: 'person', memberId: 'm_admin' })
+    await h.tick(MIN)
+    expect(jobsOf(h)).toEqual([])
+    expect(h.turns()).toHaveLength(1)
+  }))
+
+  it('jobs off (no texts port): a person\'s turn is never cut, it runs on to the runner\'s own stop', () => inAgent(async h => {
+    const d = fakeJobDeps()
+    d.texts = null
+    await d1Chat(CHAT, MEMBER)
+    wireJobs(h, d)
+    const r = await h.submit(CHAT, 'key-nocut01')
+    await settle()
+    if (!('turnId' in r)) throw new Error('refused')
+    h.push(r.turnId, ev.started(), ev.tool('Bash'))
+    h.pool.statusAnswer = { state: 'live', containerGone: false }
+    for (let i = 0; i < 6; i++) { await h.tick(5 * MIN); h.push(r.turnId, ev.text(`step ${i}`)) }
+    expect(h.turn(r.turnId)).toMatchObject({ state: 'live', cut_cause: null, interrupt_asked: 0 })
+  }))
+
+  it('a short JOB_CUT_MS cuts on time: the first watch comes no later than the cut', () => inAgent(async h => {
+    setTimings({ JOB_CUT_MS: 30 * SEC })
+    try {
+      await d1Chat(CHAT, MEMBER)
+      wireJobs(h)
+      const r = await h.submit(CHAT, 'key-short01')
+      await settle()
+      if (!('turnId' in r)) throw new Error('refused')
+      h.push(r.turnId, ev.started(), ev.tool('Bash'))
+      await h.tick(31 * SEC)
+      expect(h.turn(r.turnId)).toMatchObject({ cut_cause: 'job_cut', interrupt_asked: 1 })
+    } finally {
+      setTimings({})
+    }
+  }))
+
+  it('the monthly cap ends the job budget with its own words: raise the monthly cap, not the job budget', () => inAgent(async h => {
+    const { deps } = await startJob(h)
+    const reserve = h.usage.reserve.bind(h.usage)
+    h.usage.reserve = async t => (t.jobId !== undefined ? { refused: 'cap_reached' } : reserve(t))
+    h.push(liveTurn(h)!.turn_id, ...maxTurns(5))
+    await settle()
+    await h.tick(0)
+    await h.tick(0)
+    expect(jobsOf(h)[0]).toMatchObject({ state: 'ended', outcome: 'budget', end_cause: 'month_cap' })
+    expect(deps.sent.map(n => [n.outcome, n.cause])).toEqual([['budget', 'month_cap']])
+    const notice = jobNoticeInput(deps.sent[0])
+    expect(notice.body).toBe(MONTH_CAP_BODY)
+    expect(() => checkNotice(NOTICE_TEMPLATES, notice)).not.toThrow()
   }))
 })
 

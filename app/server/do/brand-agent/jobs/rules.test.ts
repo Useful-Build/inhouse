@@ -3,7 +3,7 @@
 // (inactivity must fail); a person's stop that raced the cut carries on; the recover rule keeps a mirror error, a
 // non-job turn, a fresh session or a changed checkpoint resumable, or refuses either crash path.
 import { describe, expect, it } from 'vitest'
-import { judge, promotable, recoverable } from './rules.ts'
+import { idle, judge, promotable, recoverable } from './rules.ts'
 import type { TurnEnd } from './rules.ts'
 
 const end = (o: Partial<TurnEnd>): TurnEnd => ({
@@ -31,10 +31,10 @@ describe('judge: N3\'s table', () => {
     ['model_off', { outcome: 'failed', failure: 'model_off' }, { end: 'failed' }],
     ['structured_output', { outcome: 'failed', failure: 'structured_output' }, { end: 'failed' }],
     ['files', { outcome: 'failed', failure: 'files' }, { end: 'failed' }],
-    ['cap_reached failed', { outcome: 'failed', failure: 'cap_reached' }, { end: 'budget' }],
+    ['cap_reached failed (the monthly cap)', { outcome: 'failed', failure: 'cap_reached' }, { end: 'budget', cause: 'month_cap' }],
     ['job_budget failed (the gate)', { outcome: 'failed', failure: 'job_budget' }, { end: 'budget' }],
     ['budget_busy (never ran)', { outcome: 'failed', failure: 'budget_busy' }, 'again'],
-    ['cancelled cap_reached', { cancel_why: 'cap_reached' }, { end: 'budget' }],
+    ['cancelled cap_reached (the monthly cap)', { cancel_why: 'cap_reached' }, { end: 'budget', cause: 'month_cap' }],
     ['cancelled job_budget', { cancel_why: 'job_budget' }, { end: 'budget' }],
     ['cancelled pool_full', { cancel_why: 'pool_full' }, 'again'],
     ['cancelled session_unusable', { cancel_why: 'session_unusable' }, { end: 'failed' }],
@@ -48,7 +48,7 @@ describe('judge: N3\'s table', () => {
 })
 
 describe('promotable', () => {
-  const facts = { textsWired: true, session: 'resumable', personQueued: false, jobLive: false }
+  const facts = { textsWired: true, session: 'resumable', personQueued: false, jobLive: false, paused: false }
   const person = { ...end({ outcome: 'failed', failure: 'max_turns' }), source: 'person', job_id: null }
   it('a person\'s turn at max_turns, turn_budget or the cut', () => {
     expect(promotable(person, facts)).toBe(true)
@@ -61,6 +61,10 @@ describe('promotable', () => {
     expect(promotable(person, { ...facts, session: 'waiting' })).toBe(false)
     expect(promotable(person, { ...facts, personQueued: true })).toBe(false)
     expect(promotable(person, { ...facts, jobLive: true })).toBe(false)
+    expect(promotable(person, { ...facts, paused: true })).toBe(false)
+    // Fenced by a pause, a removal or a delete while ending: the outcome stays, `cancel_why` says it was stopped.
+    expect(promotable({ ...person, cancel_why: 'paused' }, facts)).toBe(false)
+    expect(promotable({ ...person, cancel_why: 'removed' }, facts)).toBe(false)
     expect(promotable({ ...person, source: 'job' }, facts)).toBe(false)
     expect(promotable({ ...person, source: 'question' }, facts)).toBe(false)
     expect(promotable({ ...person, source: 'task' }, facts)).toBe(false)
@@ -95,5 +99,14 @@ describe('recoverable (N4, variant A)', () => {
     expect(recoverable({ ...t, failure: 'timeout' }, f)).toBe(false)
     expect(recoverable({ ...t, failure: 'sdk_error' }, f)).toBe(false)
     expect(recoverable({ ...t, outcome: 'stopped', failure: null }, f)).toBe(false)
+  })
+})
+
+describe('the no-progress guard', () => {
+  it('a turn with no step and no part is idle; one cut by a person\'s now message never counts either way', () => {
+    expect(idle(end({ steps_n: 0, parts_n: 0 }))).toBe(true)
+    expect(idle(end({ steps_n: 1, parts_n: 0 }))).toBe(false)
+    expect(idle(end({ steps_n: 0, parts_n: 0, cut_cause: 'message' }))).toBeNull()
+    expect(idle(end({ steps_n: 0, parts_n: 0, cut_cause: 'job_cut' }))).toBe(true)
   })
 })

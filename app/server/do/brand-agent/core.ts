@@ -257,6 +257,7 @@ export class AgentCore {
       },
       stop: t => this.fence(t, { outcome: 'stopped' }),
       askInterrupt: t => this.askInterrupt(t),
+      paused: () => this.paused(),
       advanceChat: chatId => { const r = this.liveRun(chatId); if (r !== null) this.advance(r) },
       submit: (t, extra) => this.submitTurn(t, extra),
       abandonWait: (chatId, failure) => {
@@ -451,13 +452,15 @@ export class AgentCore {
       extra === undefined ? 'person' : extra.job !== undefined ? 'job' : extra.resume !== undefined ? 'question' : 'task',
     )
     if (extra?.job !== undefined) this.jobs.admitted(extra.job, turnId)
+    // A person's own message in a job's chat (Q4 = B: the job carries on; one rule in jobs/ M1-I could change).
+    if (extra === undefined) this.jobs.personMessage(t.chatId)
     if (extra?.resume !== undefined) {
       // The resume takes the question over, in this same step (A8: the end fires exactly once): the chat leaves
       // `waiting` (its checkpoint stays, so the resume starts from it) and the parked turn's end task moves to this turn.
       this.sql.exec("UPDATE chat_state SET session = 'resumable', waiting_json = NULL WHERE chat_id = ?", t.chatId)
       this.sql.exec('UPDATE turns SET on_end_json = NULL WHERE turn_id = ?', extra.resume.parkedTurnId)
       // A job's parked end moved to this turn: the job runs again (an ended one stays ended).
-      if (extra.onEnd !== undefined) this.jobs.resumed(extra.onEnd)
+      if (extra.onEnd !== undefined) this.jobs.resumed(extra.onEnd, turnId, this.turn(extra.resume.parkedTurnId)?.job_n ?? null)
     }
     this.emit(runId, turnId, {
       type: 'turn.queued', turnId, messageId: `${turnId}.u`, text: t.input.text,
@@ -474,7 +477,9 @@ export class AgentCore {
       // A held platform stop (A9) is the person's earlier question: `now` ends it `interrupted`, as `interrupt` does,
       // so it isn't placed again after the new answer.
       const held = this.sql.exec<TurnRow>("SELECT * FROM turns WHERE run_id = ? AND state = 'ending' AND outcome IS NULL AND held_json IS NOT NULL", runId).toArray()[0]
-      if (held) this.fence(held, { outcome: 'interrupted' })
+      // A held job turn ended by a person's message carries the job on too (Q4 = B).
+      if (held && held.job_id !== null) this.sql.exec("UPDATE turns SET cut_cause = COALESCE(cut_cause, 'message') WHERE turn_id = ?", held.turn_id)
+      if (held) this.fence(this.turn(held.turn_id)!, { outcome: 'interrupted' })
     }
     // While a turn exists the authority sweep runs every 5 minutes (4.10).
     sweepBy(this.sql, this.d.scheduler, now + SWEEP_EVERY_MS)
@@ -772,7 +777,8 @@ export class AgentCore {
         last_progress_ms = COALESCE(last_progress_ms, ?), started_at_ms = ?, watch_json = NULL WHERE turn_id = ?`,
       runner, now, now, now, t.turn_id)
     this.emit(t.run_id, t.turn_id, { type: 'turn.started', turnId: t.turn_id, model: t.picker_id })
-    this.watchTask(t.turn_id, now + WATCH_EVERY_MS)
+    // The first check no later than the server's cut (a short `JOB_CUT_MS` cuts on time).
+    this.watchTask(t.turn_id, Math.min(now + WATCH_EVERY_MS, this.jobs.cutAt(this.turn(t.turn_id)!) ?? Number.POSITIVE_INFINITY))
   }
 
   /** `budget_busy`: back to `queued`, tried again in 15 s, failed after 2 minutes of waiting (4.4 step 2). */

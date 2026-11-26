@@ -23,19 +23,21 @@ import { mapTaskMessage } from '../map-events.ts'
 import type { TurnRow } from '../core.ts'
 import { safeError } from '../../../safe-error.ts'
 import { SYSTEM_MEMBER_ID } from '../../../db/ids.ts'
-import { MAX_IDLE, MAX_INFRA_RETRIES, idle, judge, promotable } from './rules.ts'
+import { MAX_IDLE, MAX_INFRA_RETRIES, PERSON_MESSAGE_ENDS_JOB, idle, judge, promotable } from './rules.ts'
+import type { EndCause } from './rules.ts'
 import type { CutCause, JobDeps, JobRow, StoredProgress } from './types.ts'
 import { jobNoticeId } from './notice.ts'
 
 export const JOB_CUT_DEFAULT_MS = 25 * 60_000
 export const JOB_DEADLINE_DEFAULT_MS = 8 * 60 * 60_000
 /** A continuation refused for a wait (a drain, a full queue, a chat waiting on a question) is tried again this often. */
-export const JOB_RETRY_MS = 60_000
+export const JOB_RETRY_DEFAULT_MS = 60_000
 /** Running helper ids kept per job (the count's bound; more is a runaway the runner's own cap already refuses). */
 const MAX_RUNNING_KEPT = 64
 
 export const jobCutMs = (): number => timing('JOB_CUT_MS', JOB_CUT_DEFAULT_MS)
 export const jobDeadlineMs = (): number => timing('JOB_DEADLINE_MS', JOB_DEADLINE_DEFAULT_MS)
+export const jobRetryMs = (): number => timing('JOB_RETRY_MS', JOB_RETRY_DEFAULT_MS)
 export const stepTaskId = (jobId: string, n: number): string => `job-step:${jobId}:${n}`
 export const deadlineTaskId = (jobId: string): string => `job-deadline:${jobId}`
 export const endTaskId = (jobId: string): string => `job-end:${jobId}`
@@ -66,6 +68,8 @@ export interface JobHost {
   advanceChat(chatId: string): void
   /** The in-object submit (core.ts `submitTurn`) with the end task and the job's fence. */
   submit(t: SubmitTurn, extra: { onEnd: OnEnd; job: JobSubmit }): Promise<SendTurnResult | Refusal>
+  /** Whether the brand is paused now. */
+  paused(): boolean
   /** Gives up the chat's question wait, if it waits (core.ts `abandonWait`). */
   abandonWait(chatId: string, failure: string): void
   /** These turns' cost from the tally, in micro-USD (closed calls at their price, open ones at their worst). */
@@ -130,7 +134,9 @@ export class JobEngine {
   promoteIfDue(t: TurnRow): void {
     const cs = this.h.sql.exec<{ session: string }>('SELECT session FROM chat_state WHERE chat_id = ?', t.chat_id).toArray()[0]
     const personQueued = this.h.sql.exec("SELECT 1 FROM turns WHERE run_id = ? AND state = 'queued' AND source = 'person' LIMIT 1", t.run_id).toArray().length > 0
-    const ok = promotable(t, { textsWired: this.deps?.texts != null, session: cs?.session ?? null, personQueued, jobLive: this.liveJobOf(t.chat_id) !== null })
+    const ok = promotable(t, {
+      textsWired: this.deps?.texts != null, session: cs?.session ?? null, personQueued, jobLive: this.liveJobOf(t.chat_id) !== null, paused: this.h.paused(),
+    })
     if (!ok || t.owner_id === SYSTEM_MEMBER_ID) return
     const now = this.h.now()
     const started = t.started_at_ms ?? t.created_at_ms
@@ -167,10 +173,23 @@ export class JobEngine {
     const jobId = this.jobOfStep(onEnd)
     if (jobId !== null) this.h.sql.exec("UPDATE jobs SET state = 'waiting' WHERE job_id = ? AND state = 'running'", jobId)
   }
-  /** The question's resume took the job's end task over: the job runs again. An ended job stays ended. */
-  resumed(onEnd: OnEnd): void {
+  /**
+   * The question's resume took the job's end task over (in `admit()`'s step): the resume is the job's turn in the parked
+   * turn's place (its hold names the job, its cost counts, Cancel and the cap reach it, a crash recovers it), the job's
+   * last turn, and the job runs again. An ended job stays ended and its resume is no job turn.
+   */
+  resumed(onEnd: OnEnd, turnId: string, parkedJobN: number | null): void {
     const jobId = this.jobOfStep(onEnd)
-    if (jobId !== null) this.h.sql.exec("UPDATE jobs SET state = 'running' WHERE job_id = ? AND state = 'waiting'", jobId)
+    if (jobId === null) return
+    const job = this.job(jobId)
+    if (!job || job.state === 'ended') return
+    this.h.sql.exec('UPDATE turns SET job_id = ?, job_n = ? WHERE turn_id = ?', jobId, parkedJobN, turnId)
+    this.h.sql.exec("UPDATE jobs SET state = 'running', last_turn_id = ? WHERE job_id = ?", turnId, jobId)
+  }
+
+  /** A person's own message in the chat (route 29, in `admit()`'s step): Q4 = B leaves the job running. */
+  personMessage(chatId: string): void {
+    if (PERSON_MESSAGE_ENDS_JOB) this.endWhere('chat_id = ?', [chatId], 'taken_over')
   }
   private jobOfStep(onEnd: OnEnd): string | null {
     if (onEnd.kind !== STEP_KIND) return null
@@ -191,6 +210,8 @@ export class JobEngine {
 
   /** When the server cuts this live turn (N3: every person's turn and every job turn, never a routine's), or null. */
   cutAt(t: TurnRow): number | null {
+    // Off until jobs are on (M1-P wires the texts): a cut with nothing to carry on would only end the turn early.
+    if (this.deps?.texts == null) return null
     if (t.owner_id === SYSTEM_MEMBER_ID || t.fenced === 1 || t.started_at_ms === null || t.state !== 'live') return null
     if (t.cut_cause !== null && t.interrupt_asked === 1) return null
     return t.started_at_ms + jobCutMs()
@@ -251,15 +272,15 @@ export class JobEngine {
    * interrupted with `cut_cause = 'job_deadline'`, else fenced `stopped`; `spare` is left to its own end), a waiting
    * job's question closed at the deadline, `job-end` for the ledger and the notice, then the chat's run. Once per job.
    */
-  endJob(jobId: string, outcome: JobOutcome, spare?: string): boolean {
+  endJob(jobId: string, outcome: JobOutcome, spare?: string, cause?: EndCause): boolean {
     const job = this.job(jobId)
     if (!job || job.state === 'ended') return false
     const now = this.h.now()
     const turns = this.turnsOf(jobId)
     const cost = this.h.turnsMicro(turns.map(t => t.turn_id))
     const changed = this.h.sql.exec(
-      "UPDATE jobs SET state = 'ended', outcome = ?, gen = gen + 1, ended_at_ms = ?, cost_micro = ? WHERE job_id = ? AND state != 'ended'",
-      outcome, now, cost, jobId).rowsWritten
+      "UPDATE jobs SET state = 'ended', outcome = ?, gen = gen + 1, ended_at_ms = ?, cost_micro = ?, end_cause = ? WHERE job_id = ? AND state != 'ended'",
+      outcome, now, cost, cause ?? null, jobId).rowsWritten
     if (changed === 0) return false
     this.h.scheduler.cancel(stepTaskId(jobId, job.pending_n))
     this.h.scheduler.cancel(deadlineTaskId(jobId))
@@ -273,7 +294,9 @@ export class JobEngine {
       if (outcome === 'time' && t.state === 'live') this.cut(t, 'job_deadline')
       else this.h.stop(t)
     }
-    if (job.state === 'waiting' && outcome === 'time') this.h.abandonWait(job.chat_id, 'job_time')
+    // A waiting job's question closes with it, whatever ended it: a later answer can't resume an ended job, and the chat
+    // takes messages again.
+    if (job.state === 'waiting') this.h.abandonWait(job.chat_id, `job_${outcome}`)
     this.h.scheduler.ensure({ id: endTaskId(jobId), kind: 'job-end', dueAtMs: now })
     this.h.advanceChat(job.chat_id)
     return true
@@ -299,7 +322,7 @@ export class JobEngine {
       const judged = this.judgeLast(job, n)
       if (judged === 'ended') return { done: true }
       // The turn this step follows isn't final yet (a reordered task): looked at again shortly, never dropped.
-      if (judged === 'wait') return { retryAtMs: this.h.now() + JOB_RETRY_MS, error: 'turn_not_final' }
+      if (judged === 'wait') return { retryAtMs: this.h.now() + jobRetryMs(), error: 'turn_not_final' }
     }
     job = this.job(jobId)!
     if (this.h.now() >= job.deadline_ms) {
@@ -362,7 +385,7 @@ export class JobEngine {
     const wait = (code === 'unavailable' && reason === 'draining') || (code === 'rate_limited' && reason === 'queue_full')
       || (code === 'conflict' && reason === 'waiting_answer')
     if (wait) {
-      const at = Math.min(this.h.now() + JOB_RETRY_MS, job.deadline_ms)
+      const at = Math.min(this.h.now() + jobRetryMs(), job.deadline_ms)
       this.h.scheduler.schedule({ id: stepTaskId(jobId, n), kind: STEP_KIND, dueAtMs: at })
       return { done: true }
     }
@@ -396,11 +419,13 @@ export class JobEngine {
     }
     const v = judge(t)
     if (v === 'done' || typeof v === 'object') {
-      this.endJob(job.job_id, v === 'done' ? 'done' : v.end)
+      if (v === 'done') this.endJob(job.job_id, 'done')
+      else this.endJob(job.job_id, v.end, undefined, v.cause)
       return 'ended'
     }
     if (v === 'carry') {
-      const idleSteps = idle(t) ? job.idle_steps + 1 : 0
+      const quiet = idle(t)
+      const idleSteps = quiet === null ? job.idle_steps : quiet ? job.idle_steps + 1 : 0
       if (idleSteps >= MAX_IDLE) {
         this.endJob(job.job_id, 'stuck')
         return 'ended'
@@ -442,7 +467,7 @@ export class JobEngine {
     if (this.deps === null) return { retryAtMs: this.h.now() + backoffMs(attempts), error: 'no job ports' }
     try {
       await this.h.usage.closeJob(jobId)
-      await this.deps.notify({ id: jobNoticeId(jobId), jobId, chatId: job.chat_id, ownerId: job.owner_id, outcome: job.outcome!, atMs: job.ended_at_ms! })
+      await this.deps.notify({ id: jobNoticeId(jobId), jobId, chatId: job.chat_id, ownerId: job.owner_id, outcome: job.outcome!, cause: job.end_cause === 'month_cap' ? 'month_cap' : null, atMs: job.ended_at_ms! })
     } catch (err) {
       console.error({ event: 'job_end_failed', jobId, error: safeError(err) })
       return { retryAtMs: this.h.now() + backoffMs(attempts), error: 'job_end' }

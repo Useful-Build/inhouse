@@ -28,6 +28,8 @@ export interface JobNotice {
   chatId: string
   ownerId: string
   outcome: JobOutcome
+  /** `month_cap`: a `budget` end caused by the brand's monthly cap, not the job's own budget. */
+  cause: 'month_cap' | null
   atMs: number
 }
 
@@ -77,6 +79,8 @@ export interface JobRow {
   cost_micro: number | null
   /** `closeJob` and the notice are done (the `job-end` task). */
   result_sent: number
+  /** Why a `budget` end happened: `month_cap` (the brand's monthly cap), else null (the job's own budget). */
+  end_cause: string | null
 }
 
 /** `jobs.progress_json`: the last label and the helpers running now (task ids, for the count). */

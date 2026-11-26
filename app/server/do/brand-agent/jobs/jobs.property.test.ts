@@ -8,7 +8,9 @@
 //  2. nothing is submitted for a job after it ended;
 //  3. no job turn starts past the job's deadline, and none the job budget refused ever starts;
 //  4. a person's stop or interrupt (which may race the server cut) never continues the job, and never starts one;
-//  5. at most one `job.ended` per job and exactly one once it ended; at most one notice per job.
+//  5. at most one `job.ended` per job and exactly one once it ended; at most one notice per job;
+//  6. liveness: a job that hasn't ended has its cap's task and a way to its next step; one the budget refused has ended;
+//  0. every turn that holds one of a job's end tasks (a question's resume too) is that job's own turn.
 // At the end the chat is driven to rest (turns answered, the clock past every deadline): every job has ended, with
 // exactly one `job.ended` and exactly one notice.
 import { fc, test } from '@fast-check/vitest'
@@ -41,7 +43,8 @@ const END: End[] = ['done', 'max_turns', 'turn_budget', 'idle_max', 'crash', 'cr
 const endArb: fc.Arbitrary<End> = fc.oneof(
   { weight: 5, arbitrary: fc.constant('max_turns' as const) },
   { weight: 2, arbitrary: fc.constant('crash' as const) },
-  ...END.filter(e => e !== 'max_turns' && e !== 'crash').map(e => ({ weight: 1, arbitrary: fc.constant(e) })),
+  { weight: 2, arbitrary: fc.constant('deferred' as const) },
+  ...END.filter(e => e !== 'max_turns' && e !== 'crash' && e !== 'deferred').map(e => ({ weight: 1, arbitrary: fc.constant(e) })),
 )
 const opArb: fc.Arbitrary<Op> = fc.oneof(
   { weight: 4, arbitrary: fc.record({ op: fc.constant('send' as const), prio: fc.constantFrom('next' as const, 'now' as const) }) },
@@ -56,7 +59,7 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
   { weight: 1, arbitrary: fc.constant({ op: 'budgetLow' as const }) },
   { weight: 1, arbitrary: fc.constant({ op: 'kill' as const }) },
   { weight: 3, arbitrary: fc.record({ op: fc.constant('tick' as const), ms: fc.constantFrom(0, 30 * SEC, 2 * MIN, 30 * MIN, 3 * 60 * MIN) }) },
-  { weight: 1, arbitrary: fc.constant({ op: 'answer' as const }) },
+  { weight: 3, arbitrary: fc.constant({ op: 'answer' as const }) },
 )
 
 // A chat of its own per run: D1 is shared across runs, and a chat's flushed history is keyed by its positions.
@@ -84,13 +87,19 @@ const liveTurn = (h: Harness) => h.turns().find(t => t.chat_id === CHAT && t.sta
 const activeTurn = (h: Harness) => [...h.turns()].reverse().find(t => t.chat_id === CHAT && ['queued', 'starting', 'live'].includes(t.state))
 
 /** What the checks remember between steps: each ended job's turn ids when it was first seen ended. */
-interface Memory { endedTurns: Map<string, string[]>; startedAtEnd: Map<string, Set<string>> }
+interface Memory { endedTurns: Map<string, string[]>; startedAtEnd: Map<string, Set<string>>; budgetRefused: Set<string> }
 
 function check(h: Harness, mem: Memory, deps: ReturnType<typeof wireJobs>) {
   const turns = h.turns()
   const events = allEvents(h)
   for (const j of jobsOf(h)) {
     const own = turns.filter(t => t.job_id === j.job_id)
+    // 0. A turn holding one of the job's end tasks is the job's own (a question's resume included): its hold, its cost,
+    // Cancel and the cap all reach it through `job_id`.
+    const step = `job-step:${j.job_id}:`
+    for (const t of turns.filter(o => o.on_end_json !== null && (JSON.parse(o.on_end_json) as { id: string }).id.startsWith(step))) {
+      expect(t.job_id, `turn ${t.turn_id} holds an end task of ${j.job_id}`).toBe(j.job_id)
+    }
     // 1. At most one queued or live turn per job.
     expect(own.filter(t => ['queued', 'starting', 'live'].includes(t.state)).length, `job ${j.job_id} in flight`).toBeLessThanOrEqual(1)
     // 2. Nothing submitted after the end.
@@ -115,6 +124,18 @@ function check(h: Harness, mem: Memory, deps: ReturnType<typeof wireJobs>) {
       }
       if (t.cancel_why === 'job_budget' || t.failure === 'job_budget') expect(t.started_at_ms).toBeNull()
     }
+    // A job whose budget refused a turn's start hold has ended (at rest after its step ran): nothing carries it on.
+    if (mem.budgetRefused.has(j.job_id)) expect(j.state, `job ${j.job_id} carried on past its budget`).toBe('ended')
+    // 6. Liveness: a job that hasn't ended has its cap's task, and its next step is either due or held by a turn whose
+    // end will ensure it (a live turn, or the parked turn of a waiting job). A lost continuation fails here, not at the cap.
+    if (j.state !== 'ended') {
+      const due = new Set(h.dueTasks().map(d => d.id))
+      expect(due.has(`job-deadline:${j.job_id}`), `job ${j.job_id} has no cap task`).toBe(true)
+      const next = `${step}${j.pending_n}`
+      const held = turns.some(t => t.on_end_json !== null && (JSON.parse(t.on_end_json) as { id: string }).id === next
+        && (!['ended', 'cancelled'].includes(t.state) || j.state === 'waiting'))
+      expect(due.has(next) || held, `job ${j.job_id} (${j.state}) has no way to its step ${j.pending_n}`).toBe(true)
+    }
     // 4. A person's stop never continues the job.
     for (const t of own) {
       if (t.person_stop === 1) expect(own.filter(o => (o.job_n as number) > (t.job_n as number)), `job ${j.job_id} continued after a stop`).toEqual([])
@@ -135,7 +156,7 @@ function check(h: Harness, mem: Memory, deps: ReturnType<typeof wireJobs>) {
 // leave it to the ops (a cut, a race with a stop, any other end).
 const START: Op[] = [{ op: 'send', prio: 'next' }]
 
-test.prop([fc.boolean(), fc.array(opArb, { minLength: 1, maxLength: 40 })], { numRuns: 40 })('the job engine keeps N3\'s invariants', (limit, rest) => inAgent(async h0 => {
+test.prop([fc.boolean(), fc.array(opArb, { minLength: 1, maxLength: 40 })], { numRuns: 150 })('the job engine keeps N3\'s invariants', (limit, rest) => inAgent(async h0 => {
   const ops = [...START, ...(limit ? [{ op: 'end', how: 'max_turns' } as const] : []), ...rest]
   // A 2-hour cap, so the clock jumps cross it with turns queued, live and between steps.
   setTimings({ JOB_CUT_MS: CUT_MS, JOB_DEADLINE_MS: 2 * 60 * MIN })
@@ -148,8 +169,12 @@ test.prop([fc.boolean(), fc.array(opArb, { minLength: 1, maxLength: 40 })], { nu
     // The job budget spent out: the ledger refuses every job turn's start hold from now on (`job_budget`, N5).
     const budget = { spent: false }
     const reserve = h.usage.reserve.bind(h.usage)
-    h.usage.reserve = async t => (budget.spent && t.jobId !== undefined ? { refused: 'job_budget' } : reserve(t))
-    const mem: Memory = { endedTurns: new Map(), startedAtEnd: new Map() }
+    const mem: Memory = { endedTurns: new Map(), startedAtEnd: new Map(), budgetRefused: new Set() }
+    h.usage.reserve = async t => {
+      if (!budget.spent || t.jobId === undefined) return reserve(t)
+      mem.budgetRefused.add(t.jobId)
+      return { refused: 'job_budget' }
+    }
     let key = 0
     let entries = 1
     let gen = 0
@@ -249,4 +274,4 @@ test.prop([fc.boolean(), fc.array(opArb, { minLength: 1, maxLength: 40 })], { nu
   } finally {
     setTimings({})
   }
-}))
+}), 600_000)

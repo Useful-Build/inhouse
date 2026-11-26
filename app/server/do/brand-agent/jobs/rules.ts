@@ -24,7 +24,10 @@ export interface TurnEnd {
  * - `again`: the turn never ran for a passing reason (`budget_busy`, `pool_full`): tried again, not counted;
  * - `{ end }`: the job ends with that outcome.
  */
-export type Verdict = 'done' | 'carry' | 'retry' | 'again' | { end: JobOutcome }
+export type Verdict = 'done' | 'carry' | 'retry' | 'again' | { end: JobOutcome; cause?: EndCause }
+
+/** Why a job ended `budget`: the brand's monthly cap, not the job's own budget (the notice says which to raise). */
+export type EndCause = 'month_cap'
 
 const CARRY = new Set(['max_turns', 'turn_budget'])
 const RETRY = new Set(['session_crashed', 'protocol', 'store', 'unknown'])
@@ -32,6 +35,8 @@ const BUDGET = new Set(['cap_reached', 'job_budget'])
 const AGAIN = new Set(['budget_busy', 'pool_full'])
 /** The server's interrupts that carry the job on (a deadline cut ended the job before it asked). */
 const CARRYING_CUTS = new Set<string>(['job_cut', 'message'] satisfies CutCause[])
+
+const budgetEnd = (code: string): Verdict => (code === 'cap_reached' ? { end: 'budget', cause: 'month_cap' } : { end: 'budget' })
 
 export function judge(t: TurnEnd): Verdict {
   // A person's stop or interrupt cancels the job, whatever the turn's own end (it may race the server's cut).
@@ -51,13 +56,13 @@ export function judge(t: TurnEnd): Verdict {
       // The runner's 30-minute hard stop or the 45-minute backstop after a cut: retried. Inactivity (no cut): failed.
       if (f === 'timeout') return t.cut_cause !== null ? 'retry' : { end: 'failed' }
       if (RETRY.has(f)) return 'retry'
-      if (BUDGET.has(f)) return { end: 'budget' }
+      if (BUDGET.has(f)) return budgetEnd(f)
       if (AGAIN.has(f)) return 'again'
       return { end: 'failed' }
     }
     case 'cancelled': {
       const why = t.cancel_why
-      if (why !== null && BUDGET.has(why)) return { end: 'budget' }
+      if (why !== null && BUDGET.has(why)) return budgetEnd(why)
       if (why === 'pool_full') return 'again'
       if (why === 'session_unusable') return { end: 'failed' }
       return { end: 'cancelled' }
@@ -66,8 +71,12 @@ export function judge(t: TurnEnd): Verdict {
   }
 }
 
-/** A continuation that made no new step and no new part (the no-progress guard). */
-export const idle = (t: Pick<TurnEnd, 'steps_n' | 'parts_n'>): boolean => t.steps_n === 0 && t.parts_n === 0
+/**
+ * A continuation that made no new step and no new part (the no-progress guard). A turn cut by a person's `now` message
+ * (Q4 = B) never counts: two quick messages mustn't end a job `stuck`; `null` leaves the count as it is.
+ */
+export const idle = (t: Pick<TurnEnd, 'steps_n' | 'parts_n' | 'cut_cause'>): boolean | null =>
+  t.cut_cause === 'message' ? null : t.steps_n === 0 && t.parts_n === 0
 /** Two idle continuations in a row end the job `stuck`. */
 export const MAX_IDLE = 2
 /** Infrastructure retries in a row before the job ends `failed` (N3). */
@@ -83,16 +92,19 @@ export interface PromoteFacts {
   personQueued: boolean
   /** The chat has a job that hasn't ended. */
   jobLive: boolean
+  /** The brand is paused (a pause that fenced the turn while it was ending keeps its outcome). */
+  paused: boolean
 }
 
 /**
  * Whether a turn becomes a job (N3), read inside `storeFinal`'s synchronous step: a person's own turn (route 29; a
  * job's own turns are already in one, routine turns never become jobs in M1) that ended on a per-turn limit or the
- * server's cut, not stopped by its person, its session resumable after it, no person's turn queued behind it, and no
- * other job alive in the chat.
+ * server's cut, not stopped by its person, not fenced by a pause, a removal or a delete while it was ending (the fence
+ * keeps the outcome but writes `cancel_why`), the brand not paused, its session resumable after it, no person's turn
+ * queued behind it, and no other job alive in the chat.
  */
 export function promotable(t: TurnEnd & { source: string | null; job_id: string | null }, f: PromoteFacts): boolean {
-  if (!f.textsWired || t.source !== 'person' || t.job_id !== null || t.person_stop === 1) return false
+  if (!f.textsWired || f.paused || t.source !== 'person' || t.job_id !== null || t.person_stop === 1 || t.cancel_why !== null) return false
   const limit = t.outcome === 'failed' && (t.failure === 'max_turns' || t.failure === 'turn_budget')
   const cut = t.outcome === 'interrupted' && t.cut_cause === 'job_cut'
   return (limit || cut) && f.session === 'resumable' && !f.personQueued && !f.jobLive

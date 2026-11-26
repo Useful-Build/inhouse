@@ -99,7 +99,7 @@ export function createAgentTables(sql: SqlStorage): void {
     next_kind TEXT NOT NULL DEFAULT 'carry' CHECK (next_kind IN ('carry', 'cut')), opened INTEGER NOT NULL DEFAULT 0,
     started_at_ms INTEGER NOT NULL, deadline_ms INTEGER NOT NULL, infra_retries INTEGER NOT NULL DEFAULT 0,
     idle_steps INTEGER NOT NULL DEFAULT 0, progress_json TEXT, ended_at_ms INTEGER, cost_micro INTEGER,
-    result_sent INTEGER NOT NULL DEFAULT 0, CHECK ((state = 'ended') = (outcome IS NOT NULL)))`)
+    result_sent INTEGER NOT NULL DEFAULT 0, end_cause TEXT CHECK (end_cause IN ('month_cap')), CHECK ((state = 'ended') = (outcome IS NOT NULL)))`)
   sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS jobs_one_live ON jobs(chat_id) WHERE state != 'ended'")
   sql.exec('CREATE INDEX IF NOT EXISTS jobs_owner ON jobs(owner_id, state)')
   sql.exec(`CREATE TABLE IF NOT EXISTS events (run_id TEXT NOT NULL, seq INTEGER NOT NULL, turn_id TEXT,

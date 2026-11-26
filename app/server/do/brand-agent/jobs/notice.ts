@@ -15,10 +15,14 @@ export const JOB_STOPPED_BODY: Readonly<Record<Exclude<JobOutcome, 'done'>, stri
   taken_over: 'A new message in the chat took over.',
 }
 
+/** A `budget` end the brand's monthly cap caused: the job's own budget had room. */
+export const MONTH_CAP_BODY = 'The brand reached its monthly spending cap. An admin can raise the monthly cap in Settings, then ask again.'
+
 export const jobNoticeId = (jobId: string): string => `job_${jobId}`
 
 export function jobNoticeInput(n: JobNotice): NoticeInput {
   const base = { id: n.id, audience: 'member' as const, audienceMemberId: n.ownerId, fields: {}, link: { to: 'chat' as const, id: n.chatId }, atMs: n.atMs }
   if (n.outcome === 'done') return { ...base, template: 'job_finished', icon: 'check' }
-  return { ...base, template: 'job_stopped', icon: 'error', body: JOB_STOPPED_BODY[n.outcome] }
+  const body = n.outcome === 'budget' && n.cause === 'month_cap' ? MONTH_CAP_BODY : JOB_STOPPED_BODY[n.outcome]
+  return { ...base, template: 'job_stopped', icon: 'error', body }
 }

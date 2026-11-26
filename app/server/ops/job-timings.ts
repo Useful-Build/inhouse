@@ -8,6 +8,8 @@ export const JOB_TIMING_NAMES = [
   'JOB_CUT_MS',
   /** N3: a job's hard end, measured from its root turn's start (8 hours). */
   'JOB_DEADLINE_MS',
+  /** N3: a continuation refused for a wait (a drain, a full queue, a waiting chat) is tried again this long after (1 minute). */
+  'JOB_RETRY_MS',
 ] as const
 
 export type JobTimingName = (typeof JOB_TIMING_NAMES)[number]
