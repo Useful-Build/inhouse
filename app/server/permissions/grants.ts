@@ -13,6 +13,7 @@ import { writeStamp } from '../db/ids.ts'
 import type { At } from '../db/members.ts'
 import { all, first, runBatch, stmt } from '../db/sql.ts'
 import type { SqlValue, Stmt } from '../db/sql.ts'
+import { OPERATIONS } from '../outbox/operations/index.ts'
 import { memberHolder } from './decide.ts'
 import { POLICY_REV } from './policy.ts'
 import type { RevokeReason } from './policy.ts'
@@ -80,14 +81,29 @@ export interface AlwaysAllowInput {
  * with its line: a dead grant must not keep its slot in the live index, or the new grant would never be made. The
  * insert takes the ceiling's current `lowered_rev` in the same statement, and adds nothing while the operation is off,
  * the action was resolved under another policy or account generation, the holder isn't an active person whose role is
- * at least `grantedRole`, `onlyIf` fails, or a still-current grant holds the key (`ON CONFLICT DO NOTHING` on the live index). Read the live
- * grant back with `liveGrant` after the batch.
+ * at least `grantedRole`, a Slack channel is no longer listed, `onlyIf` fails, or a still-current grant holds the key
+ * (`ON CONFLICT DO NOTHING` on the live index). Read the live grant back with `liveGrant` after the batch.
  */
 export function alwaysAllowStmts(input: AlwaysAllowInput): { id: string; stamp: string; stmts: Stmt[] } {
   const id = newPermissionId()
   const stamp = writeStamp(input.at.requestId)
   const r = input.resolved
   const holder = memberHolder(input.holderMemberId)
+  // What makes this answer eligible to make a grant, beyond the enabled ceiling row the insert reads: the current
+  // policy, the account still on the action's generation and connected, an active holder at or above the granted role,
+  // for Slack the channel still listed, and the answer's own condition. The superseding revoke runs under the same
+  // predicate, so a dead grant is ended as `superseded` only when the new one is really made.
+  const channelId = OPERATIONS[r.operation].connector === 'slack' ? r.scope.channelId : null
+  if (OPERATIONS[r.operation].connector === 'slack' && !channelId) throw new Error('alwaysAllowStmts: a Slack operation with no channel in its scope')
+  const eligible: Exists = {
+    sql: `? = ?
+      AND EXISTS (SELECT 1 FROM connector_accounts ca WHERE ca.account_id = ? AND ca.connected_at_ms = ?
+        AND (ca.disconnected_at_ms IS NULL OR ca.disconnected_at_ms < ca.connected_at_ms))
+      AND EXISTS (SELECT 1 FROM members m WHERE m.id = ? AND m.kind = 'person' AND m.status = 'active' AND (m.role = 'admin' OR ? = 'member'))
+      AND (? IS NULL OR EXISTS (SELECT 1 FROM notify_channels nc WHERE nc.channel_id = ? AND nc.removed_at_ms IS NULL))
+      AND EXISTS (${input.onlyIf.sql})`,
+    params: [r.policyRev, POLICY_REV, r.accountId, r.accountGen, input.holderMemberId, input.grantedRole, channelId, channelId, ...input.onlyIf.params],
+  }
   return {
     id,
     stamp,
@@ -96,21 +112,17 @@ export function alwaysAllowStmts(input: AlwaysAllowInput): { id: string; stamp: 
         `holder = ? AND account_id = ? AND operation = ? AND scope_key = ? AND (policy_rev <> ?
            OR ceiling_rev IS NOT (SELECT lowered_rev FROM permission_ceiling WHERE operation = permission_grants.operation)
            OR account_gen IS NOT (SELECT connected_at_ms FROM connector_accounts WHERE account_id = permission_grants.account_id))`,
-        [holder, r.accountId, r.operation, r.scopeKey, POLICY_REV], 'superseded', input.at, input.onlyIf,
+        [holder, r.accountId, r.operation, r.scopeKey, POLICY_REV], 'superseded', input.at,
+        { sql: `SELECT 1 FROM permission_ceiling c WHERE c.operation = ? AND c.enabled = 1 AND ${eligible.sql}`, params: [r.operation, ...eligible.params] },
       ),
       stmt(
         `INSERT INTO permission_grants (id, holder, holder_member, account_id, account_gen, operation, scope_json, scope_key, per_day,
            policy_rev, granted_by, granted_role, ceiling_rev, source_action, granted_at_ms, stamp)
          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, c.lowered_rev, ?, ?, ?
-         FROM permission_ceiling c WHERE c.operation = ? AND c.enabled = 1 AND ? = ?
-           AND EXISTS (SELECT 1 FROM connector_accounts ca WHERE ca.account_id = ? AND ca.connected_at_ms = ?
-             AND (ca.disconnected_at_ms IS NULL OR ca.disconnected_at_ms < ca.connected_at_ms))
-           AND EXISTS (SELECT 1 FROM members m WHERE m.id = ? AND m.kind = 'person' AND m.status = 'active' AND (m.role = 'admin' OR ? = 'member'))
-           AND EXISTS (${input.onlyIf.sql})
+         FROM permission_ceiling c WHERE c.operation = ? AND c.enabled = 1 AND ${eligible.sql}
          ON CONFLICT DO NOTHING`,
         id, holder, input.holderMemberId, r.accountId, r.accountGen, r.operation, JSON.stringify(r.scope), r.scopeKey, input.perDay,
-        r.policyRev, input.at.actorId, input.grantedRole, input.sourceAction, input.at.nowMs, stamp, r.operation, r.policyRev, POLICY_REV,
-        r.accountId, r.accountGen, input.holderMemberId, input.grantedRole, ...input.onlyIf.params,
+        r.policyRev, input.at.actorId, input.grantedRole, input.sourceAction, input.at.nowMs, stamp, r.operation, ...eligible.params,
       ),
       lineWhere(
         {
@@ -125,11 +137,12 @@ export function alwaysAllowStmts(input: AlwaysAllowInput): { id: string; stamp: 
 
 /**
  * A grant that still means something: unrevoked, made under the current policy, under the ceiling as it is now
- * (enabled, at the same `lowered_rev`), and on the account's current generation. As SQL on `permission_grants` aliased `g`, with its one parameter.
+ * (enabled, at the same `lowered_rev`), and on the account's current generation, not disconnected since. As SQL on `permission_grants` aliased `g`, with its one parameter.
  */
 const CURRENT = `g.revoked_at_ms IS NULL AND g.policy_rev = ?
   AND EXISTS (SELECT 1 FROM permission_ceiling gc WHERE gc.operation = g.operation AND gc.enabled = 1 AND gc.lowered_rev = g.ceiling_rev)
-  AND EXISTS (SELECT 1 FROM connector_accounts ga WHERE ga.account_id = g.account_id AND ga.connected_at_ms = g.account_gen)`
+  AND EXISTS (SELECT 1 FROM connector_accounts ga WHERE ga.account_id = g.account_id AND ga.connected_at_ms = g.account_gen
+    AND (ga.disconnected_at_ms IS NULL OR ga.disconnected_at_ms < ga.connected_at_ms))`
 
 /** The current grant for this holder, account, operation and scope, or null (a dead one isn't returned). */
 export function liveGrant(db: D1Database, key: { holder: string; accountId: string; operation: WriteOperationKey; scopeKey: string }): Promise<GrantRow | null> {

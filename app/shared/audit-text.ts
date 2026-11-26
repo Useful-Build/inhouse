@@ -2,7 +2,7 @@
 // for the audit page and the CSV. People are named by their current name, looked up by member id (`name`); a member id
 // nobody can name shows as "Former member". A setting shows its value only when the registry, as it is now, marks the
 // key audit-safe (a line written under an older registry may hold a value a later one redacts); otherwise none.
-import type { AuditArgs } from './contract/audit.ts'
+import type { AuditArgs, RevokeReason } from './contract/audit.ts'
 import { settingLabel, settingSpec } from './contract/settings.ts'
 
 export interface AuditText {
@@ -123,7 +123,8 @@ export const OPERATION_TITLE: Readonly<Record<'shopify.order.tag_add' | 'slack.c
 }
 const OPERATION_TOOL = { 'shopify.order.tag_add': 'Shopify', 'slack.channel.post': 'Slack' } as const
 const operation = (op: keyof typeof OPERATION_TITLE) => `${OPERATION_TITLE[op]} in ${OPERATION_TOOL[op]}`
-const REVOKED: Record<string, string> = {
+/** Every reason but `removed` (a person removed it, said as its own `what`). Typed so a new reason fails the typecheck. */
+const REVOKED: Readonly<Record<Exclude<RevokeReason, 'removed'>, string>> = {
   member_removed: 'its holder left the team',
   role_lowered: 'its holder’s role changed',
   account_disconnected: 'the tool was disconnected',

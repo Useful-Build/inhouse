@@ -283,6 +283,11 @@ describe('Stage 1 M2 lines (N18)', () => {
     expect(auditText({ action: 'permission.revoked', permissionId: 'pg_AAAAAAAAAAAAAAAAAAAAAA', operation: 'slack.channel.post', reason: 'removed' }, names))
       .toEqual({ what: 'removed a permission', detail: 'Post messages to a channel in Slack' })
   })
+  it('says why a permission ended for the two round 1 reasons', () => {
+    const ended = (reason: 'superseded' | 'channel_unlisted') => auditText({ action: 'permission.revoked', permissionId: 'pg_AAAAAAAAAAAAAAAAAAAAAA', operation: 'slack.channel.post', reason }, names)
+    expect(ended('superseded')).toEqual({ what: 'a permission ended', detail: 'Post messages to a channel in Slack: the rules or the tool’s connection changed, and a new one took its place' })
+    expect(ended('channel_unlisted')).toEqual({ what: 'a permission ended', detail: 'Post messages to a channel in Slack: the channel was taken off the list' })
+  })
   it('says an action needs an exact approval and why, and names whom a question asked', () => {
     expect(auditText(sample['action.requested'], names)).toEqual({ what: 'the agent asked for an approval', detail: 'Add tags to orders in Shopify: needs an exact approval, it changes more than 5 records' })
     expect(auditText(sample['question.asked'], names)).toEqual({ what: 'the agent asked a question', detail: 'Asked the person in the chat' })
