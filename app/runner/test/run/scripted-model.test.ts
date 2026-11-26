@@ -191,7 +191,7 @@ describe('the scripted model', () => {
     const model = createScriptedModel(SCENARIOS)
     const asked: Msg = { role: 'assistant', content: SCENARIOS.question!.turns[0]!.content }
     const result: Msg = { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_question_1', content: [{ type: 'text', text: 'The person chose: "No, wait a week".' }] }] }
-    for (const tail of [[], [{ role: 'system', content: 'budget' }]] as Msg[][]) {
+    for (const tail of [[], [{ role: 'system', content: 'budget' }]] as unknown as Msg[][]) {
       const res = await model.handle(mainReq([{ role: 'user', content: 'q' }, asked, result, ...tail]), 'question')
       expect(res.status).toBe(200)
       expect(((await res.json()) as { content: { text: string }[] }).content[0]!.text).toBe('Going with your answer. The question tool said: The person chose: "No, wait a week".')
