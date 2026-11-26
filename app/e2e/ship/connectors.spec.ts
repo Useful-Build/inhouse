@@ -1,6 +1,6 @@
 // Ship spec for P5 Connectors (the plan's browser scenarios S1 to S7, docs/plans/2026-11-19-p5-connectors.md): connecting Slack, a
-// question that needs Slack and Shopify, a question over the whole store answered by a code mode script, an alert at Act and at
-// Watch, pausing, disconnecting, and the Admin's read-only Tools page, as real people on the TEST BUILD with the hub, the fake
+// question that needs Slack and Shopify, a question over the whole store answered by a code mode script, an alert that reaches
+// the bell and never Slack (M2-F: both Slack legs are closed, whatever stage is stored), pausing, disconnecting, and the Admin's read-only Tools page, as real people on the TEST BUILD with the hub, the fake
 // Slack and the recorded Shopify. Desktop (1440x900) and phone (390x844). Each test is titled `S<n>: ...` (the card before its clip).
 //
 // What runs where. S2, S3 and S4 run turns in a container, which only the sandbox deployment has: they call `needsContainer()`
@@ -9,7 +9,8 @@
 // is fixed and each test proves the PATH: the run's own record shows the named tool calls (the owner's trace: each tool step's detail
 // is the tool's name) and, for alerts, the audit lines; and the answer the person reads is on screen. The fakes' own logs are NOT read
 // here: "no link preview" and "only the app link" in a Slack post (four parameters, `unfurl_links` and `unfurl_media` false) are proved by
-// e2e/api/notify-slack.spec.ts, not by this recording; S4 proves that the right alert reached Slack, the bell or nothing, and said so.
+// e2e/api/notify-slack.spec.ts, not by this recording; S4 proves that the alert reached the bell or nothing, and said so, and reads
+// the fake Slack's log only to show that the hub's delivery binding was never called (no Slack Web API call at all).
 // The hook (`POST /api/ops/test-fakes`, release token) is used for what the product itself decides: the hub's tool list, the prompt.
 //
 // What the scripted model cannot prove, and who does. S5 and S6 say "the agent no longer uses it" and "asking again says it's not
@@ -27,7 +28,7 @@ import type { APIRequestContext, Page } from '@playwright/test'
 import { mintTestCode } from '../../test/upstreams/mcp/server.ts'
 import { needsContainer } from '../api/chat-kit.ts'
 import {
-  CHANNEL, connectSlack, ensureDisconnected, fakeReset, hubCall, hubToolNames, readTools, setListedChannels, setStage, SLACK_ACCOUNT, turnPrompt,
+  CHANNEL, connectSlack, ensureDisconnected, fakeReset, fakeState, hubCall, hubToolNames, readTools, setListedChannels, setStage, SLACK_ACCOUNT, turnPrompt,
 } from '../api/fakes-kit.ts'
 import { actor, call, endLiveGrants, expectError, putSetting } from '../api/kit.ts'
 import { originFor, signInAs } from '../support/clients/real.js'
@@ -43,8 +44,9 @@ const uid = () => crypto.randomUUID().slice(0, 8)
 // What the product and the scripted model say, copied (a spec reads no product string by import).
 const SUPPLIER_ANSWER = 'Kestrel Mills says the November restock of the Fern mug ships 2 weeks late. Sources: Slack #suppliers, Shopify orders.'
 const CODE_MODE_ANSWER = 'I counted every product in the store with a script: the five lowest on stock and how many sell for over $150. Source: Shopify, all products.'
-const NOTICE_ANSWER = 'I sent the stock alert to #ops-alerts.'
-const WATCH_ANSWER = 'I sent the stock alert to your bell. It reaches Slack from the Act stage.'
+// The scripted model's fixed answer for `connectors-notice-watch`. Its second sentence predates M2-F (the stages are retired);
+// the scenario's words are test/scripted-model/scenarios.ts's, not the product's, and this spec doesn't read them as a claim.
+const BELL_ANSWER = 'I sent the stock alert to your bell. It reaches Slack from the Act stage.'
 const UNLISTED_ANSWER = "I couldn't send that: #design isn't one of the channels your admin listed."
 const NOTIFY_TOOL = 'mcp__inhouse__notification_send'
 const NOTICE_TEXT = 'The Fern mug is almost out. Restock it this week.'
@@ -270,9 +272,12 @@ test('S3: Ask over the whole store and the answer comes from a code mode script 
   await shot(page, 'S3-codemode-answer')
 })
 
-// ---------- S4: alerts at Act and Watch ----------
+// ---------- S4: an alert reaches the bell, never Slack ----------
 
-test('S4: At Act an alert reaches a listed Slack channel, an unlisted channel is refused, and at Watch the alert reaches the bell only', async ({ context, page, request }) => {
+/** The fake Slack Web API's calls: any call at all means the hub's delivery binding was used (it reads the channel, then posts). */
+const slackWeb = async (request: APIRequestContext) => (await fakeState(request)).web
+
+test('S4: With Act stored, an alert to a listed Slack channel reaches the bell only and Slack gets no call; an unlisted channel is refused', async ({ context, page, request }) => {
   needsContainer()
   test.setTimeout(480_000)
   await ensureConnected(request)
@@ -285,21 +290,11 @@ test('S4: At Act an alert reaches a listed Slack channel, an unlisted channel is
   const REFUSED = 'a notice didn’t go out'
   const TO_BELL = 'sent a notice to the bell'
   try {
-    // At Act: the alert posts once to Slack. The product's record is its audit line: "posted a notice to Slack", detail "Slack" (the
-    // audit text names where, never the channel or the text; the channel is in the answer the person reads). The post's own parameters
-    // (four, no preview, only the app link) are asserted by e2e/api/notify-slack.spec.ts.
+    // Act is the stage that used to open Slack. It is stored on purpose: since M2-F nothing reads it.
     await setStage(request, 'Act')
-    let mark = await auditMark(request)
-    await askAndRead(page, request, 'connectors-notice', 'send the stock alert', NOTICE_ANSWER, 'S4-act', [NOTIFY_TOOL])
-    const act = await auditSince(request, mark)
-    await attachJson('S4-act-audit', act)
-    const posted = act.filter(l => l.what === POSTED)
-    expect(posted.length, 'one post to Slack at Act').toBe(1)
-    expect(posted[0]!.detail, 'the audit line says where it went').toBe('Slack')
-    await shot(page, 'S4-act-sent')
-
     // An unlisted channel: refused with the audit line's own reason, nothing posted, and the person reads the refusal.
-    mark = await auditMark(request)
+    const unlistedBefore = await slackWeb(request)
+    let mark = await auditMark(request)
     await askAndRead(page, request, 'connectors-notice-unlisted', 'send it to the design channel', UNLISTED_ANSWER, 'S4-unlisted', [NOTIFY_TOOL])
     const unlisted = await auditSince(request, mark)
     await attachJson('S4-unlisted-audit', unlisted)
@@ -307,19 +302,26 @@ test('S4: At Act an alert reaches a listed Slack channel, an unlisted channel is
     expect(refused.length, 'the unlisted channel was refused and audited').toBe(1)
     expect(refused[0]!.detail, 'the refusal says why').toBe('Slack: a channel that isn’t listed')
     expect(unlisted.filter(l => l.what === POSTED).length, 'nothing was posted to an unlisted channel').toBe(0)
+    expect((await slackWeb(request)).requests.length, 'no Slack Web API call for an unlisted channel').toBe(unlistedBefore.requests.length)
     await shot(page, 'S4-unlisted-refused')
 
-    // At Watch: the same alert reaches the bell of the person who asked, and Slack gets nothing.
-    await setStage(request, 'Watch')
+    // A listed channel: the alert reaches the bell of the person who asked. The product's record is its audit line; the fake
+    // Slack's log shows no call.
     const known = new Set(((await apiOk(page, '/api/notifications')).items as { id: string }[]).map(i => i.id))
+    const slackBefore = await slackWeb(request)
     mark = await auditMark(request)
-    await askAndRead(page, request, 'connectors-notice-watch', 'send the stock alert', WATCH_ANSWER, 'S4-watch', [NOTIFY_TOOL])
-    const watch = await auditSince(request, mark)
-    await attachJson('S4-watch-audit', watch)
-    const toBell = watch.filter(l => l.what === TO_BELL)
+    await askAndRead(page, request, 'connectors-notice-watch', 'send the stock alert', BELL_ANSWER, 'S4-bell', [NOTIFY_TOOL])
+    const bellAudit = await auditSince(request, mark)
+    await attachJson('S4-bell-audit', bellAudit)
+    const toBell = bellAudit.filter(l => l.what === TO_BELL)
     expect(toBell.length, 'the alert went to the bell').toBe(1)
-    expect(toBell[0]!.detail, 'the bell line says why it is not Slack').toMatch(/: sent to the bell until the Act stage$/)
-    expect(watch.filter(l => l.what === POSTED).length, 'no Slack post at Watch').toBe(0)
+    expect(toBell[0]!.detail, 'the bell line says it is not Slack').toMatch(/: sent to the bell, not Slack$/)
+    expect(bellAudit.filter(l => l.what === POSTED).length, 'no Slack post').toBe(0)
+    const slackAfter = await slackWeb(request)
+    await attachJson('S4-bell-slack-log', { requests: slackAfter.requests.slice(slackBefore.requests.length), posts: slackAfter.posts.slice(slackBefore.posts.length) })
+    expect(slackAfter.requests.length, "no Slack Web API call: the hub's delivery binding was not used").toBe(slackBefore.requests.length)
+    expect(slackAfter.posts.length, 'nothing was posted to Slack').toBe(slackBefore.posts.length)
+    expect(slackAfter.violations).toEqual([])
     await expect.poll(async () => ((await apiOk(page, '/api/notifications')).items as { id: string; body?: string }[]).filter(i => !known.has(i.id) && i.body?.includes(NOTICE_TEXT)).length,
       { timeout: 60_000, message: "the person's bell holds the new alert" }).toBe(1)
     // What the person sees. The bell reads its notices when the app starts and on a page change; the alert came from the agent's own tool,
@@ -334,7 +336,7 @@ test('S4: At Act an alert reaches a listed Slack channel, an unlisted channel is
     await expect(bell, 'the bell counts what the server holds').toHaveAccessibleName(`Notifications, ${unread} unread`)
     await bell.click()
     await expect(page.getByRole('dialog', { name: 'Notifications' }).getByRole('button', { name: /^Message from your Inhouse agent/ }).first()).toBeVisible()
-    await shot(page, 'S4-watch-bell')
+    await shot(page, 'S4-bell')
   } finally {
     // Put back what the brand had; a failure here is attached, never thrown over the test's own error.
     await quietly('S4-restore', async () => {

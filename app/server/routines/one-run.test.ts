@@ -3,12 +3,11 @@
 // Run now, route writes (on and off, delete, restore, a schedule edit, a stage change) placed between a handler's read
 // and its batch, turn ends delivered early, late and twice, and crashes at every await of the tick and of the end
 // handler. Ways it can fail, written down first: a slot runs twice; an end task id gets a second turn; a disabled,
-// deleted or stage-locked routine's slot runs; a slot's state moves backwards; a turn that ended leaves its slot open or
+// or deleted routine's slot runs; a slot's state moves backwards; a turn that ended leaves its slot open or
 // its result written twice; the number of runs differs from the slots that should run (the brute-force oracle of test 1
 // plus the rules in words).
 import fc from 'fast-check'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { brandFacts } from './brand.ts'
 import type { SlotRow, SlotState } from './rows.ts'
 import { deleteRoutine, readRoutine, runNow, updateRoutine } from './store.ts'
 import { ON_TIME_MS, POKE_ID, TICK_ID } from './tick.ts'
@@ -97,15 +96,14 @@ describe('one run per slot (test 4)', () => {
         const finished = new Set<FakeTurn>()
         const delivered = new Set<FakeTurn>()
 
-        // At a new turn: the slot is claimed and its routine may run now (enabled for a scheduled slot, not deleted, stage).
+        // At a new turn: the slot is claimed and its routine may run now (enabled for a scheduled slot, not deleted).
         h.runs.beforeNew = async t => {
           const s = await db.prepare(
-            'SELECT s.kind, s.state, r.enabled, r.deleted_at_ms, r.need FROM routine_slots s JOIN routines r ON r.id = s.routine_id WHERE s.chat_id = ?',
-          ).bind(t.chatId).first<{ kind: string; state: string; enabled: number; deleted_at_ms: number | null; need: number }>()
-          const { stage } = await brandFacts(db)
+            'SELECT s.kind, s.state, r.enabled, r.deleted_at_ms FROM routine_slots s JOIN routines r ON r.id = s.routine_id WHERE s.chat_id = ?',
+          ).bind(t.chatId).first<{ kind: string; state: string; enabled: number; deleted_at_ms: number | null }>()
           if (!s) violations.push('a turn for no slot')
-          else if (s.state !== 'claimed' || s.deleted_at_ms !== null || (s.kind === 'scheduled' && s.enabled !== 1) || stage < s.need) {
-            violations.push(`a turn for a slot that may not run: ${JSON.stringify({ ...s, stage })}`)
+          else if (s.state !== 'claimed' || s.deleted_at_ms !== null || (s.kind === 'scheduled' && s.enabled !== 1)) {
+            violations.push(`a turn for a slot that may not run: ${JSON.stringify(s)}`)
           }
         }
 

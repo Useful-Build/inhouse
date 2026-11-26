@@ -1,16 +1,17 @@
 // Notices from the server (p5-w4.md sections 1 to 9): the agent's `notification_send` (`notifyAgent`) and the server's
 // own notices (`sendSystemNotice`, P6's approver notice). Our server decides everything: it validates, resolves member
-// ids (the bell) and listed channel names, checks the stage, runs the bounds that don't escape, reserves the caps in one
-// statement per recipient, and audits one line per recipient per call. Slack posts go only through the hub's
-// DeliveryGateway (`HUB_DELIVERY`), whose Slack SignIn re-checks, escapes once and posts with fixed parameters.
+// ids (the bell) and listed channel names, runs the bounds that don't escape, reserves the caps in one statement per
+// recipient, and audits one line per recipient per call. Both Slack legs are closed (`SLACK_DELIVERY_ENABLED`,
+// ./slack-legs.ts): a listed channel reaches the run person's bell and the alerts copy is skipped. When open, Slack posts
+// go only through the hub's DeliveryGateway (`HUB_DELIVERY`), whose Slack SignIn re-checks, escapes once and posts with
+// fixed parameters.
 // - A member id reaches the bell only: never Slack in any form. An Inhouse member, a service row or anyone not an
 //   active person is `unknown_member`, so the agent is never told "sent" for a bell nobody reads.
 // - Model text goes only in the bell's `body` and the hub's title and text; never a template, `fields`, a link, a log,
 //   an audit line or a D1 table we own (`notify_sends` keeps a hash).
 // - One send, no retry: a hub call that throws leaves the row `reserved` and answers `unknown: not retried`.
-import { STAGES } from '../../shared/contract/settings-table.ts'
-import { brandStage, deliveryRefusal } from '../stage/watch.ts'
 import type { DeliveryGateway, HubResult } from '../../hub/index/contract.ts'
+import { SLACK_DELIVERY_ENABLED } from './slack-legs.ts'
 import type { AuditArgs } from '../../shared/contract/audit.ts'
 import { boundBody, boundNotice, SYSTEM_BODY_MAX } from '../../shared/notify/bound.ts'
 import type { BoundChanges, NoticeFormat } from '../../shared/notify/bound.ts'
@@ -39,8 +40,10 @@ export interface NotifyCtx {
 
 export type Detail =
   | 'not_listed' | 'shared_channel' | 'archived' | 'not_public' | 'not_member' | 'not_found' | 'run_cap' | 'day_cap'
-  | 'too_long' | 'empty' | 'unknown_member' | 'slack_not_connected' | 'slack_unavailable' | 'rate_limited' | 'to_bell'
-  | 'no_alerts_channel' | 'below_act' | 'app_origin_missing'
+  | 'too_long' | 'empty' | 'unknown_member' | 'slack_not_connected' | 'slack_unavailable' | 'rate_limited'
+  | 'no_alerts_channel' | 'channel_to_bell' | 'slack_off' | 'app_origin_missing'
+  // Written before M2-F (the stage rule); new rows never hold them, but a repeat can read one back.
+  | 'to_bell' | 'below_act'
 
 /** One recipient's outcome. `skipped`: nothing reserved or sent for it (the Slack part with no alerts channel). */
 export type RecipientOutcome = {
@@ -91,8 +94,9 @@ export async function listedChannels(db: D1Database): Promise<ListedChannel[]> {
 export const channelKey = (name: string): string => name.replace(/^#/, '').toLowerCase()
 
 /**
- * Whose bell a channel recipient reaches below Act (OC-W4-2, B2 2026-11-21): the chat's owner when that's an active
- * brand person, else the admins (an Inhouse member's test chat, a routine whose creator is gone, an unknown chat).
+ * Whose bell a listed channel recipient reaches while the Slack legs are closed (OC-W4-2, B2 2026-11-21): the chat's
+ * owner when that's an active brand person, else the admins (an Inhouse member's test chat, a routine whose creator is
+ * gone, an unknown chat).
  */
 export async function runPerson(db: D1Database, chatId: string): Promise<string | 'admins'> {
   const row = await first<{ id: string; kind: string; status: string }>(db, stmt(
@@ -179,7 +183,11 @@ async function toBell(c: Common, r: (id: string, target: string) => Reserve, to:
       await batch(c.ctx.db, [auditLine(c, 'bell', target, 'refused', res.cap)])
       return { kind: 'bell', to, outcome: 'refused', detail: res.cap, ...named }
     }
-    const rep = repeatOf(res.row)
+    // A listed channel's notice and a member's own notice can repeat each other's bell row (same person, same text). A
+    // posted repeat carries this call's detail, not the stored row's: a channel says it went to the bell instead (never
+    // read as a Slack post), and a member's repeat never says a channel's words.
+    const stored = repeatOf(res.row)
+    const rep: ReturnType<typeof repeatOf> = stored.outcome === 'posted' ? { outcome: 'posted', ...(detail ? { detail } : {}) } : stored
     await batch(c.ctx.db, [auditLine(c, 'bell', target, rep.outcome, rep.detail, true)])
     return { kind: 'bell', to, ...rep, repeat: true, ...named }
   }
@@ -254,7 +262,7 @@ export type AgentNoticeInput = {
   link?: { kind: NoticeLinkInput['kind']; id?: string }
 }
 
-export type AgentNoticeResult = { recipients: RecipientOutcome[]; changed: string[]; listed: string[]; stage: string }
+export type AgentNoticeResult = { recipients: RecipientOutcome[]; changed: string[]; listed: string[] }
 
 export async function notifyAgent(ctx: NotifyCtx, scope: AgentScope, input: AgentNoticeInput): Promise<AgentNoticeResult> {
   const members = [...new Set(input.to.members ?? [])]
@@ -271,10 +279,10 @@ export async function notifyAgent(ctx: NotifyCtx, scope: AgentScope, input: Agen
     changed: bounded.ok ? changedList(bounded.changed, linkDropped) : [],
     audit: { source: 'agent', runId: scope.runId },
   }
-  const [listed, stage] = await Promise.all([listedChannels(ctx.db), brandStage(ctx.db)])
+  const listed = await listedChannels(ctx.db)
   const byKey = new Map(listed.map(l => [channelKey(l.name), l]))
   const listedNames = listed.map(l => `#${l.name}`)
-  const out: AgentNoticeResult = { recipients: [], changed: c.changed, listed: listedNames, stage: STAGES[stage]! }
+  const out: AgentNoticeResult = { recipients: [], changed: c.changed, listed: listedNames }
 
   const people = await activePeople(ctx.db, members)
   if (!bounded.ok) {
@@ -311,8 +319,7 @@ export async function notifyAgent(ctx: NotifyCtx, scope: AgentScope, input: Agen
     }
     out.recipients.push(await toBell(c, agentReserve('bell'), m, m, bell))
   }
-  const slackRefused = deliveryRefusal(stage, 'slack') !== null
-  const person = slackRefused && channels.length > 0 ? await runPerson(ctx.db, scope.chatId) : null
+  const person = !SLACK_DELIVERY_ENABLED && channels.length > 0 ? await runPerson(ctx.db, scope.chatId) : null
   for (const name of channels) {
     const l = byKey.get(channelKey(name))
     if (!l) {
@@ -321,8 +328,8 @@ export async function notifyAgent(ctx: NotifyCtx, scope: AgentScope, input: Agen
       out.recipients.push({ kind: 'slack', to: name, outcome: 'refused', detail: 'not_listed' })
       continue
     }
-    if (slackRefused) {
-      out.recipients.push(await toBell(c, agentReserve('bell'), name, person!, bell, 'to_bell'))
+    if (!SLACK_DELIVERY_ENABLED) {
+      out.recipients.push(await toBell(c, agentReserve('bell'), name, person!, bell, 'channel_to_bell'))
       continue
     }
     out.recipients.push(await toSlack(c, agentReserve('slack'), name, l.channelId, { title: bounded.title, text: bounded.text, link }, 'notification_send'))
@@ -401,7 +408,6 @@ export async function sendSystemNotice(
   const recipients: RecipientOutcome[] = []
 
   const alerts = input.to.alertsChannel ? (await listedChannels(ctx.db)).find(l => l.alerts) ?? null : null
-  const slackRefused = input.to.alertsChannel && deliveryRefusal(await brandStage(ctx.db), 'slack') !== null
 
   if (bounded && !bounded.ok) {
     const lines: Stmt[] = []
@@ -434,7 +440,7 @@ export async function sendSystemNotice(
   }
   if (input.to.alertsChannel) {
     if (!alerts) recipients.push({ kind: 'slack', to: 'alerts', outcome: 'skipped', detail: 'no_alerts_channel' })
-    else if (slackRefused) recipients.push({ kind: 'slack', to: 'alerts', outcome: 'skipped', detail: 'below_act' })
+    else if (!SLACK_DELIVERY_ENABLED) recipients.push({ kind: 'slack', to: 'alerts', outcome: 'skipped', detail: 'slack_off' })
     else recipients.push(await toSlack(c, systemReserve('slack'), 'alerts', alerts.channelId, { title, text: body ?? NO_BODY_TEXT, link: checked.link }, `system:${input.source}`))
   }
   return { ok: true, recipients }

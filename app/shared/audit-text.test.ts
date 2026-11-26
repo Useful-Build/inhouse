@@ -139,6 +139,7 @@ describe('P4 lines (wave-4 PR0): literal texts, and no id in any of them', () =>
     ] as const) expect(auditText({ action: 'support.access', grantId: 'g_1', method: 'GET', route }, names), route).toEqual({ what: 'looked at brand data', detail })
   })
   it('says what happened to a routine', () => {
+    expect(auditText({ action: 'routine.created', routineId: rt }, names)).toEqual({ what: 'set up a routine', detail: '' })
     expect(auditText({ action: 'routine.created', routineId: rt, need: 0 }, names)).toEqual({ what: 'set up a routine', detail: 'Needs the Watch stage' })
     expect(auditText({ action: 'routine.created', routineId: rt, need: 1 }, names)).toEqual({ what: 'set up a routine', detail: 'Needs the Act stage' })
     expect(auditText({ action: 'routine.created', routineId: rt, need: 2 }, names)).toEqual({ what: 'set up a routine', detail: 'Needs the Run stage' })
@@ -208,6 +209,23 @@ describe('P5 (p5-w4): a notice to a channel that is not listed', () => {
   it('reads in plain words and names no channel', () => {
     const line = { action: 'notify.send', source: 'agent', runId: 'r_AAAAAAAAAAAAAAAAAAAAAA', kind: 'slack', target: 'unlisted', outcome: 'refused', detail: 'not_listed', textLength: 12, noticeSha256: 'ab'.repeat(32) } as const
     expect(auditText(line, names)).toEqual({ what: 'a notice didn’t go out', detail: 'Slack: a channel that isn’t listed' })
+  })
+})
+
+// M2-F. Ways it can fail, written first: a new line names a stage; an old line written under the stage rule stops reading.
+describe('M2-F: a listed channel that reached the bell, old rows and new', () => {
+  const base = { action: 'notify.send', source: 'agent', runId: 'r_AAAAAAAAAAAAAAAAAAAAAA', kind: 'bell', target: 'm_a', outcome: 'posted', textLength: 12, noticeSha256: 'ab'.repeat(32) } as const
+  it('a new line says the bell, not Slack, and names no stage', () => {
+    const t = auditText({ ...base, detail: 'channel_to_bell' }, names)
+    expect(t).toEqual({ what: 'sent a notice to the bell', detail: 'Ada Example’s bell: sent to the bell, not Slack' })
+    expect(JSON.stringify(t)).not.toMatch(/\b(?:Watch|Act|Run|stage)\b/)
+  })
+  it('an old line still reads as it did', () => {
+    expect(auditText({ ...base, detail: 'to_bell' }, names)).toEqual({ what: 'sent a notice to the bell', detail: 'Ada Example’s bell: sent to the bell until the Act stage' })
+    expect(auditText({ ...base, kind: 'slack', target: 'C0TEST0001', outcome: 'refused', detail: 'below_act' }, names)).toEqual({ what: 'a notice didn’t go out', detail: 'Slack: Slack posts start at the Act stage' })
+  })
+  it('slack_off reads in plain words', () => {
+    expect(auditText({ ...base, kind: 'slack', target: 'C0TEST0001', outcome: 'refused', detail: 'slack_off' }, names)).toEqual({ what: 'a notice didn’t go out', detail: 'Slack: Slack posts are off for now' })
   })
 })
 

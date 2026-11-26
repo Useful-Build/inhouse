@@ -37,9 +37,9 @@ export async function routineEnd(task: DueTask, ctx: EndContext): Promise<TaskRe
   const now = ctx.nowMs
   const slot = await db.prepare(
     `SELECT s.slot_key, s.routine_id, s.run_id, s.kind, s.local_date, s.local_time, s.claimed_at_ms, s.state, s.creator_id, s.requested_by,
-        r.kind AS routine_kind, r.need
+        r.kind AS routine_kind
       FROM routine_slots s JOIN routines r ON r.id = s.routine_id WHERE s.slot_key = ?`,
-  ).bind(slotKey).first<EndSlot & { run_id: string | null; routine_kind: string; need: number }>()
+  ).bind(slotKey).first<EndSlot & { run_id: string | null; routine_kind: string }>()
   if (!slot) {
     // Gone to retention, or never made: nothing to land on. Logged loud; the task ends.
     console.error({ event: 'routine_end_no_slot' })
@@ -72,8 +72,8 @@ export async function routineEnd(task: DueTask, ctx: EndContext): Promise<TaskRe
     ).bind(slotKey, slot.routine_id, slot.local_date, slot.claimed_at_ms),
     // 4. Activity (keyed by the slot), and the bell on a failure other than W3's quiet `not_connected`.
     failure !== null
-      ? slotLine(db, { template: 'routine_failed', fields: { code: asCode(failure) }, key: slotKey, need: slot.need, runId: traceRun, atMs: now })
-      : slotLine(db, { template: out.activity?.template ?? 'routine_ran', fields: out.activity?.fields ?? {}, key: slotKey, need: slot.need, runId: traceRun, atMs: now }),
+      ? slotLine(db, { template: 'routine_failed', fields: { code: asCode(failure) }, key: slotKey, runId: traceRun, atMs: now })
+      : slotLine(db, { template: out.activity?.template ?? 'routine_ran', fields: out.activity?.fields ?? {}, key: slotKey, runId: traceRun, atMs: now }),
   ]
   if (failure !== null && failure !== 'not_connected') {
     const base = { template: 'routine_failed', fields: { code: asCode(failure) }, icon: 'error', link: { to: 'page' as const, page: 'routines' as const }, atMs: now }
