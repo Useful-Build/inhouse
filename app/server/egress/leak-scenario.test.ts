@@ -32,6 +32,7 @@ describe('webfetch-leak: the refused fetch', () => {
   it("passes on the CLI 2.1.328's plain 403 result, the refusal's own words, or a 403 error", async () => {
     for (const leak of [
       { content: 'The server returned HTTP 403 Forbidden. The response body was not retrieved. If this URL requires authentication, use an authenticated tool instead of WebFetch.' },
+      { content: '\nThe server returned HTTP 403 Forbidden.\nThe response body was not retrieved.' },
       { content: 'WebFetch refused: leak', isError: true },
       { content: 'Request failed with status code 403', isError: true },
     ]) expect(await answer(leak), leak.content).toEqual({ status: 200, misses: [] })

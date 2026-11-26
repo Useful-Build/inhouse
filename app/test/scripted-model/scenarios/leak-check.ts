@@ -67,8 +67,13 @@ const resultIs = (id: string, wantError: boolean, holds?: string) => (r: Message
   return true
 }
 
-/** The real CLI 2.1.328's WebFetch result for a 403 (M1-P's sandbox run, 2026-11-26): a plain result, not an error. */
-const CLI_403 = /^The server returned HTTP 403 Forbidden\. The response body was not retrieved\./
+/**
+ * The real CLI 2.1.328's WebFetch result for a 403 (M1-P's sandbox run, 2026-11-26): a plain result, not an error. Found
+ * anywhere in the result, its whitespace folded: on the sandbox the same words didn't match an anchored, single-spaced
+ * pattern (a miss's quote is folded to one line, so the real result may break lines or start with more). A page's
+ * summary never says it.
+ */
+const CLI_403 = 'The server returned HTTP 403 Forbidden. The response body was not retrieved.'
 
 /**
  * The leak fetch's result is the egress's `leak` refusal: an error that says `WebFetch refused: leak` when the CLI
@@ -83,7 +88,7 @@ const refusedAsLeak = (id: string) => (r: MessagesRequest): true | string => {
   const b = resultBlock(r, id)
   if (!b) return `no result for ${id}`
   const text = resultText(b)
-  if (b.is_error !== true) return CLI_403.test(text) ? true : `result for ${id} is not an error and not the CLI's 403: "${text.slice(0, 300)}"`
+  if (b.is_error !== true) return text.replace(/\s+/g, ' ').includes(CLI_403) ? true : `result for ${id} is not an error and not the CLI's 403: "${text.slice(0, 300)}"`
   if (text.includes('WebFetch refused: leak')) return true
   if (/WebFetch refused: /.test(text)) return `result for ${id} is another refusal: "${text.slice(0, 300)}"`
   if (/status code 403\b/.test(text)) return true
