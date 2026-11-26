@@ -4,7 +4,10 @@
 //    question that is no longer open; or it misses a waiting card or a "Needs a check" its viewer may resolve;
 //  - it reads for the Inhouse team (routes 120 and 140 refuse them) or before `me()` is in;
 //  - a failed read of one list zeroes the other's number;
-//  - an `action.updated`, a focus or an answer doesn't read again.
+//  - an `action.updated`, a focus or an answer doesn't read again;
+//  - an answer that lands while a read is out is counted from that older read (the badge keeps the old number);
+//  - a question that arrives (a new notice in the bell's list, after a run) isn't counted until the next focus;
+//  - a socket that comes back live, or a tab shown again, doesn't read again.
 import { createElement } from 'react'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -12,15 +15,18 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ActionCard, Question } from '../agent/types'
 
 const fake = vi.hoisted(() => ({
-  actions: vi.fn(), questions: vi.fn(), role: 'admin' as string | null,
+  actions: vi.fn(), questions: vi.fn(), role: 'admin' as string | null, notifications: [] as unknown[],
   meListeners: new Set<() => void>(), actionListeners: new Set<(u: { actionId: string; rev: number }) => void>(),
+  linkListeners: new Set<(s: string) => void>(),
 }))
 vi.mock('../agent', () => ({
   agent: {
     actions: fake.actions, questions: fake.questions,
     me: () => (fake.role ? { role: fake.role } : null),
+    listNotifications: () => fake.notifications,
     subscribe: (l: () => void) => { fake.meListeners.add(l); return () => fake.meListeners.delete(l) },
     onActionUpdated: (l: (u: { actionId: string; rev: number }) => void) => { fake.actionListeners.add(l); return () => fake.actionListeners.delete(l) },
+    onLink: (l: (s: string) => void) => { fake.linkListeners.add(l); return () => fake.linkListeners.delete(l) },
   },
 }))
 
@@ -61,7 +67,7 @@ function Badge() { shown.push(useAsksCount()); return null }
 const flush = () => act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve() })
 
 beforeEach(async () => {
-  fake.actions.mockReset(); fake.questions.mockReset(); fake.role = 'admin'; fake.meListeners.clear(); fake.actionListeners.clear()
+  fake.actions.mockReset(); fake.questions.mockReset(); fake.role = 'admin'; fake.meListeners.clear(); fake.actionListeners.clear(); fake.linkListeners.clear(); fake.notifications = []
   shown = []
   // Each case starts from an empty badge.
   publishAsks([], [])
@@ -85,6 +91,29 @@ describe('the badge', () => {
     await flush()
     expect(shown.at(-1)).toBe(0)
   })
+  test('reads again when the socket is live again and when the tab is shown; not on a link that isn\'t live, nor when hidden', async () => {
+    fake.actions.mockResolvedValue([]); fake.questions.mockResolvedValue([])
+    await act(async () => root.render(createElement(Badge)))
+    await flush()
+    const reads = () => fake.questions.mock.calls.length
+    const start = reads()
+    await act(async () => { for (const l of fake.linkListeners) l('held') })
+    await flush()
+    expect(reads()).toBe(start)
+    await act(async () => { for (const l of fake.linkListeners) l('live') })
+    await flush()
+    expect(reads()).toBe(start + 1)
+    const visibility = vi.spyOn(document, 'visibilityState', 'get')
+    visibility.mockReturnValue('hidden')
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+    await flush()
+    expect(reads()).toBe(start + 1)
+    visibility.mockReturnValue('visible')
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+    await flush()
+    expect(reads()).toBe(start + 2)
+    visibility.mockRestore()
+  })
   test('one list failing keeps the other\'s number and its own last one', async () => {
     fake.actions.mockResolvedValue([card()]); fake.questions.mockResolvedValue([question(), question()])
     await act(async () => root.render(createElement(Badge)))
@@ -97,6 +126,40 @@ describe('the badge', () => {
     expect(shown.at(-1)).toBe(4)
     expect(warn).toHaveBeenCalledTimes(1)
     warn.mockRestore()
+  })
+  test('an answer while a read is out: one more read runs after it (shared by every ask meanwhile), so the badge ends at the new number', async () => {
+    let release: (v: ActionCard[]) => void = () => {}
+    fake.actions.mockReturnValueOnce(new Promise<ActionCard[]>(r => { release = r }))
+    fake.questions.mockResolvedValue([])
+    const first = readAsks()
+    // The answer lands on the server, then two asks to read again come while the first read is out.
+    fake.actions.mockResolvedValue([])
+    const second = readAsks()
+    expect(readAsks()).toBe(second)
+    expect(fake.actions).toHaveBeenCalledTimes(1)
+    release([card()])
+    await act(async () => { await first; await second })
+    expect(fake.actions).toHaveBeenCalledTimes(2)
+    await act(async () => root.render(createElement(Badge)))
+    await flush()
+    expect(shown.at(-1)).toBe(0)
+  })
+  test('a change in the bell\'s list (a new notice, such as a question waiting) reads again; the same list does not', async () => {
+    fake.actions.mockResolvedValue([]); fake.questions.mockResolvedValue([])
+    await act(async () => root.render(createElement(Badge)))
+    await flush()
+    expect(shown.at(-1)).toBe(0)
+    const reads = fake.questions.mock.calls.length
+    // Another change in the client's state, the bell's list the same: no read.
+    await act(async () => { for (const l of fake.meListeners) l() })
+    await flush()
+    expect(fake.questions).toHaveBeenCalledTimes(reads)
+    fake.questions.mockResolvedValue([question()])
+    fake.notifications = [{ id: 'qw_q_1' }]
+    await act(async () => { for (const l of fake.meListeners) l() })
+    await flush()
+    expect(fake.questions).toHaveBeenCalledTimes(reads + 1)
+    expect(shown.at(-1)).toBe(1)
   })
   test('nothing is read, and nothing counts, for the Inhouse team or before me() is in', async () => {
     fake.actions.mockResolvedValue([card()]); fake.questions.mockResolvedValue([])

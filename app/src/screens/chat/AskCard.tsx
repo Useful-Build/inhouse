@@ -1,18 +1,21 @@
 // An action the agent proposed, as its card (Stage 1 M2-H, N15, N18): in a chat (the `ask` part) and on Approvals. It
 // shows the server's words, offers only what `can` allows, counts the hold down from the server's clock, and reads the
-// card again when an `action.updated` names it or while it settles (the hold's end, the send). The buttons send the rev
-// the card was read at; a refusal says why, and a conflict shows the card as it is now.
+// card again when an `action.updated` names it or while it settles (the hold's end, the send: with backoff, through
+// failed reads, until it settles). The buttons send the rev the card was read at; a refusal says why, a conflict shows
+// the card as it is now, and a refusal with no card in it reads the card again.
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { agent } from '../../agent'
 import type { ActionCard } from '../../agent/types'
+import { AgentError } from '../../agent/types'
+import { NOT_FOUND } from '../../../shared/contract/error-codes'
 import { NEEDS_CHECK } from '../../../shared/contract/action-states'
 import { useUi } from '../../state/store'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button, Icon } from '../../ui'
 import { CONFIRMATION_SHEET } from '../../ui/agent'
-import { SETTLE_EVERY_MS, SETTLE_TRIES, answeredToast, buttonsOf, factsOf, holdLeftMs, holdText, kickerOf, outcomeOf, refusalOf, settling } from './ask-card'
-import type { CardButton } from './ask-card'
+import { ALWAYS_STAYS, answeredToast, buttonsOf, factsOf, holdLeftMs, holdText, kickerOf, outcomeOf, refusalOf, settleDelayMs, settling } from './ask-card'
+import type { CardButton, Whose } from './ask-card'
 import { readAsks } from '../../shell/asks-count'
 
 /** A card as read, and when (on the browser's clock), so the hold's countdown is the server's gap less the time since. */
@@ -26,15 +29,24 @@ const ICON: Record<ActionCard['state'], string> = {
 /**
  * `actionId` names the card; `initial` is the card when the caller has already read it (Approvals' list). `onChange`
  * hears every newer card (an answer, a re-read). `onOpenChat` adds an Open link for a card whose chat this person may
- * open (`chatId` is set).
+ * open (`chatId` is set). `whose` is the asker's name when the card isn't the viewer's own (ask-card.ts `whoseCard`).
  */
-export function AskCard({ actionId, initial, onChange, onOpenChat, className }: {
-  actionId: string; initial?: ActionCard; onChange?: (card: ActionCard) => void; onOpenChat?: (chatId: string) => void; className?: string
+export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null, className }: {
+  actionId: string; initial?: ActionCard; onChange?: (card: ActionCard) => void; onOpenChat?: (chatId: string) => void; whose?: Whose; className?: string
 }) {
   const [read, setRead] = useState<Read | null>(() => (initial ? { card: initial, at: Date.now() } : null))
   const [failed, setFailed] = useState<string | null>(null)
+  // The card is gone on the server (a read answered not found): no button is offered any more.
+  const [gone, setGone] = useState(false)
+  // Bumped after each settling read, whether it worked or not, so the next one is always scheduled.
+  const [settleReads, setSettleReads] = useState(0)
+  // This card was answered "Always allow" here: Undo then says the permission stays.
+  const [allowedAlways, setAllowedAlways] = useState(false)
+  const headingRef = useRef<HTMLHeadingElement>(null)
   const [refusal, setRefusal] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // Set at once on a press (state lags a render), so a double click can't send twice.
+  const pressing = useRef(false)
   const [now, setNow] = useState(() => Date.now())
   const showToast = useUi(s => s.showToast)
   const titleId = useId()
@@ -44,50 +56,56 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, className }: 
   const onChangeRef = useRef(onChange)
   useEffect(() => { onChangeRef.current = onChange })
 
+  const state = useRef<ActionCard['state'] | null>(initial?.state ?? null)
   const take = useCallback((card: ActionCard) => {
     if (card.rev < rev.current) return
     rev.current = card.rev
+    // A card that moved by itself (to "Needs a check", back to waiting, settled) changes what waits on this person.
+    if (state.current !== null && state.current !== card.state) void readAsks()
+    state.current = card.state
     setRead({ card, at: Date.now() })
     setNow(Date.now())
     setFailed(null)
     onChangeRef.current?.(card)
   }, [])
 
-  const load = useCallback(() => {
-    agent.action(actionId).then(take, (e: unknown) => {
-      // A card already on screen stays; only a first read that failed says so.
-      if (rev.current === 0) setFailed(refusalOf(e).text)
-    })
-  }, [actionId, take])
+  const load = useCallback((): Promise<void> => agent.action(actionId).then(take, (e: unknown) => {
+    // A first read that failed says so (with Try again). A card already on screen stays; gone, it offers nothing more.
+    if (rev.current === 0) setFailed(refusalOf(e).text)
+    else if (e instanceof AgentError && e.code === NOT_FOUND) setGone(true)
+    else console.warn('Inhouse: could not read the action again.', e)
+  }), [actionId, take])
 
-  useEffect(() => { if (!initial) load() }, [initial, load])
+  useEffect(() => { if (!initial) void load() }, [initial, load])
   // An `action.updated` for this card, newer than what is on screen: read it again.
   useEffect(() => agent.onActionUpdated(u => { if (u.actionId === actionId && u.rev > rev.current) load() }), [actionId, load])
 
   const card = read?.card ?? null
   const left = card && read ? holdLeftMs(card, now - read.at) : null
-  // The hold's countdown ticks once a second; at its end, and while it goes out, the card is read again until it settles.
+  // The hold's countdown ticks once a second; at its end, and while it goes out, the card is read again until it settles:
+  // with backoff (ask-card.ts `settleDelayMs`), never giving up, and on through a read that failed.
   useEffect(() => {
-    if (!card || !settling(card)) { tries.current = 0; return }
+    if (!card || !settling(card) || gone) { tries.current = 0; return }
     if (left !== null && left > 0) {
       const t = setTimeout(() => setNow(Date.now()), Math.min(1000, left))
       return () => clearTimeout(t)
     }
-    if (tries.current >= SETTLE_TRIES) return
-    const t = setTimeout(() => { tries.current++; load() }, SETTLE_EVERY_MS)
+    const t = setTimeout(() => { tries.current++; void load().finally(() => setSettleReads(n => n + 1)) }, settleDelayMs(tries.current))
     return () => clearTimeout(t)
-  }, [card, left, load, now])
+  }, [card, left, load, now, gone, settleReads])
 
   if (!card) {
     return (
-      <div className={cn(CONFIRMATION_SHEET, 'w-prose-measure text-sm text-muted-foreground', className)} data-action-card="loading" role="status">
-        {failed ?? 'Loading the action.'}
+      <div className={cn(CONFIRMATION_SHEET, 'flex w-prose-measure flex-wrap items-center gap-2 text-sm text-muted-foreground', className)} data-action-card="loading" role="status">
+        <span className="min-w-0 flex-1">{failed ?? 'Loading the action.'}</span>
+        {failed !== null && <Button variant="outline" size="sm" onClick={() => { setFailed(null); void load() }}>Try again</Button>}
       </div>
     )
   }
 
   const press = (b: CardButton) => {
-    if (busy) return
+    if (pressing.current) return
+    pressing.current = true
     setBusy(true)
     setRefusal(null)
     const sent = b.kind === 'answer' ? agent.answerAction(card.id, card.rev, b.choice)
@@ -95,18 +113,27 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, className }: 
         : agent.resolveAction(card.id, card.rev, b.outcome)
     sent.then(next => {
       take(next)
+      if (b.kind === 'answer' && b.choice === 'always') setAllowedAlways(true)
+      // The pressed button is gone with the old state: keep the keyboard on the card.
+      headingRef.current?.focus()
       // The sidebar's badge counts what waits on this person: read it again.
       void readAsks()
-      showToast(answeredToast(b.kind === 'answer' ? b.choice : b.kind === 'undo' ? 'undo' : b.outcome), { icon: 'check', ms: 4000 })
+      const words = answeredToast(b.kind === 'answer' ? b.choice : b.kind === 'undo' ? 'undo' : b.outcome)
+      showToast(b.kind === 'undo' && allowedAlways ? `${words} ${ALWAYS_STAYS}` : words, { icon: 'check', ms: 4000 })
     }, (e: unknown) => {
       const r = refusalOf(e)
       setRefusal(r.text)
+      // A conflict: someone or something moved the card first, so what waits on this person may have changed.
+      if (e instanceof AgentError && e.code === 'conflict') void readAsks()
+      // The card as it is now: from the conflict, else read again (the buttons follow the server's card).
       if (r.current) take(r.current)
-    }).finally(() => setBusy(false))
+      else void load()
+    }).finally(() => { pressing.current = false; setBusy(false) })
   }
 
-  const buttons = buttonsOf(card)
-  const outcome = outcomeOf(card)
+  const buttons = gone ? [] : buttonsOf(card)
+  const outcome = outcomeOf(card, whose)
+  const alwaysStays = allowedAlways && card.state === 'undone'
   const holdLine = left !== null ? holdText(left) : null
   const waitingLapse = card.state === 'waiting' && card.lapsed
   return (
@@ -117,8 +144,8 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, className }: 
           <Icon name={ICON[card.state]} size={20} />
         </span>
         <div className="min-w-0 flex-1">
-          <div className={cn('text-sm', card.state === NEEDS_CHECK ? 'font-medium text-warning-text' : 'text-muted-foreground')}>{kickerOf(card)}</div>
-          <h3 id={titleId} className="text-md font-strong tracking-card wrap-anywhere">{card.title}</h3>
+          <div className={cn('text-sm', card.state === NEEDS_CHECK ? 'font-medium text-warning-text' : 'text-muted-foreground')}>{kickerOf(card, whose)}</div>
+          <h3 id={titleId} ref={headingRef} tabIndex={-1} className="text-md font-strong tracking-card wrap-anywhere outline-none">{card.title}</h3>
         </div>
         {onOpenChat && card.chatId && (
           <button type="button" onClick={() => onOpenChat(card.chatId!)} aria-label={`Open the chat: ${card.title}`}
@@ -137,6 +164,7 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, className }: 
       </div>
       {waitingLapse && <p className="m-0 mt-3 text-sm text-warning-text">{card.lapsed}</p>}
       {outcome && <p className="m-0 mt-3 text-sm font-strong text-foreground-2">{outcome}</p>}
+      {alwaysStays && <p className="m-0 mt-1 text-sm text-foreground-2">{ALWAYS_STAYS}</p>}
       {holdLine && (
         <p className="m-0 mt-3 flex items-center gap-2 text-sm font-strong" data-hold>
           <Icon name="schedule" size={17} /><span role="timer" aria-live="off">{holdLine}</span>

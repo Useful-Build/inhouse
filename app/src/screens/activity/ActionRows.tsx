@@ -8,29 +8,41 @@
 import { useCallback, useEffect, useState } from 'react'
 import { agent } from '../../agent'
 import type { ActionCard, Permission } from '../../agent/types'
-import { useUi } from '../../state/store'
+import { useCtx, useUi } from '../../state/store'
 import { fmtWhen } from '../../lib/format'
 import { display, nowOf } from '../../state/display'
 import { Button, Icon, SectionHeader } from '../../ui'
 import { Confirm } from '../../ui/fields'
 import { removeRefusal } from '../settings/permission-words'
+import { useBrandPerson } from '../../shell/asks-count'
 import { ACTION_ROWS_MAX, actionLine, stopAllowing } from './action-rows'
+import { whoseCard } from '../chat/ask-card'
+import type { Whose } from '../chat/ask-card'
 
 export function ActionRows({ needle }: { needle: string }) {
   const showToast = useUi(s => s.showToast)
   const openSettings = useUi(s => s.openSettings)
   const [actions, setActions] = useState<ActionCard[] | null>(null)
   const [permissions, setPermissions] = useState<Permission[]>([])
-  const [asking, setAsking] = useState<Permission | null>(null)
+  const { data } = useCtx()
+  // Only a brand person has actions and permissions (routes 110 and 120): the Inhouse team reads nothing here.
+  const brandPerson = useBrandPerson()
+  const [asking, setAsking] = useState<{ permission: Permission; whose: Whose } | null>(null)
   const [refusal, setRefusal] = useState<string | null>(null)
-  const readPermissions = useCallback(() => { agent.permissions().then(setPermissions, () => setPermissions([])) }, [])
+  const meId = agent.me()?.memberId
+  const whose = (a: ActionCard) => whoseCard(a, meId, id => data.people.members.find(m => m.id === id)?.name)
+  // A list that can't be read shows nothing here (the audit log has every action, and Approvals says when a read fails),
+  // and says so in the console.
+  const readPermissions = useCallback(() => {
+    agent.permissions().then(setPermissions, (e: unknown) => { console.warn('Inhouse: could not read the permissions for Activity.', e); setPermissions([]) })
+  }, [])
   useEffect(() => {
-    // A list that can't be read shows nothing here: the audit log has every action, and Approvals says when a read fails.
-    agent.actions().then(a => setActions(a.slice(0, ACTION_ROWS_MAX)), () => setActions([]))
+    if (!brandPerson) return
+    agent.actions().then(a => setActions(a.slice(0, ACTION_ROWS_MAX)), (e: unknown) => { console.warn("Inhouse: could not read the agent's actions for Activity.", e); setActions([]) })
     readPermissions()
-  }, [readPermissions])
+  }, [brandPerson, readPermissions])
 
-  const rows = (actions ?? []).filter(a => !needle || actionLine(a).toLowerCase().includes(needle))
+  const rows = (brandPerson ? (actions ?? []) : []).filter(a => !needle || actionLine(a, whose(a)).toLowerCase().includes(needle))
   if (rows.length === 0) return null
   const now = nowOf(), d0 = display()
   const stop = (p: Permission) => {
@@ -50,17 +62,19 @@ export function ActionRows({ needle }: { needle: string }) {
           return (
             <li key={a.id} data-activity-action={a.state} className="flex min-h-13 flex-wrap items-center gap-x-3.5 gap-y-1.5 rounded-lg py-2 pr-3 pl-3">
               <Icon name="bolt" size={19} className="flex-none text-muted-foreground" />
-              <span className="min-w-0 flex-1 basis-48 text-md text-pretty wrap-anywhere">{actionLine(a)}</span>
+              <span className="min-w-0 flex-1 basis-48 text-md text-pretty wrap-anywhere">{actionLine(a, whose(a))}</span>
               <span className="flex-none text-sm whitespace-nowrap text-muted-foreground tabular-nums">{fmtWhen(a.askedAt, now, d0)}</span>
-              {offer?.kind === 'one' && <Button variant="soft" size="sm" aria-label={`Stop allowing this: ${a.title}`} onClick={() => setAsking(offer.permission)}>Stop allowing this</Button>}
+              {offer?.kind === 'one' && <Button variant="soft" size="sm" aria-label={`Stop allowing this: ${a.title}`} onClick={() => setAsking({ permission: offer.permission, whose: whose(a) })}>Stop allowing this</Button>}
               {offer?.kind === 'many' && <Button variant="soft" size="sm" aria-label={`Stop allowing this: ${a.title}`} onClick={() => openSettings('you-permissions')}>Stop allowing this</Button>}
             </li>
           )
         })}
       </ul>
       {asking && (
-        <Confirm label="Stop allowing this?" title="Stop allowing this?" action="Remove" onCancel={() => setAsking(null)} onConfirm={() => { const p = asking; setAsking(null); stop(p) }}>
-          {`${asking.title}. Your Inhouse agent will ask before it does this again.`}
+        <Confirm label="Stop allowing this?" title="Stop allowing this?" action="Remove" onCancel={() => setAsking(null)} onConfirm={() => { const p = asking.permission; setAsking(null); stop(p) }}>
+          {asking.whose === null
+            ? `${asking.permission.title}. Your Inhouse agent will ask before it does this again.`
+            : `${asking.permission.title}, for ${asking.whose}. Your Inhouse agent will ask ${asking.whose} before it does this again.`}
         </Confirm>
       )}
     </section>

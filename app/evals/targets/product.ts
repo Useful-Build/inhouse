@@ -440,6 +440,19 @@ export function writesFromRows(before: MemoryRow[], after: MemoryRow[], caseId: 
   return out
 }
 
+/** The tool a turn parks on (Stage 1 M2-Q, N16): the chat then waits on the person's answer, with no answer or end row. */
+export const QUESTION_ASK = 'mcp__inhouse__question_ask'
+
+/** An open question the agent asked in this chat (route 140, the chat owner's list), or null. */
+export interface ParkedQuestion { question: string; options: string[] }
+export function parkedQuestionOf(items: { chatId: string | null; state: string; question: string; options: string[] }[], chatId: string): ParkedQuestion | null {
+  const q = items.find((x) => x.chatId === chatId && x.state === 'open')
+  return q ? { question: q.question, options: q.options } : null
+}
+
+/** What a parked turn's answer reads as for grading: the question and its options, as the person sees them. */
+export const parkedAnswer = (q: ParkedQuestion): string => `Asked: ${q.question}\nOptions: ${q.options.join(' | ')}`
+
 /** One case-repeat's chats (exported for the read-side set's scripted proof, which signs in on a PR's test build). */
 export function productSession(d: SessionDeps): Session {
   const turns: string[] = []
@@ -497,9 +510,12 @@ export function productSession(d: SessionDeps): Session {
       turns.push(turnId)
 
       // The turn has ended once its answer is stored: the projection writes a turn's messages in one batch when it ends.
+      // A lone `question_ask` (on in every build since M2-H) parks the turn instead: no answer and no end row, the chat
+      // waiting on the person's answer. That open question is the turn's end here (T10 grades the call).
       let answer = ''
       let sawError = false
       let failure: string | undefined
+      let parked: ParkedQuestion | null = null
       for (;;) {
         if (o?.signal?.aborted) throw new Error('the chat was aborted')
         const page = await d.api('current', 'GET', `/api/chats/${chatId}`, { signal: o?.signal })
@@ -519,6 +535,15 @@ export function productSession(d: SessionDeps): Session {
           sawError = mine.some((m) => m.part?.type === 'error')
           if (sawError) failure = 'error_part'
           break
+        }
+        if (!end) {
+          const open = await d.api('current', 'GET', '/api/questions', { signal: o?.signal })
+          d.must(open, 'read the open questions', [200])
+          parked = parkedQuestionOf(open.json.items, chatId)
+          if (parked) {
+            answer = parkedAnswer(parked)
+            break
+          }
         }
         await d.sleep(d.pollMs)
       }
@@ -547,6 +572,10 @@ export function productSession(d: SessionDeps): Session {
         return JSON.stringify(seeded) === JSON.stringify(c.input) ? c : { ...c, seedInput: seeded }
       })
       for (const w of writes) if (!used.has(w)) toolCalls.push(w)
+      // The parked call, as the open question shows it, if the trace doesn't hold it: its text and options are graded.
+      if (parked && !toolCalls.some((c) => c.name === QUESTION_ASK)) {
+        toolCalls.push({ name: QUESTION_ASK, input: { question: parked.question, options: parked.options }, result: 'Asked; the chat waits on the answer (seen from the open question, route 140)', isError: false })
+      }
       // P5 (#337): the turn must have been sent the system prompt v3 naming Shopify as connected. The static v2 fallback, no
       // version recorded, or a v3 line naming no store fails the run with that reason (never a pass).
       const promptBad = promptFailure(promptSentOf(trace.json))

@@ -1,7 +1,7 @@
 // A question the agent asked this person (Stage 1 M2-H, N16): the question, its 2 to 4 options as buttons, and what
 // happened once answered. The answer is the option's text, exactly. Answered by someone else, expired or withdrawn:
 // the card says so. Kept but not delivered (503): the same answer can be sent again.
-import { useId, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { agent } from '../../agent'
 import type { Question } from '../../agent/types'
 import { AgentError } from '../../agent/types'
@@ -17,25 +17,33 @@ export function QuestionCard({ question, onOpenChat }: { question: Question; onO
   const [q, setQ] = useState(question)
   const [mine, setMine] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
+  // Set at once on a press (state lags a render), so a double click can't send twice.
+  const pressing = useRef(false)
   const [error, setError] = useState<{ text: string; retry: string | null } | null>(null)
   const showToast = useUi(s => s.showToast)
   const titleId = useId()
+  const headingRef = useRef<HTMLHeadingElement>(null)
 
   const answer = (choice: string) => {
-    if (busy) return
+    if (pressing.current) return
+    pressing.current = true
     setBusy(choice)
     setError(null)
     agent.answerQuestion(q.id, choice).then(next => {
       setMine(true)
       setQ(next)
+      // The option buttons are gone once answered: keep the keyboard on the card.
+      headingRef.current?.focus()
       void readAsks()
       showToast('Answer sent. Your Inhouse agent carries on.', { icon: 'check', ms: 4000 })
     }, (e: unknown) => {
+      // A conflict: answered by someone else, expired or withdrawn, so it no longer waits on this person.
+      if (e instanceof AgentError && e.code === 'conflict') void readAsks()
       if (e instanceof AgentError && e.code === 'conflict' && e.current) setQ(e.current as unknown as Question)
       else if (e instanceof AgentError && e.code === 'unavailable') setError({ text: "Your answer is saved, but the chat couldn't be reached.", retry: choice })
       else if (e instanceof AgentError && e.code === NOT_FOUND) setError({ text: "This question isn't there any more.", retry: null })
       else setError({ text: e instanceof AgentError ? e.message : 'Something went wrong. Try again.', retry: null })
-    }).finally(() => setBusy(null))
+    }).finally(() => { pressing.current = false; setBusy(null) })
   }
 
   const outcome = questionOutcome(q, mine)
@@ -47,7 +55,7 @@ export function QuestionCard({ question, onOpenChat }: { question: Question; onO
         </span>
         <div className="min-w-0 flex-1">
           <div className="text-sm text-muted-foreground">Your Inhouse agent asks</div>
-          <h3 id={titleId} className="text-md font-strong tracking-card whitespace-pre-line wrap-anywhere">{q.question}</h3>
+          <h3 id={titleId} ref={headingRef} tabIndex={-1} className="text-md font-strong tracking-card whitespace-pre-line wrap-anywhere outline-none">{q.question}</h3>
         </div>
         {onOpenChat && q.chatId && (
           <button type="button" onClick={() => onOpenChat(q.chatId!)} aria-label={`Open the chat: ${q.question}`}

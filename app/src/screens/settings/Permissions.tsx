@@ -12,6 +12,7 @@ import { Confirm } from '../../ui/fields'
 import { LoadError } from '../../ui/retry'
 import { cn } from '@/lib/utils'
 import { permissionDesc, removeRefusal } from './permission-words'
+import { useBrandPerson } from '../../shell/asks-count'
 
 type ListState = { status: 'loading' } | { status: 'error'; error: AgentErrorCode } | { status: 'ready'; items: Permission[] }
 
@@ -24,11 +25,13 @@ export function Permissions() {
   const [refusal, setRefusal] = useState<string | null>(null)
   const me = agent.me()
   const nameOf = (id: string) => data.people.members.find(m => m.id === id)?.name
+  // Only a brand person has permissions (route 110 refuses anyone else): the Inhouse team reads nothing here.
+  const brandPerson = useBrandPerson()
 
   const read = useCallback(() => {
     agent.permissions().then(items => setList({ status: 'ready', items }), (e: unknown) => setList({ status: 'error', error: e instanceof AgentError ? e.code : 'unknown' }))
   }, [])
-  useEffect(read, [read])
+  useEffect(() => { if (brandPerson) read() }, [brandPerson, read])
 
   const remove = (p: Permission) => {
     setBusy(p.id)
@@ -42,6 +45,7 @@ export function Permissions() {
     }).finally(() => setBusy(null))
   }
 
+  if (!brandPerson) return null
   if (list.status === 'loading') return <p role="status" className="mt-6 text-sm text-muted-foreground">Loading what your Inhouse agent may do.</p>
   if (list.status === 'error') return <LoadError what="what your Inhouse agent may do" error={list.error} onRetry={() => { setList({ status: 'loading' }); read() }} />
   return (

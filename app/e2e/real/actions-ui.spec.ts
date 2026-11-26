@@ -15,7 +15,8 @@ import { expect, test } from '../support/test-build/index.js'
 import { open, signInAs } from '../support/clients/real.js'
 import type { Who } from '../support/clients/real.js'
 import { actor, call, me } from '../api/kit.ts'
-import { hook, requestAction, setCeiling } from '../api/fakes-kit.ts'
+import { hook, hubCall, requestAction, setCeiling } from '../api/fakes-kit.ts'
+import { SHOPIFY_READ, connectShopifyAccount } from '../support/test-build/shopify-account.ts'
 
 const OPERATION = 'shopify.order.tag_add'
 /** The fake write store's shop and one of its orders (test/upstreams/shopify/write/server.ts). */
@@ -53,8 +54,30 @@ async function removePermissions(request: APIRequestContext) {
   }
 }
 
+let restoreAccount: (() => void) | null = null
+
+// The brand's Shopify account gets the hub's connect date in D1 for this file's run, and is put back after (N9: an
+// action's generation is that date; nothing in the product writes it before M2-D). Local only (the file's D1).
+test.beforeAll(async ({ request }) => {
+  test.skip(!!process.env.E2E_TEST_BUILD_REMOTE, "writes the local D1's account row, which a deployed test build has no copy of")
+  // The hub's account answers a read (its client-credentials grant), so it has a connect date to give.
+  expect((await hubCall(request, SHOPIFY_READ.method, SHOPIFY_READ.name, SHOPIFY_READ.args)).ok).toBe(true)
+  const tools = await call(request, actor('admin'), 'GET', '/api/tools')
+  expect(tools.status, tools.text).toBe(200)
+  const since = (tools.json as { details?: { shopify?: { since?: { ms?: number } } } }).details?.shopify?.since?.ms
+  expect(since, 'the hub gives the Shopify account a connect date').toEqual(expect.any(Number))
+  restoreAccount = connectShopifyAccount(since!)
+})
+test.afterAll(async ({ request }) => {
+  await setCeiling(request, OPERATION, false)
+  restoreAccount?.()
+  restoreAccount = null
+})
+
 test.beforeEach(async ({ request }) => { await removePermissions(request) })
-test.afterEach(async ({ request }) => { await writeFault(request, 'succeed'); await removePermissions(request) })
+// The test build's server is shared: each case's operation is turned off again (seed() turns it on), the store's fault
+// cleared and no permission left behind.
+test.afterEach(async ({ request }) => { await setCeiling(request, OPERATION, false); await writeFault(request, 'succeed'); await removePermissions(request) })
 
 const cardOf = (page: Page, tag: string) => page.locator('[data-action-card]').filter({ hasText: `Tag: ${tag}` })
 /** The card's answers (its Open link, for a chat the viewer may open, sits apart). */
@@ -117,8 +140,11 @@ test('No: nothing goes out and the card offers nothing more', async ({ page, con
 test("An admin sees a member's card with its facts but no button to answer it (N15)", async ({ page, context, request }) => {
   const tag = await seed(request, 'memberA')
   await signedIn(page, context, 'admin', '#/approvals')
+  // Listed apart from the admin's own, saying whose it is.
+  await expect(page.getByRole('heading', { name: 'Waiting on your team' })).toBeVisible()
   const card = cardOf(page, tag)
   await expect(card.getByRole('heading', { name: TITLE })).toBeVisible()
+  await expect(card).toContainText('Waiting for Dana Kim')
   await expect(card).toContainText('Shopify')
   // No answer, and no way into the member's chat.
   await expect(card.getByRole('button')).toHaveCount(0)
@@ -130,9 +156,11 @@ test('Always allow lists the permission under Settings > Always allowed, and Rem
   const card = cardOf(page, tag)
   await card.getByRole('button', { name: 'Always allow' }).click()
   await expect(page.locator('[data-toast]').filter({ hasText: "Allowed. Your Inhouse agent won't ask next time." })).toBeVisible()
-  // Taken back in the hold: the permission stays, and nothing is sent.
+  // Taken back in the hold: the permission stays (the card and the toast say so), and nothing is sent.
   await card.getByRole('button', { name: `Undo: ${TITLE}` }).click()
   await expect(card).toContainText('You took it back. Nothing went out.')
+  await expect(card).toContainText('Always allow stays on. Remove it in Settings, Always allowed.')
+  await expect(page.locator('[data-toast]').filter({ hasText: 'Taken back. Nothing went out. Always allow stays on.' })).toBeVisible()
 
   await open(page, 'admin', '#/settings/you-permissions')
   await expect(page.getByRole('heading', { level: 1, name: 'Always allowed' })).toBeVisible()

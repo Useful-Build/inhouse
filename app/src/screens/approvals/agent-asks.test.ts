@@ -6,7 +6,10 @@
 //    (and the lost delivery can't be sent again);
 //  - Remove shows on a permission whose `can.remove` is false, removes without asking, or sends another rev;
 //  - Activity offers "Stop allowing this" with no permission behind it, or removes one that doesn't cover the action;
-//  - a failed read says nothing.
+//  - a failed read says nothing, or Activity's reads fail without a word in the console;
+//  - an admin's view of a member's card is listed as the admin's own, or speaks as if it were ("You said no");
+//  - "Stop allowing this" on a member's action offers another member's permission on the same account;
+//  - the Inhouse team (routes 110, 120 and 140 refuse them) gets a read, and so a refusal banner, on any of these screens.
 import { createElement } from 'react'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -25,9 +28,10 @@ vi.mock('../../agent', () => ({
     me: () => ({ memberId: 'm_Admin' }),
   },
 }))
-const badge = vi.hoisted(() => ({ reads: 0, published: [] as number[][] }))
+const badge = vi.hoisted(() => ({ reads: 0, published: [] as number[][], brandPerson: true }))
 vi.mock('../../shell/asks-count', () => ({
   readAsks: async () => { badge.reads++ },
+  useBrandPerson: () => badge.brandPerson,
   publishAsks: (a: unknown[], q: unknown[]) => { badge.published.push([a.length, q.length]) },
 }))
 vi.mock('../../state/store', () => {
@@ -70,7 +74,7 @@ let host: HTMLDivElement
 let root: ReturnType<typeof createRoot>
 beforeEach(() => {
   for (const f of [fake.actions, fake.questions, fake.answerQuestion, fake.permissions, fake.removePermission]) f.mockReset()
-  fake.toasts = []; fake.opened = []; fake.settings = []; badge.reads = 0; badge.published = []
+  fake.toasts = []; fake.opened = []; fake.settings = []; badge.reads = 0; badge.published = []; badge.brandPerson = true
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
 afterEach(() => { act(() => root.unmount()); host.remove(); document.body.innerHTML = '' })
@@ -100,7 +104,28 @@ describe('the demo looks as before', () => {
   })
 })
 
+describe('the Inhouse team', () => {
+  test('Approvals, Always allowed and Activity read nothing and show nothing', async () => {
+    badge.brandPerson = false
+    for (const el of [createElement(AgentAsks), createElement(Permissions), createElement(ActionRows, { needle: '' })]) {
+      await show(el)
+      expect(host.innerHTML).toBe('')
+    }
+    expect([fake.actions, fake.questions, fake.permissions].map(f => f.mock.calls.length)).toEqual([0, 0, 0])
+  })
+})
+
 describe('Approvals: questions and actions', () => {
+  test("an admin sees a member's card apart, under Waiting on your team, saying whose it is", async () => {
+    fake.actions.mockResolvedValue([card(), card({ id: 'ac_GGGGGGGGGGGGGGGGGGGGGG', askedBy: 'm_Dana', title: 'Tag order 7', can: NONE })]); fake.questions.mockResolvedValue([])
+    await show(createElement(AgentAsks))
+    expect(host.querySelector('#agent-actions')?.textContent).toMatch(/^Actions for you\W+1$/)
+    expect(host.querySelector('#agent-team-actions')?.textContent).toMatch(/^Waiting on your team\W+1$/)
+    const team = host.querySelector('[aria-labelledby="agent-team-actions"]')!
+    expect(team.textContent).toContain('Waiting for Dana Kim')
+    expect(team.textContent).toContain('Tag order 7')
+    expect(team.querySelectorAll('button')).toHaveLength(0)
+  })
   test('both sections show with their counts; a failed read says so and reads again', async () => {
     fake.actions.mockResolvedValue([card()]); fake.questions.mockResolvedValue([question()])
     await show(createElement(AgentAsks))
@@ -193,6 +218,26 @@ describe('Activity: Stop allowing this', () => {
     await press('Remove', document.body.querySelector('[role="alertdialog"], [role="dialog"]') ?? document.body)
     expect(fake.removePermission).toHaveBeenCalledWith('pg_BBBBBBBBBBBBBBBBBBBBBB', 4)
     expect(buttons()).toEqual([])
+  })
+  test("a member's action, seen by an admin: says whose, and offers only that member's permission, naming them", async () => {
+    fake.actions.mockResolvedValue([card({ state: 'denied', askedBy: 'm_Dana', can: NONE })])
+    // The admin's own permission on the same account isn't the one behind Dana's action.
+    fake.permissions.mockResolvedValue([permission(), permission({ id: 'pg_DDDDDDDDDDDDDDDDDDDDDD', rev: 2, holder: { kind: 'member', memberId: 'm_Dana' } })])
+    fake.removePermission.mockResolvedValue([permission()])
+    await show(createElement(ActionRows, { needle: '' }))
+    expect(host.textContent).toContain('Add a tag to order 9001. Dana Kim said no. Nothing went out.')
+    await press('Stop allowing this: Add a tag to order 9001', host)
+    expect(document.body.textContent).toContain('Add tags to orders, for Dana Kim. Your Inhouse agent will ask Dana Kim before it does this again.')
+    await press('Remove', document.body.querySelector('[role="alertdialog"], [role="dialog"]') ?? document.body)
+    expect(fake.removePermission).toHaveBeenCalledWith('pg_DDDDDDDDDDDDDDDDDDDDDD', 2)
+  })
+  test("a read that fails shows nothing, and says so in the console", async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    fake.actions.mockRejectedValue(new AgentError('unavailable', 'x')); fake.permissions.mockRejectedValue(new AgentError('unavailable', 'x'))
+    await show(createElement(ActionRows, { needle: '' }))
+    expect(host.innerHTML).toBe('')
+    expect(warn).toHaveBeenCalledTimes(2)
+    warn.mockRestore()
   })
   test('two permissions on the tool: the row points to Settings instead; the search narrows the rows', async () => {
     fake.actions.mockResolvedValue([card({ state: 'sent', result: 'Sent.', can: NONE })])

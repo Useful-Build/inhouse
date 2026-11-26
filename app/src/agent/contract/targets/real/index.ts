@@ -258,7 +258,7 @@ function realTarget(origin: string): ContractTarget {
       }
     },
     async seedWaitingMemory(texts) { return seedWaitingMemory(s, (await ready()).admin, texts) },
-    async seedAction() { return actionsWorld.seedAction((await ready()).admin) },
+    async seedAction() { return actionsWorld.seedAction((await ready()).admin, s) },
     async failNextSend(on) { await actionsWorld.failNextSend(on) },
     async failSaves(on) { failAllSaves = on },
     async injectError(method, code) { if (code) armedErrors.set(method, code); else armedErrors.delete(method) },

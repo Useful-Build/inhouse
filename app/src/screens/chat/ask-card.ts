@@ -11,9 +11,32 @@ import { display } from '../../state/display'
 /** What Approvals lists: what waits for an answer, what is in its hold or going out, and what needs a check. */
 export const OPEN_STATES: ActionState[] = ['waiting', 'approved', 'sending', NEEDS_CHECK]
 
-/** How often a settling card is read again, and how many times before it waits for an `action.updated` instead. */
+/**
+ * How long a settling card waits before its next read: every 2 s for the first 15 reads (30 s, the dispatcher's limit
+ * twice over), then twice as long each time, up to 30 s. It never stops on its own: a card in its hold or going out
+ * reads itself until it settles, whatever reads fail on the way (no server event is relied on).
+ */
 export const SETTLE_EVERY_MS = 2000
-export const SETTLE_TRIES = 30
+export const SETTLE_FAST_TRIES = 15
+export const SETTLE_MAX_MS = 30_000
+export function settleDelayMs(tries: number): number {
+  if (tries < SETTLE_FAST_TRIES) return SETTLE_EVERY_MS
+  return Math.min(SETTLE_MAX_MS, SETTLE_EVERY_MS * 2 ** (tries - SETTLE_FAST_TRIES + 1))
+}
+
+/**
+ * Whose card it is, as the words say it: null for the viewer's own (the card says "you"), else the asker's name (an
+ * admin sees a member's card on Approvals and in Activity, N15).
+ */
+export type Whose = string | null
+
+/** The asker's name for a card that isn't the viewer's, else null. An unknown name is "a teammate". */
+export function whoseCard(card: ActionCard, meId: string | undefined, nameOf: (id: string) => string | undefined): Whose {
+  if (meId === undefined || card.askedBy === meId) return null
+  return nameOf(card.askedBy) ?? 'a teammate'
+}
+
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
 /** One button on the card: its label, and what pressing it sends. */
 export type CardButton =
@@ -34,9 +57,11 @@ export const GUARDRAIL_TEXT: Readonly<Record<Guardrail, string>> = {
 }
 
 /** The small line over the title: what the card is asking, or where it got to. */
-export function kickerOf(card: ActionCard): string {
+export function kickerOf(card: ActionCard, whose: Whose = null): string {
   switch (card.state) {
-    case 'waiting': return card.kind === 'exact' ? 'Needs your approval' : 'Your Inhouse agent asks first'
+    case 'waiting':
+      if (whose !== null) return `Waiting for ${whose}`
+      return card.kind === 'exact' ? 'Needs your approval' : 'Your Inhouse agent asks first'
     case 'approved': return 'Approved'
     case 'sending': return 'Going out now'
     case 'sent': return 'Done'
@@ -60,13 +85,13 @@ export function factsOf(card: ActionCard): string[] {
 }
 
 /** What the card says once it isn't waiting for an answer (null while it waits, or in its hold). */
-export function outcomeOf(card: ActionCard): string | null {
+export function outcomeOf(card: ActionCard, whose: Whose = null): string | null {
   switch (card.state) {
     case 'waiting': case 'approved': return null
-    case 'sending': return 'It is going out now.'
+    case 'sending': return "It's going out now."
     case 'sent': case 'failed': case NEEDS_CHECK: return card.result ?? null
-    case 'undone': return 'You took it back. Nothing went out.'
-    case 'denied': return 'You said no. Nothing went out.'
+    case 'undone': return `${whose === null ? 'You' : cap(whose)} took it back. Nothing went out.`
+    case 'denied': return `${whose === null ? 'You' : cap(whose)} said no. Nothing went out.`
     case 'withdrawn': return card.lapsed ?? 'It was withdrawn. Nothing went out.'
     case 'expired': return card.lapsed ?? 'No one answered in 7 days. Nothing went out.'
   }
@@ -115,10 +140,16 @@ export function holdText(leftMs: number): string {
   return `Goes out in ${s} ${s === 1 ? 'second' : 'seconds'}`
 }
 
+/** What Undo after "Always allow" adds: Undo takes back this action only, and the permission stays. */
+export const ALWAYS_STAYS = 'Always allow stays on. Remove it in Settings, Always allowed.'
+
 /** A card whose state will change by itself soon (the hold ending, the send): read again until it settles. */
 export const settling = (card: ActionCard): boolean => card.state === 'approved' || card.state === 'sending'
 
-/** What the card says when an answer was refused. A conflict's card as it is now replaces the old one (`current`). */
+/**
+ * What the card says when an answer was refused. A conflict's card as it is now replaces the old one (`current`); with
+ * no `current` (or any other refusal), the card reads itself again so its buttons are the server's.
+ */
 export function refusalOf(e: unknown): { text: string; current: ActionCard | null } {
   if (!(e instanceof AgentError)) return { text: 'Something went wrong. Try again.', current: null }
   const current = e.code === 'conflict' && e.current ? (e.current as unknown as ActionCard) : null

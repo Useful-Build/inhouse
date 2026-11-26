@@ -5,7 +5,12 @@
 //  - the hold's countdown follows the browser's clock instead of the server's gap, or Undo is missing in the hold;
 //  - a conflict leaves the old card up with no word, or a refusal says nothing;
 //  - an `action.updated` for the card doesn't read it again, or one for another card (or an older rev) does;
-//  - the chat's part (no `initial`) never reads the card.
+//  - the chat's part (no `initial`) never reads the card, or a first read that failed can't be tried again;
+//  - a settling card (its hold over, or going out) stops reading itself after a failed read or after a minute, and
+//    freezes on "Going out now" with Undo (no server event is relied on);
+//  - a refusal with no card in it leaves the old buttons up without reading the card again; a card gone offers buttons;
+//  - Undo after Always allow doesn't say the permission stays; the keyboard is lost when the pressed button goes;
+//  - someone else's card (an admin's view) speaks as if it were the viewer's.
 import { createElement } from 'react'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -32,6 +37,7 @@ vi.mock('../../shell/asks-count', () => ({ readAsks: async () => { badge.reads++
 vi.mock('../../state/store', () => ({ useUi: (pick: (s: { showToast: (t: string) => void }) => unknown) => pick({ showToast: (t: string) => { fake.toasts.push(t) } }) }))
 
 const { AskCard } = await import('./AskCard')
+const { settleDelayMs } = await import('./ask-card')
 
 declare global { var IS_REACT_ACT_ENVIRONMENT: boolean }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -143,10 +149,74 @@ describe('answering', () => {
     expect(text()).toContain('You said no. Nothing went out.')
     expect(buttons()).toEqual([])
     fake.answerAction.mockRejectedValueOnce(new AgentError('forbidden', 'x'))
+    fake.action.mockResolvedValueOnce(card({ id: 'ac_BBBBBBBBBBBBBBBBBBBBBB' }))
     await show({ actionId: 'ac_BBBBBBBBBBBBBBBBBBBBBB', initial: card({ id: 'ac_BBBBBBBBBBBBBBBBBBBBBB' }) })
     await press('No')
     expect(host.querySelector('[role="alert"]')?.textContent).toBe("You can't answer this one.")
+    // Read again, so the buttons are the server's.
+    expect(fake.action).toHaveBeenCalledWith('ac_BBBBBBBBBBBBBBBBBBBBBB')
     expect(buttons()).toEqual(['Allow once', 'Always allow', 'No'])
+  })
+  test('a conflict with no card in it reads the card again and shows it as it is now', async () => {
+    fake.answerAction.mockRejectedValueOnce(new AgentError('conflict', 'x'))
+    fake.action.mockResolvedValueOnce(card({ rev: 2, state: 'denied', can: NONE }))
+    await show({ actionId: AC, initial: card() })
+    await press('Allow once')
+    expect(fake.action).toHaveBeenCalledTimes(1)
+    expect(text()).toContain('This changed before your answer arrived.')
+    expect(text()).toContain('You said no. Nothing went out.')
+    expect(buttons()).toEqual([])
+  })
+  test('a card gone from the server (not found on the read after a refusal) offers no button', async () => {
+    fake.answerAction.mockRejectedValueOnce(new AgentError('not_found', 'x'))
+    fake.action.mockRejectedValueOnce(new AgentError('not_found', 'x'))
+    await show({ actionId: AC, initial: card() })
+    await press('Allow once')
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe("This isn't there any more.")
+    expect(buttons()).toEqual([])
+  })
+  test('Undo after Always allow says the permission stays and where to remove it', async () => {
+    fake.answerAction.mockResolvedValueOnce(card({ rev: 2, state: 'approved', sendAt: instant(NOW + 10_000), can: { ...NONE, undo: true } }))
+    fake.undoAction.mockResolvedValueOnce(card({ rev: 3, state: 'undone', can: NONE }))
+    await show({ actionId: AC, initial: card() })
+    await press('Always allow')
+    await press('Undo')
+    expect(fake.toasts).toEqual(["Allowed. Your Inhouse agent won't ask next time.", 'Taken back. Nothing went out. Always allow stays on. Remove it in Settings, Always allowed.'])
+    expect(text()).toContain('You took it back. Nothing went out.Always allow stays on. Remove it in Settings, Always allowed.')
+  })
+  test('a double click sends once', async () => {
+    let settle: (c: ActionCard) => void = () => {}
+    fake.answerAction.mockReturnValueOnce(new Promise<ActionCard>(r => { settle = r }))
+    await show({ actionId: AC, initial: card() })
+    const b = [...host.querySelectorAll('button')].find(x => label(x) === 'Allow once')!
+    await act(async () => { b.click(); b.click() })
+    expect(fake.answerAction).toHaveBeenCalledTimes(1)
+    await act(async () => { settle(card({ rev: 2, state: 'denied', can: NONE })) })
+    await flush()
+  })
+  test('a card read again that moved by itself, and a conflict, read the badge again', async () => {
+    fake.action.mockResolvedValueOnce(card({ rev: 3, state: 'needs_check', result: 'Unclear.', can: { ...NONE, resolve: true } }))
+    await show({ actionId: AC, initial: card({ rev: 2, state: 'sending', can: NONE }) })
+    const before = badge.reads
+    await tick(2000)
+    await flush()
+    expect(badge.reads).toBe(before + 1)
+    fake.resolveAction.mockRejectedValueOnce(new AgentError('conflict', 'x', { current: card({ rev: 3, state: 'needs_check', result: 'Unclear.', can: { ...NONE, resolve: true } }) as unknown as Record<string, unknown> }))
+    await press('It went out')
+    expect(badge.reads).toBe(before + 2)
+  })
+  test('after an answer the keyboard stays on the card (its title), not lost with the pressed button', async () => {
+    fake.answerAction.mockResolvedValueOnce(card({ rev: 2, state: 'denied', can: NONE }))
+    await show({ actionId: AC, initial: card() })
+    await press('No')
+    expect(document.activeElement).toBe(host.querySelector('h3'))
+  })
+  test("someone else's card says whose it is", async () => {
+    await show({ actionId: AC, initial: card({ can: NONE }), whose: 'Dana Kim' })
+    expect(text()).toContain('Waiting for Dana Kim')
+    expect(text()).not.toContain('Your Inhouse agent asks first')
+    await show({ actionId: 'ac_BBBBBBBBBBBBBBBBBBBBBB', initial: card({ id: 'ac_BBBBBBBBBBBBBBBBBBBBBB', state: 'denied', can: NONE }), whose: 'Dana Kim' })
+    expect(text()).toContain('Dana Kim said no. Nothing went out.')
   })
 })
 
@@ -178,9 +248,52 @@ describe('reading the card again', () => {
     await tick(10_000)
     expect(fake.action).toHaveBeenCalledTimes(1)
   })
-  test('a card that cannot be read says so', async () => {
+  test('a card that cannot be read says so, and Try again reads it again', async () => {
     fake.action.mockRejectedValueOnce(new AgentError('not_found', 'x'))
     await show({ actionId: AC })
-    expect(text()).toBe("This isn't there any more.")
+    expect(text()).toBe("This isn't there any more.Try again")
+    fake.action.mockResolvedValueOnce(card())
+    await press('Try again')
+    expect(fake.action).toHaveBeenCalledTimes(2)
+    expect(buttons()).toEqual(['Allow once', 'Always allow', 'No'])
+  })
+  test('a settling card reads itself on through a failed read', async () => {
+    fake.action.mockRejectedValueOnce(new AgentError('unavailable', 'x'))
+    fake.action.mockResolvedValueOnce(card({ rev: 3, state: 'sent', result: 'Sent.', can: NONE }))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await show({ actionId: AC, initial: card({ rev: 2, state: 'approved', sendAt: instant(NOW + 1000), can: { ...NONE, undo: true } }) })
+    await tick(1000)
+    await tick(2000)
+    await flush()
+    expect(fake.action).toHaveBeenCalledTimes(1)
+    expect(text()).toContain('Going out now')
+    expect(warn).toHaveBeenCalledTimes(1)
+    await tick(2000)
+    await flush()
+    expect(fake.action).toHaveBeenCalledTimes(2)
+    expect(text()).toContain('Sent.')
+    expect(buttons()).toEqual([])
+    warn.mockRestore()
+  })
+  test('a send still going out after a minute is read on, more slowly, until it settles; then no more reads', async () => {
+    const SLOW = 40
+    fake.action.mockImplementation(async () => (fake.action.mock.calls.length >= SLOW
+      ? card({ rev: 4, state: 'sent', result: 'Sent.', can: NONE })
+      : card({ rev: 3, state: 'sending', can: NONE })))
+    await show({ actionId: AC, initial: card({ rev: 3, state: 'sending', can: NONE }) })
+    expect(text()).toContain("It's going out now.")
+    let waited = 0
+    for (let i = 0; i < SLOW; i++) {
+      waited += settleDelayMs(i)
+      await tick(settleDelayMs(i))
+      await flush()
+      expect(fake.action).toHaveBeenCalledTimes(i + 1)
+    }
+    // Past the old 30 reads (a minute), and slower once past the first 30 s.
+    expect(waited).toBeGreaterThan(5 * 60_000)
+    expect(settleDelayMs(SLOW)).toBe(30_000)
+    expect(text()).toContain('Sent.')
+    await tick(120_000)
+    expect(fake.action).toHaveBeenCalledTimes(SLOW)
   })
 })

@@ -102,6 +102,8 @@ interface Server {
   promptVersions?: (number | null)[] | null
   /** The trace's `promptApps` (default [['Shopify']]); null leaves the field out. */
   promptApps?: (string[] | null)[] | null
+  /** Route 140's open questions (default none): a chat polled with no answer yet reads them (a turn parked on one ends there). */
+  questions?: unknown[]
 }
 const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } => {
   const s: Server = {
@@ -143,6 +145,7 @@ const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } 
       if (s.stopStatus) return json({ error: { code: 'unavailable' } }, s.stopStatus)
       return n < (s.stopsBeforeEnded ?? 0) ? json({}) : json({ error: { code: 'conflict', reason: 'turn_ended' } }, 409)
     }
+    if (url.pathname === '/api/questions' && method === 'GET') return json({ items: s.questions ?? [] })
     if (url.pathname === '/api/models') return json({ default: 'sonnet', modes: [{ id: 'sonnet' }] })
     if (url.pathname === '/api/tools') return json(s.tools ?? { connected: ['shopify'], details: { shopify: { name: 'Shopify' } }, connection: {} })
     if (url.pathname === '/api/usage') return json({ cap: { minor: s.capMinor ?? 5000, currency: 'USD' }, total: { minor: s.spentMinor ?? 0, currency: 'USD' } })
