@@ -109,12 +109,12 @@ export const alertStatement = (db: D1Database, code: 'key_reused' | 'tz_invalid'
   db.prepare('INSERT INTO routine_alerts (code, last_at_ms, count) VALUES (?, ?, 1) ON CONFLICT (code) DO UPDATE SET last_at_ms = excluded.last_at_ms, count = count + 1')
     .bind(code, nowMs)
 
-/** A slot's own Activity line (source `routine-slot`): fixed words, the run as its trace, shown from the routine's stage. */
+/** A slot's own Activity line (source `routine-slot`): fixed words, the run as its trace. */
 export function slotLine(
-  db: D1Database, l: { template: ActivityTemplateId; fields?: FieldValues; key: string; need: number; runId: string | null; atMs: number }, guard?: ActivityGuard,
+  db: D1Database, l: { template: ActivityTemplateId; fields?: FieldValues; key: string; runId: string | null; atMs: number }, guard?: ActivityGuard,
 ): D1PreparedStatement {
   return recordActivity(db, {
-    template: l.template, fields: l.fields ?? {}, kind: ACTIVITY_TEMPLATES[l.template].kind, minStage: l.need as 0 | 1 | 2, atMs: l.atMs, ...(l.runId ? { trace: l.runId } : {}),
+    template: l.template, fields: l.fields ?? {}, kind: ACTIVITY_TEMPLATES[l.template].kind, atMs: l.atMs, ...(l.runId ? { trace: l.runId } : {}),
   }, { source: 'routine-slot', key: l.key }, guard)
 }
 

@@ -97,13 +97,25 @@ export interface ReserveInput {
   /** The turn model's API id (its per-turn ceiling). */
   model: string
   nowMs: number
+  /** An already opened job to charge alongside this turn's calendar month. */
+  jobId?: string
 }
 
+export interface OpenJobInput { jobId: string; rootTurnId: string; nowMs: number }
+
+// W0-A failure-code seam: the ledger and admission ports speak N3's code even before the shared event schema does.
+export type JobBudgetRefusal = 'job_budget'
+export type UsageExtendRefusal = 'cap_reached' | 'turn_budget' | 'held' | JobBudgetRefusal
+
 export interface UsageLedgerPort {
+  /** Snapshot the job budget and charge its root turn once. */
+  openJob(input: OpenJobInput): Promise<void>
+  /** Fence new holds. Existing holds still settle or release. */
+  closeJob(jobId: string): Promise<void>
   /** The turn's start hold, idempotent by turn id. */
-  reserve(t: ReserveInput): Promise<{ reservedMicro: number } | { refused: 'cap_reached' | 'budget_busy' }>
+  reserve(t: ReserveInput): Promise<{ reservedMicro: number } | { refused: 'cap_reached' | 'budget_busy' | JobBudgetRefusal }>
   /** Raise the turn's hold before admitting a call, idempotent by `(turnId, callId)`; every answer carries the hold after it. */
-  extend(turnId: string, callId: string, needMicro: number): Promise<({ ok: true } | { refused: 'cap_reached' | 'turn_budget' | 'held' }) & { ledgerHold: number }>
+  extend(turnId: string, callId: string, needMicro: number): Promise<({ ok: true } | { refused: UsageExtendRefusal }) & { ledgerHold: number }>
   /** Record a call's actual cost and set the turn's hold to `holdMicro`; a no-op once the turn is final. */
   close(turnId: string, callId: string, actualMicro: number, holdMicro: number): Promise<{ ledgerHold: number }>
   /** Final, from the tally only (design 9); the runner's own cost estimate is logged beside it, never added. */
@@ -173,7 +185,7 @@ export interface ModelCallUsage {
 }
 
 /** `granted`: send the upstream call after one confirming renew; `refused`: answer 400; `busy`: answer 503 for this call. */
-export type AdmitAnswer = { granted: true } | { refused: 'cap_reached' | 'turn_budget' | 'budget_busy' } | { busy: true }
+export type AdmitAnswer = { granted: true } | { refused: 'cap_reached' | 'turn_budget' | 'budget_busy' | JobBudgetRefusal } | { busy: true }
 /** `gone`: the row was already closed (lease or unconfirmed grant): abort the upstream call. */
 export type LeaseAnswer = { ok: true } | { gone: true }
 

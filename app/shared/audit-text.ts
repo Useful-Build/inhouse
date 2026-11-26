@@ -104,6 +104,8 @@ const NOTIFY_DETAIL: Record<string, string> = {
   slack_unavailable: 'Slack couldn’t be reached',
   rate_limited: 'Slack asked to slow down',
   to_bell: 'sent to the bell until the Act stage',
+  channel_to_bell: 'sent to the bell, not Slack',
+  slack_off: 'Slack posts are off for now',
   no_alerts_channel: 'no alerts channel is set',
   below_act: 'Slack posts start at the Act stage',
   app_origin_missing: 'the app link isn’t set up at the hub',
@@ -189,7 +191,7 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'memory.restored': return { what: 'brought back a team memory', detail: 'It waits for an admin’s OK' }
     case 'ops_task_revive': return { what: 'restarted a stuck background task', detail: `${args.kind}: ${REVIVE[args.result]} (release job)` }
     // P4 (wave-4 PR0). Never a routine name, an instruction, a file name or an item title: the line holds none.
-    case 'routine.created': return { what: 'set up a routine', detail: `Needs the ${NEED[args.need]} stage` }
+    case 'routine.created': return { what: 'set up a routine', detail: args.need === undefined ? '' : `Needs the ${NEED[args.need]} stage` }
     case 'routine.updated': return { what: 'changed a routine', detail: CHANGED_ORDER.filter(c => args.changed.includes(c)).map(c => CHANGED[c]).join(', ').replace(/^./, c => c.toUpperCase()) }
     case 'routine.enabled': return { what: args.on ? 'turned a routine on' : 'turned a routine off', detail: '' }
     case 'routine.deleted': return { what: 'deleted a routine', detail: '' }
@@ -219,7 +221,7 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
       if (args.target === 'unlisted') return { what: 'a notice didn’t go out', detail: 'Slack: a channel that isn’t listed' }
       const where = args.kind === 'slack' ? 'Slack' : args.target === 'admins' ? 'the admins’ bell' : `${who(args.target)}’s bell`
       const why = args.detail ? NOTIFY_DETAIL[args.detail] ?? args.detail : ''
-      if (args.outcome === 'posted') return { what: args.kind === 'slack' ? 'posted a notice to Slack' : 'sent a notice to the bell', detail: args.detail === 'to_bell' ? `${where}: ${why}` : where }
+      if (args.outcome === 'posted') return { what: args.kind === 'slack' ? 'posted a notice to Slack' : 'sent a notice to the bell', detail: args.detail === 'to_bell' || args.detail === 'channel_to_bell' ? `${where}: ${why}` : where }
       if (args.outcome === 'unknown') return { what: 'may have posted a notice', detail: `${where}: no answer, not retried` }
       return { what: 'a notice didn’t go out', detail: why ? `${where}: ${why}` : where }
     }

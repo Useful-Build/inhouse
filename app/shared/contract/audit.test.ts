@@ -225,7 +225,8 @@ describe('P4 lines (wave-4 PR0)', () => {
     expect(ok({ action: 'routine.updated', routineId: rt, changed: ['instruction'], instruction: 'Check refunds' })).toBe(false)
   })
 
-  it('routine.created: need is a whole number 0 to 2 (failure 7)', () => {
+  it('routine.created: a new line has no need; an old line\'s need is a whole number 0 to 2 (failure 7)', () => {
+    expect(ok({ action: 'routine.created', routineId: rt })).toBe(true)
     for (const need of [0, 1, 2]) expect(ok({ action: 'routine.created', routineId: rt, need }), String(need)).toBe(true)
     for (const need of [-1, 3, 1.5, '1', null]) expect(ok({ action: 'routine.created', routineId: rt, need }), String(need)).toBe(false)
   })
@@ -401,6 +402,10 @@ describe('P5 (p5-w4): notice lines carry ids, closed codes, a length and a hash 
     expect(okLine(send)).toBe(true)
     expect(okLine({ ...send, source: 'approvals', runId: undefined, systemKey: 'p6:n_1:2026112109', noticeKind: 'approval_waiting', kind: 'bell', target: 'admins', outcome: 'posted', detail: undefined })).toBe(true)
     expect(okLine({ action: 'notify.channels', added: ['C0TEST0001'], removed: ['C0TEST0002'], alerts: null })).toBe(true)
+  })
+  it('takes the M2-F details (channel_to_bell, slack_off) and still the stage-era ones on old lines', () => {
+    for (const detail of ['channel_to_bell', 'slack_off', 'to_bell', 'below_act']) expect(okLine({ ...send, detail }), detail).toBe(true)
+    expect(okLine({ ...send, detail: 'at_watch' })).toBe(false)
   })
   it("takes 'unlisted' as a target, never the agent's channel name", () => {
     expect(okLine({ ...send, target: 'unlisted' })).toBe(true)
