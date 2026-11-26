@@ -144,6 +144,7 @@ const DISPATCH_TIMEOUT_MS = 120
 const NOTICE_RUN = 'r_wsNoticeRun00000000000'
 
 const PEOPLE = ['m_ws_a', 'm_ws_b', 'm_ws_d', 'm_ws_e'] as const
+const INHOUSE = 'm_ws_ih'
 type Person = (typeof PEOPLE)[number]
 const START_ROLE: Record<Person, MemberRole> = { m_ws_a: 'member', m_ws_b: 'member', m_ws_d: 'admin', m_ws_e: 'admin' }
 const emailOf = (id: string) => `${id.replaceAll('_', '-')}@example.test`
@@ -336,7 +337,7 @@ type Step =
   | { k: 'late' }
   | { k: 'resolve'; i: number; by: Target; outcome: 'sent' | 'failed' }
   | { k: 'notice'; who: Who | 'system'; origin: 'chat' | 'job' | 'routine'; replay: 'none' | 'same' | 'refused' }
-  | { k: 'alerts'; marked: boolean; by: Who }
+  | { k: 'alerts'; marked: boolean; by: Who | 'inhouse' }
 
 const who = fc.constantFrom<Who>(0, 1, 2, 3)
 const target = fc.oneof({ weight: 3, arbitrary: fc.constant('own' as const) }, { weight: 1, arbitrary: who })
@@ -393,7 +394,7 @@ const stepArb: fc.Arbitrary<Step> = fc.oneof(
     origin: fc.constantFrom('chat' as const, 'chat' as const, 'job' as const, 'routine' as const),
     replay: fc.constantFrom('none' as const, 'none' as const, 'none' as const, 'same' as const, 'refused' as const),
   })),
-  W(3, fc.record({ k: fc.constant('alerts' as const), marked: fc.constantFrom(true, true, false), by: fc.constantFrom<Who>(2, 2, 3, 0) })),
+  W(3, fc.record({ k: fc.constant('alerts' as const), marked: fc.constantFrom(true, true, false), by: fc.constantFrom<Who | 'inhouse'>(2, 2, 3, 0, 'inhouse') })),
 )
 
 // ---------- the world ----------
@@ -413,6 +414,11 @@ async function setup(o: World): Promise<void> {
     db.prepare("INSERT INTO connector_accounts (account_id, connector, last_state, last_state_at_ms, connected_at_ms, shop) VALUES (?, 'shopify', 'connected', 1, ?, ?)").bind(SHOP, T0 - 2_000, SHOPIFY_WRITE_SHOP),
     db.prepare("INSERT INTO connector_accounts (account_id, connector, last_state, last_state_at_ms, connected_at_ms) VALUES (?, 'slack', 'connected', 1, ?)").bind(SLACK, T0 - 1_000),
   ])
+  // An Inhouse team member: they may save the channel list (decision 19), but their alerts mark gives no grant (D4).
+  await db.prepare(
+    `INSERT INTO members (id, kind, role, status, name, created_at_ms) VALUES (?, 'inhouse', NULL, 'active', 'Inhouse person', 1)
+     ON CONFLICT (id) DO UPDATE SET status = 'active', removed_at_ms = NULL`,
+  ).bind(INHOUSE).run()
   await channel(db, CHANNEL_ID, 'ops', 'm_ws_d')
   if (o.ceiling) {
     await runBatch(db, (['shopify.order.tag_add', 'slack.channel.post'] as const).map(operation =>
@@ -481,6 +487,14 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
   const last: { request: LastRequest | null } = { request: null }
   type LastNotice = { toolUseId: string; jobId: string | null; args: Record<string, unknown>; memberId: string; chatId: string; routineAsker: string | null }
   const lastNotice: { notice: LastNotice | null } = { notice: null }
+  /**
+   * When the brand's grant to post to the channel may exist, in the test's own words (M2-N), not D1's: an active brand
+   * admin's save moved the alerts mark onto the listed channel while the operation was on and Slack connected. Unmarking,
+   * unlisting, a disconnect or reconnect, the operation off or its daily maximum lowered, and removing the grant all end
+   * it. W2 refuses a claim under a brand grant this record doesn't hold.
+   */
+  const brand = { marked: false, listed: true, ceilingOn: o.ceiling, perDayMax: 50, slackConnected: true, allowed: false, grantId: null as string | null }
+  const brandEnds = () => { brand.allowed = false; brand.grantId = null }
   /** Actions a routine's notice made, in the test's own words (W4 doesn't trust the row's `origin` for these). */
   const routineActions = new Set<string>()
   let permitClock = () => now
@@ -540,6 +554,7 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
         if (g.account_id !== pre.account_id || g.account_gen !== pre.account_gen || g.operation !== pre.operation || g.scope_key !== pre.scope_key) f.push('the grant does not cover it')
         const held = g.holder === `member:${pre.asked_by}` ? asker?.role === 'admin' || g.granted_role === 'member' : g.holder === 'brand' && g.granted_role === 'admin'
         if (!held) f.push('the grant is not the asker\'s')
+        if (g.holder === 'brand' && (!brand.allowed || brand.grantId !== g.id)) f.push('a brand grant the test never saw an admin give, or saw taken back')
         if (!ceiling || g.ceiling_rev !== ceiling.lowered_rev) f.push('the grant predates a lowered ceiling')
         if (g.policy_rev !== POLICY_REV) f.push('the grant was made under another policy')
       }
@@ -691,6 +706,7 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
         const g = live[s.i % live.length]
         const viewer = await actor(s.by === 'holder' ? g.holder_member ?? 'm_ws_d' : PEOPLE[s.by])
         await permissions.remove({ id: g.id, ifRev: g.rev }, viewer, { ...at(), actorId: viewer.memberId })
+        if (g.id === brand.grantId && (await db.prepare('SELECT revoked_at_ms FROM permission_grants WHERE id = ?').bind(g.id).first<number | null>('revoked_at_ms')) !== null) brandEnds()
         break
       }
       case 'role': {
@@ -715,10 +731,20 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
         // The admin takes the Slack channel off the list, or lists it again (the real store: its grants end with it).
         const current = await channels.list()
         await channels.save({ channels: s.listed ? [{ channelId: CHANNEL_ID, name: 'ops' }] : [], alertsChannelId: null, ifRev: current.rev }, at())
+        // The save clears the mark either way, and unlisting ends every grant on the channel.
+        brand.marked = false
+        brand.listed = s.listed
+        brandEnds()
         break
       }
       case 'ceiling':
         await runBatch(db, [setCeilingStmt({ operation: OPERATION[s.op], enabled: s.enabled, perDayMax: s.perDayMax, actorId: 'm_system', nowMs: now })])
+        if (s.op === 'slack') {
+          // Turning the operation off or lowering its daily maximum raises `lowered_rev`: every grant made before covers nothing.
+          if (!s.enabled || (brand.ceilingOn && s.perDayMax < brand.perDayMax)) brandEnds()
+          brand.ceilingOn = s.enabled
+          brand.perDayMax = s.perDayMax
+        }
         break
       case 'account': {
         const id = ACCOUNT[s.op]
@@ -728,10 +754,18 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
           now += 1
           await accounts.connectEnded(id, CONNECTOR[s.op], 'ok', 'connected', at())
           h.connectedAtMs = now
+          if (s.op === 'slack') {
+            brand.slackConnected = true
+            brandEnds()
+          }
         } else if (s.change === 'disconnect') {
           now += 1
           await accounts.recordDisconnect(id, CONNECTOR[s.op], { action: 'tools.disconnect', accountId: id, revoked: true }, at())
           h.connectedAtMs = null
+          if (s.op === 'slack') {
+            brand.slackConnected = false
+            brandEnds()
+          }
         } else if (s.change === 'hub_drift') {
           // The hub's account moved on and the product hasn't heard yet: the hub's own check is the line that holds.
           if (h.connectedAtMs !== null) h.connectedAtMs += 7
@@ -829,7 +863,19 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
         // An admin (or a member, whose save makes no grant) moves the alerts mark on or off the channel, if it's listed.
         const current = await channels.list()
         if (!current.channels.some(c => c.channelId === CHANNEL_ID)) break
-        await channels.save({ channels: current.channels.map(c => ({ channelId: c.channelId, name: c.name })), alertsChannelId: s.marked ? CHANNEL_ID : null, ifRev: current.rev }, { ...at(), actorId: PEOPLE[s.by] })
+        const actorId = s.by === 'inhouse' ? INHOUSE : PEOPLE[s.by]
+        const who = await memberOf(actorId)
+        const movesOn = s.marked && !brand.marked
+        const mayGrant = movesOn && who?.kind === 'person' && who.status === 'active' && who.role === 'admin' && brand.listed && brand.ceilingOn && brand.slackConnected
+        await channels.save({ channels: current.channels.map(c => ({ channelId: c.channelId, name: c.name })), alertsChannelId: s.marked ? CHANNEL_ID : null, ifRev: current.rev }, { ...at(), actorId })
+        if (!s.marked && brand.marked) brandEnds()
+        brand.marked = s.marked
+        if (mayGrant) {
+          // The id is D1's (the store mints it); whether a grant may exist at all is the record's.
+          const g = await db.prepare("SELECT id FROM permission_grants WHERE holder = 'brand' AND revoked_at_ms IS NULL").first<string>('id')
+          brand.allowed = g !== null
+          brand.grantId = g
+        }
         break
       }
     }
@@ -961,6 +1007,16 @@ describe('the write-safety gate (M2-S): no outside write without a live grant or
       { k: 'tick', ms: 11_000, alarm: { crash: null, flipAt: 0, latePermit: false, binding: 'ok' } },
     ], { ceiling: true })
     expect([noGrant.problems, noGrant.admitted, noGrant.effects]).toEqual([[], 2, 0])
+    // The mark taken back takes the grant with it; the Inhouse team's mark gives none. Neither notice goes out on its own.
+    const takenBack = await runSequence([
+      { k: 'alerts', marked: true, by: 2 },
+      { k: 'alerts', marked: false, by: 2 },
+      { k: 'notice', who: 0, origin: 'chat', replay: 'none' },
+      { k: 'alerts', marked: true, by: 'inhouse' },
+      { k: 'notice', who: 2, origin: 'chat', replay: 'none' },
+      { k: 'tick', ms: 11_000, alarm: { crash: null, flipAt: 0, latePermit: false, binding: 'ok' } },
+    ], { ceiling: true })
+    expect([takenBack.problems, takenBack.admitted, takenBack.effects]).toEqual([[], 2, 0])
   })
 
   it('holds W1 to W7 over random sequences of every kind of step', async () => {

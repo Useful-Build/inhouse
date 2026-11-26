@@ -520,10 +520,10 @@ export const SCENARIOS: Record<string, Scenario> = {
     'I sent the stock alert to #ops-alerts.',
   ),
 
-  /** The same alert while Slack posts are off (P5 ship S4; Stage 1 M2-N: the post is refused, nothing is asked or sent). */
+  /** The same alert while Slack posts are off (P5 ship S4; Stage 1 M2-N: the notice reaches the bell, not Slack, and the answer says so). */
   'connectors-notice-watch': toolsThenAnswer(
     [{ id: 'toolu_scripted_notice_watch', name: 'mcp__inhouse__notification_send', input: { to: { channels: ['#ops-alerts'] }, title: 'Stock alert', text: 'The Fern mug is almost out. Restock it this week.', format: 'message', link: { kind: 'today' } } }],
-    "I couldn't post the stock alert to #ops-alerts: Slack posts are turned off for this brand.",
+    "I sent the stock alert to your bell: Slack posts are turned off for this brand.",
   ),
 
   /** The same alert to a channel the admin did not list (P5 ship S4): the server refuses it. */

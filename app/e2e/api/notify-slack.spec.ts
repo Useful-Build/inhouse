@@ -72,15 +72,15 @@ const card = async (request: APIRequestContext, id: string) => (await call(reque
 /** Polls the card until it reaches `state` (BrandAgent's alarm runs the send after the 10 s hold). */
 const until = (request: APIRequestContext, id: string, state: string) => expect.poll(async () => (await card(request, id)).state, { timeout: 45_000, intervals: [500] }).toBe(state)
 
-test('the product\'s state (no operation on): a listed channel is refused, nothing is asked, the alerts mark gives no grant, Slack gets no call', async ({ request }) => {
+test('the product\'s state (no operation on): a listed channel\'s notice reaches the bell and says Slack is off; nothing is asked, the alerts mark gives no grant, Slack gets no call', async ({ request }) => {
   await markAlerts(request, null)
   await markAlerts(request, CHANNEL.opsAlerts)
   expect((await listed(request)).find(c => c.channelId === CHANNEL.opsAlerts)).toEqual({ channelId: CHANNEL.opsAlerts, name: 'ops-alerts', alerts: true })
   const before = await fakeState(request)
   const rows = readSql<{ n: number }>('SELECT COUNT(*) AS n FROM outbox_actions')[0]!.n
   const out = await notifySend(request, newRun(owner), msg())
-  expect(actionOf(out)).toMatchObject({ kind: 'slack', outcome: 'refused', detail: 'over_ceiling' })
-  expect(asText(out)).toContain('This kind of action is turned off for this brand')
+  expect(actionOf(out)).toMatchObject({ kind: 'bell', outcome: 'posted', detail: 'channel_to_bell', slack: 'slack_off' })
+  expect(asText(out)).toContain('sent to the bell (not Slack): Slack posts are turned off for this brand')
   expect(readSql<{ n: number }>('SELECT COUNT(*) AS n FROM outbox_actions')[0]!.n).toBe(rows)
   expect((await fakeState(request)).web.requests).toEqual(before.web.requests)
 })
@@ -214,7 +214,8 @@ for (const stage of ['Watch', 'Act', 'Run'] as const) {
     const chatId = await createChat(request, dana)
     const before = await fakeState(request)
     const out = await notifySend(request, { memberId: owner, chatId }, msg({ to: { members: [owner], channels: ['#ops-alerts'] }, text: `${marker} agent https://evil.test/x`, link: { kind: 'today' } }))
-    expect(actionOf(out)).toMatchObject({ outcome: 'refused', detail: 'over_ceiling' })
+    // While the operation is off the channel's notice reaches the bell (the orchestrator's decision), never Slack.
+    expect(actionOf(out)).toMatchObject({ kind: 'bell', outcome: 'posted', detail: 'channel_to_bell', slack: 'slack_off' })
     const system = await hook(request, { op: 'systemNotice', notice: {
       key: `e2e:${uniq()}`, source: 'approvals', kind: 'approval_waiting', to: { members: [owner], alertsChannel: true },
       body: `${marker} system`, link: { kind: 'today' },
@@ -254,7 +255,7 @@ test("the alerts channel shared, archived, private or no longer a member since i
     await fakeSet(request, { web: { channels: [{ id: CHANNEL.opsAlerts, patch: c.patch }] } })
     const mark = auditMax()
     const before = (await fakeState(request)).web.posts.length
-    const r = await hook(request, { op: 'systemNotice', notice: { key: `e2e:${uniq()}`, source: 'approvals', kind: 'approval_sent', to: { alertsChannel: true }, link: { kind: 'today' } } })
+    const r = await hook(request, { op: 'systemNotice', notice: { key: `e2e:${uniq()}`, source: 'approvals', kind: 'approval_waiting', to: { alertsChannel: true }, link: { kind: 'today' } } })
     expect(r.json, c.name).toEqual({ ok: true, recipients: [{ kind: 'slack', to: 'alerts', outcome: 'refused', detail: c.detail }] })
     expect((await fakeState(request)).web.posts.length, `${c.name}: no post`).toBe(before)
     expect(audited(mark, c.detail).map(a => a.outcome), `${c.name}: audited as refused`).toEqual(['refused'])

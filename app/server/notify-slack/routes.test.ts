@@ -286,6 +286,40 @@ describe('routes F, G and H', () => {
       expect((await grants()).map(x => x.revoke_reason).sort()).toEqual(['channel_unlisted', 'removed'])
     })
 
+    // Neon's review (round 1): the product dates Slack's connect by its own clock and the hub owns the sign-in; the first
+    // write request's sync copies the hub's date in and revokes grants on any other generation. So the mark syncs first.
+    it("the mark copies the hub's connection date in first, so the first post's sync keeps the grant", async () => {
+      await brand()
+      const { hub } = fakeHub()
+      const HUB_GEN = 9_000
+      const connect = {
+        async listAccounts() {
+          return { ok: true, value: [{ accountId: 'slack:workspace', connector: 'slack', status: { state: 'active', paused: false, connectedAt: { ms: HUB_GEN } } }] }
+        },
+      }
+      const p = await admin()
+      await db.prepare('DELETE FROM notify_channels').run()
+      const r = await putNotifyChannels({ ...routeCtx(p, hub, { method: 'PUT', path: '/api/notify/channels', body: { channelIds: ['C0TEST0001'], alertsChannelId: 'C0TEST0001', ifRev: await rev() } }), env: { HUB_DELIVERY: hub as unknown as Service, HUB_CONNECT: connect as unknown as Service } } as NotifyRouteCtx)
+      expect(r.status).toBe(200)
+      const [g] = await grants()
+      expect(g).toMatchObject({ account_gen: HUB_GEN, revoked_at_ms: null })
+      // The first post's sync (BrandAgent's hubAccounts, the same `syncFromHub`) finds nothing to change: the grant lives.
+      expect(await stores.connectors.syncFromHub('slack:workspace', 'slack', { connectedAtMs: HUB_GEN, shop: null }, { actorId: 'm_system', requestId: reqId(), nowMs: 10_000 })).toBe(false)
+      expect((await grants()).map(x => x.revoked_at_ms)).toEqual([null])
+      // Without that sync (the hub unread) the grant would take the product's date and lapse at the first post's sync.
+      await markAlertsWithout(p, hub)
+    })
+    /** Unmark, then mark with no HUB_CONNECT: the grant takes D1's date (7,000) and the hub's later sync (9,000) revokes it. */
+    async function markAlertsWithout(p: Principal, hub: ChannelsBinding) {
+      await db.prepare("UPDATE connector_accounts SET connected_at_ms = 7000 WHERE account_id = 'slack:workspace'").run()
+      expect((await put(p, hub, { channelIds: ['C0TEST0001'], alertsChannelId: null, ifRev: await rev() })).status).toBe(200)
+      expect((await put(p, hub, { channelIds: ['C0TEST0001'], alertsChannelId: 'C0TEST0001', ifRev: await rev() })).status).toBe(200)
+      const live = (await grants()).filter(x => x.revoked_at_ms === null)
+      expect(live.map(x => x.account_gen)).toEqual([7_000])
+      await stores.connectors.syncFromHub('slack:workspace', 'slack', { connectedAtMs: 9_000, shop: null }, { actorId: 'm_system', requestId: reqId(), nowMs: 11_000 })
+      expect((await grants()).filter(x => x.revoked_at_ms === null)).toEqual([])
+    }
+
     it('a stale save gives no grant', async () => {
       await brand()
       const { hub } = fakeHub()

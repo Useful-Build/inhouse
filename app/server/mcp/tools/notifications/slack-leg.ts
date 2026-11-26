@@ -9,15 +9,19 @@
 // are refused). One call may name up to 3 channels, and the outbox keys an action on `(chat_id, tool_use_id)`, so each
 // channel's action takes the invocation's id plus the channel's (`<tool_use_id>#<channel id>`): the same call made again
 // (a replay) answers each channel's own action as it is, and a channel the first try didn't ask for is refused, never
-// asked afresh. The chat's owner is asked; a routine's run asks its creator (N15), and a system routine has no one to ask.
+// asked afresh. The same notice to the same channel again in one run (another call) answers the first action, so it never
+// posts twice. The chat's owner is asked; a routine's run asks its creator (N15), and a system routine has no one to ask.
 // The result is never waited on here (a job's or a routine's turn never waits, and a notice shouldn't hold a chat): the
 // card is in the chat and in Approvals, and the outcome reaches the agent later, as for `approval_request` (N14 `report`).
+import type { ActionState } from '../../../../shared/contract/actions.ts'
 import type { MemberRole } from '../../../../shared/contract/members.ts'
 import { SYSTEM_MEMBER_ID } from '../../../db/ids.ts'
 import { first, stmt } from '../../../db/sql.ts'
 import type { ListedChannel, SlackLeg, SlackLegAnswer } from '../../../notify-slack/send.ts'
 import { outboxFacts } from '../../../outbox/facts.ts'
+import { PostArgsSchema } from '../../../outbox/operations/slack-channel-post.ts'
 import { openOutbox } from '../../../outbox/store.ts'
+import { scopeKeyOf } from '../../../permissions/resolve.ts'
 import type { Asker, Origin } from '../../../permissions/types.ts'
 import type { ToolScope } from '../../server/tool.ts'
 import type { NotifyAdmitted, NotifyWiring } from './deps.ts'
@@ -70,6 +74,18 @@ export function slackLeg(wiring: NotifyWiring, db: D1Database, scope: ToolScope,
       if (admitted.replay) {
         const prior = await first<{ id: string }>(db, stmt('SELECT id FROM outbox_actions WHERE chat_id = ? AND tool_use_id = ?', scope.chatId, toolUseId))
         if (!prior) return refused('not_admitted', LEG_TEXT.notAdmitted)
+      }
+      // The per-run repeat rule (as `notify_sends` had before M2-N): the same notice to the same channel in this run, under
+      // another call (a retry after a partial failure, a resumed turn), answers the first action as it is. Never a second
+      // action, so never a second post. The stored arguments are the parsed ones, compared as the outbox wrote them.
+      const parsed = PostArgsSchema.safeParse({ channel: channel.channelId, title: post.title, text: post.text })
+      if (parsed.success) {
+        const again = await first<{ id: string; state: ActionState; verdict: 'run' | 'ask' | 'exact' }>(db, stmt(
+          `SELECT id, state, verdict FROM outbox_actions WHERE chat_id = ? AND run_id = ? AND operation = 'slack.channel.post' AND scope_key = ? AND args_json = ?
+           ORDER BY created_at_ms, id LIMIT 1`,
+          scope.chatId, scope.runId, scopeKeyOf({ channelId: channel.channelId }), JSON.stringify(parsed.data),
+        ))
+        if (again) return { kind: 'action', actionId: again.id, state: again.state, verdict: again.verdict, created: false }
       }
       const r = await port.request(
         {

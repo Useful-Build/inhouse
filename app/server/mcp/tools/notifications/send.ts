@@ -50,7 +50,8 @@ function lineFor(r: RecipientOutcome, listed: string[]): string {
   const who = r.kind === 'slack' || channelToBell(r) ? (r.to.startsWith('#') ? r.to : `#${r.to}`) : r.to
   const again = r.repeat ? ' (the same notice again: nothing new sent)' : ''
   if (r.action) return actionLine(who, r.action)
-  if (r.refusal) return `${who}: refused: ${r.refusal.reason} (${r.refusal.text})`
+  if (r.refusal && channelToBell(r) && r.outcome === 'posted') return `${who}: sent to the bell (not Slack): ${r.refusal.text}${again}`
+  if (r.refusal && r.outcome === 'refused') return `${who}: refused: ${r.refusal.reason} (${r.refusal.text})`
   if (r.outcome === 'unknown') return `${who}: unknown: not retried${again}`
   if (r.outcome === 'posted') return `${who}: ${channelToBell(r) ? 'sent to the bell (not Slack)' : 'sent'}${again}`
   const reason = r.detail ?? 'slack_unavailable'
@@ -66,7 +67,8 @@ function render(out: AgentNoticeResult) {
   return answer(lines.join('\n'), {
     recipients: out.recipients.map(r => ({
       to: r.to, kind: r.kind, outcome: r.outcome, ...(r.detail ? { detail: r.detail } : {}), ...(r.repeat ? { repeat: true } : {}),
-      ...(r.refusal ? { detail: r.refusal.reason } : {}),
+      ...(r.refusal && r.outcome === 'refused' ? { detail: r.refusal.reason } : {}),
+      ...(r.refusal && r.outcome !== 'refused' ? { slack: r.refusal.reason } : {}),
       ...(r.action ? { approval_id: r.action.id, status: r.action.state, created: r.action.created } : {}),
     })),
     changed: out.changed,

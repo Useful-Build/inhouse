@@ -7,9 +7,10 @@
 //   builds: N14's admission, then `outbox.request()`), so it goes out only under a live grant (the brand's grant an admin
 //   gave by marking the channel for alerts, or a person's "Always allow") or once a person approves its card. With no
 //   operation enabled in the ceiling (N2, every deployable build) it is refused and nothing is asked or sent.
-// - The server's own fixed notices (an approval is waiting, a routine failed) post to the admin-marked alerts channel
-//   directly, through the hub's DeliveryGateway (`HUB_DELIVERY`), whose Slack SignIn re-checks, escapes once and posts
-//   with fixed parameters. Their title is a template; model text only ever in the bounded body.
+// - The server's own fixed notices (an approval is waiting, a routine failed: `ALERTS_KINDS`, nothing else) post to the
+//   admin-marked alerts channel directly, through the hub's DeliveryGateway (`HUB_DELIVERY`), whose Slack SignIn
+//   re-checks, escapes once and posts with fixed parameters. The alerts copy is fixed here, in the sender: the kind's
+//   template title and `NO_BODY_TEXT`, never a caller's `body` (that reaches the bell only).
 // - A member id reaches the bell only: never Slack in any form. An Inhouse member, a service row or anyone not an
 //   active person is `unknown_member`, so the agent is never told "sent" for a bell nobody reads.
 // - Model text goes only in the bell's `body`, the hub's title and text and the outbox's action arguments; never a
@@ -25,7 +26,7 @@ import { bellLink, checkLink } from '../../shared/notify/links.ts'
 import type { NoticeLinkInput } from '../../shared/notify/links.ts'
 import { auditInsert } from '../db/audit.ts'
 import { SYSTEM_MEMBER_ID } from '../db/ids.ts'
-import { all, stmt, storage } from '../db/sql.ts'
+import { all, first, stmt, storage } from '../db/sql.ts'
 import type { Stmt } from '../db/sql.ts'
 import { addNotice } from '../notices/store.ts'
 import { agentRow, capHit, reserveAgent, reserveSystem, settle, systemRow } from './store.ts'
@@ -116,6 +117,21 @@ export async function listedChannels(db: D1Database): Promise<ListedChannel[]> {
 
 /** A channel name as the agent may write it: exact, case-insensitive, an optional leading `#`. */
 export const channelKey = (name: string): string => name.replace(/^#/, '').toLowerCase()
+
+/**
+ * Whose bell a listed channel's notice reaches while `slack.channel.post` is off (Stage 1 M2-N, the orchestrator's
+ * decision; as before M2-N, OC-W4-2): the chat's owner when that's an active brand person, else the admins (an Inhouse
+ * member's test chat, a routine whose creator is gone, an unknown chat).
+ */
+export async function runPerson(db: D1Database, chatId: string): Promise<string | 'admins'> {
+  const row = await first<{ id: string; kind: string; status: string }>(db, stmt(
+    'SELECT m.id AS id, m.kind AS kind, m.status AS status FROM chats c JOIN members m ON m.id = c.owner_id WHERE c.id = ?', chatId,
+  ))
+  return row && row.kind === 'person' && row.status === 'active' ? row.id : 'admins'
+}
+
+/** What the agent reads when a listed channel's notice went to the bell because Slack posts are off. */
+export const SLACK_OFF_TEXT = 'Slack posts are turned off for this brand, so it went to the bell, not Slack.'
 
 // ---------- the hub's answer ----------
 
@@ -339,6 +355,7 @@ export async function notifyAgent(ctx: AgentNotifyCtx, scope: AgentScope, input:
     }
     out.recipients.push(await toBell(c, agentReserve('bell'), m, m, bell))
   }
+  let person: string | 'admins' | undefined
   for (const name of channels) {
     const l = byKey.get(channelKey(name))
     if (!l) {
@@ -350,6 +367,15 @@ export async function notifyAgent(ctx: AgentNotifyCtx, scope: AgentScope, input:
     // Q3 = A: the same rule as any Slack post. The outbox audits what it does (`action.requested`); a refusal writes
     // nothing there, as for any write tool. The app link isn't part of a post the outbox makes.
     const a = ctx.slack ? await ctx.slack.propose(l, { title: bounded.title, text: bounded.text }) : NO_SLACK_LEG
+    if (a.kind === 'refused' && a.reason === 'over_ceiling') {
+      // While `slack.channel.post` is off (every deployable build today) the notice doesn't vanish: it reaches the run
+      // person's bell, as before M2-N, and the agent is told it didn't go to Slack.
+      person ??= await runPerson(ctx.db, scope.chatId)
+      const toBellOutcome = await toBell(c, agentReserve('bell'), name, person, bell, 'channel_to_bell')
+      // A bell that was refused too (its own caps) says only why the bell refused it.
+      out.recipients.push(toBellOutcome.outcome === 'posted' ? { ...toBellOutcome, refusal: { reason: 'slack_off', text: SLACK_OFF_TEXT } } : toBellOutcome)
+      continue
+    }
     out.recipients.push(a.kind === 'refused'
       ? { kind: 'slack', to: name, outcome: 'refused', refusal: { reason: a.reason, text: a.text } }
       : { kind: 'slack', to: name, outcome: 'asked', action: { id: a.actionId, state: a.state, verdict: a.verdict, created: a.created } })
@@ -371,6 +397,9 @@ export type SystemNoticeInput = {
 
 export type SystemNoticeResult = { ok: true; recipients: RecipientOutcome[] } | { ok: false; error: 'invalid_args' }
 
+/** The only kinds whose copy may go to the alerts channel (Q3 = A: "an approval is waiting, a routine failed"). */
+export const ALERTS_KINDS: ReadonlySet<StoredSystemKind> = new Set(['approval_waiting', 'routine_failed'])
+
 const KEY = /^[A-Za-z0-9:_.-]{1,128}$/
 const RUN_ID = /^r_[A-Za-z0-9_-]{22}$/
 const MEMBER_ID = /^m_[A-Za-z0-9_-]{1,64}$/
@@ -388,6 +417,8 @@ function checkSystemInput(input: SystemNoticeInput): { kind: StoredSystemKind; l
   const to = input.to
   if (typeof to !== 'object' || to === null) return null
   if (to.alertsChannel !== undefined && to.alertsChannel !== true) return null
+  // Any other kind's alerts copy is refused outright (`invalid_args`): a new caller can't open the channel to its words.
+  if (to.alertsChannel && !ALERTS_KINDS.has(kind)) return null
   const members = to.members ?? []
   if (!Array.isArray(members) || members.length > 50 || members.some(m => typeof m !== 'string' || !MEMBER_ID.test(m))) return null
   if (members.length === 0 && !to.alertsChannel) return null
@@ -396,7 +427,8 @@ function checkSystemInput(input: SystemNoticeInput): { kind: StoredSystemKind; l
 
 /**
  * The server's own notice (section 3a, OC-W4-7): members' bells and the admin-marked alerts channel in one call, each
- * recipient with its own row and outcome. The title is the kind's template; model text only ever in the bounded `body`.
+ * recipient with its own row and outcome. The title is the kind's template; model text only ever in the bounded `body`,
+ * which only the bells carry: the alerts copy (`ALERTS_KINDS` only) is always the template's title and `NO_BODY_TEXT`.
  * Dedupe on the caller's whole key: a repeat within one key returns the first outcome and sends nothing.
  */
 export async function sendSystemNotice(
@@ -429,20 +461,6 @@ export async function sendSystemNotice(
 
   const alerts = input.to.alertsChannel ? (await listedChannels(ctx.db)).find(l => l.alerts) ?? null : null
 
-  if (bounded && !bounded.ok) {
-    const lines: Stmt[] = []
-    for (const m of checked.members) {
-      if (people.has(m)) lines.push(auditLine(c, 'bell', m, 'refused', bounded.reason))
-      recipients.push({ kind: 'bell', to: m, outcome: 'refused', detail: people.has(m) ? bounded.reason : 'unknown_member' })
-    }
-    if (input.to.alertsChannel) {
-      if (alerts) lines.push(auditLine(c, 'slack', alerts.channelId, 'refused', bounded.reason))
-      recipients.push({ kind: 'slack', to: 'alerts', outcome: 'refused', detail: bounded.reason })
-    }
-    if (lines.length > 0) await batch(ctx.db, lines)
-    return { ok: true, recipients }
-  }
-
   const runId = input.runId ?? null
   const systemReserve = (kind: SendKind) => (id: string, target: string): Reserve => ({
     stmt: reserveSystem({ id, source: input.source, runId, key: input.key, noticeKind: checked.kind, actorId: SYSTEM_MEMBER_ID, kind, target, sha, atMs: ctx.nowMs }),
@@ -451,17 +469,43 @@ export async function sendSystemNotice(
     runId,
     kind,
   })
-  for (const m of checked.members) {
-    if (!people.has(m)) {
-      recipients.push({ kind: 'bell', to: m, outcome: 'refused', detail: 'unknown_member' })
-      continue
+  if (bounded && !bounded.ok) {
+    // The body is refused for the bells (never cut). The alerts copy never carries it, so it goes on below.
+    const lines: Stmt[] = []
+    for (const m of checked.members) {
+      if (people.has(m)) lines.push(auditLine(c, 'bell', m, 'refused', bounded.reason))
+      recipients.push({ kind: 'bell', to: m, outcome: 'refused', detail: people.has(m) ? bounded.reason : 'unknown_member' })
     }
-    recipients.push(await toBell(c, systemReserve('bell'), m, m, { template: checked.kind, ...(body !== undefined ? { body } : {}), link: checked.link }))
+    if (lines.length > 0) await batch(ctx.db, lines)
+  } else {
+    for (const m of checked.members) {
+      if (!people.has(m)) {
+        recipients.push({ kind: 'bell', to: m, outcome: 'refused', detail: 'unknown_member' })
+        continue
+      }
+      recipients.push(await toBell(c, systemReserve('bell'), m, m, { template: checked.kind, ...(body !== undefined ? { body } : {}), link: checked.link }))
+    }
   }
   if (input.to.alertsChannel) {
     if (!alerts) recipients.push({ kind: 'slack', to: 'alerts', outcome: 'skipped', detail: 'no_alerts_channel' })
-    // Q3 = A: the server's own fixed notice goes to the alerts channel without a card.
-    else recipients.push(await toSlack(c, systemReserve('slack'), 'alerts', alerts.channelId, { title, text: body ?? NO_BODY_TEXT, link: checked.link }, `system:${input.source}`))
+    // Q3 = A: the server's own fixed notice goes to the alerts channel without a card, fixed here: the title and
+    // NO_BODY_TEXT, whatever `body` the caller passed.
+    else {
+      const ca: Common = { ...c, textLength: cp(NO_BODY_TEXT), changed: [] }
+      // One alerts copy per key, whichever channel holds the mark: a retry after the mark moved finds the first copy
+      // (its dedupe row is keyed by target too, so it's looked up here without one) and posts nothing.
+      const prior = await first<SendRow>(ctx.db, stmt(
+        "SELECT id, outcome, detail, slack_ts FROM notify_sends WHERE source <> 'agent' AND source = ? AND system_key = ? AND notice_kind = ? AND kind = 'slack' ORDER BY at_ms, id LIMIT 1",
+        input.source, input.key, checked.kind,
+      ))
+      if (prior) {
+        const rep = repeatOf(prior)
+        await batch(ctx.db, [auditLine(ca, 'slack', alerts.channelId, rep.outcome, rep.detail, true)])
+        recipients.push({ kind: 'slack', to: 'alerts', ...rep, repeat: true })
+      } else {
+        recipients.push(await toSlack(ca, systemReserve('slack'), 'alerts', alerts.channelId, { title, text: NO_BODY_TEXT, link: checked.link }, `system:${input.source}`))
+      }
+    }
   }
   return { ok: true, recipients }
 }

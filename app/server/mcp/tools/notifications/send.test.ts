@@ -145,15 +145,45 @@ describe('a post to a listed channel follows the same rule as any Slack post (M2
     expect(ops!.tool_use_id!.split('#')[0]).toBe(general!.tool_use_id!.split('#')[0])
   })
 
-  it('the operation off (no ceiling row, the product\'s state): refused in the outbox\'s words, nothing written, even with the alerts mark', async () => {
+  // The orchestrator's decision (review round 1): while the operation is off the notice doesn't vanish: the chat owner's
+  // bell gets it, as before M2-N, and the agent reads that it didn't go to Slack.
+  it('the operation off (no ceiling row, the product\'s state): no card, nothing to Slack; the bell copy, and the agent is told', async () => {
     const { scope } = await setup({ ceiling: false })
     await markAlerts('C0TEST0001')
     expect(await db.prepare('SELECT COUNT(*) AS n FROM permission_grants').first<number>('n'), 'no grant without the operation').toBe(0)
     const w = wiring()
-    const r = await send({ to: { channels: ['ops-alerts'] }, title: 'T', text: 'x', format: 'message' }, scope, w.deps)
-    expect(text(r)).toBe('#ops-alerts: refused: over_ceiling (This kind of action is turned off for this brand, so nothing was asked or sent.)')
+    const r = await send({ to: { channels: ['ops-alerts'] }, title: 'T', text: 'x off', format: 'message' }, scope, w.deps)
+    expect(text(r)).toBe('#ops-alerts: sent to the bell (not Slack): Slack posts are turned off for this brand, so it went to the bell, not Slack.')
+    expect((r.structuredContent as { recipients: unknown[] }).recipients).toEqual([{ to: 'ops-alerts', kind: 'bell', outcome: 'posted', detail: 'channel_to_bell', slack: 'slack_off' }])
     expect(await actions()).toEqual([])
     expect(w.scheduled).toEqual([])
+    expect((await db.prepare("SELECT body FROM notices WHERE audience_member_id = ? AND body LIKE '%x off%'").bind(OWNER).all()).results.length).toBe(1)
+  })
+
+  it('the same notice to the same channel again in one run, from another call: the first action, never a second', async () => {
+    const { scope } = await setup()
+    await markAlerts('C0TEST0001')
+    const args = { to: { channels: ['ops-alerts'] }, title: 'T', text: 'once per run', format: 'message' }
+    const first = wiring()
+    await send(args, scope, first.deps)
+    const [row] = await actions()
+    expect(row!.state).toBe('approved')
+    // A retry with a fresh admission (a new tool_use_id), as after a partial failure or a resumed turn.
+    const second = wiring()
+    const r = await send(args, { ...scope, requestId: `mcp-${uniq()}` }, second.deps)
+    expect(text(r)).toBe(`#ops-alerts: already asked: approved (approval_id: ${row!.id})`)
+    expect((await actions()).length).toBe(1)
+    expect(second.scheduled).toEqual([])
+    // Another run may post it again.
+    await send(args, { ...scope, runId: `r_${uniq().padEnd(22, 'Y').slice(0, 22)}` }, wiring().deps)
+    expect((await actions()).length).toBe(2)
+  })
+
+  it('a headline or text the hub would refuse by its own measure (UTF-16) is refused before any card', async () => {
+    const { scope } = await setup()
+    const r = await send({ to: { channels: ['ops-alerts'] }, title: '\u{1F600}'.repeat(61), text: 'x', format: 'message' }, scope, wiring().deps)
+    expect(text(r)).toBe('#ops-alerts: refused: invalid_args (The details of that action aren’t valid, so nothing was asked or sent.)')
+    expect(await actions()).toEqual([])
   })
 
   it('without the egress wiring a channel is refused and the bell still goes', async () => {

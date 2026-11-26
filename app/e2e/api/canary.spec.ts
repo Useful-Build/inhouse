@@ -82,8 +82,8 @@ test('no token, refresh token or client secret is in a Worker log (both Workers)
   // Positive controls: the flows really happened, so an empty result means "nothing leaked", not "nothing ran".
   const state = await fakeState(request)
   expect(state.shopify.requests.length, 'the recorded Shopify was asked').toBeGreaterThan(shopifyBefore)
-  // Since M2-N (Q3 = A) the agent's post goes through the outbox; with no operation on (this spec's state) it ran and was refused.
-  expect(notice, 'the notice ran and was answered').toContain('#ops-alerts: refused: over_ceiling')
+  // Since M2-N the agent's post goes through the outbox; with no operation on (this spec's state) it reached the bell instead.
+  expect(notice, 'the notice ran and reached the bell').toContain('#ops-alerts: sent to the bell (not Slack)')
   expect(state.web.posts.length, 'nothing was posted').toBe(0)
   const needles = await canaries(request)
   expect(answers.length).toBeGreaterThan(5)

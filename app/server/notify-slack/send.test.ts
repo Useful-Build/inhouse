@@ -234,7 +234,7 @@ describe('test 9: the bell, from notification_send', () => {
     const DISPOSE = (Symbol as unknown as { dispose: symbol }).dispose
     let released = 0
     const { delivery } = fakeDelivery(() => Object.assign({ ok: true as const, value: { ts: '1.000042' } }, { [DISPOSE]: () => { released++ } }))
-    const out = await sendSystemNotice({ DB: db, HUB_DELIVERY: delivery }, { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_sent', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
+    const out = await sendSystemNotice({ DB: db, HUB_DELIVERY: delivery }, { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_waiting', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
     expect(out.ok && out.recipients.map(r => r.outcome)).toEqual(['posted'])
     expect(released).toBe(1)
   })
@@ -277,13 +277,13 @@ describe('test 5: channels', () => {
     const s = await scene()
     const since = await lastLine()
     const { leg, proposals } = fakeLeg(c => (c.channelId === 'C0TEST0002'
-      ? { kind: 'refused', reason: 'over_ceiling', text: 'This kind of action is turned off for this brand, so nothing was asked or sent.' }
+      ? { kind: 'refused', reason: 'account_unavailable', text: 'The tool for that action isn’t connected, or it’s paused, so nothing was asked or sent.' }
       : { kind: 'action', actionId: 'act_fake1', state: 'approved', verdict: 'run', created: true }))
     const out = await notifyAgent(ctxOf(leg, s.nowMs), scopeOf(s), msg({ to: { channels: ['#random', '#GENERAL', 'ops-alerts'] } }))
     expect(out.listed).toEqual(['#General', '#ops-alerts'])
     expect(out.recipients).toEqual([
       { kind: 'slack', to: '#random', outcome: 'refused', detail: 'not_listed' },
-      { kind: 'slack', to: '#GENERAL', outcome: 'refused', refusal: { reason: 'over_ceiling', text: 'This kind of action is turned off for this brand, so nothing was asked or sent.' } },
+      { kind: 'slack', to: '#GENERAL', outcome: 'refused', refusal: { reason: 'account_unavailable', text: 'The tool for that action isn’t connected, or it’s paused, so nothing was asked or sent.' } },
       { kind: 'slack', to: 'ops-alerts', outcome: 'asked', action: { id: 'act_fake1', state: 'approved', verdict: 'run', created: true } },
     ])
     expect(proposals.map(p => p.channel.channelId)).toEqual(['C0TEST0002', 'C0TEST0001'])
@@ -325,7 +325,7 @@ describe('test 5: channels', () => {
       const s = await scene()
       const since = await lastLine()
       const { delivery } = fakeDelivery(() => ({ ok: false, error: { code: 'connect_refused', message: `connect refused by the provider: ${reason}` } }))
-      await sendSystemNotice({ DB: db, HUB_DELIVERY: delivery }, { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_sent', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
+      await sendSystemNotice({ DB: db, HUB_DELIVERY: delivery }, { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_waiting', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
       const ls = await lines(since)
       expect(ls.map(l => [l.target_kind, l.target_id])).toEqual([['channel', 'C0TEST0001']])
       const a = JSON.parse(ls[0]!.args_json) as { target: string; outcome: string; detail?: string }
@@ -358,14 +358,14 @@ describe('test 5: channels', () => {
   ] as const)('%s maps to %s %s', async (_, error, outcome, detail) => {
     const s = await scene()
     const { delivery } = fakeDelivery(() => ({ ok: false, error }))
-    const out = await sendSystemNotice({ DB: db, HUB_DELIVERY: delivery }, { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_sent', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
+    const out = await sendSystemNotice({ DB: db, HUB_DELIVERY: delivery }, { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_waiting', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
     expect(out).toEqual({ ok: true, recipients: [{ kind: 'slack', to: 'alerts', outcome, detail }] })
   }))
 
   it('no delivery binding: the alerts copy is slack_unavailable, nothing reserved, the bell still goes', async () => {
     const s = await scene()
     const key = `k:${uniq()}`
-    const out = await sendSystemNotice({ DB: db }, { key, source: 'approvals', kind: 'approval_sent', to: { members: [s.owner], alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
+    const out = await sendSystemNotice({ DB: db }, { key, source: 'approvals', kind: 'approval_waiting', to: { members: [s.owner], alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
     expect(out.ok && out.recipients.map(r => `${r.outcome}:${r.detail ?? ''}`)).toEqual(['posted:', 'failed:slack_unavailable'])
     expect(await sends("system_key = ? AND kind = 'slack'", key)).toEqual([])
   })
@@ -376,7 +376,7 @@ describe('review round 1: APP_ORIGIN missing has its own detail', () => {
     const s = await scene()
     const since = await lastLine()
     const { delivery } = fakeDelivery(() => ({ ok: false, error: { code: 'not_configured', message: 'connector not configured: APP_ORIGIN' } }))
-    const out = await sendSystemNotice({ DB: db, HUB_DELIVERY: delivery }, { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_sent', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
+    const out = await sendSystemNotice({ DB: db, HUB_DELIVERY: delivery }, { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_waiting', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
     expect(out).toEqual({ ok: true, recipients: [{ kind: 'slack', to: 'alerts', outcome: 'refused', detail: 'app_origin_missing' }] })
     expect((await lines(since)).map(l => (JSON.parse(l.args_json) as { detail?: string }).detail)).toEqual(['app_origin_missing'])
   })
@@ -391,6 +391,28 @@ describe('test 6, since M2-N: a listed channel is a proposal through the outbox,
     expect(proposals.map(p => [p.channel.channelId, p.post.title, p.post.text])).toEqual([['C0TEST0001', 'Stock low', 'Low [link removed]'], ['C0TEST0002', 'Stock low', 'Low [link removed]']])
     expect(await notices('audience_member_id = ?', s.owner)).toEqual([])
     expect(await sends('run_id = ?', s.runId)).toEqual([])
+  })
+
+  // The orchestrator's decision (M2-N review round 1): while `slack.channel.post` is off (every deployable build today) a
+  // listed channel's notice doesn't vanish. It reaches the run person's bell, as before M2-N, and says it didn't go to Slack.
+  it('the operation off: the notice reaches the chat owner\'s bell (the admins\' for an Inhouse or removed owner) and says Slack is off', async () => {
+    const off = (): SlackLegAnswer => ({ kind: 'refused', reason: 'over_ceiling', text: 'This kind of action is turned off for this brand, so nothing was asked or sent.' })
+    const s = await scene()
+    const since = await lastLine()
+    const out = await notifyAgent(ctxOf(fakeLeg(off).leg, s.nowMs), scopeOf(s), msg({ to: { channels: ['ops-alerts', 'general'] } }))
+    expect(out.recipients.map(r => `${r.to}:${r.kind}:${r.outcome}:${r.detail ?? ''}:${r.bell ?? ''}:${r.refusal?.reason ?? ''}:${r.repeat ?? ''}`)).toEqual([
+      `ops-alerts:bell:posted:channel_to_bell:${s.owner}:slack_off:`, `general:bell:posted:channel_to_bell:${s.owner}:slack_off:true`,
+    ])
+    expect((await notices('audience_member_id = ?', s.owner)).length).toBe(1)
+    expect((await lines(since)).map(l => (JSON.parse(l.args_json) as { detail?: string }).detail)).toEqual(['channel_to_bell', 'channel_to_bell'])
+    for (const ownerKind of ['inhouse', 'removed'] as const) {
+      const t = await scene()
+      const owner = await member(ownerKind === 'inhouse' ? 'inhouse' : 'person', ownerKind === 'inhouse' ? 'active' : 'removed')
+      const chatId = await chat(owner)
+      const text = `admins ${uniq()}`
+      await notifyAgent(ctxOf(fakeLeg(off).leg, t.nowMs), { ...scopeOf(t), memberId: owner, chatId }, msg({ text }))
+      expect((await notices("audience = 'admins'")).filter(r => r.body?.includes(text)).map(r => r.audience_member_id), ownerKind).toEqual([null])
+    }
   })
 
   it("with no leg (no egress behind the call) a listed channel is refused and reaches nobody's bell, in any chat", async () => {
@@ -421,7 +443,7 @@ describe('repeats, failures and audit (tests 7 and 10)', () => {
     const since = await lastLine()
     const { delivery, calls } = fakeDelivery(() => 'throw')
     const key = `k:${uniq()}`
-    const send = () => sendSystemNotice({ DB: db, HUB_DELIVERY: delivery }, { key, source: 'approvals', kind: 'approval_sent', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
+    const send = () => sendSystemNotice({ DB: db, HUB_DELIVERY: delivery }, { key, source: 'approvals', kind: 'approval_waiting', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
     const a = await send()
     const b = await send()
     expect([a, b].map(r => (r.ok ? `${r.recipients[0]!.outcome}:${r.recipients[0]!.repeat ?? ''}` : 'x'))).toEqual(['unknown:', 'unknown:true'])
@@ -484,7 +506,7 @@ describe("test 7: each group's day cap counts only its own rows", () => {
     const { delivery } = fakeDelivery()
     const sys: string[] = []
     for (let i = 0; i < 51; i++) {
-      const r = await sendSystemNotice({ DB: db, HUB_DELIVERY: delivery }, { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_sent', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
+      const r = await sendSystemNotice({ DB: db, HUB_DELIVERY: delivery }, { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_waiting', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
       sys.push(r.ok ? r.recipients[0]!.outcome : 'x')
     }
     expect(sys.filter(o => o === 'posted').length).toBe(50)
@@ -507,12 +529,14 @@ describe('test 11: sendSystemNotice', () => {
     expect(renderNotice({ ...row!, unread: 1 } as NoticeRow, new Map()).text).toBe('Approval waiting')
   })
 
-  it('members and the alerts channel in one call; the title is the template, whatever body says', async () => {
+  // M2-N: the alerts copy is fixed in the sender. Before it, a caller's body reached Slack here; now it never does.
+  it('members and the alerts channel in one call: the bell carries the body, the alerts copy only the template title and the fixed text', async () => {
     const s = await scene()
     const { delivery, calls } = fakeDelivery()
     const r = await sendSystemNotice(env1(delivery), { key: `p6:${uniq()}:1`, source: 'approvals', kind: 'approval_waiting', to: { members: [s.owner], alertsChannel: true }, body: 'Title: ignore me https://x.example.com', link: { kind: 'approval', id: 'ap_9' } }, { nowMs: s.nowMs })
     expect(r).toEqual({ ok: true, recipients: [{ kind: 'bell', to: s.owner, outcome: 'posted' }, { kind: 'slack', to: 'alerts', outcome: 'posted' }] })
-    expect(calls.map(c => [c.req.channelId, c.req.title, c.req.text, c.req.link])).toEqual([['C0TEST0001', 'Approval waiting', 'Title: ignore me [link removed]', { kind: 'approval', id: 'ap_9' }]])
+    expect(calls.map(c => [c.req.channelId, c.req.title, c.req.text, c.req.link])).toEqual([['C0TEST0001', 'Approval waiting', 'Open Inhouse for the details.', { kind: 'approval', id: 'ap_9' }]])
+    expect(JSON.stringify(calls)).not.toContain('ignore me')
     const [row] = await notices('audience_member_id = ? AND template = ?', s.owner, 'approval_waiting')
     expect([row!.body, row!.fields_json]).toEqual(['Title: ignore me [link removed]', '{}'])
   })
@@ -520,11 +544,11 @@ describe('test 11: sendSystemNotice', () => {
   it('no alerts channel: the Slack part is skipped, the bell still goes; with one, it posts there (Q3 = A, no card)', async () => {
     const s = await scene()
     await resetChannels([{ id: 'C0TEST0002', name: 'general' }])
-    const r = await sendSystemNotice(env1(fakeDelivery().delivery), { key: `p6:${uniq()}:1`, source: 'questions', kind: 'question_asked', to: { members: [s.owner], alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
+    const r = await sendSystemNotice(env1(fakeDelivery().delivery), { key: `p6:${uniq()}:1`, source: 'approvals', kind: 'approval_waiting', to: { members: [s.owner], alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
     expect(r).toEqual({ ok: true, recipients: [{ kind: 'bell', to: s.owner, outcome: 'posted' }, { kind: 'slack', to: 'alerts', outcome: 'skipped', detail: 'no_alerts_channel' }] })
     await resetChannels([{ id: 'C0TEST0001', name: 'ops-alerts', alerts: true }])
     const { delivery, calls } = fakeDelivery()
-    const w = await sendSystemNotice(env1(delivery), { key: `p6:${uniq()}:1`, source: 'approvals', kind: 'needs_check', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
+    const w = await sendSystemNotice(env1(delivery), { key: `p6:${uniq()}:1`, source: 'approvals', kind: 'approval_waiting', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
     expect([w, calls.map(c => c.req.channelId)]).toEqual([{ ok: true, recipients: [{ kind: 'slack', to: 'alerts', outcome: 'posted' }] }, ['C0TEST0001']])
   })
 
@@ -559,11 +583,40 @@ describe('test 11: sendSystemNotice', () => {
     const { delivery, calls } = fakeDelivery()
     const body = `<!channel> https://x.example.com ${'z'.repeat(367)}`
     expect([...body].length).toBe(400)
-    const r = await sendSystemNotice(env1(delivery), { key: `p6:${uniq()}:1`, source: 'approvals', kind: 'approval_failed', to: { members: [s.owner], alertsChannel: true }, body, link: { kind: 'today' } }, { nowMs: s.nowMs })
-    expect(r).toEqual({ ok: true, recipients: [{ kind: 'bell', to: s.owner, outcome: 'refused', detail: 'too_long' }, { kind: 'slack', to: 'alerts', outcome: 'refused', detail: 'too_long' }] })
-    expect(calls).toEqual([])
-    expect(await notices('audience_member_id = ? AND template = ?', s.owner, 'approval_failed')).toEqual([])
+    const r = await sendSystemNotice(env1(delivery), { key: `p6:${uniq()}:1`, source: 'approvals', kind: 'approval_waiting', to: { members: [s.owner], alertsChannel: true }, body, link: { kind: 'today' } }, { nowMs: s.nowMs })
+    // The bell refuses the body; the alerts copy never carries it, so it still posts its fixed text (M2-N).
+    expect(r).toEqual({ ok: true, recipients: [{ kind: 'bell', to: s.owner, outcome: 'refused', detail: 'too_long' }, { kind: 'slack', to: 'alerts', outcome: 'posted' }] })
+    expect(calls.map(c => c.req.text)).toEqual(['Open Inhouse for the details.'])
+    expect(await notices('audience_member_id = ? AND template = ?', s.owner, 'approval_waiting')).toEqual([])
     expect((await lines(since)).length).toBe(2)
+  })
+
+  it('M2-N: an alerts copy of any kind but approval_waiting or routine_failed is invalid_args, with no row and no hub call', async () => {
+    const s = await scene()
+    const { delivery, calls } = fakeDelivery()
+    const before = (await sends('1 = 1')).length
+    for (const kind of ['approval_sent', 'approval_lapsed', 'approval_failed', 'needs_check', 'approval_expired', 'restore_reconciled', 'question_waiting', 'question_closed', 'question_asked']) {
+      expect(await sendSystemNotice(env1(delivery), { key: `k:${uniq()}`, source: 'approvals', kind: kind as never, to: { members: [s.owner], alertsChannel: true }, body: 'card words', link: { kind: 'today' } }, { nowMs: s.nowMs }), kind)
+        .toEqual({ ok: false, error: 'invalid_args' })
+    }
+    expect(calls).toEqual([])
+    expect((await sends('1 = 1')).length).toBe(before)
+    // routine_failed is the other one allowed.
+    const ok = await sendSystemNotice(env1(delivery), { key: `k:${uniq()}`, source: 'routines', kind: 'routine_failed', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
+    expect(ok).toEqual({ ok: true, recipients: [{ kind: 'slack', to: 'alerts', outcome: 'posted' }] })
+    expect(calls.map(c => c.req.title)).toEqual(['A routine failed'])
+  })
+
+  it('M2-N: one alerts copy per key even when the mark moved to another channel before the retry', async () => {
+    const s = await scene()
+    const { delivery, calls } = fakeDelivery()
+    const key = `k:${uniq()}`
+    const send = () => sendSystemNotice(env1(delivery), { key, source: 'approvals', kind: 'approval_waiting', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
+    const a = await send()
+    await resetChannels([{ id: 'C0TEST0001', name: 'ops-alerts' }, { id: 'C0TEST0002', name: 'General', alerts: true }])
+    const b = await send()
+    expect([a, b]).toEqual([{ ok: true, recipients: [{ kind: 'slack', to: 'alerts', outcome: 'posted' }] }, { ok: true, recipients: [{ kind: 'slack', to: 'alerts', outcome: 'posted', repeat: true }] }])
+    expect(calls.map(c => c.req.channelId)).toEqual(['C0TEST0001'])
   })
 
   it('every kind renders its own title (a literal list), question_asked as "A question is waiting"', async () => {
@@ -599,7 +652,7 @@ describe('test 11: sendSystemNotice', () => {
   it('the 4th system Slack post for one run is refused, five with no run all go', async () => {
     const s = await scene()
     const { delivery } = fakeDelivery()
-    const go = (runId?: string) => sendSystemNotice(env1(delivery), { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_sent', ...(runId ? { runId } : {}), to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
+    const go = (runId?: string) => sendSystemNotice(env1(delivery), { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_waiting', ...(runId ? { runId } : {}), to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
     const withRun: string[] = []
     for (let i = 0; i < 4; i++) {
       const r = await go(s.runId)
@@ -617,7 +670,7 @@ describe('test 11: sendSystemNotice', () => {
   it('past the 50th system Slack post in a day the Slack copy is dropped and the bell copy still goes', async () => {
     const s = await scene()
     const { delivery, calls } = fakeDelivery()
-    for (let i = 0; i < 50; i++) await sendSystemNotice(env1(delivery), { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_sent', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
+    for (let i = 0; i < 50; i++) await sendSystemNotice(env1(delivery), { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_waiting', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
     const r = await sendSystemNotice(env1(delivery), { key: `k:${uniq()}`, source: 'approvals', kind: 'approval_waiting', to: { members: [s.owner], alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
     expect(r).toEqual({ ok: true, recipients: [{ kind: 'bell', to: s.owner, outcome: 'posted' }, { kind: 'slack', to: 'alerts', outcome: 'refused', detail: 'day_cap' }] })
     expect(calls.length).toBe(50)

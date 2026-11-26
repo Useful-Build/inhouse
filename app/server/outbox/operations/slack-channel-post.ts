@@ -20,12 +20,21 @@ export const PostArgsSchema = z.strictObject({
   text: z.string().min(1).max(TEXT_MAX * 4),
   title: z.string().min(1).max(TITLE_MAX * 2).optional(),
 }).transform((a, ctx): { channel: string; text: string; title?: string } => {
+  // The hub's strict schema also caps the raw strings in UTF-16 units (hub/connectors/slack/outbox.ts: `.max(TEXT_MAX)`,
+  // `.max(TITLE_MAX)`), which a text of emoji passes here in code points and fails there. Refused here too, before any
+  // card: an approved post the hub would only refuse is never asked for.
+  const overHub = (field: 'text' | 'title', v: string, max: number) => {
+    if (v.length <= max) return false
+    ctx.addIssue({ code: 'custom', path: [field], message: 'too_long' })
+    return true
+  }
   if (a.title === undefined) {
     const bounded = boundBody(a.text, { escape: false, max: TEXT_MAX })
     if (!bounded.ok) {
       ctx.addIssue({ code: 'custom', path: ['text'], message: bounded.reason })
       return z.NEVER
     }
+    if (overHub('text', bounded.text, TEXT_MAX)) return z.NEVER
     return { channel: a.channel, text: bounded.text }
   }
   // `report` keeps the text's line breaks, as `boundBody` does; the title is always one line.
@@ -34,6 +43,7 @@ export const PostArgsSchema = z.strictObject({
     ctx.addIssue({ code: 'custom', path: ['text'], message: bounded.reason })
     return z.NEVER
   }
+  if (overHub('text', bounded.text, TEXT_MAX) || overHub('title', bounded.title, TITLE_MAX)) return z.NEVER
   return { channel: a.channel, text: bounded.text, title: bounded.title }
 })
 export type PostArgs = z.output<typeof PostArgsSchema>

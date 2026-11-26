@@ -193,13 +193,11 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   }
   async askNoted(turnId: string, actionId: string): Promise<void> {
     this.asks().noted(turnId, actionId)
-    // Stage 1 M2-N (Q3 = A): a new waiting card's fixed notice goes to the alerts channel. The card stands whatever the
-    // notice does, so a failed notice is logged by name, never thrown into the request that made the card.
-    try {
-      await alertApprovalWaiting(this.env, actionId)
-    } catch (err) {
+    // Stage 1 M2-N (Q3 = A): a new waiting card's fixed notice goes to the alerts channel, after the answer (the tool's
+    // answer never waits on Slack). The card stands whatever the notice does, so a failed notice is logged by name.
+    this.ctx.waitUntil(alertApprovalWaiting(this.env, actionId).catch((err: unknown) => {
       console.error({ event: 'alerts_notice_failed', kind: 'approval_waiting', actionId, error: err instanceof Error ? err.name : 'unknown' })
-    }
+    }))
   }
   async beginAskWait(turnId: string, actionId: string): Promise<AskWaitAnswer> {
     return this.asks().beginWait(turnId, actionId)
