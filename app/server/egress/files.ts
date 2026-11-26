@@ -5,6 +5,7 @@
 // bytes, before the last of them is written) with that checksum (R2 verifies and keeps it), and leaves the row `pending` until the runner's `file_saved` confirms it. Any refusal after the slot was taken
 // frees the slot in the same `finally`. `<path>` arrives with each segment `encodeURIComponent`-encoded.
 import { badFileName } from '../../shared/files/names.ts'
+import { FILE_TOO_MANY_TOKENS } from '../../shared/protocol/file-refusals.ts'
 import { chatFileKey } from '../db/r2-keys.ts'
 import type { RunGrant } from '../do/brand-agent/tokens.ts'
 import { streamFile } from '../files-io/bytes.ts'
@@ -57,7 +58,7 @@ export async function filesRoute(
         // Too many tokens to track in one read: refused with a plain reason, never served (fail closed).
         if (err instanceof TaintOverflowError) {
           d.log({ event: 'egress_taint_capture_refused', route: 'files', reason: 'too_many_tokens', runner: d.runner })
-          return jsonAnswer({ error: 'too_many_tokens' }, 422)
+          return jsonAnswer({ error: FILE_TOO_MANY_TOKENS.error }, FILE_TOO_MANY_TOKENS.status)
         }
         d.log({ event: 'egress_taint_capture_failed', route: 'files', error: safeError(err), runner: d.runner })
         return jsonAnswer({ error: 'internal' }, 500)

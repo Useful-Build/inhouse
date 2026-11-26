@@ -336,7 +336,8 @@ describe('ordinary URL corpus with a full store loaded (failure 2)', () => {
     const store = taintStore(db, HASH_KEY, () => NOW)
     const results = [
       ...chunks(ORDERS, 10).map(c => ({ body: hubBody({ orders: c, nextCursor: 'eyJsYXN0X2lkIjo1NTUwMDAwMDAwMDEwfQ' }), tool: 'orders_search' })),
-      ...chunks(PRODUCTS, 10).map(c => ({ body: hubBody({ items: c, nextCursor: null }), tool: 'products_search' })),
+      // products_search returns no handle: the handle is only for building the storefront URLs below.
+      ...chunks(PRODUCTS, 10).map(c => ({ body: hubBody({ items: c.map(({ handle: _handle, ...p }) => p), nextCursor: null }), tool: 'products_search' })),
     ]
     const expected = new Set<string>()
     for (const { body, tool } of results) {

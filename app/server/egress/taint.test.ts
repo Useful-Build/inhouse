@@ -113,16 +113,21 @@ describe('JSON-aware capture (escapes never glue characters onto a token)', () =
 describe('catalogue data is not tainted, customer and order data is (decision L2)', () => {
   const PRODUCT = {
     items: [{
-      id: 'gid://shopify/Product/8123456789012', title: 'Moss Glaze Mug 350ml Edition2024', handle: 'moss-glaze-mug-350ml', status: 'active',
+      id: 'gid://shopify/Product/8123456789012', title: 'Moss Glaze Mug 350ml Edition2024', status: 'active',
       totalInventory: 12, tracked: true, moreVariants: false, truncated: false,
       variants: [{ id: 'gid://shopify/ProductVariant/44012345678901', sku: 'MOSSMUG350SLATE01', title: 'Slate', price: { minor: 2400, currency: 'USD' } }],
     }],
     nextCursor: null,
   }
+  // order_get's shape (hub/connectors/shopify/tools/order-get.ts), with a customer the real tool never returns.
   const ORDER = {
-    id: 'gid://shopify/Order/5550000001042', name: '#1042', processedAt: '2026-11-20T10:00:00Z',
-    customer: { id: 'gid://shopify/Customer/7770000004242', displayName: 'Anna Kowalski', email: 'anna.k@example.net', phone: '+15550104242' },
-    lineItems: [{ title: 'Moss Glaze Mug 350ml Edition2024', sku: 'MOSSMUG350SLATE01', variant: { id: 'gid://shopify/ProductVariant/44012345678901' } }],
+    order: {
+      id: 'gid://shopify/Order/5550000001042', name: '#1042', processedAt: '2026-11-20T10:00:00Z',
+      customer: { id: 'gid://shopify/Customer/7770000004242', displayName: 'Anna Kowalski', email: 'anna.k@example.net', phone: '+15550104242' },
+      lines: [{ sku: 'MOSSMUG350SLATE01', title: 'Moss Glaze Mug 350ml Edition2024', quantity: 1 }],
+      refunds: [{ note: 'Refund ref ord_AbC123def456', lines: [{ sku: 'MOSSMUG350SLATE01', quantity: 1 }] }],
+      returns: [{ name: '#1042-R1', lines: [{ sku: 'MOSSMUG350SLATE01', quantity: 1 }] }],
+    },
   }
 
   async function readThroughHub(store: TaintStore, tool: string, data: unknown) {
@@ -159,10 +164,21 @@ describe('catalogue data is not tainted, customer and order data is (decision L2
       'https://docs.example.com/o/5550000001042',
       'https://docs.example.com/c#7770000004242',
       'https://docs.example.com/?p=15550104242',
+      'https://docs.example.com/r/ord_AbC123def456',
     ]) expect(await leaks(store, url), url).toBe(true)
-    // The catalogue rule is the product tools' only: an order's line sku and variant id are read in full.
-    expect(await leaks(store, 'https://shop.example.com/products/x?sku=MOSSMUG350SLATE01')).toBe(true)
-    expect(await leaks(store, 'https://shop.example.com/products/x?variant=44012345678901')).toBe(true)
+    // The order's line items are catalogue data (decision L2): a URL with the line's sku still passes.
+    expect(await leaks(store, 'https://shop.example.com/search?sku=MOSSMUG350SLATE01&q=Moss+Glaze+Mug+350ml+Edition2024')).toBe(false)
+  })
+
+  it('orders_search, refunds_search and returns_search: the line sku passes, the order and customer fields are refused', async () => {
+    const store = taintStore(db, HASH_KEY, () => BASE_NOW)
+    await readThroughHub(store, 'orders_search', { items: [{ id: 'gid://shopify/Order/5550000002001', name: '#2001', lines: [{ sku: 'SKUAAA111BBB222', quantity: 1 }] }], nextCursor: null })
+    await readThroughHub(store, 'refunds_search', { items: [{ orderId: 'gid://shopify/Order/5550000002002', orderName: '#2002', note: 'cara@example.com', lines: [{ sku: 'SKUCCC333DDD444', quantity: 1 }] }] })
+    await readThroughHub(store, 'returns_search', { items: [{ orderId: 'gid://shopify/Order/5550000002003', orderName: '#2003', lines: [{ sku: 'SKUEEE555FFF666', quantity: 1 }] }] })
+    for (const sku of ['SKUAAA111BBB222', 'SKUCCC333DDD444', 'SKUEEE555FFF666']) expect(await leaks(store, `https://shop.example.com/?sku=${sku}`), sku).toBe(false)
+    for (const url of ['https://docs.example.com/?o=%232001', 'https://docs.example.com/?o=%232002', 'https://docs.example.com/?o=%232003',
+      'https://docs.example.com/o/5550000002001', 'https://docs.example.com/o/5550000002002', 'https://docs.example.com/o/5550000002003', 'https://docs.example.com/?e=cara@example.com'])
+      expect(await leaks(store, url), url).toBe(true)
   })
 
   it('a shopify_script_run result and a Slack title holding customer data are captured and refused', async () => {
@@ -187,6 +203,9 @@ describe('catalogue data is not tainted, customer and order data is (decision L2
     // On an id path, an id of another type is read in full; a title still gives up its emails.
     expect(tokens({ items: [{ id: 'gid://shopify/Order/5550000001001', title: 'Ask anna.k@example.net about #1001' }] }))
       .toEqual(['5550000001001', 'anna.k@example.net'])
+    // An exempt id path never carries a query, and a prototype key name is no path.
+    expect(tokens({ items: [{ id: 'gid://shopify/Product/8123456789012?ref=5550000001001' }] })).toEqual(['5550000001001', '8123456789012'])
+    expect(tokens({ constructor: 'gid://shopify/Product/8123456789012', toString: 'ord_AbC123def456' })).toEqual(['8123456789012', 'ord_abc123def456'])
     // The same shape from another tool, /mcp/ or a JSON file is read in full.
     for (const t of [resultTokens(hubBody(PRODUCT), { route: 'hub', tool: 'order_get' }), resultTokens(hubBody(PRODUCT), { route: 'hub', tool: null }),
       resultTokens(mcpBody(JSON.stringify(PRODUCT)), { route: 'mcp' }), resultTokens(JSON.stringify(PRODUCT), { route: 'files', contentType: 'application/json' })])

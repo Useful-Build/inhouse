@@ -24,12 +24,12 @@ const HEX_RUN_RE = /[0-9A-Fa-f]{8,}/g
 const DATE_SHAPED = [/^\d{4}-\d{2}-\d{2}(?:[Tt]\d{2})?$/, /^\d{8}[Tt]\d{2,6}[Zz]?$/]
 const BASIC_DATE_RE = /^(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])$/
 
-/** A whole leaf that is one bare Shopify id (as `hub/connectors/shopify/shape.ts` GID, plus a query some ids carry). */
-const BARE_GID_RE = /^gid:\/\/shopify\/([A-Za-z0-9]+)\/\d+(?:\?[\w=&]*)?$/
+/** A whole leaf that is one bare Shopify id (as `hub/connectors/shopify/shape.ts` GID): no query rides on an exempt id. */
+const BARE_GID_RE = /^gid:\/\/shopify\/([A-Za-z0-9]+)\/\d+$/
 
 /**
- * Catalogue data (decision L2), by source and path, never by key name alone: only the fixed-shape Shopify product
- * tools, and only these paths of their data (`result.content[].text`, parsed). A `text` path gives up emails only; an
+ * Catalogue data (decision L2), by source and path, never by key name alone: only the fixed-shape Shopify tools, and
+ * only these paths of their data (`result.content[].text`, parsed). A `text` path gives up emails only; an
  * id path is skipped when the whole leaf is one bare id of the listed types, and read in full otherwise. Every other
  * tool (orders, `shopify_script_run`, Slack, anything new), `/mcp/` and `/files/` are read in full.
  */
@@ -37,7 +37,6 @@ const CATALOG_SHAPES: Readonly<Record<string, Readonly<Record<string, 'text' | r
   products_search: {
     'items[].id': ['Product'],
     'items[].title': 'text',
-    'items[].handle': 'text',
     'items[].variants[].id': ['ProductVariant'],
     'items[].variants[].sku': 'text',
     'items[].variants[].title': 'text',
@@ -48,6 +47,16 @@ const CATALOG_SHAPES: Readonly<Record<string, Readonly<Record<string, 'text' | r
     'matches[].productTitle': 'text',
     'matches[].variantTitle': 'text',
   },
+  // The order tools: only their line items' product fields. The order's own fields (id, name, note) stay tainted.
+  orders_search: { 'items[].lines[].sku': 'text' },
+  order_get: {
+    'order.lines[].sku': 'text',
+    'order.lines[].title': 'text',
+    'order.refunds[].lines[].sku': 'text',
+    'order.returns[].lines[].sku': 'text',
+  },
+  refunds_search: { 'items[].lines[].sku': 'text' },
+  returns_search: { 'items[].lines[].sku': 'text' },
 }
 /** Where a hub tool's data sits in its JSON-RPC answer. */
 const HUB_DATA_PATH = 'result.content[].text'
@@ -206,7 +215,7 @@ function walkJson(root: unknown, sink: Sink, shape: Readonly<Record<string, 'tex
   const stack: { v: unknown; path: string; nest: number; data: boolean }[] = [{ v: root, path: '', nest: 0, data: false }]
   while (stack.length > 0) {
     const { v, path, nest, data } = stack.pop()!
-    const rule = data && shape ? shape[path] : undefined
+    const rule = data && shape && Object.hasOwn(shape, path) ? shape[path] : undefined
     if (typeof v === 'string') {
       const head = v.trimStart()[0]
       if (nest < MAX_NESTED_JSON && (head === '{' || head === '[')) {

@@ -10,11 +10,12 @@
 //    so JSON escapes never glue characters onto a token; anything that isn't JSON is read as raw text.
 //  - What counts as private (decision L2, 2026-11-26): customer and order data is captured (names, emails, phones,
 //    addresses, order numbers and ids, customer ids). Product catalogue data is not, decided by source and path: only
-//    the Shopify product tools (`products_search`, `inventory_levels_get`, the hub tool name read from the request)
-//    and only their fixed catalogue paths (`CATALOG_SHAPES` in taint-tokens.ts). There a title or sku gives up emails
-//    only, and an id path is skipped when the whole leaf is one bare product or variant id. So a storefront page or
-//    `?variant=<id>` stays fetchable after the agent read the product. Every other tool (orders, `shopify_script_run`,
-//    Slack), `/mcp/` and `/files/` are read in full; a sku or product id in an order result is tainted.
+//    the fixed-shape Shopify tools (the hub tool name read from the request) and only their catalogue paths
+//    (`CATALOG_SHAPES` in taint-tokens.ts): the product tools' titles, skus and product/variant ids, and the order
+//    tools' line-item skus (and `order_get`'s line titles). There a title or sku gives up emails only, and an id path
+//    is skipped when the whole leaf is one bare product or variant id (no query). So a storefront page, `?variant=<id>`
+//    or a sku stays fetchable after the agent read the product or an order that sold it, while the order's own fields
+//    stay tainted. Every other tool (`shopify_script_run`, Slack, anything new), `/mcp/` and `/files/` are read in full.
 //  - Check: before DNS and on every redirect hop in `WebEgress`, percent-decode URL parts (two rounds), tokenize host
 //    labels, the joined host, path segments, query names/values (also with `+` as a space) and the fragment as they
 //    are, and base64url-/hex-decode runs (base64 at offsets 0-3 and with 0-3 trailing characters dropped, hex at
@@ -33,10 +34,13 @@
 //  - short numbers (fewer than 8 digits, except `#` order names with 3+ digits), phone numbers written with separators,
 //    names and street addresses (plain words);
 //  - data older than 7 days (expired from `egress_taint`), and a replayed transcript older than 7 days;
-//  - a result with more than 5,000 tokens isn't stored at all: the read fails instead (fail closed);
-//  - JSON embedded in non-JSON text (`Result: {...}`, NDJSON served as `text/plain`) is read as raw text, so its
-//    escapes can still glue a character onto a token (`\nalice@...` as `nalice@...`); no current route emits it;
-//  - the 50,000-row cap: after many large reads the oldest digests are evicted before their 7 days;
+//  - a result with more than 5,000 tokens isn't stored at all: the read fails instead (fail closed; a run's file
+//    restore leaves such a file out of the work folder rather than failing the run);
+//  - JSON embedded in non-JSON text is read as raw text, so its escapes can still glue a character onto a token
+//    (`\nalice@...` as `nalice@...`): a tool answer like `Result: {...}`, and a file of JSON or NDJSON the agent or a
+//    person saved as `text/plain` or `text/csv`, which `/files/` serves today;
+//  - the 50,000-row cap: after many large reads (junk ones included) the oldest real digests are evicted before
+//    their 7 days (deferred to Phase 9);
 //  - binary files (office documents, PDFs, images) are not read, so nothing in them is captured;
 //  - a token split across URL parts (half in the path, half in the query), or across a `/` of a standard-base64 run;
 //  - adjacent letters or digits with no separator (`xalice@example.com`, `55500000010019`), and a token buried among
