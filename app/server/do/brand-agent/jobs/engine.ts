@@ -72,6 +72,12 @@ export interface JobHost {
   paused(): boolean
   /** Gives up the chat's question wait, if it waits (core.ts `abandonWait`). */
   abandonWait(chatId: string, failure: string): void
+  /** The turn whose question the chat waits on, or null when it doesn't wait. */
+  waitingTurn(chatId: string): string | null
+  /** Route 27 marked the chat deleted (and no restore since). */
+  chatDeleted(chatId: string): boolean
+  /** The member is in the object's removed set. */
+  memberRemoved(memberId: string): boolean
   /** These turns' cost from the tally, in micro-USD (closed calls at their price, open ones at their worst). */
   turnsMicro(turnIds: string[]): number
 }
@@ -136,6 +142,7 @@ export class JobEngine {
     const personQueued = this.h.sql.exec("SELECT 1 FROM turns WHERE run_id = ? AND state = 'queued' AND source = 'person' LIMIT 1", t.run_id).toArray().length > 0
     const ok = promotable(t, {
       textsWired: this.deps?.texts != null, session: cs?.session ?? null, personQueued, jobLive: this.liveJobOf(t.chat_id) !== null, paused: this.h.paused(),
+      deleted: this.h.chatDeleted(t.chat_id), ownerRemoved: this.h.memberRemoved(t.owner_id),
     })
     if (!ok || t.owner_id === SYSTEM_MEMBER_ID) return
     const now = this.h.now()
@@ -195,6 +202,16 @@ export class JobEngine {
     if (onEnd.kind !== STEP_KIND) return null
     const m = /^job-step:(j_[A-Za-z0-9_-]{22}):\d+$/.exec(onEnd.id)
     return m ? m[1] : null
+  }
+
+  /** Whether the turn's job has ended (false for a turn of no job). */
+  endedJob(jobId: string | null): boolean {
+    return jobId !== null && this.job(jobId)?.state === 'ended'
+  }
+  /** The chat waits on a question of this job's own turn. */
+  private waitsOn(job: JobRow): boolean {
+    const turnId = this.h.waitingTurn(job.chat_id)
+    return turnId !== null && this.h.turn(turnId)?.job_id === job.job_id
   }
 
   /** A job turn may start only while its job runs and before its cap; past the cap the job ends `time` here. */
@@ -294,9 +311,9 @@ export class JobEngine {
       if (outcome === 'time' && t.state === 'live') this.cut(t, 'job_deadline')
       else this.h.stop(t)
     }
-    // A waiting job's question closes with it, whatever ended it: a later answer can't resume an ended job, and the chat
-    // takes messages again.
-    if (job.state === 'waiting') this.h.abandonWait(job.chat_id, `job_${outcome}`)
+    // The job's question closes with it, whatever ended it and whatever the job's state said (its deferred turn may sit
+    // between its checkpoint and `released`): a later answer can't resume an ended job, and the chat takes messages again.
+    if (this.waitsOn(job)) this.h.abandonWait(job.chat_id, `job_${outcome}`)
     this.h.scheduler.ensure({ id: endTaskId(jobId), kind: 'job-end', dueAtMs: now })
     this.h.advanceChat(job.chat_id)
     return true
@@ -311,6 +328,12 @@ export class JobEngine {
     const jobId = m[1]
     const n = Number(m[2])
     let job = this.job(jobId)
+    // A waiting job's end task fired with no wait left: the wait was given up outside the engine (a delete, a reset,
+    // damage, a refused resume), so the job can't go on.
+    if (job && job.state === 'waiting' && job.pending_n === n && !this.waitsOn(job)) {
+      this.endJob(jobId, 'cancelled')
+      return { done: true }
+    }
     if (!job || job.state !== 'running' || job.pending_n !== n) return { done: true }
     const deps = this.deps
     if (deps === null) return { retryAtMs: this.h.now() + backoffMs(attempts), error: 'no job ports' }

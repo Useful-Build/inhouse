@@ -92,19 +92,24 @@ export interface PromoteFacts {
   personQueued: boolean
   /** The chat has a job that hasn't ended. */
   jobLive: boolean
-  /** The brand is paused (a pause that fenced the turn while it was ending keeps its outcome). */
+  /** The brand is paused now: Pause ends every job, so none starts while it holds. */
   paused: boolean
+  /** Route 27 marked the chat deleted. */
+  deleted: boolean
+  /** The turn's owner is in the object's removed set. */
+  ownerRemoved: boolean
 }
 
 /**
  * Whether a turn becomes a job (N3), read inside `storeFinal`'s synchronous step: a person's own turn (route 29; a
  * job's own turns are already in one, routine turns never become jobs in M1) that ended on a per-turn limit or the
- * server's cut, not stopped by its person, not fenced by a pause, a removal or a delete while it was ending (the fence
- * keeps the outcome but writes `cancel_why`), the brand not paused, its session resumable after it, no person's turn
- * queued behind it, and no other job alive in the chat.
+ * server's cut, not stopped by its person, not fenced by a pause, a removal or a delete (on an `ending` turn, or one
+ * fenced already, the fence keeps the outcome and writes `cancel_why`, core.ts `fence`), the brand not paused, the chat
+ * not deleted, its owner not removed, its session resumable after it, no person's turn queued behind it, and no other job
+ * alive in the chat.
  */
 export function promotable(t: TurnEnd & { source: string | null; job_id: string | null }, f: PromoteFacts): boolean {
-  if (!f.textsWired || f.paused || t.source !== 'person' || t.job_id !== null || t.person_stop === 1 || t.cancel_why !== null) return false
+  if (!f.textsWired || f.paused || f.deleted || f.ownerRemoved || t.source !== 'person' || t.job_id !== null || t.person_stop === 1 || t.cancel_why !== null) return false
   const limit = t.outcome === 'failed' && (t.failure === 'max_turns' || t.failure === 'turn_budget')
   const cut = t.outcome === 'interrupted' && t.cut_cause === 'job_cut'
   return (limit || cut) && f.session === 'resumable' && !f.personQueued && !f.jobLive

@@ -264,6 +264,12 @@ export class AgentCore {
         const cs = this.chatState(chatId)
         if (cs?.session === 'waiting') this.abandonWait(cs, failure)
       },
+      waitingTurn: chatId => {
+        const cs = this.chatState(chatId)
+        return cs?.session === 'waiting' ? this.waitingOf(cs)?.turnId ?? null : null
+      },
+      chatDeleted: chatId => this.sql.exec('SELECT 1 FROM chat_deletion WHERE chat_id = ? AND deleted = 1', chatId).toArray().length > 0,
+      memberRemoved: memberId => this.sql.exec("SELECT 1 FROM authority WHERE kind = 'member' AND id = ?", memberId).toArray().length > 0,
       turnsMicro: ids => ids.reduce((sum, id) => sum + callsMicro(this.sql, id), 0),
     })
   }
@@ -923,7 +929,13 @@ export class AgentCore {
       if ('cancel' in end) return this.cancelUnstarted(t, end.cancel)
       return this.failUnstarted(t, end)
     }
-    if (t.state === 'ended' || t.state === 'cancelled' || t.fenced === 1) return
+    if (t.state === 'ended' || t.state === 'cancelled') return
+    if (t.fenced === 1) {
+      // Fenced already (the gate's `turn_budget`, say): a later pause, removal or delete still says so, so the turn's
+      // end never reads as a clean limit (M1-B: a job never starts from it). The outcome stays the first fence's.
+      if ('cancel' in end) this.sql.exec('UPDATE turns SET cancel_why = COALESCE(cancel_why, ?) WHERE turn_id = ?', end.cancel, t.turn_id)
+      return
+    }
     const now = this.d.now()
     // A held turn (A9) is `ending` with no outcome and no `turn.finished` yet: the fence shows its own.
     const terminalAlready = t.state === 'ending' && t.outcome !== null
@@ -1175,7 +1187,8 @@ export class AgentCore {
     }
     // A deferral the chat waits on, unless its resume was already admitted (the parked turn's late `released`).
     const questionId = questionIdOf(t.turn_id)
-    const waiting = fresh.deferred_json !== null && this.byKey(t.chat_id, resumeKeyOf(questionId)) === null
+    // A job turn whose job has ended never parks the chat (M1-B): its question went with the job, so it saves `resumable`.
+    const waiting = fresh.deferred_json !== null && this.byKey(t.chat_id, resumeKeyOf(questionId)) === null && !this.jobs.endedJob(fresh.job_id)
     const before = this.chatState(t.chat_id)
     const waitingJson = waiting
       ? JSON.stringify({ questionId, turnId: t.turn_id, ...(JSON.parse(fresh.deferred_json!) as Omit<Waiting, 'questionId' | 'turnId'>) } satisfies Waiting)
@@ -1579,11 +1592,13 @@ export class AgentCore {
     try {
       const turns = this.sql.exec<{ turn_id: string }>(
         `SELECT turn_id FROM turns WHERE chat_id IN (${marks}) AND (state IN ('queued', 'starting', 'live')
-          OR (state = 'ending' AND outcome IS NULL AND held_json IS NOT NULL)) ORDER BY created_at_ms, ord`, ...chatIds).toArray()
+          OR state = 'ending') ORDER BY created_at_ms, ord`, ...chatIds).toArray()
       for (const { turn_id } of turns) {
         const fresh = this.turn(turn_id)
-        // A held platform stop (A9) too: deleted, never placed again in a deleted chat.
-        if (fresh && fresh.fenced === 0 && (fresh.state === 'queued' || fresh.state === 'starting' || fresh.state === 'live' || this.held(fresh))) this.fence(fresh, { cancel: 'deleted' })
+        // A held platform stop (A9) too: deleted, never placed again in a deleted chat. An `ending` turn too (M1-B): the
+        // fence keeps its outcome and writes `cancel_why`, so a turn deleted at its limit never becomes a job (an already
+        // fenced one gets the reason through the fence's own path).
+        if (fresh && (fresh.state === 'queued' || fresh.state === 'starting' || fresh.state === 'live' || fresh.state === 'ending')) this.fence(fresh, { cancel: 'deleted' })
       }
     } finally {
       for (const r of runs) this.holding.delete(r)

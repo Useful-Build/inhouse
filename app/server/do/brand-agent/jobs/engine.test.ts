@@ -591,6 +591,130 @@ describe('review round 1', () => {
   }))
 })
 
+describe('review round 2: a turn ending, a job\'s question', () => {
+  const deferredEnd = (n: number): RunEventBody[] => [ev.started(), ev.tool('Bash'), ev.deferred(), ev.checkpoint(n, `u${n}`, n - 1), ev.success(), ev.released(cp(n))]
+  /** A person's turn whose terminal event came (`ending` at max_turns), its `released` not yet. */
+  async function endingAtLimit(h: Harness): Promise<string> {
+    await d1Chat(CHAT, MEMBER)
+    wireJobs(h)
+    const r = await h.submit(CHAT, `key-end${Math.random().toString(36).slice(2, 8)}`)
+    await settle()
+    if (!('turnId' in r)) throw new Error('refused')
+    h.push(r.turnId, ev.started(), ev.tool('Bash'), ev.checkpoint(3, 'u3', 2), ev.finished('error_max_turns'))
+    expect(h.turn(r.turnId)).toMatchObject({ state: 'ending', outcome: 'failed', failure: 'max_turns', fenced: 0 })
+    return r.turnId
+  }
+
+  it('a chat deleted while its turn is ending at its limit: no job (no ledger job, no notice)', () => inAgent(async h => {
+    const id = await endingAtLimit(h)
+    h.core.endChats([{ id: CHAT, rev: 2 }])
+    expect(h.turn(id)).toMatchObject({ cancel_why: 'deleted', failure: 'max_turns', fenced: 1 })
+    h.push(id, ev.released(cp(3)))
+    await settle()
+    await h.tick(MIN)
+    expect(jobsOf(h)).toEqual([])
+    expect(h.usage.calls.filter(c => c.method === 'openJob')).toEqual([])
+  }))
+
+  it('an owner removed while their turn is ending at its limit: no job', () => inAgent(async h => {
+    const id = await endingAtLimit(h)
+    h.core.onMemberRemoved(MEMBER)
+    expect(h.turn(id).cancel_why).toBe('removed')
+    h.push(id, ev.released(cp(3)))
+    await settle()
+    await h.tick(MIN)
+    expect(jobsOf(h)).toEqual([])
+  }))
+
+  it('Pause, then Resume before the ending turn\'s released: no job (cancel_why, not the pause flag, says so)', () => inAgent(async h => {
+    const id = await endingAtLimit(h)
+    await h.core.pause({ kind: 'person', memberId: 'm_admin' })
+    await h.core.resume({ kind: 'person', memberId: 'm_admin' })
+    h.push(id, ev.released(cp(3)))
+    await settle()
+    await h.tick(MIN)
+    expect(h.turn(id)).toMatchObject({ state: 'ended', cancel_why: 'paused' })
+    expect(jobsOf(h)).toEqual([])
+  }))
+
+  it('Pause and Resume on a turn the gate already fenced for turn_budget: no job', () => inAgent(async h => {
+    await d1Chat(CHAT, MEMBER)
+    wireJobs(h)
+    const r = await h.submit(CHAT, 'key-gatefen')
+    await settle()
+    if (!('turnId' in r)) throw new Error('refused')
+    h.push(r.turnId, ev.started(), ev.tool('Bash'))
+    h.core.fence(h.turn(r.turnId), { outcome: 'failed', reason: 'turn_budget' })
+    expect(h.turn(r.turnId)).toMatchObject({ state: 'ending', fenced: 1, failure: 'turn_budget', cancel_why: null })
+    await h.core.pause({ kind: 'person', memberId: 'm_admin' })
+    await h.core.resume({ kind: 'person', memberId: 'm_admin' })
+    expect(h.turn(r.turnId)).toMatchObject({ failure: 'turn_budget', cancel_why: 'paused' })
+    h.push(r.turnId, ev.checkpoint(3, 'u3', 2), ev.released(cp(3)))
+    await settle()
+    await h.tick(MIN)
+    expect(jobsOf(h)).toEqual([])
+  }))
+
+  it('Cancel while the job\'s deferred turn sits between its checkpoint and released: the question closes, the chat takes messages', () => inAgent(async h => {
+    const { jobId } = await startJob(h)
+    const t = liveTurn(h)!
+    h.push(t.turn_id, ev.started(), ev.tool('Bash'), ev.deferred(), ev.checkpoint(5, 'u5', 4), ev.success())
+    expect(h.sql.exec('SELECT session FROM chat_state WHERE chat_id = ?', CHAT).one().session).toBe('waiting')
+    expect(jobsOf(h)[0].state).toBe('running')
+    h.core.cancelJob(jobId, by)
+    expect(h.sql.exec('SELECT session FROM chat_state WHERE chat_id = ?', CHAT).one().session).not.toBe('waiting')
+    h.push(t.turn_id, ev.released(cp(5)))
+    await settle()
+    await h.tick(GRACE_MS)
+    expect(h.sql.exec('SELECT session, waiting_json FROM chat_state WHERE chat_id = ?', CHAT).one()).toMatchObject({ waiting_json: null })
+    expect(h.sql.exec('SELECT session FROM chat_state WHERE chat_id = ?', CHAT).one().session).not.toBe('waiting')
+    expect(await h.submit(CHAT, 'key-afterc1')).toMatchObject({ runId: expect.any(String) })
+    expect(h.core.personData(MEMBER, 'count')).toMatchObject({ counts: { jobs: 1 } })
+  }))
+
+  it('a deferred job turn whose checkpoint arrives after its job ended never parks the chat', () => inAgent(async h => {
+    const { jobId } = await startJob(h)
+    const t = liveTurn(h)!
+    h.push(t.turn_id, ev.started(), ev.tool('Bash'), ev.deferred())
+    h.core.cancelJob(jobId, by)
+    expect(h.turn(t.turn_id)).toMatchObject({ fenced: 1, state: 'ending' })
+    // The grace still takes the late checkpoint and release.
+    h.push(t.turn_id, ev.checkpoint(5, 'u5', 4), ev.released(cp(5)))
+    await settle()
+    expect(h.sql.exec('SELECT session, waiting_json FROM chat_state WHERE chat_id = ?', CHAT).one()).toEqual({ session: 'resumable', waiting_json: null })
+    expect(await h.submit(CHAT, 'key-afterc2')).toMatchObject({ runId: expect.any(String) })
+  }))
+
+  it('a wait given up outside the engine (a resume into a chat in the trash): the job\'s step ends it cancelled, not at its cap', () => inAgent(async h => {
+    await startJob(h)
+    h.push(liveTurn(h)!.turn_id, ...deferredEnd(5))
+    await settle()
+    expect(jobsOf(h)[0].state).toBe('waiting')
+    // The chat in the trash in D1: the resume gives the wait up (core.ts abandonWait) and fires the parked end.
+    await d1Chat(CHAT, MEMBER, h.clock.now)
+    const q = (JSON.parse(h.sql.exec<{ waiting_json: string }>('SELECT waiting_json FROM chat_state WHERE chat_id = ?', CHAT).one().waiting_json) as { questionId: string }).questionId
+    expect(await h.core.resumeDeferred(CHAT, 'allow', q)).toEqual({ refused: { code: 'not_found' } })
+    await h.tick(0)
+    expect(jobsOf(h)[0]).toMatchObject({ state: 'ended', outcome: 'cancelled' })
+  }))
+
+  it('a now message ending a held job turn carries the job on (Q4 = B)', () => inAgent(async h => {
+    const { jobId } = await startJob(h)
+    const t = liveTurn(h)!
+    // A platform stop before anything ran: held, no outcome yet.
+    h.push(t.turn_id, ev.failed('session_crashed'))
+    expect(h.turn(t.turn_id)).toMatchObject({ state: 'ending', outcome: null })
+    await h.submit(CHAT, 'key-nowheld', { priority: 'now' })
+    expect(h.turn(t.turn_id)).toMatchObject({ cut_cause: 'message', outcome: 'interrupted' })
+    await h.tick(GRACE_MS)
+    h.push(liveTurn(h)!.turn_id, ...fullAnswer('answered', 6))
+    await settle()
+    await h.tick(0)
+    expect(jobsOf(h)[0]).toMatchObject({ job_id: jobId, state: 'running' })
+    expect(h.turns().find(x => x.job_n === 2)).toBeDefined()
+  }))
+})
+
 describe('progress, the stored job and an older object', () => {
   it('the SDK\'s task events become job.progress; GET\'s read shows the job and its progress after a restart', () => inAgent(async h => {
     const { jobId, rootId } = await startJob(h)

@@ -48,7 +48,7 @@ describe('judge: N3\'s table', () => {
 })
 
 describe('promotable', () => {
-  const facts = { textsWired: true, session: 'resumable', personQueued: false, jobLive: false, paused: false }
+  const facts = { textsWired: true, session: 'resumable', personQueued: false, jobLive: false, paused: false, deleted: false, ownerRemoved: false }
   const person = { ...end({ outcome: 'failed', failure: 'max_turns' }), source: 'person', job_id: null }
   it('a person\'s turn at max_turns, turn_budget or the cut', () => {
     expect(promotable(person, facts)).toBe(true)
@@ -62,6 +62,9 @@ describe('promotable', () => {
     expect(promotable(person, { ...facts, personQueued: true })).toBe(false)
     expect(promotable(person, { ...facts, jobLive: true })).toBe(false)
     expect(promotable(person, { ...facts, paused: true })).toBe(false)
+    expect(promotable(person, { ...facts, deleted: true })).toBe(false)
+    expect(promotable(person, { ...facts, ownerRemoved: true })).toBe(false)
+    expect(promotable({ ...person, cancel_why: 'deleted' }, facts)).toBe(false)
     // Fenced by a pause, a removal or a delete while ending: the outcome stays, `cancel_why` says it was stopped.
     expect(promotable({ ...person, cancel_why: 'paused' }, facts)).toBe(false)
     expect(promotable({ ...person, cancel_why: 'removed' }, facts)).toBe(false)
