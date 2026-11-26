@@ -101,6 +101,13 @@ describe('a turn that hits a limit', () => {
     expect(v.pendingEnd).toBeNull()
     expect(v.files.map(f => f.name)).toEqual(['job-run.txt'])
   })
+  test("another turn's cancel, or another root's job starting, settles the hold: the failure shows first, in order", () => {
+    const cancelled = run(...root, queued(P2, 'And the refunds?'), failed(ROOT, 'max_turns'), { type: 'turn.cancelled', turnId: P2, why: 'paused' })
+    expect(cancelled.messages.map(m => m.id)).toEqual([`${ROOT}.u`, `${ROOT}.f`, `${P2}.u`, `${P2}.x`])
+    const other = run(...root, failed(ROOT, 'max_turns'), { type: 'job.started', jobId: JOB, rootTurnId: P2 })
+    expect(errors(other).map(m => m.id)).toEqual([`${ROOT}.f`])
+    expect(other.pendingEnd).toBeNull()
+  })
   test('the same events not promoted: the failure shows when the run ends', () => {
     const v = run(...root, failed(ROOT, 'max_turns'), ...between)
     expect(errors(v)).toEqual([])

@@ -4,7 +4,8 @@
 // on; the length said wrong, or a cost shown at all.
 import { describe, expect, test } from 'vitest'
 import type { ChatMessage, Job } from '../../agent/types'
-import { jobShown, takeStored } from './job-status'
+import { cancelFocus, jobShown, takeStored } from './job-status'
+import type { JobShown } from './job-status'
 import { durationText, jobFacts } from './job-text'
 import type { JobInfo } from './view'
 
@@ -81,5 +82,39 @@ describe('takeStored', () => {
     expect(takeStored({ chatId: 'c1', job: ended }, { chatId: 'c1', job: stored({ jobId: J2 }) })?.job?.jobId).toBe(J2)
     expect(takeStored({ chatId: 'c1', job: ended }, { chatId: 'c2', job: run })).toEqual({ chatId: 'c2', job: run })
     expect(takeStored(null, { chatId: 'c1', job: null })).toEqual({ chatId: 'c1', job: null })
+  })
+})
+
+describe('cancelFocus: the card the person cancelled takes the focus, once', () => {
+  const wish = { chatId: 'c1', jobId: J1 }
+  const row: JobShown = { kind: 'running', jobId: J1, waiting: false, label: null, helpers: 0 }
+  const card: JobShown = { kind: 'ended', jobId: J1, outcome: 'cancelled', durationMs: 60_000 }
+  /** The component's effect over a sequence of what shows: the wish it keeps and the focus moves it makes. */
+  const play = (shows: (JobShown | null)[], chats = shows.map(() => 'c1')) => {
+    let w: typeof wish | null = wish
+    const focused: number[] = []
+    shows.forEach((s, i) => {
+      const act = cancelFocus(w, chats[i]!, s)
+      if (act === 'wait') return
+      w = null
+      if (act === 'focus') focused.push(i)
+    })
+    return focused
+  }
+  test("the job.ended frame shows the card before the Cancel's answer: it gets the focus", () => {
+    // Pressed (row), the frame ends the job (card), then the answer (still the card): one focus, at the frame.
+    expect(play([row, card, card])).toEqual([1])
+  })
+  test('the answer shows the card first: it gets the focus', () => {
+    expect(play([row, row, card])).toEqual([2])
+  })
+  test('a later card (the next job ending) never takes it', () => {
+    const next: JobShown = { kind: 'ended', jobId: J2, outcome: 'done', durationMs: 1000 }
+    expect(play([row, card, null, { ...row, jobId: J2 }, next])).toEqual([1])
+    // Moved to another chat before the card showed: dropped, never focused there or on return.
+    expect(play([row, row, card], ['c1', 'c2', 'c1'])).toEqual([])
+  })
+  test('no wish: nothing to do', () => {
+    expect(cancelFocus(null, 'c1', card)).toBe('drop')
   })
 })

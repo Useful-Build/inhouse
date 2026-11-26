@@ -70,11 +70,12 @@ test('a cut turn becomes a job that carries on with the tab closed, survives a k
 
     const job = await jobWhen(request, dana, chatId, j => j.state === 'ended', 'the job ended', 8 * 60_000)
     expect(job).toMatchObject({ jobId: started.jobId, rootTurnId: sent.turnId, outcome: 'done' })
-    // The container was replaced: a killed runner started a newer generation (read from its own storage), and the killed
-    // step came back with the SDK's own "session ended before this call's result was recorded" (a server cut's interrupt
+    // The container was replaced: every container running at the kill was killed, so the job's later turns ran on a
+    // runner that started a newer generation than it had then (read from its own storage; which runner the pool picks
+    // isn't fixed, so any runner's counts). And the killed step came back with the SDK's own "session ended before this call's result was recorded" (a server cut's interrupt
     // says otherwise) and ran again; every step has exactly one successful run.
     const gensAfter = await runnerGens(request)
-    expect(killed.filter(r => (gensAfter[r] ?? 0) > (gensBefore[r] ?? 0)), `a killed runner's generation moved on (${JSON.stringify({ gensBefore, gensAfter })})`).not.toEqual([])
+    expect(Object.keys(gensAfter).filter(r => gensAfter[r]! > (gensBefore[r] ?? 0)), `a runner started a new container after the kill (${JSON.stringify({ killed, gensBefore, gensAfter })})`).not.toEqual([])
     const after = await stepsOf(request, prefix)
     expect(after.results.get(step), `the killed step ${step}'s result`).toBe(true)
     expect(after.texts.get(step), `the killed step ${step}'s result text`).toMatch(LOST_CALL)

@@ -11,7 +11,7 @@
 // required test-build job, the default agent set and a full run without `only`), so no other run waits 2 hours.
 //
 // It would fail if: the job ended before 2 hours or not `done`; the kill didn't land while a step ran, or the job didn't
-// go on after it on a new container (a killed runner's stored generation moves on, the killed step comes back with the
+// go on after it on a new container (a runner's stored generation moves on past what it was at the kill, the killed step comes back with the
 // SDK's "session ended before this call's result was recorded", which a server cut never gives, and later steps run); the result file lost the work done before the kill; the job ended with no result, two, or a second notice; a
 // server-written turn read as the person's message.
 import { expect, test } from '@playwright/test'
@@ -68,7 +68,7 @@ test('a scripted 2-hour job survives a closed tab and a killed container and end
   expect(after.results.get(step), `the killed step ${step}'s result`).toBe(true)
   expect(after.texts.get(step), `the killed step ${step}'s result text`).toMatch(LOST_CALL)
   const gensAfter = await runnerGens(request)
-  expect(killed.filter(r => (gensAfter[r] ?? 0) > (gensBefore[r] ?? 0)), `a killed runner's generation moved on (${JSON.stringify({ gensBefore, gensAfter })})`).not.toEqual([])
+  expect(Object.keys(gensAfter).filter(r => gensAfter[r]! > (gensBefore[r] ?? 0)), `a runner started a new container after the kill (${JSON.stringify({ killed, gensBefore, gensAfter })})`).not.toEqual([])
   const okSteps = after.calls.filter(id => after.results.get(id) === false).map(id => Number(id.slice(prefix.length).split('_')[0]))
   expect([...okSteps].sort((a, b) => a - b), 'every step ran once to success').toEqual(Array.from({ length: SOAK_STEPS }, (_, i) => i + 1))
   expect(okSteps.filter(n => n > stepN).length, 'steps after the kill').toBe(SOAK_STEPS - stepN)

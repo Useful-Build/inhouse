@@ -56,3 +56,16 @@ export function takeStored(prev: StoredJob | null, next: StoredJob): StoredJob |
   if (had && next.job && had.jobId === next.job.jobId && had.state === 'ended' && next.job.state !== 'ended') return prev
   return next
 }
+
+/** The job whose Cancel job the person pressed in this chat, so its card takes the focus once it shows. */
+export interface CancelFocus { chatId: string; jobId: string }
+
+/**
+ * What the focus wish does now that the chat shows `shown`: `focus` the card's heading (and forget the wish) once that
+ * job's card shows, whichever came first, its `job.ended` frame or the Cancel's answer; `wait` while its row still shows;
+ * `drop` it for anything else (another chat, another job, nothing), so it never outlives that card.
+ */
+export function cancelFocus(wish: CancelFocus | null, chatId: string | null, shown: JobShown | null): 'focus' | 'wait' | 'drop' {
+  if (wish === null || wish.chatId !== chatId || shown?.jobId !== wish.jobId) return 'drop'
+  return shown.kind === 'ended' ? 'focus' : 'wait'
+}

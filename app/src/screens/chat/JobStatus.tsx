@@ -14,8 +14,8 @@ import { NOT_FOUND } from '../../../shared/contract/error-codes'
 import { cn } from '@/lib/utils'
 import { AgentMark, Button, Icon } from '../../ui'
 import { useOpenChatMessages } from './open-messages'
-import { jobShown, takeStored } from './job-status'
-import type { StoredJob } from './job-status'
+import { cancelFocus, jobShown, takeStored } from './job-status'
+import type { CancelFocus, StoredJob } from './job-status'
 import type { ChatView } from './view'
 import {
   JOB_CANCEL, JOB_CANCEL_FAILED, JOB_CANCELLING, JOB_END_TEXT, JOB_RUNNING_TEXT, JOB_RUNNING_TITLE, JOB_WAITING_TEXT, helpersText, jobAnnouncement,
@@ -34,7 +34,11 @@ export function JobStatus({ chatId, view }: { chatId: string | null; view: ChatV
   const messages = useOpenChatMessages()
   const titleId = useId()
   const heading = useRef<HTMLHeadingElement>(null)
-  const focusEnd = useRef(false)
+  /** Set when Cancel job is pressed: that job's card takes the focus once it shows (job-status.ts `cancelFocus`). */
+  const focusWish = useRef<CancelFocus | null>(null)
+  /** The chat shown now, for a Cancel answer that lands after the person moved to another chat. */
+  const openChat = useRef(chatId)
+  openChat.current = chatId
   /** Bumped by each Cancel answer: a read started before it is older than what the answer said, and is dropped. */
   const epoch = useRef(0)
   /** A job's end is final: an older read that still says running never takes it back (job-status.ts `takeStored`). */
@@ -71,10 +75,14 @@ export function JobStatus({ chatId, view }: { chatId: string | null; view: ChatV
     return () => { document.removeEventListener('visibilitychange', again); if (timer !== undefined) window.clearInterval(timer) }
   }, [running, following])
 
-  // After Cancel job the button is gone: the focus goes to the card that took its place.
+  // After Cancel job the button is gone: the focus goes to the card that took its place, whether its `job.ended` frame
+  // or the Cancel's answer brought it; the wish goes with any other change, so a later card never takes the focus.
   useEffect(() => {
-    if (shown?.kind === 'ended' && focusEnd.current) { focusEnd.current = false; heading.current?.focus() }
-  }, [shown?.kind])
+    const act = cancelFocus(focusWish.current, chatId, shown)
+    if (act === 'wait') return
+    focusWish.current = null
+    if (act === 'focus') heading.current?.focus()
+  }, [chatId, shown?.kind, shown?.jobId])
 
   let said = ''
   let body: ReactNode = null
@@ -83,10 +91,22 @@ export function JobStatus({ chatId, view }: { chatId: string | null; view: ChatV
     const failed = cancel?.jobId === shown.jobId && cancel.state === 'failed'
     const onCancel = () => {
       if (busy) return
+      const asked = chatId!
       setCancel({ jobId: shown.jobId, state: 'busy' })
+      focusWish.current = { chatId: asked, jobId: shown.jobId }
       agent.cancelJob(shown.jobId).then(
-        job => { epoch.current++; focusEnd.current = true; take(chatId!, job); setCancel(null) },
-        (e: unknown) => { console.warn('Inhouse: the job was not cancelled.', e); setCancel({ jobId: shown.jobId, state: 'failed' }) },
+        job => {
+          setCancel(null)
+          // Moved to another chat meanwhile: that chat's state and its reads in flight are left alone.
+          if (openChat.current !== asked) return
+          epoch.current++
+          take(asked, job)
+        },
+        (e: unknown) => {
+          console.warn('Inhouse: the job was not cancelled.', e)
+          focusWish.current = null
+          setCancel({ jobId: shown.jobId, state: 'failed' })
+        },
       )
     }
     const detail = shown.waiting ? JOB_WAITING_TEXT : shown.label ?? JOB_RUNNING_TEXT
