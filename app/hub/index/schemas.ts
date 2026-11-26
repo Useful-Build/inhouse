@@ -92,3 +92,23 @@ export const ConnectErrorSchema = z.string().max(512)
 /** A Shopify shop host: `<handle>.myshopify.com`, the handle as parseShopifyConfig takes it (signin/providers/shopify.ts). */
 export const SHOP_HOST = /^[a-z0-9][a-z0-9-]{0,59}\.myshopify\.com$/
 export const CallToolOptionsSchema = z.strictObject({ testShopHost: z.string().regex(SHOP_HOST).optional() })
+
+// Stage 1 M2 (W0-A): the write entrypoint's request and result (contract.ts WriteRequest, WriteResult).
+// Written out, as HubErrorCodeSchema is (this file imports nothing from contract.ts); schemas.test.ts checks it equals
+// WRITE_OPERATIONS.
+export const WriteOperationKeySchema = z.enum(['shopify.order.tag_add', 'slack.channel.post'])
+
+export const WriteRequestSchema = z.strictObject({
+  actionId: id,
+  attempt: z.int().min(1),
+  requestId: id,
+  accountId: AccountIdSchema,
+  expect: z.strictObject({ connectedAtMs: z.int().nonnegative() }),
+  operation: WriteOperationKeySchema,
+  args: z.unknown(),
+})
+
+export const WriteResultSchema = z.discriminatedUnion('ok', [
+  z.strictObject({ ok: z.literal(true), value: z.strictObject({ ref: z.string().max(500) }) }),
+  z.strictObject({ ok: z.literal(false), error: HubErrorSchema, sent: z.enum(['no', 'unknown']) }),
+])

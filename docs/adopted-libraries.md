@@ -24,6 +24,10 @@ entry when a new base library is adopted. Versions live in `app/package.json`, n
 
 **Tailwind** (`tailwindcss` and `@tailwindcss/vite`, caret ranges; v4). Layer: styling, `app/src/index.css` and the Vite plugin in `app/vite.config.ts`. Changelog: https://github.com/tailwindlabs/tailwindcss/releases.
 
+## Learned from (not installed)
+
+**Executor** (MIT, read at commit `d30f09c`, branch `v2`, release `2.0.0-beta.79`, 2026-11-26; not a dependency). Layer: the hub's sign-in and connect paths, `app/hub/oauth/` and `app/hub/signin/`. What we take: the sign-in exceptions of real services, renewal rules, sign-in type detection, plain failure reasons, test scenarios and per-server defaults, each rewritten and tested here; modules that carry over their logic keep the MIT notice in their header. Why not install it: it's built on the Effect framework and runs as its own hub ([0027](decisions/0027-learn-from-executor-dont-run-it.md)). Upkeep: each milestone that touches sign-in re-scans Executor's exceptions at its latest commit and records the new commit here. Source: https://github.com/UsefulSoftwareCo/executor (changelog: its releases page).
+
 ## Per-update procedure
 
 1. Dependabot: the `registered` group in `.github/dependabot.yml` matches `streamdown`, `@streamdown/*` and

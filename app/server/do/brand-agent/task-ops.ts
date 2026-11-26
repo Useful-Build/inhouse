@@ -47,8 +47,8 @@ export async function internalSubmit(core: AgentCore, sql: SqlStorage, registry:
 
 /**
  * What a task handler gets (index.ts and the test harness build it here, so tests run the shipped context): the
- * object's parts, `runs.submit`, `paused` (a getter: the stored flag at each access, never a value from when the
- * context was built), `resumeDeferred` and `chats.status`.
+ * object's parts, `runs.submit`, `paused` and `pauseGen` (getters: the stored flags at each access, never a value from
+ * when the context was built), `resumeDeferred` and `chats.status`.
  */
 export function taskContext(p: {
   nowMs: number; env: Env; sql: SqlStorage; scheduler: Scheduler; tokens: RunTokens; ports: BrandAgentPorts; core: AgentCore; registry: Registry
@@ -58,6 +58,7 @@ export function taskContext(p: {
     nowMs: p.nowMs, env: p.env, sql, scheduler: p.scheduler, tokens: p.tokens, ports: p.ports, agent: core,
     runs: { submit: t => internalSubmit(core, sql, registry, t) },
     get paused() { return core.isPaused() },
+    get pauseGen() { return core.pauseGen() },
     resumeDeferred: (chatId, decision, questionId) => core.resumeDeferred(chatId, decision, questionId),
     chats: { status: chatId => core.chatStatus(chatId) },
   }
