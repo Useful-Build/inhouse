@@ -59,14 +59,20 @@ export interface ToolHandler<S extends z.ZodType = z.ZodType> {
   call(args: z.output<S>, scope: ToolScope, deps: ToolDeps): Promise<ToolResult>
 }
 
-/** A tool's answer: readable text first, the data after it as JSON (MCP: structured content also goes in a text block). */
+/**
+ * A tool's answer: readable text first, the data after it as JSON (MCP: structured content also goes in a text block).
+ * The CLI (2.1.328) hands the model a tool's `structuredContent` in place of its text when both are given (#444's
+ * re-check), so the words go in it too, as `message` (Stage 1 M2-G): what the real model reads is the server's words
+ * and the data. A data field named `message` would hide them: refused loud.
+ */
 export function answer(text: string, data: Record<string, unknown>): ToolResult {
-  return { content: [{ type: 'text', text }, { type: 'text', text: JSON.stringify(data) }], structuredContent: data }
+  if (Object.hasOwn(data, 'message')) throw new Error('tool answer: the data has its own `message`, which would hide the words')
+  return { content: [{ type: 'text', text }, { type: 'text', text: JSON.stringify(data) }], structuredContent: { message: text, ...data } }
 }
 
-/** A refusal the agent can act on: what went wrong and how to fix the call. `error` is a stable code. */
+/** A refusal the agent can act on: what went wrong and how to fix the call. `error` is a stable code; `message` its words (as answer's). */
 export function refusal(error: string, text: string): ToolResult {
-  return { content: [{ type: 'text', text }], structuredContent: { error }, isError: true }
+  return { content: [{ type: 'text', text }], structuredContent: { error, message: text }, isError: true }
 }
 
 /** Types a handler's call from its own schema, then widens it for the area's map. */

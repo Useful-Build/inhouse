@@ -21,6 +21,7 @@ import type { ToolDeps, ToolHandler, ToolResult, ToolScope } from '../../server/
 import { TOOL_HANDLERS } from '../index.ts'
 import { approvalHandlers } from './index.ts'
 import type { ApprovalsWiring } from './index.ts'
+import { dataOf } from '../../server/test-support.ts'
 
 const db = env.DB
 const T0 = 1_800_000_000_000
@@ -51,7 +52,7 @@ async function call(name: 'approval_request' | 'approval_get' | 'approval_list' 
   return h.call(parsed.data, s, { db, ...deps })
 }
 const text = (r: ToolResult) => r.content[0].text
-const data = (r: ToolResult) => r.structuredContent as Record<string, unknown>
+const data = (r: ToolResult) => dataOf(r)
 const count = async (table: string) => (await db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<number>('n')) ?? 0
 
 const request = (order = 1, s = scope(), tag = 'vip') => call('approval_request', { operation: 'shopify_order_tag_add', args: tagArgs(order, tag) }, s)

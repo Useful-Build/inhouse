@@ -9,6 +9,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { handleMcp } from '../../server/index.ts'
 import type { ToolScope } from '../../server/tool.ts'
 import { ASK_ALONE_TEXT, CLOSED_TEXT, EXPIRED_TEXT, handlers } from './index.ts'
+import { dataOf } from '../../server/test-support.ts'
 
 const db = env.DB
 const CHAT = 'c-mcp-q'
@@ -36,14 +37,14 @@ describe('question_ask reads, never asks (failures 1 and 2)', () => {
     const before = await db.prepare('SELECT COUNT(*) AS n FROM questions').first<number>('n')
     for (const s of [scope(), scope('tu_never'), scope('tu_answered', 'c-another-chat')]) {
       const r = await ask.call(ARGS, s, { db })
-      expect(r).toEqual({ content: [{ type: 'text', text: ASK_ALONE_TEXT }], structuredContent: { error: 'ask_alone' }, isError: true })
+      expect(r).toEqual({ content: [{ type: 'text', text: ASK_ALONE_TEXT }], structuredContent: { error: 'ask_alone', message: ASK_ALONE_TEXT }, isError: true })
     }
     expect(await db.prepare('SELECT COUNT(*) AS n FROM questions').first<number>('n')).toBe(before)
   })
 
   it('the resumed call returns the option chosen; an expired, withdrawn or unanswered one says so', async () => {
     expect(await ask.call(ARGS, scope('tu_answered'), { db })).toMatchObject({
-      content: [{ type: 'text', text: 'The person chose: "No".' }, { type: 'text' }], structuredContent: { question_id: 'q_mcpAnsweredAAAAAAAAAAA', state: 'answered', answer: 'No' },
+      content: [{ type: 'text', text: 'The person chose: "No".' }, { type: 'text' }], structuredContent: { message: 'The person chose: "No".', question_id: 'q_mcpAnsweredAAAAAAAAAAA', state: 'answered', answer: 'No' },
     })
     expect(await ask.call(ARGS, scope('tu_expired'), { db })).toMatchObject({ content: [{ text: EXPIRED_TEXT }], structuredContent: { error: 'question_expired' }, isError: true })
     expect(await ask.call(ARGS, scope('tu_closed'), { db })).toMatchObject({ content: [{ text: CLOSED_TEXT }], structuredContent: { error: 'question_closed' }, isError: true })
@@ -56,7 +57,7 @@ describe("the call's id from the CLI (failure 3)", () => {
     const body = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'question_ask', arguments: ARGS, ...(meta === undefined ? {} : { _meta: meta }) } }
     const res = await handleMcp(new Request('http://egress.internal/mcp/', { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }),
       { memberId: 'm_mcpq', chatId: CHAT, runId: 'r_AAAAAAAAAAAAAAAAAAAAAA', turnId: 't_AAAAAAAAAAAAAAAAAAAAAA' }, { db, now: () => NOW, questions: true })
-    return ((await res.json()) as { result: { structuredContent: Record<string, unknown> } }).result.structuredContent
+    return dataOf(((await res.json()) as { result: { structuredContent: Record<string, unknown>; content: { text: string }[] } }).result)
   }
   it('`_meta["claudecode/toolUseId"]` names the call; none, or a malformed one, names none', async () => {
     expect(await call({ 'claudecode/toolUseId': 'tu_answered' })).toEqual({ question_id: 'q_mcpAnsweredAAAAAAAAAAA', state: 'answered', answer: 'No' })

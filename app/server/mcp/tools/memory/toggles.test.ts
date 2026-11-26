@@ -16,6 +16,7 @@ import { SYSTEM_MEMBER_ID } from '../../../db/ids.ts'
 import { memberStore } from '../../../db/members.ts'
 import { settingStore } from '../../../db/settings.ts'
 import { memoryStore } from './store.ts'
+import { dataOf } from '../../server/test-support.ts'
 
 const db = env.DB
 const store = memoryStore({ db })
@@ -81,15 +82,15 @@ describe('the literal cases (failures 1 to 4)', () => {
     await learn(P1, false)
     const refused = await call(P1, 'memory_save', { scope: 'person', text: 'Tia wants bold totals' })
     expect(refused.isError).toBe(true)
-    expect(refused.structuredContent).toEqual({ error: 'learning_off' })
+    expect(dataOf(refused)).toEqual({ error: 'learning_off' })
     expect(refused.content[0].text).toBe('Not saved: this person turned off "Learn from my chats" in Settings, so don\'t save their preferences. Don\'t save it for the team instead. If they want it saved, they can turn it back on.')
     expect(await db.prepare("SELECT COUNT(*) AS n FROM memories WHERE text = 'Tia wants bold totals'").first<number>('n')).toBe(0)
     const upRefused = await call(P1, 'memory_update', { memory_id: mine, text: 'Tia likes very tidy tables' })
-    expect(upRefused.structuredContent).toEqual({ error: 'learning_off' })
+    expect(dataOf(upRefused)).toEqual({ error: 'learning_off' })
     expect(upRefused.content[0].text).toBe('Not changed: this person turned off "Learn from my chats" in Settings, so don\'t change their saved preferences. If they want that, they can turn it back on.')
     expect(await row(mine)).toEqual({ status: 'active', text: 'Tia likes tidy tables', rev: 1 })
     expect((await call(P1, 'memory_save', { scope: 'brand', text: 'Learn-off brand fact one' })).isError).toBeUndefined()
-    expect((await call(P1, 'memory_forget', { memory_id: mine })).structuredContent).toEqual({ memory_id: mine, forgotten: true })
+    expect(dataOf((await call(P1, 'memory_forget', { memory_id: mine })))).toEqual({ memory_id: mine, forgotten: true })
     // Another person's switch is theirs alone.
     expect((await call(P2, 'memory_save', { scope: 'person', text: 'Tom likes quiet mode' })).isError).toBeUndefined()
   })
@@ -170,7 +171,7 @@ describe('the reason is the right one (failure 1)', () => {
   it('m:learn off and m:ask off: the person save is refused with text that says not to reroute to the team, and a brand save of the same text still works (the brand rule is not the person switch)', async () => {
     await reset(); await learn(P1, false); await ask(false)
     const first = await call(P1, 'memory_save', { scope: 'person', text: 'Tia prefers email summaries' })
-    expect(first.structuredContent).toEqual({ error: 'learning_off' })
+    expect(dataOf(first)).toEqual({ error: 'learning_off' })
     expect(first.content[0].text).toContain("Don't save it for the team instead.")
     const second = await call(P1, 'memory_save', { scope: 'brand', text: 'Tia prefers email summaries' })
     expect(second.isError).toBeUndefined()
@@ -180,20 +181,20 @@ describe('the reason is the right one (failure 1)', () => {
     await reset()
     await db.prepare("INSERT OR IGNORE INTO members (id, kind, role, status, name, created_at_ms) VALUES ('m_tog_gone', 'person', 'member', 'removed', 'Gus', 1)").run()
     await learn('m_tog_gone', false)
-    expect((await call('m_tog_gone', 'memory_save', { scope: 'person', text: 'Gus is gone' })).structuredContent).toEqual({ error: 'no_member' })
+    expect(dataOf((await call('m_tog_gone', 'memory_save', { scope: 'person', text: 'Gus is gone' })))).toEqual({ error: 'no_member' })
     await learn('m_tog_gone', 'missing')
   })
   it('the switch flipped back on after a refused save still gives learning_off for an active member', async () => {
     await reset(); await learn(P1, false)
     const r = await call(P1, 'memory_save', { scope: 'person', text: 'Tia flipped back' }, withBarrier(/^\s*INSERT INTO memories/, async () => {}, () => learn(P1, true)))
-    expect(r.structuredContent).toEqual({ error: 'learning_off' })
+    expect(dataOf(r)).toEqual({ error: 'learning_off' })
   })
   it('a lost rev race with m:learn off is a conflict, not learning_off', async () => {
     await reset()
     const id = savedId(await call(P1, 'memory_save', { scope: 'person', text: 'Tia rev race' }))
     const meddle = async () => { await db.prepare('UPDATE memories SET rev = rev + 1 WHERE id = ?').bind(id).run(); await learn(P1, false) }
     const r = await call(P1, 'memory_update', { memory_id: id, text: 'Tia rev race two' }, withBarrier(/^\s*UPDATE memories SET text/, meddle))
-    expect(r.structuredContent).toEqual({ error: 'conflict' })
+    expect(dataOf(r)).toEqual({ error: 'conflict' })
   })
 })
 
@@ -209,9 +210,9 @@ describe('pins from the line-A review', () => {
     await reset()
     await db.prepare("INSERT OR IGNORE INTO members (id, kind, role, status, name, created_at_ms) VALUES ('m_tog_admin', 'person', 'admin', 'active', 'Ada', 1)").run()
     const id = savedId(await call(P1, 'memory_save', { scope: 'person', text: 'Tia private pin' }))
-    expect((await call('m_tog_admin', 'memory_update', { memory_id: id, text: 'Admin edit' })).structuredContent).toEqual({ error: 'not_found' })
+    expect(dataOf((await call('m_tog_admin', 'memory_update', { memory_id: id, text: 'Admin edit' })))).toEqual({ error: 'not_found' })
     await learn(P1, false)
-    expect((await call('m_tog_admin', 'memory_update', { memory_id: id, text: 'Admin edit' })).structuredContent).toEqual({ error: 'not_found' })
+    expect(dataOf((await call('m_tog_admin', 'memory_update', { memory_id: id, text: 'Admin edit' })))).toEqual({ error: 'not_found' })
     expect(await row(id)).toEqual({ status: 'active', text: 'Tia private pin', rev: 1 })
   })
   it('m:ask turned off through the real settings store makes a person\'s team save active', async () => {
@@ -228,7 +229,7 @@ describe('pins from the line-A review', () => {
     const done = await settings.write({ owner: P1, scope: 'personal', key: 'm:learn', value: false, ifRev: 0 }, at(P1))
     expect('ok' in done).toBe(true)
     expect(await db.prepare("SELECT value_json FROM settings WHERE owner = ? AND key = 'm:learn'").bind(P1).first<string>('value_json')).toBe('false')
-    expect((await call(P1, 'memory_save', { scope: 'person', text: 'Tia after the real switch' })).structuredContent).toEqual({ error: 'learning_off' })
+    expect(dataOf((await call(P1, 'memory_save', { scope: 'person', text: 'Tia after the real switch' })))).toEqual({ error: 'learning_off' })
     const reset1 = await settings.write({ owner: P1, scope: 'personal', key: 'm:learn', value: null, ifRev: 1 }, at(P1))
     expect('ok' in reset1).toBe(true)
     expect((await call(P1, 'memory_save', { scope: 'person', text: 'Tia after the reset' })).isError).toBeUndefined()
@@ -251,14 +252,14 @@ describe('races (failure 1)', () => {
   it('the switch is written between the read and the save: the save is refused, nothing is written', async () => {
     await reset()
     const r = await call(P1, 'memory_save', { scope: 'person', text: 'Tia raced save' }, withBarrier(/^\s*INSERT INTO memories/, () => learn(P1, false)))
-    expect(r.structuredContent).toEqual({ error: 'learning_off' })
+    expect(dataOf(r)).toEqual({ error: 'learning_off' })
     expect(await db.prepare("SELECT COUNT(*) AS n FROM memories WHERE text = 'Tia raced save'").first<number>('n')).toBe(0)
   })
   it('the switch is written between the read and the reword: refused, the fact is unchanged', async () => {
     await reset()
     const id = savedId(await call(P1, 'memory_save', { scope: 'person', text: 'Tia race reword' }))
     const r = await call(P1, 'memory_update', { memory_id: id, text: 'Tia race reword two' }, withBarrier(/^\s*UPDATE memories SET text/, () => learn(P1, false)))
-    expect(r.structuredContent).toEqual({ error: 'learning_off' })
+    expect(dataOf(r)).toEqual({ error: 'learning_off' })
     expect(await row(id)).toEqual({ status: 'active', text: 'Tia race reword', rev: 1 })
   })
   it('m:ask turned on between the read and a brand save: the fact waits', async () => {

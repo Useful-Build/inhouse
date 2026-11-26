@@ -12,6 +12,7 @@ import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import { handleMcp } from './index.ts'
 import { QUESTIONS_ON } from '../../questions/switch.ts'
+import { dataOf } from './test-support.ts'
 
 const db = env.DB
 const NOW = 1_800_000_000_000
@@ -145,7 +146,7 @@ describe('questions on (Stage 1 M2-H) and the off switch kept (M2-Q)', () => {
       expect(names).toEqual(THE_20.filter(n => n !== 'question_ask'))
       const before = await db.prepare('SELECT COUNT(*) AS n FROM questions').first<number>('n')
       const r = await call('question_ask', { question: 'Which?', options: ['A', 'B'] }, SCOPE, extra)
-      expect(r.structuredContent).toEqual({ error: 'not_available_yet' })
+      expect(dataOf(r)).toEqual({ error: 'not_available_yet' })
       expect(await db.prepare('SELECT COUNT(*) AS n FROM questions').first<number>('n')).toBe(before)
     }
   })
@@ -157,7 +158,7 @@ describe('tools/call (failure 3)', () => {
     for (const name of THE_20.filter(n => !BUILT.includes(n))) {
       const r = await call(name, { anything: 1 })
       expect(r.isError, name).toBe(true)
-      expect(r.structuredContent, name).toEqual({ error: 'not_available_yet' })
+      expect(dataOf(r), name).toEqual({ error: 'not_available_yet' })
       expect(r.content[0].text, name).toContain(`${name} isn't available yet`)
     }
     expect(await db.prepare('SELECT COUNT(*) AS n FROM memories').first<number>('n')).toBe(before)
@@ -168,7 +169,7 @@ describe('tools/call (failure 3)', () => {
     for (const args of [{ scope: 'team', text: 'x' }, { scope: 'brand' }, { scope: 'brand', text: '' }, { scope: 'brand', text: 'x'.repeat(501) }, { scope: 'brand', text: 'ok', memberId: 'm_other' }]) {
       const r = await call('memory_save', args)
       expect(r.isError, JSON.stringify(args)).toBe(true)
-      expect(r.structuredContent, JSON.stringify(args)).toEqual({ error: 'invalid_arguments' })
+      expect(dataOf(r), JSON.stringify(args)).toEqual({ error: 'invalid_arguments' })
     }
   })
 })
@@ -178,7 +179,7 @@ describe("a routine's run (the system row, A1's ask H) (failure 4)", () => {
     const before = await db.prepare("SELECT COUNT(*) AS n FROM memories WHERE scope = 'person'").first<number>('n')
     const r = await call('memory_save', { scope: 'person', text: 'Prefers weekly stock summaries' })
     expect(r.isError).toBe(true)
-    expect(r.structuredContent).toEqual({ error: 'person_scope_in_routine' })
+    expect(dataOf(r)).toEqual({ error: 'person_scope_in_routine' })
     expect(await db.prepare("SELECT COUNT(*) AS n FROM memories WHERE scope = 'person'").first<number>('n')).toBe(before)
     const ok = await call('memory_save', { scope: 'brand', text: 'Routine checks stock at six' })
     expect(ok.isError).toBeUndefined()
