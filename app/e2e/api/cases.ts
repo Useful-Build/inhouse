@@ -60,6 +60,8 @@ const NO_PERMISSION = 'pg_e2eNobodyAAAAAAAAAAAAA'
 const NO_JOB = 'j_e2eNobodyAAAAAAAAAAAAA'
 /** An action id nobody has (`ac_` + 22, actions.ts `ActionIdSchema`). */
 const NO_ACTION = 'ac_e2eNobodyAAAAAAAAAAAAA'
+/** A question id nobody has (`q_` + 22, questions.ts `QuestionIdSchema`). */
+const NO_QUESTION = 'q_e2eNobodyAAAAAAAAAAAAA'
 const ALL: Role[] = ['member', 'admin', 'inhouse']
 const PEOPLE: Role[] = ['member', 'admin']
 
@@ -206,6 +208,9 @@ export const CASES: Record<string, RouteCase> = {
   'POST /api/actions/:id/answer': { design: d('baseline', PEOPLE), path: `/api/actions/${NO_ACTION}/answer`, json: { choice: 'deny', ifRev: 1 }, passes: 404 },
   'POST /api/actions/:id/undo': { design: d('baseline', PEOPLE), path: `/api/actions/${NO_ACTION}/undo`, json: { ifRev: 1 }, passes: 404 },
   'POST /api/actions/:id/resolve': { design: d('baseline', PEOPLE), path: `/api/actions/${NO_ACTION}/resolve`, json: { outcome: 'sent', ifRev: 1 }, passes: 404 },
+  // Stage 1 M2-Q (N16): brand people only. An answer to a question nobody asked: 404, nothing written.
+  'GET /api/questions': { design: d('baseline', PEOPLE), path: '/api/questions', passes: 200 },
+  'POST /api/questions/:id/answer': { design: d('baseline', PEOPLE), path: `/api/questions/${NO_QUESTION}/answer`, json: { choice: 'Yes' }, passes: 404 },
 }
 
 /** The case for a row, or an error naming it (routes.spec.ts reports the gap on its own; this is for the specs that use it). */

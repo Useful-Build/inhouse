@@ -98,6 +98,8 @@ export const retentionRules: Readonly<Record<string, RetentionRule>> = {
   // Stage 1 M2-B: an action goes a period after it became final; `final_at_ms` is null while it's open (waiting, approved,
   // sending or an unresolved check), so an open action never goes by age.
   outbox_actions: { kind: 'd1', ageColumn: 'final_at_ms', idColumn: 'id' },
+  // Stage 1 M2-Q: a question ages from when it left `open` (`ended_at_ms`, null while open), so an open one never goes.
+  questions: { kind: 'd1', ageColumn: 'ended_at_ms', idColumn: 'id' },
 }
 
 /**
@@ -126,6 +128,7 @@ export const retentionGroups: Readonly<Record<string, PeriodName>> = {
   egress_taint: 'egressTaint',
   permission_uses: 'steps',
   outbox_actions: 'steps',
+  questions: 'steps',
 }
 
 export type RetentionPeriods = Readonly<Record<string, number | null>>

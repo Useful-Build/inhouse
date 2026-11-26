@@ -12,6 +12,11 @@ export interface ToolScope {
   nowMs: number
   /** Stamped on the rows a write changes (`req_id`). */
   requestId: string
+  /**
+   * The model's tool call this is (Stage 1 M2-Q): Claude Code's `_meta["claudecode/toolUseId"]` on `tools/call`, which
+   * the CLI sets, not the model. Absent when the request carries none.
+   */
+  toolUseId?: string
 }
 
 /** An MCP `CallToolResult` (2025-11-25): text the model reads, the same data as `structuredContent`, `isError` on a refusal. */

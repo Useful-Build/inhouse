@@ -11,6 +11,7 @@ import { handlers as approvals } from './approvals/index.ts'
 import { handlers as history } from './history/index.ts'
 import { handlers as memory } from './memory/index.ts'
 import { handlers as notifications } from './notifications/index.ts'
+import { handlers as questions } from './questions/index.ts'
 import { handlers as routines } from './routines/index.ts'
 import { STUB_NAMES, handlers as stubs } from './stubs/index.ts'
 import { handlers as skills } from './skills/index.ts'
@@ -27,6 +28,8 @@ const AREAS: readonly Area[] = [
   ['routines', routines],
   ['team', team],
   ['skills', skills],
+  // Stage 1 M2-Q (N16).
+  ['questions', questions],
   ['approvals', approvals],
 ]
 
