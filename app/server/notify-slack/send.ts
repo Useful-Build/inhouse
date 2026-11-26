@@ -183,10 +183,11 @@ async function toBell(c: Common, r: (id: string, target: string) => Reserve, to:
       await batch(c.ctx.db, [auditLine(c, 'bell', target, 'refused', res.cap)])
       return { kind: 'bell', to, outcome: 'refused', detail: res.cap, ...named }
     }
-    // A listed channel's notice can repeat a member's own bell row (same person, same text): a posted repeat still says
-    // it went to the bell instead of the channel, so the agent never reads it as a Slack post.
+    // A listed channel's notice and a member's own notice can repeat each other's bell row (same person, same text). A
+    // posted repeat carries this call's detail, not the stored row's: a channel says it went to the bell instead (never
+    // read as a Slack post), and a member's repeat never says a channel's words.
     const stored = repeatOf(res.row)
-    const rep = stored.outcome === 'posted' && detail ? { ...stored, detail } : stored
+    const rep: ReturnType<typeof repeatOf> = stored.outcome === 'posted' ? { outcome: 'posted', ...(detail ? { detail } : {}) } : stored
     await batch(c.ctx.db, [auditLine(c, 'bell', target, rep.outcome, rep.detail, true)])
     return { kind: 'bell', to, ...rep, repeat: true, ...named }
   }

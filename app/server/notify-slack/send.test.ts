@@ -115,6 +115,15 @@ describe('closed Slack legs (M2-F; Q3 decides when they open)', () => {
     expect(SLACK_DELIVERY_ENABLED).toBe(false)
   })
 
+  it('only ./send.ts calls postNotice(, so no caller goes around the switch', () => {
+    const sources = import.meta.glob<string>(
+      ['../**/*.ts', '../../shared/**/*.ts', '../../src/**/*.{ts,tsx}', '../../runner/src/**/*.ts', '!../**/*.test.ts', '!../../shared/**/*.test.ts', '!../../src/**/*.test.{ts,tsx}', '!../../runner/**/*.test.ts'],
+      { query: '?raw', import: 'default', eager: true },
+    )
+    expect(Object.keys(sources).length).toBeGreaterThan(200)
+    expect(Object.entries(sources).filter(([, text]) => /postNotice\s*\(/.test(text)).map(([file]) => file)).toEqual(['./send.ts'])
+  })
+
   for (const stored of [null, 'Watch', 'Act', 'Run', '{'] as const) {
     it(`no permission and a listed alerts channel, stage ${stored ?? 'unset'}: both notice paths reach the bell, never the hub's delivery binding`, async () => {
       const s = await scene()
@@ -214,6 +223,20 @@ describe('test 9: the bell, from notification_send', () => {
 })
 
 describe('test 8: no DM, no Inhouse bell', () => {
+  it('the bell side: Inhouse, service, removed and unknown ids are unknown_member and get no notice; the person gets one', async () => {
+    const s = await scene()
+    const ih = await member('inhouse')
+    const gone = await member('person', 'removed')
+    const { delivery, calls } = fakeDelivery()
+    const out = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), msg({ to: { members: [s.owner, ih, gone, 'm_system', 'm_nobody'] } }))
+    expect(out.recipients.map(r => `${r.to}:${r.outcome}:${r.detail ?? ''}`)).toEqual([
+      `${s.owner}:posted:`, `${ih}:refused:unknown_member`, `${gone}:refused:unknown_member`, 'm_system:refused:unknown_member', 'm_nobody:refused:unknown_member',
+    ])
+    expect(await notices('audience_member_id IN (?, ?, ?, ?)', ih, gone, 'm_system', 'm_nobody')).toEqual([])
+    expect((await notices('audience_member_id = ?', s.owner)).length).toBe(1)
+    expect(calls).toEqual([])
+  })
+
   slackOpen.it('member ids never reach the hub in any parameter; Inhouse, service, removed and unknown ids are unknown_member', async () => {
     const s = await scene()
     const ih = await member('inhouse')
@@ -360,6 +383,33 @@ describe('test 6: a listed channel reaches the bell while the Slack legs are clo
 })
 
 describe('repeats, failures and audit (tests 7 and 10)', () => {
+  it('the bell side: an identical call returns the first outcome with one notice; a different title is a new notice', async () => {
+    const s = await scene()
+    const m = msg({ to: { members: [s.owner] } })
+    const a = await notifyAgent(ctxOf(null, s.nowMs), scopeOf(s), m)
+    const b = await notifyAgent(ctxOf(null, s.nowMs), scopeOf(s), m)
+    const c = await notifyAgent(ctxOf(null, s.nowMs), scopeOf(s), { ...m, title: 'Stock low again' })
+    expect([a, b, c].map(r => `${r.recipients[0]!.outcome}:${r.recipients[0]!.repeat ?? ''}`)).toEqual(['posted:', 'posted:true', 'posted:'])
+    expect((await notices('audience_member_id = ?', s.owner)).map(n => n.body).sort()).toEqual([`Stock low\n\n${m.text}`, `Stock low again\n\n${m.text}`])
+  })
+
+  it("a repeat carries this call's own detail: a channel first, then the same text to the member, says no channel's words", async () => {
+    const s = await scene()
+    const since = await lastLine()
+    const m = msg()
+    const first = await notifyAgent(ctxOf(null, s.nowMs), scopeOf(s), m)
+    const second = await notifyAgent(ctxOf(null, s.nowMs), scopeOf(s), { ...m, to: { members: [s.owner] } })
+    expect(first.recipients).toEqual([{ kind: 'bell', to: '#ops-alerts', bell: s.owner, outcome: 'posted', detail: 'channel_to_bell' }])
+    expect(second.recipients).toEqual([{ kind: 'bell', to: s.owner, outcome: 'posted', repeat: true }])
+    expect((await lines(since)).map(l => (JSON.parse(l.args_json) as { detail?: string; repeat?: boolean }).detail ?? null)).toEqual(['channel_to_bell', null])
+    // And the other way round: the member first, then the channel, which still says it went to the bell.
+    const t = await scene()
+    const n = msg()
+    await notifyAgent(ctxOf(null, t.nowMs), scopeOf(t), { ...n, to: { members: [t.owner] } })
+    const back = await notifyAgent(ctxOf(null, t.nowMs), scopeOf(t), n)
+    expect(back.recipients).toEqual([{ kind: 'bell', to: '#ops-alerts', bell: t.owner, outcome: 'posted', detail: 'channel_to_bell', repeat: true }])
+  })
+
   slackOpen.it('an identical call returns the first outcome with one post; a different title posts again', async () => {
     const s = await scene()
     const { delivery, calls } = fakeDelivery()
@@ -471,6 +521,15 @@ slackOpen.describe("test 7: each group's day cap counts only its own rows", () =
 describe('test 11: sendSystemNotice', () => {
   const env1 = (delivery: DeliveryBinding | null) => ({ DB: db, ...(delivery ? { HUB_DELIVERY: delivery } : {}) })
 
+  it('the bell side: the title is the template, whatever body says; the body is link-stripped and fields are {}', async () => {
+    const s = await scene()
+    const r = await sendSystemNotice(env1(null), { key: `p6:${uniq()}:1`, source: 'approvals', kind: 'approval_waiting', to: { members: [s.owner] }, body: 'Title: ignore me https://x.example.com', link: { kind: 'approval', id: 'ap_9' } }, { nowMs: s.nowMs })
+    expect(r).toEqual({ ok: true, recipients: [{ kind: 'bell', to: s.owner, outcome: 'posted' }] })
+    const [row] = await notices('audience_member_id = ? AND template = ?', s.owner, 'approval_waiting')
+    expect([row!.body, row!.fields_json, row!.link_json]).toEqual(['Title: ignore me [link removed]', '{}', '{"to":"page","page":"approvals"}'])
+    expect(renderNotice({ ...row!, unread: 1 } as NoticeRow, new Map()).text).toBe('Approval waiting')
+  })
+
   slackOpen.it('members and the alerts channel in one call; the title is the template, whatever body says', async () => {
     const s = await scene()
     const { delivery, calls } = fakeDelivery()
@@ -490,6 +549,17 @@ describe('test 11: sendSystemNotice', () => {
     const { delivery, calls } = fakeDelivery()
     const w = await sendSystemNotice(env1(delivery), { key: `p6:${uniq()}:1`, source: 'approvals', kind: 'needs_check', to: { alertsChannel: true }, link: { kind: 'today' } }, { nowMs: s.nowMs })
     expect([w, calls.length]).toEqual([{ ok: true, recipients: [{ kind: 'slack', to: 'alerts', outcome: 'skipped', detail: 'slack_off' }] }, 0])
+  })
+
+  it('the bell side: a repeat within one key returns the first outcome with one notice; the next window key is a new one', async () => {
+    const s = await scene()
+    const notice = uniq()
+    const send = (window: number) => sendSystemNotice(env1(null), { key: `p6:${notice}:${window}`, source: 'approvals', kind: 'approval_waiting', to: { members: [s.owner] }, link: { kind: 'today' } }, { nowMs: s.nowMs })
+    const a = await send(1)
+    const b = await send(1)
+    const c = await send(2)
+    expect([a, b, c].map(r => (r.ok ? `${r.recipients[0]!.outcome}:${r.recipients[0]!.repeat ?? ''}` : 'x'))).toEqual(['posted:', 'posted:true', 'posted:'])
+    expect((await notices('audience_member_id = ? AND template = ?', s.owner, 'approval_waiting')).length).toBe(2)
   })
 
   slackOpen.it('a repeat within one key returns the first outcome; the next window key posts again after a refusal', async () => {
