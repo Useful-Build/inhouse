@@ -42,7 +42,8 @@ const reportReturned: Check = (r) => {
   const result = blocks.find((b) => typeof b === 'object' && b !== null && b.type === 'tool_result' && b.tool_use_id === CALL_ID)
   if (result === undefined) return `no result for ${CALL_ID}`
   const said = JSON.stringify(result.content ?? '')
-  return said.includes(HELPER_REPORT) ? true : `the helper's result is not its report; it says: ${said.slice(0, 400)}`
+  // The CLI frames a helper's report ("[Subagent hand-back] ...", every line indented), so the report's own words are at the end.
+  return said.includes(HELPER_REPORT) ? true : `the helper's result is not its report; it ends: ${said.slice(-600)}`
 }
 
 export function subagentScenarios(mainLoop: (tool?: string) => Check, resultIs: (id: string, error: boolean) => Check): Record<string, Scenario> {
