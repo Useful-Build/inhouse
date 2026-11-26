@@ -5,8 +5,8 @@
 //   1. brings the chat's files into the work folder (`inputs/`, `outputs/`; src/files/), up to the restore cap;
 //   2. runs one `query()` with the session store adapter (src/store/), streaming every SDK message back as an `sdk`
 //      event. A prompt goes in as a one-message stream, so `interrupt()` works (it needs streaming input); the `""`
-//      resume after a deferred call's answer stays a plain string (P0 S1: an empty stream left the deferred tool
-//      unavailable), and an interrupt there falls back to the abort signal;
+//      resume after a deferred call's answer goes in as a stream with no message, held open until the result
+//      (`resumePrompt`: a plain `""` makes the CLI add an empty turn of its own after the deferred call);
 //   3. at the end: the deferred call, if the run deferred one (with the runner's own one-call check), then the new and
 //      changed files under `outputs/`, then the store's checkpoint and repair (`checkpoint`, or `mirror_error`), then
 //      exactly one terminal event (`finished` or `failed`). After a stop the checkpoint goes first and the files after
@@ -112,6 +112,18 @@ export function baseOptions(config: RunConfig, cwd: string, env: Record<string, 
     ...(config.resume ? { resume: config.sessionId } : { sessionId: config.sessionId }),
     ...(sessionStore ? { sessionStore, sessionStoreFlush: STORE_FLUSH } : {}),
   }
+}
+
+/**
+ * A deferred call's resume (prompt `""`): a stream with no message, held open until `done` settles. On CLI 2.1.328 a plain
+ * `""` string runs the deferred call and then a second, empty turn of its own (a model call with nothing to answer);
+ * an empty stream ended at once left the deferred tool unavailable (P0 S1). Held open, the CLI runs the deferred call,
+ * answers once, and the run ends when the input does (test/store/deferred-resume.test.ts, the real CLI).
+ */
+export function resumePrompt(done: Promise<void>): AsyncIterable<SDKUserMessage> {
+  return (async function* () {
+    await done
+  })()
 }
 
 /** The prompt as a one-message stream, held open until `done` settles (the SDK ends the run when its input ends). */
@@ -474,7 +486,7 @@ export async function runSession(deps: {
 
   // 3. The query.
   const text = config.prompt !== '' && leftOut.length > 0 ? `${config.prompt}\n\n${leftOutNote(leftOut)}` : config.prompt
-  const prompt = text === '' ? '' : streamingPrompt(text, inputDone)
+  const prompt = text === '' ? resumePrompt(inputDone) : streamingPrompt(text, inputDone)
   let result: Result | null = null
   let thrown: unknown = null
   let threw = false

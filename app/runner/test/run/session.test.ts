@@ -79,6 +79,13 @@ function harness(query: QueryFn, guards: QueryGuards = testQueryGuards, opts: { 
   return { sent, events, done, cwd, egress, logs, close: () => onClose(), deliver: (m: unknown) => handler({ ok: true, value: m }), deliverLine: (l: LineResult) => handler(l) }
 }
 
+/** A resume's prompt: a stream (so `interrupt()` works) that, once the run has ended its input, yields no message. */
+async function expectEmptyStream(p: string | AsyncIterable<SDKUserMessage>) {
+  expect(typeof p).not.toBe('string')
+  const it = (p as AsyncIterable<SDKUserMessage>)[Symbol.asyncIterator]()
+  expect(await it.next()).toEqual({ done: true, value: undefined })
+}
+
 /** The prompt a query got, as text: a stream's one message, or the plain string. */
 async function promptText(p: string | AsyncIterable<SDKUserMessage>): Promise<{ streamed: boolean; text: string }> {
   if (typeof p === 'string') return { streamed: false, text: p }
@@ -209,7 +216,7 @@ describe('runSession', () => {
     if (present) expect(servers.actions).toEqual({ type: 'http', url: 'http://127.0.0.1:8081/actions/' })
   })
 
-  it('resume: true passes resume, not sessionId; "" is passed as the prompt', async () => {
+  it('resume: true passes resume, not sessionId; "" is passed as a stream with no message', async () => {
     const q = fakeQuery([result])
     const h = harness(q.query)
     const c = config({ resume: true, prompt: '', expect: { mainEntries: 1, lastUuid: null, lastUuidIndex: null } })
@@ -217,7 +224,7 @@ describe('runSession', () => {
     await h.done
     expect(q.calls[0]!.options.resume).toBe(c.sessionId)
     expect(q.calls[0]!.options.sessionId).toBeUndefined()
-    expect(q.calls[0]!.prompt).toBe('')
+    await expectEmptyStream(q.calls[0]!.prompt)
   })
 
   it('a query that throws ends with one failed sdk_error', async () => {
@@ -1002,14 +1009,14 @@ describe('the run lifecycle', () => {
     expect(leftOutNote(['inputs/a.pdf'])).toBe("[The chat's files over the restore size cap were not brought into the work folder: inputs/a.pdf]")
   })
 
-  it('the "" resume prompt stays a plain empty string, even with files left out', async () => {
+  it('the "" resume prompt stays a stream with no message, even with files left out', async () => {
     const egress = fakeEgress()
     egress.files.set('inputs/huge.txt', { body: new Uint8Array(5000) })
     const q = fakeQuery([result])
     const h = harness(q.query, testQueryGuards, { egress })
     h.deliver({ type: 'run', config: config({ resume: true, prompt: '', expect: { mainEntries: 1, lastUuid: null, lastUuidIndex: null }, fileCaps: { maxFileBytes: 1, maxFilesPerTurn: 1, maxRestoreBytes: 10, allowedTypes: [] } }) })
     await h.done
-    expect(q.calls[0]!.prompt).toBe('')
+    await expectEmptyStream(q.calls[0]!.prompt)
   })
 
   it("files that can't be restored end the run (files) before any query", async () => {

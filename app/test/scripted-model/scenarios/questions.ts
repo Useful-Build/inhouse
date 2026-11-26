@@ -12,16 +12,22 @@ export const QUESTION_ASKED = { question: 'Restock the blue mugs on Friday?', op
 /** What the turn after the resume says: this, then the call's result text. */
 export const QUESTION_REPLY = 'Going with your answer. The question tool said:'
 
-/** The text of the newest tool result for call `id`, or a miss. */
+/**
+ * The text of the newest tool result for call `id`, or a miss. Searched from the newest message back: the CLI can end a
+ * request with a `system` message of its own (the budget line) after the tool result.
+ */
 function resultTextOf(r: MessagesRequest, id: string): string {
-  const last = r.messages.at(-1)
-  const blocks = Array.isArray(last?.content) ? (last.content as { type?: string; tool_use_id?: string; content?: unknown }[]) : []
-  const block = blocks.find(b => b.type === 'tool_result' && b.tool_use_id === id)
-  if (block === undefined) throw new Error(`no result for ${id}`)
-  const c = block.content
-  if (typeof c === 'string') return c
-  if (Array.isArray(c)) return c.map(p => (p as { text?: unknown }).text).filter(t => typeof t === 'string').join(' ')
-  return ''
+  for (let i = r.messages.length - 1; i >= 0; i--) {
+    const content = r.messages[i]!.content
+    const blocks = Array.isArray(content) ? (content as { type?: string; tool_use_id?: string; content?: unknown }[]) : []
+    const block = blocks.find(b => b.type === 'tool_result' && b.tool_use_id === id)
+    if (block === undefined) continue
+    const c = block.content
+    if (typeof c === 'string') return c
+    if (Array.isArray(c)) return c.map(p => (p as { text?: unknown }).text).filter(t => typeof t === 'string').join(' ')
+    return ''
+  }
+  throw new Error(`no result for ${id}`)
 }
 
 export function questionScenarios(mainLoop: (tool?: string) => Check, resultIs: (id: string, error: boolean) => Check): Record<string, Scenario> {
