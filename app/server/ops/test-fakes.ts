@@ -35,7 +35,6 @@
 //   hub; `shop` is the Shopify scope's shop (the hub doesn't expose it to the server; M2-D replaces this op with the real
 //   egress handler). An approved action's send is asked of BrandAgent as an answer's is. Answers `{ result }`: the
 //   outbox's `OutboxRequestResult`.
-import { ACT } from '../stage/watch.ts'
 import { z } from 'zod'
 import type { CallerScope, ConnectGateway, HubResult } from '../../hub/index/contract.ts'
 import type { RunGrant } from '../do/brand-agent/tokens.ts'
@@ -169,8 +168,10 @@ async function hubOp(env: TestFakesEnv, op: Extract<ProductOp, { op: 'hub' }>): 
   const res = await handleHub(
     new Request('https://egress.invalid/hub/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(message) }),
     grant,
-    // This hook exercises the hub binding’s own tool rules. The production egress tests cover the Watch gate.
-    hubRouteDeps(recorder, entry => console.log(entry), async () => ACT),
+    // This hook exercises the hub binding’s own tool rules (ReadGateway refuses every write itself), so the egress's Watch
+    // gate is held open: 1 is the stage index the egress reads as Act. The production egress tests cover that gate, which
+    // M2-D replaces; nothing outside server/egress/ and server/stage/ imports the stage code (M2-F).
+    hubRouteDeps(recorder, entry => console.log(entry), async () => 1),
   )
   // The route's own answer is read so the call completes as the egress would; the spec gets the binding's HubResult.
   await res.text()

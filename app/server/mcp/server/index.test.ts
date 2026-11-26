@@ -160,20 +160,22 @@ describe("a routine's run (the system row, A1's ask H) (failure 4)", () => {
 })
 
 describe('descriptions promise only what P3 does (failure 5)', () => {
-  it('history covers own chats only; notifications go to the bell and admin-listed Slack channels, never email', async () => {
+  it('history covers own chats only; notifications go to the bell, a listed channel to the bell for now, never email', async () => {
     const { body } = await rpc({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
     const d = Object.fromEntries((body as { result: { tools: { name: string; description: string }[] } }).result.tools.map(t => [t.name, t.description]))
     expect(d.history_search).not.toMatch(/routine|run\b|activity/i)
     expect(d.history_read).not.toMatch(/routine|run\b/i)
-    // P5 W4's description (p5-w4.md section 2): the bell for members, listed channels from Act; email named only to rule it out.
+    // P5 W4's description (p5-w4.md section 2): the bell for members; a listed channel reaches the bell while both Slack legs are
+    // closed (M2-F, server/notify-slack/slack-legs.ts), and no stage is named; email named only to rule it out.
     expect(d.notification_send).toContain('reaches their bell in the app (never a Slack DM, never email)')
-    expect(d.notification_send).toContain('posts there from the Act stage; at Watch it reaches the bell instead')
+    expect(d.notification_send).toContain("`to.channels` takes the names of channels the brand's admin listed and reaches the bell for now, not Slack.")
+    expect(d.notification_send).not.toMatch(/\b(?:Watch|Act|Run|stage)\b/)
     expect(d.notification_send.replace('never email', '')).not.toMatch(/email/i)
   })
 })
 
-describe('the Watch switch (P8a S)', () => {
-  it("memory_save and team_request_create run at Watch", async () => {
+describe('a stored Watch stage changes nothing here (M2-F; it was the P8a S switch)', () => {
+  it("memory_save and team_request_create run with Watch stored", async () => {
     await db.prepare("DELETE FROM settings WHERE owner = 'brand' AND key = 'stage'").run()
     await db.prepare("INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 'stage', '\"Watch\"', 1, 0, 'm_x', 'r-watch')").run()
     const saved = await call('memory_save', { scope: 'brand', text: 'We restock on Fridays at Watch.' })

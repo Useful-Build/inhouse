@@ -7,7 +7,8 @@
 // - `reserve` by turn id (`NOT EXISTS` the turn row), answered from the turn row whatever call made it;
 // - `extend` by `(turnId, callId)` (the `usage_extends` row a granted extend writes);
 // - `close` by that row's `closed` flag, and a no-op once the turn is final;
-// - `settle` and `release` by `final = 0`.
+// - `settle` and `release` by `final = 0`;
+// - `openJob` by job id and `closeJob` by the job's state. Job turns change both pools under the month stamp.
 // The cap is read from `settings` inside the reserve and extend batches (settings-sql.ts), so a lowered cap refuses at
 // once and a raised one clears. Settle books the egress tally only: the runner's `costUsd` is an SDK estimate that
 // counts a resumed session's earlier spend (Agent SDK cost tracking, read 2026-11-20:
@@ -16,7 +17,7 @@ import { StoreUnavailableError } from '../db/sql.ts'
 import type { ReserveInput, UsageLedgerPort } from '../do/brand-agent/ports.ts'
 import { TURN_CEILING_MICRO } from '../model/catalog.ts'
 import { monthOf, zoneOf } from './month.ts'
-import { ALERT_PCT_SQL, CAP_MICRO_SQL } from './settings-sql.ts'
+import { ALERT_PCT_SQL, CAP_MICRO_SQL, JOB_BUDGET_MICRO_SQL } from './settings-sql.ts'
 
 /** The start hold every turn reserves (the cap gate): $0.25. */
 export const START_HOLD_MICRO = 250_000
@@ -42,6 +43,19 @@ export interface LedgerDeps {
 type Val = string | number | null
 type Q = { sql: string; params: Val[] }
 const q = (sql: string, ...params: Val[]): Q => ({ sql, params })
+
+type JobBudget = { budget_micro: number; spent_micro: number; state: 'open' | 'closed' }
+/** A closed job, or one that can't fit `need` even with none of its holds out but `ownHold`. A missing job row is a bug. */
+const jobSpentOut = (jobId: string, job: JobBudget | null, need: number, ownHold = 0) => {
+  if (job === null) throw new Error(`usage: no job row for ${jobId} (openJob must run first)`)
+  return job.state === 'closed' || job.budget_micro - job.spent_micro - ownHold < need
+}
+const jobHasRoom = `state = 'open' AND budget_micro - spent_micro - reserved_micro >= ?`
+const turnJob = '(SELECT job_id FROM usage_turns WHERE turn_id = ?)'
+// Apply the same delta as the successful month write, before its turn row changes. Closed jobs still record actuals.
+const jobDelta = (turnId: string, s: string, deltaSql: string, ...params: Val[]): Q =>
+  q(`UPDATE usage_jobs SET ${deltaSql}, stamp = ? WHERE job_id = ${turnJob}
+     AND EXISTS (SELECT 1 FROM usage_months WHERE stamp = ?)`, ...params, s, turnId, s)
 
 /** The model's ceiling as SQL over `usage_turns.model` (NULL for a model with none, so its extends never pass). */
 const CEILING_SQL = `(CASE model ${Object.entries(TURN_CEILING_MICRO).map(([m, c]) => `WHEN '${m.replaceAll("'", "''")}' THEN ${c}`).join(' ')} END)`
@@ -87,6 +101,8 @@ export function createUsageLedger(deps: LedgerDeps): UsageLedger {
       q(`UPDATE usage_months SET spent_micro = spent_micro + ${microSql},
            reserved_micro = reserved_micro - (SELECT reserved_micro FROM usage_turns WHERE turn_id = ?), stamp = ?
          WHERE month = (SELECT month FROM usage_turns WHERE turn_id = ? AND final = 0)`, ...microParams, turnId, s, turnId),
+      jobDelta(turnId, s, `spent_micro = spent_micro + ${microSql},
+        reserved_micro = reserved_micro - (SELECT reserved_micro FROM usage_turns WHERE turn_id = ?)`, ...microParams, turnId),
       q(`UPDATE usage_turns SET settled_micro = ${microSql}, final = 1, source = 'tally', settled_at_ms = ?, runner_cost_micro = ?, stamp = ?
          WHERE turn_id = ? AND final = 0 AND EXISTS (SELECT 1 FROM usage_months WHERE stamp = ?)`, ...microParams, nowMs, runnerCost, s, turnId, s),
       q(`UPDATE usage_months SET alert_crossed_at_ms = ?
@@ -95,31 +111,63 @@ export function createUsageLedger(deps: LedgerDeps): UsageLedger {
   }
 
   return {
+    async openJob(input) {
+      const jobId = id('job id', input.jobId)
+      const rootTurnId = id('root turn id', input.rootTurnId)
+      const s = stamp()
+      const [, , job] = await batch([
+        q(`INSERT INTO usage_jobs (job_id, budget_micro, reserved_micro, spent_micro, state, created_at_ms, stamp)
+           SELECT ?, ${JOB_BUDGET_MICRO_SQL}, CASE WHEN final = 0 THEN reserved_micro ELSE 0 END,
+             CASE WHEN final = 1 THEN settled_micro ELSE 0 END, 'open', ?, ?
+           FROM usage_turns WHERE turn_id = ? AND job_id IS NULL ON CONFLICT (job_id) DO NOTHING`,
+          jobId, input.nowMs, s, rootTurnId),
+        q(`UPDATE usage_turns SET job_id = ?, stamp = ? WHERE turn_id = ?
+           AND EXISTS (SELECT 1 FROM usage_jobs WHERE job_id = ? AND stamp = ?)`, jobId, s, rootTurnId, jobId, s),
+        q('SELECT 1 FROM usage_turns WHERE turn_id = ? AND job_id = ?', rootTurnId, jobId),
+      ])
+      if (!row(job)) throw new Error('usage: job root is missing or linked to another job')
+    },
+
+    async closeJob(jobIdIn) {
+      const jobId = id('job id', jobIdIn)
+      await batch([q(`UPDATE usage_jobs SET state = 'closed', closed_at_ms = ?, stamp = ?
+        WHERE job_id = ? AND state = 'open'`, now(), stamp(), jobId)])
+    },
+
     async reserve(t: ReserveInput) {
       const turnId = id('turn id', t.turnId)
+      const jobId = t.jobId === undefined ? null : id('job id', t.jobId)
       // route 29 only lets catalogue models through; a model with no ceiling could never extend, so refuse it loudly.
       if (TURN_CEILING_MICRO[t.model] === undefined) throw new Error(`usage: no per-turn ceiling for model ${t.model}`)
       const month = monthOf(t.nowMs, await tzNow())
       const s = stamp()
-      const r = await batch([
+      const [, , , , turnResult, monthResult, jobResult] = await batch([
         // (1) The month row, its cap refreshed from settings in this transaction.
         q(`INSERT INTO usage_months (month, cap_micro) VALUES (?, ${CAP_MICRO_SQL})
            ON CONFLICT (month) DO UPDATE SET cap_micro = excluded.cap_micro`, month),
-        // (2) The hold, only if it fits under the cap and the turn holds nothing yet.
+        // (2) The hold, only if it fits both pools and the turn holds nothing yet.
         q(`UPDATE usage_months SET last_reserve_micro = ?, reserved_micro = reserved_micro + ?, stamp = ?
            WHERE month = ? AND cap_micro - spent_micro - reserved_micro >= ?
-             AND NOT EXISTS (SELECT 1 FROM usage_turns WHERE turn_id = ?)`,
-          START_HOLD_MICRO, START_HOLD_MICRO, s, month, START_HOLD_MICRO, turnId),
-        // (3) The turn row, only under this batch's stamp.
-        q(`INSERT INTO usage_turns (turn_id, run_id, chat_id, member_id, model, month, reserved_micro, created_at_ms, stamp)
-           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM usage_months WHERE month = ? AND stamp = ?)`,
-          turnId, id('run id', t.runId), id('chat id', t.chatId), id('member id', t.memberId), t.model, month, START_HOLD_MICRO, t.nowMs, s, month, s),
-        q('SELECT reserved_micro FROM usage_turns WHERE turn_id = ?', turnId),
+             AND NOT EXISTS (SELECT 1 FROM usage_turns WHERE turn_id = ?)
+             AND (? IS NULL OR EXISTS (SELECT 1 FROM usage_jobs WHERE job_id = ? AND ${jobHasRoom}))`,
+          START_HOLD_MICRO, START_HOLD_MICRO, s, month, START_HOLD_MICRO, turnId, jobId, jobId, START_HOLD_MICRO),
+        // (3) The job hold and the turn row, only under this batch's stamp.
+        q(`UPDATE usage_jobs SET reserved_micro = reserved_micro + ?, stamp = ? WHERE job_id = ?
+           AND EXISTS (SELECT 1 FROM usage_months WHERE month = ? AND stamp = ?)`, START_HOLD_MICRO, s, jobId, month, s),
+        q(`INSERT INTO usage_turns (turn_id, run_id, chat_id, member_id, model, month, reserved_micro, created_at_ms, stamp, job_id)
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM usage_months WHERE month = ? AND stamp = ?)`,
+          turnId, id('run id', t.runId), id('chat id', t.chatId), id('member id', t.memberId), t.model, month, START_HOLD_MICRO, t.nowMs, s, jobId, month, s),
+        q('SELECT reserved_micro, job_id FROM usage_turns WHERE turn_id = ?', turnId),
         q('SELECT cap_micro, spent_micro FROM usage_months WHERE month = ?', month),
+        q('SELECT budget_micro, spent_micro, state FROM usage_jobs WHERE job_id = ?', jobId),
       ])
-      const turn = row<{ reserved_micro: number }>(r[3])
-      if (turn) return { reservedMicro: turn.reserved_micro }
-      const m = row<{ cap_micro: number; spent_micro: number }>(r[4])
+      const turn = row<{ reserved_micro: number; job_id: string | null }>(turnResult)
+      if (turn) {
+        if (jobId !== null && turn.job_id !== jobId) throw new Error('usage: turn reserved for a different job')
+        return { reservedMicro: turn.reserved_micro }
+      }
+      if (jobId !== null && jobSpentOut(jobId, row<JobBudget>(jobResult), START_HOLD_MICRO)) return { refused: 'job_budget' }
+      const m = row<{ cap_micro: number; spent_micro: number }>(monthResult)
       if (!m) throw new Error('usage: the month row is missing after its upsert')
       // Refused: `cap_reached` when the start hold can't fit even with no other hold; else others' holds (`budget_busy`).
       return { refused: m.cap_micro - m.spent_micro < START_HOLD_MICRO ? 'cap_reached' as const : 'budget_busy' as const }
@@ -131,28 +179,35 @@ export function createUsageLedger(deps: LedgerDeps): UsageLedger {
       if (amount('need', needIn) === 0) throw new Error('usage: an extend needs a positive amount')
       const need = Math.ceil(needIn / EXTEND_UNIT_MICRO) * EXTEND_UNIT_MICRO
       const s = stamp()
-      const r = await batch([
+      const [, , , , , turnResult] = await batch([
         q(`UPDATE usage_months SET cap_micro = ${CAP_MICRO_SQL} WHERE month = (SELECT month FROM usage_turns WHERE turn_id = ?)`, turnId),
         q(`UPDATE usage_months SET reserved_micro = reserved_micro + ?, stamp = ?
            WHERE month = (SELECT month FROM usage_turns WHERE turn_id = ? AND final = 0)
              AND cap_micro - spent_micro - reserved_micro >= ?
              AND (SELECT reserved_micro + ? <= ${CEILING_SQL} FROM usage_turns WHERE turn_id = ?)
-             AND NOT EXISTS (SELECT 1 FROM usage_extends WHERE turn_id = ? AND call_id = ?)`,
-          need, s, turnId, need, need, turnId, turnId, callId),
+             AND NOT EXISTS (SELECT 1 FROM usage_extends WHERE turn_id = ? AND call_id = ?)
+             AND (${turnJob} IS NULL OR EXISTS (SELECT 1 FROM usage_jobs WHERE job_id = ${turnJob} AND ${jobHasRoom}))`,
+          need, s, turnId, need, need, turnId, turnId, callId, turnId, turnId, need),
+        jobDelta(turnId, s, 'reserved_micro = reserved_micro + ?', need),
         q(`UPDATE usage_turns SET reserved_micro = reserved_micro + ?, stamp = ?
            WHERE turn_id = ? AND EXISTS (SELECT 1 FROM usage_months WHERE stamp = ?)`, need, s, turnId, s),
         q(`INSERT INTO usage_extends (turn_id, call_id, need_micro, at_ms)
            SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM usage_months WHERE stamp = ?)`, turnId, callId, need, now(), s),
         q(`SELECT t.reserved_micro, t.final, ${CEILING_SQL} AS ceiling, m.cap_micro, m.spent_micro,
-             EXISTS (SELECT 1 FROM usage_extends e WHERE e.turn_id = t.turn_id AND e.call_id = ?) AS granted
-           FROM usage_turns t JOIN usage_months m ON m.month = t.month WHERE t.turn_id = ?`, callId, turnId),
+             EXISTS (SELECT 1 FROM usage_extends e WHERE e.turn_id = t.turn_id AND e.call_id = ?) AS granted,
+             t.job_id, j.budget_micro, j.spent_micro AS job_spent_micro, j.state AS job_state
+           FROM usage_turns t JOIN usage_months m ON m.month = t.month LEFT JOIN usage_jobs j ON j.job_id = t.job_id
+           WHERE t.turn_id = ?`, callId, turnId),
       ])
-      const t = row<{ reserved_micro: number; final: number; ceiling: number | null; cap_micro: number; spent_micro: number; granted: number }>(r[4])
+      const t = row<{ reserved_micro: number; final: number; ceiling: number | null; cap_micro: number; spent_micro: number; granted: number;
+        job_id: string | null; budget_micro: number; job_spent_micro: number; job_state: JobBudget['state'] | null }>(turnResult)
       if (!t) throw new Error('usage: extend for a turn that holds nothing')
       const ledgerHold = t.final ? 0 : t.reserved_micro
       if (t.granted) return { ok: true, ledgerHold }
       // A final turn takes no more money: answered as its budget being spent.
       if (t.final) return { refused: 'turn_budget', ledgerHold }
+      const job = t.job_state === null ? null : { state: t.job_state, budget_micro: t.budget_micro, spent_micro: t.job_spent_micro }
+      if (t.job_id !== null && jobSpentOut(t.job_id, job, need, ledgerHold)) return { refused: 'job_budget', ledgerHold }
       // `cap_reached` when the need can't fit even after every other turn's hold ends (only this turn's own hold and the
       // spend stand in its way); `held` when others' holds are what block it (they may finish). Orchestrator's call, #154 r1.
       if (t.cap_micro - t.spent_micro - t.reserved_micro < need) return { refused: 'cap_reached', ledgerHold }
@@ -167,12 +222,14 @@ export function createUsageLedger(deps: LedgerDeps): UsageLedger {
       const hold = amount('hold', holdIn)
       const s = stamp()
       // The hold only ever shrinks here: a close never raises a turn's money past what a cap-checked extend granted.
-      const r = await batch([
+      const delta = '(SELECT MIN(?, reserved_micro) - reserved_micro FROM usage_turns WHERE turn_id = ?)'
+      const [beforeResult, monthWrite, , , , turnResult] = await batch([
         q('SELECT reserved_micro FROM usage_turns WHERE turn_id = ?', turnId),
-        q(`UPDATE usage_months SET reserved_micro = reserved_micro + (SELECT MIN(?, reserved_micro) - reserved_micro FROM usage_turns WHERE turn_id = ?), stamp = ?
+        q(`UPDATE usage_months SET reserved_micro = reserved_micro + ${delta}, stamp = ?
            WHERE month = (SELECT month FROM usage_turns WHERE turn_id = ? AND final = 0)
              AND NOT EXISTS (SELECT 1 FROM usage_extends WHERE turn_id = ? AND call_id = ? AND closed = 1)`,
           hold, turnId, s, turnId, turnId, callId),
+        jobDelta(turnId, s, `reserved_micro = reserved_micro + ${delta}`, hold, turnId),
         q(`UPDATE usage_turns SET reserved_micro = MIN(?, reserved_micro), stamp = ?
            WHERE turn_id = ? AND EXISTS (SELECT 1 FROM usage_months WHERE stamp = ?)`, hold, s, turnId, s),
         q(`INSERT INTO usage_extends (turn_id, call_id, need_micro, actual_micro, closed, at_ms)
@@ -180,10 +237,10 @@ export function createUsageLedger(deps: LedgerDeps): UsageLedger {
            ON CONFLICT (turn_id, call_id) DO UPDATE SET actual_micro = excluded.actual_micro, closed = 1`, turnId, callId, actual, now(), s),
         q('SELECT reserved_micro, final FROM usage_turns WHERE turn_id = ?', turnId),
       ])
-      const before = row<{ reserved_micro: number }>(r[0])
-      const t = row<{ reserved_micro: number; final: number }>(r[4])
+      const before = row<{ reserved_micro: number }>(beforeResult)
+      const t = row<{ reserved_micro: number; final: number }>(turnResult)
       if (!t || !before) throw new Error('usage: close for a turn that holds nothing')
-      if ((r[1]?.meta.changes ?? 0) > 0 && hold > before.reserved_micro) {
+      if ((monthWrite?.meta.changes ?? 0) > 0 && hold > before.reserved_micro) {
         console.warn({ event: 'usage_close_hold_above_ledger', turnId, holdMicro: hold, ledgerHold: before.reserved_micro })
       }
       return { ledgerHold: t.final ? 0 : t.reserved_micro }

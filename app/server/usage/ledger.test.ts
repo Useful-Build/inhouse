@@ -12,12 +12,17 @@
 //  8. parallel calls: a close shrinking the hold below what siblings still in flight need, or closes in another order
 //     ending at another hold;
 //  9. the month taken in UTC (or the server's zone) instead of the brand's `g:tz`, at 23:59, 00:00 and across DST.
+import { runInDurableObject } from 'cloudflare:test'
+import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, it } from 'vitest'
+import { inAgent, settle } from '../testing/brand-agent/core-harness.ts'
+import { sweepOnce } from './sweep.ts'
 import { createUsageLedger } from './ledger.ts'
 import { monthOf } from './month.ts'
 import { MONTH, NOV, db, lossyDb, monthRow, resetUsage, setSetting, turnIn, turnRow } from './test-fixtures.ts'
 
 const ledger = createUsageLedger({ db })
+const jobRow = (jobId = 'job') => db.prepare('SELECT * FROM usage_jobs WHERE job_id = ?').bind(jobId).first()
 
 /** Fixture holds of other turns, written straight into the tables (not through the ledger). */
 async function otherHolds(n: number, each: number, spent: number) {
@@ -28,6 +33,98 @@ async function otherHolds(n: number, each: number, spent: number) {
       VALUES (?, 'r_x', 'c_x', 'm_x', 'claude-sonnet-5-5', ?, ?, 1)`).bind(`t_other_${i}`, MONTH, each).run()
   }
 }
+
+describe('job budget', () => {
+  beforeEach(async () => {
+    await resetUsage('$10')
+    await setSetting('s:job_cap', '$1.00')
+    await ledger.reserve(turnIn('root'))
+  })
+
+  const open = { jobId: 'job', rootTurnId: 'root', nowMs: NOV }
+  const jobTurn = (id: string, nowMs = NOV) => ({ ...turnIn(id, { nowMs }), jobId: 'job' })
+
+  it('distinguishes a temporary hold from exhausted job headroom at the port', async () => {
+    await ledger.openJob(open)
+    expect(await ledger.extend('root', 'c', 750_000)).toEqual({ ok: true, ledgerHold: 1_000_000 })
+    expect(await ledger.reserve(jobTurn('next'))).toEqual({ refused: 'budget_busy' })
+    expect(await ledger.extend('root', 'more', 50_000)).toEqual({ refused: 'job_budget', ledgerHold: 1_000_000 })
+    await ledger.settle('root', 800_000, NOV)
+    expect(await ledger.reserve(jobTurn('next'))).toEqual({ refused: 'job_budget' })
+    expect(await jobRow()).toMatchObject({ reserved_micro: 0, spent_micro: 800_000 })
+  })
+
+  it('throws for a reserve under a job that was never opened, and holds nothing for it', async () => {
+    await expect(ledger.reserve(jobTurn('next'))).rejects.toThrow(/no job row for job/)
+    expect(await turnRow('next')).toBeNull()
+    expect(await monthRow()).toMatchObject({ reserved_micro: 250_000 })
+  })
+
+  it('carries job_budget through the model gate instead of mapping it to budget_busy',() => inAgent(async h => {
+    const turn = await h.submit('c1', 'key-job-gate')
+    if ('refused' in turn) throw new Error('fixture turn refused')
+    await settle()
+    h.usage.extendRefusal = 'job_budget'
+    expect(await h.core.admitModelCall(turn.turnId, 'c1', {
+      model: 'claude-sonnet-5-5', inputTokens: 0, maxTokens: 1000, modifiers: {}, micro: 400_000,
+    })).toEqual({ refused: 'job_budget' })
+    await settle()
+  }))
+
+  it('closes once even when the reply is lost, and still books a late settle', async () => {
+    await ledger.openJob(open)
+    expect(await ledger.reserve(jobTurn('next'))).toEqual({ reservedMicro: 250_000 })
+    let nowMs = NOV + 1
+    const lossy = lossyDb()
+    const retry = createUsageLedger({ db: lossy.db, now: () => nowMs })
+    lossy.loseNext()
+    await expect(retry.closeJob('job')).rejects.toThrow()
+    nowMs++
+    await retry.closeJob('job')
+    await retry.openJob(open)
+    expect(await jobRow()).toMatchObject({ state: 'closed', closed_at_ms: NOV + 1, reserved_micro: 500_000 })
+    expect(await retry.reserve(jobTurn('late'))).toEqual({ refused: 'job_budget' })
+    await retry.release('next', nowMs)
+    await retry.settle('root', 350_000, nowMs)
+    expect(await jobRow()).toMatchObject({ state: 'closed', reserved_micro: 0, spent_micro: 350_000 })
+  })
+
+  it('uses the saved budget across a month boundary while each turn books to its own month', async () => {
+    await ledger.settle('root', 600_000, NOV)
+    await ledger.openJob(open)
+    await setSetting('s:job_cap', '$8.00')
+    const dec = Date.UTC(2026, 11, 1)
+    expect(await ledger.reserve(jobTurn('dec', dec))).toEqual({ reservedMicro: 250_000 })
+    expect(await ledger.extend('dec', 'call', 200_000)).toEqual({ refused: 'job_budget', ledgerHold: 250_000 })
+    await ledger.settle('dec', 250_000, dec)
+    expect(await monthRow(MONTH)).toMatchObject({ reserved_micro: 0, spent_micro: 600_000 })
+    expect(await monthRow('2026-12')).toMatchObject({ reserved_micro: 0, spent_micro: 250_000 })
+    expect(await jobRow()).toMatchObject({ budget_micro: 1_000_000, spent_micro: 850_000 })
+  })
+
+  it('defaults an unset cap and clamps an out-of-range stored cap', async () => {
+    await setSetting('s:job_cap', null)
+    await ledger.openJob(open)
+    expect(await jobRow()).toMatchObject({ budget_micro: 25_000_000 })
+    await setSetting('s:job_cap', '$101.00')
+    await ledger.reserve(turnIn('second-root'))
+    await ledger.openJob({ jobId: 'second-job', rootTurnId: 'second-root', nowMs: NOV })
+    expect(await jobRow('second-job')).toMatchObject({ budget_micro: 100_000_000 })
+  })
+
+  it('books actual sweep replay once, even when it goes over the job budget', async () => {
+    await ledger.openJob(open)
+    await ledger.reserve(jobTurn('next'))
+    await ledger.closeJob('job')
+    await runInDurableObject(env.BRAND_AGENT.getByName('job-usage-sweep'), async (_agent, state) => {
+      const run = () => sweepOnce({ db, sql: state.storage.sql, nowMs: NOV + 3 * 60 * 60_000, turnCalls: (_sql, id) => ({ micro: id === 'root' ? 700_000 : 400_000 }) })
+      expect(await run()).toMatchObject({ settled: 2, failed: 0 })
+      expect(await run()).toMatchObject({ settled: 0, failed: 0 })
+    })
+    expect(await jobRow()).toMatchObject({ state: 'closed', reserved_micro: 0, spent_micro: 1_100_000 })
+    expect(await monthRow()).toMatchObject({ reserved_micro: 0, spent_micro: 1_100_000 })
+  })
+})
 
 describe('reserve at the cap boundary (failure 1)', () => {
   beforeEach(() => resetUsage('$1.00'))

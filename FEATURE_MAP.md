@@ -321,7 +321,7 @@ Settings: Members and approvers
 Settings: Slack notices
   Path:     Settings -> Slack notices
   Selector: channel rows "#<name>" with Remove, dropdowns "Add a channel" and "Alerts channel", rows "Before the Act stage", "While Slack is paused", "Who can read them"
-  Expected: an Admin or the Inhouse team adds a public channel the connected Slack account is in, removes one (asks first) and picks one alerts channel; shared and non-member channels aren't offered; a Member reads the list and the rules only; while Slack isn't connected or is paused the picker says so with Try again; a stale save shows the latest list. At Watch, the agent redirects listed Slack notices to the bell and system alerts skip Slack. The demo keeps the list until a reload
+  Expected: an Admin or the Inhouse team adds a public channel the connected Slack account is in, removes one (asks first) and picks one alerts channel; shared and non-member channels aren't offered; a Member reads the list and the rules only; while Slack isn't connected or is paused the picker says so with Try again; a stale save shows the latest list. In the product, at every stage, the agent's notices to a listed channel go to the bell and system alerts skip Slack: both Slack legs stay closed until M2-N (server/notify-slack/slack-legs.ts). The demo keeps the list until a reload
   Covered:  src/screens/settings/slack-page.test.ts, src/agent/http/notifications.test.ts, server/notify-slack/routes.test.ts (no e2e spec yet)
 
 Settings: Stage and plan
@@ -335,7 +335,7 @@ Settings: Team memory
   Selector: buttons "Forget", switch "Ask before saving a team rule", button "Teach in a chat"
   Expected: usable at every stage (no stage tag), with a "Waiting for your OK" section for an Admin in the product (Approve, Reject after asking; a stale Approve is refused and says what the rule is now); Forget removes a line with an Undo toast and the Inhouse agent page's count follows; the switch turns off; both survive a reload and Reset demo clears them; Teach in a chat opens a new chat holding "Remember that "
   Covered:  e2e/settings-team-pages.spec.ts, e2e/ship/memory-skills.spec.ts (S2 to S5), e2e/support/memory-scenarios.test.ts
-  Gaps:     on a phone a team page is read-only, so S5's phone run turns Ask off through the API and checks the page shows Off; the ship spec doesn't show a routine's team fact waiting while Ask is off (a routine can't be made at Watch through the app; the store's tests prove it)
+  Gaps:     on a phone a team page is read-only, so S5's phone run turns Ask off through the API and checks the page shows Off; the ship spec doesn't show a routine's team fact waiting while Ask is off (not recorded yet; the store's tests prove it)
 
 Settings: Run limits
   Path:     Settings -> Run limits (the demo only; the product has no such page yet, and the stored `a:<n>` and `l:*` settings and their server checks stay)
@@ -423,6 +423,7 @@ Backend core: Settings, typed and with conflicts (P2, test build)
   Selector: dropdown "Time zone", field "Monthly cap", toast "Someone changed this"
   Expected: a setting saves on the Worker and survives a reload; two tabs on one setting: the second save is refused and shows what the setting is now; a Member sees team settings as text
   Covered:  e2e/ship/backend-core.spec.ts (S2, S5, S6), e2e/api/revisions-paging.spec.ts
+  Gaps:     the brand setting `s:job_cap` is accepted by the Worker but has no Settings field yet; chat job continuation is not wired yet
 
 Backend core: photo (P2, test build)
   Path:     Settings -> General -> Photo

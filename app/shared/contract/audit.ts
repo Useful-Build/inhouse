@@ -174,6 +174,8 @@ export const NotifyOutcomeSchema = z.enum(['posted', 'refused', 'failed', 'unkno
 export const NotifyDetailSchema = z.enum([
   'not_listed', 'shared_channel', 'archived', 'not_public', 'not_member', 'not_found', 'run_cap', 'day_cap', 'too_long',
   'empty', 'unknown_member', 'slack_not_connected', 'slack_unavailable', 'rate_limited', 'to_bell', 'no_alerts_channel', 'below_act',
+  // M2-F: the stage words above stay for old rows; new rows say a listed channel went to the bell, or Slack is off.
+  'channel_to_bell', 'slack_off',
   // The hub's APP_ORIGIN is unset or malformed, so a post carrying the app link is refused (review round 1).
   'app_origin_missing',
 ])
@@ -277,8 +279,8 @@ const otherLines = [
    */
   line('ops_task_revive', { kind: TaskKindSchema, id: TaskIdSchema, result: ReviveResultSchema, by: z.literal('release') }),
   // P4 (wave-4 PR0). Ids, counts and closed lists only: no routine name, instruction, file name or item title.
-  /** `need`: the stage the routine needs (0 Watch, 1 Act, 2 Run; p4-w2.md section 2). */
-  line('routine.created', { routineId: RoutineIdSchema, need: z.number().int().min(0).max(2) }),
+  /** Legacy `need` is kept for reading old rows (0 Watch, 1 Act, 2 Run). */
+  line('routine.created', { routineId: RoutineIdSchema, need: z.number().int().min(0).max(2).optional() }),
   /** `changed`: which parts an edit changed, each once. */
   line('routine.updated', {
     routineId: RoutineIdSchema,

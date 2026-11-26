@@ -11,6 +11,7 @@
 //  3. a failure prints a secret: only labels (`slack#0`, `secret#1`, `shopify#0`, `refresh-token`) are ever printed.
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
+import { SLACK_DELIVERY_ENABLED } from '../../server/notify-slack/slack-legs.ts'
 import { actor, call, me } from './kit.ts'
 import { answerOf, createChat, send } from './chat-kit.ts'
 import {
@@ -76,12 +77,18 @@ test('no token, refresh token or client secret is in a Worker log (both Workers)
   await setStage(request, 'Act')
   await setListedChannels(request, [CHANNEL.opsAlerts], true)
   const owner = (await me(request, dana)).memberId as string
-  answers.push(JSON.stringify(await notifySend(request, newRun(owner), { to: { channels: ['#ops-alerts'] }, title: 'Stock low', text: `Fern mug ${crypto.randomUUID()}`, format: 'message' })))
+  const notice = JSON.stringify(await notifySend(request, newRun(owner), { to: { channels: ['#ops-alerts'] }, title: 'Stock low', text: `Fern mug ${crypto.randomUUID()}`, format: 'message' }))
+  answers.push(notice)
 
   // Positive controls: the flows really happened, so an empty result means "nothing leaked", not "nothing ran".
   const state = await fakeState(request)
   expect(state.shopify.requests.length, 'the recorded Shopify was asked').toBeGreaterThan(shopifyBefore)
-  expect(state.web.posts.length, 'the notice reached the fake Slack').toBeGreaterThan(0)
+  // With the Slack legs closed (server/notify-slack/slack-legs.ts, M2-F, until Q3) the notice reaches the bell and Slack gets no post.
+  if (SLACK_DELIVERY_ENABLED) expect(state.web.posts.length, 'the notice reached the fake Slack').toBeGreaterThan(0)
+  else {
+    expect(notice, 'the notice ran and reached the bell').toContain('#ops-alerts: sent to the bell (not Slack)')
+    expect(state.web.posts.length, 'closed Slack legs: no post').toBe(0)
+  }
   const needles = await canaries(request)
   expect(answers.length).toBeGreaterThan(5)
   expect(found(needles, answers), 'canaries found in an API answer').toEqual([])

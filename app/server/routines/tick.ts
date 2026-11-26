@@ -8,7 +8,7 @@
 import { ensureChat } from '../db/chats.ts'
 import { SYSTEM_MEMBER_ID } from '../db/ids.ts'
 import type { DueTask, TaskContext, TaskResult } from '../do/brand-agent/scheduler.ts'
-import { brandFacts, stageIndex, submitSettings } from './brand.ts'
+import { brandFacts, submitSettings } from './brand.ts'
 import type { BrandFacts, SubmitSettings } from './brand.ts'
 import { renderSlot, submitOf } from './render.ts'
 import { alertStatement, inState, slotInsert, slotLine } from './rows.ts'
@@ -131,7 +131,7 @@ async function decideAll(db: D1Database, brand: BrandFacts, routines: RoutineRow
   let moved = 0
   for (const r of behind.slice(0, DECIDE_LIMIT)) {
     try {
-      moved += await decideRoutine(db, r, { stage: brand.stage, tz: brand.tz }, settings, now)
+      moved += await decideRoutine(db, r, brand.tz, settings, now)
     } catch (err) {
       console.error({ event: 'routine_decide_failed', routineId: r.id, error: safeError(err) })
     }
@@ -142,8 +142,7 @@ async function decideAll(db: D1Database, brand: BrandFacts, routines: RoutineRow
 interface Decision { slot: Slot; state: NewSlot['state']; reason: string | null; deadline: number }
 
 /** The rules in words (section 4, step 1), oldest slot first. Exported for the model-based test's oracle to compare against. */
-export function decideSlots(r: Pick<RoutineRow, 'need' | 'missed' | 'catch_up_within_min'>, stage: number, slots: readonly Slot[], now: number): Decision[] {
-  if (stage < r.need) return slots.map(slot => ({ slot, state: 'skipped', reason: 'stage', deadline: slot.dueAtMs + ON_TIME_MS }))
+export function decideSlots(r: Pick<RoutineRow, 'missed' | 'catch_up_within_min'>, slots: readonly Slot[], now: number): Decision[] {
   const late = slots.filter(s => now - s.dueAtMs > ON_TIME_MS)
   const window = r.catch_up_within_min * MIN
   const newestLate = late[late.length - 1]
@@ -155,8 +154,8 @@ export function decideSlots(r: Pick<RoutineRow, 'need' | 'missed' | 'catch_up_wi
   })
 }
 
-async function decideRoutine(db: D1Database, r: RoutineRow, brand: { stage: number; tz: string }, settings: SubmitSettings, now: number): Promise<number> {
-  const all = decideSlots(r, brand.stage, slotsDue(r, brand.tz, r.checked_until_ms, now), now)
+async function decideRoutine(db: D1Database, r: RoutineRow, tz: string, settings: SubmitSettings, now: number): Promise<number> {
+  const all = decideSlots(r, slotsDue(r, tz, r.checked_until_ms, now), now)
   // Keep every claimed row and the newest rows that won't run, at most NOT_RUN_ROWS_MAX of them.
   const notRun = all.filter(d => d.state !== 'claimed')
   const dropped = new Set(notRun.slice(0, Math.max(0, notRun.length - NOT_RUN_ROWS_MAX)))
@@ -164,7 +163,7 @@ async function decideRoutine(db: D1Database, r: RoutineRow, brand: { stage: numb
   const kept = all.filter(d => !dropped.has(d))
 
   const rows = await Promise.all(kept.map(d => renderSlot(r, settings, {
-    slot_key: d.slot.key, kind: 'scheduled', local_date: d.slot.localDate, local_time: d.slot.localTime, tz: brand.tz,
+    slot_key: d.slot.key, kind: 'scheduled', local_date: d.slot.localDate, local_time: d.slot.localTime, tz,
     due_at_ms: d.slot.dueAtMs, deadline_ms: d.deadline, state: d.state, reason: d.reason, requested_by: null, claimed_at_ms: now,
   })))
   // Cursor first, inserts gated on it (Sonnet M-3, Opus F6): a write that bumped `rev` or a pass that moved the cursor
@@ -175,7 +174,7 @@ async function decideRoutine(db: D1Database, r: RoutineRow, brand: { stage: numb
   const gate = { sql: 'EXISTS (SELECT 1 FROM routines WHERE id = ? AND rev = ? AND checked_until_ms = ?)', params: [r.id, r.rev, now] }
   // A missed row's Activity line rides the same batch, guarded on the row this pass just made (state and claim time).
   const lines = rows.filter(s => s.state === 'missed')
-    .map(s => slotLine(db, { template: 'routine_missed', key: `${s.slot_key}|missed`, need: r.need, runId: null, atMs: now }, inState(s.slot_key, 'missed', now)))
+    .map(s => slotLine(db, { template: 'routine_missed', key: `${s.slot_key}|missed`, runId: null, atMs: now }, inState(s.slot_key, 'missed', now)))
   const results = await db.batch([cursor, ...rows.map(s => slotInsert(db, s, gate)), ...lines])
   if (results[0].meta.changes === 0) {
     console.warn({ event: 'routine_decide_raced', routineId: r.id })
@@ -190,7 +189,7 @@ async function decideRoutine(db: D1Database, r: RoutineRow, brand: { stage: numb
 const close = (db: D1Database, slotKey: string, from: 'claimed' | 'started', to: 'lost' | 'missed' | 'skipped' | 'refused', reason: string) =>
   db.prepare('UPDATE routine_slots SET state = ?, reason = ? WHERE slot_key = ? AND state = ?').bind(to, reason, slotKey, from)
 
-type StartedRead = { slot_key: string; chat_id: string; run_id: string | null; started_at_ms: number; need: number }
+type StartedRead = { slot_key: string; chat_id: string; run_id: string | null; started_at_ms: number }
 
 /**
  * Started rows past 45 minutes, oldest first, paged by `(started_at_ms, slot_key)`. A row whose chat waits on a question
@@ -204,7 +203,7 @@ async function sweepStarted(db: D1Database, ctx: TickContext, now: number): Prom
   let after: { ms: number; key: string } | null = null
   for (let page = 0; page < SWEEP_PAGES; page++) {
     const rows: StartedRead[] = (await db.prepare(
-      `SELECT s.slot_key, s.chat_id, s.run_id, s.started_at_ms, r.need FROM routine_slots s JOIN routines r ON r.id = s.routine_id
+      `SELECT s.slot_key, s.chat_id, s.run_id, s.started_at_ms FROM routine_slots s
         WHERE s.state = 'started' AND s.started_at_ms <= ? AND (? IS NULL OR (s.started_at_ms, s.slot_key) > (?, ?))
         ORDER BY s.started_at_ms ASC, s.slot_key ASC LIMIT ?`,
     ).bind(now - LOST_AFTER_MS, after?.ms ?? null, after?.ms ?? 0, after?.key ?? '', SWEEP_LIMIT).all<StartedRead>()).results
@@ -223,7 +222,7 @@ async function sweepStarted(db: D1Database, ctx: TickContext, now: number): Prom
       try {
         const [res] = await db.batch([
           close(db, s.slot_key, 'started', 'lost', reason),
-          slotLine(db, { template: 'routine_lost', key: `${s.slot_key}|lost`, need: s.need, runId: s.run_id, atMs: now }, inState(s.slot_key, 'lost')),
+          slotLine(db, { template: 'routine_lost', key: `${s.slot_key}|lost`, runId: s.run_id, atMs: now }, inState(s.slot_key, 'lost')),
         ])
         moved += res.meta.changes
       } catch (err) {
@@ -238,12 +237,9 @@ async function sweepStarted(db: D1Database, ctx: TickContext, now: number): Prom
 
 interface ClaimedRead extends SlotRow {
   r_name: string
-  r_need: number
   r_enabled: number
   r_deleted_at_ms: number | null
   chat_deleted_at_ms: number | null
-  /** The brand's `stage` setting as stored, read with the row (never the pass's earlier read). */
-  stage_json: string | null
 }
 
 type ClaimedKey = { slot_key: string; chat_id: string; local_date: string; r_name: string }
@@ -279,8 +275,7 @@ async function failedOnce(db: D1Database, slotKey: string, now: number, err: unk
 }
 
 /**
- * One claimed row. The chat is ensured first, so the last D1 read (the row with its routine, chat and the brand's
- * stage) sits right before the synchronous checks and the submit: no write can land between what decides and the run.
+ * One claimed row. The chat is ensured first, so the last D1 read (the row with its routine and chat) sits right before the synchronous checks and the submit: no write can land between what decides and the run.
  * How many rows it moved (0 or 1).
  */
 async function workOne(db: D1Database, ctx: TickContext, k: ClaimedKey, now: number): Promise<number> {
@@ -290,25 +285,22 @@ async function workOne(db: D1Database, ctx: TickContext, k: ClaimedKey, now: num
     return failedOnce(db, k.slot_key, now, err)
   }
   const s = await db.prepare(
-    `SELECT s.*, r.name AS r_name, r.need AS r_need, r.enabled AS r_enabled, r.deleted_at_ms AS r_deleted_at_ms,
-        c.deleted_at_ms AS chat_deleted_at_ms,
-        (SELECT value_json FROM settings WHERE owner = 'brand' AND key = 'stage') AS stage_json
+    `SELECT s.*, r.name AS r_name, r.enabled AS r_enabled, r.deleted_at_ms AS r_deleted_at_ms,
+        c.deleted_at_ms AS chat_deleted_at_ms
       FROM routine_slots s JOIN routines r ON r.id = s.routine_id LEFT JOIN chats c ON c.id = s.chat_id
       WHERE s.slot_key = ? AND s.state = 'claimed'`,
   ).bind(k.slot_key).first<ClaimedRead>()
   if (!s) return 0
   const closeTo = async (to: 'missed' | 'skipped', reason: string) => {
     const stmts = [close(db, s.slot_key, 'claimed', to, reason)]
-    if (to === 'missed') stmts.push(slotLine(db, { template: 'routine_missed', key: `${s.slot_key}|missed`, need: s.r_need, runId: null, atMs: now }, inState(s.slot_key, 'missed')))
+    if (to === 'missed') stmts.push(slotLine(db, { template: 'routine_missed', key: `${s.slot_key}|missed`, runId: null, atMs: now }, inState(s.slot_key, 'missed')))
     const [res] = await db.batch(stmts)
     return res.meta.changes
   }
-  const stage = stageIndex(s.stage_json === null ? null : JSON.parse(s.stage_json))
   // Never a submit into a trashed chat: `ensureChat` answers OK for one and the in-object submit reads no D1 (rev 3.3).
   if (s.chat_deleted_at_ms !== null) return closeTo('skipped', 'chat_deleted')
   if (s.r_deleted_at_ms !== null) return closeTo('skipped', 'deleted')
   if (s.kind === 'scheduled' && s.r_enabled !== 1) return closeTo('skipped', 'disabled')
-  if (stage < s.r_need) return closeTo('skipped', 'stage')
   if (now > s.deadline_ms) return closeTo('missed', 'late')
   return submit(db, ctx, s, now)
 }
