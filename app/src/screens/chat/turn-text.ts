@@ -25,6 +25,8 @@ export const FAILURE_TEXT: Record<TurnFailure, string> = {
   [FAIL.modelOff]: MODEL_OFF_FAILED,
   // Only a routine's run asks for structured output (P4), and no person's chat shows one: the generic words.
   [FAIL.structuredOutput]: RUN_FAILED,
+  // Only a job's turn fails for its job budget (Stage 1, N5), and jobs are off until M1-P: the generic words. M1-D words it.
+  [FAIL.jobBudget]: RUN_FAILED,
 }
 
 /** A file the agent made that wasn't saved (the `file.refused` event), with its name. */
@@ -63,6 +65,8 @@ export const CANCELLED_TEXT: Record<(typeof CANCEL)[keyof typeof CANCEL], string
   [CANCEL.capReached]: FAILURE_TEXT[FAIL.capReached],
   [CANCEL.poolFull]: FAILURE_TEXT[FAIL.poolFull],
   [CANCEL.sessionUnusable]: "This chat's memory couldn't be saved, so this question was not asked.",
+  // Only a job's turn is cancelled for its job budget (Stage 1, N5); the job's own end says why. Jobs are off until M1-P.
+  [CANCEL.jobBudget]: null,
 }
 
 /**

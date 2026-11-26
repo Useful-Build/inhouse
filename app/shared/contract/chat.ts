@@ -1,6 +1,7 @@
 // Chats: the parts of an answer, the messages, the seed turns and the chat list.
 import { z } from 'zod'
 import { ClockTimeSchema, InstantSchema, StageSchema } from './common.ts'
+import { ActionIdSchema } from './actions.ts'
 
 /** `fileId`: the chat file behind the chip (route 41 downloads it); a file only the composer holds has none. `pending`: the real client's composer holds the file itself under this key and uploads it when the message is sent. */
 export const AttachmentSchema = z.object({ name: z.string(), meta: z.string(), icon: z.string(), fileId: z.string().optional(), pending: z.string().optional() })
@@ -49,6 +50,8 @@ export const MessagePartSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('error'), text: z.string(), retryQuestion: z.string() }),
   /** Questions to ask next, offered as chips under an answer the agent couldn't give (decision D8). */
   z.object({ type: z.literal('suggestions'), questions: z.array(z.string()) }),
+  /** An action the agent proposed (Stage 1 M2, N14): the card loads `action(actionId)` and reloads on `action.updated`. */
+  z.object({ type: z.literal('ask'), actionId: ActionIdSchema }),
 ])
 export type MessagePart = z.infer<typeof MessagePartSchema>
 
