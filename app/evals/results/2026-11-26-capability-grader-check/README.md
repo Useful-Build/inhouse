@@ -36,7 +36,9 @@ Verified in `app/evals/capability/grade.test.ts` (all rejected):
 - `CAP-01`: bare `"Done."` (`bare_done_answer`), wrong facts in `Write` content (`missing_file_facts`), and an early good `Write` overwritten by a later bad `Write` (`missing_file_facts`).
 - `CAP-02`: bare `"Done."` without `Agent` (`bare_done_answer`), and inverted glaze/shipping facts (`missing_source_facts`).
 - `CAP-03`: bare `"Done."` (`bare_done_answer`), foreign source URL (`foreign_source_url`), and official `europa.eu` `WebFetch` with no citation URL in the answer (`missing_source_url`).
+- `CAP-03` look-alike hosts (`europa.eu.evil.test`, `evil.test?.europa.eu`, `noteuropa.eu`) are refused by both the chat grader's regexes and the end-state grader's URL parsing.
+- `CAP-01`: a correct `Write` followed by a small `Edit` still passes (the grader replays every `Write` and `Edit` in order); an `Edit` that removes the facts fails (`missing_file_facts`).
 
 ## Conclusion
 
-Grader check only, not a capability result (no model calls, $0.0000). On the fake target, `gradeCapabilityEndState` grades the final `Write`/`Edit` input until M6 wires stored-file retrieval from the product target. `CAP-01..03` declare `needs: ['capability']` so `product` runs report them as not run until M6.
+Grader check only, not a capability result (no model calls, $0.0000). On the fake target, `gradeCapabilityEndState` grades the file rebuilt from every `Write` and `Edit` in order until M6 wires stored-file retrieval from the product target. `CAP-01..03` declare `needs: ['capability']` so `product` runs report them as not run until M6.

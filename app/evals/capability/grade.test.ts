@@ -6,7 +6,7 @@ import { createFakeTarget } from '../targets/fake.ts'
 import { createProductTarget } from '../targets/product.ts'
 import { CAPABILITY_CASES } from './cases.ts'
 import { CAPABILITY_EXTRA_FAIL_FIXTURES, CAPABILITY_FAIL_FIXTURES, CAPABILITY_PASS_FIXTURES } from './fixtures.ts'
-import { gradeCapabilityEndState } from './grade.ts'
+import { CAP_03_ANSWER_URL, CAP_03_FETCH_URL, gradeCapabilityEndState, isOnHost } from './grade.ts'
 
 const toResult = (ch: { calls?: [string, Record<string, unknown>, string?][]; answer: string }) => ({
   toolCalls: (ch.calls ?? []).map(([name, input, result]) => ({ name, input, ...(result !== undefined ? { result } : {}) })),
@@ -15,6 +15,12 @@ const toResult = (ch: { calls?: [string, Record<string, unknown>, string?][]; an
   usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 },
   costUsd: 0,
 })
+
+const MAIN_FAIL_REASON: Record<string, string> = {
+  'CAP-01': 'missing_file_facts',
+  'CAP-02': 'missing_source_facts',
+  'CAP-03': 'foreign_source_url',
+}
 
 describe('capability eval graders (M1-H)', () => {
   it('passes all three capability cases on the passing fake target', async () => {
@@ -71,7 +77,36 @@ describe('capability eval graders (M1-H)', () => {
     expect(gradeChat(c.chats[0]!.expect, pos, S5_PEOPLE).pass).toBe(true)
     expect(gradeCapabilityEndState(id, pos)).toEqual({ pass: true })
 
-    expect(gradeCapabilityEndState(id, neg).pass).toBe(false)
+    expect(gradeCapabilityEndState(id, neg)).toEqual({ pass: false, reason: MAIN_FAIL_REASON[id] })
+  })
+
+  it('CAP-01 grades the file after a later Edit, not the Edit alone', () => {
+    const pos = toResult(CAPABILITY_PASS_FIXTURES['CAP-01']!.chats[0]!)
+    const write = pos.toolCalls.find((c) => c.name.endsWith('Write'))!
+    const content = String(write.input.content)
+    const typoFix = { ...write, name: 'Edit', input: { file_path: write.input.file_path, old_string: 'Norda', new_string: 'Norda' } }
+    expect(gradeCapabilityEndState('CAP-01', { ...pos, toolCalls: [...pos.toolCalls, typoFix] })).toEqual({ pass: true })
+    const breaking = { ...typoFix, input: { ...typoFix.input, old_string: content, new_string: 'rewritten' } }
+    expect(gradeCapabilityEndState('CAP-01', { ...pos, toolCalls: [...pos.toolCalls, breaking] }).reason).toBe('missing_file_facts')
+  })
+
+  it.each([
+    'https://europa.eu.evil.test/vat',
+    'https://evil.test?.europa.eu/',
+    'https://evil.test/#europa.eu',
+    'https://noteuropa.eu/vat',
+  ])('CAP-03 refuses the look-alike source %s', (url) => {
+    expect(isOnHost(url, 'europa.eu')).toBe(false)
+    expect(CAP_03_FETCH_URL.test(url)).toBe(false)
+    expect(CAP_03_ANSWER_URL.test(`See ${url} for details.`)).toBe(false)
+  })
+
+  it('CAP-03 accepts the real source host and its subdomains', () => {
+    for (const url of ['https://europa.eu/', 'https://taxation-customs.ec.europa.eu/vat-rates_en']) {
+      expect(isOnHost(url, 'europa.eu')).toBe(true)
+      expect(CAP_03_FETCH_URL.test(url)).toBe(true)
+      expect(CAP_03_ANSWER_URL.test(`Source: ${url}.`)).toBe(true)
+    }
   })
 
   it.each(CAPABILITY_EXTRA_FAIL_FIXTURES)('rejects $name for $expectedReason', ({ caseId, expectedReason, canned }) => {
