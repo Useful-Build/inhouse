@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { GRANT_HOURS } from '../../shared/contract/keys'
 import { LoadError } from '../ui/retry'
 import { InviteDialog } from './settings/InviteDialog'
+import { Permissions } from './settings/Permissions'
 import { allowance, mayEditNotify, pageResources, showsRemove } from './settings/allowance'
 import { readParts } from './settings/read-text'
 import { single } from './settings/single'
@@ -329,7 +330,7 @@ export function Settings() {
   }
   const page = settingsPage(setTab, env)
   // P5 W4: Slack notices is listed only for a brand with Slack connected.
-  const menu = menuFor(data.tools, demo === null)
+  const menu = menuFor(data.tools, demo === null, agent.me()?.role === 'inhouse')
   const readOnly = phone && setTab.startsWith('team-')
   // The note is for a page where a control became text; a page of buttons and plain facts has nothing to explain.
   const hidesControls = readOnly && page.sections.some(sec => sec.rows.some(r => r.kind === 'toggle' || r.kind === 'select' || r.kind === 'text' || r.kind === 'mode'))
@@ -343,7 +344,7 @@ export function Settings() {
     for (const { id: k, label } of menu.flatMap(sec => sec.pages)) {
       const p = settingsPage(k, env)
       const rows = p.sections.flatMap(sec => sec.rows).filter(r => `${r.title} ${r.desc} ${r.keywords ?? ''}`.toLowerCase().includes(needle)).map(r => r.title)
-      const pageHit = `${label} ${p.title}`.toLowerCase().includes(needle)
+      const pageHit = `${label} ${p.title} ${p.keywords ?? ''}`.toLowerCase().includes(needle)
       if (pageHit || rows.length) hits.set(k, [...new Set(rows)].slice(0, 3))
     }
     return hits
@@ -410,6 +411,8 @@ export function Settings() {
               <Icon name="desktop_windows" size={16} className="flex-none" />Change these on a computer.
             </p>
           )}
+          {/* Stage 1 M2-H: Always allowed draws itself (the product only; content.ts names it for the search). */}
+          {setTab === 'you-permissions' && demo === null && <Permissions />}
           {page.sections.filter(sec => sec.rows.length > 0 || sec.empty).map((sec, si) => (
             <section key={`${si}|${sec.label}`} className={sec.label ? undefined : 'mt-4.5'}>
               {sec.label && <SectionHeader title={sec.label} className="mt-6 mb-2.5" />}

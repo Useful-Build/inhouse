@@ -13,7 +13,7 @@ import { keepForToast } from '../ui/dialogs'
 import { NO_MOTION } from '../ui/motion'
 import { menuFor } from '../screens/settings/menu'
 import { PAGES, SHORTCUTS } from '../shell/nav'
-import { demo } from '../agent'
+import { agent, demo } from '../agent'
 import { demoEnabled } from '../shell/demo'
 
 /** Words a settings page is also found by, by its tab: Models was called Thinking modes. */
@@ -80,7 +80,7 @@ export function CommandPalette() {
               })}
             </CommandGroup>
             <CommandGroup heading="Settings">
-              {menuFor(ctx.data.tools, demo === null).flatMap(sec => sec.pages).map(({ id: tab, icon, label }) => (
+              {menuFor(ctx.data.tools, demo === null, agent.me()?.role === 'inhouse').flatMap(sec => sec.pages).map(({ id: tab, icon, label }) => (
                 <CommandItem key={tab} value={`settings:${tab}`} keywords={[label, 'Settings', ...(EXTRA[tab] ?? [])]} onSelect={() => run(() => openSettings(tab))}>
                   <Icon name={icon} size={18} className="text-foreground-3" />
                   <span className="flex-1">{label}</span>

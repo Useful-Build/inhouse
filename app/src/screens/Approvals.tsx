@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils'
 import { escapeClosesMenuOnly } from '../ui/dialogs'
 import { Avatar, Button, DetailList, EmptyState, Icon, IconTile, LogoTile, MenuItem, Page, PageHeader, SectionHeader } from '../ui'
 import { Select, TAP } from '../ui/fields'
+import { AgentAsks } from './approvals/AgentAsks'
 
 const SORTS: [ApprovalSort, string][] = [['oldest', 'Oldest first'], ['newest', 'Newest first'], ['stake', 'Most at stake']]
 
@@ -67,6 +68,8 @@ export function Approvals() {
   return (
     <Page>
       <PageHeader title="Approvals" description="Work your Inhouse agent drafted. Nothing goes out until someone approves it." />
+      {/* Stage 1 M2-H: its questions and actions for this person. The demo has none, so nothing shows there. */}
+      <AgentAsks />
 
       {S === 0 && (
         <div data-watch-block className="mt-7 flex items-start gap-4 rounded-2xl border border-dashed border-border-strong p-7 text-foreground-3">

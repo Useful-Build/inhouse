@@ -36,8 +36,8 @@ export interface McpDeps {
   /** Epoch ms; the real clock by default (tests pass their own). */
   now?: () => number
   /**
-   * Stage 1 M2-Q: `question_ask` is listed and served only when this is true (server/questions/switch.ts: the test build
-   * only, until M2-H's answer screen). Absent is off: it isn't listed, and a call to it gets `not_available_yet`.
+   * Stage 1 M2-Q: `question_ask` is listed and served only when this is true (server/questions/switch.ts: every build
+   * since M2-H's answer screen). Absent is off: it isn't listed, and a call to it gets `not_available_yet`.
    */
   questions?: boolean
 }

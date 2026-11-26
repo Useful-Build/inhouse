@@ -27,6 +27,7 @@ import {
   AgentDataSchema, AgentErrorCodeSchema, AgentNoticeSchema, AgentNotificationSchema, AgentStateSchema, ApproveResultSchema, ErrorReasonSchema, InstantSchema,
   ActiveRunSchema, ChatListSchema, ChatPageSchema, ChatSummarySchema, LibraryFileSchema, MeSchema, MemberRecordSchema, MessageIdSchema, RoutineRunSchema, RunEventSchema, RunFrameSchema, SendTurnResultSchema, SettingRecordSchema, SupportGrantSchema, ToolSetupSchema, TraceSchema,
 } from '../../../shared/contract'
+import { ActionCardSchema, PermissionSchema, QuestionSchema } from '../../../shared/contract'
 import type { AgentClient, AgentNotice, AgentState, RunEvent, RunFrame, Scenario, SendPriority, SendTurnResult, Stage } from '../types'
 import { AgentError, SCENARIOS, STAGES } from '../types'
 import type { ContractTarget, WriteMethod } from './targets'
@@ -1098,6 +1099,97 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(team()).toContain('Ship heavy orders by courier')
       expect(await c.waitingMemory()).toEqual([])
     })
+
+    // Stage 1 M2-H (N18). Ways it could break: a list or a card that doesn't parse through its schema; the demo showing an
+    // action, a permission or a question, or taking an answer; an answer that doesn't reach the server's card, sends
+    // another rev, or (stale) applies instead of rejecting with the card as it is now; a hold not drawn from the server's
+    // own `sendAt` and `serverNow`; Undo after the hold, or no Undo in it; Always allow that leaves no permission, or a
+    // permission that a stale Remove takes away; a "Needs a check" that can't be resolved by its approver.
+    const ACTIONS = ['actions', 'action', 'answerAction', 'undoAction', 'resolveAction', 'permissions', 'removePermission', 'questions', 'answerQuestion'] as const
+    only(...ACTIONS)('actions, permissions and questions: every list parses; with nothing seeded an answer is refused', async () => {
+      const c = t.client
+      for (const a of await c.actions()) parse(ActionCardSchema, a, 'an action')
+      for (const p of await c.permissions()) parse(PermissionSchema, p, 'a permission')
+      for (const q of await c.questions()) parse(QuestionSchema, q, 'a question')
+      if (!t.seedAction) {
+        // The demo: nothing to list, and nothing it could answer.
+        expect([await c.actions(), await c.permissions(), await c.questions()]).toEqual([[], [], []])
+        for (const refused of [c.action('ac_AAAAAAAAAAAAAAAAAAAAAA'), c.answerAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1, 'once'), c.undoAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1),
+          c.resolveAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1, 'sent'), c.removePermission('pg_AAAAAAAAAAAAAAAAAAAAAA', 1)]) {
+          const e = await refused.then(() => null, (x: unknown) => x)
+          expect(e).toBeInstanceOf(AgentError)
+          expect(e).toMatchObject({ code: 'not_found' })
+        }
+      }
+      // A question nobody asked: not found, on every target.
+      const e = await c.answerQuestion('q_AAAAAAAAAAAAAAAAAAAAAA', 'Yes').then(() => null, (x: unknown) => x)
+      expect(e).toBeInstanceOf(AgentError)
+      expect(e).toMatchObject({ code: 'not_found' })
+    })
+
+    ;(t.seedAction ? only(...ACTIONS) : test.skip)('an action: listed, Allow once starts the hold from the server clock, Undo takes it back, a stale answer is refused', async () => {
+      const c = t.client
+      const id = await t.seedAction!()
+      const listed = (await c.actions({ states: ['waiting'] })).find(a => a.id === id)
+      expect(listed).toMatchObject({ state: 'waiting', kind: 'ask', can: { allowOnce: true, alwaysAllow: true, approve: false, deny: true, undo: false } })
+      const card = parse(ActionCardSchema, await c.action(id), 'the card')
+      const approved = parse(ActionCardSchema, await c.answerAction(id, card.rev, 'once'), 'the answered card')
+      expect(approved).toMatchObject({ id, state: 'approved', rev: card.rev + 1, can: { undo: true, allowOnce: false } })
+      // The hold is the server's: `sendAt` is the hold after the server's own `serverNow`, never the browser's clock.
+      expect(approved.sendAt!.ms - approved.serverNow.ms).toBeGreaterThan(0)
+      expect(approved.sendAt!.ms - approved.serverNow.ms).toBeLessThanOrEqual(fx.holdMs)
+      // An answer at the rev it was read at, after another went through: the card as it is now.
+      const stale = await c.answerAction(id, card.rev, 'deny').then(() => null, (x: unknown) => x)
+      expect(stale).toMatchObject({ code: 'conflict', current: { id, state: 'approved', rev: approved.rev } })
+      const undone = await c.undoAction(id, approved.rev)
+      expect(undone).toMatchObject({ id, state: 'undone', can: { undo: false } })
+      expect((await c.actions({ states: ['undone'] })).some(a => a.id === id)).toBe(true)
+    })
+
+    ;(t.seedAction ? only(...ACTIONS) : test.skip)('Always allow leaves a permission; a stale Remove is refused, Remove at its rev takes it away', async () => {
+      const c = t.client
+      const id = await t.seedAction!()
+      const card = await c.action(id)
+      const before = await c.permissions()
+      expect(await c.answerAction(id, card.rev, 'always')).toMatchObject({ id, state: 'approved' })
+      // Taken back before the send, so the case sends nothing; the permission stays.
+      await c.undoAction(id, card.rev + 1)
+      const added = (await c.permissions()).filter(p => !before.some(b => b.id === p.id))
+      expect(added).toHaveLength(1)
+      const p = parse(PermissionSchema, added[0], 'the new permission')
+      expect(p).toMatchObject({ tool: { accountId: card.tool.accountId }, can: { remove: true }, holder: { kind: 'member', memberId: fx.me.memberId } })
+      const stale = await c.removePermission(p.id, p.rev + 1).then(() => null, (x: unknown) => x)
+      expect(stale).toMatchObject({ code: 'conflict', current: { id: p.id, rev: p.rev } })
+      const after = await c.removePermission(p.id, p.rev)
+      expect(after.some(x => x.id === p.id)).toBe(false)
+      expect((await c.permissions()).some(x => x.id === p.id)).toBe(false)
+    })
+
+    ;(t.seedAction ? only(...ACTIONS) : test.skip)('No: the card is denied and offers nothing more', async () => {
+      const c = t.client
+      const id = await t.seedAction!()
+      const card = await c.action(id)
+      const denied = await c.answerAction(id, card.rev, 'deny')
+      expect(denied).toMatchObject({ id, state: 'denied', can: { allowOnce: false, alwaysAllow: false, approve: false, deny: false, undo: false, resolve: false } })
+    })
+
+    ;(t.seedAction && t.failNextSend ? only(...ACTIONS) : test.skip)('a send whose result is unclear needs a check, and its approver says it did not go out', async () => {
+      const c = t.client
+      const id = await t.seedAction!()
+      await t.failNextSend!(true)
+      const card = await c.action(id)
+      await c.answerAction(id, card.rev, 'once')
+      // The hold ends and the send runs on the server's own clock: read the card until it has settled.
+      const settled = await vi.waitFor(async () => {
+        const now = await c.action(id)
+        if (now.state === 'approved' || now.state === 'sending') throw new Error(`still ${now.state}`)
+        return now
+      }, { timeout: 45_000, interval: 1000 })
+      expect(settled).toMatchObject({ state: 'needs_check', can: { resolve: true } })
+      expect(settled.result).toBeTruthy()
+      const resolved = await c.resolveAction(id, settled.rev, 'failed')
+      expect(resolved).toMatchObject({ id, state: 'failed', can: { resolve: false } })
+    }, 60_000)
 
     only('setToggle', 'setSetting', 'setPhoto')('toggles, settings and photos', async () => {
       const c = t.client

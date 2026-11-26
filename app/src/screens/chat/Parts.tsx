@@ -17,6 +17,7 @@ import { MODEL_OFF_TEXTS } from './notes'
 import { cn } from '@/lib/utils'
 import { SuggestionChip } from '../../ui/chat'
 import { CONFIRMATION_SHEET, Confirmation, ConfirmationButtons, ConfirmationResult } from '../../ui/agent'
+import { AskPart } from './AskCard'
 
 const OPEN_LINK = 'flex flex-none items-center gap-0.5 text-base text-foreground-3 hover:text-foreground'
 /** A routine or skill inside the answer's card: an inset block a step off the card. */
@@ -207,8 +208,8 @@ export function AgentPart({ part, trace, id, chat, animate = false, streaming = 
         </div>
       )
 
-    // Stage 1 (W0-A): no build makes this part yet. M2-H draws its card.
+    // Stage 1 M2-H: an action the agent proposed. The card reads itself (`action(id)`) and offers what `can` allows.
     case 'ask':
-      return null
+      return <AskPart actionId={part.actionId} />
   }
 }

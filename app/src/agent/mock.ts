@@ -27,6 +27,9 @@ import type { RoutineHistoryRun, RoutineRunHistory } from '../../shared/contract
 import type { Can } from '../../shared/contract/me'
 import type { InviteInput } from '../../shared/contract/members'
 import type { AvailableChannels, NotifyChannelList, PutNotifyChannels } from '../../shared/contract/notify-slack'
+import type { ActionCard, ActionFilter } from '../../shared/contract/actions'
+import type { Permission } from '../../shared/contract/permissions'
+import type { Question } from '../../shared/contract/questions'
 import { MEMBER_ID_PATTERN, meetsRule, settingRow } from '../../shared/contract/settings-table'
 import { pendingIds, visibleProblems } from '../state/derive'
 
@@ -396,6 +399,8 @@ interface Server {
   skillsDeleted: Record<string, true>
   skillsChanged: Record<string, Instant>
 }
+/** The demo has no actions, permissions or questions (Stage 1 M2): an answer to one names nothing it has. */
+const NO_M2_RECORD = "That isn't there any more."
 /** What the mock says to someone without `approveMemory` (the server's matrix refuses routes 77 and 78 the same way). */
 const WAITING_REFUSED = 'Only admins and the Inhouse team can see what waits for an OK.'
 const DECIDING_REFUSED = 'Only admins and the Inhouse team can decide on what waits for an OK.'
@@ -985,6 +990,19 @@ export class MockAgent implements AgentClient {
     if (forgotten) forgot[key] = true; else delete forgot[key]
     return this.writeRecs([[rec, 1]], { forgot })
   }
+  // Stage 1 M2 (N18): the demo has no actions, permissions or questions. Its lists are empty and every answer is refused
+  // (there is nothing it could name), with no notice: the demo's own approvals stay as they are until M5.
+  actions(_filter?: ActionFilter): Promise<ActionCard[]> { return Promise.resolve([]) }
+  action(_id: string): Promise<ActionCard> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
+  answerAction(): Promise<ActionCard> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
+  undoAction(): Promise<ActionCard> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
+  resolveAction(): Promise<ActionCard> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
+  onActionUpdated(): () => void { return () => undefined }
+  permissions(): Promise<Permission[]> { return Promise.resolve([]) }
+  removePermission(): Promise<Permission[]> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
+  questions(): Promise<Question[]> { return Promise.resolve([]) }
+  answerQuestion(): Promise<Question> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
+
   waitingMemory(): Promise<WaitingMemory[]> {
     if (!this.me()?.can.approveMemory) return this.rejected('forbidden', WAITING_REFUSED, false)
     const facts = this.server.memoryWaiting.map(l => {
