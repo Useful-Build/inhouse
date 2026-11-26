@@ -11,6 +11,7 @@ import { StoreUnavailableError } from '../../db/sql.ts'
 import { ALWAYS_LOAD_META_KEY, INHOUSE_TOOLS } from '../registry.ts'
 import { TOOL_HANDLERS } from '../tools/index.ts'
 import { refusal } from './tool.ts'
+import { notAvailableYet } from '../tools/stubs/index.ts'
 import type { ToolScope } from './tool.ts'
 import type { NotifyDeps } from '../tools/notifications/deps.ts'
 
@@ -31,7 +32,15 @@ export interface McpDeps {
   notify?: NotifyDeps
   /** Epoch ms; the real clock by default (tests pass their own). */
   now?: () => number
+  /**
+   * Stage 1 M2-Q: `question_ask` is listed and served only when this is true (server/questions/switch.ts: the test build
+   * only, until M2-H's answer screen). Absent is off: it isn't listed, and a call to it gets `not_available_yet`.
+   */
+  questions?: boolean
 }
+
+/** The tools this server leaves out while questions are off. */
+export const QUESTION_TOOLS: readonly string[] = ['question_ask']
 
 /** The largest body a call may send. */
 const MAX_BODY_BYTES = 256 * 1024
@@ -49,9 +58,12 @@ const json = (body: unknown, status = 200, headers: Record<string, string> = {})
 const rpcError = (id: Id | null, code: number, message: string, status = 200) => json({ jsonrpc: '2.0', id, error: { code, message } }, status)
 const rpcResult = (id: Id, result: unknown) => json({ jsonrpc: '2.0', id, result })
 
-/** `tools/list`: the 20 in the registry's order, each with its input schema, annotations and the always-load mark. */
-function toolList() {
-  return INHOUSE_TOOLS.map(t => ({
+/**
+ * `tools/list`: the registry's tools in order, each with its input schema, annotations and the always-load mark; without
+ * `question_ask` while questions are off.
+ */
+function toolList(questions: boolean) {
+  return INHOUSE_TOOLS.filter(t => questions || !QUESTION_TOOLS.includes(t.name)).map(t => ({
     name: t.name,
     description: t.description,
     inputSchema: z.toJSONSchema(TOOL_HANDLERS.get(t.name)!.input, { io: 'input' }),
@@ -62,6 +74,13 @@ function toolList() {
 
 const isId = (v: unknown): v is Id => typeof v === 'string' || (typeof v === 'number' && Number.isInteger(v))
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/** The CLI's id for the model's tool call (`_meta["claudecode/toolUseId"]`, Stage 1 M2-Q), when it is a plausible one. */
+export const TOOL_USE_ID_META_KEY = 'claudecode/toolUseId'
+function toolUseIdOf(meta: unknown): string | undefined {
+  const v = isObject(meta) ? meta[TOOL_USE_ID_META_KEY] : undefined
+  return typeof v === 'string' && /^[A-Za-z0-9_-]{1,256}$/.test(v) ? v : undefined
+}
 
 /** The arguments' problems, short, for the agent to fix its call. */
 const issues = (e: z.ZodError) => e.issues.slice(0, 5).map(i => `${i.path.length > 0 ? i.path.join('.') : 'arguments'}: ${i.message}`).join('; ')
@@ -108,17 +127,20 @@ export async function handleMcp(request: Request, scope: McpScope, deps: McpDeps
     case 'ping':
       return rpcResult(id, {})
     case 'tools/list':
-      return rpcResult(id, { tools: toolList() })
+      return rpcResult(id, { tools: toolList(deps.questions === true) })
     case 'tools/call': {
       const name = params?.name
       const args = params?.arguments ?? {}
       const impl = typeof name === 'string' ? TOOL_HANDLERS.get(name) : undefined
       if (!impl) return rpcError(id, INVALID_PARAMS, `Unknown tool: ${typeof name === 'string' ? name : '(no name)'}`)
+      // Questions off: the stub's answer, before the arguments are read (nothing is asked, nothing waits).
+      if (deps.questions !== true && QUESTION_TOOLS.includes(name as string)) return rpcResult(id, await notAvailableYet(name as string).call({}, { ...scope, nowMs: (deps.now ?? Date.now)(), requestId: `mcp-${crypto.randomUUID()}` }, { db: deps.db }))
       const parsed = impl.input.safeParse(args)
       // Input errors are tool execution errors (2025-11-25), so the model can read them and correct its call.
       if (!parsed.success) return rpcResult(id, refusal('invalid_arguments', `The arguments don't fit ${name}: ${issues(parsed.error)}. Fix them and call it again.`))
       const now = deps.now ?? Date.now
-      const call: ToolScope = { ...scope, nowMs: now(), requestId: `mcp-${crypto.randomUUID()}` }
+      const toolUseId = toolUseIdOf(params?._meta)
+      const call: ToolScope = { ...scope, nowMs: now(), requestId: `mcp-${crypto.randomUUID()}`, ...(toolUseId ? { toolUseId } : {}) }
       try {
         return rpcResult(id, await impl.call(parsed.data, call, { db: deps.db, ...(deps.notify ? { notify: deps.notify } : {}) }))
       } catch (err) {

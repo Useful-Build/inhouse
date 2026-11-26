@@ -63,8 +63,8 @@ export type RunContext = {
    * For the defer hook (src/guards/defer.ts, N16): resolves true once the main agent's current turn holds `toolUseId`
    * as its only tool call and the model's message that carried it is complete; false when it holds others too, or when
    * neither is known within `withinMs` (the hook fires as soon as its block is streamed, before the run loop has read
-   * the blocks after it). Completeness needs stream events (`includePartialMessages`), off until M2-Q: until then it
-   * never resolves true (src/session/core.ts `TurnToolUses.lone`). Never rejects.
+   * the blocks after it). Completeness needs stream events (`includePartialMessages`, on since M2-Q and never sent to
+   * the Worker; src/session/core.ts `TurnToolUses.lone`). Never rejects.
    */
   loneToolCall(toolUseId: string, withinMs: number): Promise<boolean>
 }

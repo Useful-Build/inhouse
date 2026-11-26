@@ -227,13 +227,13 @@ describe('T09, T11 and open served schemas', () => {
     expect(report.argsNotGraded).toEqual([{ id: 'T09', why: 'the served schema defines no fields' }])
     expect(renderReadme(report, 't')).toContain('Not graded on this target, args only (tool and notCalled still grade): T09 (the served schema defines no fields).')
   })
-  it('the open set is what the server serves: the stubs today, never a built tool', async () => {
+  it('the open set is what the server serves: no stub is left, never a built tool', async () => {
     const open = await openSchemaTools()
-    for (const n of ['question_ask']) expect(open.has(n), n).toBe(true)
-    // P4 built the routine tools (line B, fleet/watch), P5 notification_send (W4) and Stage 1 M2-E the approval tools:
-    // their real schemas have fields, so they're closed now.
+    // P4 built the routine tools (line B, fleet/watch), P5 notification_send (W4), Stage 1 M2-E the approval tools and
+    // M2-Q question_ask: their real schemas have fields, so they're closed now, and no stub is left open.
+    expect([...open]).toEqual([])
     for (const n of ['memory_search', 'memory_forget', 'history_search', 'routine_create', 'routine_run_now', 'notification_send',
-      'approval_request', 'approval_get', 'approval_list', 'approval_withdraw']) expect(open.has(n), n).toBe(false)
+      'approval_request', 'approval_get', 'approval_list', 'approval_withdraw', 'question_ask']) expect(open.has(n), n).toBe(false)
   })
 })
 
@@ -241,7 +241,7 @@ describe('T09, T11 and open served schemas', () => {
 // ?raw itself) but not under plain node, where run.ts runs it; a union or a strict empty input reads as open; a match that
 // only exists in the raw answer (inside a URL, on the canary) leaves an empty span with no word on why.
 describe('the served-schema loader and the span, outside the happy path', () => {
-  it('L1: under plain node (outside vitest), openSchemaTools() gives exactly the stubs', async () => {
+  it('L1: under plain node (outside vitest), openSchemaTools() gives exactly the stubs still served (none now)', async () => {
     const { spawnSync } = await import('node:child_process')
     // By path at run time: a literal specifier would pull the server's types into evals/'s project (no Worker Env).
     const stubs = '../server/mcp/tools/stubs/index.ts'
@@ -250,7 +250,8 @@ describe('the served-schema loader and the span, outside the happy path', () => 
     const composed = '../server/mcp/tools/index.ts'
     const { TOOL_HANDLERS } = (await import(/* @vite-ignore */ composed)) as { TOOL_HANDLERS: ReadonlyMap<string, unknown> }
     const served = STUB_NAMES.filter((n) => TOOL_HANDLERS.get(n) === handlers[n])
-    expect(served.length, 'some stub is still served').toBeGreaterThan(0)
+    // Stage 1 M2-E and M2-Q built the last stubs: none is served now, so the loader under plain node must give none too.
+    expect(served).toEqual([])
     const url = new URL('./served-schema.ts', import.meta.url).href
     const r = spawnSync(process.execPath, ['--input-type=module', '-e', `const m = await import(${JSON.stringify(url)}); console.log(JSON.stringify([...await m.openSchemaTools()].sort()))`], { cwd: new URL('..', import.meta.url).pathname, encoding: 'utf8' })
     expect(r.status, r.stderr).toBe(0)

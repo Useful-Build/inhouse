@@ -784,3 +784,39 @@ describe('progress, the stored job and an older object', () => {
     }
   }))
 })
+
+describe("Stage 1 M2-Q: a person's question while a job runs", () => {
+  const questionOf = (h: Harness) => (JSON.parse(h.sql.exec<{ waiting_json: string }>('SELECT waiting_json FROM chat_state WHERE chat_id = ?', CHAT).one().waiting_json) as { questionId: string }).questionId
+  const jobTurns = (h: Harness, jobId: string) => h.turns().filter(t => t.job_id === jobId)
+
+  it('the continuation behind the question waits it out (never failed), and the answer wakes it at once, not a minute later', () => inAgent(async h => {
+    const { jobId } = await startJob(h)
+    const cont1 = liveTurn(h)!
+    // The person writes while the job runs (Q4 = B: the job carries on); their turn queues behind the continuation.
+    const mine = await h.submit(CHAT, 'key-mine01')
+    if (!('turnId' in mine)) throw new Error(`refused ${JSON.stringify(mine)}`)
+    h.push(cont1.turn_id, ...maxTurns(5))
+    await settle()
+    await h.tick(0)
+    // The person's turn runs and asks a question: the chat waits on it.
+    const asking = h.turns().find(t => t.turn_id === mine.turnId)!
+    expect(asking.state).toBe('live')
+    h.push(asking.turn_id, ev.started(), ev.deferred(), ev.checkpoint(6, 'u6', 5), ev.success(), ev.released(cp(6)))
+    await settle()
+    await h.tick(0)
+    await h.tick(SEC)
+    expect(jobsOf(h)[0]).toMatchObject({ job_id: jobId, state: 'running', outcome: null })
+    const before = jobTurns(h, jobId).length
+    // Answered: the resume runs and ends; the job's continuation goes now.
+    const r = await h.core.resumeDeferred(CHAT, 'allow', questionOf(h))
+    if (!('turnId' in r)) throw new Error(`refused ${JSON.stringify(r)}`)
+    await settle()
+    h.push(r.turnId, ...fullAnswer('answered', 7))
+    await settle()
+    await h.tick(SEC)
+    expect(jobsOf(h)[0]).toMatchObject({ job_id: jobId, state: 'running', outcome: null })
+    const after = jobTurns(h, jobId)
+    expect(after.length).toBeGreaterThan(before)
+    expect(['queued', 'starting', 'live']).toContain(after.at(-1)!.state)
+  }))
+})
