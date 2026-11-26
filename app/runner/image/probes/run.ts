@@ -24,8 +24,9 @@ import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdir
 import { networkInterfaces } from 'node:os'
 import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
-import { PROTOCOL_HEADER, PROTOCOL_VERSION, type RunEvent, type RunStart } from '../../../shared/protocol/index.ts'
+import { PROTOCOL_HEADER, PROTOCOL_VERSION, auditInputSha256, type RunEvent, type RunStart } from '../../../shared/protocol/index.ts'
 import { SHARED_WRITABLE, createSessionHost, parseStatus, readProcs } from '../../src/guards/host.ts'
+import { helperMayUse } from '../../src/guards/agents.ts'
 import { ALLOWED_SKILLS, BUILT_IN_TOOLS, BUNDLED_SKILLS_OFF, INHOUSE_MCP_SERVER, PLUGIN_NAME } from '../../src/guards/lists.ts'
 import { SESSION_PROCESS_LIMIT, USERS_ROOT, sessionPaths, userPaths } from '../../src/guards/paths.ts'
 import { readPool, type PoolUser } from '../../src/guards/users.ts'
@@ -1422,7 +1423,11 @@ function conversations(state: ScriptState, key: string) {
   const convs = [...new Set(state.helperLog.filter((h) => h.key === key).map((h) => h.conv))]
   return convs.map((conv) => ({ conv, first: state.helperLog.find((h) => h.key === key && h.conv === conv)!, requests: state.helperLog.filter((h) => h.key === key && h.conv === conv), ids: state.helperIds.get(`${key}:${conv}`) ?? [] }))
 }
-const shown = (v: unknown) => JSON.stringify(v)?.slice(0, 400)
+/** A value as JSON for a probe line; `undefined` (which JSON can't write) as the word, so a line never holds undefined. */
+const shown = (v: unknown, max = 400) => (v === undefined ? 'undefined' : (JSON.stringify(v) ?? String(v)).slice(0, max))
+
+/** Deferred tools off the researcher's list: an `inhouse` read, an `inhouse` write, and a write tool (actions on). */
+const OFF_LIST_DEFERRED = ['mcp__inhouse__approval_list', 'mcp__inhouse__routine_create', 'mcp__actions__probe_ping'] as const
 
 /** The tools neither helper may ever see: the Agent tool, any write tool, any `inhouse` tool that writes or asks. */
 const NEVER_FOR_HELPERS = (t: string) =>
@@ -1435,6 +1440,15 @@ async function probeHelpers() {
       () => ({ tool: 'Bash', input: { command: 'echo r-bash-$((40 + 2))', description: 'Probe' } }),
       () => ({ tool: `mcp__${INHOUSE_MCP_SERVER}__memory_save`, input: { text: 'helper write' } }),
       () => ({ tool: 'Read', input: { file_path: '/etc/hostname' } }),
+      // ToolSearch: asked for the deferred tools on the list and off it in one go. Only the list's can become callable.
+      () => ({ tool: 'ToolSearch', input: { query: `select:${['WebFetch', 'mcp__inhouse__history_read', ...OFF_LIST_DEFERRED].join(',')}`, max_results: 10 } }),
+      // WebFetch, deferred and on the list: to the run's listed domain it gets past the rules and the hook (the probe host
+      // serves plain http, so the fetch itself may fail after); to an unlisted one the WebFetch hook refuses it.
+      () => ({ tool: 'WebFetch', input: { url: `http://${NAMES.gw}:${GW_PORT}/probe.txt`, prompt: 'What does it say?' } }),
+      () => ({ tool: 'WebFetch', input: { url: 'https://unlisted.inhouse-probe.example/', prompt: 'What does it say?' } }),
+      ...OFF_LIST_DEFERRED.map((tool) => () => ({ tool, input: { name: 'helper write' } })),
+      // The control: an on-list deferred tool loads and runs (the stub answers pong).
+      () => ({ tool: 'mcp__inhouse__history_read', input: {} }),
     ],
     finalText: 'r-done',
   }
@@ -1446,9 +1460,12 @@ async function probeHelpers() {
     ],
     finalText: 'a-done',
   }
+  const callsBefore = egress.toolCalls.length
   const run = await startRun({
     chatId: 'p-helpers',
     helpers: { agents: helperAgents('r', 'a'), subagentModel: SUBAGENT_MODEL },
+    webFetchDomains: [NAMES.gw],
+    actions: true,
     script: {
       mcp20: true,
       helpers: { r, a },
@@ -1477,22 +1494,56 @@ async function probeHelpers() {
     const res = result(run, i)
     record(`helpers.refused-${what}`, isErr(res), `the call's result: ${shown(res)}`)
   }
+  // Which layer refused: the main agent's calls meet our hook first (its own words), so the engine's own refusals
+  // behind it, CLAUDE_CODE_FORK_SUBAGENT=0 and the `Agent(...)` rules, aren't exercised in this container. Each was shown
+  // alone on CLI 2.1.328 outside it (PR #430): fork mode on and no rule, a fork starts; FORK_SUBAGENT=0 alone: "Agent
+  // type 'fork' not found"; `Agent(fork)` alone: "denied by permission rule".
+  fact('helpers.refusal-layer-main', 'the main agent\'s fork, built-in and untyped calls are refused by the helper hook first; the engine switch and the deny rules behind it are not exercised here')
+
+  // A request's `tools` is what loads up front: the researcher's also holds `DeferredToolPlaceholder`, the CLI's stand-in
+  // for the tools it defers behind ToolSearch (WebFetch and the on-demand `inhouse` tools, as for the main agent). Every
+  // tool there must be on the helper's list; the deferred ones are judged by what ToolSearch can load, below.
   const rTools = rc[0]?.first.tools ?? []
   const aTools = ac[0]?.first.tools ?? []
   fact('helpers.researcher-tools', shown(rTools))
   fact('helpers.analyst-tools', shown(aTools))
-  record('helpers.researcher-tool-list', rTools.includes('Read') && rTools.includes('WebFetch') && !rTools.includes('Bash') && !rTools.includes('Write') && !rTools.some(NEVER_FOR_HELPERS), shown(rTools))
-  record('helpers.analyst-tool-list', aTools.includes('Bash') && aTools.includes('Write') && !aTools.includes('WebFetch') && !aTools.some((t) => t.startsWith('mcp__')) && !aTools.some(NEVER_FOR_HELPERS), shown(aTools))
+  const offR = rTools.filter((t) => !helperMayUse('researcher', t, false) && t !== 'DeferredToolPlaceholder')
+  const offA = aTools.filter((t) => !helperMayUse('analyst', t, false))
+  record('helpers.researcher-tool-list', rTools.includes('Read') && rTools.includes('ToolSearch') && offR.length === 0 && !rTools.some(NEVER_FOR_HELPERS), `off the list: ${shown(offR)}`)
+  record('helpers.analyst-tool-list', aTools.includes('Bash') && aTools.includes('Write') && offA.length === 0 && !aTools.some(NEVER_FOR_HELPERS), `off the list: ${shown(offA)}`)
+  fact('helpers.apps-unproven', 'the probe serves no /hub/ (the apps server fails to connect), so mcp__apps__* in a helper is not exercised here')
 
-  // Run-time refusals: a call the model makes off the helper's list is refused even though the engine never offered it.
   const rIds = rc[0]?.ids ?? []
   const aIds = ac[0]?.ids ?? []
   const res = (id: string | undefined) => (id === undefined ? undefined : st.results.get(id))
+  const entryOf = (id: string | undefined, decision: string) => st.auditEntries.find((e) => e.toolUseId === id && e.decision === decision)
   record('helpers.researcher-off-list-refused', isErr(res(rIds[0])) && !(res(rIds[0])?.text ?? '').includes('r-bash-42') && isErr(res(rIds[1])), `Bash: ${shown(res(rIds[0]))}; memory_save: ${shown(res(rIds[1]))}`)
   record('helpers.researcher-listed-runs', res(rIds[2]) !== undefined && !isErr(res(rIds[2])), `Read: ${shown(res(rIds[2]))}`)
+  fact('helpers.researcher-toolsearch', shown(res(rIds[3]), 1500))
+  const fetchListed = res(rIds[4])
+  fact('helpers.researcher-webfetch-listed', shown(fetchListed, 600))
+  record(
+    'helpers.researcher-webfetch-listed-allowed',
+    entryOf(rIds[4], 'allow') !== undefined && entryOf(rIds[4], 'deny') === undefined && !/No such tool|denied/i.test(fetchListed?.text ?? 'none'),
+    `the call got past the rules and the hooks (audit ${shown(entryOf(rIds[4], 'allow'))}); its result ${shown(fetchListed)}`,
+  )
+  record('helpers.researcher-webfetch-unlisted-refused', isErr(res(rIds[5])) && typeof entryOf(rIds[5], 'deny')?.agentId === 'string', `result ${shown(res(rIds[5]))}, deny entry ${shown(entryOf(rIds[5], 'deny'))}`)
+  const offCalls = OFF_LIST_DEFERRED.map((_, k) => res(rIds[6 + k]))
+  const reached = egress.toolCalls.slice(callsBefore).filter((c) => OFF_LIST_DEFERRED.some((t) => t.endsWith(`__${c.name}`) && t.startsWith(`mcp__${c.route === 'mcp' || c.route === 'mcp20' ? 'inhouse' : c.route}__`)))
+  record(
+    'helpers.researcher-deferred-off-list-refused',
+    // ToolSearch's own answer may name what it couldn't load, so it's printed above; the calls are what must fail, and
+    // none may reach a server.
+    offCalls.every(isErr) && reached.length === 0,
+    `calls ${shown(offCalls)}; tools/call at the egress ${shown(reached)}`,
+  )
+  record('helpers.researcher-deferred-on-list-runs', res(rIds[9])?.text === 'pong' && !isErr(res(rIds[9])), `history_read after ToolSearch: ${shown(res(rIds[9]))}`)
   record('helpers.no-nesting', isErr(res(aIds[0])) && rc.length === 1, `the analyst's Agent call: ${shown(res(aIds[0]))}`)
   record('helpers.analyst-bash-runs', (res(aIds[1])?.text ?? '').includes('a-bash-42'), `Bash: ${shown(res(aIds[1]))}`)
   record('helpers.analyst-off-list-refused', isErr(res(aIds[2])), `WebFetch: ${shown(res(aIds[2]))}`)
+  // Inside a helper the engine refuses an off-list tool first ("No such tool available"): the helper hook's own deny
+  // there is the backstop for a list the engine got wrong, and isn't exercised here (unit tests: test/guards/agents.test.ts).
+  fact('helpers.refusal-layer-helper', `off-list calls in a helper are refused by the engine first: ${shown([res(rIds[0])?.text, res(aIds[2])?.text], 300)}`)
 
   // The model mapping: researcher on the subagent model, analyst on the turn's; the `opus` the call asked for is gone.
   const rModels = [...new Set(rc.flatMap((c) => c.requests.map((q) => q.model)))]
@@ -1521,12 +1572,23 @@ async function probeNoHelpersAndActions() {
   record('actions.absent-by-default', !(init?.mcp_servers ?? []).some((m) => m.name === 'actions'), `servers ${shown(init?.mcp_servers)}`)
 
   const before = egress.actionsCalls.length
-  const on = await startRun({ chatId: 'p-actions', actions: true, script: { steps: [() => ({ tool: 'mcp__actions__probe_ping', input: {} })] } }).done
+  const callsBefore = egress.toolCalls.length
+  // N14: a nested, non-ASCII input, keys out of order: the hook's inputSha256 must be the hash of what the egress gets.
+  const input = { zeta: 'café ☕ 東京', nested: { list: [3, { ü: 'ö', a: null }, 'x'], b: true }, alpha: 1.5 }
+  const on = await startRun({ chatId: 'p-actions', actions: true, script: { steps: [() => ({ tool: 'mcp__actions__probe_ping', input })] } }).done
   checkRun('actions', on, [])
   const onInit = initOf(on) as { mcp_servers?: { name: string; status?: string }[] } | undefined
   fact('actions.servers', shown(onInit?.mcp_servers))
   record('actions.present-when-asked', (onInit?.mcp_servers ?? []).some((m) => m.name === 'actions' && m.status === 'connected'), `servers ${shown(onInit?.mcp_servers)}`)
   record('actions.call-goes-through-the-proxy', result(on, 0)?.text === 'pong' && egress.actionsCalls.slice(before).includes('tools/call'), `result ${shown(result(on, 0))}, methods ${shown(egress.actionsCalls.slice(before))}`)
+  const got = egress.toolCalls.slice(callsBefore).find((c) => c.route === 'actions' && c.name === 'probe_ping')
+  const entry = on.state.auditEntries.find((e) => e.toolUseId === on.state.ids[0] && e.decision === 'allow')
+  const egressHash = got === undefined ? 'no call' : await auditInputSha256(got.arguments ?? {})
+  record(
+    'actions.input-hash-matches-the-egress',
+    entry?.inputSha256 !== undefined && entry.inputSha256 === egressHash && egressHash === (await auditInputSha256(input)),
+    `hook ${entry?.inputSha256}, egress arguments ${shown(got?.arguments)} hash ${egressHash}`,
+  )
 }
 
 /** Four helpers at once: a fifth Agent call in the same turn is refused while four are running. */
@@ -1546,9 +1608,24 @@ async function probeHelperConcurrency() {
     script: { helpers: { c: { steps: [], finalText: 'c-done', hold } }, steps: [() => [0, 1, 2, 3, 4].map((i) => agentCall('analyst', `task c${i}`)())] },
   }).done
   checkRun('helpers-cap', run, [])
+  // The cap, on what ran and on what came back: four helper conversations, at most four running at once (each from its
+  // first model request to its last), four answers and exactly one refusal naming the limit. (Parallel calls need ids
+  // that aren't prefixes of each other: lib.ts callsOf.)
+  const log = run.state.helperLog.filter((h) => h.key === 'c')
+  const spans = [...new Set(log.map((h) => h.conv))].map((conv) => {
+    const at = log.filter((h) => h.conv === conv).map((h) => h.at)
+    return [Math.min(...at), Math.max(...at)] as const
+  })
+  const mostAtOnce = Math.max(0, ...spans.map(([start]) => spans.filter(([s, e]) => s <= start && start <= e).length))
   const results = [0, 1, 2, 3, 4].map((j) => run.state.results.get(callId(run.state, 0, j)))
-  fact('helpers-cap.results', shown(results.map((x) => x && { isError: x.isError, text: x.text.slice(0, 120) })))
-  record('helpers-cap.four-at-once', convs(run.state) === 4 && results.filter(isErr).length === 1 && results.filter((x) => (x?.text ?? '').includes('c-done')).length === 4, `helpers started ${convs(run.state)}, refused ${results.filter(isErr).length}`)
+  fact('helpers-cap.results', shown(results.map((x) => x && { isError: x.isError, text: x.text.slice(-160) }), 3000))
+  const answered = results.filter((x) => !isErr(x) && (x?.text ?? '').includes('c-done')).length
+  const refused = results.filter((x) => isErr(x) && /concurrent subagent limit/i.test(x?.text ?? '')).length
+  record(
+    'helpers-cap.four-at-once',
+    agentAudits(run.state) === 5 && spans.length === 4 && mostAtOnce === 4 && answered === 4 && refused === 1,
+    `Agent calls made ${agentAudits(run.state)}, helpers started ${spans.length}, most running at once ${mostAtOnce}, answered ${answered}, refused for the limit ${refused}`,
+  )
 }
 
 /** A stop ends a run whose helper is in a long command: the run ends, its uid is freed, the helper asks nothing more. */
@@ -1595,7 +1672,8 @@ async function probeHelpersOnResume() {
   const first = await startRun({ chatId: 'p-helpers-resume', helpers, script: { helpers: { rr }, steps: [agentCall('researcher', 'first task'), caps] } }).done
   checkRun('helpers-resume.first', first, [1])
   const cp = first.events.find((e) => e.type === 'checkpoint') as { mainEntries: number; lastUuid: string | null; lastUuidIndex: number | null } | undefined
-  fact('helpers-resume.caps-first', result(first, 1)?.text ?? 'no result')
+  const CAPS = 'caps=1,4,1,0,1,0,180000'
+  record('helpers-resume.caps-first', (result(first, 1)?.text ?? '').includes(CAPS), `Bash saw ${shown(result(first, 1))}`)
   if (!cp || cp.mainEntries === 0) return record('helpers-resume.checkpoint', false, `no checkpoint to resume from: ${shown(first.events.filter((e) => e.type === 'checkpoint' || e.type === 'mirror_error'))}`)
   const sessionId = (first.events.find((e) => e.type === 'started') as { sessionId?: string } | undefined)?.sessionId!
   const again = await startRun({
@@ -1603,15 +1681,20 @@ async function probeHelpersOnResume() {
     helpers,
     resume: { sessionId, expect: { mainEntries: cp.mainEntries, lastUuid: cp.lastUuid, lastUuidIndex: cp.lastUuidIndex } },
     prompt: 'Run the probe again.',
-    script: { helpers: { rr }, steps: [agentCall('fork', 'resumed fork'), agentCall('researcher', 'resumed task', { model: 'opus' }), caps] },
+    script: { resumed: true, helpers: { rr }, steps: [agentCall('fork', 'resumed fork'), agentCall('researcher', 'resumed task', { model: 'opus' }), caps] },
   }).done
-  // A resume's conversation already holds the first run's turns, so its script counts from there.
-  checkRun('helpers-resume.resumed', again, [])
+  // A resume's conversation already holds the first run's turns: its script counts from its own first turn (`resumed`).
+  checkRun('helpers-resume.resumed', again, [2])
   const init = initOf(again) as { agents?: string[] } | undefined
   const convs = conversations(again.state, 'rr')
   const models = [...new Set(convs.flatMap((c) => c.requests.map((q) => q.model)))]
-  fact('helpers-resume.caps-resumed', shown(again.state.results.get(again.state.ids.at(-1)!)))
-  record('helpers-resume.same-caps', JSON.stringify([...(init?.agents ?? [])].sort()) === '["analyst","researcher"]' && JSON.stringify(models) === JSON.stringify([SUBAGENT_MODEL]), `agents ${shown(init?.agents)}, researcher models ${shown(models)}, main requests ${again.state.requests.length}, misses ${shown(again.state.misses)}`)
+  record('helpers-resume.caps-resumed', (result(again, 2)?.text ?? '').includes(CAPS), `Bash saw ${shown(result(again, 2))}`)
+  record('helpers-resume.fork-refused', isErr(result(again, 0)), `fork: ${shown(result(again, 0))}`)
+  record(
+    'helpers-resume.same-helpers-and-model',
+    JSON.stringify([...(init?.agents ?? [])].sort()) === '["analyst","researcher"]' && convs.length === 1 && JSON.stringify(models) === JSON.stringify([SUBAGENT_MODEL]),
+    `agents ${shown(init?.agents)}, researcher conversations ${convs.length}, models ${shown(models)}, main requests ${again.state.requests.length}, misses ${shown(again.state.misses)}`,
+  )
 }
 
 async function probeSysV() {

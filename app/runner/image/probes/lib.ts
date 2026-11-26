@@ -108,9 +108,10 @@ export type HelperScript = { steps: (() => Step | Step[])[]; finalText?: string;
 /**
  * A run's script: each step is a tool call, or several in one turn (built when its turn is asked for), then one closing
  * answer. `mcp20`: the run's `inhouse` server (through the root's proxy, as production wires it) serves the 20 tools.
- * `helpers`: the helpers' scripts, by marker key.
+ * `helpers`: the helpers' scripts, by marker key. `resumed`: the run resumes a session, so its conversation already holds
+ * the earlier runs' turns; the script counts its steps from the first turn this run is asked for.
  */
-export type Script = { steps: (() => Step | Step[])[]; finalText?: string; mcp20?: boolean; helpers?: Record<string, HelperScript> }
+export type Script = { steps: (() => Step | Step[])[]; finalText?: string; mcp20?: boolean; helpers?: Record<string, HelperScript>; resumed?: boolean }
 export type ToolResult = { text: string; isError: boolean }
 /** The marker a helper's prompt carries so the probe's model knows which script answers it. */
 export const helperMarker = (key: string) => `PROBE-HELPER-${key}`
@@ -134,6 +135,8 @@ export type ScriptState = {
   /** Protocol v2: the run's events as the root pushed them to `/events/` (deduped by seq), and audit posts taken. */
   pushed: { seq: number; type: string; [k: string]: unknown }[]
   audits: number
+  /** A resumed run's first main turn number (the earlier runs' assistant turns before it). */
+  base?: number
   /** Resolves once the run's `released` came in. */
   released: Promise<void>
   onReleased: () => void
@@ -160,13 +163,18 @@ export function newScript(script: Script): ScriptState {
   }
 }
 
-/** The tool calls of one scripted turn: one id per call, the first the step's own id, the rest suffixed. */
+/**
+ * The tool calls of one scripted turn: a one-call step's id is the step's own; a several-call step's are the step's id
+ * with `c<j>` after it. No id of one turn starts with another's: the CLI pairs parallel calls with their results in a way
+ * that loses a result when one id is a prefix of another (`x0` and `x0_1`, seen on CLI 2.1.328).
+ */
 function callsOf(step: Step | Step[], id: string): { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }[] {
-  return (Array.isArray(step) ? step : [step]).map((s, j) => ({ type: 'tool_use' as const, id: j === 0 ? id : `${id}_${j}`, name: s.tool, input: s.input }))
+  if (!Array.isArray(step)) return [{ type: 'tool_use' as const, id, name: step.tool, input: step.input }]
+  return step.map((s, j) => ({ type: 'tool_use' as const, id: `${id}c${j}`, name: s.tool, input: s.input }))
 }
 
-/** The id of call `j` of step `i` (0 for a one-call step). */
-export const callId = (state: ScriptState, i: number, j = 0) => (j === 0 ? state.ids[i]! : `${state.ids[i]!}_${j}`)
+/** The id of call `j` of a several-call step `i` (`callsOf`). A one-call step's id is `state.ids[i]`. */
+export const callId = (state: ScriptState, i: number, j: number) => `${state.ids[i]!}c${j}`
 
 function resultText(content: unknown): string {
   if (typeof content === 'string') return content
@@ -202,22 +210,26 @@ export async function answerModel(state: ScriptState, request: Request): Promise
     const steps = script.steps.map((s, i) => (i === turn ? callsOf(s(), ids[i]!) : null))
     const made = steps.flatMap((c) => c ?? []).map((c) => c.id)
     state.helperIds.set(`${key}:${conv}`, [...(state.helperIds.get(`${key}:${conv}`) ?? []), ...made])
-    return replyWith(state, request, turn, steps, script.finalText, mainLoop)
+    // Its own scenario name: the scripted model's message ids come from it, and the CLI keeps one message per id, so two
+    // helpers answered under one name would lose all but one of their answers.
+    return replyWith(state, request, turn, turn, steps, script.finalText, mainLoop, `h_${key}_${conv}`)
   }
-  const steps = state.script.steps.map((s, i) => (i === turn ? callsOf(s(), state.ids[i]!) : null))
-  return replyWith(state, request, turn, steps, state.script.finalText, mainLoop)
+  const own = state.script.resumed ? turn - (state.base ??= turn) : turn
+  const steps = state.script.steps.map((s, i) => (i === own ? callsOf(s(), state.ids[i]!) : null))
+  return replyWith(state, request, turn, own, steps, state.script.finalText, mainLoop)
 }
 
-/** The scripted answer for `turn`: its calls, or the closing text once the steps are done. */
-async function replyWith(state: ScriptState, request: Request, turn: number, steps: (ReturnType<typeof callsOf> | null)[], finalText: string | undefined, expect: (r: MessagesRequest) => boolean): Promise<Response> {
-  const turns: (ScriptedTurn | null)[] = []
-  for (let i = 0; i <= steps.length; i++) {
-    if (i !== turn) turns.push(null)
-    else if (i < steps.length) turns.push({ content: steps[i]!, expect })
-    else turns.push({ content: [{ type: 'text', text: finalText ?? 'Done.' }], expect })
-  }
-  const model = createScriptedModel({ s: { turns } })
-  const res = await model.handle(request, 's')
+/**
+ * The scripted answer for the script's step `own`: its calls, or the closing text once the steps are done (past them,
+ * the request is a miss). The scripted model reads the request's own turn (`at`, its assistant messages so far), so the
+ * answer sits there; a resumed run's `own` is `at` less the earlier runs' turns.
+ */
+async function replyWith(state: ScriptState, request: Request, at: number, own: number, steps: (ReturnType<typeof callsOf> | null)[], finalText: string | undefined, expect: (r: MessagesRequest) => boolean, scenario = 's'): Promise<Response> {
+  const turns: (ScriptedTurn | null)[] = Array.from({ length: at }, () => null)
+  if (own < steps.length) turns.push({ content: steps[own]!, expect })
+  else if (own === steps.length) turns.push({ content: [{ type: 'text', text: finalText ?? 'Done.' }], expect })
+  const model = createScriptedModel({ [scenario]: { turns } })
+  const res = await model.handle(request, scenario)
   for (const m of model.misses) state.misses.push(`turn ${m.turn}: ${m.reason}`)
   return res
 }
@@ -234,6 +246,8 @@ export type Egress = {
   mcpCalls: string[]
   /** Every MCP method asked of the `/actions/` route. */
   actionsCalls: string[]
+  /** Every MCP `tools/call` any route got, with the arguments as they arrived. */
+  toolCalls: { route: string; name: string; arguments: unknown }[]
   /** Calls the egress refused (an unknown token). */
   refused: string[]
   close(): Promise<void>
@@ -314,6 +328,7 @@ export function startEgress(): Promise<Egress> {
   const byDirect = new Map<string, ScriptState>()
   const mcpCalls: string[] = []
   const actionsCalls: string[] = []
+  const toolCalls: Egress['toolCalls'] = []
   const refused: string[] = []
   const store = new Map<string, Map<string, unknown[]>>()
   const server = http.createServer((req, res) => {
@@ -345,6 +360,9 @@ export function startEgress(): Promise<Egress> {
         if (req.method !== 'POST') return sendJson(res, 405, { error: 'POST only' })
         const parsed = JSON.parse(body.toString('utf8')) as unknown
         if (route === 'actions') actionsCalls.push(...(Array.isArray(parsed) ? parsed : [parsed]).map((m) => String((m as { method?: unknown }).method)))
+        for (const m of (Array.isArray(parsed) ? parsed : [parsed]) as { method?: string; params?: { name?: string; arguments?: unknown } }[]) {
+          if (m.method === 'tools/call') toolCalls.push({ route, name: String(m.params?.name), arguments: m.params?.arguments })
+        }
         // The slow tool's call waits here, as the egress's ask wait will (N14).
         const slow = (Array.isArray(parsed) ? parsed : [parsed]).some((m) => (m as { method?: string; params?: { name?: string } }).method === 'tools/call' && (m as { params?: { name?: string } }).params?.name === SLOW_TOOL)
         if (slow) await new Promise((r) => setTimeout(r, SLOW_TOOL_MS))
@@ -399,7 +417,7 @@ export function startEgress(): Promise<Egress> {
   return new Promise((resolve) =>
     server.listen(0, '127.0.0.1', () => {
       const port = (server.address() as { port: number }).port
-      resolve({ port, byToken, byDirect, mcpCalls, actionsCalls, refused, close: () => new Promise<void>((r) => server.close(() => r())) })
+      resolve({ port, byToken, byDirect, mcpCalls, actionsCalls, toolCalls, refused, close: () => new Promise<void>((r) => server.close(() => r())) })
     }),
   )
 }

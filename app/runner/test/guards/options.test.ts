@@ -379,7 +379,7 @@ describe('helpers and the actions server', () => {
     expect(o.agents).toBeUndefined()
     expect((o.allowedTools ?? []).filter((r) => r === 'Agent' || r.startsWith('Agent('))).toEqual([])
     const deny = (o.settings as { permissions: { deny: string[] } }).permissions.deny
-    expect(deny).toEqual(expect.arrayContaining(['Agent(fork)', 'Agent(web-fetch)', 'Agent(general-purpose)', 'Agent(Explore)', 'Agent(Plan)']))
+    expect(deny).toEqual(expect.arrayContaining(['Agent(fork)', 'Agent(web-fetch)', 'Agent(general-purpose)', 'Agent(Explore)', 'Agent(Plan)', 'Agent(claude)', 'Agent(claude-code-guide)', 'Agent(statusline-setup)']))
   })
 
   it.prop([withHelpers])('with agents: our two definitions, and exactly Agent(researcher) and Agent(analyst) pre-approved', (c) => {

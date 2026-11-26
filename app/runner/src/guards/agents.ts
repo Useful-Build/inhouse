@@ -10,6 +10,14 @@
 // The engine's own switches (`HELPER_ENV`, set in the session env): one layer of helpers, four at once, no built-in
 // agents, no forks, nothing moved to the background. And the permission rules (options.ts): only `Agent(researcher)`
 // and `Agent(analyst)` are allowed, `Agent(fork)` and the built-ins we know of are denied by name.
+// Which layer refuses what, on CLI 2.1.328 (the container probe, image/probes/run.ts, and runs outside it for PR #430):
+// a main-agent call meets this hook first, so in the container every fork, built-in and untyped Agent call is refused in
+// its words, and the engine's switches and the deny rules behind it go unexercised there. Each was shown alone outside
+// the container: with fork mode on and no rule a fork starts (the `Agent(...)` allow rules don't stop it under
+// `dontAsk`); `CLAUDE_CODE_FORK_SUBAGENT=0` alone answers "Agent type 'fork' not found"; `Agent(fork)` alone answers
+// "denied by permission rule". Inside a helper it's the other way round: the engine refuses an off-list tool first ("No
+// such tool available", ToolSearch included), so this hook's deny there is the backstop for a list the engine got wrong,
+// proven by the unit tests only.
 // Checked against the Claude Code docs (env-vars, sub-agents, permissions, hooks; read 2026-11-26) for the pinned CLI
 // 2.1.328 (agent SDK 0.3.328).
 import type { AgentDefinition, HookCallbackMatcher, HookInput, HookJSONOutput } from '@anthropic-ai/claude-agent-sdk'
@@ -69,6 +77,9 @@ export function helperTools(name: HelperName, webSearch: boolean): string[] {
       ...RESEARCHER_INHOUSE_TOOLS.map((t) => `mcp__${INHOUSE_MCP_SERVER}__${t}`),
     ]
   }
+  // `Skill` in `tools` gives the analyst the Skill tool (our file skills, on demand). The SDK type calls listing it
+  // deprecated in favour of the definition's `skills`, but that field preloads skill text into the helper's context, a
+  // different thing; the container probe shows `Skill` in the analyst's tools on the pinned CLI. Recheck on an SDK bump.
   return ['Read', 'Grep', 'Glob', 'Bash', 'Write', 'Edit', 'Skill']
 }
 
@@ -100,7 +111,7 @@ export function helperDefinitions(agents: HelperAgents, subagentModel: string, w
 export const AGENT_CALL_KEYS = ['description', 'prompt', 'subagent_type'] as const
 
 /** Agent types denied by permission rule too (options.ts): forks, and the built-ins a CLI could still offer. */
-export const DENIED_AGENT_TYPES = ['fork', 'web-fetch', 'general-purpose', 'Explore', 'Plan'] as const
+export const DENIED_AGENT_TYPES = ['fork', 'web-fetch', 'general-purpose', 'Explore', 'Plan', 'claude', 'claude-code-guide', 'statusline-setup'] as const
 
 export const HELPER_DENY = {
   noHelpers: 'No helpers can be started on this turn.',
