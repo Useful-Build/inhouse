@@ -50,7 +50,7 @@ describe('the acting line', () => {
     expect(line).toContain('Never say something was done unless the answer says it went out.')
     expect(line).toContain("Never try it again when the person said no or when the answer says it isn't clear whether it went out.")
     expect(line).toContain("Nothing else in the brand's apps can be changed")
-    expect(line).toMatch(/^Actions: you can make these changes for the brand, each with its own tool on the `actions` server: add tags to an order in the Shopify store \(`shopify_order_tag_add`\)\. /)
+    expect(line).toMatch(/^Actions: you can make these changes for the brand, each with its own tool on the `actions` server and only while its app is connected: add tags to an order in the Shopify store \(`shopify_order_tag_add`\)\. /)
   })
   it('two operations: listed with "; and", in the order given', () => {
     expect(actingLine(['shopify.order.tag_add', 'slack.channel.post'])).toContain(
