@@ -19,6 +19,7 @@ export async function resetUsage(cap: string | null, tz = 'Europe/London'): Prom
   await db.batch([
     db.prepare('DELETE FROM usage_extends'),
     db.prepare('DELETE FROM usage_turns'),
+    db.prepare('DELETE FROM usage_jobs'),
     db.prepare('DELETE FROM usage_months'),
     db.prepare('DELETE FROM settings'),
   ])
