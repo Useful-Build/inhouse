@@ -6,7 +6,7 @@ import { CONNECTED_APPS_LINE, SYSTEM_PROMPT_V1, SYSTEM_PROMPT_V2, SYSTEM_PROMPT_
 
 describe('the system prompt v1', () => {
   it('carries the softer memory rule, not the reflex', () => {
-    expect(SYSTEM_PROMPT_VERSION).toBe(5)
+    expect(SYSTEM_PROMPT_VERSION).toBe(4)
     expect(SYSTEM_PROMPT_V1).toContain('search memory when the question could depend on saved context')
     expect(SYSTEM_PROMPT_V1).toContain("You don't need to search on every chat.")
     expect(SYSTEM_PROMPT_V1).not.toMatch(/before answering/i)
@@ -24,14 +24,11 @@ describe('the system prompt v1', () => {
     expect(SYSTEM_PROMPT_V2).toContain(LINKS)
     expect(systemPromptV3('Connected apps: Slack.')).toContain(LINKS)
   })
-  // v5 (M1-P): `question_ask` is off in every deployable build until M2-H, so no built prompt names it (the turn would
-  // call a tool that answers "not available yet"); a real choice is asked in the answer.
-  it('v5: names no `question_ask` on any path, and asks a real choice in the answer', () => {
-    const CHOICE = "When you face a real choice you can't make alone, set out the options in your answer and ask the person which one they want."
-    for (const p of [SYSTEM_PROMPT_V1, SYSTEM_PROMPT_V2, systemPromptV3('Connected apps: Slack.')]) {
-      expect(p).not.toMatch(/question_ask/)
-      expect(p).toContain(CHOICE)
-    }
+  // `question_ask` is offered in every build since M2-H (questions/switch.ts), so every built prompt names it (M1-P
+  // dropped it while it was off, then put it back before merging).
+  it('names `question_ask` for a real choice on every path', () => {
+    const CHOICE = "Ask with `question_ask` when you face a real choice you can't make alone."
+    for (const p of [SYSTEM_PROMPT_V1, SYSTEM_PROMPT_V2, systemPromptV3('Connected apps: Slack.')]) expect(p).toContain(CHOICE)
   })
   it('names no persona and no brand', () => {
     expect(SYSTEM_PROMPT_V1).not.toMatch(/\bava\b/i)

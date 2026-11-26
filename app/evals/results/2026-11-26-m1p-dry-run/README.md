@@ -1,5 +1,7 @@
 # M1-P prompt v5 dry run
 
+> Superseded the same day: v5 (no `question_ask`) was dropped once M2-H (#442) offered `question_ask` in every build, and #441 ships v4. See `../2026-11-26-m1p-dry-run-2/` and `../2026-11-26-m1p-prompt.md`. Kept as run.
+
 ## Question
 
 Does the harness still run every case against prompt v5 (M1-P: no `question_ask` in the system prompt, jobs and helpers on), with T10 now marked `needs: ['questions']`? The fake target answers from a script, so this checks the harness and grading, not the model. See `../2026-11-26-m1p-prompt-v5.md`.

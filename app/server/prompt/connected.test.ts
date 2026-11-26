@@ -127,7 +127,7 @@ describe('connectedLines, the pure turn lines', () => {
 
 describe('the system prompt v3 builder', () => {
   it('is v1 then the turn lines; with no turn lines it is the static v2, and v1 is kept as it was', () => {
-    expect(SYSTEM_PROMPT_VERSION).toBe(5)
+    expect(SYSTEM_PROMPT_VERSION).toBe(4)
     expect(systemPromptV3('')).toBe(SYSTEM_PROMPT_V2)
     expect(systemPromptV3(NONE)).toBe(`${SYSTEM_PROMPT_V1}\n\n${NONE}`)
   })
@@ -341,7 +341,7 @@ describe('the version sent, on every path', () => {
       [deps(async () => ({ ok: true, value: [account('slack:workspace')] }), { channels: async () => { throw new Error('d1') } }), 'channels failed', ['Slack']],
     ] as const) {
       const p = await turnSystemPrompt(d, 't_v3')
-      expect(p.version, label).toBe(5)
+      expect(p.version, label).toBe(4)
       expect(p.text, label).not.toBe(SYSTEM_PROMPT_V2)
       // #337 round 3 (M3): the apps the built line named, so a v3 turn that named no store can't pass as one that did.
       expect(p.apps, label).toEqual(apps)
