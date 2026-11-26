@@ -206,5 +206,9 @@ export function AgentPart({ part, trace, id, chat, animate = false, streaming = 
           {part.questions.map(q => <SuggestionChip key={q} question={q} onAsk={x => { void ask(x) }} />)}
         </div>
       )
+
+    // Stage 1 (W0-A): no build makes this part yet. M2-H draws its card.
+    case 'ask':
+      return null
   }
 }

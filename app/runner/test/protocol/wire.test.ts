@@ -42,6 +42,12 @@ import {
   RunStatus,
   SYSTEM_PROMPT_MAX_BYTES,
   DEFERRED_INPUT_MAX_BYTES,
+  BRAND_SKILLS_VERSION,
+  HELPERS_VERSION,
+  HELPER_DESCRIPTION_MAX_BYTES,
+  HELPER_PROMPT_MAX_BYTES,
+  auditInputSha256,
+  canonicalJson,
   Health,
   PROMPT_MAX_CHARS,
   PROTOCOL_VERSION,
@@ -140,8 +146,10 @@ describe('RunStart', () => {
     },
   )
 
-  // outputFormat, webSearch and brandSkills are the optional fields (v2, additive: structured output; P8a S, absent is off).
-  it.prop([runStartArb, fc.constantFrom(...Object.keys(RunStart.shape).filter((k) => k !== 'outputFormat' && k !== 'webSearch' && k !== 'brandSkills'))])('refuses a missing field', (start, key) => {
+  // outputFormat, webSearch and brandSkills are the optional fields (v2, additive: structured output; P8a S, absent is off),
+  // and Stage 1's agents, subagentModel and actions (N6, additive the same way).
+  const OPTIONAL_START_KEYS = ['outputFormat', 'webSearch', 'brandSkills', 'agents', 'subagentModel', 'actions']
+  it.prop([runStartArb, fc.constantFrom(...Object.keys(RunStart.shape).filter((k) => !OPTIONAL_START_KEYS.includes(k)))])('refuses a missing field', (start, key) => {
     const copy: Record<string, unknown> = { ...start }
     delete copy[key]
     expect(RunStart.safeParse(copy).success).toBe(false)
@@ -155,6 +163,34 @@ describe('RunStart', () => {
     const refused = RunStart.safeParse({ ...start, prompt: '', resume: false, expect: null })
     expect(refused.success).toBe(false)
     expect(refused.error?.issues[0]?.path).toEqual(['prompt'])
+  })
+
+  // Stage 1 (N6), ways the helpers' keys can go wrong, written first: a third helper or a missing one rides in, a helper
+  // brings its own tools or model (the runner owns both), its words carry a control character (JSON's six-byte escape
+  // would break the body cap) or pass their byte caps, `actions` isn't a boolean, or a model name the start's own rule
+  // refuses.
+  it('takes the helpers, the subagent model and the actions switch only in their frozen shape', () => {
+    const start = fc.sample(runStartArb, 1)[0]!
+    expect(start).not.toHaveProperty('subagentModel')
+    const helper = { description: 'Finds facts on the web.', prompt: 'You research.\n\tCite every source.' }
+    const agents = { researcher: helper, analyst: helper }
+    const parses = (extra: Record<string, unknown>) => RunStart.safeParse({ subagentModel: 'claude-sonnet-5-5', ...start, ...extra }).success
+    expect(parses({ agents, actions: true })).toBe(true)
+    expect(parses({ subagentModel: undefined, actions: false })).toBe(true)
+    // agents and subagentModel come together.
+    expect(parses({ subagentModel: undefined, agents })).toBe(false)
+    expect(parses({})).toBe(false)
+    expect(parses({ agents: { researcher: helper } })).toBe(false)
+    expect(parses({ agents: { ...agents, writer: helper } })).toBe(false)
+    expect(parses({ agents: { ...agents, analyst: { ...helper, tools: ['Bash'] } } })).toBe(false)
+    expect(parses({ agents: { ...agents, analyst: { ...helper, model: 'opus' } } })).toBe(false)
+    expect(parses({ agents: { ...agents, analyst: { ...helper, prompt: 'a\u0001b' } } })).toBe(false)
+    expect(parses({ agents: { ...agents, analyst: { ...helper, prompt: '' } } })).toBe(false)
+    expect(parses({ agents: { ...agents, analyst: { ...helper, prompt: 'x'.repeat(HELPER_PROMPT_MAX_BYTES + 1) } } })).toBe(false)
+    expect(parses({ agents: { ...agents, analyst: { ...helper, prompt: '€'.repeat(Math.floor(HELPER_PROMPT_MAX_BYTES / 3) + 1) } } })).toBe(false)
+    expect(parses({ agents: { ...agents, analyst: { ...helper, description: 'x'.repeat(HELPER_DESCRIPTION_MAX_BYTES + 1) } } })).toBe(false)
+    expect(parses({ agents, actions: 'yes' })).toBe(false)
+    expect(parses({ agents, subagentModel: 'bad model' })).toBe(false)
   })
 
   /** A 1,024-character path under `inputs/` from segments of at most 255 UTF-8 bytes ('€' is three), `first` leading. */
@@ -196,6 +232,14 @@ describe('RunStart', () => {
         description: '"'.repeat(Math.floor((BRAND_SKILLS_BYTES_MAX - 16 * BRAND_SKILL_BODY_MAX - 16 * 4) / 16)),
         body: '"'.repeat(BRAND_SKILL_BODY_MAX),
       })),
+      // Stage 1 (N6): both helpers at their caps, every character a quote (two bytes in JSON, the most allowed), and the
+      // longest model name.
+      agents: {
+        researcher: { description: '"'.repeat(HELPER_DESCRIPTION_MAX_BYTES), prompt: '"'.repeat(HELPER_PROMPT_MAX_BYTES) },
+        analyst: { description: '"'.repeat(HELPER_DESCRIPTION_MAX_BYTES), prompt: '"'.repeat(HELPER_PROMPT_MAX_BYTES) },
+      },
+      subagentModel: 's'.repeat(128),
+      actions: false,
     }
     expect(RunStart.safeParse(start).success).toBe(true)
     expect(new TextEncoder().encode(JSON.stringify(start)).length).toBeLessThanOrEqual(RUN_START_MAX_BYTES)
@@ -234,6 +278,14 @@ describe('versions', () => {
     expect(acceptsVersion('3')).toBe(true)
     expect(acceptsVersion('2')).toBe(true)
     expect(acceptsVersion('1')).toBe(false)
+  })
+
+  // Stage 1 (W0-A): the helper, actions and audit keys are gated on v4, which no side speaks yet, so no Worker or runner
+  // can send them to a peer whose strict schema would refuse them. M1-E bumps to 4.
+  it('the gates: brand skills from v3, the helper keys from v4 (above every accepted version for now)', () => {
+    expect(BRAND_SKILLS_VERSION).toBe(3)
+    expect(HELPERS_VERSION).toBe(4)
+    expect(Math.max(...ACCEPTED_VERSIONS)).toBeLessThan(HELPERS_VERSION)
   })
 
   it.prop([fc.oneof(fc.integer({ min: -100, max: 1000 }).map(String), fc.string(), fc.nat(1000).map((n) => `0${n}`))])(
@@ -478,6 +530,8 @@ describe('v2 events', () => {
   })
 })
 
+const SHA_A1_B12 = '8baa73198470c7bb4c3ce142a8fd651affc0310d878bb9bd159e37a573fb4874'
+
 describe('push, audit, status and admission', () => {
   const ev = (seq: number, runId = 't_a') => ({ runId, seq, type: 'heartbeat' })
   const batch = (events: unknown[]) => PushBatch.safeParse({ turnId: 't_a', events }).success
@@ -528,6 +582,33 @@ describe('push, audit, status and admission', () => {
     expect(AuditPost.safeParse({ ...a, n: 0.5 }).success).toBe(false)
     expect(AuditPost.safeParse({ ...a, entry: { hook: 'PreToolUse' } }).success).toBe(false)
     expect(AuditPost.safeParse({ ...a, turnId: 'a b' }).success).toBe(false)
+  })
+
+  // Stage 1 (N6, N14): who made the call and the hash of its input ride on the entry, optional; a malformed hash or an
+  // empty helper id is refused, so the server never matches a proposal against a bad value.
+  it('an audit entry takes an optional helper id and input hash, in their shapes only', () => {
+    const a = fixture('audit-post.json') as { entry: Record<string, unknown> }
+    const sha = 'a'.repeat(64)
+    const entry = (extra: Record<string, unknown>) => AuditPost.safeParse({ ...a, entry: { ...a.entry, ...extra } }).success
+    expect(entry({ agentId: 'agent-1', inputSha256: sha })).toBe(true)
+    expect(entry({ agentId: null, inputSha256: sha })).toBe(true)
+    // Together or not at all: a hash with no agentId would read as the main agent's call.
+    expect(entry({ inputSha256: sha })).toBe(false)
+    expect(entry({ agentId: null })).toBe(false)
+    expect(entry({ agentId: '', inputSha256: sha })).toBe(false)
+    expect(entry({ agentId: null, inputSha256: 'A'.repeat(64) })).toBe(false)
+    expect(entry({ agentId: null, inputSha256: sha.slice(1) })).toBe(false)
+  })
+
+  // The one hash both sides compute (N14): key order and undefined keys never change it; values, array order and types do.
+  it('auditInputSha256 is the SHA-256 of the canonical JSON', async () => {
+    expect(canonicalJson({ b: 1, a: { d: undefined, c: [2, undefined, 1] } })).toBe('{"a":{"c":[2,null,1]},"b":1}')
+    // sha256('{"a":1,"b":[1,2]}'), worked out with `printf %s '{"a":1,"b":[1,2]}' | shasum -a 256`.
+    expect(await auditInputSha256({ b: [1, 2], a: 1 })).toBe(SHA_A1_B12)
+    expect(await auditInputSha256({ a: 1, b: [1, 2], c: undefined })).toBe(SHA_A1_B12)
+    expect(await auditInputSha256({ a: 1, b: [2, 1] })).not.toBe(SHA_A1_B12)
+    expect(await auditInputSha256({ a: '1', b: [1, 2] })).not.toBe(SHA_A1_B12)
+    await expect(auditInputSha256(undefined)).rejects.toThrow('no tool input')
   })
 
   it('a status: unknown carries no seqs, and nothing is acked past the last seq', () => {

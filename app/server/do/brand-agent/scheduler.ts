@@ -106,6 +106,8 @@ export interface TaskContext {
   runs: TaskRuns
   /** Whether the brand is paused, read from the stored flag at each access (P6 ask 3). */
   readonly paused: boolean
+  /** BrandAgent's `pause_gen` (Stage 1, N12): raised by every pause and resume, read from the stored flag at each access. */
+  readonly pauseGen: number
   /** `BrandAgentRpc.resumeDeferred` (P6 ask 5), the same in-object path. */
   resumeDeferred(chatId: string, decision: DeferDecision, questionId: string): Promise<SendTurnResult | Refusal>
   /** Read-only chat state (P4, B2): `{ waiting: false, liveRunId: null }` for a chat the object doesn't know. */

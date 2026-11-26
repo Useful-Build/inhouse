@@ -21,13 +21,13 @@ const at = { iso: '2026-11-20T10:00:00.000Z', ms: Date.parse('2026-11-20T10:00:0
 describe('turn failures (failure 1)', () => {
   // `model_off` (A3, 2026-11-20, from #153's review): the turn's model was switched off (or lost its price) while it
   // waited; W1 PR 2b rechecks at start.
-  // PR 5 (ask C) adds `structured_output`.
-  it('are exactly the twelve the design lists, plus model_off and structured_output', () => {
+  // PR 5 (ask C) adds `structured_output`. Stage 1 (N5) adds `job_budget`: a job's turn its budget can't start.
+  it('are exactly the twelve the design lists, plus model_off, structured_output and job_budget', () => {
     expect([...TurnFailureSchema.options].sort()).toEqual([
-      'budget_busy', 'cap_reached', 'files', 'max_turns', 'model_off', 'pool_full', 'protocol', 'sdk_error', 'session_crashed',
-      'store', 'structured_output', 'timeout', 'turn_budget', 'unknown',
+      'budget_busy', 'cap_reached', 'files', 'job_budget', 'max_turns', 'model_off', 'pool_full', 'protocol', 'sdk_error',
+      'session_crashed', 'store', 'structured_output', 'timeout', 'turn_budget', 'unknown',
     ])
-    for (const r of ['budget_busy', 'max_turns', 'turn_budget', 'model_off', 'structured_output']) {
+    for (const r of ['budget_busy', 'max_turns', 'turn_budget', 'model_off', 'structured_output', 'job_budget']) {
       expect(ChatEventSchema.safeParse({ type: 'turn.finished', turnId, outcome: 'failed', reason: r }).success, r).toBe(true)
     }
   })

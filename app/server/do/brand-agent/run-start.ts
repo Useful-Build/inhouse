@@ -4,7 +4,7 @@
 import { composeTurnPrompt } from '../../../shared/contract/runs.ts'
 import { TURN_CEILING_MICRO } from '../../model/catalog.ts'
 import { FILE_CAPS } from '../../files-io/caps.ts'
-import type { RunStart } from '../../../shared/protocol/index.ts'
+import { canonicalJson, type RunStart } from '../../../shared/protocol/index.ts'
 
 /** A turn's attachment as stored: the input row's id, name and path (from `files.inputsOf`, never the client's names). */
 export interface StoredAttachment { fileId: string; name: string; path: string }
@@ -85,13 +85,8 @@ export interface SubmitPayload {
   onEnd?: unknown
 }
 
-/** JSON with every object's keys sorted and `undefined` dropped (arrays keep their order). */
-export function canonicalJson(v: unknown): string {
-  if (v === null || typeof v !== 'object') return JSON.stringify(v)
-  if (Array.isArray(v)) return `[${v.map(x => (x === undefined ? 'null' : canonicalJson(x))).join(',')}]`
-  const entries = Object.entries(v as Record<string, unknown>).filter(([, x]) => x !== undefined).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-  return `{${entries.map(([k, x]) => `${JSON.stringify(k)}:${canonicalJson(x)}`).join(',')}}`
-}
+/** JSON with every object's keys sorted and `undefined` dropped: the protocol's one canonical form (Stage 1, N14). */
+export { canonicalJson }
 
 /** `payload_hash`: the SHA-256 (hex) of the canonical JSON of `PAYLOAD_FIELDS` as the caller sent them. */
 export async function submitPayloadHash(input: SubmitPayload): Promise<string> {
