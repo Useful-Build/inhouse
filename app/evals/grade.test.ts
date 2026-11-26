@@ -58,18 +58,20 @@ describe('the grader against S5\'s own verdicts', () => {
     expect(count('negative')).toBe(24)
   })
 
-  it('with the fixes R10 r1-r3 and T02 r3 flip to pass, T09 and T11 r1-r3 to fail: 119/129, recall 33/33, choice 40/48', () => {
+  it('with the fixes R10 r1-r3 and T02 r3 flip to pass, T07, T09 and T11 r1-r3 and T08 r2 to fail: 115/129, recall 33/33, choice 36/48', () => {
     const old = caseRepeats((id, rep, chat) => grade(id, rep, chat, true).pass)
     const fixed = caseRepeats((id, rep, chat) => grade(id, rep, chat, false).pass)
     const flipped = [...fixed].filter(([k, p]) => p !== old.get(k)).map(([k]) => k).sort()
     // T09 and T11 (r1-r3) flip to fail: S5 recorded its own mock tools' inputs (to: [ids], schedule: "weekdays 06:00"),
-    // and the cases now follow P4/P5's real schemas (to.members, days and time; line B), which S5 never served.
-    expect(flipped).toEqual(['R10-r1', 'R10-r2', 'R10-r3', 'T02-r3', 'T09-r1', 'T09-r2', 'T09-r3', 'T11-r1', 'T11-r2', 'T11-r3'])
-    for (const k of ['T09-r1', 'T09-r2', 'T09-r3', 'T11-r1', 'T11-r2', 'T11-r3']) expect(fixed.get(k), k).toBe(false)
+    // and the cases now follow P4/P5's real schemas (to.members, days and time; line B), which S5 never served. T07 r1-r3
+    // and T08 r2 flip the same way: S5 asked through a free-text `action`, and M2-E's approval_request takes
+    // `{ operation, args }`.
+    expect(flipped).toEqual(['R10-r1', 'R10-r2', 'R10-r3', 'T02-r3', 'T07-r1', 'T07-r2', 'T07-r3', 'T08-r2', 'T09-r1', 'T09-r2', 'T09-r3', 'T11-r1', 'T11-r2', 'T11-r3'])
+    for (const k of ['T07-r1', 'T07-r2', 'T07-r3', 'T08-r2', 'T09-r1', 'T09-r2', 'T09-r3', 'T11-r1', 'T11-r2', 'T11-r3']) expect(fixed.get(k), k).toBe(false)
     const count = (cat: string) => [...fixed].filter(([k, p]) => p && (cat === 'all' || byId[k.split('-')[0]!]!.cat === cat)).length
-    expect(count('all')).toBe(119)
+    expect(count('all')).toBe(115)
     expect(count('recall')).toBe(33)
-    expect(count('choice')).toBe(40)
+    expect(count('choice')).toBe(36)
     // T08's two raw misses stay: the data fix can't change recorded runs.
     expect(fixed.get('T08-r1')).toBe(false)
     expect(fixed.get('T08-r3')).toBe(false)
@@ -227,10 +229,11 @@ describe('T09, T11 and open served schemas', () => {
   })
   it('the open set is what the server serves: the stubs today, never a built tool', async () => {
     const open = await openSchemaTools()
-    for (const n of ['question_ask', 'approval_request']) expect(open.has(n), n).toBe(true)
-    // P4 built the routine tools (line B, fleet/watch) and P5 notification_send (W4): their real schemas have fields, so
-    // they're closed now.
-    for (const n of ['memory_search', 'memory_forget', 'history_search', 'routine_create', 'routine_run_now', 'notification_send']) expect(open.has(n), n).toBe(false)
+    for (const n of ['question_ask']) expect(open.has(n), n).toBe(true)
+    // P4 built the routine tools (line B, fleet/watch), P5 notification_send (W4) and Stage 1 M2-E the approval tools:
+    // their real schemas have fields, so they're closed now.
+    for (const n of ['memory_search', 'memory_forget', 'history_search', 'routine_create', 'routine_run_now', 'notification_send',
+      'approval_request', 'approval_get', 'approval_list', 'approval_withdraw']) expect(open.has(n), n).toBe(false)
   })
 })
 

@@ -58,11 +58,12 @@ describe('report on the S5 replay equals S5\'s own summary', () => {
     expect(report.totalCostUsd).toBeCloseTo(1.5731066, 6)
   })
 
-  it('with the fixes the report says 119/129 and recall 33/33', () => {
+  it('with the fixes the report says 115/129 and recall 33/33', () => {
     const fixed = buildReport(CASES, s5Rows(false), META)
     // T09 and T11 (r1-r3) flip to fail: S5 recorded its own mock tools' inputs (to: [ids], schedule: "weekdays 06:00"),
-    // and the cases now follow P4/P5's real schemas (to.members, days and time; line B), which S5 never served.
-    expect(fixed.summary.all).toMatchObject({ runs: 129, pass: 119 })
+    // and the cases now follow P4/P5's real schemas (to.members, days and time; line B), which S5 never served. T07 r1-r3
+    // and T08 r2 flip the same way: S5 asked through a free-text `action`; M2-E's approval_request takes `{ operation, args }`.
+    expect(fixed.summary.all).toMatchObject({ runs: 129, pass: 115 })
     expect(fixed.summary.recall).toMatchObject({ runs: 33, pass: 33 })
   })
 
