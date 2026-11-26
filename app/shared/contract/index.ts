@@ -35,3 +35,8 @@ export * from './chats.ts'
 export * from './attachments.ts'
 // P5 (p5-w4): the Slack channels listed for notices.
 export * from './notify-slack.ts'
+// Stage 1 (W0-A): actions, permissions, questions and jobs.
+export * from './actions.ts'
+export * from './permissions.ts'
+export * from './questions.ts'
+export * from './jobs.ts'
