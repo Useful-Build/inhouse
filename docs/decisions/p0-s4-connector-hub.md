@@ -100,6 +100,9 @@ before blaming the engineering (the tool description, the hub or the search fall
 
 ## Why not self-hosted Executor
 
+Update 2026-11-26: we still don't run it, but we learn from its sign-in code. See
+[0027](0027-learn-from-executor-dont-run-it.md).
+
 - Its image is on ghcr.io, which Cloudflare Containers can't pull from, and its database and keys live on a disk that
   Containers wipe on every stop or deploy. We'd build the persistence layer ourselves.
 - A runner holding its token picks the approval mode per request, so it could approve its own call (from its docs; not
