@@ -155,6 +155,9 @@ type Result = Extract<SDKMessage, { type: 'result' }>
  * turn (P0 S1 saw it, though the docs say it can't happen) leaves the others' results unknown, so the runner defers only
  * when the turn's calls are exactly the deferred one.
  */
+/** The API message id an SDK message carries (an `assistant` message's, shared by every block of one model reply). */
+const apiMessageId = (sdk: { message?: { id?: unknown } }): unknown => sdk.message?.id
+
 export class TurnToolUses {
   #ids = new Set<string>()
   /** The API message each of the turn's calls came in (the SDK sends one `assistant` message per content block). */
@@ -172,8 +175,8 @@ export class TurnToolUses {
       if (event?.type === 'message_start' && typeof event.message?.id === 'string') this.#streaming = event.message.id
       if (event?.type === 'message_stop' && this.#streaming !== null) this.#closed.add(this.#streaming)
     } else {
-      const message = (m as { message?: { id?: unknown; content?: unknown } }).message
-      const content = message?.content
+      const content = (m as { message?: { content?: unknown } }).message?.content
+      const messageId = apiMessageId(m as { message?: { id?: unknown } })
       if (!Array.isArray(content)) return
       if (m.type === 'user' && content.some((b) => (b as { type?: unknown })?.type === 'tool_result')) this.#ids.clear()
       if (m.type === 'assistant') {
@@ -181,7 +184,7 @@ export class TurnToolUses {
           if ((b as { type?: unknown })?.type !== 'tool_use') continue
           const id = String((b as { id?: unknown }).id)
           this.#ids.add(id)
-          if (typeof message?.id === 'string') this.#messageOf.set(id, message.id)
+          if (typeof messageId === 'string') this.#messageOf.set(id, messageId)
         }
       }
     }
