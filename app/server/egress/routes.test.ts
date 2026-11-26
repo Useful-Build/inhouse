@@ -15,14 +15,14 @@ import { describe, expect, it } from 'vitest'
 import { createRunTokens } from '../do/brand-agent/tokens.ts'
 import { handleEgress } from './index.ts'
 import { STORE_LOAD_MAX_BYTES } from './store.ts'
-import { egressRequest, FakeEgressRpc, GRANT, harness, TOKEN } from './testing/harness.ts'
+import { egressRequest, FakeEgressRpc, GRANT, harness, TOKEN, NO_CAPTURE } from './testing/harness.ts'
 
 const bucket = env.FILES
 const KEY = { projectKey: '/work/project', sessionId: GRANT.sessionId }
 const sha = async (s: string) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))].map(b => b.toString(16).padStart(2, '0')).join('')
 let u = 0
 const uniqGrant = () => ({ ...GRANT, chatId: `chat-${++u}`, turnId: `t_${u}` })
-const post = async (h: Awaited<ReturnType<typeof harness>>, path: string, body: unknown, token?: string) => handleEgress(egressRequest(path, { body, token }), h.deps)
+const post = async (h: Awaited<ReturnType<typeof harness>>, path: string, body: unknown, token?: string) => handleEgress(egressRequest(path, { body, token }), h.deps, NO_CAPTURE)
 
 describe('the store (failures 2, 3)', () => {
   it('writes the main transcript and a subagent transcript under disjoint keys, and loads each alone', async () => {
@@ -110,7 +110,7 @@ describe('scope on the real run tokens (failure 1, acceptance 6)', () => {
       const rpc = new FakeEgressRpc(tokens, () => now)
       const h = await harness({ bucket, rpc })
       // Chat B's store holds a marker.
-      await handleEgress(egressRequest('/store/append', { body: { key: { projectKey: 'p', sessionId: sessionB }, entries: [{ type: 'secret-of-b', uuid: 'b' }], part: '000000000000001-000001' }, token: tokenB }), h.deps)
+      await handleEgress(egressRequest('/store/append', { body: { key: { projectKey: 'p', sessionId: sessionB }, entries: [{ type: 'secret-of-b', uuid: 'b' }], part: '000000000000001-000001' }, token: tokenB }), h.deps, NO_CAPTURE)
       const snapshotB = async () => {
         const list = await bucket.list({ prefix: `sessions/${chatB}/` })
         return Promise.all(list.objects.map(async o => [o.key, await (await bucket.get(o.key))!.text()]))
@@ -130,7 +130,7 @@ describe('scope on the real run tokens (failure 1, acceptance 6)', () => {
         for (const o of ops) {
           const key = { projectKey: o.projectKey, sessionId: o.sessionId, ...(o.subpath === undefined ? {} : { subpath: o.subpath }) }
           const body = o.path === '/store/append' ? { key, entries: [{ type: 'from-a' }], part: '000000000000002-000001' } : o.path === '/store/load' ? { key } : { key: { projectKey: o.projectKey, sessionId: o.sessionId } }
-          const res = await handleEgress(egressRequest(o.path, { body, token: tokenA, headers: o.extraHeaders }), h.deps)
+          const res = await handleEgress(egressRequest(o.path, { body, token: tokenA, headers: o.extraHeaders }), h.deps, NO_CAPTURE)
           const text = await res.text()
           expect(text).not.toContain('secret-of-b')
           if (o.sessionId !== sessionA) expect(res.status).toBe(403)
@@ -168,7 +168,7 @@ describe('a refused run token on the session and files routes (acceptance 6)', (
       ]
 
       // Live: the store's own scope answers (403), one `scope` line per call, never a token refusal.
-      const live = await Promise.all(onB(tokenA).slice(0, 2).map(async r => (await handleEgress(r, h.deps)).status))
+      const live = await Promise.all(onB(tokenA).slice(0, 2).map(async r => (await handleEgress(r, h.deps, NO_CAPTURE)).status))
       expect(live).toEqual([403, 403])
       expect(h.logs).toEqual([
         { event: 'egress_refused', route: 'store', why: 'scope', runner: 'runner-0' },
@@ -179,7 +179,7 @@ describe('a refused run token on the session and files routes (acceptance 6)', (
       // Revoked (the turn ended): every route answers 401 before it runs, one line each.
       tokens.revokeTurn('t_ra', 'turn_ended')
       const revoked = await Promise.all(onB(tokenA).map(async r => {
-        const res = await handleEgress(r, h.deps)
+        const res = await handleEgress(r, h.deps, NO_CAPTURE)
         return [res.status, await res.json()]
       }))
       expect(revoked).toEqual([[401, { error: 'refused' }], [401, { error: 'refused' }], [401, { error: 'refused' }], [401, { error: 'refused' }]])
@@ -192,7 +192,7 @@ describe('a refused run token on the session and files routes (acceptance 6)', (
 
       // A token the BrandAgent never minted: the same 401, why `unknown`.
       h.logs.length = 0
-      const unknown = await Promise.all(onB('tok_never_minted_0123456789abcdef').map(async r => (await handleEgress(r, h.deps)).status))
+      const unknown = await Promise.all(onB('tok_never_minted_0123456789abcdef').map(async r => (await handleEgress(r, h.deps, NO_CAPTURE)).status))
       expect(unknown).toEqual([401, 401, 401, 401])
       expect(h.logs.map(l => [l.route, l.why])).toEqual([['store', 'unknown'], ['store', 'unknown'], ['files', 'unknown'], ['files', 'unknown']])
       // Chat B's store was never written.
@@ -272,15 +272,15 @@ describe('events and audit (failures 4, 5)', () => {
   })
   it('mcp: the grant ids only, the token header stripped', async () => {
     const h = await harness()
-    const res = await handleEgress(egressRequest('/mcp/', { body: { jsonrpc: '2.0' }, headers: { 'x-chat-id': 'chat-b' } }), h.deps)
+    const res = await handleEgress(egressRequest('/mcp/', { body: { jsonrpc: '2.0' }, headers: { 'x-chat-id': 'chat-b' } }), h.deps, NO_CAPTURE)
     expect(res.status).toBe(200)
     expect(h.mcpCalls[0]!.scope).toEqual({ memberId: 'm_alice', chatId: 'chat-a', runId: 'r_run1', turnId: 't_turn1' })
     expect(h.mcpCalls[0]!.request.headers.get('x-inhouse-run-token')).toBeNull()
-    expect((await handleEgress(egressRequest('/mcp/', { method: 'GET' }), h.deps)).status).toBe(405)
+    expect((await handleEgress(egressRequest('/mcp/', { method: 'GET' }), h.deps, NO_CAPTURE)).status).toBe(405)
   })
   it('only egress.internal and the six routes', async () => {
     const h = await harness()
-    expect((await handleEgress(new Request('http://other.internal/model/v1/messages', { method: 'POST', headers: { 'x-inhouse-run-token': TOKEN } }), h.deps)).status).toBe(404)
+    expect((await handleEgress(new Request('http://other.internal/model/v1/messages', { method: 'POST', headers: { 'x-inhouse-run-token': TOKEN } }), h.deps, NO_CAPTURE)).status).toBe(404)
     expect((await post(h, '/api/chats', {})).status).toBe(404)
     expect(h.rpc.callsOf('checkRunToken')).toEqual([])
   })

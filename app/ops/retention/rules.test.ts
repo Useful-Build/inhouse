@@ -37,8 +37,8 @@ beforeAll(async () => {
 })
 
 describe('the periods (failures 1 and 2)', () => {
-  it('pins the decided periods: chats and steps 365 days, trash 30, a pending upload 1, a forgotten memory 30', () => {
-    expect(DEFAULT_DAYS).toEqual({ chats: 365, steps: 365, trash: 30, pendingUpload: 1, forgottenMemory: 30, egress: 30 })
+  it('pins the decided periods: chats and steps 365 days, trash 30, a pending upload 1, a forgotten memory 30, egress 30, egressTaint 7', () => {
+    expect(DEFAULT_DAYS).toEqual({ chats: 365, steps: 365, trash: 30, pendingUpload: 1, forgottenMemory: 30, egress: 30, egressTaint: 7 })
   })
 
   it('gives every retention_period store a rule, and every one that isn\'t derived a period from its group', () => {
@@ -48,7 +48,7 @@ describe('the periods (failures 1 and 2)', () => {
     expect(Object.keys(periods).sort()).toEqual(stores.filter(e => !e.derived).map(e => e.name).sort())
     for (const [store, days] of Object.entries(periods)) expect(days, store).toBe(DEFAULT_DAYS[retentionGroups[store]])
     // Only `chats` and `steps` follow a Data and access setting; the Library's period is the fixed trash period.
-    expect(new Set(Object.values(retentionGroups))).toEqual(new Set(['chats', 'steps', 'trash', 'egress']))
+    expect(new Set(Object.values(retentionGroups))).toEqual(new Set(['chats', 'steps', 'trash', 'egress', 'egressTaint']))
     const later: TableEntry = { kind: 'd1', name: 'later_store', retention: 'retention_period', personKeys: [], export: false }
     expect(() => periodsFor([...tables, later])).toThrow(/later_store/)
   })

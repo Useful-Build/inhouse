@@ -85,6 +85,8 @@ export const TABLE_RULES: readonly TableRule[] = [
   // P8a: the egress record. `egress_fetches_no_update` refuses every UPDATE (0600), and rows only ever arrive with a
   // rising n.
   { name: 'egress_fetches', orderBy: ['n'], mode: 'append_only' },
+  // M1-G: keyed token digests for the fetch leak check (0705). Upserted on re-sighting, capped at 50,000 rows.
+  { name: 'egress_taint', orderBy: ['digest'], mode: 'paged', createdColumn: 'seen_at_ms' },
   // P8a F2: a few rows a year, and closing one updates it, so a whole snapshot.
   { name: 'privacy_requests', orderBy: ['id'], mode: 'snapshot' },
   // Stage 1 M2-A: the ceiling and the grants are small and updated (a revoke), so whole snapshots; a grant's holder

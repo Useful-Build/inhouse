@@ -29,30 +29,30 @@ describe('the fake target, full set end to end', () => {
     for (const c of S5_SET.filter((x) => x.cat !== 'exfil')) expect(CANNED[c.id], c.id).toBeDefined()
   })
 
-  it('gives the report the canned transcripts dictate (52 cases x 3 reps, clean exfiltration)', async () => {
+  it('gives the report the canned transcripts dictate (55 cases x 3 reps, clean exfiltration)', async () => {
     const out = await runEvals({ target: createFakeTarget(), cases: S5_SET, reps: 3, concurrency: 4 })
     const report = buildReport(S5_SET, out.rows, META)
     expect(out.notRun).toEqual([])
-    expect(report.summary.all.runs).toBe(156)
-    expect(report.summary.all.pass).toBe(156 - declaredFailures.length * 3)
+    expect(report.summary.all.runs).toBe(165)
+    expect(report.summary.all.pass).toBe(165 - declaredFailures.length * 3)
     expect(report.summary.e2e).toMatchObject({ runs: 9, pass: 9 })
-    expect(report.summary.exfil).toMatchObject({ runs: 27, pass: 27 })
+    expect(report.summary.exfil).toMatchObject({ runs: 36, pass: 36 })
     expect(report.exfiltration.bypasses).toEqual([])
     expect(report.totalCostUsd).toBe(0)
     expect(out.rows.filter((r) => !r.pass).map((r) => r.caseId).sort()).toEqual(['N04', 'N04', 'N04', 'T05', 'T05', 'T05'])
   })
 
-  it('a bypassing fake shows 27 bypasses, 9 per kind, and fails those case-repeats', async () => {
+  it('a bypassing fake shows 36 bypasses (18 webfetch, 9 link, 9 memory) and fails those case-repeats', async () => {
     const out = await runEvals({ target: createFakeTarget({ exfil: 'bypass' }), cases: CASES.filter((c) => c.cat === 'exfil'), reps: 3, concurrency: 2 })
     const report = buildReport(CASES, out.rows, META)
-    expect(report.summary.exfil).toMatchObject({ runs: 27, pass: 0 })
-    expect(report.exfiltration.kinds).toMatchObject({ webfetch: { bypasses: 9 }, link: { bypasses: 9 }, memory: { bypasses: 9 } })
+    expect(report.summary.exfil).toMatchObject({ runs: 36, pass: 0 })
+    expect(report.exfiltration.kinds).toMatchObject({ webfetch: { bypasses: 18 }, link: { bypasses: 9 }, memory: { bypasses: 9 } })
   })
 
   it('uses a different canary for every case-repeat', async () => {
     const out = await runEvals({ target: createFakeTarget(), cases: CASES.filter((c) => c.cat === 'exfil'), reps: 3, concurrency: 1 })
     // On disk a row names its canary by id only (#245 review: the canary itself never reaches a results file).
-    expect(new Set(out.rows.map((r) => r.canaryId)).size).toBe(27)
+    expect(new Set(out.rows.map((r) => r.canaryId)).size).toBe(36)
     expect(out.rows.some((r) => 'canary' in r)).toBe(false)
   })
 
@@ -74,7 +74,7 @@ describe('the fixture target replays S5', () => {
   it('serves only the 43 S5 cases and reports the rest (the Slack case, the code-mode cases, the exfiltration cases) as not run', async () => {
     const out = await runEvals({ target: createFixtureTarget(), cases: CASES, reps: 3, concurrency: 3 })
     expect(out.rows).toHaveLength(138)
-    expect(out.notRun.map((n) => n.id).sort()).toEqual(['C-CODEMODE-01', 'C-CODEMODE-02', 'C-CODEMODE-03', 'C-CODEMODE-04', 'C-SLACK-01', 'CAP-01', 'CAP-02', 'CAP-03', 'X01', 'X02', 'X03', 'X04', 'X05', 'X06', 'X07', 'X08', 'X09'])
+    expect(out.notRun.map((n) => n.id).sort()).toEqual(['C-CODEMODE-01', 'C-CODEMODE-02', 'C-CODEMODE-03', 'C-CODEMODE-04', 'C-SLACK-01', 'CAP-01', 'CAP-02', 'CAP-03', 'X01', 'X02', 'X03', 'X04', 'X05', 'X06', 'X07', 'X08', 'X09', 'X10', 'X11', 'X12'])
     const report = buildReport(CASES, out.rows, META)
     // T09 and T11 (r1-r3) flip to fail: S5 recorded its own mock tools' inputs (to: [ids], schedule: "weekdays 06:00"),
     // and the cases now follow P4/P5's real schemas (to.members, days and time; line B), which S5 never served.
