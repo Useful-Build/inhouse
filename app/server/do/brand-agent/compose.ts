@@ -17,7 +17,6 @@ import { createLagTable, outboxPauseHook } from '../../outbox/gate.ts'
 import { outboxNotifier } from '../../outbox/notify.ts'
 import { questionHook } from '../../questions/ask.ts'
 import { QUESTIONS_ON } from '../../questions/switch.ts'
-import type { QuestionWake } from '../../questions/agent.ts'
 
 /** The ports the BrandAgent runs on, built once per object from its env. */
 export function composePorts(env: Env, parts: BrandAgentParts): BrandAgentPorts {
@@ -77,12 +76,6 @@ export function p6Hooks(env: Env, parts: BrandAgentParts): P6Hooks {
     // (every deployable build until M2-H, server/questions/switch.ts) it is resumed at once and nothing is asked.
     onDeferred: questionHook(QUESTIONS_ON),
   }
-}
-
-// ---------- Stage 1 M2-Q's anchor (N16): what wakes on an answered question ----------
-// M1-B's job engine adds its line here (a job whose continuation waits on the chat's question).
-export function questionWakes(_env: Env, _parts: BrandAgentParts): QuestionWake[] {
-  return []
 }
 
 /** Registers P6's hooks on the engine (index.ts, once per object): each pause hook in order, `onDeferred` when set. */

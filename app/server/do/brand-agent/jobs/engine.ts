@@ -175,6 +175,20 @@ export class JobEngine {
     this.h.sql.exec('UPDATE jobs SET pending_n = ?, last_turn_id = ? WHERE job_id = ?', j.n + 1, turnId, j.jobId)
   }
 
+  /**
+   * Stage 1 M2-Q: a question's resume turn in this chat ended (core.ts `storeFinal`), so the chat no longer waits on it.
+   * A running job whose continuation was refused `waiting_answer` (a person's question, asked while the job ran) is
+   * waiting out the minute's retry: its pending step runs now instead. Nothing else is touched: a step not scheduled
+   * yet (the job's own turn still running) stays the end task it is.
+   */
+  answered(chatId: string): void {
+    const job = this.liveJobOf(chatId)
+    if (!job || job.state !== 'running') return
+    const id = stepTaskId(job.job_id, job.pending_n)
+    const ready = this.h.sql.exec("SELECT 1 FROM due_tasks WHERE id = ? AND state = 'ready'", id).toArray().length > 0
+    if (ready) this.h.scheduler.schedule({ id, kind: STEP_KIND, dueAtMs: this.h.now() })
+  }
+
   /** A job turn ended deferred on a question (its end task waits for the resume turn): the job waits. */
   parked(onEnd: OnEnd): void {
     const jobId = this.jobOfStep(onEnd)

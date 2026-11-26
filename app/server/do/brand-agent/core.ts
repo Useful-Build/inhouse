@@ -888,6 +888,9 @@ export class AgentCore {
     // M1-B: a job's end task parked on a question makes the job wait; a person's turn that hit a limit becomes a job.
     if (t.on_end_json !== null && deferredEnd) this.jobs.parked(JSON.parse(t.on_end_json) as OnEnd)
     if (state === 'ended') this.jobs.promoteIfDue(t)
+    // M2-Q: a question's resume turn ended, however its resume came (the answer route, the object's own retry after a
+    // pause, the expiry): the chat no longer waits on it, so a job continuation waiting it out runs now (jobs/engine.ts).
+    if (t.resume_json !== null) this.jobs.answered(t.chat_id)
     // The D1 projection (4.8): the rows fixed here, the batch after; the task is its durable retry.
     fixTurnRows(this.sql, turnId, now)
     this.d.scheduler.schedule({ id: `${FLUSH_TURN_PREFIX}${turnId}`, kind: 'flush-turn', dueAtMs: now + FLUSH_RETRY_MS })

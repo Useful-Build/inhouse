@@ -19,21 +19,7 @@ export function questionWaits(sql: SqlStorage, chatIds: string[]): Record<string
   return Object.fromEntries(chatIds.map(c => [c, waitingQuestionOf(sql, c)]))
 }
 
-/**
- * Called once a question's resume was taken (BrandAgent `questionResume`), in the object: the seam for whatever must
- * wake on an answer. M1-B's job engine (PR #434) adds its line here so an answered question wakes a job waiting on the
- * chat (N3: `waiting_answer` moves to a real wake). None until then.
- */
-export type QuestionWake = (chatId: string) => void
-
 /** A task's view of the BrandAgent: the same reads and the same in-object resume as the routes'. */
-export function inObjectAgent(ctx: Pick<TaskContext, 'sql' | 'resumeDeferred'>, wakes: readonly QuestionWake[] = []): QuestionAgent {
-  return {
-    waits: async chatIds => questionWaits(ctx.sql, chatIds),
-    resume: async (chatId, questionId) => {
-      const r = await ctx.resumeDeferred(chatId, 'allow', questionId)
-      if (!('refused' in r)) for (const wake of wakes) wake(chatId)
-      return r
-    },
-  }
+export function inObjectAgent(ctx: Pick<TaskContext, 'sql' | 'resumeDeferred'>): QuestionAgent {
+  return { waits: async chatIds => questionWaits(ctx.sql, chatIds), resume: (chatId, questionId) => ctx.resumeDeferred(chatId, 'allow', questionId) }
 }

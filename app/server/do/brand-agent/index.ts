@@ -9,9 +9,8 @@ import type { AuditEntry, PushAck, RunEvent } from '../../../shared/protocol/ind
 import type { ActiveRun, PauseState, SendTurnResult } from '../../../shared/contract/runs.ts'
 import type { Trace } from '../../../shared/contract/trace.ts'
 import type { Job } from '../../../shared/contract/jobs.ts'
-import { composePorts, jobDeps, p6Hooks, questionWakes, wireP6 } from './compose.ts'
+import { composePorts, jobDeps, p6Hooks, wireP6 } from './compose.ts'
 import { questionWaits } from '../../questions/agent.ts'
-import type { QuestionWake } from '../../questions/agent.ts'
 import { AgentCore } from './core.ts'
 import type {
   Actor, AdmitAnswer, BrandAgentParts, BrandAgentPorts, BrandAgentRpc, DeferDecision, DrainState, LeaseAnswer, ModelCallUsage, ModelCallWorst, PersonDataAnswer,
@@ -43,7 +42,6 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   private sched!: SqlScheduler
   private ports!: BrandAgentPorts
   private hub!: SocketHub
-  private wakes: QuestionWake[] = []
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -80,7 +78,6 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
       })
       wireP6(this.core, p6Hooks(env, parts))
       this.core.setJobs(jobDeps(env))
-      this.wakes = questionWakes(env, parts)
       this.core.ensureSeeds()
       await sched.syncAlarm()
     })
@@ -308,11 +305,9 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   async questionWaits(chatIds: string[]): Promise<Record<string, string | null>> {
     return questionWaits(this.ctx.storage.sql, chatIds)
   }
-  /** An answered question's resume (`resumeDeferred`, `allow`), then whatever wakes on an answer (compose.ts). */
+  /** An answered question's resume (`resumeDeferred`, `allow`). A job waiting on the chat wakes when it ends (core.ts). */
   async questionResume(chatId: string, questionId: string): Promise<SendTurnResult | Refusal> {
-    const r = await this.core.resumeDeferred(chatId, 'allow', questionId)
-    if (!('refused' in r)) for (const wake of this.wakes) wake(chatId)
-    return r
+    return this.core.resumeDeferred(chatId, 'allow', questionId)
   }
 }
 
