@@ -18,7 +18,8 @@ No entry is `Covered: gap`. Not checked by any spec, or only in part:
 - The chat WebSocket under the enforced CSP (`e2e/real/socket-csp.spec.ts`) needs a run, so it is checked on the sandbox deploy (`E2E_TEST_BUILD_REMOTE=1`), not on the local test build, which has no container. `e2e/real/csp-download-photo.spec.ts` covers the audit CSV download and a member photo on both.
 - A failed or never-run chat turn's words after a reload (its stored end row, P3) and a trace's "up to" cost while a model call is open are proven only by unit tests (`server/do/brand-agent/projection.test.ts`, `src/screens/chat/history.test.ts`, `src/lib/trace-cost.test.ts`): the test build has no container and no way to force a placement failure or hold a call open without new test code in the deployable bundle.
 - Brand skills (P6a): making and changing one through `skill_save` in a chat runs only on the container deploy (`e2e/api/brand-skills.spec.ts`'s chat part); that a skill loads as `brand:<name>`, is read when used and can't be written by the session is the runner job's container probe (`brand-skills.*` in `app/runner/image/probes/run.ts`). The read-side cases RS-KW1 and RS-KW2 (a skill's body that tries to widen tools or send data out) are wired into the product target, with fixture setup and cleanup covered by a unit test. Paid model results are pending.
-- The outbox (Stage 1 M2-B): routes 120 to 124 (`/api/actions`: list, read, answer, Undo, resolve "Needs a check") have no screen yet (M2-H builds the cards) and no client method yet. Writes stay off: no operation is enabled in a deployable build, so the product's lists are empty. The hold, the claim, Undo, Pause, the sweep and "Needs a check" are proven by `server/outbox/*.test.ts` and its property suite; the route spec (`e2e/api/routes.spec.ts`) checks who may call each route. On the test build, the fakes hook's `ceiling` and `action` ops (`e2e/api/fakes-kit.ts`) drive the path without a container.
+- The outbox (Stage 1 M2-B, M2-H): routes 120 to 124 have their screens (Approvals' action cards, the chat's `ask` part, Activity's action rows) and client methods. Writes stay off: no operation is enabled in a deployable build, so the product's lists are empty; on the test build the fakes hook's `ceiling` and `action` ops (`e2e/api/fakes-kit.ts`) put cards in front of the screens (`e2e/real/actions-ui.spec.ts`). The hold, the claim, Undo, Pause, the sweep and "Needs a check" are proven by `server/outbox/*.test.ts` and its property suite; the route spec (`e2e/api/routes.spec.ts`) checks who may call each route.
+- Stage 1 M2-H, not checked in a browser: the chat's `ask` part (an action card inside an answer) and `action.updated` reaching it need a container turn that proposes an action (M2-D wires the agent's tools), so they are proven by `src/screens/chat/AskCard.test.ts` and `src/agent/http/actions.test.ts`; the Questions section on Approvals needs a container turn to ask (`question_ask`), so it is proven by `src/screens/approvals/agent-asks.test.ts` and the sandbox's `e2e/api/questions.spec.ts`; the sidebar's Approvals count doesn't count actions or questions yet; the screens' visual baselines are only the demo's (`baselines.yml` runs `visual.spec.ts`, which doesn't open the test build), so the test build's screens are proven by named screenshots, axe and a no-sideways-scroll check in both themes, in `e2e/real/actions-ui.spec.ts`.
 - "A failed audit write leaves no change" (Acceptance 6) is proven only by the server unit tests on the vitest workerd (compat 2026-11-11), not on the test build's: forcing an audit write to fail there needs test code in the deployable bundle.
 
 ## Today
@@ -98,6 +99,13 @@ Approvals: loading and first day
   Selector: status text
   Expected: loading status, no sort, no approve-all, no cut text
   Covered:  e2e/today-approvals.spec.ts
+
+Approvals: the agent's actions and questions (Stage 1 M2-H, the product)
+  Path:     test build -> sign in -> Approvals (a card seeded through the fakes hook's `action` op)
+  Selector: sections "Questions for you" and "Actions for you" (each with its count) above the drafts; a card `[data-action-card="<state>"]` (`role="group"` named by its title): kicker, title, the server's lines, facts (tool, records, "Reaches customers", "Can't be taken back", the guardrail), `[data-card-actions]` buttons, Open (only for a chat the viewer may open), the hold's `role="timer"`; a question `[data-question]` with one button per option
+  Expected: the buttons follow the card's `can` and kind only (N15): an ask card offers Allow once, Always allow and No (Always allow first when the server nudges it), an exact one Approve and No, the hold Undo with "Goes out in N seconds" counted from the server's `sendAt` and `serverNow` (never the browser's clock), "Needs a check" offers It went out and It didn't go out to its approver or an admin; an admin sees a member's card's facts with no button and no Open; each answer sends the rev the card was read at, shows the card after it and a toast; a conflict shows the card as it is now with "This changed before your answer arrived. Here it is now."; at the hold's end the card reads itself every 2 s until it settles (at most 30 times), and an `action.updated` for it reads it again; a question's answer is the option's own text, then "You answered: X" (or "Someone answered first: X", or that the agent stopped waiting), and a lost delivery offers Try again with the same answer; with no actions and no questions (the demo) nothing is added and the page looks as before
+  Covered:  e2e/real/actions-ui.spec.ts (desktop and phone, axe and screenshots in light and dark), src/screens/chat/AskCard.test.ts, src/screens/chat/ask-card.property.test.ts, src/screens/approvals/agent-asks.test.ts, src/agent/http/actions.test.ts, src/agent/contract/agent.contract.test.ts (real target)
+  Gaps:     the Questions section isn't driven in a browser (see Gaps above)
 
 Toasts
   Path:     approve twice, delete two routines, hover, F6
@@ -208,6 +216,13 @@ Chat: mock answers
   Expected: a schedule and a time make one routine; an off-script question gets "can't answer from your tools yet" with chips
   Covered:  e2e/mock-behaviour.spec.ts
 
+Chat: an action card in an answer (Stage 1 M2-H, the product)
+  Path:     a product answer whose agent proposed an action (the `ask` part)
+  Selector: `[data-action-card]` inside the answer's card
+  Expected: the card reads itself (`action(id)`) and is the one Approvals shows (see Approvals above); an `action.updated` for it in the followed run reads it again, one for another card or an older rev doesn't; a card it can't read says so
+  Covered:  src/screens/chat/AskCard.test.ts, src/agent/http/actions.test.ts
+  Gaps:     no browser spec (it needs a container turn that proposes an action; see Gaps above)
+
 Chat: the product's chat (real client)
   Path:     product build on the test build or the sandbox deploy -> sign in as a seeded member -> a chat -> send, reload, open a second tab
   Selector: composer, Send, Stop, the pause control, `#/usage`
@@ -248,6 +263,13 @@ Activity: log
   Selector: search "Search activity", radiogroup "Filter activity" (All, Needs you, Changes), a section per day, rows (`data-activity-row`: one icon, the sentence, the time on the right)
   Expected: rows look like All chats' rows (the same icon on every row, no per-kind colours or status words); every time sits on one line; the tabs and the search filter the days, with an empty line for none; the Klaviyo line takes its date from the data
   Covered:  e2e/sample-data.spec.ts, e2e/page-actions.spec.ts, e2e/no-persona.spec.ts, e2e/ui-round-3.spec.ts
+
+Activity: actions (Stage 1 M2-H, the product)
+  Path:     test build -> Activity (after an action was answered)
+  Selector: section "Actions" above the days, rows `[data-activity-action="<state>"]` ("{title}. {where it got to}", the time), button "Stop allowing this: {title}"
+  Expected: the newest 20 actions, under All and Changes (not Needs you) and narrowed by the search; "Stop allowing this" shows where exactly one permission the viewer may remove covers the action's tool and, after asking ("Stop allowing this?", naming the permission), removes it; with two or more it opens Settings > Always allowed; with no actions (the demo) nothing is added
+  Covered:  e2e/real/actions-ui.spec.ts, src/screens/approvals/agent-asks.test.ts
+  Gaps:     an action's card names its tool account, not the permission behind it, so the row's link to a permission is by account (exact while each tool has one write operation)
 
 Activity: a line's side sheet
   Path:     Activity -> a row
@@ -291,7 +313,7 @@ Usage
 Settings: menu
   Path:     Settings (`#/settings/<page>`), the menu beside the app's sidebar (on a phone the menu is the first screen)
   Selector: search "Search settings", groups You (General, Notifications, Memory), Agent (Inhouse agent, Models, Team memory), Approvals and limits (Who approves what, Run limits, Spending cap), Team (Members; Slack notices when Slack is connected), Workspace (Stage and plan, Data and access, Audit log); a lock button "Admins change these" on a team group's heading
-  Expected: five groups, each announced by its heading, in this order; the product leaves out Who approves what, Run limits and Notifications (a link to one lands on General with "That page doesn't exist. You're on General.") and calls the group that is left holding the Spending cap "Spending"; the command palette lists the same pages; Slack notices appears only when Slack is connected (`hasSlack`); search filters pages and rows (a page's matching rows show under it) and "No settings match" shows for none; for someone who can't change brand settings (a Member, test build) every team group's heading has the lock with the tooltip "Admins change these", and an Admin (and the demo) sees none
+  Expected: five groups, each announced by its heading, in this order; the product adds Always allowed under You (Stage 1 M2-H; the demo has no permissions, so it leaves it out, and a link to it lands on General) and leaves out Who approves what, Run limits and Notifications (a link to one lands on General with "That page doesn't exist. You're on General.") and calls the group that is left holding the Spending cap "Spending"; the command palette lists the same pages; Slack notices appears only when Slack is connected (`hasSlack`); search filters pages and rows (a page's matching rows show under it) and "No settings match" shows for none; for someone who can't change brand settings (a Member, test build) every team group's heading has the lock with the tooltip "Admins change these", and an Admin (and the demo) sees none
   Covered:  e2e/sample-data.spec.ts, e2e/navigation.spec.ts, e2e/ui-round-3.spec.ts, e2e/real/settings-lock.spec.ts, e2e/real/product-settings.spec.ts, src/screens/settings/settings-registry.test.ts, src/screens/settings/slack-page.test.ts, src/screens/settings/product-settings.test.ts
 
 Settings: dropdowns and fields
@@ -349,6 +371,12 @@ Settings: Notifications
   Selector: dropdowns "Approvals waiting" and "Send alerts to", switches "Slack" and "Weekly report"
   Expected: locked at Watch; each dropdown lists its choices and saves a pick, the switches turn off; a reload keeps all of it and Reset demo clears it; the dropdown works by keyboard; with no channel connected alerts default to Email and there is no channel switch; on a phone the controls stay
   Covered:  e2e/settings-your-pages.spec.ts, e2e/sample-data.spec.ts, e2e/brand-data.spec.ts, e2e/settings-pages-phone.spec.ts
+
+Settings: Always allowed (Stage 1 M2-H, the product)
+  Path:     test build -> Settings -> Always allowed (`#/settings/you-permissions`)
+  Selector: section "Done without asking", rows `[data-permission]` (title; "{tool} · {scope} · Up to N a day", and "For {name}" on a teammate's), button "Remove: {title}", the question "Stop allowing this?"
+  Expected: a member sees their own permissions, an admin everyone's; Remove shows only where the permission's `can.remove` says so, asks first, sends the rev it read and shows the list after it with a toast; a stale Remove says "This permission changed first. Here it is now." and reads the list again; none: "Nothing yet. When you choose Always allow on an action, it shows here."; usable on a phone (a You page, not read-only)
+  Covered:  e2e/real/actions-ui.spec.ts, src/screens/approvals/agent-asks.test.ts, src/screens/settings/product-settings.test.ts
 
 Settings: Memory
   Path:     Settings -> Memory

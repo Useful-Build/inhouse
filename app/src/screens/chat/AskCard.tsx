@@ -140,7 +140,7 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, className }: 
         </p>
       )}
       {buttons.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div data-card-actions className="mt-3 flex flex-wrap gap-2">
           {buttons.map(b => (
             <Button key={b.label} variant={b.primary ? 'primary' : 'soft'} disabled={busy} onClick={() => press(b)}
               aria-label={b.kind === 'answer' ? undefined : `${b.label}: ${card.title}`}>{b.label}</Button>

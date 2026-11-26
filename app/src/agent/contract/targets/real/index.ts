@@ -20,6 +20,7 @@ import { resetTeam } from './members'
 import { resetSettings, settingFixtures } from './settings'
 import { CONNECTOR_METHODS, CONNECTOR_TOOL_KEY, connectorRoute, connectorWorld, isToolsWrite } from './connectors'
 import { MS_EXEMPT, MS_READ_PATH, MS_SERVED, changeMemoryElsewhere, memorySkillsRoute, resetOpenRequests, resetWaitingMemory, seedWaitingMemory } from './memory-skills'
+import { ACTIONS_SERVED, actionWorld } from './actions'
 import { WATCH_READ_PATH, WATCH_SERVED, changeRoutineElsewhere, settleRuns, WATCH_EXEMPT, WATCH_ONLY_ON_WATCH_BUILD, watchBuild, watchRoute } from './watch'
 
 /** How many live Library files `reset()` leaves (the shared Library cases delete one or two). */
@@ -39,6 +40,8 @@ const SERVED: ReadonlySet<keyof AgentClient> = new Set<keyof AgentClient>([
   ...CONNECTOR_METHODS,
   // P6a W4 (memory-skills.ts): the Team memory page's two methods and the Request buttons.
   ...MS_SERVED,
+  // Stage 1 M2-H (actions.ts): the actions, the permissions and the questions.
+  ...ACTIONS_SERVED,
 ])
 
 const WRITES: ReadonlySet<string> = new Set<WriteMethod>([
@@ -84,6 +87,7 @@ function realTarget(origin: string): ContractTarget {
   if (!watchBuild()) console.warn('CONTRACT METHOD NOT SERVED on the real target: setAside: it needs a morning check run (a container): set E2E_WATCH_BUILD=1 on the multi-config build')
   const s: Signer = signer(origin)
   const world = connectorWorld(origin)
+  const actionsWorld = actionWorld(origin)
   /** The Slack state the world is known to be in: `reset()` leaves it disconnected; `unknown` until then. */
   let slack: 'connected' | 'disconnected' | 'unknown' = 'unknown'
   let ids: Awaited<ReturnType<typeof discover>> | undefined
@@ -231,6 +235,7 @@ function realTarget(origin: string): ContractTarget {
       slack = 'disconnected'
       await resetWaitingMemory(s)
       await resetOpenRequests(s)
+      await actionsWorld.reset(s)
       // Only a build with containers can end a Run now: a containerless one (CI's contract step) would wait out the deadline.
       if (watchBuild()) await settleRuns()
       this.fixtures.personId = seeded.admin
@@ -253,6 +258,8 @@ function realTarget(origin: string): ContractTarget {
       }
     },
     async seedWaitingMemory(texts) { return seedWaitingMemory(s, (await ready()).admin, texts) },
+    async seedAction() { return actionsWorld.seedAction((await ready()).admin) },
+    async failNextSend(on) { await actionsWorld.failNextSend(on) },
     async failSaves(on) { failAllSaves = on },
     async injectError(method, code) { if (code) armedErrors.set(method, code); else armedErrors.delete(method) },
     serves: method => SERVED.has(method) && (!WATCH_ONLY_ON_WATCH_BUILD.has(method) || watchBuild()),

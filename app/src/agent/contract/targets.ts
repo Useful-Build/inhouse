@@ -144,6 +144,14 @@ export interface ContractTarget {
   failRead(resource: ResourceKey): Promise<void>
   /** P6a: team facts waiting for an OK, oldest first, as an agent's saves would leave them; answers their keys. A target that can't seed them leaves this out and the suite skips those cases. */
   seedWaitingMemory?(texts: string[]): Promise<string[]>
+  /**
+   * Stage 1 M2-H: one action waiting on the signed-in person's answer, as the agent's request leaves it (an ask card they
+   * may answer); answers its id. A target that can't make one (the demo has no actions) leaves this out, and the suite
+   * skips the cases that answer one.
+   */
+  seedAction?(): Promise<string>
+  /** Stage 1 M2-H: the next send of an approved action ends as "Needs a check" (true), or goes out (false). */
+  failNextSend?(on: boolean): Promise<void>
 }
 
 // The mock saves to the browser's storage. Vitest runs in node, so a Map stands in, with a switch that makes a write throw.
