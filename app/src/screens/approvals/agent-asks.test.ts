@@ -25,6 +25,11 @@ vi.mock('../../agent', () => ({
     me: () => ({ memberId: 'm_Admin' }),
   },
 }))
+const badge = vi.hoisted(() => ({ reads: 0, published: [] as number[][] }))
+vi.mock('../../shell/asks-count', () => ({
+  readAsks: async () => { badge.reads++ },
+  publishAsks: (a: unknown[], q: unknown[]) => { badge.published.push([a.length, q.length]) },
+}))
 vi.mock('../../state/store', () => {
   const ui = {
     showToast: (t: string) => { fake.toasts.push(t) }, openChat: (id: string) => { fake.opened.push(id) }, openSettings: (t: string) => { fake.settings.push(t) },
@@ -65,7 +70,7 @@ let host: HTMLDivElement
 let root: ReturnType<typeof createRoot>
 beforeEach(() => {
   for (const f of [fake.actions, fake.questions, fake.answerQuestion, fake.permissions, fake.removePermission]) f.mockReset()
-  fake.toasts = []; fake.opened = []; fake.settings = []
+  fake.toasts = []; fake.opened = []; fake.settings = []; badge.reads = 0; badge.published = []
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
 afterEach(() => { act(() => root.unmount()); host.remove(); document.body.innerHTML = '' })
@@ -101,6 +106,8 @@ describe('Approvals: questions and actions', () => {
     await show(createElement(AgentAsks))
     expect(host.querySelector('#agent-questions')?.textContent).toContain('Questions for you')
     expect(host.querySelector('#agent-actions')?.textContent).toContain('Actions for you')
+    // What Approvals read goes to the sidebar's badge too.
+    expect(badge.published.at(-1)).toEqual([1, 1])
     expect(host.querySelectorAll('[data-question]')).toHaveLength(1)
     expect(host.querySelectorAll('[data-action-card]')).toHaveLength(1)
     act(() => root.unmount()); root = createRoot(host)
@@ -118,6 +125,7 @@ describe('Approvals: questions and actions', () => {
     await press('Large', host)
     expect(fake.answerQuestion).toHaveBeenCalledWith('q_CCCCCCCCCCCCCCCCCCCCCC', 'Large')
     expect(host.textContent).toContain('You answered: Large')
+    expect(badge.reads).toBeGreaterThan(0)
     expect(buttons()).toEqual(['Open the chat: Which box size?'])
     await press('Open the chat: Which box size?', host)
     expect(fake.opened).toEqual(['c_EEEEEEEEEEEEEEEEEEEEEE'])

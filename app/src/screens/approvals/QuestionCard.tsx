@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils'
 import { Button, Icon } from '../../ui'
 import { CONFIRMATION_SHEET } from '../../ui/agent'
 import { questionOutcome } from './question-words'
+import { readAsks } from '../../shell/asks-count'
 
 export function QuestionCard({ question, onOpenChat }: { question: Question; onOpenChat?: (chatId: string) => void }) {
   const [q, setQ] = useState(question)
@@ -27,6 +28,7 @@ export function QuestionCard({ question, onOpenChat }: { question: Question; onO
     agent.answerQuestion(q.id, choice).then(next => {
       setMine(true)
       setQ(next)
+      void readAsks()
       showToast('Answer sent. Your Inhouse agent carries on.', { icon: 'check', ms: 4000 })
     }, (e: unknown) => {
       if (e instanceof AgentError && e.code === 'conflict' && e.current) setQ(e.current as unknown as Question)

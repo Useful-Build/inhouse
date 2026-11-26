@@ -27,6 +27,8 @@ vi.mock('../../agent', () => ({
     onActionUpdated: (l: (u: { actionId: string; rev: number }) => void) => { fake.listeners.add(l); return () => fake.listeners.delete(l) },
   },
 }))
+const badge = vi.hoisted(() => ({ reads: 0 }))
+vi.mock('../../shell/asks-count', () => ({ readAsks: async () => { badge.reads++ } }))
 vi.mock('../../state/store', () => ({ useUi: (pick: (s: { showToast: (t: string) => void }) => unknown) => pick({ showToast: (t: string) => { fake.toasts.push(t) } }) }))
 
 const { AskCard } = await import('./AskCard')
@@ -110,6 +112,8 @@ describe('answering', () => {
     await press('Allow once')
     expect(fake.answerAction).toHaveBeenCalledWith(AC, 1, 'once')
     expect(fake.toasts).toEqual(['Allowed once. It goes out in a few seconds.'])
+    // The sidebar's badge reads again after an answer.
+    expect(badge.reads).toBeGreaterThan(0)
     expect(host.querySelector('[role="timer"]')?.textContent).toBe('Goes out in 10 seconds')
     expect(buttons()).toEqual(['Undo'])
     await tick(3000)

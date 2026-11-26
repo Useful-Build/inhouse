@@ -13,6 +13,7 @@ import { Button, Icon } from '../../ui'
 import { CONFIRMATION_SHEET } from '../../ui/agent'
 import { SETTLE_EVERY_MS, SETTLE_TRIES, answeredToast, buttonsOf, factsOf, holdLeftMs, holdText, kickerOf, outcomeOf, refusalOf, settling } from './ask-card'
 import type { CardButton } from './ask-card'
+import { readAsks } from '../../shell/asks-count'
 
 /** A card as read, and when (on the browser's clock), so the hold's countdown is the server's gap less the time since. */
 interface Read { card: ActionCard; at: number }
@@ -94,6 +95,8 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, className }: 
         : agent.resolveAction(card.id, card.rev, b.outcome)
     sent.then(next => {
       take(next)
+      // The sidebar's badge counts what waits on this person: read it again.
+      void readAsks()
       showToast(answeredToast(b.kind === 'answer' ? b.choice : b.kind === 'undo' ? 'undo' : b.outcome), { icon: 'check', ms: 4000 })
     }, (e: unknown) => {
       const r = refusalOf(e)

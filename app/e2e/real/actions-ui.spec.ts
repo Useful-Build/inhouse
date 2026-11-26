@@ -1,6 +1,6 @@
 // Stage 1 M2-H on the test build: action cards seeded through the test-fakes hook (the outbox's own `request` as a
 // seeded person, `ask_only`, so each is a card) and answered from the screens, on desktop and phone. It would fail if:
-//  - Approvals didn't list a waiting card, offered a button the viewer's `can` doesn't allow (an admin answering a
+//  - Approvals didn't list a waiting card, the sidebar's badge didn't count it (or still did once answered), offered a button the viewer's `can` doesn't allow (an admin answering a
 //    member's card, N15), or the card's answer didn't reach the server;
 //  - Allow once showed no hold, or Undo in the hold didn't take it back;
 //  - Always allow left nothing under Settings > Always allowed, Remove there (after asking) didn't take it away, or
@@ -90,9 +90,15 @@ test('Allow once starts the hold on the server clock, and Undo in the hold takes
   await expect(card).toContainText('Your Inhouse agent asks first')
   await expect(answers(card)).toHaveText(['Allow once', 'Always allow', 'No'])
   await checkBothThemes(page, 'approvals-waiting')
+  // The sidebar's Approvals badge counts the card (on a phone the sidebar is a closed drawer, so desktop only).
+  const badge = page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: /^Approvals/ }).locator('[aria-label$=" waiting"]')
+  const waiting = async () => ((await badge.count()) > 0 ? Number(await badge.textContent()) : 0)
+  const before = phone(page) ? 0 : await expect.poll(waiting).toBeGreaterThanOrEqual(1).then(waiting)
 
   await card.getByRole('button', { name: 'Allow once' }).click()
   await expect(page.locator('[data-toast]').filter({ hasText: 'Allowed once. It goes out in a few seconds.' })).toBeVisible()
+  // Answered, it no longer waits on this person: the badge reads one less.
+  if (!phone(page)) await expect.poll(waiting).toBe(before - 1)
   await expect(card.getByRole('timer')).toHaveText(/^Goes out in \d+ seconds?$/)
   await card.getByRole('button', { name: `Undo: ${TITLE}` }).click()
   await expect(card).toContainText('You took it back. Nothing went out.')

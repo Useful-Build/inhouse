@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils'
 import { Avatar, Button, Icon, IconButton, InhouseMark, NavItem } from '../ui'
 import { keepForToast } from '../ui/dialogs'
 import { AccountMenu } from '../overlays/Menus'
+import { useAsksCount } from './asks-count'
 import { ChatRow } from '../ui/chat'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { AGENT, DAILY, mac, SHORTCUTS } from './nav'
@@ -54,7 +55,11 @@ export function Sidebar() {
       variant="chrome" size={18} onClick={() => openTeam('tool')} />
   )
   const activeKey = page === 'app' ? 'apps' : page === 'skill' ? 'skills' : page
-  const count = ctx.S >= 1 ? pendingIds(ctx).length : 0
+  // Stage 1 M2-H: the agent's actions and questions waiting on this person count too, whatever the stage (they don't
+  // depend on it: N17 retires it), so a card never waits unseen.
+  const asks = useAsksCount()
+  const drafts = ctx.S >= 1 ? pendingIds(ctx).length : 0
+  const count = drafts + asks
 
   // The account row is selected on Settings and on Usage, which its menu opens.
   const meActive = page === 'settings' || page === 'usage'
@@ -62,9 +67,9 @@ export function Sidebar() {
   /** One nav row: a stage locks it (with its tag), and Approvals carries its waiting count. */
   const navItem = (n: NavDef, rail: boolean) => {
     const locked = ctx.S < n.need, active = activeKey === n.key
-    const showCount = n.key === 'approvals' && !locked && count > 0
+    const showCount = n.key === 'approvals' && (locked ? asks > 0 : count > 0)
     return <NavItem key={n.key} rail={rail} icon={n.icon} label={n.label} active={active} locked={locked} onClick={() => go(n.key)}
-      count={showCount ? count : undefined} countLabel={`${count} waiting`} tag={locked ? STAGE_TAGS[n.need] : undefined} />
+      count={showCount ? (locked ? asks : count) : undefined} countLabel={`${locked ? asks : count} waiting`} tag={locked ? STAGE_TAGS[n.need] : undefined} />
   }
   const openChatId = openChatKey({ fresh, chatId }, ctx.data)
   const chats = chatEntries(ctx.data, started, ctx.agent)

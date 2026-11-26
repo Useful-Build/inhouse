@@ -12,6 +12,7 @@ import { LoadError } from '../../ui/retry'
 import { AskCard } from '../chat/AskCard'
 import { OPEN_STATES } from '../chat/ask-card'
 import { QuestionCard } from './QuestionCard'
+import { publishAsks } from '../../shell/asks-count'
 
 type Lists = { status: 'loading' } | { status: 'error'; error: AgentErrorCode } | { status: 'ready'; actions: ActionCard[]; questions: Question[] }
 
@@ -20,7 +21,7 @@ export function AgentAsks() {
   const [lists, setLists] = useState<Lists>({ status: 'loading' })
   const read = useCallback(() => {
     Promise.all([agent.questions(), agent.actions({ states: OPEN_STATES })]).then(
-      ([questions, actions]) => setLists({ status: 'ready', actions, questions }),
+      ([questions, actions]) => { setLists({ status: 'ready', actions, questions }); publishAsks(actions, questions) },
       (e: unknown) => setLists({ status: 'error', error: e instanceof AgentError ? e.code : 'unknown' }),
     )
   }, [])
