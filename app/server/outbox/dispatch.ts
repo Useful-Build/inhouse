@@ -75,7 +75,8 @@ const safeRef = (ref: string) => ref.replace(/[\p{Cc}\p{Cf}]/gu, '').slice(0, 20
 
 /**
  * The write the hub is asked for. A Slack post names the listed channel's id the claim just checked (N13), in the shape
- * the hub's strict schema takes (hub/connectors/slack/outbox.ts `SlackChannelPostArgsSchema`: `channelId` and `text`).
+ * the hub's strict schema takes (hub/connectors/slack/outbox.ts `SlackChannelPostArgsSchema`: `channelId`, `text` and,
+ * when the action has one, `title`: M2-N, a `notification_send` headline).
  */
 export function writeRequest(row: OutboxActionRow, requestId: string): WriteRequest {
   const args = JSON.parse(row.args_json) as Record<string, unknown>
@@ -83,7 +84,9 @@ export function writeRequest(row: OutboxActionRow, requestId: string): WriteRequ
   return {
     actionId: row.id, attempt: row.attempt, requestId, accountId: row.account_id, expect: { connectedAtMs: row.account_gen },
     operation: row.operation,
-    args: row.operation === 'slack.channel.post' ? { channelId: scope.channelId, text: args.text } : args,
+    args: row.operation === 'slack.channel.post'
+      ? { channelId: scope.channelId, text: args.text, ...(typeof args.title === 'string' ? { title: args.title } : {}) }
+      : args,
   }
 }
 

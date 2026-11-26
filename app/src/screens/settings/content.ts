@@ -202,9 +202,10 @@ export interface NotifyView {
 function slackPage(nv: NotifyView, product: boolean): Page {
   const listed = nv.list?.channels ?? []
   const rules: Section = { label: 'How notices work', rows: [
-    // Slack posts are still closed (M2-F): in the product alerts reach the bell for now, as the demo says before Act.
+    // Stage 1 M2-N: in the product the agent's posts to a listed channel are off for now (no operation in the ceiling, N2),
+    // so its notices reach the bell; the server's own fixed alerts (a failed routine) post to the alerts channel.
     product
-      ? R('For now', "Alerts reach the bell in the app. Slack posts aren't on yet.", 'value')
+      ? R('For now', "The agent's notices reach the bell in the app. Inhouse's own alerts, like a failed routine, post to your alerts channel.", 'value')
       : R('Before the Act stage', 'Slack posts start at Act. Until then alerts reach the bell in the app.', 'value'),
     R('While Slack is paused', 'Alerts pause while Slack is paused or needs a reconnect.', 'value'),
     R('Who can read them', 'Anyone in a listed channel can read these alerts, guests included.', 'value'),
