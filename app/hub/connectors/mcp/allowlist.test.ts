@@ -170,6 +170,16 @@ describe('test 13: listAccounts and the gateway rules', () => {
     ])
   })
 
+  it('Stage 1 M2-D: the Shopify row carries the write store\'s handle when shopOf names one; no other row does', async () => {
+    const w = world({ modules: [slackConnector, shopifyA, shopifyB] })
+    const rows = await G.listAccounts({ ...connectDeps(w), shopOf: c => (c.id === 'shopify' ? 'example-write' : null) }, SERVER)
+    expect(rows.ok && rows.value.map(r => [r.accountId, r.shop])).toEqual([['slack:workspace', undefined], ['shopify:store', 'example-write']])
+    expect(rows.ok && 'shop' in rows.value[0]!).toBe(false)
+    // No write store configured: no handle, so the product refuses a Shopify write (fail closed).
+    const none = await G.listAccounts({ ...connectDeps(w), shopOf: () => null }, SERVER)
+    expect(none.ok && none.value.every(r => !('shop' in r))).toBe(true)
+  })
+
   it('a run scope is refused on every ConnectGateway method', async () => {
     const d = connectDeps(world())
     const results = [

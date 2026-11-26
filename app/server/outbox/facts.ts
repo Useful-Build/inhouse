@@ -1,7 +1,8 @@
 // What `request` reads before it resolves and decides (N9, N10): the brand's connected accounts, its listed Slack
 // channels, the ceiling, the grants that might cover the action and the "Allow once" count. D1 holds the account's
-// generation (`connector_accounts.connected_at_ms`); the hub's SignIn state holds its pause and the shop it reads, so
-// those come through `hubAccounts` (the caller's binding; N12: the hub checks them again at the send).
+// generation (`connector_accounts.connected_at_ms`, the hub's own date copied in by M2-D's sync) and the Shopify write
+// store's handle (`connector_accounts.shop`, likewise); the hub's SignIn state holds its pause and label, so those come
+// through `hubAccounts` (the caller's binding; N12: the hub checks them again at the send).
 import { all, first, stmt } from '../db/sql.ts'
 import { memberHolder } from '../permissions/decide.ts'
 import { NUDGE_WINDOW_MS } from '../permissions/policy.ts'
@@ -12,8 +13,11 @@ import { DEFAULT_TZ } from '../usage/month.ts'
 /** The one account per connector Stage 1 writes to (the hub's account ids). */
 export const ACCOUNT_IDS = { shopify: 'shopify:store', slack: 'slack:workspace' } as const
 
-/** What the hub says about one account: paused, the label a person reads, and (Shopify) the shop handle. */
-export interface HubAccountFacts { accountId: string; paused: boolean; label: string; shop: string | null }
+/**
+ * What the hub says about one account now: paused (or not active, which refuses the same way), and the label a person
+ * reads. The shop handle and the generation are D1's (`connector_accounts`), copied from the hub by M2-D's sync.
+ */
+export interface HubAccountFacts { accountId: string; paused: boolean; label: string }
 
 export interface OutboxFacts {
   resolveFacts(nowMs: number): Promise<ResolveFacts>
@@ -30,7 +34,7 @@ export async function brandTimeZone(db: D1Database): Promise<string> {
   return v
 }
 
-type AccountRow = { account_id: string; last_state: string; connected_at_ms: number | null; disconnected_at_ms: number | null }
+type AccountRow = { account_id: string; last_state: string; connected_at_ms: number | null; disconnected_at_ms: number | null; shop: string | null }
 type CeilingRow = { operation: WriteOperationKey; enabled: number; per_day_max: number; lowered_rev: number }
 type GrantRow = {
   id: string; holder: string; account_id: string; account_gen: number; operation: WriteOperationKey; scope_key: string; per_day: number
@@ -51,7 +55,7 @@ function accountFacts(connector: 'shopify' | 'slack', row: AccountRow | undefine
     // An account the hub didn't name is treated as paused: refused, never assumed open.
     paused: hub ? hub.paused : true,
     label: hub?.label ?? DEFAULT_LABEL[connector],
-    shop: connector === 'shopify' ? hub?.shop ?? null : null,
+    shop: connector === 'shopify' ? row.shop : null,
   }
 }
 
@@ -60,7 +64,7 @@ export function outboxFacts(d: { db: D1Database; hubAccounts: () => Promise<read
   return {
     async resolveFacts(nowMs) {
       const [rows, hub, channels] = await Promise.all([
-        all<AccountRow>(db, stmt('SELECT account_id, last_state, connected_at_ms, disconnected_at_ms FROM connector_accounts WHERE account_id IN (?, ?)', ACCOUNT_IDS.shopify, ACCOUNT_IDS.slack)),
+        all<AccountRow>(db, stmt('SELECT account_id, last_state, connected_at_ms, disconnected_at_ms, shop FROM connector_accounts WHERE account_id IN (?, ?)', ACCOUNT_IDS.shopify, ACCOUNT_IDS.slack)),
         d.hubAccounts(),
         all<{ channel_id: string; name: string }>(db, stmt('SELECT channel_id, name FROM notify_channels WHERE removed_at_ms IS NULL ORDER BY channel_id')),
       ])

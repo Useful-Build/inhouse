@@ -35,8 +35,8 @@ export async function world(db: D1Database, o: { perDayMax?: number; askerRole?:
 }
 
 export const HUB_FACTS: HubAccountFacts[] = [
-  { accountId: 'shopify:store', paused: false, label: 'Shopify (Store A)', shop: 'store-a' },
-  { accountId: 'slack:workspace', paused: false, label: 'Slack', shop: null },
+  { accountId: 'shopify:store', paused: false, label: 'Shopify (Store A)' },
+  { accountId: 'slack:workspace', paused: false, label: 'Slack' },
 ]
 
 let n = 0

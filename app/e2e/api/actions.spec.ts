@@ -16,14 +16,14 @@
 //  - "Always allow" makes a permission; the next request runs under it; removing it before the claim stops the send;
 //  - an operation that isn't in the table can't be requested; the runner's hub route refuses a write.
 // The ceiling is set only through the hook and turned off again after (and before, in case a killed run left it on).
-// The brand's Shopify account row in D1 is written here at the hub's own connect date: the product records no
-// `connected_at_ms` for the client-credentials Shopify account, and an action's generation is that row's (N9).
+// The brand's Shopify account row in D1 is the real path's (M2-D): each request reads the hub's accounts and copies the
+// hub's connect date and write store into `connector_accounts`, and an action's generation is that row's (N9).
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 import { ToolsDataSchema } from '../../shared/contract/tools.ts'
 import { actor, call, expectConflict, expectError, me, newIdentity, personActor } from './kit.ts'
 import { Tab } from './chat-kit.ts'
-import { auditMax, readSql, writeSql } from './db.ts'
+import { auditMax, readSql } from './db.ts'
 import { hook, hubCall, inhouse, requestAction, setCeiling, SHOPIFY_ACCOUNT, sourcesUnder } from './fakes-kit.ts'
 
 const dana = actor('memberA')
@@ -42,7 +42,6 @@ const tagArgs = (t: string) => ({ orderId: 'gid://shopify/Order/9001', tags: [t]
 
 let danaId = ''
 let adminId = ''
-let priorAccount: Record<string, unknown> | undefined
 
 interface StoreWrite { operation: string; variables: { id?: string; tags?: string[] }; outcome: string }
 const storeWrites = async (request: APIRequestContext): Promise<StoreWrite[]> => {
@@ -69,7 +68,7 @@ const until = async (request: APIRequestContext, id: string, state: string) =>
 
 /** A new card for Dana (a waiting `ask` card), its id. */
 async function ask(request: APIRequestContext, t: string): Promise<string> {
-  const r = await requestAction(request, { memberId: danaId }, TAG_ADD, tagArgs(t), { shop: SHOP })
+  const r = await requestAction(request, { memberId: danaId }, TAG_ADD, tagArgs(t))
   expect(r.outcome, JSON.stringify(r)).toBe('waiting')
   expect(r.action).toMatchObject({ state: 'waiting', verdict: 'ask', asked_by: danaId, approver: danaId })
   return r.action.id as string
@@ -121,17 +120,8 @@ test.beforeAll(async ({ request }) => {
   // A run that was killed may have left the operation on: turn it off (through the hook, never by hand).
   if (readSql('SELECT 1 FROM permission_ceiling WHERE enabled = 1').length > 0) await setCeiling(request, TAG_ADD, false)
   // The hub's Shopify account answers a read (its client-credentials grant), and its connect date is the generation the
-  // hub checks at send (`expect.connectedAtMs`).
+  // hub checks at send (`expect.connectedAtMs`); the first request copies it into D1 (M2-D's sync).
   expect((await hubCall(request, 'callTool', 'orders_search', { first: 1 })).ok).toBe(true)
-  const tools = ToolsDataSchema.parse((await call(request, inhouse, 'GET', '/api/tools')).json)
-  const since = tools.details.shopify?.since?.ms
-  expect(since, 'the hub gives the Shopify account a connect date').toBeDefined()
-  priorAccount = readSql('SELECT * FROM connector_accounts WHERE account_id = ?', SHOPIFY_ACCOUNT)[0]
-  writeSql(
-    `INSERT INTO connector_accounts (account_id, connector, last_state, last_state_at_ms, connected_at_ms) VALUES (?, 'shopify', 'connected', ?, ?)
-     ON CONFLICT (account_id) DO UPDATE SET last_state = 'connected', connected_at_ms = excluded.connected_at_ms, disconnected_at_ms = NULL`,
-    SHOPIFY_ACCOUNT, since as number, since as number,
-  )
   await setFault(request, 'succeed')
 })
 
@@ -139,11 +129,6 @@ test.afterAll(async ({ request }) => {
   await setCeiling(request, TAG_ADD, false)
   await setFault(request, 'succeed')
   await call(request, admin, 'POST', '/api/resume', { json: {} })
-  if (priorAccount === undefined) writeSql('DELETE FROM connector_accounts WHERE account_id = ?', SHOPIFY_ACCOUNT)
-  else {
-    writeSql('UPDATE connector_accounts SET last_state = ?, connected_at_ms = ?, disconnected_at_ms = ? WHERE account_id = ?',
-      priorAccount.last_state as string, priorAccount.connected_at_ms as number | null, priorAccount.disconnected_at_ms as number | null, SHOPIFY_ACCOUNT)
-  }
 })
 
 test('the product\'s state (no operation on): every request is refused, nothing is written and nothing is sent', async ({ request }) => {
@@ -155,7 +140,7 @@ test('the product\'s state (no operation on): every request is refused, nothing 
   const t = tag()
   for (const who of [danaId, adminId]) {
     for (const mode of ['tool', 'ask_only'] as const) {
-      const shop = await requestAction(request, { memberId: who }, TAG_ADD, tagArgs(t), { mode, shop: SHOP })
+      const shop = await requestAction(request, { memberId: who }, TAG_ADD, tagArgs(t), { mode })
       expect(shop).toMatchObject({ outcome: 'refused', reason: 'over_ceiling' })
       // Slack may be refused sooner (not connected, or the channel not listed): refused either way, nothing written.
       const slack = await requestAction(request, { memberId: who }, 'slack.channel.post', { channel: '#ops', text: t }, { mode })
@@ -165,6 +150,18 @@ test('the product\'s state (no operation on): every request is refused, nothing 
   }
   expect(readSql<{ n: number }>('SELECT COUNT(*) AS n FROM outbox_actions')[0].n).toBe(rowsBefore)
   expect((await storeWrites(request)).length).toBe(writesBefore)
+})
+
+test('M2-D: a request copies the hub\'s connect date and write store into D1, and the card waits on that generation', async ({ request }) => {
+  await setCeiling(request, TAG_ADD, true)
+  const id = await ask(request, tag())
+  const since = ToolsDataSchema.parse((await call(request, inhouse, 'GET', '/api/tools')).json).details.shopify?.since?.ms
+  expect(since, 'the hub gives the Shopify account a connect date').toBeDefined()
+  expect(readSql('SELECT last_state, connected_at_ms, shop FROM connector_accounts WHERE account_id = ?', SHOPIFY_ACCOUNT))
+    .toEqual([{ last_state: 'connected', connected_at_ms: since, shop: SHOP }])
+  expect(readSql('SELECT account_gen, scope_json, tool_use_id IS NOT NULL AS invoked FROM outbox_actions WHERE id = ?', id))
+    .toEqual([{ account_gen: since, scope_json: JSON.stringify({ shop: SHOP }), invoked: 1 }])
+  await setCeiling(request, TAG_ADD, false)
 })
 
 test('an operation that isn\'t in the table can\'t be requested; the runner\'s hub route refuses a write', async ({ request }) => {
@@ -301,7 +298,7 @@ test('"Always allow" makes a permission and the next request runs under it; remo
 
   // The next request under it is approved at once (no card), and goes out only after the hold.
   const runTag = tag()
-  const r = await requestAction(request, { memberId: danaId }, TAG_ADD, tagArgs(runTag), { shop: SHOP })
+  const r = await requestAction(request, { memberId: danaId }, TAG_ADD, tagArgs(runTag))
   expect(r.outcome).toBe('approved')
   expect(r.action).toMatchObject({ verdict: 'run', grant_id: grant!.id, state: 'approved' })
   // Removed during the hold: the claim finds no live permission, nothing is sent, and the card asks again.
@@ -311,7 +308,7 @@ test('"Always allow" makes a permission and the next request runs under it; remo
   expect((await card(request, r.action.id)).lapsed).toBe('The permission was removed, so this needs your OK again.')
   expect(await writesOf(request, runTag)).toEqual([])
   // And the next request asks.
-  const next = await requestAction(request, { memberId: danaId }, TAG_ADD, tagArgs(tag()), { shop: SHOP })
+  const next = await requestAction(request, { memberId: danaId }, TAG_ADD, tagArgs(tag()))
   expect(next).toMatchObject({ outcome: 'waiting', action: { verdict: 'ask' } })
 })
 
@@ -323,7 +320,7 @@ test('turning the operation off refuses the next request and lapses an approval 
   await setCeiling(request, TAG_ADD, false)
   await until(request, id, 'waiting')
   expect((await card(request, id)).lapsed).toBe('This kind of action was turned off, so this needs your OK again.')
-  expect(await requestAction(request, { memberId: danaId }, TAG_ADD, tagArgs(tag()), { shop: SHOP })).toMatchObject({ outcome: 'refused', reason: 'over_ceiling' })
+  expect(await requestAction(request, { memberId: danaId }, TAG_ADD, tagArgs(tag()))).toMatchObject({ outcome: 'refused', reason: 'over_ceiling' })
   expect(await writesOf(request, offTag)).toEqual([])
 })
 

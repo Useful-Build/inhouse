@@ -12,6 +12,7 @@ import { envRecord, flushTestLogs, isConfiguredFrom, loadRegistry, signInFor, si
 import { isMcpConnector } from '../registry/registry'
 import { decideTestShop } from '../index/test-shop'
 import { refuseTestFakes } from './test-gate'
+import { parseShopifyWriteConfig } from '../connectors/shopify/write/provider'
 import * as G from './gateway'
 
 type HubEnv = Env & { INHOUSE_TEST_BUILD?: string }
@@ -51,6 +52,9 @@ async function deps(env: Env): Promise<G.ConnectDeps> {
     registry,
     isConfigured: c => isConfiguredFrom(env, record, c),
     signIn: accountId => signInFor(env, accountId) as unknown as G.ConnectStub,
+    // Stage 1 M2-D: the store the write app writes to (its handle only), when the write app is configured; else none, so
+    // the product refuses a Shopify write (fail closed).
+    shopOf: c => (c.id === 'shopify' ? parseShopifyWriteConfig(env as Parameters<typeof parseShopifyWriteConfig>[0])?.shop ?? null : null),
   }
 }
 

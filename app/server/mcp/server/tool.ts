@@ -2,6 +2,7 @@
 // runs as the run's person only (`memberId` from the run token's grant, never from the arguments).
 import type { z } from 'zod'
 import type { NotifyDeps } from '../tools/notifications/deps.ts'
+import type { ApprovalsWiring } from '../tools/approvals/index.ts'
 
 /** Who and what a call runs for: the run token's grant (the egress), plus this call's clock and request id. */
 export interface ToolScope {
@@ -39,6 +40,8 @@ export interface ToolDeps {
   db: D1Database
   // P5 (p5-w4): notification_send's hub delivery, opaque here (B2, 2026-11-21). Absent: Slack answers slack_unavailable.
   notify?: NotifyDeps
+  // Stage 1 M2-D: approval_request's wiring from the egress (the hub's accounts, N14's admission). Absent: refused.
+  approvals?: ApprovalsWiring
 }
 
 /**

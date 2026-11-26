@@ -6,6 +6,7 @@ import type { FileStore } from '../files-io/store.ts'
 import type { SettingsView } from '../model/catalog.ts'
 import type { ModelUpstream } from './gateway.ts'
 import type { HubRouteDeps } from './hub.ts'
+import type { ActionsRouteDeps } from './actions.ts'
 
 /** The BrandAgent's RPC as the egress uses it (`noteCountTokens` included, W1's ports.ts). */
 export type EgressRpc = BrandAgentRpc
@@ -31,6 +32,8 @@ export interface EgressDeps {
   mcp: McpHandler
   /** The `hub` route's deps (P4 H1). Absent: `/hub/` is 404. */
   hub?: HubRouteDeps
+  /** The `actions` route's deps (Stage 1 M2-D, N14). Absent: `/actions/` is 404. */
+  actions?: ActionsRouteDeps
   waitUntil(p: Promise<unknown>): void
   setInterval(fn: () => void, ms: number): ReturnType<typeof setInterval>
   clearInterval(t: ReturnType<typeof setInterval>): void

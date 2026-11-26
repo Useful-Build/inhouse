@@ -176,6 +176,11 @@ export interface CoreDeps {
    * where `@eval-trace` keeps nothing anyway); tests pass it.
    */
   evalTrace?: boolean
+  /**
+   * Stage 1 M2-D (N2, N14): whether any write operation is enabled for the brand, read when each turn starts; the start
+   * then carries `actions: true` (the runner's `actions` MCP server). Absent or throwing: off.
+   */
+  actionsOn?: () => Promise<boolean>
 }
 
 declare const __INHOUSE_EVAL_BUILD__: boolean
@@ -216,6 +221,8 @@ interface Extra {
   onEnd?: OnEnd
   resume?: Resume & { parkedTurnId: string }
   job?: JobSubmit
+  /** Stage 1 M2-D (N14): an action's result told to the agent (asks.ts, key `act_<id>`). */
+  source?: 'action'
 }
 
 /** Refusals a resume waits out (A8): it's tried again by the `deferred-resume` task, never counted toward quarantine. */
@@ -335,6 +342,34 @@ export class AgentCore {
 
   // ---------- events ----------
 
+  /**
+   * Stage 1 M2-D (N14): a chat event outside a turn's own stream (`action.updated`), under the chat's live run, else its
+   * newest one. False when this object has no run of the chat (nothing here streams it).
+   */
+  chatEvent(chatId: string, event: ChatEvent): boolean {
+    const run = this.sql.exec<{ run_id: string }>(
+      "SELECT run_id FROM runs WHERE chat_id = ? ORDER BY state = 'live' DESC, started_at_ms DESC LIMIT 1", chatId).toArray()[0]
+    if (!run) return false
+    this.emit(run.run_id, null, event)
+    return true
+  }
+
+  /**
+   * Stage 1 M2-D (N14): the asking turn's `ask` part (`{ type: 'ask', actionId }`), the turn's next part, while the turn
+   * is still open (its parts are fixed into D1 when it ends). False for a turn that has ended.
+   */
+  askPart(turnId: string, actionId: string): boolean {
+    const t = this.turn(turnId)
+    if (!t || t.state === 'ended' || t.state === 'cancelled' || t.state === 'queued') return false
+    const now = this.d.now()
+    this.emit(t.run_id, t.turn_id, {
+      type: 'part', turnId: t.turn_id, messageId: `${t.turn_id}.${t.parts_n}`, part: { type: 'ask', actionId }, model: t.picker_id,
+      at: { iso: new Date(now).toISOString(), ms: now },
+    })
+    this.sql.exec('UPDATE turns SET parts_n = parts_n + 1 WHERE turn_id = ?', t.turn_id)
+    return true
+  }
+
   /** Stores one chat event under the run's next seq (one synchronous step, 4.2.4). */
   private emit(runId: string, turnId: string | null, event: ChatEvent): number {
     const now = this.d.now()
@@ -356,7 +391,7 @@ export class AgentCore {
    * the end task. On that path the caller chose the effort too, so the hash covers it (A2's field list, run-start.ts);
    * route 29's effort is resolved from settings and isn't hashed.
    */
-  async submitTurn(t: SubmitTurn, extra?: { outputFormat?: OutputFormat; onEnd?: OnEnd; job?: JobSubmit }): Promise<SendTurnResult | Refusal> {
+  async submitTurn(t: SubmitTurn, extra?: { outputFormat?: OutputFormat; onEnd?: OnEnd; job?: JobSubmit; source?: 'action' }): Promise<SendTurnResult | Refusal> {
     const who = actorRefusal(t.by)
     if (who) return who
     // An internal submit into a person's chat reads D1 first, as route 29 does (A7): the object's own state can say live
@@ -455,7 +490,7 @@ export class AgentCore {
       extra?.resume === undefined ? null
         : JSON.stringify({ questionId: extra.resume.questionId, decision: extra.resume.decision, toolUseId: extra.resume.toolUseId } satisfies Resume),
       t.webSearch === true ? 'on' : null,
-      extra === undefined ? 'person' : extra.job !== undefined ? 'job' : extra.resume !== undefined ? 'question' : 'task',
+      extra === undefined ? 'person' : extra.job !== undefined ? 'job' : extra.resume !== undefined ? 'question' : extra.source ?? 'task',
     )
     if (extra?.job !== undefined) this.jobs.admitted(extra.job, turnId)
     // A person's own message in a job's chat (Q4 = B: the job carries on; one rule in jobs/ M1-I could change).
@@ -608,6 +643,12 @@ export class AgentCore {
         promptVersion = 2
       }
     }
+    let actions = false
+    try {
+      actions = (await this.d.actionsOn?.()) === true
+    } catch (err) {
+      console.error({ event: 'turn_actions_unreadable', turnId, error: safeError(err) })
+    }
     t = this.current(turnId, gen, 'starting')
     if (!t) return
 
@@ -665,6 +706,7 @@ export class AgentCore {
         webFetchDomains: t.web_fetch_json === null ? null : JSON.parse(t.web_fetch_json) as string[], webSearch: t.web_search === 'on',
         systemPrompt,
         outputFormat: t.output_format_json === null ? undefined : JSON.parse(t.output_format_json) as OutputFormat,
+        actions,
       })
     } catch (err) {
       console.error({ event: 'turn_start_unbuildable', error: safeError(err) })
@@ -893,7 +935,12 @@ export class AgentCore {
     this.d.scheduler.schedule({ id: `${FLUSH_TURN_PREFIX}${turnId}`, kind: 'flush-turn', dueAtMs: now + FLUSH_RETRY_MS })
     void this.flushTurn(turnId)
     this.onFinal?.(this.turn(turnId)!)
+    for (const h of this.finalHooks) h(this.turn(turnId)!)
   }
+
+  /** Stage 1 M2-D: hooks run in `storeFinal`'s synchronous step, after `onFinal` (asks.ts schedules its turn-end task). */
+  private readonly finalHooks: ((t: TurnRow) => void)[] = []
+  addFinalHook(h: (t: TurnRow) => void): void { this.finalHooks.push(h) }
 
   /**
    * Writes the turn's fixed rows to D1 (idempotent: the same ids and positions every time). True once they're in; a

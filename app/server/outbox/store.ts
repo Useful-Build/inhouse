@@ -56,6 +56,9 @@ export const mayView = (row: Pick<OutboxActionRow, 'asked_by' | 'approver'>, v: 
 const mayDo = (memberParam: string, memberMay: boolean) =>
   `EXISTS (SELECT 1 FROM members m WHERE m.id = ${memberParam} AND m.kind = 'person' AND m.status = 'active' AND (m.role = 'admin' OR ${memberMay ? 1 : 0} = 1))`
 
+/** The row's chat isn't in the trash (M2-D, N11): an answer never approves a card of a deleted chat. */
+const CHAT_NOT_DELETED = 'NOT EXISTS (SELECT 1 FROM chats c WHERE c.id = outbox_actions.chat_id AND c.deleted_at_ms IS NOT NULL)'
+
 const INSERT_COLUMNS = [
   'id', 'rev', 'state', 'verdict', 'guardrail', 'origin', 'via', 'asked_by', 'approver', 'chat_id', 'run_id', 'turn_id', 'tool_use_id', 'job_id',
   'account_id', 'account_gen', 'operation', 'policy_rev', 'scope_json', 'scope_key', 'args_json', 'payload_hash', 'records', 'units', 'card_json',
@@ -121,6 +124,8 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       "SELECT * FROM outbox_actions WHERE chat_id = ? AND payload_hash = ? AND state = 'waiting' AND expires_at_ms > ? ORDER BY created_at_ms LIMIT 1",
       chatId, payloadHash, d.now(),
     ))
+  const chatDeleted = async (chatId: string) =>
+    (await first<{ one: number }>(db, stmt('SELECT 1 AS one FROM chats WHERE id = ? AND deleted_at_ms IS NOT NULL', chatId))) !== null
   const gateOpen = async () => (await first<{ one: number }>(db, stmt(`${GATE_OPEN.replace('SELECT 1', 'SELECT 1 AS one')}`))) !== null
   const scheduleSend = async (actionId: string, atMs: number) => {
     try {
@@ -234,6 +239,8 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       const before = await row(actionId)
       if (!before || !mayView(before, actor)) return refusal('not_found')
       if (before.approver !== actor.memberId) return refusal('forbidden', 'not_owner')
+      // M2-D (N11): a card whose chat was deleted can't be answered (its deletion withdraws it; this covers the race).
+      if (await chatDeleted(before.chat_id)) return refusal('conflict')
       const kind = kindOf(before)
       if ((input.choice === 'once' || input.choice === 'always') && kind !== 'ask') return refusal('invalid')
       if (input.choice === 'approve' && kind !== 'exact') return refusal('invalid')
@@ -252,7 +259,7 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
              approved_epoch = (SELECT epoch FROM outbox_gate WHERE id = 1), send_at_ms = ?, grant_id = NULL, lapsed_reason = NULL,
              updated_at_ms = ?, stamp = ?
            WHERE id = ? AND rev = ? AND state = 'waiting' AND approver = ? AND expires_at_ms > ? AND ${kindSql}
-             AND ${mayDo('?', entry.memberMay)} AND EXISTS (${GATE_OPEN})`,
+             AND ${mayDo('?', entry.memberMay)} AND EXISTS (${GATE_OPEN}) AND ${CHAT_NOT_DELETED}`,
           actor.memberId, nowMs, sendAt, nowMs, stamp, actionId, input.ifRev, actor.memberId, nowMs, actor.memberId,
         )
         : stmt(

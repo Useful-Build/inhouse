@@ -24,6 +24,8 @@ export interface ConnectorAccountRow {
   connected_at_ms: number | null
   disconnected_by: string | null
   disconnected_at_ms: number | null
+  /** Stage 1 M2-D: the Shopify write store's handle, copied from the hub (null for every other account). */
+  shop: string | null
   rev: number
 }
 
@@ -58,7 +60,7 @@ export interface ConnectorAccountStoreDeps {
 }
 
 /** The upsert's columns besides the key; each call sets the ones it changes, the rest keep their stored values. */
-type Change = { last_state: ConnectorLastState } & Partial<Pick<ConnectorAccountRow, 'connected_by' | 'connected_at_ms' | 'disconnected_by' | 'disconnected_at_ms'>>
+type Change = { last_state: ConnectorLastState } & Partial<Pick<ConnectorAccountRow, 'connected_by' | 'connected_at_ms' | 'disconnected_by' | 'disconnected_at_ms' | 'shop'>>
 
 export function connectorAccountStore({ db, hook = s => s }: ConnectorAccountStoreDeps) {
   /** One upsert (rev + 1 on an existing row) and its audit line, in one batch. */
@@ -117,6 +119,26 @@ export function connectorAccountStore({ db, hook = s => s }: ConnectorAccountSto
     /** W3: a pause or resume is the hub's (SignIn `paused`); here only its audit line, unguarded (no row changes). */
     async recordPause(accountId: string, line: AuditArgs, at: At): Promise<void> {
       await runBatch(db, [hook(auditInsert({ atMs: at.nowMs, actorId: at.actorId, args: line, target: { kind: 'connector', id: accountId }, requestId: at.requestId }, null))])
+    },
+
+    /**
+     * Stage 1 M2-D (N9): the hub's word on a connected account, copied in. The hub owns the sign-in, so its `connectedAt`
+     * is the account's generation (the hub refuses a send whose `expect.connectedAtMs` differs), and its write store's
+     * handle is the Shopify scope's `{ shop }`. Writes only when the row says something else (it was never recorded,
+     * dated by the product's own clock, disconnected, or another handle); then it's one batch: `connected` with the hub's
+     * date and handle, rev + 1, a `tools.connect` line by the system, and, when the generation moved, the grants on any
+     * other generation revoked (N10). Returns whether it wrote. Nothing is written for an account the hub doesn't call
+     * active: a write on it is refused at `resolve` instead.
+     */
+    async syncFromHub(accountId: string, connector: string, hub: { connectedAtMs: number; shop: string | null }, at: At): Promise<boolean> {
+      const r = await first<ConnectorAccountRow>(db, stmt('SELECT * FROM connector_accounts WHERE account_id = ?', accountId))
+      const disconnected = r !== null && r.disconnected_at_ms !== null && (r.connected_at_ms === null || r.disconnected_at_ms >= r.connected_at_ms)
+      if (r && r.last_state === 'connected' && !disconnected && r.connected_at_ms === hub.connectedAtMs && r.shop === hub.shop) return false
+      const moved = r?.connected_at_ms !== hub.connectedAtMs
+      await change(accountId, connector, { last_state: 'connected', connected_at_ms: hub.connectedAtMs, shop: hub.shop, ...(disconnected ? { disconnected_at_ms: null } : {}) },
+        { action: 'tools.connect', accountId, outcome: 'ok' }, at,
+        moved ? applied => revokeAccountGrantsStmts(accountId, hub.connectedAtMs, at, applied) : undefined)
+      return true
     },
 
     /** W3: a disconnect, as one batch: `disconnected`, who and when, rev + 1, and W3's audit line. */

@@ -11,8 +11,8 @@
 //  6. a hub a version ahead (a new field, a new error code) breaks every call; a long hub message reaches the model
 //     whole; a value JSON can't carry throws out of the handler;
 //  7. a log line names a tool the hub never listed (caller text);
-//  8. at stage Watch (P8a S), a call to a tool the hub's read list doesn't name reaches the hub (a write, or a name the
-//     model made up), or the check fails open when the stage or the list can't be read.
+//  8. a call to a tool the hub's read list doesn't name reaches the hub (a write, or a name the model made up), or the
+//     check fails open when the list can't be read (N14: the read-list check on every call, the stage gate gone).
 import { fc, it } from '@fast-check/vitest'
 import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
 import type { CallerScope, HubErrorCode, HubResult, ToolInfo } from '../../hub/index/contract.ts'
@@ -63,8 +63,7 @@ function fake(): Fake {
       return (await f.call()) as HubResult<{ data: unknown }>
     },
   }
-  // At Act by default, so these tests cover the route itself; the Watch switch has its own describe (failure 8).
-  f.deps = { hub, stage: async () => 1, now: () => 1_800_000_000_000, requestId: () => `req-${++n}`, log: e => void f.logs.push(e) }
+  f.deps = { hub, now: () => 1_800_000_000_000, requestId: () => `req-${++n}`, log: e => void f.logs.push(e) }
   return f
 }
 
@@ -154,10 +153,10 @@ describe('JSON-RPC mapping against literal pairs (failure 2)', () => {
     for (const { bad, listStatus } of failures) {
       const f = fake()
       f.call = bad
-      f.list = bad
       expect((await call(f, { jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'orders_search' } })).body).toEqual({
         jsonrpc: '2.0', id: 10, result: { content: [{ type: 'text', text: 'internal: internal error' }], isError: true },
       })
+      f.list = bad
       expect(await call(f, { jsonrpc: '2.0', id: 11, method: 'tools/list' })).toMatchObject({
         status: listStatus,
         body: { jsonrpc: '2.0', id: 11, error: { code: -32603, message: 'hub: internal' } },
@@ -186,10 +185,10 @@ describe('JSON-RPC mapping against literal pairs (failure 2)', () => {
   it('an error code this Worker does not know is answered as internal, logged unknown_hub_code', async () => {
     const f = fake()
     f.call = async () => ({ ok: false, error: { code: 'quota_exceeded', message: 'New text.' } })
-    f.list = f.call
     expect((await call(f, { jsonrpc: '2.0', id: 23, method: 'tools/call', params: { name: 'orders_search' } })).body).toEqual({
       jsonrpc: '2.0', id: 23, result: { content: [{ type: 'text', text: 'internal: internal error' }], isError: true },
     })
+    f.list = f.call
     expect((await call(f, { jsonrpc: '2.0', id: 24, method: 'tools/list' })).body).toEqual({ jsonrpc: '2.0', id: 24, error: { code: -32603, message: 'hub: internal' } })
     expect(f.logs.map(l => l.code)).toEqual(['unknown_hub_code', 'unknown_hub_code'])
   })
@@ -312,14 +311,16 @@ describe('the scope the hub sees (failure 4)', () => {
     const grant = { ...GRANT, runId, memberId }
     const params = { name: 'orders_search', arguments: { runId: other, principalId: other, scope: { kind: 'server', job: other } }, runId: other, principalId: other, scope: { kind: 'server' }, chatId: other }
     await call(f, { jsonrpc: '2.0', id: 1, method, params, runId: other, scope: { kind: 'server', job: other } }, undefined, grant)
-    expect(f.scopes).toEqual([{ kind: 'run', runId, principalId: memberId, requestId: 'req-1' }])
+    // A call reads the read list first (N14), with a scope of its own.
+    const scopes = method === 'tools/call' ? ['req-1', 'req-2'] : ['req-1']
+    expect(f.scopes).toEqual(scopes.map(requestId => ({ kind: 'run', runId, principalId: memberId, requestId })))
   })
 
   it('a fresh request id per call', async () => {
     const f = fake()
     await call(f, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
     await call(f, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'orders_search' } })
-    expect(f.scopes.map(s => (s as { requestId: string }).requestId)).toEqual(['req-1', 'req-2'])
+    expect(f.scopes.map(s => (s as { requestId: string }).requestId)).toEqual(['req-1', 'req-2', 'req-3'])
   })
 })
 
@@ -357,10 +358,9 @@ describe('the canary sweep (failure 1)', () => {
       return { ok: false, error: { code: outcome, message: `Fixed text ${hubCanary}.`, retryAfterMs: 1_000 } }
     }
     f.call = answer
-    f.list = async () => {
-      const a = (await answer()) as { ok: boolean }
-      return a.ok ? { ok: true, value: [{ ...TOOLS[0]!, description: 'Search orders.' }] } : a
-    }
+    // The read list answers as the hub does, so every call gets past the read-list check (N14) and its answer is the one
+    // under test; the list's own failures are the JSON-RPC mapping's tests.
+    f.list = async () => ({ ok: true, value: [{ ...TOOLS[0]!, description: 'Search orders.' }] })
     const seen: string[] = []
     for (const body of requests) {
       const r = await call(f, body, { headers: { 'x-inhouse-run-token': token } })
@@ -382,7 +382,8 @@ describe('the canary sweep (failure 1)', () => {
     expect(r405.text + JSON.stringify([...r405.headers])).not.toContain(token)
     // The hub's text reaches the model only through the tools/call answer it belongs to: data on ok, the fixed message
     // on a hub error. Never on a throw or a malformed answer, never through tools/list.
-    expect(seen).toEqual(outcome === 'throw' || outcome === 'malformed' ? [] : ['tools/call', 'tools/call'])
+    // The made-up name isn't on the read list, so it never reaches the hub (N14) and its answer holds no hub text.
+    expect(seen).toEqual(outcome === 'throw' || outcome === 'malformed' ? [] : ['tools/call'])
     expect(printed.length).toBeGreaterThan(0)
     for (const line of printed) {
       expect(line).not.toContain(token)
@@ -392,52 +393,44 @@ describe('the canary sweep (failure 1)', () => {
   })
 })
 
-describe('the Watch switch: only listed read tools run (P8a S, failure 8)', () => {
+describe('the read-list check: only listed read tools run, on every call (N14, failure 8)', () => {
   const callTool = (name: string, id = 9) => ({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: {} } })
-  const atWatch = () => {
-    const f = fake()
-    f.deps = { ...f.deps, stage: async () => 0 }
-    return f
-  }
   it('a listed read tool runs: the list is read first, then the call', async () => {
-    const f = atWatch()
+    const f = fake()
     expect((await call(f, callTool('orders_search'))).body).toEqual({ jsonrpc: '2.0', id: 9, result: { content: [{ type: 'text', text: '{"count":2}' }] } })
     expect(f.calls.map(c => c.name)).toEqual(['orders_search'])
+    expect(f.scopes).toHaveLength(2)
   })
   it('a write tool the hub would run, and a made-up name, never reach the hub', async () => {
-    for (const name of ['orders_cancel', 'products_update', 'slack_post_message']) {
-      const f = atWatch()
+    for (const name of ['orders_cancel', 'products_update', 'slack_post_message', 'shopify_order_tag_add', 'mcp__actions__shopify_order_tag_add']) {
+      const f = fake()
       const r = await call(f, callTool(name))
-      expect(r.body, name).toEqual({ jsonrpc: '2.0', id: 9, result: { content: [{ type: 'text', text: 'write_refused: at the Watch stage only reading tools run; nothing outside Inhouse is changed' }], isError: true } })
+      expect(r.body, name).toEqual({ jsonrpc: '2.0', id: 9, result: { content: [{ type: 'text', text: "write_refused: only reading tools run here, and this isn't one of them, so nothing outside Inhouse was changed" }], isError: true } })
       expect(f.calls, name).toEqual([])
       expect(f.logs.map(l => l.code), name).toEqual(['write_refused'])
     }
   })
-  it('fails closed: an unreadable stage, a failing or malformed list, or a list error runs nothing', async () => {
+  it('fails closed: a failing or malformed list, or a list error, runs nothing', async () => {
     const cases: ((f: Fake) => void)[] = [
-      f => { f.deps = { ...f.deps, stage: async () => { throw new Error('d1 down') } } },  // logged stage_unreadable (below)
       f => { f.list = async () => { throw new Error('binding') } },
       f => { f.list = async () => ({ nope: true }) },
       f => { f.list = async () => ({ ok: false, error: { code: 'internal', message: 'x' } }) },
     ]
     for (const [i, arrange] of cases.entries()) {
-      const f = atWatch()
+      const f = fake()
       arrange(f)
       const r = await call(f, callTool('orders_search'))
-      expect(r.body, String(i)).toMatchObject({ jsonrpc: '2.0', id: 9, result: { isError: true } })
+      expect(r.body, String(i)).toEqual({ jsonrpc: '2.0', id: 9, result: { content: [{ type: 'text', text: 'internal: the tool list could not be read, so the call did not run' }], isError: true } })
       expect(f.calls, String(i)).toEqual([])
+      expect(f.logs.map(l => l.code), String(i)).toEqual(['binding_failed'])
     }
   })
-  it("a stage that can't be read is logged as stage_unreadable, not as a hub binding failure", async () => {
-    const f = atWatch()
-    f.deps = { ...f.deps, stage: async () => { throw new Error('d1 down') } }
-    await call(f, callTool('orders_search'))
-    expect(f.logs.map(l => l.code)).toEqual(['stage_unreadable'])
-    expect(f.scopes).toEqual([])
-  })
-  it('from Act the call goes to the hub as before (its own read/write split decides)', async () => {
+  it('the list is read again on every call: a tool dropped from it stops running', async () => {
     const f = fake()
-    await call(f, callTool('orders_cancel'))
-    expect(f.calls.map(c => c.name)).toEqual(['orders_cancel'])
+    await call(f, callTool('orders_search'))
+    f.list = async () => ({ ok: true, value: TOOLS.filter(t => t.name !== 'orders_search') })
+    const r = await call(f, callTool('orders_search', 10))
+    expect(r.body).toMatchObject({ jsonrpc: '2.0', id: 10, result: { isError: true } })
+    expect(f.calls.map(c => c.name)).toEqual(['orders_search'])
   })
 })
