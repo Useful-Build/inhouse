@@ -214,8 +214,8 @@ describe('runner images in the registry', () => {
     const digest = `sha256:${'a'.repeat(64)}`
     const r = registry(() => [200, { repositories: { [`${ACCOUNT}/inhouse-sbx-pr12`]: ['0123abc', digest], [`${ACCOUNT}/inhouse-sbx-pr13`]: [digest] } }])
     const cf = cloudflare({ token: TOKEN, accountId: ACCOUNT, fetchImpl: r.fetchImpl })
-    assert.deepEqual(await cf.images(), [{ name: 'inhouse-sbx-pr12', tags: ['0123abc'] }, { name: 'inhouse-sbx-pr13', tags: [] }])
-    for (const body of [{}, { repositories: [] }, { repositories: { [`${ACCOUNT}/x`]: 'tag' } }]) {
+    assert.deepEqual(await cf.images(), [{ name: 'inhouse-sbx-pr12', tags: ['0123abc'] }])
+    for (const body of [{}, { repositories: [] }, { repositories: { [`${ACCOUNT}/x`]: 'tag' } }, { repositories: {}, cursor: 'next' }]) {
       const bad = cloudflare({ token: TOKEN, accountId: ACCOUNT, fetchImpl: registry(() => [200, body]).fetchImpl })
       await assert.rejects(bad.images(), /registry catalog/)
     }

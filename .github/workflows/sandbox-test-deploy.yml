@@ -326,10 +326,10 @@ jobs:
         run: |
           export TEST_ISSUER_PRIVATE_JWK_FILE="$RUNNER_TEMP/issuer/private.jwk.json" PLAYWRIGHT_JSON_OUTPUT_NAME="$RUNNER_TEMP/report.json"
           rc=0
-          gated=$(grep -lE -- "$AGENT_GATE" e2e/api/*.spec.ts e2e/real/*.spec.ts | LC_ALL=C sort) || rc=$?
+          gated=$(grep -rlE --include='*.spec.ts' -- "$AGENT_GATE" e2e/api e2e/real | LC_ALL=C sort) || rc=$?
           [ "$rc" -le 1 ] || { echo "::error::the search for the deployment gate failed ($rc)"; exit 1; }
           rc=0
-          loose=$(grep -lE -- "$ANY_GATE" e2e/api/*.spec.ts e2e/real/*.spec.ts | LC_ALL=C sort) || rc=$?
+          loose=$(grep -rlE --include='*.spec.ts' -- "$ANY_GATE" e2e/api e2e/real | LC_ALL=C sort) || rc=$?
           [ "$rc" -le 1 ] || { echo "::error::the search for other deployment gates failed ($rc)"; exit 1; }
           for f in $loose; do
             grep -qxF "$f" <<< "$gated" && continue
@@ -344,7 +344,7 @@ jobs:
             echo "::error::$f is a helper that gates on the deployment, and AGENT_GATE doesn't know its call"; exit 1
           done
           if [ "$FULL" = true ] || [ "$CONTAINERS" != true ]; then
-            mapfile -t base < <(ls e2e/api/*.spec.ts e2e/real/*.spec.ts)
+            mapfile -t base < <(find e2e/api e2e/real -name '*.spec.ts' | LC_ALL=C sort)
             set_name="every api and real spec"
           else
             base=()

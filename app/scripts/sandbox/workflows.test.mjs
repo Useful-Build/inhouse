@@ -160,6 +160,8 @@ function checkRules(files) {
   const order = ['scripts/sandbox/deploy-config.mjs', 'check-product-config.mjs --sandbox --per-pr', 'scripts/sandbox/deploy.mjs'].map(s => deploy.indexOf(s))
   if (!order.every(i => i > 0) || order.some((v, i) => i > 0 && v < order[i - 1])) f.push('deploy: not deploy-config.mjs, then the lock, then deploy.mjs')
   if (!deploy.includes('--artifact "$RUNNER_TEMP/artifact"')) f.push('deploy: deploy-config.mjs doesn\'t read the artifact folder')
+  if (JSON.stringify(Object.keys(parsed[DEPLOY]?.jobs ?? {})) !== JSON.stringify(['check', 'pr-code', 'deploy'])) f.push(`the deploy workflow's jobs are ${JSON.stringify(Object.keys(parsed[DEPLOY]?.jobs ?? {}))}`)
+  if (JSON.stringify(Object.keys(parsed[CLEANUP]?.jobs ?? {})) !== JSON.stringify(['cleanup'])) f.push(`the cleanup workflow's jobs are ${JSON.stringify(Object.keys(parsed[CLEANUP]?.jobs ?? {}))}`)
   const prCode = parsed[DEPLOY]?.jobs['pr-code'] ?? ''
   const perms = /\n {4}permissions:\n((?: {6}.*\n)+)/.exec(`${prCode}\n`)?.[1].split('\n').map(l => l.trim()).filter(Boolean).sort()
   if (JSON.stringify(perms) !== JSON.stringify(['actions: read', 'contents: read'])) f.push(`pr-code: permissions ${JSON.stringify(perms)}`)
@@ -169,7 +171,7 @@ function checkRules(files) {
   for (const line of ['[ "$ATTEMPT" = 1 ] ||', '[ "$head_repo" = "$REPO" ] ||', '[ "$head_sha" = "$SHA" ] ||', '[ "$state" = open ] ||']) {
     if (!check.includes(line)) f.push(`check: lost ${line}`)
   }
-  const on = h => (/\non:\n((?: {2}.*\n|\n)+?)(?=\S)/.exec(`${h}\n`)?.[1] ?? '').match(/^ {2}[a-z_]+:/gm) ?? []
+  const on = h => (/\non:\n((?: {2}.*\n|\n)+?)(?=\S)/.exec(`${h.split('\n').filter(l => !/^#/.test(l)).join('\n')}\n`)?.[1] ?? '').match(/^ {2}[a-z_]+:/gm) ?? []
   if (JSON.stringify(on(parsed[DEPLOY]?.header ?? '')) !== JSON.stringify(['  workflow_dispatch:'])) f.push('the deploy workflow starts on something but dispatch')
   if (JSON.stringify(on(parsed[CLEANUP]?.header ?? '')) !== JSON.stringify(['  pull_request_target:', '  schedule:', '  workflow_dispatch:'])) f.push('the cleanup starts on something else')
   if (!/pull_request_target:\n {4}types: \[closed\]\n(?: {4}#.*\n)* {4}branches: \[main\]\n/.test(files[CLEANUP] ?? '')) f.push('the cleanup\'s PR trigger isn\'t closed PRs into main')
@@ -190,8 +192,13 @@ describe('secret jobs are frozen', () => {
     }
     expect(Object.keys(SECRET_JOBS).sort()).toEqual(Object.keys(TRIPWIRE).sort())
   })
-  test('the deploy workflow\'s header (its triggers, top permissions, defaults, env) is exactly its frozen copy', () => {
+  test('each workflow\'s header (its triggers, top permissions, concurrency, defaults, env) is exactly its frozen copy', () => {
     expect(split(FILES[DEPLOY]).header).toBe(frozen('sandbox-test-deploy.header.yml'))
+    expect(split(FILES[CLEANUP]).header).toBe(frozen('sandbox-test-deploy-cleanup.header.yml'))
+  })
+  test('split() reads a job key with an inline comment, quoted keys, and a jobs: line with a comment', () => {
+    const { jobs } = split('on: push\njobs: # all\n  a: # first\n    runs-on: x\n  "b":\n    runs-on: y\n')
+    expect(Object.keys(jobs)).toEqual(['a', 'b'])
   })
 })
 
@@ -243,6 +250,9 @@ describe('each rule fires on a broken copy', () => {
     ['pr-code on the sandbox environment', swap(DEPLOY, '      actions: read\n      contents: read\n', '      actions: read\n      contents: read\n    environment: sandbox\n'), 'pr-code: has an environment'],
     ['check without the fork refusal', swap(DEPLOY, '          [ "$head_repo" = "$REPO" ] || { echo "::error::PR $PR comes from $head_repo, not $REPO (forks never deploy)"; exit 1; }\n', ''), 'check: lost [ "$head_repo" = "$REPO" ] ||'],
     ['a push trigger', swap(DEPLOY, 'on:\n  workflow_dispatch:', 'on:\n  push:\n  workflow_dispatch:'), 'starts on something but dispatch'],
+    ['a push trigger behind a column-0 comment', swap(DEPLOY, 'on:\n  workflow_dispatch:', 'on:\n  workflow_dispatch:\n# note\n  push:'), 'starts on something but dispatch'],
+    ['secrets: inherit', job(DEPLOY, '  extra:\n    uses: ./.github/workflows/x.yml\n    secrets: inherit'), 'reads secrets by a form that names none'],
+    ['a new job in the deploy workflow', job(DEPLOY, extra('')), 'the deploy workflow\'s jobs are'],
     ['an Actions cache', job(DEPLOY, '  extra:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/cache@0000000000000000000000000000000000000000'), 'restores an Actions cache'],
     ['an action by tag', job(DEPLOY, '  extra:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/upload-artifact@v7'), 'is not pinned to a commit'],
   ]

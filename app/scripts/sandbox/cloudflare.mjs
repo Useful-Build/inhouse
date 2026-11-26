@@ -172,14 +172,18 @@ export function cloudflare({ token, accountId, fetchImpl = fetch, now = Date.now
       const auth = await registryAuth()
       const res = await fetchImpl(new URL(`${REGISTRY}/v2/_catalog?tags=true`), { method: 'GET', headers: { authorization: auth } })
       if (!res.ok) throw new CloudflareError(`the registry catalog answered ${res.status}`, { status: res.status })
-      const repos = (await res.json())?.repositories
+      const body = await res.json()
+      // The registry pages its catalog with a cursor: a second page fails rather than hides a PR's images.
+      if (body?.cursor) throw new CloudflareError('the registry catalog has more than one page')
+      const repos = body?.repositories
       if (!repos || typeof repos !== 'object' || Array.isArray(repos)) throw new CloudflareError('the registry catalog has no repositories object')
       const prefix = `${accountId}/`
       const out = []
       for (const [repo, tags] of Object.entries(repos)) {
         if (!Array.isArray(tags)) throw new CloudflareError(`the registry catalog's ${JSON.stringify(repo)} has no tag list`)
         const name = repo.replace(/^\/+/, '')
-        if (name.startsWith(prefix)) out.push({ name: name.slice(prefix.length), tags: tags.filter(t => typeof t === 'string' && IMAGE_TAG.test(t)) })
+        const plain = tags.filter(t => typeof t === 'string' && IMAGE_TAG.test(t))
+        if (name.startsWith(prefix) && plain.length > 0) out.push({ name: name.slice(prefix.length), tags: plain })
       }
       return out
     },
