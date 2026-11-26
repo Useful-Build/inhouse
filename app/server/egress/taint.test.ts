@@ -136,7 +136,7 @@ describe('catalogue data is not tainted, customer and order data is (decision L2
       listTools: async () => ({ ok: true, value: [{ name: tool, connector: 'shopify', description: tool, inputSchema: {} }] satisfies ToolInfo[] }),
       callTool: async () => ({ ok: true, value: { data } }) satisfies HubResult<{ data: unknown }>,
     }
-    const hub: HubRouteDeps = { hub: fakeHub, stage: async () => 1, now: () => BASE_NOW, requestId: () => 'req-l2', log: () => undefined }
+    const hub: HubRouteDeps = { hub: fakeHub, now: () => BASE_NOW, requestId: () => 'req-l2', log: () => undefined }
     const res = await handleEgress(
       egressRequest('/hub/', { body: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: tool, arguments: {} } }, headers: { 'content-type': 'application/json' } }),
       { ...h.deps, hub },
@@ -390,7 +390,7 @@ describe('fail closed on capture and check failures', () => {
       listTools: async () => ({ ok: true, value: [{ name: 'orders_search', connector: 'shopify', description: 'Orders', inputSchema: {} }] satisfies ToolInfo[] }),
       callTool: async () => ({ ok: true, value: { data: { order: '#1042', email: 'anna@example.com' } } }) satisfies HubResult<{ data: unknown }>,
     }
-    const hubDeps: HubRouteDeps = { hub: fakeHub, stage: async () => 1, now: () => BASE_NOW, requestId: () => 'req-1', log: () => undefined }
+    const hubDeps: HubRouteDeps = { hub: fakeHub, now: () => BASE_NOW, requestId: () => 'req-1', log: () => undefined }
     const res = await handleEgress(
       egressRequest('/hub/', {
         body: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'orders_search', arguments: {} } },
@@ -489,7 +489,7 @@ describe('end-to-end on real D1: /hub/ read then WebFetch to a listed host', () 
       listTools: async () => ({ ok: true, value: [{ name: 'orders_search', connector: 'shopify', description: 'Orders', inputSchema: {} }] satisfies ToolInfo[] }),
       callTool: async () => ({ ok: true, value: { data: { orders: [{ id: 'gid://shopify/Order/5550000001001', name: '#1001' }] } } }),
     }
-    const hubDeps: HubRouteDeps = { hub: fakeHub, stage: async () => 1, now: () => BASE_NOW, requestId: () => 'req-e2e', log: () => undefined }
+    const hubDeps: HubRouteDeps = { hub: fakeHub, now: () => BASE_NOW, requestId: () => 'req-e2e', log: () => undefined }
     const hubRes = await handleEgress(
       egressRequest('/hub/', {
         body: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'orders_search', arguments: { first: 1 } } },

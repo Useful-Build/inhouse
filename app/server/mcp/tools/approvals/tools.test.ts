@@ -17,7 +17,7 @@ import { POLICY_REV } from '../../../permissions/policy.ts'
 import { insertGrant, person } from '../../../permissions/test-support.ts'
 import { ADMIN, ASKER, HUB_FACTS, OTHER, SHOP_GEN, fresh, resetOutbox, rowOf, tagArgs, world } from '../../../outbox/test-support.ts'
 import { INHOUSE_TOOLS } from '../../registry.ts'
-import type { ToolHandler, ToolResult, ToolScope } from '../../server/tool.ts'
+import type { ToolDeps, ToolHandler, ToolResult, ToolScope } from '../../server/tool.ts'
 import { TOOL_HANDLERS } from '../index.ts'
 import { approvalHandlers } from './index.ts'
 import type { ApprovalsWiring } from './index.ts'
@@ -44,11 +44,11 @@ const wiring: ApprovalsWiring = {
 }
 const wired = approvalHandlers(() => wiring)
 
-async function call(name: 'approval_request' | 'approval_get' | 'approval_list' | 'approval_withdraw', args: Record<string, unknown>, s: ToolScope, handlers: Partial<Record<string, ToolHandler>> = wired): Promise<ToolResult> {
+async function call(name: 'approval_request' | 'approval_get' | 'approval_list' | 'approval_withdraw', args: Record<string, unknown>, s: ToolScope, handlers: Partial<Record<string, ToolHandler>> = wired, deps: Omit<ToolDeps, 'db'> = {}): Promise<ToolResult> {
   const h = handlers[name]!
   const parsed = h.input.safeParse(args)
   if (!parsed.success) throw new Error(`${name}: ${parsed.error.message}`)
-  return h.call(parsed.data, s, { db })
+  return h.call(parsed.data, s, { db, ...deps })
 }
 const text = (r: ToolResult) => r.content[0].text
 const data = (r: ToolResult) => r.structuredContent as Record<string, unknown>
@@ -147,13 +147,36 @@ describe('approval_request (failures 1, 2, 6)', () => {
     expect(await count('outbox_actions')).toBe(2)
   })
 
-  it('the served map has no wiring yet: refused with a fixed text, nothing made, even with the ceiling seeded (failure 3)', async () => {
+  it('the served map without the egress\'s wiring (`ToolDeps.approvals`): refused with a fixed text, nothing made, even with the ceiling seeded (failure 3)', async () => {
     const mark = await lastLineId(db)
     const r = await call('approval_request', { operation: 'shopify_order_tag_add', args: tagArgs(1) }, scope(), Object.fromEntries(TOOL_HANDLERS))
     expect(r).toMatchObject({ isError: true, structuredContent: { error: 'not_switched_on' } })
     expect(text(r)).toBe("Asking for approval from chat isn't switched on yet, so nothing was asked or sent. Tell the person you can't put this in Approvals yet.")
     expect(await count('outbox_actions')).toBe(0)
     expect(await linesSince(db, mark)).toEqual([])
+  })
+})
+
+describe('M2-D: the egress\'s wiring (N14, N15)', () => {
+  it('a routine\'s run asks the routine\'s creator: an exact card for them, in the routine\'s chat; no creator refuses', async () => {
+    const asked: string[] = []
+    const routine = approvalHandlers(() => ({ ...wiring, routineAsker: async () => ({ memberId: ASKER, role: 'member' }), noted: async (_s, id) => { asked.push(id) } }))
+    const r = await call('approval_request', { operation: 'shopify_order_tag_add', args: tagArgs(1) }, scope('m_system', { chatId: 'c_m2e_routine' }), routine)
+    expect(r.isError, text(r)).toBeUndefined()
+    const id = data(r).approval_id as string
+    expect(await rowOf(db, id)).toMatchObject({ origin: 'routine', asked_by: ASKER, approver: ASKER, chat_id: 'c_m2e_routine', verdict: 'ask', state: 'waiting' })
+    expect(asked).toEqual([id])
+    const system = approvalHandlers(() => ({ ...wiring, routineAsker: async () => null }))
+    expect(data(await call('approval_request', { operation: 'shopify_order_tag_add', args: tagArgs(2) }, scope('m_system', { chatId: 'c_m2e_routine' }), system))).toEqual({ error: 'no_one_to_ask' })
+  })
+
+  it('the served map takes the wiring from the tool deps, and tells the turn about the card it made or found', async () => {
+    const asked: string[] = []
+    const r = await call('approval_request', { operation: 'shopify_order_tag_add', args: tagArgs(3) }, scope(), Object.fromEntries(TOOL_HANDLERS), {
+      approvals: { ...wiring, noted: async (_s, id) => { asked.push(id) } },
+    })
+    expect(r.isError, text(r)).toBeUndefined()
+    expect(asked).toEqual([data(r).approval_id])
   })
 })
 

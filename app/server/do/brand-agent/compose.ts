@@ -14,6 +14,7 @@ import { addNotice } from '../../notices/store.ts'
 import { resolveTurnSettings } from '../../api/runs.ts'
 import { openStores } from '../../db/stores.ts'
 import { createLagTable, outboxPauseHook } from '../../outbox/gate.ts'
+import type { AsksDeps } from './asks.ts'
 import { outboxNotifier } from '../../outbox/notify.ts'
 import { questionHook } from '../../questions/ask.ts'
 import { QUESTIONS_ON } from '../../questions/switch.ts'
@@ -102,5 +103,15 @@ export function jobDeps(env: Env): JobDeps {
     async notify(n) {
       await env.DB.batch([addNotice(env.DB, jobNoticeInput(n))])
     },
+  }
+}
+
+// ---------- M2-D's anchor (Stage 1, N14): the asks' ports ----------
+// `texts` stays null until M2-G wires the action texts (N20): while it is null no resume turn is ever sent.
+
+export function asksDeps(env: Env): AsksDeps {
+  return {
+    texts: null,
+    settings: jobDeps(env).settings,
   }
 }

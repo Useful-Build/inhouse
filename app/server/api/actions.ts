@@ -39,6 +39,19 @@ async function scheduleSend(c: Ctx, change: OutboxChange): Promise<void> {
   }
 }
 
+/**
+ * Stage 1 M2-D (N14): a change reaches the chat (`action.updated`) and, once final, the agent (the report), through
+ * BrandAgent's deliver task. A failed ask is logged: the asks' sweep finds the change within a minute.
+ */
+async function tellAgent(c: Ctx, change: OutboxChange): Promise<void> {
+  if (!('action' in change)) return
+  try {
+    await brandAgent(c.env).actionChanged(change.action.id)
+  } catch (err) {
+    console.error({ event: 'action_changed_failed', actionId: change.action.id, requestId: c.requestId, error: err instanceof Error ? err.name : 'unknown' })
+  }
+}
+
 const ListQuerySchema = z.object({ states: z.string().max(200).optional(), chatId: ChatIdSchema.optional() }).strict()
 
 /** Route 120, `GET /api/actions?states=a,b&chatId=`: `{ items }`, newest first, the cards this person may see. */
@@ -84,6 +97,7 @@ export async function answerAction(c: Ctx): Promise<Response> {
   if ('error' in body) return body.error
   const change = await storesOf(c).outbox.answer(viewerOf(c), id.data, body.ok, at(c))
   await scheduleSend(c, change)
+  await tellAgent(c, change)
   return answerOf(c, id.data, change)
 }
 
@@ -93,7 +107,9 @@ export async function undoAction(c: Ctx): Promise<Response> {
   if (!id.success) return apiError('not_found')
   const body = await readBody(c.request, UndoActionInputSchema)
   if ('error' in body) return body.error
-  return answerOf(c, id.data, await storesOf(c).outbox.undo(viewerOf(c), id.data, body.ok, at(c)))
+  const change = await storesOf(c).outbox.undo(viewerOf(c), id.data, body.ok, at(c))
+  await tellAgent(c, change)
+  return answerOf(c, id.data, change)
 }
 
 /** Route 124, `POST /api/actions/:id/resolve` `{ outcome, ifRev }`: "Needs a check", by its approver or an admin. */
@@ -102,5 +118,7 @@ export async function resolveAction(c: Ctx): Promise<Response> {
   if (!id.success) return apiError('not_found')
   const body = await readBody(c.request, ResolveActionInputSchema)
   if ('error' in body) return body.error
-  return answerOf(c, id.data, await storesOf(c).outbox.resolve(viewerOf(c), id.data, body.ok, at(c)))
+  const change = await storesOf(c).outbox.resolve(viewerOf(c), id.data, body.ok, at(c))
+  await tellAgent(c, change)
+  return answerOf(c, id.data, change)
 }

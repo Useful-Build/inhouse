@@ -1,0 +1,71 @@
+// The hub's word on the brand's write accounts (Stage 1 M2-D, N9), read inside BrandAgent: the runner's egress holds no
+// hub binding but ReadGateway (the P5 import boundary), so the write path asks the object (`BrandAgentRpc.hubAccounts`).
+// The hub is the authority on a connection (it owns the sign-in): its `connectedAt` and the Shopify write store's handle
+// are copied into `connector_accounts` (db/connector-accounts.ts `syncFromHub`), where `resolve`, the claim and the
+// dispatcher's `expect.connectedAtMs` read them. The binding's answer is copied out and released, never kept
+// (shared/rpc-answer.ts).
+import { z } from 'zod'
+import type { CallerScope, ConnectGateway } from '../../../hub/index/contract.ts'
+import { connectorAccountStore } from '../../db/connector-accounts.ts'
+import { SYSTEM_MEMBER_ID } from '../../db/ids.ts'
+import { ACCOUNT_IDS } from '../../outbox/facts.ts'
+import type { HubAccountFacts } from '../../outbox/facts.ts'
+import { safeError } from '../../safe-error.ts'
+import { settledAnswer } from '../../../shared/rpc-answer.ts'
+
+const SHOP_HANDLE = /^[a-z0-9][a-z0-9-]{0,59}$/
+
+const AccountsAnswer = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    value: z.array(z.object({
+      accountId: z.string(), connector: z.string(),
+      status: z.object({ state: z.string(), paused: z.boolean(), connectedAt: z.object({ ms: z.number().int().nonnegative() }).nullable() }),
+      // A handle as the hub's config parsers take it (hub/index/schemas.ts SHOP_HANDLE, written out: no hub import here).
+      // Anything else is no handle, so a Shopify write is refused; the other accounts are read as usual.
+      shop: z.string().regex(SHOP_HANDLE).optional().catch(undefined),
+    })),
+  }),
+  z.object({ ok: z.literal(false), error: z.object({ code: z.string() }) }),
+])
+
+const LABEL: Readonly<Record<'shopify' | 'slack', string>> = { shopify: 'Shopify', slack: 'Slack' }
+
+/**
+ * The hub's word on the brand's write accounts, read now (ConnectGateway.listAccounts), and its connection date and
+ * Shopify store handle copied into `connector_accounts` (N9; the hub is the authority: it owns the sign-in). Answers each
+ * account's pause and label for `resolve`; an account the hub doesn't call active is answered as paused, so a write on it
+ * is refused (`account_unavailable`). An answer that can't be read answers nothing: every account is then refused.
+ */
+export async function hubAccountFacts(d: {
+  connect: Pick<ConnectGateway, 'listAccounts'>; db: D1Database; nowMs: number; requestId: string; log(e: Record<string, unknown>): void
+}): Promise<HubAccountFacts[]> {
+  const scope: CallerScope = { kind: 'server', job: 'actions.accounts', requestId: d.requestId }
+  let raw: unknown
+  try {
+    // The answer's plain data, the answer released (shared/rpc-answer.ts); one that isn't data throws, and is refused here.
+    raw = await settledAnswer(d.connect.listAccounts(scope))
+  } catch (err) {
+    d.log({ event: 'actions_accounts_unreadable', why: 'threw', error: safeError(err) })
+    return []
+  }
+  const parsed = AccountsAnswer.safeParse(raw)
+  if (!parsed.success || !parsed.data.ok) {
+    d.log({ event: 'actions_accounts_unreadable', why: parsed.success ? 'hub_error' : 'malformed' })
+    return []
+  }
+  const accounts = connectorAccountStore({ db: d.db })
+  const out: HubAccountFacts[] = []
+  for (const connector of ['shopify', 'slack'] as const) {
+    const a = parsed.data.value.find(x => x.accountId === ACCOUNT_IDS[connector])
+    if (!a) continue
+    const active = a.status.state === 'active' && a.status.connectedAt !== null
+    if (active) {
+      await accounts.syncFromHub(a.accountId, connector, { connectedAtMs: a.status.connectedAt!.ms, shop: connector === 'shopify' ? a.shop ?? null : null },
+        { actorId: SYSTEM_MEMBER_ID, requestId: d.requestId, nowMs: d.nowMs })
+    }
+    out.push({ accountId: a.accountId, paused: a.status.paused || !active, label: LABEL[connector] })
+  }
+  return out
+}
+

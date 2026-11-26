@@ -395,7 +395,8 @@ async function pauseAndResume(page: Page, request: APIRequestContext) {
   await shot(page, 'S5-paused')
   // What the agent sees: no Slack tool, a refused call, and a prompt that doesn't name Slack.
   await expect.poll(async () => (await hubToolNames(request)).filter(n => n.startsWith('slack_')), { message: 'the hub lists no Slack tool while paused' }).toEqual([])
-  expect(await hubCall(request, 'callTool', 'slack_search_public', { keywords: ['supplier'] })).toMatchObject({ ok: false, error: { code: 'paused' } })
+  // Not on the read list, so the runner's hub route refuses it before the hub (N14).
+  expect(await hubCall(request, 'callTool', 'slack_search_public', { keywords: ['supplier'] })).toMatchObject({ ok: false, error: { code: 'not_listed' }, refusedBy: 'egress' })
   expect(namedApps(await turnPrompt(request)), 'the prompt does not name a paused app').not.toContain('Slack')
   await main(page).getByRole('button', { name: 'Resume access' }).click()
   await expect(toast(page, 'Your Inhouse agent can read Slack again')).toBeVisible()
@@ -422,7 +423,8 @@ test('S6: Disconnect the tool and the agent is told it is not connected and what
     await shot(page, 'S6-disconnected')
     // What the agent sees: no Slack tool, a refused call, and a prompt that offers exactly what is connected.
     await expect.poll(async () => (await hubToolNames(request)).filter(n => n.startsWith('slack_')), { message: 'the hub lists no Slack tool once disconnected' }).toEqual([])
-    expect(await hubCall(request, 'callTool', 'slack_search_public', { keywords: ['supplier'] })).toMatchObject({ ok: false, error: { code: 'not_configured' } })
+    // Not on the read list, so the runner's hub route refuses it before the hub (N14).
+    expect(await hubCall(request, 'callTool', 'slack_search_public', { keywords: ['supplier'] })).toMatchObject({ ok: false, error: { code: 'not_listed' }, refusedBy: 'egress' })
     const still = namedApps(await turnPrompt(request))
     expect(still, 'a disconnected app is not named').not.toContain('Slack')
     expect(still, 'the prompt still offers what is connected').toContain('Shopify')

@@ -2,10 +2,11 @@
 // files); the runtime cases check that the schemas accept and refuse what the types say.
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import type { z } from 'zod'
-import type { AccountStatus, CallerScope, CallToolOptions, HubError, HubErrorCode, HubResult, Instant, SignInState, ToolInfo, WriteOperationKey, WriteRequest, WriteResult } from './contract'
+import type { AccountStatus, AccountSummary, CallerScope, CallToolOptions, HubError, HubErrorCode, HubResult, Instant, SignInState, ToolInfo, WriteOperationKey, WriteRequest, WriteResult } from './contract'
 import { WRITE_OPERATIONS } from './contract'
 import {
   AccountStatusSchema,
+  AccountSummarySchema,
   CallerScopeSchema,
   CallToolOptionsSchema,
   HubErrorCodeSchema,
@@ -28,6 +29,7 @@ describe('schemas.ts mirrors contract.ts', () => {
     expectTypeOf<z.infer<typeof ToolInfoSchema>>().toEqualTypeOf<ToolInfo>()
     expectTypeOf<z.infer<typeof SignInStateSchema>>().toEqualTypeOf<SignInState>()
     expectTypeOf<z.infer<typeof AccountStatusSchema>>().toEqualTypeOf<AccountStatus>()
+    expectTypeOf<z.infer<typeof AccountSummarySchema>>().toEqualTypeOf<AccountSummary>()
     expectTypeOf<z.infer<typeof CallToolOptionsSchema>>().toEqualTypeOf<CallToolOptions>()
     const toolList = hubResultSchema(ToolInfoSchema.array())
     expectTypeOf<z.infer<typeof toolList>>().toEqualTypeOf<HubResult<ToolInfo[]>>()

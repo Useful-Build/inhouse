@@ -65,6 +65,7 @@ export function cardOf(row: OutboxActionRow, viewer: Viewer, nowMs: number): Act
     serverNow: instant(nowMs),
     ...(result !== undefined ? { result } : {}),
     ...(lapsed !== undefined ? { lapsed } : {}),
+    ...(row.grant_id !== null && (asker || viewer.role === 'admin') ? { permissionId: row.grant_id } : {}),
     can: {
       allowOnce: own && waiting && kind === 'ask',
       alwaysAllow: own && waiting && kind === 'ask',

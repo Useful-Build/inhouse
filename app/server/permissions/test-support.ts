@@ -29,12 +29,15 @@ export async function ceiling(db: D1Database, operation: WriteOperationKey, row:
   ).bind(operation, row.enabled ? 1 : 0, row.perDayMax, row.loweredRev).run()
 }
 
-/** A connected account at generation `gen` (its `connected_at_ms`). */
-export async function account(db: D1Database, accountId: string, gen: number): Promise<void> {
+/**
+ * A connected account at generation `gen` (its `connected_at_ms`). A Shopify account carries its write store's handle
+ * (`shop`, M2-D: the hub's word copied in), `store-a` unless given.
+ */
+export async function account(db: D1Database, accountId: string, gen: number, shop: string | null = accountId.startsWith('shopify:') ? 'store-a' : null): Promise<void> {
   await db.prepare(
-    `INSERT INTO connector_accounts (account_id, connector, last_state, last_state_at_ms, connected_at_ms) VALUES (?, ?, 'connected', ?, ?)
-     ON CONFLICT (account_id) DO UPDATE SET connected_at_ms = excluded.connected_at_ms, disconnected_at_ms = NULL`,
-  ).bind(accountId, accountId.split(':')[0], gen, gen).run()
+    `INSERT INTO connector_accounts (account_id, connector, last_state, last_state_at_ms, connected_at_ms, shop) VALUES (?, ?, 'connected', ?, ?, ?)
+     ON CONFLICT (account_id) DO UPDATE SET connected_at_ms = excluded.connected_at_ms, disconnected_at_ms = NULL, shop = excluded.shop`,
+  ).bind(accountId, accountId.split(':')[0], gen, gen, shop).run()
 }
 
 export async function channel(db: D1Database, id: string, name: string, addedBy: string): Promise<void> {

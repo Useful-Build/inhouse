@@ -30,6 +30,11 @@ export interface StartInput {
   systemPrompt: string
   /** Structured output (PR 5, ask C): the run answers a JSON value matching it. Absent on a turn without one. */
   outputFormat?: RunStart['outputFormat']
+  /**
+   * Stage 1 M2-D (N2, N14): an operation is enabled for the brand, so the run gets the `actions` MCP server (the write
+   * tools). Sent as `actions: true` only when on (N1: a strict start); the runner link drops it below `HELPERS_VERSION`.
+   */
+  actions?: boolean
 }
 
 export function buildStart(i: StartInput): StartWithoutToken {
@@ -57,6 +62,7 @@ export function buildStart(i: StartInput): StartWithoutToken {
     ...(i.webSearch === true ? { webSearch: true } : {}),
     fileCaps: FILE_CAPS,
     ...(i.outputFormat === undefined ? {} : { outputFormat: i.outputFormat }),
+    ...(i.actions === true ? { actions: true } : {}),
   }
 }
 

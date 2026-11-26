@@ -219,6 +219,8 @@ export const LapseReasonSchema = z.enum([
   // Stage 1 M2-B: an approval not sent in time needs a person's OK again (the 10-minute approval age cap, or a send that
   // missed its permit's deadline).
   'stale_approval',
+  // Stage 1 M2-D (N11): the chat it was asked in was deleted, so its waiting and approved actions are withdrawn.
+  'chat_deleted',
 ])
 /** A failed send's code: the hub's closed error codes (app/hub/index/contract.ts `HubErrorCode`), never upstream text. */
 export const ActionFailCodeSchema = ConnectOutcomeSchema.exclude(['ok'])

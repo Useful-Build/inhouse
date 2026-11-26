@@ -31,7 +31,7 @@ describe('test 8: the egress never hands HUB_DELIVERY to a route', () => {
       const fakeEnv = { ...(env as unknown as Record<string, unknown>), HUB: hub, HUB_DELIVERY: delivery, INHOUSE_TEST_BUILD: testBuild } as unknown as Env
       const deps = egressDeps(fakeEnv, ctx, { runner: 'runner-test' } as never) as unknown as Record<string, unknown>
       const hubDeps = deps.hub as Record<string, unknown>
-      expect(Object.keys(hubDeps).sort()).toEqual(['hub', 'log', 'now', 'requestId', 'stage'])
+      expect(Object.keys(hubDeps).sort()).toEqual(['hub', 'log', 'now', 'requestId'])
       if (testBuild === undefined) expect(hubDeps.hub).toBe(hub)
       else expect(Object.keys(hubDeps.hub as object).sort()).toEqual(['callTool', 'listTools'])
       const all = reachable(deps)
