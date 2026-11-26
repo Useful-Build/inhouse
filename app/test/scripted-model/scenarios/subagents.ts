@@ -1,5 +1,5 @@
 // M1-P's helper scenario (N6, N19): the main agent starts the `researcher` helper once, the helper answers from its own
-// conversation (a branch, found by the marker in its prompt), and the main agent answers with the helper's report. The
+// conversation (a branch; its task carries the scenario's marker), and the main agent answers with the helper's report. The
 // helper's one model call reports a large, exact usage, so its spend stands out on the turn's trace and the month's
 // ledger (e2e/api/helpers.spec.ts). The helper's requests are the ones whose system prompt carries the server's researcher
 // words, so a helper that isn't ours never gets the report, and the main thread's last turn misses without it. A
@@ -9,8 +9,12 @@ import { HELPER_AGENTS } from '../../../server/prompt/agents.ts'
 
 type Check = NonNullable<ScriptedTurn['expect']>
 
-/** A marker in the task the main agent gives the researcher (its first user message). */
-export const HELPER_MARKER = '[inhouse-helper-research]'
+/**
+ * The scenario's marker in the task the main agent gives the researcher: the helper's requests are a conversation of
+ * their own, and the test build's gateway plays a request's scenario from the newest user message with a `scenario:`
+ * marker (egress/gateway.ts `scenarioStart`), so without it the helper would play the default `hello`.
+ */
+export const HELPER_MARKER = 'scenario:helper-research'
 /** The helper's one model call's usage: 100,000 input tokens on Sonnet 5.5 is $0.20 (20 cents) on the ledger. */
 export const HELPER_USAGE = { input_tokens: 100_000, output_tokens: 7 }
 export const HELPER_REPORT = 'Researcher report: Norda ships in 5 days; nothing else found.'

@@ -26,7 +26,8 @@ import { createAgentTables } from './schema.ts'
 import { createRunTokensTable, hashRunToken } from './tokens.ts'
 import { createScriptedModel } from '../../../test/scripted-model/index.ts'
 import { SCENARIOS } from '../../../test/scripted-model/scenarios.ts'
-import { HELPER_ANSWER, HELPER_REPORT, HELPER_USAGE } from '../../../test/scripted-model/scenarios/subagents.ts'
+import { HELPER_ANSWER, HELPER_MARKER, HELPER_REPORT, HELPER_USAGE } from '../../../test/scripted-model/scenarios/subagents.ts'
+import { scenarioStart } from '../../egress/gateway.ts'
 
 const ok = (r: SendTurnResult | Refusal): SendTurnResult => {
   if ('refused' in r) throw new Error(`refused ${JSON.stringify(r.refused)}`)
@@ -200,5 +201,14 @@ describe('the helper-research scenario', () => {
       { role: 'user', content: [{ type: 'tool_result', tool_use_id: call.id, content: 'API Error: 400 scripted model miss' }] },
     ] })
     expect(missed.error?.message).toContain("the helper's result is not its report")
+  })
+
+  it("the test build's gateway plays the helper's own requests as this scenario, past the CLI's own context message", () => {
+    // The helper's conversation: the CLI may put its own context first; the task (with the marker) follows.
+    const helperRequest = { model: 'claude-sonnet-5-5', messages: [
+      { role: 'user' as const, content: [{ type: 'text', text: '<system-reminder>context</system-reminder>' }] },
+      { role: 'user' as const, content: [{ type: 'text', text: `${HELPER_MARKER} How many days does Norda take to ship?` }] },
+    ] }
+    expect(scenarioStart(helperRequest)).toEqual({ scenario: 'helper-research', from: 1 })
   })
 })
