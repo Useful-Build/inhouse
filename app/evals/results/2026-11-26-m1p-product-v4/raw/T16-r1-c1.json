@@ -1,0 +1,58 @@
+{
+ "row": {
+  "caseId": "T16",
+  "cat": "choice",
+  "pair": "approval_withdraw/memory_forget",
+  "rep": 1,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": false,
+   "args": false,
+   "forbidden": true
+  },
+  "called": [
+   "approval_list",
+   "approval_list"
+  ],
+  "toolSearches": 2,
+  "answer": "I couldn't withdraw ap_311. My approvals list is empty, and that includes approv",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_brMmVtlsuMP7lre2IW5CYA",
+  "askedAs": "eval-45890736644-1-t16-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "I couldn't withdraw ap_311. My approvals list is empty, and that includes approv",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "452bd5dc4fe45b48d13c065dad12170fac50adbdc39defef0e2c3d577a863f4a",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__approval_get,mcp__inhouse__approval_withdraw\",\"ma"
+   },
+   {
+    "name": "ToolSearch",
+    "inputSha256": "cbbc6248e9978cb8014dd3fdfee4265e7d58b208364e5b073f7e3e5f7ce813b3",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__approval_list\",\"max_results\":1}"
+   },
+   {
+    "name": "mcp__inhouse__approval_list",
+    "inputSha256": "2835e7f278bd44917f0acf1bc5f439fc9bc22f47c1ae43779bc5595d37d14b59",
+    "inputExcerpt": "{\"status\":\"waiting\"}"
+   },
+   {
+    "name": "mcp__inhouse__approval_list",
+    "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "inputExcerpt": "{}"
+   }
+  ]
+ }
+}

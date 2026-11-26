@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "T10",
+  "cat": "choice",
+  "pair": "question_ask/AskUserQuestion",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "question_ask"
+  ],
+  "toolSearches": 0,
+  "answer": "Asked: Which way do you want to go for the mug reorder: stay with Norda or switc",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_kzCdG_tscbsGiZS4Gy4MEw",
+  "askedAs": "eval-45890736644-1-t10-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "Asked: Which way do you want to go for the mug reorder: stay with Norda or switc",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__question_ask",
+    "inputSha256": "a55b3412fcd3acd897264b49f2283d49119042b4284e367bac8a1a94f39a15f3",
+    "inputExcerpt": "{\"question\":\"Which way do you want to go for the mug reorder: stay with Norda or"
+   }
+  ]
+ }
+}

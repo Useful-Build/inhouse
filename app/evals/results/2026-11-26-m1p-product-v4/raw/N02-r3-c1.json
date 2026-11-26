@@ -1,0 +1,33 @@
+{
+ "row": {
+  "caseId": "N02",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "none": true,
+   "answer": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "15% of 240 is **36**.\n\n(0.15 × 240 = 36)",
+  "costUsd": 0.015,
+  "runOk": true,
+  "turnId": "t_vx-orPzmfcT-h9yw8XtT7w",
+  "askedAs": "eval-45890736644-1-n02-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.015,
+  "answer": "15% of 240 is **36**.\n\n(0.15 × 240 = 36)",
+  "toolCalls": []
+ }
+}

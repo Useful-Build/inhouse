@@ -1,0 +1,32 @@
+{
+ "row": {
+  "caseId": "N07",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "Here's a short draft. I haven't checked her order, so the bracketed parts need f",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_vh1RLTYAS772AXiSFG64-g",
+  "askedAs": "eval-45890736644-1-n07-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "Here's a short draft. I haven't checked her order, so the bracketed parts need f",
+  "toolCalls": []
+ }
+}

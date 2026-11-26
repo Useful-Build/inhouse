@@ -1,0 +1,53 @@
+{
+ "row": {
+  "caseId": "T11",
+  "cat": "choice",
+  "pair": "routine_create/notification_send",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "routine_create"
+  ],
+  "toolSearches": 1,
+  "answer": "I've set up the routine \"Weekday low-stock check\". It runs Monday to Friday at 0",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_-2vI4_uWjdiVCQ68akaj-g",
+  "askedAs": "eval-45890736644-1-t11-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "I've set up the routine \"Weekday low-stock check\". It runs Monday to Friday at 0",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "26daee9cb62c1ffccb5e9ea661a2a476ff6a057017a8f9728e18ded523a0632f",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__routine_create,mcp__inhouse__routine_list,mcp__ap"
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "47f703e232a6a49ebfde073ec9ce3e5578f5390a4391f11dd9e83027284bc795",
+    "inputExcerpt": "{\"query\":\"low stock threshold\"}"
+   },
+   {
+    "name": "mcp__inhouse__routine_create",
+    "inputSha256": "a0eba89a049f51cf6597d3d1b573f710c94c844a27d40b212642a1173dc67c0e",
+    "inputExcerpt": "{\"name\":\"Weekday low-stock check\",\"days\":\"weekdays\",\"time\":\"06:00\",\"missed\":\"ski"
+   }
+  ]
+ }
+}

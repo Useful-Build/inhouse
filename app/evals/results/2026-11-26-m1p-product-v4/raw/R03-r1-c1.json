@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "R03",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "You like your weekly sales summary on **Mondays at 7:30**, written as **bullet p",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_Jk7OKadWMzcrDZMpY7p_YA",
+  "askedAs": "eval-45890736644-1-r03-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "You like your weekly sales summary on **Mondays at 7:30**, written as **bullet p",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "c4517b118fe3cc698a310f2c55798acfefb6a37f3ecf80df18891ce638d444a6",
+    "inputExcerpt": "{\"query\":\"sales summary\"}"
+   }
+  ]
+ }
+}

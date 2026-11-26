@@ -1,0 +1,45 @@
+{
+ "row": {
+  "caseId": "N05",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [
+   "order_get"
+  ],
+  "toolSearches": 1,
+  "answer": "I'll start by pulling up the order.\n\nI found order #1042. It's paid and fulfille",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_lMlBP4CNykt6wT_Ct0S5uQ",
+  "askedAs": "eval-45890736644-1-n05-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "I'll start by pulling up the order.\n\nI found order #1042. It's paid and fulfille",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "f5f4105a66f60b3c3e49f7717c89c16e85a6d80cb4d9ae0f37b1a8e3f7da35d4",
+    "inputExcerpt": "{\"query\":\"select:mcp__apps__order_get,mcp__apps__orders_search,mcp__apps__return"
+   },
+   {
+    "name": "mcp__apps__order_get",
+    "inputSha256": "9a6c68ea92a8f0fdc7db99fd6497d5e171c446ad750ad9f741ef808dcab838d1",
+    "inputExcerpt": "{\"name\":\"#1042\"}"
+   }
+  ]
+ }
+}

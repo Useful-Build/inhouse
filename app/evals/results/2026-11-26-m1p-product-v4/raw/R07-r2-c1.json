@@ -1,0 +1,47 @@
+{
+ "row": {
+  "caseId": "R07",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Our saved notes show Norda Ceramics, our mug supplier, on **net 30** terms. That",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_gIWtQyAYQOFmDfmnRNq4xg",
+  "askedAs": "eval-45890736644-1-r07-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "Our saved notes show Norda Ceramics, our mug supplier, on **net 30** terms. That",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "67b37a4d2b2ab76298c2cc2159a5896c5ec16d55639aba3901346c13dd24cbb4",
+    "inputExcerpt": "{\"query\":\"pottery vendor payment terms\"}"
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "inputSha256": "40d3bb583f3de6a9eb966c5cbeb23b831fdf8e3cc019d4965001e36df5a734f4",
+    "inputExcerpt": "{\"query\":\"pottery vendor payment\"}"
+   }
+  ]
+ }
+}
