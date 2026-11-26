@@ -96,7 +96,7 @@ export { JOB_CARRIED_ON_TEXT }
  * A question's resume row shows nothing (its answer is on the question's card): left out in SQL, so a page still holds
  * `limit` rows and the cursor stays right. A row written before M1-D has no source and shows as it did.
  */
-const SHOWN = "NOT (role = 'user' AND extra_json IS NOT NULL AND json_extract(extra_json, '$.source') = 'question')"
+const SHOWN = "NOT (role = 'user' AND extra_json IS NOT NULL AND json_extract(extra_json, '$.source') IS 'question')"
 
 /**
  * A stored row as the contract's message (`extra_json`: a user message's quote and attachments, an agent part's
