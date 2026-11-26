@@ -122,10 +122,15 @@ export function fixTurnRows(sql: SqlStorage, turnId: string, atMs: number): Proj
   return { chatId: t.chat_id, atMs, rows }
 }
 
-/** The question that started a continuation's job: its root turn's text (the person's), or '' if the job is gone. */
+/**
+ * The question that started a continuation's job: its root turn's text (the person's). A job row is never deleted, so a
+ * missing one is a bug: logged loud, and the end row offers an empty question rather than the server's job text (this
+ * runs inside the step that stores the turn final, which must not throw).
+ */
 function jobQuestion(sql: SqlStorage, t: TurnForRows): string {
   const r = sql.exec<{ text: string }>(
     'SELECT r.text AS text FROM jobs j JOIN turns r ON r.turn_id = j.root_turn_id WHERE j.job_id = ?', t.job_id).toArray()[0]
+  if (r === undefined) console.error({ event: 'projection_job_missing', turnId: t.turn_id, jobId: t.job_id })
   return r?.text ?? ''
 }
 

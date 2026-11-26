@@ -228,6 +228,7 @@ function fakeEval(failAt: string | null, holdPut?: Promise<void>, onPut?: () => 
   const sql: string[] = []
   const http: string[] = []
   let leaseHeld = false
+  let jobCap: string | null = null
   let effort: string | undefined = 'High'
   let effortRev = 2
   const grants = new Map<string, boolean>()
@@ -244,6 +245,11 @@ function fakeEval(failAt: string | null, holdPut?: Promise<void>, onPut?: () => 
       if (q.startsWith('DELETE')) { leaseHeld = false; return [] }
       if (q.startsWith('SELECT value_json')) return failAt === 'lease' ? [{ value_json: JSON.stringify({ tag: 'product:other', until: 9e15 }) }] : leaseHeld ? [{ value_json: JSON.stringify({ tag: 'product:7-1', until: 9e15 }) }] : []
       if (q.startsWith('SELECT 1')) return leaseHeld ? [{ one: 1 }] : []
+    }
+    // M1-P: the job budget's pin and its read-back, answered as the product's D1 would.
+    if (q.includes("'s:job_cap'")) {
+      if (q.startsWith('INSERT')) { jobCap = /'s:job_cap', '([^']*)'/.exec(q)?.[1] ?? null; return [] }
+      return jobCap === null ? [] : [{ value_json: jobCap }]
     }
     if (q.includes("key = 'hub:shop'") && q.startsWith('SELECT')) return failAt === 'shop' ? [{ value_json: 'example-x.myshopify.com' }] : []
     if (q.includes('AS now')) return [{ now: 1_700_000_000_000 }]

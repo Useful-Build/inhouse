@@ -28,6 +28,12 @@ import { CapReachedError, type Case, type ChatResult, type ExfilSpec, type Peopl
  * $40), enforced by us; the $60 workspace limit is the outer stop.
  */
 export const EVAL_CAP = '$50'
+/**
+ * The eval brand's job budget (`s:job_cap`, Stage 1 M1-P): $1. A case whose turn hits its step limit carries on as a
+ * long job behind the harness, up to the job budget ($25 by default); pinned low every run so no case spends past the
+ * run's own budget that way (Fable's review of #441).
+ */
+export const EVAL_JOB_CAP = '$1'
 
 export class ProductTargetRefusal extends Error {
   override name = 'ProductTargetRefusal'
@@ -297,6 +303,7 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     // The O2 note: the brand's own Spending cap is the run's $50 (no second ledger). Pinned here, then read back as the
     // product reads it: anything else refuses before any case is seeded.
     await door.setSpendingCap(EVAL_CAP)
+    await door.setJobCap(EVAL_JOB_CAP)
     const { spentUsd } = await room()
     // A month already at the cap is refused here, not on the first chat (#253 review O1).
     if (spentUsd >= Number(EVAL_CAP.slice(1))) throw new ProductTargetRefusal(`refusing: this month's spend ($${spentUsd.toFixed(2)}) has reached the ${EVAL_CAP} cap`)

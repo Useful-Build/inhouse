@@ -49,6 +49,7 @@ class FakeDoor implements MemoryDoor {
   insertThrows = false
   clearThrows = false
   async setSpendingCap(cap: string) { this.calls.push(`cap ${cap}`) }
+  async setJobCap(cap: string) { this.calls.push(`job cap ${cap}`) }
   /** The server the person rows go to (make() wires it): the fake API sees the invite as the product's D1 would. */
   onInvite?: (p: { id: string; email: string; name: string }) => void
   async invitePerson(p: { id: string; email: string; name: string }) { this.calls.push(`person ${p.email}`); this.onInvite?.(p) }
@@ -262,6 +263,8 @@ describe('the eval-brand check (server side, before the first chat)', () => {
     const door = new FakeDoor()
     await (await make(server(), door).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).reset()
     expect(door.calls).toContain('cap $50')
+    // M1-P: the job budget is pinned too, right after the cap and before any case is seeded.
+    expect(door.calls.indexOf('job cap $1')).toBe(door.calls.indexOf('cap $50') + 1)
     for (const capMinor of [32000, 4999, 4000, 0]) {
       const d = new FakeDoor()
       await expect(make(server({ capMinor }), d).seed([], { caseId: 'N01', rep: 1, canary: 'c' }), String(capMinor)).rejects.toThrow(/Spending cap is not \$50/)
@@ -619,6 +622,17 @@ describe('the memory door', () => {
     expect(sqls[0]).toMatch(/^INSERT INTO settings \(owner, key, value_json, rev, updated_at_ms, updated_by, req_id\) VALUES \('brand', 's:cap', '"\$50"', 1, \d+, 'eval', 'eval'\) ON CONFLICT \(owner, key\) DO UPDATE SET value_json = excluded\.value_json, rev = settings\.rev \+ 1, updated_at_ms = excluded\.updated_at_ms, updated_by = 'eval', req_id = 'eval'$/)
     for (const bad of ['40', '$0', "$50'; DROP TABLE settings;--", '$100001', '$50.5']) await expect(door.setSpendingCap(bad), bad).rejects.toThrow(DoorRefusal)
     expect(sqls).toHaveLength(1)
+  })
+  it('setJobCap upserts the brand\'s s:job_cap, reads it back, and refuses anything but a job budget the product reads', async () => {
+    const sqls: string[] = []
+    const door = createDoor(async (sql) => { sqls.push(sql); return sql.startsWith('SELECT') ? [{ value_json: '"$1"' }] : [] })
+    await door.setJobCap('$1')
+    expect(sqls[0]).toMatch(/^INSERT INTO settings \(owner, key, value_json, rev, updated_at_ms, updated_by, req_id\) VALUES \('brand', 's:job_cap', '"\$1"', 1, \d+, 'eval', 'eval'\) ON CONFLICT \(owner, key\) DO UPDATE SET value_json = excluded\.value_json, rev = settings\.rev \+ 1, updated_at_ms = excluded\.updated_at_ms, updated_by = 'eval', req_id = 'eval'$/)
+    expect(sqls[1]).toBe("SELECT value_json FROM settings WHERE owner = 'brand' AND key = 's:job_cap'")
+    for (const bad of ['1', '$0', '$101', '$1.50', "$1'; DROP TABLE settings;--"]) await expect(door.setJobCap(bad), bad).rejects.toThrow(DoorRefusal)
+    expect(sqls).toHaveLength(2)
+    const stale = createDoor(async (sql) => (sql.startsWith('SELECT') ? [{ value_json: '"$25"' }] : []))
+    await expect(stale.setJobCap('$1')).rejects.toThrow(/reads back/)
   })
   it('wrangler runs in the sandbox account with the config and never echoes the environment', async () => {
     const seen: { args: string[]; env: Record<string, string | undefined> }[] = []
