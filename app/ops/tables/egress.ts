@@ -7,4 +7,5 @@ import type { TableEntry } from './types.ts'
 
 export const egressTables: readonly TableEntry[] = [
   { kind: 'd1', name: 'egress_fetches', retention: 'retention_period', personKeys: [], export: false },
+  { kind: 'd1', name: 'egress_taint', retention: 'retention_period', personKeys: [], export: false },
 ]

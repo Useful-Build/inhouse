@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import type { EgressDeps } from './deps.ts'
 import { handleEgress } from './index.ts'
-import { egressRequest } from './testing/harness.ts'
+import { egressRequest, NO_CAPTURE } from './testing/harness.ts'
 
 const CANARY = 'CANARY-tool-input-7f3a'
 
@@ -15,7 +15,7 @@ describe('a throw out of the egress', () => {
       log: (e: Record<string, unknown>) => void logs.push(e),
       runner: 'runner-0',
     } as unknown as EgressDeps
-    const res = await handleEgress(egressRequest('/store/append', { body: {} }), deps)
+    const res = await handleEgress(egressRequest('/store/append', { body: {} }), deps, NO_CAPTURE)
     expect(res.status).toBe(500)
     const body = await res.text()
     expect(body).not.toContain(CANARY)

@@ -14,7 +14,7 @@ import { fc, it as prop } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
 import { addressVerdict } from './ip.ts'
 import { env } from 'cloudflare:workers'
-import { checkUrl, handleWebFetch, recordFetch, REFUSAL_RECORDS_PER_MINUTE, WEBFETCH_MAX_BYTES, type FetchRecord } from './webfetch.ts'
+import { checkUrl, FETCH_HEADERS, handleWebFetch, recordFetch, REFUSAL_RECORDS_PER_MINUTE, WEBFETCH_MAX_BYTES, type FetchRecord } from './webfetch.ts'
 
 type Dns = Record<string, { A?: string[]; AAAA?: string[]; status?: number }>
 
@@ -60,7 +60,7 @@ async function run(url: string, opts: { list?: string | null; method?: string; h
     if (opts.refusalRecordHangs && r.verdict === 'refused') await new Promise(() => {})
     records.push(r)
   }
-  const res = await handleWebFetch(new Request(url, { method: opts.method ?? 'GET', headers: opts.headers }), { hostList: async () => opts.list ?? null, fetch: f, log: e => void logs.push(e), record, noteRecordFailure: async () => { recordFailures++ }, waitUntil: p => void later.push(p) })
+  const res = await handleWebFetch(new Request(url, { method: opts.method ?? 'GET', headers: opts.headers }), { hostList: async () => opts.list ?? null, checkLeak: async () => false, fetch: f, log: e => void logs.push(e), record, noteRecordFailure: async () => { recordFailures++ }, waitUntil: p => void later.push(p) })
   // What the runtime would finish after the answer: a refusal's record (never one that hangs).
   if (!opts.refusalRecordHangs) await Promise.all(later)
   return { res, fetched, logs, records, later, recordFailures }
@@ -101,7 +101,16 @@ describe('listed hosts: every address check still runs (6.2, decision 20)', () =
     expect(res.status).toBe(200)
     expect(await res.text()).toBe('hello')
     expect([...res.headers]).toEqual([['content-type', 'text/html']])
-    expect([...fetched[0]!.headers]).toEqual([['accept', 'text/html']])
+    // Decision L1: only Inhouse's fixed accept, accept-language and user-agent go upstream, never the caller's.
+    expect([...fetched[0]!.headers]).toEqual(Object.entries(FETCH_HEADERS).sort(([a], [b]) => a.localeCompare(b)))
+  })
+  it("pins accept, accept-language and user-agent: the agent's own values (which could carry data) never go upstream", async () => {
+    const carried = { accept: 'text/alice@example.com', 'accept-language': 'x-5550000001001', 'user-agent': 'ord_AbC123def456ghi' }
+    const { res, fetched } = await run('https://docs.example.com/a', { list: ALL, headers: carried })
+    expect(res.status).toBe(200)
+    const sent = Object.fromEntries(fetched[0]!.headers)
+    expect(sent).toEqual(FETCH_HEADERS)
+    for (const v of Object.values(carried)) expect(JSON.stringify(sent)).not.toContain(v)
   })
   it('refuses a private answer, one private answer among public ones, a public A with a private AAAA, IPv6 unique-local, mapped and metadata', async () => {
     for (const host of ['dual.example.com', 'sneaky.example.com', 'v6private.example.com', 'mapped.example.com', 'meta.example.com', 'missing.example.com']) {
