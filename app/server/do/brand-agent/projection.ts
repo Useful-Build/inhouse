@@ -9,6 +9,9 @@ import type { ChatEvent } from '../../../shared/contract/runs.ts'
 import { CANCEL } from '../../../shared/contract/chat-codes.ts'
 import type { StoredAttachment } from './run-start.ts'
 
+/** `turns.source` and the `.u` row's `extra_json.source` of a job's continuation (Stage 1, N3). */
+export const JOB_SOURCE = 'job'
+
 /** The flush's durable retry runs this long after the turn's end when the immediate flush didn't land. */
 export const FLUSH_RETRY_MS = 30_000
 export const FLUSH_TURN_PREFIX = 'flush-turn:'
@@ -44,6 +47,7 @@ interface TurnForRows {
   turn_id: string; run_id: string; chat_id: string; owner_id: string; text: string; quote: string | null
   attachments_json: string; created_at_ms: number; pos_from: number | null
   outcome: string | null; failure: string | null; cancel_why: string | null; started_at_ms: number | null; ended_at_ms: number | null
+  source: string | null; job_id: string | null; job_n: number | null
 }
 
 /**
@@ -56,15 +60,16 @@ export const SILENT_CANCELS: readonly string[] = [CANCEL.removed, CANCEL.deleted
  * The end row: what the live stream shows at a turn's end beside its parts, kept so a reload shows it too. An `event`
  * row (never in the agent's own history or search, which read `user` and `agent` rows only) with the code, not the words:
  * the client renders it with the same text and id as the live message, so the two show once.
- * - `<turnId>.f` `{ failure, retryQuestion }`: a failed turn (`turn.finished` failed);
+ * - `<turnId>.f` `{ failure, retryQuestion }`: a failed turn (`turn.finished` failed). `retryQuestion` is the turn's text,
+ *   or for a job's continuation the person's own question that started the job (M1-P): never the server's job text;
  * - `<turnId>.x` `{ outcome }`: a stopped or interrupted one (`turn.finished` stopped/interrupted, the stopped note);
  * - `<turnId>.x` `{ why }`: a turn cancelled (`turn.cancelled`) for a reason that has words, whether it was still waiting or had
  *   gone live (a pause stops an answer being written), whatever state the cancel left it in (a pause during a placement
  *   fences it to `ended`). The client words both live, so a reload agrees. (Until the first ship recording a turn that went
  *   live kept no row, because the client wordless-ignored its cancel.)
  */
-function endRow(t: TurnForRows): { id: string; extra: Record<string, string> } | null {
-  if (t.outcome === 'failed') return { id: `${t.turn_id}.f`, extra: { failure: t.failure ?? 'unknown', retryQuestion: t.text } }
+function endRow(t: TurnForRows, retryQuestion: string): { id: string; extra: Record<string, string> } | null {
+  if (t.outcome === 'failed') return { id: `${t.turn_id}.f`, extra: { failure: t.failure ?? 'unknown', retryQuestion } }
   if (t.outcome === 'stopped' || t.outcome === 'interrupted') return { id: `${t.turn_id}.x`, extra: { outcome: t.outcome } }
   // A turn that was answered and then fenced (a pause in the grace window) keeps its outcome and still writes a reason: not a cancel.
   if (t.cancel_why !== null && (t.outcome === null || t.outcome === 'cancelled') && !SILENT_CANCELS.includes(t.cancel_why)) return { id: `${t.turn_id}.x`, extra: { why: t.cancel_why } }
@@ -78,12 +83,15 @@ function endRow(t: TurnForRows): { id: string; extra: Record<string, string> } |
 export function fixTurnRows(sql: SqlStorage, turnId: string, atMs: number): Projection {
   const t = sql.exec<TurnForRows>(
     `SELECT turn_id, run_id, chat_id, owner_id, text, quote, attachments_json, created_at_ms, pos_from, outcome, failure,
-      cancel_why, started_at_ms, ended_at_ms FROM turns WHERE turn_id = ?`, turnId).one()
+      cancel_why, started_at_ms, ended_at_ms, source, job_id, job_n FROM turns WHERE turn_id = ?`, turnId).one()
   if (t.pos_from !== null) return storedProjection(sql, turnId)!
   const from = sql.exec<{ p: number }>('SELECT next_pos AS p FROM chat_state WHERE chat_id = ?', t.chat_id).one().p
   const atts = JSON.parse(t.attachments_json) as StoredAttachment[]
-  const extra: { quote?: string; attachments?: { fileId: string; name: string }[] } = {}
+  const extra: { quote?: string; attachments?: { fileId: string; name: string }[]; source?: typeof JOB_SOURCE } = {}
   if (t.quote !== null) extra.quote = t.quote
+  // A job's continuation (M1-P): the server's own text, never the person's. Its `.u` row says so, so a reload and an
+  // export show it as the agent carrying on (db/chats.ts), not as something the person typed.
+  if (t.source === JOB_SOURCE) extra.source = JOB_SOURCE
   if (atts.length > 0) extra.attachments = atts.map(a => ({ fileId: a.fileId, name: a.name }))
   const base = { chat_id: t.chat_id, run_id: t.run_id, turn_id: t.turn_id }
   const rows: ProjectedRow[] = [{
@@ -100,7 +108,7 @@ export function fixTurnRows(sql: SqlStorage, turnId: string, atMs: number): Proj
       extra_json: JSON.stringify({ trace: turnId }), model: ev.model, at_ms: ev.at.ms,
     })
   }
-  const end = endRow(t)
+  const end = endRow(t, t.source === JOB_SOURCE ? jobQuestion(sql, t) : t.text)
   if (end) {
     rows.push({
       ...base, id: end.id, pos: from + rows.length, role: 'event', author_id: null, text: '', part_json: null,
@@ -112,6 +120,13 @@ export function fixTurnRows(sql: SqlStorage, turnId: string, atMs: number): Proj
   sql.exec('UPDATE chat_state SET next_pos = ? WHERE chat_id = ?', to + 1, t.chat_id)
   sql.exec('INSERT INTO turn_rows (turn_id, chat_id, at_ms, json) VALUES (?, ?, ?, ?)', turnId, t.chat_id, atMs, JSON.stringify(rows))
   return { chatId: t.chat_id, atMs, rows }
+}
+
+/** The question that started a continuation's job: its root turn's text (the person's), or '' if the job is gone. */
+function jobQuestion(sql: SqlStorage, t: TurnForRows): string {
+  const r = sql.exec<{ text: string }>(
+    'SELECT r.text AS text FROM jobs j JOIN turns r ON r.turn_id = j.root_turn_id WHERE j.job_id = ?', t.job_id).toArray()[0]
+  return r?.text ?? ''
 }
 
 /** The turn's fixed rows, or null when it has none (not final yet). */

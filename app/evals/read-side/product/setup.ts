@@ -21,7 +21,7 @@ import { createMorningDoor, type MorningDoor } from '../../morning-check/door.ts
 import { createDoor, D1_NOW_MS, DoorRefusal, PER_PR_DB, wranglerQueries, wranglerRunner, type MemoryDoor, type RunSql } from '../../targets/door.ts'
 import {
   accessHeaders, casePerson, createProductTarget, EVAL_ACCESS_CLIENT_ID_VAR, EVAL_ACCESS_CLIENT_SECRET_VAR, EVAL_AUD_VAR, EVAL_BRAND_FLAG,
-  EVAL_CAP, EVAL_D1_NAME, EVAL_ISSUER_JWK_FILE, EVAL_ORIGIN_VAR, EVAL_PEOPLE, EVAL_WRANGLER_CONFIG, productSession, testIssuerSignIn, type Api,
+  EVAL_CAP, EVAL_D1_NAME, EVAL_JOB_CAP, EVAL_ISSUER_JWK_FILE, EVAL_ORIGIN_VAR, EVAL_PEOPLE, EVAL_WRANGLER_CONFIG, productSession, testIssuerSignIn, type Api,
 } from '../../targets/product.ts'
 import { SEED_INHOUSE } from '../../../server/seed/brand.ts'
 import { EVAL_BUCKET } from '../../exfiltration/store-data/transcripts.ts'
@@ -222,6 +222,8 @@ export async function wireEval(o: EvalOptions): Promise<Wired> {
     const shop = await door.testShop()
     if (shop !== null) throw new Error(`read-side: refusing: a test shop override (${shop}) is set: another run is on the eval deployment or left it`)
     await door.setSpendingCap(EVAL_CAP)
+    // M1-P: a case whose turn hits its step limit would carry on as a job; the job budget is pinned low as the product suite pins it.
+    await door.setJobCap(EVAL_JOB_CAP)
     const room = await product.room!()
     if (room.spentUsd + o.budgetUsd > room.capUsd) throw new Error(`read-side: refusing: this month's spend $${room.spentUsd.toFixed(2)} plus --budget $${o.budgetUsd} is over the brand's ${EVAL_CAP} cap`)
     const startUsd = room.spentUsd

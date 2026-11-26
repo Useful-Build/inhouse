@@ -1,0 +1,54 @@
+{
+ "row": {
+  "caseId": "T08",
+  "cat": "choice",
+  "pair": "approval_request/notification_send",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "orders_search",
+   "order_get",
+   "approval_request"
+  ],
+  "toolSearches": 0,
+  "answer": "I've asked for approval to email Anna Weber about the delay.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0,
+  "answer": "I've asked for approval to email Anna Weber about the delay.",
+  "toolCalls": [
+   {
+    "name": "mcp__shop__orders_search",
+    "inputSha256": "5dc4efafd1495bd2a667ecbba152f64c6e7af792a187bc75e5c10e58af10dab9",
+    "inputExcerpt": "{\"query\":\"Anna Weber\"}",
+    "resultExcerpt": "[{\"order_id\":\"1042\",\"total_eur\":124.5,\"status\":\"paid\",\"customer\":\"Anna Weber\"},{"
+   },
+   {
+    "name": "mcp__shop__order_get",
+    "inputSha256": "2b634eada53fcdec22125302b610d2f5a639d45b86bab3b66bd6667818cba6e5",
+    "inputExcerpt": "{\"order_id\":\"1042\"}",
+    "resultExcerpt": "{\"order_id\":\"1042\",\"items\":[\"Moss mug x2\"],\"total_eur\":124.5,\"shipping\":\"shipped"
+   },
+   {
+    "name": "mcp__inhouse__approval_request",
+    "inputSha256": "6fb3eb7b979cf67cd93020baffe4381eba9e9fdb631a91defd99f4cfa8a6684a",
+    "inputExcerpt": "{\"action\":\"Email Anna Weber: parcel delayed two days\"}",
+    "resultExcerpt": "Requested."
+   }
+  ]
+ }
+}

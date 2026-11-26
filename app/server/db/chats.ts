@@ -88,6 +88,9 @@ const record = (r: ChatRow): ChatRecord => ({
   deleted: r.deleted_at_ms !== null, at: instant(r.last_at_ms), rev: r.rev,
 })
 
+/** What a reloaded chat shows for a job's continuation: the agent went on by itself (no button, nothing to answer). */
+export const JOB_CARRIED_ON_TEXT = 'Your Inhouse agent carried on with this task by itself.'
+
 /**
  * A stored row as the contract's message (`extra_json`: a user message's quote and attachments, an agent part's
  * trace). An attachment shows by its name, with the generic file icon (as W5's demo engine projects it).
@@ -96,8 +99,11 @@ function message(r: MessageRow): StoredMessage {
   const where = { turnId: r.turn_id, runId: r.run_id, pos: r.pos, at: instant(r.at_ms) }
   const extra = (r.extra_json === null ? {} : JSON.parse(r.extra_json)) as {
     quote?: string; attachments?: { name: string }[]; trace?: string; failure?: TurnFailure; retryQuestion?: string; why?: CancelWhy
-    outcome?: 'stopped' | 'interrupted'
+    outcome?: 'stopped' | 'interrupted'; source?: string
   }
+  // A job's continuation (Stage 1, M1-P): the server's own message, so it reads as the agent carrying on, never as the
+  // person's words (the D1 row keeps the text the agent got, with `source: 'job'`).
+  if (r.role === 'user' && extra.source === 'job') return { id: r.id, role: 'event', text: JOB_CARRIED_ON_TEXT, ...where }
   if (r.role === 'user') {
     return {
       id: r.id, role: 'user', text: r.text, ...(extra.quote === undefined ? {} : { quote: extra.quote }),

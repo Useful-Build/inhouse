@@ -14,7 +14,10 @@ const inhouse = actor('inhouse')
 test('read order #1001 through the hub, then fetch a listed host: a clean page goes through, #1001 in the query is refused (leak)', async ({ request }) => {
   needsContainer()
   const before = await call(request, inhouse, 'GET', '/api/settings/technical')
-  const prev = (before.json?.values as Record<string, unknown> | undefined)?.['t:webfetch']
+  // The list as it was (the seed's `example.com`), put back after: the settings list answers `items`, and reading a
+  // missing `values` reset it to none for every later WebFetch spec (runs.spec.ts's webfetch-allowed, M1-P's sandbox run).
+  expect(before.status, before.text).toBe(200)
+  const prev = (before.json.items as { key: string; value: unknown }[]).find(i => i.key === 't:webfetch')?.value
   await putSetting(request, inhouse, 'technical', 't:webfetch', 'example.com')
   try {
     const chat = await createChat(request, dana)

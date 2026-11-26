@@ -21,7 +21,7 @@ export function fakeJobDeps(): FakeJobDeps {
     member: { active: true, throws: false },
     settingsAnswer: {
       model: 'claude-sonnet-5-5', pickerId: 'sonnet', effort: 'medium', sideModel: 'claude-haiku-5-5', maxTurns: 25,
-      webFetchDomains: [], webSearch: false,
+      webFetchDomains: [], webSearch: false, subagentModel: 'claude-sonnet-5-5',
     },
     notifyThrows: { on: false },
     texts: { carryOn: CARRY_ON, afterCutOff: AFTER_CUT_OFF },

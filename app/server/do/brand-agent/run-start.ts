@@ -5,6 +5,7 @@ import { composeTurnPrompt } from '../../../shared/contract/runs.ts'
 import { TURN_CEILING_MICRO } from '../../model/catalog.ts'
 import { FILE_CAPS } from '../../files-io/caps.ts'
 import { canonicalJson, type RunStart } from '../../../shared/protocol/index.ts'
+import { HELPER_AGENTS } from '../../prompt/agents.ts'
 
 /** A turn's attachment as stored: the input row's id, name and path (from `files.inputsOf`, never the client's names). */
 export interface StoredAttachment { fileId: string; name: string; path: string }
@@ -30,6 +31,12 @@ export interface StartInput {
   systemPrompt: string
   /** Structured output (PR 5, ask C): the run answers a JSON value matching it. Absent on a turn without one. */
   outputFormat?: RunStart['outputFormat']
+  /**
+   * The helpers' model (Stage 1, N6; `turns.subagent_model`). Set: the start carries both helpers (`HELPER_AGENTS`) and
+   * this model. Null or absent: neither key, so the Agent tool has nothing to start. The runner link drops both for a
+   * runner below `HELPERS_VERSION` (`startForPeer`).
+   */
+  subagentModel?: string | null
   /**
    * Stage 1 M2-D (N2, N14): an operation is enabled for the brand, so the run gets the `actions` MCP server (the write
    * tools). Sent as `actions: true` only when on (N1: a strict start); the runner link drops it below `HELPERS_VERSION`.
@@ -62,6 +69,7 @@ export function buildStart(i: StartInput): StartWithoutToken {
     ...(i.webSearch === true ? { webSearch: true } : {}),
     fileCaps: FILE_CAPS,
     ...(i.outputFormat === undefined ? {} : { outputFormat: i.outputFormat }),
+    ...(i.subagentModel == null ? {} : { agents: HELPER_AGENTS, subagentModel: i.subagentModel }),
     ...(i.actions === true ? { actions: true } : {}),
   }
 }

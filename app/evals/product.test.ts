@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CapReachedError } from './types.ts'
 import { runEvals } from './runner.ts'
+import { GRADED_PROMPT_VERSION } from './prompt-version.ts'
 import { buildReport, renderReadme } from './report.ts'
 import { writeResults } from './write.ts'
 import type { Case, ChatResult, Target } from './types.ts'
@@ -48,6 +49,7 @@ class FakeDoor implements MemoryDoor {
   insertThrows = false
   clearThrows = false
   async setSpendingCap(cap: string) { this.calls.push(`cap ${cap}`) }
+  async setJobCap(cap: string) { this.calls.push(`job cap ${cap}`) }
   /** The server the person rows go to (make() wires it): the fake API sees the invite as the product's D1 would. */
   onInvite?: (p: { id: string; email: string; name: string }) => void
   async invitePerson(p: { id: string; email: string; name: string }) { this.calls.push(`person ${p.email}`); this.onInvite?.(p) }
@@ -98,7 +100,7 @@ interface Server {
   endRow?: { failure?: string; why?: string; outcome?: string }
   /** Route 70's answer (default: Shopify connected, not paused, readable). */
   tools?: unknown
-  /** The trace's `promptVersions` (default [3], v3 sent); null leaves the field out (no version recorded). */
+  /** The trace's `promptVersions` (default [GRADED_PROMPT_VERSION], the current prompt sent); null leaves the field out (no version recorded). */
   promptVersions?: (number | null)[] | null
   /** The trace's `promptApps` (default [['Shopify']]); null leaves the field out. */
   promptApps?: (string[] | null)[] | null
@@ -158,7 +160,7 @@ const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } 
     }
     if (url.pathname.startsWith('/api/traces/') && s.traceStatus && s.traceStatus !== 200) return json({ error: { code: 'unavailable' } }, s.traceStatus)
     if (url.pathname.startsWith('/api/traces/')) {
-      const versions = s.promptVersions === undefined ? [3] : s.promptVersions
+      const versions = s.promptVersions === undefined ? [GRADED_PROMPT_VERSION] : s.promptVersions
       const apps = s.promptApps === undefined ? [['Shopify']] : s.promptApps
       return json({ cost: { minor: s.costMinor, currency: 'USD' }, steps: [{ kind: 'root', detail: '' }, ...s.steps], ...(versions === null ? {} : { promptVersions: versions }), ...(apps === null ? {} : { promptApps: apps }) })
     }
@@ -261,6 +263,8 @@ describe('the eval-brand check (server side, before the first chat)', () => {
     const door = new FakeDoor()
     await (await make(server(), door).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).reset()
     expect(door.calls).toContain('cap $50')
+    // M1-P: the job budget is pinned too, right after the cap and before any case is seeded.
+    expect(door.calls.indexOf('job cap $1')).toBe(door.calls.indexOf('cap $50') + 1)
     for (const capMinor of [32000, 4999, 4000, 0]) {
       const d = new FakeDoor()
       await expect(make(server({ capMinor }), d).seed([], { caseId: 'N01', rep: 1, canary: 'c' }), String(capMinor)).rejects.toThrow(/Spending cap is not \$50/)
@@ -619,6 +623,17 @@ describe('the memory door', () => {
     for (const bad of ['40', '$0', "$50'; DROP TABLE settings;--", '$100001', '$50.5']) await expect(door.setSpendingCap(bad), bad).rejects.toThrow(DoorRefusal)
     expect(sqls).toHaveLength(1)
   })
+  it('setJobCap upserts the brand\'s s:job_cap, reads it back, and refuses anything but a job budget the product reads', async () => {
+    const sqls: string[] = []
+    const door = createDoor(async (sql) => { sqls.push(sql); return sql.startsWith('SELECT') ? [{ value_json: '"$1"' }] : [] })
+    await door.setJobCap('$1')
+    expect(sqls[0]).toMatch(/^INSERT INTO settings \(owner, key, value_json, rev, updated_at_ms, updated_by, req_id\) VALUES \('brand', 's:job_cap', '"\$1"', 1, \d+, 'eval', 'eval'\) ON CONFLICT \(owner, key\) DO UPDATE SET value_json = excluded\.value_json, rev = settings\.rev \+ 1, updated_at_ms = excluded\.updated_at_ms, updated_by = 'eval', req_id = 'eval'$/)
+    expect(sqls[1]).toBe("SELECT value_json FROM settings WHERE owner = 'brand' AND key = 's:job_cap'")
+    for (const bad of ['1', '$0', '$101', '$1.50', "$1'; DROP TABLE settings;--"]) await expect(door.setJobCap(bad), bad).rejects.toThrow(DoorRefusal)
+    expect(sqls).toHaveLength(2)
+    const stale = createDoor(async (sql) => (sql.startsWith('SELECT') ? [{ value_json: '"$25"' }] : []))
+    await expect(stale.setJobCap('$1')).rejects.toThrow(/reads back/)
+  })
   it('wrangler runs in the sandbox account with the config and never echoes the environment', async () => {
     const seen: { args: string[]; env: Record<string, string | undefined> }[] = []
     const run = wranglerRunner({ database: 'inhouse-sbx-eval-db', config: '/tmp/sbx.jsonc', readConfig: () => JSON.stringify({ account_id: 'acct', d1_databases: [{ database_name: 'inhouse-sbx-eval-db' }] }), env: { CF_SANDBOX_ACCOUNT_ID: 'acct', CLOUDFLARE_ACCOUNT_ID: 'house', CLOUDFLARE_API_TOKEN: 'secret-token' }, spawn: (args, env) => { seen.push({ args, env }); return { status: 0, stdout: '[{"results":[{"n":1}]}]' } } })
@@ -896,8 +911,8 @@ describe('the baseline\'s harness faults', () => {
   })
   // P5 (#337): every graded turn must have been sent the system prompt v3 (route 33's trace, promptVersions). A turn on the
   // static v2 fallback, or with no version recorded, fails its run with that reason and is never graded as a pass.
-  it('a turn sent the v2 fallback, or with no version recorded, fails its run naming why; v3 passes', async () => {
-    for (const [promptVersions, failure] of [[[2], 'prompt_version:2'], [null, 'prompt_version:missing'], [[null], 'prompt_version:missing']] as const) {
+  it('a turn sent v3, the v2 fallback or no version recorded, fails its run naming why; the current version passes', async () => {
+    for (const [promptVersions, failure] of [[[3], 'prompt_version:3'], [[2], 'prompt_version:2'], [null, 'prompt_version:missing'], [[null], 'prompt_version:missing']] as const) {
       const session = await make(server({ promptVersions: promptVersions === null ? null : [...promptVersions] }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
       expect(await session.chat('hi'), JSON.stringify(promptVersions)).toMatchObject({ runOk: false, answer: 'Hello.', failure })
     }
@@ -905,7 +920,7 @@ describe('the baseline\'s harness faults', () => {
     expect(await ok.chat('hi')).toMatchObject({ runOk: true, answer: 'Hello.' })
   })
   // #337 round 3 (M3): a v3 turn whose built line didn't name Shopify as connected fails too (prompt_apps:<list>).
-  it('a v3 turn whose prompt named no store, or another app only, fails naming the apps it named', async () => {
+  it('a turn whose prompt named no store, or another app only, fails naming the apps it named', async () => {
     for (const [promptApps, failure] of [[[[]], 'prompt_apps:none'], [[['Slack']], 'prompt_apps:Slack'], [null, 'prompt_apps:missing'], [[null], 'prompt_apps:missing']] as const) {
       const session = await make(server({ promptApps: promptApps === null ? null : promptApps.map(a => (a === null ? null : [...a])) }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
       expect(await session.chat('hi'), JSON.stringify(promptApps)).toMatchObject({ runOk: false, answer: 'Hello.', failure })
