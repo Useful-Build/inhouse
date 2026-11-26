@@ -188,3 +188,36 @@ describe('the claim\'s own checks (D3)', () => {
     expect(await passes({ ...personRow, approved_by: null })).toBe(false)
   })
 })
+
+describe('the guard\'s own grant checks, every perturbation (review round 2: sampling caught some only 1 run in 3 or 4)', () => {
+  const PERTURB = ['none', 'holder_other', 'holder_brand_member', 'holder_brand_admin', 'account', 'gen', 'operation', 'scope', 'policy', 'role', 'ceiling', 'revoked'] as const
+  const base: Resolved = {
+    operation: 'shopify.order.tag_add', args: {}, accountId: 'shopify:store', accountGen: 1_000, scope: { shop: 'store-a' }, scopeKey: 'shop=store-a',
+    records: 1, units: 1, effects: { money: false, customer: false, destructive: false, access: false }, memberMay: true, payloadHash: '0'.repeat(64), policyRev: POLICY_REV,
+  }
+  it('passes a grant-backed row exactly when the one grant still covers the asker', async () => {
+    let n = 0
+    for (const p of PERTURB) for (const askerRole of ['member', 'admin'] as const) for (const mineRole of ['member', 'admin'] as const) {
+      const ctx = { asker: { memberId: ASKER, role: askerRole }, origin: 'chat' as const, chatId: 'c_claim', nowMs: 10 }
+      const g: GrantFacts = {
+        id: `pg_claimTable${String(++n).padStart(9, '0')}`, holder: `member:${ASKER}`, accountId: base.accountId, accountGen: base.accountGen,
+        operation: base.operation, scopeKey: base.scopeKey, perDay: 5, policyRev: POLICY_REV, grantedRole: mineRole, ceilingRev: 1, revokedAtMs: null,
+      }
+      const grant: GrantFacts = (({
+        none: g, holder_other: { ...g, holder: `member:${OTHER}` }, holder_brand_member: { ...g, holder: 'brand', grantedRole: 'member' },
+        holder_brand_admin: { ...g, holder: 'brand', grantedRole: 'admin' }, account: { ...g, accountId: 'shopify:other' }, gen: { ...g, accountGen: 1_001 },
+        operation: { ...g, operation: 'slack.channel.post' }, scope: { ...g, scopeKey: 'shop=store-b' }, policy: { ...g, policyRev: POLICY_REV + 1 },
+        role: { ...g, grantedRole: 'admin' }, ceiling: { ...g, ceilingRev: 2 }, revoked: { ...g, revokedAtMs: 5 },
+      }) satisfies Record<(typeof PERTURB)[number], GrantFacts>)[p]
+      // Both operations enabled at the same revision, so the `operation` perturbation is caught by the operation check
+      // itself, not by a missing ceiling row.
+      const both = { enabled: true, perDayMax: 50, loweredRev: 1 }
+      await writeState({ r: base, ctx, ceilings: { 'shopify.order.tag_add': both, 'slack.channel.post': both }, grants: [grant] })
+      const id = `ac_claim_t${n}`
+      await useFor(id, grant.id)
+      const covers = p === 'none' ? askerRole === 'admin' || mineRole === 'member' : p === 'holder_brand_admin' || (p === 'role' && askerRole === 'admin')
+      expect(await passes(rowOf(base, ctx, { id, verdict: 'run', grant_id: grant.id, approved_by: `grant:${grant.id}` })), `${p} ${askerRole} ${mineRole}`).toBe(covers)
+    }
+    expect(n).toBe(PERTURB.length * 4)
+  })
+})

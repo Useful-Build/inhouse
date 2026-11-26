@@ -228,12 +228,64 @@ describe('a dead grant never blocks a new "Always allow" (review round 1)', () =
     })
   }
 
+  it('ends nothing as superseded when no new grant is made (an ineligible answer) (review round 2)', async () => {
+    await db.prepare('DELETE FROM permission_ceiling').run()
+    await run(setCeilingStmt({ operation: 'shopify.order.tag_add', enabled: true, perDayMax: 50, actorId: 'm_system', nowMs: NOW }))
+    await person(db, 'm_dead_c', 'member')
+    const old = shopGrant('member:m_dead_c', { policyRev: POLICY_REV - 1 })
+    await insertGrant(db, old)
+    const mark = await lastLineId(db)
+    // Resolved before a reconnect: not eligible, so the dead grant stays as it is and no line says it was replaced.
+    await account(db, 'shopify:store', SHOP_GEN + 1)
+    await always('m_dead_c', 'ac_JJJJJJJJJJJJJJJJJJJJJJ')
+    await person(db, 'm_dead_c', 'member', 'removed')
+    await account(db, 'shopify:store', SHOP_GEN)
+    await always('m_dead_c', 'ac_KKKKKKKKKKKKKKKKKKKKKK')
+    expect((await revokedOf(old.id))?.revoked_at_ms).toBeNull()
+    expect(await linesSince(db, mark)).toEqual([])
+  })
+
   it('leaves a current grant alone: a second Always allow reads the same one back', async () => {
     await person(db, 'm_dead_b', 'member')
     const first = await always('m_dead_b', 'ac_GGGGGGGGGGGGGGGGGGGGGG')
     await always('m_dead_b', 'ac_HHHHHHHHHHHHHHHHHHHHHH')
     expect((await liveGrant(db, key('m_dead_b')))?.id).toBe(first)
     expect((await revokedOf(first))?.revoked_at_ms).toBeNull()
+  })
+})
+
+describe('Slack and disconnects (review round 2)', () => {
+  const post = { accountId: 'slack:workspace', accountGen: 2_000, operation: 'slack.channel.post' as const, scope: { channelId: 'C0ROUND201' }, scopeKey: 'channelId=C0ROUND201', policyRev: POLICY_REV }
+  beforeEach(async () => {
+    await account(db, 'slack:workspace', 2_000)
+    await ceiling(db, 'slack.channel.post', { enabled: true, perDayMax: 50, loweredRev: 1 })
+    await person(db, 'm_r2_a', 'member')
+    await person(db, 'm_r2_admin', 'admin')
+    await channel(db, 'C0ROUND201', 'ops', 'm_r2_admin')
+  })
+  const alwaysPost = async (action: string) => {
+    const a = alwaysAllowStmts({ holderMemberId: 'm_r2_a', grantedRole: 'member', resolved: post, perDay: 50, sourceAction: action, onlyIf: { sql: 'SELECT 1', params: [] }, at: at('m_r2_a', NOW) })
+    await db.batch(a.stmts.map(x => db.prepare(x.sql).bind(...x.params)))
+  }
+  const count = () => db.prepare("SELECT COUNT(*) AS n FROM permission_grants WHERE holder = 'member:m_r2_a'").first<number>('n')
+
+  it('makes no grant for a channel taken off the list while its card waited; relisting brings none', async () => {
+    await db.prepare("UPDATE notify_channels SET removed_at_ms = 5, removed_by = 'm_r2_admin' WHERE channel_id = 'C0ROUND201'").run()
+    await alwaysPost('ac_LLLLLLLLLLLLLLLLLLLLLL')
+    await db.prepare('UPDATE notify_channels SET removed_at_ms = NULL, removed_by = NULL WHERE channel_id = ?').bind('C0ROUND201').run()
+    expect(await count()).toBe(0)
+    await alwaysPost('ac_MMMMMMMMMMMMMMMMMMMMMM')
+    expect(await count()).toBe(1)
+  })
+
+  it('a disconnected account\'s grant is neither listed, read back as live nor reserved', async () => {
+    await alwaysPost('ac_NNNNNNNNNNNNNNNNNNNNNN')
+    const live = await liveGrant(db, { holder: 'member:m_r2_a', accountId: 'slack:workspace', operation: 'slack.channel.post', scopeKey: 'channelId=C0ROUND201' })
+    expect(live).not.toBeNull()
+    await db.prepare('UPDATE connector_accounts SET disconnected_at_ms = ? WHERE account_id = ?').bind(2_500, 'slack:workspace').run()
+    expect(await liveGrant(db, { holder: 'member:m_r2_a', accountId: 'slack:workspace', operation: 'slack.channel.post', scopeKey: 'channelId=C0ROUND201' })).toBeNull()
+    expect(await stores.permissions.list({ memberId: 'm_r2_a', role: 'member' })).toEqual([])
+    expect((await run(reserve(live!.id, 'ac_r2_use'))).meta.changes).toBe(0)
   })
 })
 

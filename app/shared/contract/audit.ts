@@ -205,6 +205,7 @@ export const ScopeKeyArgSchema = z.string().regex(/^[A-Za-z0-9%._~-]+=[A-Za-z0-9
  * took its key. `channel_unlisted`: the Slack channel it posts to was taken off the list.
  */
 export const RevokeReasonSchema = z.enum(['removed', 'member_removed', 'role_lowered', 'account_disconnected', 'account_reconnected', 'restore', 'superseded', 'channel_unlisted'])
+export type RevokeReason = z.infer<typeof RevokeReasonSchema>
 /**
  * Why an approval lapsed, or a waiting card expired (N11, N12): the brand paused or a restore held the outbox; or, at
  * the claim, the operation is off, the policy changed, the account changed, the asker or the approver can't any

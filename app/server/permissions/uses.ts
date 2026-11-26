@@ -37,7 +37,8 @@ export function reserveUseSql(r: UseReservation): Stmt {
      FROM permission_grants g
      JOIN permission_ceiling c ON c.operation = g.operation AND c.enabled = 1
      WHERE g.id = ? AND g.revoked_at_ms IS NULL AND g.ceiling_rev = c.lowered_rev AND g.policy_rev = ?
-       AND EXISTS (SELECT 1 FROM connector_accounts ca WHERE ca.account_id = g.account_id AND ca.connected_at_ms = g.account_gen)
+       AND EXISTS (SELECT 1 FROM connector_accounts ca WHERE ca.account_id = g.account_id AND ca.connected_at_ms = g.account_gen
+         AND (ca.disconnected_at_ms IS NULL OR ca.disconnected_at_ms < ca.connected_at_ms))
        AND (SELECT COALESCE(SUM(u.units), 0) FROM permission_uses u
             WHERE u.grant_id = g.id AND u.day = ? AND u.released_at_ms IS NULL) + ? <= MIN(g.per_day, c.per_day_max)`,
     `${r.actionId}#${r.actionRev}`, r.actionId, r.actionRev, r.day, r.units, r.atMs, r.grantId, POLICY_REV, r.day, r.units,
