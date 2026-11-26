@@ -1,7 +1,9 @@
 # P8: production readiness (`fleet/production-readiness`)
 
+> **Legacy (2026-11-24):** the Watch, Act and Run tiers are retired. The [2026-11-24 master plan](2026-11-24-master-plan.md) and [decision 0026](../decisions/0026-one-agent-replaces-watch-act-run.md) replace this plan's sequence; its designs stay as reference where the new plan names them.
+
 Status: re-cut on 2026-11-22 into P8a (Watch readiness, Part 1) and P8b (Part 2). Wasim decided the split; see
-[the master plan](2026-11-22-master-plan.md), its "Line A (A9)" section and "The Watch soak". The first version was
+[the master plan](../history/2026-11-22-master-plan.md), its "Line A (A9)" section and "The Watch soak". The first version was
 locked and approved by Wasim on 2026-11-19. Phase plan under the backend plan (`docs/plans/2026-11-19-backend.md`,
 "Production readiness"). Common rules are in its "Phase schedule (waves)" section.
 

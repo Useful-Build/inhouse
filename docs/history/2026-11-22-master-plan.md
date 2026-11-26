@@ -1,5 +1,7 @@
 # Master plan: Watch first, the rest at the first client
 
+> **Legacy (2026-11-24):** replaced by the [2026-11-24 master plan](../plans/2026-11-24-master-plan.md). Kept as history; don't plan from it.
+
 Updated: 2026-11-24 (Part 1's remaining work in three stages: build, connection, proving it live; standing decision 10: Export everything holds brand-shared data and the caller’s own data). Earlier: 2026-11-23 (standing decision 9: eval timing; 6 to 8: brand skills, team request statuses, routine run history). Earlier: 2026-11-22 (aligned with the 5-file repo setup in `AGENTS.md`, `REVIEW.md`, `VERIFY.md`, `DESIGN.md`, and `FEATURE_MAP.md`).
 
 Decided by Wasim on 2026-11-22: split the remaining backend work into two parts. **Part 1** is built now: a Watch-ready product, including memory at Watch, document skills, and Watch safety/readiness. **Part 2** is built once the first client signs, during that client's Watch months.
