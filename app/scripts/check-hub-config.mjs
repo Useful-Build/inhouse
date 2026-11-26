@@ -141,6 +141,15 @@ export function checkHubConfig(config) {
   if (!migrations.some(m => Array.isArray(m?.new_sqlite_classes) && m.new_sqlite_classes.includes('SignIn'))) {
     fail('signin-migration', 'no migration with `new_sqlite_classes` containing "SignIn"')
   }
+  // Stage 1 M2-C: the write-scoped Shopify app's SignIn. The hub exports the class, so the binding and the migration that
+  // creates it ship together: a binding with no migration fails the deploy, a migration with no binding leaves the
+  // class unreachable.
+  if (!bindings.some(b => b?.name === 'SHOPIFY_WRITE_SIGNIN' && b?.class_name === 'ShopifyWriteSignIn' && !has(b, 'script_name'))) {
+    fail('write-signin-binding', 'no `durable_objects.bindings` entry { name: "SHOPIFY_WRITE_SIGNIN", class_name: "ShopifyWriteSignIn" } on this Worker')
+  }
+  if (!migrations.some(m => m?.tag === 'v2' && Array.isArray(m?.new_sqlite_classes) && m.new_sqlite_classes.includes('ShopifyWriteSignIn'))) {
+    fail('write-signin-migration', 'no migration { tag: "v2" } with `new_sqlite_classes` containing "ShopifyWriteSignIn"')
+  }
   if (config.main !== 'hub/index/index.ts') fail('main', '`main` must be "hub/index/index.ts"')
   if (has(config, 'worker_loaders')) {
     const loaders = config.worker_loaders

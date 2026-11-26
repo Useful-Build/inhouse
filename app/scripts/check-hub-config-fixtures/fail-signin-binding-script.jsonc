@@ -15,6 +15,10 @@
         "name": "SIGNIN",
         "class_name": "SignIn",
         "script_name": "other-worker"
+      },
+      {
+        "name": "SHOPIFY_WRITE_SIGNIN",
+        "class_name": "ShopifyWriteSignIn"
       }
     ]
   },
@@ -23,6 +27,12 @@
       "tag": "v1",
       "new_sqlite_classes": [
         "SignIn"
+      ]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": [
+        "ShopifyWriteSignIn"
       ]
     }
   ],
