@@ -6,12 +6,16 @@
 //  - a continuation that hit its limit, or failed and is retried, shows as a failure instead of carrying on;
 //  - the server's own cut says "You stopped", or a person's stop (or their new message) says nothing;
 //  - a turn that hit a limit and did NOT become a job loses its failure;
+//  - an event between a promoted root's end and its `job.started` (a saved file after its confirm, a notice, an
+//    action's update, a progress line) shows the root's failure anyway, live or in a reload's replay (#451 review);
+//  - a message queued `next` plus the server's cut reads as "You stopped" (only a `now` message cuts the turn);
 //  - the job's progress or end is lost, or a second `job.ended` changes the view.
 import { fc, test as fcTest } from '@fast-check/vitest'
 import { describe, expect, test } from 'vitest'
 import type { ChatEvent } from '../../../shared/contract/runs'
 import type { ChatMessage } from '../../agent/types'
 import { emptyView, reduce } from './view'
+import { mergeHistory } from './notes'
 import type { ChatView } from './view'
 
 const AT = { iso: '2026-11-20T10:00:00.000Z', ms: Date.UTC(2026, 10, 20, 10, 0, 0) }
@@ -74,12 +78,45 @@ describe('a turn that hits a limit', () => {
     const v = run(...root, ended(ROOT, 'interrupted'), jobStarted)
     expect(byId(v, `${ROOT}.x`)).toBeUndefined()
   })
-  test('not promoted: the failure shows with the next event, with Try again asking the person\'s question', () => {
-    for (const next of [runFinished, started(P2), { type: 'notice', code: 'pool_busy' } as ChatEvent]) {
+  test('not promoted: the failure shows once the next turn starts or the run ends, with Try again asking the person\'s question', () => {
+    for (const next of [runFinished, started(P2)]) {
       const v = run(...root, failed(ROOT, 'turn_budget'), next)
       expect(errors(v).map(m => m.part.type === 'error' && m.part.retryQuestion)).toEqual(['Count every order this year'])
       expect(v.pendingEnd).toBeNull()
     }
+  })
+  // The server sends `turn.finished` at the runner's terminal event and `job.started` only at its release; a saved file's
+  // event comes after its awaited confirm, so it can land between them (core.ts). Nothing in between settles the hold.
+  const between: ChatEvent[] = [
+    { type: 'file', turnId: ROOT, fileId: 'f_Fileaaaaaaaaaaaaaaaaaa', name: 'job-run.txt', bytes: 7, contentType: 'text/plain' },
+    { type: 'file.refused', turnId: ROOT, name: 'big.bin', reason: 'too_large' } as ChatEvent,
+    { type: 'notice', code: 'pool_busy' },
+    { type: 'action.updated', actionId: 'ac_Actaaaaaaaaaaaaaaaaaaa', rev: 2 } as ChatEvent,
+    queued(P2, 'And the refunds?'),
+  ]
+  test.each(['max_turns', 'interrupted'] as const)('promoted (%s) with a saved file and other events before its job.started: still no failure or "You stopped"', end => {
+    const v = run(...root, end === 'interrupted' ? ended(ROOT, 'interrupted') : failed(ROOT, end), ...between, jobStarted)
+    expect(errors(v)).toEqual([])
+    expect(byId(v, `${ROOT}.x`)).toBeUndefined()
+    expect(v.pendingEnd).toBeNull()
+    expect(v.files.map(f => f.name)).toEqual(['job-run.txt'])
+  })
+  test('the same events not promoted: the failure shows when the run ends', () => {
+    const v = run(...root, failed(ROOT, 'max_turns'), ...between)
+    expect(errors(v)).toEqual([])
+    expect(errors(reduce(v, runFinished, AT, RUN))).toHaveLength(1)
+  })
+  test('a reload during the job: the stored history has no end row for the root, and the replay adds none', () => {
+    // What route 24 gives for a promoted root (projection.ts keeps no end row for it), then the run's frames replayed.
+    const history: ChatMessage[] = [
+      { id: `${ROOT}.u`, role: 'user', text: 'Count every order this year', at: AT },
+      { id: `${ROOT}.0`, role: 'agent', part: { type: 'text', text: 'Working on step 1.' }, trace: ROOT, at: AT },
+    ]
+    const replay = run(...root, { type: 'part', turnId: ROOT, messageId: `${ROOT}.0`, part: { type: 'text', text: 'Working on step 1.' }, model: 'sonnet', at: AT },
+      failed(ROOT, 'max_turns'), ...between.slice(0, 1), jobStarted, queued(C1, NOTE, 'job'), started(C1))
+    const shown = mergeHistory(history, [], replay.messages)
+    expect(shown.map(m => m.id)).toEqual([`${ROOT}.u`, `${ROOT}.0`, `${C1}.u`])
+    expect(shown.some(m => m.id === `${ROOT}.f` || m.id === `${ROOT}.x`)).toBe(false)
   })
   test("a person's stop that wasn't promoted still says so", () => {
     expect(byId(run(...root, ended(ROOT, 'interrupted'), runFinished), `${ROOT}.x`)).toEqual({ id: `${ROOT}.x`, role: 'event', text: STOPPED })
@@ -113,9 +150,33 @@ describe("a job's own turns", () => {
     expect(byId(run(...live, ended(C1, 'stopped')), `${C1}.x`)).toMatchObject({ text: STOPPED })
     expect(byId(run(...live, { ...queued(P2, 'Actually, stop'), priority: 'now' } as ChatEvent, ended(C1, 'interrupted')), `${C1}.x`)).toMatchObject({ text: STOPPED })
   })
+  test("a message queued `next` or `later`, then the server's cut: nothing says \"You stopped\" (a reload agrees)", () => {
+    for (const priority of ['next', 'later'] as const) {
+      expect(byId(run(...live, { ...queued(P2, 'And the refunds?'), priority } as ChatEvent, ended(C1, 'interrupted')), `${C1}.x`)).toBeUndefined()
+    }
+  })
+})
+
+describe("a job's question resume (the job's parked turn taken over)", () => {
+  const resumed = [...root, failed(ROOT, 'max_turns'), jobStarted, queued(C1, NOTE, 'job'), started(C1), ended(C1, 'done'), queued(P2, ''), started(P2)]
+  test('its limit, retry or the server\'s cut say nothing (a reload agrees: it is a job turn there too)', () => {
+    expect(errors(run(...resumed, failed(P2, 'max_turns')))).toEqual([])
+    expect(byId(run(...resumed, ended(P2, 'interrupted')), `${P2}.x`)).toBeUndefined()
+  })
+  test("a failure that ends the job shows, and Try again asks the person's question", () => {
+    expect(errors(run(...resumed, failed(P2, 'sdk_error'))).map(m => m.part.type === 'error' && m.part.retryQuestion)).toEqual(['Count every order this year'])
+  })
+  test('outside a running job, a question resume ends as any turn', () => {
+    const v = run(queued(P2, ''), started(P2), failed(P2, 'timeout'))
+    expect(errors(v).map(m => m.part.type === 'error' && m.part.retryQuestion)).toEqual([''])
+  })
 })
 
 describe("the job's life", () => {
+  test('a resumed run with no job.started: its progress still shows the running job (a reload replays the same)', () => {
+    const v = run({ type: 'job.progress', jobId: JOB, label: 'Reading orders', helpers: 1 })
+    expect(v.job).toMatchObject({ jobId: JOB, state: 'running', progress: { label: 'Reading orders', helpers: 1 } })
+  })
   test('progress, then one end with its length and cost; a second end changes nothing', () => {
     const p = run(...root, failed(ROOT, 'max_turns'), jobStarted, { type: 'job.progress', jobId: JOB, label: 'Reading orders', helpers: 2 })
     expect(p.job?.progress).toEqual({ label: 'Reading orders', helpers: 2 })
@@ -144,6 +205,8 @@ const eventArb: fc.Arbitrary<ChatEvent> = fc.oneof(
   fc.constantFrom(...T_IDS).map((t): ChatEvent => ({ type: 'job.started', jobId: JOB, rootTurnId: t })),
   fc.constantFrom(jobEnded('done'), jobEnded('cancelled'), jobEnded('time'), runFinished),
   fc.constantFrom(...T_IDS).map((t): ChatEvent => ({ type: 'turn.cancelled', turnId: t, why: 'paused' })),
+  fc.constantFrom(...T_IDS).map((t): ChatEvent => ({ type: 'file', turnId: t, fileId: 'f_Fileaaaaaaaaaaaaaaaaaa', name: 'a.txt', bytes: 1, contentType: 'text/plain' })),
+  fc.constant<ChatEvent>({ type: 'notice', code: 'pool_busy' }),
 )
 fcTest.prop([fc.array(eventArb, { maxLength: 30 })])('no server text is ever the person\'s message or their Try again', events => {
   const v = run(...events, runFinished)
@@ -154,4 +217,21 @@ fcTest.prop([fc.array(eventArb, { maxLength: 30 })])('no server text is ever the
   }
   for (const q of v.queued) expect(q.text).toBe(PERSON)
   expect(v.pendingEnd).toBeNull()
+})
+
+// A promoted root: whatever non-settling events land between its end and its `job.started` (files, notices, action
+// updates, another person's message queued), and whatever follows, it never shows a failure or "You stopped".
+const unsettling: fc.Arbitrary<ChatEvent> = fc.oneof(
+  fc.constant<ChatEvent>({ type: 'file', turnId: ROOT, fileId: 'f_Fileaaaaaaaaaaaaaaaaaa', name: 'a.txt', bytes: 1, contentType: 'text/plain' }),
+  fc.constant<ChatEvent>({ type: 'notice', code: 'pool_busy' }),
+  fc.constant<ChatEvent>({ type: 'notice', code: 'budget_busy' }),
+  fc.constant({ type: 'action.updated', actionId: 'ac_Actaaaaaaaaaaaaaaaaaaa', rev: 1 } as ChatEvent),
+  fc.constant(queued(P2, PERSON)),
+)
+fcTest.prop([
+  fc.constantFrom<ChatEvent>(failed(ROOT, 'max_turns'), failed(ROOT, 'turn_budget'), ended(ROOT, 'interrupted')),
+  fc.array(unsettling, { maxLength: 8 }), fc.array(eventArb, { maxLength: 15 }),
+])('a promoted root never shows a failure or "You stopped", whatever lands before its job.started', (end, before, after) => {
+  const v = run(...root, end, ...before, jobStarted, ...after.filter(e => !('turnId' in e) || e.turnId !== ROOT), runFinished)
+  expect(v.messages.filter(m => m.id === `${ROOT}.f` || m.id === `${ROOT}.x`)).toEqual([])
 })

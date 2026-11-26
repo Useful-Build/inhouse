@@ -11,15 +11,15 @@
 // required test-build job, the default agent set and a full run without `only`), so no other run waits 2 hours.
 //
 // It would fail if: the job ended before 2 hours or not `done`; the kill didn't land while a step ran, or the job didn't
-// go on after it on a new container (the killed step comes back as an error on the resumed session, and later steps
-// run); the result file lost the work done before the kill; the job ended with no result, two, or a second notice; a
+// go on after it on a new container (a killed runner's stored generation moves on, the killed step comes back with the
+// SDK's "session ended before this call's result was recorded", which a server cut never gives, and later steps run); the result file lost the work done before the kill; the job ended with no result, two, or a second notice; a
 // server-written turn read as the person's message.
 import { expect, test } from '@playwright/test'
 import { JOB_CARRIED_ON_TEXT } from '../../shared/server-turn-text.ts'
 import { SOAK_DONE, SOAK_FILE, SOAK_STEPS, stepIdPrefix } from '../../test/scripted-model/scenarios/jobs.ts'
 import { createChat, send } from './chat-kit.ts'
 import { killRunners } from './job-kit.ts'
-import { jobNotices, jobWhen, onlyThePersonSpeaks, outputText, runToken, runningStep, stepsOf, storedMessages } from './job-proof.ts'
+import { LOST_CALL, jobNotices, jobWhen, onlyThePersonSpeaks, outputText, runToken, runnerGens, runningStep, stepsOf, storedMessages } from './job-proof.ts'
 import { actor } from './kit.ts'
 
 const SELF = 'api/job-soak.spec.ts'
@@ -48,9 +48,10 @@ test('a scripted 2-hour job survives a closed tab and a killed container and end
     { timeout: KILL_AFTER_MS + 30 * 60_000, intervals: [60_000], message: 'the job ran on past the kill time and carried on at least once' }).toBe(true)
 
   // Kill every runner while one of this job's steps runs (a call with no result yet).
+  // A step that starts after this read, so the kill lands well inside its 3 minutes (not at the end of one already going).
   const before = await stepsOf(request, prefix)
-  const done = new Set(before.calls.filter(id => before.results.has(id)))
-  const step = await runningStep(request, prefix, done, 5 * 60_000)
+  const step = await runningStep(request, prefix, new Set(before.calls), 6 * 60_000)
+  const gensBefore = await runnerGens(request)
   const killed = await killRunners(request)
   const killedAtMs = Date.now()
   expect(killed).not.toEqual([])
@@ -65,6 +66,9 @@ test('a scripted 2-hour job survives a closed tab and a killed container and end
   // (on a new container) to run every later step once.
   const after = await stepsOf(request, prefix)
   expect(after.results.get(step), `the killed step ${step}'s result`).toBe(true)
+  expect(after.texts.get(step), `the killed step ${step}'s result text`).toMatch(LOST_CALL)
+  const gensAfter = await runnerGens(request)
+  expect(killed.filter(r => (gensAfter[r] ?? 0) > (gensBefore[r] ?? 0)), `a killed runner's generation moved on (${JSON.stringify({ gensBefore, gensAfter })})`).not.toEqual([])
   const okSteps = after.calls.filter(id => after.results.get(id) === false).map(id => Number(id.slice(prefix.length).split('_')[0]))
   expect([...okSteps].sort((a, b) => a - b), 'every step ran once to success').toEqual(Array.from({ length: SOAK_STEPS }, (_, i) => i + 1))
   expect(okSteps.filter(n => n > stepN).length, 'steps after the kill').toBe(SOAK_STEPS - stepN)
@@ -83,11 +87,11 @@ test('a scripted 2-hour job survives a closed tab and a killed container and end
   const messages = await storedMessages(request, dana, chatId)
   expect(messages.filter(m => m.role === 'agent' && m.part?.type === 'text' && m.part.text === SOAK_DONE), 'one result').toHaveLength(1)
   onlyThePersonSpeaks(messages, text)
-  await expect.poll(async () => (await jobNotices(request, dana, ended.jobId)).length, { timeout: 120_000, message: 'the job\'s one notice' }).toBe(1)
+  await expect.poll(async () => (await jobNotices(request, dana, chatId)).length, { timeout: 120_000, message: 'the job\'s one notice' }).toBe(1)
 
   // For the PR: the soak's numbers.
   console.log(`M1-D soak ${JSON.stringify({
-    jobId: ended.jobId, ranMinutes: Math.round(ranMs / 60_000), killedAfterMinutes: Math.round((killedAtMs - t0) / 60_000), killed, killedStep: stepN,
+    jobId: ended.jobId, ranMinutes: Math.round(ranMs / 60_000), killedAfterMinutes: Math.round((killedAtMs - t0) / 60_000), killed, gensBefore, gensAfter, killedStep: stepN,
     continuations: new Set(messages.filter(m => m.text === JOB_CARRIED_ON_TEXT).map(m => m.turnId)).size,
     fileLines: nums.length, missingLines: SOAK_STEPS - nums.length, costMinor: ended.cost?.minor ?? null,
   })}`)

@@ -3,9 +3,10 @@
 // and route 101 (Cancel) itself with Playwright's `page.route`, as routine-last-runs.spec.ts answers route 86: the page,
 // the client's reading of the answer and the card are the real ones. The sandbox's e2e/api/jobs.spec.ts proves the
 // routes and the job itself; the unit tests (src/screens/chat/job-status.test.ts, job-view.test.ts) prove what shows.
-// It would fail if: a running job showed no row or no Cancel; Cancel didn't ask route 101 or didn't turn the row into
-// the stopped card; a finished job's card didn't say how it ended, how long it ran and what it cost; or either failed
-// axe (WCAG 2.1 A and AA) in light or dark, or scrolled sideways.
+// It would fail if: a running job showed no row or no Cancel job; Cancel job didn't ask route 101, didn't turn the row
+// into the stopped card or dropped the focus; the row or the card wasn't said aloud (the status line); a finished job's
+// card didn't say how it ended and how long it ran, or showed what it cost (DESIGN.md section 1); or either failed axe
+// (WCAG 2.1 A and AA) in light or dark, or scrolled sideways.
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import { expect, test } from '../support/test-build/index.js'
@@ -51,18 +52,23 @@ test('a running job shows its progress with Cancel, and Cancel turns it into the
   const row = page.locator('[data-job-status="running"]')
   await expect(row.getByRole('heading', { name: 'Working on a long job' })).toBeVisible()
   await expect(row).toContainText("Reading this year's orders · 2 helpers working")
+  await expect(page.locator('[data-job-said]')).toHaveText("Working on a long job. Reading this year's orders")
   await checkBothThemes(page, 'job-running')
 
-  await row.getByRole('button', { name: 'Cancel' }).click()
+  await row.getByRole('button', { name: 'Cancel job' }).click()
   const card = page.locator('[data-job-status="ended"]')
-  await expect(card.getByRole('heading', { name: 'Long job stopped' })).toBeVisible()
+  const heading = card.getByRole('heading', { name: 'Long job stopped' })
+  await expect(heading).toBeVisible()
+  await expect(heading).toBeFocused()
   await expect(card).toContainText('It was stopped before it finished.')
-  await expect(card).toContainText('Ran for 12 min, cost $1.40.')
+  await expect(card).toContainText('Ran for 12 min.')
+  await expect(card).not.toContainText('$')
+  await expect(page.locator('[data-job-said]')).toHaveText('Long job stopped. It was stopped before it finished.')
   expect(cancels).toBe(1)
   await expect(row).toHaveCount(0)
 })
 
-test('a finished job shows its result card: how it ended, how long it ran and what it cost', async ({ page, context, request }) => {
+test('a finished job shows its result card: how it ended and how long it ran, never what it cost', async ({ page, context, request }) => {
   const chatId = await createChat(request, actor('memberA'), undefined, 'Count the orders')
   await page.route(`**/api/chats/${chatId}/job`, route => route.fulfill({
     json: { job: job(chatId, { state: 'ended', outcome: 'done', endedAt: at(START + 2 * 3_600_000 + 5 * 60_000), cost: { minor: 320, currency: 'USD' } }) },
@@ -73,7 +79,8 @@ test('a finished job shows its result card: how it ended, how long it ran and wh
   const card = page.locator('[data-job-status="ended"]')
   await expect(card.getByRole('heading', { name: 'Long job finished' })).toBeVisible()
   await expect(card).toContainText('Your Inhouse agent finished this task. Its answer is above.')
-  await expect(card).toContainText('Ran for 2 h 5 min, cost $3.20.')
+  await expect(card).toContainText('Ran for 2 h 5 min.')
+  await expect(card).not.toContainText('$')
   await expect(page.locator('[data-job-status="running"]')).toHaveCount(0)
   await checkBothThemes(page, 'job-finished')
 })

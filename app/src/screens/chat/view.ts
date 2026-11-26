@@ -73,9 +73,11 @@ export interface ChatView {
   /** The chat's newest long job in this run, or null. */
   job: JobInfo | null
   /**
-   * A person's turn that ended at a limit (failed for too many steps or the one-answer budget) or interrupted: the server may make it a
-   * long job in the same step (`job.started` comes next, N3), and then its end isn't a failure. Its end message waits
-   * here for the next event: dropped if that event starts its job, shown otherwise.
+   * A person's turn that ended at a limit (failed for too many steps or the one-answer budget) or interrupted: the server
+   * may make it a long job when the runner releases it (`job.started`, N3), and then its end isn't a failure. Its end
+   * message waits here until that is settled: dropped by its `job.started`, shown by the next `turn.started` or
+   * `run.finished` (the server sends either only after the release decided). Events in between (a saved `file` after
+   * its confirm, a notice, an action's update) don't settle it.
    */
   pendingEnd: { turnId: string; message: ChatMessage } | null
 }
@@ -114,10 +116,15 @@ const withAsked = (messages: ChatMessage[], t: TurnInfo): ChatMessage[] => {
   const m = askedMessage(t)
   return m === null ? messages : upsert(messages, m)
 }
+/**
+ * A turn of the running job: its continuation, or a question's resume while the job runs (the resume takes the job's
+ * parked turn over, N3; projection.ts reads the same from `turns.job_id`).
+ */
+const ofJob = (v: ChatView, t: TurnInfo): boolean => t.source === 'job' || (t.source === 'question' && v.job?.state === 'running')
 /** The question Try again asks: only ever the person's own words. A server-written turn's text is never theirs. */
 const retryOf = (v: ChatView, t: TurnInfo): string => {
   if (t.source === undefined) return t.text
-  if (t.source === 'job' && v.job) { const root = v.turns[v.job.rootTurnId]; if (root && root.source === undefined) return root.text }
+  if (ofJob(v, t) && v.job) { const root = v.turns[v.job.rootTurnId]; if (root && root.source === undefined) return root.text }
   return ''
 }
 /** A person's turn ended this way may become a long job in the same step (N3, `promotable`): its end waits. */
@@ -132,10 +139,17 @@ const setTurn = (v: ChatView, turnId: string, patch: Partial<TurnInfo>): ChatVie
 
 /**
  * `at`: when the frame was sent (a note's time). Returns the same view object when the event changes nothing.
- * A held end (`pendingEnd`) shows before any event but the one that starts its job, which drops it.
+ * A held end (`pendingEnd`) shows before an event that settles it without a job: the next turn starting, the run
+ * finishing, or another turn's job starting. Its own `job.started` drops it; every other event leaves it held.
  */
+const settlesWithoutJob = (ev: ChatEvent, turnId: string): boolean =>
+  ev.type === 'turn.started' || ev.type === 'run.finished' || (ev.type === 'job.started' && ev.rootTurnId !== turnId)
+  // Another turn's cancel shows that turn's question: a cancel this early (a pause, a deleted chat) means no job either,
+  // and the held end goes first, where the stored history has it.
+  || (ev.type === 'turn.cancelled' && ev.turnId !== turnId)
+
 export function reduce(v: ChatView, ev: ChatEvent, at: Instant, runId = ''): ChatView {
-  if (v.pendingEnd !== null && !(ev.type === 'job.started' && ev.rootTurnId === v.pendingEnd.turnId)) {
+  if (v.pendingEnd !== null && settlesWithoutJob(ev, v.pendingEnd.turnId)) {
     v = { ...v, messages: upsert(v.messages, v.pendingEnd.message), pendingEnd: null }
   }
   return step(v, ev, at, runId)
@@ -197,13 +211,14 @@ function step(v: ChatView, ev: ChatEvent, at: Instant, runId: string): ChatView 
         end = { id: `${ev.turnId}.x`, role: 'event', text: STOPPED_NOTE }
       }
       let pendingEnd = v.pendingEnd
-      if (t.source === 'job') {
+      if (ofJob(v, t)) {
         // A job's own turn: most failures are the job's to judge (carry on, retry or end for its budget, and its card says
         // so); one that ends the job whatever comes next still shows, with Try again asking the person's question. The
         // server's cut carries the job on. A stop says so only when the person stopped it: a Stop or Cancel (`stopped`), an
-        // interrupt that cancelled the job (its `job.ended` came first), or their new message taking the turn's place.
+        // interrupt that cancelled the job (its `job.ended` came first), or their new message sent `now` taking the turn's
+        // place (the server's `message` cut; one queued `next` or `later` doesn't cut, and the server's own cut then says nothing).
         const shown = ev.outcome === 'failed' ? JOB_TURN_FAILURES_SHOWN.has(ev.reason ?? 'unknown')
-          : ev.outcome === 'stopped' || (ev.outcome === 'interrupted' && (v.job?.outcome === 'cancelled' || v.queued.length > 0))
+          : ev.outcome === 'stopped' || (ev.outcome === 'interrupted' && (v.job?.outcome === 'cancelled' || v.queued.some(q => q.priority === 'now')))
         if (!shown) end = null
       } else if (end !== null && mayCarry(t, ev)) {
         pendingEnd = { turnId: ev.turnId, message: end }
@@ -247,8 +262,13 @@ function step(v: ChatView, ev: ChatEvent, at: Instant, runId: string): ChatView 
         ...v, pendingEnd: v.pendingEnd?.turnId === ev.rootTurnId ? null : v.pendingEnd,
         job: { jobId: ev.jobId, rootTurnId: ev.rootTurnId, state: 'running', progress: null, outcome: null, endedAt: null, durationMs: null, cost: null },
       }
-    case 'job.progress':
-      return v.job?.jobId === ev.jobId && v.job.state === 'running' ? { ...v, job: { ...v.job, progress: { label: ev.label, helpers: ev.helpers } } } : v
+    case 'job.progress': {
+      if (v.job?.jobId === ev.jobId) return v.job.state === 'running' ? { ...v, job: { ...v.job, progress: { label: ev.label, helpers: ev.helpers } } } : v
+      // A run resumed after the job's question carries no `job.started`: its progress still names the running job. Another
+      // job's line while this one runs is stale (one job runs per chat) and changes nothing.
+      if (v.job?.state === 'running') return v
+      return { ...v, job: { jobId: ev.jobId, rootTurnId: '', state: 'running', progress: { label: ev.label, helpers: ev.helpers }, outcome: null, endedAt: null, durationMs: null, cost: null } }
+    }
     case 'job.ended': {
       if (v.job?.state === 'ended' && v.job.jobId === ev.jobId) return v
       const base = v.job?.jobId === ev.jobId ? v.job : { jobId: ev.jobId, rootTurnId: '', progress: null }

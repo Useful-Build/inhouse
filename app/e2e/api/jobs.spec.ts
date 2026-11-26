@@ -16,7 +16,7 @@ import { JOB_CARRIED_ON_TEXT } from '../../shared/server-turn-text.ts'
 import { JOB_RUN_DONE, JOB_RUN_FILE, stepIdPrefix } from '../../test/scripted-model/scenarios/jobs.ts'
 import { Tab, createChat, needsContainer, send } from './chat-kit.ts'
 import { killRunners, resetJobTimings, setJobTimings } from './job-kit.ts'
-import { jobNotices, jobWhen, onlyThePersonSpeaks, outputText, runToken, runningStep, stepsOf, storedJob, storedMessages } from './job-proof.ts'
+import { LOST_CALL, jobNotices, jobWhen, onlyThePersonSpeaks, outputText, runToken, runnerGens, runningStep, stepsOf, storedJob, storedMessages } from './job-proof.ts'
 import { actor, call } from './kit.ts'
 
 const dana = actor('memberA')
@@ -63,16 +63,21 @@ test('a cut turn becomes a job that carries on with the tab closed, survives a k
     const found = Date.now()
     const step = await runningStep(request, prefix, new Set(before.calls), 6 * 60_000)
     const seenMs = Date.now() - found
+    const gensBefore = await runnerGens(request)
     const killed = await killRunners(request)
     console.log(`M1-D jobs: step ${step} seen running after ${seenMs} ms of polling; killed ${JSON.stringify(killed)} ${Date.now() - found} ms after the poll began`)
     expect(killed).not.toEqual([])
 
     const job = await jobWhen(request, dana, chatId, j => j.state === 'ended', 'the job ended', 8 * 60_000)
     expect(job).toMatchObject({ jobId: started.jobId, rootTurnId: sent.turnId, outcome: 'done' })
-    // The killed step came back as an error (the SDK's "interrupted" result on the resumed session) and ran again; every
-    // step has exactly one successful run.
+    // The container was replaced: a killed runner started a newer generation (read from its own storage), and the killed
+    // step came back with the SDK's own "session ended before this call's result was recorded" (a server cut's interrupt
+    // says otherwise) and ran again; every step has exactly one successful run.
+    const gensAfter = await runnerGens(request)
+    expect(killed.filter(r => (gensAfter[r] ?? 0) > (gensBefore[r] ?? 0)), `a killed runner's generation moved on (${JSON.stringify({ gensBefore, gensAfter })})`).not.toEqual([])
     const after = await stepsOf(request, prefix)
     expect(after.results.get(step), `the killed step ${step}'s result`).toBe(true)
+    expect(after.texts.get(step), `the killed step ${step}'s result text`).toMatch(LOST_CALL)
     const ok = after.calls.filter(id => after.results.get(id) === false).map(id => id.slice(prefix.length).split('_')[0])
     expect(ok.sort()).toEqual(['1', '2', '3'])
 
@@ -82,13 +87,13 @@ test('a cut turn becomes a job that carries on with the tab closed, survives a k
     expect(messages.filter(m => m.role === 'event' && m.text === JOB_CARRIED_ON_TEXT).length, 'continuations read as the agent carrying on').toBeGreaterThanOrEqual(2)
     // The root's cut keeps no end row: a reload shows no "You stopped" or failure for it.
     expect(messages.filter(m => m.turnId === sent.turnId && m.role === 'event')).toEqual([])
-    await expect.poll(async () => (await jobNotices(request, dana, job.jobId)).length, { timeout: 60_000, message: 'the job\'s one notice' }).toBe(1)
+    await expect.poll(async () => (await jobNotices(request, dana, chatId)).length, { timeout: 60_000, message: 'the job\'s one notice' }).toBe(1)
     // The file the steps wrote: the root's lines (saved at its end, before the kill) are in it, and it ends at step 3.
     const lines = (await outputText(request, dana, chatId, JOB_RUN_FILE)).trim().split('\n')
     expect(lines[0]).toBe('step-1')
     expect(lines.at(-1)).toBe('step-3')
     await runFinished(request, chatId)
-    expect((await jobNotices(request, dana, job.jobId)).length).toBe(1)
+    expect((await jobNotices(request, dana, chatId)).length).toBe(1)
   } finally {
     await resetJobTimings(request)
   }
@@ -103,12 +108,13 @@ test('Cancel on a live turn stops it and ends the job: no later turn, one notice
     const running = await jobWhen(request, dana, chatId, j => j.state === 'running', 'the job started', 300_000)
     const before = await stepsOf(request, prefix)
     await runningStep(request, prefix, new Set(before.calls), 6 * 60_000)
+    // Another person's Cancel is not found (the job is the chat owner's), and changes nothing: the job still runs.
+    const other = await call(request, actor('memberB'), 'POST', `/api/jobs/${running.jobId}/cancel`)
+    expect(other.status, other.text).toBe(404)
+    expect((await storedJob(request, dana, chatId))?.state).toBe('running')
     const r = await call(request, dana, 'POST', `/api/jobs/${running.jobId}/cancel`)
     expect(r.status, r.text).toBe(200)
     expect(r.json.job).toMatchObject({ jobId: running.jobId, state: 'ended', outcome: 'cancelled' })
-    // Another person's Cancel is not found (the job is the chat owner's).
-    const other = await call(request, actor('memberB'), 'POST', `/api/jobs/${running.jobId}/cancel`)
-    expect(other.status, other.text).toBe(404)
     await runFinished(request, chatId)
     const messages = await storedMessages(request, dana, chatId)
     onlyThePersonSpeaks(messages, text)
@@ -117,7 +123,7 @@ test('Cancel on a live turn stops it and ends the job: no later turn, one notice
     const conts = [...new Set(messages.filter(m => m.role === 'event' && m.text === JOB_CARRIED_ON_TEXT).map(m => m.turnId))]
     expect(conts).toHaveLength(1)
     expect(messages.filter(m => m.turnId === conts[0] && m.id.endsWith('.x'))).toHaveLength(1)
-    await expect.poll(async () => (await jobNotices(request, dana, running.jobId)).length, { timeout: 60_000, message: 'the job\'s one notice' }).toBe(1)
+    await expect.poll(async () => (await jobNotices(request, dana, chatId)).length, { timeout: 60_000, message: 'the job\'s one notice' }).toBe(1)
     expect((await storedJob(request, dana, chatId))?.outcome).toBe('cancelled')
   } finally {
     await resetJobTimings(request)
@@ -127,8 +133,9 @@ test('Cancel on a live turn stops it and ends the job: no later turn, one notice
 test('Cancel between turns ends the job and no continuation ever starts', async ({ request }) => {
   needsContainer()
   test.setTimeout(12 * 60_000)
-  // A drain refuses the continuation (the job waits to try again, here for 10 minutes), so the job sits between turns.
-  await setJobTimings(request, { JOB_CUT_MS, JOB_RETRY_MS: 600_000 })
+  // A drain refuses the continuation, so the job sits between turns, trying again every 20 seconds (still refused).
+  const RETRY_MS = 20_000
+  await setJobTimings(request, { JOB_CUT_MS, JOB_RETRY_MS: RETRY_MS })
   let drained = false
   try {
     const { chatId, text, sent, prefix } = await startRun(request)
@@ -149,10 +156,20 @@ test('Cancel between turns ends the job and no continuation ever starts', async 
     expect(u.status, u.text).toBe(200)
     drained = false
     await runFinished(request, chatId)
+    // Undrained, a retry that outlived the Cancel would start a continuation within 20 seconds. Watch for three retry
+    // periods that none does: no carry-on row is stored and no new step call reaches the session store.
+    const stepsAtCancel = (await stepsOf(request, prefix)).calls.length
+    const watchFrom = Date.now()
+    await expect.poll(async () => {
+      const carried = (await storedMessages(request, dana, chatId)).filter(m => m.role === 'event' && m.text === JOB_CARRIED_ON_TEXT)
+      const calls = (await stepsOf(request, prefix)).calls.length
+      if (carried.length > 0 || calls > stepsAtCancel) throw new Error(`a continuation started after the Cancel: ${carried.length} carry-on rows, ${calls - stepsAtCancel} new step calls`)
+      return Date.now() - watchFrom >= 3 * RETRY_MS
+    }, { timeout: 3 * RETRY_MS + 60_000, intervals: [5_000], message: 'no continuation for three retry periods after the Cancel' }).toBe(true)
     const messages = await storedMessages(request, dana, chatId)
     onlyThePersonSpeaks(messages, text)
     expect(messages.filter(m => m.role === 'event' && m.text === JOB_CARRIED_ON_TEXT), 'no continuation').toEqual([])
-    await expect.poll(async () => (await jobNotices(request, dana, waiting.jobId)).length, { timeout: 60_000, message: 'the job\'s one notice' }).toBe(1)
+    await expect.poll(async () => (await jobNotices(request, dana, chatId)).length, { timeout: 60_000, message: 'the job\'s one notice' }).toBe(1)
   } finally {
     if (drained) await call(request, release, 'DELETE', '/api/ops/drain')
     await resetJobTimings(request)

@@ -2,24 +2,28 @@
 // server keeps (`Job`, route 100), so a reload or a closed tab shows the same thing with no live turn. Pure: JobStatus.tsx
 // draws it. A running job is a progress row with Cancel; an ended one is a result card while it is the newest thing in
 // the chat (a later message moves the conversation on; the bell keeps the notice).
-import type { ChatMessage, Job, JobOutcome, Money } from '../../agent/types'
+import type { ChatMessage, Job, JobOutcome } from '../../agent/types'
 import type { JobInfo } from './view'
 
 export type JobShown =
   | { kind: 'running'; jobId: string; waiting: boolean; label: string | null; helpers: number }
-  | { kind: 'ended'; jobId: string; outcome: JobOutcome; durationMs: number | null; cost: Money | null }
+  | { kind: 'ended'; jobId: string; outcome: JobOutcome; durationMs: number | null }
 
 /**
  * This tab's events win for the job they name, except where the server already knows more: the same job ended (a
- * Cancel answered here before its `job.ended` arrived), or another job that is still going (one this tab saw no events of).
+ * Cancel answered here before its `job.ended` arrived) or waiting on a question (no event says so), or another job that
+ * is still going (one this tab saw no events of). The card leaves the job's cost out (DESIGN.md section 1: no cost per run).
  */
 export function jobShown(live: JobInfo | null, stored: Job | null, messages: readonly ChatMessage[]): JobShown | null {
   const storedNewer = live !== null && stored !== null && stored.jobId !== live.jobId && stored.state !== 'ended'
   if (live !== null && !storedNewer) {
     if (stored?.jobId === live.jobId && stored.state === 'ended') return storedEnd(stored, messages)
-    if (live.state === 'running') return { kind: 'running', jobId: live.jobId, waiting: false, label: live.progress?.label || null, helpers: live.progress?.helpers ?? 0 }
+    if (live.state === 'running') {
+      const waiting = stored?.jobId === live.jobId && stored.state === 'waiting'
+      return { kind: 'running', jobId: live.jobId, waiting, label: live.progress?.label || null, helpers: live.progress?.helpers ?? 0 }
+    }
     if (live.outcome === null || (live.endedAt !== null && movedOn(messages, live.endedAt.ms))) return null
-    return { kind: 'ended', jobId: live.jobId, outcome: live.outcome, durationMs: live.durationMs, cost: live.cost }
+    return { kind: 'ended', jobId: live.jobId, outcome: live.outcome, durationMs: live.durationMs }
   }
   if (stored === null) return null
   if (stored.state !== 'ended') {
@@ -30,9 +34,25 @@ export function jobShown(live: JobInfo | null, stored: Job | null, messages: rea
 
 function storedEnd(j: Job, messages: readonly ChatMessage[]): JobShown | null {
   if (j.outcome === null || j.endedAt === null || movedOn(messages, j.endedAt.ms)) return null
-  return { kind: 'ended', jobId: j.jobId, outcome: j.outcome, durationMs: Math.max(0, j.endedAt.ms - j.startedAt.ms), cost: j.cost }
+  return { kind: 'ended', jobId: j.jobId, outcome: j.outcome, durationMs: Math.max(0, j.endedAt.ms - j.startedAt.ms) }
 }
 
-/** A message the person sent, or an answer, after the job ended: the chat has moved on. */
+/**
+ * The person wrote again after the job ended: the chat has moved on. Only their own message counts: an answer's part
+ * stamped after the end (a turn winding down at the 8-hour cap is interrupted, not fenced) is still the job's.
+ */
 const movedOn = (messages: readonly ChatMessage[], endedMs: number): boolean =>
-  messages.some(m => m.role !== 'event' && m.at !== undefined && m.at.ms > endedMs)
+  messages.some(m => m.role === 'user' && m.at !== undefined && m.at.ms > endedMs)
+
+/** What route 100 last said for a chat. */
+export interface StoredJob { chatId: string; job: Job | null }
+
+/**
+ * A read of route 100 taken in: a job's end is final, so an older read that still says it runs (one that left before a
+ * Cancel was answered) never takes the end back.
+ */
+export function takeStored(prev: StoredJob | null, next: StoredJob): StoredJob | null {
+  const had = prev?.chatId === next.chatId ? prev.job : null
+  if (had && next.job && had.jobId === next.job.jobId && had.state === 'ended' && next.job.state !== 'ended') return prev
+  return next
+}

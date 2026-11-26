@@ -10,7 +10,7 @@ export const JOB_RUNNING_TITLE = 'Working on a long job'
 /** Under the title while the job runs and has said nothing yet. */
 export const JOB_RUNNING_TEXT = 'Your Inhouse agent keeps going on its own. You can close this tab.'
 export const JOB_WAITING_TEXT = 'Your Inhouse agent is waiting for your answer to its question.'
-export const JOB_CANCEL = 'Cancel'
+export const JOB_CANCEL = 'Cancel job'
 export const JOB_CANCELLING = 'Cancelling…'
 export const JOB_CANCEL_FAILED = "Couldn't cancel the job. Try again."
 
@@ -41,10 +41,8 @@ export function durationText(ms: number): string {
   return m === 0 ? `${h} h` : `${h} h ${m} min`
 }
 
-/** The card's facts line: how long it ran and what it cost (already formatted, src/lib/format.ts), each when known. */
-export function jobFacts(durationMs: number | null, cost: string | null): string {
-  const parts: string[] = []
-  if (durationMs !== null) parts.push(`Ran for ${durationText(durationMs)}`)
-  if (cost !== null) parts.push(`cost ${cost}`)
-  return parts.length ? `${parts.join(', ')}.` : ''
-}
+/** The card's facts line: how long it ran, when known. No cost (DESIGN.md section 1: no cost per run). */
+export const jobFacts = (durationMs: number | null): string => (durationMs === null ? '' : `Ran for ${durationText(durationMs)}.`)
+
+/** What a screen reader hears when the row or the card appears or changes (JobStatus's status line). */
+export const jobAnnouncement = (title: string, detail: string): string => `${title}. ${detail}`

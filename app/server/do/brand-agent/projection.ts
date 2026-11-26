@@ -119,7 +119,9 @@ export function fixTurnRows(sql: SqlStorage, turnId: string, atMs: number): Proj
     })
   }
   // Try again asks the person's own question: a job's root's for its continuation, none for an action's or question's resume.
-  const end = endRow(t, t.source === JOB_SOURCE ? jobQuestion(sql, t) : isServerTurnSource(t.source) ? '' : t.text)
+  // A question's resume inside a job is the job's turn too (`job_id` set by jobs/engine.ts `resumed`): the root's question.
+  const ofJob = t.job_id !== null && t.job_n !== 0
+  const end = endRow(t, ofJob ? jobQuestion(sql, t) : isServerTurnSource(t.source) ? '' : t.text)
   if (end) {
     rows.push({
       ...base, id: end.id, pos: from + rows.length, role: 'event', author_id: null, text: '', part_json: null,

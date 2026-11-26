@@ -9,7 +9,7 @@
 import { describe, expect, test } from 'vitest'
 import { createScriptedModel, SCENARIOS } from '../../test/scripted-model/index.ts'
 import { HARNESS_MODEL } from '../../test/scripted-model/scenarios.ts'
-import { JOB_RUN_DONE, JOB_RUN_STEPS, SOAK_DONE, SOAK_STEP_SECONDS, SOAK_STEPS, stepIdPrefix } from '../../test/scripted-model/scenarios/jobs.ts'
+import { JOB_RUN_DONE, JOB_RUN_STEPS, SOAK_DONE, SOAK_STEP_SECONDS, SOAK_STEP_TIMEOUT_MS, SOAK_STEPS, stepIdPrefix } from '../../test/scripted-model/scenarios/jobs.ts'
 
 type Msg = { role: 'user' | 'assistant'; content: unknown }
 type Tool = { type: 'tool_use'; id: string; name: string; input: { command: string } }
@@ -62,14 +62,17 @@ describe('long-job-run', () => {
 })
 
 describe('long-job-soak', () => {
-  test('its sleeps alone add up to 2 hours, each first sleep under the guard and each step under the 2-minute timeout', async () => {
+  test('its sleeps alone add up to 2 hours, each first sleep under the guard, each step inside its own timeout and the tool\'s 10 minutes', async () => {
     expect(SOAK_STEPS * SOAK_STEP_SECONDS).toBeGreaterThanOrEqual(2 * 60 * 60)
-    expect(SOAK_STEP_SECONDS).toBeLessThan(120)
+    expect(SOAK_STEP_TIMEOUT_MS).toBeGreaterThan(SOAK_STEP_SECONDS * 1000)
+    expect(SOAK_STEP_TIMEOUT_MS).toBeLessThanOrEqual(600_000)
+    // Few steps: their stored parts (an append each for the call and its result) stay far under the transcripts op's 500.
+    expect(SOAK_STEPS * 3).toBeLessThan(250)
     const { answer } = await ask('long-job-soak', [{ role: 'user', content: 'scenario:long-job-soak run=soak42ab Go.' }])
-    expect(toolOf(answer)).toMatchObject({ id: 'toolu_jobsoak_soak42ab_1_0', input: { command: 'sleep 20; sleep 20; sleep 20; sleep 20; echo step-1 >> outputs/job-soak.txt' } })
+    expect(toolOf(answer)).toMatchObject({ id: 'toolu_jobsoak_soak42ab_1_0', input: { command: `${Array(9).fill('sleep 20').join('; ')}; echo step-1 >> outputs/job-soak.txt`, timeout: 240_000 } })
   })
   test('it runs every step once, a lost one again, then answers', async () => {
-    const { ids, final } = await play('long-job-soak', 'soak42ab', new Set([45]))
+    const { ids, final } = await play('long-job-soak', 'soak42ab', new Set([20]))
     expect(ids).toHaveLength(SOAK_STEPS + 1)
     expect(final).toBe(SOAK_DONE)
   })

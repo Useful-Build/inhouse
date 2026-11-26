@@ -36,12 +36,15 @@ export const JOB_RUN_STEP_SECONDS = 60
 export const JOB_RUN_DONE = 'All three steps are done: outputs/job-run.txt.'
 export const JOB_RUN_FILE = 'outputs/job-run.txt'
 /**
- * The soak's steps: each holds its turn for SOAK_STEP_SECONDS, as four 20-second sleeps in one Bash call (the CLI's
- * guard refuses only a first `sleep` of 25 seconds or more, and its default 2-minute timeout is not reached), so the
- * steps' sleeps alone add up to 2 hours: the job can't end sooner, whatever the overheads.
+ * The soak's steps: each holds its turn for SOAK_STEP_SECONDS, as 20-second sleeps in one Bash call (the CLI's guard
+ * refuses only a first `sleep` of 25 seconds or more) with a timeout past its length (the default is 2 minutes), so
+ * the steps' sleeps alone add up to 2 hours: the job can't end sooner, whatever the overheads. Few, long steps keep the
+ * session store small: each append is one stored part, and the test-fakes `transcripts` op reads at most 500.
  */
-export const SOAK_STEP_SECONDS = 80
-export const SOAK_STEPS = 90
+export const SOAK_STEP_SECONDS = 180
+export const SOAK_STEPS = 40
+/** The soak step's Bash timeout: a minute past its sleeps (the tool's own maximum is 10 minutes). */
+export const SOAK_STEP_TIMEOUT_MS = (SOAK_STEP_SECONDS + 60) * 1000
 export const SOAK_DONE = 'All soak steps are done: outputs/job-soak.txt.'
 export const SOAK_FILE = 'outputs/job-soak.txt'
 const RUN_TOKEN = /\brun=([A-Za-z0-9]{6,32})\b/
@@ -83,7 +86,10 @@ function tokenChainNext(r: MessagesRequest, kind: 'run' | 'soak'): ScriptedBlock
     const hold = Array.from({ length: seconds / JOB_HOLD_SECONDS }, () => `sleep ${JOB_HOLD_SECONDS}`).join('; ')
     return [
       { type: 'text', text: `Working on step ${n}.` },
-      { type: 'tool_use', id: `${prefix}${n}_${tried.get(n) ?? 0}`, name: 'Bash', input: { command: `${hold}; echo step-${n} >> ${file}`, description: `Run step ${n}` } },
+      {
+        type: 'tool_use', id: `${prefix}${n}_${tried.get(n) ?? 0}`, name: 'Bash',
+        input: { command: `${hold}; echo step-${n} >> ${file}`, description: `Run step ${n}`, ...(kind === 'soak' ? { timeout: SOAK_STEP_TIMEOUT_MS } : {}) },
+      },
     ]
   }
   return [{ type: 'text', text: kind === 'run' ? JOB_RUN_DONE : SOAK_DONE }]
