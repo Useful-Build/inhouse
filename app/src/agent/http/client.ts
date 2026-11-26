@@ -37,6 +37,9 @@ import { postToolConnect, postToolDisconnect, putToolPaused, readTools } from '.
 import { readUsage, readUsageMonths } from './usage'
 import { checkDataExport, dataExportUrl as dataExportPath } from './data-access'
 import type { AvailableChannels, NotifyChannelList, PutNotifyChannels } from '../../../shared/contract/notify-slack'
+import type { ActionCard, ActionChoice, ActionFilter, ActionResolution } from '../../../shared/contract/actions'
+import type { Permission } from '../../../shared/contract/permissions'
+import type { Question } from '../../../shared/contract/questions'
 import { MESSAGE, Transport } from './transport'
 import type { Contract, TransportOptions } from './transport'
 
@@ -1239,6 +1242,43 @@ export class HttpAgent implements AgentClient {
       throw new AgentError('conflict', e.message, current.success ? { current: current.data } : {})
     }
   }
+  // ----- Stage 1 M2 (N18): actions, permissions and questions (routes 110, 111, 120 to 124, 140 and 141) -----
+  // Plain calls (types.ts): no snapshot, no notice. ./actions loads on first use, so Today's first load doesn't carry it.
+
+  /** Each `action.updated` the followed runs carry goes to these (`attach`). */
+  private actionListeners = new Set<(u: { actionId: string; rev: number }) => void>()
+  onActionUpdated = (l: (u: { actionId: string; rev: number }) => void): (() => void) => {
+    this.actionListeners.add(l)
+    return () => { this.actionListeners.delete(l) }
+  }
+
+  /**
+   * One M2 call. A refusal comes back as it came, except that a conflict's `current` is kept only when it parses as
+   * `current` says (else it is left out and the screen reads again), and a 401, or a 403 for someone who left the team,
+   * puts the client in the signed-out state.
+   */
+  private async m2<T>(run: (m: typeof import('./actions'), k: Contract) => Promise<T>, current?: keyof Contract['ANSWERS']): Promise<T> {
+    const [m, k] = await Promise.all([import('./actions'), this.k ?? this.http.contract()])
+    try {
+      return await run(m, k)
+    } catch (e) {
+      if (!(e instanceof AgentError)) throw e
+      if (HttpAgent.gone(e)) this.failStatus('meta', e)
+      if (e.code !== 'conflict' || e.current === undefined) throw e
+      const parsed = current && e.current !== null ? k.ANSWERS[current].safeParse(e.current) : null
+      throw new AgentError('conflict', e.message, { ...(e.reason ? { reason: e.reason } : {}), ...(parsed?.success ? { current: parsed.data as Record<string, unknown> } : {}) })
+    }
+  }
+  actions = (filter?: ActionFilter): Promise<ActionCard[]> => this.m2(async m => (await m.readActions(this.http, filter)).items)
+  action = (id: string): Promise<ActionCard> => this.m2(m => m.readAction(this.http, id))
+  answerAction = (id: string, ifRev: number, choice: ActionChoice): Promise<ActionCard> => this.m2((m, k) => m.postAnswer(this.http, k, id, ifRev, choice), 'actionCard')
+  undoAction = (id: string, ifRev: number): Promise<ActionCard> => this.m2((m, k) => m.postUndo(this.http, k, id, ifRev), 'actionCard')
+  resolveAction = (id: string, ifRev: number, outcome: ActionResolution): Promise<ActionCard> => this.m2((m, k) => m.postResolve(this.http, k, id, ifRev, outcome), 'actionCard')
+  permissions = (): Promise<Permission[]> => this.m2(m => m.readPermissions(this.http))
+  removePermission = (id: string, ifRev: number): Promise<Permission[]> => this.m2((m, k) => m.postRemovePermission(this.http, k, id, ifRev), 'permission')
+  questions = (): Promise<Question[]> => this.m2(m => m.readQuestions(this.http))
+  answerQuestion = (id: string, choice: string): Promise<Question> => this.m2((m, k) => m.postQuestionAnswer(this.http, k, id, choice), 'question')
+
   uploadsFiles = (): boolean => true
   /** Route 39, after the chat's own save (`createChat`) has answered: the route is a 404 for a chat the server doesn't have yet. */
   uploadFile = async (chatId: string, file: File, signal?: AbortSignal): Promise<{ fileId: string; name: string }> => {
@@ -1412,7 +1452,11 @@ export class HttpAgent implements AgentClient {
   }
 
   attach = (runId: string, onFrame: Parameters<AgentClient['attach']>[1], fromSeq = 0, onRefused?: Parameters<AgentClient['attach']>[3]): (() => void) =>
-    this.socket.attach(runId, f => { onFrame(f); if (f.event.type === 'run.finished') this.afterRun() }, fromSeq, onRefused)
+    this.socket.attach(runId, f => {
+      onFrame(f)
+      if (f.event.type === 'run.finished') this.afterRun()
+      else if (f.event.type === 'action.updated') { const u = { actionId: f.event.actionId, rev: f.event.rev }; this.actionListeners.forEach(l => l(u)) }
+    }, fromSeq, onRefused)
   link = (): LinkState => this.socket.link()
   onLink = (l: (s: LinkState) => void): (() => void) => this.socket.onLink(l)
   /** Sign out: the socket closes first. */

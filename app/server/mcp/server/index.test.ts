@@ -130,12 +130,16 @@ describe('tools/list (failure 2)', () => {
   })
 })
 
-describe('questions off (Stage 1 M2-Q: every deployable build until M2-H)', () => {
-  it("the product build's list has no question_ask (the other 19 as with questions on), and a call to it asks nothing", async () => {
-    // As the egress builds it: `questions: QUESTIONS_ON`, which is false here as in the product build (vitest.config.ts
-    // defines the product build's flags); and absent, which is off too.
-    expect(QUESTIONS_ON).toBe(false)
-    for (const extra of [{ questions: QUESTIONS_ON }, {}]) {
+describe('questions on (Stage 1 M2-H) and the off switch kept (M2-Q)', () => {
+  it("as the egress builds it (`questions: QUESTIONS_ON`), the product build's list has all 20, question_ask included", async () => {
+    // vitest.config.ts defines the product build's flags.
+    expect(QUESTIONS_ON).toBe(true)
+    const { body } = await rpc({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, {}, SCOPE, { questions: QUESTIONS_ON })
+    expect((body as { result: { tools: { name: string }[] } }).result.tools.map(t => t.name)).toEqual(THE_20)
+  })
+
+  it('off (false or absent): no question_ask (the other 19 as with questions on), and a call to it asks nothing', async () => {
+    for (const extra of [{ questions: false }, {}]) {
       const { body } = await rpc({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, {}, SCOPE, extra)
       const names = (body as { result: { tools: { name: string }[] } }).result.tools.map(t => t.name)
       expect(names).toEqual(THE_20.filter(n => n !== 'question_ask'))

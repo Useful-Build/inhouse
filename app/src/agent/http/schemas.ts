@@ -30,6 +30,9 @@ import { TraceSchema } from '../../../shared/contract/trace'
 import { DataExportCheckSchema } from '../../../shared/contract/data-access-check'
 import { ToolConnectResultSchema, ToolDisconnectResultSchema, ToolPausedInputSchema, ToolPausedResultSchema, ToolsDataSchema } from '../../../shared/contract/tools'
 import { AvailableChannelsSchema, NotifyChannelListSchema, PutNotifyChannelsSchema } from '../../../shared/contract/notify-slack'
+import { ActionCardSchema, ActionsListSchema, AnswerActionInputSchema, ResolveActionInputSchema, UndoActionInputSchema } from '../../../shared/contract/actions'
+import { PermissionSchema, PermissionsListSchema, RemovePermissionInputSchema } from '../../../shared/contract/permissions'
+import { AnswerQuestionInputSchema, QuestionSchema, QuestionsListSchema } from '../../../shared/contract/questions'
 
 /** What each route answers with. */
 export const ANSWERS = {
@@ -61,6 +64,8 @@ export const ANSWERS = {
   teamRequests: TeamRequestsListSchema, teamRequest: TeamRequestRecordSchema,
   // P8a D: Export everything's check (route 96).
   dataExportCheck: DataExportCheckSchema,
+  // Stage 1 M2 (N18): the actions (routes 120 to 124), the permissions (110 and 111) and the questions (140 and 141).
+  actions: ActionsListSchema, actionCard: ActionCardSchema, permissions: PermissionsListSchema, permission: PermissionSchema, questions: QuestionsListSchema, question: QuestionSchema,
 }
 
 /** What each write sends. */
@@ -78,6 +83,9 @@ export const BODIES = {
   createChat: CreateChatInputSchema, chatRename: ChatRenameInputSchema, chatPin: ChatPinInputSchema, chatIds: ChatIdsInputSchema, sendTurn: SendTurnInputSchema,
   toolPaused: ToolPausedInputSchema,
   notifyChannels: PutNotifyChannelsSchema,
+  // Stage 1 M2 (N18).
+  answerAction: AnswerActionInputSchema, undoAction: UndoActionInputSchema, resolveAction: ResolveActionInputSchema,
+  removePermission: RemovePermissionInputSchema, answerQuestion: AnswerQuestionInputSchema,
 }
 
 /** What the socket sends the browser and the events inside its frames; `accepts` is whether this build reads a frame's version. */

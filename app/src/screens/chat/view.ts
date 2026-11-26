@@ -153,10 +153,12 @@ export function reduce(v: ChatView, ev: ChatEvent, at: Instant, runId = ''): Cha
     }
     case 'run.finished':
       return { ...v, openRuns: v.openRuns.filter(r => r !== ev.runId), thinking: null, live: null, liveSteps: [], notice: v.damaged ? v.notice : null, budgetWait: false }
-    // Stage 1 (W0-A): no server sends these yet. M1-D shows jobs; M2-H reloads the card on `action.updated`.
+    // Stage 1 (W0-A): no server sends these yet. M1-D shows jobs.
     case 'job.started':
     case 'job.progress':
     case 'job.ended':
+      return v
+    // Stage 1 M2-H: the card reads itself again (AskCard, through the client's `onActionUpdated`); the thread is unchanged.
     case 'action.updated':
       return v
   }

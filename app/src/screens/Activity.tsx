@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { agent } from '../agent'
 import { traceOf, useTraces } from './chat/traces'
 import { plainSteps, sentence } from './activity/plain-steps'
+import { ActionRows } from './activity/ActionRows'
 import { keepUnitsTogether, plainSpaces } from '../agent/clock'
 import { activityRows, groupByDay } from '../state/derive'
 import type { ActivityKind, ActivityRow } from '../state/derive'
@@ -58,6 +59,8 @@ export function Activity() {
         <SearchBox value={query} onChange={setQuery} placeholder="Search activity" label="Search activity" className="grow basis-55" />
         <Segmented label="Filter activity" value={filter} options={TABS} onChange={v => { patch({ actFilter: v }); setOpen(null) }} />
       </div>
+      {/* Stage 1 M2-H: the agent's actions (the product; the demo has none). Not "Needs you": Approvals answers those. */}
+      {filter !== 'needs' && <ActionRows needle={needle} />}
       {days.length === 0 && (needle
         ? <EmptyState variant="inline" className="mt-7">No lines match "{query.trim()}".</EmptyState>
         : <EmptyState className="mt-6">{empty}</EmptyState>)}

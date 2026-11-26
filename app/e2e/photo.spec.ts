@@ -74,10 +74,16 @@ test('Sample photos show for Sam and the team; Sam uploads, reloads, removes and
   await page.goto('/?demo#/settings/you-general')
   await page.getByRole('button', { name: 'Remove' }).click()
   await expect(sidebarImg(page)).toHaveCount(0)
-  await expect(settingsButton(page)).toContainText('SM')
+  // The account row draws its initials with CSS (an `aria-label` names the row: src/ui/index.tsx `cssInitials`): the
+  // element is there and its `::before` draws "SM" (the browser returns the content quoted).
+  const drawn = settingsButton(page).locator('[data-initials="SM"]')
+  const initialsDrawn = () => drawn.evaluate(el => getComputedStyle(el, '::before').content)
+  await expect(drawn).toBeVisible()
+  expect(await initialsDrawn()).toBe('"SM"')
   await page.reload()
   await expect(sidebarImg(page)).toHaveCount(0)
-  await expect(settingsButton(page)).toContainText('SM')
+  await expect(drawn).toBeVisible()
+  expect(await initialsDrawn()).toBe('"SM"')
   await shot(page, '5-general-removed')
 
   // Reset demo brings the sample photo back.

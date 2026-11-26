@@ -72,8 +72,21 @@ describe('the menu, the palette and the deep links (failures 2 and 3)', () => {
       expect(ids(false), id).toContain(id)
       expect(settingsTabs(false), id).toContain(id)
     }
-    expect(settingsTabs(false)).toEqual(SETTINGS_PAGES.map(p => p.id))
-    expect(ids(true)).toEqual(expect.arrayContaining(['you-general', 'you-memory', 'team-agent', 'team-modes', 'team-memory', 'team-spend', 'team-members', 'team-plan', 'team-data', 'team-audit']))
+    // Stage 1 M2-H: every page but Always allowed, which only the product offers.
+    expect(settingsTabs(false)).toEqual(SETTINGS_PAGES.map(p => p.id).filter(id => id !== 'you-permissions'))
+    expect(ids(true)).toEqual(expect.arrayContaining(['you-general', 'you-memory', 'you-permissions', 'team-agent', 'team-modes', 'team-memory', 'team-spend', 'team-members', 'team-plan', 'team-data', 'team-audit']))
+  })
+  it('Always allowed is in the product only (Stage 1 M2-H): the demo has no permissions', () => {
+    expect(ids(true)).toContain('you-permissions')
+    expect(settingsTabs(true)).toContain('you-permissions')
+    expect(pageShown('you-permissions', true)).toBe(true)
+    expect(ids(false)).not.toContain('you-permissions')
+    expect(settingsTabs(false)).not.toContain('you-permissions')
+    expect(pageShown('you-permissions', false)).toBe(false)
+  })
+  it("the Inhouse team's product menu has no Always allowed (they have no permissions); every other page stays", () => {
+    const inhouse = menuFor(noTools, true, true).flatMap(s => s.pages).map(p => p.id)
+    expect(inhouse).toEqual(ids(true).filter(id => id !== 'you-permissions'))
   })
   it('the section that holds the Spending cap is called Spending in the product, and keeps its name in the demo', () => {
     const limits = (product: boolean) => menuFor(noTools, product).find(s => s.id === 'limits')!

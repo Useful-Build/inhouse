@@ -74,8 +74,8 @@ export function p6Hooks(env: Env, parts: BrandAgentParts): P6Hooks {
   return {
     // Stage 1 M2-B (N12): the outbox's gate kept in step with the object's pause flag on every Pause and Resume.
     pause: [outboxPauseHook({ db: env.DB, sql: parts.sql, notify: outboxNotifier(env) })],
-    // Stage 1 M2-Q (N16): a deferred `question_ask` asks its question (server/questions/ask.ts); while questions are off
-    // (every deployable build until M2-H, server/questions/switch.ts) it is resumed at once and nothing is asked.
+    // Stage 1 M2-Q (N16): a deferred `question_ask` asks its question (server/questions/ask.ts). Questions are on in
+    // every build since M2-H (server/questions/switch.ts); off, it is resumed at once and nothing is asked.
     onDeferred: questionHook(QUESTIONS_ON),
   }
 }

@@ -99,7 +99,8 @@ describe('Slack notices only with Slack connected (CI round)', async () => {
   it('a brand without Slack gets no menu row and no page; with it as a tool or a channel, both show', () => {
     expect(hasSlack(none)).toBe(false)
     expect(tabs(menuFor(none))).not.toContain('team-slack')
-    expect(tabs(menuFor(none)).length).toBe(tabs(SECTIONS).length - 1)
+    // The demo's menu (`menuFor` without `product`): every page but Slack notices and the product-only Always allowed.
+    expect(tabs(menuFor(none))).toEqual(tabs(SECTIONS).filter(id => id !== 'team-slack' && id !== 'you-permissions'))
     for (const t of [{ connected: ['slack'], channels: [] }, { connected: [], channels: [{ key: 'slack' }] }]) {
       expect(hasSlack(t)).toBe(true)
       expect(tabs(menuFor(t))).toContain('team-slack')

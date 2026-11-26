@@ -100,7 +100,8 @@ const FIELD_CURRENCY = 'USD'
 const MONEY_MAX = 100_000
 /** `caption` is one visible label over a column of controls (the effort pickers); `empty` is the muted line a section with no rows shows. */
 export interface Section { label: string; rows: Row[]; caption?: string; empty?: string }
-export interface Page { title: string; sections: Section[] }
+/** `keywords`: what the settings search matches on a page drawn by its own component (no rows to match). */
+export interface Page { title: string; sections: Section[]; keywords?: string }
 
 /** The time zones, saved as their ids and shown by name. */
 const TIME_ZONES: Record<string, string> = {
@@ -374,6 +375,9 @@ export function settingsPage(tab: string, env: Env): Page {
       { label: 'What your Inhouse agent knows about you', rows: forgetRows(memory.personal) },
       { label: 'Privacy', rows: [R('Only you can see this', 'Teammates and admins cannot read your personal memory.', 'value', 'Private'), R('Learn from my chats', 'Your Inhouse agent saves your preferences as you work. Turn off to stop.', 'toggle', '', 0, 'm:learn', true)] },
     ] },
+    // Stage 1 M2-H: the product's list of what the agent may do without asking (Permissions.tsx draws it; menu.ts keeps it
+    // out of the demo). Its words here are for the settings search.
+    'you-permissions': { title: 'Always allowed', sections: [], keywords: 'permissions always allow without asking remove stop allowing' },
     'team-plan': { title: 'Stage and plan', sections: [
       { label: 'Your stage', rows: [R('Current stage', stageDesc, 'value', stage), R('Next stage', nextStage, 'value', S < 2 ? STAGE_TAGS[S + 1] : 'None'), R('Talk to your Inhouse team', 'Move up when you are ready. Every stage includes all your tools.', 'button', 'Book a check-in', 0, undefined, undefined, () => env.openTeam('change', ''))] },
       { label: 'Running costs', rows: [R('AI and hosting', 'Paid at cost, to accounts you own, with a spending cap.', 'value', 'Anthropic · Cloudflare')] },
