@@ -29,7 +29,8 @@ describe('ReadGateway refuses writes with no stage anywhere (M2-F)', () => {
     const root = fileURLToPath(new URL('..', import.meta.url).href)
     const files = globSync('**/*.ts', { cwd: root, exclude: f => f === 'node_modules' || f.endsWith('.test.ts') || f === 'worker-configuration.d.ts' })
     expect(files.length).toBeGreaterThan(20)
-    const hits = files.filter(f => /\bstages?\b|brandStage|server\/stage\//i.test(readFileSync(join(root, f), 'utf8')))
+    // "Stage 1" (the build plan's name) in a comment is not a stage read.
+    const hits = files.filter(f => /\bstages?\b(?!\s*\d)|brandStage|server\/stage\//i.test(readFileSync(join(root, f), 'utf8')))
     expect(hits).toEqual([])
   })
 
