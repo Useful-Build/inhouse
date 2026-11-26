@@ -387,7 +387,7 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
         const facts: NewMemory[] = memory.map((f) => {
           const id = newMemoryId()
           if (f.memoryId) real.set(id, f.memoryId)
-          return { id, scope: f.scope, ownerId: f.scope === 'person' ? people[f.person ?? 'current'] : null, text: withMembers(f.fact, people) }
+          return { id, scope: f.scope, ownerId: f.scope === 'person' ? people[f.person ?? 'current'] : null, text: f.fact }
         })
         let attachment: { name: string; bytes: Uint8Array } | undefined
         if (exfil?.via === 'memory_search') facts.push({ id: newMemoryId(), scope: 'person', ownerId: people.current, text: exfil.plant(run.canary) })
@@ -429,14 +429,6 @@ export interface SessionDeps {
   pollMs: number
   sleep: (ms: number) => Promise<void>
   onSpend: (usd: number) => void
-}
-
-/** A seed fact's text with each `{member:<key>}` as that eval person's member id (T09). An unknown key is refused. */
-export function withMembers(text: string, people: People): string {
-  return text.replace(/\{member:([a-z]+)\}/g, (_m, key: string) => {
-    if (!PEOPLE_KEYS.includes(key as PersonKey) || people[key as PersonKey] === '') throw new ProductTargetRefusal(`refusing: a seed fact names an eval person ${JSON.stringify(key)} with no member id`)
-    return people[key as PersonKey]
-  })
 }
 
 /** Route 33's cost is whole cents, rounded to the nearest: the true figure is under half a cent more, so it is booked at that upper bound. */

@@ -25,7 +25,6 @@ export interface Expect {
 
 export interface SeedFact {
   memoryId?: string
-  /** `{member:<key>}` in the text is that eval person's member id on the target (T09: Tom's id is reachable). */
   fact: string
   scope: 'brand' | 'person'
   person?: PersonKey
