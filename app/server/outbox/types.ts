@@ -70,24 +70,43 @@ export interface OutboxGateRow {
   updated_at_ms: number
 }
 
+/** The admitted main-agent tool call a proposal came from (N14's `admitAction`). */
+export interface OutboxInvocation { runId: string; turnId: string; toolUseId: string }
+
 /** `request`'s context: the decide context plus the invocation it came from. */
 export interface OutboxRequestCtx extends DecideCtx {
-  runId: string | null
-  turnId: string | null
-  /** The admitted main-agent invocation (N14). Null for a proposal with no tool call behind it. */
-  toolUseId: string | null
+  /**
+   * Always set for a proposal from a turn, both modes: the row's `(chat_id, tool_use_id)` index makes a replay return the
+   * same row. Null only for the test build's fakes hook (N19), which has no tool call behind it.
+   */
+  invocation: OutboxInvocation | null
   jobId: string | null
 }
 
 export type OutboxRequestMode = 'tool' | 'ask_only'
 
+/**
+ * `decide`'s refusals, plus `invocation_conflict`: a row for the same `(chat_id, tool_use_id)` holds other arguments
+ * (another `payload_hash`). Nothing is written for either.
+ */
+export type OutboxRefuseReason = RefuseReason | 'invocation_conflict'
+
 export type OutboxRequestResult =
   /** Nothing was written. `text` is the plain refusal the agent reads. */
-  | { outcome: 'refused'; reason: RefuseReason; text: string }
-  /** A card waits for a person (`ask` or `exact`). `existing`: a retry got the waiting card it already made. */
+  | { outcome: 'refused'; reason: OutboxRefuseReason; text: string }
+  /**
+   * A new card waits for a person (`ask` or `exact`). `existing`: another invocation in this chat already has a waiting
+   * card for the same `payload_hash`, and this is that card (no second card for a retry).
+   */
   | { outcome: 'waiting'; action: OutboxActionRow; existing: boolean }
-  /** Approved under a grant with its use reserved; it sends after the hold. */
+  /** New, approved under a grant with its use reserved; it sends after the hold. */
   | { outcome: 'approved'; action: OutboxActionRow }
+  /**
+   * A replay: this `(chat_id, tool_use_id)` already has a row with the same arguments, returned as it is in whatever
+   * state it's in now (waiting, approved, sending, sent, failed, needs_check, undone, denied, withdrawn or expired).
+   * Nothing is written.
+   */
+  | { outcome: 'existing'; action: OutboxActionRow }
 
 /** A member acting on a row through the API. */
 export interface OutboxActor { memberId: string; role: MemberRole }

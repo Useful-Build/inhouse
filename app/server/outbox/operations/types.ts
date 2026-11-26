@@ -32,4 +32,5 @@ export interface OperationEntry<A = unknown> {
   card(a: A, f: ResolveFacts): { title: string; lines: string[] }
 }
 
-export type OperationTable = Readonly<Record<WriteOperationKey, OperationEntry>>
+/** One entry per operation, each under its own key (`entry.key` is its record key). */
+export type OperationTable = { readonly [K in WriteOperationKey]: OperationEntry & { key: K } }

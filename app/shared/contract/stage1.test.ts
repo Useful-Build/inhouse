@@ -3,10 +3,11 @@
 // the code under test. Ways it can fail, written down first:
 //  1. a list drifts from the plan (an action state, a guardrail, a job outcome, a turn source or a cancel reason added,
 //     dropped or renamed);
-//  2. an id of another kind (a support grant's `g_`, a turn id) passes as an action, permission, question or job id;
-//  3. an answer input takes an unknown key, a choice outside the four, or no `ifRev`; a resolve takes an outcome other
-//     than sent or failed;
-//  4. a question with fewer than 2 or more than 4 options parses;
+//  2. an id of another kind (a support grant's `g_`, an Activity line's `a_`, a turn id) passes as an action,
+//     permission, question or job id;
+//  3. an answer input takes an unknown key, a choice outside the four, or no `ifRev` (or 0: revs start at 1); a resolve
+//     takes an outcome other than sent or failed;
+//  4. a question with fewer than 2 or more than 4 options, or one option twice, parses;
 //  5. a new chat event (`job.*`, `action.updated`) or the `ask` part doesn't parse, or `turn.queued` refuses a frame with
 //     no `source` (every frame sent before Stage 1).
 import { describe, expect, it } from 'vitest'
@@ -37,10 +38,11 @@ describe('lists (failure 1)', () => {
 
 describe('ids (failure 2)', () => {
   it('take only their own prefix and 128 random bits', () => {
-    const cases: [typeof ActionIdSchema, string][] = [[ActionIdSchema, 'a_'], [PermissionIdSchema, 'pg_'], [QuestionIdSchema, 'q_'], [JobIdSchema, 'j_']]
+    const cases: [typeof ActionIdSchema, string][] = [[ActionIdSchema, 'ac_'], [PermissionIdSchema, 'pg_'], [QuestionIdSchema, 'q_'], [JobIdSchema, 'j_']]
     for (const [schema, prefix] of cases) {
       expect(schema.safeParse(`${prefix}${R}`).success, prefix).toBe(true)
-      for (const bad of [`${prefix}${R}x`, `${prefix}${R.slice(1)}`, `g_${R}`, turnId, `${prefix}${R.slice(1)}.`, ''])
+      // `a_` is an Activity line's id, `g_` a support grant's.
+      for (const bad of [`${prefix}${R}x`, `${prefix}${R.slice(1)}`, `g_${R}`, `a_${R}`, turnId, `${prefix}${R.slice(1)}.`, ''])
         expect(schema.safeParse(bad).success, `${prefix} ${bad}`).toBe(false)
     }
   })
@@ -51,6 +53,11 @@ describe('inputs (failure 3)', () => {
     expect(AnswerActionInputSchema.safeParse({ choice: 'once', ifRev: 1 }).success).toBe(true)
     expect(AnswerActionInputSchema.safeParse({ choice: 'allow', ifRev: 1 }).success).toBe(false)
     expect(AnswerActionInputSchema.safeParse({ choice: 'once' }).success).toBe(false)
+    // Revs start at 1, so an ifRev of 0 can never match.
+    expect(AnswerActionInputSchema.safeParse({ choice: 'once', ifRev: 0 }).success).toBe(false)
+    expect(UndoActionInputSchema.safeParse({ ifRev: 0 }).success).toBe(false)
+    expect(ResolveActionInputSchema.safeParse({ outcome: 'sent', ifRev: 0 }).success).toBe(false)
+    expect(RemovePermissionInputSchema.safeParse({ ifRev: 0 }).success).toBe(false)
     expect(AnswerActionInputSchema.safeParse({ choice: 'once', ifRev: 1, grant: true }).success).toBe(false)
     expect(UndoActionInputSchema.safeParse({ ifRev: 2 }).success).toBe(true)
     expect(UndoActionInputSchema.safeParse({}).success).toBe(false)
@@ -70,7 +77,7 @@ describe('inputs (failure 3)', () => {
 
 describe('records', () => {
   const card = {
-    id: `a_${R}`, rev: 1, kind: 'ask', state: 'waiting', title: 'Tag order #1001', lines: ['Adds the tag vip'],
+    id: `ac_${R}`, rev: 1, kind: 'ask', state: 'waiting', title: 'Tag order #1001', lines: ['Adds the tag vip'],
     tool: { accountId: 'shopify:store', label: 'Shopify (Store A)' }, records: 1, reachesCustomer: false, reversible: true,
     chatId: 'chat-1', askedBy: 'm_owner', askedAt: at, serverNow: at,
     can: { allowOnce: true, alwaysAllow: true, approve: false, deny: true, undo: false, resolve: false }, nudgeAlways: false,
@@ -99,6 +106,8 @@ describe('records', () => {
     expect(QuestionSchema.safeParse({ ...q, options: ['a', 'b', 'c', 'd'] }).success).toBe(true)
     expect(QuestionSchema.safeParse({ ...q, options: ['Yes'] }).success).toBe(false)
     expect(QuestionSchema.safeParse({ ...q, options: ['a', 'b', 'c', 'd', 'e'] }).success).toBe(false)
+    // A choice's text names one option, so no option is listed twice.
+    expect(QuestionSchema.safeParse({ ...q, options: ['Yes', 'No', 'Yes'] }).success).toBe(false)
   })
 
   it("a chat's job is a job or null", () => {
@@ -121,10 +130,10 @@ describe('chat events and the ask part (failure 5)', () => {
     expect(ok({ type: 'job.progress', jobId, label: 'Two helpers are reading', helpers: 2 })).toBe(true)
     expect(ok({ type: 'job.ended', jobId, outcome: 'time', durationMs: 28_800_000, cost: { minor: 1200, currency: 'USD' } })).toBe(true)
     expect(ok({ type: 'job.ended', jobId, outcome: 'paused', durationMs: 1, cost: { minor: 0, currency: 'USD' } })).toBe(false)
-    expect(ok({ type: 'action.updated', actionId: `a_${R}`, rev: 2, state: 'approved' })).toBe(true)
-    expect(ok({ type: 'action.updated', actionId: `a_${R}`, rev: 0, state: 'approved' })).toBe(false)
+    expect(ok({ type: 'action.updated', actionId: `ac_${R}`, rev: 2, state: 'approved' })).toBe(true)
+    expect(ok({ type: 'action.updated', actionId: `ac_${R}`, rev: 0, state: 'approved' })).toBe(false)
     expect(ok({ type: 'turn.cancelled', turnId, why: 'job_budget' })).toBe(true)
-    expect(MessagePartSchema.safeParse({ type: 'ask', actionId: `a_${R}` }).success).toBe(true)
+    expect(MessagePartSchema.safeParse({ type: 'ask', actionId: `ac_${R}` }).success).toBe(true)
     expect(MessagePartSchema.safeParse({ type: 'ask', actionId: 'x' }).success).toBe(false)
   })
 

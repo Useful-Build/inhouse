@@ -42,8 +42,12 @@ import {
   RunStatus,
   SYSTEM_PROMPT_MAX_BYTES,
   DEFERRED_INPUT_MAX_BYTES,
+  BRAND_SKILLS_VERSION,
+  HELPERS_VERSION,
   HELPER_DESCRIPTION_MAX_BYTES,
   HELPER_PROMPT_MAX_BYTES,
+  auditInputSha256,
+  canonicalJson,
   Health,
   PROMPT_MAX_CHARS,
   PROTOCOL_VERSION,
@@ -167,11 +171,15 @@ describe('RunStart', () => {
   // refuses.
   it('takes the helpers, the subagent model and the actions switch only in their frozen shape', () => {
     const start = fc.sample(runStartArb, 1)[0]!
+    expect(start).not.toHaveProperty('subagentModel')
     const helper = { description: 'Finds facts on the web.', prompt: 'You research.\n\tCite every source.' }
     const agents = { researcher: helper, analyst: helper }
-    const parses = (extra: Record<string, unknown>) => RunStart.safeParse({ ...start, ...extra }).success
-    expect(parses({ agents, subagentModel: 'claude-sonnet-5-5', actions: true })).toBe(true)
-    expect(parses({ actions: false })).toBe(true)
+    const parses = (extra: Record<string, unknown>) => RunStart.safeParse({ subagentModel: 'claude-sonnet-5-5', ...start, ...extra }).success
+    expect(parses({ agents, actions: true })).toBe(true)
+    expect(parses({ subagentModel: undefined, actions: false })).toBe(true)
+    // agents and subagentModel come together.
+    expect(parses({ subagentModel: undefined, agents })).toBe(false)
+    expect(parses({})).toBe(false)
     expect(parses({ agents: { researcher: helper } })).toBe(false)
     expect(parses({ agents: { ...agents, writer: helper } })).toBe(false)
     expect(parses({ agents: { ...agents, analyst: { ...helper, tools: ['Bash'] } } })).toBe(false)
@@ -182,7 +190,7 @@ describe('RunStart', () => {
     expect(parses({ agents: { ...agents, analyst: { ...helper, prompt: '€'.repeat(Math.floor(HELPER_PROMPT_MAX_BYTES / 3) + 1) } } })).toBe(false)
     expect(parses({ agents: { ...agents, analyst: { ...helper, description: 'x'.repeat(HELPER_DESCRIPTION_MAX_BYTES + 1) } } })).toBe(false)
     expect(parses({ actions: 'yes' })).toBe(false)
-    expect(parses({ subagentModel: 'bad model' })).toBe(false)
+    expect(parses({ agents, subagentModel: 'bad model' })).toBe(false)
   })
 
   /** A 1,024-character path under `inputs/` from segments of at most 255 UTF-8 bytes ('€' is three), `first` leading. */
@@ -270,6 +278,14 @@ describe('versions', () => {
     expect(acceptsVersion('3')).toBe(true)
     expect(acceptsVersion('2')).toBe(true)
     expect(acceptsVersion('1')).toBe(false)
+  })
+
+  // Stage 1 (W0-A): the helper, actions and audit keys are gated on v4, which no side speaks yet, so no Worker or runner
+  // can send them to a peer whose strict schema would refuse them. M1-E bumps to 4.
+  it('the gates: brand skills from v3, the helper keys from v4 (above every accepted version for now)', () => {
+    expect(BRAND_SKILLS_VERSION).toBe(3)
+    expect(HELPERS_VERSION).toBe(4)
+    expect(Math.max(...ACCEPTED_VERSIONS)).toBeLessThan(HELPERS_VERSION)
   })
 
   it.prop([fc.oneof(fc.integer({ min: -100, max: 1000 }).map(String), fc.string(), fc.nat(1000).map((n) => `0${n}`))])(
@@ -514,6 +530,8 @@ describe('v2 events', () => {
   })
 })
 
+const SHA_A1_B12 = '8baa73198470c7bb4c3ce142a8fd651affc0310d878bb9bd159e37a573fb4874'
+
 describe('push, audit, status and admission', () => {
   const ev = (seq: number, runId = 't_a') => ({ runId, seq, type: 'heartbeat' })
   const batch = (events: unknown[]) => PushBatch.safeParse({ turnId: 't_a', events }).success
@@ -573,10 +591,23 @@ describe('push, audit, status and admission', () => {
     const sha = 'a'.repeat(64)
     const entry = (extra: Record<string, unknown>) => AuditPost.safeParse({ ...a, entry: { ...a.entry, ...extra } }).success
     expect(entry({ agentId: 'agent-1', inputSha256: sha })).toBe(true)
-    expect(entry({ inputSha256: sha })).toBe(true)
-    expect(entry({ agentId: '' })).toBe(false)
-    expect(entry({ inputSha256: 'A'.repeat(64) })).toBe(false)
-    expect(entry({ inputSha256: sha.slice(1) })).toBe(false)
+    expect(entry({ agentId: null, inputSha256: sha })).toBe(true)
+    // Together or not at all: a hash with no agentId would read as the main agent's call.
+    expect(entry({ inputSha256: sha })).toBe(false)
+    expect(entry({ agentId: null })).toBe(false)
+    expect(entry({ agentId: '', inputSha256: sha })).toBe(false)
+    expect(entry({ agentId: null, inputSha256: 'A'.repeat(64) })).toBe(false)
+    expect(entry({ agentId: null, inputSha256: sha.slice(1) })).toBe(false)
+  })
+
+  // The one hash both sides compute (N14): key order and undefined keys never change it; values, array order and types do.
+  it('auditInputSha256 is the SHA-256 of the canonical JSON', async () => {
+    expect(canonicalJson({ b: 1, a: { d: undefined, c: [2, undefined, 1] } })).toBe('{"a":{"c":[2,null,1]},"b":1}')
+    // sha256('{"a":1,"b":[1,2]}'), worked out with `printf %s '{"a":1,"b":[1,2]}' | shasum -a 256`.
+    expect(await auditInputSha256({ b: [1, 2], a: 1 })).toBe(SHA_A1_B12)
+    expect(await auditInputSha256({ a: 1, b: [1, 2], c: undefined })).toBe(SHA_A1_B12)
+    expect(await auditInputSha256({ a: 1, b: [2, 1] })).not.toBe(SHA_A1_B12)
+    expect(await auditInputSha256({ a: '1', b: [1, 2] })).not.toBe(SHA_A1_B12)
   })
 
   it('a status: unknown carries no seqs, and nothing is acked past the last seq', () => {

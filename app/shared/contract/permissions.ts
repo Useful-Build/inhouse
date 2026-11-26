@@ -3,7 +3,10 @@
 // word a person reads here (`title`, `scope`, `tool.label`) is the server's own, never connector output.
 import { z } from 'zod'
 import { InstantSchema } from './common.ts'
-import { IfRevSchema, MemberIdSchema } from './members.ts'
+import { MemberIdSchema } from './members.ts'
+
+/** The rev last read, for an action or a grant: their revs start at 1 (up to 9 digits, as every `ifRev`). */
+export const RowIfRevSchema = z.number().int().min(1).max(999_999_999)
 
 /** A permission grant's id: `pg_` + 128 random bits (N10). */
 export const PermissionIdSchema = z.string().regex(/^pg_[A-Za-z0-9_-]{22}$/)
@@ -52,5 +55,5 @@ export const PermissionsListSchema = z.object({ items: z.array(PermissionSchema)
 export type PermissionsList = z.infer<typeof PermissionsListSchema>
 
 /** `removePermission(id, ifRev)`. */
-export const RemovePermissionInputSchema = z.object({ ifRev: IfRevSchema }).strict()
+export const RemovePermissionInputSchema = z.object({ ifRev: RowIfRevSchema }).strict()
 export type RemovePermissionInput = z.infer<typeof RemovePermissionInputSchema>

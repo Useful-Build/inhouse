@@ -5,11 +5,11 @@
 import { z } from 'zod'
 import { InstantSchema } from './common.ts'
 import { ChatIdSchema } from './chat-ids.ts'
-import { IfRevSchema, MemberIdSchema } from './members.ts'
-import { GuardrailSchema, WriteToolRefSchema } from './permissions.ts'
+import { MemberIdSchema } from './members.ts'
+import { GuardrailSchema, RowIfRevSchema, WriteToolRefSchema } from './permissions.ts'
 
-/** An outbox action's id: `a_` + 128 random bits. */
-export const ActionIdSchema = z.string().regex(/^a_[A-Za-z0-9_-]{22}$/)
+/** An outbox action's id: `ac_` + 128 random bits (`a_` is an Activity line's). */
+export const ActionIdSchema = z.string().regex(/^ac_[A-Za-z0-9_-]{22}$/)
 export type ActionId = z.infer<typeof ActionIdSchema>
 
 /** The outbox row's state (N11's `outbox_actions.state`). */
@@ -65,11 +65,11 @@ export const ActionChoiceSchema = z.enum(['once', 'always', 'approve', 'deny'])
 export type ActionChoice = z.infer<typeof ActionChoiceSchema>
 
 /** `POST /api/actions/:id/answer`. */
-export const AnswerActionInputSchema = z.object({ choice: ActionChoiceSchema, ifRev: IfRevSchema }).strict()
+export const AnswerActionInputSchema = z.object({ choice: ActionChoiceSchema, ifRev: RowIfRevSchema }).strict()
 export type AnswerActionInput = z.infer<typeof AnswerActionInputSchema>
 
 /** `undoAction(id, ifRev)`: an approved action, before its claim. */
-export const UndoActionInputSchema = z.object({ ifRev: IfRevSchema }).strict()
+export const UndoActionInputSchema = z.object({ ifRev: RowIfRevSchema }).strict()
 export type UndoActionInput = z.infer<typeof UndoActionInputSchema>
 
 /** What a person says about a "Needs a check" action. */
@@ -77,5 +77,5 @@ export const ActionResolutionSchema = z.enum(['sent', 'failed'])
 export type ActionResolution = z.infer<typeof ActionResolutionSchema>
 
 /** `resolveAction(id, ifRev, outcome)`: `needs_check` to `sent` or `failed`. */
-export const ResolveActionInputSchema = z.object({ outcome: ActionResolutionSchema, ifRev: IfRevSchema }).strict()
+export const ResolveActionInputSchema = z.object({ outcome: ActionResolutionSchema, ifRev: RowIfRevSchema }).strict()
 export type ResolveActionInput = z.infer<typeof ResolveActionInputSchema>

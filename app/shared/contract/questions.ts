@@ -19,7 +19,9 @@ export const QuestionSchema = z.object({
   id: QuestionIdSchema,
   state: QuestionStateSchema,
   question: z.string().min(1).max(QUESTION_MAX_CHARS),
-  options: z.array(z.string().min(1).max(QUESTION_OPTION_MAX_CHARS)).min(2).max(4),
+  /** Distinct, so a choice's text names one option. */
+  options: z.array(z.string().min(1).max(QUESTION_OPTION_MAX_CHARS)).min(2).max(4)
+    .refine(o => new Set(o).size === o.length, { message: 'An option is listed twice' }),
   /** Null for a viewer who may not open the chat. */
   chatId: ChatIdSchema.nullable(),
   askedAt: InstantSchema,

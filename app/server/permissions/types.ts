@@ -65,6 +65,8 @@ export interface ConnectedAccountFacts {
   paused: boolean
   /** The tool as a person reads it: "Shopify (Store A)". */
   label: string
+  /** Shopify only: the shop handle (`<handle>.myshopify.com`), `shopify.order.tag_add`'s scope `{ shop }`. Null otherwise. */
+  shop: string | null
 }
 
 /** A Slack channel the admin listed (`notify_channels`, not removed). */
@@ -93,9 +95,11 @@ export interface GrantFacts {
   policyRev: number
   grantedRole: MemberRole
   ceilingRev: number
+  /** Null while live. `decideCore` treats a set value as no grant, whatever the caller's query did. */
+  revokedAtMs: number | null
 }
 
-/** What `decideCore` reads: the ceiling, the live grants for this operation and account, and the nudge count. */
+/** What `decideCore` reads: the ceiling, the grants for this operation and account, and the nudge count. */
 export interface DecideFacts {
   ceiling: Readonly<Partial<Record<WriteOperationKey, CeilingFacts>>>
   grants: readonly GrantFacts[]
