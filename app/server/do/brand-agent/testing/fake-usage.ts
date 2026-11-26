@@ -13,17 +13,22 @@
 // Two modes. Scripted (the default): `reserve` and `extend` answer what a test sets (`reserveAnswer`, `extendRefusal`),
 // no cap, no rounding. Cap mode (`capMicro` set, with `ceilings` and `unitMicro`): reserve and extend decide as W4 does
 // (the start hold if it fits under the cap, an extend rounded up to `unitMicro` under the cap and the model's ceiling;
-// a refusal says `cap_reached`, `turn_budget`, `held` or `budget_busy` by W4's rules).
-import type { ReserveInput, UsageLedgerPort } from '../ports.ts'
+// a refusal says `cap_reached`, `turn_budget`, `held` or `budget_busy` by W4's rules). Jobs have their own budget in both modes.
+import { DEFAULT_JOB_BUDGET_USD } from '../../../../shared/contract/settings-table.ts'
+import type { OpenJobInput, ReserveInput, UsageExtendRefusal, UsageLedgerPort } from '../ports.ts'
 
 type ReserveAnswer = Awaited<ReturnType<UsageLedgerPort['reserve']>>
-type ExtendRefusal = 'cap_reached' | 'turn_budget' | 'held'
+type Job = { budget: number; reserved: number; spent: number; closed: boolean }
+const jobSpentOut = (job: Job | undefined, need: number, ownHold = 0) =>
+  !job || job.closed || job.budget - job.spent - ownHold < need
+const jobHasRoom = (job: Job, need: number) => job.budget - job.spent - job.reserved >= need
+
 type ExtendAnswer = Awaited<ReturnType<UsageLedgerPort['extend']>>
 
 export class FakeUsageLedger implements UsageLedgerPort {
   calls: { method: keyof UsageLedgerPort; args: unknown[] }[] = []
   reserveAnswer: ReserveAnswer = { reservedMicro: 250_000 }
-  extendRefusal: ExtendRefusal | null = null
+  extendRefusal: UsageExtendRefusal | null = null
   /** Cap mode: the brand's cap (null: scripted mode), the per-model ceilings and the extend unit. */
   capMicro: number | null = null
   ceilings: Readonly<Record<string, number>> = {}
@@ -40,32 +45,62 @@ export class FakeUsageLedger implements UsageLedgerPort {
   /** The month's held and spent money (one month: the fake has no calendar). */
   monthReserved = 0
   spent = 0
+  jobBudgetMicro = DEFAULT_JOB_BUDGET_USD * 1_000_000
+  private jobs = new Map<string, Job>()
+  private turnJobs = new Map<string, string>()
   private extends = new Map<string, ExtendAnswer>()
   /** Closed calls and their actual cost, by `${turnId} ${callId}`. */
   closed = new Map<string, number>()
 
   private setHold(turnId: string, to: number) {
-    this.monthReserved += to - (this.holds.get(turnId) ?? 0)
+    const delta = to - (this.holds.get(turnId) ?? 0)
+    this.monthReserved += delta
+    const job = this.jobOf(turnId)
+    if (job) job.reserved += delta
     this.holds.set(turnId, to)
   }
   private known(turnId: string) { return this.holds.has(turnId) }
+  private jobOf(turnId: string) {
+    const jobId = this.turnJobs.get(turnId)
+    return jobId === undefined ? undefined : this.jobs.get(jobId)
+  }
+
+  async openJob(input: OpenJobInput) {
+    this.calls.push({ method: 'openJob', args: [input] })
+    const { jobId, rootTurnId } = input
+    const linked = this.turnJobs.get(rootTurnId)
+    if (linked === jobId) return
+    const hold = this.holds.get(rootTurnId)
+    if (hold === undefined || linked !== undefined || this.jobs.has(jobId)) throw new Error('usage: job root is missing or linked to another job')
+    this.jobs.set(jobId, { budget: this.jobBudgetMicro, reserved: hold, spent: this.booked.get(rootTurnId) ?? 0, closed: false })
+    this.turnJobs.set(rootTurnId, jobId)
+  }
+
+  async closeJob(jobId: string) {
+    this.calls.push({ method: 'closeJob', args: [jobId] })
+    const job = this.jobs.get(jobId)
+    if (job) job.closed = true
+  }
 
   async reserve(t: ReserveInput): Promise<ReserveAnswer> {
     this.calls.push({ method: 'reserve', args: [t] })
-    if (this.known(t.turnId)) return { reservedMicro: this.holds.get(t.turnId)! }
-    if (this.capMicro !== null) {
-      if (this.capMicro - this.spent - this.monthReserved < this.startHoldMicro) {
-        return { refused: this.capMicro - this.spent < this.startHoldMicro ? 'cap_reached' : 'budget_busy' }
-      }
-      this.models.set(t.turnId, t.model)
-      this.setHold(t.turnId, this.startHoldMicro)
-      return { reservedMicro: this.startHoldMicro }
+    if (this.known(t.turnId)) {
+      if (t.jobId !== undefined && this.turnJobs.get(t.turnId) !== t.jobId) throw new Error('usage: turn reserved for a different job')
+      return { reservedMicro: this.holds.get(t.turnId)! }
     }
-    if ('reservedMicro' in this.reserveAnswer) {
-      this.models.set(t.turnId, t.model)
-      this.setHold(t.turnId, this.reserveAnswer.reservedMicro)
+    const answer = this.capMicro === null ? this.reserveAnswer : { reservedMicro: this.startHoldMicro }
+    if ('refused' in answer) return answer
+    const need = answer.reservedMicro
+    const job = t.jobId === undefined ? undefined : this.jobs.get(t.jobId)
+    if (t.jobId !== undefined && jobSpentOut(job, need)) return { refused: 'job_budget' }
+    if (this.capMicro !== null && this.capMicro - this.spent - this.monthReserved < need) {
+      return { refused: this.capMicro - this.spent < need ? 'cap_reached' : 'budget_busy' }
     }
-    return this.reserveAnswer
+    if (job && !jobHasRoom(job, need)) return { refused: 'budget_busy' }
+    if (t.jobId !== undefined) this.turnJobs.set(t.turnId, t.jobId)
+    this.models.set(t.turnId, t.model)
+    this.setHold(t.turnId, need)
+    return answer
   }
   async extend(turnId: string, callId: string, needIn: number): Promise<ExtendAnswer> {
     this.calls.push({ method: 'extend', args: [turnId, callId, needIn] })
@@ -76,7 +111,9 @@ export class FakeUsageLedger implements UsageLedgerPort {
     if (this.extends.has(key)) return { ok: true, ledgerHold: hold }
     if (isFinal) return { refused: 'turn_budget', ledgerHold: 0 }
     const need = Math.ceil(needIn / this.unitMicro) * this.unitMicro
-    let refusal: ExtendRefusal | null = this.extendRefusal
+    const job = this.jobOf(turnId)
+    if (job && jobSpentOut(job, need, hold)) return { refused: 'job_budget', ledgerHold: hold }
+    let refusal = this.extendRefusal
     if (this.capMicro !== null) {
       const ceiling = this.ceilings[this.models.get(turnId) ?? '']
       const fits = this.capMicro - this.spent - this.monthReserved >= need && ceiling !== undefined && hold + need <= ceiling
@@ -85,6 +122,7 @@ export class FakeUsageLedger implements UsageLedgerPort {
           : ceiling === undefined || hold + need > ceiling ? 'turn_budget' : 'held'
     }
     if (refusal) return { refused: refusal, ledgerHold: hold }
+    if (job && !jobHasRoom(job, need)) return { refused: 'held', ledgerHold: hold }
     // Only a granted extend is remembered: a refused call may be extended again once a sibling closes.
     this.setHold(turnId, hold + need)
     this.extends.set(key, { ok: true, ledgerHold: hold + need })
@@ -106,6 +144,8 @@ export class FakeUsageLedger implements UsageLedgerPort {
     this.final.add(turnId)
     this.booked.set(turnId, micro)
     this.spent += micro
+    const job = this.jobOf(turnId)
+    if (job) job.spent += micro
     this.setHold(turnId, 0)
   }
   async settle(turnId: string, micro: number, nowMs: number, runnerCostMicro: number | null = null) {

@@ -10,7 +10,7 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 import { createUsageLedger } from './ledger.ts'
-import { MONTH, NOV, lossyDb, monthRow, resetUsage, turnIn } from './test-fixtures.ts'
+import { MONTH, NOV, db, lossyDb, monthRow, resetUsage, setSetting, turnIn } from './test-fixtures.ts'
 
 const START = 250_000
 const UNIT = 50_000
@@ -151,6 +151,87 @@ describe('the ledger under generated histories', () => {
       const ran = drivers.reduce((s, d) => s + d.tally, 0)
       expect((await monthRow(MONTH))?.spent_micro ?? 0).toBe(ran)
       expect((await monthRow(MONTH))?.reserved_micro ?? 0).toBe(0)
+    }), { numRuns: 40 })
+  }, 300_000)
+
+  it('charges the root once and preserves both pools through mixed job operations', async () => {
+    const op = fc.record({ kind: fc.constantFrom('reserve', 'extend', 'close', 'settle', 'release'), turn: fc.nat(3), units: fc.integer({ min: 1, max: 20 }) })
+    await fc.assert(fc.asyncProperty(fc.integer({ min: 1, max: 4 }), fc.boolean(), fc.array(op, { minLength: 10, maxLength: 40 }), async (capUsd, finalRoot, ops) => {
+      await resetUsage('$2.00')
+      await db.prepare('DELETE FROM usage_jobs').run()
+      await setSetting('s:job_cap', `$${capUsd}`)
+      const cap = capUsd * 1_000_000
+      const ledger = createUsageLedger({ db })
+      const jobId = 'job'
+      await ledger.reserve(turnIn('root'))
+      // Keep an independent, non-job hold in the same month throughout.
+      await ledger.reserve(turnIn('other'))
+      if (finalRoot) await ledger.settle('root', 125_000, NOV)
+      const open = { jobId, rootTurnId: 'root', nowMs: NOV }
+      await ledger.openJob(open)
+      await ledger.openJob(open)
+      const turns = new Map<number, { hold: number; tally: number; pending: boolean }>()
+      let spent = finalRoot ? 125_000 : 0
+      const reserved = () => (finalRoot ? 0 : START) + [...turns.values()].reduce((sum, t) => sum + t.hold, 0)
+      const check = async (state: 'open' | 'closed') => {
+        const held = reserved()
+        expect(await db.prepare('SELECT state, spent_micro, reserved_micro FROM usage_jobs WHERE job_id = ?').bind(jobId).first())
+          .toEqual({ state, spent_micro: spent, reserved_micro: held })
+        expect(await monthRow(MONTH)).toMatchObject({ spent_micro: spent, reserved_micro: held + START })
+        expect(spent + held).toBeLessThanOrEqual(cap)
+        expect(spent + held + START).toBeLessThanOrEqual(2_000_000)
+      }
+      await check('open')
+      if (!finalRoot) {
+        await ledger.settle('root', 125_000, NOV)
+        finalRoot = true
+        spent += 125_000
+      }
+      await ledger.openJob(open)
+      await check('open')
+      for (const { kind, turn, units } of ops) {
+        const id = `t${turn}`
+        const t = turns.get(turn)
+        const need = units * UNIT
+        const free = Math.min(cap, 2_000_000 - START) - spent - reserved()
+        if (kind === 'reserve' && !t) {
+          const answer = await ledger.reserve({ ...turnIn(id), jobId })
+          expect('reservedMicro' in answer).toBe(free >= START)
+          if ('reservedMicro' in answer) turns.set(turn, { hold: START, tally: 0, pending: false })
+        } else if (t && t.hold > 0) {
+          const call = `c${turn}`
+          if (kind === 'extend' && !t.pending && t.tally === 0) {
+            const answer = await ledger.extend(id, call, need)
+            expect('ok' in answer).toBe(free >= need)
+            if ('ok' in answer) { t.hold += need; t.pending = true }
+          } else if (kind === 'close' && t.pending) {
+            t.tally = Math.min(t.hold, need)
+            t.hold = Math.max(START, t.tally)
+            expect(await ledger.close(id, call, t.tally, t.hold)).toEqual({ ledgerHold: t.hold })
+            t.pending = false
+          } else if ((kind === 'settle' || kind === 'release') && !t.pending) {
+            if (kind === 'settle') {
+              t.tally = Math.min(t.hold, need)
+              await ledger.settle(id, t.tally, NOV)
+            } else await ledger.release(id, NOV)
+            t.hold = 0
+            spent += t.tally
+          }
+        }
+        await check('open')
+      }
+      await ledger.closeJob(jobId)
+      await ledger.openJob(open)
+      expect(await ledger.reserve({ ...turnIn('late'), jobId })).toEqual({ refused: 'job_budget' })
+      await check('closed')
+      for (const [turn, t] of turns) {
+        if (t.hold === 0) continue
+        expect(await ledger.extend(`t${turn}`, 'after-close', UNIT)).toEqual({ refused: 'job_budget', ledgerHold: t.hold })
+        await ledger.settle(`t${turn}`, t.tally, NOV)
+        spent += t.tally
+        t.hold = 0
+        await check('closed')
+      }
     }), { numRuns: 40 })
   }, 300_000)
 })

@@ -26,7 +26,9 @@
 //   `cancelled`, no row is `deciding`, `granted` or `inflight` and every queued close was answered.
 // Nothing that must happen after a reset lives only in memory: the rows and the queue are SQLite; the waiters' promises
 // die with the instance (their RPCs fail with it), so `seeds()` frees what still waits and re-arms `call-lease`.
-import type { AdmitAnswer, LeaseAnswer, ModelCallUsage, ModelCallWorst, UsageLedgerPort } from './ports.ts'
+import { TurnFailureSchema } from '../../../shared/contract/runs.ts'
+import type { TurnFailure } from '../../../shared/contract/runs.ts'
+import type { AdmitAnswer, JobBudgetRefusal, LeaseAnswer, ModelCallUsage, ModelCallWorst, UsageExtendRefusal, UsageLedgerPort } from './ports.ts'
 import type { Scheduler, TaskResult } from './scheduler.ts'
 import { StoreUnavailableError } from '../../db/sql.ts'
 import { safeError } from '../../safe-error.ts'
@@ -46,7 +48,7 @@ export const LEDGER_RETRY_MAX_MS = 60_000
 const OPEN = "('deciding', 'granted', 'inflight')"
 const CLOSED = "('done', 'cut', 'freed')"
 
-export type GateRefusal = 'cap_reached' | 'turn_budget' | 'budget_busy'
+export type GateRefusal = 'cap_reached' | 'turn_budget' | 'budget_busy' | JobBudgetRefusal
 
 interface CallRow {
   [k: string]: SqlStorageValue
@@ -78,10 +80,16 @@ export interface GateDeps {
   /** Whether the turn takes new model calls now (running, not fenced, not interrupted). */
   admits(turnId: string): boolean
   /** An extend refused with nothing of the turn in flight: the BrandAgent fences the turn with this failure. */
-  refuseTurn(turnId: string, reason: GateRefusal): void
+  refuseTurn(turnId: string, reason: TurnFailure): void
 }
 
-const refusalOf = (r: 'cap_reached' | 'turn_budget' | 'held'): GateRefusal => (r === 'held' ? 'budget_busy' : r)
+const refusalOf = (r: UsageExtendRefusal): GateRefusal => (r === 'held' ? 'budget_busy' : r)
+// W0-A seam: keep job_budget on the admission port, but emit only valid turn failures until the shared schema lands.
+const turnFailureOf = (reason: GateRefusal): TurnFailure => {
+  if (reason !== 'job_budget') return reason
+  const parsed = TurnFailureSchema.safeParse(reason)
+  return parsed.success ? parsed.data : 'turn_budget'
+}
 
 export class ModelGate {
   private readonly d: GateDeps
@@ -465,7 +473,7 @@ export class ModelGate {
         const reason = refusalOf(a.refused)
         this.sql.exec("UPDATE model_calls SET state = 'freed', micro = 0, closed_at_ms = ? WHERE turn_id = ? AND call_id = ?", this.d.now(), turnId, c.call_id)
         this.answer(turnId, c.call_id, { refused: reason })
-        this.d.refuseTurn(turnId, reason)
+        this.d.refuseTurn(turnId, turnFailureOf(reason))
         return
       }
       case 'close':

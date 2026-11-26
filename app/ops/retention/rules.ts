@@ -16,6 +16,8 @@ export type PeriodName = keyof typeof DEFAULT_DAYS
 export interface Age { column: string; period: PeriodName; when?: string }
 
 export type RetentionRule =
+  /** Account ledger data: not aged by the retention job. */
+  | { kind: 'keep'; why: string }
   /**
    * A D1 table: a row goes when `ageColumn` (epoch ms) is strictly before the cutoff. `idColumn` is the table's whole
    * primary key (one column): the run deletes by it in bounded rounds and logs it.
@@ -91,6 +93,7 @@ export const retentionRules: Readonly<Record<string, RetentionRule>> = {
   'library/': { kind: 'custom', ages: [], withParent: 'library_uploads', why: 'with its library_uploads row (deleted first), never by object age (B9: no lifecycle rule)' },
   // P8a: the egress record. `egress_fetches_no_update` forbids UPDATE only, so DELETE works.
   egress_fetches: { kind: 'd1', ageColumn: 'at_ms', idColumn: 'n' },
+  usage_jobs: { kind: 'keep', why: 'kept with the account ledger; open holds and closed accounting rows are never aged' },
 }
 
 /**
