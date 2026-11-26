@@ -3,8 +3,8 @@
 // member, with no tool call behind it); answers, Undo, resolve, Pause, Resume and removing a permission go through
 // their routes; BrandAgent's own alarm runs the send through `HUB_WRITE` into the hub's fake Shopify write store; the
 // effects are read from that store's log (the hook's `state`). Oracles, the plan's words written out here:
-//  - with no ceiling row (the product's state) every request is refused `over_ceiling`, nothing is written and nothing
-//    reaches the store;
+//  - with no operation on (the product's state: no ceiling row, or only turned-off ones) every request is refused
+//    `over_ceiling`, nothing is written and nothing reaches the store;
 //  - a card is its asker's to answer: another member can't see it (404), an admin sees it but can't answer it (403),
 //    a stale `ifRev` is 409 with the card as it is;
 //  - an approved action goes out once, after its hold, and only then; Undo before the claim sends nothing, Undo after
@@ -120,9 +120,10 @@ test.afterAll(async ({ request }) => {
   }
 })
 
-test('the product\'s state (no ceiling row): every request is refused, nothing is written and nothing is sent', async ({ request }) => {
-  // No seed and no route writes the ceiling (N2): before any spec turns an operation on, the table has no row at all.
-  expect(readSql('SELECT operation FROM permission_ceiling')).toEqual([])
+test('the product\'s state (no operation on): every request is refused, nothing is written and nothing is sent', async ({ request }) => {
+  // No seed and no route writes the ceiling (N2), so no operation is on. The table may hold a turned-off row (the hook's
+  // `ceiling` off keeps the row, and another spec may have run first); `decide` treats it as it treats no row at all.
+  expect(readSql('SELECT operation FROM permission_ceiling WHERE enabled = 1')).toEqual([])
   const rowsBefore = readSql<{ n: number }>('SELECT COUNT(*) AS n FROM outbox_actions')[0].n
   const writesBefore = (await storeWrites(request)).length
   const t = tag()

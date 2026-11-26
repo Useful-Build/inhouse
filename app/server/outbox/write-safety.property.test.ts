@@ -11,7 +11,8 @@
 // Random steps: a request (any asker, a system routine included, any origin, both modes, a replay of the same
 // invocation with the same or other arguments), an answer by anyone (a stale revision and a double answer among them),
 // Undo, withdraw (the asker, the agent, anyone else), removing a permission (its holder, an admin, anyone else), a role
-// lowered or raised, a member removed and re-invited, the ceiling turned off, lowered or raised, an account reconnected
+// lowered or raised, a member removed and re-invited, the ceiling turned off, lowered or raised (worlds start with Shopify
+// tags capped at 1, 2 or 50 a day), the Slack channel taken off the list or listed again, an account reconnected
 // or disconnected, the hub's own view of an account drifting or paused, Pause and Resume (each hook run or failing), a
 // clock jump (past the 10 s hold, the 40 s permit deadline, the 60 s stale mark, the 10-minute approval cap, the 7-day
 // expiry), a dispatch (a crash before or after each of its D1 calls, a fast Pause and Resume at each of its reads, a
@@ -29,13 +30,14 @@
 //      generation; the asker an active person; and either (a) a live grant held by the asker (or the brand), on the same
 //      account, generation, operation and scope, made under the current ceiling and policy, with this revision's use
 //      unreleased and the grant's day inside MIN(per_day, per_day_max), or (b) the approver (the asker) approved this
-//      revision (the test recorded the answer) and is still an active person;
+//      revision (the test recorded the answer, from the revision the test sent, never from the row the outbox returned)
+//      and is still an active person; and an answer wins only at the revision it named;
 //  W3. the call started inside the permit: the clock before `claimed_at + 40 s`, and no Pause or Resume since the claim;
 //  W4. no effect for a routine without an approval (a routine never runs under a grant);
 //  W5. no effect with an empty ceiling: with no ceiling row (the product's state) every request is refused and nothing
 //      reaches an upstream;
-//  W6. a grant-backed effect keeps its use (unreleased) unless the action ended `failed`, and no grant's effects in a
-//      day pass its `per_day`.
+//  W6. a grant-backed effect keeps its use (unreleased) unless the action ended `failed` (which releases it), and the
+//      effects still holding a use, per grant and day, stay inside the daily limit their claims saw.
 // Planted bugs (each seen red, then restored; the PR lists them) prove the oracle has teeth.
 import { fc } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
@@ -53,6 +55,7 @@ import { setCeilingStmt } from '../permissions/ceiling.ts'
 import { permissionStore } from '../permissions/grants.ts'
 import { POLICY_REV } from '../permissions/policy.ts'
 import { channel } from '../permissions/test-support.ts'
+import { notifyChannelStore } from '../notify-slack/channels.ts'
 import type { WriteOperationKey } from '../permissions/types.ts'
 import { sendAction } from './dispatch.ts'
 import { outboxFacts } from './facts.ts'
@@ -300,6 +303,7 @@ type Step =
   | { k: 'reinvite'; who: Who }
   | { k: 'ceiling'; op: Op; enabled: boolean; perDayMax: number }
   | { k: 'account'; op: Op; change: 'reconnect' | 'disconnect' | 'hub_drift' | 'hub_pause' | 'hub_resume' }
+  | { k: 'channel'; listed: boolean }
   | { k: 'flip'; hookFails: boolean; pulse: boolean }
   | { k: 'tick'; ms: number; alarm: SendOpts | false }
   | ({ k: 'dispatch'; i: number } & SendOpts)
@@ -336,11 +340,12 @@ const stepArb: fc.Arbitrary<Step> = fc.oneof(
   })),
   W(2, fc.record({ k: fc.constant('undo' as const), i: idx, by: target })),
   W(1, fc.record({ k: fc.constant('withdraw' as const), i: idx, by: fc.oneof(target, fc.constant('agent' as const)) })),
-  W(2, fc.record({ k: fc.constant('revoke' as const), i: idx, by: fc.oneof(fc.constant('holder' as const), who) })),
+  W(3, fc.record({ k: fc.constant('revoke' as const), i: idx, by: fc.oneof(fc.constant('holder' as const), who) })),
   W(1, fc.record({ k: fc.constant('role' as const), who, to: fc.constantFrom<MemberRole>('member', 'admin') })),
   W(1, fc.record({ k: fc.constant('remove' as const), who })),
   W(1, fc.record({ k: fc.constant('reinvite' as const), who })),
-  W(1, fc.record({ k: fc.constant('ceiling' as const), op, enabled: fc.constantFrom(true, true, false), perDayMax: fc.constantFrom(1, 2, 50) })),
+  W(3, fc.record({ k: fc.constant('ceiling' as const), op, enabled: fc.constantFrom(true, true, true, false), perDayMax: fc.constantFrom(1, 2, 50) })),
+  W(1, fc.record({ k: fc.constant('channel' as const), listed: fc.boolean() })),
   W(1, fc.record({ k: fc.constant('account' as const), op, change: fc.constantFrom('reconnect' as const, 'disconnect' as const, 'hub_drift' as const, 'hub_pause' as const, 'hub_resume' as const) })),
   W(2, fc.record({ k: fc.constant('flip' as const), hookFails: fc.boolean(), pulse: fc.constantFrom(true, true, false) })),
   // alarm: BrandAgent's alarm fires as the clock moves, for every approved action whose hold is over, each send as drawn.
@@ -365,7 +370,7 @@ interface MemberRow { id: string; role: MemberRole; status: string; kind: string
 interface GrantRow { id: string; rev: number; holder: string; holder_member: string | null; account_id: string; account_gen: number; operation: string; scope_key: string; per_day: number; policy_rev: number; granted_role: MemberRole; ceiling_rev: number; revoked_at_ms: number | null }
 interface UseRow { id: string; grant_id: string; day: string; units: number; released_at_ms: number | null }
 
-async function setup(o: { ceiling: boolean }): Promise<void> {
+async function setup(o: World): Promise<void> {
   await resetOutbox(db)
   await db.batch(PEOPLE.map(id => db.prepare(
     `INSERT INTO members (id, kind, role, status, name, email_norm, subject, created_at_ms) VALUES (?, 'person', ?, 'active', 'Test person', ?, ?, 1)
@@ -378,9 +383,12 @@ async function setup(o: { ceiling: boolean }): Promise<void> {
   await channel(db, CHANNEL_ID, 'ops', 'm_ws_d')
   if (o.ceiling) {
     await runBatch(db, (['shopify.order.tag_add', 'slack.channel.post'] as const).map(operation =>
-      setCeilingStmt({ operation, enabled: true, perDayMax: 50, actorId: 'm_system', nowMs: T0 })))
+      setCeilingStmt({ operation, enabled: true, perDayMax: operation === 'shopify.order.tag_add' ? o.perDayMax ?? 50 : 50, actorId: 'm_system', nowMs: T0 })))
   }
 }
+
+/** The brand at the start: its ceiling on or absent (the product's state), and the Shopify tags' daily maximum. */
+interface World { ceiling: boolean; perDayMax?: number }
 
 const OPERATION: Record<Op, WriteOperationKey> = { shop: 'shopify.order.tag_add', slack: 'slack.channel.post' }
 const ACCOUNT: Record<Op, string> = { shop: SHOP, slack: SLACK }
@@ -397,7 +405,7 @@ interface Outcome {
   problems: string[]
 }
 
-async function runSequence(steps: readonly Step[], o: { ceiling: boolean }): Promise<Outcome> {
+async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
   await setup(o)
   let now = T0
   const hub = new HubStandIn(hubCode)
@@ -417,6 +425,7 @@ async function runSequence(steps: readonly Step[], o: { ceiling: boolean }): Pro
   const members = memberStore({ db })
   const accounts = connectorAccountStore({ db })
   const permissions = permissionStore({ db })
+  const channels = notifyChannelStore({ db })
   const note = notices()
   const at = () => ({ actorId: 'm_ws_d', requestId: fresh('at'), nowMs: now })
 
@@ -430,7 +439,7 @@ async function runSequence(steps: readonly Step[], o: { ceiling: boolean }): Pro
   }
   const approvals = new Map<string, { rev: number; by: string; era: number }>()
   /** Each winning claim (`id#attempt`): the oracle's faults at the claim, and the era and generation it happened in. */
-  const claims = new Map<string, { faults: string[]; era: number; gen: number; claimedAtMs: number; grantId: string | null; useId: string }>()
+  const claims = new Map<string, { faults: string[]; limit: number | null; era: number; gen: number; claimedAtMs: number; grantId: string | null; useId: string }>()
   const calls: Call[] = []
   /** The unique tag or text token each request carried, to its action. */
   const tokens = new Map<string, string>()
@@ -456,8 +465,9 @@ async function runSequence(steps: readonly Step[], o: { ceiling: boolean }): Pro
   }
 
   /** The oracle's look at a claim, right after its batch: W2, in the test's own words. */
-  async function claimFaults(pre: OutboxActionRow, post: OutboxActionRow): Promise<string[]> {
+  async function claimFaults(pre: OutboxActionRow, post: OutboxActionRow): Promise<{ faults: string[]; limit: number | null }> {
     const f: string[] = []
+    let limit: number | null = null
     const claimedAt = post.claimed_at_ms ?? -1
     const gate = await db.prepare('SELECT * FROM outbox_gate WHERE id = 1').first<OutboxGateRow>()
     if (!gate || gate.paused !== 0 || gate.restore_hold !== 0) f.push('the gate was closed')
@@ -501,7 +511,8 @@ async function runSequence(steps: readonly Step[], o: { ceiling: boolean }): Pro
       else {
         const day = await db.prepare('SELECT COALESCE(SUM(units), 0) AS n FROM permission_uses WHERE grant_id = ? AND day = ? AND released_at_ms IS NULL')
           .bind(use.grant_id, use.day).first<{ n: number }>()
-        if (!g || !ceiling || (day?.n ?? 0) > Math.min(g.per_day, ceiling.per_day_max)) f.push('the grant\'s day is over its limit')
+        limit = g && ceiling ? Math.min(g.per_day, ceiling.per_day_max) : null
+        if (limit === null || (day?.n ?? 0) > limit) f.push('the grant\'s day is over its limit')
       }
     } else {
       if (pre.approved_by !== pre.approver || pre.approver !== pre.asked_by) f.push('not approved by its approver')
@@ -509,7 +520,7 @@ async function runSequence(steps: readonly Step[], o: { ceiling: boolean }): Pro
       const approver = await memberOf(pre.approver)
       if (!approver || approver.kind !== 'person' || approver.status !== 'active') f.push('the approver is not an active person')
     }
-    return f
+    return { faults: f, limit }
   }
 
   /** The dispatcher, as BrandAgent's task runs it, on a D1 the oracle watches (and that may crash or flip under it). */
@@ -526,7 +537,7 @@ async function runSequence(steps: readonly Step[], o: { ceiling: boolean }): Pro
           const post = await rowOf(id)
           if (post && post.state === 'sending' && post.attempt === pre.attempt + 1 && pre.state === 'approved') {
             claims.set(`${id}#${post.attempt}`, {
-              faults: await claimFaults(pre, post), era, gen: object.pauseGen, claimedAtMs: post.claimed_at_ms ?? -1, grantId: pre.grant_id, useId: `${pre.id}#${pre.rev}`,
+              ...await claimFaults(pre, post), era, gen: object.pauseGen, claimedAtMs: post.claimed_at_ms ?? -1, grantId: pre.grant_id, useId: `${pre.id}#${pre.rev}`,
             })
           }
           pre = null
@@ -606,14 +617,19 @@ async function runSequence(steps: readonly Step[], o: { ceiling: boolean }): Pro
         if (!id) break
         const row = (await rowOf(id))!
         const who = await by(s.by, row)
-        const ifRev = s.stale ? Math.max(1, row.rev - 1) : row.rev
+        // A stale answer names a revision the card isn't at (one behind, or one ahead of a first revision).
+        const ifRev = s.stale ? (row.rev > 1 ? row.rev - 1 : row.rev + 1) : row.rev
         // `fit_*`: the choice the card offers (Approve on an exact or a routine's card, card.ts `kindOf`); the others may not fit.
         const exact = row.verdict === 'exact' || row.origin === 'routine'
         const choice = s.choice === 'fit_once' || s.choice === 'fit_always' ? (exact ? 'approve' : s.choice === 'fit_once' ? 'once' : 'always') : s.choice
         const answer = () => port.answer(who, id, { choice, ifRev })
         const results = s.twice ? await Promise.all([answer(), answer()]) : [await answer()]
         for (const r of results) {
-          if ('action' in r && r.action.state === 'approved') approvals.set(id, { rev: r.action.approved_rev ?? -1, by: who.memberId, era })
+          if (!('action' in r)) continue
+          // An answer is to the revision the person saw: it may win only at that revision, and what it approves is the
+          // next one. Recorded from the test's own `ifRev`, never from the row the outbox returns.
+          if (ifRev !== row.rev) problems.push(`W2: an answer to revision ${ifRev} won on a card at revision ${row.rev} (${id})`)
+          if (r.action.state === 'approved') approvals.set(id, { rev: ifRev + 1, by: who.memberId, era })
         }
         break
       }
@@ -656,6 +672,12 @@ async function runSequence(steps: readonly Step[], o: { ceiling: boolean }): Pro
         if (m?.status !== 'removed') break
         const invited = await members.invite({ name: 'Test person', email: emailOf(id), role: START_ROLE[id] }, at())
         if ('ok' in invited) await members.resolvePerson({ subject: subjectOf(id), email: emailOf(id), requestId: fresh('signin'), nowMs: now })
+        break
+      }
+      case 'channel': {
+        // The admin takes the Slack channel off the list, or lists it again (the real store: its grants end with it).
+        const current = await channels.list()
+        await channels.save({ channels: s.listed ? [{ channelId: CHANNEL_ID, name: 'ops' }] : [], alertsChannelId: null, ifRev: current.rev }, at())
         break
       }
       case 'ceiling':
@@ -760,23 +782,29 @@ async function runSequence(steps: readonly Step[], o: { ceiling: boolean }): Pro
     for (const f of c.permit) problems.push(`W3: a call where ${f} (${c.actionId}${perAction.has(c.actionId) ? ', with an effect' : ''})`)
   }
   for (const [id, count] of callsPer) if (count > 1) problems.push(`W1: ${count} hub calls for one action (${id})`)
-  // W6: a grant-backed effect keeps its use unless its action failed; no grant's effects in a day pass its per_day.
-  const perGrantDay = new Map<string, number>()
+  // W6: a grant-backed effect keeps its use unless its action failed (a definite refusal, or a person said it didn't go
+  // out: both release it, as the reservation counts); the effects still holding a use, per grant and day, stay inside
+  // the largest daily limit any of their claims saw.
+  const perGrantDay = new Map<string, { units: number; limit: number }>()
   for (const id of perAction.keys()) {
     for (const c of calls.filter(x => x.actionId === id)) {
       const claim = claims.get(`${c.actionId}#${c.attempt}`)
       if (!claim || claim.grantId === null) continue
-      const use = await db.prepare('SELECT u.*, g.per_day FROM permission_uses u JOIN permission_grants g ON g.id = u.grant_id WHERE u.id = ?')
-        .bind(claim.useId).first<UseRow & { per_day: number }>()
+      const use = await db.prepare('SELECT * FROM permission_uses WHERE id = ?').bind(claim.useId).first<UseRow>()
       const row = await rowOf(id)
       if (!use) {
         problems.push(`W6: a grant-backed effect with no use (${id})`)
         continue
       }
-      if (use.released_at_ms !== null && row?.state !== 'failed') problems.push(`W6: a grant-backed effect whose use was released while ${row?.state} (${id})`)
+      if (use.released_at_ms !== null) {
+        if (row?.state !== 'failed') problems.push(`W6: a grant-backed effect whose use was released while ${row?.state} (${id})`)
+        continue
+      }
       const key = `${use.grant_id}|${use.day}`
-      perGrantDay.set(key, (perGrantDay.get(key) ?? 0) + use.units)
-      if ((perGrantDay.get(key) ?? 0) > use.per_day) problems.push(`W6: a grant's effects passed its day (${key})`)
+      const was = perGrantDay.get(key) ?? { units: 0, limit: 0 }
+      const now2 = { units: was.units + use.units, limit: Math.max(was.limit, claim.limit ?? 0) }
+      perGrantDay.set(key, now2)
+      if (now2.units > now2.limit) problems.push(`W6: a grant's effects passed its day (${key}: ${now2.units} over ${now2.limit})`)
     }
   }
   if (!o.ceiling) {
@@ -785,6 +813,14 @@ async function runSequence(steps: readonly Step[], o: { ceiling: boolean }): Pro
   }
   return { effects: effects.length, admitted, problems }
 }
+
+/** The world's daily maximum for Shopify tags: tight in a third of the runs each, so a grant's day fills. */
+const PER_DAY_MAX = fc.constantFrom(1, 2, 50)
+// Floors on what the suites send, about half the lowest count seen over repeated runs: a run that sends little proves
+// little, and a floor near the usual count would flake. Seen on 2026-11-26: the main suite sent 139 to 164
+// effects over 400 runs (5 runs of it), the send path 322 to 431 over 300 runs (11 runs of it).
+const MAIN_FLOOR = 70
+const SEND_PATH_FLOOR = 160
 
 describe('the write-safety gate (M2-S): no outside write without a live grant or an approval of that exact action', () => {
   beforeAll(async () => {
@@ -806,19 +842,20 @@ describe('the write-safety gate (M2-S): no outside write without a live grant or
 
   it('holds W1 to W6 over random sequences of every kind of step', async () => {
     let effects = 0
-    const runs = 300
-    // Half the runs start with an "Always allow" for the first member's Shopify tags, so sends under a grant are common.
+    const runs = 400
+    // Three runs in four start with an "Always allow" for the first member's Shopify tags, so sends under a grant are common;
+    // a third of the worlds cap the tags at 1 or 2 a day, so a grant's day fills.
     const seed: Step[] = [
       { k: 'request', who: 0, origin: 'chat', op: 'shop', mode: 'tool', replay: 'none' },
       { k: 'answer', i: 0, by: 'own', choice: 'fit_always', stale: false, twice: false },
     ]
-    await fc.assert(fc.asyncProperty(fc.boolean(), fc.array(stepArb, { minLength: 30, maxLength: 90 }), async (seeded, steps) => {
-      const out = await runSequence(seeded ? [...seed, ...steps] : steps, { ceiling: true })
+    await fc.assert(fc.asyncProperty(fc.constantFrom(true, true, true, false), PER_DAY_MAX, fc.array(stepArb, { minLength: 30, maxLength: 90 }), async (seeded, perDayMax, steps) => {
+      const out = await runSequence(seeded ? [...seed, ...steps] : steps, { ceiling: true, perDayMax })
       effects += out.effects
       expect(out.problems).toEqual([])
     }), { numRuns: runs })
     // The suite must actually send: a run where nothing reached an upstream proves nothing.
-    expect(effects).toBeGreaterThan(runs / 3)
+    expect(effects, `effects sent over ${runs} runs: ${effects}`).toBeGreaterThan(MAIN_FLOOR)
   }, 300_000)
 
   it('holds W1 to W6 on the send path: a crash at each boundary, the sweep, every fault, late results and checks', async () => {
@@ -830,18 +867,19 @@ describe('the write-safety gate (M2-S): no outside write without a live grant or
       { k: 'request', who: 0, origin: 'chat', op: 'shop', mode: 'tool', replay: 'none' },
       { k: 'answer', i: 0, by: 'own', choice: 'fit_always', stale: false, twice: false },
       { k: 'request', who: 0, origin: 'chat', op: 'shop', mode: 'tool', replay: 'none' },
+      { k: 'request', who: 0, origin: 'chat', op: 'shop', mode: 'tool', replay: 'none' },
       { k: 'request', who: 2, origin: 'chat', op: 'slack', mode: 'tool', replay: 'none' },
       { k: 'answer', i: 0, by: 'own', choice: 'fit_once', stale: false, twice: false },
       { k: 'tick', ms: 11_000, alarm: false },
     ]
-    const sendPath = stepArb.filter(s => ['tick', 'dispatch', 'sweep', 'flip', 'late', 'resolve', 'fault', 'undo', 'revoke', 'account', 'ceiling'].includes(s.k))
+    const sendPath = stepArb.filter(s => ['tick', 'dispatch', 'sweep', 'flip', 'late', 'resolve', 'fault', 'undo', 'revoke', 'account', 'ceiling', 'channel'].includes(s.k))
     let effects = 0
-    await fc.assert(fc.asyncProperty(fc.array(sendPath, { minLength: 5, maxLength: 30 }), async tail => {
-      const out = await runSequence([...prefix, ...tail], { ceiling: true })
+    await fc.assert(fc.asyncProperty(PER_DAY_MAX, fc.array(sendPath, { minLength: 5, maxLength: 30 }), async (perDayMax, tail) => {
+      const out = await runSequence([...prefix, ...tail], { ceiling: true, perDayMax })
       effects += out.effects
       expect(out.problems).toEqual([])
     }), { numRuns: 300 })
-    expect(effects).toBeGreaterThan(300)
+    expect(effects, `effects sent over 300 runs: ${effects}`).toBeGreaterThan(SEND_PATH_FLOOR)
   }, 300_000)
 
   it('the product\'s state (no ceiling row): every request is refused and nothing reaches an upstream', async () => {
