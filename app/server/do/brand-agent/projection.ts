@@ -133,11 +133,19 @@ export function fixTurnRows(sql: SqlStorage, turnId: string, atMs: number): Proj
   return { chatId: t.chat_id, atMs, rows }
 }
 
-/** The question that started a continuation's job: its root turn's text (the person's), or '' if the job is gone. */
+/**
+ * The question that started a continuation's job: its root turn's text (the person's). A job or root row that's gone is
+ * a bug, logged loudly; the end row is still stored, with no question (so no Try again), since throwing here would
+ * break the turn's final step.
+ */
 function jobQuestion(sql: SqlStorage, t: TurnForRows): string {
   const r = sql.exec<{ text: string }>(
     'SELECT r.text AS text FROM jobs j JOIN turns r ON r.turn_id = j.root_turn_id WHERE j.job_id = ?', t.job_id).toArray()[0]
-  return r?.text ?? ''
+  if (r === undefined) {
+    console.error({ event: 'projection_job_question_missing', turnId: t.turn_id, jobId: t.job_id })
+    return ''
+  }
+  return r.text
 }
 
 /** The turn's fixed rows, or null when it has none (not final yet). */

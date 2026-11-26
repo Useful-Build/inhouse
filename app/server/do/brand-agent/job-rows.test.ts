@@ -7,7 +7,7 @@
 //  5. a reload shows an action's or a question's resume as the person's message, or a page loses rows to the filter;
 //  6. the agent's history tools read the server's own notes back as something the person said.
 import { env } from 'cloudflare:workers'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SendTurnResult } from '../../../shared/contract/runs.ts'
 import { chatStore } from '../../db/chats.ts'
 import { historyStore } from '../../mcp/tools/history/store.ts'
@@ -77,6 +77,22 @@ describe("a long job's turns after a reload", () => {
     const end = storedProjection(h.sql, cont.turn_id)!.rows.at(-1)!
     expect(end.id).toBe(`${cont.turn_id}.f`)
     expect(JSON.parse(end.extra_json!)).toEqual({ failure: 'sdk_error', retryQuestion: 'question key-rows3' })
+  }))
+
+  it('a job row gone when a continuation ends: logged loudly, and the end row is still stored with no question (failure 3)', () => inAgent(async h => {
+    const { cont, job } = await promoted(h, 'key-rows5')
+    h.sql.exec('DELETE FROM jobs WHERE job_id = ?', job.job_id)
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      h.push(cont.turn_id, ev.started(), ev.failed('sdk_error'), ev.released(cp(3)))
+      await settle()
+      expect(errors).toHaveBeenCalledWith({ event: 'projection_job_question_missing', turnId: cont.turn_id, jobId: job.job_id })
+    } finally {
+      errors.mockRestore()
+    }
+    const end = storedProjection(h.sql, cont.turn_id)!.rows.at(-1)!
+    expect(end.id).toBe(`${cont.turn_id}.f`)
+    expect(JSON.parse(end.extra_json!)).toEqual({ failure: 'sdk_error', retryQuestion: '' })
   }))
 
   it("Cancel on a live continuation keeps the stopped note (failure 4)", () => inAgent(async h => {
