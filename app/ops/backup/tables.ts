@@ -91,6 +91,10 @@ export const TABLE_RULES: readonly TableRule[] = [
   { name: 'permission_ceiling', orderBy: ['operation'], mode: 'snapshot' },
   { name: 'permission_grants', orderBy: ['id'], mode: 'snapshot', after: ['members'] },
   { name: 'permission_uses', orderBy: ['id'], mode: 'paged', createdColumn: 'at_ms' },
+  // Stage 1 M2-B: the gate is one row; the actions are updated through their life and grow with every write: paged. A
+  // restore holds the outbox (M2-R: every restored approved or sending row to "Needs a check").
+  { name: 'outbox_gate', orderBy: ['id'], mode: 'snapshot' },
+  { name: 'outbox_actions', orderBy: ['id'], mode: 'paged', createdColumn: 'created_at_ms' },
 ]
 
 /** A name that goes into SQL as a quoted identifier: letters, digits and `_` only. */

@@ -107,6 +107,10 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   permission_ceiling: { action: 'keep', why: 'the brand\'s ceiling: updated_by stays pseudonymous', kept: ['updated_by'] },
   permission_grants: { action: 'delete_rows', column: 'holder_member', kept: ['granted_by', 'revoked_by'] },
   permission_uses: { action: 'keep', why: 'no member id: a grant\'s day counter by action and grant id; retention removes it' },
+  // Stage 1 M2-B. The actions the person asked for go (their chats' words are in them); an action someone else asked for
+  // keeps who approved or resolved it, pseudonymous once their row is. The gate names no one.
+  outbox_gate: { action: 'keep', why: 'one row of pause state: no member id' },
+  outbox_actions: { action: 'delete_rows', column: 'asked_by', kept: ['approver', 'approved_by', 'resolved_by'] },
   privacy_requests: { action: 'keep', why: 'no member id: a Shopify customer by Shopify id only, cleared when the request is closed (route 94); the topic and dates stay as the record that it was answered' },
 }
 

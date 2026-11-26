@@ -8,6 +8,7 @@ import { routinesSignals } from '../../routines/signal.ts'
 import { privacySignals } from '../../webhooks/shopify-privacy/signal.ts'
 import { egressRecordSignal } from './egress.ts'
 import { dataSignals } from './data.ts'
+import { outboxSignals } from './needs-check.ts'
 import type { Signal } from './types.ts'
 
-export const signals: readonly Signal[] = [...coreSignals, ...RUNS_SIGNALS, ...POOL_SIGNALS, ...usageSignals, ...routinesSignals, ...dataSignals(), ...privacySignals, egressRecordSignal]
+export const signals: readonly Signal[] = [...coreSignals, ...RUNS_SIGNALS, ...POOL_SIGNALS, ...usageSignals, ...routinesSignals, ...dataSignals(), ...privacySignals, egressRecordSignal, ...outboxSignals()]
