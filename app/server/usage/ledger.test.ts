@@ -54,7 +54,13 @@ describe('job budget', () => {
     expect(await jobRow()).toMatchObject({ reserved_micro: 0, spent_micro: 800_000 })
   })
 
-  it('carries job_budget through the model gate instead of mapping it to budget_busy', () => inAgent(async h => {
+  it('throws for a reserve under a job that was never opened, and holds nothing for it', async () => {
+    await expect(ledger.reserve(jobTurn('next'))).rejects.toThrow(/no job row for job/)
+    expect(await turnRow('next')).toBeNull()
+    expect(await monthRow()).toMatchObject({ reserved_micro: 250_000 })
+  })
+
+  it('carries job_budget through the model gate instead of mapping it to budget_busy',() => inAgent(async h => {
     const turn = await h.submit('c1', 'key-job-gate')
     if ('refused' in turn) throw new Error('fixture turn refused')
     await settle()
@@ -111,7 +117,7 @@ describe('job budget', () => {
     await ledger.reserve(jobTurn('next'))
     await ledger.closeJob('job')
     await runInDurableObject(env.BRAND_AGENT.getByName('job-usage-sweep'), async (_agent, state) => {
-      const run = () => sweepOnce({ db, sql: state.storage.sql, nowMs: NOV + 3 * 60 * 60_000, turnCalls: id => ({ micro: id === 'root' ? 700_000 : 400_000 }) })
+      const run = () => sweepOnce({ db, sql: state.storage.sql, nowMs: NOV + 3 * 60 * 60_000, turnCalls: (_sql, id) => ({ micro: id === 'root' ? 700_000 : 400_000 }) })
       expect(await run()).toMatchObject({ settled: 2, failed: 0 })
       expect(await run()).toMatchObject({ settled: 0, failed: 0 })
     })

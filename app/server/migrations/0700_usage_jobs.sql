@@ -10,5 +10,5 @@ CREATE TABLE usage_jobs (
   stamp TEXT NOT NULL
 );
 
-ALTER TABLE usage_turns ADD COLUMN job_id TEXT REFERENCES usage_jobs(job_id);
+ALTER TABLE usage_turns ADD COLUMN job_id TEXT;
 CREATE INDEX usage_turns_job ON usage_turns(job_id) WHERE job_id IS NOT NULL;

@@ -45,8 +45,11 @@ type Q = { sql: string; params: Val[] }
 const q = (sql: string, ...params: Val[]): Q => ({ sql, params })
 
 type JobBudget = { budget_micro: number; spent_micro: number; state: 'open' | 'closed' }
-const jobSpentOut = (job: JobBudget | null, need: number, ownHold = 0) =>
-  job === null || job.state === 'closed' || job.budget_micro - job.spent_micro - ownHold < need
+/** A closed job, or one that can't fit `need` even with none of its holds out but `ownHold`. A missing job row is a bug. */
+const jobSpentOut = (jobId: string, job: JobBudget | null, need: number, ownHold = 0) => {
+  if (job === null) throw new Error(`usage: no job row for ${jobId} (openJob must run first)`)
+  return job.state === 'closed' || job.budget_micro - job.spent_micro - ownHold < need
+}
 const jobHasRoom = `state = 'open' AND budget_micro - spent_micro - reserved_micro >= ?`
 const turnJob = '(SELECT job_id FROM usage_turns WHERE turn_id = ?)'
 // Apply the same delta as the successful month write, before its turn row changes. Closed jobs still record actuals.
@@ -163,7 +166,7 @@ export function createUsageLedger(deps: LedgerDeps): UsageLedger {
         if (jobId !== null && turn.job_id !== jobId) throw new Error('usage: turn reserved for a different job')
         return { reservedMicro: turn.reserved_micro }
       }
-      if (jobId !== null && jobSpentOut(row<JobBudget>(jobResult), START_HOLD_MICRO)) return { refused: 'job_budget' }
+      if (jobId !== null && jobSpentOut(jobId, row<JobBudget>(jobResult), START_HOLD_MICRO)) return { refused: 'job_budget' }
       const m = row<{ cap_micro: number; spent_micro: number }>(monthResult)
       if (!m) throw new Error('usage: the month row is missing after its upsert')
       // Refused: `cap_reached` when the start hold can't fit even with no other hold; else others' holds (`budget_busy`).
@@ -204,7 +207,7 @@ export function createUsageLedger(deps: LedgerDeps): UsageLedger {
       // A final turn takes no more money: answered as its budget being spent.
       if (t.final) return { refused: 'turn_budget', ledgerHold }
       const job = t.job_state === null ? null : { state: t.job_state, budget_micro: t.budget_micro, spent_micro: t.job_spent_micro }
-      if (t.job_id !== null && jobSpentOut(job, need, ledgerHold)) return { refused: 'job_budget', ledgerHold }
+      if (t.job_id !== null && jobSpentOut(t.job_id, job, need, ledgerHold)) return { refused: 'job_budget', ledgerHold }
       // `cap_reached` when the need can't fit even after every other turn's hold ends (only this turn's own hold and the
       // spend stand in its way); `held` when others' holds are what block it (they may finish). Orchestrator's call, #154 r1.
       if (t.cap_micro - t.spent_micro - t.reserved_micro < need) return { refused: 'cap_reached', ledgerHold }

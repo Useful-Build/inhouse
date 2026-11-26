@@ -30,7 +30,7 @@ const zodOf = (rule: ValueRule): z.ZodType<SettingValue> => {
     case 'bool': return z.boolean()
     case 'enum': return z.enum(rule.values as [string, ...string[]])
     case 'text': return z.string().trim().min(rule.min).max(rule.max)
-    case 'cap': return z.string().regex(CAP_PATTERN).refine(v => capOk(v, rule.maxUsd), 'Out of range')
+    case 'cap': return z.string().regex(CAP_PATTERN).refine(v => capOk(v, rule.maxUsd, rule.minUsd), 'Out of range')
     case 'member': return z.union([MemberIdSchema, z.literal('anyone')])
     case 'hostlist': return z.string().refine(v => parseHostlist(v) !== null, 'Not a list of host names')
   }

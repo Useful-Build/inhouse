@@ -59,7 +59,7 @@ export const TABLE_RULES: readonly TableRule[] = [
   { name: 'chat_files', orderBy: ['id'], mode: 'paged', createdColumn: 'created_at_ms', after: ['chats'], r2KeyColumns: ['r2_key'] },
   { name: 'usage_months', orderBy: ['month'], mode: 'snapshot' },
   { name: 'usage_jobs', orderBy: ['job_id'], mode: 'paged', createdColumn: 'created_at_ms' },
-  { name: 'usage_turns', orderBy: ['turn_id'], mode: 'paged', createdColumn: 'created_at_ms', after: ['usage_months', 'usage_jobs'] },
+  { name: 'usage_turns', orderBy: ['turn_id'], mode: 'paged', createdColumn: 'created_at_ms', after: ['usage_months'] },
   { name: 'usage_extends', orderBy: ['turn_id', 'call_id'], mode: 'paged', createdColumn: 'at_ms', after: ['usage_turns'] },
   // The audit copy's cursor; its reset after a restore is F1's.
   { name: 'audit_copy_state', orderBy: ['id'], mode: 'snapshot' },
