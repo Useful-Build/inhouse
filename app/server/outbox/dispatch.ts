@@ -192,12 +192,9 @@ export async function sendAction(actionId: string, d: DispatchDeps): Promise<Sen
     }))
     return { kind: 'not_claimed' }
   }
-  let call: Promise<unknown>
-  try {
-    call = hub.runAction(req)
-  } catch (err) {
-    call = Promise.reject(err)
-  }
+  // An async function runs synchronously up to its first await, so the call starts here; a synchronous throw becomes
+  // its rejection.
+  const call = (async () => hub.runAction(req))()
 
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<{ timeout: true }>(r => { timer = setTimeout(() => r({ timeout: true }), d.timeoutMs ?? timing().hubTimeoutMs) })
