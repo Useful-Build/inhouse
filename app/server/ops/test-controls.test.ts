@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { killRunner, resetTestControls, setTimings, timing } from '@test-controls'
 import * as off from './test-controls-off.ts'
+import type { JobTimingName } from './job-timings.ts'
 
 afterEach(resetTestControls)
 
@@ -9,7 +10,8 @@ it('looks up overrides by name and replaces or clears the whole set', () => {
   setTimings({ JOB_CUT_MS: 100, JOB_DEADLINE_MS: 900 })
   expect(timing('JOB_CUT_MS', 1_500)).toBe(100)
   expect(timing('JOB_DEADLINE_MS', 5_000)).toBe(900)
-  expect(timing('toString', 10)).toBe(10)
+  // An inherited Object key never reads as an override (the route allows only job-timings.ts names anyway).
+  expect(timing('toString' as JobTimingName, 10)).toBe(10)
   setTimings({ JOB_DEADLINE_MS: 800 })
   expect(timing('JOB_CUT_MS', 1_500)).toBe(1_500)
   resetTestControls()

@@ -5,7 +5,15 @@ type Check = NonNullable<ScriptedTurn['expect']>
 export const LONG_JOB_READY = 'The post-checkpoint file is written. Holding the turn open.'
 export const LONG_JOB_DONE = 'Saved outputs/job-result.txt.'
 
-/** Use a fresh scenario marker per phase so a partial transcript cannot shift the scripted reply index. */
+/**
+ * Use a fresh scenario marker per phase so a partial transcript cannot shift the scripted reply index.
+ *
+ * `long-job-work` and `long-job-resume` serve W0-B's crash-resume spike only: each phase is a turn a spec sends itself,
+ * with its own `scenario:` marker. A real job continuation is authored by the server (N3's job texts port), so it
+ * carries no `scenario:` marker and would not select these. Job specs that drive real continuations need a
+ * continuation-safe scenario (one that picks its reply from the transcript, not from a marker in the newest message),
+ * which M1-B builds.
+ */
 export function jobScenarios(mainLoop: (tool?: string) => Check, resultIs: (id: string, error: boolean) => Check): Record<string, Scenario> {
   const bash = (id: string, command: string, description: string, after?: string, text?: string): ScriptedTurn => ({
     content: [

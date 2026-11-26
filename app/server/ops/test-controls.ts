@@ -3,6 +3,7 @@
 // deployable Worker (scripts/check-product-build.mjs scans for the canary below and for this module). Reached only
 // through route 67 (alarm-now.ts), inside `if (__INHOUSE_TEST_BUILD__ && env.INHOUSE_TEST_BUILD === '1')`: the
 // generic alarm-now control, routine controls and job test controls. The off module has no test behavior.
+import type { JobTimingName } from './job-timings.ts'
 
 /** The bundle-scan canary: it must be in the test build's Worker and never in the deployable one. */
 export const TEST_CONTROLS_CANARY = 'inhouse-test-controls-canary-5d81e0a7'
@@ -31,16 +32,16 @@ export function armStopAfterBatch(): { armed: true } {
 }
 
 // Set via RPC on the BrandAgent so the reads and writes happen in the same isolate. Eviction clears the overrides.
-let timings = new Map<string, number>()
+let timings = new Map<JobTimingName, number>()
 
-/** Replaces the entire set. Pass an empty object in teardown to restore the defaults. */
-export function setTimings(overrides: Record<string, number>): { set: true } {
+/** Replaces the entire set. Pass an empty object in teardown to restore the defaults. Names: job-timings.ts. */
+export function setTimings(overrides: Partial<Record<JobTimingName, number>>): { set: true } {
   console.log({ event: 'test_control', control: 'set_timings', canary: TEST_CONTROLS_CANARY })
-  timings = new Map(Object.entries(overrides))
+  timings = new Map(Object.entries(overrides) as [JobTimingName, number][])
   return { set: true }
 }
 
-export function timing(name: string, fallback: number): number {
+export function timing(name: JobTimingName, fallback: number): number {
   return timings.get(name) ?? fallback
 }
 
