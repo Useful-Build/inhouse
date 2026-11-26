@@ -5,7 +5,8 @@
 // `run_tokens.member_id`, every `turn.queued` event's `by` (`events.json:$.by`), the removed set (`authority.id` where
 // `kind = 'member'`) and who paused (`flags.value` where `key = 'paused_by'`). A socket's attachment holds the member id
 // too, in the runtime's socket state rather than SQLite: it lives at most an hour (the lease) and goes with the socket.
-// flags.egress_record_failed_at is an operational timestamp that holds no person data.
+// flags.egress_record_failed_at is an operational timestamp that holds no person data. Stage 1 M1-B adds `jobs.owner_id`
+// (a long job is its chat owner's; deleted with the person through `personData`).
 import type { TableEntry } from './types.ts'
 
 export const chatTables: readonly TableEntry[] = [
@@ -16,5 +17,5 @@ export const chatTables: readonly TableEntry[] = [
   { kind: 'd1', name: 'tool_calls', retention: 'retention_period', personKeys: ['member_id'], export: true },
   // Stage 1 M2-B: the object's `outbox_lag` (since when the outbox's gate has been behind it: a time and a generation, no
   // person key) is covered by this class-level entry, as the object's other tables are.
-  { kind: 'do', name: 'BrandAgent', retention: 'retention_period', personKeys: ['runs.owner_id', 'turns.owner_id', 'chat_state.owner_id', 'run_tokens.member_id', 'events.json:$.by', 'authority.id', 'flags.value'], export: false },
+  { kind: 'do', name: 'BrandAgent', retention: 'retention_period', personKeys: ['runs.owner_id', 'turns.owner_id', 'chat_state.owner_id', 'run_tokens.member_id', 'events.json:$.by', 'authority.id', 'flags.value', 'jobs.owner_id'], export: false },
 ]
