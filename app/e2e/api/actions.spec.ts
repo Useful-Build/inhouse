@@ -96,8 +96,14 @@ async function socketProbe(request: APIRequestContext, label: string): Promise<v
   const invited = await call(request, admin, 'POST', '/api/members/invites', { json: { name: who.name, email: who.email, role: 'member' } })
   await call(request, personActor(who), 'GET', '/api/me')
   const tab = await Tab.open(personActor(who))
-  const list = await call(request, admin, 'GET', '/api/members?limit=200')
-  const rev = (list.json.items as { id: string; rev: number }[]).find(m => m.id === invited.json.id)?.rev ?? 0
+  let page = (await call(request, admin, 'GET', '/api/members?limit=100')).json as { items: { id: string; rev: number }[]; nextCursor: string | null }
+  let rev = 0
+  for (let k = 0; k < 100; k++) {
+    const found = page.items.find(m => m.id === invited.json.id)
+    if (found) { rev = found.rev; break }
+    if (page.nextCursor === null) break
+    page = (await call(request, admin, 'GET', `/api/members?limit=100&cursor=${encodeURIComponent(page.nextCursor)}`)).json
+  }
   const t0 = Date.now()
   const del = await call(request, admin, 'DELETE', `/api/members/${invited.json.id}?ifRev=${rev}`)
   try {
