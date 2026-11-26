@@ -11,6 +11,8 @@ import type { StoredAttachment } from './run-start.ts'
 
 /** `turns.source` and the `.u` row's `extra_json.source` of a job's continuation (Stage 1, N3). */
 export const JOB_SOURCE = 'job'
+/** `turns.source` and the `.u` row's `extra_json.source` of an action's result told to the agent (Stage 1 M2-D, M2-G). */
+export const ACTION_SOURCE = 'action'
 
 /** The flush's durable retry runs this long after the turn's end when the immediate flush didn't land. */
 export const FLUSH_RETRY_MS = 30_000
@@ -87,11 +89,13 @@ export function fixTurnRows(sql: SqlStorage, turnId: string, atMs: number): Proj
   if (t.pos_from !== null) return storedProjection(sql, turnId)!
   const from = sql.exec<{ p: number }>('SELECT next_pos AS p FROM chat_state WHERE chat_id = ?', t.chat_id).one().p
   const atts = JSON.parse(t.attachments_json) as StoredAttachment[]
-  const extra: { quote?: string; attachments?: { fileId: string; name: string }[]; source?: typeof JOB_SOURCE } = {}
+  const extra: { quote?: string; attachments?: { fileId: string; name: string }[]; source?: typeof JOB_SOURCE | typeof ACTION_SOURCE } = {}
   if (t.quote !== null) extra.quote = t.quote
   // A job's continuation (M1-P): the server's own text, never the person's. Its `.u` row says so, so a reload and an
   // export show it as the agent carrying on (db/chats.ts), not as something the person typed.
   if (t.source === JOB_SOURCE) extra.source = JOB_SOURCE
+  // Stage 1 M2-G: an action's result (asks.ts) is the server's words too; the history tools read it as Inhouse's.
+  else if (t.source === ACTION_SOURCE) extra.source = ACTION_SOURCE
   if (atts.length > 0) extra.attachments = atts.map(a => ({ fileId: a.fileId, name: a.name }))
   const base = { chat_id: t.chat_id, run_id: t.run_id, turn_id: t.turn_id }
   const rows: ProjectedRow[] = [{
