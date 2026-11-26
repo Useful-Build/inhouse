@@ -14,6 +14,7 @@ export const seedCursor: Real['seedCursor'] = off
 export const setTimings: Real['setTimings'] = off
 export const timing: Real['timing'] = (_name, fallback) => fallback
 export const killRunner: Real['killRunner'] = off
+export const crashResumeProbe: Real['crashResumeProbe'] = off
 export const resetTestControls: Real['resetTestControls'] = () => {}
 /** The tick's hook (routines/tick.ts): nothing, so the product build's tick runs as written. */
 export const afterTickBatch: Real['afterTickBatch'] = () => {}

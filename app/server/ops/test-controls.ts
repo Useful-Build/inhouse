@@ -6,6 +6,7 @@
 
 /** The bundle-scan canary: it must be in the test build's Worker and never in the deployable one. */
 export const TEST_CONTROLS_CANARY = 'inhouse-test-controls-canary-5d81e0a7'
+export { crashResumeProbe } from '../do/brand-agent/test-crash-resume.ts'
 
 /**
  * Runs one scheduler pass now (the BrandAgent's `alarm()` body), for specs that can't wait for the runtime's alarm.
