@@ -9,6 +9,7 @@ import { writeStamp } from '../db/ids.ts'
 import type { At } from '../db/members.ts'
 import { all, first, runBatch, stmt } from '../db/sql.ts'
 import type { Stmt } from '../db/sql.ts'
+import { revokeChannelGrantsStmts } from '../permissions/grants.ts'
 
 const REV = 'COALESCE((SELECT rev FROM notify_channel_list WHERE id = 1), 0)'
 
@@ -40,6 +41,10 @@ export function notifyChannelStore({ db, hook = s => s }: { db: D1Database; hook
       for (const c of removed) {
         stmts.push(stmt(`UPDATE notify_channels SET removed_by = ?, removed_at_ms = ?, alerts = 0, req_id = ? WHERE channel_id = ? AND removed_at_ms IS NULL ${guard}`,
           at.actorId, at.nowMs, stamp, c.channelId, input.ifRev))
+        // Stage 1 M2-A: the grants to post there end with the listing, only where this removal applied.
+        stmts.push(...revokeChannelGrantsStmts(c.channelId, at, {
+          sql: 'SELECT 1 FROM notify_channels WHERE channel_id = ? AND req_id = ? AND removed_at_ms IS NOT NULL', params: [c.channelId, stamp],
+        }))
       }
       // A kept row whose name changed at Slack first takes a placeholder no Slack name can be (`~` + its id), so two
       // channels swapping or chaining names never meet the lowercase-name index mid-batch (review round 1).

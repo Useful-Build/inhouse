@@ -157,6 +157,26 @@ describe('"Always allow" (failure 3)', () => {
     expect(lines).toEqual([{ action: 'permission.granted', permissionId: live!.id, operation: 'shopify.order.tag_add', accountId: 'shopify:store', scopeKey: 'shop=store-a', holder: 'member', perDay: 50, actionId: live!.source_action }])
   })
 
+  it('adds nothing for an answer resolved before a reconnect or a policy change, or a holder removed or below the granted role', async () => {
+    await person(db, 'm_always_c', 'member')
+    const mark = await lastLineId(db)
+    const tryAlways = async (over: Partial<typeof resolved>, grantedRole: 'member' | 'admin' = 'member') => {
+      const a = alwaysAllowStmts({ holderMemberId: 'm_always_c', grantedRole, resolved: { ...resolved, ...over }, perDay: 50, sourceAction: 'ac_IIIIIIIIIIIIIIIIIIIIII', onlyIf: { sql: 'SELECT 1', params: [] }, at: at('m_always_c', NOW) })
+      await db.batch(a.stmts.map(s => db.prepare(s.sql).bind(...s.params)))
+    }
+    await account(db, 'shopify:store', SHOP_GEN + 1)
+    await tryAlways({})
+    await tryAlways({ accountGen: SHOP_GEN + 1, policyRev: POLICY_REV + 1 })
+    await tryAlways({ accountGen: SHOP_GEN + 1 }, 'admin')
+    await person(db, 'm_always_c', 'member', 'removed')
+    await tryAlways({ accountGen: SHOP_GEN + 1 })
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM permission_grants').first('n')).toBe(0)
+    expect(await linesSince(db, mark)).toEqual([])
+    await person(db, 'm_always_c', 'member')
+    await tryAlways({ accountGen: SHOP_GEN + 1 })
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM permission_grants').first('n')).toBe(1)
+  })
+
   it('adds nothing when the operation is off or the answer lost (onlyIf), and takes the ceiling\'s current revision', async () => {
     await person(db, 'm_always_b', 'member')
     const mark = await lastLineId(db)
@@ -274,6 +294,30 @@ describe('lapses are written (failure 4)', () => {
     expect(actions).toEqual(['tools.connect', 'permission.revoked', 'tools.connect', 'tools.disconnect', 'permission.revoked'])
   })
 
+  it('a channel taken off the list ends its grants; listing it again brings none back', async () => {
+    await person(db, 'm_lapse_e', 'member')
+    await person(db, 'm_lapse_admin', 'admin')
+    await account(db, 'slack:workspace', 2_000)
+    const listed = await stores.notify.save({ channels: [{ channelId: 'C0LAPSE001', name: 'ops' }, { channelId: 'C0LAPSE002', name: 'stock' }], alertsChannelId: null, ifRev: (await stores.notify.list()).rev }, at('m_lapse_admin', NOW))
+    expect('ok' in listed).toBe(true)
+    const post = (channelId: string): GrantFacts => ({ ...shopGrant('member:m_lapse_e'), operation: 'slack.channel.post', accountId: 'slack:workspace', accountGen: 2_000, scopeKey: `channelId=${channelId}` })
+    const gone = post('C0LAPSE001')
+    const kept = post('C0LAPSE002')
+    await insertGrant(db, gone)
+    await insertGrant(db, kept)
+    const mark = await lastLineId(db)
+    const rev = (await stores.notify.list()).rev
+    const stale = await stores.notify.save({ channels: [{ channelId: 'C0LAPSE002', name: 'stock' }], alertsChannelId: null, ifRev: rev + 3 }, at('m_lapse_admin', NOW))
+    expect('conflict' in stale).toBe(true)
+    expect((await revokedOf(gone.id))?.revoked_at_ms).toBeNull()
+    await stores.notify.save({ channels: [{ channelId: 'C0LAPSE002', name: 'stock' }], alertsChannelId: null, ifRev: rev }, at('m_lapse_admin', NOW))
+    expect(await revokedOf(gone.id)).toEqual({ revoked_at_ms: NOW, revoke_reason: 'channel_unlisted' })
+    expect((await revokedOf(kept.id))?.revoked_at_ms).toBeNull()
+    expect((await parsedSince(mark)).map(l => l.action)).toEqual(['permission.revoked', 'notify.channels'])
+    await stores.notify.save({ channels: [{ channelId: 'C0LAPSE001', name: 'ops' }, { channelId: 'C0LAPSE002', name: 'stock' }], alertsChannelId: null, ifRev: rev + 1 }, at('m_lapse_admin', NOW + 1))
+    expect((await revokedOf(gone.id))?.revoke_reason).toBe('channel_unlisted')
+  })
+
   it('revokes only where the triggering change applied', async () => {
     await person(db, 'm_lapse_d', 'member')
     const g = shopGrant('member:m_lapse_d')
@@ -325,9 +369,19 @@ describe('the list and remove (failure 5)', () => {
     const b = { ...theirs, id: grantId() }
     await insertGrant(db, b)
     await person(db, 'm_list_admin', 'member')
-    const done = await stores.permissions.remove({ id: b.id, ifRev: 1 }, { memberId: 'm_list_admin', role: 'admin' }, at('m_list_admin', NOW))
-    expect('ok' in done).toBe(false)
+    const stale = { memberId: 'm_list_admin', role: 'admin' } as const
+    // Not a 409 carrying another member's grant: the stale principal sees only its own (review round 1).
+    expect(await stores.permissions.remove({ id: b.id, ifRev: 1 }, stale, at('m_list_admin', NOW))).toEqual({ refused: 'not_found' })
+    expect(await stores.permissions.remove({ id: b.id, ifRev: 7 }, stale, at('m_list_admin', NOW))).toEqual({ refused: 'not_found' })
+    expect(await stores.permissions.list(stale)).toEqual([])
     expect((await revokedOf(b.id))?.revoked_at_ms).toBeNull()
+  })
+
+  it('names a channel no longer listed without a #', async () => {
+    const b = { ...theirs, id: grantId() }
+    await insertGrant(db, b)
+    await db.prepare("UPDATE notify_channels SET removed_at_ms = 5, removed_by = 'm_list_admin' WHERE channel_id = 'C0LIST0001'").run()
+    expect((await stores.permissions.list({ memberId: 'm_list_b', role: 'member' }))[0]?.scope).toBe('a channel no longer listed')
   })
 
   it('routes 110 and 111 answer the list, 404 for an id the caller can\'t see, 409 with the current grant when stale', async () => {

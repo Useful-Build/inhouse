@@ -13,6 +13,7 @@ import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { OPERATIONS } from '../outbox/operations/index.ts'
 import { claimGuardSql } from './claim-guard.ts'
+import type { GuardTable } from './claim-guard.ts'
 import { decideCore } from './decide.ts'
 import { POLICY_REV } from './policy.ts'
 import { account, ceiling, channel, insertGrant, person, resetPermissions, storable } from './test-support.ts'
@@ -34,8 +35,8 @@ interface Row {
 }
 const COLS: readonly (keyof Row)[] = ['id', 'rev', 'verdict', 'origin', 'asked_by', 'approved_by', 'grant_id', 'account_id', 'account_gen', 'operation', 'policy_rev', 'scope_key', 'scope_json', 'records']
 
-async function passes(row: Row): Promise<boolean> {
-  const g = claimGuardSql('a')
+async function passes(row: Row, table: GuardTable = OPERATIONS): Promise<boolean> {
+  const g = claimGuardSql('a', table)
   const n = await db.prepare(`WITH a AS (SELECT ${COLS.map(c => `? AS ${c}`).join(', ')}) SELECT COUNT(*) AS n FROM a WHERE ${g.sql}`)
     .bind(...COLS.map(c => row[c]), ...g.params).first<number>('n')
   return n === 1
@@ -47,24 +48,35 @@ const rowOf = (r: Resolved, ctx: DecideCtx & { asker: Asker }, over: Partial<Row
   scope_key: r.scopeKey, scope_json: JSON.stringify(r.scope), records: r.records, ...over,
 })
 
-// ---------- generators: the real operations (the SQL reads their flags), random everything else ----------
+// ---------- generators: the real operations with made-up flags (the guard reads them from the table it's given, so its
+// `memberMay` and effect branches run), random everything else ----------
 
-const resolvedArb: fc.Arbitrary<Resolved> = fc.record({
+const NO_EFFECTS = { money: false, customer: false, destructive: false, access: false }
+const flagsArb = fc.record({
+  memberMay: fc.oneof({ weight: 3, arbitrary: fc.constant(true) }, { weight: 1, arbitrary: fc.constant(false) }),
+  effects: fc.oneof({ weight: 3, arbitrary: fc.constant(NO_EFFECTS) }, { weight: 1, arbitrary: fc.record({ money: fc.boolean(), customer: fc.boolean(), destructive: fc.boolean(), access: fc.boolean() }) }),
+})
+const tableArb: fc.Arbitrary<GuardTable> = fc.record({ shop: flagsArb, slack: flagsArb }).map(({ shop, slack }) => ({
+  'shopify.order.tag_add': { connector: 'shopify', ...shop },
+  'slack.channel.post': { connector: 'slack', ...slack },
+}))
+const resolvedArb = (table: GuardTable): fc.Arbitrary<Resolved> => fc.record({
   operation: fc.constantFrom(...OPS),
   accountGen: fc.constantFrom(1_000, 2_000),
   records: recordsArb,
   policyRev: policyRevArb,
 }).map(x => {
-  const e = OPERATIONS[x.operation]
+  const e = table[x.operation]
   const scope = SCOPE[x.operation]
   return { ...x, accountId: ACCOUNT[x.operation], scope, scopeKey: scopeKey(scope), units: 1, effects: { ...e.effects }, memberMay: e.memberMay, args: {}, payloadHash: '0'.repeat(64) }
 })
-const caseArb = fc.tuple(resolvedArb, ctxArb(ASKER, false)).chain(([r, ctx]) => ceilingsArb(r.operation).chain(ceilings => fc.record({
+const caseArb = tableArb.chain(table => fc.tuple(resolvedArb(table), ctxArb(ASKER, false)).chain(([r, ctx]) => ceilingsArb(r.operation).chain(ceilings => fc.record({
+  table: fc.constant(table),
   r: fc.constant(r),
   ctx: fc.constant(ctx as DecideCtx & { asker: Asker }),
   ceilings: fc.constant(ceilings),
   grants: fc.integer({ min: 0, max: 4 }).chain(n => fc.tuple(...Array.from({ length: n }, (_, i) => grantArb(r, ceilings, ctx.asker, i, { other: OTHER })))),
-})))
+}))))
 
 async function writeState(c: { r: Resolved; ctx: DecideCtx & { asker: Asker }; ceilings: DecideFacts['ceiling']; grants: GrantFacts[] }): Promise<void> {
   await resetPermissions(db)
@@ -92,7 +104,7 @@ describe('claimGuardSql agrees with decideCore', () => {
         await useFor(id, g.id)
         const v = decideCore({ ceiling: c.ceilings, grants: [g], allowOnceCount: 0 }, c.ctx, c.r)
         const want = v.verdict === 'run' && v.grantId === g.id
-        const got = await passes(rowOf(c.r, c.ctx, { id, verdict: 'run', grant_id: g.id, approved_by: `grant:${g.id}` }))
+        const got = await passes(rowOf(c.r, c.ctx, { id, verdict: 'run', grant_id: g.id, approved_by: `grant:${g.id}` }), c.table)
         tally.push(`${want}/${got}`)
         expect(got).toBe(want)
       }
@@ -110,7 +122,7 @@ describe('claimGuardSql agrees with decideCore', () => {
       const v = decideCore({ ceiling: c.ceilings, grants: c.grants, allowOnceCount: 0 }, c.ctx, c.r)
       const want = v.verdict !== 'refuse' && c.r.policyRev === POLICY_REV
       const verdict = v.verdict === 'refuse' ? 'ask' : v.verdict === 'run' ? 'ask' : v.verdict
-      const got = await passes(rowOf(c.r, c.ctx, { verdict }))
+      const got = await passes(rowOf(c.r, c.ctx, { verdict }), c.table)
       tally.push(`${want}/${got}`)
       expect(got).toBe(want)
     }), { numRuns: 150 })
