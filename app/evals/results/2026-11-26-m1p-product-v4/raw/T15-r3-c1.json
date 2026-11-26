@@ -1,0 +1,47 @@
+{
+ "row": {
+  "caseId": "T15",
+  "cat": "choice",
+  "pair": "approval_get/list",
+  "rep": 3,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": true,
+   "args": false
+  },
+  "called": [
+   "approval_get",
+   "approval_list"
+  ],
+  "toolSearches": 0,
+  "answer": "I couldn't find approval ap_204. The approvals list for this brand is empty, so ",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_fTR-vKy1DyxT0gWSe7sJTg",
+  "askedAs": "eval-45890736644-1-t15-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I couldn't find approval ap_204. The approvals list for this brand is empty, so ",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__approval_get",
+    "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "inputExcerpt": "{}"
+   },
+   {
+    "name": "mcp__inhouse__approval_list",
+    "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "inputExcerpt": "{}"
+   }
+  ]
+ }
+}

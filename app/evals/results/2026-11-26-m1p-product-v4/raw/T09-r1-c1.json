@@ -1,0 +1,42 @@
+{
+ "row": {
+  "caseId": "T09",
+  "cat": "choice",
+  "pair": "notification_send/approval_request",
+  "rep": 1,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": false,
+   "args": false,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I couldn't send the message to Tom. I don't have a member ID for him, and nothin",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_TrOesa5wB4TPRRYjKQrWtQ",
+  "askedAs": "eval-45890736644-1-t09-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I couldn't send the message to Tom. I don't have a member ID for him, and nothin",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "95a2de77ec2c0c3c0373b05f33d4d5c52f4eb0aecf422539e220a90b0602a381",
+    "inputExcerpt": "{\"query\":\"Tom member id\"}"
+   }
+  ]
+ }
+}

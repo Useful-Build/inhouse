@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "R08",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "No. Our saved policy says we never ship to PO boxes.\n\nIf a customer gives a PO b",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_aUm2IuiLbpaE1KqsEqZUog",
+  "askedAs": "eval-45890736644-1-r08-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "No. Our saved policy says we never ship to PO boxes.\n\nIf a customer gives a PO b",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "4d85fdd1d09127664a048d78d820a4938a6550fb05e2fae28a99c64ed6748aa7",
+    "inputExcerpt": "{\"query\":\"PO box shipping address policy\"}"
+   }
+  ]
+ }
+}
