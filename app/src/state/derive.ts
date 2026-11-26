@@ -6,7 +6,23 @@ import { display, nowOf } from './display'
 
 export const STAGE_TAGS = ['Watch', 'Act', 'Run'] as const
 
-export interface Ctx { S: StageIndex; agent: AgentState; data: AgentData }
+export interface Ctx {
+  S: StageIndex
+  agent: AgentState
+  data: AgentData
+  /**
+   * Stage 1 M2-I: the product build, which has no stages (decision "Master plan: one agent"). Its view is pinned to the
+   * Act view (`PRODUCT_STAGE`) until M5: nothing is locked by a stage or tagged with one, and what only a later stage
+   * would offer is left out. Absent in the demo, where the Stage switch still drives everything.
+   */
+  noStages?: boolean
+}
+
+/** Stage 1 M2-I: the stage the product's view is pinned to until M5 (today's Act view). The `stage` setting stays, unread. */
+export const PRODUCT_STAGE = 'Act' as const
+
+/** Whether a stage holds back something that needs `need`: the demo's Stage switch only. The product has no stages. */
+export const stageLocked = (ctx: Pick<Ctx, 'S' | 'noStages'>, need: number): boolean => !ctx.noStages && ctx.S < need
 
 /** The channel the team hears from the agent on at a stage: the first one whose stage is reached. None: no channel wording. */
 export const channelFrom = (data: AgentData, stage: StageIndex): ToolChannel | undefined => data.tools.channels.find(c => stage >= c.need)
@@ -203,6 +219,21 @@ export const sinceLine = (d: ToolDetail, d0: Display): string => {
   throw new Error(`Tools data: "${d.name}" has no connected or going-live date.`)
 }
 
+/**
+ * The Access row: it follows the tool's state, so a paused or disconnected tool never claims access. The demo's follows its
+ * stage; the product (no stages, M2-I) says read only unless a write operation on the tool is enabled (`acts`, N2).
+ */
+export function toolAccess(ctx: Ctx, key: string): string {
+  const state = toolState(ctx, key)
+  const paused = !!ctx.agent.toolPaused[key]
+  if (state === 'disconnected') return paused ? 'None. A person paused it, and the login needs renewing.' : 'None until the login is renewed.'
+  if (state === 'paused') return 'None. A person paused it.'
+  if (state === 'connecting') return 'None yet. Being connected.'
+  if (state === 'off') return "None. It isn't connected."
+  const level = ctx.noStages ? (toolDetail(ctx.data, key).acts ? 1 : 0) : ctx.S
+  return ['Read only', 'Read, plus drafts you approve', 'Read, drafts and agreed jobs within limits'][level]!
+}
+
 export function toolView(ctx: Ctx, key: string): ToolView {
   const d = toolDetail(ctx.data, key)
   const state = toolState(ctx, key)
@@ -217,7 +248,10 @@ export function toolView(ctx: Ctx, key: string): ToolView {
   const tagOf = { connected: 'On', paused: 'Paused', disconnected: 'Off', connecting: 'Not yet', off: 'Off' }[state]
   const setup = Object.hasOwn(ctx.data.tools.setup, key) ? SETUP_DUE[ctx.data.tools.setup[key].due] : null
   const ability = (k: ToolAbility['key'], icon: string, title: string, text: string, need: StageIndex): ToolAbility =>
-    ({ key: k, icon, title, text, need, locked: ctx.S < need, tag: ctx.S < need ? STAGE_TAGS[need] : tagOf })
+    ({ key: k, icon, title, text, need, locked: stageLocked(ctx, need), tag: stageLocked(ctx, need) ? STAGE_TAGS[need] : tagOf })
+  // The product has no stages (M2-I): an ability only a later stage has ("Do by itself") is left out, not tagged, and so is
+  // drafting while no write operation on this tool is enabled (N2): the page says what is true, read only.
+  const offered = (ab: ToolAbility) => !ctx.noStages || (ab.need <= ctx.S && (ab.key !== 'draft' || !!d.acts))
   return {
     key, name: d.name, state,
     statusText: failedFirst !== null ? `Disconnected · login expired at ${failedFirst}` : { connecting: 'Being connected', connected: 'Connected', paused: 'Access paused', disconnected: `Disconnected · login expired at ${lostAt}`, off: 'Not connected' }[state],
@@ -229,7 +263,7 @@ export function toolView(ctx: Ctx, key: string): ToolView {
       ability('read', 'visibility', 'Read', d.read, 0),
       ability('draft', 'edit_note', 'Draft for your approval', d.draft, 1),
       ability('run', 'bolt', 'Do by itself', d.run, 2),
-    ],
+    ].filter(offered),
     examples: state === 'connected' ? d.ex : [],
   }
 }
@@ -350,6 +384,23 @@ export const isHandled = (ctx: Ctx, p: Problem) => ranByAgent(ctx, p) && !p.part
 /** The problems a person hasn't set aside (snoozed, dismissed or chose not to send): what Today lists and every count uses. */
 export const visibleProblems = (ctx: Ctx): Problem[] => ctx.data.problems.filter(p => !ctx.agent.setAside[p.id])
 
+/**
+ * Stage 1 M2-I: the product's cards that need a look but have nothing to approve (the morning check's items and status
+ * cards carry a placeholder draft, server/today/problem.ts). Pinned to the Act view, the product counts them as needing
+ * the person, never as approved. The demo's cards all carry a draft at Act, so it has none.
+ */
+export function lookIds(ctx: Ctx): string[] {
+  if (!ctx.noStages || flags(ctx).noData) return []
+  return visibleProblems(ctx).filter(p => !ctx.agent.approved[p.id] && !hasDraft(p) && !isHandled(ctx, p)).map(p => p.id)
+}
+
+/**
+ * Whether Approvals shows its drafts section ("Waiting for you"): from Act, but not while only the agent's actions or
+ * questions wait on this person (`asks`, Stage 1 M2-H) and no draft does, so "Waiting for you 0" and "All caught up" never
+ * sit under a waiting card (M2-I: the product is pinned to Act). The demo has no actions or questions.
+ */
+export const showDraftsSection = (ctx: Ctx, asks: number): boolean => ctx.S >= 1 && !(asks > 0 && pendingIds(ctx).length === 0)
+
 export function pendingIds(ctx: Ctx): string[] {
   const { S, agent } = ctx
   if (flags(ctx).noData) return []
@@ -397,6 +448,7 @@ export function todayCopy(ctx: Ctx): TodayCopy {
   const { S } = ctx
   const f = flags(ctx)
   const n = pendingIds(ctx).length
+  const looks = lookIds(ctx).length
   const h = handled(ctx).count
   const shown = visibleProblems(ctx).length
   const aside = ctx.data.problems.length - shown
@@ -427,9 +479,10 @@ export function todayCopy(ctx: Ctx): TodayCopy {
       countLabel: shown ? `${shown} to look at` : '', sortLabel: 'Most urgent first',
     },
     {
-      headline: n && n === total ? (n === 1 ? '1 thing needs you. A draft is ready.' : `${n} things need you. Drafts are ready.`) : n ? `${n} left to approve today.` : total && shown === total ? (total === 1 ? "Approved. You're all caught up." : `All ${total} approved.`) : "You're all caught up.",
+      headline: n && n === total ? (n === 1 ? '1 thing needs you. A draft is ready.' : `${n} things need you. Drafts are ready.`) : n ? `${n} left to approve today.`
+        : looks ? `${looks} ${looks === 1 ? 'thing needs' : 'things need'} you today.` : total && shown === total ? (total === 1 ? "Approved. You're all caught up." : `All ${total} approved.`) : "You're all caught up.",
       headSub: 'Nothing goes out until you approve it. Money and customer messages ask you to look first.',
-      countLabel: n ? `${n} drafted and waiting` : doneLabel, sortLabel: 'Most urgent first',
+      countLabel: n ? `${n} drafted and waiting` : looks ? `${looks} to look at` : doneLabel, sortLabel: 'Most urgent first',
     },
     {
       headline: runHeadline,
@@ -689,8 +742,8 @@ export function activityRows(ctx: Ctx): ActivityRow[] {
   // product's lines are the server's, already complete, and its traces are run ids: every one of today's goes through the
   // generic row below, as the earlier days' do. Keyed on the trace, which a member's name can't set.
   const morning = today[0]?.trace === 'morning' && today[0].text.includes('{read}') ? today[0] : undefined
-  /** A line the current stage hides: `minStage` is the lowest stage that shows it. */
-  const below = (e: { minStage?: string }) => (e.minStage === 'Act' && S < 1) || (e.minStage === 'Run' && S < 2)
+  /** A line the current stage hides: `minStage` is the lowest stage that shows it. The product has no stages (M2-I): none. */
+  const below = (e: { minStage?: string }) => !ctx.noStages && ((e.minStage === 'Act' && S < 1) || (e.minStage === 'Run' && S < 2))
   if (!morning) {
     for (const e of today) {
       if (below(e)) continue

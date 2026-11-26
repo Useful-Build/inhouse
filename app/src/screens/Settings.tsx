@@ -6,7 +6,7 @@ import { agent, demo } from '../agent'
 import { STAGES } from '../agent/types'
 import type { SupportGrant } from '../agent'
 import { keepUnitsTogether } from '../agent/clock'
-import { STAGE_TAGS, memberFor, userName } from '../state/derive'
+import { STAGE_TAGS, memberFor, stageLocked, userName } from '../state/derive'
 import { backToSettingsMenu, useCtx, useUi } from '../state/store'
 import { Avatar, Button, EmptyState, Icon, IconButton, InhouseMark, NavItem, PageHeader, SectionHeader, StageTag, Switch, SwitchLook } from '../ui'
 import { Confirm, SearchBox, Select, TAP } from '../ui/fields'
@@ -428,7 +428,7 @@ export function Settings() {
                 )}
                 {readOnly && sec.caption && <div className="pt-4 text-xs text-muted-foreground">{sec.caption}</div>}
                 {sec.rows.map((row, i) => {
-                  const locked = S < row.need
+                  const locked = stageLocked(ctx, row.need)
                   const on = !locked && (row.on ?? st.toggles[row.key ?? ''] ?? row.def ?? false)
                   // A value shown as text (a team page on a phone) sits under the description, in the title's column.
                   const al = allowance(row, me?.can, demo === null, me?.role)

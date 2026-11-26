@@ -265,8 +265,8 @@ export function resultWords(s: Pick<SlotRow, 'state' | 'result_text' | 'failure'
       return s.outcome === 'done' ? 'It finished' : 'It was stopped before it finished'
     case 'lost': return 'It stopped before it finished'
     case 'missed': return 'It missed its time'
-    // `stage`: only a row skipped before M2-F; no slot is skipped for the stage since.
-    case 'skipped': return s.reason === 'disabled' ? 'It was off at its time' : s.reason === 'stage' ? 'It starts at a later stage' : 'It was skipped'
+    // `stage`: only a row skipped before M2-F; no slot is skipped for the stage since. Its words name no stage (M2-I).
+    case 'skipped': return s.reason === 'disabled' ? 'It was off at its time' : s.reason === 'stage' ? "It wasn't available yet" : 'It was skipped'
     case 'refused': return s.reason === 'paused' ? 'Your agent was paused' : s.reason === 'cap_reached' ? 'The spending cap was reached' : "It couldn't start"
   }
 }

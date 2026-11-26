@@ -244,6 +244,11 @@ export function permissionStore({ db, hook = s => s }: { db: D1Database; hook?: 
     : all<ListRow>(db, stmt(`${LIST} AND g.holder = ? ORDER BY g.granted_at_ms DESC, g.id DESC`, POLICY_REV, memberHolder(viewer.memberId))))
 
   return {
+    /** Stage 1 M2-I: the operations enabled for the brand (N2: none in a deployable build in M1 and M2), for the Tools page. */
+    async enabledOperations(): Promise<string[]> {
+      return (await all<{ operation: string }>(db, stmt('SELECT operation FROM permission_ceiling WHERE enabled = 1 ORDER BY operation'))).map(r => r.operation)
+    },
+
     /** This person's live grants; for an admin, every live grant of the brand. Newest first. */
     async list(viewer: Viewer): Promise<Permission[]> {
       return (await visible(viewer)).map(r => permissionOf(r, viewer))

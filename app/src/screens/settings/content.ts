@@ -152,7 +152,7 @@ export interface Env {
   removeMember: (id: string) => void
   /** Whether Data and access shows the grant (status, hours, End now) instead of the demo's one switch. */
   grantUi: boolean
-  /** The product build (no demo): the demo-only rows (settings nothing reads yet, Act-stage alerts) are left out of the pages. */
+  /** The product build (no demo): the demo-only rows (settings nothing reads yet, Act-stage alerts) and stage words are left out of the pages. */
   product: boolean
   /** Whether the viewer sees the support grant at all: an Admin or the Inhouse team (route 16), or anyone in the demo. */
   showGrant: boolean
@@ -198,11 +198,14 @@ export interface NotifyView {
   retry: () => void
 }
 
-/** The Slack notices page (P5 W4, p5-w4.md section 10). */
-function slackPage(nv: NotifyView): Page {
+/** The Slack notices page (P5 W4, p5-w4.md section 10). `product`: the build with no stages (M2-I), so no stage words. */
+function slackPage(nv: NotifyView, product: boolean): Page {
   const listed = nv.list?.channels ?? []
   const rules: Section = { label: 'How notices work', rows: [
-    R('Before the Act stage', 'Slack posts start at Act. Until then alerts reach the bell in the app.', 'value'),
+    // Slack posts are still closed (M2-F): in the product alerts reach the bell for now, as the demo says before Act.
+    product
+      ? R('For now', "Alerts reach the bell in the app. Slack posts aren't on yet.", 'value')
+      : R('Before the Act stage', 'Slack posts start at Act. Until then alerts reach the bell in the app.', 'value'),
     R('While Slack is paused', 'Alerts pause while Slack is paused or needs a reconnect.', 'value'),
     R('Who can read them', 'Anyone in a listed channel can read these alerts, guests included.', 'value'),
   ] }
@@ -450,7 +453,7 @@ export function settingsPage(tab: string, env: Env): Page {
     ] },
   }
   // P5 W4: built only when it's asked for, from what Settings.tsx read.
-  if (tab === 'team-slack' && hasSlack(data.tools)) return slackPage(env.notify)
+  if (tab === 'team-slack' && hasSlack(data.tools)) return slackPage(env.notify, env.product)
   // A page the product leaves out never renders, even for the frame before a deep link to it is redirected (App.tsx).
   return Object.hasOwn(pages, tab) && pageShown(tab, env.product) ? pages[tab] : pages['you-general']
 }

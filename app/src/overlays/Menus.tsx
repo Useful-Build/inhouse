@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { agent, demo } from '../agent'
 import type { AgentNotification } from '../agent'
 import { showHelpAndGuides } from '../lib/product-flow'
+import { teamSettingsTab } from '../screens/settings/menu'
 import { useAgentData, useAgentState, useCtx, useUi } from '../state/store'
 import { openRequests, userName } from '../state/derive'
 import { fmtWhen } from '../lib/format'
@@ -92,7 +93,7 @@ export function AccountMenu({ children }: { children: ReactNode }) {
   // Report a bug and Send feedback are request types in the team window, so the menu has one entry for the team.
   const groups: Item[][] = [[
     ['person', 'Your settings', () => openSettings('you-general')],
-    ['admin_panel_settings', 'Team settings', () => openSettings('team-plan')],
+    ['admin_panel_settings', 'Team settings', () => openSettings(teamSettingsTab(demo === null))],
     ['monitoring', 'Usage', () => go('usage')],
   ], [
     ['support_agent', 'Your Inhouse team', () => { focusTrigger(); openTeam('tool') },

@@ -101,7 +101,9 @@ test('Allow once starts the hold on the server clock, and Undo in the hold takes
   await checkBothThemes(page, 'approvals-waiting')
   // The sidebar's Approvals badge counts the card (on a phone the sidebar is a closed drawer, so desktop only).
   const badge = page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: /^Approvals/ }).locator('[aria-label$=" waiting"]')
-  const waiting = async () => ((await badge.count()) > 0 ? Number(await badge.textContent()) : 0)
+  // Read in one step: a count, then a text read, races the badge going away between the two (the text read then waits
+  // for a badge that never comes back, and the poll times out).
+  const waiting = () => badge.evaluateAll(els => (els.length > 0 ? Number(els[0]!.textContent) : 0))
   const before = phone(page) ? 0 : await expect.poll(waiting).toBeGreaterThanOrEqual(1).then(waiting)
 
   await card.getByRole('button', { name: 'Allow once' }).click()
