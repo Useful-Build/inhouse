@@ -20,7 +20,7 @@ import type { SendTurnResult } from '../../../shared/contract/runs.ts'
 import { MEMBER, MIN, OTHER, SEC, d1Chat, ev, fullAnswer, inAgent, settle } from '../../testing/brand-agent/core-harness.ts'
 import type { Harness } from '../../testing/brand-agent/core-harness.ts'
 import { p6Hooks, wireP6 } from './compose.ts'
-import { questionOnDeferred } from '../../questions/ask.ts'
+import { questionsOffOnDeferred } from '../../questions/ask.ts'
 import type { DeferredQuestion, InternalSubmit, PauseEvent, Refusal } from './ports.ts'
 import { withSeed } from './scheduler.ts'
 import type { TaskContext, TaskHandler } from './scheduler.ts'
@@ -122,9 +122,9 @@ describe('pause hooks (P6 ask 3, failure 2)', () => {
     expect(h.core.pauseState()).toEqual({ paused: false, at: null, by: null })
   }))
 
-  it("P6's anchor: the outbox's one pause hook (Stage 1 M2-B) and M2-Q's onDeferred; an anchor returning one throwing hook makes pause() throw with the flag kept", () => inAgent(async h => {
+  it("P6's anchor: the outbox's one pause hook (Stage 1 M2-B) and M2-Q's onDeferred (questions off in this build); an anchor returning one throwing hook makes pause() throw with the flag kept", () => inAgent(async h => {
     expect(p6Hooks(env, { sql: h.sql, scheduler: h.sched, now: () => h.clock.now, hooks: { retryPlacement: () => {}, placementExpired: () => {} } }))
-      .toEqual({ pause: [{ onPause: expect.any(Function), onResume: expect.any(Function) }], onDeferred: questionOnDeferred })
+      .toEqual({ pause: [{ onPause: expect.any(Function), onResume: expect.any(Function) }], onDeferred: questionsOffOnDeferred })
     wireP6(h.core, { pause: [{ onPause: async () => { throw new Error('T10 failed') }, onResume: async () => {} }], onDeferred: null })
     await expect(h.core.pause(ADMIN)).rejects.toThrow('T10 failed')
     expect(h.core.pauseState().paused).toBe(true)

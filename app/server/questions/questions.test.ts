@@ -6,7 +6,9 @@
 //  4. a question is answered by someone it wasn't asked of, with a choice that isn't an option, or twice by two admins;
 //  5. expiry: an open question past 7 days isn't closed, its people aren't told, or its turn keeps waiting; a question
 //     whose turn no longer waits is expired (and resumed) instead of withdrawn;
-//  6. the list shows another person's question, an admin's question to a member, or one already expired.
+//  6. the list shows another person's question, an admin's question to a member, or one already expired;
+//  7. with questions off (every deployable build until M2-H), a deferred `question_ask` asks anything or leaves its chat
+//     waiting, or the switch is on outside the test build.
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import type { RunEventBody } from '../../shared/protocol/index.ts'
@@ -17,6 +19,8 @@ import type { InternalSubmit, Refusal } from '../do/brand-agent/ports.ts'
 import { internalSubmit } from '../do/brand-agent/task-ops.ts'
 import { questionWaits, waitingQuestionOf } from './agent.ts'
 import { expiryTaskId, questionOnDeferred } from './ask.ts'
+import { p6Hooks } from '../do/brand-agent/compose.ts'
+import { QUESTIONS_ON, questionsOn } from './switch.ts'
 import { answerQuestion, openQuestions } from './flow.ts'
 import type { QuestionAgent } from './flow.ts'
 import { questionStore } from './store.ts'
@@ -202,5 +206,29 @@ describe('expiry (failure 5)', () => {
     expect(await lines('question.expired', id)).toEqual([])
     expect((await notices(id)).map(x => x.id)).toEqual([`qw_${id}`])
     expect(resumes(h, id)).toBe(0)
+  }))
+})
+
+describe('questions off (failure 7)', () => {
+  it('on in the test build only: never in the product, house, brand or eval build', () => {
+    expect(questionsOn({ test: false, eval: false })).toBe(false)
+    expect(questionsOn({ test: true, eval: true })).toBe(false)
+    expect(questionsOn({ test: true, eval: false })).toBe(true)
+    // vitest.config.ts defines the product build's flags.
+    expect(QUESTIONS_ON).toBe(false)
+  })
+
+  it("the product build's hook (compose.ts): a deferred question asks nothing and its chat doesn't wait; the call runs again at once", () => inAgent(async h => {
+    const hook = p6Hooks(env, { sql: h.sql, scheduler: h.sched, now: () => h.clock.now, hooks: { retryPlacement: () => {}, placementExpired: () => {} } }).onDeferred!
+    h.core.setOnDeferred(hook)
+    await d1Chat('c-off', MEMBER)
+    const a = await ask(h, 'c-off', { question: 'Which?', options: OPTIONS })
+    const id = qid(a.turnId)
+    expect(await store.get(id)).toBeNull()
+    expect(await lines('question.asked', id)).toEqual([])
+    expect(await notices(id)).toEqual([])
+    expect(waitingQuestionOf(h.sql, 'c-off')).toBeNull()
+    expect(resumes(h, id)).toBe(1)
+    expect(h.dueTasks().find(t => t.id === expiryTaskId(id))).toBeUndefined()
   }))
 })

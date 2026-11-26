@@ -29,7 +29,19 @@ export async function whoToAsk(db: D1Database, ownerId: string, chatId: string):
   return { askedOf: 'admins', askedAs: 'admins' }
 }
 
-/** P6's `onDeferred` for questions (compose.ts). */
+/**
+ * With questions off (server/questions/switch.ts): a deferral is resumed at once and nothing is asked, so no chat ever
+ * waits on a question nobody can answer. The call then runs and the server refuses it (it isn't offered).
+ */
+export const questionsOffOnDeferred: OnDeferredHook = async (q, ctx) => {
+  await ctx.resumeDeferred(q.chatId, 'deny', q.questionId)
+  return { ok: true }
+}
+
+/** P6's `onDeferred` for this build (compose.ts): asks only when questions are on. */
+export const questionHook = (on: boolean): OnDeferredHook => (on ? questionOnDeferred : questionsOffOnDeferred)
+
+/** P6's `onDeferred` for questions, when they are on. */
 export const questionOnDeferred: OnDeferredHook = async (q, ctx) => {
   // Only `question_ask` is ever deferred; anything else, or an input the tool would refuse, is let run on a resume,
   // where the tool answers it (a refusal the agent can read). The chat never waits on a question nobody can see.

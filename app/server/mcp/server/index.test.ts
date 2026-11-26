@@ -11,6 +11,7 @@
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import { handleMcp } from './index.ts'
+import { QUESTIONS_ON } from '../../questions/switch.ts'
 
 const db = env.DB
 const NOW = 1_800_000_000_000
@@ -36,19 +37,19 @@ const BUILT = ['memory_search', 'memory_save', 'memory_update', 'memory_forget',
   // P6a W3: the Inhouse team tools.
   'team_request_create', 'team_request_list',
   // P6a brand skills.
-  'skill_save',
-  // Stage 1 M2-Q: question_ask (its own tests: server/mcp/tools/questions/questions.test.ts).
-  'question_ask']
+  'skill_save']
 
-const post = (body: string, headers: Record<string, string> = {}, scope = SCOPE) =>
-  handleMcp(new Request('http://egress.internal/mcp/', { method: 'POST', body, headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...headers } }), scope, { db, now: () => NOW })
-const rpc = async (msg: unknown, headers: Record<string, string> = {}, scope = SCOPE) => {
-  const res = await post(JSON.stringify(msg), headers, scope)
+/** `extra`: more of the handler's deps (Stage 1 M2-Q's `questions`). */
+type Extra = { questions?: boolean }
+const post = (body: string, headers: Record<string, string> = {}, scope = SCOPE, extra: Extra = {}) =>
+  handleMcp(new Request('http://egress.internal/mcp/', { method: 'POST', body, headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...headers } }), scope, { db, now: () => NOW, ...extra })
+const rpc = async (msg: unknown, headers: Record<string, string> = {}, scope = SCOPE, extra: Extra = {}) => {
+  const res = await post(JSON.stringify(msg), headers, scope, extra)
   const text = await res.text()
   return { status: res.status, body: text === '' ? null : (JSON.parse(text) as Record<string, unknown>), type: res.headers.get('Content-Type') }
 }
-const call = async (name: string, args: unknown, scope = SCOPE) => {
-  const r = await rpc({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name, arguments: args } }, {}, scope)
+const call = async (name: string, args: unknown, scope = SCOPE, extra: Extra = {}) => {
+  const r = await rpc({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name, arguments: args } }, {}, scope, extra)
   return (r.body as { result: { isError?: boolean; structuredContent?: Record<string, unknown>; content: { type: string; text: string }[] } }).result
 }
 
@@ -105,11 +106,12 @@ describe('JSON-RPC over POST, literal pairs (failure 1)', () => {
 })
 
 describe('tools/list (failure 2)', () => {
-  it('is exactly the 20, in order, the six marked always-load, each with an object input schema', async () => {
-    const { body } = await rpc({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
+  it('with questions on: exactly the 20, in order, the six marked always-load, each with an object input schema', async () => {
+    const { body } = await rpc({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, {}, SCOPE, { questions: true })
     const tools = (body as { result: { tools: { name: string; description: string; inputSchema: { type: string }; _meta?: Record<string, unknown>; annotations: Record<string, unknown> }[] } }).result.tools
     expect(tools.map(t => t.name)).toEqual(THE_20)
     expect(tools.filter(t => t._meta?.['anthropic/alwaysLoad'] === true).map(t => t.name)).toEqual(THE_6)
+    expect(Object.keys((tools.find(t => t.name === 'question_ask')!.inputSchema as unknown as { properties: Record<string, unknown> }).properties).sort()).toEqual(['options', 'question'])
     for (const t of tools) {
       expect(t.inputSchema.type, t.name).toBe('object')
       expect(t.description.length, t.name).toBeGreaterThan(30)
@@ -123,6 +125,23 @@ describe('tools/list (failure 2)', () => {
     expect(props('memory_update')).toEqual(['memory_id', 'text'])
     expect(props('memory_forget')).toEqual(['memory_id'])
     expect(props('history_read')).toEqual(['chat_id', 'from_position', 'limit'])
+  })
+})
+
+describe('questions off (Stage 1 M2-Q: every deployable build until M2-H)', () => {
+  it("the product build's list has no question_ask (the other 19 as with questions on), and a call to it asks nothing", async () => {
+    // As the egress builds it: `questions: QUESTIONS_ON`, which is false here as in the product build (vitest.config.ts
+    // defines the product build's flags); and absent, which is off too.
+    expect(QUESTIONS_ON).toBe(false)
+    for (const extra of [{ questions: QUESTIONS_ON }, {}]) {
+      const { body } = await rpc({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, {}, SCOPE, extra)
+      const names = (body as { result: { tools: { name: string }[] } }).result.tools.map(t => t.name)
+      expect(names).toEqual(THE_20.filter(n => n !== 'question_ask'))
+      const before = await db.prepare('SELECT COUNT(*) AS n FROM questions').first<number>('n')
+      const r = await call('question_ask', { question: 'Which?', options: ['A', 'B'] }, SCOPE, extra)
+      expect(r.structuredContent).toEqual({ error: 'not_available_yet' })
+      expect(await db.prepare('SELECT COUNT(*) AS n FROM questions').first<number>('n')).toBe(before)
+    }
   })
 })
 

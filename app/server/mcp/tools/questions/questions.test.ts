@@ -55,7 +55,7 @@ describe("the call's id from the CLI (failure 3)", () => {
   const call = async (meta: unknown) => {
     const body = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'question_ask', arguments: ARGS, ...(meta === undefined ? {} : { _meta: meta }) } }
     const res = await handleMcp(new Request('http://egress.internal/mcp/', { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }),
-      { memberId: 'm_mcpq', chatId: CHAT, runId: 'r_AAAAAAAAAAAAAAAAAAAAAA', turnId: 't_AAAAAAAAAAAAAAAAAAAAAA' }, { db, now: () => NOW })
+      { memberId: 'm_mcpq', chatId: CHAT, runId: 'r_AAAAAAAAAAAAAAAAAAAAAA', turnId: 't_AAAAAAAAAAAAAAAAAAAAAA' }, { db, now: () => NOW, questions: true })
     return ((await res.json()) as { result: { structuredContent: Record<string, unknown> } }).result.structuredContent
   }
   it('`_meta["claudecode/toolUseId"]` names the call; none, or a malformed one, names none', async () => {
