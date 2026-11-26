@@ -3,6 +3,7 @@
 // every push (design 8.6). The logic is in runner.ts, behind a container port; this class hands it `ctx.container`.
 // `ctx.container` only: no deprecated `Container` class, no beta scheduling or snapshots.
 import { DurableObject } from 'cloudflare:workers'
+import { killRunner } from '@test-controls'
 import type { RunStart } from '../../../shared/protocol/index.ts'
 import { brandAgent } from '../brand-agent/client.ts'
 import { RunnerCore, sqlRunnerState, type AdmitResult, type StatusResult, type WarmResult } from './runner.ts'
@@ -51,6 +52,8 @@ export class Runner extends DurableObject<Env> {
   warm(newerThan: number | null): Promise<WarmResult> {
     return this.#runner.warm(newerThan)
   }
+
+  async testKillRunner(): Promise<{ killed: boolean }> { return killRunner(this.ctx.container) }
 
   async fetch(): Promise<Response> {
     return new Response('not found', { status: 404 })

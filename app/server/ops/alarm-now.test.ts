@@ -27,11 +27,14 @@ let good: Issuer
 beforeAll(async () => { good = await issuer() })
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as unknown as ExecutionContext
 
-/** As drain.test.ts: `compiled` stands in for `__INHOUSE_TEST_BUILD__`, `flag` for the `INHOUSE_TEST_BUILD` var. */
-function setup(mode?: { compiled: boolean; flag: string | undefined }) {
+/**
+ * As drain.test.ts: `compiled` stands in for `__INHOUSE_TEST_BUILD__`, `flag` for the `INHOUSE_TEST_BUILD` var, `eval`
+ * for `__INHOUSE_EVAL_BUILD__`.
+ */
+function setup(mode?: { compiled: boolean; flag: string | undefined; eval?: boolean }) {
   const s = fakeStores({ people: { member: { role: 'member' }, admin: { role: 'admin' } }, grant: null })
   const table: readonly Route[] = mode === undefined ? routes
-    : routes.map(r => (r.method === 'POST' && r.pattern === '/api/ops/alarm' ? { ...r, handler: alarmNowHandler(mode.compiled) } : r))
+    : routes.map(r => (r.method === 'POST' && r.pattern === '/api/ops/alarm' ? { ...r, handler: alarmNowHandler(mode.compiled, mode.eval ?? false) } : r))
   const parts: ApiParts = {
     authenticate: (r, e, st, n, id) => authenticate(r, e, st, n, id, good.keys),
     checkOrigin, checkAccess, stores: () => s.stores, routes: table, accessMatrix,
@@ -49,6 +52,69 @@ const person = async (who: 'member' | 'admin') => ({
   Origin: BRAND.origin,
 })
 const bodyOf = async (r: Response) => JSON.parse(await r.text())
+
+it('gates and validates job controls before dispatching them', async () => {
+  const headers = await release()
+  const post = (call: ReturnType<typeof setup>, body: unknown, h = headers) =>
+    call('/api/ops/alarm', { method: 'POST', headers: h, body: JSON.stringify(body) })
+  const timing = { action: 'setTimings', overrides: { JOB_CUT_MS: 150 } }
+  const kill = { action: 'killRunner', runner: 'runner-0' }
+  const enabled = setup({ compiled: true, flag: '1' })
+  for (const body of [timing, kill]) {
+    expect((await post(setup(), body)).status).toBe(404)
+    expect((await post(setup({ compiled: true, flag: '0' }), body)).status).toBe(404)
+    expect((await post(enabled, body, await person('admin'))).status).toBe(403)
+  }
+  for (const body of [
+    { action: 'setTimings', overrides: { JOB_CUT_MS: -1 } },
+    { action: 'setTimings', overrides: { JOB_CUT_MS: 1.5 } },
+    { action: 'setTimings', overrides: { invalidName: 10 } },
+    // Well-formed but not in job-timings.ts: refused, never silently ignored.
+    { action: 'setTimings', overrides: { JOB_UNKNOWN_MS: 10 } },
+    { action: 'setTimings', overrides: { JOB_CUT_MS: 100, JOB_UNKNOWN_MS: 10 } },
+    { action: 'killRunner', runner: 'arbitrary-name' },
+  ]) expect((await post(enabled, body)).status).toBe(400)
+  // In the runner name's format but outside the pool (the test config's RUNNER_POOL is 2).
+  expect(baseEnv.RUNNER_POOL).toBe('2')
+  for (const runner of ['runner-2', 'runner-9']) {
+    const r = await post(enabled, { action: 'killRunner', runner })
+    expect(r.status, runner).toBe(404)
+    expect(await bodyOf(r)).toEqual({ error: { code: 'not_found', reason: 'runner' } })
+  }
+  try {
+    expect(await bodyOf(await post(enabled, timing))).toEqual({ set: true })
+    expect(await bodyOf(await post(enabled, { action: 'setTimings', overrides: { JOB_CUT_MS: 100, JOB_DEADLINE_MS: 900 } }))).toEqual({ set: true })
+    // The in-process test pool has no containers. The hook must not boot one.
+    expect(await bodyOf(await post(enabled, kill))).toEqual({ killed: false })
+    expect(await bodyOf(await post(enabled, { action: 'killRunner', runner: 'runner-1' }))).toEqual({ killed: false })
+  } finally {
+    expect((await post(enabled, { action: 'setTimings', overrides: {} })).status).toBe(200)
+  }
+})
+
+it('eval build (compiled in and switched on, the eval build too): 404 for every control, before the object is reached', async () => {
+  const headers = await release()
+  const call = setup({ compiled: true, flag: '1', eval: true })
+  const agent = vi.spyOn(baseEnv.BRAND_AGENT, 'getByName')
+  const runner = vi.spyOn(baseEnv.RUNNER, 'getByName')
+  try {
+    for (const body of [
+      {},
+      { action: 'alarm', pokeTick: true },
+      { action: 'stopAfterBatch' },
+      { action: 'setTimings', overrides: { JOB_CUT_MS: 150 } },
+      { action: 'killRunner', runner: 'runner-0' },
+    ]) {
+      const r = await call('/api/ops/alarm', { method: 'POST', headers, body: JSON.stringify(body) })
+      expect(r.status, JSON.stringify(body)).toBe(404)
+      expect(await bodyOf(r)).toEqual({ error: { code: 'not_found' } })
+    }
+    expect(agent).not.toHaveBeenCalled()
+    expect(runner).not.toHaveBeenCalled()
+  } finally {
+    vi.restoreAllMocks()
+  }
+})
 
 /**
  * A due task the pass can see: a row of a kind no handler knows, due a moment ago, written straight into the brand's
