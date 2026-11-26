@@ -9,7 +9,7 @@ import { safeError } from '../safe-error.ts'
 import type { AccountSummary, ConnectGateway } from '../../hub/index/contract.ts'
 import { catalogByAccount } from '../api/tools-catalog.ts'
 import { listedChannels } from '../notify-slack/send.ts'
-import { SYSTEM_PROMPT_V2, systemPromptV3 } from './system.ts'
+import { SYSTEM_PROMPT_V2, SYSTEM_PROMPT_VERSION, systemPromptV3 } from './system.ts'
 import { withTestShopConnect } from '@test-shop'
 import { plainAnswer } from '../../shared/rpc-answer.ts'
 
@@ -116,10 +116,10 @@ async function readChannels(deps: TurnPromptDeps, turnId: string, log: Log): Pro
 }
 
 /**
- * The prompt a turn is sent, its version (3 the built prompt, 2 the static fallback, system.ts) and the apps the built
+ * The prompt a turn is sent, its version (SYSTEM_PROMPT_VERSION the built prompt, 2 the static fallback, system.ts) and the apps the built
  * line named as connected (`[]`: "No apps are connected yet."; null: the fallback, which names none as connected).
  */
-export type TurnPrompt = { text: string; version: 2 | 3; apps: string[] | null }
+export type TurnPrompt = { text: string; version: 2 | typeof SYSTEM_PROMPT_VERSION; apps: string[] | null }
 const FALLBACK: TurnPrompt = { text: SYSTEM_PROMPT_V2, version: 2, apps: null }
 
 /** The longest a turn's start waits for the hub and the channel list together (A9's condition). */
@@ -158,7 +158,7 @@ export async function turnSystemPrompt(deps: TurnPromptDeps, turnId: string): Pr
       }
     }
     const { lines, apps } = connectedParts(accounts, channels)
-    return lines === '' ? FALLBACK : { text: systemPromptV3(lines), version: 3, apps }
+    return lines === '' ? FALLBACK : { text: systemPromptV3(lines), version: SYSTEM_PROMPT_VERSION, apps }
   } catch (err) {
     console.error({ event: 'prompt_build_failed', turnId, error: safeError(err) })
     return FALLBACK

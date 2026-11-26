@@ -61,6 +61,24 @@ export interface ResolvedTurn {
   webFetchDomains: string[]
   /** Web search: only with the brand's `t:websearch` switch set to true (an Admin's, M1-F); off by default. */
   webSearch: boolean
+  /**
+   * The API id the `researcher` helper runs on (Stage 1, N6; `analyst` inherits `model`): Sonnet when the turn runs Opus
+   * or Fable and Sonnet is on and priced for the brand, else the turn's own model. Sent to the runner with the helpers
+   * and carried by the turn's run grant, so the egress lets this model through too.
+   */
+  subagentModel: string
+}
+
+/** The picker ids whose turns hand `researcher` to Sonnet (N6): the two models that cost more than it. */
+const SUBAGENT_DOWNGRADE_FROM: readonly string[] = ['opus', 'fable']
+/** The picker id `researcher` moves to. */
+export const SUBAGENT_PICKER_ID = 'sonnet'
+
+/** N6's choice, from the turn's resolved model and the brand's settings: the cheaper Sonnet when it's on, else the turn's model. */
+export function pickSubagentModel(turn: CatalogModel, settings: SettingsView, catalog: readonly CatalogModel[] = CATALOG): string {
+  if (!SUBAGENT_DOWNGRADE_FROM.includes(turn.id)) return turn.apiId
+  const sonnet = resolveModel(SUBAGENT_PICKER_ID, settings, catalog)
+  return 'refused' in sonnet ? turn.apiId : sonnet.model.apiId
 }
 
 /**
@@ -68,8 +86,8 @@ export interface ResolvedTurn {
  * call: unknown model → `invalid`; switched off or unpriced → `forbidden`/`model_off`; the effort and side model from
  * the catalogue and `tm:<id>:*`; `maxTurns` from `t:max_turns` (else 25); WebFetch's hosts from `t:webfetch` (empty or
  * missing: none; a stored value that breaks the rule: none, fail closed; none while `t:webfetch_on` is off); web search on
- * only when `t:websearch` is true. The web switches are brand settings (an Admin's, M1-F) and the rest technical, so both
- * scopes are read.
+ * only when `t:websearch` is true; the helpers' model (`pickSubagentModel`, N6). The web switches are brand settings (an
+ * Admin's, M1-F) and the rest technical, so both scopes are read.
  */
 export async function resolveTurnSettings(
   settingsStore: Pick<Stores['settings'], 'list'>, pickerId: string, catalog: readonly CatalogModel[] = CATALOG,
@@ -85,7 +103,8 @@ export async function resolveTurnSettings(
   const hosts = typeof hostSetting === 'string' ? parseHostlist(hostSetting) : []
   const webFetchDomains = webFetchOn(settings['t:webfetch_on']) ? (hosts ?? []) : []
   const webSearch = webSearchOn(settings['t:websearch'])
-  return { model: resolved.model.apiId, pickerId: resolved.model.id, effort: resolved.effort, sideModel: resolved.sideApiId, maxTurns, webFetchDomains, webSearch }
+  const subagentModel = pickSubagentModel(resolved.model, settings as SettingsView, catalog)
+  return { model: resolved.model.apiId, pickerId: resolved.model.id, effort: resolved.effort, sideModel: resolved.sideApiId, maxTurns, webFetchDomains, webSearch, subagentModel }
 }
 
 /** Route 29 over a given catalogue (tests pass a priced copy; the route uses the shipped one). */

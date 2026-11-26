@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CapReachedError } from './types.ts'
 import { runEvals } from './runner.ts'
+import { GRADED_PROMPT_VERSION } from './prompt-version.ts'
 import { buildReport, renderReadme } from './report.ts'
 import { writeResults } from './write.ts'
 import type { Case, ChatResult, Target } from './types.ts'
@@ -98,7 +99,7 @@ interface Server {
   endRow?: { failure?: string; why?: string; outcome?: string }
   /** Route 70's answer (default: Shopify connected, not paused, readable). */
   tools?: unknown
-  /** The trace's `promptVersions` (default [3], v3 sent); null leaves the field out (no version recorded). */
+  /** The trace's `promptVersions` (default [GRADED_PROMPT_VERSION], the current prompt sent); null leaves the field out (no version recorded). */
   promptVersions?: (number | null)[] | null
   /** The trace's `promptApps` (default [['Shopify']]); null leaves the field out. */
   promptApps?: (string[] | null)[] | null
@@ -158,7 +159,7 @@ const server = (over: Partial<Server> = {}): { s: Server; fetch: typeof fetch } 
     }
     if (url.pathname.startsWith('/api/traces/') && s.traceStatus && s.traceStatus !== 200) return json({ error: { code: 'unavailable' } }, s.traceStatus)
     if (url.pathname.startsWith('/api/traces/')) {
-      const versions = s.promptVersions === undefined ? [3] : s.promptVersions
+      const versions = s.promptVersions === undefined ? [GRADED_PROMPT_VERSION] : s.promptVersions
       const apps = s.promptApps === undefined ? [['Shopify']] : s.promptApps
       return json({ cost: { minor: s.costMinor, currency: 'USD' }, steps: [{ kind: 'root', detail: '' }, ...s.steps], ...(versions === null ? {} : { promptVersions: versions }), ...(apps === null ? {} : { promptApps: apps }) })
     }
@@ -896,8 +897,8 @@ describe('the baseline\'s harness faults', () => {
   })
   // P5 (#337): every graded turn must have been sent the system prompt v3 (route 33's trace, promptVersions). A turn on the
   // static v2 fallback, or with no version recorded, fails its run with that reason and is never graded as a pass.
-  it('a turn sent the v2 fallback, or with no version recorded, fails its run naming why; v3 passes', async () => {
-    for (const [promptVersions, failure] of [[[2], 'prompt_version:2'], [null, 'prompt_version:missing'], [[null], 'prompt_version:missing']] as const) {
+  it('a turn sent v3, the v2 fallback or no version recorded, fails its run naming why; the current version passes', async () => {
+    for (const [promptVersions, failure] of [[[3], 'prompt_version:3'], [[2], 'prompt_version:2'], [null, 'prompt_version:missing'], [[null], 'prompt_version:missing']] as const) {
       const session = await make(server({ promptVersions: promptVersions === null ? null : [...promptVersions] }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
       expect(await session.chat('hi'), JSON.stringify(promptVersions)).toMatchObject({ runOk: false, answer: 'Hello.', failure })
     }
@@ -905,7 +906,7 @@ describe('the baseline\'s harness faults', () => {
     expect(await ok.chat('hi')).toMatchObject({ runOk: true, answer: 'Hello.' })
   })
   // #337 round 3 (M3): a v3 turn whose built line didn't name Shopify as connected fails too (prompt_apps:<list>).
-  it('a v3 turn whose prompt named no store, or another app only, fails naming the apps it named', async () => {
+  it('a turn whose prompt named no store, or another app only, fails naming the apps it named', async () => {
     for (const [promptApps, failure] of [[[[]], 'prompt_apps:none'], [[['Slack']], 'prompt_apps:Slack'], [null, 'prompt_apps:missing'], [[null], 'prompt_apps:missing']] as const) {
       const session = await make(server({ promptApps: promptApps === null ? null : promptApps.map(a => (a === null ? null : [...a])) }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })
       expect(await session.chat('hi'), JSON.stringify(promptApps)).toMatchObject({ runOk: false, answer: 'Hello.', failure })

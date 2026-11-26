@@ -1,0 +1,50 @@
+{
+ "row": {
+  "caseId": "CAP-01",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "answer": true,
+   "answerNot": true,
+   "capability": true
+  },
+  "called": [
+   "memory_search",
+   "Write"
+  ],
+  "toolSearches": 0,
+  "answer": "Saved the summary to reports/supplier-summary.md: Norda Ceramics has a 6 weeks l",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0,
+  "answer": "Saved the summary to reports/supplier-summary.md: Norda Ceramics has a 6 weeks l",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "e2f1e54c4f01eda1ebe30bada4cb6a465c06ad78d05410586e5ca77edc91cb0b",
+    "inputExcerpt": "{\"query\":\"ceramic mug supplier\"}",
+    "resultExcerpt": "Norda Ceramics: lead time 6 weeks, minimum order 120 units."
+   },
+   {
+    "name": "Write",
+    "inputSha256": "bcf5ed32378b5ae4bf4dc569f70524d8dd8f7d7aaa05a91f6cfba47945d47863",
+    "inputExcerpt": "{\"file_path\":\"reports/supplier-summary.md\",\"content\":\"# Supplier Summary\\n\\n- No",
+    "resultExcerpt": "Wrote reports/supplier-summary.md"
+   }
+  ]
+ }
+}

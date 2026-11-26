@@ -3,7 +3,8 @@
 // an unknown model isn't `invalid`; a switched-off model runs; the effort, side model, turn budget or WebFetch hosts
 // don't follow the settings; a broken stored host list allows any host instead of none; an empty or missing list allows
 // any host (P8a S: it allows none); web search is on without the brand's `t:websearch` switch; a fetch host is left
-// while the brand's `t:webfetch_on` is off (M1-F: both switches are brand settings, so both scopes are read).
+// while the brand's `t:webfetch_on` is off (M1-F: both switches are brand settings, so both scopes are read); the helpers'
+// model doesn't follow N6 (M1-P).
 import { describe, expect, it } from 'vitest'
 import type { SettingRecord } from '../../shared/contract/settings.ts'
 import { settingSpec } from '../../shared/contract/settings.ts'
@@ -22,6 +23,7 @@ describe('resolveTurnSettings (F)', () => {
   it('defaults: the catalogue effort, Haiku as the side model, 25 turns, no WebFetch host, web search off', async () => {
     expect(await resolveTurnSettings(store({}), 'sonnet')).toEqual({
       model: 'claude-sonnet-5-5', pickerId: 'sonnet', effort: 'medium', sideModel: 'claude-haiku-5-5', maxTurns: 25, webFetchDomains: [], webSearch: false,
+      subagentModel: 'claude-sonnet-5-5',
     })
     expect(await resolveTurnSettings(store({ 't:webfetch': '' }), 'sonnet')).toMatchObject({ webFetchDomains: [], webSearch: false })
   })
@@ -40,7 +42,20 @@ describe('resolveTurnSettings (F)', () => {
   it('follows the settings: effort label, Haiku off, the turn budget and a host list', async () => {
     expect(await resolveTurnSettings(store({ 'tm:opus:effort': 'Highest', 'tm:haiku:on': 'off', 't:max_turns': '50', 't:webfetch': 'example.com\ndocs.example.org' }), 'opus')).toEqual({
       model: 'claude-opus-5-5', pickerId: 'opus', effort: 'max', sideModel: 'claude-opus-5-5', maxTurns: 50, webFetchDomains: ['example.com', 'docs.example.org'], webSearch: false,
+      subagentModel: 'claude-sonnet-5-5',
     })
+  })
+
+  // Stage 1 M1-P (N6): the helpers' model. Ways it could fail: an Opus or Fable turn's helpers stay on the dearer model
+  // while Sonnet is on, move to Sonnet while it's off, or a Sonnet or Haiku turn's helpers move to another model.
+  it('the helpers\' model: Sonnet for an Opus or Fable turn while Sonnet is on, else the turn\'s own model', async () => {
+    for (const picker of ['opus', 'fable']) {
+      expect(await resolveTurnSettings(store({}), picker), picker).toMatchObject({ subagentModel: 'claude-sonnet-5-5' })
+      const off = await resolveTurnSettings(store({ 'tm:sonnet:on': 'off' }), picker)
+      expect(off, picker).toMatchObject({ subagentModel: picker === 'opus' ? 'claude-opus-5-5' : 'claude-fable-5-2' })
+    }
+    expect(await resolveTurnSettings(store({}), 'sonnet')).toMatchObject({ subagentModel: 'claude-sonnet-5-5' })
+    expect(await resolveTurnSettings(store({}), 'haiku')).toMatchObject({ subagentModel: 'claude-haiku-5-5' })
   })
 
   it('refuses an unknown model and a switched-off one; a broken host list allows no host', async () => {

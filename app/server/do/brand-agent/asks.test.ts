@@ -22,7 +22,7 @@ import { ACTIONS_TOOL_PREFIX, recordInvocation } from './invocations.ts'
 
 const db = env.DB
 const TOOL = `${ACTIONS_TOOL_PREFIX}shopify_order_tag_add`
-const SETTINGS = { model: 'claude-sonnet-5-5', pickerId: 'sonnet', effort: 'medium' as const, sideModel: 'claude-haiku-5-5', maxTurns: 25, webFetchDomains: [], webSearch: false }
+const SETTINGS = { model: 'claude-sonnet-5-5', pickerId: 'sonnet', effort: 'medium' as const, sideModel: 'claude-haiku-5-5', maxTurns: 25, webFetchDomains: [], webSearch: false, subagentModel: 'claude-sonnet-5-5' }
 const TEXTS: ActionTexts = { result: p => `An automatic note from Inhouse: ${p.title} is ${p.state}.` }
 
 const asks = (h: Harness, deps: Partial<AsksDeps> = {}) =>

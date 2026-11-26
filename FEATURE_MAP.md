@@ -453,7 +453,13 @@ Backend core: Settings, typed and with conflicts (P2, test build)
   Selector: dropdown "Time zone", field "Monthly cap", toast "Someone changed this"
   Expected: a setting saves on the Worker and survives a reload; two tabs on one setting: the second save is refused and shows what the setting is now; a Member sees team settings as text
   Covered:  e2e/ship/backend-core.spec.ts (S2, S5, S6), e2e/api/revisions-paging.spec.ts
-  Gaps:     the brand setting `s:job_cap` is accepted by the Worker but has no Settings field yet; chat job continuation is not wired yet
+  Gaps:     the brand setting `s:job_cap` is accepted by the Worker but has no Settings field yet
+
+Chat: long jobs and helpers (Stage 1 M1-P, product)
+  Path:     Chat -> any question
+  Expected: a person's question that hits its step or spend limit, or runs 25 minutes, carries on by itself as a long job (up to 8 hours, within the job budget, `s:job_cap`); each carry-on is the server's own note to the agent, which a reloaded chat shows as "Your Inhouse agent carried on with this task by itself." and never as the person's message, and a failed carry-on's Try again asks the person's own question; the agent can start two helpers (researcher: reads the web, apps, memory and past chats; analyst: works on files with code), whose model calls go through the turn's egress grant and are on the ledger; an Opus or Fable turn's researcher runs on Sonnet while Sonnet is on, any other turn's on its own model
+  Covered:  server/do/brand-agent/helpers-jobs.test.ts, server/egress/model.test.ts, server/api/resolve-turn.test.ts, server/prompt/{job,agents,system}.test.ts, server/do/brand-agent/jobs/engine.test.ts, e2e/api/helpers.spec.ts (sandbox deploy: a scripted helper turn and its spend)
+  Gaps:     the live job screens (progress, Cancel, the job's end) are M1-D's, and until then the live view shows a carry-on note as a sent message (a reload shows it right); routine turns get no helpers
 
 Backend core: photo (P2, test build)
   Path:     Settings -> General -> Photo

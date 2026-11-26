@@ -32,7 +32,7 @@ describe('a minted token (failures 1, 3)', () => {
       expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/)
       const hash = await sha256(token)
       expect(await hashRunToken(token)).toBe(hash)
-      for (const r of ALL) expect(tokens.check(hash, r, T), r).toEqual({ ...grant('t_1'), expiresAtMs: T + 2_700_000 })
+      for (const r of ALL) expect(tokens.check(hash, r, T), r).toEqual({ ...grant('t_1'), subagentModel: null, expiresAtMs: T + 2_700_000 })
       tokens.closeRoutes('t_1', ['model', 'mcp', 'files', 'audit'], 'terminal')
       for (const r of ['model', 'mcp', 'files', 'audit'] as const) expect(tokens.check(hash, r, T), r).toEqual({ refused: 'closed' })
       for (const r of ['store', 'events'] as const) expect(tokens.check(hash, r, T), r).toMatchObject({ turnId: 't_1' })
