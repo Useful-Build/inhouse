@@ -8,6 +8,7 @@ import { auditInsert } from './audit.ts'
 import type { AuditHook, Guard } from './audit.ts'
 import { newMemberId, writeStamp } from './ids.ts'
 import { photoUrl } from './photos.ts'
+import { revokeMemberGrantsStmts } from '../permissions/grants.ts'
 import { all, first, runBatch, stmt } from './sql.ts'
 import type { Stmt } from './sql.ts'
 
@@ -63,6 +64,8 @@ const OPEN = "status IN ('invited', 'active')"
 const ANOTHER_ADMIN = "(SELECT COUNT(*) FROM members WHERE kind = 'person' AND role = 'admin' AND status = 'active' AND id <> ?) >= 1"
 
 const memberGuard = (id: string, stamp: string): Guard => ({ table: 'members', where: 'id = ?', params: [id], stamp })
+/** The member row this write stamped, as a condition for the lapses written with it. */
+const changedBy = (id: string, stamp: string) => ({ sql: 'SELECT 1 FROM members WHERE id = ? AND req_id = ?', params: [id, stamp] })
 
 // ---------- statement builders (pure: the seed renders them as SQL) ----------
 
@@ -278,6 +281,9 @@ export function memberStore({ db, hook = s => s }: MemberStoreDeps) {
           input.role, stamp, input.id, input.ifRev, from, input.role, input.id,
         ),
         auditInsert({ atMs: at.nowMs, actorId: at.actorId, args: { action: 'member.role_changed', memberId: input.id, from, to: input.role }, target: { kind: 'member', id: input.id }, requestId: at.requestId }, memberGuard(input.id, stamp)),
+        // Stage 1 M2-A (N10): lowering a role ends the member's own "Always allow" grants, in this batch, only where the
+        // change applied.
+        ...(input.role === 'member' ? revokeMemberGrantsStmts(input.id, 'role_lowered', at, changedBy(input.id, stamp)) : []),
       ])
       const r = await person(input.id)
       if (change.meta.changes > 0 && r) return { ok: memberRecord(r) }
@@ -302,6 +308,8 @@ export function memberStore({ db, hook = s => s }: MemberStoreDeps) {
           at.nowMs, stamp, input.id, input.ifRev, input.id, input.notAdmin ? 1 : 0,
         ),
         auditInsert({ atMs: at.nowMs, actorId: at.actorId, args: { action: 'member.removed', memberId: input.id }, target: { kind: 'member', id: input.id }, requestId: at.requestId }, memberGuard(input.id, stamp)),
+        // Stage 1 M2-A (N10): a removed member's grants end with the removal. A re-invite keeps the id, never the grants.
+        ...revokeMemberGrantsStmts(input.id, 'member_removed', at, changedBy(input.id, stamp)),
       ])
       const r = await person(input.id)
       if (change.meta.changes > 0 && r) return { ok: memberRecord(r) }

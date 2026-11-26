@@ -339,6 +339,9 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'GET /api/data-access/export': ['no', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
   // Row 96 (P8a D): Export everything's check, row 95's access.
   'GET /api/data-access/export/check': ['no', 'ok', 'grant', 'audit', 'no', 'no', 'no'],
+  // Stage 1 M2-A, rows 110 and 111: brand people only (the store decides whose permission).
+  'GET /api/permissions': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  'POST /api/permissions/:id/remove': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },

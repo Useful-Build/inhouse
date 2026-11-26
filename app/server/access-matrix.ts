@@ -135,6 +135,10 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 95 */ { method: 'GET', pattern: '/api/data-access/export', class: 'brand_data', allow: ['admin', 'inhouse'] },
   // P8a D: the check the page makes before route 95 (its plan only: the size or the `too_large` refusal). Row 95's access.
   /* 96 */ { method: 'GET', pattern: '/api/data-access/export/check', class: 'brand_data', allow: ['admin', 'inhouse'] },
+  // Stage 1 M2-A (N15): a person's own "Always allow" permissions; an admin sees and removes any (the store's statement
+  // decides the object). Brand people only: the Inhouse team sees none in M2.
+  /* 110 */ { method: 'GET', pattern: '/api/permissions', class: 'baseline', allow: ['member', 'admin'] },
+  /* 111 */ { method: 'POST', pattern: '/api/permissions/:id/remove', class: 'baseline', allow: ['member', 'admin'] },
 ]
 
 /** Each `CanKey`'s row (section 3). */
