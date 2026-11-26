@@ -24,7 +24,7 @@ import { ToolsDataSchema } from '../../shared/contract/tools.ts'
 import { actor, call, expectConflict, expectError, me, newIdentity, personActor } from './kit.ts'
 import { Tab } from './chat-kit.ts'
 import { auditMax, readSql } from './db.ts'
-import { hook, hubCall, inhouse, requestAction, setCeiling, SHOPIFY_ACCOUNT, sourcesUnder } from './fakes-kit.ts'
+import { CHANNEL, ensureDisconnected, fakeState, freshConnect, hook, hubCall, inhouse, requestAction, setCeiling, setListedChannels, SHOPIFY_ACCOUNT, sourcesUnder } from './fakes-kit.ts'
 
 const dana = actor('memberA')
 const leo = actor('memberB')
@@ -322,6 +322,34 @@ test('turning the operation off refuses the next request and lapses an approval 
   expect((await card(request, id)).lapsed).toBe('This kind of action was turned off, so this needs your OK again.')
   expect(await requestAction(request, { memberId: danaId }, TAG_ADD, tagArgs(tag()))).toMatchObject({ outcome: 'refused', reason: 'over_ceiling' })
   expect(await writesOf(request, offTag)).toEqual([])
+})
+
+// M2-D's done-when, the Slack half: a post to a listed channel goes end to end through the egress handler and the
+// outbox into the fake Slack, once. The product dates Slack's connect by its own clock; the request copies the hub's date
+// in (N9), so the hub's `expect.connectedAtMs` check passes instead of refusing every send as stale.
+test('M2-D: a Slack post to a listed channel, asked through the egress, answered, sent once to the fake Slack', async ({ request }) => {
+  test.setTimeout(120_000)
+  await freshConnect(request)
+  await setListedChannels(request, [CHANNEL.opsAlerts])
+  const name = readSql<{ name: string }>('SELECT name FROM notify_channels WHERE channel_id = ? AND removed_at_ms IS NULL', CHANNEL.opsAlerts)[0]!.name
+  await setCeiling(request, 'slack.channel.post', true)
+  try {
+    const token = `m2d-${run}-slack`
+    const before = (await fakeState(request)).web.posts.length
+    const r = await requestAction(request, { memberId: danaId }, 'slack.channel.post', { channel: `#${name}`, text: `Restock note ${token}` })
+    expect(r.outcome, JSON.stringify(r)).toBe('waiting')
+    expect(JSON.parse(r.action.scope_json)).toEqual({ channelId: CHANNEL.opsAlerts })
+    const hubGen = readSql<{ connected_at_ms: number }>("SELECT connected_at_ms FROM connector_accounts WHERE account_id = 'slack:workspace'")[0]!.connected_at_ms
+    expect(r.action.account_gen).toBe(hubGen)
+    await allowOnce(request, r.action.id)
+    await until(request, r.action.id, 'sent')
+    const posts = (await fakeState(request)).web.posts.slice(before).filter(p => (p.text ?? '').includes(token))
+    expect(posts.map(p => p.channel)).toEqual([CHANNEL.opsAlerts])
+  } finally {
+    await setCeiling(request, 'slack.channel.post', false)
+    await setListedChannels(request, [])
+    await ensureDisconnected(request)
+  }
 })
 
 // The dispatcher once kept every write binding's answer, and Workers RPC keeps a call's context open until its answer is

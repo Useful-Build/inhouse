@@ -207,7 +207,7 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   async hubAccounts(): Promise<HubAccountFacts[]> {
     return hubAccountFacts({
       connect: this.env.HUB_CONNECT as unknown as Pick<ConnectGateway, 'listAccounts'>, db: this.env.DB, nowMs: Date.now(),
-      requestId: `actions-accounts-${crypto.randomUUID()}`, log: e => console.log(e),
+      requestId: `actions-accounts-${crypto.randomUUID()}`, log: entry => console.log(entry),
     })
   }
 

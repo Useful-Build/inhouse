@@ -215,10 +215,15 @@ describe('hub: the egress route\'s own handler with a run scope (failure 5)', ()
   it('callTool: name and args reach the hub; a refusal comes back raw; no name is 400; a dead binding is 502', async () => {
     quiet()
     const calls: unknown[] = []
-    const HUB = { listTools: async () => ({ ok: true, value: [] }), callTool: async (s: unknown, name: string, args: unknown) => { calls.push({ s, name, args }); return { ok: false, error: { code: 'write_refused', message: 'writes are refused' } } } }
-    const r = await runTestFakes({ op: 'hub', method: 'callTool', name: 'notes_delete', args: { id: 'n1' } }, envWith({ HUB }))
-    expect(r).toEqual({ status: 200, body: { ok: false, error: { code: 'write_refused', message: 'writes are refused' } } })
-    expect(calls).toMatchObject([{ s: { kind: 'run', principalId: 'm_test_fakes' }, name: 'notes_delete', args: { id: 'n1' } }])
+    const listed = [{ name: 'notes_read', connector: 'notes', description: 'Read a note.', inputSchema: {} }]
+    const HUB = { listTools: async () => ({ ok: true, value: listed }), callTool: async (s: unknown, name: string, args: unknown) => { calls.push({ s, name, args }); return { ok: false, error: { code: 'upstream_rejected', message: 'refused upstream' } } } }
+    const r = await runTestFakes({ op: 'hub', method: 'callTool', name: 'notes_read', args: { id: 'n1' } }, envWith({ HUB }))
+    expect(r).toEqual({ status: 200, body: { ok: false, error: { code: 'upstream_rejected', message: 'refused upstream' } } })
+    expect(calls).toMatchObject([{ s: { kind: 'run', principalId: 'm_test_fakes' }, name: 'notes_read', args: { id: 'n1' } }])
+    // A name the read list doesn't name never reaches the hub (the egress's own check, N14): the route's refusal, marked.
+    expect(await runTestFakes({ op: 'hub', method: 'callTool', name: 'notes_delete', args: { id: 'n1' } }, envWith({ HUB }))).toEqual({
+      status: 200, body: { ok: false, error: { code: 'write_refused', message: "write_refused: only the reading tools the connected apps list now run here, and this one isn't listed (a write, or its app is paused or needs a reconnect), so nothing outside Inhouse was changed" }, refusedBy: 'egress' },
+    })
     expect(await runTestFakes({ op: 'hub', method: 'callTool' }, envWith({ HUB }))).toEqual({ status: 400, body: { error: { code: 'invalid', detail: 'callTool needs name' } } })
     expect(calls).toHaveLength(1)
     const dead = { listTools: async () => { throw new Error('binding') }, callTool: async () => { throw new Error('binding') } }

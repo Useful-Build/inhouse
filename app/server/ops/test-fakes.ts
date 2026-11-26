@@ -14,7 +14,8 @@
 //   `serverDay` added here: the UTC day key the notice day caps count by (notify-slack/store.ts `utcDay`).
 // - `hub`: { method: 'listTools' | 'callTool', name?, args? }: the egress `/hub/` route's own handler (handleHub) with a
 //   synthetic run grant, so the scope is built exactly as that route builds it. Answers the ReadGateway's HubResult as
-//   it came over the binding (502 `binding_failed` when the binding threw).
+//   it came over the binding (502 `binding_failed` when the binding threw), or, for a callTool the route's read-list
+//   check (N14) refused before the hub, `{ ok: false, error: { code: 'write_refused', message }, refusedBy: 'egress' }`.
 // - `notify`: { as: { memberId, chatId?, runId?, turnId? }, args }: the inhouse MCP server's own handler (handleMcp)
 //   calling `notification_send` as `as.memberId`, which must be an active person on the brand; an `as.chatId` must be
 //   that member's chat, and an `as.runId` or `as.turnId` given with it one of that chat's (both: a pair of one row).
@@ -157,9 +158,13 @@ async function hubOp(env: TestFakesEnv, op: Extract<ProductOp, { op: 'hub' }>): 
   if (op.method === 'callTool' && op.name === undefined) return refuse(400, 'invalid', 'callTool needs name')
   const hub = env.HUB as ReadGatewayLike
   let result: unknown = null
+  let called = false
   const recorder: ReadGatewayLike = {
     listTools: async scope => (result = await hub.listTools(scope)) as never,
-    callTool: async (scope, name, args) => (result = await hub.callTool(scope, name, args)) as never,
+    callTool: async (scope, name, args) => {
+      called = true
+      return (result = await hub.callTool(scope, name, args)) as never
+    },
   }
   const grant: RunGrant = {
     turnId: `t_fakes_${tail()}`, runId: `r_${tail()}`, chatId: `c_fakes_${tail()}`, memberId: 'm_test_fakes', sessionId: `s_fakes_${tail()}`,
@@ -168,15 +173,23 @@ async function hubOp(env: TestFakesEnv, op: Extract<ProductOp, { op: 'hub' }>): 
   const message = op.method === 'listTools'
     ? { jsonrpc: '2.0', id: 1, method: 'tools/list' }
     : { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: op.name, arguments: op.args ?? {} } }
+  let code: string | null = null
   const res = await handleHub(
     new Request('https://egress.invalid/hub/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(message) }),
     grant,
     // The egress's own read-list check runs here as on the real route (N14): a name the hub doesn't list as read never
-    // reaches its callTool, so `result` is then the list's answer.
-    hubRouteDeps(recorder, entry => console.log(entry)),
+    // reaches its callTool.
+    hubRouteDeps(recorder, entry => {
+      code = typeof entry.code === 'string' ? entry.code : null
+      console.log(entry)
+    }),
   )
-  // The route's own answer is read so the call completes as the egress would; the spec gets the binding's HubResult.
-  await res.text()
+  // The route's own answer is read so the call completes as the egress would; the spec gets the binding's HubResult, or
+  // (a callTool the read-list check refused before the hub) the route's own refusal, marked `refusedBy: 'egress'`.
+  const answered = (await res.json()) as { result?: { content?: { text?: string }[] } }
+  if (op.method === 'callTool' && !called && result !== null && code === 'write_refused') {
+    return ok({ ok: false, error: { code, message: answered.result?.content?.[0]?.text ?? '' }, refusedBy: 'egress' })
+  }
   if (result === null) return refuse(502, 'binding_failed')
   return ok(result)
 }
@@ -292,7 +305,7 @@ async function actionOp(env: TestFakesEnv, op: Extract<ProductOp, { op: 'action'
       poke: p => stub.poke(p),
       hubAccounts: () => stub.hubAccounts(),
     },
-    now: () => Date.now(), sleep: ms => new Promise(r => setTimeout(r, ms)), requestId: () => `test-fakes-${crypto.randomUUID()}`, log: e => console.log(e),
+    now: () => Date.now(), sleep: ms => new Promise(r => setTimeout(r, ms)), requestId: () => `test-fakes-${crypto.randomUUID()}`, log: entry => console.log(entry),
   }
   const call = (path: string, message: unknown) =>
     new Request(`https://egress.invalid${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(message) })

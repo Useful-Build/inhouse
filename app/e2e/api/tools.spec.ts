@@ -63,8 +63,9 @@ test('a tool outside the allowlist is absent and unknown_tool, a write is write_
 
   const requestsBefore = (await fakeState(request)).notes.requests.length
   const callsBefore = (await fakeState(request)).notes.toolCalls.length
+  // The runner's hub route runs only what the hub's read list names (N14), so the hidden tool is refused there.
   const unknown = await hubCall(request, 'callTool', 'notes_export', {})
-  expect(unknown).toMatchObject({ ok: false, error: { code: 'unknown_tool' } })
+  expect(unknown).toMatchObject({ ok: false, error: { code: 'write_refused' }, refusedBy: 'egress' })
   expect(await hubCall(request, 'callTool', 'notes_delete', { id: 'n1' })).toMatchObject({ ok: false, error: { code: 'write_refused' } })
   const after = await fakeState(request)
   expect(after.notes.requests.length, 'no request at all reached the fake for the hidden tool or the write').toBe(requestsBefore)
@@ -88,7 +89,8 @@ test('pause hides: a paused tool leaves the list and answers paused; unpaused it
   expect(paused.json).toEqual({ paused: true })
   expect((await readTools(request)).details.slack?.paused).toBe(true)
   expect(slackNames(await hubToolNames(request)), 'no Slack tool while paused').toEqual([])
-  expect(await hubCall(request, 'callTool', 'slack_search_public', SEARCH)).toMatchObject({ ok: false, error: { code: 'paused' } })
+  // A paused tool isn't on the read list, so the runner's hub route refuses it before the hub (N14).
+  expect(await hubCall(request, 'callTool', 'slack_search_public', SEARCH)).toMatchObject({ ok: false, error: { code: 'write_refused' }, refusedBy: 'egress' })
   const back = await call(request, inhouse, 'PUT', `/api/tools/${acct(SLACK_ACCOUNT)}/paused`, { json: { paused: false } })
   expect(back.json).toEqual({ paused: false })
   expect(slackNames(await hubToolNames(request))).toContain('slack_search_public')
@@ -122,7 +124,8 @@ test('a scope policy change after a connect hides every Slack tool, shows a reco
   expect(flip.status, flip.text).toBe(200)
   try {
     expect(slackNames(await hubToolNames(request)), 'every Slack tool is hidden').toEqual([])
-    expect(await hubCall(request, 'callTool', 'slack_search_public', SEARCH)).toMatchObject({ ok: false, error: { code: 'scope_mismatch' } })
+    // A hidden tool isn't on the read list, so the runner's hub route refuses it before the hub (N14).
+    expect(await hubCall(request, 'callTool', 'slack_search_public', SEARCH)).toMatchObject({ ok: false, error: { code: 'write_refused' }, refusedBy: 'egress' })
     const t = await readTools(request)
     expect(t.connection.slack, 'the account needs a reconnect').toMatchObject({ status: 'disconnected' })
     expect(namedApps(await turnPrompt(request)), 'the prompt no longer names Slack').not.toContain('Slack')

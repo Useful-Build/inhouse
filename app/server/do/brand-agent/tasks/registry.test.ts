@@ -8,7 +8,7 @@ import { inAgent, settle } from '../../../testing/brand-agent/core-harness.ts'
 describe('the registry (obligation 12)', () => {
   it('holds exactly the P3 kinds, each a handler', () => {
     expect(Object.keys(taskHandlers).sort()).toEqual([
-      'audit-copy', 'authority-sweep', 'backup', 'call-lease', 'chat-file-sweep', 'deferred-hook', 'deferred-resume', 'flush-turn',
+      'action-deliver', 'ask-turn-end', 'asks-sweep', 'audit-copy', 'authority-sweep', 'backup', 'call-lease', 'chat-file-sweep', 'deferred-hook', 'deferred-resume', 'flush-turn',
       'grant-expiry', 'job-deadline', 'job-end', 'job-step', 'outbox-send', 'outbox-sweep', 'pool-retry', 'retention', 'routine-end',
       'routine-tick', 'run-advance', 'turn-watch', 'usage-sweep',
     ])

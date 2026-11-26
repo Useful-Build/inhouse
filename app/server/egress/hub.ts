@@ -51,7 +51,7 @@ export function hubRouteDeps(hub: ReadGatewayLike, log: (e: Record<string, unkno
  * What the model reads when a call names a tool the hub's read list doesn't (N14): only reading tools run here. Writes go
  * through the `actions` server and a person's OK (server/egress/actions.ts), never through `apps`.
  */
-export const NOT_A_READ_TEXT = "write_refused: only reading tools run here, and this isn't one of them, so nothing outside Inhouse was changed"
+export const NOT_A_READ_TEXT = "write_refused: only the reading tools the connected apps list now run here, and this one isn't listed (a write, or its app is paused or needs a reconnect), so nothing outside Inhouse was changed"
 /** The model's text when the hub's read list couldn't be read (fail closed). */
 const LIST_FAILED_TEXT = 'internal: the tool list could not be read, so the call did not run'
 
@@ -205,7 +205,7 @@ export async function handleHub(request: Request, grant: RunGrant, deps: HubRout
       tool = knownTools.has(name) ? name : 'unknown'
       // The read-list check (N14), on every call: a tool runs only when the hub's read list, read now, names it. The
       // hub's ReadGateway refuses a write itself; this check doesn't rest on that, so a hub that grows a write tool still
-      // runs none here. Writes reach the hub only through the outbox's dispatcher (`HUB_WRITE`).
+      // runs none here. Writes reach the hub only through the outbox's dispatcher.
       let listed: unknown
       try {
         listed = await deps.hub.listTools(scope())
