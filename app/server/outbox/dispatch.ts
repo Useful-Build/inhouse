@@ -23,6 +23,7 @@ import { first, runBatch, stmt } from '../db/sql.ts'
 import type { Stmt } from '../db/sql.ts'
 import type { DueTask, TaskContext, TaskHandler, TaskResult } from '../do/brand-agent/scheduler.ts'
 import { safeError } from '../safe-error.ts'
+import { plainAnswer } from '../../shared/rpc-answer.ts'
 import { claimStmt, lapseStmts, whyRefused } from './claim.ts'
 import { notifyAll, outboxNotifier } from './notify.ts'
 import type { OutboxNotice, OutboxNotifier } from './notify.ts'
@@ -130,25 +131,6 @@ async function storeResult(d: Pick<DispatchDeps, 'db' | 'requestId' | 'notify'>,
   return applied
 }
 
-/** An RPC answer's plain data (JSON's: a disposer, a function or a symbol key never comes along); `undefined` when it has none. */
-function plainCopy(value: unknown): unknown {
-  try {
-    const text = JSON.stringify(value)
-    return text === undefined ? undefined : JSON.parse(text)
-  } catch {
-    return undefined
-  }
-}
-
-/** Runs an RPC answer's disposer, if it has one (https://developers.cloudflare.com/workers/runtime-apis/rpc/lifecycle/). */
-function release(value: unknown): void {
-  if (typeof value !== 'object' || value === null || DISPOSE === undefined) return
-  const dispose = (value as Record<symbol, unknown>)[DISPOSE]
-  if (typeof dispose === 'function') (dispose as () => void).call(value)
-}
-/** `Symbol.dispose` (the runtime has it; this project's TypeScript lib doesn't name it yet). */
-const DISPOSE = (Symbol as unknown as { dispose?: symbol }).dispose
-
 /** What the hub's answer (or its absence) means. Anything the dispatcher can't read as sure is a check for a person. */
 function outcomeOf(answer: { value: unknown } | { thrown: true } | { timeout: true }): SendOutcome {
   if ('thrown' in answer) return { kind: 'needs_check', why: 'thrown' }
@@ -235,13 +217,17 @@ export async function sendAction(actionId: string, d: DispatchDeps): Promise<Sen
 
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<{ timeout: true }>(r => { timer = setTimeout(() => r({ timeout: true }), d.timeoutMs ?? timing().hubTimeoutMs) })
-  // The binding's answer is copied out, then released: Workers RPC gives every object an RPC returns a disposer, and
-  // until it runs the call's context stays open, which kept this object from ever going idle (so a removed member's
-  // socket never finished closing). The copy keeps only plain data.
+  // The binding's answer is copied out, then released (shared/rpc-answer.ts): an answer that carried a disposer kept the
+  // call open, and this object then never went idle (so a removed member's socket never finished closing). The hub now
+  // releases its own inner answers; this copy is the backstop. An answer that isn't data (a function or a stub in it) is
+  // logged loud and read as no result: `ResultSchema` then refuses it, a check for a person (`bad_result`).
   const settled = call.then(value => {
-    const copy = plainCopy(value)
-    release(value)
-    return { value: copy }
+    try {
+      return { value: plainAnswer(value) as unknown }
+    } catch (err) {
+      console.error({ event: 'outbox_answer_not_data', actionId, attempt: claimed.attempt, error: safeError(err) })
+      return { value: undefined as unknown }
+    }
   }, (err: unknown) => {
     console.error({ event: 'outbox_send_threw', actionId, attempt: claimed.attempt, error: safeError(err) })
     return { thrown: true as const }

@@ -26,7 +26,7 @@ export type OrderTagAddStub = { orderTagAdd(input: WriteOperationInput): unknown
 
 /**
  * The write SignIn's `orderTagAdd`, its answer read as plain data and released (`settledAnswer`, shared/rpc-answer.ts),
- * never passed on as is: an RPC answer left undisposed keeps its call open.
+ * never passed on as is: an answer passed on carries its disposer, which keeps the call open until the caller disposes it.
  */
 export async function orderTagAddVia(stub: OrderTagAddStub, input: WriteOperationInput): Promise<WriteResult> {
   return (await settledAnswer(stub.orderTagAdd(input))) as WriteResult

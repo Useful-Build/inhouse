@@ -95,8 +95,8 @@ async function readAccounts(deps: TurnPromptDeps, turnId: string, log: Log): Pro
     return null
   }
   try {
-    // Copied and released at once (shared/rpc-answer.ts): this runs in BrandAgent every turn, and an RPC answer held
-    // undisposed keeps its call open, so the object would never go idle.
+    // Copied and released at once (shared/rpc-answer.ts), a backstop: this runs in BrandAgent every turn, and an answer
+    // that carries a disposer or stubs keeps its call open until released. The fix is the hub's (it releases its own).
     const r = plainAnswer(await deps.gateway.listAccounts({ kind: 'server', job: 'prompt.turn', requestId: turnId }))
     if (r.ok) return r.value
     log({ event: 'prompt_accounts_unread', turnId, code: r.error.code })

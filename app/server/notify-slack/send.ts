@@ -231,7 +231,8 @@ async function toSlack(c: Common, r: (id: string, target: string) => Reserve, to
   }
   let answer: HubResult<{ ts: string }>
   try {
-    // Copied and released at once (shared/rpc-answer.ts): a sender inside a Durable Object must not hold the call open.
+    // Copied and released at once (shared/rpc-answer.ts), a backstop: an answer that carries a disposer or stubs keeps
+    // its call open until released, and this sender can run inside BrandAgent. The fix is the hub's.
     answer = plainAnswer(await delivery.postNotice({ kind: 'server', job, requestId: c.ctx.requestId }, {
       accountId: SLACK_ACCOUNT, channelId, title: n.title, text: n.text, noticeId: id, ...(n.link ? { link: n.link } : {}),
     }))

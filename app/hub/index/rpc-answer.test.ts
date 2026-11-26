@@ -1,7 +1,8 @@
-// Every ConnectGateway, DeliveryGateway and WriteGateway path answers plain data and releases the SignIn object's answer. Workers RPC
-// gives each object an RPC returns a disposer, and the call stays open until it runs
-// (https://developers.cloudflare.com/workers/runtime-apis/rpc/lifecycle/, read 2026-11-26): a gateway that passed a
-// SignIn answer on as is handed that open call to the product, where BrandAgent then never went idle. Ways it can fail:
+// Every ConnectGateway, DeliveryGateway and WriteGateway path answers plain data and releases the SignIn object's
+// answer. Workers RPC gives each object an RPC returns a disposer
+// (https://developers.cloudflare.com/workers/runtime-apis/rpc/lifecycle/, read 2026-11-26), and a method that returns
+// such an answer as is keeps its call open until the caller disposes it: a gateway that passed a SignIn answer on kept
+// the product's call open, and BrandAgent then never went idle. Ways it can fail:
 //  1. a method returns the SignIn answer itself (it still carries the disposer);
 //  2. a method builds its own answer but never releases the SignIn's;
 //  3. the copy changes what the method answered.

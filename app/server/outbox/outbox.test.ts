@@ -315,7 +315,7 @@ describe('the result (failure 5)', () => {
     expect(await unreleasedUses(db, s.id)).toEqual([])
   })
 
-  for (const [mode, why] of [['unknown', 'unknown'], ['throw', 'thrown'], ['bad', 'bad_result'], ['hang', 'timeout']] as const) {
+  for (const [mode, why] of [['unknown', 'unknown'], ['throw', 'thrown'], ['bad', 'bad_result'], ['not_data', 'bad_result'], ['hang', 'timeout']] as const) {
     it(`${mode}: needs a check (${why}), the approver told, no retry`, async () => {
       const mark = await lastLineId(db)
       const s = await sendWith(mode)

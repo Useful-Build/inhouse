@@ -221,8 +221,8 @@ describe('test 9: the bell, from notification_send', () => {
     expect(calls.map(c => [c.req.title, c.req.text])).toEqual([['Q&A', 'R&D a < b x > y']])
   })
 
-  // Workers RPC gives the hub's answer a disposer, and the call stays open until it runs: a sender inside BrandAgent that
-  // held it kept the object from going idle (shared/rpc-answer.ts).
+  // A backstop (shared/rpc-answer.ts): an answer that carries a disposer keeps its call open until released, and this
+  // sender can run inside BrandAgent.
   slackOpen.it("the hub's answer is released once", async () => {
     const s = await scene()
     const DISPOSE = (Symbol as unknown as { dispose: symbol }).dispose

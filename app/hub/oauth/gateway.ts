@@ -4,7 +4,8 @@
 // - Every argument is parsed; the state's prefix only routes to the right SignIn, the binding is the stored item.
 // - listAccounts gives one row per account id, whatever number of modules name it.
 // - Every SignIn answer is read through `settledAnswer`: copied as plain data and released, never passed on as is (an
-//   RPC answer keeps its call open until released, and the product's caller may be a Durable Object).
+//   answer passed on as is carries its disposer, which keeps the call open until the product's caller, maybe a Durable
+//   Object, disposes it).
 import type { AccountStatus, AccountSummary, CallerScope, HubResult, Instant } from '../index/contract'
 import { err, ok } from '../index/errors'
 import { AccountIdSchema, AuthCodeSchema, CallerScopeSchema, ConnectErrorSchema, ConnectStateSchema, MemberIdSchema } from '../index/schemas'

@@ -168,8 +168,8 @@ describe('turnSystemPrompt, per turn from the gateway and the channel list', () 
     expect(warns.mock.calls).toEqual([[{ event: 'prompt_accounts_unread', turnId: 't_4', code: 'no_binding' }]])
   })
 
-  // Workers RPC gives the hub's answer a disposer, and the call stays open until it runs: held by BrandAgent (where this
-  // runs every turn), it kept the object from ever going idle (shared/rpc-answer.ts).
+  // A backstop (shared/rpc-answer.ts): an answer that carries a disposer keeps its call open until released, and this
+  // runs in BrandAgent every turn.
   it('the hub answer is released once, read or failed, and its data is what the line is built from', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
     const DISPOSE = (Symbol as unknown as { dispose: symbol }).dispose

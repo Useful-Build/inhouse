@@ -3,7 +3,7 @@
 // Checks paused, connectedAtMs, scopes, and channel eligibility before sending, re-checks them after the awaited channel
 // check, and hands `expect` to the SignIn, which re-reads paused, state, scopes and connectedAtMs synchronously right
 // before `chat.postMessage` (after its own token gate and channel re-check). Every SignIn answer is read as plain data
-// and released (`settledAnswer`, shared/rpc-answer.ts): an RPC answer left undisposed keeps its call open.
+// and released (`settledAnswer`, shared/rpc-answer.ts), so no answer that carries a disposer is ever passed on.
 import { z } from 'zod'
 import type { AccountStatus, HubErrorCode, HubResult, WriteResult } from '../../index/contract'
 import { hubError } from '../../index/errors'
