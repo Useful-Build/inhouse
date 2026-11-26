@@ -11,18 +11,23 @@
 // or a column; `alias` must be a plain SQL identifier. decide.property.test.ts checks this against `decideCore` on
 // random D1 states.
 import { OPERATION_KEYS, OPERATIONS } from '../outbox/operations/index.ts'
+import type { OperationEntry, WriteOperationKey } from '../outbox/operations/types.ts'
 import { BULK_RECORDS, POLICY_REV } from './policy.ts'
 
 const list = (n: number) => Array.from({ length: n }, () => '?').join(', ')
 /** `col IN (...)` over a possibly empty list (SQLite takes `IN ()`, but say what's meant). */
 const inList = (col: string, keys: readonly string[]) => (keys.length === 0 ? '0' : `${col} IN (${list(keys.length)})`)
 
-export function claimGuardSql(alias: string): { sql: string; params: unknown[] } {
+/** The flags the guard reads from each operation's entry. */
+export type GuardTable = Readonly<Record<WriteOperationKey, Pick<OperationEntry, 'memberMay' | 'effects' | 'connector'>>>
+
+/** `table` is the real operation table; the differential test passes made-up flags so every branch runs. */
+export function claimGuardSql(alias: string, table: GuardTable = OPERATIONS): { sql: string; params: unknown[] } {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(alias)) throw new Error('claimGuardSql: alias must be a plain identifier')
   const a = alias
-  const memberMay = OPERATION_KEYS.filter(k => OPERATIONS[k].memberMay)
-  const effectful = OPERATION_KEYS.filter(k => Object.values(OPERATIONS[k].effects).some(Boolean))
-  const slack = OPERATION_KEYS.filter(k => OPERATIONS[k].connector === 'slack')
+  const memberMay = OPERATION_KEYS.filter(k => table[k].memberMay)
+  const effectful = OPERATION_KEYS.filter(k => Object.values(table[k].effects).some(Boolean))
+  const slack = OPERATION_KEYS.filter(k => table[k].connector === 'slack')
   const may = (m: string) => `(${m}.role = 'admin' OR ${inList(`${a}.operation`, memberMay)})`
   const sql = `(
   EXISTS (SELECT 1 FROM permission_ceiling pc WHERE pc.operation = ${a}.operation AND pc.enabled = 1)

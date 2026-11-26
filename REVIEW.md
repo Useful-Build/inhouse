@@ -23,6 +23,7 @@ Changes here need a High-tier review plus explicit approval from Wasim in chat o
 - Policy and agent gates: `AGENTS.md`, `REVIEW.md`, `VERIFY.md`
 - Auth, routing, security, prompts, and build seams: `app/server/auth/**`, `app/server/routes.ts`, `app/server/access-matrix.ts`, `app/server/prompt/`, `app/shared/security-headers.ts`, `app/vite.config.ts`, `app/hub/{signin,crypto,scope,testing}/`, `app/public/_headers`
 - Data and config: `app/server/migrations/`, `app/ops/`, `app/wrangler*.jsonc`, `app/worker/`
+- Agent engine, money and the write path (added 2026-11-26 for Stage 1): `app/server/egress/`, `app/server/permissions/`, `app/server/outbox/`, `app/server/usage/`, `app/server/notify-slack/`, `app/server/do/brand-agent/`, `app/hub/outbox-entry/`, `app/hub/connectors/*/write/`, `app/runner/src/guards/`, `app/runner/src/proxy/`, `app/server/**/*.property.test.ts`
 - Checks and CI: `.github/workflows/`, `.github/rulesets/`, `app/scripts/`, `app/playwright.config.ts`, `app/vitest.config.ts`, `app/e2e/`, `app/src/**/*.property.test.ts`
 
 How to notify Wasim: send a short, plain-language note (2 to 3 short paragraphs) covering: (1) what the problem is, (2) what needs to change and the benefit of changing it, and (3) your recommendation. Wait for his verdict; he will ask if he wants more detail.

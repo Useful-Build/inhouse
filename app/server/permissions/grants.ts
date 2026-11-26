@@ -14,6 +14,7 @@ import type { At } from '../db/members.ts'
 import { all, first, runBatch, stmt } from '../db/sql.ts'
 import type { SqlValue, Stmt } from '../db/sql.ts'
 import { memberHolder } from './decide.ts'
+import { POLICY_REV } from './policy.ts'
 import type { RevokeReason } from './policy.ts'
 import type { Resolved, WriteOperationKey } from './types.ts'
 
@@ -74,9 +75,13 @@ export interface AlwaysAllowInput {
 }
 
 /**
- * The grant's insert and its line. The insert takes the ceiling's current `lowered_rev` in the same statement, and adds
- * nothing while the operation is off, `onlyIf` fails, or a live grant already holds the key (`ON CONFLICT DO NOTHING`
- * on the live index). Read the live grant back with `liveGrant` after the batch.
+ * The grant's insert and its line. First, under `onlyIf`, any unrevoked grant on the same key that no longer covers
+ * anything (made under another ceiling revision, policy revision or account generation) is revoked as `superseded`
+ * with its line: a dead grant must not keep its slot in the live index, or the new grant would never be made. The
+ * insert takes the ceiling's current `lowered_rev` in the same statement, and adds nothing while the operation is off,
+ * the action was resolved under another policy or account generation, the holder isn't an active person whose role is
+ * at least `grantedRole`, `onlyIf` fails, or a still-current grant holds the key (`ON CONFLICT DO NOTHING` on the live index). Read the live
+ * grant back with `liveGrant` after the batch.
  */
 export function alwaysAllowStmts(input: AlwaysAllowInput): { id: string; stamp: string; stmts: Stmt[] } {
   const id = newPermissionId()
@@ -87,14 +92,25 @@ export function alwaysAllowStmts(input: AlwaysAllowInput): { id: string; stamp: 
     id,
     stamp,
     stmts: [
+      ...revokeWhere(
+        `holder = ? AND account_id = ? AND operation = ? AND scope_key = ? AND (policy_rev <> ?
+           OR ceiling_rev IS NOT (SELECT lowered_rev FROM permission_ceiling WHERE operation = permission_grants.operation)
+           OR account_gen IS NOT (SELECT connected_at_ms FROM connector_accounts WHERE account_id = permission_grants.account_id))`,
+        [holder, r.accountId, r.operation, r.scopeKey, POLICY_REV], 'superseded', input.at, input.onlyIf,
+      ),
       stmt(
         `INSERT INTO permission_grants (id, holder, holder_member, account_id, account_gen, operation, scope_json, scope_key, per_day,
            policy_rev, granted_by, granted_role, ceiling_rev, source_action, granted_at_ms, stamp)
          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, c.lowered_rev, ?, ?, ?
-         FROM permission_ceiling c WHERE c.operation = ? AND c.enabled = 1 AND EXISTS (${input.onlyIf.sql})
+         FROM permission_ceiling c WHERE c.operation = ? AND c.enabled = 1 AND ? = ?
+           AND EXISTS (SELECT 1 FROM connector_accounts ca WHERE ca.account_id = ? AND ca.connected_at_ms = ?
+             AND (ca.disconnected_at_ms IS NULL OR ca.disconnected_at_ms < ca.connected_at_ms))
+           AND EXISTS (SELECT 1 FROM members m WHERE m.id = ? AND m.kind = 'person' AND m.status = 'active' AND (m.role = 'admin' OR ? = 'member'))
+           AND EXISTS (${input.onlyIf.sql})
          ON CONFLICT DO NOTHING`,
         id, holder, input.holderMemberId, r.accountId, r.accountGen, r.operation, JSON.stringify(r.scope), r.scopeKey, input.perDay,
-        r.policyRev, input.at.actorId, input.grantedRole, input.sourceAction, input.at.nowMs, stamp, r.operation, ...input.onlyIf.params,
+        r.policyRev, input.at.actorId, input.grantedRole, input.sourceAction, input.at.nowMs, stamp, r.operation, r.policyRev, POLICY_REV,
+        r.accountId, r.accountGen, input.holderMemberId, input.grantedRole, ...input.onlyIf.params,
       ),
       lineWhere(
         {
@@ -107,11 +123,19 @@ export function alwaysAllowStmts(input: AlwaysAllowInput): { id: string; stamp: 
   }
 }
 
-/** The live grant for this holder, account, operation and scope, or null. */
+/**
+ * A grant that still means something: unrevoked, made under the current policy, under the ceiling as it is now
+ * (enabled, at the same `lowered_rev`), and on the account's current generation. As SQL on `permission_grants` aliased `g`, with its one parameter.
+ */
+const CURRENT = `g.revoked_at_ms IS NULL AND g.policy_rev = ?
+  AND EXISTS (SELECT 1 FROM permission_ceiling gc WHERE gc.operation = g.operation AND gc.enabled = 1 AND gc.lowered_rev = g.ceiling_rev)
+  AND EXISTS (SELECT 1 FROM connector_accounts ga WHERE ga.account_id = g.account_id AND ga.connected_at_ms = g.account_gen)`
+
+/** The current grant for this holder, account, operation and scope, or null (a dead one isn't returned). */
 export function liveGrant(db: D1Database, key: { holder: string; accountId: string; operation: WriteOperationKey; scopeKey: string }): Promise<GrantRow | null> {
   return first<GrantRow>(db, stmt(
-    'SELECT * FROM permission_grants WHERE holder = ? AND account_id = ? AND operation = ? AND scope_key = ? AND revoked_at_ms IS NULL',
-    key.holder, key.accountId, key.operation, key.scopeKey,
+    `SELECT g.* FROM permission_grants g WHERE g.holder = ? AND g.account_id = ? AND g.operation = ? AND g.scope_key = ? AND ${CURRENT}`,
+    key.holder, key.accountId, key.operation, key.scopeKey, POLICY_REV,
   ))
 }
 
@@ -153,6 +177,13 @@ export const revokeAccountGrantsStmts = (accountId: string, keepGen: number | nu
     ? revokeWhere('account_id = ?', [accountId], 'account_disconnected', at, when)
     : revokeWhere('account_id = ? AND account_gen <> ?', [accountId, keepGen], 'account_reconnected', at, when)
 
+/**
+ * A Slack channel taken off the list (`channel_unlisted`): every grant to post there ends, so listing it again never
+ * brings an old grant back. `when`: the channel's row was stamped removed by this write.
+ */
+export const revokeChannelGrantsStmts = (channelId: string, at: At, when: Exists): Stmt[] =>
+  revokeWhere("json_extract(scope_json, '$.channelId') = ?", [channelId], 'channel_unlisted', at, when)
+
 // ---------- the person's list and remove (routes in server/api/permissions.ts) ----------
 
 /** Who reads or removes: a brand person. Admins see and remove any grant; a member only their own (N15). */
@@ -167,7 +198,7 @@ const TOOL: Readonly<Record<WriteOperationKey, string>> = { 'shopify.order.tag_a
 export function permissionOf(r: ListRow, viewer: Viewer): Permission {
   const scope = JSON.parse(r.scope_json) as Record<string, string>
   const tool = TOOL[r.operation]
-  const where = r.operation === 'slack.channel.post' ? `#${r.channel_name ?? 'a channel no longer listed'}` : scope.shop ?? r.account_id
+  const where = r.operation === 'slack.channel.post' ? (r.channel_name === null ? 'a channel no longer listed' : `#${r.channel_name}`) : scope.shop ?? r.account_id
   return {
     id: r.id,
     rev: r.rev,
@@ -184,8 +215,8 @@ export function permissionOf(r: ListRow, viewer: Viewer): Permission {
 }
 
 const LIST = `SELECT g.*, nc.name AS channel_name FROM permission_grants g
-  LEFT JOIN notify_channels nc ON nc.channel_id = json_extract(g.scope_json, '$.channelId')
-  WHERE g.revoked_at_ms IS NULL`
+  LEFT JOIN notify_channels nc ON nc.channel_id = json_extract(g.scope_json, '$.channelId') AND nc.removed_at_ms IS NULL
+  WHERE ${CURRENT}`
 
 /** An active brand person of this role, as a statement condition (the actor checked inside the write). */
 const ACTIVE_PERSON = "SELECT 1 FROM members WHERE id = ? AND kind = 'person' AND status = 'active' AND role = ?"
@@ -193,9 +224,11 @@ const ACTIVE_PERSON = "SELECT 1 FROM members WHERE id = ? AND kind = 'person' AN
 export type RemoveOutcome = { ok: Permission[] } | { conflict: Permission } | { refused: 'not_found' }
 
 export function permissionStore({ db, hook = s => s }: { db: D1Database; hook?: AuditHook }) {
+  // An admin's wider view is checked against the members row, not the principal: a role lowered since sign-in sees only
+  // its own grants.
   const visible = async (viewer: Viewer): Promise<ListRow[]> => (viewer.role === 'admin'
-    ? all<ListRow>(db, stmt(`${LIST} ORDER BY g.granted_at_ms DESC, g.id DESC`))
-    : all<ListRow>(db, stmt(`${LIST} AND g.holder = ? ORDER BY g.granted_at_ms DESC, g.id DESC`, memberHolder(viewer.memberId))))
+    ? all<ListRow>(db, stmt(`${LIST} AND (g.holder = ? OR EXISTS (${ACTIVE_PERSON})) ORDER BY g.granted_at_ms DESC, g.id DESC`, POLICY_REV, memberHolder(viewer.memberId), viewer.memberId, 'admin'))
+    : all<ListRow>(db, stmt(`${LIST} AND g.holder = ? ORDER BY g.granted_at_ms DESC, g.id DESC`, POLICY_REV, memberHolder(viewer.memberId))))
 
   return {
     /** This person's live grants; for an admin, every live grant of the brand. Newest first. */
