@@ -9,7 +9,7 @@ describe('the BrandAgent registry entry', () => {
   const entry = chatTables.find(e => e.kind === 'do' && e.name === 'BrandAgent')!
   it('lists every place the object keeps a member id', () => {
     expect([...entry.personKeys].sort()).toEqual([
-      'authority.id', 'chat_state.owner_id', 'events.json:$.by', 'flags.value', 'run_tokens.member_id', 'runs.owner_id', 'turns.owner_id',
+      'authority.id', 'chat_state.owner_id', 'events.json:$.by', 'flags.value', 'jobs.owner_id', 'run_tokens.member_id', 'runs.owner_id', 'turns.owner_id',
     ])
   })
   it('names only tables and columns the object has', () => inAgent(async h => {

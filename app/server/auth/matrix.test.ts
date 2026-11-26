@@ -342,6 +342,9 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   // Stage 1 M2-A, rows 110 and 111: brand people only (the store decides whose permission).
   'GET /api/permissions': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
   'POST /api/permissions/:id/remove': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  // Rows 100 and 101 (Stage 1 M1-B): a chat's long job and its Cancel, the owner's only (route 49's access).
+  'GET /api/chats/:id/job': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
+  'POST /api/jobs/:id/cancel': ['obj', 'obj', 'no', 'no', 'no', 'no', 'no'],
   // Stage 1 M2-B, rows 120 to 124: brand people only (the outbox decides whose card).
   'GET /api/actions': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
   'GET /api/actions/:id': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],

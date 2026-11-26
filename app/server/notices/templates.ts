@@ -50,4 +50,8 @@ export const NOTICE_TEMPLATES: Readonly<Record<string, NoticeTemplate>> = {
   restore_reconciled: { source: 'approvals', text: 'Sends checked after a restore', who: 'Inhouse', fields: {}, body: { max: 300, optional: true } },
   question_waiting: { source: 'questions', text: 'A question is waiting', who: 'Inhouse', fields: {}, body: { max: 300, optional: true } },
   question_closed: { source: 'questions', text: 'A question was closed', who: 'Inhouse', fields: {}, body: { max: 300, optional: true } },
+  // Stage 1 M1-B (N3): a long job's one notice, to its owner, bell only. `job_stopped` says why in a fixed server line
+  // (jobs/notice.ts), and for the budget what to raise.
+  job_finished: { source: 'jobs', text: 'A long job finished', who: 'Your Inhouse agent', fields: {} },
+  job_stopped: { source: 'jobs', text: 'A long job stopped', who: 'Your Inhouse agent', fields: {}, body: { max: 300 } },
 }
