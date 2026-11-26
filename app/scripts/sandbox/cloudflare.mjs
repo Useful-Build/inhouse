@@ -180,7 +180,8 @@ export function cloudflare({ token, accountId, fetchImpl = fetch, now = Date.now
       const prefix = `${accountId}/`
       const out = []
       for (const [repo, tags] of Object.entries(repos)) {
-        if (!Array.isArray(tags)) throw new CloudflareError(`the registry catalog's ${JSON.stringify(repo)} has no tag list`)
+        // The repository's name stays out of the message: it can be another product's, and this log is public.
+        if (!Array.isArray(tags)) throw new CloudflareError('a registry catalog entry has no tag list')
         const name = repo.replace(/^\/+/, '')
         const plain = tags.filter(t => typeof t === 'string' && IMAGE_TAG.test(t))
         if (name.startsWith(prefix) && plain.length > 0) out.push({ name: name.slice(prefix.length), tags: plain })
