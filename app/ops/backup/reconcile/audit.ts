@@ -19,6 +19,7 @@ import { SYSTEM_MEMBER_ID } from '../../../server/db/ids.ts'
 import { FORMER_MEMBER } from '../../../server/db/members.ts'
 import type { At } from '../../../server/db/members.ts'
 import { runBatch } from '../../../server/db/sql.ts'
+import { HOLD_LINES } from '../../../server/outbox/restore-hold.ts'
 import { isMemberId } from '../../delete/r2.ts'
 import { encodeRow, insertPartSql, isRowLine, linesAsArray, partLines, sha256, tableColumns } from '../format.ts'
 import { BackupManifestSchema, SnapshotManifestSchema } from '../manifest.ts'
@@ -101,8 +102,16 @@ async function targetLines(target: D1Database, columns: readonly string[], after
 }
 
 const PLACEHOLDER = 'restore.member_placeholder'
-/** A placeholder row's `req_id`: which restore wrote it, so a re-run finds every one (and writes any line still missing). */
+/**
+ * A placeholder row's `req_id`: which restore wrote it, so a re-run finds every one (and writes any line still missing).
+ * The outbox hold's lines (step 4, server/outbox/restore-hold.ts) carry it too.
+ */
 const stampOf = (restoreId: string) => `restore:${restoreId}`
+export const restoreStamp = stampOf
+
+/** This restore's own step-4 lines (the outbox hold's): its two line kinds under this restore's `req_id`, nothing else. */
+const holdLines = async (target: D1Database, restoreId: string): Promise<number[]> =>
+  (await target.prepare(`SELECT id FROM audit_log WHERE ${HOLD_LINES}`).bind(stampOf(restoreId)).all<{ id: number }>()).results.map(r => r.id)
 
 /** This restore's placeholder lines in the target, by member id (their ids, so the conflict check can allow them). */
 async function placeholderLines(target: D1Database, restoreId: string): Promise<Map<string, number>> {
@@ -129,7 +138,7 @@ export async function reappendAudit(bucket: R2Bucket, target: D1Database, record
   const inTarget = await targetLines(target, columns, afterId)
   const ours = await placeholderLines(target, record.restoreId)
   // This restore's own lines aren't from the source: a re-run after a failed record write must not see a conflict.
-  for (const id of [...ours.values(), ...await confirmedLines(target, record.restoreId)]) inTarget.delete(id)
+  for (const id of [...ours.values(), ...await confirmedLines(target, record.restoreId), ...await holdLines(target, record.restoreId)]) inTarget.delete(id)
   const toWrite: string[] = []
   for (const l of lines) {
     const there = inTarget.get(idOf(l))
