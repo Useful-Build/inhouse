@@ -20,7 +20,7 @@
 // outlives it inside that group. A process that left the group (setsid) is `SessionUsers.release()`'s to end (seam.ts).
 import { spawn, type ChildProcess } from 'node:child_process'
 import type { Duplex, Readable } from 'node:stream'
-import { SDK_MESSAGE_MAX_BYTES, type AuditEntry } from '../../../shared/protocol/index.ts'
+import { SDK_MESSAGE_MAX_BYTES, auditEntryForPeer, type AuditEntry } from '../../../shared/protocol/index.ts'
 import { LOCAL_LINE_MAX_BYTES, LineReader, encodeLine, type LineResult } from '../protocol/ndjson.ts'
 import { capSdkMessage, monotonicMs, parseSessionMessage, type RootMessage, type RunConfig, type SessionEvent } from '../protocol/local.ts'
 import type { SessionUser } from '../session/seam.ts'
@@ -87,6 +87,8 @@ export function hostSession(opts: {
   child: ChildProcess
   stream: RunStream
   config: RunConfig
+  /** The run's protocol version with the Worker: the `audit` run event drops `agentId` and `inputSha256` below v4. */
+  protocol: number
   stopGraceMs: number
   log: (entry: Record<string, unknown>) => void
   /**
@@ -198,7 +200,7 @@ export function hostSession(opts: {
           if (!ok) return nack(id, 'the Worker did not record the entry')
           if (stream.ended || monotonicMs() >= expiresAt) return nack(id, stream.ended ? 'the run has ended' : 'the entry expired before the Worker recorded it')
           // The trace copy; the durable one is the Worker's.
-          stream.emit({ type: 'audit', entry })
+          stream.emit({ type: 'audit', entry: auditEntryForPeer(entry, opts.protocol) })
           send({ type: 'audit_ack', id })
         },
         () => nack(id, 'the Worker did not record the entry'),

@@ -10,7 +10,10 @@ import {
   PROTOCOL_VERSION,
   RUN_REFUSAL_STATUS,
   RUN_START_MAX_BYTES,
+  HELPER_START_KEYS,
+  HELPERS_VERSION,
   RunStart,
+  auditEntryForPeer,
   type AuditEntry,
   type AuditPost,
   type ErrorBody,
@@ -56,6 +59,14 @@ type LiveRun = {
   checkpoint: CheckpointState | null
   /** The audit entries posted so far (the next one's `n`). */
   audits: number
+  /**
+   * The protocol version the Worker started the run with (its `POST /runs` header). An audit entry carries `agentId` and
+   * `inputSha256` to the Worker only at `HELPERS_VERSION` or above, on both of its wire paths (`AuditPost` here and the
+   * `audit` run event in session-host.ts): a v3 Worker's strict schema would refuse them.
+   */
+  protocol: number
+  /** The start asked for the `actions` MCP server (`RunStart.actions`); the proxy's `/actions/` is closed otherwise. */
+  actions: boolean
 }
 
 export type RootDeps = {
@@ -94,7 +105,7 @@ export type Root = {
    * The live run's token for a session uid; null when there's none, or more than one (never guess). For the `files`
    * route, null too once the run's terminal event has gone out.
    */
-  tokenForUid(uid: number, route?: string): string | null
+  tokenForUid(uid: number, route?: string, asked?: string): string | null
   liveCount(): number
   /**
    * JSON bytes of a run's events not yet acked by the egress; null for no such run. Bounded by backpressure: past the
@@ -128,8 +139,11 @@ export function createRoot(deps: RootDeps): Root {
   const pushing = new Set<Pusher>()
   let stopping = false
 
-  const tokenForUid = (uid: number, route?: string): string | null => {
+  const tokenForUid = (uid: number, route?: string, asked?: string): string | null => {
     const token = pickToken(runs.values(), uid)
+    // The `actions` server only for a run whose start asked for it (N6): the session has no such server otherwise, and
+    // nothing else on the uid may reach the write tools' route.
+    if (token !== null && asked === 'actions' && ![...runs.values()].find((r) => r.uid === uid)!.actions) return null
     // Once the run's terminal event has gone out (its timeout, say), no file is saved for it: one uploaded now would
     // have no `file_saved`. The store stays open, so the session's checkpoint still lands.
     if (token !== null && route === 'files' && [...runs.values()].find((r) => r.uid === uid)!.stream?.ended) return null
@@ -149,7 +163,7 @@ export function createRoot(deps: RootDeps): Root {
     chats.delete(live.chatId)
   }
 
-  async function startRun(req: IncomingMessage, res: ServerResponse) {
+  async function startRun(req: IncomingMessage, res: ServerResponse, protocol: number) {
     if (stopping) return json(res, 503, { error: 'the runner is stopping' })
     const body = await readJson(req)
     if (stopping) return json(res, 503, { error: 'the runner is stopping' })
@@ -158,6 +172,10 @@ export function createRoot(deps: RootDeps): Root {
     // Issue messages and paths only: zod doesn't echo input values unless asked, so the token can't come back here.
     if (!parsed.success) return json(res, 400, { error: z.prettifyError(parsed.error).slice(0, 2000) })
     const { runToken, ...config } = parsed.data satisfies { runToken: string } & RunConfig
+    // Below v4 no Worker may send the helper keys (it strips them for an older runner, `startForPeer`): one that did
+    // isn't speaking the version it named.
+    const early = HELPER_START_KEYS.filter((k) => config[k] !== undefined)
+    if (protocol < HELPERS_VERSION && early.length > 0) return json(res, 400, { error: `a v${protocol} start carries ${early.join(', ')}, which come only from v${HELPERS_VERSION}` })
     if (runs.has(config.runId) || released.has(config.runId)) return refuse(res, 'run_live')
     if (chats.has(config.chatId)) return refuse(res, 'chat_live')
 
@@ -177,6 +195,8 @@ export function createRoot(deps: RootDeps): Root {
       queryRan: false,
       checkpoint: null,
       audits: 0,
+      protocol,
+      actions: config.actions === true,
     }
     runs.set(config.runId, live)
     chats.add(config.chatId)
@@ -275,7 +295,7 @@ export function createRoot(deps: RootDeps): Root {
     if (wait <= 0) return false
     const abort = new AbortController()
     const deadline = timers.setTimeout(() => abort.abort(), wait)
-    const post: AuditPost = { turnId: live.runId, n: live.audits++, entry }
+    const post: AuditPost = { turnId: live.runId, n: live.audits++, entry: auditEntryForPeer(entry, live.protocol) }
     try {
       const res = await deps.fetch(`${deps.egressUrl.replace(/\/$/, '')}/audit/`, {
         method: 'POST',
@@ -326,6 +346,7 @@ export function createRoot(deps: RootDeps): Root {
         config,
         stopGraceMs: deps.stopGraceMs,
         log: deps.log,
+        protocol: live.protocol,
         recordAudit: (entry, expiresAt) => recordAudit(live, entry, expiresAt),
         onQueryStarted: () => void (live.queryRan = true),
         onStoreResult: (cp) => void (live.checkpoint = cp),
@@ -413,7 +434,8 @@ export function createRoot(deps: RootDeps): Root {
       return json(res, 426, { error: 'unsupported protocol version', version: PROTOCOL_VERSION })
     }
 
-    if (method === 'POST' && url.pathname === '/runs') return startRun(req, res)
+    // The header is an accepted version's canonical decimal (checked above).
+    if (method === 'POST' && url.pathname === '/runs') return startRun(req, res, Number(header))
     const status = /^\/runs\/([A-Za-z0-9_-]{1,64})$/.exec(url.pathname)
     if (method === 'GET' && status) return json(res, 200, runStatus(status[1]!))
     const action = /^\/runs\/([A-Za-z0-9_-]{1,64})\/(interrupt|stop)$/.exec(url.pathname)

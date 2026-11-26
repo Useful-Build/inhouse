@@ -34,7 +34,7 @@ import { AUDIT_ACK_MARGIN_MS, LEFT_OUT_NOTE_MAX_CHARS, SDK_MESSAGE_MAX_DEPTH, le
 import { monotonicMs, parseSessionMessage } from '../../src/protocol/local.ts'
 import { sessionEnv } from '../../src/session/env.ts'
 import type { QueryGuards, RunContext } from '../../src/session/seam.ts'
-import { AuditRefusedError } from '../../src/guards/audit.ts'
+import { AUDIT_HOOK_TIMEOUT_S, AuditRefusedError } from '../../src/guards/audit.ts'
 import { sessionPaths, userPaths } from '../../src/guards/paths.ts'
 import { poolUserName } from '../../src/guards/users.ts'
 import { RunConfig } from '../../src/protocol/local.ts'
@@ -160,8 +160,9 @@ describe('runSession', () => {
       tools: ['Read'],
     })
     expect(options.resume).toBeUndefined()
-    // The model settings (Claude Code's env-vars page): every alias on a model the egress allows, subagents forced onto
-    // the turn's model, compaction at 600,000 (the 1M window kept). The session env comes first, merged, not replaced.
+    // The model settings (Claude Code's env-vars page): every alias on a model the egress allows, the default subagent
+    // model the turn's (not forced: a helper's definition outranks it, N6), compaction at 600,000 (the 1M window kept).
+    // The session env comes first, merged, not replaced.
     expect(options.env).toEqual({
       PATH: '/bin',
       ANTHROPIC_DEFAULT_HAIKU_MODEL: 'claude-haiku-5-5',
@@ -169,9 +170,9 @@ describe('runSession', () => {
       ANTHROPIC_DEFAULT_OPUS_MODEL: 'claude-sonnet-5-5',
       ANTHROPIC_DEFAULT_FABLE_MODEL: 'claude-sonnet-5-5',
       CLAUDE_CODE_SUBAGENT_MODEL: 'claude-sonnet-5-5',
-      CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1',
       CLAUDE_CODE_AUTO_COMPACT_WINDOW: '600000',
     })
+    expect(options.env).not.toHaveProperty('CLAUDE_CODE_SUBAGENT_MODEL_FORCE')
     expect(options.env).not.toHaveProperty('CLAUDE_CODE_DISABLE_1M_CONTEXT')
     expect(options.systemPrompt).toBe(c.systemPrompt)
     // No proxy in this env: no inhouse server (production's sessionEnv always sets it; the next test).
@@ -189,6 +190,22 @@ describe('runSession', () => {
     const { options } = q.calls[0]!
     expect(options.mcpServers).toEqual({ inhouse: { type: 'http', url: 'http://127.0.0.1:8081/mcp/' }, apps: { type: 'http', url: 'http://127.0.0.1:8081/hub/' } })
     expect(options.systemPrompt).toBe('You answer for the brand.')
+  })
+
+  // Stage 1 (N6): the `actions` server is there only when the run config's `actions` is true; absent or false, the
+  // session has the two servers it has today.
+  it.each([
+    [undefined, false],
+    [false, false],
+    [true, true],
+  ])('the actions server (proxy /actions/) with actions %s: present %s', async (actions, present) => {
+    const q = fakeQuery([assistant, result])
+    const h = harness(q.query, testQueryGuards, { env: { INHOUSE_PROXY_URL: 'http://127.0.0.1:8081' } })
+    h.deliver({ type: 'run', config: config(actions === undefined ? {} : { actions }) })
+    await h.done
+    const servers = q.calls[0]!.options.mcpServers as Record<string, unknown>
+    expect(Object.keys(servers).sort()).toEqual(present ? ['actions', 'apps', 'inhouse'] : ['apps', 'inhouse'])
+    if (present) expect(servers.actions).toEqual({ type: 'http', url: 'http://127.0.0.1:8081/actions/' })
   })
 
   it('resume: true passes resume, not sessionId; "" is passed as the prompt', async () => {
@@ -1039,12 +1056,25 @@ describe('sessionEnv', () => {
         'PATH', 'HOME', 'TMPDIR', 'USER', 'LOGNAME', 'LANG', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_API_KEY', 'INHOUSE_PROXY_URL',
         'CLAUDE_CODE_DISABLE_AUTO_MEMORY', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'DISABLE_AUTOUPDATER',
         'MCP_CONNECTION_NONBLOCKING', 'MCP_CONNECT_TIMEOUT_MS',
+        // Stage 1 (N6, N14): the helpers' caps, the foreground switches and the MCP tool timeout.
+        'CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH', 'CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS', 'CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS',
+        'CLAUDE_CODE_FORK_SUBAGENT', 'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS', 'CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS', 'MCP_TOOL_TIMEOUT',
       ].sort(),
     )
     expect(env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${port}/model`)
     expect(new URL(env.INHOUSE_PROXY_URL!).username + new URL(env.INHOUSE_PROXY_URL!).password).toBe('')
     expect(env.MCP_CONNECTION_NONBLOCKING).toBe('0')
     expect(env.MCP_CONNECT_TIMEOUT_MS).toBe('15000')
+    // Literal values (the env-vars page, read 2026-11-26): one layer of helpers, four at once, no built-in agents, no
+    // forks, nothing in the background, MCP calls up to 180 s.
+    expect(env.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH).toBe('1')
+    expect(env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS).toBe('4')
+    expect(env.CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS).toBe('1')
+    expect(env.CLAUDE_CODE_FORK_SUBAGENT).toBe('0')
+    expect(env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe('1')
+    expect(env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS).toBe('0')
+    expect(env.MCP_TOOL_TIMEOUT).toBe('180000')
+    expect(env).not.toHaveProperty('CLAUDE_CODE_SUBAGENT_MODEL_FORCE')
   })
 })
 
@@ -1117,7 +1147,10 @@ describe('the production wiring', () => {
     const p = sessionPaths(config.chatId)
     const env = sessionEnv({ uid: 30001, gid: 30001, user: 's01', home: userPaths('s01').home, workDir: p.workDir }, 8081)
     const o = productionQueryGuards().apply(baseOptions(config, p.workDir, cliEnv(env), new AbortController()), config, run!)
-    const audit = o.hooks!.PreToolUse!.filter((m) => m.matcher === undefined)
+    // Two matchers take every tool: the helper hook, then the audit hook (the one with the engine timeout).
+    const every = o.hooks!.PreToolUse!.filter((m) => m.matcher === undefined)
+    expect(every).toHaveLength(2)
+    const audit = every.filter((m) => m.timeout === AUDIT_HOOK_TIMEOUT_S)
     expect(audit).toHaveLength(1)
     const m = audit[0]!
     expect(m.onFailure).toBe('block')
