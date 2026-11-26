@@ -33,6 +33,8 @@ import { SWEEP_EVERY_MS, sweepBy } from './authority.ts'
 import { auditInsert } from '../../db/audit.ts'
 import { runBatch } from '../../db/sql.ts'
 import type { EgressRoute, RunGrant, TokenRefusal } from './tokens.ts'
+import { doPauseState, lagSince } from '../../outbox/gate.ts'
+import type { Lag } from '../../ops/signals/needs-check.ts'
 
 export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   private core!: AgentCore
@@ -289,6 +291,12 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   }
   async personData(p: { personId: string; mode: 'count' | 'delete' }): Promise<PersonDataAnswer> {
     return this.core.personData(p.personId, p.mode)
+  }
+
+  // ---------- Stage 1 M2-B: the outbox gate's health signal ----------
+  /** This object's pause generation, and since when it has seen the outbox's gate behind it (null: not behind). */
+  async outboxLag(): Promise<Lag> {
+    return { pauseGen: doPauseState(this.ctx.storage.sql).pauseGen, lagSinceMs: lagSince(this.ctx.storage.sql) }
   }
 }
 

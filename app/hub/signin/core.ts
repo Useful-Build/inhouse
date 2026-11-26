@@ -48,7 +48,7 @@ import { checkVariables } from '../scope/variables'
 import { API_VERSION, requestGrant, sendRead, type ShopifyConfig, type Upstream } from './providers/shopify'
 // P5 (p5-w4)
 import { callWeb, LIST_LIMIT, parseChannel, POSTABLE_CHANNEL, refusalFor, type WebOutcome } from '../connectors/slack/web'
-import type { SlackChannel, SlackPostRequest } from '../connectors/slack/contract'
+import type { SlackChannel, SlackPostExpect, SlackPostRequest } from '../connectors/slack/contract'
 import { boundNotice, composeSlack, isAppOrigin } from '../../shared/notify/bound'
 import { linkPath } from '../../shared/notify/links'
 
@@ -1397,10 +1397,10 @@ export class SignInCore {
    * Slack, then `chat.postMessage` with a parameter object built here from exactly `channel`, `text`, `unfurl_links` and
    * `unfurl_media`, so no caller can add `link_names`, `parse`, `blocks`, `thread_ts` or anything else.
    */
-  async slackPost(accountId: string, req: SlackPostRequest): Promise<HubResult<{ ts: string }>> {
+  async slackPost(accountId: string, req: SlackPostRequest, expect?: SlackPostExpect): Promise<HubResult<{ ts: string }>> {
     const started = this.#d.now()
     const channelId = typeof req === 'object' && req !== null && typeof req.channelId === 'string' ? req.channelId : ''
-    const result = await this.#post(accountId, req)
+    const result = await this.#post(accountId, req, expect)
     log('hub_delivery', {
       accountId,
       code: result.ok ? 'ok' : result.error.code,
@@ -1410,8 +1410,26 @@ export class SignInCore {
     return result
   }
 
-  async #post(accountId: string, req: SlackPostRequest): Promise<HubResult<{ ts: string }>> {
+  /** Synchronous: the stored record against the outbox's expectation (N13). Null when the post may go. */
+  #postExpectRefusal(accountId: string, p: McpProvider | null, expect: SlackPostExpect): HubResult<never> | null {
+    const raw = this.#read()
+    if (!p || p.connector.id !== 'slack' || !raw || raw.accountId !== accountId || raw.kind !== 'oauth_mcp') return err('not_configured')
+    const r = normalize(raw)
+    if (r.paused) return err('paused')
+    if (r.state === 'failed') return err('credentials_rejected')
+    if (r.state !== 'active' || !r.token) return err('not_configured')
+    if (r.connectedAtMs !== expect.connectedAtMs) return err('connect_stale', 'connectedAtMs')
+    if (!sameScopeSet(r.scopes, requestedScopes(p.connector, p.clientConfig)) || !r.scopes.includes('chat:write')) {
+      return err('scope_mismatch', 'missing chat:write')
+    }
+    return null
+  }
+
+  async #post(accountId: string, req: SlackPostRequest, expect?: SlackPostExpect): Promise<HubResult<{ ts: string }>> {
     if (typeof req !== 'object' || req === null) return err('invalid_args')
+    if (expect !== undefined && (typeof expect !== 'object' || expect === null || !Number.isSafeInteger(expect.connectedAtMs))) {
+      return err('invalid_args', 'expect')
+    }
     if (typeof req.channelId !== 'string' || !POSTABLE_CHANNEL.test(req.channelId)) return err('invalid_args', 'channelId')
     if (typeof req.title !== 'string' || typeof req.text !== 'string') return err('invalid_args')
     // The pure steps first, so a doomed post costs no token read, refresh or Slack call. Steps 1 and 2 again
@@ -1436,6 +1454,14 @@ export class SignInCore {
     if (!info.ok) return info
     const refused = refusalFor(info.value)
     if (refused) return err('connect_refused', refused)
+    if (expect !== undefined) {
+      // Stage 1 M2-C (N13): the outbox's post. The provider read is the last await; the record check below and the
+      // `chat.postMessage` send start with none in between, so a pause, disconnect or reconnect that landed during the
+      // token gate or `conversations.info` is seen here.
+      const p = await this.#provider(accountId)
+      const stale = this.#postExpectRefusal(accountId, p, expect)
+      if (stale) return stale
+    }
     const params = { channel: req.channelId, text: composeSlack(b.title, b.text, appLink), unfurl_links: 'false', unfurl_media: 'false' }
     const out = await callWeb(g.value.upstream, g.value.token, 'chat.postMessage', params)
     if (out.kind !== 'ok') return this.#webError(out)

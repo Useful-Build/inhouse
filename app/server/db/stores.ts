@@ -64,6 +64,10 @@ import type { PrivacyRequestStore } from '../webhooks/shopify-privacy/store.ts'
 import { permissionStore } from '../permissions/grants.ts'
 import type { PermissionStore } from '../permissions/grants.ts'
 
+// Stage 1 M2-B's slot.
+import { outboxStore } from '../outbox/store.ts'
+import type { OutboxApiStore } from '../outbox/store.ts'
+
 export interface Stores extends AuthStores {
   members: MemberDirectory & MemberStore
   grants: GrantStore & GrantStoreImpl
@@ -123,6 +127,9 @@ export interface Stores extends AuthStores {
 
   /** Stage 1 M2-A: a person's "Always allow" permissions (routes 110 and 111). */
   permissions: PermissionStore
+
+  /** Stage 1 M2-B: the outbox's cards and a person's answers, Undo and resolve (routes 120 to 124). */
+  outbox: OutboxApiStore
 }
 
 /** What the stores read from the Worker's env. `AUDIT_HASH_KEY` is a secret on the product Worker (a var in the test build). */
@@ -204,5 +211,7 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
     dataExport: dataExportStore({ db, bucket: env.FILES }),
 
     permissions: permissionStore({ db, hook }),
+
+    outbox: outboxStore({ db, hook }),
   }
 }

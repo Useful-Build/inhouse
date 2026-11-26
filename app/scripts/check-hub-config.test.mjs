@@ -36,6 +36,7 @@ const EXPECTED = {
   'fail-secret-define-env-dot.jsonc': ['secret-in-define'],
   'fail-unknown-var.jsonc': ['unknown-var'],
   'fail-secret-slack-client-secret.jsonc': ['secret-in-vars'],
+  'fail-secret-shopify-write-client-secret.jsonc': ['secret-in-vars'],
   'fail-alias.jsonc': ['bundler'],
   'fail-no-bundle.jsonc': ['bundler'],
   'fail-build.jsonc': ['bundler'],
@@ -45,6 +46,12 @@ const EXPECTED = {
   'fail-signin-binding-script.jsonc': ['signin-binding'],
   'fail-signin-migration.jsonc': ['signin-migration'],
   'fail-main.jsonc': ['main'],
+  // Stage 1 M2-C: the write-scoped Shopify SignIn's binding and its v2 migration, together.
+  'fail-write-signin-binding.jsonc': ['write-signin-binding'],
+  'fail-write-signin-binding-script.jsonc': ['write-signin-binding'],
+  'fail-write-signin-migration.jsonc': ['write-signin-migration'],
+  'fail-write-signin-migration-kv.jsonc': ['write-signin-migration'],
+  'fail-write-signin-migration-tag.jsonc': ['write-signin-migration'],
   // P5 W2: code mode's loader.
   'fail-worker-loaders-two.jsonc': ['worker-loaders'],
   'fail-worker-loaders-name.jsonc': ['worker-loaders'],

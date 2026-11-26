@@ -24,7 +24,7 @@ import {
   type ShopifyReadClient,
 } from '../registry/registry'
 import { parseShopifyConfig, type Upstream } from './providers/shopify'
-import type { SlackPostRequest } from '../connectors/slack/contract'
+import type { SlackPostExpect, SlackPostRequest } from '../connectors/slack/contract'
 import { SignInCore, type McpCallRequest, type McpProvider, type QueryRequest, type SyncStore } from './core'
 
 type HubEnv = Env & { INHOUSE_TEST_BUILD?: string }
@@ -308,8 +308,8 @@ export class SignIn extends DurableObject<Env> {
   slackChannelList(accountId: string, cursor?: string) {
     return this.#guard(() => this.#core.slackChannelList(accountId, cursor))
   }
-  slackPost(accountId: string, req: SlackPostRequest) {
-    return this.#guard(() => this.#core.slackPost(accountId, req))
+  slackPost(accountId: string, req: SlackPostRequest, expect?: SlackPostExpect) {
+    return this.#guard(() => this.#core.slackPost(accountId, req, expect))
   }
   override async alarm(): Promise<void> {
     try {

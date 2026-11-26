@@ -58,6 +58,8 @@ const NO_BRAND_SKILL = 'bs_e2eNobodyAAAAAAAAAAAAA'
 const NO_PERMISSION = 'pg_e2eNobodyAAAAAAAAAAAAA'
 /** A job id nobody has (`j_` + 22, jobs.ts `JobIdSchema`). */
 const NO_JOB = 'j_e2eNobodyAAAAAAAAAAAAA'
+/** An action id nobody has (`ac_` + 22, actions.ts `ActionIdSchema`). */
+const NO_ACTION = 'ac_e2eNobodyAAAAAAAAAAAAA'
 const ALL: Role[] = ['member', 'admin', 'inhouse']
 const PEOPLE: Role[] = ['member', 'admin']
 
@@ -198,6 +200,12 @@ export const CASES: Record<string, RouteCase> = {
   // Stage 1 M1-B (N3): a chat nobody has is 404; a well-formed job id nobody has is 404, nothing written.
   'GET /api/chats/:id/job': { design: d('personal', PEOPLE), path: `/api/chats/${NO_CHAT}/job`, passes: 404 },
   'POST /api/jobs/:id/cancel': { design: d('personal', PEOPLE), path: `/api/jobs/${NO_JOB}/cancel`, json: {}, passes: 404 },
+  // Stage 1 M2-B (N15): brand people only. No route makes an action, so the object routes answer 404 here.
+  'GET /api/actions': { design: d('baseline', PEOPLE), path: '/api/actions', passes: 200 },
+  'GET /api/actions/:id': { design: d('baseline', PEOPLE), path: `/api/actions/${NO_ACTION}`, passes: 404 },
+  'POST /api/actions/:id/answer': { design: d('baseline', PEOPLE), path: `/api/actions/${NO_ACTION}/answer`, json: { choice: 'deny', ifRev: 1 }, passes: 404 },
+  'POST /api/actions/:id/undo': { design: d('baseline', PEOPLE), path: `/api/actions/${NO_ACTION}/undo`, json: { ifRev: 1 }, passes: 404 },
+  'POST /api/actions/:id/resolve': { design: d('baseline', PEOPLE), path: `/api/actions/${NO_ACTION}/resolve`, json: { outcome: 'sent', ifRev: 1 }, passes: 404 },
 }
 
 /** The case for a row, or an error naming it (routes.spec.ts reports the gap on its own; this is for the specs that use it). */

@@ -47,6 +47,8 @@ import { closePrivacyRequest } from './webhooks/shopify-privacy/close.ts'
 import { checkExport, exportEverything } from './api/data-access.ts'
 // Stage 1 M2-A: the permissions a person can see and remove.
 import { listPermissions, removePermission } from './api/permissions.ts'
+// Stage 1 M2-B: the outbox's cards and a person's answers to them.
+import { answerAction, getAction, listActions, resolveAction, undoAction } from './api/actions.ts'
 // P5 (p5-w1 section 9): the Inhouse team connects an OAuth tool through the hub's ConnectGateway.
 import { connectCallback, startConnect } from './api/connect.ts'
 import { toolsDepsOf, toolsHandlers } from './api/tools.ts'
@@ -242,6 +244,12 @@ export const routes: readonly Route[] = [
   // Stage 1 M1-B (N3): a chat's long job, and its owner's Cancel.
   /* 100 */ { method: 'GET', pattern: '/api/chats/:id/job', handler: getChatJob },
   /* 101 */ { method: 'POST', pattern: '/api/jobs/:id/cancel', handler: cancelJob },
+  // Stage 1 M2-B (rows 120 to 129): the outbox's cards; answering, undoing and resolving one.
+  /* 120 */ { method: 'GET', pattern: '/api/actions', handler: listActions },
+  /* 121 */ { method: 'GET', pattern: '/api/actions/:id', handler: getAction },
+  /* 122 */ { method: 'POST', pattern: '/api/actions/:id/answer', handler: answerAction },
+  /* 123 */ { method: 'POST', pattern: '/api/actions/:id/undo', handler: undoAction },
+  /* 124 */ { method: 'POST', pattern: '/api/actions/:id/resolve', handler: resolveAction },
 ]
 
 /** A webhook route: served by server/index.ts before sign-in, its handler authenticating the request itself. */

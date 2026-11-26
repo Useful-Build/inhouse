@@ -3,15 +3,19 @@
 // bounds with the one escape and the fixed parameters by construction. The request is rebuilt from its four keys, so
 // nothing else a caller puts on it reaches the SignIn.
 import type { HubResult } from '../../index/contract'
-import type { SlackPostRequest } from './contract'
+import type { SlackPostExpect, SlackPostRequest } from './contract'
 
 export const SLACK_ACCOUNT = 'slack:workspace' as const
 
 /** The Slack SignIn stub method the poster calls (`signInFor(env, SLACK_ACCOUNT)`). */
-export type SlackPostStub = { slackPost(accountId: string, req: SlackPostRequest): Promise<HubResult<{ ts: string }>> }
+export type SlackPostStub = {
+  slackPost(accountId: string, req: SlackPostRequest, expect?: SlackPostExpect): Promise<HubResult<{ ts: string }>>
+}
 
-export function postToSlack(signIn: SlackPostStub, req: SlackPostRequest): Promise<HubResult<{ ts: string }>> {
+/** `expect` (the outbox only, N13): the account the post was approved against; delivery leaves it out. */
+export function postToSlack(signIn: SlackPostStub, req: SlackPostRequest, expect?: SlackPostExpect): Promise<HubResult<{ ts: string }>> {
   const clean: SlackPostRequest = { channelId: req.channelId, title: req.title, text: req.text }
   if (req.link !== undefined) clean.link = req.link
-  return signIn.slackPost(SLACK_ACCOUNT, clean)
+  if (expect === undefined) return signIn.slackPost(SLACK_ACCOUNT, clean)
+  return signIn.slackPost(SLACK_ACCOUNT, clean, { connectedAtMs: expect.connectedAtMs })
 }

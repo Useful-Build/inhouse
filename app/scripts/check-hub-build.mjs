@@ -78,6 +78,10 @@ function readCanaries() {
   if (!existsSync(shopifyUpstream)) fail(`${relative(root, shopifyUpstream)} is missing: there's no Shopify upstream canary to look for.`)
   const shopifyMatch = read(shopifyUpstream).match(/export const SHOPIFY_UPSTREAM_CANARY = '([^']+)'/)
   if (!shopifyMatch) fail(`no \`export const SHOPIFY_UPSTREAM_CANARY = '...'\` in ${relative(root, shopifyUpstream)}; the upstream's shape changed.`)
+  const shopifyWriteUpstream = join(root, 'test/upstreams/shopify/write/server.ts')
+  if (!existsSync(shopifyWriteUpstream)) fail(`${relative(root, shopifyWriteUpstream)} is missing: there's no Shopify write upstream canary to look for.`)
+  const shopifyWriteMatch = read(shopifyWriteUpstream).match(/export const SHOPIFY_WRITE_UPSTREAM_CANARY = '([^']+)'/)
+  if (!shopifyWriteMatch) fail(`no \`export const SHOPIFY_WRITE_UPSTREAM_CANARY = '...'\` in ${relative(root, shopifyWriteUpstream)}; the write upstream's shape changed.`)
   const mcpUpstream = join(root, 'test/upstreams/mcp/server.ts')
   if (!existsSync(mcpUpstream)) fail(`${relative(root, mcpUpstream)} is missing: there's no MCP upstream canary to look for.`)
   const mcpMatch = read(mcpUpstream).match(/export const MCP_UPSTREAM_CANARY = '([^']+)'/)
@@ -86,7 +90,13 @@ function readCanaries() {
   if (!existsSync(fakesHook)) fail(`${relative(root, fakesHook)} is missing: there's no test-fakes canary to look for.`)
   const fakesMatch = read(fakesHook).match(/export const HUB_FAKES_CANARY = '([^']+)'/)
   if (!fakesMatch) fail(`no \`export const HUB_FAKES_CANARY = '...'\` in ${relative(root, fakesHook)}; the hook's shape changed.`)
-  return { CANARY: canaryMatch[1], SHOPIFY_CANARY: shopifyMatch[1], MCP_CANARY: mcpMatch[1], FAKES_CANARY: fakesMatch[1] }
+  return {
+    CANARY: canaryMatch[1],
+    SHOPIFY_CANARY: shopifyMatch[1],
+    SHOPIFY_WRITE_CANARY: shopifyWriteMatch[1],
+    MCP_CANARY: mcpMatch[1],
+    FAKES_CANARY: fakesMatch[1],
+  }
 }
 
 // ---------- a bundle's files ----------
@@ -222,11 +232,12 @@ function moduleGraph({ inputs }) {
 function main() {
   const deployDir = flag('--deploy', join(root, 'dist-hub'))
   const testDir = flag('--test', join(root, 'dist-hub-test'))
-  const { CANARY, SHOPIFY_CANARY, MCP_CANARY, FAKES_CANARY } = readCanaries()
+  const { CANARY, SHOPIFY_CANARY, SHOPIFY_WRITE_CANARY, MCP_CANARY, FAKES_CANARY } = readCanaries()
 
   const PARTS = [
     ['canary string', canary(CANARY)],
     ['shopify upstream canary', canary(SHOPIFY_CANARY)],
+    ['shopify write upstream canary', canary(SHOPIFY_WRITE_CANARY)],
     ['mcp upstream canary', canary(MCP_CANARY)],
     ['test-fakes canary', canary(FAKES_CANARY)],
     ['test-fakes globals', fakesGlobals],

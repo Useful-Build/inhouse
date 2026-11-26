@@ -101,6 +101,16 @@ describe('state (failure 2)', () => {
       notes: { requests: [], revoked: [], refreshSends: [], toolCalls: [], issuedTokens: [...notesMcp.tokens.keys()], liveTokens: notesMcp.liveTokens() },
       web: { requests: [{ path: '/api/auth.test', method: 'POST', params: {}, authorized: false }], posts: [], violations: [] },
       shopify: { requests: [], issuedTokens: [...shopifyIssuedTokens] },
+      shopifyWrite: {
+        requests: [],
+        writes: [],
+        orders: [
+          { id: 'gid://shopify/Order/9001', name: '#9001', tags: ['existing'] },
+          { id: 'gid://shopify/Order/9002', name: '#9002', tags: [] },
+          { id: 'gid://shopify/Order/9003', name: '#9003', tags: ['vip'] },
+        ],
+        faults: { 'shopify.order.tag_add': 'succeed' },
+      },
       connect: { bodies: [] },
       accounts: [],
     })

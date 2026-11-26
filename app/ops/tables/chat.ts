@@ -15,5 +15,7 @@ export const chatTables: readonly TableEntry[] = [
   { kind: 'd1', name: 'chat_messages', retention: 'retention_period', personKeys: ['author_id'], export: true },
   // 0101 (W1's second PR): the redacted audit of a turn's tool calls, by the turn's member.
   { kind: 'd1', name: 'tool_calls', retention: 'retention_period', personKeys: ['member_id'], export: true },
+  // Stage 1 M2-B: the object's `outbox_lag` (since when the outbox's gate has been behind it: a time and a generation, no
+  // person key) is covered by this class-level entry, as the object's other tables are.
   { kind: 'do', name: 'BrandAgent', retention: 'retention_period', personKeys: ['runs.owner_id', 'turns.owner_id', 'chat_state.owner_id', 'run_tokens.member_id', 'events.json:$.by', 'authority.id', 'flags.value', 'jobs.owner_id'], export: false },
 ]

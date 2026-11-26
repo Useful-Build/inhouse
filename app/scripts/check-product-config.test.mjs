@@ -47,19 +47,22 @@ const RULE_TEXT = {
   'pool-no-container': 'containers must be exactly one, for the Runner class',
   // P3 (p3-design 8.2): the gateway the egress calls must be named.
   'gateway-id-empty': 'vars.AI_GATEWAY_ID must name the AI Gateway',
-  // P4 (p4-h1.md OC 4), widened by P5 W1 (B2, 2026-11-21): exactly HUB → ReadGateway and HUB_CONNECT → ConnectGateway.
-  'hub-server-gateway': "services[0] binds ServerGateway: the product Worker binds the hub's HUB → ReadGateway, HUB_CONNECT → ConnectGateway, HUB_DELIVERY → DeliveryGateway only",
+  // P4 (p4-h1.md OC 4), widened by P5 W1, P5 W4, and Stage 1 M2-C: HUB, HUB_CONNECT, HUB_DELIVERY, HUB_WRITE.
+  'hub-server-gateway': "services[0] binds ServerGateway: the product Worker binds the hub's HUB → ReadGateway, HUB_CONNECT → ConnectGateway, HUB_DELIVERY → DeliveryGateway, HUB_WRITE → WriteGateway only",
   'hub-no-entrypoint': 'services[0] binds inhouse-hub with no entrypoint (its default export): bind ReadGateway',
   'hub-other-entrypoint': 'services[0].entrypoint must be ReadGateway for HUB, not "Admin"',
   'hub-second-entry': 'services must bind HUB exactly once (found 2)',
   'hub-missing': 'services must bind HUB exactly once (found 0)',
-  'hub-other-service': 'services[1] binds "other-worker": the product Worker binds the hub (HUB → ReadGateway, HUB_CONNECT → ConnectGateway, HUB_DELIVERY → DeliveryGateway) only',
-  'hub-binding-name': 'services[0] binds inhouse-hub as "SHOPIFY": its bindings are HUB, HUB_CONNECT and HUB_DELIVERY',
+  'hub-other-service': 'services[1] binds "other-worker": the product Worker binds the hub (HUB → ReadGateway, HUB_CONNECT → ConnectGateway, HUB_DELIVERY → DeliveryGateway, HUB_WRITE → WriteGateway) only',
+  'hub-binding-name': 'services[0] binds inhouse-hub as "SHOPIFY": its bindings are HUB, HUB_CONNECT, HUB_DELIVERY and HUB_WRITE',
   'hub-connect-missing': 'services must bind HUB_CONNECT exactly once (found 0)',
   'hub-connect-entrypoint': 'services[1].entrypoint must be ConnectGateway for HUB_CONNECT, not "DeliveryGateway"',
   // P5 W4 (B2, 2026-11-21): HUB_DELIVERY → DeliveryGateway joins the exact list.
   'hub-delivery-missing': 'services must bind HUB_DELIVERY exactly once (found 0)',
   'hub-delivery-entrypoint': 'services[2].entrypoint must be DeliveryGateway for HUB_DELIVERY, not "ConnectGateway"',
+  // Stage 1 M2-C (N13): HUB_WRITE → WriteGateway joins the exact list.
+  'hub-write-missing': 'services must bind HUB_WRITE exactly once (found 0)',
+  'hub-write-entrypoint': 'services[3].entrypoint must be WriteGateway for HUB_WRITE, not "ReadGateway"',
   'sbx-name': 'config.name carries inhouse-sbx-',
   'sbx-host': 'config.vars.INHOUSE_ACCESS carries inhouse-sbx-',
 }
@@ -174,11 +177,14 @@ describe('check-product-config', () => {
     }
   })
 
-  // P4 (p4-h1.md OC 4), widened by P5 W1: both Worker configs bind exactly the hub's ReadGateway as HUB and its
-  // ConnectGateway as HUB_CONNECT.
-  // P5 W4: and its DeliveryGateway as HUB_DELIVERY.
-  const HUB = [{ binding: 'HUB', service: 'inhouse-hub', entrypoint: 'ReadGateway' }, { binding: 'HUB_CONNECT', service: 'inhouse-hub', entrypoint: 'ConnectGateway' }, { binding: 'HUB_DELIVERY', service: 'inhouse-hub', entrypoint: 'DeliveryGateway' }]
-  test('the two Worker configs bind HUB, HUB_CONNECT and HUB_DELIVERY once each, and the hub rule passes both', () => {
+  // P4 (p4-h1.md OC 4), widened by P5 W1, P5 W4, and Stage 1 M2-C (N13): HUB, HUB_CONNECT, HUB_DELIVERY, HUB_WRITE.
+  const HUB = [
+    { binding: 'HUB', service: 'inhouse-hub', entrypoint: 'ReadGateway' },
+    { binding: 'HUB_CONNECT', service: 'inhouse-hub', entrypoint: 'ConnectGateway' },
+    { binding: 'HUB_DELIVERY', service: 'inhouse-hub', entrypoint: 'DeliveryGateway' },
+    { binding: 'HUB_WRITE', service: 'inhouse-hub', entrypoint: 'WriteGateway' },
+  ]
+  test('the two Worker configs bind HUB, HUB_CONNECT, HUB_DELIVERY and HUB_WRITE once each, and the hub rule passes both', () => {
     for (const c of [testConfig(), JSON.parse(stripJsonc(readFileSync(template, 'utf8')))]) {
       expect(c.services).toEqual(HUB)
       expect(checkHub(c)).toEqual([])
@@ -186,35 +192,44 @@ describe('check-product-config', () => {
   })
   test('the hub rule names a ServerGateway entry on any service, and a services value that is not a list', () => {
     expect(checkHub({ services: [...HUB, { binding: 'HUB_SERVER', service: 'inhouse-hub', entrypoint: 'ServerGateway' }] })).toEqual([
-      "services[3] binds ServerGateway: the product Worker binds the hub's HUB → ReadGateway, HUB_CONNECT → ConnectGateway, HUB_DELIVERY → DeliveryGateway only",
+      "services[4] binds ServerGateway: the product Worker binds the hub's HUB → ReadGateway, HUB_CONNECT → ConnectGateway, HUB_DELIVERY → DeliveryGateway, HUB_WRITE → WriteGateway only",
     ])
     expect(checkHub({ services: [...HUB, { binding: 'OTHER', service: 'renamed-hub', entrypoint: 'ServerGateway' }] })).toEqual([
-      "services[3] binds ServerGateway: the product Worker binds the hub's HUB → ReadGateway, HUB_CONNECT → ConnectGateway, HUB_DELIVERY → DeliveryGateway only",
+      "services[4] binds ServerGateway: the product Worker binds the hub's HUB → ReadGateway, HUB_CONNECT → ConnectGateway, HUB_DELIVERY → DeliveryGateway, HUB_WRITE → WriteGateway only",
     ])
     // Changed in the review fold (#237): another service is refused (was allowed).
     expect(checkHub({ services: [...HUB, { binding: 'OTHER', service: 'other-worker' }] })).toEqual([
-      'services[3] binds "other-worker": the product Worker binds the hub (HUB → ReadGateway, HUB_CONNECT → ConnectGateway, HUB_DELIVERY → DeliveryGateway) only',
+      'services[4] binds "other-worker": the product Worker binds the hub (HUB → ReadGateway, HUB_CONNECT → ConnectGateway, HUB_DELIVERY → DeliveryGateway, HUB_WRITE → WriteGateway) only',
     ])
-    expect(checkHub({ services: [{ ...HUB[0], props: { mode: 'server' } }, HUB[1], HUB[2]] })).toEqual([
+    expect(checkHub({ services: [{ ...HUB[0], props: { mode: 'server' } }, HUB[1], HUB[2], HUB[3]] })).toEqual([
       'services[0] has props: the hub entry is binding, service and entrypoint only',
     ])
     expect(checkHub({ services: { HUB: 'inhouse-hub' } })).toEqual(['services must be a list'])
   })
   test('P5 W1: each binding gets its own entrypoint, never the other one', () => {
-    expect(checkHub({ services: [{ ...HUB[0], entrypoint: 'ConnectGateway' }, { ...HUB[1], entrypoint: 'ReadGateway' }, HUB[2]] })).toEqual([
+    expect(checkHub({ services: [{ ...HUB[0], entrypoint: 'ConnectGateway' }, { ...HUB[1], entrypoint: 'ReadGateway' }, HUB[2], HUB[3]] })).toEqual([
       'services[0].entrypoint must be ReadGateway for HUB, not "ConnectGateway"',
       'services[1].entrypoint must be ConnectGateway for HUB_CONNECT, not "ReadGateway"',
     ])
-    expect(checkHub({ services: [] })).toEqual(['services must bind HUB exactly once (found 0)', 'services must bind HUB_CONNECT exactly once (found 0)', 'services must bind HUB_DELIVERY exactly once (found 0)'])
+    expect(checkHub({ services: [] })).toEqual([
+      'services must bind HUB exactly once (found 0)',
+      'services must bind HUB_CONNECT exactly once (found 0)',
+      'services must bind HUB_DELIVERY exactly once (found 0)',
+      'services must bind HUB_WRITE exactly once (found 0)',
+    ])
     expect(checkHub({ services: [...HUB, HUB[1]] })).toEqual(['services must bind HUB_CONNECT exactly once (found 2)'])
   })
-  test('P5 W4: HUB_DELIVERY is DeliveryGateway exactly once; an extra or a wrong entry fails', () => {
+  test('P5 W4 & M2-C: HUB_DELIVERY and HUB_WRITE are each bound once with their own entrypoint', () => {
     expect(checkHub({ services: [...HUB, HUB[2]] })).toEqual(['services must bind HUB_DELIVERY exactly once (found 2)'])
-    expect(checkHub({ services: [HUB[0], HUB[1], { ...HUB[2], entrypoint: 'ServerGateway' }] })).toEqual([
-      "services[2] binds ServerGateway: the product Worker binds the hub's HUB → ReadGateway, HUB_CONNECT → ConnectGateway, HUB_DELIVERY → DeliveryGateway only",
+    expect(checkHub({ services: [HUB[0], HUB[1], { ...HUB[2], entrypoint: 'ServerGateway' }, HUB[3]] })).toEqual([
+      "services[2] binds ServerGateway: the product Worker binds the hub's HUB → ReadGateway, HUB_CONNECT → ConnectGateway, HUB_DELIVERY → DeliveryGateway, HUB_WRITE → WriteGateway only",
     ])
-    expect(checkHub({ services: [HUB[0], HUB[1], { ...HUB[2], entrypoint: 'ReadGateway' }] })).toEqual([
+    expect(checkHub({ services: [HUB[0], HUB[1], { ...HUB[2], entrypoint: 'ReadGateway' }, HUB[3]] })).toEqual([
       'services[2].entrypoint must be DeliveryGateway for HUB_DELIVERY, not "ReadGateway"',
+    ])
+    expect(checkHub({ services: [...HUB, HUB[3]] })).toEqual(['services must bind HUB_WRITE exactly once (found 2)'])
+    expect(checkHub({ services: [HUB[0], HUB[1], HUB[2], { ...HUB[3], entrypoint: 'ReadGateway' }] })).toEqual([
+      'services[3].entrypoint must be WriteGateway for HUB_WRITE, not "ReadGateway"',
     ])
   })
 

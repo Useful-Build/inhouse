@@ -100,6 +100,8 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   notify_channel_list: { action: 'keep', why: 'the brand channel list revision contains no member data' },
   notify_sends: { action: 'keep', why: 'keep caps and deduplication intact through retention; member references stay pseudonymous', kept: ['actor_id', 'target'] },
   SignIn: { action: 'keep', why: 'the brand owns the sealed credential; connectedBy resolves through the pseudonymised member row and pending items expire', kept: ['connectedBy', 'pending.memberId'] },
+  // Stage 1 M2-C: the write-scoped Shopify app's one sealed token record; it names no member.
+  ShopifyWriteSignIn: { action: 'keep', why: 'the brand owns the sealed write credential; no member id' },
   // P8a: the egress record names a host, a runner and a container generation, never a member, a run or a turn (one
   // container serves several sessions at once), so no row is a person's; it goes by age in 30 days.
   egress_fetches: { action: 'keep', why: 'no member id: the egress knows the container, not the run; retention removes rows after 30 days. A host can carry data in a subdomain from a refused exfil attempt: kept 30 days, ops-only and not exported. A host over 253 characters is not recorded, only logged' },
@@ -109,6 +111,10 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   permission_ceiling: { action: 'keep', why: 'the brand\'s ceiling: updated_by stays pseudonymous', kept: ['updated_by'] },
   permission_grants: { action: 'delete_rows', column: 'holder_member', kept: ['granted_by', 'revoked_by'] },
   permission_uses: { action: 'keep', why: 'no member id: a grant\'s day counter by action and grant id; retention removes it' },
+  // Stage 1 M2-B. The actions the person asked for go (their chats' words are in them); an action someone else asked for
+  // keeps who approved or resolved it, pseudonymous once their row is. The gate names no one.
+  outbox_gate: { action: 'keep', why: 'one row of pause state: no member id' },
+  outbox_actions: { action: 'delete_rows', column: 'asked_by', kept: ['approver', 'approved_by', 'resolved_by'] },
   privacy_requests: { action: 'keep', why: 'no member id: a Shopify customer by Shopify id only, cleared when the request is closed (route 94); the topic and dates stay as the record that it was answered' },
 }
 

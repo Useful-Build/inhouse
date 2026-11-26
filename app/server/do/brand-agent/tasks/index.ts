@@ -20,6 +20,8 @@ import { routineTick } from '../../../routines/tick.ts'
 import { routineEnd } from '../../../routines/end.ts'
 import { backupTask } from '../../../ops/backup-handlers.ts'
 import { retentionTask } from '../../../ops/retention-handlers.ts'
+import { outboxSend } from '../../../outbox/dispatch.ts'
+import { outboxSweep } from '../../../outbox/sweep.ts'
 import { EVAL_TASKS } from '@eval-trace'
 
 declare const __INHOUSE_EVAL_BUILD__: boolean
@@ -59,6 +61,9 @@ export function buildTaskHandlers(evalBuild: boolean): Readonly<Record<string, T
     // 03:30 UTC, each seeded (ensure semantics).
     backup: backupTask,
     retention: retentionTask,
+    // Stage 1 M2-B (N11): one send per approved action (`outbox-send:<id>`), and the outbox's sweep, seeded, every 60 s.
+    'outbox-send': outboxSend,
+    'outbox-sweep': outboxSweep,
     // The eval build only (p3-eval-observability rev 2 rec 5): the kept inputs' 7-day TTL (server/eval-trace/on.ts).
     ...(evalBuild ? EVAL_TASKS : {}),
   }
