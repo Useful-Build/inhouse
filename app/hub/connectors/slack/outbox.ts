@@ -1,7 +1,8 @@
 // Outbox Slack channel post (Stage 1 M2-C, N13): reuses `postToSlack` (connectors/slack/post.ts) so every Slack post
 // keeps the same channel id check, bounds, single escape, and fixed parameters (`unfurl_links=false`, `unfurl_media=false`).
-// Checks paused, connectedAtMs, scopes, and channel eligibility before sending, and re-checks paused and connectedAtMs
-// again after the awaited channel check, right before calling `postToSlack`.
+// Checks paused, connectedAtMs, scopes, and channel eligibility before sending, re-checks them after the awaited channel
+// check, and hands `expect` to the SignIn, which re-reads paused, state, scopes and connectedAtMs synchronously right
+// before `chat.postMessage` (after its own token gate and channel re-check).
 import { z } from 'zod'
 import type { AccountStatus, HubErrorCode, HubResult, WriteResult } from '../../index/contract'
 import { hubError } from '../../index/errors'
@@ -39,6 +40,7 @@ const DEFINITE_SLACK_NO_SEND = new Set<HubErrorCode>([
   'key_unavailable',
   'credentials_rejected',
   'connect_refused',
+  'connect_stale',
   'rate_limited',
   'upstream_rejected',
 ])
@@ -92,7 +94,7 @@ export async function postSlackOutboxAction(
   const rightBeforePost = checkSlackAccount(await signIn.status(SLACK_ACCOUNT), req.expect.connectedAtMs)
   if (rightBeforePost) return rightBeforePost
 
-  const posted = await postToSlack(signIn, { channelId, title, text })
+  const posted = await postToSlack(signIn, { channelId, title, text }, { connectedAtMs: req.expect.connectedAtMs })
   if (!posted.ok) {
     const sent = DEFINITE_SLACK_NO_SEND.has(posted.error.code) ? 'no' : 'unknown'
     return { ok: false, error: posted.error, sent }
