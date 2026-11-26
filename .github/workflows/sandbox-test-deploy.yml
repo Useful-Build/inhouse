@@ -9,9 +9,9 @@
 # Runs of different PRs go in parallel; runs of one PR queue (concurrency below).
 #
 # Trust. The PR's code is untrusted, and everything a run prints or uploads is public.
-# - Two jobs run side by side, never mixed. `pr-code` runs the PR's code (install, build, specs) with no secret and no
-#   token permission but `actions: read`. `deploy` holds CF_SANDBOX_TOKEN through the `sandbox` environment (deployment
-#   branches: main only) and runs only main's code: this workflow (dispatched from main; the first step refuses any
+# - Two jobs run side by side, never mixed. `pr-code` runs the PR's code (install, build, specs) with no secret; its
+#   token only reads contents (checkout) and this run's jobs. `deploy` holds CF_SANDBOX_TOKEN through the `sandbox`
+#   environment (deployment branches: main only) and runs only main's code: this workflow (dispatched from main; the first step refuses any
 #   other ref), main's scripts at the dispatched commit, main's lockfile with `npm ci --ignore-scripts`, main's wrangler
 #   by path. It never checks out or runs the PR: from the PR it takes only the build's plain files, copied out by an
 #   exact file list (scripts/sandbox/deploy-config.mjs), and only after the sandbox lock passes on the final config.
@@ -116,6 +116,8 @@ jobs:
           ONLY: ${{ inputs.only }}
           SPECS: ${{ inputs.specs }}
         run: |
+          # One line only: read -a takes the first line, so a newline would drop the rest silently.
+          case "$ONLY" in *$'\n'* | *$'\r'*) echo "::error::only must be one line"; exit 1 ;; esac
           read -r -a items <<< "$ONLY"
           if [ "${#items[@]}" -eq 0 ]; then echo "only=" >> "$GITHUB_OUTPUT"; exit 0; fi
           [ "$SPECS" = true ] || { echo "::error::only needs specs=true"; exit 1; }
@@ -125,7 +127,7 @@ jobs:
           done
           echo "only=${items[*]}" >> "$GITHUB_OUTPUT"
 
-  # The PR's code: no secret, no token permission but reading this run's jobs (the wait for the deploy below).
+  # The PR's code: no secret; the token reads only this repo's contents (checkout) and this run's jobs (the wait below).
   pr-code:
     name: pr-code
     needs: check
@@ -134,6 +136,7 @@ jobs:
     timeout-minutes: 150
     permissions:
       actions: read
+      contents: read
     env:
       PR: ${{ needs.check.outputs.pr }}
       SHA: ${{ needs.check.outputs.sha }}
@@ -436,11 +439,12 @@ jobs:
           if [ "$CONTAINERS" = true ]; then want+=(image); fi
           deadline=$((SECONDS + 1800))
           while :; do
+            # The job's state first: artifacts read after it says completed are final, so a last upload is never missed.
+            state=$(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT/jobs" --paginate --jq '.jobs[] | select(.name == "pr-code") | .status')
             have=$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" --jq '.artifacts[].name')
             missing=()
             for n in "${want[@]}"; do grep -qxF "$n" <<< "$have" || missing+=("$n"); done
             if [ "${#missing[@]}" -eq 0 ]; then echo "the build is in"; break; fi
-            state=$(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT/jobs" --paginate --jq '.jobs[] | select(.name == "pr-code") | .status')
             [ "$state" != completed ] || { echo "::error::pr-code ended without ${missing[*]}"; exit 1; }
             [ "$SECONDS" -lt "$deadline" ] || { echo "::error::no ${missing[*]} within 30 minutes"; exit 1; }
             sleep 15

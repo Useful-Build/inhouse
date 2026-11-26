@@ -12,6 +12,9 @@ name: sandbox-test-deploy-cleanup
 on:
   pull_request_target:
     types: [closed]
+    # Only PRs into main: a PR into fleet/** would run from that branch, which the main-only environment refuses (the
+    # daily sweep covers those).
+    branches: [main]
   schedule:
     - cron: "37 5 * * *"
   workflow_dispatch:

@@ -87,10 +87,10 @@ describe('the rules, whatever the copies say', () => {
     expect([...at].sort((a, b) => a - b)).toEqual(at)
     expect(deploy).toContain('--artifact "$RUNNER_TEMP/artifact"')
   })
-  test('pr-code: no environment, only actions: read, no secret but SBX_ZONE (failure 3)', () => {
+  test('pr-code: no environment, only actions and contents read, no secret but SBX_ZONE (failure 3)', () => {
     const job = split(read(DEPLOY)).jobs['pr-code']
     expect(job).not.toMatch(/\benvironment:/)
-    expect(/\n {4}permissions:\n((?: {6}.*\n)+)/.exec(`${job}\n`)?.[1].trim()).toBe('actions: read')
+    expect(/\n {4}permissions:\n((?: {6}.*\n)+)/.exec(`${job}\n`)?.[1].split('\n').map(l => l.trim()).filter(Boolean).sort()).toEqual(['actions: read', 'contents: read'])
     expect([...new Set(job.match(/secrets\.[A-Za-z0-9_]+/g))]).toEqual(['secrets.SBX_ZONE'])
     const check = split(read(DEPLOY)).jobs.check
     expect(check).not.toMatch(/secrets\.|\benvironment:/)
@@ -99,7 +99,7 @@ describe('the rules, whatever the copies say', () => {
     const on = h => /\non:\n((?: {2}.*\n|\n)+?)(?=\S)/.exec(`${h}\n`)?.[1] ?? ''
     expect(on(split(read(DEPLOY)).header).match(/^ {2}[a-z_]+:/gm)).toEqual(['  workflow_dispatch:'])
     expect(on(split(read(CLEANUP)).header).match(/^ {2}[a-z_]+:/gm)).toEqual(['  pull_request_target:', '  schedule:', '  workflow_dispatch:'])
-    expect(read(CLEANUP)).toMatch(/pull_request_target:\n {4}types: \[closed\]\n/)
+    expect(read(CLEANUP)).toMatch(/pull_request_target:\n {4}types: \[closed\]\n(?: {4}#.*\n)* {4}branches: \[main\]\n/)
   })
   // setup-node turns its npm cache on by itself only for a package.json with a packageManager field (AGENTS.md: add
   // package-manager-cache: false everywhere before adding one), or with `cache:` set.

@@ -50,11 +50,12 @@
           if [ "$CONTAINERS" = true ]; then want+=(image); fi
           deadline=$((SECONDS + 1800))
           while :; do
+            # The job's state first: artifacts read after it says completed are final, so a last upload is never missed.
+            state=$(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT/jobs" --paginate --jq '.jobs[] | select(.name == "pr-code") | .status')
             have=$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" --jq '.artifacts[].name')
             missing=()
             for n in "${want[@]}"; do grep -qxF "$n" <<< "$have" || missing+=("$n"); done
             if [ "${#missing[@]}" -eq 0 ]; then echo "the build is in"; break; fi
-            state=$(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT/jobs" --paginate --jq '.jobs[] | select(.name == "pr-code") | .status')
             [ "$state" != completed ] || { echo "::error::pr-code ended without ${missing[*]}"; exit 1; }
             [ "$SECONDS" -lt "$deadline" ] || { echo "::error::no ${missing[*]} within 30 minutes"; exit 1; }
             sleep 15
