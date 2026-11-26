@@ -9,7 +9,7 @@
 // The operation is turned on only through the test-fakes hook (N2, N19) and off again after.
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
-import { ACTION_DONE, ACTION_TAG, APPROVAL_ASKED } from '../../test/scripted-model/scenarios/actions.ts'
+import { ACTION_DONE, ACTION_STARTED, ACTION_TAG, APPROVAL_ASKED } from '../../test/scripted-model/scenarios/actions.ts'
 import { answerOf, createChat, needsContainer, send, textOf } from './chat-kit.ts'
 import { hook, hubCall, setCeiling } from './fakes-kit.ts'
 import { actor, call } from './kit.ts'
@@ -56,7 +56,8 @@ test('M2-D: the agent\'s write tool waits for the person\'s OK, and the sent res
     expect(r.status, r.text).toBe(200)
   }
   const answer = await answerOf(request, dana, chat, sent.turnId, 180_000)
-  expect(textOf(answer)).toBe(ACTION_DONE)
+  // The turn's text, in order: the words before the write call, then the answer once its result is back.
+  expect(textOf(answer)).toBe(`${ACTION_STARTED}\n${ACTION_DONE}`)
   expect((await cardsOf(request, chat)).map(c => [c.id, c.state])).toEqual([[card!.id, 'sent']])
   expect(await tagWrites(request)).toBe(before + 1)
   // The turn's stored messages carry the card's `ask` part.

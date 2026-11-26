@@ -12,6 +12,8 @@ export const ACTION_ORDER_ID = 'gid://shopify/Order/9001'
 export const ACTION_TAG = 'm2d-scripted'
 export const ACTION_TOOL = 'mcp__actions__shopify_order_tag_add'
 export const APPROVAL_REQUEST_TOOL = 'mcp__inhouse__approval_request'
+/** Turn 0's words before the write call: the turn's stored answer holds them, then `ACTION_DONE`. */
+export const ACTION_STARTED = 'Adding the tag.'
 export const ACTION_DONE = 'The tag action has its answer.'
 export const APPROVAL_ASKED = 'The approval is in Approvals.'
 
@@ -77,7 +79,7 @@ const args = { orderId: ACTION_ORDER_ID, tags: [ACTION_TAG] }
 export const ACTIONS_SCENARIOS: Record<string, Scenario> = {
   'action-tag-add': {
     turns: [
-      { content: [{ type: 'text', text: 'Adding the tag.' }, { type: 'tool_use', id: 'toolu_scripted_action_tag', name: ACTION_TOOL, input: args }], expect: isMainLoop },
+      { content: [{ type: 'text', text: ACTION_STARTED }, { type: 'tool_use', id: 'toolu_scripted_action_tag', name: ACTION_TOOL, input: args }], expect: isMainLoop },
       { content: [{ type: 'text', text: ACTION_DONE }], expect: answeredWithAction('toolu_scripted_action_tag') },
     ],
   },

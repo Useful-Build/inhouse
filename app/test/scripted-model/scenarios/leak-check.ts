@@ -67,16 +67,26 @@ const resultIs = (id: string, wantError: boolean, holds?: string) => (r: Message
   return true
 }
 
+/** How CLI 2.1.328 answers a WebFetch the server refused with 403: a plain result (no `is_error`), without the body. */
+export const CLI_FETCH_403 = /^The server returned HTTP 403 Forbidden\. The response body was not retrieved\./
+
 /**
  * The leak fetch's result is the egress's `leak` refusal: an error that says `WebFetch refused: leak` when the CLI
- * passes the egress's body through. If the CLI shows only the status (`Request failed with status code 403`), that
- * 403 is all it can say: with the control fetch to the same host allowed one turn earlier, the token is the only
+ * passes the egress's body through. If the CLI shows only the status, that 403 is all it can say: as an error
+ * (`Request failed with status code 403`), or, on CLI 2.1.328, as a plain result in its own words (`CLI_FETCH_403`,
+ * seen on the sandbox). With the control fetch to the same host allowed one turn earlier, the token is the only
  * difference, so a 403 there is the leak check's. Any other refusal marker, another status, or a page fails.
  */
 const refusedAsLeak = (id: string) => (r: MessagesRequest): true | string => {
-  const err = resultIs(id, true)(r)
-  if (err !== true) return err
-  const text = resultText(resultBlock(r, id)!)
+  const m = isMainLoop(r)
+  if (m !== true) return m
+  const b = resultBlock(r, id)
+  if (!b) return `no result for ${id}`
+  const text = resultText(b)
+  if (b.is_error !== true) {
+    if (CLI_FETCH_403.test(text)) return true
+    return `result for ${id} has is_error=${String(b.is_error)} and isn't the CLI's 403: "${text.slice(0, 300)}"`
+  }
   if (text.includes('WebFetch refused: leak')) return true
   if (/WebFetch refused: /.test(text)) return `result for ${id} is another refusal: "${text.slice(0, 300)}"`
   if (/status code 403\b/.test(text)) return true
