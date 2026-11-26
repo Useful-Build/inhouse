@@ -324,6 +324,15 @@ describe('the result (failure 5)', () => {
     expect(s.d.hub.calls[0].req.expect).toEqual({ connectedAtMs: SHOP_GEN, shop: 'store-a' })
   })
 
+  it('a Shopify row with no shop in its scope fails loud before the claim: still approved, nothing sent (M2-G)', async () => {
+    const a = await approved(1)
+    await db.prepare("UPDATE outbox_actions SET scope_json = '{}', send_at_ms = ? WHERE id = ?").bind(now, a.id).run()
+    const d = dispatch(a.id)
+    await expect(d.run).rejects.toThrow(/no shop in its scope/)
+    expect(await rowOf(db, a.id)).toMatchObject({ state: 'approved', attempt: 0 })
+    expect(d.hub.calls).toHaveLength(0)
+  })
+
   it('a definite refusal: failed, the use released', async () => {
     const s = await sendWith('no')
     expect(s.row).toMatchObject({ state: 'failed', error_code: 'upstream_rejected' })

@@ -161,6 +161,9 @@ export async function sendAction(actionId: string, d: DispatchDeps): Promise<Sen
     return { kind: 'not_claimed' }
   }
   const who = { atMs: nowMs, actorId: SYSTEM, requestId: d.requestId }
+  // The request's shape is checked before the claim (M2-G, #454 review): a row writeRequest can't build (a Shopify
+  // action with no shop in its scope, which resolve never makes) fails loud while still `approved`, never in `sending`.
+  writeRequest(row, d.requestId)
 
   if (d.hub === null) {
     // No write binding in this build: a definite failure, nothing sent.
