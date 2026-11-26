@@ -14,7 +14,7 @@ import { createChat } from '../api/chat-kit.ts'
 import { actor } from '../api/kit.ts'
 
 const JOB_ID = 'j_Cardaaaaaaaaaaaaaaaaaa'
-const ROOT = 't_Rootaaaaaaaaaaaaaaaaa'
+const ROOT = 't_Rootaaaaaaaaaaaaaaaaaa'
 const at = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
 const START = Date.UTC(2026, 10, 26, 9, 0)
 const job = (chatId: string, o: Record<string, unknown>) => ({

@@ -5,7 +5,7 @@
 //  - a step's command is one the CLI's Bash guard refuses (a first `sleep` of 25 seconds or more) or one that outlasts
 //    its default 2-minute timeout;
 //  - the soak's sleeps add up to less than 2 hours, so it could "pass" short;
-//  - no token in the first message gets an improvised answer instead of a miss.
+//  - a request with no token (the runner's shared checks send one) is a miss instead of the chain.
 import { describe, expect, test } from 'vitest'
 import { createScriptedModel, SCENARIOS } from '../../test/scripted-model/index.ts'
 import { HARNESS_MODEL } from '../../test/scripted-model/scenarios.ts'
@@ -54,9 +54,10 @@ describe('long-job-run', () => {
     const { answer } = await ask('long-job-run', [{ role: 'user', content: 'scenario:long-job-run run=abc123xyz Go.' }])
     expect(toolOf(answer).input.command).toBe('sleep 20; sleep 20; sleep 20; echo step-1 >> outputs/job-run.txt')
   })
-  test('no run token: a miss that says so, never an answer', async () => {
-    const { misses } = await ask('long-job-run', [{ role: 'user', content: 'scenario:long-job-run Go.' }])
-    expect(misses.map(m => m.reason)).toEqual(["the turn's contentFor threw: the first message names no run=<token>"])
+  test('no run token: the chain still runs, under the token "none"', async () => {
+    const { answer, misses } = await ask('long-job-run', [{ role: 'user', content: 'scenario:long-job-run Go.' }])
+    expect(misses).toEqual([])
+    expect(toolOf(answer).id).toBe('toolu_jobrun_none_1_0')
   })
 })
 

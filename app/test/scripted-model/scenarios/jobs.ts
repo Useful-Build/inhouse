@@ -46,14 +46,16 @@ export const SOAK_DONE = 'All soak steps are done: outputs/job-soak.txt.'
 export const SOAK_FILE = 'outputs/job-soak.txt'
 const RUN_TOKEN = /\brun=([A-Za-z0-9]{6,32})\b/
 
-/** The run token in the request's first user message, or a throw (a miss that says why). */
+/**
+ * The run token in the request's first user message, or `none` when it names none (the chain still runs, as every
+ * scenario must for the runner's shared checks; only a spec that finds its steps needs a token of its own).
+ */
+export const NO_RUN_TOKEN = 'none'
 export function runTokenOf(r: MessagesRequest): string {
   const first = r.messages.find(m => m.role === 'user')
   const text = first === undefined ? '' : typeof first.content === 'string' ? first.content
     : Array.isArray(first.content) ? (first.content as Block[]).map(b => (typeof b.text === 'string' ? b.text : '')).join(' ') : ''
-  const m = RUN_TOKEN.exec(text)
-  if (!m) throw new Error('the first message names no run=<token>')
-  return m[1]!
+  return RUN_TOKEN.exec(text)?.[1] ?? NO_RUN_TOKEN
 }
 
 /** The tool call id prefix of a run's steps: what a spec looks for in the session store. */
