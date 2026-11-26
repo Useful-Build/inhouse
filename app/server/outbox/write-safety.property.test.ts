@@ -345,7 +345,7 @@ const stepArb: fc.Arbitrary<Step> = fc.oneof(
   W(1, fc.record({ k: fc.constant('remove' as const), who })),
   W(1, fc.record({ k: fc.constant('reinvite' as const), who })),
   W(3, fc.record({ k: fc.constant('ceiling' as const), op, enabled: fc.constantFrom(true, true, true, false), perDayMax: fc.constantFrom(1, 2, 50) })),
-  W(1, fc.record({ k: fc.constant('channel' as const), listed: fc.boolean() })),
+  W(3, fc.record({ k: fc.constant('channel' as const), listed: fc.boolean() })),
   W(1, fc.record({ k: fc.constant('account' as const), op, change: fc.constantFrom('reconnect' as const, 'disconnect' as const, 'hub_drift' as const, 'hub_pause' as const, 'hub_resume' as const) })),
   W(2, fc.record({ k: fc.constant('flip' as const), hookFails: fc.boolean(), pulse: fc.constantFrom(true, true, false) })),
   // alarm: BrandAgent's alarm fires as the clock moves, for every approved action whose hold is over, each send as drawn.
@@ -818,7 +818,7 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
 const PER_DAY_MAX = fc.constantFrom(1, 2, 50)
 // Floors on what the suites send, about half the lowest count seen over repeated runs: a run that sends little proves
 // little, and a floor near the usual count would flake. Seen on 2026-11-26: the main suite sent 139 to 164
-// effects over 400 runs (5 runs of it), the send path 322 to 431 over 300 runs (11 runs of it).
+// effects over 400 runs (5 runs of it; a reviewer's run saw 138), the send path 322 to 431 over 300 runs (11 runs of it).
 const MAIN_FLOOR = 70
 const SEND_PATH_FLOOR = 160
 
