@@ -15,7 +15,7 @@ import { SendTurnInputSchema } from '../../shared/contract/runs.ts'
 import { OPERATIONS, OPERATION_KEYS } from '../outbox/operations/index.ts'
 import { ceiling, resetPermissions } from '../permissions/test-support.ts'
 import { ACTION_TEXTS, NO_ACTIONS_LINE, OPERATION_WORDS, actingLine } from './actions.ts'
-import { enabledOperations } from './connected.ts'
+import { activeMembers, enabledOperations } from './connected.ts'
 import { JOB_NOTE_PREFIX } from './job.ts'
 
 const CLAIM = /`actions` server|you can make these changes|you can (?:change|send|post|tag)/i
@@ -96,5 +96,20 @@ describe('the resume turn (ACTION_TEXTS)', () => {
     expect(ACTION_TEXTS.result({ ...card, state: 'failed', result: 'x' })).not.toContain('(x)')
     expect(ACTION_TEXTS.result({ ...card, state: 'expired', result: null })).toContain('no one answered in 7 days')
     for (const state of ActionStateSchema.options) expect(ACTION_TEXTS.result({ ...card, state, result: null })).not.toContain('Tag: vip')
+  })
+})
+
+describe('activeMembers: the team line\'s read (M2-G)', () => {
+  it('active people only, earliest first, ids and names only (never an email or a role)', async () => {
+    const ins = (id: string, kind: string, status: string, name: string | null, at: number) =>
+      env.DB.prepare('INSERT INTO members (id, kind, role, status, name, email_norm, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(id, kind, kind === 'person' ? 'member' : null, status, name, `${id}@example.test`, at).run()
+    await ins('m_tl_b', 'person', 'active', 'Bea Two', 900_002)
+    await ins('m_tl_a', 'person', 'active', 'Al One', 900_001)
+    await ins('m_tl_inv', 'person', 'invited', 'Ivy Invited', 900_003)
+    await ins('m_tl_gone', 'person', 'removed', 'Rex Removed', 900_004)
+    await ins('m_tl_ih', 'inhouse', 'active', 'Ina Inhouse', 900_005)
+    await ins('m_tl_none', 'person', 'active', null, 900_006)
+    const mine = (await activeMembers(env.DB)).filter(m => m.id.startsWith('m_tl_'))
+    expect(mine).toEqual([{ id: 'm_tl_a', name: 'Al One' }, { id: 'm_tl_b', name: 'Bea Two' }])
   })
 })

@@ -26,7 +26,7 @@ const slack = (paused: boolean): AccountSummary => ({
 describe("the turn's system prompt", () => {
   it('carries the connected-apps line read when the turn starts', async () => {
     let answer: HubResult<AccountSummary[]> = { ok: true, value: [slack(false)] }
-    const deps = { gateway: { listAccounts: async () => answer }, delivery: true, channels: async () => ['ops'], operations: async () => [] }
+    const deps = { gateway: { listAccounts: async () => answer }, delivery: true, channels: async () => ['ops'], operations: async () => [], members: async () => [] }
     await inAgent(async h => {
       const a = ok(await h.submit('c1', 'key-prompt1'))
       await settle()

@@ -109,10 +109,10 @@ describe('withTestShopConnect (the prompt\'s account read)', () => {
   it('with a row set, the account read carries the override, and the built line names Shopify as connected', async () => {
     const { gateway, calls } = recordingConnect()
     const wrapped = withTestShopConnect(gateway, env.DB, { INHOUSE_TEST_BUILD: '1' })
-    const before = await turnSystemPrompt({ gateway: wrapped, delivery: false, channels: async () => [], operations: async () => [] }, 't_1')
+    const before = await turnSystemPrompt({ gateway: wrapped, delivery: false, channels: async () => [], operations: async () => [], members: async () => [] }, 't_1')
     expect(before.text).toContain('No apps are connected yet.')
     await setRow(TEST_SHOP_OWNER, JSON.stringify(HOST))
-    const built = await turnSystemPrompt({ gateway: wrapped, delivery: false, channels: async () => [], operations: async () => [] }, 't_2')
+    const built = await turnSystemPrompt({ gateway: wrapped, delivery: false, channels: async () => [], operations: async () => [], members: async () => [] }, 't_2')
     expect(built).toMatchObject({ version: SYSTEM_PROMPT_VERSION })
     expect(built.text).toContain('Connected apps: Shopify. Search for their tools')
     expect(calls).toEqual([undefined, { testShopHost: HOST }])

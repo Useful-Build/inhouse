@@ -79,6 +79,33 @@ function connectedParts(accounts: readonly AccountSummary[] | null, channels: re
   return { lines: lines.join('\n'), apps: names }
 }
 
+/** The most team members the team line names (the earliest to join first). */
+export const TEAM_LINE_MAX = 50
+/**
+ * A member's name as the team line may carry it: letters (any script), digits, spaces, `.`, `'` and `-`, at most 60 characters.
+ * Anything else (a newline, a sentence's punctuation, a colon) could carry prompt text: that member is left out, logged.
+ */
+export const TEAM_NAME = /^\p{L}[\p{L}\p{M}\p{N} .'-]{0,59}$/u
+const MEMBER_ID_SHAPE = /^[A-Za-z0-9_-]{1,80}$/
+export type TeamMember = { id: string; name: string }
+
+/**
+ * The team line (M2-G): the brand's active people by name and member id, so `notification_send`'s `to.members` can
+ * reach someone named in the chat. Names and ids only: never an email, a role or anything else about a person. Empty
+ * when no member is left to name.
+ */
+export function teamLine(members: readonly TeamMember[]): string {
+  const ok = members.filter(m => TEAM_NAME.test(m.name) && MEMBER_ID_SHAPE.test(m.id)).slice(0, TEAM_LINE_MAX)
+  if (ok.length === 0) return ''
+  return `Team members, by member id (for notification_send's \`to.members\`): ${joinNames(ok.map(m => `${m.name} (${m.id})`))}.`
+}
+
+/** The brand's active people, earliest first, at most TEAM_LINE_MAX past what the line drops (names that fail TEAM_NAME). */
+export async function activeMembers(db: D1Database): Promise<TeamMember[]> {
+  return all<TeamMember>(db, stmt(
+    "SELECT id, name FROM members WHERE kind = 'person' AND status = 'active' AND name IS NOT NULL ORDER BY created_at_ms, id LIMIT ?", TEAM_LINE_MAX * 2))
+}
+
 export type TurnPromptDeps = {
   /** `HUB_CONNECT`, or null when the binding is missing (read as "couldn't check"). */
   gateway: Pick<ConnectGateway, 'listAccounts'> | null
@@ -88,6 +115,8 @@ export type TurnPromptDeps = {
   channels: () => Promise<readonly string[]>
   /** The operations enabled for the brand (M2-G). */
   operations: () => Promise<readonly WriteOperationKey[]>
+  /** The brand's active people, for the team line (M2-G). */
+  members: () => Promise<readonly TeamMember[]>
 }
 
 /**
@@ -109,6 +138,7 @@ export function turnPromptDeps(env: { DB: D1Database; HUB_CONNECT?: unknown; HUB
     delivery: env.HUB_DELIVERY !== undefined,
     channels: async () => (await listedChannels(env.DB)).map(c => c.name),
     operations: () => enabledOperations(env.DB),
+    members: () => activeMembers(env.DB),
   }
 }
 
@@ -140,6 +170,19 @@ async function readOperations(deps: TurnPromptDeps, turnId: string, log: Log): P
   } catch (err) {
     log({ event: 'prompt_operations_unread', turnId, error: safeError(err) })
     return []
+  }
+}
+
+/** The team line; a failed read names nobody (logged), and a dropped name is counted in the log, never echoed. */
+async function readTeam(deps: TurnPromptDeps, turnId: string, log: Log): Promise<string> {
+  try {
+    const members = await deps.members()
+    const dropped = members.filter(m => !TEAM_NAME.test(m.name) || !MEMBER_ID_SHAPE.test(m.id)).length
+    if (dropped > 0) log({ event: 'prompt_member_names_dropped', turnId, dropped })
+    return teamLine(members)
+  } catch (err) {
+    log({ event: 'prompt_members_unread', turnId, error: safeError(err) })
+    return ''
   }
 }
 
@@ -181,7 +224,10 @@ export async function turnSystemPrompt(deps: TurnPromptDeps, turnId: string): Pr
     if (readOps === 'timeout') console.error({ event: 'prompt_operations_unread', turnId, code: 'timeout' })
     const ops = readOps === 'timeout' ? [] : readOps
     const actions = actingLine(ops)
-    const fallback: TurnPrompt = { text: systemPromptV3('', actions), version: 2, apps: null, actions: ops.length > 0 }
+    const readTeamLine = await Promise.race([readTeam(deps, turnId, log), deadline])
+    if (readTeamLine === 'timeout') console.error({ event: 'prompt_members_unread', turnId, code: 'timeout' })
+    const team = readTeamLine === 'timeout' ? '' : readTeamLine
+    const fallback: TurnPrompt = { text: systemPromptV3('', actions, team), version: 2, apps: null, actions: ops.length > 0 }
     const accounts = await Promise.race([readAccounts(deps, turnId, log), deadline])
     if (accounts === 'timeout') {
       console.error({ event: 'prompt_accounts_unread', turnId, code: 'timeout' })
@@ -202,7 +248,7 @@ export async function turnSystemPrompt(deps: TurnPromptDeps, turnId: string): Pr
       }
     }
     const { lines, apps } = connectedParts(accounts, channels, ops.includes('slack.channel.post'))
-    return lines === '' ? fallback : { text: systemPromptV3(lines, actions), version: SYSTEM_PROMPT_VERSION, apps, actions: ops.length > 0 }
+    return lines === '' ? fallback : { text: systemPromptV3(lines, actions, team), version: SYSTEM_PROMPT_VERSION, apps, actions: ops.length > 0 }
   } catch (err) {
     console.error({ event: 'prompt_build_failed', turnId, error: safeError(err) })
     return FALLBACK
