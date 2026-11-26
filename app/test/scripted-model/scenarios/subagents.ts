@@ -49,9 +49,12 @@ const reportReturned: Check = (r) => {
   const blocks = r.messages.flatMap((m) => (Array.isArray(m.content) ? (m.content as { type?: unknown; tool_use_id?: unknown; content?: unknown }[]) : []))
   const result = blocks.find((b) => typeof b === 'object' && b !== null && b.type === 'tool_result' && b.tool_use_id === CALL_ID)
   if (result === undefined) return `no result for ${CALL_ID}`
-  const said = JSON.stringify(result.content ?? '')
-  // The CLI frames a helper's report ("[Subagent hand-back] ...", every line indented), so the report's own words are at the end.
-  return said.includes(HELPER_REPORT) ? true : `the helper's result is not its report; it ends: ${said.slice(-600)}`
+  const c = result.content
+  const said = (typeof c === 'string' ? c : Array.isArray(c) ? c.map((b) => (typeof b === 'object' && b !== null && 'text' in b ? String((b as { text: unknown }).text) : '')).join('\n') : '')
+    .replace(/\s+/g, ' ')
+  // The CLI frames a helper's report ("[Subagent hand-back] ...", every line indented), so the report's own words are at
+  // the end; the miss quotes only the end, as the egress caps an error's message.
+  return said.includes(HELPER_REPORT) ? true : `the helper's result is not its report; it ends: ${said.slice(-200)}`
 }
 
 export function subagentScenarios(mainLoop: (tool?: string) => Check, resultIs: (id: string, error: boolean) => Check): Record<string, Scenario> {
