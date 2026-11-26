@@ -168,6 +168,30 @@ test('the grant\'s daily limit: past it, the post becomes an exact card (count),
   }
 })
 
+test('a new card while the alerts channel is set: the server\'s fixed "Approval waiting" notice posts there once, with no card lines', async ({ request }) => {
+  await setCeiling(request, POST, true)
+  try {
+    await markAlerts(request, null)
+    await markAlerts(request, CHANNEL.opsAlerts)
+    const token = `alerted-${uniq()}`
+    const before = (await fakeState(request)).web.posts.length
+    // #general has no grant (only the alerts channel does): the post is a card.
+    const a = actionOf(await notifySend(request, newRun(owner), msg({ to: { channels: ['#general'] }, text: `${token} restock` })), '#general')
+    expect(a).toMatchObject({ status: 'waiting', created: true })
+    await expect.poll(async () => (await fakeState(request)).web.posts.length, { timeout: 15_000, intervals: [250] }).toBe(before + 1)
+    const post = (await fakeState(request)).web.posts.at(-1)!
+    expect(post.channel).toBe(CHANNEL.opsAlerts)
+    expect(post.text.startsWith('*Approval waiting*'), post.text).toBe(true)
+    expect(post.text, 'never the card\'s lines').not.toContain(token)
+    expect(post.text).toContain(`/approvals/${a.approval_id}|Open in Inhouse>`)
+    // The card is withdrawn by its person, so nothing is left waiting after this test.
+    const c = await card(request, a.approval_id!)
+    expect((await call(request, dana, 'POST', `/api/actions/${a.approval_id}/answer`, { json: { choice: 'deny', ifRev: c.rev } })).status).toBe(200)
+  } finally {
+    await setCeiling(request, POST, false)
+  }
+})
+
 test("the server's own notice posts to the alerts channel without a card and doesn't reduce the agent's allowance", async ({ request }) => {
   const day = (await fakeState(request)).serverDay
   const agentToday = () => readSql<{ n: number }>("SELECT count(*) AS n FROM notify_sends WHERE source = 'agent' AND kind = 'slack' AND day = ?", day)[0]!.n

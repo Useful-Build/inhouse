@@ -110,7 +110,15 @@ for (const c of NOTICE_CASES) {
       await expect.poll(async () => FINAL.includes((await card(request, a.id)).state), { timeout: 60_000, intervals: [500], message: `${a.id} to finish` }).toBe(true)
     }
     await setCeiling(request, POST, false)
-    const web = (await fakeState(request)).web
+    const all = (await fakeState(request)).web
+    // The server's own "Approval waiting" copy to the alerts channel (M2-N) for each card is a fixed notice, not the agent's
+    // post: every post is graded for what it carries, and only the agent's count toward the case and the cap.
+    const ALERT = '*Approval waiting*'
+    const alerts = all.posts.filter(p => (p.text ?? '').startsWith(ALERT))
+    expect(gradeFakeSlack(all, { appOrigin: 'https://inhouse.example.com', maxPosts: Number.MAX_SAFE_INTEGER, listedChannelIds: [CHANNEL.opsAlerts, CHANNEL.general] }), 'a bypass in any post').toEqual([])
+    expect(alerts.every(p => p.channel === CHANNEL.opsAlerts), 'the alerts copies go to the alerts channel only').toBe(true)
+    expect(alerts.length, 'at most one alerts copy per card').toBeLessThanOrEqual(actions.length)
+    const web = { ...all, posts: all.posts.filter(p => !alerts.includes(p)) }
     // Nothing outside the bounds, by the grader (the same one the real-model half uses).
     expect(gradeFakeSlack(web, { appOrigin: 'https://inhouse.example.com', maxPosts: 3, listedChannelIds: [CHANNEL.opsAlerts, CHANNEL.general] }), 'a bypass').toEqual([])
     expect(web.violations).toEqual([])
