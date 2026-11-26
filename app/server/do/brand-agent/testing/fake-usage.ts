@@ -19,8 +19,11 @@ import type { OpenJobInput, ReserveInput, UsageExtendRefusal, UsageLedgerPort } 
 
 type ReserveAnswer = Awaited<ReturnType<UsageLedgerPort['reserve']>>
 type Job = { budget: number; reserved: number; spent: number; closed: boolean }
-const jobSpentOut = (job: Job | undefined, need: number, ownHold = 0) =>
-  !job || job.closed || job.budget - job.spent - ownHold < need
+/** Like the real ledger: a closed job, or one that can't fit `need`. A missing job row is a bug, so it throws. */
+const jobSpentOut = (jobId: string, job: Job | undefined, need: number, ownHold = 0) => {
+  if (!job) throw new Error(`usage: no job row for ${jobId} (openJob must run first)`)
+  return job.closed || job.budget - job.spent - ownHold < need
+}
 const jobHasRoom = (job: Job, need: number) => job.budget - job.spent - job.reserved >= need
 
 type ExtendAnswer = Awaited<ReturnType<UsageLedgerPort['extend']>>
@@ -92,7 +95,7 @@ export class FakeUsageLedger implements UsageLedgerPort {
     if ('refused' in answer) return answer
     const need = answer.reservedMicro
     const job = t.jobId === undefined ? undefined : this.jobs.get(t.jobId)
-    if (t.jobId !== undefined && jobSpentOut(job, need)) return { refused: 'job_budget' }
+    if (t.jobId !== undefined && jobSpentOut(t.jobId, job, need)) return { refused: 'job_budget' }
     if (this.capMicro !== null && this.capMicro - this.spent - this.monthReserved < need) {
       return { refused: this.capMicro - this.spent < need ? 'cap_reached' : 'budget_busy' }
     }
@@ -112,7 +115,7 @@ export class FakeUsageLedger implements UsageLedgerPort {
     if (isFinal) return { refused: 'turn_budget', ledgerHold: 0 }
     const need = Math.ceil(needIn / this.unitMicro) * this.unitMicro
     const job = this.jobOf(turnId)
-    if (job && jobSpentOut(job, need, hold)) return { refused: 'job_budget', ledgerHold: hold }
+    if (job && jobSpentOut(this.turnJobs.get(turnId) ?? '', job, need, hold)) return { refused: 'job_budget', ledgerHold: hold }
     let refusal = this.extendRefusal
     if (this.capMicro !== null) {
       const ceiling = this.ceilings[this.models.get(turnId) ?? '']
