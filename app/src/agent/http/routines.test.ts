@@ -123,7 +123,7 @@ describe('the client: routines', () => {
     expect(agent.getSnapshot().routinesDeleted.rt_gone).toBe(true)
   })
 
-  test('Run now sends a key the route takes, and the run heads routineRuns; run_open and stage are refused in the page\'s words (L1)', async () => {
+  test('Run now sends a key the route takes, and the run heads routineRuns; run_open is refused in the page\'s words (L1), and a stage refusal no server sends any more gets no stage words (M2-I)', async () => {
     const run = { routine: 'rt_a', at: at(NOW) }
     const { agent, calls } = await loaded({
       ...reads({ routines: LIST }), 'POST /api/routines/rt_a/run': { body: run },
@@ -136,11 +136,15 @@ describe('the client: routines', () => {
     expect(agent.getSnapshot().routineRuns[0]).toEqual(run)
     expect(body(calls.find(c => c.path === '/api/routines/rt_a/run')!).clientKey).toMatch(/^[A-Za-z0-9_-]{8,64}$/)
     await expect(agent.runRoutine('rt_b')).rejects.toMatchObject({ code: 'conflict', reason: 'run_open', message: 'A run is still going. Try again when it finishes.' })
-    await expect(agent.runRoutine('rt_gone')).rejects.toMatchObject({ code: 'forbidden', reason: 'stage', message: 'This routine runs from the Act stage. Ask your Inhouse team about moving to Act.' })
-    expect(heard).toEqual([
-      { type: 'error', code: 'conflict', text: 'A run is still going. Try again when it finishes.' },
-      { type: 'error', code: 'forbidden', text: 'This routine runs from the Act stage. Ask your Inhouse team about moving to Act.' },
-    ])
+    // The product has no stages (Stage 1 M2-I): the server stopped sending this reason (M2-F), and the client no longer
+    // words it. An old refusal is told as any refusal is, never with a stage's name.
+    const stale = await agent.runRoutine('rt_gone').then(() => null, (e: unknown) => e)
+    expect(stale).toMatchObject({ code: 'forbidden', reason: 'stage' })
+    expect((stale as Error).message).not.toMatch(/\bstages?\b|\b(Watch|Act|Run)\b/i)
+    expect(heard).toHaveLength(2)
+    expect(heard[0]).toEqual({ type: 'error', code: 'conflict', text: 'A run is still going. Try again when it finishes.' })
+    expect(heard[1]).toMatchObject({ type: 'error', code: 'forbidden' })
+    expect((heard[1] as { text: string }).text).not.toMatch(/\bstages?\b|\b(Watch|Act|Run)\b/i)
     expect(agent.getSnapshot().routineRuns).toHaveLength(1)
   })
 
