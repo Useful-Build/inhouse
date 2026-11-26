@@ -5,14 +5,16 @@
 //    person approves it. With no operation enabled in the ceiling (N2, every deployable build) it is refused.
 //  - `approval_get` and `approval_list` read only this person's own actions, never an admin's wider view.
 //  - `approval_withdraw` moves this chat's own `waiting` action to `withdrawn`.
-// `approval_request` needs two things only the egress has: the hub's word on each account (pause, label, shop) and N14's
-// admission (this call bound to the main agent's own call in this turn). M2-D wires both through `approvalHandlers`;
-// until then the served map has no wiring and `approval_request` is refused with a fixed text. Results are fixed texts
-// plus ids and the card's own server words; the outbox's audit lines hold ids only.
+// `approval_request` needs two things only the egress has: the hub's word on each account (pause, label) and N14's
+// admission (this call bound to the main agent's own call in this turn). M2-D wires both from the egress through the
+// tool deps (`ToolDeps.approvals`, egress/actions.ts `approvalsWiring`); a call without that wiring is refused with a
+// fixed text. A routine's run asks the routine's creator (N15). Results are fixed texts plus ids and the card's own server
+// words; the outbox's audit lines hold ids only.
 import { z } from 'zod'
 import { ActionIdSchema, ActionStateSchema } from '../../../../shared/contract/actions.ts'
 import type { ActionState } from '../../../../shared/contract/actions.ts'
 import type { MemberRole } from '../../../../shared/contract/members.ts'
+import type { Asker } from '../../../permissions/types.ts'
 import { SYSTEM_MEMBER_ID } from '../../../db/ids.ts'
 import { first, stmt } from '../../../db/sql.ts'
 import { cardOf } from '../../../outbox/card.ts'
@@ -40,9 +42,9 @@ const RequestInput = z.object({
 }).strict()
 export type ApprovalRequestInput = z.output<typeof RequestInput>
 
-/** What `approval_request` needs from the egress (M2-D builds it). */
+/** What `approval_request` needs from the egress (M2-D builds it: egress/actions.ts `approvalsWiring`). */
 export interface ApprovalsWiring {
-  /** The hub's word on each connected account: paused, the label a person reads, the shop (outbox/facts.ts). */
+  /** The hub's word on each connected account: paused and the label a person reads (outbox/facts.ts). */
   hubAccounts(): Promise<readonly HubAccountFacts[]>
   /**
    * N14's admission: binds this call to an unused call of `approval_request` by the main agent in this live turn, with
@@ -50,6 +52,13 @@ export interface ApprovalsWiring {
    * `jobId` is the job the turn belongs to, if any.
    */
   admit(scope: ToolScope, input: ApprovalRequestInput): Promise<{ toolUseId: string; jobId: string | null } | null>
+  /**
+   * M2-D (N15): a routine's run (`m_system`) asks the routine's creator, if still an active person; null for a system
+   * routine (`decide` then refuses, `no_one_to_ask`). Absent: every routine run is refused.
+   */
+  routineAsker?(scope: ToolScope): Promise<Asker | null>
+  /** M2-D (N14): a card was made or found for this turn: its `ask` part and the chat's `action.updated`. */
+  noted?(scope: ToolScope, actionId: string): Promise<void>
 }
 
 /**
@@ -119,9 +128,10 @@ export function approvalHandlers(wiringOf: (deps: ToolDeps) => ApprovalsWiring |
         if (!admitted) return refusal('not_admitted', TEXT.notAdmitted)
         const operation = operationForTool(a.operation)
         if (!operation) return refusal('unknown_operation', REFUSAL_TEXT.unknown_operation)
-        // A routine's own run (`m_system`) has no person behind it: `decide` refuses it (`no_one_to_ask`).
+        // A routine's own run (`m_system`) asks the routine's creator (N15); a system routine has no one: `decide` refuses
+        // it (`no_one_to_ask`).
         const system = scope.memberId === SYSTEM_MEMBER_ID
-        const asker = system ? null : await activePerson(deps.db, scope.memberId)
+        const asker = system ? (wiring.routineAsker ? await wiring.routineAsker(scope) : null) : await activePerson(deps.db, scope.memberId)
         if (!system && !asker) return refusal('no_one_to_ask', TEXT.noPerson)
         const port = openOutbox({
           db: deps.db, requestId: scope.requestId, now: () => scope.nowMs, schedule: neverSchedules,
@@ -135,6 +145,7 @@ export function approvalHandlers(wiringOf: (deps: ToolDeps) => ApprovalsWiring |
           { operation, args: a.args },
           { mode: 'ask_only' },
         )
+        if (r.outcome !== 'refused') await wiring.noted?.(scope, r.action.id)
         switch (r.outcome) {
           case 'refused':
             return refusal(r.reason, r.text)
@@ -183,5 +194,5 @@ export function approvalHandlers(wiringOf: (deps: ToolDeps) => ApprovalsWiring |
   }
 }
 
-/** The served map: no wiring yet, so `approval_request` is refused until M2-D passes it; the other three are live. */
-export const handlers = approvalHandlers(() => null)
+/** The served map: `approval_request` runs with the egress's wiring (`ToolDeps.approvals`), else it's refused. */
+export const handlers = approvalHandlers(deps => deps.approvals ?? null)

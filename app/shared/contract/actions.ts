@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { InstantSchema } from './common.ts'
 import { ChatIdSchema } from './chat-ids.ts'
 import { MemberIdSchema } from './members.ts'
-import { GuardrailSchema, RowIfRevSchema, WriteToolRefSchema } from './permissions.ts'
+import { GuardrailSchema, PermissionIdSchema, RowIfRevSchema, WriteToolRefSchema } from './permissions.ts'
 
 /** An outbox action's id: `ac_` + 128 random bits (`a_` is an Activity line's). */
 export const ActionIdSchema = z.string().regex(/^ac_[A-Za-z0-9_-]{22}$/)
@@ -44,6 +44,11 @@ export const ActionCardSchema = z.object({
   result: z.string().optional(),
   /** Why an approval lapsed, in server words (paused, the account changed, the grant was removed). */
   lapsed: z.string().optional(),
+  /**
+   * Stage 1 M2-D: the permission the action ran under ("Always allow"), so "Stop allowing this" names that one. Only for
+   * a viewer who may remove it (its holder, the asker, or an admin).
+   */
+  permissionId: PermissionIdSchema.optional(),
   can: z.object({ allowOnce: z.boolean(), alwaysAllow: z.boolean(), approve: z.boolean(), deny: z.boolean(), undo: z.boolean(), resolve: z.boolean() }),
   /** Offer Always allow first: this person said Allow once 3 times for this operation and scope in 30 days. */
   nudgeAlways: z.boolean(),

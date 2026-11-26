@@ -15,7 +15,8 @@ import { eventsRoute } from './events.ts'
 import { filesRoute } from './files.ts'
 import { gatewayUpstream, scriptedUpstream } from './gateway.ts'
 import { handleHub, HUB_MAX_BODY_BYTES, hubRouteDeps, type ReadGatewayLike } from './hub.ts'
-import { brandStage } from '../stage/watch.ts'
+import { approvalsWiring, handleActions } from './actions.ts'
+import type { ActionsRouteDeps } from './actions.ts'
 import { withTestShop } from '@test-shop'
 import { jsonAnswer, messagesError, readCapped, RUN_TOKEN_HEADER } from './http.ts'
 import { mcpHandler } from '../mcp/server/index.ts'
@@ -127,14 +128,16 @@ async function routeEgress(request: Request, d: EgressDeps, opts: EgressOptions)
   const name = /^\/([a-z]+)\//.exec(url.pathname)?.[1]
   // `/hub/` (P4 H1): the hub's read tools, the turn's second MCP server, on the grant's `mcp` route (it closes with `mcp`).
   const hub = name === 'hub' ? d.hub : undefined
-  if (!name || !(hub !== undefined || (EGRESS_ROUTES as readonly string[]).includes(name))) return jsonAnswer({ error: 'not_found' }, 404)
-  const route = (hub !== undefined ? 'mcp' : name) as EgressRoute
+  // `/actions/` (Stage 1 M2-D, N14): the write tools, a third MCP server, on the grant's `mcp` route too.
+  const actions = name === 'actions' ? d.actions : undefined
+  if (!name || !(hub !== undefined || actions !== undefined || (EGRESS_ROUTES as readonly string[]).includes(name))) return jsonAnswer({ error: 'not_found' }, 404)
+  const route = (hub !== undefined || actions !== undefined ? 'mcp' : name) as EgressRoute
 
   const token = request.headers.get(RUN_TOKEN_HEADER)
   const checked = token ? await d.rpc.checkRunToken(await hashRunToken(token), route) : { refused: 'unknown' as const }
   if ('refused' in checked) {
     // `path: 'hub'` tells a refused `/hub/` call from a refused `/mcp/` one (both check the `mcp` route).
-    d.log({ event: 'egress_refused', route, ...(hub !== undefined ? { path: 'hub' } : {}), why: checked.refused, runner: d.runner })
+    d.log({ event: 'egress_refused', route, ...(hub !== undefined ? { path: 'hub' } : actions !== undefined ? { path: 'actions' } : {}), why: checked.refused, runner: d.runner })
     return refusal(route, route === 'events' && checked.refused === 'closed' ? 410 : 401)
   }
   const grant = checked
@@ -143,6 +146,10 @@ async function routeEgress(request: Request, d: EgressDeps, opts: EgressOptions)
     const res = await handleHub(withoutToken(request), grant, hub)
     if (res.status !== 200) return res
     return captureResponse(res, d, { route: 'hub', tool: await hubToolName(copy) }, opts.captureTaint)
+  }
+  if (actions !== undefined) {
+    const res = await handleActions(withoutToken(request), grant, actions)
+    return captureResponse(res, d, { route: 'mcp' }, opts.captureTaint)
   }
   const path = url.pathname
   switch (route) {
@@ -186,9 +193,16 @@ export function usesScriptedModel(env: Pick<EgressEnv, 'INHOUSE_TEST_BUILD'>, co
 
 /** The real deps from the Worker's env (the test build's model is the scripted one, and only there). */
 export function egressDeps(env: EgressEnv, ctx: ExecutionContext, props: EgressProps): EgressDeps {
+  // W1's BrandAgent implements BrandAgentRpc; the stub is typed by that interface.
+  const rpc = env.BRAND_AGENT.getByName('brand') as unknown as EgressRpc
+  // Stage 1 M2-D (N14): the write tools' route; the hub's word on the accounts comes from BrandAgent (`rpc.hubAccounts`).
+  const actions: ActionsRouteDeps = {
+    db: env.DB, rpc,
+    now: () => Date.now(), sleep: ms => new Promise(r => setTimeout(r, ms)), requestId: () => `actions-${crypto.randomUUID()}`,
+    log: entry => console.log(entry),
+  }
   return {
-    // W1's BrandAgent implements BrandAgentRpc; the stub is typed by that interface.
-    rpc: env.BRAND_AGENT.getByName('brand') as unknown as EgressRpc,
+    rpc,
     runner: props.runner,
     touchRunner: async runner => {
       await (env.RUNNER.getByName(runner) as unknown as { touch(): Promise<void> }).touch()
@@ -201,11 +215,13 @@ export function egressDeps(env: EgressEnv, ctx: ExecutionContext, props: EgressP
     newFileId,
     // W6's `inhouse` MCP server (server/mcp/server/index.ts), acting as the grant's member only.
     // P5 W4: notification_send's hub delivery, opaque to the egress (the one allowed import from the notifications tool).
+    // M2-D: approval_request's wiring (the hub's accounts and N14's admission), the same as the actions route's.
     // Stage 1 M2-Q: `question_ask` only where this build turns questions on (server/questions/switch.ts: every build since M2-H).
-    mcp: mcpHandler({ db: env.DB, notify: notifyDeps(env), questions: QUESTIONS_ON }),
+    mcp: mcpHandler({ db: env.DB, notify: notifyDeps(env), approvals: approvalsWiring(actions), questions: QUESTIONS_ON }),
     // The hub's ReadGateway (P4 H1, OC 4: the only hub entrypoint the product Worker binds). In the test and eval builds
     // only, each read carries the test shop override the eval harness set (`@test-shop`; the off module returns the hub as is).
-    hub: hubRouteDeps(withTestShop(env.HUB as unknown as ReadGatewayLike, env.DB, env), entry => console.log(entry), () => brandStage(env.DB)),
+    hub: hubRouteDeps(withTestShop(env.HUB as unknown as ReadGatewayLike, env.DB, env), entry => console.log(entry)),
+    actions,
     waitUntil: p => ctx.waitUntil(p),
     setInterval: (fn, ms) => setInterval(fn, ms),
     clearInterval: t => clearInterval(t),

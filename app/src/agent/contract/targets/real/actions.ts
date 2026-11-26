@@ -8,29 +8,22 @@
 // (never a send under a permission a case left). The operation is turned on first with the hook's `ceiling` op: the test
 // build's only way (N2). The send goes to the hub's fake Shopify write store; its fault switch makes the store hang until
 // the dispatcher's 15 s limit, an unclear result the dispatcher records as "Needs a check" (N11). (Not the store's
-// unreadable-body fault: scripts/check-icons.mjs reads any underscored string in src/ as an icon name.) The brand's Shopify
-// account is given the hub's connect date in the test build's D1 once, before the first seed (the target's own setup,
-// e2e/support/test-build/shopify-account.ts): the outbox refuses an account with none, and nothing writes it before M2-D.
-// serve.ts starts a fresh build for the suite, so the row isn't put back.
+// unreadable-body fault: scripts/check-icons.mjs reads any underscored string in src/ as an icon name.) Before the first
+// seed the hub's Shopify account is read once (e2e/support/test-build/shopify-read.ts): its first token grant gives it
+// its connect date, which M2-D's sync copies into D1 on the request; the outbox refuses an account with none.
 import type { JWK } from 'jose'
 import { mintService } from '../../../../../server/auth/test-issuer-mint'
 import type { AgentClient } from '../../../types'
 import type { Signer } from './me'
+import { SHOPIFY_READ } from '../../../../../e2e/support/test-build/shopify-read'
 
 /** The N18 methods the real client serves over HTTP. `onActionUpdated` needs a run (a container), so no case reads it here. */
 export const ACTIONS_SERVED = [
   'actions', 'action', 'answerAction', 'undoAction', 'resolveAction', 'permissions', 'removePermission', 'questions', 'answerQuestion',
 ] as const satisfies readonly (keyof AgentClient)[]
 
-/**
- * The Node-only helper that writes the account row (node:sqlite). Loaded at run time: the app's tsconfig has no Node
- * types, and this target only ever runs in vitest's node project.
- */
-const ACCOUNT_KIT = new URL('../../../../../e2e/support/test-build/shopify-account.ts', import.meta.url).href
-
 const OPERATION = 'shopify.order.tag_add'
-/** The fake write store's shop and one of its orders (test/upstreams/shopify/write/server.ts). */
-const SHOP = 'example-write.myshopify.com'
+/** One of the fake write store's orders (test/upstreams/shopify/write/server.ts). */
 const ORDER = 'gid://shopify/Order/9002'
 
 const env: Record<string, string | undefined> = (globalThis as unknown as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {}
@@ -42,7 +35,7 @@ const need = (name: string): string => {
 
 export interface ActionWorld {
   /** One action waiting on the Admin's answer, with a tag no other case used; answers its id. */
-  seedAction(adminId: string, s: Signer): Promise<string>
+  seedAction(adminId: string): Promise<string>
   /** The next send of an approved action ends as "Needs a check" (true, after the hub's 15 s limit), or goes out (false). */
   failNextSend(on: boolean): Promise<void>
   /** No permission of the Admin's left (each removed at its rev), and sends go out again. */
@@ -62,24 +55,19 @@ export function actionWorld(brandOrigin: string): ActionWorld {
   }
   let n = 0
   let account: Promise<void> | null = null
-  /** The Shopify account's row at the hub's connect date (the hub's account answers a read first, so it has one). */
-  const connectAccount = async (s: Signer) => {
-    const kit = (await import(/* @vite-ignore */ ACCOUNT_KIT)) as { SHOPIFY_READ: Record<string, unknown>; connectShopifyAccount(sinceMs: number): () => void }
-    const read = await hook(kit.SHOPIFY_READ)
+  /** The hub's Shopify account read once, so it has its connect date (the hub's first token grant). */
+  const readAccount = async () => {
+    const read = await hook({ ...SHOPIFY_READ })
     if (read?.ok !== true) throw new Error(`The real contract target's hub Shopify read failed: ${JSON.stringify(read)}`)
-    const tools = await s.api('admin', 'GET', '/api/tools')
-    const since = tools.json?.details?.shopify?.since?.ms
-    if (tools.status !== 200 || typeof since !== 'number') throw new Error(`The real contract target got no Shopify connect date: ${tools.status} ${JSON.stringify(tools.json?.details?.shopify)}`)
-    kit.connectShopifyAccount(since)
   }
   const fault = (f: 'succeed' | 'timeout') => hook({ op: 'set', shopifyWrite: { faults: { [OPERATION]: f } } })
   return {
-    async seedAction(adminId, s) {
-      await (account ??= connectAccount(s).catch((e: unknown) => { account = null; throw e }))
+    async seedAction(adminId) {
+      await (account ??= readAccount().catch((e: unknown) => { account = null; throw e }))
       await hook({ op: 'ceiling', operation: OPERATION, enabled: true, perDayMax: 50 })
       // A tag of its own each time: a card waiting with the same arguments would be returned instead of a new one.
       const tag = `contract-${Date.now().toString(36)}-${++n}`
-      const { result } = await hook({ op: 'action', as: { memberId: adminId }, operation: OPERATION, args: { orderId: ORDER, tags: [tag] }, shop: SHOP })
+      const { result } = await hook({ op: 'action', as: { memberId: adminId }, operation: OPERATION, args: { orderId: ORDER, tags: [tag] } })
       if (result?.outcome !== 'waiting' || typeof result.action?.id !== 'string') throw new Error(`The real contract target couldn't put an action waiting: ${JSON.stringify(result)}`)
       return result.action.id as string
     },

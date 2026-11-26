@@ -16,11 +16,10 @@ import { open, signInAs } from '../support/clients/real.js'
 import type { Who } from '../support/clients/real.js'
 import { actor, call, me } from '../api/kit.ts'
 import { hook, hubCall, requestAction, setCeiling } from '../api/fakes-kit.ts'
-import { SHOPIFY_READ, connectShopifyAccount } from '../support/test-build/shopify-account.ts'
+import { SHOPIFY_READ } from '../support/test-build/shopify-read.ts'
 
 const OPERATION = 'shopify.order.tag_add'
-/** The fake write store's shop and one of its orders (test/upstreams/shopify/write/server.ts). */
-const SHOP = 'example-write.myshopify.com'
+/** One of the fake write store's orders (test/upstreams/shopify/write/server.ts). */
 const ORDER = 'gid://shopify/Order/9002'
 const TITLE = 'Add a tag to order 9002'
 
@@ -31,7 +30,7 @@ async function seed(request: APIRequestContext, who: 'admin' | 'memberA'): Promi
   const { memberId } = await me(request, actor(who))
   await setCeiling(request, OPERATION, true)
   const tag = `e2e-${test.info().project.name}-${Date.now().toString(36)}`
-  const result = await requestAction(request, { memberId }, OPERATION, { orderId: ORDER, tags: [tag] }, { mode: 'ask_only', shop: SHOP })
+  const result = await requestAction(request, { memberId }, OPERATION, { orderId: ORDER, tags: [tag] }, { mode: 'ask_only' })
   expect(result?.outcome, JSON.stringify(result)).toBe('waiting')
   return tag
 }
@@ -54,25 +53,12 @@ async function removePermissions(request: APIRequestContext) {
   }
 }
 
-let restoreAccount: (() => void) | null = null
-
-// The brand's Shopify account gets the hub's connect date in D1 for this file's run, and is put back after (N9: an
-// action's generation is that date; nothing in the product writes it before M2-D). Local only (the file's D1).
+// The hub's Shopify account answers a read first (its client-credentials grant gives it its connect date), and M2-D's
+// sync copies that date into D1 on the first request (N9: an action's generation is that date).
 test.beforeAll(async ({ request }) => {
-  test.skip(!!process.env.E2E_TEST_BUILD_REMOTE, "writes the local D1's account row, which a deployed test build has no copy of")
-  // The hub's account answers a read (its client-credentials grant), so it has a connect date to give.
   expect((await hubCall(request, SHOPIFY_READ.method, SHOPIFY_READ.name, SHOPIFY_READ.args)).ok).toBe(true)
-  const tools = await call(request, actor('admin'), 'GET', '/api/tools')
-  expect(tools.status, tools.text).toBe(200)
-  const since = (tools.json as { details?: { shopify?: { since?: { ms?: number } } } }).details?.shopify?.since?.ms
-  expect(since, 'the hub gives the Shopify account a connect date').toEqual(expect.any(Number))
-  restoreAccount = connectShopifyAccount(since!)
 })
-test.afterAll(async ({ request }) => {
-  await setCeiling(request, OPERATION, false)
-  restoreAccount?.()
-  restoreAccount = null
-})
+test.afterAll(async ({ request }) => { await setCeiling(request, OPERATION, false) })
 
 test.beforeEach(async ({ request }) => { await removePermissions(request) })
 // The test build's server is shared: each case's operation is turned off again (seed() turns it on), the store's fault

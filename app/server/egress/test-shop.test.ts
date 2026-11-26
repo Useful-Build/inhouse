@@ -24,7 +24,8 @@ const scope: CallerScope = { kind: 'run', runId: 'r', principalId: 'p', requestI
 function recordingHub() {
   const calls: { name: string; options: CallToolOptions | undefined; arity: number }[] = []
   const hub: ReadGatewayLike = {
-    listTools: async () => ({ ok: true, value: [] }),
+    // `orders_search` is on the read list, so the egress's read-list check (N14) lets the call through.
+    listTools: async () => ({ ok: true, value: [{ name: 'orders_search', connector: 'shopify', description: 'Search orders.', inputSchema: {} }] }),
     callTool: async (...a: [CallerScope, string, unknown, CallToolOptions?]) => {
       calls.push({ name: a[1], options: a[3], arity: a.length })
       return { ok: true, value: { data: null } } satisfies HubResult<{ data: unknown }>
@@ -151,7 +152,7 @@ describe('the off stand-in (every other build)', () => {
 describe('the runner\'s egress route never forwards a caller\'s override', () => {
   const tamper = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'orders_search', arguments: {}, options: { testShopHost: 'evil-store.myshopify.com' }, testShopHost: 'evil-store.myshopify.com', _meta: { testShopHost: 'evil-store.myshopify.com' } } }
   const post = (hub: ReadGatewayLike) =>
-    handleHub(new Request('http://egress.internal/hub/', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(tamper) }), GRANT, hubRouteDeps(hub, () => {}, async () => 1))
+    handleHub(new Request('http://egress.internal/hub/', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(tamper) }), GRANT, hubRouteDeps(hub, () => {}))
 
   it.each([['the off stand-in', false], ['test-shop.ts with no row', true]])('%s: the hub gets three arguments, no options', async (_label, real) => {
     const { hub, calls } = recordingHub()

@@ -1,0 +1,76 @@
+# Deletes the sandbox test deployments (sandbox-test-deploy.yml) of closed PRs: when a same-repo PR closes, a daily
+# sweep (a close whose run failed, or a deploy that finished after the close), and by hand:
+#   gh workflow run sandbox-test-deploy-cleanup                    (deletes)
+#   gh workflow run sandbox-test-deploy-cleanup -f dry_run=true    (only prints the plan)
+# app/scripts/sandbox/cleanup.mjs lists the account's Workers, custom domains, D1, R2, container applications and registry
+# images, keeps only exact per-PR names (names.mjs perPrNames) whose PR is closed, empties each bucket before deleting it and logs
+# every deletion. Nothing from any PR runs here: pull_request_target runs this file and the scripts as they are on main
+# (the base branch), and the job never checks out the PR. The `sandbox` environment admits only main. (The private ops
+# repo's test-deploy-cleanup.yml sweeps the same names daily until it's retired; both delete only closed PRs' names.)
+name: sandbox-test-deploy-cleanup
+
+on:
+  pull_request_target:
+    types: [closed]
+    # Only PRs into main: a PR into fleet/** would run from that branch, which the main-only environment refuses (the
+    # daily sweep covers those).
+    branches: [main]
+  schedule:
+    - cron: "37 5 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Only print what would be deleted.
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: sandbox-test-deploy-cleanup
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  cleanup:
+    # A fork's PR never deployed, and a close Dependabot itself triggers gets no secrets: the daily sweep covers both.
+    if: github.event_name != 'pull_request_target' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: sandbox
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Only from main
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          [ "$REF" = refs/heads/main ] || { echo "::error::sandbox-test-deploy-cleanup runs only from main (this run: $REF)"; exit 1; }
+      # main's code (for pull_request_target, the base branch's head), never the PR's.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: main
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: main/app/.nvmrc
+          package-manager-cache: false
+      # Secrets, not variables, so GitHub masks the account id and the zone (in every host) in the log.
+      - name: Delete closed PRs' deployments
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_SANDBOX_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_SANDBOX_ACCOUNT_ID }}
+          CF_SANDBOX_ACCOUNT_ID: ${{ secrets.CF_SANDBOX_ACCOUNT_ID }}
+          SBX_ZONE: ${{ secrets.SBX_ZONE }}
+          GITHUB_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          for v in CLOUDFLARE_API_TOKEN CF_SANDBOX_ACCOUNT_ID SBX_ZONE; do [ -n "${!v}" ] || { echo "::error::$v is not set"; exit 1; }; done
+          flag=()
+          if [ "$DRY_RUN" = true ]; then flag=(--dry-run); fi
+          node main/app/scripts/sandbox/cleanup.mjs --app main/app "${flag[@]}"

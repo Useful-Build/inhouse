@@ -14,7 +14,8 @@
 //   `serverDay` added here: the UTC day key the notice day caps count by (notify-slack/store.ts `utcDay`).
 // - `hub`: { method: 'listTools' | 'callTool', name?, args? }: the egress `/hub/` route's own handler (handleHub) with a
 //   synthetic run grant, so the scope is built exactly as that route builds it. Answers the ReadGateway's HubResult as
-//   it came over the binding (502 `binding_failed` when the binding threw).
+//   it came over the binding (502 `binding_failed` when the binding threw), or, for a callTool the route's read-list
+//   check (N14) refused before the hub, `{ ok: false, error: { code: 'not_listed', message }, refusedBy: 'egress' }`.
 // - `notify`: { as: { memberId, chatId?, runId?, turnId? }, args }: the inhouse MCP server's own handler (handleMcp)
 //   calling `notification_send` as `as.memberId`, which must be an active person on the brand; an `as.chatId` must be
 //   that member's chat, and an `as.runId` or `as.turnId` given with it one of that chat's (both: a pair of one row).
@@ -30,11 +31,14 @@
 //   Empty in the local test build (no container writes a session); filled on the per-PR remote deploy.
 // - `ceiling` (Stage 1 M2-B, N2, N19): { operation, enabled, perDayMax }: the one way an operation exists in the test build
 //   (no route writes the ceiling in M1 or M2). Answers `{ ok: true }`.
-// - `action` (Stage 1 M2-B, N19): { as: { memberId, chatId? }, operation, args, mode?, shop? }: the outbox's `request` as
-//   an active person on the brand, with no tool call behind it (`invocation: null`). The account's pause comes from the
-//   hub; `shop` is the Shopify scope's shop (the hub doesn't expose it to the server; M2-D replaces this op with the real
-//   egress handler). An approved action's send is asked of BrandAgent as an answer's is. Answers `{ result }`: the
-//   outbox's `OutboxRequestResult`.
+// - `action` (Stage 1 M2-B, N19; M2-D): { as: { memberId, chatId? }, operation, args, mode? }: the write tool's call
+//   through the egress's own `actions` handler (handleActions; `mode: 'ask_only'` is `approval_request` through the MCP
+//   server's handler), as an active person, with a made-up run grant as the `hub` op has. CLOSE TO AUTH: N14's admission
+//   is a stand-in here that admits the call as a fresh main-agent call of a turn no runner holds (no container in the
+//   test build); everything after it is the real path: the hub's accounts read and copied into D1, the outbox's
+//   `request`, BrandAgent's `ask` part, the send scheduled on BrandAgent, the report (that turn isn't live, so nothing
+//   waits). Answers `{ result }`: `{ outcome, reason?, text, action? }` (the outbox's outcome read back from the row)
+//   and `tool`, the tool's own answer as the agent reads it.
 import { z } from 'zod'
 import type { CallerScope, ConnectGateway, HubResult } from '../../hub/index/contract.ts'
 import type { RunGrant } from '../do/brand-agent/tokens.ts'
@@ -46,13 +50,13 @@ import { utcDay } from '../notify-slack/store.ts'
 import { turnPromptDeps, turnSystemPrompt } from '../prompt/connected.ts'
 import { R2_PREFIXES, type KeyedBucket } from '../db/r2-keys.ts'
 import { WriteOperationArgSchema } from '../../shared/contract/audit.ts'
-import type { AccountSummary } from '../../hub/index/contract.ts'
 import { runBatch } from '../db/sql.ts'
 import { setCeilingStmt } from '../permissions/ceiling.ts'
-import { outboxFacts } from '../outbox/facts.ts'
-import { openOutbox } from '../outbox/store.ts'
-import { SEND_KIND, sendTaskId } from '../outbox/send-task.ts'
+import { OPERATIONS } from '../outbox/operations/index.ts'
+import type { OutboxActionRow } from '../outbox/types.ts'
 import type { BrandAgent } from '../do/brand-agent/index.ts'
+import { approvalsWiring, handleActions } from '../egress/actions.ts'
+import type { ActionsRouteDeps } from '../egress/actions.ts'
 
 declare const __INHOUSE_TEST_BUILD__: boolean
 
@@ -76,8 +80,8 @@ const ProductOpSchema = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('transcripts') }),
   z.strictObject({ op: z.literal('ceiling'), operation: WriteOperationArgSchema, enabled: z.boolean(), perDayMax: z.number().int().min(1).max(10_000) }),
   z.strictObject({
-    op: z.literal('action'), as: z.strictObject({ memberId: id, chatId: id.optional() }), operation: WriteOperationArgSchema, args: z.unknown(),
-    mode: z.enum(['tool', 'ask_only']).optional(), shop: z.string().min(1).max(100).optional(),
+    op: z.literal('action'), as: z.strictObject({ memberId: id, chatId: id.optional() }), operation: WriteOperationArgSchema,
+    args: z.record(z.string(), z.unknown()), mode: z.enum(['tool', 'ask_only']).optional(),
   }),
 ])
 type ProductOp = z.infer<typeof ProductOpSchema>
@@ -154,9 +158,13 @@ async function hubOp(env: TestFakesEnv, op: Extract<ProductOp, { op: 'hub' }>): 
   if (op.method === 'callTool' && op.name === undefined) return refuse(400, 'invalid', 'callTool needs name')
   const hub = env.HUB as ReadGatewayLike
   let result: unknown = null
+  let called = false
   const recorder: ReadGatewayLike = {
     listTools: async scope => (result = await hub.listTools(scope)) as never,
-    callTool: async (scope, name, args) => (result = await hub.callTool(scope, name, args)) as never,
+    callTool: async (scope, name, args) => {
+      called = true
+      return (result = await hub.callTool(scope, name, args)) as never
+    },
   }
   const grant: RunGrant = {
     turnId: `t_fakes_${tail()}`, runId: `r_${tail()}`, chatId: `c_fakes_${tail()}`, memberId: 'm_test_fakes', sessionId: `s_fakes_${tail()}`,
@@ -165,16 +173,23 @@ async function hubOp(env: TestFakesEnv, op: Extract<ProductOp, { op: 'hub' }>): 
   const message = op.method === 'listTools'
     ? { jsonrpc: '2.0', id: 1, method: 'tools/list' }
     : { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: op.name, arguments: op.args ?? {} } }
+  let code: string | null = null
   const res = await handleHub(
     new Request('https://egress.invalid/hub/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(message) }),
     grant,
-    // This hook exercises the hub binding’s own tool rules (ReadGateway refuses every write itself), so the egress's Watch
-    // gate is held open: 1 is the stage index the egress reads as Act. The production egress tests cover that gate, which
-    // M2-D replaces; nothing outside server/egress/ and server/stage/ imports the stage code (M2-F).
-    hubRouteDeps(recorder, entry => console.log(entry), async () => 1),
+    // The egress's own read-list check runs here as on the real route (N14): a name the hub doesn't list as read never
+    // reaches its callTool.
+    hubRouteDeps(recorder, entry => {
+      code = typeof entry.code === 'string' ? entry.code : null
+      console.log(entry)
+    }),
   )
-  // The route's own answer is read so the call completes as the egress would; the spec gets the binding's HubResult.
-  await res.text()
+  // The route's own answer is read so the call completes as the egress would; the spec gets the binding's HubResult, or
+  // (a callTool the read-list check refused before the hub) the route's own refusal, marked `refusedBy: 'egress'`.
+  const answered = (await res.json()) as { result?: { content?: { text?: string }[] } }
+  if (op.method === 'callTool' && !called && result !== null && code === 'not_listed') {
+    return ok({ ok: false, error: { code, message: answered.result?.content?.[0]?.text ?? '' }, refusedBy: 'egress' })
+  }
   if (result === null) return refuse(502, 'binding_failed')
   return ok(result)
 }
@@ -259,7 +274,10 @@ async function ceilingOp(env: TestFakesEnv, op: Extract<ProductOp, { op: 'ceilin
   return ok({ ok: true })
 }
 
-/** `action`: the outbox's `request` as an active person, its account facts from the hub; an approval's send asked for. */
+/**
+ * `action`: the write tool's call through the egress's `actions` handler (or `approval_request` through the MCP server's),
+ * as an active person, with a made-up run grant and a stand-in admission (N19). The rest is the real path.
+ */
 async function actionOp(env: TestFakesEnv, op: Extract<ProductOp, { op: 'action' }>): Promise<TestFakesAnswer> {
   const member = await env.DB.prepare("SELECT id, role FROM members WHERE id = ? AND kind = 'person' AND status = 'active'").bind(op.as.memberId).first<{ id: string; role: 'member' | 'admin' }>()
   if (!member) return refuse(400, 'unknown_member')
@@ -267,25 +285,44 @@ async function actionOp(env: TestFakesEnv, op: Extract<ProductOp, { op: 'action'
     const chat = await env.DB.prepare('SELECT id FROM chats WHERE id = ? AND owner_id = ? AND deleted_at_ms IS NULL').bind(op.as.chatId, member.id).first()
     if (!chat) return refuse(400, 'chat_not_members')
   }
-  const hubAccounts = async () => {
-    const r = await (env.HUB_CONNECT as Pick<ConnectGateway, 'listAccounts'>).listAccounts(serverScope())
-    if (!r.ok) throw new Error(`test-fakes action: the hub's accounts are unreadable (${r.error.code})`)
-    return r.value.map((a: AccountSummary) => ({ accountId: a.accountId, paused: a.status.paused, label: a.connector === 'shopify' ? 'Shopify' : 'Slack', shop: a.connector === 'shopify' ? op.shop ?? null : null }))
-  }
   const agent = env.BRAND_AGENT as DurableObjectNamespace<BrandAgent> | undefined
-  const port = openOutbox({
-    db: env.DB, requestId: `test-fakes-${crypto.randomUUID()}`, now: () => Date.now(), facts: outboxFacts({ db: env.DB, hubAccounts }),
-    schedule: async (actionId, atMs) => {
-      if (!agent) throw new Error('test-fakes action: no BRAND_AGENT binding')
-      await agent.getByName('brand').poke({ kind: SEND_KIND, id: sendTaskId(actionId), dueAtMs: atMs })
+  if (!agent) return refuse(502, 'no_brand_agent')
+  const stub = agent.getByName('brand')
+  const grant: RunGrant = {
+    turnId: `t_fakes_${tail()}`, runId: `r_${tail()}`, chatId: op.as.chatId ?? `c_fakes_${tail()}`, memberId: member.id, sessionId: `s_fakes_${tail()}`,
+    model: 'test-fakes', sideModel: 'test-fakes', expiresAtMs: Date.now() + 60_000,
+  }
+  const deps: ActionsRouteDeps = {
+    db: env.DB,
+    rpc: {
+      // The stand-in admission: a fresh main-agent call of this made-up turn (the real one needs a runner's audited call).
+      admitAction: async () => ({ toolUseId: `toolu_fakes_${tail()}`, turnId: grant.turnId, runId: grant.runId, chatId: grant.chatId, ownerId: member.id, jobId: null, replay: false }),
+      askNoted: (turnId, actionId) => stub.askNoted(turnId, actionId),
+      beginAskWait: (turnId, actionId) => stub.beginAskWait(turnId, actionId),
+      endAskWait: (actionId, delivered) => stub.endAskWait(actionId, delivered),
+      askTurnLive: turnId => stub.askTurnLive(turnId),
+      actionChanged: actionId => stub.actionChanged(actionId),
+      poke: p => stub.poke(p),
+      hubAccounts: () => stub.hubAccounts(),
     },
-  })
-  const result = await port.request(
-    { asker: { memberId: member.id, role: member.role }, origin: 'chat', chatId: op.as.chatId ?? `c_fakes_${tail()}`, nowMs: Date.now(), invocation: null, jobId: null },
-    { operation: op.operation, args: op.args },
-    { mode: op.mode ?? 'tool' },
-  )
-  return ok({ result })
+    now: () => Date.now(), sleep: ms => new Promise(r => setTimeout(r, ms)), requestId: () => `test-fakes-${crypto.randomUUID()}`, log: entry => console.log(entry),
+  }
+  const call = (path: string, message: unknown) =>
+    new Request(`https://egress.invalid${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(message) })
+  const res = op.mode === 'ask_only'
+    ? await handleMcp(call('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'approval_request', arguments: { operation: OPERATIONS[op.operation].tool, args: op.args } } }),
+      { memberId: grant.memberId, chatId: grant.chatId, runId: grant.runId, turnId: grant.turnId }, { db: env.DB, approvals: approvalsWiring(deps) })
+    : await handleActions(call('/actions/', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: OPERATIONS[op.operation].tool, arguments: op.args } }), grant, deps)
+  const body = (await res.json()) as { result?: { content: { text: string }[]; structuredContent?: Record<string, unknown>; isError?: boolean }; error?: { message?: string } }
+  const tool = body.result
+  if (!tool) return refuse(400, 'invalid', body.error?.message ?? 'no result')
+  const text = tool.content[0]?.text ?? ''
+  if (tool.isError) return ok({ result: { outcome: 'refused', reason: tool.structuredContent?.error, text, tool } })
+  const actionId = tool.structuredContent?.approval_id
+  const action = typeof actionId === 'string' ? await env.DB.prepare('SELECT * FROM outbox_actions WHERE id = ?').bind(actionId).first<OutboxActionRow>() : null
+  if (!action) return refuse(502, 'no_action', 'the tool answered no action')
+  const outcome = action.state === 'approved' && action.verdict === 'run' ? 'approved' : action.state === 'waiting' ? 'waiting' : 'existing'
+  return ok({ result: { outcome, text, action, tool } })
 }
 
 /** One op of the hook. Validates the body first: a malformed body or an unknown op is 400 and does nothing. */

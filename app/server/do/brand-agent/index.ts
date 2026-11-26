@@ -9,11 +9,16 @@ import type { AuditEntry, PushAck, RunEvent } from '../../../shared/protocol/ind
 import type { ActiveRun, PauseState, SendTurnResult } from '../../../shared/contract/runs.ts'
 import type { Trace } from '../../../shared/contract/trace.ts'
 import type { Job } from '../../../shared/contract/jobs.ts'
-import { composePorts, jobDeps, p6Hooks, wireP6 } from './compose.ts'
+import { asksDeps, composePorts, jobDeps, p6Hooks, wireP6 } from './compose.ts'
+import { Asks, actionsOn, createAskTables } from './asks.ts'
+import { createInvocationTables, recordInvocation } from './invocations.ts'
+import { hubAccountFacts } from './hub-accounts.ts'
+import type { HubAccountFacts } from '../../outbox/facts.ts'
+import type { ConnectGateway } from '../../../hub/index/contract.ts'
 import { questionWaits } from '../../questions/agent.ts'
 import { AgentCore } from './core.ts'
 import type {
-  Actor, AdmitAnswer, BrandAgentParts, BrandAgentPorts, BrandAgentRpc, DeferDecision, DrainState, LeaseAnswer, ModelCallUsage, ModelCallWorst, PersonDataAnswer,
+  Actor, AdmitActionAnswer, AdmitAnswer, AskWaitAnswer, BrandAgentParts, BrandAgentPorts, BrandAgentRpc, DeferDecision, DrainState, LeaseAnswer, ModelCallUsage, ModelCallWorst, PersonDataAnswer,
   PoolHealth, Refusal, RunScope, RunsHealth, SubmitTurn,
 } from './ports.ts'
 import { createAgentTables } from './schema.ts'
@@ -48,6 +53,9 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
     void ctx.blockConcurrencyWhile(async () => {
       const sql = ctx.storage.sql
       createAgentTables(sql)
+      // Stage 1 M2-D (N14): the admitted calls and the asks' records.
+      createInvocationTables(sql)
+      createAskTables(sql)
       const now = () => Date.now()
       const tokens = createRunTokens(sql, now)
       const sched: SqlScheduler = createScheduler<TaskContext>({
@@ -71,6 +79,8 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
         modelUsable: modelUsable(openStores(env)), brandSkills: () => skillFiles(env.DB), taskSeeds: registrySeeds(taskHandlers),
         onEvent: e => this.hub.onEvent(e),
         sockets: this.hub,
+        // Stage 1 M2-D (N2): the write tools' server only while an operation is enabled.
+        actionsOn: () => actionsOn(env.DB),
         chatGone: async chatId => {
           const c = await chatStore({ db: env.DB }).ownerOf(chatId)
           return c === null || c.deleted
@@ -78,6 +88,8 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
       })
       wireP6(this.core, p6Hooks(env, parts))
       this.core.setJobs(jobDeps(env))
+      // Stage 1 M2-D (N14): a turn that proposed a write gets its turn-end task in `storeFinal`'s own step.
+      this.core.addFinalHook(t => this.asks().onTurnFinal(t))
       this.core.ensureSeeds()
       await sched.syncAlarm()
     })
@@ -167,6 +179,37 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   }
   async writeToolCall(turnId: string, n: number, entry: AuditEntry): Promise<void> {
     await this.core.writeToolCall(turnId, n, entry)
+    // Stage 1 M2-D (N14): a call that can propose a write is kept for admission, before the audit route's 204 lets it run.
+    recordInvocation(this.ctx.storage.sql, turnId, entry, Date.now())
+  }
+
+  // ---------- Stage 1 M2-D: the ask flow (N14, asks.ts) ----------
+  private asks(): Asks {
+    return new Asks({ sql: this.ctx.storage.sql, scheduler: this.sched, db: this.env.DB, core: this.core, deps: asksDeps(this.env), now: () => Date.now() })
+  }
+  async admitAction(turnId: string, tool: string, inputSha256: string): Promise<AdmitActionAnswer> {
+    return this.asks().admit(turnId, tool, inputSha256)
+  }
+  async askNoted(turnId: string, actionId: string): Promise<void> {
+    this.asks().noted(turnId, actionId)
+  }
+  async beginAskWait(turnId: string, actionId: string): Promise<AskWaitAnswer> {
+    return this.asks().beginWait(turnId, actionId)
+  }
+  async endAskWait(actionId: string, delivered: boolean): Promise<void> {
+    this.asks().endWait(actionId, delivered)
+  }
+  async askTurnLive(turnId: string): Promise<boolean> {
+    return this.asks().turnLive(turnId)
+  }
+  async actionChanged(actionId: string): Promise<void> {
+    this.asks().changed(actionId)
+  }
+  async hubAccounts(): Promise<HubAccountFacts[]> {
+    return hubAccountFacts({
+      connect: this.env.HUB_CONNECT as unknown as Pick<ConnectGateway, 'listAccounts'>, db: this.env.DB, nowMs: Date.now(),
+      requestId: `actions-accounts-${crypto.randomUUID()}`, log: entry => console.log(entry),
+    })
   }
 
   // ---------- the API (routes 24, 27, 29-31, 35-37, 49) ----------

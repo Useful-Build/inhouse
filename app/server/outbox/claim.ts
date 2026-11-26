@@ -17,6 +17,15 @@ import type { LapseReason } from './sql.ts'
 import { timing } from './timing.ts'
 import type { OutboxActionRow, OutboxGateRow } from './types.ts'
 
+/** M2-D (N11): the action's chat isn't in the trash (a deleted chat withdraws its actions). */
+const CHAT_KEPT = 'NOT EXISTS (SELECT 1 FROM chats ch WHERE ch.id = outbox_actions.chat_id AND ch.deleted_at_ms IS NOT NULL)'
+/**
+ * M2-D (N9): a Shopify action's scope names the store its account writes to now (`connector_accounts.shop`, the hub's
+ * word): a store change with the same connection date can't send an action approved for the old store.
+ */
+const SHOP_KEPT = `(json_extract(outbox_actions.scope_json, '$.shop') IS NULL OR EXISTS (SELECT 1 FROM connector_accounts cs
+  WHERE cs.account_id = outbox_actions.account_id AND cs.shop = json_extract(outbox_actions.scope_json, '$.shop')))`
+
 export function claimStmt(p: { actionId: string; nowMs: number; pauseGen: number; stamp: string }): Stmt {
   const guard = claimGuardSql('outbox_actions')
   return stmt(
@@ -24,6 +33,7 @@ export function claimStmt(p: { actionId: string; nowMs: number; pauseGen: number
      WHERE id = ? AND state = 'approved' AND approved_rev = rev AND send_at_ms <= ? AND approved_at_ms > ?
        AND EXISTS (SELECT 1 FROM outbox_gate gt WHERE gt.id = 1 AND gt.paused = 0 AND gt.restore_hold = 0
          AND gt.epoch = outbox_actions.approved_epoch AND gt.do_gen = ?)
+       AND ${CHAT_KEPT} AND ${SHOP_KEPT}
        AND ${guard.sql}`,
     p.nowMs, p.nowMs, p.stamp, p.actionId, p.nowMs, p.nowMs - timing().approvalMaxAgeMs, p.pauseGen, ...(guard.params as SqlValue[]),
   )
@@ -42,6 +52,8 @@ const exists = async (db: D1Database, sql: string, ...params: (string | number |
 export async function whyRefused(db: D1Database, row: OutboxActionRow, nowMs: number, pauseGen: number): Promise<ClaimRefusal> {
   if (row.state !== 'approved' || row.approved_rev !== row.rev) return { kind: 'gone' }
   if (row.send_at_ms === null || row.send_at_ms > nowMs) return { kind: 'wait', atMs: row.send_at_ms ?? nowMs }
+  // M2-D: a deleted chat's action can never be sent: withdrawn, whatever else holds.
+  if (await exists(db, 'SELECT 1 FROM chats WHERE id = ? AND deleted_at_ms IS NOT NULL', row.chat_id)) return { kind: 'withdraw', reason: 'chat_deleted' }
   if (row.approved_at_ms === null || row.approved_at_ms <= nowMs - timing().approvalMaxAgeMs) return { kind: 'lapse', reason: 'stale_approval' }
   const gate = await first<OutboxGateRow>(db, stmt('SELECT * FROM outbox_gate WHERE id = 1'))
   if (!gate) throw new Error('outbox: the gate row is missing')
@@ -55,6 +67,11 @@ export async function whyRefused(db: D1Database, row: OutboxActionRow, nowMs: nu
   if (!(await exists(db,
     'SELECT 1 FROM connector_accounts WHERE account_id = ? AND connected_at_ms = ? AND (disconnected_at_ms IS NULL OR disconnected_at_ms < connected_at_ms)',
     row.account_id, row.account_gen))) return { kind: 'withdraw', reason: 'account_changed' }
+  // M2-D: the Shopify store the account writes to changed (the same connection date): the scope can never pass again.
+  const shop = (JSON.parse(row.scope_json) as { shop?: string }).shop
+  if (shop !== undefined && !(await exists(db, 'SELECT 1 FROM connector_accounts WHERE account_id = ? AND shop = ?', row.account_id, shop))) {
+    return { kind: 'withdraw', reason: 'account_changed' }
+  }
   const people = await all<{ id: string; role: string; kind: string; status: string }>(db, stmt(
     'SELECT id, role, kind, status FROM members WHERE id IN (?, ?)', row.asked_by, row.approved_by ?? row.asked_by,
   ))

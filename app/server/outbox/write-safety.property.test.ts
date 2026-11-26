@@ -389,7 +389,8 @@ async function setup(o: World): Promise<void> {
      ON CONFLICT (id) DO UPDATE SET role = excluded.role, status = 'active', removed_at_ms = NULL, email_norm = excluded.email_norm, subject = excluded.subject, rev = rev + 1`,
   ).bind(id, START_ROLE[id], emailOf(id), subjectOf(id))))
   await db.batch([
-    db.prepare("INSERT INTO connector_accounts (account_id, connector, last_state, last_state_at_ms, connected_at_ms) VALUES (?, 'shopify', 'connected', 1, ?)").bind(SHOP, T0 - 2_000),
+    // The Shopify write store's handle is D1's, copied from the hub (M2-D's sync); written here as that sync would.
+    db.prepare("INSERT INTO connector_accounts (account_id, connector, last_state, last_state_at_ms, connected_at_ms, shop) VALUES (?, 'shopify', 'connected', 1, ?, ?)").bind(SHOP, T0 - 2_000, SHOPIFY_WRITE_SHOP),
     db.prepare("INSERT INTO connector_accounts (account_id, connector, last_state, last_state_at_ms, connected_at_ms) VALUES (?, 'slack', 'connected', 1, ?)").bind(SLACK, T0 - 1_000),
   ])
   await channel(db, CHANNEL_ID, 'ops', 'm_ws_d')
@@ -428,8 +429,8 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
     facts: outboxFacts({
       db,
       hubAccounts: async () => [
-        { accountId: SHOP, paused: hub.accounts.get(SHOP)?.paused ?? true, label: 'Shopify', shop: SHOPIFY_WRITE_SHOP },
-        { accountId: SLACK, paused: hub.accounts.get(SLACK)?.paused ?? true, label: 'Slack', shop: null },
+        { accountId: SHOP, paused: hub.accounts.get(SHOP)?.paused ?? true, label: 'Shopify' },
+        { accountId: SLACK, paused: hub.accounts.get(SLACK)?.paused ?? true, label: 'Slack' },
       ],
     }),
     schedule: async () => {},

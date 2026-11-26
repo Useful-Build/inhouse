@@ -57,8 +57,12 @@ export type AccountStatus = {
   needsReconnect: boolean
 }
 
-/** One row per account id (two modules naming one account give one row). */
-export type AccountSummary = { accountId: string; connector: string; configured: boolean; status: AccountStatus }
+/**
+ * One row per account id (two modules naming one account give one row). `shop` (Stage 1 M2-D): for the Shopify account
+ * only, the handle of the store the write app writes to (`<handle>` of `<handle>.myshopify.com`, a deployment var, not a
+ * secret), when one is configured. The product keeps it as the permission scope's `{ shop }`; absent, a write is refused.
+ */
+export type AccountSummary = { accountId: string; connector: string; configured: boolean; status: AccountStatus; shop?: string }
 
 /**
  * A read call's options. `testShopHost` is the test and eval builds' shop override (the morning-check set, P4): the Shopify
