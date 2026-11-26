@@ -19,6 +19,7 @@ import { PromptBentoSlot } from '../ui/chat'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { AgentPart, ApprovalCard } from './chat/Parts'
 import { LiveSteps } from './chat/LiveSteps'
+import { JobStatus } from './chat/JobStatus'
 import { SourcesRow, StepsLine } from './chat/Steps'
 import { useOpenChatMessages } from './chat/open-messages'
 import { FileChip } from './chat/FileChip'
@@ -492,6 +493,8 @@ function Thread() {
             </div>
           )}
           {/* What holds the agent back, said where the person is about to type: a pause, a busy budget, a damaged session, a lost link. */}
+          {/* Stage 1 M1-D: the chat's long job, its progress and Cancel, then how it ended. */}
+          <JobStatus chatId={openId} view={view} />
           {notices}
           {/* Always there, so a screen reader hears each change to the queue. */}
           <div role="status" className="sr-only">{queueStatus}</div>

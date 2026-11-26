@@ -27,7 +27,7 @@ import {
   AgentDataSchema, AgentErrorCodeSchema, AgentNoticeSchema, AgentNotificationSchema, AgentStateSchema, ApproveResultSchema, ErrorReasonSchema, InstantSchema,
   ActiveRunSchema, ChatListSchema, ChatPageSchema, ChatSummarySchema, LibraryFileSchema, MeSchema, MemberRecordSchema, MessageIdSchema, RoutineRunSchema, RunEventSchema, RunFrameSchema, SendTurnResultSchema, SettingRecordSchema, SupportGrantSchema, ToolSetupSchema, TraceSchema,
 } from '../../../shared/contract'
-import { ActionCardSchema, PermissionSchema, QuestionSchema } from '../../../shared/contract'
+import { ActionCardSchema, JobSchema, PermissionSchema, QuestionSchema } from '../../../shared/contract'
 import type { AgentClient, AgentNotice, AgentState, RunEvent, RunFrame, Scenario, SendPriority, SendTurnResult, Stage } from '../types'
 import { AgentError, SCENARIOS, STAGES } from '../types'
 import type { ContractTarget, WriteMethod } from './targets'
@@ -1123,6 +1123,24 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       }
       // A question nobody asked: not found, on every target.
       const e = await c.answerQuestion('q_AAAAAAAAAAAAAAAAAAAAAA', 'Yes').then(() => null, (x: unknown) => x)
+      expect(e).toBeInstanceOf(AgentError)
+      expect(e).toMatchObject({ code: 'not_found' })
+    })
+
+    // Stage 1 M1-D (N3, N18). Ways it could break: a job that doesn't parse through its schema; the demo showing a job or
+    // taking a Cancel; a Cancel of a job this person doesn't have doing anything but not found. A job itself needs a
+    // container (the sandbox's e2e/api/jobs.spec.ts drives one): here no chat has one.
+    only('job', 'cancelJob')('jobs: a chat with no job shows none; a Cancel of a job nobody has is refused', async () => {
+      const c = t.client
+      const read = await c.job(fx.unknownChatId).then(job => ({ job }), (e: unknown) => ({ e }))
+      if ('job' in read) {
+        if (read.job !== null) parse(JobSchema, read.job, 'a job')
+        expect(read.job).toBeNull()
+      } else {
+        expect(read.e).toBeInstanceOf(AgentError)
+        expect(read.e).toMatchObject({ code: 'not_found' })
+      }
+      const e = await c.cancelJob('j_AAAAAAAAAAAAAAAAAAAAAA').then(() => null, (x: unknown) => x)
       expect(e).toBeInstanceOf(AgentError)
       expect(e).toMatchObject({ code: 'not_found' })
     })
