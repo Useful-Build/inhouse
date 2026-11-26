@@ -22,6 +22,7 @@ import { retentionTask } from '../../../ops/retention-handlers.ts'
 import { outboxSend } from '../../../outbox/dispatch.ts'
 import { outboxSweep } from '../../../outbox/sweep.ts'
 import { EVAL_TASKS } from '@eval-trace'
+import { questionExpiry } from '../../../questions/expiry.ts'
 
 declare const __INHOUSE_EVAL_BUILD__: boolean
 
@@ -59,6 +60,8 @@ export function buildTaskHandlers(evalBuild: boolean): Readonly<Record<string, T
     // Stage 1 M2-B (N11): one send per approved action (`outbox-send:<id>`), and the outbox's sweep, seeded, every 60 s.
     'outbox-send': outboxSend,
     'outbox-sweep': outboxSweep,
+    // Stage 1 M2-Q (N16): a question's 7-day expiry, and the backstop for an answer whose resume never landed.
+    'question-expiry': questionExpiry,
     // The eval build only (p3-eval-observability rev 2 rec 5): the kept inputs' 7-day TTL (server/eval-trace/on.ts).
     ...(evalBuild ? EVAL_TASKS : {}),
   }

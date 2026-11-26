@@ -114,6 +114,9 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   // keeps who approved or resolved it, pseudonymous once their row is. The gate names no one.
   outbox_gate: { action: 'keep', why: 'one row of pause state: no member id' },
   outbox_actions: { action: 'delete_rows', column: 'asked_by', kept: ['approver', 'approved_by', 'resolved_by'] },
+  // Stage 1 M2-Q. The questions asked of the person go; one asked of every admin keeps who answered it, pseudonymous once
+  // their row is.
+  questions: { action: 'delete_rows', column: 'asked_of', kept: ['answered_by'] },
   privacy_requests: { action: 'keep', why: 'no member id: a Shopify customer by Shopify id only, cleared when the request is closed (route 94); the topic and dates stay as the record that it was answered' },
 }
 

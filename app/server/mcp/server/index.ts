@@ -63,6 +63,13 @@ function toolList() {
 const isId = (v: unknown): v is Id => typeof v === 'string' || (typeof v === 'number' && Number.isInteger(v))
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
+/** The CLI's id for the model's tool call (`_meta["claudecode/toolUseId"]`, Stage 1 M2-Q), when it is a plausible one. */
+export const TOOL_USE_ID_META_KEY = 'claudecode/toolUseId'
+function toolUseIdOf(meta: unknown): string | undefined {
+  const v = isObject(meta) ? meta[TOOL_USE_ID_META_KEY] : undefined
+  return typeof v === 'string' && /^[A-Za-z0-9_-]{1,256}$/.test(v) ? v : undefined
+}
+
 /** The arguments' problems, short, for the agent to fix its call. */
 const issues = (e: z.ZodError) => e.issues.slice(0, 5).map(i => `${i.path.length > 0 ? i.path.join('.') : 'arguments'}: ${i.message}`).join('; ')
 
@@ -118,7 +125,8 @@ export async function handleMcp(request: Request, scope: McpScope, deps: McpDeps
       // Input errors are tool execution errors (2025-11-25), so the model can read them and correct its call.
       if (!parsed.success) return rpcResult(id, refusal('invalid_arguments', `The arguments don't fit ${name}: ${issues(parsed.error)}. Fix them and call it again.`))
       const now = deps.now ?? Date.now
-      const call: ToolScope = { ...scope, nowMs: now(), requestId: `mcp-${crypto.randomUUID()}` }
+      const toolUseId = toolUseIdOf(params?._meta)
+      const call: ToolScope = { ...scope, nowMs: now(), requestId: `mcp-${crypto.randomUUID()}`, ...(toolUseId ? { toolUseId } : {}) }
       try {
         return rpcResult(id, await impl.call(parsed.data, call, { db: deps.db, ...(deps.notify ? { notify: deps.notify } : {}) }))
       } catch (err) {

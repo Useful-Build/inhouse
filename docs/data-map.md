@@ -66,6 +66,7 @@ The block below is generated from the table registry (`app/ops/tables`) by `data
 | `permission_uses` | D1 table | How often each permission was used each day | None | Steps setting (default 12 months) | No | Kept: no personal data | Nightly, copied in pages (may lag the snapshot by minutes) |  |
 | `outbox_gate` | D1 table | Whether the agent's actions are paused or held for a restore | None | Kept while the deployment lives | No | Kept: no personal data | Nightly, exact |  |
 | `outbox_actions` | D1 table | Actions the agent proposed, their approvals and outcomes | Member IDs of who asked, approved and checked it; the action's details, such as a message's text | Steps setting (default 12 months) after the action finished; never while it's open | Yes | Actions the person asked for are deleted. Others keep who approved or checked them, which no longer identifies the deleted person | Nightly, copied in pages (may lag the snapshot by minutes) |  |
+| `questions` | D1 table | Questions the agent asked a person, with their options and the answer | Member IDs of who was asked and who answered, the question and the answer | Steps setting (default 12 months) after the question is answered or closed; an open question is kept | Yes | Questions asked of the person are deleted. Others keep who answered, which no longer identifies the deleted person | Nightly, exact | The question, its options and the answer |
 <!-- stores:end -->
 
 ## Terms

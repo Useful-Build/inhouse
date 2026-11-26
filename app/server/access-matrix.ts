@@ -147,6 +147,10 @@ export const accessMatrix: readonly AccessRow[] = [
   /* 122 */ { method: 'POST', pattern: '/api/actions/:id/answer', class: 'baseline', allow: ['member', 'admin'] },
   /* 123 */ { method: 'POST', pattern: '/api/actions/:id/undo', class: 'baseline', allow: ['member', 'admin'] },
   /* 124 */ { method: 'POST', pattern: '/api/actions/:id/resolve', class: 'baseline', allow: ['member', 'admin'] },
+  // Stage 1 M2-Q (N16): the questions asked of this person (a member's own; a routine's to its creator or every admin;
+  // the question's `asked_of` decides, in its statement). Never the Inhouse team: a question is the brand's to answer.
+  /* 140 */ { method: 'GET', pattern: '/api/questions', class: 'baseline', allow: ['member', 'admin'] },
+  /* 141 */ { method: 'POST', pattern: '/api/questions/:id/answer', class: 'baseline', allow: ['member', 'admin'] },
 ]
 
 /** Each `CanKey`'s row (section 3). */

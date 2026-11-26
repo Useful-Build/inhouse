@@ -5,6 +5,7 @@ import type { MessagesRequest, Scenario, ScriptedBranch, ScriptedTurn } from './
 import { BUILT_IN_TOOLS, INHOUSE_MCP_SERVER } from '../../runner/src/guards/lists.ts'
 import { INHOUSE_TOOLS } from '../../server/mcp/registry.ts'
 import { jobScenarios } from './scenarios/jobs.ts'
+import { questionScenarios } from './scenarios/questions.ts'
 
 /** The model every harness run asks for (the harness's `RunStart`). */
 export const HARNESS_MODEL = 'claude-sonnet-5-5'
@@ -436,6 +437,7 @@ export const READ_SIDE_NOTICE_TEXT = 'The returns code needs action today.'
 export const READ_SIDE_SUBAGENT_MARKER = 'rs-subagent-lookup'
 export const SCENARIOS: Record<string, Scenario> = {
   ...jobScenarios(mainLoop, resultIs),
+  ...questionScenarios(mainLoop, resultIs),
   /** Answers with the SDK's StructuredOutput tool, matching STRUCTURED_SCHEMA (run it with that outputFormat). */
   structured: {
     turns: [

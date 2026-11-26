@@ -8,7 +8,9 @@ import { turnPromptDeps, turnSystemPrompt } from '../../prompt/connected.ts'
 import type { AuditEntry, PushAck, RunEvent } from '../../../shared/protocol/index.ts'
 import type { ActiveRun, PauseState, SendTurnResult } from '../../../shared/contract/runs.ts'
 import type { Trace } from '../../../shared/contract/trace.ts'
-import { composePorts, p6Hooks, wireP6 } from './compose.ts'
+import { composePorts, p6Hooks, questionWakes, wireP6 } from './compose.ts'
+import { questionWaits } from '../../questions/agent.ts'
+import type { QuestionWake } from '../../questions/agent.ts'
 import { AgentCore } from './core.ts'
 import type {
   Actor, AdmitAnswer, BrandAgentParts, BrandAgentPorts, BrandAgentRpc, DeferDecision, DrainState, LeaseAnswer, ModelCallUsage, ModelCallWorst, PersonDataAnswer,
@@ -40,6 +42,7 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   private sched!: SqlScheduler
   private ports!: BrandAgentPorts
   private hub!: SocketHub
+  private wakes: QuestionWake[] = []
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -75,6 +78,7 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
         },
       })
       wireP6(this.core, p6Hooks(env, parts))
+      this.wakes = questionWakes(env, parts)
       this.core.ensureSeeds()
       await sched.syncAlarm()
     })
@@ -281,6 +285,18 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   /** This object's pause generation, and since when it has seen the outbox's gate behind it (null: not behind). */
   async outboxLag(): Promise<Lag> {
     return { pauseGen: doPauseState(this.ctx.storage.sql).pauseGen, lagSinceMs: lagSince(this.ctx.storage.sql) }
+  }
+
+  // ---------- Stage 1 M2-Q (N16): questions ----------
+  /** The question each chat waits on, or null (server/questions/agent.ts). */
+  async questionWaits(chatIds: string[]): Promise<Record<string, string | null>> {
+    return questionWaits(this.ctx.storage.sql, chatIds)
+  }
+  /** An answered question's resume (`resumeDeferred`, `allow`), then whatever wakes on an answer (compose.ts). */
+  async questionResume(chatId: string, questionId: string): Promise<SendTurnResult | Refusal> {
+    const r = await this.core.resumeDeferred(chatId, 'allow', questionId)
+    if (!('refused' in r)) for (const wake of this.wakes) wake(chatId)
+    return r
   }
 }
 
