@@ -207,12 +207,6 @@ export function guardedOptions(
       ],
     },
     skillOverrides: Object.fromEntries(BUNDLED_SKILLS_OFF.map((s) => [s, 'off' as const])),
-    // WebFetch's preflight (the CLI asks api.anthropic.com's domain lookup about each host before fetching) is off: the
-    // container reaches no Anthropic host but through the model route, so the lookup fails and every fetch with it
-    // ("Unable to verify if domain ... is safe to fetch"; M1-P's sandbox run, 2026-11-26). Our own rules decide instead:
-    // the listed hosts (the allow rules and the WebFetch hook here) and the egress's host list and leak check. It also
-    // keeps the brand's hostnames from going to that lookup. SDK 0.3.328 Settings `skipWebFetchPreflight`.
-    skipWebFetchPreflight: true,
     enabledPlugins: Object.fromEntries(BUILT_IN_PLUGINS_OFF.map((p) => [p, false])),
   }
 
