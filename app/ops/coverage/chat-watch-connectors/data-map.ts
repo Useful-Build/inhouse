@@ -66,6 +66,9 @@ export const NOTES: Readonly<Record<string, Note>> = {
   ShopifyWriteSignIn: { holds: 'The connector hub’s sealed token for the separate Shopify write app', personal: 'None', retention: 'Kept while the write app is configured', deletion: 'Kept: no personal data', backup: 'Not restored: granted again on the next write' },
   team_requests: { holds: 'Requests to the support team', personal: 'Requester id, request text and subject', retention: 'Kept while the deployment lives or until the requester is deleted' },
   brand_skills: { holds: 'Skills written by the brand', personal: 'Maker and editor ids, skill description and instructions', retention: 'Kept until the skill is deleted', deletion: 'The skill stays; the deleted member’s maker and editor links are cleared', keeps: 'Skill description and instructions' },
+  permission_ceiling: { holds: 'Which actions the agent may take at all, and their daily limits', personal: 'Member ID of who last changed it', retention: 'Kept while the deployment lives', deletion: 'Kept: the member ID no longer identifies the deleted person' },
+  permission_grants: { holds: '"Always allow" permissions, live and ended', personal: 'Member IDs of the holder and of who granted and ended it', retention: 'Kept while the deployment lives', deletion: 'The person\'s own permissions are deleted. Others keep who granted or ended them, which no longer identifies the deleted person' },
+  permission_uses: { holds: 'How often each permission was used each day', personal: 'None', retention: 'Steps setting (default 12 months)', deletion: 'Kept: no personal data' },
   privacy_requests: { holds: 'Shopify privacy requests and their status', personal: 'Shopify customer and order IDs while open', retention: 'Request record kept while the deployment lives; customer and order IDs cleared on close', deletion: 'Kept: no team member ID' },
 }
 

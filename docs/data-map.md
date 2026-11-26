@@ -61,6 +61,9 @@ The block below is generated from the table registry (`app/ops/tables`) by `data
 | `privacy_requests` | D1 table | Shopify privacy requests and their status | Shopify customer and order IDs while open | Request record kept while the deployment lives; customer and order IDs cleared on close | No | Kept: no team member ID | Nightly, exact |  |
 | `team_requests` | D1 table | Requests to the support team | Requester id, request text and subject | Kept while the deployment lives or until the requester is deleted | Yes | Rows that belong to the person deleted | Nightly, copied in pages (may lag the snapshot by minutes) |  |
 | `brand_skills` | D1 table | Skills written by the brand | Maker and editor ids, skill description and instructions | Kept until the skill is deleted | Yes | The skill stays; the deleted member’s maker and editor links are cleared | Nightly, exact | Skill description and instructions |
+| `permission_ceiling` | D1 table | Which actions the agent may take at all, and their daily limits | Member ID of who last changed it | Kept while the deployment lives | Yes | Kept: the member ID no longer identifies the deleted person | Nightly, exact |  |
+| `permission_grants` | D1 table | "Always allow" permissions, live and ended | Member IDs of the holder and of who granted and ended it | Kept while the deployment lives | Yes | The person's own permissions are deleted. Others keep who granted or ended them, which no longer identifies the deleted person | Nightly, exact |  |
+| `permission_uses` | D1 table | How often each permission was used each day | None | Steps setting (default 12 months) | No | Kept: no personal data | Nightly, copied in pages (may lag the snapshot by minutes) |  |
 <!-- stores:end -->
 
 ## Terms

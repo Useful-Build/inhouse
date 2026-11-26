@@ -54,6 +54,8 @@ const NO_ROUTINE = 'rt_e2eNobodyAAAAAAAAAAAAA'
 const NO_TEAM_REQUEST = 'tr_e2eNobodyAAAAAAAAAAAAA'
 /** A brand skill id that names nothing: `bs_` + 22 characters (BrandSkillIdSchema). */
 const NO_BRAND_SKILL = 'bs_e2eNobodyAAAAAAAAAAAAA'
+/** A permission id nobody has (`pg_` + 22, permissions.ts `PermissionIdSchema`). */
+const NO_PERMISSION = 'pg_e2eNobodyAAAAAAAAAAAAA'
 const ALL: Role[] = ['member', 'admin', 'inhouse']
 const PEOPLE: Role[] = ['member', 'admin']
 
@@ -188,6 +190,9 @@ export const CASES: Record<string, RouteCase> = {
   'GET /api/data-access/export': { design: d('brand_data', ['admin', 'inhouse']), path: '/api/data-access/export', passes: 200 },
   // Row 96 (P8a D): Export everything's check. It plans only: a 200 with the size, nothing written.
   'GET /api/data-access/export/check': { design: d('brand_data', ['admin', 'inhouse']), path: '/api/data-access/export/check', passes: 200 },
+  // Stage 1 M2-A (N15): brand people only.
+  'GET /api/permissions': { design: d('baseline', PEOPLE), path: '/api/permissions', passes: 200 },
+  'POST /api/permissions/:id/remove': { design: d('baseline', PEOPLE), path: `/api/permissions/${NO_PERMISSION}/remove`, json: { ifRev: 1 }, passes: 404 },
 }
 
 /** The case for a row, or an error naming it (routes.spec.ts reports the gap on its own; this is for the specs that use it). */
