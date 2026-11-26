@@ -6,7 +6,7 @@ import { ActionCardSchema } from '../../shared/contract/actions.ts'
 import type { MemberRole } from '../../shared/contract/members.ts'
 import { operationEntry } from './operations/index.ts'
 import type { OutboxActionRow } from './types.ts'
-import { FAILED_TEXT, LAPSE_TEXT, NEEDS_CHECK_TEXT, SENT_TEXT } from './words.ts'
+import { FAILED_TEXT, LAPSE_TEXT, NEEDS_CHECK_TEXT, SENT_TEXT, WITHDRAWN_TEXT } from './words.ts'
 import type { LapseReason } from './sql.ts'
 
 /** What the request stored for the card (`card_json`): the operation's own words, the tool's label and the nudge. */
@@ -41,7 +41,10 @@ export function cardOf(row: OutboxActionRow, viewer: Viewer, nowMs: number): Act
   const asker = viewer.memberId === row.asked_by
   const waiting = row.state === 'waiting' && row.expires_at_ms > nowMs
   const kind = kindOf(row)
-  const lapsed = row.lapsed_reason && (row.state === 'waiting' || row.state === 'expired') ? LAPSE_TEXT[row.lapsed_reason as LapseReason] : undefined
+  const reason = row.lapsed_reason as LapseReason | null
+  const lapsed = reason === null ? undefined
+    : row.state === 'withdrawn' ? WITHDRAWN_TEXT[reason]
+      : row.state === 'waiting' || row.state === 'expired' ? LAPSE_TEXT[reason] : undefined
   const result = resultText(row)
   return ActionCardSchema.parse({
     id: row.id,

@@ -15,7 +15,8 @@ CREATE TABLE outbox_gate (
   restore_hold INTEGER NOT NULL DEFAULT 0 CHECK (restore_hold IN (0, 1)),
   epoch INTEGER NOT NULL DEFAULT 1,
   do_gen INTEGER NOT NULL DEFAULT 0,
-  updated_at_ms INTEGER NOT NULL);
+  updated_at_ms INTEGER NOT NULL,
+  stamp TEXT);
 INSERT INTO outbox_gate (id, updated_at_ms) VALUES (1, 0);
 
 CREATE TABLE outbox_actions (

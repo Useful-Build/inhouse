@@ -70,6 +70,8 @@ export interface OutboxGateRow {
   /** BrandAgent's `pause_gen` as of the last successful sync. A claim needs it to equal the dispatcher's `pauseGen`. */
   do_gen: number
   updated_at_ms: number
+  /** The last sync that moved the gate (its later statements act only under it). */
+  stamp: string | null
 }
 
 /** The admitted main-agent tool call a proposal came from (N14's `admitAction`). */

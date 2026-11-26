@@ -35,7 +35,7 @@ describe('the object\'s pause state (failure 1)', () => {
 describe('the hook (failures 2 and 3)', () => {
   it('syncs the gate to the state after each Pause and Resume', () => inAgent(async h => {
     const told = notices()
-    h.core.registerPauseHook(outboxPauseHook({ db, state: () => doPauseState(h.sql), notify: told.notify }))
+    h.core.registerPauseHook(outboxPauseHook({ db, sql: h.sql, notify: told.notify }))
     const before = await readGate(db)
     await h.core.pause(ADMIN)
     expect(await readGate(db)).toMatchObject({ paused: 1, do_gen: 1, epoch: before.epoch + 1 })
@@ -50,4 +50,29 @@ describe('the hook (failures 2 and 3)', () => {
     await h.core.pause(ADMIN)
     expect(await readGate(db)).toMatchObject({ paused: 1, do_gen: 1 })
   }))
+})
+
+describe("one task at a time (nit 11: the permit's deadline doesn't rely on it, but the pass is serial today)", () => {
+  it('a pass runs the send tasks and the sweep one after another, never overlapping', () => {
+    let running = 0
+    let most = 0
+    const order: string[] = []
+    const slow = (name: string) => async () => {
+      running++
+      most = Math.max(most, running)
+      order.push(`start:${name}`)
+      await new Promise(r => setTimeout(r, 5))
+      order.push(`end:${name}`)
+      running--
+      return { done: true as const }
+    }
+    return inAgent(async h => {
+      h.sched.schedule({ id: 'outbox-send:ac_a', kind: 'outbox-send', dueAtMs: h.clock.now })
+      h.sched.schedule({ id: 'outbox-send:ac_b', kind: 'outbox-send', dueAtMs: h.clock.now })
+      h.sched.schedule({ id: 'outbox-sweep', kind: 'outbox-sweep', dueAtMs: h.clock.now })
+      await h.tick(1_000)
+      expect(most).toBe(1)
+      expect(order.filter(o => o.startsWith('start'))).toHaveLength(3)
+    }, { handlers: { 'outbox-send': slow('send'), 'outbox-sweep': slow('sweep') } })
+  })
 })

@@ -163,7 +163,7 @@ async function runSequence(steps: Step[]): Promise<number> {
     const r = await db.prepare('SELECT id FROM outbox_actions WHERE state = ? ORDER BY created_at_ms LIMIT 1').bind(state).first<{ id: string }>()
     return r?.id ?? at(i)
   }
-  const sync = () => syncGate({ db, state: { ...object }, nowMs: now, requestId: fresh('sync'), notify: note.notify })
+  const sync = () => syncGate({ db, state: () => ({ ...object }), nowMs: now, requestId: fresh('sync'), notify: note.notify })
   const remember = (row: OutboxActionRow | null) => {
     if (row && row.state === 'approved') approvedEra.set(row.id, era)
   }
@@ -259,7 +259,7 @@ async function runSequence(steps: Step[]): Promise<number> {
         break
       }
       case 'sweep': {
-        await sweepOutbox({ db, nowMs: now, state: { ...object }, scheduler: { ensure: () => {} }, notify: note.notify, requestId: fresh('sweep') })
+        await sweepOutbox({ db, nowMs: now, state: () => ({ ...object }), scheduler: { ensure: () => {} }, notify: note.notify, requestId: fresh('sweep') })
         const stuck = await db.prepare("SELECT id FROM outbox_actions WHERE state = 'sending' AND claimed_at_ms <= ?").bind(now - 60_000).all()
         if (stuck.results.length > 0) problems.push('P4: a sending row past its deadline after a sweep')
         break

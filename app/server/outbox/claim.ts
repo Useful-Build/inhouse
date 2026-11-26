@@ -4,7 +4,9 @@
 // (the ceiling, the policy, the account, the asker, the channel, and the grant and its use or the approver). A row in
 // `sending` is never claimed again: nothing moves a row back to `approved`.
 // A refused claim sends nothing. The dispatcher reads why, and moves the row back to `waiting` (the approval cleared,
-// the use released, `lapsed_reason` set, the card saying why) or, when the asker left the team, to `withdrawn`.
+// the use released, `lapsed_reason` set, the card saying why) or, when the asker left the team or the action can never
+// pass again (its account generation or policy revision is gone), to `withdrawn`. An approval not claimed within 10
+// minutes of being given lapses (the approval age cap).
 import { all, first, stmt } from '../db/sql.ts'
 import type { SqlValue, Stmt } from '../db/sql.ts'
 import { claimGuardSql } from '../permissions/claim-guard.ts'
@@ -12,17 +14,18 @@ import { BULK_RECORDS, POLICY_REV } from '../permissions/policy.ts'
 import { operationEntry } from './operations/index.ts'
 import { actionLine, both, butNot, releaseUseWhere, stamped, unreleasedUse } from './sql.ts'
 import type { LapseReason } from './sql.ts'
+import { timing } from './timing.ts'
 import type { OutboxActionRow, OutboxGateRow } from './types.ts'
 
 export function claimStmt(p: { actionId: string; nowMs: number; pauseGen: number; stamp: string }): Stmt {
   const guard = claimGuardSql('outbox_actions')
   return stmt(
     `UPDATE outbox_actions SET state = 'sending', rev = rev + 1, attempt = attempt + 1, claimed_at_ms = ?, updated_at_ms = ?, stamp = ?
-     WHERE id = ? AND state = 'approved' AND approved_rev = rev AND send_at_ms <= ?
+     WHERE id = ? AND state = 'approved' AND approved_rev = rev AND send_at_ms <= ? AND approved_at_ms > ?
        AND EXISTS (SELECT 1 FROM outbox_gate gt WHERE gt.id = 1 AND gt.paused = 0 AND gt.restore_hold = 0
          AND gt.epoch = outbox_actions.approved_epoch AND gt.do_gen = ?)
        AND ${guard.sql}`,
-    p.nowMs, p.nowMs, p.stamp, p.actionId, p.nowMs, p.pauseGen, ...(guard.params as SqlValue[]),
+    p.nowMs, p.nowMs, p.stamp, p.actionId, p.nowMs, p.nowMs - timing().approvalMaxAgeMs, p.pauseGen, ...(guard.params as SqlValue[]),
   )
 }
 
@@ -39,16 +42,19 @@ const exists = async (db: D1Database, sql: string, ...params: (string | number |
 export async function whyRefused(db: D1Database, row: OutboxActionRow, nowMs: number, pauseGen: number): Promise<ClaimRefusal> {
   if (row.state !== 'approved' || row.approved_rev !== row.rev) return { kind: 'gone' }
   if (row.send_at_ms === null || row.send_at_ms > nowMs) return { kind: 'wait', atMs: row.send_at_ms ?? nowMs }
+  if (row.approved_at_ms === null || row.approved_at_ms <= nowMs - timing().approvalMaxAgeMs) return { kind: 'lapse', reason: 'stale_approval' }
   const gate = await first<OutboxGateRow>(db, stmt('SELECT * FROM outbox_gate WHERE id = 1'))
   if (!gate) throw new Error('outbox: the gate row is missing')
   if (gate.restore_hold === 1) return { kind: 'lapse', reason: 'restore_hold' }
   if (gate.paused === 1 || gate.epoch !== row.approved_epoch || gate.do_gen !== pauseGen) return { kind: 'lapse', reason: 'paused' }
   if (!(await exists(db, 'SELECT 1 FROM permission_ceiling WHERE operation = ? AND enabled = 1', row.operation))) return { kind: 'lapse', reason: 'over_ceiling' }
   const entry = operationEntry(row.operation)
-  if (!entry || row.policy_rev !== POLICY_REV) return { kind: 'lapse', reason: 'policy_changed' }
+  // A stored action made under another policy, or on another account generation, can never pass again: withdrawn, so
+  // a person isn't asked to approve something that can only lapse again.
+  if (!entry || row.policy_rev !== POLICY_REV) return { kind: 'withdraw', reason: 'policy_changed' }
   if (!(await exists(db,
     'SELECT 1 FROM connector_accounts WHERE account_id = ? AND connected_at_ms = ? AND (disconnected_at_ms IS NULL OR disconnected_at_ms < connected_at_ms)',
-    row.account_id, row.account_gen))) return { kind: 'lapse', reason: 'account_changed' }
+    row.account_id, row.account_gen))) return { kind: 'withdraw', reason: 'account_changed' }
   const people = await all<{ id: string; role: string; kind: string; status: string }>(db, stmt(
     'SELECT id, role, kind, status FROM members WHERE id IN (?, ?)', row.asked_by, row.approved_by ?? row.asked_by,
   ))

@@ -8,7 +8,7 @@ import { fileStore } from '../../files-io/store.ts'
 import type { StoredFile } from '../../files-io/store.ts'
 import type { ChatFile } from './ports.ts'
 import { runnerPool } from '../runner/pool.ts'
-import { doPauseState, outboxPauseHook } from '../../outbox/gate.ts'
+import { outboxPauseHook } from '../../outbox/gate.ts'
 import { outboxNotifier } from '../../outbox/notify.ts'
 
 /** The ports the BrandAgent runs on, built once per object from its env. */
@@ -62,7 +62,7 @@ export interface P6Hooks {
 export function p6Hooks(env: Env, parts: BrandAgentParts): P6Hooks {
   return {
     // Stage 1 M2-B (N12): the outbox's gate kept in step with the object's pause flag on every Pause and Resume.
-    pause: [outboxPauseHook({ db: env.DB, state: () => doPauseState(parts.sql), notify: outboxNotifier(env) })],
+    pause: [outboxPauseHook({ db: env.DB, sql: parts.sql, notify: outboxNotifier(env) })],
     onDeferred: null,
   }
 }

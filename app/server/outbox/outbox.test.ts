@@ -24,15 +24,17 @@ import { lastLineId, linesSince, personPrincipal, ctx as handlerCtx } from '../d
 import { setCeilingStmt } from '../permissions/ceiling.ts'
 import { POLICY_REV } from '../permissions/policy.ts'
 import { channel, insertGrant, person } from '../permissions/test-support.ts'
-import { runBatch } from '../db/sql.ts'
+import { runBatch, stmt } from '../db/sql.ts'
 import { cardOf } from './card.ts'
 import { claimStmt } from './claim.ts'
 import { sendAction } from './dispatch.ts'
 import type { DispatchDeps } from './dispatch.ts'
 import { syncGate } from './gate.ts'
 import { sweepOutbox } from './sweep.ts'
+import { outboxFacts } from './facts.ts'
+import { openOutbox } from './store.ts'
 import {
-  ADMIN, ASKER, OTHER, SHOP_GEN, fakeHub, fresh, notices, outbox, requestCtx, rowOf, tagArgs, unreleasedUses, world,
+  ADMIN, ASKER, HUB_FACTS, OTHER, SHOP_GEN, fakeHub, fresh, notices, outbox, requestCtx, rowOf, tagArgs, unreleasedUses, world,
 } from './test-support.ts'
 import type { HubMode } from './test-support.ts'
 import type { OutboxActionRow } from './types.ts'
@@ -219,10 +221,9 @@ describe('the claim during the hold (failure 4)', () => {
     const after = (await rowOf(db, r.action.id))!
     expect(after).toMatchObject({ state, lapsed_reason: reason, grant_id: null, approved_rev: null })
     expect(await unreleasedUses(db, r.action.id)).toEqual([])
-    if (state === 'waiting') {
-      expect(cardOf(after, ASKER_ACTOR, now).lapsed).toEqual(expect.any(String))
-      expect(d.note.list).toEqual([expect.objectContaining({ kind: 'approval_lapsed', to: ASKER, actionId: r.action.id })])
-    }
+    // The card says why (a withdrawn one too), and the approver is told.
+    expect(cardOf(after, ASKER_ACTOR, now).lapsed).toEqual(expect.any(String))
+    expect(d.note.list).toEqual([expect.objectContaining({ kind: 'approval_lapsed', to: ASKER, actionId: r.action.id })])
   }
 
   it('a removed permission stops the send and the card says why', () => lapsedBy(
@@ -239,19 +240,32 @@ describe('the claim during the hold (failure 4)', () => {
   it('a lowered ceiling stops it', () => lapsedBy(
     () => runBatch(db, [setCeilingStmt({ operation: 'shopify.order.tag_add', enabled: false, perDayMax: 50, actorId: 'm_system', nowMs: now })]), 'over_ceiling'))
 
-  it('a reconnected account stops it', () => lapsedBy(
-    () => db.prepare('UPDATE connector_accounts SET connected_at_ms = ?').bind(SHOP_GEN + 1).run(), 'account_changed'))
+  // The stored action is on the old generation and can never pass again: withdrawn, not asked again (Fable 5).
+  it('a reconnected account stops it, withdrawn', () => lapsedBy(
+    () => db.prepare('UPDATE connector_accounts SET connected_at_ms = ?').bind(SHOP_GEN + 1).run(), 'account_changed', 'withdrawn'))
+
+  it('a policy revision the row was made under no longer current: withdrawn', async () => {
+    const a = await approved()
+    await db.prepare('UPDATE outbox_actions SET policy_rev = policy_rev + 1 WHERE id = ?').bind(a.id).run()
+    now += 10_000
+    const d = dispatch(a.id)
+    expect(await d.run).toEqual({ kind: 'not_claimed' })
+    expect(d.hub.calls).toEqual([])
+    const after = (await rowOf(db, a.id))!
+    expect(after).toMatchObject({ state: 'withdrawn', lapsed_reason: 'policy_changed' })
+    expect(cardOf(after, ASKER_ACTOR, now).lapsed).toContain('withdrawn')
+  })
 
   it('a Pause lapses it at once: back to waiting, its use released, the approver told; resuming sends nothing', async () => {
     await grant()
     const r = await ask(1)
     if (r.outcome !== 'approved') throw new Error('expected a run')
     const told = notices()
-    await syncGate({ db, state: { paused: true, pauseGen: 1 }, nowMs: now, requestId: fresh('sync'), notify: told.notify })
+    await syncGate({ db, state: () => ({ paused: true, pauseGen: 1 }), nowMs: now, requestId: fresh('sync'), notify: told.notify })
     expect(await rowOf(db, r.action.id)).toMatchObject({ state: 'waiting', lapsed_reason: 'paused', grant_id: null })
     expect(await unreleasedUses(db, r.action.id)).toEqual([])
     expect(told.list).toEqual([expect.objectContaining({ kind: 'approval_lapsed', to: ASKER, actionId: r.action.id })])
-    await syncGate({ db, state: { paused: false, pauseGen: 2 }, nowMs: now, requestId: fresh('sync'), notify: told.notify })
+    await syncGate({ db, state: () => ({ paused: false, pauseGen: 2 }), nowMs: now, requestId: fresh('sync'), notify: told.notify })
     now += 10_000
     const d = dispatch(r.action.id, { gate: { paused: false, pauseGen: 2 } })
     expect(await d.run).toEqual({ kind: 'not_claimed' })
@@ -392,7 +406,7 @@ describe('the sweep (failure 7)', () => {
   const sweep = (state = { paused: false, pauseGen: 0 }) => {
     const ensured: string[] = []
     const note = notices()
-    return { run: sweepOutbox({ db, nowMs: now, state, scheduler: { ensure: t => ensured.push(t.id) }, notify: note.notify, requestId: fresh('sw') }), ensured, note }
+    return { run: sweepOutbox({ db, nowMs: now, state: () => state, scheduler: { ensure: t => ensured.push(t.id) }, notify: note.notify, requestId: fresh('sw') }), ensured, note }
   }
 
   it("schedules a lost approved row's send once its hold is 30 s past, and sends it once", async () => {
@@ -451,6 +465,170 @@ describe('the audit lines (failure 8)', () => {
     for (const l of lines) expect(l.target).toEqual(['action', a.id])
     expect(JSON.stringify(lines)).not.toContain('vip')
     expect(JSON.stringify(lines)).not.toContain('Order/1')
+  })
+})
+
+describe('review round 1', () => {
+  const sync = (paused: boolean, pauseGen: number, told = notices()) =>
+    syncGate({ db, state: () => ({ paused, pauseGen }), nowMs: now, requestId: fresh('sync'), notify: told.notify })
+  const gateRow = () => db.prepare('SELECT paused, do_gen, epoch FROM outbox_gate').first<{ paused: number; do_gen: number; epoch: number }>()
+
+  it('a stale sync never reopens a paused gate (must-fix 1)', async () => {
+    await sync(true, 1)
+    const paused = await gateRow()
+    // A sweep that read the object before the Pause (open, generation 0) syncs after it.
+    expect(await sync(false, 0)).toEqual({ moved: false, lapsed: 0 })
+    expect(await gateRow()).toEqual(paused)
+    expect(await outbox(db, clock).answer(ASKER_ACTOR, (await waitingId()).id, { choice: 'once', ifRev: 1 })).toEqual({ refused: { code: 'conflict', reason: 'paused' } })
+  })
+
+  it("a stale sync never re-pauses the gate or lapses an approval given after the Resume (must-fix 1)", async () => {
+    await sync(true, 1)
+    await sync(false, 2)
+    const open = await gateRow()
+    const a = await approved()
+    // A hook or sweep that read the object while it was paused (generation 1) syncs after the Resume's sync.
+    expect(await sync(true, 1)).toEqual({ moved: false, lapsed: 0 })
+    expect(await gateRow()).toEqual(open)
+    expect(await rowOf(db, a.id)).toMatchObject({ state: 'approved' })
+    now += 10_000
+    const d = dispatch(a.id, { gate: { paused: false, pauseGen: 2 } })
+    expect(await d.run).toMatchObject({ kind: 'sent' })
+  })
+
+  it('the sweep reads the object when it syncs, not before its first await (must-fix 1)', async () => {
+    let reads = 0
+    // The first read (for the comparison) sees a Resume at generation 1; a Pause lands before the sync, which must use it.
+    const state = () => (++reads === 1 ? { paused: false, pauseGen: 1 } : { paused: true, pauseGen: 2 })
+    await sweepOutbox({ db, nowMs: now, state, scheduler: { ensure: () => {} }, notify: notices().notify, requestId: fresh('sw') })
+    expect(await gateRow()).toMatchObject({ paused: 1, do_gen: 2 })
+  })
+
+  it('"Always allow" over a grant that died before the answer: the new grant takes the use, and revoking it stops the send (must-fix 2)', async () => {
+    // A grant on the same key made under an older ceiling: dead, but still unrevoked.
+    const dead = await grant()
+    await db.prepare('UPDATE permission_grants SET ceiling_rev = 0 WHERE id = ?').bind(dead).run()
+    const a = await waitingId()
+    const r = await outbox(db, clock).answer(ASKER_ACTOR, a.id, { choice: 'always', ifRev: 1 })
+    if (!('action' in r)) throw new Error(`answer refused: ${r.refused.code}`)
+    const live = (await db.prepare('SELECT id FROM permission_grants WHERE revoked_at_ms IS NULL').all<{ id: string }>()).results
+    expect(live).toHaveLength(1)
+    expect(live[0].id).not.toBe(dead)
+    expect(r.action.grant_id).toBe(live[0].id)
+    expect(await unreleasedUses(db, a.id)).toEqual([expect.objectContaining({ grant_id: live[0].id, action_rev: 2 })])
+    await db.prepare('UPDATE permission_grants SET revoked_at_ms = ? WHERE id = ?').bind(now, live[0].id).run()
+    now += 10_000
+    const d = dispatch(a.id)
+    expect(await d.run).toEqual({ kind: 'not_claimed' })
+    expect(d.hub.calls).toEqual([])
+    expect(await rowOf(db, a.id)).toMatchObject({ state: 'waiting', lapsed_reason: 'permission_removed' })
+  })
+
+  it('two "Always allow" answers racing: one grant, both actions under it with a use, and revoking it stops both (must-fix 2)', async () => {
+    const a = await waitingId(1)
+    const b = await waitingId(2)
+    const port = outbox(db, clock)
+    const both = await Promise.all([port.answer(ASKER_ACTOR, a.id, { choice: 'always', ifRev: 1 }), port.answer(ASKER_ACTOR, b.id, { choice: 'always', ifRev: 1 })])
+    expect(both.every(x => 'action' in x)).toBe(true)
+    const live = (await db.prepare('SELECT id FROM permission_grants WHERE revoked_at_ms IS NULL').all<{ id: string }>()).results
+    expect(live).toHaveLength(1)
+    for (const id of [a.id, b.id]) {
+      expect(await rowOf(db, id)).toMatchObject({ grant_id: live[0].id })
+      expect(await unreleasedUses(db, id)).toEqual([expect.objectContaining({ grant_id: live[0].id })])
+    }
+    await db.prepare('UPDATE permission_grants SET revoked_at_ms = ?').bind(now).run()
+    now += 10_000
+    for (const id of [a.id, b.id]) {
+      const d = dispatch(id)
+      expect(await d.run).toEqual({ kind: 'not_claimed' })
+      expect(d.hub.calls).toEqual([])
+    }
+  })
+
+  it('the epoch alone refuses the claim, with no call (should-fix 3)', async () => {
+    const a = await approved()
+    await db.prepare('UPDATE outbox_gate SET epoch = epoch + 1').run()
+    now += 10_000
+    const d = dispatch(a.id)
+    expect(await d.run).toEqual({ kind: 'not_claimed' })
+    expect(d.hub.calls).toEqual([])
+    expect(await rowOf(db, a.id)).toMatchObject({ state: 'waiting', lapsed_reason: 'paused' })
+  })
+
+  it('the restore hold alone refuses the claim, with no call (should-fix 3)', async () => {
+    const a = await approved()
+    await db.prepare('UPDATE outbox_gate SET restore_hold = 1').run()
+    now += 10_000
+    const d = dispatch(a.id)
+    expect(await d.run).toEqual({ kind: 'not_claimed' })
+    expect(d.hub.calls).toEqual([])
+    expect(await rowOf(db, a.id)).toMatchObject({ state: 'waiting', lapsed_reason: 'restore_hold' })
+  })
+
+  it('a run that a sync lapsed before the read-back answers waiting and schedules nothing (should-fix 4)', async () => {
+    await grant()
+    const scheduled: { id: string; atMs: number }[] = []
+    // The request's audit line swapped for the sync's effect, landing inside the same batch, just after the insert.
+    const port = openOutbox({
+      db, now: clock, requestId: fresh('req'), facts: outboxFacts({ db, hubAccounts: async () => HUB_FACTS }),
+      schedule: async (id, atMs) => { scheduled.push({ id, atMs }) },
+      hook: () => stmt("UPDATE outbox_actions SET state = 'waiting', approved_rev = NULL, send_at_ms = NULL, lapsed_reason = 'paused' WHERE state = 'approved'"),
+    })
+    const r = await port.request(requestCtx({ nowMs: now }), { operation: 'shopify.order.tag_add', args: tagArgs(1) }, { mode: 'tool' })
+    expect(r).toMatchObject({ outcome: 'waiting', existing: false, action: { state: 'waiting' } })
+    expect(scheduled).toEqual([])
+  })
+
+  it('an approval not claimed within 10 minutes lapses, at the claim and in the sweep (decision 9)', async () => {
+    const a = await approved(1)
+    const b = await approved(2)
+    now += 10 * 60_000 + 1
+    const d = dispatch(a.id)
+    expect(await d.run).toEqual({ kind: 'not_claimed' })
+    expect(d.hub.calls).toEqual([])
+    expect(await rowOf(db, a.id)).toMatchObject({ state: 'waiting', lapsed_reason: 'stale_approval' })
+    expect(d.note.list).toEqual([expect.objectContaining({ kind: 'approval_lapsed', actionId: a.id })])
+    const told = notices()
+    expect(await sweepOutbox({ db, nowMs: now, state: () => ({ paused: false, pauseGen: 0 }), scheduler: { ensure: () => {} }, notify: told.notify, requestId: fresh('sw') }))
+      .toMatchObject({ tooOld: 1 })
+    expect(await rowOf(db, b.id)).toMatchObject({ state: 'waiting', lapsed_reason: 'stale_approval' })
+    expect(await unreleasedUses(db, b.id)).toEqual([])
+    expect(told.list).toEqual([expect.objectContaining({ kind: 'approval_lapsed', actionId: b.id })])
+    expect(cardOf((await rowOf(db, b.id))!, ASKER_ACTOR, now).lapsed).toContain('10 minutes')
+  })
+
+  it('the permit: a Pause after the claim puts the row back with no call and tells the approver (should-fix 7)', async () => {
+    const a = await approved()
+    now += 10_000
+    let reads = 0
+    const object = { paused: false, pauseGen: 0 }
+    const gate = {
+      // The dispatcher reads `paused` at its start, then at the permit: the Pause lands between the claim and the permit.
+      get paused() { if (++reads === 2) { object.paused = true; object.pauseGen = 1 } return object.paused },
+      get pauseGen() { return object.pauseGen },
+    }
+    const d = dispatch(a.id, { gate })
+    expect(await d.run).toEqual({ kind: 'not_claimed' })
+    expect(d.hub.calls).toEqual([])
+    expect(await rowOf(db, a.id)).toMatchObject({ state: 'waiting', lapsed_reason: 'paused' })
+    expect(d.note.list).toEqual([expect.objectContaining({ kind: 'approval_lapsed', actionId: a.id })])
+  })
+
+  it('the permit has a deadline: past it no call starts, so the sweep never races a send (nit 11)', async () => {
+    const a = await approved()
+    now += 10_000
+    const d = dispatch(a.id, { clock: () => now + 45_001 })
+    expect(await d.run).toEqual({ kind: 'not_claimed' })
+    expect(d.hub.calls).toEqual([])
+    expect(await rowOf(db, a.id)).toMatchObject({ state: 'waiting', lapsed_reason: 'stale_approval' })
+  })
+
+  it('an expired card no sweep has reached yet stops nothing: a new request makes a new card (nit 10)', async () => {
+    const a = await waitingId()
+    now = a.expires_at_ms
+    const r = await ask(1)
+    expect(r).toMatchObject({ outcome: 'waiting', existing: false })
+    if (r.outcome === 'waiting') expect(r.action.id).not.toBe(a.id)
   })
 })
 

@@ -28,6 +28,17 @@ export const LAPSE_TEXT: Readonly<Record<LapseReason, string>> = {
   channel_not_listed: 'The channel isn’t listed any more, so this needs your OK again.',
   permission_removed: 'The permission was removed, so this needs your OK again.',
   count: 'Today’s allowance for this permission is used up, so this needs your OK.',
+  stale_approval: 'It wasn’t sent within 10 minutes of the OK, so it needs your OK again.',
+}
+
+/**
+ * Why an approval was withdrawn rather than sent back: the stored action can never pass again (its account generation
+ * or its policy revision is gone), so asking again would only loop. The agent can propose it afresh.
+ */
+export const WITHDRAWN_TEXT: Readonly<Partial<Record<LapseReason, string>>> = {
+  account_changed: 'The tool’s connection changed, so this was withdrawn. Ask the agent to propose it again.',
+  policy_changed: 'The rules changed, so this was withdrawn. Ask the agent to propose it again.',
+  asker_removed: 'The person who asked left the team, so this was withdrawn.',
 }
 
 /** A needs-check row's words on its card. */

@@ -12,6 +12,11 @@ const TIMING = Object.freeze({
   staleSendingMs: 60_000,
   /** An unanswered card expires after this long. */
   expiresMs: 7 * 86_400_000,
+  /**
+   * An approval not claimed this long after it was given lapses back to waiting (the orchestrator's cap), whether its
+   * send task is late, in backoff or quarantined: an OK is for now, not for whenever.
+   */
+  approvalMaxAgeMs: 10 * 60_000,
   /** The sweep runs this often. */
   sweepEveryMs: 60_000,
 })

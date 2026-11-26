@@ -8,7 +8,7 @@ import { writeStamp } from '../db/ids.ts'
 import { all, first, runBatch, stmt } from '../db/sql.ts'
 import type { SqlValue, Stmt } from '../db/sql.ts'
 import { decideCore, memberHolder } from '../permissions/decide.ts'
-import { alwaysAllowStmts, liveGrant } from '../permissions/grants.ts'
+import { alwaysAllowStmts } from '../permissions/grants.ts'
 import { NUDGE_AFTER } from '../permissions/policy.ts'
 import { resolve } from '../permissions/resolve.ts'
 import type { DecideCtx, Resolved, Verdict } from '../permissions/types.ts'
@@ -19,7 +19,7 @@ import { brandTimeZone } from './facts.ts'
 import type { OutboxFacts } from './facts.ts'
 import { operationEntry } from './operations/index.ts'
 import {
-  actionLine, both, butNot, GATE_OPEN, newActionId, releaseUseWhere, reserveUseWhere, stamped, unreleasedUse,
+  actionLine, both, butNot, GATE_OPEN, newActionId, permissionUseKey, releaseUseWhere, reserveUseByKeyWhere, stamped, unreleasedUse,
 } from './sql.ts'
 import type { Exists } from './sql.ts'
 import { timing } from './timing.ts'
@@ -95,7 +95,7 @@ function insertAction(n: NewRow, also: readonly Exists[]): Stmt {
     n.nowMs + t.expiresMs, n.nowMs, n.nowMs, n.stamp,
   ]
   const conds = [
-    `NOT EXISTS (SELECT 1 FROM outbox_actions WHERE chat_id = ? AND payload_hash = ? AND state = 'waiting')`,
+    `NOT EXISTS (SELECT 1 FROM outbox_actions WHERE chat_id = ? AND payload_hash = ? AND state = 'waiting' AND expires_at_ms > ?)`,
     ...also.map(e => `EXISTS (${e.sql})`),
   ]
   return stmt(
@@ -103,7 +103,7 @@ function insertAction(n: NewRow, also: readonly Exists[]): Stmt {
      SELECT ${INSERT_COLUMNS.map(() => '?').join(', ')}, ${approved ? '(SELECT epoch FROM outbox_gate WHERE id = 1)' : 'NULL'}
      WHERE ${conds.join(' AND ')}
      ON CONFLICT DO NOTHING`,
-    ...values, n.ctx.chatId, n.r.payloadHash, ...also.flatMap(e => e.params),
+    ...values, n.ctx.chatId, n.r.payloadHash, n.nowMs, ...also.flatMap(e => e.params),
   )
 }
 
@@ -117,7 +117,10 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
   const byInvocation = (chatId: string, toolUseId: string) =>
     first<OutboxActionRow>(db, stmt('SELECT * FROM outbox_actions WHERE chat_id = ? AND tool_use_id = ?', chatId, toolUseId))
   const waitingDup = (chatId: string, payloadHash: string) =>
-    first<OutboxActionRow>(db, stmt("SELECT * FROM outbox_actions WHERE chat_id = ? AND payload_hash = ? AND state = 'waiting' ORDER BY created_at_ms LIMIT 1", chatId, payloadHash))
+    first<OutboxActionRow>(db, stmt(
+      "SELECT * FROM outbox_actions WHERE chat_id = ? AND payload_hash = ? AND state = 'waiting' AND expires_at_ms > ? ORDER BY created_at_ms LIMIT 1",
+      chatId, payloadHash, d.now(),
+    ))
   const gateOpen = async () => (await first<{ one: number }>(db, stmt(`${GATE_OPEN.replace('SELECT 1', 'SELECT 1 AS one')}`))) !== null
   const scheduleSend = async (actionId: string, atMs: number) => {
     try {
@@ -190,8 +193,12 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
         ])
         const made = await row(id)
         if (made) {
-          await scheduleSend(id, made.send_at_ms as number)
-          return { outcome: 'approved', action: made }
+          // Branch on the row as it is now: a Pause's sync may have sent it back to waiting since the batch.
+          if (made.state === 'approved' && made.send_at_ms !== null) {
+            await scheduleSend(id, made.send_at_ms)
+            return { outcome: 'approved', action: made }
+          }
+          return made.state === 'waiting' ? { outcome: 'waiting', action: made, existing: false } : { outcome: 'existing', action: made }
         }
         const existing = await existingFor(ctx, r)
         if (existing) return existing
@@ -260,27 +267,34 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       })
       if (input.choice === 'always') {
         // The grant (or the live one already there), the action's use under it and `grant_id`, all only under this
-        // answer's stamp. `grant_id` is set only where the use was reserved: otherwise the person's own approval of
-        // this revision stands, and the grant is there for the next one.
+        // answer's stamp. Which grant is found in SQL by its key when the batch runs, never read before it. `grant_id`
+        // is set only where the use was reserved: otherwise the person's own approval of this revision stands, and the
+        // grant is there for the next one.
         const scope = JSON.parse(before.scope_json) as Record<string, string>
-        const live = await liveGrant(db, { holder: memberHolder(actor.memberId), accountId: before.account_id, operation: before.operation, scopeKey: before.scope_key })
+        const key = { holder: memberHolder(actor.memberId), accountId: before.account_id, operation: before.operation, scopeKey: before.scope_key }
         const grant = alwaysAllowStmts({
           holderMemberId: actor.memberId, grantedRole: actor.role,
           resolved: { accountId: before.account_id, accountGen: before.account_gen, operation: before.operation, scope, scopeKey: before.scope_key, policyRev: before.policy_rev },
           perDay: entry.defaultPerDay, sourceAction: actionId, onlyIf: mine, at: { actorId: actor.memberId, requestId: d.requestId, nowMs },
         })
-        const grantId = live?.id ?? grant.id
         const nextRev = input.ifRev + 1
         const tz = await brandTimeZone(db)
+        const use = permissionUseKey(actionId, nextRev)
         stmts.push(
           ...grant.stmts.map(s => hook(s)),
-          reserveUseWhere({ actionId, actionRev: nextRev, grantId, day: dayOfUse(nowMs, tz), units: before.units, atMs: nowMs }, mine),
+          reserveUseByKeyWhere(key, { actionId, actionRev: nextRev, day: dayOfUse(nowMs, tz), units: before.units, atMs: nowMs }, mine),
           stmt(
-            `UPDATE outbox_actions SET grant_id = ? WHERE id = ? AND stamp = ?
-               AND EXISTS (SELECT 1 FROM permission_uses WHERE id = ? AND grant_id = ? AND released_at_ms IS NULL)`,
-            grantId, actionId, stamp, `${actionId}#${nextRev}`, grantId,
+            `UPDATE outbox_actions SET grant_id = (SELECT grant_id FROM permission_uses WHERE id = ? AND released_at_ms IS NULL)
+             WHERE id = ? AND stamp = ? AND EXISTS (SELECT 1 FROM permission_uses WHERE id = ? AND released_at_ms IS NULL)`,
+            use, actionId, stamp, use,
           ),
-          hook(actionLine(line(grantId), { sql: `${mine.sql} AND grant_id = ?`, params: [...mine.params, grantId] })),
+          // The line names the grant the batch found, so it's built in SQL from the row (ids and a closed code only).
+          stmt(
+            `INSERT INTO audit_log (at_ms, actor_id, action, target_kind, target_id, args_json, req_id)
+             SELECT ?, ?, 'action.answered', 'action', a.id, json_object('actionId', a.id, 'choice', 'always', 'permissionId', a.grant_id), ?
+             FROM outbox_actions a WHERE a.id = ? AND a.stamp = ? AND a.grant_id IS NOT NULL`,
+            nowMs, actor.memberId, d.requestId, actionId, stamp,
+          ),
           hook(actionLine(line(), { sql: `${mine.sql} AND grant_id IS NULL`, params: mine.params })),
         )
       } else {
@@ -432,17 +446,17 @@ export function outboxStore({ db, hook }: { db: D1Database; hook?: AuditHook }) 
     resolve: (actor: OutboxActor, id: string, input: Parameters<OutboxPort['resolve']>[2], at: { requestId: string; nowMs: number }): Promise<OutboxChange> =>
       port(at).resolve(actor, id, input),
     /** The health signals' counts (ops/signals/needs-check.ts): open checks, sends past their deadline, the gate. */
-    async health(nowMs: number): Promise<{ needsCheck: number; staleSending: number; gate: { paused: boolean; updatedAtMs: number } }> {
+    async health(nowMs: number): Promise<{ needsCheck: number; staleSending: number; gate: { paused: boolean; doGen: number; updatedAtMs: number } }> {
       const [counts, gate] = await Promise.all([
         first<{ checks: number; stale: number }>(db, stmt(
           `SELECT SUM(state = 'needs_check') AS checks, SUM(state = 'sending' AND claimed_at_ms <= ?) AS stale FROM outbox_actions
            WHERE state IN ('needs_check', 'sending')`,
           nowMs - timing().staleSendingMs - timing().sweepEveryMs,
         )),
-        first<{ paused: number; updated_at_ms: number }>(db, stmt('SELECT paused, updated_at_ms FROM outbox_gate WHERE id = 1')),
+        first<{ paused: number; do_gen: number; updated_at_ms: number }>(db, stmt('SELECT paused, do_gen, updated_at_ms FROM outbox_gate WHERE id = 1')),
       ])
       if (!gate) throw new Error('outbox: the gate row is missing')
-      return { needsCheck: counts?.checks ?? 0, staleSending: counts?.stale ?? 0, gate: { paused: gate.paused === 1, updatedAtMs: gate.updated_at_ms } }
+      return { needsCheck: counts?.checks ?? 0, staleSending: counts?.stale ?? 0, gate: { paused: gate.paused === 1, doGen: gate.do_gen, updatedAtMs: gate.updated_at_ms } }
     },
   }
 }

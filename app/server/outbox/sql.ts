@@ -73,6 +73,27 @@ export function reserveUseWhere(r: UseReservation, onlyIf: Exists): Stmt {
   return stmt(`${base.sql.trimEnd()} AND EXISTS (${onlyIf.sql})`, ...base.params, ...onlyIf.params)
 }
 
+/** The one live grant's key (the live index `permission_grants_live`: at most one unrevoked grant per key). */
+export interface GrantKey { holder: string; accountId: string; operation: string; scopeKey: string }
+
+/**
+ * `reserveUseWhere` for whichever grant is live on `key` when the batch runs, found in SQL rather than read before it:
+ * a grant revoked, or made by a racing answer, between a read and the batch can't leave the use on the wrong grant.
+ * Every rule of `reserveUseSql` holds unchanged; only its `g.id = ?` becomes the key's live grant.
+ */
+export function reserveUseByKeyWhere(key: GrantKey, r: Omit<UseReservation, 'grantId'>, onlyIf: Exists): Stmt {
+  const SENTINEL = '\u0000grant-by-key'
+  const base = reserveUseWhere({ ...r, grantId: SENTINEL }, onlyIf)
+  const at = base.params.indexOf(SENTINEL)
+  if (at < 0 || base.params.lastIndexOf(SENTINEL) !== at || base.sql.split('WHERE g.id = ? AND').length !== 2) {
+    throw new Error('reserveUseByKeyWhere: reserveUseSql changed shape')
+  }
+  return stmt(
+    base.sql.replace('WHERE g.id = ? AND', 'WHERE g.holder = ? AND g.account_id = ? AND g.operation = ? AND g.scope_key = ? AND'),
+    ...base.params.slice(0, at), key.holder, key.accountId, key.operation, key.scopeKey, ...base.params.slice(at + 1),
+  )
+}
+
 /** Releases this revision's use once (a released use stays released), only where `onlyIf` holds. */
 export function releaseUseWhere(r: { actionId: string; actionRev: number; reason: ReleaseReason; atMs: number }, onlyIf: Exists): Stmt {
   return stmt(

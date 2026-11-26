@@ -3,8 +3,9 @@
 //  1. Paused: don't claim (the pause sync sends the row back to waiting). No write binding: the row fails
 //     `not_configured`, nothing sent.
 //  2. The claim (claim.ts). Refused: the row lapses back to waiting (or is withdrawn) and its approver is told why.
-//  3. The permit: the object's pause flag and generation read again, synchronously. If either changed, the row goes back
-//     to waiting with no call made. No `await` sits between this check and the start of the hub call. A Pause after the
+//  3. The permit: the object's pause flag and generation read again, synchronously, and the real clock still inside the
+//     claim's deadline (so the sweep can't call the row stale mid-send). If not, the row goes back to waiting with no
+//     call made, and its approver is told. No `await` sits between this check and the start of the hub call. A Pause after the
 //     permit can't recall the call; its result is recorded as usual.
 //  4. The hub call, 15 s limit.
 //  5. The result, stored with a compare on the claim's attempt: the hub's `ok` is `sent`; an error with `sent: 'no'` is
@@ -29,7 +30,7 @@ import { actionLine, both, butNot, releaseUseWhere, stamped, unreleasedUse } fro
 import { SEND_KIND } from './send-task.ts'
 import { timing } from './timing.ts'
 import type { OutboxActionRow } from './types.ts'
-import { LAPSE_TEXT, NEEDS_CHECK_TEXT } from './words.ts'
+import { LAPSE_TEXT, NEEDS_CHECK_TEXT, WITHDRAWN_TEXT } from './words.ts'
 
 type NeedsCheckWhy = z.infer<typeof NeedsCheckWhySchema>
 
@@ -58,6 +59,8 @@ export interface DispatchDeps {
   requestId: string
   /** Tests only: the call's late result, stored after a timeout, settles this. */
   onLate?: (p: Promise<void>) => void
+  /** The real clock at the permit (default: `nowMs`, the pass's clock). */
+  clock?: () => number
   /** Tests only: the hub call's limit (default `timing().hubTimeoutMs`). */
   timeoutMs?: number
 }
@@ -177,19 +180,28 @@ export async function sendAction(actionId: string, d: DispatchDeps): Promise<Sen
     }))
     const after = await first<{ stamp: string | null; rev: number }>(db, stmt('SELECT stamp, rev FROM outbox_actions WHERE id = ?', actionId))
     if (after?.stamp === lapse) {
-      await notifyAll(d.notify, [{ kind: 'approval_lapsed', to: claimed.approver, actionId, key: `lapsed:${actionId}:${after.rev}`, body: LAPSE_TEXT[why.reason] }])
+      const body = (why.kind === 'withdraw' ? WITHDRAWN_TEXT[why.reason] : undefined) ?? LAPSE_TEXT[why.reason]
+      await notifyAll(d.notify, [{ kind: 'approval_lapsed', to: claimed.approver, actionId, key: `lapsed:${actionId}:${after.rev}`, body }])
     }
     return { kind: 'not_claimed' }
   }
 
   const req = writeRequest(claimed, d.requestId)
   const hub = d.hub
-  // The permit (step 3). From this check to the call's start there is no await.
-  if (d.gate.paused || d.gate.pauseGen !== gen) {
+  // The permit (step 3): the object's pause state unchanged since the claim, and the call still able to finish before
+  // the sweep may call this row stale (so a sweep and a person's resolve can never race the send, whatever runs the
+  // tasks). From this check to the call's start there is no await.
+  const permitBy = (claimed.claimed_at_ms ?? nowMs) + timing().staleSendingMs - timing().hubTimeoutMs
+  const late = d.gate.paused || d.gate.pauseGen !== gen ? 'paused' as const : (d.clock ?? (() => nowMs))() > permitBy ? 'stale_approval' as const : null
+  if (late !== null) {
     const back = writeStamp(d.requestId)
     await runBatch(db, lapseStmts({
-      row: claimed, fromState: 'sending', attempt: claimed.attempt, to: 'waiting', reason: 'paused', nowMs, stamp: back, requestId: d.requestId, actorId: SYSTEM,
+      row: claimed, fromState: 'sending', attempt: claimed.attempt, to: 'waiting', reason: late, nowMs, stamp: back, requestId: d.requestId, actorId: SYSTEM,
     }))
+    const after = await first<{ stamp: string | null; rev: number }>(db, stmt('SELECT stamp, rev FROM outbox_actions WHERE id = ?', actionId))
+    if (after?.stamp === back) {
+      await notifyAll(d.notify, [{ kind: 'approval_lapsed', to: claimed.approver, actionId, key: `lapsed:${actionId}:${after.rev}`, body: LAPSE_TEXT[late] }])
+    }
     return { kind: 'not_claimed' }
   }
   // An async function runs synchronously up to its first await, so the call starts here; a synchronous throw becomes
@@ -205,14 +217,20 @@ export async function sendAction(actionId: string, d: DispatchDeps): Promise<Sen
   const answer = await Promise.race([settled, timeout])
   clearTimeout(timer)
   const outcome = outcomeOf(answer)
-  await storeResult(d, claimed, outcome, nowMs, false)
+  if (!(await storeResult(d, claimed, outcome, nowMs, false))) {
+    // Nothing else moves a `sending` row within the permit's deadline; if this fires, something did. Loud, not silent.
+    console.error({ event: 'outbox_result_not_stored', actionId, attempt: claimed.attempt, outcome: outcome.kind })
+  }
   if ('timeout' in answer) {
     // The hub may still answer. A sure answer may then settle the row, while no person has resolved it.
-    const late = settled.then(async a => {
+    const lateResult = settled.then(async a => {
       const o = outcomeOf(a)
-      if (o.kind === 'sent' || o.kind === 'failed') await storeResult(d, claimed, o, Date.now(), true)
+      if (o.kind === 'sent' || o.kind === 'failed') {
+        const stored = await storeResult(d, claimed, o, Date.now(), true)
+        console.log({ event: 'outbox_late_result', actionId, attempt: claimed.attempt, outcome: o.kind, stored })
+      }
     }).catch((err: unknown) => console.error({ event: 'outbox_late_result_failed', actionId, error: safeError(err) }))
-    d.onLate?.(late)
+    d.onLate?.(lateResult)
   }
   console.log({ event: 'outbox_send', actionId, attempt: claimed.attempt, outcome: outcome.kind, ...(outcome.kind === 'needs_check' ? { why: outcome.why } : {}) })
   return outcome
@@ -223,7 +241,7 @@ export const outboxSend: TaskHandler = async (task: DueTask, ctx: TaskContext): 
   const actionId = task.id.slice(SEND_KIND.length + 1)
   const hub = (ctx.env as unknown as { HUB_WRITE?: WriteGateway }).HUB_WRITE ?? null
   await sendAction(actionId, {
-    db: ctx.env.DB, nowMs: ctx.nowMs, gate: ctx, hub, notify: outboxNotifier(ctx.env), requestId: `outbox-send-${crypto.randomUUID()}`,
+    db: ctx.env.DB, nowMs: ctx.nowMs, gate: ctx, hub, clock: () => Date.now(), notify: outboxNotifier(ctx.env), requestId: `outbox-send-${crypto.randomUUID()}`,
     again: atMs => ctx.scheduler.schedule({ id: task.id, kind: SEND_KIND, dueAtMs: atMs }),
   })
   return { done: true }
