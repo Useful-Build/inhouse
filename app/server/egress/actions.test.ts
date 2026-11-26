@@ -14,9 +14,9 @@ import type { Admitted } from '../do/brand-agent/invocations.ts'
 import type { RunGrant } from '../do/brand-agent/tokens.ts'
 import { WAIT_MAX_MS } from '../do/brand-agent/asks.ts'
 import { ASKER, HUB_FACTS, SHOP_GEN, fresh, outbox, rowOf, sendNow, tagArgs, world } from '../outbox/test-support.ts'
-import { insertGrant } from '../permissions/test-support.ts'
+import { insertGrant, person } from '../permissions/test-support.ts'
 import { POLICY_REV } from '../permissions/policy.ts'
-import { ACTION_WORDS, callAction, handleActions } from './actions.ts'
+import { ACTION_WORDS, askerFor, callAction, handleActions } from './actions.ts'
 import type { ActionsRouteDeps } from './actions.ts'
 
 const db = env.DB
@@ -30,8 +30,8 @@ const grantOf = (turnId: string): RunGrant => ({
 
 interface World { deps: ActionsRouteDeps; rpc: FakeBrandAgentRpc; clock: { now: number }; onSleep: ((now: number) => Promise<void>) | null; turnId: string }
 
-function setup(o: { jobId?: string | null; ownerId?: string } = {}): World {
-  const turnId = `t_m2d_${fresh('t')}`
+function setup(o: { jobId?: string | null; ownerId?: string; turnId?: string } = {}): World {
+  const turnId = o.turnId ?? `t_m2d_${fresh('t')}`
   const rpc = new FakeBrandAgentRpc()
   const clock = { now: T0 }
   rpc.admitActionAnswer = (): Admitted => ({ toolUseId: fresh('toolu'), turnId, runId: 'r_m2d', chatId: CHAT, ownerId: o.ownerId ?? ASKER, jobId: o.jobId ?? null, replay: false })
@@ -184,6 +184,23 @@ describe('permissions: a covering grant runs through the hold; a spent day gives
 })
 
 describe('refusals write nothing (failure 3)', () => {
+  it('a call from a chat in the trash (deleted before BrandAgent ended its turns) is refused, even with a covering grant', async () => {
+    await db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms, deleted_at_ms) VALUES (?, ?, 'A chat', 0, 0, 1) ON CONFLICT (id) DO UPDATE SET deleted_at_ms = 1").bind(CHAT, ASKER).run()
+    try {
+      await insertGrant(db, {
+        id: 'pg_DELETEDCHATAAAAAAAAAA', holder: `member:${ASKER}`, accountId: 'shopify:store', accountGen: SHOP_GEN, operation: 'shopify.order.tag_add',
+        scopeKey: 'shop=store-a', perDay: 50, policyRev: POLICY_REV, grantedRole: 'member', ceilingRev: 1, revokedAtMs: null,
+      })
+      const r = await call(setup())
+      expect(r).toMatchObject({ isError: true, structuredContent: { error: 'chat_deleted' } })
+      expect(text(r)).toBe('This chat was deleted, so nothing was asked or sent.')
+      expect(await count()).toBe(0)
+      expect(await db.prepare('SELECT COUNT(*) AS n FROM permission_uses').first<number>('n')).toBe(0)
+    } finally {
+      await db.prepare('DELETE FROM chats WHERE id = ?').bind(CHAT).run()
+    }
+  })
+
   it('an unknown tool is refused before admission', async () => {
     const w = setup()
     const r = await call(w, {}, 'shopify_order_delete')
@@ -230,6 +247,43 @@ describe('refusals write nothing (failure 3)', () => {
       w.rpc.hubAccountsAnswer = facts
       expect(await call(w)).toMatchObject({ isError: true, structuredContent: { error: 'account_unavailable' } })
     }
+    expect(await count()).toBe(0)
+  })
+})
+
+/** A routine (`team`: a person made it; `system`: one of ours) with one started slot whose turn is `turnId`, on real rows. */
+async function routineTurn(origin: 'team' | 'system', creator: string): Promise<string> {
+  const rid = `routine-${fresh('r')}`
+  const turnId = `t_m2d_${fresh('rt')}`
+  await db.batch([
+    db.prepare(`INSERT INTO routines (id, origin, name, instruction, prompt_ref, days_mask, hour, minute, missed, need, creator_id, checked_until_ms, created_at_ms, updated_at_ms)
+      VALUES (?, ?, 'Tag big orders', 'Tag the big orders.', ?, 127, 9, 0, 'skip', 0, ?, 0, 0, 0)`).bind(rid, origin, origin === 'system' ? 'morning-check' : null, creator),
+    db.prepare(`INSERT INTO routine_slots (slot_key, routine_id, kind, local_date, local_time, tz, due_at_ms, deadline_ms, state, chat_id, client_key, prompt_text, submit_json,
+      routine_rev, creator_id, turn_id, claimed_at_ms) VALUES (?, ?, 'scheduled', '2026-11-26', '09:00', 'UTC', 0, 0, 'started', ?, ?, 'p', '{}', 1, ?, ?, 0)`)
+      .bind(`${rid}|2026-11-26|09:00`, rid, CHAT, `key-${fresh('k')}`, creator, turnId),
+  ])
+  return turnId
+}
+
+describe('a routine\'s run asks its creator (N15)', () => {
+  it('a person-made routine asks its creator: a card for them, from the routine\'s run, that never waits', async () => {
+    const turnId = await routineTurn('team', ASKER)
+    expect(await askerFor(db, { ownerId: 'm_system', turnId, jobId: null })).toEqual({ asker: { memberId: ASKER, role: 'member' }, origin: 'routine' })
+    const w = setup({ ownerId: 'm_system', turnId })
+    const r = await call(w)
+    expect(r.isError, text(r)).toBeUndefined()
+    expect(await rowOf(db, idOf(r))).toMatchObject({ origin: 'routine', asked_by: ASKER, approver: ASKER, state: 'waiting', report: 'later' })
+    expect(methods(w.rpc)).not.toContain('beginAskWait')
+  })
+
+  it('a system routine, a creator no longer on the team, and a turn no routine started have no one to ask: refused', async () => {
+    const system = await routineTurn('system', ASKER)
+    expect(await askerFor(db, { ownerId: 'm_system', turnId: system, jobId: null })).toEqual({ asker: null, origin: 'routine' })
+    await person(db, 'm_m2d_gone', 'member', 'removed')
+    const gone = await routineTurn('team', 'm_m2d_gone')
+    expect(await askerFor(db, { ownerId: 'm_system', turnId: gone, jobId: null })).toEqual({ asker: null, origin: 'routine' })
+    expect(await askerFor(db, { ownerId: 'm_system', turnId: 't_m2d_nowhere', jobId: null })).toEqual({ asker: null, origin: 'routine' })
+    for (const turnId of [system, gone]) expect(await call(setup({ ownerId: 'm_system', turnId }))).toMatchObject({ isError: true, structuredContent: { error: 'no_one_to_ask' } })
     expect(await count()).toBe(0)
   })
 })

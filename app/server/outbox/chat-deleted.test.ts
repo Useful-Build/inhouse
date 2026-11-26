@@ -72,6 +72,15 @@ describe('a deleted chat withdraws its waiting and approved actions (failures 1,
     expect(cardOf((await rowOf(db, waiting.id))!, { memberId: ASKER, role: 'member' }, T0).lapsed).toBe('The chat it was asked in was deleted, so this was withdrawn.')
   })
 
+  it('a request from a chat already in the trash is refused (the window before BrandAgent ends its turns), writing nothing', async () => {
+    const c = `c_del_${fresh('f')}`
+    await chat(c)
+    await db.prepare('UPDATE chats SET deleted_at_ms = 1 WHERE id = ?').bind(c).run()
+    const r = await outbox(db, () => T0).request(requestCtx({ nowMs: T0, chatId: c }), { operation: 'shopify.order.tag_add', args: tagArgs(9) }, { mode: 'tool' })
+    expect(r).toEqual({ outcome: 'refused', reason: 'chat_deleted', text: 'This chat was deleted, so nothing was asked or sent.' })
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM outbox_actions WHERE chat_id = ?').bind(c).first<number>('n')).toBe(0)
+  })
+
   it('another owner\'s deletion of the same ids changes nothing (the update is the owner\'s own chats)', async () => {
     const c = `c_del_${fresh('c')}`
     await chat(c)
@@ -83,8 +92,9 @@ describe('a deleted chat withdraws its waiting and approved actions (failures 1,
   it('an answer to a card whose chat is in the trash is refused (the race the deletion\'s batch can\'t close)', async () => {
     const c = `c_del_${fresh('d')}`
     await chat(c)
-    await db.prepare('UPDATE chats SET deleted_at_ms = 1 WHERE id = ?').bind(c).run()
     const a = await ask(c, 6)
+    // Put in the trash by hand, without the deletion's withdrawal: the card is still waiting.
+    await db.prepare('UPDATE chats SET deleted_at_ms = 1 WHERE id = ?').bind(c).run()
     for (const choice of ['once', 'always', 'deny'] as const) {
       expect(await outbox(db, () => T0).answer({ memberId: ASKER, role: 'member' }, a.id, { choice, ifRev: a.rev }), choice).toEqual({ refused: { code: 'conflict' } })
     }

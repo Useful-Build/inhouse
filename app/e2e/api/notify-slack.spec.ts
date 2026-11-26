@@ -217,8 +217,8 @@ test('[static] the runner has no path to the delivery binding', async () => {
   expectNoRunnerPathToDelivery()
 })
 
-test('a direct Slack write through the hub route is write_refused and posts nothing', async ({ request }) => {
+test('a direct Slack write through the hub route is refused there (not on the read list) and posts nothing', async ({ request }) => {
   const before = (await fakeState(request)).web.posts.length
-  expect(await hubCall(request, 'callTool', 'slack_send_message', { channel_id: CHANNEL.general, message: 'hello' })).toMatchObject({ ok: false, error: { code: 'write_refused' } })
+  expect(await hubCall(request, 'callTool', 'slack_send_message', { channel_id: CHANNEL.general, message: 'hello' })).toMatchObject({ ok: false, error: { code: 'not_listed' }, refusedBy: 'egress' })
   expect((await fakeState(request)).web.posts.length).toBe(before)
 })

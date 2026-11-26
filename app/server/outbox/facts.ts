@@ -63,9 +63,11 @@ export function outboxFacts(d: { db: D1Database; hubAccounts: () => Promise<read
   const { db } = d
   return {
     async resolveFacts(nowMs) {
-      const [rows, hub, channels] = await Promise.all([
+      // The hub's word first: reading it copies the hub's connection date and shop into `connector_accounts` (M2-D), so
+      // the rows are read only after that write, never beside it (the first request after a connect would see the old row).
+      const hub = await d.hubAccounts()
+      const [rows, channels] = await Promise.all([
         all<AccountRow>(db, stmt('SELECT account_id, last_state, connected_at_ms, disconnected_at_ms, shop FROM connector_accounts WHERE account_id IN (?, ?)', ACCOUNT_IDS.shopify, ACCOUNT_IDS.slack)),
-        d.hubAccounts(),
         all<{ channel_id: string; name: string }>(db, stmt('SELECT channel_id, name FROM notify_channels WHERE removed_at_ms IS NULL ORDER BY channel_id')),
       ])
       const row = (id: string) => rows.find(r => r.account_id === id)

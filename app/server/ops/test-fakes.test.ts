@@ -222,7 +222,7 @@ describe('hub: the egress route\'s own handler with a run scope (failure 5)', ()
     expect(calls).toMatchObject([{ s: { kind: 'run', principalId: 'm_test_fakes' }, name: 'notes_read', args: { id: 'n1' } }])
     // A name the read list doesn't name never reaches the hub (the egress's own check, N14): the route's refusal, marked.
     expect(await runTestFakes({ op: 'hub', method: 'callTool', name: 'notes_delete', args: { id: 'n1' } }, envWith({ HUB }))).toEqual({
-      status: 200, body: { ok: false, error: { code: 'write_refused', message: "write_refused: only the reading tools the connected apps list now run here, and this one isn't listed (a write, or its app is paused or needs a reconnect), so nothing outside Inhouse was changed" }, refusedBy: 'egress' },
+      status: 200, body: { ok: false, error: { code: 'not_listed', message: "not_listed: this tool isn't available to run right now, so it didn't run and nothing outside Inhouse was changed. Only reading tools run here, and only while their app is connected: if the person expected it to work, ask them to check its app in Tools (it may be paused or need a reconnect)." }, refusedBy: 'egress' },
     })
     expect(await runTestFakes({ op: 'hub', method: 'callTool' }, envWith({ HUB }))).toEqual({ status: 400, body: { error: { code: 'invalid', detail: 'callTool needs name' } } })
     expect(calls).toHaveLength(1)

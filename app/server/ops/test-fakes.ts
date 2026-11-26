@@ -15,7 +15,7 @@
 // - `hub`: { method: 'listTools' | 'callTool', name?, args? }: the egress `/hub/` route's own handler (handleHub) with a
 //   synthetic run grant, so the scope is built exactly as that route builds it. Answers the ReadGateway's HubResult as
 //   it came over the binding (502 `binding_failed` when the binding threw), or, for a callTool the route's read-list
-//   check (N14) refused before the hub, `{ ok: false, error: { code: 'write_refused', message }, refusedBy: 'egress' }`.
+//   check (N14) refused before the hub, `{ ok: false, error: { code: 'not_listed', message }, refusedBy: 'egress' }`.
 // - `notify`: { as: { memberId, chatId?, runId?, turnId? }, args }: the inhouse MCP server's own handler (handleMcp)
 //   calling `notification_send` as `as.memberId`, which must be an active person on the brand; an `as.chatId` must be
 //   that member's chat, and an `as.runId` or `as.turnId` given with it one of that chat's (both: a pair of one row).
@@ -187,7 +187,7 @@ async function hubOp(env: TestFakesEnv, op: Extract<ProductOp, { op: 'hub' }>): 
   // The route's own answer is read so the call completes as the egress would; the spec gets the binding's HubResult, or
   // (a callTool the read-list check refused before the hub) the route's own refusal, marked `refusedBy: 'egress'`.
   const answered = (await res.json()) as { result?: { content?: { text?: string }[] } }
-  if (op.method === 'callTool' && !called && result !== null && code === 'write_refused') {
+  if (op.method === 'callTool' && !called && result !== null && code === 'not_listed') {
     return ok({ ok: false, error: { code, message: answered.result?.content?.[0]?.text ?? '' }, refusedBy: 'egress' })
   }
   if (result === null) return refuse(502, 'binding_failed')

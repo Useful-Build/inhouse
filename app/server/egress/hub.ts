@@ -21,7 +21,7 @@ const LOGGED_METHODS = ['initialize', 'ping', 'tools/list', 'tools/call', 'notif
 export type HubLogMethod = (typeof LOGGED_METHODS)[number] | 'other' | 'none'
 
 /** What a log line's `code` may be: `ok`, a hub error code, or this route's own refusals. */
-export type HubLogCode = 'ok' | HubErrorCode | 'binding_failed' | 'unknown_hub_code' | 'bad_request' | 'bad_params' | 'unknown_method' | 'method_not_allowed' | 'not_found' | 'too_large'
+export type HubLogCode = 'ok' | HubErrorCode | 'binding_failed' | 'not_listed' | 'unknown_hub_code' | 'bad_request' | 'bad_params' | 'unknown_method' | 'method_not_allowed' | 'not_found' | 'too_large'
 
 /** One line per call, these fields only: never the token, its hash, arguments, results, documents or hub messages. */
 export type HubEgressLog = {
@@ -51,7 +51,7 @@ export function hubRouteDeps(hub: ReadGatewayLike, log: (e: Record<string, unkno
  * What the model reads when a call names a tool the hub's read list doesn't (N14): only reading tools run here. Writes go
  * through the `actions` server and a person's OK (server/egress/actions.ts), never through `apps`.
  */
-export const NOT_A_READ_TEXT = "write_refused: only the reading tools the connected apps list now run here, and this one isn't listed (a write, or its app is paused or needs a reconnect), so nothing outside Inhouse was changed"
+export const NOT_LISTED_TEXT = "not_listed: this tool isn't available to run right now, so it didn't run and nothing outside Inhouse was changed. Only reading tools run here, and only while their app is connected: if the person expected it to work, ask them to check its app in Tools (it may be paused or need a reconnect)."
 /** The model's text when the hub's read list couldn't be read (fail closed). */
 const LIST_FAILED_TEXT = 'internal: the tool list could not be read, so the call did not run'
 
@@ -215,7 +215,7 @@ export async function handleHub(request: Request, grant: RunGrant, deps: HubRout
       const reads = listMirror.safeParse(listed)
       if (!reads.success || !reads.data.ok) return done('binding_failed', rpcResult(id, { content: [{ type: 'text', text: LIST_FAILED_TEXT }], isError: true }))
       if (!reads.data.value.some(t => t.name === name)) {
-        return done('write_refused', rpcResult(id, { content: [{ type: 'text', text: NOT_A_READ_TEXT }], isError: true }))
+        return done('not_listed', rpcResult(id, { content: [{ type: 'text', text: NOT_LISTED_TEXT }], isError: true }))
       }
       let answer: unknown
       try {

@@ -167,6 +167,9 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
         const prior = await byInvocation(ctx.chatId, ctx.invocation.toolUseId)
         if (prior) return prior.payload_hash === r.payloadHash ? { outcome: 'existing', action: prior } : refusedRequest('invocation_conflict')
       }
+      // M2-D (N11): nothing new from a deleted chat (its deletion withdraws what it had; this covers a request that lands
+      // between the deletion and BrandAgent's end of the chat's turns, or when that end fails).
+      if (await chatDeleted(ctx.chatId)) return refusedRequest('chat_deleted')
       let v = await decide(facts, ctx, r, mode)
       if (v.verdict === 'refuse') return refusedRequest(v.reason)
       const dup = await waitingDup(ctx.chatId, r.payloadHash)

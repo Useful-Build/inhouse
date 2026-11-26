@@ -62,6 +62,15 @@ describe('the copy into D1 (failures 1, 2, 3)', () => {
     expect(r).toMatchObject({ accountGen: HUB_GEN, scope: { shop: 'example-write' } })
   })
 
+  it('the first request after a connect resolves on the hub\'s copied row, not the row from before it', async () => {
+    // No row yet (the client-credentials Shopify account is never recorded by a connect). The facts reader reads the
+    // hub (which writes the row) before it reads the rows.
+    const facts = outboxFacts({ db, hubAccounts: () => read({ ok: true, value: [shopify()] }) })
+    const rf = await facts.resolveFacts(6_000)
+    expect(rf.accounts.shopify).toMatchObject({ connectedAtMs: HUB_GEN, shop: 'example-write', connected: true, paused: false })
+    expect(await resolve(rf, { operation: 'shopify.order.tag_add', args: { orderId: 'gid://shopify/Order/1', tags: ['a'] } })).toMatchObject({ accountGen: HUB_GEN })
+  })
+
   it('a second read that changes nothing writes nothing', async () => {
     await read({ ok: true, value: [shopify()] })
     const mark = await lastLineId(db)

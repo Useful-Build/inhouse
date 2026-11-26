@@ -405,9 +405,9 @@ describe('the read-list check: only listed read tools run, on every call (N14, f
     for (const name of ['orders_cancel', 'products_update', 'slack_post_message', 'shopify_order_tag_add', 'mcp__actions__shopify_order_tag_add']) {
       const f = fake()
       const r = await call(f, callTool(name))
-      expect(r.body, name).toEqual({ jsonrpc: '2.0', id: 9, result: { content: [{ type: 'text', text: "write_refused: only the reading tools the connected apps list now run here, and this one isn't listed (a write, or its app is paused or needs a reconnect), so nothing outside Inhouse was changed" }], isError: true } })
+      expect(r.body, name).toEqual({ jsonrpc: '2.0', id: 9, result: { content: [{ type: 'text', text: "not_listed: this tool isn't available to run right now, so it didn't run and nothing outside Inhouse was changed. Only reading tools run here, and only while their app is connected: if the person expected it to work, ask them to check its app in Tools (it may be paused or need a reconnect)." }], isError: true } })
       expect(f.calls, name).toEqual([])
-      expect(f.logs.map(l => l.code), name).toEqual(['write_refused'])
+      expect(f.logs.map(l => l.code), name).toEqual(['not_listed'])
     }
   })
   it('fails closed: a failing or malformed list, or a list error, runs nothing', async () => {

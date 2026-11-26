@@ -90,10 +90,10 @@ export interface OutboxRequestCtx extends DecideCtx {
 export type OutboxRequestMode = 'tool' | 'ask_only'
 
 /**
- * `decide`'s refusals, plus `invocation_conflict`: a row for the same `(chat_id, tool_use_id)` holds other arguments
+ * `decide`'s refusals, plus `chat_deleted` (M2-D: the chat is in the trash) and `invocation_conflict`: a row for the same `(chat_id, tool_use_id)` holds other arguments
  * (another `payload_hash`). Nothing is written for either.
  */
-export type OutboxRefuseReason = RefuseReason | 'invocation_conflict'
+export type OutboxRefuseReason = RefuseReason | 'invocation_conflict' | 'chat_deleted'
 
 export type OutboxRequestResult =
   /** Nothing was written. `text` is the plain refusal the agent reads. */

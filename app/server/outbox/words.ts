@@ -13,6 +13,7 @@ export const REFUSAL_TEXT: Readonly<Record<OutboxRefuseReason, string>> = {
   needs_admin: 'Only an admin can approve this kind of action, so nothing was asked or sent.',
   no_one_to_ask: 'There’s no one to ask for an approval here, so nothing was asked or sent.',
   invocation_conflict: 'That call was already made with other details, so nothing new was asked or sent.',
+  chat_deleted: 'This chat was deleted, so nothing was asked or sent.',
 }
 
 /** Why an approval lapsed, as the card says it. */
