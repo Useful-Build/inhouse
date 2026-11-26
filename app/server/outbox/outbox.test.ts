@@ -360,7 +360,8 @@ describe('the result (failure 5)', () => {
     now += 10_000
     const d = dispatch(r.action.id)
     await d.run
-    expect(d.hub.calls[0].req).toMatchObject({ operation: 'slack.channel.post', accountId: 'slack:workspace', args: { channel: 'C0OUTBOX01', text: 'Restock is in' } })
+    expect(d.hub.calls[0].req).toMatchObject({ operation: 'slack.channel.post', accountId: 'slack:workspace', args: { channelId: 'C0OUTBOX01', text: 'Restock is in' } })
+    expect(d.hub.calls[0].req.args).toEqual({ channelId: 'C0OUTBOX01', text: 'Restock is in' })
   })
 })
 
