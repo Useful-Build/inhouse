@@ -52,7 +52,12 @@ export interface ApprovalsWiring {
   admit(scope: ToolScope, input: ApprovalRequestInput): Promise<{ toolUseId: string; jobId: string | null } | null>
 }
 
-/** The tools never schedule a send: `ask_only` never approves, and the person's answer schedules its own. */
+/**
+ * The tools never ask for a send. This is not the guard: the outbox's `request` turns a `run` into an `ask` under
+ * `ask_only` (store.ts `decide`), and that clamp is what keeps an approval_request from being approved. The store logs and
+ * swallows a failed schedule, and the sweep would still send an approved row, so throwing here only makes such a call
+ * loud in the logs.
+ */
 const neverSchedules = async (actionId: string): Promise<void> => {
   throw new Error(`approval tools: asked to schedule a send for ${actionId}, which ask_only never approves`)
 }
@@ -94,8 +99,12 @@ function reader(deps: ToolDeps, scope: ToolScope) {
   return {
     port,
     get: async (id: string) => mine(await port.get(viewer, id)),
+    // Filtered on the state the agent is shown: a waiting card past its 7 days that the sweep hasn't moved yet is
+    // `expired`, so it's read with the stored `waiting` rows and kept under `expired`, never under `waiting`.
     list: async (status: ActionState | undefined) =>
-      (await port.list(viewer, status ? { states: [status] } : {})).filter(r => r.asked_by === scope.memberId).slice(0, LIST_MAX),
+      (await port.list(viewer, status ? { states: status === 'expired' ? ['expired', 'waiting'] : [status] } : {}))
+        .filter(r => r.asked_by === scope.memberId && (status === undefined || stateOf(r, scope.nowMs) === status))
+        .slice(0, LIST_MAX),
   }
 }
 

@@ -197,6 +197,19 @@ describe('approval_get and approval_list (failure 4)', () => {
     const later = await call('approval_get', { approval_id: id }, scope(ASKER, { nowMs: T0 + 8 * 24 * 3600_000 }))
     expect(data(later)).toMatchObject({ status: 'expired' })
   })
+
+  it('lists an unswept card past its 7 days under expired, not under waiting, and a fresh one only under waiting', async () => {
+    const old = await made(1)
+    const fresh = await made(2, scope(ASKER, { nowMs: T0 + 6 * 24 * 3600_000 }))
+    const swept = await made(3)
+    await db.prepare("UPDATE outbox_actions SET state = 'expired', rev = rev + 1 WHERE id = ?").bind(swept).run()
+    const later = scope(ASKER, { nowMs: T0 + 8 * 24 * 3600_000 })
+    const ids = async (status: string) => (data(await call('approval_list', { status }, later)).approvals as { approval_id: string; status: string }[])
+    expect(await ids('waiting')).toEqual([expect.objectContaining({ approval_id: fresh, status: 'waiting' })])
+    const expired = await ids('expired')
+    expect(expired.map(a => a.approval_id).sort()).toEqual([old, swept].sort())
+    expect(expired.every(a => a.status === 'expired')).toBe(true)
+  })
 })
 
 describe('approval_withdraw (failure 5)', () => {
