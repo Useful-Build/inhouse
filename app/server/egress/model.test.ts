@@ -12,13 +12,13 @@ import { describe, expect, it } from 'vitest'
 import type { AdmitAnswer, ModelCallWorst } from '../do/brand-agent/ports.ts'
 import { gatewayRequest, gatewayUpstream } from './gateway.ts'
 import { handleEgress } from './index.ts'
-import { deferred, egressRequest, GRANT, harness, sseFeed, TOKEN, until } from './testing/harness.ts'
+import { deferred, egressRequest, GRANT, harness, sseFeed, TOKEN, until, NO_CAPTURE } from './testing/harness.ts'
 import type { Harness } from './testing/harness.ts'
 
 const MSG = '/model/v1/messages'
 const small = { model: 'claude-sonnet-5-5', max_tokens: 1000, messages: [{ role: 'user', content: 'hi' }] }
 const call = (h: Harness, body: unknown = small, init: { signal?: AbortSignal; headers?: Record<string, string> } = {}) =>
-  handleEgress(egressRequest(MSG, { body, ...init }), h.deps)
+  handleEgress(egressRequest(MSG, { body, ...init }), h.deps, NO_CAPTURE)
 const json = async (r: Response) => (await r.json()) as { type?: string; error?: { type: string; message: string } }
 const settle = (h: Harness) => Promise.all(h.waits)
 
@@ -400,8 +400,8 @@ describe('the model and the counts (failure 7)', () => {
     // W1's fake counts only turns it knows (an unknown turn answers false, like the real counter).
     h.rpc.turns.add(GRANT.turnId)
     h.answer = async () => Response.json({ input_tokens: 12 })
-    for (let i = 0; i < 50; i++) expect((await handleEgress(egressRequest('/model/v1/messages/count_tokens', { body: small }), h.deps)).status).toBe(200)
-    const res = await handleEgress(egressRequest('/model/v1/messages/count_tokens', { body: small }), h.deps)
+    for (let i = 0; i < 50; i++) expect((await handleEgress(egressRequest('/model/v1/messages/count_tokens', { body: small }), h.deps, NO_CAPTURE)).status).toBe(200)
+    const res = await handleEgress(egressRequest('/model/v1/messages/count_tokens', { body: small }), h.deps, NO_CAPTURE)
     expect(res.status).toBe(400)
     expect(h.upstreamCalls).toHaveLength(50)
     expect(h.rpc.callsOf('admitModelCall')).toEqual([])
@@ -415,8 +415,8 @@ describe('the model and the counts (failure 7)', () => {
   })
   it('the run grant comes from the token only: no token or an unknown one is 401 and logged without it', async () => {
     const h = await harness()
-    expect((await handleEgress(egressRequest(MSG, { body: small, token: null }), h.deps)).status).toBe(401)
-    expect((await handleEgress(egressRequest(MSG, { body: small, token: 'another-token-0123456789' }), h.deps)).status).toBe(401)
+    expect((await handleEgress(egressRequest(MSG, { body: small, token: null }), h.deps, NO_CAPTURE)).status).toBe(401)
+    expect((await handleEgress(egressRequest(MSG, { body: small, token: 'another-token-0123456789' }), h.deps, NO_CAPTURE)).status).toBe(401)
     expect(h.logs).toEqual([
       { event: 'egress_refused', route: 'model', why: 'unknown', runner: 'runner-0' },
       { event: 'egress_refused', route: 'model', why: 'unknown', runner: 'runner-0' },

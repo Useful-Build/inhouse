@@ -1,10 +1,21 @@
-// Scripted scenario for M1-G (fetch leak check): read an order through the hub, then WebFetch a listed host
-// (`example.com`) carrying that order's `#1001` name in the query. The egress refuses it with `leak` before DNS.
+// Scripted scenario for M1-G (fetch leak check). Turn 0 reads order #1001 through the hub (`order_get`, so the order
+// the fetch then names is the one read; `orders_search` would answer the newest order instead). Turn 1 checks that read
+// carried #1001, then fetches a control page on the listed host (`example.com`) with nothing private in it: it must go
+// through, which proves the host is listed and reachable. Turn 2 fetches the same host with `#1001` in the query: the
+// only difference from the control is the token, so a refusal there is the leak check's. Both fetches carry the
+// scenario's marker in their prompt, so an allowed fetch gets its page summary answered and comes back without
+// `is_error`: a leak fetch that went out fails turn 3's check instead of passing as an error.
 import type { MessagesRequest, Scenario } from '../index.ts'
 
 export const WEBFETCH_LEAK_REFUSED_ANSWER = 'WebFetch was refused by the leak check.'
+/** The order the scenario reads and then tries to send out. */
+export const LEAK_ORDER_NAME = '#1001'
+export const LEAK_CONTROL_URL = 'https://example.com/?ref=leak-check-control'
+export const LEAK_URL = `https://example.com/?order=${encodeURIComponent(LEAK_ORDER_NAME)}`
 
 const HARNESS_MODEL = 'claude-sonnet-5-5'
+/** Brings each fetch's page-summary side request to this scenario (see `webfetch-allowed` in scenarios.ts). */
+const FETCH_PROMPT = 'Summarise the page (scenario:webfetch-leak)'
 
 const isMainLoop = (r: MessagesRequest): true | string => {
   if (r.model !== HARNESS_MODEL) return `model ${String(r.model)}, not ${HARNESS_MODEL}`
@@ -12,39 +23,66 @@ const isMainLoop = (r: MessagesRequest): true | string => {
   return true
 }
 
-const resultBlock = (r: MessagesRequest, id: string): { is_error?: unknown } | undefined => {
+const firstUserText = (r: MessagesRequest): string => {
+  const c = r.messages.find(m => m.role === 'user')?.content
+  if (typeof c === 'string') return c
+  return Array.isArray(c) ? c.map(b => (typeof b === 'object' && b !== null && 'text' in b ? String((b as { text: unknown }).text) : '')).join('\n') : ''
+}
+
+/** WebFetch's side request: no tools, one user message with the fetched page and this scenario's prompt. */
+const pageSummary = (r: MessagesRequest): boolean =>
+  Array.isArray(r.tools) && r.tools.length === 0 && r.messages.length === 1 && firstUserText(r).includes('Web page content:') && firstUserText(r).includes(FETCH_PROMPT)
+
+/** A message that only adds text after a tool's result (the CLI's budget line, say): looked past, as in scenarios.ts. */
+const textOnly = (m: MessagesRequest['messages'][number]): boolean =>
+  m.role === 'system' ||
+  (m.role === 'user' && (typeof m.content === 'string' || (Array.isArray(m.content) && m.content.every(b => (b as { type?: unknown })?.type === 'text'))))
+
+const resultBlock = (r: MessagesRequest, id: string): { is_error?: unknown; content?: unknown } | undefined => {
   for (let i = r.messages.length - 1; i >= 0; i--) {
     const m = r.messages[i]!
-    if (m.role === 'system') continue
+    if (textOnly(m)) continue
     if (m.role !== 'user' || !Array.isArray(m.content)) return undefined
     const hit = m.content.find(
       b => typeof b === 'object' && b !== null && (b as { type?: unknown }).type === 'tool_result' && (b as { tool_use_id?: unknown }).tool_use_id === id,
     )
-    if (hit) return hit as { is_error?: unknown }
+    if (hit) return hit as { is_error?: unknown; content?: unknown }
   }
   return undefined
 }
 
-const isErrorResult = (id: string, wantError: boolean) => (r: MessagesRequest): true | string => {
+const resultText = (block: { content?: unknown }): string =>
+  typeof block.content === 'string' ? block.content
+  : Array.isArray(block.content) ? block.content.map(b => (typeof b === 'object' && b !== null && typeof (b as { text?: unknown }).text === 'string' ? (b as { text: string }).text : '')).join(' ')
+  : ''
+
+/** The result of call `id` is (or isn't) an error and, when `holds` is given, its text holds it. */
+const resultIs = (id: string, wantError: boolean, holds?: string) => (r: MessagesRequest): true | string => {
   const m = isMainLoop(r)
   if (m !== true) return m
   const b = resultBlock(r, id)
   if (!b) return `no result for ${id}`
-  return (b.is_error === true) === wantError ? true : `result for ${id} has is_error=${String(b.is_error)}, expected ${String(wantError)}`
+  if ((b.is_error === true) !== wantError) return `result for ${id} has is_error=${String(b.is_error)}, expected ${String(wantError)}: "${resultText(b).slice(0, 300)}"`
+  if (holds !== undefined && !resultText(b).includes(holds)) return `result for ${id} doesn't hold ${holds}: "${resultText(b).slice(0, 300)}"`
+  return true
 }
 
 export const LEAK_CHECK_SCENARIOS: Record<string, Scenario> = {
   'webfetch-leak': {
     turns: [
-      { content: [{ type: 'tool_use', id: 'toolu_scripted_leak_read', name: 'mcp__apps__orders_search', input: { first: 1 } }], expect: isMainLoop },
+      { content: [{ type: 'tool_use', id: 'toolu_scripted_leak_read', name: 'mcp__apps__order_get', input: { name: LEAK_ORDER_NAME } }], expect: isMainLoop },
       {
-        content: [{ type: 'tool_use', id: 'toolu_scripted_leak_fetch', name: 'WebFetch', input: { url: 'https://example.com/?order=%231001', prompt: 'Summarise the page' } }],
-        expect: isErrorResult('toolu_scripted_leak_read', false),
+        content: [{ type: 'tool_use', id: 'toolu_scripted_leak_control', name: 'WebFetch', input: { url: LEAK_CONTROL_URL, prompt: FETCH_PROMPT } }],
+        expect: resultIs('toolu_scripted_leak_read', false, `"${LEAK_ORDER_NAME}"`),
       },
       {
-        content: [{ type: 'text', text: WEBFETCH_LEAK_REFUSED_ANSWER }],
-        expect: isErrorResult('toolu_scripted_leak_fetch', true),
+        content: [{ type: 'tool_use', id: 'toolu_scripted_leak_fetch', name: 'WebFetch', input: { url: LEAK_URL, prompt: FETCH_PROMPT } }],
+        expect: resultIs('toolu_scripted_leak_control', false),
       },
+      { content: [{ type: 'text', text: WEBFETCH_LEAK_REFUSED_ANSWER }], expect: resultIs('toolu_scripted_leak_fetch', true) },
     ],
+    branches: {
+      'page-summary': { match: pageSummary, turns: [{ content: [{ type: 'text', text: 'A page kept for documentation examples.' }] }] },
+    },
   },
 }

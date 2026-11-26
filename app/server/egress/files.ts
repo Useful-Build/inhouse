@@ -12,7 +12,7 @@ import type { FileRefusal } from '../files-io/bytes.ts'
 import { FILE_CAPS } from '../files-io/caps.ts'
 import type { EgressDeps } from './deps.ts'
 import { jsonAnswer } from './http.ts'
-import { isTextLikeContentType } from './taint.ts'
+import { isTextLikeContentType, type CaptureTaint } from './taint.ts'
 import { safeError } from '../safe-error.ts'
 
 const SHA256 = /^[0-9a-f]{64}$/
@@ -34,7 +34,7 @@ export async function filesRoute(
   urlPath: string,
   grant: RunGrant,
   d: EgressDeps,
-  captureTaint?: (text: string) => Promise<void>,
+  captureTaint: CaptureTaint,
 ): Promise<Response> {
   const chatId = grant.chatId
   if (urlPath === '/files/') {
@@ -49,10 +49,10 @@ export async function filesRoute(
     const f = await d.files.currentAt(chatId, path)
     const body = f ? await d.files.readBytes(f) : null
     if (!f || !body) return jsonAnswer({ error: 'not_found' }, 404)
-    if (captureTaint && isTextLikeContentType(f.contentType)) {
+    if (isTextLikeContentType(f.contentType)) {
       const bytes = new Uint8Array(await new Response(body).arrayBuffer())
       try {
-        await captureTaint(new TextDecoder('utf-8', { fatal: false }).decode(bytes))
+        await captureTaint(new TextDecoder('utf-8', { fatal: false }).decode(bytes), { route: 'files', contentType: f.contentType })
       } catch (err) {
         d.log({ event: 'egress_taint_capture_failed', route: 'files', error: safeError(err), runner: d.runner })
         return jsonAnswer({ error: 'internal' }, 500)

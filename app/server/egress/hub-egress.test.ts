@@ -13,7 +13,7 @@ import { createRunTokens, type TokenRefusal } from '../do/brand-agent/tokens.ts'
 import type { EgressDeps } from './deps.ts'
 import type { HubRouteDeps, ReadGatewayLike } from './hub.ts'
 import { handleEgress } from './index.ts'
-import { egressRequest, FakeEgressRpc, GRANT, harness, TOKEN } from './testing/harness.ts'
+import { egressRequest, FakeEgressRpc, GRANT, harness, TOKEN, NO_CAPTURE } from './testing/harness.ts'
 
 const list = { jsonrpc: '2.0', id: 1, method: 'tools/list' }
 
@@ -45,7 +45,7 @@ async function setup(rpc?: FakeEgressRpc) {
 describe('/hub/ through the egress', () => {
   it('a live mcp grant reaches the hub as the grant run, without the token header', async () => {
     const { h, f, deps } = await setup()
-    const res = await handleEgress(egressRequest('/hub/', { body: list, headers: { 'content-type': 'application/json' } }), deps)
+    const res = await handleEgress(egressRequest('/hub/', { body: list, headers: { 'content-type': 'application/json' } }), deps, NO_CAPTURE)
     expect(res.status).toBe(200)
     expect(f.scopes).toEqual([{ kind: 'run', runId: GRANT.runId, principalId: GRANT.memberId, requestId: 'req-1' }])
     expect(h.rpc.callsOf('checkRunToken').map(c => c.args[1])).toEqual(['mcp'])
@@ -59,7 +59,7 @@ describe('/hub/ through the egress', () => {
       return { refused: why === 'missing' ? 'unknown' : why }
     }
     const { h, f, deps } = await setup(rpc)
-    const res = await handleEgress(egressRequest('/hub/', { body: list, headers: { 'content-type': 'application/json' }, token: why === 'missing' ? null : TOKEN }), deps)
+    const res = await handleEgress(egressRequest('/hub/', { body: list, headers: { 'content-type': 'application/json' }, token: why === 'missing' ? null : TOKEN }), deps, NO_CAPTURE)
     expect(res.status).toBe(401)
     expect(f.scopes).toEqual([])
     expect(h.logs.filter(l => l.event === 'egress_refused')).toEqual([{ event: 'egress_refused', route: 'mcp', path: 'hub', why: why === 'missing' ? 'unknown' : why, runner: 'runner-0' }])
@@ -72,7 +72,7 @@ describe('/hub/ through the egress', () => {
       const { expiresAtMs: _, ...grant } = GRANT
       const token = await tokens.mint(grant, 1_800_000_000_000)
       const { f, deps } = await setup(new FakeEgressRpc(tokens, () => 1_800_000_000_000))
-      const ask = () => handleEgress(egressRequest('/hub/', { body: list, headers: { 'content-type': 'application/json' }, token }), deps)
+      const ask = () => handleEgress(egressRequest('/hub/', { body: list, headers: { 'content-type': 'application/json' }, token }), deps, NO_CAPTURE)
       tokens.closeRoutes(GRANT.turnId, ['files', 'events'], 'test')
       expect((await ask()).status).toBe(200)
       tokens.closeRoutes(GRANT.turnId, ['mcp'], 'test')

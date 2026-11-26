@@ -22,7 +22,7 @@ import { mcpHandler } from '../mcp/server/index.ts'
 import { notifyDeps } from '../mcp/tools/notifications/deps.ts'
 import { modelRoute } from './model.ts'
 import { storeRoute } from './store.ts'
-import { taintStore } from './taint.ts'
+import { taintStore, type CaptureTaint } from './taint.ts'
 import { safeError } from '../safe-error.ts'
 
 /** The test issuer's compile-time switch (vite.config.ts); true in the test and eval builds only. */
@@ -49,8 +49,8 @@ function withoutToken(request: Request): Request {
 }
 
 export interface EgressOptions {
-  /** Captures high-signal tokens from `/hub/`, `/mcp/` and text-like `/files/` responses before returning (M1-G, N8). */
-  captureTaint?: (text: string) => Promise<void>
+  /** Runs on `/hub/`, `/mcp/` and text-like `/files/` responses before returning; required, so no route skips it. */
+  captureTaint: CaptureTaint
 }
 
 /**
@@ -61,12 +61,12 @@ async function captureResponse(
   res: Response,
   d: EgressDeps,
   route: 'hub' | 'mcp',
-  captureTaint?: (text: string) => Promise<void>,
+  captureTaint: CaptureTaint,
 ): Promise<Response> {
-  if (!captureTaint || res.status !== 200) return res
+  if (res.status !== 200) return res
   const text = await res.text()
   try {
-    await captureTaint(text)
+    await captureTaint(text, { route })
   } catch (err) {
     d.log({ event: 'egress_taint_capture_failed', route, error: safeError(err), runner: d.runner })
     return jsonAnswer({ error: 'internal' }, 500)
@@ -79,7 +79,7 @@ async function captureResponse(
  * throw would put its message in the runtime's own exception log. A failure inside a streamed body, after the answer
  * left, is the route's own to handle.
  */
-export async function handleEgress(request: Request, d: EgressDeps, opts?: EgressOptions): Promise<Response> {
+export async function handleEgress(request: Request, d: EgressDeps, opts: EgressOptions): Promise<Response> {
   try {
     return await routeEgress(request, d, opts)
   } catch (e) {
@@ -88,7 +88,7 @@ export async function handleEgress(request: Request, d: EgressDeps, opts?: Egres
   }
 }
 
-async function routeEgress(request: Request, d: EgressDeps, opts?: EgressOptions): Promise<Response> {
+async function routeEgress(request: Request, d: EgressDeps, opts: EgressOptions): Promise<Response> {
   const url = new URL(request.url)
   if (url.hostname !== EGRESS_HOST) return jsonAnswer({ error: 'not_found' }, 404)
   const name = /^\/([a-z]+)\//.exec(url.pathname)?.[1]
@@ -105,7 +105,7 @@ async function routeEgress(request: Request, d: EgressDeps, opts?: EgressOptions
     return refusal(route, route === 'events' && checked.refused === 'closed' ? 410 : 401)
   }
   const grant = checked
-  if (hub !== undefined) return captureResponse(await handleHub(withoutToken(request), grant, hub), d, 'hub', opts?.captureTaint)
+  if (hub !== undefined) return captureResponse(await handleHub(withoutToken(request), grant, hub), d, 'hub', opts.captureTaint)
   const path = url.pathname
   switch (route) {
     case 'model':
@@ -119,10 +119,10 @@ async function routeEgress(request: Request, d: EgressDeps, opts?: EgressOptions
     case 'mcp': {
       if (request.method !== 'POST') return jsonAnswer({ error: 'method' }, 405)
       const res = await d.mcp(withoutToken(request), { memberId: grant.memberId, chatId: grant.chatId, runId: grant.runId, turnId: grant.turnId })
-      return captureResponse(res, d, 'mcp', opts?.captureTaint)
+      return captureResponse(res, d, 'mcp', opts.captureTaint)
     }
     case 'files':
-      return filesRoute(request, path, grant, d, opts?.captureTaint)
+      return filesRoute(request, path, grant, d, opts.captureTaint)
   }
 }
 
@@ -181,6 +181,6 @@ export function egressDeps(env: EgressEnv, ctx: ExecutionContext, props: EgressP
 export class Egress extends WorkerEntrypoint<Env, EgressProps> {
   async fetch(request: Request): Promise<Response> {
     const taint = taintStore(this.env.DB, this.env.AUDIT_HASH_KEY, () => Date.now())
-    return handleEgress(request, egressDeps(this.env, this.ctx, this.ctx.props), { captureTaint: text => taint.capture(text).then(() => undefined) })
+    return handleEgress(request, egressDeps(this.env, this.ctx, this.ctx.props), { captureTaint: (body, source) => taint.capture(body, source).then(() => undefined) })
   }
 }

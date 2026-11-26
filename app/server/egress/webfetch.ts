@@ -30,8 +30,15 @@ export const WEBFETCH_MAX_REDIRECTS = 3
 /** Bound the D1 log volume from refused requests across the brand's runners. */
 export const REFUSAL_RECORDS_PER_MINUTE = 60
 const REFUSAL_WINDOW_MS = 60_000
-/** Request headers a fetch may carry upstream (nothing that identifies or authorises). */
-const REQUEST_HEADERS = ['accept', 'accept-language', 'user-agent']
+/**
+ * The request headers every fetch carries upstream, fixed by Inhouse (decision L1, 2026-11-26). The agent can't set
+ * any header, so none can carry data the leak check (which reads the URL only) would miss.
+ */
+export const FETCH_HEADERS: Readonly<Record<string, string>> = {
+  accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5',
+  'accept-language': 'en-US,en;q=0.9',
+  'user-agent': 'Mozilla/5.0 (compatible; InhouseFetch/1.0)',
+}
 /** Response headers passed back. */
 const RESPONSE_HEADERS = ['content-type', 'content-language', 'last-modified', 'etag']
 
@@ -145,11 +152,7 @@ export async function handleWebFetch(request: Request, d: WebDeps): Promise<Resp
   const list = stored === null ? [] : parseHostlist(stored)
   if (list === null) return refuse('settings', d, hostOf(url))
 
-  const headers = new Headers()
-  for (const h of REQUEST_HEADERS) {
-    const v = request.headers.get(h)
-    if (v !== null) headers.set(h, v)
-  }
+  const headers = new Headers(FETCH_HEADERS)
   for (let hop = 0; ; hop++) {
     // Seam for M1-F (N7): check the brand's `t:webfetch_on` switch at the top of each hop, before static checks, leak check, DNS or fetch.
     const staticWhy = checkUrlStatic(url, list)
