@@ -144,7 +144,7 @@ export const restoreRoutine = revWrite('restore')
 /**
  * Route 54, `POST /api/routines/:id/run` `{ clientKey }`: one claimed Run now the tick submits (never here). The same key
  * again answers the same run; another open Run now of the routine is `conflict`/`run_open` with that run; a deleted
- * routine is 404; a team routine below its stage is `forbidden`/`stage`. A disabled routine may run (OC 10).
+ * routine is 404. A disabled routine may run (OC 10).
  */
 export async function runRoutineNow(c: HandlerContext): Promise<Response> {
   if (!viewerOf(c)) return apiError('forbidden')
@@ -160,7 +160,6 @@ export async function runRoutineNow(c: HandlerContext): Promise<Response> {
   }
   if ('conflict' in o) return apiError('conflict', { reason: 'run_open', current: run(o.conflict) })
   if (o.refused === 'not_found') return apiError('not_found')
-  if (o.refused === 'stage') return apiError('forbidden', { reason: 'stage' })
   if (o.refused === 'settings') return apiError(o.code as AgentErrorCode, o.reason === undefined ? {} : { reason: o.reason })
   return apiError('unavailable')
 }

@@ -9,6 +9,7 @@
 //  5. a paused Slack still takes a post;
 //  6. a hub tool is always loaded, or a runner route reaches the delivery binding.
 import { expect, test } from '@playwright/test'
+import { SLACK_DELIVERY_ENABLED } from '../../server/notify-slack/slack-legs.ts'
 import { actor, call, expectError } from './kit.ts'
 import { ToolsDataSchema } from '../../shared/contract/tools.ts'
 import {
@@ -149,6 +150,7 @@ test('a same-token reconnect keeps an active account working and revokes nothing
 })
 
 test('with Slack paused, notification_send to a listed channel at Act answers slack_not_connected and the fake records no post', async ({ request }) => {
+  test.skip(!SLACK_DELIVERY_ENABLED, 'the Slack legs are closed until Q3 (server/notify-slack/slack-legs.ts): a channel reaches the bell, never the hub; this runs again when they open')
   await freshConnect(request)
   await setStage(request, 'Act')
   await setListedChannels(request, [CHANNEL.opsAlerts], true)

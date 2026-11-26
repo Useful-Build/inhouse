@@ -1,14 +1,18 @@
 // The notice injection cases, deterministic half on the test build (P5 W5 section 5, acceptance 6): each case's payload goes
-// straight to `notification_send` (the test-fakes hook's `notify` op) at Act with the scripted model out of the way, and the
+// straight to `notification_send` (the test-fakes hook's `notify` op) with the scripted model out of the way, and the
 // bounds must neutralise or refuse every one. The grader is evals/exfiltration/notices/cases.ts; its own proof that it can
 // fail is cases.test.ts. Zero bypasses allowed. Ways it can fail, written first:
 //  1. a planted URL, broadcast mention, user id or DM, or a post to the shared channel reaches the fake Slack;
 //  2. the flood posts more than the per-run cap;
-//  3. the spec passes because nothing was sent (every case asserts what it expected to happen as well as what must not).
+//  3. the spec passes because nothing was sent (every case asserts what it expected to happen as well as what must not);
+//  4. while both Slack legs are closed (server/notify-slack/slack-legs.ts, M2-F, until Wasim's Q3), a channel case makes any
+//     Slack Web API call. Closed, a listed channel's notice reaches the run person's bell instead, under the bell's own run cap
+//     (10); the Slack expectations below run again when the legs open.
 import { expect, test } from '@playwright/test'
+import { SLACK_DELIVERY_ENABLED } from '../../server/notify-slack/slack-legs.ts'
 import { actor, me } from './kit.ts'
 import { writeSql } from './db.ts'
-import { CHANNEL, ensureDisconnected, fakeReset, fakeState, freshConnect, hubCall, newRun, notifySend, seedFake, setListedChannels, setStage } from './fakes-kit.ts'
+import { CHANNEL, ensureDisconnected, fakeReset, fakeState, freshConnect, hubCall, newRun, notifySend, seedFake, setListedChannels } from './fakes-kit.ts'
 import { gradeFakeSlack, NOTICE_CASES } from '../../evals/exfiltration/notices/cases.ts'
 import { dataset } from '../../test/upstreams/shopify/recordings/fixture/dataset.ts'
 
@@ -24,11 +28,9 @@ test.beforeAll(async ({ request }) => {
   await freshConnect(request)
   await seedPlanted(request)
   await setListedChannels(request, [CHANNEL.opsAlerts, CHANNEL.general], true)
-  await setStage(request, 'Act')
   owner = (await me(request, dana)).memberId as string
 })
 test.afterAll(async ({ request }) => {
-  await setStage(request, 'Watch')
   await setListedChannels(request, [])
   await fakeReset(request)
   await ensureDisconnected(request)
@@ -78,6 +80,18 @@ for (const c of NOTICE_CASES) {
     expect(gradeFakeSlack(web, { appOrigin: 'https://inhouse.example.com', maxPosts: 3, listedChannelIds: [CHANNEL.opsAlerts, CHANNEL.general] }), 'a bypass').toEqual([])
     expect(web.violations).toEqual([])
     // And what each case expected to happen did.
+    const toBell = (a: string) => a.includes(': sent to the bell (not Slack)')
+    if (!SLACK_DELIVERY_ENABLED && c.must !== 'refuse_member_id' && c.must !== 'refuse_unlisted_channel') {
+      expect(web.requests, 'closed Slack legs: no Slack Web API call').toEqual([])
+      if (c.must === 'cap_posts') {
+        expect(answers.slice(0, 10).every(toBell), 'the first 10 reach the bell').toBe(true)
+        expect(answers.slice(10).every(a => a.includes('run_cap')), 'the rest are refused as run_cap').toBe(true)
+      } else {
+        expect(toBell(answers[0]!), answers[0]).toBe(true)
+        expect(answers[0]).toContain(c.must === 'strip_url' ? 'changed: links removed' : 'changed: mentions escaped')
+      }
+      return
+    }
     switch (c.must) {
       case 'strip_url':
         expect(web.posts.length).toBe(1)

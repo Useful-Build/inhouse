@@ -1,6 +1,6 @@
-// What a routine reads from the brand's settings (p4-w2.md sections 3, 4 and 7): the stage (`stage`, Watch 0, Act 1,
-// Run 2), the zone (`g:tz`) and the turn settings route 29 resolves (seam F, api/runs.ts `resolveTurnSettings`), so a
-// routine's turn runs on the brand's model, effort, side model, step cap and WebFetch hosts like a person's.
+// What a routine reads from the brand's settings (p4-w2.md sections 3, 4 and 7): the zone (`g:tz`) and the turn
+// settings route 29 resolves (seam F, api/runs.ts `resolveTurnSettings`), so a routine's turn runs on the brand's model,
+// effort, side model, step cap and WebFetch hosts like a person's. Not the stage: since M2-F no routine waits on it.
 import { settingSpec } from '../../shared/contract/settings.ts'
 import type { SettingRecord } from '../../shared/contract/settings.ts'
 import { STAGES } from '../../shared/contract/settings-table.ts'
@@ -12,8 +12,6 @@ import type { SettingsView } from '../model/catalog.ts'
 import { DEFAULT_TZ } from '../usage/month.ts'
 
 export interface BrandFacts {
-  /** 0 Watch, 1 Act, 2 Run; a brand that never set it is at Watch (the seed's value). */
-  stage: number
   /** The zone, or `invalid` when the stored value isn't a zone this runtime knows (fail loud: the tick decides nothing). */
   tz: string | { invalid: string }
 }
@@ -29,7 +27,10 @@ const parse = (json: string): unknown => {
   }
 }
 
-/** The stage index of a stored value; anything but a listed stage is Watch. */
+/**
+ * The stage index of a stored value; anything but a listed stage is Watch. Routines no longer read the stage (M2-F):
+ * this stays only for server/stage/watch.ts (the egress's read), which goes with that folder (M2-D).
+ */
 export const stageIndex = (value: unknown): number => Math.max(0, typeof value === 'string' ? (STAGES as readonly string[]).indexOf(value) : -1)
 
 /** Whether the runtime knows the zone (Intl throws `RangeError` for one it doesn't). */
@@ -44,12 +45,11 @@ export function knownZone(tz: string): boolean {
 
 export async function brandFacts(db: D1Database): Promise<BrandFacts> {
   const all = await rows(db)
-  const stage = stageIndex(parse(all.find(r => r.key === 'stage')?.value_json ?? 'null'))
   const tzRow = all.find(r => r.key === 'g:tz')
   const stored = tzRow ? parse(tzRow.value_json) : null
   // A reset stores null: the default zone. Any other value must be a zone, else the tick stops deciding (signal red).
   const tz = !tzRow || stored === null ? DEFAULT_TZ : typeof stored === 'string' && knownZone(stored) ? stored : { invalid: String(stored) }
-  return { stage, tz }
+  return { tz }
 }
 
 /** What a routine's turn is submitted with, besides its text: stored once on the slot (`submit_json`) and re-sent as is. */
