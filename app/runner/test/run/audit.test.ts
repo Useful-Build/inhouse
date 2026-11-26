@@ -7,11 +7,17 @@
 // - an entry sent after the run ended goes unanswered, so the hook waits out its timeout while the root's grace runs;
 // - an entry read after the session stopped waiting for it (it sat in the pipe) is written as if its call ran;
 // - the root's wall clock steps (NTP, set by hand) and an expired entry is acked, or a fresh one nacked.
+// Stage 1 (N6, N14), also written first:
+// - a run the Worker started at v3 gets `agentId` or `inputSha256` on either wire path (the `AuditPost` or the `audit`
+//   run event): its strict schema would refuse the entry, and every call would be blocked;
+// - a run started at v4 loses them (the server could no longer tell a helper's call from the main agent's);
+// - a v3 start that carries a helper key is admitted.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RunEvent } from '../../../shared/protocol/index.ts'
-import { openRun, postRun, runStart, startTestRoot, waitFor, type TestRoot } from './support/root-client.ts'
+import { PROTOCOL_HEADER } from '../../../shared/protocol/index.ts'
+import { openRun, postRun, protocolHeaders, runStart, startTestRoot, waitFor, type TestRoot } from './support/root-client.ts'
 import { gate, spawnFixture } from './support/test-seams.ts'
 
 let root: TestRoot
@@ -118,5 +124,42 @@ describe('audit entries', () => {
     const events = await postRun(root, runStart({ prompt: 'audit-bad' }))
     expect(events.some((e) => e.type === 'audit')).toBe(false)
     expect(ends(events)).toEqual([expect.objectContaining({ type: 'failed', reason: 'protocol' })])
+  })
+})
+
+describe('the helper keys on the wire (v4)', () => {
+  const sent = (events: RunEvent[]) => events.flatMap((e) => (e.type === 'audit' ? [e.entry] : []))
+  it('a run started at v4: both entries keep agentId and inputSha256, on the AuditPost and on the audit event', async () => {
+    const events = await postRun(root, runStart({ prompt: 'audit-helper' }), 4)
+    const want = [
+      { agentId: 'agent-7', inputSha256: '0'.repeat(64) },
+      { agentId: null, inputSha256: '1'.repeat(64) },
+    ]
+    expect(sent(events).map((e) => ({ agentId: e.agentId, inputSha256: e.inputSha256 }))).toEqual(want)
+    expect(root.egress.audits.map((a) => ({ agentId: a.entry.agentId, inputSha256: a.entry.inputSha256 }))).toEqual(want)
+    expect(ends(events)).toEqual([expect.objectContaining({ type: 'finished' })])
+  })
+
+  it('a run started at v3: neither wire path carries agentId or inputSha256; the calls are still recorded and acked', async () => {
+    const events = await postRun(root, runStart({ prompt: 'audit-helper' }), 3)
+    for (const e of [...sent(events), ...root.egress.audits.map((a) => a.entry)]) {
+      expect(e).not.toHaveProperty('agentId')
+      expect(e).not.toHaveProperty('inputSha256')
+    }
+    expect(sent(events).map((e) => e.toolUseId)).toEqual(['toolu_0', 'toolu_1'])
+    expect(root.egress.audits.map((a) => a.entry.toolUseId)).toEqual(['toolu_0', 'toolu_1'])
+    const report = events.find((e) => e.type === 'sdk' && e.message.type === 'audits')
+    expect(report?.type === 'sdk' && report.message.replies).toEqual([0, 1].map((id) => ({ type: 'audit_ack', id })))
+  })
+
+  it.each([
+    ['agents', { agents: { researcher: { description: 'd', prompt: 'p' }, analyst: { description: 'd', prompt: 'p' } }, subagentModel: 'claude-sonnet-5-5' }],
+    ['actions', { actions: false }],
+  ])('a v3 start carrying %s is refused (400), never admitted; the same start at v4 is', async (_, extra) => {
+    const start = runStart({ prompt: 'echo:m:1', ...extra })
+    const res = await fetch(`${root.url}/runs`, { method: 'POST', headers: { ...protocolHeaders, [PROTOCOL_HEADER]: '3' }, body: JSON.stringify(start) })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toMatch(/only from v4/)
+    await postRun(root, { ...start, runId: `${start.runId}-v4`, chatId: `${start.chatId}-v4` }, 4)
   })
 })

