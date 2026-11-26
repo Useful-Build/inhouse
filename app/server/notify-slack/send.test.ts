@@ -220,6 +220,18 @@ describe('test 9: the bell, from notification_send', () => {
     expect(row!.body).toBe('Q&A\n\nR&D a < b x > y')
     expect(calls.map(c => [c.req.title, c.req.text])).toEqual([['Q&A', 'R&D a < b x > y']])
   })
+
+  // A backstop (shared/rpc-answer.ts): an answer that carries a disposer keeps its call open until released, and this
+  // sender can run inside BrandAgent.
+  slackOpen.it("the hub's answer is released once", async () => {
+    const s = await scene()
+    const DISPOSE = (Symbol as unknown as { dispose: symbol }).dispose
+    let released = 0
+    const { delivery } = fakeDelivery(() => Object.assign({ ok: true as const, value: { ts: '1.000042' } }, { [DISPOSE]: () => { released++ } }))
+    const out = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), msg())
+    expect(out.recipients.map(r => r.outcome)).toEqual(['posted'])
+    expect(released).toBe(1)
+  })
 })
 
 describe('test 8: no DM, no Inhouse bell', () => {

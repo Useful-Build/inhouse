@@ -85,7 +85,15 @@ const comparable = async (db: D1Database) => {
   d1.members = d1.members.map(row => row.pseudonymised_at_ms === null ? row : {
     ...row, pseudonymised_at_ms: true, removed_at_ms: true, req_id: null,
   })
+  // The restored gate differs by design: step 4 holds it and re-seats it (M2-R). `comparableHeld` checks those fields.
+  d1.outbox_gate = d1.outbox_gate.map(row => ({ ...row, restore_hold: true, do_gen: true, epoch: true, updated_at_ms: true }))
   return { d1, r2: Object.fromEntries(Object.entries(r2).filter(([key]) => !/^(backups|restore|deletion-log)\//.test(key))) }
+}
+
+/** The restored database after a reconcile: its outbox gate held at `do_gen = -1` (step 4), everything else as `comparable`. */
+const comparableHeld = async (db: D1Database) => {
+  expect(await db.prepare('SELECT restore_hold, do_gen FROM outbox_gate WHERE id = 1').first()).toEqual({ restore_hold: 1, do_gen: -1 })
+  return comparable(db)
 }
 
 const sortRows = (rows: Record<string, SqlStorageValue>[]) =>
@@ -356,7 +364,7 @@ it('backup, live retention and person deletion, restore and replay converge acro
       for (let pass = 0; pass < 2; pass++) {
         const reconciled = await reconcile(deps)
         if (!('ok' in reconciled)) throw new Error(reconciled.refused)
-        expect(await comparable(e.RESTORE_DB)).toEqual(expected)
+        expect(await comparableHeld(e.RESTORE_DB)).toEqual(expected)
         expect(agentState(state.storage.sql)).toEqual(expectedAgent)
         await assertFts(e.RESTORE_DB, ftsChecks)
       }
@@ -421,7 +429,7 @@ it('topology agentPoint > d1Point converges across D1, R2, BrandAgent and FTS', 
     const deps = { bucket, target: e.RESTORE_DB, restoreId: record.restoreId, at: at(T2 + 20), retentionSql: state.storage.sql, runners: { BrandAgent: brandAgentRunner(instance) } }
     const out = await reconcile(deps)
     if (!('ok' in out)) throw new Error(out.refused)
-    expect(await comparable(e.RESTORE_DB)).toEqual(expected)
+    expect(await comparableHeld(e.RESTORE_DB)).toEqual(expected)
     expect(agentState(state.storage.sql)).toEqual(expectedAgent)
     await assertFts(e.RESTORE_DB, { chatKeep: ['c_live'], chatGone: ['c_early', 'c_late'], memGone: ['memearly', 'memlate'] })
     expect(await confirmRestore({ ...deps, at: at(T2 + 30, members.inhouse), approvedBy: members.admin })).toMatchObject({ ok: { status: 'restored' } })
@@ -483,7 +491,7 @@ it('topology Until deleted replays trash-only without deleting old live chats or
     for (let pass = 0; pass < 2; pass++) {
       const out = await reconcile(deps)
       if (!('ok' in out)) throw new Error(out.refused)
-      expect(await comparable(e.RESTORE_DB)).toEqual(expected)
+      expect(await comparableHeld(e.RESTORE_DB)).toEqual(expected)
       expect(agentState(state.storage.sql)).toEqual(expectedAgent)
       await assertFts(e.RESTORE_DB, { chatKeep: ['cOldLive', 'cTrashEdge', 'cFileTrash'], chatGone: ['cTrashGone'], memGone: ['memFGone'] })
     }
@@ -549,7 +557,7 @@ it('topology busy DO recovery refuses replay_stopped until settled, then converg
     sql.exec("UPDATE turns SET d1_flushed = 1 WHERE turn_id = 't_ret_old'")
     const out = await reconcile({ ...deps, at: at(AFTER + 70) })
     if (!('ok' in out)) throw new Error(out.refused)
-    expect(await comparable(e.RESTORE_DB)).toEqual(expected)
+    expect(await comparableHeld(e.RESTORE_DB)).toEqual(expected)
     expect(agentState(sql)).toEqual(expectedAgent)
     await assertFts(e.RESTORE_DB, { chatKeep: ['cRetKeep'], chatGone: ['cRetBusy'] })
     expect(await confirmRestore({ ...deps, at: at(AFTER + 80, members.inhouse), approvedBy: members.admin })).toMatchObject({ ok: { status: 'restored' } })

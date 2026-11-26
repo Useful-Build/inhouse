@@ -168,6 +168,34 @@ describe('turnSystemPrompt, per turn from the gateway and the channel list', () 
     expect(warns.mock.calls).toEqual([[{ event: 'prompt_accounts_unread', turnId: 't_4', code: 'no_binding' }]])
   })
 
+  // A backstop (shared/rpc-answer.ts): an answer that carries a disposer keeps its call open until released, and this
+  // runs in BrandAgent every turn.
+  it('the hub answer is released once, read or failed, and its data is what the line is built from', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const DISPOSE = (Symbol as unknown as { dispose: symbol }).dispose
+    const cases: [HubResult<AccountSummary[]>, string][] = [
+      [{ ok: true, value: [account('slack:workspace')] }, `${SYSTEM_PROMPT_V1}\n\nConnected apps: Slack${TAIL}\nSlack channels you may post to with notification_send: #ops. Post nowhere else.`],
+      [{ ok: false, error: { code: 'upstream_unavailable', message: 'hub down' } }, SYSTEM_PROMPT_V2],
+    ]
+    for (const [data, text] of cases) {
+      let released = 0
+      const answer = Object.assign({}, data, { [DISPOSE]: () => { released++ } })
+      expect(await textOf(deps(async () => answer), 't_r')).toBe(text)
+      expect(released).toBe(1)
+    }
+    expect(errors).toHaveBeenCalledTimes(1)
+  })
+
+  // The release is code only (PR #443): the prompt built from an answer as Workers RPC hands it over (with a disposer) is
+  // the one built from the same plain answer, on every input. The literal and reference-model cases above pin that text.
+  test.prop([accountsArb, fc.array(validName, { maxLength: 6 })])('the prompt is the same with or without a disposer on the answer', async (accounts, channels) => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const DISPOSE = (Symbol as unknown as { dispose: symbol }).dispose
+    const plain = await turnSystemPrompt(deps(async () => ({ ok: true, value: accounts }), { channels: async () => channels }), 't_p')
+    const handed = { ok: true as const, value: accounts, [DISPOSE]: () => {} }
+    expect(await turnSystemPrompt(deps(async () => handed, { channels: async () => channels }), 't_p')).toEqual(plain)
+  })
+
   it('a failed channel read: logged loud, the connected-apps line stays and the channel line goes', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
     const d = deps(async () => ({ ok: true, value: [account('slack:workspace')] }), { channels: async () => { throw new Error('d1') } })

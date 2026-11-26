@@ -9,6 +9,7 @@ import type { SyncStore } from '../../../signin/core'
 import { flushTestLogs, signInFor, upstreamFor } from '../../../signin/signin'
 import { ShopifyWriteCore } from './core'
 import { parseShopifyWriteConfig, writeErr } from './provider'
+import { settledAnswer } from '../../../../shared/rpc-answer'
 
 /** `Env` (generated) plus what it can't name: the test build's flag and the optional write app secret. */
 export type HubWriteEnv = Env & { INHOUSE_TEST_BUILD?: string; SHOPIFY_WRITE_CLIENT_SECRET?: string }
@@ -33,7 +34,7 @@ export class ShopifyWriteSignIn extends DurableObject<Env> {
       upstream: () => upstreamFor(hubEnv),
       keyring: () => keyRingFor(hubEnv),
       config: () => parseShopifyWriteConfig(hubEnv),
-      accountStatus: async accountId => (await signInFor(env, accountId).status(accountId)) as HubResult<AccountStatus>,
+      accountStatus: async accountId => (await settledAnswer(signInFor(env, accountId).status(accountId))) as HubResult<AccountStatus>,
     })
   }
 

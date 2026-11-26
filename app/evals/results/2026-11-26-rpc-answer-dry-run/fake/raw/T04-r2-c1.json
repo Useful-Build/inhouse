@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "T04",
+  "cat": "choice",
+  "pair": "memory_forget/routine_delete",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_forget"
+  ],
+  "toolSearches": 0,
+  "answer": "Forgotten.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0,
+  "answer": "Forgotten.",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_forget",
+    "inputSha256": "c2849271732610451eee7d97ac9129c0603ecc16beb1f4ce7579abf94331bbbb",
+    "inputExcerpt": "{\"memory_id\":\"m_moss\"}",
+    "resultExcerpt": "Forgotten."
+   }
+  ]
+ }
+}

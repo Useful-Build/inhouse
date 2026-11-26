@@ -513,7 +513,9 @@ export class AgentCore {
     const run = this.sql.exec<{ state: string; chat_id: string; started_at_ms: number }>('SELECT state, chat_id, started_at_ms FROM runs WHERE run_id = ?', runId).toArray()[0]
     if (!run || run.state !== 'live' || this.holding.has(runId)) return null
     if (this.count(`run_id = ? AND state IN ${ACTIVE}`, runId) > 0) return null
-    const next = this.sql.exec<TurnRow>(`SELECT * FROM turns WHERE run_id = ? AND state = 'queued' ORDER BY ${PRIORITY_ORDER}, ord LIMIT 1`, runId).toArray()[0]
+    // A question's resume first (M2-Q): a turn queued behind the asking turn before it deferred must never run on the
+    // deferred session ahead of the resume (it would leave the resume nothing to resume).
+    const next = this.sql.exec<TurnRow>(`SELECT * FROM turns WHERE run_id = ? AND state = 'queued' ORDER BY (resume_json IS NULL), ${PRIORITY_ORDER}, ord LIMIT 1`, runId).toArray()[0]
     if (next) {
       if (this.paused()) return null
       if (this.draining_()) {
@@ -649,6 +651,11 @@ export class AgentCore {
 
     // The session (sync).
     const cs = this.chatState(t.chat_id)
+    // M2-Q: a turn claimed while the chat waited on a question, whose resume was admitted during this start's awaits:
+    // the resume answers first (as `admit()` holds a send while a resume is queued or starting), so this one ends here.
+    if (t.resume_json === null && this.count("chat_id = ? AND resume_json IS NOT NULL AND state IN ('queued', 'starting') AND turn_id != ?", t.chat_id, t.turn_id) > 0) {
+      return this.cancelUnstarted(t, 'session_unusable')
+    }
     let sessionId: string
     let expect: StartWithoutToken['expect'] = null
     if (!cs || cs.session === 'none' || cs.session_id === null) {
@@ -893,6 +900,11 @@ export class AgentCore {
     // M1-B: a job's end task parked on a question makes the job wait; a person's turn that hit a limit becomes a job.
     if (t.on_end_json !== null && deferredEnd) this.jobs.parked(JSON.parse(t.on_end_json) as OnEnd)
     if (state === 'ended') this.jobs.promoteIfDue(t)
+    // M2-Q: a question's resume turn ended, however its resume came (the answer route, the object's own retry after a
+    // pause, the expiry): the chat no longer waits on it, so a job continuation waiting it out runs now (jobs/engine.ts).
+    // Not when this resume deferred again (the chat still waits), nor for the job's own resume (its end task, ensured
+    // above, is that job's next step already).
+    if (t.resume_json !== null && !deferredEnd && t.job_id === null) this.jobs.answered(t.chat_id)
     // The D1 projection (4.8): the rows fixed here, the batch after; the task is its durable retry.
     fixTurnRows(this.sql, turnId, now)
     this.d.scheduler.schedule({ id: `${FLUSH_TURN_PREFIX}${turnId}`, kind: 'flush-turn', dueAtMs: now + FLUSH_RETRY_MS })

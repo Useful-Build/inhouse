@@ -37,7 +37,9 @@ describe('judge: N3\'s table', () => {
     ['cancelled cap_reached (the monthly cap)', { cancel_why: 'cap_reached' }, { end: 'budget', cause: 'month_cap' }],
     ['cancelled job_budget', { cancel_why: 'job_budget' }, { end: 'budget' }],
     ['cancelled pool_full', { cancel_why: 'pool_full' }, 'again'],
-    ['cancelled session_unusable', { cancel_why: 'session_unusable' }, { end: 'failed' }],
+    // Stage 1 M2-Q: a continuation that started into a chat waiting on a person's question; tried again (it waits the
+    // question out, and a damaged session refuses the retry).
+    ['cancelled session_unusable', { cancel_why: 'session_unusable' }, 'again'],
     ['cancelled paused', { cancel_why: 'paused' }, { end: 'cancelled' }],
     ['cancelled removed', { cancel_why: 'removed' }, { end: 'cancelled' }],
     ['cancelled deleted', { cancel_why: 'deleted' }, { end: 'cancelled' }],

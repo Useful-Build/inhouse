@@ -83,6 +83,8 @@ const TARGET_ROWS_CHECKED = 1_000
  */
 export const SEEDED_ROWS: readonly { table: string; key: readonly (string | number)[]; migration: string; pristine: Readonly<Record<string, string | number | null>> }[] = [
   { table: 'routines', key: ['routine-morning-check'], migration: '0221_morning_check.sql', pristine: { rev: 1, last_slot_key: null } },
+  // The outbox gate (M2-R): every Pause and Resume moves it, so a used brand's backup never matches the fresh row.
+  { table: 'outbox_gate', key: [1], migration: '0730_outbox.sql', pristine: { paused: 0, restore_hold: 0, epoch: 1, do_gen: 0, updated_at_ms: 0, stamp: null } },
 ]
 /** Whether the target's row (an encoded line) is a named seeded row the migration left as it was. */
 function pristineSeed(t: TableManifest, pk: string, targetLine: string): boolean {

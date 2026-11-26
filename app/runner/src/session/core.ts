@@ -5,8 +5,8 @@
 //   1. brings the chat's files into the work folder (`inputs/`, `outputs/`; src/files/), up to the restore cap;
 //   2. runs one `query()` with the session store adapter (src/store/), streaming every SDK message back as an `sdk`
 //      event. A prompt goes in as a one-message stream, so `interrupt()` works (it needs streaming input); the `""`
-//      resume after a deferred call's answer stays a plain string (P0 S1: an empty stream left the deferred tool
-//      unavailable), and an interrupt there falls back to the abort signal;
+//      resume after a deferred call's answer goes in as a stream with no message, held open until the result
+//      (`resumePrompt`: a plain `""` makes the CLI add an empty turn of its own after the deferred call);
 //   3. at the end: the deferred call, if the run deferred one (with the runner's own one-call check), then the new and
 //      changed files under `outputs/`, then the store's checkpoint and repair (`checkpoint`, or `mirror_error`), then
 //      exactly one terminal event (`finished` or `failed`). After a stop the checkpoint goes first and the files after
@@ -104,11 +104,28 @@ export function baseOptions(config: RunConfig, cwd: string, env: Record<string, 
     maxTurns: config.maxTurns,
     maxBudgetUsd: config.maxBudgetUsd,
     settingSources: [],
+    // Stream events (Stage 1, N16): the defer hook's `loneToolCall` needs a model message's `message_stop` to know no more
+    // tool calls are coming in it (TurnToolUses.lone). The run loop reads them and never sends one to the Worker.
+    includePartialMessages: true,
     // The SDK's own CLI spawn and MCP delivery: the CLI gets fresh stdio pipes, so it never holds the local channel
     // (src/session/channel.ts), and the SDK reads its stderr as usual.
     ...(config.resume ? { resume: config.sessionId } : { sessionId: config.sessionId }),
     ...(sessionStore ? { sessionStore, sessionStoreFlush: STORE_FLUSH } : {}),
   }
+}
+
+/**
+ * A deferred call's resume (prompt `""`): a stream with no message, held open until `done` settles. On CLI 2.1.328 a plain
+ * `""` string runs the deferred call and then a second, empty turn of its own (a model call with nothing to answer);
+ * an empty stream ended at once left the deferred tool unavailable (P0 S1). Held open, the CLI runs the deferred call,
+ * answers once, and the run ends when the input does (test/store/deferred-resume.test.ts, the real CLI). A stop or an
+ * interrupt that comes before the query exists ends the input first, so such a resume gets an input that ends at once
+ * (the deferred call then doesn't run): the run ends stopped or interrupted, as it would anyway.
+ */
+export function resumePrompt(done: Promise<void>): AsyncIterable<SDKUserMessage> {
+  return (async function* () {
+    await done
+  })()
 }
 
 /** The prompt as a one-message stream, held open until `done` settles (the SDK ends the run when its input ends). */
@@ -162,6 +179,19 @@ export class TurnToolUses {
   #ids = new Set<string>()
   /** The API message each of the turn's calls came in (the SDK sends one `assistant` message per content block). */
   #messageOf = new Map<string, string>()
+  /**
+   * Every call of each API message, kept across tool results: the CLI runs a call while its message still streams, so
+   * an earlier call's result can arrive (and start the turn over in `#ids`) before a later call of the same message.
+   * A message with no id counts on its own (a key per SDK message).
+   */
+  #calls = new Map<string, Set<string>>()
+  #keyOf = new Map<string, string>()
+  #unnamed = 0
+  /** Another call came in the same API message as `id` (whatever results came back in between). */
+  #sibling(id: string): boolean {
+    const key = this.#keyOf.get(id)
+    return key !== undefined && (this.#calls.get(key)?.size ?? 0) > 1
+  }
   /** API messages known to be complete: their `message_stop` stream event was seen. */
   #closed = new Set<string>()
   /** The API message being streamed (its `message_start`), for the `message_stop` that names no id. */
@@ -180,32 +210,37 @@ export class TurnToolUses {
       if (!Array.isArray(content)) return
       if (m.type === 'user' && content.some((b) => (b as { type?: unknown })?.type === 'tool_result')) this.#ids.clear()
       if (m.type === 'assistant') {
+        const key = typeof messageId === 'string' ? messageId : `#${++this.#unnamed}`
         for (const b of content) {
           if ((b as { type?: unknown })?.type !== 'tool_use') continue
           const id = String((b as { id?: unknown }).id)
           this.#ids.add(id)
           if (typeof messageId === 'string') this.#messageOf.set(id, messageId)
+          const calls = this.#calls.get(key) ?? new Set<string>()
+          calls.add(id)
+          this.#calls.set(key, calls)
+          this.#keyOf.set(id, key)
         }
       }
     }
     for (const wake of [...this.#waiters]) wake()
   }
   /**
-   * Resolves true once the turn holds `id` as its only call AND the API message that carried it is complete; false
-   * once it holds `id` beside another call; false when neither is known within `withinMs`. Never rejects.
+   * Resolves true once the turn holds `id` as its only call AND the API message that carried it is complete and carried
+   * no other call; false once it holds `id` beside another call (in the turn, or in its message even after that call's
+   * result came back); false when neither is known within `withinMs`. Never rejects.
    *
    * Completeness matters: the SDK sends a turn's tool calls as separate `assistant` messages, one per block, with no
    * stop reason on them, and the CLI runs a call's PreToolUse hook as soon as its block is streamed, before the blocks
    * after it arrive (seen on CLI 2.1.328, PR #430). So "only one call so far" proves nothing until the message is
    * complete, which only its `message_stop` stream event says. Stream events come only with `includePartialMessages`,
-   * which is off in M1-E: here `lone` never resolves true, so nothing can be deferred on it. M2-Q, which defers, turns
-   * stream events on (and keeps them off the wire).
+   * which `baseOptions` turns on (M2-Q); the run loop keeps them off the wire.
    */
   lone(id: string, withinMs: number): Promise<boolean> {
     return new Promise((resolve) => {
       const check = () => {
         if (!this.#ids.has(id)) return false
-        if (this.#ids.size > 1) return done(false), true
+        if (this.#ids.size > 1 || this.#sibling(id)) return done(false), true
         const message = this.#messageOf.get(id)
         if (message === undefined || !this.#closed.has(message)) return false
         return done(true), true
@@ -224,9 +259,9 @@ export class TurnToolUses {
   get count() {
     return this.#ids.size
   }
-  /** The turn's calls are this one call and nothing else. */
+  /** The turn's calls are this one call and nothing else, and its model message carried no other call. */
   only(id: string) {
-    return this.#ids.size === 1 && this.#ids.has(id)
+    return this.#ids.size === 1 && this.#ids.has(id) && !this.#sibling(id)
   }
 }
 
@@ -335,7 +370,8 @@ export async function runSession(deps: {
     try {
       await q.interrupt()
     } catch {
-      // interrupt() needs the streaming prompt; the `""` resume has none, so it falls back to the abort signal.
+      // Every prompt is streaming input (the `""` resume too, `resumePrompt`), so interrupt() normally works; when it
+      // refuses anyway (the query already ending), the abort signal ends the run.
       abort.abort()
     }
   }
@@ -453,7 +489,7 @@ export async function runSession(deps: {
 
   // 3. The query.
   const text = config.prompt !== '' && leftOut.length > 0 ? `${config.prompt}\n\n${leftOutNote(leftOut)}` : config.prompt
-  const prompt = text === '' ? '' : streamingPrompt(text, inputDone)
+  const prompt = text === '' ? resumePrompt(inputDone) : streamingPrompt(text, inputDone)
   let result: Result | null = null
   let thrown: unknown = null
   let threw = false
@@ -464,6 +500,9 @@ export async function runSession(deps: {
     for await (const m of q) {
       if (ended) break
       turn.see(m)
+      // A stream event is for the turn tracker only: never on the wire, so the Worker's events, the chat and the
+      // transcript mirror see exactly what they saw with stream events off.
+      if (m.type === 'stream_event') continue
       // Capped here as well as in the root, so an honest session never sends a line over the channel's cap.
       const raw = m as unknown as Record<string, unknown>
       const stub = (why: 'tooDeep' | 'unencodable') => ({ message: { type: String(raw.type).slice(0, 64), [why]: true }, truncated: true })
@@ -495,7 +534,7 @@ export async function runSession(deps: {
   } else if (check.state === 'pending' && !stopping && !abort.signal.aborted && (result !== null || !untouchedResume)) {
     // An unstopped query that ended (with a result, or after writing to the store) without the SDK ever loading the main
     // transcript: nothing proved the resume ran on the expected transcript. A stop keeps its own end (and so does an
-    // interrupt that fell back to the abort signal); an interrupt the SDK honoured, on a resume that ended before the
+    // interrupt whose interrupt() refused and fell back to the abort signal); an interrupt the SDK honoured, on a resume that ended before the
     // transcript loaded, still ends `failed store` here, as intended.
     terminal = { type: 'failed', reason: 'store', message: 'the resume never loaded its transcript from the store' }
   } else if (result !== null && result.subtype === 'error_max_structured_output_retries') {
@@ -516,7 +555,8 @@ export async function runSession(deps: {
       else terminal = { type: 'failed', reason: 'sdk_error', message: `a deferred call in a turn with ${turn.count} tool calls; the runner defers only a lone call, and only that one` }
     }
   } else if (stopping) terminal = { type: 'failed', reason: 'stopped', message: 'stopped' }
-  // An interrupt that fell back to the abort signal makes the SDK throw an AbortError: that's an interrupt, not an SDK fault.
+  // An interrupt whose interrupt() refused falls back to the abort signal, and the SDK throws an AbortError: that's an
+  // interrupt, not an SDK fault.
   else if (abort.signal.aborted) terminal = { type: 'failed', reason: 'interrupted', message: 'interrupted' }
   else terminal = { type: 'failed', reason: 'sdk_error', message: threw ? message(thrown) : 'the query ended without a result' }
 

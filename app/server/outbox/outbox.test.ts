@@ -315,7 +315,7 @@ describe('the result (failure 5)', () => {
     expect(await unreleasedUses(db, s.id)).toEqual([])
   })
 
-  for (const [mode, why] of [['unknown', 'unknown'], ['throw', 'thrown'], ['bad', 'bad_result'], ['hang', 'timeout']] as const) {
+  for (const [mode, why] of [['unknown', 'unknown'], ['throw', 'thrown'], ['bad', 'bad_result'], ['not_data', 'bad_result'], ['hang', 'timeout']] as const) {
     it(`${mode}: needs a check (${why}), the approver told, no retry`, async () => {
       const mark = await lastLineId(db)
       const s = await sendWith(mode)
@@ -360,7 +360,8 @@ describe('the result (failure 5)', () => {
     now += 10_000
     const d = dispatch(r.action.id)
     await d.run
-    expect(d.hub.calls[0].req).toMatchObject({ operation: 'slack.channel.post', accountId: 'slack:workspace', args: { channel: 'C0OUTBOX01', text: 'Restock is in' } })
+    expect(d.hub.calls[0].req).toMatchObject({ operation: 'slack.channel.post', accountId: 'slack:workspace', args: { channelId: 'C0OUTBOX01', text: 'Restock is in' } })
+    expect(d.hub.calls[0].req.args).toEqual({ channelId: 'C0OUTBOX01', text: 'Restock is in' })
   })
 })
 

@@ -146,6 +146,13 @@ export const BRAND_FOR_CALLER: Readonly<Record<string, CallerPolicy>> = {
       return rest
     },
   },
+  // Stage 1 M2-Q. Route 140 shows a person the questions asked of them (and an Admin those asked of every admin); a
+  // question asked of another member is that member's chat. The Inhouse team gets none.
+  questions: {
+    kind: 'rows',
+    why: 'route 140: the questions asked of the caller, or of every admin',
+    where: c => (person(c) ? { where: "asked_of = ? OR asked_of = 'admins'", params: [c.memberId] } : null),
+  },
 }
 
 /** P5 stores excluded from every export by the registry. */
