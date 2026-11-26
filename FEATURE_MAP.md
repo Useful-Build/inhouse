@@ -422,6 +422,7 @@ Backend core: Settings, typed and with conflicts (P2, test build)
   Selector: dropdown "Time zone", field "Monthly cap", toast "Someone changed this"
   Expected: a setting saves on the Worker and survives a reload; two tabs on one setting: the second save is refused and shows what the setting is now; a Member sees team settings as text
   Covered:  e2e/ship/backend-core.spec.ts (S2, S5, S6), e2e/api/revisions-paging.spec.ts
+  Gaps:     the brand setting `s:job_cap` is accepted by the Worker but has no Settings field yet; chat job continuation is not wired yet
 
 Backend core: photo (P2, test build)
   Path:     Settings -> General -> Photo

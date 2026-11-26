@@ -16,7 +16,7 @@ const cols = async (t: string) => (await db.prepare(`SELECT name FROM pragma_tab
 describe('0130_usage', () => {
   it('creates the four tables with the design columns (failure 1)', async () => {
     expect(await cols('usage_months')).toEqual(['month', 'cap_micro', 'reserved_micro', 'spent_micro', 'last_reserve_micro', 'alert_crossed_at_ms', 'stamp'])
-    expect(await cols('usage_turns')).toEqual(['turn_id', 'run_id', 'chat_id', 'member_id', 'model', 'month', 'reserved_micro', 'settled_micro', 'final', 'source', 'runner_cost_micro', 'created_at_ms', 'settled_at_ms', 'stamp'])
+    expect(await cols('usage_turns')).toEqual(['turn_id', 'run_id', 'chat_id', 'member_id', 'model', 'month', 'reserved_micro', 'settled_micro', 'final', 'source', 'runner_cost_micro', 'created_at_ms', 'settled_at_ms', 'stamp', 'job_id'])
     expect(await cols('usage_extends')).toEqual(['turn_id', 'call_id', 'need_micro', 'actual_micro', 'closed', 'at_ms'])
     expect(await cols('audit_copy_state')).toEqual(['id', 'last_id', 'pending_from', 'pending_to', 'at_ms'])
   })

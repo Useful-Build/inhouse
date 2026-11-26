@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { InstantSchema } from './common.ts'
 import { MemberIdSchema } from './members.ts'
 import type { SettingRow, ValueRule } from './settings-table.ts'
-import { EXACT_ROWS, PATTERN_ROWS, capOk, parseHostlist, settingRow } from './settings-table.ts'
+import { CAP_PATTERN, EXACT_ROWS, PATTERN_ROWS, capOk, parseHostlist, settingRow } from './settings-table.ts'
 
 export const SettingScopeSchema = z.enum(['personal', 'brand', 'technical'])
 export type SettingScope = z.infer<typeof SettingScopeSchema>
@@ -30,7 +30,7 @@ const zodOf = (rule: ValueRule): z.ZodType<SettingValue> => {
     case 'bool': return z.boolean()
     case 'enum': return z.enum(rule.values as [string, ...string[]])
     case 'text': return z.string().trim().min(rule.min).max(rule.max)
-    case 'cap': return z.string().regex(/^\$\d{1,6}(\.\d{2})?$/).refine(capOk, 'Out of range')
+    case 'cap': return z.string().regex(CAP_PATTERN).refine(v => capOk(v, rule.maxUsd, rule.minUsd), 'Out of range')
     case 'member': return z.union([MemberIdSchema, z.literal('anyone')])
     case 'hostlist': return z.string().refine(v => parseHostlist(v) !== null, 'Not a list of host names')
   }
@@ -64,7 +64,7 @@ const SETTING_LABELS: Record<string, string> = {
   'g:name': 'Name', 'b:name': 'Brand name', 'g:theme': 'Theme', 'g:lang': 'Language', 'g:size': 'Text size', 'g:tz': 'Time zone',
   'n:wait': 'Approvals waiting', 'n:channel': 'Send alerts to', 'n:slack': 'Chat app alerts', 'n:weekly': 'Weekly report',
   'm:learn': 'Learn from my chats', 'm:ask': 'Ask before saving a team rule', 's:cap': 'Monthly cap', 's:alert': 'Alert at',
-  's:currency': 'Show amounts in', 'stage': 'Stage', 't:tone': 'Tone', 't:signs': 'Signs emails as', 'g:mode': 'Default model',
+  's:job_cap': 'Job budget', 's:currency': 'Show amounts in', 'stage': 'Stage', 't:tone': 'Tone', 't:signs': 'Signs emails as', 'g:mode': 'Default model',
   'l:daily': 'Daily limit', 'l:restock': 'Largest restock', 'd:chats': 'Chats', 'd:steps': 'Activity and steps',
   'd:2fa': 'Two-step sign-in', 't:max_turns': 'Most steps per answer', 't:webfetch': 'Web pages the agent may read',
   't:websearch': 'Web search',

@@ -130,4 +130,16 @@ describe('the fake ledger keeps W4\'s contract', () => {
       expect(got, turn).toEqual(want)
     }
   })
+
+  it('both throw on a reserve for a job that was never opened (a bug, not a job_budget refusal)', async () => {
+    await resetUsage(null)
+    await setSetting('s:cap', '100')
+    const real = createUsageLedger({ db: env.DB, now: () => NOV })
+    const fake = new FakeUsageLedger()
+    fake.capMicro = 100_000_000
+    for (const ledger of [real, fake] as UsageLedgerPort[]) {
+      await expect(ledger.reserve({ ...turnIn('t-nojob', { model: SONNET, nowMs: NOV }), jobId: 'j_never_opened' }))
+        .rejects.toThrow('openJob must run first')
+    }
+  })
 })

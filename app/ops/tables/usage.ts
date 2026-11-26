@@ -4,6 +4,8 @@ import type { TableEntry } from './types.ts'
 
 export const usageTables: readonly TableEntry[] = [
   { kind: 'd1', name: 'usage_months', retention: 'account', personKeys: [], export: true },
+  // Internal accounting state. Settled costs are already exported through usage_turns.
+  { kind: 'd1', name: 'usage_jobs', retention: 'account', personKeys: [], export: false },
   { kind: 'd1', name: 'usage_turns', retention: 'account', personKeys: ['member_id'], export: true },
   // A call's hold and cost, keyed by its turn: kept with the turn it belongs to.
   { kind: 'd1', name: 'usage_extends', retention: 'account', personKeys: [], export: false },

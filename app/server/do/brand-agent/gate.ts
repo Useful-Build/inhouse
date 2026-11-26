@@ -26,7 +26,8 @@
 //   `cancelled`, no row is `deciding`, `granted` or `inflight` and every queued close was answered.
 // Nothing that must happen after a reset lives only in memory: the rows and the queue are SQLite; the waiters' promises
 // die with the instance (their RPCs fail with it), so `seeds()` frees what still waits and re-arms `call-lease`.
-import type { AdmitAnswer, LeaseAnswer, ModelCallUsage, ModelCallWorst, UsageLedgerPort } from './ports.ts'
+import type { TurnFailure } from '../../../shared/contract/runs.ts'
+import type { AdmitAnswer, JobBudgetRefusal, LeaseAnswer, ModelCallUsage, ModelCallWorst, UsageExtendRefusal, UsageLedgerPort } from './ports.ts'
 import type { Scheduler, TaskResult } from './scheduler.ts'
 import { StoreUnavailableError } from '../../db/sql.ts'
 import { safeError } from '../../safe-error.ts'
@@ -46,7 +47,7 @@ export const LEDGER_RETRY_MAX_MS = 60_000
 const OPEN = "('deciding', 'granted', 'inflight')"
 const CLOSED = "('done', 'cut', 'freed')"
 
-export type GateRefusal = 'cap_reached' | 'turn_budget' | 'budget_busy'
+export type GateRefusal = 'cap_reached' | 'turn_budget' | 'budget_busy' | JobBudgetRefusal
 
 interface CallRow {
   [k: string]: SqlStorageValue
@@ -78,10 +79,10 @@ export interface GateDeps {
   /** Whether the turn takes new model calls now (running, not fenced, not interrupted). */
   admits(turnId: string): boolean
   /** An extend refused with nothing of the turn in flight: the BrandAgent fences the turn with this failure. */
-  refuseTurn(turnId: string, reason: GateRefusal): void
+  refuseTurn(turnId: string, reason: TurnFailure): void
 }
 
-const refusalOf = (r: 'cap_reached' | 'turn_budget' | 'held'): GateRefusal => (r === 'held' ? 'budget_busy' : r)
+const refusalOf = (r: UsageExtendRefusal): GateRefusal => (r === 'held' ? 'budget_busy' : r)
 
 export class ModelGate {
   private readonly d: GateDeps
