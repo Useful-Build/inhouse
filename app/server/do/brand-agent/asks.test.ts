@@ -248,6 +248,29 @@ describe('the turn\'s end and the resume turn (failures 4, 5)', () => {
   }))
 })
 
+describe('the asks sweep', () => {
+  it('schedules a deliver task for each action changed since its last pass, once, and keeps its place', () => inAgent(async h => {
+    const { turnId, chat } = await liveTurn(h)
+    await db.prepare('DELETE FROM outbox_actions').run()
+    const ids = [await action(h, turnId, chat, 1), await action(h, turnId, chat, 2)]
+    const delivers = () => h.dueTasks().filter(t => t.id.startsWith('action-deliver:')).map(t => t.id).sort()
+    await asks(h).sweep()
+    expect(delivers()).toEqual(ids.map(deliverTaskId).sort())
+    for (const id of ids) h.sched.cancel(deliverTaskId(id))
+    // A row written in the same millisecond after a pass is read on the next one, whatever its id.
+    const third = await action(h, turnId, chat, 3)
+    await asks(h).sweep()
+    expect(delivers()).toContain(deliverTaskId(third))
+    // Once the clock has moved on, a pass reads only what changed within its overlap of the last one.
+    h.clock.now += 10_000
+    const fourth = await action(h, turnId, chat, 4)
+    await asks(h).sweep()
+    for (const id of [...ids, third, fourth]) h.sched.cancel(deliverTaskId(id))
+    await asks(h).sweep()
+    expect(delivers()).toEqual([deliverTaskId(fourth)])
+  }))
+})
+
 describe('the D1 report store (failure 6)', () => {
   it('changes `report` only from the given values, and nothing else on the row', () => inAgent(async h => {
     const { turnId, chat } = await liveTurn(h)

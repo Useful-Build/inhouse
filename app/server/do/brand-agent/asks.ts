@@ -50,6 +50,9 @@ export const MAX_WAITS_PER_TURN = 3
 export const RESUME_RETRY_MS = 60_000
 /** The sweep's period. */
 export const ASKS_SWEEP_EVERY_MS = 60_000
+/** The most actions one sweep pass reads, and how far behind its last row a short page leaves the sweep's cursor. */
+export const ASKS_SWEEP_PAGE = 200
+export const ASKS_SWEEP_OVERLAP_MS = 2_000
 /** Finished waits and seen revisions are kept this long. */
 export const ASKS_KEEP_MS = 8 * 24 * 60 * 60_000
 
@@ -391,12 +394,24 @@ export class Asks {
   async sweep(): Promise<void> {
     const { sql, db } = this.p
     const now = this.p.now()
-    const cursor = Number(sql.exec<{ value: number }>("SELECT value FROM flags WHERE key = 'asks_cursor'").toArray()[0]?.value ?? 0)
+    // The cursor is (updated_at_ms, id). A full page moves it exactly past its last row; a short page leaves it
+    // `ASKS_SWEEP_OVERLAP_MS` behind that row's time, so a row written later in the same millisecond (with a smaller id)
+    // is read on the next pass. A row read twice gets its (idempotent) deliver task twice.
+    const flag = (key: string) => sql.exec<{ value: number | string }>('SELECT value FROM flags WHERE key = ?', key).toArray()[0]?.value
+    const atMs = Number(flag('asks_cursor_ms') ?? 0)
+    const afterId = String(flag('asks_cursor_id') ?? '')
     const rows = await all<{ id: string; updated_at_ms: number }>(db, stmt(
-      'SELECT id, updated_at_ms FROM outbox_actions WHERE updated_at_ms > ? ORDER BY updated_at_ms LIMIT 200', cursor))
+      'SELECT id, updated_at_ms FROM outbox_actions WHERE updated_at_ms > ? OR (updated_at_ms = ? AND id > ?) ORDER BY updated_at_ms, id LIMIT ?',
+      atMs, atMs, afterId, ASKS_SWEEP_PAGE))
     for (const r of rows) this.changed(r.id)
-    const next = rows.length > 0 ? rows[rows.length - 1]!.updated_at_ms : cursor
-    sql.exec("INSERT INTO flags (key, value) VALUES ('asks_cursor', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", next)
+    const last = rows.at(-1)
+    if (last) {
+      const full = rows.length === ASKS_SWEEP_PAGE
+      const nextMs = full ? last.updated_at_ms : Math.max(atMs, last.updated_at_ms - ASKS_SWEEP_OVERLAP_MS)
+      const nextId = full ? last.id : nextMs === atMs ? afterId : ''
+      sql.exec("INSERT INTO flags (key, value) VALUES ('asks_cursor_ms', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", nextMs)
+      sql.exec("INSERT INTO flags (key, value) VALUES ('asks_cursor_id', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", nextId)
+    }
     pruneInvocations(sql, now)
     sql.exec('DELETE FROM ask_waits WHERE until_ms < ?', now - ASKS_KEEP_MS)
     sql.exec('DELETE FROM ask_parts WHERE at_ms < ?', now - ASKS_KEEP_MS)

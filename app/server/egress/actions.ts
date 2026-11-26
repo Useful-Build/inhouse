@@ -27,6 +27,7 @@ import { all, first, stmt } from '../db/sql.ts'
 import { outboxFacts } from '../outbox/facts.ts'
 import { operationEntry, operationForTool, OPERATIONS } from '../outbox/operations/index.ts'
 import { openOutbox } from '../outbox/store.ts'
+import { SEND_KIND, sendTaskId } from '../outbox/send-task.ts'
 import { FINAL_STATES } from '../outbox/sql.ts'
 import type { OutboxActionRow } from '../outbox/types.ts'
 import type { Asker, Origin, WriteOperationKey } from '../permissions/types.ts'
@@ -226,7 +227,7 @@ export async function callAction(grant: RunGrant, name: string, args: Record<str
   const port = openOutbox({
     db: d.db, requestId, now: d.now,
     facts: outboxFacts({ db: d.db, hubAccounts: () => d.rpc.hubAccounts() }),
-    schedule: (actionId, atMs) => d.rpc.poke({ kind: 'outbox-send', id: `outbox-send:${actionId}`, dueAtMs: atMs }),
+    schedule: (actionId, atMs) => d.rpc.poke({ kind: SEND_KIND, id: sendTaskId(actionId), dueAtMs: atMs }),
   })
   const r = await port.request(
     { asker: who.asker, origin: who.origin, chatId: admitted.chatId, nowMs, invocation: { runId: admitted.runId, turnId: admitted.turnId, toolUseId: admitted.toolUseId }, jobId: admitted.jobId },
