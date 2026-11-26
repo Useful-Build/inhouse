@@ -93,6 +93,8 @@ export const retentionRules: Readonly<Record<string, RetentionRule>> = {
   egress_fetches: { kind: 'd1', ageColumn: 'at_ms', idColumn: 'n' },
   // M1-G: fetch leak-check token digests, expired after 7 days.
   egress_taint: { kind: 'd1', ageColumn: 'seen_at_ms', idColumn: 'digest' },
+  // Stage 1 M2-A: a grant's uses count only toward their own day; a year on they count toward nothing.
+  permission_uses: { kind: 'd1', ageColumn: 'at_ms', idColumn: 'id' },
 }
 
 /**
@@ -119,6 +121,7 @@ export const retentionGroups: Readonly<Record<string, PeriodName>> = {
   'library/': 'trash',
   egress_fetches: 'egress',
   egress_taint: 'egressTaint',
+  permission_uses: 'steps',
 }
 
 export type RetentionPeriods = Readonly<Record<string, number | null>>

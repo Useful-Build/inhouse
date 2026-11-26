@@ -44,6 +44,8 @@ import type { WebhookHandler } from './webhooks/shopify-privacy/handler.ts'
 import { closePrivacyRequest } from './webhooks/shopify-privacy/close.ts'
 // P8a D: Data and access's Export everything (row 95).
 import { checkExport, exportEverything } from './api/data-access.ts'
+// Stage 1 M2-A: the permissions a person can see and remove.
+import { listPermissions, removePermission } from './api/permissions.ts'
 // P5 (p5-w1 section 9): the Inhouse team connects an OAuth tool through the hub's ConnectGateway.
 import { connectCallback, startConnect } from './api/connect.ts'
 import { toolsDepsOf, toolsHandlers } from './api/tools.ts'
@@ -233,6 +235,9 @@ export const routes: readonly Route[] = [
   /* 95 */ { method: 'GET', pattern: '/api/data-access/export', handler: exportEverything },
   // P8a D: the page's check before it starts that download (the same plan, its size or refusal, nothing written).
   /* 96 */ { method: 'GET', pattern: '/api/data-access/export/check', handler: checkExport },
+  // Stage 1 M2-A (rows 110 to 119): a person's "Always allow" permissions, and removing one.
+  /* 110 */ { method: 'GET', pattern: '/api/permissions', handler: listPermissions },
+  /* 111 */ { method: 'POST', pattern: '/api/permissions/:id/remove', handler: removePermission },
 ]
 
 /** A webhook route: served by server/index.ts before sign-in, its handler authenticating the request itself. */

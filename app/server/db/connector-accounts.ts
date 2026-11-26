@@ -10,6 +10,8 @@ import type { AuditHook } from './audit.ts'
 import { writeStamp } from './ids.ts'
 import type { At } from './members.ts'
 import { all, first, runBatch, stmt } from './sql.ts'
+import type { Stmt } from './sql.ts'
+import { revokeAccountGrantsStmts } from '../permissions/grants.ts'
 
 export type ConnectorLastState = 'never' | 'connecting' | 'connected' | 'failed' | 'disconnected'
 
@@ -60,7 +62,11 @@ type Change = { last_state: ConnectorLastState } & Partial<Pick<ConnectorAccount
 
 export function connectorAccountStore({ db, hook = s => s }: ConnectorAccountStoreDeps) {
   /** One upsert (rev + 1 on an existing row) and its audit line, in one batch. */
-  const change = async (accountId: string, connector: string, c: Change, line: AuditArgs, at: At): Promise<void> => {
+  /**
+   * `lapses`: Stage 1 M2-A (N10), the grants this change ends, written in the same batch and only where the change
+   * applied (given the condition that this write's row is stamped).
+   */
+  const change = async (accountId: string, connector: string, c: Change, line: AuditArgs, at: At, lapses?: (applied: { sql: string; params: string[] }) => Stmt[]): Promise<void> => {
     const stamp = writeStamp(at.requestId)
     const extra = Object.keys(c).filter(k => k !== 'last_state') as (keyof Change)[]
     const cols = ['account_id', 'connector', 'last_state', 'last_state_at_ms', ...extra, 'req_id']
@@ -76,6 +82,7 @@ export function connectorAccountStore({ db, hook = s => s }: ConnectorAccountSto
         { atMs: at.nowMs, actorId: at.actorId, args: line, target: { kind: 'connector', id: accountId }, requestId: at.requestId },
         { table: 'connector_accounts', where: 'account_id = ?', params: [accountId], stamp },
       )),
+      ...(lapses ? lapses({ sql: 'SELECT 1 FROM connector_accounts WHERE account_id = ? AND req_id = ?', params: [accountId, stamp] }) : []),
     ])
   }
 
@@ -102,7 +109,9 @@ export function connectorAccountStore({ db, hook = s => s }: ConnectorAccountSto
      */
     connectEnded(accountId: string, connector: string, outcome: ConnectOutcome, lastState: Exclude<ConnectorLastState, 'connecting'>, at: At): Promise<void> {
       const c: Change = outcome === 'ok' ? { last_state: 'connected', connected_by: at.actorId, connected_at_ms: at.nowMs } : { last_state: lastState }
-      return change(accountId, connector, c, { action: 'tools.connect', accountId, outcome }, at)
+      // A connect that succeeded is a new generation (`connected_at_ms`): grants on any other generation end (N10).
+      return change(accountId, connector, c, { action: 'tools.connect', accountId, outcome }, at,
+        outcome === 'ok' ? applied => revokeAccountGrantsStmts(accountId, at.nowMs, at, applied) : undefined)
     },
 
     /** W3: a pause or resume is the hub's (SignIn `paused`); here only its audit line, unguarded (no row changes). */
@@ -112,7 +121,8 @@ export function connectorAccountStore({ db, hook = s => s }: ConnectorAccountSto
 
     /** W3: a disconnect, as one batch: `disconnected`, who and when, rev + 1, and W3's audit line. */
     recordDisconnect(accountId: string, connector: string, line: AuditArgs, at: At): Promise<void> {
-      return change(accountId, connector, { last_state: 'disconnected', disconnected_by: at.actorId, disconnected_at_ms: at.nowMs }, line, at)
+      return change(accountId, connector, { last_state: 'disconnected', disconnected_by: at.actorId, disconnected_at_ms: at.nowMs }, line, at,
+        applied => revokeAccountGrantsStmts(accountId, null, at, applied))
     },
   }
 }

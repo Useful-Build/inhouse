@@ -105,6 +105,11 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   // M1-G: keyed 16-byte digests of tokens read across the brand, never a member id; goes by age in 7 days.
   egress_taint: { action: 'keep', why: 'no member id: keyed digests of tokens read across the brand, kept 7 days and capped at 50,000 rows; retention removes expired rows' },
   // P8a F2: a privacy request names a Shopify customer by Shopify id, never a member; its ids go when the runbook closes it.
+  // Stage 1 M2-A. The person's own grants go (they were revoked when the person was removed); a grant someone else holds
+  // keeps who granted or revoked it, pseudonymous once their row is. The ceiling keeps who last changed it.
+  permission_ceiling: { action: 'keep', why: 'the brand\'s ceiling: updated_by stays pseudonymous', kept: ['updated_by'] },
+  permission_grants: { action: 'delete_rows', column: 'holder_member', kept: ['granted_by', 'revoked_by'] },
+  permission_uses: { action: 'keep', why: 'no member id: a grant\'s day counter by action and grant id; retention removes it' },
   privacy_requests: { action: 'keep', why: 'no member id: a Shopify customer by Shopify id only, cleared when the request is closed (route 94); the topic and dates stay as the record that it was answered' },
 }
 
