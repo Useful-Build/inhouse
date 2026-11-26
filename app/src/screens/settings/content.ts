@@ -13,7 +13,7 @@ import { calendarOf, fmtAuditDay, fmtCapSetting, fmtDayWord, fmtMoney, fmtNearDa
 import { display, nowOf } from '../../state/display'
 import { AUDIT_CSV_HEADER, csvCell } from '../../../shared/csv'
 import { grantStatus } from './grant-status'
-import { HOSTLIST_MAX_HOSTS, MAX_TURNS, parseHostlist } from '../../../shared/contract/settings-table'
+import { DEFAULT_JOB_BUDGET_USD, HOSTLIST_MAX_HOSTS, MAX_JOB_BUDGET_USD, MAX_TURNS, MIN_JOB_BUDGET_USD, parseHostlist } from '../../../shared/contract/settings-table'
 import { dataExportFileName, nextCleanupMs } from '../../../shared/contract/data-access'
 import { demoExport } from './demo-export'
 
@@ -71,7 +71,8 @@ export interface Row {
   also?: { label: string; ariaLabel: string; ask?: { title: string; text: string; action: string }; go: () => void }
 }
 
-export type FieldType = 'money' | 'email' | 'hosts'
+/** `jobBudget` is a money field held between the ledger's start hold and the Inhouse ceiling (`s:job_cap`, M1-F). */
+export type FieldType = 'money' | 'jobBudget' | 'email' | 'hosts'
 /** What's wrong with a typed field's value, or the value to save. */
 export function checkField(type: FieldType, raw: string): { error: string } | { value: string } {
   const v = raw.trim()
@@ -81,11 +82,15 @@ export function checkField(type: FieldType, raw: string): { error: string } | { 
     return parseHostlist(hosts.join('\n')) ? { value: hosts.join('\n') } : { error: `Use website names like example.com, up to ${HOSTLIST_MAX_HOSTS}.` }
   }
   if (type === 'email') return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? { value: v } : { error: 'Enter an email address, like name@company.com.' }
+  const usd = (n: number) => fmtMoney(moneyOf(n, FIELD_CURRENCY), display())
+  const job = type === 'jobBudget'
+  const wrong = job ? `Enter an amount from ${usd(MIN_JOB_BUDGET_USD)} to ${usd(MAX_JOB_BUDGET_USD)}.` : 'Enter an amount above $0, like $300.'
   // Plain digits only, with optional thousands commas and cents: no exponents ("1e3"), hex ("0x10") or signs.
-  if (!/^\$?(\d{1,3}(,\d{3})+|\d+)(\.\d{1,2})?$/.test(v)) return { error: 'Enter an amount above $0, like $300.' }
+  if (!/^\$?(\d{1,3}(,\d{3})+|\d+)(\.\d{1,2})?$/.test(v)) return { error: wrong }
   const n = Number(v.replace(/^\$/, '').replaceAll(',', ''))
-  if (!(n > 0)) return { error: 'Enter an amount above $0, like $300.' }
-  if (n > MONEY_MAX) return { error: `Enter an amount up to ${fmtMoney(moneyOf(MONEY_MAX, FIELD_CURRENCY), display())}.` }
+  if (!(n > 0)) return { error: wrong }
+  if (job && (n < MIN_JOB_BUDGET_USD || n > MAX_JOB_BUDGET_USD)) return { error: wrong }
+  if (n > MONEY_MAX) return { error: `Enter an amount up to ${usd(MONEY_MAX)}.` }
   // Whole dollars stay whole ("$320"); cents always show two digits ("$300.50"); no thousands separator.
   return { value: fmtMoney(moneyOf(n, FIELD_CURRENCY), display(), { grouping: false }) }
 }
@@ -380,8 +385,10 @@ export function settingsPage(tab: string, env: Env): Page {
       ] },
       { label: 'Answers', rows: [
         sel('Most steps in one answer', 'An answer that needs more steps than this stops and says so.', 't:max_turns', '25', [...MAX_TURNS]),
+        // The two web switches are an Admin's (brand settings, M1-F); which websites it may open stays the Inhouse team's.
+        { ...R('Search the web', 'Let your Inhouse agent search the web. Off by default.', 'toggle', '', 0, 't:websearch', false), keywords: 'websearch internet' },
+        { ...R('Read web pages', 'Let your Inhouse agent open the websites listed below. Off blocks them all.', 'toggle', '', 0, 't:webfetch_on', true), keywords: 'webfetch internet websites' },
         { ...txt('Websites it may open', 'Enter one website name per line. Leave empty to block all websites.', 't:webfetch', ''), type: 'hosts', keywords: 'webfetch hosts domains allowlist' },
-        R('Search the web', 'Allow your Inhouse agent to search the web. Off by default.', 'toggle', '', 0, 't:websearch', false),
       ] },
       { label: 'What your Inhouse agent knows', rows: [R('Team memory', `Supplier, customer and stock rules the whole team shares. ${memCount} things remembered.`, 'button', 'Open memory', 0, undefined, undefined, () => env.openSettings('team-memory')), R('Skills', `The jobs it knows how to do. ${skills.length} skills, added by your Inhouse team.`, 'button', 'View skills', 0, undefined, undefined, env.goSkills)] },
     ] },
@@ -410,7 +417,7 @@ export function settingsPage(tab: string, env: Env): Page {
       { label: 'Always waits for a person', rows: [R('Money', 'Orders, refunds, claims and budget changes.', 'value', 'Always'), R('Customers', 'Any message to a customer.', 'value', 'Always')] },
     ] },
     'team-spend': { title: 'Spending cap', sections: [
-      { label: 'This month', rows: [{ ...txt('Monthly cap', 'Chats, routines and jobs pause when the cap is reached.', 's:cap', fmtCapSetting(usage.cap, d0)), type: 'money' }, sel('Alert at', 'Admins get an email.', 's:alert', `${usage.alertAt}%`, ['50%', '70%', '80%', '90%', '100%']), sel('Show amounts in', 'The currency used for amounts in reports and emails.', 's:currency', 'USD ($)', ['USD ($)', 'GBP (£)', 'EUR (€)', 'CAD ($)', 'AUD ($)']), R('Spent so far', `${usage.month} ${usage.monthKey?.slice(0, 4) ?? calendarOf(now, d0).year}.`, 'value', fmtSpentSetting(env.spent, d0))] },
+      { label: 'This month', rows: [{ ...txt('Monthly cap', 'Chats, routines and jobs pause when the cap is reached.', 's:cap', fmtCapSetting(usage.cap, d0)), type: 'money' }, { ...txt('Job budget', `A long job stops once it has spent this. It can go a little over. Up to ${fmtMoney(moneyOf(MAX_JOB_BUDGET_USD, FIELD_CURRENCY), d0)}.`, 's:job_cap', fmtMoney(moneyOf(DEFAULT_JOB_BUDGET_USD, FIELD_CURRENCY), d0, { grouping: false })), type: 'jobBudget', keywords: 'job budget per job max' }, sel('Alert at', 'Admins get an email.', 's:alert', `${usage.alertAt}%`, ['50%', '70%', '80%', '90%', '100%']), sel('Show amounts in', 'The currency used for amounts in reports and emails.', 's:currency', 'USD ($)', ['USD ($)', 'GBP (£)', 'EUR (€)', 'CAD ($)', 'AUD ($)']), R('Spent so far', `${usage.month} ${usage.monthKey?.slice(0, 4) ?? calendarOf(now, d0).year}.`, 'value', fmtSpentSetting(env.spent, d0))] },
       // The one stop for everything at once, next to the cap that stops it by itself.
       // Pause and Resume are Admin and Inhouse team only (access-matrix rows 36 and 37). `editBrandSettings` is the `me().can` key
       // with the same class and allow list (row 10, pause-can.test.ts); a Member sees no button instead of one the server refuses.
