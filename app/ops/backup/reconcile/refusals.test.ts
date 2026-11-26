@@ -118,7 +118,7 @@ it('refuses a record from before the reconcile by name, and a write over a recor
 
 it('the record schema refuses restored without every step, with a refusal, or with an index not rebuilt', () => {
   const steps = {
-    fts: 'rebuilt', audit: { source: 'snapshot', afterId: 1, throughId: 1, appended: 0, gap: null, placeholders: [] }, members: { removed: [], roles: [] }, outbox: { held: [], revoked: [] },
+    fts: 'rebuilt', audit: { source: 'snapshot', afterId: 1, throughId: 1, appended: 0, gap: null, placeholders: [] }, members: { removed: [], roles: [] }, outbox: { held: [], revoked: [], closed: [] },
     replay: { watermarkMs: T, throughKey: null, runs: [], skippedRefused: [] }, confirm: { actorId: ids.inhouse, approvedBy: ids.admin, atMs: T, auditId: 2 }, refusal: null,
   } as const
   const base = { ...record, status: 'restored', reconciled: true, d1: { ...record.d1, derived: record.d1.derived.map(d => ({ ...d, state: 'rebuilt' })) } }

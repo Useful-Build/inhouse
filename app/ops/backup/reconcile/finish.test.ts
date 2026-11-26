@@ -148,7 +148,7 @@ it('reconciles: the audit lines come back once with their ids, and Dana stays go
   expect(fts).toMatchObject({ restoreId: record.restoreId, status: 'rebuilt' })
   expect(fts.tables.map(t => t.name).sort()).toEqual(record.d1.derived.map(d => d.name).sort())
   expect(first.ok.reconcile).toMatchObject({
-    fts: 'rebuilt', audit: { source: 'snapshot', afterId: backupMaxId, appended: laterLines.length, gap: null, placeholders: [nia] }, outbox: { held: [], revoked: [] }, confirm: null, refusal: null,
+    fts: 'rebuilt', audit: { source: 'snapshot', afterId: backupMaxId, appended: laterLines.length, gap: null, placeholders: [nia] }, outbox: { held: [], revoked: [], closed: [] }, confirm: null, refusal: null,
   })
   // Leo's run (T + 10) reaches only the BrandAgent (recovered to T + 5); Dana's every store it names.
   const runs = first.ok.reconcile?.replay?.runs ?? []

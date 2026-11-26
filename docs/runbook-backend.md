@@ -132,9 +132,10 @@ running it again. In order:
    (no answer and no send while it's set) and `do_gen = -1` (so the first sync after the switch re-seats the gate at the
    recovered BrandAgent's generation). Every `approved` or `sending` action, and every `waiting` one the re-appended
    audit lines show was approved after the backup, becomes "Needs a check" with an `action.needs_check` line
-   (`why: restore`). With an audit gap (lines read from the daily copy), every `waiting` action is held too. Every live
-   permission is revoked with reason `restore`. The record's `reconcile.outbox` lists the held action ids and the revoked
-   permission ids. Nothing held is ever sent by the system: after the switch, the approver (or an Admin) checks the tool
+   (`why: restore`). With an audit gap (lines read from the daily copy), every `waiting` action is held too. A
+   `waiting` action the live brand denied, withdrew or let expire after the backup is closed again the same way. Every
+   live permission is revoked with reason `restore`. The record's `reconcile.outbox` lists the held action ids, the
+   revoked permission ids and the closed action ids. Once this restore is confirmed, the step changes nothing. Nothing held is ever sent by the system: after the switch, the approver (or an Admin) checks the tool
    and says whether it went out. A Resume never lifts the hold; only the confirm does.
 5. **Deletion-log replay.** Apply each retention job at its logged cutoffs and repeat person deletions from each
    store's recovery point. If a person deletion stopped after pseudonymisation, replay the member update. Any
@@ -172,7 +173,8 @@ Run the confirm (`confirmRestore`) with two ids: the actor is the Inhouse operat
 restored database), and `approvedBy` is the Admin whose written approval you hold. An operator approves only when the
 restored database has no active Admin. The confirm refuses unless every step is done, and refuses if anything was
 logged in the deletion log after the replay read it. It writes one `restore.confirmed` line, clears the outbox hold
-in the same batch, and the record becomes `restored`. A record from before the hold existed (`outbox: 'p8b_pending'`)
+in the same batch (and sets `do_gen` back to -1, so nothing is claimed until the live BrandAgent's first sync after the
+switch), and the record becomes `restored`. A record from before the hold existed (`outbox: 'p8b_pending'`)
 is refused: run the reconcile again first.
 
 ### 5. Hard gate: `checkBeforeSwitch`

@@ -8,7 +8,8 @@
 //  3b. the member removals and role changes those lines record, applied again (members.ts);
 //  4. the outbox hold (M2-R, server/outbox/restore-hold.ts): the gate held and re-seated (`restore_hold = 1`,
 //     `do_gen = -1`), every `approved` or `sending` row, and every `waiting` row the re-appended lines show approved, to
-//     "Needs a check", every live grant revoked. After step 3, whose lines it reads; its own lines carry this restore's
+//     "Needs a check", every live grant revoked; a `waiting` row the re-appended lines show denied, withdrawn or expired
+//     closed again. After step 3, whose lines it reads; its own lines carry this restore's
 //     request id (`restoreStamp`), so step 3 on a re-run knows them. Only the confirm clears the hold;
 //  5. the deletion-log replay past the watermark (replay.ts).
 // The record stays `restored_unreconciled`; only an admin's audited confirm (confirm.ts) makes it `restored`. A refusal
@@ -90,7 +91,7 @@ export async function reconcile(deps: ReconcileDeps): Promise<ReconcileResult> {
     const members = await reapplyMemberChanges(deps.target, audit.afterId)
     // 4. The outbox hold, before the replay and the confirm.
     const outbox = await holdOutbox(deps.target, {
-      afterId: audit.afterId, gap: audit.gap !== null,
+      restoreId: deps.restoreId, afterId: audit.afterId, gap: audit.gap !== null,
       at: { nowMs: deps.at.nowMs, actorId: deps.at.actorId, requestId: restoreStamp(deps.restoreId) },
     })
     // 5. The deletion log past the watermark.

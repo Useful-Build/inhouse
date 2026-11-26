@@ -103,10 +103,11 @@ export const ReconcileSchema = z.object({
   }).nullable(),
   /**
    * Step 4 (M2-R, server/outbox/restore-hold.ts): the outbox held (`outbox_gate.restore_hold = 1`, `do_gen = -1`), the
-   * actions it sent to "Needs a check" and the grants it revoked, by id. `'p8b_pending'` is only on records written
-   * before the hold existed; a new confirm refuses it.
+   * actions it sent to "Needs a check", the grants it revoked and the waiting actions it closed again (denied, withdrawn
+   * or expired live after the backup), by id. `'p8b_pending'` is only on records written before the hold existed; a new
+   * confirm refuses it.
    */
-  outbox: z.union([z.literal('p8b_pending'), z.object({ held: z.array(z.string()), revoked: z.array(z.string()) })]).nullable(),
+  outbox: z.union([z.literal('p8b_pending'), z.object({ held: z.array(z.string()), revoked: z.array(z.string()), closed: z.array(z.string()) })]).nullable(),
   /** Step 5: the deletion log replayed past the watermark. */
   replay: z.object({
     watermarkMs: Count,

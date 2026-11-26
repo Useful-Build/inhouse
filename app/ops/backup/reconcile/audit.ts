@@ -19,6 +19,7 @@ import { SYSTEM_MEMBER_ID } from '../../../server/db/ids.ts'
 import { FORMER_MEMBER } from '../../../server/db/members.ts'
 import type { At } from '../../../server/db/members.ts'
 import { runBatch } from '../../../server/db/sql.ts'
+import { HOLD_LINES } from '../../../server/outbox/restore-hold.ts'
 import { isMemberId } from '../../delete/r2.ts'
 import { encodeRow, insertPartSql, isRowLine, linesAsArray, partLines, sha256, tableColumns } from '../format.ts'
 import { BackupManifestSchema, SnapshotManifestSchema } from '../manifest.ts'
@@ -108,9 +109,9 @@ const PLACEHOLDER = 'restore.member_placeholder'
 const stampOf = (restoreId: string) => `restore:${restoreId}`
 export const restoreStamp = stampOf
 
-/** This restore's own step-4 lines (the outbox hold's), by their `req_id`. */
+/** This restore's own step-4 lines (the outbox hold's): its two line kinds under this restore's `req_id`, nothing else. */
 const holdLines = async (target: D1Database, restoreId: string): Promise<number[]> =>
-  (await target.prepare('SELECT id FROM audit_log WHERE req_id = ?').bind(stampOf(restoreId)).all<{ id: number }>()).results.map(r => r.id)
+  (await target.prepare(`SELECT id FROM audit_log WHERE ${HOLD_LINES}`).bind(stampOf(restoreId)).all<{ id: number }>()).results.map(r => r.id)
 
 /** This restore's placeholder lines in the target, by member id (their ids, so the conflict check can allow them). */
 async function placeholderLines(target: D1Database, restoreId: string): Promise<Map<string, number>> {
