@@ -136,11 +136,18 @@ export function createProxy(deps: ProxyDeps): http.Server {
     if (uid === null) return refuseLogged(deps, res, route, null, 'unknown caller')
     if (uid === 0) return refuseLogged(deps, res, route, uid, 'root never calls through the proxy')
     const token = deps.tokenForUid(uid, tokenRouteFor(route), route)
-    if (token === null) return refuseLogged(deps, res, route, uid, 'no live run for this user (or its stream has ended)')
+    if (token === null) return refuseLogged(deps, res, route, uid, noTokenReason(route))
     forward(deps, path, req, res, token, route, uid)
   }
 
   return server
+}
+
+/** Why a call got no token. `/actions/` is also shut for a live run whose start didn't ask for the actions server. */
+function noTokenReason(route: string): string {
+  return route === 'actions'
+    ? "no live run with the actions server for this user (its start didn't ask for it, or its stream has ended)"
+    : 'no live run for this user (or its stream has ended)'
 }
 
 /**
@@ -344,7 +351,7 @@ function forwardBuffered(
         if (callerGone) return
         const freshToken = deps.tokenForUid(uid, tokenRoute, route)
         if (freshToken === null) {
-          refuseLogged(deps, res, route, uid, 'no live run for this user (or its stream has ended)')
+          refuseLogged(deps, res, route, uid, noTokenReason(route))
           return
         }
         if (freshToken !== initialToken) {

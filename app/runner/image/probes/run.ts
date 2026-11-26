@@ -1520,6 +1520,13 @@ async function probeHelpers() {
   record('helpers.researcher-off-list-refused', isErr(res(rIds[0])) && !(res(rIds[0])?.text ?? '').includes('r-bash-42') && isErr(res(rIds[1])), `Bash: ${shown(res(rIds[0]))}; memory_save: ${shown(res(rIds[1]))}`)
   record('helpers.researcher-listed-runs', res(rIds[2]) !== undefined && !isErr(res(rIds[2])), `Read: ${shown(res(rIds[2]))}`)
   fact('helpers.researcher-toolsearch', shown(res(rIds[3]), 1500))
+  // What ToolSearch loaded: the `tool_reference` names in its answer. Only tools on the list, none of the off-list ones.
+  const loaded = [...(res(rIds[3])?.text ?? '').matchAll(/"tool_name"\s*:\s*"([^"]+)"/g)].map((m) => m[1]!)
+  record(
+    'helpers.researcher-toolsearch-loads-only-listed',
+    loaded.length > 0 && loaded.every((t) => helperMayUse('researcher', t, false)) && !OFF_LIST_DEFERRED.some((t) => loaded.includes(t) || (res(rIds[3])?.text ?? '').includes(`"${t}"`)),
+    `loaded ${shown(loaded)}`,
+  )
   const fetchListed = res(rIds[4])
   fact('helpers.researcher-webfetch-listed', shown(fetchListed, 600))
   record(
@@ -1575,19 +1582,28 @@ async function probeNoHelpersAndActions() {
   const callsBefore = egress.toolCalls.length
   // N14: a nested, non-ASCII input, keys out of order: the hook's inputSha256 must be the hash of what the egress gets.
   const input = { zeta: 'café ☕ 東京', nested: { list: [3, { ü: 'ö', a: null }, 'x'], b: true }, alpha: 1.5 }
-  const on = await startRun({ chatId: 'p-actions', actions: true, script: { steps: [() => ({ tool: 'mcp__actions__probe_ping', input })] } }).done
+  // Then a call with no arguments (`{}`): whether the CLI sends `arguments: {}` or leaves it out is printed for M2-D.
+  const on = await startRun({ chatId: 'p-actions', actions: true, script: { steps: [() => ({ tool: 'mcp__actions__probe_ping', input }), () => ({ tool: 'mcp__actions__probe_ping', input: {} })] } }).done
   checkRun('actions', on, [])
   const onInit = initOf(on) as { mcp_servers?: { name: string; status?: string }[] } | undefined
   fact('actions.servers', shown(onInit?.mcp_servers))
   record('actions.present-when-asked', (onInit?.mcp_servers ?? []).some((m) => m.name === 'actions' && m.status === 'connected'), `servers ${shown(onInit?.mcp_servers)}`)
   record('actions.call-goes-through-the-proxy', result(on, 0)?.text === 'pong' && egress.actionsCalls.slice(before).includes('tools/call'), `result ${shown(result(on, 0))}, methods ${shown(egress.actionsCalls.slice(before))}`)
-  const got = egress.toolCalls.slice(callsBefore).find((c) => c.route === 'actions' && c.name === 'probe_ping')
-  const entry = on.state.auditEntries.find((e) => e.toolUseId === on.state.ids[0] && e.decision === 'allow')
-  const egressHash = got === undefined ? 'no call' : await auditInputSha256(got.arguments ?? {})
+  const [got, gotEmpty] = egress.toolCalls.slice(callsBefore).filter((c) => c.route === 'actions' && c.name === 'probe_ping')
+  const entryOf = (i: number) => on.state.auditEntries.find((e) => e.toolUseId === on.state.ids[i] && e.decision === 'allow')
+  const egressHash = got === undefined ? 'no call' : got.arguments === undefined ? 'no arguments' : await auditInputSha256(got.arguments)
   record(
     'actions.input-hash-matches-the-egress',
-    entry?.inputSha256 !== undefined && entry.inputSha256 === egressHash && egressHash === (await auditInputSha256(input)),
-    `hook ${entry?.inputSha256}, egress arguments ${shown(got?.arguments)} hash ${egressHash}`,
+    entryOf(0)?.inputSha256 !== undefined && entryOf(0)!.inputSha256 === egressHash && egressHash === (await auditInputSha256(input)),
+    `hook ${entryOf(0)?.inputSha256}, egress arguments ${shown(got?.arguments)} hash ${egressHash}`,
+  )
+  // No arguments: the raw shape as it arrived (absent or `{}`), then the rule M2-D follows: absent hashes as `{}`.
+  fact('actions.no-argument-call-arrives-as', gotEmpty === undefined ? 'no call' : Object.hasOwn(gotEmpty, 'arguments') && gotEmpty.arguments !== undefined ? `arguments ${shown(gotEmpty.arguments)}` : 'arguments absent')
+  const emptyHash = gotEmpty === undefined ? 'no call' : await auditInputSha256(gotEmpty.arguments === undefined ? {} : gotEmpty.arguments)
+  record(
+    'actions.no-argument-hash-matches-the-egress',
+    result(on, 1)?.text === 'pong' && entryOf(1)?.inputSha256 !== undefined && entryOf(1)!.inputSha256 === emptyHash && emptyHash === (await auditInputSha256({})),
+    `hook ${entryOf(1)?.inputSha256}, egress arguments ${gotEmpty === undefined ? 'no call' : shown(gotEmpty.arguments)} hash ${emptyHash}`,
   )
 }
 

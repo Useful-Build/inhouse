@@ -181,6 +181,12 @@ describe('what is forwarded', () => {
       expect(asked).toEqual(['mcp', 'mcp', 'mcp', 'mcp'])
       // The proxy names the route each call came on, so the root can keep /actions/ shut for a run without actions.
       expect(came).toEqual(['actions', 'actions', 'hub', 'mcp'])
+      // And says so in its log: /actions/ may be shut for a live run too.
+      expect(logs.filter((l) => l.type === 'proxy_refused').map((l) => [l.route, l.reason])).toEqual([
+        ['actions', "no live run with the actions server for this user (its start didn't ask for it, or its stream has ended)"],
+        ['hub', 'no live run for this user (or its stream has ended)'],
+        ['mcp', 'no live run for this user (or its stream has ended)'],
+      ])
     } finally {
       p.server.closeAllConnections()
       await new Promise((r) => p.server.close(r))
