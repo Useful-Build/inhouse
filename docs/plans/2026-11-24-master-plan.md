@@ -280,15 +280,27 @@ characters of raw order data to 199 to 1,131 for the model. Slack and other MCP 
    call goes through the hub's normal path (SignIn, egress guard, definition-hash check), so a script can do nothing a
    single tool call couldn't.
 2. **Typed signatures from the tool snapshot.** The hub turns each tool's `inputSchema` into a short TypeScript
-   declaration the agent reads before writing the script. Adopt the schema-to-types part of `@cloudflare/codemode`
-   (0.5.6) if it runs with the v2 MCP client (it is built against the v1 SDK today); otherwise keep the generator in our
-   runner.
+   declaration. A `code_describe` tool hands the model only the types it asks for, so the full list never fills the
+   context. Adopt only the pure helpers of `@cloudflare/codemode` 0.5.6, pinned exactly (`jsonSchemaToType`,
+   `escapeJsDoc`, `sanitizeToolName`; its core works with the v2 MCP client since 0.5.1). Don't adopt its executor or
+   runtime: our runner is stricter (no network, outside deadline, CPU and return caps), and its approval flow runs an
+   approved write when a script replays, which breaks item 4.
 3. **Same caps, shared across all tools** (calls, bytes read, deadline), one call in flight at a time.
 4. **Writes from a script don't run in the script.** A script may *propose* writes (`tools.<server>.<tool>` on a write
    tool returns a proposal). When the script ends, the proposals go through `decide()` together: covered ones enter the
    outbox, the rest become one card, and more than 5 records is one batch card with the full list (D3). The sandbox
    still never holds a write path.
-5. **Untrusted text stays untrusted.** Tool results a script returns are marked the same way as direct tool results.
+5. **Untrusted text stays untrusted.** Tool results a script returns are marked the same way as direct tool results,
+   and tool descriptions inside the generated types are untrusted text too.
+6. **Cross-server leak guard.** A script could pass data read from one server into a read call on another. Data from
+   a private tool may only flow to servers the admin marked trusted; others refuse it (the same idea as the fetch leak
+   check, section 4.3).
+
+**Checked and not used (2026-11-26):** Claude Code's experimental Code Mode (refuses to run through a proxy, which our
+runner uses for model calls, and is off for zero-data-retention organizations); the Claude API's programmatic tool
+calling (code and raw tool results sit in Anthropic's container for up to 30 days, not ZDR-eligible, no Agent SDK
+switch). Re-check both when they're GA. The MCP spec has no code-mode extension. Notes:
+`verify/stage1-build/code-mode-research.md`.
 
 **Done when:** a script joins Shopify orders with Slack messages and a fixture MCP server's data and returns a small
 answer; a changed tool definition is refused inside a script; a script proposing 40 tags yields one batch card; the
