@@ -361,7 +361,7 @@ jobs:
           docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
             -v "$RUNNER_TEMP/probes:/opt/runner/probes:ro" -e PROBE_GW_PORT=18080 inhouse-runner:ci node /opt/runner/probes/run.mjs
 
-  # A fleet PR's fast checks (phase batching): e2e shard 1's checks and builds without Playwright, and the test-build
+  # A fleet PR's fast checks (phase batching): the e2e shards' checks and builds without Playwright, and the test-build
   # job's fresh-install migrations and config check, in the same image. Left to the push run: every Playwright project
   # (the product project and the test build's api, real and smoke included), the contract suite on the real client and
   # the runner image steps. Its build is the PR's preview build (preview.yml), as e2e's is on a PR into
