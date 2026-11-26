@@ -38,7 +38,7 @@ export async function crashResumeProbe(sql: SqlStorage, bucket: R2Bucket, turnId
         AND NOT EXISTS (SELECT 1 FROM turns WHERE chat_id = ? AND state IN ('queued', 'starting', 'live', 'ending'))
         AND EXISTS (SELECT 1 FROM turns WHERE turn_id = ? AND text LIKE 'scenario:long-job-work [w0-b-spike]%'
           AND session_id = chat_state.session_id AND state = 'ended' AND failure = 'session_crashed'
-          AND fenced = 1 AND grace_until_ms <= ? AND query_ran = 1 AND saw_checkpoint = 0 AND mirror_error = 0)
+          AND ((fenced = 1 AND grace_until_ms <= ?) OR fenced = 0) AND query_ran = 1 AND saw_checkpoint = 0 AND mirror_error = 0)
         AND NOT EXISTS (SELECT 1 FROM run_tokens WHERE turn_id = ? AND revoked_at_ms IS NULL AND routes_open <> ',,')
       RETURNING chat_id`, p.chatId, p.chatId, turnId, nowMs, turnId).toArray()
     if (changed.length !== 1) return null

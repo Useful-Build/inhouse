@@ -13,6 +13,11 @@ interface Probe {
   state: string
   runner: string | null
   graceOver: number
+  fenced: number
+  openTokens: number
+  outcome: string | null
+  failure: string | null
+  sawCheckpoint: number
 }
 
 const member = actor('memberA')
@@ -51,13 +56,16 @@ test('W0-B variant A: resume from the existing verified checkpoint without chang
     if (running.runner === null) throw new Error('missing runner for the live spike turn')
     await killRunner(request, running.runner)
 
-    await expect.poll(async () => {
-      const p = await probe(request, work.turnId)
-      return [p.state, p.graceOver]
-    }, { timeout: 150_000 }).toEqual(['ended', 1])
+    // Two crash paths: the container's exit fences the turn (then a 60 s grace), or the runner's own `failed` event ends
+    // it unfenced through `terminal` and `endTurn` (no grace). Either way it must be `ended`; a fenced one also waits out its grace.
+    await expect.poll(async () => (await probe(request, work.turnId)).state, { timeout: 150_000 }).toBe('ended')
+    const ended = await probe(request, work.turnId)
+    console.log('W0-B ended after kill', JSON.stringify({ outcome: ended.outcome, failure: ended.failure, fenced: ended.fenced,
+      graceOver: ended.graceOver, openTokens: ended.openTokens, session: ended.session, sawCheckpoint: ended.sawCheckpoint }))
+    if (ended.fenced === 1) await expect.poll(async () => (await probe(request, work.turnId)).graceOver, { timeout: 90_000 }).toBe(1)
     const crashed = await probe(request, work.turnId)
     expect(crashed).toMatchObject({ session: 'damaged', sessionId: first.sessionId, failure: 'session_crashed',
-      checkpointEntries: first.checkpointEntries, checkpointUuidMatches: true, fenced: 1, openTokens: 0, sawCheckpoint: 0 })
+      checkpointEntries: first.checkpointEntries, checkpointUuidMatches: true, openTokens: 0, sawCheckpoint: 0 })
     const afterCrashFiles = (await filesOf(request, chatId)).map(f => f.path)
     console.log('W0-B after kill', JSON.stringify({ checkpoint: first.checkpointEntries, store: crashed.entries, files: afterCrashFiles }))
     const recovered = await probe(request, work.turnId, true)
