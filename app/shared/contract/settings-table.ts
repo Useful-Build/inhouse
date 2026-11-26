@@ -11,7 +11,7 @@ export type ValueRule =
   | { t: 'enum'; values: readonly string[] }
   | { t: 'bool' }
   | { t: 'text'; min: number; max: number }
-  | { t: 'cap' }
+  | { t: 'cap'; maxUsd?: number; minUsd?: number }
   | { t: 'member' }
   | { t: 'hostlist' }
 export interface SettingRow { scope: SettingScopeName; rule: ValueRule; auditSafe: boolean }
@@ -40,7 +40,14 @@ export const RETENTION = ['3 months', '6 months', '12 months', '24 months', 'Unt
 
 /** The money field's saved text: whole US dollars or two-digit cents, no grouping, above $0 and up to $100,000 ("$320", "$300.50"). */
 export const CAP_PATTERN = /^\$\d{1,6}(\.\d{2})?$/
-export const capOk = (v: string) => CAP_PATTERN.test(v) && Number(v.slice(1)) > 0 && Number(v.slice(1)) <= 100_000
+export const capOk = (v: string, maxUsd = 100_000, minUsd = 0) =>
+  CAP_PATTERN.test(v) && Number(v.slice(1)) > 0 && Number(v.slice(1)) >= minUsd && Number(v.slice(1)) <= maxUsd
+
+/** `s:job_cap` when unset, and the code ceiling an Admin can't pass (Wasim, 2026-11-26). */
+export const DEFAULT_JOB_BUDGET_USD = 25
+export const MAX_JOB_BUDGET_USD = 100
+/** The ledger's start hold ($0.25, server/usage/ledger.ts `START_HOLD_MICRO`): a job cap below it refuses every turn. */
+export const MIN_JOB_BUDGET_USD = 0.25
 /**
  * The runner protocol's `Hostname` rule (shared/protocol/index.ts; copied, since this file has no imports, and
  * compared with it in settings-hostlist.test.ts): lowercase labels, at least two, no trailing dot.
@@ -96,6 +103,7 @@ export const EXACT_ROWS: Record<string, SettingRow> = {
   'g:tz': safe('brand', oneOf(TIME_ZONE_IDS)),
   'm:ask': safe('brand', bool),
   's:cap': safe('brand', { t: 'cap' }),
+  's:job_cap': safe('brand', { t: 'cap', maxUsd: MAX_JOB_BUDGET_USD, minUsd: MIN_JOB_BUDGET_USD }),
   's:alert': safe('brand', oneOf(ALERT_AT)),
   's:currency': safe('brand', oneOf(CURRENCIES)),
   // technical
@@ -141,7 +149,7 @@ export function meetsRule(rule: ValueRule, value: unknown): boolean {
     case 'bool': return typeof value === 'boolean'
     case 'enum': return typeof value === 'string' && rule.values.includes(value)
     case 'text': { if (typeof value !== 'string') return false; const n = value.trim().length; return n >= rule.min && n <= rule.max }
-    case 'cap': return typeof value === 'string' && capOk(value)
+    case 'cap': return typeof value === 'string' && capOk(value, rule.maxUsd, rule.minUsd)
     case 'member': return typeof value === 'string' && (value === 'anyone' || MEMBER_ID_PATTERN.test(value))
     case 'hostlist': return typeof value === 'string' && parseHostlist(value) !== null
   }

@@ -34,6 +34,7 @@ export const NOTES: Readonly<Record<string, Note>> = {
   chat_files: { holds: 'Chat attachments and outputs', personal: 'File names, uploader id', retention: 'With its chat; an output deleted from the Library goes 30 days after', deletion: 'Deleted with the person\'s chats' },
   'files/': { holds: 'Chat file bytes', personal: 'File bytes', retention: 'With its chat or its deleted file', deletion: 'Deleted with the person\'s chats', backup: 'Not backed up (kept through a database restore)' },
   usage_months: { holds: 'Monthly AI spend and cap', personal: 'None', retention: 'Kept while the deployment lives', deletion: 'Kept: no personal data' },
+  usage_jobs: { holds: 'Each job\'s budget and its spend across its turns', personal: 'None', retention: 'Kept while the deployment lives', deletion: 'Kept: no personal data' },
   usage_turns: { holds: 'Each turn\'s reserved and settled spend', personal: 'Member id', retention: 'Kept while the deployment lives', deletion: 'Kept: the brand\'s bill keeps the member id, which no longer names anyone' },
   usage_extends: { holds: 'Each model call\'s hold and cost', personal: 'None', retention: 'Kept while the deployment lives', deletion: 'Kept: no personal data' },
   audit_copy_state: { holds: 'Where the audit log\'s daily copy has reached', personal: 'None', retention: 'Kept while the deployment lives', deletion: 'Kept: no personal data' },

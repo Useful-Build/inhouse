@@ -21,7 +21,7 @@ const memberIds = fc.oneof(
 )
 const values = fc.oneof(
   memberIds,
-  fc.string(), fc.boolean(), fc.constantFrom('on', 'off', 'anyone', 'm_sam', 'm_', '$320', '$300.50', '$0', '$100000', '$100001', '$1.5', '  x  ', '', ' ', 'x'.repeat(80), 'x'.repeat(81)),
+  fc.string(), fc.boolean(), fc.constantFrom('on', 'off', 'anyone', 'm_sam', 'm_', '$320', '$300.50', '$0', '$100000', '$100001', '$1.5', '$0.24', '$0.25', '$100.00', '$100.01', '  x  ', '', ' ', 'x'.repeat(80), 'x'.repeat(81)),
   fc.constantFrom(...Object.values(EXACT_ROWS).flatMap(r => (r.rule.t === 'enum' ? [...r.rule.values] : []))), fc.integer(), fc.constant(null),
 )
 
