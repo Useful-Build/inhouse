@@ -72,14 +72,17 @@ const SYSTEM = 'm_system'
 /** A safe ref as the card shows it: no control characters, at most 200 characters. */
 const safeRef = (ref: string) => ref.replace(/[\p{Cc}\p{Cf}]/gu, '').slice(0, 200)
 
-/** The write the hub is asked for. A Slack post names the listed channel's id the claim just checked (N13). */
+/**
+ * The write the hub is asked for. A Slack post names the listed channel's id the claim just checked (N13), in the shape
+ * the hub's strict schema takes (hub/connectors/slack/outbox.ts `SlackChannelPostArgsSchema`: `channelId` and `text`).
+ */
 export function writeRequest(row: OutboxActionRow, requestId: string): WriteRequest {
   const args = JSON.parse(row.args_json) as Record<string, unknown>
   const scope = JSON.parse(row.scope_json) as Record<string, string>
   return {
     actionId: row.id, attempt: row.attempt, requestId, accountId: row.account_id, expect: { connectedAtMs: row.account_gen },
     operation: row.operation,
-    args: row.operation === 'slack.channel.post' ? { ...args, channel: scope.channelId } : args,
+    args: row.operation === 'slack.channel.post' ? { channelId: scope.channelId, text: args.text } : args,
   }
 }
 
