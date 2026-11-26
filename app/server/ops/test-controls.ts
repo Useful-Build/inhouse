@@ -2,9 +2,7 @@
 // --mode product-test` resolves that to this file, every other build to test-controls-off.ts, so this never enters the
 // deployable Worker (scripts/check-product-build.mjs scans for the canary below and for this module). Reached only
 // through route 67 (alarm-now.ts), inside `if (__INHOUSE_TEST_BUILD__ && env.INHOUSE_TEST_BUILD === '1')`: the
-// generic alarm-now control, and the two routine controls W6's slot specs need (p4-w6.md section 3): stop a tick after
-// its batch, and seed a routine's `checked_until_ms`. The one hook product code calls, `afterTickBatch` (routines/tick.ts),
-// does nothing in the off module, so the product build holds no test branch.
+// generic alarm-now control, routine controls and job test controls. The off module has no test behavior.
 
 /** The bundle-scan canary: it must be in the test build's Worker and never in the deployable one. */
 export const TEST_CONTROLS_CANARY = 'inhouse-test-controls-canary-5d81e0a7'
@@ -32,9 +30,32 @@ export function armStopAfterBatch(): { armed: true } {
   return { armed: true }
 }
 
-/** Clears the switch, armed or not: the tests' fresh state (routines/test-kit.ts `fresh`), so an unconsumed arm can't leak. */
+// Set via RPC on the BrandAgent so the reads and writes happen in the same isolate. Eviction clears the overrides.
+let timings = new Map<string, number>()
+
+/** Replaces the entire set. Pass an empty object in teardown to restore the defaults. */
+export function setTimings(overrides: Record<string, number>): { set: true } {
+  console.log({ event: 'test_control', control: 'set_timings', canary: TEST_CONTROLS_CANARY })
+  timings = new Map(Object.entries(overrides))
+  return { set: true }
+}
+
+export function timing(name: string, fallback: number): number {
+  return timings.get(name) ?? fallback
+}
+
+/** Hard kill, not a runner stop: the existing monitor detects the exit. Never starts a container. */
+export async function killRunner(container: { readonly running: boolean; destroy(): Promise<void> } | undefined): Promise<{ killed: boolean }> {
+  if (!container?.running) return { killed: false }
+  console.log({ event: 'test_control', control: 'kill_runner', canary: TEST_CONTROLS_CANARY })
+  await container.destroy()
+  return { killed: true }
+}
+
+/** Restores the tests' fresh state (routines/test-kit.ts `fresh`). */
 export function resetTestControls(): void {
   stopAfterBatch = false
+  timings.clear()
 }
 
 /** The tick's hook, called after its decide step (routines/tick.ts). Throws once when armed, and clears the switch. */

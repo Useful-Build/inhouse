@@ -11,6 +11,8 @@
 //     `{ armed: true }`;
 //   `{ action: 'seedCursor', routineId, checkedUntilMs }`: a live routine's `checked_until_ms`, a past instant ->
 //     `{ seeded: true }`, or 404 `not_found` with reason `routine` when no live routine has that id.
+//   `{ action: 'setTimings', overrides }`: replace the BrandAgent's job timing overrides (milliseconds).
+//   `{ action: 'killRunner', runner }`: destroy an existing runner container without a graceful shutdown.
 import { z } from 'zod'
 import { RoutineIdSchema } from '../../shared/contract/audit.ts'
 import { MAX_BODY_BYTES, readCapped } from '../db/handler-kit.ts'
@@ -23,6 +25,8 @@ declare const __INHOUSE_TEST_BUILD__: boolean
 const ControlSchema = z.union([
   z.strictObject({ action: z.literal('alarm').optional(), pokeTick: z.literal(true).optional() }),
   z.strictObject({ action: z.literal('stopAfterBatch') }),
+  z.strictObject({ action: z.literal('setTimings'), overrides: z.record(z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/), z.number().int().positive()) }),
+  z.strictObject({ action: z.literal('killRunner'), runner: z.string().regex(/^runner-(0|[1-9][0-9]{0,8})$/) }),
   z.strictObject({ action: z.literal('seedCursor'), routineId: RoutineIdSchema, checkedUntilMs: z.number().int().nonnegative() }),
 ])
 
@@ -50,7 +54,12 @@ export function alarmNowHandler(compiledTestBuild: boolean = __INHOUSE_TEST_BUIL
     if (!on) return apiError('not_found')
     const body = await readControl(c.request)
     if (body === null) return apiError('invalid')
+    if (body.action === 'killRunner') {
+      if (!(Number(body.runner.slice('runner-'.length)) < Number(c.env.RUNNER_POOL))) return apiError('not_found', { reason: 'runner' })
+      return apiJson(await c.env.RUNNER.getByName(body.runner).testKillRunner())
+    }
     const agent = brandAgent(c.env)
+    if (body.action === 'setTimings') return apiJson(await agent.testSetTimings(body.overrides))
     if (body.action === 'stopAfterBatch') return apiJson(await agent.testStopAfterBatch())
     if (body.action === 'seedCursor') {
       if (body.checkedUntilMs >= c.nowMs) return apiError('invalid', { reason: 'not_past' })

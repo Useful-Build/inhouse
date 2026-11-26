@@ -50,6 +50,33 @@ const person = async (who: 'member' | 'admin') => ({
 })
 const bodyOf = async (r: Response) => JSON.parse(await r.text())
 
+it('gates and validates job controls before dispatching them', async () => {
+  const headers = await release()
+  const post = (call: ReturnType<typeof setup>, body: unknown, h = headers) =>
+    call('/api/ops/alarm', { method: 'POST', headers: h, body: JSON.stringify(body) })
+  const timing = { action: 'setTimings', overrides: { JOB_CUT_MS: 150 } }
+  const kill = { action: 'killRunner', runner: 'runner-0' }
+  const enabled = setup({ compiled: true, flag: '1' })
+  for (const body of [timing, kill]) {
+    expect((await post(setup(), body)).status).toBe(404)
+    expect((await post(setup({ compiled: true, flag: '0' }), body)).status).toBe(404)
+    expect((await post(enabled, body, await person('admin'))).status).toBe(403)
+  }
+  for (const body of [
+    { action: 'setTimings', overrides: { JOB_CUT_MS: -1 } },
+    { action: 'setTimings', overrides: { JOB_CUT_MS: 1.5 } },
+    { action: 'setTimings', overrides: { invalidName: 10 } },
+    { action: 'killRunner', runner: 'arbitrary-name' },
+  ]) expect((await post(enabled, body)).status).toBe(400)
+  try {
+    expect(await bodyOf(await post(enabled, timing))).toEqual({ set: true })
+    // The in-process test pool has no containers. The hook must not boot one.
+    expect(await bodyOf(await post(enabled, kill))).toEqual({ killed: false })
+  } finally {
+    expect((await post(enabled, { action: 'setTimings', overrides: {} })).status).toBe(200)
+  }
+})
+
 /**
  * A due task the pass can see: a row of a kind no handler knows, due a moment ago, written straight into the brand's
  * object with its alarm moved an hour out first, so only a pass this test starts can reach it (the runtime's alarm
