@@ -15,6 +15,8 @@
 //     CONNECT_REDIRECT_URI; P5 W1);
 //   - sets `alias`, `no_bundle` or `build` (each swaps a module or skips the esbuild bundle the bundle scan reads);
 //   - lacks the SIGNIN binding to the hub's own SignIn class, or the migration that creates SignIn on SQLite;
+//   - has the SHOPIFY_WRITE_SIGNIN binding without the `v2` migration that creates ShopifyWriteSignIn, or the reverse
+//     (Stage 1 M2-C);
 //   - has a `main` other than hub/index/index.ts;
 //   - sets `worker_loaders` as anything but exactly one entry `{ "binding": "LOADER" }` (P5 W2's code mode; absent is
 //     allowed: code mode then has no loader).
@@ -180,5 +182,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
     for (const f of failures) console.error(`    ${f}`)
     process.exit(1)
   }
-  console.log(`ok    ${path}: no route or other public surface, no env block, no test build, secrets required and not in the file, SignIn bound and migrated.`)
+  console.log(`ok    ${path}: no route or other public surface, no env block, no test build, secrets required and not in the file, SignIn bound and migrated, the write SignIn bound with its v2 migration.`)
 }

@@ -214,8 +214,10 @@ async function send(
     // A partial result (errors next to a `tagsAdd` value) means the mutation may have run: never `sent: 'no'` then.
     const noMutationResult = body.data === undefined || body.data === null
       || (typeof body.data === 'object' && !Array.isArray(body.data) && (body.data as Record<string, unknown>).tagsAdd == null)
-    if (codes.includes('THROTTLED')) return writeErr('rate_limited', noMutationResult ? 'no' : 'unknown')
-    if (noMutationResult && codes.length > 0 && codes.every(c => DEFINITE_GQL_REFUSALS.has(c))) {
+    // A definite `'no'` needs every error to carry a known code: an uncoded error beside one could be anything.
+    const allCoded = codes.length === body.errors.length
+    if (codes.includes('THROTTLED')) return writeErr('rate_limited', noMutationResult && allCoded && codes.every(c => c === 'THROTTLED') ? 'no' : 'unknown')
+    if (noMutationResult && allCoded && codes.every(c => DEFINITE_GQL_REFUSALS.has(c))) {
       const unique = [...new Set(codes)].slice(0, 10)
       return writeErr('upstream_rejected', 'no', unique.join(','))
     }

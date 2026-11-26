@@ -269,7 +269,9 @@ back alone (the newer hub still serves every older product's bindings) or fix fo
 **Eval hub.** The eval hub must carry exactly `app/wrangler.hub.test.jsonc`'s vars (`EVAL_TEST_HUB_VARS` in
 `check-product-config.mjs`), so its generated config needs the three test vars M2-C added: `SHOPIFY_WRITE_SHOP`,
 `SHOPIFY_WRITE_CLIENT_ID` and `SHOPIFY_WRITE_CLIENT_SECRET` (invented values for the fake write store). Without them the
-sandbox config check refuses the eval hub.
+sandbox config check refuses the eval hub. Every generated hub config (sandbox and eval) also needs the `SHOPIFY_WRITE_SIGNIN` binding and the
+`v2` migration that creates `ShopifyWriteSignIn`; without them a write answers `internal` (`sent: 'unknown'`) instead of
+`not_configured`.
 
 ## Redeploy the previous release
 

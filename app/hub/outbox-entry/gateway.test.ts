@@ -360,6 +360,9 @@ describe('Shopify write GraphQL errors and a rejected token', () => {
     ['THROTTLED with no data', { errors: throttled }, 'rate_limited', 'no'],
     ['THROTTLED with tagsAdd null', { errors: throttled, data: { tagsAdd: null } }, 'rate_limited', 'no'],
     ['THROTTLED next to a tagsAdd result', { errors: throttled, data: partial }, 'rate_limited', 'unknown'],
+    ['a definite refusal beside an uncoded error', { errors: [...denied, { message: 'odd' }], data: { tagsAdd: null } }, 'upstream_unavailable', 'unknown'],
+    ['THROTTLED beside an uncoded error', { errors: [...throttled, { message: 'odd' }], data: { tagsAdd: null } }, 'rate_limited', 'unknown'],
+    ['THROTTLED beside another code', { errors: [...throttled, ...denied], data: { tagsAdd: null } }, 'rate_limited', 'unknown'],
   ] as const)('%s answers %s, sent: %s', async (_, body, code, sent) => {
     const w = gqlWorld(body)
     const r = await runWriteAction(w.deps, baseShopifyReq())
