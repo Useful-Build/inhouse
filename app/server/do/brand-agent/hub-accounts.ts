@@ -2,7 +2,8 @@
 // hub binding but ReadGateway (the P5 import boundary), so the write path asks the object (`BrandAgentRpc.hubAccounts`).
 // The hub is the authority on a connection (it owns the sign-in): its `connectedAt` and the Shopify write store's handle
 // are copied into `connector_accounts` (db/connector-accounts.ts `syncFromHub`), where `resolve`, the claim and the
-// dispatcher's `expect.connectedAtMs` read them. The binding's answer is copied out and released, never kept.
+// dispatcher's `expect.connectedAtMs` read them. The binding's answer is copied out and released, never kept
+// (shared/rpc-answer.ts).
 import { z } from 'zod'
 import type { CallerScope, ConnectGateway } from '../../../hub/index/contract.ts'
 import { connectorAccountStore } from '../../db/connector-accounts.ts'
@@ -10,6 +11,7 @@ import { SYSTEM_MEMBER_ID } from '../../db/ids.ts'
 import { ACCOUNT_IDS } from '../../outbox/facts.ts'
 import type { HubAccountFacts } from '../../outbox/facts.ts'
 import { safeError } from '../../safe-error.ts'
+import { settledAnswer } from '../../../shared/rpc-answer.ts'
 
 const SHOP_HANDLE = /^[a-z0-9][a-z0-9-]{0,59}$/
 
@@ -27,29 +29,6 @@ const AccountsAnswer = z.discriminatedUnion('ok', [
   z.object({ ok: z.literal(false), error: z.object({ code: z.string() }) }),
 ])
 
-/** `Symbol.dispose` (the runtime has it; this project's TypeScript lib doesn't name it yet). */
-const DISPOSE = (Symbol as unknown as { dispose?: symbol }).dispose
-
-/**
- * An RPC answer's plain data, and its disposer run: Workers RPC gives every object an RPC returns a disposer, and until
- * it runs the call's context stays open (outbox/dispatch.ts found it kept BrandAgent from going idle). Nothing from the
- * binding is kept but the copy. https://developers.cloudflare.com/workers/runtime-apis/rpc/lifecycle/
- */
-export function rpcPlain(value: unknown): unknown {
-  let copy: unknown
-  try {
-    const text = JSON.stringify(value)
-    copy = text === undefined ? undefined : JSON.parse(text)
-  } catch {
-    copy = undefined
-  }
-  if (typeof value === 'object' && value !== null && DISPOSE !== undefined) {
-    const dispose = (value as Record<symbol, unknown>)[DISPOSE]
-    if (typeof dispose === 'function') (dispose as () => void).call(value)
-  }
-  return copy
-}
-
 const LABEL: Readonly<Record<'shopify' | 'slack', string>> = { shopify: 'Shopify', slack: 'Slack' }
 
 /**
@@ -64,7 +43,8 @@ export async function hubAccountFacts(d: {
   const scope: CallerScope = { kind: 'server', job: 'actions.accounts', requestId: d.requestId }
   let raw: unknown
   try {
-    raw = rpcPlain(await d.connect.listAccounts(scope))
+    // The answer's plain data, the answer released (shared/rpc-answer.ts); one that isn't data throws, and is refused here.
+    raw = await settledAnswer(d.connect.listAccounts(scope))
   } catch (err) {
     d.log({ event: 'actions_accounts_unreadable', why: 'threw', error: safeError(err) })
     return []

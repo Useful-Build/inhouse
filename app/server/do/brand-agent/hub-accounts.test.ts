@@ -15,7 +15,7 @@ import { outboxFacts } from '../../outbox/facts.ts'
 import { resolve } from '../../permissions/resolve.ts'
 import { POLICY_REV } from '../../permissions/policy.ts'
 import { insertGrant, person, resetPermissions } from '../../permissions/test-support.ts'
-import { hubAccountFacts, rpcPlain } from './hub-accounts.ts'
+import { hubAccountFacts } from './hub-accounts.ts'
 
 const db = env.DB
 const SHOP = 'shopify:store'
@@ -134,12 +134,13 @@ describe('fail closed (failures 4, 5)', () => {
     expect(await row(SHOP)).toBeNull()
   })
 
-  it('the binding\'s answer is copied out and its disposer run', () => {
+  it('the binding\'s answer is copied out and its disposer run; an answer that isn\'t data answers no account', async () => {
     const dispose = (Symbol as unknown as { dispose?: symbol }).dispose
     if (dispose === undefined) return
     let disposed = 0
-    const answer = { ok: true, value: [], [dispose]: () => { disposed++ } }
-    expect(rpcPlain(answer)).toEqual({ ok: true, value: [] })
+    const answer = { ok: true, value: [shopify()], [dispose]: () => { disposed++ } }
+    expect(await read(answer)).toEqual([{ accountId: SHOP, paused: false, label: 'Shopify' }])
     expect(disposed).toBe(1)
+    expect(await read({ ok: true, value: [shopify()], stub: () => 1 })).toEqual([])
   })
 })
