@@ -19,10 +19,18 @@ const CALL_ID = 'toolu_helper_research_1'
 /** The first words of the researcher's prompt, which reach the engine only through `RunStart.agents`. */
 const RESEARCHER_OPENING = HELPER_AGENTS.researcher.prompt.split('\n')[0]!
 
-const firstUserText = (r: MessagesRequest): string => {
-  const c = r.messages.find((m) => m.role === 'user')?.content
-  if (typeof c === 'string') return c
-  return Array.isArray(c) ? c.map((b) => (typeof b === 'object' && b !== null && 'text' in b ? String((b as { text: unknown }).text) : '')).join('\n') : ''
+/**
+ * The text of the request's user messages before the first assistant message: the helper's prompt, wherever the CLI puts
+ * it (it may send its own context as an earlier user message). Never a later message, so the main thread's tool result
+ * that quotes the report can't match.
+ */
+const openingUserText = (r: MessagesRequest): string => {
+  const end = r.messages.findIndex((m) => m.role === 'assistant')
+  return r.messages.slice(0, end === -1 ? undefined : end).filter((m) => m.role === 'user').map((m) => {
+    const c = m.content
+    if (typeof c === 'string') return c
+    return Array.isArray(c) ? c.map((b) => (typeof b === 'object' && b !== null && 'text' in b ? String((b as { text: unknown }).text) : '')).join('\n') : ''
+  }).join('\n')
 }
 
 /** The helper's request: the server's researcher words as its system prompt, and no Agent tool to start a helper of its own. */
@@ -65,7 +73,7 @@ export function subagentScenarios(mainLoop: (tool?: string) => Check, resultIs: 
       ],
       branches: {
         researcher: {
-          match: (r) => firstUserText(r).includes(HELPER_MARKER),
+          match: (r) => openingUserText(r).includes(HELPER_MARKER),
           turns: [{ content: [{ type: 'text', text: HELPER_REPORT }], usage: HELPER_USAGE, expect: researcherRequest }],
         },
       },
