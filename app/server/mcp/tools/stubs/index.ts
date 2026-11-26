@@ -1,5 +1,5 @@
 // The tool map in ../index.ts installs these fallbacks first, then replaces them with live handlers where available.
-// Transactional approvals and questions currently return `not_available_yet`.
+// The question tool currently returns `not_available_yet`.
 import { z } from 'zod'
 import { refusal, tool } from '../../server/tool.ts'
 import type { InhouseToolName, ToolHandler } from '../../server/tool.ts'
@@ -18,7 +18,6 @@ export function notAvailableYet(name: string): ToolHandler {
 
 /** Initial fallback entries and the names a live handler may override. */
 export const STUB_NAMES: readonly InhouseToolName[] = [
-  'approval_request', 'approval_get', 'approval_list', 'approval_withdraw',
   'question_ask',
   'routine_create', 'routine_list', 'routine_update', 'routine_delete', 'routine_run_now',
   'notification_send',
