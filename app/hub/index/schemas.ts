@@ -70,11 +70,15 @@ export const AccountStatusSchema = z.strictObject({
   needsReconnect: z.boolean(),
 })
 
+/** A Shopify store's handle (`<handle>.myshopify.com` without the domain), as the hub's config parsers take it. */
+export const SHOP_HANDLE = /^[a-z0-9][a-z0-9-]{0,59}$/
+
 export const AccountSummarySchema = z.strictObject({
   accountId: z.string(),
   connector: z.string(),
   configured: z.boolean(),
   status: AccountStatusSchema,
+  shop: z.string().regex(SHOP_HANDLE).optional(),
 })
 
 /** A connector id or account id: `shopify`, `shopify:store`. */

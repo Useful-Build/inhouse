@@ -37,6 +37,11 @@ export interface StartInput {
    * runner below `HELPERS_VERSION` (`startForPeer`).
    */
   subagentModel?: string | null
+  /**
+   * Stage 1 M2-D (N2, N14): an operation is enabled for the brand, so the run gets the `actions` MCP server (the write
+   * tools). Sent as `actions: true` only when on (N1: a strict start); the runner link drops it below `HELPERS_VERSION`.
+   */
+  actions?: boolean
 }
 
 export function buildStart(i: StartInput): StartWithoutToken {
@@ -65,6 +70,7 @@ export function buildStart(i: StartInput): StartWithoutToken {
     fileCaps: FILE_CAPS,
     ...(i.outputFormat === undefined ? {} : { outputFormat: i.outputFormat }),
     ...(i.subagentModel == null ? {} : { agents: HELPER_AGENTS, subagentModel: i.subagentModel }),
+    ...(i.actions === true ? { actions: true } : {}),
   }
 }
 

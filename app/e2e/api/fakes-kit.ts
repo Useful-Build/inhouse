@@ -195,15 +195,17 @@ export async function setCeiling(request: APIRequestContext, operation: 'shopify
 }
 
 /**
- * Stage 1 M2-B (N19): the outbox's `request` as an active person, with no tool call behind it. The answer is the outbox's
- * result: `refused` with its words, `waiting` (a card), `approved` (under a permission) or `existing`.
+ * Stage 1 M2-B (N19), M2-D: the write tool's call through the egress's `actions` handler (`ask_only`: `approval_request`)
+ * as an active person, with a made-up run grant and the hook's stand-in admission. The answer: `outcome` (`refused` with
+ * its `reason` and words, `waiting` (a card), `approved` (under a permission) or `existing`), `action` (the row), `text`
+ * and `tool` (the tool's own answer as the agent reads it).
  */
 export const requestAction = async (
   request: APIRequestContext,
   as: { memberId: string; chatId?: string },
   operation: 'shopify.order.tag_add' | 'slack.channel.post',
   args: Record<string, unknown>,
-  o: { mode?: 'tool' | 'ask_only'; shop?: string } = {},
+  o: { mode?: 'tool' | 'ask_only' } = {},
 ): Promise<any> => (await hookOk(request, { op: 'action', as, operation, args, ...o })).result
 
 /** The brand's stage (a technical setting the Inhouse team writes). Slack posts start at Act; Watch reaches the bell only. */

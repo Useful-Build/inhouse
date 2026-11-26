@@ -36,7 +36,7 @@ async function setup(rpc?: FakeEgressRpc) {
   const h = await harness(rpc ? { rpc } : {})
   const f = fakeHub()
   // At Act: these tests cover the dispatch; hub.test.ts covers the Watch switch.
-  const hubDeps: HubRouteDeps = { hub: f.hub, stage: async () => 1, now: () => 0, requestId: () => 'req-1', log: e => void h.logs.push(e as unknown as Record<string, unknown>) }
+  const hubDeps: HubRouteDeps = { hub: f.hub, now: () => 0, requestId: () => 'req-1', log: e => void h.logs.push(e as unknown as Record<string, unknown>) }
   // The orchestrator's line adds `hub` to EgressDeps; a variable (not a literal) keeps this typechecking before it lands.
   const deps: EgressDeps & { hub: HubRouteDeps } = Object.assign({}, h.deps, { hub: hubDeps })
   return { h, f, deps }

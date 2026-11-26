@@ -27,6 +27,8 @@ export type ConnectDeps = {
   registry: Registry
   isConfigured(connector: HubConnector): boolean
   signIn(accountId: string): ConnectStub
+  /** Stage 1 M2-D: the store handle a connector's writes go to (Shopify's write app), or null. */
+  shopOf?(connector: HubConnector): string | null
 }
 
 const instant = (ms: number): Instant => ({ iso: new Date(ms).toISOString(), ms })
@@ -116,7 +118,8 @@ export async function listAccounts(deps: ConnectDeps, scope: CallerScope): Promi
     const status = await settledAnswer(deps.signIn(accountId).status(accountId))
     if (!status.ok) return status
     const configured = modulesFor(deps, accountId).some(x => deps.isConfigured(x))
-    rows.push({ accountId, connector: m.id, configured, status: status.value })
+    const shop = deps.shopOf?.(m) ?? null
+    rows.push({ accountId, connector: m.id, configured, status: status.value, ...(shop !== null ? { shop } : {}) })
   }
   return ok(rows)
 }

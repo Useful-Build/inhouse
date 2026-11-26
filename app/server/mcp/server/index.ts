@@ -13,6 +13,7 @@ import { TOOL_HANDLERS } from '../tools/index.ts'
 import { refusal } from './tool.ts'
 import { notAvailableYet } from '../tools/stubs/index.ts'
 import type { ToolScope } from './tool.ts'
+import type { ApprovalsWiring } from '../tools/approvals/index.ts'
 import type { NotifyDeps } from '../tools/notifications/deps.ts'
 
 /** The protocol versions this server speaks, newest first; an `initialize` asking for another gets the newest. */
@@ -30,6 +31,8 @@ export interface McpDeps {
   db: D1Database
   // P5 (p5-w4): passed on to the tools as it is (opaque; built by `notifyDeps(env)`).
   notify?: NotifyDeps
+  // Stage 1 M2-D: approval_request's wiring, passed on as it is (egress/actions.ts `approvalsWiring`).
+  approvals?: ApprovalsWiring
   /** Epoch ms; the real clock by default (tests pass their own). */
   now?: () => number
   /**
@@ -142,7 +145,7 @@ export async function handleMcp(request: Request, scope: McpScope, deps: McpDeps
       const toolUseId = toolUseIdOf(params?._meta)
       const call: ToolScope = { ...scope, nowMs: now(), requestId: `mcp-${crypto.randomUUID()}`, ...(toolUseId ? { toolUseId } : {}) }
       try {
-        return rpcResult(id, await impl.call(parsed.data, call, { db: deps.db, ...(deps.notify ? { notify: deps.notify } : {}) }))
+        return rpcResult(id, await impl.call(parsed.data, call, { db: deps.db, ...(deps.notify ? { notify: deps.notify } : {}), ...(deps.approvals ? { approvals: deps.approvals } : {}) }))
       } catch (err) {
         if (err instanceof StoreUnavailableError) {
           console.error({ event: 'mcp_store_unavailable', tool: name, error: safeError(err) })

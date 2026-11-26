@@ -2,9 +2,10 @@
 // and answers what a test sets. Token checks go through a real `RunTokens` when one is given (W3's scope property runs
 // on the real tokens.ts), else through `grants`, a map from token hash to grant.
 import type {
-  Actor, AdmitAnswer, BrandAgentRpc, DeferDecision, RunScope, DrainState, LeaseAnswer, ModelCallUsage, ModelCallWorst, PersonDataAnswer, PoolHealth, Refusal, RunsHealth,
+  Actor, AdmitActionAnswer, AdmitAnswer, AskWaitAnswer, BrandAgentRpc, DeferDecision, RunScope, DrainState, LeaseAnswer, ModelCallUsage, ModelCallWorst, PersonDataAnswer, PoolHealth, Refusal, RunsHealth,
   SubmitTurn,
 } from '../ports.ts'
+import type { HubAccountFacts } from '../../../outbox/facts.ts'
 import type { EgressRoute, RunGrant, RunTokens, TokenRefusal } from '../tokens.ts'
 import type { AuditEntry, PushAck, RunEvent } from '../../../../shared/protocol/index.ts'
 import type { ActiveRun, PauseState, SendTurnResult } from '../../../../shared/contract/runs.ts'
@@ -32,6 +33,10 @@ export class FakeBrandAgentRpc implements BrandAgentRpc {
   poolHealthAnswer: PoolHealth = { protocol: green, restarts: green, shortfall: green }
   runsHealthAnswer: RunsHealth = { failures: green, stuck: green, damaged: green, quarantined: green }
   reviveAnswer: 'revived' | 'not_quarantined' | 'not_found' = 'revived'
+  /** Stage 1 M2-D: what `admitAction`, `beginAskWait` and `askTurnLive` answer. */
+  admitActionAnswer: AdmitActionAnswer | ((turnId: string, tool: string, inputSha256: string) => AdmitActionAnswer) = { refused: 'no_match' }
+  askWaitAnswer: AskWaitAnswer | ((turnId: string, actionId: string) => AskWaitAnswer) = { wait: false, why: 'turn_not_live' }
+  askTurnLiveAnswer: boolean | ((turnId: string) => boolean) = false
 
   private readonly tokens: RunTokens | undefined
   private readonly now: () => number
@@ -108,5 +113,27 @@ export class FakeBrandAgentRpc implements BrandAgentRpc {
   async personData(p: { personId: string; mode: 'count' | 'delete' }): Promise<PersonDataAnswer> {
     this.log('personData', p)
     return { busy: true }
+  }
+
+  // Stage 1 M2-D (N14)
+  async admitAction(turnId: string, tool: string, inputSha256: string): Promise<AdmitActionAnswer> {
+    this.log('admitAction', turnId, tool, inputSha256)
+    return typeof this.admitActionAnswer === 'function' ? this.admitActionAnswer(turnId, tool, inputSha256) : this.admitActionAnswer
+  }
+  async askNoted(turnId: string, actionId: string): Promise<void> { this.log('askNoted', turnId, actionId) }
+  async beginAskWait(turnId: string, actionId: string): Promise<AskWaitAnswer> {
+    this.log('beginAskWait', turnId, actionId)
+    return typeof this.askWaitAnswer === 'function' ? this.askWaitAnswer(turnId, actionId) : this.askWaitAnswer
+  }
+  async endAskWait(actionId: string, delivered: boolean): Promise<void> { this.log('endAskWait', actionId, delivered) }
+  async askTurnLive(turnId: string): Promise<boolean> {
+    this.log('askTurnLive', turnId)
+    return typeof this.askTurnLiveAnswer === 'function' ? this.askTurnLiveAnswer(turnId) : this.askTurnLiveAnswer
+  }
+  async actionChanged(actionId: string): Promise<void> { this.log('actionChanged', actionId) }
+  hubAccountsAnswer: HubAccountFacts[] = []
+  async hubAccounts(): Promise<HubAccountFacts[]> {
+    this.log('hubAccounts')
+    return this.hubAccountsAnswer
   }
 }

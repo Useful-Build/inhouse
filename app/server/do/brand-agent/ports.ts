@@ -3,6 +3,8 @@
 // (`BrandAgentRpc`: the egress, the API handlers, the Runner objects, the health signals). W1's first PR defines them
 // with a fake of each under testing/; W2, W3 and W4 fill the real pool, files and usage ports. Every amount is in
 // micro-USD, every time in epoch ms.
+import type { AdmitRefusal, Admitted } from './invocations.ts'
+import type { HubAccountFacts } from '../../outbox/facts.ts'
 import type { AuditEntry, OutputFormat, PushAck, RunEvent, RunStart } from '../../../shared/protocol/index.ts'
 import type { AgentErrorCode, ErrorReason } from '../../../shared/contract/common.ts'
 import type { Trace } from '../../../shared/contract/trace.ts'
@@ -386,4 +388,29 @@ export interface BrandAgentRpc {
   resumeDeferred(chatId: string, decision: DeferDecision, questionId: string): Promise<SendTurnResult | Refusal>
   /** P8 C1: a person's rows in this object's SQLite, counted or deleted (`busy` while any of their turns is live or waiting). */
   personData(p: { personId: string; mode: 'count' | 'delete' }): Promise<PersonDataAnswer>
+
+  // ---------- Stage 1 M2-D: the ask flow (N14; asks.ts, invocations.ts) ----------
+  /** N14's admission: binds a write proposal to an unused call by the main agent in this live turn, and marks it used. */
+  admitAction(turnId: string, tool: string, inputSha256: string): Promise<AdmitActionAnswer>
+  /** A request made or found an action for this turn: its `ask` part (once) and the chat's `action.updated`. */
+  askNoted(turnId: string, actionId: string): Promise<void>
+  /** A waiter starts (at most 3 per turn, one per action, only while the turn is live). */
+  beginAskWait(turnId: string, actionId: string): Promise<AskWaitAnswer>
+  /** A waiter returned; `delivered` when it returned the action's final result inline. */
+  endAskWait(actionId: string, delivered: boolean): Promise<void>
+  /** Whether the turn is live and unfenced (the waiter's claim of `report = 'tool'` is made only then). */
+  askTurnLive(turnId: string): Promise<boolean>
+  /** An action changed outside the object (a route): its `action.updated` and its report, now. */
+  actionChanged(actionId: string): Promise<void>
+  /**
+   * The hub's word on the write accounts (pause, label), read now through the object's ConnectGateway, with the hub's
+   * connection date and Shopify store copied into D1 (hub-accounts.ts). Empty when the hub can't say (every write refused).
+   */
+  hubAccounts(): Promise<HubAccountFacts[]>
 }
+
+/** `admitAction`'s answer (invocations.ts). */
+export type AdmitActionAnswer = Admitted | { refused: AdmitRefusal }
+/** `beginAskWait`'s answer (asks.ts). */
+/** `already_waiting`: another waiter holds this action's wait; it owns the report, so this one changes nothing. */
+export type AskWaitAnswer = { wait: true; untilMs: number } | { wait: false; why: 'turn_not_live' | 'busy' | 'already_waiting' }

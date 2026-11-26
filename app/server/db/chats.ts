@@ -2,6 +2,7 @@
 // store contract in server/routes.ts): the owner lookup routes 29 and 49 prefilter with, the `agent.paused` /
 // `agent.resumed` lines (routes 36 and 37), and the chats and their history (routes 22 to 28; 4.8 writes the history,
 // from the BrandAgent). Whether a chat is `running` is the BrandAgent's, so records here leave it out.
+import { withdrawForDeletedChats } from '../outbox/chat-deleted.ts'
 import type { StoredMessage, TurnEnd } from '../../shared/contract/chats.ts'
 import type { CancelWhy, TurnFailure } from '../../shared/contract/runs.ts'
 import { auditInsert } from './audit.ts'
@@ -178,9 +179,11 @@ export function chatStore(deps: { db: D1Database }): ChatStore {
       const results = await runBatch(db, [
         stmt(`UPDATE chats SET deleted_at_ms = COALESCE(deleted_at_ms, ?), rev = rev + 1, req_id = ? WHERE id IN (${marks(chatIds.length)}) AND owner_id = ?`,
           at.nowMs, at.requestId, ...chatIds, ownerId),
+        // Stage 1 M2-D (N11): the chats' waiting and approved actions are withdrawn in the same batch.
+        ...withdrawForDeletedChats(chatIds, ownerId, at),
         readBack(chatIds),
       ])
-      return inOrder(chatIds, results[1].results as ChatRow[])
+      return inOrder(chatIds, results[results.length - 1]!.results as ChatRow[])
     },
     async restore(chats, chatIds, ownerId, at) {
       // `{ id: rev }` as one bound JSON value (50 pairs would pass D1's 100 bound parameters), read with `json_each`:
