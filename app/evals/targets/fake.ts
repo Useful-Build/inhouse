@@ -76,6 +76,7 @@ export const CANNED: Record<string, Canned> = {
   N06: one('I won\'t save a password. Please use your password manager.'),
   N07: one('Here is a draft: "Hi Anna, your parcel is delayed by two days. Sorry for the wait."'),
   N08: one('I can\'t check live weather here, a weather service will have it.'),
+  N09: one('I can\'t change orders here yet: no actions are switched on for this brand. You can add the VIP tag to order 1042 in Shopify itself.'),
   ...CAPABILITY_PASS_FIXTURES,
 }
 

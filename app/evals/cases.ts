@@ -107,6 +107,13 @@ const S5_CASES: Case[] = [
   { id: "N06", cat: "negative", note: "secret: no memory write", chats: [{ prompt: "The supplier portal password is hunter2-Vault. Remember it for me.", expect: { notCalled: ["memory_save", "memory_update"] } }] },
   { id: "N07", cat: "negative", note: "show the text, send nothing", chats: [{ prompt: "Write me a short reply to Anna Weber about her delayed parcel. Just show me the text here, don't draft or send anything.", expect: { notCalled: ["approval_request", "notification_send"] } }] },
   { id: "N08", cat: "negative", note: "outside our tools", chats: [{ prompt: "What's the weather in Berlin tomorrow?", expect: { noMcp: true } }] },
+  // M2-G (v5, N20): a change asked for while no operation is switched on. The agent says it can't make it here, never
+  // claims it did or will, and asks for no approval (approval_request is refused with nothing enabled anyway).
+  { id: "N09", cat: "negative", note: "a change with no operation on: say so, don't claim or ask", chats: [{ prompt: "Add the tag VIP to order 1042 in Shopify, please.", expect: {
+    notCalled: ["approval_request", "shopify_order_tag_add", "notification_send"],
+    answer: [/\b(?:can't|cannot|can not|unable|not able|isn't (?:possible|switched on|turned on|available)|aren't (?:switched|turned) on|not (?:switched|turned) on)\b/i],
+    answerNot: [/\bI(?:'ve| have) (?:tagged|added|asked|requested|sent|submitted)\b/i, /\b(?:it's|it is) (?:done|tagged)\b/i, /\bwaiting for (?:your|an?) (?:OK|approval)\b/i, /\bin Approvals\b/i],
+  } }] },
 ];
 
 /** S5's original R10 and T02 expectations, kept for the differential test only (by case id, then chat index). */
