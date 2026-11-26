@@ -15,6 +15,8 @@
 //     CONNECT_REDIRECT_URI; P5 W1);
 //   - sets `alias`, `no_bundle` or `build` (each swaps a module or skips the esbuild bundle the bundle scan reads);
 //   - lacks the SIGNIN binding to the hub's own SignIn class, or the migration that creates SignIn on SQLite;
+//   - has the SHOPIFY_WRITE_SIGNIN binding without the `v2` migration that creates ShopifyWriteSignIn, or the reverse
+//     (Stage 1 M2-C);
 //   - has a `main` other than hub/index/index.ts;
 //   - sets `worker_loaders` as anything but exactly one entry `{ "binding": "LOADER" }` (P5 W2's code mode; absent is
 //     allowed: code mode then has no loader).
@@ -83,11 +85,13 @@ function removeTrailingCommas(json) {
 const has = (obj, key) => obj !== null && typeof obj === 'object' && Object.hasOwn(obj, key)
 const SECRET_NAMES = ['HUB_TOKEN_KEYS', 'SHOPIFY_CLIENT_SECRET']
 /** A Worker secret that may be absent: refused in `vars` and `define`, but not listed as required. */
-const OPTIONAL_SECRET_NAMES = ['SLACK_CLIENT_SECRET']
+const OPTIONAL_SECRET_NAMES = ['SLACK_CLIENT_SECRET', 'SHOPIFY_WRITE_CLIENT_SECRET']
 /** The only `vars` a deployable config may set (the ops repo fills them per deployment). */
 const KNOWN_VARS = ['SHOPIFY_SHOP', 'SHOPIFY_CLIENT_ID', 'SLACK_CLIENT_ID', 'SLACK_TEAM_ID', 'SLACK_PRIVATE_SEARCH', 'CONNECT_REDIRECT_URI',
   // P5 W4: the product origin Slack notices link to.
-  'APP_ORIGIN']
+  'APP_ORIGIN',
+  // Stage 1 M2-C: the separate write-scoped Shopify app (empty in Stage 1).
+  'SHOPIFY_WRITE_SHOP', 'SHOPIFY_WRITE_CLIENT_ID']
 const PUBLIC_SURFACES = ['assets', 'site']
 const BUNDLER_SWAPS = ['alias', 'no_bundle', 'build']
 
@@ -139,6 +143,15 @@ export function checkHubConfig(config) {
   if (!migrations.some(m => Array.isArray(m?.new_sqlite_classes) && m.new_sqlite_classes.includes('SignIn'))) {
     fail('signin-migration', 'no migration with `new_sqlite_classes` containing "SignIn"')
   }
+  // Stage 1 M2-C: the write-scoped Shopify app's SignIn. The hub exports the class, so the binding and the migration that
+  // creates it ship together: a binding with no migration fails the deploy, a migration with no binding leaves the
+  // class unreachable.
+  if (!bindings.some(b => b?.name === 'SHOPIFY_WRITE_SIGNIN' && b?.class_name === 'ShopifyWriteSignIn' && !has(b, 'script_name'))) {
+    fail('write-signin-binding', 'no `durable_objects.bindings` entry { name: "SHOPIFY_WRITE_SIGNIN", class_name: "ShopifyWriteSignIn" } on this Worker')
+  }
+  if (!migrations.some(m => m?.tag === 'v2' && Array.isArray(m?.new_sqlite_classes) && m.new_sqlite_classes.includes('ShopifyWriteSignIn'))) {
+    fail('write-signin-migration', 'no migration { tag: "v2" } with `new_sqlite_classes` containing "ShopifyWriteSignIn"')
+  }
   if (config.main !== 'hub/index/index.ts') fail('main', '`main` must be "hub/index/index.ts"')
   if (has(config, 'worker_loaders')) {
     const loaders = config.worker_loaders
@@ -169,5 +182,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
     for (const f of failures) console.error(`    ${f}`)
     process.exit(1)
   }
-  console.log(`ok    ${path}: no route or other public surface, no env block, no test build, secrets required and not in the file, SignIn bound and migrated.`)
+  console.log(`ok    ${path}: no route or other public surface, no env block, no test build, secrets required and not in the file, SignIn bound and migrated, the write SignIn bound with its v2 migration.`)
 }

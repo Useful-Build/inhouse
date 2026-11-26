@@ -13,6 +13,7 @@
 // - An unregistered host answers 599 with a clear message. Never a real fetch.
 
 import { createShopifyUpstream } from '../../test/upstreams/shopify/server'
+import { createShopifyWriteUpstream, SHOPIFY_WRITE_HOST } from '../../test/upstreams/shopify/write/server'
 import { createMcpUpstream, SLACK_OAUTH_PATHS } from '../../test/upstreams/mcp/server'
 import { createSlackWebUpstream, SLACK_WEB_PATHS } from '../../test/upstreams/slack/server'
 import { MORNING_CHECK_UPSTREAMS } from '../../test/upstreams/morning-check/upstreams'
@@ -48,6 +49,11 @@ testUpstreams.set('example-fixture.myshopify.com', async req => {
   }
   return res
 })
+
+// Stage 1 M2-C (N13): the separate fake Shopify write store (`example-write.myshopify.com`), so the read fixture
+// (`example-fixture.myshopify.com`) is never written to.
+export const shopifyWrite = createShopifyWriteUpstream()
+testUpstreams.set(SHOPIFY_WRITE_HOST, shopifyWrite.fetch)
 
 // The graded morning-check set (P4 W3): one invented shop per case (evals/morning-check/), each with its own dataset and
 // fault. The runner points the product Worker's SHOPIFY_SHOP at a case's host.
