@@ -5,7 +5,7 @@ import { fc } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
 import { sha256Hex } from './sha256.ts'
 
-const subtle = async (b: Uint8Array) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', b))].map(x => x.toString(16).padStart(2, '0')).join('')
+const subtle = async (b: Uint8Array) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(b)))].map(x => x.toString(16).padStart(2, '0')).join('')
 const utf8 = (s: string) => new TextEncoder().encode(s)
 
 describe('sha256Hex', () => {
