@@ -412,7 +412,8 @@ describe('pause and resume (routes 35 to 37)', () => {
     expect(agent.getSnapshot().paused).toEqual(iso(6000))
     await agent.resume()
     expect(agent.getSnapshot().paused).toBeNull()
-    expect(calls.filter(c => c.method === 'POST').map(c => [c.path, c.body])).toEqual([['/api/pause', undefined], ['/api/resume', undefined]])
+    // Each sends the empty JSON body routes 36 and 37 require (server/api/pause.ts): with none the server answers 400.
+    expect(calls.filter(c => c.method === 'POST').map(c => [c.path, c.body])).toEqual([['/api/pause', '{}'], ['/api/resume', '{}']])
   })
 
   test('a refused pause hands back the identical snapshot', async () => {

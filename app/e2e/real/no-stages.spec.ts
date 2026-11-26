@@ -18,9 +18,16 @@ const phone = (page: Page) => (page.viewportSize()?.width ?? 1440) < 600
 const STAGE_NAME = /\b(Watch|Act|Run)\b(?! now)/
 const STAGE_WORD = /\bstages?\b/i
 
-/** Every word on the page, hidden ones included (a tag's screen reader text, a closed drawer), once `ready` shows. */
-async function expectNoStageWords(page: Page, where: string) {
-  const text = await page.locator('body').evaluate(b => b.textContent ?? '')
+/**
+ * Every word on the page, hidden ones included (a tag's screen reader text, a closed drawer), once `ready` shows. `skip`:
+ * parts that are someone's own words, not the app's (a skill's instructions to the agent say "Run `python3`").
+ */
+async function expectNoStageWords(page: Page, where: string, skip?: string) {
+  const text = await page.locator('body').evaluate((b, sel) => {
+    const copy = b.cloneNode(true) as HTMLElement
+    if (sel) copy.querySelectorAll(sel).forEach(e => e.remove())
+    return copy.textContent ?? ''
+  }, skip)
   expect(text, `${where} names a stage`).not.toMatch(STAGE_NAME)
   expect(text, `${where} says "stage"`).not.toMatch(STAGE_WORD)
 }
@@ -58,7 +65,11 @@ test("A skill's page and a routine's panel don't say which stage they work from"
   await page.getByRole('main').getByRole('button', { name: 'pdf', exact: true }).click()
   await expect(page.getByRole('heading', { level: 1, name: 'pdf', exact: true })).toBeVisible()
   await expect(page.getByRole('main').getByText('Who can change it', { exact: true })).toBeVisible()
-  await expectNoStageWords(page, 'the pdf skill')
+  // The instructions are the skill's own text for the agent (runner/image/plugin/skills/pdf/SKILL.md: "Run `python3`"),
+  // so the check reads everything else on the page. They have loaded, so leaving them out is a real cut.
+  const instructions = 'article[aria-labelledby="skill-instructions"]'
+  await expect(page.locator(instructions)).toContainText('PDF')
+  await expectNoStageWords(page, 'the pdf skill', instructions)
   await expect(page.getByRole('main').getByText('Works from', { exact: true })).toHaveCount(0)
 
   // The morning check: the one routine the test build always has.
