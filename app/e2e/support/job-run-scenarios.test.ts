@@ -52,7 +52,7 @@ describe('long-job-run', () => {
   })
   test("a step's command is one the Bash guard allows and writes its line", async () => {
     const { answer } = await ask('long-job-run', [{ role: 'user', content: 'scenario:long-job-run run=abc123xyz Go.' }])
-    expect(toolOf(answer).input.command).toBe('sleep 20; echo step-1 >> outputs/job-run.txt')
+    expect(toolOf(answer).input.command).toBe('sleep 20; sleep 20; sleep 20; echo step-1 >> outputs/job-run.txt')
   })
   test('no run token: a miss that says so, never an answer', async () => {
     const { misses } = await ask('long-job-run', [{ role: 'user', content: 'scenario:long-job-run Go.' }])

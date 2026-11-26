@@ -27,6 +27,12 @@ const blocksOf = (r: MessagesRequest): Block[] =>
  * that ended, to kill the container while a step runs.
  */
 export const JOB_RUN_STEPS = 3
+/**
+ * How long a `long-job-run` step holds its turn: three 20-second sleeps in one Bash call, so a spec that finds the step
+ * running in the session store has most of a minute to kill the container under it (one 20-second sleep proved too
+ * short on the sandbox: the store read and the kill landed after the step had ended).
+ */
+export const JOB_RUN_STEP_SECONDS = 60
 export const JOB_RUN_DONE = 'All three steps are done: outputs/job-run.txt.'
 export const JOB_RUN_FILE = 'outputs/job-run.txt'
 /**
@@ -71,7 +77,8 @@ function tokenChainNext(r: MessagesRequest, kind: 'run' | 'soak'): ScriptedBlock
   for (let n = 1; n <= steps; n++) {
     if (done.has(n)) continue
     const file = kind === 'run' ? JOB_RUN_FILE : SOAK_FILE
-    const hold = kind === 'run' ? `sleep ${JOB_HOLD_SECONDS}` : Array.from({ length: SOAK_STEP_SECONDS / JOB_HOLD_SECONDS }, () => `sleep ${JOB_HOLD_SECONDS}`).join('; ')
+    const seconds = kind === 'run' ? JOB_RUN_STEP_SECONDS : SOAK_STEP_SECONDS
+    const hold = Array.from({ length: seconds / JOB_HOLD_SECONDS }, () => `sleep ${JOB_HOLD_SECONDS}`).join('; ')
     return [
       { type: 'text', text: `Working on step ${n}.` },
       { type: 'tool_use', id: `${prefix}${n}_${tried.get(n) ?? 0}`, name: 'Bash', input: { command: `${hold}; echo step-${n} >> ${file}`, description: `Run step ${n}` } },

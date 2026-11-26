@@ -1,9 +1,9 @@
 // Long jobs on the sandbox deploy (Stage 1 M1-D, N3 and N4), with short timings: a chat turn the server cuts becomes a
 // job, carries on with the tab closed, survives a container killed while a step runs, and ends with one result and one
 // bell notice; Cancel ends a job between its turns and on a live turn. Every case runs turns, so `needsContainer()`.
-// Oracles: N3, N4 and the scripted chain (`long-job-run`, test/scripted-model/scenarios/jobs.ts): three steps of 20
-// seconds, each call id carrying the run's token. With JOB_CUT_MS at 50 s the root does two steps and is cut in the third
-// (three can't fit, two always do), so it becomes a job and a continuation finishes it.
+// Oracles: N3, N4 and the scripted chain (`long-job-run`, test/scripted-model/scenarios/jobs.ts): three steps of 60
+// seconds, each call id carrying the run's token. With JOB_CUT_MS at 150 s the root does two steps and is cut in the
+// third (three can't fit, two always do), so it becomes a job and a continuation finishes it.
 // It would fail if: a cut turn didn't become a job; a closed tab or a killed container ended the job, lost the steps the
 // store held or ran a done step again; a job ended with no result, two, or a second notice; a server-written turn read
 // as the person's message, or its Try again as the person's question; Cancel left a turn running or a continuation
@@ -21,7 +21,7 @@ import { actor, call } from './kit.ts'
 
 const dana = actor('memberA')
 const release = actor('release')
-const JOB_CUT_MS = 50_000
+const JOB_CUT_MS = 150_000
 test.describe.configure({ mode: 'serial' })
 
 /** A job of the token chain, started by dana's message in a new chat. */
@@ -44,13 +44,13 @@ async function runFinished(request: APIRequestContext, chatId: string) {
 
 test('a cut turn becomes a job that carries on with the tab closed, survives a killed container mid-step and ends with one result and one notice', async ({ request }) => {
   needsContainer()
-  test.setTimeout(12 * 60_000)
+  test.setTimeout(16 * 60_000)
   await setJobTimings(request, { JOB_CUT_MS })
   try {
     const tab = await Tab.open(dana)
     const { chatId, text, sent, prefix } = await startRun(request)
     tab.attach(sent.runId)
-    await tab.until(() => tab.frames(sent.runId).some(f => f.event.type === 'job.started'), 'the job started', 180_000)
+    await tab.until(() => tab.frames(sent.runId).some(f => f.event.type === 'job.started'), 'the job started', 300_000)
     const frames = tab.frames(sent.runId)
     const started = frames.find(f => f.event.type === 'job.started')!.event
     expect(started.rootTurnId).toBe(sent.turnId)
@@ -60,8 +60,12 @@ test('a cut turn becomes a job that carries on with the tab closed, survives a k
 
     // A continuation's step running now (the root's steps are known): kill every runner under it.
     const before = await stepsOf(request, prefix)
-    const step = await runningStep(request, prefix, new Set(before.calls), 4 * 60_000)
-    expect(await killRunners(request)).not.toEqual([])
+    const found = Date.now()
+    const step = await runningStep(request, prefix, new Set(before.calls), 6 * 60_000)
+    const seenMs = Date.now() - found
+    const killed = await killRunners(request)
+    console.log(`M1-D jobs: step ${step} seen running after ${seenMs} ms of polling; killed ${JSON.stringify(killed)} ${Date.now() - found} ms after the poll began`)
+    expect(killed).not.toEqual([])
 
     const job = await jobWhen(request, dana, chatId, j => j.state === 'ended', 'the job ended', 8 * 60_000)
     expect(job).toMatchObject({ jobId: started.jobId, rootTurnId: sent.turnId, outcome: 'done' })
@@ -92,13 +96,13 @@ test('a cut turn becomes a job that carries on with the tab closed, survives a k
 
 test('Cancel on a live turn stops it and ends the job: no later turn, one notice', async ({ request }) => {
   needsContainer()
-  test.setTimeout(8 * 60_000)
+  test.setTimeout(12 * 60_000)
   await setJobTimings(request, { JOB_CUT_MS })
   try {
     const { chatId, text, prefix } = await startRun(request)
-    const running = await jobWhen(request, dana, chatId, j => j.state === 'running', 'the job started', 180_000)
+    const running = await jobWhen(request, dana, chatId, j => j.state === 'running', 'the job started', 300_000)
     const before = await stepsOf(request, prefix)
-    await runningStep(request, prefix, new Set(before.calls), 4 * 60_000)
+    await runningStep(request, prefix, new Set(before.calls), 6 * 60_000)
     const r = await call(request, dana, 'POST', `/api/jobs/${running.jobId}/cancel`)
     expect(r.status, r.text).toBe(200)
     expect(r.json.job).toMatchObject({ jobId: running.jobId, state: 'ended', outcome: 'cancelled' })
@@ -122,17 +126,17 @@ test('Cancel on a live turn stops it and ends the job: no later turn, one notice
 
 test('Cancel between turns ends the job and no continuation ever starts', async ({ request }) => {
   needsContainer()
-  test.setTimeout(8 * 60_000)
+  test.setTimeout(12 * 60_000)
   // A drain refuses the continuation (the job waits to try again, here for 10 minutes), so the job sits between turns.
   await setJobTimings(request, { JOB_CUT_MS, JOB_RETRY_MS: 600_000 })
   let drained = false
   try {
     const { chatId, text, sent, prefix } = await startRun(request)
-    await runningStep(request, prefix, new Set(), 3 * 60_000)
+    await runningStep(request, prefix, new Set(), 4 * 60_000)
     const d = await call(request, release, 'POST', '/api/ops/drain', { json: {} })
     expect(d.status, d.text).toBe(200)
     drained = true
-    const waiting = await jobWhen(request, dana, chatId, j => j.state === 'running', 'the root became a job', 180_000)
+    const waiting = await jobWhen(request, dana, chatId, j => j.state === 'running', 'the root became a job', 300_000)
     // The root's rows are stored (it ended), and no continuation was admitted while drained.
     await expect.poll(async () => (await storedMessages(request, dana, chatId)).some(m => m.id === `${sent.turnId}.u`), { timeout: 60_000, message: 'the root\'s rows' }).toBe(true)
     const r = await call(request, dana, 'POST', `/api/jobs/${waiting.jobId}/cancel`)
