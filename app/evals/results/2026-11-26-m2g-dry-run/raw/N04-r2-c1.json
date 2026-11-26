@@ -1,0 +1,39 @@
+{
+ "row": {
+  "caseId": "N04",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "forbidden": false
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "Hello! Sorry the call ran long.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0,
+  "answer": "Hello! Sorry the call ran long.",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "inputSha256": "ebbd744a7602a5a1eb08253aae751a5d644f8c454910cda323cee59751c319b9",
+    "inputExcerpt": "{\"scope\":\"person\",\"fact\":\"Tired after a long supplier call.\"}",
+    "resultExcerpt": "Saved as m_6."
+   }
+  ]
+ }
+}
