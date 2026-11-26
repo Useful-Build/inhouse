@@ -199,6 +199,9 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'GET', pattern: '/api/data-access/export', class: 'brand_data', allow: ['admin', 'inhouse'] },
   // P8a D: Export everything's check (row 96): row 95's access.
   { method: 'GET', pattern: '/api/data-access/export/check', class: 'brand_data', allow: ['admin', 'inhouse'] },
+  // Stage 1 M2-A (N15).
+  { method: 'GET', pattern: '/api/permissions', class: 'baseline', allow: ['member', 'admin'] },
+  { method: 'POST', pattern: '/api/permissions/:id/remove', class: 'baseline', allow: ['member', 'admin'] },
 ]
 
 /** `CanRows` as section 3 maps them. */

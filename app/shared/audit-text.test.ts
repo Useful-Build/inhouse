@@ -60,6 +60,20 @@ const sample: Record<AuditArgs['action'], AuditArgs> = {
   'brand_skill.changed': { action: 'brand_skill.changed', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
   'brand_skill.deleted': { action: 'brand_skill.deleted', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
   'data.exported': { action: 'data.exported', scope: 'brand', stores: 24, items: 1234 },
+  'permission.granted': { action: 'permission.granted', permissionId: 'pg_AAAAAAAAAAAAAAAAAAAAAA', operation: 'slack.channel.post', accountId: 'slack:workspace', scopeKey: 'channelId=C0123ABCD', holder: 'member', perDay: 50, actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA' },
+  'permission.revoked': { action: 'permission.revoked', permissionId: 'pg_AAAAAAAAAAAAAAAAAAAAAA', operation: 'shopify.order.tag_add', reason: 'member_removed' },
+  'action.requested': { action: 'action.requested', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', operation: 'shopify.order.tag_add', verdict: 'exact', guardrail: 'bulk', origin: 'chat', records: 6, units: 6 },
+  'action.answered': { action: 'action.answered', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', choice: 'always', permissionId: 'pg_AAAAAAAAAAAAAAAAAAAAAA' },
+  'action.undone': { action: 'action.undone', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', released: true },
+  'action.withdrawn': { action: 'action.withdrawn', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', by: 'agent' },
+  'action.lapsed': { action: 'action.lapsed', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', reason: 'paused', released: true },
+  'action.sent': { action: 'action.sent', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', attempt: 1 },
+  'action.failed': { action: 'action.failed', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', attempt: 1, code: 'upstream_rejected', released: true },
+  'action.needs_check': { action: 'action.needs_check', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', attempt: 1, why: 'timeout' },
+  'action.resolved': { action: 'action.resolved', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', outcome: 'failed', released: true },
+  'question.asked': { action: 'question.asked', questionId: 'q_AAAAAAAAAAAAAAAAAAAAAA', askedOf: 'owner', options: 3 },
+  'question.answered': { action: 'question.answered', questionId: 'q_AAAAAAAAAAAAAAAAAAAAAA' },
+  'question.expired': { action: 'question.expired', questionId: 'q_AAAAAAAAAAAAAAAAAAAAAA' },
 }
 const names = (id: string) => ({ m_a: 'Ada Example' } as Record<string, string>)[id] ?? null
 
@@ -269,5 +283,32 @@ describe('P6a lines (PR0): literal texts, no id and no em dash', () => {
       const t = `${auditText(sample[action], names).what} ${auditText(sample[action], names).detail}`
       expect(t, action).not.toMatch(/mem_|tr_|bs_|\d|\u2014/)
     }
+  })
+})
+
+describe('Stage 1 M2 lines (N18)', () => {
+  const m2 = ['permission.granted', 'permission.revoked', 'action.requested', 'action.answered', 'action.undone', 'action.withdrawn', 'action.lapsed',
+    'action.sent', 'action.failed', 'action.needs_check', 'action.resolved', 'question.asked', 'question.answered', 'question.expired'] as const
+  it('never shows an id, a scope key, an operation key, a code or an em dash', () => {
+    for (const action of m2) {
+      const t = `${auditText(sample[action], names).what} ${auditText(sample[action], names).detail}`
+      expect(t, action).not.toMatch(/pg_|ac_|q_|m_|=|\.tag_add|\.post|_|—/)
+    }
+  })
+  it('says what the permission was for and why it ended', () => {
+    expect(auditText(sample['permission.granted'], names)).toEqual({ what: 'let the agent act without asking', detail: 'Post messages to a channel in Slack' })
+    expect(auditText(sample['permission.revoked'], names)).toEqual({ what: 'a permission ended', detail: 'Add tags to orders in Shopify: its holder left the team' })
+    expect(auditText({ action: 'permission.revoked', permissionId: 'pg_AAAAAAAAAAAAAAAAAAAAAA', operation: 'slack.channel.post', reason: 'removed' }, names))
+      .toEqual({ what: 'removed a permission', detail: 'Post messages to a channel in Slack' })
+  })
+  it('says why a permission ended for the two round 1 reasons', () => {
+    const ended = (reason: 'superseded' | 'channel_unlisted') => auditText({ action: 'permission.revoked', permissionId: 'pg_AAAAAAAAAAAAAAAAAAAAAA', operation: 'slack.channel.post', reason }, names)
+    expect(ended('superseded')).toEqual({ what: 'a permission ended', detail: 'Post messages to a channel in Slack: the rules or the tool’s connection changed, and a new one took its place' })
+    expect(ended('channel_unlisted')).toEqual({ what: 'a permission ended', detail: 'Post messages to a channel in Slack: the channel was taken off the list' })
+  })
+  it('says an action needs an exact approval and why, and names whom a question asked', () => {
+    expect(auditText(sample['action.requested'], names)).toEqual({ what: 'the agent asked for an approval', detail: 'Add tags to orders in Shopify: needs an exact approval, it changes more than 5 records' })
+    expect(auditText(sample['question.asked'], names)).toEqual({ what: 'the agent asked a question', detail: 'Asked the person in the chat' })
+    expect(auditText({ action: 'question.asked', questionId: 'q_AAAAAAAAAAAAAAAAAAAAAA', askedOf: 'admins', options: 2 }, names)).toEqual({ what: 'the agent asked a question', detail: 'Asked the admins' })
   })
 })

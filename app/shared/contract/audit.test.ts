@@ -69,6 +69,20 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   'brand_skill.changed': { action: 'brand_skill.changed', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
   'brand_skill.deleted': { action: 'brand_skill.deleted', skillId: 'bs_AAAAAAAAAAAAAAAAAAAAAA' },
   'data.exported': { action: 'data.exported', scope: 'brand', stores: 24, items: 1234 },
+  'permission.granted': { action: 'permission.granted', permissionId: 'pg_AAAAAAAAAAAAAAAAAAAAAA', operation: 'slack.channel.post', accountId: 'slack:workspace', scopeKey: 'channelId=C0123ABCD', holder: 'member', perDay: 50, actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA' },
+  'permission.revoked': { action: 'permission.revoked', permissionId: 'pg_AAAAAAAAAAAAAAAAAAAAAA', operation: 'shopify.order.tag_add', reason: 'member_removed' },
+  'action.requested': { action: 'action.requested', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', operation: 'shopify.order.tag_add', verdict: 'exact', guardrail: 'bulk', origin: 'chat', records: 6, units: 6 },
+  'action.answered': { action: 'action.answered', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', choice: 'always', permissionId: 'pg_AAAAAAAAAAAAAAAAAAAAAA' },
+  'action.undone': { action: 'action.undone', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', released: true },
+  'action.withdrawn': { action: 'action.withdrawn', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', by: 'agent' },
+  'action.lapsed': { action: 'action.lapsed', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', reason: 'paused', released: true },
+  'action.sent': { action: 'action.sent', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', attempt: 1 },
+  'action.failed': { action: 'action.failed', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', attempt: 1, code: 'upstream_rejected', released: true },
+  'action.needs_check': { action: 'action.needs_check', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', attempt: 1, why: 'timeout' },
+  'action.resolved': { action: 'action.resolved', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', outcome: 'failed', released: true },
+  'question.asked': { action: 'question.asked', questionId: 'q_AAAAAAAAAAAAAAAAAAAAAA', askedOf: 'owner', options: 3 },
+  'question.answered': { action: 'question.answered', questionId: 'q_AAAAAAAAAAAAAAAAAAAAAA' },
+  'question.expired': { action: 'question.expired', questionId: 'q_AAAAAAAAAAAAAAAAAAAAAA' },
 }
 const word = fc.stringMatching(/^[A-Z][a-z]{1,11}$/)
 const name = fc.oneof(word, fc.tuple(word, word).map(([a, b]) => `${a} ${b}`))

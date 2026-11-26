@@ -91,6 +91,8 @@ export const retentionRules: Readonly<Record<string, RetentionRule>> = {
   'library/': { kind: 'custom', ages: [], withParent: 'library_uploads', why: 'with its library_uploads row (deleted first), never by object age (B9: no lifecycle rule)' },
   // P8a: the egress record. `egress_fetches_no_update` forbids UPDATE only, so DELETE works.
   egress_fetches: { kind: 'd1', ageColumn: 'at_ms', idColumn: 'n' },
+  // Stage 1 M2-A: a grant's uses count only toward their own day; a year on they count toward nothing.
+  permission_uses: { kind: 'd1', ageColumn: 'at_ms', idColumn: 'id' },
 }
 
 /**
@@ -116,6 +118,7 @@ export const retentionGroups: Readonly<Record<string, PeriodName>> = {
   library_marks: 'trash',
   'library/': 'trash',
   egress_fetches: 'egress',
+  permission_uses: 'steps',
 }
 
 export type RetentionPeriods = Readonly<Record<string, number | null>>
