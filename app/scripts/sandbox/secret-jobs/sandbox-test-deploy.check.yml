@@ -1,0 +1,54 @@
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      pr: ${{ steps.pr.outputs.pr }}
+      sha: ${{ steps.pr.outputs.sha }}
+      only: ${{ steps.only.outputs.only }}
+    steps:
+      - name: Only from main, first attempt
+        env:
+          REF: ${{ github.ref }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          [ "$REF" = refs/heads/main ] || { echo "::error::sandbox-test-deploy runs only from main (this run: $REF)"; exit 1; }
+          [ "$ATTEMPT" = 1 ] || { echo "::error::dispatch again instead of re-running (attempt $ATTEMPT)"; exit 1; }
+      - name: The PR and its head
+        id: pr
+        env:
+          PR: ${{ inputs.pr }}
+          SHA: ${{ inputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ "$PR" =~ ^[1-9][0-9]{0,5}$ ]] || { echo "::error::pr must be a PR number"; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha must be 40 lowercase hex"; exit 1; }
+          gh api "repos/$REPO/pulls/$PR" > "$RUNNER_TEMP/pr.json"
+          state=$(jq -r .state "$RUNNER_TEMP/pr.json")
+          head_repo=$(jq -r .head.repo.full_name "$RUNNER_TEMP/pr.json")
+          head_sha=$(jq -r .head.sha "$RUNNER_TEMP/pr.json")
+          [ "$state" = open ] || { echo "::error::PR $PR is $state"; exit 1; }
+          [ "$head_repo" = "$REPO" ] || { echo "::error::PR $PR comes from $head_repo, not $REPO (forks never deploy)"; exit 1; }
+          [ "$head_sha" = "$SHA" ] || { echo "::error::PR $PR's head is $head_sha, not $SHA"; exit 1; }
+          { echo "pr=$PR"; echo "sha=$SHA"; } >> "$GITHUB_OUTPUT"
+      # A strict allowlist: spec files under e2e/api or e2e/real by bare path, nothing that could be a flag, a glob or
+      # another folder. Whether each one is in the chosen set is checked against the PR's tree in pr-code.
+      - name: The spec filter
+        id: only
+        env:
+          ONLY: ${{ inputs.only }}
+          SPECS: ${{ inputs.specs }}
+        run: |
+          # One line only: read -a takes the first line, so a newline would drop the rest silently.
+          case "$ONLY" in *$'\n'* | *$'\r'*) echo "::error::only must be one line"; exit 1 ;; esac
+          read -r -a items <<< "$ONLY"
+          if [ "${#items[@]}" -eq 0 ]; then echo "only=" >> "$GITHUB_OUTPUT"; exit 0; fi
+          [ "$SPECS" = true ] || { echo "::error::only needs specs=true"; exit 1; }
+          [ "${#items[@]}" -le 30 ] || { echo "::error::only takes at most 30 spec files"; exit 1; }
+          for f in "${items[@]}"; do
+            [[ "$f" =~ ^(api|real)/[a-z0-9][a-z0-9-]{0,80}\.spec\.ts$ ]] || { echo "::error::only: '$f' is not a spec file like api/runs.spec.ts or real/socket-csp.spec.ts"; exit 1; }
+          done
+          echo "only=${items[*]}" >> "$GITHUB_OUTPUT"
+
+  # The PR's code: no secret; the token reads only this repo's contents (checkout) and this run's jobs (the wait below).
