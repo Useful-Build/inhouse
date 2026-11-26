@@ -23,7 +23,7 @@ import { alarmPort, createScheduler, registrySeeds } from './scheduler.ts'
 import { poke, revive, taskContext } from './task-ops.ts'
 import type { SqlScheduler, TaskContext } from './scheduler.ts'
 import { taskHandlers } from './tasks/index.ts'
-import { armStopAfterBatch, runAlarmNow, seedCursor } from '@test-controls'
+import { armStopAfterBatch, runAlarmNow, seedCursor, setTimings } from '@test-controls'
 import { POKE_ID, TICK_KIND } from '../../routines/tick.ts'
 import { createRunTokens } from './tokens.ts'
 import { PRINCIPAL_HEADER, SocketHub } from './sockets.ts'
@@ -101,6 +101,10 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   /** The test build's stop-after-batch control (route 67): the next routine tick pass in this object stops after its batch. */
   async testStopAfterBatch(): Promise<{ armed: true }> {
     return armStopAfterBatch()
+  }
+
+  async testSetTimings(overrides: Record<string, number>): Promise<{ set: true }> {
+    return setTimings(overrides)
   }
 
   /** The test build's cursor seed (route 67): one routine's `checked_until_ms`, written to D1 from here. */
