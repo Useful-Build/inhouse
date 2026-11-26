@@ -118,7 +118,9 @@ export function baseOptions(config: RunConfig, cwd: string, env: Record<string, 
  * A deferred call's resume (prompt `""`): a stream with no message, held open until `done` settles. On CLI 2.1.328 a plain
  * `""` string runs the deferred call and then a second, empty turn of its own (a model call with nothing to answer);
  * an empty stream ended at once left the deferred tool unavailable (P0 S1). Held open, the CLI runs the deferred call,
- * answers once, and the run ends when the input does (test/store/deferred-resume.test.ts, the real CLI).
+ * answers once, and the run ends when the input does (test/store/deferred-resume.test.ts, the real CLI). A stop or an
+ * interrupt that comes before the query exists ends the input first, so such a resume gets an input that ends at once
+ * (the deferred call then doesn't run): the run ends stopped or interrupted, as it would anyway.
  */
 export function resumePrompt(done: Promise<void>): AsyncIterable<SDKUserMessage> {
   return (async function* () {
@@ -368,7 +370,8 @@ export async function runSession(deps: {
     try {
       await q.interrupt()
     } catch {
-      // interrupt() needs the streaming prompt; the `""` resume has none, so it falls back to the abort signal.
+      // Every prompt is streaming input (the `""` resume too, `resumePrompt`), so interrupt() normally works; when it
+      // refuses anyway (the query already ending), the abort signal ends the run.
       abort.abort()
     }
   }
@@ -531,7 +534,7 @@ export async function runSession(deps: {
   } else if (check.state === 'pending' && !stopping && !abort.signal.aborted && (result !== null || !untouchedResume)) {
     // An unstopped query that ended (with a result, or after writing to the store) without the SDK ever loading the main
     // transcript: nothing proved the resume ran on the expected transcript. A stop keeps its own end (and so does an
-    // interrupt that fell back to the abort signal); an interrupt the SDK honoured, on a resume that ended before the
+    // interrupt whose interrupt() refused and fell back to the abort signal); an interrupt the SDK honoured, on a resume that ended before the
     // transcript loaded, still ends `failed store` here, as intended.
     terminal = { type: 'failed', reason: 'store', message: 'the resume never loaded its transcript from the store' }
   } else if (result !== null && result.subtype === 'error_max_structured_output_retries') {
@@ -552,7 +555,8 @@ export async function runSession(deps: {
       else terminal = { type: 'failed', reason: 'sdk_error', message: `a deferred call in a turn with ${turn.count} tool calls; the runner defers only a lone call, and only that one` }
     }
   } else if (stopping) terminal = { type: 'failed', reason: 'stopped', message: 'stopped' }
-  // An interrupt that fell back to the abort signal makes the SDK throw an AbortError: that's an interrupt, not an SDK fault.
+  // An interrupt whose interrupt() refused falls back to the abort signal, and the SDK throws an AbortError: that's an
+  // interrupt, not an SDK fault.
   else if (abort.signal.aborted) terminal = { type: 'failed', reason: 'interrupted', message: 'interrupted' }
   else terminal = { type: 'failed', reason: 'sdk_error', message: threw ? message(thrown) : 'the query ended without a result' }
 

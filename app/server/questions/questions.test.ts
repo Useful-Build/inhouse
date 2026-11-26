@@ -303,3 +303,69 @@ describe('retries, the trash and many chats (failures 8 to 10)', () => {
     expect(asked).toEqual([100, 1])
   })
 })
+
+describe("a question's resume always runs before a turn queued behind the asking turn (review round 2)", () => {
+  const Q_EVENT = (tu: string): RunEventBody => ({ type: 'deferred', toolUseId: tu, toolName: 'mcp__inhouse__question_ask', input: { question: 'Which?', options: OPTIONS } })
+  const cp = { mainEntries: 2, lastUuid: 'u2', lastUuidIndex: 1 }
+
+  it('answered while the asking turn is ending (before its released): the resume is claimed first, not the turn queued earlier', () => inAgent(async h => {
+    await d1Chat('c-race-a', MEMBER)
+    const p = ok(await h.submit('c-race-a', 'key-race-p1'))
+    await settle()
+    const q = ok(await h.submit('c-race-a', 'key-race-q1'))
+    // The events one by one: the deferral and its checkpoint (the chat waits), the turn's end, and no `released` yet.
+    h.push(p.turnId, ev.started(), Q_EVENT('tu_race_a'), ev.checkpoint(2, 'u2', 1), ev.success())
+    await settle()
+    expect(waitingQuestionOf(h.sql, 'c-race-a')).toBe(qid(p.turnId))
+    const r = ok(await h.core.resumeDeferred('c-race-a', 'allow', qid(p.turnId)))
+    await settle()
+    expect(h.turn(r.turnId).state).toBe('queued')
+    h.push(p.turnId, ev.released(cp))
+    await settle()
+    expect(['starting', 'live']).toContain(h.turn(r.turnId).state)
+    expect(h.turn(q.turnId).state).toBe('queued')
+  }))
+
+  it('answered while a turn queued earlier is starting into the waiting chat: that turn is cancelled session_unusable and the resume runs', () => inAgent(async h => {
+    await d1Chat('c-race-b', MEMBER)
+    const p = ok(await h.submit('c-race-b', 'key-race-p2'))
+    await settle()
+    const q = ok(await h.submit('c-race-b', 'key-race-q2'))
+    let open!: () => void
+    const gate = new Promise<void>(res => (open = res))
+    h.core.beforeStep = async (step, turnId) => { if (step === 'model' && turnId === q.turnId) await gate }
+    h.push(p.turnId, ev.started(), Q_EVENT('tu_race_b'), ev.checkpoint(2, 'u2', 1), ev.success())
+    await settle()
+    h.push(p.turnId, ev.released(cp))
+    await settle()
+    // The turn queued behind the asking turn is claimed into the waiting chat and held mid-start.
+    expect(h.turn(q.turnId).state).toBe('starting')
+    const r = ok(await h.core.resumeDeferred('c-race-b', 'allow', qid(p.turnId)))
+    open()
+    await settle()
+    expect(h.turn(q.turnId)).toMatchObject({ state: 'cancelled', cancel_why: 'session_unusable' })
+    expect(['starting', 'live']).toContain(h.turn(r.turnId).state)
+  }))
+})
+
+describe('expiry in a trashed chat survives a transient failure (review round 2)', () => {
+  it("the resume's D1 read throws once: the retry still gives the wait up and withdraws the question", () => inAgent(async h => {
+    h.core.setOnDeferred(questionOnDeferred)
+    await d1Chat('c-trash-flaky', MEMBER)
+    const a = await ask(h, 'c-trash-flaky', { question: 'Which?', options: OPTIONS })
+    const id = qid(a.turnId)
+    await d1Chat('c-trash-flaky', MEMBER, h.clock.now)
+    // The resume's chat read (core.ts `chatGone`) fails once, at the expiry.
+    const down = Promise.reject(new Error('D1 down'))
+    down.catch(() => {})
+    h.chatCheck.gate = down
+    await h.tick(QUESTION_TTL_MS)
+    h.chatCheck.gate = null
+    // The task's retry (the scheduler's backoff).
+    await h.tick(10 * 60 * SEC)
+    expect(await row(id)).toMatchObject({ state: 'closed', answer: null })
+    expect(waitingQuestionOf(h.sql, 'c-trash-flaky')).toBeNull()
+    expect(await lines('question.expired', id)).toEqual([])
+    expect(resumes(h, id)).toBe(0)
+  }))
+})

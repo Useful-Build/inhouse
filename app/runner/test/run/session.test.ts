@@ -665,6 +665,27 @@ describe('the run lifecycle', () => {
     expect(h.events().at(-1)).toMatchObject({ reason: 'sdk_error' })
   })
 
+  it('the "" resume: a stream with no message, held open until the result, then ended (one deferred call, no turn of its own)', async () => {
+    let afterResult: IteratorResult<SDKUserMessage> | null = null
+    const q = scriptedQuery(async function* ({ prompt }) {
+      expect(typeof prompt).not.toBe('string')
+      const it = (prompt as AsyncIterable<SDKUserMessage>)[Symbol.asyncIterator]()
+      let ended = false
+      const next = it.next().then((r) => ((ended = true), r))
+      yield assistant
+      for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r))
+      // Still open while the resumed call runs: an input that ended at once would leave the deferred tool unavailable.
+      expect(ended).toBe(false)
+      yield result
+      afterResult = await next
+    })
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: config({ resume: true, prompt: '', expect: { mainEntries: 1, lastUuid: null, lastUuidIndex: null } }) })
+    await h.done
+    // Ended by the result, with no message ever sent.
+    expect(afterResult).toEqual({ done: true, value: undefined })
+  })
+
   it('the prompt stream stays open until the result, then ends (so the SDK ends the run)', async () => {
     let afterResult: IteratorResult<SDKUserMessage> | null = null
     const q = scriptedQuery(async function* ({ prompt }) {
