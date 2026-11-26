@@ -102,6 +102,11 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   // container serves several sessions at once), so no row is a person's; it goes by age in 30 days.
   egress_fetches: { action: 'keep', why: 'no member id: the egress knows the container, not the run; retention removes rows after 30 days. A host can carry data in a subdomain from a refused exfil attempt: kept 30 days, ops-only and not exported. A host over 253 characters is not recorded, only logged' },
   // P8a F2: a privacy request names a Shopify customer by Shopify id, never a member; its ids go when the runbook closes it.
+  // Stage 1 M2-A. The person's own grants go (they were revoked when the person was removed); a grant someone else holds
+  // keeps who granted or revoked it, pseudonymous once their row is. The ceiling keeps who last changed it.
+  permission_ceiling: { action: 'keep', why: 'the brand\'s ceiling: updated_by stays pseudonymous', kept: ['updated_by'] },
+  permission_grants: { action: 'delete_rows', column: 'holder_member', kept: ['granted_by', 'revoked_by'] },
+  permission_uses: { action: 'keep', why: 'no member id: a grant\'s day counter by action and grant id; retention removes it' },
   privacy_requests: { action: 'keep', why: 'no member id: a Shopify customer by Shopify id only, cleared when the request is closed (route 94); the topic and dates stay as the record that it was answered' },
 }
 

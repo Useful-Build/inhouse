@@ -116,6 +116,43 @@ const REQUEST_STATUS = { done: 'marked a request done', declined: 'declined a re
 
 const hours = (h: number) => (h === 1 ? '1 hour' : `${h} hours`)
 
+/** Stage 1 M2: what each write operation does, as a person reads it (the audit log and the permissions list). */
+export const OPERATION_TITLE: Readonly<Record<'shopify.order.tag_add' | 'slack.channel.post', string>> = {
+  'shopify.order.tag_add': 'Add tags to orders',
+  'slack.channel.post': 'Post messages to a channel',
+}
+const OPERATION_TOOL = { 'shopify.order.tag_add': 'Shopify', 'slack.channel.post': 'Slack' } as const
+const operation = (op: keyof typeof OPERATION_TITLE) => `${OPERATION_TITLE[op]} in ${OPERATION_TOOL[op]}`
+const REVOKED: Record<string, string> = {
+  member_removed: 'its holder left the team',
+  role_lowered: 'its holder’s role changed',
+  account_disconnected: 'the tool was disconnected',
+  account_reconnected: 'the tool was connected again',
+  restore: 'the brand’s data was restored from a backup',
+}
+const GUARDRAIL: Record<string, string> = {
+  money: 'it moves money', customer: 'it reaches a customer', destructive: 'it can’t be undone', access: 'it changes who has access',
+  bulk: 'it changes more than 5 records', count: 'today’s allowance is used up', unreviewed: 'it isn’t reviewed yet', browser: 'it uses the browser',
+}
+const LAPSED: Record<string, string> = {
+  paused: 'the agent was paused', restore_hold: 'the brand’s data was being restored', expired: 'no one answered in 7 days',
+  over_ceiling: 'this kind of action is turned off', policy_changed: 'the rules changed', account_changed: 'the tool’s connection changed',
+  asker_removed: 'the person who asked left the team', approver_not_allowed: 'the approver can no longer approve it',
+  channel_not_listed: 'the channel isn’t listed any more', permission_removed: 'the permission was removed', count: 'today’s allowance is used up',
+}
+const NEEDS_CHECK: Record<string, string> = {
+  timeout: 'no answer in time', unknown: 'the tool couldn’t say whether it went out', thrown: 'the call broke off',
+  bad_result: 'the answer couldn’t be read', stale: 'it was sending for too long',
+}
+/** Why a send failed, from the hub's closed codes; any other code says the tool couldn't do it. */
+const FAILED: Record<string, string> = {
+  not_configured: 'writing to the tool isn’t set up', paused: 'the tool is paused', credentials_rejected: 'the tool refused the sign-in',
+  scope_mismatch: 'the connection can’t do this', upstream_rejected: 'the tool refused it', upstream_unavailable: 'the tool couldn’t be reached',
+  rate_limited: 'the tool asked to slow down', connect_stale: 'the tool’s connection changed', invalid_args: 'the tool refused the details',
+}
+const QUESTION_ASKED = { owner: 'Asked the person in the chat', creator: 'Asked the routine’s creator', admins: 'Asked the admins' } as const
+const ANSWERED = { once: 'allowed an action once', always: 'allowed an action and said always allow', approve: 'approved an action', deny: 'declined an action' } as const
+
 /** `name(id)`: the member's current name, or null when the id names no member. */
 export function auditText(args: AuditArgs, name: (memberId: string) => string | null): AuditText {
   const who = (id: string) => name(id) ?? 'Former member'
@@ -197,6 +234,27 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'brand_skill.created': return { what: 'made a skill in a chat', detail: '' }
     case 'brand_skill.changed': return { what: 'changed a skill in a chat', detail: '' }
     case 'brand_skill.deleted': return { what: 'deleted a skill', detail: '' }
+    // Stage 1 M2. Never an action's arguments, a card's words, a question or its answer: the lines hold none.
+    case 'permission.granted':
+      return { what: 'let the agent act without asking', detail: args.holder === 'brand' ? `${operation(args.operation)}, for the whole team` : operation(args.operation) }
+    case 'permission.revoked':
+      return args.reason === 'removed'
+        ? { what: 'removed a permission', detail: operation(args.operation) }
+        : { what: 'a permission ended', detail: `${operation(args.operation)}: ${REVOKED[args.reason]}` }
+    case 'action.requested':
+      if (args.verdict === 'run') return { what: 'the agent acted under a permission', detail: operation(args.operation) }
+      return { what: 'the agent asked for an approval', detail: args.guardrail ? `${operation(args.operation)}: needs an exact approval, ${GUARDRAIL[args.guardrail]}` : operation(args.operation) }
+    case 'action.answered': return { what: ANSWERED[args.choice], detail: '' }
+    case 'action.undone': return { what: 'undid an action before it went out', detail: '' }
+    case 'action.withdrawn': return { what: args.by === 'agent' ? 'the agent withdrew an action' : 'withdrew an action', detail: '' }
+    case 'action.lapsed': return args.reason === 'expired' ? { what: 'an action expired', detail: LAPSED.expired } : { what: 'an approval lapsed', detail: LAPSED[args.reason] }
+    case 'action.sent': return { what: 'an action went out', detail: '' }
+    case 'action.failed': return { what: 'an action didn’t go out', detail: FAILED[args.code] ?? 'the tool couldn’t do it' }
+    case 'action.needs_check': return { what: 'an action needs a check', detail: NEEDS_CHECK[args.why] }
+    case 'action.resolved': return { what: args.outcome === 'sent' ? 'confirmed an action went out' : 'confirmed an action didn’t go out', detail: '' }
+    case 'question.asked': return { what: 'the agent asked a question', detail: QUESTION_ASKED[args.askedOf] }
+    case 'question.answered': return { what: 'answered a question', detail: '' }
+    case 'question.expired': return { what: 'a question expired', detail: 'No one answered in 7 days' }
     case 'data.exported': return { what: 'downloaded all brand data', detail: `${String(args.items).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} ${args.items === 1 ? 'item' : 'items'}` }
   }
 }

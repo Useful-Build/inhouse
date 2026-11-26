@@ -86,6 +86,11 @@ export const TABLE_RULES: readonly TableRule[] = [
   { name: 'egress_fetches', orderBy: ['n'], mode: 'append_only' },
   // P8a F2: a few rows a year, and closing one updates it, so a whole snapshot.
   { name: 'privacy_requests', orderBy: ['id'], mode: 'snapshot' },
+  // Stage 1 M2-A: the ceiling and the grants are small and updated (a revoke), so whole snapshots; a grant's holder
+  // references members. The uses are updated too (a release) and grow with every grant-backed send: paged.
+  { name: 'permission_ceiling', orderBy: ['operation'], mode: 'snapshot' },
+  { name: 'permission_grants', orderBy: ['id'], mode: 'snapshot', after: ['members'] },
+  { name: 'permission_uses', orderBy: ['id'], mode: 'paged', createdColumn: 'at_ms' },
 ]
 
 /** A name that goes into SQL as a quoted identifier: letters, digits and `_` only. */

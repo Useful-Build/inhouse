@@ -60,6 +60,10 @@ import type { DataExportStore } from '../data-access/store.ts'
 import { privacyRequestStore } from '../webhooks/shopify-privacy/store.ts'
 import type { PrivacyRequestStore } from '../webhooks/shopify-privacy/store.ts'
 
+// Stage 1 M2-A's slot.
+import { permissionStore } from '../permissions/grants.ts'
+import type { PermissionStore } from '../permissions/grants.ts'
+
 export interface Stores extends AuthStores {
   members: MemberDirectory & MemberStore
   grants: GrantStore & GrantStoreImpl
@@ -116,6 +120,9 @@ export interface Stores extends AuthStores {
 
   /** P8a D: Data and access's Export everything (route 95), C1's brand export as one streamed download. */
   dataExport: DataExportStore
+
+  /** Stage 1 M2-A: a person's "Always allow" permissions (routes 110 and 111). */
+  permissions: PermissionStore
 }
 
 /** What the stores read from the Worker's env. `AUDIT_HASH_KEY` is a secret on the product Worker (a var in the test build). */
@@ -195,5 +202,7 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
     brandSkills: brandSkillStore({ db }),
 
     dataExport: dataExportStore({ db, bucket: env.FILES }),
+
+    permissions: permissionStore({ db, hook }),
   }
 }

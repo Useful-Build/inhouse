@@ -126,6 +126,14 @@ export const BRAND_FOR_CALLER: Readonly<Record<string, CallerPolicy>> = {
     project: ({ rev, updated_at_ms }) => ({ rev, updated_at_ms }),
   },
   brand_skills: { kind: 'whole', why: 'route 84: brand data' },
+  // Stage 1 M2-A. The ceiling holds no person's data beyond who changed it. Route 110 shows an Admin every grant and the
+  // Inhouse team none, so the grants go to a person (route 95's only person is an Admin) and not to the Inhouse team.
+  permission_ceiling: { kind: 'whole', why: 'brand configuration: which writes exist and their daily ceiling' },
+  permission_grants: {
+    kind: 'rows',
+    why: 'route 110: an Admin sees every grant; the Inhouse team sees none',
+    where: c => (person(c) ? { where: '1', params: [] } : null),
+  },
 }
 
 /** P5 stores excluded from every export by the registry. */

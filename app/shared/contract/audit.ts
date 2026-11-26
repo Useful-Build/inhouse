@@ -5,6 +5,10 @@ import { pageOf } from './paging.ts'
 import { GrantHoursSchema, GrantIdSchema } from './grants.ts'
 import { FileIdSchema, RunIdSchema } from './chat-ids.ts'
 import { MemberIdSchema, MemberRoleSchema } from './members.ts'
+import { ActionChoiceSchema, ActionIdSchema, ActionResolutionSchema } from './actions.ts'
+import { GuardrailSchema, PermissionIdSchema } from './permissions.ts'
+import { QuestionIdSchema } from './questions.ts'
+import type { WriteOperationKey } from '../../hub/index/contract.ts'
 import { SettingKeySchema, SettingScopeSchema, SettingValueSchema, settingSpec } from './settings.ts'
 
 /** An audit row formatted for display, also used by the demo. */
@@ -50,6 +54,12 @@ export const AuditActionSchema = z.enum([
   'brand_skill.created', 'brand_skill.changed', 'brand_skill.deleted',
   // P8a D (route 95): an Admin, or the Inhouse team under a live grant, downloaded the brand's whole export.
   'data.exported',
+  // Stage 1 M2 (N18; M2-A defines them all, the outbox and the questions write most): a permission ("Always allow")
+  // made or revoked; an action the agent proposed, through its whole life; a question to a person.
+  'permission.granted', 'permission.revoked',
+  'action.requested', 'action.answered', 'action.undone', 'action.withdrawn', 'action.lapsed', 'action.sent', 'action.failed',
+  'action.needs_check', 'action.resolved',
+  'question.asked', 'question.answered', 'question.expired',
 ])
 export type AuditAction = z.infer<typeof AuditActionSchema>
 
@@ -180,6 +190,33 @@ export const TeamRequestStatusChangeSchema = z.enum(['done', 'declined', 'withdr
 /** A brand skill: `bs_` + 128 random bits (the brand skills store makes it). Never its name, description or text. */
 export const BrandSkillIdSchema = z.string().regex(new RegExp(`^bs_${RANDOM}$`))
 
+// ---------- Stage 1 M2's argument shapes (N10, N18): ids, closed codes and counts; never an argument, a card's words,
+// a question or an answer's text ----------
+/** A write operation's key, written out (the client bundle imports nothing from the hub); the hub's `WRITE_OPERATIONS`. */
+export const WriteOperationArgSchema = z.enum(['shopify.order.tag_add', 'slack.channel.post'])
+// Fails the typecheck when the two lists differ, either way.
+const sameOperations: [z.infer<typeof WriteOperationArgSchema>, WriteOperationKey] extends [WriteOperationKey, z.infer<typeof WriteOperationArgSchema>] ? true : never = true
+void sameOperations
+/** A scope as one key (server/permissions/resolve.ts `scopeKeyOf`): `name=value` pairs, URI-encoded, joined by `&`. */
+export const ScopeKeyArgSchema = z.string().regex(/^[A-Za-z0-9%._~-]+=[A-Za-z0-9%._~-]{1,200}(?:&[A-Za-z0-9%._~-]+=[A-Za-z0-9%._~-]{1,200}){0,7}$/)
+/** Why a live permission was revoked (server/permissions/policy.ts `REVOKE_REASONS`). */
+export const RevokeReasonSchema = z.enum(['removed', 'member_removed', 'role_lowered', 'account_disconnected', 'account_reconnected', 'restore'])
+/**
+ * Why an approval lapsed, or a waiting card expired (N11, N12): the brand paused or a restore held the outbox; or, at
+ * the claim, the operation is off, the policy changed, the account changed, the asker or the approver can't any
+ * more, the channel isn't listed, the permission is gone, its use for the day is spent.
+ */
+export const LapseReasonSchema = z.enum([
+  'paused', 'restore_hold', 'expired', 'over_ceiling', 'policy_changed', 'account_changed', 'asker_removed', 'approver_not_allowed',
+  'channel_not_listed', 'permission_removed', 'count',
+])
+/** A failed send's code: the hub's closed error codes (app/hub/index/contract.ts `HubErrorCode`), never upstream text. */
+export const ActionFailCodeSchema = ConnectOutcomeSchema.exclude(['ok'])
+/** Why a send needs a person's check: no answer in time, the hub wasn't sure, the call threw, the answer didn't parse, the sending row went stale. */
+export const NeedsCheckWhySchema = z.enum(['timeout', 'unknown', 'thrown', 'bad_result', 'stale'])
+const ACTION_RECORDS = z.number().int().min(1).max(1_000_000)
+const ACTION_ATTEMPT = z.number().int().min(1).max(1000)
+
 const line = <A extends AuditAction, S extends z.ZodRawShape>(action: A, shape: S) => z.object({ action: z.literal(action), ...shape }).strict()
 const member = { memberId: MemberIdSchema }
 
@@ -304,6 +341,33 @@ const otherLines = [
   // P8a D (route 95). Counts only: how many stores and how many rows and files the export planned. Never a store's
   // name, a row, a file name or anything a row holds.
   line('data.exported', { scope: z.literal('brand'), stores: z.number().int().min(0).max(1000), items: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) }),
+  // Stage 1 M2 (N10, N18). Ids, the operation, the scope key, closed codes and counts only.
+  /** "Always allow" made a permission. `actionId`: the answer that made it (absent for one made another way). */
+  line('permission.granted', {
+    permissionId: PermissionIdSchema, operation: WriteOperationArgSchema, accountId: ConnectorAccountIdSchema, scopeKey: ScopeKeyArgSchema,
+    holder: z.enum(['member', 'brand']), perDay: z.number().int().min(1).max(100_000), actionId: ActionIdSchema.optional(),
+  }),
+  line('permission.revoked', { permissionId: PermissionIdSchema, operation: WriteOperationArgSchema, reason: RevokeReasonSchema }),
+  /** `permissionId`: a `run` under that permission, its use reserved with the action. */
+  line('action.requested', {
+    actionId: ActionIdSchema, operation: WriteOperationArgSchema, verdict: z.enum(['run', 'ask', 'exact']), guardrail: GuardrailSchema.optional(),
+    origin: z.enum(['chat', 'job', 'routine']), records: ACTION_RECORDS, units: ACTION_RECORDS, permissionId: PermissionIdSchema.optional(),
+  }),
+  /** `permissionId`: the permission an "Always allow" made or found, whose use this action reserved. */
+  line('action.answered', { actionId: ActionIdSchema, choice: ActionChoiceSchema, permissionId: PermissionIdSchema.optional() }),
+  /** `released`: the action's reserved use was given back. */
+  line('action.undone', { actionId: ActionIdSchema, released: z.boolean() }),
+  line('action.withdrawn', { actionId: ActionIdSchema, by: z.enum(['member', 'agent']) }),
+  line('action.lapsed', { actionId: ActionIdSchema, reason: LapseReasonSchema, released: z.boolean() }),
+  line('action.sent', { actionId: ActionIdSchema, attempt: ACTION_ATTEMPT }),
+  line('action.failed', { actionId: ActionIdSchema, attempt: ACTION_ATTEMPT.optional(), code: ActionFailCodeSchema, released: z.boolean() }),
+  line('action.needs_check', { actionId: ActionIdSchema, attempt: ACTION_ATTEMPT, why: NeedsCheckWhySchema }),
+  /** A person said whether a "Needs a check" action went out. `released`: "it didn't" gave the use back. */
+  line('action.resolved', { actionId: ActionIdSchema, outcome: ActionResolutionSchema, released: z.boolean() }),
+  /** `askedOf`: the chat's owner, the routine's creator, or every admin (a routine whose creator is gone). No member id. */
+  line('question.asked', { questionId: QuestionIdSchema, askedOf: z.enum(['owner', 'creator', 'admins']), options: z.number().int().min(2).max(4) }),
+  line('question.answered', { questionId: QuestionIdSchema }),
+  line('question.expired', { questionId: QuestionIdSchema }),
 ] as const
 
 /**
