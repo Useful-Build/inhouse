@@ -460,6 +460,7 @@ describe('fail closed on capture and check failures', () => {
     const records: FetchRecord[] = []
     const later: Promise<unknown>[] = []
     const res = await handleWebFetch(new Request('https://docs.example.com/clean'), {
+      fetchOn: async () => true,
       hostList: async () => 'docs.example.com',
       checkLeak: async () => { throw new Error('d1 unreachable') },
       fetch: (async (input: RequestInfo | URL) => {
@@ -501,6 +502,7 @@ describe('end-to-end on real D1: /hub/ read then WebFetch to a listed host', () 
 
     const networkCalls: string[] = []
     const fetchRes = await handleWebFetch(new Request('https://docs.example.com/lookup?order=5550000001001'), {
+      fetchOn: async () => true,
       hostList: async () => 'docs.example.com',
       checkLeak: u => store.checkUrl(u),
       fetch: (async (input: RequestInfo | URL) => {

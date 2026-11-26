@@ -163,7 +163,7 @@ async function routeEgress(request: Request, d: EgressDeps, opts: EgressOptions)
   }
 }
 
-/** The brand's technical settings the egress reads (`tm:*` and `t:websearch` for the model gate). */
+/** The brand's settings the egress reads: the technical `tm:*` and the brand's `t:websearch` switch (an Admin's, M1-F) for the model gate. */
 export async function brandSettings(db: D1Database): Promise<SettingsView> {
   const rows = await db.prepare("SELECT key, value_json FROM settings WHERE owner = 'brand' AND (key LIKE 'tm:%' OR key = 't:websearch')").all<{ key: string; value_json: string }>()
   const out: Record<string, string | boolean | null> = {}

@@ -2,15 +2,19 @@
 // expected value is a literal from the catalogue's published ids and the settings keys of design 4.9. Ways it can fail:
 // an unknown model isn't `invalid`; a switched-off model runs; the effort, side model, turn budget or WebFetch hosts
 // don't follow the settings; a broken stored host list allows any host instead of none; an empty or missing list allows
-// any host (P8a S: it allows none); web search is on without the Inhouse team's `t:websearch` switch (P8a S).
+// any host (P8a S: it allows none); web search is on without the brand's `t:websearch` switch; a fetch host is left
+// while the brand's `t:webfetch_on` is off (M1-F: both switches are brand settings, so both scopes are read).
 import { describe, expect, it } from 'vitest'
 import type { SettingRecord } from '../../shared/contract/settings.ts'
+import { settingSpec } from '../../shared/contract/settings.ts'
 import { resolveTurnSettings } from './runs.ts'
 
-const store = (values: Record<string, string>) => ({
+/** The settings store: each value listed under its own key's scope, as the real store lists them. */
+const store = (values: Record<string, unknown>) => ({
   list: async (owner: string, scope: string) => {
-    expect([owner, scope]).toEqual(['brand', 'technical'])
-    return Object.entries(values).map(([key, value]): SettingRecord => ({ key, value, rev: 1, updatedAt: null, updatedBy: null }))
+    expect(owner).toBe('brand')
+    expect(['brand', 'technical']).toContain(scope)
+    return Object.entries(values).filter(([key]) => settingSpec(key)?.scope === scope).map(([key, value]): SettingRecord => ({ key, value: value as SettingRecord['value'], rev: 1, updatedAt: null, updatedBy: null }))
   },
 })
 
@@ -23,9 +27,14 @@ describe('resolveTurnSettings (F)', () => {
   })
 
   it('web search only with the switch on (true); anything else is off', async () => {
-    const value = (v: unknown) => ({ list: async () => [{ key: 't:websearch', value: v, rev: 1, updatedAt: null, updatedBy: null } as SettingRecord] })
-    expect(await resolveTurnSettings(value(true), 'sonnet')).toMatchObject({ webSearch: true })
-    for (const v of [false, null, 'true', 'on', 1]) expect(await resolveTurnSettings(value(v), 'sonnet'), String(v)).toMatchObject({ webSearch: false })
+    expect(await resolveTurnSettings(store({ 't:websearch': true }), 'sonnet')).toMatchObject({ webSearch: true })
+    for (const v of [false, null, 'true', 'on', 1]) expect(await resolveTurnSettings(store({ 't:websearch': v }), 'sonnet'), String(v)).toMatchObject({ webSearch: false })
+  })
+
+  it('reading web pages off leaves no fetch host whatever the list; on, reset or missing lets the list decide', async () => {
+    const hosts = 'example.com\ndocs.example.org'
+    for (const v of [false, 'false', 0, 'off']) expect(await resolveTurnSettings(store({ 't:webfetch': hosts, 't:webfetch_on': v }), 'sonnet'), String(v)).toMatchObject({ webFetchDomains: [] })
+    for (const v of [true, null, undefined]) expect(await resolveTurnSettings(store({ 't:webfetch': hosts, ...(v === undefined ? {} : { 't:webfetch_on': v }) }), 'sonnet'), String(v)).toMatchObject({ webFetchDomains: ['example.com', 'docs.example.org'] })
   })
 
   it('follows the settings: effort label, Haiku off, the turn budget and a host list', async () => {

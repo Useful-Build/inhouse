@@ -302,9 +302,10 @@ Settings: dropdowns and fields
 
 Settings: Inhouse agent web tools
   Path:     Settings -> Inhouse agent
-  Selector: Websites it may open, Search the web
-  Expected: an empty host list blocks WebFetch and reads as "No websites" when read-only; WebSearch is off by default and has a separate switch
-  Covered:  server/api/resolve-turn.test.ts, server/egress/webfetch.test.ts, runner/test/guards/options.test.ts, src/screens/settings/hosts-field.test.ts
+  Selector: switches "Search the web" and "Read web pages", field "Websites it may open"
+  Expected: the two switches are brand settings (`t:websearch`, `t:webfetch_on`): an Admin or the Inhouse team flips them, a Member reads them as text and the server refuses a Member's write (403); Search the web is off by default, Read web pages on; off means no web request at all (the web egress reads `t:webfetch_on` before every hop, so a session already running and a redirect under way stop too, with zero DNS or page calls, and the model route refuses a web search tool), and a chat or routine turn resolves `webSearch: false` and no fetch host; which websites it may open stays the Inhouse team's (an Admin reads the list as text and can't widen it); an empty host list blocks WebFetch and reads as "No websites" when read-only; a web search value stored while it was a technical setting keeps its value and rev
+  Covered:  server/egress/web-switches.test.ts, server/api/resolve-turn.test.ts, server/api/settings.test.ts, server/egress/webfetch.test.ts, runner/test/guards/options.test.ts, src/screens/settings/hosts-field.test.ts, src/screens/settings/web-and-spend.test.ts, e2e/api/web-switches.spec.ts, e2e/real/product-settings.spec.ts
+  Gaps:     no container run proves a scripted WebFetch is refused with the switch off (the network-seam unit test does)
 
 Settings: Models
   Path:     Settings -> Models
@@ -363,9 +364,9 @@ Settings: Inhouse agent
 
 Settings: Spending cap
   Path:     Settings -> Spending cap
-  Selector: field "Monthly cap", dropdowns "Alert at" and "Show amounts in", button "Pause Inhouse agent"
-  Expected: Pause Inhouse agent (locked until Act, then as in Run limits) sits here in both builds, so the product can pause at Act and Run; only an Admin or the Inhouse team gets the button (a Member can't pause: the server refuses it); a cap and alert level show on Usage; a wrong amount says why and isn't saved; a cap below spend shows the cap banner and the capped state; the currency pick saves; values survive a reload; on a phone it reads as text
-  Covered:  e2e/cross-screen.spec.ts, e2e/edge-cases.spec.ts, e2e/data-states.spec.ts, e2e/page-details.spec.ts, e2e/sample-data.spec.ts, e2e/pages-polish-phone.spec.ts, e2e/phone.spec.ts
+  Selector: fields "Monthly cap" and "Job budget", dropdowns "Alert at" and "Show amounts in", button "Pause Inhouse agent"
+  Expected: the Job budget (`s:job_cap`, the most one long job may spend, $25 by default) takes $0.25 to $100: the field says "Enter an amount from $0.25 to $100." and doesn't save outside it, and the server refuses it too (400); only an Admin or the Inhouse team changes either amount (a Member reads both as text, and the server refuses a Member's write); Pause Inhouse agent (locked until Act, then as in Run limits) sits here in both builds, so the product can pause at Act and Run; only an Admin or the Inhouse team gets the button (a Member can't pause: the server refuses it); a cap and alert level show on Usage; a wrong amount says why and isn't saved; a cap below spend shows the cap banner and the capped state; the currency pick saves; values survive a reload; on a phone it reads as text
+  Covered:  e2e/cross-screen.spec.ts, e2e/edge-cases.spec.ts, e2e/data-states.spec.ts, e2e/page-details.spec.ts, e2e/sample-data.spec.ts, e2e/pages-polish-phone.spec.ts, e2e/phone.spec.ts, src/screens/settings/web-and-spend.test.ts, e2e/api/web-switches.spec.ts, e2e/real/product-settings.spec.ts
 
 Settings: Data and access
   Path:     Settings -> Data and access
