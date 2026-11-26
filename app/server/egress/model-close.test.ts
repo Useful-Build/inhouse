@@ -12,14 +12,14 @@ import { describe, expect, it } from 'vitest'
 import { gatewayUpstream } from './gateway.ts'
 import { FIRST_BYTE_TIMEOUT_MS, STREAM_IDLE_TIMEOUT_MS } from './model.ts'
 import { handleEgress } from './index.ts'
-import { egressRequest, harness, sseFeed, until } from './testing/harness.ts'
+import { egressRequest, harness, sseFeed, until, NO_CAPTURE } from './testing/harness.ts'
 import type { Harness } from './testing/harness.ts'
 
 const small = { model: 'claude-sonnet-5-5', max_tokens: 1000, messages: [{ role: 'user', content: 'hi' }] }
 const WORST = 10_090
 const ZERO = { inputTokens: 0, outputTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, cacheReadTokens: 0, webSearches: 0 }
 const call = (h: Harness, body: unknown = small, init: { signal?: AbortSignal; headers?: Record<string, string> } = {}) =>
-  handleEgress(egressRequest('/model/v1/messages', { body, ...init }), h.deps)
+  handleEgress(egressRequest('/model/v1/messages', { body, ...init }), h.deps, NO_CAPTURE)
 const releases = (h: Harness) => h.rpc.callsOf('releaseModelCall').map(c => c.args[2] as { usage: Record<string, number>; cut: boolean })
 const settle = (h: Harness) => Promise.all(h.waits)
 const sse = { headers: { 'content-type': 'text/event-stream' } }

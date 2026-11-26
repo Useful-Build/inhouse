@@ -18,6 +18,7 @@ import { badProxyPath } from '../proxy/server.ts'
 import type { Fetch } from '../store/adapter.ts'
 import { NotFollowed, closeDir, inDir, list, lstatIn, openBelow, openChild, openDir, readFileIn, type Dir } from './safe-dir.ts'
 import { badFileName } from '../../../shared/files/names.ts'
+import { FILE_TOO_MANY_TOKENS } from '../../../shared/protocol/file-refusals.ts'
 import { sniffType } from '../../../shared/files/sniff.ts'
 
 export const INPUTS = 'inputs'
@@ -152,6 +153,16 @@ function untilAborted<T>(p: Promise<T>, signal: AbortSignal | undefined): Promis
 }
 
 /** Makes the folder `name` in `dir` (if missing) and opens it; it must be a real folder. */
+/** A refused download's `error` field (null when its body isn't that JSON). */
+async function refusalOf(res: Response, signal: AbortSignal | undefined): Promise<string | null> {
+  const body: unknown = await untilAborted(res.json(), signal).catch((e: unknown) => {
+    if (signal?.aborted) throw e
+    return null
+  })
+  const error = typeof body === 'object' && body !== null ? (body as { error?: unknown }).error : undefined
+  return typeof error === 'string' ? error : null
+}
+
 async function makeChild(dir: Dir, name: string): Promise<Dir> {
   await mkdir(inDir(dir, name)).catch((e: NodeJS.ErrnoException) => {
     if (e.code !== 'EEXIST') throw e
@@ -217,6 +228,13 @@ export function createFiles(deps: { fetch: Fetch; proxyUrl: string; cwd: string;
             continue
           }
           const got = await untilAborted(deps.fetch(`${base}${url}`, { method: 'GET', signal }), signal)
+          // A text file with more tokens than the leak check tracks in one read isn't served (M1-G): left out, not a
+          // failed run, so one large CSV can't stop every later turn. Any other refusal still fails the restore.
+          if (got.status === FILE_TOO_MANY_TOKENS.status && (await refusalOf(got, signal)) === FILE_TOO_MANY_TOKENS.error) {
+            leftOut.push(f.path)
+            log({ type: 'file_restore_skipped', reason: 'too many tokens', bytes: f.bytes })
+            continue
+          }
           if (!got.ok) throw new Error(`file download: ${got.status}`)
           const body = new Uint8Array(await untilAborted(got.arrayBuffer(), signal))
           // The listing's size is what the budget counted; a body past it would overrun the cap.

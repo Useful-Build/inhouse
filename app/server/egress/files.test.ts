@@ -11,7 +11,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { createRunTokens } from '../do/brand-agent/tokens.ts'
 import { fileStore } from '../files-io/store.ts'
 import { handleEgress } from './index.ts'
-import { egressRequest, FakeEgressRpc, GRANT, harness } from './testing/harness.ts'
+import { egressRequest, FakeEgressRpc, GRANT, harness, NO_CAPTURE } from './testing/harness.ts'
 
 const db = env.DB
 const files = fileStore({ db, bucket: env.FILES })
@@ -34,7 +34,7 @@ const setup = async () => {
   return { grant, h }
 }
 const putFile = async (h: Awaited<ReturnType<typeof harness>>, path: string, body: string, hash?: string) =>
-  handleEgress(egressRequest(`/files/${path}`, { method: 'PUT', body, headers: { 'x-inhouse-sha256': hash ?? (await sha(body)), 'content-type': 'text/csv' } }), h.deps)
+  handleEgress(egressRequest(`/files/${path}`, { method: 'PUT', body, headers: { 'x-inhouse-sha256': hash ?? (await sha(body)), 'content-type': 'text/csv' } }), h.deps, NO_CAPTURE)
 const outputsOf = async (turnId: string) => (await db.prepare("SELECT COUNT(*) AS n FROM chat_files WHERE turn_id = ? AND kind = 'output'").bind(turnId).first<number>('n'))
 
 describe('PUT (failure 1)', () => {
@@ -69,7 +69,7 @@ describe('an R2 write that fails (failure 1)', () => {
     const { grant, h } = await setup()
     const sha1 = await sha('a,1\n')
     for (const headers of [{ 'content-length': '3' }, { 'content-length': '9' }]) {
-      const res = await handleEgress(egressRequest('/files/outputs/l.csv', { method: 'PUT', body: 'a,1\n', headers: { 'x-inhouse-sha256': sha1, ...headers } }), h.deps)
+      const res = await handleEgress(egressRequest('/files/outputs/l.csv', { method: 'PUT', body: 'a,1\n', headers: { 'x-inhouse-sha256': sha1, ...headers } }), h.deps, NO_CAPTURE)
       expect(res.status).toBe(400)
       expect(await res.json()).toEqual({ error: 'length_mismatch' })
     }
@@ -111,7 +111,7 @@ describe('a streamed PUT (p3-design 8.5, a streamed size)', () => {
   }
   const put = (h: Awaited<ReturnType<typeof harness>>, path: string, body: ReadableStream<Uint8Array>, declared: number, hash: string) =>
     // egressRequest's bodies are strings; a stream body goes on a copy of its request.
-    handleEgress(new Request(egressRequest(`/files/${path}`, { method: 'PUT', headers: { 'x-inhouse-sha256': hash, 'content-length': String(declared) } }), { body }), h.deps)
+    handleEgress(new Request(egressRequest(`/files/${path}`, { method: 'PUT', headers: { 'x-inhouse-sha256': hash, 'content-length': String(declared) } }), { body }), h.deps, NO_CAPTURE)
   it('3 MiB: the row records the literal hash and size, pending; R2 holds the bytes with that checksum', async () => {
     const { grant, h } = await setup()
     const res = await put(h, 'outputs/big.csv', stream(MiB3), MiB3, SHA_3MIB_C)
@@ -145,12 +145,12 @@ describe('pending until confirm (failure 2)', () => {
   it('a saved output is listed and served only after confirm', async () => {
     const { grant, h } = await setup()
     await putFile(h, 'outputs/r.csv', 'q,9\n')
-    const list = async () => (await handleEgress(egressRequest('/files/', { method: 'GET' }), h.deps)).json()
+    const list = async () => (await handleEgress(egressRequest('/files/', { method: 'GET' }), h.deps, NO_CAPTURE)).json()
     expect(await list()).toEqual({ files: [] })
-    expect((await handleEgress(egressRequest('/files/outputs/r.csv', { method: 'GET' }), h.deps)).status).toBe(404)
+    expect((await handleEgress(egressRequest('/files/outputs/r.csv', { method: 'GET' }), h.deps, NO_CAPTURE)).status).toBe(404)
     await files.confirm(grant.chatId, grant.turnId, 'outputs/r.csv', await sha('q,9\n'), 5)
     expect(await list()).toEqual({ files: [{ path: 'outputs/r.csv', bytes: 4 }] })
-    const got = await handleEgress(egressRequest('/files/outputs/r.csv', { method: 'GET' }), h.deps)
+    const got = await handleEgress(egressRequest('/files/outputs/r.csv', { method: 'GET' }), h.deps, NO_CAPTURE)
     expect(await got.text()).toBe('q,9\n')
     expect(got.headers.get('content-type')).toBe('text/csv')
   })
@@ -178,7 +178,7 @@ describe('scope on the real run tokens, files too (failure 3, acceptance 6)', ()
       const tokenB = await tokens.mint({ ...base, turnId: 't_fb', chatId: chatB, memberId: 'm_b' }, now)
       const h = await harness({ files, bucket: env.FILES, rpc: new FakeEgressRpc(tokens, () => now), newFileId: () => `f_s_${uniq()}` })
       const marker = 'secret,of-b\n'
-      expect((await handleEgress(egressRequest('/files/outputs/b.csv', { method: 'PUT', body: marker, token: tokenB, headers: { 'x-inhouse-sha256': await sha(marker) } }), h.deps)).status).toBe(201)
+      expect((await handleEgress(egressRequest('/files/outputs/b.csv', { method: 'PUT', body: marker, token: tokenB, headers: { 'x-inhouse-sha256': await sha(marker) } }), h.deps, NO_CAPTURE)).status).toBe(201)
       await files.confirm(chatB, 't_fb', 'outputs/b.csv', await sha(marker), now)
       const rowsB = async () => (await db.prepare('SELECT * FROM chat_files WHERE chat_id = ? ORDER BY id').bind(chatB).all()).results
       const before = await rowsB()
@@ -191,7 +191,7 @@ describe('scope on the real run tokens, files too (failure 3, acceptance 6)', ()
         for (const o of ops) {
           const body = o.method === 'PUT' ? 'from,a\n' : undefined
           const headers = o.method === 'PUT' ? { ...o.headers, 'x-inhouse-sha256': await sha('from,a\n') } : o.headers
-          const res = await handleEgress(egressRequest(o.path, { method: o.method, body, headers, token: tokenA }), h.deps)
+          const res = await handleEgress(egressRequest(o.path, { method: o.method, body, headers, token: tokenA }), h.deps, NO_CAPTURE)
           expect(await res.text()).not.toContain('of-b')
         }
         expect(await rowsB()).toEqual(before)
