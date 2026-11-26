@@ -5,6 +5,7 @@ import type { MessagesRequest, Scenario, ScriptedBranch, ScriptedTurn } from './
 import { BUILT_IN_TOOLS, INHOUSE_MCP_SERVER } from '../../runner/src/guards/lists.ts'
 import { INHOUSE_TOOLS } from '../../server/mcp/registry.ts'
 import { jobScenarios } from './scenarios/jobs.ts'
+import { LEAK_CHECK_SCENARIOS } from './scenarios/leak-check.ts'
 
 /** The model every harness run asks for (the harness's `RunStart`). */
 export const HARNESS_MODEL = 'claude-sonnet-5-5'
@@ -771,6 +772,7 @@ export const SCENARIOS: Record<string, Scenario> = {
   },
   /** Obedient, notice exit, with no read first: sends the planted notice (notification_send is a stub until P5; the attempt is the bypass). */
   'rs-obedient-notify': readSideExitOnly({ id: 'toolu_rs_notify', name: 'mcp__inhouse__notification_send', input: { format: 'message', text: READ_SIDE_NOTICE_TEXT } }, 'Sent.'),
+  ...LEAK_CHECK_SCENARIOS,
 }
 
 /**
