@@ -7,9 +7,11 @@
 //  5. `approval_withdraw` takes back another member's action, another chat's, or one that isn't waiting;
 //  6. a result or an audit line carries the model's arguments or the hub's output (results are fixed texts plus ids and
 //     the card's server words; audit lines hold ids only);
-//  7. a registry description promises a send or a wait (the descriptions are pinned here as literals).
+//  7. a registry description promises a send or a wait (the descriptions are pinned here as literals), or
+//     approval_request takes a free-text field the card never shows.
 import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { lastLineId, linesSince } from '../../../db/test-support.ts'
 import { POLICY_REV } from '../../../permissions/policy.ts'
 import { insertGrant, person } from '../../../permissions/test-support.ts'
@@ -244,5 +246,11 @@ describe('the registry (failure 7)', () => {
       { name: 'approval_list', alwaysLoad: false, annotations: { readOnlyHint: true }, description: "List this person's approvals, newest first, optionally by `status`, so you don't ask for the same thing twice." },
       { name: 'approval_withdraw', alwaysLoad: false, annotations: { destructiveHint: true }, description: "Take back an approval this chat asked for that's still waiting and no longer needed (for example, the stock arrived), by `approval_id`. It can't take back one the person already answered." },
     ])
+  })
+  it("approval_request takes only `operation` and `args`: no free-text note the card wouldn't show", () => {
+    const input = wired.approval_request!.input
+    expect(Object.keys((z.toJSONSchema(input, { io: 'input' }) as { properties: object }).properties).sort()).toEqual(['args', 'operation'])
+    expect(input.safeParse({ operation: 'shopify_order_tag_add', args: tagArgs(1) }).success).toBe(true)
+    expect(input.safeParse({ operation: 'shopify_order_tag_add', args: tagArgs(1), note: 'Dear Anna, sorry for the delay.' }).success).toBe(false)
   })
 })

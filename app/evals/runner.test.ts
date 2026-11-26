@@ -77,8 +77,9 @@ describe('the fixture target replays S5', () => {
     expect(out.notRun.map((n) => n.id).sort()).toEqual(['C-CODEMODE-01', 'C-CODEMODE-02', 'C-CODEMODE-03', 'C-CODEMODE-04', 'C-SLACK-01', 'CAP-01', 'CAP-02', 'CAP-03', 'X01', 'X02', 'X03', 'X04', 'X05', 'X06', 'X07', 'X08', 'X09'])
     const report = buildReport(CASES, out.rows, META)
     // T09 and T11 (r1-r3) flip to fail: S5 recorded its own mock tools' inputs (to: [ids], schedule: "weekdays 06:00"),
-    // and the cases now follow P4/P5's real schemas (to.members, days and time; line B), which S5 never served.
-    expect(report.summary.all).toMatchObject({ runs: 129, pass: 119 })
+    // and the cases now follow P4/P5's real schemas (to.members, days and time; line B), which S5 never served. T07 r1-r3
+    // and T08 r2 flip the same way: S5 asked through a free-text `action`; M2-E's approval_request takes `{ operation, args }`.
+    expect(report.summary.all).toMatchObject({ runs: 129, pass: 115 })
   })
 })
 

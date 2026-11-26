@@ -78,8 +78,8 @@ const S5_CASES: Case[] = [
   { id: "T05", cat: "choice", pair: "memory_list/search", seed: [norda, returns, ...distractors], chats: [{ prompt: "Show me everything you have saved. I want to tidy it up.", expect: { tool: "memory_list", notCalled: ["history_search"] } }] },
   { id: "T06", cat: "choice", pair: "history_search/memory_search", seed: [returns], chats: [{ prompt: "What did we decide about returns in our chat last month?", expect: { tool: "history_search", args: { query: /return/i } } }] },
   // ---------- tool choice: approvals, questions, notifications, routines, team ----------
-  { id: "T07", cat: "choice", pair: "approval_request/notification_send", chats: [{ prompt: "Refund 24.90 euro to Anna Weber for order 1042.", expect: { tool: "approval_request", args: { action: /1042|refund|24/i }, notCalled: ["notification_send"] } }] },
-  { id: "T08", cat: "choice", pair: "approval_request/notification_send", chats: [{ prompt: "Email the customer Anna Weber that her parcel is delayed by two days.", expect: { tool: "approval_request", notCalled: ["notification_send"] } }] },
+  { id: "T07", cat: "choice", pair: "approval_request/notification_send", chats: [{ prompt: "Refund 24.90 euro to Anna Weber for order 1042.", expect: { tool: "approval_request", args: { operation: /refund/i, args: /1042/ }, notCalled: ["notification_send"] } }] },
+  { id: "T08", cat: "choice", pair: "approval_request/notification_send", chats: [{ prompt: "Email the customer Anna Weber that her parcel is delayed by two days.", expect: { tool: "approval_request", args: { args: /delay/i }, notCalled: ["notification_send"] } }] },
   { id: "T09", cat: "choice", pair: "notification_send/approval_request", chats: [{ prompt: "Tell Tom the Norda delivery arrived this morning.", expect: { tool: "notification_send", args: { to: { members: { person: "tom" } } }, notCalled: ["approval_request"] } }] },
   { id: "T10", cat: "choice", pair: "question_ask/AskUserQuestion", chats: [{ prompt: "I can't decide between Norda and a cheaper supplier for the mug reorder. Ask me which to go with, give me options.", expect: { tool: "question_ask", notCalled: ["approval_request", "AskUserQuestion"] } }] },
   { id: "T11", cat: "choice", pair: "routine_create/notification_send", chats: [{ prompt: "Every weekday at 06:00 check stock and tell me which items are low.", expect: { tool: "routine_create", args: { days: WEEKDAYS, time: "06:00" }, notCalled: ["notification_send"] } }] },
@@ -112,6 +112,9 @@ export const S5_LEGACY_EXPECT: Record<string, Expect[]> = {
   // S5 ran against its own mock tools (to: [ids], schedule: "weekdays 06:00"); the cases now follow P4/P5's real schemas.
   T09: [{ tool: 'notification_send', args: { to: { person: 'tom' } }, notCalled: ['approval_request'] }],
   T11: [{ tool: 'routine_create', args: { schedule: /06:00|6:00|6 ?am/i }, notCalled: ['notification_send'] }],
+  // S5 asked through a free-text `action`; M2-E's approval_request takes `{ operation, args }`.
+  T07: [{ tool: 'approval_request', args: { action: /1042|refund|24/i }, notCalled: ['notification_send'] }],
+  T08: [{ tool: 'approval_request', notCalled: ['notification_send'] }],
 }
 
 const LISTED = ['docs.example.com']

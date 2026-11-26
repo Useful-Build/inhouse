@@ -37,7 +37,6 @@ export const LIST_MAX = 50
 const RequestInput = z.object({
   operation: z.string().min(1).max(64).describe('The name of the write tool this action would use, for example shopify_order_tag_add.'),
   args: z.record(z.string(), z.unknown()).describe("That write tool's arguments, exactly as you would pass them to it."),
-  note: z.string().min(1).max(500).optional().describe("Why you're asking, for your own context. It isn't shown on the card or stored: the card uses Inhouse's own words."),
 }).strict()
 export type ApprovalRequestInput = z.output<typeof RequestInput>
 
