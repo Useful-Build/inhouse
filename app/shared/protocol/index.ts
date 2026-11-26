@@ -2,7 +2,10 @@
 // runner with the runner's own zod (the zod-major check keeps them one dialect).
 //
 // Unknown fields: every object here is strict, so a field the other side doesn't know fails the parse loudly. Any change
-// to a schema bumps PROTOCOL_VERSION; a side that still accepts the previous version keeps that version's schemas.
+// to a schema bumps PROTOCOL_VERSION; a side that still accepts the previous version keeps that version's schemas. An
+// additive optional field gets a `<NAME>_VERSION` gate (as `BRAND_SKILLS_VERSION`): no side sends it below that version,
+// so one schema reads both. A field may land before its version does (`HELPERS_VERSION`): then the gate is above
+// PROTOCOL_VERSION, nothing can send it, and the PR whose side first acts on it bumps PROTOCOL_VERSION to the gate.
 // The one open shape is the SDK message inside an `sdk` event, passed through as data.
 import { z } from 'zod'
 import { badFileName } from '../files/names.ts'
@@ -17,6 +20,15 @@ export const PROTOCOL_VERSION = 3
 export const ACCEPTED_VERSIONS: readonly number[] = [PROTOCOL_VERSION, 2]
 /** The first version whose `RunStart` may carry `brandSkills`. */
 export const BRAND_SKILLS_VERSION = 3
+/**
+ * The first version whose `RunStart` may carry `agents`, `subagentModel` and `actions`, and whose `AuditEntry` may carry
+ * `agentId` and `inputSha256` (Stage 1, N6 and N14). It is above PROTOCOL_VERSION on purpose: the schemas read the keys
+ * now, but no side may send them until v4 exists, so a skewed pair (an older strict peer) never sees one. M1-E, the first
+ * PR whose runner acts on them, bumps PROTOCOL_VERSION to 4 (accepting [4, 3]); the Worker drops the start's three for a
+ * runner below it (as `brandSkills` for v2 in `server/do/runner/runner.ts`), and the runner sends the entry's two only
+ * when it talks 4.
+ */
+export const HELPERS_VERSION = 4
 /** Every request to the runner (except the discovery routes `/protocol` and `/health`) carries this header. */
 export const PROTOCOL_HEADER = 'x-inhouse-protocol'
 
@@ -144,6 +156,32 @@ function checkLastUuid(v: { mainEntries: number; lastUuid: string | null; lastUu
   if (v.lastUuidIndex !== null && v.lastUuidIndex >= v.mainEntries) ctx.addIssue({ code: 'custom', path: ['lastUuidIndex'], message: 'lastUuidIndex is past mainEntries' })
 }
 
+/** The helpers' names (Stage 1, N6). The runner owns each one's tool list (`guards/agents.ts`); the server can't widen it. */
+export const HELPER_NAMES = ['researcher', 'analyst'] as const
+export type HelperName = (typeof HELPER_NAMES)[number]
+/**
+ * The caps on one helper's words, in UTF-8 bytes. With no control character but a newline or tab, JSON writes each byte
+ * at most twice over, so both helpers at their caps add under 19 KiB to a start, which keeps a start at every field's cap
+ * under `RUN_START_MAX_BYTES` (wire.test.ts).
+ */
+export const HELPER_DESCRIPTION_MAX_BYTES = 512
+export const HELPER_PROMPT_MAX_BYTES = 4 * 1024
+// eslint-disable-next-line no-control-regex
+const HELPER_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f]/
+const helperText = (max: number) =>
+  z.string().min(1).refine((t) => utf8.encode(t).length <= max && !HELPER_CONTROL.test(t), { message: `over ${max} bytes, or a control character` })
+
+/** One helper as the server defines it: its words only. No tools and no model: the runner owns those. */
+export const HelperDef = z.strictObject({
+  description: helperText(HELPER_DESCRIPTION_MAX_BYTES),
+  prompt: helperText(HELPER_PROMPT_MAX_BYTES),
+})
+export type HelperDef = z.infer<typeof HelperDef>
+
+/** `RunStart.agents`: both helpers, exactly these two names. */
+export const HelperAgents = z.strictObject({ researcher: HelperDef, analyst: HelperDef })
+export type HelperAgents = z.infer<typeof HelperAgents>
+
 /** The fields of a `POST /runs` body; `RunStart` adds the cross-field rules. */
 export const RunStartFields = z.strictObject({
   runId: Id,
@@ -197,13 +235,31 @@ export const RunStartFields = z.strictObject({
    * read-only, as a plugin beside ours before the session starts; the guards add each one to the session's skills.
    */
   brandSkills: BrandSkillFiles.optional(),
+  /**
+   * Optional (Stage 1, N6; additive like `webSearch`): the two helpers the turn may start. Absent: the Agent tool has
+   * nothing to start (built-in agents are off). The Worker sends it only to a runner at `HELPERS_VERSION` or above, and
+   * only when helpers are on (M1-P), so an older runner image still accepts every start.
+   */
+  agents: HelperAgents.optional(),
+  /** Optional (Stage 1, N6): the model `researcher` runs on; `analyst` inherits `model`. Sent with `agents`. */
+  subagentModel: Model.optional(),
+  /**
+   * Optional (Stage 1, N6): the `actions` MCP server (M2's write tools) is present only when this is `true`. Absent or
+   * `false` is off. Sent only when the brand has an enabled operation (N2), which no deployable build has in Stage 1.
+   */
+  actions: z.boolean().optional(),
 })
 
-/** Cross-field rules shared by `RunStart` and the runner's run config (the same fields less the token). */
-export function checkRunStart(v: { prompt: string; resume: boolean; expect: unknown }, ctx: z.RefinementCtx) {
+/**
+ * Cross-field rules shared by `RunStart` and the runner's run config (the same fields less the token). `agents` and
+ * `subagentModel` come together or not at all: `researcher` has no model without one, and a model with no helpers is a
+ * mistake.
+ */
+export function checkRunStart(v: { prompt: string; resume: boolean; expect: unknown; agents?: unknown; subagentModel?: unknown }, ctx: z.RefinementCtx) {
   if (v.prompt === '' && !v.resume) ctx.addIssue({ code: 'custom', path: ['prompt'], message: 'an empty prompt is only for a resume' })
   if (v.resume && v.expect === null) ctx.addIssue({ code: 'custom', path: ['expect'], message: 'a resume carries expect' })
   if (!v.resume && v.expect !== null) ctx.addIssue({ code: 'custom', path: ['expect'], message: "a session's first run has no expect" })
+  if ((v.agents === undefined) !== (v.subagentModel === undefined)) ctx.addIssue({ code: 'custom', path: ['subagentModel'], message: 'agents and subagentModel come together' })
 }
 
 /** `POST /runs` body. The run token is accepted here and nowhere else. */
@@ -266,6 +322,28 @@ export function jsonBytes(value: unknown): number {
   }
 }
 
+/**
+ * JSON with every object's keys sorted and `undefined` dropped (arrays keep their order, an `undefined` item is `null`).
+ * The one canonical form both sides hash: the runner for `AuditEntry.inputSha256`, the egress when it admits a proposal
+ * (N14), and the Worker's submit payload hash.
+ */
+export function canonicalJson(v: unknown): string {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v)
+  if (Array.isArray(v)) return `[${v.map((x) => (x === undefined ? 'null' : canonicalJson(x))).join(',')}]`
+  const entries = Object.entries(v as Record<string, unknown>).filter(([, x]) => x !== undefined).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  return `{${entries.map(([k, x]) => `${JSON.stringify(k)}:${canonicalJson(x)}`).join(',')}}`
+}
+
+/**
+ * `AuditEntry.inputSha256`: the SHA-256 of a tool call input's `canonicalJson` (UTF-8), lower-case hex. A missing input
+ * throws: `canonicalJson(undefined)` isn't JSON, and hashing it would quietly match nothing (callers pass `{}`).
+ */
+export async function auditInputSha256(input: unknown): Promise<string> {
+  if (input === undefined) throw new Error('auditInputSha256: no tool input (pass {} for a call without arguments)')
+  const digest = await crypto.subtle.digest('SHA-256', utf8.encode(canonicalJson(input)))
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
 /** The cap on an audit entry's `input`, as JSON bytes. */
 export const AUDIT_INPUT_MAX_BYTES = 16 * 1024
 
@@ -282,6 +360,20 @@ export const AuditEntry = z.strictObject({
   /** What the hook decided, e.g. `allow`, `deny`, `defer`. */
   decision: z.string().max(64),
   input: z.unknown().refine((i) => jsonBytes(i) <= AUDIT_INPUT_MAX_BYTES, { message: `input over ${AUDIT_INPUT_MAX_BYTES} bytes` }),
+  /**
+   * Optional (`HELPERS_VERSION`, N6): the helper that made the call (the hook input's `agent_id`), or null for the main agent. Sent
+   * together with `inputSha256`, so absent never means "the main agent": an entry with neither proves nothing about who
+   * made the call, and the server never admits a write or an ask on it (N14).
+   */
+  agentId: z.string().min(1).max(256).nullable().optional(),
+  /**
+   * Optional (`HELPERS_VERSION`, N14): `auditInputSha256(tool_input)`, the SHA-256 of the `canonicalJson` of the hook's raw
+   * `tool_input`, lower-case hex. Never of this entry's wrapped or cut `input` (`{ cut, value }`): the egress hashes the
+   * raw call, so a hash of the wrapper would match nothing and every write would be refused.
+   */
+  inputSha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+}).superRefine((e, ctx) => {
+  if ((e.agentId === undefined) !== (e.inputSha256 === undefined)) ctx.addIssue({ code: 'custom', path: ['agentId'], message: 'agentId and inputSha256 come together' })
 })
 export type AuditEntry = z.infer<typeof AuditEntry>
 

@@ -12,6 +12,7 @@ export const FAIL = {
   maxTurns: 'max_turns', turnBudget: 'turn_budget', capReached: 'cap_reached', budgetBusy: 'budget_busy', poolFull: 'pool_full', unknown: 'unknown',
   modelOff: 'model_off',
   structuredOutput: 'structured_output',
+  jobBudget: 'job_budget',
 } as const satisfies Record<string, TurnFailure>
 
 export const NOTICE = {
@@ -20,4 +21,5 @@ export const NOTICE = {
 
 export const CANCEL = {
   paused: 'paused', removed: 'removed', deleted: 'deleted', capReached: 'cap_reached', poolFull: 'pool_full', sessionUnusable: 'session_unusable',
+  jobBudget: 'job_budget',
 } as const satisfies Record<string, Cancel>
