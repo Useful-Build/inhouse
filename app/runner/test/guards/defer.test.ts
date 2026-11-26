@@ -1,5 +1,5 @@
-// The defer hook's seam (Stage 1, N16; M2-Q fills the body). Ways it could fail, written first:
-// - the hook defers anything yet, matches a tool other than question_ask, or doesn't block on failure;
+// The defer hook (Stage 1, N16). Ways it could fail, written first:
+// - the hook defers a call the run doesn't say is alone, a helper's call or another tool, or doesn't block on failure;
 // - `loneToolCall` says a call is alone when the turn holds another call too, before the call was seen, or before the
 //   model's message that carried it is complete (its sibling blocks arrive as separate messages, after the hook runs);
 // - it waits past its deadline, or misses a call that arrives while it waits, or a later turn's call;
@@ -14,16 +14,40 @@ const results = (ids: string[]) =>
 
 afterEach(() => vi.useRealTimers())
 
-describe('the defer hook (no-op until M2-Q)', () => {
-  it('matches only question_ask, blocks on failure, and never defers', async () => {
-    const m = deferHook({ audit: async () => {}, loneToolCall: async () => true })
+describe('the defer hook', () => {
+  const input = (o: Record<string, unknown> = {}) =>
+    ({ hook_event_name: 'PreToolUse', tool_name: DEFERRED_TOOL, tool_input: {}, tool_use_id: 'u1', session_id: 's', transcript_path: '', cwd: '/work/a', ...o }) as never
+  const opts = { signal: new AbortController().signal }
+  /** A run whose `loneToolCall` answers `lone`, recording what it was asked. */
+  const run = (lone: boolean) => {
+    const asked: [string, number][] = []
+    return { asked, ctx: { audit: async () => {}, loneToolCall: async (id: string, within: number) => (asked.push([id, within]), lone) } }
+  }
+
+  it('matches only question_ask, blocks on failure, and refuses another hook event', async () => {
+    const m = deferHook(run(true).ctx)
     expect(m.matcher).toBe('mcp__inhouse__question_ask')
     expect(DEFERRED_TOOL).toBe('mcp__inhouse__question_ask')
     expect(DEFER_SEEN_WITHIN_MS).toBe(2_000)
     expect(m.onFailure).toBe('block')
-    const input = { hook_event_name: 'PreToolUse', tool_name: DEFERRED_TOOL, tool_input: {}, tool_use_id: 'u1', session_id: 's', transcript_path: '', cwd: '/work/a' }
-    expect(await m.hooks[0]!(input as never, 'u1', { signal: new AbortController().signal })).toEqual({})
-    await expect(m.hooks[0]!({ hook_event_name: 'PostToolUse' } as never, 'u1', { signal: new AbortController().signal })).rejects.toThrow(/defer hook got/)
+    await expect(m.hooks[0]!({ hook_event_name: 'PostToolUse' } as never, 'u1', opts)).rejects.toThrow(/defer hook got/)
+  })
+
+  it('defers exactly when the run says the call is alone, asking about this call within 2 s', async () => {
+    const yes = run(true)
+    expect(await deferHook(yes.ctx).hooks[0]!(input(), 'u1', opts)).toEqual({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'defer' } })
+    expect(yes.asked).toEqual([['u1', 2_000]])
+    const no = run(false)
+    expect(await deferHook(no.ctx).hooks[0]!(input(), 'u1', opts)).toEqual({})
+  })
+
+  it("never defers a helper's call, another tool, or a call with no id, and doesn't ask the run about them", async () => {
+    const r = run(true)
+    const hook = deferHook(r.ctx).hooks[0]!
+    expect(await hook(input({ agent_id: 'agent-1' }), 'u1', opts)).toEqual({})
+    expect(await hook(input({ tool_name: 'mcp__inhouse__memory_save' }), 'u1', opts)).toEqual({})
+    expect(await hook(input({ tool_use_id: undefined }), undefined, opts)).toEqual({})
+    expect(r.asked).toEqual([])
   })
 })
 
@@ -62,7 +86,7 @@ describe('the turn tracker behind loneToolCall', () => {
     await expect(waiting).resolves.toBe(false)
   })
 
-  it('without stream events (M1-E: includePartialMessages off) it never resolves true: false at the deadline, not before', async () => {
+  it('without a message_stop stream event it never resolves true: false at the deadline, not before', async () => {
     vi.useFakeTimers()
     const t = new TurnToolUses()
     t.see(block('a', 'm1'))

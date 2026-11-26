@@ -35,6 +35,7 @@ import { monotonicMs, parseSessionMessage } from '../../src/protocol/local.ts'
 import { sessionEnv } from '../../src/session/env.ts'
 import type { QueryGuards, RunContext } from '../../src/session/seam.ts'
 import { AUDIT_HOOK_TIMEOUT_S, AuditRefusedError } from '../../src/guards/audit.ts'
+import { DEFER, DEFERRED_TOOL, deferHook } from '../../src/guards/defer.ts'
 import { sessionPaths, userPaths } from '../../src/guards/paths.ts'
 import { poolUserName } from '../../src/guards/users.ts'
 import { RunConfig } from '../../src/protocol/local.ts'
@@ -472,6 +473,76 @@ function scriptedQuery(body: (p: Parameters<QueryFn>[0]) => AsyncGenerator<SDKMe
   }
   return { query, calls }
 }
+
+describe('stream events and the defer hook (Stage 1, N16)', () => {
+  // The CLI streams a turn's calls one block per assistant message and runs a call's PreToolUse hook as its block
+  // arrives; only the message's `message_stop` stream event says no sibling block is coming. Ways it could fail,
+  // written first: stream events stay off (so nothing is ever deferred), reach the Worker as `sdk` events (the chat,
+  // the transcript mirror and the ledger would see them), or the hook defers before the message is complete.
+  const ev = (event: Record<string, unknown>, parent: string | null = null) => ({ type: 'stream_event', parent_tool_use_id: parent, uuid: 'x', session_id: 's', event }) as unknown as SDKMessage
+  const block = (id: string, message: string) =>
+    ({ type: 'assistant', parent_tool_use_id: null, message: { id: message, stop_reason: null, content: [{ type: 'tool_use', id, name: DEFERRED_TOOL, input: { question: 'Which?', options: ['A', 'B'] } }] } }) as unknown as SDKMessage
+  const hookInput = (id: string) => ({ hook_event_name: 'PreToolUse', tool_name: DEFERRED_TOOL, tool_input: {}, tool_use_id: id, session_id: 's', transcript_path: '', cwd: '/work/a' })
+  /** The guards the session applies, keeping the run context the hooks get. */
+  function capturing() {
+    const box: { run: RunContext | null } = { run: null }
+    const guards: QueryGuards = { kind: 'test', apply: (options, _c, run) => ((box.run = run), options) }
+    return { guards, box }
+  }
+
+  it('asks the SDK for stream events and sends none to the Worker', async () => {
+    const q = fakeQuery([ev({ type: 'message_start', message: { id: 'm1' } }), ev({ type: 'content_block_delta' }), assistant, ev({ type: 'message_stop' }), result])
+    const h = harness(q.query)
+    h.deliver({ type: 'run', config: config() })
+    await h.done
+    expect(q.calls[0]!.options.includePartialMessages).toBe(true)
+    expect(types(h.events())).toEqual(['sdk', 'sdk', 'checkpoint', 'finished'])
+    expect(h.events().filter((e) => e.type === 'sdk').map((e) => e.message.type)).toEqual(['assistant', 'result'])
+  })
+
+  it('a lone call is deferred once its message is complete; the deferral then ends the run waiting', async () => {
+    const { guards, box } = capturing()
+    let decided: unknown = 'pending'
+    const q = scriptedQuery(async function* () {
+      yield ev({ type: 'message_start', message: { id: 'm1' } })
+      yield block('t1', 'm1')
+      // The CLI runs the hook now, before the rest of the message has streamed.
+      const hook = deferHook(box.run!).hooks[0]!(hookInput('t1') as never, 't1', { signal: new AbortController().signal }).then((d) => (decided = d))
+      for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r))
+      expect(decided).toBe('pending')
+      yield ev({ type: 'message_delta' })
+      yield ev({ type: 'message_stop' })
+      await hook
+      expect(decided).toEqual(DEFER)
+      yield { ...(result as object), stop_reason: 'tool_deferred', deferred_tool_use: { id: 't1', name: DEFERRED_TOOL, input: { question: 'Which?', options: ['A', 'B'] } } } as unknown as SDKMessage
+    })
+    const h = harness(q.query, guards)
+    h.deliver({ type: 'run', config: config() })
+    await h.done
+    expect(types(h.events())).toEqual(['sdk', 'sdk', 'deferred', 'checkpoint', 'finished'])
+  })
+
+  it('a call whose message carries a second call is not deferred (the second block streams after the hook fired)', async () => {
+    const { guards, box } = capturing()
+    let decided: unknown = 'pending'
+    const q = scriptedQuery(async function* () {
+      yield ev({ type: 'message_start', message: { id: 'm1' } })
+      yield block('t1', 'm1')
+      const hook = deferHook(box.run!).hooks[0]!(hookInput('t1') as never, 't1', { signal: new AbortController().signal }).then((d) => (decided = d))
+      yield block('t2', 'm1')
+      yield ev({ type: 'message_stop' })
+      await hook
+      expect(decided).toEqual({})
+      yield toolResult('t1')
+      yield result
+    })
+    const h = harness(q.query, guards)
+    h.deliver({ type: 'run', config: config() })
+    await h.done
+    expect(types(h.events())).not.toContain('deferred')
+    expect(h.events().at(-1)?.type).toBe('finished')
+  })
+})
 
 describe('resume verification (protocol v2 expect)', () => {
   const SID = '7b0f8f0e-2a8c-4f4e-9d36-0c1c7f6b2a11'

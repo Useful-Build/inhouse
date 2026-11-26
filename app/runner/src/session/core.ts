@@ -104,6 +104,9 @@ export function baseOptions(config: RunConfig, cwd: string, env: Record<string, 
     maxTurns: config.maxTurns,
     maxBudgetUsd: config.maxBudgetUsd,
     settingSources: [],
+    // Stream events (Stage 1, N16): the defer hook's `loneToolCall` needs a model message's `message_stop` to know no more
+    // tool calls are coming in it (TurnToolUses.lone). The run loop reads them and never sends one to the Worker.
+    includePartialMessages: true,
     // The SDK's own CLI spawn and MCP delivery: the CLI gets fresh stdio pipes, so it never holds the local channel
     // (src/session/channel.ts), and the SDK reads its stderr as usual.
     ...(config.resume ? { resume: config.sessionId } : { sessionId: config.sessionId }),
@@ -198,8 +201,7 @@ export class TurnToolUses {
    * stop reason on them, and the CLI runs a call's PreToolUse hook as soon as its block is streamed, before the blocks
    * after it arrive (seen on CLI 2.1.328, PR #430). So "only one call so far" proves nothing until the message is
    * complete, which only its `message_stop` stream event says. Stream events come only with `includePartialMessages`,
-   * which is off in M1-E: here `lone` never resolves true, so nothing can be deferred on it. M2-Q, which defers, turns
-   * stream events on (and keeps them off the wire).
+   * which `baseOptions` turns on (M2-Q); the run loop keeps them off the wire.
    */
   lone(id: string, withinMs: number): Promise<boolean> {
     return new Promise((resolve) => {
@@ -464,6 +466,9 @@ export async function runSession(deps: {
     for await (const m of q) {
       if (ended) break
       turn.see(m)
+      // A stream event is for the turn tracker only: never on the wire, so the Worker's events, the chat and the
+      // transcript mirror see exactly what they saw with stream events off.
+      if (m.type === 'stream_event') continue
       // Capped here as well as in the root, so an honest session never sends a line over the channel's cap.
       const raw = m as unknown as Record<string, unknown>
       const stub = (why: 'tooDeep' | 'unencodable') => ({ message: { type: String(raw.type).slice(0, 64), [why]: true }, truncated: true })
