@@ -30,16 +30,28 @@ async function questionOf(request: APIRequestContext, who: Actor, chatId: string
   return found!
 }
 
-/** The chat's agent text once it holds `needle`. */
+/** The chat's agent text once it holds `needle`. On a timeout the error carries what the chat and its turns' traces hold. */
 async function agentSays(request: APIRequestContext, who: Actor, chatId: string, needle: string): Promise<string> {
   let text = ''
-  await expect.poll(async () => {
-    const r = await call(request, who, 'GET', `/api/chats/${chatId}`)
-    expect(r.status, r.text).toBe(200)
-    text = (r.json.messages as { role: string; part?: { type: string; text?: string } }[])
-      .filter(m => m.role === 'agent' && m.part?.type === 'text').map(m => m.part!.text ?? '').join('\n')
-    return text.includes(needle)
-  }, { timeout: 180_000, message: `the agent saying "${needle}" in chat ${chatId}` }).toBe(true)
+  let messages: { role: string; turnId: string; part?: { type: string; text?: string } }[] = []
+  try {
+    await expect.poll(async () => {
+      const r = await call(request, who, 'GET', `/api/chats/${chatId}`)
+      expect(r.status, r.text).toBe(200)
+      messages = r.json.messages
+      text = messages.filter(m => m.role === 'agent' && m.part?.type === 'text').map(m => m.part!.text ?? '').join('\n')
+      return text.includes(needle)
+    }, { timeout: 180_000, message: `the agent saying "${needle}" in chat ${chatId}` }).toBe(true)
+  } catch (e) {
+    // What the chat holds, and each turn's steps, so a failure on the sandbox says where the resume stopped.
+    const turns = [...new Set(messages.map(m => m.turnId))]
+    const traces: unknown[] = []
+    for (const t of turns) {
+      const r = await call(request, who, 'GET', `/api/traces/${t}`)
+      traces.push({ turn: t, status: r.status, steps: r.json?.steps, outcome: r.json?.outcome, failure: r.json?.failure })
+    }
+    throw new Error(`${(e as Error).message}\nmessages: ${JSON.stringify(messages).slice(0, 4000)}\ntraces: ${JSON.stringify(traces).slice(0, 6000)}`)
+  }
   return text
 }
 
