@@ -1,7 +1,7 @@
 // Chats: the thread (one card per answer, D2), hover actions under each answer and your own messages, the "···" menu,
 // long messages that fold, Retry on a stopped answer, the time and model markers, Jump to latest, the queued messages and
 // the ask box. Scrolling is Message Scroller's (src/ui/agent/thread.tsx).
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { Fragment, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { agent, demo } from '../agent'
 import { showLocalAnswerControls, showSendToChannel } from '../lib/product-flow'
 import { traceOf, useTraces } from './chat/traces'
@@ -19,7 +19,6 @@ import { PromptBentoSlot } from '../ui/chat'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { AgentPart, ApprovalCard } from './chat/Parts'
 import { LiveSteps } from './chat/LiveSteps'
-import { JobStatus } from './chat/JobStatus'
 import { SourcesRow, StepsLine } from './chat/Steps'
 import { useOpenChatMessages } from './chat/open-messages'
 import { FileChip } from './chat/FileChip'
@@ -92,6 +91,13 @@ function QueuedChip({ q, editing, onEdit, onSendNow, onRemove }: { q: QueuedMsg;
 const NO_QUEUE: QueuedMsg[] = []
 /** An answer turn's card (D2). */
 const CARD = 'box-border flex max-w-full min-w-0 flex-col gap-3.5 self-start rounded-3xl bg-card py-4'
+
+// Stage 1 M1-D: the job row and card load with the first chat, outside Today's first load (scripts/check-bundle.mjs).
+// A module Vite's preload-error handling left undefined never settles, so the fallback (nothing) stays until the reload.
+const JobStatus = lazy(async () => {
+  const m = await import('./chat/JobStatus')
+  return m === undefined ? new Promise<never>(() => {}) : { default: m.JobStatus }
+})
 
 function Thread() {
   useTraces()
@@ -495,7 +501,7 @@ function Thread() {
           )}
           {/* What holds the agent back, said where the person is about to type: a pause, a busy budget, a damaged session, a lost link. */}
           {/* Stage 1 M1-D: the chat's long job, its progress and Cancel, then how it ended. */}
-          <JobStatus chatId={openId} view={view} />
+          <Suspense fallback={null}><JobStatus chatId={openId} view={view} /></Suspense>
           {notices}
           {/* Always there, so a screen reader hears each change to the queue. */}
           <div role="status" className="sr-only">{queueStatus}</div>
