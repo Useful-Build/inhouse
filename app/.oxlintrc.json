@@ -71,6 +71,25 @@
                   "SlackChannel"
                 ],
                 "message": "P5 import boundary: the egress may use the hub's ReadGateway types only, never ConnectGateway or DeliveryGateway."
+              },
+              {
+                "group": [
+                  "**/outbox/dispatch",
+                  "**/outbox/dispatch.ts"
+                ],
+                "message": "Stage 1 M2-B import boundary (N11, N13): the runner's egress never reaches the outbox's dispatcher, the only holder of the hub's write binding. It proposes through the outbox's request, and BrandAgent sends."
+              },
+              {
+                "group": [
+                  "**/hub/index/contract",
+                  "**/hub/index/contract.ts"
+                ],
+                "importNames": [
+                  "WriteGateway",
+                  "WriteRequest",
+                  "WriteResult"
+                ],
+                "message": "Stage 1 M2-B import boundary: the egress never holds the hub's write entrypoint's types. Only server/outbox/dispatch.ts calls it."
               }
             ]
           }

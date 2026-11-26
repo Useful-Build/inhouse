@@ -202,6 +202,12 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   // Stage 1 M2-A (N15).
   { method: 'GET', pattern: '/api/permissions', class: 'baseline', allow: ['member', 'admin'] },
   { method: 'POST', pattern: '/api/permissions/:id/remove', class: 'baseline', allow: ['member', 'admin'] },
+  // Stage 1 M2-B (N15).
+  { method: 'GET', pattern: '/api/actions', class: 'baseline', allow: ['member', 'admin'] },
+  { method: 'GET', pattern: '/api/actions/:id', class: 'baseline', allow: ['member', 'admin'] },
+  { method: 'POST', pattern: '/api/actions/:id/answer', class: 'baseline', allow: ['member', 'admin'] },
+  { method: 'POST', pattern: '/api/actions/:id/undo', class: 'baseline', allow: ['member', 'admin'] },
+  { method: 'POST', pattern: '/api/actions/:id/resolve', class: 'baseline', allow: ['member', 'admin'] },
 ]
 
 /** `CanRows` as section 3 maps them. */

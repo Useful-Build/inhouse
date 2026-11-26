@@ -342,6 +342,12 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   // Stage 1 M2-A, rows 110 and 111: brand people only (the store decides whose permission).
   'GET /api/permissions': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
   'POST /api/permissions/:id/remove': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  // Stage 1 M2-B, rows 120 to 124: brand people only (the outbox decides whose card).
+  'GET /api/actions': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  'GET /api/actions/:id': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  'POST /api/actions/:id/answer': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  'POST /api/actions/:id/undo': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  'POST /api/actions/:id/resolve': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },

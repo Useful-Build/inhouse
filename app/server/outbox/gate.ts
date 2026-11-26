@@ -1,0 +1,143 @@
+// Pause and the gate (N12). The pause flag lives in BrandAgent's SQLite; answers run in the Worker and write D1, which
+// can't read the flag. So the gate row (`outbox_gate`) is the truth for D1, and one batch keeps it in step: `paused` and
+// `do_gen` set to the object's state, `epoch` raised, and every `approved` row sent back to `waiting` with its use
+// released and its line. It runs from the outbox's pause hook on every Pause and every Resume, and from the sweep
+// whenever the gate and the object disagree. It's safe to repeat.
+// Why that holds: an answer is refused while the gate is paused; a claim needs the row's `approved_epoch` to equal the
+// gate's `epoch` (so no approval given before a Pause or a Resume is claimed after it) and the gate's `do_gen` to equal
+// the dispatcher's own `pauseGen` (so if a hook failed or hasn't run yet, nothing is claimed until a sync succeeds, and
+// that sync lapses every approved row). So resuming sends nothing, even when a hook fails.
+// The gate only moves forward (gateSyncStmts). So a gate *ahead* of the object, as after a restore that brought back
+// an older BrandAgent or a newer D1, never moves again on its own, and nothing is claimed until someone repairs it:
+// M2-R's restore step sets `do_gen = -1` with `restore_hold = 1`, so the next sync moves it forward from below, and only
+// the admin's audited restore confirm clears the hold.
+import { SYSTEM_MEMBER_ID, writeStamp } from '../db/ids.ts'
+import { all, first, runBatch, stmt } from '../db/sql.ts'
+import type { Stmt } from '../db/sql.ts'
+import type { PauseHook } from '../do/brand-agent/ports.ts'
+import { notifyAll } from './notify.ts'
+import type { OutboxNotifier } from './notify.ts'
+import { linesForStamped, UNRELEASED_USE } from './sql.ts'
+import type { OutboxGateRow } from './types.ts'
+import { LAPSE_TEXT } from './words.ts'
+
+/** The object's pause state, as the claim compares it: the flag and its generation (BrandAgent's `flags` table). */
+export interface PauseState { paused: boolean; pauseGen: number }
+
+/**
+ * Reads BrandAgent's own flags (core.ts `isPaused`, `pauseGen`): paused while `paused_at_ms` is set; `pause_gen` raised
+ * by every pause and resume, 0 before the first. gate.test.ts checks this agrees with the engine's own reads.
+ */
+export function doPauseState(sql: SqlStorage): PauseState {
+  const rows = sql.exec<{ key: string; value: number | string | null }>("SELECT key, value FROM flags WHERE key IN ('paused_at_ms', 'pause_gen')").toArray()
+  const gen = rows.find(r => r.key === 'pause_gen')?.value
+  return { paused: rows.some(r => r.key === 'paused_at_ms' && r.value !== null), pauseGen: typeof gen === 'number' ? gen : 0 }
+}
+
+export const readGate = async (db: D1Database): Promise<OutboxGateRow> => {
+  const g = await first<OutboxGateRow>(db, stmt('SELECT * FROM outbox_gate WHERE id = 1'))
+  if (!g) throw new Error('outbox: the gate row is missing')
+  return g
+}
+
+/** Whether the gate and the object disagree (the sweep then syncs). */
+export const outOfStep = (g: OutboxGateRow, s: PauseState): boolean => (g.paused === 1) !== s.paused || g.do_gen !== s.pauseGen
+
+/**
+ * The sync's batch. The gate moves first, and only forward: to a later `do_gen`, or to the same one with another
+ * `paused` (N12). A sync built from a state read before a newer Pause or Resume was synced matches nothing, so it can
+ * never reopen a paused gate or lapse approvals given after the Resume. Every later statement acts only where the gate
+ * took this sync's stamp: the lines (they read the approved rows), then the uses, then the rows.
+ */
+export function gateSyncStmts(s: PauseState, at: { nowMs: number; requestId: string }, stamp: string): Stmt[] {
+  const who = { atMs: at.nowMs, actorId: SYSTEM_MEMBER_ID, requestId: at.requestId }
+  const paused = s.paused ? 1 : 0
+  const moved = 'EXISTS (SELECT 1 FROM outbox_gate WHERE id = 1 AND stamp = ?)'
+  return [
+    stmt(
+      `UPDATE outbox_gate SET paused = ?, do_gen = ?, epoch = epoch + 1, updated_at_ms = ?, stamp = ?
+       WHERE id = 1 AND (do_gen < ? OR (do_gen = ? AND paused <> ?))`,
+      paused, s.pauseGen, at.nowMs, stamp, s.pauseGen, s.pauseGen, paused,
+    ),
+    stmt(`UPDATE outbox_actions SET stamp = ? WHERE state = 'approved' AND ${moved}`, stamp, stamp),
+    linesForStamped(
+      'action.lapsed',
+      `json_object('actionId', a.id, 'reason', 'paused', 'released', json(CASE WHEN ${UNRELEASED_USE} THEN 'true' ELSE 'false' END))`,
+      [], who, stamp,
+    ),
+    stmt(
+      `UPDATE permission_uses SET released_at_ms = ?, release_reason = 'lapsed'
+       WHERE released_at_ms IS NULL AND id IN (SELECT id || '#' || rev FROM outbox_actions WHERE state = 'approved' AND stamp = ?)`,
+      at.nowMs, stamp,
+    ),
+    stmt(
+      `UPDATE outbox_actions SET state = 'waiting', rev = rev + 1, approved_by = NULL, approved_rev = NULL, approved_at_ms = NULL,
+         approved_epoch = NULL, send_at_ms = NULL, grant_id = NULL, lapsed_reason = 'paused', updated_at_ms = ?
+       WHERE state = 'approved' AND stamp = ?`,
+      at.nowMs, stamp,
+    ),
+  ]
+}
+
+/**
+ * One sync, from the object's state read now (not before an await), then a notice to each lapsed action's approver.
+ * Returns whether the gate moved and how many approvals lapsed.
+ */
+export async function syncGate(d: { db: D1Database; state: () => PauseState; nowMs: number; requestId: string; notify: OutboxNotifier }): Promise<{ moved: boolean; lapsed: number; state: PauseState }> {
+  const stamp = writeStamp(d.requestId)
+  const state = d.state()
+  await runBatch(d.db, gateSyncStmts(state, d, stamp))
+  const gate = await readGate(d.db)
+  const lapsed = await all<{ id: string; rev: number; approver: string }>(d.db, stmt(
+    "SELECT id, rev, approver FROM outbox_actions WHERE stamp = ? AND state = 'waiting' AND lapsed_reason = 'paused'", stamp,
+  ))
+  await notifyAll(d.notify, lapsed.map(r => ({ kind: 'approval_lapsed' as const, to: r.approver, actionId: r.id, key: `lapsed:${r.id}:${r.rev}`, body: LAPSE_TEXT.paused })))
+  const moved = gate.stamp === stamp
+  console.log({ event: 'outbox_gate_sync', paused: state.paused, pauseGen: state.pauseGen, moved, lapsed: lapsed.length })
+  return { moved, lapsed: lapsed.length, state }
+}
+
+// ---------- how long the gate has been behind the object (BrandAgent's own SQLite; the `outbox_gate` health signal) ----------
+
+/**
+ * Creates the object's one-row record of a gate left behind (a sync that failed). Run once per object from compose.ts
+ * (`p6Hooks`, in the constructor), so the reads and writes below, the `outboxLag()` RPC among them, do no DDL. The
+ * registry's class-level `BrandAgent` entry covers it (no person key: a time and a generation).
+ */
+export function createLagTable(sql: SqlStorage): void {
+  sql.exec('CREATE TABLE IF NOT EXISTS outbox_lag (id INTEGER PRIMARY KEY CHECK (id = 1), since_ms INTEGER NOT NULL, gen INTEGER NOT NULL)')
+}
+
+/** A sync failed or the sweep found the gate behind: keeps the first moment it was seen. */
+export function noteLag(sql: SqlStorage, gen: number, nowMs: number): void {
+  sql.exec('INSERT INTO outbox_lag (id, since_ms, gen) VALUES (1, ?, ?) ON CONFLICT (id) DO UPDATE SET gen = excluded.gen', nowMs, gen)
+}
+
+/** A sync succeeded: the gate is caught up. */
+export function clearLag(sql: SqlStorage): void {
+  sql.exec('DELETE FROM outbox_lag')
+}
+
+/** Since when the gate has been seen behind the object, or null. */
+export function lagSince(sql: SqlStorage): number | null {
+  return sql.exec<{ since_ms: number }>('SELECT since_ms FROM outbox_lag WHERE id = 1').toArray()[0]?.since_ms ?? null
+}
+
+/**
+ * The outbox's pause hook (compose.ts): the same sync on Pause and on Resume, from the object's state at that moment. A
+ * sync that throws is recorded as lag (the health signal) and rethrown (pause() then throws, the flag kept); the sweep
+ * repeats it.
+ */
+export function outboxPauseHook(d: { db: D1Database; sql: SqlStorage; notify: OutboxNotifier }): PauseHook {
+  const run = async (atMs: number) => {
+    try {
+      const synced = await syncGate({ db: d.db, state: () => doPauseState(d.sql), nowMs: atMs, requestId: `outbox-gate-${crypto.randomUUID()}`, notify: d.notify })
+      // Caught up only if no later Pause or Resume came while the sync ran (the sweep checks the same).
+      if (synced.state.pauseGen === doPauseState(d.sql).pauseGen) clearLag(d.sql)
+    } catch (err) {
+      noteLag(d.sql, doPauseState(d.sql).pauseGen, atMs)
+      throw err
+    }
+  }
+  return { onPause: e => run(e.atMs), onResume: e => run(e.atMs) }
+}

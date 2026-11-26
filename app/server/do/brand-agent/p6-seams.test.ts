@@ -121,9 +121,9 @@ describe('pause hooks (P6 ask 3, failure 2)', () => {
     expect(h.core.pauseState()).toEqual({ paused: false, at: null, by: null })
   }))
 
-  it("P6's anchor: empty today; an anchor returning one throwing hook makes pause() throw with the flag kept", () => inAgent(async h => {
+  it("P6's anchor: the outbox's one pause hook (Stage 1 M2-B) and no onDeferred; an anchor returning one throwing hook makes pause() throw with the flag kept", () => inAgent(async h => {
     expect(p6Hooks(env, { sql: h.sql, scheduler: h.sched, now: () => h.clock.now, hooks: { retryPlacement: () => {}, placementExpired: () => {} } }))
-      .toEqual({ pause: [], onDeferred: null })
+      .toEqual({ pause: [{ onPause: expect.any(Function), onResume: expect.any(Function) }], onDeferred: null })
     wireP6(h.core, { pause: [{ onPause: async () => { throw new Error('T10 failed') }, onResume: async () => {} }], onDeferred: null })
     await expect(h.core.pause(ADMIN)).rejects.toThrow('T10 failed')
     expect(h.core.pauseState().paused).toBe(true)

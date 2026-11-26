@@ -61,3 +61,27 @@ describe('the P5 import boundary', () => {
     expect(r.status).toBe(0)
   })
 })
+
+// Stage 1 M2-B (N11, N13): the egress may never import the outbox's dispatcher, the only holder of the hub's write
+// binding, nor the write entrypoint's types. Its request path (outbox/store.ts) stays open to it (M2-D wires it).
+describe('the outbox dispatcher boundary', () => {
+  test('the egress importing the dispatcher or the write types is an error', () => {
+    const r = lint({
+      'server/egress/k.ts': "import { sendAction } from '../outbox/dispatch.ts'\nexport const k = sendAction\n",
+      'server/egress/deep/l.ts': "import { outboxSend } from '../../outbox/dispatch'\nexport const l = outboxSend\n",
+      'server/egress/m.ts': "import type { WriteGateway } from '../../hub/index/contract.ts'\nexport const m: WriteGateway | null = null\n",
+    })
+    expect(r.status).toBe(1)
+    const hits = lines(r.out)
+    for (const file of ['k.ts', 'l.ts', 'm.ts']) expect(hits.some(l => l.includes(`/${file}:`)), file).toBe(true)
+  })
+
+  test("the egress may use the outbox's request path, and BrandAgent's tasks may import the dispatcher", () => {
+    const r = lint({
+      'server/egress/fine-outbox.ts': "import { openOutbox } from '../outbox/store.ts'\nexport const o = openOutbox\n",
+      'server/do/brand-agent/tasks/x.ts': "import { outboxSend } from '../../../outbox/dispatch.ts'\nexport const x = outboxSend\n",
+    })
+    expect(lines(r.out)).toEqual([])
+    expect(r.status).toBe(0)
+  })
+})
