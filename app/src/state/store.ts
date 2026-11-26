@@ -8,7 +8,6 @@ import { AgentError, SCENARIOS, STAGES, stageIndex } from '../agent/types'
 import { NOT_FOUND, REASON } from '../../shared/contract/error-codes'
 import type { ChatView } from '../screens/chat/view'
 import { NO_MODEL_TEXT, RELOAD_NOTE, RUN_FAILED, STOPPED_NOTE, emptyView, upsert } from '../screens/chat/notes'
-import { productStage } from './stage'
 import { heldFile, dropFile, withoutPending } from './pending-files'
 import type { AbortSet } from '../screens/chat/upload'
 import { shownClock, shownDateTimeIn, shownTimeOn } from '../agent/upgrade-times'
@@ -16,7 +15,7 @@ import { instantOf } from '../lib/format'
 import { STARTED_CHAT_PREFIX } from './chatIds'
 import { clearRevealed } from '../screens/chat/reveal'
 import { rememberTrigger } from '../ui/dialogs'
-import { activeMode, problemById } from './derive'
+import { PRODUCT_STAGE, activeMode, problemById } from './derive'
 import type { Ctx } from './derive'
 
 export type Page = 'today' | 'library' | 'chats' | 'approvals' | 'routines' | 'activity' | 'apps' | 'app' | 'skills' | 'skill' | 'usage' | 'settings'
@@ -1383,9 +1382,11 @@ export function useCtx(): Ctx {
   const agentState = useAgentState()
   const data = useAgentData()
   const demoStage = useUi(s => s.stage)
-  // The demo's switch drives the stage there; on the product it is the agent's technical `stage` setting.
-  const stage = demoControls ? demoStage : productStage(agentState.settings)
-  return useMemo(() => ({ S: stageIndex(stage), agent: agentState, data }), [stage, agentState, data])
+  // The demo's switch drives the stage there. The product has no stages (Stage 1 M2-I): its view is pinned to the Act
+  // view until M5, and the technical `stage` setting stays, unread.
+  const product = !demoControls
+  const stage = product ? PRODUCT_STAGE : demoStage
+  return useMemo(() => ({ S: stageIndex(stage), agent: agentState, data, ...(product ? { noStages: true } : {}) }), [stage, product, agentState, data])
 }
 
 // ---------- composer drafts (PR 4): swap drafts when the open composer changes ----------

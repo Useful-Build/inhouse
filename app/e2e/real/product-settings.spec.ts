@@ -43,8 +43,8 @@ test('Spending cap holds Pause Inhouse agent, and the menu has no Who approves w
   await signInAs(context, 'admin')
   await open(page, 'admin', '#/settings/team-spend')
   await expect(page.getByRole('heading', { level: 1, name: 'Spending cap', exact: true })).toBeVisible()
-  // At Watch the Act-stage button is shown and locked (it works from Act).
-  await expect(page.getByRole('main').getByRole('button', { name: 'Pause Inhouse agent', exact: true })).toBeDisabled()
+  // The product's view is pinned to Act (Stage 1 M2-I): the button is offered. Not clicked here: no-stages.spec.ts.
+  await expect(page.getByRole('main').getByRole('button', { name: 'Pause Inhouse agent', exact: true })).toBeEnabled()
   if (phone(page.viewportSize()?.width)) await page.getByRole('button', { name: 'Back to settings' }).click()
   const nav = page.getByRole('navigation', { name: 'Settings' })
   await expect(nav.getByRole('button', { name: 'Spending cap', exact: true })).toBeVisible()

@@ -77,6 +77,7 @@ const instant = (ms: number): { iso: string; ms: number } => ({ iso: new Date(ms
 const NEVER_READ = instant(0)
 
 const SLACK_CHANNEL_DESC = 'Notices reach your team in the channels your admin lists, and anyone can ask your Inhouse agent there.'
+/** The contract's legacy `need` (N17): kept so the shape is unchanged, never read by the product, which has no stages (M2-I). */
 const SLACK_CHANNEL_NEED: StageIndex = 1
 
 /**

@@ -57,14 +57,17 @@ export const hasSlack = (tools: SlackSignals): boolean => tools.connected.includ
 
 /**
  * The pages only the demo offers. The product has no approval rules or run limits to show yet (the stored `a:<n>` and `l:*`
- * settings and their server checks stay), and every Notifications row is Act-stage work nothing sends yet, so it hides the
- * three pages, their menu entries and their deep links.
+ * settings and their server checks stay), and every Notifications row is work nothing sends yet, so it hides those pages,
+ * their menu entries and their deep links. Stage 1 M2-I: the product has no stages (decision "Master plan: one agent"), so
+ * Stage and plan goes too; the technical `stage` setting stays, unread.
  */
-const DEMO_ONLY_PAGES: readonly string[] = ['team-approvals', 'team-limits', 'you-notif']
+const DEMO_ONLY_PAGES: readonly string[] = ['team-approvals', 'team-limits', 'you-notif', 'team-plan']
 /** Stage 1 M2-H: the pages only the product offers. The demo has no permissions, so Always allowed would always be empty. */
 const PRODUCT_ONLY_PAGES: readonly string[] = ['you-permissions']
 /** Whether a page is offered: the demo leaves out the product-only pages, the product the demo-only ones. */
 export const pageShown = (id: string, product: boolean): boolean => (product ? !DEMO_ONLY_PAGES.includes(id) : !PRODUCT_ONLY_PAGES.includes(id))
+/** Where the account menu's Team settings opens: Stage and plan in the demo, the first team page in the product (M2-I). */
+export const teamSettingsTab = (product: boolean): string => (product ? 'team-agent' : 'team-plan')
 /** The ids a `#/settings/<id>` link may name. */
 export const settingsTabs = (product: boolean): string[] => SETTINGS_PAGES.filter(p => pageShown(p.id, product)).map(p => p.id)
 

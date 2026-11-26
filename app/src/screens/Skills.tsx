@@ -1,7 +1,7 @@
 // Skills: the list, and each skill's own page (#/skills/<name>).
 import { agent, demo } from '../agent'
 import { keepUnitsTogether } from '../agent/clock'
-import { STAGE_TAGS, whenOf } from '../state/derive'
+import { STAGE_TAGS, stageLocked, whenOf } from '../state/derive'
 import { display } from '../state/display'
 import { fmtDay } from '../lib/format'
 import { skillBySlug, skillSlugs, useCtx, useUi } from '../state/store'
@@ -30,7 +30,8 @@ export const madeBy = (s: SkillDef) => `Made by ${s.by.replace(/, in a chat$/, '
 const skillKey = (name: string) => `s:${name}`
 
 export function Skills() {
-  const { S, agent: st, data } = useCtx()
+  const ctx = useCtx()
+  const { S, agent: st, data } = ctx
   const loading = data.status === 'loading'
   const tab = useUi(s => s.skillTab)
   const patch = useUi(s => s.patch)
@@ -67,7 +68,7 @@ export function Skills() {
         : <EmptyState variant="inline">{needle ? `No skills match "${query.trim()}".` : 'No skills in this list.'}</EmptyState>)}
       <CardGrid size="lg" variant="rows">
         {list.map(s => {
-          const locked = S < s.need
+          const locked = stageLocked(ctx, s.need)
           const key = listKey(s.n)
           const off = !!demo && !locked && st.toggles[skillKey(s.n)] === false
           return (
@@ -130,8 +131,8 @@ export function byline(s: SkillDef): string {
 
 /** The side rail's key-value rows for a skill's page. */
 export function skillFacts(s: SkillDef, isDemo: boolean): [string, string][] {
-  // On the product "Works from" is dropped at need 0 (every skill starts at Watch), and "Used" shows only when there is one.
-  const facts: [string, string][] = isDemo || s.need > 0 ? [['Works from', STAGE_TAGS[s.need]]] : []
+  // "Works from" names a stage, so only the demo has it: the product has no stages (M2-I). "Used" shows only when there is one.
+  const facts: [string, string][] = isDemo ? [['Works from', STAGE_TAGS[s.need]]] : []
   const maker = s.by.replace(/, in a chat$/, '')
   facts.push(['Made by', s.mine ? maker : s.by])
   // A brand skill: its maker and admins change it in a chat, or admins only once the maker's data is deleted. The Inhouse team's: only the Inhouse team.
@@ -152,7 +153,8 @@ function RailCard({ title, children, className }: { title?: string; children: Re
 
 /** A skill's page: what it's for, a way to try it, its instructions and the facts beside them. */
 export function SkillPage() {
-  const { S, agent: st, data } = useCtx()
+  const ctx = useCtx()
+  const { agent: st, data } = ctx
   const key = useUi(s => s.skillKey)
   const go = useUi(s => s.go)
   const newChat = useUi(s => s.newChat)
@@ -169,13 +171,13 @@ export function SkillPage() {
   }, [want])
   // App shows the list in place of a skill it doesn't know (and moves the route there once the skills have loaded).
   if (!s) return null
-  const locked = S < s.need
+  const locked = stageLocked(ctx, s.need)
   const toggle = skillKey(s.n)
   // The product has no skill switch: every skill is on.
   const on = !locked && (demo === null || st.toggles[toggle] !== false)
   const example = s.example && !locked ? `Use the "${s.n}" skill: ${s.example}` : null
   const toolsOf = (s.tools ?? []).map(k => ({ k, name: data.tools.details[k]?.name ?? data.tools.catalog.find(c => c.k === k)?.name ?? k }))
-  const usedBy = (s.routines ?? []).flatMap(id => data.routines.filter(r => r.id === id && !st.routinesDeleted[r.id] && !(r.inChat && S < r.need)))
+  const usedBy = (s.routines ?? []).flatMap(id => data.routines.filter(r => r.id === id && !st.routinesDeleted[r.id] && !(r.inChat && stageLocked(ctx, r.need))))
   const facts = skillFacts(s, demo !== null)
   const canChange = !!s.mine && s.canChange === true
   // The switch is the demo's; the product has none. Delete is for a brand skill its maker or an admin may change.
@@ -205,12 +207,13 @@ export function SkillPage() {
             <Icon name={s.icon} size={30} />
           </span>
         )}
-        tag={(
+        // The stage it works from, and the switch's Off: the demo's alone. The product has no stages (M2-I) and no switch.
+        tag={demo !== null ? (
           <span className="flex items-center gap-2">
             {locked ? <StageTag tag={STAGE_TAGS[s.need]} size="lg" /> : <Badge variant="outline" size="md">{STAGE_TAGS[s.need]}</Badge>}
             {!locked && !on && <Badge variant="muted" size="md">Off</Badge>}
           </span>
-        )}
+        ) : undefined}
         description={<>
           <span className="block text-lg leading-prose">{keepUnitsTogether(s.d)}</span>
           <span className="mt-2.5 block text-sm text-muted-foreground">{byline(s)}</span>

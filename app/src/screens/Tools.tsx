@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils'
 import { agent, demo } from '../agent'
 import { askForTool } from '../lib/product-flow'
 import { keepUnitsTogether } from '../agent/clock'
-import { STAGE_TAGS, toolCounts, toolDetail, toolView } from '../state/derive'
+import { STAGE_TAGS, stageLocked, toolCounts, toolDetail, toolView } from '../state/derive'
 import type { ToolState } from '../state/derive'
 import { useCtx, useUi } from '../state/store'
 import { useEffect, useState, useSyncExternalStore } from 'react'
@@ -74,7 +74,7 @@ async function connectTool(key: string, label: string, say: (text: string) => vo
 
 export function Tools() {
   const ctx = useCtx()
-  const { S, agent: st, data } = ctx
+  const { agent: st, data } = ctx
   const { tools } = data
   const openTool = useUi(s => s.openTool)
   const showToast = useUi(s => s.showToast)
@@ -146,7 +146,7 @@ export function Tools() {
       <SectionHeader title="Channels" count={channels.length} className={SECTION_HEAD} />
       <CardGrid size="lg" variant="rows" className={ONE(channels.length)}>
         {channels.map(c => {
-          const locked = S < c.need
+          const locked = stageLocked(ctx, c.need)
           return (
             <button key={c.key} type="button" data-channel-row onClick={() => openTool(c.key)} className={ROW}>
               <LogoTile k={c.key} className={locked ? 'grayscale' : undefined} />
@@ -190,7 +190,7 @@ export function Tools() {
       <CardGrid size="lg" variant="rows" className={ONE(catalog.length)}>
         {catalog.map(c => {
           const need = c.need ?? 0
-          const locked = S < need
+          const locked = stageLocked(ctx, need)
           const req = !!st.requestedTools[c.k]
           const ask = () => {
             // The product says "sent" once the server has it; a refusal is told by the client and shows no toast.
@@ -268,10 +268,10 @@ function ToolsFailed() {
 
 /** A channel's page (Slack): where the team hears from the agent. Not a tool it reads, so no abilities or questions (D6). */
 function ChannelPage({ channel: c }: { channel: ToolChannel }) {
-  const { S } = useCtx()
+  const ctx = useCtx()
   const go = useUi(s => s.go)
   const openSettings = useUi(s => s.openSettings)
-  const locked = S < c.need
+  const locked = stageLocked(ctx, c.need)
   const status = locked ? `Included from ${STAGE_TAGS[c.need]}` : `Connected · ${fmtDay(c.since, display())}`
   // Before Act the channel isn't live, so only the website shows.
   const info: [string, ReactNode][] = []
@@ -286,7 +286,8 @@ function ChannelPage({ channel: c }: { channel: ToolChannel }) {
       <PageHeader className="mt-4" title={c.name} description={c.desc}
         leading={<LogoTile k={c.key} size="xl" className={cn('shadow-card', locked && 'grayscale')} />}
         tag={<Badge variant="status" size="md">{status}</Badge>}
-        actions={!locked && (
+        // Notification settings is a page only the demo has (settings/menu.ts).
+        actions={!locked && demo !== null && (
           <Button variant="outline" size="lg" onClick={() => openSettings('you-notif')}>
             <Icon name="notifications" size={17} />Notification settings
           </Button>
