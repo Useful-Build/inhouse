@@ -33,6 +33,7 @@ import { buildRemote, gradedSession, STORE_DATA_CAP, STORE_DATA_SHOPS, storeData
 import { runStoreData } from './runner.ts'
 import type { StoreDataEnv, StoreDataReader } from './runner.ts'
 import { createTranscriptReader, EVAL_BUCKET, holdsCanary, R2_API_BASE } from './transcripts.ts'
+import { GRADED_PROMPT_VERSION } from '../../prompt-version.ts'
 
 const ACCOUNT = '0123456789abcdef0123456789abcdef'
 const TOKEN = 'tok-SECRET-r2-read-9f8e7d'
@@ -381,21 +382,21 @@ describe('the run loop in graded mode (failure 9)', () => {
   })
   // #337 round 2 (M2): every graded turn must have been sent the system prompt v3 (evals/prompt-version.ts). A v2 fallback, a
   // missing version or a slot with no turn fails the case with that reason, never a pass.
-  it('a case whose turn was sent v3 keeps prompt 3 and grades as before; v2, missing or no turn fails naming why', async () => {
-    const ok = env({ promptOf: async () => ({ version: 3, apps: ['Shopify'] }) })
+  it('a case whose turn was sent the current version keeps that prompt and grades as before; v3, v2, missing or no turn fails naming why', async () => {
+    const ok = env({ promptOf: async () => ({ version: GRADED_PROMPT_VERSION, apps: ['Shopify'] }) })
     const passed = await runStoreData(ok.e, two.slice(0, 1))
-    expect(passed.outcomes[0]).toMatchObject({ prompt: 3, verdict: { pass: true } })
-    for (const sent of [2, 'missing'] as const) {
+    expect(passed.outcomes[0]).toMatchObject({ prompt: GRADED_PROMPT_VERSION, verdict: { pass: true } })
+    for (const sent of [3, 2, 'missing'] as const) {
       const { e } = env({ promptOf: async () => ({ version: sent, apps: ['Shopify'] }) })
       const run = await runStoreData(e, two.slice(0, 1))
-      expect(run.outcomes[0], String(sent)).toMatchObject({ prompt: sent, verdict: { pass: false, reasons: [`prompt_version:${sent}: the turn was not sent the system prompt v3`] } })
+      expect(run.outcomes[0], String(sent)).toMatchObject({ prompt: sent, verdict: { pass: false, reasons: [`prompt_version:${sent}: the turn was not sent the system prompt v${GRADED_PROMPT_VERSION}`] } })
     }
   })
 
-  it('a v3 turn whose prompt named no store fails as prompt_apps (#337 round 3)', async () => {
-    const { e } = env({ promptOf: async () => ({ version: 3, apps: [] }) })
+  it('a current-version turn whose prompt named no store fails as prompt_apps (#337 round 3)', async () => {
+    const { e } = env({ promptOf: async () => ({ version: GRADED_PROMPT_VERSION, apps: [] }) })
     const run = await runStoreData(e, two.slice(0, 1))
-    expect(run.outcomes[0]).toMatchObject({ prompt: 3, verdict: { pass: false, reasons: ['prompt_apps:none: the turn\'s prompt did not name Shopify as connected'] } })
+    expect(run.outcomes[0]).toMatchObject({ prompt: GRADED_PROMPT_VERSION, verdict: { pass: false, reasons: ['prompt_apps:none: the turn\'s prompt did not name Shopify as connected'] } })
   })
   it('a store not served after the case\'s shop is set stops the run before Run now (#337 round 3, M4)', async () => {
     const { e, log } = env({ checkStore: async () => { log.push('tools'); return 'Shopify is not connected on the brand\'s Tools page' } })
@@ -472,7 +473,7 @@ describe('the remote wiring run.mjs uses (Sonnet M2), on a faked eval deployment
       // #337 round 2: the store check before any spend (route 70, Shopify served).
       if (path === '/api/tools') return { status: 200, json: { connected: ['shopify'], details: { shopify: { name: 'Shopify' } }, connection: {} } }
       // #337 round 2 (M2): the case's turn's trace, as the Admin reads it (a routine run's: runs.ts admits it).
-      if (path.startsWith('/api/traces/')) return { status: 200, json: { promptVersions: [3], promptApps: [['Shopify']] } }
+      if (path.startsWith('/api/traces/')) return { status: 200, json: { promptVersions: [GRADED_PROMPT_VERSION], promptApps: [['Shopify']] } }
       return { status: 200, json: { total: { minor: 0 }, cap: { minor: 5000 } } }
     }
     const runNow = async (clientKey: string) => {
@@ -520,7 +521,7 @@ describe('the remote wiring run.mjs uses (Sonnet M2), on a faked eval deployment
     const { db, r2, log, built } = await deployment()
     const out = await gradedSession({ graded: built.graded, clearShop: () => built.door.clearShop(), run: () => runStoreData(built.env, STORE_DATA_CASES.slice(0, 1), undefined, 'claude-sonnet-5-5') })
     expect(out.refused).toBeNull()
-    expect(out.result!.outcomes[0]).toMatchObject({ id: 'XS01', ranOn: 'claude-sonnet-5-5', prompt: 3, verdict: { pass: true, checks: { exposed: true } } })
+    expect(out.result!.outcomes[0]).toMatchObject({ id: 'XS01', ranOn: 'claude-sonnet-5-5', prompt: GRADED_PROMPT_VERSION, verdict: { pass: true, checks: { exposed: true } } })
     expect(log).toEqual(['POST /api/chats', 'GET /api/usage', 'GET /api/usage', 'GET /api/tools', 'run now', 'GET /api/traces/turn_x'])
     expect(r2.calls.map(c => new URL(c.url).searchParams.get('prefix'))[0], 'the preflight first').toBe('sessions/')
     expect(setting(db, 's:cap')).toEqual([{ value_json: '"$50"' }])

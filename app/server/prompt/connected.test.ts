@@ -125,9 +125,9 @@ describe('connectedLines, the pure turn lines', () => {
   })
 })
 
-describe('the system prompt v3', () => {
+describe('the system prompt v3 builder', () => {
   it('is v1 then the turn lines; with no turn lines it is the static v2, and v1 is kept as it was', () => {
-    expect(SYSTEM_PROMPT_VERSION).toBe(3)
+    expect(SYSTEM_PROMPT_VERSION).toBe(4)
     expect(systemPromptV3('')).toBe(SYSTEM_PROMPT_V2)
     expect(systemPromptV3(NONE)).toBe(`${SYSTEM_PROMPT_V1}\n\n${NONE}`)
   })
@@ -296,8 +296,8 @@ describe('the store is named exactly once, on the builder path and on every fall
   })
 })
 
-// The version sent with each turn (#337 review M1, M2): 3 only for the built prompt, 2 on every fallback. Ways it can fail:
-// a fallback reports 3 (the eval tooling would grade v2 turns as v3), or the builder reports 2.
+// The version sent with each turn (#337 review M1, M2): the current version only for the built prompt, 2 on every fallback. Ways it can fail:
+// a fallback reports the current version (the eval tooling would grade v2 turns as the current version), or the builder reports 2.
 describe('the version sent, on every path', () => {
   afterEach(() => vi.restoreAllMocks())
   const deps = (listAccounts: () => Promise<HubResult<AccountSummary[]>>, o: Partial<TurnPromptDeps> = {}): TurnPromptDeps => ({
@@ -305,7 +305,7 @@ describe('the version sent, on every path', () => {
   })
   const quiet = () => { vi.spyOn(console, 'error').mockImplementation(() => {}); vi.spyOn(console, 'warn').mockImplementation(() => {}) }
 
-  it('the builder: 3, with apps, with none connected, and when only the channel read failed', async () => {
+  it('the builder: the current version, with apps, with none connected, and when only the channel read failed', async () => {
     quiet()
     for (const [d, label, apps] of [
       [deps(async () => ({ ok: true, value: [account('shopify:store'), account('slack:workspace')] })), 'apps', ['Shopify', 'Slack']],
@@ -313,7 +313,7 @@ describe('the version sent, on every path', () => {
       [deps(async () => ({ ok: true, value: [account('slack:workspace')] }), { channels: async () => { throw new Error('d1') } }), 'channels failed', ['Slack']],
     ] as const) {
       const p = await turnSystemPrompt(d, 't_v3')
-      expect(p.version, label).toBe(3)
+      expect(p.version, label).toBe(4)
       expect(p.text, label).not.toBe(SYSTEM_PROMPT_V2)
       // #337 round 3 (M3): the apps the built line named, so a v3 turn that named no store can't pass as one that did.
       expect(p.apps, label).toEqual(apps)

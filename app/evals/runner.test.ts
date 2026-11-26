@@ -12,6 +12,7 @@ import { CAP_CHAT_USD, estimateUsd, runEvals } from './runner.ts'
 import { buildReport } from './report.ts'
 import { S5_PEOPLE } from './s5-fixtures.ts'
 import type { ChatResult, Target } from './types.ts'
+import { GRADED_PROMPT_VERSION } from './prompt-version.ts'
 
 const USAGE = { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }
 // The Slack search case (P5) needs the hub's live Slack tool, the code-mode cases (P5 W2) the live Shopify store, and
@@ -379,13 +380,13 @@ describe('unbuilt tools and the cause of a failed run', () => {
     expect(out.rows[0]).toMatchObject({ runOk: false, pass: false, err: 'the turn\'s prompt did not name Shopify as connected: prompt_apps:none' })
   })
   // P5 (#337): a turn that answered but wasn't sent prompt v3 is a failed row that says so, never a pass.
-  it('a turn not sent the system prompt v3 fails its row with that reason, even with an answer', async () => {
+  it('a turn not sent the current system prompt fails its row with that reason, even with an answer', async () => {
     for (const failure of ['prompt_version:2', 'prompt_version:missing']) {
       const t = createFakeTarget()
       const seed = t.seed
       t.seed = async (...a) => { const s = await seed(...a); return { ...s, chat: async () => ({ toolCalls: [], answer: 'Hello.', runOk: false, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0.4, failure, turnId: 't_BBBBBBBBBBBBBBBBBBBBBB' }) } }
       const out = await runEvals({ target: t, cases: [CASES.find((c) => c.id === 'R02')!], reps: 1, concurrency: 1 })
-      expect(out.rows[0], failure).toMatchObject({ runOk: false, pass: false, err: `the turn was not sent the system prompt v3: ${failure}` })
+      expect(out.rows[0], failure).toMatchObject({ runOk: false, pass: false, err: `the turn was not sent the system prompt v${GRADED_PROMPT_VERSION}: ${failure}` })
     }
   })
 })
