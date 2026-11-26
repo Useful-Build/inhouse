@@ -133,25 +133,25 @@ const validArgs = {
 } as const
 
 describe('resolve (I8)', () => {
-  test.prop([fc.string().filter(s => !OPS.includes(s as WriteOperationKey)), fc.anything()])('refuses an unknown operation', (op, args) => {
-    expect(resolve(facts(), { operation: op as WriteOperationKey, args })).toEqual({ refuse: { verdict: 'refuse', reason: 'unknown_operation' } })
+  test.prop([fc.string().filter(s => !OPS.includes(s as WriteOperationKey)), fc.anything()])('refuses an unknown operation', async (op, args) => {
+    expect(await resolve(facts(), { operation: op as WriteOperationKey, args })).toEqual({ refuse: { verdict: 'refuse', reason: 'unknown_operation' } })
   })
 
-  test.prop([fc.constantFrom(...OPS), fc.anything().filter(a => typeof a !== 'object' || a === null || Array.isArray(a))])('refuses arguments that aren\'t an object', (op, args) => {
-    expect(resolve(facts(), { operation: op, args })).toEqual({ refuse: { verdict: 'refuse', reason: 'invalid_args' } })
+  test.prop([fc.constantFrom(...OPS), fc.anything().filter(a => typeof a !== 'object' || a === null || Array.isArray(a))])('refuses arguments that aren\'t an object', async (op, args) => {
+    expect(await resolve(facts(), { operation: op, args })).toEqual({ refuse: { verdict: 'refuse', reason: 'invalid_args' } })
   })
 
   test.prop([fc.constantFrom(...OPS), fc.dictionary(fc.constantFrom('accountId', 'accountGen', 'connectedAtMs', 'shop', 'extra'), fc.jsonValue(), { minKeys: 1 })])(
     'refuses any extra key (the account never comes from the arguments)',
-    (op, extra) => {
-      expect(resolve(facts(), { operation: op, args: { ...validArgs[op], ...extra } })).toEqual({ refuse: { verdict: 'refuse', reason: 'invalid_args' } })
+    async (op, extra) => {
+      expect(await resolve(facts(), { operation: op, args: { ...validArgs[op], ...extra } })).toEqual({ refuse: { verdict: 'refuse', reason: 'invalid_args' } })
     },
   )
 
-  test.prop([fc.constantFrom(...OPS), fc.integer({ min: 1, max: 9e12 })])('takes the account and its generation from the connected account', (op, gen) => {
+  test.prop([fc.constantFrom(...OPS), fc.integer({ min: 1, max: 9e12 })])('takes the account and its generation from the connected account', async (op, gen) => {
     const f = facts()
     const key = op === 'slack.channel.post' ? 'slack' : 'shopify'
-    const got = resolve({ ...f, accounts: { ...f.accounts, [key]: { ...f.accounts[key]!, connectedAtMs: gen } } }, { operation: op, args: validArgs[op] })
+    const got = await resolve({ ...f, accounts: { ...f.accounts, [key]: { ...f.accounts[key]!, connectedAtMs: gen } } }, { operation: op, args: validArgs[op] })
     expect(got).toMatchObject({ operation: op, accountId: f.accounts[key]!.accountId, accountGen: gen, policyRev: POLICY_REV, records: 1, units: 1 })
   })
 })

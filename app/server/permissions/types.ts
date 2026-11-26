@@ -107,6 +107,7 @@ export interface DecideFacts {
   allowOnceCount: number
 }
 
-export type ResolveFn = (f: ResolveFacts, p: Proposed) => Resolved | { refuse: RefuseVerdict }
+/** Async: `payloadHash` uses WebCrypto's digest (changed by M2-A; no call site existed). */
+export type ResolveFn = (f: ResolveFacts, p: Proposed) => Promise<Resolved | { refuse: RefuseVerdict }>
 export type DecideCoreFn = (f: DecideFacts, ctx: DecideCtx, r: Resolved) => Verdict
 export type ClaimGuardSqlFn = (alias: string) => { sql: string; params: unknown[] }

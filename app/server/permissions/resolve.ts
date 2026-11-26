@@ -1,12 +1,11 @@
 // `resolve` (N9): a proposal (an operation and the model's raw arguments) becomes a `Resolved`, or a refusal. The model
 // supplies only the operation and the arguments; the server derives everything else. The account and its generation
 // come from the brand's connected account (`connector_accounts.connected_at_ms`), never from the arguments; the scope,
-// the counts, the effects and `memberMay` from the operation's entry. Pure and synchronous.
-import { canonicalJson } from '../../shared/protocol/index.ts'
+// the counts, the effects and `memberMay` from the operation's entry. Pure; async only for WebCrypto's digest.
+import { auditInputSha256 } from '../../shared/protocol/index.ts'
 import { operationEntry } from '../outbox/operations/index.ts'
 import { POLICY_REV } from './policy.ts'
-import { sha256Hex } from './sha256.ts'
-import type { Proposed, RefuseReason, RefuseVerdict, Resolved, ResolveFacts } from './types.ts'
+import type { RefuseReason, RefuseVerdict, ResolveFn } from './types.ts'
 
 const refuse = (reason: RefuseReason): { refuse: RefuseVerdict } => ({ refuse: { verdict: 'refuse', reason } })
 
@@ -15,14 +14,17 @@ export function scopeKeyOf(scope: Readonly<Record<string, string>>): string {
   return Object.keys(scope).sort().map(k => `${encodeURIComponent(k)}=${encodeURIComponent(scope[k])}`).join('&')
 }
 
-/** SHA-256 of the canonical JSON of what the action would do: operation, account, generation, scope and parsed arguments. */
-export function payloadHashOf(p: { operation: string; accountId: string; accountGen: number; scope: Readonly<Record<string, string>>; args: unknown }): string {
-  return sha256Hex(new TextEncoder().encode(canonicalJson({ operation: p.operation, accountId: p.accountId, accountGen: p.accountGen, scope: p.scope, args: p.args })))
+/**
+ * SHA-256 of the canonical JSON of what the action would do: operation, account, generation, scope and parsed
+ * arguments. The same canonical form and hash the runner and the egress use (`auditInputSha256`), lower-case hex.
+ */
+export function payloadHashOf(p: { operation: string; accountId: string; accountGen: number; scope: Readonly<Record<string, string>>; args: unknown }): Promise<string> {
+  return auditInputSha256({ operation: p.operation, accountId: p.accountId, accountGen: p.accountGen, scope: p.scope, args: p.args })
 }
 
 const isCount = (n: number) => Number.isSafeInteger(n) && n >= 1
 
-export function resolve(f: ResolveFacts, p: Proposed): Resolved | { refuse: RefuseVerdict } {
+export const resolve: ResolveFn = async (f, p) => {
   // The key may come from outside (a cast tool name, a stored row): look it up, never index blindly.
   const entry = typeof p.operation === 'string' ? operationEntry(p.operation) : null
   if (!entry) return refuse('unknown_operation')
@@ -51,7 +53,7 @@ export function resolve(f: ResolveFacts, p: Proposed): Resolved | { refuse: Refu
     units,
     effects: { ...entry.effects },
     memberMay: entry.memberMay,
-    payloadHash: payloadHashOf({ operation: entry.key, accountId: account.accountId, accountGen, scope, args }),
+    payloadHash: await payloadHashOf({ operation: entry.key, accountId: account.accountId, accountGen, scope, args }),
     policyRev: POLICY_REV,
   }
 }
