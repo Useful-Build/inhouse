@@ -83,11 +83,13 @@ function removeTrailingCommas(json) {
 const has = (obj, key) => obj !== null && typeof obj === 'object' && Object.hasOwn(obj, key)
 const SECRET_NAMES = ['HUB_TOKEN_KEYS', 'SHOPIFY_CLIENT_SECRET']
 /** A Worker secret that may be absent: refused in `vars` and `define`, but not listed as required. */
-const OPTIONAL_SECRET_NAMES = ['SLACK_CLIENT_SECRET']
+const OPTIONAL_SECRET_NAMES = ['SLACK_CLIENT_SECRET', 'SHOPIFY_WRITE_CLIENT_SECRET']
 /** The only `vars` a deployable config may set (the ops repo fills them per deployment). */
 const KNOWN_VARS = ['SHOPIFY_SHOP', 'SHOPIFY_CLIENT_ID', 'SLACK_CLIENT_ID', 'SLACK_TEAM_ID', 'SLACK_PRIVATE_SEARCH', 'CONNECT_REDIRECT_URI',
   // P5 W4: the product origin Slack notices link to.
-  'APP_ORIGIN']
+  'APP_ORIGIN',
+  // Stage 1 M2-C: the separate write-scoped Shopify app (empty in Stage 1).
+  'SHOPIFY_WRITE_SHOP', 'SHOPIFY_WRITE_CLIENT_ID']
 const PUBLIC_SURFACES = ['assets', 'site']
 const BUNDLER_SWAPS = ['alias', 'no_bundle', 'build']
 

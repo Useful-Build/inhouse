@@ -23,6 +23,9 @@ export { SignIn } from '../signin/signin'
 export { ConnectGateway } from '../oauth/entry'
 // P5 (p5-w4): Slack delivery for product server code only (HUB_DELIVERY).
 export { DeliveryGateway } from '../connectors/slack/delivery'
+// Stage 1 M2-C (N13): outbox-only write entrypoint (HUB_WRITE) and write-scoped Shopify SignIn DO.
+export { WriteGateway } from '../outbox-entry/entry'
+export { ShopifyWriteSignIn } from '../connectors/shopify/write/signin'
 
 const notFound = (): Response =>
   new Response(JSON.stringify({ error: 'not_found' }), {

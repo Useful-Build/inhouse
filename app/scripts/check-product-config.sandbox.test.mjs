@@ -470,7 +470,7 @@ describe('(P4) the product\'s one service binding, to its own sandbox hub (failu
     expect(r2.status).toBe(0)
   })
   // (P5) The message names both allowed sets now (the refusals are unchanged).
-  const SHAPE = 'services is set: a sandbox config may not use it, but for exactly { HUB -> ReadGateway } or { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway, HUB_DELIVERY -> DeliveryGateway }'
+  const SHAPE = 'services is set: a sandbox config may not use it, but for exactly { HUB -> ReadGateway }, { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway, HUB_DELIVERY -> DeliveryGateway } or { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway, HUB_DELIVERY -> DeliveryGateway, HUB_WRITE -> WriteGateway }'
   const PRODUCT_CASES = [
     ['the house hub', [PR12, 'pass-per-pr.json'], { ...HUB, service: 'inhouse-hub' }, 'services[0].service: "inhouse-hub" is not PR 12\'s hub name (inhouse-sbx-pr12-hub)'],
     ['another PR\'s hub', [PR12, 'pass-per-pr.json'], { ...HUB, service: 'inhouse-sbx-pr13-hub' }, 'services[0].service: "inhouse-sbx-pr13-hub" is not PR 12\'s hub name'],
@@ -779,6 +779,10 @@ describe('(P4) the eval deployment\'s own hub (failures 12 and 13)', () => {
   const EVAL_PRODUCT_CASES = [
     // #266's P5 set passes for a PR and the candidate; the eval deployment takes exactly the read and connect pair.
     ['P5\'s three bindings', p5, SHAPE],
+    // Stage 1 M2-C (N2, N13): the eval config must NEVER carry HUB_WRITE.
+    ['M2-C\'s write binding beside read and connect', [...p5.slice(0, 2), { binding: 'HUB_WRITE', service: EVAL_HUB_NAME, entrypoint: 'WriteGateway' }], SHAPE],
+    ['M2-C\'s four bindings', [...p5, { binding: 'HUB_WRITE', service: EVAL_HUB_NAME, entrypoint: 'WriteGateway' }], SHAPE],
+    ['HUB_WRITE alone', [{ binding: 'HUB_WRITE', service: EVAL_HUB_NAME, entrypoint: 'WriteGateway' }], SHAPE],
     ['P5\'s connect binding alone', [p5[1]], SHAPE],
     ['the read and the delivery bindings', [evalEntry, p5[2]], SHAPE],
     ['the connect and the delivery bindings', [p5[1], p5[2]], SHAPE],
@@ -952,20 +956,23 @@ describe('(P5) the product\'s three hub bindings: exact sets, not any subset (fa
     { binding: 'HUB_CONNECT', service: hub, entrypoint: 'ConnectGateway' },
     { binding: 'HUB_DELIVERY', service: hub, entrypoint: 'DeliveryGateway' },
   ]
-  const SHAPE = 'services is set: a sandbox config may not use it, but for exactly { HUB -> ReadGateway } or { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway, HUB_DELIVERY -> DeliveryGateway }'
-  test('PR 12 and the candidate may bind all three to their own hub, in any order; none and HUB alone still pass', () => {
-    for (const services of [three('inhouse-sbx-pr12-hub'), three('inhouse-sbx-pr12-hub').reverse(), [three('inhouse-sbx-pr12-hub')[0]], []]) {
+  const SHAPE = 'services is set: a sandbox config may not use it, but for exactly { HUB -> ReadGateway }, { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway, HUB_DELIVERY -> DeliveryGateway } or { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway, HUB_DELIVERY -> DeliveryGateway, HUB_WRITE -> WriteGateway }'
+  const four = hub => [...three(hub), { binding: 'HUB_WRITE', service: hub, entrypoint: 'WriteGateway' }]
+  test('PR 12 and the candidate may bind all three or four to their own hub, in any order; none and HUB alone still pass', () => {
+    for (const services of [three('inhouse-sbx-pr12-hub'), three('inhouse-sbx-pr12-hub').reverse(), four('inhouse-sbx-pr12-hub'), four('inhouse-sbx-pr12-hub').reverse(), [three('inhouse-sbx-pr12-hub')[0]], []]) {
       const config = load('pass-per-pr.json')
       config.services = services
       const r = run([...PR12, write(config)])
       expect(r.stderr, JSON.stringify(services)).toBe('')
       expect(r.status).toBe(0)
     }
-    const candidate = load('pass-candidate.json')
-    candidate.services = three('inhouse-sbx-hub')
-    const r = run([...CANDIDATE, write(candidate)])
-    expect(r.stderr).toBe('')
-    expect(r.status).toBe(0)
+    for (const services of [three('inhouse-sbx-hub'), four('inhouse-sbx-hub')]) {
+      const candidate = load('pass-candidate.json')
+      candidate.services = services
+      const r = run([...CANDIDATE, write(candidate)])
+      expect(r.stderr).toBe('')
+      expect(r.status).toBe(0)
+    }
   })
   const H = 'inhouse-sbx-pr12-hub'
   const CASES = [
