@@ -15,6 +15,7 @@ import { SYSTEM_MEMBER_ID } from '../../../db/ids.ts'
 import { notifyChannelStore } from '../../../notify-slack/channels.ts'
 import { HUB_FACTS, resetOutbox } from '../../../outbox/test-support.ts'
 import type { OutboxActionRow } from '../../../outbox/types.ts'
+import type { HubAccountFacts } from '../../../outbox/facts.ts'
 import { account, ceiling, person } from '../../../permissions/test-support.ts'
 import type { ToolScope } from '../../server/tool.ts'
 import { notifyDeps } from './deps.ts'
@@ -30,12 +31,12 @@ const ADMIN = 'm_ns_admin'
 const CREATOR = 'm_ns_creator'
 
 /** The egress's wiring with a stand-in admission: each call admitted as a fresh main-agent call, or as `next` says. */
-function wiring(o: { admit?: (input: unknown) => NotifyAdmitted | null; routineAsker?: string | null } = {}) {
+function wiring(o: { admit?: (input: unknown) => NotifyAdmitted | null; routineAsker?: string | null; hub?: HubAccountFacts[] } = {}) {
   const scheduled: { actionId: string; atMs: number }[] = []
   const noted: string[] = []
   const admitted: unknown[] = []
   const w: NotifyWiring = {
-    hubAccounts: async () => HUB_FACTS,
+    hubAccounts: async () => o.hub ?? HUB_FACTS,
     admit: async (_scope, input) => {
       admitted.push(input)
       return o.admit ? o.admit(input) : { toolUseId: `toolu_${uniq()}`, jobId: null, replay: false }
@@ -69,6 +70,7 @@ async function markAlerts(channelId: string | null, actorId = ADMIN) {
 }
 
 const text = (r: { content: { text: string }[] }) => r.content[0]!.text
+const adminsBell = async (marker: string) => (await db.prepare("SELECT COUNT(*) AS n FROM notices WHERE audience = 'admins' AND body LIKE ?").bind(`%${marker}%`).first<number>('n'))!
 const actions = async () => (await db.prepare('SELECT * FROM outbox_actions ORDER BY created_at_ms, id').all<OutboxActionRow>()).results
 const send = (args: unknown, scope: ToolScope, deps: ReturnType<typeof wiring>['deps'] | undefined) =>
   notificationSend.call(NotificationSendInput.parse(args), scope, { db, ...(deps ? { notify: deps } : {}) })
@@ -226,7 +228,10 @@ describe('a post to a listed channel follows the same rule as any Slack post (M2
   it("a routine's post asks its creator even under the brand's grant; a system routine has no one to ask", async () => {
     const { scope } = await setup()
     await markAlerts('C0TEST0001')
-    const routine = { ...scope, memberId: SYSTEM_MEMBER_ID }
+    // A routine's run is in a chat the system owns (the routine's slot's), not a person's.
+    const routineChat = `c_${uniq()}`
+    await db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms) VALUES (?, ?, 'R', 1, 1)").bind(routineChat, SYSTEM_MEMBER_ID).run()
+    const routine = { ...scope, memberId: SYSTEM_MEMBER_ID, chatId: routineChat }
     const team = wiring({ routineAsker: CREATOR })
     await send({ to: { channels: ['ops-alerts'] }, title: 'T', text: 'routine', format: 'message' }, routine, team.deps)
     const [row] = await actions()
@@ -234,8 +239,10 @@ describe('a post to a listed channel follows the same rule as any Slack post (M2
     expect(team.scheduled).toEqual([])
     const system = wiring({ routineAsker: null })
     const r = await send({ to: { channels: ['ops-alerts'] }, title: 'T', text: 'system routine', format: 'message' }, routine, system.deps)
-    expect(text(r)).toBe('#ops-alerts: refused: no_one_to_ask (There’s no one to ask for an approval here, so nothing was asked or sent.)')
+    // No one to approve it: the notice goes to the admins' bell instead (the run person rule: a system chat has no person).
+    expect(text(r)).toBe('#ops-alerts: sent to the bell (not Slack): There’s no one here to approve a Slack post, so it went to the bell, not Slack.')
     expect((await actions()).length).toBe(1)
+    expect(await adminsBell('system routine')).toBe(1)
   })
 
   it("a job's post is the job's; a removed person is no one to ask", async () => {
@@ -246,6 +253,29 @@ describe('a post to a listed channel follows the same rule as any Slack post (M2
     expect([row!.origin, row!.job_id]).toEqual(['job', 'j_ns_1'])
     await person(db, OWNER, 'member', 'removed')
     const r = await send({ to: { channels: ['ops-alerts'] }, title: 'T', text: 'gone', format: 'message' }, scope, wiring().deps)
-    expect(text(r)).toBe('#ops-alerts: refused: no_one_to_ask (There’s no one to ask for an approval here, so nothing was asked or sent.)')
+    expect(text(r)).toBe('#ops-alerts: sent to the bell (not Slack): There’s no one here to approve a Slack post, so it went to the bell, not Slack.')
+    expect(await adminsBell('gone')).toBe(1)
+  })
+
+  // Review round 2: a notice must never vanish. Each refusal that isn't about the call itself sends it to the bell instead.
+  it('Slack paused at the hub (account_unavailable): the chat owner\'s bell, and the agent is told', async () => {
+    const { scope } = await setup()
+    const w = wiring({ hub: [{ accountId: 'slack:workspace', paused: true, label: 'Slack' }] })
+    const r = await send({ to: { channels: ['ops-alerts'] }, title: 'T', text: 'slack paused', format: 'message' }, scope, w.deps)
+    expect(text(r)).toBe('#ops-alerts: sent to the bell (not Slack): Slack isn’t connected or is paused right now, so it went to the bell, not Slack.')
+    expect(await actions()).toEqual([])
+    expect((await db.prepare("SELECT COUNT(*) AS n FROM notices WHERE audience_member_id = ? AND body LIKE '%slack paused%'").bind(OWNER).first<number>('n'))).toBe(1)
+  })
+
+  it("an Inhouse member's chat (no one to ask): the admins' bell, never a card", async () => {
+    const { scope } = await setup()
+    const IH = 'm_ns_inhouse'
+    await db.prepare("INSERT INTO members (id, kind, role, status, name, created_at_ms) VALUES (?, 'inhouse', NULL, 'active', 'I', 1) ON CONFLICT (id) DO NOTHING").bind(IH).run()
+    const chatId = `c_${uniq()}`
+    await db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms) VALUES (?, ?, 'T', 1, 1)").bind(chatId, IH).run()
+    const r = await send({ to: { channels: ['ops-alerts'] }, title: 'T', text: 'inhouse chat', format: 'message' }, { ...scope, memberId: IH, chatId }, wiring().deps)
+    expect(text(r)).toBe('#ops-alerts: sent to the bell (not Slack): There’s no one here to approve a Slack post, so it went to the bell, not Slack.')
+    expect(await actions()).toEqual([])
+    expect(await adminsBell('inhouse chat')).toBe(1)
   })
 })

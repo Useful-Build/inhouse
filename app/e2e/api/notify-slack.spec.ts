@@ -149,6 +149,32 @@ test('a listed channel with the brand\'s grant (the admin\'s alerts mark): liste
   }
 })
 
+// Neon's review (round 1, High): the product dates a Slack connect by its own clock, and the first write request copies the
+// hub's date in and revokes grants on any other generation. The route syncs the hub's date before the mark makes the grant,
+// so on a fresh connect with no request in between, the first post still runs under it. Remove that sync and this goes red
+// (the grant takes the product's date, the post's sync revokes it, and the post becomes a card).
+test("a fresh connect, then the alerts mark, then the first post: it runs under the brand's grant (the mark synced the hub's date)", async ({ request }) => {
+  test.setTimeout(120_000)
+  await freshConnect(request)
+  await setListedChannels(request, [CHANNEL.opsAlerts, CHANNEL.general])
+  const productDate = readSql<{ connected_at_ms: number }>("SELECT connected_at_ms FROM connector_accounts WHERE account_id = 'slack:workspace'")[0]!.connected_at_ms
+  await setCeiling(request, POST, true)
+  try {
+    await markAlerts(request, CHANNEL.opsAlerts)
+    const g = readSql<{ id: string; account_gen: number }>("SELECT id, account_gen FROM permission_grants WHERE holder = 'brand' AND revoked_at_ms IS NULL")
+    const synced = readSql<{ connected_at_ms: number }>("SELECT connected_at_ms FROM connector_accounts WHERE account_id = 'slack:workspace'")[0]!.connected_at_ms
+    await test.info().attach('dates', { body: JSON.stringify({ productDate, synced, grant: g }), contentType: 'application/json' })
+    expect(g.map(x => x.account_gen), "the grant took the hub's date").toEqual([synced])
+    const a = actionOf(await notifySend(request, newRun(owner), msg()))
+    expect(a, 'the first post runs under the grant').toMatchObject({ outcome: 'asked', status: 'approved', created: true })
+    expect(readSql<{ grant_id: string }>('SELECT grant_id FROM outbox_actions WHERE id = ?', a.approval_id!)).toEqual([{ grant_id: g[0]!.id }])
+    expect(readSql<{ revoked_at_ms: number | null }>('SELECT revoked_at_ms FROM permission_grants WHERE id = ?', g[0]!.id)).toEqual([{ revoked_at_ms: null }])
+    await until(request, a.approval_id!, 'sent')
+  } finally {
+    await setCeiling(request, POST, false)
+  }
+})
+
 test('the grant\'s daily limit: past it, the post becomes an exact card (count), never a send', async ({ request }) => {
   await setCeiling(request, POST, true, 1)
   try {

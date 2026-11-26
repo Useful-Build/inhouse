@@ -277,13 +277,13 @@ describe('test 5: channels', () => {
     const s = await scene()
     const since = await lastLine()
     const { leg, proposals } = fakeLeg(c => (c.channelId === 'C0TEST0002'
-      ? { kind: 'refused', reason: 'account_unavailable', text: 'The tool for that action isn’t connected, or it’s paused, so nothing was asked or sent.' }
+      ? { kind: 'refused', reason: 'not_admitted', text: "That call couldn't be matched to this turn, so nothing was asked or sent." }
       : { kind: 'action', actionId: 'act_fake1', state: 'approved', verdict: 'run', created: true }))
     const out = await notifyAgent(ctxOf(leg, s.nowMs), scopeOf(s), msg({ to: { channels: ['#random', '#GENERAL', 'ops-alerts'] } }))
     expect(out.listed).toEqual(['#General', '#ops-alerts'])
     expect(out.recipients).toEqual([
       { kind: 'slack', to: '#random', outcome: 'refused', detail: 'not_listed' },
-      { kind: 'slack', to: '#GENERAL', outcome: 'refused', refusal: { reason: 'account_unavailable', text: 'The tool for that action isn’t connected, or it’s paused, so nothing was asked or sent.' } },
+      { kind: 'slack', to: '#GENERAL', outcome: 'refused', refusal: { reason: 'not_admitted', text: "That call couldn't be matched to this turn, so nothing was asked or sent." } },
       { kind: 'slack', to: 'ops-alerts', outcome: 'asked', action: { id: 'act_fake1', state: 'approved', verdict: 'run', created: true } },
     ])
     expect(proposals.map(p => p.channel.channelId)).toEqual(['C0TEST0002', 'C0TEST0001'])
@@ -413,6 +413,22 @@ describe('test 6, since M2-N: a listed channel is a proposal through the outbox,
       await notifyAgent(ctxOf(fakeLeg(off).leg, t.nowMs), { ...scopeOf(t), memberId: owner, chatId }, msg({ text }))
       expect((await notices("audience = 'admins'")).filter(r => r.body?.includes(text)).map(r => r.audience_member_id), ownerKind).toEqual([null])
     }
+  })
+
+  it('Slack unavailable or no one to approve it: each also reaches the bell instead, with its own words; a call not admitted is refused', async () => {
+    const cases: [string, string, string][] = [
+      ['account_unavailable', 'slack_unavailable', 'Slack isn’t connected or is paused right now, so it went to the bell, not Slack.'],
+      ['no_one_to_ask', 'no_one_to_ask', 'There’s no one here to approve a Slack post, so it went to the bell, not Slack.'],
+    ]
+    for (const [refused, reason, words] of cases) {
+      const s = await scene()
+      const out = await notifyAgent(ctxOf(fakeLeg(() => ({ kind: 'refused', reason: refused, text: 'outbox words' })).leg, s.nowMs), scopeOf(s), msg())
+      expect(out.recipients, refused).toEqual([{ kind: 'bell', to: '#ops-alerts', bell: s.owner, outcome: 'posted', detail: 'channel_to_bell', refusal: { reason, text: words } }])
+    }
+    const s = await scene()
+    const out = await notifyAgent(ctxOf(fakeLeg(() => ({ kind: 'refused', reason: 'not_admitted', text: 'no' })).leg, s.nowMs), scopeOf(s), msg())
+    expect(out.recipients).toEqual([{ kind: 'slack', to: '#ops-alerts', outcome: 'refused', refusal: { reason: 'not_admitted', text: 'no' } }])
+    expect(await notices('audience_member_id = ?', s.owner)).toEqual([])
   })
 
   it("with no leg (no egress behind the call) a listed channel is refused and reaches nobody's bell, in any chat", async () => {

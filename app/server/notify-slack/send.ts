@@ -133,6 +133,21 @@ export async function runPerson(db: D1Database, chatId: string): Promise<string 
 /** What the agent reads when a listed channel's notice went to the bell because Slack posts are off. */
 export const SLACK_OFF_TEXT = 'Slack posts are turned off for this brand, so it went to the bell, not Slack.'
 
+/**
+ * The outbox's refusals that send a listed channel's notice to the bell instead (orchestrator, M2-N review rounds 1 and
+ * 2): a notice must never vanish just because it can't be posted. Each with what the agent reads and its short code.
+ * Every other refusal (not admitted, a replay, a deleted chat, no egress behind the call) means the call itself isn't
+ * one to act on: it's refused, as for any write tool.
+ */
+export const TO_BELL_INSTEAD: Readonly<Record<string, { reason: string; text: string }>> = {
+  // The operation is off (every deployable build today).
+  over_ceiling: { reason: 'slack_off', text: SLACK_OFF_TEXT },
+  // Slack isn't connected, is paused, or the hub couldn't be read.
+  account_unavailable: { reason: 'slack_unavailable', text: 'Slack isn’t connected or is paused right now, so it went to the bell, not Slack.' },
+  // No one to approve it: an Inhouse member's chat, a removed owner, a system routine.
+  no_one_to_ask: { reason: 'no_one_to_ask', text: 'There’s no one here to approve a Slack post, so it went to the bell, not Slack.' },
+}
+
 // ---------- the hub's answer ----------
 
 const CHANNEL_REFUSALS = new Set<Detail>(['shared_channel', 'archived', 'not_public', 'not_member', 'not_found'])
@@ -367,13 +382,14 @@ export async function notifyAgent(ctx: AgentNotifyCtx, scope: AgentScope, input:
     // Q3 = A: the same rule as any Slack post. The outbox audits what it does (`action.requested`); a refusal writes
     // nothing there, as for any write tool. The app link isn't part of a post the outbox makes.
     const a = ctx.slack ? await ctx.slack.propose(l, { title: bounded.title, text: bounded.text }) : NO_SLACK_LEG
-    if (a.kind === 'refused' && a.reason === 'over_ceiling') {
-      // While `slack.channel.post` is off (every deployable build today) the notice doesn't vanish: it reaches the run
-      // person's bell, as before M2-N, and the agent is told it didn't go to Slack.
+    const instead = a.kind === 'refused' && Object.hasOwn(TO_BELL_INSTEAD, a.reason) ? TO_BELL_INSTEAD[a.reason]! : null
+    if (instead) {
+      // The notice doesn't vanish: it reaches the run person's bell (the chat's owner if an active brand person, else the
+      // admins: `runPerson`, the rule before M2-N), and the agent is told why it didn't go to Slack.
       person ??= await runPerson(ctx.db, scope.chatId)
       const toBellOutcome = await toBell(c, agentReserve('bell'), name, person, bell, 'channel_to_bell')
       // A bell that was refused too (its own caps) says only why the bell refused it.
-      out.recipients.push(toBellOutcome.outcome === 'posted' ? { ...toBellOutcome, refusal: { reason: 'slack_off', text: SLACK_OFF_TEXT } } : toBellOutcome)
+      out.recipients.push(toBellOutcome.outcome === 'posted' ? { ...toBellOutcome, refusal: instead } : toBellOutcome)
       continue
     }
     out.recipients.push(a.kind === 'refused'

@@ -151,8 +151,9 @@ test('a same-token reconnect keeps an active account working and revokes nothing
   await fakeSet(request, { mcp: { sameToken: false } })
 })
 
-// Since M2-N (Q3 = A) the post goes through the outbox, whose `resolve` refuses a paused account before anything is asked.
-test('with Slack paused, notification_send to a listed channel answers account_unavailable and the fake records no post', async ({ request }) => {
+// Since M2-N (Q3 = A) the post goes through the outbox, whose `resolve` refuses a paused account before anything is asked;
+// the notice then reaches the bell instead and says Slack isn't connected or is paused (review round 2).
+test('with Slack paused, notification_send to a listed channel reaches the bell, says Slack is paused, and the fake records no post', async ({ request }) => {
   await freshConnect(request)
   await setStage(request, 'Act')
   await setListedChannels(request, [CHANNEL.opsAlerts], true)
@@ -161,7 +162,7 @@ test('with Slack paused, notification_send to a listed channel answers account_u
   expect(paused.json).toEqual({ paused: true })
   const postsBefore = (await fakeState(request)).web.posts.length
   const out = await notifySend(request, newRun(memberId), { to: { channels: ['#ops-alerts'] }, title: 'Stock low', text: `Fern mug ${crypto.randomUUID()}`, format: 'message' })
-  expect(JSON.stringify(out)).toContain('account_unavailable')
+  expect(JSON.stringify(out)).toContain('sent to the bell (not Slack): Slack isn’t connected or is paused right now')
   expect((await fakeState(request)).web.posts.length, 'the fake recorded no post').toBe(postsBefore)
   await call(request, inhouse, 'PUT', `/api/tools/${acct(SLACK_ACCOUNT)}/paused`, { json: { paused: false } })
   await setStage(request, 'Watch')

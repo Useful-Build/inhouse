@@ -196,7 +196,7 @@ describe('descriptions promise only what P3 does (failure 5)', () => {
     // same rule as any Slack post (a person's OK unless a standing permission covers it), and no stage is named; email named
     // only to rule it out. It never promises a post goes out on its own.
     expect(d.notification_send).toContain('reaches their bell in the app (never a Slack DM, never email)')
-    expect(d.notification_send).toContain("`to.channels` takes the names of channels the brand's admin listed: each post follows the same rule as any Slack post, so it waits for a person's OK in Approvals unless a standing permission covers that channel (then it posts after a short hold), and it's refused while Slack posts are off.")
+    expect(d.notification_send).toContain("`to.channels` takes the names of channels the brand's admin listed: each post follows the same rule as any Slack post, so it waits for a person's OK in Approvals unless a standing permission covers that channel (then it posts after a short hold); while Slack posts are off (or Slack isn't connected) it goes to the bell instead, and the result says so.")
     expect(d.notification_send).not.toMatch(/reaches the bell for now|posts (?:right away|at once|immediately)/)
     expect(d.notification_send).not.toMatch(/\b(?:Watch|Act|Run|stage)\b/)
     expect(d.notification_send.replace('never email', '')).not.toMatch(/email/i)

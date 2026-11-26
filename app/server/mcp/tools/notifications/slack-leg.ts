@@ -85,7 +85,12 @@ export function slackLeg(wiring: NotifyWiring, db: D1Database, scope: ToolScope,
            ORDER BY created_at_ms, id LIMIT 1`,
           scope.chatId, scope.runId, scopeKeyOf({ channelId: channel.channelId }), JSON.stringify(parsed.data),
         ))
-        if (again) return { kind: 'action', actionId: again.id, state: again.state, verdict: again.verdict, created: false }
+        if (again) {
+          // Found, as a replay's `existing` and `approval_request`'s found card are: this turn shows it too (its `ask` part
+          // and `action.updated`; the alerts copy is deduped per card).
+          await wiring.noted(scope, again.id)
+          return { kind: 'action', actionId: again.id, state: again.state, verdict: again.verdict, created: false }
+        }
       }
       const r = await port.request(
         {
