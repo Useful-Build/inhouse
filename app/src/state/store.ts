@@ -472,6 +472,8 @@ const PART_OK: Record<MessagePart['type'], (p: Rec) => boolean> = {
   notInThisStage: p => isStr(p.text),
   error: p => isStr(p.text) && isStr(p.retryQuestion),
   suggestions: p => Array.isArray(p.questions) && p.questions.every(isStr),
+  // Stage 1 (W0-A): no build makes this part yet (M2-H draws it).
+  ask: p => isStr(p.actionId),
 }
 const isPart = (v: unknown): v is MessagePart => isRec(v) && Object.hasOwn(PART_OK, v.type as string) && PART_OK[v.type as MessagePart['type']](v)
 const isMsg = (m: unknown): m is ChatMessage => {

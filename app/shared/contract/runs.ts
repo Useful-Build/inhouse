@@ -8,6 +8,8 @@ import { ChatIdSchema, FileIdSchema, MessageIdSchema, RunIdSchema, StepIdSchema,
 import { AttachmentRefSchema, FileRefusalReasonSchema } from './attachments.ts'
 import { MemberIdSchema } from './members.ts'
 import { SendPrioritySchema } from './requests.ts'
+import { JobIdSchema, JobOutcomeSchema } from './jobs.ts'
+import { ActionIdSchema, ActionStateSchema } from './actions.ts'
 
 export { FileIdSchema, MessageIdSchema, RunIdSchema, StepIdSchema, TurnIdSchema }
 export type { RunId, TurnId } from './chat-ids.ts'
@@ -42,19 +44,30 @@ export const TurnFailureSchema = z.enum([
   'model_off',
   // The run was asked for structured output and has none it can give (R3 #151; W1 PR 5 maps the runner's reason).
   'structured_output',
+  // Stage 1 M1 (N5): a job's turn the job's budget can't take a start hold for.
+  'job_budget',
 ])
 export type TurnFailure = z.infer<typeof TurnFailureSchema>
 
 /** Why a turn that never ran was cancelled. */
-export const CancelWhySchema = z.enum(['paused', 'removed', 'deleted', 'cap_reached', 'pool_full', 'session_unusable'])
+export const CancelWhySchema = z.enum(['paused', 'removed', 'deleted', 'cap_reached', 'pool_full', 'session_unusable',
+  // Stage 1 M1 (N5): a job's turn its budget refused at the start.
+  'job_budget'])
 export type CancelWhy = z.infer<typeof CancelWhySchema>
+
+/**
+ * Who wrote a turn the person didn't type (Stage 1, N3): a job's continuation, an action's result or a question's
+ * answer. Absent on a person's own message, so the screen never shows a server message as theirs.
+ */
+export const TurnSourceSchema = z.enum(['job', 'action', 'question'])
+export type TurnSource = z.infer<typeof TurnSourceSchema>
 
 /** One event of a run, in order by the envelope's `seq`. */
 export const ChatEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('run.started'), runId: RunIdSchema, chatId: ChatIdSchema }),
   z.object({
     type: z.literal('turn.queued'), turnId: TurnIdSchema, messageId: MessageIdSchema, text: z.string(), quote: z.string().optional(),
-    attachments: AttachmentRefSchema.array(), priority: SendPrioritySchema, by: MemberIdSchema,
+    attachments: AttachmentRefSchema.array(), priority: SendPrioritySchema, by: MemberIdSchema, source: TurnSourceSchema.optional(),
   }),
   z.object({ type: z.literal('turn.started'), turnId: TurnIdSchema, model: z.string() }),
   z.object({ type: z.literal('part'), turnId: TurnIdSchema, messageId: MessageIdSchema, part: MessagePartSchema, model: z.string(), at: InstantSchema }),
@@ -71,6 +84,12 @@ export const ChatEventSchema = z.discriminatedUnion('type', [
   }),
   z.object({ type: z.literal('notice'), code: z.enum(['mirror_error', 'cap_reached', 'budget_busy', 'paused', 'pool_busy', 'session_damaged']) }),
   z.object({ type: z.literal('run.finished'), runId: RunIdSchema, turns: z.number().int(), durationMs: z.number().int().min(0), cost: MoneySchema }),
+  // Stage 1 M1 (N3): a job's life. Exactly one `job.ended` per job.
+  z.object({ type: z.literal('job.started'), jobId: JobIdSchema, rootTurnId: TurnIdSchema }),
+  z.object({ type: z.literal('job.progress'), jobId: JobIdSchema, label: z.string(), helpers: z.number().int().min(0) }),
+  z.object({ type: z.literal('job.ended'), jobId: JobIdSchema, outcome: JobOutcomeSchema, durationMs: z.number().int().min(0), cost: MoneySchema }),
+  // Stage 1 M2 (N14): an action of this chat changed; the card reloads `action(id)`.
+  z.object({ type: z.literal('action.updated'), actionId: ActionIdSchema, rev: z.number().int().min(1), state: ActionStateSchema }),
 ])
 export type ChatEvent = z.infer<typeof ChatEventSchema>
 
