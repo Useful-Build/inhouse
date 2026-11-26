@@ -333,10 +333,20 @@ describe('the guarded options', () => {
         signal: new AbortController().signal,
       })
     const turn = () => new Promise<void>((r) => setImmediate(r))
+    // The entry is built asynchronously (its inputSha256 is a crypto.subtle digest, off the event loop), so wait for it
+    // to reach the transport (bounded, no fixed count of turns), then a few turns more for the hook to act if it would.
+    const sentReaches = async (n: number) => {
+      const deadline = Date.now() + 2_000
+      while (sent.length < n) {
+        if (Date.now() > deadline) throw new Error(`the audit entry ${n} never reached the transport`)
+        await turn()
+      }
+      for (let i = 0; i < 5; i++) await turn()
+    }
 
     let allowed = false
     const first = call('u1').then((r) => ((allowed = true), r))
-    for (let i = 0; i < 5; i++) await turn()
+    await sentReaches(1)
     expect(allowed).toBe(false)
     expect(sent).toEqual([
       { hook: 'PreToolUse', toolName: 'Bash', toolUseId: 'u1', decision: 'allow', input: { cut: false, value: { command: 'ls' } }, agentId: null, inputSha256: await auditInputSha256({ command: 'ls' }) },
@@ -347,7 +357,7 @@ describe('the guarded options', () => {
     await expect(first).resolves.toEqual({})
 
     const second = call('u2')
-    for (let i = 0; i < 5; i++) await turn()
+    await sentReaches(2)
     settle.reject(new Error('audit refused: the Worker has gone'))
     await expect(second).rejects.toThrow(AuditRefusedError)
     await expect(second).rejects.toThrow(/the Worker has gone/)
