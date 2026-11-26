@@ -37,7 +37,9 @@
 //  W5. no effect with an empty ceiling: with no ceiling row (the product's state) every request is refused and nothing
 //      reaches an upstream;
 //  W6. a grant-backed effect keeps its use (unreleased) unless the action ended `failed` (which releases it), and the
-//      effects still holding a use, per grant and day, stay inside the daily limit their claims saw.
+//      effects still holding a use, per grant and day, stay inside the daily limit their claims saw;
+//  W7. every answer the write binding gave was released (Workers RPC: an undisposed answer keeps the call's context
+//      open, and the BrandAgent object never goes idle).
 // Planted bugs (each seen red, then restored; the PR lists them) prove the oracle has teeth.
 import { fc } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
@@ -145,6 +147,9 @@ interface HubAccount { paused: boolean; connectedAtMs: number | null }
 /** One call that reached the binding, and what the oracle saw at that moment. */
 interface Call { actionId: string; attempt: number; permit: string[] }
 
+/** `Symbol.dispose`, as the runtime has it (this project's TypeScript lib doesn't name it yet). */
+const DISPOSE = (Symbol as unknown as { dispose: symbol }).dispose
+
 const SHOP_CONFIG = { shop: SHOPIFY_WRITE_SHOP, clientId: SHOPIFY_WRITE_TEST_CLIENT_ID, clientSecret: SHOPIFY_WRITE_TEST_CLIENT_SECRET }
 
 class HubStandIn {
@@ -161,6 +166,9 @@ class HubStandIn {
   binding: BindingFault = 'ok'
   readonly accounts = new Map<string, HubAccount>()
   readonly hung: (() => void)[] = []
+  /** Answers the binding gave and how many of them the dispatcher released (Workers RPC: each has a disposer). */
+  given = 0
+  released = 0
   /** Runs first in every call, synchronously: the oracle's look at the permit (and a planted Pause inside the call). */
   onCall: (req: WriteRequest) => void = () => {}
   #token: string | null = null
@@ -229,9 +237,13 @@ class HubStandIn {
         // hub/outbox-entry/entry.ts: an unexpected throw is `internal`, `sent: 'unknown'`.
         answer = { ok: false, error: this.#code.hubError('internal'), sent: 'unknown' }
       }
+      // As Workers RPC hands it over: with a disposer the caller must run, or the call's context stays open.
+      this.given++
+      let disposed = false
+      const handed = Object.assign({}, answer, { [DISPOSE]: () => { if (!disposed) { disposed = true; this.released++ } } }) as WriteResult
       // The hub did its work; its answer is lost until the test lets it through.
-      if (this.binding === 'hang') return new Promise<WriteResult>(resolve => { this.hung.push(() => resolve(answer)) })
-      return answer
+      if (this.binding === 'hang') return new Promise<WriteResult>(resolve => { this.hung.push(() => resolve(handed)) })
+      return handed
     },
   }
 }
@@ -751,8 +763,13 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
   }
   for (const release of hub.hung.splice(0)) release()
   await Promise.all(late.splice(0))
+  // A late answer whose dispatcher crashed after the timeout has no `late` promise to wait on: its release runs on the
+  // promise chain the dispatcher attached at the call. One macrotask turn lets every such chain finish.
+  await new Promise<void>(resolve => { setTimeout(resolve, 0) })
 
   // ---------- the oracle, from the upstreams' logs ----------
+  // W7: every answer the binding gave was released (a late one once it arrived).
+  if (hub.released !== hub.given) problems.push(`W7: ${hub.given - hub.released} of the binding's ${hub.given} answers were never released`)
   const effects: string[] = []
   for (const w of hub.shop.writes) {
     const tags = Array.isArray(w.variables.tags) ? (w.variables.tags as unknown[]).map(String) : []
@@ -840,7 +857,7 @@ describe('the write-safety gate (M2-S): no outside write without a live grant or
     expect(out.effects).toBe(1)
   })
 
-  it('holds W1 to W6 over random sequences of every kind of step', async () => {
+  it('holds W1 to W7 over random sequences of every kind of step', async () => {
     let effects = 0
     const runs = 400
     // Three runs in four start with an "Always allow" for the first member's Shopify tags, so sends under a grant are common;
@@ -858,7 +875,7 @@ describe('the write-safety gate (M2-S): no outside write without a live grant or
     expect(effects, `effects sent over ${runs} runs: ${effects}`).toBeGreaterThan(MAIN_FLOOR)
   }, 300_000)
 
-  it('holds W1 to W6 on the send path: a crash at each boundary, the sweep, every fault, late results and checks', async () => {
+  it('holds W1 to W7 on the send path: a crash at each boundary, the sweep, every fault, late results and checks', async () => {
     // A prefix that leaves approved actions behind (one allowed once, one under a fresh "Always allow", one run under it,
     // a Slack post allowed once), then only the steps around a send.
     const prefix: Step[] = [

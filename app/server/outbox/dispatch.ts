@@ -130,6 +130,25 @@ async function storeResult(d: Pick<DispatchDeps, 'db' | 'requestId' | 'notify'>,
   return applied
 }
 
+/** An RPC answer's plain data (JSON's: a disposer, a function or a symbol key never comes along); `undefined` when it has none. */
+function plainCopy(value: unknown): unknown {
+  try {
+    const text = JSON.stringify(value)
+    return text === undefined ? undefined : JSON.parse(text)
+  } catch {
+    return undefined
+  }
+}
+
+/** Runs an RPC answer's disposer, if it has one (https://developers.cloudflare.com/workers/runtime-apis/rpc/lifecycle/). */
+function release(value: unknown): void {
+  if (typeof value !== 'object' || value === null || DISPOSE === undefined) return
+  const dispose = (value as Record<symbol, unknown>)[DISPOSE]
+  if (typeof dispose === 'function') (dispose as () => void).call(value)
+}
+/** `Symbol.dispose` (the runtime has it; this project's TypeScript lib doesn't name it yet). */
+const DISPOSE = (Symbol as unknown as { dispose?: symbol }).dispose
+
 /** What the hub's answer (or its absence) means. Anything the dispatcher can't read as sure is a check for a person. */
 function outcomeOf(answer: { value: unknown } | { thrown: true } | { timeout: true }): SendOutcome {
   if ('thrown' in answer) return { kind: 'needs_check', why: 'thrown' }
@@ -216,7 +235,14 @@ export async function sendAction(actionId: string, d: DispatchDeps): Promise<Sen
 
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<{ timeout: true }>(r => { timer = setTimeout(() => r({ timeout: true }), d.timeoutMs ?? timing().hubTimeoutMs) })
-  const settled = call.then(value => ({ value }), (err: unknown) => {
+  // The binding's answer is copied out, then released: Workers RPC gives every object an RPC returns a disposer, and
+  // until it runs the call's context stays open, which kept this object from ever going idle (so a removed member's
+  // socket never finished closing). The copy keeps only plain data.
+  const settled = call.then(value => {
+    const copy = plainCopy(value)
+    release(value)
+    return { value: copy }
+  }, (err: unknown) => {
     console.error({ event: 'outbox_send_threw', actionId, attempt: claimed.attempt, error: safeError(err) })
     return { thrown: true as const }
   })
