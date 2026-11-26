@@ -66,6 +66,8 @@ export async function answerQuestion(
   if (!optionsOf(row).includes(p.choice)) return { refused: 'invalid', current: row }
   if (row.state === 'open') {
     if (p.at.nowMs >= row.expires_at_ms) return { refused: 'closed', current: row }
+    // A chat in the trash: not answered (no line, nothing resumed), and left open so a restore brings it back.
+    if (await store.chatGone(row.chat_id)) return { refused: 'not_found' }
     // Withdrawn: the turn no longer waits on it. Never answered, so nothing can resume it later.
     const waits = await agent.waits([row.chat_id])
     if (waits[row.chat_id] !== row.id) {
@@ -93,14 +95,26 @@ export async function answerQuestion(
   return { ok: row }
 }
 
+/** At most this many chats per `waits` call (BrandAgent `questionWaits` refuses more). */
+export const WAITS_BATCH = 100
+
+/** The question each chat waits on, asked in batches of `WAITS_BATCH`. */
+async function waitsOf(agent: QuestionAgent, chatIds: string[]): Promise<Record<string, string | null>> {
+  const out: Record<string, string | null> = {}
+  for (let i = 0; i < chatIds.length; i += WAITS_BATCH) Object.assign(out, await agent.waits(chatIds.slice(i, i + WAITS_BATCH)))
+  return out
+}
+
 /**
  * The open questions asked of this viewer, oldest first, each one's wait checked: a question its turn no longer waits
- * on is withdrawn here (`closed`) and left out. Throws when the BrandAgent can't say.
+ * on is withdrawn here (`closed`) and left out. First, the viewer's own answers whose resume never landed (the object
+ * was unreachable) are resumed again, so a reload unblocks the chat. Throws when the BrandAgent can't say.
  */
 export async function openQuestions(store: QuestionStore, agent: QuestionAgent, viewer: QuestionViewer, nowMs: number): Promise<QuestionRow[]> {
+  for (const r of await store.undeliveredBy(viewer.memberId)) await deliver(store, agent, r, nowMs)
   const rows = await store.openFor(viewer, nowMs)
   if (rows.length === 0) return []
-  const waits = await agent.waits([...new Set(rows.map(r => r.chat_id))])
+  const waits = await waitsOf(agent, [...new Set(rows.map(r => r.chat_id))])
   const live: QuestionRow[] = []
   for (const r of rows) {
     if (waits[r.chat_id] === r.id) live.push(r)

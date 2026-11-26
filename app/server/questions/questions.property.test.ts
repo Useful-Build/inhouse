@@ -9,14 +9,14 @@
 //      first answer, or for an expired one (no answer), never another;
 //  Q3. an answer after its wait was given up resumes nothing: refused `closed`, and no resume turn for that question;
 //  Q4. a question its turn no longer waits on is withdrawn when the list is read: no open, unexpired question of the
-//      chat is left that the chat doesn't wait on;
+//      chat is left that the chat doesn't wait on (unless the chat is in the trash: kept open, unlisted, for a restore);
 //  Q5. no lost resume: once the object is reachable again and the answer is retried (or its expiry runs), every
 //      answered question has exactly one resume turn and is marked delivered; and the call the SDK runs again on that
 //      resume reads the stored answer (the option chosen).
 import { fc, test } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
 import { describe, expect } from 'vitest'
-import { MEMBER, OTHER, MIN, SEC, d1Chat, ev, fullAnswer, inAgent, settle } from '../testing/brand-agent/core-harness.ts'
+import { OTHER, MIN, SEC, d1Chat, ev, fullAnswer, inAgent, settle } from '../testing/brand-agent/core-harness.ts'
 import type { Harness } from '../testing/brand-agent/core-harness.ts'
 import type { RunEventBody } from '../../shared/protocol/index.ts'
 import { handlers } from '../mcp/tools/questions/index.ts'
@@ -73,10 +73,13 @@ function agentOf(h: Harness, fault: { next: null | 'before' | 'lost' }): Questio
 
 const resumes = (h: Harness, id: string) =>
   h.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM turns WHERE client_key = ?', `resume_${id}`).one().n
+/** Each case's own owner, so the shared D1's rows of another case (an undelivered answer) are never this one's. */
+let MEMBER = ''
 const viewerOf = (who: 'owner' | 'other') => ({ memberId: who === 'owner' ? MEMBER : OTHER, role: 'member' as const })
 
 async function run(ops: Op[]): Promise<void> {
   const chat = `c-qprop-${++cases}`
+  MEMBER = `m_qprop_${cases}`
   await d1Chat(chat, MEMBER)
   await d1Chat(`c-qprop-other-${cases}`, OTHER)
   await inAgent(async h => {
@@ -114,7 +117,7 @@ async function run(ops: Op[]): Promise<void> {
           // The resume turn before it (if any) ends first, so a chat can ask again.
           await finish()
           const n = asked.length
-          const a = await h.submit(chat, `key-ask-${String(n).padStart(4, '0')}`)
+          const a = await h.submit(chat, `key-ask-${String(n).padStart(4, '0')}`, { member: MEMBER })
           if ('refused' in a) break
           await settle()
           const deferred: RunEventBody = { type: 'deferred', toolUseId: `tu_${n}`, toolName: 'mcp__inhouse__question_ask', input: { question: `Which way, ${n}?`, options: OPTIONS } }
@@ -160,10 +163,18 @@ async function run(ops: Op[]): Promise<void> {
         case 'pause': await h.core.pause(ADMIN); paused = true; break
         case 'unpause': await h.core.resume(ADMIN); paused = false; break
         case 'list': {
-          await openQuestions(store, agent, { memberId: MEMBER, role: 'member' }, h.clock.now)
+          // The list resumes this person's undelivered answers first, so an unreachable object fails it (loud), as the
+          // route's 500 would; nothing else is checked then.
+          try {
+            await openQuestions(store, agent, { memberId: MEMBER, role: 'member' }, h.clock.now)
+          } catch (e) {
+            if (!(e instanceof Error) || !/could not be reached|reply was lost/.test(e.message)) throw e
+            break
+          }
           // Q4.
           const waits = waitingQuestionOf(h.sql, chat)
-          for (const r of await rows()) if (r.state === 'open' && r.expires_at_ms > h.clock.now) expect(r.id).toBe(waits)
+          // (A chat in the trash keeps its question open, unlisted, so a restore brings it back.)
+          if (!deleted) for (const r of await rows()) if (r.state === 'open' && r.expires_at_ms > h.clock.now) expect(r.id).toBe(waits)
           break
         }
         case 'finish': await finish(); break
@@ -205,7 +216,7 @@ async function run(ops: Op[]): Promise<void> {
         }, { db: env.DB })
         expect(out.structuredContent).toEqual({ question_id: r.id, state: 'answered', answer: first.get(r.id) })
       }
-      if (r.state === 'open') expect(r.expires_at_ms > h.clock.now && waitingQuestionOf(h.sql, chat) === r.id, JSON.stringify(r)).toBe(true)
+      if (r.state === 'open' && !deleted) expect(r.expires_at_ms > h.clock.now && waitingQuestionOf(h.sql, chat) === r.id, JSON.stringify(r)).toBe(true)
       if (givenUp.has(r.id)) expect(n).toBe(0)
     }
   })
@@ -216,6 +227,9 @@ describe('questions: the wait, the answer and the resume (property)', () => {
 
   test('Q5 by example: a reply lost after the resume landed, then the same answer again: one resume, delivered', () =>
     run([{ k: 'ask' }, { k: 'unreachable', lost: true }, { k: 'answer', who: 'owner', choice: 1, twice: false, together: false }, { k: 'answer', who: 'owner', choice: 1, twice: false, together: false }]))
+
+  test('Q5 by example (the paused-brand bug): ask, pause, answer, reset, unpause: the answer is closed, never read as delivered', () =>
+    run([{ k: 'ask' }, { k: 'pause' }, { k: 'answer', who: 'owner', choice: 2, twice: false, together: false }, { k: 'reset' }, { k: 'unpause' }, { k: 'tick', ms: 2 * MIN }]))
 
   test('Q3 by example: reset, then the answer: closed, nothing resumed', () =>
     run([{ k: 'ask' }, { k: 'reset' }, { k: 'answer', who: 'owner', choice: 0, twice: true, together: false }]))

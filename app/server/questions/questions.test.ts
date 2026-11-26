@@ -7,6 +7,9 @@
 //  5. expiry: an open question past 7 days isn't closed, its people aren't told, or its turn keeps waiting; a question
 //     whose turn no longer waits is expired (and resumed) instead of withdrawn;
 //  6. the list shows another person's question, an admin's question to a member, or one already expired;
+//  8. a resume that didn't land is never retried after a reload (the chat blocked for 7 days);
+//  9. a chat in the trash: its question listed, answered (a line, a 409), or expired with a notice; a restore loses it;
+//  10. the list asks the object about more than 100 chats at once;
 //  7. with questions off (every deployable build until M2-H), a deferred `question_ask` asks anything or leaves its chat
 //     waiting, or the switch is on outside the test build.
 import { env } from 'cloudflare:workers'
@@ -21,7 +24,7 @@ import { questionWaits, waitingQuestionOf } from './agent.ts'
 import { expiryTaskId, questionOnDeferred } from './ask.ts'
 import { p6Hooks } from '../do/brand-agent/compose.ts'
 import { QUESTIONS_ON, questionsOn } from './switch.ts'
-import { answerQuestion, openQuestions } from './flow.ts'
+import { WAITS_BATCH, answerQuestion, openQuestions } from './flow.ts'
 import type { QuestionAgent } from './flow.ts'
 import { questionStore } from './store.ts'
 import { QUESTION_TTL_MS, toQuestion } from './types.ts'
@@ -231,4 +234,72 @@ describe('questions off (failure 7)', () => {
     expect(resumes(h, id)).toBe(1)
     expect(h.dueTasks().find(t => t.id === expiryTaskId(id))).toBeUndefined()
   }))
+})
+
+describe('retries, the trash and many chats (failures 8 to 10)', () => {
+  it("a resume that didn't land: the answer is kept, and the owner's next list resumes it (no 7-day block)", () => inAgent(async h => {
+    h.core.setOnDeferred(questionOnDeferred)
+    await d1Chat('c-retry', MEMBER)
+    const a = await ask(h, 'c-retry', { question: 'Which?', options: OPTIONS })
+    const id = qid(a.turnId)
+    const down: QuestionAgent = { waits: async ids => questionWaits(h.sql, ids), resume: async () => { throw new Error('unreachable') } }
+    expect(await answerQuestion(store, down, { id, choice: 'Yes', viewer: { memberId: MEMBER, role: 'member' }, at: at(h) })).toMatchObject({ unavailable: { state: 'answered' } })
+    expect(resumes(h, id)).toBe(0)
+    // Another member's list never resumes someone else's answer.
+    await openQuestions(store, agentOf(h), { memberId: OTHER, role: 'member' }, h.clock.now)
+    expect(resumes(h, id)).toBe(0)
+    expect(await openQuestions(store, agentOf(h), { memberId: MEMBER, role: 'member' }, h.clock.now)).toEqual([])
+    expect(resumes(h, id)).toBe(1)
+    expect((await row(id)).delivered_at_ms).toBe(h.clock.now)
+  }))
+
+  it('a chat in the trash: not listed, an answer is refused with no line and nothing resumed; a restore brings it back', () => inAgent(async h => {
+    h.core.setOnDeferred(questionOnDeferred)
+    await d1Chat('c-trash-q', MEMBER)
+    const a = await ask(h, 'c-trash-q', { question: 'Which?', options: OPTIONS })
+    const id = qid(a.turnId)
+    const me = { memberId: MEMBER, role: 'member' as const }
+    await d1Chat('c-trash-q', MEMBER, h.clock.now)
+    expect(await openQuestions(store, agentOf(h), me, h.clock.now)).toEqual([])
+    expect(await answerQuestion(store, agentOf(h), { id, choice: 'Yes', viewer: me, at: at(h) })).toEqual({ refused: 'not_found' })
+    expect(await lines('question.answered', id)).toEqual([])
+    expect(resumes(h, id)).toBe(0)
+    expect((await row(id)).state).toBe('open')
+    await d1Chat('c-trash-q', MEMBER, null)
+    expect((await openQuestions(store, agentOf(h), me, h.clock.now)).map(r => r.id)).toEqual([id])
+    expect('ok' in (await answerQuestion(store, agentOf(h), { id, choice: 'No', viewer: me, at: at(h) }))).toBe(true)
+    expect(resumes(h, id)).toBe(1)
+  }))
+
+  it('a chat in the trash at the expiry: withdrawn, no expiry line, no closed notice; the wait is given up', () => inAgent(async h => {
+    h.core.setOnDeferred(questionOnDeferred)
+    await d1Chat('c-trash-exp', MEMBER)
+    const a = await ask(h, 'c-trash-exp', { question: 'Which?', options: OPTIONS })
+    const id = qid(a.turnId)
+    await d1Chat('c-trash-exp', MEMBER, h.clock.now)
+    await h.tick(QUESTION_TTL_MS)
+    expect(await row(id)).toMatchObject({ state: 'closed', answer: null })
+    expect(await lines('question.expired', id)).toEqual([])
+    expect((await notices(id)).map(x => x.id)).toEqual([`qw_${id}`])
+    expect(waitingQuestionOf(h.sql, 'c-trash-exp')).toBeNull()
+    expect(resumes(h, id)).toBe(0)
+  }))
+
+  it(`101 chats with open questions: the object is asked about at most ${WAITS_BATCH} at a time, and every one is answered`, async () => {
+    const rows = Array.from({ length: 101 }, (_, i) => ({ id: `q_${String(i).padStart(22, '0')}`, chat_id: `c-many-${i}` }) as QuestionRow)
+    const fake = {
+      openFor: async () => rows, undeliveredBy: async () => [], withdraw: async () => { throw new Error('nothing to withdraw') },
+    } as unknown as Parameters<typeof openQuestions>[0]
+    const asked: number[] = []
+    const agent: QuestionAgent = {
+      waits: async ids => { asked.push(ids.length); return questionWaitsLike(ids) },
+      resume: async () => { throw new Error('no resume') },
+    }
+    const questionWaitsLike = (ids: string[]) => {
+      if (ids.length > 100) throw new Error('questionWaits: 1 to 100 chat ids')
+      return Object.fromEntries(ids.map(c => [c, rows.find(r => r.chat_id === c)!.id]))
+    }
+    expect((await openQuestions(fake, agent, { memberId: MEMBER, role: 'member' }, 0)).map(r => r.id)).toEqual(rows.map(r => r.id))
+    expect(asked).toEqual([100, 1])
+  })
 })

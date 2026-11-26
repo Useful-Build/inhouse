@@ -165,6 +165,19 @@ export class TurnToolUses {
   #ids = new Set<string>()
   /** The API message each of the turn's calls came in (the SDK sends one `assistant` message per content block). */
   #messageOf = new Map<string, string>()
+  /**
+   * Every call of each API message, kept across tool results: the CLI runs a call while its message still streams, so
+   * an earlier call's result can arrive (and start the turn over in `#ids`) before a later call of the same message.
+   * A message with no id counts on its own (a key per SDK message).
+   */
+  #calls = new Map<string, Set<string>>()
+  #keyOf = new Map<string, string>()
+  #unnamed = 0
+  /** Another call came in the same API message as `id` (whatever results came back in between). */
+  #sibling(id: string): boolean {
+    const key = this.#keyOf.get(id)
+    return key !== undefined && (this.#calls.get(key)?.size ?? 0) > 1
+  }
   /** API messages known to be complete: their `message_stop` stream event was seen. */
   #closed = new Set<string>()
   /** The API message being streamed (its `message_start`), for the `message_stop` that names no id. */
@@ -183,19 +196,25 @@ export class TurnToolUses {
       if (!Array.isArray(content)) return
       if (m.type === 'user' && content.some((b) => (b as { type?: unknown })?.type === 'tool_result')) this.#ids.clear()
       if (m.type === 'assistant') {
+        const key = typeof messageId === 'string' ? messageId : `#${++this.#unnamed}`
         for (const b of content) {
           if ((b as { type?: unknown })?.type !== 'tool_use') continue
           const id = String((b as { id?: unknown }).id)
           this.#ids.add(id)
           if (typeof messageId === 'string') this.#messageOf.set(id, messageId)
+          const calls = this.#calls.get(key) ?? new Set<string>()
+          calls.add(id)
+          this.#calls.set(key, calls)
+          this.#keyOf.set(id, key)
         }
       }
     }
     for (const wake of [...this.#waiters]) wake()
   }
   /**
-   * Resolves true once the turn holds `id` as its only call AND the API message that carried it is complete; false
-   * once it holds `id` beside another call; false when neither is known within `withinMs`. Never rejects.
+   * Resolves true once the turn holds `id` as its only call AND the API message that carried it is complete and carried
+   * no other call; false once it holds `id` beside another call (in the turn, or in its message even after that call's
+   * result came back); false when neither is known within `withinMs`. Never rejects.
    *
    * Completeness matters: the SDK sends a turn's tool calls as separate `assistant` messages, one per block, with no
    * stop reason on them, and the CLI runs a call's PreToolUse hook as soon as its block is streamed, before the blocks
@@ -207,7 +226,7 @@ export class TurnToolUses {
     return new Promise((resolve) => {
       const check = () => {
         if (!this.#ids.has(id)) return false
-        if (this.#ids.size > 1) return done(false), true
+        if (this.#ids.size > 1 || this.#sibling(id)) return done(false), true
         const message = this.#messageOf.get(id)
         if (message === undefined || !this.#closed.has(message)) return false
         return done(true), true
@@ -226,9 +245,9 @@ export class TurnToolUses {
   get count() {
     return this.#ids.size
   }
-  /** The turn's calls are this one call and nothing else. */
+  /** The turn's calls are this one call and nothing else, and its model message carried no other call. */
   only(id: string) {
-    return this.#ids.size === 1 && this.#ids.has(id)
+    return this.#ids.size === 1 && this.#ids.has(id) && !this.#sibling(id)
   }
 }
 

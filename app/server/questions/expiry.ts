@@ -32,6 +32,13 @@ export const questionExpiry: TaskHandler = async (task, ctx) => {
       await store.withdraw(row.id, ctx.nowMs)
       return { done: true }
     }
+    // A chat in the trash: withdrawn, not expired (no line, no notice); the wait is given up through the resume, which
+    // finds the chat gone and ends the parked turn (core.ts `resumeDeferred`).
+    if (await store.chatGone(row.chat_id)) {
+      await store.withdraw(row.id, ctx.nowMs)
+      await ctx.resumeDeferred(row.chat_id, 'deny', row.id)
+      return { done: true }
+    }
     await store.expire(row.id, { actorId: SYSTEM_MEMBER_ID, requestId: `question-${crypto.randomUUID()}`, nowMs: ctx.nowMs })
     row = (await store.get(questionId))!
   }

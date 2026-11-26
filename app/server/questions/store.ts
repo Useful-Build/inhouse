@@ -31,8 +31,15 @@ export interface QuestionStore {
   get(id: string): Promise<QuestionRow | null>
   /** The question a tool call asked, by the call's id in its chat. */
   byToolUse(chatId: string, toolUseId: string): Promise<QuestionRow | null>
-  /** The open questions asked of this viewer and not past their expiry, oldest first. */
+  /**
+   * The open questions asked of this viewer and not past their expiry, oldest first. Not a chat in the trash (or gone):
+   * its question stays open, so a restore brings it back.
+   */
   openFor(viewer: QuestionViewer, nowMs: number): Promise<QuestionRow[]>
+  /** This member's answers whose resume never landed (answered, not delivered), oldest first. */
+  undeliveredBy(memberId: string): Promise<QuestionRow[]>
+  /** The chat is in the trash, or not in D1 at all. */
+  chatGone(chatId: string): Promise<boolean>
   /**
    * Asks the question: the row, its `question.asked` line and its bell notice, in one batch. `false` when a question
    * with this id or for this tool call is already there (nothing written).
@@ -65,9 +72,20 @@ export function questionStore(d: { db: D1Database }): QuestionStore {
     async openFor(viewer, nowMs) {
       const admin = viewer.role === 'admin' ? 1 : 0
       const r = await storage('D1', () => prepare(db, stmt(
-        `SELECT * FROM questions WHERE state = 'open' AND expires_at_ms > ? AND (asked_of = ? OR (asked_of = 'admins' AND ? = 1))
-          ORDER BY created_at_ms, id`, nowMs, viewer.memberId, admin)).all<QuestionRow>())
+        `SELECT q.* FROM questions q JOIN chats c ON c.id = q.chat_id AND c.deleted_at_ms IS NULL
+          WHERE q.state = 'open' AND q.expires_at_ms > ? AND (q.asked_of = ? OR (q.asked_of = 'admins' AND ? = 1))
+          ORDER BY q.created_at_ms, q.id`, nowMs, viewer.memberId, admin)).all<QuestionRow>())
       return r.results
+    },
+    async undeliveredBy(memberId) {
+      const r = await storage('D1', () => prepare(db, stmt(
+        `SELECT * FROM questions WHERE state = 'answered' AND delivered_at_ms IS NULL AND answered_by = ? ORDER BY answered_at_ms, id`,
+        memberId)).all<QuestionRow>())
+      return r.results
+    },
+    async chatGone(chatId) {
+      const c = await storage('D1', () => prepare(db, stmt('SELECT deleted_at_ms FROM chats WHERE id = ?', chatId)).first<{ deleted_at_ms: number | null }>())
+      return c === null || c.deleted_at_ms !== null
     },
     async create(q, at) {
       const insert = stmt(

@@ -117,6 +117,19 @@ describe('the turn tracker behind loneToolCall', () => {
     expect(t.count).toBe(1)
   })
 
+  it("a sibling call's result arriving mid-stream doesn't make the later call of the same message lone", async () => {
+    // The CLI runs A while the message still streams; A's result comes back (clearing the turn's calls) before Q's block.
+    const t = new TurnToolUses()
+    t.see(start('m1'))
+    t.see(block('a', 'm1'))
+    t.see(results(['a']))
+    t.see(block('q', 'm1'))
+    const waiting = t.lone('q', 2_000)
+    t.see(stop)
+    await expect(waiting).resolves.toBe(false)
+    expect(t.only('q')).toBe(false)
+  })
+
   it('a new turn starts clean after the tool results', async () => {
     const t = new TurnToolUses()
     t.see(start('m1'))
