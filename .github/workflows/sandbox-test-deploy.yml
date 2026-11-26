@@ -133,7 +133,8 @@ jobs:
     needs: check
     runs-on: ubuntu-latest
     # Build (~10 min) beside the deploy job, the wait for the deploy (up to 45), the warm-up (up to 14), the specs.
-    timeout-minutes: 150
+    # 210, not 150: M1-D's 2-hour job soak (e2e/api/job-soak.spec.ts, run only when named) needs about 135 minutes of specs.
+    timeout-minutes: 210
     permissions:
       actions: read
       contents: read
