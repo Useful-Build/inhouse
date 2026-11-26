@@ -12,6 +12,7 @@ import { hashId, slotKeyOfEndTask } from './keys.ts'
 import { RESULT_HANDLERS } from './results.ts'
 import type { EndSlot, ResultOutput } from './results.ts'
 import { slotLine } from './rows.ts'
+import { alertRoutineFailed } from '../notify-slack/alerts-notices.ts'
 
 export type EndContext = Pick<TaskContext, 'nowMs' | 'env'>
 
@@ -83,5 +84,8 @@ export async function routineEnd(task: DueTask, ctx: EndContext): Promise<TaskRe
     }
   }
   await db.batch(statements)
+  // Stage 1 M2-N (Q3 = A): the same failure's fixed notice to the alerts channel, after the end committed. Keyed on the
+  // slot, so a re-run end posts once. A throw retries the end, whose every statement is idempotent.
+  if (failure !== null && failure !== 'not_connected') await alertRoutineFailed(ctx.env, { slotKey, routineId: slot.routine_id, runId: traceRun }, { nowMs: now })
   return { done: true }
 }

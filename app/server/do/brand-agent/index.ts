@@ -13,6 +13,7 @@ import { asksDeps, composePorts, jobDeps, p6Hooks, wireP6 } from './compose.ts'
 import { Asks, actionsOn, createAskTables } from './asks.ts'
 import { createInvocationTables, recordInvocation } from './invocations.ts'
 import { hubAccountFacts } from './hub-accounts.ts'
+import { alertApprovalWaiting } from '../../notify-slack/alerts-notices.ts'
 import type { HubAccountFacts } from '../../outbox/facts.ts'
 import type { ConnectGateway } from '../../../hub/index/contract.ts'
 import { questionWaits } from '../../questions/agent.ts'
@@ -192,6 +193,11 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   }
   async askNoted(turnId: string, actionId: string): Promise<void> {
     this.asks().noted(turnId, actionId)
+    // Stage 1 M2-N (Q3 = A): a new waiting card's fixed notice goes to the alerts channel, after the answer (the tool's
+    // answer never waits on Slack). The card stands whatever the notice does, so a failed notice is logged by name.
+    this.ctx.waitUntil(alertApprovalWaiting(this.env, actionId).catch((err: unknown) => {
+      console.error({ event: 'alerts_notice_failed', kind: 'approval_waiting', actionId, error: err instanceof Error ? err.name : 'unknown' })
+    }))
   }
   async beginAskWait(turnId: string, actionId: string): Promise<AskWaitAnswer> {
     return this.asks().beginWait(turnId, actionId)
