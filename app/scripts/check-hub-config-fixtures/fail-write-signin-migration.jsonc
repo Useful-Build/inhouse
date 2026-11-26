@@ -1,0 +1,50 @@
+// Fails write-signin-migration: the SHOPIFY_WRITE_SIGNIN binding without its v2 migration.
+/* "routes": ["not-a-real-route/*"], in a comment: ignored */
+{
+  "name": "inhouse-hub",
+  "main": "hub/index/index.ts",
+  "compatibility_date": "2026-11-11",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SIGNIN",
+        "class_name": "SignIn"
+      },
+      {
+        "name": "SHOPIFY_WRITE_SIGNIN",
+        "class_name": "ShopifyWriteSignIn"
+      }
+    ]
+  },
+  "worker_loaders": [{ "binding": "LOADER" }],
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "SignIn"
+      ]
+    }
+  ],
+  "define": {
+    "__INHOUSE_HUB_TEST__": "false"
+  },
+  "vars": {
+    "SHOPIFY_SHOP": "",
+    "SHOPIFY_CLIENT_ID": "",
+    "SLACK_CLIENT_ID": "",
+    "SLACK_TEAM_ID": "",
+    "SLACK_PRIVATE_SEARCH": "off",
+    "CONNECT_REDIRECT_URI": ""
+  },
+  "secrets": {
+    "required": [
+      "HUB_TOKEN_KEYS",
+      "SHOPIFY_CLIENT_SECRET"
+    ]
+  },
+}

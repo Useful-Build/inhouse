@@ -99,6 +99,8 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   notify_channel_list: { action: 'keep', why: 'the brand channel list revision contains no member data' },
   notify_sends: { action: 'keep', why: 'keep caps and deduplication intact through retention; member references stay pseudonymous', kept: ['actor_id', 'target'] },
   SignIn: { action: 'keep', why: 'the brand owns the sealed credential; connectedBy resolves through the pseudonymised member row and pending items expire', kept: ['connectedBy', 'pending.memberId'] },
+  // Stage 1 M2-C: the write-scoped Shopify app's one sealed token record; it names no member.
+  ShopifyWriteSignIn: { action: 'keep', why: 'the brand owns the sealed write credential; no member id' },
   // P8a: the egress record names a host, a runner and a container generation, never a member, a run or a turn (one
   // container serves several sessions at once), so no row is a person's; it goes by age in 30 days.
   egress_fetches: { action: 'keep', why: 'no member id: the egress knows the container, not the run; retention removes rows after 30 days. A host can carry data in a subdomain from a refused exfil attempt: kept 30 days, ops-only and not exported. A host over 253 characters is not recorded, only logged' },

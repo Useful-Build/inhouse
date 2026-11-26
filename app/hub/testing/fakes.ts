@@ -22,7 +22,7 @@ import { FakeMcpServer, SLACK_CHANNELS, SLACK_MESSAGES } from '../../test/upstre
 import { FakeSlackWeb, WEB_CHANNELS } from '../../test/upstreams/slack/server'
 import { dataset as shopifyFixtureValue } from '../../test/upstreams/shopify/recordings/fixture/dataset'
 import type { Dataset } from '../../test/upstreams/shopify/dataset'
-import { notesMcp, shopifyIssuedTokens, shopifyRequests, slackMcp, slackWeb } from './index'
+import { notesMcp, shopifyIssuedTokens, shopifyRequests, shopifyWrite, slackMcp, slackWeb } from './index'
 
 /** Found in the hub's test bundle, never in the deployable one (scripts/check-hub-build.mjs reads it from here). */
 export const HUB_FAKES_CANARY = 'INHOUSE_HUB_FAKES_CANARY_3a6f'
@@ -78,11 +78,22 @@ const WebSwitchesSchema = z.strictObject({
   channels: z.array(z.strictObject({ id: z.string().min(1).max(40), patch: ChannelPatchSchema })).max(50).optional(),
 })
 
+const ShopifyWriteSwitchesSchema = z.strictObject({
+  faults: z.strictObject({
+    'shopify.order.tag_add': z.enum(['succeed', 'refuse', 'timeout', 'broken_body']).optional(),
+  }).optional(),
+})
+
 /** The hub ops (the product's hook forwards these as they are). */
 export const HubFakesOpSchema = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('state') }),
   z.strictObject({ op: z.literal('reset') }),
-  z.strictObject({ op: z.literal('set'), mcp: McpSwitchesSchema.optional(), web: WebSwitchesSchema.optional() }),
+  z.strictObject({
+    op: z.literal('set'),
+    mcp: McpSwitchesSchema.optional(),
+    web: WebSwitchesSchema.optional(),
+    shopifyWrite: ShopifyWriteSwitchesSchema.optional(),
+  }),
   z.strictObject({ op: z.literal('alarm'), accountId: AccountIdSchema }),
   z.strictObject({ op: z.literal('var'), name: z.literal('SLACK_PRIVATE_SEARCH'), value: z.enum(['on', 'off']) }),
   z.strictObject({ op: z.literal('logs'), since: z.number().int().min(0).optional() }),
@@ -153,6 +164,12 @@ function fakesStateLocal() {
     notes: mcpLogs(notesMcp),
     web: copy({ requests: slackWeb.requests, posts: slackWeb.posts, violations: slackWeb.violations }),
     shopify: copy({ requests: shopifyRequests, issuedTokens: shopifyIssuedTokens }),
+    shopifyWrite: copy({
+      requests: shopifyWrite.requests,
+      writes: shopifyWrite.writes,
+      orders: [...shopifyWrite.orders.values()],
+      faults: shopifyWrite.faults,
+    }),
     connect: { bodies: [...connectBodies] },
   }
 }
@@ -223,6 +240,7 @@ export function resetFakes(kv?: Pick<SyncKvStorage, 'delete'>): void {
   slackWeb.posts = []
   slackWeb.violations = []
   shopifyRequests.length = 0
+  shopifyWrite.reset()
   connectBodies.length = 0
   kv?.delete(TEST_FAKES_VARS_KEY)
   clearSeeds()
@@ -243,6 +261,9 @@ function applySet(op: Extract<HubFakesOp, { op: 'set' }>): HubResult<{ set: true
     const { channels, ...switches } = op.web
     Object.assign(slackWeb, switches)
     for (const c of channels ?? []) slackWeb.channels.set(c.id, { ...slackWeb.channels.get(c.id)!, ...c.patch })
+  }
+  if (op.shopifyWrite?.faults) {
+    Object.assign(shopifyWrite.faults, op.shopifyWrite.faults)
   }
   return { ok: true, value: { set: true } }
 }

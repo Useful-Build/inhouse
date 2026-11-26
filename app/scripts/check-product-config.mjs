@@ -301,7 +301,7 @@ const HUB_SERVICE = 'inhouse-hub'
  * ConnectGateway and P5 W4's DeliveryGateway, product server code only). ServerGateway is never bound. Keeping the runner off HUB_CONNECT and HUB_DELIVERY is code
  * discipline plus checks (the import-boundary rule, W5's runtime tests), not this config: every module shares `env`.
  */
-const HUB_BINDINGS = { HUB: 'ReadGateway', HUB_CONNECT: 'ConnectGateway', HUB_DELIVERY: 'DeliveryGateway' }
+const HUB_BINDINGS = { HUB: 'ReadGateway', HUB_CONNECT: 'ConnectGateway', HUB_DELIVERY: 'DeliveryGateway', HUB_WRITE: 'WriteGateway' }
 const HUB_ENTRY_KEYS = new Set(['binding', 'service', 'entrypoint'])
 const HUB_LIST = Object.entries(HUB_BINDINGS).map(([b, e]) => `${b} → ${e}`).join(', ')
 
@@ -398,14 +398,14 @@ const DO_KEYS = new Set(['name', 'class_name'])
 const MIGRATION_KEYS = new Set(['tag', 'new_classes', 'new_sqlite_classes', 'renamed_classes', 'deleted_classes'])
 const OBSERVABILITY_KEYS = new Set(['enabled', 'head_sampling_rate', 'logs', 'traces'])
 const OBSERVABILITY_PART_KEYS = new Set(['enabled', 'head_sampling_rate', 'invocation_logs', 'persist'])
-/** (P4, P5) Each hub binding a sandbox product Worker may hold, by name, and the hub entrypoint it must name. */
-const SANDBOX_HUB_ENTRYPOINTS = { HUB: 'ReadGateway', HUB_CONNECT: 'ConnectGateway', HUB_DELIVERY: 'DeliveryGateway' }
-/** (P4, P5) The allowed sets of those bindings, exactly: P4's read binding alone, or P5's three. */
-const SANDBOX_HUB_SETS = [['HUB'], ['HUB', 'HUB_CONNECT', 'HUB_DELIVERY']]
-/** (eval hub) The eval deployment's one allowed set: its own hub's read and connect bindings together (#337); never delivery. */
+/** (P4, P5, M2-C) Each hub binding a sandbox product Worker may hold, by name, and the hub entrypoint it must name. */
+const SANDBOX_HUB_ENTRYPOINTS = { HUB: 'ReadGateway', HUB_CONNECT: 'ConnectGateway', HUB_DELIVERY: 'DeliveryGateway', HUB_WRITE: 'WriteGateway' }
+/** (P4, P5, M2-C) The allowed sets of those bindings, exactly: P4's read binding alone, P5's three, or M2-C's four. */
+const SANDBOX_HUB_SETS = [['HUB'], ['HUB', 'HUB_CONNECT', 'HUB_DELIVERY'], ['HUB', 'HUB_CONNECT', 'HUB_DELIVERY', 'HUB_WRITE']]
+/** (eval hub) The eval deployment's one allowed set: its own hub's read and connect bindings together (#337); never delivery or write. */
 const EVAL_HUB_SETS = [['HUB', 'HUB_CONNECT']]
-const EVAL_SERVICES_SHAPE = 'services is set: the eval deployment may bind exactly { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway } to its own hub, each entry { binding, service, entrypoint } and nothing else (never HUB_DELIVERY)'
-const SERVICES_SHAPE = 'services is set: a sandbox config may not use it, but for exactly { HUB -> ReadGateway } or { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway, HUB_DELIVERY -> DeliveryGateway }, each entry { binding, service: <its own hub>, entrypoint } and nothing else'
+const EVAL_SERVICES_SHAPE = 'services is set: the eval deployment may bind exactly { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway } to its own hub, each entry { binding, service, entrypoint } and nothing else (never HUB_DELIVERY or HUB_WRITE)'
+const SERVICES_SHAPE = 'services is set: a sandbox config may not use it, but for exactly { HUB -> ReadGateway }, { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway, HUB_DELIVERY -> DeliveryGateway } or { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway, HUB_DELIVERY -> DeliveryGateway, HUB_WRITE -> WriteGateway }, each entry { binding, service: <its own hub>, entrypoint } and nothing else'
 /** (P4) The keys a sandbox hub config may give a value (a subset of SANDBOX_KEYS). */
 const HUB_KEYS = new Set([
   'name', 'account_id', 'workers_dev', 'preview_urls', 'vars', 'durable_objects', 'migrations', 'main', 'observability',
@@ -434,6 +434,8 @@ function hubLoaderFault(value) {
 const CANDIDATE_HUB_VARS = {
   SHOPIFY_SHOP: [v => v === '', 'must be empty: no store credential in the sandbox account'],
   SHOPIFY_CLIENT_ID: [v => v === '', 'must be empty: no store credential in the sandbox account'],
+  SHOPIFY_WRITE_SHOP: [v => v === '', 'must be empty: no store credential in the sandbox account'],
+  SHOPIFY_WRITE_CLIENT_ID: [v => v === '', 'must be empty: no store credential in the sandbox account'],
   SLACK_CLIENT_ID: [v => v === '', 'must be empty: the candidate hub has no Slack (master plan decision 11)'],
   SLACK_TEAM_ID: [v => v === '', 'must be empty: the candidate hub has no Slack (master plan decision 11)'],
   SLACK_PRIVATE_SEARCH: [v => v === 'off', 'must be "off": the candidate hub has no Slack (master plan decision 11)'],
@@ -460,6 +462,10 @@ export const EVAL_TEST_HUB_VARS = Object.freeze({
   SLACK_PRIVATE_SEARCH: 'off',
   CONNECT_REDIRECT_URI: 'https://inhouse.example.com/api/connect/callback',
   APP_ORIGIN: 'https://inhouse.example.com',
+  // Stage 1 M2-C: the test config's invented write-scoped Shopify app (fake upstream in test/upstreams/shopify/write/).
+  SHOPIFY_WRITE_SHOP: 'example-write',
+  SHOPIFY_WRITE_CLIENT_ID: 'test-write-client',
+  SHOPIFY_WRITE_CLIENT_SECRET: 'test-only-write-client-secret-8d4a2f1c9b0e',
 })
 /** True when `vars` holds exactly EVAL_TEST_HUB_VARS: the same keys, each the same string. */
 const isEvalTestHubVars = vars => {

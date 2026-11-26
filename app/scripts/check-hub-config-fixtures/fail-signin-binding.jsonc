@@ -1,4 +1,4 @@
-// Fails signin-binding: no binding.
+// Fails signin-binding: no SIGNIN binding.
 /* "routes": ["not-a-real-route/*"], in a comment: ignored */
 {
   "name": "inhouse-hub",
@@ -9,11 +9,25 @@
   "observability": {
     "enabled": true
   },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SHOPIFY_WRITE_SIGNIN",
+        "class_name": "ShopifyWriteSignIn"
+      }
+    ]
+  },
   "migrations": [
     {
       "tag": "v1",
       "new_sqlite_classes": [
         "SignIn"
+      ]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": [
+        "ShopifyWriteSignIn"
       ]
     }
   ],

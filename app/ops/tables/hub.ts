@@ -4,4 +4,6 @@ import type { TableEntry } from './types.ts'
 
 export const hubTables: readonly TableEntry[] = [
   { kind: 'do', name: 'SignIn', retention: 'config', personKeys: ['connectedBy', 'pending.memberId'], export: false },
+  // Stage 1 M2-C: the write-scoped Shopify app's sealed token (one record, no member ids).
+  { kind: 'do', name: 'ShopifyWriteSignIn', retention: 'config', personKeys: [], export: false },
 ]

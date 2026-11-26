@@ -19,9 +19,15 @@
 		"enabled": true
 	},
 	"durable_objects": {
-		"bindings": [{ "name": "SIGNIN", "class_name": "SignIn" }]
+		"bindings": [
+			{ "name": "SIGNIN", "class_name": "SignIn" },
+			{ "name": "SHOPIFY_WRITE_SIGNIN", "class_name": "ShopifyWriteSignIn" }
+		]
 	},
-	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SignIn"] }],
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["SignIn"] },
+		{ "tag": "v2", "new_sqlite_classes": ["ShopifyWriteSignIn"] }
+	],
 	// P5 W2: code mode runs scripts in Dynamic Workers (env.LOADER). Exactly this one binding (check-hub-config.mjs).
 	"worker_loaders": [{ "binding": "LOADER" }],
 	// The test upstream seam (hub/testing/) is only in a bundle built with this "true" (wrangler.hub.test.jsonc).
@@ -39,7 +45,10 @@
 		"SLACK_PRIVATE_SEARCH": "off",
 		"CONNECT_REDIRECT_URI": "",
 		// P5 W4: the brand's product origin (https, no path) for the "Open in Inhouse" link in Slack notices.
-		"APP_ORIGIN": ""
+		"APP_ORIGIN": "",
+		// Stage 1 M2-C (N13): the write-scoped Shopify app (separate from the read app). Empty in Stage 1.
+		"SHOPIFY_WRITE_SHOP": "",
+		"SHOPIFY_WRITE_CLIENT_ID": ""
 	},
 	// Set with `wrangler secret put` through a secret card, never in a file. SLACK_CLIENT_SECRET is optional (not in
 	// `required`): set it the same way once the Slack app exists.

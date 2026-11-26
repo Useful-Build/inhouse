@@ -46,14 +46,15 @@
 		]
 	},
 	"migrations": [{ "tag": "p3-v1", "new_sqlite_classes": ["BrandAgent", "Runner"] }],
-	// The connector hub (P4 p4-h1.md OC 4, P5 p5-w1.md section 3): `HUB` is its ReadGateway, for the runner's `/hub/`
-	// egress route; `HUB_CONNECT` its ConnectGateway, for product server code only (the connect routes); `HUB_DELIVERY` its
-	// DeliveryGateway (P5 p5-w4.md section 6), product server code only (notices to listed Slack channels). Never
-	// `ServerGateway`. Every entrypoint of a Worker shares its env, so keeping the runner off HUB_CONNECT and HUB_DELIVERY is code
-	// discipline plus checks (the import-boundary rule in .oxlintrc.json), not this config.
-	// scripts/check-product-config.mjs refuses any list but exactly these three.
+	// The connector hub (P4 p4-h1.md OC 4, P5 p5-w1.md section 3, Stage 1 M2-C N13): `HUB` is its ReadGateway, for the
+	// runner's `/hub/` egress route; `HUB_CONNECT` its ConnectGateway, for product server code only (the connect routes);
+	// `HUB_DELIVERY` its DeliveryGateway (P5 p5-w4.md section 6), product server code only (notices to listed Slack
+	// channels); `HUB_WRITE` its WriteGateway (M2-C), for the outbox dispatcher (`app/server/outbox/dispatch.ts`) only.
+	// Never `ServerGateway`. Every entrypoint of a Worker shares its env, so keeping the runner off HUB_CONNECT,
+	// HUB_DELIVERY and HUB_WRITE is code discipline plus checks (the import-boundary rule in .oxlintrc.json and scan tests),
+	// not this config. scripts/check-product-config.mjs refuses any list but exactly these four.
 	// https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/rpc/ (named entrypoints, read 2026-11-21)
-	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }, { "binding": "HUB_CONNECT", "service": "inhouse-hub", "entrypoint": "ConnectGateway" }, { "binding": "HUB_DELIVERY", "service": "inhouse-hub", "entrypoint": "DeliveryGateway" }],
+	"services": [{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" }, { "binding": "HUB_CONNECT", "service": "inhouse-hub", "entrypoint": "ConnectGateway" }, { "binding": "HUB_DELIVERY", "service": "inhouse-hub", "entrypoint": "DeliveryGateway" }, { "binding": "HUB_WRITE", "service": "inhouse-hub", "entrypoint": "WriteGateway" }],
 	// The runner image, built from app/ as CI's runner job builds it (it bundles app/shared/protocol). max_instances is
 	// 3 x RUNNER_POOL (scripts/check-product-config.mjs compares them).
 	// https://developers.cloudflare.com/containers/ and the Wrangler configuration's `containers` (read 2026-11-20)
