@@ -208,7 +208,10 @@ export const requestAction = async (
   o: { mode?: 'tool' | 'ask_only' } = {},
 ): Promise<any> => (await hookOk(request, { op: 'action', as, operation, args, ...o })).result
 
-/** The brand's stage (a technical setting the Inhouse team writes). Slack posts start at Act; Watch reaches the bell only. */
+/**
+ * The brand's stage (a technical setting the Inhouse team writes). Nothing reads it since M2-F; specs store one to show it
+ * changes nothing. Slack posts follow the permission path (M2-N, Q3 = A), whatever stage is stored.
+ */
 export async function setStage(request: APIRequestContext, stage: 'Watch' | 'Act' | 'Run'): Promise<void> {
   const r = await putSetting(request, inhouse, 'technical', 'stage', stage)
   expect(r.status, r.text).toBe(200)

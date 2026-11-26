@@ -72,7 +72,7 @@ describe('Slack notices', () => {
     for (const status of ['loading', 'error', 'ready'] as const) {
       const p = settingsPage('team-slack', { ...env(view({ status }).v), product: true })
       const text = p.sections.flatMap(s => [s.label, ...s.rows.flatMap(x => [x.title, x.desc, x.value])]).join(' ')
-      expect(text, status).toContain("Alerts reach the bell in the app. Slack posts aren't on yet.")
+      expect(text, status).toContain("The agent's notices reach the bell in the app. Inhouse's own alerts, like a failed routine, post to your alerts channel.")
       expect(text, status).toContain('Alerts pause while Slack is paused or needs a reconnect.')
       expect(text, status).not.toMatch(/\bstages?\b/i)
       expect(text, status).not.toMatch(/\b(Watch|Act|Run)\b/)

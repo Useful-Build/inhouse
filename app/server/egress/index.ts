@@ -21,7 +21,7 @@ import { withTestShop } from '@test-shop'
 import { jsonAnswer, messagesError, readCapped, RUN_TOKEN_HEADER } from './http.ts'
 import { mcpHandler } from '../mcp/server/index.ts'
 import { QUESTIONS_ON } from '../questions/switch.ts'
-import { notifyDeps } from '../mcp/tools/notifications/deps.ts'
+import { notifyDeps, notifyWiring } from '../mcp/tools/notifications/deps.ts'
 import { modelRoute } from './model.ts'
 import { storeRoute } from './store.ts'
 import { TaintOverflowError, taintStore, type CaptureTaint, type TaintSource } from './taint.ts'
@@ -214,10 +214,11 @@ export function egressDeps(env: EgressEnv, ctx: ExecutionContext, props: EgressP
     files: fileStore({ db: env.DB, bucket: env.FILES }),
     newFileId,
     // W6's `inhouse` MCP server (server/mcp/server/index.ts), acting as the grant's member only.
-    // P5 W4: notification_send's hub delivery, opaque to the egress (the one allowed import from the notifications tool).
     // M2-D: approval_request's wiring (the hub's accounts and N14's admission), the same as the actions route's.
+    // M2-N: notification_send's post to a listed channel goes through the outbox with the same wiring plus its own
+    // admission and the send's task; opaque to the egress (the one allowed import from the notifications tool).
     // Stage 1 M2-Q: `question_ask` only where this build turns questions on (server/questions/switch.ts: every build since M2-H).
-    mcp: mcpHandler({ db: env.DB, notify: notifyDeps(env), approvals: approvalsWiring(actions), questions: QUESTIONS_ON }),
+    mcp: mcpHandler({ db: env.DB, notify: notifyDeps(notifyWiring(approvalsWiring(actions), actions)), approvals: approvalsWiring(actions), questions: QUESTIONS_ON }),
     // The hub's ReadGateway (P4 H1, OC 4: the only hub entrypoint the product Worker binds). In the test and eval builds
     // only, each read carries the test shop override the eval harness set (`@test-shop`; the off module returns the hub as is).
     hub: hubRouteDeps(withTestShop(env.HUB as unknown as ReadGatewayLike, env.DB, env), entry => console.log(entry)),

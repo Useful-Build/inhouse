@@ -7,6 +7,7 @@
 import { z } from 'zod'
 import type { CallerScope, ConnectGateway } from '../../../hub/index/contract.ts'
 import { connectorAccountStore } from '../../db/connector-accounts.ts'
+import type { ConnectorAccountStore } from '../../db/connector-accounts.ts'
 import { SYSTEM_MEMBER_ID } from '../../db/ids.ts'
 import { ACCOUNT_IDS } from '../../outbox/facts.ts'
 import type { HubAccountFacts } from '../../outbox/facts.ts'
@@ -38,8 +39,8 @@ const LABEL: Readonly<Record<'shopify' | 'slack', string>> = { shopify: 'Shopify
  * is refused (`account_unavailable`). An answer that can't be read answers nothing: every account is then refused.
  */
 export async function hubAccountFacts(d: {
-  connect: Pick<ConnectGateway, 'listAccounts'>; db: D1Database; nowMs: number; requestId: string; log(e: Record<string, unknown>): void
-}): Promise<HubAccountFacts[]> {
+  connect: Pick<ConnectGateway, 'listAccounts'>; nowMs: number; requestId: string; log(e: Record<string, unknown>): void
+} & ({ db: D1Database } | { accounts: Pick<ConnectorAccountStore, 'syncFromHub'> })): Promise<HubAccountFacts[]> {
   const scope: CallerScope = { kind: 'server', job: 'actions.accounts', requestId: d.requestId }
   let raw: unknown
   try {
@@ -54,7 +55,8 @@ export async function hubAccountFacts(d: {
     d.log({ event: 'actions_accounts_unreadable', why: parsed.success ? 'hub_error' : 'malformed' })
     return []
   }
-  const accounts = connectorAccountStore({ db: d.db })
+  // M2-N: an API route has no D1 handle, only its stores; it passes the connector store itself.
+  const accounts = 'accounts' in d ? d.accounts : connectorAccountStore({ db: d.db })
   const out: HubAccountFacts[] = []
   for (const connector of ['shopify', 'slack'] as const) {
     const a = parsed.data.value.find(x => x.accountId === ACCOUNT_IDS[connector])
