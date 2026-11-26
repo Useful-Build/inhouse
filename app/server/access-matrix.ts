@@ -139,6 +139,14 @@ export const accessMatrix: readonly AccessRow[] = [
   // decides the object). Brand people only: the Inhouse team sees none in M2.
   /* 110 */ { method: 'GET', pattern: '/api/permissions', class: 'baseline', allow: ['member', 'admin'] },
   /* 111 */ { method: 'POST', pattern: '/api/permissions/:id/remove', class: 'baseline', allow: ['member', 'admin'] },
+  // Stage 1 M2-B (N15): the outbox's cards. Brand people only: the asker sees their own; an admin sees every card's facts
+  // (never another person's chat) and may resolve a "Needs a check"; only the approver answers or undoes (the outbox's
+  // statements decide the object). The Inhouse team sees none in M2.
+  /* 120 */ { method: 'GET', pattern: '/api/actions', class: 'baseline', allow: ['member', 'admin'] },
+  /* 121 */ { method: 'GET', pattern: '/api/actions/:id', class: 'baseline', allow: ['member', 'admin'] },
+  /* 122 */ { method: 'POST', pattern: '/api/actions/:id/answer', class: 'baseline', allow: ['member', 'admin'] },
+  /* 123 */ { method: 'POST', pattern: '/api/actions/:id/undo', class: 'baseline', allow: ['member', 'admin'] },
+  /* 124 */ { method: 'POST', pattern: '/api/actions/:id/resolve', class: 'baseline', allow: ['member', 'admin'] },
 ]
 
 /** Each `CanKey`'s row (section 3). */

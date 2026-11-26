@@ -189,6 +189,23 @@ export const notifySend = async (request: APIRequestContext, as: { memberId: str
   return r.json
 }
 
+/** Stage 1 M2-B (N19): turns a write operation on or off for the brand (the test build's only way; no route writes it). */
+export async function setCeiling(request: APIRequestContext, operation: 'shopify.order.tag_add' | 'slack.channel.post', enabled: boolean, perDayMax = 50): Promise<void> {
+  await hookOk(request, { op: 'ceiling', operation, enabled, perDayMax })
+}
+
+/**
+ * Stage 1 M2-B (N19): the outbox's `request` as an active person, with no tool call behind it. The answer is the outbox's
+ * result: `refused` with its words, `waiting` (a card), `approved` (under a permission) or `existing`.
+ */
+export const requestAction = async (
+  request: APIRequestContext,
+  as: { memberId: string; chatId?: string },
+  operation: 'shopify.order.tag_add' | 'slack.channel.post',
+  args: Record<string, unknown>,
+  o: { mode?: 'tool' | 'ask_only'; shop?: string } = {},
+): Promise<any> => (await hookOk(request, { op: 'action', as, operation, args, ...o })).result
+
 /** The brand's stage (a technical setting the Inhouse team writes). Slack posts start at Act; Watch reaches the bell only. */
 export async function setStage(request: APIRequestContext, stage: 'Watch' | 'Act' | 'Run'): Promise<void> {
   const r = await putSetting(request, inhouse, 'technical', 'stage', stage)

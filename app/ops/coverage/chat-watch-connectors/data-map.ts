@@ -70,6 +70,8 @@ export const NOTES: Readonly<Record<string, Note>> = {
   permission_ceiling: { holds: 'Which actions the agent may take at all, and their daily limits', personal: 'Member ID of who last changed it', retention: 'Kept while the deployment lives', deletion: 'Kept: the member ID no longer identifies the deleted person' },
   permission_grants: { holds: '"Always allow" permissions, live and ended', personal: 'Member IDs of the holder and of who granted and ended it', retention: 'Kept while the deployment lives', deletion: 'The person\'s own permissions are deleted. Others keep who granted or ended them, which no longer identifies the deleted person' },
   permission_uses: { holds: 'How often each permission was used each day', personal: 'None', retention: 'Steps setting (default 12 months)', deletion: 'Kept: no personal data' },
+  outbox_gate: { holds: 'Whether the agent\'s actions are paused or held for a restore', personal: 'None', retention: 'Kept while the deployment lives', deletion: 'Kept: no personal data' },
+  outbox_actions: { holds: 'Actions the agent proposed, their approvals and outcomes', personal: 'Member IDs of who asked, approved and checked it; the action\'s details, such as a message\'s text', retention: 'Steps setting (default 12 months) after the action finished; never while it\'s open', deletion: 'Actions the person asked for are deleted. Others keep who approved or checked them, which no longer identifies the deleted person' },
   privacy_requests: { holds: 'Shopify privacy requests and their status', personal: 'Shopify customer and order IDs while open', retention: 'Request record kept while the deployment lives; customer and order IDs cleared on close', deletion: 'Kept: no team member ID' },
 }
 

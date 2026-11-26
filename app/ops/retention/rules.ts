@@ -95,6 +95,9 @@ export const retentionRules: Readonly<Record<string, RetentionRule>> = {
   egress_taint: { kind: 'd1', ageColumn: 'seen_at_ms', idColumn: 'digest' },
   // Stage 1 M2-A: a grant's uses count only toward their own day; a year on they count toward nothing.
   permission_uses: { kind: 'd1', ageColumn: 'at_ms', idColumn: 'id' },
+  // Stage 1 M2-B: an action goes a period after it became final; `final_at_ms` is null while it's open (waiting, approved,
+  // sending or an unresolved check), so an open action never goes by age.
+  outbox_actions: { kind: 'd1', ageColumn: 'final_at_ms', idColumn: 'id' },
 }
 
 /**
@@ -122,6 +125,7 @@ export const retentionGroups: Readonly<Record<string, PeriodName>> = {
   egress_fetches: 'egress',
   egress_taint: 'egressTaint',
   permission_uses: 'steps',
+  outbox_actions: 'steps',
 }
 
 export type RetentionPeriods = Readonly<Record<string, number | null>>

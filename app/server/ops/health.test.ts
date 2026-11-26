@@ -48,6 +48,8 @@ describe('the health route', () => {
         { name: 'privacy_requests', ok: true },
         { name: 'shopify_webhook_secrets', ok: true, amber: true, detail: 'not set' },
         { name: 'egress_record_failed', ok: true },
+        // Stage 1 M2-B: no action needs a check, none is stuck sending, the gate agrees with the agent.
+        { name: 'outbox_needs_check', ok: true }, { name: 'outbox_sending_stale', ok: true }, { name: 'outbox_gate', ok: true },
       ] },
     })
   })

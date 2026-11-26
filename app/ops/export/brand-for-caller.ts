@@ -134,6 +134,18 @@ export const BRAND_FOR_CALLER: Readonly<Record<string, CallerPolicy>> = {
     why: 'route 110: an Admin sees every grant; the Inhouse team sees none',
     where: c => (person(c) ? { where: '1', params: [] } : null),
   },
+  // Stage 1 M2-B. Route 120 shows an Admin every card's facts but never another person's chat, and the Inhouse team none:
+  // another person's action goes without its chat, run, turn and tool call ids.
+  outbox_actions: {
+    kind: 'rows',
+    why: "route 120: an Admin sees every card's facts, a chat's ids only for their own; the Inhouse team sees none",
+    where: c => (person(c) ? { where: '1', params: [] } : null),
+    project: (row, c) => {
+      if (row.asked_by === c.memberId) return row
+      const { chat_id: _chat, run_id: _run, turn_id: _turn, tool_use_id: _tool, job_id: _job, ...rest } = row
+      return rest
+    },
+  },
 }
 
 /** P5 stores excluded from every export by the registry. */
