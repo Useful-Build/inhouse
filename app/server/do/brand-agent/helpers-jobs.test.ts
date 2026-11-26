@@ -190,5 +190,14 @@ describe('the helper-research scenario', () => {
       { role: 'user', content: [{ type: 'tool_result', tool_use_id: call.id, content: HELPER_REPORT }] },
     ] })
     expect(last.content).toEqual([{ type: 'text', text: HELPER_ANSWER }])
+    // A helper whose own request missed comes back as its text, not an error: the main thread's answer is a miss then.
+    const m3 = createScriptedModel(SCENARIOS)
+    await answer(m3, { tools, messages: [{ role: 'user', content: 'scenario:helper-research go' }] })
+    const missed = await answer(m3, { tools, messages: [
+      { role: 'user', content: 'scenario:helper-research go' },
+      { role: 'assistant', content: first.content },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: call.id, content: 'API Error: 400 scripted model miss' }] },
+    ] })
+    expect(missed.error?.message).toContain("the helper's result is not its report")
   })
 })

@@ -29,7 +29,7 @@ test('a scripted turn starts the researcher helper; its model call is on the tur
   const trace = (await call(request, dana, 'GET', `/api/traces/${sent.turnId}`)).json as { cost: { minor: number }; steps: { kind: string; label: string; detail: string }[] }
   // The helper's own call: Sonnet 5.5 (the turn's subagent model; a Sonnet turn keeps its own) with the marked usage.
   const helperSteps = trace.steps.filter(s => s.kind === 'model' && s.detail === `${HELPER_USAGE.input_tokens} in · ${HELPER_USAGE.output_tokens} out`)
-  expect(helperSteps.map(s => s.label)).toEqual(['claude-sonnet-5-5'])
+  expect(helperSteps.map(s => s.label), JSON.stringify(trace.steps.filter(s => s.kind !== 'root'))).toEqual(['claude-sonnet-5-5'])
   expect(trace.steps.filter(s => s.kind === 'tool' && ['Agent', 'Task'].includes(s.detail))).toHaveLength(1)
   expect(trace.cost.minor).toBeGreaterThanOrEqual(HELPER_CENTS)
   // The ledger: the month's total moves by at least the helper's spend once the turn is settled (other specs only add).

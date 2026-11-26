@@ -32,6 +32,19 @@ const researcherRequest: Check = (r) => {
   return true
 }
 
+/**
+ * The researcher's report reached the main thread as the Agent call's result. Otherwise a miss that quotes what the result
+ * said, so a helper request the branch refused (its own miss comes back as the helper's text, not as an error) shows in
+ * the turn's answer instead of passing as a report.
+ */
+const reportReturned: Check = (r) => {
+  const blocks = r.messages.flatMap((m) => (Array.isArray(m.content) ? (m.content as { type?: unknown; tool_use_id?: unknown; content?: unknown }[]) : []))
+  const result = blocks.find((b) => typeof b === 'object' && b !== null && b.type === 'tool_result' && b.tool_use_id === CALL_ID)
+  if (result === undefined) return `no result for ${CALL_ID}`
+  const said = JSON.stringify(result.content ?? '')
+  return said.includes(HELPER_REPORT) ? true : `the helper's result is not its report; it says: ${said.slice(0, 400)}`
+}
+
 export function subagentScenarios(mainLoop: (tool?: string) => Check, resultIs: (id: string, error: boolean) => Check): Record<string, Scenario> {
   return {
     /** Start with `scenario:helper-research`: one researcher, then the answer from its report. */
@@ -44,7 +57,10 @@ export function subagentScenarios(mainLoop: (tool?: string) => Check, resultIs: 
           }],
           expect: mainLoop(),
         },
-        { content: [{ type: 'text', text: HELPER_ANSWER }], expect: resultIs(CALL_ID, false) },
+        {
+          content: [{ type: 'text', text: HELPER_ANSWER }],
+          expect: (r) => { const ok = resultIs(CALL_ID, false)(r); return ok === true ? reportReturned(r) : ok },
+        },
       ],
       branches: {
         researcher: {
