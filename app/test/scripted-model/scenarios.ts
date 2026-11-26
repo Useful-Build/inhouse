@@ -4,6 +4,7 @@
 import type { MessagesRequest, Scenario, ScriptedBranch, ScriptedTurn } from './index.ts'
 import { BUILT_IN_TOOLS, INHOUSE_MCP_SERVER } from '../../runner/src/guards/lists.ts'
 import { INHOUSE_TOOLS } from '../../server/mcp/registry.ts'
+import { jobScenarios } from './scenarios/jobs.ts'
 import { LEAK_CHECK_SCENARIOS } from './scenarios/leak-check.ts'
 
 /** The model every harness run asks for (the harness's `RunStart`). */
@@ -435,6 +436,7 @@ export const READ_SIDE_NOTICE_TEXT = 'The returns code needs action today.'
 /** The marker the read-side subagent's prompt carries, so its requests take the subagent branch. */
 export const READ_SIDE_SUBAGENT_MARKER = 'rs-subagent-lookup'
 export const SCENARIOS: Record<string, Scenario> = {
+  ...jobScenarios(mainLoop, resultIs),
   /** Answers with the SDK's StructuredOutput tool, matching STRUCTURED_SCHEMA (run it with that outputFormat). */
   structured: {
     turns: [
