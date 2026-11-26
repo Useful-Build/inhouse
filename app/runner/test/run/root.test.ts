@@ -384,7 +384,7 @@ describe('a Worker that reads slowly', () => {
         if (slow) handle?.pause()
       })
       stream.emit({ type: 'started', sessionId: config.sessionId, resume: config.resume })
-      handle = hostSession({ child, stream, config, stopGraceMs: 200, log: (l) => logs.push(l), recordAudit: async () => true, onQueryStarted: () => {}, onStoreResult: () => {} })
+      handle = hostSession({ child, stream, config, protocol: PROTOCOL_VERSION, stopGraceMs: 200, log: (l) => logs.push(l), recordAudit: async () => true, onQueryStarted: () => {}, onStoreResult: () => {} })
       await waitFor(() => existsSync(join(user.workDir, 'got-run')), 'the session has its run')
       slow = true
       handle.pause()
@@ -751,6 +751,24 @@ describe('the run token stays in the root', () => {
     await fetch(`${root.url}/runs/${start.runId}/stop`, { method: 'POST', headers: protocolHeaders })
     await pending
     expect(root.tokenForUid(uid)).toBeNull()
+  })
+
+  // N6: the proxy's /actions/ (which rides the mcp token) is open only to a run whose start asked for the actions server.
+  it.each([
+    [undefined, false],
+    [false, false],
+    [true, true],
+  ])('actions %s: the token for /actions/ is given %s; /mcp/ and /hub/ as always', async (actions, open) => {
+    const start = runStart({ prompt: 'obey-stop', runToken: 'tok_actions_route_00001', ...(actions === undefined ? {} : { actions }) })
+    const pending = postRun(root, start)
+    await waitFor(() => root.users.uids.has(start.chatId) && root.tokenForUid(root.users.uids.get(start.chatId)!) !== null)
+    const uid = root.users.uids.get(start.chatId)!
+    expect(root.tokenForUid(uid, 'mcp', 'actions')).toBe(open ? 'tok_actions_route_00001' : null)
+    expect(root.tokenForUid(uid, 'mcp', 'mcp')).toBe('tok_actions_route_00001')
+    expect(root.tokenForUid(uid, 'mcp', 'hub')).toBe('tok_actions_route_00001')
+    await fetch(`${root.url}/runs/${start.runId}/stop`, { method: 'POST', headers: protocolHeaders })
+    await pending
+    expect(root.tokenForUid(uid, 'mcp', 'actions')).toBeNull()
   })
 
   it('a bad RunStart is refused without echoing the token', async () => {
