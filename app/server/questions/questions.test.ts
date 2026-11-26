@@ -10,8 +10,8 @@
 //  8. a resume that didn't land is never retried after a reload (the chat blocked for 7 days);
 //  9. a chat in the trash: its question listed, answered (a line, a 409), or expired with a notice; a restore loses it;
 //  10. the list asks the object about more than 100 chats at once;
-//  7. with questions off (every deployable build until M2-H), a deferred `question_ask` asks anything or leaves its chat
-//     waiting, or the switch is on outside the test build.
+//  7. the product build's hook doesn't ask (questions are on everywhere since M2-H ships the screen); with questions off
+//     (the kept switch), a deferred `question_ask` asks anything or leaves its chat waiting.
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import type { RunEventBody } from '../../shared/protocol/index.ts'
@@ -21,9 +21,9 @@ import type { Harness } from '../testing/brand-agent/core-harness.ts'
 import type { InternalSubmit, Refusal } from '../do/brand-agent/ports.ts'
 import { internalSubmit } from '../do/brand-agent/task-ops.ts'
 import { questionWaits, waitingQuestionOf } from './agent.ts'
-import { expiryTaskId, questionOnDeferred } from './ask.ts'
+import { expiryTaskId, questionHook, questionOnDeferred } from './ask.ts'
 import { p6Hooks } from '../do/brand-agent/compose.ts'
-import { QUESTIONS_ON, questionsOn } from './switch.ts'
+import { QUESTIONS_ON } from './switch.ts'
 import { WAITS_BATCH, answerQuestion, openQuestions } from './flow.ts'
 import type { QuestionAgent } from './flow.ts'
 import { questionStore } from './store.ts'
@@ -212,18 +212,27 @@ describe('expiry (failure 5)', () => {
   }))
 })
 
-describe('questions off (failure 7)', () => {
-  it('on in the test build only: never in the product, house, brand or eval build', () => {
-    expect(questionsOn({ test: false, eval: false })).toBe(false)
-    expect(questionsOn({ test: true, eval: true })).toBe(false)
-    expect(questionsOn({ test: true, eval: false })).toBe(true)
-    // vitest.config.ts defines the product build's flags.
-    expect(QUESTIONS_ON).toBe(false)
+describe('questions on, and the off switch kept (failure 7)', () => {
+  it('on in every build since M2-H: vitest.config.ts defines the product build\'s flags', () => {
+    expect(QUESTIONS_ON).toBe(true)
   })
 
-  it("the product build's hook (compose.ts): a deferred question asks nothing and its chat doesn't wait; the call runs again at once", () => inAgent(async h => {
+  it("the product build's hook (compose.ts) asks: the question, its waiting notice, its expiry, and the chat waits on it", () => inAgent(async h => {
     const hook = p6Hooks(env, { sql: h.sql, scheduler: h.sched, now: () => h.clock.now, hooks: { retryPlacement: () => {}, placementExpired: () => {} } }).onDeferred!
     h.core.setOnDeferred(hook)
+    await d1Chat('c-on', MEMBER)
+    const a = await ask(h, 'c-on', { question: 'Which?', options: OPTIONS })
+    const id = qid(a.turnId)
+    expect(await row(id)).toMatchObject({ chat_id: 'c-on', asked_of: MEMBER, asked_as: 'owner', state: 'open' })
+    expect(await lines('question.asked', id)).toEqual([{ questionId: id, askedOf: 'owner', options: 2 }])
+    expect((await notices(id)).map(x => x.id)).toEqual([`qw_${id}`])
+    expect(waitingQuestionOf(h.sql, 'c-on')).toBe(id)
+    expect(resumes(h, id)).toBe(0)
+    expect(h.dueTasks().find(t => t.id === expiryTaskId(id))).toEqual({ id: expiryTaskId(id), due_at_ms: h.clock.now + QUESTION_TTL_MS })
+  }))
+
+  it("off (questionHook(false)): a deferred question asks nothing and its chat doesn't wait; the call runs again at once", () => inAgent(async h => {
+    h.core.setOnDeferred(questionHook(false))
     await d1Chat('c-off', MEMBER)
     const a = await ask(h, 'c-off', { question: 'Which?', options: OPTIONS })
     const id = qid(a.turnId)

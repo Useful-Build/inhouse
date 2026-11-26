@@ -201,7 +201,7 @@ export function egressDeps(env: EgressEnv, ctx: ExecutionContext, props: EgressP
     newFileId,
     // W6's `inhouse` MCP server (server/mcp/server/index.ts), acting as the grant's member only.
     // P5 W4: notification_send's hub delivery, opaque to the egress (the one allowed import from the notifications tool).
-    // Stage 1 M2-Q: `question_ask` only where this build turns questions on (server/questions/switch.ts: the test build).
+    // Stage 1 M2-Q: `question_ask` only where this build turns questions on (server/questions/switch.ts: every build since M2-H).
     mcp: mcpHandler({ db: env.DB, notify: notifyDeps(env), questions: QUESTIONS_ON }),
     // The hub's ReadGateway (P4 H1, OC 4: the only hub entrypoint the product Worker binds). In the test and eval builds
     // only, each read carries the test shop override the eval harness set (`@test-shop`; the off module returns the hub as is).
