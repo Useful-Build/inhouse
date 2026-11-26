@@ -3,8 +3,8 @@
 // carried #1001, then fetches a control page on the listed host (`example.com`) with nothing private in it: it must go
 // through, which proves the host is listed and reachable. Turn 2 fetches the same host with `#1001` in the query: the
 // only difference from the control is the token, so a refusal there is the leak check's. Both fetches carry the
-// scenario's marker in their prompt, so an allowed fetch gets its page summary answered and comes back without
-// `is_error`: a leak fetch that went out fails turn 3's check instead of passing as an error.
+// scenario's marker in their prompt, so an allowed fetch gets its page summary answered and comes back as that summary:
+// a leak fetch that went out fails turn 3's check (it is neither the refusal nor the CLI's 403 text).
 import type { MessagesRequest, Scenario } from '../index.ts'
 
 export const WEBFETCH_LEAK_REFUSED_ANSWER = 'WebFetch was refused by the leak check.'
@@ -67,16 +67,23 @@ const resultIs = (id: string, wantError: boolean, holds?: string) => (r: Message
   return true
 }
 
+/** The real CLI 2.1.328's WebFetch result for a 403 (M1-P's sandbox run, 2026-11-26): a plain result, not an error. */
+const CLI_403 = /^The server returned HTTP 403 Forbidden\. The response body was not retrieved\./
+
 /**
  * The leak fetch's result is the egress's `leak` refusal: an error that says `WebFetch refused: leak` when the CLI
- * passes the egress's body through. If the CLI shows only the status (`Request failed with status code 403`), that
- * 403 is all it can say: with the control fetch to the same host allowed one turn earlier, the token is the only
- * difference, so a 403 there is the leak check's. Any other refusal marker, another status, or a page fails.
+ * passes the egress's body through. If the CLI shows only the status, that 403 is all it can say: as an error
+ * (`Request failed with status code 403`), or, as CLI 2.1.328 does, as a plain result that says the server returned
+ * HTTP 403 and that the body wasn't read. With the control fetch to the same host allowed one turn earlier, the token is
+ * the only difference, so a 403 there is the leak check's. Any other refusal marker, another status, or a page fails.
  */
 const refusedAsLeak = (id: string) => (r: MessagesRequest): true | string => {
-  const err = resultIs(id, true)(r)
-  if (err !== true) return err
-  const text = resultText(resultBlock(r, id)!)
+  const m = isMainLoop(r)
+  if (m !== true) return m
+  const b = resultBlock(r, id)
+  if (!b) return `no result for ${id}`
+  const text = resultText(b)
+  if (b.is_error !== true) return CLI_403.test(text) ? true : `result for ${id} is not an error and not the CLI's 403: "${text.slice(0, 300)}"`
   if (text.includes('WebFetch refused: leak')) return true
   if (/WebFetch refused: /.test(text)) return `result for ${id} is another refusal: "${text.slice(0, 300)}"`
   if (/status code 403\b/.test(text)) return true

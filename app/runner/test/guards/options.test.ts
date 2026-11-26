@@ -187,6 +187,12 @@ describe('the guarded options', () => {
     expect(s.enabledPlugins).toEqual(Object.fromEntries(BUILT_IN_PLUGINS_OFF.map((p) => [p, false])))
   })
 
+  // M1-P: the CLI's WebFetch preflight asks api.anthropic.com about each host, which the container can't reach, so every
+  // fetch failed on the sandbox; our host list and the egress decide instead.
+  it.prop([config])("WebFetch's preflight lookup is off on every run", (c) => {
+    expect((guards.apply(base(c), c, run).settings as { skipWebFetchPreflight?: unknown }).skipWebFetchPreflight).toBe(true)
+  })
+
   it.prop([config])("deny rules cover the session's .claude/, .mcp.json, home, /opt and the runner's code", (c) => {
     const p = sessionPaths(c.chatId)
     const deny = (guards.apply(base(c), c, run).settings as { permissions: { deny: string[] } }).permissions.deny
