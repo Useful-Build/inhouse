@@ -158,7 +158,8 @@ describe('waits (failure 3)', () => {
     for (let i = 0; i < MAX_WAITS_PER_TURN; i++) expect(a.beginWait(turnId, `ac_w${i}`)).toMatchObject({ wait: true })
     expect(a.beginWait(turnId, 'ac_w3')).toEqual({ wait: false, why: 'busy' })
     a.endWait('ac_w0', false)
-    expect(a.beginWait(turnId, 'ac_w1')).toEqual({ wait: false, why: 'busy' })
+    // A second waiter on a live wait's action: not `busy` (that would hand its report on), `already_waiting`.
+    expect(a.beginWait(turnId, 'ac_w1')).toEqual({ wait: false, why: 'already_waiting' })
     expect(a.beginWait(turnId, 'ac_w3')).toMatchObject({ wait: true })
     expect(a.beginWait('t_unknown', 'ac_w9')).toEqual({ wait: false, why: 'turn_not_live' })
     h.core.stop(turnId, { kind: 'person', memberId: ASKER })
@@ -194,6 +195,9 @@ describe('the turn\'s end and the resume turn (failures 4, 5)', () => {
     expect((await rowOf(db, id))!.report).toBe('resume')
     const resumes = h.turns().filter(t => t.chat_id === chat && t.source === 'action')
     expect(resumes.map(t => [t.client_key, t.owner_id, t.priority, t.text])).toEqual([[resumeKey(id), ASKER, 'next', 'An automatic note from Inhouse: Add a tag to order 1 is sent.']])
+    // The chat says whose words these are: the server's, for an action (`turn.queued`'s source).
+    const queued = h.events(resumes[0]!.run_id).filter(e => e.type === 'turn.queued' && e.turnId === resumes[0]!.turn_id)
+    expect(queued).toEqual([expect.objectContaining({ type: 'turn.queued', source: 'action', by: ASKER })])
   }))
 
   it('a turn that ends done keeps its tool rows: the waiter told the agent', () => inAgent(async h => {
@@ -268,6 +272,13 @@ describe('the asks sweep', () => {
     for (const id of [...ids, third, fourth]) h.sched.cancel(deliverTaskId(id))
     await asks(h).sweep()
     expect(delivers()).toEqual([deliverTaskId(fourth)])
+    // Once the last row is older than the overlap, a pass schedules nothing again: the cursor is exactly past it.
+    h.clock.now += 10_000
+    await asks(h).sweep()
+    h.sched.cancel(deliverTaskId(fourth))
+    await asks(h).sweep()
+    await asks(h).sweep()
+    expect(delivers()).toEqual([])
   }))
 })
 

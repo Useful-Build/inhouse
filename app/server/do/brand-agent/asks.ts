@@ -29,7 +29,7 @@ import type { AgentCore } from './core.ts'
 import { admitAction, pruneInvocations, turnProposed } from './invocations.ts'
 import type { AdmitRefusal, Admitted } from './invocations.ts'
 import type { JobTurnSettings } from './jobs/types.ts'
-import type { Refusal, SubmitTurn } from './ports.ts'
+import type { AskWaitAnswer, Refusal, SubmitTurn } from './ports.ts'
 import type { DueTask, Scheduler, TaskContext, TaskHandler, TaskResult } from './scheduler.ts'
 import { withSeed } from './scheduler.ts'
 import { asksDeps } from './compose.ts'
@@ -273,16 +273,16 @@ export class Asks {
   }
 
   /** A waiter starts. Refused when the turn isn't live, or already holds `MAX_WAITS_PER_TURN` live waits. */
-  beginWait(turnId: string, actionId: string): { wait: true; untilMs: number } | { wait: false; why: 'turn_not_live' | 'busy' } {
+  beginWait(turnId: string, actionId: string): AskWaitAnswer {
     const { sql } = this.p
     const now = this.p.now()
+    // One live waiter per action: a second (a replay of the same call) doesn't wait, and leaves the report to the first.
+    const live = sql.exec<{ action_id: string }>('SELECT action_id FROM ask_waits WHERE action_id = ? AND finished = 0 AND until_ms > ?', actionId, now).toArray()
+    if (live.length > 0) return { wait: false, why: 'already_waiting' }
     if (!this.turnLiveNow(turnId)) return { wait: false, why: 'turn_not_live' }
     const held = sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM ask_waits WHERE turn_id = ? AND finished = 0 AND until_ms > ?', turnId, now).one().n
     if (held >= MAX_WAITS_PER_TURN) return { wait: false, why: 'busy' }
     const untilMs = now + WAIT_MAX_MS + WAIT_AFTER_APPROVAL_MS + WAIT_MARGIN_MS
-    const live = sql.exec<{ action_id: string }>('SELECT action_id FROM ask_waits WHERE action_id = ? AND finished = 0 AND until_ms > ?', actionId, now).toArray()
-    // One live waiter per action: a second (a replay of the same call) doesn't wait.
-    if (live.length > 0) return { wait: false, why: 'busy' }
     sql.exec(
       `INSERT INTO ask_waits (action_id, turn_id, started_at_ms, until_ms) VALUES (?, ?, ?, ?)
        ON CONFLICT (action_id) DO UPDATE SET turn_id = excluded.turn_id, started_at_ms = excluded.started_at_ms, until_ms = excluded.until_ms,
@@ -406,9 +406,11 @@ export class Asks {
     for (const r of rows) this.changed(r.id)
     const last = rows.at(-1)
     if (last) {
-      const full = rows.length === ASKS_SWEEP_PAGE
-      const nextMs = full ? last.updated_at_ms : Math.max(atMs, last.updated_at_ms - ASKS_SWEEP_OVERLAP_MS)
-      const nextId = full ? last.id : nextMs === atMs ? afterId : ''
+      // The overlap only while the last row is recent: once it is `ASKS_SWEEP_OVERLAP_MS` old nothing can still be written
+      // at its time, so the cursor moves exactly past it and the last rows aren't scheduled again every pass.
+      const exact = rows.length === ASKS_SWEEP_PAGE || last.updated_at_ms <= now - ASKS_SWEEP_OVERLAP_MS
+      const nextMs = exact ? last.updated_at_ms : Math.max(atMs, last.updated_at_ms - ASKS_SWEEP_OVERLAP_MS)
+      const nextId = exact ? last.id : nextMs === atMs ? afterId : ''
       sql.exec("INSERT INTO flags (key, value) VALUES ('asks_cursor_ms', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", nextMs)
       sql.exec("INSERT INTO flags (key, value) VALUES ('asks_cursor_id', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", nextId)
     }

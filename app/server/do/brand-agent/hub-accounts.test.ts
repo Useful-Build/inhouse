@@ -93,6 +93,22 @@ describe('the copy into D1 (failures 1, 2, 3)', () => {
     expect(g?.revoked_at_ms).not.toBeNull()
   })
 
+  it('a product disconnect older than its own connect but not older than the hub\'s date is cleared: the account reads connected', async () => {
+    // The product connected at 200 and recorded a disconnect at 150 (its clock); the hub dates the connection 120.
+    await db.prepare("INSERT INTO connector_accounts (account_id, connector, last_state, last_state_at_ms, connected_at_ms, disconnected_at_ms) VALUES (?, 'slack', 'connected', 200, 200, 150)").bind(SLACK).run()
+    await read({ ok: true, value: [slack({ connectedAtMs: 120 })] })
+    expect(await row(SLACK)).toMatchObject({ connected_at_ms: 120, disconnected_at_ms: null })
+    const facts = await outboxFacts({ db, hubAccounts: async () => [{ accountId: SLACK, paused: false, label: 'Slack' }] }).resolveFacts(6_000)
+    expect(facts.accounts.slack).toMatchObject({ connected: true, connectedAtMs: 120 })
+  })
+
+  it('a handle that isn\'t a store handle is no handle: Shopify is refused, the other accounts read as usual', async () => {
+    expect(await read({ ok: true, value: [shopify({ shop: 'evil.example/../x' }), slack()] })).toEqual([
+      { accountId: SHOP, paused: false, label: 'Shopify' }, { accountId: SLACK, paused: false, label: 'Slack' },
+    ])
+    expect(await row(SHOP)).toMatchObject({ shop: null })
+  })
+
   it('a Shopify account with no write store configured keeps no handle: resolve refuses the write', async () => {
     await read({ ok: true, value: [shopify({ shop: '' })] })
     expect(await row(SHOP)).toMatchObject({ shop: null, connected_at_ms: HUB_GEN })

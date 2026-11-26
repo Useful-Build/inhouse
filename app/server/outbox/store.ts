@@ -99,6 +99,8 @@ function insertAction(n: NewRow, also: readonly Exists[]): Stmt {
   ]
   const conds = [
     `NOT EXISTS (SELECT 1 FROM outbox_actions WHERE chat_id = ? AND payload_hash = ? AND state = 'waiting' AND expires_at_ms > ?)`,
+    // M2-D (N11): never into a chat in the trash, decided in the insert itself (a deletion may land after any read).
+    'NOT EXISTS (SELECT 1 FROM chats WHERE id = ? AND deleted_at_ms IS NOT NULL)',
     ...also.map(e => `EXISTS (${e.sql})`),
   ]
   return stmt(
@@ -106,7 +108,7 @@ function insertAction(n: NewRow, also: readonly Exists[]): Stmt {
      SELECT ${INSERT_COLUMNS.map(() => '?').join(', ')}, ${approved ? '(SELECT epoch FROM outbox_gate WHERE id = 1)' : 'NULL'}
      WHERE ${conds.join(' AND ')}
      ON CONFLICT DO NOTHING`,
-    ...values, n.ctx.chatId, n.r.payloadHash, n.nowMs, ...also.flatMap(e => e.params),
+    ...values, n.ctx.chatId, n.r.payloadHash, n.nowMs, n.ctx.chatId, ...also.flatMap(e => e.params),
   )
 }
 
@@ -210,6 +212,7 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
         }
         const existing = await existingFor(ctx, r)
         if (existing) return existing
+        if (await chatDeleted(ctx.chatId)) return refusedRequest('chat_deleted')
         // The reservation lost (the day's units spent, the grant revoked meanwhile) or the gate closed: decide again. A
         // `run` that still can't reserve is an exact approval with guardrail `count`, never `run` and never `ask` (N10);
         // a closed gate leaves an ordinary card for after the Resume.
@@ -234,6 +237,7 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       if (made) return { outcome: 'waiting', action: made, existing: false }
       const existing = await existingFor(ctx, r)
       if (existing) return existing
+      if (await chatDeleted(ctx.chatId)) return refusedRequest('chat_deleted')
       throw new Error('outbox: a waiting insert applied nothing and no row explains it')
     },
 
@@ -268,7 +272,7 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
         : stmt(
           `UPDATE outbox_actions SET state = 'denied', rev = rev + 1, final_at_ms = ?, updated_at_ms = ?, stamp = ?
            WHERE id = ? AND rev = ? AND state = 'waiting' AND approver = ?
-             AND EXISTS (SELECT 1 FROM members m WHERE m.id = ? AND m.kind = 'person' AND m.status = 'active')`,
+             AND EXISTS (SELECT 1 FROM members m WHERE m.id = ? AND m.kind = 'person' AND m.status = 'active') AND ${CHAT_NOT_DELETED}`,
           nowMs, nowMs, stamp, actionId, input.ifRev, actor.memberId, actor.memberId,
         )]
       const line = (permissionId?: string) => ({
@@ -318,6 +322,7 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       }
       if (!after || after.rev !== input.ifRev || after.state !== 'waiting') return refusal('conflict')
       if (after.expires_at_ms <= nowMs) return refusal('conflict')
+      if (await chatDeleted(after.chat_id)) return refusal('conflict')
       if (approving && !(await gateOpen())) return refusal('conflict', 'paused')
       return refusal('forbidden')
     },

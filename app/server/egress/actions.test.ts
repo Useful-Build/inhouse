@@ -16,30 +16,31 @@ import { WAIT_MAX_MS } from '../do/brand-agent/asks.ts'
 import { ASKER, HUB_FACTS, SHOP_GEN, fresh, outbox, rowOf, sendNow, tagArgs, world } from '../outbox/test-support.ts'
 import { insertGrant, person } from '../permissions/test-support.ts'
 import { POLICY_REV } from '../permissions/policy.ts'
-import { ACTION_WORDS, askerFor, callAction, handleActions } from './actions.ts'
+import { ACTION_WORDS, approvalsWiring, askerFor, callAction, handleActions } from './actions.ts'
 import type { ActionsRouteDeps } from './actions.ts'
 
 const db = env.DB
 const T0 = 1_800_000_000_000
 const CHAT = 'c_m2d_chat'
 
-const grantOf = (turnId: string): RunGrant => ({
-  turnId, runId: 'r_m2d', chatId: CHAT, memberId: ASKER, sessionId: '00000000-0000-4000-8000-0000000000d2', model: 'claude-sonnet-5-5',
+const grantOf = (turnId: string, chatId = CHAT): RunGrant => ({
+  turnId, runId: 'r_m2d', chatId, memberId: ASKER, sessionId: '00000000-0000-4000-8000-0000000000d2', model: 'claude-sonnet-5-5',
   sideModel: 'claude-haiku-5-5', expiresAtMs: T0 + 3_600_000,
 })
 
-interface World { deps: ActionsRouteDeps; rpc: FakeBrandAgentRpc; clock: { now: number }; onSleep: ((now: number) => Promise<void>) | null; turnId: string }
+interface World { deps: ActionsRouteDeps; rpc: FakeBrandAgentRpc; clock: { now: number }; onSleep: ((now: number) => Promise<void>) | null; turnId: string; chatId: string }
 
-function setup(o: { jobId?: string | null; ownerId?: string; turnId?: string } = {}): World {
+function setup(o: { jobId?: string | null; ownerId?: string; turnId?: string; chatId?: string } = {}): World {
   const turnId = o.turnId ?? `t_m2d_${fresh('t')}`
+  const chatId = o.chatId ?? CHAT
   const rpc = new FakeBrandAgentRpc()
   const clock = { now: T0 }
-  rpc.admitActionAnswer = (): Admitted => ({ toolUseId: fresh('toolu'), turnId, runId: 'r_m2d', chatId: CHAT, ownerId: o.ownerId ?? ASKER, jobId: o.jobId ?? null, replay: false })
+  rpc.admitActionAnswer = (): Admitted => ({ toolUseId: fresh('toolu'), turnId, runId: 'r_m2d', chatId, ownerId: o.ownerId ?? ASKER, jobId: o.jobId ?? null, replay: false })
   rpc.askWaitAnswer = { wait: true, untilMs: T0 + 165_000 }
   rpc.askTurnLiveAnswer = true
   rpc.hubAccountsAnswer = [...HUB_FACTS]
   const w: World = {
-    rpc, clock, turnId, onSleep: null,
+    rpc, clock, turnId, chatId, onSleep: null,
     deps: {
       db, rpc, now: () => clock.now, requestId: () => fresh('req'), log: () => {},
       sleep: async ms => {
@@ -51,7 +52,7 @@ function setup(o: { jobId?: string | null; ownerId?: string; turnId?: string } =
   return w
 }
 
-const call = (w: World, args: Record<string, unknown> = tagArgs(1042, 'sale'), name = 'shopify_order_tag_add') => callAction(grantOf(w.turnId), name, args, w.deps)
+const call = (w: World, args: Record<string, unknown> = tagArgs(1042, 'sale'), name = 'shopify_order_tag_add') => callAction(grantOf(w.turnId, w.chatId), name, args, w.deps)
 const text = (r: { content: { text: string }[] }) => r.content[0]!.text
 const idOf = (r: { structuredContent?: Record<string, unknown> }) => r.structuredContent?.approval_id as string
 const count = async () => (await db.prepare('SELECT COUNT(*) AS n FROM outbox_actions').first<number>('n')) ?? 0
@@ -184,6 +185,37 @@ describe('permissions: a covering grant runs through the hold; a spent day gives
 })
 
 describe('refusals write nothing (failure 3)', () => {
+  it('approval_request\'s wiring: a replay with no action from its first try is not admitted; one with an action is', async () => {
+    const w = setup()
+    const wiring = approvalsWiring(w.deps)
+    const s = { memberId: ASKER, chatId: CHAT, runId: 'r_m2d', turnId: w.turnId, nowMs: T0, requestId: 'req' }
+    const toolUseId = fresh('toolu')
+    w.rpc.admitActionAnswer = { toolUseId, turnId: w.turnId, runId: 'r_m2d', chatId: CHAT, ownerId: ASKER, jobId: null, replay: true }
+    expect(await wiring.admit(s, { operation: 'shopify_order_tag_add', args: tagArgs(1) })).toBeNull()
+    await outbox(db, () => T0).request({ asker: { memberId: ASKER, role: 'member' }, origin: 'chat', chatId: CHAT, nowMs: T0, jobId: null, invocation: { runId: 'r_m2d', turnId: w.turnId, toolUseId } },
+      { operation: 'shopify.order.tag_add', args: tagArgs(1) }, { mode: 'ask_only' })
+    expect(await wiring.admit(s, { operation: 'shopify_order_tag_add', args: tagArgs(1) })).toEqual({ toolUseId, jobId: null })
+  })
+
+  it('a replay of a call whose first try was refused makes no action, even once the rules would let it through', async () => {
+    await db.prepare('UPDATE permission_ceiling SET enabled = 0').run()
+    const w = setup()
+    const toolUseId = fresh('toolu')
+    w.rpc.admitActionAnswer = { toolUseId, turnId: w.turnId, runId: 'r_m2d', chatId: CHAT, ownerId: ASKER, jobId: null, replay: false }
+    expect(await call(w)).toMatchObject({ isError: true, structuredContent: { error: 'over_ceiling' } })
+    await db.prepare('UPDATE permission_ceiling SET enabled = 1').run()
+    w.rpc.admitActionAnswer = { toolUseId, turnId: w.turnId, runId: 'r_m2d', chatId: CHAT, ownerId: ASKER, jobId: null, replay: true }
+    expect(await call(w)).toMatchObject({ isError: true, structuredContent: { error: 'not_admitted' } })
+    expect(await count()).toBe(0)
+    // A replay of a call that made an action answers that action as it is.
+    w.rpc.admitActionAnswer = { toolUseId, turnId: w.turnId, runId: 'r_m2d', chatId: CHAT, ownerId: ASKER, jobId: null, replay: false }
+    w.rpc.askWaitAnswer = { wait: false, why: 'busy' }
+    const made = await call(w)
+    w.rpc.admitActionAnswer = { toolUseId, turnId: w.turnId, runId: 'r_m2d', chatId: CHAT, ownerId: ASKER, jobId: null, replay: true }
+    expect(idOf(await call(w))).toBe(idOf(made))
+    expect(await count()).toBe(1)
+  })
+
   it('a call from a chat in the trash (deleted before BrandAgent ended its turns) is refused, even with a covering grant', async () => {
     await db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms, deleted_at_ms) VALUES (?, ?, 'A chat', 0, 0, 1) ON CONFLICT (id) DO UPDATE SET deleted_at_ms = 1").bind(CHAT, ASKER).run()
     try {
@@ -251,39 +283,42 @@ describe('refusals write nothing (failure 3)', () => {
   })
 })
 
-/** A routine (`team`: a person made it; `system`: one of ours) with one started slot whose turn is `turnId`, on real rows. */
-async function routineTurn(origin: 'team' | 'system', creator: string): Promise<string> {
+/** A routine (`team`: a person made it; `system`: one of ours) with one started slot in its own chat, on real rows. */
+async function routineChat(origin: 'team' | 'system', creator: string): Promise<{ chatId: string; turnId: string }> {
   const rid = `routine-${fresh('r')}`
+  const chatId = `c_m2d_routine_${fresh('rc')}`
   const turnId = `t_m2d_${fresh('rt')}`
   await db.batch([
     db.prepare(`INSERT INTO routines (id, origin, name, instruction, prompt_ref, days_mask, hour, minute, missed, need, creator_id, checked_until_ms, created_at_ms, updated_at_ms)
       VALUES (?, ?, 'Tag big orders', 'Tag the big orders.', ?, 127, 9, 0, 'skip', 0, ?, 0, 0, 0)`).bind(rid, origin, origin === 'system' ? 'morning-check' : null, creator),
     db.prepare(`INSERT INTO routine_slots (slot_key, routine_id, kind, local_date, local_time, tz, due_at_ms, deadline_ms, state, chat_id, client_key, prompt_text, submit_json,
       routine_rev, creator_id, turn_id, claimed_at_ms) VALUES (?, ?, 'scheduled', '2026-11-26', '09:00', 'UTC', 0, 0, 'started', ?, ?, 'p', '{}', 1, ?, ?, 0)`)
-      .bind(`${rid}|2026-11-26|09:00`, rid, CHAT, `key-${fresh('k')}`, creator, turnId),
+      .bind(`${rid}|2026-11-26|09:00`, rid, chatId, `key-${fresh('k')}`, creator, turnId),
   ])
-  return turnId
+  return { chatId, turnId }
 }
 
 describe('a routine\'s run asks its creator (N15)', () => {
-  it('a person-made routine asks its creator: a card for them, from the routine\'s run, that never waits', async () => {
-    const turnId = await routineTurn('team', ASKER)
-    expect(await askerFor(db, { ownerId: 'm_system', turnId, jobId: null })).toEqual({ asker: { memberId: ASKER, role: 'member' }, origin: 'routine' })
-    const w = setup({ ownerId: 'm_system', turnId })
-    const r = await call(w)
-    expect(r.isError, text(r)).toBeUndefined()
-    expect(await rowOf(db, idOf(r))).toMatchObject({ origin: 'routine', asked_by: ASKER, approver: ASKER, state: 'waiting', report: 'later' })
-    expect(methods(w.rpc)).not.toContain('beginAskWait')
+  it('a person-made routine asks its creator, also from a resumed turn of the routine\'s chat (another turn id): a card that never waits', async () => {
+    const { chatId, turnId } = await routineChat('team', ASKER)
+    expect(await askerFor(db, { ownerId: 'm_system', chatId, jobId: null })).toEqual({ asker: { memberId: ASKER, role: 'member' }, origin: 'routine' })
+    for (const t of [turnId, `t_m2d_${fresh('resumed')}`]) {
+      const w = setup({ ownerId: 'm_system', turnId: t, chatId })
+      const r = await call(w, tagArgs(t === turnId ? 1 : 2))
+      expect(r.isError, text(r)).toBeUndefined()
+      expect(await rowOf(db, idOf(r))).toMatchObject({ origin: 'routine', asked_by: ASKER, approver: ASKER, chat_id: chatId, turn_id: t, state: 'waiting', report: 'later' })
+      expect(methods(w.rpc)).not.toContain('beginAskWait')
+    }
   })
 
-  it('a system routine, a creator no longer on the team, and a turn no routine started have no one to ask: refused', async () => {
-    const system = await routineTurn('system', ASKER)
-    expect(await askerFor(db, { ownerId: 'm_system', turnId: system, jobId: null })).toEqual({ asker: null, origin: 'routine' })
+  it('a system routine, a creator no longer on the team, and a chat no routine owns have no one to ask: refused', async () => {
+    const system = await routineChat('system', ASKER)
+    expect(await askerFor(db, { ownerId: 'm_system', chatId: system.chatId, jobId: null })).toEqual({ asker: null, origin: 'routine' })
     await person(db, 'm_m2d_gone', 'member', 'removed')
-    const gone = await routineTurn('team', 'm_m2d_gone')
-    expect(await askerFor(db, { ownerId: 'm_system', turnId: gone, jobId: null })).toEqual({ asker: null, origin: 'routine' })
-    expect(await askerFor(db, { ownerId: 'm_system', turnId: 't_m2d_nowhere', jobId: null })).toEqual({ asker: null, origin: 'routine' })
-    for (const turnId of [system, gone]) expect(await call(setup({ ownerId: 'm_system', turnId }))).toMatchObject({ isError: true, structuredContent: { error: 'no_one_to_ask' } })
+    const gone = await routineChat('team', 'm_m2d_gone')
+    expect(await askerFor(db, { ownerId: 'm_system', chatId: gone.chatId, jobId: null })).toEqual({ asker: null, origin: 'routine' })
+    expect(await askerFor(db, { ownerId: 'm_system', chatId: 'c_m2d_nowhere', jobId: null })).toEqual({ asker: null, origin: 'routine' })
+    for (const c of [system, gone]) expect(await call(setup({ ownerId: 'm_system', ...c }))).toMatchObject({ isError: true, structuredContent: { error: 'no_one_to_ask' } })
     expect(await count()).toBe(0)
   })
 })
@@ -297,6 +332,16 @@ describe('who waits (failure 4)', () => {
     expect(w.clock.now).toBe(T0)
     expect(await rowOf(db, idOf(r))).toMatchObject({ state: 'waiting', report: 'later' })
     expect(methods(w.rpc)).not.toContain('endAskWait')
+  })
+
+  it('a second waiter on the same action (the same call again) leaves the first one\'s wait and report alone', async () => {
+    const w = setup()
+    w.rpc.askWaitAnswer = { wait: false, why: 'already_waiting' }
+    const r = await call(w)
+    expect(text(r)).toBe(`Waiting for the person's OK. It's in Approvals. ${ACTION_WORDS.alreadyWaiting} (approval_id: ${idOf(r)})`)
+    expect((await rowOf(db, idOf(r)))!.report).toBeNull()
+    expect(methods(w.rpc)).not.toContain('endAskWait')
+    expect(methods(w.rpc)).not.toContain('actionChanged')
   })
 
   it('a job\'s turn never waits (and never asks to)', async () => {

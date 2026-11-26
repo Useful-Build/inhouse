@@ -60,14 +60,16 @@ export interface AskerOf { asker: Asker | null; origin: Origin }
  * routine's run (`m_system`) asks the routine's creator, if still an active person, and a system routine has no one to
  * ask (`decide` refuses it, `no_one_to_ask`).
  */
-export async function askerFor(db: D1Database, a: Pick<Admitted, 'ownerId' | 'turnId' | 'jobId'>): Promise<AskerOf> {
+export async function askerFor(db: D1Database, a: Pick<Admitted, 'ownerId' | 'chatId' | 'jobId'>): Promise<AskerOf> {
   const active = async (memberId: string): Promise<Asker | null> => {
     const m = await first<{ role: 'member' | 'admin' }>(db, stmt("SELECT role FROM members WHERE id = ? AND kind = 'person' AND status = 'active'", memberId))
     return m ? { memberId, role: m.role } : null
   }
   if (a.ownerId === SYSTEM_MEMBER_ID) {
+    // By the run's chat (a routine's slot owns its chat): a resumed routine turn has another turn id, and the slot's
+    // `turn_id` is written only once its submit is answered.
     const r = await first<{ origin: string; creator_id: string }>(db, stmt(
-      'SELECT r.origin, r.creator_id FROM routine_slots s JOIN routines r ON r.id = s.routine_id WHERE s.turn_id = ?', a.turnId))
+      'SELECT r.origin, r.creator_id FROM routine_slots s JOIN routines r ON r.id = s.routine_id WHERE s.chat_id = ? ORDER BY s.claimed_at_ms DESC LIMIT 1', a.chatId))
     return { asker: r && r.origin === 'team' ? await active(r.creator_id) : null, origin: 'routine' }
   }
   return { asker: await active(a.ownerId), origin: a.jobId !== null ? 'job' : 'chat' }
@@ -91,6 +93,7 @@ export const ACTION_WORDS = {
   /** A job's or a routine's turn never waits. */
   laterNote: "You'll get the result when there is one.",
   /** A turn already waiting on 3 approvals asks the 4th without waiting. */
+  alreadyWaiting: 'This call is already being waited on, so the result comes from that wait.',
   busyNote: "This turn is already waiting on other approvals, so this one isn't waited on. You'll get the result when there is one.",
   unknownTool: 'There is no such action tool, so nothing was asked or sent.',
   notAdmitted: "That call couldn't be matched to this turn, so nothing was asked or sent.",
@@ -221,6 +224,12 @@ export async function callAction(grant: RunGrant, name: string, args: Record<str
   }
   // The admitted turn is the grant's own (the token is the turn's); anything else is a bug, never a way in.
   if (admitted.turnId !== grant.turnId || admitted.chatId !== grant.chatId) throw new Error('actions: admission answered another turn')
+  // A replay (the same call again, every matching invocation used) only ever answers that call's own action. One whose
+  // first try was refused wrote nothing, so the replay is refused too, whatever the rules say now.
+  if (admitted.replay && !(await invocationRow(d.db, admitted.chatId, admitted.toolUseId))) {
+    d.log({ event: 'actions_not_admitted', turnId: grant.turnId, why: 'replay_without_action' })
+    return refused('not_admitted', ACTION_WORDS.notAdmitted)
+  }
   const requestId = d.requestId()
   const nowMs = d.now()
   const who = await askerFor(d.db, admitted)
@@ -250,6 +259,11 @@ export async function callAction(grant: RunGrant, name: string, args: Record<str
     return answerFor(r.action, ACTION_WORDS.laterNote)
   }
   const begun = await d.rpc.beginAskWait(admitted.turnId, actionId)
+  if (!begun.wait && begun.why === 'already_waiting') {
+    // Another waiter on this action (the same call again) owns its wait and its report: say where it stands, change nothing.
+    const now = await first<OutboxActionRow>(d.db, stmt('SELECT * FROM outbox_actions WHERE id = ?', actionId))
+    return answerFor(now ?? r.action, ACTION_WORDS.alreadyWaiting)
+  }
   if (!begun.wait) {
     await waiterGaveUp(store, actionId, false)
     await d.rpc.actionChanged(actionId)
@@ -293,6 +307,10 @@ async function waitFor(d: ActionsRouteDeps, actionId: string): Promise<OutboxAct
   }
 }
 
+/** The action an invocation made, if any (the outbox's `(chat_id, tool_use_id)` key). */
+const invocationRow = (db: D1Database, chatId: string, toolUseId: string) =>
+  first<{ id: string }>(db, stmt('SELECT id FROM outbox_actions WHERE chat_id = ? AND tool_use_id = ?', chatId, toolUseId))
+
 /** The approver's name as the agent reads it ("Dana"), or "the person". */
 async function approverName(db: D1Database, memberId: string): Promise<string> {
   const m = await first<{ name: string | null }>(db, stmt('SELECT name FROM members WHERE id = ?', memberId))
@@ -311,9 +329,13 @@ export function approvalsWiring(d: ActionsRouteDeps): ApprovalsWiring {
         return null
       }
       if (a.turnId !== scope.turnId || a.chatId !== scope.chatId) throw new Error('approval_request: admission answered another turn')
+      if (a.replay && !(await invocationRow(d.db, a.chatId, a.toolUseId))) {
+        d.log({ event: 'actions_not_admitted', turnId: scope.turnId, tool: 'approval_request', why: 'replay_without_action' })
+        return null
+      }
       return { toolUseId: a.toolUseId, jobId: a.jobId }
     },
-    routineAsker: async scope => (await askerFor(d.db, { ownerId: SYSTEM_MEMBER_ID, turnId: scope.turnId, jobId: null })).asker,
+    routineAsker: async scope => (await askerFor(d.db, { ownerId: SYSTEM_MEMBER_ID, chatId: scope.chatId, jobId: null })).asker,
     noted: (scope, actionId) => d.rpc.askNoted(scope.turnId, actionId),
   }
 }

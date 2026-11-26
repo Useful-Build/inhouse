@@ -407,4 +407,5 @@ export interface BrandAgentRpc {
 /** `admitAction`'s answer (invocations.ts). */
 export type AdmitActionAnswer = Admitted | { refused: AdmitRefusal }
 /** `beginAskWait`'s answer (asks.ts). */
-export type AskWaitAnswer = { wait: true; untilMs: number } | { wait: false; why: 'turn_not_live' | 'busy' }
+/** `already_waiting`: another waiter holds this action's wait; it owns the report, so this one changes nothing. */
+export type AskWaitAnswer = { wait: true; untilMs: number } | { wait: false; why: 'turn_not_live' | 'busy' | 'already_waiting' }

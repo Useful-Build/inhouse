@@ -13,7 +13,9 @@ import { lastLineId, linesSince } from '../db/test-support.ts'
 import { POLICY_REV } from '../permissions/policy.ts'
 import { insertGrant } from '../permissions/test-support.ts'
 import { cardOf } from './card.ts'
-import { ADMIN, ASKER, SHOP_GEN, fresh, outbox, requestCtx, rowOf, tagArgs, unreleasedUses, world } from './test-support.ts'
+import { ADMIN, ASKER, HUB_FACTS, SHOP_GEN, fresh, outbox, requestCtx, rowOf, sendNow, tagArgs, unreleasedUses, world } from './test-support.ts'
+import { openOutbox } from './store.ts'
+import { outboxFacts } from './facts.ts'
 
 const db = env.DB
 const T0 = 1_800_000_000_000
@@ -99,6 +101,64 @@ describe('a deleted chat withdraws its waiting and approved actions (failures 1,
       expect(await outbox(db, () => T0).answer({ memberId: ASKER, role: 'member' }, a.id, { choice, ifRev: a.rev }), choice).toEqual({ refused: { code: 'conflict' } })
     }
     expect(await rowOf(db, a.id)).toMatchObject({ state: 'waiting', rev: a.rev })
+  })
+})
+
+describe('M2-D round 2: the insert and the claim check the chat and the store themselves', () => {
+  it('a chat deleted after the request\'s own read and before its insert gets nothing (the insert\'s condition), even with a grant', async () => {
+    for (const withGrant of [false, true]) {
+      if (withGrant) await grant()
+      const c = `c_del_${fresh('race')}`
+      await chat(c)
+      const base = outboxFacts({ db, hubAccounts: async () => HUB_FACTS })
+      const port = openOutbox({
+        db, requestId: fresh('req'), now: () => T0, schedule: async () => {},
+        // The deletion lands while `decide` reads its facts: after the request's chat read, before its batch.
+        facts: { resolveFacts: base.resolveFacts, decideFacts: async (r, ctx) => {
+          await db.prepare('UPDATE chats SET deleted_at_ms = 1 WHERE id = ?').bind(c).run()
+          return base.decideFacts(r, ctx)
+        } },
+      })
+      const r = await port.request(requestCtx({ nowMs: T0, chatId: c }), { operation: 'shopify.order.tag_add', args: tagArgs(20) }, { mode: 'tool' })
+      expect(r, String(withGrant)).toEqual({ outcome: 'refused', reason: 'chat_deleted', text: 'This chat was deleted, so nothing was asked or sent.' })
+      expect(await db.prepare('SELECT COUNT(*) AS n FROM outbox_actions WHERE chat_id = ?').bind(c).first<number>('n')).toBe(0)
+    }
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM permission_uses').first<number>('n')).toBe(0)
+  })
+
+  it('the claim refuses an approval whose chat went to the trash without its withdrawal: withdrawn, its use released, nothing sent', async () => {
+    await grant()
+    const c = `c_del_${fresh('claim')}`
+    await chat(c)
+    const a = await ask(c, 21)
+    expect(a.state).toBe('approved')
+    await db.prepare('UPDATE chats SET deleted_at_ms = 1 WHERE id = ?').bind(c).run()
+    const hub = await sendNow(db, a.id, a.send_at_ms! + 1)
+    expect(hub.calls).toEqual([])
+    expect(await rowOf(db, a.id)).toMatchObject({ state: 'withdrawn', lapsed_reason: 'chat_deleted' })
+    expect(await unreleasedUses(db, a.id)).toEqual([])
+  })
+
+  it('the claim refuses a Shopify action whose store changed under the same connection date: withdrawn, nothing sent', async () => {
+    await grant()
+    const c = `c_shop_${fresh('claim')}`
+    await chat(c)
+    const a = await ask(c, 22)
+    expect(JSON.parse(a.scope_json)).toEqual({ shop: 'store-a' })
+    await db.prepare("UPDATE connector_accounts SET shop = 'store-b' WHERE account_id = 'shopify:store'").run()
+    const hub = await sendNow(db, a.id, a.send_at_ms! + 1)
+    expect(hub.calls).toEqual([])
+    expect(await rowOf(db, a.id)).toMatchObject({ state: 'withdrawn', lapsed_reason: 'account_changed' })
+  })
+
+  it('the same store at send: the claim goes through and it is sent once', async () => {
+    await grant()
+    const c = `c_shop_${fresh('ok')}`
+    await chat(c)
+    const a = await ask(c, 23)
+    const hub = await sendNow(db, a.id, a.send_at_ms! + 1)
+    expect(hub.calls).toHaveLength(1)
+    expect(await rowOf(db, a.id)).toMatchObject({ state: 'sent' })
   })
 })
 

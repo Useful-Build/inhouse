@@ -132,7 +132,9 @@ export function connectorAccountStore({ db, hook = s => s }: ConnectorAccountSto
      */
     async syncFromHub(accountId: string, connector: string, hub: { connectedAtMs: number; shop: string | null }, at: At): Promise<boolean> {
       const r = await first<ConnectorAccountRow>(db, stmt('SELECT * FROM connector_accounts WHERE account_id = ?', accountId))
-      const disconnected = r !== null && r.disconnected_at_ms !== null && (r.connected_at_ms === null || r.disconnected_at_ms >= r.connected_at_ms)
+      // A disconnect at or after the connection date being written would read as disconnected (the claim's and `resolve`'s
+      // rule), so it is cleared: the hub, which owns the sign-in, says the account is active since `connectedAtMs`.
+      const disconnected = r !== null && r.disconnected_at_ms !== null && r.disconnected_at_ms >= hub.connectedAtMs
       if (r && r.last_state === 'connected' && !disconnected && r.connected_at_ms === hub.connectedAtMs && r.shop === hub.shop) return false
       const moved = r?.connected_at_ms !== hub.connectedAtMs
       await change(accountId, connector, { last_state: 'connected', connected_at_ms: hub.connectedAtMs, shop: hub.shop, ...(disconnected ? { disconnected_at_ms: null } : {}) },

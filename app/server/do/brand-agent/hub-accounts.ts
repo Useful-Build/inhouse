@@ -11,13 +11,17 @@ import { ACCOUNT_IDS } from '../../outbox/facts.ts'
 import type { HubAccountFacts } from '../../outbox/facts.ts'
 import { safeError } from '../../safe-error.ts'
 
+const SHOP_HANDLE = /^[a-z0-9][a-z0-9-]{0,59}$/
+
 const AccountsAnswer = z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
     value: z.array(z.object({
       accountId: z.string(), connector: z.string(),
       status: z.object({ state: z.string(), paused: z.boolean(), connectedAt: z.object({ ms: z.number().int().nonnegative() }).nullable() }),
-      shop: z.string().optional(),
+      // A handle as the hub's config parsers take it (hub/index/schemas.ts SHOP_HANDLE, written out: no hub import here).
+      // Anything else is no handle, so a Shopify write is refused; the other accounts are read as usual.
+      shop: z.string().regex(SHOP_HANDLE).optional().catch(undefined),
     })),
   }),
   z.object({ ok: z.literal(false), error: z.object({ code: z.string() }) }),

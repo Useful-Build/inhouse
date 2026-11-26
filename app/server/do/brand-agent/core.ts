@@ -507,7 +507,7 @@ export class AgentCore {
       type: 'turn.queued', turnId, messageId: `${turnId}.u`, text: t.input.text,
       ...(t.input.quote === undefined ? {} : { quote: t.input.quote }),
       attachments: atts.map(a => ({ fileId: a.fileId, name: a.name })), priority: t.input.priority, by: member,
-      ...(extra?.job !== undefined ? { source: 'job' as const } : {}),
+      ...(extra?.job !== undefined ? { source: 'job' as const } : extra?.source === 'action' ? { source: 'action' as const } : {}),
     })
     // `now` interrupts the live turn (not one already ending or interrupted) and goes next (4.3).
     if (t.input.priority === 'now') {
