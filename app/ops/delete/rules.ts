@@ -104,6 +104,8 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   // P8a: the egress record names a host, a runner and a container generation, never a member, a run or a turn (one
   // container serves several sessions at once), so no row is a person's; it goes by age in 30 days.
   egress_fetches: { action: 'keep', why: 'no member id: the egress knows the container, not the run; retention removes rows after 30 days. A host can carry data in a subdomain from a refused exfil attempt: kept 30 days, ops-only and not exported. A host over 253 characters is not recorded, only logged' },
+  // M1-G: keyed 16-byte digests of tokens read across the brand, never a member id; goes by age in 7 days.
+  egress_taint: { action: 'keep', why: 'no member id: keyed digests of tokens read across the brand, kept 7 days and capped at 50,000 rows; retention removes expired rows' },
   // P8a F2: a privacy request names a Shopify customer by Shopify id, never a member; its ids go when the runbook closes it.
   // Stage 1 M2-A. The person's own grants go (they were revoked when the person was removed); a grant someone else holds
   // keeps who granted or revoked it, pseudonymous once their row is. The ceiling keeps who last changed it.

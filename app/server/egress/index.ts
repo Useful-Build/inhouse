@@ -14,15 +14,16 @@ import type { EgressDeps, EgressRpc } from './deps.ts'
 import { eventsRoute } from './events.ts'
 import { filesRoute } from './files.ts'
 import { gatewayUpstream, scriptedUpstream } from './gateway.ts'
-import { handleHub, hubRouteDeps, type ReadGatewayLike } from './hub.ts'
+import { handleHub, HUB_MAX_BODY_BYTES, hubRouteDeps, type ReadGatewayLike } from './hub.ts'
 import { brandStage } from '../stage/watch.ts'
 import { withTestShop } from '@test-shop'
-import { jsonAnswer, messagesError, RUN_TOKEN_HEADER } from './http.ts'
+import { jsonAnswer, messagesError, readCapped, RUN_TOKEN_HEADER } from './http.ts'
 import { mcpHandler } from '../mcp/server/index.ts'
 import { QUESTIONS_ON } from '../questions/switch.ts'
 import { notifyDeps } from '../mcp/tools/notifications/deps.ts'
 import { modelRoute } from './model.ts'
 import { storeRoute } from './store.ts'
+import { TaintOverflowError, taintStore, type CaptureTaint, type TaintSource } from './taint.ts'
 import { safeError } from '../safe-error.ts'
 
 /** The test issuer's compile-time switch (vite.config.ts); true in the test and eval builds only. */
@@ -48,21 +49,79 @@ function withoutToken(request: Request): Request {
   return new Request(request, { headers })
 }
 
+export interface EgressOptions {
+  /** Runs on `/hub/`, `/mcp/` and text-like `/files/` responses before returning; required, so no route skips it. */
+  captureTaint: CaptureTaint
+}
+
+/** What the agent reads when a result holds more tokens than the leak check tracks in one read (fail closed). */
+export const TAINT_OVERFLOW_TEXT =
+  'Not read: the result holds more ids, emails or order numbers than one read may carry. Ask for fewer items (a smaller page or a narrower search).'
+
+/**
+ * The hub tool a `/hub/` call names (`tools/call`'s `params.name`), read from a copy of the request within the hub's
+ * own body cap; null for anything else, so nothing in its answer counts as catalogue data (decision L2).
+ */
+async function hubToolName(copy: Request): Promise<string | null> {
+  const bytes = await readCapped(copy, HUB_MAX_BODY_BYTES)
+  if (bytes === null) return null
+  try {
+    const message: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
+    if (typeof message !== 'object' || message === null || (message as { method?: unknown }).method !== 'tools/call') return null
+    const name = (message as { params?: { name?: unknown } }).params?.name
+    return typeof name === 'string' ? name : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Awaits taint capture on a 200 `/hub/` or `/mcp/` response before returning it. Fails closed on capture error so
+ * uncaptured private data never reaches the container (N8). A result with too many tokens answers the call as a
+ * JSON-RPC tool error with a plain reason (`TAINT_OVERFLOW_TEXT`), never the result.
+ */
+async function captureResponse(res: Response, d: EgressDeps, source: TaintSource, captureTaint: CaptureTaint): Promise<Response> {
+  if (res.status !== 200) return res
+  const text = await res.text()
+  const route = source.route
+  try {
+    await captureTaint(text, source)
+  } catch (err) {
+    if (err instanceof TaintOverflowError) {
+      d.log({ event: 'egress_taint_capture_refused', route, reason: 'too_many_tokens', runner: d.runner })
+      return jsonAnswer({ jsonrpc: '2.0', id: rpcId(text), result: { content: [{ type: 'text', text: TAINT_OVERFLOW_TEXT }], isError: true } })
+    }
+    d.log({ event: 'egress_taint_capture_failed', route, error: safeError(err), runner: d.runner })
+    return jsonAnswer({ error: 'internal' }, 500)
+  }
+  return new Response(text, { status: res.status, headers: res.headers })
+}
+
+/** The JSON-RPC id of an answer, so a refusal answers the same call (null when it can't be read). */
+function rpcId(text: string): string | number | null {
+  try {
+    const id = (JSON.parse(text) as { id?: unknown }).id
+    return typeof id === 'string' || typeof id === 'number' ? id : null
+  } catch {
+    return null
+  }
+}
+
 /**
  * The egress's one entry. Its last catch answers a fixed 500 and logs the error's name only (P8a P-auth): an uncaught
  * throw would put its message in the runtime's own exception log. A failure inside a streamed body, after the answer
  * left, is the route's own to handle.
  */
-export async function handleEgress(request: Request, d: EgressDeps): Promise<Response> {
+export async function handleEgress(request: Request, d: EgressDeps, opts: EgressOptions): Promise<Response> {
   try {
-    return await routeEgress(request, d)
+    return await routeEgress(request, d, opts)
   } catch (e) {
     d.log({ event: 'egress_failed', error: safeError(e), runner: d.runner })
     return jsonAnswer({ error: 'internal' }, 500)
   }
 }
 
-async function routeEgress(request: Request, d: EgressDeps): Promise<Response> {
+async function routeEgress(request: Request, d: EgressDeps, opts: EgressOptions): Promise<Response> {
   const url = new URL(request.url)
   if (url.hostname !== EGRESS_HOST) return jsonAnswer({ error: 'not_found' }, 404)
   const name = /^\/([a-z]+)\//.exec(url.pathname)?.[1]
@@ -79,7 +138,12 @@ async function routeEgress(request: Request, d: EgressDeps): Promise<Response> {
     return refusal(route, route === 'events' && checked.refused === 'closed' ? 410 : 401)
   }
   const grant = checked
-  if (hub !== undefined) return handleHub(withoutToken(request), grant, hub)
+  if (hub !== undefined) {
+    const copy = request.clone() as unknown as Request
+    const res = await handleHub(withoutToken(request), grant, hub)
+    if (res.status !== 200) return res
+    return captureResponse(res, d, { route: 'hub', tool: await hubToolName(copy) }, opts.captureTaint)
+  }
   const path = url.pathname
   switch (route) {
     case 'model':
@@ -90,11 +154,13 @@ async function routeEgress(request: Request, d: EgressDeps): Promise<Response> {
       return eventsRoute(request, path, grant, d)
     case 'audit':
       return auditRoute(request, path, grant, d)
-    case 'mcp':
+    case 'mcp': {
       if (request.method !== 'POST') return jsonAnswer({ error: 'method' }, 405)
-      return d.mcp(withoutToken(request), { memberId: grant.memberId, chatId: grant.chatId, runId: grant.runId, turnId: grant.turnId })
+      const res = await d.mcp(withoutToken(request), { memberId: grant.memberId, chatId: grant.chatId, runId: grant.runId, turnId: grant.turnId })
+      return captureResponse(res, d, { route: 'mcp' }, opts.captureTaint)
+    }
     case 'files':
-      return filesRoute(request, path, grant, d)
+      return filesRoute(request, path, grant, d, opts.captureTaint)
   }
 }
 
@@ -153,6 +219,7 @@ export function egressDeps(env: EgressEnv, ctx: ExecutionContext, props: EgressP
 
 export class Egress extends WorkerEntrypoint<Env, EgressProps> {
   async fetch(request: Request): Promise<Response> {
-    return handleEgress(request, egressDeps(this.env, this.ctx, this.ctx.props))
+    const taint = taintStore(this.env.DB, this.env.AUDIT_HASH_KEY, () => Date.now())
+    return handleEgress(request, egressDeps(this.env, this.ctx, this.ctx.props), { captureTaint: (body, source) => taint.capture(body, source).then(() => undefined) })
   }
 }

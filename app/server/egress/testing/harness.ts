@@ -6,7 +6,11 @@ import { FakeBrandAgentRpc } from '../../do/brand-agent/testing/fake-brand-agent
 import type { SettingsView } from '../../model/catalog.ts'
 import type { EgressDeps, McpHandler } from '../deps.ts'
 import type { ModelPath } from '../gateway.ts'
+import type { EgressOptions } from '../index.ts'
 import { RUN_TOKEN_HEADER } from '../http.ts'
+
+/** Egress options for a test that doesn't look at the leak check (M1-G): every capture succeeds and stores nothing. */
+export const NO_CAPTURE: EgressOptions = { captureTaint: async () => undefined }
 
 /** W1's fake, with a filter over its call log. */
 export class FakeEgressRpc extends FakeBrandAgentRpc {

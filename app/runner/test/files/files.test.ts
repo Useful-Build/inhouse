@@ -403,6 +403,27 @@ describe('restoring the chat files', () => {
     expect(capLeftOut(names.slice(0, 3))).toEqual(names.slice(0, 3))
   })
 
+  it("leaves out a file the egress won't serve for too many tokens (M1-G), restores the rest; any other refusal still fails", async () => {
+    egress.files.set('inputs/a.pdf', { body: new Uint8Array(PDF) })
+    egress.files.set('outputs/customers.csv', { body: new Uint8Array(Buffer.from('email\na@example.com\n')) })
+    const real = egress.fetch
+    let refusal: Response = Response.json({ error: 'too_many_tokens' }, { status: 422 })
+    egress.fetch = async (url, init) => (url.endsWith('/files/outputs/customers.csv') ? refusal : real(url, init))
+    const { f, logs } = files()
+    const r = await f.restore()
+    expect(r.leftOut).toEqual(['outputs/customers.csv'])
+    expect(r.event).toEqual({ type: 'files_restored', restored: 1, bytes: PDF.length, leftOut: ['outputs/customers.csv'] })
+    expect(existsSync(join(cwd, 'outputs', 'customers.csv'))).toBe(false)
+    expect(readFileSync(join(cwd, 'inputs', 'a.pdf'))).toEqual(PDF)
+    expect(logs).toContainEqual({ type: 'file_restore_skipped', reason: 'too many tokens', bytes: 20 })
+    // Another 422, a non-JSON 422 and a 500 still fail the restore (and the run, as `files`).
+    for (const other of [Response.json({ error: 'type_not_allowed' }, { status: 422 }), new Response('nope', { status: 422 }), Response.json({ error: 'internal' }, { status: 500 })]) {
+      rmSync(join(cwd, 'inputs', 'a.pdf'))
+      refusal = other
+      await expect(files().f.restore()).rejects.toThrow(/file download: (422|500)/)
+    }
+  })
+
   it('a body longer than its listing fails the restore', async () => {
     egress.files.set('inputs/a.pdf', { body: new Uint8Array(PDF) })
     const real = egress.fetch
