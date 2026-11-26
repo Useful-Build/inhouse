@@ -2,16 +2,19 @@
 //
 // How it works:
 //  - Capture: after `/hub/` and `/mcp/` respond, and when `/files/` serves a text-like file to a session, extract
-//    high-signal tokens (at most 500 per result, highest signal first) and store their keyed HMAC-SHA-256 digests
-//    (first 16 bytes, 32-char lowercase hex, keyed with `AUDIT_HASH_KEY` over a domain-separated input) in
-//    `egress_taint` before returning. A JSON result is parsed and its string leaves walked (a JSON string inside a
-//    string, such as the hub's `result.content[].text`, is unwrapped), so JSON escapes never glue characters onto a
-//    token; anything that isn't JSON is read as raw text.
+//    every high-signal token of the result and store their keyed HMAC-SHA-256 digests (first 16 bytes, 32-char
+//    lowercase hex, keyed with `AUDIT_HASH_KEY` over a domain-separated input) in `egress_taint` before returning. A
+//    result with more than 5,000 tokens fails the read closed (`TaintOverflowError`, a plain reason to the agent), so
+//    junk earlier in a result can't push the real tokens out. A JSON result is parsed and its string and number leaves
+//    and object keys walked (a JSON string inside a string, such as the hub's `result.content[].text`, is unwrapped),
+//    so JSON escapes never glue characters onto a token; anything that isn't JSON is read as raw text.
 //  - What counts as private (decision L2, 2026-11-26): customer and order data is captured (names, emails, phones,
-//    addresses, order numbers and ids, customer ids). Product catalogue data is not: a Shopify id of a catalogue type
-//    (product, variant, inventory item, location...) is skipped wherever it appears, and in a hub result the catalogue
-//    fields (`title`, `handle`, `sku`, `vendor`, `productType`) give up emails only. So a storefront page or
-//    `?variant=<id>` stays fetchable after the agent read the product.
+//    addresses, order numbers and ids, customer ids). Product catalogue data is not, decided by source and path: only
+//    the Shopify product tools (`products_search`, `inventory_levels_get`, the hub tool name read from the request)
+//    and only their fixed catalogue paths (`CATALOG_SHAPES` in taint-tokens.ts). There a title or sku gives up emails
+//    only, and an id path is skipped when the whole leaf is one bare product or variant id. So a storefront page or
+//    `?variant=<id>` stays fetchable after the agent read the product. Every other tool (orders, `shopify_script_run`,
+//    Slack), `/mcp/` and `/files/` are read in full; a sku or product id in an order result is tainted.
 //  - Check: before DNS and on every redirect hop in `WebEgress`, percent-decode URL parts (two rounds), tokenize host
 //    labels, the joined host, path segments, query names/values (also with `+` as a space) and the fragment as they
 //    are, and base64url-/hex-decode runs (base64 at offsets 0-3 and with 0-3 trailing characters dropped, hex at
@@ -20,7 +23,8 @@
 //    adjacent characters still matches. Any digest present in `egress_taint` (within 7 days) refuses the hop (`leak`).
 //  - Brand-wide: the web intercept knows only the container (`EgressProps`), never the turn, so the store is brand-wide.
 //  - Retention and cap: rows expire after 7 days and the table is capped at 50,000 rows (oldest evicted in bounded
-//    deletes; an exact count runs only when the cheap rowid span says the table may be over).
+//    deletes; an exact count runs only when the cheap rowid span says the table may be over). Under heavy re-sighting
+//    churn the span stays loose and that count (over at most 50,000 rows) can run on every capture: accepted.
 //  - Fail closed: a capture failure fails the tool/file response; a check failure refuses the fetch, and so does a URL
 //    with more than `MAX_URL_CANDIDATES` candidate tokens.
 //
@@ -29,7 +33,9 @@
 //  - short numbers (fewer than 8 digits, except `#` order names with 3+ digits), phone numbers written with separators,
 //    names and street addresses (plain words);
 //  - data older than 7 days (expired from `egress_taint`), and a replayed transcript older than 7 days;
-//  - the 500-token cut per result: a result with more tokens stores only the 500 highest-signal ones;
+//  - a result with more than 5,000 tokens isn't stored at all: the read fails instead (fail closed);
+//  - JSON embedded in non-JSON text (`Result: {...}`, NDJSON served as `text/plain`) is read as raw text, so its
+//    escapes can still glue a character onto a token (`\nalice@...` as `nalice@...`); no current route emits it;
 //  - the 50,000-row cap: after many large reads the oldest digests are evicted before their 7 days;
 //  - binary files (office documents, PDFs, images) are not read, so nothing in them is captured;
 //  - a token split across URL parts (half in the path, half in the query), or across a `/` of a standard-base64 run;
@@ -38,11 +44,11 @@
 //    beyond base64/hex then percent;
 //  - a base64 or hex run with 4 or more characters glued on before or after it at an unaligned offset.
 import { AuditKeyMissingError } from '../db/audit.ts'
-import { extractUrlTokens, resultTokens, TAINT_MAX_TOKENS_PER_RESULT, type TaintSource } from './taint-tokens.ts'
+import { extractUrlTokens, resultTokens, type TaintSource } from './taint-tokens.ts'
 
 export {
   decodePercentTwoRounds, extractTokens, extractUrlTokens, isTextLikeContentType, resultTokens, TAINT_MAX_TOKENS_PER_RESULT,
-  type CaptureTaint, type TaintSource,
+  TaintOverflowError, type CaptureTaint, type TaintSource,
 } from './taint-tokens.ts'
 
 export const TAINT_TTL_MS = 7 * 24 * 60 * 60 * 1000
@@ -79,7 +85,7 @@ export interface TaintStoreOptions {
 }
 
 export interface TaintStore {
-  /** Extracts up to 500 high-signal tokens from a result and stores their digests. Returns the count stored. */
+  /** Stores the digests of every high-signal token of a result (throws `TaintOverflowError` past 5,000). Returns the count. */
   capture(body: string, source: TaintSource): Promise<number>
   /** Returns true if any candidate token in `url` matches a non-expired digest in `egress_taint` (or `url` has too many). */
   checkUrl(url: URL): Promise<boolean>
@@ -98,9 +104,10 @@ export function taintStore(
   /**
    * The row cap without a full count on every capture. `INSERT OR REPLACE` gives a re-sighted digest a new rowid, so
    * the rowid span (two b-tree edge reads) bounds the row count from above; only when it passes the cap does an exact
-   * count run, and then the oldest rows go in one bounded delete.
+   * count run, and then the oldest rows go in one delete. The table is at most `maxRows` before a capture, so the
+   * delete is bounded by what the capture inserted (at most 5,000), and the cap holds after every capture.
    */
-  async function enforceCap(): Promise<void> {
+  async function enforceCap(inserted: number): Promise<void> {
     const span = await db
       .prepare('SELECT (SELECT max(rowid) FROM egress_taint) - (SELECT min(rowid) FROM egress_taint) + 1 AS n')
       .first<{ n: number | null }>()
@@ -109,13 +116,13 @@ export function taintStore(
     if (count <= maxRows) return
     await db
       .prepare('DELETE FROM egress_taint WHERE rowid IN (SELECT rowid FROM egress_taint ORDER BY seen_at_ms ASC, rowid ASC LIMIT ?)')
-      .bind(Math.min(count - maxRows, evictBatch))
+      .bind(Math.min(count - maxRows, Math.max(evictBatch, inserted)))
       .run()
   }
 
   return {
     async capture(body: string, source: TaintSource): Promise<number> {
-      const tokens = resultTokens(body, source, TAINT_MAX_TOKENS_PER_RESULT)
+      const tokens = resultTokens(body, source)
       if (tokens.length === 0) return 0
       const digests = await Promise.all(tokens.map(t => digestToken(hashKey, t)))
       const at = now()
@@ -134,7 +141,7 @@ export function taintStore(
         stmts.push(db.prepare(`INSERT OR REPLACE INTO egress_taint (digest, seen_at_ms) VALUES ${chunk.map(() => '(?, ?)').join(', ')}`).bind(...params))
       }
       await db.batch(stmts)
-      await enforceCap()
+      await enforceCap(digests.length)
       return digests.length
     },
 

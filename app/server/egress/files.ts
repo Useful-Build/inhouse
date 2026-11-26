@@ -12,7 +12,7 @@ import type { FileRefusal } from '../files-io/bytes.ts'
 import { FILE_CAPS } from '../files-io/caps.ts'
 import type { EgressDeps } from './deps.ts'
 import { jsonAnswer } from './http.ts'
-import { isTextLikeContentType, type CaptureTaint } from './taint.ts'
+import { isTextLikeContentType, TaintOverflowError, type CaptureTaint } from './taint.ts'
 import { safeError } from '../safe-error.ts'
 
 const SHA256 = /^[0-9a-f]{64}$/
@@ -54,6 +54,11 @@ export async function filesRoute(
       try {
         await captureTaint(new TextDecoder('utf-8', { fatal: false }).decode(bytes), { route: 'files', contentType: f.contentType })
       } catch (err) {
+        // Too many tokens to track in one read: refused with a plain reason, never served (fail closed).
+        if (err instanceof TaintOverflowError) {
+          d.log({ event: 'egress_taint_capture_refused', route: 'files', reason: 'too_many_tokens', runner: d.runner })
+          return jsonAnswer({ error: 'too_many_tokens' }, 422)
+        }
         d.log({ event: 'egress_taint_capture_failed', route: 'files', error: safeError(err), runner: d.runner })
         return jsonAnswer({ error: 'internal' }, 500)
       }

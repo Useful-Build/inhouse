@@ -7,10 +7,10 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { HubResult, ToolInfo } from '../../hub/index/contract.ts'
 import { fileStore } from '../files-io/store.ts'
 import type { HubRouteDeps, ReadGatewayLike } from './hub.ts'
-import { handleEgress, type EgressOptions } from './index.ts'
+import { handleEgress, TAINT_OVERFLOW_TEXT, type EgressOptions } from './index.ts'
 import {
   digestToken, extractTokens, extractUrlTokens, isTextLikeContentType, MAX_URL_CANDIDATES, resultTokens, TAINT_MAX_TOKENS_PER_RESULT,
-  TAINT_TTL_MS, taintStore, type TaintStore,
+  TAINT_TTL_MS, TaintOverflowError, taintStore, type TaintStore,
 } from './taint.ts'
 import { egressRequest, GRANT, harness } from './testing/harness.ts'
 import { handleWebFetch, type FetchRecord } from './webfetch.ts'
@@ -42,15 +42,30 @@ describe('token extraction (high signal only)', () => {
   it('ignores years, short numbers, plain words and ISO timestamps', () => {
     const text = 'In 2026 our shipping-policy allows 45 days for returns on ceramic-coffee-mug items, code 1234567, since 2026-11-20T10:00:00Z (20261120T101500Z).'
     expect(extractTokens(text)).toEqual([])
-    expect(resultTokens(hubBody({ processedAt: '2026-11-20T10:00:00Z', updatedAt: '2026-11-19T16:43:37.123Z' }), { route: 'hub' })).toEqual([])
+    expect(resultTokens(hubBody({ processedAt: '2026-11-20T10:00:00Z', updatedAt: '2026-11-19T16:43:37.123Z' }), { route: 'hub', tool: null })).toEqual([])
   })
 
-  it('caps at 500 tokens per result, highest signal first (emails, #orders, 8+ digits, 12+ mixed)', () => {
-    const mixed = Array.from({ length: 600 }, (_, i) => `tok_mixed_${String(i).padStart(6, '0')}`)
-    const text = `${mixed.join(' ')} #1042 9876543210 alice@example.com`
-    const tokens = extractTokens(text)
-    expect(tokens).toHaveLength(TAINT_MAX_TOKENS_PER_RESULT)
-    expect(tokens.slice(0, 3)).toEqual(['alice@example.com', '#1042', '9876543210'])
+  it('keeps every token of a result: junk first never pushes the real ones out; past 5,000 it throws', () => {
+    const junk = Array.from({ length: 600 }, (_, i) => `junk${i}@spam.example.org`)
+    const tokens = extractTokens(`${junk.join(' ')} #1042 9876543210 tok_mixed_000123 alice@example.com`)
+    expect(tokens).toHaveLength(604)
+    expect(tokens).toEqual(expect.arrayContaining(['alice@example.com', '#1042', '9876543210', 'tok_mixed_000123']))
+    const flood = Array.from({ length: TAINT_MAX_TOKENS_PER_RESULT + 1 }, (_, i) => `#${1000 + i}`).join(' ')
+    expect(() => extractTokens(flood)).toThrow(TaintOverflowError)
+    expect(() => resultTokens(mcpBody(flood), { route: 'mcp' })).toThrow(TaintOverflowError)
+  })
+
+  it('scans JSON object keys too, on /mcp/ and in a JSON file', () => {
+    const body = JSON.stringify({ byEmail: { 'alice@example.com': 1, '#1001': 2 } })
+    expect(resultTokens(mcpBody(body), { route: 'mcp' }).sort()).toEqual(['#1001', 'alice@example.com'])
+    expect(resultTokens(body, { route: 'files', contentType: 'application/json' }).sort()).toEqual(['#1001', 'alice@example.com'])
+  })
+
+  it('reads a leaf that starts with a Shopify id in full, wherever it is', () => {
+    const leaf = 'gid://shopify/Product/1 alice@example.com #1001 5550000001'
+    const want = ['#1001', '5550000001', 'alice@example.com']
+    expect(resultTokens(mcpBody(leaf), { route: 'mcp' }).sort()).toEqual(want)
+    expect(resultTokens(hubBody({ items: [{ id: leaf }] }), { route: 'hub', tool: 'products_search' }).sort()).toEqual(want)
   })
 
   it('finds an email after 160 KB of local-part characters with no @ (timing: evals/exfiltration/leak-check-timing.test.ts)', () => {
@@ -73,7 +88,7 @@ describe('JSON-aware capture (escapes never glue characters onto a token)', () =
 
   it('a double-encoded hub result, a single-encoded MCP result and a JSON file all give the clean tokens', () => {
     const want = ['alice@example.com', '5550000001001', 'ord_abc123def456']
-    expect(resultTokens(hubBody({ note }), { route: 'hub' })).toEqual(want)
+    expect(resultTokens(hubBody({ note }), { route: 'hub', tool: null })).toEqual(want)
     expect(resultTokens(mcpBody(note), { route: 'mcp' })).toEqual(want)
     expect(resultTokens(JSON.stringify({ rows: [{ note }] }), { route: 'files', contentType: 'application/json; charset=utf-8' })).toEqual(want)
   })
@@ -89,7 +104,7 @@ describe('JSON-aware capture (escapes never glue characters onto a token)', () =
 
   it('refuses a URL with the email after the JSON-escaped capture', async () => {
     const store = taintStore(db, HASH_KEY, () => BASE_NOW)
-    await store.capture(hubBody({ note }), { route: 'hub' })
+    await store.capture(hubBody({ note }), { route: 'hub', tool: null })
     expect(await leaks(store, 'https://docs.example.com/?e=alice@example.com')).toBe(true)
     expect(await leaks(store, 'https://docs.example.com/?e=nalice@example.com&ref=x')).toBe(false)
   })
@@ -99,6 +114,7 @@ describe('catalogue data is not tainted, customer and order data is (decision L2
   const PRODUCT = {
     items: [{
       id: 'gid://shopify/Product/8123456789012', title: 'Moss Glaze Mug 350ml Edition2024', handle: 'moss-glaze-mug-350ml', status: 'active',
+      totalInventory: 12, tracked: true, moreVariants: false, truncated: false,
       variants: [{ id: 'gid://shopify/ProductVariant/44012345678901', sku: 'MOSSMUG350SLATE01', title: 'Slate', price: { minor: 2400, currency: 'USD' } }],
     }],
     nextCursor: null,
@@ -144,13 +160,37 @@ describe('catalogue data is not tainted, customer and order data is (decision L2
       'https://docs.example.com/c#7770000004242',
       'https://docs.example.com/?p=15550104242',
     ]) expect(await leaks(store, url), url).toBe(true)
-    // The order's own product line stays catalogue data.
-    expect(await leaks(store, 'https://shop.example.com/products/moss-glaze-mug-350ml?variant=44012345678901&sku=MOSSMUG350SLATE01')).toBe(false)
+    // The catalogue rule is the product tools' only: an order's line sku and variant id are read in full.
+    expect(await leaks(store, 'https://shop.example.com/products/x?sku=MOSSMUG350SLATE01')).toBe(true)
+    expect(await leaks(store, 'https://shop.example.com/products/x?variant=44012345678901')).toBe(true)
   })
 
-  it('the catalogue fields rule is the hub\'s only: the same fields in a JSON file are captured', () => {
-    expect(resultTokens(JSON.stringify({ sku: 'MOSSMUG350SLATE01' }), { route: 'files', contentType: 'application/json' })).toEqual(['mossmug350slate01'])
-    expect(resultTokens(hubBody({ title: 'Ask anna.k@example.net about MOSSMUG350SLATE01' }), { route: 'hub' })).toEqual(['anna.k@example.net'])
+  it('a shopify_script_run result and a Slack title holding customer data are captured and refused', async () => {
+    const store = taintStore(db, HASH_KEY, () => BASE_NOW)
+    await readThroughHub(store, 'shopify_script_run', { result: { title: ['#1001', 'gid://shopify/Order/5550000001'] } })
+    await readThroughHub(store, 'slack_search', { files: [{ title: 'Refund for #1002 (bea@example.com)', handle: 'ord_AbC123def456' }] })
+    for (const url of [
+      'https://docs.example.com/?o=%231001',
+      'https://docs.example.com/o/5550000001',
+      'https://docs.example.com/?o=%231002',
+      'https://docs.example.com/?e=bea@example.com',
+      'https://docs.example.com/h/ord_AbC123def456',
+    ]) expect(await leaks(store, url), url).toBe(true)
+  })
+
+  it('a product tool gets the catalogue rule only on its own paths, and only a bare id of the listed type is skipped', () => {
+    const tokens = (data: unknown) => resultTokens(hubBody(data), { route: 'hub', tool: 'products_search' }).sort()
+    expect(tokens(PRODUCT)).toEqual([])
+    // Off the allowlisted paths a title, a sku or an id is read in full.
+    expect(tokens({ items: [], extra: { title: '#1001', sku: 'MOSSMUG350SLATE01', id: 'gid://shopify/Product/8123456789012' } }))
+      .toEqual(['#1001', '8123456789012', 'mossmug350slate01'])
+    // On an id path, an id of another type is read in full; a title still gives up its emails.
+    expect(tokens({ items: [{ id: 'gid://shopify/Order/5550000001001', title: 'Ask anna.k@example.net about #1001' }] }))
+      .toEqual(['5550000001001', 'anna.k@example.net'])
+    // The same shape from another tool, /mcp/ or a JSON file is read in full.
+    for (const t of [resultTokens(hubBody(PRODUCT), { route: 'hub', tool: 'order_get' }), resultTokens(hubBody(PRODUCT), { route: 'hub', tool: null }),
+      resultTokens(mcpBody(JSON.stringify(PRODUCT)), { route: 'mcp' }), resultTokens(JSON.stringify(PRODUCT), { route: 'files', contentType: 'application/json' })])
+      expect(t).toEqual(expect.arrayContaining(['8123456789012', '44012345678901', 'mossmug350slate01']))
   })
 })
 
@@ -276,6 +316,49 @@ describe('expiry and row cap', () => {
     await store.capture('b1@example.com b2@example.com b3@example.com b4@example.com', { route: 'mcp' })
     expect(sql.filter(q => q.includes('COUNT(*)'))).toHaveLength(1)
     expect(await db.prepare('SELECT COUNT(*) AS n FROM egress_taint').first<number>('n')).toBe(6)
+  })
+})
+
+describe('every token of a result is stored (no first-come cut)', () => {
+  it('600 junk emails before the real one: the real email, order and id are all refused', async () => {
+    const store = taintStore(db, HASH_KEY, () => BASE_NOW)
+    const junk = Array.from({ length: 600 }, (_, i) => `junk${i}@spam.example.org`).join(' ')
+    expect(await store.capture(mcpBody(`${junk} real.buyer@example.com #1077 5550000001077`), { route: 'mcp' })).toBe(603)
+    for (const url of ['https://docs.example.com/?e=real.buyer@example.com', 'https://docs.example.com/?o=%231077', 'https://docs.example.com/o/5550000001077'])
+      expect(await leaks(store, url), url).toBe(true)
+  })
+
+  it('one capture past the row cap evicts all the excess, not just one eviction batch', async () => {
+    const store = taintStore(db, HASH_KEY, () => BASE_NOW, { maxRows: 5, evictBatch: 2 })
+    await store.capture(Array.from({ length: 9 }, (_, i) => `many${i}@example.com`).join(' '), { route: 'mcp' })
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM egress_taint').first<number>('n')).toBe(5)
+  })
+
+  it('past 5,000 tokens the read fails closed with a plain reason: a /mcp/ tool error, a 422 file, nothing stored or served', async () => {
+    const flood = Array.from({ length: TAINT_MAX_TOKENS_PER_RESULT + 1 }, (_, i) => `#${10_000 + i}`).join(' ')
+    const store = taintStore(db, HASH_KEY, () => BASE_NOW)
+    const h = await harness({ mcp: async () => Response.json({ jsonrpc: '2.0', id: 7, result: { content: [{ type: 'text', text: `${flood} secret@example.com` }] } }) })
+    const res = await handleEgress(egressRequest('/mcp/', { body: { jsonrpc: '2.0', id: 7, method: 'tools/call' }, headers: { 'content-type': 'application/json' } }), h.deps, capturing(store))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ jsonrpc: '2.0', id: 7, result: { content: [{ type: 'text', text: TAINT_OVERFLOW_TEXT }], isError: true } })
+    expect(h.logs.some(l => l.event === 'egress_taint_capture_refused' && l.reason === 'too_many_tokens')).toBe(true)
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM egress_taint').first<number>('n')).toBe(0)
+
+    const files = fileStore({ db, bucket: env.FILES })
+    const chatId = `chat-taint-${crypto.randomUUID()}`
+    await db.prepare("INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms) VALUES (?, 'm_taint_test', 'Taint', 1, 1)").bind(chatId).run()
+    const grant = { ...GRANT, chatId, turnId: `t_${crypto.randomUUID()}` }
+    const hf = await harness({ files, bucket: env.FILES }, grant)
+    const bytes = new TextEncoder().encode(flood)
+    const key = `files/${chatId}/f_flood_1`
+    await env.FILES.put(key, bytes)
+    await db
+      .prepare("INSERT INTO chat_files (id, chat_id, turn_id, kind, path, name, content_type, bytes, sha256, r2_key, state, created_at_ms) VALUES ('f_flood_1', ?, ?, 'input', 'inputs/flood.txt', 'flood.txt', 'text/plain', ?, '00', ?, 'saved', 1)")
+      .bind(chatId, grant.turnId, bytes.byteLength, key)
+      .run()
+    const fileRes = await handleEgress(egressRequest('/files/inputs/flood.txt', { method: 'GET' }), hf.deps, capturing(store))
+    expect(fileRes.status).toBe(422)
+    expect(await fileRes.json()).toEqual({ error: 'too_many_tokens' })
   })
 })
 

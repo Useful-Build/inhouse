@@ -7,8 +7,9 @@
 //     page upstream. Every type x encoding x placement x context is enumerated; fast-check draws the values;
 //  2. ordinary public URLs (dates, years, blog paths, timestamps, pagination, docs fragments) and URLs built from the
 //     store's own catalogue (storefront pages, product ids, `?variant=<id>`, skus, titles; decision L2) are refused
-//     when a full store (the recorded fixture with synthetic customers and real-length ids) has been captured, chunk
-//     by chunk so nothing is cut at 500; while its customer and order data is refused.
+//     when a full store (the recorded fixture with synthetic customers and real-length ids) has been captured chunk
+//     by chunk (products through `products_search`, orders through `orders_search`), while its customer and order
+//     data is refused.
 import { fc } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -158,7 +159,7 @@ function privateResult(token: string, context: Context, draw: Draw): { body: str
       return { body: `${draw.prefix} ${token} ${draw.suffix}`, source: { route: 'files', contentType: 'text/plain' } }
     case 'json-escaped':
       // An escape right before and after the token: raw-text tokenizing would glue `n`, `t`, `r` or `\` onto it.
-      return { body: hubBody({ order: { note: `${draw.prefix}${draw.escape}${token}${draw.escape}${draw.suffix}` } }), source: { route: 'hub' } }
+      return { body: hubBody({ order: { note: `${draw.prefix}${draw.escape}${token}${draw.escape}${draw.suffix}` } }), source: { route: 'hub', tool: 'order_get' } }
   }
 }
 
@@ -288,7 +289,7 @@ const ORDERS = fixture.orders.map(o => {
       email: `buyer${n}.${n % 2 ? 'k' : 'm'}@mail${n % 13}.example.net`,
       phone: `+1555${String(n).padStart(7, '0')}`,
     },
-    lineItems: o.lineItems.nodes.map((l, i) => ({ sku: l.sku, title: l.title, variant: { id: PRODUCTS[(n + i) % PRODUCTS.length]!.variants[0]!.id } })),
+    lineItems: o.lineItems.nodes.map(l => ({ sku: l.sku, title: l.title })),
     refunds: o.refunds.map(r => ({ note: r.note, createdAt: r.createdAt })),
   }
 })
@@ -330,19 +331,19 @@ function storeUrls(): string[] {
 }
 
 describe('ordinary URL corpus with a full store loaded (failure 2)', () => {
-  it('stores every token of the store (no result cut at 500), passes every ordinary and catalogue URL, refuses its customer data', async () => {
+  it('stores every token of the store, passes every ordinary and catalogue URL, refuses its customer data', async () => {
     await db.prepare('DELETE FROM egress_taint').run()
     const store = taintStore(db, HASH_KEY, () => NOW)
     const results = [
-      ...chunks(ORDERS, 10).map(c => hubBody({ orders: c, nextCursor: 'eyJsYXN0X2lkIjo1NTUwMDAwMDAwMDEwfQ' })),
-      ...chunks(PRODUCTS, 10).map(c => hubBody({ items: c, nextCursor: null })),
+      ...chunks(ORDERS, 10).map(c => ({ body: hubBody({ orders: c, nextCursor: 'eyJsYXN0X2lkIjo1NTUwMDAwMDAwMDEwfQ' }), tool: 'orders_search' })),
+      ...chunks(PRODUCTS, 10).map(c => ({ body: hubBody({ items: c, nextCursor: null }), tool: 'products_search' })),
     ]
     const expected = new Set<string>()
-    for (const body of results) {
-      const tokens = resultTokens(body, { route: 'hub' })
+    for (const { body, tool } of results) {
+      const tokens = resultTokens(body, { route: 'hub', tool })
       expect(tokens.length).toBeLessThan(TAINT_MAX_TOKENS_PER_RESULT)
       for (const t of tokens) expected.add(t)
-      await store.capture(body, { route: 'hub' })
+      await store.capture(body, { route: 'hub', tool })
     }
     // Per order at least: the email, the order name, the order id, the customer id and the phone.
     expect(expected.size).toBeGreaterThanOrEqual(ORDERS.length * 5)

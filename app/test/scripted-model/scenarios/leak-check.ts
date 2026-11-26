@@ -67,6 +67,22 @@ const resultIs = (id: string, wantError: boolean, holds?: string) => (r: Message
   return true
 }
 
+/**
+ * The leak fetch's result is the egress's `leak` refusal: an error that says `WebFetch refused: leak` when the CLI
+ * passes the egress's body through. If the CLI shows only the status (`Request failed with status code 403`), that
+ * 403 is all it can say: with the control fetch to the same host allowed one turn earlier, the token is the only
+ * difference, so a 403 there is the leak check's. Any other refusal marker, another status, or a page fails.
+ */
+const refusedAsLeak = (id: string) => (r: MessagesRequest): true | string => {
+  const err = resultIs(id, true)(r)
+  if (err !== true) return err
+  const text = resultText(resultBlock(r, id)!)
+  if (text.includes('WebFetch refused: leak')) return true
+  if (/WebFetch refused: /.test(text)) return `result for ${id} is another refusal: "${text.slice(0, 300)}"`
+  if (/status code 403\b/.test(text)) return true
+  return `result for ${id} is an error but not the leak refusal: "${text.slice(0, 300)}"`
+}
+
 export const LEAK_CHECK_SCENARIOS: Record<string, Scenario> = {
   'webfetch-leak': {
     turns: [
@@ -79,7 +95,7 @@ export const LEAK_CHECK_SCENARIOS: Record<string, Scenario> = {
         content: [{ type: 'tool_use', id: 'toolu_scripted_leak_fetch', name: 'WebFetch', input: { url: LEAK_URL, prompt: FETCH_PROMPT } }],
         expect: resultIs('toolu_scripted_leak_control', false),
       },
-      { content: [{ type: 'text', text: WEBFETCH_LEAK_REFUSED_ANSWER }], expect: resultIs('toolu_scripted_leak_fetch', true) },
+      { content: [{ type: 'text', text: WEBFETCH_LEAK_REFUSED_ANSWER }], expect: refusedAsLeak('toolu_scripted_leak_fetch') },
     ],
     branches: {
       'page-summary': { match: pageSummary, turns: [{ content: [{ type: 'text', text: 'A page kept for documentation examples.' }] }] },

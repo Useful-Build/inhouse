@@ -1,8 +1,11 @@
 // The fetch leak check's tokenizer (M1-G, N8): pure functions, no storage. What it reads, what it skips (decision L2)
 // and its known gaps are in the header of taint.ts, which stores and checks the digests.
 
-/** At most this many tokens are captured from one result, highest signal first. */
-export const TAINT_MAX_TOKENS_PER_RESULT = 500
+/**
+ * Every token of a result is captured, up to this ceiling; a result with more fails the read (`TaintOverflowError`),
+ * so padding a result with junk can never choose which real tokens are dropped.
+ */
+export const TAINT_MAX_TOKENS_PER_RESULT = 5000
 /** How deep a JSON string inside a JSON string is unwrapped (the hub's results are double-encoded). */
 const MAX_NESTED_JSON = 4
 /** A URL run's sub-runs span at most this many `-`/`_`-joined parts. */
@@ -21,49 +24,60 @@ const HEX_RUN_RE = /[0-9A-Fa-f]{8,}/g
 const DATE_SHAPED = [/^\d{4}-\d{2}-\d{2}(?:[Tt]\d{2})?$/, /^\d{8}[Tt]\d{2,6}[Zz]?$/]
 const BASIC_DATE_RE = /^(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])$/
 
-/** Shopify id types that are product catalogue data (decision L2): never captured. */
-const CATALOG_GID_TYPES = new Set([
-  'Product', 'ProductVariant', 'ProductOption', 'ProductOptionValue', 'ProductImage', 'MediaImage', 'Collection',
-  'InventoryItem', 'InventoryLevel', 'Location',
-])
-const GID_RE = /^gid:\/\/shopify\/([A-Za-z0-9]+)\//
-/** Catalogue fields of a hub result (decision L2): only emails are taken from them. */
-const CATALOG_KEYS = new Set(['title', 'handle', 'sku', 'vendor', 'productType'])
+/** A whole leaf that is one bare Shopify id (as `hub/connectors/shopify/shape.ts` GID, plus a query some ids carry). */
+const BARE_GID_RE = /^gid:\/\/shopify\/([A-Za-z0-9]+)\/\d+(?:\?[\w=&]*)?$/
 
-/** Where a captured result came from: the catalogue fields rule applies to the hub's results only. */
-export type TaintSource = { route: 'hub' } | { route: 'mcp' } | { route: 'files'; contentType: string }
+/**
+ * Catalogue data (decision L2), by source and path, never by key name alone: only the fixed-shape Shopify product
+ * tools, and only these paths of their data (`result.content[].text`, parsed). A `text` path gives up emails only; an
+ * id path is skipped when the whole leaf is one bare id of the listed types, and read in full otherwise. Every other
+ * tool (orders, `shopify_script_run`, Slack, anything new), `/mcp/` and `/files/` are read in full.
+ */
+const CATALOG_SHAPES: Readonly<Record<string, Readonly<Record<string, 'text' | readonly string[]>>>> = {
+  products_search: {
+    'items[].id': ['Product'],
+    'items[].title': 'text',
+    'items[].handle': 'text',
+    'items[].variants[].id': ['ProductVariant'],
+    'items[].variants[].sku': 'text',
+    'items[].variants[].title': 'text',
+  },
+  inventory_levels_get: {
+    sku: 'text',
+    'matches[].variantId': ['ProductVariant'],
+    'matches[].productTitle': 'text',
+    'matches[].variantTitle': 'text',
+  },
+}
+/** Where a hub tool's data sits in its JSON-RPC answer. */
+const HUB_DATA_PATH = 'result.content[].text'
+
+/** Where a captured result came from. `tool`: the hub tool called (null when it can't be read: nothing is catalogue). */
+export type TaintSource = { route: 'hub'; tool: string | null } | { route: 'mcp' } | { route: 'files'; contentType: string }
 /** Captures high-signal tokens from a result before it goes back to the container; throws when it can't (fail closed). */
 export type CaptureTaint = (body: string, source: TaintSource) => Promise<void>
 
-type Kind = 'email' | 'order' | 'digits' | 'mixed'
-const KINDS: readonly Kind[] = ['email', 'order', 'digits', 'mixed']
+/** A result with more tokens than `TAINT_MAX_TOKENS_PER_RESULT`: the read fails closed with this plain reason. */
+export class TaintOverflowError extends Error {
+  constructor() {
+    super(`the result holds more than ${TAINT_MAX_TOKENS_PER_RESULT} ids, emails or order numbers`)
+    this.name = 'TaintOverflowError'
+  }
+}
 
-/** Collects tokens by kind, each kind capped, so the result can be ordered highest signal first. */
+/** Collects distinct lower-cased tokens; past `max` it throws `TaintOverflowError`. */
 class Sink {
-  readonly by: Record<Kind, Set<string>> = { email: new Set(), order: new Set(), digits: new Set(), mixed: new Set() }
-  readonly cap: number
-  constructor(cap: number) {
-    this.cap = cap
+  readonly tokens = new Set<string>()
+  readonly max: number
+  constructor(max: number) {
+    this.max = max
   }
-  add(kind: Kind, token: string): void {
-    const set = this.by[kind]
-    if (set.size < this.cap) set.add(token.toLowerCase())
-  }
-  emailsFull(): boolean {
-    return this.by.email.size >= this.cap
-  }
-  ordered(limit: number): string[] {
-    const out = new Set<string>()
-    for (const k of KINDS) {
-      for (const t of this.by[k]) {
-        if (out.size >= limit) return [...out]
-        out.add(t)
-      }
-    }
-    return [...out]
+  add(token: string): void {
+    this.tokens.add(token.toLowerCase())
+    if (this.tokens.size > this.max) throw new TaintOverflowError()
   }
   all(): string[] {
-    return [...new Set(KINDS.flatMap(k => [...this.by[k]]))]
+    return [...this.tokens]
   }
 }
 
@@ -120,7 +134,7 @@ function spansOf(run: string, emit: (span: string) => void): void {
 function scanText(text: string, sink: Sink, opts: { emailsOnly?: boolean; variants?: boolean } = {}): void {
   if (!text) return
   scanEmails(text, (local, labels) => {
-    sink.add('email', `${local}@${labels.join('.')}`)
+    sink.add(`${local}@${labels.join('.')}`)
     if (!opts.variants) return
     const locals = [local]
     for (let i = 0; i < local.length && locals.length < 16; i++) if (isLocalSeparator(local[i]!) && i + 1 < local.length) locals.push(local.slice(i + 1))
@@ -131,34 +145,31 @@ function scanText(text: string, sink: Sink, opts: { emailsOnly?: boolean; varian
       const cut = /^(.*\.[A-Za-z0-9]+)[-_]/.exec(d)?.[1]
       if (cut && cut !== d) domains.push(cut)
     }
-    for (const l of locals) for (const d of domains) sink.add('email', `${l}@${d}`)
+    for (const l of locals) for (const d of domains) sink.add(`${l}@${d}`)
   })
-  if (opts.emailsOnly || sink.emailsFull()) return
-  for (const m of text.matchAll(ORDER_NAME_RE)) sink.add('order', m[0])
+  if (opts.emailsOnly) return
+  for (const m of text.matchAll(ORDER_NAME_RE)) sink.add(m[0])
   for (const m of text.matchAll(LONG_DIGITS_RE)) {
     // The date of a basic-form ISO timestamp (`20261120T101500Z`) is not an id.
     if (BASIC_DATE_RE.test(m[0]) && /^[Tt]\d/.test(text.slice(m.index + 8, m.index + 10))) continue
-    sink.add('digits', m[0])
+    sink.add(m[0])
   }
   for (const m of text.matchAll(MIXED_ID_RE)) {
     const run = m[0]
-    if (isMixedToken(run)) sink.add('mixed', run)
-    if (opts.variants) spansOf(run, span => { if (isMixedToken(span)) sink.add('mixed', span) })
+    if (isMixedToken(run)) sink.add(run)
+    if (opts.variants) spansOf(run, span => { if (isMixedToken(span)) sink.add(span) })
   }
 }
 
 /**
- * Extracts high-signal tokens from raw `text`, normalized to lowercase, deduplicated, highest signal first:
- *  1. email addresses
- *  2. `#` order names with 3+ digits
- *  3. digit runs of 8+ digits
- *  4. runs of 12+ `[A-Za-z0-9_-]` mixing letters and digits (not an ISO date with its hour)
+ * Extracts every high-signal token from raw `text`, lower-cased and deduplicated: email addresses, `#` order names
+ * with 3+ digits, digit runs of 8+ digits, and runs of 12+ `[A-Za-z0-9_-]` mixing letters and digits (not an ISO date
+ * with its hour). More than `TAINT_MAX_TOKENS_PER_RESULT` throws `TaintOverflowError`.
  */
-export function extractTokens(text: string, limit: number = TAINT_MAX_TOKENS_PER_RESULT): string[] {
-  if (!text || limit <= 0) return []
-  const sink = new Sink(limit)
+export function extractTokens(text: string): string[] {
+  const sink = new Sink(TAINT_MAX_TOKENS_PER_RESULT)
   scanText(text, sink)
-  return sink.ordered(limit)
+  return sink.all()
 }
 
 /** A JSON number as written (`JSON.parse` would round an id past 2^53). */
@@ -186,45 +197,60 @@ const isJsonMime = (contentType: string) => {
   return mime === 'application/json' || mime.endsWith('+json')
 }
 
-/** Walks a parsed JSON value's leaves (iteratively, in document order) into `sink`. */
-function walkJson(root: unknown, sink: Sink, catalogFields: boolean): void {
-  const stack: { v: unknown; key: string | null; nest: number }[] = [{ v: root, key: null, nest: 0 }]
+/**
+ * Walks a parsed JSON value (iteratively) into `sink`: every string and number leaf, and every object key. A string
+ * that holds JSON is parsed and walked as its own document. `shape`: the catalogue paths of a Shopify product tool's
+ * data, applied only to the document parsed from the hub answer's `result.content[].text`.
+ */
+function walkJson(root: unknown, sink: Sink, shape: Readonly<Record<string, 'text' | readonly string[]>> | null): void {
+  const stack: { v: unknown; path: string; nest: number; data: boolean }[] = [{ v: root, path: '', nest: 0, data: false }]
   while (stack.length > 0) {
-    const { v, key, nest } = stack.pop()!
+    const { v, path, nest, data } = stack.pop()!
+    const rule = data && shape ? shape[path] : undefined
     if (typeof v === 'string') {
       const head = v.trimStart()[0]
       if (nest < MAX_NESTED_JSON && (head === '{' || head === '[')) {
         const inner = parseJson(v)
         if (inner.ok) {
-          stack.push({ v: inner.value, key, nest: nest + 1 })
+          stack.push({ v: inner.value, path: '', nest: nest + 1, data: nest === 0 && path === HUB_DATA_PATH })
           continue
         }
       }
-      const gid = GID_RE.exec(v)
-      if (gid && CATALOG_GID_TYPES.has(gid[1]!)) continue
-      scanText(v, sink, { emailsOnly: catalogFields && key !== null && CATALOG_KEYS.has(key) })
+      if (rule === 'text') {
+        scanText(v, sink, { emailsOnly: true })
+        continue
+      }
+      const gid = rule ? BARE_GID_RE.exec(v) : null
+      if (gid && (rule as readonly string[]).includes(gid[1]!)) continue
+      scanText(v, sink)
     } else if (v instanceof JsonNumber) {
-      if (!(catalogFields && key !== null && CATALOG_KEYS.has(key))) scanText(v.text, sink)
+      scanText(v.text, sink)
     } else if (Array.isArray(v)) {
-      for (let i = v.length - 1; i >= 0; i--) stack.push({ v: v[i], key, nest })
+      for (let i = v.length - 1; i >= 0; i--) stack.push({ v: v[i], path: `${path}[]`, nest, data })
     } else if (v !== null && typeof v === 'object') {
       const entries = Object.entries(v)
-      for (let i = entries.length - 1; i >= 0; i--) stack.push({ v: entries[i]![1], key: entries[i]![0], nest })
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const [k, x] = entries[i]!
+        scanText(k, sink)
+        stack.push({ v: x, path: path ? `${path}.${k}` : k, nest, data })
+      }
     }
   }
 }
 
 /**
- * The tokens a result captures (at most `limit`, highest signal first). `/hub/` and `/mcp/` bodies and JSON files are
- * parsed and their leaves walked; a body that isn't JSON, and any other text file, is read as raw text.
+ * Every token a result captures. `/hub/` and `/mcp/` bodies and JSON files are parsed and walked (keys included); a
+ * body that isn't JSON, and any other text file, is read as raw text. More than `TAINT_MAX_TOKENS_PER_RESULT` throws
+ * `TaintOverflowError`.
  */
-export function resultTokens(body: string, source: TaintSource, limit: number = TAINT_MAX_TOKENS_PER_RESULT): string[] {
-  if (!body || limit <= 0) return []
-  const sink = new Sink(limit)
+export function resultTokens(body: string, source: TaintSource): string[] {
+  if (!body) return []
+  const sink = new Sink(TAINT_MAX_TOKENS_PER_RESULT)
   const json = source.route !== 'files' || isJsonMime(source.contentType) ? parseJson(body) : { ok: false as const }
-  if (json.ok) walkJson(json.value, sink, source.route === 'hub')
+  const shape = source.route === 'hub' && source.tool !== null ? (Object.hasOwn(CATALOG_SHAPES, source.tool) ? CATALOG_SHAPES[source.tool]! : null) : null
+  if (json.ok) walkJson(json.value, sink, shape)
   else scanText(body, sink)
-  return sink.ordered(limit)
+  return sink.all()
 }
 
 /** Percent-decodes valid `%XX` runs without throwing on stray `%` characters. */
@@ -332,7 +358,7 @@ export function extractUrlTokens(url: URL): string[] {
     segments.push({ raw: url.hash.slice(1) })
   }
 
-  const sink = new Sink(Number.MAX_SAFE_INTEGER)
+  const sink = new Sink(Number.POSITIVE_INFINITY)
   for (const { raw, isQuery } of segments) {
     const decoded = decodePercentTwoRounds(raw)
     // In a query `+` is a space: decode both ways so `?q=hi+<base64url>` aligns on the encoded run.
