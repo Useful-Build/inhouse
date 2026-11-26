@@ -1,0 +1,40 @@
+{
+ "row": {
+  "caseId": "R07",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Payment is due net 30.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0,
+  "answer": "Payment is due net 30.",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "67b37a4d2b2ab76298c2cc2159a5896c5ec16d55639aba3901346c13dd24cbb4",
+    "inputExcerpt": "{\"query\":\"pottery vendor payment terms\"}",
+    "resultExcerpt": "Norda Ceramics: payment terms net 30."
+   }
+  ]
+ }
+}

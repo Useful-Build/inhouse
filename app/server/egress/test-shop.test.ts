@@ -9,6 +9,7 @@ import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { AccountSummary, CallToolOptions, CallerScope, HubResult } from '../../hub/index/contract.ts'
 import { turnSystemPrompt } from '../prompt/connected.ts'
+import { SYSTEM_PROMPT_VERSION } from '../prompt/system.ts'
 import { reset } from '../db/test-support.ts'
 import type { ReadGatewayLike } from './hub.ts'
 import { TEST_SHOP_KEY, TEST_SHOP_OWNER, SHOP_HOST, readTestShop, withTestShop, withTestShopConnect } from './test-shop.ts'
@@ -112,7 +113,7 @@ describe('withTestShopConnect (the prompt\'s account read)', () => {
     expect(before.text).toContain('No apps are connected yet.')
     await setRow(TEST_SHOP_OWNER, JSON.stringify(HOST))
     const built = await turnSystemPrompt({ gateway: wrapped, delivery: false, channels: async () => [] }, 't_2')
-    expect(built).toMatchObject({ version: 3 })
+    expect(built).toMatchObject({ version: SYSTEM_PROMPT_VERSION })
     expect(built.text).toContain('Connected apps: Shopify. Search for their tools')
     expect(calls).toEqual([undefined, { testShopHost: HOST }])
     await wrapped.listAccounts(server)

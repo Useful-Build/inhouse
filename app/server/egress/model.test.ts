@@ -395,6 +395,28 @@ describe('the model and the counts (failure 7)', () => {
     expect((await call(h, { ...small, model: 'claude-haiku-5-5' })).status).toBe(403)
     expect(h.rpc.callsOf('admitModelCall').map(c => (c.args[2] as ModelCallWorst).model)).toEqual(['claude-haiku-5-5'])
   })
+  // Stage 1 M1-P (N6): an Opus turn's helpers run on Sonnet. Ways it could fail: the helpers' model is refused (helpers
+  // can't run), any other model passes once the grant has a helper model, a switched-off helper model still runs, or a
+  // grant without one (no helpers) lets a third model through.
+  it("the turn's subagent model passes; any other is refused; a switched-off one is refused model_off", async () => {
+    const h = await harness({}, { ...GRANT, model: 'claude-opus-5-5', subagentModel: 'claude-sonnet-5-5' })
+    expect((await call(h, { ...small, model: 'claude-sonnet-5-5' })).status).toBe(200)
+    expect((await call(h, { ...small, model: 'claude-opus-5-5' })).status).toBe(200)
+    for (const other of ['claude-fable-5-2', 'claude-sonnet-4-5', 'claude-haiku-5-5x']) {
+      const res = await call(h, { ...small, model: other })
+      expect(res.status, other).toBe(403)
+      expect(await json(res), other).toEqual({ type: 'error', error: { type: 'permission_error', message: 'This turn may not use that model.' } })
+    }
+    h.settings['tm:sonnet:on'] = 'off'
+    const off = await call(h, { ...small, model: 'claude-sonnet-5-5' })
+    expect(off.status).toBe(403)
+    expect(await json(off)).toEqual({ type: 'error', error: { type: 'permission_error', message: 'model_off' } })
+    expect(h.rpc.callsOf('admitModelCall').map(c => (c.args[2] as ModelCallWorst).model)).toEqual(['claude-sonnet-5-5', 'claude-opus-5-5'])
+    // No helpers (null, as every turn before M1-P and every routine turn): only the two models of the grant.
+    const g = await harness({}, { ...GRANT, model: 'claude-opus-5-5', subagentModel: null })
+    expect((await call(g, { ...small, model: 'claude-sonnet-5-5' })).status).toBe(403)
+    expect((await call(g, { ...small, model: 'claude-haiku-5-5' })).status).toBe(200)
+  })
   it("the CLI's own count_tokens pass unpriced, 50 per turn, then 400", async () => {
     const h = await harness()
     // W1's fake counts only turns it knows (an unknown turn answers false, like the real counter).
