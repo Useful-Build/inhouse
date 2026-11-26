@@ -608,6 +608,7 @@ describe('push, audit, status and admission', () => {
     expect(await auditInputSha256({ a: 1, b: [1, 2], c: undefined })).toBe(SHA_A1_B12)
     expect(await auditInputSha256({ a: 1, b: [2, 1] })).not.toBe(SHA_A1_B12)
     expect(await auditInputSha256({ a: '1', b: [1, 2] })).not.toBe(SHA_A1_B12)
+    await expect(auditInputSha256(undefined)).rejects.toThrow('no tool input')
   })
 
   it('a status: unknown carries no seqs, and nothing is acked past the last seq', () => {

@@ -334,8 +334,12 @@ export function canonicalJson(v: unknown): string {
   return `{${entries.map(([k, x]) => `${JSON.stringify(k)}:${canonicalJson(x)}`).join(',')}}`
 }
 
-/** `AuditEntry.inputSha256`: the SHA-256 of a tool call input's `canonicalJson` (UTF-8), lower-case hex. */
+/**
+ * `AuditEntry.inputSha256`: the SHA-256 of a tool call input's `canonicalJson` (UTF-8), lower-case hex. A missing input
+ * throws: `canonicalJson(undefined)` isn't JSON, and hashing it would quietly match nothing (callers pass `{}`).
+ */
 export async function auditInputSha256(input: unknown): Promise<string> {
+  if (input === undefined) throw new Error('auditInputSha256: no tool input (pass {} for a call without arguments)')
   const digest = await crypto.subtle.digest('SHA-256', utf8.encode(canonicalJson(input)))
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
