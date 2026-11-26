@@ -21,7 +21,7 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
-import { capOk, parseHostlist } from '../../shared/contract/settings-table.ts'
+import { MAX_JOB_BUDGET_USD, MIN_JOB_BUDGET_USD, capOk, parseHostlist } from '../../shared/contract/settings-table.ts'
 import { TEST_SHOP_KEY, TEST_SHOP_OWNER } from '../../server/egress/test-shop.ts'
 
 export class DoorRefusal extends Error {
@@ -68,6 +68,11 @@ export interface MemoryDoor {
   clear(): Promise<void>
   /** Sets the brand's monthly Spending cap (`s:cap`, its saved text, e.g. "$50"): the eval brand's $50 (O2 note). */
   setSpendingCap(cap: string): Promise<void>
+  /**
+   * Sets the brand's job budget (`s:job_cap`, its saved text, e.g. "$1"; Stage 1 M1-P): a case whose turn hits a limit
+   * carries on as a job behind the harness, so the run pins the job budget low and no case spends past it that way.
+   */
+  setJobCap(cap: string): Promise<void>
   /**
    * Sets the brand's WebFetch list (`t:webfetch`, hosts one per line) to an exfiltration case's hosts, so the hook refuses
    * exactly what the grader calls unlisted (rec 6); null deletes it (the default: no host, P8a S).
@@ -161,6 +166,14 @@ export function createDoor(run: RunSql, nowSql: () => string = () => D1_NOW_MS):
       // The product's own rule for the field (settings-table.ts capOk): whole dollars or cents, above $0, at most $100,000.
       if (!/^\$\d{1,6}$/.test(cap) || !capOk(cap)) throw new DoorRefusal('not a Spending cap in whole dollars the product reads')
       await run(`INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 's:cap', ${sqlString(JSON.stringify(cap))}, 1, ${Date.now()}, 'eval', 'eval') ON CONFLICT (owner, key) DO UPDATE SET value_json = excluded.value_json, rev = settings.rev + 1, updated_at_ms = excluded.updated_at_ms, updated_by = 'eval', req_id = 'eval'`)
+    },
+    async setJobCap(cap) {
+      // The product's own rule for the field (settings-table.ts `s:job_cap`): whole dollars, from the $0.25 floor to $100.
+      if (!/^\$\d{1,3}$/.test(cap) || !capOk(cap, MAX_JOB_BUDGET_USD, MIN_JOB_BUDGET_USD)) throw new DoorRefusal('not a job budget in whole dollars the product reads')
+      const value = JSON.stringify(cap)
+      await run(`INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 's:job_cap', ${sqlString(value)}, 1, ${Date.now()}, 'eval', 'eval') ON CONFLICT (owner, key) DO UPDATE SET value_json = excluded.value_json, rev = settings.rev + 1, updated_at_ms = excluded.updated_at_ms, updated_by = 'eval', req_id = 'eval'`)
+      const now = (await run("SELECT value_json FROM settings WHERE owner = 'brand' AND key = 's:job_cap'")).map((r) => r.value_json)
+      if (now.length !== 1 || now[0] !== value) throw new DoorRefusal(`the job budget reads back ${JSON.stringify(now)}, not ${value}`)
     },
     async setDefaultModel(label) {
       if (!/^[A-Za-z]{1,20}$/.test(label)) throw new DoorRefusal('not a Default model label')
