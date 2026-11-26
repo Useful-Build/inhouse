@@ -1,6 +1,6 @@
 # 0026. One agent with a proactive switch replaces Watch, Act and Run
 
-- Status: proposed, 2026-11-24 (accepted when Wasim approves the master plan)
+- Status: accepted, 2026-11-26 (Wasim approved the master plan; proposed 2026-11-24)
 - Plan: [Master plan 2026-11-24](../plans/2026-11-24-master-plan.md)
 - Supersedes the tier sequence in the [backend plan](../plans/2026-11-19-backend.md) and the
   [2026-11-22 master plan](../history/2026-11-22-master-plan.md)

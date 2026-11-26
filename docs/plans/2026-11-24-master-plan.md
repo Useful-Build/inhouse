@@ -1,6 +1,6 @@
 # Master plan: one powerful agent
 
-Status: **draft for Wasim's approval, 2026-11-24. Nothing here is built yet; implementation starts only on Wasim's word.**
+Status: **approved by Wasim on 2026-11-26; Stage 1 (Build) in progress.** Drafted 2026-11-24.
 Replaces the [2026-11-22 master plan](../history/2026-11-22-master-plan.md) (now legacy). Decision record:
 [0026](../decisions/0026-one-agent-replaces-watch-act-run.md). Council material (gitignored):
 `verify/agent-direction/` (two rounds by GPT-6.2 Sol xhigh, Claude Fable 5.2 high and Gemini 4 Neon xhigh, with Opus 5.5
@@ -68,6 +68,7 @@ to drive it, then prove it on the road."
 | D11 | **Paid evals at the gates.** Small capped paid eval runs at M3 (write safety) and M6 (capability), each with Wasim's OK on the cap at the time. The full all-model sweep stays in Stage 3. |
 | D12 | **Order.** Build (Stage 1) now. Connection (Stage 2) and proving it live (Stage 3) paused. Operator tools after the build. |
 | D13 | **Pack seam last.** Build against Shopify, then cut the sector "pack" out of working code (M7). |
+| D14 | **Code mode for every tool** (Wasim, 2026-11-26). The agent can use any connected tool (Shopify, Slack, any MCP server) from a short script that calls the tools and returns only what it needs, so large results never fill the context window. Built in M4 (section 4.9). |
 
 ## 4. How it works
 
@@ -262,6 +263,37 @@ with fake upstreams, and demo data. The core (runner, BrandAgent, hub core, perm
 memory, skills engine, evals harness, app) imports nothing from a pack (lint rule). A toy second pack on the fixture
 MCP server proves the seam.
 
+### 4.9 Code mode for every tool
+
+**In plain words.** Instead of calling tools one at a time and reading every full answer, the agent writes a short
+JavaScript script: "fetch the last 500 orders, keep the ones returned this week, count them by reason". The script runs
+next to the tools and only the small answer comes back to the agent. That's faster, picks the right tool more often and
+saves the context window and the budget.
+
+**Today** (`app/hub/codemode/`, P5): it works for Shopify only. A script runs in a Cloudflare Dynamic Worker with no
+network and can reach exactly one thing, `shop.graphql`, with caps on calls, bytes read and time. In P0 it cut about 88K
+characters of raw order data to 199 to 1,131 for the model. Slack and other MCP tools can't be used from a script.
+
+**What M4 adds:**
+1. **One `tools` object per script**, built from the brand's connections: `tools.<server>.<tool>(args)` for every
+   confirmed read tool on every connected MCP server (Slack and any server added by URL), beside `shop.graphql`. Each
+   call goes through the hub's normal path (SignIn, egress guard, definition-hash check), so a script can do nothing a
+   single tool call couldn't.
+2. **Typed signatures from the tool snapshot.** The hub turns each tool's `inputSchema` into a short TypeScript
+   declaration the agent reads before writing the script. Adopt the schema-to-types part of `@cloudflare/codemode`
+   (0.5.6) if it runs with the v2 MCP client (it is built against the v1 SDK today); otherwise keep the generator in our
+   runner.
+3. **Same caps, shared across all tools** (calls, bytes read, deadline), one call in flight at a time.
+4. **Writes from a script don't run in the script.** A script may *propose* writes (`tools.<server>.<tool>` on a write
+   tool returns a proposal). When the script ends, the proposals go through `decide()` together: covered ones enter the
+   outbox, the rest become one card, and more than 5 records is one batch card with the full list (D3). The sandbox
+   still never holds a write path.
+5. **Untrusted text stays untrusted.** Tool results a script returns are marked the same way as direct tool results.
+
+**Done when:** a script joins Shopify orders with Slack messages and a fixture MCP server's data and returns a small
+answer; a changed tool definition is refused inside a script; a script proposing 40 tags yields one batch card; the
+caps hold across tools (property test).
+
 ## 5. What's already built (kept)
 
 | Area | Where | Fate |
@@ -306,8 +338,8 @@ prompts, migrations, `app/ops/`, `app/hub/{signin,crypto,scope}/`, routes or the
 | # | Milestone | Status |
 |---|---|---|
 | M0 | Built base (section 5) | Done |
-| M1 | Powerful core | To build |
-| M2 | Permissions and the first write | To build |
+| M1 | Powerful core | In progress |
+| M2 | Permissions and the first write | In progress |
 | M3 | Guardrails and the write set | To build |
 | M4 | Any MCP (+ optional browser) | To build |
 | M5 | Proactive mode | To build |
@@ -359,13 +391,13 @@ prompts, migrations, `app/ops/`, `app/hub/{signin,crypto,scope}/`, routes or the
 - **Goal (plain):** a brand admin can connect any tool that offers MCP, by pasting a URL, and the agent can use it
   safely.
 - **Adopts:** the official MCP TypeScript SDK on the 2026-07-28 spec (section 4.5); later Cloudflare Browser Run.
-- **Builds:** section 4.5's list: the client swap with `mode: 'auto'`; the client ID document; the runtime registry
+- **Builds:** code mode for every tool (section 4.9); section 4.5's list: the client swap with `mode: 'auto'`; the client ID document; the runtime registry
   per brand; the sign-in upgrade (CIMD, `application_type`, `iss` check, issuer-keyed credentials, scope step-up);
   connect by URL with tool snapshot, definition hashes and admin confirmation; drift hides a tool; untrusted-text
   handling; MCP writes through the outbox; optional reviewed manifests for known servers; fixture servers for both
   eras, mid-call input and a changing tool (one Gorgias-shaped). Then, optionally, the browser Worker (D8).
 - **Done when:** a 2026-07-28-only fixture server and a 2025-11-25 one both connect by URL with no code change, and
-  their reads work in chat and in a proactive check; a login reply with a wrong `iss` is refused; a changed tool
+  their reads work in chat, in a proactive check and from a code-mode script; a login reply with a wrong `iss` is refused; a changed tool
   definition hides the tool; an MCP write asks and goes through the outbox; Slack keeps working on the new client.
   Browser (if built): its capability case passes; logins only by handoff.
 
