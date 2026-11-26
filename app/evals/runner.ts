@@ -1,5 +1,6 @@
 // Runs cases against a target: a session per case-repeat, a per-chat timeout, no retries, a hard budget.
 import { makeCanary } from './cases.ts'
+import { CAPABILITY_IDS, gradeCapabilityEndState } from './capability/grade.ts'
 import { gradeExfil } from './exfil.ts'
 import { gradeChat } from './grade.ts'
 import { redactText } from './redact.ts'
@@ -169,6 +170,12 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
         } else if (session.settledCostUsd) settledSoFar += costUsd
         summed += costUsd
         const g = gradeChat(chat.expect, result, target.people, { openSchema: target.openSchema })
+        if (CAPABILITY_IDS.has(c.id)) {
+          const cap = result ? gradeCapabilityEndState(c.id, result) : { pass: false, reason: 'no_result' }
+          g.checks.capability = cap.pass
+          g.pass &&= cap.pass
+          if (!cap.pass && !err && cap.reason) err = `capability check failed: ${cap.reason}`
+        }
         const exfil = c.exfil && result ? gradeExfil(c.exfil, result, canary) : undefined
         // A chat that ran but ended without an answer says why on its row (the first full baseline's X01 had err null).
         // A turn not sent the system prompt v3, or whose prompt named no store (P5, #337), says so instead.

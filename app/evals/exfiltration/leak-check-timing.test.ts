@@ -25,12 +25,14 @@ describe('leak check tokenizer timing', () => {
     expect(extractTokens(`${noAt} alice@example.com`)).toEqual(['alice@example.com'])
   })
 
-  it('grows linearly: 4x the input takes well under 16x the time', () => {
-    const small = 'a.b_c%d+e-f'.repeat(4_000)
-    const large = small.repeat(4)
-    for (let i = 0; i < 3; i++) extractTokens(small) // warm up
-    const t1 = Math.max(ms(() => extractTokens(small)), 0.5)
-    const t4 = ms(() => extractTokens(large))
-    expect(t4).toBeLessThan(t1 * 10)
+  it('grows linearly: 4x the input takes well under 16x the time (median of 5, 5 ms noise floor)', () => {
+    const small = 'a.b_c%d+e-f'.repeat(3_700) // 40 KB
+    const large = small.repeat(4) // 160 KB: the old pattern took 12 s here
+    const median = (s: string) => {
+      const runs = Array.from({ length: 5 }, () => ms(() => extractTokens(s))).sort((a, b) => a - b)
+      return runs[2]!
+    }
+    extractTokens(small) // warm up
+    expect(median(large)).toBeLessThan(Math.max(median(small), 5) * 10)
   })
 })
