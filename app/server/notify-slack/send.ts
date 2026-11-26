@@ -12,6 +12,7 @@
 // - One send, no retry: a hub call that throws leaves the row `reserved` and answers `unknown: not retried`.
 import type { DeliveryGateway, HubResult } from '../../hub/index/contract.ts'
 import { SLACK_DELIVERY_ENABLED } from './slack-legs.ts'
+import { plainAnswer } from '../../shared/rpc-answer.ts'
 import type { AuditArgs } from '../../shared/contract/audit.ts'
 import { boundBody, boundNotice, SYSTEM_BODY_MAX } from '../../shared/notify/bound.ts'
 import type { BoundChanges, NoticeFormat } from '../../shared/notify/bound.ts'
@@ -230,9 +231,10 @@ async function toSlack(c: Common, r: (id: string, target: string) => Reserve, to
   }
   let answer: HubResult<{ ts: string }>
   try {
-    answer = await delivery.postNotice({ kind: 'server', job, requestId: c.ctx.requestId }, {
+    // Copied and released at once (shared/rpc-answer.ts): a sender inside a Durable Object must not hold the call open.
+    answer = plainAnswer(await delivery.postNotice({ kind: 'server', job, requestId: c.ctx.requestId }, {
       accountId: SLACK_ACCOUNT, channelId, title: n.title, text: n.text, noticeId: id, ...(n.link ? { link: n.link } : {}),
-    })
+    }))
   } catch {
     // No answer: the row stays `reserved` and nothing re-sends it (at most once).
     await batch(c.ctx.db, [auditLine(c, 'slack', channelId, 'unknown')])

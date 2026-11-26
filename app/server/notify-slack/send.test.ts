@@ -220,6 +220,18 @@ describe('test 9: the bell, from notification_send', () => {
     expect(row!.body).toBe('Q&A\n\nR&D a < b x > y')
     expect(calls.map(c => [c.req.title, c.req.text])).toEqual([['Q&A', 'R&D a < b x > y']])
   })
+
+  // Workers RPC gives the hub's answer a disposer, and the call stays open until it runs: a sender inside BrandAgent that
+  // held it kept the object from going idle (shared/rpc-answer.ts).
+  slackOpen.it("the hub's answer is released once", async () => {
+    const s = await scene()
+    const DISPOSE = (Symbol as unknown as { dispose: symbol }).dispose
+    let released = 0
+    const { delivery } = fakeDelivery(() => Object.assign({ ok: true as const, value: { ts: '1.000042' } }, { [DISPOSE]: () => { released++ } }))
+    const out = await notifyAgent(ctxOf(delivery, s.nowMs), scopeOf(s), msg())
+    expect(out.recipients.map(r => r.outcome)).toEqual(['posted'])
+    expect(released).toBe(1)
+  })
 })
 
 describe('test 8: no DM, no Inhouse bell', () => {

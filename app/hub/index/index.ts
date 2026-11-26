@@ -18,6 +18,7 @@ import { callReadyTool, listReadyTools, toolNameForLog } from '../registry/regis
 import { flushTestLogs, loadRegistry, readyGatewayDeps } from '../signin/signin'
 import { codeModeFor } from '../codemode/run'
 import { decideTestShop } from './test-shop'
+import { settledAnswer } from '../../shared/rpc-answer'
 
 export { SignIn } from '../signin/signin'
 export { ConnectGateway } from '../oauth/entry'
@@ -103,12 +104,13 @@ export class ReadGateway extends WorkerEntrypoint<Env> implements ReadApi {
   }
 }
 
+// Each SignIn answer is returned as plain data and released (`settledAnswer`), never passed on as is.
 export class ServerGateway extends WorkerEntrypoint<Env> implements ServerApi {
   async status(scope: CallerScope, accountId: string): Promise<HubResult<AccountStatus>> {
     return guarded(this.env, async () => {
       if (!CallerScopeSchema.safeParse(scope).success) return err('invalid_args', 'scope')
       if (!AccountIdSchema.safeParse(accountId).success) return err('invalid_args', 'accountId')
-      return (await signInFor(this.env, accountId).status(accountId)) as HubResult<AccountStatus>
+      return (await settledAnswer(signInFor(this.env, accountId).status(accountId))) as HubResult<AccountStatus>
     })
   }
 
@@ -116,7 +118,7 @@ export class ServerGateway extends WorkerEntrypoint<Env> implements ServerApi {
     return guarded(this.env, async () => {
       if (!CallerScopeSchema.safeParse(scope).success) return err('invalid_args', 'scope')
       if (!AccountIdSchema.safeParse(accountId).success) return err('invalid_args', 'accountId')
-      return (await signInFor(this.env, accountId).reencrypt(accountId)) as HubResult<{ kid: string; changed: boolean }>
+      return (await settledAnswer(signInFor(this.env, accountId).reencrypt(accountId))) as HubResult<{ kid: string; changed: boolean }>
     })
   }
 }

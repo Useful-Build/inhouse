@@ -168,6 +168,24 @@ describe('turnSystemPrompt, per turn from the gateway and the channel list', () 
     expect(warns.mock.calls).toEqual([[{ event: 'prompt_accounts_unread', turnId: 't_4', code: 'no_binding' }]])
   })
 
+  // Workers RPC gives the hub's answer a disposer, and the call stays open until it runs: held by BrandAgent (where this
+  // runs every turn), it kept the object from ever going idle (shared/rpc-answer.ts).
+  it('the hub answer is released once, read or failed, and its data is what the line is built from', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const DISPOSE = (Symbol as unknown as { dispose: symbol }).dispose
+    const cases: [HubResult<AccountSummary[]>, string][] = [
+      [{ ok: true, value: [account('slack:workspace')] }, `${SYSTEM_PROMPT_V1}\n\nConnected apps: Slack${TAIL}\nSlack channels you may post to with notification_send: #ops. Post nowhere else.`],
+      [{ ok: false, error: { code: 'upstream_unavailable', message: 'hub down' } }, SYSTEM_PROMPT_V2],
+    ]
+    for (const [data, text] of cases) {
+      let released = 0
+      const answer = Object.assign({}, data, { [DISPOSE]: () => { released++ } })
+      expect(await textOf(deps(async () => answer), 't_r')).toBe(text)
+      expect(released).toBe(1)
+    }
+    expect(errors).toHaveBeenCalledTimes(1)
+  })
+
   it('a failed channel read: logged loud, the connected-apps line stays and the channel line goes', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
     const d = deps(async () => ({ ok: true, value: [account('slack:workspace')] }), { channels: async () => { throw new Error('d1') } })
