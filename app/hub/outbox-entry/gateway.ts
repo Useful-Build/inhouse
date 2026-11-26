@@ -7,6 +7,7 @@ import { WRITE_OPERATIONS, type WriteRequest, type WriteResult } from '../index/
 import { hubError } from '../index/errors'
 import { log } from '../index/log'
 import { WriteRequestSchema } from '../index/schemas'
+import { settledAnswer } from '../../shared/rpc-answer'
 
 export type WriteOperationInput = {
   accountId: string
@@ -18,6 +19,17 @@ export type WriteGatewayDeps = {
   shopifyOrderTagAdd(input: WriteOperationInput): Promise<WriteResult>
   slackChannelPost(input: WriteOperationInput): Promise<WriteResult>
   now?: () => number
+}
+
+/** The write SignIn's method the test build's `shopifyOrderTagAdd` calls (entry.ts). */
+export type OrderTagAddStub = { orderTagAdd(input: WriteOperationInput): unknown }
+
+/**
+ * The write SignIn's `orderTagAdd`, its answer read as plain data and released (`settledAnswer`, shared/rpc-answer.ts),
+ * never passed on as is: an answer passed on carries its disposer, which keeps the call open until the caller disposes it.
+ */
+export async function orderTagAddVia(stub: OrderTagAddStub, input: WriteOperationInput): Promise<WriteResult> {
+  return (await settledAnswer(stub.orderTagAdd(input))) as WriteResult
 }
 
 const isUnknownOperation = (req: unknown): boolean => {
