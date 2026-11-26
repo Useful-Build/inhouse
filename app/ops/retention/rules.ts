@@ -9,7 +9,7 @@ import type { TableEntry } from '../tables/types.ts'
  * the deletion or mark (B9), forgotten memories 30 days after their last update (B9; C1 Q15), a Library upload left
  * `pending` after 1 day (p4-w5.md section 2), the egress record after 30 days (P8a: the Watch soak reads a day at a time).
  */
-export const DEFAULT_DAYS = { chats: 365, steps: 365, trash: 30, pendingUpload: 1, forgottenMemory: 30, egress: 30 } as const
+export const DEFAULT_DAYS = { chats: 365, steps: 365, trash: 30, pendingUpload: 1, forgottenMemory: 30, egress: 30, egressTaint: 7 } as const
 export type PeriodName = keyof typeof DEFAULT_DAYS
 
 /** One way a row goes by its own age: `column` (epoch ms; `table.column` for another table's) past `period`, when `when` holds. */
@@ -91,6 +91,8 @@ export const retentionRules: Readonly<Record<string, RetentionRule>> = {
   'library/': { kind: 'custom', ages: [], withParent: 'library_uploads', why: 'with its library_uploads row (deleted first), never by object age (B9: no lifecycle rule)' },
   // P8a: the egress record. `egress_fetches_no_update` forbids UPDATE only, so DELETE works.
   egress_fetches: { kind: 'd1', ageColumn: 'at_ms', idColumn: 'n' },
+  // M1-G: fetch leak-check token digests, expired after 7 days.
+  egress_taint: { kind: 'd1', ageColumn: 'seen_at_ms', idColumn: 'digest' },
 }
 
 /**
@@ -116,6 +118,7 @@ export const retentionGroups: Readonly<Record<string, PeriodName>> = {
   library_marks: 'trash',
   'library/': 'trash',
   egress_fetches: 'egress',
+  egress_taint: 'egressTaint',
 }
 
 export type RetentionPeriods = Readonly<Record<string, number | null>>

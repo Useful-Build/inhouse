@@ -22,6 +22,7 @@ import { brandAgent } from '../do/brand-agent/client.ts'
 import { safeError } from '../safe-error.ts'
 import type { EgressProps } from './index.ts'
 import { addressVerdict } from './ip.ts'
+import { taintStore } from './taint.ts'
 
 export const DOH_URL = 'https://cloudflare-dns.com/dns-query'
 export const WEBFETCH_MAX_BYTES = 10 * 1024 * 1024
@@ -37,6 +38,8 @@ const RESPONSE_HEADERS = ['content-type', 'content-language', 'last-modified', '
 export interface WebDeps {
   /** The brand's `t:webfetch` as stored (a JSON string value), or null when it was never set. */
   hostList(): Promise<string | null>
+  /** Leak check (M1-G, N8): returns true when `url` carries a stored private-data token. Throws on store failure (fail closed). */
+  checkLeak(url: URL): Promise<boolean>
   /** The network: the DoH resolver and the page fetches go through it. */
   fetch: typeof fetch
   log(entry: Record<string, unknown>): void
@@ -48,7 +51,7 @@ export interface WebDeps {
   waitUntil(p: Promise<unknown>): void
 }
 
-export type WebRefusal = 'method' | 'scheme' | 'port' | 'not_listed' | 'address' | 'dns' | 'redirects' | 'too_large' | 'settings' | 'record'
+export type WebRefusal = 'method' | 'scheme' | 'port' | 'not_listed' | 'address' | 'dns' | 'redirects' | 'too_large' | 'settings' | 'record' | 'leak'
 
 /** One outbound request as the egress record keeps it: the host only, and the verdict with its refusal code. */
 export type FetchRecord = { host: string; verdict: 'allowed'; code: null } | { host: string; verdict: 'refused'; code: WebRefusal }
@@ -76,8 +79,8 @@ export async function resolvesPublic(host: string, f: typeof fetch): Promise<boo
   return any
 }
 
-/** The checks one URL must pass before it's fetched (a hop of a redirect included). */
-export async function checkUrl(url: URL, list: string[], f: typeof fetch): Promise<WebRefusal | null> {
+/** Static URL checks that run before the leak check and DNS: scheme, port, literal address and host list. */
+export function checkUrlStatic(url: URL, list: string[]): WebRefusal | null {
   if (url.protocol !== 'https:') return 'scheme'
   if (url.port !== '' && url.port !== '443') return 'port'
   if (url.username !== '' || url.password !== '') return 'scheme'
@@ -86,8 +89,19 @@ export async function checkUrl(url: URL, list: string[], f: typeof fetch): Promi
   if (literal === 'blocked') return 'address'
   // An empty list lists nothing: every host is refused (P8a S).
   if (!list.includes(host)) return 'not_listed'
-  if (literal === 'public') return null
+  return null
+}
+
+/** DNS check for a host that already passed static checks and the leak check. */
+export async function checkUrlDns(url: URL, f: typeof fetch): Promise<WebRefusal | null> {
+  const host = url.hostname.replace(/\.$/, '').toLowerCase()
+  if (addressVerdict(host) === 'public') return null
   return (await resolvesPublic(host, f)) ? null : 'dns'
+}
+
+/** The checks one URL must pass before it's fetched (a hop of a redirect included). */
+export async function checkUrl(url: URL, list: string[], f: typeof fetch): Promise<WebRefusal | null> {
+  return checkUrlStatic(url, list) ?? (await checkUrlDns(url, f))
 }
 
 const refusal = (why: WebRefusal) =>
@@ -137,8 +151,19 @@ export async function handleWebFetch(request: Request, d: WebDeps): Promise<Resp
     if (v !== null) headers.set(h, v)
   }
   for (let hop = 0; ; hop++) {
-    const why = await checkUrl(url, list, d.fetch)
-    if (why) return refuse(why, d, hostOf(url))
+    // Seam for M1-F (N7): check the brand's `t:webfetch_on` switch at the top of each hop, before static checks, leak check, DNS or fetch.
+    const staticWhy = checkUrlStatic(url, list)
+    if (staticWhy) return refuse(staticWhy, d, hostOf(url))
+    let leaked: boolean
+    try {
+      leaked = await d.checkLeak(url)
+    } catch (err) {
+      d.log({ event: 'webfetch_leak_check_failed', error: safeError(err) })
+      return refuse('leak', d, hostOf(url))
+    }
+    if (leaked) return refuse('leak', d, hostOf(url))
+    const dnsWhy = await checkUrlDns(url, d.fetch)
+    if (dnsWhy) return refuse(dnsWhy, d, hostOf(url))
     // Recorded before it goes out: an unrecorded request never does.
     try {
       await d.record({ host: hostOf(url), verdict: 'allowed', code: null })
@@ -203,8 +228,12 @@ export class WebEgress extends WorkerEntrypoint<Env, EgressSource> {
   async fetch(request: Request): Promise<Response> {
     const source = this.ctx.props
     const db = this.env.DB
+    const taint = taintStore(db, this.env.AUDIT_HASH_KEY, () => Date.now())
     return handleWebFetch(request, {
-      hostList: () => storedHostList(db), fetch: (i, init) => fetch(i, init), log: e => console.log(e),
+      hostList: () => storedHostList(db),
+      checkLeak: url => taint.checkUrl(url),
+      fetch: (i, init) => fetch(i, init),
+      log: e => console.log(e),
       record: r => recordFetch(db, source, r, Date.now()),
       noteRecordFailure: () => brandAgent(this.env).noteEgressRecordFailure(),
       waitUntil: p => this.ctx.waitUntil(p),

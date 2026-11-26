@@ -60,7 +60,7 @@ async function run(url: string, opts: { list?: string | null; method?: string; h
     if (opts.refusalRecordHangs && r.verdict === 'refused') await new Promise(() => {})
     records.push(r)
   }
-  const res = await handleWebFetch(new Request(url, { method: opts.method ?? 'GET', headers: opts.headers }), { hostList: async () => opts.list ?? null, fetch: f, log: e => void logs.push(e), record, noteRecordFailure: async () => { recordFailures++ }, waitUntil: p => void later.push(p) })
+  const res = await handleWebFetch(new Request(url, { method: opts.method ?? 'GET', headers: opts.headers }), { hostList: async () => opts.list ?? null, checkLeak: async () => false, fetch: f, log: e => void logs.push(e), record, noteRecordFailure: async () => { recordFailures++ }, waitUntil: p => void later.push(p) })
   // What the runtime would finish after the answer: a refusal's record (never one that hangs).
   if (!opts.refusalRecordHangs) await Promise.all(later)
   return { res, fetched, logs, records, later, recordFailures }
