@@ -122,15 +122,19 @@ export class ShopifyWriteCore {
    */
   async orderTagAdd(req: {
     accountId: string
-    expect: { connectedAtMs: number }
+    expect: { connectedAtMs: number; shop?: string }
     args: unknown
   }): Promise<WriteResult> {
     if (req.accountId !== SHOPIFY_WRITE_ACCOUNT) return writeErr('invalid_args', 'no', 'accountId')
+    // Stage 1 M2-G: the store the action was approved for. Required: a write never goes to a store nobody named.
+    if (req.expect.shop === undefined) return writeErr('invalid_args', 'no', 'expect.shop')
     const parsed = ShopifyOrderTagAddArgsSchema.safeParse(req.args)
     if (!parsed.success) return writeErr('invalid_args', 'no', parsed.error.issues[0]?.path.join('.') || 'args')
 
     const config = this.#d.config()
     if (!config) return writeErr('not_configured', 'no', 'shopify_write')
+    // The write app points at another store than the one approved (a store change with no request since): refused.
+    if (config.shop !== req.expect.shop) return writeErr('connect_stale', 'no', 'shop')
 
     // Pre-check account state before spending a token grant.
     const before = checkShopifyAccountState(await this.#d.accountStatus(req.accountId), req.expect.connectedAtMs)
@@ -146,6 +150,7 @@ export class ShopifyWriteCore {
     // Re-check config, scopes, and account state right before the upstream write request (after every awaited step).
     const configNow = this.#d.config()
     if (!configNow) return writeErr('not_configured', 'no', 'shopify_write')
+    if (configNow.shop !== req.expect.shop) return writeErr('connect_stale', 'no', 'shop')
     if (!SHOPIFY_WRITE_SCOPES.every(s => acquired.scopes.includes(s))) {
       return writeErr('scope_mismatch', 'no', 'missing write_orders')
     }

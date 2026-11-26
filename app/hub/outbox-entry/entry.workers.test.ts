@@ -48,7 +48,7 @@ describe('WriteGateway through Worker exports (workerd)', () => {
       attempt: 1,
       requestId: 'req-shopify-1',
       accountId: 'shopify:store',
-      expect: { connectedAtMs },
+      expect: { connectedAtMs, shop: 'example-write' },
       operation: 'shopify.order.tag_add',
       args: { orderId: 'gid://shopify/Order/9001', tags: ['urgent'] },
     }
@@ -111,7 +111,7 @@ describe('WriteGateway through Worker exports (workerd)', () => {
       attempt: 1,
       requestId: 'req-off-1',
       accountId: 'shopify:store',
-      expect: { connectedAtMs: 1 },
+      expect: { connectedAtMs: 1, shop: 'example-write' },
       operation: 'shopify.order.tag_add',
       args: { orderId: 'gid://shopify/Order/9001', tags: ['a'] },
     })

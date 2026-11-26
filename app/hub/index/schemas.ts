@@ -107,7 +107,7 @@ export const WriteRequestSchema = z.strictObject({
   attempt: z.int().min(1),
   requestId: id,
   accountId: AccountIdSchema,
-  expect: z.strictObject({ connectedAtMs: z.int().nonnegative() }),
+  expect: z.strictObject({ connectedAtMs: z.int().nonnegative(), shop: z.string().regex(SHOP_HANDLE).optional() }),
   operation: WriteOperationKeySchema,
   args: z.unknown(),
 })

@@ -307,6 +307,8 @@ describe('the result (failure 5)', () => {
     expect(s.d.hub.calls).toHaveLength(1)
     expect(s.d.hub.calls[0].violation).toBeNull()
     expect(s.d.hub.calls[0].req).toMatchObject({ actionId: s.id, attempt: 1, accountId: 'shopify:store', expect: { connectedAtMs: SHOP_GEN }, operation: 'shopify.order.tag_add' })
+    // M2-G: the store the action was approved for (its scope), so the hub refuses a write app that now points elsewhere.
+    expect(s.d.hub.calls[0].req.expect).toEqual({ connectedAtMs: SHOP_GEN, shop: 'store-a' })
   })
 
   it('a definite refusal: failed, the use released', async () => {
@@ -361,6 +363,7 @@ describe('the result (failure 5)', () => {
     const d = dispatch(r.action.id)
     await d.run
     expect(d.hub.calls[0].req).toMatchObject({ operation: 'slack.channel.post', accountId: 'slack:workspace', args: { channelId: 'C0OUTBOX01', text: 'Restock is in' } })
+    expect(d.hub.calls[0].req.expect).not.toHaveProperty('shop')
     expect(d.hub.calls[0].req.args).toEqual({ channelId: 'C0OUTBOX01', text: 'Restock is in' })
   })
 })

@@ -148,14 +148,16 @@ export type WriteOperationKey = (typeof WRITE_OPERATIONS)[number]
 /**
  * One send from the outbox dispatcher (`app/server/outbox/dispatch.ts`, the only holder of `HUB_WRITE`). `actionId` and
  * `attempt` name the outbox row and its claim; `expect.connectedAtMs` is the account generation the action was approved
- * on (the hub refuses when it changed). `args` is checked per operation by the hub, strictly.
+ * on (the hub refuses when it changed). `expect.shop` (Stage 1 M2-G, from #444's review): for a Shopify write, the store
+ * handle the action was approved for (its permission scope); the hub refuses when its write app now points at another
+ * store, even with no request since. `args` is checked per operation by the hub, strictly.
  */
 export type WriteRequest = {
   actionId: string
   attempt: number
   requestId: string
   accountId: string
-  expect: { connectedAtMs: number }
+  expect: { connectedAtMs: number; shop?: string }
   operation: WriteOperationKey
   args: unknown
 }

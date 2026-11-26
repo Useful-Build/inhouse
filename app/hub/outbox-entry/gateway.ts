@@ -11,7 +11,7 @@ import { settledAnswer } from '../../shared/rpc-answer'
 
 export type WriteOperationInput = {
   accountId: string
-  expect: { connectedAtMs: number }
+  expect: { connectedAtMs: number; shop?: string }
   args: unknown
 }
 

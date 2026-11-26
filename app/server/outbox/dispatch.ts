@@ -77,12 +77,17 @@ const safeRef = (ref: string) => ref.replace(/[\p{Cc}\p{Cf}]/gu, '').slice(0, 20
  * The write the hub is asked for. A Slack post names the listed channel's id the claim just checked (N13), in the shape
  * the hub's strict schema takes (hub/connectors/slack/outbox.ts `SlackChannelPostArgsSchema`: `channelId`, `text` and,
  * when the action has one, `title`: M2-N, a `notification_send` headline).
+ * A Shopify write names the store it was approved for (`expect.shop`, its scope; M2-G): the hub refuses when its write
+ * app points at another store.
  */
 export function writeRequest(row: OutboxActionRow, requestId: string): WriteRequest {
   const args = JSON.parse(row.args_json) as Record<string, unknown>
   const scope = JSON.parse(row.scope_json) as Record<string, string>
+  const shopify = row.operation === 'shopify.order.tag_add'
+  if (shopify && typeof scope.shop !== 'string') throw new Error(`outbox: a Shopify action with no shop in its scope (${row.id})`)
   return {
-    actionId: row.id, attempt: row.attempt, requestId, accountId: row.account_id, expect: { connectedAtMs: row.account_gen },
+    actionId: row.id, attempt: row.attempt, requestId, accountId: row.account_id,
+    expect: shopify ? { connectedAtMs: row.account_gen, shop: scope.shop! } : { connectedAtMs: row.account_gen },
     operation: row.operation,
     args: row.operation === 'slack.channel.post'
       ? { channelId: scope.channelId, text: args.text, ...(typeof args.title === 'string' ? { title: args.title } : {}) }
