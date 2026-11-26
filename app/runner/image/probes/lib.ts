@@ -116,7 +116,7 @@ export type ToolResult = { text: string; isError: boolean }
 /** The marker a helper's prompt carries so the probe's model knows which script answers it. */
 export const helperMarker = (key: string) => `PROBE-HELPER-${key}`
 /** One model request a helper made: which script, which conversation (by its first message), what it asked with. */
-export type HelperRequest = { key: string; conv: string; turn: number; model: string; tools: string[]; at: number }
+export type HelperRequest = { key: string; conv: string; turn: number; model: string; tools: string[]; at: number; answeredAt?: number }
 
 export type ScriptState = {
   script: Script
@@ -203,8 +203,11 @@ export async function answerModel(state: ScriptState, request: Request): Promise
     // its own tool ids.
     const conv = createHash('sha256').update(JSON.stringify(body.messages?.[0] ?? null)).digest('hex').slice(0, 10)
     state.requests.pop()
-    state.helperLog.push({ key, conv, turn, model: String(body.model), tools: (Array.isArray(body.tools) ? body.tools : []).map((t) => String((t as { name?: unknown }).name)), at: Date.now() })
+    const logged: HelperRequest = { key, conv, turn, model: String(body.model), tools: (Array.isArray(body.tools) ? body.tools : []).map((t) => String((t as { name?: unknown }).name)), at: Date.now() }
+    state.helperLog.push(logged)
     if (turn === 0 && script.hold) await script.hold(state)
+    // When the answer goes back: a helper is running from its first request until its last answer.
+    logged.answeredAt = Date.now()
     const base = `toolu_h${key}${conv}`
     const ids = script.steps.map((_, i) => `${base}x${i}`)
     const steps = script.steps.map((s, i) => (i === turn ? callsOf(s(), ids[i]!) : null))

@@ -1596,8 +1596,9 @@ async function probeHelperConcurrency() {
   if (VIA !== 'root') return record('helpers-cap.via-root', false, `runs go ${VIA}`)
   const convs = (st: ScriptState) => new Set(st.helperLog.filter((h) => h.key === 'c').map((h) => h.conv)).size
   const agentAudits = (st: ScriptState) => st.auditEntries.filter((e) => (e.toolName === 'Agent' || e.toolName === 'Task') && e.agentId === null && e.decision === 'allow').length
-  // Each helper holds its first answer until four are running and all five calls were made, then a short while for a
-  // fifth to start (it mustn't); bounded, so a CLI that runs them one by one still finishes (and fails the check).
+  // A barrier: each helper holds its first answer until four are running and all five calls were made, then until a fifth
+  // starts (it mustn't) or 5 s pass; bounded, so a CLI that runs them one by one still finishes (and fails the check).
+  // Held so, the four genuinely overlap: each runs from its first request to its answer, past the fourth's start.
   const hold = async (st: ScriptState) => {
     await waitUntil(() => convs(st) >= 4 && agentAudits(st) >= 5, 'four helpers running and five Agent calls made', 20_000).catch(() => undefined)
     await waitUntil(() => convs(st) >= 5, 'a fifth helper', 5_000).catch(() => undefined)
@@ -1613,8 +1614,8 @@ async function probeHelperConcurrency() {
   // that aren't prefixes of each other: lib.ts callsOf.)
   const log = run.state.helperLog.filter((h) => h.key === 'c')
   const spans = [...new Set(log.map((h) => h.conv))].map((conv) => {
-    const at = log.filter((h) => h.conv === conv).map((h) => h.at)
-    return [Math.min(...at), Math.max(...at)] as const
+    const mine = log.filter((h) => h.conv === conv)
+    return [Math.min(...mine.map((h) => h.at)), Math.max(...mine.map((h) => h.answeredAt ?? h.at))] as const
   })
   const mostAtOnce = Math.max(0, ...spans.map(([start]) => spans.filter(([s, e]) => s <= start && start <= e).length))
   const results = [0, 1, 2, 3, 4].map((j) => run.state.results.get(callId(run.state, 0, j)))

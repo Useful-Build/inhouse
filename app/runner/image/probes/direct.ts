@@ -30,7 +30,7 @@ export type DirectVariant =
   /** strictAllowlist on or off, with a canUseTool that allows (and records) every ask. */
   | 'strict-on'
   | 'strict-off'
-  /** The bundled skills not turned off (test-only): a typed /code-review must then expand. */
+  /** The bundled skills not turned off, built-in agents back on (test-only): a typed /code-review must then expand. */
   | 'skills-not-off'
   /** The same, and the `skills` allowlist taken out too (test-only): nothing of ours stands between /code-review and the CLI. */
   | 'skills-open'
@@ -120,12 +120,17 @@ switch (input.variant) {
     options.permissionMode = 'default'
     options.canUseTool = allowAll
     break
+  // /code-review runs as a forked skill, which needs a built-in agent: with built-in agents off (Stage 1, HELPER_ENV) it
+  // ends "No agent available for forked execution" whatever the skill guards say. The control is for the skill guards
+  // alone, so these test-only variants put the built-ins back (CLI 2.1.328; PR #430).
   case 'skills-not-off':
     delete (options.settings as { skillOverrides?: unknown }).skillOverrides
+    options.env = { ...options.env, CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS: '0' }
     break
   case 'skills-open':
     delete (options.settings as { skillOverrides?: unknown }).skillOverrides
     delete options.skills
+    options.env = { ...options.env, CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS: '0' }
     break
   case 'tmp-rule-off':
   case 'proc-rule-off':
