@@ -15,6 +15,7 @@ import { HttpAgent } from '../../../http/client'
 import { AgentError } from '../../../types'
 import { WATCH_READ_PATH, changeRoutineElsewhere, resetRoutines, seedUnreadNotice, settleRuns, settleTick, watchBuild, watchRoute } from './watch'
 import { signer } from './me'
+import { resetTeam } from './members'
 import type { Signer } from './me'
 
 const origin = inject('contractRealOrigin')
@@ -81,6 +82,10 @@ describe.skipIf(!origin)('the real client\'s P4 methods', () => {
 
   beforeAll(async () => {
     s = signer(origin)
+    // Every write here is the seeded Admin's. The contract suite that runs before this file on the same build (its
+    // properties change roles at random, and its reset runs before each case, not after the last) can leave that person a
+    // Member, and then a routine write answers forbidden/not_owner. Put the team back first, as the suite's own reset does.
+    await resetTeam(s)
     if (watch) await settleRuns()
     await resetRoutines(s)
     await seedUnreadNotice()

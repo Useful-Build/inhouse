@@ -50,14 +50,11 @@ beforeEach(async () => {
   await setStage('Act')
 })
 
-describe('stage (test 8)', () => {
-  it('routine_create at Watch is refused with the literal text; at Act it is made, need 1', async () => {
+describe('legacy stage settings do not gate routines', () => {
+  it('routine_create works with Watch stored and preserves the legacy need column', async () => {
     await setStage('Watch')
-    const r = await call('routine_create', { name: NAME, instruction: INSTRUCTION, days: 'daily', time: '06:00' }, scope(ALEX))
-    expect([r.isError, text(r)]).toEqual([true, 'Routines you set up need the Act stage. Ask an admin to move to Act.'])
-    expect(await db.prepare('SELECT COUNT(*) AS n FROM routines').first('n')).toBe(0)
-    await setStage('Act')
     const id = await create()
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM routines').first('n')).toBe(1)
     expect(await db.prepare('SELECT origin, need, missed, creator_id, source_chat_id, checked_until_ms, days_mask FROM routines WHERE id = ?').bind(id).first())
       .toEqual({ origin: 'team', need: 1, missed: 'skip', creator_id: ALEX, source_chat_id: `c_tools_${ALEX}`, checked_until_ms: NOW, days_mask: 31 })
   })
@@ -78,7 +75,7 @@ describe('the routine tools (test 9)', () => {
     // 2026-06-01 is a Monday; 07:30 EDT is 11:30Z, already past at 12:00Z: the next is Thursday.
     expect(data(r)).toMatchObject({ schedule: 'Mondays and Thursdays at 07:30', next: '2026-06-04T11:30:00.000Z' })
     expect(await lines(id)).toEqual([{ template: 'routine_made', actor_id: ALEX, fields_json: '{}', source_key: `${id}|created` }])
-    expect(await audit(id)).toEqual([{ actor_id: ALEX, action: 'routine.created', target_kind: 'routine', target_id: id, args_json: '{"routineId":"' + id + '","need":1}' }])
+    expect(await audit(id)).toEqual([{ actor_id: ALEX, action: 'routine.created', target_kind: 'routine', target_id: id, args_json: '{"routineId":"' + id + '"}' }])
     const everything = JSON.stringify([await lines(id), await audit(id)])
     expect(everything).not.toContain('Zebra')
     expect(everything).not.toContain('zebra')
@@ -114,7 +111,7 @@ describe('the routine tools (test 9)', () => {
     const d = await call('routine_delete', { routine_id: id }, scope(ADMIN))
     expect(d.isError).toBeUndefined()
     expect((await audit(id)).map(a => [a.actor_id, a.action, a.args_json])).toEqual([
-      [ALEX, 'routine.created', `{"routineId":"${id}","need":1}`],
+      [ALEX, 'routine.created', `{"routineId":"${id}"}`],
       [ADMIN, 'routine.updated', `{"routineId":"${id}","changed":["schedule"]}`],
       [ADMIN, 'routine.enabled', `{"routineId":"${id}","on":false}`],
       [ADMIN, 'routine.deleted', `{"routineId":"${id}"}`],
@@ -162,12 +159,12 @@ describe('the routine tools (test 9)', () => {
     expect((await audit(id)).filter(l => l.action === 'routine.run_now').map(l => l.actor_id)).toEqual([ALEX])
   })
 
-  it('routine_run_now on a deleted routine is not found; a team routine below its stage is refused', async () => {
+  it('routine_run_now works with Watch stored, but a deleted routine is not found', async () => {
     const id = await create()
     await setStage('Watch')
     const r = await call('routine_run_now', { routine_id: id }, scope(ALEX))
-    expect([r.isError, data(r).error]).toEqual([true, 'stage'])
-    await setStage('Act')
+    expect(r.isError).toBeUndefined()
+    expect((await slotsOf(id)).map(s => s.state)).toEqual(['claimed'])
     await call('routine_delete', { routine_id: id }, scope(ALEX))
     const d = await call('routine_run_now', { routine_id: id }, scope(ALEX))
     expect([d.isError, data(d).error]).toEqual([true, 'not_found'])
