@@ -124,7 +124,8 @@ export function scriptedUpstream(): ModelUpstream {
       const at = scenarioStart(request)
       scenario = at.scenario
       // A resumed session's prompt: its turns count from that prompt, not from the session's first one.
-      if (at.from > 0) body = JSON.stringify({ ...request, messages: request.messages.slice(at.from) })
+      // W0-B spike only (draft PR, never merged): the crash-resume scenario also reads the history before its marker.
+      if (at.from > 0) body = JSON.stringify({ ...request, messages: request.messages.slice(at.from), ...(scenario === 'long-job-resume' ? { spikeEarlier: request.messages.slice(0, at.from) } : {}) })
     } catch {
       // The scripted model reports the unreadable body itself.
     }

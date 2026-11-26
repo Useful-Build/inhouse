@@ -70,7 +70,11 @@ test('W0-B variant A: resume from the existing verified checkpoint without chang
     expect(final).toMatchObject({ session: 'resumable', sessionId: first.sessionId, outcome: 'done', sawCheckpoint: 1, mirrorError: 0, checkpointUuidMatches: true })
     expect(final.checkpointEntries).toBeGreaterThan(first.checkpointEntries)
     expect(final.checkpointEntries).toBe(final.entries)
-    expect(textOf(await answerOf(request, member, chatId, resume.turnId))).toContain(LONG_JOB_DONE)
+    const answer = textOf(await answerOf(request, member, chatId, resume.turnId))
+    console.log('W0-B resumed request', JSON.stringify(answer.split('\n').find(l => l.startsWith('history ')) ?? 'no history line'))
+    expect(answer).toContain(LONG_JOB_DONE)
+    // A real Messages API refuses a tool_use with no tool_result right after it, so variant A needs none unpaired.
+    expect(answer).toContain('unpaired=none')
     const files = await filesOf(request, chatId)
     const result = files.find(f => f.path === 'outputs/job-result.txt')
     expect(result, 'the resumed turn saved a result file').toBeDefined()
