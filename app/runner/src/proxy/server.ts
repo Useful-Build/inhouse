@@ -44,8 +44,12 @@ export type ProxyDeps = {
   upstream: URL
   /** The uid on the other end of an accepted connection, or null when unknown. Called once, when the connection opens. */
   lookupUid: (socket: Socket) => Promise<number | null>
-  /** The live run's token for a uid and route, or null (the root closes `files` once a run's stream has ended). */
-  tokenForUid: (uid: number, route: string) => string | null
+  /**
+   * The live run's token for a uid and token route (`tokenRouteFor`), or null (the root closes `files` once a run's
+   * stream has ended). `asked` is the proxy route the call came on: the root refuses `actions` for a run that didn't ask
+   * for the actions server (N6).
+   */
+  tokenForUid: (uid: number, route: string, asked: string) => string | null
   log: (entry: Record<string, unknown>) => void
   /** The largest request body forwarded; a bigger one gets 413. */
   maxBodyBytes?: number
@@ -131,7 +135,7 @@ export function createProxy(deps: ProxyDeps): http.Server {
     const uid = await (uids.get(req.socket) ?? Promise.resolve(null))
     if (uid === null) return refuseLogged(deps, res, route, null, 'unknown caller')
     if (uid === 0) return refuseLogged(deps, res, route, uid, 'root never calls through the proxy')
-    const token = deps.tokenForUid(uid, tokenRouteFor(route))
+    const token = deps.tokenForUid(uid, tokenRouteFor(route), route)
     if (token === null) return refuseLogged(deps, res, route, uid, 'no live run for this user (or its stream has ended)')
     forward(deps, path, req, res, token, route, uid)
   }
@@ -338,7 +342,7 @@ function forwardBuffered(
       retryTimer = setTimeout(() => {
         retryTimer = undefined
         if (callerGone) return
-        const freshToken = deps.tokenForUid(uid, tokenRoute)
+        const freshToken = deps.tokenForUid(uid, tokenRoute, route)
         if (freshToken === null) {
           refuseLogged(deps, res, route, uid, 'no live run for this user (or its stream has ended)')
           return

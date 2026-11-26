@@ -3,7 +3,8 @@
 // - it forwards without a token, or passes on a token (or key) the caller made up;
 // - it forwards a route outside the six, or a path that climbs out of its route;
 // - (P4 H1) `/hub/` asks for any token but the run's `mcp` one, or a hub path climbs out of `/hub/`;
-// - (Stage 1, N6) `/actions/` asks for any token but the run's `mcp` one, stays open once `mcp` has closed, or retries a
+// - (Stage 1, N6) `/actions/` asks for any token but the run's `mcp` one, doesn't tell the root it's `/actions/` (so a run
+//   without actions can't be shut out of it), stays open once `mcp` has closed, or retries a
 //   `tools/call` (a second send could propose the same write twice);
 // - the token ends up in a log line;
 // - a header outside the allowlist is forwarded;
@@ -160,7 +161,8 @@ describe('what is forwarded', () => {
   it('(N6) /actions/ is forwarded as it came, with the token the root gives for the mcp route, and closes with it', async () => {
     const asked: string[] = []
     let mcpOpen = true
-    const p = await makeProxy({ tokenForUid: (uid, route) => (asked.push(route), uid === 1001 && route === 'mcp' && mcpOpen ? 'tok_mcp_route_1001_aaaaaaaa' : null) })
+    const came: string[] = []
+    const p = await makeProxy({ tokenForUid: (uid, route, on) => (asked.push(route), came.push(on), uid === 1001 && route === 'mcp' && mcpOpen ? 'tok_mcp_route_1001_aaaaaaaa' : null) })
     try {
       const body = '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
       const res = await fetch(`${p.url}/actions/`, { method: 'POST', headers: { connection: 'close', 'content-type': 'application/json' }, body })
@@ -177,6 +179,8 @@ describe('what is forwarded', () => {
       }
       expect(seen).toHaveLength(1)
       expect(asked).toEqual(['mcp', 'mcp', 'mcp', 'mcp'])
+      // The proxy names the route each call came on, so the root can keep /actions/ shut for a run without actions.
+      expect(came).toEqual(['actions', 'actions', 'hub', 'mcp'])
     } finally {
       p.server.closeAllConnections()
       await new Promise((r) => p.server.close(r))

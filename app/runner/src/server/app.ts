@@ -65,6 +65,8 @@ type LiveRun = {
    * `audit` run event in session-host.ts): a v3 Worker's strict schema would refuse them.
    */
   protocol: number
+  /** The start asked for the `actions` MCP server (`RunStart.actions`); the proxy's `/actions/` is closed otherwise. */
+  actions: boolean
 }
 
 export type RootDeps = {
@@ -103,7 +105,7 @@ export type Root = {
    * The live run's token for a session uid; null when there's none, or more than one (never guess). For the `files`
    * route, null too once the run's terminal event has gone out.
    */
-  tokenForUid(uid: number, route?: string): string | null
+  tokenForUid(uid: number, route?: string, asked?: string): string | null
   liveCount(): number
   /**
    * JSON bytes of a run's events not yet acked by the egress; null for no such run. Bounded by backpressure: past the
@@ -137,8 +139,11 @@ export function createRoot(deps: RootDeps): Root {
   const pushing = new Set<Pusher>()
   let stopping = false
 
-  const tokenForUid = (uid: number, route?: string): string | null => {
+  const tokenForUid = (uid: number, route?: string, asked?: string): string | null => {
     const token = pickToken(runs.values(), uid)
+    // The `actions` server only for a run whose start asked for it (N6): the session has no such server otherwise, and
+    // nothing else on the uid may reach the write tools' route.
+    if (token !== null && asked === 'actions' && ![...runs.values()].find((r) => r.uid === uid)!.actions) return null
     // Once the run's terminal event has gone out (its timeout, say), no file is saved for it: one uploaded now would
     // have no `file_saved`. The store stays open, so the session's checkpoint still lands.
     if (token !== null && route === 'files' && [...runs.values()].find((r) => r.uid === uid)!.stream?.ended) return null
@@ -191,6 +196,7 @@ export function createRoot(deps: RootDeps): Root {
       checkpoint: null,
       audits: 0,
       protocol,
+      actions: config.actions === true,
     }
     runs.set(config.runId, live)
     chats.add(config.chatId)
