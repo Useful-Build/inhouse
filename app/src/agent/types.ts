@@ -21,6 +21,9 @@ import type { ActiveRun, SendTurnResult } from '../../shared/contract/runs'
 import type { ChatList, ChatPage } from '../../shared/contract/chats'
 import type { AttachmentRef } from '../../shared/contract/attachments'
 import type { RunFrame } from '../../shared/contract/run-event'
+import type { ActionCard, ActionChoice, ActionFilter, ActionResolution } from '../../shared/contract/actions'
+import type { Permission } from '../../shared/contract/permissions'
+import type { Question } from '../../shared/contract/questions'
 
 export type { Stage, StageIndex, Scenario, Effort, AgentErrorCode, ErrorReason, ResourceKey, ResourceStatus, Instant, Money, ClockTime, Prose } from '../../shared/contract/common'
 export type { AgentMeta } from '../../shared/contract/meta'
@@ -53,6 +56,9 @@ export type { LibraryKind, LibraryPlace, DocPreview, LibraryLink, LibraryFile } 
 export type { ApprovalRecord, ApproveResult, TeamRequest, StampRecord, SetAsideReason, SetAsideRecord, AgentState } from '../../shared/contract/state'
 export type { AgentNotice, NoticePage, AgentNotification } from '../../shared/contract/notice'
 export type { AgentData } from '../../shared/contract/data'
+export type { ActionCard, ActionChoice, ActionFilter, ActionKind, ActionResolution, ActionState } from '../../shared/contract/actions'
+export type { Guardrail, Permission, PermissionHolder } from '../../shared/contract/permissions'
+export type { Question } from '../../shared/contract/questions'
 
 export const STAGES: Stage[] = ['Watch', 'Act', 'Run']
 export const SCENARIOS: Scenario[] = ['Normal', 'First day', 'Loading', 'Tool disconnected', 'Cap reached']
@@ -278,6 +284,43 @@ export interface AgentClient {
   availableNotifyChannels(cursor?: string): Promise<AvailableChannels>
   /** Saves the whole list. Rejects with `conflict` and a reason (REASON's notice channel list in shared/contract/error-codes.ts) for a channel Slack refuses, or with the current list as `current` for a stale `ifRev`. */
   saveNotifyChannels(input: PutNotifyChannels): Promise<NotifyChannelList>
+
+  // ---------- Stage 1 M2 (N18): the agent's actions, the permissions and the questions ----------
+  // Plain calls: none changes the snapshot or sends a notice. Each resolves with the server's answer or rejects with an
+  // `AgentError`, and the card that asked says what happened. A 401, or a 403 for someone who left the team, puts the
+  // client in the signed-out state as any read does. The demo has none of them: its lists are empty and every answer is
+  // refused (not found).
+  /** Route 120: the cards this person may see, newest first, narrowed to some states or one chat. */
+  actions(filter?: ActionFilter): Promise<ActionCard[]>
+  /** Route 121: one card. Rejects with not found for one this person may not see. */
+  action(id: string): Promise<ActionCard>
+  /**
+   * Route 122: answers a waiting card at the rev it was read at: `once` and `always` an ask card, `approve` an exact one,
+   * `deny` either. Resolves to the card after the answer. A stale rev, or a card another answer moved first, rejects with
+   * `conflict` and the card as it is now in `current`; one this person may not answer with `forbidden`.
+   */
+  answerAction(id: string, ifRev: number, choice: ActionChoice): Promise<ActionCard>
+  /** Route 123: takes an approved action back during its hold. Once it started going out: `conflict` with the card as it is now. */
+  undoAction(id: string, ifRev: number): Promise<ActionCard>
+  /** Route 124: says whether a "Needs a check" action went out (`sent`) or not (`failed`). The approver or an admin only. */
+  resolveAction(id: string, ifRev: number, outcome: ActionResolution): Promise<ActionCard>
+  /**
+   * Called with each `action.updated` the runs this client follows carry (an action of a followed chat changed): the card
+   * reads it again. Returns the unsubscribe. The demo never calls it.
+   */
+  onActionUpdated(listener: (u: { actionId: string; rev: number }) => void): () => void
+  /** Route 110: what the agent may do without asking: this person's permissions and, for an admin, everyone's. Newest first. */
+  permissions(): Promise<Permission[]>
+  /** Route 111: stops one permission, at the rev it was read at. Resolves to the list after it. A stale rev: `conflict` with the permission as it is now. */
+  removePermission(id: string, ifRev: number): Promise<Permission[]>
+  /** Route 140: the open questions asked of this person, oldest first. */
+  questions(): Promise<Question[]>
+  /**
+   * Route 141: answers a question with one of its options, exactly. Resolves to the answered question. Answered by someone
+   * else, expired or withdrawn: `conflict` with the question as it is now; `unavailable` when the answer is kept but the
+   * waiting turn couldn't be reached (the same answer again goes on).
+   */
+  answerQuestion(id: string, choice: string): Promise<Question>
 }
 
 /** The longest chat title a person can set. Longer titles are cut. */
