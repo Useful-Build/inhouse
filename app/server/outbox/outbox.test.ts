@@ -191,6 +191,19 @@ describe('answers (failure 2)', () => {
   })
 })
 
+// M2-G: an agent's own withdraw (approval_withdraw) told the agent in its answer: no resume turn is owed (`none`). A
+// person's withdraw leaves `report` alone, so the asks' delivery tells the agent.
+describe('withdraw and the report (M2-G)', () => {
+  it("the agent's withdraw sets report `none`; a person's leaves it", async () => {
+    const a = await waitingId(1)
+    const byAgent = await outbox(db, clock).withdraw({ kind: 'agent', chatId: a.chat_id, turnId: 't_1' }, a.id, { ifRev: a.rev })
+    expect(byAgent).toMatchObject({ action: { state: 'withdrawn', report: 'none' } })
+    const b = await waitingId(2)
+    const byPerson = await outbox(db, clock).withdraw({ kind: 'member', actor: ASKER_ACTOR }, b.id, { ifRev: b.rev })
+    expect(byPerson).toMatchObject({ action: { state: 'withdrawn', report: null } })
+  })
+})
+
 describe('Undo (failure 3)', () => {
   it('before the claim: undone, its use released; after the claim: conflict', async () => {
     await grant()

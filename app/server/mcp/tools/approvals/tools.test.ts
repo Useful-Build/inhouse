@@ -241,7 +241,8 @@ describe('approval_withdraw (failure 5)', () => {
     const mark = await lastLineId(db)
     const r = await call('approval_withdraw', { approval_id: id }, scope())
     expect(text(r)).toBe(`Approval ${id} is withdrawn. Nothing from it will go out.`)
-    expect(await rowOf(db, id)).toMatchObject({ state: 'withdrawn', rev: 2 })
+    // M2-G: the agent's own withdraw told it in this answer, so no resume turn is owed about it (`report` `none`).
+    expect(await rowOf(db, id)).toMatchObject({ state: 'withdrawn', rev: 2, report: 'none' })
     const lines = await linesSince(db, mark)
     expect(lines.map(l => [l.action, l.actor_id, l.target_id])).toEqual([['action.withdrawn', ASKER, id]])
     expect(JSON.parse(lines[0].args_json)).toEqual({ actionId: id, by: 'agent' })
