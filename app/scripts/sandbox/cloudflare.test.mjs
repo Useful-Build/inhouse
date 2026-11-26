@@ -209,6 +209,17 @@ describe('runner images in the registry', () => {
     return { seen, fetchImpl }
   }
   const basic = `Basic ${Buffer.from('v1:registry-secret').toString('base64')}`
+  // wrangler 4.162's own fixture shape (cloudchamber images tests): each repository lists its tags and a digest entry.
+  test('drops the catalog\'s sha256 digest entries, as wrangler does; an unexpected answer fails loud', async () => {
+    const digest = `sha256:${'a'.repeat(64)}`
+    const r = registry(() => [200, { repositories: { [`${ACCOUNT}/inhouse-sbx-pr12`]: ['0123abc', digest], [`${ACCOUNT}/inhouse-sbx-pr13`]: [digest] } }])
+    const cf = cloudflare({ token: TOKEN, accountId: ACCOUNT, fetchImpl: r.fetchImpl })
+    assert.deepEqual(await cf.images(), [{ name: 'inhouse-sbx-pr12', tags: ['0123abc'] }, { name: 'inhouse-sbx-pr13', tags: [] }])
+    for (const body of [{}, { repositories: [] }, { repositories: { [`${ACCOUNT}/x`]: 'tag' } }]) {
+      const bad = cloudflare({ token: TOKEN, accountId: ACCOUNT, fetchImpl: registry(() => [200, body]).fetchImpl })
+      await assert.rejects(bad.images(), /registry catalog/)
+    }
+  })
   test('lists this account\'s repositories with their tags, the prefix dropped', async () => {
     const r = registry(() => [200, { repositories: { [`${ACCOUNT}/inhouse-sbx-pr12`]: ['aaa'], [`/${ACCOUNT}/inhouse-sbx-pr13`]: ['b'], 'ffffffffffffffffffffffffffffffff/other': ['c'] } }])
     const cf = cloudflare({ token: TOKEN, accountId: ACCOUNT, fetchImpl: r.fetchImpl })
@@ -225,7 +236,7 @@ describe('runner images in the registry', () => {
     assert.deepEqual(await cf.deleteImage('inhouse-sbx-pr12', 'aaa'), { deleted: true })
     assert.deepEqual(await cf.deleteImage('inhouse-sbx-pr12', 'gone'), { deleted: false })
     const m = `https://registry.cloudflare.com/v2/${ACCOUNT}/inhouse-sbx-pr12/manifests`
-    assert.deepEqual(r.seen.filter(s => !s[1].includes('api.cloudflare.com')).map(s => s.slice(0, 2)), [
+    assert.deepEqual(r.seen.filter(s => new URL(s[1]).host === 'registry.cloudflare.com').map(s => s.slice(0, 2)), [
       ['HEAD', `${m}/aaa`], ['DELETE', `${m}/aaa`], ['PUT', 'https://registry.cloudflare.com/v2/gc/layers'], ['HEAD', `${m}/gone`],
     ])
   })

@@ -196,3 +196,21 @@ describe('runner images', () => {
     assert.deepEqual(cf.calls, [['deleteImage', 'inhouse-sbx-pr12', 'aaa'], ['deleteImage', 'inhouse-sbx-pr12', 'bbb']])
   })
 })
+
+describe('runner images: digests and refusals never stop a teardown half way', () => {
+  test('a sha256 digest entry is never planned (images() drops it; planTeardown takes only plain tags it is given)', async () => {
+    const { planTeardown } = await import('./teardown.mjs')
+    const listing = { workers: ['inhouse-sbx-pr12'], domains: [], d1: [], r2: [], containers: [], images: [{ name: 'inhouse-sbx-pr12', tags: ['aaa'] }] }
+    const { deletions } = planTeardown(listing, [12], { app, zone: ZONE })
+    assert.deepEqual(deletions.map(d => d.kind), ['worker', 'image'])
+  })
+  test('one bad deletion anywhere in the list is refused before the first call', async () => {
+    const cf = fakeCf()
+    const plan = [
+      { pr: 12, kind: 'worker', name: 'inhouse-sbx-pr12' },
+      { pr: 12, kind: 'image', name: 'inhouse-sbx-pr12', tag: `sha256:${'a'.repeat(64)}` },
+    ]
+    await assert.rejects(runTeardown(cf, plan, { app, zone: ZONE, dryRun: false, log: () => {} }), /not a plain tag/)
+    assert.deepEqual(cf.calls, [])
+  })
+})

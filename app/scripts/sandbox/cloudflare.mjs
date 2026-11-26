@@ -15,6 +15,8 @@ const REGISTRY = 'https://registry.cloudflare.com'
 const MANIFEST_ACCEPT = 'application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'
 const IMAGE_NAME = /^[a-z0-9][a-z0-9-]{0,127}$/
 const IMAGE_TAG = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/
+/** A plain image tag, as wrangler's isValidImageTag reads one (never a `sha256:` digest). */
+export const isPlainImageTag = tag => typeof tag === 'string' && IMAGE_TAG.test(tag)
 
 export class CloudflareError extends Error {
   /** `status` and `errors` ([{ code, message }]) are set on an API answer, for callers that act on one code. */
@@ -161,17 +163,30 @@ export function cloudflare({ token, accountId, fetchImpl = fetch, now = Date.now
       return (json.result ?? []).map(a => ({ id: a.id, name: a.name }))
     },
     deleteContainerApp: id => call('DELETE', `/containers/applications/${seg(id)}`),
-    /** Every repository in the account's container registry with its tags: { name, tags }, the account prefix dropped. */
+    /**
+     * Every repository in the account's container registry with its plain tags: { name, tags }, the account prefix
+     * dropped. As wrangler's `images list` does, only entries that are image tags stay: the catalog also lists each
+     * manifest's `sha256:<digest>`, which is no tag and can't be deleted as one.
+     */
     async images() {
       const auth = await registryAuth()
       const res = await fetchImpl(new URL(`${REGISTRY}/v2/_catalog?tags=true`), { method: 'GET', headers: { authorization: auth } })
       if (!res.ok) throw new CloudflareError(`the registry catalog answered ${res.status}`, { status: res.status })
-      const repos = (await res.json())?.repositories ?? {}
+      const repos = (await res.json())?.repositories
+      if (!repos || typeof repos !== 'object' || Array.isArray(repos)) throw new CloudflareError('the registry catalog has no repositories object')
       const prefix = `${accountId}/`
-      return Object.entries(repos).map(([repo, tags]) => ({ name: repo.replace(/^\/+/, ''), tags: Array.isArray(tags) ? tags : [] }))
-        .filter(r => r.name.startsWith(prefix)).map(r => ({ name: r.name.slice(prefix.length), tags: r.tags }))
+      const out = []
+      for (const [repo, tags] of Object.entries(repos)) {
+        if (!Array.isArray(tags)) throw new CloudflareError(`the registry catalog's ${JSON.stringify(repo)} has no tag list`)
+        const name = repo.replace(/^\/+/, '')
+        if (name.startsWith(prefix)) out.push({ name: name.slice(prefix.length), tags: tags.filter(t => typeof t === 'string' && IMAGE_TAG.test(t)) })
+      }
+      return out
     },
-    /** Deletes one image tag (its manifest), then asks the registry to collect unreferenced layers. */
+    /**
+     * Deletes one image tag (its manifest), then asks the registry to collect unreferenced layers. That collection runs
+     * over the whole account's registry, as wrangler's `images delete` does; it frees only layers no manifest uses.
+     */
     async deleteImage(name, tag) {
       if (!IMAGE_NAME.test(name ?? '') || !IMAGE_TAG.test(tag ?? '')) throw new CloudflareError(`refusing to delete image ${JSON.stringify(`${name}:${tag}`)}: not a plain name and tag`)
       const auth = await registryAuth()

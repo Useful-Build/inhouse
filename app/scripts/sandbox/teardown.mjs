@@ -4,7 +4,7 @@
 // names, never by prefix, and the name is checked again right before its delete call.
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
-import { isSafeKey } from './cloudflare.mjs'
+import { isPlainImageTag, isSafeKey } from './cloudflare.mjs'
 
 /** The app repo's name guard and lock, from a checkout of its main (`--app <that checkout>/app`). */
 export async function loadApp(appDir) {
@@ -66,16 +66,24 @@ export function planTeardown(listing, prs, { app, zone, keepImageTags = [] }) {
   return { deletions, skipped }
 }
 
+/** Throws unless deletion `d` names exactly one of its PR's own resources (and, for an image, a plain tag). */
+function checkDeletion(d, { app, zone }) {
+  const names = app.perPrNames(d.pr)
+  const expected = { worker: [names.worker], hub: [names.hub], container: [names.container], image: [names.image], d1: [names.d1], r2: [names.r2], domain: [`${names.brand}.${zone}`, `${names.team}.${zone}`] }[d.kind]
+  if (!expected?.includes(d.name)) throw new Error(`refusing to delete ${d.kind} ${JSON.stringify(d.name)}: not PR ${d.pr}'s`)
+  if (d.kind !== 'domain') app.assertPerPrName(d.name, d.pr)
+  if (d.kind === 'image' && !isPlainImageTag(d.tag)) throw new Error(`refusing to delete image ${d.name}:${JSON.stringify(d.tag)}: not a plain tag`)
+}
+
 /**
- * Runs the deletions, logging each one. `dryRun` only logs. Every name is checked against `perPrNames` of its PR right
- * before its call; a mismatch throws before anything else is deleted.
+ * Runs the deletions, logging each one. `dryRun` only logs. Every deletion is checked against `perPrNames` of its PR
+ * before the FIRST call, so a refusal never stops a teardown half way (a Worker gone, its images left), and each again
+ * right before its own call.
  */
 export async function runTeardown(cf, deletions, { app, zone, dryRun, log }) {
+  for (const d of deletions) checkDeletion(d, { app, zone })
   for (const d of deletions) {
-    const names = app.perPrNames(d.pr)
-    const expected = { worker: [names.worker], hub: [names.hub], container: [names.container], image: [names.image], d1: [names.d1], r2: [names.r2], domain: [`${names.brand}.${zone}`, `${names.team}.${zone}`] }[d.kind]
-    if (!expected?.includes(d.name)) throw new Error(`refusing to delete ${d.kind} ${JSON.stringify(d.name)}: not PR ${d.pr}'s`)
-    if (d.kind !== 'domain') app.assertPerPrName(d.name, d.pr)
+    checkDeletion(d, { app, zone })
     const what = `${d.kind} ${d.name}${d.tag ? `:${d.tag}` : ''}${d.id ? ` (${d.id})` : ''} of PR ${d.pr}`
     if (dryRun) {
       log(`would delete ${what}`)

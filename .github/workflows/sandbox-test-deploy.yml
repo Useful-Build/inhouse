@@ -306,9 +306,11 @@ jobs:
       # container block's beforeAll calls writeSql, which skips on a deployed build, so nothing in it runs here). A spec
       # that negates E2E_TEST_BUILD_REMOTE in any other form, or a helper other than chat-kit that gates on it, fails the
       # run: the grep doesn't know it, and it would run nowhere. REMOTE_OUT is gated another way on purpose (it needs
-      # settings this workflow doesn't pass). With `full` (or no containers), every api and real spec; only that equals
-      # the ops repo's old run. `only` narrows the set, and each named file must be in it. Then the JSON report (not the
-      # listing) must show at least one test that ran, and, except with `full`, a test that ran in every file asked for.
+      # settings this workflow doesn't pass). ANY_GATE is a grep: a gate written as `!== '1'` or through a local constant
+      # escapes it. With `full` (or no containers), every api and real spec; only that equals the ops repo's old run.
+      # `only` narrows the set, and each named file must be in it. Then the JSON report (not the listing) must show at
+      # least one test that ran, and a test that ran in every file asked for: the agent set's, or `only`'s (not every
+      # spec's, where whole files skip on a deployed build by design).
       - name: Specs against the deployment
         if: inputs.specs
         working-directory: pr/app
@@ -335,9 +337,12 @@ jobs:
             echo "::error::$f negates E2E_TEST_BUILD_REMOTE in a form AGENT_GATE doesn't match: write it as test.skip(!process.env.E2E_TEST_BUILD_REMOTE, ...) or needsContainer(), or add it to REMOTE_OUT"; exit 1
           done
           rc=0
-          helpers=$(grep -rlE --include='*.ts' -- 'skip\(\s*!process\.env\.E2E_TEST_BUILD_REMOTE' e2e | grep -vE '\.spec\.ts$' | grep -vxF e2e/api/chat-kit.ts) || rc=$?
+          hits=$(grep -rlE --include='*.ts' -- 'skip\(\s*!process\.env\.E2E_TEST_BUILD_REMOTE' e2e) || rc=$?
           [ "$rc" -le 1 ] || { echo "::error::the search for gating helpers failed ($rc)"; exit 1; }
-          [ -z "$helpers" ] || { echo "::error::a helper gates on the deployment and AGENT_GATE doesn't know its call: $helpers"; exit 1; }
+          for f in $hits; do
+            case "$f" in *.spec.ts | e2e/api/chat-kit.ts) continue ;; esac
+            echo "::error::$f is a helper that gates on the deployment, and AGENT_GATE doesn't know its call"; exit 1
+          done
           if [ "$FULL" = true ] || [ "$CONTAINERS" != true ]; then
             mapfile -t base < <(ls e2e/api/*.spec.ts e2e/real/*.spec.ts)
             set_name="every api and real spec"
@@ -365,7 +370,7 @@ jobs:
             | sed -E 's/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/<jwt>/g' || rc=$?
           [ -f "$PLAYWRIGHT_JSON_OUTPUT_NAME" ] || { echo "::error::no JSON report (exit $rc)"; exit 1; }
           per_file=("${files[@]}")
-          if [ "$FULL" = true ] && [ -z "$ONLY" ]; then per_file=(); fi
+          if [ "$set_name" != "the agent set" ] && [ -z "$ONLY" ]; then per_file=(); fi
           node --input-type=module - "$PLAYWRIGHT_JSON_OUTPUT_NAME" "${per_file[@]}" <<'EOF'
           import { readFileSync } from 'node:fs'
           const [file, ...specs] = process.argv.slice(2)
