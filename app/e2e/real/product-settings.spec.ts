@@ -58,3 +58,77 @@ for (const tab of ['team-approvals', 'team-limits', 'you-notif']) {
     await expect(page.locator('[data-toast]').filter({ hasText: "That page doesn't exist. You're on General." })).toBeVisible()
   })
 }
+
+// M1-F: the web switches (Inhouse agent page) and the two spend fields (Spending cap page). An Admin changes them on a
+// computer, a Member reads them as text, and the job budget field holds the $100 ceiling and the $0.25 start hold. It
+// would fail if an Admin's switch didn't save or come back after a reload, a Member got a control, an Admin got a
+// control over which websites it may open, or the job budget saved a value outside $0.25 to $100.
+test('An Admin flips Search the web and Read web pages, and they stay after a reload', async ({ page, context }) => {
+  test.skip(phone(page.viewportSize()?.width), 'a phone reads team settings as text')
+  await signInAs(context, 'admin')
+  const main = page.getByRole('main')
+  await open(page, 'admin', '#/settings/team-agent')
+  const search = main.getByRole('switch', { name: 'Search the web', exact: true })
+  const read = main.getByRole('switch', { name: 'Read web pages', exact: true })
+  // The defaults: search off, reading on. Which websites it may open stays the Inhouse team's: text, not a field.
+  await expect(search).not.toBeChecked()
+  await expect(read).toBeChecked()
+  await expect(main.getByRole('textbox', { name: 'Websites it may open', exact: true })).toHaveCount(0)
+  try {
+    await search.click()
+    await expect(search).toBeChecked()
+    await read.click()
+    await expect(read).not.toBeChecked()
+    await page.reload()
+    await expect(search).toBeChecked()
+    await expect(read).not.toBeChecked()
+  } finally {
+    if (await search.isChecked()) await search.click()
+    if (!(await read.isChecked())) await read.click()
+    await expect(search).not.toBeChecked()
+    await expect(read).toBeChecked()
+  }
+})
+
+test('An Admin sets the job budget between $0.25 and $100 next to the one Monthly cap', async ({ page, context }) => {
+  test.skip(phone(page.viewportSize()?.width), 'a phone reads team settings as text')
+  await signInAs(context, 'admin')
+  const main = page.getByRole('main')
+  await open(page, 'admin', '#/settings/team-spend')
+  await expect(main.getByRole('textbox', { name: 'Monthly cap', exact: true })).toHaveCount(1)
+  const job = main.getByRole('textbox', { name: 'Job budget', exact: true })
+  await expect(job).toHaveValue('$25')
+  try {
+    for (const over of ['$150', '0.10']) {
+      await job.fill(over)
+      await job.press('Enter')
+      await expect(main.getByText('Enter an amount from $0.25 to $100.', { exact: true })).toBeVisible()
+    }
+    await job.fill('60')
+    await job.press('Enter')
+    await expect(job).toHaveValue('$60')
+    await expect(page.locator('[data-toast]').filter({ hasText: 'Saved' })).toBeVisible()
+    await page.reload()
+    await expect(job).toHaveValue('$60')
+  } finally {
+    await job.fill('$25')
+    await job.press('Enter')
+    await expect(job).toHaveValue('$25')
+  }
+})
+
+test('A Member reads the web switches and both spend fields as text, with no control', async ({ page, context }) => {
+  await signInAs(context, 'dana')
+  const main = page.getByRole('main')
+  await open(page, 'dana', '#/settings/team-agent')
+  await expect(page.getByRole('heading', { level: 1, name: 'Inhouse agent', exact: true })).toBeVisible()
+  for (const name of ['Search the web', 'Read web pages']) {
+    await expect(main.getByText(name, { exact: true })).toBeVisible()
+    await expect(main.getByRole('switch', { name, exact: true })).toHaveCount(0)
+  }
+  await open(page, 'dana', '#/settings/team-spend')
+  await expect(page.getByRole('heading', { level: 1, name: 'Spending cap', exact: true })).toBeVisible()
+  await expect(main.getByText('Job budget', { exact: true })).toBeVisible()
+  await expect(main.getByText('$25', { exact: true })).toBeVisible()
+  for (const name of ['Monthly cap', 'Job budget']) await expect(main.getByRole('textbox', { name, exact: true })).toHaveCount(0)
+})

@@ -1,8 +1,9 @@
 // What a routine reads from the brand's settings (p4-w2.md sections 3, 4 and 7): the zone (`g:tz`) and the turn
 // settings route 29 resolves (seam F, api/runs.ts `resolveTurnSettings`), so a routine's turn runs on the brand's model,
-// effort, side model, step cap and WebFetch hosts like a person's. Not the stage: since M2-F no routine waits on it.
+// effort, side model, step cap, WebFetch hosts and web switches like a person's. Not the stage: since M2-F no routine
+// waits on it.
 import { settingSpec } from '../../shared/contract/settings.ts'
-import type { SettingRecord } from '../../shared/contract/settings.ts'
+import type { SettingRecord, SettingScope } from '../../shared/contract/settings.ts'
 import { STAGES } from '../../shared/contract/settings-table.ts'
 // The two route modules load on first use: statically they would pull the request path's Vite-only imports into
 // everything that imports the routine store (the D1 stores, which Node scripts load: scripts/sandbox/seed-remote.mjs).
@@ -61,15 +62,17 @@ export type SubmitSettings = ResolvedTurn
  * off) comes back as it is: the tick then decides nothing and the routines signal goes red on the lag.
  */
 export async function submitSettings(db: D1Database): Promise<SubmitSettings | { refused: { code: string; reason?: string } }> {
-  const technical: SettingRecord[] = (await rows(db))
-    .filter(r => settingSpec(r.key)?.scope === 'technical')
-    .map(r => ({ key: r.key, value: parse(r.value_json) as SettingRecord['value'], rev: r.rev, updatedAt: null, updatedBy: null }))
+  // The brand and technical rows (the web switches are brand settings, M1-F), each listed under its own scope as the
+  // settings store lists them.
+  const stored = (await rows(db)).map(r => ({ scope: settingSpec(r.key)?.scope, record: { key: r.key, value: parse(r.value_json) as SettingRecord['value'], rev: r.rev, updatedAt: null, updatedBy: null } }))
+  const ofScope = (scope: SettingScope): SettingRecord[] => stored.filter(r => r.scope === scope).map(r => r.record)
+  const technical = ofScope('technical')
   const view: SettingsView = Object.fromEntries(technical.map(r => [r.key, r.value as string | boolean | null]))
   const byLabel = CATALOG.find(m => m.label === view['g:mode'])
   const [{ DEFAULT_MODEL_ID }, { resolveTurnSettings }] = await Promise.all([import('../api/models.ts'), import('../api/runs.ts')])
   const choices = [byLabel?.id, DEFAULT_MODEL_ID, ...CATALOG.map(m => m.id)].filter((id): id is string => id !== undefined)
   const pickerId = choices.find(id => !('refused' in resolveModel(id, view))) ?? DEFAULT_MODEL_ID
-  const resolved = await resolveTurnSettings({ list: async () => technical }, pickerId)
+  const resolved = await resolveTurnSettings({ list: async (_owner, scope) => ofScope(scope) }, pickerId)
   if ('refused' in resolved) return { refused: resolved.refused }
   return resolved
 }

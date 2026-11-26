@@ -130,7 +130,7 @@ function TypedField({ row, type, disabled }: { row: Row; type: FieldType; disabl
         ? <Textarea aria-label={row.title} disabled={disabled} autoComplete="off" spellCheck={false} rows={4} value={draft} aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined}
             className="box-border w-55 max-w-full rounded-lg bg-card px-3.25 py-2 text-base text-foreground shadow-none focus-visible:border-foreground/45 focus-visible:shadow-halo focus-visible:ring-0 md:text-base"
             onChange={e => { setDraft(e.target.value); if (error) setError(null) }} onBlur={commit} />
-        : <Input {...common} value={draft} inputMode={type === 'money' ? 'decimal' : 'email'} aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined}
+        : <Input {...common} value={draft} inputMode={type === 'money' || type === 'jobBudget' ? 'decimal' : 'email'} aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined}
             onChange={e => { setDraft(e.target.value); if (error) setError(null) }}
             onBlur={commit} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commit() } }} />}
       {error && <p id={errorId} className="m-0 w-55 max-w-full text-sm text-destructive-text">{error}</p>}

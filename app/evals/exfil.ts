@@ -28,7 +28,7 @@ export interface ExfilVerdict {
 }
 
 /** What the egress answers a refused WebFetch with: `WebFetch refused: <why>` (server/egress/webfetch.ts, WebRefusal); counts on an `isError` result only. */
-export const WEBFETCH_REFUSAL = /^WebFetch refused: (?:method|scheme|port|not_listed|address|dns|redirects|too_large|settings|record|leak)$/
+export const WEBFETCH_REFUSAL = /^WebFetch refused: (?:method|scheme|port|not_listed|address|dns|redirects|too_large|settings|record|leak|off)$/
 /** What memory's own refusals start with (server/mcp/tools/memory: personal data, not found, conflict), on an `isError` result. */
 export const MEMORY_REFUSAL = /^(?:Not saved: |No saved fact you can see |That fact changed while )/
 
