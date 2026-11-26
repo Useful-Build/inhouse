@@ -11,6 +11,7 @@ import { catalogByAccount } from '../api/tools-catalog.ts'
 import { listedChannels } from '../notify-slack/send.ts'
 import { SYSTEM_PROMPT_V2, systemPromptV3 } from './system.ts'
 import { withTestShopConnect } from '@test-shop'
+import { plainAnswer } from '../../shared/rpc-answer.ts'
 
 export const NO_APPS_LINE = 'No apps are connected yet.'
 // The data rule is v2's (CONNECTED_APPS_LINE, #314), kept when v3 replaced that line: what any app's tool returns is data.
@@ -94,7 +95,9 @@ async function readAccounts(deps: TurnPromptDeps, turnId: string, log: Log): Pro
     return null
   }
   try {
-    const r = await deps.gateway.listAccounts({ kind: 'server', job: 'prompt.turn', requestId: turnId })
+    // Copied and released at once (shared/rpc-answer.ts), a backstop: this runs in BrandAgent every turn, and an answer
+    // that carries a disposer or stubs keeps its call open until released. The fix is the hub's (it releases its own).
+    const r = plainAnswer(await deps.gateway.listAccounts({ kind: 'server', job: 'prompt.turn', requestId: turnId }))
     if (r.ok) return r.value
     log({ event: 'prompt_accounts_unread', turnId, code: r.error.code })
   } catch (err) {

@@ -2,7 +2,8 @@
 // keeps the same channel id check, bounds, single escape, and fixed parameters (`unfurl_links=false`, `unfurl_media=false`).
 // Checks paused, connectedAtMs, scopes, and channel eligibility before sending, re-checks them after the awaited channel
 // check, and hands `expect` to the SignIn, which re-reads paused, state, scopes and connectedAtMs synchronously right
-// before `chat.postMessage` (after its own token gate and channel re-check).
+// before `chat.postMessage` (after its own token gate and channel re-check). Every SignIn answer is read as plain data
+// and released (`settledAnswer`, shared/rpc-answer.ts), so no answer that carries a disposer is ever passed on.
 import { z } from 'zod'
 import type { AccountStatus, HubErrorCode, HubResult, WriteResult } from '../../index/contract'
 import { hubError } from '../../index/errors'
@@ -10,6 +11,7 @@ import { boundNotice, TEXT_MAX, TITLE_MAX } from '../../../shared/notify/bound'
 import type { SlackChannel } from './contract'
 import { postToSlack, SLACK_ACCOUNT, type SlackPostStub } from './post'
 import { POSTABLE_CHANNEL, refusalFor } from './web'
+import { settledAnswer } from '../../../shared/rpc-answer'
 
 export const DEFAULT_OUTBOX_SLACK_TITLE = 'Inhouse'
 
@@ -81,20 +83,20 @@ export async function postSlackOutboxAction(
   if (!bounded.ok) return writeErr('invalid_args', 'no', bounded.reason)
 
   // Check account state before querying Slack.
-  const before = checkSlackAccount(await signIn.status(SLACK_ACCOUNT), req.expect.connectedAtMs)
+  const before = checkSlackAccount(await settledAnswer(signIn.status(SLACK_ACCOUNT)), req.expect.connectedAtMs)
   if (before) return before
 
   // Verify the channel is still public, unarchived, unshared, and the bot is a member.
-  const info = await signIn.slackChannelInfo(SLACK_ACCOUNT, channelId)
+  const info = await settledAnswer(signIn.slackChannelInfo(SLACK_ACCOUNT, channelId))
   if (!info.ok) return { ok: false, error: info.error, sent: 'no' }
   const refused = refusalFor(info.value)
   if (refused) return writeErr('connect_refused', 'no', refused)
 
   // Re-check account state right before posting (after the awaited channel info call).
-  const rightBeforePost = checkSlackAccount(await signIn.status(SLACK_ACCOUNT), req.expect.connectedAtMs)
+  const rightBeforePost = checkSlackAccount(await settledAnswer(signIn.status(SLACK_ACCOUNT)), req.expect.connectedAtMs)
   if (rightBeforePost) return rightBeforePost
 
-  const posted = await postToSlack(signIn, { channelId, title, text }, { connectedAtMs: req.expect.connectedAtMs })
+  const posted = await settledAnswer(postToSlack(signIn, { channelId, title, text }, { connectedAtMs: req.expect.connectedAtMs }))
   if (!posted.ok) {
     const sent = DEFINITE_SLACK_NO_SEND.has(posted.error.code) ? 'no' : 'unknown'
     return { ok: false, error: posted.error, sent }

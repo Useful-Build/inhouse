@@ -23,6 +23,7 @@ import { first, runBatch, stmt } from '../db/sql.ts'
 import type { Stmt } from '../db/sql.ts'
 import type { DueTask, TaskContext, TaskHandler, TaskResult } from '../do/brand-agent/scheduler.ts'
 import { safeError } from '../safe-error.ts'
+import { plainAnswer } from '../../shared/rpc-answer.ts'
 import { claimStmt, lapseStmts, whyRefused } from './claim.ts'
 import { notifyAll, outboxNotifier } from './notify.ts'
 import type { OutboxNotice, OutboxNotifier } from './notify.ts'
@@ -72,14 +73,17 @@ const SYSTEM = 'm_system'
 /** A safe ref as the card shows it: no control characters, at most 200 characters. */
 const safeRef = (ref: string) => ref.replace(/[\p{Cc}\p{Cf}]/gu, '').slice(0, 200)
 
-/** The write the hub is asked for. A Slack post names the listed channel's id the claim just checked (N13). */
+/**
+ * The write the hub is asked for. A Slack post names the listed channel's id the claim just checked (N13), in the shape
+ * the hub's strict schema takes (hub/connectors/slack/outbox.ts `SlackChannelPostArgsSchema`: `channelId` and `text`).
+ */
 export function writeRequest(row: OutboxActionRow, requestId: string): WriteRequest {
   const args = JSON.parse(row.args_json) as Record<string, unknown>
   const scope = JSON.parse(row.scope_json) as Record<string, string>
   return {
     actionId: row.id, attempt: row.attempt, requestId, accountId: row.account_id, expect: { connectedAtMs: row.account_gen },
     operation: row.operation,
-    args: row.operation === 'slack.channel.post' ? { ...args, channel: scope.channelId } : args,
+    args: row.operation === 'slack.channel.post' ? { channelId: scope.channelId, text: args.text } : args,
   }
 }
 
@@ -213,7 +217,18 @@ export async function sendAction(actionId: string, d: DispatchDeps): Promise<Sen
 
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<{ timeout: true }>(r => { timer = setTimeout(() => r({ timeout: true }), d.timeoutMs ?? timing().hubTimeoutMs) })
-  const settled = call.then(value => ({ value }), (err: unknown) => {
+  // The binding's answer is copied out, then released (shared/rpc-answer.ts): an answer that carried a disposer kept the
+  // call open, and this object then never went idle (so a removed member's socket never finished closing). The hub now
+  // releases its own inner answers; this copy is the backstop. An answer that isn't data (a function or a stub in it) is
+  // logged loud and read as no result: `ResultSchema` then refuses it, a check for a person (`bad_result`).
+  const settled = call.then(value => {
+    try {
+      return { value: plainAnswer(value) as unknown }
+    } catch (err) {
+      console.error({ event: 'outbox_answer_not_data', actionId, attempt: claimed.attempt, error: safeError(err) })
+      return { value: undefined as unknown }
+    }
+  }, (err: unknown) => {
     console.error({ event: 'outbox_send_threw', actionId, attempt: claimed.attempt, error: safeError(err) })
     return { thrown: true as const }
   })

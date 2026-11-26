@@ -63,7 +63,9 @@ jobs:
         run: npm run typecheck
       - if: matrix.shard == 1
         run: npm run lint
-      - if: matrix.shard == 1
+      # The unit suite runs on shard 2: shard 1 also builds and checks the product, test and eval builds, and with the
+      # unit suite it reached the 25-minute limit (21 to 25 minutes against shard 2's 13 to 15, 2026-11-26).
+      - if: matrix.shard == 2
         run: node --version && npm run test:unit
       - run: npm run build
         env:
@@ -223,7 +225,7 @@ jobs:
       - name: Migrations, fresh install
         run: rm -rf .wrangler/test-build && npm run test-build:migrate
       # The deployable-config check must refuse the test build's config (it sets the test flag and test origins).
-      # The script's fixture tests run with test:unit (e2e shard 1). The fast job runs this same step on a fleet PR.
+      # The script's fixture tests run with test:unit (e2e shard 2). The fast job runs this same step on a fleet PR.
       # Its exit codes (AGENTS.md): 0 deployable, 1 refused, 2 usage or a crash. Only 1 counts as refusing here: a crash
       # (2) or any other code fails this step too.
       - name: The config check refuses wrangler.test.jsonc
@@ -359,7 +361,7 @@ jobs:
           docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
             -v "$RUNNER_TEMP/probes:/opt/runner/probes:ro" -e PROBE_GW_PORT=18080 inhouse-runner:ci node /opt/runner/probes/run.mjs
 
-  # A fleet PR's fast checks (phase batching): e2e shard 1's checks and builds without Playwright, and the test-build
+  # A fleet PR's fast checks (phase batching): the e2e shards' checks and builds without Playwright, and the test-build
   # job's fresh-install migrations and config check, in the same image. Left to the push run: every Playwright project
   # (the product project and the test build's api, real and smoke included), the contract suite on the real client and
   # the runner image steps. Its build is the PR's preview build (preview.yml), as e2e's is on a PR into

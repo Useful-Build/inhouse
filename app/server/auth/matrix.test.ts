@@ -351,6 +351,9 @@ const ORACLE: Record<string, readonly [Want, Want, Want, Want, Want, Want, Want]
   'POST /api/actions/:id/answer': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
   'POST /api/actions/:id/undo': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
   'POST /api/actions/:id/resolve': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  // Stage 1 M2-Q, rows 140 and 141: brand people only (the question's `asked_of` decides whose).
+  'GET /api/questions': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
+  'POST /api/questions/:id/answer': ['ok', 'ok', 'no', 'no', 'no', 'no', 'no'],
 }
 const DECISION: Record<Want, ReturnType<typeof checkAccess>> = {
   ok: { ok: true }, obj: { ok: true, objectCheck: 'required' }, no: { refused: 'forbidden' },

@@ -3,11 +3,15 @@
 // - `scope.kind` must be `server` on every method (the runner's `run` scope is refused).
 // - Every argument is parsed; the state's prefix only routes to the right SignIn, the binding is the stored item.
 // - listAccounts gives one row per account id, whatever number of modules name it.
+// - Every SignIn answer is read through `settledAnswer`: copied as plain data and released, never passed on as is (an
+//   answer passed on as is carries its disposer, which keeps the call open until the product's caller, maybe a Durable
+//   Object, disposes it).
 import type { AccountStatus, AccountSummary, CallerScope, HubResult, Instant } from '../index/contract'
 import { err, ok } from '../index/errors'
 import { AccountIdSchema, AuthCodeSchema, CallerScopeSchema, ConnectErrorSchema, ConnectStateSchema, MemberIdSchema } from '../index/schemas'
 import { isMcpConnector, type HubConnector, type Registry } from '../registry/registry'
 import { stateAccount } from './protocol'
+import { settledAnswer } from '../../shared/rpc-answer'
 
 /** The SignIn stub methods the gateway calls. */
 export type ConnectStub = {
@@ -49,7 +53,7 @@ export async function startConnect(deps: ConnectDeps, scope: CallerScope, req: {
   const m = oauthModule(deps, req.accountId)
   if (m === 'unknown') return err('unknown_tool')
   if (m === 'not_configured') return err('not_configured', req.accountId)
-  const r = await deps.signIn(req.accountId).beginConnect({ accountId: req.accountId, memberId: req.memberId })
+  const r = await settledAnswer(deps.signIn(req.accountId).beginConnect({ accountId: req.accountId, memberId: req.memberId }))
   if (!r.ok) return r
   return ok({ authorizeUrl: r.value.authorizeUrl, expiresAt: instant(r.value.expiresAtMs) })
 }
@@ -69,7 +73,7 @@ export async function completeConnect(deps: ConnectDeps, scope: CallerScope, req
   if (!AuthCodeSchema.safeParse(req.code).success) return err('invalid_args', 'code')
   const accountId = routedAccount(deps, req.state)
   if (!accountId) return err('state_invalid')
-  return deps.signIn(accountId).completeConnect({ state: req.state, code: req.code, memberId: req.memberId })
+  return settledAnswer(deps.signIn(accountId).completeConnect({ state: req.state, code: req.code, memberId: req.memberId }))
 }
 
 /** The AS answered `?error=`. Its value is validated and dropped: never echoed, logged or stored. */
@@ -80,7 +84,7 @@ export async function failConnect(deps: ConnectDeps, scope: CallerScope, req: { 
   if (!ConnectErrorSchema.safeParse(req.error).success) return err('invalid_args', 'error')
   const accountId = routedAccount(deps, req.state)
   if (!accountId) return ok({ accountId: null })
-  return deps.signIn(accountId).failConnect({ state: req.state, memberId: req.memberId })
+  return settledAnswer(deps.signIn(accountId).failConnect({ state: req.state, memberId: req.memberId }))
 }
 
 /** OAuth accounts only (OC-W1-8): Shopify's credentials are deployment config with no connect flow to bring it back. */
@@ -90,7 +94,7 @@ export async function disconnect(deps: ConnectDeps, scope: CallerScope, accountI
   const mods = modulesFor(deps, accountId)
   if (mods.length === 0) return err('unknown_tool')
   if (!mods.some(isMcpConnector)) return err('invalid_args', 'accountId')
-  const r = await deps.signIn(accountId).disconnect(accountId)
+  const r = await settledAnswer(deps.signIn(accountId).disconnect(accountId))
   if (!r.ok) return r
   return ok({ revoked: r.value.revoked === true })
 }
@@ -100,7 +104,7 @@ export async function setPaused(deps: ConnectDeps, scope: CallerScope, accountId
   if (!AccountIdSchema.safeParse(accountId).success) return err('invalid_args', 'accountId')
   if (typeof paused !== 'boolean') return err('invalid_args', 'paused')
   if (modulesFor(deps, accountId).length === 0) return err('unknown_tool')
-  return deps.signIn(accountId).setPaused(accountId, paused)
+  return settledAnswer(deps.signIn(accountId).setPaused(accountId, paused))
 }
 
 export async function listAccounts(deps: ConnectDeps, scope: CallerScope): Promise<HubResult<AccountSummary[]>> {
@@ -109,7 +113,7 @@ export async function listAccounts(deps: ConnectDeps, scope: CallerScope): Promi
   for (const m of deps.registry.modules) if (!first.has(m.accountId)) first.set(m.accountId, m)
   const rows: AccountSummary[] = []
   for (const [accountId, m] of first) {
-    const status = await deps.signIn(accountId).status(accountId)
+    const status = await settledAnswer(deps.signIn(accountId).status(accountId))
     if (!status.ok) return status
     const configured = modulesFor(deps, accountId).some(x => deps.isConfigured(x))
     rows.push({ accountId, connector: m.id, configured, status: status.value })

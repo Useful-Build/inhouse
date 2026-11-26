@@ -67,6 +67,9 @@ import type { PermissionStore } from '../permissions/grants.ts'
 // Stage 1 M2-B's slot.
 import { outboxStore } from '../outbox/store.ts'
 import type { OutboxApiStore } from '../outbox/store.ts'
+// Stage 1 M2-Q's slot.
+import { questionStore } from '../questions/store.ts'
+import type { QuestionStore } from '../questions/store.ts'
 
 export interface Stores extends AuthStores {
   members: MemberDirectory & MemberStore
@@ -130,6 +133,8 @@ export interface Stores extends AuthStores {
 
   /** Stage 1 M2-B: the outbox's cards and a person's answers, Undo and resolve (routes 120 to 124). */
   outbox: OutboxApiStore
+  /** Stage 1 M2-Q: questions the agent asked (routes 140 and 141). */
+  questions: QuestionStore
 }
 
 /** What the stores read from the Worker's env. `AUDIT_HASH_KEY` is a secret on the product Worker (a var in the test build). */
@@ -213,5 +218,6 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
     permissions: permissionStore({ db, hook }),
 
     outbox: outboxStore({ db, hook }),
+    questions: questionStore({ db }),
   }
 }

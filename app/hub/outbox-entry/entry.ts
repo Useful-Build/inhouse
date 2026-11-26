@@ -14,7 +14,7 @@ import { SHOPIFY_WRITE_SIGNIN_ACCOUNT } from '../connectors/shopify/write/provid
 import type { HubWriteEnv } from '../connectors/shopify/write/signin'
 import { postSlackOutboxAction, type SlackOutboxStub } from '../connectors/slack/outbox'
 import { SLACK_ACCOUNT } from '../connectors/slack/post'
-import { runWriteAction, type WriteGatewayDeps } from './gateway'
+import { orderTagAddVia, runWriteAction, type WriteGatewayDeps } from './gateway'
 
 export class WriteGateway extends WorkerEntrypoint<Env> implements WriteApi {
   #deps(): WriteGatewayDeps {
@@ -24,7 +24,7 @@ export class WriteGateway extends WorkerEntrypoint<Env> implements WriteApi {
         shopifyOrderTagAdd: async input => {
           const ns = hubEnv.SHOPIFY_WRITE_SIGNIN
           const stub = ns.get(ns.idFromName(SHOPIFY_WRITE_SIGNIN_ACCOUNT))
-          return (await stub.orderTagAdd(input)) as WriteResult
+          return orderTagAddVia(stub, input)
         },
         slackChannelPost: input =>
           postSlackOutboxAction(signInFor(this.env, SLACK_ACCOUNT) as unknown as SlackOutboxStub, input),

@@ -5,6 +5,7 @@
 // Docs read 2026-11-20: SQLite storage API (ctx.storage.kv, transactionSync), Alarms, Durable Objects rules, lifecycle.
 import { DurableObject } from 'cloudflare:workers'
 import { safeError } from '../../server/safe-error'
+import { settledAnswer } from '../../shared/rpc-answer'
 import { connectors } from '../connectors/index'
 import type { HubResult } from '../index/contract'
 import { err } from '../index/errors'
@@ -134,7 +135,8 @@ export const signInFor = (env: Env, accountId: string) => env.SIGNIN.get(env.SIG
 
 /**
  * The ReadGateway's deps with readiness and the MCP proxy (P5 W1). index.ts's ReadGateway uses these through the
- * orchestrator's wiring line: `listReadyTools(await readyGatewayDeps(this.env))`, `callReadyTool(...)`.
+ * orchestrator's wiring line: `listReadyTools(await readyGatewayDeps(this.env))`, `callReadyTool(...)`. Every SignIn
+ * answer is read as plain data and released (`settledAnswer`), so a tool's answer never passes one on as is.
  */
 export async function readyGatewayDeps(env: Env, testShop: string | null = null): Promise<ReadyGatewayDeps> {
   const [registry, record] = await Promise.all([loadRegistry(env), envRecord(env)])
@@ -148,8 +150,8 @@ export async function readyGatewayDeps(env: Env, testShop: string | null = null)
         const version = apiVersion ?? (isMcpConnector(c) ? undefined : c.apiVersion)
         if (!version) return err('invalid_args', 'apiVersion')
         const query = { accountId: c.accountId, document, variables, apiVersion: version }
-        if (testShop === null) return (await signInFor(env, c.accountId).query(query)) as HubResult<{ data: unknown }>
-        return (await env.SIGNIN.get(env.SIGNIN.idFromName(signInName(c.accountId, testShop))).query({ ...query, testShop })) as HubResult<{ data: unknown }>
+        if (testShop === null) return (await settledAnswer(signInFor(env, c.accountId).query(query))) as HubResult<{ data: unknown }>
+        return (await settledAnswer(env.SIGNIN.get(env.SIGNIN.idFromName(signInName(c.accountId, testShop))).query({ ...query, testShop }))) as HubResult<{ data: unknown }>
       },
     }),
     nowMs: () => Date.now(),
@@ -158,11 +160,11 @@ export async function readyGatewayDeps(env: Env, testShop: string | null = null)
     isReady: async accountId => {
       const shopify = testShop !== null && registry.modules.some(c => c.accountId === accountId && !isMcpConnector(c))
       const stub = shopify ? env.SIGNIN.get(env.SIGNIN.idFromName(signInName(accountId, testShop))) : signInFor(env, accountId)
-      const r = await stub.ready(accountId)
+      const r = await settledAnswer(stub.ready(accountId))
       return r.ok ? r.value : { ready: false, code: 'not_configured' }
     },
     mcpFor: (c: McpConnectorModule): McpClient => ({
-      call: async (upstream, args) => (await signInFor(env, c.accountId).mcpCall({ accountId: c.accountId, upstream, args })) as never,
+      call: async (upstream, args) => (await settledAnswer(signInFor(env, c.accountId).mcpCall({ accountId: c.accountId, upstream, args }))) as never,
     }),
   }
 }

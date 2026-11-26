@@ -36,6 +36,8 @@ export interface Guard {
     | 'team_requests'
     // P6a brand skills (0471_brand_skills.sql).
     | 'brand_skills'
+    // Stage 1 M2-Q (0740_questions.sql).
+    | 'questions'
   where: string
   params: readonly SqlValue[]
   stamp: string

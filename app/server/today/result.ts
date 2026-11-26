@@ -12,6 +12,7 @@ import { itemId } from './ids.ts'
 import { normaliseResult } from './normalise.ts'
 import type { Normalised } from './normalise.ts'
 import { fixedWords, incompleteSummary, thingsWords } from './words.ts'
+import { plainAnswer } from '../../shared/rpc-answer.ts'
 
 /** The hub's connector name for a Shopify store (`ToolInfo.connector`). */
 export const SHOPIFY = 'shopify'
@@ -47,7 +48,8 @@ export async function morningCheck(slot: EndSlot, end: Parameters<ResultHandler[
   if (slot.state === 'ended') return { statements: [], summary: null }
   // 0. Is a store connected? Only a hub that says it isn't configured, or lists no Shopify tool, counts: any other hub
   // error throws, so the end is retried instead of recording a wrong cause.
-  const tools = await ctx.hub.listTools({ kind: 'server', job: JOB, requestId: await hashId('mc_', slot.slot_key) })
+  // Copied and released at once (shared/rpc-answer.ts), a backstop: this runs inside BrandAgent (routine-end).
+  const tools = plainAnswer(await ctx.hub.listTools({ kind: 'server', job: JOB, requestId: await hashId('mc_', slot.slot_key) }))
   if (!tools.ok) {
     if (tools.error.code !== 'not_configured') throw new Error(`morning check: the hub's tool list failed (${tools.error.code})`)
     return none("Shopify isn't connected", 'not_connected')
