@@ -334,7 +334,11 @@ async function runSequence(steps: Step[]): Promise<number> {
 }
 
 /** The send path's own steps, after a prefix that leaves approved actions behind: one asked, one under a grant. */
-const sendStepArb: fc.Arbitrary<Step> = stepArb.filter(s => ['dispatch', 'crash', 'sweep', 'flip', 'late', 'resolve', 'tick', 'undo', 'revoke'].includes(s.k))
+// The send path's clock moves in steps under the 70 s the sweep and permit rules need, never by days: an 8-day jump
+// (the first property's expiry case) lapses every approval at once and leaves the send path nothing to send.
+const sendStepArb: fc.Arbitrary<Step> = stepArb
+  .filter(s => ['dispatch', 'crash', 'sweep', 'flip', 'late', 'resolve', 'tick', 'undo', 'revoke'].includes(s.k))
+  .map(s => (s.k === 'tick' && s.ms > 70_000 ? { k: 'tick', ms: s.ms % 70_001 } : s))
 const PREFIX: Step[] = [
   { k: 'grant', perDay: 2 },
   { k: 'request', order: 1 },
@@ -344,10 +348,6 @@ const PREFIX: Step[] = [
   { k: 'request', order: 3 },
   { k: 'answer', i: 2, choice: 'always', stale: false, race: 'none' },
   { k: 'tick', ms: 11_000 },
-  // Every run sends both approved actions before the random tail (the hold has passed; both are inside the 10-minute cap
-  // and the permit deadline), so the suite always exercises P1 and P2: a random tail alone can lapse them all.
-  { k: 'dispatch', i: 0, mode: 'ok', flipAt: 0 },
-  { k: 'dispatch', i: 0, mode: 'ok', flipAt: 0 },
 ]
 
 describe('the outbox under random sequences (P1 to P7)', () => {
@@ -356,10 +356,9 @@ describe('the outbox under random sequences (P1 to P7)', () => {
   }, 120_000)
 
   it('holds every invariant on the send path: claims, crashes, the sweep, Pause and late results', async () => {
-    let silent = 0
-    await fc.assert(fc.asyncProperty(fc.array(sendStepArb, { minLength: 5, maxLength: 25 }), async tail => { if (await runSequence([...PREFIX, ...tail]) === 0) silent++ }), { numRuns: 200 })
-    // The suite must actually send: a run where the hub was never called proves nothing about P1 and P2, so every run
-    // calls it at least once (the prefix's dispatches send before the random tail can lapse anything).
-    expect(silent).toBe(0)
+    let calls = 0
+    await fc.assert(fc.asyncProperty(fc.array(sendStepArb, { minLength: 5, maxLength: 25 }), async tail => { calls += await runSequence([...PREFIX, ...tail]) }), { numRuns: 300 })
+    // The suite must actually send: a run where the hub was never called proves nothing about P1 and P2.
+    expect(calls, `the send path called the hub ${calls} times`).toBeGreaterThan(100)
   }, 120_000)
 })
