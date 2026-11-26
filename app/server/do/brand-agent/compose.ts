@@ -17,6 +17,7 @@ import { createLagTable, outboxPauseHook } from '../../outbox/gate.ts'
 import type { AsksDeps } from './asks.ts'
 import { outboxNotifier } from '../../outbox/notify.ts'
 import { JOB_TEXTS } from '../../prompt/job.ts'
+import { ACTION_TEXTS } from '../../prompt/actions.ts'
 import { questionHook } from '../../questions/ask.ts'
 import { QUESTIONS_ON } from '../../questions/switch.ts'
 
@@ -109,11 +110,12 @@ export function jobDeps(env: Env): JobDeps {
 }
 
 // ---------- M2-D's anchor (Stage 1, N14): the asks' ports ----------
-// `texts` stays null until M2-G wires the action texts (N20): while it is null no resume turn is ever sent.
+// M2-G wired the action texts (N20, prompt/actions.ts): with them an action's result that comes after the asking turn
+// ended is sent into the chat as one resume turn.
 
 export function asksDeps(env: Env): AsksDeps {
   return {
-    texts: null,
+    texts: ACTION_TEXTS,
     settings: jobDeps(env).settings,
   }
 }
