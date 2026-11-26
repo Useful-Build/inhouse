@@ -3,7 +3,8 @@
 // The calls are the BrandAgent's (`model_calls`, W1), so the sweep reads them through `TurnCallsReader` (turn-calls.ts,
 // wired at the registry, do/brand-agent/tasks/index.ts). A turn the reader answers null for is not settled (a money close
 // books only what it can prove): the pass logs it and the held budget stays visible to the `usage_stranded` signal
-// (signal.ts). Idempotent by task id: settle is `final = 0` guarded.
+// (signal.ts). Replay uses the same `final = 0` settlement as a live turn: one batch moves the month and any linked
+// job, even if that job has closed. The sweep never tries to acquire a new hold.
 import type { DueTask, Scheduler, TaskContext, TaskHandler, TaskResult } from '../do/brand-agent/scheduler.ts'
 import { RUN_TOKEN_TTL_MS } from '../do/brand-agent/tokens.ts'
 import { createUsageLedger } from './ledger.ts'

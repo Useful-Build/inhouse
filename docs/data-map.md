@@ -28,6 +28,7 @@ The block below is generated from the table registry (`app/ops/tables`) by `data
 | `chat_files` | D1 table | Chat attachments and outputs | File names, uploader id | With its chat; an output deleted from the Library goes 30 days after | Yes | Deleted with the person's chats | Nightly, copied in pages (may lag the snapshot by minutes) |  |
 | `files/` | R2 prefix | Chat file bytes | File bytes | With its chat or its deleted file | Yes | Deleted with the person's chats | Not backed up (kept through a database restore) |  |
 | `usage_months` | D1 table | Monthly AI spend and cap | None | Kept while the deployment lives | Yes | Kept: no personal data | Nightly, exact |  |
+| `usage_jobs` | D1 table | Each job's budget and its spend across its turns | None | Kept while the deployment lives | No | Kept: no personal data | Nightly, copied in pages (may lag the snapshot by minutes) |  |
 | `usage_turns` | D1 table | Each turn's reserved and settled spend | Member id | Kept while the deployment lives | Yes | Kept: the brand's bill keeps the member id, which no longer names anyone | Nightly, copied in pages (may lag the snapshot by minutes) |  |
 | `usage_extends` | D1 table | Each model call's hold and cost | None | Kept while the deployment lives | No | Kept: no personal data | Nightly, copied in pages (may lag the snapshot by minutes) |  |
 | `audit_copy_state` | D1 table | Where the audit log's daily copy has reached | None | Kept while the deployment lives | No | Kept: no personal data | Nightly, exact |  |

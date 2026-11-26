@@ -10,7 +10,7 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 import { createUsageLedger } from './ledger.ts'
-import { MONTH, NOV, lossyDb, monthRow, resetUsage, turnIn } from './test-fixtures.ts'
+import { MONTH, NOV, db, lossyDb, monthRow, resetUsage, setSetting, turnIn } from './test-fixtures.ts'
 
 const START = 250_000
 const UNIT = 50_000
@@ -151,6 +151,160 @@ describe('the ledger under generated histories', () => {
       const ran = drivers.reduce((s, d) => s + d.tally, 0)
       expect((await monthRow(MONTH))?.spent_micro ?? 0).toBe(ran)
       expect((await monthRow(MONTH))?.reserved_micro ?? 0).toBe(0)
+    }), { numRuns: 40 })
+  }, 300_000)
+
+
+  // Job budgets (N5): two jobs and turns with no job share one month. Ops are generated and interleaved (several extends
+  // per turn, closes, settles, releases, closeJob at any point), each request's reply may be lost (then retried) or sent
+  // twice. The reference model keeps the month and each job as plain numbers and predicts every answer, refusal codes
+  // included. Ways it can fail: a job's spent + reserved passing its budget, the month cap passing, `job_budget` and
+  // `cap_reached` and `budget_busy`/`held` confused, a closed job taking a hold, the root counted twice or not at all
+  // (settled before or after openJob), a retry moving either pool twice.
+  it('charges each root once and keeps both pools under their limits through generated job histories', async () => {
+    const SONNET_CEILING = CEILING['claude-sonnet-5-5']
+    const jobArb = fc.record({ budgetUnits: fc.integer({ min: 5, max: 60 }), finalRoot: fc.boolean(), rootCost: fc.integer({ min: 0, max: START }) })
+    const opArb = fc.record({
+      kind: fc.constantFrom('reserve', 'reserve', 'extend', 'extend', 'extend', 'close', 'close', 'settle', 'release', 'closeJob'),
+      job: fc.nat(2), turn: fc.nat(2), units: fc.integer({ min: 1, max: 20 }), cost: fc.nat(100), lose: fc.boolean(), dup: fc.boolean(),
+    })
+    const arb = fc.record({ capDollars: fc.integer({ min: 1, max: 4 }), jobs: fc.tuple(jobArb, jobArb), ops: fc.array(opArb, { minLength: 10, maxLength: 40 }) })
+    await fc.assert(fc.asyncProperty(arb, async h => {
+      await resetUsage(`$${h.capDollars}`)
+      const cap = h.capDollars * 1_000_000
+      const lossy = lossyDb()
+      const ledger = createUsageLedger({ db: lossy.db })
+      const send = async <T>(o: { lose: boolean; dup: boolean }, f: () => Promise<T>): Promise<T> => {
+        if (o.lose) {
+          lossy.loseNext()
+          await expect(f()).rejects.toThrow()
+        }
+        const a = await f()
+        if (o.dup) expect(await f()).toEqual(a)
+        return a
+      }
+
+      // Job 2 stands for "no job": its turns charge the month only.
+      type Turn = { id: string; job: number; phase: 'new' | 'open' | 'done'; hold: number; tally: number; calls: { id: string; need: number }[]; n: number }
+      const turns: Turn[] = [0, 1, 2].flatMap(job => [0, 1, 2].map(i => ({ id: `j${job}t${i}`, job, phase: 'new' as const, hold: 0, tally: 0, calls: [], n: 0 })))
+      const turnOf = (job: number, i: number) => turns[job * 3 + i]
+      const jobs = h.jobs.map((j, i) => ({ id: `job${i}`, budget: j.budgetUnits * UNIT, state: 'open' as 'open' | 'closed', spent: 0 }))
+      let spent = 0
+      let opened = 0
+      const open = (job?: number) => turns.filter(t => t.phase === 'open' && (job === undefined || t.job === job))
+      const reserved = (job?: number) => open(job).reduce((s, t) => s + t.hold, 0)
+      const book = (t: Turn) => {
+        spent += t.tally
+        if (t.job < 2) jobs[t.job].spent += t.tally
+        t.phase = 'done'
+        t.hold = 0
+      }
+
+      const check = async () => {
+        expect(await monthRow(MONTH)).toMatchObject({ spent_micro: spent, reserved_micro: reserved() })
+        expect(spent + reserved()).toBeLessThanOrEqual(cap)
+        for (const [i, j] of jobs.slice(0, opened).entries()) {
+          expect(await db.prepare('SELECT budget_micro, state, spent_micro, reserved_micro FROM usage_jobs WHERE job_id = ?').bind(j.id).first())
+            .toEqual({ budget_micro: j.budget, state: j.state, spent_micro: j.spent, reserved_micro: reserved(i) })
+          expect(j.spent + reserved(i)).toBeLessThanOrEqual(j.budget)
+        }
+      }
+
+      // Each job's root: reserved with no job, maybe settled, then opened (twice, the second a no-op) under its budget.
+      for (const [i, j] of h.jobs.entries()) {
+        const root = turnOf(i, 0)
+        expect(await ledger.reserve(turnIn(root.id))).toEqual({ reservedMicro: START })
+        root.phase = 'open'
+        root.hold = START
+        if (j.finalRoot) {
+          await ledger.settle(root.id, j.rootCost, NOV)
+          root.tally = j.rootCost
+          spent += j.rootCost
+          root.phase = 'done'
+          root.hold = 0
+          jobs[i].spent = j.rootCost
+        }
+        await setSetting('s:job_cap', `$${(jobs[i].budget / 1_000_000).toFixed(2)}`)
+        const input = { jobId: jobs[i].id, rootTurnId: root.id, nowMs: NOV }
+        await send({ lose: j.finalRoot, dup: true }, () => ledger.openJob(input))
+        opened++
+        await check()
+      }
+
+      for (const o of h.ops) {
+        const t = turnOf(o.job, o.turn)
+        const job = o.job < 2 ? jobs[o.job] : null
+        const jobId = job === null ? {} : { jobId: job.id }
+        if (o.kind === 'closeJob') {
+          if (!job) continue
+          await send(o, () => ledger.closeJob(job.id))
+          job.state = 'closed'
+        } else if (o.kind === 'reserve' && t.phase === 'new') {
+          const monthFree = cap - spent - reserved()
+          const jobFree = job ? job.budget - job.spent - reserved(o.job) : Infinity
+          const answer = await send(o, () => ledger.reserve({ ...turnIn(t.id), ...jobId }))
+          if (job && (job.state === 'closed' || job.budget - job.spent < START)) expect(answer).toEqual({ refused: 'job_budget' })
+          else if (monthFree >= START && jobFree >= START) {
+            expect(answer).toEqual({ reservedMicro: START })
+            t.phase = 'open'
+            t.hold = START
+          } else expect(answer).toEqual({ refused: cap - spent < START ? 'cap_reached' : 'budget_busy' })
+        } else if (o.kind === 'reserve' && t.phase === 'open') {
+          // A repeat for an open turn is answered from its row.
+          expect(await send(o, () => ledger.reserve({ ...turnIn(t.id), ...jobId }))).toEqual({ reservedMicro: t.hold })
+        } else if (o.kind === 'extend' && t.phase === 'open') {
+          const need = o.units * UNIT
+          const callId = `c${t.n++}`
+          const monthFree = cap - spent - reserved()
+          const jobOk = !job || (job.state === 'open' && job.budget - job.spent - reserved(o.job) >= need)
+          const answer = await send(o, () => ledger.extend(t.id, callId, need))
+          if (monthFree >= need && t.hold + need <= SONNET_CEILING && jobOk) {
+            expect(answer).toEqual({ ok: true, ledgerHold: t.hold + need })
+            t.hold += need
+            t.calls.push({ id: callId, need })
+          } else {
+            const refused = job && (job.state === 'closed' || job.budget - job.spent - t.hold < need) ? 'job_budget'
+              : cap - spent - t.hold < need ? 'cap_reached'
+                : t.hold + need > SONNET_CEILING ? 'turn_budget' : 'held'
+            expect(answer).toEqual({ refused, ledgerHold: t.hold })
+          }
+        } else if (o.kind === 'close' && t.phase === 'open' && t.calls.length > 0) {
+          const call = t.calls.shift()!
+          const actual = Math.floor(call.need * o.cost / 100)
+          t.tally += actual
+          const holdArg = Math.max(START, t.tally + t.calls.reduce((s, c) => s + c.need, 0))
+          expect(await send(o, () => ledger.close(t.id, call.id, actual, holdArg))).toEqual({ ledgerHold: Math.min(holdArg, t.hold) })
+          t.hold = Math.min(holdArg, t.hold)
+        } else if ((o.kind === 'settle' || o.kind === 'release') && t.phase === 'open' && t.calls.length === 0) {
+          // Release books the closed calls' actuals, which is the tally: both end the turn at the same spend.
+          await send(o, () => (o.kind === 'settle' ? ledger.settle(t.id, t.tally, NOV) : ledger.release(t.id, NOV)))
+          book(t)
+        } else continue
+        await check()
+      }
+
+      // Then both jobs close and every open turn drains: a closed job takes no hold, and its turns still book.
+      for (const j of jobs) {
+        await ledger.closeJob(j.id)
+        j.state = 'closed'
+        expect(await ledger.reserve({ ...turnIn(`late-${j.id}`), jobId: j.id })).toEqual({ refused: 'job_budget' })
+      }
+      for (const t of open()) {
+        if (t.job < 2) expect(await ledger.extend(t.id, 'after-close', UNIT)).toEqual({ refused: 'job_budget', ledgerHold: t.hold })
+        for (let call = t.calls.shift(); call; call = t.calls.shift()) {
+          t.tally += call.need
+          const holdArg = Math.max(START, t.tally + t.calls.reduce((s, c) => s + c.need, 0))
+          expect(await ledger.close(t.id, call.id, call.need, holdArg)).toEqual({ ledgerHold: Math.min(holdArg, t.hold) })
+          t.hold = Math.min(holdArg, t.hold)
+        }
+        await ledger.settle(t.id, t.tally, NOV)
+        book(t)
+        await check()
+      }
+      // Each root counts exactly once, settled before or after its job opened: spent is every turn's tally, once.
+      expect(spent).toBe(turns.reduce((s, t) => s + t.tally, 0))
+      for (const [i, j] of jobs.entries()) expect(j.spent).toBe(turns.filter(t => t.job === i).reduce((s, t) => s + t.tally, 0))
+      expect(await monthRow(MONTH)).toMatchObject({ spent_micro: spent, reserved_micro: 0 })
     }), { numRuns: 40 })
   }, 300_000)
 })
