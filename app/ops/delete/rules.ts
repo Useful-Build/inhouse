@@ -62,6 +62,7 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   Runner: { action: 'keep', why: 'holds nothing of a person\'s (p3-design section 11)' },
   // P3 W4: the ledger is the brand's bill.
   usage_months: { action: 'keep', why: 'no person data: the brand\'s monthly bill' },
+  usage_jobs: { action: 'keep', why: 'no person keys: the brand\'s job budget and cost' },
   usage_turns: { action: 'keep', why: 'the brand\'s bill: member_id is pseudonymous once the member row is', kept: ['member_id'] },
   usage_extends: { action: 'keep', why: 'no person data: a call\'s hold and cost, keyed by its turn' },
   audit_copy_state: { action: 'keep', why: 'no person data: the audit copy\'s cursor' },
