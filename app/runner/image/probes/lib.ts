@@ -6,6 +6,7 @@
 // Each scripted turn is built when its request arrives, so a probe can name a pid or path only known once the run is up.
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { createScriptedModel, type MessagesRequest, type ScriptedTurn } from '../../../test/scripted-model/index.ts'
 
 export const PROBE_MODEL = 'claude-sonnet-5-5'
@@ -98,22 +99,44 @@ export function runCommand(cmd: string, args: string[], opts: { uid?: number; gi
 // Scripted runs
 
 export type Step = { tool: string; input: Record<string, unknown> }
-/** A run's script: each step is a tool call (built when its turn is asked for), then one closing answer. */
-/** `mcp20`: the run's `inhouse` server (through the root's proxy, as production wires it) serves the 20 tools. */
-export type Script = { steps: (() => Step)[]; finalText?: string; mcp20?: boolean }
+/**
+ * A helper's script (Stage 1, N6), keyed by a marker its definition's prompt carries (`helperMarker(key)`): every
+ * conversation whose system prompt holds the marker is answered from it, turn by turn, each with its own tool ids.
+ * `hold` runs before a conversation's first answer (the concurrency probe holds helpers open with it).
+ */
+export type HelperScript = { steps: (() => Step | Step[])[]; finalText?: string; hold?: (state: ScriptState) => Promise<void> }
+/**
+ * A run's script: each step is a tool call, or several in one turn (built when its turn is asked for), then one closing
+ * answer. `mcp20`: the run's `inhouse` server (through the root's proxy, as production wires it) serves the 20 tools.
+ * `helpers`: the helpers' scripts, by marker key. `resumed`: the run resumes a session, so its conversation already holds
+ * the earlier runs' turns; the script counts its steps from the first turn this run is asked for.
+ */
+export type Script = { steps: (() => Step | Step[])[]; finalText?: string; mcp20?: boolean; helpers?: Record<string, HelperScript>; resumed?: boolean }
 export type ToolResult = { text: string; isError: boolean }
+/** The marker a helper's prompt carries so the probe's model knows which script answers it. */
+export const helperMarker = (key: string) => `PROBE-HELPER-${key}`
+/** One model request a helper made: which script, which conversation (by its first message), what it asked with. */
+export type HelperRequest = { key: string; conv: string; turn: number; model: string; tools: string[]; at: number; answeredAt?: number }
 
 export type ScriptState = {
   script: Script
   /** The tool call ids, in step order. */
   ids: string[]
   results: Map<string, ToolResult>
-  /** Every model request body that came in, for checks on what the CLI sent. */
+  /** Every model request body that came in, for checks on what the CLI sent (the main agent's; helpers' in `helperLog`). */
   requests: MessagesRequest[]
+  /** The helpers' model requests, in arrival order. */
+  helperLog: HelperRequest[]
+  /** The tool call ids each helper conversation was given, by `<key>:<conv>`, in step order (a step's calls in order). */
+  helperIds: Map<string, string[]>
+  /** The audit entries the root posted, as posted (protocol v4: with `agentId` and `inputSha256`). */
+  auditEntries: { toolName: string; toolUseId?: string; decision: string; agentId?: string | null; inputSha256?: string }[]
   misses: string[]
   /** Protocol v2: the run's events as the root pushed them to `/events/` (deduped by seq), and audit posts taken. */
   pushed: { seq: number; type: string; [k: string]: unknown }[]
   audits: number
+  /** A resumed run's first main turn number (the earlier runs' assistant turns before it). */
+  base?: number
   /** Resolves once the run's `released` came in. */
   released: Promise<void>
   onReleased: () => void
@@ -124,8 +147,34 @@ export function newScript(script: Script): ScriptState {
   const n = scriptCount++
   let onReleased!: () => void
   const released = new Promise<void>((r) => (onReleased = r))
-  return { script, ids: script.steps.map((_, i) => `toolu_probe${n}x${i}`), results: new Map(), requests: [], misses: [], pushed: [], audits: 0, released, onReleased }
+  return {
+    script,
+    ids: script.steps.map((_, i) => `toolu_probe${n}x${i}`),
+    results: new Map(),
+    requests: [],
+    helperLog: [],
+    helperIds: new Map(),
+    auditEntries: [],
+    misses: [],
+    pushed: [],
+    audits: 0,
+    released,
+    onReleased,
+  }
 }
+
+/**
+ * The tool calls of one scripted turn: a one-call step's id is the step's own; a several-call step's are the step's id
+ * with `c<j>` after it. No id of one turn starts with another's: the CLI pairs parallel calls with their results in a way
+ * that loses a result when one id is a prefix of another (`x0` and `x0_1`, seen on CLI 2.1.328).
+ */
+function callsOf(step: Step | Step[], id: string): { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }[] {
+  if (!Array.isArray(step)) return [{ type: 'tool_use' as const, id, name: step.tool, input: step.input }]
+  return step.map((s, j) => ({ type: 'tool_use' as const, id: `${id}c${j}`, name: s.tool, input: s.input }))
+}
+
+/** The id of call `j` of a several-call step `i` (`callsOf`). A one-call step's id is `state.ids[i]`. */
+export const callId = (state: ScriptState, i: number, j: number) => `${state.ids[i]!}c${j}`
 
 function resultText(content: unknown): string {
   if (typeof content === 'string') return content
@@ -144,21 +193,46 @@ export async function answerModel(state: ScriptState, request: Request): Promise
       if (b?.type === 'tool_result' && typeof b.tool_use_id === 'string') state.results.set(b.tool_use_id, { text: resultText(b.content), isError: b.is_error === true })
     }
   }
-  const turns: (ScriptedTurn | null)[] = []
   const mainLoop = (r: MessagesRequest) => Array.isArray(r.tools) && r.tools.length > 0
   const turn = body.messages?.filter((m) => m.role === 'assistant').length ?? 0
-  for (let i = 0; i <= state.script.steps.length; i++) {
-    if (i !== turn) {
-      turns.push(null)
-      continue
-    }
-    if (i < state.script.steps.length) {
-      const step = state.script.steps[i]!()
-      turns.push({ content: [{ type: 'tool_use', id: state.ids[i]!, name: step.tool, input: step.input }], expect: mainLoop })
-    } else turns.push({ content: [{ type: 'text', text: state.script.finalText ?? 'Done.' }], expect: mainLoop })
+  const system = JSON.stringify((body as { system?: unknown }).system ?? '')
+  const helper = Object.entries(state.script.helpers ?? {}).find(([key]) => system.includes(helperMarker(key)))
+  if (helper) {
+    const [key, script] = helper
+    // A helper conversation is known by its first message (the task the main agent gave it), so each one it starts gets
+    // its own tool ids.
+    const conv = createHash('sha256').update(JSON.stringify(body.messages?.[0] ?? null)).digest('hex').slice(0, 10)
+    state.requests.pop()
+    const logged: HelperRequest = { key, conv, turn, model: String(body.model), tools: (Array.isArray(body.tools) ? body.tools : []).map((t) => String((t as { name?: unknown }).name)), at: Date.now() }
+    state.helperLog.push(logged)
+    if (turn === 0 && script.hold) await script.hold(state)
+    // When the answer goes back: a helper is running from its first request until its last answer.
+    logged.answeredAt = Date.now()
+    const base = `toolu_h${key}${conv}`
+    const ids = script.steps.map((_, i) => `${base}x${i}`)
+    const steps = script.steps.map((s, i) => (i === turn ? callsOf(s(), ids[i]!) : null))
+    const made = steps.flatMap((c) => c ?? []).map((c) => c.id)
+    state.helperIds.set(`${key}:${conv}`, [...(state.helperIds.get(`${key}:${conv}`) ?? []), ...made])
+    // Its own scenario name: the scripted model's message ids come from it, and the CLI keeps one message per id, so two
+    // helpers answered under one name would lose all but one of their answers.
+    return replyWith(state, request, turn, turn, steps, script.finalText, mainLoop, `h_${key}_${conv}`)
   }
-  const model = createScriptedModel({ s: { turns } })
-  const res = await model.handle(request, 's')
+  const own = state.script.resumed ? turn - (state.base ??= turn) : turn
+  const steps = state.script.steps.map((s, i) => (i === own ? callsOf(s(), state.ids[i]!) : null))
+  return replyWith(state, request, turn, own, steps, state.script.finalText, mainLoop)
+}
+
+/**
+ * The scripted answer for the script's step `own`: its calls, or the closing text once the steps are done (past them,
+ * the request is a miss). The scripted model reads the request's own turn (`at`, its assistant messages so far), so the
+ * answer sits there; a resumed run's `own` is `at` less the earlier runs' turns.
+ */
+async function replyWith(state: ScriptState, request: Request, at: number, own: number, steps: (ReturnType<typeof callsOf> | null)[], finalText: string | undefined, expect: (r: MessagesRequest) => boolean, scenario = 's'): Promise<Response> {
+  const turns: (ScriptedTurn | null)[] = Array.from({ length: at }, () => null)
+  if (own < steps.length) turns.push({ content: steps[own]!, expect })
+  else if (own === steps.length) turns.push({ content: [{ type: 'text', text: finalText ?? 'Done.' }], expect })
+  const model = createScriptedModel({ [scenario]: { turns } })
+  const res = await model.handle(request, scenario)
   for (const m of model.misses) state.misses.push(`turn ${m.turn}: ${m.reason}`)
   return res
 }
@@ -173,6 +247,10 @@ export type Egress = {
   byDirect: Map<string, ScriptState>
   /** Every MCP method the stub was asked for. */
   mcpCalls: string[]
+  /** Every MCP method asked of the `/actions/` route. */
+  actionsCalls: string[]
+  /** Every MCP `tools/call` any route got, with the arguments as they arrived. */
+  toolCalls: { route: string; name: string; arguments: unknown }[]
   /** Calls the egress refused (an unknown token). */
   refused: string[]
   close(): Promise<void>
@@ -197,9 +275,14 @@ function mcp(calls: string[], message: { jsonrpc?: string; id?: unknown; method?
     case 'ping':
       return ok({})
     case 'tools/list':
-      return ok({ tools: [{ name: 'probe_ping', description: 'Probe tool: answers pong.', inputSchema: { type: 'object', properties: {} } }] })
+      return ok({
+        tools: [
+          { name: 'probe_ping', description: 'Probe tool: answers pong.', inputSchema: { type: 'object', properties: {} } },
+          { name: SLOW_TOOL, description: `Probe tool: answers after ${SLOW_TOOL_MS / 1000} s.`, inputSchema: { type: 'object', properties: {} } },
+        ],
+      })
     case 'tools/call':
-      return ok({ content: [{ type: 'text', text: 'pong' }] })
+      return ok({ content: [{ type: 'text', text: (message.params as { name?: string } | undefined)?.name === SLOW_TOOL ? SLOW_TOOL_ANSWER : 'pong' }] })
     case 'resources/list':
       return ok({ resources: [{ uri: 'inhouse://probe/one', name: 'one', description: 'The probe resource', mimeType: 'text/plain' }] })
     case 'resources/templates/list':
@@ -212,6 +295,11 @@ function mcp(calls: string[], message: { jsonrpc?: string; id?: unknown; method?
       return { jsonrpc: '2.0', id: message.id, error: { code: -32601, message: `no method ${message.method}` } }
   }
 }
+
+/** The stub's slow tool (N14): it answers only after `SLOW_TOOL_MS`, past the CLI's default 120 s backgrounding. */
+export const SLOW_TOOL = 'probe_slow'
+export const SLOW_TOOL_MS = 150_000
+export const SLOW_TOOL_ANSWER = 'slow-done'
 
 /** The 20 `inhouse` tools (docs/product/agent-tools.md): the six always loaded, then the fourteen found on demand. */
 export const INHOUSE_ALWAYS = ['memory_search', 'memory_save', 'approval_request', 'question_ask', 'history_search', 'notification_send'] as const
@@ -242,7 +330,10 @@ export function startEgress(): Promise<Egress> {
   const byToken = new Map<string, ScriptState>()
   const byDirect = new Map<string, ScriptState>()
   const mcpCalls: string[] = []
+  const actionsCalls: string[] = []
+  const toolCalls: Egress['toolCalls'] = []
   const refused: string[] = []
+  const store = new Map<string, Map<string, unknown[]>>()
   const server = http.createServer((req, res) => {
     void (async () => {
       const url = new URL(req.url ?? '/', 'http://egress')
@@ -268,9 +359,16 @@ export function startEgress(): Promise<Egress> {
         res.writeHead(answer.status, Object.fromEntries(answer.headers))
         return res.end(Buffer.from(await answer.arrayBuffer()))
       }
-      if (route === 'mcp' || route === 'mcp20') {
+      if (route === 'mcp' || route === 'mcp20' || route === 'actions') {
         if (req.method !== 'POST') return sendJson(res, 405, { error: 'POST only' })
         const parsed = JSON.parse(body.toString('utf8')) as unknown
+        if (route === 'actions') actionsCalls.push(...(Array.isArray(parsed) ? parsed : [parsed]).map((m) => String((m as { method?: unknown }).method)))
+        for (const m of (Array.isArray(parsed) ? parsed : [parsed]) as { method?: string; params?: { name?: string; arguments?: unknown } }[]) {
+          if (m.method === 'tools/call') toolCalls.push({ route, name: String(m.params?.name), arguments: m.params?.arguments })
+        }
+        // The slow tool's call waits here, as the egress's ask wait will (N14).
+        const slow = (Array.isArray(parsed) ? parsed : [parsed]).some((m) => (m as { method?: string; params?: { name?: string } }).method === 'tools/call' && (m as { params?: { name?: string } }).params?.name === SLOW_TOOL)
+        if (slow) await new Promise((r) => setTimeout(r, SLOW_TOOL_MS))
         const answer = route === 'mcp20' || state?.script.mcp20 === true ? mcp20 : mcp
         const answers = (Array.isArray(parsed) ? parsed : [parsed]).map((m) => answer(mcpCalls, m as never)).filter((a) => a !== null)
         if (answers.length === 0) return res.writeHead(202).end()
@@ -285,12 +383,28 @@ export function startEgress(): Promise<Egress> {
       }
       if (route === 'audit' && state && req.method === 'POST') {
         state.audits++
+        state.auditEntries.push((JSON.parse(body.toString('utf8')) as { entry: ScriptState['auditEntries'][number] }).entry)
         return res.writeHead(204).end()
       }
       if (route === 'store') {
-        if (path === '/store/load') return sendJson(res, 200, { entries: null })
-        if (path === '/store/list-subkeys') return sendJson(res, 200, { subkeys: [] })
-        return sendJson(res, 200, { ok: true })
+        // A store in memory, by key, parts in append order (a resend of a part replaces it), so a run can be resumed.
+        const b = JSON.parse(body.toString('utf8') || '{}') as { key?: { projectKey: string; sessionId: string; subpath?: string }; entries?: unknown[]; part?: string }
+        const k = (key: NonNullable<typeof b.key>) => JSON.stringify([key.projectKey, key.sessionId, key.subpath ?? null])
+        if (path === '/store/append' && b.key && b.part) {
+          const parts = store.get(k(b.key)) ?? new Map<string, unknown[]>()
+          parts.set(b.part, b.entries ?? [])
+          store.set(k(b.key), parts)
+          return sendJson(res, 200, { ok: true })
+        }
+        if (path === '/store/load' && b.key) {
+          const parts = store.get(k(b.key))
+          return sendJson(res, 200, { entries: parts ? [...parts.keys()].sort().flatMap((p) => parts.get(p)!) : null })
+        }
+        if (path === '/store/list-subkeys' && b.key) {
+          const subkeys = [...store.keys()].map((x) => JSON.parse(x) as [string, string, string | null]).filter(([p, s, sub]) => p === b.key!.projectKey && s === b.key!.sessionId && sub !== null).map(([, , sub]) => sub!)
+          return sendJson(res, 200, { subkeys })
+        }
+        return sendJson(res, 400, { error: 'bad store call' })
       }
       if (route === 'files') {
         if (req.method === 'GET' && (path === '/files/' || path === '/files')) return sendJson(res, 200, { files: [] })
@@ -306,7 +420,7 @@ export function startEgress(): Promise<Egress> {
   return new Promise((resolve) =>
     server.listen(0, '127.0.0.1', () => {
       const port = (server.address() as { port: number }).port
-      resolve({ port, byToken, byDirect, mcpCalls, refused, close: () => new Promise<void>((r) => server.close(() => r())) })
+      resolve({ port, byToken, byDirect, mcpCalls, actionsCalls, toolCalls, refused, close: () => new Promise<void>((r) => server.close(() => r())) })
     }),
   )
 }

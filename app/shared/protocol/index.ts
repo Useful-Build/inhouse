@@ -4,31 +4,59 @@
 // Unknown fields: every object here is strict, so a field the other side doesn't know fails the parse loudly. Any change
 // to a schema bumps PROTOCOL_VERSION; a side that still accepts the previous version keeps that version's schemas. An
 // additive optional field gets a `<NAME>_VERSION` gate (as `BRAND_SKILLS_VERSION`): no side sends it below that version,
-// so one schema reads both. A field may land before its version does (`HELPERS_VERSION`): then the gate is above
-// PROTOCOL_VERSION, nothing can send it, and the PR whose side first acts on it bumps PROTOCOL_VERSION to the gate.
+// so one schema reads both. A field may land before its version does: then the gate is above PROTOCOL_VERSION, nothing
+// can send it, and the PR whose side first acts on it bumps PROTOCOL_VERSION to the gate (`HELPERS_VERSION` did, in M1-E).
 // The one open shape is the SDK message inside an `sdk` event, passed through as data.
 import { z } from 'zod'
 import { badFileName } from '../files/names.ts'
 import { BrandSkillFiles } from './brand-skills.ts'
 
-export const PROTOCOL_VERSION = 3
+export const PROTOCOL_VERSION = 4
 /**
  * The versions this side speaks. The rule: the current one and the one before, so a Worker one version ahead still runs
  * chats. v1 was never deployed, so the rule started at v2. v3 (P6a, brand skills) adds `RunStart.brandSkills`, optional:
- * a v2 start is a v3 start without it, so one schema reads both, and the Worker leaves it out when it talks v2.
+ * a v2 start is a v3 start without it. v4 (Stage 1, M1-E) adds the helper keys below the same way, so one schema reads
+ * v3 and v4, and v2 is no longer spoken.
  */
-export const ACCEPTED_VERSIONS: readonly number[] = [PROTOCOL_VERSION, 2]
+export const ACCEPTED_VERSIONS: readonly number[] = [PROTOCOL_VERSION, 3]
 /** The first version whose `RunStart` may carry `brandSkills`. */
 export const BRAND_SKILLS_VERSION = 3
 /**
  * The first version whose `RunStart` may carry `agents`, `subagentModel` and `actions`, and whose `AuditEntry` may carry
- * `agentId` and `inputSha256` (Stage 1, N6 and N14). It is above PROTOCOL_VERSION on purpose: the schemas read the keys
- * now, but no side may send them until v4 exists, so a skewed pair (an older strict peer) never sees one. M1-E, the first
- * PR whose runner acts on them, bumps PROTOCOL_VERSION to 4 (accepting [4, 3]); the Worker drops the start's three for a
- * runner below it (as `brandSkills` for v2 in `server/do/runner/runner.ts`), and the runner sends the entry's two only
- * when it talks 4.
+ * `agentId` and `inputSha256` (Stage 1, N6 and N14). The Worker drops the start's three for a runner below it
+ * (`startForPeer`, in `server/do/runner/runner.ts`), and the runner drops the entry's two for a Worker below it
+ * (`auditEntryForPeer`, on both of the entry's wire paths: `AuditPost` and the `audit` run event).
  */
 export const HELPERS_VERSION = 4
+
+/** The start keys a runner below `HELPERS_VERSION` doesn't know (its strict schema would refuse the start). */
+export const HELPER_START_KEYS = ['agents', 'subagentModel', 'actions'] as const
+/** The audit entry keys a Worker below `HELPERS_VERSION` doesn't know. */
+export const HELPER_AUDIT_KEYS = ['agentId', 'inputSha256'] as const
+
+/**
+ * A start as a runner speaking `version` may get it: without `brandSkills` below `BRAND_SKILLS_VERSION`, and without
+ * the helper keys below `HELPERS_VERSION`. `dropped` names what was left out (for the log).
+ */
+export function startForPeer<T extends Record<string, unknown>>(start: T, version: number): { start: T; dropped: string[] } {
+  const out: Record<string, unknown> = { ...start }
+  const dropped: string[] = []
+  const drop = (key: string) => {
+    if (out[key] !== undefined) dropped.push(key)
+    delete out[key]
+  }
+  if (version < BRAND_SKILLS_VERSION) drop('brandSkills')
+  if (version < HELPERS_VERSION) for (const k of HELPER_START_KEYS) drop(k)
+  return { start: out as T, dropped }
+}
+
+/** An audit entry as a Worker speaking `version` may get it: without `agentId` and `inputSha256` below `HELPERS_VERSION`. */
+export function auditEntryForPeer<T extends Record<string, unknown>>(entry: T, version: number): T {
+  if (version >= HELPERS_VERSION) return entry
+  const out: Record<string, unknown> = { ...entry }
+  for (const k of HELPER_AUDIT_KEYS) delete out[k]
+  return out as T
+}
 /** Every request to the runner (except the discovery routes `/protocol` and `/health`) carries this header. */
 export const PROTOCOL_HEADER = 'x-inhouse-protocol'
 
@@ -237,8 +265,8 @@ export const RunStartFields = z.strictObject({
   brandSkills: BrandSkillFiles.optional(),
   /**
    * Optional (Stage 1, N6; additive like `webSearch`): the two helpers the turn may start. Absent: the Agent tool has
-   * nothing to start (built-in agents are off). The Worker sends it only to a runner at `HELPERS_VERSION` or above, and
-   * only when helpers are on (M1-P), so an older runner image still accepts every start.
+   * nothing to start (built-in agents and forks are off). The Worker sends it only to a runner at `HELPERS_VERSION` or
+   * above, and only when helpers are on (M1-P), so an older runner image still accepts every start.
    */
   agents: HelperAgents.optional(),
   /** Optional (Stage 1, N6): the model `researcher` runs on; `analyst` inherits `model`. Sent with `agents`. */

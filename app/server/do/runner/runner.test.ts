@@ -1,8 +1,9 @@
 // The Runner object's logic (runner.ts) with the container behind a port (a fake below) and the object's real SQLite.
 // Expected values are literal wire fixtures and literal call lists, never read from runner.ts. Ways it can fail,
 // written down first:
-//  1. a v2 Worker and a v2 runner don't agree on 2; an injected [3, 2] Worker doesn't fall back to 2; [3] against [2]
-//     still admits (it must report `protocol`, and send nothing);
+//  1. a v4 Worker and a v4 runner don't agree on 4; a v4 Worker doesn't fall back to 3 for the previous image; a [2]
+//     runner still admits (it must report `protocol`, and send nothing); a v3 runner gets a helper key (its strict
+//     schema refuses the start) or loses its brand skills;
 //  2. the intercepts go in another order, carry more than `{ runner, containerGen }` (a token, chat or member), or are
 //     registered again for a container that's still running; the container starts with Internet on;
 //  3. `touch()` doesn't re-arm the inactivity timeout each time, starts a container, or after an object restart doesn't
@@ -89,8 +90,8 @@ class FakeContainer implements ContainerPort<Binding> {
 
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
-/** A runner as protocol v2 answers (wire fixtures written out, not built from the schemas). */
-function v2Runner(accepted: number[], runs: Route = () => json(202, { accepted: true })): Route {
+/** A runner as it answers `/protocol` and `/health` for `accepted` (wire fixtures written out, not built from the schemas). */
+function fakeRunner(accepted: number[], runs: Route = () => json(202, { accepted: true })): Route {
   return (path, init) => {
     if (path === '/protocol') return json(200, { version: accepted[0], accepted })
     if (path === '/health') return json(200, { ok: true, protocol: accepted[0], live: 0, memory: { totalBytes: null, availableBytes: null, rssBytes: 1, heapUsedBytes: 1 } })
@@ -163,55 +164,97 @@ const headerOf = (init: RequestInit | undefined) => new Headers(init?.headers).g
 const settle = () => new Promise(r => setTimeout(r, 0))
 
 describe('protocol versions (literal wire fixtures)', () => {
-  it('a v2 Worker against a runner answering {version: 2, accepted: [2]} admits on 2', t(async state => {
+  it('a v4 Worker against a runner answering {version: 4, accepted: [4, 3]} admits on 4', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2])
+    c.route = fakeRunner([4, 3])
     const { core } = make(c, state)
-    expect(await core.admit(RS)).toEqual({ accepted: true, gen: 1, protocol: 2 })
+    expect(await core.admit(RS)).toEqual({ accepted: true, gen: 1, protocol: 4 })
     const post = c.requests.find(r => r.path === '/runs')!
-    expect(headerOf(post.init)).toBe('2')
+    expect(headerOf(post.init)).toBe('4')
     expect(post.init?.method).toBe('POST')
   }))
 
-  it('an injected [3, 2] Worker against a [2] runner runs on 2', t(async state => {
+  it('a v4 Worker against the previous runner image ([3, 2]) runs on 3', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2])
-    const { core } = make(c, state, [3, 2])
-    expect(await core.admit(RS)).toEqual({ accepted: true, gen: 1, protocol: 2 })
-    expect(headerOf(c.requests.find(r => r.path === '/runs')!.init)).toBe('2')
+    c.route = fakeRunner([3, 2])
+    const { core } = make(c, state)
+    expect(await core.admit(RS)).toEqual({ accepted: true, gen: 1, protocol: 3 })
+    expect(headerOf(c.requests.find(r => r.path === '/runs')!.init)).toBe('3')
   }))
 
-  it('a [3] Worker against a [2] runner reports `protocol` and sends no run', t(async state => {
+  it('a v4 Worker against a [2] runner reports `protocol` and sends no run (v2 is no longer spoken)', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2])
-    const { core } = make(c, state, [3])
+    c.route = fakeRunner([2])
+    const { core } = make(c, state)
     expect(await core.admit(RS)).toEqual({ protocol: 'none', gen: 1 })
     expect(c.requests.map(r => r.path)).toEqual(['/protocol'])
   }))
 
-  // v3 (P6a brand skills): a start's `brandSkills` reach a v3 runner, and a v2 runner (whose schema is strict) gets the
-  // start without them rather than a refusal.
-  it("brand skills go to a [3, 2] runner on 3, and are left out for a [2] runner on 2", t(async state => {
-    const skills = [{ name: 'weekly-report', description: 'Writes the weekly report.', body: 'Read the orders.' }]
-    const v3 = new FakeContainer()
-    v3.route = v2Runner([3, 2])
-    expect(await make(v3, state).core.admit({ ...RS, brandSkills: skills })).toEqual({ accepted: true, gen: 1, protocol: 3 })
-    const sent3 = v3.requests.find(r => r.path === '/runs')!
-    expect(headerOf(sent3.init)).toBe('3')
-    expect(JSON.parse(String(sent3.init?.body)).brandSkills).toEqual(skills)
+  it('an injected [5, 4] Worker against a [4, 3] runner runs on 4', t(async state => {
+    const c = new FakeContainer()
+    c.route = fakeRunner([4, 3])
+    expect(await make(c, state, [5, 4]).core.admit(RS)).toEqual({ accepted: true, gen: 1, protocol: 4 })
+    expect(headerOf(c.requests.find(r => r.path === '/runs')!.init)).toBe('4')
   }))
-  it('a [2] runner gets the start without brandSkills, and admits it', t(async state => {
-    const v2 = new FakeContainer()
-    v2.route = v2Runner([2])
-    expect(await make(v2, state).core.admit({ ...RS, brandSkills: [{ name: 'weekly-report', description: 'Writes it.', body: 'Steps.' }] })).toEqual({ accepted: true, gen: 1, protocol: 2 })
-    const sent2 = JSON.parse(String(v2.requests.find(r => r.path === '/runs')!.init?.body)) as Record<string, unknown>
-    expect(sent2).not.toHaveProperty('brandSkills')
-    expect(sent2.runId).toBe(RS.runId)
+
+  it('an injected [5] Worker against a [4, 3] runner reports `protocol` and sends no run', t(async state => {
+    const c = new FakeContainer()
+    c.route = fakeRunner([4, 3])
+    expect(await make(c, state, [5]).core.admit(RS)).toEqual({ protocol: 'none', gen: 1 })
+    expect(c.requests.map(r => r.path)).toEqual(['/protocol'])
+  }))
+
+  // v3 (P6a brand skills) and v4 (Stage 1 helpers): a start carries only the keys the runner's version knows. Brand
+  // skills reach a v3 runner; the helper keys (agents, subagentModel, actions) reach only a v4 runner, all three or none.
+  const skills = [{ name: 'weekly-report', description: 'Writes the weekly report.', body: 'Read the orders.' }]
+  const agents = { researcher: { description: 'Finds facts.', prompt: 'Research.' }, analyst: { description: 'Works numbers.', prompt: 'Analyse.' } }
+  const full: RunStart = { ...RS, brandSkills: skills, agents, subagentModel: 'claude-sonnet-5-5', actions: true }
+  const sentBody = (c: FakeContainer) => JSON.parse(String(c.requests.find(r => r.path === '/runs')!.init?.body)) as Record<string, unknown>
+
+  it('a [4, 3] runner gets the helper keys and brand skills as sent', t(async state => {
+    const c = new FakeContainer()
+    c.route = fakeRunner([4, 3])
+    expect(await make(c, state).core.admit(full)).toEqual({ accepted: true, gen: 1, protocol: 4 })
+    const sent = sentBody(c)
+    expect(sent.agents).toEqual(agents)
+    expect(sent.subagentModel).toBe('claude-sonnet-5-5')
+    expect(sent.actions).toBe(true)
+    expect(sent.brandSkills).toEqual(skills)
+  }))
+
+  it('a [3, 2] runner gets the start without agents, subagentModel and actions (brand skills kept), and admits it', t(async state => {
+    const c = new FakeContainer()
+    c.route = fakeRunner([3, 2])
+    const { core, logs } = make(c, state)
+    expect(await core.admit(full)).toEqual({ accepted: true, gen: 1, protocol: 3 })
+    const sent = sentBody(c)
+    expect(Object.keys(sent).filter(k => ['agents', 'subagentModel', 'actions'].includes(k))).toEqual([])
+    expect(sent.brandSkills).toEqual(skills)
+    expect(sent.runId).toBe(RS.runId)
+    expect(logs.filter(l => l.event === 'start_keys_dropped')).toEqual([{ event: 'start_keys_dropped', turnId: RS.runId, protocol: 3, keys: ['agents', 'subagentModel', 'actions'] }])
+  }))
+
+  it('`actions: false` alone is left out for a v3 runner too (strict schema), with nothing logged as dropped but it', t(async state => {
+    const c = new FakeContainer()
+    c.route = fakeRunner([3, 2])
+    const { core, logs } = make(c, state)
+    expect(await core.admit({ ...RS, actions: false })).toEqual({ accepted: true, gen: 1, protocol: 3 })
+    expect(sentBody(c)).not.toHaveProperty('actions')
+    expect(logs.filter(l => l.event === 'start_keys_dropped').map(l => l.keys)).toEqual([['actions']])
+  }))
+
+  it('a start without the helper keys goes to a v3 runner unchanged, and nothing is logged as dropped', t(async state => {
+    const c = new FakeContainer()
+    c.route = fakeRunner([3, 2])
+    const { core, logs } = make(c, state)
+    expect(await core.admit(RS)).toEqual({ accepted: true, gen: 1, protocol: 3 })
+    expect(sentBody(c)).toEqual(JSON.parse(JSON.stringify(RS)))
+    expect(logs.filter(l => l.event === 'start_keys_dropped')).toEqual([])
   }))
 
   it('a 426 from the runner is `protocol`', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2], () => json(426, { error: 'unsupported protocol version', version: 2 }))
+    c.route = fakeRunner([4, 3], () => json(426, { error: 'unsupported protocol version', version: 4 }))
     const { core } = make(c, state)
     expect(await core.admit(RS)).toEqual({ protocol: 'none', gen: 1 })
   }))
@@ -220,7 +263,7 @@ describe('protocol versions (literal wire fixtures)', () => {
 describe('container start', () => {
   it('registers the intercepts in order with props { runner, containerGen } only, then starts with no Internet', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2])
+    c.route = fakeRunner([4, 3])
     const { core } = make(c, state, undefined, 'runner-3')
     await core.admit(RS)
     expect(c.log).toEqual(['intercept', 'intercept', 'intercept', 'start', 'timeout', 'monitor'])
@@ -239,7 +282,7 @@ describe('container start', () => {
 
   it('a second admission on the running container starts nothing and registers nothing', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2])
+    c.route = fakeRunner([4, 3])
     const { core } = make(c, state)
     await core.admit(RS)
     await core.admit({ ...RS, runId: 't_turnBBBBBBBBBBBBBBBBBBBB' })
@@ -249,12 +292,12 @@ describe('container start', () => {
 
   it('a new container after an exit is a new generation: intercepts again with the new gen, protocol renegotiated', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2])
+    c.route = fakeRunner([4, 3])
     const m = make(c, state)
     await m.core.admit(RS)
     c.exit(137)
     await settle()
-    expect(await m.core.admit(RS)).toEqual({ accepted: true, gen: 2, protocol: 2 })
+    expect(await m.core.admit(RS)).toEqual({ accepted: true, gen: 2, protocol: 4 })
     expect(c.intercepts.slice(3).map(i => i.binding.props.containerGen)).toEqual([2, 2, 2])
     expect(c.requests.filter(r => r.path === '/protocol')).toHaveLength(2)
     expect(m.exits).toEqual([['runner-0', 1, 1]])
@@ -299,7 +342,7 @@ describe('a slow cold start (failure 8)', () => {
     // A clock the deps' timeouts and waits share: each signal aborts once the clock passes its own deadline.
     let clock = 0
     const timers: { at: number; c: AbortController }[] = []
-    const routes = v2Runner([2])
+    const routes = fakeRunner([4, 3])
     c.route = (path, init) => {
       if (path === '/protocol' && clock < 90_000) throw new TypeError('connection refused')
       return routes(path, init)
@@ -315,7 +358,7 @@ describe('a slow cold start (failure 8)', () => {
       },
       log: () => {},
     })
-    expect(await core.admit(RS)).toEqual({ accepted: true, gen: 1, protocol: 2 })
+    expect(await core.admit(RS)).toEqual({ accepted: true, gen: 1, protocol: 4 })
     expect(clock).toBeGreaterThanOrEqual(90_000)
     expect(c.starts.length).toBe(1)
   }))
@@ -350,9 +393,9 @@ describe('an exit says whether its container came up (failure 9)', () => {
     ['an exit shape whose code is not digits', () => new Error('Container exited with unexpected exit code: CANARY-chat-text'), 'Error'],
   ])("container_exited on %s logs the platform's code only (P8a P-auth)", (_what, error, how) => t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2])
+    c.route = fakeRunner([4, 3])
     const m = make(c, state)
-    expect(await m.core.admit(RS)).toEqual({ accepted: true, gen: 1, protocol: 2 })
+    expect(await m.core.admit(RS)).toEqual({ accepted: true, gen: 1, protocol: 4 })
     c.monitors.splice(0).forEach(x => x.reject(error()))
     await settle()
     expect(m.logs.filter(l => l.event === 'container_exited')).toEqual([{ event: 'container_exited', gen: 1, cameUp: true, how }])
@@ -361,9 +404,9 @@ describe('an exit says whether its container came up (failure 9)', () => {
 
   it('container_exited on a clean exit logs exit 0', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2])
+    c.route = fakeRunner([4, 3])
     const m = make(c, state)
-    expect(await m.core.admit(RS)).toEqual({ accepted: true, gen: 1, protocol: 2 })
+    expect(await m.core.admit(RS)).toEqual({ accepted: true, gen: 1, protocol: 4 })
     c.monitors.splice(0).forEach(x => x.resolve())
     await settle()
     expect(m.logs.filter(l => l.event === 'container_exited')).toEqual([{ event: 'container_exited', gen: 1, cameUp: true, how: 'exit 0' }])
@@ -384,7 +427,7 @@ describe('an exit says whether its container came up (failure 9)', () => {
 
   it('a container that answered, refused the run (typed 503) and then died: reported as up', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2], () => json(503, { error: 'the runner is stopping' }))
+    c.route = fakeRunner([4, 3], () => json(503, { error: 'the runner is stopping' }))
     const m = make(c, state)
     expect(await m.core.admit(RS)).toEqual({ unavailable: 'the runner is stopping', gen: 1 })
     c.exit(1)
@@ -394,8 +437,8 @@ describe('an exit says whether its container came up (failure 9)', () => {
 
   it('a container that answered /protocol with no shared version (stored null) and then exited: reported as up', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2])
-    const m = make(c, state, [3])
+    c.route = fakeRunner([2])
+    const m = make(c, state)
     expect(await m.core.admit(RS)).toEqual({ protocol: 'none', gen: 1 })
     expect(state.protocol(1)).toBeNull()
     c.exit(1)
@@ -405,7 +448,7 @@ describe('an exit says whether its container came up (failure 9)', () => {
 
   it('a container that dies while its admission is in flight (after /protocol): reported as up', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2], (_p, init) => new Promise<Response>((_res, rej) => init!.signal!.addEventListener('abort', () => rej(init!.signal!.reason))))
+    c.route = fakeRunner([4, 3], (_p, init) => new Promise<Response>((_res, rej) => init!.signal!.addEventListener('abort', () => rej(init!.signal!.reason))))
     const m = make(c, state)
     const pending = m.core.admit(RS)
     await settle()
@@ -421,7 +464,7 @@ describe('an exit says whether its container came up (failure 9)', () => {
 describe('liveness', () => {
   it('a touch every 30 s for over 15 minutes re-arms the timeout each time and starts nothing', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2])
+    c.route = fakeRunner([4, 3])
     const { core } = make(c, state)
     await core.admit(RS)
     // 16 minutes of pushes, one every 30 s (the core reads no clock: each push is one touch).
@@ -440,7 +483,7 @@ describe('liveness', () => {
 
   it('an object restart with the container running: monitor() called again on touch, intercepts not duplicated', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2])
+    c.route = fakeRunner([4, 3])
         await make(c, state).core.admit(RS)
     // The object restarts: a new core over the same storage, the container still running.
     const after = make(c, state)
@@ -448,16 +491,16 @@ describe('liveness', () => {
     expect(c.log).toEqual(['intercept', 'intercept', 'intercept', 'start', 'timeout', 'monitor', 'timeout', 'monitor'])
     expect(c.intercepts).toHaveLength(3)
     // The negotiated version survived the restart: no new /protocol before the next run.
-    expect(await after.core.admit({ ...RS, runId: 't_turnCCCCCCCCCCCCCCCCCCCC' })).toEqual({ accepted: true, gen: 1, protocol: 2 })
+    expect(await after.core.admit({ ...RS, runId: 't_turnCCCCCCCCCCCCCCCCCCCC' })).toEqual({ accepted: true, gen: 1, protocol: 4 })
     expect(c.requests.filter(r => r.path === '/protocol')).toHaveLength(1)
   }))
 
   it('an object restart: the first admission (no touch before it) re-arms the timeout and the monitor', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2])
+    c.route = fakeRunner([4, 3])
     await make(c, state).core.admit(RS)
     const after = make(c, state)
-    expect(await after.core.admit({ ...RS, runId: 't_turnDDDDDDDDDDDDDDDDDDDD' })).toEqual({ accepted: true, gen: 1, protocol: 2 })
+    expect(await after.core.admit({ ...RS, runId: 't_turnDDDDDDDDDDDDDDDDDDDD' })).toEqual({ accepted: true, gen: 1, protocol: 4 })
     expect(c.timeouts).toEqual([600_000, 600_000])
     expect(c.log.filter(x => x === 'monitor')).toHaveLength(2)
     expect(c.starts).toHaveLength(1)
@@ -465,13 +508,13 @@ describe('liveness', () => {
 
   it('a container that exited while the object was away is reported before the next one starts', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2])
+    c.route = fakeRunner([4, 3])
     await make(c, state).core.admit(RS)
     // The object is evicted; its monitor is gone with it, and the container then stops unseen.
     c.monitors.splice(0)
     c.running = false
     const after = make(c, state)
-    expect(await after.core.admit(RS)).toEqual({ accepted: true, gen: 2, protocol: 2 })
+    expect(await after.core.admit(RS)).toEqual({ accepted: true, gen: 2, protocol: 4 })
     // Reported while only the first container had started: before the new one.
     expect(after.exits).toEqual([['runner-0', 1, 1]])
     expect(c.starts).toHaveLength(2)
@@ -479,7 +522,7 @@ describe('liveness', () => {
 
   it('two settlements of one generation report the exit once', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2])
+    c.route = fakeRunner([4, 3])
         const first = make(c, state)
     await first.core.admit(RS)
     const second = make(c, state)
@@ -495,7 +538,7 @@ describe('admission answers', () => {
   it('no answer in 15 s: the fetch is aborted and the answer is ambiguous, never a refusal', t(async state => {
     const c = new FakeContainer()
     let seen: AbortSignal | undefined
-    c.route = v2Runner([2], (_p, init) => new Promise<Response>((_res, rej) => {
+    c.route = fakeRunner([4, 3], (_p, init) => new Promise<Response>((_res, rej) => {
       seen = init!.signal!
       seen.addEventListener('abort', () => rej(seen!.reason))
     }))
@@ -516,7 +559,7 @@ describe('admission answers', () => {
     [409, { error: 'run_live' }, { refused: 'run_live', gen: 1 }],
   ])('%i %j is a definite refusal', t(async (state, status: number, body: unknown, want: unknown) => {
     const c = new FakeContainer()
-    c.route = v2Runner([2], () => json(status, body))
+    c.route = fakeRunner([4, 3], () => json(status, body))
     const { core } = make(c, state)
     expect(await core.admit(RS)).toEqual(want)
   }))
@@ -528,7 +571,7 @@ describe('admission answers', () => {
     [500, { error: 'could not set up the session user' }, { unavailable: 'could not set up the session user', gen: 1 }],
   ])('a typed %i %j is definite: %j', t(async (state, status: number, body: unknown, want: unknown) => {
     const c = new FakeContainer()
-    c.route = v2Runner([2], () => json(status, body))
+    c.route = fakeRunner([4, 3], () => json(status, body))
     const { core } = make(c, state)
     expect(await core.admit(RS)).toEqual(want)
   }))
@@ -542,14 +585,14 @@ describe('admission answers', () => {
     [404, 'not found'],
   ])('%i %s is untyped: ambiguous (the runner may have admitted)', t(async (state, status: number, body: string) => {
     const c = new FakeContainer()
-    c.route = v2Runner([2], () => new Response(body, { status }))
+    c.route = fakeRunner([4, 3], () => new Response(body, { status }))
     const { core } = make(c, state)
     expect(await core.admit(RS)).toEqual({ ambiguous: true, gen: 1 })
   }))
 
   it('a bare 409 (no readable body) is the chat being live: chat_live', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2], () => new Response('conflict', { status: 409 }))
+    c.route = fakeRunner([4, 3], () => new Response('conflict', { status: 409 }))
     const { core } = make(c, state)
     expect(await core.admit(RS)).toEqual({ refused: 'chat_live', gen: 1 })
   }))
@@ -564,7 +607,7 @@ describe('status', () => {
     [{ state: 'unknown', lastSeq: null, ackedSeq: null }, 'unknown'],
   ])('%j → %s', t(async (state, body: unknown, want: string) => {
     const c = new FakeContainer()
-    c.route = v2Runner([2], path => (path === '/runs/t_1' ? json(200, body) : json(202, { accepted: true })))
+    c.route = fakeRunner([4, 3], path => (path === '/runs/t_1' ? json(200, body) : json(202, { accepted: true })))
     const { core } = make(c, state)
     await core.admit(RS)
     expect(await core.status('t_1')).toEqual({ state: want, containerGone: false })
@@ -572,7 +615,7 @@ describe('status', () => {
 
   it('a call that fails because the container just stopped is unreachable and gone', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2], path => {
+    c.route = fakeRunner([4, 3], path => {
       if (path === '/runs/t_1') {
         c.running = false
         throw new TypeError('connection reset')
@@ -586,7 +629,7 @@ describe('status', () => {
 
   it('a failed call is unreachable with the container still there; no container is unreachable and gone', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2], path => {
+    c.route = fakeRunner([4, 3], path => {
       if (path === '/runs/t_1') throw new TypeError('network')
       return json(202, { accepted: true })
     })
@@ -602,18 +645,18 @@ describe('status', () => {
 describe('warm', () => {
   it('needs /protocol afresh and /health ok', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2])
+    c.route = fakeRunner([4, 3])
     const { core } = make(c, state)
-    expect(await core.warm()).toEqual({ ok: true, gen: 1, protocol: 2 })
+    expect(await core.warm()).toEqual({ ok: true, gen: 1, protocol: 4 })
     expect(c.requests.map(r => r.path)).toEqual(['/protocol', '/protocol', '/health'])
   }))
 
   it('a container no newer than the drain\'s, running nothing: replaced by a new generation, its exit reported once', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2])
+    c.route = fakeRunner([4, 3])
     const m = make(c, state)
     await m.core.admit(RS)
-    expect(await m.core.warm(1)).toEqual({ ok: true, gen: 2, protocol: 2 })
+    expect(await m.core.warm(1)).toEqual({ ok: true, gen: 2, protocol: 4 })
     expect(c.destroys).toBe(1)
     expect(c.starts).toHaveLength(2)
     await settle()
@@ -622,8 +665,8 @@ describe('warm', () => {
 
   it('a container no newer than the drain\'s still running turns: busy, nothing destroyed', t(async state => {
     const c = new FakeContainer()
-    const base = v2Runner([2])
-    c.route = (path, init) => (path === '/health' ? json(200, { ok: true, protocol: 2, live: 1, memory: { totalBytes: null, availableBytes: null, rssBytes: 1, heapUsedBytes: 1 } }) : base(path, init))
+    const base = fakeRunner([4, 3])
+    c.route = (path, init) => (path === '/health' ? json(200, { ok: true, protocol: 4, live: 1, memory: { totalBytes: null, availableBytes: null, rssBytes: 1, heapUsedBytes: 1 } }) : base(path, init))
     const m = make(c, state)
     await m.core.admit(RS)
     expect(await m.core.warm(1)).toMatchObject({ ok: false, why: 'busy' })
@@ -632,16 +675,16 @@ describe('warm', () => {
 
   it('a container newer than the drain\'s is kept', t(async state => {
     const c = new FakeContainer()
-    c.route = v2Runner([2])
+    c.route = fakeRunner([4, 3])
     const m = make(c, state)
     await m.core.admit(RS)
-    expect(await m.core.warm(0)).toEqual({ ok: true, gen: 1, protocol: 2 })
+    expect(await m.core.warm(0)).toEqual({ ok: true, gen: 1, protocol: 4 })
     expect(c.destroys).toBe(0)
   }))
 
   it('a failing /health refuses', t(async state => {
     const c = new FakeContainer()
-    const base = v2Runner([2])
+    const base = fakeRunner([4, 3])
     c.route = (path, init) => (path === '/health' ? json(503, { error: 'not ready' }) : base(path, init))
     const { core } = make(c, state)
     expect(await core.warm()).toMatchObject({ ok: false, why: 'health' })

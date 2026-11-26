@@ -53,6 +53,8 @@
 //                      {type: 'audits', replies} with the answers, then finished
 //   audit-on-stop      sends one sdk event {type: 'waiting'} and waits for stop; then sends one audit entry and writes the root's answer to `audit-reply.json` in
 //                      its cwd before it ends with failed/stopped
+//   audit-helper       as audit:2, with Stage 1's keys: entry 0 a helper's (`agentId: 'agent-7'`), entry 1 the main
+//                      agent's (`agentId: null`), each with an `inputSha256`
 //   audit-bad          sends an audit entry that fails the schema
 //   audit-after-end    sends finished, then one audit entry; writes the root's answer to `audit-reply.json` in its cwd
 //   audit-expired      sends one audit entry whose expiresAt has passed; then one sdk event {type: 'audits', replies}
@@ -441,6 +443,15 @@ channel.onMessage((line) => {
       void (async () => {
         const replies: unknown[] = []
         for (let i = 0; i < Number(a); i++) replies.push(await sendAudit(auditEntry(i)))
+        event({ type: 'sdk', message: { type: 'audits', replies }, truncated: false })
+        finished()
+        end()
+      })()
+      break
+    case 'audit-helper':
+      void (async () => {
+        const replies: unknown[] = []
+        for (const [i, agentId] of ['agent-7', null].entries()) replies.push(await sendAudit({ ...auditEntry(i), agentId, inputSha256: String(i).repeat(64) }))
         event({ type: 'sdk', message: { type: 'audits', replies }, truncated: false })
         finished()
         end()

@@ -5,9 +5,11 @@ import { isIP } from 'node:net'
 import { basename, join } from 'node:path'
 import type { HookCallbackMatcher, HookEvent, Options } from '@anthropic-ai/claude-agent-sdk'
 import type { RunConfig } from '../protocol/local.ts'
-import { APPS_SERVER, mcpServerUrls } from '../session/mcp-servers.ts'
+import { ACTIONS_SERVER, APPS_SERVER, mcpServerUrls, type McpServerName } from '../session/mcp-servers.ts'
 import type { QueryGuards, RunContext } from '../session/seam.ts'
+import { DENIED_AGENT_TYPES, HELPER_ENV, helperDefinitions, helperHook } from './agents.ts'
 import { auditHook, deniedEntry, recordToolCall } from './audit.ts'
+import { deferHook } from './defer.ts'
 import { BRAND_PLUGIN_NAME } from '../../../shared/protocol/brand-skills.ts'
 import { ALLOWED_SKILLS, BUILT_IN_PLUGINS_OFF, BUILT_IN_TOOLS, BUNDLED_SKILLS_OFF, INHOUSE_MCP_SERVER } from './lists.ts'
 import { CLI_WRAPPER, PLUGIN_DIR, RUNNER_DIR, USERS_ROOT, WORK_ROOT, userPaths, validSessionKey, type UserPaths } from './paths.ts'
@@ -113,7 +115,7 @@ export function createQueryGuards(deps: QueryGuardDeps): QueryGuards {
 
 export function guardedOptions(
   base: Options,
-  config: Pick<RunConfig, 'webFetchDomains' | 'webSearch' | 'outputFormat' | 'brandSkills'>,
+  config: Pick<RunConfig, 'webFetchDomains' | 'webSearch' | 'outputFormat' | 'brandSkills' | 'agents' | 'subagentModel' | 'actions'>,
   run: RunContext,
   deps: QueryGuardDeps & { workRoot: string; usersRoot: string; pluginDir: string; cliPath: string },
 ): Options {
@@ -144,11 +146,16 @@ export function guardedOptions(
   const home = own.home
   if (base.env?.HOME !== home) throw new GuardConfigError("HOME must be the session user's own home")
   if (base.env?.TMPDIR !== own.tmp) throw new GuardConfigError("TMPDIR must be the session user's own temp folder")
+  // The helpers' caps and the foreground switches (src/guards/agents.ts): exactly these values, whatever the base says.
+  for (const [k, v] of Object.entries(HELPER_ENV)) if (base.env?.[k] !== v) throw new GuardConfigError(`${k} must be ${v}`)
+  if (base.env?.CLAUDE_CODE_SUBAGENT_MODEL_FORCE !== undefined) throw new GuardConfigError('CLAUDE_CODE_SUBAGENT_MODEL_FORCE must not be set (a helper runs on its own model)')
   const servers = Object.keys(base.mcpServers ?? {})
-  if (servers.some((s) => s !== INHOUSE_MCP_SERVER && s !== APPS_SERVER)) throw new GuardConfigError(`only the "${INHOUSE_MCP_SERVER}" and "${APPS_SERVER}" MCP servers are allowed`)
-  // Ours are the root's proxy over http, each at its own route (`/mcp/`, `/hub/`): never a program to run, never
-  // another host or route.
-  for (const name of servers as (typeof INHOUSE_MCP_SERVER | typeof APPS_SERVER)[]) {
+  // `actions` (M2's write tools) only on a run that asked for it (N6); nothing sends that in Stage 1 (N2).
+  const allowedServers: string[] = [INHOUSE_MCP_SERVER, APPS_SERVER, ...(config.actions === true ? [ACTIONS_SERVER] : [])]
+  if (servers.some((s) => !allowedServers.includes(s))) throw new GuardConfigError(`only the ${allowedServers.map((s) => `"${s}"`).join(', ')} MCP servers are allowed on this run`)
+  // Ours are the root's proxy over http, each at its own route (`/mcp/`, `/hub/`, `/actions/`): never a program to run,
+  // never another host or route.
+  for (const name of servers as McpServerName[]) {
     const server = base.mcpServers![name]!
     if (server.type !== 'http') throw new GuardConfigError(`the "${name}" MCP server must be an http server`)
     const proxy = base.env?.INHOUSE_PROXY_URL
@@ -156,7 +163,11 @@ export function guardedOptions(
   }
 
   // WebSearch only when the run config turns it on (P8a S: the brand's `t:websearch`, off by default); absent is off.
-  const builtIns = BUILT_IN_TOOLS.filter((t) => t !== 'WebSearch' || config.webSearch === true)
+  const webSearch = config.webSearch === true
+  const builtIns = BUILT_IN_TOOLS.filter((t) => t !== 'WebSearch' || webSearch)
+  // The helpers (N6), only as the run config sends them; with none, the Agent tool has nothing it may start.
+  if ((config.agents === undefined) !== (config.subagentModel === undefined)) throw new GuardConfigError('agents and subagentModel come together')
+  const agents = config.agents !== undefined && config.subagentModel !== undefined ? helperDefinitions(config.agents, config.subagentModel, webSearch) : null
   const brandSkills = (config.brandSkills ?? []).map((s) => s.name)
 
   const hostAddresses = deps.hostAddresses()
@@ -190,6 +201,9 @@ export function guardedOptions(
         ...Array.from({ length: POOL_SIZE }, (_, i) => poolUserName(i))
           .filter((u) => u !== base.env?.USER)
           .map((u) => `Read(${abs(join(deps.usersRoot, u))}/**)`),
+        // No fork (a copy of the whole conversation with the main agent's tools) and no built-in agent, by name too:
+        // the engine switches already turn them off (HELPER_ENV), and the allow rules name only our two helpers.
+        ...DENIED_AGENT_TYPES.map((t) => `Agent(${t})`),
       ],
     },
     skillOverrides: Object.fromEntries(BUNDLED_SKILLS_OFF.map((s) => [s, 'off' as const])),
@@ -197,7 +211,7 @@ export function guardedOptions(
   }
 
   const ours: Partial<Record<HookEvent, HookCallbackMatcher[]>> = {
-    PreToolUse: preToolUseHooks(domains, hostAddresses, run, deps.auditTimeoutMs),
+    PreToolUse: preToolUseHooks(domains, hostAddresses, run, deps.auditTimeoutMs, { agents: config.agents, webSearch }),
   }
   const hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = { ...base.hooks }
   for (const [event, matchers] of Object.entries(ours) as [HookEvent, HookCallbackMatcher[]][]) {
@@ -210,14 +224,19 @@ export function guardedOptions(
     tools: [...builtIns, ...(config.outputFormat ? [STRUCTURED_OUTPUT_TOOL] : [])],
     // Pre-approved; `dontAsk` refuses everything else. Edits only inside the session folder (the deny rules above
     // carve out .claude/ and .mcp.json, and name the home); WebFetch to the listed domains, or any (null: the hook decides).
+    // The Agent tool never bare: only `Agent(researcher)` and `Agent(analyst)`, and only on a run with helpers.
     allowedTools: [
-      ...builtIns.filter((t) => t !== 'Edit' && t !== 'Write' && t !== 'WebFetch'),
+      ...builtIns.filter((t) => t !== 'Edit' && t !== 'Write' && t !== 'WebFetch' && t !== 'Agent'),
       `Edit(${abs(cwd)}/**)`,
       ...webFetchAllowRules(domains),
+      ...(agents ? Object.keys(agents).map((n) => `Agent(${n})`) : []),
       `mcp__${INHOUSE_MCP_SERVER}`,
       `mcp__${APPS_SERVER}`,
+      ...(config.actions === true ? [`mcp__${ACTIONS_SERVER}`] : []),
       ...(config.outputFormat ? [STRUCTURED_OUTPUT_TOOL] : []),
     ],
+    // Our two helpers, their tools and models set here (src/guards/agents.ts); the server sends their words only.
+    ...(agents ? { agents } : {}),
     permissionMode: 'dontAsk',
     strictMcpConfig: true,
     settings,
@@ -237,9 +256,9 @@ export function guardedOptions(
       autoAllowBashIfSandboxed: true,
       allowUnsandboxedCommands: false,
       network: {
-        // Bash reaches the listed WebFetch domains and nothing else; never this container or its root's ports. With
-        // WebFetch open to any public host (null), Bash still reaches none: the open reach is WebFetch's alone.
-        allowedDomains: domains ?? [],
+        // Bash reaches no network at all (Stage 1, N6): the WebFetch list is WebFetch's alone, and Bash never reaches
+        // this container or its root's ports.
+        allowedDomains: [],
         strictAllowlist: true,
         deniedDomains: [...new Set([...LOCAL_NAMES, ...hostAddresses])],
         allowLocalBinding: false,
@@ -260,12 +279,22 @@ export function guardedOptions(
 }
 
 /**
- * Our PreToolUse hooks, in order: the WebFetch hook (which records a 'deny' audit entry for a call it refuses, so the
- * trace can mark that call: p3-eval-observability rev 2 rec 6), then the blocking audit hook for every call.
+ * Our PreToolUse hooks, in order: the helper hook (src/guards/agents.ts) and the WebFetch hook, each of which records
+ * a 'deny' audit entry for a call it refuses (so the trace can mark that call: p3-eval-observability rev 2 rec 6), the
+ * defer hook (a no-op until M2-Q), then the blocking audit hook for every call.
  */
-export function preToolUseHooks(domains: readonly string[] | null, hostAddresses: readonly string[], run: RunContext, auditTimeoutMs?: number): HookCallbackMatcher[] {
+export function preToolUseHooks(
+  domains: readonly string[] | null,
+  hostAddresses: readonly string[],
+  run: RunContext,
+  auditTimeoutMs?: number,
+  helpers: { agents: RunConfig['agents']; webSearch: boolean } = { agents: undefined, webSearch: false },
+): HookCallbackMatcher[] {
+  const recordDenied = async (input: Parameters<typeof deniedEntry>[0]) => recordToolCall(run, await deniedEntry(input), auditTimeoutMs)
   return [
-    webFetchHook(domains, hostAddresses, undefined, (input) => recordToolCall(run, deniedEntry(input), auditTimeoutMs)),
+    helperHook(helpers.agents, helpers.webSearch, recordDenied),
+    webFetchHook(domains, hostAddresses, undefined, recordDenied),
+    deferHook(run),
     auditHook(run, auditTimeoutMs),
   ]
 }
