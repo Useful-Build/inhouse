@@ -8,6 +8,11 @@ import { fileStore } from '../../files-io/store.ts'
 import type { StoredFile } from '../../files-io/store.ts'
 import type { ChatFile } from './ports.ts'
 import { runnerPool } from '../runner/pool.ts'
+import type { JobDeps } from './jobs/types.ts'
+import { jobNoticeInput } from './jobs/notice.ts'
+import { addNotice } from '../../notices/store.ts'
+import { resolveTurnSettings } from '../../api/runs.ts'
+import { openStores } from '../../db/stores.ts'
 import { createLagTable, outboxPauseHook } from '../../outbox/gate.ts'
 import { outboxNotifier } from '../../outbox/notify.ts'
 import { questionHook } from '../../questions/ask.ts'
@@ -84,4 +89,25 @@ export function questionWakes(_env: Env, _parts: BrandAgentParts): QuestionWake[
 export function wireP6(core: { registerPauseHook(h: PauseHook): void; setOnDeferred(h: OnDeferredHook | null): void }, hooks: P6Hooks): void {
   for (const h of hooks.pause) core.registerPauseHook(h)
   if (hooks.onDeferred !== null) core.setOnDeferred(hooks.onDeferred)
+}
+
+// ---------- M1-B's anchor (Stage 1, N3): the job engine's ports ----------
+// `texts` stays null until M1-P wires the job texts (N20): while it is null no turn ever becomes a job.
+
+export function jobDeps(env: Env): JobDeps {
+  return {
+    texts: null,
+    async memberActive(memberId) {
+      const row = await env.DB.prepare('SELECT status FROM members WHERE id = ?').bind(memberId).first<{ status: string }>()
+      return row !== null && row.status === 'active'
+    },
+    async settings(pickerId) {
+      const r = await resolveTurnSettings(openStores(env).settings, pickerId)
+      if ('refused' in r) return { refused: r.refused.code === 'invalid' ? 'invalid' : 'model_off' }
+      return r
+    },
+    async notify(n) {
+      await env.DB.batch([addNotice(env.DB, jobNoticeInput(n))])
+    },
+  }
 }

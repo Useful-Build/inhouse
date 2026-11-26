@@ -463,7 +463,7 @@ describe('personData (P8 C1; failure 7)', () => {
   }
   const ZERO = {
     runs: 0, turns: 0, events: 0, chat_state: 0, run_tokens: 0, model_calls: 0, ledger_queue: 0, pool_queue: 0, due_tasks: 0, turn_effects: 0,
-    turn_trace: 0, turn_rows: 0, chat_deletion: 0,
+    turn_trace: 0, turn_rows: 0, chat_deletion: 0, jobs: 0,
   }
 
   it('count equals delete\'s counts; other members\' rows untouched; a second delete is zeros', () => inAgent(async h => {

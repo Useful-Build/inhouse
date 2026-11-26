@@ -659,6 +659,7 @@ describe("the eleven template rows in P4's table (revision 3.3)", () => {
       ['restore_reconciled', 'Sends checked after a restore', 300], ['question_waiting', 'A question is waiting', 300], ['question_closed', 'A question was closed', 300],
     ]
     for (const [template, title, max] of ROWS) expect([NOTICE_TEMPLATES[template]?.text, NOTICE_TEMPLATES[template]?.body?.max], template).toEqual([title, max])
-    expect(Object.values(NOTICE_TEMPLATES).filter(t => t.body).length).toBe(11)
+    // Every other row with a body is Stage 1 M1-B's stopped-job notice (bell only; its line is the server's own).
+    expect(Object.entries(NOTICE_TEMPLATES).filter(([, t]) => t.body).map(([k]) => k).sort()).toEqual([...ROWS.map(([k]) => k), 'job_stopped'].sort())
   })
 })

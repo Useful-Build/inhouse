@@ -94,3 +94,35 @@ export function outcomeOf(ev: Terminal, interruptAsked: boolean): TurnOutcome {
   if (ev.reason === 'stopped') return { outcome: 'stopped' }
   return { outcome: 'failed', reason: ev.reason }
 }
+
+/**
+ * A background task's life as the SDK reports it (Stage 1 M1-B, N3's progress): `task_started`, `task_progress` and
+ * `task_notification` system messages. `helper`: a subagent (`local_agent`), the only kind the job's helper count
+ * counts. The label is the server's own words, never the task's description (model text). Ambient tasks (the SDK says
+ * hosts should leave them out of activity) and anything else map to null.
+ */
+export type TaskEvent =
+  | { kind: 'started'; taskId: string; helper: boolean; label: string }
+  | { kind: 'progress'; taskId: string; label: string }
+  | { kind: 'ended'; taskId: string; label: string }
+
+const ENDED_LABELS: Readonly<Record<string, string>> = { completed: 'A helper finished', failed: 'A helper failed', stopped: 'A helper stopped' }
+
+export function mapTaskMessage(message: Record<string, unknown>, truncated: boolean): TaskEvent | null {
+  if (truncated || message.type !== 'system' || typeof message.task_id !== 'string' || message.task_id === '') return null
+  if (message.ambient === true || message.skip_transcript === true) return null
+  const taskId = message.task_id
+  switch (message.subtype) {
+    case 'task_started': {
+      const helper = message.task_type === 'local_agent' || typeof message.subagent_type === 'string'
+      return { kind: 'started', taskId, helper, label: helper ? stepLabel('Agent') : 'Working in the background' }
+    }
+    case 'task_progress':
+      return { kind: 'progress', taskId, label: typeof message.last_tool_name === 'string' ? stepLabel(message.last_tool_name) : 'Working' }
+    case 'task_notification': {
+      const status = typeof message.status === 'string' && Object.hasOwn(ENDED_LABELS, message.status) ? message.status : 'stopped'
+      return { kind: 'ended', taskId, label: ENDED_LABELS[status] }
+    }
+    default: return null
+  }
+}
