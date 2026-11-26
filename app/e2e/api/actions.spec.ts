@@ -21,7 +21,8 @@
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 import { ToolsDataSchema } from '../../shared/contract/tools.ts'
-import { actor, call, expectConflict, expectError, me } from './kit.ts'
+import { actor, call, expectConflict, expectError, me, newIdentity, personActor } from './kit.ts'
+import { Tab } from './chat-kit.ts'
 import { auditMax, readSql, writeSql } from './db.ts'
 import { hook, hubCall, inhouse, requestAction, setCeiling, SHOPIFY_ACCOUNT, sourcesUnder } from './fakes-kit.ts'
 
@@ -89,7 +90,28 @@ const needsCheckDetail = async (request: APIRequestContext): Promise<string | un
   return s?.detail
 }
 
+// DIAGNOSTIC (temporary, M2-S review round 2): after each test, how long a removed member's socket takes to close.
+async function socketProbe(request: APIRequestContext, label: string): Promise<void> {
+  const who = newIdentity('ws-probe')
+  const invited = await call(request, admin, 'POST', '/api/members/invites', { json: { name: who.name, email: who.email, role: 'member' } })
+  await call(request, personActor(who), 'GET', '/api/me')
+  const tab = await Tab.open(personActor(who))
+  const list = await call(request, admin, 'GET', '/api/members?limit=200')
+  const rev = (list.json.items as { id: string; rev: number }[]).find(m => m.id === invited.json.id)?.rev ?? 0
+  const t0 = Date.now()
+  const del = await call(request, admin, 'DELETE', `/api/members/${invited.json.id}?ifRev=${rev}`)
+  try {
+    await tab.until(() => tab.closed !== null, 'close', 25_000)
+    console.log(`PROBE ${label}: delete ${del.status}, closed ${tab.closed?.code} after ${Date.now() - t0} ms`)
+  } catch {
+    console.log(`PROBE ${label}: delete ${del.status}, NOT closed after ${Date.now() - t0} ms`)
+    tab.close()
+  }
+}
+test.afterEach(async ({ request }, info) => { test.setTimeout(info.timeout + 40_000); await socketProbe(request, info.title.slice(0, 40)) })
+
 test.beforeAll(async ({ request }) => {
+  await socketProbe(request, 'before the spec')
   danaId = (await me(request, dana)).memberId
   adminId = (await me(request, admin)).memberId
   // A run that was killed may have left the operation on: turn it off (through the hook, never by hand).
