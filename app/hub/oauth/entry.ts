@@ -14,6 +14,7 @@ import { decideTestShop } from '../index/test-shop'
 import { refuseTestFakes } from './test-gate'
 import { parseShopifyWriteConfig } from '../connectors/shopify/write/provider'
 import * as G from './gateway'
+import { settledAnswer } from '../../shared/rpc-answer'
 
 type HubEnv = Env & { INHOUSE_TEST_BUILD?: string }
 
@@ -97,7 +98,7 @@ export class ConnectGateway extends WorkerEntrypoint<Env> implements ConnectApi 
       const stubFor = (accountId: string) => this.env.SIGNIN.get(this.env.SIGNIN.idFromName(signInName(accountId, testShop)))
       for (const accountId of shopifyAccounts) {
         // A failed grant leaves the row as the object has it (`failed`): the prompt then doesn't claim the app.
-        await stubFor(accountId).warmTestShop({ accountId, testShop })
+        await settledAnswer(stubFor(accountId).warmTestShop({ accountId, testShop }))
       }
       return G.listAccounts({ ...d, signIn: accountId => (shopifyAccounts.has(accountId) ? stubFor(accountId) : d.signIn(accountId)) as unknown as G.ConnectStub }, scope)
     })

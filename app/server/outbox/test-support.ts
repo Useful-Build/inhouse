@@ -69,7 +69,7 @@ export const unreleasedUses = async (db: D1Database, actionId: string) =>
   (await db.prepare('SELECT * FROM permission_uses WHERE action_id = ? AND released_at_ms IS NULL').bind(actionId).all<{ id: string; grant_id: string; action_rev: number; units: number }>()).results
 
 /** How the fake hub answers one call. `hang`: never, until the test releases it. */
-export type HubMode = 'ok' | 'no' | 'unknown' | 'throw' | 'bad' | 'hang'
+export type HubMode = 'ok' | 'no' | 'unknown' | 'throw' | 'bad' | 'hang' | 'not_data'
 
 export interface Call { req: WriteRequest; violation: string | null }
 
@@ -100,6 +100,8 @@ export function fakeHub(db: D1Database, next: () => HubMode, onCall?: () => void
         case 'throw': throw new Error('binding broke')
         case 'bad': return { ok: true, value: { nope: 1 } } as unknown as WriteResult
         case 'hang': return new Promise<WriteResult>(r => { hanging.push(r) })
+        // A sure-looking answer with a function in it: not data (a JSON copy used to drop the function and read `sent`).
+        case 'not_data': return { ok: true, value: { ref: 'vip', more: () => 1 } } as unknown as WriteResult
       }
     },
   }

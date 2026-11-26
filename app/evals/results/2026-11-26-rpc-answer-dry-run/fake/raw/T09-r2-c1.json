@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "T09",
+  "cat": "choice",
+  "pair": "notification_send/approval_request",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "notification_send"
+  ],
+  "toolSearches": 0,
+  "answer": "Told Tom.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0,
+  "answer": "Told Tom.",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__notification_send",
+    "inputSha256": "793b9be36317a9dd21a80524e280746ea2c29f9acf1d1bd37a37a7dcb945399d",
+    "inputExcerpt": "{\"to\":{\"members\":[\"p_tom\"]},\"title\":\"Norda delivery\",\"text\":\"The Norda delivery ",
+    "resultExcerpt": "Sent."
+   }
+  ]
+ }
+}
