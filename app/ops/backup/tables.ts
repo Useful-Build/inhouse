@@ -98,6 +98,8 @@ export const TABLE_RULES: readonly TableRule[] = [
   // restore holds the outbox (M2-R: every restored approved or sending row to "Needs a check").
   { name: 'outbox_gate', orderBy: ['id'], mode: 'snapshot' },
   { name: 'outbox_actions', orderBy: ['id'], mode: 'paged', createdColumn: 'created_at_ms' },
+  // Stage 1 M2-Q: few rows, each updated once or twice (answered, delivered), so a whole snapshot.
+  { name: 'questions', orderBy: ['id'], mode: 'snapshot' },
 ]
 
 /** A name that goes into SQL as a quoted identifier: letters, digits and `_` only. */

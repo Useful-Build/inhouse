@@ -17,6 +17,7 @@ import { p8Tables } from './p8.ts'
 import { notifyTables } from './notify.ts'
 import { outboxTables } from './outbox.ts'
 import { permissionTables } from './permissions.ts'
+import { questionTables } from './questions.ts'
 import { poolTables } from './pool.ts'
 import { privacyTables } from './privacy.ts'
 import { routineTables } from './routines.ts'
@@ -25,4 +26,4 @@ import { todayTables } from './today.ts'
 import type { TableEntry } from './types.ts'
 import { usageTables } from './usage.ts'
 
-export const tables: readonly TableEntry[] = [...coreTables, ...chatTables, ...filesTables, ...usageTables, ...memoryTables, ...poolTables, ...activityTables, ...noticeTables, ...routineTables, ...libraryTables, ...todayTables, ...connectorTables, ...notifyTables, ...p8Tables, ...egressTables, ...hubTables, ...privacyTables, ...teamRequestTables, ...brandSkillTables, ...permissionTables, ...outboxTables]
+export const tables: readonly TableEntry[] = [...coreTables, ...chatTables, ...filesTables, ...usageTables, ...memoryTables, ...poolTables, ...activityTables, ...noticeTables, ...routineTables, ...libraryTables, ...todayTables, ...connectorTables, ...notifyTables, ...p8Tables, ...egressTables, ...hubTables, ...privacyTables, ...teamRequestTables, ...brandSkillTables, ...permissionTables, ...outboxTables, ...questionTables]

@@ -64,7 +64,10 @@ export function judge(t: TurnEnd): Verdict {
       const why = t.cancel_why
       if (why !== null && BUDGET.has(why)) return budgetEnd(why)
       if (why === 'pool_full') return 'again'
-      if (why === 'session_unusable') return { end: 'failed' }
+      // Stage 1 M2-Q: a continuation queued before the chat began waiting on a person's question starts into the waiting
+      // session and is cancelled `session_unusable`. The same text again: it waits out the question (`waiting_answer`)
+      // and a damaged session refuses it at once (`session_damaged`), so this never loops.
+      if (why === 'session_unusable') return 'again'
       return { end: 'cancelled' }
     }
     default: return { end: 'failed' }

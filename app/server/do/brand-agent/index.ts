@@ -15,6 +15,7 @@ import { createInvocationTables, recordInvocation } from './invocations.ts'
 import { hubAccountFacts } from './hub-accounts.ts'
 import type { HubAccountFacts } from '../../outbox/facts.ts'
 import type { ConnectGateway } from '../../../hub/index/contract.ts'
+import { questionWaits } from '../../questions/agent.ts'
 import { AgentCore } from './core.ts'
 import type {
   Actor, AdmitActionAnswer, AdmitAnswer, AskWaitAnswer, BrandAgentParts, BrandAgentPorts, BrandAgentRpc, DeferDecision, DrainState, LeaseAnswer, ModelCallUsage, ModelCallWorst, PersonDataAnswer,
@@ -340,6 +341,16 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   /** This object's pause generation, and since when it has seen the outbox's gate behind it (null: not behind). */
   async outboxLag(): Promise<Lag> {
     return { pauseGen: doPauseState(this.ctx.storage.sql).pauseGen, lagSinceMs: lagSince(this.ctx.storage.sql) }
+  }
+
+  // ---------- Stage 1 M2-Q (N16): questions ----------
+  /** The question each chat waits on, or null (server/questions/agent.ts). */
+  async questionWaits(chatIds: string[]): Promise<Record<string, string | null>> {
+    return questionWaits(this.ctx.storage.sql, chatIds)
+  }
+  /** An answered question's resume (`resumeDeferred`, `allow`). A job waiting on the chat wakes when it ends (core.ts). */
+  async questionResume(chatId: string, questionId: string): Promise<SendTurnResult | Refusal> {
+    return this.core.resumeDeferred(chatId, 'allow', questionId)
   }
 }
 
