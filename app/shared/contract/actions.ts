@@ -70,9 +70,14 @@ export type ActionDetailRow = z.infer<typeof ActionDetailRowSchema>
 
 /**
  * A card's or an item's detail rows, in the order of its ids: one per order (a tag call, a refund), or one per line (a
- * draft order). Absent when nothing was read (the store didn't answer, or the operation has no such facts).
+ * draft order). Absent when nothing was read and the operation has nothing to say about it. `note` (#575): server words
+ * for a card whose facts couldn't be read ("Product names couldn't be read."), shown quietly in place of rows; then
+ * `rows` is empty. Either rows or a note, never neither.
  */
-export const ActionDetailSchema = z.object({ rows: z.array(ActionDetailRowSchema).min(1).max(100) }).strict()
+export const ActionDetailSchema = z.object({
+  rows: z.array(ActionDetailRowSchema).max(100),
+  note: z.string().max(120).optional(),
+}).strict().refine(d => d.rows.length > 0 || d.note !== undefined, { message: 'rows or a note', path: ['rows'] })
 export type ActionDetail = z.infer<typeof ActionDetailSchema>
 
 export const ActionBatchSchema = z.object({

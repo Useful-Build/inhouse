@@ -42,6 +42,7 @@ import { claimTool, d1Reports, waiterGaveUp, WAIT_AFTER_APPROVAL_MS, WAIT_MAX_MS
 import type { BrandAgentRpc } from '../do/brand-agent/ports.ts'
 import type { RunGrant } from '../do/brand-agent/tokens.ts'
 import { readCapped } from './http.ts'
+import { safeError } from '../safe-error.ts'
 
 export const ACTIONS_PATH = '/actions/'
 export const ACTIONS_MAX_BODY_BYTES = 64 * 1024
@@ -264,7 +265,7 @@ export async function callAction(grant: RunGrant, name: string, args: Record<str
   const port = openOutbox({
     db: d.db, requestId, now: d.now,
     // Stage 1 M3 (card details): the store's facts go into the card's display-only rows; the answer below never has them.
-    facts: outboxFacts({ db: d.db, hubAccounts: () => d.rpc.hubAccounts(), cardFacts: cardFactsReader(d.rpc) }),
+    facts: outboxFacts({ db: d.db, hubAccounts: () => d.rpc.hubAccounts(), cardFacts: cardFactsReader(d.rpc, d.log) }),
     schedule: (actionId, atMs) => d.rpc.poke({ kind: SEND_KIND, id: sendTaskId(actionId), dueAtMs: atMs }),
   })
   const r = await port.request(
@@ -371,8 +372,16 @@ async function approverName(db: D1Database, row: Pick<OutboxActionRow, 'approver
 }
 
 /** Stage 1 M3 (card details): the outbox's reader of the store's facts, through BrandAgent (the egress holds no hub binding). */
-export const cardFactsReader = (rpc: Pick<BrandAgentRpc, 'cardFacts'>): CardFactsReader => async req => {
-  const facts = await rpc.cardFacts(req)
+export const cardFactsReader = (rpc: Pick<BrandAgentRpc, 'cardFacts'>, log: (e: Record<string, unknown>) => void): CardFactsReader => async req => {
+  let facts: Awaited<ReturnType<BrandAgentRpc['cardFacts']>>
+  try {
+    facts = await rpc.cardFacts(req)
+  } catch (err) {
+    // #562: the hop to BrandAgent itself failed (an object reset on deploy, an overload). The card is made with its ids
+    // only; the write is never refused for want of its facts. A closed reason only: no name, no id.
+    log({ event: 'card_facts_unread', why: 'rpc', error: safeError(err) })
+    return null
+  }
   return facts === null ? null : factsView(facts)
 }
 
@@ -380,7 +389,7 @@ export const cardFactsReader = (rpc: Pick<BrandAgentRpc, 'cardFacts'>): CardFact
 export function approvalsWiring(d: ActionsRouteDeps): ApprovalsWiring {
   return {
     hubAccounts: () => d.rpc.hubAccounts(),
-    cardFacts: cardFactsReader(d.rpc),
+    cardFacts: cardFactsReader(d.rpc, d.log),
     async admit(scope, input) {
       const a = await d.rpc.admitAction(scope.turnId, APPROVAL_REQUEST_TOOL, await auditInputSha256(input))
       if ('refused' in a) {

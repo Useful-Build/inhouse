@@ -41,7 +41,6 @@ const loopWrites = async (request: APIRequestContext): Promise<number> => {
 interface BatchCard {
   id: string; rev: number; state: string; kind: string; result?: string
   batch?: { itemCount: number; firstLines: string[]; totals: { records: number; units: number; unitsLabel: string }; firstDetails?: unknown[] }
-  title?: string
 }
 const card = async (request: APIRequestContext, id: string): Promise<BatchCard> => {
   const r = await call(request, dana, 'GET', `/api/actions/${id}`)
@@ -104,9 +103,8 @@ test('a loop of 500 allowed writes stops at the limit and becomes one card; appr
   const batch = await card(request, batchId)
   expect(batch).toMatchObject({ kind: 'exact', state: 'waiting', batch: { itemCount: 450, totals: { records: 450, units: 450, unitsLabel: 'orders' } } })
   expect(batch.batch!.firstLines).toHaveLength(10)
-  // Stage 1 M3 (card details, #488): the title says what the card does, and each row names its order's customer and total
-  // from the hub's fake write store (order 9001: Alex Moore; 9002: a guest order).
-  expect(batch.title).toBe('Tag 450 orders')
+  // Stage 1 M3 (card details, #488): each row names its order's customer and total from the hub's fake write store (order
+  // 9001: Alex Moore; 9002: a guest order).
   expect(batch.batch!.firstDetails).toHaveLength(10)
   expect(batch.batch!.firstDetails!.slice(0, 2)).toEqual([
     { rows: [{ ref: 'Order 9001', order: '#9001', customer: 'Alex Moore', amount: '$642.10', currency: 'USD' }] },

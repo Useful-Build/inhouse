@@ -23,7 +23,5 @@ export const shopifyInventoryRestock: OperationEntry<RestockArgs> & { key: 'shop
   idempotent: false,
   coalesces: true,
   defaults: { grant: { perDay: 200, unitsMax: 50 }, ceiling: { perDayMax: 1000, unitsMax: 500 } },
-  // Stage 1 M3 (card details): a collecting card's title; each call is one item's stock at one location.
-  batchTitle: records => `Restock ${records === 1 ? '1 product' : `${records} products`}`,
   card: a => stockCard('Add', a),
 }

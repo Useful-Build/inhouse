@@ -57,11 +57,12 @@ const MARKUP = /[<>`]/g
 
 /**
  * The app's text rules for connector text (shared/notify/bound.ts, the notices' steps 1 and 2): NFC, control, bidi,
- * zero-width and tag characters stripped, one line, anything that could be a link replaced; then no markup characters,
+ * zero-width and tag characters stripped, one line; then no markup characters, before anything that could be a link is
+ * replaced (#573: a `<`, `>` or backtick splits a host for the link check, so stripping it after would join one back);
  * runs of space as one, and cut to `max` code points (with an ellipsis). Undefined when nothing is left.
  */
 export function cardText(raw: string, max: number): string | undefined {
-  const text = removeLinks(cleanChars(raw, 'message')).text.replace(MARKUP, '').replace(/\s+/gu, ' ').trim()
+  const text = removeLinks(cleanChars(raw, 'message').replace(MARKUP, '')).text.replace(/\s+/gu, ' ').trim()
   if (text === '') return undefined
   const points = [...text]
   return points.length <= max ? text : `${points.slice(0, max - 1).join('').trimEnd()}…`

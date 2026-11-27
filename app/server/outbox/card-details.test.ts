@@ -21,7 +21,10 @@ import { approvalsWiring, callAction } from '../egress/actions.ts'
 import type { ActionsRouteDeps } from '../egress/actions.ts'
 import { approvalHandlers } from '../mcp/tools/approvals/index.ts'
 import { lastLineId, linesSince } from '../db/test-support.ts'
-import { ceiling } from '../permissions/test-support.ts'
+import { ceiling, insertGrant } from '../permissions/test-support.ts'
+import { POLICY_REV } from '../permissions/policy.ts'
+import { timing } from './timing.ts'
+import { PRODUCTS_UNREAD_TEXT } from './words.ts'
 import { amountWords, cardText, factsView, readCardFacts } from './detail.ts'
 import type { CleanCardFacts } from './detail.ts'
 import { OPERATIONS } from './operations/index.ts'
@@ -60,7 +63,7 @@ function setup() {
   rpc.hubAccountsAnswer = [{ accountId: 'shopify:store', paused: false, label: 'Shopify (Store A)' }, { accountId: 'slack:workspace', paused: false, label: 'Slack' }]
   const deps: ActionsRouteDeps = { db, rpc, now: () => T0, requestId: () => fresh('req'), log: () => {}, sleep: async () => {} }
   const call = (name: string, args: Record<string, unknown>) => callAction(grantOf(turnId), name, args, deps)
-  return { rpc, deps, call }
+  return { rpc, deps, call, turnId }
 }
 
 const store = outboxStore({ db })
@@ -86,6 +89,10 @@ describe('the text rules (failure 1)', () => {
     expect(cardText('A'.repeat(500), 80)).toBe(`${'A'.repeat(79)}…`)
     expect([...cardText('🧵'.repeat(500), 80)!]).toHaveLength(80)
     expect(cardText('​ ‮', 80)).toBeUndefined()
+    // #573: a markup character that splits a host never joins it back after the link check.
+    expect(cardText('pay at evil`.example/x', 80)).toBe('pay at [link removed]')
+    expect(cardText('evil<>.example', 80)).toBe('[link removed]')
+    expect(cardText('www`.evil`.example', 80)).toBe('[link removed]')
     expect(amountWords('642.1', 'USD')).toBe('$642.10')
     expect(amountWords('2490', 'JPY')).toBe('¥2,490')
   })
@@ -163,8 +170,6 @@ describe('a batch card and its item list (failure 3)', () => {
     expect(JSON.stringify(r)).not.toContain('Customer')
     const batch = (await latest())!
     const card = await cardOf(batch.id)
-    // Verb + count + object.
-    expect(card.title).toBe('Tag 7 orders as VIP')
     expect(card.batch?.firstDetails).toHaveLength(7)
     expect(card.batch?.firstDetails?.[0]).toEqual({ rows: [{ ref: 'Order 3901', order: '#3901', customer: 'Customer 0', amount: '$642.10', currency: 'USD' }] })
     // A guest order has no customer; a deleted one says so.
@@ -253,5 +258,69 @@ describe('the leak check and the hub call (failure 5)', () => {
     expect(await cardFactsVia({ ...base, timeoutMs: 5, connect: { cardFacts: () => new Promise(() => {}) } }, req)).toBeNull()
     expect(logs.map(l => l.why)).toEqual(['taint', 'not_configured', 'threw', 'timeout'])
     expect(JSON.stringify(logs)).not.toContain('Alex')
+  })
+})
+
+describe('review round 1 (#562, #563, #572, #575)', () => {
+  it('#562: a failed hop to BrandAgent still makes the card, with its ids only', async () => {
+    const w = setup()
+    w.rpc.cardFacts = async () => { throw new Error('Durable Object reset because its code was updated') }
+    const logs: Record<string, unknown>[] = []
+    const deps = { ...w.deps, log: (e: Record<string, unknown>) => { logs.push(e) } }
+    const r = await callAction(grantOf(w.turnId), 'shopify_order_tag_add', { orderIds: [ORDER(1050)], tags: ['vip'] }, deps)
+    expect(r.isError, JSON.stringify(r)).toBeUndefined()
+    const row = (await latest())!
+    expect(row.detail_json).toBeNull()
+    expect(logs).toContainEqual(expect.objectContaining({ event: 'card_facts_unread', why: 'rpc' }))
+  })
+
+  it('#563: a draft order\'s products stay fetchable; an order card\'s id and name are refused', async () => {
+    const taint = taintStore(db, 'card-details-test-hash-key-0123456789', () => T0)
+    const capture = { requestId: 'req-cd', log: () => {}, captureTaint: async (body: string) => { await taint.capture(body, { route: 'hub', tool: null }) } }
+    const variantId = VARIANT(44012345678901)
+    const vreq: CardFactsRequest = { accountId: 'shopify:store', expect: { connectedAtMs: SHOP_GEN, shop: 'store-a' }, orderIds: [], variantIds: [variantId] }
+    const variants = { ok: true, value: { orders: null, variants: [{ id: variantId, found: true, product: 'Linen shirt', variant: 'M', sku: 'LINEN-SHIRT-2026M' }] } }
+    expect((await cardFactsVia({ ...capture, connect: { cardFacts: async () => variants as never } }, vreq))?.variants?.[0]).toMatchObject({ found: true, product: 'Linen shirt, M' })
+    expect(await taint.checkUrl(new URL('https://store-a.example/products/linen-shirt?variant=44012345678901'))).toBe(false)
+    expect(await taint.checkUrl(new URL('https://supplier.example/search?q=LINEN-SHIRT-2026M'))).toBe(false)
+    const oreq: CardFactsRequest = { ...vreq, orderIds: [ORDER(4400123456789)], variantIds: [] }
+    const orders = { ok: true, value: { orders: [{ ...order(4400123456789, 'Alex Moore'), name: '#77123' }], variants: null } }
+    await cardFactsVia({ ...capture, connect: { cardFacts: async () => orders as never } }, oreq)
+    expect(await taint.checkUrl(new URL('https://evil.example/c/4400123456789'))).toBe(true)
+    expect(await taint.checkUrl(new URL('https://evil.example/?q=%2377123'))).toBe(true)
+  })
+
+  it('#572: an "Always allow" write\'s hold counts from its insert, after a slow store read', async () => {
+    await insertGrant(db, {
+      id: 'pg_cd572AAAAAAAAAAAAAAAAA', holder: `member:${ASKER}`, accountId: 'shopify:store', accountGen: SHOP_GEN, operation: 'shopify.order.tag_add',
+      scopeKey: 'shop=store-a', perDay: 50, unitsMax: 1, policyRev: POLICY_REV, grantedRole: 'member', ceilingRev: 1, revokedAtMs: null,
+    })
+    const w = setup()
+    const clock = { now: T0 }
+    w.rpc.cardFacts = async () => {
+      clock.now += 4_000 // the store took 4 s
+      return null
+    }
+    const r = await callAction(grantOf(w.turnId), 'shopify_order_tag_add', { orderIds: [ORDER(1051)], tags: ['vip'] }, { ...w.deps, now: () => clock.now })
+    expect(r.isError, JSON.stringify(r)).toBeUndefined()
+    const row = (await db.prepare("SELECT state, created_at_ms, approved_at_ms, send_at_ms FROM outbox_actions WHERE verdict = 'run' ORDER BY created_at_ms DESC LIMIT 1")
+      .first<{ state: string; created_at_ms: number; approved_at_ms: number; send_at_ms: number }>())!
+    expect(row.created_at_ms).toBe(T0 + 4_000)
+    expect(row.approved_at_ms).toBe(T0 + 4_000)
+    expect(row.send_at_ms - row.created_at_ms).toBe(timing().holdMs)
+  })
+
+  it('#575: a draft order whose products couldn\'t be read says so quietly, and the request still goes ahead', async () => {
+    await ceiling(db, 'shopify.draft_order.create', { enabled: true, perDayMax: 50, loweredRev: 1 })
+    const w = setup()
+    w.rpc.cardFactsAnswer = null
+    const r = await w.call('shopify_draft_order_create', { lines: [{ variantId: VARIANT(7001), quantity: 2 }] })
+    expect(r.isError, JSON.stringify(r)).toBeUndefined()
+    const card = await cardOf((await latest())!.id)
+    expect(card.detail).toEqual({ rows: [], note: PRODUCTS_UNREAD_TEXT })
+    // A tag card with no facts has no note: only an operation that names one says so.
+    w.rpc.cardFactsAnswer = null
+    await w.call('shopify_order_tag_add', { orderIds: [ORDER(1052)], tags: ['vip'] })
+    expect((await cardOf((await latest())!.id)).detail).toBeUndefined()
   })
 })

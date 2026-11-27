@@ -256,6 +256,12 @@ data. [Shopify privacy law compliance](https://shopify.dev/docs/apps/build/compl
 | `customers/redact` (route 92) | Find and erase Inhouse's stored copies of personal data for the named customer and orders in that shop. Check related records, files and derived indexes, and verify that the data is gone. If no matching data is held, record the search and its outcome. |
 | `shop/redact` (route 93) | Locate and erase the Shopify data Inhouse holds for the uninstalled shop, including stored copies in records, files and derived indexes. If the whole brand deployment is retiring, coordinate the approved teardown separately. Verify erasure or document that Inhouse held no shop data. |
 
+Approval cards keep what they showed from the store (Stage 1 M3, card details): `outbox_actions.detail_json` and
+`outbox_items.detail_json` hold the customer's name, the order's name and total for each order a card named. They're
+keyed by order, not by customer: find the rows whose `args_json` names one of the request's order IDs (their
+`detail_json` rows carry `ref: "Order <id>"`) and set `detail_json` to NULL on those rows. The card then shows its IDs
+only.
+
 For redaction, check backups against the data map. Record any copies that age out and make sure a restore cannot
 reintroduce the erased data. Record completion in the private ops record using the internal request ID.
 

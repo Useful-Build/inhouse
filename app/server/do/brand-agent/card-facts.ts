@@ -1,7 +1,8 @@
 // Card details (Stage 1 M3, #488), read inside BrandAgent: the egress holds no hub binding but ReadGateway (P5), so the
 // outbox's request asks the object (`BrandAgentRpc.cardFacts`), as it does for the accounts (hub-accounts.ts). The hub
 // reads the write store (ConnectGateway.cardFacts); the answer is copied out and released (shared/rpc-answer.ts), its
-// private data captured for the fetch leak check like any other Shopify read (egress/taint.ts), then cleaned and handed
+// orders' part captured for the fetch leak check as customer and order data (egress/taint.ts, decision L2; the variants'
+// catalogue data stays fetchable, #563), then cleaned and handed
 // back as plain data (outbox/detail.ts). Display only: the caller stores it beside the card, never in words the agent
 // reads.
 //
@@ -51,8 +52,11 @@ export async function cardFactsVia(d: CardFactsDeps, req: CardFactsRequest): Pro
     return null
   }
   try {
-    // The hub's answer as it came (before cleaning), so every token the store sent is captured.
-    await d.captureTaint(JSON.stringify((raw as { value: unknown }).value))
+    // The orders' part as it came (before cleaning), so every token of an order the store sent is captured: its id, name,
+    // customer and total are customer and order data (decision L2). The variants' part is catalogue data (product and
+    // variant ids, titles, SKUs), which L2 keeps fetchable, so it isn't captured (#563).
+    const orders = (raw as { value: { orders: unknown } }).value.orders
+    if (orders !== null) await d.captureTaint(JSON.stringify({ orders }))
   } catch (err) {
     d.log({ event: 'card_facts_unread', why: 'taint', error: safeError(err) })
     return null

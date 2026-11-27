@@ -80,11 +80,10 @@ export interface OperationBase<A> {
    */
   detail?(a: A, f: CardFactsView): ActionDetail | null
   /**
-   * Stage 1 M3 (card details): a batch card's title, verb + count + object ("Tag 450 orders as VIP"). `a` is the call's
-   * own arguments for a one-call batch, null for a collecting card (its items are several calls). `records` is the
-   * card's total.
+   * Stage 1 M3 (#575): the quiet note a card shows when the store couldn't be read for this call ("Product names couldn't
+   * be read."), in place of rows. Absent: no note (the card shows its ids only). The request goes ahead either way.
    */
-  batchTitle?(records: number, a: A | null): string
+  unreadNote?: string
   /** M2: no automatic resend. */
   idempotent: false
   /** Server words only. */

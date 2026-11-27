@@ -1,7 +1,7 @@
 // `shopify.order.tag_remove` (Stage 1 M3-S1, N21): removes 1 to 5 tags from 1 to 100 orders in the brand's connected
 // Shopify store. The same shape, limits and class as tag_add (no effect flag; adding the tag back undoes it).
 // Shared shape: ./shopify-order-tags.ts.
-import { itemsPerOrder, OrderTagsArgsSchema, shopScope, tagsBatchTitle, tagsCard, tagsDetail, tagsFacts, tagsItemLine, type OrderTagsArgs } from './shopify-order-tags.ts'
+import { itemsPerOrder, OrderTagsArgsSchema, shopScope, tagsCard, tagsDetail, tagsFacts, tagsItemLine, type OrderTagsArgs } from './shopify-order-tags.ts'
 import type { OperationEntry } from './types.ts'
 
 export const shopifyOrderTagRemove: OperationEntry<OrderTagsArgs> & { key: 'shopify.order.tag_remove' } = {
@@ -18,7 +18,6 @@ export const shopifyOrderTagRemove: OperationEntry<OrderTagsArgs> & { key: 'shop
   itemLine: (a, f) => tagsItemLine('remove', a, f),
   facts: tagsFacts,
   detail: tagsDetail,
-  batchTitle: (records, a) => tagsBatchTitle('remove', records, a),
   effects: { money: false, customer: false, destructive: false, access: false },
   memberMay: true,
   reversible: true,

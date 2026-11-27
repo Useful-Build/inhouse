@@ -243,7 +243,8 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
     async request(ctx, proposed, { mode }) {
       const facts = d.facts
       if (!facts) throw new Error('outbox: request needs the facts reader')
-      const nowMs = d.now()
+      // Read again after the store's facts (#572): the rows' times and an approved row's hold count from the write.
+      let nowMs = d.now()
       const rf = await facts.resolveFacts(nowMs)
       const r = await resolve(rf, proposed)
       if ('refuse' in r) return refusedRequest(r.refuse.reason)
@@ -271,7 +272,16 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       // Stage 1 M3 (card details, #488): the store's facts for this call, read once, for the card's and each item's
       // display-only rows. Never in `card` or an item's line (the words the agent reads back).
       const view = await cardFactsFor(facts, entry, r, account.shop)
-      const detail = (a: unknown): ActionDetail | null => (view !== null && entry.detail ? entry.detail(a, view) : null)
+      // #572: the read can take up to 5 s; every row below is written at the clock after it, so an "Always allow" write's
+      // hold (`send_at_ms`) is its full length from the insert, never what's left of it.
+      nowMs = d.now()
+      const detail = (a: unknown): ActionDetail | null => {
+        const rows = view !== null && entry.detail ? entry.detail(a, view) : null
+        // #575: an operation whose card names what the store holds says so when the store couldn't be read for it.
+        if (rows !== null || entry.unreadNote === undefined || !entry.facts) return rows
+        const wanted = entry.facts(a)
+        return wanted.orderIds.length + wanted.variantIds.length > 0 ? { rows: [], note: entry.unreadNote } : null
+      }
       const asker = ctx.asker
       if (!asker) throw new Error('outbox: decide let through an action with no asker')
       const via = mode === 'ask_only' ? 'approval_request' : 'tool'

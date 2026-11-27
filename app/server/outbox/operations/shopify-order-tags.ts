@@ -62,14 +62,3 @@ export const tagsFacts = (a: OrderTagsArgs): FactsWanted => ({ orderIds: [...a.o
 /** Stage 1 M3 (card details): one row per order, "#3901 · Alex Moore · $642.10". */
 export const tagsDetail = (a: OrderTagsArgs, f: CardFactsView): ActionDetail | null => detailOf(a.orderIds.map(id => orderRow(f, id)))
 
-const ordersWords = (n: number) => (n === 1 ? '1 order' : `${n} orders`)
-
-/**
- * Stage 1 M3 (card details): a batch's title. One call's batch names its tags ("Tag 450 orders as VIP", "Remove VIP, rush
- * from 12 orders"); a collecting card holds several calls, so only the count ("Tag 450 orders").
- */
-export function tagsBatchTitle(verb: 'add' | 'remove', records: number, a: OrderTagsArgs | null): string {
-  const tags = a?.tags.join(', ')
-  if (verb === 'add') return tags ? `Tag ${ordersWords(records)} as ${tags}` : `Tag ${ordersWords(records)}`
-  return tags ? `Remove ${tags} from ${ordersWords(records)}` : `Remove tags from ${ordersWords(records)}`
-}

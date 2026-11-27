@@ -4,6 +4,7 @@
 // The hub checks the arguments again, strictly, and sends nothing else (hub/connectors/shopify/write/ops/draft-order-create.ts).
 import { z } from 'zod'
 import { detailOf, variantRow } from '../detail.ts'
+import { PRODUCTS_UNREAD_TEXT } from '../words.ts'
 import { shopScope, TagsSchema } from './shopify-order-tags.ts'
 import type { OperationEntry } from './types.ts'
 
@@ -45,7 +46,8 @@ export const shopifyDraftOrderCreate: OperationEntry<DraftOrderArgs> & { key: 's
   // Stage 1 M3 (card details, #488): each line's product, variant and SKU from the store, beside its variant id.
   facts: a => ({ orderIds: [], variantIds: a.lines.map(l => l.variantId) }),
   detail: (a, f) => detailOf(a.lines.map(l => variantRow(f, l.variantId, l.quantity))),
-  batchTitle: records => `Create ${records === 1 ? '1 draft order' : `${records} draft orders`}`,
+  // #575: when the product names couldn't be read, the card says so rather than show bare variant ids alone.
+  unreadNote: PRODUCTS_UNREAD_TEXT,
   effects: { money: false, customer: false, destructive: false, access: false },
   memberMay: true,
   reversible: true,

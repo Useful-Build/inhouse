@@ -8,7 +8,6 @@ import type { ActionCard, ActionKind, ActionState } from '../../shared/contract/
 import { ActionCardSchema } from '../../shared/contract/actions.ts'
 import type { MemberRole } from '../../shared/contract/members.ts'
 import { operationEntry } from './operations/index.ts'
-import type { OperationEntry } from './operations/types.ts'
 import type { OutboxActionRow, OutboxItemRow } from './types.ts'
 import { batchSummaries, storedDetail } from './batch/rows.ts'
 import type { BatchSummary } from './batch/rows.ts'
@@ -75,7 +74,7 @@ export function cardOf(row: OutboxActionRow, viewer: Viewer, nowMs: number, batc
     rev: row.rev,
     kind,
     state: row.state,
-    title: batch === undefined ? stored.title : batchCardTitle(row, entry, stored),
+    title: batch === undefined || row.tool_use_id !== null ? stored.title : batchTitle(row.items_n, stored.label),
     lines: batch === undefined ? stored.lines : batch.firstLines,
     tool: { accountId: row.account_id, label: stored.label },
     records: row.records,
@@ -113,17 +112,6 @@ export function cardOf(row: OutboxActionRow, viewer: Viewer, nowMs: number, batc
     approverKind: row.approver_kind,
     ...(admins && waiting && !own ? { waitingFor: WAITING_FOR_ADMIN } : {}),
   })
-}
-
-/**
- * Stage 1 M3 (card details): a batch card's title, verb + count + object from its operation ("Tag 450 orders as VIP",
- * "Create 12 draft orders"): a one-call batch names its call's own arguments, a collecting card only the count. An
- * operation with no batch title keeps M3-B's words (the call's own title, or "N changes in Shopify").
- */
-function batchCardTitle(row: OutboxActionRow, entry: OperationEntry, stored: StoredCard): string {
-  const oneCall = row.tool_use_id !== null
-  if (entry.batchTitle) return entry.batchTitle(row.records, oneCall ? (JSON.parse(row.args_json) as unknown) : null)
-  return oneCall ? stored.title : batchTitle(row.items_n, stored.label)
 }
 
 /** Cards for a list of rows, each batch's first lines read in one go. */
