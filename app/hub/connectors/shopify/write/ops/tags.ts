@@ -17,9 +17,8 @@ import { rootOutcome, type RootOutcome } from './types'
 export const ORDERS_PER_CALL_MAX = 5
 
 const ORDER_GID = /^gid:\/\/shopify\/Order\/([1-9]\d{0,19})$/
-// Tags: 1..40 chars, no commas or control characters.
-// eslint-disable-next-line no-control-regex -- rejecting control characters is intentional
-const TAG_RE = /^[^\u0000-\u001F\u007F,]{1,40}$/
+// Tags: 1..40 chars, no commas or control characters (C0, DEL and C1).
+const TAG_RE = /^[^\p{Cc},]{1,40}$/u
 
 /** One tag, trimmed, as Shopify stores it (the server's own check is stricter). */
 export const ShopifyTagSchema = z.string().trim().regex(TAG_RE)
