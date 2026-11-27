@@ -114,14 +114,15 @@ export function BatchSheet({ card, opened, whose, busy, refusal, onClose, onSawT
   }, [want, read.next, card.id, shown])
 
   // The list's end in view asks for the next page.
-  // Watched afresh after each page, so its first report says whether the end still shows (a short list asks again).
+  // Watched afresh after each page, and when the card moves on or a read starts over (a page then in flight is dropped), so
+  // its first report says whether the end still shows: a short list asks again instead of waiting for a scroll.
   const pages = read.items.length
   useEffect(() => {
     if (!end || typeof IntersectionObserver === 'undefined') return
     const io = new IntersectionObserver(entries => setAtEnd(entries.some(e => e.isIntersecting)))
     io.observe(end)
     return () => io.disconnect()
-  }, [end, pages])
+  }, [end, pages, readRev, read.next])
 
   const q = query.trim().toLowerCase()
   const rows = q ? read.items.filter(it => matches(it, q)) : read.items

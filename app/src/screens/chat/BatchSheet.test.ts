@@ -184,6 +184,32 @@ describe('the full list', () => {
     expect(sheet().querySelector('h2 + p')?.textContent).toBe('Shopify')
     expect(sheet().querySelector('[data-sheet-totals]')?.textContent).toBe('12 changes · 900 stock units')
   })
+  test('a card that moves on while a page is on its way: the dropped read starts over without waiting for a scroll', async () => {
+    const seen: ((e: { isIntersecting: boolean }[]) => void)[] = []
+    class FakeObserver { constructor(cb: (e: { isIntersecting: boolean }[]) => void) { seen.push(cb) } observe() {} disconnect() {} }
+    vi.stubGlobal('IntersectionObserver', FakeObserver)
+    try {
+      let release: (() => void) | null = null
+      fake.actionItems.mockImplementationOnce(() => new Promise(res => { release = () => res({ items: [], next: undefined }) }))
+      serve(3, 'needs_check')
+      const unclear = batch(3, { state: 'needs_check', can: { ...NONE, resolve: true } })
+      await show({ card: unclear })
+      await act(async () => { seen.at(-1)!([{ isIntersecting: true }]) })
+      await flush()
+      expect(fake.actionItems).toHaveBeenCalledTimes(1)
+      const watchers = seen.length
+      // The card moves on before that page answers: its answer is dropped, and the end is watched afresh.
+      await act(async () => root.render(createElement(TooltipProvider, null, createElement(BatchSheet, {
+        card: { ...unclear, rev: 2 }, opened: unclear, whose: null, busy: false, refusal: null, onClose: () => {}, onSawTip: () => {}, onAnswer: () => {}, onResolve: () => {},
+      }))))
+      await flush()
+      expect(seen.length).toBeGreaterThan(watchers)
+      await act(async () => { release!() })
+      await act(async () => { seen.at(-1)!([{ isIntersecting: true }]) })
+      await flush()
+      expect(rows()).toHaveLength(3)
+    } finally { vi.unstubAllGlobals() }
+  })
   test('once the card stops waiting, its answers go', async () => {
     serve(12)
     await show({ card: batch(12, { rev: 2, state: 'denied', can: NONE }), opened: batch(12) })
