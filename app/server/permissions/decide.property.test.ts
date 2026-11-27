@@ -121,8 +121,8 @@ describe('decideCore', () => {
 const facts = (over: Partial<ResolveFacts> = {}): ResolveFacts => ({
   nowMs: 1_800_000_000_000,
   accounts: {
-    shopify: { accountId: 'shopify:store', connectedAtMs: 1_000, connected: true, paused: false, label: 'Shopify (Store A)', shop: 'store-a' },
-    slack: { accountId: 'slack:workspace', connectedAtMs: 2_000, connected: true, paused: false, label: 'Slack', shop: null },
+    shopify: { accountId: 'shopify:store', connectedAtMs: 1_000, connected: true, paused: false, label: 'Shopify (Store A)', shop: 'store-a', currency: null },
+    slack: { accountId: 'slack:workspace', connectedAtMs: 2_000, connected: true, paused: false, label: 'Slack', shop: null, currency: null },
   },
   listedChannels: [{ id: 'C0123ABCD', name: 'ops' }],
   ...over,

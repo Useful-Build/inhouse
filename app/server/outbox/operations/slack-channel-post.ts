@@ -64,11 +64,20 @@ export const slackChannelPost: OperationEntry<PostArgs> & { key: 'slack.channel.
   },
   records: () => 1,
   units: () => 1,
+  unitsLabel: 'posts',
+  // Stage 1 M3-A (N21): the channel and the post's first line, as the card's own words.
+  itemLine(a, f) {
+    const c = listedChannel(f.listedChannels, a.channel)
+    if (!c) throw new Error('slack.channel.post: item line asked for an unlisted channel')
+    const first = (a.title ?? a.text).split('\n', 1)[0] ?? ''
+    return `#${c.name}: ${first.length > 80 ? `${first.slice(0, 79)}…` : first}`
+  },
   effects: { money: false, customer: false, destructive: false, access: false },
   memberMay: true,
   reversible: false,
   idempotent: false,
-  defaultPerDay: 50,
+  coalesces: true,
+  defaults: { perDay: 50, unitsMax: 1, ceiling: { perDayMax: 200, unitsMax: 1 } },
   card(a, f) {
     const c = listedChannel(f.listedChannels, a.channel)
     // `resolve` refuses an unlisted channel before it builds the card.

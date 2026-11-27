@@ -84,7 +84,7 @@ describe('the copy into D1 (failures 1, 2, 3)', () => {
     await person(db, 'm_hub_acct', 'member')
     await insertGrant(db, {
       id: 'pg_AAAAAAAAAAAAAAAAAAAAAA', holder: 'member:m_hub_acct', accountId: SLACK, accountGen: 42, operation: 'slack.channel.post', scopeKey: 'channelId=C1',
-      perDay: 50, policyRev: POLICY_REV, grantedRole: 'member', ceilingRev: 1, revokedAtMs: null,
+      perDay: 50, unitsMax: 1, policyRev: POLICY_REV, grantedRole: 'member', ceilingRev: 1, revokedAtMs: null,
     })
     await read({ ok: true, value: [slack()] })
     expect(await row(SLACK)).toMatchObject({ connected_at_ms: HUB_GEN + 1, last_state: 'connected' })

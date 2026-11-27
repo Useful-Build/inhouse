@@ -5,7 +5,7 @@
 // through `hubAccounts` (the caller's binding; N12: the hub checks them again at the send).
 import { all, first, stmt } from '../db/sql.ts'
 import { memberHolder } from '../permissions/decide.ts'
-import { NUDGE_WINDOW_MS } from '../permissions/policy.ts'
+import { BULK_RECORDS, NUDGE_WINDOW_MS } from '../permissions/policy.ts'
 import type { CeilingFacts, ConnectedAccountFacts, DecideCtx, DecideFacts, GrantFacts, Resolved, ResolveFacts, WriteOperationKey } from '../permissions/types.ts'
 import { knownZone } from '../routines/brand.ts'
 import { DEFAULT_TZ } from '../usage/month.ts'
@@ -43,6 +43,13 @@ type GrantRow = {
 
 const DEFAULT_LABEL = { shopify: 'Shopify', slack: 'Slack' } as const
 
+/**
+ * Stage 1 M3-A: the limits every row has until 0760_permission_limits.sql (M3-L) adds their columns, equal to that
+ * migration's defaults and to M2's rules (one unit per call, more than 5 records is bulk). Nothing reads them before M3-L,
+ * which reads the columns instead and deletes this.
+ */
+const UNTIL_0760 = { ceiling: { unitsMax: 1, bulkThreshold: BULK_RECORDS, batchMax: 500, rev: 1 }, grantUnitsMax: 1 } as const
+
 function accountFacts(connector: 'shopify' | 'slack', row: AccountRow | undefined, hub: HubAccountFacts | undefined): ConnectedAccountFacts | null {
   if (!row) return null
   // Connected now: the last state says so and no disconnect came after the connect (claim-guard.ts checks the same).
@@ -56,6 +63,8 @@ function accountFacts(connector: 'shopify' | 'slack', row: AccountRow | undefine
     paused: hub ? hub.paused : true,
     label: hub?.label ?? DEFAULT_LABEL[connector],
     shop: connector === 'shopify' ? row.shop : null,
+    // Stage 1 M3-A: M3-S2 copies the shop's currency into `connector_accounts`; until then no account has one.
+    currency: null,
   }
 }
 
@@ -101,12 +110,13 @@ export function outboxFacts(d: { db: D1Database; hubAccounts: () => Promise<read
           : Promise.resolve({ n: 0 }),
       ])
       const ceiling: Partial<Record<WriteOperationKey, CeilingFacts>> = {}
-      for (const c of ceilings) ceiling[c.operation] = { enabled: c.enabled === 1, perDayMax: c.per_day_max, loweredRev: c.lowered_rev }
+      for (const c of ceilings) ceiling[c.operation] = { enabled: c.enabled === 1, perDayMax: c.per_day_max, loweredRev: c.lowered_rev, ...UNTIL_0760.ceiling }
       return {
         ceiling,
         grants: grants.map((g): GrantFacts => ({
           id: g.id, holder: g.holder, accountId: g.account_id, accountGen: g.account_gen, operation: g.operation, scopeKey: g.scope_key,
-          perDay: g.per_day, policyRev: g.policy_rev, grantedRole: g.granted_role, ceilingRev: g.ceiling_rev, revokedAtMs: g.revoked_at_ms,
+          perDay: g.per_day, unitsMax: UNTIL_0760.grantUnitsMax, policyRev: g.policy_rev, grantedRole: g.granted_role, ceilingRev: g.ceiling_rev,
+          revokedAtMs: g.revoked_at_ms,
         })),
         allowOnceCount: once?.n ?? 0,
       }

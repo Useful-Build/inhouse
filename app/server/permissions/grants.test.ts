@@ -32,7 +32,7 @@ const uid = () => `${Date.now().toString(36)}${++k}`
 const grantId = () => `pg_${uid().padEnd(22, 'A').slice(0, 22)}`
 const shopGrant = (holder: string, over: Partial<GrantFacts> = {}): GrantFacts => ({
   id: grantId(), holder, accountId: 'shopify:store', accountGen: SHOP_GEN, operation: 'shopify.order.tag_add', scopeKey: 'shop=store-a',
-  perDay: 5, policyRev: POLICY_REV, grantedRole: 'member', ceilingRev: 1, revokedAtMs: null, ...over,
+  perDay: 5, unitsMax: 1, policyRev: POLICY_REV, grantedRole: 'member', ceilingRev: 1, revokedAtMs: null, ...over,
 })
 const reserve = (grant: string, actionId: string, units = 1, day = '2026-11-26') =>
   reserveUseSql({ actionId, actionRev: 1, grantId: grant, day, units, atMs: NOW })

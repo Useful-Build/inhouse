@@ -140,7 +140,7 @@ describe('permissions: a covering grant runs through the hold; a spent day gives
     const id = `pg_${fresh('g').replace(/[^A-Za-z0-9]/g, '').padEnd(22, 'A').slice(0, 22)}`
     await insertGrant(db, {
       id, holder: `member:${ASKER}`, accountId: 'shopify:store', accountGen: SHOP_GEN, operation: 'shopify.order.tag_add', scopeKey: 'shop=store-a',
-      perDay, policyRev: POLICY_REV, grantedRole: 'member', ceilingRev: 1, revokedAtMs: null,
+      perDay, unitsMax: 1, policyRev: POLICY_REV, grantedRole: 'member', ceilingRev: 1, revokedAtMs: null,
     })
     return id
   }
@@ -221,7 +221,7 @@ describe('refusals write nothing (failure 3)', () => {
     try {
       await insertGrant(db, {
         id: 'pg_DELETEDCHATAAAAAAAAAA', holder: `member:${ASKER}`, accountId: 'shopify:store', accountGen: SHOP_GEN, operation: 'shopify.order.tag_add',
-        scopeKey: 'shop=store-a', perDay: 50, policyRev: POLICY_REV, grantedRole: 'member', ceilingRev: 1, revokedAtMs: null,
+        scopeKey: 'shop=store-a', perDay: 50, unitsMax: 1, policyRev: POLICY_REV, grantedRole: 'member', ceilingRev: 1, revokedAtMs: null,
       })
       const r = await call(setup())
       expect(r).toMatchObject({ isError: true, structuredContent: { error: 'chat_deleted' } })

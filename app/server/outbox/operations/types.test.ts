@@ -9,13 +9,16 @@ const tag: OperationEntry<{ orderId: string; tags: string[] }> & { key: 'shopify
   key: 'shopify.order.tag_add', tool: 'shopify_order_tag_add', description: 'Adds tags to one order.',
   args: z.strictObject({ orderId: z.string(), tags: z.array(z.string()).min(1).max(5) }), connector: 'shopify',
   scope: () => ({ shop: 'example' }), records: () => 1, units: () => 1, effects, memberMay: true, reversible: true,
-  idempotent: false, defaultPerDay: 50, card: a => ({ title: `Tag order ${a.orderId}`, lines: a.tags }),
+  unitsLabel: 'orders', itemLine: a => `Order ${a.orderId}: add ${a.tags.join(', ')}`,
+  idempotent: false, coalesces: true, defaults: { perDay: 50, unitsMax: 5, ceiling: { perDayMax: 200, unitsMax: 100 } },
+  card: a => ({ title: `Tag order ${a.orderId}`, lines: a.tags }),
 }
 const post: OperationEntry<{ channel: string; text: string }> & { key: 'slack.channel.post' } = {
   key: 'slack.channel.post', tool: 'slack_channel_post', description: 'Posts to a listed channel.',
   args: z.strictObject({ channel: z.string(), text: z.string() }), connector: 'slack',
   scope: (a, f): Record<string, string> | { refuse: 'not_listed' } => { const c = f.listedChannels.find(x => x.name === a.channel); return c ? { channelId: c.id } : { refuse: 'not_listed' } },
-  records: () => 1, units: () => 1, effects, memberMay: true, reversible: false, idempotent: false, defaultPerDay: 50,
+  records: () => 1, units: () => 1, unitsLabel: 'posts', itemLine: a => `${a.channel}: ${a.text}`, effects, memberMay: true,
+  reversible: false, idempotent: false, coalesces: true, defaults: { perDay: 50, unitsMax: 1, ceiling: { perDayMax: 200, unitsMax: 1 } },
   card: a => ({ title: `Post to ${a.channel}`, lines: [a.text] }),
 }
 

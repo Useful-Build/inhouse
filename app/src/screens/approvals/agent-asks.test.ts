@@ -59,7 +59,7 @@ const NONE = { allowOnce: false, alwaysAllow: false, approve: false, deny: false
 const card = (o: Partial<ActionCard> = {}): ActionCard => ({
   id: 'ac_AAAAAAAAAAAAAAAAAAAAAA', rev: 1, kind: 'ask', state: 'waiting', title: 'Add a tag to order 9001', lines: ['Tag: vip'],
   tool: { accountId: 'shopify:store', label: 'Shopify' }, records: 1, reachesCustomer: false, reversible: true,
-  chatId: null, askedBy: 'm_Admin', askedAt: instant(1000), serverNow: instant(2000), can: { ...NONE, allowOnce: true, alwaysAllow: true, deny: true }, nudgeAlways: false, ...o,
+  chatId: null, askedBy: 'm_Admin', askedAt: instant(1000), serverNow: instant(2000), can: { ...NONE, allowOnce: true, alwaysAllow: true, deny: true }, nudgeAlways: false, approverKind: 'person', ...o,
 })
 const question = (o: Partial<Question> = {}): Question => ({
   id: 'q_CCCCCCCCCCCCCCCCCCCCCC', state: 'open', question: 'Which box size?', options: ['Small', 'Large'], chatId: 'c_EEEEEEEEEEEEEEEEEEEEEE',
@@ -67,7 +67,7 @@ const question = (o: Partial<Question> = {}): Question => ({
 })
 const permission = (o: Partial<Permission> = {}): Permission => ({
   id: 'pg_BBBBBBBBBBBBBBBBBBBBBB', rev: 4, holder: { kind: 'member', memberId: 'm_Admin' }, operation: 'shopify.order.tag_add', title: 'Add tags to orders',
-  tool: { accountId: 'shopify:store', label: 'Shopify' }, scope: 'Store A', perDay: 50, grantedBy: 'm_Admin', grantedAt: instant(1000), can: { remove: true }, ...o,
+  tool: { accountId: 'shopify:store', label: 'Shopify' }, scope: 'Store A', perDay: 50, limits: { perDay: 50, unitsMax: 1, unitsLabel: 'orders', effectivePerDay: 50 }, grantedBy: 'm_Admin', grantedAt: instant(1000), can: { remove: true }, ...o,
 })
 
 let host: HTMLDivElement

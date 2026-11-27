@@ -47,11 +47,23 @@ export type RefuseReason =
   | 'not_listed'
   | 'needs_admin'
   | 'no_one_to_ask'
+  // Stage 1 M3 (N23, N22, N26). `over_limit`: one call's units are past the ceiling's `units_max` ("over the limit the
+  // Inhouse team set"). `batch_full`: the open batch for this kind holds `batch_max` items. `too_many_waiting`: a 6th
+  // waiting card of an operation that never collects (money, destructive) in one chat. `writes_off`: a ceiling change
+  // while editing is off in a deployable build (`CEILING_EDIT_ON = false`).
+  | 'over_limit'
+  | 'batch_full'
+  | 'too_many_waiting'
+  | 'writes_off'
 
 export type Verdict =
   | { verdict: 'run'; grantId: string }
   | { verdict: 'ask'; nudge: boolean }
-  | { verdict: 'exact'; guardrail: Guardrail }
+  /**
+   * `approver` (Stage 1 M3, N25): `asker` is M2's card, answered by the person who asked; `admins` is a card any active
+   * admin answers (a member asked for an operation with `memberMay: false`, from M3-X).
+   */
+  | { verdict: 'exact'; guardrail: Guardrail; approver: 'asker' | 'admins' }
   | { verdict: 'refuse'; reason: RefuseReason }
 
 export type RefuseVerdict = Extract<Verdict, { verdict: 'refuse' }>
@@ -67,6 +79,12 @@ export interface ConnectedAccountFacts {
   label: string
   /** Shopify only: the shop handle (`<handle>.myshopify.com`), `shopify.order.tag_add`'s scope `{ shop }`. Null otherwise. */
   shop: string | null
+  /**
+   * Stage 1 M3 (N21): Shopify only, the shop's currency (ISO 4217, upper case), from the hub's connect/status answer and
+   * copied into `connector_accounts` like the shop handle (M3-S2). A refund in any other currency is refused at
+   * `resolve`. Null otherwise, and until M3-S2 copies it.
+   */
+  currency: string | null
 }
 
 /** A Slack channel the admin listed (`notify_channels`, not removed). */
@@ -79,8 +97,21 @@ export interface ResolveFacts {
   listedChannels: readonly ListedChannel[]
 }
 
-/** One operation's row in `permission_ceiling`. A missing row means the operation doesn't exist for the brand (N2). */
-export interface CeilingFacts { enabled: boolean; perDayMax: number; loweredRev: number }
+/**
+ * One operation's row in `permission_ceiling`. A missing row means the operation doesn't exist for the brand (N2).
+ * Stage 1 M3 (N23, 0760): `unitsMax` is the largest single call (one item) whatever approves it; `bulkThreshold` the
+ * most records one call touches before it's an exact approval (1 to 5); `batchMax` the most items in one batch (1 to
+ * 500); `rev` the row's revision for the screen's `ifRev`.
+ */
+export interface CeilingFacts {
+  enabled: boolean
+  perDayMax: number
+  loweredRev: number
+  unitsMax: number
+  bulkThreshold: number
+  batchMax: number
+  rev: number
+}
 
 /** A grant that might cover the resolved action (`permission_grants`); `decideCore` itself skips a revoked one (`revokedAtMs`). */
 export interface GrantFacts {
@@ -92,6 +123,8 @@ export interface GrantFacts {
   operation: WriteOperationKey
   scopeKey: string
   perDay: number
+  /** Stage 1 M3 (N23, 0760): the largest single call this grant lets run. A bigger one is an exact `count` card. */
+  unitsMax: number
   policyRev: number
   grantedRole: MemberRole
   ceilingRev: number
@@ -105,6 +138,20 @@ export interface DecideFacts {
   grants: readonly GrantFacts[]
   /** This member's "Allow once" answers for the same operation and scope in the last 30 days. */
   allowOnceCount: number
+}
+
+/**
+ * Stage 1 M3 (N22, N23; M3-L owns the table and the daily sum): one batch item's units given back from its batch's one
+ * grant use, at most once per item and approval (`PRIMARY KEY (action_id, action_rev, n)`): the item failed definitely,
+ * moved to a new card, or was withdrawn. `reserveUseSql`'s daily sum subtracts these.
+ */
+export interface PermissionItemReleaseRow {
+  action_id: string
+  action_rev: number
+  n: number
+  units: number
+  reason: 'failed' | 'moved' | 'withdrawn'
+  at_ms: number
 }
 
 /** Async: `payloadHash` uses WebCrypto's digest (changed by M2-A; no call site existed). */

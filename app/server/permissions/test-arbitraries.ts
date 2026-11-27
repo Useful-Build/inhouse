@@ -17,14 +17,20 @@ export const recordsArb = fc.oneof(
   { weight: 1, arbitrary: fc.integer({ min: 6, max: 500 }) },
 )
 
+/**
+ * Stage 1 M3-A: the ceiling's M3 limits at 0760's defaults (M2's rules: one unit per call, bulk past 5, batches of 500).
+ * M3-L varies them when its rules read them.
+ */
+export const M2_CEILING_LIMITS = { unitsMax: 1, bulkThreshold: 5, batchMax: 500, rev: 1 } as const
+
 /** The ceilings: the action's operation enabled most of the time, either revision; the other one anything or absent. */
 export const ceilingsArb = (op: WriteOperationKey): fc.Arbitrary<Ceilings> => fc.record({
   mine: fc.oneof(
-    { weight: 4, arbitrary: fc.record({ enabled: fc.constant(true), perDayMax: fc.integer({ min: 1, max: 50 }), loweredRev: fc.integer({ min: 1, max: 2 }) }) },
-    { weight: 1, arbitrary: fc.record({ enabled: fc.constant(false), perDayMax: fc.integer({ min: 1, max: 50 }), loweredRev: fc.integer({ min: 1, max: 2 }) }) },
+    { weight: 4, arbitrary: fc.record({ enabled: fc.constant(true), perDayMax: fc.integer({ min: 1, max: 50 }), loweredRev: fc.integer({ min: 1, max: 2 }) }).map(c => ({ ...c, ...M2_CEILING_LIMITS })) },
+    { weight: 1, arbitrary: fc.record({ enabled: fc.constant(false), perDayMax: fc.integer({ min: 1, max: 50 }), loweredRev: fc.integer({ min: 1, max: 2 }) }).map(c => ({ ...c, ...M2_CEILING_LIMITS })) },
     { weight: 1, arbitrary: fc.constant(null) },
   ),
-  other: fc.option(fc.record({ enabled: fc.boolean(), perDayMax: fc.integer({ min: 1, max: 50 }), loweredRev: fc.integer({ min: 1, max: 2 }) }), { nil: null }),
+  other: fc.option(fc.record({ enabled: fc.boolean(), perDayMax: fc.integer({ min: 1, max: 50 }), loweredRev: fc.integer({ min: 1, max: 2 }) }).map(c => ({ ...c, ...M2_CEILING_LIMITS })), { nil: null }),
 }).map(({ mine, other }) => {
   const out: Ceilings = {}
   if (mine) out[op] = mine
@@ -44,7 +50,7 @@ export const grantArb = (r: Resolved, ceilings: Ceilings, asker: Asker | null, i
     const role = asker?.role === 'admin' ? mineRole : 'member'
     const g: GrantFacts = {
       id: `pg_t${String(i).padStart(21, '0')}`, holder: `member:${askerId}`, accountId: r.accountId, accountGen: r.accountGen,
-      operation: r.operation, scopeKey: r.scopeKey, perDay, policyRev: POLICY_REV, grantedRole: role, ceilingRev: loweredRev, revokedAtMs: null,
+      operation: r.operation, scopeKey: r.scopeKey, perDay, unitsMax: 1, policyRev: POLICY_REV, grantedRole: role, ceilingRev: loweredRev, revokedAtMs: null,
     }
     switch (p) {
       case 'none': return g

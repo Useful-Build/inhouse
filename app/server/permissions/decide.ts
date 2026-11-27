@@ -50,7 +50,8 @@ export function decideCore(f: DecideFacts, ctx: DecideCtx, r: Resolved): Verdict
   if (asker === null) return { verdict: 'refuse', reason: 'no_one_to_ask' }
   if (asker.role === 'member' && !r.memberMay) return { verdict: 'refuse', reason: 'needs_admin' }
   const guardrail = guardrailOf(r)
-  if (guardrail) return { verdict: 'exact', guardrail }
+  // Stage 1 M3-A: every exact card is the asker's until M3-X adds the admins' card (N25).
+  if (guardrail) return { verdict: 'exact', guardrail, approver: 'asker' }
   if (ctx.origin === 'routine') return { verdict: 'ask', nudge: false }
   // The asker's own grant before the brand's, then by id: one answer for the same facts.
   const covering = f.grants.filter(g => covers(g, asker, r, ceiling))

@@ -218,7 +218,7 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
         // a closed gate leaves an ordinary card for after the Resume.
         v = await decide(facts, ctx, r, mode)
         if (v.verdict === 'refuse') return refusedRequest(v.reason)
-        if (v.verdict === 'run') v = (await gateOpen()) ? { verdict: 'exact', guardrail: 'count' } : { verdict: 'ask', nudge: false }
+        if (v.verdict === 'run') v = (await gateOpen()) ? { verdict: 'exact', guardrail: 'count', approver: 'asker' } : { verdict: 'ask', nudge: false }
       }
 
       const id = newActionId()
@@ -289,7 +289,7 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
         const grant = alwaysAllowStmts({
           holderMemberId: actor.memberId, grantedRole: actor.role,
           resolved: { accountId: before.account_id, accountGen: before.account_gen, operation: before.operation, scope, scopeKey: before.scope_key, policyRev: before.policy_rev },
-          perDay: entry.defaultPerDay, sourceAction: actionId, onlyIf: mine, at: { actorId: actor.memberId, requestId: d.requestId, nowMs },
+          perDay: entry.defaults.perDay, sourceAction: actionId, onlyIf: mine, at: { actorId: actor.memberId, requestId: d.requestId, nowMs },
         })
         const nextRev = input.ifRev + 1
         const tz = await brandTimeZone(db)

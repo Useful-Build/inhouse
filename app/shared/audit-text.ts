@@ -158,6 +158,12 @@ const FAILED: Record<string, string> = {
   scope_mismatch: 'the connection can’t do this', upstream_rejected: 'the tool refused it', upstream_unavailable: 'the tool couldn’t be reached',
   rate_limited: 'the tool asked to slow down', connect_stale: 'the tool’s connection changed', invalid_args: 'the tool refused the details',
 }
+const thousands = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+/** Stage 1 M3 (N26): an operation's ceiling in plain words. Counts only, so the line holds nothing a person typed. */
+const ceilingWords = (v: { enabled: boolean; perDayMax: number; unitsMax: number; bulkThreshold: number; batchMax: number }) =>
+  v.enabled
+    ? `on, up to ${thousands(v.perDayMax)} a day, ${thousands(v.unitsMax)} at most in one call, an exact approval past ${v.bulkThreshold} at once, up to ${thousands(v.batchMax)} in one batch`
+    : 'off'
 const QUESTION_ASKED = { owner: 'Asked the person in the chat', creator: 'Asked the routine’s creator', admins: 'Asked the admins' } as const
 const ANSWERED = { once: 'allowed an action once', always: 'allowed an action and said always allow', approve: 'approved an action', deny: 'declined an action' } as const
 
@@ -263,6 +269,7 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'question.asked': return { what: 'the agent asked a question', detail: QUESTION_ASKED[args.askedOf] }
     case 'question.answered': return { what: 'answered a question', detail: '' }
     case 'question.expired': return { what: 'a question expired', detail: 'No one answered in 7 days' }
+    case 'ceiling.changed': return { what: 'changed what the agent can do', detail: `${operation(args.operation)}: ${ceilingWords(args.new)}${args.old === null ? '' : ` (was ${ceilingWords(args.old)})`}` }
     case 'data.exported': return { what: 'downloaded all brand data', detail: `${String(args.items).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} ${args.items === 1 ? 'item' : 'items'}` }
   }
 }

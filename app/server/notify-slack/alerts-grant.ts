@@ -35,7 +35,7 @@ export const channelScope = (channelId: string) => {
 }
 
 /** A brand grant's `per_day`: the operation's default (the ceiling's daily maximum caps it at each use, N10). */
-export const ALERTS_PER_DAY = OPERATIONS[OPERATION].defaultPerDay
+export const ALERTS_PER_DAY = OPERATIONS[OPERATION].defaults.perDay
 
 /** The Slack account connected now (no disconnect after the connect), as SQL on `connector_accounts` aliased `ca`. */
 const CONNECTED = 'ca.account_id = ? AND ca.connected_at_ms IS NOT NULL AND (ca.disconnected_at_ms IS NULL OR ca.disconnected_at_ms < ca.connected_at_ms)'

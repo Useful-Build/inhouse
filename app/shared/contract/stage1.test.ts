@@ -80,7 +80,7 @@ describe('records', () => {
     id: `ac_${R}`, rev: 1, kind: 'ask', state: 'waiting', title: 'Tag order #1001', lines: ['Adds the tag vip'],
     tool: { accountId: 'shopify:store', label: 'Shopify (Store A)' }, records: 1, reachesCustomer: false, reversible: true,
     chatId: 'chat-1', askedBy: 'm_owner', askedAt: at, serverNow: at,
-    can: { allowOnce: true, alwaysAllow: true, approve: false, deny: true, undo: false, resolve: false }, nudgeAlways: false,
+    can: { allowOnce: true, alwaysAllow: true, approve: false, deny: true, undo: false, resolve: false }, nudgeAlways: false, approverKind: 'person',
   }
   it('an action card parses, with its optional fields or without', () => {
     expect(ActionCardSchema.safeParse(card).success).toBe(true)
@@ -92,7 +92,7 @@ describe('records', () => {
   it('a permission parses for a member or the brand', () => {
     const p = {
       id: `pg_${R}`, rev: 1, holder: { kind: 'member', memberId: 'm_owner' }, operation: 'shopify.order.tag_add', title: 'Add tags to orders',
-      tool: { accountId: 'shopify:store', label: 'Shopify (Store A)' }, scope: 'Store A', perDay: 50, grantedBy: 'm_owner', grantedAt: at, can: { remove: true },
+      tool: { accountId: 'shopify:store', label: 'Shopify (Store A)' }, scope: 'Store A', perDay: 50, limits: { perDay: 50, unitsMax: 1, unitsLabel: 'orders', effectivePerDay: 50 }, grantedBy: 'm_owner', grantedAt: at, can: { remove: true },
     }
     expect(PermissionSchema.safeParse(p).success).toBe(true)
     expect(PermissionSchema.safeParse({ ...p, holder: { kind: 'brand' } }).success).toBe(true)

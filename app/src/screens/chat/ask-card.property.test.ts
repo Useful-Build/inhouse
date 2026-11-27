@@ -36,6 +36,7 @@ const cardArb: fc.Arbitrary<ActionCard> = fc.record({
   ...(r.result ? { result: r.result } : {}), ...(r.lapsed ? { lapsed: r.lapsed } : {}),
   // The server never sets Always allow on an exact card (card.ts); the arbitrary keeps to what it can send.
   can: { ...r.can, alwaysAllow: r.kind === 'exact' ? false : r.can.alwaysAllow }, nudgeAlways: r.nudgeAlways && r.kind === 'ask' && r.can.alwaysAllow,
+  approverKind: 'person' as const,
 }))
 
 describe('buttons follow can and state (1, 2)', () => {

@@ -13,8 +13,8 @@ import { PostArgsSchema } from './slack-channel-post.ts'
 const facts: ResolveFacts = {
   nowMs: 1,
   accounts: {
-    shopify: { accountId: 'shopify:store', connectedAtMs: 10, connected: true, paused: false, label: 'Shopify (Store A)', shop: 'store-a' },
-    slack: { accountId: 'slack:workspace', connectedAtMs: 20, connected: true, paused: false, label: 'Slack', shop: null },
+    shopify: { accountId: 'shopify:store', connectedAtMs: 10, connected: true, paused: false, label: 'Shopify (Store A)', shop: 'store-a', currency: null },
+    slack: { accountId: 'slack:workspace', connectedAtMs: 20, connected: true, paused: false, label: 'Slack', shop: null, currency: null },
   },
   listedChannels: [{ id: 'C0123ABCD', name: 'Ops' }],
 }
@@ -87,7 +87,7 @@ describe('the table', () => {
     expect(operationForTool('shopify_order_tag_add')).toBe('shopify.order.tag_add')
     expect(operationForTool('slack_channel_post')).toBe('slack.channel.post')
     expect(operationForTool('notification_send')).toBeNull()
-    for (const e of Object.values(OPERATIONS)) expect(e).toMatchObject({ idempotent: false, defaultPerDay: 50, memberMay: true, effects: { money: false, customer: false, destructive: false, access: false } })
+    for (const e of Object.values(OPERATIONS)) expect(e).toMatchObject({ idempotent: false, defaults: { perDay: 50 }, memberMay: true, effects: { money: false, customer: false, destructive: false, access: false } })
   })
   it('gives the same payload hash for the same action and another for any change', async () => {
     const a = await resolve(facts, { operation: 'slack.channel.post', args: { channel: '#ops', text: 'hi' } })

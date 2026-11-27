@@ -5,7 +5,8 @@ import { pageOf } from './paging.ts'
 import { GrantHoursSchema, GrantIdSchema } from './grants.ts'
 import { FileIdSchema, RunIdSchema } from './chat-ids.ts'
 import { MemberIdSchema, MemberRoleSchema } from './members.ts'
-import { ActionChoiceSchema, ActionIdSchema, ActionResolutionSchema } from './actions.ts'
+import { ActionApproverKindSchema, ActionChoiceSchema, ActionIdSchema, ActionResolutionSchema } from './actions.ts'
+import { CeilingValuesSchema } from './ceiling.ts'
 import { GuardrailSchema, PermissionIdSchema } from './permissions.ts'
 import { QuestionIdSchema } from './questions.ts'
 import type { WriteOperationKey } from '../../hub/index/contract.ts'
@@ -60,6 +61,8 @@ export const AuditActionSchema = z.enum([
   'action.requested', 'action.answered', 'action.undone', 'action.withdrawn', 'action.lapsed', 'action.sent', 'action.failed',
   'action.needs_check', 'action.resolved',
   'question.asked', 'question.answered', 'question.expired',
+  // Stage 1 M3 (N26): the Inhouse team changed an operation's ceiling (M3-C's route; the test build's fakes hook).
+  'ceiling.changed',
 ])
 export type AuditAction = z.infer<typeof AuditActionSchema>
 
@@ -369,7 +372,11 @@ const otherLines = [
     origin: z.enum(['chat', 'job', 'routine']), records: ACTION_RECORDS, units: ACTION_RECORDS, permissionId: PermissionIdSchema.optional(),
   }),
   /** `permissionId`: the permission an "Always allow" made or found, whose use this action reserved. */
-  line('action.answered', { actionId: ActionIdSchema, choice: ActionChoiceSchema, permissionId: PermissionIdSchema.optional() }),
+  /**
+   * `approverKind` (Stage 1 M3, N25): who could answer it; `admins` when any admin could (the answering admin is the
+   * line's actor). Absent on lines written before M3.
+   */
+  line('action.answered', { actionId: ActionIdSchema, choice: ActionChoiceSchema, permissionId: PermissionIdSchema.optional(), approverKind: ActionApproverKindSchema.optional() }),
   /** `released`: the action's reserved use was given back. */
   line('action.undone', { actionId: ActionIdSchema, released: z.boolean() }),
   line('action.withdrawn', { actionId: ActionIdSchema, by: z.enum(['member', 'agent']) }),
@@ -386,6 +393,9 @@ const otherLines = [
   line('question.asked', { questionId: QuestionIdSchema, askedOf: z.enum(['owner', 'creator', 'admins']), options: z.number().int().min(2).max(4) }),
   line('question.answered', { questionId: QuestionIdSchema }),
   line('question.expired', { questionId: QuestionIdSchema }),
+  // Stage 1 M3 (N26). The operation and its values before and after: switches and counts only. `old` is null when the
+  // operation had no row. The actor is the line's own.
+  line('ceiling.changed', { operation: WriteOperationArgSchema, old: CeilingValuesSchema.nullable(), new: CeilingValuesSchema }),
 ] as const
 
 /**

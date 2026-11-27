@@ -176,7 +176,7 @@ async function runSequence(steps: Step[]): Promise<number> {
         if (!live) {
           await insertGrant(db, {
             id: `pg_${fresh('g').replace(/[^A-Za-z0-9]/g, '').padEnd(22, 'A').slice(0, 22)}`, holder: `member:${ASKER}`, accountId: 'shopify:store',
-            accountGen: SHOP_GEN, operation: 'shopify.order.tag_add', scopeKey: 'shop=store-a', perDay: s.perDay, policyRev: POLICY_REV,
+            accountGen: SHOP_GEN, operation: 'shopify.order.tag_add', scopeKey: 'shop=store-a', perDay: s.perDay, unitsMax: 1, policyRev: POLICY_REV,
             grantedRole: 'member', ceilingRev: 1, revokedAtMs: null,
           })
         }

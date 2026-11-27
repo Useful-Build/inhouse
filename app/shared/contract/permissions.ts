@@ -31,6 +31,19 @@ export const PermissionHolderSchema = z.discriminatedUnion('kind', [
 ])
 export type PermissionHolder = z.infer<typeof PermissionHolderSchema>
 
+/**
+ * Stage 1 M3 (N23, N33): a permission's limits, in the person's words. `perDay`: the grant's own daily count;
+ * `unitsMax`: the largest single call it lets through; `unitsLabel`: what both count ("orders", "stock units", "posts");
+ * `effectivePerDay`: what the day really allows, the smaller of `perDay` and the Inhouse team's ceiling for the operation.
+ */
+export const PermissionLimitsSchema = z.object({
+  perDay: z.number().int().min(1),
+  unitsMax: z.number().int().min(1),
+  unitsLabel: z.string(),
+  effectivePerDay: z.number().int().min(0),
+})
+export type PermissionLimits = z.infer<typeof PermissionLimitsSchema>
+
 /** One live grant, as `permissions()` lists it. `operation` is the server's operation key, opaque to the client. */
 export const PermissionSchema = z.object({
   id: PermissionIdSchema,
@@ -43,6 +56,8 @@ export const PermissionSchema = z.object({
   /** Where it applies, in plain words: "#ops", "Store A". */
   scope: z.string(),
   perDay: z.number().int().min(1),
+  /** Stage 1 M3 (N33). `limits.perDay` equals `perDay` (kept for M2's readers). */
+  limits: PermissionLimitsSchema,
   grantedBy: MemberIdSchema,
   grantedAt: InstantSchema,
   /** Display only: the server checks again on remove (N15). */

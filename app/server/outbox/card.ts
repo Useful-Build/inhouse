@@ -75,5 +75,7 @@ export function cardOf(row: OutboxActionRow, viewer: Viewer, nowMs: number): Act
       resolve: row.state === 'needs_check' && (own || viewer.role === 'admin'),
     },
     nudgeAlways: own && waiting && kind === 'ask' && stored.nudge,
+    // Stage 1 M3-A (N25): every card is a person's until M3-X adds the admins' card (and `approver_kind` with M3-B's 0770).
+    approverKind: 'person',
   })
 }

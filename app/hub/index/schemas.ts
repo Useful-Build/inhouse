@@ -110,6 +110,10 @@ export const WriteRequestSchema = z.strictObject({
   expect: z.strictObject({ connectedAtMs: z.int().nonnegative(), shop: z.string().regex(SHOP_HANDLE).optional() }),
   operation: WriteOperationKeySchema,
   args: z.unknown(),
+  // Stage 1 M3 (N22, N21): a batch item, `n` of `of`, at most the ceiling's largest batch (500); the upstream
+  // idempotency key (`<actionId>:<n>`).
+  item: z.strictObject({ n: z.int().min(1).max(500), of: z.int().min(1).max(500) }).refine(i => i.n <= i.of, 'An item is at most the last one').optional(),
+  idempotencyKey: z.string().regex(/^[A-Za-z0-9_:-]{1,200}$/).optional(),
 })
 
 export const WriteResultSchema = z.discriminatedUnion('ok', [

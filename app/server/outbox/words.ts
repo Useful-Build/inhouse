@@ -14,6 +14,11 @@ export const REFUSAL_TEXT: Readonly<Record<OutboxRefuseReason, string>> = {
   no_one_to_ask: 'There’s no one to ask for an approval here, so nothing was asked or sent.',
   invocation_conflict: 'That call was already made with other details, so nothing new was asked or sent.',
   chat_deleted: 'This chat was deleted, so nothing was asked or sent.',
+  // Stage 1 M3-A (N23, N22, N26): nothing returns these before M3-L, M3-B and M3-C.
+  over_limit: 'That’s over the limit the Inhouse team set for this kind of action, so nothing was asked or sent.',
+  batch_full: 'The waiting list for this kind of action is full, so nothing was asked or sent. Wait for an answer on it first.',
+  too_many_waiting: 'Five of these are already waiting for an answer in this chat, so nothing was asked or sent. Wait for an answer first.',
+  writes_off: 'Changing what the agent can do is switched off in this build, so nothing changed.',
 }
 
 /** Why an approval lapsed, as the card says it. */
