@@ -159,7 +159,7 @@ export function Today() {
               const risk = low ? null : riskLabel(dv)
               return (
                 // The title is the card's one link: its ::after stretches over the card, and the card's other buttons sit above it.
-                <article key={p.id} className="today-card relative flex cursor-pointer flex-col rounded-2xl bg-card shadow-card transition focus-within:shadow-float hover:shadow-float" aria-label={p.title}>
+                <article key={p.id} data-urgent={isUrgent(p.sev) || undefined} className="today-card relative flex cursor-pointer flex-col rounded-2xl bg-card shadow-card transition focus-within:shadow-float hover:shadow-float" aria-label={p.title}>
                   <div className="flex flex-1 flex-col pt-4 pr-4 pl-5.5">
                     <div className="flex min-h-7 items-center gap-2">
                       {!c.dimmed && isUrgent(p.sev) && <Badge variant="destructive" size="lg">Urgent</Badge>}

@@ -10,7 +10,7 @@ import { ChatRow } from '../ui/chat'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { AGENT, DAILY, mac, SHORTCUTS } from './nav'
 import type { NavDef } from './nav'
-import { useSideLook } from './side-look'
+import { STYLE_PARTS, useSideLook } from './side-look'
 
 // The account row while its menu is open: it holds its hover look (open is hover, never selected).
 const OPEN_ROW = 'data-[state=open]:bg-accent data-[state=open]:text-foreground'
@@ -33,17 +33,19 @@ export function Sidebar() {
     document.documentElement.dataset.side = side
     return () => { delete document.documentElement.dataset.side }
   }, [side])
-  // Design exploration: the look and the search control (index.css keys its rules off data-side-look and data-side-search).
+  // Design exploration: the look, its style and Today's card buttons (index.css keys its rules off these attributes).
   const look = useSideLook(s => s.look)
-  const search = useSideLook(s => s.search)
+  const style = useSideLook(s => s.style)
+  const cards = useSideLook(s => s.cards)
   useLayoutEffect(() => {
     const root = document.documentElement
     root.dataset.sideLook = look
-    root.dataset.sideSearch = search
-    return () => { delete root.dataset.sideLook; delete root.dataset.sideSearch }
-  }, [look, search])
+    root.dataset.sideStyle = STYLE_PARTS[style]
+    root.dataset.cardButtons = cards
+    return () => { delete root.dataset.sideLook; delete root.dataset.sideStyle; delete root.dataset.cardButtons }
+  }, [look, style, cards])
   // The selected row's marker: one element that glides to the row. The Sidebar says where the row is (--pill-*) and
-  // index.css draws it there, as a chip or as a line, and clears the row's own fill.
+  // index.css draws it there, as a short line on the sidebar's edge, and clears the row's own fill.
   // Desktop only. It scrolls with the rows, since the sidebar is its containing block.
   const pill = useRef<HTMLElement>(null)
   const placePill = () => {

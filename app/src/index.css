@@ -587,57 +587,51 @@
 @keyframes m3{0%{transform:translate(-8px,0) scale(.96)}6.49%{transform:translate(0,0) scale(1)}9.09%{transform:translate(0,0) scale(1)}13.64%{transform:translate(.3px,0) scale(.86)}16.88%{transform:translate(-.6px,-.2px) scale(.7)}17.53%{transform:translate(-1.2px,-.4px) scale(.68)}21%{transform:translate(-3px,1px) scale(.68)}23.16%{transform:translate(-6.7px,-2.5px) scale(.62)}29.22%{transform:translate(-13.5px,-2.4px) scale(.66)}35.06%{transform:translate(-16.1px,.8px) scale(.88)}37.45%{transform:translate(-14.3px,.8px) scale(1)}42.64%{transform:translate(-5px,.1px) scale(1.08)}46.1%{transform:translate(-5px,.1px) scale(1.08)}49.78%{transform:translate(0,0) scale(.92)}52.16%{transform:translate(0,0) scale(.92)}56.06%{transform:translate(-4.9px,.4px) scale(.7)}56.71%{transform:translate(-7.8px,-.1px) scale(1.34)}60.17%{transform:translate(-8px,0) scale(0)}61.26%{transform:translate(-8px,0) scale(0)}62.77%{transform:translate(-8px,0) scale(.52)}66.23%{transform:translate(-8px,0) scale(1.06)}71.86%{transform:translate(0,0) scale(1)}73.38%{transform:translate(0,0) scale(1)}77.92%{transform:translate(-1.9px,0) scale(.82)}80.09%{transform:translate(-7.9px,0) scale(1.28)}85.28%{transform:translate(0,0) scale(1)}87.66%{transform:translate(0,0) scale(1)}92.86%{transform:translate(-3.4px,0) scale(.84)}94.59%{transform:translate(-7.9px,0) scale(.94)}98.27%{transform:translate(-8px,0) scale(.24)}100%{transform:translate(-8px,0) scale(.96)}}
 
 /* ---------- sidebar looks: design exploration (branch design/sidebar-iterations) ----------
- * The Sidebar sets data-side-look and data-side-search on <html> (shell/side-look.ts; the demo switches flip them).
- * In every look the sidebar is a flush column with no card, its mark sits on the top bar's centre line, one marker
- * glides to the selected row, and collapsing it is a move, not a cut. Desktop only: the phone drawer keeps the card.
+ * The Sidebar sets data-side-look, data-side-style and data-card-buttons on <html> (shell/side-look.ts; the demo switches
+ * flip them). Locked in for both looks: the sidebar is a flush column with no card; the selected row is marked by a short
+ * ink line on the sidebar's edge that glides between rows, and the row itself turns to ink with a filled icon; the other
+ * rows stay a step quieter until the pointer or the keyboard is in the sidebar; group labels take the app's mono caps;
+ * the waiting count takes the agent's sapphire; collapsing is a move, not a cut. Desktop only: the phone drawer keeps the card.
  * The winner folds into the Sidebar's own classes and tokens, and the rest of this block goes. */
 :root {
-  --app-desk: #eeeef0;                 /* the desk under the sheet: a clear step under the page (#fafafa) */
+  --app-desk: #eeeef0;                 /* edge: the desk under the sheet, a clear step under the page (#fafafa) */
   --app-sheet-edge: 0 0 0 1px rgba(15, 15, 20, .08), 0 1px 1px rgba(15, 15, 20, .03), 0 8px 24px -16px rgba(15, 15, 20, .16);
-  --app-side-row-active: #ffffff;      /* the selected row: a raised white chip */
   --app-side-row-hover: rgba(15, 15, 20, .055);
-  --app-side-row-shadow: 0 0 0 1px rgba(15, 15, 20, .07), 0 1px 2px rgba(15, 15, 20, .06);
-  --app-side-rule: rgba(15, 15, 20, .09);  /* gallery and line: the one line between the sidebar and the page */
+  --app-side-rule: rgba(15, 15, 20, .09);  /* line: the one line between the sidebar and the page; ruled: its group rules */
   --app-side-count: #dde5f7;           /* the waiting count: the agent's sapphire, as a tint (8:1 under --brand-text) */
-  --app-side-field: #ffffff;           /* search as a field */
-  --app-side-field-edge: 0 0 0 1px rgba(15, 15, 20, .1), 0 1px 1px rgba(15, 15, 20, .04);
-  --app-side-field-edge-hover: 0 0 0 1px rgba(15, 15, 20, .2), 0 1px 1px rgba(15, 15, 20, .04);
   --app-side-ease: cubic-bezier(.2, .8, .2, 1);
 }
 .dark {
   --app-desk: #0a0a0c;
   --app-sheet-edge: 0 0 0 1px rgba(255, 255, 255, .07);
-  --app-side-row-active: #27272c;
   --app-side-row-hover: rgba(255, 255, 255, .055);
-  --app-side-row-shadow: 0 0 0 1px rgba(255, 255, 255, .06);
   --app-side-rule: rgba(255, 255, 255, .09);
   --app-side-count: #1f2a44;
-  --app-side-field: #19191c;
-  --app-side-field-edge: 0 0 0 1px rgba(255, 255, 255, .12);
-  --app-side-field-edge-hover: 0 0 0 1px rgba(255, 255, 255, .24);
 }
 
-/* The marker: a chip the size of the row. Off until the Sidebar has placed it; with reduced motion it jumps. */
+/* The marker: a short ink line on the sidebar's right edge, level with the selected row. Off until the Sidebar has
+ * placed it; with reduced motion it jumps. */
 [data-side-pill] {
-  position: absolute; top: 0; left: 0; z-index: -1; pointer-events: none;
-  width: var(--pill-w, 0); height: var(--pill-h, 0); transform: translate(var(--pill-x, 0), var(--pill-y, 0));
-  border-radius: 8px; background: var(--app-side-row-active); box-shadow: var(--app-side-row-shadow);
-  transition: transform .26s var(--app-side-ease), width .26s var(--app-side-ease), height .26s var(--app-side-ease), opacity .12s linear;
+  position: absolute; top: 0; right: 0; z-index: -1; pointer-events: none;
+  width: 2px; height: calc(var(--pill-h, 0px) - 14px); transform: translateY(calc(var(--pill-y, 0px) + 7px));
+  border-radius: 2px 0 0 2px; background: var(--foreground);
+  transition: transform .26s var(--app-side-ease), height .26s var(--app-side-ease), opacity .12s linear;
   @media (prefers-reduced-motion: reduce) { transition: none; }
 }
 [data-side-pill][data-off] { opacity: 0; }
 
 :root:not([data-side="none"])[data-side-look] {
   --app-topbar-h: 58px;
-  --app-sheet-gap: 0px;
+  /* Both looks keep 8px clear above the top bar and the sidebar's head: edge as desk, line as air. */
+  --app-sheet-gap: 8px;
   /* The sidebar's room is its width alone: it has no margin now. */
   --app-side-offset: var(--app-sidebar);
   &[data-side="rail"] { --app-side-offset: var(--app-sidebar-rail); }
 
   #sidebar {
     margin: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; padding-bottom: 12px;
-    /* The rows' own selected fill is the marker's; a hovered row darkens the ground a step. */
-    --fill-hover: var(--app-side-row-active); --accent: var(--app-side-row-hover);
+    /* A hovered row darkens the ground a step; a chat row's "···" button covers the title with the ground itself. */
+    --fill-hover: var(--background); --accent: var(--app-side-row-hover);
     /* Collapsing is a move: the column narrows and the page follows, while the icons hold their place. */
     transition: width .24s var(--app-side-ease);
     @media (prefers-reduced-motion: reduce) { transition: none; }
@@ -655,18 +649,32 @@
   &[data-side="rail"] #sidebar > button { margin-left: 4px; }
   &[data-side="rail"] #sidebar > [data-side-mark] { margin-left: 2px; margin-bottom: calc((var(--app-topbar-h) - 36px) / 2 + 2px); }
 
-  /* The waiting count is the agent's signal, so it takes the agent's sapphire as a soft tint, not the ink. */
+  /* The selected row turns to ink and its icon fills (the fill is an axis of the icon font, so it fills in rather than
+   * swaps; the Icon sets the axes inline). The other rows wait a step quieter. */
+  #sidebar :is(nav button, [data-side-search], [data-chat-open], [data-chat-fallback]) { transition: color .16s linear; }
+  #sidebar :is(nav button, [data-side-search]):not([aria-current="page"]) { color: var(--foreground-3); }
+  #sidebar:is(:hover, :focus-within) :is(nav button, [data-side-search]):not([aria-current="page"]) { color: var(--foreground); }
+  #sidebar [data-chat-row]:not(.bg-fill-hover) [data-chat-open], #sidebar [data-chat-fallback]:not([aria-current="page"]) { color: var(--foreground-3); }
+  #sidebar:is(:hover, :focus-within) [data-chat-row]:not(.bg-fill-hover) [data-chat-open] { color: var(--foreground-2); }
+  #sidebar:is(:hover, :focus-within) [data-chat-fallback] { color: var(--foreground); }
+  #sidebar [data-chat-row].bg-fill-hover [data-chat-open] { color: var(--foreground); font-weight: 550; }
+  #sidebar nav button .ms { transition: font-variation-settings .2s linear; }
+  #sidebar nav button[aria-current="page"] .ms { font-variation-settings: "wght" 400, "FILL" 1 !important; }
+  #sidebar [data-side-label] { font: 500 11px var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; }
+
+  /* The waiting count is the agent's signal, so it takes the agent's sapphire as a soft tint, not the ink. The bell's
+   * unread dot is the same signal. */
   #sidebar nav [data-slot="badge"] { background: var(--app-side-count); color: var(--brand-text); }
-  #sidebar nav button > i { background: var(--brand); }
+  #sidebar nav button > i, [data-shell-main] header i.bg-foreground { background: var(--brand); }
 }
 
-/* desk and edge: the page is a sheet on the desk, 8px of desk all round and a 12px corner. The sheet's ground is drawn
- * under the Skyspace layer, which is clipped to the same box, so Today's skylight sits inside the sheet. */
-:root:not([data-side="none"]):is([data-side-look="desk"], [data-side-look="edge"]) {
-  --app-sheet-gap: 8px;
+/* edge: the page is a sheet on the desk, 8px of desk all round and a 12px corner. The sheet's ground is drawn under the
+ * Skyspace layer, which is clipped to the same box, so Today's skylight sits inside the sheet. */
+:root:not([data-side="none"])[data-side-look="edge"] {
   --app-sheet-radius: 12px;
   --app-sheet-inset: var(--app-sheet-gap) var(--app-sheet-gap) var(--app-sheet-gap) var(--app-side-offset);
   [data-shell] { background: var(--app-desk); }
+  #sidebar { --fill-hover: var(--app-desk); }
   [data-shell]::before {
     content: ""; position: absolute; z-index: -2; inset: var(--app-sheet-inset); border-radius: var(--app-sheet-radius);
     background: var(--background); box-shadow: var(--app-sheet-edge); pointer-events: none;
@@ -682,15 +690,16 @@
   [data-shell-main] { margin: var(--app-sheet-gap); margin-left: 0; border-radius: var(--app-sheet-radius); overflow: hidden; }
 }
 
-/* gallery and line: no desk and no sheet. The Skyspace room runs behind the sidebar as it was drawn to, and one hairline
- * that fades out at both ends stands between the sidebar and the page. */
-:root:not([data-side="none"]):is([data-side-look="gallery"], [data-side-look="line"]) {
+/* line: no desk and no sheet. The Skyspace room runs behind the sidebar as it was drawn to, and one hairline that fades
+ * out at both ends stands between the sidebar and the page. The top bar keeps the same 8px of air above it as the head. */
+:root:not([data-side="none"])[data-side-look="line"] {
   [data-skyspace-offset="full"] { --app-cove-shift: 126px; }
   [data-skyspace-offset="rail"] { --app-cove-shift: 31px; }
   .skyspace-cove, .skyspace-inner {
     transition: left .24s var(--app-side-ease);
     @media (prefers-reduced-motion: reduce) { transition: none; }
   }
+  [data-shell-main] { padding-top: var(--app-sheet-gap); }
   [data-shell-main]::before {
     content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 1px; background: var(--app-side-rule); pointer-events: none;
     -webkit-mask-image: linear-gradient(transparent, black 96px, black calc(100% - 96px), transparent);
@@ -698,36 +707,31 @@
   }
 }
 
-/* line and edge: the marker is a short ink line on the sidebar's edge (the hairline, or the sheet's own edge), level with
- * the selected row. The row itself only turns to ink and its icon fills. The rest of the sidebar stays a step quieter
- * until the pointer or the keyboard is in it, and the group labels take the app's small mono caps. */
-:root:not([data-side="none"]):is([data-side-look="line"], [data-side-look="edge"]) {
-  [data-side-pill] {
-    left: auto; right: 0; width: 2px; height: calc(var(--pill-h, 0px) - 14px); transform: translateY(calc(var(--pill-y, 0px) + 7px));
-    border-radius: 2px 0 0 2px; background: var(--foreground); box-shadow: none;
-  }
-  #sidebar { --fill-hover: var(--background); }
-  #sidebar :is(nav button, [data-side-search], [data-chat-open]) { transition: color .16s linear; }
-  #sidebar :is(nav button, [data-side-search]):not([aria-current="page"]) { color: var(--foreground-3); }
-  #sidebar:is(:hover, :focus-within) :is(nav button, [data-side-search]):not([aria-current="page"]) { color: var(--foreground); }
-  #sidebar [data-chat-row]:not(.bg-fill-hover) [data-chat-open] { color: var(--foreground-3); }
-  #sidebar:is(:hover, :focus-within) [data-chat-row]:not(.bg-fill-hover) [data-chat-open] { color: var(--foreground-2); }
-  #sidebar [data-chat-row].bg-fill-hover [data-chat-open] { color: var(--foreground); font-weight: 550; }
-  /* The glyph's fill is an axis of the icon font, so it fills in rather than swaps. The Icon sets the axes inline. */
-  #sidebar nav button .ms { transition: font-variation-settings .2s linear; }
-  #sidebar nav button[aria-current="page"] .ms { font-variation-settings: "wght" 400, "FILL" 1 !important; }
-  #sidebar [data-side-label] { font: 500 11px var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; }
+/* ---- styles: variations on either look (data-side-style holds the words that are on) ---- */
+/* bare: the mark without its tile. It sits on the icons' axis (32px in) and the name starts on the labels' line (53px). */
+:root:not([data-side="none"])[data-side-look][data-side-style~="bare"] {
+  #sidebar [data-side-mark] { width: 22px; margin-left: 3px; border-color: transparent; border-radius: 0; background: transparent; }
+  #sidebar [data-side-mark] svg { width: 22px; height: 22px; }
+  &[data-side="rail"] #sidebar > [data-side-mark] { margin-left: 9px; }
 }
-:root:not([data-side="none"])[data-side-look="edge"] #sidebar { --fill-hover: var(--app-desk); }
+/* stamp: the mark reversed on an ink tile. */
+:root:not([data-side="none"])[data-side-look][data-side-style~="stamp"] {
+  #sidebar [data-side-mark] { border-color: transparent; background: var(--foreground); }
+  #sidebar [data-side-mark] svg { color: var(--background); }
+}
+/* fine: 18px icons a weight up, and rows 2px tighter. The labels keep their size and their line. */
+:root:not([data-side="none"])[data-side-look][data-side-style~="fine"] {
+  #sidebar :is(nav button, [data-side-search]) .ms { width: 18px !important; font-size: 18px !important; }
+  #sidebar :is(nav button, [data-side-search]):not([aria-current="page"]) .ms { font-variation-settings: "wght" 400 !important; }
+  &[data-side="full"] #sidebar :is(nav button, [data-side-search]) { height: 34px; }
+  &[data-side="full"] #sidebar [data-chat-row] { height: 30px; }
+}
+/* ruled: a hairline over each group's label and over the account row. */
+:root:not([data-side="none"])[data-side="full"][data-side-look][data-side-style~="ruled"] {
+  #sidebar :is(#side-agent, #side-pinned), #sidebar > div:has(> span[data-side-label]) { margin-top: 12px; padding-top: 16px; border-top: 1px solid var(--app-side-rule); }
+  #sidebar > div:last-child { padding-top: 10px; border-top: 1px solid var(--app-side-rule); }
+}
 
-/* Search as a field: a white well with the shortcut on a key cap. It opens the same palette. */
-:root:not([data-side="none"])[data-side-look][data-side-search="field"] {
-  #sidebar [data-side-search] {
-    height: 34px; margin-bottom: 8px; background: var(--app-side-field); box-shadow: var(--app-side-field-edge);
-    color: var(--muted-foreground); font-weight: 400; transition: box-shadow .12s linear;
-  }
-  #sidebar [data-side-search]:hover { background: var(--app-side-field); box-shadow: var(--app-side-field-edge-hover); }
-  #sidebar [data-side-search] > [aria-hidden]:last-child {
-    gap: 2px; padding: 1px 5px; border-radius: 5px; background: var(--muted); box-shadow: 0 0 0 1px var(--border); font-size: 11px; font-weight: 500;
-  }
-}
+/* Today's card buttons, urgent only: ink marks the cards that can't wait; the rest take the outline button. */
+:root[data-card-buttons="urgent"] .today-card:not([data-urgent]) button.bg-primary { background: var(--card); color: var(--foreground); box-shadow: inset 0 0 0 1px var(--input); }
+:root[data-card-buttons="urgent"] .today-card:not([data-urgent]) button.bg-primary:hover { background: var(--accent); }

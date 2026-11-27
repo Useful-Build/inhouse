@@ -6,8 +6,8 @@ import { useUi } from '../state/store'
 import { Button, Icon, IconButton, Segmented, Switch } from '../ui'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { demoEnabled } from './demo'
-import { SIDE_LOOKS, SIDE_SEARCHES, useSideLook } from './side-look'
-import type { SideLook, SideSearch } from './side-look'
+import { CARD_BUTTONS, SIDE_LOOKS, SIDE_STYLES, useSideLook } from './side-look'
+import type { CardButtons, SideLook } from './side-look'
 
 
 /** The dashed circle that opens the switches. It sits in the top bar, so it never covers a page's controls. */
@@ -39,7 +39,8 @@ export function DevSwitcher() {
   const ambient = useUi(s => s.ambient)
   const animateMark = useUi(s => s.animateMark)
   const sideLook = useSideLook(s => s.look)
-  const sideSearch = useSideLook(s => s.search)
+  const sideStyle = useSideLook(s => s.style)
+  const cardButtons = useSideLook(s => s.cards)
   const { setDemo, resetDemo, showToast, patch } = useUi.getState()
   if (!demoEnabled() || !open) return null
   const label = 'mt-2.5 mb-1 text-2xs font-strong text-muted-foreground'
@@ -52,8 +53,15 @@ export function DevSwitcher() {
       </div>
       <div className={label}>Sidebar look</div>
       <Segmented<SideLook> label="Sidebar look" value={sideLook} options={SIDE_LOOKS} onChange={useSideLook.getState().setLook} />
-      <div className={label}>Sidebar search</div>
-      <Segmented<SideSearch> label="Sidebar search" value={sideSearch} options={SIDE_SEARCHES} onChange={useSideLook.getState().setSearch} />
+      <div className={label}>Sidebar style</div>
+      {/* Six options don't fit one segmented row in this panel: they wrap as the scenarios do. */}
+      <div className="flex flex-wrap gap-1">
+        {SIDE_STYLES.map(([k, name]) => (
+          <Button key={k} variant={sideStyle === k ? 'primary' : 'soft'} size="sm" aria-pressed={sideStyle === k} onClick={() => useSideLook.getState().setStyle(k)}>{name}</Button>
+        ))}
+      </div>
+      <div className={label}>Today card buttons</div>
+      <Segmented<CardButtons> label="Today card buttons" value={cardButtons} options={CARD_BUTTONS} onChange={useSideLook.getState().setCards} />
       <div className={label}>Stage</div>
       <Segmented label="Stage" value={stage} options={STAGES.map(s => [s, s])} onChange={v => setDemo({ stage: v })} />
       <div className={label}>Scenario</div>
