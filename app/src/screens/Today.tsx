@@ -159,7 +159,7 @@ export function Today() {
               const risk = low ? null : riskLabel(dv)
               return (
                 // The title is the card's one link: its ::after stretches over the card, and the card's other buttons sit above it.
-                <article key={p.id} data-urgent={isUrgent(p.sev) || undefined} className="today-card relative flex cursor-pointer flex-col rounded-2xl bg-card shadow-card transition focus-within:shadow-float hover:shadow-float" aria-label={p.title}>
+                <article key={p.id} className="today-card relative flex cursor-pointer flex-col rounded-2xl bg-card shadow-card transition focus-within:shadow-float hover:shadow-float" aria-label={p.title}>
                   <div className="flex flex-1 flex-col pt-4 pr-4 pl-5.5">
                     <div className="flex min-h-7 items-center gap-2">
                       {!c.dimmed && isUrgent(p.sev) && <Badge variant="destructive" size="lg">Urgent</Badge>}
@@ -220,7 +220,8 @@ export function Today() {
                           <span className="min-w-0 flex-1 text-pretty">{c.sheetNote}</span>
                         </div>
                       )}
-                      <Button className={cn('relative z-raised mt-3 whitespace-nowrap', phone ? 'w-full' : 'self-start', tap)} onClick={low ? () => approve(p.id) : open}>
+                      {/* Ink marks the cards that can't wait (the ones with the Urgent pill): the rest take the outline button, so the page says where to start. */}
+                      <Button variant={!c.dimmed && isUrgent(p.sev) ? 'primary' : 'outline'} className={cn('relative z-raised mt-3 whitespace-nowrap', phone ? 'w-full' : 'self-start', tap)} onClick={low ? () => approve(p.id) : open}>
                         {low ? <><Icon name="check" size={16} />{dv.cta}</> : <>Review draft<Icon name="arrow_forward" size={16} /></>}
                       </Button>
                     </div>

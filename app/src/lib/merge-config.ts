@@ -14,7 +14,7 @@ export const appMergeConfig: ConfigExtension<string, string> = {
       radius: ['bar'],
       animate: ['ih-wind', 'mark-1', 'mark-2', 'mark-3', 'step-in'],
       // --container-* (w-, max-w-, columns-) and --spacing-* (min-h-, max-h-, inset, margins) names.
-      container: ['sidebar', 'sidebar-rail', 'settings-nav', 'library-nav', 'today-column', 'chat-column', 'page-narrow', 'page-default', 'page-wide', 'page-detail', 'detail-rail', 'reading-measure',
+      container: ['sidebar', 'sidebar-rail', 'sidebar-inner', 'settings-nav', 'library-nav', 'today-column', 'chat-column', 'page-narrow', 'page-default', 'page-wide', 'page-detail', 'detail-rail', 'reading-measure',
         'screen-gutter', 'screen-gutter-sm', 'menu-message', 'menu-attach', 'menu-tools', 'menu-mode', 'menu-mode-phone', 'menu-account', 'popover-notifications', 'select-menu', 'problem-panel', 'activity-panel', 'library',
         'window-sm', 'window-md', 'window-form', 'window-lg', 'window-xl', /* PR 5 */ 'prose-measure', 'answer-measure'],
       spacing: ['select-height', 'below-topbar', 'playhead', 'playhead-offset', 'bar-tick', 'today-top', 'chat-empty-top',
@@ -22,7 +22,7 @@ export const appMergeConfig: ConfigExtension<string, string> = {
         'window-max', 'window-max-lg', 'window-wide', 'window-center', 'window-max-wide',
         /* PR 5 */ 'selection-room'],
       // Documentation only: tailwind-merge v3 already reads any text-, bg- or border- name as a colour.
-      color: ['done', 'destructive-solid', 'on-destructive', 'switch-off', 'window-surface', 'tag-edge-strong', 'draft-sheet', 'draft-kind', 'success', 'success-tint', 'success-text', /* PR 5 */ 'bubble'],
+      color: ['done', 'destructive-solid', 'on-destructive', 'switch-off', 'window-surface', 'tag-edge-strong', 'draft-sheet', 'draft-kind', 'success', 'success-tint', 'success-text', /* PR 5 */ 'bubble', 'side-hover', 'count'],
     },
     // Groups whose names aren't theme scales in tailwind-merge. Without these, bg-dot-grid reads as a color and
     // border-hairline as a border color, and cn() drops one of two classes that don't conflict.
