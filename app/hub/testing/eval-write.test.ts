@@ -32,8 +32,17 @@ describe('only the test build exports it (failure 3)', () => {
   it('the deployable main module never names it; the test build\'s main re-exports everything and adds it', () => {
     expect(src('../index/index.ts')).not.toContain('EvalWriteGateway')
     const entry = code(src('./entry/index.ts'))
-    expect(entry).toContain("export * from '../../index/index'")
-    expect(entry).toContain("export { default } from '../../index/index'")
+    // Every name the deployable main exports (its classes and re-exports, and the default), re-exported by name.
+    const deployable = code(src('../index/index.ts'))
+    const names = [
+      ...[...deployable.matchAll(/^export class (\w+)/gm)].map(m => m[1]),
+      ...[...deployable.matchAll(/^export \{ ([^}]+) \} from/gm)].flatMap(m => (m[1] ?? '').split(',').map(n => n.trim())),
+      ...(/^export default /m.test(deployable) ? ['default'] : []),
+    ].sort()
+    expect(names).toContain('ReadGateway')
+    const reexported = /^export \{ ([^}]+) \} from '\.\.\/\.\.\/index\/index'$/m.exec(entry)?.[1]?.split(',').map(n => n.trim()).sort()
+    expect(reexported).toEqual(names)
+    expect(entry).not.toContain('export *')
     expect(entry).toContain("export { EvalWriteGateway } from '../eval-write'")
   })
   it('the test config builds from that main module, and the deployable config from its own', () => {

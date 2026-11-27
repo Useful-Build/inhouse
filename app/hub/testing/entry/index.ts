@@ -3,6 +3,7 @@
 // (../eval-write.ts). The deployable build's `main` stays hub/index/index.ts, so this file and EvalWriteGateway are never
 // in its bundle (scripts/check-hub-build.mjs). Named index.ts: wrangler names the bundle after its entry, and the ops
 // deploy takes the hub bundle's `index.js`.
-export * from '../../index/index'
-export { default } from '../../index/index'
+// Each export by name, never `export *`: the workers test pool reads the main module's named exports, and a star
+// re-export leaves them out (`exports.ReadGateway` undefined). eval-write.test.ts holds this list to index.ts's.
+export { default, ConnectGateway, DeliveryGateway, ReadGateway, ServerGateway, ShopifyWriteSignIn, SignIn, WriteGateway } from '../../index/index'
 export { EvalWriteGateway } from '../eval-write'
