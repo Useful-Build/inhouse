@@ -1050,7 +1050,7 @@ describe('the baseline\'s harness faults', () => {
     expect(door.approvals).toEqual([])
     expect(door.calls).toContain('delete approvals 1')
   })
-  it('T09: names the seeded member the eval key `tom` signs in as, by the name the team line gives', () => {
+  it('T09: names the seeded member the eval key `tom` signs in as, by the name member_find finds (M3-G; the team line before)', () => {
     expect(kase('T09').chats[0]!.prompt).toBe('Tell Leo the Norda delivery arrived this morning.')
     expect(EVAL_PEOPLE.tom.email).toBe('leo@example.test')
   })

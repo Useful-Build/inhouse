@@ -1,0 +1,42 @@
+{
+ "row": {
+  "caseId": "Q03",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "answer": true,
+   "answerNot": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Draft to Kiln & Co: please confirm this week's mug order. I went with Kiln & Co ",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0,
+  "answer": "Draft to Kiln & Co: please confirm this week's mug order. I went with Kiln & Co ",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "8d93e750bb4feb73ebe0dfbeede1cba9a5468b5f299d355fa34ab52118ac5916",
+    "inputExcerpt": "{\"query\":\"mug reorder supplier this week\"}",
+    "resultExcerpt": "This week's mug reorder goes to Kiln & Co. Norda is paused until January."
+   }
+  ]
+ }
+}

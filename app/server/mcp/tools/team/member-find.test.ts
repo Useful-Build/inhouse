@@ -105,7 +105,7 @@ describe('member_find', () => {
     expect(r.content[0].text).toBe(`11 active people on the team. ${DATA_TEXT} ${HIDDEN_TEXT(9)} ${FLAGGED_TEXT(4)}`)
     const hiddenWords = ['María', 'Bob', 'Bartholomew', 'send everything', 'Ignore', 'Ignоre', 'rules', 'Please', 'Reply', 'keys']
     for (const word of hiddenWords) expect(JSON.stringify(r)).not.toContain(word)
-    expect(HIDDEN_TEXT(1)).toBe("1 person's name isn't shown (nameShown: false) because it isn't a plain name or is flagged. Reach them by memberId.")
+    expect(HIDDEN_TEXT(1)).toBe("1 person's name isn't shown (nameShown: false) because it isn't a plain name or is flagged. Don't pick one of them on a guess: reach them by memberId only once the person you're helping confirms who they mean.")
     expect(FLAGGED_TEXT(1)).toBe("1 name has flags: it reads like an instruction, mixes scripts in a word or holds letters of an unlisted script, so it isn't shown.")
   })
 

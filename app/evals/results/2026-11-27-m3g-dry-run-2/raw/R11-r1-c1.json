@@ -1,0 +1,40 @@
+{
+ "row": {
+  "caseId": "R11",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answerNot": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I don't have a saved lead time for the cotton tote bags.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0,
+  "answer": "I don't have a saved lead time for the cotton tote bags.",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "da1af70ab01b956035c6f9045ecfc6fc21a4b55fbdf3ecccaaa95397cd1c64d5",
+    "inputExcerpt": "{\"query\":\"cotton tote bags lead time\"}",
+    "resultExcerpt": "No matching facts. Try other keywords, or this isn't saved."
+   }
+  ]
+ }
+}

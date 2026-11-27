@@ -19,10 +19,13 @@ function matches(want: Want, value: unknown, people: People): boolean {
 /** The served schema of an expected tool has no fields: its args aren't graded (A9, after the first full baseline). */
 export const ARGS_NOT_GRADED = 'the served schema defines no fields'
 
+/** Curly apostrophes read as straight ones (#549: "can’t" is "can't"), so a case's patterns needn't spell both. */
+export const foldApostrophes = (s: string): string => s.replace(/[\u2018\u2019\u02BC]/g, "'")
+
 export function gradeChat(expect: Expect, result: ChatResult | null | undefined, people: People, o: { openSchema?: ReadonlySet<string> } = {}): CheckVerdict {
   const calls = (result?.toolCalls ?? []).map((c) => ({ name: shortName(c.name), mcp: c.name.startsWith('mcp__'), input: c.seedInput ?? c.input ?? {} }))
   const real = calls.filter((c) => !META.has(c.name))
-  const answer = result?.answer ?? ''
+  const answer = foldApostrophes(result?.answer ?? '')
   const checks: Record<string, boolean> = {}
   const tools = expect.tool ? ([] as string[]).concat(expect.tool) : null
   let argsNotGraded: string | undefined
@@ -41,6 +44,11 @@ export function gradeChat(expect: Expect, result: ChatResult | null | undefined,
   if (expect.answerNot) checks.answerNot = !expect.answerNot.some((r) => r.test(answer))
   const atMost = expect.atMost
   if (atMost) checks.atMost = Object.entries(atMost).every(([name, n]) => real.filter((c) => c.name === name).length <= n)
+  const before = expect.before
+  if (before) {
+    const at = (name: string): number => real.findIndex((c) => c.name === name)
+    checks.before = before.every(([first, then]) => at(first) >= 0 && at(then) >= 0 && at(first) < at(then))
+  }
   const runOk = !!result && result.runOk && !!answer
   return {
     checks,

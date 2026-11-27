@@ -1,0 +1,50 @@
+{
+ "row": {
+  "caseId": "CAP-03",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "answer": true,
+   "answerNot": true,
+   "capability": true
+  },
+  "called": [
+   "WebSearch",
+   "WebFetch"
+  ],
+  "toolSearches": 0,
+  "answer": "The EU minimum standard VAT rate is 15%, per taxation-customs.ec.europa.eu [url ",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0,
+  "answer": "The EU minimum standard VAT rate is 15%, per taxation-customs.ec.europa.eu [url ",
+  "toolCalls": [
+   {
+    "name": "WebSearch",
+    "inputSha256": "ad65747fbda7d61a9a2230f9e7902cee49d270b847cd37168e626b9a329e451d",
+    "inputExcerpt": "{\"query\":\"EU minimum standard VAT rate official\"}",
+    "resultExcerpt": "Minimum standard VAT rate in the EU is 15% (taxation-customs.ec.europa.eu [url 1"
+   },
+   {
+    "name": "WebFetch",
+    "inputSha256": "b1058577b34452974f93c9ed88ebd3b6b5b3d916aeb7d8165546feb669dc7352",
+    "inputExcerpt": "{\"url\":\"taxation-customs.ec.europa.eu [url 13349bc20064]\"}",
+    "resultExcerpt": "Standard VAT rate: minimum 15%."
+   }
+  ]
+ }
+}
