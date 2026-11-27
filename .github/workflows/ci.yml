@@ -1,5 +1,5 @@
 # The required check for main and fleet/** (job name "ci"). Runs on PRs, on push to fleet/** and on dispatch. The
-# merge_group trigger is kept for a merge queue, which is off for now (see AGENTS.md, "How changes land here").
+# merge_group trigger serves main's merge queue (on since decision 0028): each queued group runs the whole suite here.
 # The app's whole suite runs in app/: type check, lint, build and every Playwright project, in the official
 # Playwright image so screenshots render the same on every run. Two shards at most: runner slots are shared.
 # Phase batching (Wasim, 2026-11-21): a PR into a fleet/** branch runs only the fast checks (the fast job: type check,
