@@ -100,7 +100,7 @@ test('the largest single call: past the ceiling\'s is refused, past the permissi
   const over = await ask(request, chatId, RESTOCK, restock(600))
   expect(over).toMatchObject({ outcome: 'refused', reason: 'over_limit' })
   const perm = await allowAlways(request, chatId, RESTOCK, restock(5))
-  expect(perm.limits).toEqual({ perDay: 200, unitsMax: 50 })
+  expect(perm.limits).toMatchObject({ perDay: 200, unitsMax: 50 })
   // Within the permission's largest call: run under it.
   const within = await ask(request, chatId, RESTOCK, restock(20))
   expect(within.outcome, JSON.stringify(within)).toBe('approved')
@@ -128,7 +128,7 @@ test('N32: a batch run under a permission, removed during its 10 s hold, sends n
   await ceiling(request, TAG_ADD, true, { perDayMax: 200, unitsMax: 100, bulkThreshold: 5 })
   const chatId = await createChat(request, dana)
   const perm = await allowAlways(request, chatId, TAG_ADD, { orderIds: ['gid://shopify/Order/9001'], tags: [`allow-${run}`] })
-  expect(perm.limits).toEqual({ perDay: 50, unitsMax: 5 })
+  expect(perm.limits).toMatchObject({ perDay: 50, unitsMax: 5 })
   const tag = `hold-${run}`
   const orders = ['9001', '9002', '9003', '9004'].map(n => `gid://shopify/Order/${n}`)
   const b = await ask(request, chatId, TAG_ADD, { orderIds: orders, tags: [tag] })

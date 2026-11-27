@@ -72,7 +72,7 @@ test.afterAll(async ({ request }) => {
 
 test('the agent\'s loop of 500 allowed writes stops at the limit and becomes one card; approving 200 sends 200, the rest wait', async ({ request }) => {
   needsContainer()
-  test.setTimeout(900_000)
+  test.setTimeout(2_700_000)
   const danaId = (await me(request, dana)).memberId
 
   // "Always allow" on a first card (in another chat) makes the permission (per day 50, largest call 5); that card is
@@ -90,7 +90,21 @@ test('the agent\'s loop of 500 allowed writes stops at the limit and becomes one
   // The agent's own loop.
   const chatId = await createChat(request, dana)
   const sent = await send(request, dana, chatId, `scenario:write-loop loop-tag:${LOOP_TAG} tag every order`)
-  const answer = await answerOf(request, dana, chatId, sent.turnId, 600_000)
+  // 500 calls, one at a time through the egress: the turn takes a while. Its progress is logged as it runs, so a slow or
+  // stuck loop shows how far it got.
+  const progress = async () => {
+    const cards = (await call(request, dana, 'GET', `/api/actions?chatId=${encodeURIComponent(chatId)}`)).json.items as BatchCard[]
+    const collected = cards.find(c => c.batch !== undefined && c.state === 'waiting')?.batch?.itemCount ?? 0
+    return `${cards.filter(c => c.batch === undefined).length} single cards, ${collected} collected, ${await loopWrites(request)} writes`
+  }
+  await expect.poll(async () => {
+    const r = await call(request, dana, 'GET', `/api/chats/${chatId}`)
+    expect(r.status, r.text).toBe(200)
+    const ended = (r.json.messages as { role: string; turnId: string }[]).some(m => m.role === 'agent' && m.turnId === sent.turnId)
+    if (!ended) console.log(`write-loop: ${await progress()}`)
+    return ended
+  }, { timeout: 1_800_000, intervals: [30_000], message: 'the loop turn ends' }).toBe(true)
+  const answer = await answerOf(request, dana, chatId, sent.turnId)
   expect(textOf(answer)).toBe(WRITE_LOOP_DONE)
 
   // One card, and only one: the 450 calls past the permission's day, collected.
