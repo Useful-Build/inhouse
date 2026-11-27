@@ -10,6 +10,7 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 import { agent } from '../../agent'
 import type { ActionCard } from '../../agent/types'
+import type { KeyboardEvent, MouseEvent } from 'react'
 import { AgentError } from '../../agent/types'
 import { NOT_FOUND } from '../../../shared/contract/error-codes'
 import { NEEDS_CHECK } from '../../../shared/contract/action-states'
@@ -22,6 +23,7 @@ import {
 } from './ask-card'
 import type { CardButton, Whose } from './ask-card'
 import { readAsks } from '../../shell/asks-count'
+import { rememberTrigger } from '../../ui/dialogs'
 import { fmtCount } from '../../lib/format'
 import { display } from '../../state/display'
 import type { BatchSheetProps } from './BatchSheet'
@@ -84,9 +86,10 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
   const [busy, setBusy] = useState(false)
   // Set at once on a press (state lags a render), so a double click can't send twice.
   const pressing = useRef(false)
-  // The card on screen when a press began (pointer down): a batch whose count grew before the click lands still answers
-  // for what its button said then.
-  const pressedOn = useRef<ActionCard | null>(null)
+  // The card on screen when a press began on a button (pointer down, or Space or Enter down), bound to that button: a
+  // batch whose count grew before the click lands still answers for what its button said then. A press that ends without
+  // a click on it (dragged off, cancelled, focus gone) leaves nothing behind for a later press.
+  const pressedOn = useRef<{ key: string; card: ActionCard } | null>(null)
   // The full list is open, with the card as it was when it opened: its answer covers that card's items and totals.
   const [sheet, setSheet] = useState<ActionCard | null>(null)
   // The most items seen on this batch while it waited (its reads, the full list's pages), and how many the answer left
@@ -183,7 +186,10 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
       if (b.kind === 'answer' && b.choice === 'always') setAllowedAlways(true)
       if (b.kind === 'answer' && covers) setLeftOver(Math.max(0, tipSeen.current - covers.upTo))
       // The pressed button is gone with the old state: keep the keyboard on the card (the list stays open for an item).
-      if (item === undefined) { setSheet(null); headingRef.current?.focus() }
+      // From the list (#581): it gives focus to the heading as it closes, not back to "See all".
+      if (item === undefined) {
+        if (sheet) { rememberTrigger(headingRef.current); setSheet(null) } else headingRef.current?.focus()
+      }
       // The sidebar's badge counts what waits on this person: read it again (once: `take` already did if the state moved).
       if (state.current === before) void readAsks()
       const words = b.kind === 'answer' && b.choice === 'approve' && covers ? batchApprovedToast(covers.upTo)
@@ -201,7 +207,24 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
       if (e instanceof AgentError && e.code === 'conflict' && state.current === before) void readAsks()
     }).finally(() => { pressing.current = false; setBusy(false) })
   }
-  const press = (b: CardButton) => { const shown = pressedOn.current ?? card; pressedOn.current = null; send(b, shown) }
+  /** The card the press on button `key` began on (else the card now), taken once. */
+  const shownFor = (key: string): ActionCard => {
+    const p = pressedOn.current
+    pressedOn.current = null
+    return p && p.key === key ? p.card : card
+  }
+  const press = (b: CardButton) => send(b, shownFor(b.key))
+  /** A button's press handlers: where its press begins (pointer or key) and where one that didn't click ends. */
+  const pressStart = (key: string) => {
+    const end = () => { if (pressedOn.current?.key === key) pressedOn.current = null }
+    // After the click that follows the release (same task), so the click still reads the press.
+    const endAfterClick = () => setTimeout(end, 0)
+    return {
+      onPointerDown: () => { pressedOn.current = { key, card } },
+      onKeyDown: (e: KeyboardEvent) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) pressedOn.current = { key, card } },
+      onPointerUp: endAfterClick, onKeyUp: endAfterClick, onPointerCancel: end, onBlur: end,
+    }
+  }
 
   const buttons = gone ? [] : buttonsOf(card)
   // A card gone from the server (not found on a read) no longer says where it was: it may have gone out or not.
@@ -224,7 +247,8 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
   const rows = batch ? batch.firstRows.slice(0, previewRows(batch)) : []
   const more = batch ? batch.itemCount - rows.length : 0
   const count = batch ? fmtCount(batch.itemCount, display()) : ''
-  const openSheet = () => { const shown = pressedOn.current ?? card; pressedOn.current = null; setSheet(shown) }
+  // The list loads with its first opening: its trigger is remembered now, so focus comes back to it on close (#581).
+  const openSheet = (e: MouseEvent<HTMLButtonElement>) => { rememberTrigger(e.currentTarget); setSheet(shownFor('see-all')) }
   return (
     <div role="group" aria-labelledby={titleId} data-action-card={gone ? 'gone' : card.state} data-action-id={card.id}
       className={cn(ACTION_CARD, className)}>
@@ -277,7 +301,7 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
         <div className="flex min-h-8 items-center justify-between gap-3 px-4.5 pt-1.5 text-sm" data-card-more>
           <span className="text-muted-foreground">{more > 0 ? `and ${fmtCount(more, display())} more` : ''}</span>
           {fullList && (
-            <Button variant="link" size="sm" className="px-0 text-brand-text" onPointerDown={() => { pressedOn.current = card }} onClick={openSheet}
+            <Button variant="link" size="sm" className="px-0 text-brand-text" {...pressStart('see-all')} onClick={openSheet}
               aria-haspopup="dialog" aria-label={`See all ${count}: ${card.title}`}>
               {`See all ${count}`}
             </Button>
@@ -297,7 +321,7 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
       {buttons.length > 0 && (
         <div data-card-actions className="flex flex-wrap gap-2 px-4.5 pt-3.5">
           {buttons.map(b => (
-            <Button key={b.key} variant={b.primary ? 'primary' : 'outline'} disabled={busy} onPointerDown={() => { pressedOn.current = card }} onClick={() => press(b)}
+            <Button key={b.key} variant={b.primary ? 'primary' : 'outline'} disabled={busy} {...pressStart(b.key)} onClick={() => press(b)}
               aria-label={b.kind === 'answer' ? undefined : `${b.label}: ${card.title}`}>{b.label}</Button>
           ))}
         </div>
@@ -305,7 +329,7 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
       {/* A batch's unclear items are settled one at a time, in its full list. */}
       {buttons.length === 0 && batch && card.state === NEEDS_CHECK && card.can.resolve && !gone && (
         <div data-card-actions className="flex flex-wrap gap-2 px-4.5 pt-3.5">
-          <Button variant="primary" onClick={() => setSheet(card)} aria-haspopup="dialog">Check each change</Button>
+          <Button variant="primary" onClick={e => { rememberTrigger(e.currentTarget); setSheet(card) }} aria-haspopup="dialog">Check each change</Button>
         </div>
       )}
       {refusal && !sheet && <p role="alert" className="m-0 mx-4.5 mt-3 text-sm text-destructive-text">{refusal}</p>}

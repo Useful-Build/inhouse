@@ -434,6 +434,33 @@ describe('batches (Stage 1 M3-U)', () => {
     // The 10 that joined meanwhile are named, and where they wait.
     expect(host.querySelector('[data-left-over]')?.textContent).toBe("10 more arrived while you looked. They wait for their own OK. They're in Approvals.")
   })
+  test('Space on Approve: the press begins at keydown, so items joining before the keyup click are not covered', async () => {
+    fake.action.mockResolvedValue(batch(453))
+    fake.answerAction.mockResolvedValueOnce(batch(450, { rev: 2, state: 'approved', sendAt: instant(NOW + 10_000), can: { ...NONE, undo: true } }))
+    await show({ actionId: AC, initial: batch(450) })
+    const approve = [...host.querySelectorAll('button')].find(b => label(b) === 'Approve all 450')!
+    await act(async () => { approve.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true })) })
+    await tick(5000)
+    await flush()
+    expect(buttons()).toContain('Approve all 453')
+    await act(async () => { approve.dispatchEvent(new KeyboardEvent('keyup', { key: ' ', bubbles: true })); approve.click() })
+    await flush()
+    expect(fake.answerAction).toHaveBeenCalledWith(AC, 1, 'approve', { upTo: 450, totals: { records: 450, units: 450 } })
+  })
+  test('a press dragged off its button leaves nothing behind: a later press answers for the card as it is then', async () => {
+    fake.action.mockResolvedValue(batch(453))
+    fake.answerAction.mockResolvedValueOnce(batch(453, { rev: 2, state: 'denied', can: NONE }))
+    await show({ actionId: AC, initial: batch(450) })
+    const approve = [...host.querySelectorAll('button')].find(b => label(b) === 'Approve all 450')!
+    await act(async () => { approve.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); approve.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true })) })
+    await tick(5000)
+    await flush()
+    // A press on another button (No, by keyboard) never takes the abandoned press's card.
+    const no = [...host.querySelectorAll('button')].find(b => label(b) === 'No')!
+    await act(async () => { no.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); no.click() })
+    await flush()
+    expect(fake.answerAction).toHaveBeenCalledWith(AC, 1, 'deny', { upTo: 453, totals: { records: 453, units: 453 } })
+  })
   test('a batch that needs a check is settled item by item in its list, never all at once from the card', async () => {
     await show({ actionId: AC, initial: batch(40, { state: 'needs_check', result: '38 went out. 2 are unclear.', can: { ...NONE, resolve: true } }) })
     expect(buttons()).toEqual(['See all 40', 'Check each change'])

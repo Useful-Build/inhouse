@@ -29,7 +29,7 @@ const NONE = { allowOnce: false, alwaysAllow: false, approve: false, deny: false
 const lineOf = (n: number) => `Order ${3900 + n} (store-a): add VIP`
 const rowOf = (n: number) => ({ ref: `#${3900 + n}`, change: 'add VIP' })
 const batch = (n: number, o: Partial<ActionCard> = {}): ActionCard => ({
-  id: AC, rev: 1, kind: 'exact', state: 'waiting', title: `${n} changes in Shopify (store-a)`, lines: [], tool: { accountId: 'shopify:store', label: 'Shopify' },
+  id: AC, rev: 1, kind: 'exact', state: 'waiting', title: `Tag ${n} orders`, lines: [], tool: { accountId: 'shopify:store', label: 'Shopify' },
   records: n, reachesCustomer: false, reversible: true, guardrail: 'bulk', chatId: null, askedBy: 'm_A', askedAt: instant(1000), serverNow: instant(2000),
   can: { ...NONE, approve: true, deny: true }, nudgeAlways: false, approverKind: 'person',
   batch: {
@@ -143,6 +143,39 @@ describe('the full list', () => {
     // The rows stayed while the page was read again, and the settled one shows its outcome.
     expect(seen).toBe(3)
     expect(rows().map(r => r.getAttribute('data-item-state'))).toEqual(['failed', 'needs_check', 'needs_check'])
+  })
+  test('its title is the card it opened on, and once that card moves on it follows the live one', async () => {
+    serve(453)
+    await show({ card: batch(453), opened: batch(450) })
+    expect(document.querySelector('[data-batch-sheet] h2')?.textContent).toBe('Tag 450 orders')
+    expect(sheet().querySelector('[data-more-arrived]')).not.toBeNull()
+    // Answered elsewhere and sent: the outcomes load, "more arrived" goes, and so do the answers.
+    serve(450, 'sent', { result: 'Sent.' })
+    await act(async () => root.render(createElement(TooltipProvider, null, createElement(BatchSheet, {
+      card: batch(450, { rev: 3, state: 'sent', can: NONE }), opened: batch(450), whose: null, busy: false, refusal: null,
+      onClose: () => {}, onSawTip: () => {}, onAnswer: () => {}, onResolve: () => {},
+    }))))
+    await flush()
+    expect(sheet().querySelector('[data-more-arrived]')).toBeNull()
+    expect(sheetButtons()).toEqual([])
+    expect(new Set(rows().map(r => r.getAttribute('data-item-state')))).toEqual(new Set(['sent']))
+  })
+  test('Try again reads the failed page under an observer too', async () => {
+    const seen: ((e: { isIntersecting: boolean }[]) => void)[] = []
+    class FakeObserver { constructor(cb: (e: { isIntersecting: boolean }[]) => void) { seen.push(cb) } observe() {} disconnect() {} }
+    vi.stubGlobal('IntersectionObserver', FakeObserver)
+    try {
+      serve(5)
+      fake.actionItems.mockRejectedValueOnce(new AgentError('unavailable', 'Inhouse is busy. Try again.'))
+      await show({ card: batch(5) })
+      await act(async () => { seen.at(-1)!([{ isIntersecting: true }]) })
+      await flush()
+      await act(async () => { seen.at(-1)!([{ isIntersecting: false }]) })
+      await flush()
+      expect(sheet().textContent).toContain('Inhouse is busy. Try again.')
+      await click('Try again')
+      expect(rows()).toHaveLength(5)
+    } finally { vi.unstubAllGlobals() }
   })
   test('once the card stops waiting, its answers go', async () => {
     serve(12)

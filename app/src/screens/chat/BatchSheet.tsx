@@ -66,7 +66,9 @@ export function BatchSheet({ card, opened, whose, busy, refusal, onClose, onSawT
   const panel = useRef<HTMLDivElement>(null)
   // The list's last line, once the sheet has drawn it (the sheet's content mounts after this component does).
   const [end, setEnd] = useState<HTMLDivElement | null>(null)
-  const waiting = opened.state === 'waiting'
+  // Still answering what it opened on only while the card itself still waits: once it moves on (answered elsewhere, sent),
+  // the list follows the live card (its items' outcomes, a resolve) and the "more arrived" line goes.
+  const waiting = opened.state === 'waiting' && card.state === 'waiting'
   // A waiting batch lists what the opened card showed; any other lists every item it has now.
   const shownCard = waiting ? opened : card
   const batch = shownCard.batch!
@@ -140,13 +142,19 @@ export function BatchSheet({ card, opened, whose, busy, refusal, onClose, onSawT
         onPointerDownOutside={keepForToast} onInteractOutside={keepForToast}
         overlayProps={{ className: NO_MOTION }}
         onOpenAutoFocus={e => { before.current = claimTrigger(); e.preventDefault(); panel.current?.focus() }}
-        onCloseAutoFocus={e => { e.preventDefault(); if (document.activeElement === document.body) restoreFocus(before.current) }}
+        // Back to what the card remembered as it closed the list (its heading, after an answer), else the opener (#581).
+        onCloseAutoFocus={e => {
+          e.preventDefault()
+          const remembered = claimTrigger()
+          const to = remembered && remembered.isConnected && !panel.current?.contains(remembered) && remembered !== document.body ? remembered : before.current
+          if (document.activeElement === document.body || panel.current?.contains(document.activeElement)) restoreFocus(to)
+        }}
         data-surface="window" data-batch-sheet
         className={cn('gap-0 overflow-hidden rounded-2xl border bg-window-surface shadow-menu', NO_MOTION, phone ? 'inset-x-2.5 bottom-2.5 h-auto max-h-window-max w-auto' : 'inset-y-2.5 right-2.5 h-auto w-activity-panel sm:max-w-none')}>
         <div className="border-b border-divider px-5 pt-4.5 pb-3.5">
           <div className="flex items-start gap-3">
             <div className="min-w-0 flex-1">
-              <SheetTitle className="text-md leading-card font-strong tracking-card text-pretty wrap-anywhere">{card.title}</SheetTitle>
+              <SheetTitle className="text-md leading-card font-strong tracking-card text-pretty wrap-anywhere">{shownCard.title}</SheetTitle>
               <p className={cn('m-0 mt-0.5 text-sm', sub.warn ? 'font-medium text-warning-text' : 'text-muted-foreground')}>{`${card.tool.label} · ${coversText(batch)}`}</p>
             </div>
             <IconButton icon="close" label="Close" onClick={onClose} className={cn('-mt-1 -mr-1.5', tap)} />
@@ -181,7 +189,7 @@ export function BatchSheet({ card, opened, whose, busy, refusal, onClose, onSawT
           {read.error !== null && (
             <div className="flex flex-wrap items-center gap-2 py-3 text-sm text-muted-foreground" role="status">
               <span className="min-w-0 flex-1">{read.error}</span>
-              <Button variant="outline" size="sm" onClick={() => setRead(r => ({ ...r, error: null }))}>Try again</Button>
+              <Button variant="outline" size="sm" onClick={() => { setRead(r => ({ ...r, error: null })); setAtEnd(true) }}>Try again</Button>
             </div>
           )}
         </div>

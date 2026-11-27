@@ -14,7 +14,7 @@ import { useCtx, useUi } from '../../state/store'
 import { SectionHeader } from '../../ui'
 import { LoadError } from '../../ui/retry'
 import { AskCard } from '../chat/AskCard'
-import { buttonsOf, OPEN_STATES, whoseCard } from '../chat/ask-card'
+import { OPEN_STATES, whoseCard } from '../chat/ask-card'
 import { QuestionCard } from './QuestionCard'
 import { publishAsks, useBrandPerson } from '../../shell/asks-count'
 
@@ -52,8 +52,9 @@ export function AgentAsks() {
   const { actions, questions } = lists
   const meId = agent.me()?.memberId
   const whose = (a: ActionCard) => whoseCard(a, meId, id => data.people.members.find(m => m.id === id)?.name)
-  // Someone else's card this person may answer (an admins card) is theirs to act on: listed with their own.
-  const forMe = (a: ActionCard) => whose(a) === null || (a.approverKind === 'admins' && buttonsOf(a).some(b => b.kind === 'answer'))
+  // Someone else's card this person can act on is theirs too, listed with their own (#580): an admins card they may answer
+  // or undo in its hold, a Needs a check they may resolve. Only cards they can't act on wait under the team.
+  const forMe = (a: ActionCard) => whose(a) === null || Object.values(a.can).some(Boolean)
   const mine = actions.filter(forMe)
   const team = actions.filter(a => !forMe(a))
   return (

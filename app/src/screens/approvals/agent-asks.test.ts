@@ -152,6 +152,18 @@ describe('Approvals: questions and actions', () => {
     expect([...host.querySelectorAll('[data-action-id]')].map(e => e.getAttribute('data-action-id'))).toEqual(['ac_JJJJJJJJJJJJJJJJJJJJJJ', 'ac_KKKKKKKKKKKKKKKKKKKKKK'])
     expect(host.textContent).toContain('You said no. Nothing went out.')
   })
+  test("issue 580: a member's Needs a check the admin may resolve, and an admins card in its hold they may undo, are theirs", async () => {
+    fake.actions.mockResolvedValue([
+      card({ id: 'ac_LLLLLLLLLLLLLLLLLLLLLL', askedBy: 'm_Dana', title: 'Tag order 8', state: 'needs_check', can: { ...NONE, resolve: true } }),
+      card({ id: 'ac_MMMMMMMMMMMMMMMMMMMMMM', kind: 'exact', askedBy: 'm_Dana', title: 'Refund order 9', approverKind: 'admins', state: 'approved', sendAt: instant(12_000), can: { ...NONE, undo: true } }),
+      card({ id: 'ac_NNNNNNNNNNNNNNNNNNNNNN', askedBy: 'm_Dana', title: 'Tag order 10', can: NONE }),
+    ])
+    fake.questions.mockResolvedValue([])
+    await show(createElement(AgentAsks))
+    const ids = (sel: string) => [...host.querySelectorAll(`${sel} [data-action-id]`)].map(e => e.getAttribute('data-action-id'))
+    expect(ids('[aria-labelledby="agent-actions"]')).toEqual(['ac_LLLLLLLLLLLLLLLLLLLLLL', 'ac_MMMMMMMMMMMMMMMMMMMMMM'])
+    expect(ids('[aria-labelledby="agent-team-actions"]')).toEqual(['ac_NNNNNNNNNNNNNNNNNNNNNN'])
+  })
   test('both sections show with their counts; a failed read says so and reads again', async () => {
     fake.actions.mockResolvedValue([card()]); fake.questions.mockResolvedValue([question()])
     await show(createElement(AgentAsks))
