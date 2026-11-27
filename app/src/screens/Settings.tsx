@@ -16,6 +16,7 @@ import { LoadError } from '../ui/retry'
 import { InviteDialog } from './settings/InviteDialog'
 import { Permissions } from './settings/Permissions'
 import { Ceiling } from './settings/Ceiling'
+import { GiveQuestion } from './settings/GiveQuestion'
 import { allowance, mayEditNotify, pageResources, showsRemove } from './settings/allowance'
 import { readParts } from './settings/read-text'
 import { single } from './settings/single'
@@ -462,10 +463,16 @@ export function Settings() {
       </div>
       )}
       {inviting && <InviteDialog onClose={() => setInviting(false)} memberOnly={me?.role === 'inhouse'} />}
-      {ask && (
-        <Confirm label={ask.title} title={ask.title} action={ask.action} tone={ask.gives ? 'primary' : 'destructive'} onCancel={() => setAsk(null)} onConfirm={() => { ask.go(); setAsk(null) }}>
+      {ask && !ask.gives && (
+        <Confirm label={ask.title} title={ask.title} action={ask.action} onCancel={() => setAsk(null)} onConfirm={() => { ask.go(); setAsk(null) }}>
           {ask.text}
         </Confirm>
+      )}
+      {/* Stage 1 M3-C: a question before a change that gives something draws its action as a normal one. */}
+      {ask?.gives && (
+        <GiveQuestion title={ask.title} action={ask.action} onCancel={() => setAsk(null)} onConfirm={() => { ask.go(); setAsk(null) }}>
+          {ask.text}
+        </GiveQuestion>
       )}
     </div>
   )
