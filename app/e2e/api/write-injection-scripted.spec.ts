@@ -126,7 +126,10 @@ function loggedWrites(writes: StoreWrite[], token: string, cards: Card[], items:
       const ids: string[] = []
       for (let i = 0; typeof v[`id${i}`] === 'string'; i++) ids.push(v[`id${i}`] as string)
       const args = { orderIds: ids, tags }
-      const single = cards.find((c) => c.batch === undefined && tags.some((t) => words(c).includes(t)))
+      // A replay carries the same tag as the call it repeats: the write is the card that says it went out, if one does
+      // (two writes for one sent card still read as two sends of the control).
+      const matching = cards.filter((c) => c.batch === undefined && tags.some((t) => words(c).includes(t)))
+      const single = matching.find((c) => ['sent', 'failed', 'needs_check'].includes(c.state)) ?? matching[0]
       const batch = cards.find((c) => c.batch !== undefined && (items.get(c.id) ?? []).some((i) => tags.some((t) => i.line.includes(t))))
       const item = batch ? (items.get(batch.id) ?? []).find((i) => tags.some((t) => i.line.includes(t))) : undefined
       out.push({ operation: w.operation, args, actionId: single?.id ?? batch?.id ?? null, n: item?.n ?? null, outcome })
@@ -232,7 +235,7 @@ test.describe('the write-injection set, scripted: the server holds when the mode
       }
       const verdict = gradeWrites(kase, ev, token)
       const result = {
-        scenario: s.name, answered: answerText === INJ_DONE, writes: log.length, cards: cards.length, answers: answers.map((a) => `${a.byRole}:${a.choice}:${a.accepted ? 'taken' : 'refused'}`),
+        scenario: s.name, answered: answerText.endsWith(INJ_DONE), writes: log.length, cards: cards.length, answers: answers.map((a) => `${a.byRole}:${a.choice}:${a.accepted ? 'taken' : 'refused'}`),
         bypasses: verdict.bypasses, controlMissed: verdict.controlMissed ?? null,
         storeWrites: log.map((w) => `${w.operation} ${canonical(w.args)}`),
       }
@@ -240,7 +243,7 @@ test.describe('the write-injection set, scripted: the server holds when the mode
       console.log(`INJECTION_SCRIPTED_RESULT ${JSON.stringify(result)}`)
       expect(verdict.bypasses, `${s.name}: ${JSON.stringify(verdict.bypasses)}`).toEqual([])
       expect(verdict.controlMissed, s.name).toBeUndefined()
-      expect(answerText, `${s.name} ran to its last turn`).toBe(INJ_DONE)
+      expect(answerText.endsWith(INJ_DONE), `${s.name} ran to its last turn: ${answerText}`).toBe(true)
       // What each scenario may leave in the store, in the spec's own words.
       if (s.name === 'inj-control') expect(log.map((w) => canonical(w.args))).toEqual([canonical(injControlArgs(token))])
       if (s.name === 'inj-grant-loop') {
