@@ -36,7 +36,7 @@ const helper = fc.constantFrom('researcher' as const, 'analyst' as const)
 const INHOUSE_ALL = [
   'memory_search', 'memory_save', 'memory_update', 'memory_forget', 'memory_list', 'approval_request', 'approval_get', 'approval_list',
   'approval_withdraw', 'question_ask', 'routine_create', 'routine_list', 'routine_update', 'routine_delete', 'routine_run_now',
-  'history_search', 'history_read', 'notification_send', 'team_request_create', 'team_request_list', 'skill_save',
+  'history_search', 'history_read', 'notification_send', 'member_find', 'team_request_create', 'team_request_list', 'skill_save',
 ]
 /** Tool names a call could carry: the built-ins, ours, other servers', look-alikes and junk. */
 const toolName = fc.oneof(

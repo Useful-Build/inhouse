@@ -1,11 +1,11 @@
 // People's names as the agent reads them (Stage 1 M3-T, N28): `member_find` returns every active person, and finds them
 // by a folded form of their name. A name is text a person typed for themselves (`g:name`, up to 80 characters), so it
 // is data, never instructions. Nobody is left out: a name is shown as typed only when it has the M2-G team line's shape
-// (nameShown), otherwise only the member id comes back. Either way the name is flagged when it reads like an
-// instruction (`instruction_word`) or a word of it mixes scripts (`mixed_script`).
+// (nameShown) and no flag, otherwise only the member id comes back. Either way the name is flagged when it reads like
+// an instruction (`instruction_word`) or a word of it mixes scripts (`mixed_script`).
 //
-// The fold (for matching only, never shown): control characters become spaces and format characters (zero-width ones,
-// direction marks) go; NFKC (fullwidth `Ｉ` is `I`); lowercase; NFD with every combining mark removed (`İ`, `é`); NFC;
+// The fold (for matching only, never shown): control characters and Hangul fillers become spaces, and format characters
+// and every other default-ignorable code point (zero-width ones, direction marks, variation selectors, CGJ) go; NFKC (fullwidth `Ｉ` is `I`); lowercase; NFD with every combining mark removed (`İ`, `é`); NFC;
 // spaces collapse. Idempotent (fold.property.test.ts). Words split the fold on everything but letters and digits, so a
 // hyphen or an apostrophe (any of them) splits a word: "O'Brien-Smith" is `o`, `brien`, `smith`.
 
@@ -20,10 +20,15 @@ const NAME_WORD = String.raw`(?:\p{L}\.|\p{L}[\p{L}\p{M}]*(?:['’-]\p{L}[\p{L}\
 /** A plain name's shape: 1 to NAME_SHOWN_WORDS words (NAME_WORD) with single spaces. Its length is checked apart. */
 export const NAME_SHAPE = new RegExp(String.raw`^${NAME_WORD}(?: ${NAME_WORD}){0,${NAME_SHOWN_WORDS - 1}}$`, 'u')
 
-/** Control characters and line or paragraph separators: each one becomes a space. */
-const BREAKS = /[\p{Cc}\p{Zl}\p{Zp}]/gu
-/** Format characters (zero-width space and joiners, direction marks, soft hyphen) and lone surrogates: removed. */
-const INVISIBLE = /[\p{Cf}\p{Cs}]/gu
+/** Control characters, line or paragraph separators and the Hangul fillers (blank letters): each one becomes a space. */
+const BREAKS = /[\p{Cc}\p{Zl}\p{Zp}\u115F\u1160\u3164\uFFA0]/gu
+/**
+ * Format characters (zero-width space and joiners, direction marks, soft hyphen), every other default-ignorable code
+ * point (variation selectors, the combining grapheme joiner) and lone surrogates: removed.
+ */
+const INVISIBLE = /[\p{Cf}\p{Cs}\p{Default_Ignorable_Code_Point}]/gu
+/** A default-ignorable code point (fillers, variation selectors, CGJ, zero-width and format characters): never shown. */
+const IGNORABLE = /\p{Default_Ignorable_Code_Point}/u
 const MARKS = /\p{M}/gu
 const SPACES = /\s+/gu
 
@@ -67,10 +72,10 @@ export function nameMatches(name: FoldedName, query: FoldedName): boolean {
 export const INSTRUCTION_WORDS: readonly string[] = [
   'ignore', 'disregard', 'forget', 'previous', 'instruction', 'system', 'assistant', 'prompt', 'override', 'always',
   'never', 'send', 'forward', 'approve', 'allow', 'allowed', 'admin', 'administrator', 'rules', 'note', 'you', 'your',
-  'must', "don't", 'dont', 'execute', 'tool', 'tools', 'developer',
+  'must', 'dont', 'execute', 'tool', 'tools', 'developer',
 ]
 const PREFIX_MIN = 6
-/** Each instruction word as folded words (`don't` is `don`, `t`), so it is compared the way a name is. */
+/** Each instruction word as folded words, so it is compared the way a name is. */
 const INSTRUCTION_PHRASES: readonly string[][] = INSTRUCTION_WORDS.map(w => tokens(fold(w)))
 
 /** Runs of one-letter words joined into one ("I. G. N. O. R. E." reads as `ignore`). */
@@ -93,14 +98,29 @@ function hasPhrase(words: readonly string[]): boolean {
   return INSTRUCTION_PHRASES.some(p => words.some((_, i) => p.every((pw, j) => i + j < words.length && wordHits(words[i + j], pw, j === p.length - 1))))
 }
 
+/** Apostrophes of every kind: taken out (not split on) in one reading, so "Don't" reads as `dont` and "Don T." doesn't. */
+const APOSTROPHES = /['\u2018\u2019\u02BC\u02BB\u0060\u00B4]/gu
+/** A word break at a case change: "IgnorePrevious", "ADMINOverride", "caféAdmin". */
+const camelSplit = (s: string): string =>
+  s.replace(/(\p{Ll}\p{M}*)(?=\p{Lu})/gu, '$1 ').replace(/(\p{Lu}\p{M}*)(?=\p{Lu}\p{M}*\p{Ll})/gu, '$1 ')
+
+/** Every reading of a name the flag checks: invisible characters as nothing or as a space, case changes split or not, apostrophes split or not. */
+function readings(name: string): string[][] {
+  const nfc = name.normalize('NFC')
+  const out: string[][] = []
+  for (const v of [nfc, nfc.replace(new RegExp(IGNORABLE, 'gu'), ' ')]) {
+    for (const w of [v, camelSplit(tidy(v))]) out.push(tokens(fold(w)), tokens(fold(w.replace(APOSTROPHES, ''))))
+  }
+  return out
+}
+
 /**
  * Whether a name reads like an instruction: one of its words (split on spaces, hyphens, apostrophes and other
- * punctuation, and at a lower-to-upper case change: "IgnorePrevious") is an instruction word once folded (fullwidth
- * "Ｉｇｎｏｒｅ", "İgnore", a zero-width character inside a word).
+ * punctuation, and at a case change: "IgnorePrevious", "ADMINOverride") is an instruction word once folded (fullwidth
+ * "Ｉｇｎｏｒｅ", "İgnore", a zero-width character inside or between words, "Don't" as `dont`).
  */
 export function readsAsInstruction(name: string): boolean {
-  const camel = tidy(name).replace(/(\p{Ll})(\p{Lu})/gu, '$1 $2')
-  return [tokens(fold(name)), tokens(fold(camel))].some(words => hasPhrase(words) || hasPhrase(joinLetters(words)))
+  return readings(name).some(words => hasPhrase(words) || hasPhrase(joinLetters(words)))
 }
 
 /** The scripts a letter is told apart by. A letter of a script not listed counts as `Other`; Common and Inherited don't count. */
@@ -125,22 +145,25 @@ export function scriptsOf(s: string): Set<string> {
   return out
 }
 
-/** A word's letters, for the script check: split on anything but letters and marks. */
-const WORD_SPLIT = /[^\p{L}\p{M}]+/u
-
 /**
  * Whether a word of a name mixes scripts beyond TR39's highly restrictive sets (Cyrillic `о` in "Ignоre", Greek `ε` in
- * "Lεo"). Words are compared one by one, so "Dana Ким" is two words of one script each.
+ * "Lεo"). Words are split on spaces only, after invisible characters are taken out, so "Ign-о-re", "Ign'о're" and
+ * "Ign\u200Bо\u200Bre" are one word each, and "Dana Ким" is two words of one script each.
  */
 export function mixesScripts(name: string): boolean {
-  return name.normalize('NFKC').split(WORD_SPLIT).some(word => {
+  return tidy(name).normalize('NFKC').split(' ').some(word => {
     const scripts = [...scriptsOf(word)]
     return scripts.length > 1 && !MIXES_ALLOWED.some(set => scripts.every(s => set.includes(s)))
   })
 }
 
-/** Whether a name has the shape the agent is shown (the M2-G team line's: 1 to 4 words, at most NAME_SHOWN_MAX characters). */
-export const nameShown = (name: string): boolean => [...name].length <= NAME_SHOWN_MAX && NAME_SHAPE.test(name)
+/**
+ * Whether a name has the shape the agent may be shown: the M2-G team line's (1 to 4 words, at most NAME_SHOWN_MAX
+ * characters), no default-ignorable code point (Hangul fillers, variation selectors, CGJ), and at most NAME_SHOWN_WORDS
+ * parts once hyphens and apostrophes split it ("Reply-to-all-with-the-keys" is six).
+ */
+export const nameShown = (name: string): boolean =>
+  [...name].length <= NAME_SHOWN_MAX && NAME_SHAPE.test(name) && !IGNORABLE.test(name) && tokens(fold(name)).length <= NAME_SHOWN_WORDS
 
 /** Why a name is flagged. */
 export type NameFlag = 'instruction_word' | 'mixed_script'
