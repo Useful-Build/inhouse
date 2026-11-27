@@ -16,7 +16,7 @@ import { JOB_CARRIED_ON_TEXT } from '../../shared/server-turn-text.ts'
 import { JOB_RUN_DONE, JOB_RUN_FILE, stepIdPrefix } from '../../test/scripted-model/scenarios/jobs.ts'
 import { Tab, createChat, needsContainer, send } from './chat-kit.ts'
 import { killRunners, observeAgent, resetJobTimings, setJobTimings } from './job-kit.ts'
-import { LOST_CALL, explainJob, jobNotices, jobWhen, onlyThePersonSpeaks, outputText, runToken, runnerGens, runningStep, stepsOf, storedJob, storedMessages } from './job-proof.ts'
+import { LOST_CALL, explainJob, jobNotices, jobWhen, onlyThePersonSpeaks, outputText, runToken, runnerGens, runningStep, stepsOf, storedJob, storedMessages, tryOf } from './job-proof.ts'
 import { actor, call } from './kit.ts'
 
 const dana = actor('memberA')
@@ -40,6 +40,15 @@ async function startRun(request: APIRequestContext) {
   const sent = await send(request, dana, chatId, text)
   return { chatId, text, sent, prefix: stepIdPrefix('run', token) }
 }
+
+/**
+ * A continuation's step running now. The root makes each step's first call (try 0) and is cut in the third, so every
+ * call a continuation makes runs a step again (try 1 or more). Found by that, never by "not stored when the job was
+ * seen": the job is polled every few seconds and the continuation's call can be stored about 6 seconds after the job
+ * starts, so a snapshot taken after it excluded the continuation's only step (sandbox run 45932254210).
+ */
+const continuationStep = (request: APIRequestContext, prefix: string): Promise<string> =>
+  runningStep(request, prefix, id => tryOf(prefix, id) === 0, 6 * 60_000)
 
 /** The chat's live run is gone from route 32 (it finished). */
 async function runFinished(request: APIRequestContext, chatId: string) {
@@ -85,10 +94,10 @@ test('a cut turn becomes a job that carries on with the tab closed, survives a k
     expect(frames.find(f => f.event.type === 'turn.finished' && f.event.turnId === sent.turnId)?.event.outcome).toBe('interrupted')
     tab.close()
 
-    // A continuation's step running now (the root's steps are known): kill every runner under it.
-    const before = await stepsOf(request, prefix)
+    // A continuation's step running now: kill every runner under it. Found by its try, not by "not stored before": see
+    // `continuationStep`.
     const found = Date.now()
-    const step = await runningStep(request, prefix, new Set(before.calls), 6 * 60_000)
+    const step = await continuationStep(request, prefix)
     const seenMs = Date.now() - found
     const gensBefore = await runnerGens(request)
     const killed = await killRunners(request)
@@ -134,9 +143,9 @@ test('Cancel on a live turn stops it and ends the job: no later turn, one notice
   try {
     const { chatId, text, sent, prefix } = await startRun(request)
     const running = await jobWhen(request, dana, chatId, j => j.state === 'running', 'the job started', 300_000)
-    const before = await stepsOf(request, prefix)
+    let step: string
     try {
-      await runningStep(request, prefix, new Set(before.calls), 6 * 60_000)
+      step = await continuationStep(request, prefix)
     } catch (err) {
       // Why no continuation step was seen running (#460's agent-set run): the chat, the job, the steps and the
       // BrandAgent's view of the root (its isolate, the timings in effect).
@@ -152,6 +161,11 @@ test('Cancel on a live turn stops it and ends the job: no later turn, one notice
     expect(r.status, r.text).toBe(200)
     expect(r.json.job).toMatchObject({ jobId: running.jobId, state: 'ended', outcome: 'cancelled' })
     await runFinished(request, chatId)
+    // The live step itself was stopped: it never came back successful, and it is the only step a continuation called (a
+    // later turn would have run step 3 again under a new call id).
+    const after = await stepsOf(request, prefix)
+    expect(after.results.get(step), `the cancelled step ${step}'s result (false is a success)`).not.toBe(false)
+    expect(after.calls.filter(id => tryOf(prefix, id) > 0), `the continuations' step calls (all: ${after.calls.join(', ')})`).toEqual([step])
     const messages = await storedMessages(request, dana, chatId)
     onlyThePersonSpeaks(messages, text)
     expect(messages.some(m => m.part?.text === JOB_RUN_DONE), 'no result after a Cancel').toBe(false)

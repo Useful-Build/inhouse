@@ -65,8 +65,11 @@ export interface MemoryDoor {
   /** Puts facts in, active (the case's premise is that the agent knows them). */
   insert(facts: NewMemory[]): Promise<void>
   /**
-   * Empties the brand's memory and its requests to the Inhouse team: the eval brand holds nothing a case-repeat should
-   * carry over (Stage 1 M2-G: T14's repeat 1 left an open request that repeats 2 and 3 found).
+   * Empties the brand's memory and its requests to the Inhouse team, and deletes every team routine: the eval brand holds
+   * nothing a case-repeat should carry over (Stage 1 M2-G: T14's repeat 1 left an open request that repeats 2 and 3 found;
+   * T11 failed 3/3 because routines an earlier run made were already on the brand). Routines go the product's own way, a
+   * soft delete (store.ts deleteRoutine: `deleted_at_ms` set, so no list, tick or team cap counts them; their slots keep
+   * their rows), and are read back: a team routine still live is a DoorRefusal. System routines (the morning check) stay.
    */
   clear(): Promise<void>
   /**
@@ -177,6 +180,10 @@ export function createDoor(run: RunSql, nowSql: () => string = () => D1_NOW_MS):
       await run(`INSERT INTO memories (id, scope, owner_id, text, status, created_by, created_at_ms, updated_at_ms) VALUES ${values.join(', ')}`)
     },
     async clear() {
+      const now = nowSql()
+      await run(`UPDATE routines SET deleted_at_ms = ${now}, updated_at_ms = ${now}, rev = rev + 1, req_id = 'eval' WHERE origin = 'team' AND deleted_at_ms IS NULL`)
+      const live = await run("SELECT id FROM routines WHERE origin = 'team' AND deleted_at_ms IS NULL")
+      if (live.length !== 0) throw new DoorRefusal(`${live.length} team routines are still live after the clear`)
       await run('DELETE FROM team_requests')
       await run('DELETE FROM memories')
     },

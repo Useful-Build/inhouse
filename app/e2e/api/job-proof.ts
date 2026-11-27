@@ -25,13 +25,25 @@ export async function storedJob(request: APIRequestContext, who: Actor, chatId: 
   return r.json.job as StoredJob | null
 }
 
-/** The job once `ok` holds of it; fails after `timeoutMs` with the job as it was. */
+/**
+ * Runs `poll`'s expectation; on a timeout, fails with `late()`'s text, built then (a poll's `message` is built before it
+ * polls, so it can only name the values from before the first read), above the poll's own error.
+ */
+async function failingWith(poll: () => Promise<void>, late: () => string): Promise<void> {
+  try {
+    await poll()
+  } catch (err) {
+    throw new Error(`${late()}\n${err instanceof Error ? err.message : String(err)}`, { cause: err })
+  }
+}
+
+/** The job once `ok` holds of it; fails after `timeoutMs` with the job as it was at the last read. */
 export async function jobWhen(request: APIRequestContext, who: Actor, chatId: string, ok: (j: StoredJob) => boolean, what: string, timeoutMs: number): Promise<StoredJob> {
   let job: StoredJob | null = null
-  await expect.poll(async () => {
+  await failingWith(() => expect.poll(async () => {
     job = await storedJob(request, who, chatId)
     return job !== null && ok(job)
-  }, { timeout: timeoutMs, intervals: [2_000, 5_000, 10_000], message: `${what} (job: ${JSON.stringify(job)})` }).toBe(true)
+  }, { timeout: timeoutMs, intervals: [2_000, 5_000, 10_000], message: what }).toBe(true), () => `${what} (job at the last read: ${JSON.stringify(job)})`)
   return job!
 }
 
@@ -70,15 +82,31 @@ export async function stepsOf(request: APIRequestContext, prefix: string): Promi
   return { calls, results, texts }
 }
 
-/** A step call with no result yet, other than those in `not`: a step running now (the store mirrors as the turn goes). */
-export async function runningStep(request: APIRequestContext, prefix: string, not: ReadonlySet<string>, timeoutMs: number): Promise<string> {
+/**
+ * Which try of its step a call is: the `_<try>` after the step number (`<prefix><step>_<try>`, the token chain's ids in
+ * test/scripted-model/scenarios/jobs.ts): 0 for a step's first call, 1 for the call that runs it again after a cut or a
+ * lost container, and so on.
+ */
+export function tryOf(prefix: string, id: string): number {
+  const m = /^\d+_(\d+)$/.exec(id.startsWith(prefix) ? id.slice(prefix.length) : '')
+  if (m === null) throw new Error(`${id} is not a step call of ${prefix}`)
+  return Number(m[1])
+}
+
+/**
+ * A step call with no result yet that `skip` doesn't name (a set of ids, or a test of each id): a step running now (the
+ * store mirrors as the turn goes). Fails after `timeoutMs` with the run's calls and results as they were at the last read.
+ */
+export async function runningStep(request: APIRequestContext, prefix: string, skip: ReadonlySet<string> | ((id: string) => boolean), timeoutMs: number): Promise<string> {
+  const skipped = typeof skip === 'function' ? skip : (id: string) => skip.has(id)
   let running: string | undefined
   let seen: Steps = { calls: [], results: new Map(), texts: new Map() }
-  await expect.poll(async () => {
+  await failingWith(() => expect.poll(async () => {
     seen = await stepsOf(request, prefix)
-    running = seen.calls.find(id => !seen.results.has(id) && !not.has(id))
+    running = seen.calls.find(id => !seen.results.has(id) && !skipped(id))
     return running !== undefined
-  }, { timeout: timeoutMs, intervals: [1_000], message: `a running step of ${prefix} (calls ${seen.calls.length}, results ${seen.results.size})` }).toBe(true)
+  }, { timeout: timeoutMs, intervals: [1_000], message: `a running step of ${prefix}` }).toBe(true),
+  () => `a running step of ${prefix} (at the last read: calls ${seen.calls.length}, results ${seen.results.size}: ${seen.calls.map(c => `${c.slice(prefix.length)}=${seen.results.has(c) ? (seen.results.get(c) ? 'error' : 'ok') : 'none'}`).join(' ')})`)
   return running!
 }
 
