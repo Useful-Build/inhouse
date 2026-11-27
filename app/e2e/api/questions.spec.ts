@@ -10,10 +10,10 @@
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 import { QUESTION_ASKED, QUESTION_REPLY } from '../../test/scripted-model/scenarios/questions.ts'
-import { QUESTION_ROUTINE_CREATED, ROUTINE_QUESTION } from '../../test/scripted-model/scenarios/acceptance.ts'
+import { QUESTION_ROUTINE_CREATED } from '../../test/scripted-model/scenarios/acceptance.ts'
 import { answerOf, createChat, needsContainer, send, textOf } from './chat-kit.ts'
 import { killRunners } from './job-kit.ts'
-import { actor, call } from './kit.ts'
+import { actor, call, endLiveGrants, putSetting } from './kit.ts'
 import type { Actor } from './kit.ts'
 
 const dana = actor('memberA')
@@ -96,9 +96,35 @@ test('a question beside another call is not asked; the agent asks again on its o
   expect(await agentSays(request, dana, chatId, QUESTION_REPLY)).toContain(QUESTION_ASKED.options[0])
 })
 
+/**
+ * A routine's turn takes the brand's default model, which nothing seeds (so Opus), and the scripted model answers only the
+ * harness's chat model: the default must be Fast first. As e2e/ship/watch.spec.ts does it: technical settings are the
+ * Inhouse team's to write, under a live grant the Admin gives; the grant ends after (also when a step fails). Left Fast.
+ */
+async function ensureFastDefault(request: APIRequestContext): Promise<void> {
+  const read = async () => {
+    const r = await call(request, dana, 'GET', '/api/settings/technical')
+    expect(r.status, r.text).toBe(200)
+    return (r.json.items as { key: string; value?: unknown }[]).find(i => i.key === 'g:mode')?.value
+  }
+  if ((await read()) !== 'Fast') {
+    await endLiveGrants(request)
+    try {
+      const grant = await call(request, actor('admin'), 'POST', '/api/grants', { json: { hours: 1 } })
+      expect(grant.status, grant.text).toBe(201)
+      const put = await putSetting(request, actor('inhouse'), 'technical', 'g:mode', 'Fast')
+      expect(put.status, `setting the default model to Fast: ${put.text}`).toBe(200)
+    } finally {
+      await endLiveGrants(request)
+    }
+  }
+  expect(await read(), 'the default model reads back as Fast').toBe('Fast')
+}
+
 test("a routine's question goes to its creator's inbox with no chat; the run waits for the answer, then finishes", async ({ request }) => {
   needsContainer()
   test.setTimeout(600_000)
+  await ensureFastDefault(request)
   // A routine made in Dana's chat (so she is its creator), named for this run.
   const name = `m2j-question-${Date.now().toString(36)}`
   const chatId = await createChat(request, dana)
@@ -125,7 +151,7 @@ test("a routine's question goes to its creator's inbox with no chat; the run wai
     await expect.poll(async () => {
       const r = await call(request, dana, 'GET', '/api/questions')
       expect(r.status, r.text).toBe(200)
-      q = (r.json.items as Q[]).find(x => !before.has(x.id) && x.question === ROUTINE_QUESTION.question)
+      q = (r.json.items as Q[]).find(x => !before.has(x.id) && x.question === QUESTION_ASKED.question)
       return q !== undefined
     }, { timeout: 240_000, message: "the routine's question in its creator's list" }).toBe(true)
   } catch (e) {
@@ -137,17 +163,17 @@ test("a routine's question goes to its creator's inbox with no chat; the run wai
     const asked = { dana: (await call(request, dana, 'GET', '/api/questions')).json, admin: (await call(request, actor('admin'), 'GET', '/api/questions')).json }
     throw new Error(`${(e as Error).message}\nruns: ${JSON.stringify(history).slice(0, 2000)}\ntrace: ${JSON.stringify(steps).slice(0, 6000)}\nquestions: ${JSON.stringify(asked).slice(0, 3000)}`)
   }
-  expect(q).toMatchObject({ state: 'open', options: ROUTINE_QUESTION.options, chatId: null, answer: null })
+  expect(q).toMatchObject({ state: 'open', options: QUESTION_ASKED.options, chatId: null, answer: null })
   // Another member never sees it, nor can answer it.
   expect(((await call(request, leo, 'GET', '/api/questions')).json.items as Q[]).map(x => x.id)).not.toContain(q!.id)
-  expect((await call(request, leo, 'POST', `/api/questions/${q!.id}/answer`, { json: { choice: ROUTINE_QUESTION.options[0] } })).status).toBe(404)
+  expect((await call(request, leo, 'POST', `/api/questions/${q!.id}/answer`, { json: { choice: QUESTION_ASKED.options[0] } })).status).toBe(404)
   // The run waits on the answer, across a hard kill of every runner (P6 acceptance 10).
   expect((await runs())[0]).toMatchObject({ outcome: 'running', manual: true })
   await killRunners(request)
 
-  const answered = await call(request, dana, 'POST', `/api/questions/${q!.id}/answer`, { json: { choice: ROUTINE_QUESTION.options[0] } })
+  const answered = await call(request, dana, 'POST', `/api/questions/${q!.id}/answer`, { json: { choice: QUESTION_ASKED.options[0] } })
   expect(answered.status, answered.text).toBe(200)
-  expect(answered.json).toMatchObject({ id: q!.id, state: 'answered', answer: ROUTINE_QUESTION.options[0] })
+  expect(answered.json).toMatchObject({ id: q!.id, state: 'answered', answer: QUESTION_ASKED.options[0] })
   // The run resumes with the answer and finishes.
   await expect.poll(async () => (await runs())[0]?.outcome, { timeout: 300_000, intervals: [2_000], message: "the routine's run finishes" }).toBe('done')
 })
