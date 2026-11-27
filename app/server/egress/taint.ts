@@ -26,6 +26,12 @@
 //  - Retention and cap: rows expire after 7 days and the table is capped at 50,000 rows (oldest evicted in bounded
 //    deletes; an exact count runs only when the cheap rowid span says the table may be over). Under heavy re-sighting
 //    churn the span stays loose and that count (over at most 50,000 rows) can run on every capture: accepted.
+//  - Junk can't evict a recent token unseen (#427, M3-F): eviction goes by age (expired rows first, then the least
+//    recently seen); one result adds at most 5,000 rows (more fails the read); and while the table is full and its
+//    oldest row was seen under a day ago (`TAINT_FULL_GUARD_MS`), every URL that carries a candidate token is refused
+//    (`leak`). So a flood of junk reads closes fetch rather than opening it: a row evicted while it was under a day old
+//    leaves the table full of rows newer than it, which keeps fetch closed until that row would be a day old. A token
+//    is protected for its full 7 days unless junk fills the table, and then for at least a day.
 //  - Fail closed: a capture failure fails the tool/file response; a check failure refuses the fetch, and so does a URL
 //    with more than `MAX_URL_CANDIDATES` candidate tokens.
 //
@@ -39,8 +45,9 @@
 //  - JSON embedded in non-JSON text is read as raw text, so its escapes can still glue a character onto a token
 //    (`\nalice@...` as `nalice@...`): a tool answer like `Result: {...}`, and a file of JSON or NDJSON the agent or a
 //    person saved as `text/plain` or `text/csv`, which `/files/` serves today;
-//  - the 50,000-row cap: after many large reads (junk ones included) the oldest real digests are evicted before
-//    their 7 days (deferred to Phase 9);
+//  - the 50,000-row cap: after many large reads (junk ones included) the oldest real digests can be evicted before
+//    their 7 days, but never before a day (see "Junk can't evict" above); a brand that reads 50,000 distinct tokens
+//    in a day has fetch refused for URLs with candidate tokens until its oldest row is a day old;
 //  - binary files (office documents, PDFs, images) are not read, so nothing in them is captured;
 //  - a token split across URL parts (half in the path, half in the query), or across a `/` of a standard-base64 run;
 //  - adjacent letters or digits with no separator (`xalice@example.com`, `55500000010019`), and a token buried among
@@ -59,6 +66,11 @@ export const TAINT_TTL_MS = 7 * 24 * 60 * 60 * 1000
 export const TAINT_MAX_ROWS = 50_000
 /** Bounded eviction size per capture write so one request never scans or deletes the whole table. */
 export const TAINT_EVICT_BATCH = 500
+/**
+ * While the table is full, fetch stays closed (for URLs with candidate tokens) until its oldest row was seen this long
+ * ago: what eviction took from a full table was never newer than that row.
+ */
+export const TAINT_FULL_GUARD_MS = 24 * 60 * 60 * 1000
 /** More candidate tokens than this in one URL refuses it (fail closed) rather than hashing and looking up all of them. */
 export const MAX_URL_CANDIDATES = 4096
 /** The MAC input's domain separator, so a digest here can't be linked to the audit log's hashes under the same key. */
@@ -91,7 +103,10 @@ export interface TaintStoreOptions {
 export interface TaintStore {
   /** Stores the digests of every high-signal token of a result (throws `TaintOverflowError` past 5,000). Returns the count. */
   capture(body: string, source: TaintSource): Promise<number>
-  /** Returns true if any candidate token in `url` matches a non-expired digest in `egress_taint` (or `url` has too many). */
+  /**
+   * Returns true if any candidate token in `url` matches a non-expired digest in `egress_taint`, if `url` has too many,
+   * or if it has any while the table is full and its oldest row is under `TAINT_FULL_GUARD_MS` old.
+   */
   checkUrl(url: URL): Promise<boolean>
 }
 
@@ -106,10 +121,24 @@ export function taintStore(
   const evictBatch = opts.evictBatch ?? TAINT_EVICT_BATCH
 
   /**
+   * Whether the table is full with its oldest row seen under `TAINT_FULL_GUARD_MS` ago. The oldest time is an index
+   * edge read; the count runs only when that row is recent and the rowid span (an upper bound on the count) reaches the cap.
+   */
+  async function fullOfRecent(atMs: number): Promise<boolean> {
+    const edge = await db
+      .prepare('SELECT (SELECT min(seen_at_ms) FROM egress_taint) AS oldest, (SELECT max(rowid) FROM egress_taint) - (SELECT min(rowid) FROM egress_taint) + 1 AS span')
+      .first<{ oldest: number | null; span: number | null }>()
+    if (!edge || edge.oldest === null || edge.oldest <= atMs - TAINT_FULL_GUARD_MS || (edge.span ?? 0) < maxRows) return false
+    const count = (await db.prepare('SELECT COUNT(*) AS n FROM egress_taint').first<{ n: number }>())?.n ?? 0
+    return count >= maxRows
+  }
+
+  /**
    * The row cap without a full count on every capture. `INSERT OR REPLACE` gives a re-sighted digest a new rowid, so
    * the rowid span (two b-tree edge reads) bounds the row count from above; only when it passes the cap does an exact
-   * count run, and then the oldest rows go in one delete. The table is at most `maxRows` before a capture, so the
-   * delete is bounded by what the capture inserted (at most 5,000), and the cap holds after every capture.
+   * count run, and then the oldest rows go in one delete, by age (expired ones are the oldest). The table is at most
+   * `maxRows` before a capture, so the delete is bounded by what the capture inserted (at most 5,000), and the cap holds
+   * after every capture.
    */
   async function enforceCap(inserted: number): Promise<void> {
     const span = await db
@@ -154,7 +183,8 @@ export function taintStore(
       if (tokens.length === 0) return false
       if (tokens.length > MAX_URL_CANDIDATES) return true
       const digests = await Promise.all(tokens.map(t => digestToken(hashKey, t)))
-      const cutoff = now() - ttlMs
+      const at = now()
+      const cutoff = at - ttlMs
       const stmts: D1PreparedStatement[] = []
       for (let i = 0; i < digests.length; i += SELECT_CHUNK_DIGESTS) {
         const chunk = digests.slice(i, i + SELECT_CHUNK_DIGESTS)
@@ -165,7 +195,8 @@ export function taintStore(
         )
       }
       const results = await db.batch<{ hit: number }>(stmts)
-      return results.some(r => r.results.length > 0)
+      if (results.some(r => r.results.length > 0)) return true
+      return fullOfRecent(at)
     },
   }
 }

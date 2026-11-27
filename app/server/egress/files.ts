@@ -2,8 +2,11 @@
 // (attachments first), `GET /files/<path>` reads one, `PUT /files/<path>` saves one, only under `outputs/`. A PUT takes
 // one of the turn's 20 output slots with a conditional insert, streams the body into R2 (files-io/bytes.ts: its
 // declared length, 20 MiB at most; the type by magic bytes from its first bytes; the `x-inhouse-sha256` against the
-// bytes, before the last of them is written) with that checksum (R2 verifies and keeps it), and leaves the row `pending` until the runner's `file_saved` confirms it. Any refusal after the slot was taken
-// frees the slot in the same `finally`. `<path>` arrives with each segment `encodeURIComponent`-encoded.
+// bytes, before the last of them is written) with that checksum (R2 verifies and keeps it), and leaves the row `pending`
+// until the runner's `file_saved` confirms it. Any refusal after the slot was taken frees the slot in the same `finally`.
+// `<path>` arrives with each segment `encodeURIComponent`-encoded. A text-like GET is captured for the fetch leak check
+// (taint.ts) before its bytes go back: more tokens than one read may hold refuse it (`FILE_TOO_MANY_TOKENS`), and any
+// other capture failure refuses it too (fail closed).
 import { badFileName } from '../../shared/files/names.ts'
 import { FILE_TOO_MANY_TOKENS } from '../../shared/protocol/file-refusals.ts'
 import { chatFileKey } from '../db/r2-keys.ts'
