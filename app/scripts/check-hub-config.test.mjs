@@ -86,7 +86,7 @@ test('the hub template passes', () => {
 test('the hub test config fails (the test build can never pass as deployable)', () => {
   const r = run('wrangler.hub.test.jsonc')
   assert.equal(r.status, 1, r.out)
-  assert.deepEqual(r.rules, ['secret-in-vars', 'secrets-required', 'test-build-var', 'test-define'], r.out)
+  assert.deepEqual(r.rules, ['main', 'secret-in-vars', 'secrets-required', 'test-build-var', 'test-define'], r.out)
 })
 
 test('an unreadable file exits 2, never 0 or 1', () => {

@@ -120,6 +120,9 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   // Stage 1 M2-Q. The questions asked of the person go; one asked of every admin keeps who answered it, pseudonymous once
   // their row is.
   questions: { action: 'delete_rows', column: 'asked_of', kept: ['answered_by'] },
+  // Stage 1 M3-R: the eval deployment's write log and faults (empty elsewhere); a write request carries no member id.
+  eval_write_log: { action: 'keep', why: 'no member id: the eval deployment\'s logged write requests, cleared per case-repeat' },
+  eval_write_fault: { action: 'keep', why: 'no member id: the eval deployment\'s planned write answers, cleared per case-repeat' },
   privacy_requests: { action: 'keep', why: 'no member id: a Shopify customer by Shopify id only, cleared when the request is closed (route 94); the topic and dates stay as the record that it was answered' },
 }
 

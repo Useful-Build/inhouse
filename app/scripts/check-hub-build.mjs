@@ -8,6 +8,8 @@
 //      SHOPIFY_UPSTREAM_CANARY (read from app/test/upstreams/shopify/server.ts), each in any output file but the
 //      metafile, and the recorded MCP upstream's MCP_UPSTREAM_CANARY (P5, read from app/test/upstreams/mcp/server.ts).
 //      Each is read from its source, so the scan and the code can't drift.
+//      Stage 1 M3-R (N30): the name EvalWriteGateway (EVAL_WRITE_GATEWAY, read from app/hub/testing/eval-write.ts's class),
+//      the eval deployment's credential-free write log, which only the test bundle's main module exports.
 //      The test-fakes hook (W5): HUB_FAKES_CANARY (read from app/hub/testing/fakes.ts), and the hook's three in-isolate
 //      globals (`__inhouseHubTestVars`, `__inhouseHubTestLogs`, `__inhouseHubTestConnectBodies`), which must sit only
 //      inside `if (false)` blocks of the deployable script (the define's dead branches: wrangler doesn't minify, so their
@@ -90,7 +92,12 @@ function readCanaries() {
   if (!existsSync(fakesHook)) fail(`${relative(root, fakesHook)} is missing: there's no test-fakes canary to look for.`)
   const fakesMatch = read(fakesHook).match(/export const HUB_FAKES_CANARY = '([^']+)'/)
   if (!fakesMatch) fail(`no \`export const HUB_FAKES_CANARY = '...'\` in ${relative(root, fakesHook)}; the hook's shape changed.`)
+  const evalWrite = join(hubDir, 'testing/eval-write.ts')
+  if (!existsSync(evalWrite)) fail(`${relative(root, evalWrite)} is missing: there's no eval write gateway name to look for.`)
+  const evalWriteMatch = read(evalWrite).match(/export class (EvalWriteGateway) extends WorkerEntrypoint/)
+  if (!evalWriteMatch) fail(`no \`export class EvalWriteGateway extends WorkerEntrypoint\` in ${relative(root, evalWrite)}; the gateway's shape changed.`)
   return {
+    EVAL_WRITE_GATEWAY: evalWriteMatch[1],
     CANARY: canaryMatch[1],
     SHOPIFY_CANARY: shopifyMatch[1],
     SHOPIFY_WRITE_CANARY: shopifyWriteMatch[1],
@@ -232,7 +239,7 @@ function moduleGraph({ inputs }) {
 function main() {
   const deployDir = flag('--deploy', join(root, 'dist-hub'))
   const testDir = flag('--test', join(root, 'dist-hub-test'))
-  const { CANARY, SHOPIFY_CANARY, SHOPIFY_WRITE_CANARY, MCP_CANARY, FAKES_CANARY } = readCanaries()
+  const { CANARY, SHOPIFY_CANARY, SHOPIFY_WRITE_CANARY, MCP_CANARY, FAKES_CANARY, EVAL_WRITE_GATEWAY } = readCanaries()
 
   const PARTS = [
     ['canary string', canary(CANARY)],
@@ -241,6 +248,7 @@ function main() {
     ['mcp upstream canary', canary(MCP_CANARY)],
     ['test-fakes canary', canary(FAKES_CANARY)],
     ['test-fakes globals', fakesGlobals],
+    ['eval write gateway', canary(EVAL_WRITE_GATEWAY)],
     ['module graph', moduleGraph],
   ]
 

@@ -21,6 +21,7 @@ import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { JWK } from 'jose'
 import { createDoor, newActionId, newMemoryId, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory } from './door.ts'
+import { writeProvides } from './write-door.ts'
 import { CapReachedError, type Case, type ChatResult, type ExfilSpec, type People, type PersonKey, type RunContext, type SeedApproval, type SeedFact, type Session, type Target, type ToolCall } from '../types.ts'
 
 /**
@@ -339,7 +340,10 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     name: 'product',
     people,
     // P3 builds none of the shop and mail connectors or routines: the cases that need them report as not run (phase P4/P5).
-    provides: new Set<string>(),
+    // Stage 1 M3-R (N30): the write families, each once its operations are built. The eval hub binds the write log
+    // (app/wrangler.eval.jsonc HUB_WRITE -> EvalWriteGateway, pinned by check-product-config.sandbox.test.mjs), so a write
+    // the agent makes there lands in the log, never in a store.
+    provides: writeProvides(),
     ...(opts.openSchema ? { openSchema: opts.openSchema } : {}),
     unobservable: unobservableReason,
     spentUsd: () => spentTotal,

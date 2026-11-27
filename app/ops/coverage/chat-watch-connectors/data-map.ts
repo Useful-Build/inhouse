@@ -73,6 +73,8 @@ export const NOTES: Readonly<Record<string, Note>> = {
   permission_uses: { holds: 'How often each permission was used each day', personal: 'None', retention: 'Steps setting (default 12 months)', deletion: 'Kept: no personal data' },
   outbox_gate: { holds: 'Whether the agent\'s actions are paused or held for a restore', personal: 'None', retention: 'Kept while the deployment lives', deletion: 'Kept: no personal data' },
   outbox_actions: { holds: 'Actions the agent proposed, their approvals and outcomes', personal: 'Member IDs of who asked, approved and checked it; the action\'s details, such as a message\'s text', retention: 'Steps setting (default 12 months) after the action finished; never while it\'s open', deletion: 'Actions the person asked for are deleted. Others keep who approved or checked them, which no longer identifies the deleted person' },
+  eval_write_log: { holds: 'Test only: the writes the evaluation deployment\'s agent made, logged instead of sent', personal: 'None', retention: 'Cleared before each evaluation case; empty outside the evaluation deployment', deletion: 'Kept: no personal data' },
+  eval_write_fault: { holds: 'Test only: planned answers for the evaluation deployment\'s logged writes', personal: 'None', retention: 'Cleared before each evaluation case; empty outside the evaluation deployment', deletion: 'Kept: no personal data' },
   privacy_requests: { holds: 'Shopify privacy requests and their status', personal: 'Shopify customer and order IDs while open', retention: 'Request record kept while the deployment lives; customer and order IDs cleared on close', deletion: 'Kept: no team member ID' },
 }
 

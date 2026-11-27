@@ -58,7 +58,11 @@
 	"services": [
 		{ "binding": "HUB", "service": "inhouse-hub", "entrypoint": "ReadGateway" },
 		// P5 (#337): the per-turn prompt v3 reads the connected accounts through it. Never HUB_DELIVERY (the eval brand is at Watch).
-		{ "binding": "HUB_CONNECT", "service": "inhouse-hub", "entrypoint": "ConnectGateway" }
+		{ "binding": "HUB_CONNECT", "service": "inhouse-hub", "entrypoint": "ConnectGateway" },
+		// Stage 1 M3-R (N30; Q3 = D): the outbox dispatcher's write binding, to the eval hub's EvalWriteGateway (the hub test
+		// build's credential-free write log: each write lands in the eval D1's `eval_write_log`, never in a store). Never the
+		// real WriteGateway: the eval lock admits HUB_WRITE only to EvalWriteGateway, and no other config may name it.
+		{ "binding": "HUB_WRITE", "service": "inhouse-hub", "entrypoint": "EvalWriteGateway" }
 	],
 	// The runner image, built from app/ as CI's runner job builds it (it bundles app/shared/protocol). max_instances is
 	// 3 x RUNNER_POOL (scripts/check-product-config.mjs compares them).

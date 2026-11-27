@@ -24,6 +24,9 @@
 //     (a missing, extra or repeated binding; the eval deployment HUB alone); or a hub config (--hub, --eval --hub) gets
 //     a route, storage, a service binding, an unbundled build, a `secrets` list wrangler would fail on, or (candidate) a store
 //     credential or the test switch.
+// 15. (Stage 1 M3-R, N30) HUB_WRITE -> EvalWriteGateway (the hub test build's write log) passes anywhere but the eval
+//     product config, or the eval config binds HUB_WRITE to the real WriteGateway; a D1 passes in any hub config but the
+//     eval hub's, or there as anything but exactly { binding: EVAL_WRITE_LOG, database_name: the eval database }.
 // 14. (P5) a `worker_loaders` passes anywhere but a sandbox hub config, or in one as anything but exactly
 //     [{ "binding": "LOADER" }] (more entries, another binding name, extra keys, a non-list); the product keeps refusing it.
 // Oracles: the literal pass fixtures in check-product-config-fixtures/sandbox/ and one literal change per rule below,
@@ -35,7 +38,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import fc from 'fast-check'
 import { describe, expect, test } from 'vitest'
-import { checkSandboxConfig, EVAL_TEST_HUB_VARS, stripJsonc } from './check-product-config.mjs'
+import { checkSandboxConfig, EVAL_TEST_HUB_VARS, EVAL_WRITE_LOG_BINDING, stripJsonc } from './check-product-config.mjs'
 
 const script = fileURLToPath(new URL('./check-product-config.mjs', import.meta.url))
 const fixtures = fileURLToPath(new URL('./check-product-config-fixtures/', import.meta.url))
@@ -769,7 +772,8 @@ describe('(P4) the eval deployment\'s own hub (failures 12 and 13)', () => {
   // hub, pass the eval lock, so the fixtures above can't drift from the file the eval deployment is built from.
   test('app/wrangler.eval.jsonc\'s services (the service renamed to the eval hub, as ops does) pass the eval lock', () => {
     const real = JSON.parse(stripJsonc(readFileSync(fileURLToPath(new URL('../wrangler.eval.jsonc', import.meta.url)), 'utf8')))
-    expect(real.services.map(s => [s.binding, s.entrypoint]).sort()).toEqual([['HUB', 'ReadGateway'], ['HUB_CONNECT', 'ConnectGateway']])
+    // Stage 1 M3-R (N30): and the write binding to EvalWriteGateway, the hub test build's write log.
+    expect(real.services.map(s => [s.binding, s.entrypoint]).sort()).toEqual([['HUB', 'ReadGateway'], ['HUB_CONNECT', 'ConnectGateway'], ['HUB_WRITE', 'EvalWriteGateway']])
     const config = load('pass-eval.json')
     config.services = real.services.map(s => ({ ...s, service: EVAL_HUB_NAME }))
     const r = run([...EVAL, write(config)])
@@ -836,7 +840,8 @@ describe('(P4) the eval deployment\'s own hub (failures 12 and 13)', () => {
     ['a define', c => { c.define = { __INHOUSE_HUB_TEST__: 'true' } }, 'define is set: a sandbox config may not use it'],
     ['a service binding', c => { c.services = [evalEntry] }, 'services is set: a sandbox hub config binds no other Worker'],
     ['a route', c => { c.routes = [{ pattern: `inhouse-sbx-eval-brand.${ZONE}`, custom_domain: true }] }, 'routes is set: a sandbox hub config may not use it'],
-    ['the eval D1', c => { c.d1_databases = [{ binding: 'DB', database_name: 'inhouse-sbx-eval-db' }] }, 'd1_databases is set: a sandbox hub config may not use it'],
+    // Stage 1 M3-R (N30): the eval hub may bind the eval database as EVAL_WRITE_LOG only (its own cases below).
+    ['the eval D1 as the product binds it', c => { c.d1_databases = [{ binding: 'DB', database_name: 'inhouse-sbx-eval-db' }] }, 'd1_databases[0] must be exactly { binding: "EVAL_WRITE_LOG", database_name } in the eval hub config'],
     ['version metadata', c => { c.version_metadata = { binding: 'CF_VERSION_METADATA' } }, 'version_metadata is set: a sandbox hub config may not use it'],
     ['a rebundle', c => { delete c.no_bundle }, 'no_bundle must be true in a sandbox hub config'],
     ['workers.dev on', c => { c.workers_dev = true }, 'workers_dev must be false'],
@@ -915,7 +920,8 @@ describe('(P4) the eval deployment\'s own hub (failures 12 and 13)', () => {
     const productAsHub = run([...EVAL_HUB, `${fixtures}sandbox/pass-eval.json`])
     expect(productAsHub.status).toBe(1)
     expect(productAsHub.stderr).toContain('name: "inhouse-sbx-eval" is not the eval deployment\'s hub name')
-    expect(productAsHub.stderr).toContain('d1_databases is set: a sandbox hub config may not use it')
+    // Stage 1 M3-R (N30): the eval hub's one D1 is the write log's; the product's DB binding is refused by that rule.
+    expect(productAsHub.stderr).toContain('d1_databases[0] must be exactly { binding: "EVAL_WRITE_LOG", database_name } in the eval hub config')
     const hubAsProduct = run([...EVAL, `${fixtures}sandbox/pass-eval-hub.json`])
     expect(hubAsProduct.status).toBe(1)
     expect(hubAsProduct.stderr).toContain('name: "inhouse-sbx-eval-hub" is not the eval deployment\'s worker name')
@@ -1023,5 +1029,106 @@ describe('(P5) the product\'s three hub bindings: exact sets, not any subset (fa
     const r = run([...EVAL, write(config)])
     expect(r.status).toBe(1)
     expect(failureLines(r)).toEqual([expect.stringContaining('services is set: the eval deployment may bind exactly { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway } to its own hub')])
+  })
+})
+
+describe('(Stage 1 M3-R, N30) the eval write log: HUB_WRITE -> EvalWriteGateway and its D1, eval only (failure 15)', () => {
+  const EVAL_HUB_NAME = 'inhouse-sbx-eval-hub'
+  const pair = [
+    { binding: 'HUB', service: EVAL_HUB_NAME, entrypoint: 'ReadGateway' },
+    { binding: 'HUB_CONNECT', service: EVAL_HUB_NAME, entrypoint: 'ConnectGateway' },
+  ]
+  const evalWrite = { binding: 'HUB_WRITE', service: EVAL_HUB_NAME, entrypoint: 'EvalWriteGateway' }
+  const SHAPE = 'services is set: the eval deployment may bind exactly { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway } to its own hub, or those two and HUB_WRITE -> EvalWriteGateway'
+  const SANDBOX_SHAPE = 'services is set: a sandbox config may not use it, but for exactly'
+  const LOG = { binding: 'EVAL_WRITE_LOG', database_name: 'inhouse-sbx-eval-db' }
+
+  test('the eval product may bind read, connect and the write log together, in any order', () => {
+    for (const services of [[...pair, evalWrite], [evalWrite, ...pair], [pair[1], evalWrite, pair[0]]]) {
+      const config = load('pass-eval.json')
+      config.services = services
+      const r = run([...EVAL, write(config)])
+      expect(r.stderr, JSON.stringify(services)).toBe('')
+      expect(r.status).toBe(0)
+    }
+  })
+  const EVAL_REFUSED = [
+    ['HUB_WRITE to the real WriteGateway', [...pair, { ...evalWrite, entrypoint: 'WriteGateway' }], SHAPE],
+    ['the write log alone', [evalWrite], SHAPE],
+    ['the write log beside read only', [pair[0], evalWrite], SHAPE],
+    ['the write log beside delivery', [...pair, { binding: 'HUB_DELIVERY', service: EVAL_HUB_NAME, entrypoint: 'DeliveryGateway' }, evalWrite], SHAPE],
+    ['the write log twice', [...pair, evalWrite, evalWrite], SHAPE],
+    ['EvalWriteGateway on another binding', [...pair, { ...evalWrite, binding: 'HUB_EVAL' }], SHAPE],
+    ['the read binding on EvalWriteGateway', [{ ...pair[0], entrypoint: 'EvalWriteGateway' }, pair[1]], SHAPE],
+    ['the write log on the house hub', [...pair, { ...evalWrite, service: 'inhouse-hub' }], 'services[2].service: "inhouse-hub" is not the eval deployment\'s hub name'],
+    ['the write log on a PR\'s hub', [...pair, { ...evalWrite, service: 'inhouse-sbx-pr12-hub' }], 'services[2].service: "inhouse-sbx-pr12-hub" is not the eval deployment\'s hub name'],
+  ]
+  for (const [name, services, text] of EVAL_REFUSED) {
+    test(`the eval product refuses ${name}`, () => {
+      const config = load('pass-eval.json')
+      config.services = services
+      const r = run([...EVAL, write(config)])
+      expect(r.status).toBe(1)
+      expect(failureLines(r)).toEqual([expect.stringContaining(text)])
+    })
+  }
+  test('a PR\'s product and the candidate never bind EvalWriteGateway', () => {
+    const three = hub => [
+      { binding: 'HUB', service: hub, entrypoint: 'ReadGateway' },
+      { binding: 'HUB_CONNECT', service: hub, entrypoint: 'ConnectGateway' },
+      { binding: 'HUB_DELIVERY', service: hub, entrypoint: 'DeliveryGateway' },
+    ]
+    for (const [mode, fixture, hub] of [[PR12, 'pass-per-pr.json', 'inhouse-sbx-pr12-hub'], [CANDIDATE, 'pass-candidate.json', 'inhouse-sbx-hub']]) {
+      for (const services of [[...three(hub), { binding: 'HUB_WRITE', service: hub, entrypoint: 'EvalWriteGateway' }], [three(hub)[0], three(hub)[1], { binding: 'HUB_WRITE', service: hub, entrypoint: 'EvalWriteGateway' }]]) {
+        const config = load(fixture)
+        config.services = services
+        const r = run([...mode, write(config)])
+        expect(r.status).toBe(1)
+        expect(failureLines(r)).toEqual([expect.stringContaining(SANDBOX_SHAPE)])
+      }
+    }
+  })
+
+  test('the binding name is the one the gateway reads (hub/testing/eval-write.ts)', () => {
+    expect(EVAL_WRITE_LOG_BINDING).toBe('EVAL_WRITE_LOG')
+    const gateway = readFileSync(fileURLToPath(new URL('../hub/testing/eval-write.ts', import.meta.url)), 'utf8')
+    expect(gateway).toContain(`this.env.${EVAL_WRITE_LOG_BINDING}`)
+  })
+  test('the eval hub may bind the eval database as EVAL_WRITE_LOG, with the test build\'s vars too', () => {
+    for (const vars of [undefined, { ...EVAL_TEST_HUB_VARS }]) {
+      const config = load('pass-eval-hub.json')
+      config.d1_databases = [LOG]
+      if (vars) config.vars = vars
+      const r = run([...EVAL, '--hub', write(config)])
+      expect(r.stderr).toBe('')
+      expect(r.status).toBe(0)
+    }
+  })
+  const HUB_REFUSED = [
+    ['another database', [{ ...LOG, database_name: 'inhouse-sbx-pr12-db' }], 'd1_databases[0].database_name: "inhouse-sbx-pr12-db" is not the eval deployment\'s d1 name (inhouse-sbx-eval-db)'],
+    ['the house database', [{ ...LOG, database_name: 'inhouse' }], 'd1_databases[0].database_name: "inhouse" is not the eval deployment\'s d1 name'],
+    ['another binding name', [{ ...LOG, binding: 'DB' }], 'd1_databases[0] must be exactly { binding: "EVAL_WRITE_LOG", database_name }'],
+    ['migrations', [{ ...LOG, migrations_dir: 'migrations' }], 'd1_databases[0] must be exactly { binding: "EVAL_WRITE_LOG", database_name }'],
+    ['a database id', [{ ...LOG, database_id: '00000000-0000-4000-8000-000000000001' }], 'd1_databases[0] must be exactly'],
+    ['no database name', [{ binding: 'EVAL_WRITE_LOG' }], 'd1_databases[0] must be exactly'],
+    ['two databases', [LOG, LOG], 'd1_databases has more than one database'],
+  ]
+  for (const [name, d1, text] of HUB_REFUSED) {
+    test(`the eval hub refuses ${name}`, () => {
+      const config = load('pass-eval-hub.json')
+      config.d1_databases = d1
+      const r = run([...EVAL, '--hub', write(config)])
+      expect(r.status).toBe(1)
+      expect(failureLines(r)).toEqual(expect.arrayContaining([expect.stringContaining(text)]))
+    })
+  }
+  test('a PR\'s hub and the candidate hub never bind the write log\'s D1', () => {
+    for (const [mode, fixture, db] of [[PR12_HUB, 'pass-per-pr-hub.json', 'inhouse-sbx-pr12-db'], [CANDIDATE_HUB, 'pass-candidate-hub.json', 'inhouse-sbx-product-db']]) {
+      const config = load(fixture)
+      config.d1_databases = [{ binding: 'EVAL_WRITE_LOG', database_name: db }]
+      const r = run([...mode, write(config)])
+      expect(r.status).toBe(1)
+      expect(failureLines(r)).toEqual(expect.arrayContaining([expect.stringContaining('d1_databases is set: a sandbox hub config may not use it')]))
+    }
   })
 })
