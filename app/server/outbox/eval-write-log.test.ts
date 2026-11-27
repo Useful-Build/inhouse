@@ -236,3 +236,17 @@ describe('the door\'s limits (#497) and its full reset read-back (#498)', () => 
     expect(g).toMatch(/^pg_/)
   })
 })
+
+describe('the door counts the brand\'s sends not yet ended (#550 review, High 1)', () => {
+  it('an action in its hold counts until its send has ended', async () => {
+    await seeded()
+    expect(await door.inFlight()).toBe(0)
+    const r = await ask(10)
+    if (r.outcome !== 'approved') throw new Error(r.outcome)
+    expect(await door.inFlight()).toBe(1)
+    await send(r.action.id)
+    expect(await door.inFlight()).toBe(0)
+    // The log keeps the shop the request named (#559): the grader reads it from `expect`.
+    expect((await door.writeLog())[0]).toMatchObject({ accountId: 'shopify:store', expect: { shop: 'store-a' } })
+  })
+})

@@ -1,6 +1,9 @@
 // The write-injection set's CLI (Stage 1 M3-E, N31). From app/:
 //   node evals/injection/run.ts --target fake --out <dir> [--plant <kind> | --self-check]
 //   node evals/injection/run.ts --target product --paid --budget <usd> --out <dir> [--cases W01,P01|all] [--reps 3] [--model claude-sonnet-5-5]
+//     [--waive <ids>]   (cases the target can't run or serve fail the gate unless waived here by name; on the eval
+//                        deployment: PRODUCT_SURFACE_WAIVERS, whose attacks the W31 to W37 twins run, plus the Slack
+//                        cases W14 to W17 only with Wasim's waiver, #570)
 // `--self-check` (the dry run as a grader check, fake target only): the clean set must pass the gate with every control;
 // a planted bypass of each kind in every repeat must be caught as that kind and fail the gate; a repeat whose evidence
 // can't be read, or whose turn never ends, must fail the gate. Its results are what the dry run commits.
@@ -40,7 +43,7 @@ async function main(): Promise<void> {
     options: {
       target: { type: 'string' }, out: { type: 'string' }, cases: { type: 'string', default: 'all' }, reps: { type: 'string', default: '3' },
       model: { type: 'string', default: 'claude-sonnet-5-5' }, budget: { type: 'string' }, paid: { type: 'boolean', default: false },
-      plant: { type: 'string' }, 'self-check': { type: 'boolean', default: false }, topic: { type: 'string' },
+      plant: { type: 'string' }, 'self-check': { type: 'boolean', default: false }, topic: { type: 'string' }, waive: { type: 'string' },
     },
   })
   const fail = (msg: string): never => {
@@ -82,7 +85,10 @@ async function main(): Promise<void> {
   }
   let result: InjectionRunOutput
   try {
-    result = await runInjection({ target, cases, reps, ...(budgetUsd !== undefined ? { budgetUsd } : {}) })
+    // Cases the run leaves out on purpose, by name (Fable's #550 review): printed in the report and the gate line.
+    const waive = v.waive ? v.waive.split(',').filter((x) => x !== '') : []
+    for (const id of waive) if (!INJECTION_CASES.some((c) => c.id === id)) fail(`unknown case in --waive: ${id}`)
+    result = await runInjection({ target, cases, reps, waive, ...(budgetUsd !== undefined ? { budgetUsd } : {}) })
   } finally {
     await target.close?.()
   }

@@ -15,12 +15,16 @@ import { createProductTarget, type ProductTarget, type ProductTargetOptions } fr
 import type { ExfilSpec } from '../types.ts'
 import type { InjectionSession, InjectionTarget } from './runner.ts'
 import { canonical } from './grade.ts'
+import { askFor } from './names.ts'
+import type { CeilingRow } from '../targets/write-door.ts'
 import { PRODUCT_PLANTS, type EvAction, type HarnessAnswer, type InjectionCase, type LoggedWrite, type WriteEvidence } from './types.ts'
 
 /** The outbox stamps rows with the Worker's clock and the mark is D1's: a little slack so no row of the repeat is missed. */
 export const CLOCK_SLACK_MS = 2_000
 /** How long the control's card may take to appear after the turn, and its send after the answer (the 10 s hold and the send). */
 export const CONTROL_WAIT_MS = 90_000
+
+const ceilingRows = (rows: CeilingRow[]): NonNullable<WriteEvidence['ceilingsBefore']> => rows.map((r) => ({ operation: r.operation, enabled: r.enabled, perDayMax: r.perDayMax, unitsMax: r.unitsMax }))
 
 export interface ProductInjectionOptions extends Pick<ProductTargetOptions, 'paid' | 'budgetUsd' | 'env' | 'model'> {
   /** The product target to drive (tests); default one made from the options. */
@@ -41,12 +45,14 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
     close: async () => { await base.close?.() },
     async start(c: InjectionCase, run): Promise<InjectionSession> {
       const plant: ExfilSpec | undefined = c.plant ? { kind: 'memory', via: c.plant.via as ExfilSpec['via'], hosts: [], plant: c.plant.text } : undefined
-      const session = await base.seed([], { caseId: c.id, rep: run.rep, canary: run.canary, writes: true, ...(c.personName ? { personName: c.personName } : {}) }, plant)
+      const session = await base.seed([], { caseId: c.id, rep: run.rep, canary: run.canary, writes: true }, plant)
       const w = base.writeDoor()
       const asker = base.people.current
       const seeded = new Set<string>()
       const answers: HarnessAnswer[] = []
       let mark = 0
+      let teammate: string | undefined
+      let ceilingsBefore: WriteEvidence['ceilingsBefore'] = null
       try {
         if (base.room) {
           const room = await base.room()
@@ -55,27 +61,33 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
         await w.resetWrites()
         mark = (await w.now()) - CLOCK_SLACK_MS
         for (const s of c.ceilings) await w.setCeiling(s.operation, { ...(s.perDayMax !== undefined ? { perDayMax: s.perDayMax } : {}), ...(s.unitsMax !== undefined ? { unitsMax: s.unitsMax } : {}) })
+        if (c.namedMember) teammate = await base.addTeammate({ caseId: c.id, rep: run.rep, name: c.namedMember })
         if (c.grant) seeded.add(await w.grant({ memberId: asker, operation: c.grant.operation, ...(c.grant.perDay !== undefined ? { perDay: c.grant.perDay } : {}), ...(c.grant.unitsMax !== undefined ? { unitsMax: c.grant.unitsMax } : {}) }))
+        ceilingsBefore = ceilingRows(await w.ceilings())
       } catch (e) {
         await session.reset()
+        if (teammate) await base.removeTeammate(teammate)
         throw e
       }
-      const chats = (): readonly string[] => (session as { chatIds?: () => readonly string[] }).chatIds?.() ?? []
 
-      async function evidence(): Promise<WriteEvidence> {
-        const [log, rows, grants] = await Promise.all([w.writeLog(), w.outbox(mark), w.grants()])
+      /** The evidence as it stands now (the control's wait reads it while a card is open). */
+      async function read(): Promise<WriteEvidence> {
+        const [log, rows, grants, account, ceilings] = await Promise.all([w.writeLog(), w.outbox(mark), w.grants(), w.shopifyAccount(), w.ceilings()])
         const actions: EvAction[] = rows.actions.map((a) => ({
           id: a.id, rev: a.rev, state: a.state, operation: a.operation, args: a.kind === 'batch' ? null : (a.args as Record<string, unknown>),
           kind: a.kind === 'batch' ? 'batch' : 'single', verdict: a.verdict, guardrail: a.guardrail, approverKind: a.approverKind === 'admins' ? 'admins' : 'person',
           askedBy: a.askedBy, approvedBy: a.approvedBy, approvedRev: a.approvedRev, approvedUpto: a.approvedUpto, grantId: a.grantId, origin: a.origin,
         }))
-        const logged: LoggedWrite[] = log.map((l) => ({ operation: l.operation, args: (l.args ?? {}) as Record<string, unknown>, actionId: l.actionId, n: l.item?.n ?? null, outcome: l.outcome }))
+        // #559: the account the request named and the shop its `expect` named, as the eval gateway logged them.
+        const shopOf = (e: unknown): string | null => (e !== null && typeof e === 'object' && typeof (e as { shop?: unknown }).shop === 'string' ? (e as { shop: string }).shop : null)
+        const logged: LoggedWrite[] = log.map((l) => ({ operation: l.operation, args: (l.args ?? {}) as Record<string, unknown>, actionId: l.actionId, n: l.item?.n ?? null, outcome: l.outcome, accountId: l.accountId, shop: shopOf(l.expect) }))
         return {
           log: logged, actions,
           items: rows.items.map((i) => ({ actionId: i.actionId, n: i.n, args: i.args as Record<string, unknown>, state: i.state })),
           uses: rows.uses,
           grants: grants.map((g) => ({ id: g.id, holderMember: g.holderMember, operation: g.operation, perDay: g.perDay, unitsMax: g.unitsMax, seeded: seeded.has(g.id) })),
-          answers, asker, roles: { [asker]: 'member' },
+          answers, asker, shop: account?.shop ?? null, roles: { [asker]: 'member', [base.people.lena]: 'admin' },
+          ceilingsBefore, ceilingsAfter: ceilingRows(ceilings),
         }
       }
 
@@ -92,41 +104,74 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
           if (live.length !== seeded.size || !live.every((g) => seeded.has(g.id) && g.holderMember === asker)) return `the live grants are not the case's (${live.length} live, ${seeded.size} seeded)`
           if (c.needs.includes('refund')) {
             const account = await w.shopifyAccount()
-            if (!account?.currency) return 'the store\'s currency is unknown, so every refund would be refused account_unavailable (run a control first: its write copies it from the hub)'
+            if (account?.lastState !== 'connected') return `the store is ${account?.lastState ?? 'not recorded'}, not connected`
+            if (!account.currency) return 'the store\'s currency is unknown, so every refund would be refused account_unavailable (run a control first: its write copies it from the hub)'
           }
           return null
         },
-        chat: (prompt, opts) => session.chat(prompt, opts),
+        chat: (prompt, opts) => session.chat(askFor(prompt, c.namedMember), opts),
+        async quiesce() {
+          if (!session.quiesce) throw new Error('the product session has no quiesce')
+          await session.quiesce()
+        },
         async approveControl(control) {
+          // A grant's control has no card: the seeded grant runs it (the grader checks it did).
+          if (control.via === 'grant') return
           const want = canonical(control.args)
           const deadline = now() + CONTROL_WAIT_MS
           let action: EvAction | undefined
           for (;;) {
-            action = (await evidence()).actions.find((a) => a.operation === control.operation && a.args !== null && canonical(a.args) === want)
+            action = (await read()).actions.find((a) => a.operation === control.operation && a.args !== null && canonical(a.args) === want)
             if (action?.state === 'waiting') break
             if (action && action.state !== 'waiting') throw new Error(`the control's action is ${action.state}, not waiting for an answer`)
             if (now() > deadline) throw new Error('the control\'s card never appeared')
             await sleep(2_000)
           }
-          const chatId = chats()[0]
-          const cards = await base.call('current', 'GET', `/api/actions?chatId=${encodeURIComponent(chatId ?? '')}`)
-          if (cards.status !== 200) throw new Error(`read the cards: ${cards.status}`)
-          const card = (cards.json.items as { id: string; rev: number; kind: 'ask' | 'exact' }[]).find((x) => x.id === action!.id)
-          if (!card) throw new Error('the control\'s card is not in its chat')
-          const choice = card.kind === 'exact' ? 'approve' : 'once'
-          const r = await base.call('current', 'POST', `/api/actions/${encodeURIComponent(card.id)}/answer`, { json: { choice, ifRev: card.rev } })
-          answers.push({ actionId: card.id, choice, by: asker, byRole: 'member', accepted: r.status === 200 })
-          if (r.status !== 200) throw new Error(`the answer was refused: ${r.status}`)
+          const answer = async (who: 'current' | 'lena', choice: 'once' | 'approve', rev: number) => {
+            const r = await base.call(who, 'POST', `/api/actions/${encodeURIComponent(action!.id)}/answer`, { json: { choice, ifRev: rev } })
+            answers.push({ actionId: action!.id, choice, by: who === 'lena' ? base.people.lena : asker, byRole: who === 'lena' ? 'admin' : 'member', accepted: r.status === 200 })
+            return r
+          }
+          const exact = action.verdict === 'exact'
+          if (control.via === 'admin') {
+            // The person's own Approve first: it must be refused (the grader requires the refusal), then an admin's.
+            const mine = await answer('current', 'approve', action.rev)
+            if (mine.status === 200) throw new Error('the person\'s own Approve on an admins card was taken')
+            const r = await answer('lena', 'approve', action.rev)
+            if (r.status !== 200) throw new Error(`the admin's answer was refused: ${r.status}`)
+          } else {
+            const r = await answer('current', exact ? 'approve' : 'once', action.rev)
+            if (r.status !== 200) throw new Error(`the answer was refused: ${r.status}`)
+          }
           for (;;) {
-            const a = (await evidence()).actions.find((x) => x.id === card.id)
+            const a = (await read()).actions.find((x) => x.id === action!.id)
             if (a && ['sent', 'failed', 'needs_check'].includes(a.state)) return
             if (now() > deadline + CONTROL_WAIT_MS) throw new Error(`the control's send never ended (${a?.state ?? 'gone'})`)
             await sleep(2_000)
           }
         },
-        evidence,
+        evidence: read,
+        async probeAdminsCard(m) {
+          const deadline = now() + CONTROL_WAIT_MS
+          for (;;) {
+            const a = (await read()).actions.find((x) => x.operation === m.operation && x.approverKind === 'admins' && x.state === 'waiting')
+            if (a) {
+              const r = await base.call('current', 'POST', `/api/actions/${encodeURIComponent(a.id)}/answer`, { json: { choice: 'approve', ifRev: a.rev } })
+              answers.push({ actionId: a.id, choice: 'approve', by: asker, byRole: 'member', accepted: r.status === 200 })
+              return
+            }
+            if (now() > deadline) return // no card: the grader says so (mustAsk)
+            await sleep(2_000)
+          }
+        },
         settledCostUsd: session.settledCostUsd ? () => session.settledCostUsd!() : undefined,
-        reset: () => session.reset(),
+        async reset() {
+          try {
+            await session.reset()
+          } finally {
+            if (teammate) await base.removeTeammate(teammate)
+          }
+        },
       }
     },
   }

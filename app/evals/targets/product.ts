@@ -186,6 +186,12 @@ export function callOfStep(s: TraceStep): ToolCall {
 export interface ProductTarget extends Target {
   readonly call: Api
   writeDoor(): WriteDoor
+  /**
+   * M3-E (#566): an active teammate named `name` for one case-repeat (an `eval-` address, so the next run's start removes
+   * it too), and its removal. Only after a seed (the eval-brand check).
+   */
+  addTeammate(t: { caseId: string; rep: number; name: string }): Promise<string>
+  removeTeammate(id: string): Promise<void>
 }
 
 export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
@@ -385,6 +391,17 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
     room,
     call: api,
     writeDoor: writesOf,
+    async addTeammate(t) {
+      if (!checked || !door) throw new ProductTargetRefusal('a teammate is added only after the eval-brand check: seed a case first')
+      const who = casePerson(runTag, t.caseId, t.rep)
+      const id = newMemberId()
+      await door.addTeammate({ id, email: who.email.replace('@', '-named@'), name: t.name })
+      return id
+    },
+    async removeTeammate(id) {
+      if (!door) throw new ProductTargetRefusal('no door')
+      await door.removeTeammate(id)
+    },
     async close() {
       await taking?.catch(() => {})
       if (leased) await door!.releaseLease(leaseTag)
@@ -484,7 +501,7 @@ export interface SessionDeps {
   writes?: WriteDoor
 }
 
-/** How long reset waits for a cancelled job to end (#450). */
+/** How long quiesce waits for the session's runs, jobs and sends to end (#450). */
 export const JOB_END_TIMEOUT_MS = 120_000
 
 /** Route 33's cost is whole cents, rounded to the nearest: the true figure is under half a cent more, so it is booked at that upper bound. */
@@ -519,7 +536,7 @@ export function parkedQuestionOf(items: { chatId: string | null; state: string; 
 export const parkedAnswer = (q: ParkedQuestion): string => `Asked: ${q.question}\nOptions: ${q.options.join(' | ')}`
 
 /** One case-repeat's chats (exported for the read-side set's scripted proof, which signs in on a PR's test build). */
-export function productSession(d: SessionDeps): Session & { chatIds(): readonly string[] } {
+export function productSession(d: SessionDeps): Session & { chatIds(): readonly string[]; quiesce(): Promise<void> } {
   const turns: string[] = []
   const chats: string[] = []
   let booked = 0
@@ -552,25 +569,47 @@ export function productSession(d: SessionDeps): Session & { chatIds(): readonly 
     }
   }
   /**
-   * #450: a turn that hit its step limit carries on as a long job behind the harness, and could write into the next
-   * repeat's log. Every chat this session made: its live job is cancelled (route 101, the owner's Cancel) and read again
-   * (route 100) until it has ended. A job that doesn't end in time, or an answer that can't be read, throws: reset() is
-   * loud, and the runner stops the run on it.
+   * Quiesce (#450; the #550 reviews): nothing of this session may still write while its evidence is read or its state
+   * cleared. Its own turns are stopped; then, until all is still, every chat it made is read: a live run (a turn the
+   * server started itself, such as a resume after an answer) is stopped by its turns' ids, a live job is cancelled
+   * (route 101) and read again (route 100), and with the write door the brand's held, approved or sending actions are
+   * counted. A deadline throws: reset() and the injection runner are loud, and the run stops or the repeat fails on it.
    */
-  async function cancelJobs(): Promise<void> {
+  async function quiesce(): Promise<void> {
     const deadline = AbortSignal.timeout(JOB_END_TIMEOUT_MS)
-    for (const chatId of chats) {
-      for (;;) {
-        const r = await d.api('current', 'GET', `/api/chats/${encodeURIComponent(chatId)}/job`)
-        if (r.status === 404) break // the chat is gone (deleted with its jobs)
-        if (r.status !== 200) throw new Error(`read the job of chat ${chatId}: ${r.status}`)
-        const job = r.json?.job as { jobId: string; state: string } | null
-        if (!job || job.state === 'ended') break
-        if (deadline.aborted) throw new Error(`job ${job.jobId} did not end within ${JOB_END_TIMEOUT_MS / 1000} s of its cancel`)
-        const c = await d.api('current', 'POST', `/api/jobs/${encodeURIComponent(job.jobId)}/cancel`, { json: {} })
-        if (c.status !== 200 && c.status !== 409) throw new Error(`cancel job ${job.jobId}: ${c.status}`)
-        await d.sleep(d.pollMs)
+    await endTurns()
+    for (;;) {
+      const busy: string[] = []
+      for (const chatId of chats) {
+        const page = await d.api('current', 'GET', `/api/chats/${encodeURIComponent(chatId)}`)
+        if (page.status === 404) continue // the chat is gone (deleted with its runs and jobs)
+        if (page.status !== 200) throw new Error(`read chat ${chatId}: ${page.status}`)
+        const live = ((page.json?.runs ?? []) as { runId: string; live: boolean }[]).filter((r) => r.live)
+        for (const run of live) {
+          busy.push(`run ${run.runId}`)
+          const turnIds = new Set(((page.json?.messages ?? []) as { runId?: string; turnId?: string }[]).filter((m) => m.runId === run.runId && m.turnId).map((m) => m.turnId!))
+          for (const t of turnIds) {
+            const r = await d.api('current', 'POST', `/api/turns/${encodeURIComponent(t)}/stop`, { json: {} })
+            if (r.status !== 200 && r.status !== 409 && r.status !== 404) throw new Error(`stop turn ${t}: ${r.status}`)
+          }
+        }
+        const j = await d.api('current', 'GET', `/api/chats/${encodeURIComponent(chatId)}/job`)
+        if (j.status === 404) continue
+        if (j.status !== 200) throw new Error(`read the job of chat ${chatId}: ${j.status}`)
+        const job = j.json?.job as { jobId: string; state: string } | null
+        if (job && job.state !== 'ended') {
+          busy.push(`job ${job.jobId}`)
+          const c = await d.api('current', 'POST', `/api/jobs/${encodeURIComponent(job.jobId)}/cancel`, { json: {} })
+          if (c.status !== 200 && c.status !== 409) throw new Error(`cancel job ${job.jobId}: ${c.status}`)
+        }
       }
+      if (d.writes) {
+        const n = await d.writes.inFlight()
+        if (n > 0) busy.push(`${n} sends held or sending`)
+      }
+      if (busy.length === 0) return
+      if (deadline.aborted) throw new Error(`not still within ${JOB_END_TIMEOUT_MS / 1000} s: ${busy.join(', ')}`)
+      await d.sleep(d.pollMs)
     }
   }
   async function bookCost(): Promise<number> {
@@ -689,10 +728,10 @@ export function productSession(d: SessionDeps): Session & { chatIds(): readonly 
     async settledCostUsd() {
       return bookCost()
     },
+    quiesce,
     async reset() {
-      await endTurns()
-      // #450: every live job ended before anything is cleared, so none writes into the next repeat.
-      await cancelJobs()
+      // #450: every turn, run, job and send ended before anything is cleared, so none writes into the next repeat.
+      await quiesce()
       await d.door.deleteApprovals(seededApprovals)
       await d.door.clear()
       await d.writes?.resetWrites()

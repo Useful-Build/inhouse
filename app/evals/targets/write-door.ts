@@ -120,6 +120,11 @@ export interface WriteDoor {
   outbox(sinceMs: number): Promise<OutboxRows>
   /** D1's clock now, in ms (the mark `outbox` reads from). */
   now(): Promise<number>
+  /**
+   * The brand's sends not yet ended: actions approved (in their hold) or sending, and items sending. The harness waits
+   * for none before it reads a repeat's evidence, so a held write is graded, never deleted unseen by the reset.
+   */
+  inFlight(): Promise<number>
   /** Every request the gateway logged, oldest first. */
   writeLog(): Promise<WriteLogRow[]>
   /**
@@ -217,6 +222,12 @@ export function createWriteDoor(run: RunSql, nowSql: () => string = () => D1_NOW
       const nowMs = Number((await run(`SELECT ${nowSql()} AS now`))[0]?.now)
       if (!Number.isSafeInteger(nowMs)) throw new DoorRefusal('D1 gave no clock')
       return nowMs
+    },
+    async inFlight() {
+      const r = (await run("SELECT (SELECT COUNT(*) FROM outbox_actions WHERE state IN ('approved', 'sending')) + (SELECT COUNT(*) FROM outbox_items WHERE state = 'sending') AS n"))[0]
+      const n = Number(r?.n)
+      if (!Number.isSafeInteger(n)) throw new DoorRefusal('the outbox gave no count')
+      return n
     },
     async outbox(sinceMs) {
       if (!wholeIn(sinceMs, 0, Number.MAX_SAFE_INTEGER)) throw new DoorRefusal('not a time the door reads from')
