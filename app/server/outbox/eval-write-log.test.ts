@@ -64,7 +64,7 @@ describe('a door-seeded ceiling and grant give a run that lands in the log (fail
     const log = await door.writeLog()
     expect(log).toEqual([{
       n: expect.any(Number), atMs: HOLD_OVER, actionId: r.action.id, attempt: 1, requestId: expect.any(String), accountId: 'shopify:store',
-      operation: OP, args: tagArgs(1), expect: { connectedAtMs: SHOP_GEN, shop: 'store-a' }, item: null, idempotencyKey: null, outcome: 'sent',
+      operation: OP, args: tagArgs(1), expect: { connectedAtMs: SHOP_GEN, shop: 'store-a' }, item: null, idempotencyKey: `${r.action.id}:1`, outcome: 'sent',
     }])
     const row = await rowOf(db, r.action.id)
     expect(row).toMatchObject({ state: 'sent' })
