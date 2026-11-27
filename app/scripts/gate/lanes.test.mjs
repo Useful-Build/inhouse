@@ -266,25 +266,37 @@ describe('loosened numeric settings, in check files only', () => {
       .toEqual(["check-weakening: timeout changed to a value that can't be read (Number(process.env.T ?? 5000)) (line 11)"])
     expect(reasons([file(spec, { patch: hunk(['timeout: T'], ['timeout: T * 2']) })])).toHaveLength(1)
   })
-  test('added settings that loosen at once', () => {
-    const added1 = line => reasons([file(spec, { patch: hunk([], [line]) })])
-    expect(added1('test.describe.configure({ retries: 2 })')).toEqual(['check-weakening: retries raised from 0 to 2 (line 11)'])
-    expect(added1('  retry: 1,')).toEqual(['check-weakening: retry raised from 0 to 1 (line 11)'])
-    expect(added1('  retry: RETRIES,')).toEqual(["check-weakening: adds retry with a value that can't be read (RETRIES) (line 11)"])
-    // An identifier can't be told from a number: flagged (a callback named `noop` too).
-    expect(added1('  retry: noop,')).toEqual(["check-weakening: adds retry with a value that can't be read (noop) (line 11)"])
-    expect(added1('  test.setTimeout(120_000)')).toEqual(['check-weakening: adds test.setTimeout(120_000) (line 11)'])
-    expect(added1("  await expect(page).toHaveScreenshot({ maxDiffPixels: 50 })")).toEqual(['check-weakening: adds maxDiffPixels: 50 (line 11)'])
-    expect(added1('  maxDiffPixelRatio: 0.01,')).toEqual(['check-weakening: adds maxDiffPixelRatio: 0.01 (line 11)'])
-    expect(added1('  threshold: 0.3,')).toEqual(['check-weakening: adds threshold: 0.3 (line 11)'])
-    expect(added1('  fc.assert(p, { numRuns: 40 })')).toEqual(['check-weakening: adds numRuns: 40, below 100 (line 11)'])
-    expect(added1('  fc.assert(p, { numRuns: runs })')).toEqual(["check-weakening: adds numRuns: runs, a value that can't be read (line 11)"])
-  })
-  test('added settings that don\'t loosen', () => {
-    for (const line of ['retries: 0,', 'retry: 0', 'retry: () => run(),', 'retry: async () => {},', 'fc.assert(p, { numRuns: 100 })', 'numRuns: 300', 'timeout: 9000', 'lowStockThreshold: 5,', "shouldRetry: true", 'infra_retries: 3,', 'infra_retries: number', 'timeout: number;',
-      '    const retry = toolOf(await ask(convo))', 'let timeout = setTimeout(fn)']) {
+  test('purely added lines never count: adding or tightening a test is never Lane 4', () => {
+    for (const line of [
+      'test.describe.configure({ retries: 2 })', '  retry: 1,', '  retry: RETRIES,', '  retry: noop,', '  test.setTimeout(120_000)',
+      '  test.setTimeout(SOAK_TIMEOUT_MS)', '  await expect(page).toHaveScreenshot({ maxDiffPixels: 50 })', '  maxDiffPixelRatio: 0.01,',
+      '  threshold: 0.3,', '  fc.assert(p, { numRuns: 40 })', '  fc.assert(p, { numRuns: runs })', 'retries: 0,', 'numRuns: 300',
+      'timeout: 9000', 'lowStockThreshold: 5,', 'shouldRetry: true', 'infra_retries: 3,', 'infra_retries: number', 'timeout: number;',
+      '    const retry = toolOf(await ask(convo))', 'let timeout = setTimeout(fn)',
+    ]) {
       expect(laneOf([file(spec, { patch: hunk([], [line]) })]), line).toBe('Lane 3')
     }
+  })
+  test('a new test beside a removed line that has no such key or call is not flagged', () => {
+    expect(laneOf([file(spec, { patch: hunk(["  await page.goto('/')"], ["  await page.goto('/')", '  test.setTimeout(180_000)', '  fc.assert(p, { numRuns: 30 })']) })])).toBe('Lane 3')
+  })
+  test('a loosening key added to an existing call (its removed line in the same hunk) counts', () => {
+    const modified = (before, after) => reasons([file(spec, { patch: hunk([before], [after]) })])
+    expect(modified("  await expect(page).toHaveScreenshot('x.png')", "  await expect(page).toHaveScreenshot('x.png', { maxDiffPixels: 50 })"))
+      .toEqual(['check-weakening: adds maxDiffPixels: 50 (line 11)'])
+    expect(modified('  await expect(page).toHaveScreenshot()', '  await expect(page).toHaveScreenshot({ maxDiffPixelRatio: 0.02, threshold: 0.4 })'))
+      .toEqual(['check-weakening: adds maxDiffPixelRatio: 0.02 (line 11)', 'check-weakening: adds threshold: 0.4 (line 11)'])
+    expect(modified('  fc.assert(fc.property(arb, check))', '  fc.assert(fc.property(arb, check), { numRuns: 20 })')).toEqual(['check-weakening: adds numRuns: 20, below 100 (line 11)'])
+    expect(modified('  fc.assert(fc.property(arb, check))', '  fc.assert(fc.property(arb, check), { numRuns: RUNS })')).toEqual(["check-weakening: adds numRuns: RUNS, a value that can't be read (line 11)"])
+    expect(modified("  test.describe.configure({ mode: 'serial' })", "  test.describe.configure({ mode: 'serial', retries: 2 })")).toEqual(['check-weakening: retries raised from 0 to 2 (line 11)'])
+    expect(modified('  await $.go(x)', '  await $.go(x, { retry: R })')).toEqual(["check-weakening: adds retry with a value that can't be read (R) (line 11)"])
+  })
+  test('a key added to an existing call that doesn\'t loosen is fine', () => {
+    const modified = (before, after) => laneOf([file(spec, { patch: hunk([before], [after]) })])
+    expect(modified('  fc.assert(fc.property(arb, check))', '  fc.assert(fc.property(arb, check), { numRuns: 500 })')).toBe('Lane 3')
+    expect(modified("  test.describe.configure({ mode: 'serial' })", "  test.describe.configure({ mode: 'serial', retries: 0 })")).toBe('Lane 3')
+    expect(modified("  await expect(page).toHaveScreenshot('x.png')", "  await expect(page).toHaveScreenshot('x.png', { timeout: 9000 })")).toBe('Lane 3')
+    expect(modified("  await expect(a).toBeVisible()", "  await expect(page).toHaveScreenshot({ maxDiffPixels: 5 })")).toBe('Lane 3')
   })
   test('product code never counts (E)', () => {
     for (const [before, after] of [['const MAX_INFRA_RETRIES = 2', 'const MAX_INFRA_RETRIES = 3'], ['busy_timeout: 5000', 'busy_timeout: 30000'], [null, 'maxDiffPixels: 9']]) {

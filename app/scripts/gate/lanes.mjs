@@ -237,11 +237,16 @@ export function skipIn(view, i) {
 }
 
 // ---- Numeric settings -----------------------------------------------------------------------------------------------
-// In check files only (tests, specs, e2e code, test folders, test, lint and type configs): a raised timeout, retries,
-// retry, threshold, maxDiffPixels or maxDiffPixelRatio (matched by key suffix: testTimeout counts), a lowered numRuns, an
-// added or raised test.setTimeout, an added retries or retry above 0 (exact keys), an added threshold, maxDiffPixels or maxDiffPixelRatio, and an added numRuns below 100.
-// Values are read as numbers or products of numbers (`60 * 1000`, `60_000`); a changed value that can't be read is
-// flagged. Product code (`MAX_INFRA_RETRIES = 3`, a busy_timeout) is not a check file and never counts.
+// Adding or tightening a test is never check-weakening; loosening an existing one is. So these rules read modified lines
+// only: a removed and an added line in the same hunk with the same key or call. In check files only (tests, specs, e2e
+// code, test folders, test, lint and type configs):
+// - a raised timeout, retries, retry, threshold, maxDiffPixels or maxDiffPixelRatio (by key suffix: testTimeout counts),
+//   a raised test.setTimeout, a lowered numRuns, and a changed value that can't be read;
+// - a loosening key newly added to an existing call (the call is on a removed line of the same hunk): retries or retry
+//   above 0, any maxDiffPixels, maxDiffPixelRatio or threshold, a numRuns below 100, or one of those that can't be read.
+// A purely added line (a new test with `test.setTimeout(180_000)` or `numRuns: 30`) never counts. Values are read as
+// numbers or products of numbers (`60 * 1000`, `60_000`). Product code (`MAX_INFRA_RETRIES = 3`, a busy_timeout) is not
+// a check file and never counts.
 
 const LOOSEN_KINDS = ['maxdiffpixelratio', 'maxdiffpixels', 'threshold', 'retries', 'retry', 'timeout', 'numruns']
 const kindOf = key => LOOSEN_KINDS.find(k => key.toLowerCase().endsWith(k)) ?? null
@@ -260,7 +265,23 @@ export function evaluate(expr) {
 const notNumber = v => isFunction(v) || STRING_LITERAL.test(v) || /^(?:true|false|null|undefined)$/.test(v) || /^[[{]/.test(v) ||
   /^(?:number|string|boolean|bigint|unknown|any|never|void)\b/.test(v)
 
-/** Each loosening setting on a line, in order: [{ key, kind, raw, value }] (value null when it can't be read). */
+/** The call a position on a line sits inside (`toHaveScreenshot`, `fc.assert`), or null when it's in none on that line. */
+function enclosingCall(text, pos) {
+  let depth = 0
+  for (let j = pos - 1; j >= 0; j--) {
+    const c = text[j]
+    if (')]}'.includes(c)) depth++
+    else if ('([{'.includes(c)) {
+      if (depth > 0) { depth--; continue }
+      if (c !== '(') continue
+      const name = /([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*$/.exec(text.slice(0, j))
+      return name ? name[1].replace(/\s+/g, '') : null
+    }
+  }
+  return null
+}
+
+/** Each loosening setting on a line, in order: [{ key, kind, raw, value, call }] (value null when it can't be read). */
 function settings(line) {
   if (/^\s*(?:\*|\/\*|\/\/|#)/.test(line)) return []
   const text = line.replace(/(^|\s)\/\/.*$/, '$1')
@@ -285,7 +306,7 @@ function settings(line) {
     // Options are passed as properties (`retries: n`); an assignment (`const retry = toolOf(...)`) counts only with a
     // number, since an unreadable one is a local variable, not a setting.
     if (value === null && !m[0].includes(':')) continue
-    out.push({ key: m[1], kind, raw, value })
+    out.push({ key: m[1], kind, raw, value, call: enclosingCall(text, m.index) })
   }
   for (const m of text.matchAll(SET_TIMEOUT)) {
     const call = callArgs(text, m.index + m[0].length - 1)
@@ -311,9 +332,11 @@ function loosenedIn(hunk) {
         if (loosened) found.push(`check-weakening: ${s.key} ${s.kind === 'numruns' ? 'lowered' : 'raised'} from ${was.raw} to ${s.raw} ${at}`)
         continue
       }
-      // Added with nothing removed.
-      if (s.setTimeout) found.push(`check-weakening: adds ${s.key}(${s.raw}) ${at}`)
-      else if (s.key === 'retries' || s.key === 'retry') {
+      // Added with nothing removed: only a key added to an existing call (one a removed line of this hunk makes) counts.
+      if (s.setTimeout || !s.call) continue
+      const last = s.call.split('.').at(-1).replaceAll('$', '\\$')
+      if (!hunk.removed.some(t => new RegExp(`(?<![\\w$])${last}\\s*\\(`).test(t))) continue
+      if (s.key === 'retries' || s.key === 'retry') {
         if (s.value === null) found.push(`check-weakening: adds ${s.key} with a value that can't be read (${s.raw}) ${at}`)
         else if (s.value > 0) found.push(`check-weakening: ${s.key} raised from 0 to ${s.raw} ${at}`)
       } else if (NEW_IS_LOOSER.has(s.key)) found.push(`check-weakening: adds ${s.key}: ${s.raw} ${at}`)
