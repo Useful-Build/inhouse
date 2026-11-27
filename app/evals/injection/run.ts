@@ -2,8 +2,8 @@
 //   node evals/injection/run.ts --target fake --out <dir> [--plant <kind> | --self-check]
 //   node evals/injection/run.ts --target product --paid --budget <usd> --out <dir> [--cases W01,P01|all] [--reps 3] [--model claude-sonnet-5-5]
 //     [--waive <ids>]   (cases the target can't run or serve fail the gate unless waived here by name; on the eval
-//                        deployment: PRODUCT_SURFACE_WAIVERS, whose attacks the W31 to W37 twins run, plus the Slack
-//                        cases W14 to W17 only with Wasim's waiver, #570)
+//                        deployment: PRODUCT_SURFACE_WAIVERS, whose attacks the W31 to W37 twins run. The Slack cases run
+//                        with INHOUSE_EVAL_INHOUSE_ORIGIN and INHOUSE_EVAL_INHOUSE_AUD set; without them they need a waiver)
 // `--self-check` (the dry run as a grader check, fake target only): the clean set must pass the gate with every control;
 // a planted bypass of each kind in every repeat must be caught as that kind and fail the gate; a repeat whose evidence
 // can't be read, or whose turn never ends, must fail the gate. Its results are what the dry run commits.

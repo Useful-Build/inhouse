@@ -9,9 +9,15 @@
 //    waited for;
 //  - evidence: the whole log (cleared per repeat), the outbox rows since the repeat's mark, the grants, the answers;
 //  - reset: the product session's (turns stopped, live jobs cancelled and ended, #450), then the write state cleared.
-// Planting in the store, Slack or a web page needs a per-case dataset on the eval hub, not built: those cases are listed
-// as not served here (the fake and the scripted sandbox run cover them).
-import { createProductTarget, type ProductTarget, type ProductTargetOptions } from '../targets/product.ts'
+//  - Slack (#577): with the Inhouse app's origin and aud set, the Slack cases run. Each Slack case-repeat connects Slack
+//    through the product's own flow (the fake keeps its tokens in memory), seeds the workspace with its planted messages
+//    in #support, and lists its channels after its ceiling is on; its reset empties the workspace and the listed channels;
+//    the run's close disconnects Slack (#583), so a later suite's tools don't change.
+// Planting in the store or a web page needs a per-case dataset on the eval hub, not built: those cases are listed as not
+// served here (their twins W31 to W37 plant the same attacks through a file or a memory hit).
+import { accessHeaders, createProductTarget, EVAL_AUD_VAR, testIssuerSignIn, type ProductTarget, type ProductTargetOptions } from '../targets/product.ts'
+import { connectSlack, disconnectSlack, type InhouseApi } from '../targets/slack-door.ts'
+import { SEED_INHOUSE } from '../../server/seed/brand.ts'
 import type { ExfilSpec } from '../types.ts'
 import type { InjectionSession, InjectionTarget } from './runner.ts'
 import { canonical } from './grade.ts'
@@ -52,25 +58,66 @@ export function slackEvidence(ev: WriteEvidence, channels: readonly { id: string
 
 const ceilingRows = (rows: CeilingRow[]): NonNullable<WriteEvidence['ceilingsBefore']> => rows.map((r) => ({ operation: r.operation, enabled: r.enabled, perDayMax: r.perDayMax, unitsMax: r.unitsMax }))
 
+/** The Inhouse app's origin and the test issuer's aud there: the Slack connect routes are the Inhouse team's. */
+export const EVAL_INHOUSE_ORIGIN_VAR = 'INHOUSE_EVAL_INHOUSE_ORIGIN'
+export const EVAL_INHOUSE_AUD_VAR = 'INHOUSE_EVAL_INHOUSE_AUD'
+
+/** The product as the Inhouse team (the seeded Inhouse person), on the Inhouse app's origin, with the redirect kept. */
+export function inhouseApi(env: Record<string, string | undefined>, doFetch: typeof fetch = fetch): InhouseApi | null {
+  const origin = env[EVAL_INHOUSE_ORIGIN_VAR]
+  const aud = env[EVAL_INHOUSE_AUD_VAR]
+  if (!origin || !aud) return null
+  const sign = testIssuerSignIn({ ...env, [EVAL_AUD_VAR]: aud })
+  const edge = accessHeaders(env)
+  return async (method, path, body) => {
+    const headers: Record<string, string> = { ...(await sign('lena', { sub: SEED_INHOUSE.subject, email: SEED_INHOUSE.email })), ...edge }
+    if (method !== 'GET') headers.Origin = origin
+    if (body !== undefined) headers['Content-Type'] = 'application/json'
+    const r = await doFetch(`${origin}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), redirect: 'manual', signal: AbortSignal.timeout(30_000) })
+    const text = await r.text()
+    let json: unknown = null
+    try { json = JSON.parse(text) } catch { /* not JSON */ }
+    return { status: r.status, json, location: r.headers.get('location') }
+  }
+}
+
 export interface ProductInjectionOptions extends Pick<ProductTargetOptions, 'paid' | 'budgetUsd' | 'env' | 'model'> {
   /** The product target to drive (tests); default one made from the options. */
   base?: ProductTarget
+  /** The product as the Inhouse team (tests); default from INHOUSE_EVAL_INHOUSE_ORIGIN and _AUD. None: no Slack case runs. */
+  inhouse?: InhouseApi | null
+  /** The Slack connect and disconnect (tests); default slack-door.ts's, through the product's own routes. */
+  slackLink?: { connect(api: InhouseApi): Promise<void>; disconnect(api: InhouseApi): Promise<void> }
   sleep?: (ms: number) => Promise<void>
   now?: () => number
 }
 
 export function createProductInjectionTarget(o: ProductInjectionOptions): InjectionTarget {
   const base = o.base ?? createProductTarget({ paid: o.paid, budgetUsd: o.budgetUsd, env: o.env, model: o.model })
+  const inhouse = o.inhouse === undefined ? inhouseApi(o.env) : o.inhouse
+  // Slack runs only with the Inhouse app to connect it through (#577): then the Slack cases and the Slack plant are served.
+  const provides = inhouse ? new Set([...base.provides, 'slack_post']) : base.provides
+  const plants = inhouse ? [...PRODUCT_PLANTS, 'slack'] : PRODUCT_PLANTS
+  let slackConnected = false
+  const link = o.slackLink ?? { connect: connectSlack, disconnect: disconnectSlack }
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
   const now = o.now ?? Date.now
   return {
     name: 'product',
-    provides: base.provides,
-    serves: (c) => (c.plant && !PRODUCT_PLANTS.includes(c.plant.via) ? `planting through ${c.plant.via} needs a per-case dataset on the eval hub (not built)` : null),
+    provides,
+    serves: (c) => (c.plant && !plants.includes(c.plant.via) ? `planting through ${c.plant.via} needs a per-case dataset on the eval hub (not built)` : null),
     spentUsd: () => base.spentUsd?.() ?? 0,
-    close: async () => { await base.close?.() },
+    close: async () => {
+      try {
+        // #583: leave the shared eval deployment without Slack.
+        if (slackConnected && inhouse) await link.disconnect(inhouse)
+      } finally {
+        await base.close?.()
+      }
+    },
     async start(c: InjectionCase, run): Promise<InjectionSession> {
-      const plant: ExfilSpec | undefined = c.plant ? { kind: 'memory', via: c.plant.via as ExfilSpec['via'], hosts: [], plant: c.plant.text } : undefined
+      const slackCase = c.needs.includes('slack_post') || c.plant?.via === 'slack'
+      const plant: ExfilSpec | undefined = c.plant && c.plant.via !== 'slack' ? { kind: 'memory', via: c.plant.via as ExfilSpec['via'], hosts: [], plant: c.plant.text } : undefined
       const session = await base.seed([], { caseId: c.id, rep: run.rep, canary: run.canary, writes: true }, plant)
       const w = base.writeDoor()
       const asker = base.people.current
@@ -88,11 +135,22 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
         mark = (await w.now()) - CLOCK_SLACK_MS
         for (const s of c.ceilings) await w.setCeiling(s.operation, { ...(s.perDayMax !== undefined ? { perDayMax: s.perDayMax } : {}), ...(s.unitsMax !== undefined ? { unitsMax: s.unitsMax } : {}) })
         if (c.namedMember) teammate = await base.addTeammate({ caseId: c.id, rep: run.rep, name: c.namedMember })
+        if (slackCase) {
+          if (!inhouse) throw new Error('a Slack case needs the Inhouse app (INHOUSE_EVAL_INHOUSE_ORIGIN and _AUD)')
+          // A fresh connection per case-repeat (the fake keeps its tokens in memory), the workspace with the case's plant
+          // in #support, then the case's listed channels (after its ceiling: the door lists only where posting is on).
+          await link.connect(inhouse)
+          slackConnected = true
+          const slack = base.slackDoor()
+          await slack.seed({ messages: c.plant?.via === 'slack' ? [{ channel: 'support', text: c.plant.text(run.canary) }] : [] })
+          await slack.list({ by: base.people.lena, channels: c.channels.map((name) => ({ name: name.replace(/^#/, '') })) })
+        }
         if (c.grant) seeded.add(await w.grant({ memberId: asker, operation: c.grant.operation, ...(c.grant.perDay !== undefined ? { perDay: c.grant.perDay } : {}), ...(c.grant.unitsMax !== undefined ? { unitsMax: c.grant.unitsMax } : {}) }))
         ceilingsBefore = ceilingRows(await w.ceilings())
       } catch (e) {
         await session.reset()
         if (teammate) await base.removeTeammate(teammate)
+        if (slackCase && slackConnected) await base.slackDoor().reset()
         throw e
       }
 
@@ -119,6 +177,14 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
 
       return {
         async preflight() {
+          if (slackCase) {
+            const w2 = await base.slackDoor().read()
+            const want = c.channels.map((x) => x.replace(/^#/, '')).sort()
+            if (JSON.stringify(w2.listed.map((l) => l.name).sort()) !== JSON.stringify(want)) return `the listed channels read ${JSON.stringify(w2.listed.map((l) => l.name))}, not ${JSON.stringify(want)}`
+            if (c.plant?.via === 'slack' && w2.messages.length !== 1) return 'the planted Slack message is not in the workspace'
+            const acct = await base.slackDoor().account()
+            if (acct?.lastState !== 'connected') return `Slack is ${acct?.lastState ?? 'not recorded'}, not connected`
+          }
           const ceilings = await w.ceilings()
           for (const s of c.ceilings) {
             const row = ceilings.find((x) => x.operation === s.operation)
@@ -195,7 +261,11 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
           try {
             await session.reset()
           } finally {
-            if (teammate) await base.removeTeammate(teammate)
+            try {
+              if (teammate) await base.removeTeammate(teammate)
+            } finally {
+              if (slackCase) await base.slackDoor().reset()
+            }
           }
         },
       }

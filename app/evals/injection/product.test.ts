@@ -217,3 +217,58 @@ describe('#584: a Slack post as the eval log holds it (`channelId`) grades by th
     expect(writeProvides().has('slack_post')).toBe(false)
   })
 })
+
+describe('the Slack cases on the eval deployment (#577)', () => {
+  class FakeSlack {
+    calls: string[] = []
+    listed: { id: string; name: string; alerts: boolean }[] = []
+    messages: { channel: string; ts: string; user: string; text: string }[] = []
+    async seed(w: { messages: { channel: string; text: string }[] }) { this.calls.push(`seed ${w.messages.map((m) => m.channel).join(',')}`); this.messages = w.messages.map((m) => ({ channel: 'C0EVAL0002', ts: '1', user: 'U0TEST0002', text: m.text })) }
+    async list(l: { by: string; channels: { name: string }[] }) { this.calls.push(`list ${l.by} ${l.channels.map((c) => c.name).join(',')}`); this.listed = l.channels.map((c) => ({ id: 'C0EVAL0001', name: c.name.replace(/^#/, ''), alerts: false })); return { alertsGrant: null } }
+    async read() { return { channels: [], messages: this.messages, listed: this.listed } }
+    async account() { return { lastState: 'connected', connectedAtMs: 1 } }
+    async reset() { this.calls.push('reset'); this.listed = []; this.messages = [] }
+  }
+  const wire = () => {
+    const writes = new FakeWrites()
+    const slack = new FakeSlack()
+    const links: string[] = []
+    const { base, calls } = stand({ writes })
+    const target = createProductInjectionTarget({
+      paid: true, env: {}, base: { ...base, slackDoor: () => slack } as unknown as ProductTarget, inhouse: async () => ({ status: 200, json: null, location: null }),
+      slackLink: { connect: async () => { links.push('connect') }, disconnect: async () => { links.push('disconnect') } },
+    })
+    return { target, slack, links, calls }
+  }
+
+  it('without the Inhouse app no Slack case is served; with it, slack_post and the Slack plant are', () => {
+    expect(createProductInjectionTarget({ paid: true, env: {}, base: stand({ writes: new FakeWrites() }).base, inhouse: null }).provides.has('slack_post')).toBe(false)
+    const { target } = wire()
+    expect(target.provides.has('slack_post')).toBe(true)
+    expect(target.serves(kase('W29'))).toBeNull()
+    expect(target.serves(kase('W03'))).toMatch(/shopify/)
+  })
+
+  it('a Slack case connects Slack, plants in #support, lists its channels after its ceiling, preflights them, and its reset empties the workspace', async () => {
+    const { target, slack, links } = wire()
+    const s = await target.start(kase('W15'), { rep: 1, canary: 'C' })
+    expect(links).toEqual(['connect'])
+    expect(slack.calls).toEqual(['seed support', 'list m_l ops'])
+    expect(await s.preflight()).toBeNull()
+    slack.listed = []
+    expect(await s.preflight()).toMatch(/listed channels read/)
+    await s.reset()
+    expect(slack.calls.at(-1)).toBe('reset')
+    await target.close!()
+    expect(links).toEqual(['connect', 'disconnect'])
+  })
+
+  it('a case with no Slack never touches it, and the run\'s close leaves Slack alone when it never connected', async () => {
+    const { target, slack, links } = wire()
+    const s = await target.start(kase('W06'), { rep: 1, canary: 'C' })
+    await s.reset()
+    await target.close!()
+    expect(slack.calls).toEqual([])
+    expect(links).toEqual([])
+  })
+})

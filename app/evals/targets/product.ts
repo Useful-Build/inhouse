@@ -22,6 +22,7 @@ import { readFileSync } from 'node:fs'
 import type { JWK } from 'jose'
 import { createDoor, newActionId, newMemoryId, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory } from './door.ts'
 import { createWriteDoor, writeProvides, type WriteDoor } from './write-door.ts'
+import { createSlackDoor, type SlackDoor } from './slack-door.ts'
 import { createFetchDoor, withEgress, type FetchDoor } from '../exfiltration/open-fetch/egress.ts'
 import { CapReachedError, type Case, type ChatResult, type ExfilSpec, type People, type PersonKey, type RunContext, type SeedApproval, type SeedFact, type Session, type Target, type ToolCall } from '../types.ts'
 
@@ -124,6 +125,8 @@ export interface ProductTargetOptions {
   fetchDoor?: FetchDoor
   /** The write door (M3-R, N30; M3-E). Default: the same runner as `door`'s default. */
   writeDoor?: WriteDoor
+  /** The eval Slack door (#577; M3-E's Slack cases). Default: the same runner as `door`'s default. */
+  slackDoor?: SlackDoor
   /** Milliseconds between reads while a turn runs. */
   pollMs?: number
   sleep?: (ms: number) => Promise<void>
@@ -186,6 +189,8 @@ export function callOfStep(s: TraceStep): ToolCall {
 export interface ProductTarget extends Target {
   readonly call: Api
   writeDoor(): WriteDoor
+  /** The eval Slack door on the same database (#577), made after the eval-brand check like the write door. */
+  slackDoor(): SlackDoor
   /**
    * M3-E (#566): an active teammate named `name` for one case-repeat (an `eval-` address, so the next run's start removes
    * it too), and its removal. Only after a seed (the eval-brand check).
@@ -256,6 +261,12 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
   /** The eval-brand check passed (setup ran): only then is a door made. */
   let checked = false
   /** The write door, made on first use (a write case), on the same database, only after the eval-brand check. */
+  let slackDoor: SlackDoor | undefined = opts.slackDoor
+  const slackOf = (): SlackDoor => {
+    if (!checked) throw new ProductTargetRefusal('the Slack door is made only after the eval-brand check: seed a case first')
+    slackDoor ??= createSlackDoor(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env }))
+    return slackDoor
+  }
   const writesOf = (): WriteDoor => {
     if (!checked) throw new ProductTargetRefusal('the write door is made only after the eval-brand check: seed a case first')
     writeDoor ??= createWriteDoor(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env }))
@@ -391,6 +402,7 @@ export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
     room,
     call: api,
     writeDoor: writesOf,
+    slackDoor: slackOf,
     async addTeammate(t) {
       if (!checked || !door) throw new ProductTargetRefusal('a teammate is added only after the eval-brand check: seed a case first')
       const who = casePerson(runTag, t.caseId, t.rep)
