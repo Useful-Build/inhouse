@@ -200,7 +200,9 @@ export function ChatRow({ chat, place = 'sidebar', open = false, running = false
     place === 'sidebar' ? 'group-has-focus-visible/chat:opacity-100' : 'group-focus-within/chat:opacity-100')
 
   // The sidebar trigger sits over the title's end, so it carries the hovered row's own fill (solid, to cover the text).
-  const trigger = 'bg-side-hover hover:bg-fill-strong'
+  // Only with a fine pointer: on a touch screen it always shows and the title leaves it room, so a fill would sit on
+  // every row as a lone square.
+  const trigger = 'pointer-fine:bg-side-hover pointer-fine:hover:bg-fill-strong'
 
   // Where focus goes after Pin (the same chat, redrawn in its new group) or Delete (the next row, else the previous,
   // else the list's fallback). Read from the page before the change, applied after it, by the menu.

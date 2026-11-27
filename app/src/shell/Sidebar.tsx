@@ -17,17 +17,25 @@ const OPEN_ROW = 'data-[state=open]:bg-side-hover data-[state=open]:text-foregro
 /**
  * Tells the marker where the selected row is (`side-marker` in index.css draws the line there). With no selected row
  * (See all, a page the sidebar doesn't list) the line is off.
+ * The line glides only between two placed rows. Its first place, its place after being off and its place while the rows
+ * scroll (`snap`) are set with no transition (`data-ready` off), so it never slides in from the top or lags a scroll.
  */
-function placeMarker(el: HTMLElement) {
+function placeMarker(el: HTMLElement, snap = false) {
   const box = el.parentElement
   if (!box) return
   // The open chat by its row, not its button: while its title is being renamed the button isn't there.
   const row = box.querySelector<HTMLElement>('[aria-current="page"]:not([data-chat-fallback], [data-chat-open]), [data-chat-row][data-current]')
-  if (!row) { el.dataset.off = ''; return }
+  if (!row) { el.dataset.off = ''; delete el.dataset.ready; return }
+  if (snap) delete el.dataset.ready
   const b = box.getBoundingClientRect(), r = row.getBoundingClientRect()
-  el.style.setProperty('--side-marker-y', `${r.top - b.top - box.clientTop + box.scrollTop}px`)
+  el.style.setProperty('--side-marker-y', `${r.top - b.top - box.clientTop}px`)
   el.style.setProperty('--side-marker-h', `${r.height}px`)
   delete el.dataset.off
+  if (el.dataset.ready === undefined) {
+    // Reading its box applies the place above while the transition is still off; then the next change glides.
+    el.getBoundingClientRect()
+    el.dataset.ready = ''
+  }
 }
 
 /**
@@ -38,7 +46,8 @@ function placeMarker(el: HTMLElement) {
  *
  * The `<aside>` is the column: on desktop its width animates on a collapse. Inside it one scroller holds the rows at
  * the column's final width, so an expand reveals them without reflow, and a scrollbar that takes room narrows the rows
- * instead of covering them. The marker lives in the scroller, so it scrolls with the rows.
+ * instead of covering them. The marker sits on the column's own edge, so it rides that edge through a collapse; it is
+ * placed again as the rows scroll.
  */
 export function Sidebar() {
   const ctx = useCtx()
@@ -61,7 +70,7 @@ export function Sidebar() {
   const { go, newChat, openChat, openChatList, openTeam, patch, toggleSidebar } = useUi.getState()
   // The marker's line. It mounts with its tree (the rail, the full sidebar, or the drawer's content a commit after the
   // drawer opens), so the ref places it then and watches the sidebar's size; every render places it again, since the
-  // selected row may have changed or moved (a chat pinned, a group added).
+  // selected row may have changed or moved (a chat pinned, a group added); a scroll of the rows places it too.
   const marker = useRef<HTMLElement | null>(null)
   const markerRef = useCallback((el: HTMLElement | null) => {
     marker.current = el
@@ -74,6 +83,7 @@ export function Sidebar() {
   }, [])
   useLayoutEffect(() => { if (marker.current) placeMarker(marker.current) })
   const line = <i ref={markerRef} aria-hidden="true" className="side-marker data-off:opacity-0" />
+  const follow = () => { if (marker.current) placeMarker(marker.current, true) }
   // The phone drawer opens with focus on itself, so no row shows a focus ring until someone tabs.
   const drawer = useRef<HTMLDivElement>(null)
   // The rail and the full sidebar are different trees, so the collapse button is a new element after a click on it:
@@ -127,8 +137,8 @@ export function Sidebar() {
   // while the column narrows.
   if (rail) return (
     <aside id="sidebar" aria-label="Sidebar" className="group/side side-move relative z-sidebar flex w-sidebar-rail flex-none flex-col overflow-hidden">
-      <div className="relative isolate box-border flex min-h-0 w-sidebar-rail flex-1 flex-col items-start gap-px overflow-x-hidden overflow-y-auto pt-2 pb-3 pl-3">
       {line}
+      <div onScroll={follow} className="box-border flex min-h-0 w-sidebar-rail flex-1 flex-col items-start gap-px overflow-x-hidden overflow-y-auto pt-2 pb-3 pl-3">
       <span className="ml-2.25 flex h-14.5 flex-none items-center">
         <InhouseMark size={22} />
       </span>
@@ -159,11 +169,11 @@ export function Sidebar() {
   // A quiet text control (See all): with the rows, it waits a step quieter.
   const hushed = phone ? '' : 'text-foreground-3 transition-colors group-hover/side:text-foreground group-has-focus-visible/side:text-foreground'
   const aside = (
-      <aside id="sidebar" aria-label="Sidebar" className={cn('group/side box-border flex w-sidebar flex-none flex-col overflow-hidden',
-        phone ? 'my-2.5 mr-0 ml-2.5 min-h-0 flex-1 rounded-2xl border border-border bg-card shadow-float' : 'side-move relative z-sidebar')}>
-        {/* The drawer's card has a border, so its scroller takes the room the card leaves. */}
-        <div className={cn('relative isolate box-border flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-3 pt-2 pb-3', phone ? 'w-full' : 'w-sidebar')}>
+      <aside id="sidebar" aria-label="Sidebar" className={cn('group/side relative box-border flex w-sidebar flex-none flex-col overflow-hidden',
+        phone ? 'side-on-card my-2.5 mr-0 ml-2.5 min-h-0 flex-1 rounded-2xl border border-border bg-card shadow-float' : 'side-move z-sidebar')}>
         {line}
+        {/* The drawer's card has a border, so its scroller takes the room the card leaves. */}
+        <div onScroll={follow} className={cn('box-border flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-3 pt-2 pb-3', phone ? 'w-full' : 'w-sidebar')}>
         {/* As tall as the top bar and level with it. The mark sits on the nav icons' axis and the name starts on the labels' line. */}
         <div className="flex h-14.5 flex-none items-center gap-2.5 pr-1 pl-2.25">
           <InhouseMark size={22} />

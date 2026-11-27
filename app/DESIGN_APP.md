@@ -97,7 +97,7 @@ A value the base scales can't express becomes an `--app-*` token, named by role,
 | Type | `text-hero` (Today's greeting, fluid 26 to 34px), `text-window-title` (the review window's title, 22px), `text-parent` (a component's text takes its parent's size) | |
 | Page patch | `shadow-page-xs` to `xl`: a page-coloured glow behind text on the dots | 4/2 to 18/14px |
 | Focus and pick | `shadow-composer-focus` (float plus halo), `shadow-selected` (a 2px ink ring on a picked card) | |
-| The sidebar | `side-marker` (the selected row's ink line on the sidebar's edge: the Sidebar sets `--side-marker-y` and `--side-marker-h`), `side-move` (its width on a collapse), `side-rule` (the hairline on the main column), `icon-fill-ease` (a glyph that fills in); all ease with `--app-side-ease` and stop with reduced motion | |
+| The sidebar | `side-marker` (the selected row's ink line on the sidebar's edge: the Sidebar sets `--side-marker-y` and `--side-marker-h`, and `data-ready` once it is placed, so it glides between rows but never slides in), `side-on-card` (the drawer: a hovered row takes `--accent`), `side-move` (its width on a collapse), `side-rule` (the hairline on the main column), `icon-fill-ease` (a glyph that fills in); all ease with `--app-side-ease` and stop with reduced motion | |
 | Lines and fills | `border-hairline` 1.5px, `bg-topbar-fade`, `bg-hatch-wait`, `bg-hatch-approval` (its stripe is `--app-hatch-approval-stripe`, warning at 40%), `bg-dot-grid`, `bg-dot-grid-live`, `bg-dot-grid-tool` | |
 | No theme scale | `bg-size-(--app-dot-grid-size)`, `mask-(--app-dots-mask)`, `mask-(--app-sweep-mask)`, `mask-size-(--app-sweep-mask-size)`, `mask-(--app-tool-hero-mask)` | Tailwind has no namespace for these, so the class names the token |
 

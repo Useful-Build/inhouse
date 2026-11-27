@@ -579,15 +579,20 @@
 /* ---------- the sidebar ----------
  * It has no surface of its own: it sits on the page's wall, behind one hairline (side-rule, on the main column). */
 /* The selection marker: a short ink line on the sidebar's edge, level with the selected row, that glides between rows.
- * The Sidebar sets where the row is (--side-marker-y, --side-marker-h); until then the line has no height. It scrolls
- * with the rows (the sidebar's scroller is its containing block) and sits under them (it is its stacking context too). */
+ * The Sidebar sets where the row is (--side-marker-y, --side-marker-h); until then the line has no height. It sits on
+ * the column itself, clear of the rows (they keep 12px from that edge), so it rides the edge through a collapse.
+ * It glides only once placed (data-ready, set by the Sidebar after a first place, a return from off or a scroll):
+ * before that its place is set at once, so it never slides in from the top. */
 @utility side-marker {
-  position: absolute; top: 0; right: 0; z-index: -1; pointer-events: none;
+  position: absolute; top: 0; right: 0; pointer-events: none;
   width: 2px; height: calc(var(--side-marker-h, 0px) - 14px); transform: translateY(calc(var(--side-marker-y, 0px) + 7px));
   border-radius: 2px 0 0 2px; background: var(--foreground);
-  transition: transform .26s var(--app-side-ease), height .26s var(--app-side-ease), opacity .12s linear;
-  @media (prefers-reduced-motion: reduce) { transition: none; }
+  transition: opacity .12s linear;
+  &[data-ready] { transition: transform .26s var(--app-side-ease), height .26s var(--app-side-ease), opacity .12s linear; }
+  @media (prefers-reduced-motion: reduce) { &, &[data-ready] { transition: none; } }
 }
+/* The phone drawer puts the sidebar's rows on a card: a hovered or open row takes the card's own hover step there. */
+@utility side-on-card { --app-side-hover: var(--accent); }
 /* Collapsing is a move, not a cut: the column narrows and the page follows. */
 @utility side-move {
   transition: width .24s var(--app-side-ease);
