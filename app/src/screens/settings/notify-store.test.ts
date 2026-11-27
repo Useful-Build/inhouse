@@ -15,7 +15,7 @@ type Agent = Parameters<typeof createNotifyStore>[0]['agent']
 type List = Awaited<ReturnType<Agent['listNotifyChannels']>>
 type Save = Parameters<Agent['saveNotifyChannels']>[0]
 
-const LIST: List = { rev: 2, channels: [{ channelId: 'C0TEST0001', name: 'ops-alerts', alerts: true }, { channelId: 'C0TEST0002', name: 'general', alerts: false }] }
+const LIST: List = { rev: 2, channels: [{ channelId: 'C0TEST0001', name: 'ops-alerts', alerts: true }, { channelId: 'C0TEST0002', name: 'general', alerts: false }], posting: { on: false } }
 const PAGE = { channels: [{ channelId: 'C0TEST0005', name: 'warehouse' }, { channelId: 'C0TEST0003', name: 'partner', disabled: 'shared_channel' as const }], nextCursor: null }
 
 function fake(over: Partial<Agent> = {}) {
@@ -26,7 +26,7 @@ function fake(over: Partial<Agent> = {}) {
     availableNotifyChannels: async () => PAGE,
     saveNotifyChannels: async input => {
       saves.push(input)
-      return { rev: input.ifRev + 1, channels: input.channelIds.map(id => ({ channelId: id, name: id, alerts: id === input.alertsChannelId })) }
+      return { rev: input.ifRev + 1, channels: input.channelIds.map(id => ({ channelId: id, name: id, alerts: id === input.alertsChannelId })), posting: { on: false } }
     },
     ...over,
   }
@@ -50,7 +50,7 @@ describe('the Slack notices store', () => {
   })
 
   it('a stale save shows the current list the answer carried, and says so', async () => {
-    const current: List = { rev: 9, channels: [{ channelId: 'C0TEST0009', name: 'newer', alerts: false }] }
+    const current: List = { rev: 9, channels: [{ channelId: 'C0TEST0009', name: 'newer', alerts: false }], posting: { on: false } }
     const f = fake({ saveNotifyChannels: async () => { throw new AgentError('conflict', 'x', { current }) } })
     f.store.open(true)
     await f.store.retry()

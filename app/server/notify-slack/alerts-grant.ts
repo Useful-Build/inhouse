@@ -12,6 +12,7 @@
 // It takes the ceiling's `lowered_rev`, the current policy and the account's generation, so a later change to any of
 // them makes it cover nothing, like every grant. A re-save that doesn't move the mark never makes one: a grant an admin
 // removed in Permissions stays removed until the channel is marked again.
+import type { NotifyPosting } from '../../shared/contract/notify-slack.ts'
 import { auditInsert } from '../db/audit.ts'
 import { writeStamp } from '../db/ids.ts'
 import type { At } from '../db/members.ts'
@@ -113,6 +114,15 @@ function lineWhereStamped(id: string, stamp: string, at: At, args: Extract<Param
 
 /** The mark moved off `channelId`: its brand grant ends (`removed`), only where `when` holds (this write changed that row). */
 export const unmarkGrantStmts = (channelId: string, at: At, when: Exists): Stmt[] => revokeBrand(channelId, '', [], 'removed', at, when)
+
+/**
+ * Stage 1 M3-C (N27): whether posting is switched on in the ceiling now and, while it is, the daily limit an admin's
+ * mark would give: the smaller of the grant's own and the ceiling's daily maximum (as `alertsGrantOf` reads a live one).
+ */
+export async function alertsPosting(db: D1Database): Promise<NotifyPosting> {
+  const c = await first<{ per_day_max: number }>(db, stmt('SELECT per_day_max FROM permission_ceiling WHERE operation = ? AND enabled = 1', OPERATION))
+  return c ? { on: true, perDay: Math.min(ALERTS_PER_DAY, c.per_day_max) } : { on: false }
+}
 
 /** The alerts channel's live brand grant as the channel list shows it: its id, its scope in plain words and its daily limit. */
 export interface AlertsGrantView { id: string; scope: string; perDay: number }

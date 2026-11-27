@@ -3,7 +3,7 @@
 // the rev bump runs last, so a stale save changes nothing and answers `conflict`. Member ids only; no notice text.
 // Stage 1 M2-N (Q3 = A): moving the alerts mark onto a channel gives the brand's grant to post there, and moving it off
 // takes that grant back, in the same batch (./alerts-grant.ts says when a grant is made). The list shows the alerts
-// channel's live grant with its scope and daily limit.
+// channel's live grant with its scope and daily limit. Stage 1 M3-C (N27): and whether posting is on, with the limit a mark gives.
 import type { AuditArgs } from '../../shared/contract/audit.ts'
 import type { NotifyChannelList } from '../../shared/contract/notify-slack.ts'
 import { auditInsert } from '../db/audit.ts'
@@ -13,7 +13,7 @@ import type { At } from '../db/members.ts'
 import { all, first, runBatch, stmt } from '../db/sql.ts'
 import type { Stmt } from '../db/sql.ts'
 import { revokeChannelGrantsStmts } from '../permissions/grants.ts'
-import { alertsGrantOf, alertsGrantStmts, unmarkGrantStmts } from './alerts-grant.ts'
+import { alertsGrantOf, alertsGrantStmts, alertsPosting, unmarkGrantStmts } from './alerts-grant.ts'
 
 const REV = 'COALESCE((SELECT rev FROM notify_channel_list WHERE id = 1), 0)'
 
@@ -31,7 +31,7 @@ export function notifyChannelStore({ db, hook = s => s }: { db: D1Database; hook
       const permission = c.alerts ? await alertsGrantOf(db, c) : null
       return permission ? { ...c, permission } : c
     }))
-    return { rev, channels }
+    return { rev, channels, posting: await alertsPosting(db) }
   }
 
   return {

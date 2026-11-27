@@ -63,6 +63,8 @@ async function inhouse(): Promise<Principal> {
 function routeCtx(p: Principal, hub: ChannelsBinding, init: { method?: string; path: string; body?: unknown }): NotifyRouteCtx {
   return { ...ctx(stores, p, init).c, env: { HUB_DELIVERY: hub as unknown as Service } } as NotifyRouteCtx
 }
+/** Stage 1 M3-C (N27): no ceiling row for `slack.channel.post` here, so posting is off and the list shows no limit. */
+const OFF = { on: false } as const
 const json = async (r: Response) => ({ status: r.status, body: (await r.json()) as Record<string, unknown> })
 const put = (p: Principal, hub: ChannelsBinding, body: unknown) => putNotifyChannels(routeCtx(p, hub, { method: 'PUT', path: '/api/notify/channels', body }))
 const lines = async () => (await db.prepare("SELECT args_json FROM audit_log WHERE action = 'notify.channels' ORDER BY id").all<{ args_json: string }>()).results.map(r => JSON.parse(r.args_json) as Record<string, unknown>)
@@ -97,12 +99,12 @@ describe('routes F, G and H', () => {
     const before = (await lines()).length
     const r0 = await rev()
     const a = await json(await put(await admin(), hub, { channelIds: ['C0TEST0001', 'C0TEST0002'], alertsChannelId: 'C0TEST0001', ifRev: r0 }))
-    expect(a).toEqual({ status: 200, body: { rev: r0 + 1, channels: [{ channelId: 'C0TEST0002', name: 'general', alerts: false }, { channelId: 'C0TEST0001', name: 'ops-alerts', alerts: true }] } })
+    expect(a).toEqual({ status: 200, body: { rev: r0 + 1, channels: [{ channelId: 'C0TEST0002', name: 'general', alerts: false }, { channelId: 'C0TEST0001', name: 'ops-alerts', alerts: true }], posting: OFF } })
     expect(calls).toEqual(['check:server:C0TEST0001', 'check:server:C0TEST0002'])
     const stale = await json(await put(await inhouse(), hub, { channelIds: ['C0TEST0002'], ifRev: r0 }))
     expect([stale.status, (stale.body.error as { reason?: string }).reason, ((stale.body.error as { current: { rev: number } }).current.rev)]).toEqual([409, undefined, r0 + 1])
     const b = await json(await put(await inhouse(), hub, { channelIds: ['C0TEST0002'], alertsChannelId: 'C0TEST0002', ifRev: r0 + 1 }))
-    expect(b.body).toEqual({ rev: r0 + 2, channels: [{ channelId: 'C0TEST0002', name: 'general', alerts: true }] })
+    expect(b.body).toEqual({ rev: r0 + 2, channels: [{ channelId: 'C0TEST0002', name: 'general', alerts: true }], posting: OFF })
     // A no-op save bumps the rev and writes no line.
     await put(await admin(), hub, { channelIds: ['C0TEST0002'], alertsChannelId: 'C0TEST0002', ifRev: r0 + 2 })
     expect((await lines()).slice(before)).toEqual([
@@ -161,7 +163,7 @@ describe('routes F, G and H', () => {
     const first = await store.save({ channels: [{ channelId: 'C0TEST0001', name: 'ops-alerts' }, { channelId: 'C0TEST0002', name: 'general' }], alertsChannelId: null, ifRev: list.rev }, at(1))
     if (!('ok' in first)) throw new Error('first save conflicted')
     const swap = await store.save({ channels: [{ channelId: 'C0TEST0001', name: 'general' }, { channelId: 'C0TEST0002', name: 'ops-alerts' }], alertsChannelId: null, ifRev: first.ok.rev }, at(2))
-    expect(swap).toEqual({ ok: { rev: first.ok.rev + 1, channels: [{ channelId: 'C0TEST0001', name: 'general', alerts: false }, { channelId: 'C0TEST0002', name: 'ops-alerts', alerts: false }] } })
+    expect(swap).toEqual({ ok: { rev: first.ok.rev + 1, channels: [{ channelId: 'C0TEST0001', name: 'general', alerts: false }, { channelId: 'C0TEST0002', name: 'ops-alerts', alerts: false }], posting: OFF } })
     list = await store.list()
     const chain = await store.save({ channels: [{ channelId: 'C0TEST0001', name: 'ops-alerts' }, { channelId: 'C0TEST0002', name: 'ops-old' }], alertsChannelId: null, ifRev: list.rev }, at(3))
     expect('ok' in chain && chain.ok.channels.map(c => c.name)).toEqual(['ops-alerts', 'ops-old'])
@@ -175,7 +177,7 @@ describe('routes F, G and H', () => {
     expect((await put(p, hub, { channelIds: ['C0TEST0001', 'C0TEST0002'], alertsChannelId: 'C0TEST0001', ifRev: r0 })).status).toBe(200)
     const paused = { ...hub, checkChannel: async () => ({ ok: false as const, error: { code: 'paused' as const, message: 'connector paused' } }) }
     const moved = await json(await put(p, paused, { channelIds: ['C0TEST0001', 'C0TEST0002'], alertsChannelId: 'C0TEST0002', ifRev: r0 + 1 }))
-    expect(moved.body).toEqual({ rev: r0 + 2, channels: [{ channelId: 'C0TEST0002', name: 'general', alerts: true }, { channelId: 'C0TEST0001', name: 'ops-alerts', alerts: false }] })
+    expect(moved.body).toEqual({ rev: r0 + 2, channels: [{ channelId: 'C0TEST0002', name: 'general', alerts: true }, { channelId: 'C0TEST0001', name: 'ops-alerts', alerts: false }], posting: OFF })
     const removed = await json(await put(p, paused, { channelIds: ['C0TEST0002'], alertsChannelId: 'C0TEST0002', ifRev: r0 + 2 }))
     expect(removed.status).toBe(200)
     // Adding one still needs Slack.
@@ -193,13 +195,13 @@ describe('routes F, G and H', () => {
     expect((await put(p, hub, { channelIds: ['C0TEST0001', 'C0TEST0002'], ifRev: r0 })).status).toBe(200)
     const named = (names: Record<string, string>) => ({ ...hub, checkChannel: async (_s: unknown, req: { channelId: string }) => ({ ok: true as const, value: { ...SLACK[req.channelId]!, name: names[req.channelId] ?? SLACK[req.channelId]!.name } }) })
     const renamed = await json(await put(p, named({ C0TEST0002: 'general-chat' }), { channelIds: ['C0TEST0001', 'C0TEST0002'], ifRev: r0 + 1 }))
-    expect(renamed.body).toEqual({ rev: r0 + 2, channels: [{ channelId: 'C0TEST0002', name: 'general-chat', alerts: false }, { channelId: 'C0TEST0001', name: 'ops-alerts', alerts: false }] })
+    expect(renamed.body).toEqual({ rev: r0 + 2, channels: [{ channelId: 'C0TEST0002', name: 'general-chat', alerts: false }, { channelId: 'C0TEST0001', name: 'ops-alerts', alerts: false }], posting: OFF })
     const swapped = await json(await put(p, named({ C0TEST0001: 'general-chat', C0TEST0002: 'ops-alerts' }), { channelIds: ['C0TEST0001', 'C0TEST0002'], ifRev: r0 + 2 }))
-    expect(swapped).toEqual({ status: 200, body: { rev: r0 + 3, channels: [{ channelId: 'C0TEST0001', name: 'general-chat', alerts: false }, { channelId: 'C0TEST0002', name: 'ops-alerts', alerts: false }] } })
+    expect(swapped).toEqual({ status: 200, body: { rev: r0 + 3, channels: [{ channelId: 'C0TEST0001', name: 'general-chat', alerts: false }, { channelId: 'C0TEST0002', name: 'ops-alerts', alerts: false }], posting: OFF } })
     // A kept channel that became shared still saves (its posts are refused at the hub); a thrown check keeps the name.
     const shared = { ...hub, checkChannel: async (_s: unknown, req: { channelId: string }) => (req.channelId === 'C0TEST0001' ? { ok: true as const, value: { ...SLACK.C0TEST0001!, name: 'general-chat', shared: true } } : Promise.reject(new Error('hub down'))) }
     const kept = await json(await put(p, shared as never, { channelIds: ['C0TEST0001', 'C0TEST0002'], alertsChannelId: 'C0TEST0001', ifRev: r0 + 3 }))
-    expect(kept.body).toEqual({ rev: r0 + 4, channels: [{ channelId: 'C0TEST0001', name: 'general-chat', alerts: true }, { channelId: 'C0TEST0002', name: 'ops-alerts', alerts: false }] })
+    expect(kept.body).toEqual({ rev: r0 + 4, channels: [{ channelId: 'C0TEST0001', name: 'general-chat', alerts: true }, { channelId: 'C0TEST0002', name: 'ops-alerts', alerts: false }], posting: OFF })
   })
 
   describe('M2-N: the alerts mark is the brand\'s grant for that channel', () => {
@@ -231,7 +233,7 @@ describe('routes F, G and H', () => {
       })
       // The daily limit a post meets now: the smaller of the grant's 50 and the ceiling's 20.
       const shown = { id: g!.id, scope: '#ops-alerts', perDay: 20 }
-      expect(marked.body).toEqual({ rev: r0 + 1, channels: [{ channelId: 'C0TEST0002', name: 'general', alerts: false }, { channelId: 'C0TEST0001', name: 'ops-alerts', alerts: true, permission: shown }] })
+      expect(marked.body).toEqual({ rev: r0 + 1, channels: [{ channelId: 'C0TEST0002', name: 'general', alerts: false }, { channelId: 'C0TEST0001', name: 'ops-alerts', alerts: true, permission: shown }], posting: { on: true, perDay: 20 } })
       expect((await list()).channels).toEqual([{ channelId: 'C0TEST0002', name: 'general', alerts: false }, { channelId: 'C0TEST0001', name: 'ops-alerts', alerts: true, permission: shown }])
       // A re-save that keeps the mark makes no second grant.
       await put(p, hub, { channelIds: ['C0TEST0001', 'C0TEST0002'], alertsChannelId: 'C0TEST0001', ifRev: r0 + 1 })

@@ -39,6 +39,7 @@ import { checkDataExport, dataExportUrl as dataExportPath } from './data-access'
 import type { AvailableChannels, NotifyChannelList, PutNotifyChannels } from '../../../shared/contract/notify-slack'
 import type { ActionCard, ActionChoice, ActionFilter, ActionResolution } from '../../../shared/contract/actions'
 import type { Permission } from '../../../shared/contract/permissions'
+import type { CeilingList, CeilingRow, UpdateCeilingInput } from '../../../shared/contract/ceiling'
 import type { Question } from '../../../shared/contract/questions'
 import type { Job } from '../../../shared/contract/jobs'
 import { MESSAGE, Transport } from './transport'
@@ -1279,6 +1280,19 @@ export class HttpAgent implements AgentClient {
   removePermission = (id: string, ifRev: number): Promise<Permission[]> => this.m2((m, k) => m.postRemovePermission(this.http, k, id, ifRev), 'permission')
   questions = (): Promise<Question[]> => this.m2(m => m.readQuestions(this.http))
   answerQuestion = (id: string, choice: string): Promise<Question> => this.m2((m, k) => m.postQuestionAnswer(this.http, k, id, choice), 'question')
+  // ----- Stage 1 M3-C (N26): the Inhouse ceiling (routes 150 and 151); ./ceiling loads on first use -----
+  ceiling = async (): Promise<CeilingList> => { const m = await import('./ceiling'); return this.plain(() => m.readCeiling(this.http)) }
+  setCeiling = async (operation: string, input: UpdateCeilingInput): Promise<CeilingRow> => {
+    const [m, k] = await Promise.all([import('./ceiling'), this.k ?? this.http.contract()])
+    try {
+      return await this.plain(() => m.putCeilingRow(this.http, k, operation, input))
+    } catch (e) {
+      // A stale change's `current` is passed on only when it is a row; else the page reads the list again.
+      if (!(e instanceof AgentError) || e.code !== 'conflict' || e.current === undefined) throw e
+      const current = k.ANSWERS.ceilingRow.safeParse(e.current)
+      throw new AgentError('conflict', e.message, { ...(e.reason ? { reason: e.reason } : {}), ...(current.success ? { current: current.data } : {}) })
+    }
+  }
   // ----- Stage 1 M1-D (N3): a chat's long job (routes 100 and 101); ./jobs loads on first use -----
   job = async (chatId: string): Promise<Job | null> => { const m = await import('./jobs'); return this.plain(() => m.readChatJob(this.http, chatId)) }
   cancelJob = async (jobId: string): Promise<Job> => { const m = await import('./jobs'); return this.plain(() => m.postCancelJob(this.http, jobId)) }

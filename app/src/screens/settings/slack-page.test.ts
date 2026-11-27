@@ -13,7 +13,7 @@ type Env = Parameters<typeof settingsPage>[1]
 type View = Env['notify']
 
 const noop = () => {}
-const LIST = { rev: 4, channels: [{ channelId: 'C0TEST0001', name: 'ops-alerts', alerts: true }, { channelId: 'C0TEST0002', name: 'general', alerts: false }] }
+const LIST: NonNullable<View['list']> = { rev: 4, channels: [{ channelId: 'C0TEST0001', name: 'ops-alerts', alerts: true }, { channelId: 'C0TEST0002', name: 'general', alerts: false }], posting: { on: false } }
 const AVAILABLE = [
   { channelId: 'C0TEST0001', name: 'ops-alerts' }, { channelId: 'C0TEST0002', name: 'general' }, { channelId: 'C0TEST0005', name: 'warehouse' },
   { channelId: 'C0TEST0003', name: 'partner', disabled: 'shared_channel' as const }, { channelId: 'C0TEST0006', name: 'design', disabled: 'not_member' as const },
@@ -80,7 +80,7 @@ describe('Slack notices', () => {
   })
 
   it('says when Slack is not connected, offers a retry, and an empty list says where posts go', () => {
-    const { v, calls } = view({ pickerError: 'disconnected', list: { rev: 0, channels: [] } })
+    const { v, calls } = view({ pickerError: 'disconnected', list: { rev: 0, channels: [], posting: { on: false } } })
     const p = page(v)
     expect(p.sections[0]!.empty).toBe('No channels yet. Your Inhouse agent posts only to channels listed here.')
     const add = p.sections.flatMap(s => s.rows).find(x => x.title === 'Add a channel')!
@@ -95,7 +95,7 @@ describe("the demo agent's channel list", () => {
   it('saves open channels, refuses a shared or non-member one and a stale rev', async () => {
     const start = await agent.listNotifyChannels()
     const saved = await agent.saveNotifyChannels({ channelIds: ['C0DEMO0001', 'C0DEMO0002'], alertsChannelId: 'C0DEMO0001', ifRev: start.rev })
-    expect(saved).toEqual({ rev: start.rev + 1, channels: [{ channelId: 'C0DEMO0001', name: 'ops-alerts', alerts: true }, { channelId: 'C0DEMO0002', name: 'warehouse', alerts: false }] })
+    expect(saved).toEqual({ rev: start.rev + 1, channels: [{ channelId: 'C0DEMO0001', name: 'ops-alerts', alerts: true }, { channelId: 'C0DEMO0002', name: 'warehouse', alerts: false }], posting: { on: false } })
     await expect(agent.saveNotifyChannels({ channelIds: ['C0DEMO0003'], ifRev: saved.rev })).rejects.toMatchObject({ code: 'conflict', reason: 'shared_channel' })
     await expect(agent.saveNotifyChannels({ channelIds: ['C0DEMO0004'], ifRev: saved.rev })).rejects.toMatchObject({ code: 'conflict', reason: 'not_member' })
     await expect(agent.saveNotifyChannels({ channelIds: [], ifRev: start.rev })).rejects.toMatchObject({ code: 'conflict', current: { rev: saved.rev } })
@@ -110,8 +110,9 @@ describe('Slack notices only with Slack connected (CI round)', async () => {
   it('a brand without Slack gets no menu row and no page; with it as a tool or a channel, both show', () => {
     expect(hasSlack(none)).toBe(false)
     expect(tabs(menuFor(none))).not.toContain('team-slack')
-    // The demo's menu (`menuFor` without `product`): every page but Slack notices and the product-only Always allowed.
-    expect(tabs(menuFor(none))).toEqual(tabs(SECTIONS).filter(id => id !== 'team-slack' && id !== 'you-permissions'))
+    // The demo's menu (`menuFor` without `product`): every page but Slack notices and the product-only Always allowed and
+    // What the agent can do (Stage 1 M3-C).
+    expect(tabs(menuFor(none))).toEqual(tabs(SECTIONS).filter(id => id !== 'team-slack' && id !== 'you-permissions' && id !== 'team-ceiling'))
     for (const t of [{ connected: ['slack'], channels: [] }, { connected: [], channels: [{ key: 'slack' }] }]) {
       expect(hasSlack(t)).toBe(true)
       expect(tabs(menuFor(t))).toContain('team-slack')

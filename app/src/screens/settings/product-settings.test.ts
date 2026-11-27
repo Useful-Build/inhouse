@@ -72,8 +72,8 @@ describe('the menu, the palette and the deep links (failures 2 and 3)', () => {
       expect(ids(false), id).toContain(id)
       expect(settingsTabs(false), id).toContain(id)
     }
-    // Stage 1 M2-H: every page but Always allowed, which only the product offers.
-    expect(settingsTabs(false)).toEqual(SETTINGS_PAGES.map(p => p.id).filter(id => id !== 'you-permissions'))
+    // Stage 1 M2-H: every page but Always allowed, which only the product offers (and, M3-C, What the agent can do).
+    expect(settingsTabs(false)).toEqual(SETTINGS_PAGES.map(p => p.id).filter(id => id !== 'you-permissions' && id !== 'team-ceiling'))
     expect(ids(true)).toEqual(expect.arrayContaining(['you-general', 'you-memory', 'you-permissions', 'team-agent', 'team-modes', 'team-memory', 'team-spend', 'team-members', 'team-data', 'team-audit']))
   })
   // Stage 1 M2-I: the product has no stages. Its Env is the Act view it is pinned to (store.ts `useCtx`). The audit log is

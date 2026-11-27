@@ -22,7 +22,8 @@ const refuse = (code: 'conflict' | 'invalid', text: string, extra: ConstructorPa
 
 export const demoNotify = {
   list(): Promise<NotifyChannelList> {
-    return Promise.resolve({ rev, channels: listed.map(c => ({ ...c })) })
+    // The demo's Slack page keeps its own Act-stage words and reads no posting state (content.ts `slackPage`).
+    return Promise.resolve({ rev, channels: listed.map(c => ({ ...c })), posting: { on: false } })
   },
   available(): Promise<AvailableChannels> {
     return Promise.resolve({
