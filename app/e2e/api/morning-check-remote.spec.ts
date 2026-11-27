@@ -1,8 +1,8 @@
 // The morning-check set's remote run on the scripted model (P4 acceptance 2's plumbing): the same remote logic run.mjs
 // --target drives (evals/morning-check/remote.ts, door.ts, runner.ts) and the same grader (grade.ts), on the per-PR test
 // deployment, where each turn gets its container. The proof is the pair:
-//  - outage-all: the door sets the test shop override to that case's shop, whose recorded upstream answers every request
-//    503. The build's egress passes it to the hub (server/egress/test-shop.ts), the hub reads that shop
+//  - outage-all: the door sets the test shop override to that case's shop, whose recorded upstream answers every read
+//    503 (its token endpoint still grants). The build's egress passes it to the hub (server/egress/test-shop.ts), the hub reads that shop
 //    (hub/index/test-shop.ts), the read comes back `upstream_unavailable`, and only then does the scenario's `read-failed`
 //    branch answer the outage result (test/scripted-model/scenarios.ts; any other error misses). Graded unchanged: it must
 //    pass.
