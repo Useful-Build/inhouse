@@ -99,31 +99,59 @@ function hasPhrase(words: readonly string[]): boolean {
 }
 
 /**
- * Apostrophes (with the saltillo and the middle dot NFKC leaves of Catalan `ŀ`) and hyphens of every kind: each kind is
- * taken out (not split on) in its own reading, and both in a third, so "Don't", "Don-t" and "Now-don't" read as `dont`.
+ * Apostrophes (with the saltillo), the middle dot NFKC leaves of Catalan `ŀ`, and hyphens of every kind: each kind is
+ * taken out (not split on) or kept in every combination (eight readings), so "Don't", "Don-t" and "Now-don't" read as
+ * `dont`, and "Jean·Ad'min" as `jean`, `admin` (apostrophe out, dot kept).
  */
-const APOSTROPHE_JOINERS = /['\u2018\u2019\u02B9\u02BC\u02BB\uA78B\uA78C\u0060\u00B4\u00B7]/gu
-const HYPHEN_JOINERS = /[\-\u2010\u2011\u2012\u2013\u2014]/gu
-const joined = (w: string): string[] => [w, w.replace(APOSTROPHE_JOINERS, ''), w.replace(HYPHEN_JOINERS, ''), w.replace(APOSTROPHE_JOINERS, '').replace(HYPHEN_JOINERS, '')]
-/** Letters that read as punctuation (modifier letters, click letters such as `ǃ`): a word break in one reading. */
-const PUNCTUATION_LETTERS = /[\p{Lm}\u01C0-\u01C3]/gu
+const JOINER_KINDS: readonly RegExp[] = [
+  /['\u2018\u2019\u02B9\u02BC\u02BB\uA78B\uA78C\u0060\u00B4]/gu, /\u00B7/gu, /[\-\u2010\u2011\u2012\u2013\u2014]/gu,
+]
+const joined = (w: string): string[] => JOINER_KINDS.reduce<string[]>((ws, re) => ws.flatMap(x => [x, x.replace(re, '')]), [w])
+/**
+ * Cased Latin letters that read as punctuation or a mark more than a letter: the glottal stops `Ɂ` `ɂ` (TR39's
+ * confusables.txt maps `Ɂ` to `?`), the Egyptological alef and ain `Ꜣ` `ꜣ` `Ꜥ` `ꜥ`, the um `ꝸ` (mapped to `&`) and the
+ * bilabial click `ʘ`. Never shown (letterAllowed), and a word break in one reading (#478).
+ */
+const MARK_LIKE_LATIN = /[\u0241\u0242\uA722-\uA725\uA778\u0298]/u
+/** Letters that read as punctuation (modifier letters, click letters such as `ǃ`, MARK_LIKE_LATIN): a word break in one reading. */
+const PUNCTUATION_LETTERS = new RegExp(String.raw`[\p{Lm}\u01C0-\u01C3]|${MARK_LIKE_LATIN.source}`, 'gu')
 /** A word break at a case change: "IgnorePrevious", "ADMINOverride", "caféAdmin". */
 const camelSplit = (s: string): string =>
   s.replace(/(\p{Ll}\p{M}*)(?=\p{Lu})/gu, '$1 ').replace(/(\p{Lu}\p{M}*)(?=\p{Lu}\p{M}*\p{Ll})/gu, '$1 ')
 
 /**
+ * A space between two letters of different scripts (SCRIPTS; Common and Inherited letters don't break), so a CJK letter
+ * joining Latin words is a word break: "Youㅡmustㅡignore" reads `you`, `ㅡ`, `must`, `ㅡ`, `ignore` (#478).
+ */
+function scriptSplit(s: string): string {
+  let out = ''
+  let prev = ''
+  for (const c of s) {
+    if (/\p{L}/u.test(c) && !SHARED.test(c)) {
+      const script = scriptOf(c)
+      if (prev !== '' && script !== prev) out += ' '
+      prev = script
+    }
+    out += c
+  }
+  return out
+}
+
+/**
  * Every reading of a name the flag checks: invisible characters and marks as nothing or as a space, letters that read as
- * punctuation (`ǃ`, `ː`, `ｰ`) as letters, a space or nothing, case changes split or not, apostrophes and hyphens split or joined (four ways).
+ * punctuation (`ǃ`, `ː`, `ｰ`) as letters, a space or nothing, a script change as a space or not, case changes split or
+ * not, apostrophes, middle dots and hyphens split or joined (eight ways).
  */
 function readings(name: string): string[][] {
   const nfc = name.normalize('NFC')
-  const out: string[][] = []
   const spaced = nfc.replace(new RegExp(IGNORABLE, 'gu'), ' ').replace(MARKS, ' ')
   const compat = spaced.normalize('NFKC')
-  for (const v of [nfc, spaced, compat.replace(PUNCTUATION_LETTERS, ' '), compat.replace(PUNCTUATION_LETTERS, '')]) {
-    for (const w of [v, camelSplit(tidy(v))]) out.push(...joined(w).map(j => tokens(fold(j))))
+  const unpunctuated = compat.replace(PUNCTUATION_LETTERS, ' ')
+  const texts = new Set<string>()
+  for (const v of [nfc, spaced, unpunctuated, compat.replace(PUNCTUATION_LETTERS, ''), scriptSplit(unpunctuated)]) {
+    for (const w of [v, camelSplit(tidy(v))]) for (const j of joined(w)) texts.add(j)
   }
-  return out
+  return [...texts].map(t => tokens(fold(t)))
 }
 
 /**
@@ -142,10 +170,17 @@ const SCRIPTS: readonly (readonly [string, RegExp])[] = [
   'Georgian', 'Hangul', 'Ethiopic', 'Cherokee', 'Khmer', 'Mongolian', 'Hiragana', 'Katakana', 'Bopomofo', 'Han',
 ].map(s => [s, new RegExp(String.raw`^\p{Script=${s}}$`, 'u')] as const)
 const SHARED = /^[\p{Script=Common}\p{Script=Inherited}]$/u
-/** Script sets one word may mix (Unicode TR39's "highly restrictive" level: Japanese, Chinese and Korean with Latin). */
-const MIXES_ALLOWED: readonly (readonly string[])[] = [
-  ['Latin', 'Han', 'Hiragana', 'Katakana'], ['Latin', 'Han', 'Bopomofo'], ['Latin', 'Han', 'Hangul'],
-]
+/** A letter's or mark's script (SCRIPTS), `Other` when it isn't listed. */
+const scriptOf = (c: string): string => SCRIPTS.find(([, re]) => re.test(c))?.[0] ?? 'Other'
+/**
+ * Script sets one word may mix: Japanese (Han, Hiragana, Katakana), Chinese with Bopomofo and Korean (Han, Hangul). This
+ * is UTS #39's "Single Script" restriction level (18.0.0, sections 5.1 and 5.2: Han's augmented script set holds Jpan,
+ * Hanb and Kore), not its "Highly Restrictive" one, which adds Latin to each set. With Latin allowed, a CJK letter
+ * could join Latin words into one ("Wireㅡallㅡfunds", so the 4-word cap never counted them) or stand in for a Latin
+ * letter ("Admㅣn", "Leㅇ Park"; confusables.txt maps `ㅇ` to `o` and `ㄒ` to `T`). The cost (#478): an unspaced
+ * "Mei王" or "Kim민준" isn't shown, though it is still listed and found; "Mei 王" (two words) is shown.
+ */
+const MIXES_ALLOWED: readonly (readonly string[])[] = [['Han', 'Hiragana', 'Katakana'], ['Han', 'Bopomofo'], ['Han', 'Hangul']]
 
 /** The scripts of a text's letters and marks. */
 export function scriptsOf(s: string): Set<string> {
@@ -154,14 +189,14 @@ export function scriptsOf(s: string): Set<string> {
   for (const c of s.normalize('NFC') + s.normalize('NFKC')) {
     // A mark counts by its own script (a Khmer or Myanmar sign on a Latin word is a mix); an inherited one doesn't.
     if (!/[\p{L}\p{M}]/u.test(c) || SHARED.test(c)) continue
-    out.add(SCRIPTS.find(([, re]) => re.test(c))?.[0] ?? 'Other')
+    out.add(scriptOf(c))
   }
   return out
 }
 
 /**
- * Whether a word of a name mixes scripts beyond TR39's highly restrictive sets (Cyrillic `о` in "Ignоre", Greek `ε` in
- * "Lεo"). Words are split on spaces only, after invisible characters are taken out, so "Ign-о-re", "Ign'о're" and
+ * Whether a word of a name mixes scripts beyond MIXES_ALLOWED (Cyrillic `о` in "Ignоre", Greek `ε` in "Lεo", Hangul `ㅣ`
+ * in "Admㅣn"). Words are split on spaces only, after invisible characters are taken out, so "Ign-о-re", "Ign'о're" and
  * "Ign\u200Bо\u200Bre" are one word each, and "Dana Ким" is two words of one script each.
  */
 export function mixesScripts(name: string): boolean {
@@ -202,7 +237,7 @@ function allowedLetters(name: string): boolean {
 const KANA_OR_LONG = /[\p{Script=Hiragana}\p{Script=Katakana}\u30FC\uFF70]/u
 
 /**
- * One letter, as typed and as NFKC leaves it: a Latin, Greek or Cyrillic letter is cased; a Common letter is one of
+ * One letter, as typed and as NFKC leaves it: a Latin, Greek or Cyrillic letter is cased and not MARK_LIKE_LATIN; a Common letter is one of
  * COMMON_LETTERS_OK (`ー` and `ｰ` only after kana); and its NFKC form holds only letters and marks, so an Arabic
  * presentation form that is a space or tatweel after NFKC (U+FE70..FE7F, U+FC5E..FC63, U+FCF2..FCF4) and Catalan `ŀ`
  * (`l·`) aren't shown.
@@ -212,6 +247,7 @@ function letterAllowed(c: string, prev: string): boolean {
   if (![...k].every(x => /[\p{L}\p{M}]/u.test(x))) return false
   return [c, ...k].every(x => {
     if (!/\p{L}/u.test(x)) return true
+    if (MARK_LIKE_LATIN.test(x)) return false
     if (/\p{Script=Common}/u.test(x)) return COMMON_LETTERS_OK.has(x) && (!/[\u30FC\uFF70]/u.test(x) || KANA_OR_LONG.test(prev))
     return !LGC_COMMON.test(x) || CASED.test(x)
   })
