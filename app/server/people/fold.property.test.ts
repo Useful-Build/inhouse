@@ -109,7 +109,8 @@ describe('a name the agent is shown', () => {
     }), { numRuns: RUNS })
   })
 
-  it('has at most 4 parts, split on spaces, hyphens, apostrophes, dots, marks, the saltillo, ー after a non-kana letter, a script change next to a Latin letter and what NFKC breaks', () => {
+  // ー splits only after a non-kana letter, and a script change next to a Latin letter splits too (#478).
+  it('has at most 4 parts, split on spaces, hyphens, apostrophes, dots, marks, the saltillo, ー and what NFKC breaks', () => {
     // A part is Latin letters or kana with long-vowel marks ("アーイーウ" is one part: ー after kana doesn't split).
     const part = fc.oneof(
       { weight: 3, arbitrary: fc.stringMatching(/^[A-Za-z]{1,6}$/) },
@@ -171,7 +172,8 @@ describe('mixed_script', () => {
   })
 
 
-  it('flags a Latin name, hyphens and apostrophes included, with one letter swapped for a look-alike of another script (CJK too)', () => {
+  // The look-alike may be Cyrillic, Greek or CJK (#478).
+  it('flags a Latin name, hyphens and apostrophes included, with one letter swapped for a look-alike of another script', () => {
     const word = fc.array(fc.stringMatching(/^[A-Za-z][a-z]{0,5}$/), { minLength: 1, maxLength: 3 })
       .chain(parts => fc.array(fc.constantFrom('-', "'", '’', '\u200B', ''), { minLength: parts.length - 1, maxLength: parts.length - 1 })
         .map(joins => parts.map((p, i) => p + (joins[i] ?? '')).join('')))
