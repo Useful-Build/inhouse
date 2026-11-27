@@ -65,14 +65,16 @@ export const STATES: UiState[] = [
   page_('act-chat-stuck', 'Act', 'Normal', '#/chats/stuck', '3 orders · $556', true),
   page_('act-chats-all', 'Act', 'Normal', '#/chats/all', 'Kestrel delivery times', true),
   // Stage 1 M3-U: a 450-change batch card in its chat, and its full list.
-  page_('act-chat-batch', 'Act', 'Normal', '#/chats/vip-tags', 'In all: 450 orders', true),
+  page_('act-chat-batch', 'Act', 'Normal', '#/chats/vip-tags', 'and 447 more', true),
   {
-    name: 'pop-batch-sheet', stage: 'Act', scenario: 'Normal', hash: '#/chats/vip-tags', ready: 'In all: 450 orders', a11y: true,
+    name: 'pop-batch-sheet', stage: 'Act', scenario: 'Normal', hash: '#/chats/vip-tags', ready: 'and 447 more', a11y: true,
     act: async page => {
       await page.getByRole('button', { name: /^See all 450: / }).click()
-      const sheet = page.getByRole('dialog', { name: '450 changes in Shopify' })
-      await expect(sheet.locator('[data-item]')).toHaveCount(450)
-      await expect(sheet.getByRole('button', { name: 'Approve these 450: 450 orders' })).toBeVisible()
+      const sheet = page.getByRole('dialog', { name: 'Tag 450 orders as VIP' })
+      await expect(sheet.locator('[data-item]').first()).toBeVisible()
+      await expect(sheet.getByRole('button', { name: 'Approve all 450' })).toBeVisible()
+      // The list reads more as it scrolls: wait until the first page is in and nothing is loading.
+      await expect(sheet.getByRole('status')).toHaveCount(0)
     },
   },
   {

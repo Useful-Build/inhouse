@@ -1,19 +1,20 @@
 // Stage 1 M3-U in the demo: the real agent's batch card and admins card on sample data (sample-data/actions.json,
 // mock-actions.ts), on desktop and phone, in both themes. It would fail if:
-//  - the 450-change batch didn't show in its chat (Act) with its first 10 lines, "and 440 more", its totals and an
-//    Approve that names exactly what it covers, or showed on day one (the stage doesn't matter: the stages are going);
-//  - "See all 450" didn't list every change, in order, or its Approve covered another count than the one it named;
+//  - the 450-change batch didn't show in its chat with its title, one quiet line ("One approval covers all 450"), 3 rows,
+//    "and 447 more" with "See all 450" and "Approve all 450", or showed on day one (the stage doesn't matter: they're going);
+//  - "See all 450" didn't list every change, in order, its search didn't narrow them, or its Approve covered another count;
+//  - the 12-item restock didn't show as a table (column heads, 5 rows) with its total in the header;
 //  - the approval didn't hold for 10 seconds on the demo clock and then say all 450 went out;
 //  - Approvals didn't list the batch and a teammate's refund (any admin answers it) under "Actions for you";
 //  - any of these failed axe (WCAG 2.1 A and AA) in light or dark, or scrolled sideways.
 // Named screenshots of each state go to the run's artifacts (the design checkpoint and VERIFY.md's visual proof). The
 // phone's: actions-demo-phone.spec.ts.
 import AxeBuilder from '@axe-core/playwright'
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import { expect, fxFor, test, type Stage, type Theme } from './support/fx.js'
 
-const BATCH = '450 changes in Shopify'
-const APPROVE = 'Approve these 450: 450 orders'
+const BATCH = 'Tag 450 orders as VIP'
+const APPROVE = 'Approve all 450'
 
 async function start(page: Page, hash: string, o: { stage?: Stage; theme?: Theme } = {}) {
   await page.clock.install()
@@ -32,20 +33,24 @@ async function axeClean(page: Page, name: string) {
   expect(violations.map(v => `${v.id}: ${v.nodes.map(n => n.target.join(' ')).join(', ')}`), name).toEqual([])
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `${name} scrolls sideways`).toBe(true)
 }
+/** Scrolls the full list to its end until every row is read (it reads 100 more each time its end shows). */
+async function readAll(sheet: Locator, n: number) {
+  const list = sheet.locator('[data-sheet-list]')
+  await expect.poll(async () => { await list.evaluate(el => { el.scrollTop = el.scrollHeight }); return sheet.locator('[data-item]').count() }, { timeout: 30_000 }).toBe(n)
+}
 const batchCard = (page: Page) => page.locator('[data-action-card]').filter({ has: page.getByRole('heading', { name: BATCH }) })
 
 for (const theme of ['light', 'dark'] as const) {
-  test(`the batch card in its chat (${theme}): first lines, totals and an Approve naming what it covers`, async ({ page }) => {
+  test(`the batch card in its chat (${theme}): a quiet summary, 3 rows, See all and Approve all`, async ({ page }) => {
     await start(page, '#/chats/vip-tags', { theme })
     const card = batchCard(page)
     await expect(card).toBeVisible()
-    await expect(card).toContainText('Needs your approval')
-    const lines = card.locator('[data-card-lines] li')
-    await expect(lines).toHaveCount(11)
-    await expect(lines.first()).toHaveText('Order 3901 (northline-outdoor): add VIP')
-    await expect(lines.nth(9)).toHaveText('Order 3910 (northline-outdoor): add VIP')
-    await expect(lines.last()).toHaveText('and 440 more')
-    await expect(card.locator('[data-batch-totals]')).toContainText('In all: 450 orders')
+    await expect(card.locator('[data-card-subtitle]')).toHaveText('Shopify · One approval covers all 450')
+    const rows = card.locator('[data-card-rows] [data-row]')
+    await expect(rows).toHaveCount(3)
+    await expect(rows.first()).toHaveText('#3901add VIP')
+    await expect(rows.last()).toHaveText('#3903add VIP')
+    await expect(card.locator('[data-card-more]')).toHaveText('and 447 moreSee all 450')
     await expect(card.locator('[data-card-actions] button')).toHaveText([APPROVE, 'No'])
     await expect(card.getByRole('button', { name: `See all 450: ${BATCH}` })).toBeVisible()
     await card.scrollIntoViewIfNeeded()
@@ -61,10 +66,16 @@ test('See all lists every change in order; its Approve covers the 450 it names, 
   const sheet = page.getByRole('dialog', { name: BATCH })
   await expect(sheet).toBeVisible()
   const items = sheet.locator('[data-item]')
+  await readAll(sheet, 450)
+  await expect(items.nth(0)).toHaveText('#3901add VIP')
+  await expect(items.nth(449)).toHaveText('#4350add VIP')
+  await expect(sheet.locator('[data-sheet-totals]')).toHaveText('450 orders')
+  // A search narrows the rows on their own words.
+  await sheet.getByRole('searchbox', { name: 'Search orders' }).fill('4123')
+  await expect(items).toHaveCount(1)
+  await expect(items.first()).toHaveText('#4123add VIP')
+  await sheet.getByRole('searchbox', { name: 'Search orders' }).fill('')
   await expect(items).toHaveCount(450)
-  await expect(items.nth(0)).toContainText('Order 3901 (northline-outdoor): add VIP')
-  await expect(items.nth(449)).toContainText('Order 4350 (northline-outdoor): add VIP')
-  await expect(sheet.locator('[data-sheet-totals]')).toHaveText('450 changes · In all: 450 orders')
   await items.nth(200).scrollIntoViewIfNeeded()
   await shot(page, 'demo-batch-sheet-desktop-light')
   await axeClean(page, 'demo batch sheet light')
@@ -89,11 +100,18 @@ test('No on the batch: nothing goes out, and the card offers nothing more', asyn
 })
 
 for (const theme of ['light', 'dark'] as const) {
-  test(`Approvals lists the batch and a teammate's refund for any admin (${theme})`, async ({ page }) => {
+  test(`Approvals lists both batches (a list and a table) and a teammate's refund for any admin (${theme})`, async ({ page }) => {
     await start(page, '#/approvals', { theme })
     const section = page.locator('section[aria-labelledby="agent-actions"]')
     await expect(section.getByRole('heading', { name: /^Actions for you/ })).toBeVisible()
     await expect(batchCard(page)).toBeVisible()
+    // Rows with quantities are a table, its total in the header.
+    const restock = page.locator('[data-action-card]').filter({ has: page.getByRole('heading', { name: 'Restock 12 items' }) })
+    await expect(restock.locator('[data-card-total]')).toHaveText('12 changes · 2,400 stock units')
+    await expect(restock.locator('th')).toHaveText(['Item', 'Where and why', 'Stock'])
+    await expect(restock.locator('tbody tr')).toHaveCount(5)
+    await expect(restock.locator('tbody tr').first()).toHaveText('Item 8001Location 601 · stock received+20')
+    await expect(restock.locator('[data-card-actions] button')).toHaveText(['Approve all 12', 'No'])
     const refund = page.locator('[data-action-card]').filter({ has: page.getByRole('heading', { name: 'Refund $238.00 (USD) on order 4838' }) })
     await expect(refund).toContainText('Dana Kim asks an admin')
     await expect(refund).toContainText('Moves money')

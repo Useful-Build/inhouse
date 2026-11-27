@@ -1114,9 +1114,9 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       for (const q of await c.questions()) parse(QuestionSchema, q, 'a question')
       if (!t.seedAction) {
         // The demo: no permission or question to list; its actions are its sample cards (Stage 1 M3-U: a batch and a
-        // teammate's refund), and nothing it doesn't have can be answered.
+        // restock and a teammate's refund), and nothing it doesn't have can be answered.
         expect([await c.permissions(), await c.questions()]).toEqual([[], []])
-        expect((await c.actions()).map(a => [a.approverKind, a.batch?.itemCount ?? null])).toEqual([['person', 450], ['admins', null]])
+        expect((await c.actions()).map(a => [a.approverKind, a.batch?.itemCount ?? null])).toEqual([['person', 450], ['person', 12], ['admins', null]])
         for (const refused of [c.action('ac_AAAAAAAAAAAAAAAAAAAAAA'), c.answerAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1, 'once'), c.undoAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1),
           c.resolveAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1, 'sent'), c.withdrawAction('ac_AAAAAAAAAAAAAAAAAAAAAA', 1), c.actionItems('ac_AAAAAAAAAAAAAAAAAAAAAA', 0),
           c.removePermission('pg_AAAAAAAAAAAAAAAAAAAAAA', 1)]) {

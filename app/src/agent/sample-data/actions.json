@@ -1,24 +1,40 @@
 {
-  "note": "The demo's agent actions (Stage 1 M3-U): what the real agent's cards look like, on invented data. They show in the Normal scenario, whatever the stage. The batch is one card holding 450 changes, each tagging one order; its lines are made from `line` with each order number from `firstOrder` up. The refund is a teammate's, so only an admin may approve it. Times are from the demo's Monday.",
-  "batch": {
-    "id": "ac_demoVipTagBatch0000000",
-    "chatId": "vip-tags",
-    "title": "450 changes in Shopify",
-    "tool": "Shopify",
-    "itemCount": 450,
-    "firstOrder": 3901,
-    "line": "Order {n} (northline-outdoor): add VIP",
-    "unitsLabel": "orders",
-    "guardrail": "bulk",
-    "askedAt": "0d 07:58",
-    "result": "Sent. {n} of {n} went out"
-  },
+  "note": "The demo's agent actions (Stage 1 M3-U): what the real agent's cards look like, on invented data. They show in the Normal scenario, whatever the stage. Each batch is one card holding many changes. The VIP batch tags 450 orders, one each, its orders numbered from `firstOrder` up; its lines, rows and title are the server's words for that operation. The restock batch adds stock to 12 items at one location, one quantity each (a table with its total). The refund is a teammate's, so only an admin may approve it. Times are from the demo's Monday.",
+  "tool": "Shopify",
+  "shop": "northline-outdoor",
+  "batches": [
+    {
+      "id": "ac_demoVipTagBatch0000000",
+      "chatId": "vip-tags",
+      "title": "Tag 450 orders as VIP",
+      "kind": "tags",
+      "count": 450,
+      "firstOrder": 3901,
+      "tag": "VIP",
+      "unitsLabel": "orders",
+      "guardrail": "bulk",
+      "askedAt": "0d 07:58"
+    },
+    {
+      "id": "ac_demoRestockBatch000000",
+      "chatId": "ridge",
+      "title": "Restock 12 items",
+      "kind": "restock",
+      "firstItem": 8001,
+      "location": 601,
+      "reason": "stock received",
+      "quantities": [20, 40, 120, 60, 200, 100, 80, 300, 500, 400, 380, 200],
+      "unitsLabel": "stock units",
+      "guardrail": "count",
+      "askedAt": "0d 07:49"
+    }
+  ],
+  "batchResult": "Sent. {n} of {n} went out",
   "refund": {
     "id": "ac_demoDanaRefund00000000",
     "askedBy": "dana",
     "title": "Refund $238.00 (USD) on order 4838",
     "lines": ["1 item, shipping $0.00.", "1 × line 48381", "Restock the items: no.", "The customer gets Shopify’s refund email: no."],
-    "tool": "Shopify",
     "askedAt": "0d 07:31",
     "result": "Sent."
   }

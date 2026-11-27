@@ -114,3 +114,10 @@ export function batchStoppedText(p: { sent: number; total: number; left: number;
     : `The other ${p.left} ${p.left === 1 ? 'was' : 'were'} withdrawn.`
   return `${p.sent} of ${p.total} went out before this stopped. ${rest} ${p.why}`
 }
+
+/** Stage 1 M3-U: a list in UI words, no Oxford comma: "VIP", "VIP and rush", "VIP, rush and gift". */
+export function andList(xs: readonly string[]): string {
+  return xs.length <= 1 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`
+}
+/** Stage 1 M3-U: a count and its noun, the noun singular for one: "450 orders", "1 order". */
+export const countOf = (n: number, one: string, many: string): string => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`

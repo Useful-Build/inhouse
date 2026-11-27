@@ -141,7 +141,7 @@ describe('Approvals: questions and actions', () => {
   test('a batch answered here reads the list again: the card that took its later items joins the end, the answered one stays', async () => {
     const batch = (id: string, n: number, o: Partial<ActionCard> = {}) => card({
       id, kind: 'exact', title: `${n} changes in Shopify`, lines: [], can: { ...NONE, approve: true, deny: true },
-      batch: { itemCount: n, firstLines: [], totals: { records: n, units: n, unitsLabel: 'orders' } }, ...o,
+      batch: { itemCount: n, firstLines: [], firstRows: [], heads: { ref: 'Order', change: 'Change', amount: 'Amount' }, totals: { records: n, units: n, unitsLabel: 'orders' } }, ...o,
     })
     fake.actions.mockResolvedValueOnce([batch('ac_JJJJJJJJJJJJJJJJJJJJJJ', 12)]).mockResolvedValueOnce([batch('ac_KKKKKKKKKKKKKKKKKKKKKK', 3)])
     fake.questions.mockResolvedValue([])

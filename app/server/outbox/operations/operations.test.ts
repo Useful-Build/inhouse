@@ -246,3 +246,40 @@ describe('the table keeps the class rules (M3-A)', () => {
     expect(line).toContain(text)
   })
 })
+
+// Stage 1 M3-U (N33): a batch's rows and title. Ways it could break: an operation that collects has no row, no heads or
+// no title (its card would fall back to a bare line or "450 changes in Shopify"); a row drops the record or the change;
+// a stock row loses its sign; a title names tags the items don't all share, or counts the wrong thing.
+describe('batch rows and titles (M3-U)', () => {
+  it('every operation that collects defines its row, its heads and its title', () => {
+    for (const e of Object.values(OPERATIONS) as OperationEntry[]) {
+      if (!e.coalesces) continue
+      expect([e.key, typeof e.itemRow, typeof e.batchTitle, e.rowHeads === undefined]).toEqual([e.key, 'function', 'function', false])
+    }
+  })
+  it('tags: the orders and the change; the title names the tags only when every item shares them', () => {
+    const add = OPERATIONS['shopify.order.tag_add'] as OperationEntry<TagAddArgs>
+    const rm = OPERATIONS['shopify.order.tag_remove'] as OperationEntry<TagAddArgs>
+    const a = { orderIds: ['gid://shopify/Order/1042', 'gid://shopify/Order/1043'], tags: ['VIP', 'rush'] }
+    expect(add.itemRow!(a)).toEqual({ ref: '#1042, #1043', change: 'add VIP, rush' })
+    expect(rm.itemRow!(a)).toEqual({ ref: '#1042, #1043', change: 'remove VIP, rush' })
+    expect(add.titleKey).toBe('$.tags')
+    expect(add.batchTitle!({ records: 450, units: 450 }, { orderIds: ['gid://shopify/Order/1'], tags: ['VIP'] })).toBe('Tag 450 orders as VIP')
+    expect(add.batchTitle!({ records: 1, units: 1 }, a)).toBe('Tag 1 order as VIP and rush')
+    expect(add.batchTitle!({ records: 1200, units: 1200 }, { orderIds: ['gid://shopify/Order/1'], tags: ['a', 'b', 'c'] })).toBe('Tag 1,200 orders as a, b and c')
+    expect(add.batchTitle!({ records: 450, units: 450 }, null)).toBe('Add tags to 450 orders')
+    expect(rm.batchTitle!({ records: 12, units: 12 }, a)).toBe('Remove VIP and rush from 12 orders')
+    expect(rm.batchTitle!({ records: 12, units: 12 }, null)).toBe('Remove tags from 12 orders')
+  })
+  it('stock: the item, where and why, and the signed quantity; drafts: their products', () => {
+    const restock = OPERATIONS['shopify.inventory.restock'] as OperationEntry<{ inventoryItemId: string; locationId: string; quantity: number; reason: string }>
+    const reduce = OPERATIONS['shopify.inventory.reduce'] as OperationEntry<{ inventoryItemId: string; locationId: string; quantity: number; reason: string }>
+    const s = { inventoryItemId: 'gid://shopify/InventoryItem/8001', locationId: 'gid://shopify/Location/601', quantity: 1200, reason: 'received' }
+    expect(restock.itemRow!(s)).toEqual({ ref: 'Item 8001', change: 'Location 601 · stock received', amount: '+1,200' })
+    expect(reduce.itemRow!({ ...s, reason: 'damaged' })).toEqual({ ref: 'Item 8001', change: 'Location 601 · damaged', amount: '-1,200' })
+    expect(restock.batchTitle!({ records: 120, units: 2400 }, null)).toBe('Restock 120 items')
+    const draft = OPERATIONS['shopify.draft_order.create']
+    expect(draft.itemRow!({ lines: [{ variantId: 'gid://shopify/ProductVariant/7001', quantity: 2 }], note: 'Showroom' })).toEqual({ ref: 'Draft', change: '2 × variant 7001; note: Showroom' })
+    expect(draft.batchTitle!({ records: 10, units: 10 }, null)).toBe('Create 10 draft orders')
+  })
+})

@@ -39,10 +39,26 @@ export const BATCH_FIRST_LINES = 10
  * `itemCount` in the person's words ("120 orders", "+2,400 stock units"). `amount` is a money total already formatted by
  * the server ("$24.90 (USD)"); a batch never moves money today, so it's set by no operation yet.
  */
+/**
+ * Stage 1 M3-U (N33): one item as a row of the batch card and its full list, in server words: the record it changes
+ * (`ref`, "#3901"), the change ("add VIP"), and its amount or quantity when it has one ("+20", "$24.90"). Nothing a
+ * person approves is cut from the item's `line`; the row is its short form.
+ */
+export const ActionItemRowSchema = z.object({ ref: z.string(), change: z.string(), amount: z.string().optional() })
+export type ActionItemRow = z.infer<typeof ActionItemRowSchema>
+
+/** Stage 1 M3-U (N33): the rows' column heads, in the person's words ("Item", "Where", "Stock"), for rows with amounts. */
+export const ActionItemHeadsSchema = z.object({ ref: z.string(), change: z.string(), amount: z.string() })
+export type ActionItemHeads = z.infer<typeof ActionItemHeadsSchema>
+
 export const ActionBatchSchema = z.object({
   /** 0 only for a batch whose every item moved to a new card before any was sent (the old card lapses in place). */
   itemCount: z.number().int().min(0).max(BATCH_ITEMS_MAX),
   firstLines: z.array(z.string()).max(BATCH_FIRST_LINES),
+  /** Stage 1 M3-U: the same first items as rows. */
+  firstRows: z.array(ActionItemRowSchema).max(BATCH_FIRST_LINES),
+  /** Stage 1 M3-U: the rows' column heads. */
+  heads: ActionItemHeadsSchema,
   totals: z.object({
     records: z.number().int().min(0),
     units: z.number().int().min(0),
@@ -168,6 +184,8 @@ export type ActionItemState = z.infer<typeof ActionItemStateSchema>
 export const ActionItemSchema = z.object({
   n: z.number().int().min(1).max(BATCH_ITEMS_MAX),
   line: z.string(),
+  /** Stage 1 M3-U (N33): its short form as a row. */
+  row: ActionItemRowSchema,
   state: ActionItemStateSchema,
   /** The outcome in server words, once it has one (sent with its safe ref, or the failure). */
   result: z.string().optional(),

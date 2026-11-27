@@ -1,6 +1,6 @@
 // The demo's agent actions (Stage 1 M3-U): what the real agent's cards look like, on the invented data in
-// sample-data/actions.json. A 450-change batch in a chat of the signed-in admin's, and a teammate's refund that only an
-// admin may approve (an admins card, N25). They show in the Normal scenario whatever the stage (the stages are going); in the
+// sample-data/actions.json. A 450-change batch in a chat of the signed-in admin's, a 12-item restock (a table with its
+// total), and a teammate's refund that only an admin may approve (an admins card, N25). They show in the Normal scenario whatever the stage (the stages are going); in the
 // other scenarios the lists are empty and every answer is refused (not found), as before. Answers follow the outbox's rules as the screens
 // see them: the rev an answer was read at, a batch's `upTo` and totals as the card showed them, Undo in the 10 second
 // hold, and the send at its end, on the demo clock. In memory only: a reload or Reset demo starts them again.
@@ -12,9 +12,13 @@ import { NEEDS_CHECK } from '../../shared/contract/action-states'
 import { demoAt } from './demo-clock'
 import { instantOf as instant } from '../lib/format'
 
+type RawBatch = { id: string; chatId: string; title: string; unitsLabel: string; guardrail: 'bulk' | 'count'; askedAt: string } & (
+  | { kind: 'tags'; count: number; firstOrder: number; tag: string }
+  | { kind: 'restock'; firstItem: number; location: number; reason: string; quantities: number[] }
+)
 const raw = actionsRaw as {
-  batch: { id: string; chatId: string; title: string; tool: string; itemCount: number; firstOrder: number; line: string; unitsLabel: string; guardrail: 'bulk'; askedAt: string; result: string }
-  refund: { id: string; askedBy: string; title: string; lines: string[]; tool: string; askedAt: string; result: string }
+  tool: string; shop: string; batches: RawBatch[]; batchResult: string
+  refund: { id: string; askedBy: string; title: string; lines: string[]; askedAt: string; result: string }
 }
 
 /**
@@ -27,7 +31,7 @@ export const FIRST_LINES = 10
 /** The demo's hold, as the product's (N11). */
 export const DEMO_HOLD_MS = 10_000
 const NONE: ActionCard['can'] = { allowOnce: false, alwaysAllow: false, approve: false, deny: false, undo: false, resolve: false, withdraw: false }
-const TOOL = { accountId: 'shopify:northline-outdoor', label: raw.batch.tool }
+const TOOL = { accountId: `shopify:${raw.shop}`, label: raw.tool }
 
 export interface MockActionsHost {
   /** Now on the demo clock, epoch ms. */
@@ -39,21 +43,50 @@ export interface MockActionsHost {
   memberId(sampleId: string): string
 }
 
-interface Row { card: ActionCard; sendAtMs: number | null; items: ActionItem[] }
+/** A demo item, with the records and units the totals count (as the server's item rows hold them). */
+type Item = ActionItem & { records: number; units: number }
+interface Row { card: ActionCard; sendAtMs: number | null; items: Item[] }
 
-const lineOf = (n: number) => raw.batch.line.replace('{n}', String(raw.batch.firstOrder + n - 1))
+/** A batch's items in the server's words for its operation (operations/shopify-order-tags.ts, shopify-inventory.ts). */
+function itemsOf(b: RawBatch): { items: Item[]; heads: { ref: string; change: string; amount: string } } {
+  if (b.kind === 'tags') {
+    return {
+      heads: { ref: 'Order', change: 'Change', amount: 'Amount' },
+      items: Array.from({ length: b.count }, (_, i) => {
+        const order = b.firstOrder + i
+        return { n: i + 1, line: `Order ${order} (${raw.shop}): add ${b.tag}`, row: { ref: `#${order}`, change: `add ${b.tag}` }, state: 'pending' as const, records: 1, units: 1 }
+      }),
+    }
+  }
+  return {
+    heads: { ref: 'Item', change: 'Where and why', amount: 'Stock' },
+    items: b.quantities.map((q, i) => {
+      const item = b.firstItem + i
+      return {
+        n: i + 1, line: `Item ${item} at location ${b.location} (${raw.shop}): +${q} (${b.reason})`,
+        row: { ref: `Item ${item}`, change: `Location ${b.location} · ${b.reason}`, amount: `+${q}` }, state: 'pending' as const, records: 1, units: q,
+      }
+    }),
+  }
+}
 
-function batchRow(h: MockActionsHost): Row {
-  const b = raw.batch
-  const items: ActionItem[] = Array.from({ length: b.itemCount }, (_, i) => ({ n: i + 1, line: lineOf(i + 1), state: 'pending' as const }))
-  const firstLines = items.slice(0, FIRST_LINES).map(i => i.line)
+const sum = (items: Item[], k: 'records' | 'units') => items.reduce((n, i) => n + i[k], 0)
+const visible = ({ records: _r, units: _u, ...item }: Item): ActionItem => item
+
+function batchRow(h: MockActionsHost, b: RawBatch): Row {
+  const { items, heads } = itemsOf(b)
+  const first = items.slice(0, FIRST_LINES)
+  const firstLines = first.map(i => i.line)
   return {
     sendAtMs: null, items,
     card: {
-      id: b.id, rev: 1, kind: 'exact', state: 'waiting', title: b.title, lines: firstLines, tool: TOOL, records: b.itemCount,
+      id: b.id, rev: 1, kind: 'exact', state: 'waiting', title: b.title, lines: firstLines, tool: TOOL, records: sum(items, 'records'),
       reachesCustomer: false, reversible: true, guardrail: b.guardrail, chatId: b.chatId, askedBy: h.meId, askedAt: demoAt(b.askedAt),
       serverNow: demoAt(b.askedAt), can: { ...NONE, approve: true, deny: true }, nudgeAlways: false, approverKind: 'person',
-      batch: { itemCount: b.itemCount, firstLines, totals: { records: b.itemCount, units: b.itemCount, unitsLabel: b.unitsLabel } },
+      batch: {
+        itemCount: items.length, firstLines, firstRows: first.map(i => i.row), heads,
+        totals: { records: sum(items, 'records'), units: sum(items, 'units'), unitsLabel: b.unitsLabel },
+      },
     },
   }
 }
@@ -75,7 +108,7 @@ export class MockActions {
   private h: MockActionsHost
   constructor(h: MockActionsHost) { this.h = h; this.rows = this.fresh() }
 
-  private fresh(): Row[] { return [batchRow(this.h), refundRow(this.h)] }
+  private fresh(): Row[] { return [...raw.batches.map(b => batchRow(this.h, b)), refundRow(this.h)] }
   /** Reset demo: every card waits again. */
   reset() { this.rows = this.fresh() }
 
@@ -84,7 +117,7 @@ export class MockActions {
     if (row.card.state === 'approved' && row.sendAtMs !== null && this.h.now() >= row.sendAtMs) {
       const n = row.card.batch?.itemCount ?? 0
       row.items = row.items.map(i => (i.n <= n ? { ...i, state: 'sent' as const, result: 'Sent.' } : i))
-      const result = row.card.batch ? raw.batch.result.replaceAll('{n}', String(n)) : raw.refund.result
+      const result = row.card.batch ? raw.batchResult.replaceAll('{n}', String(n)) : raw.refund.result
       row.card = { ...row.card, state: 'sent', rev: row.card.rev + 1, can: NONE, result }
       row.sendAtMs = null
     }
@@ -114,12 +147,13 @@ export class MockActions {
     const c = row.card
     if (c.rev !== ifRev || c.state !== 'waiting') this.conflict(row)
     if (choice === 'once' || choice === 'always' || (choice === 'approve' && !c.can.approve)) throw new AgentError('forbidden', "You can't answer this one.")
-    // A batch's answer names what it saw (each of the demo's items is one order: records and units are its count).
+    // A batch's answer names what it saw: the stored items 1 to `upTo` must add up to the totals it sends.
+    const shown = covers ? row.items.filter(i => i.n <= covers.upTo) : []
     if (c.batch) {
       if (!covers || covers.upTo > c.batch.itemCount) throw new AgentError('invalid', 'That answer names items this card doesn’t have.')
-      if (covers.totals.records !== covers.upTo || covers.totals.units !== covers.upTo) throw new AgentError('conflict', 'This changed before your answer arrived.', { reason: TOTALS_CHANGED })
+      if (covers.totals.records !== sum(shown, 'records') || covers.totals.units !== sum(shown, 'units')) throw new AgentError('conflict', 'This changed before your answer arrived.', { reason: TOTALS_CHANGED })
     } else if (covers) throw new AgentError('invalid', 'Only a batch names its items.')
-    const batch = c.batch && covers ? { ...c.batch, itemCount: covers.upTo, totals: { ...c.batch.totals, records: covers.upTo, units: covers.upTo } } : c.batch
+    const batch = c.batch && covers ? { ...c.batch, itemCount: covers.upTo, totals: { ...c.batch.totals, records: covers.totals.records, units: covers.totals.units } } : c.batch
     if (choice === 'deny') {
       row.card = { ...c, state: 'denied', rev: c.rev + 1, can: NONE, ...(batch ? { batch } : {}) }
       row.items = row.items.map(i => ({ ...i, state: 'withdrawn' as const }))
@@ -155,6 +189,6 @@ export class MockActions {
     if (!row.card.batch) throw new AgentError(NOT_FOUND, "That isn't there any more.")
     const page = row.items.filter(i => i.n > after).slice(0, ITEMS_PAGE)
     const last = page.at(-1)?.n
-    return { items: page, ...(last !== undefined && last < row.items.length ? { next: last } : {}) }
+    return { items: page.map(visible), ...(last !== undefined && last < row.items.length ? { next: last } : {}) }
   }
 }

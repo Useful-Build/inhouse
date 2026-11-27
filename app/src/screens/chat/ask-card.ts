@@ -157,9 +157,56 @@ export function coversText(b: Batch): string {
   return b.totals.amount ? `${units}, ${b.totals.amount}` : units
 }
 
-/** The batch's Approve, naming exactly what it covers (N33): "Approve these 450: 450 orders". */
+/**
+ * The batch's Approve (Stage 1 M3-U design, N33): "Approve all 450", the count its card shows. The answer covers exactly
+ * those items and the totals on the card (`coversOf`); one item is plain "Approve".
+ */
 export function batchApproveLabel(b: Batch): string {
-  return `${b.itemCount === 1 ? 'Approve this one' : `Approve these ${fmtCount(b.itemCount, display())}`}: ${coversText(b)}`
+  return b.itemCount === 1 ? 'Approve' : `Approve all ${fmtCount(b.itemCount, display())}`
+}
+
+/** What one approval covers, as the card's subtitle says it: "One approval covers all 450", or the totals when they differ. */
+export function coversLine(b: Batch): string {
+  return b.itemCount > 1 && b.totals.records === b.itemCount && b.totals.units === b.itemCount && !b.totals.amount
+    ? `One approval covers all ${fmtCount(b.itemCount, display())}`
+    : `One approval covers ${coversText(b)}`
+}
+
+/** A batch whose rows carry amounts or quantities (stock, money) shows them as a table with its total (option B). */
+export const isTable = (b: Batch): boolean => b.firstRows.some(r => r.amount !== undefined)
+
+/** How many rows the card previews: 3 in a list, 5 in a table. */
+export const previewRows = (b: Batch): number => (isTable(b) ? 5 : 3)
+
+/** A table's total, in its header and its list's footer: "12 changes · 2,400 stock units". */
+export function tableTotal(b: Batch): string {
+  return `${fmtCount(b.itemCount, display())} ${b.itemCount === 1 ? 'change' : 'changes'} · ${coversText(b)}`
+}
+
+/** The full list's search placeholder, from the rows' first column: "Search orders", "Search items". */
+export const searchLabel = (b: Batch): string => `Search ${b.heads.ref.toLowerCase()}s`
+
+/**
+ * The quiet line under a card's title (Stage 1 M3-U design): the tool, then what the card is waiting for or where it got
+ * to. An admins card an admin may answer names who asked instead ("Dana Kim asks an admin"). `warn`: it needs a check.
+ */
+export function subtitleOf(card: ActionCard, whose: Whose = null): { text: string; warn: boolean } {
+  const tool = card.tool.label
+  if (card.state !== 'waiting') return { text: `${tool} · ${kickerOf(card, whose)}`, warn: card.state === NEEDS_CHECK }
+  if (card.approverKind === 'admins') {
+    if (card.can.approve) return { text: whose === null ? `${tool} · Needs an admin's approval` : `${cap(whose)} asks an admin`, warn: false }
+    return { text: `${tool} · Waiting for ${whose ?? card.waitingFor ?? 'an admin'}`, warn: false }
+  }
+  if (whose !== null) return { text: `${tool} · Waiting for ${whose}`, warn: false }
+  if (card.batch) return { text: `${tool} · ${coversLine(card.batch)}`, warn: false }
+  return { text: `${tool} · ${card.kind === 'exact' ? 'Needs your approval' : 'Your Inhouse agent asks first'}`, warn: false }
+}
+
+/** A single card's sensitive facts, as one quiet line (the tool is in the subtitle); a batch shows none. */
+export function riskLine(card: ActionCard): string | null {
+  if (card.batch) return null
+  const facts = factsOf(card).slice(1).filter(f => !(f.endsWith(' records')))
+  return facts.length > 0 ? facts.join(' · ') : null
 }
 
 /**
@@ -171,10 +218,10 @@ export function coversOf(card: ActionCard): BatchCovers | undefined {
   return { upTo: card.batch.itemCount, totals: { records: card.batch.totals.records, units: card.batch.totals.units } }
 }
 
-/** "See all 450": the full list, for a batch with more items than its first lines, or once its items have outcomes. */
+/** "See all 450": the full list, for a batch with more items than its card previews, or once its items have outcomes. */
 export function showsFullList(card: ActionCard): boolean {
   if (!card.batch || card.batch.itemCount === 0) return false
-  return card.batch.itemCount > card.batch.firstLines.length || card.state === 'sending' || card.state === 'sent' || card.state === 'failed' || card.state === NEEDS_CHECK
+  return card.batch.itemCount > previewRows(card.batch) || card.state === 'sending' || card.state === 'sent' || card.state === 'failed' || card.state === NEEDS_CHECK
 }
 
 /** A finished batch's toast after an approval: how many, and that they start going out (in passes, N22). */

@@ -15,18 +15,17 @@ import { NOT_FOUND } from '../../../shared/contract/error-codes'
 import { NEEDS_CHECK } from '../../../shared/contract/action-states'
 import { useUi } from '../../state/store'
 import { cn } from '@/lib/utils'
-import { Badge } from '@/components/ui/badge'
-import { Button, Icon } from '../../ui'
-import { CONFIRMATION_SHEET } from '../../ui/agent'
+import { Button, Icon, IconTile } from '../../ui'
 import {
-  ALWAYS_STAYS, answeredToast, batchApprovedToast, buttonsOf, coversOf, coversText, factsOf, holdLeftMs, holdText, kickerOf, moreArrivedText, outcomeOf,
-  refusalOf, settleDelayMs, settling, showsFullList,
+  ALWAYS_STAYS, answeredToast, batchApprovedToast, buttonsOf, coversOf, holdLeftMs, holdText, isTable, moreArrivedText, outcomeOf, previewRows,
+  refusalOf, riskLine, settleDelayMs, settling, showsFullList, subtitleOf, tableTotal,
 } from './ask-card'
 import type { CardButton, Whose } from './ask-card'
 import { readAsks } from '../../shell/asks-count'
 import { fmtCount } from '../../lib/format'
 import { display } from '../../state/display'
 import type { BatchSheetProps } from './BatchSheet'
+import { ItemRowView } from './ItemRow'
 
 /** How often a waiting batch reads itself: items joining it keep its rev, so no `action.updated` names them. */
 export const BATCH_REFRESH_MS = 5000
@@ -39,6 +38,8 @@ const BatchSheet = lazy(async () => {
 })
 
 const GONE_KICKER = 'No longer there'
+/** The action card's shell (Stage 1 M3-U design): a card on a hairline, its parts inset by the same 18px. */
+const ACTION_CARD = 'box-border flex w-prose-measure max-w-full flex-col self-start rounded-2xl border border-border bg-card pb-4 shadow-card'
 const GONE_ICON = 'info'
 const GONE_TEXT = "This isn't there any more."
 
@@ -57,7 +58,7 @@ const ICON: Record<ActionCard['state'], string> = {
 export function AskPart({ actionId }: { actionId: string }) {
   const inhouse = useSyncExternalStore(agent.subscribe, () => agent.me()?.role === 'inhouse')
   if (inhouse) {
-    return <div className={cn(CONFIRMATION_SHEET, 'w-prose-measure text-sm text-muted-foreground')} data-action-card="hidden">Your Inhouse agent proposed an action here. Only the brand's team can see it.</div>
+    return <div className={cn(ACTION_CARD, 'px-4.5 pt-4 text-sm text-muted-foreground')} data-action-card="hidden">Your Inhouse agent proposed an action here. Only the brand's team can see it.</div>
   }
   return <AskCard actionId={actionId} />
 }
@@ -155,7 +156,7 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
 
   if (!card) {
     return (
-      <div className={cn(CONFIRMATION_SHEET, 'flex w-prose-measure flex-wrap items-center gap-2 text-sm text-muted-foreground', className)} data-action-card="loading" role="status">
+      <div className={cn(ACTION_CARD, 'flex-row flex-wrap items-center gap-2 px-4.5 pt-4 text-sm text-muted-foreground', className)} data-action-card="loading" role="status">
         <span className="min-w-0 flex-1">{failed ?? 'Loading the action.'}</span>
         {failed !== null && <Button variant="outline" size="sm" onClick={() => { setFailed(null); void load() }}>Try again</Button>}
       </div>
@@ -217,71 +218,97 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
     onAnswer: b => send(b, sheet),
     onResolve: (outcome, n) => send({ kind: 'resolve', outcome, label: '', primary: false, key: 'item' }, card, n),
   }
+  const sub = gone ? { text: GONE_KICKER, warn: false } : subtitleOf(card, whose)
+  const risk = gone ? null : riskLine(card)
+  const table = !!batch && isTable(batch)
+  const rows = batch ? batch.firstRows.slice(0, previewRows(batch)) : []
+  const more = batch ? batch.itemCount - rows.length : 0
+  const count = batch ? fmtCount(batch.itemCount, display()) : ''
+  const openSheet = () => { const shown = pressedOn.current ?? card; pressedOn.current = null; setSheet(shown) }
   return (
     <div role="group" aria-labelledby={titleId} data-action-card={gone ? 'gone' : card.state} data-action-id={card.id}
-      className={cn(CONFIRMATION_SHEET, 'flex w-prose-measure flex-col', className)}>
-      <div className="flex items-center gap-3">
-        <span aria-hidden="true" className="flex size-10 flex-none items-center justify-center rounded-full border border-border bg-draft-kind text-foreground-3">
-          <Icon name={gone ? GONE_ICON : ICON[card.state]} size={20} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className={cn('text-sm', card.state === NEEDS_CHECK && !gone ? 'font-medium text-warning-text' : 'text-muted-foreground')}>{gone ? GONE_KICKER : kickerOf(card, whose)}</div>
-          <h3 id={titleId} ref={headingRef} tabIndex={-1} className="text-md font-strong tracking-card wrap-anywhere outline-none">{card.title}</h3>
+      className={cn(ACTION_CARD, className)}>
+      <div className="flex flex-wrap items-start gap-x-3 gap-y-2 px-4.5 pt-4 pb-3">
+        <IconTile icon={gone ? GONE_ICON : ICON[card.state]} size="md" tone="fill" iconSize={18} />
+        <div className="min-w-0 flex-1 basis-40">
+          <h3 id={titleId} ref={headingRef} tabIndex={-1} className="m-0 text-md leading-card font-strong tracking-card wrap-anywhere outline-none">{card.title}</h3>
+          <p className={cn('m-0 mt-0.5 text-sm wrap-anywhere', sub.warn ? 'font-medium text-warning-text' : 'text-muted-foreground')} data-card-subtitle>{sub.text}</p>
         </div>
+        {table && batch && <p className="m-0 pt-0.5 text-sm text-foreground-2 tabular-nums" data-card-total>{tableTotal(batch)}</p>}
         {onOpenChat && card.chatId && (
           <button type="button" onClick={() => onOpenChat(card.chatId!)} aria-label={`Open the chat: ${card.title}`}
-            className="flex flex-none items-center gap-0.5 self-center text-base text-foreground-3 hover:text-foreground">
-            Open<Icon name="chevron_right" size={18} />
+            className="flex flex-none items-center gap-0.5 pt-0.5 text-sm text-foreground-3 hover:text-foreground">
+            Open<Icon name="chevron_right" size={17} />
           </button>
         )}
       </div>
-      {card.lines.length > 0 && (
-        <ul className="m-0 mt-3 list-none rounded-xl bg-draft-kind px-3.5 py-2.5 text-sm leading-prose text-foreground-2 wrap-anywhere" data-card-lines>
-          {card.lines.map((l, i) => <li key={`${i}|${l}`}>{l}</li>)}
-          {batch && batch.itemCount > card.lines.length && (
-            <li className="text-muted-foreground">{`and ${fmtCount(batch.itemCount - card.lines.length, display())} more`}</li>
-          )}
+      {batch && rows.length > 0 && (table ? (
+        <div className="px-4.5">
+          <table className="w-full border-collapse text-sm" data-card-rows>
+            <thead>
+              <tr className="border-b border-divider text-left text-xs text-muted-foreground">
+                <th scope="col" className="py-2 pr-3 font-medium">{batch.heads.ref}</th>
+                <th scope="col" className="py-2 pr-3 font-medium">{batch.heads.change}</th>
+                <th scope="col" className="py-2 text-right font-medium">{batch.heads.amount}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i} className="border-b border-divider align-baseline">
+                  <td className="py-2.25 pr-3 font-mono text-xs whitespace-nowrap text-muted-foreground">{r.ref}</td>
+                  <td className="py-2.25 pr-3 wrap-anywhere">{r.change}</td>
+                  <td className="py-2.25 text-right whitespace-nowrap text-foreground-2 tabular-nums">{r.amount}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <ul className="m-0 mx-4.5 list-none border-t border-divider p-0" data-card-rows>
+          {rows.map((r, i) => <ItemRowView key={i} row={r} />)}
+        </ul>
+      ))}
+      {!batch && card.lines.length > 0 && (
+        <ul className="m-0 mx-4.5 list-none border-t border-divider p-0 text-sm text-foreground-2" data-card-rows>
+          {card.lines.map((l, i) => <li key={`${i}|${l}`} className="border-b border-divider py-2.25 leading-prose wrap-anywhere">{l}</li>)}
         </ul>
       )}
-      {batch && batch.itemCount > 0 && (
-        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm" data-batch-totals>
-          <span className="min-w-0 flex-1 text-foreground-2"><span className="text-muted-foreground">In all: </span><span className="font-strong">{coversText(batch)}</span></span>
+      {batch && (more > 0 || fullList) && (
+        <div className="flex min-h-8 items-center justify-between gap-3 px-4.5 pt-1.5 text-sm" data-card-more>
+          <span className="text-muted-foreground">{more > 0 ? `and ${fmtCount(more, display())} more` : ''}</span>
           {fullList && (
-            <Button variant="outline" size="sm" onPointerDown={() => { pressedOn.current = card }}
-              onClick={() => { const shown = pressedOn.current ?? card; pressedOn.current = null; setSheet(shown) }}
-              aria-haspopup="dialog" aria-label={`See all ${fmtCount(batch.itemCount, display())}: ${card.title}`}>
-              {`See all ${fmtCount(batch.itemCount, display())}`}
+            <Button variant="link" size="sm" className="px-0 text-brand-text" onPointerDown={() => { pressedOn.current = card }} onClick={openSheet}
+              aria-haspopup="dialog" aria-label={`See all ${count}: ${card.title}`}>
+              {`See all ${count}`}
             </Button>
           )}
         </div>
       )}
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        {factsOf(card).map((f, i) => <Badge key={f} variant={i === 0 ? 'status' : 'warning'} size="lg">{f}</Badge>)}
-      </div>
-      {waitingLapse && <p className="m-0 mt-3 text-sm text-warning-text">{card.lapsed}</p>}
-      {outcome && <p className="m-0 mt-3 text-sm font-strong text-foreground-2">{outcome}</p>}
-      {alwaysStays && <p className="m-0 mt-1 text-sm text-foreground-2">{ALWAYS_STAYS}</p>}
-      {leftOver > 0 && card.state !== 'waiting' && <p className="m-0 mt-1 text-sm text-foreground-2" data-left-over>{moreArrivedText(leftOver)} They're in Approvals.</p>}
+      {risk && <p className="m-0 mx-4.5 mt-2.5 text-sm text-muted-foreground" data-card-risk>{risk}</p>}
+      {waitingLapse && <p className="m-0 mx-4.5 mt-3 text-sm text-warning-text">{card.lapsed}</p>}
+      {outcome && <p className="m-0 mx-4.5 mt-3 text-sm font-strong text-foreground-2">{outcome}</p>}
+      {alwaysStays && <p className="m-0 mx-4.5 mt-1 text-sm text-foreground-2">{ALWAYS_STAYS}</p>}
+      {leftOver > 0 && card.state !== 'waiting' && <p className="m-0 mx-4.5 mt-1 text-sm text-foreground-2" data-left-over>{moreArrivedText(leftOver)} They're in Approvals.</p>}
       {holdLine && (
-        <p className="m-0 mt-3 flex items-center gap-2 text-sm font-strong" data-hold>
+        <p className="m-0 mx-4.5 mt-3 flex items-center gap-2 text-sm font-strong" data-hold>
           <Icon name="schedule" size={17} /><span role="timer" aria-live="off">{holdLine}</span>
         </p>
       )}
       {buttons.length > 0 && (
-        <div data-card-actions className="mt-3 flex flex-wrap gap-2">
+        <div data-card-actions className="flex flex-wrap gap-2 px-4.5 pt-3.5">
           {buttons.map(b => (
-            <Button key={b.key} variant={b.primary ? 'primary' : 'soft'} disabled={busy} onPointerDown={() => { pressedOn.current = card }} onClick={() => press(b)}
+            <Button key={b.key} variant={b.primary ? 'primary' : 'outline'} disabled={busy} onPointerDown={() => { pressedOn.current = card }} onClick={() => press(b)}
               aria-label={b.kind === 'answer' ? undefined : `${b.label}: ${card.title}`}>{b.label}</Button>
           ))}
         </div>
       )}
       {/* A batch's unclear items are settled one at a time, in its full list. */}
       {buttons.length === 0 && batch && card.state === NEEDS_CHECK && card.can.resolve && !gone && (
-        <div data-card-actions className="mt-3 flex flex-wrap gap-2">
+        <div data-card-actions className="flex flex-wrap gap-2 px-4.5 pt-3.5">
           <Button variant="primary" onClick={() => setSheet(card)} aria-haspopup="dialog">Check each change</Button>
         </div>
       )}
-      {refusal && !sheet && <p role="alert" className="m-0 mt-3 text-sm text-destructive-text">{refusal}</p>}
+      {refusal && !sheet && <p role="alert" className="m-0 mx-4.5 mt-3 text-sm text-destructive-text">{refusal}</p>}
       {sheetProps && <Suspense fallback={null}><BatchSheet {...sheetProps} /></Suspense>}
     </div>
   )

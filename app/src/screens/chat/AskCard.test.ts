@@ -27,6 +27,9 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ActionCard } from '../../agent/types'
 import { AgentError } from '../../agent/types'
 
+/** An order's row record ("#" and its number), built so no literal reads as a colour to the token check. */
+const orderRef = (n: number) => `#${n}`
+
 const fake = vi.hoisted(() => ({
   action: vi.fn(),
   answerAction: vi.fn(),
@@ -349,26 +352,44 @@ describe('reading the card again', () => {
 
 describe('batches (Stage 1 M3-U)', () => {
   const LINES = Array.from({ length: 10 }, (_, i) => `Order ${3901 + i} (store-a): add VIP`)
+  const ROWS = Array.from({ length: 10 }, (_, i) => ({ ref: `#${3901 + i}`, change: 'add VIP' }))
+  const HEADS = { ref: 'Order', change: 'Change', amount: 'Amount' }
   const batch = (n: number, o: Partial<ActionCard> = {}): ActionCard => card({
-    kind: 'exact', guardrail: 'bulk', title: `${n} changes in Shopify (store-a)`, lines: LINES, records: n, can: { ...NONE, approve: true, deny: true },
-    batch: { itemCount: n, firstLines: LINES, totals: { records: n, units: n, unitsLabel: 'orders' } }, ...o,
+    kind: 'exact', guardrail: 'bulk', title: `Tag ${n} orders as VIP`, lines: LINES, records: n, can: { ...NONE, approve: true, deny: true },
+    batch: { itemCount: n, firstLines: LINES, firstRows: ROWS, heads: HEADS, totals: { records: n, units: n, unitsLabel: 'orders' } }, ...o,
   })
-  test('shows the first lines, how many more, the totals, See all and an Approve naming what it covers', async () => {
+  const rowTexts = () => [...host.querySelectorAll('[data-card-rows] [data-row]')].map(r => r.textContent)
+  test('a quiet summary: the title, one line under it, 3 rows, "and N more" with See all, and Approve all', async () => {
     await show({ actionId: AC, initial: batch(450) })
-    const lines = [...host.querySelectorAll('[data-card-lines] li')].map(l => l.textContent)
-    expect(lines).toEqual([...LINES, 'and 440 more'])
-    expect(host.querySelector('[data-batch-totals]')?.textContent).toContain('In all: 450 orders')
-    expect(buttons()).toEqual(['See all 450', 'Approve these 450: 450 orders', 'No'])
-    expect(text()).toContain('Changes many records')
+    expect(host.querySelector('h3')?.textContent).toBe('Tag 450 orders as VIP')
+    expect(host.querySelector('[data-card-subtitle]')?.textContent).toBe('Shopify · One approval covers all 450')
+    expect(rowTexts()).toEqual([3901, 3902, 3903].map(n => `${orderRef(n)}add VIP`))
+    expect(host.querySelector('[data-card-more]')?.textContent).toBe('and 447 moreSee all 450')
+    expect(buttons()).toEqual(['See all 450', 'Approve all 450', 'No'])
+    // No badges, no kicker, no "In all".
+    expect(text()).not.toContain('Changes many records')
+    expect(text()).not.toContain('Needs your approval')
+    expect(text()).not.toContain('In all')
   })
-  test('one item, one unit: the words are singular', async () => {
-    await show({ actionId: AC, initial: batch(1, { lines: LINES.slice(0, 1), batch: { itemCount: 1, firstLines: LINES.slice(0, 1), totals: { records: 1, units: 1, unitsLabel: 'orders' } } }) })
-    expect(buttons()).toEqual(['Approve this one: 1 order', 'No'])
+  test('rows with amounts are a table with its total in the header and 5 rows under column heads', async () => {
+    const rows = Array.from({ length: 10 }, (_, i) => ({ ref: `Item ${8001 + i}`, change: 'Location 601 · restock', amount: `+${10 * (i + 1)}` }))
+    await show({ actionId: AC, initial: batch(12, { title: 'Restock 12 items', batch: { itemCount: 12, firstLines: LINES, firstRows: rows, heads: { ref: 'Item', change: 'Where and why', amount: 'Stock' }, totals: { records: 12, units: 900, unitsLabel: 'stock units' } } }) })
+    expect(host.querySelector('[data-card-total]')?.textContent).toBe('12 changes · 900 stock units')
+    expect([...host.querySelectorAll('th')].map(t => t.textContent)).toEqual(['Item', 'Where and why', 'Stock'])
+    expect(host.querySelectorAll('tbody tr')).toHaveLength(5)
+    expect(host.querySelector('tbody tr')?.textContent).toBe('Item 8001Location 601 · restock+10')
+    expect(host.querySelector('[data-card-subtitle]')?.textContent).toBe('Shopify · One approval covers 900 stock units')
+    expect(buttons()).toEqual(['See all 12', 'Approve all 12', 'No'])
+  })
+  test('one item: a plain Approve, and the subtitle names what it covers', async () => {
+    await show({ actionId: AC, initial: batch(1, { lines: LINES.slice(0, 1), batch: { itemCount: 1, firstLines: LINES.slice(0, 1), firstRows: ROWS.slice(0, 1), heads: HEADS, totals: { records: 1, units: 1, unitsLabel: 'orders' } } }) })
+    expect(buttons()).toEqual(['Approve', 'No'])
+    expect(host.querySelector('[data-card-subtitle]')?.textContent).toBe('Shopify · One approval covers 1 order')
   })
   test('Approve sends the count and totals on the card; No does too', async () => {
     fake.answerAction.mockResolvedValueOnce(batch(450, { rev: 2, state: 'approved', sendAt: instant(NOW + 10_000), can: { ...NONE, undo: true } }))
     await show({ actionId: AC, initial: batch(450) })
-    await press('Approve these 450: 450 orders')
+    await press('Approve all 450')
     expect(fake.answerAction).toHaveBeenCalledWith(AC, 1, 'approve', { upTo: 450, totals: { records: 450, units: 450 } })
     expect(fake.toasts).toEqual(['Approved 450. They start going out in a few seconds.'])
     fake.answerAction.mockResolvedValueOnce(batch(12, { id: 'ac_BBBBBBBBBBBBBBBBBBBBBB', rev: 2, state: 'denied', can: NONE }))
@@ -382,7 +403,7 @@ describe('batches (Stage 1 M3-U)', () => {
     await tick(5000)
     await flush()
     expect(fake.action).toHaveBeenCalledTimes(1)
-    expect(buttons()).toContain('Approve these 452: 452 orders')
+    expect(buttons()).toContain('Approve all 452')
     await tick(5000)
     await flush()
     expect(fake.action).toHaveBeenCalledTimes(2)
@@ -395,12 +416,12 @@ describe('batches (Stage 1 M3-U)', () => {
     fake.action.mockResolvedValue(batch(460))
     fake.answerAction.mockResolvedValueOnce(batch(450, { rev: 2, state: 'approved', sendAt: instant(NOW + 10_000), can: { ...NONE, undo: true } }))
     await show({ actionId: AC, initial: batch(450) })
-    const approve = [...host.querySelectorAll('button')].find(b => label(b) === 'Approve these 450: 450 orders')!
+    const approve = [...host.querySelectorAll('button')].find(b => label(b) === 'Approve all 450')!
     await act(async () => { approve.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })) })
     // The card reads itself and grows to 460 before the click lands.
     await tick(5000)
     await flush()
-    expect(buttons()).toContain('Approve these 460: 460 orders')
+    expect(buttons()).toContain('Approve all 460')
     await act(async () => { approve.click() })
     await flush()
     expect(fake.answerAction).toHaveBeenCalledWith(AC, 1, 'approve', { upTo: 450, totals: { records: 450, units: 450 } })

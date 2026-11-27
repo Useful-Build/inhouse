@@ -28,7 +28,11 @@ const card = {
   chatId: 'chat-1', askedBy: 'm_owner', askedAt: at, serverNow: at,
   can: { allowOnce: false, alwaysAllow: false, approve: true, deny: true, undo: false, resolve: false, withdraw: false }, nudgeAlways: false, approverKind: 'person',
 }
-const batch = { itemCount: 450, firstLines: Array.from({ length: 10 }, (_, i) => `Order ${1001 + i} (store-a): add VIP`), totals: { records: 450, units: 450, unitsLabel: 'orders' } }
+const HEADS = { ref: 'Order', change: 'Change', amount: 'Amount' }
+const batch = {
+  itemCount: 450, firstLines: Array.from({ length: 10 }, (_, i) => `Order ${1001 + i} (store-a): add VIP`),
+  firstRows: Array.from({ length: 10 }, (_, i) => ({ ref: `#${1001 + i}`, change: 'add VIP' })), heads: HEADS, totals: { records: 450, units: 450, unitsLabel: 'orders' },
+}
 
 describe('the batch card (1, 2)', () => {
   it('parses a single card and a batch card, each with who answers it', () => {
@@ -50,9 +54,15 @@ describe('the batch card (1, 2)', () => {
     expect(BATCH_ITEMS_MAX).toBe(500)
     expect(BATCH_FIRST_LINES).toBe(10)
     expect(ActionCardSchema.safeParse({ ...card, batch: { ...batch, itemCount: 500 } }).success).toBe(true)
-    expect(ActionCardSchema.safeParse({ ...card, batch: { itemCount: 0, firstLines: [], totals: { records: 0, units: 0, unitsLabel: 'orders' } } }).success).toBe(true)
+    expect(ActionCardSchema.safeParse({ ...card, batch: { itemCount: 0, firstLines: [], firstRows: [], heads: HEADS, totals: { records: 0, units: 0, unitsLabel: 'orders' } } }).success).toBe(true)
     for (const itemCount of [-1, 501, 1.5]) expect(ActionCardSchema.safeParse({ ...card, batch: { ...batch, itemCount } }).success, String(itemCount)).toBe(false)
     expect(ActionCardSchema.safeParse({ ...card, batch: { ...batch, firstLines: [...batch.firstLines, 'one more'] } }).success).toBe(false)
+    // Stage 1 M3-U: the same first items as rows, at most 10, each with its record and change; and the rows' heads.
+    expect(ActionCardSchema.safeParse({ ...card, batch: { ...batch, firstRows: [...batch.firstRows, { ref: '#1', change: 'add VIP' }] } }).success).toBe(false)
+    expect(ActionCardSchema.safeParse({ ...card, batch: { ...batch, firstRows: [{ ref: '#1' }] } }).success).toBe(false)
+    expect(ActionCardSchema.safeParse({ ...card, batch: { ...batch, firstRows: [{ ref: 'Item 1', change: 'Location 6', amount: '+20' }] } }).success).toBe(true)
+    const { heads: _h, ...headless } = batch
+    expect(ActionCardSchema.safeParse({ ...card, batch: headless }).success).toBe(false)
     expect(ActionCardSchema.safeParse({ ...card, batch: { ...batch, totals: { records: 450, units: -1, unitsLabel: 'orders' } } }).success).toBe(false)
     expect(ActionCardSchema.safeParse({ ...card, batch: { ...batch, totals: { records: 450, units: 450 } } }).success).toBe(false)
   })
@@ -76,7 +86,7 @@ describe('the answer (3)', () => {
 })
 
 describe('the items page (4)', () => {
-  const item = { n: 11, line: 'Order 1011 (store-a): add VIP', state: 'pending' }
+  const item = { n: 11, line: 'Order 1011 (store-a): add VIP', row: { ref: '#1011', change: 'add VIP' }, state: 'pending' }
   it('pages 100 items at a time after a position', () => {
     expect(ACTION_ITEMS_PAGE).toBe(100)
     expect(ActionItemsPageSchema.safeParse({ items: Array.from({ length: 100 }, (_, i) => ({ ...item, n: i + 1 })), next: 100 }).success).toBe(true)
@@ -85,6 +95,9 @@ describe('the items page (4)', () => {
     for (const state of ['waiting', 'approved', 'moved']) expect(ActionItemsPageSchema.safeParse({ items: [{ ...item, state }] }).success, state).toBe(false)
     expect(ActionItemsPageSchema.safeParse({ items: [{ ...item, n: 0 }] }).success).toBe(false)
     expect(ActionItemsPageSchema.safeParse({ items: [], next: 0 }).success).toBe(false)
+    // Stage 1 M3-U: every item carries its row.
+    const { row: _r, ...rowless } = item
+    expect(ActionItemsPageSchema.safeParse({ items: [rowless] }).success).toBe(false)
   })
   it('reads `after` from the query text, from 0, and nothing else', () => {
     expect(ActionItemsQuerySchema.parse({})).toEqual({ after: 0 })

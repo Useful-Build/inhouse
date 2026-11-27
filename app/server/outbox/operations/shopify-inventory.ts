@@ -47,3 +47,10 @@ export function stockCard(verb: 'Add' | 'Remove', a: StockArgs): { title: string
     lines: [`Location: ${num(a.locationId)}`, `Reason: ${REASON_WORDS[a.reason]}`],
   }
 }
+
+/** Stage 1 M3-U (N33): a stock change as a row: the item, where and why, and the signed quantity ("+20"). */
+export function stockItemRow(sign: '+' | '-', a: StockArgs): { ref: string; change: string; amount: string } {
+  return { ref: `Item ${num(a.inventoryItemId)}`, change: `Location ${num(a.locationId)} · ${REASON_WORDS[a.reason]}`, amount: `${sign}${a.quantity.toLocaleString('en-US')}` }
+}
+/** Stage 1 M3-U: the stock rows' heads. */
+export const STOCK_ROW_HEADS = { ref: 'Item', change: 'Where and why', amount: 'Stock' } as const
