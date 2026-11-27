@@ -118,7 +118,7 @@ function ChangeWindow({ row, onClose, onSaved, onCurrent }: { row: CeilingRow; o
         {fieldsOf(row).map(f => (
           <div key={f.key} className="flex flex-col gap-1.5">
             <Label htmlFor={`ceiling-${f.key}`} className="text-sm font-strong text-foreground-2">{f.label}</Label>
-            <Input id={`ceiling-${f.key}`} inputMode="numeric" autoComplete="off" spellCheck={false} value={typed[f.key] ?? String(row[f.key])}
+            <Input id={`ceiling-${f.key}`} inputMode="numeric" autoComplete="off" spellCheck={false} value={typed[f.key] ?? f.shown(row[f.key])}
               onChange={e => { setTyped(t => ({ ...t, [f.key]: e.target.value })); setError(null) }}
               className="box-border h-9.5 rounded-lg bg-card px-3.25 text-base shadow-none md:text-base" />
           </div>

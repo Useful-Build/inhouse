@@ -7,7 +7,9 @@
 //  4. lowering a value doesn't raise `lowered_rev`, or raising one does (an old grant would come back to life);
 //  5. a change and its `ceiling.changed` line don't land together (one without the other), or the line's old and new
 //     values aren't the row's;
-//  6. the list leaves out an operation, shows a row it doesn't have as on, or tells someone they may edit who can't;
+//  6. the list leaves out an operation, shows a row it doesn't have as on, or tells someone they may edit who can't; an
+//     operation added to the table without its words here fails the whole read (the M3-S2 merge's 500), or a money
+//     operation's limit isn't said in the connected shop's currency (#515);
 //  7. two changes racing at one `rev` both apply: the writer's own `ifRev` guard, inside the statement, is all that
 //     holds once the store's read has passed (#521).
 import { env } from 'cloudflare:workers'
@@ -22,7 +24,8 @@ import { openStores } from '../db/stores.ts'
 import { brokenAudit, ctx, lastLineId, linesSince, personPrincipal } from '../db/test-support.ts'
 import { stmt } from '../db/sql.ts'
 import { OPERATION_KEYS } from '../outbox/operations/index.ts'
-import { resetPermissions } from '../permissions/test-support.ts'
+import { account, resetPermissions } from '../permissions/test-support.ts'
+import { OPERATION_LIMITS, OPERATION_TITLE } from '../../shared/audit-text.ts'
 import { ceilingAtRev, setCeilingStmt } from '../permissions/ceiling.ts'
 import { ceilingHandlers } from './ceiling.ts'
 import { CEILING_EDIT_ON, ceilingStore } from './ceiling-store.ts'
@@ -203,6 +206,35 @@ describe('the list (failure 6)', () => {
     expect(tag).toMatchObject({ title: 'Add tags to orders', tool: 'Shopify', measure: { kind: 'count', label: 'orders' }, applies: { perDay: true, batch: true }, guardrails: [], approverKind: 'person', suggested: { perDayMax: 200, unitsMax: 100 } })
     const post = list.items.find(i => i.operation === 'slack.channel.post')!
     expect(post).toMatchObject({ tool: 'Slack', measure: { kind: 'count', label: 'posts' }, applies: { perDay: true, batch: false } })
+  })
+
+  it('reads 200 with every operation in the table, each with its own title, words and measure, as each viewer who may read', async () => {
+    for (const who of [admin, inhouse]) {
+      const r = await json(await call(who, {}))
+      expect(r.status, JSON.stringify(r.body)).toBe(200)
+      const list = CeilingListSchema.parse(r.body)
+      expect(list.items.map(i => i.operation)).toEqual(OPERATION_KEYS)
+      for (const i of list.items) {
+        const key = i.operation as (typeof OPERATION_KEYS)[number]
+        expect(i.title, key).toBe(OPERATION_TITLE[key])
+        expect(i.description.length, key).toBeGreaterThan(10)
+        expect(i.measure.kind, key).toBe(OPERATION_LIMITS[key].money ? 'money' : 'count')
+        expect(i.applies, key).toEqual({ perDay: OPERATION_LIMITS[key].perDay, batch: OPERATION_LIMITS[key].batch })
+      }
+    }
+    // Every operation in the table has a row on the page, so none can be missing its words (the typecheck holds the map).
+    expect(OPERATION_KEYS).toEqual(expect.arrayContaining(['shopify.inventory.restock', 'shopify.inventory.reduce', 'shopify.refund.create']))
+  })
+
+  it("says a money operation's limits in the connected shop's currency, and in none while no store names one (#515)", async () => {
+    const refund = async () => CeilingListSchema.parse((await json(await call(admin, {}))).body).items.find(i => i.operation === 'shopify.refund.create')!
+    expect(await refund()).toMatchObject({ measure: { kind: 'money', currency: null }, guardrails: ['money', 'customer'], approverKind: 'admins', applies: { perDay: false, batch: false } })
+    await account(db, 'shopify:store', 7_000)
+    await db.prepare("UPDATE connector_accounts SET currency = 'EUR' WHERE account_id = 'shopify:store'").run()
+    expect((await refund()).measure).toEqual({ kind: 'money', currency: 'EUR' })
+    // A disconnected store's currency isn't the shop's any more.
+    await db.prepare("UPDATE connector_accounts SET disconnected_at_ms = 8_000 WHERE account_id = 'shopify:store'").run()
+    expect((await refund()).measure).toEqual({ kind: 'money', currency: null })
   })
 
   it('shows a row as it is, and offers editing to the Inhouse team only, only while editing is on', async () => {

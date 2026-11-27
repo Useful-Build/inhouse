@@ -45,7 +45,6 @@ describe('what applies (failure 2)', () => {
     expect(limitLines(post)).toEqual(['Up to 200 posts a day for each Always allow', 'Up to 1 post in one go'])
     const refund = row({ applies: { perDay: false, batch: false }, measure: { kind: 'money', currency: 'USD' }, guardrails: ['money', 'customer'], approverKind: 'admins', unitsMax: 50_000 })
     expect(fieldsOf(refund).map(f => f.key)).toEqual(['unitsMax'])
-    expect(limitLines(refund)).toEqual(['Up to 50,000 minor units of USD in one go'])
     expect(approvalLine(refund)).toBe('An admin approves it exactly, every time, because it moves money and it reaches a customer.')
     // A value that doesn't apply is kept as the row holds it, whatever is typed.
     expect(readValues(post, true, { batchMax: '0' })).toEqual({ ok: { enabled: true, perDayMax: 200, unitsMax: 1, bulkThreshold: 5, batchMax: 500 } })
@@ -54,6 +53,33 @@ describe('what applies (failure 2)', () => {
     expect(limitLines(row({ enabled: false }))).toEqual(["Off. Your Inhouse agent can't do this."])
     expect(limitLines(row())).toEqual(['Up to 200 orders a day for each Always allow', 'Up to 100 orders in one go', 'More than 5 at once needs an exact OK, and up to 500 in one batch'])
     expect(approvalLine(row())).toBe('The person who asked approves it first, or chooses Always allow.')
+  })
+})
+
+describe('money limits (#515)', () => {
+  const refund = (currency: string | null, unitsMax = 50_000) => row({
+    operation: 'shopify.refund.create', title: 'Refund orders', applies: { perDay: false, batch: false }, measure: { kind: 'money', currency },
+    guardrails: ['money', 'customer'], approverKind: 'admins', unitsMax,
+  })
+  it("read as money in the shop's currency, never as a count", () => {
+    expect(limitLines(refund('USD'))).toEqual(['Up to $500 in one go'])
+    expect(limitLines(refund('USD', 50_050))).toEqual(['Up to $500.50 in one go'])
+    expect(limitLines(refund('JPY', 50_000))).toEqual(['Up to ¥50,000 in one go'])
+    // No connected store names its currency yet: the amount can't be money, so it says what it counts.
+    expect(limitLines(refund(null))).toEqual(["Up to 50,000 in the smallest unit of the shop's currency in one go"])
+  })
+  it("are typed in the currency's major unit, with its decimals at most, and stored in minor units", () => {
+    const [f] = fieldsOf(refund('USD'))
+    expect([f!.label, f!.shown(50_000), f!.shown(50_050)]).toEqual(['Most in one go (USD)', '500', '500.5'])
+    expect(readValues(refund('USD'), true, { unitsMax: '750.25' })).toMatchObject({ ok: { unitsMax: 75_025 } })
+    expect(readValues(refund('USD'), true, { unitsMax: '1,000' })).toMatchObject({ ok: { unitsMax: 100_000 } })
+    for (const bad of ['0', '0.001', '12.345', '-5', 'ten', '']) expect('error' in readValues(refund('USD'), true, { unitsMax: bad }), bad).toBe(true)
+    expect(readValues(refund('JPY'), true, { unitsMax: '1.5' })).toMatchObject({ error: expect.stringContaining('¥1') })
+    expect(readValues(refund('JPY'), true, { unitsMax: '1500' })).toMatchObject({ ok: { unitsMax: 1500 } })
+    // Untouched, the stored value goes back as it was.
+    expect(readValues(refund('USD', 50_050), true, {})).toMatchObject({ ok: { unitsMax: 50_050 } })
+    const [none] = fieldsOf(refund(null))
+    expect([none!.label, none!.shown(50_000)]).toEqual(["Most in one go, in the smallest unit of the shop's currency", '50000'])
   })
 })
 
