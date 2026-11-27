@@ -3,10 +3,14 @@
 // questions.ts): a lone `question_ask` ends the turn waiting; the question is listed for the chat's owner only; it
 // waits across a hard kill of every runner; the owner's answer resumes the turn, and the call run again returns the
 // option chosen; a question asked beside another call is not asked, and the agent asks again on its own.
+// M2-J adds a routine's question (scenarios/acceptance.ts `routine-create-question`): a routine's run asks its creator,
+// who sees it in their questions (Approvals' Questions section, the inbox) with no chat to open (a routine's chat is the
+// system's); another member never sees it; the run waits until the creator answers, then finishes.
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 import { QUESTION_ASKED, QUESTION_REPLY } from '../../test/scripted-model/scenarios/questions.ts'
-import { createChat, needsContainer, send } from './chat-kit.ts'
+import { QUESTION_ROUTINE_CREATED } from '../../test/scripted-model/scenarios/acceptance.ts'
+import { answerOf, createChat, needsContainer, send, textOf } from './chat-kit.ts'
 import { killRunners } from './job-kit.ts'
 import { actor, call } from './kit.ts'
 import type { Actor } from './kit.ts'
@@ -89,4 +93,49 @@ test('a question beside another call is not asked; the agent asks again on its o
   const answered = await call(request, dana, 'POST', `/api/questions/${q.id}/answer`, { json: { choice: QUESTION_ASKED.options[0] } })
   expect(answered.status, answered.text).toBe(200)
   expect(await agentSays(request, dana, chatId, QUESTION_REPLY)).toContain(QUESTION_ASKED.options[0])
+})
+
+test("a routine's question goes to its creator's inbox with no chat; the run waits for the answer, then finishes", async ({ request }) => {
+  needsContainer()
+  test.setTimeout(600_000)
+  // A routine made in Dana's chat (so she is its creator), named for this run.
+  const name = `m2j-question-${Date.now().toString(36)}`
+  const chatId = await createChat(request, dana)
+  const made = await send(request, dana, chatId, `scenario:routine-create-question routine-name:${name}`)
+  expect(textOf(await answerOf(request, dana, chatId, made.turnId, 180_000))).toBe(QUESTION_ROUTINE_CREATED)
+  const list = await call(request, dana, 'GET', '/api/routines')
+  expect(list.status, list.text).toBe(200)
+  const routine = (list.json.routines as { id: string; name: string }[]).find(r => r.name === name)
+  expect(routine, `the routine ${name} is listed`).toBeDefined()
+  const runs = async () => {
+    const r = await call(request, dana, 'GET', `/api/routines/${routine!.id}/runs`)
+    expect(r.status, r.text).toBe(200)
+    return r.json.runs as { outcome: string; manual: boolean }[]
+  }
+
+  // Questions already open for Dana (other cases' leftovers) aren't this run's.
+  const before = new Set(((await call(request, dana, 'GET', '/api/questions')).json.items as Q[]).map(q => q.id))
+  const run = await call(request, dana, 'POST', `/api/routines/${routine!.id}/run`, { json: { clientKey: `m2jq${Date.now().toString(36)}` } })
+  expect(run.status, run.text).toBe(200)
+
+  // The run asks its creator: the question is in her list, with no chat she could open.
+  let q: Q | undefined
+  await expect.poll(async () => {
+    const r = await call(request, dana, 'GET', '/api/questions')
+    expect(r.status, r.text).toBe(200)
+    q = (r.json.items as Q[]).find(x => !before.has(x.id) && x.question === QUESTION_ASKED.question)
+    return q !== undefined
+  }, { timeout: 240_000, message: "the routine's question in its creator's list" }).toBe(true)
+  expect(q).toMatchObject({ state: 'open', options: QUESTION_ASKED.options, chatId: null, answer: null })
+  // Another member never sees it, nor can answer it.
+  expect(((await call(request, leo, 'GET', '/api/questions')).json.items as Q[]).map(x => x.id)).not.toContain(q!.id)
+  expect((await call(request, leo, 'POST', `/api/questions/${q!.id}/answer`, { json: { choice: QUESTION_ASKED.options[0] } })).status).toBe(404)
+  // The run waits on the answer.
+  expect((await runs())[0]).toMatchObject({ outcome: 'running', manual: true })
+
+  const answered = await call(request, dana, 'POST', `/api/questions/${q!.id}/answer`, { json: { choice: QUESTION_ASKED.options[0] } })
+  expect(answered.status, answered.text).toBe(200)
+  expect(answered.json).toMatchObject({ id: q!.id, state: 'answered', answer: QUESTION_ASKED.options[0] })
+  // The run resumes with the answer and finishes.
+  await expect.poll(async () => (await runs())[0]?.outcome, { timeout: 300_000, intervals: [2_000], message: "the routine's run finishes" }).toBe('done')
 })
