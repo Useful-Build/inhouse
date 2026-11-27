@@ -98,18 +98,24 @@ function hasPhrase(words: readonly string[]): boolean {
   return INSTRUCTION_PHRASES.some(p => words.some((_, i) => p.every((pw, j) => i + j < words.length && wordHits(words[i + j], pw, j === p.length - 1))))
 }
 
-/** Apostrophes of every kind: taken out (not split on) in one reading, so "Don't" reads as `dont` and "Don T." doesn't. */
-const APOSTROPHES = /['\u2018\u2019\u02BC\u02BB\u0060\u00B4]/gu
+/** Apostrophes and hyphens of every kind: taken out (not split on) in one reading, so "Don't" and "Don-t" read as `dont`. */
+const JOINERS = /['\u2018\u2019\u02B9\u02BC\u02BB\uA78C\u0060\u00B4\-\u2010\u2011\u2012\u2013\u2014]/gu
+/** Letters that read as punctuation (modifier letters, click letters such as `ǃ`): a word break in one reading. */
+const PUNCTUATION_LETTERS = /[\p{Lm}\u01C0-\u01C3]/gu
 /** A word break at a case change: "IgnorePrevious", "ADMINOverride", "caféAdmin". */
 const camelSplit = (s: string): string =>
   s.replace(/(\p{Ll}\p{M}*)(?=\p{Lu})/gu, '$1 ').replace(/(\p{Lu}\p{M}*)(?=\p{Lu}\p{M}*\p{Ll})/gu, '$1 ')
 
-/** Every reading of a name the flag checks: invisible characters as nothing or as a space, case changes split or not, apostrophes split or not. */
+/**
+ * Every reading of a name the flag checks: invisible characters and marks as nothing or as a space, letters that read as
+ * punctuation as letters or as a space, case changes split or not, apostrophes and hyphens split or joined.
+ */
 function readings(name: string): string[][] {
   const nfc = name.normalize('NFC')
   const out: string[][] = []
-  for (const v of [nfc, nfc.replace(new RegExp(IGNORABLE, 'gu'), ' ')]) {
-    for (const w of [v, camelSplit(tidy(v))]) out.push(tokens(fold(w)), tokens(fold(w.replace(APOSTROPHES, ''))))
+  const spaced = nfc.replace(new RegExp(IGNORABLE, 'gu'), ' ').replace(MARKS, ' ')
+  for (const v of [nfc, spaced, spaced.normalize('NFKC').replace(PUNCTUATION_LETTERS, ' ')]) {
+    for (const w of [v, camelSplit(tidy(v))]) out.push(tokens(fold(w)), tokens(fold(w.replace(JOINERS, ''))))
   }
   return out
 }
@@ -135,11 +141,12 @@ const MIXES_ALLOWED: readonly (readonly string[])[] = [
   ['Latin', 'Han', 'Hiragana', 'Katakana'], ['Latin', 'Han', 'Bopomofo'], ['Latin', 'Han', 'Hangul'],
 ]
 
-/** The scripts of a text's letters. */
+/** The scripts of a text's letters and marks. */
 export function scriptsOf(s: string): Set<string> {
   const out = new Set<string>()
   for (const c of s.normalize('NFKC')) {
-    if (!/\p{L}/u.test(c) || SHARED.test(c)) continue
+    // A mark counts by its own script (a Khmer or Myanmar sign on a Latin word is a mix); an inherited one doesn't.
+    if (!/[\p{L}\p{M}]/u.test(c) || SHARED.test(c)) continue
     out.add(SCRIPTS.find(([, re]) => re.test(c))?.[0] ?? 'Other')
   }
   return out
@@ -151,19 +158,53 @@ export function scriptsOf(s: string): Set<string> {
  * "Ign\u200Bо\u200Bre" are one word each, and "Dana Ким" is two words of one script each.
  */
 export function mixesScripts(name: string): boolean {
-  return tidy(name).normalize('NFKC').split(' ').some(word => {
+  // Split before any NFKC: a few letters (U+037A, U+FE70..) expand to a space under NFKC and would split one word.
+  return tidy(name).split(' ').some(word => {
     const scripts = [...scriptsOf(word)]
     return scripts.length > 1 && !MIXES_ALLOWED.some(set => scripts.every(s => set.includes(s)))
   })
 }
 
+/** Latin, Greek and Cyrillic letters, and Common-script ones (modifier letters such as `ː`, tatweel). */
+const LGC_COMMON = /[\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Common}]/u
+/** A cased letter: the only kind of Latin, Greek or Cyrillic letter a shown name may hold (`ǃ`, `ʰ` are not). */
+const CASED = /[\p{Lu}\p{Ll}\p{Lt}]/u
+/** Common-script letters a shown name may hold: the okina and modifier apostrophe, Japanese's long-vowel marks. */
+const COMMON_LETTERS_OK = new Set(['\u02BB', '\u02BC', '\u30FC', '\uFF70'])
+
+/**
+ * Whether every letter and mark of a name is on the shown-name allowlist: a Latin, Greek or Cyrillic letter is cased,
+ * a Common-script letter is one of COMMON_LETTERS_OK, and no mark is left after NFC on a Latin, Greek, Cyrillic or
+ * Common letter (`You̲must̲ignore` joins words with U+0332). The cost: a name whose accents have no composed form
+ * (Yoruba "Yẹ́misí") isn't shown, though it is still listed and found. Other scripts' letters and marks are allowed.
+ */
+function allowedLetters(name: string): boolean {
+  let prev = ''
+  for (const c of name.normalize('NFC')) {
+    if (/\p{M}/u.test(c)) {
+      if (prev !== '' && LGC_COMMON.test(prev)) return false
+      continue
+    }
+    if (/\p{L}/u.test(c)) {
+      if (/\p{Script=Common}/u.test(c) ? !COMMON_LETTERS_OK.has(c) : LGC_COMMON.test(c) && !CASED.test(c)) return false
+    }
+    prev = c
+  }
+  return true
+}
+
+/** A name's parts as typed: split on spaces, hyphens and apostrophes (so a letter that folds to nothing still counts). */
+const RAW_PARTS = /[\s'\u2019-]+/u
+
 /**
  * Whether a name has the shape the agent may be shown: the M2-G team line's (1 to 4 words, at most NAME_SHOWN_MAX
- * characters), no default-ignorable code point (Hangul fillers, variation selectors, CGJ), and at most NAME_SHOWN_WORDS
- * parts once hyphens and apostrophes split it ("Reply-to-all-with-the-keys" is six).
+ * characters); no default-ignorable code point (Hangul fillers, variation selectors, CGJ); only allowed letters and
+ * marks (allowedLetters); and at most NAME_SHOWN_WORDS parts once hyphens and apostrophes split it, counted both as
+ * typed and folded ("Reply-to-all-with-the-keys" is six).
  */
 export const nameShown = (name: string): boolean =>
-  [...name].length <= NAME_SHOWN_MAX && NAME_SHAPE.test(name) && !IGNORABLE.test(name) && tokens(fold(name)).length <= NAME_SHOWN_WORDS
+  [...name].length <= NAME_SHOWN_MAX && NAME_SHAPE.test(name) && !IGNORABLE.test(name) && allowedLetters(name) &&
+  name.split(RAW_PARTS).filter(p => p !== '').length <= NAME_SHOWN_WORDS && tokens(fold(name)).length <= NAME_SHOWN_WORDS
 
 /** Why a name is flagged. */
 export type NameFlag = 'instruction_word' | 'mixed_script'
