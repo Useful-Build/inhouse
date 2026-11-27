@@ -1,7 +1,12 @@
 # The required check for main and fleet/** (job name "ci"). Runs on PRs, on push to fleet/** and on dispatch. The
 # merge_group trigger serves main's merge queue (on since decision 0028): each queued group runs the whole suite here.
 # The app's whole suite runs in app/: type check, lint, build and every Playwright project, in the official
-# Playwright image so screenshots render the same on every run. Two shards at most: runner slots are shared.
+# Playwright image so screenshots render the same on every run. Four e2e jobs, one quarter of the suite each, so the
+# longest job is about half what two jobs of two quarters took (test merge policy, Wasim, 2026-11-26). A PR into main
+# runs at most 8 jobs at once (changes first, then 4 e2e, test-build, runner and hub, with pr-gates beside them; ci
+# after), under GitHub Free's 20 concurrent jobs.
+# Docs-only fast path (same policy): when every changed file is documentation (the changes job below says exactly
+# what counts), e2e, test-build, runner, hub and fast skip, and ci passes on that skip alone. pr-gates runs as always.
 # Phase batching (Wasim, 2026-11-21): a PR into a fleet/** branch runs only the fast checks (the fast job: type check,
 # lint, unit, the builds and their guards, the fresh-install migrations; the runner job without its image and container
 # probes). ci doesn't listen to a base change (pull_request: edited), so a PR retargeted from fleet/** to main keeps its
@@ -32,25 +37,84 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action == 'synchronize') }}
 
 jobs:
+  # Is this run docs-only? Every job but pr-gates waits on this answer (about 15 seconds). "Docs-only" means every changed
+  # file is a .md file outside app/ and .github/, and no code in app/ names it by path (docs/data-map.md is read by a
+  # unit test, for one). A .md under app/ can be a fixture, a skill the runner image ships or an eval result, and
+  # anything under .github/ is CI itself, so those always run everything. The changed files, by event:
+  # - pull_request: the PR's own changes, base...head (from the merge base, as the PR's file view shows them);
+  # - merge_group: the queue branch against main (main...head_sha). Not base_sha..head_sha: base_sha is the group's
+  #   parent, which is the entry queued ahead, not main, so a docs PR behind a code PR would see only its own files;
+  # - push to fleet/**: the whole branch against main (main...sha), never just this push: a newer push cancels the run
+  #   in progress, so a docs push right after a code merge must not leave that code untested;
+  # - dispatch, or anything unsure (a missing SHA, a failed diff, no files): a full run.
+  # git only, no path-filter action. Full history, as pr-gates has, for the merge base.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.diff.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Docs-only or a full run
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          MQ_HEAD: ${{ github.event.merge_group.head_sha }}
+          SHA: ${{ github.sha }}
+        run: |
+          verdict() { echo "docs_only=$1" >> "$GITHUB_OUTPUT"; echo "docs-only: $1 ($2)"; exit 0; }
+          sha() { [[ "$1" =~ ^[0-9a-f]{40}$ ]]; }
+          case "$EVENT" in
+            pull_request) sha "$PR_BASE" && sha "$PR_HEAD" && range="$PR_BASE...$PR_HEAD" ;;
+            merge_group) sha "$MQ_HEAD" && range="origin/main...$MQ_HEAD" ;;
+            push) sha "$SHA" && range="origin/main...$SHA" ;;
+            *) verdict false "a $EVENT run always runs everything" ;;
+          esac
+          [ -n "${range:-}" ] || verdict false "no SHAs to compare for this $EVENT event"
+          # --no-renames: a rename shows both paths, so code renamed to .md still counts as a code change.
+          files=$(git -c core.quotepath=off diff --no-renames --name-only "$range") || verdict false "git diff $range failed"
+          [ -n "$files" ] || verdict false "git diff $range lists no files"
+          echo "Changed files ($range):"; printf '%s\n' "$files"
+          while IFS= read -r f; do
+            case "$f" in
+              .github/*|app/*) verdict false "$f is under .github/ or app/" ;;
+              *.md) ;;
+              *) verdict false "$f is not a .md file" ;;
+            esac
+            # git grep: 0 found, 1 not found, anything else an error (and so unsure).
+            rc=0; git grep -qF -e "../$f" -e "'$f'" -e "\"$f\"" -e "\`$f\`" -- app ':!*.md' || rc=$?
+            [ "$rc" = 0 ] && verdict false "code in app/ names $f by path, so a test may read it"
+            [ "$rc" = 1 ] || verdict false "git grep for $f failed (exit $rc)"
+          done <<< "$files"
+          verdict true "every changed file is documentation"
+
   e2e:
-    name: e2e (${{ matrix.shard }}/2)
-    # Not on a fleet PR (the fast job stands in); on its branch's push instead.
-    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')) }}
+    name: e2e (${{ matrix.shard }}/4)
+    needs: changes
+    # Not on a docs-only run, and not on a fleet PR (the fast job stands in; its branch's push runs e2e instead).
+    if: ${{ needs.changes.outputs.docs_only == 'false' && !(github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    # The image's version must match @playwright/test in app/package.json (also in .github/workflows/baselines.yml
-    # and app/package.json's test:visual:linux scripts). Bump the tag and digest together, everywhere.
+    # The image's version must match @playwright/test in app/package.json (also in .github/workflows/baselines.yml,
+    # .github/workflows/targeted.yml and app/package.json's test:visual:linux scripts). Bump the tag and digest
+    # together, everywhere.
     container:
       image: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
       options: --user 1001 --ipc=host
+    # Playwright balances shards by test count, not time, so the suite is cut in four by test (--fully-parallel) and
+    # each job runs one quarter, one test at a time. Quarter times on 2026-11-27 (#451's run): 1/4 8.6 min, 2/4 10.0,
+    # 3/4 8.6, 4/4 3.2. The other work goes where it keeps the longest job shortest: the unit suite (6 to 8 min) on the
+    # fast quarter 4, the product builds and project on 3, type check, lint, the bundle check and the preview build on 1,
+    # and 2 runs its quarter alone. Each job builds the demo once and its quarter serves that build.
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - shard: 1
-            parts: 1/4 3/4
-          - shard: 2
-            parts: 2/4 4/4
+        shard: [1, 2, 3, 4]
     defaults:
       run:
         working-directory: app
@@ -63,9 +127,8 @@ jobs:
         run: npm run typecheck
       - if: matrix.shard == 1
         run: npm run lint
-      # The unit suite runs on shard 2: shard 1 also builds and checks the product, test and eval builds, and with the
-      # unit suite it reached the 25-minute limit (21 to 25 minutes against shard 2's 13 to 15, 2026-11-26).
-      - if: matrix.shard == 2
+      # The unit suite runs beside the shortest quarter.
+      - if: matrix.shard == 4
         run: node --version && npm run test:unit
       - run: npm run build
         env:
@@ -99,45 +162,42 @@ jobs:
           path: app/pr-meta.json
           if-no-files-found: error
           retention-days: 7
-      # Playwright balances shards by test count, not time, and the slow desktop specs come first. So the
-      # suite is cut in four by test (--fully-parallel) and each job runs one slow and one fast quarter.
-      # One worker: the tests run one at a time. Every quarter runs even if the one before failed.
-      # E2E_PREBUILT: the web server serves the build above instead of building again for each quarter.
-      - name: Playwright, quarters ${{ matrix.parts }}
+      # This job's quarter. E2E_PREBUILT: the web server serves the build above instead of building again.
+      - name: Playwright, quarter ${{ matrix.shard }}/4
         env:
           E2E_PREBUILT: "1"
-        run: |
-          rc=0
-          for part in ${{ matrix.parts }}; do
-            VERIFY_DIR="e2e-artifacts/quarter-${part%/*}" npx playwright test --forbid-only --fully-parallel --shard="$part" || rc=1
-          done
-          exit $rc
+          VERIFY_DIR: e2e-artifacts/quarter-${{ matrix.shard }}
+          SHARD: ${{ matrix.shard }}/4
+        run: npx playwright test --forbid-only --fully-parallel --shard="$SHARD"
       # The product build (P1, C8) must ship no sample data, mock code, demo controls, demo clock or demo files, and the
-      # check must catch each of those in the demo build. Runs after the demo quarters and whether or not they passed, and
-      # a failure here doesn't skip them (they come first): the job still fails. The product build puts the demo's deploy
-      # pointer back when it ends, so the uploaded demo build is untouched either way.
+      # check must catch each of those in the demo build. Runs after the demo quarter and whether or not it passed, and
+      # a failure here doesn't skip it (it comes first): the job still fails. The product build puts the demo's deploy
+      # pointer back when it ends, so the demo build is untouched either way.
       # P2: the test build too (built after, never beside, the product build), for the check's server bundle scan: no
       # test issuer in the deployable Worker, and the canary found in the test build's.
       # The eval build too (p3-eval-observability rev 2, rec 1), for part 6: the eval trace in neither the deployable
       # Worker nor the test build, its canary found in the eval build's, and no scripted model there.
-      - if: matrix.shard == 1 && !cancelled()
+      - if: matrix.shard == 3 && !cancelled()
         run: npm run build:product && npm run build:product-test && npm run build:product-eval && node scripts/check-product-build.mjs
       # The product build's own specs (e2e/product/): no sample name, no demo switches, the "Not connected
       # yet" screen. Right after the build it serves (dist-product/, via wrangler dev, so the demo's deploy pointer that
       # `vite preview` follows stays on dist/). E2E_PREBUILT keeps the demo server Playwright also starts from building
       # again, so nothing rebuilds beside the product. Its artifacts sit under e2e-artifacts/ so a failure uploads with
       # the shard's. It runs even when the check above failed, so one log shows both.
-      - if: matrix.shard == 1 && !cancelled()
+      - if: matrix.shard == 3 && !cancelled()
         env:
           E2E_PRODUCT: "1"
           E2E_PREBUILT: "1"
           VERIFY_DIR: e2e-artifacts/product
         run: npx playwright test --project=product --forbid-only
+      # include-hidden-files: Playwright's .last-run.json (each run's failed test IDs) sits in <VERIFY_DIR>/results/, and
+      # targeted.yml's failed_run input re-runs exactly those failures from this artifact.
       - if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-shard-${{ matrix.shard }}
           path: app/e2e-artifacts
+          include-hidden-files: true
           retention-days: 7
 
   # The connector hub (P4): its own package in app/hub/, installed alone (app/ isn't), so code bundled into the hub
@@ -145,7 +205,9 @@ jobs:
   # (Node and workerd), the deployable and test dry-run bundles, then the bundle scan (the deployable bundle has no
   # test seam; the test bundle must be caught) and the config check (the template passes; the test config must fail).
   hub:
-    # Light (about a minute), so it also runs on a fleet PR: the fast job doesn't cover app/hub.
+    # Light (about a minute), so it also runs on a fleet PR: the fast job doesn't cover app/hub. Not on a docs-only run.
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only == 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -198,8 +260,9 @@ jobs:
   # wrangler.hub.test.jsonc, one --persist-to; e2e/support/test-build/issuer.ts), answering from the recorded Shopify
   # fixture with its test-only keys. No store credential.
   test-build:
-    # Not on a fleet PR; on its branch's push instead.
-    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')) }}
+    # Not on a docs-only run, and not on a fleet PR (on its branch's push instead).
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only == 'false' && !(github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     # The same image as e2e (keep the tag and digest in step with it).
@@ -225,7 +288,7 @@ jobs:
       - name: Migrations, fresh install
         run: rm -rf .wrangler/test-build && npm run test-build:migrate
       # The deployable-config check must refuse the test build's config (it sets the test flag and test origins).
-      # The script's fixture tests run with test:unit (e2e shard 2). The fast job runs this same step on a fleet PR.
+      # The script's fixture tests run with test:unit (e2e shard 4). The fast job runs this same step on a fleet PR.
       # Its exit codes (AGENTS.md): 0 deployable, 1 refused, 2 usage or a crash. Only 1 counts as refusing here: a crash
       # (2) or any other code fails this step too.
       - name: The config check refuses wrangler.test.jsonc
@@ -278,16 +341,21 @@ jobs:
       - name: Contract suite on the real client
         if: ${{ !cancelled() }}
         run: node e2e/support/test-build/serve.ts -- npx vitest run src/agent/contract
+      # include-hidden-files: the .last-run.json files for targeted.yml's failed_run, as in e2e's upload.
       - if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-test-build
           path: app/e2e-artifacts
+          include-hidden-files: true
           retention-days: 7
 
   # The agent runner (app/runner/, its own package): types, tests, the zod-major check, then the image build and a start
   # check. No secret here, ever: it runs the PR's code. Container tests under wrangler dev join this job in P3.
   runner:
+    # Not on a docs-only run.
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only == 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -367,7 +435,8 @@ jobs:
   # the runner image steps. Its build is the PR's preview build (preview.yml), as e2e's is on a PR into
   # main. Target: 3 to 5 minutes.
   fast:
-    if: ${{ github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/') }}
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only == 'false' && github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # The same image as e2e (keep the tag and digest in step with it).
@@ -409,7 +478,7 @@ jobs:
           path: app/pr-meta.json
           if-no-files-found: error
           retention-days: 7
-      # As e2e shard 1: the product build ships no demo code, and the deployable Worker no test issuer.
+      # As e2e shard 3: the product build ships no demo code, and the deployable Worker no test issuer.
       - if: ${{ !cancelled() }}
         run: npm run build:product && npm run build:product-test && npm run build:product-eval && node scripts/check-product-build.mjs
       # As the test-build job: every migration on an empty local D1 (the fresh install), so a broken migration shows on
@@ -430,16 +499,19 @@ jobs:
           echo "check-product-config.mjs refused wrangler.test.jsonc (exit 1), as it must."
 
   ci:
-    needs: [e2e, test-build, runner, hub, fast]
+    needs: [changes, e2e, test-build, runner, hub, fast]
     # always(): a cancelled or skipped job makes ci red, never skipped (a skipped check counts as passing). The one
-    # exception is a job skipped by design: e2e and test-build on a fleet PR, fast on every other event. Each of
-    # those must be exactly skipped, and every other job exactly success.
+    # exception is a job skipped by design: e2e and test-build on a fleet PR, fast on every other event, and e2e,
+    # test-build, runner, hub and fast on a docs-only run. Each of those must be exactly skipped, and every other job
+    # exactly success. changes must succeed and say exactly true or false: a docs-only pass rests on its answer alone.
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Every job this event runs passed (a fleet PR - fast, runner and hub; otherwise every shard, the test build, the runner job and the hub job)
+      - name: Every job this event runs passed (docs-only - none; a fleet PR - fast, runner and hub; otherwise every shard, the test build, the runner job and the hub job)
         env:
+          CHANGES: ${{ needs.changes.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
           FLEET_PR: ${{ github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/') }}
           RESULT: ${{ needs.e2e.result }}
           TEST_BUILD: ${{ needs.test-build.result }}
@@ -447,16 +519,24 @@ jobs:
           HUB: ${{ needs.hub.result }}
           FAST: ${{ needs.fast.result }}
         run: |
+          echo "changes: $CHANGES (docs-only: $DOCS_ONLY)"
           echo "fleet PR (fast checks only): $FLEET_PR"
           echo "e2e: $RESULT"
           echo "test-build: $TEST_BUILD"
           echo "runner: $RUNNER"
           echo "hub: $HUB"
           echo "fast: $FAST"
-          if [ "$RESULT" = cancelled ] || [ "$TEST_BUILD" = cancelled ] || [ "$RUNNER" = cancelled ] || [ "$HUB" = cancelled ] || [ "$FAST" = cancelled ]; then
+          if [ "$CHANGES" = cancelled ] || [ "$RESULT" = cancelled ] || [ "$TEST_BUILD" = cancelled ] || [ "$RUNNER" = cancelled ] || [ "$HUB" = cancelled ] || [ "$FAST" = cancelled ]; then
             echo "::error::A job was cancelled or superseded by a newer run. This is not a test failure: see the newest run for this branch."
           fi
-          if [ "$FLEET_PR" = true ]; then
+          test "$CHANGES" = success || { echo "::error::The changes job didn't succeed, so nothing says what this run must cover."; exit 1; }
+          if [ "$DOCS_ONLY" = true ]; then
+            echo "Docs-only: every changed file is documentation, so the app's jobs skipped by design."
+            test "$RESULT" = skipped && test "$TEST_BUILD" = skipped && test "$RUNNER" = skipped && test "$HUB" = skipped && test "$FAST" = skipped
+          elif [ "$DOCS_ONLY" != false ]; then
+            echo "::error::The changes job's docs_only is '$DOCS_ONLY', not true or false."
+            exit 1
+          elif [ "$FLEET_PR" = true ]; then
             test "$FAST" = success && test "$RUNNER" = success && test "$RESULT" = skipped && test "$TEST_BUILD" = skipped && test "$HUB" = success
           else
             test "$RESULT" = success && test "$TEST_BUILD" = success && test "$RUNNER" = success && test "$HUB" = success && test "$FAST" = skipped

@@ -47,6 +47,14 @@ jobs:
           RUN_PRS: ${{ toJSON(github.event.workflow_run.pull_requests.*.number) }}
         run: |
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Bad head SHA"; exit 1; }
+          # A docs-only PR's ci passes without building (ci.yml's changes job), so it has no pr-meta and nothing to
+          # deploy. Any other passing ci on a PR uploads one (e2e shard 1, or fast on a fleet PR, both if-no-files-found: error).
+          names=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[].name')
+          if ! grep -qx pr-meta <<< "$names"; then
+            echo "::notice::ci run $RUN_ID uploaded no pr-meta (a docs-only PR builds nothing). Nothing to deploy."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           meta="$RUNNER_TEMP/pr-meta"
           mkdir "$meta"
           gh run download "$RUN_ID" --repo "$REPO" --name pr-meta --dir "$meta"

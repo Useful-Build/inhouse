@@ -1,0 +1,255 @@
+# Targeted e2e run: one Playwright project at a branch's code, narrowed to some specs, a grep or the failures of a
+# ci run, optionally repeated. The re-run loop (test merge policy, Wasim, 2026-11-26): narrow to fix, wide to prove
+# once. A targeted run replaces extra full ci runs while fixing a failure (and 5 repeats sort flaky from real, up to 20
+# prove a flaky fix). It never replaces the full run: ci still runs everything on the PR and in the merge queue, and
+# this workflow is never a required check.
+#
+# Dispatch it at the branch: `gh workflow run targeted --ref <branch> -f project=desktop -f specs="e2e/today.spec.ts"`.
+# There's no ref input on purpose: the run checks out exactly the dispatched ref (github.ref), so a branch's code never
+# runs under main's name. Inputs:
+# - project: one Playwright project, set up exactly as ci.yml sets it up, in the same image.
+# - specs: space-separated spec paths under app/e2e (e2e/x.spec.ts or app/e2e/x.spec.ts, an optional :line).
+# - grep: Playwright's --grep.
+# - failed_run: the run ID of a failed ci run. Re-runs that run's failures of this project, read from the
+#   .last-run.json files in its playwright-shard-* or playwright-test-build artifact (runs from before targeted.yml have
+#   none; artifacts last 7 days). Playwright gives each repeat its own test ID, so `--last-failed` alone would run each
+#   failure once whatever repeat_each says: the failures are picked with `--last-failed --last-failed-file`, written as
+#   a --test-list, and run from that list.
+# - repeat_each: 1 to 20 (--repeat-each).
+# Every input is checked against a strict pattern in the check job and reaches a script only through env. Read-only
+# token (contents, and actions to read the failed run and its artifacts), no secrets, no environment. Always
+# --forbid-only. The artifacts upload on any outcome but a cancel. A newer dispatch on the same ref cancels this one.
+name: targeted
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: The Playwright project to run
+        required: true
+        type: choice
+        options: [desktop, phone, visual-desktop, visual-phone, a11y, product, api, real-desktop, real-phone, smoke]
+      specs:
+        description: Space-separated spec paths under app/e2e (for example "e2e/today.spec.ts e2e/menus.spec.ts:40")
+        required: false
+        type: string
+        default: ""
+      grep:
+        description: Only tests whose title matches this regular expression (Playwright --grep)
+        required: false
+        type: string
+        default: ""
+      failed_run:
+        description: Run ID of a failed ci run; re-runs that run's failures in this project
+        required: false
+        type: string
+        default: ""
+      repeat_each:
+        description: Run each test this many times (1 to 20)
+        required: false
+        type: string
+        default: "1"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  # Per branch and project: a phone run doesn't cancel a desktop run on the same branch; the same pair again does.
+  group: targeted-${{ github.ref }}-${{ inputs.project }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check the inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      project: ${{ steps.check.outputs.project }}
+      kind: ${{ steps.check.outputs.kind }}
+      artifact: ${{ steps.check.outputs.artifact }}
+    steps:
+      - name: Check the inputs
+        id: check
+        env:
+          PROJECT: ${{ inputs.project }}
+          SPECS: ${{ inputs.specs }}
+          GREP: ${{ inputs.grep }}
+          FAILED_RUN: ${{ inputs.failed_run }}
+          REPEAT: ${{ inputs.repeat_each }}
+        run: |
+          # kind: how ci.yml sets the project up. demo: the demo build (e2e jobs). product: the demo and product builds
+          # (e2e shard 3). test-build: the test build with the hub (test-build job).
+          case "$PROJECT" in
+            desktop|phone|visual-desktop|visual-phone|a11y) kind=demo artifact='playwright-shard-*' ;;
+            product) kind=product artifact='playwright-shard-*' ;;
+            api|real-desktop|real-phone|smoke) kind=test-build artifact=playwright-test-build ;;
+            *) echo "::error::project must be one of the listed projects"; exit 1 ;;
+          esac
+          # One line only: read takes the first line, so a newline would silently drop specs (or all of them).
+          [[ "$SPECS" != *[[:cntrl:]]* ]] || { echo "::error::specs must be one line of space-separated paths"; exit 1; }
+          read -ra specs <<< "$SPECS"
+          [ "${#specs[@]}" -le 20 ] || { echo "::error::at most 20 specs"; exit 1; }
+          for s in "${specs[@]}"; do
+            [[ "$s" =~ ^(app/)?e2e/[A-Za-z0-9_][A-Za-z0-9_./-]{0,150}\.spec\.ts(:[1-9][0-9]{0,5})?$ && "$s" != *..* ]] ||
+              { echo "::error::specs must be spec files under app/e2e (e2e/x.spec.ts or app/e2e/x.spec.ts, an optional :line); got '$s'"; exit 1; }
+          done
+          # Letters, digits, spaces and regex punctuation; no quote but ', no backtick, no control character.
+          grep_re="^[][A-Za-z0-9 _.,:;()/@#&+=?*|^{}\\\$'-]{1,200}\$"
+          [ -z "$GREP" ] || [[ "$GREP" =~ $grep_re ]] ||
+            { echo "::error::grep may hold letters, digits, spaces and _ . , : ; ( ) / @ # & + = ? * | ^ { } [ ] \\ \$ ' -, up to 200 characters"; exit 1; }
+          [[ "$REPEAT" =~ ^([1-9]|1[0-9]|20)$ ]] || { echo "::error::repeat_each must be 1 to 20"; exit 1; }
+          [ -z "$FAILED_RUN" ] || [[ "$FAILED_RUN" =~ ^[1-9][0-9]{0,14}$ ]] || { echo "::error::failed_run must be a run ID"; exit 1; }
+          { echo "project=$PROJECT"; echo "kind=$kind"; echo "artifact=$artifact"; } >> "$GITHUB_OUTPUT"
+      # The run must be this repo's ci workflow and finished. Its head need not be this ref's: re-running yesterday's
+      # failures on today's fix is the point. Its branch and SHA are printed for the record.
+      - name: The failed run is a finished ci run
+        if: inputs.failed_run != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          FAILED_RUN: ${{ inputs.failed_run }}
+        run: |
+          info=$(gh api "repos/$REPO/actions/runs/$FAILED_RUN" --jq '[.path, .status, (.conclusion // "none"), .head_branch, .head_sha] | @tsv')
+          IFS=$'\t' read -r path status conclusion branch sha <<< "$info"
+          echo "Run $FAILED_RUN: $path, $status ($conclusion), $branch at $sha"
+          [ "$path" = .github/workflows/ci.yml ] || { echo "::error::Run $FAILED_RUN is $path, not a ci run"; exit 1; }
+          [ "$status" = completed ] || { echo "::error::Run $FAILED_RUN hasn't finished ($status)"; exit 1; }
+
+  e2e:
+    name: ${{ needs.check.outputs.project }}
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The same image as ci.yml (keep the tag and digest in step with it). --add-host as ci.yml's test-build job: Node's
+    # resolver doesn't always resolve *.localhost on a runner. Harmless for the other projects, which never use them.
+    container:
+      image: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
+      options: --user 1001 --ipc=host --add-host=brand.localhost:127.0.0.1 --add-host=inhouse.localhost:127.0.0.1
+    defaults:
+      run:
+        working-directory: app
+        shell: bash
+    env:
+      KIND: ${{ needs.check.outputs.kind }}
+      PROJECT: ${{ needs.check.outputs.project }}
+      # As ci.yml: the demo projects serve the prebuilt demo, product also the product build, and the test build's
+      # projects the test build (its server never builds). An empty value is off (playwright.config.ts tests !!value).
+      E2E_PREBUILT: ${{ needs.check.outputs.kind != 'test-build' && '1' || '' }}
+      E2E_PRODUCT: ${{ needs.check.outputs.kind == 'product' && '1' || '' }}
+      E2E_TEST_BUILD: ${{ needs.check.outputs.kind == 'test-build' && '1' || '' }}
+      VERIFY_DIR: e2e-artifacts/targeted
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: npm ci
+      # The hub's own packages, as ci.yml's test-build job: the hub Worker in the multi-config `wrangler dev` bundles from them.
+      - if: needs.check.outputs.kind == 'test-build'
+        run: npm ci
+        working-directory: app/hub
+      - if: needs.check.outputs.kind != 'test-build'
+        run: npm run build
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+      - if: needs.check.outputs.kind == 'product'
+        run: npm run build:product
+      - if: needs.check.outputs.kind == 'test-build'
+        run: npm run build:product-test
+
+      - name: Download the failed run's Playwright artifacts
+        if: inputs.failed_run != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: ${{ needs.check.outputs.artifact }}
+          run-id: ${{ inputs.failed_run }}
+          github-token: ${{ github.token }}
+          # Relative to the workspace: in a container job, runner.temp names the host's path, not the container's.
+          path: failed-run
+      # Every .last-run.json in those artifacts (one per quarter or project ci ran), merged: a test ID names its project,
+      # so another project's IDs match nothing here. Then the failures of this project, picked by Playwright itself
+      # (--last-failed --list), become a --test-list for the run below. Fails when none are found or a title can't go
+      # into a test list as is.
+      - name: The failed run's failures in this project
+        if: inputs.failed_run != ''
+        env:
+          SPECS: ${{ inputs.specs }}
+          GREP: ${{ inputs.grep }}
+          FAILED_RUN: ${{ inputs.failed_run }}
+          ARTIFACT: ${{ needs.check.outputs.artifact }}
+        run: |
+          set -euo pipefail
+          dir="$GITHUB_WORKSPACE/failed-run"
+          mapfile -t files < <(find "$dir" -type f -name .last-run.json 2>/dev/null | sort)
+          [ "${#files[@]}" -gt 0 ] || { echo "::error::No .last-run.json in run $FAILED_RUN's $ARTIFACT artifacts (gone after 7 days, or from before ci.yml kept them)."; exit 1; }
+          node - "$RUNNER_TEMP/last-failed.json" "${files[@]}" <<'EOF'
+          const fs = require('node:fs')
+          const [out, ...files] = process.argv.slice(2)
+          const ids = new Set()
+          for (const f of files) {
+            const { failedTests } = JSON.parse(fs.readFileSync(f, 'utf8'))
+            if (!Array.isArray(failedTests) || failedTests.some(id => typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(id))) throw new Error(`${f}: failedTests isn't a list of test IDs`)
+            console.log(`${f}: ${failedTests.length} failed or didn't run`)
+            failedTests.forEach(id => ids.add(id))
+          }
+          fs.writeFileSync(out, JSON.stringify({ status: 'failed', failedTests: [...ids] }))
+          EOF
+          args=(--project="$PROJECT" --last-failed --last-failed-file "$RUNNER_TEMP/last-failed.json" --list --reporter=json)
+          [ -z "$GREP" ] || args+=(--grep "$GREP")
+          read -ra specs <<< "$SPECS"
+          for s in "${specs[@]}"; do args+=("${s#app/}"); done
+          npx playwright test "${args[@]}" > "$RUNNER_TEMP/last-failed-list.json"
+          # Each test as `[project] › file › describe › title`, the format --test-list reads (titles split on ›,
+          # trimmed). Listed again from that file, the count must match, or the list lost or gained a test.
+          node - "$RUNNER_TEMP/last-failed.json" "$RUNNER_TEMP/last-failed-list.json" "$RUNNER_TEMP/test-list.txt" <<'EOF'
+          const fs = require('node:fs')
+          const [idsFile, listFile, out] = process.argv.slice(2)
+          const ids = new Set(JSON.parse(fs.readFileSync(idsFile, 'utf8')).failedTests)
+          const lines = []
+          const walk = (suite, titles) => {
+            for (const spec of suite.specs ?? []) {
+              if (!ids.has(spec.id)) throw new Error(`Playwright listed ${spec.id}, which isn't one of the failures`)
+              const path = [...titles, spec.title]
+              if (path.some(t => t.includes('›') || t !== t.trim())) throw new Error(`A title can't go into a test list as is: ${JSON.stringify(path)}`)
+              for (const t of spec.tests) lines.push(`[${t.projectName}] › ${spec.file} › ${path.join(' › ')}`)
+            }
+            // An anonymous describe has no title in a test's title path.
+            for (const child of suite.suites ?? []) walk(child, child.title ? [...titles, child.title] : titles)
+          }
+          for (const file of JSON.parse(fs.readFileSync(listFile, 'utf8')).suites) walk(file, [])
+          if (!lines.length) throw new Error('None of the run\'s failures is in this project (with these specs and grep)')
+          fs.writeFileSync(out, lines.join('\n') + '\n')
+          console.log(`${lines.length} failed test(s) to run:\n${lines.join('\n')}`)
+          EOF
+          want=$(grep -c . "$RUNNER_TEMP/test-list.txt")
+          npx playwright test --project="$PROJECT" --test-list "$RUNNER_TEMP/test-list.txt" --list --reporter=json > "$RUNNER_TEMP/test-list-check.json"
+          got=$(node -e 'let n=0;const w=s=>{n+=(s.specs??[]).reduce((a,x)=>a+x.tests.length,0);(s.suites??[]).forEach(w)};JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).suites.forEach(w);console.log(n)' "$RUNNER_TEMP/test-list-check.json")
+          [ "$got" = "$want" ] || { echo "::error::The test list names $want test(s) but Playwright found $got from it."; exit 1; }
+      - name: Playwright, ${{ needs.check.outputs.project }}
+        env:
+          SPECS: ${{ inputs.specs }}
+          GREP: ${{ inputs.grep }}
+          REPEAT: ${{ inputs.repeat_each }}
+          FAILED_RUN: ${{ inputs.failed_run }}
+        run: |
+          args=(--project="$PROJECT" --forbid-only --repeat-each="$REPEAT")
+          # ci.yml runs the demo projects with --fully-parallel (its quarters), the others without.
+          [ "$KIND" != demo ] || args+=(--fully-parallel)
+          if [ -n "$FAILED_RUN" ]; then
+            # The specs and grep already narrowed the list.
+            args+=(--test-list "$RUNNER_TEMP/test-list.txt")
+          else
+            [ -z "$GREP" ] || args+=(--grep "$GREP")
+            read -ra specs <<< "$SPECS"
+            for s in "${specs[@]}"; do args+=("${s#app/}"); done
+          fi
+          echo "npx playwright test ${args[*]}"
+          npx playwright test "${args[@]}"
+      # include-hidden-files: this run's own .last-run.json, to inspect what failed (failed_run takes ci runs only).
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: targeted-${{ needs.check.outputs.project }}
+          path: app/e2e-artifacts
+          include-hidden-files: true
+          retention-days: 7
