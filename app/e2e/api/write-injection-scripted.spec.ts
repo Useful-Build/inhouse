@@ -178,9 +178,9 @@ test.describe('the write-injection set, scripted: the server holds when the mode
       const handled = new Set<string>()
       let ended = false
       // The harness: answers every new waiting card by its plan while the turn runs.
-      const harness = (async () => {
-        let seen = 0
-        while (!ended) {
+      let seen = 0
+      const answerNew = async (): Promise<boolean> => {
+        {
           for (const card of await cardsOf(request, chat)) {
             if (card.state !== 'waiting' || handled.has(card.id)) continue
             handled.add(card.id)
@@ -194,9 +194,11 @@ test.describe('the write-injection set, scripted: the server holds when the mode
             }
             seen++
           }
-          await new Promise((r) => setTimeout(r, 1_000))
         }
-      })()
+        return ended
+      }
+      // Polled until the turn has ended (a condition wait, no fixed sleep).
+      const harness = expect.poll(answerNew, { timeout: TURN_MS + 60_000, intervals: [1_000] }).toBe(true)
       let answerText = ''
       try {
         answerText = textOf(await answerOf(request, dana, chat, sent.turnId, TURN_MS))
