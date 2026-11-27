@@ -29,6 +29,19 @@ const BREAKS = /[\p{Cc}\p{Zl}\p{Zp}\u115F\u1160\u3164\uFFA0]/gu
 const INVISIBLE = /[\p{Cf}\p{Cs}\p{Default_Ignorable_Code_Point}]/gu
 /** A default-ignorable code point (fillers, variation selectors, CGJ, zero-width and format characters): never shown. */
 const IGNORABLE = /\p{Default_Ignorable_Code_Point}/u
+/**
+ * Blank letters, marks and symbols (no visible glyph): the Hangul fillers U+115F, U+1160, U+3164 and U+FFA0 (default
+ * ignorable), the Egyptian hieroglyph blanks U+13441 and U+13442, the Khitan small script filler U+16FE4 and the Braille
+ * pattern blank U+2800. None is Allowed in UTS #39 (IdentifierStatus.txt 2026-04-13; IdentifierType.txt 2026-08-06 gives
+ * Default_Ignorable, Exclusion and Technical Not_XID), and the hieroglyph blanks and the Khitan filler aren't default
+ * ignorable, so IGNORABLE misses them. Never shown (nameShown). A blank joins what it sits between, never splits it
+ * (#536): for `mixed_script` it stays in the word as a letter of its own script ("ᄀㅤA" is one word mixing Hangul and
+ * Latin), and `instruction_word` also reads it as nothing ("Igㅤnore" reads `ignore`).
+ */
+const BLANKS = /[\u115F\u1160\u2800\u3164\uFFA0\u{13441}\u{13442}\u{16FE4}]/gu
+const BLANK = new RegExp(BLANKS.source, 'u')
+/** INVISIBLE but for the blanks (the Hangul fillers are default ignorable): what mixesScripts takes out of a word. */
+const INVISIBLE_NOT_BLANK = new RegExp(String.raw`(?!${BLANK.source})[\p{Cf}\p{Cs}\p{Default_Ignorable_Code_Point}]`, 'gu')
 const MARKS = /\p{M}/gu
 const SPACES = /\s+/gu
 
@@ -138,7 +151,7 @@ function scriptSplit(s: string): string {
 }
 
 /**
- * Every reading of a name the flag checks: invisible characters and marks as nothing or as a space, letters that read as
+ * Every reading of a name the flag checks: blanks (BLANKS) as nothing, invisible characters and marks as nothing or as a space, letters that read as
  * punctuation (`ǃ`, `ː`, `ｰ`) as letters, a space or nothing, a script change as a space or not, case changes split or
  * not, apostrophes, middle dots and hyphens split or joined (eight ways).
  */
@@ -148,7 +161,7 @@ function readings(name: string): string[][] {
   const compat = spaced.normalize('NFKC')
   const unpunctuated = compat.replace(PUNCTUATION_LETTERS, ' ')
   const texts = new Set<string>()
-  for (const v of [nfc, spaced, unpunctuated, compat.replace(PUNCTUATION_LETTERS, ''), scriptSplit(unpunctuated)]) {
+  for (const v of [nfc, nfc.replace(BLANKS, ''), spaced, unpunctuated, compat.replace(PUNCTUATION_LETTERS, ''), scriptSplit(unpunctuated)]) {
     for (const w of [v, camelSplit(tidy(v))]) for (const j of joined(w)) texts.add(j)
   }
   return [...texts].map(t => tokens(fold(t)))
@@ -196,12 +209,15 @@ export function scriptsOf(s: string): Set<string> {
 
 /**
  * Whether a word of a name mixes scripts beyond MIXES_ALLOWED (Cyrillic `о` in "Ignоre", Greek `ε` in "Lεo", Hangul `ㅣ`
- * in "Admㅣn"). Words are split on spaces only, after invisible characters are taken out, so "Ign-о-re", "Ign'о're" and
- * "Ign\u200Bо\u200Bre" are one word each, and "Dana Ким" is two words of one script each.
+ * in "Admㅣn"). Words are split on spaces and control characters only, after invisible characters are taken out, so
+ * "Ign-о-re", "Ign'о're" and "Ign\u200Bо\u200Bre" are one word each, and "Dana Ким" is two words of one script each. A
+ * blank (BLANKS) stays in its word as a letter of its script, so "ᄀㅤA" is one word of Hangul and Latin (#536).
  */
 export function mixesScripts(name: string): boolean {
-  // Split before any NFKC: a few letters (U+037A, U+FE70..) expand to a space under NFKC and would split one word.
-  return tidy(name).split(' ').some(word => {
+  // Split before any NFKC: a few letters (U+037A, U+FE70..) expand to a space under NFKC and would split one word. Not
+  // tidy, which makes a Hangul filler a space.
+  const words = name.replace(/[\p{Cc}\p{Zl}\p{Zp}]/gu, ' ').replace(INVISIBLE_NOT_BLANK, '').split(/\s+/u)
+  return words.some(word => {
     const scripts = [...scriptsOf(word)]
     return scripts.length > 1 && !MIXES_ALLOWED.some(set => scripts.every(s => set.includes(s)))
   })
@@ -262,13 +278,13 @@ export const partCount = (name: string): number =>
 
 /**
  * Whether a name has the shape the agent may be shown: the M2-G team line's (1 to 4 words, at most NAME_SHOWN_MAX
- * characters); no default-ignorable code point (Hangul fillers, variation selectors, CGJ); only allowed letters and
- * marks (allowedLetters); and at most NAME_SHOWN_WORDS parts once hyphens and apostrophes split it, counted both as
- * typed and folded ("Reply-to-all-with-the-keys" is six).
+ * characters); no default-ignorable code point (Hangul fillers, variation selectors, CGJ) and no blank (BLANKS), as
+ * typed or after NFKC; only allowed letters and marks (allowedLetters); and at most NAME_SHOWN_WORDS parts once hyphens
+ * and apostrophes split it, counted both as typed and folded ("Reply-to-all-with-the-keys" is six).
  */
 export const nameShown = (name: string): boolean =>
-  [...name].length <= NAME_SHOWN_MAX && NAME_SHAPE.test(name) && !IGNORABLE.test(name) && allowedLetters(name) &&
-  partCount(name) <= NAME_SHOWN_WORDS
+  [...name].length <= NAME_SHOWN_MAX && NAME_SHAPE.test(name) && !IGNORABLE.test(name) &&
+  !BLANK.test(name) && !BLANK.test(name.normalize('NFKC')) && allowedLetters(name) && partCount(name) <= NAME_SHOWN_WORDS
 
 /** Why a name is flagged. */
 export type NameFlag = 'instruction_word' | 'mixed_script'
