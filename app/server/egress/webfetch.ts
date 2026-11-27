@@ -1,9 +1,11 @@
 // The WebFetch egress (HTTPS catch-all, p3-design 8.8 and 6.2): a session's web reads, best effort. GET and HEAD only,
-// no body, cookies or authorization forwarded, port 443 only. Only an exact host on the brand's `t:webfetch` list; with
-// the list empty or never set (the default), no host at all (P8a S: a brand lists the hosts it may read; before P8a an
-// empty list meant any public host). Every host is resolved first through DNS over HTTPS to a pinned
-// resolver, and any non-public answer refuses it; address literals are judged directly. Redirects: at most 3, each hop
-// checked the same way. Response bytes capped at 10 MB.
+// no body, cookies or authorization forwarded, port 443 only. Two modes, the Inhouse team's `t:webfetch_mode` (M3-F, N29):
+//  - `list` (the default): only an exact host on the brand's `t:webfetch` list; with the list empty or never set, no host
+//    at all (P8a S: a brand lists the hosts it may read; before P8a an empty list meant any public host);
+//  - `open`: any public host name (a valid DNS name of two or more labels, never an address literal). Every other check
+//    stays: the off switch, scheme, port, the leak check before DNS, DNS and the private-address block, on every hop.
+// Every host is resolved first through DNS over HTTPS to a pinned resolver, and any non-public answer refuses it; address
+// literals are judged directly. Redirects: at most 3, each hop checked the same way. Response bytes capped at 10 MB.
 //
 // The off switch (M1-F, N7): an Admin turns reading web pages off with the brand's `t:webfetch_on`. It's read from D1 at
 // the top of every hop, before the static checks, the leak check, DNS or any page request, so off means no web request
@@ -21,7 +23,7 @@
 // read 2026-11-20): `GET https://cloudflare-dns.com/dns-query?name=<n>&type=A|AAAA` with `accept: application/dns-json`;
 // `Status` 0 is success; `Answer[]` entries carry a numeric `type` (1 A, 28 AAAA, 5 CNAME) and `data`.
 import { WorkerEntrypoint } from 'cloudflare:workers'
-import { parseHostlist, webFetchOn } from '../../shared/contract/settings-table.ts'
+import { parseHostlist, webFetchMode, webFetchOn, type WebFetchMode } from '../../shared/contract/settings-table.ts'
 import { brandAgent } from '../do/brand-agent/client.ts'
 import { safeError } from '../safe-error.ts'
 import type { EgressProps } from './index.ts'
@@ -51,6 +53,8 @@ export interface WebDeps {
   fetchOn(): Promise<boolean>
   /** The brand's `t:webfetch` as stored (a JSON string value), or null when it was never set. */
   hostList(): Promise<string | null>
+  /** The brand's `t:webfetch_mode` now (M3-F): `list` unless the Inhouse team set `open`. Throws on a store failure. */
+  fetchMode(): Promise<WebFetchMode>
   /** Leak check (M1-G, N8): returns true when `url` carries a stored private-data token. Throws on store failure (fail closed). */
   checkLeak(url: URL): Promise<boolean>
   /** The network: the DoH resolver and the page fetches go through it. */
@@ -92,14 +96,19 @@ export async function resolvesPublic(host: string, f: typeof fetch): Promise<boo
   return any
 }
 
-/** Static URL checks that run before the leak check and DNS: scheme, port, literal address and host list. */
-export function checkUrlStatic(url: URL, list: string[]): WebRefusal | null {
+/**
+ * Static URL checks that run before the leak check and DNS: scheme, port, literal address and host list. `list` null is
+ * open mode (M3-F): any host name the host-list rule would accept (`parseHostlist`: a DNS name of two or more labels,
+ * no address literal or numeric last label), so an address literal, public or not, is refused (`address`).
+ */
+export function checkUrlStatic(url: URL, list: string[] | null): WebRefusal | null {
   if (url.protocol !== 'https:') return 'scheme'
   if (url.port !== '' && url.port !== '443') return 'port'
   if (url.username !== '' || url.password !== '') return 'scheme'
   const host = url.hostname.replace(/\.$/, '').toLowerCase()
   const literal = addressVerdict(host)
   if (literal === 'blocked') return 'address'
+  if (list === null) return parseHostlist(host)?.length === 1 ? null : 'address'
   // An empty list lists nothing: every host is refused (P8a S).
   if (!list.includes(host)) return 'not_listed'
   return null
@@ -113,7 +122,7 @@ export async function checkUrlDns(url: URL, f: typeof fetch): Promise<WebRefusal
 }
 
 /** The checks one URL must pass before it's fetched (a hop of a redirect included). */
-export async function checkUrl(url: URL, list: string[], f: typeof fetch): Promise<WebRefusal | null> {
+export async function checkUrl(url: URL, list: string[] | null, f: typeof fetch): Promise<WebRefusal | null> {
   return checkUrlStatic(url, list) ?? (await checkUrlDns(url, f))
 }
 
@@ -154,9 +163,20 @@ function capped(body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
 export async function handleWebFetch(request: Request, d: WebDeps): Promise<Response> {
   let url = new URL(request.url)
   if (request.method !== 'GET' && request.method !== 'HEAD') return refuse('method', d, hostOf(url))
-  const stored = await d.hostList()
-  const list = stored === null ? [] : parseHostlist(stored)
-  if (list === null) return refuse('settings', d, hostOf(url))
+  // The mode and the list, read once per request (the off switch is read again on every hop below).
+  let mode: WebFetchMode
+  try {
+    mode = await d.fetchMode()
+  } catch (err) {
+    d.log({ event: 'webfetch_mode_read_failed', error: safeError(err) })
+    return refuse('settings', d, hostOf(url))
+  }
+  let list: string[] | null = null
+  if (mode === 'list') {
+    const stored = await d.hostList()
+    list = stored === null ? [] : parseHostlist(stored)
+    if (list === null) return refuse('settings', d, hostOf(url))
+  }
 
   const headers = new Headers(FETCH_HEADERS)
   for (let hop = 0; ; hop++) {
@@ -225,6 +245,12 @@ async function storedHostList(db: D1Database): Promise<string | null> {
   return typeof v === 'string' ? v : null
 }
 
+/** The brand's `t:webfetch_mode` now (M3-F): `open` only when the Inhouse team set it (`webFetchMode`). */
+export async function storedFetchMode(db: D1Database): Promise<WebFetchMode> {
+  const row = await db.prepare("SELECT value_json FROM settings WHERE owner = 'brand' AND key = 't:webfetch_mode'").first<{ value_json: string }>()
+  return webFetchMode(row ? (JSON.parse(row.value_json) as unknown) : undefined)
+}
+
 /** The brand's `t:webfetch_on` now (M1-F): on unless an Admin set it to false (`webFetchOn`). */
 export async function storedFetchOn(db: D1Database): Promise<boolean> {
   const row = await db.prepare("SELECT value_json FROM settings WHERE owner = 'brand' AND key = 't:webfetch_on'").first<{ value_json: string }>()
@@ -254,6 +280,7 @@ export function webEgressDeps(env: Env, ctx: Pick<ExecutionContext, 'waitUntil'>
   return {
     fetchOn: () => storedFetchOn(db),
     hostList: () => storedHostList(db),
+    fetchMode: () => storedFetchMode(db),
     checkLeak: url => taint.checkUrl(url),
     fetch: (i, init) => fetch(i, init),
     log: e => console.log(e),

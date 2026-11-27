@@ -128,6 +128,14 @@ describe('route 29: send a turn', () => {
     expect(await turnRow(r.body.turnId as string)).toMatchObject({ model: 'claude-haiku-5-5', effort: 'low', max_turns: 25, web_fetch_json: '[]', web_search: null })
   })
 
+  it('open fetch mode (M3-F) is stored on the turn as the JSON text null (any public host), never as SQL NULL (no host)', async () => {
+    await setting('t:webfetch_mode', 'open')
+    const id = `c-${uniq()}`
+    await chat(id, alice)
+    const r = await send(sendPriced, alice, id, { clientTurnKey: key(), text: 'hi', model: 'haiku' })
+    expect(await turnRow(r.body.turnId as string)).toMatchObject({ web_fetch_json: 'null' })
+  })
+
   it("the brand's t:websearch switch (an Admin's since M1-F) reaches the turn", async () => {
     await db.prepare("INSERT INTO settings (owner, key, value_json, rev, updated_at_ms, updated_by, req_id) VALUES ('brand', 't:websearch', 'true', 1, ?, 'm_inhouse', 'r')").bind(T).run()
     const id = `c-${uniq()}`
