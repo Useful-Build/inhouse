@@ -74,7 +74,7 @@ const answeredWithAction = (id: string) => (r: MessagesRequest): true | string =
   return true
 }
 
-const args = { orderId: ACTION_ORDER_ID, tags: [ACTION_TAG] }
+const args = { orderIds: [ACTION_ORDER_ID], tags: [ACTION_TAG] }
 
 export const ACTIONS_SCENARIOS: Record<string, Scenario> = {
   'action-tag-add': {

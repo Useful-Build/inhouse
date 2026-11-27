@@ -141,8 +141,16 @@ export interface DeliveryGateway {
 
 // ---- Stage 1 M2 (W0-A): the write entrypoint's contract (N13). M2-C builds it. ----
 
-/** The only writes in M2. The server's operation table is typed `Record<WriteOperationKey, OperationEntry>`. */
-export const WRITE_OPERATIONS = ['shopify.order.tag_add', 'slack.channel.post'] as const
+/**
+ * The writes the hub runs (M2's two; Stage 1 M3 adds one line per operation, a shared entry file). The server's operation
+ * table is typed `Record<WriteOperationKey, OperationEntry>`.
+ */
+export const WRITE_OPERATIONS = [
+  'shopify.order.tag_add',
+  'slack.channel.post',
+  'shopify.order.tag_remove', // M3-S1
+  'shopify.draft_order.create', // M3-S1
+] as const
 export type WriteOperationKey = (typeof WRITE_OPERATIONS)[number]
 
 /**

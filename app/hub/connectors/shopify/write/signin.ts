@@ -7,7 +7,7 @@ import { log } from '../../../index/log'
 import { keyRingFor } from '../../../crypto/keyring'
 import type { SyncStore } from '../../../signin/core'
 import { flushTestLogs, signInFor, upstreamFor } from '../../../signin/signin'
-import { ShopifyWriteCore } from './core'
+import { ShopifyWriteCore, type ShopifyWriteInput } from './core'
 import { parseShopifyWriteConfig, writeErr } from './provider'
 import { settledAnswer } from '../../../../shared/rpc-answer'
 
@@ -39,20 +39,16 @@ export class ShopifyWriteSignIn extends DurableObject<Env> {
   }
 
   /**
-   * Runs `shopify.order.tag_add` against the write-scoped Shopify app.
+   * Runs one Shopify write operation (`ops/`) against the write-scoped Shopify app.
    * Stage 1: only runs in the test build against the fake write upstream; the deployable build answers `not_configured`.
    */
-  async orderTagAdd(req: {
-    accountId: string
-    expect: { connectedAtMs: number }
-    args: unknown
-  }): Promise<WriteResult> {
+  async runWrite(req: ShopifyWriteInput): Promise<WriteResult> {
     try {
       const hubEnv: HubWriteEnv = this.env
       if (!(__INHOUSE_HUB_TEST__ && hubEnv.INHOUSE_TEST_BUILD === '1')) {
         return writeErr('not_configured', 'no', 'shopify_write')
       }
-      return await this.#core.orderTagAdd(req)
+      return await this.#core.run(req)
     } catch {
       log('hub_internal', { code: 'internal' })
       return writeErr('internal', 'unknown')

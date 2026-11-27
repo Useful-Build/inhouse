@@ -1,4 +1,4 @@
-// The two operations (N9) as `resolve` uses them. Ways it can fail: an argument outside the hub's strict shape gets
+// The operations (N9; M3-S1 adds tag_remove and draft_order.create) as `resolve` uses them. Ways it can fail: an argument outside the hub's strict shape gets
 // through (a sixth tag, a comma in a tag, an order that isn't an order id, an extra key); a Slack post keeps a link or
 // a control character, or is cut instead of refused; an unlisted channel resolves; the table's tool names drift.
 import { describe, expect, it } from 'vitest'
@@ -8,7 +8,9 @@ import { resolve } from '../../permissions/resolve.ts'
 import type { ResolveFacts } from '../../permissions/types.ts'
 import { OPERATION_LIMITS } from '../../../shared/audit-text.ts'
 import { OPERATIONS, grantDefaults, operationForTool } from './index.ts'
-import { TagAddArgsSchema } from './shopify-order-tag-add.ts'
+import { TagAddArgsSchema, type TagAddArgs } from './shopify-order-tag-add.ts'
+import type { OperationEntry } from './types.ts'
+import { DraftOrderArgsSchema } from './shopify-draft-order-create.ts'
 import { PostArgsSchema } from './slack-channel-post.ts'
 
 const facts: ResolveFacts = {
@@ -22,29 +24,106 @@ const facts: ResolveFacts = {
 
 describe('shopify.order.tag_add', () => {
   const ok = (a: unknown) => TagAddArgsSchema.safeParse(a).success
-  it('takes one order and 1 to 5 distinct clean tags, nothing else', async () => {
-    expect(ok({ orderId: 'gid://shopify/Order/42', tags: ['vip', 'gift'] })).toBe(true)
-    expect(ok({ orderId: 'gid://shopify/Order/42', tags: [] })).toBe(false)
-    expect(ok({ orderId: 'gid://shopify/Order/42', tags: ['a', 'b', 'c', 'd', 'e', 'f'] })).toBe(false)
-    expect(ok({ orderId: 'gid://shopify/Order/42', tags: ['vip', 'VIP'] })).toBe(false)
-    expect(ok({ orderId: 'gid://shopify/Order/42', tags: ['a,b'] })).toBe(false)
-    expect(ok({ orderId: 'gid://shopify/Order/42', tags: [' vip'] })).toBe(false)
-    expect(ok({ orderId: 'gid://shopify/Order/42', tags: ['v\u202eip'] })).toBe(false)
-    expect(ok({ orderId: 'gid://shopify/Order/42', tags: ['x'.repeat(41)] })).toBe(false)
-    expect(ok({ orderId: 'gid://shopify/Customer/42', tags: ['vip'] })).toBe(false)
-    expect(ok({ orderId: '42', tags: ['vip'] })).toBe(false)
-    expect(ok({ orderId: 'gid://shopify/Order/42', tags: ['vip'], shop: 'other' })).toBe(false)
+  const one = (tags: unknown, extra: object = {}) => ({ orderIds: ['gid://shopify/Order/42'], tags, ...extra })
+  it('takes 1 to 100 distinct orders and 1 to 5 distinct clean tags, nothing else', async () => {
+    expect(ok(one(['vip', 'gift']))).toBe(true)
+    expect(ok(one([]))).toBe(false)
+    expect(ok(one(['a', 'b', 'c', 'd', 'e', 'f']))).toBe(false)
+    expect(ok(one(['vip', 'VIP']))).toBe(false)
+    expect(ok(one(['a,b']))).toBe(false)
+    expect(ok(one([' vip']))).toBe(false)
+    expect(ok(one(['v\u202eip']))).toBe(false)
+    expect(ok(one(['x'.repeat(41)]))).toBe(false)
+    expect(ok({ orderIds: ['gid://shopify/Customer/42'], tags: ['vip'] })).toBe(false)
+    expect(ok({ orderIds: ['42'], tags: ['vip'] })).toBe(false)
+    expect(ok(one(['vip'], { shop: 'other' }))).toBe(false)
+    // M3-S1: the list form only (M2's single `orderId` is gone); 1 to 100, each once.
+    expect(ok({ orderId: 'gid://shopify/Order/42', tags: ['vip'] })).toBe(false)
+    expect(ok({ orderIds: [], tags: ['vip'] })).toBe(false)
+    expect(ok({ orderIds: ['gid://shopify/Order/42', 'gid://shopify/Order/42'], tags: ['vip'] })).toBe(false)
+    expect(ok({ orderIds: Array.from({ length: 100 }, (_, i) => `gid://shopify/Order/${i + 1}`), tags: ['vip'] })).toBe(true)
+    expect(ok({ orderIds: Array.from({ length: 101 }, (_, i) => `gid://shopify/Order/${i + 1}`), tags: ['vip'] })).toBe(false)
   })
-  it('resolves to the connected shop, one record, and its card in server words', async () => {
-    const r = await resolve(facts, { operation: 'shopify.order.tag_add', args: { orderId: 'gid://shopify/Order/42', tags: ['vip'] } })
+  it('resolves to the connected shop, one record and one unit per order, and its card in server words', async () => {
+    const r = await resolve(facts, { operation: 'shopify.order.tag_add', args: one(['vip']) })
     expect(r).toMatchObject({ accountId: 'shopify:store', accountGen: 10, scope: { shop: 'store-a' }, scopeKey: 'shop=store-a', records: 1, units: 1 })
-    expect(OPERATIONS['shopify.order.tag_add'].card({ orderId: 'gid://shopify/Order/42', tags: ['vip', 'gift'] }, facts)).toEqual({ title: 'Add 2 tags to order 42', lines: ['Tag: vip', 'Tag: gift'] })
+    expect(OPERATIONS['shopify.order.tag_add'].card(one(['vip', 'gift']), facts)).toEqual({ title: 'Add 2 tags to order 42', lines: ['Tag: vip', 'Tag: gift'] })
+    const many = { orderIds: [1042, 1043, 1044].map(n => `gid://shopify/Order/${n}`), tags: ['vip'] }
+    expect(await resolve(facts, { operation: 'shopify.order.tag_add', args: many })).toMatchObject({ records: 3, units: 3 })
+    expect(OPERATIONS['shopify.order.tag_add'].card(many, facts)).toEqual({ title: 'Add a tag to 3 orders', lines: ['Tag: vip', 'Orders: 1042, 1043, 1044'] })
   })
   it('refuses an account that is gone, paused or has no shop', async () => {
     for (const shopify of [null, { ...facts.accounts.shopify!, paused: true }, { ...facts.accounts.shopify!, connected: false }, { ...facts.accounts.shopify!, shop: null }, { ...facts.accounts.shopify!, connectedAtMs: null }]) {
-      expect(await resolve({ ...facts, accounts: { ...facts.accounts, shopify } }, { operation: 'shopify.order.tag_add', args: { orderId: 'gid://shopify/Order/42', tags: ['vip'] } }))
+      expect(await resolve({ ...facts, accounts: { ...facts.accounts, shopify } }, { operation: 'shopify.order.tag_add', args: one(['vip']) }))
         .toEqual({ refuse: { verdict: 'refuse', reason: 'account_unavailable' } })
     }
+  })
+})
+
+// Stage 1 M3-S1 (N21, N22). Ways it can go wrong: a multi-order call's items don't add up to the call or aren't the
+// operation's own arguments; an item line drops an order, a tag or the shop (a collected call of 2 to 5 orders is one
+// item, so its line must name every order); tag_remove's words say add; a draft's line or card drops a product, a
+// quantity, the note or a tag; a draft takes a field that could reach a customer or hold stock.
+describe.each(['shopify.order.tag_add', 'shopify.order.tag_remove'] as const)('%s items and lines (M3-S1)', key => {
+  // Both entries take the same arguments (shopify-order-tags.ts).
+  const e = OPERATIONS[key] as OperationEntry<TagAddArgs>
+  const verb = key === 'shopify.order.tag_add' ? 'add' : 'remove'
+  it('splits a call into one item per order, each its own valid arguments, the units adding up', () => {
+    const a = { orderIds: [1042, 1043, 1044].map(n => `gid://shopify/Order/${n}`), tags: ['VIP', 'rush'] }
+    const items = e.items!(a)
+    expect(items).toEqual(a.orderIds.map(id => ({ orderIds: [id], tags: a.tags })))
+    for (const it of items) expect(e.args.safeParse(it).success).toBe(true)
+    expect(items.reduce((n, it) => n + e.units(it), 0)).toBe(e.units(a))
+    expect(items.reduce((n, it) => n + e.records(it), 0)).toBe(e.records(a))
+  })
+  it('names the shop, every order and every tag in an item line, whatever the call holds', () => {
+    expect(e.itemLine({ orderIds: ['gid://shopify/Order/1042'], tags: ['VIP', 'rush'] }, facts)).toBe(`Order 1042 (store-a): ${verb} VIP, rush`)
+    const five = [1042, 1043, 1044, 1045, 1046].map(n => `gid://shopify/Order/${n}`)
+    expect(e.itemLine({ orderIds: five, tags: ['VIP'] }, facts)).toBe(`Orders 1042, 1043, 1044, 1045, 1046 (store-a): ${verb} VIP`)
+  })
+  it('has N24\'s limits and no effect flag', () => {
+    expect(e).toMatchObject({ unitsLabel: 'orders', coalesces: true, memberMay: true, reversible: true, connector: 'shopify', defaults: { grant: { perDay: 50, unitsMax: 5 }, ceiling: { perDayMax: 200, unitsMax: 100 } } })
+  })
+})
+
+describe('shopify.order.tag_remove (M3-S1)', () => {
+  it('takes what tag_add takes, resolves to the shop, and its card says remove', async () => {
+    const a = { orderIds: ['gid://shopify/Order/42'], tags: ['vip'] }
+    expect(await resolve(facts, { operation: 'shopify.order.tag_remove', args: a })).toMatchObject({ scope: { shop: 'store-a' }, records: 1, units: 1 })
+    expect(await resolve(facts, { operation: 'shopify.order.tag_remove', args: { orderId: 'gid://shopify/Order/42', tags: ['vip'] } })).toEqual({ refuse: { verdict: 'refuse', reason: 'invalid_args' } })
+    expect(OPERATIONS['shopify.order.tag_remove'].card(a, facts)).toEqual({ title: 'Remove a tag from order 42', lines: ['Tag: vip'] })
+    expect(OPERATIONS['shopify.order.tag_remove'].card({ orderIds: ['gid://shopify/Order/1', 'gid://shopify/Order/2'], tags: ['a', 'b'] }, facts))
+      .toEqual({ title: 'Remove 2 tags from 2 orders', lines: ['Tag: a', 'Tag: b', 'Orders: 1, 2'] })
+  })
+})
+
+describe('shopify.draft_order.create (M3-S1)', () => {
+  const e = OPERATIONS['shopify.draft_order.create']
+  const line = { variantId: 'gid://shopify/ProductVariant/7001', quantity: 2 }
+  const ok = (a: unknown) => DraftOrderArgsSchema.safeParse(a).success
+  it('takes 1 to 20 distinct variants with 1 to 100 each, an optional note and tags, nothing else', () => {
+    expect(ok({ lines: [line] })).toBe(true)
+    expect(ok({ lines: [line], note: 'For the\nshowroom', tags: ['sample'] })).toBe(true)
+    for (const bad of [
+      { lines: [] }, { lines: [line, line] }, { lines: Array.from({ length: 21 }, (_, i) => ({ variantId: `gid://shopify/ProductVariant/${i + 1}`, quantity: 1 })) },
+      { lines: [{ ...line, quantity: 0 }] }, { lines: [{ ...line, quantity: 101 }] }, { lines: [{ ...line, quantity: 1.5 }] },
+      { lines: [{ ...line, price: '0.00' }] }, { lines: [{ variantId: 'gid://shopify/Product/7001', quantity: 1 }] },
+      { lines: [line], note: '' }, { lines: [line], note: 'x'.repeat(501) }, { lines: [line], note: 'a\u202eb' }, { lines: [line], note: 'a\tb' },
+      { lines: [line], tags: [] }, { lines: [line], tags: ['a,b'] }, { lines: [line], tags: ['a', 'A'] },
+      { lines: [line], customerId: 'gid://shopify/Customer/1' }, { lines: [line], email: 'a@example.com' },
+      { lines: [line], shippingAddress: {} }, { lines: [line], appliedDiscount: {} }, { lines: [line], reserveInventoryUntil: '2030-01-01' },
+    ]) expect(ok(bad), JSON.stringify(bad)).toBe(false)
+  })
+  it('resolves to the shop as one record and one unit, with every product, quantity, the note and tags on its line and card', async () => {
+    const a = { lines: [line, { variantId: 'gid://shopify/ProductVariant/7003', quantity: 1 }], note: 'For the showroom', tags: ['sample', 'q4'] }
+    expect(await resolve(facts, { operation: 'shopify.draft_order.create', args: a })).toMatchObject({ scope: { shop: 'store-a' }, scopeKey: 'shop=store-a', records: 1, units: 1 })
+    expect(e.itemLine(a, facts)).toBe('Draft order (store-a): 2 × variant 7001, 1 × variant 7003; note: For the showroom; tags: sample, q4')
+    expect(e.card(a, facts)).toEqual({ title: 'Create a draft order of 3 items', lines: ['2 × variant 7001', '1 × variant 7003', 'Note: For the showroom', 'Tags: sample, q4'] })
+    expect(e.card({ lines: [{ ...line, quantity: 1 }] }, facts)).toEqual({ title: 'Create a draft order of 1 item', lines: ['1 × variant 7001'] })
+    expect(e.items).toBeUndefined()
+  })
+  it('has N24\'s limits and no effect flag', () => {
+    expect(e).toMatchObject({ unitsLabel: 'draft orders', coalesces: true, memberMay: true, connector: 'shopify', effects: { money: false, customer: false, destructive: false, access: false }, defaults: { grant: { perDay: 10, unitsMax: 1 }, ceiling: { perDayMax: 50, unitsMax: 1 } } })
   })
 })
 
@@ -87,8 +166,13 @@ describe('the table', () => {
   it('names each operation by its tool, and nothing else', async () => {
     expect(operationForTool('shopify_order_tag_add')).toBe('shopify.order.tag_add')
     expect(operationForTool('slack_channel_post')).toBe('slack.channel.post')
+    expect(operationForTool('shopify_order_tag_remove')).toBe('shopify.order.tag_remove')
+    expect(operationForTool('shopify_draft_order_create')).toBe('shopify.draft_order.create')
     expect(operationForTool('notification_send')).toBeNull()
-    for (const e of Object.values(OPERATIONS)) expect(e).toMatchObject({ idempotent: false, defaults: { grant: { perDay: 50 } }, memberMay: true, effects: { money: false, customer: false, destructive: false, access: false } })
+    // M3-S1: still no operation with an effect flag, so every one may be asked for by a member and covered by a grant.
+    for (const e of Object.values(OPERATIONS)) expect(e).toMatchObject({ idempotent: false, defaults: { grant: { perDay: expect.any(Number) } }, memberMay: true, effects: { money: false, customer: false, destructive: false, access: false } })
+    expect(OPERATIONS['shopify.order.tag_add'].defaults.grant?.perDay).toBe(50)
+    expect(OPERATIONS['slack.channel.post'].defaults.grant?.perDay).toBe(50)
   })
   it('gives the same payload hash for the same action and another for any change', async () => {
     const a = await resolve(facts, { operation: 'slack.channel.post', args: { channel: '#ops', text: 'hi' } })

@@ -127,7 +127,7 @@ describe('approval_request (failures 1, 2, 6)', () => {
     admitWith = () => ({ toolUseId: fresh('tu'), jobId: null })
     expect(data(await call('approval_request', { operation: 'shopify_order_delete', args: {} }, scope()))).toEqual({ error: 'unknown_operation' })
     expect(data(await call('approval_request', { operation: 'shopify.order.tag_add', args: tagArgs(1) }, scope()))).toEqual({ error: 'unknown_operation' })
-    expect(data(await call('approval_request', { operation: 'shopify_order_tag_add', args: { orderId: 'x', tags: [] } }, scope()))).toEqual({ error: 'invalid_args' })
+    expect(data(await call('approval_request', { operation: 'shopify_order_tag_add', args: { orderIds: ['x'], tags: [] } }, scope()))).toEqual({ error: 'invalid_args' })
     expect(data(await request(1, scope('m_system', { chatId: 'c_m2e_routine' })))).toEqual({ error: 'no_one_to_ask' })
     await person(db, OTHER, 'member', 'removed')
     expect(data(await request(1, scope(OTHER)))).toEqual({ error: 'no_one_to_ask' })

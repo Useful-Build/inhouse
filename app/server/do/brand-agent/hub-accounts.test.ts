@@ -58,7 +58,7 @@ describe('the copy into D1 (failures 1, 2, 3)', () => {
     // resolve reads the copied generation and shop: the scope and the generation are the hub's.
     const facts = await outboxFacts({ db, hubAccounts: async () => [{ accountId: SHOP, paused: false, label: 'Shopify' }] }).resolveFacts(6_000)
     expect(facts.accounts.shopify).toMatchObject({ connectedAtMs: HUB_GEN, shop: 'example-write', connected: true })
-    const r = await resolve(facts, { operation: 'shopify.order.tag_add', args: { orderId: 'gid://shopify/Order/1', tags: ['a'] } })
+    const r = await resolve(facts, { operation: 'shopify.order.tag_add', args: { orderIds: ['gid://shopify/Order/1'], tags: ['a'] } })
     expect(r).toMatchObject({ accountGen: HUB_GEN, scope: { shop: 'example-write' } })
   })
 
@@ -68,7 +68,7 @@ describe('the copy into D1 (failures 1, 2, 3)', () => {
     const facts = outboxFacts({ db, hubAccounts: () => read({ ok: true, value: [shopify()] }) })
     const rf = await facts.resolveFacts(6_000)
     expect(rf.accounts.shopify).toMatchObject({ connectedAtMs: HUB_GEN, shop: 'example-write', connected: true, paused: false })
-    expect(await resolve(rf, { operation: 'shopify.order.tag_add', args: { orderId: 'gid://shopify/Order/1', tags: ['a'] } })).toMatchObject({ accountGen: HUB_GEN })
+    expect(await resolve(rf, { operation: 'shopify.order.tag_add', args: { orderIds: ['gid://shopify/Order/1'], tags: ['a'] } })).toMatchObject({ accountGen: HUB_GEN })
   })
 
   it('a second read that changes nothing writes nothing', async () => {
@@ -113,7 +113,7 @@ describe('the copy into D1 (failures 1, 2, 3)', () => {
     await read({ ok: true, value: [shopify({ shop: '' })] })
     expect(await row(SHOP)).toMatchObject({ shop: null, connected_at_ms: HUB_GEN })
     const facts = await outboxFacts({ db, hubAccounts: async () => [{ accountId: SHOP, paused: false, label: 'Shopify' }] }).resolveFacts(6_000)
-    expect(await resolve(facts, { operation: 'shopify.order.tag_add', args: { orderId: 'gid://shopify/Order/1', tags: ['a'] } })).toMatchObject({ refuse: { reason: 'account_unavailable' } })
+    expect(await resolve(facts, { operation: 'shopify.order.tag_add', args: { orderIds: ['gid://shopify/Order/1'], tags: ['a'] } })).toMatchObject({ refuse: { reason: 'account_unavailable' } })
   })
 })
 

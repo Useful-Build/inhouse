@@ -119,11 +119,13 @@ const REQUEST_STATUS = { done: 'marked a request done', declined: 'declined a re
 const hours = (h: number) => (h === 1 ? '1 hour' : `${h} hours`)
 
 /** Stage 1 M2: what each write operation does, as a person reads it (the audit log and the permissions list). */
-export const OPERATION_TITLE: Readonly<Record<'shopify.order.tag_add' | 'slack.channel.post', string>> = {
+export const OPERATION_TITLE: Readonly<Record<'shopify.order.tag_add' | 'slack.channel.post' | 'shopify.order.tag_remove' | 'shopify.draft_order.create', string>> = {
   'shopify.order.tag_add': 'Add tags to orders',
   'slack.channel.post': 'Post messages to a channel',
+  'shopify.order.tag_remove': 'Remove tags from orders',
+  'shopify.draft_order.create': 'Create draft orders',
 }
-const OPERATION_TOOL = { 'shopify.order.tag_add': 'Shopify', 'slack.channel.post': 'Slack' } as const
+const OPERATION_TOOL = { 'shopify.order.tag_add': 'Shopify', 'slack.channel.post': 'Slack', 'shopify.order.tag_remove': 'Shopify', 'shopify.draft_order.create': 'Shopify' } as const
 const operation = (op: keyof typeof OPERATION_TITLE) => `${OPERATION_TITLE[op]} in ${OPERATION_TOOL[op]}`
 /** Every reason but `removed` (a person removed it, said as its own `what`). Typed so a new reason fails the typecheck. */
 const REVOKED: Readonly<Record<Exclude<RevokeReason, 'removed'>, string>> = {
@@ -170,6 +172,8 @@ const thousands = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 export const OPERATION_LIMITS: Readonly<Record<keyof typeof OPERATION_TITLE, { perDay: boolean; batch: boolean; money: boolean }>> = {
   'shopify.order.tag_add': { perDay: true, batch: true, money: false },
   'slack.channel.post': { perDay: true, batch: false, money: false },
+  'shopify.order.tag_remove': { perDay: true, batch: true, money: false },
+  'shopify.draft_order.create': { perDay: true, batch: true, money: false },
 }
 
 type CeilingValues = { enabled: boolean; perDayMax: number; unitsMax: number; bulkThreshold: number; batchMax: number }

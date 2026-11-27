@@ -258,9 +258,9 @@ describe('refusals write nothing (failure 3)', () => {
   it('the admission hashes the call\'s input as the runner does (the raw arguments\' canonical JSON)', async () => {
     const w = setup()
     w.rpc.admitActionAnswer = { refused: 'no_match' }
-    await call(w, { tags: ['sale'], orderId: 'gid://shopify/Order/1042' })
+    await call(w, { tags: ['sale'], orderIds: ['gid://shopify/Order/1042'] })
     const { auditInputSha256 } = await import('../../shared/protocol/index.ts')
-    expect(w.rpc.calls[0]!.args[2]).toBe(await auditInputSha256({ orderId: 'gid://shopify/Order/1042', tags: ['sale'] }))
+    expect(w.rpc.calls[0]!.args[2]).toBe(await auditInputSha256({ orderIds: ['gid://shopify/Order/1042'], tags: ['sale'] }))
   })
 
   it('the product\'s state (no operation on): refused over_ceiling, nothing written; tools/list is empty', async () => {
