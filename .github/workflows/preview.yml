@@ -116,8 +116,11 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: app/.nvmrc
+      # --ignore-scripts: this job holds a secret, so no package's install script runs here (a version bump can't
+      # run code at install). None is needed: esbuild and workerd find their binaries in their optional platform
+      # packages, and app/'s prepare only sets git hooks. ci.yml's ignore-scripts job proves these commands per PR.
       - working-directory: app
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       # Unpacked outside the checkout, so nothing in it can land next to wrangler or in node_modules.
       - name: Download the PR's build

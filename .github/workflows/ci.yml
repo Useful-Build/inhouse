@@ -254,6 +254,65 @@ jobs:
             exit 1
           fi
 
+  # Every job that holds a secret installs with `npm ci --ignore-scripts` (app/scripts/ignore-scripts.test.mjs holds
+  # them to it): deploy.yml deploy, preview.yml deploy, preview-cleanup.yml delete, nightly.yml connectors and
+  # slack-connectors, sandbox-test-deploy.yml pr-code and deploy. They run on main, on a schedule or by dispatch, so
+  # this job makes the same installs and runs their commands, with no secret, on every PR (a version bump's included):
+  # a package that starts to need its install script fails here, not in a deploy. Not on a docs-only run.
+  ignore-scripts:
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only == 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: app
+    env:
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: app/.nvmrc
+      - run: npm ci --ignore-scripts
+      # deploy.yml's and ci.yml's build, which the deploy and preview jobs upload, made on this install.
+      - run: npm run build
+      # The deploy and preview jobs: main's wrangler by path reads wrangler.jsonc (their config check), compiles the
+      # build as `versions upload` does and stops before the upload, and loads each other subcommand they run.
+      - name: The deploy and preview jobs' wrangler
+        run: |
+          node -e "const path = require('node:path');
+          const { unstable_readConfig } = require(path.resolve('node_modules/wrangler'));
+          const c = unstable_readConfig({ config: path.resolve('wrangler.jsonc') }, { preserveOriginalMain: true });
+          if (!c.name) { console.log('::error::wrangler.jsonc read with no name'); process.exit(1); }
+          console.log('wrangler.jsonc read: ' + c.name);"
+          w() { node node_modules/wrangler/bin/wrangler.js "$@" --env-file /dev/null; }
+          w --version
+          w versions upload --dry-run
+          for c in "versions deploy" rollback "deployments status" preview "preview delete"; do
+            # shellcheck disable=SC2086 # the subcommand's words split on purpose
+            w $c --help > /dev/null || { echo "::error::wrangler $c --help failed"; exit 1; }
+          done
+      # sandbox-test-deploy.yml's pr-code: the test build, the hub's test bundle and Playwright's CLI.
+      - run: npm run build:product-test
+      - working-directory: app/hub
+        run: npm ci --ignore-scripts && npm run bundle:test
+      - run: npx --no-install playwright --version
+      # nightly.yml's connectors and slack-connectors: `vitest list` with the filter each passes to test:live collects
+      # their files (nothing runs). It exits 0 on an empty list, so each list must name its file.
+      - name: The nightly's live tests collect
+        working-directory: app/hub
+        run: |
+          set -o pipefail
+          npx --no-install vitest list --project live test/connectors/shopify/ | tee "$RUNNER_TEMP/shopify.txt"
+          grep -q '^\[live\] \.\./test/connectors/shopify/' "$RUNNER_TEMP/shopify.txt" || { echo "::error::no Shopify live test listed"; exit 1; }
+          npx --no-install vitest list --project live test/connectors/mcp/slack.live.ts | tee "$RUNNER_TEMP/slack.txt"
+          grep -q '^\[live\] \.\./test/connectors/mcp/slack\.live\.ts' "$RUNNER_TEMP/slack.txt" || { echo "::error::no Slack live test listed"; exit 1; }
+
   # The TEST BUILD (P2, p2-design section 10): the product Worker under `wrangler dev` with a fresh local D1 and the
   # test issuer. No secret anywhere: the issuer's key pair is made per run and only its public half reaches the Worker.
   # P4 wave 4: the connector hub runs beside it in the same multi-config `wrangler dev` (the product's config first, then
@@ -499,16 +558,17 @@ jobs:
           echo "check-product-config.mjs refused wrangler.test.jsonc (exit 1), as it must."
 
   ci:
-    needs: [changes, e2e, test-build, runner, hub, fast]
+    needs: [changes, e2e, test-build, runner, hub, fast, ignore-scripts]
     # always(): a cancelled or skipped job makes ci red, never skipped (a skipped check counts as passing). The one
     # exception is a job skipped by design: e2e and test-build on a fleet PR, fast on every other event, and e2e,
-    # test-build, runner, hub and fast on a docs-only run. Each of those must be exactly skipped, and every other job
-    # exactly success. changes must succeed and say exactly true or false: a docs-only pass rests on its answer alone.
+    # test-build, runner, hub, fast and ignore-scripts on a docs-only run. Each of those must be exactly skipped, and
+    # every other job exactly success. changes must succeed and say exactly true or false: a docs-only pass rests on
+    # its answer alone.
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Every job this event runs passed (docs-only - none; a fleet PR - fast, runner and hub; otherwise every shard, the test build, the runner job and the hub job)
+      - name: Every job this event runs passed (docs-only - none; a fleet PR - fast, runner, hub and ignore-scripts; otherwise every shard, the test build, the runner job, the hub job and ignore-scripts)
         env:
           CHANGES: ${{ needs.changes.result }}
           DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
@@ -518,6 +578,7 @@ jobs:
           RUNNER: ${{ needs.runner.result }}
           HUB: ${{ needs.hub.result }}
           FAST: ${{ needs.fast.result }}
+          IGNORE_SCRIPTS: ${{ needs.ignore-scripts.result }}
         run: |
           echo "changes: $CHANGES (docs-only: $DOCS_ONLY)"
           echo "fleet PR (fast checks only): $FLEET_PR"
@@ -526,20 +587,21 @@ jobs:
           echo "runner: $RUNNER"
           echo "hub: $HUB"
           echo "fast: $FAST"
-          if [ "$CHANGES" = cancelled ] || [ "$RESULT" = cancelled ] || [ "$TEST_BUILD" = cancelled ] || [ "$RUNNER" = cancelled ] || [ "$HUB" = cancelled ] || [ "$FAST" = cancelled ]; then
+          echo "ignore-scripts: $IGNORE_SCRIPTS"
+          if [ "$CHANGES" = cancelled ] || [ "$RESULT" = cancelled ] || [ "$TEST_BUILD" = cancelled ] || [ "$RUNNER" = cancelled ] || [ "$HUB" = cancelled ] || [ "$FAST" = cancelled ] || [ "$IGNORE_SCRIPTS" = cancelled ]; then
             echo "::error::A job was cancelled or superseded by a newer run. This is not a test failure: see the newest run for this branch."
           fi
           test "$CHANGES" = success || { echo "::error::The changes job didn't succeed, so nothing says what this run must cover."; exit 1; }
           if [ "$DOCS_ONLY" = true ]; then
             echo "Docs-only: every changed file is documentation, so the app's jobs skipped by design."
-            test "$RESULT" = skipped && test "$TEST_BUILD" = skipped && test "$RUNNER" = skipped && test "$HUB" = skipped && test "$FAST" = skipped
+            test "$RESULT" = skipped && test "$TEST_BUILD" = skipped && test "$RUNNER" = skipped && test "$HUB" = skipped && test "$FAST" = skipped && test "$IGNORE_SCRIPTS" = skipped
           elif [ "$DOCS_ONLY" != false ]; then
             echo "::error::The changes job's docs_only is '$DOCS_ONLY', not true or false."
             exit 1
           elif [ "$FLEET_PR" = true ]; then
-            test "$FAST" = success && test "$RUNNER" = success && test "$RESULT" = skipped && test "$TEST_BUILD" = skipped && test "$HUB" = success
+            test "$FAST" = success && test "$RUNNER" = success && test "$RESULT" = skipped && test "$TEST_BUILD" = skipped && test "$HUB" = success && test "$IGNORE_SCRIPTS" = success
           else
-            test "$RESULT" = success && test "$TEST_BUILD" = success && test "$RUNNER" = success && test "$HUB" = success && test "$FAST" = skipped
+            test "$RESULT" = success && test "$TEST_BUILD" = success && test "$RUNNER" = success && test "$HUB" = success && test "$FAST" = skipped && test "$IGNORE_SCRIPTS" = success
           fi
 
   pr-gates:

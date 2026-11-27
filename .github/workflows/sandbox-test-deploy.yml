@@ -176,8 +176,11 @@ jobs:
         with:
           node-version-file: pr/app/.nvmrc
           package-manager-cache: false
+      # --ignore-scripts, here and for the hub: this job gets SBX_ZONE later, so no package's install script runs. The
+      # PR's own code still runs (the build, the specs); this only keeps a dependency's install hook out. Each
+      # `npx --no-install` below runs only what the lockfile installed, never a fresh download.
       - working-directory: pr/app
-        run: npm ci
+        run: npm ci --ignore-scripts
       - working-directory: pr/app
         run: npm run build:product-test
       # Only the Worker's folder, the assets and the migrations (deploy-config.mjs refuses anything else).
@@ -190,7 +193,7 @@ jobs:
         working-directory: pr/app
         run: |
           if [ ! -f wrangler.hub.test.jsonc ]; then echo "no hub in this PR"; exit 0; fi
-          (cd hub && npm ci && npm run bundle:test)
+          (cd hub && npm ci --ignore-scripts && npm run bundle:test)
           mkdir -p "$RUNNER_TEMP/out/hub"
           cp dist-hub-test/*.js "$RUNNER_TEMP/out/hub/"
           cp wrangler.hub.test.jsonc "$RUNNER_TEMP/out/hub/wrangler.jsonc"
@@ -222,7 +225,7 @@ jobs:
       - name: Install the browser
         if: inputs.specs
         working-directory: pr/app
-        run: npx playwright install --with-deps chromium
+        run: npx --no-install playwright install --with-deps chromium
       - name: Wait for the deploy job
         if: inputs.specs
         env:
@@ -367,7 +370,7 @@ jobs:
           fi
           echo "running $set_name${ONLY:+, narrowed by only}: ${files[*]}"
           rc=0
-          npx playwright test "${files[@]}" --project=api --project=real-desktop --project=real-phone --forbid-only --reporter=list,json 2>&1 \
+          npx --no-install playwright test "${files[@]}" --project=api --project=real-desktop --project=real-phone --forbid-only --reporter=list,json 2>&1 \
             | sed -E 's/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/<jwt>/g' || rc=$?
           [ -f "$PLAYWRIGHT_JSON_OUTPUT_NAME" ] || { echo "::error::no JSON report (exit $rc)"; exit 1; }
           per_file=("${files[@]}")
