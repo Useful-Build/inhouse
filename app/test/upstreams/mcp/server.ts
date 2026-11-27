@@ -119,6 +119,16 @@ async function readCode(code: string): Promise<CodePayload | null> {
 // ---------- the Slack dataset (invented) ----------
 
 type Msg = { channel: string; ts: string; user: string; text: string; thread?: string }
+/** One channel as the fake serves it. */
+export type FakeSlackChannel = { readonly id: string; readonly name: string; readonly private: boolean }
+/**
+ * The channels and messages a Slack fake serves in place of the fixture below (Stage 1 M3, N31: the eval deployment's
+ * workspace, which its hub reads from the eval D1 before each request; hub/testing/eval-slack.ts).
+ */
+export interface FakeSlackWorkspace {
+  readonly channels: readonly FakeSlackChannel[]
+  readonly messages: readonly Msg[]
+}
 export const SLACK_CHANNELS = [
   { id: 'C0TEST0001', name: 'ops', private: false },
   { id: 'C0TEST0002', name: 'suppliers', private: false },
@@ -197,6 +207,11 @@ export class FakeMcpServer {
   clients = new Map<string, { secret: string; redirectUris: string[] }>()
   pastGrants = new Map<string, Set<string>>()
   sessions = new Map<string, { token: string; stale: boolean }>()
+  /**
+   * The workspace the Slack profile serves (Stage 1 M3): null serves the fixture (SLACK_CHANNELS, SLACK_MESSAGES and
+   * their seeds). The eval hub sets it from its D1 before each request (hub/testing/index.ts testUpstreamFetch).
+   */
+  workspace: FakeSlackWorkspace | null = null
   #n = 0
   #lists = 0
 
@@ -483,8 +498,9 @@ export class FakeMcpServer {
       if (this.missingScope === 'hide') return this.#answer({ jsonrpc: '2.0', id, error: { code: -32602, message: `UPSTREAM unknown tool ${name}` } })
       return new Response(null, { status: 403, headers: { 'WWW-Authenticate': `Bearer error="insufficient_scope", scope="${need}"` } })
     }
+    const ws: FakeSlackWorkspace = this.workspace ?? { channels: SLACK_CHANNELS, messages: SLACK_MESSAGES }
     const visible = (ch: string, priv: boolean) => {
-      const c = SLACK_CHANNELS.find(x => x.id === ch)
+      const c = ws.channels.find(x => x.id === ch)
       return !!c && (!c.private || (priv && t.scopes.includes('groups:history')))
     }
     const limit = typeof args.limit === 'number' ? args.limit : 20
@@ -494,22 +510,22 @@ export class FakeMcpServer {
         const priv = name === 'slack_search_public_and_private'
         const words = (Array.isArray(args.keywords) ? args.keywords : []).map(w => String(w).toLowerCase())
         // Lexical AND: every keyword must appear (so S4's miss reproduces).
-        const hits = SLACK_MESSAGES.filter(m => visible(m.channel, priv) && words.length > 0 && words.every(w => m.text.toLowerCase().includes(w)))
+        const hits = ws.messages.filter(m => visible(m.channel, priv) && words.length > 0 && words.every(w => m.text.toLowerCase().includes(w)))
         return this.#text(id, { messages: hits.slice(0, limit) })
       }
       case 'slack_search_channels': {
         const words = (Array.isArray(args.keywords) ? args.keywords : []).map(w => String(w).toLowerCase())
-        return this.#text(id, { channels: SLACK_CHANNELS.filter(c => !c.private && words.some(w => c.name.includes(w))).map(c => ({ id: c.id, name: c.name })) })
+        return this.#text(id, { channels: ws.channels.filter(c => !c.private && words.some(w => c.name.includes(w))).map(c => ({ id: c.id, name: c.name })) })
       }
       case 'slack_read_channel': {
         if (!visible(String(args.channel_id), true)) return this.#isError(id, 'UPSTREAM channel_not_found for this token')
-        return this.#text(id, { messages: SLACK_MESSAGES.filter(m => m.channel === args.channel_id && !m.thread).slice(0, limit) })
+        return this.#text(id, { messages: ws.messages.filter(m => m.channel === args.channel_id && !m.thread).slice(0, limit) })
       }
       case 'slack_read_thread':
         if (!visible(String(args.channel_id), true)) return this.#isError(id, 'UPSTREAM channel_not_found')
-        return this.#text(id, { messages: SLACK_MESSAGES.filter(m => m.channel === args.channel_id && (m.ts === args.message_ts || m.thread === args.message_ts)).slice(0, limit) })
+        return this.#text(id, { messages: ws.messages.filter(m => m.channel === args.channel_id && (m.ts === args.message_ts || m.thread === args.message_ts)).slice(0, limit) })
       case 'slack_list_user_channels':
-        return this.#text(id, { channels: SLACK_CHANNELS.filter(c => !c.private).map(c => ({ id: c.id, name: c.name })) })
+        return this.#text(id, { channels: ws.channels.filter(c => !c.private).map(c => ({ id: c.id, name: c.name })) })
       case 'slack_list_channel_members':
         return this.#text(id, { members: SLACK_USERS.map(u => u.id) })
       case 'slack_read_user_profile':

@@ -128,6 +128,9 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   // Stage 1 M3-R: the eval deployment's write log and faults (empty elsewhere); a write request carries no member id.
   eval_write_log: { action: 'keep', why: 'no member id: the eval deployment\'s logged write requests, cleared per case-repeat' },
   eval_write_fault: { action: 'keep', why: 'no member id: the eval deployment\'s planned write answers, cleared per case-repeat' },
+  // Stage 1 M3 (N31): the eval deployment's fake Slack workspace (empty elsewhere); invented channels and messages.
+  eval_slack_channel: { action: 'keep', why: 'no member id: the eval deployment\'s fake Slack channels, cleared per case-repeat' },
+  eval_slack_message: { action: 'keep', why: 'no member id: the eval deployment\'s planted fake Slack messages, cleared per case-repeat' },
   privacy_requests: { action: 'keep', why: 'no member id: a Shopify customer by Shopify id only, cleared when the request is closed (route 94); the topic and dates stay as the record that it was answered' },
 }
 

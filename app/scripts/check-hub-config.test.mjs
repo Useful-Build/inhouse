@@ -58,6 +58,9 @@ const EXPECTED = {
   'fail-worker-loaders-extra-key.jsonc': ['worker-loaders'],
   'fail-worker-loaders-not-array.jsonc': ['worker-loaders'],
   'fail-worker-loaders-empty.jsonc': ['worker-loaders'],
+  // Stage 1 M3 (#589): no database on the deployable hub, not even the eval one.
+  'fail-d1-databases.jsonc': ['database'],
+  'fail-d1-databases-empty.jsonc': ['database'],
 }
 
 const run = path => {

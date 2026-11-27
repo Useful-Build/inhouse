@@ -20,6 +20,7 @@ import { MORNING_CHECK_UPSTREAMS } from '../../test/upstreams/morning-check/upst
 import { dataset as shopifyFixtureDataset } from '../../test/upstreams/shopify/recordings/fixture/dataset'
 import { STORE_DATA_UPSTREAMS } from '../../test/upstreams/shopify/datasets/exfiltration/upstreams'
 import { READ_SIDE_UPSTREAMS } from '../../test/upstreams/shopify/datasets/read-side/upstreams'
+import { evalSlackWorkspace, type EvalSlackEnv } from './eval-slack'
 
 /** Found in the test bundle, never in the deployable one (the bundle scan looks for this exact value). */
 export const HUB_TEST_CANARY = 'INHOUSE_HUB_TEST_CANARY_4b9e'
@@ -84,8 +85,14 @@ testUpstreams.set('slack.com', req => {
 // (evals/read-side/shops.ts).
 for (const [host, upstream] of Object.entries(READ_SIDE_UPSTREAMS)) testUpstreams.set(host, upstream)
 
-export async function testUpstreamFetch(req: Request): Promise<Response> {
+/**
+ * One upstream request through the seam. `env` is the hub's (the singleton test-fakes DO passes its own, signin.ts): on
+ * the eval hub, whose env binds the eval D1, the Slack fake first takes the workspace the eval door seeded there (Stage 1
+ * M3, ./eval-slack.ts); without that binding it serves the fixture.
+ */
+export async function testUpstreamFetch(req: Request, env?: Env): Promise<Response> {
   const host = new URL(req.url).host
+  if (host === 'mcp.slack.com') slackMcp.workspace = await evalSlackWorkspace(env as (Env & EvalSlackEnv) | undefined)
   const upstream = testUpstreams.get(host)
   if (!upstream) {
     return new Response(`hub test build: no recorded upstream for host "${host}" (register it in app/hub/testing/index.ts)`, {

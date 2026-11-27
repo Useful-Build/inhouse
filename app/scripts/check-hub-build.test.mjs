@@ -25,6 +25,8 @@ const EXPECTED = {
   'deploy-mcp-canary': [1, /FAIL {2}mcp upstream canary: the deployable.*\n.*INHOUSE_MCP_UPSTREAM_CANARY_7c2d/],
   // Stage 1 M3-R (N30): the eval deployment's write log gateway is the test bundle's alone.
   'deploy-eval-write-gateway': [1, /FAIL {2}eval write gateway: the deployable.*\n.*"EvalWriteGateway" in/],
+  // Stage 1 M3 (N31): the eval deployment's fake Slack workspace is the test bundle's alone.
+  'deploy-eval-slack-canary': [1, /FAIL {2}eval slack canary: the deployable.*\n.*INHOUSE_EVAL_SLACK_CANARY_5d1e/],
   'deploy-fakes-canary': [1, /FAIL {2}test-fakes canary: the deployable.*\n.*INHOUSE_HUB_FAKES_CANARY_3a6f/],
   'deploy-fakes-globals': [1, /FAIL {2}test-fakes globals: the deployable.*\n.*__inhouseHubTestLogs/],
   // The deployable script keeps the define's dead branches as text: names inside `if (false)` only are fine.
@@ -104,6 +106,26 @@ for (const name of FAKES_NAMES) {
     }
   })
 }
+
+// #588: the eval Slack canary in the test bundle's source map alone (tree-shaken from the script) fails the scan.
+test('the eval slack canary only in the test bundle\'s map, not its script: the scan fails', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'check-hub-build-map-'))
+  try {
+    const canary = 'INHOUSE_EVAL_SLACK_CANARY_5d1e'
+    const seam = readFileSync(join(app, TEST, 'index.js'), 'utf8')
+    assert.ok(seam.includes(canary))
+    const mapOnly = bundleFolder(tmp, 'map-only', seam.split(canary).join('REMOVED'))
+    writeFileSync(join(mapOnly, 'index.js.map'), JSON.stringify({ version: 3, sourcesContent: [`export const EVAL_SLACK_CANARY = '${canary}'`] }))
+    const r = run('--deploy', `${FIXTURES}/deploy-clean`, '--test', mapOnly)
+    assert.equal(r.status, 1, r.out)
+    assert.match(r.out, /ok {4}eval slack canary: caught the test bundle/)
+    assert.match(r.out, /FAIL {2}eval slack canary in the script: the test bundle .* holds "INHOUSE_EVAL_SLACK_CANARY_5d1e" in no script/)
+    // The fixture test bundle, with the canary in its script, passes that part.
+    assert.match(run('--deploy', `${FIXTURES}/deploy-clean`, '--test', TEST).out, /ok {4}eval slack canary in the script/)
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
 
 test('a test bundle that is clean fails the scan: it proves nothing', () => {
   const r = run('--deploy', `${FIXTURES}/deploy-clean`, '--test', `${FIXTURES}/deploy-clean`)
