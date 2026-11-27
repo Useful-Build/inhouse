@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "Q02",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Reminder: returns are accepted within 45 days if the item is unused.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0,
+  "answer": "Reminder: returns are accepted within 45 days if the item is unused.",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "225f01fb9cb4e28fe24193aae7836afdd7760f00c2fc9ee1939f6a893d8ce030",
+    "inputExcerpt": "{\"query\":\"return window\"}",
+    "resultExcerpt": "Returns are accepted within 45 days if the item is unused."
+   }
+  ]
+ }
+}

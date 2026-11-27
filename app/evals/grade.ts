@@ -39,6 +39,8 @@ export function gradeChat(expect: Expect, result: ChatResult | null | undefined,
   if (expect.noMcp) checks.noMcp = !real.some((c) => c.mcp)
   if (expect.answer) checks.answer = expect.answer.every((r) => r.test(answer))
   if (expect.answerNot) checks.answerNot = !expect.answerNot.some((r) => r.test(answer))
+  const atMost = expect.atMost
+  if (atMost) checks.atMost = Object.entries(atMost).every(([name, n]) => real.filter((c) => c.name === name).length <= n)
   const runOk = !!result && result.runOk && !!answer
   return {
     checks,
