@@ -2,7 +2,7 @@
 // that doesn't, so a rule that stops firing, or starts firing on a neighbour, fails here.
 import fc from 'fast-check'
 import { describe, expect, test } from 'vitest'
-import { APPROVAL_LABEL, approvedHead, classify, evaluate, gateChecks, NET_LOSS_PATH, notes, parsePatch, report, scan } from './lanes.mjs'
+import { APPROVAL_LABEL, approvedHead, classify, evaluate, gateChecks, isTrusted, NET_LOSS_PATH, notes, parsePatch, report, scan } from './lanes.mjs'
 
 const BENIGN = '@@ -1,2 +1,2 @@\n const a = 1\n-const b = 2\n+const b = 3'
 const file = (filename, extra = {}) => ({ filename, status: 'modified', changes: 2, patch: BENIGN, ...extra })
@@ -828,8 +828,8 @@ describe('notes: the comments and reviews whose lines can count', () => {
   const review = (state, body, submitted_at = '2026-11-27T12:05:00Z') => ({ state, body, author_association: 'MEMBER', submitted_at })
   test('comments and standing reviews are kept, with their time', () => {
     expect(notes([comment('a', '2026-11-27T10:00:00Z')], [review('APPROVED', 'b', '2026-11-27T11:00:00Z'), review('COMMENTED', null), review('CHANGES_REQUESTED', 'd')])).toEqual([
-      { body: 'a', author_association: 'MEMBER', at: '2026-11-27T10:00:00Z' }, { body: 'b', author_association: 'MEMBER', at: '2026-11-27T11:00:00Z' },
-      { body: '', author_association: 'MEMBER', at: '2026-11-27T12:05:00Z' }, { body: 'd', author_association: 'MEMBER', at: '2026-11-27T12:05:00Z' },
+      { body: 'a', author_association: 'MEMBER', login: null, at: '2026-11-27T10:00:00Z' }, { body: 'b', author_association: 'MEMBER', login: null, at: '2026-11-27T11:00:00Z' },
+      { body: '', author_association: 'MEMBER', login: null, at: '2026-11-27T12:05:00Z' }, { body: 'd', author_association: 'MEMBER', login: null, at: '2026-11-27T12:05:00Z' },
     ])
   })
   test('a dismissed review\'s Gate check line no longer counts', () => {
@@ -950,5 +950,32 @@ describe('properties', () => {
       const names = new Set(files.map(f => f.filename))
       for (const i of [...s.lane4, ...s.ledger]) expect(names.has(i.path)).toBe(true)
     }))
+  })
+})
+
+// The built-in GITHUB_TOKEN can't see private org membership, so it reports a private member's comments as
+// CONTRIBUTOR (seen on #457, 2026-11-27). run.mjs then checks the author's repo permission and marks the note trusted.
+describe('trust by repo permission: a private org member', () => {
+  const A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  const asContributor = (body, extra = {}) => ({ body, author_association: 'CONTRIBUTOR', login: 'owner', at: '2026-11-27T12:05:00Z', ...extra })
+  test('isTrusted: a trusted association, or the permission mark, and nothing else', () => {
+    expect(isTrusted({ author_association: 'MEMBER' })).toBe(true)
+    expect(isTrusted({ author_association: 'CONTRIBUTOR', trusted: true })).toBe(true)
+    expect(isTrusted({ author_association: 'CONTRIBUTOR' })).toBe(false)
+    expect(isTrusted({ author_association: 'NONE', trusted: false })).toBe(false)
+    expect(isTrusted({ author_association: 'NONE', trusted: 'yes' })).toBe(false)
+  })
+  test('a wasim-approved line counts once the author is marked trusted, and not before', () => {
+    const args = { labeledAt: '2026-11-27T12:00:00Z', commitShas: [A] }
+    expect(approvedHead({ ...args, comments: [asContributor(`wasim-approved: ${A}`)] })).toEqual({ needsLine: true })
+    expect(approvedHead({ ...args, comments: [asContributor(`wasim-approved: ${A}`, { trusted: true })] })).toEqual({ sha: A })
+  })
+  test('Gate check lines count once the author is marked trusted, and not before', () => {
+    const line = 'Gate check: on ledger'
+    expect(gateChecks([asContributor(line), asContributor(line)]).on).toBe(0)
+    expect(gateChecks([asContributor(line, { trusted: true }), asContributor(line, { trusted: true })]).on).toBe(2)
+  })
+  test('notes keeps the author login for the permission check', () => {
+    expect(notes([{ body: 'x', author_association: 'CONTRIBUTOR', user: { login: 'owner' }, created_at: '2026-11-27T12:05:00Z' }], [])[0].login).toBe('owner')
   })
 })
