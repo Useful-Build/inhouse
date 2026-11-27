@@ -3,12 +3,17 @@
 // questions.ts): a lone `question_ask` ends the turn waiting; the question is listed for the chat's owner only; it
 // waits across a hard kill of every runner; the owner's answer resumes the turn, and the call run again returns the
 // option chosen; a question asked beside another call is not asked, and the agent asks again on its own.
+// M2-J adds a routine's question (scenarios/acceptance.ts `routine-create-question`): a routine's run asks its creator,
+// who sees it in their questions (Approvals' Questions section, the inbox) with no chat to open (a routine's chat is the
+// system's); another member never sees it; the run waits, across a kill of every runner, until the creator answers, then
+// finishes.
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 import { QUESTION_ASKED, QUESTION_REPLY } from '../../test/scripted-model/scenarios/questions.ts'
-import { createChat, needsContainer, send } from './chat-kit.ts'
+import { QUESTION_ROUTINE_CREATED, ROUTINE_CHOICE } from '../../test/scripted-model/scenarios/acceptance.ts'
+import { answerOf, createChat, needsContainer, send, textOf } from './chat-kit.ts'
 import { killRunners } from './job-kit.ts'
-import { actor, call } from './kit.ts'
+import { actor, call, endLiveGrants, putSetting } from './kit.ts'
 import type { Actor } from './kit.ts'
 
 const dana = actor('memberA')
@@ -89,4 +94,98 @@ test('a question beside another call is not asked; the agent asks again on its o
   const answered = await call(request, dana, 'POST', `/api/questions/${q.id}/answer`, { json: { choice: QUESTION_ASKED.options[0] } })
   expect(answered.status, answered.text).toBe(200)
   expect(await agentSays(request, dana, chatId, QUESTION_REPLY)).toContain(QUESTION_ASKED.options[0])
+})
+
+/**
+ * A routine's turn takes the brand's default model, which nothing seeds (so Opus), and the scripted model answers only the
+ * harness's chat model: the default must be Fast first. As e2e/ship/watch.spec.ts does it: technical settings are the
+ * Inhouse team's to write, under a live grant the Admin gives; the grant ends after (also when a step fails). Left Fast.
+ */
+async function ensureFastDefault(request: APIRequestContext): Promise<void> {
+  const read = async () => {
+    const r = await call(request, dana, 'GET', '/api/settings/technical')
+    expect(r.status, r.text).toBe(200)
+    return (r.json.items as { key: string; value?: unknown }[]).find(i => i.key === 'g:mode')?.value
+  }
+  if ((await read()) !== 'Fast') {
+    await endLiveGrants(request)
+    try {
+      const grant = await call(request, actor('admin'), 'POST', '/api/grants', { json: { hours: 1 } })
+      expect(grant.status, grant.text).toBe(201)
+      const put = await putSetting(request, actor('inhouse'), 'technical', 'g:mode', 'Fast')
+      expect(put.status, `setting the default model to Fast: ${put.text}`).toBe(200)
+    } finally {
+      await endLiveGrants(request)
+    }
+  }
+  expect(await read(), 'the default model reads back as Fast').toBe('Fast')
+}
+
+test("a routine's question goes to its creator's inbox with no chat; the run waits for the answer, then finishes", async ({ request }) => {
+  needsContainer()
+  test.setTimeout(600_000)
+  await ensureFastDefault(request)
+  // A routine made in Dana's chat (so she is its creator), named for this run.
+  const name = `m2j-question-${Date.now().toString(36)}`
+  const chatId = await createChat(request, dana)
+  const made = await send(request, dana, chatId, `scenario:routine-create-question routine-name:${name}`)
+  expect(textOf(await answerOf(request, dana, chatId, made.turnId, 180_000))).toBe(QUESTION_ROUTINE_CREATED)
+  const list = await call(request, dana, 'GET', '/api/routines')
+  expect(list.status, list.text).toBe(200)
+  const routine = (list.json.routines as { id: string; name: string }[]).find(r => r.name === name)
+  expect(routine, `the routine ${name} is listed`).toBeDefined()
+  try {
+    const runs = async () => {
+      const r = await call(request, dana, 'GET', `/api/routines/${routine!.id}/runs`)
+      expect(r.status, r.text).toBe(200)
+      return r.json.runs as { outcome: string; manual: boolean }[]
+    }
+
+    // Questions already open for Dana (other cases' leftovers) aren't this run's.
+    const before = new Set(((await call(request, dana, 'GET', '/api/questions')).json.items as Q[]).map(q => q.id))
+    const run = await call(request, dana, 'POST', `/api/routines/${routine!.id}/run`, { json: { clientKey: `m2jq${Date.now().toString(36)}` } })
+    expect(run.status, run.text).toBe(200)
+
+    // The run asks its creator: the question is in her list, with no chat she could open.
+    let q: Q | undefined
+    try {
+      await expect.poll(async () => {
+        const r = await call(request, dana, 'GET', '/api/questions')
+        expect(r.status, r.text).toBe(200)
+        q = (r.json.items as Q[]).find(x => !before.has(x.id) && x.question === QUESTION_ASKED.question)
+        return q !== undefined
+      }, { timeout: 240_000, message: "the routine's question in its creator's list" }).toBe(true)
+    } catch (e) {
+      // Where the run got to, so a failure on the sandbox says why: its runs (route 86), the newest one's steps, and the
+      // questions the creator and the admin hold.
+      const history = (await call(request, dana, 'GET', `/api/routines/${routine!.id}/runs`)).json as { runs?: { trace?: string }[] }
+      const trace = history.runs?.[0]?.trace
+      const steps = trace ? (await call(request, dana, 'GET', `/api/traces/${trace}`)).json : null
+      const asked = { dana: (await call(request, dana, 'GET', '/api/questions')).json, admin: (await call(request, actor('admin'), 'GET', '/api/questions')).json }
+      throw new Error(`${(e as Error).message}\nruns: ${JSON.stringify(history).slice(0, 2000)}\ntrace: ${JSON.stringify(steps).slice(0, 6000)}\nquestions: ${JSON.stringify(asked).slice(0, 3000)}`)
+    }
+    expect(q).toMatchObject({ state: 'open', options: QUESTION_ASKED.options, chatId: null, answer: null })
+    // Another member never sees it, nor can answer it.
+    expect(((await call(request, leo, 'GET', '/api/questions')).json.items as Q[]).map(x => x.id)).not.toContain(q!.id)
+    expect((await call(request, leo, 'POST', `/api/questions/${q!.id}/answer`, { json: { choice: ROUTINE_CHOICE } })).status).toBe(404)
+    // The run waits on the answer, across a hard kill of every runner (P6 acceptance 10).
+    expect((await runs())[0]).toMatchObject({ outcome: 'running', manual: true })
+    await killRunners(request)
+
+    const answered = await call(request, dana, 'POST', `/api/questions/${q!.id}/answer`, { json: { choice: ROUTINE_CHOICE } })
+    expect(answered.status, answered.text).toBe(200)
+    expect(answered.json).toMatchObject({ id: q!.id, state: 'answered', answer: ROUTINE_CHOICE })
+    // The run resumes with the answer and finishes. `done` proves the answer arrived: the run's last scripted turn
+    // (scenarios/acceptance.ts `routine-question`) answers only when the call's result holds the option chosen, and a miss
+    // ends the run failed.
+    await expect.poll(async () => (await runs())[0]?.outcome, { timeout: 300_000, intervals: [2_000], message: "the routine's run finishes" }).toBe('done')
+  } finally {
+    // The routine goes, whatever happened: no daily run of it is left on the sandbox brand.
+    const now = (await call(request, dana, 'GET', '/api/routines')).json.routines as { id: string; rev: number }[]
+    const left = now.find(r => r.id === routine!.id)
+    if (left) {
+      const gone = await call(request, dana, 'POST', `/api/routines/${left.id}/delete`, { json: { ifRev: left.rev } })
+      expect(gone.status, gone.text).toBe(200)
+    }
+  }
 })
