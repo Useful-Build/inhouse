@@ -8,7 +8,8 @@
 //     unique index on `(chat_id, coalesce_key)`), raise the tip only where it still equals the one read before, then the
 //     item only where that raise took this append's stamp. A lost compare reads again, at most 3 times, then "busy".
 // The same `(chat_id, tool_use_id)` returns its item wherever it now sits; a call whose payload equals a pending item of
-// the open batch returns that item. At `batch_max` the key clears and the next call is refused `batch_full`.
+// the open batch returns that item. At `batch_max` the key clears and the next call is refused `batch_full`. A batch past
+// its expiry is not open: the next append clears its key and opens a fresh one (#504), without waiting for the sweep.
 import { writeStamp } from '../../db/ids.ts'
 import { first, runBatch, stmt } from '../../db/sql.ts'
 import type { SqlValue, Stmt } from '../../db/sql.ts'
@@ -198,7 +199,11 @@ export async function collect(d: BatchRequestDeps, c: Call, guardrail: 'count' |
     const replay = await replayItem(db, c.ctx, c.r.payloadHash)
     if (replay === 'conflict') return { outcome: 'conflict' }
     if (replay) return replay
-    const open = await first<OutboxActionRow>(db, stmt('SELECT * FROM outbox_actions WHERE chat_id = ? AND coalesce_key = ?', c.ctx.chatId, key))
+    // Only a batch still within its expiry collects (#504): one past it but not yet swept keeps its key until the sweep's
+    // state change clears it, takes no call (the raise below compares the expiry) and matches no payload.
+    const open = await first<OutboxActionRow>(db, stmt(
+      'SELECT * FROM outbox_actions WHERE chat_id = ? AND coalesce_key = ? AND expires_at_ms > ?', c.ctx.chatId, key, d.nowMs,
+    ))
     if (open) {
       const dup = await first<OutboxItemRow>(db, stmt(
         "SELECT * FROM outbox_items WHERE action_id = ? AND payload_hash = ? AND state = 'pending' ORDER BY n LIMIT 1", open.id, c.r.payloadHash,
@@ -220,6 +225,11 @@ export async function collect(d: BatchRequestDeps, c: Call, guardrail: 'count' |
     }
     const stmts: Stmt[] = []
     if (!open) {
+      // An expired batch still holding the key stops collecting, in the same D1 batch, so the unique index lets the new
+      // one open (#504). It can never take a call or an answer again, so this holds whether or not the rest applies.
+      stmts.push(stmt(
+        'UPDATE outbox_actions SET coalesce_key = NULL WHERE chat_id = ? AND coalesce_key = ? AND expires_at_ms <= ?', c.ctx.chatId, key, d.nowMs,
+      ))
       // Opened under a stamp of its own: only the raise below marks this append as the winner.
       const card: StoredCard = { title: batchStoredTitle(c.label), lines: [], label: c.label, nudge: false }
       const full = fullBatch(c, d.nowMs)
