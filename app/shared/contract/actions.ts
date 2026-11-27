@@ -44,7 +44,13 @@ export const BATCH_FIRST_LINES = 10
  * (`ref`, "#3901"), the change ("add VIP"), and its amount or quantity when it has one ("+20", "$24.90"). Nothing a
  * person approves is cut from the item's `line`; the row is its short form.
  */
-export const ActionItemRowSchema = z.object({ ref: z.string(), change: z.string(), amount: z.string().optional() })
+export const ActionItemRowSchema = z.object({
+  ref: z.string(),
+  change: z.string(),
+  amount: z.string().optional(),
+  /** A display-only detail the server may add (a customer's or product's name), shown beside the change when present. */
+  detail: z.string().optional(),
+})
 export type ActionItemRow = z.infer<typeof ActionItemRowSchema>
 
 /** Stage 1 M3-U (N33): the rows' column heads, in the person's words ("Item", "Where", "Stock"), for rows with amounts. */

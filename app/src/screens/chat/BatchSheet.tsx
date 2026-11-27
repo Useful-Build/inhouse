@@ -45,8 +45,8 @@ export interface BatchSheetProps {
 interface Read { items: ActionItem[]; next: number | null; past: number; error: string | null; busy: boolean }
 const START: Read = { items: [], next: 0, past: 0, error: null, busy: false }
 
-/** A search over a row's own words: its record, its change, its amount and its full line. */
-const matches = (it: ActionItem, q: string) => [it.row.ref, it.row.change, it.row.amount ?? '', it.line].some(t => t.toLowerCase().includes(q))
+/** A search over a row's own words: its record, its change, its amount, its detail and its full line. */
+const matches = (it: ActionItem, q: string) => [it.row.ref, it.row.change, it.row.amount ?? '', it.row.detail ?? '', it.line].some(t => t.toLowerCase().includes(q))
 
 export function BatchSheet({ card, opened, whose, busy, refusal, onClose, onSawTip, onAnswer, onResolve }: BatchSheetProps) {
   const phone = useUi(s => s.phone)
@@ -114,7 +114,9 @@ export function BatchSheet({ card, opened, whose, busy, refusal, onClose, onSawT
   const resolving = card.state === NEEDS_CHECK && card.can.resolve
   const count = fmtCount(shown, display())
   const sub = subtitleOf(card, whose)
-  const loading = read.next !== null && read.error === null
+  // A page is on its way (between pages nothing shows: the next one loads as the list's end comes into view).
+  const loading = read.busy
+  const complete = read.next === null
 
   return (
     <Sheet open onOpenChange={o => { if (!o) onClose() }}>
@@ -157,7 +159,7 @@ export function BatchSheet({ card, opened, whose, busy, refusal, onClose, onSawT
               )
             })}
           </ul>
-          {q && !loading && rows.length === 0 && <p role="status" className="m-0 py-6 text-center text-sm text-muted-foreground">Nothing matches.</p>}
+          {q && complete && rows.length === 0 && <p role="status" className="m-0 py-6 text-center text-sm text-muted-foreground">Nothing matches.</p>}
           <div ref={setEnd} className="h-px" />
           {loading && <p role="status" className="m-0 py-3 text-sm text-muted-foreground">{`Loading ${fmtCount(read.items.length, display())} of ${count}.`}</p>}
           {read.error !== null && (
