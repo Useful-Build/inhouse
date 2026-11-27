@@ -24,6 +24,7 @@ import type { RunFrame } from '../../shared/contract/run-event'
 import type { ActionCard, ActionChoice, ActionFilter, ActionResolution } from '../../shared/contract/actions'
 import type { Permission } from '../../shared/contract/permissions'
 import type { Question } from '../../shared/contract/questions'
+import type { Job } from '../../shared/contract/jobs'
 
 export type { Stage, StageIndex, Scenario, Effort, AgentErrorCode, ErrorReason, ResourceKey, ResourceStatus, Instant, Money, ClockTime, Prose } from '../../shared/contract/common'
 export type { AgentMeta } from '../../shared/contract/meta'
@@ -59,6 +60,7 @@ export type { AgentData } from '../../shared/contract/data'
 export type { ActionCard, ActionChoice, ActionFilter, ActionKind, ActionResolution, ActionState } from '../../shared/contract/actions'
 export type { Guardrail, Permission, PermissionHolder } from '../../shared/contract/permissions'
 export type { Question } from '../../shared/contract/questions'
+export type { Job, JobOutcome, JobProgress, JobState } from '../../shared/contract/jobs'
 
 export const STAGES: Stage[] = ['Watch', 'Act', 'Run']
 export const SCENARIOS: Scenario[] = ['Normal', 'First day', 'Loading', 'Tool disconnected', 'Cap reached']
@@ -321,6 +323,13 @@ export interface AgentClient {
    * waiting turn couldn't be reached (the same answer again goes on).
    */
   answerQuestion(id: string, choice: string): Promise<Question>
+
+  // ---------- Stage 1 M1-D (N3, N18): long jobs ----------
+  // Plain calls like the M2 ones above. The demo has no jobs: `job` answers null and `cancelJob` is refused (not found).
+  /** Route 100: the chat's newest job, or null when it has none, so a reload shows it with no live turn. */
+  job(chatId: string): Promise<Job | null>
+  /** Route 101: the chat owner's Cancel. Resolves to the job after it (one that had already ended, as it is). */
+  cancelJob(jobId: string): Promise<Job>
 }
 
 /** The longest chat title a person can set. Longer titles are cut. */

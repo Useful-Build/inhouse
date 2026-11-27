@@ -15,7 +15,9 @@
 //   `{ action: 'setTimings', overrides }`: replace the BrandAgent's job timing overrides (milliseconds), names from
 //     job-timings.ts only (any other name is a 400) -> `{ set: true }`; `{}` clears them;
 //   `{ action: 'killRunner', runner }`: destroy `runner-<i>`'s container, if running, without a graceful shutdown ->
-//     `{ killed: boolean }`, or 404 `not_found` with reason `runner` when `i` is outside the pool (`RUNNER_POOL`).
+//     `{ killed: boolean }`, or 404 `not_found` with reason `runner` when `i` is outside the pool (`RUNNER_POOL`);
+//   `{ action: 'runnerGen', runner }`: the container generation `runner-<i>` last started, read from its own storage
+//     -> `{ gen }` (0 for none yet), 404 as `killRunner` outside the pool (M1-D: a spec proves a kill replaced it).
 import { z } from 'zod'
 import { RoutineIdSchema } from '../../shared/contract/audit.ts'
 import { MAX_BODY_BYTES, readCapped } from '../db/handler-kit.ts'
@@ -32,6 +34,7 @@ const ControlSchema = z.union([
   z.strictObject({ action: z.literal('stopAfterBatch') }),
   z.strictObject({ action: z.literal('setTimings'), overrides: z.partialRecord(z.enum(JOB_TIMING_NAMES), z.number().int().positive()) }),
   z.strictObject({ action: z.literal('killRunner'), runner: z.string().regex(/^runner-(0|[1-9][0-9]{0,8})$/) }),
+  z.strictObject({ action: z.literal('runnerGen'), runner: z.string().regex(/^runner-(0|[1-9][0-9]{0,8})$/) }),
   z.strictObject({ action: z.literal('seedCursor'), routineId: RoutineIdSchema, checkedUntilMs: z.number().int().nonnegative() }),
 ])
 
@@ -59,9 +62,10 @@ export function alarmNowHandler(compiledTestBuild: boolean = __INHOUSE_TEST_BUIL
     if (!on) return apiError('not_found')
     const body = await readControl(c.request)
     if (body === null) return apiError('invalid')
-    if (body.action === 'killRunner') {
+    if (body.action === 'killRunner' || body.action === 'runnerGen') {
       if (!(Number(body.runner.slice('runner-'.length)) < Number(c.env.RUNNER_POOL))) return apiError('not_found', { reason: 'runner' })
-      return apiJson(await c.env.RUNNER.getByName(body.runner).testKillRunner())
+      const runner = c.env.RUNNER.getByName(body.runner)
+      return apiJson(body.action === 'killRunner' ? await runner.testKillRunner() : await runner.testRunnerGen())
     }
     const agent = brandAgent(c.env)
     if (body.action === 'setTimings') return apiJson(await agent.testSetTimings(body.overrides))

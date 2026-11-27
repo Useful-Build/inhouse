@@ -9,6 +9,7 @@ import { auditInsert } from './audit.ts'
 import type { At } from './members.ts'
 import { all, first, runBatch, stmt } from './sql.ts'
 import { SYSTEM_MEMBER_ID } from './ids.ts'
+import { JOB_CARRIED_ON_TEXT, isServerTurnSource, serverTurnText } from '../../shared/server-turn-text.ts'
 
 /** A chat's owner and whether it's deleted, or null when there's no such chat. */
 export interface ChatOwner { ownerId: string; deleted: boolean }
@@ -89,7 +90,13 @@ const record = (r: ChatRow): ChatRecord => ({
 })
 
 /** What a reloaded chat shows for a job's continuation: the agent went on by itself (no button, nothing to answer). */
-export const JOB_CARRIED_ON_TEXT = 'Your Inhouse agent carried on with this task by itself.'
+export { JOB_CARRIED_ON_TEXT }
+
+/**
+ * A question's resume row shows nothing (its answer is on the question's card): left out in SQL, so a page still holds
+ * `limit` rows and the cursor stays right. A row written before M1-D has no source and shows as it did.
+ */
+const SHOWN = "NOT (role = 'user' AND extra_json IS NOT NULL AND json_extract(extra_json, '$.source') IS 'question')"
 
 /**
  * A stored row as the contract's message (`extra_json`: a user message's quote and attachments, an agent part's
@@ -101,9 +108,13 @@ function message(r: MessageRow): StoredMessage {
     quote?: string; attachments?: { name: string }[]; trace?: string; failure?: TurnFailure; retryQuestion?: string; why?: CancelWhy
     outcome?: 'stopped' | 'interrupted'; source?: string
   }
-  // A job's continuation (Stage 1, M1-P): the server's own message, so it reads as the agent carrying on, never as the
-  // person's words (the D1 row keeps the text the agent got, with `source: 'job'`).
-  if (r.role === 'user' && extra.source === 'job') return { id: r.id, role: 'event', text: JOB_CARRIED_ON_TEXT, ...where }
+  // A turn the server wrote (Stage 1: M1-P's job continuation, M1-D's action resume): the server's own note, never the
+  // person's words (the D1 row keeps the text the agent got, with its `source`). shared/server-turn-text.ts.
+  if (r.role === 'user' && isServerTurnSource(extra.source)) {
+    const text = serverTurnText(extra.source)
+    if (text === null) throw new Error(`chat_messages ${r.id}: a ${extra.source} row the query should have left out`)
+    return { id: r.id, role: 'event', text, ...where }
+  }
   if (r.role === 'user') {
     return {
       id: r.id, role: 'user', text: r.text, ...(extra.quote === undefined ? {} : { quote: extra.quote }),
@@ -201,8 +212,8 @@ export function chatStore(deps: { db: D1Database }): ChatStore {
     },
     async messages(chatId, beforePos, limit) {
       const rows = await all<MessageRow>(db, beforePos === null
-        ? stmt('SELECT id, run_id, turn_id, pos, role, text, part_json, extra_json, model, at_ms FROM chat_messages WHERE chat_id = ? ORDER BY pos DESC LIMIT ?', chatId, limit)
-        : stmt('SELECT id, run_id, turn_id, pos, role, text, part_json, extra_json, model, at_ms FROM chat_messages WHERE chat_id = ? AND pos < ? ORDER BY pos DESC LIMIT ?', chatId, beforePos, limit))
+        ? stmt(`SELECT id, run_id, turn_id, pos, role, text, part_json, extra_json, model, at_ms FROM chat_messages WHERE chat_id = ? AND ${SHOWN} ORDER BY pos DESC LIMIT ?`, chatId, limit)
+        : stmt(`SELECT id, run_id, turn_id, pos, role, text, part_json, extra_json, model, at_ms FROM chat_messages WHERE chat_id = ? AND pos < ? AND ${SHOWN} ORDER BY pos DESC LIMIT ?`, chatId, beforePos, limit))
       return rows.map(message)
     },
   }

@@ -22,8 +22,11 @@ describe('turn outcomes, each with its own words', () => {
     ['pool_full', 'Your Inhouse agent is busy right now. Try again in a moment.'],
     ['timeout', 'This answer took too long, so your Inhouse agent stopped it. Nothing was changed.'],
   ]
+  // A person's turn that hit a limit may become a long job in the same step (Stage 1 M1-D): its words show with the next
+  // event that isn't its `job.started` (here the run's end), see 'a turn that hits a limit' below.
   test.each(CASES)('%s', (reason, text) => {
-    const v = run(queued, { type: 'turn.started', turnId: T, model: 'sonnet' }, { type: 'turn.finished', turnId: T, outcome: 'failed', reason })
+    const v = run(queued, { type: 'turn.started', turnId: T, model: 'sonnet' }, { type: 'turn.finished', turnId: T, outcome: 'failed', reason },
+      { type: 'run.finished', runId: 'r_Rrrrrrrrrrrrrrrrrrrrrr', turns: 1, durationMs: 1, cost: { minor: 0, currency: 'USD' } })
     expect(lastText(v)).toBe(text)
     expect(v.turns[T].state).toBe('failed')
   })
@@ -73,9 +76,10 @@ describe('notices', () => {
 
 describe('a turn ends once', () => {
   test('a second turn.finished for it changes nothing: no second line, the outcome stays', () => {
-    const fin = (outcome: 'done' | 'failed', reason?: 'max_turns'): ChatEvent => ({ type: 'turn.finished', turnId: T, outcome, ...(reason ? { reason } : {}) })
-    const once = run(queued, { type: 'turn.started', turnId: T, model: 'sonnet' }, fin('failed', 'max_turns'))
-    const twice = [fin('failed', 'max_turns'), fin('done')].reduce((v, e) => reduce(v, e, AT), once)
+    // `timeout`, not a limit: a limit's words wait for the next event (M1-D), which job-view.test.ts covers once over.
+    const fin = (outcome: 'done' | 'failed', reason?: 'timeout'): ChatEvent => ({ type: 'turn.finished', turnId: T, outcome, ...(reason ? { reason } : {}) })
+    const once = run(queued, { type: 'turn.started', turnId: T, model: 'sonnet' }, fin('failed', 'timeout'))
+    const twice = [fin('failed', 'timeout'), fin('done')].reduce((v, e) => reduce(v, e, AT), once)
     expect(twice).toBe(once)
     expect(twice.messages.filter(m => m.id === `${T}.f`)).toHaveLength(1)
     expect(twice.turns[T].state).toBe('failed')
