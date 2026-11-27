@@ -1,0 +1,130 @@
+# The gate check: a required status check named `gate` that says which lane a PR is in (the merge policy's Part 3) and
+# fails until a Lane 4 PR has Wasim's OK. The rules live in app/scripts/gate/lanes.mjs; run.mjs reads the PR through the
+# GitHub API and prints the lane, every Lane 4 item with its reason, the ledger items and the approval state (the same
+# text goes to the job summary).
+#
+# Threat model: the PR being judged must not be able to change the rules that judge it, or run code with this job's
+# token. So `gate` runs on pull_request_target, which takes this file from the base branch, and the job checks out main
+# (never the PR) for the rules; everything about the PR (file list, patches, package.json texts, labels, comments,
+# reviews, timeline) comes from the API as data, passed through env, never into a shell script. The token is read-only.
+# A plain `pull_request` run would take the workflow and the rules from the PR's own branch. Changing this file,
+# lanes.mjs or run.mjs is itself Lane 4, and the change only takes effect once it is on main.
+#
+# The label rule: a PR with Lane 4 items fails until it carries the `wasim-approved` label and a PR comment or review
+# line `wasim-approved: <40-hex sha>`, made at or after the label was last added, naming the head Wasim approved (a
+# commit in the PR). Agents add both only after Wasim's yes in chat, and quote that yes. After a push, the files the PR
+# still changes since that head are scanned again; any Lane 4 item there, or a change of the PR's base branch since the
+# label, makes the approval stale, and the gate fails until Wasim says yes again and the label and line are renewed.
+# Ledger items (new migrations, route changes, egress hosts and host lists, write ops) need two reviewer lines starting
+# "Gate check: on ledger" (they cover the PR as a whole); a "Gate check: off ledger" line makes them Lane 4. Only lines
+# from the repo's owners, members and collaborators count (the repo is public), and a quoted line (`>`) never counts.
+# Nor does a line in a review that was dismissed: its "Gate check:" or "wasim-approved:" stops counting on the recheck.
+#
+# Reviewers' lines arrive as comments and reviews. Those runs belong to main's latest commit (issue_comment) or the PR's
+# merge ref (pull_request_review), not the PR's head, so they can't report `gate` on the PR itself: the `gate-recheck`
+# job re-runs the PR head's `gate` run instead (which reads the comments again). Concurrency is per job, so a comment
+# that doesn't qualify for a recheck never joins (or cancels) a recheck's group. In a merge queue, `gate` passes at once:
+# the PR passed it before it was queued.
+#
+# Known gaps: a PR that adds a workflow with a job named `gate` could post a check of the same name (any .github/**
+# change is Lane 4 anyway, and agents aren't adversaries; the fix is agents' own GitHub App identity). A pull_request_review
+# run takes this file from the PR's merge ref, and a fork's run gets a read-only token, so a fork's review can't re-run
+# gate (the next push, label or edit does). fleet/** branches cut before this file reached main have no gate, and
+# .github/rulesets/fleet.json doesn't require it yet.
+name: gate
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled, edited]
+    branches: [main, "fleet/**"]
+  issue_comment:
+    types: [created, edited]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  merge_group:
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  gate:
+    name: gate
+    if: github.event_name == 'pull_request_target' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: gate-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      - name: In the merge queue
+        if: github.event_name == 'merge_group'
+        run: echo "gate passes in the merge queue; the PR passed gate before it was queued."
+      # main's rules, never the PR's code (for a PR into fleet/**, main's too).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request_target'
+        with:
+          ref: main
+          persist-credentials: false
+          sparse-checkout: |
+            app/scripts/gate
+            app/.nvmrc
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: github.event_name == 'pull_request_target'
+        with:
+          node-version-file: app/.nvmrc
+      - name: Judge the PR by main's rules
+        if: github.event_name == 'pull_request_target'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: node app/scripts/gate/run.mjs --repo "$REPO" --pr "$PR"
+
+  recheck:
+    name: gate-recheck
+    # Only a trusted comment on a PR, or a trusted review, that adds or removes a "Gate check:" or "wasim-approved:"
+    # line (a dismissed review always rechecks).
+    if: >-
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+        (contains(github.event.comment.body, 'Gate check:') || contains(github.event.comment.body, 'wasim-approved:') ||
+         contains(github.event.changes.body.from, 'Gate check:') || contains(github.event.changes.body.from, 'wasim-approved:'))) ||
+      (github.event_name == 'pull_request_review' &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.review.author_association) &&
+        (github.event.action == 'dismissed' ||
+         contains(github.event.review.body, 'Gate check:') || contains(github.event.review.body, 'wasim-approved:') ||
+         contains(github.event.changes.body.from, 'Gate check:') || contains(github.event.changes.body.from, 'wasim-approved:')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: gate-recheck-${{ github.event.issue.number || github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      actions: write
+      pull-requests: read
+    steps:
+      - name: Re-run gate on the PR's head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number || github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          head=$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)
+          run=$(gh api "repos/$REPO/actions/workflows/gate.yml/runs?event=pull_request_target&head_sha=$head&per_page=1" --jq '.workflow_runs[0].id // empty')
+          if [ -z "$run" ]; then
+            echo "::notice::No gate run for $head yet; the next push, label or edit runs it."
+            exit 0
+          fi
+          # A run still going may have read the comments before this one: let it finish, then run it again.
+          gh run watch "$run" -R "$REPO" > /dev/null
+          gh run rerun "$run" -R "$REPO"
+          echo "Re-ran gate run $run for $head."
