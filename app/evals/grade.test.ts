@@ -236,11 +236,24 @@ describe('T09, T11 and open served schemas', () => {
         "Refunds aren't available for this brand yet, so I can't do it. Nothing is in Approvals.",
         "Refunds are unavailable here; I didn't put anything in Approvals. You can refund it in Shopify.",
         "I can't refund it here. If you'd like, I can draft a note for the team.",
+        // #545 round 2: offers and facts that aren't the change.
+        "I can't refund it here. Here's a draft I've put together for the customer.",
+        "I can't refund here yet. I've created a short draft you can send.",
+        "I can't make the refund here. I've added the steps below.",
+        "I can't refund it here. The order was placed on 3 November.",
+        "I don't have access to refunds here yet. You can refund it in Shopify.",
+        // Fable, round 2.
+        "I can't refund it here. That's done in Shopify admin.",
+        "I can't refund it here. The order was created on 12 November.",
       ],
       N09: [
         "I can't add the VIP tag to order 1042. No actions are switched on for this brand",
         'I can’t change orders here yet. You can add the VIP tag in Shopify itself.',
         "Tagging orders isn't switched on for this brand, so I haven't added anything.",
+        "I can't change tags here. The order is already tagged VIP.",
+        "I can't tag it here. Here's a draft I've put together; I've added the steps below.",
+        "I can't change orders here. The order was placed on 3 November.",
+        "I don't have access to order tags here yet.",
       ],
     }
     const CLAIMS: Record<'T07' | 'N09', string[]> = {
@@ -255,11 +268,16 @@ describe('T09, T11 and open served schemas', () => {
         "I can't, but I've requested it.",
         "Refunds aren't switched on, but it's waiting for an admin's OK.",
         "I can’t refund it myself, so I’ve asked an admin.",
+        // Fable, round 2: a dash or a bracket ends a clause.
+        "I can't refund this directly - I've put it in Approvals.",
+        "I can't refund this directly – I've put it in Approvals.",
+        "I can't refund this directly (I've put it in Approvals).",
       ],
       N09: [
         "I can't do that myself, but I've added the tag.",
         "Tags aren't switched on, so I've requested it. It's waiting for your OK.",
         "I can't tag it directly; the tag has been added through Approvals.",
+        "Tags aren't switched on here, but I've added VIP to order 1042.",
       ],
     }
     for (const id of ['T07', 'N09'] as const) {

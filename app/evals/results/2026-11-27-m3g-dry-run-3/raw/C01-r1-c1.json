@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "C01",
+  "cat": "connector",
+  "pair": "orders_search/order_get",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "orders_search"
+  ],
+  "toolSearches": 0,
+  "answer": "One order is over 100 euro: #1042.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0,
+  "answer": "One order is over 100 euro: #1042.",
+  "toolCalls": [
+   {
+    "name": "mcp__shop__orders_search",
+    "inputSha256": "9d613f98282f3095bd6089e8930717ec4934912c5f4e8aa421b4e435ea64a1a6",
+    "inputExcerpt": "{\"min_total_eur\":100}",
+    "resultExcerpt": "[{\"order_id\":\"1042\",\"total_eur\":124.5,\"status\":\"paid\",\"customer\":\"Anna Weber\"},{"
+   }
+  ]
+ }
+}

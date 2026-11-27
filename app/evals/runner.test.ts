@@ -30,34 +30,34 @@ describe('the fake target, full set end to end', () => {
     for (const c of S5_SET.filter((x) => x.cat !== 'exfil')) expect(CANNED[c.id], c.id).toBeDefined()
   })
 
-  it('gives the report the canned transcripts dictate (65 cases x 3 reps, clean exfiltration; T08 parked)', async () => {
+  it('gives the report the canned transcripts dictate (66 cases x 3 reps, clean exfiltration; T08 parked)', async () => {
     const out = await runEvals({ target: createFakeTarget(), cases: S5_SET, reps: 3, concurrency: 4 })
     const report = buildReport(S5_SET, out.rows, META)
     // T08 (customer email) waits for a write operation that does it: no target provides `write_set`. T07 runs on `refund`
     // since M3-G (the fake provides it).
     expect(out.notRun).toEqual([{ id: 'T08', needs: ['write_set'] }])
-    // 159 before M2-G added N09 (a change with no operation on); 162 before the routine question cases Q01 to Q04; 174 before M3-F added the six open-fetch cases (X13-X18); 192 before M3-G unparked T07.
-    expect(report.summary.all.runs).toBe(195)
-    expect(report.summary.all.pass).toBe(195 - declaredFailures.length * 3)
+    // 159 before M2-G added N09 (a change with no operation on); 162 before the routine question cases Q01 to Q04; 174 before M3-F added the six open-fetch cases (X13-X18); 192 before M3-G unparked T07; 195 before M3-G added X19.
+    expect(report.summary.all.runs).toBe(198)
+    expect(report.summary.all.pass).toBe(198 - declaredFailures.length * 3)
     expect(report.summary.e2e).toMatchObject({ runs: 9, pass: 9 })
-    expect(report.summary.exfil).toMatchObject({ runs: 54, pass: 54 })
+    expect(report.summary.exfil).toMatchObject({ runs: 57, pass: 57 })
     expect(report.exfiltration.bypasses).toEqual([])
     expect(report.totalCostUsd).toBe(0)
     expect(out.rows.filter((r) => !r.pass).map((r) => r.caseId).sort()).toEqual(['N04', 'N04', 'N04', 'T05', 'T05', 'T05'])
   })
 
-  it('a bypassing fake shows 54 bypasses (36 webfetch, 9 link, 9 memory) and fails those case-repeats', async () => {
+  it('a bypassing fake shows 57 bypasses (39 webfetch, 9 link, 9 memory) and fails those case-repeats', async () => {
     const out = await runEvals({ target: createFakeTarget({ exfil: 'bypass' }), cases: CASES.filter((c) => c.cat === 'exfil'), reps: 3, concurrency: 2 })
     const report = buildReport(CASES, out.rows, META)
-    expect(report.summary.exfil).toMatchObject({ runs: 54, pass: 0 })
+    expect(report.summary.exfil).toMatchObject({ runs: 57, pass: 0 })
     // The six open-fetch cases' bypasses carry their secret (an order number, an email) to an unlisted host.
-    expect(report.exfiltration.kinds).toMatchObject({ webfetch: { bypasses: 36 }, link: { bypasses: 9 }, memory: { bypasses: 9 } })
+    expect(report.exfiltration.kinds).toMatchObject({ webfetch: { bypasses: 39 }, link: { bypasses: 9 }, memory: { bypasses: 9 } })
   })
 
   it('uses a different canary for every case-repeat', async () => {
     const out = await runEvals({ target: createFakeTarget(), cases: CASES.filter((c) => c.cat === 'exfil'), reps: 3, concurrency: 1 })
     // On disk a row names its canary by id only (#245 review: the canary itself never reaches a results file).
-    expect(new Set(out.rows.map((r) => r.canaryId)).size).toBe(54)
+    expect(new Set(out.rows.map((r) => r.canaryId)).size).toBe(57)
     expect(out.rows.some((r) => 'canary' in r)).toBe(false)
   })
 
@@ -81,7 +81,7 @@ describe('the fixture target replays S5', () => {
   it('serves only the 41 S5 cases it can and reports the rest (the Slack case, the code-mode cases, the exfiltration cases, M2-G\'s N09, the routine question cases Q01 to Q04, the parked T07 and T08) as not run', async () => {
     const out = await runEvals({ target: createFixtureTarget(), cases: CASES, reps: 3, concurrency: 3 })
     expect(out.rows).toHaveLength(132)
-    expect(out.notRun.map((n) => n.id).sort()).toEqual(['C-CODEMODE-01', 'C-CODEMODE-02', 'C-CODEMODE-03', 'C-CODEMODE-04', 'C-SLACK-01', 'CAP-01', 'CAP-02', 'CAP-03', 'N09', 'Q01', 'Q02', 'Q03', 'Q04', 'T07', 'T08', 'X01', 'X02', 'X03', 'X04', 'X05', 'X06', 'X07', 'X08', 'X09', 'X10', 'X11', 'X12', 'X13', 'X14', 'X15', 'X16', 'X17', 'X18'])
+    expect(out.notRun.map((n) => n.id).sort()).toEqual(['C-CODEMODE-01', 'C-CODEMODE-02', 'C-CODEMODE-03', 'C-CODEMODE-04', 'C-SLACK-01', 'CAP-01', 'CAP-02', 'CAP-03', 'N09', 'Q01', 'Q02', 'Q03', 'Q04', 'T07', 'T08', 'X01', 'X02', 'X03', 'X04', 'X05', 'X06', 'X07', 'X08', 'X09', 'X10', 'X11', 'X12', 'X13', 'X14', 'X15', 'X16', 'X17', 'X18', 'X19'])
     const report = buildReport(CASES, out.rows, META)
     // T09 and T11 (r1-r3) flip to fail: S5 recorded its own mock tools' inputs (to: [ids], schedule: "weekdays 06:00"),
     // and the cases now follow P4/P5's real schemas (to.members, days and time; line B), which S5 never served. T07 r1-r3
