@@ -135,21 +135,22 @@ export function taintStore(
 
   /**
    * The row cap without a full count on every capture. `INSERT OR REPLACE` gives a re-sighted digest a new rowid, so
-   * the rowid span (two b-tree edge reads) bounds the row count from above; only when it passes the cap does an exact
-   * count run, and then the oldest rows go in one delete, by age (expired ones are the oldest). The table is at most
-   * `maxRows` before a capture, so the delete is bounded by what the capture inserted (at most 5,000), and the cap holds
-   * after every capture.
+   * the rowid span (two b-tree edge reads) bounds the row count from above; only when it passes the cap does the
+   * eviction run, as one statement that counts the table inside itself and deletes the oldest rows, by age (expired ones
+   * are the oldest), down to exactly `maxRows`. Counting inside the delete keeps overlapping captures from each deleting
+   * the same excess: the table never drops under the cap, so the full-table guard can't be switched off by two reads at
+   * once (M3-F review). Each delete is bounded by what its capture inserted (at most 5,000) or `evictBatch`.
    */
   async function enforceCap(inserted: number): Promise<void> {
     const span = await db
       .prepare('SELECT (SELECT max(rowid) FROM egress_taint) - (SELECT min(rowid) FROM egress_taint) + 1 AS n')
       .first<{ n: number | null }>()
     if ((span?.n ?? 0) <= maxRows) return
-    const count = (await db.prepare('SELECT COUNT(*) AS n FROM egress_taint').first<{ n: number }>())?.n ?? 0
-    if (count <= maxRows) return
     await db
-      .prepare('DELETE FROM egress_taint WHERE rowid IN (SELECT rowid FROM egress_taint ORDER BY seen_at_ms ASC, rowid ASC LIMIT ?)')
-      .bind(Math.min(count - maxRows, Math.max(evictBatch, inserted)))
+      .prepare(
+        'DELETE FROM egress_taint WHERE rowid IN (SELECT rowid FROM egress_taint ORDER BY seen_at_ms ASC, rowid ASC LIMIT max(0, min((SELECT COUNT(*) FROM egress_taint) - ?, ?)))',
+      )
+      .bind(maxRows, Math.max(evictBatch, inserted))
       .run()
   }
 

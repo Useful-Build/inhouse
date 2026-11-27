@@ -370,6 +370,22 @@ describe('a flood of junk closes fetch rather than opening it (#427, M3-F)', () 
     expect(await leaks(store, real)).toBe(false)
   })
 
+  it('overlapping captures at the cap never leave the table under it, so the guard stays on (one-statement eviction)', async () => {
+    let now = BASE_NOW
+    const store = taintStore(db, HASH_KEY, () => now, { maxRows: 20, evictBatch: 100 })
+    await store.capture('real.buyer@example.com', { route: 'mcp' })
+    now += 1000
+    await store.capture(Array.from({ length: 20 }, (_, i) => `fill${i}@spam.example.org`).join(' '), { route: 'mcp' })
+    expect(await stored('real.buyer@example.com')).toBe(false)
+    for (let round = 0; round < 5; round++) {
+      now += 1000
+      await Promise.all(Array.from({ length: 6 }, (_, k) =>
+        store.capture(Array.from({ length: 7 }, (_, i) => `par${round}x${k}x${i}@spam.example.org`).join(' '), { route: 'mcp' })))
+      expect(await db.prepare('SELECT COUNT(*) AS n FROM egress_taint').first<number>('n'), `round ${round}`).toBe(20)
+      expect(await leaks(store, 'https://any-site.example.net/?e=real.buyer%40example.com'), `round ${round}`).toBe(true)
+    }
+  })
+
   it('a table below the cap never refuses on age alone, and a full one with an old oldest row refuses only stored tokens', async () => {
     let now = BASE_NOW
     const store = taintStore(db, HASH_KEY, () => now, { maxRows: 5, evictBatch: 10 })

@@ -410,7 +410,7 @@ describe('eviction property (failure 3): a flood of junk closes fetch rather tha
           }
         }
       }),
-      { numRuns: Math.max(RUNS * 25, 50) },
+      { numRuns: Math.max(RUNS * 50, 100) },
     )
   })
 })
