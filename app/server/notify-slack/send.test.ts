@@ -28,6 +28,7 @@ import { renderNotice } from '../notices/render.ts'
 import type { NoticeRow } from '../notices/read.ts'
 import { notifyAgent, sendSystemNotice } from './send.ts'
 import type { AgentNoticeInput, AgentNotifyCtx, DeliveryBinding, ListedChannel, SlackLeg, SlackLegAnswer } from './send.ts'
+import { dataOf } from '../mcp/server/test-support.ts'
 
 const db = env.DB
 const DAY = 86_400_000
@@ -142,7 +143,7 @@ describe('the agent posts through the outbox, the server posts its own notices (
       const agent = await notificationSend.call(NotificationSendInput.parse(msg()), { ...scopeOf(s), nowMs: s.nowMs, requestId: `m2-n-${uniq()}` }, { db, notify: notifyDeps(null) })
       expect(calls, 'the agent path never calls the delivery binding').toEqual([])
       expect(agent.content[0]!.text).toBe('#ops-alerts: refused: actions_unavailable (Slack posts can’t be asked for from here, so nothing was asked or sent.)')
-      expect(agent.structuredContent).toEqual({ recipients: [{ to: '#ops-alerts', kind: 'slack', outcome: 'refused', detail: 'actions_unavailable' }], changed: [] })
+      expect(dataOf(agent)).toEqual({ recipients: [{ to: '#ops-alerts', kind: 'slack', outcome: 'refused', detail: 'actions_unavailable' }], changed: [] })
       // The server's own notice to a member and the alerts channel: the channel's post goes out once, with no card.
       const system = await sendSystemNotice({ DB: db, HUB_DELIVERY: delivery }, {
         key: `m2-n:${uniq()}`, source: 'approvals', kind: 'approval_waiting', to: { members: [s.owner], alertsChannel: true }, link: { kind: 'today' },

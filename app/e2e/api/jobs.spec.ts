@@ -16,7 +16,7 @@ import { JOB_CARRIED_ON_TEXT } from '../../shared/server-turn-text.ts'
 import { JOB_RUN_DONE, JOB_RUN_FILE, stepIdPrefix } from '../../test/scripted-model/scenarios/jobs.ts'
 import { Tab, createChat, needsContainer, send } from './chat-kit.ts'
 import { killRunners, resetJobTimings, setJobTimings } from './job-kit.ts'
-import { LOST_CALL, jobNotices, jobWhen, onlyThePersonSpeaks, outputText, runToken, runnerGens, runningStep, stepsOf, storedJob, storedMessages } from './job-proof.ts'
+import { LOST_CALL, explainJob, jobNotices, jobWhen, onlyThePersonSpeaks, outputText, runToken, runnerGens, runningStep, stepsOf, storedJob, storedMessages } from './job-proof.ts'
 import { actor, call } from './kit.ts'
 
 const dana = actor('memberA')
@@ -50,7 +50,13 @@ test('a cut turn becomes a job that carries on with the tab closed, survives a k
     const tab = await Tab.open(dana)
     const { chatId, text, sent, prefix } = await startRun(request)
     tab.attach(sent.runId)
-    await tab.until(() => tab.frames(sent.runId).some(f => f.event.type === 'job.started'), 'the job started', 300_000)
+    try {
+      await tab.until(() => tab.frames(sent.runId).some(f => f.event.type === 'job.started'), 'the job started', 300_000)
+    } catch (err) {
+      // Why it didn't start, printed with the failure (M2-G: #454's runs timed out here with no clue).
+      console.log(`M1-D jobs: no job.started.\n${await explainJob(request, dana, { chatId, turnId: sent.turnId, frames: tab.frames(sent.runId) as never, prefix })}`)
+      throw err
+    }
     const frames = tab.frames(sent.runId)
     const started = frames.find(f => f.event.type === 'job.started')!.event
     expect(started.rootTurnId).toBe(sent.turnId)

@@ -27,6 +27,7 @@ import type { AnswerOutcome, QuestionAgent } from './flow.ts'
 import { questionStore } from './store.ts'
 import { QUESTION_TTL_MS } from './types.ts'
 import type { QuestionRow } from './types.ts'
+import { dataOf } from '../mcp/server/test-support.ts'
 
 const ADMIN = { kind: 'person' as const, memberId: 'm_admin' }
 const OPTIONS = ['Ship today', 'Wait for stock', 'Ask the supplier']
@@ -214,7 +215,7 @@ async function run(ops: Op[]): Promise<void> {
         const out = await handlers.question_ask!.call({ question: r.question, options: JSON.parse(r.options_json) as string[] }, {
           memberId: MEMBER, chatId: chat, runId: 'r_x', turnId: 't_x', nowMs: h.clock.now, requestId: 'req-x', toolUseId: r.tool_use_id,
         }, { db: env.DB })
-        expect(out.structuredContent).toEqual({ question_id: r.id, state: 'answered', answer: first.get(r.id) })
+        expect(dataOf(out)).toEqual({ question_id: r.id, state: 'answered', answer: first.get(r.id) })
       }
       if (r.state === 'open' && !deleted) expect(r.expires_at_ms > h.clock.now && waitingQuestionOf(h.sql, chat) === r.id, JSON.stringify(r)).toBe(true)
       if (givenUp.has(r.id)) expect(n).toBe(0)

@@ -20,8 +20,8 @@ import { CancelWhySchema, TurnFailureSchema } from '../../shared/contract/runs.t
 import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { JWK } from 'jose'
-import { createDoor, newMemoryId, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory } from './door.ts'
-import { CapReachedError, type Case, type ChatResult, type ExfilSpec, type People, type PersonKey, type RunContext, type SeedFact, type Session, type Target, type ToolCall } from '../types.ts'
+import { createDoor, newActionId, newMemoryId, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory } from './door.ts'
+import { CapReachedError, type Case, type ChatResult, type ExfilSpec, type People, type PersonKey, type RunContext, type SeedApproval, type SeedFact, type Session, type Target, type ToolCall } from '../types.ts'
 
 /**
  * The eval brand's monthly Spending cap: Wasim's monthly Anthropic test budget, $50 (2026-11-22, superseding decision 18's
@@ -393,7 +393,7 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
         if (exfil?.via === 'memory_search') facts.push({ id: newMemoryId(), scope: 'person', ownerId: people.current, text: exfil.plant(run.canary) })
         if (exfil?.via === 'attachment') attachment = { name: 'note.txt', bytes: new TextEncoder().encode(exfil.plant(run.canary)) }
         await d.insert(facts)
-        session = productSession({ api, must, door: d, people, picker, real, attachment, pollMs, sleep, askedAs: who.sub, onSpend: (usd) => { spentTotal += usd } })
+        session = productSession({ api, must, door: d, people, picker, real, attachment, approvals: run.approvals, pollMs, sleep, askedAs: who.sub, onSpend: (usd) => { spentTotal += usd } })
       } catch (e) {
         try {
           if (settingsTouched) await resetWebTools(door!)
@@ -421,9 +421,11 @@ export interface SessionDeps {
   /** The case person who asks (`eval-<run>-<case>-r<rep>`). */
   askedAs: string
   picker: string
-  /** Real memory id to the case's own id (`m_norda`). */
+  /** Real memory id (or approval id) to the case's own id (`m_norda`, `ap_204`). */
   real: Map<string, string>
   attachment?: { name: string; bytes: Uint8Array }
+  /** The case's approvals (Stage 1 M2-G): seeded waiting in the first chat, as the case person's, before its turn. */
+  approvals?: SeedApproval[]
   pollMs: number
   sleep: (ms: number) => Promise<void>
   onSpend: (usd: number) => void
@@ -465,6 +467,8 @@ export function productSession(d: SessionDeps): Session {
   const turns: string[] = []
   let booked = 0
   let attachment = d.attachment
+  let approvals: readonly SeedApproval[] = d.approvals ?? []
+  const seededApprovals: string[] = []
   const personKey = (id: string | null): string => PEOPLE_KEYS.find((k) => d.people[k] === id) ?? String(id)
 
   async function turnCost(turnId: string): Promise<number> {
@@ -504,6 +508,15 @@ export function productSession(d: SessionDeps): Session {
       const before = await d.door.rows()
       const chatId = `eval-${rid()}`
       d.must(await d.api('current', 'POST', '/api/chats', { json: { id: chatId, title: 'Eval chat' }, signal: o?.signal }), 'create the chat')
+      // The case's approvals (M2-G: T15, T16), the person's own, waiting in this chat; the prompt names each by its real id.
+      for (const a of approvals) {
+        const id = newActionId()
+        await d.door.insertApproval({ id, chatId, askedBy: d.people.current, title: a.title, line: a.line })
+        seededApprovals.push(id)
+        d.real.set(id, a.id)
+        prompt = prompt.replaceAll(a.id, id)
+      }
+      approvals = []
       let attachments: { fileId: string; name: string }[] | undefined
       if (attachment) {
         const up = await d.api('current', 'POST', `/api/chats/${chatId}/attachments`, { bytes: attachment.bytes, headers: { 'X-File-Name': encodeURIComponent(attachment.name), 'Content-Type': 'text/plain' }, signal: o?.signal })
@@ -596,6 +609,7 @@ export function productSession(d: SessionDeps): Session {
     },
     async reset() {
       await endTurns()
+      await d.door.deleteApprovals(seededApprovals)
       await d.door.clear()
     },
   }

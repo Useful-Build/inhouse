@@ -10,15 +10,16 @@
 //     deleted chat; a refused submit is lost instead of tried again with the same key;
 //  6. the D1 report store changes a row it shouldn't (another `from`), or anything but `report`.
 import { env } from 'cloudflare:workers'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { auditInputSha256 } from '../../../shared/protocol/index.ts'
 import type { AuditEntry } from '../../../shared/protocol/index.ts'
 import { d1Chat, ev, inAgent, settle } from '../../testing/brand-agent/core-harness.ts'
 import type { Harness } from '../../testing/brand-agent/core-harness.ts'
 import { ASKER, fresh, outbox, requestCtx, rowOf, tagArgs, world } from '../../outbox/test-support.ts'
-import { Asks, d1Reports, DELIVER_KIND, deliverTaskId, MAX_WAITS_PER_TURN, resumeKey } from './asks.ts'
+import { Asks, d1Reports, DELIVER_KIND, deliverTaskId, MAX_RESUME_TRIES, MAX_WAITS_PER_TURN, RESUME_RETRY_MS, resumeKey, resumeKeyParts } from './asks.ts'
 import type { ActionTexts, AsksDeps } from './asks.ts'
 import { ACTIONS_TOOL_PREFIX, recordInvocation } from './invocations.ts'
+import { storedProjection } from './projection.ts'
 
 const db = env.DB
 const TOOL = `${ACTIONS_TOOL_PREFIX}shopify_order_tag_add`
@@ -26,7 +27,7 @@ const SETTINGS = { model: 'claude-sonnet-5-5', pickerId: 'sonnet', effort: 'medi
 const TEXTS: ActionTexts = { result: p => `An automatic note from Inhouse: ${p.title} is ${p.state}.` }
 
 const asks = (h: Harness, deps: Partial<AsksDeps> = {}) =>
-  new Asks({ sql: h.sql, scheduler: h.sched, db, core: h.core, deps: { texts: null, settings: async () => SETTINGS, ...deps }, now: () => h.clock.now })
+  new Asks({ sql: h.sql, scheduler: h.sched, db, core: h.core, deps: { texts: null, settings: async () => SETTINGS, defaultSettings: async () => SETTINGS, ...deps }, now: () => h.clock.now })
 
 const entry = async (o: Partial<AuditEntry> & { args?: unknown } = {}): Promise<AuditEntry> => {
   const { args = tagArgs(1), ...rest } = o
@@ -250,6 +251,209 @@ describe('the turn\'s end and the resume turn (failures 4, 5)', () => {
     await a.deliver(id)
     expect(h.turns().filter(t => t.chat_id === chat && t.source === 'action').map(t => t.client_key)).toEqual([resumeKey(id)])
   }))
+})
+
+// M2-G (from #444's review, Fable). Ways it can fail: a resume is dropped (`none`) while the chat and its owner are there,
+// because the asking turn's row is gone or its model is off; a card first made in an earlier turn and asked again in a
+// turn that then fails keeps its `tool` report (no one tells the agent); a final row left `later` while the texts port
+// was null is never delivered once it is wired.
+describe('reports that must not be lost (M2-G)', () => {
+  const DEFAULT = { ...SETTINGS, model: 'claude-haiku-5-5', pickerId: 'haiku' }
+  async function ended(h: Harness) {
+    const t = await liveTurn(h)
+    const e = await entry()
+    recordInvocation(h.sql, t.turnId, e, h.clock.now)
+    expect(asks(h).admit(t.turnId, TOOL, e.inputSha256!)).toMatchObject({ replay: false })
+    const id = await action(h, t.turnId, t.chat)
+    await db.prepare("UPDATE outbox_actions SET state = 'sent', report = 'later', result_json = '{\"ref\":\"vip\"}' WHERE id = ?").bind(id).run()
+    h.core.stop(t.turnId, { kind: 'person', memberId: ASKER })
+    await settle()
+    return { ...t, id }
+  }
+  const resumes = (h: Harness, chat: string) => h.turns().filter(t => t.chat_id === chat && t.source === 'action')
+
+  it('the asking turn\'s row gone: the chat\'s owner gets the resume on the default model', () => inAgent(async h => {
+    const { chat, id } = await ended(h)
+    await db.prepare("UPDATE outbox_actions SET turn_id = 't_gone' WHERE id = ?").bind(id).run()
+    await asks(h, { texts: TEXTS, defaultSettings: async () => DEFAULT }).deliver(id)
+    expect((await rowOf(db, id))!.report).toBe('resume')
+    expect(resumes(h, chat).map(t => [t.client_key, t.owner_id, t.picker_id])).toEqual([[resumeKey(id), ASKER, 'haiku']])
+  }))
+
+  it('the asking turn\'s model off now: the default model', () => inAgent(async h => {
+    const { chat, id } = await ended(h)
+    await asks(h, { texts: TEXTS, settings: async () => ({ refused: 'model_off' }), defaultSettings: async () => DEFAULT }).deliver(id)
+    expect(resumes(h, chat).map(t => t.picker_id)).toEqual(['haiku'])
+  }))
+
+  it('no usable model at all: the report stays `resume` and is tried again later, nothing goes in', () => inAgent(async h => {
+    const { chat, id } = await ended(h)
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await asks(h, { texts: TEXTS, settings: async () => ({ refused: 'model_off' }), defaultSettings: async () => ({ refused: 'model_off' }) }).deliver(id)
+    errors.mockRestore()
+    expect((await rowOf(db, id))!.report).toBe('resume')
+    expect(resumes(h, chat)).toEqual([])
+    expect(h.dueTasks()).toContainEqual(expect.objectContaining({ id: deliverTaskId(id) }))
+  }))
+
+  it('a card first made in an earlier turn: the turn that asked it again and failed flips it to later', () => inAgent(async h => {
+    const first = await liveTurn(h)
+    const id = await action(h, first.turnId, first.chat)
+    h.push(first.turnId, ev.started(), ev.text('asked'), ev.checkpoint(2, 'u2', 1), ev.success(), ev.released({ mainEntries: 2, lastUuid: 'u2', lastUuidIndex: 1 }))
+    await settle()
+    const second = await h.submit(first.chat, `key-${fresh('k').replace(/[^A-Za-z0-9_-]/g, '')}`.slice(0, 60), { member: ASKER })
+    if ('refused' in second) throw new Error('refused')
+    await settle()
+    expect(h.turn(second.turnId).state).toBe('live')
+    const a = asks(h, { texts: TEXTS })
+    a.noted(second.turnId, id)
+    expect(a.beginWait(second.turnId, id)).toMatchObject({ wait: true })
+    expect(await d1Reports(db).set(id, 'tool', [null])).toBe(true)
+    await db.prepare("UPDATE outbox_actions SET state = 'sent' WHERE id = ?").bind(id).run()
+    h.push(second.turnId, ev.started(), ev.finished('error_during_execution'), ev.released({ mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2 }))
+    await settle()
+    await a.turnEnded(second.turnId)
+    expect((await rowOf(db, id))!.report).toBe('later')
+  }))
+
+  it('the sweep gives a final, unreported row its deliver task again, whenever it last changed', () => inAgent(async h => {
+    const { id } = await ended(h)
+    const a = asks(h)
+    await a.sweep()
+    h.clock.now += 60_000
+    await a.sweep()
+    h.sched.cancel(deliverTaskId(id))
+    await a.sweep()
+    expect(h.dueTasks()).toContainEqual(expect.objectContaining({ id: deliverTaskId(id) }))
+    // Reported (`resume`, `tool` or `none`), or not final: left alone.
+    h.sched.cancel(deliverTaskId(id))
+    await db.prepare("UPDATE outbox_actions SET report = 'resume' WHERE id = ?").bind(id).run()
+    await a.sweep()
+    expect(h.dueTasks().filter(t => t.id === deliverTaskId(id))).toEqual([])
+  }))
+})
+
+// M2-G (from #444's final re-check, Fable and Neon). Ways it can fail: a resume turn cancelled before it started (a Pause,
+// a full pool, the chat starting to wait on a question while it was queued) is answered `submitted` on every keyed retry,
+// so the report is lost; or a try is made again after a final cancel, or without end.
+describe('a resume turn cancelled before it started (M2-G)', () => {
+  async function ended(h: Harness) {
+    const t = await liveTurn(h)
+    const id = await action(h, t.turnId, t.chat)
+    await db.prepare("UPDATE outbox_actions SET state = 'sent', report = 'later' WHERE id = ?").bind(id).run()
+    h.core.stop(t.turnId, { kind: 'person', memberId: ASKER })
+    await settle()
+    return { ...t, id }
+  }
+  const keys = (h: Harness, chat: string) => h.turns().filter(t => t.chat_id === chat && t.source === 'action').map(t => [t.client_key, t.state, t.cancel_why])
+
+  it('a Pause cancels the queued resume: its deliver task is due again, and once resumed the next try goes in, once', () => inAgent(async h => {
+    const { chat, id } = await ended(h)
+    const busy = await h.submit(chat, `key-${fresh('k').replace(/[^A-Za-z0-9_-]/g, '')}`.slice(0, 60), { member: ASKER })
+    if ('refused' in busy) throw new Error('refused')
+    await settle()
+    const a = asks(h, { texts: TEXTS })
+    h.core.addFinalHook(t => a.onTurnFinal(t))
+    await a.deliver(id)
+    expect(keys(h, chat)).toEqual([[resumeKey(id), 'queued', null]])
+    h.sched.cancel(deliverTaskId(id))
+    await h.core.pause({ kind: 'person', memberId: ASKER })
+    await settle()
+    expect(keys(h, chat)).toEqual([[resumeKey(id), 'cancelled', 'paused']])
+    expect(h.dueTasks()).toContainEqual(expect.objectContaining({ id: deliverTaskId(id) }))
+    await a.deliver(id)
+    expect(keys(h, chat)).toHaveLength(1)
+    await h.core.resume({ kind: 'person', memberId: ASKER })
+    await a.deliver(id)
+    await a.deliver(id)
+    expect(keys(h, chat).map(k => k[0])).toEqual([resumeKey(id), resumeKey(id, 1)])
+    expect((await rowOf(db, id))!.report).toBe('resume')
+  }))
+
+  const cancelLast = (h: Harness, chat: string, why: string) =>
+    h.sql.exec("UPDATE turns SET state = 'cancelled', cancel_why = ? WHERE chat_id = ? AND source = 'action' AND state != 'cancelled'", why, chat)
+
+  it('a try queued, running or ended is never submitted again (no `key_reused` that would clobber the report)', () => inAgent(async h => {
+    const { chat, id } = await ended(h)
+    let calls = 0
+    const a = asks(h, { texts: { result: p => `${TEXTS.result(p)} ${++calls}` } })
+    await a.deliver(id)
+    // The action moves on (its text would change); a second delivery leaves the queued try alone.
+    await db.prepare("UPDATE outbox_actions SET state = 'failed' WHERE id = ?").bind(id).run()
+    await a.deliver(id)
+    expect(keys(h, chat).map(k => k[0])).toEqual([resumeKey(id)])
+    expect((await rowOf(db, id))!.report).toBe('resume')
+    expect(calls).toBe(1)
+  }))
+
+  it('a final cancel (the member removed) is never tried again: the report is given up', () => inAgent(async h => {
+    const { chat, id } = await ended(h)
+    const a = asks(h, { texts: TEXTS })
+    await a.deliver(id)
+    cancelLast(h, chat, 'removed')
+    await a.deliver(id)
+    expect(keys(h, chat).map(k => k[0])).toEqual([resumeKey(id)])
+    expect((await rowOf(db, id))!.report).toBe('none')
+  }))
+
+  it('passing cancels stop after MAX_RESUME_TRIES, given up loud; a full pool doesn\'t count', () => inAgent(async h => {
+    const { chat, id } = await ended(h)
+    const a = asks(h, { texts: TEXTS })
+    await a.deliver(id)
+    // Seven full-pool cancels in a row: none counts, each is tried again.
+    for (let n = 1; n <= 7; n++) {
+      cancelLast(h, chat, 'pool_full')
+      await a.deliver(id)
+      expect(keys(h, chat).map(k => k[0])).toContain(resumeKey(id, n))
+    }
+    for (let i = 0; i < MAX_RESUME_TRIES - 1; i++) {
+      cancelLast(h, chat, 'session_unusable')
+      await a.deliver(id)
+    }
+    cancelLast(h, chat, 'session_unusable')
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await a.deliver(id)
+    expect(errors).toHaveBeenCalledWith({ event: 'action_resume_given_up', actionId: id, tries: MAX_RESUME_TRIES })
+    errors.mockRestore()
+    expect(keys(h, chat)).toHaveLength(8 + MAX_RESUME_TRIES - 1)
+    expect((await rowOf(db, id))!.report).toBe('none')
+  }))
+
+  it('a try cancelled for a passing cause gets its next delivery RESUME_RETRY_MS later, never at once', () => inAgent(async h => {
+    const { chat, id } = await ended(h)
+    const a = asks(h, { texts: TEXTS })
+    await a.deliver(id)
+    h.sched.cancel(deliverTaskId(id))
+    const [t] = h.turns().filter(x => x.chat_id === chat && x.source === 'action')
+    a.onTurnFinal({ ...t!, state: 'cancelled', cancel_why: 'pool_full' })
+    expect(h.dueTasks()).toContainEqual(expect.objectContaining({ id: deliverTaskId(id), due_at_ms: h.clock.now + RESUME_RETRY_MS }))
+  }))
+
+  // #454 round 1 (Fable, Neon): a resume turn's text is the server's, never the person's. Its stored row says so (the
+  // reload shows M1-D's note, db/chats.ts) and a failure's Try again offers no question (projection.ts, view.ts).
+  it('a failed resume turn: its row is the server\'s (`source: action`), and Try again asks nothing', () => inAgent(async h => {
+    const { turnId, chat, id } = await ended(h)
+    h.push(turnId, ev.released({ mainEntries: 2, lastUuid: 'u2', lastUuidIndex: 1 }))
+    await settle()
+    await asks(h, { texts: TEXTS }).deliver(id)
+    await settle()
+    const [t] = h.turns().filter(x => x.chat_id === chat && x.source === 'action')
+    expect(t!.state).toBe('live')
+    h.push(t!.turn_id, ev.started(), ev.failed('sdk_error'), ev.released({ mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2 }))
+    await settle()
+    const rows = storedProjection(h.sql, t!.turn_id)!.rows
+    expect(rows[0]).toMatchObject({ id: `${t!.turn_id}.u`, role: 'user', extra_json: JSON.stringify({ source: 'action' }) })
+    const end = rows.at(-1)!
+    expect(end.id).toBe(`${t!.turn_id}.f`)
+    expect(JSON.parse(end.extra_json!)).toEqual({ failure: 'sdk_error', retryQuestion: '' })
+  }))
+
+  it('resume keys: act_<id>, then act_<id>-<n>; nothing else parses', () => {
+    const id = 'ac_0123456789abcdefghijkl'
+    expect(resumeKeyParts(resumeKey(id))).toEqual({ actionId: id, n: 0 })
+    expect(resumeKeyParts(resumeKey(id, 4))).toEqual({ actionId: id, n: 4 })
+    for (const k of [`act_${id}-0`, `act_${id}-`, `act_${id}x`, `resume_${id}`, 'act_ac_short']) expect(resumeKeyParts(k)).toBeNull()
+  })
 })
 
 describe('the asks sweep', () => {

@@ -52,7 +52,7 @@ const baseShopifyReq = (overrides: Partial<WriteRequest> = {}): WriteRequest => 
   attempt: 1,
   requestId: 'req-write-1',
   accountId: SHOPIFY_WRITE_ACCOUNT,
-  expect: { connectedAtMs: CONNECTED_AT_MS },
+  expect: { connectedAtMs: CONNECTED_AT_MS, shop: SHOPIFY_WRITE_SHOP },
   operation: 'shopify.order.tag_add',
   args: { orderId: 'gid://shopify/Order/9001', tags: ['priority', 'rush'] },
   ...overrides,
@@ -78,6 +78,8 @@ afterEach(() => vi.restoreAllMocks())
 
 function shopifyWorld(opts: {
   configured?: boolean
+  /** Stage 1 M2-G: the write app's store, read on every `config()` call (so a test can change it mid-write). */
+  shop?: () => string
   status?: () => Promise<HubResult<AccountStatus>>
   upstreamWrap?: (inner: (req: Request) => Promise<Response>) => (req: Request) => Promise<Response>
   writeTimeoutMs?: number
@@ -86,16 +88,16 @@ function shopifyWorld(opts: {
   const fake = createShopifyWriteUpstream()
   let now = START_MS
   const ring = parseKeyRing(ringJson(['k1'], 'k1'))
-  const config = opts.configured === false
+  const config = () => opts.configured === false
     ? null
-    : { shop: SHOPIFY_WRITE_SHOP, clientId: SHOPIFY_WRITE_TEST_CLIENT_ID, clientSecret: SHOPIFY_WRITE_TEST_CLIENT_SECRET }
+    : { shop: opts.shop?.() ?? SHOPIFY_WRITE_SHOP, clientId: SHOPIFY_WRITE_TEST_CLIENT_ID, clientSecret: SHOPIFY_WRITE_TEST_CLIENT_SECRET }
   const upstreamFn = opts.upstreamWrap ? opts.upstreamWrap(fake.fetch) : fake.fetch
   const core = new ShopifyWriteCore({
     store,
     now: () => now,
     upstream: async () => upstreamFn,
     keyring: async () => ring,
-    config: () => config,
+    config,
     accountStatus: opts.status ?? (async () => ok(makeAccountStatus())),
     writeTimeoutMs: opts.writeTimeoutMs,
   })
@@ -129,6 +131,9 @@ describe('WriteGateway schema & operation checks', () => {
       { ...baseShopifyReq(), actionId: '' },
       { ...baseShopifyReq(), accountId: 'Bad Account' },
       { ...baseShopifyReq(), expect: { connectedAtMs: -1 } },
+      { ...baseShopifyReq(), expect: { connectedAtMs: CONNECTED_AT_MS, shop: 'Not A Handle' } },
+      { ...baseShopifyReq(), expect: { connectedAtMs: CONNECTED_AT_MS, shop: SHOPIFY_WRITE_SHOP, extra: 1 } },
+      { ...baseShopifyReq(), expect: { connectedAtMs: CONNECTED_AT_MS } },
       { ...baseShopifyReq(), extraField: true },
       { ...baseShopifyReq(), args: { orderId: '1234', tags: ['a'] } },
       { ...baseShopifyReq(), args: { orderId: 'gid://shopify/Order/9001', tags: [] } },
@@ -262,6 +267,30 @@ describe('Shopify write account checks (before and during awaited steps)', () =>
     expect(r).toMatchObject({ ok: false, error: { code: 'paused' }, sent: 'no' })
     expect(w.fake.writes).toEqual([])
     expect(w.fake.orders.get('gid://shopify/Order/9001')!.tags).toEqual(['existing'])
+  })
+
+  // Stage 1 M2-G (from #444's review): the store the action was approved for travels as `expect.shop`, so a store change
+  // with no request since is caught here, before and right before the send.
+  it('refuses another store than the approved one with sent: no and zero upstream calls', async () => {
+    const w = shopifyWorld({ shop: () => 'other-store' })
+    const r = await runWriteAction(w.deps, baseShopifyReq())
+    expect(r).toMatchObject({ ok: false, error: { code: 'connect_stale' }, sent: 'no' })
+    expect(w.fake.requests).toEqual([])
+  })
+
+  it('refuses with sent: no if the write app\'s store changes during the token grant await (zero write mutations)', async () => {
+    let shop = SHOPIFY_WRITE_SHOP
+    const w = shopifyWorld({
+      shop: () => shop,
+      upstreamWrap: inner => async req => {
+        const res = await inner(req)
+        if (new URL(req.url).pathname === '/admin/oauth/access_token') shop = 'other-store'
+        return res
+      },
+    })
+    const r = await runWriteAction(w.deps, baseShopifyReq())
+    expect(r).toMatchObject({ ok: false, error: { code: 'connect_stale' }, sent: 'no' })
+    expect(w.fake.writes).toEqual([])
   })
 
   it('refuses with sent: no if connectedAtMs changes during the token grant await (zero write mutations)', async () => {

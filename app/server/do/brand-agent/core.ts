@@ -146,7 +146,9 @@ export interface CoreDeps {
    * (P5: the connected apps and listed channels), with the version it sent and the apps it named (prompt/connected.ts
    * TurnPrompt), which the turn's row keeps as `prompt_version` and `prompt_apps` (JSON). The builder never throws; it logs a failed read and sends the static v2.
    */
-  systemPrompt: string | ((turnId: string) => Promise<{ text: string; version: number; apps?: readonly string[] | null }>)
+  // Stage 1 M2-G: `actions`, when the builder gives it, is whether its prompt says the agent can act (an operation is
+  // enabled); the start's `actions` flag then comes from it, not from `actionsOn`, so the words and the tools agree.
+  systemPrompt: string | ((turnId: string) => Promise<{ text: string; version: number; apps?: readonly string[] | null; actions?: boolean }>)
   /** D1, for the redacted `tool_calls` rows (8.7). */
   db: D1Database
   /** A new session id (a UUID); tests pass literal ones. */
@@ -634,6 +636,8 @@ export class AgentCore {
     let systemPrompt: string
     let promptVersion: number | null = null
     let promptApps: string | null = null
+    // M2-G: the prompt's own word on acting. A builder that failed sent the static v2, which names no operation: false.
+    let promptActions: boolean | undefined
     if (typeof this.d.systemPrompt === 'string') systemPrompt = this.d.systemPrompt
     else {
       try {
@@ -641,18 +645,23 @@ export class AgentCore {
         systemPrompt = built.text
         promptVersion = built.version
         promptApps = built.apps === undefined || built.apps === null ? null : JSON.stringify(built.apps)
+        promptActions = built.actions
       } catch (err) {
         // The error's name only: a builder's message could carry hub or D1 text (P8a's log guard, A10).
         console.error({ event: 'turn_prompt_failed', turnId, error: safeError(err) })
         systemPrompt = SYSTEM_PROMPT_V2
         promptVersion = 2
+        promptActions = false
       }
     }
     let actions = false
-    try {
-      actions = (await this.d.actionsOn?.()) === true
-    } catch (err) {
-      console.error({ event: 'turn_actions_unreadable', turnId, error: safeError(err) })
+    if (promptActions !== undefined) actions = promptActions
+    else {
+      try {
+        actions = (await this.d.actionsOn?.()) === true
+      } catch (err) {
+        console.error({ event: 'turn_actions_unreadable', turnId, error: safeError(err) })
+      }
     }
     t = this.current(turnId, gen, 'starting')
     if (!t) return

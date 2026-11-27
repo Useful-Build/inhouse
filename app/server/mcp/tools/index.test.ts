@@ -6,6 +6,7 @@ import { refusal } from '../server/tool.ts'
 import type { ToolHandler } from '../server/tool.ts'
 import { TOOL_HANDLERS, composeHandlers } from './index.ts'
 import { z } from 'zod'
+import { dataOf } from '../server/test-support.ts'
 
 const h = (label: string): ToolHandler => ({ input: z.object({}), call: async () => refusal(label, label) })
 const REGISTRY = ['memory_search', 'routine_list', 'routine_create']
@@ -15,8 +16,8 @@ const stubs = ['stubs', { routine_list: h('stub'), routine_create: h('stub') }] 
 describe('composeHandlers', () => {
   it('a later area replaces a stub, and only a stub', async () => {
     const map = composeHandlers([stubs, ['memory', { memory_search: h('m') }], ['routines', { routine_list: h('real') }]], REGISTRY, STUBS)
-    expect((await map.get('routine_list')!.call({}, null as never, null as never)).structuredContent).toEqual({ error: 'real' })
-    expect((await map.get('routine_create')!.call({}, null as never, null as never)).structuredContent).toEqual({ error: 'stub' })
+    expect(dataOf((await map.get('routine_list')!.call({}, null as never, null as never)))).toEqual({ error: 'real' })
+    expect(dataOf((await map.get('routine_create')!.call({}, null as never, null as never)))).toEqual({ error: 'stub' })
   })
   it('a tool with two handlers fails, whichever order', () => {
     expect(() => composeHandlers([stubs, ['memory', { memory_search: h('a') }], ['other', { memory_search: h('b') }]], REGISTRY, STUBS)).toThrow('memory_search has two handlers (memory, other)')

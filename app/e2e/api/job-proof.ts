@@ -98,6 +98,40 @@ export async function storedMessages(request: APIRequestContext, who: Actor, cha
   throw new Error(`chat ${chatId} has more than 50 pages`)
 }
 
+/**
+ * What a job spec prints when its job didn't start or end in time (M2-G, after #454's sandbox runs timed out with no
+ * clue): every frame the tab saw for the run (type, turn, outcome and reason), the chat's stored messages (role, turn,
+ * text or part type, an end row's extra), the root turn's trace steps and the stored job. Read-only, best effort: a
+ * failed read is printed as such, never thrown over the spec's own failure.
+ */
+export async function explainJob(request: APIRequestContext, who: Actor, o: { chatId: string; turnId: string; frames: readonly { seq: number; event: Record<string, unknown> }[]; prefix?: string }): Promise<string> {
+  const out: string[] = [`chat ${o.chatId}, root turn ${o.turnId}`]
+  out.push('frames:', ...o.frames.map(f => {
+    const e = f.event
+    const pick = ['type', 'turnId', 'outcome', 'reason', 'why', 'code', 'jobId', 'source'].flatMap(k => (e[k] === undefined ? [] : [`${k}=${String(e[k])}`]))
+    return `  #${f.seq} ${pick.join(' ')}`
+  }))
+  const read = async (what: string, f: () => Promise<string[]>) => {
+    try { out.push(`${what}:`, ...(await f())) } catch (err) { out.push(`${what}: unreadable (${err instanceof Error ? err.message : String(err)})`) }
+  }
+  await read('stored messages', async () => (await storedMessages(request, who, o.chatId)).map(m => {
+    const x = m as StoredMessage & { text?: string; end?: unknown }
+    return `  ${m.pos} ${m.role} ${m.turnId} ${x.part?.type ?? ''} ${(x.text ?? (x.part as { text?: string } | undefined)?.text ?? '').slice(0, 80)} ${x.end === undefined ? '' : JSON.stringify(x.end)}`
+  }))
+  await read('trace', async () => {
+    const r = await call(request, who, 'GET', `/api/traces/${encodeURIComponent(o.turnId)}`)
+    if (r.status !== 200) return [`  ${r.status} ${r.text.slice(0, 200)}`]
+    const t = r.json as { steps?: { kind: string; label?: string; detail?: string }[]; promptVersions?: unknown }
+    return [`  promptVersions ${JSON.stringify(t.promptVersions)}`, ...(t.steps ?? []).map(s => `  ${s.kind} ${s.label ?? ''} ${s.detail ?? ''}`.slice(0, 160))]
+  })
+  await read('job', async () => [`  ${JSON.stringify(await storedJob(request, who, o.chatId))}`])
+  if (o.prefix !== undefined) {
+    const prefix = o.prefix
+    await read('steps', async () => { const s = await stepsOf(request, prefix); return s.calls.map(c => `  ${c} error=${String(s.results.get(c))} ${(s.texts.get(c) ?? '').slice(0, 80)}`) })
+  }
+  return out.join('\n')
+}
+
 /** The bell's job notices for this chat (`A long job finished` or `stopped`, linked to the chat), whatever their id: a
  *  second notice for the job, under any id, shows as two. */
 export async function jobNotices(request: APIRequestContext, who: Actor, chatId: string): Promise<{ id: string; text: string }[]> {

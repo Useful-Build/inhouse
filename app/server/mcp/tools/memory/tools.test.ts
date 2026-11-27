@@ -10,6 +10,7 @@ import { env } from 'cloudflare:workers'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { handleMcp } from '../../server/index.ts'
 import { memoryStore } from './store.ts'
+import { dataOf } from '../../server/test-support.ts'
 
 const db = env.DB
 const A = 'm_tools_a'
@@ -83,21 +84,21 @@ describe('updating and forgetting (failures 2 and 3)', () => {
     const mine = await saved(A, 'person', 'Ann prefers short replies')
     expect((await call(A, 'memory_update', { memory_id: mine, text: 'Ann prefers very short replies' })).isError).toBeUndefined()
     expect(await status(mine)).toEqual({ status: 'active', text: 'Ann prefers very short replies', rev: 2 })
-    expect((await call(B, 'memory_update', { memory_id: mine, text: 'Changed by Ben' })).structuredContent).toEqual({ error: 'not_found' })
-    expect((await call(A, 'memory_update', { memory_id: team, text: 'Again' })).structuredContent).toEqual({ error: 'not_found' })   // waiting: not visible
+    expect(dataOf((await call(B, 'memory_update', { memory_id: mine, text: 'Changed by Ben' })))).toEqual({ error: 'not_found' })
+    expect(dataOf((await call(A, 'memory_update', { memory_id: team, text: 'Again' })))).toEqual({ error: 'not_found' })   // waiting: not visible
     expect(await status(mine)).toMatchObject({ text: 'Ann prefers very short replies' })
   })
   it('forget takes only the member\'s own person fact', async () => {
     const team = await saved(A, 'brand', 'Returns within thirty days')
     await db.prepare("UPDATE memories SET status = 'active' WHERE id = ?").bind(team).run()
-    expect((await call(A, 'memory_forget', { memory_id: team })).structuredContent).toEqual({ error: 'team_fact' })
+    expect(dataOf((await call(A, 'memory_forget', { memory_id: team })))).toEqual({ error: 'team_fact' })
     expect(await status(team)).toMatchObject({ status: 'active' })
     const bens = await saved(B, 'person', 'Ben likes dark mode')
-    expect((await call(A, 'memory_forget', { memory_id: bens })).structuredContent).toEqual({ error: 'not_found' })
+    expect(dataOf((await call(A, 'memory_forget', { memory_id: bens })))).toEqual({ error: 'not_found' })
     expect(await status(bens)).toMatchObject({ status: 'active' })
-    expect((await call(B, 'memory_forget', { memory_id: bens })).structuredContent).toEqual({ memory_id: bens, forgotten: true })
+    expect(dataOf((await call(B, 'memory_forget', { memory_id: bens })))).toEqual({ memory_id: bens, forgotten: true })
     expect(await status(bens)).toMatchObject({ status: 'forgotten', rev: 2 })
-    expect((await call(B, 'memory_forget', { memory_id: bens })).structuredContent).toEqual({ error: 'not_found' })
+    expect(dataOf((await call(B, 'memory_forget', { memory_id: bens })))).toEqual({ error: 'not_found' })
   })
 })
 
@@ -106,10 +107,10 @@ describe('a change between the read and the write (failure 4)', () => {
     const mine = await saved(A, 'person', 'Ann orders on Mondays')
     const meddle = () => db.prepare("UPDATE memories SET text = 'Ann orders on Tuesdays', rev = rev + 1 WHERE id = ?").bind(mine).run()
     const up = await call(A, 'memory_update', { memory_id: mine, text: 'Ann orders on Wednesdays' }, withBarrier(/^\s*UPDATE memories SET text/, meddle))
-    expect(up.structuredContent).toEqual({ error: 'conflict' })
+    expect(dataOf(up)).toEqual({ error: 'conflict' })
     expect(await status(mine)).toEqual({ status: 'active', text: 'Ann orders on Tuesdays', rev: 2 })
     const forget = await call(A, 'memory_forget', { memory_id: mine }, withBarrier(/^\s*UPDATE memories SET status = 'forgotten'/, () => db.prepare('UPDATE memories SET rev = rev + 1 WHERE id = ?').bind(mine).run()))
-    expect(forget.structuredContent).toEqual({ error: 'conflict' })
+    expect(dataOf(forget)).toEqual({ error: 'conflict' })
     expect(await status(mine)).toMatchObject({ status: 'active', rev: 3 })
   })
   it('a route forget racing an agent update: whichever lands second sees the other (store level)', async () => {
@@ -136,7 +137,7 @@ describe('listing (failure 5)', () => {
       cursor = page.next_cursor as string | null
     } while (cursor)
     expect(seen).toEqual([...texts].reverse())
-    expect((await call(C, 'memory_list', { cursor: 'not-ours!' })).structuredContent).toEqual({ error: 'invalid_cursor' })
-    expect((await call(C, 'memory_list', { cursor: 'Zm9v' })).structuredContent).toEqual({ error: 'invalid_cursor' })
+    expect(dataOf((await call(C, 'memory_list', { cursor: 'not-ours!' })))).toEqual({ error: 'invalid_cursor' })
+    expect(dataOf((await call(C, 'memory_list', { cursor: 'Zm9v' })))).toEqual({ error: 'invalid_cursor' })
   })
 })

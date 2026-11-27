@@ -363,9 +363,12 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       const stamp = writeStamp(d.requestId)
       const actorId = by.kind === 'member' ? by.actor.memberId : before.asked_by
       const who = by.kind === 'member' ? stmt('asked_by = ?', by.actor.memberId) : stmt('chat_id = ?', by.chatId)
+      // Stage 1 M2-G: the agent's own withdraw (approval_withdraw) told the agent in its answer, so nobody needs a resume
+      // turn about it (`report = 'none'`). A person's withdraw leaves `report` for the asks' delivery to decide.
+      const report = by.kind === 'agent' ? ", report = 'none'" : ''
       await runBatch(db, [
         stmt(
-          `UPDATE outbox_actions SET state = 'withdrawn', rev = rev + 1, final_at_ms = ?, updated_at_ms = ?, stamp = ?
+          `UPDATE outbox_actions SET state = 'withdrawn', rev = rev + 1, final_at_ms = ?, updated_at_ms = ?, stamp = ?${report}
            WHERE id = ? AND rev = ? AND state = 'waiting' AND ${who.sql}`,
           nowMs, nowMs, stamp, actionId, input.ifRev, ...who.params,
         ),

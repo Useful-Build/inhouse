@@ -191,6 +191,19 @@ describe('answers (failure 2)', () => {
   })
 })
 
+// M2-G: an agent's own withdraw (approval_withdraw) told the agent in its answer: no resume turn is owed (`none`). A
+// person's withdraw leaves `report` alone, so the asks' delivery tells the agent.
+describe('withdraw and the report (M2-G)', () => {
+  it("the agent's withdraw sets report `none`; a person's leaves it", async () => {
+    const a = await waitingId(1)
+    const byAgent = await outbox(db, clock).withdraw({ kind: 'agent', chatId: a.chat_id, turnId: 't_1' }, a.id, { ifRev: a.rev })
+    expect(byAgent).toMatchObject({ action: { state: 'withdrawn', report: 'none' } })
+    const b = await waitingId(2)
+    const byPerson = await outbox(db, clock).withdraw({ kind: 'member', actor: ASKER_ACTOR }, b.id, { ifRev: b.rev })
+    expect(byPerson).toMatchObject({ action: { state: 'withdrawn', report: null } })
+  })
+})
+
 describe('Undo (failure 3)', () => {
   it('before the claim: undone, its use released; after the claim: conflict', async () => {
     await grant()
@@ -307,6 +320,17 @@ describe('the result (failure 5)', () => {
     expect(s.d.hub.calls).toHaveLength(1)
     expect(s.d.hub.calls[0].violation).toBeNull()
     expect(s.d.hub.calls[0].req).toMatchObject({ actionId: s.id, attempt: 1, accountId: 'shopify:store', expect: { connectedAtMs: SHOP_GEN }, operation: 'shopify.order.tag_add' })
+    // M2-G: the store the action was approved for (its scope), so the hub refuses a write app that now points elsewhere.
+    expect(s.d.hub.calls[0].req.expect).toEqual({ connectedAtMs: SHOP_GEN, shop: 'store-a' })
+  })
+
+  it('a Shopify row with no shop in its scope fails loud before the claim: still approved, nothing sent (M2-G)', async () => {
+    const a = await approved(1)
+    await db.prepare("UPDATE outbox_actions SET scope_json = '{}', send_at_ms = ? WHERE id = ?").bind(now, a.id).run()
+    const d = dispatch(a.id)
+    await expect(d.run).rejects.toThrow(/no shop in its scope/)
+    expect(await rowOf(db, a.id)).toMatchObject({ state: 'approved', attempt: 0 })
+    expect(d.hub.calls).toHaveLength(0)
   })
 
   it('a definite refusal: failed, the use released', async () => {
@@ -361,6 +385,7 @@ describe('the result (failure 5)', () => {
     const d = dispatch(r.action.id)
     await d.run
     expect(d.hub.calls[0].req).toMatchObject({ operation: 'slack.channel.post', accountId: 'slack:workspace', args: { channelId: 'C0OUTBOX01', text: 'Restock is in' } })
+    expect(d.hub.calls[0].req.expect).not.toHaveProperty('shop')
     expect(d.hub.calls[0].req.args).toEqual({ channelId: 'C0OUTBOX01', text: 'Restock is in' })
   })
 })
