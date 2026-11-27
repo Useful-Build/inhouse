@@ -282,6 +282,22 @@ describe('the job timings kept in the object, and the observe control', () => {
     }
   })
 
+  it('testObserve on an object whose controls are switched off fails before any read', async () => {
+    await runInDurableObject(brand(), async (instance, state) => {
+      const exec = vi.spyOn(state.storage.sql, 'exec')
+      const agent = instance as unknown as { env: object; testObserve(t: string | null): Promise<unknown> }
+      const was = agent.env
+      try {
+        agent.env = { ...was, INHOUSE_TEST_BUILD: '0' }
+        await expect(agent.testObserve('t_AAAAAAAAAAAAAAAAAAAAAA')).rejects.toThrow('The test controls are not switched on.')
+        expect(exec).not.toHaveBeenCalled()
+      } finally {
+        agent.env = was
+        exec.mockRestore()
+      }
+    })
+  })
+
   it('a kept row it can\'t read is logged and loads none, never throws; an expired one loads none; no row leaves memory alone', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {

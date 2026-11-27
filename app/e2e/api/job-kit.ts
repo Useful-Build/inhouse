@@ -63,9 +63,16 @@ export async function killRunners(request: APIRequestContext): Promise<string[]>
 /**
  * Route 67's observe control (read only): the BrandAgent's isolate id and construct time, the job timings in effect,
  * and the turn's state, `started_at_ms`, `cut_cause`, `interrupt_asked`, its `turn-watch` task and the quarantined count.
+ * For a diagnostic series: a failed read is recorded (`{ error }`), never thrown, so a transient error on the diagnostic
+ * poll can't fail a spec that would pass (#460 review).
  */
 export async function observeAgent(request: APIRequestContext, turnId?: string): Promise<Record<string, unknown>> {
-  return await jobControl(request, { action: 'observe', ...(turnId === undefined ? {} : { turnId }) }) as Record<string, unknown>
+  try {
+    const r = await call(request, actor('release'), 'POST', '/api/ops/alarm', { json: { action: 'observe', ...(turnId === undefined ? {} : { turnId }) } })
+    return r.status === 200 ? r.json as Record<string, unknown> : { error: r.status, body: r.text.slice(0, 200) }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
 }
 
 /** N3's job state route. Call once M1-B's route is present. */

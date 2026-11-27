@@ -16,6 +16,8 @@ export const timing: Real['timing'] = (_name, fallback) => fallback
 /** The BrandAgent's constructor calls it in every build: nothing to load outside the test build. */
 export const loadTestControls: Real['loadTestControls'] = () => {}
 export const currentTimings: Real['currentTimings'] = off
+export const TIMINGS_FLAG: Real['TIMINGS_FLAG'] = 'test:job_timings'
+export const TIMINGS_TTL_MS: Real['TIMINGS_TTL_MS'] = 60 * 60_000
 export const isolateId: Real['isolateId'] = off
 export const killRunner: Real['killRunner'] = off
 export const resetTestControls: Real['resetTestControls'] = () => {}

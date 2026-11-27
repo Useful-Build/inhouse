@@ -32,6 +32,7 @@ import { poke, revive, taskContext } from './task-ops.ts'
 import type { SqlScheduler, TaskContext } from './scheduler.ts'
 import { taskHandlers } from './tasks/index.ts'
 import { armStopAfterBatch, currentTimings, isolateId, loadTestControls, runAlarmNow, seedCursor, setTimings } from '@test-controls'
+import { testControlsOn } from '../../ops/test-switch.ts'
 import { POKE_ID, TICK_KIND } from '../../routines/tick.ts'
 import { createRunTokens } from './tokens.ts'
 import { PRINCIPAL_HEADER, SocketHub } from './sockets.ts'
@@ -68,8 +69,9 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
       const sql = ctx.storage.sql
       createAgentTables(sql)
       // The test build's controls kept in this object's SQLite (the job timings), back in memory: an eviction or a
-      // hibernation since a spec set them must not drop them. Every other build: nothing to load.
-      loadTestControls(sql)
+      // hibernation since a spec set them must not drop them. Only while the controls are switched on (route 67's own
+      // switch, test-switch.ts); every other build's module has nothing to load anyway.
+      if (testControlsOn(env)) loadTestControls(sql)
       // Stage 1 M2-D (N14): the admitted calls and the asks' records.
       createInvocationTables(sql)
       createAskTables(sql)
@@ -146,6 +148,8 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
    * one turn's cut facts with its `turn-watch` task, so a job spec can say why a cut didn't come (#454/#455's runs).
    */
   async testObserve(turnId: string | null): Promise<TestObservation> {
+    // Fails before any read when the controls are off (route 67 never calls it then; this is the object's own guard).
+    if (!testControlsOn(this.env)) throw new Error('The test controls are not switched on.')
     const turn = turnId === null ? null : this.core.turn(turnId)
     const watch = turnId === null ? undefined
       : this.ctx.storage.sql.exec<{ id: string; gen: number; due_at_ms: number; attempts: number; state: string; last_error: string | null }>(
