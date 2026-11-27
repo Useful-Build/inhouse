@@ -103,12 +103,14 @@ test('Conversation: markdown, scroll-up while streaming, Jump to latest, the tim
   await expect(jump).toBeVisible()
   await expect(stepsButtons(page)).toHaveCount(before + 1, { timeout: 15_000 })
   await expect(page.locator('[data-composer]').getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
+  // The answer's words are still being revealed after the run ends (aria-busy on the log). Wait for the last of them, or a
+  // last line lands under the jump (#529: 24 px short of the end straight after the click) or after the hover below,
+  // when following the bottom moves the hovered row 24 px up from under the pointer.
+  await expect(log(page)).not.toHaveAttribute('aria-busy', 'true')
   expect((await scrollState(page)).top).toBe(0)
   await shot(page, 'scrolled-up-jump-to-latest')
   await jump.click()
-  // The rows are content-visibility: auto, so the jump lays out rows that were off screen at their real heights and the
-  // scroll range changes under it (#529: 1016 px before the click, 575 px straight after, 24 px short of the end); Message
-  // Scroller follows the bottom again on its next resize frame. Read until it has.
+  // The jump's scroll lands from the click handler; read until it has, not once.
   await expect.poll(async () => (await scrollState(page)).fromBottom).toBeLessThanOrEqual(1)
   await expect(jump).toHaveCount(0)
   // Message Scroller follows the bottom while its jump settles (data-autoscrolling, about 180ms); a programmatic scroll
