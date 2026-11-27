@@ -79,8 +79,37 @@ describe('a backup that is wrong (failures 1, 3)', () => {
     await expectRefused(await copyBackup({ manifest: m => ({ ...m, format: 2 }) }), /^format_unsupported: 2/)
   })
   it('refuses another migration level', async () => {
-    const r = await expectRefused(await copyBackup({ manifest: m => ({ ...m, migration: '0004_audit_log.sql' }) }), /^migration_mismatch/)
+    // #585: a backup taken at 0004 holds the set up to it; the target has every later migration as extra.
+    const upTo = good.migrations!.slice(0, good.migrations!.indexOf('0004_audit_log.sql') + 1)
+    const r = await expectRefused(await copyBackup({ manifest: m => ({ ...m, migration: '0004_audit_log.sql', migrations: upTo }) }), /^migration_mismatch: extra on the target \[/)
+    expect(r.reason).not.toContain('missing on the target')
     expect(r.watermarkMs).toBe(T)
+  })
+  it('refuses a backup with a migration the target lacks, naming it (#585)', async () => {
+    const migrations = [...good.migrations!, '9998_not_on_target.sql']
+    await expectRefused(await copyBackup({ manifest: m => ({ ...m, migration: '9998_not_on_target.sql', migrations }) }), /^migration_mismatch: missing on the target \[9998_not_on_target\.sql\]$/)
+  })
+  it('refuses a backup that lacks a migration the target has, naming it, even one older than its highest (#585)', async () => {
+    const dropped = good.migrations![good.migrations!.length - 2]
+    const migrations = good.migrations!.filter(n => n !== dropped)
+    await expectRefused(await copyBackup({ manifest: m => ({ ...m, migrations }) }), new RegExp(`^migration_mismatch: extra on the target \\[${dropped.replace(/\./g, '\\.')}\\]$`))
+  })
+  it('refuses a backup missing one migration and holding another, naming both (#585)', async () => {
+    const dropped = good.migrations![0]
+    const migrations = [...good.migrations!.filter(n => n !== dropped), '9998_not_on_target.sql']
+    await expectRefused(await copyBackup({ manifest: m => ({ ...m, migration: '9998_not_on_target.sql', migrations }) }),
+      new RegExp(`^migration_mismatch: missing on the target \\[9998_not_on_target\\.sql\\]; extra on the target \\[${dropped.replace(/\./g, '\\.')}\\]$`))
+  })
+  it('refuses a manifest whose migration list is out of order or disagrees with its migration (#585)', async () => {
+    await expectRefused(await copyBackup({ manifest: m => ({ ...m, migrations: [...m.migrations!].reverse() }) }), /^manifest_invalid/)
+    await expectRefused(await copyBackup({ manifest: m => ({ ...m, migration: m.migrations![0] }) }), /^manifest_invalid/)
+  })
+  it('checks a manifest taken before #585 (no list) the old way: the target\'s last applied row by id', async () => {
+    const last = await e.RESTORE_DB.prepare('SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1').first<string>('name')
+    const legacy = (m: BackupManifest, migration: string) => { const { migrations: _, ...rest } = m; return { ...rest, migration } }
+    await expectRefused(await copyBackup({ manifest: m => legacy(m, '0004_audit_log.sql') }), new RegExp(`^migration_mismatch: backup 0004_audit_log\\.sql, target ${last!.replace(/\./g, '\\.')}$`))
+    // The migration check passes when the last rows agree: the next check refuses instead.
+    await expectRefused(await copyBackup({ manifest: m => ({ ...legacy(m, last!), tables: m.tables.map(t => (t.name === 'settings' ? { ...t, columns: [...t.columns, 'extra'] } : t)) }) }), /^columns_mismatch: settings/)
   })
   it('refuses other columns', async () => {
     await expectRefused(await copyBackup({ manifest: m => ({ ...m, tables: m.tables.map(t => (t.name === 'settings' ? { ...t, columns: [...t.columns, 'extra'] } : t)) }) }), /^columns_mismatch: settings/)

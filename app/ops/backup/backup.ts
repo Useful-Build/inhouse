@@ -1,7 +1,7 @@
 // The canonical-table backup to R2 (P8 G1; plan "Design notes", acceptance item 4). C1 calls it nightly.
 // One consistent point: D1 has no read snapshot across queries, so one batch (one transaction,
 // https://developers.cloudflare.com/d1/worker-api/d1-database/ read 2026-11-20) reads every `snapshot` table whole,
-// the max id of every `append_only` table and the last applied migration. Append-only rows at or below a recorded max
+// the max id of every `append_only` table and every applied migration's name. Append-only rows at or below a recorded max
 // can't change after the batch, so paging them afterwards still gives exactly the state at the batch.
 // Layout: `backups/d1/<backupId>/<table>/<part>.ndjson`, then `backups/d1/<backupId>/manifest.json` last.
 // Derived tables (FTS5 indexes, registry entries with `derived`) aren't copied: the manifest lists them with their
@@ -13,6 +13,7 @@ import { SNAPSHOT_MAX_ROWS, TableWriter, appendRows, encodeRow, keyRows, maxIdSe
 import { BackupManifestSchema } from './manifest.ts'
 import type { BackupManifest, TableManifest } from './manifest.ts'
 import { KeySet } from './key-set.ts'
+import { migrationSet } from './migrations.ts'
 import { canonicalTables, ident } from './tables.ts'
 import type { TableRule } from './tables.ts'
 
@@ -53,12 +54,14 @@ export async function backup(deps: BackupDeps): Promise<BackupManifest> {
     ...snapshotRules.map(r => snapshotSelect(db, r, cols(r.name))),
     ...appendRules.map(r => maxIdSelect(db, r)),
     ...insertRules.map(r => pointSelect(db, r)),
-    db.prepare('SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1'),
+    // Every applied name (#585): the apply order isn't a level, since migrations merge out of number order.
+    db.prepare('SELECT name FROM d1_migrations'),
   ])
   const snapshotRows = new Map(snapshotRules.map((r, i) => [r.name, results[i].results as Record<string, unknown>[]]))
   const maxIds = new Map(appendRules.map((r, i) => [r.name, (results[snapshotRules.length + i].results[0] as { max: number }).max]))
   const points = new Map(insertRules.map((r, i) => [r.name, results[snapshotRules.length + appendRules.length + i].results[0] as { point: number; n: number }]))
-  const migration = (results[results.length - 1].results[0] as { name: string } | undefined)?.name
+  const migrations = migrationSet((results[results.length - 1].results as { name: string }[]).map(r => r.name))
+  const migration = migrations.at(-1)
   if (!migration) throw new BackupError('no_migration', 'd1_migrations is empty')
   for (const [name, rows] of snapshotRows) if (rows.length > SNAPSHOT_MAX_ROWS) throw new BackupError('snapshot_too_large', `${name}: over ${SNAPSHOT_MAX_ROWS} rows`)
   await deps.testing?.afterPointBatch?.()
@@ -111,7 +114,7 @@ export async function backup(deps: BackupDeps): Promise<BackupManifest> {
       sha256: digest.sha256, parts: digest.parts,
     })
   }
-  const manifest = BackupManifestSchema.parse({ format: 1, backupId, takenAtMs: nowMs, migration, tables, derived })
+  const manifest = BackupManifestSchema.parse({ format: 1, backupId, takenAtMs: nowMs, migration, migrations, tables, derived })
   await bucket.put(backupManifestKey(backupId), JSON.stringify(manifest), json)
   return manifest
 }

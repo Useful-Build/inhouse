@@ -55,7 +55,10 @@ describe('one consistent point (failure 1)', () => {
     const ids = (await partRows(m, 'audit_log')).map(r => r[0] as number)
     expect(Math.max(...ids)).toBe(before?.max)
     expect(await partRows(m, 'settings')).toEqual(settingsBefore)
-    expect(m).toMatchObject({ format: 1, takenAtMs: T, migration: await env.DB.prepare('SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1').first<string>('name') })
+    // #585: every applied name, sorted, and the highest of them (not the last row by id).
+    const applied = (await env.DB.prepare('SELECT name FROM d1_migrations').all<{ name: string }>()).results.map(r => r.name).sort()
+    expect(applied.length).toBeGreaterThan(1)
+    expect(m).toMatchObject({ format: 1, takenAtMs: T, migration: applied.at(-1), migrations: applied })
     expect(await env.DB.prepare('SELECT MAX(id) AS max FROM audit_log').first<number>('max')).toBeGreaterThan(before?.max as number)
   })
 })

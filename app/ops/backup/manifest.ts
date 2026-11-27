@@ -32,10 +32,22 @@ export const BackupManifestSchema = z.object({
   format: z.number(),
   backupId: z.string().min(1),
   takenAtMs: Count,
+  /**
+   * With `migrations`: the highest applied name (its last). Without (a backup taken before #585): the last row of
+   * `d1_migrations` by id, which the restore still checks the old way.
+   */
   migration: z.string().min(1),
+  /** #585: every applied migration name at the point batch, sorted by name. The restore needs the target's to be equal. */
+  migrations: z.array(z.string().min(1)).min(1).optional(),
   tables: z.array(TableManifestSchema),
   /** Derived tables (FTS5 indexes): not in the backup, rebuilt from the tables in `from` after a restore. */
   derived: z.array(z.object({ name: z.string().min(1), from: z.array(z.string().min(1)).min(1) })),
+}).superRefine((m, ctx) => {
+  if (m.migrations === undefined) return
+  for (let i = 1; i < m.migrations.length; i++) {
+    if (!(m.migrations[i - 1] < m.migrations[i])) ctx.addIssue({ code: 'custom', path: ['migrations', i], message: 'not sorted by name, or named twice' })
+  }
+  if (m.migrations.at(-1) !== m.migration) ctx.addIssue({ code: 'custom', path: ['migration'], message: 'not the highest of migrations' })
 })
 
 export type TableManifest = z.infer<typeof TableManifestSchema>
