@@ -70,6 +70,9 @@ import type { OutboxApiStore } from '../outbox/store.ts'
 // Stage 1 M2-Q's slot.
 import { questionStore } from '../questions/store.ts'
 import type { QuestionStore } from '../questions/store.ts'
+// Stage 1 M3-C: the Inhouse ceiling's page (routes 150 and 151).
+import { ceilingStore } from '../api/ceiling-store.ts'
+import type { CeilingStore } from '../api/ceiling-store.ts'
 
 export interface Stores extends AuthStores {
   members: MemberDirectory & MemberStore
@@ -135,6 +138,8 @@ export interface Stores extends AuthStores {
   outbox: OutboxApiStore
   /** Stage 1 M2-Q: questions the agent asked (routes 140 and 141). */
   questions: QuestionStore
+  /** Stage 1 M3-C: the Inhouse ceiling, "What the agent can do" (routes 150 and 151). */
+  ceiling: CeilingStore
 }
 
 /** What the stores read from the Worker's env. `AUDIT_HASH_KEY` is a secret on the product Worker (a var in the test build). */
@@ -143,6 +148,8 @@ export interface StoresEnv {
   /** The R2 bucket of photos (wrangler config `FILES`); P8 C1's health signals list it (backups, the deletion log). */
   FILES: PhotoStoreDeps['files'] & Pick<KeyedBucket, 'list'>
   AUDIT_HASH_KEY?: string
+  /** Stage 1 M3-C: the test build's switch (`'1'` there); the ceiling's store reads it to know whether editing is on. */
+  INHOUSE_TEST_BUILD?: string
 }
 
 /**
@@ -219,5 +226,6 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
 
     outbox: outboxStore({ db, hook }),
     questions: questionStore({ db }),
+    ceiling: ceilingStore({ db, hook, env }),
   }
 }

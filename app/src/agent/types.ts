@@ -23,6 +23,7 @@ import type { AttachmentRef } from '../../shared/contract/attachments'
 import type { RunFrame } from '../../shared/contract/run-event'
 import type { ActionCard, ActionChoice, ActionFilter, ActionResolution } from '../../shared/contract/actions'
 import type { Permission } from '../../shared/contract/permissions'
+import type { CeilingList, CeilingRow, UpdateCeilingInput } from '../../shared/contract/ceiling'
 import type { Question } from '../../shared/contract/questions'
 import type { Job } from '../../shared/contract/jobs'
 
@@ -59,6 +60,7 @@ export type { AgentNotice, NoticePage, AgentNotification } from '../../shared/co
 export type { AgentData } from '../../shared/contract/data'
 export type { ActionCard, ActionChoice, ActionFilter, ActionKind, ActionResolution, ActionState } from '../../shared/contract/actions'
 export type { Guardrail, Permission, PermissionHolder } from '../../shared/contract/permissions'
+export type { CeilingList, CeilingMeasure, CeilingRow, CeilingValues, UpdateCeilingInput } from '../../shared/contract/ceiling'
 export type { Question } from '../../shared/contract/questions'
 export type { Job, JobOutcome, JobProgress, JobState } from '../../shared/contract/jobs'
 
@@ -323,6 +325,17 @@ export interface AgentClient {
    * waiting turn couldn't be reached (the same answer again goes on).
    */
   answerQuestion(id: string, choice: string): Promise<Question>
+
+  // ---------- Stage 1 M3-C (N26): the Inhouse ceiling, "What the agent can do" ----------
+  // Plain calls like the M2 ones above. The demo has no ceiling: its list is empty, editing is off and a change is refused.
+  /** Route 150: every write operation with its limits. The Inhouse team and admins only (a member is refused). */
+  ceiling(): Promise<CeilingList>
+  /**
+   * Route 151: sets one operation's whole row at the `rev` it was read at (null for one with no row yet). The Inhouse
+   * team only, while editing is on in this build (else `forbidden`, its reason saying editing is off). Resolves to the row after
+   * it. A stale rev: `conflict` with the row as it is now in `current`.
+   */
+  setCeiling(operation: string, input: UpdateCeilingInput): Promise<CeilingRow>
 
   // ---------- Stage 1 M1-D (N3, N18): long jobs ----------
   // Plain calls like the M2 ones above. The demo has no jobs: `job` answers null and `cancelJob` is refused (not found).

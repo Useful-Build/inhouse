@@ -17,7 +17,7 @@ import { endLiveGrant, staleRev } from './grants'
 import { discover, signer } from './me'
 import type { Seeded, Signer } from './me'
 import { resetTeam } from './members'
-import { resetSettings, settingFixtures } from './settings'
+import { resetSettings, setSettingElsewhere, settingFixtures } from './settings'
 import { CONNECTOR_METHODS, CONNECTOR_TOOL_KEY, connectorRoute, connectorWorld, isToolsWrite } from './connectors'
 import { MS_EXEMPT, MS_READ_PATH, MS_SERVED, changeMemoryElsewhere, memorySkillsRoute, resetOpenRequests, resetWaitingMemory, seedWaitingMemory } from './memory-skills'
 import { ACTIONS_SERVED, actionWorld } from './actions'
@@ -266,6 +266,9 @@ function realTarget(origin: string): ContractTarget {
     async injectError(method, code) { if (code) armedErrors.set(method, code); else armedErrors.delete(method) },
     serves: method => SERVED.has(method) && (!WATCH_ONLY_ON_WATCH_BUILD.has(method) || watchBuild()),
     async writeElsewhere(record, value) {
+      // A setting on the settings table (not the name, which is on the member's row) is changed in two requests (#466).
+      const row = record.kind === 'setting' && record.key !== 'g:name' ? settingRow(record.key) : undefined
+      if (record.kind === 'setting' && row) return setSettingElsewhere(s, row.scope, record.key, value ?? null)
       const other = await elsewhere()
       if (record.kind === 'setting') {
         if (typeof value === 'boolean') await other.setToggle(record.key, value)

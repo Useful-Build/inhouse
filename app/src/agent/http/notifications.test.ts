@@ -6,7 +6,7 @@ import { AgentError } from '../types'
 import { Transport } from './transport'
 import { putNotifyChannels, readAvailableChannels, readNotifyChannels } from './notifications'
 
-const LIST = { rev: 3, channels: [{ channelId: 'C0TEST0001', name: 'ops-alerts', alerts: true }] }
+const LIST = { rev: 3, channels: [{ channelId: 'C0TEST0001', name: 'ops-alerts', alerts: true }], posting: { on: false } }
 
 function server(status: number, body: unknown) {
   const calls: { method: string; path: string; body: unknown }[] = []
@@ -24,7 +24,7 @@ describe('notice channel calls', () => {
     expect(s.calls).toEqual([{ method: 'GET', path: '/api/notify/channels', body: undefined }])
   })
   test('a list the schema refuses (a user id as a channel) is an unknown error, not passed on', async () => {
-    const s = server(200, { rev: 1, channels: [{ channelId: 'U0TEST0001', name: 'dm', alerts: false }] })
+    const s = server(200, { rev: 1, channels: [{ channelId: 'U0TEST0001', name: 'dm', alerts: false }], posting: { on: false } })
     await expect(readNotifyChannels(s.transport)).rejects.toMatchObject({ code: 'unknown' })
   })
   test('route 74 reads a page, with the cursor escaped', async () => {
@@ -81,7 +81,7 @@ describe('notice channel calls', () => {
     const good = await agentWith(LIST).saveNotifyChannels({ channelIds: [], ifRev: 1 }).catch((x: unknown) => x)
     expect(good).toBeInstanceOf(AgentError)
     expect(good).toMatchObject({ code: 'conflict', current: LIST })
-    for (const bad of [{ rev: 'x', channels: [] }, { rev: 1, channels: [{ channelId: 'U0TEST0001', name: 'dm', alerts: false }] }, { anything: true }]) {
+    for (const bad of [{ rev: 'x', channels: [] }, { rev: 1, channels: [{ channelId: 'U0TEST0001', name: 'dm', alerts: false }], posting: { on: false } }, { anything: true }]) {
       const e = await agentWith(bad).saveNotifyChannels({ channelIds: [], ifRev: 1 }).catch((x: unknown) => x)
       expect(e).toBeInstanceOf(AgentError)
       expect((e as AgentError).code).toBe('conflict')

@@ -214,6 +214,13 @@ export const CASES: Record<string, RouteCase> = {
   // Stage 1 M2-Q (N16): brand people only. An answer to a question nobody asked: 404, nothing written.
   'GET /api/questions': { design: d('baseline', PEOPLE), path: '/api/questions', passes: 200 },
   'POST /api/questions/:id/answer': { design: d('baseline', PEOPLE), path: `/api/questions/${NO_QUESTION}/answer`, json: { choice: 'Yes' }, passes: 404 },
+  // Stage 1 M3-C (N26): the Inhouse team and admins read; the Inhouse team alone writes (editing is on in the test build).
+  // A whole valid row for a key that names no operation: 404, nothing written.
+  'GET /api/ceiling': { design: d('technical', ['admin', 'inhouse']), path: '/api/ceiling', passes: 200 },
+  'PUT /api/ceiling/:operation': {
+    design: d('technical', ['inhouse']), path: '/api/ceiling/e2e.nobody',
+    json: { enabled: false, perDayMax: 1, unitsMax: 1, bulkThreshold: 1, batchMax: 1, ifRev: null }, passes: 404,
+  },
 }
 
 /** The case for a row, or an error naming it (routes.spec.ts reports the gap on its own; this is for the specs that use it). */
