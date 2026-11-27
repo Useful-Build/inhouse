@@ -1,0 +1,40 @@
+{
+ "row": {
+  "caseId": "C03",
+  "cat": "connector",
+  "pair": "inventory_levels_get/products_search",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "inventory_levels_get"
+  ],
+  "toolSearches": 0,
+  "answer": "There are 40 Moss mugs in stock.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0,
+  "answer": "There are 40 Moss mugs in stock.",
+  "toolCalls": [
+   {
+    "name": "mcp__shop__inventory_levels_get",
+    "inputSha256": "11c60b778a0a0959d39493a54aebb36438e680d1bef21dc9d2086414e4e7b12d",
+    "inputExcerpt": "{\"product\":\"Moss mug\"}",
+    "resultExcerpt": "{\"on_hand\":40}"
+   }
+  ]
+ }
+}

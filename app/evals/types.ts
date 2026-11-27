@@ -23,6 +23,11 @@ export interface Expect {
   answerNot?: RegExp[]
   /** Each named tool is called at most this many times (a routine asks its creator at most once: Q01). */
   atMost?: Record<string, number>
+  /**
+   * Order (Stage 1 M3-G, T09): for each `[first, then]`, both were called and `first`'s earliest call comes before
+   * `then`'s (the agent looked the member id up with member_find before notification_send).
+   */
+  before?: [first: string, then: string][]
 }
 
 export interface SeedFact {

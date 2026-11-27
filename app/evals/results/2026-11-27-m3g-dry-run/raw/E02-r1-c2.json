@@ -1,0 +1,40 @@
+{
+ "row": {
+  "caseId": "E02",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 1,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "You're out of office on Friday afternoons.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0,
+  "answer": "You're out of office on Friday afternoons.",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "930b8f8bd8285189aeec167aa24bcea3f0d903fe8c80cb045e368d512fd7b89d",
+    "inputExcerpt": "{\"query\":\"Friday afternoon\"}",
+    "resultExcerpt": "Out of office every Friday afternoon."
+   }
+  ]
+ }
+}

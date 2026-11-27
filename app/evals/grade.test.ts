@@ -111,7 +111,7 @@ describe('T02 accepts the fact in the person\'s language', () => {
 describe('people by key and argument matching', () => {
   const t09 = byId.T09!.chats[0]!.expect
   const call = (to: string) =>
-    gradeChat(t09, { toolCalls: [{ name: 'mcp__inhouse__notification_send', input: { to: { members: [to] } } }], answer: 'Sent.', runOk: true, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0 }, { current: 'u1', tom: 'u_tom_7', lena: 'u3' }).pass
+    gradeChat(t09, { toolCalls: [{ name: 'mcp__inhouse__member_find', input: { query: 'Leo' } }, { name: 'mcp__inhouse__notification_send', input: { to: { members: [to] } } }], answer: 'Sent.', runOk: true, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0 }, { current: 'u1', tom: 'u_tom_7', lena: 'u3' }).pass
   it('maps a person key to the target\'s id (literal map)', () => {
     expect(call('u_tom_7')).toBe(true)
     expect(call('u3')).toBe(false)
@@ -210,18 +210,99 @@ describe('T09, T11 and open served schemas', () => {
     for (const days of ['weekdays', ['mon', 'tue', 'wed', 'thu', 'fri'], ['fri', 'thu', 'wed', 'tue', 'mon']]) expect(gradeChat(t11, res('routine_create', { name: 'n', instruction: 'i', days, time: '06:00' }), people).checks.args, JSON.stringify(days)).toBe(true)
     for (const input of [{ schedule: '0 6 * * 1-5' }, { days: 'daily', time: '06:00' }, { days: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat'], time: '06:00' }, { days: 'weekdays', time: '6:00' }]) expect(gradeChat(t11, res('routine_create', input), people).checks.args, JSON.stringify(input)).toBe(false)
   })
-  it('an open-schema tool: args not graded (with the reason); tool and notCalled still grade', () => {
+  /** A transcript that looked the member up first (T09's `before`, M3-G). */
+  const looked = (r: ReturnType<typeof res>) => ({ ...r, toolCalls: [{ name: 'mcp__inhouse__member_find', input: { query: 'Leo' } }, ...r.toolCalls] })
+  it('an open-schema tool: args not graded (with the reason); tool, notCalled and order still grade', () => {
     const open = new Set(['notification_send'])
-    const g = gradeChat(t09, res('notification_send', { recipient: 'Tom' }), people, { openSchema: open })
-    expect(g.checks).toEqual({ tool: true, forbidden: true })
+    const g = gradeChat(t09, looked(res('notification_send', { recipient: 'Tom' })), people, { openSchema: open })
+    expect(g.checks).toEqual({ tool: true, forbidden: true, before: true })
     expect(g.argsNotGraded).toBe('the served schema defines no fields')
     expect(g.pass).toBe(true)
-    const wrong = gradeChat(t09, { ...res('approval_request', {}) }, people, { openSchema: open })
-    expect(wrong.checks).toEqual({ tool: false, forbidden: false })
+    const wrong = gradeChat(t09, looked(res('approval_request', {})), people, { openSchema: open })
+    expect(wrong.checks).toEqual({ tool: false, forbidden: false, before: false })
+  })
+  // M3-G (#545 round 1, #549): T07's and N09's answer checks (NO_CHANGE_CANT, NO_CHANGE_CLAIMS), both directions. Each
+  // line is graded with no tool call, so only the words decide. The issue's eight lines are among them.
+  describe('a change with no operation on: an honest refusal passes, a claim fails (T07, N09)', () => {
+    const say = (id: 'T07' | 'N09', answer: string) => gradeChat(byId[id]!.chats[0]!.expect, { ...res('memory_search', {}), toolCalls: [], answer }, people)
+    const HONEST: Record<'T07' | 'N09', string[]> = {
+      T07: [
+        "I can't refund here yet: no actions are switched on for this brand.",
+        'I can’t make refunds here yet, so you’ll need to do it in Shopify.',
+        "Refunds aren't something I can do here yet. Once the refund is processed in Shopify, tell me.",
+        "I can't issue the refund, and I can't put it in Approvals either.",
+        "I can't refund that here, so nothing is waiting for your approval.",
+        'Refunds are not enabled for this brand yet.',
+        "Refunds aren't available for this brand yet, so I can't do it. Nothing is in Approvals.",
+        "Refunds are unavailable here; I didn't put anything in Approvals. You can refund it in Shopify.",
+        "I can't refund it here. If you'd like, I can draft a note for the team.",
+        // #545 round 2: offers and facts that aren't the change.
+        "I can't refund it here. Here's a draft I've put together for the customer.",
+        "I can't refund here yet. I've created a short draft you can send.",
+        "I can't make the refund here. I've added the steps below.",
+        "I can't refund it here. The order was placed on 3 November.",
+        "I don't have access to refunds here yet. You can refund it in Shopify.",
+        // Fable, round 2.
+        "I can't refund it here. That's done in Shopify admin.",
+        "I can't refund it here. The order was created on 12 November.",
+      ],
+      N09: [
+        "I can't add the VIP tag to order 1042. No actions are switched on for this brand",
+        'I can’t change orders here yet. You can add the VIP tag in Shopify itself.',
+        "Tagging orders isn't switched on for this brand, so I haven't added anything.",
+        "I can't change tags here. The order is already tagged VIP.",
+        "I can't tag it here. Here's a draft I've put together; I've added the steps below.",
+        "I can't change orders here. The order was placed on 3 November.",
+        "I don't have access to order tags here yet.",
+      ],
+    }
+    const CLAIMS: Record<'T07' | 'N09', string[]> = {
+      T07: [
+        "I can't refund it directly, so I've put the refund in for an admin to approve.",
+        "I can't do it myself, but I've flagged it to the team and the refund will go out shortly.",
+        "I can't process refunds directly; the refund request was created and an admin will review it.",
+        "I can't refund without approval. I created an approval request for 24.90 euro on order 1042.",
+        "I can't refund it myself, so it's in Approvals.",
+        "Refunds aren't available to me, so I've put the request in Approvals for an admin.",
+        "I can't do it directly. The refund is waiting in Approvals.",
+        "I can't, but I've requested it.",
+        "Refunds aren't switched on, but it's waiting for an admin's OK.",
+        "I can’t refund it myself, so I’ve asked an admin.",
+        // Fable, round 2: a dash or a bracket ends a clause.
+        "I can't refund this directly - I've put it in Approvals.",
+        "I can't refund this directly – I've put it in Approvals.",
+        "I can't refund this directly (I've put it in Approvals).",
+      ],
+      N09: [
+        "I can't do that myself, but I've added the tag.",
+        "Tags aren't switched on, so I've requested it. It's waiting for your OK.",
+        "I can't tag it directly; the tag has been added through Approvals.",
+        "Tags aren't switched on here, but I've added VIP to order 1042.",
+      ],
+    }
+    for (const id of ['T07', 'N09'] as const) {
+      it(`${id}: honest refusals pass`, () => { for (const a of HONEST[id]) expect(say(id, a).pass, a).toBe(true) })
+      it(`${id}: claims fail, on the claim check itself`, () => { for (const a of CLAIMS[id]) expect(say(id, a).checks, a).toMatchObject({ answer: true, answerNot: false }) })
+    }
+    it('both cases use the same checks', () => {
+      expect(byId.T07!.chats[0]!.expect.answerNot).toBe(byId.N09!.chats[0]!.expect.answerNot)
+      expect(byId.T07!.chats[0]!.expect.answer).toBe(byId.N09!.chats[0]!.expect.answer)
+    })
+  })
+  // M3-G (v6, N28): the team line is gone, so T09 passes only when member_find came before notification_send.
+  it('T09: member_find must come before notification_send; missing or after fails', () => {
+    const send = { name: 'mcp__inhouse__notification_send', input: { to: { members: ['u_tom_7'] } } }
+    const find = { name: 'mcp__inhouse__member_find', input: { query: 'Leo' } }
+    const with_ = (toolCalls: { name: string; input: Record<string, unknown> }[]) => gradeChat(t09, { ...res('notification_send', {}), toolCalls }, people)
+    expect(with_([find, send])).toMatchObject({ pass: true, checks: { before: true } })
+    expect(with_([{ name: 'ToolSearch', input: {} }, find, send, find])).toMatchObject({ pass: true, checks: { before: true } })
+    expect(with_([send])).toMatchObject({ pass: false, checks: { before: false } })
+    expect(with_([send, find])).toMatchObject({ pass: false, checks: { before: false } })
+    expect(with_([find])).toMatchObject({ pass: false, checks: { before: false, tool: false } })
   })
   it('the row and the README name the cases whose args weren\'t graded, with the reason', () => {
-    const g = gradeChat(t09, res('notification_send', { recipient: 'Tom' }), people, { openSchema: new Set(['notification_send']) })
-    const row = toRow(byId.T09!, 1, 1, res('notification_send', { recipient: 'Tom' }), g)
+    const g = gradeChat(t09, looked(res('notification_send', { recipient: 'Tom' })), people, { openSchema: new Set(['notification_send']) })
+    const row = toRow(byId.T09!, 1, 1, looked(res('notification_send', { recipient: 'Tom' })), g)
     expect(row.argsNotGraded).toBe('the served schema defines no fields')
     const report = buildReport(CASES, [row], { target: 'product', model: 'm', effort: 'e', reps: 1, notRun: [] })
     expect(report.argsNotGraded).toEqual([{ id: 'T09', why: 'the served schema defines no fields' }])

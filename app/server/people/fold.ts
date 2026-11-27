@@ -9,7 +9,7 @@
 // spaces collapse. Idempotent (fold.property.test.ts). Words split the fold on everything but letters and digits, so a
 // hyphen or an apostrophe (any of them) splits a word: "O'Brien-Smith" is `o`, `brien`, `smith`.
 
-/** The longest name shown, and the most words in it (the M2-G team line's limits, prompt/connected.ts). */
+/** The longest name shown, and the most words in it (the limits of M2-G's team line, which prompt v6 removed). */
 export const NAME_SHOWN_MAX = 40
 export const NAME_SHOWN_WORDS = 4
 /**
