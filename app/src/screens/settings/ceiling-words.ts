@@ -61,15 +61,21 @@ export interface CeilingField {
   hint: string
   /** It takes decimals (money in a currency that has them): the phone keyboard offers a decimal point. */
   decimals: boolean
+  /**
+   * A money field's live reading of what's typed, in the store's currency format ("= KD 1,500.000"), so a person sees the
+   * amount that will be saved before saving it; null while what's typed isn't an amount. Absent for a count.
+   */
+  preview?: (raw: string) => string | null
 }
 
 /**
  * Typed digits as plain digits: commas only as a well-formed thousands separator (groups of exactly three, before any
- * decimal point), so "500,50" or "1,50" is never read as 50,050 or 150. Null for anything else.
+ * decimal point, the first group not starting with zero), so "500,50", "1,50" or "0,500" is never read as 50,050, 150
+ * or 500. Null for anything else.
  */
 export function plainNumber(raw: string): string | null {
   const t = raw.trim()
-  return /^(\d{1,3}(,\d{3})+|\d+)(\.\d+)?$/.test(t) ? t.replace(/,/g, '') : null
+  return /^([1-9]\d{0,2}(,\d{3})+|\d+)(\.\d+)?$/.test(t) ? t.replace(/,/g, '') : null
 }
 
 const whole = (max: number) => ({
@@ -85,14 +91,20 @@ function limitField(r: CeilingRow, key: 'perDayMax' | 'unitsMax', what: string):
   if (r.measure.kind === 'count') return { key, label: `Most ${r.measure.label} ${what}`, max, ...whole(max) }
   const currency = r.measure.currency
   if (!currency) return { key, label: `Most ${what}, in the smallest unit of the shop's currency`, max, ...whole(max) }
+  const read = (raw: string) => {
+    if (!/^\d+(\.\d+)?$/.test(raw)) return null
+    const minor = moneyOf(Number(raw), currency).minor
+    // More decimals than the currency has would be rounded: refused, so what's saved is what was typed.
+    return String(majorOf({ minor, currency })) === String(Number(raw)) ? minor : null
+  }
   return {
     key, label: `Most ${what} (${currency})`, max,
     shown: v => String(majorOf({ minor: v, currency })),
-    read: raw => {
-      if (!/^\d+(\.\d+)?$/.test(raw)) return null
-      const minor = moneyOf(Number(raw), currency).minor
-      // More decimals than the currency has would be rounded: refused, so what's saved is what was typed.
-      return String(majorOf({ minor, currency })) === String(Number(raw)) ? minor : null
+    read,
+    preview: raw => {
+      const plain = plainNumber(raw)
+      const minor = plain === null ? null : read(plain)
+      return minor === null || minor < 1 || minor > max ? null : `= ${fmtMoney({ minor, currency }, display(), { cents: 'always' })}`
     },
     hint: `an amount from ${fmtMoney({ minor: 1, currency }, display())} to ${fmtMoney({ minor: max, currency }, display())}`,
     decimals: majorOf({ minor: 1, currency }) < 1,
@@ -117,6 +129,7 @@ export function readValues(r: CeilingRow, enabled: boolean, typed: Partial<Recor
   for (const f of fieldsOf(r)) {
     const typedText = typed[f.key]
     const plain = typedText === undefined ? null : plainNumber(typedText)
+    if (typedText !== undefined && /^[+-]/.test(typedText.trim())) return { error: `${f.label}: enter ${f.hint}, with no + or - sign.` }
     if (typedText !== undefined && plain === null && typedText.includes(',')) {
       return { error: `${f.label}: enter ${f.hint}. Use a comma only between thousands, as in 1,500.` }
     }

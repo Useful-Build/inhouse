@@ -88,12 +88,38 @@ describe('money limits (issue 515)', () => {
     expect(units('KWD', '1,500.125')).toBe(1_500_125)
     expect(units('KWD', '2.5')).toBe(2_500)
     // A comma used as a decimal mark, or out of place: refused with a plain message, never a raise of 100 times.
-    for (const [currency, raw] of [['USD', '500,50'], ['USD', '1,50'], ['JPY', '1500,5'], ['USD', '1,50,0'], ['USD', ',500'], ['USD', '500,'], ['KWD', '1,5000.125'], ['USD', '1,500,00'], ['USD', '1.500,50']] as const) {
+    for (const [currency, raw] of [['USD', '500,50'], ['USD', '1,50'], ['JPY', '1500,5'], ['USD', '1,50,0'], ['USD', ',500'], ['USD', '500,'], ['KWD', '1,5000.125'], ['USD', '1,500,00'], ['USD', '1.500,50'],
+      // A leading zero group before a comma: "0,500" is half a unit written the European way, never 500.
+      ['KWD', '0,500'], ['USD', '0,500'], ['USD', '00,500'], ['USD', '000,500'], ['USD', '01,500']] as const) {
       expect(units(currency, raw), `${currency} ${raw}`).toMatch(/Use a comma only between thousands, as in 1,500\.$/)
     }
     expect(units('KWD', '1.5001')).toMatch(/enter an amount from/)
     // A count field takes the same rule.
     expect(readValues(row(), true, { perDayMax: '1,20' })).toMatchObject({ error: expect.stringContaining('Use a comma only between thousands') })
+  })
+  it('takes a leading zero without a comma, and says a sign is not allowed', () => {
+    const units = (currency: string, raw: string) => {
+      const got = readValues(refund(currency), true, { unitsMax: raw })
+      return 'ok' in got ? got.ok.unitsMax : got.error
+    }
+    expect(units('KWD', '0.500')).toBe(500)
+    expect(units('USD', '0.5')).toBe(50)
+    expect(readValues(row(), true, { bulkThreshold: '0' })).toMatchObject({ error: expect.stringContaining('a whole number from 1 to 5') })
+    for (const raw of ['-1,500', '+1,500', '-5', '+5']) expect(units('USD', raw), raw).toMatch(/with no \+ or - sign\.$/)
+  })
+  it('reads back a typed amount in the store\'s currency format before it is saved', () => {
+    const [usd] = fieldsOf(refund('USD'))
+    expect(['500.5', '1,500', '1500.25', ' 7 '].map(t => usd!.preview!(t))).toEqual(['= $500.50', '= $1,500.00', '= $1,500.25', '= $7.00'])
+    const [kwd] = fieldsOf(refund('KWD'))
+    expect(kwd!.preview!('1,500')).toMatch(/^= (KWD|KD)\s?1,500\.000$/)
+    expect(kwd!.preview!('1.5')).toMatch(/^= (KWD|KD)\s?1\.500$/)
+    const [jpy] = fieldsOf(refund('JPY'))
+    expect(jpy!.preview!('1,500')).toBe('= ¥1,500')
+    // Nothing to read back while what's typed isn't an amount the field would save.
+    for (const t of ['1,50', '0,500', '-5', '12.345', '0', '', 'ten']) expect(usd!.preview!(t), t).toBeNull()
+    // A count field, or money with no currency yet, has no reading: it is the number typed.
+    expect(fieldsOf(row()).some(f => f.preview)).toBe(false)
+    expect(fieldsOf(refund(null)).some(f => f.preview)).toBe(false)
   })
   it('offers a decimal keyboard only where the currency has decimals', () => {
     expect(fieldsOf(refund('USD')).map(f => f.decimals)).toEqual([true])

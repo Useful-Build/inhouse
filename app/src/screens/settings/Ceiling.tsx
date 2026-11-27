@@ -117,14 +117,21 @@ function ChangeWindow({ row, onClose, onSaved, onCurrent }: { row: CeilingRow; o
           <span className="text-sm font-strong text-foreground-2">Let your Inhouse agent do this</span>
           <Switch on={enabled} label="Let your Inhouse agent do this" onChange={() => { setEnabled(v => !v); setError(null) }} />
         </div>
-        {fieldsOf(row).map(f => (
-          <div key={f.key} className="flex flex-col gap-1.5">
-            <Label htmlFor={`ceiling-${f.key}`} className="text-sm font-strong text-foreground-2">{f.label}</Label>
-            <Input id={`ceiling-${f.key}`} inputMode={f.decimals ? 'decimal' : 'numeric'} autoComplete="off" spellCheck={false} value={typed[f.key] ?? f.shown(row[f.key])}
-              onChange={e => { setTyped(t => ({ ...t, [f.key]: e.target.value })); setError(null) }}
-              className="box-border h-9.5 rounded-lg bg-card px-3.25 text-base shadow-none md:text-base" />
-          </div>
-        ))}
+        {fieldsOf(row).map(f => {
+          const text = typed[f.key] ?? f.shown(row[f.key])
+          // A money field reads back what's typed as the amount it saves ("= $500.50"), so "1,500" can't pass for 1.5.
+          const preview = f.preview?.(text) ?? null
+          return (
+            <div key={f.key} className="flex flex-col gap-1.5">
+              <Label htmlFor={`ceiling-${f.key}`} className="text-sm font-strong text-foreground-2">{f.label}</Label>
+              <Input id={`ceiling-${f.key}`} inputMode={f.decimals ? 'decimal' : 'numeric'} autoComplete="off" spellCheck={false} value={text}
+                aria-describedby={f.preview ? `ceiling-${f.key}-amount` : undefined}
+                onChange={e => { setTyped(t => ({ ...t, [f.key]: e.target.value })); setError(null) }}
+                className="box-border h-9.5 rounded-lg bg-card px-3.25 text-base shadow-none md:text-base" />
+              {f.preview && <p id={`ceiling-${f.key}-amount`} aria-live="polite" className="m-0 min-h-5 text-sm text-foreground-3">{preview ?? ''}</p>}
+            </div>
+          )
+        })}
         {'ok' in next && lowers(prev, next.ok) && (
           <p role="note" className="m-0 text-sm text-foreground-3">Lowering a limit or switching this off ends every Always allow for it. People are asked again.</p>
         )}
