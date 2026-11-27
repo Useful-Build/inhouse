@@ -132,10 +132,18 @@ test('Cancel on a live turn stops it and ends the job: no later turn, one notice
   test.setTimeout(12 * 60_000)
   await setJobTimings(request, { JOB_CUT_MS })
   try {
-    const { chatId, text, prefix } = await startRun(request)
+    const { chatId, text, sent, prefix } = await startRun(request)
     const running = await jobWhen(request, dana, chatId, j => j.state === 'running', 'the job started', 300_000)
     const before = await stepsOf(request, prefix)
-    await runningStep(request, prefix, new Set(before.calls), 6 * 60_000)
+    try {
+      await runningStep(request, prefix, new Set(before.calls), 6 * 60_000)
+    } catch (err) {
+      // Why no continuation step was seen running (#460's agent-set run): the chat, the job, the steps and the
+      // BrandAgent's view of the root (its isolate, the timings in effect).
+      console.log(`M1-D jobs (Cancel live): no running step.\n${await explainJob(request, dana, { chatId, turnId: sent.turnId, frames: [], prefix })}`)
+      console.log(`M1-D jobs (Cancel live): the BrandAgent: ${JSON.stringify(await observeAgent(request, sent.turnId))}`)
+      throw err
+    }
     // Another person's Cancel is not found (the job is the chat owner's), and changes nothing: the job still runs.
     const other = await call(request, actor('memberB'), 'POST', `/api/jobs/${running.jobId}/cancel`)
     expect(other.status, other.text).toBe(404)
