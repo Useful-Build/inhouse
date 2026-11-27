@@ -67,30 +67,22 @@ function filesBetween(repo, from, to) {
   return { files: withPackageTexts(repo, files, cmp.merge_base_commit.sha, to) }
 }
 
-/** The approval record: which head the label was added on, and the files changed since. */
-function approval(repo, pr, prData) {
+/**
+ * The approval record: the head a `wasim-approved: <sha>` line names (made at or after the label was last added), and
+ * the files changed since. Fails closed when the PR has more commits than the API lists (250), so the SHA can't be checked.
+ */
+function approval(repo, pr, prData, comments) {
   const timeline = getAll(`repos/${repo}/issues/${pr}/timeline?per_page=100`)
   const labeledAt = timeline.filter(e => e.event === 'labeled' && e.label?.name === APPROVAL_LABEL).map(e => e.created_at).at(-1) ?? null
-  const forcePushedAt = timeline.filter(e => e.event === 'head_ref_force_pushed').map(e => e.created_at)
-  const prCommits = getAll(`repos/${repo}/pulls/${pr}/commits?per_page=100`)
-  // A commit's push time: its first check suite on the PR's head branch. Only needed back to the first one pushed
-  // before the label, so read from the newest down and stop there.
-  const commits = prCommits.map(c => ({ sha: c.sha, pushedAt: null }))
-  const at = labeledAt ? Date.parse(labeledAt) : -Infinity
-  for (let i = commits.length - 1; i >= 0 && labeledAt; i--) {
-    const suites = getAll(`repos/${repo}/commits/${commits[i].sha}/check-suites?per_page=100`)
-      .flatMap(p => p.check_suites ?? [p])
-      .filter(s => s.head_branch === prData.head.ref)
-    const first = suites.map(s => s.created_at).sort().at(0) ?? null
-    commits[i].pushedAt = first
-    if (first && Date.parse(first) <= at) break
-  }
-  const head = approvedHead({ labeledAt, forcePushedAt, commits })
-  if (head.problem) return { approvedDeltaFiles: null, approvalProblem: head.problem }
-  if (head.sha === prData.head.sha) return { approvedDeltaFiles: [], approvalProblem: null, approvedSha: head.sha }
+  const baseChangedAt = timeline.filter(e => e.event === 'base_ref_changed').map(e => e.created_at)
+  const commitShas = getAll(`repos/${repo}/pulls/${pr}/commits?per_page=100`).map(c => c.sha)
+  const head = approvedHead({ labeledAt, comments, commitShas, baseChangedAt, commitCount: prData.commits })
+  if (head.problem) return { approvalProblem: head.problem }
+  if (head.needsLine) return { approvalNeedsLine: true }
+  if (head.sha === prData.head.sha) return { approvedDeltaFiles: [], approvedSha: head.sha }
   const delta = filesBetween(repo, head.sha, prData.head.sha)
-  if (delta.problem) return { approvedDeltaFiles: null, approvalProblem: delta.problem }
-  return { approvedDeltaFiles: delta.files, approvalProblem: null, approvedSha: head.sha }
+  if (delta.problem) return { approvalProblem: delta.problem }
+  return { approvedDeltaFiles: delta.files, approvedSha: head.sha }
 }
 
 function main() {
@@ -106,12 +98,11 @@ function main() {
   const comments = [
     ...getAll(`repos/${repo}/issues/${pr}/comments?per_page=100`),
     ...getAll(`repos/${repo}/pulls/${pr}/reviews?per_page=100`),
-  ].map(c => ({ body: c.body ?? '', author_association: c.author_association }))
-  const record = labels.includes(APPROVAL_LABEL) ? approval(repo, pr, prData) : { approvedDeltaFiles: null, approvalProblem: null }
+  ].map(c => ({ body: c.body ?? '', author_association: c.author_association, at: c.created_at ?? c.submitted_at ?? null }))
+  const { approvedSha, ...record } = labels.includes(APPROVAL_LABEL) ? approval(repo, pr, prData, comments) : {}
 
   const result = classify({ files, labels, comments, incomplete, ...record })
-  let text = report(result, { pr, head })
-  if (record.approvedSha) text += `\n- approved head: \`${record.approvedSha.slice(0, 12)}\``
+  const text = report(result, { pr, head, approvedSha })
   // The report holds the PR's file names: stop the runner reading workflow commands from it while it prints.
   const resume = randomUUID()
   console.log(`::stop-commands::${resume}`)

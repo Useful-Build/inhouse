@@ -2,7 +2,7 @@
 // that doesn't, so a rule that stops firing, or starts firing on a neighbour, fails here.
 import fc from 'fast-check'
 import { describe, expect, test } from 'vitest'
-import { APPROVAL_LABEL, approvedHead, classify, gateChecks, parsePatch, report, scan } from './lanes.mjs'
+import { APPROVAL_LABEL, approvedHead, classify, evaluate, gateChecks, NET_LOSS_PATH, parsePatch, report, scan } from './lanes.mjs'
 
 const BENIGN = '@@ -1,2 +1,2 @@\n const a = 1\n-const b = 2\n+const b = 3'
 const file = (filename, extra = {}) => ({ filename, status: 'modified', changes: 2, patch: BENIGN, ...extra })
@@ -48,6 +48,15 @@ describe('Lane 4 paths', () => {
     ['app/package-lock.json', 'dependency change'],
     ['app/runner/harness/package-lock.json', 'dependency change'],
     ['app/scripts/sandbox/new.mjs', 'sandbox'],
+    ['app/.oxlintrc.json', 'lint config'],
+    ['app/hub/.oxlintrc.json', 'lint config'],
+    ['.eslintrc.cjs', 'lint config'],
+    ['app/eslint.config.js', 'lint config'],
+    ['app/oxlint.config.ts', 'lint config'],
+    ['app/tsconfig.json', 'TypeScript config'],
+    ['app/tsconfig.server-test.json', 'TypeScript config'],
+    ['app/runner/harness/tsconfig.json', 'TypeScript config'],
+    ['app/hub/tsconfig.json', 'TypeScript config'],
   ]
   for (const [path, why] of cases) {
     test(`${path} is Lane 4 (${why}), in every status`, () => {
@@ -86,6 +95,14 @@ describe('app/scripts: existing check scripts are Lane 4, new ones are not', () 
   test('a move within app/scripts is Lane 4', () => expect(laneOf([file('app/scripts/b.mjs', { status: 'renamed', previous_filename: 'app/scripts/a.mjs' })])).toBe('Lane 4'))
   test('a move out of app/scripts is Lane 4', () => expect(laneOf([file('app/src/a.mjs', { status: 'renamed', previous_filename: 'app/scripts/a.mjs' })])).toBe('Lane 4'))
   test('a modified file in a nested folder is Lane 4', () => expect(laneOf([file('app/scripts/nightly/run.mjs')])).toBe('Lane 4'))
+  test('the hub\'s and runner\'s scripts folders count the same way', () => {
+    for (const path of ['app/runner/scripts/check-zod-major.mjs', 'app/hub/scripts/check.mjs', 'app/runner/harness/scripts/x.mjs']) {
+      expect(reasons([file(path)]), path).toContain('the referee: an existing check script')
+      expect(reasons([file(path, { status: 'removed' })]), path).toContain('the referee: an existing check script')
+      expect(laneOf([added(path, ['export const x = 1'])]), path).toBe('Lane 1/2')
+    }
+    expect(laneOf([file('app/src/scripts/a.ts')])).toBe('Lane 1/2')
+  })
 })
 
 describe('check-weakening patterns in added lines, in any file', () => {
@@ -98,29 +115,46 @@ describe('check-weakening patterns in added lines, in any file', () => {
     ['test.describe.skip("x", () => {})', 'a skipped test or suite (.skip)'],
     ["test.fixme('x', async ({ page }) => {})", 'a skipped test or suite (.fixme)'],
     ["test.describe.fixme('x')", 'a skipped test or suite (.fixme)'],
-    ['it.skip(`a ${"b"}`, fn)', 'a .skip( call (kept: a template with ${} in its arguments'],
+    ['it.skip(`a ${"b"}`, fn)', 'a skipped test or suite (.skip)'],
     ['it.skip(`plain title`, fn)', 'a skipped test or suite (.skip)'],
     ['it.skip.each([1])("x")', 'a skipped test or suite (.skip)'],
+    ["it.todo('later')", 'a todo test (.todo)'],
+    ["test.todo('later')", 'a todo test (.todo)'],
+    ["it.fails('x', fn)", 'an expected-to-fail test (.fails)'],
+    ["test.fail('x', async () => {})", 'an expected-to-fail test (.fail)'],
+    ['test.fail()', 'an unconditional skip (.fail())'],
+    ['// @ts-nocheck', 'a @ts-nocheck'],
     ['test.skip()', 'an unconditional skip (.skip())'],
     ['  test.skip( )', 'an unconditional skip (.skip())'],
     ['test.fixme()', 'an unconditional skip (.fixme())'],
     ["test.skip(true, 'flaky on CI')", 'an unconditional skip (.skip(true))'],
     ['test.skip(true)', 'an unconditional skip (.skip(true))'],
-    ['it.skipIf(true)("x", fn)', 'an unconditional skip (.skipIf(true))'],
-    ["it.skipIf('yes')('x', fn)", "a .skipIf( with a string condition (kept: always true)"],
-    ['test.skip(title, async () => {})', "a skipped test whose title isn't a string literal (.skip)"],
-    ["test.skip(name, 'details', fn)", "a skipped test whose title isn't a string literal (.skip)"],
+    ["test.skip(1, 'x')", 'an unconditional skip (.skip(1))'],
+    ['test.skip(false)', 'an unconditional skip (.skip(false))'],
+    ['test.skip(!0)', 'an unconditional skip (.skip(!0))'],
+    ['test.skip(null, REASON)', 'an unconditional skip (.skip(null))'],
+    ['it.skipIf(true)("x", fn)', 'a .skipIf( with a literal condition (true)'],
+    ['it.skipIf(1)("x", fn)', 'a .skipIf( with a literal condition (1)'],
+    ["it.skipIf('yes')('x', fn)", "a .skipIf( with a literal condition ('yes')"],
+    ['it.runIf(false)("x", fn)', 'a .runIf( with a literal condition (false)'],
+    ['describe.runIf(0)("x", fn)', 'a .runIf( with a literal condition (0)'],
+    ['it.skipIf()("x", fn)', 'a .skipIf( with a literal condition (none)'],
+    ['test.skip(title, async () => {})', "a skipped test or suite (.skip) whose title isn't a string literal"],
+    ["test.skip(name, 'details', fn)", "a skipped test or suite (.skip) whose title isn't a string literal"],
+    ['test.skip(TITLE, function () {})', "a skipped test or suite (.skip) whose title isn't a string literal"],
     ["test.skip(..., 'x')", "a .skip( with its first argument left out (kept: can't tell it's conditional)"],
-    ['test.skip(!ready, () => {})', "a skipped test whose title isn't a string literal (.skip)"],
-    ["test.skip(name, async () => {", "a .skip( call (kept: its arguments run past the line"],
-    ['test.skip(!cond,', 'a .skip( call (kept: its arguments run past the line'],
-    ["test.skip(/firefox/.test(name), 'x')", 'a .skip( call (kept: a comment or regex in its arguments'],
-    ["test.skip(a, 'x'", 'a .skip( call (kept: its arguments run past the line'],
-    ["test.skip(a]", 'a .skip( call (kept: unbalanced brackets'],
-    ["test.skip('unterminated, fn)", 'a .skip( call (kept: its arguments run past the line'],
+    ["test.skip(name, async () => {", "a .skip( call (kept: its arguments don't close where the diff shows them, so it can't be read as conditional)"],
+    ['test.skip(!cond,', "a .skip( call (kept: its arguments don't close where the diff shows them, so it can't be read as conditional)"],
+    ["test.skip(/firefox/.test(name), 'x')", "a .skip( call (kept: a comment or regex in its arguments, so it can't be read as conditional)"],
+    ["test.skip(a, 'x'", "a .skip( call (kept: its arguments don't close where the diff shows them, so it can't be read as conditional)"],
+    ["test.skip(a]", "a .skip( call (kept: its arguments don't close where the diff shows them, so it can't be read as conditional)"],
+    ["test.skip('unterminated, fn)", "a .skip( call (kept: its arguments don't close where the diff shows them, so it can't be read as conditional)"],
     ['const s = test.skip', "a .skip used as a value (kept: can't tell it's conditional)"],
     ['run(describe.skip)', "a .skip used as a value (kept: can't tell it's conditional)"],
     ['({ fn: test.skip })', "a .skip used as a value (kept: can't tell it's conditional)"],
+    ['(true ? test.skip : test)("x", fn)', 'a .skip picked by a literal condition (true)'],
+    ['(1 ? test : test.skip)("x", fn)', 'a .skip picked by a literal condition (1)'],
+    ["const t = 'on' ? describe.skip : describe", "a .skip picked by a literal condition ('on')"],
     ["(cond ? test : test.skip)('x', fn); test.skip('y', fn)", 'a skipped test or suite (.skip)'],
     ['// oxlint-disable-next-line no-console', 'a lint disable comment'],
     ['/* eslint-disable */', 'a lint disable comment'],
@@ -130,11 +164,12 @@ describe('check-weakening patterns in added lines, in any file', () => {
     for (const path of ['app/src/a.ts', 'app/e2e/a.spec.ts', 'README.md', 'app/hub/x.yml']) {
       const r = classify({ files: [file(path, { patch: hunk([], [line]) })] })
       expect(r.lane, `${path}: ${line}`).toBe('Lane 4')
-      expect(r.lane4[0].reason.startsWith(`check-weakening: adds ${why}`), r.lane4[0].reason).toBe(true)
+      expect(r.lane4[0].reason, line).toBe(`check-weakening: adds ${why} (line 11)`)
       expect(r.lane4[0].reason).toMatch(/ \(line 11\)$/)
     }
   })
-  // Conditional skips: a condition first, then only reason strings. VERIFY.md asks deploy-only specs for this form.
+  // Conditional skips: a first argument that isn't a literal, whatever follows it (reasons). VERIFY.md asks deploy-only
+  // specs for this form.
   const conditional = [
     "test.skip(!phone(page), 'the phone project only')",
     "  test.skip(!process.env.E2E_TEST_BUILD_REMOTE, 'needs the deployed build')",
@@ -143,18 +178,36 @@ describe('check-weakening patterns in added lines, in any file', () => {
     "test.fixme(isMobile, 'broken on phones, issue #12')",
     "test.skip(({ browserName }) => browserName === 'firefox', 'no firefox')",
     "test.skip(cond && other(a, [1, 2]), `reason`)",
-    "test.skip(false)",
+    'test.skip(CLOSED, CLOSED_WHY)',
+    '  test.skip(!asked, `the 2-hour proof runs only when named: sandbox-test-deploy -f full=true -f only="${SELF}"`)',
+    '  test.skip(condition, reason)',
+    '      test.skip(!!process.env.E2E_TEST_BUILD_REMOTE && bad.remoteSkip !== undefined, bad.remoteSkip)',
+    "test.fail(isWebkit, 'known bug')",
     '  ;(t.seedAction ? only(...ACTIONS) : test.skip)(\'an action: listed\', async () => {',
     "(cond ? test : test.skip)('x', fn)",
     "const t = ready ? describe : describe.skip",
     "it.skipIf(win)('x', fn)",
+    'it.runIf(process.env.CI)("x", fn)',
     "describe.skipIf(process.platform === 'win32')('suite', () => {})",
     'query.skip(10).limit(5)',
+    'tour.skip()',
+    'this.tour.skip(); steps.todo("x")',
     "test.skip(!phone(page), 'desktop only') // see issue",
     'gate with `test.skip(!process.env.E2E_TEST_BUILD_REMOTE, ...)` in prose',
   ]
   test.each(conditional)('adds %s: not check-weakening', line => {
     expect(laneOf([file('app/src/a.ts', { patch: hunk([], [line]) })])).toBe('Lane 1/2')
+  })
+  test('a call split over added lines is read whole', () => {
+    expect(laneOf([file('app/e2e/a.spec.ts', { patch: hunk([], ['  test.skip(', '    !process.env.E2E_TEST_BUILD_REMOTE,', "    'needs the deployed build',", '  )']) })])).toBe('Lane 3')
+    expect(reasons([file('app/e2e/a.spec.ts', { patch: hunk([], ['  test.skip(', "    'a title',", '    async () => {})']) })])).toEqual(['check-weakening: adds a skipped test or suite (.skip) (line 11)'])
+  })
+  test('a call split over an added line and context lines is read whole', () => {
+    const patch = "@@ -1,3 +1,3 @@\n-  test.skip(cond,\n+  test.skip(!cond,\n     'reason',\n   )"
+    expect(laneOf([file('app/e2e/a.spec.ts', { patch })])).toBe('Lane 3')
+  })
+  test('a call that still does not close in the hunk is flagged', () => {
+    expect(reasons([file('app/e2e/a.spec.ts', { patch: hunk([], ['  test.skip(', '    !cond,']) })])).toEqual(["check-weakening: adds a .skip( call (kept: its arguments don't close where the diff shows them, so it can't be read as conditional) (line 11)"])
   })
   test('the #442 lines are conditional', () => {
     const lines = [
@@ -171,7 +224,7 @@ describe('check-weakening patterns in added lines, in any file', () => {
     expect(laneOf([file('app/src/a.ts', { patch: hunk(["test.skip('x')"], ["test('x')"]) })])).toBe('Lane 1/2')
     expect(laneOf([file('app/src/a.ts', { patch: "@@ -1,2 +1,2 @@\n test.skip('x')\n-a\n+b" })])).toBe('Lane 1/2')
   })
-  const benign = ['skipLink()', 'const skip = 2', 'items.skipped', 'skipToContent(', 'test.only("x")', 'xit is a word', 'eslint config', '.skipper(']
+  const benign = ['tour.skip()', 'player.fixme()', 'list.todo("x")', 'skipLink()', 'const skip = 2', 'items.skipped', 'skipToContent(', 'test.only("x")', 'xit is a word', 'eslint config', '.skipper(']
   test.each(benign)('%s is not a pattern', line => expect(laneOf([file('app/src/a.ts', { patch: hunk([], [line]) })])).toBe('Lane 1/2'))
   test('the line number is the new file\'s', () => {
     const patch = '@@ -1,3 +1,4 @@\n a\n-b\n+c\n+test.skip("x")\n d\n@@ -40,1 +41,2 @@\n e\n+// eslint-disable-line'
@@ -179,45 +232,111 @@ describe('check-weakening patterns in added lines, in any file', () => {
   })
 })
 
-describe('loosened numeric settings (same key, same hunk)', () => {
+describe('loosened numeric settings, in check files only', () => {
+  const spec = 'app/e2e/a.spec.ts'
   const loosened = [
     ['timeout: 5000', 'timeout: 10000'], ['timeout: 25_000', 'timeout: 30_000'], ['testTimeout: 25_000,', 'testTimeout: 60_000,'],
-    ['retries: 0', 'retries: 2'], ['maxDiffPixels: 10', 'maxDiffPixels: 200'], ['maxDiffPixelRatio: 0.01', 'maxDiffPixelRatio: 0.02'],
+    ['retries: 0', 'retries: 2'], ['retry: 0', 'retry: 3'], ['maxDiffPixels: 10', 'maxDiffPixels: 200'], ['maxDiffPixelRatio: 0.01', 'maxDiffPixelRatio: 0.02'],
     ['threshold: 0.2', 'threshold: 0.3'], ['{ numRuns: 1000 }', '{ numRuns: 100 }'], ['const timeout = 100', 'const timeout = 101'],
     ['expect(x).toHaveScreenshot({ maxDiffPixels: 0 })', 'expect(x).toHaveScreenshot({ maxDiffPixels: 5 })'],
+    ['timeout: 60 * 1000', 'timeout: 2 * 60 * 1000'], ['timeout: 60_000', 'timeout: 90 * 1000'], ['test.setTimeout(60_000)', 'test.setTimeout(120_000)'],
+    ['testInfo.setTimeout(1000)', 'testInfo.setTimeout(2e3)'],
   ]
   test.each(loosened)('%s -> %s is Lane 4', (before, after) => {
-    const r = reasons([file('app/e2e/a.spec.ts', { patch: hunk([before], [after]) })])
+    const r = reasons([file(spec, { patch: hunk([before], [after]) })])
     expect(r).toHaveLength(1)
-    expect(r[0]).toMatch(/^check-weakening: \w+ (raised|lowered) from [\d.]+ to [\d.]+ \(line 11\)$/)
+    expect(r[0]).toMatch(/^check-weakening: [\w.]+ (raised|lowered) from .+ to .+ \(line 11\)$/)
   })
   const fine = [
     ['timeout: 10000', 'timeout: 5000'], ['{ numRuns: 100 }', '{ numRuns: 1000 }'], ['retries: 2', 'retries: 0'],
-    ['timeout: 5000', 'hookTimeout: 9000'], ['limit: 5', 'limit: 9'], ['timeout: 5000', 'timeout: 5000'],
+    ['timeout: 5000', 'hookTimeout: 9000'], ['limit: 5', 'limit: 9'], ['timeout: 5000', 'timeout: 5000'], ['timeout: 60 * 1000', 'timeout: 60_000'],
+    ['test.setTimeout(120_000)', 'test.setTimeout(60_000)'], ['timeout: BIG', 'timeout: BIG'], ['retry: noop', 'retry: () => {}'],
+    ['// timeout: 5', '// timeout: 50'], ['const ok = a === 5', 'const ok = a === 9'],
   ]
   test.each(fine)('%s -> %s is not flagged', (before, after) => {
-    expect(laneOf([file('app/src/a.ts', { patch: hunk([before], [after]) })])).toBe('Lane 1/2')
+    expect(laneOf([file(spec, { patch: hunk([before], [after]) })])).toBe('Lane 3')
   })
-  test('a new retries setting counts as raised from 0', () => {
-    expect(reasons([file('app/e2e/a.spec.ts', { patch: hunk([], ['test.describe.configure({ retries: 2 })']) })])).toEqual(['check-weakening: retries raised from 0 to 2 (line 11)'])
-    expect(laneOf([file('app/e2e/a.spec.ts', { patch: hunk([], ['retries: 0,']) })])).toBe('Lane 3')
+  test('an assignment counts only with a number', () => {
+    expect(reasons([file(spec, { patch: hunk([], ['  const RETRIES = 3']) })])).toEqual([])
+    expect(reasons([file(spec, { patch: hunk(['  const retries = 1'], ['  const retries = 3']) })])).toEqual(['check-weakening: retries raised from 1 to 3 (line 11)'])
+    expect(reasons([file(spec, { patch: hunk(['  const timeout = 5'], ['  const timeout = pick()']) })])).toEqual([])
   })
-  test('a new timeout setting alone is not flagged', () => expect(laneOf([file('app/src/a.ts', { patch: hunk([], ['timeout: 9000']) })])).toBe('Lane 1/2'))
+  test('a value that changes to something that can\'t be read is flagged', () => {
+    expect(reasons([file(spec, { patch: hunk(['timeout: 5000'], ['timeout: Number(process.env.T ?? 5000)']) })]))
+      .toEqual(["check-weakening: timeout changed to a value that can't be read (Number(process.env.T ?? 5000)) (line 11)"])
+    expect(reasons([file(spec, { patch: hunk(['timeout: T'], ['timeout: T * 2']) })])).toHaveLength(1)
+  })
+  test('added settings that loosen at once', () => {
+    const added1 = line => reasons([file(spec, { patch: hunk([], [line]) })])
+    expect(added1('test.describe.configure({ retries: 2 })')).toEqual(['check-weakening: retries raised from 0 to 2 (line 11)'])
+    expect(added1('  retry: 1,')).toEqual(['check-weakening: retry raised from 0 to 1 (line 11)'])
+    expect(added1('  retry: RETRIES,')).toEqual(["check-weakening: adds retry with a value that can't be read (RETRIES) (line 11)"])
+    // An identifier can't be told from a number: flagged (a callback named `noop` too).
+    expect(added1('  retry: noop,')).toEqual(["check-weakening: adds retry with a value that can't be read (noop) (line 11)"])
+    expect(added1('  test.setTimeout(120_000)')).toEqual(['check-weakening: adds test.setTimeout(120_000) (line 11)'])
+    expect(added1("  await expect(page).toHaveScreenshot({ maxDiffPixels: 50 })")).toEqual(['check-weakening: adds maxDiffPixels: 50 (line 11)'])
+    expect(added1('  maxDiffPixelRatio: 0.01,')).toEqual(['check-weakening: adds maxDiffPixelRatio: 0.01 (line 11)'])
+    expect(added1('  threshold: 0.3,')).toEqual(['check-weakening: adds threshold: 0.3 (line 11)'])
+    expect(added1('  fc.assert(p, { numRuns: 40 })')).toEqual(['check-weakening: adds numRuns: 40, below 100 (line 11)'])
+    expect(added1('  fc.assert(p, { numRuns: runs })')).toEqual(["check-weakening: adds numRuns: runs, a value that can't be read (line 11)"])
+  })
+  test('added settings that don\'t loosen', () => {
+    for (const line of ['retries: 0,', 'retry: 0', 'retry: () => run(),', 'retry: async () => {},', 'fc.assert(p, { numRuns: 100 })', 'numRuns: 300', 'timeout: 9000', 'lowStockThreshold: 5,', "shouldRetry: true", 'infra_retries: 3,', 'infra_retries: number', 'timeout: number;',
+      '    const retry = toolOf(await ask(convo))', 'let timeout = setTimeout(fn)']) {
+      expect(laneOf([file(spec, { patch: hunk([], [line]) })]), line).toBe('Lane 3')
+    }
+  })
+  test('product code never counts (E)', () => {
+    for (const [before, after] of [['const MAX_INFRA_RETRIES = 2', 'const MAX_INFRA_RETRIES = 3'], ['busy_timeout: 5000', 'busy_timeout: 30000'], [null, 'maxDiffPixels: 9']]) {
+      for (const path of ['app/server/do/x.ts', 'app/src/a.ts', 'app/runner/src/run.ts']) {
+        expect(classify({ files: [file(path, { patch: hunk(before ? [before] : [], [after]) })] }).lane4, `${path}: ${after}`).toEqual([])
+      }
+    }
+  })
+  test('configs and test folders count', () => {
+    for (const path of ['app/playwright.config.ts', 'app/vitest.config.ts', 'app/hub/connectors/slack/testing/kit.ts', 'app/test/upstreams/x.ts', 'app/e2e/support/fx.ts', 'app/tsconfig.json']) {
+      expect(classify({ files: [file(path, { patch: hunk(['timeout: 5'], ['timeout: 50']) })] }).lane4.map(i => i.reason), path).toContain('check-weakening: timeout raised from 5 to 50 (line 11)')
+    }
+  })
   test('a removed and an added setting in different hunks are not paired', () => {
     const patch = '@@ -1,2 +1,1 @@\n a\n-timeout: 5000\n@@ -50,1 +49,2 @@\n b\n+timeout: 9000'
-    expect(laneOf([file('app/src/a.ts', { patch })])).toBe('Lane 1/2')
+    expect(laneOf([file(spec, { patch })])).toBe('Lane 3')
   })
   test('two settings with the same key pair in order', () => {
-    expect(reasons([file('a.ts', { patch: hunk(['timeout: 10', 'timeout: 50'], ['timeout: 20', 'timeout: 50']) })])).toEqual(['check-weakening: timeout raised from 10 to 20 (line 11)'])
+    expect(reasons([file(spec, { patch: hunk(['timeout: 10', 'timeout: 50'], ['timeout: 20', 'timeout: 50']) })])).toEqual(['check-weakening: timeout raised from 10 to 20 (line 11)'])
+  })
+  test('evaluate reads numbers and products, and nothing else', () => {
+    expect([evaluate('60_000'), evaluate('60 * 1000'), evaluate('2*60*1_000'), evaluate('(5) * 2'), evaluate('1e3'), evaluate('0.5')]).toEqual([60000, 60000, 120000, 10, 1000, 0.5])
+    for (const e of ['T', 'T * 2', '60 + 1', 'Number(x)', '', '1 /2', '-1']) expect(evaluate(e), e).toBe(null)
   })
   test('property: any raise of a loosening key is flagged, any fall is not (the reverse for numRuns)', () => {
-    const key = fc.constantFrom('timeout', 'testTimeout', 'retries', 'maxDiffPixels', 'maxDiffPixelRatio', 'threshold', 'numRuns')
-    fc.assert(fc.property(key, fc.nat(1_000_000), fc.nat(1_000_000), fc.constantFrom(':', ' =', ': '), (k, a, b, sep) => {
+    const key = fc.constantFrom('timeout', 'testTimeout', 'retries', 'retry', 'maxDiffPixels', 'maxDiffPixelRatio', 'threshold', 'numRuns')
+    fc.assert(fc.property(key, fc.nat(1_000_000), fc.nat(1_000_000), fc.constantFrom(':', ' =', ': '), fc.boolean(), (k, a, b, sep, product) => {
       fc.pre(a !== b)
-      const r = classify({ files: [file('app/src/x.ts', { patch: hunk([`  ${k}${sep} ${a},`], [`  ${k}${sep} ${b},`]) })] })
+      const v = n => (product ? `${n} * 1` : `${n}`)
+      const r = classify({ files: [file(spec, { patch: hunk([`  ${k}${sep} ${v(a)},`], [`  ${k}${sep} ${v(b)},`]) })] })
       const loosened = k === 'numRuns' ? b < a : b > a
       expect(r.lane === 'Lane 4').toBe(loosened)
     }))
+  })
+})
+
+describe('net loss of tests', () => {
+  const t = (path, removed, addedLines) => file(path, { patch: hunk(removed, addedLines) })
+  test('more test, it and describe declarations removed than added is Lane 4', () => {
+    const r = classify({ files: [t('app/src/a.test.ts', ["test('a', () => {})", "it('b', () => {})"], ["test('a', () => {})"])] })
+    expect(r.lane4).toEqual([{ path: NET_LOSS_PATH, reason: 'check-weakening: net loss of tests (2 test, it or describe declarations removed, 1 added)' }])
+  })
+  test('tests moved between files net out', () => {
+    expect(laneOf([t('app/src/a.test.ts', ["test('a', fn)", "describe('s', fn)"], []), t('app/src/b.test.ts', [], ["test('a', fn)", "test.describe('s', fn)"])])).toBe('Lane 1/2')
+  })
+  test('a test rewritten in place is not a loss', () => expect(laneOf([t('app/e2e/a.spec.ts', ["test('a', async ({ page }) => {"], ["test('a, renamed', async ({ page }) => {"])])).toBe('Lane 3'))
+  test('only test files count', () => expect(laneOf([t('docs/a.md', ["test('a', fn)", "test('b', fn)"], [])])).toBe('Lane 1/2'))
+  test('turning a test into a skipped one is a loss (and a skip)', () => {
+    expect(reasons([t('app/src/a.test.ts', ["it('a', fn)"], ["it.skip('a', fn)"])])).toEqual([
+      'check-weakening: adds a skipped test or suite (.skip) (line 11)',
+      'check-weakening: net loss of tests (1 test, it or describe declarations removed, 0 added)',
+    ])
   })
 })
 
@@ -324,18 +443,30 @@ describe('ledger items', () => {
     }
     expect(classify({ files: [file('app/server/routes.test.ts')] }).ledger).toEqual([])
   })
-  test('a new write op is a ledger item; a changed one is only Lane 3', () => {
+  test('a new or changed write op is a ledger item; its tests are not', () => {
     expect(classify({ files: [added('app/hub/connectors/shopify/write/refund.ts', ['x'])] }).ledger).toEqual([{ path: 'app/hub/connectors/shopify/write/refund.ts', reason: 'new write op' }])
-    const changed = classify({ files: [file('app/hub/connectors/shopify/write/core.ts')] })
-    expect([changed.lane, changed.ledger]).toEqual(['Lane 3', []])
+    expect(classify({ files: [file('app/hub/connectors/shopify/write/core.ts')] }).ledger).toEqual([{ path: 'app/hub/connectors/shopify/write/core.ts', reason: 'write op change' }])
+    expect(classify({ files: [file('app/hub/connectors/shopify/write/core.ts', { status: 'removed' })] }).ledger[0].reason).toBe('write op change')
+    expect(classify({ files: [added('app/server/outbox/operations/refund.ts', ['x'])] }).ledger).toEqual([{ path: 'app/server/outbox/operations/refund.ts', reason: 'new write op' }])
+    expect(classify({ files: [file('app/server/outbox/operations/slack-channel-post.ts')] }).ledger[0].reason).toBe('write op change')
+    for (const path of ['app/hub/connectors/shopify/write/core.test.ts', 'app/server/outbox/operations/operations.test.ts', 'app/hub/connectors/x/write/testing/kit.ts']) {
+      expect(classify({ files: [file(path)] }).ledger, path).toEqual([])
+    }
+    expect(classify({ files: [file('app/server/outbox/dispatch.ts')] }).ledger).toEqual([])
   })
   test('a changed existing migration is Lane 4, and so is a removed or moved one', () => {
     expect(reasons([file('app/server/migrations/0730_outbox.sql')])).toContain('irreversible: changes or removes an existing migration')
     expect(laneOf([file('app/server/migrations/0730_outbox.sql', { status: 'removed' })])).toBe('Lane 4')
     expect(laneOf([file('app/server/migrations/0731_outbox.sql', { status: 'renamed', previous_filename: 'app/server/migrations/0730_outbox.sql' })])).toBe('Lane 4')
   })
-  test.each(['DROP TABLE x;', 'ALTER TABLE x DROP COLUMN y;', 'ALTER TABLE x RENAME TO y;', 'ALTER TABLE x RENAME COLUMN a TO b;', 'delete from x where 1;'])('a new migration with %s is Lane 4', sql => {
-    expect(reasons([added('app/server/migrations/0750_x.sql', ['CREATE TABLE z (id TEXT);', sql])])).toEqual(['irreversible: a non-additive migration statement (line 2)'])
+  test.each([
+    'DROP TABLE x;', 'ALTER TABLE x DROP COLUMN y;', 'ALTER TABLE x RENAME TO y;', 'ALTER TABLE x RENAME COLUMN a TO b;', 'delete from x where 1;',
+    "UPDATE x SET a = 'b';", '  DROP INDEX i;', 'REFERENCES y(id) ON DELETE CASCADE',
+  ])('a new migration with %s is Lane 4', sql => {
+    expect(reasons([added('app/server/migrations/0750_x.sql', ['CREATE TABLE z (id TEXT);', sql])])).toEqual(['irreversible: non-additive migration (line 2)'])
+  })
+  test('the rule covers every file under migrations, not only .sql', () => {
+    expect(reasons([added('app/server/migrations/README.txt', ['UPDATE rows by hand'])])).toContain('irreversible: non-additive migration (line 1)')
   })
   test('a SQL comment that mentions DROP is not', () => expect(laneOf([added('app/server/migrations/0750_x.sql', ['-- never DROP TABLE x here', 'CREATE TABLE y (id TEXT);'])])).toBe('Lane 3'))
 })
@@ -351,7 +482,59 @@ describe('egress hosts', () => {
   })
   test('a host moved between lines is not new', () => expect(egress(["  'api.stripe.com', 'b.example.com',"], ["  'api.stripe.com',", "  'b.example.com',"])).toEqual([]))
   test('a host in an egress test is not an egress host', () => expect(egress([], ["  'evil.example.com',"], 'app/server/egress/deny.test.ts')).toEqual([]))
-  test('a host outside egress is not a ledger item', () => expect(egress([], ["  'api.stripe.com',"], 'app/server/other/x.ts')).toEqual([]))
+  test('a host outside egress code is not a ledger item', () => expect(egress([], ["  'api.stripe.com',"], 'app/server/other/x.ts')).toEqual([]))
+  test('hub connectors are egress code too', () => {
+    expect(egress([], ["    allowedHosts: ['mcp.slack.com', 'slack.com', 'files.slack.com'],"], 'app/hub/connectors/mcp/slack/route.ts')).toEqual([
+      { path: 'app/hub/connectors/mcp/slack/route.ts', reason: 'adds an egress host: files.slack.com, mcp.slack.com, slack.com' },
+      { path: 'app/hub/connectors/mcp/slack/route.ts', reason: 'changes a host list line (allowedHosts, hosts or HOSTS)' },
+    ])
+    expect(egress(["export const SLACK_API_HOSTS = ['slack.com'] as const"], ["export const SLACK_API_HOSTS = ['slack.com', 'files.slack.com'] as const"], 'app/hub/connectors/slack/web.ts'))
+      .toEqual([
+        { path: 'app/hub/connectors/slack/web.ts', reason: 'adds an egress host: files.slack.com' },
+        { path: 'app/hub/connectors/slack/web.ts', reason: 'changes a host list line (allowedHosts, hosts or HOSTS)' },
+      ])
+  })
+  test('a host list line that changes without a literal host is a ledger item', () => {
+    for (const line of ['    allowedHosts: [NOTES_HOST, OTHER_HOST],', '  if (mcp.hosts.includes(url.host)) return x', 'const HOSTS = [...base, extra]']) {
+      expect(egress([], [line], 'app/hub/connectors/mcp/client.ts'), line).toEqual([{ path: 'app/hub/connectors/mcp/client.ts', reason: 'changes a host list line (allowedHosts, hosts or HOSTS)' }])
+    }
+    expect(egress(['    allowedHosts: [A, B],'], ['    allowedHosts: [A],'], 'app/server/egress/x.ts')).toHaveLength(1)
+  })
+  test('connector tests and testing kits are not egress code', () => {
+    expect(egress([], ["  allowedHosts: ['evil.example.com'],"], 'app/hub/connectors/mcp/slack/route.test.ts')).toEqual([])
+    expect(egress([], ["  allowedHosts: ['evil.example.com'],"], 'app/hub/connectors/slack/testing/kit.ts')).toEqual([])
+  })
+})
+
+describe('Dockerfiles: install lines are a dependency change', () => {
+  const docker = (patch, path = 'app/runner/Dockerfile') => classify({ files: [file(path, { patch })] }).lane4.map(i => i.reason)
+  const DEP = 'dependency change: a Dockerfile install line'
+  test.each([
+    ['RUN npm ci --no-audit --no-fund', 'RUN npm ci --no-audit --no-fund --ignore-scripts'],
+    ['RUN apt-get update && apt-get install -y curl', 'RUN apt-get update && apt-get install -y curl git'],
+    [null, 'RUN apk add --no-cache git'],
+    [null, 'RUN pip install requests'],
+    [null, 'RUN pip3 install requests'],
+    ['RUN npm install -g x', null],
+  ])('%s -> %s is Lane 4', (before, after) => {
+    expect(docker(hunk(before ? [before] : [], after ? [after] : []))).toEqual([DEP])
+  })
+  test('a package added on a continuation line of an install', () => {
+    const patch = '@@ -25,4 +25,5 @@\n RUN apt-get update \\\n   && apt-get install -y --no-install-recommends \\\n     ca-certificates \\\n+    git \\\n     curl'
+    expect(docker(patch)).toEqual([DEP])
+  })
+  test('a hunk that starts inside an instruction it can\'t see is flagged', () => {
+    expect(docker('@@ -30,2 +30,3 @@\n     curl \\\n+    git \\\n     jq')).toEqual([DEP])
+  })
+  test('other instructions are not', () => {
+    expect(docker(hunk(['ENV A=1'], ['ENV A=2']))).toEqual([])
+    expect(docker(hunk(['RUN chown -R root:root /opt/runner'], ['RUN chown -R root:root /opt/runner /opt/x']))).toEqual([])
+    expect(docker('@@ -1,3 +1,3 @@\n RUN npm ci\n-COPY a b\n+COPY a c')).toEqual([])
+  })
+  test('any Dockerfile counts, but not .dockerignore', () => {
+    expect(docker(hunk([], ['RUN npm ci']), 'app/hub/Dockerfile.test')).toEqual([DEP])
+    expect(docker(hunk([], ['npm ci']), 'app/runner/Dockerfile.dockerignore')).toEqual([])
+  })
 })
 
 describe('files the API gives no diff for', () => {
@@ -375,6 +558,12 @@ describe('the approval label', () => {
     const r = classify({ files: lane4 })
     expect([r.pass, r.approval]).toEqual([false, 'missing'])
     expect(r.failures[0]).toContain(`add the ${APPROVAL_LABEL} label`)
+  })
+  test('the label without a line naming the head fails, and says what to add', () => {
+    const r = classify({ files: lane4, labels: [APPROVAL_LABEL], approvalNeedsLine: true })
+    expect([r.pass, r.approval]).toEqual([false, 'no approved head named'])
+    expect(r.failures[0]).toBe('add the line `wasim-approved: <sha>` naming the approved head (in a PR comment made at or after the label)')
+    expect(classify({ files: lane4, labels: [APPROVAL_LABEL] }).approval).toBe('no approved head named')
   })
   test('the label on the same head passes', () => {
     const r = classify({ files: lane4, labels: [APPROVAL_LABEL], approvedDeltaFiles: [] })
@@ -408,10 +597,9 @@ describe('the approval label', () => {
     const moved = file('app/scripts/b.mjs', { status: 'renamed', previous_filename: 'app/scripts/a.mjs' })
     expect(classify({ files: [...lane4, file('app/scripts/b.mjs')], labels: [APPROVAL_LABEL], approvedDeltaFiles: [moved] }).approval).toBe('stale')
   })
-  test('no approval record is stale, with the reason', () => {
-    expect(classify({ files: lane4, labels: [APPROVAL_LABEL], approvalProblem: 'the branch was force-pushed after the label was added' }).failures[0])
-      .toBe('approval is stale: the branch was force-pushed after the label was added; ask Wasim again and re-add the label')
-    expect(classify({ files: lane4, labels: [APPROVAL_LABEL] }).approval).toBe('stale')
+  test('an approval problem is stale, with the reason', () => {
+    expect(classify({ files: lane4, labels: [APPROVAL_LABEL], approvalProblem: 'the base branch changed after the label was added' }).failures[0])
+      .toBe('approval is stale: the base branch changed after the label was added; ask Wasim again and re-add the label')
   })
   test('no Lane 4 item: the label is not needed', () => {
     expect(classify({ files: [file('app/src/a.ts')] }).approval).toBe('not needed')
@@ -419,38 +607,66 @@ describe('the approval label', () => {
   })
 })
 
-describe('approvedHead: the head when the label was added', () => {
-  const commits = [
-    { sha: 'a', pushedAt: '2026-11-27T10:00:00Z' },
-    { sha: 'b', pushedAt: null },
-    { sha: 'c', pushedAt: '2026-11-27T11:00:00Z' },
-    { sha: 'd', pushedAt: '2026-11-27T13:00:00Z' },
-  ]
-  test('the newest commit pushed before the label', () => expect(approvedHead({ labeledAt: '2026-11-27T12:00:00Z', commits })).toEqual({ sha: 'c' }))
-  test('a commit pushed at the same second counts', () => expect(approvedHead({ labeledAt: '2026-11-27T11:00:00Z', commits })).toEqual({ sha: 'c' }))
-  test('inner commits of a push (no push time) are skipped', () => expect(approvedHead({ labeledAt: '2026-11-27T10:30:00Z', commits })).toEqual({ sha: 'a' }))
-  test('a commit made before the label but pushed after is not approved', () => {
-    expect(approvedHead({ labeledAt: '2026-11-27T12:00:00Z', commits: [{ sha: 'a', pushedAt: '2026-11-27T13:00:00Z' }] }).problem).toMatch(/no commit/)
+describe('approvedHead: the head a wasim-approved line names', () => {
+  const A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  const B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  const C = 'cccccccccccccccccccccccccccccccccccccccc'
+  const commitShas = [A, B]
+  const say = (body, at, association = 'MEMBER') => ({ body, at, author_association: association })
+  const labeledAt = '2026-11-27T12:00:00Z'
+  test('the SHA on a trusted line made after the label', () => {
+    expect(approvedHead({ labeledAt, commitShas, comments: [say(`Wasim said yes in chat.\n\nwasim-approved: ${A}`, '2026-11-27T12:05:00Z')] })).toEqual({ sha: A })
   })
-  test('no label time', () => expect(approvedHead({ labeledAt: null, commits }).problem).toMatch(/no record/))
-  test('a force-push after the label', () => {
-    expect(approvedHead({ labeledAt: '2026-11-27T12:00:00Z', forcePushedAt: ['2026-11-27T12:30:00Z'], commits }).problem).toBe('the branch was force-pushed after the label was added')
+  test('a line made at the same second as the label counts', () => {
+    expect(approvedHead({ labeledAt, commitShas, comments: [say(`wasim-approved: ${A}`, labeledAt)] })).toEqual({ sha: A })
   })
-  test('a force-push before the label is fine', () => {
-    expect(approvedHead({ labeledAt: '2026-11-27T12:00:00Z', forcePushedAt: ['2026-11-27T09:00:00Z'], commits })).toEqual({ sha: 'c' })
+  test('the latest line wins', () => {
+    const comments = [say(`wasim-approved: ${B}`, '2026-11-27T12:30:00Z'), say(`wasim-approved: ${A}`, '2026-11-27T12:10:00Z')]
+    expect(approvedHead({ labeledAt, commitShas, comments })).toEqual({ sha: B })
+  })
+  test('upper-case hex, and list or emphasis marks, are fine', () => {
+    expect(approvedHead({ labeledAt, commitShas, comments: [say(`- **wasim-approved: ${A.toUpperCase()}**`, '2026-11-27T12:05:00Z')] })).toEqual({ sha: A })
+  })
+  test('no line, or only lines that don\'t count, needs a line', () => {
+    const ignored = [
+      say(`wasim-approved: ${A}`, '2026-11-27T11:59:59Z'),
+      say(`wasim-approved: ${A}`, '2026-11-27T12:05:00Z', 'NONE'),
+      say(`> wasim-approved: ${A}`, '2026-11-27T12:05:00Z'),
+      say(`I'd write wasim-approved: ${A}`, '2026-11-27T12:05:00Z'),
+      say(`wasim-approved: ${A.slice(0, 12)}`, '2026-11-27T12:05:00Z'),
+      say(`wasim-approved: ${A}0`, '2026-11-27T12:05:00Z'),
+      say(`wasim-approved: ${A}`, null),
+    ]
+    expect(approvedHead({ labeledAt, commitShas, comments: ignored })).toEqual({ needsLine: true })
+  })
+  test('a SHA that is not a commit in the PR is a problem', () => {
+    expect(approvedHead({ labeledAt, commitShas, comments: [say(`wasim-approved: ${C}`, '2026-11-27T12:05:00Z')] }).problem).toBe("the approved SHA cccccccccccc isn't a commit in this PR")
+  })
+  test('a base change after the label is a problem; before it is fine', () => {
+    const comments = [say(`wasim-approved: ${A}`, '2026-11-27T12:05:00Z')]
+    expect(approvedHead({ labeledAt, commitShas, comments, baseChangedAt: ['2026-11-27T12:30:00Z'] }).problem).toBe('the base branch changed after the label was added')
+    expect(approvedHead({ labeledAt, commitShas, comments, baseChangedAt: ['2026-11-27T09:00:00Z'] })).toEqual({ sha: A })
+  })
+  test('no label time', () => expect(approvedHead({ labeledAt: null, commitShas }).problem).toMatch(/no record/))
+  test('more commits than the API lists fails closed (J)', () => {
+    const comments = [say(`wasim-approved: ${A}`, '2026-11-27T12:05:00Z')]
+    expect(approvedHead({ labeledAt, commitShas, comments, commitCount: 251 }).problem)
+      .toBe("the PR has 251 commits but the API lists only 2, so the approved SHA can't be checked")
+    expect(approvedHead({ labeledAt, commitShas, comments, commitCount: 2 })).toEqual({ sha: A })
   })
 })
 
 describe('Gate check lines', () => {
   test.each([
-    'Gate check: on ledger', '> Gate check: on ledger', '- Gate check: on ledger (M2 ledger rows 3, 4)', '**Gate check: on ledger**',
+    'Gate check: on ledger', '- Gate check: on ledger (M2 ledger rows 3, 4)', '**Gate check: on ledger**',
     '  gate check: ON LEDGER', 'Verdict: approve\r\n\r\nGate check: on ledger',
   ])('%j counts', body => expect(gateChecks([trusted(body)]).on).toBe(1))
-  test.each(['I say Gate check: on ledger', 'Gate check: on ledgers', 'Gate check: onledger', 'Gate check:'])('%j does not count', body => {
+  test.each(['I say Gate check: on ledger', 'Gate check: on ledgers', 'Gate check: onledger', 'Gate check:', '> Gate check: on ledger', '  > Gate check: on ledger', '>Gate check: on ledger'])('%j does not count', body => {
     expect(gateChecks([trusted(body)]).on).toBe(0)
   })
   test('two lines in one comment count once', () => expect(gateChecks([trusted('Gate check: on ledger\nGate check: on ledger')]).on).toBe(1))
   test('off ledger', () => expect(gateChecks([trusted('Gate check: off ledger')])).toEqual({ on: 0, off: true }))
+  test('a quoted off-ledger line does not count either', () => expect(gateChecks([trusted('> Gate check: off ledger')])).toEqual({ on: 0, off: false }))
 })
 
 describe('the report', () => {
@@ -462,16 +678,20 @@ describe('the report', () => {
     expect(text).toContain('- `.github/workflows/ci.yml`: the referee: CI workflows and repo settings')
     expect(text).toContain('- `app/server/migrations/0750_x.sql`: new migration')
     expect(text).toContain('- `app/e2e/a.spec.ts`')
-    expect(text).toContain('### Approval (wasim-approved)\n- missing')
+    expect(text).toContain('### Approval (the wasim-approved label plus a `wasim-approved: <sha>` line)\n- missing')
+    expect(report(r, { approvedSha: 'abcdef0123456789' })).toContain('- approved head: `abcdef012345`')
     expect(text).not.toContain('—')
   })
 })
 
 test('parsePatch tracks new-file line numbers across hunks', () => {
-  expect(parsePatch('@@ -1,2 +1,3 @@\n a\n+b\n-c\n+d\n\\ No newline at end of file\n@@ -9 +10 @@\n+e')).toEqual([
+  const hunks = parsePatch('@@ -1,2 +1,3 @@\n a\n+b\n-c\n+d\n\\ No newline at end of file\n@@ -9 +10 @@\n+e')
+  expect(hunks.map(h => ({ added: h.added, removed: h.removed }))).toEqual([
     { added: [{ line: 2, text: 'b' }, { line: 3, text: 'd' }], removed: ['c'] },
     { added: [{ line: 10, text: 'e' }], removed: [] },
   ])
+  expect(hunks[0].lines).toEqual([{ line: 1, text: 'a', added: false }, { line: 2, text: 'b', added: true }, { line: 3, text: 'd', added: true }])
+  expect(hunks[0].old).toEqual([{ text: 'a', removed: false }, { text: 'c', removed: true }])
 })
 
 describe('properties', () => {
@@ -515,11 +735,11 @@ describe('properties', () => {
       expect(laneOf([file(path, { patch: hunk([], [`${pre} ${pattern} ${post}`]) })])).toBe('Lane 4')
     }))
   })
-  test('a condition then reason strings is never check-weakening', () => {
-    const ident = fc.stringMatching(/^[a-z][a-zA-Z0-9]{0,8}$/).filter(s => s !== 'true')
+  test('a condition then at most one reason is never check-weakening', () => {
+    const ident = fc.stringMatching(/^[a-z][a-zA-Z0-9]{0,8}$/).filter(s => !['true', 'false', 'null', 'undefined'].includes(s))
     const cond = fc.oneof(ident, ident.map(s => `!${s}`), fc.tuple(ident, ident).map(([a, b]) => `${a}(${b}) && !${b}.x`), ident.map(s => `process.env.${s.toUpperCase()}`))
     const reason = fc.stringMatching(/^[a-z ]{0,20}$/).map(s => `'${s}'`)
-    fc.assert(fc.property(fc.constantFrom('test.skip', 'test.fixme', 'it.skipIf', 'test.describe.skip'), cond, fc.array(reason, { maxLength: 2 }), (call, c, rs) => {
+    fc.assert(fc.property(fc.constantFrom('test.skip', 'test.fixme', 'it.skipIf', 'test.describe.skip'), cond, fc.array(fc.oneof(reason, ident), { maxLength: 1 }), (call, c, rs) => {
       expect(laneOf([file('app/e2e/a.spec.ts', { patch: hunk([], [`  ${call}(${[c, ...rs].join(', ')})`]) })])).toBe('Lane 3')
     }))
   })
