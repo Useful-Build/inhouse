@@ -56,7 +56,9 @@ test('the Inhouse team and admins read every operation; a member is refused', as
 
 test('an admin and a member are refused a change, and nothing changes', async ({ request }) => {
   const before = await rowOf(request, OP)
-  for (const who of [admin, member]) expectError(await put(request, who, OP, { ...values(), ifRev: before.rev }), 403, 'forbidden')
+  // A technical route: an admin reads it, so a write is refused as read-only; a member is refused outright.
+  expectError(await put(request, admin, OP, { ...values(), ifRev: before.rev }), 403, 'forbidden', 'admin_read_only')
+  expectError(await put(request, member, OP, { ...values(), ifRev: before.rev }), 403, 'forbidden')
   expect(await rowOf(request, OP)).toEqual(before)
 })
 
