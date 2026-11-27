@@ -156,7 +156,7 @@ test('a batch answer must name what it saw: stale totals are 409 `totals_changed
   const bare = await call(request, dana, 'POST', `/api/actions/${b!.id}/answer`, { json: { choice: 'approve', ifRev: b!.rev } })
   expect(bare.status, bare.text).toBe(400)
   const denied = await call(request, dana, 'POST', `/api/actions/${b!.id}/answer`, {
-    json: { choice: 'deny', ifRev: b!.rev, upTo: b!.batch!.itemCount, totals: b!.batch!.totals },
+    json: { choice: 'deny', ifRev: b!.rev, upTo: b!.batch!.itemCount, totals: { records: b!.batch!.totals.records, units: b!.batch!.totals.units } },
   })
   expect(denied.status, denied.text).toBe(200)
   // A single action has no list: `approval_request` (ask only) always makes a single card, whatever the permission.

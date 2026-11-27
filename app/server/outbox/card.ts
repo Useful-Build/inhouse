@@ -51,7 +51,9 @@ export function cardOf(row: OutboxActionRow, viewer: Viewer, nowMs: number, batc
   const kind = kindOf(row)
   const reason = row.lapsed_reason as LapseReason | null
   const lapsed = reason === null ? undefined
-    : row.state === 'withdrawn' ? WITHDRAWN_TEXT[reason] ?? (row.kind === 'batch' ? batchMovedText(LAPSE_TEXT[reason]) : undefined)
+    // #507: only a batch left with no item (every one moved on when it stopped) says its changes moved; a moved card its
+    // asker then withdrew keeps its items and says nothing of the sort.
+    : row.state === 'withdrawn' ? WITHDRAWN_TEXT[reason] ?? (row.kind === 'batch' && row.items_n === 0 ? batchMovedText(LAPSE_TEXT[reason]) : undefined)
       : row.state === 'waiting' || row.state === 'expired' ? LAPSE_TEXT[reason] : undefined
   const result = resultText(row)
   return ActionCardSchema.parse({

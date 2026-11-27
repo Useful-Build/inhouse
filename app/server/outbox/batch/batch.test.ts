@@ -310,6 +310,12 @@ describe('sending (failure 3)', () => {
     const line = await db.prepare("SELECT args_json FROM audit_log WHERE action = 'action.lapsed' AND target_id = ?").bind(b.id).first<{ args_json: string }>()
     expect(JSON.parse(line!.args_json)).toEqual({ actionId: b.id, reason: 'over_ceiling', released: false })
     expect(r.notices).toEqual([expect.objectContaining({ actionId: rest!.id, body: expect.stringMatching(/^0 of 3 went out before this stopped/) })])
+    // #507: the new card, withdrawn by its asker, keeps its items and doesn't claim they moved on.
+    const withdrawn = await outbox(db, clock).withdraw({ kind: 'member', actor: ME }, rest!.id, { ifRev: rest!.rev })
+    if (!('action' in withdrawn)) throw new Error(`withdraw refused: ${withdrawn.refused.code}`)
+    expect(withdrawn.action).toMatchObject({ state: 'withdrawn', lapsed_reason: 'over_ceiling', items_n: 3 })
+    const [card] = await cardsOf(db, [withdrawn.action], ME, now)
+    expect(card!.lapsed).toBeUndefined()
   })
 
   it('a deleted chat mid-batch withdraws what is left, with no notice', async () => {
