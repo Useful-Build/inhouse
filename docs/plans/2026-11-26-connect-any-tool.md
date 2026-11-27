@@ -337,9 +337,9 @@ Also done 2026-11-26, outside the master plan:
 These fold into M4's own slices; M4 sets the order. Each is checkable on its own.
 
 1. **Detect and plain reasons.** No token handling changes. Checklist 1 and 4.
-2. **Exceptions and renewal**, with M4's client swap. Checklist 2, 3 and 10. High tier (it touches `app/hub/signin/`).
-3. **API key path and the credential step.** Checklist 5 and 8. High tier (routes, the access matrix, `signin`,
-   `crypto`), so it needs Wasim's OK.
+2. **Exceptions and renewal**, with M4's client swap. Checklist 2, 3 and 10. Lane 4 (it touches `app/hub/signin/`).
+3. **API key path and the credential step.** Checklist 5 and 8. Lane 4 (`signin` and `crypto`, so it needs
+   Wasim's OK); its routes and access-matrix rows are ledger items (`REVIEW.md` §3).
 4. **Connection check and known-server settings.** Checklist 6 and 9.
 5. **Connector kit and one fixture connector.** Checklist 7. Starts with a short proof of the guarded outbound call.
 

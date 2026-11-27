@@ -208,7 +208,7 @@ safer and simpler. Done wrong, new servers simply won't connect.
    a hub dependency, so the hub-isolation rule (no npm imports in code bundled into the hub from outside it) still
    holds.
 2. **Our client ID document**: one public HTTPS page describing Inhouse's client, served per brand account (the hub has
-   no public route, so it's served by the product Worker or a static path; decided in M4, High tier).
+   no public route, so it's served by the product Worker or a static path; decided in M4; Lane 3 with its route on the ledger, Lane 4 if it touches sign-in).
 3. **A runtime registry per brand** (D1): the server URL, its era, the login server's issuer, the tool snapshot with
    definition hashes and `ttlMs`, the confirmed read list, and reviewed operations. Today's compile-time registry
    (`app/hub/registry/registry.ts`) stays for Shopify, Slack and reviewed connectors.
