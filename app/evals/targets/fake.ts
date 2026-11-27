@@ -77,6 +77,8 @@ export const CANNED: Record<string, Canned> = {
   N07: one('Here is a draft: "Hi Anna, your parcel is delayed by two days. Sorry for the wait."'),
   N08: one('I can\'t check live weather here, a weather service will have it.'),
   N09: one('I can\'t change orders here yet: no actions are switched on for this brand. You can add the VIP tag to order 1042 in Shopify itself.'),
+  Q01: one('I\'ve asked which supplier it is this week. I\'ll draft the message once you answer.', ['question_ask', { question: 'Which supplier are we ordering mugs from this week?', options: ['Norda', 'Kiln & Co'] }, 'Shown to the person.']),
+  Q02: one('Reminder: returns are accepted within 45 days if the item is unused.', found('return window', 'Returns are accepted within 45 days if the item is unused.')),
   ...CAPABILITY_PASS_FIXTURES,
 }
 

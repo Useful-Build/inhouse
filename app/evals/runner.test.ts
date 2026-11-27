@@ -30,14 +30,14 @@ describe('the fake target, full set end to end', () => {
     for (const c of S5_SET.filter((x) => x.cat !== 'exfil')) expect(CANNED[c.id], c.id).toBeDefined()
   })
 
-  it('gives the report the canned transcripts dictate (54 cases x 3 reps, clean exfiltration; T07 and T08 parked)', async () => {
+  it('gives the report the canned transcripts dictate (56 cases x 3 reps, clean exfiltration; T07 and T08 parked)', async () => {
     const out = await runEvals({ target: createFakeTarget(), cases: S5_SET, reps: 3, concurrency: 4 })
     const report = buildReport(S5_SET, out.rows, META)
     // T07 (refund) and T08 (customer email) wait for a write operation that does them (M3): no target provides `write_set`.
     expect(out.notRun).toEqual([{ id: 'T07', needs: ['write_set'] }, { id: 'T08', needs: ['write_set'] }])
-    // 159 before M2-G added N09 (a change with no operation on).
-    expect(report.summary.all.runs).toBe(162)
-    expect(report.summary.all.pass).toBe(162 - declaredFailures.length * 3)
+    // 159 before M2-G added N09 (a change with no operation on); 162 before the routine question cases Q01 and Q02.
+    expect(report.summary.all.runs).toBe(168)
+    expect(report.summary.all.pass).toBe(168 - declaredFailures.length * 3)
     expect(report.summary.e2e).toMatchObject({ runs: 9, pass: 9 })
     expect(report.summary.exfil).toMatchObject({ runs: 36, pass: 36 })
     expect(report.exfiltration.bypasses).toEqual([])
@@ -76,10 +76,10 @@ describe('the fake target, full set end to end', () => {
 })
 
 describe('the fixture target replays S5', () => {
-  it('serves only the 41 S5 cases it can and reports the rest (the Slack case, the code-mode cases, the exfiltration cases, M2-G\'s N09, the parked T07 and T08) as not run', async () => {
+  it('serves only the 41 S5 cases it can and reports the rest (the Slack case, the code-mode cases, the exfiltration cases, M2-G\'s N09, the routine question cases Q01 and Q02, the parked T07 and T08) as not run', async () => {
     const out = await runEvals({ target: createFixtureTarget(), cases: CASES, reps: 3, concurrency: 3 })
     expect(out.rows).toHaveLength(132)
-    expect(out.notRun.map((n) => n.id).sort()).toEqual(['C-CODEMODE-01', 'C-CODEMODE-02', 'C-CODEMODE-03', 'C-CODEMODE-04', 'C-SLACK-01', 'CAP-01', 'CAP-02', 'CAP-03', 'N09', 'T07', 'T08', 'X01', 'X02', 'X03', 'X04', 'X05', 'X06', 'X07', 'X08', 'X09', 'X10', 'X11', 'X12'])
+    expect(out.notRun.map((n) => n.id).sort()).toEqual(['C-CODEMODE-01', 'C-CODEMODE-02', 'C-CODEMODE-03', 'C-CODEMODE-04', 'C-SLACK-01', 'CAP-01', 'CAP-02', 'CAP-03', 'N09', 'Q01', 'Q02', 'T07', 'T08', 'X01', 'X02', 'X03', 'X04', 'X05', 'X06', 'X07', 'X08', 'X09', 'X10', 'X11', 'X12'])
     const report = buildReport(CASES, out.rows, META)
     // T09 and T11 (r1-r3) flip to fail: S5 recorded its own mock tools' inputs (to: [ids], schedule: "weekdays 06:00"),
     // and the cases now follow P4/P5's real schemas (to.members, days and time; line B), which S5 never served. T07 r1-r3
@@ -221,9 +221,9 @@ describe('budget, timeout and failures', () => {
     expect(buildReport(CASES, out.rows, META).exfiltration.notOk).toBe(2)
   })
 
-  it('estimates S5\'s price: about $0.011 a chat, $1.5 for the 43 x 3 set (plus M2-G\'s N09)', () => {
+  it('estimates S5\'s price: about $0.011 a chat, $1.5 for the 43 x 3 set (plus M2-G\'s N09 and the routine question cases Q01 and Q02)', () => {
     const s5 = S5_SET.filter((c) => c.cat !== 'exfil')
-    expect(estimateUsd(s5, 3)).toBeCloseTo(0.011 * 141, 9)
+    expect(estimateUsd(s5, 3)).toBeCloseTo(0.011 * 147, 9)
   })
 })
 
