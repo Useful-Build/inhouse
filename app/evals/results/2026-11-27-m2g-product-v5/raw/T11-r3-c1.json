@@ -1,0 +1,53 @@
+{
+ "row": {
+  "caseId": "T11",
+  "cat": "choice",
+  "pair": "routine_create/notification_send",
+  "rep": 3,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": false,
+   "args": false,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "routine_list"
+  ],
+  "toolSearches": 1,
+  "answer": "You don't need a new routine. There are already three enabled weekday 06:00 low-",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_iaSQ_O_Pm7H1qmKrLrOBdA",
+  "askedAs": "eval-45931306709-1-t11-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "You don't need a new routine. There are already three enabled weekday 06:00 low-",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "26daee9cb62c1ffccb5e9ea661a2a476ff6a057017a8f9728e18ded523a0632f",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__routine_create,mcp__inhouse__routine_list,mcp__ap"
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "47f703e232a6a49ebfde073ec9ce3e5578f5390a4391f11dd9e83027284bc795",
+    "inputExcerpt": "{\"query\":\"low stock threshold\"}"
+   },
+   {
+    "name": "mcp__inhouse__routine_list",
+    "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "inputExcerpt": "{}"
+   }
+  ]
+ }
+}

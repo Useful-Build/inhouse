@@ -25,11 +25,12 @@ const b64 = (bytes: Uint8Array) => {
  */
 export async function snapshotAll(db: D1Database, bucket: R2Bucket, opts: { logBodies?: boolean } = {}): Promise<Snapshot> {
   const names = (await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'd1_%' AND name NOT LIKE '_cf_%' ORDER BY name").all<{ name: string }>()).results
+  // Two batches, not two reads per table: a property snapshots every table a few times per case, and one round trip per
+  // statement made the snapshots most of its time (ops/retention's D1 cutoff property neared its timeout in CI).
   const d1: Snapshot['d1'] = {}
-  for (const { name } of names) {
-    const cols = (await db.prepare(`PRAGMA table_info(${name})`).all<{ cid: number }>()).results
-    d1[name] = (await db.prepare(`SELECT * FROM ${name} ORDER BY ${cols.map(c => c.cid + 1).join(', ')}`).all<Record<string, unknown>>()).results
-  }
+  const infos = names.length ? await db.batch<{ cid: number }>(names.map(({ name }) => db.prepare(`PRAGMA table_info(${name})`))) : []
+  const rows = names.length ? await db.batch<Record<string, unknown>>(names.map(({ name }, i) => db.prepare(`SELECT * FROM ${name} ORDER BY ${infos[i].results.map(c => c.cid + 1).join(', ')}`))) : []
+  names.forEach(({ name }, i) => { d1[name] = rows[i].results })
   const r2: Snapshot['r2'] = {}
   let cursor: string | undefined
   for (;;) {

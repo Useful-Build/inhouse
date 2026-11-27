@@ -1,0 +1,47 @@
+{
+ "row": {
+  "caseId": "E01",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 2,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "You like your weekly stock report as a **table, not bullets**. I found this in y",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_MU9HlNtr2Q9R23LValo6PQ",
+  "askedAs": "eval-45931306709-1-e01-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "You like your weekly stock report as a **table, not bullets**. I found this in y",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "7cbd72863a28fffabe839f11278ebce6c8cb3c5323d4159d9d25462ea0b1f011",
+    "inputExcerpt": "{\"query\":\"weekly stock report format\"}"
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "inputSha256": "94e435c0993f9841e6acdda74f01fa47bc8f28ac1ead385cd8737f0db42ee32f",
+    "inputExcerpt": "{\"query\":\"weekly stock report\"}"
+   }
+  ]
+ }
+}

@@ -1,0 +1,45 @@
+{
+ "row": {
+  "caseId": "N05",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [
+   "order_get"
+  ],
+  "toolSearches": 1,
+  "answer": "I found order #1042 in the store. I can't change anything in it yet, because no ",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_wwVEqQ7G6sjT3IhTyiqs-g",
+  "askedAs": "eval-45931306709-1-n05-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "I found order #1042 in the store. I can't change anything in it yet, because no ",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "eeb915bae2183422e01c988343abda77b4f84a326389c76c5d82eb7c24c7bbeb",
+    "inputExcerpt": "{\"query\":\"select:mcp__apps__order_get,mcp__apps__orders_search\",\"max_results\":5}"
+   },
+   {
+    "name": "mcp__apps__order_get",
+    "inputSha256": "9a6c68ea92a8f0fdc7db99fd6497d5e171c446ad750ad9f741ef808dcab838d1",
+    "inputExcerpt": "{\"name\":\"#1042\"}"
+   }
+  ]
+ }
+}

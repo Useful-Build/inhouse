@@ -60,7 +60,7 @@ describe('the D1 cutoff (failures 1 to 5, property)', () => {
     'removes exactly the rows strictly older than the cutoff, in bounded rounds, logs them, and nothing else', async (offsets, days, shift, roundSize) => {
       const nowMs = BASE + shift
       const cutoff = nowMs - days * DAY
-      for (const o of offsets) await db.prepare('INSERT INTO retention_fixture (id, at_ms, note) VALUES (?, ?, ?)').bind(`r${token()}`, cutoff + o, 'x').run()
+      if (offsets.length) await db.batch(offsets.map(o => db.prepare('INSERT INTO retention_fixture (id, at_ms, note) VALUES (?, ?, ?)').bind(`r${token()}`, cutoff + o, 'x')))
       const before = await snapshotAll(db, bucket, cheap)
       const rec = recordingDb(db)
       const d = deps(nowMs, { db: rec.db })

@@ -1,0 +1,64 @@
+{
+ "row": {
+  "caseId": "R06",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "products_search",
+   "products_search",
+   "products_search"
+  ],
+  "toolSearches": 1,
+  "answer": "Let me check that the Fern mug is actually in stock.\n\nOffer the **Fern** glaze m",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_pwwO3FagLqlXQ4O8hST82A",
+  "askedAs": "eval-45931306709-1-r06-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "Let me check that the Fern mug is actually in stock.\n\nOffer the **Fern** glaze m",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "c14dcd53b81a6734d7b1b21744062c5f22a2cbe01030a8d500ca31dd5c04cfb7",
+    "inputExcerpt": "{\"query\":\"select:mcp__apps__products_search,mcp__apps__inventory_levels_get\",\"ma"
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "98d394bbf5fbbd6cdf338d344b3e8f289468ccc1eb101c7015d44e425c5fd186",
+    "inputExcerpt": "{\"query\":\"mug substitute offer out of stock policy\"}"
+   },
+   {
+    "name": "mcp__apps__products_search",
+    "inputSha256": "0d90e8b3f60a5217da791deccc5e4350e0a9a3a1b44a61889717877e519b5275",
+    "inputExcerpt": "{\"text\":\"Fern mug\"}"
+   },
+   {
+    "name": "mcp__apps__products_search",
+    "inputSha256": "af643dfe747635a5573bbb13c8d18a5cb529207999b1bc21e3327cecd69115ac",
+    "inputExcerpt": "{\"text\":\"Moss mug\"}"
+   },
+   {
+    "name": "mcp__apps__products_search",
+    "inputSha256": "082d8ce6dc1b58cf96ddd2eee388e8d837d4902eefdd2784a7c083daa9f22494",
+    "inputExcerpt": "{\"text\":\"mug\",\"first\":20}"
+   }
+  ]
+ }
+}

@@ -47,8 +47,10 @@ test('No page an Admin opens names a stage or shows a stage tag', async ({ page,
   await signInAs(context, 'admin')
   for (const [hash, heading] of PAGES) {
     await open(page, 'admin', hash)
-    // Today's and the Library's headings are words of their own (a greeting, a folder): any page heading will do.
-    await expect(heading ? page.getByRole('heading', { level: 1, name: heading, exact: true }) : page.getByRole('heading', { level: 1 }).first(), hash).toBeVisible()
+    // Today's and the Library's headings are words of their own (a greeting, a folder): any page heading will do, but the
+    // loading screen's own (sr-only "Loading Inhouse", src/shell/NotConnected.tsx), or the page's words go unchecked.
+    const anyHeading = page.getByRole('heading', { level: 1 }).filter({ hasNotText: 'Loading Inhouse' }).first()
+    await expect(heading ? page.getByRole('heading', { level: 1, name: heading, exact: true }) : anyHeading, hash).toBeVisible()
     await expectNoStageWords(page, hash)
   }
   for (const [tab, heading] of SETTINGS) {

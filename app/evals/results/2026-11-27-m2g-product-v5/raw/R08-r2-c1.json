@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "R08",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "No. According to our saved brand policy, we never ship to PO boxes.\n\nIf a custom",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_m8MSp_t3ySYEvLv2q9FOOg",
+  "askedAs": "eval-45931306709-1-r08-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "No. According to our saved brand policy, we never ship to PO boxes.\n\nIf a custom",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "4d85fdd1d09127664a048d78d820a4938a6550fb05e2fae28a99c64ed6748aa7",
+    "inputExcerpt": "{\"query\":\"PO box shipping address policy\"}"
+   }
+  ]
+ }
+}

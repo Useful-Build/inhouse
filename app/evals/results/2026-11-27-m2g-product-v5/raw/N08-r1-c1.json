@@ -1,0 +1,46 @@
+{
+ "row": {
+  "caseId": "N08",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "noMcp": true
+  },
+  "called": [
+   "WebFetch"
+  ],
+  "toolSearches": 1,
+  "answer": "I can't look up the weather for you. Web access is switched off for this brand, ",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_rXEMwTP2aTPOrD8pvwYJuw",
+  "askedAs": "eval-45931306709-1-n08-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I can't look up the weather for you. Web access is switched off for this brand, ",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "8ef779e67bdca8e575461dd26589aebda5b38994bca4aaa82150fd1def313770",
+    "inputExcerpt": "{\"query\":\"select:WebFetch\",\"max_results\":1}"
+   },
+   {
+    "name": "WebFetch",
+    "inputSha256": "853c13fe12485804c3fef85f97ab8104328750a52da97477b66edce89a91988b",
+    "inputExcerpt": "{\"url\":\"wttr.in [url 38afac897fe3]\",\"prompt\":\"Give the forecast for 2026-11-28 i",
+    "hookDenied": true
+   }
+  ]
+ }
+}

@@ -15,14 +15,22 @@ import type { APIRequestContext } from '@playwright/test'
 import { JOB_CARRIED_ON_TEXT } from '../../shared/server-turn-text.ts'
 import { JOB_RUN_DONE, JOB_RUN_FILE, stepIdPrefix } from '../../test/scripted-model/scenarios/jobs.ts'
 import { Tab, createChat, needsContainer, send } from './chat-kit.ts'
-import { killRunners, resetJobTimings, setJobTimings } from './job-kit.ts'
+import { killRunners, observeAgent, resetJobTimings, setJobTimings } from './job-kit.ts'
 import { LOST_CALL, explainJob, jobNotices, jobWhen, onlyThePersonSpeaks, outputText, runToken, runnerGens, runningStep, stepsOf, storedJob, storedMessages } from './job-proof.ts'
 import { actor, call } from './kit.ts'
 
 const dana = actor('memberA')
 const release = actor('release')
 const JOB_CUT_MS = 150_000
+/** How long after the cut the BrandAgent is first observed: the wait before it stays a silent socket (see below). */
+const OBSERVE_AFTER_CUT_MS = 30_000
 test.describe.configure({ mode: 'serial' })
+
+// The kept overrides start clear (#460 review): a run that died before a `finally` can't leave a short cut for these.
+test.beforeAll(async ({ request }) => {
+  if (!process.env.E2E_TEST_BUILD_REMOTE) return
+  await resetJobTimings(request)
+})
 
 /** A job of the token chain, started by dana's message in a new chat. */
 async function startRun(request: APIRequestContext) {
@@ -45,18 +53,31 @@ async function runFinished(request: APIRequestContext, chatId: string) {
 test('a cut turn becomes a job that carries on with the tab closed, survives a killed container mid-step and ends with one result and one notice', async ({ request }) => {
   needsContainer()
   test.setTimeout(16 * 60_000)
+  const timingsSetAtMs = Date.now()
   await setJobTimings(request, { JOB_CUT_MS })
   try {
     const tab = await Tab.open(dana)
     const { chatId, text, sent, prefix } = await startRun(request)
     tab.attach(sent.runId)
+    // Until the cut is due the wait is a silent socket, as before #460, so the BrandAgent may still go idle and be rebuilt
+    // (the path the kept timings exist for). Only after it, route 67's observe is polled: its isolate, the timings in
+    // effect and the root's cut facts, printed with a failure so a cut that never came says why (#454 and #455).
+    const jobStarted = () => tab.frames(sent.runId).some(f => f.event.type === 'job.started')
+    const series: Record<string, unknown>[] = []
     try {
-      await tab.until(() => tab.frames(sent.runId).some(f => f.event.type === 'job.started'), 'the job started', 300_000)
+      await tab.until(jobStarted, 'the job started', JOB_CUT_MS + OBSERVE_AFTER_CUT_MS).catch(() => {})
+      await expect.poll(async () => {
+        series.push(await observeAgent(request, sent.turnId))
+        return jobStarted()
+      }, { timeout: 300_000 - JOB_CUT_MS - OBSERVE_AFTER_CUT_MS, intervals: [10_000], message: 'the job started' }).toBe(true)
     } catch (err) {
-      // Why it didn't start, printed with the failure (M2-G: #454's runs timed out here with no clue).
       console.log(`M1-D jobs: no job.started.\n${await explainJob(request, dana, { chatId, turnId: sent.turnId, frames: tab.frames(sent.runId) as never, prefix })}`)
+      console.log(`M1-D jobs: the BrandAgent, every 10 s after the cut:\n${series.map(o => JSON.stringify(o)).join('\n')}`)
       throw err
     }
+    // One line on success too: whether the BrandAgent was rebuilt while the job was awaited (its construct time after the
+    // timings were set), and the timings it read.
+    console.log(`M1-D jobs: the BrandAgent at job.started: ${JSON.stringify(series.at(-1) ?? await observeAgent(request, sent.turnId))}; timings set at ${timingsSetAtMs}`)
     const frames = tab.frames(sent.runId)
     const started = frames.find(f => f.event.type === 'job.started')!.event
     expect(started.rootTurnId).toBe(sent.turnId)
@@ -111,10 +132,18 @@ test('Cancel on a live turn stops it and ends the job: no later turn, one notice
   test.setTimeout(12 * 60_000)
   await setJobTimings(request, { JOB_CUT_MS })
   try {
-    const { chatId, text, prefix } = await startRun(request)
+    const { chatId, text, sent, prefix } = await startRun(request)
     const running = await jobWhen(request, dana, chatId, j => j.state === 'running', 'the job started', 300_000)
     const before = await stepsOf(request, prefix)
-    await runningStep(request, prefix, new Set(before.calls), 6 * 60_000)
+    try {
+      await runningStep(request, prefix, new Set(before.calls), 6 * 60_000)
+    } catch (err) {
+      // Why no continuation step was seen running (#460's agent-set run): the chat, the job, the steps and the
+      // BrandAgent's view of the root (its isolate, the timings in effect).
+      console.log(`M1-D jobs (Cancel live): no running step.\n${await explainJob(request, dana, { chatId, turnId: sent.turnId, frames: [], prefix })}`)
+      console.log(`M1-D jobs (Cancel live): the BrandAgent: ${JSON.stringify(await observeAgent(request, sent.turnId))}`)
+      throw err
+    }
     // Another person's Cancel is not found (the job is the chat owner's), and changes nothing: the job still runs.
     const other = await call(request, actor('memberB'), 'POST', `/api/jobs/${running.jobId}/cancel`)
     expect(other.status, other.text).toBe(404)

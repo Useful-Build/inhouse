@@ -240,6 +240,9 @@ describe('each rule fires on a broken copy', () => {
     return { ...FILES, [file]: FILES[file].replace(from, () => to) }
   }
   const job = (file, text) => ({ ...FILES, [file]: `${FILES[file].trimEnd()}\n\n${text}\n` })
+  // The deploy job's install, by its working directory: pr-code's has the same run line, in pr/app.
+  const MAIN_APP = '      - working-directory: main/app\n'
+  const MAIN_CI = `${MAIN_APP}        run: npm ci --ignore-scripts`
   const extra = body => `  extra:\n    runs-on: ubuntu-latest\n${body}\n    steps:\n      - run: echo`
   const newFile = body => ({ ...FILES, 'new.yml': `on:\n  pull_request_target:\njobs:\n${extra(body)}\n` })
   const prEnv = to => swap(DEPLOY, '          SBX_ZONE: ${{ secrets.SBX_ZONE }}\n        run: |\n          [ -n "$SBX_ZONE" ]', `          SBX_ZONE: ${to}\n        run: |\n          [ -n "$SBX_ZONE" ]`)
@@ -267,8 +270,8 @@ describe('each rule fires on a broken copy', () => {
     ['an environment through an alias', newFile('    env:\n      X: &e sandbox\n    environment: *e'), 'new.yml#extra: uses the sandbox environment'],
     ['deployment: false first and a comment between', newFile('    environment:\n      deployment: false\n      # a note\n      name: sandbox # here'), 'new.yml#extra: uses the sandbox environment'],
     ['an escaped environment key', newFile('    "\\x65nvironment": sandbox'), 'new.yml#extra: uses the sandbox environment'],
-    ['npm ci --ignore-scripts=false', swap(DEPLOY, '        run: npm ci --ignore-scripts', '        run: npm ci --ignore-scripts=false'), 'npm ci without --ignore-scripts'],
-    ['npm rebuild', swap(DEPLOY, '        run: npm ci --ignore-scripts', '        run: |\n          npm ci --ignore-scripts\n          npm rebuild'), 'a package script'],
+    ['npm ci --ignore-scripts=false', swap(DEPLOY, MAIN_CI, MAIN_APP + '        run: npm ci --ignore-scripts=false'), 'npm ci without --ignore-scripts'],
+    ['npm rebuild', swap(DEPLOY, MAIN_CI, MAIN_APP + '        run: |\n          npm ci --ignore-scripts\n          npm rebuild'), 'a package script'],
     ['an environment on check', swap(DEPLOY, '    permissions:\n      pull-requests: read\n', '    permissions:\n      pull-requests: read\n    environment:\n      url: https://x\n      name: sandbox\n'), 'deploy.yml#check: uses the sandbox environment'],
     ['(secrets).X in pr-code', prEnv('${{ (secrets).CF_SANDBOX_TOKEN }}'), 'pr-code: mentions secrets'],
     ['another secret in pr-code', prEnv('${{ secrets.OTHER }}'), 'pr-code: mentions secrets'],
@@ -280,13 +283,13 @@ describe('each rule fires on a broken copy', () => {
     ['|| true after the tripwire', swap(DEPLOY, 'runs only from main (this run: $REF)"; exit 1; }\n          [ "$ATTEMPT" = 1 ] || { echo "::error::dispatch again instead of re-running (attempt $ATTEMPT)"; exit 1; }\n      # Secrets', 'runs only from main (this run: $REF)"; exit 1; } || true\n          [ "$ATTEMPT" = 1 ] || { echo "::error::dispatch again instead of re-running (attempt $ATTEMPT)"; exit 1; }\n      # Secrets'), 'the first step isn\'t the exact main tripwire'],
     ['exit 0 in the cleanup\'s tripwire', swap(CLEANUP, 'cleanup runs only from main (this run: $REF)"; exit 1; }', 'cleanup runs only from main (this run: $REF)"; exit 0; }'), 'cleanup: the first step isn\'t the exact main tripwire'],
     ['continue-on-error on a later step', swap(DEPLOY, '      - working-directory: main/app\n        run: npm ci --ignore-scripts', '      - working-directory: main/app\n        continue-on-error: true\n        run: npm ci --ignore-scripts'), 'deploy: continue-on-error'],
-    ['git checkout of the PR', swap(DEPLOY, '        run: npm ci --ignore-scripts', '        run: git checkout "$SHA" && npm ci --ignore-scripts'), 'deploy: a git checkout of other code'],
+    ['git checkout of the PR', swap(DEPLOY, MAIN_CI, MAIN_APP + '        run: git checkout "$SHA" && npm ci --ignore-scripts'), 'deploy: a git checkout of other code'],
     ['docker run of the PR\'s image', swap(DEPLOY, '          zstd -dc "$RUNNER_TEMP/image/image.tar.zst" | docker load', '          zstd -dc "$RUNNER_TEMP/image/image.tar.zst" | docker load\n          docker run "inhouse-sbx-pr$PR:$SHA"'), 'running or building an image'],
     ['NODE_OPTIONS on the job', swap(DEPLOY, '      CONTAINERS: ${{ inputs.containers }}\n    steps:', '      CONTAINERS: ${{ inputs.containers }}\n      NODE_OPTIONS: --require ./x.js\n    steps:'), 'an environment variable that loads code'],
     ['contents: write', swap(DEPLOY, '    permissions:\n      contents: read\n      actions: read\n    env:', '    permissions:\n      contents: write\n      actions: read\n    env:'), 'a write permission'],
-    ['npm --prefix run', swap(DEPLOY, '        run: npm ci --ignore-scripts', '        run: npm ci --ignore-scripts && npm --prefix x run y'), 'a package script'],
-    ['a script from the artifact', swap(DEPLOY, '        run: npm ci --ignore-scripts', '        run: npm ci --ignore-scripts && node "$RUNNER_TEMP/artifact/x.mjs"'), 'a file from the artifact run'],
-    ['npm ci with scripts', swap(DEPLOY, '        run: npm ci --ignore-scripts', '        run: npm ci'), 'npm ci without --ignore-scripts'],
+    ['npm --prefix run', swap(DEPLOY, MAIN_CI, MAIN_APP + '        run: npm ci --ignore-scripts && npm --prefix x run y'), 'a package script'],
+    ['a script from the artifact', swap(DEPLOY, MAIN_CI, MAIN_APP + '        run: npm ci --ignore-scripts && node "$RUNNER_TEMP/artifact/x.mjs"'), 'a file from the artifact run'],
+    ['npm ci with scripts', swap(DEPLOY, MAIN_CI, MAIN_APP + '        run: npm ci'), 'npm ci without --ignore-scripts'],
     ['a PR-head checkout', swap(DEPLOY, '          path: main\n', '          path: main\n          ref: ${{ needs.check.outputs.sha }}\n'), 'checks out ${{ needs.check.outputs.sha }}'],
     ['a second checkout as a block sequence item', swap(DEPLOY, '      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0\n        with:\n          node-version-file: main/app/.nvmrc', '      -\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n        with:\n          ref: ${{ needs.check.outputs.sha }}\n          persist-credentials: false\n      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0\n        with:\n          node-version-file: main/app/.nvmrc'), 'checks out ${{ needs.check.outputs.sha }}'],
     ['another action in a token job', swap(DEPLOY, '      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2\n        with:\n          name: build', '      - uses: some/action@0000000000000000000000000000000000000000\n      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2\n        with:\n          name: build'), 'deploy: uses some/action'],

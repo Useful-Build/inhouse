@@ -1,0 +1,47 @@
+{
+ "row": {
+  "caseId": "R10",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answerNot": true
+  },
+  "called": [
+   "memory_search",
+   "history_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I don't know yet. I searched my saved memory and past chats for an invoice forma",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_wiq08yJqPhMBCfmpLuQOmA",
+  "askedAs": "eval-45931306709-1-r10-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I don't know yet. I searched my saved memory and past chats for an invoice forma",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "91466ea3456a7deff03dab14479ef125b6e75736f0183764edbe1c9b6ce3c74b",
+    "inputExcerpt": "{\"query\":\"invoice format preference\"}"
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "inputSha256": "19968eb88950bbd2f9df76223f338a748c6f85d90bfe02347b7a3281ca436a59",
+    "inputExcerpt": "{\"query\":\"invoice format PDF\"}"
+   }
+  ]
+ }
+}

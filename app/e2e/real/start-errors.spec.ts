@@ -30,6 +30,29 @@ test('the first read in flight shows the neutral loading screen, then the app', 
   await expect(loadingHeading(page)).toHaveCount(0)
 })
 
+test('a link followed while the loading screen shows opens that page, not the first one', async ({ page, context }) => {
+  // Issue #461: the shell's hash listener mounts with the app, after the first read; a hash change before that was lost,
+  // and the app opened the first link's page under the second link's address.
+  await signInAs(context, 'admin')
+  let release!: () => void
+  const held = new Promise<void>(r => { release = r })
+  await page.route('**/api/me', async route => { await held; await route.continue() })
+  await open(page, 'admin', '#/today')
+  try {
+    await expect(loadingHeading(page)).toBeAttached()
+    await open(page, 'admin', '#/approvals')
+    await expect(loadingHeading(page)).toBeAttached()
+  } finally {
+    release()
+  }
+  await expect(page.getByRole('heading', { level: 1, name: 'Approvals', exact: true })).toBeVisible()
+  expect(new URL(page.url()).hash).toBe('#/approvals')
+  // Back goes to the first link's page: the late read added no entry of its own.
+  await page.goBack()
+  await expect(page.getByRole('heading', { level: 1, name: /^Good \w+, / })).toBeVisible()
+  expect(new URL(page.url()).hash).toBe('#/today')
+})
+
 test('a token for another app (wrong audience) shows that the sign-in ended, and Sign in again reloads the page', async ({ page, context }) => {
   // The Inhouse app's token on the brand app: the Worker answers 401, as it does when the Access session has expired.
   await context.setExtraHTTPHeaders(await signIn(people.admin.subject, 'inhouse'))

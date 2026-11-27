@@ -1,0 +1,34 @@
+{
+ "row": {
+  "caseId": "N09",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true,
+   "answer": true,
+   "answerNot": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "I can't add the VIP tag to order 1042 here. No actions that change Shopify are s",
+  "costUsd": 0.015,
+  "runOk": true,
+  "turnId": "t_I3lSImHnpeRrmEdBC3VL2A",
+  "askedAs": "eval-45931306709-1-n09-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.015,
+  "answer": "I can't add the VIP tag to order 1042 here. No actions that change Shopify are s",
+  "toolCalls": []
+ }
+}

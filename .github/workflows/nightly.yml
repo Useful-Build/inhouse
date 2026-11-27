@@ -105,10 +105,13 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         with:
           node-version-file: app/.nvmrc
+      # --ignore-scripts: this job holds secrets, so no package's install script runs here. None is needed
+      # (esbuild and workerd find their binaries in their optional platform packages); ci.yml's ignore-scripts job
+      # proves the install and this job's test list per PR.
       - name: Install the hub
         if: steps.gate.outputs.run == 'true'
         working-directory: app/hub
-        run: npm ci
+        run: npm ci --ignore-scripts
       # The filter keeps the run to the connector files: test/upstreams/shopify/record.live.ts (the recorder) never runs.
       - name: Shopify connectors against the read fixture
         if: steps.gate.outputs.run == 'true'
@@ -177,10 +180,13 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         with:
           node-version-file: app/.nvmrc
+      # --ignore-scripts: this job holds secrets, so no package's install script runs here. None is needed
+      # (esbuild and workerd find their binaries in their optional platform packages); ci.yml's ignore-scripts job
+      # proves the install and this job's test list per PR.
       - name: Install the hub
         if: steps.gate.outputs.run == 'true'
         working-directory: app/hub
-        run: npm ci
+        run: npm ci --ignore-scripts
       # The exact file: a rename makes vitest find no test file and fail, never run something else.
       - name: Slack connectors against the test workspace
         if: steps.gate.outputs.run == 'true'
