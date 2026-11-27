@@ -36,6 +36,8 @@ export const channelScope = (channelId: string) => {
 
 /** A brand grant's `per_day`: the operation's default (the ceiling's daily maximum caps it at each use, N10). */
 export const ALERTS_PER_DAY = grantDefaults(OPERATION).perDay
+/** Stage 1 M3-L (N24): its largest single call, the operation's default (one post). */
+const ALERTS_UNITS_MAX = grantDefaults(OPERATION).unitsMax
 
 /** The Slack account connected now (no disconnect after the connect), as SQL on `connector_accounts` aliased `ca`. */
 const CONNECTED = 'ca.account_id = ? AND ca.connected_at_ms IS NOT NULL AND (ca.disconnected_at_ms IS NULL OR ca.disconnected_at_ms < ca.connected_at_ms)'
@@ -84,14 +86,14 @@ export function alertsGrantStmts(channelId: string, marked: Exists, at: At): Stm
     [POLICY_REV], 'superseded', at, eligible),
     stmt(
       `INSERT INTO permission_grants (id, holder, holder_member, account_id, account_gen, operation, scope_json, scope_key, per_day,
-         policy_rev, granted_by, granted_role, ceiling_rev, source_action, granted_at_ms, stamp)
-       SELECT ?, 'brand', NULL, ca.account_id, ca.connected_at_ms, ?, ?, ?, ?, ?, ?, 'admin', c.lowered_rev, NULL, ?, ?
+         units_max, policy_rev, granted_by, granted_role, ceiling_rev, source_action, granted_at_ms, stamp)
+       SELECT ?, 'brand', NULL, ca.account_id, ca.connected_at_ms, ?, ?, ?, ?, ?, ?, ?, 'admin', c.lowered_rev, NULL, ?, ?
        FROM permission_ceiling c, connector_accounts ca
        WHERE c.operation = ? AND c.enabled = 1 AND ${CONNECTED}
          AND EXISTS (SELECT 1 FROM members m WHERE m.id = ? AND m.kind = 'person' AND m.status = 'active' AND m.role = 'admin')
          AND EXISTS (${marked.sql})
        ON CONFLICT DO NOTHING`,
-      id, OPERATION, JSON.stringify(scope), scopeKey, ALERTS_PER_DAY, POLICY_REV, at.actorId, at.nowMs, stamp,
+      id, OPERATION, JSON.stringify(scope), scopeKey, ALERTS_PER_DAY, ALERTS_UNITS_MAX, POLICY_REV, at.actorId, at.nowMs, stamp,
       OPERATION, SLACK, at.actorId, ...marked.params,
     ),
     lineWhereStamped(id, stamp, at, {

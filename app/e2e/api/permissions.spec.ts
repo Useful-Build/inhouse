@@ -11,6 +11,7 @@ import { expect, test } from '@playwright/test'
 import { actor, call, expectConflict, me } from './kit.ts'
 import { auditMax, expectOneLine, writeSql } from './db.ts'
 import { setCeiling } from './fakes-kit.ts'
+import { POLICY_REV } from '../../server/permissions/policy.ts'
 
 const dana = actor('memberA')
 const leo = actor('memberB')
@@ -31,9 +32,9 @@ function grant(id: string, holder: string, scope: string): void {
   writeSql(
     `INSERT INTO permission_grants (id, holder, holder_member, account_id, account_gen, operation, scope_json, scope_key, per_day,
        policy_rev, granted_by, granted_role, ceiling_rev, granted_at_ms)
-     VALUES (?, ?, ?, ?, 1, 'shopify.order.tag_add', ?, ?, 50, 1, ?, 'member',
+     VALUES (?, ?, ?, ?, 1, 'shopify.order.tag_add', ?, ?, 50, ?, ?, 'member',
        (SELECT lowered_rev FROM permission_ceiling WHERE operation = 'shopify.order.tag_add'), ?)`,
-    id, `member:${holder}`, holder, ACCOUNT, JSON.stringify({ shop: scope }), `shop=${scope}`, holder, Date.now(),
+    id, `member:${holder}`, holder, ACCOUNT, JSON.stringify({ shop: scope }), `shop=${scope}`, POLICY_REV, holder, Date.now(),
   )
 }
 

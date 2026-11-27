@@ -4,22 +4,29 @@
 //  I1. never `run` without a live grant that covers it (a reference `covering` written here, sharing no code with
 //      decide.ts): live, held by the asker or the brand, same account, generation, operation and scope key, current
 //      ceiling and policy revisions, and the asker's role at least the role it was granted under;
-//  I2. never `run` or `ask` for a guardrail: any effect flag, or more than 5 records (D3), is `exact` (or a refusal
-//      that comes before it), whatever grants exist;
+//  I2. never `run` or `ask` for a guardrail: any effect flag, or more records than the ceiling's `bulk_threshold` (1 to
+//      5, D3), is `exact` (or a refusal that comes before it), whatever grants exist;
 //  I3. refuse outside the ceiling: no row, or a disabled one, is `over_ceiling`, whatever else holds;
 //  I4. a routine never runs (D4: routines use no grant in M2);
 //  I5. a member never runs or asks for an operation their role can't approve (`needs_admin`), and no one to ask is
 //      `no_one_to_ask`;
 //  I6. another member's grant never covers the asker (D4: a member's grant covers only their own chats);
-//  I7. `ask` whenever the action passes steps 1 to 5 and no grant covers it; `nudge` exactly at 3 or more "Allow once";
+//  I7. `ask` whenever the action passes steps 1 to 6 and no grant covers it; `nudge` exactly at 3 or more "Allow once";
 //  I8. `resolve` refuses an unknown operation and arguments that don't parse, and never takes the account or its
 //      generation from the arguments.
+// Stage 1 M3-L (N23), written before the code:
+//  I9. never `run` past any limit: a call past the ceiling's `units_max` is refused `over_limit` (after `over_ceiling`
+//      only), whatever the asker, origin or grants; a `run` is under a grant whose own `units_max` admits the call;
+//  I10. `units_max` is per call: a covering grant runs exactly the calls its `units_max` admits, whatever its daily
+//      count (that is the reservation's), and a call it doesn't admit is `exact` `count`, never `ask` or `run`;
+//  I11. no `admins` verdict before M3-X: every exact card is the asker's, and a member asking for an operation their
+//      role can't approve is still refused `needs_admin`.
 import { fc, test } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import { decideCore } from './decide.ts'
 import { POLICY_REV } from './policy.ts'
 import { resolve } from './resolve.ts'
-import { OPS, ceilingsArb, ctxArb, grantArb, policyRevArb, recordsArb } from './test-arbitraries.ts'
+import { OPS, ceilingsArb, ctxArb, grantArb, policyRevArb, recordsArb, unitsArb } from './test-arbitraries.ts'
 import type { Asker, DecideFacts, GrantFacts, Resolved, ResolveFacts, WriteOperationKey } from './types.ts'
 
 const ASKER_ID = 'm_asker'
@@ -35,7 +42,7 @@ const resolvedArb: fc.Arbitrary<Resolved> = fc.record({
   accountGen: fc.constantFrom(1_000, 2_000),
   scopeKey: fc.constantFrom('shop=store-a', 'channelId=C0123ABCD'),
   records: recordsArb,
-  units: fc.integer({ min: 1, max: 5 }),
+  units: unitsArb,
   effects: effectsArb,
   memberMay: fc.oneof({ weight: 3, arbitrary: fc.constant(true) }, { weight: 1, arbitrary: fc.constant(false) }),
   policyRev: policyRevArb,
@@ -65,23 +72,27 @@ function covering(f: DecideFacts, asker: Asker, r: Resolved): GrantFacts[] {
       g.policyRev === POLICY_REV && r.policyRev === POLICY_REV
   })
 }
-const guardrailed = (r: Resolved) => Object.values(r.effects).some(Boolean) || r.records > 5
+const guardrailed = (f: DecideFacts, r: Resolved) => Object.values(r.effects).some(Boolean) || r.records > (f.ceiling[r.operation]?.bulkThreshold ?? 0)
 const enabled = (f: DecideFacts, r: Resolved) => f.ceiling[r.operation]?.enabled === true
+/** Within the ceiling's largest single call (N23). */
+const withinCeiling = (f: DecideFacts, r: Resolved) => r.units <= (f.ceiling[r.operation]?.unitsMax ?? 0)
+/** The covering grants whose own largest call admits these units. */
+const admitting = (f: DecideFacts, asker: Asker, r: Resolved) => covering(f, asker, r).filter(g => r.units <= g.unitsMax)
 
 describe('decideCore', () => {
   test.prop([caseArb])('I1: never runs without a live covering grant, and runs under one when it may', ({ r, ctx, f }) => {
     const v = decideCore(f, ctx, r)
     if (v.verdict === 'run') {
       expect(ctx.asker).not.toBeNull()
-      expect(covering(f, ctx.asker as Asker, r).map(g => g.id)).toContain(v.grantId)
+      expect(admitting(f, ctx.asker as Asker, r).map(g => g.id)).toContain(v.grantId)
     }
-    if (enabled(f, r) && ctx.asker && (ctx.asker.role === 'admin' || r.memberMay) && !guardrailed(r) && ctx.origin !== 'routine' && covering(f, ctx.asker, r).length > 0) {
+    if (enabled(f, r) && withinCeiling(f, r) && ctx.asker && (ctx.asker.role === 'admin' || r.memberMay) && !guardrailed(f, r) && ctx.origin !== 'routine' && admitting(f, ctx.asker, r).length > 0) {
       expect(v.verdict).toBe('run')
     }
   })
 
   test.prop([caseArb])('I2: a guardrail is never run or ask: exact, or a refusal that comes first', ({ r, ctx, f }) => {
-    fc.pre(guardrailed(r))
+    fc.pre(guardrailed(f, r))
     const v = decideCore(f, ctx, r)
     expect(['exact', 'refuse']).toContain(v.verdict)
     if (v.verdict === 'exact') expect(v.guardrail).toBe(Object.values(r.effects).some(Boolean) ? ['money', 'customer', 'destructive', 'access'].find(k => r.effects[k as keyof typeof r.effects]) : 'bulk')
@@ -97,7 +108,7 @@ describe('decideCore', () => {
   })
 
   test.prop([caseArb])('I5: no one to ask, and a member asking for what their role can\'t approve, are refused', ({ r, ctx, f }) => {
-    fc.pre(enabled(f, r))
+    fc.pre(enabled(f, r) && withinCeiling(f, r))
     expect(decideCore(f, { ...ctx, asker: null }, r)).toEqual({ verdict: 'refuse', reason: 'no_one_to_ask' })
     expect(decideCore(f, { ...ctx, asker: { memberId: ASKER_ID, role: 'member' } }, { ...r, memberMay: false })).toEqual({ verdict: 'refuse', reason: 'needs_admin' })
   })
@@ -108,11 +119,46 @@ describe('decideCore', () => {
   })
 
   test.prop([caseArb])('I7: ask when nothing refuses, no guardrail and no grant covers; nudge from 3 Allow once', ({ r, ctx, f }) => {
-    fc.pre(enabled(f, r) && ctx.asker !== null && (ctx.asker.role === 'admin' || r.memberMay) && !guardrailed(r))
+    fc.pre(enabled(f, r) && withinCeiling(f, r) && ctx.asker !== null && (ctx.asker.role === 'admin' || r.memberMay) && !guardrailed(f, r))
     const asker = ctx.asker as Asker
     const v = decideCore(f, ctx, r)
     if (ctx.origin === 'routine') expect(v).toEqual({ verdict: 'ask', nudge: false })
     else if (covering(f, asker, r).length === 0) expect(v).toEqual({ verdict: 'ask', nudge: f.allowOnceCount >= 3 })
+  })
+
+  test.prop([caseArb])('I9: never runs past a limit: over the ceiling\'s largest call is over_limit, and a run is within its grant\'s', ({ r, ctx, f }) => {
+    const v = decideCore(f, ctx, r)
+    if (enabled(f, r) && !withinCeiling(f, r)) expect(v).toEqual({ verdict: 'refuse', reason: 'over_limit' })
+    if (v.verdict === 'run') {
+      expect(withinCeiling(f, r)).toBe(true)
+      expect(r.units).toBeLessThanOrEqual(f.grants.find(g => g.id === v.grantId)!.unitsMax)
+    }
+    // Past the ceiling, no asker, origin or grant changes the answer.
+    if (enabled(f, r) && !withinCeiling(f, r)) {
+      expect(decideCore(f, { ...ctx, asker: null, origin: 'routine' }, r)).toEqual({ verdict: 'refuse', reason: 'over_limit' })
+      expect(decideCore({ ...f, grants: [] }, ctx, { ...r, memberMay: false })).toEqual({ verdict: 'refuse', reason: 'over_limit' })
+    }
+  })
+
+  test.prop([caseArb])('I10: units_max is per call: a covering grant runs what it admits, whatever its daily count, else exact count', ({ r, ctx, f }) => {
+    fc.pre(enabled(f, r) && withinCeiling(f, r) && ctx.asker !== null && (ctx.asker.role === 'admin' || r.memberMay) && !guardrailed(f, r) && ctx.origin !== 'routine')
+    const asker = ctx.asker as Asker
+    fc.pre(covering(f, asker, r).length > 0)
+    const v = decideCore(f, ctx, r)
+    if (admitting(f, asker, r).length > 0) expect(v.verdict).toBe('run')
+    else expect(v).toEqual({ verdict: 'exact', guardrail: 'count', approver: 'asker' })
+    // The daily count never enters the decision: any perDay gives the same verdict.
+    expect(decideCore({ ...f, grants: f.grants.map(g => ({ ...g, perDay: 1 })) }, ctx, r)).toEqual(v)
+    // Smaller calls are admitted at least as often: a run stays a run at 1 unit.
+    if (v.verdict === 'run') expect(decideCore(f, ctx, { ...r, units: 1 }).verdict).toBe('run')
+  })
+
+  test.prop([caseArb])('I11: no admins verdict before M3-X', ({ r, ctx, f }) => {
+    const v = decideCore(f, ctx, r)
+    if (v.verdict === 'exact') expect(v.approver).toBe('asker')
+    if (enabled(f, r) && withinCeiling(f, r) && ctx.asker?.role === 'member') {
+      expect(decideCore(f, ctx, { ...r, memberMay: false })).toEqual({ verdict: 'refuse', reason: 'needs_admin' })
+    }
   })
 })
 

@@ -5,7 +5,7 @@
 // through `hubAccounts` (the caller's binding; N12: the hub checks them again at the send).
 import { all, first, stmt } from '../db/sql.ts'
 import { memberHolder } from '../permissions/decide.ts'
-import { BULK_RECORDS, NUDGE_WINDOW_MS } from '../permissions/policy.ts'
+import { NUDGE_WINDOW_MS } from '../permissions/policy.ts'
 import type { CeilingFacts, ConnectedAccountFacts, DecideCtx, DecideFacts, GrantFacts, Resolved, ResolveFacts, WriteOperationKey } from '../permissions/types.ts'
 import { knownZone } from '../routines/brand.ts'
 import { DEFAULT_TZ } from '../usage/month.ts'
@@ -35,20 +35,15 @@ export async function brandTimeZone(db: D1Database): Promise<string> {
 }
 
 type AccountRow = { account_id: string; last_state: string; connected_at_ms: number | null; disconnected_at_ms: number | null; shop: string | null }
-type CeilingRow = { operation: WriteOperationKey; enabled: number; per_day_max: number; lowered_rev: number }
+type CeilingRow = {
+  operation: WriteOperationKey; enabled: number; per_day_max: number; lowered_rev: number; units_max: number; bulk_threshold: number; batch_max: number; rev: number
+}
 type GrantRow = {
-  id: string; holder: string; account_id: string; account_gen: number; operation: WriteOperationKey; scope_key: string; per_day: number
+  id: string; holder: string; account_id: string; account_gen: number; operation: WriteOperationKey; scope_key: string; per_day: number; units_max: number
   policy_rev: number; granted_role: 'member' | 'admin'; ceiling_rev: number; revoked_at_ms: number | null
 }
 
 const DEFAULT_LABEL = { shopify: 'Shopify', slack: 'Slack' } as const
-
-/**
- * Stage 1 M3-A: the limits every row has until 0760_permission_limits.sql (M3-L) adds their columns, equal to that
- * migration's defaults and to M2's rules (one unit per call, more than 5 records is bulk). Nothing reads them before M3-L,
- * which reads the columns instead and deletes this.
- */
-const UNTIL_0760 = { ceiling: { unitsMax: 1, bulkThreshold: BULK_RECORDS, batchMax: 500, rev: 1 }, grantUnitsMax: 1 } as const
 
 function accountFacts(connector: 'shopify' | 'slack', row: AccountRow | undefined, hub: HubAccountFacts | undefined): ConnectedAccountFacts | null {
   if (!row) return null
@@ -94,9 +89,9 @@ export function outboxFacts(d: { db: D1Database; hubAccounts: () => Promise<read
     async decideFacts(r, ctx) {
       const holders = ctx.asker ? [memberHolder(ctx.asker.memberId), 'brand'] : ['brand']
       const [ceilings, grants, once] = await Promise.all([
-        all<CeilingRow>(db, stmt('SELECT operation, enabled, per_day_max, lowered_rev FROM permission_ceiling')),
+        all<CeilingRow>(db, stmt('SELECT operation, enabled, per_day_max, lowered_rev, units_max, bulk_threshold, batch_max, rev FROM permission_ceiling')),
         all<GrantRow>(db, stmt(
-          `SELECT id, holder, account_id, account_gen, operation, scope_key, per_day, policy_rev, granted_role, ceiling_rev, revoked_at_ms
+          `SELECT id, holder, account_id, account_gen, operation, scope_key, per_day, units_max, policy_rev, granted_role, ceiling_rev, revoked_at_ms
            FROM permission_grants WHERE revoked_at_ms IS NULL AND operation = ? AND account_id = ? AND holder IN (${holders.map(() => '?').join(', ')})`,
           r.operation, r.accountId, ...holders,
         )),
@@ -110,12 +105,17 @@ export function outboxFacts(d: { db: D1Database; hubAccounts: () => Promise<read
           : Promise.resolve({ n: 0 }),
       ])
       const ceiling: Partial<Record<WriteOperationKey, CeilingFacts>> = {}
-      for (const c of ceilings) ceiling[c.operation] = { enabled: c.enabled === 1, perDayMax: c.per_day_max, loweredRev: c.lowered_rev, ...UNTIL_0760.ceiling }
+      for (const c of ceilings) {
+        ceiling[c.operation] = {
+          enabled: c.enabled === 1, perDayMax: c.per_day_max, loweredRev: c.lowered_rev, unitsMax: c.units_max, bulkThreshold: c.bulk_threshold,
+          batchMax: c.batch_max, rev: c.rev,
+        }
+      }
       return {
         ceiling,
         grants: grants.map((g): GrantFacts => ({
           id: g.id, holder: g.holder, accountId: g.account_id, accountGen: g.account_gen, operation: g.operation, scopeKey: g.scope_key,
-          perDay: g.per_day, unitsMax: UNTIL_0760.grantUnitsMax, policyRev: g.policy_rev, grantedRole: g.granted_role, ceilingRev: g.ceiling_rev,
+          perDay: g.per_day, unitsMax: g.units_max, policyRev: g.policy_rev, grantedRole: g.granted_role, ceilingRev: g.ceiling_rev,
           revokedAtMs: g.revoked_at_ms,
         })),
         allowOnceCount: once?.n ?? 0,

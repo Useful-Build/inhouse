@@ -142,8 +142,10 @@ export interface DecideFacts {
 
 /**
  * Stage 1 M3 (N22, N23; M3-L owns the table and the daily sum): one batch item's units given back from its batch's one
- * grant use, at most once per item and approval (`PRIMARY KEY (action_id, action_rev, n)`): the item failed definitely,
- * moved to a new card, or was withdrawn. `reserveUseSql`'s daily sum subtracts these.
+ * grant use, at most once per item and approval (`UNIQUE (action_id, action_rev, n)`; 0760 keys the row by one column,
+ * `id = <action_id>#<action_rev>#<n>`, for retention, as `permission_uses`): the item failed definitely, moved to a new
+ * card, or was withdrawn. `reserveUseSql`'s daily sum subtracts these while their use is unreleased; `releaseItemSql`
+ * writes them.
  */
 export interface PermissionItemReleaseRow {
   action_id: string

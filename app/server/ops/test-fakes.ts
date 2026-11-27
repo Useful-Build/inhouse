@@ -33,7 +33,8 @@
 // - `transcripts`: the R2 session store's objects (`sessions/`, the runner's transcripts) as texts. Answers `{ texts }`.
 //   Empty in the local test build (no container writes a session); filled on the per-PR remote deploy.
 // - `ceiling` (Stage 1 M2-B, N2, N19): { operation, enabled, perDayMax }: the one way an operation exists in the test build
-//   (no route writes the ceiling in M1 or M2). Answers `{ ok: true }`.
+//   (no route writes the ceiling in M1 or M2). Stage 1 M3-L (N23): optional `unitsMax`, `bulkThreshold` and `batchMax`;
+//   left out, 0760's defaults (M2's rules). Answers `{ ok: true }`.
 // - `action` (Stage 1 M2-B, N19; M2-D): { as: { memberId, chatId? }, operation, args, mode? }: the write tool's call
 //   through the egress's own `actions` handler (handleActions; `mode: 'ask_only'` is `approval_request` through the MCP
 //   server's handler), as an active person, with a made-up run grant as the `hub` op has. CLOSE TO AUTH: N14's admission
@@ -53,6 +54,7 @@ import { utcDay } from '../notify-slack/store.ts'
 import { turnPromptDeps, turnSystemPrompt } from '../prompt/connected.ts'
 import { R2_PREFIXES, type KeyedBucket } from '../db/r2-keys.ts'
 import { WriteOperationArgSchema } from '../../shared/contract/audit.ts'
+import { CeilingValuesSchema } from '../../shared/contract/ceiling.ts'
 import { runBatch } from '../db/sql.ts'
 import { setCeilingStmt } from '../permissions/ceiling.ts'
 import { OPERATIONS } from '../outbox/operations/index.ts'
@@ -81,7 +83,11 @@ const ProductOpSchema = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('systemNotice'), notice: z.unknown() }),
   z.strictObject({ op: z.literal('logs'), since: z.strictObject({ product: z.number().int().min(0).optional(), hub: z.number().int().min(0).optional() }).optional() }),
   z.strictObject({ op: z.literal('transcripts') }),
-  z.strictObject({ op: z.literal('ceiling'), operation: WriteOperationArgSchema, enabled: z.boolean(), perDayMax: z.number().int().min(1).max(10_000) }),
+  z.strictObject({
+    op: z.literal('ceiling'), operation: WriteOperationArgSchema, enabled: z.boolean(), perDayMax: z.number().int().min(1).max(10_000),
+    unitsMax: CeilingValuesSchema.shape.unitsMax.optional(), bulkThreshold: CeilingValuesSchema.shape.bulkThreshold.optional(),
+    batchMax: CeilingValuesSchema.shape.batchMax.optional(),
+  }),
   z.strictObject({
     op: z.literal('action'), as: z.strictObject({ memberId: id, chatId: id.optional() }), operation: WriteOperationArgSchema,
     args: z.record(z.string(), z.unknown()), mode: z.enum(['tool', 'ask_only']).optional(),
@@ -292,7 +298,10 @@ async function transcriptsOp(env: TestFakesEnv): Promise<TestFakesAnswer> {
 
 /** `ceiling`: turns an operation on or off for the brand (the test build only: no route writes the ceiling, N2). */
 async function ceilingOp(env: TestFakesEnv, op: Extract<ProductOp, { op: 'ceiling' }>): Promise<TestFakesAnswer> {
-  await runBatch(env.DB, [setCeilingStmt({ operation: op.operation, enabled: op.enabled, perDayMax: op.perDayMax, actorId: 'm_system', nowMs: Date.now() })])
+  await runBatch(env.DB, [setCeilingStmt({
+    operation: op.operation, enabled: op.enabled, perDayMax: op.perDayMax, unitsMax: op.unitsMax, bulkThreshold: op.bulkThreshold, batchMax: op.batchMax,
+    actorId: 'm_system', nowMs: Date.now(),
+  })])
   return ok({ ok: true })
 }
 
