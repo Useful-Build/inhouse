@@ -12,6 +12,8 @@ const THE_20 = [
   'routine_create', 'routine_list', 'routine_update', 'routine_delete', 'routine_run_now',
   'history_search', 'history_read',
   'notification_send',
+  // Stage 1 M3-T (N28): the read-only member lookup.
+  'member_find',
   'team_request_create', 'team_request_list',
   // P6a brand skills (master plan standing decision 6).
   'skill_save',
@@ -31,7 +33,7 @@ describe('the inhouse tool registry', () => {
     }
   })
   it('marks the reads and the destructive ones', () => {
-    const reads = ['memory_search', 'memory_list', 'approval_get', 'approval_list', 'routine_list', 'history_search', 'history_read', 'team_request_list']
+    const reads = ['memory_search', 'memory_list', 'approval_get', 'approval_list', 'routine_list', 'history_search', 'history_read', 'member_find', 'team_request_list']
     const destructive = ['memory_forget', 'approval_withdraw', 'routine_delete']
     expect(INHOUSE_TOOLS.filter(t => t.annotations.readOnlyHint).map(t => t.name)).toEqual(reads)
     expect(INHOUSE_TOOLS.filter(t => t.annotations.destructiveHint).map(t => t.name)).toEqual(destructive)
