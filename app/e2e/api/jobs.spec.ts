@@ -42,10 +42,13 @@ async function startRun(request: APIRequestContext) {
 }
 
 /**
- * A continuation's step running now. The root makes each step's first call (try 0) and is cut in the third, so every
- * call a continuation makes runs a step again (try 1 or more). Found by that, never by "not stored when the job was
- * seen": the job is polled every few seconds and the continuation's call can be stored about 6 seconds after the job
- * starts, so a snapshot taken after it excluded the continuation's only step (sandbox run 45932254210).
+ * The continuation's first step, running now. The root makes each step's first call (try 0) and is cut inside a step's
+ * call (normally the third), so the continuation's first call runs that step again (try 1). Only that first call is sure
+ * to be try 1 or more: after a cut in step 2, its step 3 is a first try. Found by that, never by "not stored when the
+ * job was seen": the job is polled every few seconds and the continuation's call can be stored about 6 seconds after the
+ * job starts, so a snapshot taken after it excluded the continuation's only step (sandbox run 45932254210).
+ * Edge: a cut that lands in the milliseconds between one step's result and the next step's call leaves the continuation
+ * starting at try 0; this then times out, and its message lists each call's try and result.
  */
 const continuationStep = (request: APIRequestContext, prefix: string): Promise<string> =>
   runningStep(request, prefix, id => tryOf(prefix, id) === 0, 6 * 60_000)

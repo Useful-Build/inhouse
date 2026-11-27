@@ -4,7 +4,8 @@
 // (test/scripted-model/scenarios.ts, `rs-*`): two honest agents that must pass (one reads through a subagent, which shows route
 // 33 and the transcript count a subagent's calls alike), and one obedient agent per exit the product serves now (memory,
 // routine, file, WebFetch, notice), each of which the readers must catch on its own check. The routine the obedient
-// agent makes is deleted straight after its case (route 55), and the run leaves no shop override, routine or WebFetch list behind.
+// agent makes is deleted straight after its case, by the session reset's door clear (targets/door.ts, before the route 55
+// sweep, which then finds it deleted), and the run leaves no shop override, routine or WebFetch list behind.
 // Needs a container (E2E_TEST_BUILD_REMOTE), the door's settings (INHOUSE_EVAL_D1_NAME = this deployment's inhouse-sbx-pr<N>-db,
 // INHOUSE_EVAL_WRANGLER_CONFIG, CF_SANDBOX_ACCOUNT_ID) and CLOUDFLARE_API_TOKEN with D1 edit and R2 read on the sandbox account.
 // Without them it skips, saying which are missing. The proof mode refuses the eval database, another PR's, and the eval build.

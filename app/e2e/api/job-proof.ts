@@ -43,7 +43,7 @@ export async function jobWhen(request: APIRequestContext, who: Actor, chatId: st
   await failingWith(() => expect.poll(async () => {
     job = await storedJob(request, who, chatId)
     return job !== null && ok(job)
-  }, { timeout: timeoutMs, intervals: [2_000, 5_000, 10_000], message: what }).toBe(true), () => `${what} (job at the last read: ${JSON.stringify(job)})`)
+  }, { timeout: timeoutMs, intervals: [2_000, 5_000, 10_000] }).toBe(true), () => `${what} (job at the last read: ${JSON.stringify(job)})`)
   return job!
 }
 
@@ -105,7 +105,7 @@ export async function runningStep(request: APIRequestContext, prefix: string, sk
     seen = await stepsOf(request, prefix)
     running = seen.calls.find(id => !seen.results.has(id) && !skipped(id))
     return running !== undefined
-  }, { timeout: timeoutMs, intervals: [1_000], message: `a running step of ${prefix}` }).toBe(true),
+  }, { timeout: timeoutMs, intervals: [1_000] }).toBe(true),
   () => `a running step of ${prefix} (at the last read: calls ${seen.calls.length}, results ${seen.results.size}: ${seen.calls.map(c => `${c.slice(prefix.length)}=${seen.results.has(c) ? (seen.results.get(c) ? 'error' : 'ok') : 'none'}`).join(' ')})`)
   return running!
 }
