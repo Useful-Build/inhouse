@@ -48,6 +48,8 @@ export interface GrantRow {
   scope_json: string
   scope_key: string
   per_day: number
+  /** Stage 1 M3-L (0760): the largest single call this grant lets run. */
+  units_max: number
   policy_rev: number
   granted_by: string
   granted_role: MemberRole
@@ -69,6 +71,8 @@ export interface AlwaysAllowInput {
   grantedRole: MemberRole
   resolved: Pick<Resolved, 'accountId' | 'accountGen' | 'operation' | 'scope' | 'scopeKey' | 'policyRev'>
   perDay: number
+  /** Stage 1 M3-L (N23, N24): the largest single call it lets run, the operation's grant default. */
+  unitsMax: number
   sourceAction: string
   /** The answer's own condition: only the winning answer may create a grant (its row stamped by this batch). */
   onlyIf: Exists
@@ -85,6 +89,9 @@ export interface AlwaysAllowInput {
  * (`ON CONFLICT DO NOTHING` on the live index). Read the live grant back with `liveGrant` after the batch.
  */
 export function alwaysAllowStmts(input: AlwaysAllowInput): { id: string; stamp: string; stmts: Stmt[] } {
+  for (const [k, n] of [['perDay', input.perDay], ['unitsMax', input.unitsMax]] as const) {
+    if (!Number.isSafeInteger(n) || n < 1) throw new Error(`alwaysAllowStmts: ${k} must be a whole number, at least 1`)
+  }
   const id = newPermissionId()
   const stamp = writeStamp(input.at.requestId)
   const r = input.resolved
@@ -117,12 +124,12 @@ export function alwaysAllowStmts(input: AlwaysAllowInput): { id: string; stamp: 
       ),
       stmt(
         `INSERT INTO permission_grants (id, holder, holder_member, account_id, account_gen, operation, scope_json, scope_key, per_day,
-           policy_rev, granted_by, granted_role, ceiling_rev, source_action, granted_at_ms, stamp)
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, c.lowered_rev, ?, ?, ?
+           units_max, policy_rev, granted_by, granted_role, ceiling_rev, source_action, granted_at_ms, stamp)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, c.lowered_rev, ?, ?, ?
          FROM permission_ceiling c WHERE c.operation = ? AND c.enabled = 1 AND ${eligible.sql}
          ON CONFLICT DO NOTHING`,
         id, holder, input.holderMemberId, r.accountId, r.accountGen, r.operation, JSON.stringify(r.scope), r.scopeKey, input.perDay,
-        r.policyRev, input.at.actorId, input.grantedRole, input.sourceAction, input.at.nowMs, stamp, r.operation, ...eligible.params,
+        input.unitsMax, r.policyRev, input.at.actorId, input.grantedRole, input.sourceAction, input.at.nowMs, stamp, r.operation, ...eligible.params,
       ),
       lineWhere(
         {
@@ -222,11 +229,11 @@ export function permissionOf(r: ListRow, viewer: Viewer): Permission {
     tool: { accountId: r.account_id, label: tool },
     scope: where,
     perDay: r.per_day,
-    // Stage 1 M3-A (N33): one unit per call until 0760 (M3-L) adds `units_max`, its default; the day's real allowance is
-    // the smaller of the grant's count and the ceiling's, as the reservation counts it.
+    // Stage 1 M3 (N23, N33): the grant's own limits; the day's real allowance is the smaller of the grant's count and the
+    // ceiling's, as the reservation counts it.
     limits: {
       perDay: r.per_day,
-      unitsMax: 1,
+      unitsMax: r.units_max,
       unitsLabel: OPERATIONS[r.operation].unitsLabel,
       effectivePerDay: Math.min(r.per_day, r.ceiling_per_day_max),
     },

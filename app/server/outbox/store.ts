@@ -56,6 +56,13 @@ export const mayView = (row: Pick<OutboxActionRow, 'asked_by' | 'approver'>, v: 
 const mayDo = (memberParam: string, memberMay: boolean) =>
   `EXISTS (SELECT 1 FROM members m WHERE m.id = ${memberParam} AND m.kind = 'person' AND m.status = 'active' AND (m.role = 'admin' OR ${memberMay ? 1 : 0} = 1))`
 
+/**
+ * Stage 1 M3-L (N23): the row's units are within the ceiling's largest single call now. An approval past it is refused
+ * at the answer (the ceiling was lowered since the card was made); a missing row is the claim's `over_ceiling`.
+ */
+const WITHIN_UNITS_MAX = `NOT EXISTS (SELECT 1 FROM permission_ceiling pc WHERE pc.operation = outbox_actions.operation
+  AND outbox_actions.units > pc.units_max)`
+
 /** The row's chat isn't in the trash (M2-D, N11): an answer never approves a card of a deleted chat. */
 const CHAT_NOT_DELETED = 'NOT EXISTS (SELECT 1 FROM chats c WHERE c.id = outbox_actions.chat_id AND c.deleted_at_ms IS NOT NULL)'
 
@@ -266,7 +273,7 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
              approved_epoch = (SELECT epoch FROM outbox_gate WHERE id = 1), send_at_ms = ?, grant_id = NULL, lapsed_reason = NULL,
              updated_at_ms = ?, stamp = ?
            WHERE id = ? AND rev = ? AND state = 'waiting' AND approver = ? AND expires_at_ms > ? AND ${kindSql}
-             AND ${mayDo('?', entry.memberMay)} AND EXISTS (${GATE_OPEN}) AND ${CHAT_NOT_DELETED}`,
+             AND ${mayDo('?', entry.memberMay)} AND EXISTS (${GATE_OPEN}) AND ${CHAT_NOT_DELETED} AND ${WITHIN_UNITS_MAX}`,
           actor.memberId, nowMs, sendAt, nowMs, stamp, actionId, input.ifRev, actor.memberId, nowMs, actor.memberId,
         )
         : stmt(
@@ -289,7 +296,7 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
         const grant = alwaysAllowStmts({
           holderMemberId: actor.memberId, grantedRole: actor.role,
           resolved: { accountId: before.account_id, accountGen: before.account_gen, operation: before.operation, scope, scopeKey: before.scope_key, policyRev: before.policy_rev },
-          perDay: grantDefaults(entry.key).perDay, sourceAction: actionId, onlyIf: mine, at: { actorId: actor.memberId, requestId: d.requestId, nowMs },
+          ...grantDefaults(entry.key), sourceAction: actionId, onlyIf: mine, at: { actorId: actor.memberId, requestId: d.requestId, nowMs },
         })
         const nextRev = input.ifRev + 1
         const tz = await brandTimeZone(db)
@@ -324,6 +331,9 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       if (after.expires_at_ms <= nowMs) return refusal('conflict')
       if (await chatDeleted(after.chat_id)) return refusal('conflict')
       if (approving && !(await gateOpen())) return refusal('conflict', 'paused')
+      if (approving && (await first<{ one: number }>(db, stmt(`SELECT 1 AS one FROM outbox_actions WHERE id = ? AND NOT ${WITHIN_UNITS_MAX}`, actionId))) !== null) {
+        return refusal('conflict', 'over_limit')
+      }
       return refusal('forbidden')
     },
 

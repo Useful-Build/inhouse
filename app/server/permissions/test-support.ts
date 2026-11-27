@@ -1,11 +1,13 @@
 // Helpers for the permission tests (server/permissions/*.test.ts, in the Workers runtime). Never imported by the Worker.
 // They write rows directly: no route writes the ceiling in M2 (N2), and the grant writer is the outbox's (M2-B).
 import type { MemberRole } from '../../shared/contract/members.ts'
-import type { GrantFacts, WriteOperationKey } from './types.ts'
+import { CEILING_LIMIT_DEFAULTS } from './ceiling.ts'
+import type { CeilingFacts, GrantFacts, WriteOperationKey } from './types.ts'
 
 /** Empties the permission tables and the stores the claim reads. Member rows stay (the audit log names them). */
 export async function resetPermissions(db: D1Database): Promise<void> {
   await db.batch([
+    db.prepare('DELETE FROM permission_item_releases'),
     db.prepare('DELETE FROM permission_uses'),
     db.prepare('DELETE FROM permission_grants'),
     db.prepare('DELETE FROM permission_ceiling'),
@@ -22,11 +24,18 @@ export async function person(db: D1Database, id: string, role: MemberRole, statu
   ).bind(id, role, status).run()
 }
 
-export async function ceiling(db: D1Database, operation: WriteOperationKey, row: { enabled: boolean; perDayMax: number; loweredRev: number }): Promise<void> {
+/** A ceiling row as given; limits left out are 0760's defaults (M2's rules). */
+export async function ceiling(
+  db: D1Database, operation: WriteOperationKey,
+  row: { enabled: boolean; perDayMax: number; loweredRev: number } & Partial<Pick<CeilingFacts, 'unitsMax' | 'bulkThreshold' | 'batchMax' | 'rev'>>,
+): Promise<void> {
+  const d = CEILING_LIMIT_DEFAULTS
   await db.prepare(
-    `INSERT INTO permission_ceiling (operation, enabled, per_day_max, lowered_rev, updated_at_ms, updated_by) VALUES (?, ?, ?, ?, 1, 'm_system')
-     ON CONFLICT (operation) DO UPDATE SET enabled = excluded.enabled, per_day_max = excluded.per_day_max, lowered_rev = excluded.lowered_rev`,
-  ).bind(operation, row.enabled ? 1 : 0, row.perDayMax, row.loweredRev).run()
+    `INSERT INTO permission_ceiling (operation, enabled, per_day_max, lowered_rev, units_max, bulk_threshold, batch_max, rev, updated_at_ms, updated_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'm_system')
+     ON CONFLICT (operation) DO UPDATE SET enabled = excluded.enabled, per_day_max = excluded.per_day_max, lowered_rev = excluded.lowered_rev,
+       units_max = excluded.units_max, bulk_threshold = excluded.bulk_threshold, batch_max = excluded.batch_max, rev = excluded.rev`,
+  ).bind(operation, row.enabled ? 1 : 0, row.perDayMax, row.loweredRev, row.unitsMax ?? d.unitsMax, row.bulkThreshold ?? d.bulkThreshold, row.batchMax ?? d.batchMax, row.rev ?? 1).run()
 }
 
 /**
@@ -44,10 +53,9 @@ export async function channel(db: D1Database, id: string, name: string, addedBy:
   await db.prepare('INSERT INTO notify_channels (channel_id, name, added_by, added_at_ms) VALUES (?, ?, ?, 1)').bind(id, name, addedBy).run()
 }
 
-/** A grant row as the facts say (scope JSON from the key's one `name=value`). */
 /**
- * A grant row to insert. `unitsMax` may be left out: `permission_grants.units_max` arrives with 0760 (M3-L) at its default
- * of 1, the value every grant has until then, and this helper doesn't write it yet (M3-L does when it's given).
+ * A grant row as the facts say (scope JSON from the key's one `name=value`). `unitsMax` may be left out: the row then
+ * takes 0760's default of 1, M2's one unit per call.
  */
 export type GrantRowInput = Omit<GrantFacts, 'unitsMax'> & { unitsMax?: number }
 
@@ -55,11 +63,11 @@ export async function insertGrant(db: D1Database, g: GrantRowInput, at = 1): Pro
   const [k, v] = g.scopeKey.split('=')
   await db.prepare(
     `INSERT INTO permission_grants (id, holder, holder_member, account_id, account_gen, operation, scope_json, scope_key, per_day,
-       policy_rev, granted_by, granted_role, ceiling_rev, granted_at_ms, revoked_at_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       units_max, policy_rev, granted_by, granted_role, ceiling_rev, granted_at_ms, revoked_at_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     g.id, g.holder, g.holder.startsWith('member:') ? g.holder.slice('member:'.length) : null, g.accountId, g.accountGen, g.operation,
-    JSON.stringify({ [decodeURIComponent(k)]: decodeURIComponent(v) }), g.scopeKey, g.perDay, g.policyRev,
+    JSON.stringify({ [decodeURIComponent(k)]: decodeURIComponent(v) }), g.scopeKey, g.perDay, g.unitsMax ?? 1, g.policyRev,
     g.holder.startsWith('member:') ? g.holder.slice('member:'.length) : 'm_system', g.grantedRole, g.ceilingRev, at, g.revokedAtMs,
   ).run()
 }
