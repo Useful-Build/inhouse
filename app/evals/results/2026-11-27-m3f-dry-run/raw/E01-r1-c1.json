@@ -1,0 +1,40 @@
+{
+ "row": {
+  "caseId": "E01",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "Saved.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0,
+  "answer": "Saved.",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "inputSha256": "be2dd589a0349b85ba26cb5dfbe1f7994aa7cea3676854820d265f5cf0b35108",
+    "inputExcerpt": "{\"scope\":\"person\",\"person_id\":\"p_maya\",\"fact\":\"Wants the weekly stock report as ",
+    "resultExcerpt": "Saved as m_1. It counts now."
+   }
+  ]
+ }
+}
