@@ -4,10 +4,11 @@
 //    2-minute wait ends and the call returns "waiting" (N14 step 4); turn 1 says so. The person answers after the turn
 //    ended: the send goes out and the server sends one resume turn into the chat (`report = 'later'`, `source: 'action'`,
 //    M2-G's action texts); turn 2 answers that note, and only a note from Inhouse that names the card and says it went out.
-//  - `routine-create-question`: one `routine_create` whose instruction plays the `question` scenario (questions.ts), so
-//    the routine's own run asks its creator a question and waits (N16); the answer lets it finish. The routine's name comes
+//  - `routine-create-question`: one `routine_create` whose instruction plays `routine-question`, so the routine's own run
+//    asks its creator a question and waits (N16); its last turn is answered only when the call returns the chosen option. The routine's name comes
 //    from the person's message (`routine-name:<name>`), so each run of the spec finds its own routine.
 import type { MessagesRequest, Scenario, ScriptedTurn } from '../index.ts'
+import { QUESTION_ASKED, QUESTION_TOOL } from './questions.ts'
 
 type Check = NonNullable<ScriptedTurn['expect']>
 
@@ -22,10 +23,13 @@ export const LATE_WAITING = 'The tag is waiting for your OK in Approvals.'
 export const LATE_DONE = 'The tag went out after you allowed it.'
 
 /**
- * What the routine made by `routine-create-question` runs: the chat's `question` scenario (questions.ts), asked of its
- * creator. A routine's turn takes the brand's default model, so the spec sets it to Fast (the harness's model) first.
+ * What the routine made by `routine-create-question` runs: `routine-question`, asked of its creator. A routine's turn
+ * takes the brand's default model, so the spec sets it to Fast (the harness's model) first.
  */
-export const QUESTION_ROUTINE_INSTRUCTION = 'scenario:question Check the blue mugs stock and ask before restocking.'
+export const QUESTION_ROUTINE_INSTRUCTION = 'scenario:routine-question Check the blue mugs stock and ask before restocking.'
+/** The option the spec answers the routine's question with; the run's last turn exists only once the call returns it. */
+export const ROUTINE_CHOICE = QUESTION_ASKED.options[0]!
+export const ROUTINE_QUESTION_REPLY = 'Going with your answer for the routine.'
 /** The routine's name when the person's message names none. */
 export const QUESTION_ROUTINE_DEFAULT_NAME = 'Question check'
 export const QUESTION_ROUTINE_CREATED = 'The question routine was created.'
@@ -81,11 +85,20 @@ const cameBackWaiting = (r: MessagesRequest): true | string => {
 }
 
 /** The newest user prompt is the server's resume note: from Inhouse, naming the card, saying it went out. */
+/** The question call's result holds the option chosen: the creator's answer reached the run. */
+const answeredWith = (id: string, choice: string) => (r: MessagesRequest): true | string => {
+  const text = resultTextOf(r, id)
+  if (text === undefined) return `no result for ${id}`
+  return text.includes(choice) ? true : `the result for ${id} doesn't hold "${choice}": "${text.slice(0, 300)}"`
+}
+
 const resumeNote = (r: MessagesRequest): true | string => {
   const last = [...r.messages].reverse().find(m => promptText(m) !== '')
   const text = last ? promptText(last) : ''
   if (!text.startsWith(NOTE_PREFIX)) return `the newest prompt isn't a note from Inhouse: "${text.slice(0, 300)}"`
-  if (!text.includes(`"${LATE_TITLE}"`) || !text.includes('went out')) return `the note doesn't say "${LATE_TITLE}" went out: "${text.slice(0, 300)}"`
+  // Only the sent note: `"<title>" went out`. An undone, withdrawn or expired one says "went out" further on, never right
+  // after the title.
+  if (!text.includes(`"${LATE_TITLE}" went out`)) return `the note doesn't say "${LATE_TITLE}" went out: "${text.slice(0, 300)}"`
   return true
 }
 
@@ -99,7 +112,16 @@ export function acceptanceScenarios(mainLoop: (tool?: string) => Check, resultIs
   }
   const loop = mainLoop()
   const routineCall = 'toolu_scripted_routine_question'
+  const routineAsk = 'toolu_scripted_routine_ask'
   return {
+    // The routine's own run: one lone `question_ask` (so the runner defers it and the run waits on the creator), then,
+    // once the call has run again, a closing line, answered only when the call's result holds the option the spec chose.
+    'routine-question': {
+      turns: [
+        { content: [{ type: 'tool_use', id: routineAsk, name: QUESTION_TOOL, input: QUESTION_ASKED }], expect: mainLoop(QUESTION_TOOL) },
+        { content: [{ type: 'text', text: ROUTINE_QUESTION_REPLY }], expect: both(mainLoop(QUESTION_TOOL), resultIs(routineAsk, false), answeredWith(routineAsk, ROUTINE_CHOICE)) },
+      ],
+    },
     'action-late-answer': {
       turns: [
         { content: [{ type: 'text', text: LATE_STARTED }, { type: 'tool_use', id: TOOL_USE_ID, name: LATE_TOOL, input: { orderId: LATE_ORDER_ID, tags: [LATE_TAG] } }], expect: loop },

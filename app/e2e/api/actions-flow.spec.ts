@@ -36,8 +36,10 @@ test('zero grants: no migration or seed turns an operation on or makes a permiss
     expect(text, `${file} seeds no ceiling row`).not.toMatch(/INSERT\s+(OR\s+\w+\s+)?INTO\s+permission_ceiling/i)
     expect(text, `${file} seeds no permission`).not.toMatch(/INSERT\s+(OR\s+\w+\s+)?INTO\s+permission_grants/i)
   }
-  // The local D1 as the read specs find it: no operation on (a write spec's teardown turns its own off again).
+  // The local D1 as the read specs find it: no operation on (a write spec's teardown turns its own off again) and no live
+  // permission (this spec runs before any spec that makes one: the api project runs first, files in name order).
   expect(readSql('SELECT operation FROM permission_ceiling WHERE enabled = 1')).toEqual([])
+  expect(readSql('SELECT id FROM permission_grants WHERE revoked_at_ms IS NULL')).toEqual([])
 })
 
 interface Card { id: string; rev: number; state: string; kind: string; askedAt: { ms: number } }

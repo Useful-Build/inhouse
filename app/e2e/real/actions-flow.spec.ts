@@ -15,11 +15,11 @@
 // assertions and polls, never a fixed sleep. Writes stay off in deployable builds: only the hook turns the operation on
 // (N2), and it is turned off again after each case. The phone layout of the same cards is real/actions-ui.spec.ts's; these
 // scenarios prove the server's behaviour through the screens, so they run on the desktop project only.
-import type { APIRequestContext, Page } from '@playwright/test'
+import type { APIRequestContext, Page, Route } from '@playwright/test'
 import { expect, test } from '../support/test-build/index.js'
 import { open, signInAs } from '../support/clients/real.js'
 import type { Who } from '../support/clients/real.js'
-import { actor, call, me } from '../api/kit.ts'
+import { actor, call, expectConflict, me } from '../api/kit.ts'
 import type { Actor } from '../api/kit.ts'
 import { createChat } from '../api/chat-kit.ts'
 import { hook, hubCall, release, requestAction, setCeiling } from '../api/fakes-kit.ts'
@@ -151,13 +151,20 @@ test('Allow once: the countdown runs out on the page clock while nothing goes ou
   await expect(card.getByRole('timer')).toHaveText(/^Goes out in (10|9|8) seconds$/)
 
   // The page's clock jumps 30 s: its countdown says it's going out. The server's hold hasn't ended, so the card on the
-  // server is still approved and nothing has reached the store. No browser timer decides a send.
+  // server is still approved and nothing has reached the store. No browser timer decides a send. The card's own reads of
+  // the server are held meanwhile (a read in the hold would draw the server's countdown again), then let through.
+  const heldReads: Route[] = []
+  const holdRead = (route: Route) => { if (route.request().method() === 'GET') heldReads.push(route); else void route.continue() }
+  await page.route(`**/api/actions/${row.id}`, holdRead)
   await page.clock.runFor(30_000)
   await expect(card.getByRole('timer')).toHaveText('Going out now')
   const held = await cardAs(request, dana, row.id)
   expect(held.serverNow.ms, 'checked inside the server\'s hold').toBeLessThan(held.sendAt!.ms)
   expect(held.state).toBe('approved')
   expect(await writesOf(request, tag)).toEqual([])
+  await expect(card.getByRole('timer')).toHaveText('Going out now')
+  await page.unroute(`**/api/actions/${row.id}`, holdRead)
+  for (const r of heldReads) await r.continue()
 
   // The server's hold ends; the send runs on its alarm; the card reads itself until it settles.
   await expect(card).toHaveAttribute('data-action-card', 'sent', { timeout: 60_000 })
@@ -303,25 +310,30 @@ test('an unclear send needs a check: the system never sends it again, and the pe
   await expect(card).toHaveAttribute('data-action-card', 'needs_check', { timeout: 90_000 })
   await expect(card).toContainText('Needs a check')
   await expect(answers(card)).toHaveText(['It went out', "It didn't go out"])
+  // The store answers normally from here, so a second send would land as a second write in its log.
   await storeFault(request, 'succeed')
   expect(await writesOf(request, tag)).toEqual([expect.objectContaining({ outcome: 'timeout' })])
 
-  // A scheduler pass now (the alarm's own body, route 67): nothing sends it again.
+  // A scheduler pass now (route 67, the alarm's own body). It runs only the tasks already due, so it proves nothing on its
+  // own; the proof that nothing sent it again is the store's log, which still holds the one write, here and at the end.
   const alarm = await call(request, release, 'POST', '/api/ops/alarm', { json: {} })
   expect(alarm.status, alarm.text).toBe(200)
-  expect((await cardAs(request, dana, row.id)).state).toBe('needs_check')
-  // Another member can't settle it (they can't see it).
   const c = await cardAs(request, dana, row.id)
+  expect(c.state).toBe('needs_check')
+  expect(await writesOf(request, tag)).toHaveLength(1)
+  // Another member can't settle it (they can't see it).
   expect((await call(request, leo, 'POST', `/api/actions/${row.id}/resolve`, { json: { outcome: 'failed', ifRev: c.rev } })).status).toBe(404)
 
   // The person who allowed it settles it.
   await card.getByRole('button', { name: `It went out: ${TITLE}` }).click()
   await expect(card).toHaveAttribute('data-action-card', 'sent')
   await expect(answers(card)).toHaveCount(0)
+  // Settled once: another answer, at the card's current rev, is refused with the card as it is.
+  const settled = await cardAs(request, dana, row.id)
+  expect(settled.state).toBe('sent')
+  expect(expectConflict(await call(request, dana, 'POST', `/api/actions/${row.id}/resolve`, { json: { outcome: 'failed', ifRev: settled.rev } })))
+    .toMatchObject({ id: row.id, rev: settled.rev, state: 'sent' })
   expect(await writesOf(request, tag)).toHaveLength(1)
-  // Settled once: a second answer is a conflict.
-  const again = await call(request, dana, 'POST', `/api/actions/${row.id}/resolve`, { json: { outcome: 'failed', ifRev: c.rev } })
-  expect(again.status, again.text).toBe(409)
 })
 
 test("another member can't see the card, answer it or open the chat it belongs to", async ({ page, request }) => {
