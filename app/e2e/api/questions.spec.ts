@@ -10,7 +10,7 @@
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 import { QUESTION_ASKED, QUESTION_REPLY } from '../../test/scripted-model/scenarios/questions.ts'
-import { QUESTION_ROUTINE_CREATED } from '../../test/scripted-model/scenarios/acceptance.ts'
+import { QUESTION_ROUTINE_CREATED, ROUTINE_QUESTION } from '../../test/scripted-model/scenarios/acceptance.ts'
 import { answerOf, createChat, needsContainer, send, textOf } from './chat-kit.ts'
 import { killRunners } from './job-kit.ts'
 import { actor, call } from './kit.ts'
@@ -125,7 +125,7 @@ test("a routine's question goes to its creator's inbox with no chat; the run wai
     await expect.poll(async () => {
       const r = await call(request, dana, 'GET', '/api/questions')
       expect(r.status, r.text).toBe(200)
-      q = (r.json.items as Q[]).find(x => !before.has(x.id) && x.question === QUESTION_ASKED.question)
+      q = (r.json.items as Q[]).find(x => !before.has(x.id) && x.question === ROUTINE_QUESTION.question)
       return q !== undefined
     }, { timeout: 240_000, message: "the routine's question in its creator's list" }).toBe(true)
   } catch (e) {
@@ -137,17 +137,17 @@ test("a routine's question goes to its creator's inbox with no chat; the run wai
     const asked = { dana: (await call(request, dana, 'GET', '/api/questions')).json, admin: (await call(request, actor('admin'), 'GET', '/api/questions')).json }
     throw new Error(`${(e as Error).message}\nruns: ${JSON.stringify(history).slice(0, 2000)}\ntrace: ${JSON.stringify(steps).slice(0, 6000)}\nquestions: ${JSON.stringify(asked).slice(0, 3000)}`)
   }
-  expect(q).toMatchObject({ state: 'open', options: QUESTION_ASKED.options, chatId: null, answer: null })
+  expect(q).toMatchObject({ state: 'open', options: ROUTINE_QUESTION.options, chatId: null, answer: null })
   // Another member never sees it, nor can answer it.
   expect(((await call(request, leo, 'GET', '/api/questions')).json.items as Q[]).map(x => x.id)).not.toContain(q!.id)
-  expect((await call(request, leo, 'POST', `/api/questions/${q!.id}/answer`, { json: { choice: QUESTION_ASKED.options[0] } })).status).toBe(404)
+  expect((await call(request, leo, 'POST', `/api/questions/${q!.id}/answer`, { json: { choice: ROUTINE_QUESTION.options[0] } })).status).toBe(404)
   // The run waits on the answer, across a hard kill of every runner (P6 acceptance 10).
   expect((await runs())[0]).toMatchObject({ outcome: 'running', manual: true })
   await killRunners(request)
 
-  const answered = await call(request, dana, 'POST', `/api/questions/${q!.id}/answer`, { json: { choice: QUESTION_ASKED.options[0] } })
+  const answered = await call(request, dana, 'POST', `/api/questions/${q!.id}/answer`, { json: { choice: ROUTINE_QUESTION.options[0] } })
   expect(answered.status, answered.text).toBe(200)
-  expect(answered.json).toMatchObject({ id: q!.id, state: 'answered', answer: QUESTION_ASKED.options[0] })
+  expect(answered.json).toMatchObject({ id: q!.id, state: 'answered', answer: ROUTINE_QUESTION.options[0] })
   // The run resumes with the answer and finishes.
   await expect.poll(async () => (await runs())[0]?.outcome, { timeout: 300_000, intervals: [2_000], message: "the routine's run finishes" }).toBe('done')
 })

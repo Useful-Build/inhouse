@@ -4,8 +4,8 @@
 //    2-minute wait ends and the call returns "waiting" (N14 step 4); turn 1 says so. The person answers after the turn
 //    ended: the send goes out and the server sends one resume turn into the chat (`report = 'later'`, `source: 'action'`,
 //    M2-G's action texts); turn 2 answers that note, and only a note from Inhouse that names the card and says it went out.
-//  - `routine-create-question`: one `routine_create` whose instruction plays the `question` scenario (questions.ts), so the
-//    routine's own run asks its creator a question and waits (N16). The routine's name comes from the person's message
+//  - `routine-create-question`: one `routine_create` whose instruction plays `routine-question`, so the routine's own run
+//    asks its creator a question and waits (N16); the answer lets it finish. The routine's name comes from the person's message
 //    (`routine-name:<name>`), so each run of the spec finds its own routine.
 import type { MessagesRequest, Scenario, ScriptedTurn } from '../index.ts'
 
@@ -21,8 +21,15 @@ export const LATE_STARTED = 'Asking to add the tag.'
 export const LATE_WAITING = 'The tag is waiting for your OK in Approvals.'
 export const LATE_DONE = 'The tag went out after you allowed it.'
 
-/** What the routine made by `routine-create-question` runs: the `question` scenario, asked of its creator. */
-export const QUESTION_ROUTINE_INSTRUCTION = 'scenario:question Check the blue mugs stock and ask before restocking.'
+/**
+ * What the routine made by `routine-create-question` runs: `routine-question`, asked of its creator. Not the chat's
+ * `question` scenario: a routine's turn runs on the brand's default model, not the harness's chat model that scenario
+ * checks for.
+ */
+export const QUESTION_ROUTINE_INSTRUCTION = 'scenario:routine-question Check the blue mugs stock and ask before restocking.'
+export const ROUTINE_QUESTION_TOOL = 'mcp__inhouse__question_ask'
+export const ROUTINE_QUESTION = { question: 'Restock the blue mugs this week?', options: ['Yes, this week', 'No, next month'] }
+export const ROUTINE_QUESTION_REPLY = 'Going with your answer for the routine.'
 export const QUESTION_ROUTINE_CREATED = 'The question routine was created.'
 const ROUTINE_NAME = /routine-name:([A-Za-z0-9-]{1,40})/
 
@@ -84,6 +91,17 @@ const resumeNote = (r: MessagesRequest): true | string => {
   return true
 }
 
+/**
+ * A routine's main-loop request: a Claude model (whichever the brand's default is) with a tool list that offers
+ * `question_ask`.
+ */
+const routineLoop = (r: MessagesRequest): true | string => {
+  if (typeof r.model !== 'string' || !r.model.startsWith('claude-')) return `model ${String(r.model)}`
+  if (!Array.isArray(r.tools) || r.tools.length === 0) return 'no tool list (a side request)'
+  // Listed by name, or left to tool search behind the CLI's `defer_loading` placeholder (scenarios.ts `offers`).
+  return r.tools.some(t => t.name === ROUTINE_QUESTION_TOOL || t.defer_loading === true) ? true : `the tool list doesn't offer ${ROUTINE_QUESTION_TOOL}`
+}
+
 export function acceptanceScenarios(mainLoop: (tool?: string) => Check, resultIs: (id: string, error: boolean) => Check): Record<string, Scenario> {
   const both = (...checks: Check[]): Check => r => {
     for (const c of checks) {
@@ -94,7 +112,16 @@ export function acceptanceScenarios(mainLoop: (tool?: string) => Check, resultIs
   }
   const loop = mainLoop()
   const routineCall = 'toolu_scripted_routine_question'
+  const routineAsk = 'toolu_scripted_routine_ask'
   return {
+    // The routine's own run: one lone `question_ask` (so the runner defers it and the run waits on the creator), then, once
+    // the call has run again with the answer, a closing line.
+    'routine-question': {
+      turns: [
+        { content: [{ type: 'tool_use', id: routineAsk, name: ROUTINE_QUESTION_TOOL, input: ROUTINE_QUESTION }], expect: routineLoop },
+        { content: [{ type: 'text', text: ROUTINE_QUESTION_REPLY }], expect: both(routineLoop, resultIs(routineAsk, false)) },
+      ],
+    },
     'action-late-answer': {
       turns: [
         { content: [{ type: 'text', text: LATE_STARTED }, { type: 'tool_use', id: TOOL_USE_ID, name: LATE_TOOL, input: { orderId: LATE_ORDER_ID, tags: [LATE_TAG] } }], expect: loop },
