@@ -29,7 +29,7 @@ import type { Can } from '../../shared/contract/me'
 import type { InviteInput } from '../../shared/contract/members'
 import type { AvailableChannels, NotifyChannelList, PutNotifyChannels } from '../../shared/contract/notify-slack'
 import type { ActionCard, ActionChoice, ActionFilter, ActionItemsPage } from '../../shared/contract/actions'
-import { MockActions } from './mock-actions'
+import type { MockActions } from './mock-actions'
 import type { Permission } from '../../shared/contract/permissions'
 import type { CeilingList, CeilingRow } from '../../shared/contract/ceiling'
 import type { Question } from '../../shared/contract/questions'
@@ -876,7 +876,8 @@ export class MockAgent implements AgentClient {
     this.mockRuns.clear(); this.history.clear(); this.engine?.clear(); this.scripted = null; this.sendDelayMs = 0
     this.created.clear(); this.createdInfo.clear()
     this.runInfo.clear()
-    this.demoActions.reset()
+    // A demo whose actions loaded starts them again; one that never read them has nothing to reset.
+    void this.demoActionsLoad?.then(a => a.reset())
     try { localStorage.removeItem(RUNS_KEY) } catch (e) { console.warn('Inhouse demo: could not clear saved runs.', e) }
     try { localStorage.removeItem(DATA_OVERRIDE_KEY) } catch (e) { console.warn('Inhouse demo: could not clear the data override.', e) }
     this.startedAt = Date.now()
@@ -1000,26 +1001,31 @@ export class MockAgent implements AgentClient {
   // Stage 1 M2 (N18): the demo has no permissions or questions: its lists are empty and every answer is refused (there is
   // nothing it could name), with no notice. Stage 1 M3-U: its actions are the real agent's cards on sample data
   // (mock-actions.ts), in the Normal scenario whatever the stage; in the other scenarios none, as before.
-  private demoActions = new MockActions({
-    now: () => demoNow(this.startedAt).getTime(),
-    shown: () => this.demo.scenario === 'Normal',
-    meId: ME_ID,
-    memberId: memberIdOf,
-  })
+  // They load with the first read of them (their module and sample data), outside Today's first load (check-bundle).
+  private demoActionsLoad: Promise<MockActions> | null = null
+  private demoActions(): Promise<MockActions> {
+    return this.demoActionsLoad ??= import('./mock-actions').then(m => new m.MockActions({
+      now: () => demoNow(this.startedAt).getTime(),
+      shown: () => this.demo.scenario === 'Normal',
+      meId: ME_ID,
+      memberId: memberIdOf,
+    }))
+  }
   /** A demo action's answer: the card, or the refusal as an AgentError (no notice: the card says it). */
-  private acted<T>(run: () => T): Promise<T> {
-    try { return Promise.resolve(run()) } catch (e) {
+  private async acted<T>(run: (a: MockActions) => T): Promise<T> {
+    const a = await this.demoActions()
+    try { return run(a) } catch (e) {
       if (!(e instanceof AgentError)) throw e
       return this.rejected(e.code, e.message, false, { ...(e.reason ? { reason: e.reason } : {}), ...(e.current ? { current: e.current } : {}) })
     }
   }
-  actions(filter?: ActionFilter): Promise<ActionCard[]> { return Promise.resolve(this.demoActions.list(filter)) }
-  action(id: string): Promise<ActionCard> { return this.acted(() => this.demoActions.get(id)) }
-  answerAction(id: string, ifRev: number, choice: ActionChoice, covers?: BatchCovers): Promise<ActionCard> { return this.acted(() => this.demoActions.answer(id, ifRev, choice, covers)) }
-  undoAction(id: string, ifRev: number): Promise<ActionCard> { return this.acted(() => this.demoActions.undo(id, ifRev)) }
-  resolveAction(id: string, ifRev: number): Promise<ActionCard> { return this.acted(() => this.demoActions.resolve(id, ifRev)) }
-  withdrawAction(id: string, ifRev: number): Promise<ActionCard> { return this.acted(() => this.demoActions.withdraw(id, ifRev)) }
-  actionItems(id: string, after: number): Promise<ActionItemsPage> { return this.acted(() => this.demoActions.items(id, after)) }
+  actions(filter?: ActionFilter): Promise<ActionCard[]> { return this.acted(a => a.list(filter)) }
+  action(id: string): Promise<ActionCard> { return this.acted(a => a.get(id)) }
+  answerAction(id: string, ifRev: number, choice: ActionChoice, covers?: BatchCovers): Promise<ActionCard> { return this.acted(a => a.answer(id, ifRev, choice, covers)) }
+  undoAction(id: string, ifRev: number): Promise<ActionCard> { return this.acted(a => a.undo(id, ifRev)) }
+  resolveAction(id: string, ifRev: number): Promise<ActionCard> { return this.acted(a => a.resolve(id, ifRev)) }
+  withdrawAction(id: string, ifRev: number): Promise<ActionCard> { return this.acted(a => a.withdraw(id, ifRev)) }
+  actionItems(id: string, after: number): Promise<ActionItemsPage> { return this.acted(a => a.items(id, after)) }
   onActionUpdated(): () => void { return () => undefined }
   permissions(): Promise<Permission[]> { return Promise.resolve([]) }
   removePermission(): Promise<Permission[]> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }

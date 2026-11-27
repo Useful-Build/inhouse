@@ -11,6 +11,8 @@ async function start(page: Page, fx: Fx, stage: 'Watch' | 'Act' | 'Run', scenari
 }
 
 const badge = (page: Page) => page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /Approvals/ })
+/** Stage 1 M3-U: the demo's three agent cards (two batches and a teammate's refund) wait on Sam too, beside the drafts. */
+const ASKS = 3
 const card = (page: Page, title: string) => page.getByRole('article').filter({ hasText: title })
 const KESTREL = 'Ridge 30L Pack runs out in 9 days'
 const sentToast = (page: Page) => page.getByRole('status').filter({ hasText: 'Reorder of 600 sent to Kestrel Supply' })
@@ -48,13 +50,13 @@ test('Act: a reload during the 10 s hold still sends the Kestrel reorder, and Un
 test('Act: Undo in the toast during the hold cancels the send', async ({ fx, page }) => {
   await start(page, fx, 'Act', 'Normal', '#/today', true)
   const toast = await approveKestrel(page)
-  await expect(badge(page)).toContainText('5')
+  await expect(badge(page)).toContainText(String(5 + ASKS))
   await toast.getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect(badge(page)).toContainText('6')
+  await expect(badge(page)).toContainText(String(6 + ASKS))
   await expect(card(page, KESTREL).getByRole('button', { name: 'Review' })).toBeVisible()
 
   await page.clock.runFor(11_000)
-  await expect(badge(page)).toContainText('6')
+  await expect(badge(page)).toContainText(String(6 + ASKS))
   await expect(card(page, KESTREL).getByRole('button', { name: 'Review' })).toBeVisible()
   await expect(sentToast(page)).toHaveCount(0)
   await expect(card(page, KESTREL)).not.toContainText('Approved by Sam')
@@ -93,15 +95,15 @@ test('Run: Pause, then Undo in the toast, puts Inhouse agent back to running', a
 test('Act: Reset demo during the hold clears the approval and nothing is sent', async ({ fx, page }) => {
   await start(page, fx, 'Act', 'Normal', '#/today', true)
   await approveKestrel(page)
-  await expect(badge(page)).toContainText('5')
+  await expect(badge(page)).toContainText(String(5 + ASKS))
 
   await page.getByRole('button', { name: /Demo switches/ }).click()
   await page.getByRole('button', { name: 'Reset demo', exact: true }).click()
-  await expect(badge(page)).toContainText('6')
+  await expect(badge(page)).toContainText(String(6 + ASKS))
   await expect(card(page, KESTREL).getByRole('button', { name: 'Review' })).toBeVisible()
 
   await page.clock.runFor(11_000)
-  await expect(badge(page)).toContainText('6')
+  await expect(badge(page)).toContainText(String(6 + ASKS))
   await expect(sentToast(page)).toHaveCount(0)
 })
 
