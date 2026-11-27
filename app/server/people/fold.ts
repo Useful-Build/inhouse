@@ -1,17 +1,27 @@
-// People's names as the agent reads them (Stage 1 M3-T, N28): `member_find` returns every active person's name as they
-// typed it, and finds them by a folded form. A name is text a person typed for themselves (`g:name`, up to 80
-// characters), so it is data, never instructions: nothing here decides whether a name is shown, only how it's shown,
-// matched and flagged.
+// People's names as the agent reads them (Stage 1 M3-T, N28): `member_find` returns every active person, and finds them
+// by a folded form of their name. A name is text a person typed for themselves (`g:name`, up to 80 characters), so it
+// is data, never instructions. Nobody is left out: a name is shown as typed only when it is a plain name (the M2-G team
+// line's shape, no instruction word, one script); any other name is withheld (NAME_WITHHELD) and the person flagged,
+// still with their member id.
 //
-// The fold, in order: control characters become spaces and format characters (zero-width ones, direction marks) go;
-// NFKC (fullwidth `Ｉ` is `I`); lowercase; NFD with every combining mark removed (`İ`, `é`); NFC; then each look-alike
-// letter becomes its Latin prototype (Unicode TR39's confusables, look-alikes.ts: Cyrillic `о` is `o`); spaces
-// collapse. Idempotent (fold.property.test.ts). Tokens split the fold on everything but letters and digits, so a hyphen
-// or an apostrophe (any of them) splits a word: "O'Brien-Smith" is `o`, `brien`, `srnith`.
-import { LOOK_ALIKE_SOURCES } from './look-alikes.ts'
+// The fold (for matching only, never shown): control characters become spaces and format characters (zero-width ones,
+// direction marks) go; NFKC (fullwidth `Ｉ` is `I`); lowercase; NFD with every combining mark removed (`İ`, `é`); NFC;
+// spaces collapse. Idempotent (fold.property.test.ts). Words split the fold on everything but letters and digits, so a
+// hyphen or an apostrophe (any of them) splits a word: "O'Brien-Smith" is `o`, `brien`, `smith`.
 
-/** The most characters of a name the agent is shown (a name may be 80). */
-export const NAME_SHOWN_MAX = 60
+/** What the agent is shown in place of a name that isn't a plain name. */
+export const NAME_WITHHELD = '(name withheld)'
+
+/** The longest name shown, and the most words in it (the M2-G team line's limits, prompt/connected.ts). */
+export const NAME_SHOWN_MAX = 40
+export const NAME_SHOWN_WORDS = 4
+/**
+ * One word of a name: an initial (one letter and a dot, "J.") or letters (any script) with an inner `'` or `-`
+ * ("O'Neil-Ng"). No digits, no other punctuation, and a dot only after a lone initial: a sentence's full stop can't pass.
+ */
+const NAME_WORD = String.raw`(?:\p{L}\.|\p{L}[\p{L}\p{M}]*(?:['’-]\p{L}[\p{L}\p{M}]*)*)`
+/** A plain name's shape: 1 to NAME_SHOWN_WORDS words (NAME_WORD) with single spaces. Its length is checked apart. */
+export const NAME_SHAPE = new RegExp(String.raw`^${NAME_WORD}(?: ${NAME_WORD}){0,${NAME_SHOWN_WORDS - 1}}$`, 'u')
 
 /** Control characters and line or paragraph separators: each one becomes a space. */
 const BREAKS = /[\p{Cc}\p{Zl}\p{Zp}]/gu
@@ -20,25 +30,11 @@ const INVISIBLE = /[\p{Cf}\p{Cs}]/gu
 const MARKS = /\p{M}/gu
 const SPACES = /\s+/gu
 
-const LOOK_ALIKES: ReadonlyMap<string, string> = new Map(
-  Object.entries(LOOK_ALIKE_SOURCES).flatMap(([to, from]) => [...from].map(c => [c, to] as const)),
-)
-
 const tidy = (s: string): string => s.replace(BREAKS, ' ').replace(INVISIBLE, '').replace(SPACES, ' ').trim()
 
-/**
- * A name as the agent is shown it: as typed, with control and format characters taken out (a control character reads
- * as a space), spaces collapsed, at most NAME_SHOWN_MAX characters (never half a character).
- */
-export function shownName(name: string): string {
-  const chars = [...tidy(name)]
-  return chars.length <= NAME_SHOWN_MAX ? chars.join('') : chars.slice(0, NAME_SHOWN_MAX).join('').trimEnd()
-}
-
-/** The folded form of a name or a query: how two spellings that look alike compare equal. */
+/** The folded form of a name or a query: how two spellings of a name compare equal (case, width, accents). */
 export function fold(s: string): string {
-  const plain = tidy(s).normalize('NFKC').toLowerCase().normalize('NFD').replace(MARKS, '').normalize('NFC')
-  return tidy([...plain].map(c => LOOK_ALIKES.get(c) ?? c).join(''))
+  return tidy(tidy(s).normalize('NFKC').toLowerCase().normalize('NFD').replace(MARKS, '').normalize('NFC'))
 }
 
 /**
@@ -68,9 +64,8 @@ export function nameMatches(name: FoldedName, query: FoldedName): boolean {
 
 /**
  * Words a short name could use to read as an instruction to the model ("Ignore previous instructions", "You are
- * allowed now"). Carried over from the M2-G team line's list without `do` (a common surname: "Anh Do", #454's review),
- * plus a few more. A word of six letters or more also flags a longer word it starts ("instructions", "ignored").
- * Defence in depth beside the tool's framing, never a proof: a flagged name is still returned.
+ * allowed now"). The M2-G team line's list without `do` (a common surname: "Anh Do", #454's review), plus a few more.
+ * A word of six letters or more also catches a longer word it starts ("instructions", "ignored").
  */
 export const INSTRUCTION_WORDS: readonly string[] = [
   'ignore', 'disregard', 'forget', 'previous', 'instruction', 'system', 'assistant', 'prompt', 'override', 'always',
@@ -81,7 +76,7 @@ const PREFIX_MIN = 6
 /** Each instruction word as folded words (`don't` is `don`, `t`), so it is compared the way a name is. */
 const INSTRUCTION_PHRASES: readonly string[][] = INSTRUCTION_WORDS.map(w => tokens(fold(w)))
 
-/** Runs of one-letter words joined into one ("I G N O R E" reads as `ignore`). */
+/** Runs of one-letter words joined into one ("I. G. N. O. R. E." reads as `ignore`). */
 function joinLetters(words: readonly string[]): string[] {
   const out: string[] = []
   let run = ''
@@ -103,10 +98,48 @@ function hasPhrase(words: readonly string[]): boolean {
 
 /**
  * Whether a name reads like an instruction: one of its words (split on spaces, hyphens, apostrophes and other
- * punctuation, and at a lower-to-upper case change: "IgnorePrevious") is an instruction word once folded, look-alike
- * letters included (Cyrillic `о` in "Ignоre", fullwidth "Ｉｇｎｏｒｅ", "İgnore").
+ * punctuation, and at a lower-to-upper case change: "IgnorePrevious") is an instruction word once folded (fullwidth
+ * "Ｉｇｎｏｒｅ", "İgnore", a zero-width character inside a word).
  */
 export function readsAsInstruction(name: string): boolean {
   const camel = tidy(name).replace(/(\p{Ll})(\p{Lu})/gu, '$1 $2')
   return [tokens(fold(name)), tokens(fold(camel))].some(words => hasPhrase(words) || hasPhrase(joinLetters(words)))
+}
+
+/** The scripts a letter is told apart by. A letter of a script not listed counts as `Other`; Common and Inherited don't count. */
+const SCRIPTS: readonly (readonly [string, RegExp])[] = [
+  'Latin', 'Greek', 'Cyrillic', 'Armenian', 'Hebrew', 'Arabic', 'Syriac', 'Thaana', 'Devanagari', 'Bengali', 'Gurmukhi',
+  'Gujarati', 'Oriya', 'Tamil', 'Telugu', 'Kannada', 'Malayalam', 'Sinhala', 'Thai', 'Lao', 'Tibetan', 'Myanmar',
+  'Georgian', 'Hangul', 'Ethiopic', 'Cherokee', 'Khmer', 'Mongolian', 'Hiragana', 'Katakana', 'Bopomofo', 'Han',
+].map(s => [s, new RegExp(String.raw`^\p{Script=${s}}$`, 'u')] as const)
+const SHARED = /^[\p{Script=Common}\p{Script=Inherited}]$/u
+/** Script sets one name may mix (Unicode TR39's "highly restrictive" level: Japanese, Chinese and Korean with Latin). */
+const MIXES_ALLOWED: readonly (readonly string[])[] = [
+  ['Latin', 'Han', 'Hiragana', 'Katakana'], ['Latin', 'Han', 'Bopomofo'], ['Latin', 'Han', 'Hangul'],
+]
+
+/** The scripts of a text's letters. */
+export function scriptsOf(s: string): Set<string> {
+  const out = new Set<string>()
+  for (const c of s.normalize('NFKC')) {
+    if (!/\p{L}/u.test(c) || SHARED.test(c)) continue
+    out.add(SCRIPTS.find(([, re]) => re.test(c))?.[0] ?? 'Other')
+  }
+  return out
+}
+
+/** Whether a name mixes scripts beyond TR39's highly restrictive sets (Cyrillic `о` in "Ignоre", Greek `ο` in "Lεo"). */
+export function mixesScripts(name: string): boolean {
+  const scripts = [...scriptsOf(name)]
+  return scripts.length > 1 && !MIXES_ALLOWED.some(set => scripts.every(s => set.includes(s)))
+}
+
+/** Whether a name is a plain name: the shape, at most NAME_SHOWN_MAX characters, no instruction word, one script. */
+export function plainName(name: string): boolean {
+  return [...name].length <= NAME_SHOWN_MAX && NAME_SHAPE.test(name) && !readsAsInstruction(name) && !mixesScripts(name)
+}
+
+/** A name as the agent is shown it: exactly as typed when it is a plain name, otherwise withheld and flagged. */
+export function nameForAgent(name: string | null): { name: string; flagged: boolean } {
+  return name !== null && plainName(name) ? { name, flagged: false } : { name: NAME_WITHHELD, flagged: true }
 }
