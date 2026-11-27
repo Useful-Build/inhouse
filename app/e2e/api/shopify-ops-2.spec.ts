@@ -3,7 +3,8 @@
 // send through `HUB_WRITE` into the hub's fake Shopify write store. No container. Oracles, the plan's words written out:
 //  - a restock is an `ask` card; allowed once, it goes out once after its hold with the action's idempotency key;
 //  - a reduce is an exact `destructive` card every time, which its asker approves;
-//  - a member's refund is refused `needs_admin` (until M3-X); an admin's is an exact `money` card; approved, it goes out
+//  - a member's refund is an exact `money` card for any admin (M3-X; admin-cards.spec.ts has the rest); an admin's is an
+//    exact `money` card to themselves; approved, it goes out
 //    once with the amount explicit in its transaction, after Shopify's suggested refund matched it;
 //  - a refund in another currency than the shop's (which the hub's connect/status answer names, copied into D1) is
 //    refused at `resolve`, and one past the ceiling's largest call `over_limit`;
@@ -124,9 +125,13 @@ test('a reduce is an exact destructive card, even for its asker; approved, it go
   expect(sent[0]!.variables).toMatchObject({ input: { reason: 'damaged', changes: [{ delta: -2 }] }, idempotencyKey: `${id}:1` })
 })
 
-test('a member\'s refund is refused needs_admin; another currency is invalid_args; past the largest call over_limit', async ({ request }) => {
+test('a member\'s refund is an admins card; another currency is invalid_args; past the largest call over_limit', async ({ request }) => {
   await ceiling(request, REFUND, true)
-  expect(await requestAction(request, danaId, REFUND, refundArgs())).toMatchObject({ outcome: 'refused', reason: 'needs_admin' })
+  // Stage 1 M3-X (N25): was refused `needs_admin`. Said No to at once, so nothing of it goes out.
+  const asked = await requestAction(request, danaId, REFUND, refundArgs())
+  expect(asked).toMatchObject({ outcome: 'waiting', action: { verdict: 'exact', guardrail: 'money', approver_kind: 'admins', approver: 'role:admin' } })
+  const no = await call(request, admin, 'POST', `/api/actions/${asked.action!.id}/answer`, { json: { choice: 'deny', ifRev: asked.action!.rev } })
+  expect(no.status, no.text).toBe(200)
   expect(await requestAction(request, adminId, REFUND, refundArgs({ amount: { minor: 500, currency: 'EUR' } }))).toMatchObject({ outcome: 'refused', reason: 'invalid_args' })
   expect(await requestAction(request, adminId, REFUND, refundArgs({ amount: { minor: 50_001, currency: 'USD' } }))).toMatchObject({ outcome: 'refused', reason: 'over_limit' })
   expect(await storeWrites(request, REFUND)).toEqual([])
