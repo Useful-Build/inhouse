@@ -3,10 +3,11 @@
 # The app's whole suite runs in app/: type check, lint, build and every Playwright project, in the official
 # Playwright image so screenshots render the same on every run. Four e2e jobs, one quarter of the suite each, so the
 # longest job is about half what two jobs of two quarters took (test merge policy, Wasim, 2026-11-26). A PR into main
-# runs at most 8 jobs at once (changes first, then 4 e2e, test-build, runner and hub, with pr-gates beside them; ci
-# after), under GitHub Free's 20 concurrent jobs.
+# runs at most 9 jobs at once (changes first, then 4 e2e, test-build, runner, hub and ignore-scripts, with pr-gates
+# beside them; ci after), under GitHub Free's 20 concurrent jobs.
 # Docs-only fast path (same policy): when every changed file is documentation (the changes job below says exactly
-# what counts), e2e, test-build, runner, hub and fast skip, and ci passes on that skip alone. pr-gates runs as always.
+# what counts), e2e, test-build, runner, hub, fast and ignore-scripts skip, and ci passes on that skip alone. pr-gates
+# runs as always.
 # Phase batching (Wasim, 2026-11-21): a PR into a fleet/** branch runs only the fast checks (the fast job: type check,
 # lint, unit, the builds and their guards, the fresh-install migrations; the runner job without its image and container
 # probes). ci doesn't listen to a base change (pull_request: edited), so a PR retargeted from fleet/** to main keeps its
@@ -256,9 +257,10 @@ jobs:
 
   # Every job that holds a secret installs with `npm ci --ignore-scripts` (app/scripts/ignore-scripts.test.mjs holds
   # them to it): deploy.yml deploy, preview.yml deploy, preview-cleanup.yml delete, nightly.yml connectors and
-  # slack-connectors, sandbox-test-deploy.yml pr-code and deploy. They run on main, on a schedule or by dispatch, so
-  # this job makes the same installs and runs their commands, with no secret, on every PR (a version bump's included):
-  # a package that starts to need its install script fails here, not in a deploy. Not on a docs-only run.
+  # slack-connectors, sandbox-test-deploy.yml pr-code and deploy, plus deploy.yml build, whose dist/ goes live. They run
+  # on main, on a schedule or by dispatch, so this job makes the same installs and runs their commands, with no secret,
+  # on every PR (a version bump's included): a package that starts to need its install script fails here, not in a
+  # deploy. Not on a docs-only run.
   ignore-scripts:
     needs: changes
     if: ${{ needs.changes.outputs.docs_only == 'false' }}

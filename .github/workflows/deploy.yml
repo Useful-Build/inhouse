@@ -98,7 +98,9 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: app/.nvmrc
-      - run: npm ci
+      # --ignore-scripts: no secret here, but this build's dist/ is what the deploy job puts live, so no package's
+      # install script gets to touch it. None is needed (ci.yml's ignore-scripts job builds the same way per PR).
+      - run: npm ci --ignore-scripts
       - run: npm run build
         env:
           RELEASE_SHA: ${{ needs.plan.outputs.sha }}
