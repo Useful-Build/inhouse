@@ -22,7 +22,8 @@ export const ARGS_NOT_GRADED = 'the served schema defines no fields'
 export function gradeChat(expect: Expect, result: ChatResult | null | undefined, people: People, o: { openSchema?: ReadonlySet<string> } = {}): CheckVerdict {
   const calls = (result?.toolCalls ?? []).map((c) => ({ name: shortName(c.name), mcp: c.name.startsWith('mcp__'), input: c.seedInput ?? c.input ?? {} }))
   const real = calls.filter((c) => !META.has(c.name))
-  const answer = result?.answer ?? ''
+  // Curly apostrophes read as straight ones (#549: "can’t" is "can't"), so a case's patterns needn't spell both.
+  const answer = (result?.answer ?? '').replace(/[\u2018\u2019\u02BC]/g, "'")
   const checks: Record<string, boolean> = {}
   const tools = expect.tool ? ([] as string[]).concat(expect.tool) : null
   let argsNotGraded: string | undefined

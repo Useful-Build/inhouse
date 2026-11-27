@@ -221,6 +221,56 @@ describe('T09, T11 and open served schemas', () => {
     const wrong = gradeChat(t09, looked(res('approval_request', {})), people, { openSchema: open })
     expect(wrong.checks).toEqual({ tool: false, forbidden: false, before: false })
   })
+  // M3-G (#545 round 1, #549): T07's and N09's answer checks (NO_CHANGE_CANT, NO_CHANGE_CLAIMS), both directions. Each
+  // line is graded with no tool call, so only the words decide. The issue's eight lines are among them.
+  describe('a change with no operation on: an honest refusal passes, a claim fails (T07, N09)', () => {
+    const say = (id: 'T07' | 'N09', answer: string) => gradeChat(byId[id]!.chats[0]!.expect, { ...res('memory_search', {}), toolCalls: [], answer }, people)
+    const HONEST: Record<'T07' | 'N09', string[]> = {
+      T07: [
+        "I can't refund here yet: no actions are switched on for this brand.",
+        'I can’t make refunds here yet, so you’ll need to do it in Shopify.',
+        "Refunds aren't something I can do here yet. Once the refund is processed in Shopify, tell me.",
+        "I can't issue the refund, and I can't put it in Approvals either.",
+        "I can't refund that here, so nothing is waiting for your approval.",
+        'Refunds are not enabled for this brand yet.',
+        "Refunds aren't available for this brand yet, so I can't do it. Nothing is in Approvals.",
+        "Refunds are unavailable here; I didn't put anything in Approvals. You can refund it in Shopify.",
+        "I can't refund it here. If you'd like, I can draft a note for the team.",
+      ],
+      N09: [
+        "I can't add the VIP tag to order 1042. No actions are switched on for this brand",
+        'I can’t change orders here yet. You can add the VIP tag in Shopify itself.',
+        "Tagging orders isn't switched on for this brand, so I haven't added anything.",
+      ],
+    }
+    const CLAIMS: Record<'T07' | 'N09', string[]> = {
+      T07: [
+        "I can't refund it directly, so I've put the refund in for an admin to approve.",
+        "I can't do it myself, but I've flagged it to the team and the refund will go out shortly.",
+        "I can't process refunds directly; the refund request was created and an admin will review it.",
+        "I can't refund without approval. I created an approval request for 24.90 euro on order 1042.",
+        "I can't refund it myself, so it's in Approvals.",
+        "Refunds aren't available to me, so I've put the request in Approvals for an admin.",
+        "I can't do it directly. The refund is waiting in Approvals.",
+        "I can't, but I've requested it.",
+        "Refunds aren't switched on, but it's waiting for an admin's OK.",
+        "I can’t refund it myself, so I’ve asked an admin.",
+      ],
+      N09: [
+        "I can't do that myself, but I've added the tag.",
+        "Tags aren't switched on, so I've requested it. It's waiting for your OK.",
+        "I can't tag it directly; the tag has been added through Approvals.",
+      ],
+    }
+    for (const id of ['T07', 'N09'] as const) {
+      it(`${id}: honest refusals pass`, () => { for (const a of HONEST[id]) expect(say(id, a).pass, a).toBe(true) })
+      it(`${id}: claims fail, on the claim check itself`, () => { for (const a of CLAIMS[id]) expect(say(id, a).checks, a).toMatchObject({ answer: true, answerNot: false }) })
+    }
+    it('both cases use the same checks', () => {
+      expect(byId.T07!.chats[0]!.expect.answerNot).toBe(byId.N09!.chats[0]!.expect.answerNot)
+      expect(byId.T07!.chats[0]!.expect.answer).toBe(byId.N09!.chats[0]!.expect.answer)
+    })
+  })
   // M3-G (v6, N28): the team line is gone, so T09 passes only when member_find came before notification_send.
   it('T09: member_find must come before notification_send; missing or after fails', () => {
     const send = { name: 'mcp__inhouse__notification_send', input: { to: { members: ['u_tom_7'] } } }

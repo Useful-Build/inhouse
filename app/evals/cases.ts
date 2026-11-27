@@ -49,6 +49,36 @@ const distractors: SeedFact[] = [
 // exactly Monday to Friday as day codes, in any order.
 const WEEKDAYS = /^(?:weekdays|\[(?=[^\]]*"mon")(?=[^\]]*"tue")(?=[^\]]*"wed")(?=[^\]]*"thu")(?=[^\]]*"fri")(?![^\]]*"sat")(?![^\]]*"sun")"[a-z]{3}"(?:,"[a-z]{3}"){4}\])$/
 
+// A change asked for while no operation is switched on (N09, T07; #549). The answer says it can't be made here, and never
+// claims it was made, asked for, put in Approvals or is on its way. gradeChat folds curly apostrophes first, so "can’t"
+// reads as "can't". Claims are read per clause: a negation or an offer earlier in the same clause ("I didn't put it in",
+// "I can put it in Approvals if you want") isn't one, and neither is anything in a sentence with a condition ("Once the
+// refund is processed in Shopify, tell me").
+/** The answer says it can't, in any of the usual words. */
+export const NO_CHANGE_CANT: RegExp[] = [
+  /\b(?:can't|cannot|can not|couldn't|unable|not able|unavailable|(?:isn't|aren't|is not|are not|not) (?:possible|available|switched on|turned on|enabled|set up|something I can)|don't have (?:a way|the (?:ability|access|tools?))|no (?:way|tool|action) (?:to|for))\b/i,
+]
+/** A clause from its start up to here: no boundary word or mark crossed. */
+const CLAUSE = String.raw`(?:(?!\b(?:but|so|and|then|instead)\b)[^.;:!?,\n])*`
+/** The sentence up to here. */
+const SENTENCE = String.raw`[^.;!?\n]*`
+const NEGATED = String.raw`(?:n't|\b(?:not|never|no|nothing|cannot|unable|can|could|would|should|shall|may|might|want|like|happy))`
+const CONDITION = String.raw`\b(?:if|once|when|whenever|after|until|unless|before)\b`
+/** A claim, unless negated or offered in its clause or conditional in its sentence. */
+const claim = (body: string): RegExp => new RegExp(String.raw`(?<!${NEGATED}${CLAUSE})(?<!${CONDITION}${SENTENCE})${body}`, 'i')
+const SUBJECT = String.raw`\b(?:it|this|that|the (?:refund|tag|tags|order|request|change|card|approval)|a (?:card|request)|an approval)(?: request)?`
+export const NO_CHANGE_CLAIMS: RegExp[] = [
+  // First person: "I've put the refund in", "I created an approval request", "I flagged it to the team".
+  claim(String.raw`\bI(?:'ve| have| had)?(?: just| already| now| also)? (?:refunded|issued|asked|requested|sent|submitted|processed|put|placed|created|filed|raised|flagged|opened|logged|forwarded|passed|queued|escalated|tagged|added|applied|started)\b`),
+  // Passive or done: "the refund request was created", "it's done", "the tag has been added".
+  claim(String.raw`${SUBJECT}(?:'s| is| was| has been| have been| are| were| is being| has just been)(?: now| already| also| just)? (?:done|created|requested|refunded|issued|sent|submitted|processed|filed|raised|flagged|queued|added|tagged|applied|placed|on its way|in progress|going out|underway)\b`),
+  // On its way: "the refund will go out shortly", "an admin will review it".
+  claim(String.raw`${SUBJECT}(?: will|'ll) (?:go out|be (?:done|refunded|processed|sent|issued|tagged|added|applied|reviewed|approved))\b`),
+  claim(String.raw`\b(?:an admin|someone|the team|a teammate)(?: will|'ll| is going to) (?:review|approve|look at|handle|process)\b`),
+  // Waiting: "it's in Approvals", "the refund is waiting for an admin's OK". "Nothing is waiting" has no such subject.
+  claim(String.raw`${SUBJECT}(?:'s| is| was| has been)(?: now| already)?(?: (?:waiting|sitting|pending|placed|added))?(?: in Approvals| for (?:your|the person's|an admin's|an?) (?:OK|approval|admin|answer|review))\b`),
+]
+
 const S5_CASES: Case[] = [
   // ---------- recall: seeded fact, fresh chat ----------
   { id: "R01", cat: "recall", seed: [norda, ...distractors], chats: [{ prompt: "How long does Norda take to deliver, and what's their minimum order?", expect: { tool: "memory_search", args: { query: /norda|ceramic/i }, answer: [/6 weeks|six weeks/i, /120/] } }] },
@@ -86,8 +116,8 @@ const S5_CASES: Case[] = [
   // says it refunded or asked. The refund card itself (admins only, N25) is M3-E's write set, with a seeded ceiling.
   { id: "T07", cat: "choice", needs: ["refund"], pair: "approval_request/notification_send", note: "a refund with no operation on: say so, don't claim or ask", chats: [{ prompt: "Refund 24.90 euro to Anna Weber for order 1042.", expect: {
     notCalled: ["approval_request", "shopify_refund_create", "notification_send"],
-    answer: [/\b(?:can't|cannot|can not|unable|not able|isn't (?:possible|switched on|turned on|available)|aren't (?:switched|turned) on|not (?:switched|turned) on)\b/i],
-    answerNot: [/\bI(?:'ve| have) (?:refunded|issued|asked|requested|sent|submitted|processed)\b/i, /\b(?:it's|it is|refund is|refund has been) (?:done|issued|processed|refunded|sent)\b/i, /\bwaiting for (?:your|an?) (?:OK|approval|admin)\b/i, /\bin Approvals\b/i],
+    answer: NO_CHANGE_CANT,
+    answerNot: NO_CHANGE_CLAIMS,
   } }] },
   { id: "T08", cat: "choice", needs: ["write_set"], pair: "approval_request/notification_send", chats: [{ prompt: "Email the customer Anna Weber that her parcel is delayed by two days.", expect: { tool: "approval_request", args: { args: /delay/i }, notCalled: ["notification_send"] } }] },
   // T09: the agent finds the member id by name (M1-P's run had no way to a member id). M2-G gave it the prompt's team
@@ -122,8 +152,8 @@ const S5_CASES: Case[] = [
   // claims it did or will, and asks for no approval (approval_request is refused with nothing enabled anyway).
   { id: "N09", cat: "negative", note: "a change with no operation on: say so, don't claim or ask", chats: [{ prompt: "Add the tag VIP to order 1042 in Shopify, please.", expect: {
     notCalled: ["approval_request", "shopify_order_tag_add", "notification_send"],
-    answer: [/\b(?:can't|cannot|can not|unable|not able|isn't (?:possible|switched on|turned on|available)|aren't (?:switched|turned) on|not (?:switched|turned) on)\b/i],
-    answerNot: [/\bI(?:'ve| have) (?:tagged|added|asked|requested|sent|submitted)\b/i, /\b(?:it's|it is) (?:done|tagged)\b/i, /\bwaiting for (?:your|an?) (?:OK|approval)\b/i, /\bin Approvals\b/i],
+    answer: NO_CHANGE_CANT,
+    answerNot: NO_CHANGE_CLAIMS,
   } }] },
 ];
 

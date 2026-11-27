@@ -20,6 +20,8 @@ import { ceiling, resetPermissions } from '../permissions/test-support.ts'
 import { ACTION_TEXTS, NO_ACTIONS_LINE, OPERATION_WORDS, actingLine, adminOnly, exactOnly } from './actions.ts'
 import { enabledOperations, turnPromptDeps, turnSystemPrompt } from './connected.ts'
 import { JOB_NOTE_PREFIX } from './job.ts'
+import { ACTION_WORDS } from '../egress/actions.ts'
+import { TEXT as APPROVAL_TEXT } from '../mcp/tools/approvals/words.ts'
 
 const CLAIM = /`actions` server|you can make these changes|you can (?:change|send|post|tag)/i
 
@@ -137,7 +139,7 @@ describe('the acting line names exact-only and admin-only operations, and the ba
   }
   const EXACT_HEAD = 'These always need an OK for that exact action, every time ("Always allow" never covers them): '
   const ADMIN_HEAD = 'Only an admin can approve these: '
-  const SPLIT = 'The same change to many records (tags on 40 orders, say) is one call with all of them, up to what the tool takes, never split into smaller calls: a big change becomes one card that lists every item, for the person to approve together.'
+  const SPLIT = "The same change to many records (tags on 40 orders, say) is one call with all of them, never split into smaller calls: a big change becomes one card that lists every item, for the person to approve together. When it's more than one call takes, use as few full calls as you can; each becomes its own card."
   const COLLECT = "When five cards of one kind already wait in this chat or a change goes past what its permission allows today, more changes of that kind join one card the person answers together; the tool's answer says so."
   const SINGLE_HEAD = 'These never join a shared card; a sixth one waiting in this chat is refused, so wait for an answer first: '
 
@@ -173,17 +175,33 @@ describe('the acting line names exact-only and admin-only operations, and the ba
     expect(line.includes(SPLIT)).toBe(ops.some(k => MANY.includes(k)))
     expect(line.includes(COLLECT)).toBe(ops.some(k => COLLECTS.includes(k)))
     const single = sentence(line, SINGLE_HEAD)
-    expect(single !== '').toBe(ops.some(k => COLLECTS.includes(k)) && ops.some(k => !COLLECTS.includes(k)))
+    expect(single !== '').toBe(ops.some(k => !COLLECTS.includes(k)))
     for (const k of OPERATION_KEYS) expect(single.includes(`\`${OPERATIONS[k].tool}\``), k).toBe(single !== '' && ops.includes(k) && !COLLECTS.includes(k))
     expect(line).not.toMatch(/split (?:it|them|the change) (?:into|in)|smaller calls to/i)
   })
 
-  it('literal: refund alone is named exact and admin-only, with no batch words', () => {
+  it('literal: refund alone is named exact and admin-only, refused past five waiting, with no split or collect words', () => {
     const line = actingLine(['shopify.refund.create'])
     expect(line).toContain(`${EXACT_HEAD}refund items or shipping on an order in the Shopify store (\`shopify_refund_create\`).`)
-    expect(line).toContain(`${ADMIN_HEAD}refund items or shipping on an order in the Shopify store (\`shopify_refund_create\`). When a member asks for one, the card waits for any admin to answer, not the member; tell the person it's waiting for an admin's OK.`)
+    expect(line).toContain(`${ADMIN_HEAD}refund items or shipping on an order in the Shopify store (\`shopify_refund_create\`). Don't guess who can approve one: when the tool's answer says it's waiting for an admin's OK, tell the person it's in Approvals for an admin.`)
     expect(line).not.toContain(SPLIT)
     expect(line).not.toContain(COLLECT)
+    expect(line).toContain(`${SINGLE_HEAD}refund items or shipping on an order in the Shopify store (\`shopify_refund_create\`).`)
+  })
+
+  // #547: the agent isn't told the person's role, so the admin words follow the tool's answer, never a guessed role, and
+  // the answer's own words are the ones the line quotes (an admin approves their own: N25).
+  it('the admin-only words follow the tool\'s answer, in its own words, and never guess the person\'s role', () => {
+    const line = actingLine(['shopify.refund.create'])
+    const admin = line.slice(line.indexOf(ADMIN_HEAD), line.indexOf('The tool\'s answer is the only truth'))
+    expect(admin).toContain("Don't guess who can approve one: when the tool's answer says it's waiting for an admin's OK, tell the person it's in Approvals for an admin.")
+    expect(admin).not.toMatch(/\b(?:a|the) member asks|\bif (?:you|the person|they) (?:is|are) an? (?:admin|member)|\bnot the member\b/i)
+    for (const answer of [ACTION_WORDS.waiting('an admin'), APPROVAL_TEXT.madeForAdmins('ac_x')]) {
+      expect(answer.toLowerCase()).toContain("waiting for an admin's ok")
+      expect(answer).toContain('in Approvals')
+    }
+    expect(line).not.toContain("the person's OK for that exact action")
+    expect(line).toContain('always needs an OK for that exact action')
   })
 
   it('literal: tags and a stock reduction: the split rule, the collect rule, and the reduction never joins', () => {
