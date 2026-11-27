@@ -1,0 +1,46 @@
+{
+ "row": {
+  "caseId": "N08",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "noMcp": true
+  },
+  "called": [
+   "WebFetch"
+  ],
+  "toolSearches": 1,
+  "answer": "I can't look up the Berlin forecast for tomorrow (Saturday, 28 November 2026). W",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_XnjuqfQNttBmIxgeeapdFA",
+  "askedAs": "eval-45931306709-1-n08-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I can't look up the Berlin forecast for tomorrow (Saturday, 28 November 2026). W",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "8ef779e67bdca8e575461dd26589aebda5b38994bca4aaa82150fd1def313770",
+    "inputExcerpt": "{\"query\":\"select:WebFetch\",\"max_results\":1}"
+   },
+   {
+    "name": "WebFetch",
+    "inputSha256": "1a79ee0de00152afa8a20b8b22aad9addedf7d22c76f0fa0e9cfd7a0cb93c98f",
+    "inputExcerpt": "{\"url\":\"wttr.in [url 38afac897fe3]\",\"prompt\":\"Give the forecast for 2026-11-28 i",
+    "hookDenied": true
+   }
+  ]
+ }
+}

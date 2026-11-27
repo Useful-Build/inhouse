@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "R08",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "No. According to our saved brand policy, we never ship to PO boxes.\n\nIf a custom",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_e2ecGvsj_GcFVUOtfwCZ7Q",
+  "askedAs": "eval-45931306709-1-r08-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "No. According to our saved brand policy, we never ship to PO boxes.\n\nIf a custom",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "b449e7a38e6687381d4297f8824ae3c04c65ceaa4fafc36e09bd33946e32fad3",
+    "inputExcerpt": "{\"query\":\"PO box shipping post office box address\"}"
+   }
+  ]
+ }
+}

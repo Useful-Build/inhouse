@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "T10",
+  "cat": "choice",
+  "pair": "question_ask/AskUserQuestion",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "question_ask"
+  ],
+  "toolSearches": 0,
+  "answer": "Asked: Which supplier should we go with for the mug reorder? Pick the option clo",
+  "costUsd": 0.015,
+  "runOk": true,
+  "turnId": "t_1vYUVk5dLufLv2K1QIqQ_A",
+  "askedAs": "eval-45931306709-1-t10-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.015,
+  "answer": "Asked: Which supplier should we go with for the mug reorder? Pick the option clo",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__question_ask",
+    "inputSha256": "f4d05eec0490033e2fd10ae4bd9b9533d95636828e31b2350baea564bccd72d0",
+    "inputExcerpt": "{\"question\":\"Which supplier should we go with for the mug reorder? Pick the opti"
+   }
+  ]
+ }
+}

@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "R09",
+  "cat": "recall",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "For the UK you use Royal Mail. DHL is the courier for the EU. This comes from a ",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_sKEcA3yQLogk-EDpTAfNPQ",
+  "askedAs": "eval-45931306709-1-r09-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "For the UK you use Royal Mail. DHL is the courier for the EU. This comes from a ",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "ec6775687ce49126930b8bdbb0f3d93c9932b058eccc9a6b012493fe3fe7222e",
+    "inputExcerpt": "{\"query\":\"courier UK shipping carrier\"}"
+   }
+  ]
+ }
+}

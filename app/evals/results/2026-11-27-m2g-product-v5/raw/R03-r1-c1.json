@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "R03",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "My saved notes say you want the weekly sales summary on Mondays at 7:30, as bull",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_Rurwqf3m1hCs4X0mi4adgQ",
+  "askedAs": "eval-45931306709-1-r03-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "My saved notes say you want the weekly sales summary on Mondays at 7:30, as bull",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "b71fecea16396ea5a28916efb611db2421bd2fb28ab336c1bb3c3395cf586e82",
+    "inputExcerpt": "{\"query\":\"sales summary\",\"limit\":10}"
+   }
+  ]
+ }
+}

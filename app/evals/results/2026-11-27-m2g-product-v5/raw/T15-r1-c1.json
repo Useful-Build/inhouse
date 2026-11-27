@@ -1,0 +1,46 @@
+{
+ "row": {
+  "caseId": "T15",
+  "cat": "choice",
+  "pair": "approval_get/list",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "approval_get"
+  ],
+  "toolSearches": 1,
+  "answer": "Not yet. Approval ac_ypAUj75ELlR-33t42cw5qQ is still waiting for someone to answ",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_7PfRywmrW7gcoOia7lqFRQ",
+  "askedAs": "eval-45931306709-1-t15-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "Not yet. Approval ac_ypAUj75ELlR-33t42cw5qQ is still waiting for someone to answ",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "449383900fe89516d5c894a549e7deaaaa8e40feb33cbd63746d569560016893",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__approval_get\",\"max_results\":1}"
+   },
+   {
+    "name": "mcp__inhouse__approval_get",
+    "inputSha256": "71da64790bef1b9293774ff16573870fe770f96803c033a3c4e5693b8bfab83d",
+    "inputExcerpt": "{\"approval_id\":\"ac_ypAUj75ELlR-33t42cw5qQ\"}"
+   }
+  ]
+ }
+}
