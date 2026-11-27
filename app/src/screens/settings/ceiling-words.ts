@@ -59,12 +59,24 @@ export interface CeilingField {
   read: (raw: string) => number | null
   /** What to type, for the error. */
   hint: string
+  /** It takes decimals (money in a currency that has them): the phone keyboard offers a decimal point. */
+  decimals: boolean
+}
+
+/**
+ * Typed digits as plain digits: commas only as a well-formed thousands separator (groups of exactly three, before any
+ * decimal point), so "500,50" or "1,50" is never read as 50,050 or 150. Null for anything else.
+ */
+export function plainNumber(raw: string): string | null {
+  const t = raw.trim()
+  return /^(\d{1,3}(,\d{3})+|\d+)(\.\d+)?$/.test(t) ? t.replace(/,/g, '') : null
 }
 
 const whole = (max: number) => ({
   shown: (v: number) => String(v),
   read: (raw: string) => (/^\d+$/.test(raw) ? Number(raw) : null),
   hint: `a whole number from 1 to ${n(max)}`,
+  decimals: false,
 })
 
 /** A limit's field: a count as a whole number; money in its currency's major unit, with that currency's decimals at most. */
@@ -83,6 +95,7 @@ function limitField(r: CeilingRow, key: 'perDayMax' | 'unitsMax', what: string):
       return String(majorOf({ minor, currency })) === String(Number(raw)) ? minor : null
     },
     hint: `an amount from ${fmtMoney({ minor: 1, currency }, display())} to ${fmtMoney({ minor: max, currency }, display())}`,
+    decimals: majorOf({ minor: 1, currency }) < 1,
   }
 }
 
@@ -103,7 +116,11 @@ export function readValues(r: CeilingRow, enabled: boolean, typed: Partial<Recor
   const out: CeilingValues = { enabled, perDayMax: r.perDayMax, unitsMax: r.unitsMax, bulkThreshold: r.bulkThreshold, batchMax: r.batchMax }
   for (const f of fieldsOf(r)) {
     const typedText = typed[f.key]
-    const v = typedText === undefined ? r[f.key] : f.read(typedText.trim().replace(/,/g, ''))
+    const plain = typedText === undefined ? null : plainNumber(typedText)
+    if (typedText !== undefined && plain === null && typedText.includes(',')) {
+      return { error: `${f.label}: enter ${f.hint}. Use a comma only between thousands, as in 1,500.` }
+    }
+    const v = typedText === undefined ? r[f.key] : plain === null ? null : f.read(plain)
     if (v === null || !Number.isSafeInteger(v) || v < 1 || v > f.max) return { error: `${f.label}: enter ${f.hint}.` }
     out[f.key] = v
   }

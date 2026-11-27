@@ -74,6 +74,33 @@ describe('money limits (issue 515)', () => {
     expect(readValues(refund('USD'), true, { unitsMax: '750.25' })).toMatchObject({ ok: { unitsMax: 75_025 } })
     expect(readValues(refund('USD'), true, { unitsMax: '1,000' })).toMatchObject({ ok: { unitsMax: 100_000 } })
     for (const bad of ['0', '0.001', '12.345', '-5', 'ten', '']) expect('error' in readValues(refund('USD'), true, { unitsMax: bad }), bad).toBe(true)
+  })
+  it('takes a comma only between thousands, never as a decimal mark: "500,50" is refused, not read as $50,050', () => {
+    const units = (currency: string, raw: string) => {
+      const got = readValues(refund(currency), true, { unitsMax: raw })
+      return 'ok' in got ? got.ok.unitsMax : got.error
+    }
+    // Well-formed: groups of exactly three, before any decimal point.
+    expect(units('USD', '1,500')).toBe(150_000)
+    expect(units('USD', '1,500.50')).toBe(150_050)
+    expect(units('USD', '500.50')).toBe(50_050)
+    expect(units('USD', ' 1,234,567.89 ')).toBe(123_456_789)
+    expect(units('KWD', '1,500.125')).toBe(1_500_125)
+    expect(units('KWD', '2.5')).toBe(2_500)
+    // A comma used as a decimal mark, or out of place: refused with a plain message, never a raise of 100 times.
+    for (const [currency, raw] of [['USD', '500,50'], ['USD', '1,50'], ['JPY', '1500,5'], ['USD', '1,50,0'], ['USD', ',500'], ['USD', '500,'], ['KWD', '1,5000.125'], ['USD', '1,500,00'], ['USD', '1.500,50']] as const) {
+      expect(units(currency, raw), `${currency} ${raw}`).toMatch(/Use a comma only between thousands, as in 1,500\.$/)
+    }
+    expect(units('KWD', '1.5001')).toMatch(/enter an amount from/)
+    // A count field takes the same rule.
+    expect(readValues(row(), true, { perDayMax: '1,20' })).toMatchObject({ error: expect.stringContaining('Use a comma only between thousands') })
+  })
+  it('offers a decimal keyboard only where the currency has decimals', () => {
+    expect(fieldsOf(refund('USD')).map(f => f.decimals)).toEqual([true])
+    expect(fieldsOf(refund('KWD')).map(f => f.decimals)).toEqual([true])
+    expect(fieldsOf(refund('JPY')).map(f => f.decimals)).toEqual([false])
+    expect(fieldsOf(refund(null)).map(f => f.decimals)).toEqual([false])
+    expect(fieldsOf(row()).every(f => !f.decimals)).toBe(true)
     expect(readValues(refund('JPY'), true, { unitsMax: '1.5' })).toMatchObject({ error: expect.stringContaining('¥1') })
     expect(readValues(refund('JPY'), true, { unitsMax: '1500' })).toMatchObject({ ok: { unitsMax: 1500 } })
     // Untouched, the stored value goes back as it was.
