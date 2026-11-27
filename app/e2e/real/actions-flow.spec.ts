@@ -350,7 +350,9 @@ test("another member can't see the card, answer it or open the chat it belongs t
   expect((await call(request, leo, 'GET', `/api/chats/${chatId}`)).status).toBe(404)
   expect((await cardAs(request, dana, row.id)).state).toBe('waiting')
 
-  // Dana: the card, with a way into her chat.
+  // Dana: the card, with a way into her chat. A fresh load, so nothing of Leo's session stays in the page's memory (a
+  // goto that changes only the hash would keep the app, and his chat list, as they were).
+  await page.goto('about:blank')
   await signedIn(page, 'dana', '#/approvals')
   const card = cardOf(page, tag)
   await expectAskAnswers(card)
