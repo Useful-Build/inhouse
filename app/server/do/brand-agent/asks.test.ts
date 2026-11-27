@@ -19,6 +19,7 @@ import { ASKER, fresh, outbox, requestCtx, rowOf, tagArgs, world } from '../../o
 import { Asks, d1Reports, DELIVER_KIND, deliverTaskId, MAX_RESUME_TRIES, MAX_WAITS_PER_TURN, RESUME_RETRY_MS, resumeKey, resumeKeyParts } from './asks.ts'
 import type { ActionTexts, AsksDeps } from './asks.ts'
 import { ACTIONS_TOOL_PREFIX, recordInvocation } from './invocations.ts'
+import { storedProjection } from './projection.ts'
 
 const db = env.DB
 const TOOL = `${ACTIONS_TOOL_PREFIX}shopify_order_tag_add`
@@ -426,6 +427,25 @@ describe('a resume turn cancelled before it started (M2-G)', () => {
     const [t] = h.turns().filter(x => x.chat_id === chat && x.source === 'action')
     a.onTurnFinal({ ...t!, state: 'cancelled', cancel_why: 'pool_full' })
     expect(h.dueTasks()).toContainEqual(expect.objectContaining({ id: deliverTaskId(id), due_at_ms: h.clock.now + RESUME_RETRY_MS }))
+  }))
+
+  // #454 round 1 (Fable, Neon): a resume turn's text is the server's, never the person's. Its stored row says so (the
+  // reload shows M1-D's note, db/chats.ts) and a failure's Try again offers no question (projection.ts, view.ts).
+  it('a failed resume turn: its row is the server\'s (`source: action`), and Try again asks nothing', () => inAgent(async h => {
+    const { turnId, chat, id } = await ended(h)
+    h.push(turnId, ev.released({ mainEntries: 2, lastUuid: 'u2', lastUuidIndex: 1 }))
+    await settle()
+    await asks(h, { texts: TEXTS }).deliver(id)
+    await settle()
+    const [t] = h.turns().filter(x => x.chat_id === chat && x.source === 'action')
+    expect(t!.state).toBe('live')
+    h.push(t!.turn_id, ev.started(), ev.failed('sdk_error'), ev.released({ mainEntries: 3, lastUuid: 'u3', lastUuidIndex: 2 }))
+    await settle()
+    const rows = storedProjection(h.sql, t!.turn_id)!.rows
+    expect(rows[0]).toMatchObject({ id: `${t!.turn_id}.u`, role: 'user', extra_json: JSON.stringify({ source: 'action' }) })
+    const end = rows.at(-1)!
+    expect(end.id).toBe(`${t!.turn_id}.f`)
+    expect(JSON.parse(end.extra_json!)).toEqual({ failure: 'sdk_error', retryQuestion: '' })
   }))
 
   it('resume keys: act_<id>, then act_<id>-<n>; nothing else parses', () => {

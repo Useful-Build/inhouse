@@ -1,0 +1,48 @@
+{
+ "row": {
+  "caseId": "T09",
+  "cat": "choice",
+  "pair": "notification_send/approval_request",
+  "rep": 3,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": false,
+   "args": false,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "question_ask"
+  ],
+  "toolSearches": 0,
+  "answer": "Asked: I don't have a member id for Tom, so I can't send him the in-app notifica",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_M836M61S1tBUiOy6DnEOjg",
+  "askedAs": "eval-45890736644-1-t09-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "Asked: I don't have a member id for Tom, so I can't send him the in-app notifica",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "95a2de77ec2c0c3c0373b05f33d4d5c52f4eb0aecf422539e220a90b0602a381",
+    "inputExcerpt": "{\"query\":\"Tom member id\"}"
+   },
+   {
+    "name": "mcp__inhouse__question_ask",
+    "inputSha256": "d0de53b9a25e034b6174595a7724d057a39dedeaea88a6dbd2ef04fa2ec7944b",
+    "inputExcerpt": "{\"question\":\"I don't have a member id for Tom, so I can't send him the in-app no"
+   }
+  ]
+ }
+}

@@ -1,7 +1,7 @@
-// The history tools and the server's own notes (Stage 1 M2-G, from #441's review). Ways it can fail, written first: a
-// job's carry-on note or an action's result (a `user` row the server wrote, `extra_json.source` `job` or `action`) comes
-// back as the person's words, in a search hit (whose snippet can drop the note's "[Automatic note ...]" prefix) or in a
-// read; or a person's own message is labelled as a note.
+// The history tools and the server's own notes (Stage 1 M2-G, from #441's review; the rule is M1-D's, store.ts). Ways it
+// can fail, written first: a job's carry-on note or an action's result (a `user` row the server wrote, `extra_json.source`
+// `job` or `action`) comes back as the person's words, in a search hit (whose snippet can drop the note's "[Automatic
+// note ...]" prefix) or in a read; or a person's own message is left out with them.
 import { env } from 'cloudflare:workers'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { historyStore } from './store.ts'
@@ -24,19 +24,18 @@ beforeAll(async () => {
   await row('t_hn3.0', 3, 'agent', 'Tagged the pelican order.', JSON.stringify({ trace: 't_hn3' }))
 })
 
-describe('the server\'s notes read as Inhouse\'s, never the person\'s', () => {
-  it('search: each hit\'s role', async () => {
+describe('the server\'s notes never come back as the person\'s words', () => {
+  it('search: the person\'s message and the agent\'s answer only', async () => {
     const hits = await historyStore({ db }).search(ME, 'pelican', { afterMs: null, beforeMs: null, limit: 10 })
-    expect(Object.fromEntries(hits.map(h => [h.messageId, h.role]))).toEqual({ 't_hn0.u': 'user', 't_hn1.u': 'inhouse', 't_hn2.u': 'inhouse', 't_hn3.0': 'agent' })
+    expect(hits.map(h => [h.messageId, h.role]).sort()).toEqual([['t_hn0.u', 'user'], ['t_hn3.0', 'agent']])
   })
-  it('read: each message\'s role, and the words the agent reads', async () => {
+  it('read: the same two, and none of the notes\' words', async () => {
     const chat = await historyStore({ db }).read(ME, CHAT, { fromPos: 0, limit: 10 })
-    expect(chat!.messages.map(m => m.role)).toEqual(['user', 'inhouse', 'inhouse', 'agent'])
+    expect(chat!.messages.map(m => [m.pos, m.role])).toEqual([[0, 'user'], [3, 'agent']])
     const scope = { memberId: ME, chatId: 'c_other', runId: 'r_x', turnId: 't_x', nowMs: 2000, requestId: 'req' } as ToolScope
     const r = await handlers.history_read!.call({ chat_id: CHAT, from_position: 0, limit: 10 }, scope, { db })
     const text = r.content[0]!.text
     expect(text).toContain('Person (1970-01-01): Tag the pelican orders as wholesale')
-    expect(text).toContain('Inhouse (an automatic note, not the person) (1970-01-01): [Automatic note from Inhouse')
-    expect(text.match(/Person \(/g)).toHaveLength(1)
+    expect(text).not.toContain('Automatic note')
   })
 })

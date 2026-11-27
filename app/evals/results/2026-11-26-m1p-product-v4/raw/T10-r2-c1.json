@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "T10",
+  "cat": "choice",
+  "pair": "question_ask/AskUserQuestion",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "question_ask"
+  ],
+  "toolSearches": 0,
+  "answer": "Asked: For the mug reorder, which way do you want to go? Pick the option closest",
+  "costUsd": 0.015,
+  "runOk": true,
+  "turnId": "t_ixV3PrW7jikKmfifZN-l7w",
+  "askedAs": "eval-45890736644-1-t10-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.015,
+  "answer": "Asked: For the mug reorder, which way do you want to go? Pick the option closest",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__question_ask",
+    "inputSha256": "3266150bd8f3ff1c181a2e1f2e69f2bffd0cbcd599926bd3f7c13d37c634ba13",
+    "inputExcerpt": "{\"question\":\"For the mug reorder, which way do you want to go? Pick the option c"
+   }
+  ]
+ }
+}

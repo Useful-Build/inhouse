@@ -1,0 +1,51 @@
+{
+ "row": {
+  "caseId": "N05",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "order_get"
+  ],
+  "toolSearches": 1,
+  "answer": "I found order #1042. I haven't taken any action on it yet.\n\n**Order #1042**\n- Pl",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_0yns1sPgDSDimTD9jfKwbg",
+  "askedAs": "eval-45890736644-1-n05-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "I found order #1042. I haven't taken any action on it yet.\n\n**Order #1042**\n- Pl",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "8fb0734e12e16d5407c9f905d893430663c2b5283e6dd4da8dddd03309fef6eb",
+    "inputExcerpt": "{\"query\":\"select:mcp__apps__orders_search,mcp__apps__order_get,mcp__apps__return"
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "ba5e78d59c7d650b0a7f6e0abc4d3eb31f4aeb426621bb90581a2b1e958a8490",
+    "inputExcerpt": "{\"query\":\"damaged order refund replacement policy\"}"
+   },
+   {
+    "name": "mcp__apps__order_get",
+    "inputSha256": "9a6c68ea92a8f0fdc7db99fd6497d5e171c446ad750ad9f741ef808dcab838d1",
+    "inputExcerpt": "{\"name\":\"#1042\"}"
+   }
+  ]
+ }
+}

@@ -42,6 +42,8 @@ const SERVED: ReadonlySet<keyof AgentClient> = new Set<keyof AgentClient>([
   ...MS_SERVED,
   // Stage 1 M2-H (actions.ts): the actions, the permissions and the questions.
   ...ACTIONS_SERVED,
+  // Stage 1 M1-D: a chat's job and its Cancel.
+  'job', 'cancelJob',
 ])
 
 const WRITES: ReadonlySet<string> = new Set<WriteMethod>([

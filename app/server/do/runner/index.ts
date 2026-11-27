@@ -54,6 +54,8 @@ export class Runner extends DurableObject<Env> {
   }
 
   async testKillRunner(): Promise<{ killed: boolean }> { return killRunner(this.ctx.container) }
+  /** Test build only (route 67's `runnerGen`): the container generation this Runner last started, 0 for none yet. */
+  async testRunnerGen(): Promise<{ gen: number }> { return { gen: sqlRunnerState(this.ctx.storage.sql).gen() } }
 
   async fetch(): Promise<Response> {
     return new Response('not found', { status: 404 })

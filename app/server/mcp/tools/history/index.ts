@@ -5,7 +5,6 @@ import { ChatIdSchema } from '../../../../shared/contract/chat-ids.ts'
 import { answer, refusal, tool } from '../../server/tool.ts'
 import type { InhouseToolName, ToolDeps, ToolHandler } from '../../server/tool.ts'
 import { historyStore } from './store.ts'
-import type { HistoryRole } from './store.ts'
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/
 const dayMs = (d: string) => {
@@ -16,8 +15,7 @@ const dayMs = (d: string) => {
 const MAX_TEXT = 4000
 const cut = (s: string) => (s.length > MAX_TEXT ? `${s.slice(0, MAX_TEXT)}… (cut)` : s)
 const day = (ms: number) => new Date(ms).toISOString().slice(0, 10)
-/** Stage 1 M2-G: a note the server wrote into the chat (a job's carry-on, an action's result) is never the person's. */
-const who = (role: HistoryRole) => (role === 'user' ? 'Person' : role === 'agent' ? 'Agent' : 'Inhouse (an automatic note, not the person)')
+const who = (role: 'user' | 'agent') => (role === 'user' ? 'Person' : 'Agent')
 
 const storeOf = (deps: ToolDeps) => historyStore({ db: deps.db })
 

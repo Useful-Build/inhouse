@@ -8,11 +8,10 @@
 import type { ChatEvent } from '../../../shared/contract/runs.ts'
 import { CANCEL } from '../../../shared/contract/chat-codes.ts'
 import type { StoredAttachment } from './run-start.ts'
+import { JOB_TURN_FAILURES_SHOWN, isServerTurnSource, type ServerTurnSource } from '../../../shared/server-turn-text.ts'
 
 /** `turns.source` and the `.u` row's `extra_json.source` of a job's continuation (Stage 1, N3). */
 export const JOB_SOURCE = 'job'
-/** `turns.source` and the `.u` row's `extra_json.source` of an action's result told to the agent (Stage 1 M2-D, M2-G). */
-export const ACTION_SOURCE = 'action'
 
 /** The flush's durable retry runs this long after the turn's end when the immediate flush didn't land. */
 export const FLUSH_RETRY_MS = 30_000
@@ -49,7 +48,7 @@ interface TurnForRows {
   turn_id: string; run_id: string; chat_id: string; owner_id: string; text: string; quote: string | null
   attachments_json: string; created_at_ms: number; pos_from: number | null
   outcome: string | null; failure: string | null; cancel_why: string | null; started_at_ms: number | null; ended_at_ms: number | null
-  source: string | null; job_id: string | null; job_n: number | null
+  source: string | null; job_id: string | null; job_n: number | null; cut_cause: string | null; person_stop: number
 }
 
 /**
@@ -69,8 +68,16 @@ export const SILENT_CANCELS: readonly string[] = [CANCEL.removed, CANCEL.deleted
  *   gone live (a pause stops an answer being written), whatever state the cancel left it in (a pause during a placement
  *   fences it to `ended`). The client words both live, so a reload agrees. (Until the first ship recording a turn that went
  *   live kept no row, because the client wordless-ignored its cancel.)
+ * A long job's own turn ends (Stage 1 M1-D) keep no row: the job's progress row and result card speak for them, and the
+ * next continuation's row says the agent carried on. That is a promoted root (it became the job, `job_n = 0`), and a
+ * continuation that failed in a way the job carries on from, retries or ends for its budget (all but
+ * JOB_TURN_FAILURES_SHOWN, shared/server-turn-text.ts) or that the server cut (`job_cut`, `job_deadline`). A person's Stop, Cancel or interrupt, or their new message taking the turn's place, keeps the
+ * stopped note. The live view (src/screens/chat/view.ts) shows the same.
  */
 function endRow(t: TurnForRows, retryQuestion: string): { id: string; extra: Record<string, string> } | null {
+  if (t.job_id !== null && t.job_n === 0) return null
+  if (t.job_id !== null && t.outcome === 'failed' && !JOB_TURN_FAILURES_SHOWN.has(t.failure ?? 'unknown')) return null
+  if (t.job_id !== null && t.outcome === 'interrupted' && t.person_stop === 0 && t.cut_cause !== 'message') return null
   if (t.outcome === 'failed') return { id: `${t.turn_id}.f`, extra: { failure: t.failure ?? 'unknown', retryQuestion } }
   if (t.outcome === 'stopped' || t.outcome === 'interrupted') return { id: `${t.turn_id}.x`, extra: { outcome: t.outcome } }
   // A turn that was answered and then fenced (a pause in the grace window) keeps its outcome and still writes a reason: not a cancel.
@@ -85,17 +92,16 @@ function endRow(t: TurnForRows, retryQuestion: string): { id: string; extra: Rec
 export function fixTurnRows(sql: SqlStorage, turnId: string, atMs: number): Projection {
   const t = sql.exec<TurnForRows>(
     `SELECT turn_id, run_id, chat_id, owner_id, text, quote, attachments_json, created_at_ms, pos_from, outcome, failure,
-      cancel_why, started_at_ms, ended_at_ms, source, job_id, job_n FROM turns WHERE turn_id = ?`, turnId).one()
+      cancel_why, started_at_ms, ended_at_ms, source, job_id, job_n, cut_cause, person_stop FROM turns WHERE turn_id = ?`, turnId).one()
   if (t.pos_from !== null) return storedProjection(sql, turnId)!
   const from = sql.exec<{ p: number }>('SELECT next_pos AS p FROM chat_state WHERE chat_id = ?', t.chat_id).one().p
   const atts = JSON.parse(t.attachments_json) as StoredAttachment[]
-  const extra: { quote?: string; attachments?: { fileId: string; name: string }[]; source?: typeof JOB_SOURCE | typeof ACTION_SOURCE } = {}
+  const extra: { quote?: string; attachments?: { fileId: string; name: string }[]; source?: ServerTurnSource } = {}
   if (t.quote !== null) extra.quote = t.quote
-  // A job's continuation (M1-P): the server's own text, never the person's. Its `.u` row says so, so a reload and an
-  // export show it as the agent carrying on (db/chats.ts), not as something the person typed.
-  if (t.source === JOB_SOURCE) extra.source = JOB_SOURCE
-  // Stage 1 M2-G: an action's result (asks.ts) is the server's words too; the history tools read it as Inhouse's.
-  else if (t.source === ACTION_SOURCE) extra.source = ACTION_SOURCE
+  // A turn the server wrote (M1-P's job continuation; M1-D: an action's or a question's resume too): its text is never
+  // the person's. Its `.u` row says so, so a reload and an export show the server's note (db/chats.ts) and the agent's
+  // history tools leave it out, never as something the person typed.
+  if (isServerTurnSource(t.source)) extra.source = t.source
   if (atts.length > 0) extra.attachments = atts.map(a => ({ fileId: a.fileId, name: a.name }))
   const base = { chat_id: t.chat_id, run_id: t.run_id, turn_id: t.turn_id }
   const rows: ProjectedRow[] = [{
@@ -112,7 +118,10 @@ export function fixTurnRows(sql: SqlStorage, turnId: string, atMs: number): Proj
       extra_json: JSON.stringify({ trace: turnId }), model: ev.model, at_ms: ev.at.ms,
     })
   }
-  const end = endRow(t, t.source === JOB_SOURCE ? jobQuestion(sql, t) : t.text)
+  // Try again asks the person's own question: a job's root's for its continuation, none for an action's or question's resume.
+  // A question's resume inside a job is the job's turn too (`job_id` set by jobs/engine.ts `resumed`): the root's question.
+  const ofJob = t.job_id !== null && t.job_n !== 0
+  const end = endRow(t, ofJob ? jobQuestion(sql, t) : isServerTurnSource(t.source) ? '' : t.text)
   if (end) {
     rows.push({
       ...base, id: end.id, pos: from + rows.length, role: 'event', author_id: null, text: '', part_json: null,
@@ -126,11 +135,19 @@ export function fixTurnRows(sql: SqlStorage, turnId: string, atMs: number): Proj
   return { chatId: t.chat_id, atMs, rows }
 }
 
-/** The question that started a continuation's job: its root turn's text (the person's), or '' if the job is gone. */
+/**
+ * The question that started a continuation's job: its root turn's text (the person's). A job or root row that's gone is
+ * a bug, logged loudly; the end row is still stored, with no question (so no Try again), since throwing here would
+ * break the turn's final step.
+ */
 function jobQuestion(sql: SqlStorage, t: TurnForRows): string {
   const r = sql.exec<{ text: string }>(
     'SELECT r.text AS text FROM jobs j JOIN turns r ON r.turn_id = j.root_turn_id WHERE j.job_id = ?', t.job_id).toArray()[0]
-  return r?.text ?? ''
+  if (r === undefined) {
+    console.error({ event: 'projection_job_question_missing', turnId: t.turn_id, jobId: t.job_id })
+    return ''
+  }
+  return r.text
 }
 
 /** The turn's fixed rows, or null when it has none (not final yet). */

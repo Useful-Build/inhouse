@@ -30,6 +30,7 @@ import type { AvailableChannels, NotifyChannelList, PutNotifyChannels } from '..
 import type { ActionCard, ActionFilter } from '../../shared/contract/actions'
 import type { Permission } from '../../shared/contract/permissions'
 import type { Question } from '../../shared/contract/questions'
+import type { Job } from '../../shared/contract/jobs'
 import { MEMBER_ID_PATTERN, meetsRule, settingRow } from '../../shared/contract/settings-table'
 import { pendingIds, visibleProblems } from '../state/derive'
 
@@ -1002,6 +1003,9 @@ export class MockAgent implements AgentClient {
   removePermission(): Promise<Permission[]> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
   questions(): Promise<Question[]> { return Promise.resolve([]) }
   answerQuestion(): Promise<Question> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
+  // Stage 1 M1-D (N3): the demo runs no long jobs. A chat has none, and a Cancel names nothing it has.
+  job(_chatId: string): Promise<Job | null> { return Promise.resolve(null) }
+  cancelJob(_jobId: string): Promise<Job> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
 
   waitingMemory(): Promise<WaitingMemory[]> {
     if (!this.me()?.can.approveMemory) return this.rejected('forbidden', WAITING_REFUSED, false)

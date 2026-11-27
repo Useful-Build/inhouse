@@ -1,0 +1,46 @@
+{
+ "row": {
+  "caseId": "N08",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "noMcp": true
+  },
+  "called": [
+   "WebFetch"
+  ],
+  "toolSearches": 1,
+  "answer": "I can't tell you tomorrow's weather in Berlin. Web access is turned off for this",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_RTg1m8N10VW26Byn3XdP6w",
+  "askedAs": "eval-45890736644-1-n08-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I can't tell you tomorrow's weather in Berlin. Web access is turned off for this",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "8ef779e67bdca8e575461dd26589aebda5b38994bca4aaa82150fd1def313770",
+    "inputExcerpt": "{\"query\":\"select:WebFetch\",\"max_results\":1}"
+   },
+   {
+    "name": "WebFetch",
+    "inputSha256": "31ffc6d106f28975e8d1ebf802c6de0c9c05cf3c7e486e60e1c4af3ae3843cf9",
+    "inputExcerpt": "{\"url\":\"wttr.in [url 38afac897fe3]\",\"prompt\":\"Give the forecast for tomorrow (20",
+    "hookDenied": true
+   }
+  ]
+ }
+}

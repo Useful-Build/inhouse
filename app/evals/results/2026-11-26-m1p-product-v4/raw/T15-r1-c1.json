@@ -1,0 +1,51 @@
+{
+ "row": {
+  "caseId": "T15",
+  "cat": "choice",
+  "pair": "approval_get/list",
+  "rep": 1,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": false,
+   "args": false
+  },
+  "called": [
+   "approval_list"
+  ],
+  "toolSearches": 2,
+  "answer": "I can't find approval ap_204. Your approvals list is empty, so there's nothing t",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_QVs4uoaPNsizFlwDt3A8Tw",
+  "askedAs": "eval-45890736644-1-t15-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I can't find approval ap_204. Your approvals list is empty, so there's nothing t",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "449383900fe89516d5c894a549e7deaaaa8e40feb33cbd63746d569560016893",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__approval_get\",\"max_results\":1}"
+   },
+   {
+    "name": "ToolSearch",
+    "inputSha256": "cbbc6248e9978cb8014dd3fdfee4265e7d58b208364e5b073f7e3e5f7ce813b3",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__approval_list\",\"max_results\":1}"
+   },
+   {
+    "name": "mcp__inhouse__approval_list",
+    "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "inputExcerpt": "{}"
+   }
+  ]
+ }
+}

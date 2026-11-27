@@ -59,8 +59,9 @@ it('gates and validates job controls before dispatching them', async () => {
     call('/api/ops/alarm', { method: 'POST', headers: h, body: JSON.stringify(body) })
   const timing = { action: 'setTimings', overrides: { JOB_CUT_MS: 150 } }
   const kill = { action: 'killRunner', runner: 'runner-0' }
+  const gen = { action: 'runnerGen', runner: 'runner-0' }
   const enabled = setup({ compiled: true, flag: '1' })
-  for (const body of [timing, kill]) {
+  for (const body of [timing, kill, gen]) {
     expect((await post(setup(), body)).status).toBe(404)
     expect((await post(setup({ compiled: true, flag: '0' }), body)).status).toBe(404)
     expect((await post(enabled, body, await person('admin'))).status).toBe(403)
@@ -73,13 +74,16 @@ it('gates and validates job controls before dispatching them', async () => {
     { action: 'setTimings', overrides: { JOB_UNKNOWN_MS: 10 } },
     { action: 'setTimings', overrides: { JOB_CUT_MS: 100, JOB_UNKNOWN_MS: 10 } },
     { action: 'killRunner', runner: 'arbitrary-name' },
+    { action: 'runnerGen', runner: 'arbitrary-name' },
   ]) expect((await post(enabled, body)).status).toBe(400)
   // In the runner name's format but outside the pool (the test config's RUNNER_POOL is 2).
   expect(baseEnv.RUNNER_POOL).toBe('2')
   for (const runner of ['runner-2', 'runner-9']) {
-    const r = await post(enabled, { action: 'killRunner', runner })
-    expect(r.status, runner).toBe(404)
-    expect(await bodyOf(r)).toEqual({ error: { code: 'not_found', reason: 'runner' } })
+    for (const action of ['killRunner', 'runnerGen']) {
+      const r = await post(enabled, { action, runner })
+      expect(r.status, `${action} ${runner}`).toBe(404)
+      expect(await bodyOf(r)).toEqual({ error: { code: 'not_found', reason: 'runner' } })
+    }
   }
   try {
     expect(await bodyOf(await post(enabled, timing))).toEqual({ set: true })
@@ -87,6 +91,8 @@ it('gates and validates job controls before dispatching them', async () => {
     // The in-process test pool has no containers. The hook must not boot one.
     expect(await bodyOf(await post(enabled, kill))).toEqual({ killed: false })
     expect(await bodyOf(await post(enabled, { action: 'killRunner', runner: 'runner-1' }))).toEqual({ killed: false })
+    // No container ever started in the test pool: generation 0, read from the Runner's storage without booting one.
+    expect(await bodyOf(await post(enabled, gen))).toEqual({ gen: 0 })
   } finally {
     expect((await post(enabled, { action: 'setTimings', overrides: {} })).status).toBe(200)
   }
@@ -104,6 +110,7 @@ it('eval build (compiled in and switched on, the eval build too): 404 for every 
       { action: 'stopAfterBatch' },
       { action: 'setTimings', overrides: { JOB_CUT_MS: 150 } },
       { action: 'killRunner', runner: 'runner-0' },
+      { action: 'runnerGen', runner: 'runner-0' },
     ]) {
       const r = await call('/api/ops/alarm', { method: 'POST', headers, body: JSON.stringify(body) })
       expect(r.status, JSON.stringify(body)).toBe(404)

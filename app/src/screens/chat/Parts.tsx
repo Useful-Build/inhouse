@@ -196,7 +196,8 @@ export function AgentPart({ part, trace, id, chat, animate = false, streaming = 
           <Icon name="error" size={19} className="text-destructive" />
           <span className="min-w-0 flex-1">{part.text}</span>
           {MODEL_OFF_TEXTS.includes(part.text) && <Button variant="soft" onClick={() => openModelMenu()}>Pick another model</Button>}
-          <Button variant="soft" onClick={() => { retryAnswer(id, trace, part.retryQuestion) }}>Try again</Button>
+          {/* No question to ask again: the turn was the server's own (a job's or an action's), never the person's words. */}
+          {part.retryQuestion !== '' && <Button variant="soft" onClick={() => { retryAnswer(id, trace, part.retryQuestion) }}>Try again</Button>}
         </div>
       )
 

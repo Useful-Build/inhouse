@@ -33,6 +33,7 @@ import { AvailableChannelsSchema, NotifyChannelListSchema, PutNotifyChannelsSche
 import { ActionCardSchema, ActionsListSchema, AnswerActionInputSchema, ResolveActionInputSchema, UndoActionInputSchema } from '../../../shared/contract/actions'
 import { PermissionSchema, PermissionsListSchema, RemovePermissionInputSchema } from '../../../shared/contract/permissions'
 import { AnswerQuestionInputSchema, QuestionSchema, QuestionsListSchema } from '../../../shared/contract/questions'
+import { ChatJobSchema } from '../../../shared/contract/jobs'
 
 /** What each route answers with. */
 export const ANSWERS = {
@@ -66,6 +67,8 @@ export const ANSWERS = {
   dataExportCheck: DataExportCheckSchema,
   // Stage 1 M2 (N18): the actions (routes 120 to 124), the permissions (110 and 111) and the questions (140 and 141).
   actions: ActionsListSchema, actionCard: ActionCardSchema, permissions: PermissionsListSchema, permission: PermissionSchema, questions: QuestionsListSchema, question: QuestionSchema,
+  // Stage 1 M1-D (N3): a chat's newest job (route 100) and a cancelled one (101).
+  chatJob: ChatJobSchema,
 }
 
 /** What each write sends. */

@@ -5,11 +5,21 @@
 // stores the same ids as the turn's end row (projection.ts), and turn-text.ts `historyMessages` words it the same way.
 // Live-only notes (the server stores neither): `<turnId>.r.<name>` a file the agent made that wasn't saved,
 // `<turnId>.l` the chat's earlier files a run couldn't bring back.
-import type { Attachment, AttachmentRef, ChatMessage, Instant } from '../../agent/types'
-import type { ChatEvent, TurnFailure } from '../../../shared/contract/runs'
-import { NOTICE } from '../../../shared/contract/chat-codes'
+//
+// Turns the server wrote itself (Stage 1, N3 and N20: a long job's continuation, an action's or a question's resume) are
+// never the person's message: their `<turnId>.u` shows as the server's own note (shared/server-turn-text.ts), as a
+// reload shows it, and their text is never offered back as the person's question (Try again). Most of a long job's own
+// turn ends say nothing in the thread (the job's progress row and result card speak for it, JobStatus.tsx): a promoted
+// root's limit or cut, a continuation's failure the job carries on from or retries, or the server's cut. The server's
+// history projection (projection.ts) keeps no end row for exactly those, so a reload agrees.
+import type { Attachment, AttachmentRef, ChatMessage, Instant, Money } from '../../agent/types'
+import type { ChatEvent, TurnFailure, TurnSource } from '../../../shared/contract/runs'
+import type { JobOutcome } from '../../../shared/contract/jobs'
+import { FAIL, NOTICE } from '../../../shared/contract/chat-codes'
+import { JOB_TURN_FAILURES_SHOWN, serverTurnText } from '../../../shared/server-turn-text'
 import { NOTICE_TEXT, RUN_FAILED, STOPPED_NOTE, emptyView, upsert } from './notes'
 import { FAILURE_TEXT, cancelledText, fileRefusedText, filesLeftOutText } from './turn-text'
+import { JOB_THINKING } from './job-text'
 
 export type NoticeCode = Extract<ChatEvent, { type: 'notice' }>['code']
 
@@ -17,10 +27,29 @@ export type NoticeCode = Extract<ChatEvent, { type: 'notice' }>['code']
 export interface QueuedTurn { turnId: string; messageId: string; text: string; quote?: string; atts: Attachment[]; priority: 'now' | 'next' | 'later' }
 
 export type TurnState = 'queued' | 'live' | 'done' | 'interrupted' | 'stopped' | 'failed' | 'cancelled'
-/** `at`: when the question was sent (the `turn.queued` frame's time), shown as the person's message time. */
-export interface TurnInfo { turnId: string; runId: string; state: TurnState; text: string; quote?: string; atts: Attachment[]; at: Instant; failure?: TurnFailure }
+/**
+ * `at`: when the question was sent (the `turn.queued` frame's time), shown as the person's message time. `source`: who
+ * wrote a turn the person didn't type (a question's resume is told by its empty text: a person's message never is).
+ */
+export interface TurnInfo {
+  turnId: string; runId: string; messageId: string; state: TurnState; text: string; quote?: string; atts: Attachment[]; at: Instant; failure?: TurnFailure
+  source?: TurnSource
+}
 /** One live step emitted while a turn is running. */
 export interface LiveStep { id: string; label: string; tool?: string }
+
+/** The chat's long job as its events told it (N3): `job.started`, its last `job.progress`, its one `job.ended`. */
+export interface JobInfo {
+  jobId: string
+  rootTurnId: string
+  state: 'running' | 'ended'
+  progress: { label: string; helpers: number } | null
+  outcome: JobOutcome | null
+  /** When `job.ended` was sent, its length and its cost. */
+  endedAt: Instant | null
+  durationMs: number | null
+  cost: Money | null
+}
 
 export interface ChatView {
   messages: ChatMessage[]
@@ -41,6 +70,16 @@ export interface ChatView {
   /** Runs that started and haven't finished. */
   openRuns: string[]
   files: { turnId: string; fileId: string; name: string; bytes: number; contentType: string }[]
+  /** The chat's newest long job in this run, or null. */
+  job: JobInfo | null
+  /**
+   * A person's turn that ended at a limit (failed for too many steps or the one-answer budget) or interrupted: the server
+   * may make it a long job when the runner releases it (`job.started`, N3), and then its end isn't a failure. Its end
+   * message waits here until that is settled: dropped by its `job.started`, shown by the next `turn.started` or
+   * `run.finished` (the server sends either only after the release decided). Events in between (a saved `file` after
+   * its confirm, a notice, an action's update) don't settle it.
+   */
+  pendingEnd: { turnId: string; message: ChatMessage } | null
 }
 
 export { emptyView }
@@ -64,34 +103,82 @@ export function refOf(a: Attachment): AttachmentRef {
   return { fileId: `f_${id}`, name: a.name }
 }
 
-const userMessage = (t: TurnInfo, messageId: string): ChatMessage => ({
-  id: messageId, role: 'user', text: t.text, ...(t.quote !== undefined ? { quote: t.quote } : {}), ...(t.atts.length ? { atts: t.atts } : {}), at: t.at,
+const userMessage = (t: TurnInfo): ChatMessage => ({
+  id: t.messageId, role: 'user', text: t.text, ...(t.quote !== undefined ? { quote: t.quote } : {}), ...(t.atts.length ? { atts: t.atts } : {}), at: t.at,
 })
+/** What a turn's `.u` shows: the person's message, or the server's own note for a turn it wrote (null: nothing). */
+function askedMessage(t: TurnInfo): ChatMessage | null {
+  if (t.source === undefined) return userMessage(t)
+  const text = serverTurnText(t.source)
+  return text === null ? null : { id: t.messageId, role: 'event', text }
+}
+const withAsked = (messages: ChatMessage[], t: TurnInfo): ChatMessage[] => {
+  const m = askedMessage(t)
+  return m === null ? messages : upsert(messages, m)
+}
+/**
+ * A turn of the running job: its continuation, or a question's resume while the job runs (the resume takes the job's
+ * parked turn over, N3; projection.ts reads the same from `turns.job_id`).
+ */
+const ofJob = (v: ChatView, t: TurnInfo): boolean => t.source === 'job' || (t.source === 'question' && v.job?.state === 'running')
+/** The question Try again asks: only ever the person's own words. A server-written turn's text is never theirs. */
+const retryOf = (v: ChatView, t: TurnInfo): string => {
+  if (t.source === undefined) return t.text
+  if (ofJob(v, t) && v.job) { const root = v.turns[v.job.rootTurnId]; if (root && root.source === undefined) return root.text }
+  return ''
+}
+/** A person's turn ended this way may become a long job in the same step (N3, `promotable`): its end waits. */
+const CARRY_FAILURES: ReadonlySet<string> = new Set([FAIL.maxTurns, FAIL.turnBudget])
+const mayCarry = (t: TurnInfo, ev: Extract<ChatEvent, { type: 'turn.finished' }>): boolean =>
+  t.source === undefined && ((ev.outcome === 'failed' && CARRY_FAILURES.has(ev.reason ?? '')) || ev.outcome === 'interrupted')
 const withoutTurn = (q: QueuedTurn[], turnId: string) => q.filter(x => x.turnId !== turnId)
 const setTurn = (v: ChatView, turnId: string, patch: Partial<TurnInfo>): ChatView['turns'] => {
   const t = v.turns[turnId]
   return t ? { ...v.turns, [turnId]: { ...t, ...patch } } : v.turns
 }
 
-/** `at`: when the frame was sent (a note's time). Returns the same view object when the event changes nothing. */
+/**
+ * `at`: when the frame was sent (a note's time). Returns the same view object when the event changes nothing.
+ * A held end (`pendingEnd`) shows before an event that settles it without a job: the next turn starting, the run
+ * finishing, or another turn's job starting. Its own `job.started` drops it; every other event leaves it held.
+ */
+const settlesWithoutJob = (ev: ChatEvent, turnId: string): boolean =>
+  ev.type === 'turn.started' || ev.type === 'run.finished' || (ev.type === 'job.started' && ev.rootTurnId !== turnId)
+  // Another turn's cancel shows that turn's question: a cancel this early (a pause, a deleted chat) means no job either,
+  // and the held end goes first, where the stored history has it.
+  || (ev.type === 'turn.cancelled' && ev.turnId !== turnId)
+
 export function reduce(v: ChatView, ev: ChatEvent, at: Instant, runId = ''): ChatView {
+  if (v.pendingEnd !== null && settlesWithoutJob(ev, v.pendingEnd.turnId)) {
+    v = { ...v, messages: upsert(v.messages, v.pendingEnd.message), pendingEnd: null }
+  }
+  return step(v, ev, at, runId)
+}
+
+function step(v: ChatView, ev: ChatEvent, at: Instant, runId: string): ChatView {
   switch (ev.type) {
     case 'run.started':
       return v.openRuns.includes(ev.runId) ? v : { ...v, openRuns: [...v.openRuns, ev.runId] }
     case 'turn.queued': {
       if (v.turns[ev.turnId]) return v
       const atts = ev.attachments.map(a => ({ ...attOf(a.name), fileId: a.fileId }))
-      const info: TurnInfo = { turnId: ev.turnId, runId, state: 'queued', text: ev.text, ...(ev.quote !== undefined ? { quote: ev.quote } : {}), atts, at }
+      // A question's resume carries no source on the wire (core.ts) and no text: a person's message always has text.
+      const source: TurnSource | undefined = ev.source ?? (ev.text === '' && atts.length === 0 ? 'question' : undefined)
+      const info: TurnInfo = {
+        turnId: ev.turnId, runId, messageId: ev.messageId, state: 'queued', text: ev.text, ...(ev.quote !== undefined ? { quote: ev.quote } : {}), atts, at,
+        ...(source !== undefined ? { source } : {}),
+      }
+      // Only the person's own messages wait as queued chips: a server-written turn is never shown as something they sent.
+      if (source !== undefined) return { ...v, turns: { ...v.turns, [ev.turnId]: info } }
       const q: QueuedTurn = { turnId: ev.turnId, messageId: ev.messageId, text: ev.text, ...(ev.quote !== undefined ? { quote: ev.quote } : {}), atts, priority: ev.priority }
       return { ...v, turns: { ...v.turns, [ev.turnId]: info }, queued: [...v.queued, q] }
     }
     case 'turn.started': {
       const t = v.turns[ev.turnId]
       if (!t) return v
-      const msgId = v.queued.find(x => x.turnId === ev.turnId)?.messageId ?? `${ev.turnId}.u`
       return {
-        ...v, live: ev.turnId, thinking: 'Reading your question…', liveSteps: [], notice: null, budgetWait: false,
-        turns: setTurn(v, ev.turnId, { state: 'live' }), queued: withoutTurn(v.queued, ev.turnId), messages: upsert(v.messages, userMessage(t, msgId)),
+        ...v, live: ev.turnId, thinking: t.source === 'job' ? JOB_THINKING : 'Reading your question…', liveSteps: [], notice: null, budgetWait: false,
+        turns: setTurn(v, ev.turnId, { state: 'live' }), queued: withoutTurn(v.queued, ev.turnId), messages: withAsked(v.messages, t),
       }
     }
     case 'part':
@@ -115,15 +202,31 @@ export function reduce(v: ChatView, ev: ChatEvent, at: Instant, runId = ''): Cha
       const state: TurnState = ev.outcome
       let messages = v.messages
       // A turn that ended before it started (a failure at the claim) still shows what was asked.
-      if (t.state === 'queued') messages = upsert(messages, userMessage(t, v.queued.find(x => x.turnId === ev.turnId)?.messageId ?? `${ev.turnId}.u`))
+      if (t.state === 'queued') messages = withAsked(messages, t)
+      let end: ChatMessage | null = null
       if (ev.outcome === 'failed') {
         const reason = ev.reason ?? 'unknown'
-        messages = upsert(messages, { id: `${ev.turnId}.f`, role: 'agent', trace: ev.turnId, at, part: { type: 'error', text: FAILURE_TEXT[reason] ?? RUN_FAILED, retryQuestion: t.text } })
+        end = { id: `${ev.turnId}.f`, role: 'agent', trace: ev.turnId, at, part: { type: 'error', text: FAILURE_TEXT[reason] ?? RUN_FAILED, retryQuestion: retryOf(v, t) } }
       } else if (ev.outcome === 'interrupted' || ev.outcome === 'stopped') {
-        messages = upsert(messages, { id: `${ev.turnId}.x`, role: 'event', text: STOPPED_NOTE })
+        end = { id: `${ev.turnId}.x`, role: 'event', text: STOPPED_NOTE }
       }
+      let pendingEnd = v.pendingEnd
+      if (ofJob(v, t)) {
+        // A job's own turn: most failures are the job's to judge (carry on, retry or end for its budget, and its card says
+        // so); one that ends the job whatever comes next still shows, with Try again asking the person's question. The
+        // server's cut carries the job on. A stop says so only when the person stopped it: a Stop or Cancel (`stopped`), an
+        // interrupt that cancelled the job (its `job.ended` came first), or their new message sent `now` taking the turn's
+        // place (the server's `message` cut; one queued `next` or `later` doesn't cut, and the server's own cut then says nothing).
+        const shown = ev.outcome === 'failed' ? JOB_TURN_FAILURES_SHOWN.has(ev.reason ?? 'unknown')
+          : ev.outcome === 'stopped' || (ev.outcome === 'interrupted' && (v.job?.outcome === 'cancelled' || v.queued.some(q => q.priority === 'now')))
+        if (!shown) end = null
+      } else if (end !== null && mayCarry(t, ev)) {
+        pendingEnd = { turnId: ev.turnId, message: end }
+        end = null
+      }
+      if (end !== null) messages = upsert(messages, end)
       return {
-        ...v, messages, queued: withoutTurn(v.queued, ev.turnId),
+        ...v, messages, pendingEnd, queued: withoutTurn(v.queued, ev.turnId),
         live: v.live === ev.turnId ? null : v.live,
         thinking: v.live === ev.turnId ? null : v.thinking,
         liveSteps: v.live === ev.turnId ? [] : v.liveSteps,
@@ -137,7 +240,7 @@ export function reduce(v: ChatView, ev: ChatEvent, at: Instant, runId = ''): Cha
       const text = cancelledText(ev.why, v.messages.some(x => x.role === 'agent' && x.trace === ev.turnId))
       let messages = v.messages
       if (text !== null) {
-        messages = upsert(messages, userMessage(t, v.queued.find(x => x.turnId === ev.turnId)?.messageId ?? `${ev.turnId}.u`))
+        messages = withAsked(messages, t)
         messages = upsert(messages, { id: `${ev.turnId}.x`, role: 'event', text })
       }
       const wasLive = v.live === ev.turnId
@@ -153,11 +256,24 @@ export function reduce(v: ChatView, ev: ChatEvent, at: Instant, runId = ''): Cha
     }
     case 'run.finished':
       return { ...v, openRuns: v.openRuns.filter(r => r !== ev.runId), thinking: null, live: null, liveSteps: [], notice: v.damaged ? v.notice : null, budgetWait: false }
-    // Stage 1 (W0-A): no server sends these yet. M1-D shows jobs.
+    // Stage 1 M1-D (N3): the job's life, for its progress row and result card (JobStatus.tsx).
     case 'job.started':
-    case 'job.progress':
-    case 'job.ended':
-      return v
+      return {
+        ...v, pendingEnd: v.pendingEnd?.turnId === ev.rootTurnId ? null : v.pendingEnd,
+        job: { jobId: ev.jobId, rootTurnId: ev.rootTurnId, state: 'running', progress: null, outcome: null, endedAt: null, durationMs: null, cost: null },
+      }
+    case 'job.progress': {
+      if (v.job?.jobId === ev.jobId) return v.job.state === 'running' ? { ...v, job: { ...v.job, progress: { label: ev.label, helpers: ev.helpers } } } : v
+      // A run resumed after the job's question carries no `job.started`: its progress still names the running job. Another
+      // job's line while this one runs is stale (one job runs per chat) and changes nothing.
+      if (v.job?.state === 'running') return v
+      return { ...v, job: { jobId: ev.jobId, rootTurnId: '', state: 'running', progress: { label: ev.label, helpers: ev.helpers }, outcome: null, endedAt: null, durationMs: null, cost: null } }
+    }
+    case 'job.ended': {
+      if (v.job?.state === 'ended' && v.job.jobId === ev.jobId) return v
+      const base = v.job?.jobId === ev.jobId ? v.job : { jobId: ev.jobId, rootTurnId: '', progress: null }
+      return { ...v, job: { ...base, state: 'ended', outcome: ev.outcome, endedAt: at, durationMs: ev.durationMs, cost: ev.cost } }
+    }
     // Stage 1 M2-H: the card reads itself again (AskCard, through the client's `onActionUpdated`); the thread is unchanged.
     case 'action.updated':
       return v
