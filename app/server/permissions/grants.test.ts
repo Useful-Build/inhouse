@@ -6,7 +6,7 @@
 //  4. a lapse is computed, not written: a removed then re-invited member, a role drop, a reconnected or disconnected
 //     account leave the old grant live (or revoke it without its line, or revoke when the change didn't apply);
 //  5. the list shows a member someone else's grant, or a member removes one; a stale `ifRev` removes anything; a
-//     removal or a revoke writes a line the schema refuses, or none.
+//     removal or a revoke writes a line the schema refuses, or none; a grant's largest call reads above the ceiling's (#492).
 import { fc } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -435,6 +435,15 @@ describe('the list and remove (failure 5)', () => {
     await insertGrant(db, b)
     await db.prepare("UPDATE notify_channels SET removed_at_ms = 5, removed_by = 'm_list_admin' WHERE channel_id = 'C0LIST0001'").run()
     expect((await stores.permissions.list({ memberId: 'm_list_b', role: 'member' }))[0]?.scope).toBe('a channel no longer listed')
+  })
+
+  it('#492: a grant\'s largest call never reads above the ceiling\'s; its day reads the smaller count', async () => {
+    await ceiling(db, 'shopify.order.tag_add', { enabled: true, perDayMax: 20, loweredRev: 1, unitsMax: 1 })
+    const g = shopGrant('member:m_list_b', { perDay: 50, unitsMax: 5 })
+    await insertGrant(db, g)
+    expect((await stores.permissions.list({ memberId: 'm_list_b', role: 'member' })).find(p => p.id === g.id)?.limits).toEqual({ perDay: 50, unitsMax: 1, unitsLabel: 'orders', effectivePerDay: 20 })
+    await ceiling(db, 'shopify.order.tag_add', { enabled: true, perDayMax: 200, loweredRev: 1, unitsMax: 100 })
+    expect((await stores.permissions.list({ memberId: 'm_list_b', role: 'member' })).find(p => p.id === g.id)?.limits).toEqual({ perDay: 50, unitsMax: 5, unitsLabel: 'orders', effectivePerDay: 50 })
   })
 
   it('routes 110 and 111 answer the list, 404 for an id the caller can\'t see, 409 with the current grant when stale', async () => {

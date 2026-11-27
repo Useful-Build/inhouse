@@ -56,13 +56,25 @@ export const STATES: UiState[] = [
   page_('act-loading', 'Act', 'Loading', '#/today', 'Reading your tools'),
   page_('act-cap-today', 'Act', 'Cap reached', '#/today', 'Spending cap reached.'),
   page_('act-today', 'Act', 'Normal', '#/today', '6 things need you. Drafts are ready.', true),
-  page_('act-approvals', 'Act', 'Normal', '#/approvals', 'Waiting for you', true),
+  // Stage 1 M3-U: the agent's action cards (the demo's batch and a teammate's refund) sit above the drafts.
+  page_('act-approvals', 'Act', 'Normal', '#/approvals', 'Actions for you', true),
   page_('act-library', 'Act', 'Normal', '#/library', 'All files', true),
   // PR 6: the Library with nothing in it yet, and while it loads.
   page_('act-library-first-day', 'Act', 'First day', '#/library', 'No files yet', true),
   page_('act-library-loading', 'Act', 'Loading', '#/library', 'All files', true),
   page_('act-chat-stuck', 'Act', 'Normal', '#/chats/stuck', '3 orders · $556', true),
   page_('act-chats-all', 'Act', 'Normal', '#/chats/all', 'Kestrel delivery times', true),
+  // Stage 1 M3-U: a 450-change batch card in its chat, and its full list.
+  page_('act-chat-batch', 'Act', 'Normal', '#/chats/vip-tags', 'In all: 450 orders', true),
+  {
+    name: 'pop-batch-sheet', stage: 'Act', scenario: 'Normal', hash: '#/chats/vip-tags', ready: 'In all: 450 orders', a11y: true,
+    act: async page => {
+      await page.getByRole('button', { name: /^See all 450: / }).click()
+      const sheet = page.getByRole('dialog', { name: '450 changes in Shopify' })
+      await expect(sheet.locator('[data-item]')).toHaveCount(450)
+      await expect(sheet.getByRole('button', { name: 'Approve these 450: 450 orders' })).toBeVisible()
+    },
+  },
   {
     name: 'pop-notifications', stage: 'Act', scenario: 'Normal', hash: '#/today', ready: '6 things need you', a11y: true,
     act: async page => {

@@ -209,8 +209,11 @@ export const revokeChannelGrantsStmts = (channelId: string, at: At, when: Exists
 /** Who reads or removes: a brand person. Admins see and remove any grant; a member only their own (N15). */
 export interface Viewer { memberId: string; role: MemberRole }
 
-/** `ceiling_per_day_max`: the operation's ceiling (the list shows only current grants, so its row exists and is on). */
-type ListRow = GrantRow & { channel_name: string | null; ceiling_per_day_max: number }
+/**
+ * `ceiling_per_day_max` and `ceiling_units_max`: the operation's ceiling (the list shows only current grants, so its row
+ * exists and is on).
+ */
+type ListRow = GrantRow & { channel_name: string | null; ceiling_per_day_max: number; ceiling_units_max: number }
 
 const instant = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
 const TOOL: Readonly<Record<WriteOperationKey, string>> = {
@@ -232,11 +235,12 @@ export function permissionOf(r: ListRow, viewer: Viewer): Permission {
     tool: { accountId: r.account_id, label: tool },
     scope: where,
     perDay: r.per_day,
-    // Stage 1 M3 (N23, N33): the grant's own limits; the day's real allowance is the smaller of the grant's count and the
-    // ceiling's, as the reservation counts it.
+    // Stage 1 M3 (N23, N33): the grant's own daily count; the day's real allowance is the smaller of the grant's count and
+    // the ceiling's, as the reservation counts it. #492: the largest single call it lets through is never more than the
+    // ceiling's largest call (every request checks that first), so a grant made at 5 under a ceiling of 1 says 1.
     limits: {
       perDay: r.per_day,
-      unitsMax: r.units_max,
+      unitsMax: Math.min(r.units_max, r.ceiling_units_max),
       unitsLabel: OPERATIONS[r.operation].unitsLabel,
       effectivePerDay: Math.min(r.per_day, r.ceiling_per_day_max),
     },
@@ -246,7 +250,7 @@ export function permissionOf(r: ListRow, viewer: Viewer): Permission {
   }
 }
 
-const LIST = `SELECT g.*, nc.name AS channel_name, lc.per_day_max AS ceiling_per_day_max FROM permission_grants g
+const LIST = `SELECT g.*, nc.name AS channel_name, lc.per_day_max AS ceiling_per_day_max, lc.units_max AS ceiling_units_max FROM permission_grants g
   JOIN permission_ceiling lc ON lc.operation = g.operation
   LEFT JOIN notify_channels nc ON nc.channel_id = json_extract(g.scope_json, '$.channelId') AND nc.removed_at_ms IS NULL
   WHERE ${CURRENT}`

@@ -6,14 +6,14 @@
 //  - the approval didn't hold for 10 seconds on the demo clock and then say all 450 went out;
 //  - Approvals didn't list the batch and a teammate's refund (any admin answers it) under "Actions for you";
 //  - any of these failed axe (WCAG 2.1 A and AA) in light or dark, or scrolled sideways.
-// Named screenshots of each state go to the run's artifacts (the design checkpoint and VERIFY.md's visual proof).
+// Named screenshots of each state go to the run's artifacts (the design checkpoint and VERIFY.md's visual proof). The
+// phone's: actions-demo-phone.spec.ts.
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import { expect, fxFor, test, type Stage, type Theme } from './support/fx.js'
 
 const BATCH = '450 changes in Shopify'
 const APPROVE = 'Approve these 450: 450 orders'
-const phone = (page: Page) => (page.viewportSize()?.width ?? 1440) < 600
 
 async function start(page: Page, hash: string, o: { stage?: Stage; theme?: Theme } = {}) {
   await page.clock.install()
@@ -66,10 +66,8 @@ test('See all lists every change in order; its Approve covers the 450 it names, 
   await expect(items.nth(449)).toContainText('Order 4350 (northline-outdoor): add VIP')
   await expect(sheet.locator('[data-sheet-totals]')).toHaveText('450 changes · In all: 450 orders')
   await items.nth(200).scrollIntoViewIfNeeded()
-  await shot(page, `demo-batch-sheet-${phone(page) ? 'phone' : 'desktop'}-light`)
+  await shot(page, 'demo-batch-sheet-desktop-light')
   await axeClean(page, 'demo batch sheet light')
-  await page.emulateMedia({ colorScheme: 'dark' })
-  await shot(page, `demo-batch-sheet-${phone(page) ? 'phone' : 'desktop'}-dark`)
 
   await sheet.getByRole('button', { name: APPROVE }).click()
   await expect(sheet).toBeHidden()
@@ -100,7 +98,7 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(refund).toContainText('Dana Kim asks an admin')
     await expect(refund).toContainText('Moves money')
     await expect(refund.locator('[data-card-actions] button')).toHaveText(['Approve', 'No'])
-    await shot(page, `demo-approvals-${phone(page) ? 'phone' : 'desktop'}-${theme}`, true)
+    await shot(page, `demo-approvals-desktop-${theme}`, true)
     await axeClean(page, `demo approvals ${theme}`)
   })
 }
