@@ -1,7 +1,7 @@
 // Batches' property suite (Stage 1 M3-B, N22) on real D1 with a fake hub: random sequences of calls (one at a time and
 // in parallel, replays among them), answers with `upTo` (stale totals and a tip that moved among them), passes of the
-// send task (the hub answering, refusing, throttling, unsure, throwing or hanging, and a Pause landing inside a call),
-// crashes at an item boundary, Pause and Resume, a revoke, a ceiling lowered and raised, the clock, the sweep, a person
+// send task (the hub answering, refusing, throttling, unsure, throwing or hanging, and a Pause, a revoke or a lowered
+// ceiling landing inside a pass), crashes at an item boundary (before the call, and after it ran with its result lost), Pause and Resume, a revoke, a ceiling lowered and raised, the clock, the sweep, a person
 // resolving an item, and a restore's hold.
 // Invariants, written before the code:
 //  B1. each item has at most one hub call that ran (a throttled call ran nothing), and at most 1 + its throttles calls;
@@ -18,9 +18,12 @@
 //  B6. released units are counted once: per item at most one release, never for an item that went out, and a batch's
 //      releases never pass its use; while its use is held, every item it failed, withdrew or moved on has given its units
 //      back; no grant's day passes its limit;
-//  B7. a waiting batch's tip is its last position and its totals its items';
+//  B7. every batch's tip is its last position and its totals its items' (a split, a stop or an end leaves the card
+//      with exactly what stayed on it, #501);
 //  B8. resuming sends nothing: every call is for a batch approved since the last Pause or Resume;
-//  B9. a batch held for a check (a restore's hold, or its end) has no item left to send.
+//  B9. a batch held for a check (a restore's hold, or its end) has no item left to send;
+//  B10. a person's resolve of an item stands: a late result never changes it;
+//  B11. the sweep makes an item in flight past its deadline a check, never something to send again.
 // A rule that changes while an item's call is in flight can't recall that call (as M2: the claim is the last word), so
 // the call-time rule check in B2 lets through only the calls of items already claimed when a disturbance landed.
 import { fc } from '@fast-check/vitest'
@@ -34,7 +37,7 @@ import { restoreHoldStmts } from '../restore-hold.ts'
 import { sweepOutbox } from '../sweep.ts'
 import { ASKER, SHOP_GEN, fresh, notices, outbox, requestCtx, world } from '../test-support.ts'
 import type { OutboxActionRow, OutboxItemRow } from '../types.ts'
-import { itemClaimStmt } from './send.ts'
+import { itemClaimStmt, itemRequest } from './send.ts'
 import { afterNthCall, itemHub, itemsOf, pass, wideArgs } from './test-support.ts'
 import type { ItemMode } from './test-support.ts'
 
@@ -55,15 +58,16 @@ type Step =
   | { k: 'answer'; i: number; choice: 'approve' | 'deny'; cut: number; stale: boolean }
   | { k: 'pass'; i: number; modes: ItemMode[]; at: number; disturb: Disturb; afterHold: boolean }
   | { k: 'drive'; i: number; cut: number; modes: ItemMode[]; passes: number; at: number; disturb: Disturb }
-  | { k: 'crash'; i: number }
+  | { k: 'crash'; i: number; after: 'claim' | 'call' }
   | { k: 'flip'; pulse: boolean }
   | { k: 'grant'; perDay: number }
   | { k: 'revoke' }
   | { k: 'ceiling'; enabled: boolean }
   | { k: 'tick'; ms: number }
-  | { k: 'sweep' }
+  | { k: 'sweep'; late: boolean }
   | { k: 'resolve'; i: number; outcome: 'sent' | 'failed' }
   | { k: 'restore' }
+  | { k: 'late'; result: 'ok' | 'no' }
 
 const order = fc.integer({ min: 1, max: 40 })
 const stepArb: fc.Arbitrary<Step> = fc.oneof(
@@ -93,18 +97,19 @@ const stepArb: fc.Arbitrary<Step> = fc.oneof(
       modes: fc.array(fc.constantFrom<ItemMode>('ok', 'ok', 'ok', 'ok', 'no', 'throttle', 'unknown', 'throw', 'hang'), { minLength: 1, maxLength: 6 }),
       passes: fc.integer({ min: 1, max: 4 }),
       at: fc.oneof({ weight: 3, arbitrary: fc.constant(0) }, { weight: 1, arbitrary: fc.integer({ min: 1, max: 4 }) }, { weight: 2, arbitrary: fc.integer({ min: 5, max: 14 }) }),
-      disturb: fc.constantFrom<Disturb>('flip', 'revoke', 'lower'),
+      disturb: fc.constantFrom<Disturb>('flip', 'revoke', 'revoke', 'lower'),
     }),
   },
-  { weight: 1, arbitrary: fc.record({ k: fc.constant('crash' as const), i: fc.nat({ max: 7 }) }) },
+  { weight: 2, arbitrary: fc.record({ k: fc.constant('crash' as const), i: fc.nat({ max: 7 }), after: fc.constantFrom('claim' as const, 'call' as const) }) },
   { weight: 2, arbitrary: fc.record({ k: fc.constant('flip' as const), pulse: fc.constantFrom(true, true, false) }) },
   { weight: 2, arbitrary: fc.record({ k: fc.constant('grant' as const), perDay: fc.integer({ min: 2, max: 8 }) }) },
   { weight: 1, arbitrary: fc.constant({ k: 'revoke' as const }) },
   { weight: 1, arbitrary: fc.record({ k: fc.constant('ceiling' as const), enabled: fc.boolean() }) },
   { weight: 4, arbitrary: fc.record({ k: fc.constant('tick' as const), ms: fc.oneof({ weight: 9, arbitrary: fc.integer({ min: 0, max: 70_000 }) }, { weight: 1, arbitrary: fc.constant(8 * 86_400_000) }) }) },
-  { weight: 2, arbitrary: fc.constant({ k: 'sweep' as const }) },
+  { weight: 3, arbitrary: fc.record({ k: fc.constant('sweep' as const), late: fc.boolean() }) },
   { weight: 2, arbitrary: fc.record({ k: fc.constant('resolve' as const), i: fc.nat({ max: 7 }), outcome: fc.constantFrom('sent' as const, 'failed' as const) }) },
   { weight: 1, arbitrary: fc.constant({ k: 'restore' as const }) },
+  { weight: 2, arbitrary: fc.record({ k: fc.constant('late' as const), result: fc.constantFrom('ok' as const, 'no' as const) }) },
 )
 
 const ITEM_FIXED = (i: OutboxItemRow) => JSON.stringify([i.item_id, i.chat_id, i.tool_use_id, i.args_json, i.payload_hash, i.line, i.records, i.units])
@@ -124,6 +129,7 @@ async function runSequence(withGrant: boolean, steps: Step[]): Promise<void> {
   /** Item ids called, with whether the call ran something. */
   const ran = new Map<string, number>()
   const calledWithdrawn: string[] = []
+  const late: Promise<void>[] = []
   let mode: ItemMode[] = ['ok']
   let disturbAt = 0
   let disturbing: Disturb = 'flip'
@@ -157,9 +163,13 @@ async function runSequence(withGrant: boolean, steps: Step[]): Promise<void> {
         : item && item.units > rules.units_max ? `past the largest call (${item.units} > ${rules.units_max})`
           : rules.grant_id !== null && (rules.revoked_at_ms !== null || rules.ceiling_rev !== rules.lowered_rev) ? 'grant-backed with its grant gone' : null
       if (broke !== null && !(item && inFlight.has(item.item_id))) problems.push(`B2: a call for ${req.actionId} ${broke}`)
-      const p = hub.gateway.runAction(req)
+      // The call is settled into a value before anything else is awaited, so a call that throws while a disturbance runs
+      // is never an unhandled rejection; its error then goes to the dispatcher as the binding's own throw.
+      const call = hub.gateway.runAction(req).then(value => ({ value }), (error: unknown) => ({ error }))
       if (disturbAt > 0 && callNo === disturbAt) await disturbNow()
-      const r = await p
+      const settled = await call
+      if ('error' in settled) throw settled.error
+      const r = settled.value
       if (item && (r.ok || hub.calls.at(-1)?.ran)) ran.set(item.item_id, (ran.get(item.item_id) ?? 0) + 1)
       return r
     },
@@ -236,7 +246,7 @@ async function runSequence(withGrant: boolean, steps: Step[]): Promise<void> {
           disturbing = s.disturb
           disturbAt = s.at > 0 && s.at <= 4 ? callNo + s.at : 0
           const passDb = s.at > 4 ? afterNthCall(db, s.at - 4, disturbNow) : db
-          await pass(passDb, b.id, { nowMs: now, hub: gateway, gate: object, timeoutMs: 1 })
+          await pass(passDb, b.id, { nowMs: now, hub: gateway, gate: object, timeoutMs: 1, onLate: p => { late.push(p) } })
           disturbAt = 0
           inFlight = new Set()
           break
@@ -258,7 +268,7 @@ async function runSequence(withGrant: boolean, steps: Step[]): Promise<void> {
           disturbAt = s.at > 0 && s.at <= 4 ? callNo + s.at : 0
           for (let k = 0; k < s.passes; k++) {
             const passDb = k === 0 && s.at > 4 ? afterNthCall(db, s.at - 4, disturbNow) : db
-            const pr = await pass(passDb, b.id, { nowMs: now, hub: gateway, gate: object, timeoutMs: 1 })
+            const pr = await pass(passDb, b.id, { nowMs: now, hub: gateway, gate: object, timeoutMs: 1, onLate: p => { late.push(p) } })
             if (pr.again.length === 0) break
             now = Math.max(now, ...pr.again)
           }
@@ -267,11 +277,19 @@ async function runSequence(withGrant: boolean, steps: Step[]): Promise<void> {
           break
         }
         case 'crash': {
-          // A crash at an item boundary: the item claimed, the task gone before its call.
+          // A crash at an item boundary: the item claimed, then the task gone before its call (`claim`) or after its call
+          // ran but before its result was stored (`call`). Either way the sweep makes it a check; it's never sent again.
           const b = await aimBatch(s.i, 'sending')
           if (!b || b.state !== 'sending') break
           const item = await db.prepare("SELECT * FROM outbox_items WHERE action_id = ? AND state = 'pending' ORDER BY n LIMIT 1").bind(b.id).first<OutboxItemRow>()
-          if (item) await runBatch(db, [itemClaimStmt({ actionId: b.id, itemId: item.item_id, nowMs: now, pauseGen: object.pauseGen, stamp: fresh('crash') })])
+          if (!item) break
+          const stamp = fresh('crash')
+          await runBatch(db, [itemClaimStmt({ actionId: b.id, itemId: item.item_id, nowMs: now, pauseGen: object.pauseGen, stamp })])
+          const claimed = await db.prepare('SELECT * FROM outbox_items WHERE item_id = ?').bind(item.item_id).first<OutboxItemRow>()
+          if (s.after === 'call' && claimed?.stamp === stamp) {
+            mode = ['ok']
+            await gateway.runAction(itemRequest(b, claimed))
+          }
           break
         }
         case 'flip':
@@ -303,14 +321,34 @@ async function runSequence(withGrant: boolean, steps: Step[]): Promise<void> {
         case 'tick':
           now += s.ms
           break
-        case 'sweep':
+        case 'sweep': {
+          // Half the time a minute has passed since the last claim, so any item still in flight is past its deadline.
+          if (s.late) now += 61_000
+          const stale = (await db.prepare("SELECT item_id FROM outbox_items WHERE state = 'sending' AND claimed_at_ms <= ?").bind(now - 60_000).all<{ item_id: string }>()).results
           await sweepOutbox({ db, nowMs: now, state: () => ({ ...object }), scheduler: { ensure: () => {} }, notify: note.notify, requestId: fresh('sweep') })
+          for (const { item_id } of stale) {
+            const after = await db.prepare('SELECT state FROM outbox_items WHERE item_id = ?').bind(item_id).first<{ state: string }>()
+            if (after?.state !== 'needs_check') problems.push(`B11: a stale item ${item_id} is ${after?.state} after the sweep, not a check`)
+          }
           break
+        }
         case 'resolve': {
           const b = await aimBatch(s.i, 'needs_check')
           if (!b || b.state !== 'needs_check') break
           const item = await db.prepare("SELECT n FROM outbox_items WHERE action_id = ? AND state = 'needs_check' ORDER BY n LIMIT 1").bind(b.id).first<{ n: number }>()
           if (item) await outbox(db, clock).resolve({ memberId: ASKER, role: 'member' }, b.id, { outcome: s.outcome, ifRev: b.rev, item: item.n })
+          break
+        }
+        case 'late': {
+          // The calls still hanging answer now, after their timeout: a sure answer settles an unclear item nobody
+          // resolved, never one a person did (B10).
+          const resolved = new Map((await db.prepare("SELECT item_id, state FROM outbox_items WHERE resolved_by IS NOT NULL").all<{ item_id: string; state: string }>()).results.map(r => [r.item_id, r.state]))
+          hub.release(s.result === 'ok' ? { ok: true, value: { ref: 'late' } } : { ok: false, error: { code: 'upstream_rejected', message: 'refused' }, sent: 'no' })
+          await Promise.all(late.splice(0))
+          for (const [id, state] of resolved) {
+            const now = await db.prepare('SELECT state FROM outbox_items WHERE item_id = ?').bind(id).first<{ state: string }>()
+            if (now && now.state !== state) problems.push(`B10: a late result changed item ${id}, resolved ${state}, to ${now.state}`)
+          }
           break
         }
         case 'restore': {
@@ -373,7 +411,6 @@ async function runSequence(withGrant: boolean, steps: Step[]): Promise<void> {
     const heldOpen = await db.prepare("SELECT a.id FROM outbox_actions a JOIN outbox_items i ON i.action_id = a.id WHERE a.kind = 'batch' AND a.state = 'needs_check' AND i.state = 'pending'").all()
     if (heldOpen.results.length > 0) problems.push('B9: a batch held for a check still has items to send')
     for (const b of await batches()) {
-      if (b.state !== 'waiting') continue
       const mine = items.filter(i => i.action_id === b.id)
       const max = mine.reduce((m, i) => Math.max(m, i.n), 0)
       if (b.items_n !== max) problems.push(`B7: ${b.id}'s tip ${b.items_n} isn't its last position ${max}`)
@@ -381,12 +418,14 @@ async function runSequence(withGrant: boolean, steps: Step[]): Promise<void> {
     }
     if (problems.length > 0) break
   }
+  // The calls still hanging answer now; their late results settle before the next run resets the database.
   hub.release({ ok: true, value: { ref: 'late' } })
+  await Promise.all(late)
   expect(problems).toEqual([])
 }
 
 describe('batches (property)', () => {
-  it('holds B1 to B7 over random sequences', async () => {
-    await fc.assert(fc.asyncProperty(fc.boolean(), fc.array(stepArb, { minLength: 6, maxLength: 36 }), runSequence), { numRuns: 120 })
+  it('holds B1 to B11 over random sequences', async () => {
+    await fc.assert(fc.asyncProperty(fc.constantFrom(true, true, false), fc.array(stepArb, { minLength: 6, maxLength: 36 }), runSequence), { numRuns: 200 })
   }, 600_000)
 })

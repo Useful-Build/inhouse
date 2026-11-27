@@ -23,9 +23,8 @@
 //  4. The batch ends once no item is pending or sending: `needs_check` while any item is unclear; else `sent` if any
 //     went out (its ref counts them), `failed` (its use given back) if none did.
 import type { WriteRequest } from '../../../hub/index/contract.ts'
-import { THROTTLE_WAIT_MS } from '../../../hub/index/contract.ts'
 import { SYSTEM_MEMBER_ID, writeStamp } from '../../db/ids.ts'
-import { all, first, runBatch, stmt } from '../../db/sql.ts'
+import { first, runBatch, stmt } from '../../db/sql.ts'
 import type { SqlValue, Stmt } from '../../db/sql.ts'
 import { claimGuardSql } from '../../permissions/claim-guard.ts'
 import { releaseItemSql } from '../../permissions/uses.ts'
@@ -33,7 +32,7 @@ import { safeError } from '../../safe-error.ts'
 import { CHAT_KEPT, lapseStmts, SHOP_KEPT, whyRefused } from '../claim.ts'
 import type { ClaimRefusal } from '../claim.ts'
 import type { DispatchDeps } from '../dispatch.ts'
-import { expectOf, outcomeOf, requestArgs, startCall } from '../hub-call.ts'
+import { expectOf, outcomeOf, requestArgs, startCall, THROTTLE_WAIT_MS } from '../hub-call.ts'
 import type { SendOutcome } from '../hub-call.ts'
 import { notifyAll } from '../notify.ts'
 import { actionLine, both, butNot, newActionId, releaseUseWhere, stamped, unreleasedUse } from '../sql.ts'
@@ -210,25 +209,34 @@ async function endBatch(d: Pick<DispatchDeps, 'db' | 'requestId' | 'notify'>, ba
 /**
  * Step 3: a refused item claim (or a Pause at an item's permit) stops the batch. Its pending items move to a new
  * waiting card (`lapse`) or are withdrawn (`withdraw`), their units given back once; then the batch ends if nothing of it
- * is in flight.
+ * is in flight. Everything is decided in SQL inside one D1 batch from the items pending at that moment (never a list
+ * read before it: an item another pass sends back to pending, or claims, in between would be counted on the wrong card).
+ * The items move in two steps: first marked with this stop's stamp, then moved and numbered 1 to k in their order, the
+ * numbers taken from a materialised ranking of the marked items.
  */
-async function stopBatch(d: Pick<DispatchDeps, 'db' | 'requestId' | 'notify'>, batch: OutboxActionRow, how: 'lapse' | 'withdraw', reason: LapseReason, nowMs: number): Promise<void> {
+export async function stopBatch(d: Pick<DispatchDeps, 'db' | 'requestId' | 'notify'>, batch: OutboxActionRow, how: 'lapse' | 'withdraw', reason: LapseReason, nowMs: number): Promise<void> {
   const { db } = d
   const stamp = writeStamp(d.requestId)
   const mine = stamped(batch.id, stamp)
-  const pending = await all<{ item_id: string; n: number }>(db, stmt("SELECT item_id, n FROM outbox_items WHERE action_id = ? AND state = 'pending' ORDER BY n", batch.id))
   const useRev = batch.approved_rev ?? batch.rev
+  const newId = newActionId()
+  const marked = "FROM outbox_items i WHERE i.action_id = ? AND i.stamp = ? AND i.state = 'pending'"
   const stmts: Stmt[] = [
     stmt(
       "UPDATE outbox_actions SET stamp = ?, lapsed_reason = ?, updated_at_ms = ? WHERE id = ? AND state = 'sending' AND attempt = ?",
       stamp, reason, nowMs, batch.id, batch.attempt,
     ),
-    releaseItemsStmt({ actionId: batch.id, useRev, reason: how === 'lapse' ? 'moved' : 'withdrawn', atMs: nowMs, itemWhere: { sql: "i.state = 'pending'", params: [] }, onlyIf: mine }),
+    // The items this stop takes: the ones pending now.
+    stmt(
+      "UPDATE outbox_items SET stamp = ? WHERE action_id = ? AND state = 'pending' AND EXISTS (SELECT 1 FROM outbox_actions WHERE id = ? AND stamp = ?)",
+      stamp, batch.id, batch.id, stamp,
+    ),
+    releaseItemsStmt({
+      actionId: batch.id, useRev, reason: how === 'lapse' ? 'moved' : 'withdrawn', atMs: nowMs,
+      itemWhere: { sql: "i.state = 'pending' AND i.stamp = ?", params: [stamp] }, onlyIf: mine,
+    }),
   ]
-  const newId = newActionId()
-  if (how === 'lapse' && pending.length > 0) {
-    const map = JSON.stringify(pending.map((p, k) => ({ id: p.item_id, n: k + 1 })))
-    const moving = "FROM outbox_items i WHERE i.action_id = o.id AND i.state = 'pending'"
+  if (how === 'lapse') {
     stmts.push(
       stmt(
         `INSERT INTO outbox_actions (id, rev, state, verdict, guardrail, origin, via, asked_by, approver, chat_id, run_id, turn_id, tool_use_id, job_id,
@@ -236,17 +244,18 @@ async function stopBatch(d: Pick<DispatchDeps, 'db' | 'requestId' | 'notify'>, b
            expires_at_ms, created_at_ms, updated_at_ms, stamp, kind, items_n)
          SELECT ?, 1, 'waiting', 'exact', o.guardrail, o.origin, o.via, o.asked_by, o.approver, o.chat_id, o.run_id, o.turn_id, NULL, o.job_id,
            o.account_id, o.account_gen, o.operation, o.policy_rev, o.scope_json, o.scope_key, 'null', ?,
-           (SELECT SUM(i.records) ${moving}), (SELECT SUM(i.units) ${moving}),
-           json_set(o.card_json, '$.title', 'Changes in ' || json_extract(o.card_json, '$.label'), '$.lines', json('[]')), ?, ?, ?, ?, ?, 'batch', ?
-         FROM outbox_actions o WHERE o.id = ? AND o.stamp = ? AND EXISTS (SELECT 1 ${moving})`,
-        newId, batchPayloadHash(newId), reason, nowMs + timing().expiresMs, nowMs, nowMs, stamp, pending.length, batch.id, stamp,
+           (SELECT SUM(i.records) ${marked}), (SELECT SUM(i.units) ${marked}),
+           json_set(o.card_json, '$.title', 'Changes in ' || json_extract(o.card_json, '$.label'), '$.lines', json('[]')), ?, ?, ?, ?, ?, 'batch',
+           (SELECT COUNT(*) ${marked})
+         FROM outbox_actions o WHERE o.id = ? AND o.stamp = ? AND EXISTS (SELECT 1 ${marked})`,
+        newId, batchPayloadHash(newId), batch.id, stamp, batch.id, stamp, reason, nowMs + timing().expiresMs, nowMs, nowMs, stamp,
+        batch.id, stamp, batch.id, stamp, batch.id, stamp,
       ),
       stmt(
-        `UPDATE outbox_items SET action_id = ?, moved_from = ?, updated_at_ms = ?,
-           n = (SELECT json_extract(j.value, '$.n') FROM json_each(?) j WHERE json_extract(j.value, '$.id') = outbox_items.item_id)
-         WHERE action_id = ? AND state = 'pending' AND item_id IN (SELECT json_extract(j.value, '$.id') FROM json_each(?) j)
-           AND EXISTS (SELECT 1 FROM outbox_actions WHERE id = ? AND stamp = ?)`,
-        newId, batch.id, nowMs, map, batch.id, map, newId, stamp,
+        `UPDATE outbox_items SET action_id = ?, moved_from = ?, updated_at_ms = ?, n = r.k
+         FROM (SELECT item_id, ROW_NUMBER() OVER (ORDER BY n) AS k FROM outbox_items WHERE action_id = ? AND stamp = ? AND state = 'pending') AS r
+         WHERE outbox_items.item_id = r.item_id AND EXISTS (SELECT 1 FROM outbox_actions WHERE id = ? AND stamp = ?)`,
+        newId, batch.id, nowMs, batch.id, stamp, newId, stamp,
       ),
       // The new card's request line, built in SQL from its row (ids, counts and closed codes only; no guardrail when the
       // batch ran under a grant).
@@ -261,24 +270,36 @@ async function stopBatch(d: Pick<DispatchDeps, 'db' | 'requestId' | 'notify'>, b
     )
   } else {
     stmts.push(stmt(
-      "UPDATE outbox_items SET state = 'withdrawn', updated_at_ms = ? WHERE action_id = ? AND state = 'pending' AND EXISTS (SELECT 1 FROM outbox_actions WHERE id = ? AND stamp = ?)",
-      nowMs, batch.id, batch.id, stamp,
+      "UPDATE outbox_items SET state = 'withdrawn', updated_at_ms = ? WHERE action_id = ? AND stamp = ? AND state = 'pending'",
+      nowMs, batch.id, stamp,
     ))
   }
+  // #501: the card's count and totals are what stayed on it (as an answer's split leaves them); `approved_upto` keeps
+  // what the approval covered, so the end can say how many moved.
+  const on = 'FROM outbox_items i WHERE i.action_id = outbox_actions.id'
+  stmts.push(stmt(
+    `UPDATE outbox_actions SET items_n = (SELECT COALESCE(MAX(i.n), 0) ${on}), records = (SELECT COALESCE(SUM(i.records), 0) ${on}),
+       units = (SELECT COALESCE(SUM(i.units), 0) ${on})
+     WHERE id = ? AND stamp = ?`,
+    batch.id, stamp,
+  ))
   await runBatch(db, stmts)
   const after = await rowOf(db, batch.id)
   if (after?.stamp !== stamp) return
-  const counts = await first<{ sent: number; total: number }>(db, stmt(
-    "SELECT SUM(state = 'sent') AS sent, COUNT(*) AS total FROM outbox_items WHERE action_id = ? OR moved_from = ?", batch.id, batch.id,
+  const counts = await first<{ sent: number; total: number; left: number }>(db, stmt(
+    `SELECT SUM(state = 'sent') AS sent, COUNT(*) AS total, SUM(stamp = ? AND (state = 'withdrawn' OR action_id <> ?)) AS left
+     FROM outbox_items WHERE action_id = ? OR moved_from = ?`,
+    stamp, batch.id, batch.id, batch.id,
   ))
+  const left = counts?.left ?? 0
   const moved = await first<{ id: string }>(db, stmt('SELECT id FROM outbox_actions WHERE id = ? AND stamp = ?', newId, stamp))
-  console.log({ event: 'outbox_batch_stopped', actionId: batch.id, reason, how, moved: moved ? pending.length : 0 })
+  console.log({ event: 'outbox_batch_stopped', actionId: batch.id, reason, how, left })
   // A deleted chat's actions are its owner's own doing: no notice (as its deletion's batch, #444).
-  if (reason !== 'chat_deleted' && pending.length > 0) {
+  if (reason !== 'chat_deleted' && left > 0) {
     const why = (how === 'withdraw' ? WITHDRAWN_TEXT[reason] : undefined) ?? LAPSE_TEXT[reason]
     await notifyAll(d.notify, [{
       kind: 'approval_lapsed', to: batch.approver, actionId: moved ? newId : batch.id, key: `stopped:${batch.id}:${batch.attempt}`,
-      body: batchStoppedText({ sent: counts?.sent ?? 0, total: counts?.total ?? 0, left: pending.length, moved: moved !== null, why }),
+      body: batchStoppedText({ sent: counts?.sent ?? 0, total: counts?.total ?? 0, left, moved: moved !== null, why }),
     }])
   }
 }

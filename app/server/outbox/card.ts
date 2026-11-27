@@ -8,7 +8,7 @@ import { operationEntry } from './operations/index.ts'
 import type { OutboxActionRow, OutboxItemRow } from './types.ts'
 import { batchSummaries } from './batch/rows.ts'
 import type { BatchSummary } from './batch/rows.ts'
-import { batchTitle, FAILED_TEXT, LAPSE_TEXT, NEEDS_CHECK_TEXT, SENT_TEXT, WITHDRAWN_TEXT } from './words.ts'
+import { batchMovedText, batchTitle, FAILED_TEXT, LAPSE_TEXT, NEEDS_CHECK_TEXT, SENT_TEXT, WITHDRAWN_TEXT } from './words.ts'
 import type { LapseReason } from './sql.ts'
 
 /** What the request stored for the card (`card_json`): the operation's own words, the tool's label and the nudge. */
@@ -51,7 +51,7 @@ export function cardOf(row: OutboxActionRow, viewer: Viewer, nowMs: number, batc
   const kind = kindOf(row)
   const reason = row.lapsed_reason as LapseReason | null
   const lapsed = reason === null ? undefined
-    : row.state === 'withdrawn' ? WITHDRAWN_TEXT[reason]
+    : row.state === 'withdrawn' ? WITHDRAWN_TEXT[reason] ?? (row.kind === 'batch' ? batchMovedText(LAPSE_TEXT[reason]) : undefined)
       : row.state === 'waiting' || row.state === 'expired' ? LAPSE_TEXT[reason] : undefined
   const result = resultText(row)
   return ActionCardSchema.parse({

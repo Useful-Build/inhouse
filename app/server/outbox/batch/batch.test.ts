@@ -24,6 +24,8 @@ import { ASKER, SHOP_GEN, fresh, notices, outbox, requestCtx, rowOf, tagArgs, wo
 import type { OutboxActionRow, OutboxRequestResult } from '../types.ts'
 import { OPERATIONS } from '../operations/index.ts'
 import type { OperationEntry } from '../operations/types.ts'
+import { insertItemsStmt } from './rows.ts'
+import { stopBatch } from './send.ts'
 import { afterNthCall, itemHub, itemsOf, pass, wideArgs } from './test-support.ts'
 import type { ItemMode } from './test-support.ts'
 
@@ -142,10 +144,17 @@ describe('collecting (failure 1)', () => {
 
   it('an item never enters at a position an approval covers, and its arguments never change', async () => {
     const b = await approve(await collecting(2))
-    await expect(db.prepare(`INSERT INTO outbox_items (item_id, action_id, n, chat_id, args_json, payload_hash, line, records, units, created_at_ms, updated_at_ms)
-      VALUES ('oi_x', ?, 1, 'c', '{}', 'h', 'l', 1, 1, 1, 1)`).bind(b.id).run()).rejects.toThrow(/approval covers/)
     await expect(db.prepare("UPDATE outbox_items SET args_json = '{}' WHERE action_id = ?").bind(b.id).run()).rejects.toThrow(/fixed/)
     await expect(db.prepare("UPDATE outbox_items SET n = n + 10 WHERE action_id = ?").bind(b.id).run()).rejects.toThrow()
+    // A position the approval covers, emptied (here by hand): the items' insert puts nothing there, and no item moves in.
+    const [first] = await itemsOf(db, b.id)
+    await db.prepare('DELETE FROM outbox_items WHERE item_id = ?').bind(first!.item_id).run()
+    const other = await collecting(1, 700)
+    const stray = { itemId: 'oi_stray', n: 1, toolUseId: null, args: tagArgs(9), payloadHash: 'h', line: 'l', records: 1, units: 1 }
+    await db.batch([insertItemsStmt(b.id, 'c_ob_chat', [stray], now, { sql: 'SELECT 1', params: [] })].map(s => db.prepare(s.sql).bind(...s.params)))
+    expect((await itemsOf(db, b.id)).map(i => i.n)).toEqual([2])
+    const theirs = (await itemsOf(db, other.id))[0]!
+    await expect(db.prepare('UPDATE outbox_items SET action_id = ?, n = 1, moved_from = ? WHERE item_id = ?').bind(b.id, other.id, theirs.item_id).run()).rejects.toThrow(/approval covers/)
   })
 })
 
@@ -273,7 +282,11 @@ describe('sending (failure 3)', () => {
     }
     const r = await pass(db, b.id, { nowMs: now, hub: gateway })
     expect(hub.calls).toHaveLength(2)
-    expect(r.outcome).toEqual({ kind: 'sent', ref: '2 of 2 went out' })
+    // #501: counted against what was approved, the moved ones named; the card keeps only what stayed on it.
+    expect(r.outcome).toEqual({ kind: 'sent', ref: '2 of 5 went out; the other 3 moved to a new card for a new OK' })
+    expect(await rowOf(db, b.id)).toMatchObject({ items_n: 2, records: 2, units: 2, approved_upto: 5 })
+    const [old] = await cardsOf(db, [(await rowOf(db, b.id))!], ME, now)
+    expect(old).toMatchObject({ result: 'Sent. 2 of 5 went out; the other 3 moved to a new card for a new OK', batch: { itemCount: 2, totals: { records: 2, units: 2 } } })
     const rest = await db.prepare("SELECT * FROM outbox_actions WHERE kind = 'batch' AND id <> ?").bind(b.id).first<OutboxActionRow>()
     expect(rest).toMatchObject({ state: 'waiting', items_n: 3, lapsed_reason: 'over_ceiling', coalesce_key: null })
     expect((await itemsOf(db, rest!.id)).map(i => [i.n, i.moved_from])).toEqual([[1, b.id], [2, b.id], [3, b.id]])
@@ -287,8 +300,11 @@ describe('sending (failure 3)', () => {
     // The ceiling goes off right after the batch's own claim, before its first item's.
     const r = await pass(afterNthCall(db, 2, async () => { await ceiling(db, 'shopify.order.tag_add', { enabled: false, perDayMax: 50, loweredRev: 2 }) }), b.id, { nowMs: now, hub: hub.gateway })
     expect(hub.calls).toHaveLength(0)
-    expect(await rowOf(db, b.id)).toMatchObject({ state: 'withdrawn', lapsed_reason: 'over_ceiling', result_json: null, error_code: null })
+    expect(await rowOf(db, b.id)).toMatchObject({ state: 'withdrawn', lapsed_reason: 'over_ceiling', result_json: null, error_code: null, items_n: 0, records: 0, units: 0 })
     expect(await itemsOf(db, b.id)).toEqual([])
+    // #501: its card says why, and where its changes went.
+    const [old] = await cardsOf(db, [(await rowOf(db, b.id))!], ME, now)
+    expect(old!.lapsed).toBe('Nothing here went out. Its changes moved to a new card. This kind of action was turned off, so this needs your OK again.')
     const rest = await db.prepare("SELECT * FROM outbox_actions WHERE kind = 'batch' AND id <> ?").bind(b.id).first<OutboxActionRow>()
     expect(rest).toMatchObject({ state: 'waiting', items_n: 3, lapsed_reason: 'over_ceiling' })
     const line = await db.prepare("SELECT args_json FROM audit_log WHERE action = 'action.lapsed' AND target_id = ?").bind(b.id).first<{ args_json: string }>()
@@ -316,7 +332,36 @@ describe('sending (failure 3)', () => {
     expect(hub.calls).toHaveLength(1)
     const rest = await db.prepare("SELECT * FROM outbox_actions WHERE kind = 'batch' AND id <> ?").bind(b.id).first<OutboxActionRow>()
     expect(rest).toMatchObject({ state: 'waiting', items_n: 2, lapsed_reason: 'paused' })
+    expect(await rowOf(db, b.id)).toMatchObject({ state: 'sent', items_n: 1, result_json: JSON.stringify({ ref: '1 of 3 went out; the other 2 moved to a new card for a new OK' }) })
+  })
+
+  it('#502: a late result never changes an item a person resolved', async () => {
+    const b = await approve(await collecting(2))
+    now += HOLD
+    const late: Promise<void>[] = []
+    const hub = itemHub(db, req => (req.item!.n === 1 ? 'hang' : 'ok'))
+    const r = await pass(db, b.id, { nowMs: now, hub: hub.gateway, timeoutMs: 1, onLate: p => { late.push(p) } })
+    expect(r.outcome).toEqual({ kind: 'needs_check', why: 'unknown' })
+    const row = (await rowOf(db, b.id))!
+    expect(await outbox(db, clock).resolve(ME, b.id, { outcome: 'sent', ifRev: row.rev, item: 1 })).toMatchObject({ action: { state: 'sent' } })
+    // The hub answers now that it didn't go out: the person's word stands, and nothing is given back.
+    hub.release({ ok: false, error: { code: 'upstream_rejected', message: 'refused' }, sent: 'no' })
+    await Promise.all(late)
+    expect((await itemsOf(db, b.id)).map(i => [i.state, i.resolved_by])).toEqual([['sent', ASKER], ['sent', null]])
     expect(await rowOf(db, b.id)).toMatchObject({ state: 'sent' })
+    expect(await releases(b.id)).toEqual([])
+  })
+
+  it('a late result settles an unclear item nobody resolved, and the batch then ends', async () => {
+    const b = await approve(await collecting(2))
+    now += HOLD
+    const late: Promise<void>[] = []
+    const hub = itemHub(db, req => (req.item!.n === 1 ? 'hang' : 'ok'))
+    await pass(db, b.id, { nowMs: now, hub: hub.gateway, timeoutMs: 1, onLate: p => { late.push(p) } })
+    hub.release({ ok: true, value: { ref: 'late' } })
+    await Promise.all(late)
+    expect((await itemsOf(db, b.id)).map(i => i.state)).toEqual(['sent', 'sent'])
+    expect(await rowOf(db, b.id)).toMatchObject({ state: 'sent', result_json: JSON.stringify({ ref: '2 of 2 went out' }) })
   })
 
   it('an unclear item is a check for a person; resolved item by item, the batch then ends', async () => {
@@ -406,6 +451,34 @@ describe('grant-backed batches and their units (failure 3)', () => {
     expect(p.notices).toEqual([expect.objectContaining({ kind: 'approval_lapsed', actionId: r.action.id })])
   })
 
+  it('a stop is decided from the items pending at that moment, even with a throttled item going back to pending beside it', async () => {
+    await grant()
+    const r = await call([1, 2, 3, 4])
+    if (r.outcome !== 'approved') throw new Error(`expected approved, got ${r.outcome}`)
+    // Mid-batch: item 1 went out, item 2 is in another pass's call; items 3 and 4 wait.
+    await db.batch([
+      db.prepare("UPDATE outbox_actions SET state = 'sending', rev = rev + 1, attempt = 1, claimed_at_ms = ? WHERE id = ?").bind(now, r.action.id),
+      db.prepare("UPDATE outbox_items SET state = 'sent', attempt = 1 WHERE action_id = ? AND n = 1").bind(r.action.id),
+      db.prepare("UPDATE outbox_items SET state = 'sending', attempt = 1, claimed_at_ms = ? WHERE action_id = ? AND n = 2").bind(now, r.action.id),
+    ])
+    const batch = (await rowOf(db, r.action.id))!
+    // The other pass's item comes back throttled (pending again) as the stop runs, at its first database call.
+    const race = () => db.prepare("UPDATE outbox_items SET state = 'pending', throttles = 1, claimed_at_ms = NULL WHERE action_id = ? AND n = 2 AND state = 'sending'").bind(r.action.id).run()
+    await stopBatch({ db: afterNthCall(db, 1, async () => { await race() }), requestId: fresh('stop'), notify: notices().notify }, batch, 'lapse', 'paused', now)
+    const rest = (await db.prepare("SELECT * FROM outbox_actions WHERE kind = 'batch' AND id <> ?").bind(r.action.id).first<OutboxActionRow>())!
+    const moved = await itemsOf(db, rest.id)
+    // The new card holds exactly what moved, numbered from 1, with totals that match (so it can be answered).
+    expect(moved.map(i => i.n)).toEqual(moved.map((_, k) => k + 1))
+    expect(rest).toMatchObject({ items_n: moved.length, records: moved.length, units: moved.length })
+    expect(await outbox(db, clock).answer(ME, rest.id, { choice: 'deny', ifRev: 1, upTo: moved.length, totals: { records: moved.length, units: moved.length } })).toMatchObject({ action: { state: 'denied' } })
+    // Units came back for exactly the items that moved, never for one still on the old card.
+    const back = await releases(r.action.id)
+    expect(back.map(b => b.reason)).toEqual(moved.map(() => 'moved'))
+    const old = await itemsOf(db, r.action.id)
+    expect(back.map(b => b.n).filter(n => old.some(i => i.n === n))).toEqual([])
+    expect((await rowOf(db, r.action.id))!.items_n).toBe(Math.max(...old.map(i => i.n)))
+  })
+
   it('an item throttled 5 times fails and gives its units back once', async () => {
     await grant()
     const r = await call([1, 2])
@@ -441,8 +514,8 @@ describe('the sweep and a restore (failure 4)', () => {
   it('a batch row is never a stale single; a stale item is a check; a batch whose task was lost runs again', async () => {
     const b = await approve(await collecting(2))
     now += HOLD
-    const hub = itemHub(db, () => 'hang')
-    void pass(db, b.id, { nowMs: now, hub: hub.gateway, timeoutMs: 60_000 })
+    const hub = itemHub(db, req => (req.item!.n === 1 ? 'hang' : 'ok'))
+    const running = pass(db, b.id, { nowMs: now, hub: hub.gateway, timeoutMs: 60_000 })
     await expect.poll(async () => (await itemsOf(db, b.id))[0]!.state).toBe('sending')
     now += 61_000
     const ensured: string[] = []
@@ -452,7 +525,10 @@ describe('the sweep and a restore (failure 4)', () => {
     expect(ensured).toContain(`outbox-send:${b.id}`)
     const line = await db.prepare("SELECT args_json FROM audit_log WHERE action = 'action.needs_check' AND target_id = ?").bind(b.id).first<{ args_json: string }>()
     expect(JSON.parse(line!.args_json)).toMatchObject({ why: 'stale', item: 1 })
+    // The call answers after all: its item is a check now, so the answer isn't stored over it.
     hub.release({ ok: true, value: { ref: 'late' } })
+    await running
+    expect((await itemsOf(db, b.id))[0]!.state).toBe('needs_check')
   })
 
   it('a restore holds every pending and sending item of a held batch', async () => {

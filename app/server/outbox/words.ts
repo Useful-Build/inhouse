@@ -72,6 +72,12 @@ export const batchStoredTitle = (label: string): string => `Changes in ${label}`
 export const batchTitle = (items: number, label: string): string => `${items} ${items === 1 ? 'change' : 'changes'} in ${label}`
 
 /**
+ * Stage 1 M3-B (#501): a batch that stopped before any of it went out, every item moved to a new card, as its card says
+ * it ("Nothing here went out. Its changes moved to a new card. The agent was paused, so this needs your OK again.").
+ */
+export const batchMovedText = (why: string): string => `Nothing here went out. Its changes moved to a new card. ${why}`
+
+/**
  * Stage 1 M3-B (N22): a batch that stopped part way, to its approver: what went out, and where the rest is now ("Paused:
  * 12 of 40 went out; the other 28 need a new OK").
  */

@@ -166,6 +166,29 @@ describe('export completeness (failures 1 to 4, property)', () => {
     expect(lines.filter(l => l.store === 'usage_turns')).toEqual([{ store: 'usage_turns', row }])
   })
 
+  it('#506: a person export holds the batch items of their own chats, and no one else\'s', async () => {
+    const { dana, leo } = seeded.members
+    const chat = db.prepare('INSERT INTO chats (id, owner_id, title, created_at_ms, last_at_ms) VALUES (?, ?, ?, ?, ?)')
+    const item = db.prepare(`INSERT INTO outbox_items (item_id, action_id, n, chat_id, tool_use_id, args_json, payload_hash, line, records, units,
+      state, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, NULL, '{}', 'h', ?, 1, 1, 'pending', ?, ?)`)
+    await db.batch([
+      chat.bind('c_export_items_dana', dana, 'Dana', BASE, BASE),
+      chat.bind('c_export_items_leo', leo, 'Leo', BASE, BASE),
+      item.bind('oi_export_dana_1', 'ac_export_dana', 1, 'c_export_items_dana', 'Order 1 (store-a): add vip', BASE, BASE),
+      item.bind('oi_export_dana_2', 'ac_export_dana', 2, 'c_export_items_dana', 'Order 2 (store-a): add vip', BASE, BASE),
+      item.bind('oi_export_leo_1', 'ac_export_leo', 1, 'c_export_items_leo', 'Order 3 (store-a): add vip', BASE, BASE),
+    ])
+    const plan = await planOk({ kind: 'person', memberId: dana })
+    const { lines } = await readLines(runExport(d(), plan))
+    const ids = lines.filter(l => l.store === 'outbox_items').map(l => (l.row as { item_id: string }).item_id).sort()
+    expect(ids).toEqual(['oi_export_dana_1', 'oi_export_dana_2'])
+    expect(plan.counts.outbox_items).toBe(2)
+    await db.batch([
+      db.prepare("DELETE FROM outbox_items WHERE item_id LIKE 'oi_export_%'"),
+      db.prepare("DELETE FROM chats WHERE id IN ('c_export_items_dana', 'c_export_items_leo')"),
+    ])
+  })
+
   test.prop([worldArb], { numRuns: 20 })('the brand export is every exported store whole; a person export is exactly what names them', async w => {
     const ids: string[] = [seeded.members.dana, seeded.members.leo, seeded.members.admin, seeded.members.invite]
     for (const status of w.people) {

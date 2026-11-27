@@ -63,14 +63,9 @@ BEGIN
   SELECT RAISE(ABORT, 'outbox_items: an item''s identity, arguments, line and counts are fixed; it moves only while pending');
 END;
 
--- An item enters a batch (inserted or moved in) only at a position no approval covers: never into 1 to `approved_upto`
--- of its batch, and only into a batch row.
-CREATE TRIGGER outbox_items_insert_free BEFORE INSERT ON outbox_items
-WHEN NOT EXISTS (SELECT 1 FROM outbox_actions a WHERE a.id = NEW.action_id AND a.kind = 'batch'
-  AND (a.approved_upto IS NULL OR NEW.n > a.approved_upto))
-BEGIN
-  SELECT RAISE(ABORT, 'outbox_items: an item goes only into a batch, after the items an approval covers');
-END;
+-- An item moves only into a batch, at a position no approval covers: never into 1 to `approved_upto`. (A new item's
+-- insert states the same rule in its own WHERE, server/outbox/batch/rows.ts; inserts carry no trigger, so a restore
+-- can put a backup's answered and partly sent batches back as they were.)
 CREATE TRIGGER outbox_items_move_free BEFORE UPDATE OF action_id, n ON outbox_items
 WHEN (NEW.action_id IS NOT OLD.action_id OR NEW.n IS NOT OLD.n)
   AND NOT EXISTS (SELECT 1 FROM outbox_actions a WHERE a.id = NEW.action_id AND a.kind = 'batch'

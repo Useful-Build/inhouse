@@ -12,6 +12,13 @@ import type { WriteOperationKey } from './operations/types.ts'
 type NeedsCheckWhy = z.infer<typeof NeedsCheckWhySchema>
 
 /**
+ * Stage 1 M3 (N22): how long a batch waits before it tries a throttled item again: the hub contract's
+ * `THROTTLE_WAIT_MS`, copied here because the product build takes only types from the hub's contract
+ * (hub-call.test.ts keeps the two equal).
+ */
+export const THROTTLE_WAIT_MS = { default: 2_000, min: 1_000, max: 60_000 } as const
+
+/**
  * The hub's answer, as the dispatcher trusts it: a safe ref, or a closed error code with what the hub knows was sent.
  * `retryAfterMs` (Stage 1 M3, N22): how long a throttled call (`rate_limited`, nothing ran) asks to wait.
  */

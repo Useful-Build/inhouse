@@ -24,13 +24,18 @@ test.describe.configure({ mode: 'serial' })
 const TAG_ADD = 'shopify.order.tag_add'
 const run = Date.now().toString(36)
 const LOOP_TAG = `m3b-${run}`
-const orderArgs = (order: number, tag = LOOP_TAG) => ({ orderIds: [`gid://shopify/Order/${order}`], tags: [tag] })
+/**
+ * Call `k`'s arguments: one of the fake store's three orders (test/upstreams/shopify/write: 9001 to 9003; any other is
+ * "Order not found", a failed send that gives its unit back) and a tag of its own, so no two calls share a payload.
+ */
+const callArgs = (k: number, prefix = LOOP_TAG) => ({ orderIds: [`gid://shopify/Order/${9001 + (k % 3)}`], tags: [`${prefix}-${k}`] })
+const isLoopTag = (t: string) => t.startsWith(`${LOOP_TAG}-`)
 
 interface StoreWrite { operation: string; variables: { tags?: string[] } }
 const loopWrites = async (request: APIRequestContext): Promise<number> => {
   const r = await hook(request, { op: 'state' })
   expect(r.status, r.text).toBe(200)
-  return (r.json.shopifyWrite as { writes: StoreWrite[] }).writes.filter(w => w.variables.tags?.includes(LOOP_TAG)).length
+  return (r.json.shopifyWrite as { writes: StoreWrite[] }).writes.filter(w => w.variables.tags?.some(isLoopTag)).length
 }
 
 interface BatchCard {
@@ -71,7 +76,7 @@ test('a loop of 500 allowed writes stops at the limit and becomes one card; appr
 
   // "Always allow" on a first card makes the permission (per day 50, largest call 5); that card is undone in its hold, so
   // its unit goes back and the loop has the whole day.
-  const first = await requestAction(request, { memberId: danaId, chatId }, TAG_ADD, orderArgs(1, `${LOOP_TAG}-first`))
+  const first = await requestAction(request, { memberId: danaId, chatId }, TAG_ADD, callArgs(0, `first-${run}`))
   expect(first.outcome, JSON.stringify(first)).toBe('waiting')
   const always = await call(request, dana, 'POST', `/api/actions/${first.action.id}/answer`, { json: { choice: 'always', ifRev: first.action.rev } })
   expect(always.status, always.text).toBe(200)
@@ -84,7 +89,7 @@ test('a loop of 500 allowed writes stops at the limit and becomes one card; appr
   const outcomes: string[] = []
   let batchId = ''
   for (let k = 1; k <= 500; k++) {
-    const r = await requestAction(request, { memberId: danaId, chatId }, TAG_ADD, orderArgs(1000 + k))
+    const r = await requestAction(request, { memberId: danaId, chatId }, TAG_ADD, callArgs(k))
     outcomes.push(r.outcome)
     if (r.outcome === 'collected') {
       batchId ||= r.action.id
@@ -110,7 +115,7 @@ test('a loop of 500 allowed writes stops at the limit and becomes one card; appr
   expect(page1.status, page1.text).toBe(200)
   expect(page1.json.items).toHaveLength(100)
   expect(page1.json.next).toBe(100)
-  expect(page1.json.items[0]).toMatchObject({ n: 1, state: 'pending', line: expect.stringContaining('Order 1051') })
+  expect(page1.json.items[0]).toMatchObject({ n: 1, state: 'pending', line: expect.stringContaining(`add ${LOOP_TAG}-51`) })
 
   // Approve what was seen, the first 200; the 250 after move to a new collecting card.
   const approved = await call(request, dana, 'POST', `/api/actions/${batchId}/answer`, {
@@ -138,9 +143,7 @@ test('a loop of 500 allowed writes stops at the limit and becomes one card; appr
 
 test('a batch answer must name what it saw: stale totals are 409 `totals_changed`, a single card takes none', async ({ request }) => {
   const chatId = await createChat(request, dana)
-  const tag = `${LOOP_TAG}-totals`
-  const ids: string[] = []
-  for (let k = 1; k <= 7; k++) ids.push((await requestAction(request, { memberId: danaId, chatId }, TAG_ADD, orderArgs(5000 + k, tag))).action.id)
+  for (let k = 1; k <= 7; k++) await requestAction(request, { memberId: danaId, chatId }, TAG_ADD, callArgs(k, `totals-${run}`))
   // The permission from the first test runs the first calls; make sure this chat has a collecting card.
   const cards = (await call(request, dana, 'GET', `/api/actions?chatId=${chatId}`)).json.items as BatchCard[]
   const b = cards.find(c => c.batch !== undefined && c.state === 'waiting')
@@ -156,7 +159,10 @@ test('a batch answer must name what it saw: stale totals are 409 `totals_changed
     json: { choice: 'deny', ifRev: b!.rev, upTo: b!.batch!.itemCount, totals: b!.batch!.totals },
   })
   expect(denied.status, denied.text).toBe(200)
-  // A single action has no list.
-  const single = cards.find(c => c.batch === undefined)
-  if (single) expect((await call(request, dana, 'GET', `/api/actions/${single.id}/items`)).status).toBe(404)
+  // A single action has no list: `approval_request` (ask only) always makes a single card, whatever the permission.
+  const single = await requestAction(request, { memberId: danaId, chatId }, TAG_ADD, callArgs(8, `single-${run}`), { mode: 'ask_only' })
+  expect(single.outcome, JSON.stringify(single)).toBe('waiting')
+  expect(single.action.kind).toBe('single')
+  const noList = await call(request, dana, 'GET', `/api/actions/${single.action.id}/items`)
+  expect(noList.status, noList.text).toBe(404)
 })

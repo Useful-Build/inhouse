@@ -36,7 +36,9 @@ export interface NewItem {
 
 /**
  * The items' insert as one statement over a JSON list (D1 binds at most 100 parameters a statement; a call over the bulk
- * threshold has up to 100 items), only where `onlyIf` holds. The triggers refuse an item at a position an approval covers.
+ * threshold has up to 100 items), only where `onlyIf` holds, only into a batch row, and never at a position an approval
+ * of that batch covers (0770's move trigger states the same for a move; an insert has no trigger, so a restore can put
+ * answered batches back).
  */
 export function insertItemsStmt(actionId: string, chatId: string, items: readonly NewItem[], nowMs: number, onlyIf: Exists): Stmt {
   const list = items.map(i => ({
@@ -48,8 +50,11 @@ export function insertItemsStmt(actionId: string, chatId: string, items: readonl
      SELECT json_extract(j.value, '$.id'), ?, json_extract(j.value, '$.n'), ?, json_extract(j.value, '$.tu'), json_extract(j.value, '$.a'),
        json_extract(j.value, '$.h'), json_extract(j.value, '$.l'), json_extract(j.value, '$.r'), json_extract(j.value, '$.u'),
        json_extract(j.value, '$.m'), 'pending', ?, ?
-     FROM json_each(?) j WHERE EXISTS (${onlyIf.sql})`,
-    actionId, chatId, nowMs, nowMs, JSON.stringify(list), ...onlyIf.params,
+     FROM json_each(?) j
+     WHERE EXISTS (SELECT 1 FROM outbox_actions a WHERE a.id = ? AND a.kind = 'batch'
+         AND (a.approved_upto IS NULL OR json_extract(j.value, '$.n') > a.approved_upto))
+       AND EXISTS (${onlyIf.sql})`,
+    actionId, chatId, nowMs, nowMs, JSON.stringify(list), actionId, ...onlyIf.params,
   )
 }
 

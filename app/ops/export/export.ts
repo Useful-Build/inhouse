@@ -109,7 +109,11 @@ export function personFilter(entry: TableEntry, memberId: string): RowFilter | n
 }
 
 /** C1: the stores whose person export is the person's own chats', by the chat column. */
-const CHAT_SCOPED: Readonly<Record<string, string>> = { chat_messages: 'chat_id', tool_calls: 'chat_id', chat_files: 'chat_id' }
+const CHAT_SCOPED: Readonly<Record<string, string>> = {
+  chat_messages: 'chat_id', tool_calls: 'chat_id', chat_files: 'chat_id',
+  // Stage 1 M3-B (#506): a batch's items name no person; they're the person's when their batch's chat is.
+  outbox_items: 'chat_id',
+}
 
 /** A D1 entry's rows for one person: rows that name them or belong to their chats. */
 function personScope(entry: TableEntry, memberId: string): RowFilter | null {

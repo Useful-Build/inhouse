@@ -122,8 +122,9 @@ function remainderStmts(p: {
 }
 
 /**
- * A batch ends once no item is pending, sending or unclear: `sent` if any item went out (its ref counts them in server
- * words, "48 of 50 went out"); `failed` if none did and one failed; `withdrawn` if none was sent or failed (every item
+ * A batch ends once no item is pending, sending or unclear: `sent` if any item went out (its ref counts them against
+ * what the approval covered, in server words: "48 of 50 went out", "2 of 5 went out; the other 3 moved to a new card
+ * for a new OK"); `failed` if none did and one failed; `withdrawn` if none was sent or failed (every item
  * moved to a new card or was withdrawn when the batch stopped, its `lapsed_reason` saying why). Only where `onlyIf`
  * holds and the row is in `from`. A batch that ends `failed` or `withdrawn` gives its whole use back (`release`, to run
  * after any line that reads whether it was held).
@@ -133,14 +134,18 @@ export function endBatchStmts(p: {
 }): { end: Stmt; release: Stmt | null } {
   const open = "SELECT 1 FROM outbox_items i WHERE i.action_id = outbox_actions.id AND i.state IN ('pending', 'sending', 'needs_check')"
   const count = (state: string) => `(SELECT COUNT(*) FROM outbox_items i WHERE i.action_id = outbox_actions.id AND i.state = '${state}')`
-  const total = '(SELECT COUNT(*) FROM outbox_items i WHERE i.action_id = outbox_actions.id)'
+  // Counted against what the approval covered (#501): items that moved to a new card when the batch stopped are named
+  // as such, never left out of the count.
+  const total = 'COALESCE(approved_upto, (SELECT COUNT(*) FROM outbox_items i WHERE i.action_id = outbox_actions.id))'
+  const moved = `(${total} - (SELECT COUNT(*) FROM outbox_items i WHERE i.action_id = outbox_actions.id))`
   const ended = stamped(p.row.id, p.stamp)
   const useRev = p.row.approved_rev
   return {
     end: stmt(
       `UPDATE outbox_actions SET state = CASE WHEN ${count('sent')} > 0 THEN 'sent' WHEN ${count('failed')} > 0 THEN 'failed' ELSE 'withdrawn' END,
          rev = rev + 1,
-         result_json = CASE WHEN ${count('sent')} > 0 THEN json_object('ref', ${count('sent')} || ' of ' || ${total} || ' went out') ELSE NULL END,
+         result_json = CASE WHEN ${count('sent')} > 0 THEN json_object('ref', ${count('sent')} || ' of ' || ${total} || ' went out'
+           || CASE WHEN ${moved} > 0 THEN '; the other ' || ${moved} || ' moved to a new card for a new OK' ELSE '' END) ELSE NULL END,
          error_code = CASE WHEN ${count('sent')} > 0 OR ${count('failed')} = 0 THEN NULL
            ELSE COALESCE((SELECT i.error_code FROM outbox_items i WHERE i.action_id = outbox_actions.id AND i.state = 'failed'
              AND i.error_code IS NOT NULL ORDER BY i.n LIMIT 1), 'internal') END,
