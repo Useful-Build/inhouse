@@ -194,8 +194,8 @@ describe.each(KEYS)('%s', key => {
 describe('tags on several orders (one hub call, one document)', () => {
   it('adds to up to 5 orders in one upstream request, with each order a variable, never in the query text', async () => {
     const w = world()
-    w.fake.orders.set(ORDER(9004), { id: ORDER(9004), name: '#9004', tags: [], customer: null, totalMinor: 0 })
-    w.fake.orders.set(ORDER(9005), { id: ORDER(9005), name: '#9005', tags: [], customer: null, totalMinor: 0 })
+    w.fake.orders.set(ORDER(9004), { id: ORDER(9004), name: '#9004', tags: [] })
+    w.fake.orders.set(ORDER(9005), { id: ORDER(9005), name: '#9005', tags: [] })
     const ids = [9001, 9002, 9003, 9004, 9005].map(ORDER)
     const r = await w.run(req('shopify.order.tag_add', { orderIds: ids, tags: ['rush'] }))
     expect(r).toEqual({ ok: true, value: { ref: 'orders 9001, 9002, 9003, 9004, 9005: rush' } })

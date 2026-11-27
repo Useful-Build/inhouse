@@ -15,11 +15,12 @@ const ORDER_FIELDS = 'id name currentTotalPriceSet { shopMoney { amount currency
 function orderNode(fake: FakeShopifyWriteUpstream, id: string, withCustomer: boolean): Record<string, unknown> | null {
   const o = fake.orders.get(id)
   if (!o) return null
+  const f = fake.orderFacts.get(id) ?? { customer: null, totalMinor: 0 }
   return {
     id: o.id,
     name: o.name,
-    currentTotalPriceSet: { shopMoney: { amount: cents(o.totalMinor), currencyCode: fake.currency } },
-    ...(withCustomer ? { customer: o.customer === null ? null : { displayName: o.customer } } : {}),
+    currentTotalPriceSet: { shopMoney: { amount: cents(f.totalMinor), currencyCode: fake.currency } },
+    ...(withCustomer ? { customer: f.customer === null ? null : { displayName: f.customer } } : {}),
   }
 }
 

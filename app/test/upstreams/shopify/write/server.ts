@@ -39,10 +39,19 @@ export type FakeWriteOrder = {
   id: string
   name: string
   tags: string[]
-  /** Stage 1 M3 (card details): the customer's display name (null: a guest order) and the current total, in cents. */
-  customer: string | null
-  totalMinor: number
 }
+
+/**
+ * Stage 1 M3 (card details): what an approval card reads about an order beyond the write fields, kept apart from
+ * `orders` (whose copy the test hook's `state` answers): the customer's display name (null: a guest order) and the
+ * current total, in cents. An order with no entry reads as a guest order with a zero total.
+ */
+export type FakeOrderFacts = { customer: string | null; totalMinor: number }
+export const WRITE_ORDER_FACTS: ReadonlyMap<string, FakeOrderFacts> = new Map([
+  ['gid://shopify/Order/9001', { customer: 'Alex Moore', totalMinor: 64210 }],
+  ['gid://shopify/Order/9002', { customer: null, totalMinor: 1000 }],
+  ['gid://shopify/Order/9003', { customer: 'Priya Shah', totalMinor: 120800 }],
+])
 
 /** A draft order the fake made: its lines and optional note and tags, exactly as received. */
 export type FakeDraftOrder = { id: string; lines: { variantId: string; quantity: number }[]; note?: string; tags?: string[] }
@@ -59,9 +68,9 @@ export const WRITE_PRODUCTS: ReadonlyMap<string, FakeProduct> = new Map([
 ])
 
 export const INITIAL_WRITE_ORDERS: readonly FakeWriteOrder[] = [
-  { id: 'gid://shopify/Order/9001', name: '#9001', tags: ['existing'], customer: 'Alex Moore', totalMinor: 64210 },
-  { id: 'gid://shopify/Order/9002', name: '#9002', tags: [], customer: null, totalMinor: 1000 },
-  { id: 'gid://shopify/Order/9003', name: '#9003', tags: ['vip'], customer: 'Priya Shah', totalMinor: 120800 },
+  { id: 'gid://shopify/Order/9001', name: '#9001', tags: ['existing'] },
+  { id: 'gid://shopify/Order/9002', name: '#9002', tags: [] },
+  { id: 'gid://shopify/Order/9003', name: '#9003', tags: ['vip'] },
 ]
 
 /** Stage 1 M3-S2: the stock levels the fake starts with (`available` per item and location; invented). */
@@ -149,6 +158,7 @@ export class FakeShopifyWriteUpstream {
   drafts: FakeDraftOrder[] = []
   variants = new Set<string>(WRITE_VARIANTS)
   products = new Map<string, FakeProduct>(WRITE_PRODUCTS)
+  orderFacts = new Map<string, FakeOrderFacts>(WRITE_ORDER_FACTS)
   stock = copyStock()
   adjustments = 0
   refundOrders = copyRefundOrders()
@@ -175,6 +185,7 @@ export class FakeShopifyWriteUpstream {
     this.drafts = []
     this.variants = new Set(WRITE_VARIANTS)
     this.products = new Map(WRITE_PRODUCTS)
+    this.orderFacts = new Map(WRITE_ORDER_FACTS)
     this.stock = copyStock()
     this.adjustments = 0
     this.refundOrders = copyRefundOrders()
