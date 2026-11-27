@@ -14,6 +14,20 @@
 export const APPROVAL_LABEL = 'wasim-approved'
 /** Comment authors whose "Gate check:" and "wasim-approved:" lines count (the repo is public: anyone else's are ignored). */
 export const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR'])
+
+/**
+ * Whether a note's author can speak for the repo: a trusted author_association, or `trusted: true`, which run.mjs sets
+ * after checking the author's repo permission (admin, maintain or write). The built-in GITHUB_TOKEN can't see private
+ * org membership, so it reports a private member's comments as CONTRIBUTOR; the permission check covers them.
+ */
+export const isTrusted = c => TRUSTED_ASSOCIATIONS.has(c.author_association) || c.trusted === true
+
+/**
+ * Whether a repo permission (the `permission` field of GET collaborators/{login}/permission) lets its holder speak for
+ * the repo. Only admin and write: the API reports maintain as write, triage as read, and a bot or an outsider as read or
+ * none, so none of those count.
+ */
+export const permissionCanSpeak = permission => permission === 'admin' || permission === 'write'
 export const GATE_CHECKS_NEEDED = 2
 /** Property tests below this many runs are check-weakening when added. */
 export const MIN_NUM_RUNS = 100
@@ -647,7 +661,7 @@ const STANDING_REVIEWS = new Set(['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED'])
  */
 export function notes(issueComments, reviews) {
   return [...issueComments, ...reviews.filter(r => STANDING_REVIEWS.has(r.state))]
-    .map(c => ({ body: c.body ?? '', author_association: c.author_association, at: c.created_at ?? c.submitted_at ?? null }))
+    .map(c => ({ body: c.body ?? '', author_association: c.author_association, login: c.user?.login ?? null, at: c.created_at ?? c.submitted_at ?? null }))
 }
 
 /** A comment line without leading list and emphasis marks; null for a quoted line (`>`), which never counts. */
@@ -659,7 +673,7 @@ export function gateChecks(comments) {
   let on = 0
   let off = false
   for (const c of comments) {
-    if (!TRUSTED_ASSOCIATIONS.has(c.author_association)) continue
+    if (!isTrusted(c)) continue
     const lines = commentLines(c)
     if (lines.some(l => /^Gate check:\s*off ledger\b/i.test(l))) off = true
     if (lines.some(l => /^Gate check:\s*on ledger\b/i.test(l))) on++
@@ -686,7 +700,7 @@ export function approvedHead({ labeledAt, comments = [], commitShas = [], baseCh
   if (baseChangedAt.some(t => Date.parse(t) > at)) return { problem: 'the base branch changed after the label was added' }
   let latest = null
   for (const c of comments) {
-    if (!TRUSTED_ASSOCIATIONS.has(c.author_association) || !c.at || Date.parse(c.at) < at) continue
+    if (!isTrusted(c) || !c.at || Date.parse(c.at) < at) continue
     for (const l of commentLines(c)) {
       const m = /^wasim-approved:\s*([0-9a-f]{40})(?![0-9a-z])/i.exec(l)
       if (m && (!latest || Date.parse(c.at) >= Date.parse(latest.at))) latest = { at: c.at, sha: m[1].toLowerCase() }

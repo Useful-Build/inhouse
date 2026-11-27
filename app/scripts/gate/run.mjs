@@ -8,7 +8,7 @@
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { appendFileSync } from 'node:fs'
-import { APPROVAL_LABEL, approvedHead, classify, notes, report } from './lanes.mjs'
+import { APPROVAL_LABEL, approvedHead, classify, isTrusted, notes, permissionCanSpeak, report } from './lanes.mjs'
 
 /** GitHub caps a PR's file list at 3000 and a comparison's at 300. */
 const COMPARE_FILE_CAP = 300
@@ -38,6 +38,30 @@ const getAll = path => JSON.parse(ghText(['--paginate', '--slurp', path])).flat(
 /** A workflow command's data, escaped as @actions/core does, so a file name can't end the command or start another. */
 const escapeData = s => s.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A')
 const encodePath = p => p.split('/').map(encodeURIComponent).join('/')
+
+/**
+ * Marks notes `trusted` when their author_association isn't trusted but the author has write access or more (lanes.mjs'
+ * permissionCanSpeak). The
+ * built-in GITHUB_TOKEN can't see private org membership, so a private member's comments come back as CONTRIBUTOR.
+ * One lookup per login. A 404 (the login isn't a user) leaves the note untrusted; any other error throws, so
+ * the gate fails closed rather than guessing.
+ */
+function withPermissionTrust(repo, list) {
+  const cache = new Map()
+  const canSpeak = login => {
+    if (!cache.has(login)) {
+      let ok = false
+      try {
+        ok = permissionCanSpeak(get(`repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`).permission)
+      } catch (e) {
+        if (!/HTTP 404/.test(String(e.stderr))) throw e
+      }
+      cache.set(login, ok)
+    }
+    return cache.get(login)
+  }
+  return list.map(c => (isTrusted(c) || !c.login ? c : { ...c, trusted: canSpeak(c.login) }))
+}
 
 /** A file's text at a commit, or null when it doesn't exist there. */
 function textAt(repo, path, ref) {
@@ -96,7 +120,7 @@ function main() {
   const files = withPackageTexts(repo, listed, mergeBase, head)
   const labels = prData.labels.map(l => l.name)
   // Issue comments, and the reviews that still stand (a dismissed review's lines don't count).
-  const comments = notes(getAll(`repos/${repo}/issues/${pr}/comments?per_page=100`), getAll(`repos/${repo}/pulls/${pr}/reviews?per_page=100`))
+  const comments = withPermissionTrust(repo, notes(getAll(`repos/${repo}/issues/${pr}/comments?per_page=100`), getAll(`repos/${repo}/pulls/${pr}/reviews?per_page=100`)))
   const { approvedSha, ...record } = labels.includes(APPROVAL_LABEL) ? approval(repo, pr, prData, comments) : {}
 
   const result = classify({ files, labels, comments, incomplete, ...record })
