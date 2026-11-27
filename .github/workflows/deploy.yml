@@ -98,7 +98,9 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: app/.nvmrc
-      - run: npm ci
+      # --ignore-scripts: no secret here, but this build's dist/ is what the deploy job puts live, so no package's
+      # install script gets to touch it. None is needed (ci.yml's ignore-scripts job builds the same way per PR).
+      - run: npm ci --ignore-scripts
       - run: npm run build
         env:
           RELEASE_SHA: ${{ needs.plan.outputs.sha }}
@@ -150,8 +152,11 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: app/.nvmrc
+      # --ignore-scripts: this job holds a secret, so no package's install script runs here (a version bump can't
+      # run code at install). None is needed: esbuild and workerd find their binaries in their optional platform
+      # packages, and app/'s prepare only sets git hooks. ci.yml's ignore-scripts job proves these commands per PR.
       - working-directory: app
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       # A deploy goes ahead only while its commit is still main's head. A newer push has its own run waiting in
       # the production group, and a re-run of an old run must never put old code back live.
