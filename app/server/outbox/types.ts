@@ -196,7 +196,10 @@ export interface OutboxPort {
   answer(actor: OutboxActor, actionId: string, input: { choice: ActionChoice; ifRev: number; upTo?: number; totals?: ActionAnswerTotals }): Promise<OutboxChange>
   /** `approved` to `undone`, only before the claim. */
   undo(actor: OutboxActor, actionId: string, input: { ifRev: number }): Promise<OutboxChange>
-  /** `waiting` to `withdrawn`: the asker, or the agent for its own action (`approval_withdraw`). */
+  /**
+   * `waiting` to `withdrawn`: the asker (a single card only, Stage 1 M3-X #527: never a batch, which holds other calls'
+   * items), or the agent for its own action (`approval_withdraw`).
+   */
   withdraw(by: { kind: 'member'; actor: OutboxActor } | { kind: 'agent'; chatId: string; turnId: string }, actionId: string, input: { ifRev: number }): Promise<OutboxChange>
   /**
    * `needs_check` to `sent` or `failed`: the approver or an admin. "It didn't go out" releases the use. Stage 1 M3 (N22):

@@ -136,8 +136,9 @@ export async function resolveAction(c: Ctx): Promise<Response> {
 
 /**
  * Route 126, `POST /api/actions/:id/withdraw` `{ ifRev }` (Stage 1 M3-X, N25): the asker takes back their own waiting
- * card (`can.withdraw` on an admins card they can't answer). Anyone else's card: 403 (or 404 for one they may not see);
- * a card no longer waiting: 409 with the current card.
+ * single card (`can.withdraw` on an admins card they can't answer). Anyone else's card, or a batch (#527: it holds other
+ * calls' items and is answered with its `upTo`): 403 (or 404 for one they may not see); a card no longer waiting: 409
+ * with the current card.
  */
 export async function withdrawAction(c: Ctx): Promise<Response> {
   const id = ActionIdSchema.safeParse(c.params.id)

@@ -504,12 +504,16 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       if (by.kind === 'member') {
         if (!mayView(before, by.actor)) return refusal('not_found')
         if (before.asked_by !== by.actor.memberId) return refusal('forbidden', 'not_owner')
+        // Stage 1 M3-X (N25, #527): a person takes back only their own single card. A batch holds other calls' items
+        // (a collecting one can grow under the same revision), so it's answered with its `upTo` and totals, never
+        // withdrawn whole from here. The update's WHERE says the same.
+        if (before.kind !== 'single') return refusal('forbidden', 'not_owner')
       } else if (before.chat_id !== by.chatId) {
         return refusal('not_found')
       }
       const stamp = writeStamp(d.requestId)
       const actorId = by.kind === 'member' ? by.actor.memberId : before.asked_by
-      const who = by.kind === 'member' ? stmt('asked_by = ?', by.actor.memberId) : stmt('chat_id = ?', by.chatId)
+      const who = by.kind === 'member' ? stmt("asked_by = ? AND kind = 'single'", by.actor.memberId) : stmt('chat_id = ?', by.chatId)
       // Stage 1 M2-G: the agent's own withdraw (approval_withdraw) told the agent in its answer, so nobody needs a resume
       // turn about it (`report = 'none'`). A person's withdraw leaves `report` for the asks' delivery to decide.
       const report = by.kind === 'agent' ? ", report = 'none'" : ''

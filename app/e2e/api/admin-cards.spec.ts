@@ -8,9 +8,10 @@
 //    facts in Approvals, never the chat, and neither can read the other's chat;
 //  - two admins answering at once give one approval, and it goes out once;
 //  - an admin demoted during the hold stops the claim: nothing goes out and the card waits for any admin's OK again;
-//  - a Needs a check on it is listed for an admin with Resolve (the M2-H carry-over), and its asker can't resolve it.
-// A second admin is invited for the spec and removed after; the refund's ceiling row is set only through the hook and
-// turned off again after (and before, in case a killed run left it on).
+//  - a member's Needs a check is listed for an admin with Resolve and no chat (the M2-H carry-over); a tag_add made unclear
+//    by the fake store's `broken_body` fault (the only fault the hook sets), since nothing makes a refund unclear here.
+// A second admin is invited for the spec and removed after; the ceiling rows are set only through the hook and turned off
+// again after (and before, in case a killed run left them on).
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 import { createChat } from './chat-kit.ts'
@@ -23,6 +24,7 @@ const admin = actor('admin')
 test.describe.configure({ mode: 'serial' })
 
 const REFUND = 'shopify.refund.create'
+const TAG_ADD = 'shopify.order.tag_add'
 /** Order 9001's unfulfilled line in the fake: $5.00 a unit, three units. */
 const refundArgs = () => ({
   orderId: 'gid://shopify/Order/9001', lines: [{ lineItemId: 'gid://shopify/LineItem/90012', quantity: 1 }], amount: { minor: 500, currency: 'USD' },
@@ -39,12 +41,13 @@ let kit: Actor = admin
 let kitId = ''
 let danaChat = ''
 
-const ceiling = async (request: APIRequestContext, enabled: boolean) => {
-  const r = await hook(request, { op: 'ceiling', operation: REFUND, enabled, perDayMax: 1000, unitsMax: 50_000 })
+const ceiling = async (request: APIRequestContext, enabled: boolean, operation: typeof REFUND | typeof TAG_ADD = REFUND) => {
+  const r = await hook(request, { op: 'ceiling', operation, enabled, perDayMax: 1000, unitsMax: operation === REFUND ? 50_000 : 5 })
   expect(r.status, r.text).toBe(200)
 }
-const fault = async (request: APIRequestContext, f: 'succeed' | 'broken_body') => {
-  const r = await hook(request, { op: 'set', shopifyWrite: { faults: { [REFUND]: f } } })
+/** The fake store's answer to a tag_add (the hook's only write fault). */
+const tagFault = async (request: APIRequestContext, f: 'succeed' | 'broken_body') => {
+  const r = await hook(request, { op: 'set', shopifyWrite: { faults: { [TAG_ADD]: f } } })
   expect(r.status, r.text).toBe(200)
 }
 const refunds = async (request: APIRequestContext, actionId: string): Promise<number> => {
@@ -79,9 +82,9 @@ const setRole = async (request: APIRequestContext, id: string, role: 'member' | 
 test.beforeAll(async ({ request }) => {
   danaId = (await me(request, dana)).memberId
   await ceiling(request, false)
+  await ceiling(request, false, TAG_ADD)
   // The hub's Shopify account answers a read, so it has a connect date the first request copies into D1 (M2-D).
   expect((await hubCall(request, 'callTool', 'orders_search', { first: 1 })).ok).toBe(true)
-  await fault(request, 'succeed')
   await ceiling(request, true)
   // A second admin for this spec.
   const who = newIdentity('m3x-admin')
@@ -95,7 +98,8 @@ test.beforeAll(async ({ request }) => {
 
 test.afterAll(async ({ request }) => {
   await ceiling(request, false)
-  await fault(request, 'succeed')
+  await ceiling(request, false, TAG_ADD)
+  await tagFault(request, 'succeed')
   if (kitId) {
     const row = await memberRow(request, kitId)
     if (row) await call(request, admin, 'DELETE', `/api/members/${kitId}?ifRev=${row.rev}`)
@@ -168,24 +172,28 @@ test('an admin demoted during the hold stops the claim: nothing goes out, and it
   }
 })
 
-test('a Needs a check on it is listed for an admin with Resolve; its asker can\'t resolve it', async ({ request }) => {
+test('a member\'s Needs a check is listed for an admin with Resolve and no chat; any admin resolves it', async ({ request }) => {
   test.setTimeout(90_000)
-  await fault(request, 'broken_body')
+  await ceiling(request, true, TAG_ADD)
+  await tagFault(request, 'broken_body')
   try {
-    const id = await memberRefund(request)
-    expect((await answer(request, admin, id, 'approve', (await card(request, admin, id)).rev)).status).toBe(200)
+    const r = await hook(request, { op: 'action', as: { memberId: danaId, chatId: danaChat }, operation: TAG_ADD, args: { orderIds: ['gid://shopify/Order/9001'], tags: [`m3x-${Date.now().toString(36)}`] } })
+    expect(r.status, r.text).toBe(200)
+    expect(r.json.result).toMatchObject({ outcome: 'waiting', action: { approver_kind: 'person', approver: danaId } })
+    const id = r.json.result.action.id as string
+    const allowed = await call(request, dana, 'POST', `/api/actions/${id}/answer`, { json: { choice: 'once', ifRev: (await card(request, dana, id)).rev } })
+    expect(allowed.status, allowed.text).toBe(200)
     await until(request, id, 'needs_check')
     for (const who of [admin, kit]) {
       const checks = await call(request, who, 'GET', '/api/actions?states=needs_check')
       expect(checks.json.items).toEqual(expect.arrayContaining([expect.objectContaining({ id, chatId: null, can: expect.objectContaining({ resolve: true }) })]))
     }
-    const mine = await card(request, dana, id)
-    expect(mine.can.resolve).toBe(false)
-    expectError(await call(request, dana, 'POST', `/api/actions/${id}/resolve`, { json: { outcome: 'sent', ifRev: mine.rev } }), 403, 'forbidden', 'not_owner')
-    const done = await call(request, kit, 'POST', `/api/actions/${id}/resolve`, { json: { outcome: 'failed', ifRev: mine.rev } })
+    expect((await card(request, dana, id)).can.resolve).toBe(true)
+    const done = await call(request, kit, 'POST', `/api/actions/${id}/resolve`, { json: { outcome: 'failed', ifRev: (await card(request, kit, id)).rev } })
     expect(done.status, done.text).toBe(200)
     expect(done.json).toMatchObject({ state: 'failed' })
   } finally {
-    await fault(request, 'succeed')
+    await tagFault(request, 'succeed')
+    await ceiling(request, false, TAG_ADD)
   }
 })

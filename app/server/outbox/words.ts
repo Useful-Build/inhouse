@@ -2,6 +2,8 @@
 // lapse or an outcome. Server words only: never connector output, never the model's text.
 import type { LapseReason } from './sql.ts'
 import type { OutboxRefuseReason } from './types.ts'
+// #487: what a partly-sent call stores beside its `needs_check` (`result_json`), read by shared/partial-send.ts.
+import type { PartialGroups } from '../../shared/partial-send.ts'
 
 /** The plain refusal the agent reads (`request` wrote nothing). */
 export const REFUSAL_TEXT: Readonly<Record<OutboxRefuseReason, string>> = {
@@ -59,11 +61,6 @@ export const NEEDS_CHECK_TEXT = 'It isn’t clear whether this went out. Check i
 /** Stage 1 M3-X (N25): whom an admins card waits for, as its asker's card says it. */
 export const WAITING_FOR_ADMIN = 'an admin'
 
-/**
- * #487: what a partly-sent call stores beside its `needs_check` (`result_json`): the hub's groups of order numbers, read
- * by hub-call.ts `partialOf` (digits only, never other text).
- */
-export interface PartialGroups { sent: string[]; refused: string[]; unclear: string[] }
 
 const orderList = (nums: readonly string[]) => `${nums.length === 1 ? 'Order' : 'Orders'} ${nums.join(', ')}`
 

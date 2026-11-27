@@ -4,8 +4,13 @@
 //        that isn't the hub's groups of order numbers reaches a card;
 //  #509: a batch stopped part way counts, in its notice, items its approval never covered;
 //  #484 (Fable, low): a row both over a lowered limit and never able to pass again waits until it expires instead of
-//        being withdrawn.
+//        being withdrawn;
+//  #527: a person withdraws a collecting batch whole through route 126 (its revision doesn't move when an item joins, so
+//        an old `ifRev` takes back items the person never saw).
 import { env } from 'cloudflare:workers'
+import { withdrawAction } from '../api/actions.ts'
+import { openStores } from '../db/stores.ts'
+import { personPrincipal, ctx as handlerCtx } from '../db/test-support.ts'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { WriteGateway, WriteResult } from '../../hub/index/contract.ts'
 import { account, ceiling } from '../permissions/test-support.ts'
@@ -13,7 +18,7 @@ import { itemsPage } from './batch/rows.ts'
 import { itemHub, pass, wideArgs } from './batch/test-support.ts'
 import { cardOf } from './card.ts'
 import { sendAction } from './dispatch.ts'
-import { outcomeOf, partialOf } from './hub-call.ts'
+import { outcomeOf } from './hub-call.ts'
 import { ASKER, SHOP_GEN, fresh, notices, outbox, requestCtx, rowOf, tagArgs, world } from './test-support.ts'
 import type { OutboxActionRow, OutboxRequestResult } from './types.ts'
 import { needsCheckText } from './words.ts'
@@ -32,19 +37,17 @@ beforeEach(async () => {
   await ceiling(db, 'shopify.order.tag_add', { enabled: true, perDayMax: 50, loweredRev: 1, unitsMax: 5 })
 })
 
-const PARTIAL: WriteResult = { ok: false, error: { code: 'upstream_rejected', message: 'sent 9001,9002; refused 424242' }, sent: 'unknown' }
+// #487 (review round 1): the hub's real answer, as hub/outbox-entry/shopify-ops.test.ts pins it (the code's fixed text,
+// then the groups). hub/outbox-entry/partial-send.test.ts drives `partialOf` through the hub's own `readTags`.
+const PARTIAL: WriteResult = { ok: false, error: { code: 'upstream_rejected', message: 'upstream rejected the request: sent 9001,9002; refused 424242' }, sent: 'unknown' }
 const answering = (r: WriteResult): WriteGateway => ({ runAction: async () => r })
 
 describe('#487: the groups of a partly-sent call', () => {
-  it('reads only the hub\'s groups of order numbers', () => {
-    expect(partialOf('sent 9001,9002; refused 424242')).toEqual({ sent: ['9001', '9002'], refused: ['424242'], unclear: [] })
-    expect(partialOf('refused 1; unclear 2,3')).toEqual({ sent: [], refused: ['1'], unclear: ['2', '3'] })
-    for (const bad of [undefined, '', 'unclear', 'sent order', 'sent 1; sent 2', 'sent 1;refused 2', 'sent 1, 2', 'went 1', 'sent 1; <b>x</b>', 'sent 1\nrefused 2']) {
-      expect(partialOf(bad), String(bad)).toBeNull()
-    }
+  it('the hub\'s real answer names its groups; anything else unclear stays as it was', () => {
     expect(outcomeOf({ value: PARTIAL })).toEqual({ kind: 'needs_check', why: 'unknown', partial: { sent: ['9001', '9002'], refused: ['424242'], unclear: [] } })
-    // Anything else unclear stays as it was.
-    expect(outcomeOf({ value: { ok: false, error: { code: 'upstream_unavailable', message: 'timeout' }, sent: 'unknown' } })).toEqual({ kind: 'needs_check', why: 'unknown' })
+    // The groups without the hub's fixed text before them are never read.
+    expect(outcomeOf({ value: { ...PARTIAL, error: { code: 'upstream_rejected', message: 'sent 9001,9002; refused 424242' } } })).toEqual({ kind: 'needs_check', why: 'unknown' })
+    expect(outcomeOf({ value: { ok: false, error: { code: 'upstream_unavailable', message: 'upstream unavailable: timeout' }, sent: 'unknown' } })).toEqual({ kind: 'needs_check', why: 'unknown' })
     expect(needsCheckText(null)).toBe(needsCheckText(JSON.stringify({})))
   })
 
@@ -127,5 +130,67 @@ describe('#484: withdraw-class reasons come before a lowered limit', () => {
     now += HOLD
     await sendAction(a.action.id, { db, nowMs: now, hub: itemHub(db, () => 'ok').gateway, notify: notices().notify, requestId: fresh('s'), again: () => {}, gate: { paused: false, pauseGen: 0 }, timeoutMs: 1_000 })
     expect(await rowOf(db, a.action.id)).toMatchObject({ state: 'waiting', lapsed_reason: 'over_limit' })
+  })
+})
+
+describe('#527: route 126 takes back only the asker\'s own single card', () => {
+  const stores = openStores(env)
+  const withEnv = <C extends object>(c: C) => ({ ...c, env: { BRAND_AGENT: { getByName: () => ({ poke: async () => {}, actionChanged: async () => {} }) } } as never })
+  const post = (id: string, ifRev: number) =>
+    withdrawAction(withEnv(handlerCtx(stores, personPrincipal(ASKER, 'member'), { method: 'POST', path: `/api/actions/${id}/withdraw`, params: { id }, body: { ifRev }, nowMs: now }).c))
+
+  it('a collecting batch, at the revision it had before more items joined: refused, nothing changes', async () => {
+    for (let k = 1; k <= 5; k++) expect((await outbox(db, clock).request(requestCtx({ nowMs: now }), { operation: 'shopify.order.tag_add', args: tagArgs(k) }, { mode: 'tool' })).outcome).toBe('waiting')
+    const first = await outbox(db, clock).request(requestCtx({ nowMs: now }), { operation: 'shopify.order.tag_add', args: tagArgs(100) }, { mode: 'tool' })
+    if (first.outcome !== 'collected') throw new Error('expected a collected call')
+    const seen = first.action
+    for (let k = 1; k <= 3; k++) expect((await outbox(db, clock).request(requestCtx({ nowMs: now }), { operation: 'shopify.order.tag_add', args: tagArgs(100 + k) }, { mode: 'tool' })).outcome).toBe('collected')
+    const r = await post(seen.id, seen.rev)
+    expect(r.status).toBe(403)
+    expect(await outbox(db, clock).withdraw({ kind: 'member', actor: ME }, seen.id, { ifRev: seen.rev })).toEqual({ refused: { code: 'forbidden', reason: 'not_owner' } })
+    expect(await rowOf(db, seen.id)).toMatchObject({ state: 'waiting', items_n: 4 })
+    // A single card of its own is still the asker's to take back.
+    const single = await db.prepare("SELECT id, rev FROM outbox_actions WHERE kind = 'single' AND state = 'waiting' LIMIT 1").first<{ id: string; rev: number }>()
+    expect((await post(single!.id, single!.rev)).status).toBe(200)
+  })
+
+  it('the update itself refuses a batch, whatever the read before it said', async () => {
+    for (let k = 1; k <= 5; k++) await outbox(db, clock).request(requestCtx({ nowMs: now }), { operation: 'shopify.order.tag_add', args: tagArgs(k) }, { mode: 'tool' })
+    const c = await outbox(db, clock).request(requestCtx({ nowMs: now }), { operation: 'shopify.order.tag_add', args: tagArgs(200) }, { mode: 'tool' })
+    if (c.outcome !== 'collected') throw new Error('expected a collected call')
+    const pass = (o: object, k: string | symbol) => {
+      const v = Reflect.get(o, k) as unknown
+      return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(o) : v
+    }
+    // A database whose first read of the row says it's a single card (as a stale read could): only the update decides.
+    const lying = new Proxy(db, {
+      get(target, key) {
+        if (key !== 'prepare') return pass(target, key)
+        return (sql: string) => {
+          const st = target.prepare(sql)
+          if (sql !== 'SELECT * FROM outbox_actions WHERE id = ?') return st
+          return new Proxy(st, {
+            get(t, k) {
+              if (k !== 'bind') return pass(t, k)
+              return (...v: unknown[]) => {
+                const bound = t.bind(...v)
+                return new Proxy(bound, {
+                  get(b, kk) {
+                    if (kk !== 'first') return pass(b, kk)
+                    return async () => {
+                      const row = await b.first<OutboxActionRow>()
+                      return row && row.id === c.action.id && row.state === 'waiting' ? { ...row, kind: 'single' } : row
+                    }
+                  },
+                })
+              }
+            },
+          })
+        }
+      },
+    }) as D1Database
+    const r = await outbox(lying, clock).withdraw({ kind: 'member', actor: ME }, c.action.id, { ifRev: c.action.rev })
+    expect(r).toEqual({ refused: { code: 'conflict' } })
+    expect(await rowOf(db, c.action.id)).toMatchObject({ state: 'waiting', kind: 'batch' })
   })
 })

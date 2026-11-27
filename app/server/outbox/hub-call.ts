@@ -8,7 +8,8 @@ import { plainAnswer } from '../../shared/rpc-answer.ts'
 import { safeError } from '../safe-error.ts'
 import { operationEntry } from './operations/index.ts'
 import type { WriteOperationKey } from './operations/types.ts'
-import type { PartialGroups } from './words.ts'
+import { partialOf } from '../../shared/partial-send.ts'
+import type { PartialGroups } from '../../shared/partial-send.ts'
 
 type NeedsCheckWhy = z.infer<typeof NeedsCheckWhySchema>
 
@@ -39,29 +40,6 @@ export type SendOutcome =
   /** `partial` (#487): a multi-order call the hub says went out in part, its groups by order number. */
   | { kind: 'needs_check'; why: NeedsCheckWhy; partial?: PartialGroups }
 
-/** One group of a partly-sent call's message: a word and 1 to 100 order numbers (digits only). */
-const GROUP = /^(sent|refused|unclear) (\d{1,20}(?:,\d{1,20}){0,99})$/
-
-/**
- * #487: the groups a multi-order write names when only part of it went out (the hub's `sent 9001,9002; refused 424242`,
- * hub/connectors/shopify/write/ops/tags.ts `readTags`), or null. Only digits are kept: any message not exactly in that
- * shape (a group with no number, another word, any other text) names no groups, and the card says only that it's unclear.
- */
-export function partialOf(message: string | undefined): PartialGroups | null {
-  if (message === undefined) return null
-  const g: PartialGroups = { sent: [], refused: [], unclear: [] }
-  const seen = new Set<string>()
-  for (const part of message.split('; ')) {
-    const m = GROUP.exec(part)
-    if (!m) return null
-    const word = m[1] as keyof PartialGroups
-    if (seen.has(word)) return null
-    seen.add(word)
-    g[word] = m[2]!.split(',')
-  }
-  return seen.size > 0 ? g : null
-}
-
 /** #487: what a `needs_check` stores in `result_json`: the groups of a partly-sent call, or nothing. */
 export const partialJson = (o: SendOutcome): string | null => (o.kind === 'needs_check' && o.partial ? JSON.stringify({ partial: o.partial }) : null)
 
@@ -79,7 +57,7 @@ export function outcomeOf(answer: HubAnswer): SendOutcome {
   const r = parsed.data
   if (r.ok) return { kind: 'sent', ref: safeRef(r.value.ref) }
   if (r.sent !== 'no') {
-    const partial = partialOf(r.error.message)
+    const partial = partialOf(r.error.code, r.error.message)
     return { kind: 'needs_check', why: 'unknown', ...(partial ? { partial } : {}) }
   }
   return { kind: 'failed', code: r.error.code, ...(r.error.retryAfterMs !== undefined ? { retryAfterMs: r.error.retryAfterMs } : {}) }
