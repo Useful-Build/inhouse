@@ -73,7 +73,7 @@ const grantRow = async (scope: string) => {
   const id = newPermissionId()
   await insertGrant(e.DB, {
     id, holder: `member:${ASKER}`, accountId: 'shopify:store', accountGen: SHOP_GEN, operation: 'shopify.order.tag_add', scopeKey: `shop=${scope}`,
-    perDay: 5, unitsMax: 1, policyRev: POLICY_REV, grantedRole: 'member', ceilingRev: 1, revokedAtMs: null,
+    perDay: 5, policyRev: POLICY_REV, grantedRole: 'member', ceilingRev: 1, revokedAtMs: null,
   })
   return id
 }
