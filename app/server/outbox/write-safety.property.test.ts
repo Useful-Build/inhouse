@@ -1807,8 +1807,12 @@ type Paths = Outcome['paths']
 const addPaths = (to: Paths, from: Paths) => { for (const k of Object.keys(to) as (keyof Paths)[]) to[k] += from[k] }
 const noPaths = (): Paths => ({ grantItemCalls: 0, restoreInItemCall: 0, crashBeforeItemResult: 0 })
 const M3_SEND_FLOOR = { effects: 700, items: 500 }
-/** #597: the rare-path suite's floors (about half the lowest seen; see its log line). */
-const RARE_FLOOR = { grantItemCalls: 1, restoreInItemCall: 1, crashBeforeItemResult: 1 }
+/**
+ * #597: the rare-path suite's floors, about a third of what CI's first run saw (2026-11-27: 147 item calls under a grant,
+ * 47 restores inside an item's call, 169 crashes before an item's result over 150 runs; the main suite then reached 4,
+ * 0 and 4, the send path 108, 5 and 18).
+ */
+const RARE_FLOOR = { grantItemCalls: 50, restoreInItemCall: 15, crashBeforeItemResult: 55 }
 
 describe('the write-safety gate (M3-W): every operation, batches, admin cards, limits, item crashes, throttles and restores', () => {
   beforeAll(async () => {
