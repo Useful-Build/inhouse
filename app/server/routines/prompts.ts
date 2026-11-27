@@ -4,7 +4,7 @@
 import type { OutputFormat } from '../../shared/protocol/index.ts'
 import { RESULT_HANDLERS } from './results.ts'
 import { MORNING_CHECK_PROMPT_V1 } from '../prompt/routines/morning-check.ts'
-import { TEAM_ROUTINE_PREAMBLE } from '../prompt/routines/common.ts'
+import { teamRoutineTurn } from '../prompt/routines/common.ts'
 
 /**
  * The system routines' prompts, by `prompt_ref` (one line each, added with the routine's row: W3's morning check). An
@@ -42,7 +42,7 @@ export function routinePrompt(r: PromptSource): string {
     if (!Object.hasOwn(SYSTEM_ROUTINE_PROMPTS, ref)) throw new Error(`routinePrompt: no prompt for ${ref}`)
     return SYSTEM_ROUTINE_PROMPTS[ref]
   }
-  return `${TEAM_ROUTINE_PREAMBLE}\n\n${r.instruction}`
+  return teamRoutineTurn(r.instruction)
 }
 
 /** The structured-output format a routine's kind asks for (its result handler's schema), if any. */

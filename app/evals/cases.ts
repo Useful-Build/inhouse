@@ -5,7 +5,7 @@ import type { Case, Expect, SeedFact } from './types.ts'
 import { SLACK_SEARCH_CASE } from './connectors/slack-search/case.ts'
 import { CODEMODE_CASES } from './connectors/codemode/cases.ts'
 import { CAPABILITY_CASES } from './capability/cases.ts'
-import { TEAM_ROUTINE_PREAMBLE } from '../server/prompt/routines/common.ts'
+import { teamRoutineTurn } from '../server/prompt/routines/common.ts'
 
 /**
  * R10 fails only on a leak: Tom named, or PDF stated as this person's preference. A mention is fine: the bare word as an
@@ -131,22 +131,25 @@ export const S5_LEGACY_EXPECT: Record<string, Expect[]> = {
   T14: [{ tool: 'team_request_create', args: { title: /tiktok/i }, notCalled: ['notification_send'] }],
 }
 
-/**
- * A team routine's turn text for this instruction, as server/routines/prompts.ts `routinePrompt` renders it (its preamble,
- * a blank line, the person's instruction; cases.test.ts pins the two together). The case runs it as a chat turn: the model
- * reads the same text a scheduled run sends, and a question reaches the case's person in place of the routine's creator.
- */
-export const routineTurn = (instruction: string): string => `${TEAM_ROUTINE_PREAMBLE}\n\n${instruction}`
-
-// A routine may ask its creator a question (2026-11-27, Wasim): only for a decision only they can make, at most once.
-// Q01 can't be done right without the creator's pick, so it asks; Q02 has a sensible default, so it finishes alone.
+// A routine may ask its creator a question (2026-11-27, Wasim): only when it can't do the job correctly without a decision
+// only they can make, at most once. Each case sends the exact turn text a team routine renders (teamRoutineTurn, shared
+// with server/routines/prompts.ts) as a chat turn, so a question reaches the case's person in place of the creator.
+// Q01 and Q03 are a minimal pair: the same job, and only Q03 has the pick saved in memory. Q02 has an unclear detail with
+// a saved answer; Q04 a low-stakes fork (the format) it picks itself. "Say so in your summary" isn't graded.
+const REORDER = "Draft this week's mug reorder message to the supplier we're ordering from this week, Norda or Kiln & Co. It changes from week to week."
 const ROUTINE_QUESTION_CASES: Case[] = [
-  { id: 'Q01', cat: 'choice', pair: 'question_ask/AskUserQuestion', note: 'routine: a pick only its creator can make, so it asks', chats: [{
-    prompt: routineTurn("Draft this week's mug reorder message to the one supplier I'm ordering from this week, Norda or Kiln & Co. It changes every week and only I know which one."),
-    expect: { tool: 'question_ask', notCalled: ['AskUserQuestion', 'approval_request', 'notification_send'] } }] },
-  { id: 'Q02', cat: 'negative', note: 'routine: unclear details with a sensible default, so it finishes without asking', seed: [returns, ...distractors], chats: [{
-    prompt: routineTurn('Write the team a short reminder of our return window.'),
+  { id: 'Q01', cat: 'choice', pair: 'question_ask/AskUserQuestion', note: "routine: a pick only its creator can make and nothing saved, so it asks, once", seed: distractors, chats: [{
+    prompt: teamRoutineTurn(REORDER),
+    expect: { tool: 'question_ask', atMost: { question_ask: 1 }, notCalled: ['AskUserQuestion', 'approval_request', 'notification_send'] } }] },
+  { id: 'Q03', cat: 'negative', note: "routine: Q01's job with the pick saved, so it searches and doesn't ask", seed: [{ fact: "This week's mug reorder goes to Kiln & Co. Norda is paused until January.", scope: 'brand' }, ...distractors], chats: [{
+    prompt: teamRoutineTurn(REORDER),
+    expect: { tool: 'memory_search', notCalled: ['question_ask', 'AskUserQuestion'], answer: [/kiln/i] } }] },
+  { id: 'Q02', cat: 'negative', note: 'routine: an unclear detail with a saved answer, so it finishes without asking', seed: [returns, ...distractors], chats: [{
+    prompt: teamRoutineTurn('Write the team a short reminder of our return window for the holiday season.'),
     expect: { tool: 'memory_search', notCalled: ['question_ask', 'AskUserQuestion'], answer: [/45/] } }] },
+  { id: 'Q04', cat: 'negative', note: 'routine: a low-stakes fork (the format), so it picks one and finishes', seed: [{ fact: 'We never ship to PO boxes.', scope: 'brand' }, ...distractors], chats: [{
+    prompt: teamRoutineTurn("Write the team a note on our shipping rules for Monday's stand-up, as a short paragraph or as bullet points. I haven't decided which."),
+    expect: { tool: 'memory_search', notCalled: ['question_ask', 'AskUserQuestion'], answer: [/60/] } }] },
 ]
 
 const LISTED = ['docs.example.com']

@@ -31,6 +31,7 @@ describe('the routine preambles', () => {
     expect(TEAM_ROUTINE_PREAMBLE).not.toMatch(/don't ask questions/i)
     expect(TEAM_ROUTINE_PREAMBLE).toContain('A routine runs unattended, so finish the job on your own whenever you can')
     expect(TEAM_ROUTINE_PREAMBLE).toContain("Ask the routine's creator with `question_ask` only when you can't do the job correctly without a decision only they can make.")
+    expect(TEAM_ROUTINE_PREAMBLE).toContain('where something is unclear but a sensible choice exists, make it and say so in your summary.')
     expect(TEAM_ROUTINE_PREAMBLE).toContain('Ask at most once, and keep the question short with clear options.')
   })
   it('the system preamble is unchanged (the morning check v1 was graded with it)', () => {

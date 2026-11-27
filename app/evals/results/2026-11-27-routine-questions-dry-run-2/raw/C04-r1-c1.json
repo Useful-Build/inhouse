@@ -1,0 +1,40 @@
+{
+ "row": {
+  "caseId": "C04",
+  "cat": "connector",
+  "pair": "products_search/inventory_levels_get",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "products_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Two products are tagged ceramic.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0,
+  "answer": "Two products are tagged ceramic.",
+  "toolCalls": [
+   {
+    "name": "mcp__shop__products_search",
+    "inputSha256": "6abc272922a06e7552b7860dd8b4b191232130fa78a0846df3742b78fdab211d",
+    "inputExcerpt": "{\"tag\":\"ceramic\"}",
+    "resultExcerpt": "[]"
+   }
+  ]
+ }
+}
