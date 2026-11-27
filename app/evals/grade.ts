@@ -41,6 +41,11 @@ export function gradeChat(expect: Expect, result: ChatResult | null | undefined,
   if (expect.answerNot) checks.answerNot = !expect.answerNot.some((r) => r.test(answer))
   const atMost = expect.atMost
   if (atMost) checks.atMost = Object.entries(atMost).every(([name, n]) => real.filter((c) => c.name === name).length <= n)
+  const before = expect.before
+  if (before) {
+    const at = (name: string): number => real.findIndex((c) => c.name === name)
+    checks.before = before.every(([first, then]) => at(first) >= 0 && at(then) >= 0 && at(first) < at(then))
+  }
   const runOk = !!result && result.runOk && !!answer
   return {
     checks,

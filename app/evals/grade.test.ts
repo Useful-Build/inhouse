@@ -111,7 +111,7 @@ describe('T02 accepts the fact in the person\'s language', () => {
 describe('people by key and argument matching', () => {
   const t09 = byId.T09!.chats[0]!.expect
   const call = (to: string) =>
-    gradeChat(t09, { toolCalls: [{ name: 'mcp__inhouse__notification_send', input: { to: { members: [to] } } }], answer: 'Sent.', runOk: true, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0 }, { current: 'u1', tom: 'u_tom_7', lena: 'u3' }).pass
+    gradeChat(t09, { toolCalls: [{ name: 'mcp__inhouse__member_find', input: { query: 'Leo' } }, { name: 'mcp__inhouse__notification_send', input: { to: { members: [to] } } }], answer: 'Sent.', runOk: true, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0 }, { current: 'u1', tom: 'u_tom_7', lena: 'u3' }).pass
   it('maps a person key to the target\'s id (literal map)', () => {
     expect(call('u_tom_7')).toBe(true)
     expect(call('u3')).toBe(false)
@@ -210,18 +210,31 @@ describe('T09, T11 and open served schemas', () => {
     for (const days of ['weekdays', ['mon', 'tue', 'wed', 'thu', 'fri'], ['fri', 'thu', 'wed', 'tue', 'mon']]) expect(gradeChat(t11, res('routine_create', { name: 'n', instruction: 'i', days, time: '06:00' }), people).checks.args, JSON.stringify(days)).toBe(true)
     for (const input of [{ schedule: '0 6 * * 1-5' }, { days: 'daily', time: '06:00' }, { days: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat'], time: '06:00' }, { days: 'weekdays', time: '6:00' }]) expect(gradeChat(t11, res('routine_create', input), people).checks.args, JSON.stringify(input)).toBe(false)
   })
-  it('an open-schema tool: args not graded (with the reason); tool and notCalled still grade', () => {
+  /** A transcript that looked the member up first (T09's `before`, M3-G). */
+  const looked = (r: ReturnType<typeof res>) => ({ ...r, toolCalls: [{ name: 'mcp__inhouse__member_find', input: { query: 'Leo' } }, ...r.toolCalls] })
+  it('an open-schema tool: args not graded (with the reason); tool, notCalled and order still grade', () => {
     const open = new Set(['notification_send'])
-    const g = gradeChat(t09, res('notification_send', { recipient: 'Tom' }), people, { openSchema: open })
-    expect(g.checks).toEqual({ tool: true, forbidden: true })
+    const g = gradeChat(t09, looked(res('notification_send', { recipient: 'Tom' })), people, { openSchema: open })
+    expect(g.checks).toEqual({ tool: true, forbidden: true, before: true })
     expect(g.argsNotGraded).toBe('the served schema defines no fields')
     expect(g.pass).toBe(true)
-    const wrong = gradeChat(t09, { ...res('approval_request', {}) }, people, { openSchema: open })
-    expect(wrong.checks).toEqual({ tool: false, forbidden: false })
+    const wrong = gradeChat(t09, looked(res('approval_request', {})), people, { openSchema: open })
+    expect(wrong.checks).toEqual({ tool: false, forbidden: false, before: false })
+  })
+  // M3-G (v6, N28): the team line is gone, so T09 passes only when member_find came before notification_send.
+  it('T09: member_find must come before notification_send; missing or after fails', () => {
+    const send = { name: 'mcp__inhouse__notification_send', input: { to: { members: ['u_tom_7'] } } }
+    const find = { name: 'mcp__inhouse__member_find', input: { query: 'Leo' } }
+    const with_ = (toolCalls: { name: string; input: Record<string, unknown> }[]) => gradeChat(t09, { ...res('notification_send', {}), toolCalls }, people)
+    expect(with_([find, send])).toMatchObject({ pass: true, checks: { before: true } })
+    expect(with_([{ name: 'ToolSearch', input: {} }, find, send, find])).toMatchObject({ pass: true, checks: { before: true } })
+    expect(with_([send])).toMatchObject({ pass: false, checks: { before: false } })
+    expect(with_([send, find])).toMatchObject({ pass: false, checks: { before: false } })
+    expect(with_([find])).toMatchObject({ pass: false, checks: { before: false, tool: false } })
   })
   it('the row and the README name the cases whose args weren\'t graded, with the reason', () => {
-    const g = gradeChat(t09, res('notification_send', { recipient: 'Tom' }), people, { openSchema: new Set(['notification_send']) })
-    const row = toRow(byId.T09!, 1, 1, res('notification_send', { recipient: 'Tom' }), g)
+    const g = gradeChat(t09, looked(res('notification_send', { recipient: 'Tom' })), people, { openSchema: new Set(['notification_send']) })
+    const row = toRow(byId.T09!, 1, 1, looked(res('notification_send', { recipient: 'Tom' })), g)
     expect(row.argsNotGraded).toBe('the served schema defines no fields')
     const report = buildReport(CASES, [row], { target: 'product', model: 'm', effort: 'e', reps: 1, notRun: [] })
     expect(report.argsNotGraded).toEqual([{ id: 'T09', why: 'the served schema defines no fields' }])

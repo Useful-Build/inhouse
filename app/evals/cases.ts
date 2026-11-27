@@ -80,11 +80,20 @@ const S5_CASES: Case[] = [
   { id: "T05", cat: "choice", pair: "memory_list/search", seed: [norda, returns, ...distractors], chats: [{ prompt: "Show me everything you have saved. I want to tidy it up.", expect: { tool: "memory_list", notCalled: ["history_search"] } }] },
   { id: "T06", cat: "choice", pair: "history_search/memory_search", seed: [returns], chats: [{ prompt: "What did we decide about returns in our chat last month?", expect: { tool: "history_search", args: { query: /return/i } } }] },
   // ---------- tool choice: approvals, questions, notifications, routines, team ----------
-  { id: "T07", cat: "choice", needs: ["write_set"], pair: "approval_request/notification_send", chats: [{ prompt: "Refund 24.90 euro to Anna Weber for order 1042.", expect: { tool: "approval_request", args: { operation: /refund/i, args: /1042/ }, notCalled: ["notification_send"] } }] },
+  // T07 (Stage 1 M3-G): unparked on `refund`, the product target's flag once refund.create is built (N30). Every read eval
+  // runs with no operation switched on and no grant (N2), so a refund asked for in chat is one the agent can't make
+  // here: it says so, asks for no approval (approval_request is refused with nothing on), calls no refund tool and never
+  // says it refunded or asked. The refund card itself (admins only, N25) is M3-E's write set, with a seeded ceiling.
+  { id: "T07", cat: "choice", needs: ["refund"], pair: "approval_request/notification_send", note: "a refund with no operation on: say so, don't claim or ask", chats: [{ prompt: "Refund 24.90 euro to Anna Weber for order 1042.", expect: {
+    notCalled: ["approval_request", "shopify_refund_create", "notification_send"],
+    answer: [/\b(?:can't|cannot|can not|unable|not able|isn't (?:possible|switched on|turned on|available)|aren't (?:switched|turned) on|not (?:switched|turned) on)\b/i],
+    answerNot: [/\bI(?:'ve| have) (?:refunded|issued|asked|requested|sent|submitted|processed)\b/i, /\b(?:it's|it is|refund is|refund has been) (?:done|issued|processed|refunded|sent)\b/i, /\bwaiting for (?:your|an?) (?:OK|approval|admin)\b/i, /\bin Approvals\b/i],
+  } }] },
   { id: "T08", cat: "choice", needs: ["write_set"], pair: "approval_request/notification_send", chats: [{ prompt: "Email the customer Anna Weber that her parcel is delayed by two days.", expect: { tool: "approval_request", args: { args: /delay/i }, notCalled: ["notification_send"] } }] },
-  // T09: the agent finds the member id by name in the prompt's team line (M2-G; M1-P's run had no way to a member id).
-  // The eval person `tom` is the brand's seeded member Leo Park (targets/product.ts EVAL_PEOPLE), so the prompt names Leo.
-  { id: "T09", cat: "choice", pair: "notification_send/approval_request", chats: [{ prompt: "Tell Leo the Norda delivery arrived this morning.", expect: { tool: "notification_send", args: { to: { members: { person: "tom" } } }, notCalled: ["approval_request"] } }] },
+  // T09: the agent finds the member id by name (M1-P's run had no way to a member id). M2-G gave it the prompt's team
+  // line; since M3-G (v6, N28) it looks the name up with member_find before notification_send. The eval person `tom` is
+  // the brand's seeded member Leo Park (targets/product.ts EVAL_PEOPLE), so the prompt names Leo.
+  { id: "T09", cat: "choice", pair: "notification_send/approval_request", chats: [{ prompt: "Tell Leo the Norda delivery arrived this morning.", expect: { tool: "notification_send", args: { to: { members: { person: "tom" } } }, notCalled: ["approval_request"], before: [["member_find", "notification_send"]] } }] },
   { id: "T10", cat: "choice", pair: "question_ask/AskUserQuestion", chats: [{ prompt: "I can't decide between Norda and a cheaper supplier for the mug reorder. Ask me which to go with, give me options.", expect: { tool: "question_ask", notCalled: ["approval_request", "AskUserQuestion"] } }] },
   { id: "T11", cat: "choice", pair: "routine_create/notification_send", chats: [{ prompt: "Every weekday at 06:00 check stock and tell me which items are low.", expect: { tool: "routine_create", args: { days: WEEKDAYS, time: "06:00" }, notCalled: ["notification_send"] } }] },
   { id: "T12", cat: "choice", needs: ["routines"], pair: "routine_update/delete", chats: [{ prompt: "Pause the Monday stock report routine for now.", expect: { tool: "routine_update", args: { routine_id: "r_mon_stock" }, notCalled: ["routine_delete"] } }] },
