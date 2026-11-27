@@ -92,13 +92,39 @@ describe('a backup that is wrong (failures 1, 3)', () => {
   it('refuses a backup that lacks a migration the target has, naming it, even one older than its highest (#585)', async () => {
     const dropped = good.migrations![good.migrations!.length - 2]
     const migrations = good.migrations!.filter(n => n !== dropped)
-    await expectRefused(await copyBackup({ manifest: m => ({ ...m, migrations }) }), new RegExp(`^migration_mismatch: extra on the target \\[${dropped.replace(/\./g, '\\.')}\\]$`))
+    const r = await expectRefused(await copyBackup({ manifest: m => ({ ...m, migrations }) }), /^migration_mismatch/)
+    expect(r.reason).toBe(`migration_mismatch: extra on the target [${dropped}]`)
   })
   it('refuses a backup missing one migration and holding another, naming both (#585)', async () => {
     const dropped = good.migrations![0]
     const migrations = [...good.migrations!.filter(n => n !== dropped), '9998_not_on_target.sql']
-    await expectRefused(await copyBackup({ manifest: m => ({ ...m, migration: '9998_not_on_target.sql', migrations }) }),
-      new RegExp(`^migration_mismatch: missing on the target \\[9998_not_on_target\\.sql\\]; extra on the target \\[${dropped.replace(/\./g, '\\.')}\\]$`))
+    const r = await expectRefused(await copyBackup({ manifest: m => ({ ...m, migration: '9998_not_on_target.sql', migrations }) }), /^migration_mismatch/)
+    expect(r.reason).toBe(`migration_mismatch: missing on the target [9998_not_on_target.sql]; extra on the target [${dropped}]`)
+  })
+  it('refuses a target whose d1_migrations is emptied or missing, naming every migration (#585)', async () => {
+    const all = good.migrations!
+    const named = all.length <= 10 ? all.join(', ') : `${all.slice(0, 10).join(', ')} and ${all.length - 10} more`
+    const id = await copyBackup()
+    const legacyId = await copyBackup({ manifest: m => { const { migrations: _, ...rest } = m; return rest } })
+    const rows = (await e.RESTORE_DB.prepare('SELECT * FROM d1_migrations ORDER BY id').all<Record<string, unknown>>()).results
+    expect(rows.map(r => r.name)).toHaveLength(all.length)
+    try {
+      await e.RESTORE_DB.prepare('DELETE FROM d1_migrations').run()
+      expect((await expectRefused(id, /^migration_mismatch/)).reason).toBe(`migration_mismatch: missing on the target [${named}]`)
+      expect((await expectRefused(legacyId, /^migration_mismatch/)).reason).toBe(`migration_mismatch: backup ${good.migration}, target none`)
+      await e.RESTORE_DB.prepare('ALTER TABLE d1_migrations RENAME TO d1_migrations_aside').run()
+      expect((await expectRefused(id, /^migration_mismatch/)).reason).toBe(`migration_mismatch: missing on the target [${named}]`)
+      expect((await expectRefused(legacyId, /^migration_mismatch/)).reason).toBe(`migration_mismatch: backup ${good.migration}, target none`)
+    } finally {
+      // Put the target's table and rows back as they were, for the cases after this one.
+      if (await e.RESTORE_DB.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'd1_migrations_aside'").first() !== null) {
+        await e.RESTORE_DB.prepare('ALTER TABLE d1_migrations_aside RENAME TO d1_migrations').run()
+      }
+      await e.RESTORE_DB.prepare('DELETE FROM d1_migrations').run()
+      const cols = Object.keys(rows[0])
+      await e.RESTORE_DB.batch(rows.map(r => e.RESTORE_DB.prepare(`INSERT INTO d1_migrations (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`).bind(...cols.map(c => r[c]))))
+    }
+    expect((await e.RESTORE_DB.prepare('SELECT * FROM d1_migrations ORDER BY id').all()).results).toEqual(rows)
   })
   it('refuses a manifest whose migration list is out of order or disagrees with its migration (#585)', async () => {
     await expectRefused(await copyBackup({ manifest: m => ({ ...m, migrations: [...m.migrations!].reverse() }) }), /^manifest_invalid/)
@@ -107,7 +133,8 @@ describe('a backup that is wrong (failures 1, 3)', () => {
   it('checks a manifest taken before #585 (no list) the old way: the target\'s last applied row by id', async () => {
     const last = await e.RESTORE_DB.prepare('SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1').first<string>('name')
     const legacy = (m: BackupManifest, migration: string) => { const { migrations: _, ...rest } = m; return { ...rest, migration } }
-    await expectRefused(await copyBackup({ manifest: m => legacy(m, '0004_audit_log.sql') }), new RegExp(`^migration_mismatch: backup 0004_audit_log\\.sql, target ${last!.replace(/\./g, '\\.')}$`))
+    const r = await expectRefused(await copyBackup({ manifest: m => legacy(m, '0004_audit_log.sql') }), /^migration_mismatch/)
+    expect(r.reason).toBe(`migration_mismatch: backup 0004_audit_log.sql, target ${last}`)
     // The migration check passes when the last rows agree: the next check refuses instead.
     await expectRefused(await copyBackup({ manifest: m => ({ ...legacy(m, last!), tables: m.tables.map(t => (t.name === 'settings' ? { ...t, columns: [...t.columns, 'extra'] } : t)) }) }), /^columns_mismatch: settings/)
   })
