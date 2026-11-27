@@ -92,8 +92,11 @@ export const ACTION_WORDS = {
   expired: 'No one answered in 7 days, so nothing went out.',
   /** A job's or a routine's turn never waits. */
   laterNote: "You'll get the result when there is one.",
-  /** A turn already waiting on 3 approvals asks the 4th without waiting. */
-  alreadyWaiting: 'This call is already being waited on, so the result comes from that wait.',
+  /**
+   * Another waiter holds this action's wait (the same call again). Its result comes from that wait, or, when the first
+   * request was one the runner gave up on, as an automatic note from Inhouse (M2-G, from #444's review): both said.
+   */
+  alreadyWaiting: "This call is already being waited on, so this one doesn't wait. You'll get the result from that wait or, if it has ended, as an automatic note from Inhouse.",
   busyNote: "This turn is already waiting on other approvals, so this one isn't waited on. You'll get the result when there is one.",
   unknownTool: 'There is no such action tool, so nothing was asked or sent.',
   notAdmitted: "That call couldn't be matched to this turn, so nothing was asked or sent.",
@@ -138,10 +141,14 @@ const rpcResult = (id: Id, result: unknown) => json({ jsonrpc: '2.0', id, result
 const isId = (v: unknown): v is Id => typeof v === 'string' || (typeof v === 'number' && Number.isInteger(v))
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
-/** A tool result: the words first, then the action's id and state as data. */
+/**
+ * A tool result: the words first, then the action's id and state as data. The CLI (2.1.328) hands the model a tool's
+ * `structuredContent` in place of its text when both are given (#444's re-check, 714340c8), so the words go in it too
+ * (`message`): the server's words are what the agent reads, on either client (M2-G).
+ */
 const toolAnswer = (text: string, data: Record<string, unknown>, isError = false) =>
-  ({ content: [{ type: 'text', text }, { type: 'text', text: JSON.stringify(data) }], structuredContent: data, ...(isError ? { isError: true } : {}) })
-const refused = (code: string, text: string) => ({ content: [{ type: 'text', text }], structuredContent: { error: code }, isError: true })
+  ({ content: [{ type: 'text', text }, { type: 'text', text: JSON.stringify(data) }], structuredContent: { message: text, ...data }, ...(isError ? { isError: true } : {}) })
+const refused = (code: string, text: string) => ({ content: [{ type: 'text', text }], structuredContent: { error: code, message: text }, isError: true })
 
 /** The operations the brand has on (N2: none in a deployable build, so the list is empty). */
 async function enabledOperations(db: D1Database): Promise<WriteOperationKey[]> {

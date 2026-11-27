@@ -107,7 +107,7 @@ export async function runEvals(o: RunOptions): Promise<RunOutput> {
     // (the first paid baseline died with no report on a reset's 401).
     let session: Awaited<ReturnType<Target['seed']>>
     try {
-      session = await target.seed(c.seed ?? [], { caseId: c.id, rep, canary }, c.exfil)
+      session = await target.seed(c.seed ?? [], { caseId: c.id, rep, canary, ...(c.approvals ? { approvals: c.approvals } : {}) }, c.exfil)
     } catch (e) {
       // A seed that throws partway leaves no session to reset: the run stops here (the product target's own seed puts the
       // brand's WebFetch list back and releases the brand before it rethrows).

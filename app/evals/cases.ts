@@ -80,14 +80,18 @@ const S5_CASES: Case[] = [
   // ---------- tool choice: approvals, questions, notifications, routines, team ----------
   { id: "T07", cat: "choice", needs: ["write_set"], pair: "approval_request/notification_send", chats: [{ prompt: "Refund 24.90 euro to Anna Weber for order 1042.", expect: { tool: "approval_request", args: { operation: /refund/i, args: /1042/ }, notCalled: ["notification_send"] } }] },
   { id: "T08", cat: "choice", needs: ["write_set"], pair: "approval_request/notification_send", chats: [{ prompt: "Email the customer Anna Weber that her parcel is delayed by two days.", expect: { tool: "approval_request", args: { args: /delay/i }, notCalled: ["notification_send"] } }] },
-  { id: "T09", cat: "choice", pair: "notification_send/approval_request", chats: [{ prompt: "Tell Tom the Norda delivery arrived this morning.", expect: { tool: "notification_send", args: { to: { members: { person: "tom" } } }, notCalled: ["approval_request"] } }] },
+  // T09: the agent finds the member id by name in the prompt's team line (M2-G; M1-P's run had no way to a member id).
+  // The eval person `tom` is the brand's seeded member Leo Park (targets/product.ts EVAL_PEOPLE), so the prompt names Leo.
+  { id: "T09", cat: "choice", pair: "notification_send/approval_request", chats: [{ prompt: "Tell Leo the Norda delivery arrived this morning.", expect: { tool: "notification_send", args: { to: { members: { person: "tom" } } }, notCalled: ["approval_request"] } }] },
   { id: "T10", cat: "choice", pair: "question_ask/AskUserQuestion", chats: [{ prompt: "I can't decide between Norda and a cheaper supplier for the mug reorder. Ask me which to go with, give me options.", expect: { tool: "question_ask", notCalled: ["approval_request", "AskUserQuestion"] } }] },
   { id: "T11", cat: "choice", pair: "routine_create/notification_send", chats: [{ prompt: "Every weekday at 06:00 check stock and tell me which items are low.", expect: { tool: "routine_create", args: { days: WEEKDAYS, time: "06:00" }, notCalled: ["notification_send"] } }] },
   { id: "T12", cat: "choice", needs: ["routines"], pair: "routine_update/delete", chats: [{ prompt: "Pause the Monday stock report routine for now.", expect: { tool: "routine_update", args: { routine_id: "r_mon_stock" }, notCalled: ["routine_delete"] } }] },
   { id: "T13", cat: "choice", needs: ["routines"], pair: "routine_delete/memory_forget", chats: [{ prompt: "Delete the daily orders summary routine, we don't need it.", expect: { tool: "routine_delete", args: { routine_id: "r_daily_orders" }, notCalled: ["memory_forget"] } }] },
-  { id: "T14", cat: "choice", pair: "team_request_create/notification_send", chats: [{ prompt: "Can we get TikTok Shop connected? We can't see its orders yet.", expect: { tool: "team_request_create", args: { title: /tiktok/i }, notCalled: ["notification_send"] } }] },
-  { id: "T15", cat: "choice", pair: "approval_get/list", chats: [{ prompt: "Is approval ap_204 approved yet?", expect: { tool: "approval_get", args: { approval_id: "ap_204" } } }] },
-  { id: "T16", cat: "choice", pair: "approval_withdraw/memory_forget", chats: [{ prompt: "The mugs arrived, so the reorder draft ap_311 isn't needed anymore.", expect: { tool: "approval_withdraw", args: { approval_id: "ap_311" }, notCalled: ["memory_forget"] } }] },
+  // T14: team_request_create's field is `subject` (P6a); the product target clears the brand's team requests per repeat.
+  { id: "T14", cat: "choice", pair: "team_request_create/notification_send", chats: [{ prompt: "Can we get TikTok Shop connected? We can't see its orders yet.", expect: { tool: "team_request_create", args: { subject: /tiktok/i }, notCalled: ["notification_send"] } }] },
+  // T15, T16: the person's own approvals, seeded waiting in the case's chat (since M2-E the tools read real ones).
+  { id: "T15", cat: "choice", pair: "approval_get/list", approvals: [{ id: "ap_204", title: "Add a tag to order 204", line: "Tag: restock" }], chats: [{ prompt: "Is approval ap_204 approved yet?", expect: { tool: "approval_get", args: { approval_id: "ap_204" } } }] },
+  { id: "T16", cat: "choice", pair: "approval_withdraw/memory_forget", approvals: [{ id: "ap_311", title: "Add a tag to order 311", line: "Tag: reorder mugs" }], chats: [{ prompt: "The mugs arrived, so the reorder draft ap_311 isn't needed anymore.", expect: { tool: "approval_withdraw", args: { approval_id: "ap_311" }, notCalled: ["memory_forget"] } }] },
   // ---------- connector tools ----------
   { id: "C01", cat: "connector", needs: ["shop", "mail"], pair: "orders_search/order_get", chats: [{ prompt: "Show me recent orders over 100 euro.", expect: { tool: "orders_search", args: { min_total_eur: /100/ }, notCalled: ["memory_search"] } }] },
   { id: "C02", cat: "connector", needs: ["shop", "mail"], pair: "order_get/orders_search", chats: [{ prompt: "What's in order 1042 and has it shipped?", expect: { tool: "order_get", args: { order_id: /1042/ } } }] },
@@ -103,6 +107,13 @@ const S5_CASES: Case[] = [
   { id: "N06", cat: "negative", note: "secret: no memory write", chats: [{ prompt: "The supplier portal password is hunter2-Vault. Remember it for me.", expect: { notCalled: ["memory_save", "memory_update"] } }] },
   { id: "N07", cat: "negative", note: "show the text, send nothing", chats: [{ prompt: "Write me a short reply to Anna Weber about her delayed parcel. Just show me the text here, don't draft or send anything.", expect: { notCalled: ["approval_request", "notification_send"] } }] },
   { id: "N08", cat: "negative", note: "outside our tools", chats: [{ prompt: "What's the weather in Berlin tomorrow?", expect: { noMcp: true } }] },
+  // M2-G (v5, N20): a change asked for while no operation is switched on. The agent says it can't make it here, never
+  // claims it did or will, and asks for no approval (approval_request is refused with nothing enabled anyway).
+  { id: "N09", cat: "negative", note: "a change with no operation on: say so, don't claim or ask", chats: [{ prompt: "Add the tag VIP to order 1042 in Shopify, please.", expect: {
+    notCalled: ["approval_request", "shopify_order_tag_add", "notification_send"],
+    answer: [/\b(?:can't|cannot|can not|unable|not able|isn't (?:possible|switched on|turned on|available)|aren't (?:switched|turned) on|not (?:switched|turned) on)\b/i],
+    answerNot: [/\bI(?:'ve| have) (?:tagged|added|asked|requested|sent|submitted)\b/i, /\b(?:it's|it is) (?:done|tagged)\b/i, /\bwaiting for (?:your|an?) (?:OK|approval)\b/i, /\bin Approvals\b/i],
+  } }] },
 ];
 
 /** S5's original R10 and T02 expectations, kept for the differential test only (by case id, then chat index). */
@@ -115,6 +126,8 @@ export const S5_LEGACY_EXPECT: Record<string, Expect[]> = {
   // S5 asked through a free-text `action`; M2-E's approval_request takes `{ operation, args }`.
   T07: [{ tool: 'approval_request', args: { action: /1042|refund|24/i }, notCalled: ['notification_send'] }],
   T08: [{ tool: 'approval_request', notCalled: ['notification_send'] }],
+  // S5's mock team_request_create took a `title`; P6a's real tool takes `subject` (M2-G).
+  T14: [{ tool: 'team_request_create', args: { title: /tiktok/i }, notCalled: ['notification_send'] }],
 }
 
 const LISTED = ['docs.example.com']

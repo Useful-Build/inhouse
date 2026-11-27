@@ -17,6 +17,7 @@ import { TOOL_HANDLERS } from '../mcp/tools/index.ts'
 import type { ToolResult, ToolScope } from '../mcp/server/tool.ts'
 import { NEEDS_PERSON_TEXT } from '../mcp/tools/team/index.ts'
 import { createRequest } from './store.ts'
+import { dataOf } from '../mcp/server/test-support.ts'
 
 const db = env.DB
 const stores = openStores(env)
@@ -290,7 +291,7 @@ describe('the tools', () => {
   it('the 51st is refused with request_limit; text and subject bounds are the schema', async () => {
     for (let i = 0; i < 50; i++) await make(ALEX, { text: `r${i}` })
     const r = await call('team_request_create', { kind: 'job', text: 'more' }, scope(SAM))
-    expect([r.isError, r.structuredContent]).toEqual([true, { error: 'request_limit' }])
+    expect([r.isError, dataOf(r)]).toEqual([true, { error: 'request_limit' }])
     const h = TOOL_HANDLERS.get('team_request_create')!
     expect(h.input.safeParse({ kind: 'tool', text: '' }).success).toBe(false)
     expect(h.input.safeParse({ kind: 'tool', text: 'x'.repeat(1001) }).success).toBe(false)

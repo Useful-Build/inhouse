@@ -21,6 +21,7 @@ import type { ToolDeps, ToolHandler, ToolResult, ToolScope } from '../../server/
 import { TOOL_HANDLERS } from '../index.ts'
 import { approvalHandlers } from './index.ts'
 import type { ApprovalsWiring } from './index.ts'
+import { dataOf } from '../../server/test-support.ts'
 
 const db = env.DB
 const T0 = 1_800_000_000_000
@@ -51,7 +52,7 @@ async function call(name: 'approval_request' | 'approval_get' | 'approval_list' 
   return h.call(parsed.data, s, { db, ...deps })
 }
 const text = (r: ToolResult) => r.content[0].text
-const data = (r: ToolResult) => r.structuredContent as Record<string, unknown>
+const data = (r: ToolResult) => dataOf(r)
 const count = async (table: string) => (await db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<number>('n')) ?? 0
 
 const request = (order = 1, s = scope(), tag = 'vip') => call('approval_request', { operation: 'shopify_order_tag_add', args: tagArgs(order, tag) }, s)
@@ -241,7 +242,8 @@ describe('approval_withdraw (failure 5)', () => {
     const mark = await lastLineId(db)
     const r = await call('approval_withdraw', { approval_id: id }, scope())
     expect(text(r)).toBe(`Approval ${id} is withdrawn. Nothing from it will go out.`)
-    expect(await rowOf(db, id)).toMatchObject({ state: 'withdrawn', rev: 2 })
+    // M2-G: the agent's own withdraw told it in this answer, so no resume turn is owed about it (`report` `none`).
+    expect(await rowOf(db, id)).toMatchObject({ state: 'withdrawn', rev: 2, report: 'none' })
     const lines = await linesSince(db, mark)
     expect(lines.map(l => [l.action, l.actor_id, l.target_id])).toEqual([['action.withdrawn', ASKER, id]])
     expect(JSON.parse(lines[0].args_json)).toEqual({ actionId: id, by: 'agent' })

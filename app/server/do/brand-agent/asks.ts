@@ -15,8 +15,11 @@
 //     * when an action is final, `action-deliver:<id>` claims `resume` when the report is `later`, or NULL with the asking
 //       turn gone, or `tool` whose waiter died without returning the result; and submits one turn into the chat. A
 //       refused submit is tried again later with the same key.
-//  The resume turn's text comes from the action texts port (`ActionTexts`), `null` until M2-G: while it is null no resume
-//  turn is ever sent (the report stays `later` or NULL for M2-G to pick up).
+//  The resume turn's text comes from the action texts port (`ActionTexts`, wired by M2-G): while it is null no resume
+//  turn is sent, and the report stays `later` or NULL; the sweep picks such rows up again once it is wired (M2-G).
+//  M2-G (from #444's review): a resume turn goes in whenever the chat and its owner are there, even when the asking
+//  turn's row is gone (the chat's owner asks) or its model is off (the brand's default model); a turn's end flips every
+//  action that turn asked about or waited on, not only the ones it first made.
 import type { ActionState } from '../../../shared/contract/actions.ts'
 import type { SendTurnResult } from '../../../shared/contract/runs.ts'
 import { SYSTEM_MEMBER_ID } from '../../db/ids.ts'
@@ -61,8 +64,27 @@ export const TURN_END_KIND = 'ask-turn-end'
 export const ASKS_SWEEP_KIND = 'asks-sweep'
 export const deliverTaskId = (actionId: string): string => `${DELIVER_KIND}:${actionId}`
 export const turnEndTaskId = (turnId: string): string => `${TURN_END_KIND}:${turnId}`
-/** A resume turn's key: one per action, so a retried submit answers the same turn. */
-export const resumeKey = (actionId: string): string => `act_${actionId}`
+/**
+ * A resume turn's key: one per action and try, so a retried submit answers the same turn. The first try is `act_<id>`;
+ * a try cancelled before it started (below) is followed by `act_<id>-<n>` (M2-G).
+ */
+export const resumeKey = (actionId: string, n = 0): string => (n === 0 ? `act_${actionId}` : `act_${actionId}-${n}`)
+/** The action and try a resume key names, or null. */
+export function resumeKeyParts(key: string): { actionId: string; n: number } | null {
+  const m = /^act_(ac_[A-Za-z0-9_-]{22})(?:-([1-9][0-9]?))?$/.exec(key)
+  return m ? { actionId: m[1]!, n: m[2] === undefined ? 0 : Number(m[2]) } : null
+}
+/**
+ * Why a resume turn may be cancelled before it starts and still be owed: the brand was paused, the pool was full, or the
+ * chat began waiting on a question while it was queued (`session_unusable`, as a job's continuation, jobs/rules.ts). Any
+ * other cancel (the chat deleted, the member removed, the spending cap) is final. From #444's re-check (Fable, Neon).
+ */
+export const RESUME_AGAIN = new Set(['paused', 'pool_full', 'session_unusable'])
+/**
+ * Tries of one action's resume turn before the report is given up (`none`, logged loud). A try cancelled because the
+ * pool was full doesn't count (as a job's continuation, jobs/rules.ts): it's only tried again, `RESUME_RETRY_MS` later.
+ */
+export const MAX_RESUME_TRIES = 5
 
 const isFinal = (state: ActionState): boolean => (FINAL_STATES as readonly string[]).includes(state)
 
@@ -192,10 +214,15 @@ export interface ActionTexts {
 }
 
 export interface AsksDeps {
-  /** `null` until M2-G: no resume turn is sent. */
+  /** Null: no resume turn is sent (M2-G wired it, compose.ts). */
   texts: ActionTexts | null
   /** Route 29's settings for the asking turn's picker id, read now (as a job's continuation, compose.ts `jobDeps`). */
   settings(pickerId: string): Promise<JobTurnSettings | { refused: 'model_off' | 'invalid' }>
+  /**
+   * M2-G: the brand's default settings (its Default model, as a routine's turn runs), for a resume whose asking turn is
+   * gone or whose model is off now. Refused: no model is usable at all.
+   */
+  defaultSettings(): Promise<JobTurnSettings | { refused: unknown }>
 }
 
 /** Whether any write operation is enabled for the brand (N2): the turn's start then carries `actions: true`. */
@@ -304,16 +331,31 @@ export class Asks {
     return w ? { untilMs: w.until_ms, finished: w.finished === 1, delivered: w.delivered === 1 } : null
   }
 
-  /** `storeFinal`'s hook (core.ts `addFinalHook`): a turn that proposed a write gets its turn-end task. */
-  onTurnFinal(t: { turn_id: string }): void {
+  /**
+   * `storeFinal`'s hook (core.ts `addFinalHook`): a turn that proposed a write gets its turn-end task. A resume turn
+   * cancelled before it started for a passing cause gets its action's deliver task, which sends the next try (M2-G).
+   */
+  onTurnFinal(t: { turn_id: string; source?: string | null; state?: string; cancel_why?: string | null; client_key?: string }): void {
+    if (t.source === 'action' && t.state === 'cancelled' && t.cancel_why != null && RESUME_AGAIN.has(t.cancel_why)) {
+      const k = t.client_key === undefined ? null : resumeKeyParts(t.client_key)
+      // The next try waits RESUME_RETRY_MS: a pool that refuses at once must not burn every try in a moment (#454 review).
+      if (k) this.p.scheduler.schedule({ id: deliverTaskId(k.actionId), kind: DELIVER_KIND, dueAtMs: this.p.now() + RESUME_RETRY_MS })
+    }
     if (!turnProposed(this.p.sql, t.turn_id)) return
     this.p.scheduler.ensure({ id: turnEndTaskId(t.turn_id), kind: TURN_END_KIND, dueAtMs: this.p.now() })
   }
 
-  /** The `ask-turn-end:<turnId>` task: N14's flip for a turn that didn't end `done`, then each of its actions delivered. */
+  /**
+   * The `ask-turn-end:<turnId>` task: N14's flip for a turn that didn't end `done`, then each of its actions delivered.
+   * Its actions are the ones it made (`outbox_actions.turn_id`) and the ones it asked about or waited on (its `ask` parts
+   * and waits): a card first made in an earlier turn and asked again in this one is this turn's to report (M2-G).
+   */
   async turnEnded(turnId: string): Promise<void> {
     const t = this.p.core.turn(turnId)
-    const ids = (await all<{ id: string }>(this.p.db, stmt('SELECT id FROM outbox_actions WHERE turn_id = ?', turnId))).map(r => r.id)
+    const made = (await all<{ id: string }>(this.p.db, stmt('SELECT id FROM outbox_actions WHERE turn_id = ?', turnId))).map(r => r.id)
+    const asked = this.p.sql.exec<{ action_id: string }>(
+      'SELECT action_id FROM ask_parts WHERE turn_id = ? UNION SELECT action_id FROM ask_waits WHERE turn_id = ?', turnId, turnId).toArray().map(r => r.action_id)
+    const ids = [...new Set([...made, ...asked])]
     await turnEndedReports(d1Reports(this.p.db), ids, t?.outcome ?? null)
     for (const id of ids) this.changed(id)
   }
@@ -355,22 +397,38 @@ export class Asks {
     return false
   }
 
-  /** The resume turn: by the chat's owner, priority `next`, key `act_<id>`, `source: 'action'`, the asking turn's model. */
+  /**
+   * The resume turn: by the chat's owner, priority `next`, key `act_<id>`, `source: 'action'`, the asking turn's model.
+   * The asking turn's row gone (pruned, or never in this object): the chat's owner and the brand's default model. Its
+   * model off now: the brand's default model. A chat this object never ran has no owner here: gone. No usable model at
+   * all: tried again later.
+   */
   private async submitResume(row: ReportRow, full: OutboxActionRow): Promise<'submitted' | 'retry' | 'gone'> {
     const texts = this.p.deps.texts
     if (!texts) throw new Error('asks: a resume claimed with no action texts')
     const asking = row.turnId === null ? null : this.p.core.turn(row.turnId)
-    if (!asking) return 'gone'
-    const settings = await this.p.deps.settings(asking.picker_id)
-    if ('refused' in settings) return 'gone'
+    const owner = asking?.owner_id
+      ?? this.p.sql.exec<{ owner_id: string }>('SELECT owner_id FROM chat_state WHERE chat_id = ?', row.chatId).toArray()[0]?.owner_id
+    if (owner === undefined) return 'gone'
+    let settings = asking ? await this.p.deps.settings(asking.picker_id) : null
+    if (settings === null || 'refused' in settings) {
+      const fallback = await this.p.deps.defaultSettings()
+      if ('refused' in fallback) {
+        console.error({ event: 'action_resume_no_model', actionId: row.id })
+        return 'retry'
+      }
+      settings = fallback
+    }
+    const next = this.resumeTry(row)
+    if ('done' in next) return next.done
+    const n = next.n
     const card = JSON.parse(full.card_json) as StoredCard
     const result = full.state === 'sent' && full.result_json !== null ? (JSON.parse(full.result_json) as { ref?: string }).ref ?? null : null
-    const owner = asking.owner_id
     const turn: SubmitTurn = {
       chatId: row.chatId, by: { kind: owner === SYSTEM_MEMBER_ID ? 'service' : 'person', memberId: owner },
       model: settings.model, pickerId: settings.pickerId, effort: settings.effort, sideModel: settings.sideModel,
       maxTurns: settings.maxTurns, webFetchDomains: settings.webFetchDomains, webSearch: settings.webSearch,
-      input: { clientTurnKey: resumeKey(row.id), text: texts.result({ title: card.title, lines: card.lines, state: full.state, result }), priority: 'next', model: settings.pickerId, attachments: [] },
+      input: { clientTurnKey: resumeKey(row.id, n), text: texts.result({ title: card.title, lines: card.lines, state: full.state, result }), priority: 'next', model: settings.pickerId, attachments: [] },
     }
     let answer: SendTurnResult | Refusal
     try {
@@ -385,6 +443,29 @@ export class Asks {
     if (code === 'not_found' || code === 'forbidden') return 'gone'
     console.error({ event: 'action_resume_refused', actionId: row.id, code, reason: reason ?? null })
     return 'gone'
+  }
+
+  /**
+   * Which try of the resume turn to submit: the first, or the next once the last was cancelled before it started for a
+   * passing cause. A last try that is queued, ran or ended is never submitted again (`submitted`: its key could meet a
+   * changed text and be refused `key_reused`, #454 review); one cancelled for a final cause, or `MAX_RESUME_TRIES` used up
+   * (logged loud), is `gone`. A try cancelled because the pool was full doesn't count toward the limit.
+   */
+  private resumeTry(row: ReportRow): { n: number } | { done: 'submitted' | 'gone' } {
+    const tries = this.p.sql.exec<{ client_key: string; state: string; cancel_why: string | null }>(
+      'SELECT client_key, state, cancel_why FROM turns WHERE chat_id = ? AND (client_key = ? OR client_key LIKE ?)',
+      row.chatId, resumeKey(row.id), `${resumeKey(row.id)}-%`).toArray()
+      .flatMap(t => { const k = resumeKeyParts(t.client_key); return k && k.actionId === row.id ? [{ ...t, n: k.n }] : [] })
+    const last = tries.reduce<(typeof tries)[number] | null>((a, t) => (a === null || t.n > a.n ? t : a), null)
+    if (last === null) return { n: 0 }
+    if (last.state !== 'cancelled') return { done: 'submitted' }
+    if (last.cancel_why === null || !RESUME_AGAIN.has(last.cancel_why)) return { done: 'gone' }
+    const counted = tries.filter(t => !(t.state === 'cancelled' && t.cancel_why === 'pool_full')).length
+    if (counted >= MAX_RESUME_TRIES) {
+      console.error({ event: 'action_resume_given_up', actionId: row.id, tries: counted })
+      return { done: 'gone' }
+    }
+    return { n: last.n + 1 }
   }
 
   /**
@@ -414,6 +495,13 @@ export class Asks {
       sql.exec("INSERT INTO flags (key, value) VALUES ('asks_cursor_ms', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", nextMs)
       sql.exec("INSERT INTO flags (key, value) VALUES ('asks_cursor_id', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", nextId)
     }
+    // Final actions nobody has reported yet (`later`, or NULL): each pass gives them their deliver task again, so a row
+    // left while the texts port was null, or whose task was lost, is reported once the port is wired (M2-G). Each
+    // delivery moves the row on (`resume` or `none`), or waits on its live turn, so the set drains.
+    const unreported = await all<{ id: string }>(db, stmt(
+      `SELECT id FROM outbox_actions WHERE state IN (${FINAL_STATES.map(() => '?').join(', ')}) AND (report IS NULL OR report = 'later')
+       ORDER BY updated_at_ms, id LIMIT ?`, ...FINAL_STATES, ASKS_SWEEP_PAGE))
+    for (const r of unreported) this.changed(r.id)
     pruneInvocations(sql, now)
     sql.exec('DELETE FROM ask_waits WHERE until_ms < ?', now - ASKS_KEEP_MS)
     sql.exec('DELETE FROM ask_parts WHERE at_ms < ?', now - ASKS_KEEP_MS)
