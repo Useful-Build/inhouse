@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { pendingIds, STAGE_TAGS, stageLocked, userName } from '../state/derive'
 import { chatEntries, openChatKey, useCtx, useUi } from '../state/store'
 import { cn } from '@/lib/utils'
@@ -33,13 +33,39 @@ export function Sidebar() {
     document.documentElement.dataset.side = side
     return () => { delete document.documentElement.dataset.side }
   }, [side])
-  // Design exploration: the look (index.css keys its rules off data-side-look). Ink is a dark island in either theme.
+  // Design exploration: the look and the desk's tone (index.css keys its rules off data-side-look and data-side-tone).
   const look = useSideLook(s => s.look)
+  const tone = useSideLook(s => s.tone)
   useLayoutEffect(() => {
-    document.documentElement.dataset.sideLook = look
-    return () => { delete document.documentElement.dataset.sideLook }
-  }, [look])
-  const ink = look === 'ink' && !phone
+    const root = document.documentElement
+    root.dataset.sideLook = look
+    root.dataset.sideTone = tone
+    return () => { delete root.dataset.sideLook; delete root.dataset.sideTone }
+  }, [look, tone])
+  // The selected row's chip: one element that glides to the row (index.css draws it and clears the row's own fill).
+  // Desktop only. It scrolls with the rows, since the sidebar is its containing block.
+  const pill = useRef<HTMLElement>(null)
+  const placePill = () => {
+    const el = pill.current, box = el?.parentElement
+    if (!el || !box) return
+    const row = box.querySelector<HTMLElement>('button[aria-current="page"]:not([data-chat-fallback]), [data-chat-row].bg-fill-hover')
+    if (!row) { el.dataset.off = ''; return }
+    const b = box.getBoundingClientRect(), r = row.getBoundingClientRect()
+    el.style.width = `${r.width}px`
+    el.style.height = `${r.height}px`
+    el.style.transform = `translate(${r.left - b.left - box.clientLeft + box.scrollLeft}px, ${r.top - b.top - box.clientTop + box.scrollTop}px)`
+    delete el.dataset.off
+  }
+  // After every render: the selected row may have changed, or moved (a chat pinned, a group added).
+  useLayoutEffect(placePill)
+  useEffect(() => {
+    const box = pill.current?.parentElement
+    if (!box) return
+    const ro = new ResizeObserver(placePill)
+    ro.observe(box)
+    return () => ro.disconnect()
+  }, [rail, phone])
+  const chip = !phone && <i ref={pill} aria-hidden="true" data-side-pill data-off="" />
   const { go, newChat, openChat, openChatList, openTeam, patch, toggleSidebar } = useUi.getState()
   // The phone drawer opens with focus on itself, so no row shows a focus ring until someone tabs.
   const drawer = useRef<HTMLDivElement>(null)
@@ -90,7 +116,8 @@ export function Sidebar() {
 
     // Collapsed on desktop: an icon rail with the same items, each named in a tooltip.
   if (rail) return (
-    <aside id="sidebar" aria-label="Sidebar" className={cn('relative z-sidebar my-2.5 mr-0 ml-2.5 box-border flex w-sidebar-rail flex-none flex-col items-center gap-px overflow-x-hidden overflow-y-auto rounded-2xl border border-border bg-card px-2.5 pt-3 pb-2.5 shadow-float', ink && 'dark')}>
+    <aside id="sidebar" aria-label="Sidebar" className="relative z-sidebar my-2.5 mr-0 ml-2.5 box-border flex w-sidebar-rail flex-none flex-col items-center gap-px overflow-x-hidden overflow-y-auto rounded-2xl border border-border bg-card px-2.5 pt-3 pb-2.5 shadow-float">
+      {chip}
       <span data-side-mark className="mb-1 flex size-9 flex-none items-center justify-center rounded-lg border border-input bg-card">
         <InhouseMark />
       </span>
@@ -116,8 +143,9 @@ export function Sidebar() {
 
   const aside = (
       <aside id="sidebar" aria-label="Sidebar" className={cn('my-2.5 mr-0 ml-2.5 box-border flex w-sidebar flex-none flex-col overflow-x-hidden overflow-y-auto rounded-2xl border border-border bg-card px-2.5 pt-3 pb-2.5 shadow-float',
-        phone ? 'min-h-0 flex-1' : 'relative z-sidebar', ink && 'dark')}>
-        <div className="flex items-center gap-1.5 py-1 pr-1 pl-1.5">
+        phone ? 'min-h-0 flex-1' : 'relative z-sidebar')}>
+        {chip}
+        <div data-side-head className="flex items-center gap-1.5 py-1 pr-1 pl-1.5">
           <span data-side-mark className="mr-1 flex size-9 flex-none items-center justify-center rounded-lg border border-input bg-card">
             <InhouseMark />
           </span>
