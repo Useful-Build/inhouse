@@ -88,7 +88,7 @@ export const ACTION_WORDS = {
   approved: "Approved. It's being sent. You'll get the result.",
   failed: "It didn't go out. Nothing was changed.",
   needsCheck: (name: string) => `It isn't clear whether it went out, so ${name} was asked to check. Don't try it again.`,
-  undone: (name: string) => `${name} undid it before it went out.`,
+  undone: (name: string) => `${name.charAt(0).toUpperCase()}${name.slice(1)} undid it before it went out.`,
   withdrawn: 'It was withdrawn, so nothing went out.',
   expired: 'No one answered in 7 days, so nothing went out.',
   /** A job's or a routine's turn never waits. */
@@ -277,7 +277,7 @@ export async function callAction(grant: RunGrant, name: string, args: Record<str
     await d.rpc.askNoted(admitted.turnId, batch.id)
     await waiterGaveUp(d1Reports(d.db), batch.id, false)
     await d.rpc.actionChanged(batch.id)
-    const name = await approverName(d.db, batch.approver)
+    const name = await approverName(d.db, batch)
     const state = itemState(r.item, batch)
     const final = isFinal(state)
     return toolAnswer(
@@ -287,7 +287,7 @@ export async function callAction(grant: RunGrant, name: string, args: Record<str
   }
   const actionId = r.action.id
   await d.rpc.askNoted(admitted.turnId, actionId)
-  const approver = await approverName(d.db, r.action.approver)
+  const approver = await approverName(d.db, r.action)
   const answerFor = (row: OutboxActionRow, note?: string) =>
     toolAnswer(`${wordsFor(row, approver)}${note ? ` ${note}` : ''} (approval_id: ${row.id})`, { approval_id: row.id, status: row.state })
   const store = d1Reports(d.db)
@@ -356,9 +356,13 @@ const invocationRow = async (db: D1Database, chatId: string, toolUseId: string) 
   (await first<{ id: string }>(db, stmt('SELECT id FROM outbox_actions WHERE chat_id = ? AND tool_use_id = ?', chatId, toolUseId)))
     ?? first<{ id: string }>(db, stmt('SELECT action_id AS id FROM outbox_items WHERE chat_id = ? AND tool_use_id = ?', chatId, toolUseId))
 
-/** The approver's name as the agent reads it ("Dana"), or "the person". */
-async function approverName(db: D1Database, memberId: string): Promise<string> {
-  const m = await first<{ name: string | null }>(db, stmt('SELECT name FROM members WHERE id = ?', memberId))
+/**
+ * The approver's name as the agent reads it ("Dana"), or "the person". Stage 1 M3-X (N25): an admins card's is "an
+ * admin" ("Waiting for an admin's OK. It's in Approvals.").
+ */
+async function approverName(db: D1Database, row: Pick<OutboxActionRow, 'approver' | 'approver_kind'>): Promise<string> {
+  if (row.approver_kind === 'admins') return 'an admin'
+  const m = await first<{ name: string | null }>(db, stmt('SELECT name FROM members WHERE id = ?', row.approver))
   const name = m?.name?.trim()
   return name ? name : 'the person'
 }

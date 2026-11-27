@@ -7,6 +7,8 @@
 // scenario's meaning, written here from N9's words: which perturbations still cover, and for whom.
 // Stage 1 M3-L (N23): crossed too with the ceiling's bulk threshold (1 and 5, the records either side of it), the call's
 // units either side of the ceiling's largest call, and either side of the grant's.
+// Stage 1 M3-X (N25): a member asking for what their role can't approve is an exact card for any active admin, its
+// guardrail the effect's, else `bulk`, else `access`.
 import { describe, expect, it } from 'vitest'
 import { decideCore } from './decide.ts'
 import { POLICY_REV } from './policy.ts'
@@ -48,7 +50,7 @@ function stillCovers(p: Perturbation, asker: Asker, mineRole: 'member' | 'admin'
 describe('decideCore, every combination', () => {
   it('gives the scenario\'s verdict in all of them', () => {
     let cases = 0
-    const counts: Record<Verdict['verdict'] | 'overLimit' | 'countCard', number> = { run: 0, ask: 0, exact: 0, refuse: 0, overLimit: 0, countCard: 0 }
+    const counts: Record<Verdict['verdict'] | 'overLimit' | 'countCard' | 'admins', number> = { run: 0, ask: 0, exact: 0, refuse: 0, overLimit: 0, countCard: 0, admins: 0 }
     for (const p of PERTURBATIONS) for (const askerRole of ['member', 'admin', null] as const) for (const origin of ['chat', 'job', 'routine'] as Origin[])
       for (const c of CEILINGS) for (const bulkThreshold of [1, 5]) for (const over of [false, true]) for (const memberMay of [true, false]) for (const money of [false, true])
         for (const policyRev of [POLICY_REV, POLICY_REV + 1]) for (const mineRole of ['member', 'admin'] as const) for (const allowOnce of [2, 3])
@@ -71,7 +73,7 @@ describe('decideCore, every combination', () => {
           if (!ceiling?.enabled) want = { verdict: 'refuse', reason: 'over_ceiling' }
           else if (!ceilingAdmits) want = { verdict: 'refuse', reason: 'over_limit' }
           else if (asker === null) want = { verdict: 'refuse', reason: 'no_one_to_ask' }
-          else if (asker.role === 'member' && !memberMay) want = { verdict: 'refuse', reason: 'needs_admin' }
+          else if (asker.role === 'member' && !memberMay) want = { verdict: 'exact', guardrail: money ? 'money' : over ? 'bulk' : 'access', approver: 'admins' }
           else if (money) want = { verdict: 'exact', guardrail: 'money', approver: 'asker' }
           else if (over) want = { verdict: 'exact', guardrail: 'bulk', approver: 'asker' }
           else if (origin === 'routine') want = { verdict: 'ask', nudge: false }
@@ -81,11 +83,13 @@ describe('decideCore, every combination', () => {
           counts[got.verdict]++
           if (got.verdict === 'refuse' && got.reason === 'over_limit') counts.overLimit++
           if (got.verdict === 'exact' && got.guardrail === 'count') counts.countCard++
+          if (got.verdict === 'exact' && got.approver === 'admins') counts.admins++
           cases++
         }
     expect(cases).toBe(PERTURBATIONS.length * 3 * 3 * CEILINGS.length * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2)
     for (const v of ['run', 'ask', 'exact', 'refuse'] as const) expect(counts[v], v).toBeGreaterThan(0)
     expect(counts.overLimit, 'over_limit').toBeGreaterThan(0)
     expect(counts.countCard, 'exact count').toBeGreaterThan(0)
+    expect(counts.admins, 'admins card').toBeGreaterThan(0)
   })
 })

@@ -8,8 +8,8 @@
 //      5, D3), is `exact` (or a refusal that comes before it), whatever grants exist;
 //  I3. refuse outside the ceiling: no row, or a disabled one, is `over_ceiling`, whatever else holds;
 //  I4. a routine never runs (D4: routines use no grant in M2);
-//  I5. a member never runs or asks for an operation their role can't approve (`needs_admin`), and no one to ask is
-//      `no_one_to_ask`;
+//  I5. a member never runs or asks for an operation their role can't approve (Stage 1 M3-X: an exact card for any active
+//      admin, I11), and no one to ask is `no_one_to_ask`;
 //  I6. another member's grant never covers the asker (D4: a member's grant covers only their own chats);
 //  I7. `ask` whenever the action passes steps 1 to 6 and no grant covers it; `nudge` exactly at 3 or more "Allow once";
 //  I8. `resolve` refuses an unknown operation and arguments that don't parse, and never takes the account or its
@@ -19,8 +19,10 @@
 //      only), whatever the asker, origin or grants; a `run` is under a grant whose own `units_max` admits the call;
 //  I10. `units_max` is per call: a covering grant runs exactly the calls its `units_max` admits, whatever its daily
 //      count (that is the reservation's), and a call it doesn't admit is `exact` `count`, never `ask` or `run`;
-//  I11. no `admins` verdict before M3-X: every exact card is the asker's, and a member asking for an operation their
-//      role can't approve is still refused `needs_admin`.
+//  I11. (Stage 1 M3-X, N25; it replaces M3-L's "no `admins` verdict before M3-X") an `admins` card is exactly a member
+//      asking for an operation their role can't approve, past steps 1 to 3: exact, never run or ask, whatever the
+//      origin, grants or nudge count, its guardrail the effect's (else `bulk`, else `access`); every other exact card is
+//      the asker's, and nothing is refused `needs_admin` any more.
 import { fc, test } from '@fast-check/vitest'
 import { describe, expect } from 'vitest'
 import { decideCore } from './decide.ts'
@@ -107,10 +109,10 @@ describe('decideCore', () => {
     expect(decideCore(f, { ...ctx, origin: 'routine' }, r).verdict).not.toBe('run')
   })
 
-  test.prop([caseArb])('I5: no one to ask, and a member asking for what their role can\'t approve, are refused', ({ r, ctx, f }) => {
+  test.prop([caseArb])('I5: no one to ask is refused, and a member never runs or asks for what their role can\'t approve', ({ r, ctx, f }) => {
     fc.pre(enabled(f, r) && withinCeiling(f, r))
     expect(decideCore(f, { ...ctx, asker: null }, r)).toEqual({ verdict: 'refuse', reason: 'no_one_to_ask' })
-    expect(decideCore(f, { ...ctx, asker: { memberId: ASKER_ID, role: 'member' } }, { ...r, memberMay: false })).toEqual({ verdict: 'refuse', reason: 'needs_admin' })
+    expect(decideCore(f, { ...ctx, asker: { memberId: ASKER_ID, role: 'member' } }, { ...r, memberMay: false })).toMatchObject({ verdict: 'exact', approver: 'admins' })
   })
 
   test.prop([caseArb])('I6: another member\'s grant never covers the asker', ({ r, ctx, f }) => {
@@ -153,11 +155,26 @@ describe('decideCore', () => {
     if (v.verdict === 'run') expect(decideCore(f, ctx, { ...r, units: 1 }).verdict).toBe('run')
   })
 
-  test.prop([caseArb])('I11: no admins verdict before M3-X', ({ r, ctx, f }) => {
+  test.prop([caseArb])('I11: an admins card is exactly a member asking for what their role can\'t approve', ({ r, ctx, f }) => {
     const v = decideCore(f, ctx, r)
-    if (v.verdict === 'exact') expect(v.approver).toBe('asker')
-    if (enabled(f, r) && withinCeiling(f, r) && ctx.asker?.role === 'member') {
-      expect(decideCore(f, ctx, { ...r, memberMay: false })).toEqual({ verdict: 'refuse', reason: 'needs_admin' })
+    const passes = enabled(f, r) && withinCeiling(f, r) && ctx.asker !== null
+    const adminOnly = passes && ctx.asker!.role === 'member' && !r.memberMay
+    const effect = (['money', 'customer', 'destructive', 'access'] as const).find(k => r.effects[k])
+    if (adminOnly) {
+      const want = effect ?? (r.records > f.ceiling[r.operation]!.bulkThreshold ? 'bulk' : 'access')
+      expect(v).toEqual({ verdict: 'exact', guardrail: want, approver: 'admins' })
+    } else if (v.verdict === 'exact') expect(v.approver).toBe('asker')
+    expect(v).not.toEqual({ verdict: 'refuse', reason: 'needs_admin' })
+    if (adminOnly) {
+      // No origin, grant or nudge count changes it: the same card from a routine, with no grants, with many Allow once.
+      for (const origin of ['chat', 'job', 'routine'] as const) expect(decideCore(f, { ...ctx, origin }, r)).toEqual(v)
+      expect(decideCore({ ...f, grants: [] }, ctx, r)).toEqual(v)
+      expect(decideCore({ ...f, allowOnceCount: 9 }, ctx, r)).toEqual(v)
+    }
+    // The same call from an admin is never an admins card (an exact card to themselves at most).
+    if (passes) {
+      const asAdmin = decideCore(f, { ...ctx, asker: { memberId: ctx.asker!.memberId, role: 'admin' } }, r)
+      if (asAdmin.verdict === 'exact') expect(asAdmin.approver).toBe('asker')
     }
   })
 })

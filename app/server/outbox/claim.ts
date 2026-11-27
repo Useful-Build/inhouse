@@ -7,6 +7,8 @@
 // the use released, `lapsed_reason` set, the card saying why) or, when the asker left the team or the action can never
 // pass again (its account generation or policy revision is gone), to `withdrawn`. An approval not claimed within 10
 // minutes of being given lapses (the approval age cap).
+// Stage 1 M3-X (N25): an admins card's member asker passes the claim (claimGuardSql), and its approving admin must still
+// be an active admin: an admin demoted or removed during the hold sends it back to waiting for any admin's OK.
 import { all, first, stmt } from '../db/sql.ts'
 import type { SqlValue, Stmt } from '../db/sql.ts'
 import { claimGuardSql } from '../permissions/claim-guard.ts'
@@ -59,12 +61,6 @@ export async function whyRefused(db: D1Database, row: OutboxActionRow, nowMs: nu
   if (!gate) throw new Error('outbox: the gate row is missing')
   if (gate.restore_hold === 1) return { kind: 'lapse', reason: 'restore_hold' }
   if (gate.paused === 1 || gate.epoch !== row.approved_epoch || gate.do_gen !== pauseGen) return { kind: 'lapse', reason: 'paused' }
-  const ceiling = await first<{ units_max: number; bulk_threshold: number }>(db, stmt(
-    'SELECT units_max, bulk_threshold FROM permission_ceiling WHERE operation = ? AND enabled = 1', row.operation,
-  ))
-  if (!ceiling) return { kind: 'lapse', reason: 'over_ceiling' }
-  // Stage 1 M3-L (N23): the largest single call was lowered below this one's since it was approved.
-  if (row.units > ceiling.units_max) return { kind: 'lapse', reason: 'over_limit' }
   const entry = operationEntry(row.operation)
   // A stored action made under another policy, or on another account generation, can never pass again: withdrawn, so
   // a person isn't asked to approve something that can only lapse again.
@@ -86,20 +82,33 @@ export async function whyRefused(db: D1Database, row: OutboxActionRow, nowMs: nu
   }
   const asker = people.find(p => p.id === row.asked_by)
   if (!asker || asker.kind !== 'person' || asker.status !== 'active') return { kind: 'withdraw', reason: 'asker_removed' }
-  if (!may(row.asked_by)) return { kind: 'lapse', reason: 'approver_not_allowed' }
+  // After every withdraw-class reason (Fable, #484): a row that can never pass again is withdrawn, not sent back to wait
+  // until it expires behind a lowered or disabled ceiling.
+  const ceiling = await first<{ units_max: number; bulk_threshold: number }>(db, stmt(
+    'SELECT units_max, bulk_threshold FROM permission_ceiling WHERE operation = ? AND enabled = 1', row.operation,
+  ))
+  if (!ceiling) return { kind: 'lapse', reason: 'over_ceiling' }
+  // Stage 1 M3-L (N23): the largest single call was lowered below this one's since it was approved.
+  if (row.units > ceiling.units_max) return { kind: 'lapse', reason: 'over_limit' }
+  // Stage 1 M3-X (N25): an admins card's asker is a member whose role can't approve it; only its approver is checked.
+  const admins = row.approver_kind === 'admins' && row.grant_id === null
+  if (!admins && !may(row.asked_by)) return { kind: 'lapse', reason: 'approver_not_allowed' }
   if (entry.connector === 'slack') {
     const channelId = (JSON.parse(row.scope_json) as { channelId?: string }).channelId ?? ''
     if (!(await exists(db, 'SELECT 1 FROM notify_channels WHERE channel_id = ? AND removed_at_ms IS NULL', channelId))) return { kind: 'lapse', reason: 'channel_not_listed' }
   }
   if (row.grant_id !== null) {
-    if (row.origin === 'routine' || row.records > ceiling.bulk_threshold || Object.values(entry.effects).some(Boolean)) return { kind: 'lapse', reason: 'permission_removed' }
+    if (row.origin === 'routine' || row.approver_kind === 'admins' || row.records > ceiling.bulk_threshold || Object.values(entry.effects).some(Boolean)) return { kind: 'lapse', reason: 'permission_removed' }
     if (!(await exists(db, 'SELECT 1 FROM permission_uses WHERE id = ? AND grant_id = ? AND released_at_ms IS NULL', `${row.id}#${row.rev}`, row.grant_id))) {
       return { kind: 'lapse', reason: 'count' }
     }
     // Revoked, made under another ceiling or policy, no longer covering the asker, or its `units_max` below these units.
     return { kind: 'lapse', reason: 'permission_removed' }
   }
-  if (!may(row.approved_by)) return { kind: 'lapse', reason: 'approver_not_allowed' }
+  const approver = people.find(p => p.id === row.approved_by)
+  if (admins ? !(approver && approver.kind === 'person' && approver.status === 'active' && approver.role === 'admin') : !may(row.approved_by)) {
+    return { kind: 'lapse', reason: 'approver_not_allowed' }
+  }
   throw new Error(`outbox: the claim of ${row.id} was refused for a reason the dispatcher can't name`)
 }
 

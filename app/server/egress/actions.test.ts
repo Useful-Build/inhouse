@@ -18,6 +18,8 @@ import { insertGrant, person } from '../permissions/test-support.ts'
 import { POLICY_REV } from '../permissions/policy.ts'
 import { ACTION_WORDS, approvalsWiring, askerFor, callAction, handleActions } from './actions.ts'
 import type { ActionsRouteDeps } from './actions.ts'
+import { OPERATIONS } from '../outbox/operations/index.ts'
+import type { OperationEntry } from '../outbox/operations/types.ts'
 
 const db = env.DB
 const T0 = 1_800_000_000_000
@@ -442,5 +444,22 @@ describe('Stage 1 M3-B: a call that joins a batch (N22)', () => {
     const replay = await call(w, tagArgs(8))
     expect(text(replay)).toBe(`${ACTION_WORDS.sent('vip')} (approval_id: ${id}, item 1)`)
     expect(replay.structuredContent).toMatchObject({ approval_id: id, item: 1, status: 'sent' })
+  })
+})
+
+describe('an admins card (Stage 1 M3-X, N25)', () => {
+  it('a member\'s call only an admin may approve waits for "an admin", and an admin\'s Undo says so', async () => {
+    const table = OPERATIONS as unknown as Record<string, OperationEntry>
+    const real = table['shopify.order.tag_add']!
+    table['shopify.order.tag_add'] = { ...real, memberMay: false, coalesces: false, effects: { ...real.effects, customer: true } } as OperationEntry
+    try {
+      await db.prepare("UPDATE members SET name = 'Dana' WHERE id = ?").bind(ASKER).run()
+      const r = await call(setup())
+      expect(text(r)).toBe(`Waiting for an admin's OK. It's in Approvals. (approval_id: ${idOf(r)})`)
+      expect(await rowOf(db, idOf(r))).toMatchObject({ approver_kind: 'admins', state: 'waiting' })
+      expect(ACTION_WORDS.undone('an admin')).toBe('An admin undid it before it went out.')
+    } finally {
+      table['shopify.order.tag_add'] = real
+    }
   })
 })

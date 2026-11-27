@@ -32,7 +32,7 @@ import { safeError } from '../../safe-error.ts'
 import { CHAT_KEPT, lapseStmts, SHOP_KEPT, whyRefused } from '../claim.ts'
 import type { ClaimRefusal } from '../claim.ts'
 import type { DispatchDeps } from '../dispatch.ts'
-import { expectOf, outcomeOf, requestArgs, startCall, THROTTLE_WAIT_MS } from '../hub-call.ts'
+import { expectOf, outcomeOf, partialJson, requestArgs, startCall, THROTTLE_WAIT_MS } from '../hub-call.ts'
 import type { SendOutcome } from '../hub-call.ts'
 import { notifyAll } from '../notify.ts'
 import { actionLine, both, butNot, newActionId, releaseUseWhere, stamped, unreleasedUse } from '../sql.ts'
@@ -59,7 +59,7 @@ const itemOf = (db: D1Database, itemId: string) => first<OutboxItemRow>(db, stmt
 /** The guard's columns over a batch row, with `units` and `records` given by `counts` (SQL over `b`). */
 const guardFrom = (counts: string, where: string) =>
   `SELECT b.id, b.approved_rev AS rev, b.operation, b.policy_rev, b.account_id, b.account_gen, b.asked_by, b.scope_json, b.grant_id,
-     b.origin, b.scope_key, b.approved_by, ${counts} FROM outbox_actions b ${where}`
+     b.origin, b.scope_key, b.approved_by, b.approver_kind, ${counts} FROM outbox_actions b ${where}`
 
 /** The gate open at the approval's epoch and the dispatcher's own pause generation (one `?`), SQL on `outbox_actions`. */
 const GATE_AT_EPOCH = `EXISTS (SELECT 1 FROM outbox_gate gt WHERE gt.id = 1 AND gt.paused = 0 AND gt.restore_hold = 0
@@ -159,8 +159,9 @@ async function storeItem(d: Pick<DispatchDeps, 'db' | 'requestId'>, batch: Outbo
     ), release)
   } else {
     stmts.push(
-      stmt(`UPDATE outbox_items SET state = 'needs_check', updated_at_ms = ?, stamp = ? WHERE item_id = ? AND attempt = ? AND state = 'sending'`,
-        nowMs, stamp, item.item_id, item.attempt),
+      // #487: a partly-sent item keeps the hub's groups (order numbers only) for the person who checks it.
+      stmt(`UPDATE outbox_items SET state = 'needs_check', result_json = ?, updated_at_ms = ?, stamp = ? WHERE item_id = ? AND attempt = ? AND state = 'sending'`,
+        partialJson(outcome), nowMs, stamp, item.item_id, item.attempt),
       actionLine({ ...who(d, nowMs), args: { action: 'action.needs_check', actionId: batch.id, attempt: item.attempt, why: outcome.why, item: item.n } }, now('needs_check')),
     )
   }
@@ -286,11 +287,14 @@ export async function stopBatch(d: Pick<DispatchDeps, 'db' | 'requestId' | 'noti
   await runBatch(db, stmts)
   const after = await rowOf(db, batch.id)
   if (after?.stamp !== stamp) return
-  const counts = await first<{ sent: number; total: number; left: number }>(db, stmt(
-    `SELECT SUM(state = 'sent') AS sent, COUNT(*) AS total, SUM(stamp = ? AND (state = 'withdrawn' OR action_id <> ?)) AS left
+  // #509: counted against what the approval covered (items 1 to `approved_upto`), as endBatchStmts does: items an
+  // earlier answer moved on (or that went out from that other card) were never this approval's.
+  const counts = await first<{ sent: number; left: number }>(db, stmt(
+    `SELECT SUM(action_id = ? AND state = 'sent') AS sent, SUM(stamp = ? AND (state = 'withdrawn' OR action_id <> ?)) AS left
      FROM outbox_items WHERE action_id = ? OR moved_from = ?`,
-    stamp, batch.id, batch.id, batch.id,
+    batch.id, stamp, batch.id, batch.id, batch.id,
   ))
+  if (batch.approved_upto === null) throw new Error(`outbox: batch ${batch.id} stopped while sending with no approval`)
   const left = counts?.left ?? 0
   const moved = await first<{ id: string }>(db, stmt('SELECT id FROM outbox_actions WHERE id = ? AND stamp = ?', newId, stamp))
   console.log({ event: 'outbox_batch_stopped', actionId: batch.id, reason, how, left })
@@ -299,7 +303,7 @@ export async function stopBatch(d: Pick<DispatchDeps, 'db' | 'requestId' | 'noti
     const why = (how === 'withdraw' ? WITHDRAWN_TEXT[reason] : undefined) ?? LAPSE_TEXT[reason]
     await notifyAll(d.notify, [{
       kind: 'approval_lapsed', to: batch.approver, actionId: moved ? newId : batch.id, key: `stopped:${batch.id}:${batch.attempt}`,
-      body: batchStoppedText({ sent: counts?.sent ?? 0, total: counts?.total ?? 0, left, moved: moved !== null, why }),
+      body: batchStoppedText({ sent: counts?.sent ?? 0, total: batch.approved_upto, left, moved: moved !== null, why }),
     }])
   }
 }

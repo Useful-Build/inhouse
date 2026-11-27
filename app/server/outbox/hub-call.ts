@@ -8,6 +8,8 @@ import { plainAnswer } from '../../shared/rpc-answer.ts'
 import { safeError } from '../safe-error.ts'
 import { operationEntry } from './operations/index.ts'
 import type { WriteOperationKey } from './operations/types.ts'
+import { partialOf } from '../../shared/partial-send.ts'
+import type { PartialGroups } from '../../shared/partial-send.ts'
 
 type NeedsCheckWhy = z.infer<typeof NeedsCheckWhySchema>
 
@@ -25,7 +27,8 @@ export const THROTTLE_WAIT_MS = { default: 2_000, min: 1_000, max: 60_000 } as c
 const ResultSchema = z.union([
   z.object({ ok: z.literal(true), value: z.object({ ref: z.string().max(500) }) }),
   z.object({
-    ok: z.literal(false), error: z.object({ code: ActionFailCodeSchema, retryAfterMs: z.number().int().min(0).max(86_400_000).optional() }),
+    ok: z.literal(false),
+    error: z.object({ code: ActionFailCodeSchema, retryAfterMs: z.number().int().min(0).max(86_400_000).optional(), message: z.string().max(4_000).optional() }),
     sent: z.enum(['no', 'unknown']),
   }),
 ])
@@ -34,7 +37,11 @@ export type SendOutcome =
   | { kind: 'not_claimed' }
   | { kind: 'sent'; ref: string }
   | { kind: 'failed'; code: string; retryAfterMs?: number }
-  | { kind: 'needs_check'; why: NeedsCheckWhy }
+  /** `partial` (#487): a multi-order call the hub says went out in part, its groups by order number. */
+  | { kind: 'needs_check'; why: NeedsCheckWhy; partial?: PartialGroups }
+
+/** #487: what a `needs_check` stores in `result_json`: the groups of a partly-sent call, or nothing. */
+export const partialJson = (o: SendOutcome): string | null => (o.kind === 'needs_check' && o.partial ? JSON.stringify({ partial: o.partial }) : null)
 
 /** A safe ref as the card shows it: no control characters, at most 200 characters. */
 const safeRef = (ref: string) => ref.replace(/[\p{Cc}\p{Cf}]/gu, '').slice(0, 200)
@@ -49,7 +56,10 @@ export function outcomeOf(answer: HubAnswer): SendOutcome {
   if (!parsed.success) return { kind: 'needs_check', why: 'bad_result' }
   const r = parsed.data
   if (r.ok) return { kind: 'sent', ref: safeRef(r.value.ref) }
-  if (r.sent !== 'no') return { kind: 'needs_check', why: 'unknown' }
+  if (r.sent !== 'no') {
+    const partial = partialOf(r.error.code, r.error.message)
+    return { kind: 'needs_check', why: 'unknown', ...(partial ? { partial } : {}) }
+  }
   return { kind: 'failed', code: r.error.code, ...(r.error.retryAfterMs !== undefined ? { retryAfterMs: r.error.retryAfterMs } : {}) }
 }
 

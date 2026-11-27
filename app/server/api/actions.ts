@@ -1,11 +1,12 @@
-// Routes 120 to 125 (Stage 1 M2-B, N11, N15, N18; M3-B, N22 and N33: a batch's full list): the outbox's cards and a
-// person's answers to them. Brand people only
+// Routes 120 to 126 (Stage 1 M2-B, N11, N15, N18; M3-B, N22 and N33: a batch's full list; M3-X, N25: the asker's
+// withdraw): the outbox's cards and a person's answers to them. Brand people only
 // (the matrix); the rules on the object are the outbox's, in its statements: the asker sees their own cards (with the
 // chat), an admin sees every card's facts (never another person's chat) and may resolve a "Needs a check"; only the
-// card's approver answers, undoes or resolves it otherwise. No route makes an action: `request` is the agent's (M2-D).
+// card's approver answers, undoes or resolves it otherwise. An admins card (M3-X) is any active admin's to answer, its
+// approving admin's to undo, and its asker's to withdraw. No route makes an action: `request` is the agent's (M2-D).
 import {
   ActionCardSchema, ActionFilterSchema, ActionIdSchema, ActionItemsPageSchema, ActionItemsQuerySchema, ActionsListSchema, AnswerActionInputSchema,
-  ResolveActionInputSchema, UndoActionInputSchema,
+  ResolveActionInputSchema, UndoActionInputSchema, WithdrawActionInputSchema,
 } from '../../shared/contract/actions.ts'
 import { ChatIdSchema } from '../../shared/contract/chat-ids.ts'
 import { readBody, readQuery, storesOf } from '../db/handler-kit.ts'
@@ -129,6 +130,22 @@ export async function resolveAction(c: Ctx): Promise<Response> {
   const body = await readBody(c.request, ResolveActionInputSchema)
   if ('error' in body) return body.error
   const change = await storesOf(c).outbox.resolve(viewerOf(c), id.data, body.ok, at(c))
+  await tellAgent(c, change)
+  return answerOf(c, id.data, change)
+}
+
+/**
+ * Route 126, `POST /api/actions/:id/withdraw` `{ ifRev }` (Stage 1 M3-X, N25): the asker takes back their own waiting
+ * single card (`can.withdraw` on an admins card they can't answer). Anyone else's card, or a batch (#527: it holds other
+ * calls' items and is answered with its `upTo`): 403 (or 404 for one they may not see); a card no longer waiting: 409
+ * with the current card.
+ */
+export async function withdrawAction(c: Ctx): Promise<Response> {
+  const id = ActionIdSchema.safeParse(c.params.id)
+  if (!id.success) return apiError('not_found')
+  const body = await readBody(c.request, WithdrawActionInputSchema)
+  if ('error' in body) return body.error
+  const change = await storesOf(c).outbox.withdraw(viewerOf(c), id.data, body.ok, at(c))
   await tellAgent(c, change)
   return answerOf(c, id.data, change)
 }

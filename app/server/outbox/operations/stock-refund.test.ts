@@ -4,8 +4,8 @@
 //   lower case, a delta, a transaction the agent made up);
 // - a refund resolves in another currency than the shop's, or while the shop's currency isn't known;
 // - a refund's units aren't its amount, so the ceiling's largest call doesn't bound it (`over_limit`);
-// - a reduce or a refund runs under a grant, collects into a batch, or a member's refund is anything but `needs_admin`
-//   (until M3-X);
+// - a reduce or a refund runs under a grant, collects into a batch, or a member's refund is anything but an exact money
+//   card for any active admin (Stage 1 M3-X, N25);
 // - a card or item line drops the amount, the currency, a line, the shipping, the restock or the customer's email.
 import { describe, expect, it } from 'vitest'
 import { decideCore } from '../../permissions/decide.ts'
@@ -143,8 +143,9 @@ describe('decideCore on the new operations (N23; M3-X changes only the member re
     }
   })
 
-  it('a member\'s refund is refused needs_admin; an admin\'s is an exact money card; over the ceiling\'s largest call is over_limit', async () => {
-    expect(await decide('shopify.refund.create', refund(), 'member', { unitsMax: 50_000 })).toEqual({ verdict: 'refuse', reason: 'needs_admin' })
+  it('a member\'s refund is an exact money card for any admin; an admin\'s is an exact money card to themselves; over the ceiling\'s largest call is over_limit', async () => {
+    // Stage 1 M3-X (N25): was refused `needs_admin` until the admins card landed.
+    expect(await decide('shopify.refund.create', refund(), 'member', { unitsMax: 50_000 })).toEqual({ verdict: 'exact', guardrail: 'money', approver: 'admins' })
     expect(await decide('shopify.refund.create', refund(), 'admin', { unitsMax: 50_000 })).toEqual({ verdict: 'exact', guardrail: 'money', approver: 'asker' })
     const big = refund({ amount: { minor: 50_001, currency: 'USD' } })
     for (const role of ['member', 'admin'] as const) {

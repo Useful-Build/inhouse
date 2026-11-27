@@ -39,6 +39,7 @@ const REVIEWED: readonly (readonly [string, string, string])[] = [
   ['server/seed/run.ts', 'console.error(err instanceof Error ? err.message : err)', 'an operator CLI on a local or deploy-time database, never in the Worker'],
   ['server/seed/first-admin.ts', "err instanceof Error ? err.message : ''", "an operator CLI; the value is the operator's own input"],
   ['server/egress/hub.ts', 'e.message.length > HUB_MESSAGE_MAX_CHARS', "a HubError's fixed text (hub/index/errors.ts), returned to the model, never logged"],
+  ['server/outbox/hub-call.ts', 'const partial = partialOf(r.error.code, r.error.message)', "a WriteResult's HubError text (not a caught error), matched against the order-number groups only; only digits are kept, anything else is dropped"],
   ['server/db/members.ts', '/UNIQUE constraint failed/.test(err.cause.message)', 'a match on the storage error, never logged or stored'],
   ['server/db/sql.ts', 'throw err instanceof StoreUnavailableError ? err : new StoreUnavailableError(what, err)', 'kept as the cause only; the message is fixed text'],
   ['server/usage/ledger.ts', "new StoreUnavailableError('usage ledger', err)", 'as above'],

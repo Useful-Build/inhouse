@@ -1,7 +1,7 @@
 // `shopify.refund.create` (Stage 1 M3-S2, N21, section 0 Q1 and Q2): refunds line items (and shipping) on one order in
 // the brand's connected Shopify store, for an exact amount in the shop's currency. Money and the customer: an exact
 // approval every time, never covered by a grant, never collected (the 6th waiting card in a chat is refused
-// `too_many_waiting`), and admins only: a member's refund is refused `needs_admin` until M3-X makes it an admins card.
+// `too_many_waiting`), and admins only: a member's refund is an admins card any active admin answers (M3-X, N25).
 // `units` = the amount in minor units, so the ceiling's largest call (N24: $500 as 50,000 cents) bounds one refund.
 // `resolve` refuses a currency other than the shop's (`ConnectedAccountFacts.currency`, copied from the hub), and every
 // refund while the shop's currency isn't known. At the send the hub asks Shopify's suggested refund for these lines and

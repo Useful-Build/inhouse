@@ -25,12 +25,20 @@ interface LineRow {
   actor_name: string | null
 }
 
-/** The member ids a line's arguments name (a member, an earlier identity, an approver's value). */
+/**
+ * The member ids a line's arguments name (a member, an earlier identity, an approver's value), so the page names each
+ * one wherever its line falls: every member id shared/audit-text.ts `auditText` reads (audit-read.test.ts keeps the two
+ * together). Stage 1 M3-X: a bell notice's recipient and a restore's approver too (they read as "Former member" on the
+ * JSON page when no other line on it named them, while the CSV's longer page named them).
+ */
 export function memberIdsIn(args: AuditArgs): string[] {
   const ids: string[] = []
+  const member = (v: unknown) => { if (typeof v === 'string' && MemberIdSchema.safeParse(v).success) ids.push(v) }
   if ('memberId' in args) ids.push(args.memberId)
   if ('replaces' in args && args.replaces) ids.push(args.replaces)
-  if (args.action === 'setting.changed' && typeof args.value === 'string' && MemberIdSchema.safeParse(args.value).success) ids.push(args.value)
+  if (args.action === 'setting.changed') member(args.value)
+  if (args.action === 'notify.send' && args.kind === 'bell') member(args.target)
+  if (args.action === 'restore.confirmed') member(args.approvedBy)
   return ids
 }
 

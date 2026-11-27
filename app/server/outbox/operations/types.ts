@@ -82,7 +82,7 @@ type Harmless = Effects & { money: false; destructive: false }
  * coalesce, so no batch ever needs an admin and none moves money; money defines `amount`; destructive isn't reversible;
  * money and destructive name no grant defaults.
  *
- * - `memberMay`: false means a member's call is an exact card for any active admin (N25; refused `needs_admin` until M3-X).
+ * - `memberMay`: false means a member's call is an exact card for any active admin (N25, M3-X).
  * - `coalesces` (N22): whether calls of this kind may collect into one batch card (a 6th waiting card, or a call past its
  *   grant's count). When false, the 6th waiting card of the kind in a chat is refused `too_many_waiting`.
  * - `amount` (N21): a money operation's amount, shown, bound and sent.
