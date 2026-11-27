@@ -26,6 +26,8 @@ export interface ConnectorAccountRow {
   disconnected_at_ms: number | null
   /** Stage 1 M2-D: the Shopify write store's handle, copied from the hub (null for every other account). */
   shop: string | null
+  /** Stage 1 M3-S2: the Shopify write store's currency (ISO 4217), copied from the hub (null for every other account, 0790). */
+  currency: string | null
   rev: number
 }
 
@@ -60,7 +62,7 @@ export interface ConnectorAccountStoreDeps {
 }
 
 /** The upsert's columns besides the key; each call sets the ones it changes, the rest keep their stored values. */
-type Change = { last_state: ConnectorLastState } & Partial<Pick<ConnectorAccountRow, 'connected_by' | 'connected_at_ms' | 'disconnected_by' | 'disconnected_at_ms' | 'shop'>>
+type Change = { last_state: ConnectorLastState } & Partial<Pick<ConnectorAccountRow, 'connected_by' | 'connected_at_ms' | 'disconnected_by' | 'disconnected_at_ms' | 'shop' | 'currency'>>
 
 export function connectorAccountStore({ db, hook = s => s }: ConnectorAccountStoreDeps) {
   /** One upsert (rev + 1 on an existing row) and its audit line, in one batch. */
@@ -129,15 +131,21 @@ export function connectorAccountStore({ db, hook = s => s }: ConnectorAccountSto
      * date and handle, rev + 1, a `tools.connect` line by the system, and, when the generation moved, the grants on any
      * other generation revoked (N10). Returns whether it wrote. Nothing is written for an account the hub doesn't call
      * active: a write on it is refused at `resolve` instead.
+     *
+     * Stage 1 M3-S2 (N21): the write store's currency too, as the hub read it. A read that failed (`currency: null`) keeps
+     * the stored currency while the store is the same one, so a passing outage doesn't flip refunds off and on; another
+     * store, or a new generation, takes the hub's word as it is (none, until the hub reads it).
      */
-    async syncFromHub(accountId: string, connector: string, hub: { connectedAtMs: number; shop: string | null }, at: At): Promise<boolean> {
+    async syncFromHub(accountId: string, connector: string, hub: { connectedAtMs: number; shop: string | null; currency: string | null }, at: At): Promise<boolean> {
       const r = await first<ConnectorAccountRow>(db, stmt('SELECT * FROM connector_accounts WHERE account_id = ?', accountId))
       // A disconnect at or after the connection date being written would read as disconnected (the claim's and `resolve`'s
       // rule), so it is cleared: the hub, which owns the sign-in, says the account is active since `connectedAtMs`.
       const disconnected = r !== null && r.disconnected_at_ms !== null && r.disconnected_at_ms >= hub.connectedAtMs
-      if (r && r.last_state === 'connected' && !disconnected && r.connected_at_ms === hub.connectedAtMs && r.shop === hub.shop) return false
+      const sameStore = r !== null && r.shop === hub.shop && r.connected_at_ms === hub.connectedAtMs
+      const currency = hub.currency ?? (sameStore ? r.currency : null)
+      if (r && r.last_state === 'connected' && !disconnected && r.connected_at_ms === hub.connectedAtMs && r.shop === hub.shop && r.currency === currency) return false
       const moved = r?.connected_at_ms !== hub.connectedAtMs
-      await change(accountId, connector, { last_state: 'connected', connected_at_ms: hub.connectedAtMs, shop: hub.shop, ...(disconnected ? { disconnected_at_ms: null } : {}) },
+      await change(accountId, connector, { last_state: 'connected', connected_at_ms: hub.connectedAtMs, shop: hub.shop, currency, ...(disconnected ? { disconnected_at_ms: null } : {}) },
         { action: 'tools.connect', accountId, outcome: 'ok' }, at,
         moved ? applied => revokeAccountGrantsStmts(accountId, hub.connectedAtMs, at, applied) : undefined)
       return true

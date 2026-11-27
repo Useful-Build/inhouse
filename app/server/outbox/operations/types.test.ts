@@ -26,15 +26,20 @@ const post: OperationEntry<{ channel: string; text: string }> & { key: 'slack.ch
 // Stage 1 M3-S1: the table's other two keys, each an entry of its own.
 const untag = { ...tag, key: 'shopify.order.tag_remove' as const, tool: 'shopify_order_tag_remove' }
 const draft = { ...tag, key: 'shopify.draft_order.create' as const, tool: 'shopify_draft_order_create' }
+// Stage 1 M3-S2: three more keys, made-up entries of their own (the class rules are checked below and in operations.test.ts).
+const restock = { ...tag, key: 'shopify.inventory.restock' as const, tool: 'shopify_inventory_restock' }
+const reduce = { ...tag, key: 'shopify.inventory.reduce' as const, tool: 'shopify_inventory_reduce' }
+const refund = { ...tag, key: 'shopify.refund.create' as const, tool: 'shopify_refund_create' }
+const m3s2 = { 'shopify.inventory.restock': restock, 'shopify.inventory.reduce': reduce, 'shopify.refund.create': refund }
 
 describe('OperationTable', () => {
   it('takes each entry under its own key only', () => {
-    const table: OperationTable = { 'shopify.order.tag_add': tag, 'slack.channel.post': post, 'shopify.order.tag_remove': untag, 'shopify.draft_order.create': draft }
+    const table: OperationTable = { 'shopify.order.tag_add': tag, 'slack.channel.post': post, 'shopify.order.tag_remove': untag, 'shopify.draft_order.create': draft, ...m3s2 }
     // @ts-expect-error: an entry under another operation's key
-    const swapped: OperationTable = { 'shopify.order.tag_add': post, 'slack.channel.post': tag, 'shopify.order.tag_remove': untag, 'shopify.draft_order.create': draft }
+    const swapped: OperationTable = { 'shopify.order.tag_add': post, 'slack.channel.post': tag, 'shopify.order.tag_remove': untag, 'shopify.draft_order.create': draft, ...m3s2 }
     // @ts-expect-error: a missing operation
-    const missing: OperationTable = { 'shopify.order.tag_add': tag, 'slack.channel.post': post, 'shopify.order.tag_remove': untag }
-    expect(Object.keys(table)).toEqual(['shopify.order.tag_add', 'slack.channel.post', 'shopify.order.tag_remove', 'shopify.draft_order.create'])
+    const missing: OperationTable = { 'shopify.order.tag_add': tag, 'slack.channel.post': post, 'shopify.order.tag_remove': untag, 'shopify.draft_order.create': draft, 'shopify.inventory.restock': restock, 'shopify.inventory.reduce': reduce }
+    expect(Object.keys(table)).toEqual(['shopify.order.tag_add', 'slack.channel.post', 'shopify.order.tag_remove', 'shopify.draft_order.create', 'shopify.inventory.restock', 'shopify.inventory.reduce', 'shopify.refund.create'])
     expect([swapped, missing]).toHaveLength(2)
   })
 })

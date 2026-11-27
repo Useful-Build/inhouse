@@ -6,6 +6,7 @@ import type { ShopifyWriteOp } from './types'
 export const orderTagRemove: ShopifyWriteOp<ShopifyOrderTagsArgs> = {
   key: 'shopify.order.tag_remove',
   scope: 'write_orders',
+  idempotent: false,
   args: ShopifyOrderTagsArgsSchema,
   document: a => tagsDocument({ operation: 'OrderTagsRemove', field: 'tagsRemove' }, a),
   read: (data, a) => readTags(data, a, 'removed '),

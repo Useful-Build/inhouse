@@ -249,9 +249,11 @@ function strictHubResult(body: unknown): string | null {
     const v = b.value
     if (Array.isArray(v)) {
       for (const row of v) {
-        // Stage 1 M2-D: the Shopify row may also carry its write store's handle (`shop`); no other row may.
+        // Stage 1 M2-D: the Shopify row may also carry its write store's handle (`shop`); M3-S2: with it, the store's
+        // currency (`currency`, only beside a handle). No other row may carry either.
         const shopify = (row as { connector?: unknown }).connector === 'shopify'
-        if (!sameKeys(row, SUMMARY_KEYS) && !(shopify && sameKeys(row, [...SUMMARY_KEYS, 'shop']))) return 'an account summary with fields beyond the contract'
+        const shopifyShapes = [[...SUMMARY_KEYS, 'shop'], [...SUMMARY_KEYS, 'shop', 'currency']]
+        if (!sameKeys(row, SUMMARY_KEYS) && !(shopify && shopifyShapes.some(keys => sameKeys(row, keys)))) return 'an account summary with fields beyond the contract'
         if (!onlyKeys((row as { status: unknown }).status, STATUS_KEYS)) return 'an account status with fields beyond the contract'
       }
       return null

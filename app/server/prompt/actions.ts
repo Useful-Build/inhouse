@@ -22,6 +22,9 @@ export const OPERATION_WORDS: Record<WriteOperationKey, string> = {
   'slack.channel.post': 'post a message in a Slack channel the brand listed for notices',
   'shopify.order.tag_remove': 'remove tags from orders in the Shopify store',
   'shopify.draft_order.create': 'create a draft order in the Shopify store',
+  'shopify.inventory.restock': 'add stock of an item at a location in the Shopify store', // M3-S2
+  'shopify.inventory.reduce': 'remove stock of an item at a location in the Shopify store', // M3-S2
+  'shopify.refund.create': 'refund items or shipping on an order in the Shopify store', // M3-S2
 }
 
 /** One operation as the acting line names it: its words and its tool (`mcp__actions__<tool>`). */

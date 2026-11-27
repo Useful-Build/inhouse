@@ -1,7 +1,7 @@
 // The hub's word on the brand's write accounts (Stage 1 M2-D, N9), read inside BrandAgent: the runner's egress holds no
 // hub binding but ReadGateway (the P5 import boundary), so the write path asks the object (`BrandAgentRpc.hubAccounts`).
 // The hub is the authority on a connection (it owns the sign-in): its `connectedAt` and the Shopify write store's handle
-// are copied into `connector_accounts` (db/connector-accounts.ts `syncFromHub`), where `resolve`, the claim and the
+// (and, Stage 1 M3-S2, its currency) are copied into `connector_accounts` (db/connector-accounts.ts `syncFromHub`), where `resolve`, the claim and the
 // dispatcher's `expect.connectedAtMs` read them. The binding's answer is copied out and released, never kept
 // (shared/rpc-answer.ts).
 import { z } from 'zod'
@@ -25,6 +25,9 @@ const AccountsAnswer = z.discriminatedUnion('ok', [
       // A handle as the hub's config parsers take it (hub/index/schemas.ts SHOP_HANDLE, written out: no hub import here).
       // Anything else is no handle, so a Shopify write is refused; the other accounts are read as usual.
       shop: z.string().regex(SHOP_HANDLE).optional().catch(undefined),
+      // Stage 1 M3-S2: the write store's currency (hub/index/schemas.ts AccountSummarySchema). Anything else is none, so
+      // every refund is refused; the other operations are read as usual.
+      currency: z.string().regex(/^[A-Z]{3}$/).optional().catch(undefined),
     })),
   }),
   z.object({ ok: z.literal(false), error: z.object({ code: z.string() }) }),
@@ -63,7 +66,8 @@ export async function hubAccountFacts(d: {
     if (!a) continue
     const active = a.status.state === 'active' && a.status.connectedAt !== null
     if (active) {
-      await accounts.syncFromHub(a.accountId, connector, { connectedAtMs: a.status.connectedAt!.ms, shop: connector === 'shopify' ? a.shop ?? null : null },
+      const shopify = connector === 'shopify'
+      await accounts.syncFromHub(a.accountId, connector, { connectedAtMs: a.status.connectedAt!.ms, shop: shopify ? a.shop ?? null : null, currency: shopify ? a.currency ?? null : null },
         { actorId: SYSTEM_MEMBER_ID, requestId: d.requestId, nowMs: d.nowMs })
     }
     out.push({ accountId: a.accountId, paused: a.status.paused || !active, label: LABEL[connector] })

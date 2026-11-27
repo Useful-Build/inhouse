@@ -198,7 +198,8 @@ export const BrandSkillIdSchema = z.string().regex(new RegExp(`^bs_${RANDOM}$`))
 // ---------- Stage 1 M2's argument shapes (N10, N18): ids, closed codes and counts; never an argument, a card's words,
 // a question or an answer's text ----------
 /** A write operation's key, written out (the client bundle imports nothing from the hub); the hub's `WRITE_OPERATIONS`. */
-export const WriteOperationArgSchema = z.enum(['shopify.order.tag_add', 'slack.channel.post', 'shopify.order.tag_remove', 'shopify.draft_order.create'])
+export const WriteOperationArgSchema = z.enum(['shopify.order.tag_add', 'slack.channel.post', 'shopify.order.tag_remove', 'shopify.draft_order.create',
+  'shopify.inventory.restock', 'shopify.inventory.reduce', 'shopify.refund.create'])
 // Fails the typecheck when the two lists differ, either way.
 const sameOperations: [z.infer<typeof WriteOperationArgSchema>, WriteOperationKey] extends [WriteOperationKey, z.infer<typeof WriteOperationArgSchema>] ? true : never = true
 void sameOperations

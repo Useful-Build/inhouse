@@ -8,7 +8,9 @@ const ALLOWED = new Set(['lineItems', 'note', 'tags'])
 
 export const fakeDraftOrderCreate: FakeWriteOp<'shopify.draft_order.create'> = {
   key: 'shopify.draft_order.create',
-  mutation: 'DraftOrderCreate',
+  kind: 'mutation',
+  name: 'DraftOrderCreate',
+  document: () => 'mutation DraftOrderCreate($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id } userErrors { field message } } }',
   root: 'draftOrderCreate',
   cost: () => 10,
   run(fake, variables, refuse) {

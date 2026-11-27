@@ -17,16 +17,21 @@ import { rootOutcome, type RootOutcome } from './types'
 export const ORDERS_PER_CALL_MAX = 5
 
 const ORDER_GID = /^gid:\/\/shopify\/Order\/([1-9]\d{0,19})$/
-// Tags: 1..40 chars, no commas or control characters (C0, DEL and C1).
-const TAG_RE = /^[^\p{Cc},]{1,40}$/u
+// Tags (#491: exactly the server's rule, server/outbox/operations/shopify-order-tags.ts `TagSchema`): 1..40 chars, no
+// comma (Shopify splits on commas), no control or format character (C0, DEL, C1, bidi, zero-width), no surrounding space
+// (refused, never trimmed: what the person approved is what goes out).
+const TAG_RE = /^[^,\p{Cc}\p{Cf}]+$/u
 
-/** One tag, trimmed, as Shopify stores it (the server's own check is stricter). */
-export const ShopifyTagSchema = z.string().trim().regex(TAG_RE)
+/** One tag, exactly as the server checked it (40 UTF-16 units at most, as zod counts). */
+export const ShopifyTagSchema = z.string().min(1).max(40).regex(TAG_RE).refine(t => t === t.trim(), 'No surrounding space')
+/** 1 to 5 tags, each once; case doesn't make a new tag in Shopify. */
+export const ShopifyTagsSchema = z.array(ShopifyTagSchema).min(1).max(5)
+  .refine(t => new Set(t.map(x => x.toLowerCase())).size === t.length, 'Each tag once')
 
 export const ShopifyOrderTagsArgsSchema = z.strictObject({
   orderIds: z.array(z.string().regex(ORDER_GID)).min(1).max(ORDERS_PER_CALL_MAX)
     .refine(ids => new Set(ids).size === ids.length, 'Each order once'),
-  tags: z.array(ShopifyTagSchema).min(1).max(5),
+  tags: ShopifyTagsSchema,
 })
 export type ShopifyOrderTagsArgs = z.infer<typeof ShopifyOrderTagsArgsSchema>
 

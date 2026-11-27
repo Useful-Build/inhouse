@@ -9,10 +9,10 @@ import type { AccountSummary, CallToolOptions, CallerScope, ConnectGateway as Co
 import { err } from '../index/errors'
 import { log } from '../index/log'
 import { envRecord, flushTestLogs, isConfiguredFrom, loadRegistry, signInFor, signInName, TEST_FAKES_DO_NAME } from '../signin/signin'
-import { isMcpConnector } from '../registry/registry'
+import { isMcpConnector, type HubConnector } from '../registry/registry'
 import { decideTestShop } from '../index/test-shop'
 import { refuseTestFakes } from './test-gate'
-import { parseShopifyWriteConfig } from '../connectors/shopify/write/provider'
+import { parseShopifyWriteConfig, SHOPIFY_WRITE_SIGNIN_ACCOUNT } from '../connectors/shopify/write/provider'
 import * as G from './gateway'
 import { settledAnswer } from '../../shared/rpc-answer'
 
@@ -56,6 +56,17 @@ async function deps(env: Env): Promise<G.ConnectDeps> {
     // Stage 1 M2-D: the store the write app writes to (its handle only), when the write app is configured; else none, so
     // the product refuses a Shopify write (fail closed).
     shopOf: c => (c.id === 'shopify' ? parseShopifyWriteConfig(env as Parameters<typeof parseShopifyWriteConfig>[0])?.shop ?? null : null),
+    // Stage 1 M3-S2 (N21): the write store's currency, read by the write SignIn in the test build only (writes are off
+    // elsewhere, so the deployable build neither asks nor reads; the guard is written out in full).
+    ...(__INHOUSE_HUB_TEST__ && (env as Env & { INHOUSE_TEST_BUILD?: string }).INHOUSE_TEST_BUILD === '1'
+      ? {
+        currencyOf: async (c: HubConnector) => {
+          if (c.id !== 'shopify') return null
+          const ns = env.SHOPIFY_WRITE_SIGNIN
+          return (await settledAnswer(ns.get(ns.idFromName(SHOPIFY_WRITE_SIGNIN_ACCOUNT)).shopCurrency())) as string | null
+        },
+      }
+      : {}),
   }
 }
 
