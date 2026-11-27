@@ -99,10 +99,12 @@ export function Select({ value, options, onChange, label, disabled, align = 'rig
 
 /**
  * The one question before a change that takes something away (Delete, Replace, removing a role): a title, a line on
- * what happens and Cancel or the action. Cancel has focus first, and Escape cancels.
+ * what happens and Cancel or the action. Cancel has focus first, and Escape cancels. `tone: 'primary'` draws the action
+ * as a normal one, for a question before a change that gives something (marking a channel for alerts, Stage 1 M3-C).
  */
-export function Confirm({ label, title, children, action, onCancel, onConfirm, closeFocus }: {
+export function Confirm({ label, title, children, action, onCancel, onConfirm, closeFocus, tone = 'destructive' }: {
   label: string; title: string; children: ReactNode; action: string; onCancel: () => void; onConfirm: () => void
+  tone?: 'destructive' | 'primary'
   /** On close, focus this instead of what opened the question. */
   closeFocus?: () => HTMLElement | null
 }) {
@@ -123,7 +125,7 @@ export function Confirm({ label, title, children, action, onCancel, onConfirm, c
         <p className="mt-2 mb-0 text-base leading-prose text-foreground-3">{children}</p>
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="outline" size="lg" data-cancel onClick={onCancel}>Cancel</Button>
-          <Button variant="destructive" size="lg" onClick={onConfirm}>{action}</Button>
+          <Button variant={tone} size="lg" onClick={onConfirm}>{action}</Button>
         </div>
       </div>
     </Window>

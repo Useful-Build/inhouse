@@ -59,7 +59,7 @@ export interface Row {
   on?: boolean
   toggle?: (on: boolean) => void
   /** A `select` row: the question to ask before saving this value, or null to save it straight away. */
-  confirm?: (value: string) => { title: string; text: string; action: string } | null
+  confirm?: (value: string) => { title: string; text: string; action: string; /** The action gives something rather than taking it away: drawn as a normal action, not in the destructive colour. */ gives?: true } | null
   /** A `select` row: what the button says when it isn't the value's own name ("Choose a channel" before one is picked). */
   display?: string
   /** The `me().can` key the row's control needs. Without it the control follows the setting's scope (brand or technical). Not allowed: it shows as text. */
@@ -280,7 +280,7 @@ function slackPage(nv: NotifyView, product: boolean, viewer: MemberRole | 'inhou
         // Stage 1 M3-C (N27): an admin's mark gives a standing permission while posting is on, so it's said and asked first.
         ...(product && posting?.on && who === 'admin' ? {
           confirm: (v: string) => (v === 'None' || v === (current ? `#${current.name}` : 'None') ? null : {
-            title: `Mark ${v} for alerts?`, text: alertsDisclosure(posting, 'admin'), action: 'Mark for alerts',
+            title: `Mark ${v} for alerts?`, text: alertsDisclosure(posting, 'admin'), action: 'Mark for alerts', gives: true,
           }),
         } : {}),
       })

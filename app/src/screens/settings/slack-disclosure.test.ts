@@ -50,7 +50,8 @@ describe('marking a channel for alerts (failures 1, 2 and 5)', () => {
     const { rows } = page(view(list(ON)), 'admin')
     const alerts = rows.find(r => r.title === 'Alerts channel')!
     expect(alerts.desc).toBe(N27(20))
-    expect(alerts.confirm!('#general')).toEqual({ title: 'Mark #general for alerts?', text: N27(20), action: 'Mark for alerts' })
+    // A mark gives something, so the question's action is a normal one, not the destructive colour.
+    expect(alerts.confirm!('#general')).toEqual({ title: 'Mark #general for alerts?', text: N27(20), action: 'Mark for alerts', gives: true })
     // Keeping the mark where it is, or taking it off, gives nothing: no question.
     expect(alerts.confirm!('#ops-alerts')).toBeNull()
     expect(alerts.confirm!('None')).toBeNull()

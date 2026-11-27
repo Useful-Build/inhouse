@@ -148,6 +148,8 @@ export interface StoresEnv {
   /** The R2 bucket of photos (wrangler config `FILES`); P8 C1's health signals list it (backups, the deletion log). */
   FILES: PhotoStoreDeps['files'] & Pick<KeyedBucket, 'list'>
   AUDIT_HASH_KEY?: string
+  /** Stage 1 M3-C: the test build's switch (`'1'` there); the ceiling's store reads it to know whether editing is on. */
+  INHOUSE_TEST_BUILD?: string
 }
 
 /**
@@ -224,6 +226,6 @@ export function openStores(env: StoresEnv, hook?: AuditHook, testing: { beforePh
 
     outbox: outboxStore({ db, hook }),
     questions: questionStore({ db }),
-    ceiling: ceilingStore({ db, hook }),
+    ceiling: ceilingStore({ db, hook, env }),
   }
 }

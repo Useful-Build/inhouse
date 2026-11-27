@@ -61,7 +61,7 @@ const RESOURCE_NAMES: Record<string, string> = {
 }
 
 /** A question waiting before a setting is saved. */
-interface Ask { title: string; text: string; action: string; go: () => void }
+interface Ask { title: string; text: string; action: string; gives?: true; go: () => void }
 
 let savedTimer: ReturnType<typeof setTimeout> | undefined
 /** A small "Saved" toast once typing stops, not one per keystroke. */
@@ -463,7 +463,7 @@ export function Settings() {
       )}
       {inviting && <InviteDialog onClose={() => setInviting(false)} memberOnly={me?.role === 'inhouse'} />}
       {ask && (
-        <Confirm label={ask.title} title={ask.title} action={ask.action} onCancel={() => setAsk(null)} onConfirm={() => { ask.go(); setAsk(null) }}>
+        <Confirm label={ask.title} title={ask.title} action={ask.action} tone={ask.gives ? 'primary' : 'destructive'} onCancel={() => setAsk(null)} onConfirm={() => { ask.go(); setAsk(null) }}>
           {ask.text}
         </Confirm>
       )}

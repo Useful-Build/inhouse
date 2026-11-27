@@ -1,12 +1,15 @@
 // Routes 150 and 151 (Stage 1 M3-C, N26) on real D1 in the Workers runtime. Ways they can fail, written down first:
 //  1. someone other than the Inhouse team changes the ceiling (an admin or a member past the matrix, or a member reading it);
 //  2. a change goes through while editing is off in a product-shaped build (the constant false, the test build's switch
-//     not compiled in, or compiled in but not switched on);
+//     not compiled in, or compiled in but not switched on, or the eval build, which runs with the switch on), through
+//     the route or straight through the store (#520);
 //  3. a change made against a stale `rev` (or a "create" for a row that exists) changes anything or writes a line;
 //  4. lowering a value doesn't raise `lowered_rev`, or raising one does (an old grant would come back to life);
 //  5. a change and its `ceiling.changed` line don't land together (one without the other), or the line's old and new
 //     values aren't the row's;
-//  6. the list leaves out an operation, shows a row it doesn't have as on, or tells someone they may edit who can't.
+//  6. the list leaves out an operation, shows a row it doesn't have as on, or tells someone they may edit who can't;
+//  7. two changes racing at one `rev` both apply: the writer's own `ifRev` guard, inside the statement, is all that
+//     holds once the store's read has passed (#521).
 import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { CeilingListSchema, CeilingRowSchema } from '../../shared/contract/ceiling.ts'
@@ -14,12 +17,16 @@ import type { CeilingRow, CeilingValues } from '../../shared/contract/ceiling.ts
 import { accessMatrix } from '../access-matrix.ts'
 import { checkAccess } from '../auth/matrix.ts'
 import type { Principal } from '../auth/principal.ts'
+import type { AuditHook } from '../db/audit.ts'
 import { openStores } from '../db/stores.ts'
 import { brokenAudit, ctx, lastLineId, linesSince, personPrincipal } from '../db/test-support.ts'
+import { stmt } from '../db/sql.ts'
 import { OPERATION_KEYS } from '../outbox/operations/index.ts'
 import { resetPermissions } from '../permissions/test-support.ts'
-import type { HandlerContext } from '../routes.ts'
-import { CEILING_EDIT_ON, ceilingHandlers } from './ceiling.ts'
+import { ceilingAtRev, setCeilingStmt } from '../permissions/ceiling.ts'
+import { ceilingHandlers } from './ceiling.ts'
+import { CEILING_EDIT_ON, ceilingStore } from './ceiling-store.ts'
+import type { CeilingBuild } from './ceiling-store.ts'
 
 const db = env.DB
 const stores = openStores(env)
@@ -29,22 +36,26 @@ const inhouse: Principal = { kind: 'inhouse', memberId: IH, subject: 's_ih', gra
 const admin = personPrincipal('m_ceiling_admin', 'admin')
 const member = personPrincipal('m_ceiling_member', 'member')
 
+/** A build as compiled (the defines the store reads) and its env's switch. */
+type Build = CeilingBuild & { flag: string | undefined }
 /** The test build compiled in and switched on: the one build where a change goes through before M3-J. */
-type Build = { build: boolean; flag: string | undefined }
-const ON: Build = { build: true, flag: '1' }
+const ON: Build = { testBuild: true, evalBuild: false, flag: '1' }
+/** The stores of a build: the ceiling's store stands in for that build's defines and env. */
+const storesFor = (build: Build, hook?: AuditHook) =>
+  ({ ...openStores(env, hook), ceiling: ceilingStore({ db, hook, env: build.flag === undefined ? {} : { INHOUSE_TEST_BUILD: build.flag }, build }) })
+const h = ceilingHandlers()
 
-function call(p: Principal, init: { method?: 'GET' | 'PUT'; operation?: string; body?: unknown }, build: Build = ON, s = stores) {
+function call(p: Principal, init: { method?: 'GET' | 'PUT'; operation?: string; body?: unknown }, build: Build = ON, hook?: AuditHook) {
   const path = init.operation === undefined ? '/api/ceiling' : `/api/ceiling/${init.operation}`
-  const { c } = ctx(s, p, { method: init.method ?? 'GET', path, body: init.body, params: init.operation === undefined ? {} : { operation: init.operation }, nowMs: NOW })
-  const h = ceilingHandlers(build.build)
-  const hc = { ...c, env: build.flag === undefined ? {} : { INHOUSE_TEST_BUILD: build.flag } } as unknown as HandlerContext
+  const { c } = ctx(storesFor(build, hook), p, { method: init.method ?? 'GET', path, body: init.body, params: init.operation === undefined ? {} : { operation: init.operation }, nowMs: NOW })
+  const hc = { ...c, env: {} } as Parameters<typeof h.get>[0]
   return (init.method === 'PUT' ? h.put : h.get)(hc)
 }
 const json = async (r: Response) => ({ status: r.status, body: (await r.json()) as Record<string, unknown> })
 
 const TAG = 'shopify.order.tag_add'
 const values = (o: Partial<CeilingValues> = {}): CeilingValues => ({ enabled: true, perDayMax: 200, unitsMax: 100, bulkThreshold: 5, batchMax: 500, ...o })
-const put = (p: Principal, body: unknown, build: Build = ON, s = stores) => call(p, { method: 'PUT', operation: TAG, body }, build, s).then(json)
+const put = (p: Principal, body: unknown, build: Build = ON, hook?: AuditHook) => call(p, { method: 'PUT', operation: TAG, body }, build, hook).then(json)
 const dbRow = () => db.prepare('SELECT enabled, per_day_max, units_max, bulk_threshold, batch_max, lowered_rev, rev, updated_by, updated_at_ms FROM permission_ceiling WHERE operation = ?').bind(TAG).first()
 const ceilingLines = async (since: number) => (await linesSince(db, since)).filter(l => l.action === 'ceiling.changed')
 
@@ -74,10 +85,18 @@ describe('who reaches the routes (failure 1)', () => {
 })
 
 describe('editing is off in a product-shaped build (failure 2)', () => {
-  it('the constant ships false', () => {
+  it('the constant ships false, and the stores as vitest compiles them (both defines false) have editing off', () => {
     expect(CEILING_EDIT_ON).toBe(false)
+    expect(stores.ceiling.editOn()).toBe(false)
+    expect(openStores({ ...env, INHOUSE_TEST_BUILD: '1' }).ceiling.editOn()).toBe(false)
   })
-  for (const [name, build] of [['the deployable build', { build: false, flag: '1' }], ['the test build switched off', { build: true, flag: undefined }], ['the test build with another flag', { build: true, flag: 'true' }]] as const) {
+  const OFF: [string, Build][] = [
+    ['the deployable build', { testBuild: false, evalBuild: false, flag: '1' }],
+    ['the eval build (test issuer and switch on, but deployed)', { testBuild: true, evalBuild: true, flag: '1' }],
+    ['the test build switched off', { testBuild: true, evalBuild: false, flag: undefined }],
+    ['the test build with another flag', { testBuild: true, evalBuild: false, flag: 'true' }],
+  ]
+  for (const [name, build] of OFF) {
     it(`${name}: refused writes_off, nothing written, no line; the list says so and offers no edit`, async () => {
       const since = await lastLineId(db)
       const r = await put(inhouse, { ...values(), ifRev: null }, build)
@@ -87,6 +106,13 @@ describe('editing is off in a product-shaped build (failure 2)', () => {
       expect(await ceilingLines(since)).toEqual([])
       const list = await json(await call(inhouse, {}, build))
       expect(list.body).toMatchObject({ can: { edit: false }, writesOff: true })
+    })
+    it(`${name}: the store itself refuses, for any caller holding the stores (#520)`, async () => {
+      const since = await lastLineId(db)
+      const done = await storesFor(build).ceiling.set({ operation: TAG, ifRev: null, ...values() }, { actorId: IH, requestId: 'r-direct', nowMs: NOW })
+      expect(done).toEqual({ writesOff: true })
+      expect(await dbRow()).toBeNull()
+      expect(await ceilingLines(since)).toEqual([])
     })
   }
 })
@@ -152,8 +178,7 @@ describe('a change (failures 3 to 5)', () => {
   })
 
   it('a change whose line fails rolls back with it (failure 5)', async () => {
-    const broken = openStores(env, brokenAudit)
-    await expect(put(inhouse, { ...values(), ifRev: null }, ON, broken)).rejects.toThrow()
+    await expect(put(inhouse, { ...values(), ifRev: null }, ON, brokenAudit)).rejects.toThrow()
     expect(await dbRow()).toBeNull()
   })
 
@@ -187,5 +212,63 @@ describe('the list (failure 6)', () => {
     expect([forAdmin.can.edit, forAdmin.writesOff]).toEqual([false, false])
     const forTeam = CeilingListSchema.parse((await json(await call(inhouse, {}))).body)
     expect([forTeam.can.edit, forTeam.writesOff]).toEqual([true, false])
+  })
+})
+
+describe("the writer's own rev guard (failure 7, #521)", () => {
+  const at = { actorId: IH, nowMs: NOW }
+  /** The route's batch for a change at `ifRev`: the line under `ceilingAtRev`, then the row, as the store sends them. */
+  const batch = (ifRev: number | null, v: CeilingValues) => {
+    const guard = ceilingAtRev(TAG, ifRev)
+    const line = stmt(`INSERT INTO audit_log (at_ms, actor_id, action, target_kind, target_id, args_json, req_id) SELECT ?, ?, 'ceiling.changed', NULL, NULL, '{}', 'r-guard' WHERE ${guard.sql}`, NOW, IH, ...guard.params)
+    return db.batch([line, setCeilingStmt({ operation: TAG, ...v, ifRev, ...at })].map(s => db.prepare(s.sql).bind(...s.params)))
+  }
+
+  it('a stale rev, or a create while a row exists, changes no row and writes no line in the statements themselves', async () => {
+    await db.prepare(setCeilingStmt({ operation: TAG, ...values(), ...at }).sql).bind(...setCeilingStmt({ operation: TAG, ...values(), ...at }).params).run()
+    const before = await dbRow()
+    const since = await lastLineId(db)
+    for (const ifRev of [null, 2, 0]) {
+      const [line, row] = await batch(ifRev, values({ enabled: false, perDayMax: 1 }))
+      expect([line!.meta.changes, row!.meta.changes], String(ifRev)).toEqual([0, 0])
+    }
+    expect(await dbRow()).toEqual(before)
+    expect(await linesSince(db, since)).toEqual([])
+    // The matching rev applies both, raising rev and (a lowering) lowered_rev.
+    const [line, row] = await batch(1, values({ perDayMax: 100 }))
+    expect([line!.meta.changes, row!.meta.changes]).toEqual([1, 1])
+    expect(await dbRow()).toMatchObject({ per_day_max: 100, rev: 2, lowered_rev: 2 })
+  })
+
+  it('a rev given for an operation with no row creates nothing', async () => {
+    const [line, row] = await batch(1, values())
+    expect([line!.meta.changes, row!.meta.changes]).toEqual([0, 0])
+    expect(await dbRow()).toBeNull()
+  })
+
+  it("two saves racing at one rev: the one that lands second (after the store's read) changes nothing and writes no line", async () => {
+    await put(inhouse, { ...values(), ifRev: null })
+    const since = await lastLineId(db)
+    // A D1 whose batch first lets another save at the same rev land, as a race between the store's read and its batch.
+    let raced = false
+    const racing = new Proxy(db, {
+      get(target, key) {
+        if (key !== 'batch') return Reflect.get(target, key, target) as unknown
+        return async (stmts: D1PreparedStatement[]) => {
+          if (!raced) {
+            raced = true
+            const other = setCeilingStmt({ operation: TAG, ...values({ perDayMax: 150 }), ifRev: 1, actorId: IH, nowMs: NOW })
+            expect((await target.prepare(other.sql).bind(...other.params).run()).meta.changes).toBe(1)
+          }
+          return target.batch(stmts)
+        }
+      },
+    })
+    const store = ceilingStore({ db: racing, env: { INHOUSE_TEST_BUILD: '1' }, build: ON })
+    const done = await store.set({ operation: TAG, ifRev: 1, ...values({ perDayMax: 120 }) }, { actorId: IH, requestId: 'r-race', nowMs: NOW })
+    expect(raced).toBe(true)
+    expect(done).toMatchObject({ conflict: { perDayMax: 150, rev: 2 } })
+    expect(await dbRow()).toMatchObject({ per_day_max: 150, rev: 2 })
+    expect(await ceilingLines(since)).toEqual([])
   })
 })

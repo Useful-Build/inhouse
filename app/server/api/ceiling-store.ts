@@ -6,7 +6,13 @@
 // condition (permissions/ceiling.ts `ceilingAtRev`), so a stale change writes neither. The row goes through the
 // ceiling's one writer (`setCeilingStmt`): lowering any value raises `lowered_rev` there, and disabling an operation
 // lapses its approved actions at their next claim (the claim's guard reads the row, M2). server/ceiling-boundary.test.ts
-// checks nothing else writes the table.
+// checks nothing else writes the table, and that only the route calls `set`.
+//
+// Writes stay off (N2, #520): `set` itself refuses `writes_off` unless editing is on in this build, so no caller holding
+// the stores can turn an operation on in a deployable build. `CEILING_EDIT_ON` is false until M3-J flips it after the
+// paid write-injection run; the test build turns editing on for its own specs (compiled in AND switched on, as the
+// test-fakes hook is gated), never the eval build, which also runs with `INHOUSE_TEST_BUILD=1`. Who may change it (the
+// Inhouse team) is the route's check, where the caller is known.
 import { CeilingRowSchema } from '../../shared/contract/ceiling.ts'
 import type { CeilingRow, CeilingValues } from '../../shared/contract/ceiling.ts'
 import type { Guardrail } from '../../shared/contract/permissions.ts'
@@ -75,19 +81,57 @@ function rowOf(key: WriteOperationKey, r: CeilingDbRow | undefined): CeilingRow 
 
 export type CeilingChange = { operation: WriteOperationKey; ifRev: number | null } & CeilingValues
 
-export function ceilingStore({ db, hook = s => s }: { db: D1Database; hook?: AuditHook }) {
+declare const __INHOUSE_TEST_BUILD__: boolean
+declare const __INHOUSE_EVAL_BUILD__: boolean
+
+/**
+ * Whether the Inhouse team may change the ceiling in a deployable build (N2, N26). Off until M3-J flips it, after the
+ * paid write-injection run shows zero bypasses. Only M3-J changes this line.
+ */
+export const CEILING_EDIT_ON = false
+
+/** What this build compiles in: the test build's switch and the eval build's mark (vite's defines). */
+export interface CeilingBuild { testBuild: boolean; evalBuild: boolean }
+
+/**
+ * The defines as compiled. Read lazily and through `typeof`: the stores also load in plain Node (the sandbox seed),
+ * where the defines don't exist, and there editing is off.
+ */
+function compiledBuild(): CeilingBuild {
+  return {
+    testBuild: typeof __INHOUSE_TEST_BUILD__ !== 'undefined' && __INHOUSE_TEST_BUILD__ === true,
+    evalBuild: typeof __INHOUSE_EVAL_BUILD__ === 'undefined' || __INHOUSE_EVAL_BUILD__ !== false,
+  }
+}
+
+/** Editing is on: the constant, or the test build compiled in, not the eval build, and switched on in its env. */
+export const ceilingEditOn = (build: CeilingBuild, env: { INHOUSE_TEST_BUILD?: unknown }): boolean =>
+  CEILING_EDIT_ON || (build.testBuild && !build.evalBuild && env.INHOUSE_TEST_BUILD === '1')
+
+/**
+ * The store over `db`. `env` is the Worker's (its `INHOUSE_TEST_BUILD` switch); `build` stands in for the compiled
+ * defines in the unit tests only.
+ */
+export function ceilingStore({ db, hook = s => s, env, build = compiledBuild() }: { db: D1Database; hook?: AuditHook; env: { INHOUSE_TEST_BUILD?: unknown }; build?: CeilingBuild }) {
+  const editOn = () => ceilingEditOn(build, env)
   const read = async (key: WriteOperationKey): Promise<CeilingDbRow | null> =>
     first<CeilingDbRow>(db, stmt(`SELECT ${COLUMNS} FROM permission_ceiling WHERE operation = ?`, key))
 
   return {
+    /** Whether a change may go through in this build (the list's `writesOff` and `can.edit` read it). */
+    editOn,
     /** Every operation in the table, in its order, each with its row or the suggested values. */
     async list(): Promise<CeilingRow[]> {
       const rows = await all<CeilingDbRow>(db, stmt(`SELECT ${COLUMNS} FROM permission_ceiling`))
       const by = new Map(rows.map(r => [r.operation, r]))
       return OPERATION_KEYS.map(k => rowOf(k, by.get(k)))
     },
-    /** The operation's row after the change, or `conflict` with it as it is now (null `ifRev` and a row exists, or a stale `rev`). */
-    async set(change: CeilingChange, at: At): Promise<{ ok: CeilingRow } | { conflict: CeilingRow }> {
+    /**
+     * The operation's row after the change, `conflict` with it as it is now (null `ifRev` and a row exists, or a stale
+     * `rev`), or `writesOff` (nothing read or written) while editing is off in this build.
+     */
+    async set(change: CeilingChange, at: At): Promise<{ ok: CeilingRow } | { conflict: CeilingRow } | { writesOff: true }> {
+      if (!editOn()) return { writesOff: true }
       const { operation, ifRev, ...values } = change
       const before = await read(operation)
       const stale = ifRev === null ? before !== null : before === null || before.rev !== ifRev
