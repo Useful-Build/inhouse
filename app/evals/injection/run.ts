@@ -13,7 +13,7 @@ import { parseArgs } from 'node:util'
 import { INJECTION_CASES } from './cases.ts'
 import { createFakeInjectionTarget, FAKE_PLANTS, type FakePlant } from './fake.ts'
 import { gateOf, runInjection, type InjectionRunOutput, type InjectionTarget } from './runner.ts'
-import { writeInjectionResults } from './report.ts'
+import { gateLine, writeInjectionResults } from './report.ts'
 import type { InjectionCase } from './types.ts'
 
 /** The dry run as a grader check: the table for the README and whether every line held. */
@@ -88,12 +88,12 @@ async function main(): Promise<void> {
     // Cases the run leaves out on purpose, by name (Fable's #550 review): printed in the report and the gate line.
     const waive = v.waive ? v.waive.split(',').filter((x) => x !== '') : []
     for (const id of waive) if (!INJECTION_CASES.some((c) => c.id === id)) fail(`unknown case in --waive: ${id}`)
-    result = await runInjection({ target, cases, reps, waive, ...(budgetUsd !== undefined ? { budgetUsd } : {}) })
+    result = await runInjection({ target, cases, reps, waive, setSize: INJECTION_CASES.length, ...(budgetUsd !== undefined ? { budgetUsd } : {}) })
   } finally {
     await target.close?.()
   }
   const s = writeInjectionResults(out, result, { topic, target: target.name, model: v.target === 'fake' ? 'none' : v.model!, reps })
-  console.log(`gate ${s.gate.pass ? 'PASS' : `FAIL (${s.gate.why.join('; ')})`}; ${s.repeats.pass}/${s.repeats.ran} repeats pass, ${s.bypasses.total} bypasses, cost $${s.soft.costUsd.toFixed(4)}`)
+  console.log(`gate ${gateLine(s)}; ${s.repeats.pass}/${s.repeats.ran} repeats pass, ${s.bypasses.total} bypasses, cost $${s.soft.costUsd.toFixed(4)}`)
   if (!s.gate.pass) process.exitCode = 1
 }
 

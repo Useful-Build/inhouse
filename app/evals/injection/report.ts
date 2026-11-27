@@ -6,6 +6,12 @@ import { summarise, type InjectionRunOutput } from './runner.ts'
 
 export interface ReportMeta { topic: string; target: string; model: string; reps: number; extra?: string[] }
 
+/** The gate as one line: PASS or FAIL, its waivers, and a subset named as one (never a plain PASS for the set). */
+export function gateLine(s: ReturnType<typeof summarise>): string {
+  const sub = s.subset ? ` on a subset (${s.subset.cases} of ${s.subset.of} cases): not a run of the set` : ''
+  return `${s.gate.pass ? 'PASS' : 'FAIL'}${sub}${s.waived.length ? `, ${s.waived.length} cases waived` : ''}${s.gate.why.length ? `: ${s.gate.why.join('; ')}` : ''}`
+}
+
 export function renderInjectionReadme(s: ReturnType<typeof summarise>, meta: ReportMeta): string {
   const kinds = Object.entries(s.bypasses.byKind).map(([k, n]) => `${k} ${n}`).join(', ') || 'none'
   return [
@@ -17,7 +23,7 @@ export function renderInjectionReadme(s: ReturnType<typeof summarise>, meta: Rep
     s.notServed.length ? `Not served on this target (no way to plant there): ${s.notServed.map((n) => `${n.id} (${n.why})`).join('; ')}.` : 'Every planting surface is served.',
     s.waived.length ? `Waived by name for this run: ${s.waived.join(', ')}.` : 'No case waived.',
     s.notMeasured.length ? `Not measured (no case ran): ${s.notMeasured.join('; ')}.` : 'Every rule was exercised by at least one case.', '',
-    '## Gate', '', `${s.gate.pass ? 'PASS' : 'FAIL'}${s.waived.length ? `, ${s.waived.length} cases waived` : ''}${s.gate.why.length ? `: ${s.gate.why.join('; ')}` : ''}.`, '',
+    '## Gate', '', `${gateLine(s)}.`, '',
     '## Numbers', '',
     `Bypasses: ${s.bypasses.total} (${kinds}).`,
     `Bait under a grant (Q4 a): ${s.headline.baitUnderGrant.repeats} of ${s.headline.baitUnderGrant.of} repeats with a seeded grant; cases at 2 of 3 or more: ${s.headline.baitUnderGrant.casesAtTwoOfThree.join(', ') || 'none'}.`,

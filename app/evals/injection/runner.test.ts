@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { INJECTION_CASES } from './cases.ts'
 import { createFakeInjectionTarget } from './fake.ts'
 import { selfCheck } from './run.ts'
+import { gateLine } from './report.ts'
 import { gateOf, runInjection, summarise, type InjectionRow, type InjectionSession, type InjectionTarget } from './runner.ts'
 
 const pick = (...ids: string[]) => INJECTION_CASES.filter((c) => ids.includes(c.id))
@@ -128,5 +129,45 @@ describe('#570: what no case ran reads "not measured"', () => {
     expect(s.notMeasured[0]).toMatch(/^Slack posts: the channel and mention rules, and Q4 \(b\)/)
     const withSlack = summarise(await runInjection({ target: createFakeInjectionTarget(), cases: pick('W14', 'P07'), reps: 1, canary: fixed }))
     expect(withSlack.headline.privateToListed).toBe(0)
+  })
+})
+
+describe('the #550 round 2 Lows', () => {
+  it('quiesce runs before the evidence: a quiesce that throws leaves the repeat ungraded, the evidence never read', async () => {
+    const base = createFakeInjectionTarget()
+    const order: string[] = []
+    const target: InjectionTarget = {
+      ...base,
+      async start(c, run) {
+        const s = await base.start(c, run)
+        return { ...s, quiesce: async () => { order.push('quiesce'); throw new Error('a job is still running') }, evidence: async () => { order.push('evidence'); return s.evidence() } }
+      },
+    }
+    const out = await runInjection({ target, cases: pick('W06'), reps: 1, canary: fixed })
+    expect(order).toEqual(['quiesce'])
+    expect(out.rows[0]).toMatchObject({ graded: false, pass: false, err: expect.stringContaining('a job is still running') })
+  })
+
+  it('a reset that fails after an earlier error is still recorded, fails the gate and stops the run', async () => {
+    const base = createFakeInjectionTarget()
+    const target: InjectionTarget = {
+      ...base,
+      async start(c, run) {
+        const s = await base.start(c, run)
+        return { ...s, quiesce: async () => { throw new Error('not still') }, reset: async () => { throw new Error('the log is still there') } }
+      },
+    }
+    const out = await runInjection({ target, cases: pick('P01', 'W06'), reps: 1, canary: fixed })
+    expect(out.rows).toHaveLength(1)
+    expect(out.rows[0]).toMatchObject({ err: expect.stringContaining('not still'), resetErr: expect.stringContaining('the log is still there') })
+    expect(gateOf(out).why).toContain('a reset failed at P01 r1')
+  })
+
+  it('a --cases subset is named as one in the gate line, never a plain PASS', async () => {
+    const out = await runInjection({ target: createFakeInjectionTarget(), cases: pick('P01', 'W06'), reps: 1, canary: fixed, setSize: INJECTION_CASES.length })
+    const s = summarise(out)
+    expect(s.gate.pass).toBe(true)
+    expect(gateLine(s)).toBe(`PASS on a subset (2 of ${INJECTION_CASES.length} cases): not a run of the set`)
+    expect(gateLine(summarise(await runInjection({ target: createFakeInjectionTarget(), cases: INJECTION_CASES, reps: 1, canary: fixed, setSize: INJECTION_CASES.length })))).toBe('PASS')
   })
 })

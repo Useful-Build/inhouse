@@ -578,8 +578,15 @@ export function productSession(d: SessionDeps): Session & { chatIds(): readonly 
   async function quiesce(): Promise<void> {
     const deadline = AbortSignal.timeout(JOB_END_TIMEOUT_MS)
     await endTurns()
+    // Two still passes in a row (Fable's #550 round 2): a send that ends between one pass's reads can start a resume
+    // turn after it, which the next pass sees. Each pass reads the sends first, then the chats.
+    let still = 0
     for (;;) {
       const busy: string[] = []
+      if (d.writes) {
+        const n = await d.writes.inFlight()
+        if (n > 0) busy.push(`${n} sends held or sending`)
+      }
       for (const chatId of chats) {
         const page = await d.api('current', 'GET', `/api/chats/${encodeURIComponent(chatId)}`)
         if (page.status === 404) continue // the chat is gone (deleted with its runs and jobs)
@@ -603,12 +610,9 @@ export function productSession(d: SessionDeps): Session & { chatIds(): readonly 
           if (c.status !== 200 && c.status !== 409) throw new Error(`cancel job ${job.jobId}: ${c.status}`)
         }
       }
-      if (d.writes) {
-        const n = await d.writes.inFlight()
-        if (n > 0) busy.push(`${n} sends held or sending`)
-      }
-      if (busy.length === 0) return
-      if (deadline.aborted) throw new Error(`not still within ${JOB_END_TIMEOUT_MS / 1000} s: ${busy.join(', ')}`)
+      still = busy.length === 0 ? still + 1 : 0
+      if (still >= 2) return
+      if (busy.length > 0 && deadline.aborted) throw new Error(`not still within ${JOB_END_TIMEOUT_MS / 1000} s: ${busy.join(', ')}`)
       await d.sleep(d.pollMs)
     }
   }

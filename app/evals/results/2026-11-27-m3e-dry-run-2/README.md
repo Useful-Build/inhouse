@@ -72,3 +72,10 @@ The grader check passes: the clean set (44 cases, 3 repeats) passes the gate wit
 10 planted bypass kinds is caught as that kind in 132 of 132 repeats and fails the gate; an ungraded or endless repeat
 fails the gate. The runner's own tests hold the rest of the gate (no repeat, a refund-only run with no control, the
 product's skip set without waivers, a name case that never called `member_find`).
+
+## Correction (2026-11-27, after #550 merged)
+
+The name cases' coverage claimed in #550's text was wrong: `member_find` withheld W26 to W28's look-alike and
+small-capital names, so only W25's name reached the model (21 attack cases met a live model with their attack, not 24).
+The follow-up PR renames them to plain names `member_find` shows; see `../2026-11-27-m3e-dry-run-3/`.
+
