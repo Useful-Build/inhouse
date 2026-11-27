@@ -8,8 +8,9 @@ import type { ActionCard, ActionKind, ActionState } from '../../shared/contract/
 import { ActionCardSchema } from '../../shared/contract/actions.ts'
 import type { MemberRole } from '../../shared/contract/members.ts'
 import { operationEntry } from './operations/index.ts'
+import type { OperationEntry } from './operations/types.ts'
 import type { OutboxActionRow, OutboxItemRow } from './types.ts'
-import { batchSummaries } from './batch/rows.ts'
+import { batchSummaries, storedDetail } from './batch/rows.ts'
 import type { BatchSummary } from './batch/rows.ts'
 import { batchMovedText, batchTitle, FAILED_TEXT, LAPSE_TEXT, needsCheckText, SENT_TEXT, WAITING_FOR_ADMIN, WITHDRAWN_TEXT } from './words.ts'
 import type { LapseReason } from './sql.ts'
@@ -67,12 +68,14 @@ export function cardOf(row: OutboxActionRow, viewer: Viewer, nowMs: number, batc
     : row.state === 'withdrawn' ? WITHDRAWN_TEXT[reason] ?? (row.kind === 'batch' && row.items_n === 0 ? batchMovedText(LAPSE_TEXT[reason]) : undefined)
       : row.state === 'waiting' || row.state === 'expired' ? LAPSE_TEXT[reason] : undefined
   const result = resultText(row)
+  // Stage 1 M3 (card details): a single action's own rows; a batch's are its items' (`firstDetails`, the items route).
+  const detail = row.kind === 'batch' ? null : storedDetail(row.detail_json)
   return ActionCardSchema.parse({
     id: row.id,
     rev: row.rev,
     kind,
     state: row.state,
-    title: batch === undefined || row.tool_use_id !== null ? stored.title : batchTitle(row.items_n, stored.label),
+    title: batch === undefined ? stored.title : batchCardTitle(row, entry, stored),
     lines: batch === undefined ? stored.lines : batch.firstLines,
     tool: { accountId: row.account_id, label: stored.label },
     records: row.records,
@@ -99,11 +102,28 @@ export function cardOf(row: OutboxActionRow, viewer: Viewer, nowMs: number, batc
     },
     nudgeAlways: own && waiting && kind === 'ask' && stored.nudge,
     ...(batch !== undefined
-      ? { batch: { itemCount: row.items_n, firstLines: batch.firstLines, totals: { records: row.records, units: row.units, unitsLabel: entry.unitsLabel } } }
+      ? {
+        batch: {
+          itemCount: row.items_n, firstLines: batch.firstLines, totals: { records: row.records, units: row.units, unitsLabel: entry.unitsLabel },
+          ...(batch.firstDetails.some(x => x !== null) ? { firstDetails: batch.firstDetails } : {}),
+        },
+      }
       : {}),
+    ...(detail !== null ? { detail } : {}),
     approverKind: row.approver_kind,
     ...(admins && waiting && !own ? { waitingFor: WAITING_FOR_ADMIN } : {}),
   })
+}
+
+/**
+ * Stage 1 M3 (card details): a batch card's title, verb + count + object from its operation ("Tag 450 orders as VIP",
+ * "Create 12 draft orders"): a one-call batch names its call's own arguments, a collecting card only the count. An
+ * operation with no batch title keeps M3-B's words (the call's own title, or "N changes in Shopify").
+ */
+function batchCardTitle(row: OutboxActionRow, entry: OperationEntry, stored: StoredCard): string {
+  const oneCall = row.tool_use_id !== null
+  if (entry.batchTitle) return entry.batchTitle(row.records, oneCall ? (JSON.parse(row.args_json) as unknown) : null)
+  return oneCall ? stored.title : batchTitle(row.items_n, stored.label)
 }
 
 /** Cards for a list of rows, each batch's first lines read in one go. */

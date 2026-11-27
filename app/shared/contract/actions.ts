@@ -39,6 +39,42 @@ export const BATCH_FIRST_LINES = 10
  * `itemCount` in the person's words ("120 orders", "+2,400 stock units"). `amount` is a money total already formatted by
  * the server ("$24.90 (USD)"); a batch never moves money today, so it's set by no operation yet.
  */
+// ---------- Stage 1 M3 (card details, #488): who and how much, beside the ids ----------
+
+/** The longest text a detail row holds, in code points (cleaned and cut by the server, server/outbox/detail.ts). */
+export const DETAIL_TEXT_MAX = { order: 40, customer: 80, product: 120, sku: 64 } as const
+
+/**
+ * One row of what a card or an item is about, read from the connected store when the agent asked (display only: the
+ * agent never sees these). `ref` is always there; each other field only when the store answered it:
+ * - `order`: the order's name as the shop shows it ("#3901"); `customer`: its customer's name ("Alex Moore");
+ * - `amount`: the money that matters, already formatted ("$642.10": the order's total, or a refund's amount) with its
+ *   ISO 4217 `currency`;
+ * - `product`: a draft-order line's product and variant ("Linen shirt, M"), its `sku` and `quantity`;
+ * - `notFound`: the store has no such order or product now (deleted, or the id is wrong): show the id and say so.
+ * The text is the store's, cleaned: no control or bidi characters, no links, no markup, cut to `DETAIL_TEXT_MAX`.
+ */
+export const ActionDetailRowSchema = z.object({
+  /** What the ids say, in server words ("Order 9001", "Variant 7001"): always there, so a row stands on its own. */
+  ref: z.string().max(60),
+  order: z.string().max(DETAIL_TEXT_MAX.order).optional(),
+  customer: z.string().max(DETAIL_TEXT_MAX.customer).optional(),
+  amount: z.string().max(40).optional(),
+  currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+  product: z.string().max(DETAIL_TEXT_MAX.product).optional(),
+  sku: z.string().max(DETAIL_TEXT_MAX.sku).optional(),
+  quantity: z.number().int().min(1).optional(),
+  notFound: z.literal(true).optional(),
+}).strict()
+export type ActionDetailRow = z.infer<typeof ActionDetailRowSchema>
+
+/**
+ * A card's or an item's detail rows, in the order of its ids: one per order (a tag call, a refund), or one per line (a
+ * draft order). Absent when nothing was read (the store didn't answer, or the operation has no such facts).
+ */
+export const ActionDetailSchema = z.object({ rows: z.array(ActionDetailRowSchema).min(1).max(100) }).strict()
+export type ActionDetail = z.infer<typeof ActionDetailSchema>
+
 export const ActionBatchSchema = z.object({
   /** 0 only for a batch whose every item moved to a new card before any was sent (the old card lapses in place). */
   itemCount: z.number().int().min(0).max(BATCH_ITEMS_MAX),
@@ -49,6 +85,11 @@ export const ActionBatchSchema = z.object({
     unitsLabel: z.string(),
     amount: z.string().optional(),
   }),
+  /**
+   * Stage 1 M3 (card details): the first lines' details, one per entry of `firstLines` in the same order (null where an
+   * item has none). Absent on a card built before details existed.
+   */
+  firstDetails: z.array(ActionDetailSchema.nullable()).max(BATCH_FIRST_LINES).optional(),
 })
 export type ActionBatch = z.infer<typeof ActionBatchSchema>
 
@@ -90,6 +131,8 @@ export const ActionCardSchema = z.object({
   nudgeAlways: z.boolean(),
   /** Stage 1 M3 (N22, N33): set only for a batch (one action with an item list). */
   batch: ActionBatchSchema.optional(),
+  /** Stage 1 M3 (card details, #488): a single action's detail rows (a batch's are its items'). */
+  detail: ActionDetailSchema.optional(),
   /** Stage 1 M3 (N25): who answers it. */
   approverKind: ActionApproverKindSchema,
   /** Stage 1 M3 (N25): whom a waiting card waits for, in server words ("an admin"), for a viewer who can't answer it. */
@@ -171,6 +214,8 @@ export const ActionItemSchema = z.object({
   state: ActionItemStateSchema,
   /** The outcome in server words, once it has one (sent with its safe ref, or the failure). */
   result: z.string().optional(),
+  /** Stage 1 M3 (card details, #488): the item's detail rows ("#3901 · Alex Moore · $642.10"). */
+  detail: ActionDetailSchema.optional(),
 })
 export type ActionItem = z.infer<typeof ActionItemSchema>
 

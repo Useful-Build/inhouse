@@ -2,7 +2,9 @@
 // `OperationTable` (each entry typed by its own key), so it and the hub's `WRITE_OPERATIONS` can't drift. Types only.
 import type { z } from 'zod'
 import type { WriteOperationKey } from '../../../hub/index/contract.ts'
+import type { ActionDetail } from '../../../shared/contract/actions.ts'
 import type { ResolveFacts } from '../../permissions/types.ts'
+import type { CardFactsView, FactsWanted } from '../detail.ts'
 
 export type { WriteOperationKey }
 
@@ -67,6 +69,22 @@ export interface OperationBase<A> {
    * in server words ("Order 1042 (store-a): add VIP, rush"). Nothing a person approves may be cut from it.
    */
   itemLine(item: A, f: ResolveFacts): string
+  /**
+   * Stage 1 M3 (card details, #488): the store records a card of this call names, for the facts a person sees beside the
+   * ids (detail.ts). Absent for an operation with none to read (a Slack post, a stock change).
+   */
+  facts?(a: A): FactsWanted
+  /**
+   * Stage 1 M3 (card details): the call's (or one item's) detail rows from the store's answer, or null when it didn't
+   * answer for every id. Display only: never part of `card`, `itemLine` or anything else the agent reads.
+   */
+  detail?(a: A, f: CardFactsView): ActionDetail | null
+  /**
+   * Stage 1 M3 (card details): a batch card's title, verb + count + object ("Tag 450 orders as VIP"). `a` is the call's
+   * own arguments for a one-call batch, null for a collecting card (its items are several calls). `records` is the
+   * card's total.
+   */
+  batchTitle?(records: number, a: A | null): string
   /** M2: no automatic resend. */
   idempotent: false
   /** Server words only. */

@@ -29,6 +29,8 @@ export const SHOPIFY_WRITE_TEST_CLIENT_ID = 'test-write-client'
 export const SHOPIFY_WRITE_TEST_CLIENT_SECRET = 'test-only-write-client-secret-8d4a2f1c9b0e'
 export const SHOPIFY_WRITE_API_VERSION = '2026-10'
 export const SHOPIFY_WRITE_SCOPES = ['write_orders', 'write_draft_orders', 'write_inventory'] as const
+/** Stage 1 M3 (card details): the read scopes the write app may also hold for an approval card's facts; granted by default. */
+export const SHOPIFY_WRITE_CARD_SCOPES = ['read_customers', 'read_products'] as const
 export const SHOPIFY_WRITE_TOKEN_LIFETIME_S = 86399
 
 export type WriteFault = 'succeed' | 'refuse' | 'timeout' | 'broken_body' | 'throttle'
@@ -37,6 +39,9 @@ export type FakeWriteOrder = {
   id: string
   name: string
   tags: string[]
+  /** Stage 1 M3 (card details): the customer's display name (null: a guest order) and the current total, in cents. */
+  customer: string | null
+  totalMinor: number
 }
 
 /** A draft order the fake made: its lines and optional note and tags, exactly as received. */
@@ -45,10 +50,18 @@ export type FakeDraftOrder = { id: string; lines: { variantId: string; quantity:
 /** The product variants a draft order may name (invented). */
 export const WRITE_VARIANTS: readonly string[] = ['gid://shopify/ProductVariant/7001', 'gid://shopify/ProductVariant/7002', 'gid://shopify/ProductVariant/7003']
 
+/** Stage 1 M3 (card details): each variant's product title, own title and SKU (invented). A deleted variant leaves `variants`. */
+export type FakeProduct = { product: string; variant: string; sku: string | null }
+export const WRITE_PRODUCTS: ReadonlyMap<string, FakeProduct> = new Map([
+  ['gid://shopify/ProductVariant/7001', { product: 'Linen shirt', variant: 'M', sku: 'LIN-M' }],
+  ['gid://shopify/ProductVariant/7002', { product: 'Linen shirt', variant: 'L', sku: null }],
+  ['gid://shopify/ProductVariant/7003', { product: 'Canvas tote', variant: 'Default Title', sku: 'TOTE-1' }],
+])
+
 export const INITIAL_WRITE_ORDERS: readonly FakeWriteOrder[] = [
-  { id: 'gid://shopify/Order/9001', name: '#9001', tags: ['existing'] },
-  { id: 'gid://shopify/Order/9002', name: '#9002', tags: [] },
-  { id: 'gid://shopify/Order/9003', name: '#9003', tags: ['vip'] },
+  { id: 'gid://shopify/Order/9001', name: '#9001', tags: ['existing'], customer: 'Alex Moore', totalMinor: 64210 },
+  { id: 'gid://shopify/Order/9002', name: '#9002', tags: [], customer: null, totalMinor: 1000 },
+  { id: 'gid://shopify/Order/9003', name: '#9003', tags: ['vip'], customer: 'Priya Shah', totalMinor: 120800 },
 ]
 
 /** Stage 1 M3-S2: the stock levels the fake starts with (`available` per item and location; invented). */
@@ -135,6 +148,7 @@ export class FakeShopifyWriteUpstream {
   orders = new Map<string, FakeWriteOrder>(INITIAL_WRITE_ORDERS.map(o => [o.id, { ...o, tags: [...o.tags] }]))
   drafts: FakeDraftOrder[] = []
   variants = new Set<string>(WRITE_VARIANTS)
+  products = new Map<string, FakeProduct>(WRITE_PRODUCTS)
   stock = copyStock()
   adjustments = 0
   refundOrders = copyRefundOrders()
@@ -150,7 +164,7 @@ export class FakeShopifyWriteUpstream {
   /** Idempotency keys seen: the variables sent with each and the first answer. */
   #idempotent = new Map<string, { variables: string; data: Record<string, unknown> }>()
   issuedTokens: string[] = []
-  scope: string[] = [...SHOPIFY_WRITE_SCOPES]
+  scope: string[] = [...SHOPIFY_WRITE_SCOPES, ...SHOPIFY_WRITE_CARD_SCOPES]
   credentials = { clientId: SHOPIFY_WRITE_TEST_CLIENT_ID, clientSecret: SHOPIFY_WRITE_TEST_CLIENT_SECRET }
   apiVersion = SHOPIFY_WRITE_API_VERSION
   #tokens = new Set<string>()
@@ -160,6 +174,7 @@ export class FakeShopifyWriteUpstream {
     this.orders = new Map(INITIAL_WRITE_ORDERS.map(o => [o.id, { ...o, tags: [...o.tags] }]))
     this.drafts = []
     this.variants = new Set(WRITE_VARIANTS)
+    this.products = new Map(WRITE_PRODUCTS)
     this.stock = copyStock()
     this.adjustments = 0
     this.refundOrders = copyRefundOrders()
@@ -171,7 +186,7 @@ export class FakeShopifyWriteUpstream {
     this.reads = []
     this.documentErrors = []
     this.#idempotent = new Map()
-    this.scope = [...SHOPIFY_WRITE_SCOPES]
+    this.scope = [...SHOPIFY_WRITE_SCOPES, ...SHOPIFY_WRITE_CARD_SCOPES]
   }
 
   fetch = async (req: Request): Promise<Response> => {
@@ -246,6 +261,10 @@ export class FakeShopifyWriteUpstream {
       return gqlError(`${op}: ${wrong}`, 'GRAPHQL_VALIDATION_FAILED', this.apiVersion)
     }
 
+    // Stage 1 M3 (card details): a query the grant has no scope for runs nothing, as Shopify's ACCESS_DENIED.
+    if (handler.needs !== undefined && !this.scope.includes(handler.needs)) {
+      return gqlError(`Access denied for ${handler.root} field. Required access: \`${handler.needs}\` access scope.`, 'ACCESS_DENIED', this.apiVersion)
+    }
     const fault = this.faults[handler.key] ?? 'succeed'
     const logged = JSON.parse(JSON.stringify(variables)) as Record<string, unknown>
     const seen = handler.idempotent && typeof variables.idempotencyKey === 'string' ? this.#idempotent.get(variables.idempotencyKey) : undefined

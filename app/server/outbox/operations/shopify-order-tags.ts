@@ -4,7 +4,10 @@
 // item, so its line names every order in it (at most the bulk threshold, 5). The hub checks the arguments again,
 // strictly, and takes at most 5 orders in one call (hub/connectors/shopify/write/ops/tags.ts).
 import { z } from 'zod'
+import type { ActionDetail } from '../../../shared/contract/actions.ts'
 import type { ResolveFacts } from '../../permissions/types.ts'
+import { detailOf, orderRow } from '../detail.ts'
+import type { CardFactsView, FactsWanted } from '../detail.ts'
 
 /** A Shopify order's GraphQL id, the form the read tools return. */
 const ORDER_ID = /^gid:\/\/shopify\/Order\/[1-9][0-9]{0,19}$/
@@ -51,4 +54,22 @@ export function tagsCard(verb: 'Add' | 'Remove', a: OrderTagsArgs): { title: str
   const lines = a.tags.map(t => `Tag: ${t}`)
   if (a.orderIds.length > 1) lines.push(`Orders: ${a.orderIds.map(orderNumber).join(', ')}`)
   return { title: `${verb} ${tags} ${verb === 'Add' ? 'to' : 'from'} ${where}`, lines }
+}
+
+/** Stage 1 M3 (card details): the orders, for their names, customers and totals. */
+export const tagsFacts = (a: OrderTagsArgs): FactsWanted => ({ orderIds: [...a.orderIds], variantIds: [] })
+
+/** Stage 1 M3 (card details): one row per order, "#3901 · Alex Moore · $642.10". */
+export const tagsDetail = (a: OrderTagsArgs, f: CardFactsView): ActionDetail | null => detailOf(a.orderIds.map(id => orderRow(f, id)))
+
+const ordersWords = (n: number) => (n === 1 ? '1 order' : `${n} orders`)
+
+/**
+ * Stage 1 M3 (card details): a batch's title. One call's batch names its tags ("Tag 450 orders as VIP", "Remove VIP, rush
+ * from 12 orders"); a collecting card holds several calls, so only the count ("Tag 450 orders").
+ */
+export function tagsBatchTitle(verb: 'add' | 'remove', records: number, a: OrderTagsArgs | null): string {
+  const tags = a?.tags.join(', ')
+  if (verb === 'add') return tags ? `Tag ${ordersWords(records)} as ${tags}` : `Tag ${ordersWords(records)}`
+  return tags ? `Remove ${tags} from ${ordersWords(records)}` : `Remove tags from ${ordersWords(records)}`
 }

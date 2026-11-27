@@ -25,6 +25,8 @@ import { auditInputSha256 } from '../../shared/protocol/index.ts'
 import { SYSTEM_MEMBER_ID } from '../db/ids.ts'
 import { all, first, stmt } from '../db/sql.ts'
 import { outboxFacts } from '../outbox/facts.ts'
+import { factsView } from '../outbox/detail.ts'
+import type { CardFactsReader } from '../outbox/detail.ts'
 import { operationEntry, operationForTool, OPERATIONS } from '../outbox/operations/index.ts'
 import { openOutbox } from '../outbox/store.ts'
 import { SEND_KIND, sendTaskId } from '../outbox/send-task.ts'
@@ -146,7 +148,7 @@ function itemWords(item: OutboxItemRow, batch: OutboxActionRow, name: string): s
 export interface ActionsRouteDeps {
   db: D1Database
   /** BrandAgent: admission, the asks, the send's task, and the hub's word on the accounts (the egress holds no hub binding but ReadGateway). */
-  rpc: Pick<BrandAgentRpc, 'admitAction' | 'askNoted' | 'beginAskWait' | 'endAskWait' | 'askTurnLive' | 'actionChanged' | 'poke' | 'hubAccounts'>
+  rpc: Pick<BrandAgentRpc, 'admitAction' | 'askNoted' | 'beginAskWait' | 'endAskWait' | 'askTurnLive' | 'actionChanged' | 'poke' | 'hubAccounts' | 'cardFacts'>
   now(): number
   sleep(ms: number): Promise<void>
   requestId(): string
@@ -261,7 +263,8 @@ export async function callAction(grant: RunGrant, name: string, args: Record<str
   const who = await askerFor(d.db, admitted)
   const port = openOutbox({
     db: d.db, requestId, now: d.now,
-    facts: outboxFacts({ db: d.db, hubAccounts: () => d.rpc.hubAccounts() }),
+    // Stage 1 M3 (card details): the store's facts go into the card's display-only rows; the answer below never has them.
+    facts: outboxFacts({ db: d.db, hubAccounts: () => d.rpc.hubAccounts(), cardFacts: cardFactsReader(d.rpc) }),
     schedule: (actionId, atMs) => d.rpc.poke({ kind: SEND_KIND, id: sendTaskId(actionId), dueAtMs: atMs }),
   })
   const r = await port.request(
@@ -367,10 +370,17 @@ async function approverName(db: D1Database, row: Pick<OutboxActionRow, 'approver
   return name ? name : 'the person'
 }
 
+/** Stage 1 M3 (card details): the outbox's reader of the store's facts, through BrandAgent (the egress holds no hub binding). */
+export const cardFactsReader = (rpc: Pick<BrandAgentRpc, 'cardFacts'>): CardFactsReader => async req => {
+  const facts = await rpc.cardFacts(req)
+  return facts === null ? null : factsView(facts)
+}
+
 /** The approval tools' wiring (mcp/tools/approvals, M2-E's seam): the hub's accounts, N14's admission, the routine's asker. */
 export function approvalsWiring(d: ActionsRouteDeps): ApprovalsWiring {
   return {
     hubAccounts: () => d.rpc.hubAccounts(),
+    cardFacts: cardFactsReader(d.rpc),
     async admit(scope, input) {
       const a = await d.rpc.admitAction(scope.turnId, APPROVAL_REQUEST_TOOL, await auditInputSha256(input))
       if ('refused' in a) {

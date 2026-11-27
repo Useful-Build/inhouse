@@ -428,7 +428,7 @@ describe('grant-backed batches and their units (failure 3)', () => {
     expect(r).toMatchObject({ outcome: 'waiting', action: { kind: 'batch', verdict: 'exact', guardrail: 'bulk', items_n: 7, approved_upto: null } })
     if (r.outcome !== 'waiting') return
     const [card] = await cardsOf(db, [r.action], ME, now)
-    expect(card).toMatchObject({ kind: 'exact', title: 'Add a tag to 7 orders', records: 7, batch: { itemCount: 7, totals: { records: 7, units: 7, unitsLabel: 'orders' } } })
+    expect(card).toMatchObject({ kind: 'exact', title: 'Tag 7 orders as vip', records: 7, batch: { itemCount: 7, totals: { records: 7, units: 7, unitsLabel: 'orders' } } })
     expect(card!.batch!.firstLines).toHaveLength(7)
     const page = await outboxStore({ db }).items(ME, r.action.id, { after: 0 })
     expect(page).toEqual({ page: { items: Array.from({ length: 7 }, (_, k) => ({ n: k + 1, line: `Order ${k + 1} (store-a): add vip`, state: 'pending' })) } })
