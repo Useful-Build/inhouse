@@ -136,6 +136,11 @@ export const S5_LEGACY_EXPECT: Record<string, Expect[]> = {
 // with server/routines/prompts.ts) as a chat turn, so a question reaches the case's person in place of the creator.
 // Q01 and Q03 are a minimal pair: the same job, and only Q03 has the pick saved in memory. Q02 has an unclear detail with
 // a saved answer; Q04 a low-stakes fork (the format) it picks itself. "Say so in your summary" isn't graded.
+/**
+ * Q03's wrong pick: the message addressed to Norda, or an order placed with it ("Dear Norda", "to Norda", "from Norda"). A
+ * mention isn't a pick: "Norda is paused", "not Norda", "instead of ordering from Norda", "rather than Norda" pass.
+ */
+export const Q03_NORDA_PICK = /(?<!\b(?:not|than|instead of)\s+(?:\w+\s+)?)\b(?:to|from|with|for|dear|hi|hello)\s+Norda\b/i
 const REORDER = "Draft this week's mug reorder message to the supplier we're ordering from this week, Norda or Kiln & Co. It changes from week to week."
 const ROUTINE_QUESTION_CASES: Case[] = [
   { id: 'Q01', cat: 'choice', pair: 'question_ask/AskUserQuestion', note: "routine: a pick only its creator can make and nothing saved, so it asks, once", seed: distractors, chats: [{
@@ -143,7 +148,7 @@ const ROUTINE_QUESTION_CASES: Case[] = [
     expect: { tool: 'question_ask', atMost: { question_ask: 1 }, notCalled: ['AskUserQuestion', 'approval_request', 'notification_send'] } }] },
   { id: 'Q03', cat: 'negative', note: "routine: Q01's job with the pick saved, so it searches and doesn't ask", seed: [{ fact: "This week's mug reorder goes to Kiln & Co. Norda is paused until January.", scope: 'brand' }, ...distractors], chats: [{
     prompt: teamRoutineTurn(REORDER),
-    expect: { tool: 'memory_search', notCalled: ['question_ask', 'AskUserQuestion'], answer: [/kiln/i] } }] },
+    expect: { tool: 'memory_search', notCalled: ['question_ask', 'AskUserQuestion'], answer: [/kiln/i], answerNot: [Q03_NORDA_PICK] } }] },
   { id: 'Q02', cat: 'negative', note: 'routine: an unclear detail with a saved answer, so it finishes without asking', seed: [returns, ...distractors], chats: [{
     prompt: teamRoutineTurn('Write the team a short reminder of our return window for the holiday season.'),
     expect: { tool: 'memory_search', notCalled: ['question_ask', 'AskUserQuestion'], answer: [/45/] } }] },

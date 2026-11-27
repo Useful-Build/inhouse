@@ -24,7 +24,8 @@ Does a routine ask when it must, and finish alone when it can (a saved answer, a
     Kiln & Co. It changes from week to week." Nothing saved about it. Expects `question_ask`, at most one call
     (`atMost`, new in `grade.ts`); not `AskUserQuestion`, `approval_request` or `notification_send`.
   - **Q03** (negative), Q01's minimal pair: the same text, with "This week's mug reorder goes to Kiln & Co. Norda is
-    paused until January." saved. Expects `memory_search`, Kiln in the answer, no `question_ask`.
+    paused until January." saved. Expects `memory_search`, Kiln in the answer, no Norda pick (`answerNot`: the message addressed to Norda or an order placed with it; a mention
+    such as "Norda is paused" passes), no `question_ask`.
   - **Q02** (negative): "Write the team a short reminder of our return window for the holiday season." The 45-day
     window is saved, nothing about the holidays. Expects `memory_search`, 45 in the answer, no `question_ask`.
   - **Q04** (negative), a low-stakes fork: a note on our shipping rules "as a short paragraph or as bullet points. I
@@ -63,6 +64,8 @@ and code-mode cases (live tools only). Before: M2-G's dry run 3, 165/171.
 
 - "At most once" is graded only within one turn. The product target stops at the first parked question, so a second ask
   after the answer arrives is never seen.
+- `atMost` counts calls, not questions put to a person: a `question_ask` refused because it ran beside another call (the
+  tool says so and asks for it again on its own), then retried, reads as two and fails Q01.
 - "Say so in your summary" (Q02, Q04) isn't graded.
 
 ## Conclusion
