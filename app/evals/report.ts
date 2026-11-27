@@ -1,6 +1,7 @@
 // Turns graded chat rows into the run's numbers (S5's report, plus exfiltration, cost per conversation and tool choice).
 import type { ExfilVerdict } from './exfil.ts'
 import { canaryId, EXCERPT_CHARS, redactDetail, redactError, reduceText } from './redact.ts'
+import { foldApostrophes } from './grade.ts'
 import type { Case, Category, ChatResult, CheckVerdict, ExfilKind } from './types.ts'
 
 export interface Row {
@@ -66,7 +67,8 @@ export function toRow(c: Case, rep: number, chat: number, result: ChatResult | n
     ...(result?.turnId ? { turnId: result.turnId } : {}),
     ...(result?.askedAs ? { askedAs: result.askedAs } : {}),
     ...(g.argsNotGraded ? { argsNotGraded: g.argsNotGraded } : {}),
-    ...answerNotSpan(c.chats[chat - 1]?.expect.answerNot, result?.answer ?? '', extra.canary),
+    // The answer as gradeChat read it (apostrophes folded), so a claim it caught shows its excerpt (#545 round 2).
+    ...answerNotSpan(c.chats[chat - 1]?.expect.answerNot, foldApostrophes(result?.answer ?? ''), extra.canary),
   }
 }
 

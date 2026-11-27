@@ -129,6 +129,25 @@ describe('collecting (failure 1)', () => {
     expect(await ask(300)).toMatchObject({ outcome: 'collected', existing: false, item: { n: 1 } })
   })
 
+  it('#504, #542: a collecting batch past its expiry, not yet swept, takes no call and matches no payload; a fresh one opens', async () => {
+    const b = await collecting(1)
+    now += 7 * 86_400_000
+    // Five fresh waiting singles (the old five expired with the batch), then the same payload as the expired item.
+    for (let k = 1; k <= 5; k++) expect((await ask(10 + k)).outcome).toBe('waiting')
+    const again = await ask(100)
+    expect(again).toMatchObject({ outcome: 'collected', existing: false, item: { n: 1 } })
+    if (again.outcome !== 'collected') throw new Error('expected a collected call')
+    expect(again.action.id).not.toBe(b.id)
+    expect(again.action.coalesce_key).toBe(b.coalesce_key)
+    expect(await ask(101)).toMatchObject({ outcome: 'collected', existing: false, action: { id: again.action.id }, item: { n: 2 } })
+    // The expired card stopped collecting and kept its one item; the sweep then expires it.
+    expect(await rowOf(db, b.id)).toMatchObject({ state: 'waiting', coalesce_key: null, items_n: 1 })
+    expect((await itemsOf(db, b.id)).map(i => [i.n, i.state])).toEqual([[1, 'pending']])
+    await sweepOutbox({ db, nowMs: now, state: () => ({ paused: false, pauseGen: 0 }), scheduler: { ensure: () => {} }, notify: notices().notify, requestId: fresh('sweep') })
+    expect(await rowOf(db, b.id)).toMatchObject({ state: 'expired', coalesce_key: null })
+    expect(await rowOf(db, again.action.id)).toMatchObject({ state: 'waiting', items_n: 2, coalesce_key: b.coalesce_key })
+  })
+
   it('parallel appends: one collecting batch, its positions 1 to the tip with no gap, every call either in it once or told busy', async () => {
     for (let k = 1; k <= 5; k++) await ask(k)
     const results = await Promise.all(Array.from({ length: 12 }, (_, k) => ask(400 + k)))

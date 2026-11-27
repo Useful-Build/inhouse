@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "T11",
+  "cat": "choice",
+  "pair": "routine_create/notification_send",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "routine_create"
+  ],
+  "toolSearches": 0,
+  "answer": "Created the routine.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0,
+  "answer": "Created the routine.",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__routine_create",
+    "inputSha256": "6666e7371ea7d23de34b00784b1d786a258a405bef326fb888a8a617acbe329f",
+    "inputExcerpt": "{\"name\":\"Weekday low stock\",\"instruction\":\"Check stock and list low items\",\"days",
+    "resultExcerpt": "Created."
+   }
+  ]
+ }
+}
