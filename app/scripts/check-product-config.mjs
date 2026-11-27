@@ -136,7 +136,8 @@
 // P5's HUB_DELIVERY (the eval brand is at Watch and delivers nothing to Slack), and never the candidate's, a PR's or the
 // house's hub; `--eval --hub` locks the eval hub's own config by the hub rules above, with one exception: the eval hub
 // alone may bind one D1, exactly `{ binding: "EVAL_WRITE_LOG", database_name: <the eval deployment's database> }`
-// (EvalWriteGateway's log; no migrations_dir).
+// (EvalWriteGateway's log; no migrations_dir). (Stage 1 M3, N31) The same binding switches the hub test build's fake
+// Slack to the eval workspace the eval door seeds there (hub/testing/eval-slack.ts), so only the eval hub serves it.
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, isAbsolute, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -417,8 +418,10 @@ const EVAL_HUB_SETS = [['HUB', 'HUB_CONNECT'], ['HUB', 'HUB_CONNECT', 'HUB_WRITE
 const EVAL_SERVICES_SHAPE = 'services is set: the eval deployment may bind exactly { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway } to its own hub, or those two and HUB_WRITE -> EvalWriteGateway (its write log), each entry { binding, service, entrypoint } and nothing else (never HUB_DELIVERY, and HUB_WRITE never to WriteGateway)'
 /**
  * (Stage 1 M3-R, N30) The one D1 binding the eval hub config may hold: the eval deployment's own database
- * (evalNames().d1), which EvalWriteGateway writes its log to (hub/testing/eval-write.ts reads `env.EVAL_WRITE_LOG`). The ops
- * repo adds it to the eval hub's config; no other hub config may bind a D1.
+ * (evalNames().d1), which EvalWriteGateway writes its log to (hub/testing/eval-write.ts reads `env.EVAL_WRITE_LOG`), and
+ * (Stage 1 M3, N31) whose fake Slack workspace the hub test build's Slack fake serves while it is bound
+ * (hub/testing/eval-slack.ts reads `env?.EVAL_WRITE_LOG`). The ops repo adds it to the eval hub's config; no other hub
+ * config may bind a D1, so no other hub serves that workspace.
  */
 export const EVAL_WRITE_LOG_BINDING = 'EVAL_WRITE_LOG'
 const SERVICES_SHAPE = 'services is set: a sandbox config may not use it, but for exactly { HUB -> ReadGateway }, { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway, HUB_DELIVERY -> DeliveryGateway } or { HUB -> ReadGateway, HUB_CONNECT -> ConnectGateway, HUB_DELIVERY -> DeliveryGateway, HUB_WRITE -> WriteGateway }, each entry { binding, service: <its own hub>, entrypoint } and nothing else'
