@@ -25,7 +25,7 @@
 // the call-time rule check in B2 lets through only the calls of items already claimed when a disturbance landed.
 import { fc } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { runBatch } from '../../db/sql.ts'
 import { POLICY_REV } from '../../permissions/policy.ts'
 import { ceiling, insertGrant } from '../../permissions/test-support.ts'
@@ -35,7 +35,7 @@ import { sweepOutbox } from '../sweep.ts'
 import { ASKER, SHOP_GEN, fresh, notices, outbox, requestCtx, world } from '../test-support.ts'
 import type { OutboxActionRow, OutboxItemRow } from '../types.ts'
 import { itemClaimStmt } from './send.ts'
-import { afterNthCall, itemHub, itemsOf, pass, wideArgs, widenTagAdd } from './test-support.ts'
+import { afterNthCall, itemHub, itemsOf, pass, wideArgs } from './test-support.ts'
 import type { ItemMode } from './test-support.ts'
 
 const db = env.DB
@@ -111,7 +111,7 @@ const ITEM_FIXED = (i: OutboxItemRow) => JSON.stringify([i.item_id, i.chat_id, i
 
 async function runSequence(withGrant: boolean, steps: Step[]): Promise<void> {
   await world(db)
-  // Writes through the widened tag_add: up to 100 orders, 3 a call at most before a call is a bulk batch.
+  // tag_add's list form: up to 100 orders, 3 a call at most before a call is a bulk batch.
   await ceiling(db, 'shopify.order.tag_add', { enabled: true, perDayMax: 50, loweredRev: 1, unitsMax: 100, bulkThreshold: 3, batchMax: 12 })
   let now = T0
   const clock = () => now
@@ -386,10 +386,6 @@ async function runSequence(withGrant: boolean, steps: Step[]): Promise<void> {
 }
 
 describe('batches (property)', () => {
-  let restore: () => void = () => {}
-  beforeAll(() => { restore = widenTagAdd() })
-  afterAll(() => restore())
-
   it('holds B1 to B7 over random sequences', async () => {
     await fc.assert(fc.asyncProperty(fc.boolean(), fc.array(stepArb, { minLength: 6, maxLength: 36 }), runSequence), { numRuns: 120 })
   }, 600_000)

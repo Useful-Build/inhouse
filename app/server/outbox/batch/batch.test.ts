@@ -12,7 +12,7 @@
 //     batch row as a stale single, misses a stale item or a lost batch; a restore leaves a pending item claimable;
 //  5. #493: an "Always allow" on a card over a bulk threshold lowered since loops back to waiting.
 import { env } from 'cloudflare:workers'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { AuditArgsSchema } from '../../../shared/contract/audit.ts'
 import { POLICY_REV } from '../../permissions/policy.ts'
 import { ceiling, insertGrant } from '../../permissions/test-support.ts'
@@ -24,7 +24,7 @@ import { ASKER, SHOP_GEN, fresh, notices, outbox, requestCtx, rowOf, tagArgs, wo
 import type { OutboxActionRow, OutboxRequestResult } from '../types.ts'
 import { OPERATIONS } from '../operations/index.ts'
 import type { OperationEntry } from '../operations/types.ts'
-import { afterNthCall, itemHub, itemsOf, pass, wideArgs, widenTagAdd } from './test-support.ts'
+import { afterNthCall, itemHub, itemsOf, pass, wideArgs } from './test-support.ts'
 import type { ItemMode } from './test-support.ts'
 
 const db = env.DB
@@ -189,8 +189,7 @@ describe('answers (failure 2)', () => {
   })
 
   it('an item past a ceiling lowered since is refused at the answer (`over_limit`)', async () => {
-    const restore = widenTagAdd()
-    try {
+    {
       await ceiling(db, 'shopify.order.tag_add', { enabled: true, perDayMax: 50, loweredRev: 1, unitsMax: 100 })
       for (let k = 1; k <= 5; k++) {
         expect((await outbox(db, clock).request(requestCtx({ nowMs: now }), { operation: 'shopify.order.tag_add', args: wideArgs([k]) }, { mode: 'tool' })).outcome).toBe('waiting')
@@ -200,8 +199,6 @@ describe('answers (failure 2)', () => {
       await ceiling(db, 'shopify.order.tag_add', { enabled: true, perDayMax: 50, loweredRev: 2, unitsMax: 1 })
       expect(await outbox(db, clock).answer(ME, r.action.id, { choice: 'approve', ifRev: 1, upTo: 1, totals: { records: 2, units: 2 } }))
         .toEqual({ refused: { code: 'conflict', reason: 'over_limit' } })
-    } finally {
-      restore()
     }
   })
 })
@@ -338,12 +335,9 @@ describe('sending (failure 3)', () => {
 })
 
 describe('grant-backed batches and their units (failure 3)', () => {
-  let restore: () => void = () => {}
   beforeEach(async () => {
-    restore = widenTagAdd()
     await ceiling(db, 'shopify.order.tag_add', { enabled: true, perDayMax: 50, loweredRev: 1, unitsMax: 100 })
   })
-  afterEach(() => restore())
 
   const call = (orders: number[]) => outbox(db, clock).request(requestCtx({ nowMs: now }), { operation: 'shopify.order.tag_add', args: wideArgs(orders) }, { mode: 'tool' })
 
@@ -355,7 +349,7 @@ describe('grant-backed batches and their units (failure 3)', () => {
     expect(r.action.tool_use_id).not.toBeNull()
     const uses = await db.prepare('SELECT units FROM permission_uses WHERE action_id = ?').bind(r.action.id).all<{ units: number }>()
     expect(uses.results).toEqual([{ units: 3 }])
-    expect((await itemsOf(db, r.action.id)).map(i => [i.n, i.records, i.line])).toEqual([[1, 1, 'Orders 1 (store-a): add vip'], [2, 1, 'Orders 2 (store-a): add vip'], [3, 1, 'Orders 3 (store-a): add vip']])
+    expect((await itemsOf(db, r.action.id)).map(i => [i.n, i.records, i.line])).toEqual([[1, 1, 'Order 1 (store-a): add vip'], [2, 1, 'Order 2 (store-a): add vip'], [3, 1, 'Order 3 (store-a): add vip']])
   })
 
   it('a call over the bulk threshold is one exact card with the full list', async () => {
@@ -363,10 +357,10 @@ describe('grant-backed batches and their units (failure 3)', () => {
     expect(r).toMatchObject({ outcome: 'waiting', action: { kind: 'batch', verdict: 'exact', guardrail: 'bulk', items_n: 7, approved_upto: null } })
     if (r.outcome !== 'waiting') return
     const [card] = await cardsOf(db, [r.action], ME, now)
-    expect(card).toMatchObject({ kind: 'exact', title: 'Add vip to 7 orders', records: 7, batch: { itemCount: 7, totals: { records: 7, units: 7, unitsLabel: 'orders' } } })
+    expect(card).toMatchObject({ kind: 'exact', title: 'Add a tag to 7 orders', records: 7, batch: { itemCount: 7, totals: { records: 7, units: 7, unitsLabel: 'orders' } } })
     expect(card!.batch!.firstLines).toHaveLength(7)
     const page = await outboxStore({ db }).items(ME, r.action.id, { after: 0 })
-    expect(page).toEqual({ page: { items: Array.from({ length: 7 }, (_, k) => ({ n: k + 1, line: `Orders ${k + 1} (store-a): add vip`, state: 'pending' })) } })
+    expect(page).toEqual({ page: { items: Array.from({ length: 7 }, (_, k) => ({ n: k + 1, line: `Order ${k + 1} (store-a): add vip`, state: 'pending' })) } })
   })
 
   it('a failed item gives its units back once; an item that went out never does; the rest stopped by a revoke go back once', async () => {

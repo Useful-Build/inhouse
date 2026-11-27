@@ -1,10 +1,7 @@
 // Helpers for the batch tests (server/outbox/batch/*.test.ts, in the Workers runtime). Never imported by the Worker.
-import { z } from 'zod'
 import type { WriteGateway, WriteRequest, WriteResult } from '../../../hub/index/contract.ts'
 import { sendAction } from '../dispatch.ts'
 import type { DispatchDeps } from '../dispatch.ts'
-import { OPERATIONS } from '../operations/index.ts'
-import type { OperationEntry } from '../operations/types.ts'
 import { fresh, notices } from '../test-support.ts'
 import type { OutboxActionRow, OutboxItemRow } from '../types.ts'
 
@@ -67,31 +64,8 @@ export async function pass(db: D1Database, actionId: string, o: Partial<Dispatch
 export const itemsOf = async (db: D1Database, actionId: string) =>
   (await db.prepare('SELECT * FROM outbox_items WHERE action_id = ? ORDER BY n').bind(actionId).all<OutboxItemRow>()).results
 
-/** `shopify.order.tag_add`'s arguments as M3-S1 widens them: 1 to 100 orders, each its own item. */
-const WideArgs = z.strictObject({ orderIds: z.array(z.string().regex(/^gid:\/\/shopify\/Order\/[1-9][0-9]{0,19}$/)).min(1).max(100), tags: z.array(z.string().min(1).max(40)).min(1).max(5) })
-type Wide = z.infer<typeof WideArgs>
-
-export const wideArgs = (orders: readonly number[], tag = 'vip'): Wide => ({ orderIds: orders.map(o => `gid://shopify/Order/${o}`), tags: [tag] })
-
-/**
- * Swaps `shopify.order.tag_add` for the shape M3-S1 gives it (a list of orders, one item each), so a call over the bulk
- * threshold or a multi-record run makes its own batch. Returns the undo. Tests only: the table is otherwise fixed.
- */
-export function widenTagAdd(): () => void {
-  const table = OPERATIONS as unknown as Record<string, OperationEntry>
-  const was = table['shopify.order.tag_add']!
-  const wide: OperationEntry<Wide> = {
-    ...(was as unknown as OperationEntry<Wide>),
-    args: WideArgs,
-    records: a => a.orderIds.length,
-    units: a => a.orderIds.length,
-    items: a => a.orderIds.map(id => ({ orderIds: [id], tags: a.tags })),
-    itemLine: (a, f) => `Orders ${a.orderIds.map(o => o.slice(o.lastIndexOf('/') + 1)).join(', ')} (${f.accounts.shopify?.shop ?? ''}): add ${a.tags.join(', ')}`,
-    card: a => ({ title: `Add ${a.tags.join(', ')} to ${a.orderIds.length} orders`, lines: a.tags.map(t => `Tag: ${t}`) }),
-  }
-  table['shopify.order.tag_add'] = wide as unknown as OperationEntry
-  return () => { table['shopify.order.tag_add'] = was }
-}
+/** `shopify.order.tag_add`'s arguments for these orders (M3-S1's list form), one item per order when it splits. */
+export const wideArgs = (orders: readonly number[], tag = 'vip') => ({ orderIds: orders.map(o => `gid://shopify/Order/${o}`), tags: [tag] })
 
 /** `db`, calling `then` once its `n`-th call (a statement's run, first or all, or a batch) settles. */
 export function afterNthCall(db: D1Database, n: number, then: () => Promise<void> | void): D1Database {

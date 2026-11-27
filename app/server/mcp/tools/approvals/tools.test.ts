@@ -15,7 +15,7 @@ import { z } from 'zod'
 import { lastLineId, linesSince } from '../../../db/test-support.ts'
 import { POLICY_REV } from '../../../permissions/policy.ts'
 import { ceiling, insertGrant, person } from '../../../permissions/test-support.ts'
-import { itemsOf, wideArgs, widenTagAdd } from '../../../outbox/batch/test-support.ts'
+import { itemsOf, wideArgs } from '../../../outbox/batch/test-support.ts'
 import { ADMIN, ASKER, HUB_FACTS, OTHER, SHOP_GEN, fresh, resetOutbox, rowOf, tagArgs, world } from '../../../outbox/test-support.ts'
 import { INHOUSE_TOOLS } from '../../registry.ts'
 import type { ToolDeps, ToolHandler, ToolResult, ToolScope } from '../../server/tool.ts'
@@ -308,8 +308,7 @@ describe('Stage 1 M3-B: batches (N22)', () => {
   })
 
   it('a call\'s own batch (over the bulk threshold) is that call\'s: the agent may withdraw it, its items with it', async () => {
-    const restore = widenTagAdd()
-    try {
+    {
       await ceiling(db, 'shopify.order.tag_add', { enabled: true, perDayMax: 50, loweredRev: 1, unitsMax: 100 })
       const r = await call('approval_request', { operation: 'shopify_order_tag_add', args: wideArgs([1, 2, 3, 4, 5, 6, 7]) }, scope())
       expect(r.isError, text(r)).toBeUndefined()
@@ -317,8 +316,6 @@ describe('Stage 1 M3-B: batches (N22)', () => {
       expect(await rowOf(db, id)).toMatchObject({ kind: 'batch', state: 'waiting', guardrail: 'bulk', items_n: 7 })
       expect(data(await call('approval_withdraw', { approval_id: id }, scope()))).toMatchObject({ status: 'withdrawn' })
       expect((await itemsOf(db, id)).every(i => i.state === 'withdrawn')).toBe(true)
-    } finally {
-      restore()
     }
   })
 })

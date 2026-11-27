@@ -24,7 +24,7 @@ test.describe.configure({ mode: 'serial' })
 const TAG_ADD = 'shopify.order.tag_add'
 const run = Date.now().toString(36)
 const LOOP_TAG = `m3b-${run}`
-const orderArgs = (order: number, tag = LOOP_TAG) => ({ orderId: `gid://shopify/Order/${order}`, tags: [tag] })
+const orderArgs = (order: number, tag = LOOP_TAG) => ({ orderIds: [`gid://shopify/Order/${order}`], tags: [tag] })
 
 interface StoreWrite { operation: string; variables: { tags?: string[] } }
 const loopWrites = async (request: APIRequestContext): Promise<number> => {
