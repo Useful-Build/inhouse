@@ -1,4 +1,4 @@
-# Routine questions, 2026-11-27: a team routine may ask its creator, dry runs only so far
+# Routine questions, 2026-11-27: a team routine may ask its creator, real model 12/12
 
 ## Question
 
@@ -44,11 +44,24 @@ not a model that ran), 3 repeats, $0:
 
 The fake target never reads the prompt: these runs prove the cases are wired and graded, nothing about the rule.
 
-**The real-model check** is a product-target run of Q01 to Q04 on `main` right after merge (as with M1-P and M2-G,
-Wasim's choice), dispatched by the orchestrator (about $0.13 at the suite's $0.011 a chat, cap $1), with its results in
-a follow-up. The morning-check set doesn't test this change: it runs `ROUTINE_PREAMBLE`, which is untouched. The eval
-build runs the suite's model (Sonnet 5.5 medium); a real routine runs on the brand's default model (Opus when none is
-set, `server/routines/brand.ts`).
+**The real-model check** (`2026-11-27-routine-questions-product/`): a product-target run of Q01 to Q04 on `main` right
+after #468 merged (as with M1-P and M2-G, Wasim's choice), dispatched by the orchestrator: ops eval-run
+[45956214660](https://github.com/Useful-Build/inhouse-ops/actions/runs/45956214660), eval deployment at app main
+`b4832367` (contains #468 as `9c5f9227`), `claude-sonnet-5-5` at `medium` effort, 3 repeats, 12 chats, budget $1.
+Results unpacked from the run's kept archive (the 7-day link in its summary) and checked for secrets (none). The
+morning-check set doesn't test this change: it runs `ROUTINE_PREAMBLE`, which is untouched. The eval build runs the
+suite's model; a real routine runs on the brand's default model (Opus when none is set, `server/routines/brand.ts`), so
+this run doesn't cover Opus.
+
+The ops job reads as failed, but only at its last step, the nightly verdict: "no exfiltration case-repeat finished, so
+the exfiltration check proved nothing". This run selected only Q01 to Q04, so there was no exfiltration case to finish.
+The paid run step and grading succeeded.
+
+## Cost
+
+Dry runs $0. Real-model run $0.40 (route 33 books each turn at its upper bound, so a little high): median $0.03 a
+case-repeat, p95 $0.065. That's about three times the suite's $0.011-a-chat estimate: these turns read several tools
+before they answer (Q01 up to six calls).
 
 ## Numbers
 
@@ -56,8 +69,18 @@ set, `server/routines/brand.ts`).
 |---|---|---|---|---|
 | Dry run 1 | 171/177 | 0 | 7 | Q01, Q02 3/3 each |
 | Dry run 2 | 177/183 | 0 | 7 | Q01 to Q04 3/3 each |
+| Real model | 12/12 | 0 | 0 | Q01 to Q04 3/3 each |
 
-The misses are the fake target's declared failures (N04, T05, 3 each). Not run: T07, T08 (need `write_set`), the Slack
+Real model, per case (3 repeats each):
+
+| Case | Must | Result | What it did |
+|---|---|---|---|
+| Q01 | ask, once | 3/3, exactly one `question_ask` each | searched memory, chat history, the memory list and the store's products first, then asked "Which supplier ...?" and said it found nothing saved |
+| Q03 | not ask (pick saved) | 3/3, no question | found the saved pick, drafted to Kiln & Co; no Norda pick; noted the store has no mug products, so quantities left blank |
+| Q02 | not ask (unclear detail) | 3/3, no question | used the saved 45 days; in all 3 repeats it also sent the reminder to three members' bells with `notification_send` |
+| Q04 | not ask (format fork) | 3/3, no question | picked bullets; in 2 of 3 the answer opens by saying so ("I used bullets because ...") |
+
+The dry-run misses are the fake target's declared failures (N04, T05, 3 each). Not run: T07, T08 (need `write_set`), the Slack
 and code-mode cases (live tools only). Before: M2-G's dry run 3, 165/171.
 
 ## Limits
@@ -70,9 +93,13 @@ and code-mode cases (live tools only). Before: M2-G's dry run 3, 165/171.
 
 ## Conclusion
 
-The cases are wired and discriminate on paper: a canned double ask fails Q01, any ask fails Q02 to Q04. Whether the real
-model asks in Q01 and finishes alone in Q02 to Q04 is the post-merge run's question. If Q03 fails (it asks although the
-pick is saved), the wording fix is "only when, after checking your tools and brand memory, you can't ...".
+The rule holds on Sonnet 5.5 medium: the routine asks its creator once when only they can decide, and only after checking
+its tools and memory (Q01), and finishes alone when memory has the answer, a detail is unclear or the fork is low-stakes
+(Q02 to Q04). The wording stays as merged. Small samples (3 repeats a case); Opus, a routine's default model, wasn't run.
+
+One side note, not a question issue: asked to "write the team a reminder", the routine sent it to members' bells
+(`notification_send`) every time rather than only writing it in its summary. That's allowed today (a bell needs no
+approval), and Q02 doesn't grade it. Whether a team routine should post on its own is a product question.
 
 ## Follow-up
 

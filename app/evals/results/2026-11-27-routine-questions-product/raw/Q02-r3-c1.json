@@ -1,0 +1,48 @@
+{
+ "row": {
+  "caseId": "Q02",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "notification_send"
+  ],
+  "toolSearches": 0,
+  "answer": "I sent the holiday return window reminder to Sam, Dana and Leo as an in-app bell",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_Xjheh95Lq00W9KbjQ6u7Ig",
+  "askedAs": "eval-45956214660-1-q02-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I sent the holiday return window reminder to Sam, Dana and Leo as an in-app bell",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "acdc69888dcb80b4cb88c3627eec03606b74d2b5f5fe4e8e9a0d4b9cbdc520ec",
+    "inputExcerpt": "{\"query\":\"return window policy holiday\"}"
+   },
+   {
+    "name": "mcp__inhouse__notification_send",
+    "inputSha256": "7060d3efdf3f122ff39b6c26ec304483bf6f285b9a32dfafbbd9bd5e619b8c54",
+    "inputExcerpt": "{\"to\":{\"members\":[\"m_MNpbmTiwIvds0zRXBOQpOA\",\"m_yJCIY1Mj6Tp18zNr2iAbaA\",\"m_mLAML"
+   }
+  ]
+ }
+}
