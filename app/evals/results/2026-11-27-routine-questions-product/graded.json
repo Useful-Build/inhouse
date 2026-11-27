@@ -1,0 +1,299 @@
+[
+ {
+  "caseId": "Q01",
+  "cat": "choice",
+  "pair": "question_ask/AskUserQuestion",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "atMost": true
+  },
+  "called": [
+   "memory_search",
+   "history_search",
+   "memory_list",
+   "products_search",
+   "products_search",
+   "question_ask"
+  ],
+  "toolSearches": 1,
+  "answer": "Asked: Which supplier is the mug reorder going to this week? I found no saved ro",
+  "costUsd": 0.065,
+  "runOk": true,
+  "turnId": "t_Vslwny02ZjgnXdgQdWKU7A",
+  "askedAs": "eval-45956214660-1-q01-r1"
+ },
+ {
+  "caseId": "Q01",
+  "cat": "choice",
+  "pair": "question_ask/AskUserQuestion",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "atMost": true
+  },
+  "called": [
+   "memory_search",
+   "history_search",
+   "memory_list",
+   "products_search",
+   "question_ask"
+  ],
+  "toolSearches": 1,
+  "answer": "Asked: Which supplier are we ordering mugs from this week? I found nothing in me",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_kz24NMIS5_ndqkQwVXlwKQ",
+  "askedAs": "eval-45956214660-1-q01-r2"
+ },
+ {
+  "caseId": "Q01",
+  "cat": "choice",
+  "pair": "question_ask/AskUserQuestion",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "atMost": true
+  },
+  "called": [
+   "memory_search",
+   "history_search",
+   "memory_list",
+   "products_search",
+   "products_search",
+   "question_ask"
+  ],
+  "toolSearches": 1,
+  "answer": "Asked: Which supplier is this week's mug reorder going to? I can't find it in me",
+  "costUsd": 0.045,
+  "runOk": true,
+  "turnId": "t_XTTI6b3Fe9ZnJ1cszltNXA",
+  "askedAs": "eval-45956214660-1-q01-r3"
+ },
+ {
+  "caseId": "Q02",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "notification_send"
+  ],
+  "toolSearches": 0,
+  "answer": "I sent the team a return window reminder in the app: returns are accepted within",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_LSk8NiD77xJ_NtCIRpZEbQ",
+  "askedAs": "eval-45956214660-1-q02-r1"
+ },
+ {
+  "caseId": "Q02",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "notification_send"
+  ],
+  "toolSearches": 0,
+  "answer": "I sent the team a reminder in the app: returns are accepted within 45 days if th",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_bO83M0YRapLWoT-etHpHxQ",
+  "askedAs": "eval-45956214660-1-q02-r2"
+ },
+ {
+  "caseId": "Q02",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "notification_send"
+  ],
+  "toolSearches": 0,
+  "answer": "I sent the holiday return window reminder to Sam, Dana and Leo as an in-app bell",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_Xjheh95Lq00W9KbjQ6u7Ig",
+  "askedAs": "eval-45956214660-1-q02-r3"
+ },
+ {
+  "caseId": "Q03",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "answer": true,
+   "answerNot": true
+  },
+  "called": [
+   "memory_search",
+   "history_search",
+   "products_search",
+   "products_search",
+   "products_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I found no mug products in the store, so the draft leaves quantities blank for t",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_V_S1iT62IlyL9Mq5SBvT_A",
+  "askedAs": "eval-45956214660-1-q03-r1"
+ },
+ {
+  "caseId": "Q03",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "answer": true,
+   "answerNot": true
+  },
+  "called": [
+   "memory_search",
+   "history_search",
+   "products_search",
+   "products_search"
+  ],
+  "toolSearches": 1,
+  "answer": "No mugs in the catalogue, so I'll draft the message with quantities left blank.\n",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_8np53Xlkqag2rsU9_GMkxQ",
+  "askedAs": "eval-45956214660-1-q03-r2"
+ },
+ {
+  "caseId": "Q03",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "answer": true,
+   "answerNot": true
+  },
+  "called": [
+   "memory_search",
+   "history_search",
+   "products_search",
+   "products_search"
+  ],
+  "toolSearches": 1,
+  "answer": "No mug products exist in the store, so I'll draft the message with quantities le",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_4vVKLN4vKZcLHFBFRqZUew",
+  "askedAs": "eval-45956214660-1-q03-r3"
+ },
+ {
+  "caseId": "Q04",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "**Shipping rules: note for Monday's stand-up**\n\nI used bullets because there are",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_spp1JWGOjqcm_RZDoze_4A",
+  "askedAs": "eval-45956214660-1-q04-r1"
+ },
+ {
+  "caseId": "Q04",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "**Shipping rules: note for Monday's stand-up**\n\nI chose bullets over a paragraph",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_FGtVd-m5qy8Yc6fhBAJcvg",
+  "askedAs": "eval-45956214660-1-q04-r2"
+ },
+ {
+  "caseId": "Q04",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "**Shipping rules: note for Monday's stand-up**\n\n- Free shipping starts at €60.\n-",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_fQvc2w7dKna7aJCp5LttOA",
+  "askedAs": "eval-45956214660-1-q04-r3"
+ }
+]

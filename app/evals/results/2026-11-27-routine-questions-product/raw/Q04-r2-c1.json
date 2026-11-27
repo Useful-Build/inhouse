@@ -1,0 +1,48 @@
+{
+ "row": {
+  "caseId": "Q04",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "**Shipping rules: note for Monday's stand-up**\n\nI chose bullets over a paragraph",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_FGtVd-m5qy8Yc6fhBAJcvg",
+  "askedAs": "eval-45956214660-1-q04-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "**Shipping rules: note for Monday's stand-up**\n\nI chose bullets over a paragraph",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "35efd55c1cca95458d8450ba77b00465166e1670d9394a9a057df05391d20993",
+    "inputExcerpt": "{\"query\":\"shipping rules\"}"
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "a50a98ef63b8ec045603bdb839d362683f5ef832619f5c92d5c097dc06011dd9",
+    "inputExcerpt": "{\"query\":\"shipping policy delivery free shipping carrier\"}"
+   }
+  ]
+ }
+}

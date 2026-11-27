@@ -1,0 +1,77 @@
+{
+ "row": {
+  "caseId": "Q01",
+  "cat": "choice",
+  "pair": "question_ask/AskUserQuestion",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "atMost": true
+  },
+  "called": [
+   "memory_search",
+   "history_search",
+   "memory_list",
+   "products_search",
+   "products_search",
+   "question_ask"
+  ],
+  "toolSearches": 1,
+  "answer": "Asked: Which supplier is this week's mug reorder going to? I can't find it in me",
+  "costUsd": 0.045,
+  "runOk": true,
+  "turnId": "t_XTTI6b3Fe9ZnJ1cszltNXA",
+  "askedAs": "eval-45956214660-1-q01-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.045,
+  "answer": "Asked: Which supplier is this week's mug reorder going to? I can't find it in me",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "9a693aeff5e4d644c3a4849b40913ff575f046513f84eff314f5155d57f697d3",
+    "inputExcerpt": "{\"query\":\"mug reorder supplier Norda Kiln & Co\"}"
+   },
+   {
+    "name": "mcp__inhouse__history_search",
+    "inputSha256": "b598ae026c7b1eb772f54e236022dbac2a1e176413b5ab0c5ede1b1584e20663",
+    "inputExcerpt": "{\"query\":\"mug reorder supplier\"}"
+   },
+   {
+    "name": "mcp__inhouse__memory_list",
+    "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "inputExcerpt": "{}"
+   },
+   {
+    "name": "ToolSearch",
+    "inputSha256": "19e5999a84607c5d416d7042b56bf601d85098967bfea9c2d0498f62e62f8705",
+    "inputExcerpt": "{\"query\":\"select:mcp__apps__products_search,mcp__apps__inventory_levels_get,mcp_"
+   },
+   {
+    "name": "mcp__apps__products_search",
+    "inputSha256": "082d8ce6dc1b58cf96ddd2eee388e8d837d4902eefdd2784a7c083daa9f22494",
+    "inputExcerpt": "{\"text\":\"mug\",\"first\":20}"
+   },
+   {
+    "name": "mcp__apps__products_search",
+    "inputSha256": "cd7c4ab9e780bb4e6390aff64d4b19dedfa146194d535862ba9d95ff2363bdc9",
+    "inputExcerpt": "{\"stockBelow\":20,\"first\":20}"
+   },
+   {
+    "name": "mcp__inhouse__question_ask",
+    "inputSha256": "1fc11c35d3c05d3ec9832a9f4059095636840df4ca1230b241f4d19f9351d6f2",
+    "inputExcerpt": "{\"question\":\"Which supplier is this week's mug reorder going to? I can't find it"
+   }
+  ]
+ }
+}

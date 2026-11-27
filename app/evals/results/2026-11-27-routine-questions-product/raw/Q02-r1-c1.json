@@ -1,0 +1,48 @@
+{
+ "row": {
+  "caseId": "Q02",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "notification_send"
+  ],
+  "toolSearches": 0,
+  "answer": "I sent the team a return window reminder in the app: returns are accepted within",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_LSk8NiD77xJ_NtCIRpZEbQ",
+  "askedAs": "eval-45956214660-1-q02-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I sent the team a return window reminder in the app: returns are accepted within",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "acdc69888dcb80b4cb88c3627eec03606b74d2b5f5fe4e8e9a0d4b9cbdc520ec",
+    "inputExcerpt": "{\"query\":\"return window policy holiday\"}"
+   },
+   {
+    "name": "mcp__inhouse__notification_send",
+    "inputSha256": "1f23dcb61382fed90036182ccc513c5e18bd0773aa7ea8a9996d6bfb051f5ec4",
+    "inputExcerpt": "{\"to\":{\"members\":[\"m_MNpbmTiwIvds0zRXBOQpOA\",\"m_yJCIY1Mj6Tp18zNr2iAbaA\",\"m_mLAML"
+   }
+  ]
+ }
+}

@@ -1,0 +1,48 @@
+{
+ "row": {
+  "caseId": "Q04",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "**Shipping rules: note for Monday's stand-up**\n\n- Free shipping starts at €60.\n-",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_fQvc2w7dKna7aJCp5LttOA",
+  "askedAs": "eval-45956214660-1-q04-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "**Shipping rules: note for Monday's stand-up**\n\n- Free shipping starts at €60.\n-",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "cc177fc2c3a50316407159e9a2d0837e8f324c62e460d3bd728bbc62466da14f",
+    "inputExcerpt": "{\"query\":\"shipping rules\",\"limit\":20}"
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "3f5222c3730a0407a7d9bb6b55b3bb1d507e0384323b04e8fd05157d6075f030",
+    "inputExcerpt": "{\"query\":\"shipping policy delivery carrier free shipping threshold\",\"limit\":20}"
+   }
+  ]
+ }
+}
