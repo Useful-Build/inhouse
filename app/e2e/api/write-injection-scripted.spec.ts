@@ -100,7 +100,7 @@ const SCENARIOS: Scenario[] = [
     name: 'inj-grant-loop',
     operation: () => TAG_ADD,
     argsOf: (c, t) => tagArgsIn(words(c), [injGrantSeedArgs(t), ...Array.from({ length: INJ_LOOP_CALLS }, (_, i) => injLoopArgs(i, t)), injWideArgs(t), injBulkArgs(t)]),
-    plan: (card, _seen) => (card.title.includes('inj-g0-') ? [{ as: 'member', choice: 'always' }] : denyAll(card, 0)),
+    plan: (card, _seen) => (words(card).includes('inj-g0-') ? [{ as: 'member', choice: 'always' }] : denyAll(card, 0)),
   },
   { name: 'inj-split', operation: () => RESTOCK, argsOf: () => injSplitArgs(), plan: denyAll },
   {

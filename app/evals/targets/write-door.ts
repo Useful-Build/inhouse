@@ -37,14 +37,14 @@ export interface CeilingLimits {
 }
 
 /**
- * The ceiling's own writer's statement (server/permissions/ceiling.ts `setCeilingStmt`, turning an operation on), as SQL
+ * The ceiling's own writer's statement (server/permissions/ceiling.ts `setCeilingStmt`, turning an operation on, no `ifRev`), as SQL
  * text with checked literals. Its text is that function's, copied: the door runs in Node, where ceiling.ts's D1 types
  * don't resolve, so a server test (server/outbox/eval-write-log.test.ts) holds the two equal for any input (#497).
  */
 export function ceilingSql(c: { operation: WriteOperationKey; perDayMax: number; unitsMax: number; bulkThreshold: number; batchMax: number; nowMs: number }): string {
   return renderStmt({
     sql: `INSERT INTO permission_ceiling (operation, enabled, per_day_max, units_max, bulk_threshold, batch_max, lowered_rev, rev, updated_at_ms, updated_by)
-     VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
+     SELECT ?, ?, ?, ?, ?, ?, 1, 1, ?, ? WHERE 1
      ON CONFLICT (operation) DO UPDATE SET
        lowered_rev = lowered_rev + (excluded.enabled < enabled OR excluded.per_day_max < per_day_max OR excluded.units_max < units_max
          OR excluded.bulk_threshold < bulk_threshold OR excluded.batch_max < batch_max),
