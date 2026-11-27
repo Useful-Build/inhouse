@@ -4,8 +4,8 @@
 // Active people only (`kind = 'person'`, `status = 'active'`): never an invited or removed person, the Inhouse team or a
 // service row, never an email, a title or a role. Nobody is left out: a name comes back as typed only when it has the
 // team line's shape and no flag (`nameShown`), otherwise only the member id does; either way `flags` says when the
-// name reads like an instruction or mixes scripts in a word (the orchestrator's call on #471's reviews: a caught name
-// is withheld, not shown with a warning). Matching is on the folded name (people/fold.ts), shown or not.
+// name reads like an instruction, mixes scripts in a word or holds letters of a script names aren't shown in (the
+// orchestrator's call on #471's reviews: a caught name is withheld, not shown with a warning). Matching is on the folded name (people/fold.ts), shown or not.
 import { z } from 'zod'
 import { all, stmt } from '../../../db/sql.ts'
 import { foldName, nameFlags, nameMatches, nameShown } from '../../../people/fold.ts'
@@ -40,7 +40,7 @@ export const DATA_TEXT =
 export const HIDDEN_TEXT = (n: number): string =>
   `${n === 1 ? "1 person's name isn't" : `${n} people's names aren't`} shown (nameShown: false) because ${n === 1 ? "it isn't" : "they aren't"} a plain name or ${n === 1 ? 'is' : 'are'} flagged. Don't pick one of them on a guess: reach them by memberId only once the person you're helping confirms who they mean.`
 export const FLAGGED_TEXT = (n: number): string =>
-  `${n === 1 ? '1 name has' : `${n} names have`} flags: ${n === 1 ? 'it reads' : 'they read'} like an instruction or mix${n === 1 ? 'es' : ''} scripts in a word, so ${n === 1 ? "it isn't" : "they aren't"} shown.`
+  `${n === 1 ? '1 name has' : `${n} names have`} flags: ${n === 1 ? 'it reads' : 'they read'} like an instruction, mix${n === 1 ? 'es' : ''} scripts in a word or hold${n === 1 ? 's' : ''} letters of an unlisted script, so ${n === 1 ? "it isn't" : "they aren't"} shown.`
 export const NO_MATCH_TEXT =
   'No active person on the team matches that name. Call member_find with no query to list everyone, or ask the person who they mean.'
 
