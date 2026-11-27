@@ -107,6 +107,26 @@ for (const name of FAKES_NAMES) {
   })
 }
 
+// #588: the eval Slack canary in the test bundle's source map alone (tree-shaken from the script) fails the scan.
+test('the eval slack canary only in the test bundle\'s map, not its script: the scan fails', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'check-hub-build-map-'))
+  try {
+    const canary = 'INHOUSE_EVAL_SLACK_CANARY_5d1e'
+    const seam = readFileSync(join(app, TEST, 'index.js'), 'utf8')
+    assert.ok(seam.includes(canary))
+    const mapOnly = bundleFolder(tmp, 'map-only', seam.split(canary).join('REMOVED'))
+    writeFileSync(join(mapOnly, 'index.js.map'), JSON.stringify({ version: 3, sourcesContent: [`export const EVAL_SLACK_CANARY = '${canary}'`] }))
+    const r = run('--deploy', `${FIXTURES}/deploy-clean`, '--test', mapOnly)
+    assert.equal(r.status, 1, r.out)
+    assert.match(r.out, /ok {4}eval slack canary: caught the test bundle/)
+    assert.match(r.out, /FAIL {2}eval slack canary in the script: the test bundle .* holds "INHOUSE_EVAL_SLACK_CANARY_5d1e" in no script/)
+    // The fixture test bundle, with the canary in its script, passes that part.
+    assert.match(run('--deploy', `${FIXTURES}/deploy-clean`, '--test', TEST).out, /ok {4}eval slack canary in the script/)
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
 test('a test bundle that is clean fails the scan: it proves nothing', () => {
   const r = run('--deploy', `${FIXTURES}/deploy-clean`, '--test', `${FIXTURES}/deploy-clean`)
   assert.equal(r.status, 1, r.out)

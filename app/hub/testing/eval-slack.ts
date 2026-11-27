@@ -35,13 +35,18 @@ const USER_ID = /^U[A-Z0-9]{2,20}$/
 type ChannelRow = { channel_id: unknown; name: unknown; is_private: unknown }
 type MessageRow = { ts: unknown; channel_id: unknown; user_id: unknown; text: unknown; thread_ts: unknown }
 
+/**
+ * A row the schema should have refused. The canary is in the text on purpose (#588): runtime code that names it keeps it
+ * in the bundle's script, so a leak of this module into a bundle shows in the JS, not only in its source map.
+ */
+const malformed = (what: string): Error => new Error(`eval slack (${EVAL_SLACK_CANARY}): ${what}`)
 const str = (v: unknown, what: string): string => {
-  if (typeof v !== 'string') throw new Error(`eval slack: ${what} is not text`)
+  if (typeof v !== 'string') throw malformed(`${what} is not text`)
   return v
 }
 const shaped = (v: unknown, re: RegExp, what: string): string => {
   const s = str(v, what)
-  if (!re.test(s)) throw new Error(`eval slack: ${what} is malformed`)
+  if (!re.test(s)) throw malformed(`${what} is malformed`)
   return s
 }
 

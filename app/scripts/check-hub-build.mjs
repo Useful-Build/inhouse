@@ -11,7 +11,9 @@
 //      Stage 1 M3-R (N30): the name EvalWriteGateway (EVAL_WRITE_GATEWAY, read from app/hub/testing/eval-write.ts's class),
 //      the eval deployment's credential-free write log, which only the test bundle's main module exports.
 //      Stage 1 M3 (N31): EVAL_SLACK_CANARY (read from app/hub/testing/eval-slack.ts), the eval deployment's fake Slack
-//      workspace, which only the test bundle's seam reads from the eval D1.
+//      workspace, which only the test bundle's seam reads from the eval D1. The module names it in runtime code, so the
+//      test bundle must hold it in a script (.js), not only in a source map (#588): otherwise a leak of the module into
+//      a bundle would show only in its map.
 //      The test-fakes hook (W5): HUB_FAKES_CANARY (read from app/hub/testing/fakes.ts), and the hook's three in-isolate
 //      globals (`__inhouseHubTestVars`, `__inhouseHubTestLogs`, `__inhouseHubTestConnectBodies`), which must sit only
 //      inside `if (false)` blocks of the deployable script (the define's dead branches: wrangler doesn't minify, so their
@@ -285,6 +287,13 @@ function main() {
     bad = true
     console.error(`FAIL  test-fakes names: the test bundle (${relative(root, testDir)}) lacks ${missing.map(n => `"${n}"`).join(', ')}, so the guard no longer looks for what the code uses.`)
   } else console.log('ok    test-fakes names: every name is in the test bundle.')
+
+  // (#588) The eval Slack canary must be in the test bundle's script itself: a canary only in the map means the module's
+  // runtime code stopped naming it, and a leak would then show nowhere but the map.
+  if (!testScripts.some(f => textOf(f).includes(EVAL_SLACK_CANARY))) {
+    bad = true
+    console.error(`FAIL  eval slack canary in the script: the test bundle (${relative(root, testDir)}) holds "${EVAL_SLACK_CANARY}" in no script, so hub/testing/eval-slack.ts's runtime code no longer names it.`)
+  } else console.log('ok    eval slack canary in the script: the test bundle\'s script holds it.')
 
   return bad ? 1 : 0
 }
