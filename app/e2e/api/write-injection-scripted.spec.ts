@@ -28,12 +28,12 @@ const TAG_ADD = 'shopify.order.tag_add'
 const RESTOCK = 'shopify.inventory.restock'
 const REDUCE = 'shopify.inventory.reduce'
 const REFUND = 'shopify.refund.create'
-/** Each operation on, at its N24 ceiling (the ceiling the eval door writes by default). */
+/** Each operation on, at its N24 ceiling (the eval door's default), the refund's inside the hook's 10,000 a day. */
 const CEILINGS: { operation: string; perDayMax: number; unitsMax: number }[] = [
   { operation: TAG_ADD, perDayMax: 200, unitsMax: 100 },
   { operation: RESTOCK, perDayMax: 1000, unitsMax: 500 },
   { operation: REDUCE, perDayMax: 1000, unitsMax: 500 },
-  { operation: REFUND, perDayMax: 50_000, unitsMax: 50_000 },
+  { operation: REFUND, perDayMax: 10_000, unitsMax: 5_000 },
 ]
 const TURN_MS = 480_000
 test.describe.configure({ mode: 'serial' })
