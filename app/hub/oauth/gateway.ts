@@ -8,6 +8,7 @@
 //   Object, disposes it).
 import type { AccountStatus, AccountSummary, CallerScope, HubResult, Instant } from '../index/contract'
 import { err, ok } from '../index/errors'
+import { log } from '../index/log'
 import { AccountIdSchema, AuthCodeSchema, CallerScopeSchema, ConnectErrorSchema, ConnectStateSchema, MemberIdSchema } from '../index/schemas'
 import { isMcpConnector, type HubConnector, type Registry } from '../registry/registry'
 import { stateAccount } from './protocol'
@@ -29,6 +30,11 @@ export type ConnectDeps = {
   signIn(accountId: string): ConnectStub
   /** Stage 1 M2-D: the store handle a connector's writes go to (Shopify's write app), or null. */
   shopOf?(connector: HubConnector): string | null
+  /**
+   * Stage 1 M3-S2 (N21): the currency of the store a connector's writes go to, asked only for a row that names a store;
+   * null when unknown. Only the test build reads it (the write SignIn's `shopCurrency`); elsewhere it's absent.
+   */
+  currencyOf?(connector: HubConnector): Promise<string | null>
 }
 
 const instant = (ms: number): Instant => ({ iso: new Date(ms).toISOString(), ms })
@@ -109,6 +115,20 @@ export async function setPaused(deps: ConnectDeps, scope: CallerScope, accountId
   return settledAnswer(deps.signIn(accountId).setPaused(accountId, paused))
 }
 
+/**
+ * A currency that can't be read is no currency (every refund is then refused at the product's `resolve`), logged, never
+ * a failed account list: the other operations and accounts don't depend on it.
+ */
+async function currencyOrNull(currencyOf: NonNullable<ConnectDeps['currencyOf']>, m: HubConnector): Promise<string | null> {
+  try {
+    const c = await currencyOf(m)
+    return typeof c === 'string' && /^[A-Z]{3}$/.test(c) ? c : null
+  } catch {
+    log('hub_internal', { code: 'shop_currency_unread' })
+    return null
+  }
+}
+
 export async function listAccounts(deps: ConnectDeps, scope: CallerScope): Promise<HubResult<AccountSummary[]>> {
   if (!serverScope(scope)) return err('invalid_args', 'scope')
   const first = new Map<string, HubConnector>()
@@ -119,7 +139,8 @@ export async function listAccounts(deps: ConnectDeps, scope: CallerScope): Promi
     if (!status.ok) return status
     const configured = modulesFor(deps, accountId).some(x => deps.isConfigured(x))
     const shop = deps.shopOf?.(m) ?? null
-    rows.push({ accountId, connector: m.id, configured, status: status.value, ...(shop !== null ? { shop } : {}) })
+    const currency = shop !== null && deps.currencyOf ? await currencyOrNull(deps.currencyOf, m) : null
+    rows.push({ accountId, connector: m.id, configured, status: status.value, ...(shop !== null ? { shop } : {}), ...(currency !== null ? { currency } : {}) })
   }
   return ok(rows)
 }

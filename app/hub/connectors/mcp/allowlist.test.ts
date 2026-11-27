@@ -180,6 +180,22 @@ describe('test 13: listAccounts and the gateway rules', () => {
     expect(none.ok && none.value.every(r => !('shop' in r))).toBe(true)
   })
 
+  it('Stage 1 M3-S2: the Shopify row carries the write store\'s currency; asked only for a row with a store; a failed read is none', async () => {
+    const w = world({ modules: [slackConnector, shopifyA, shopifyB] })
+    const asked: string[] = []
+    const shopOf = (c: { id: string }) => (c.id === 'shopify' ? 'example-write' : null)
+    const rows = await G.listAccounts({ ...connectDeps(w), shopOf, currencyOf: async c => (asked.push(c.id), 'USD') }, SERVER)
+    expect(rows.ok && rows.value.map(r => [r.accountId, r.currency])).toEqual([['slack:workspace', undefined], ['shopify:store', 'USD']])
+    expect(asked).toEqual(['shopify'])
+    for (const currencyOf of [async () => null, async () => 'usd', async () => { throw new Error('down') }]) {
+      const r = await G.listAccounts({ ...connectDeps(w), shopOf, currencyOf }, SERVER)
+      expect(r.ok && r.value.map(x => [x.accountId, x.shop, 'currency' in x])).toEqual([['slack:workspace', undefined, false], ['shopify:store', 'example-write', false]])
+    }
+    // No store: never asked.
+    const none = await G.listAccounts({ ...connectDeps(w), shopOf: () => null, currencyOf: async () => { throw new Error('asked') } }, SERVER)
+    expect(none.ok && none.value.every(r => !('currency' in r))).toBe(true)
+  })
+
   it('a run scope is refused on every ConnectGateway method', async () => {
     const d = connectDeps(world())
     const results = [

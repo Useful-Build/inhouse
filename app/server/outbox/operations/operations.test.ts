@@ -168,9 +168,19 @@ describe('the table', () => {
     expect(operationForTool('slack_channel_post')).toBe('slack.channel.post')
     expect(operationForTool('shopify_order_tag_remove')).toBe('shopify.order.tag_remove')
     expect(operationForTool('shopify_draft_order_create')).toBe('shopify.draft_order.create')
+    expect(operationForTool('shopify_inventory_restock')).toBe('shopify.inventory.restock')
+    expect(operationForTool('shopify_inventory_reduce')).toBe('shopify.inventory.reduce')
+    expect(operationForTool('shopify_refund_create')).toBe('shopify.refund.create')
     expect(operationForTool('notification_send')).toBeNull()
-    // M3-S1: still no operation with an effect flag, so every one may be asked for by a member and covered by a grant.
-    for (const e of Object.values(OPERATIONS)) expect(e).toMatchObject({ idempotent: false, defaults: { grant: { perDay: expect.any(Number) } }, memberMay: true, effects: { money: false, customer: false, destructive: false, access: false } })
+    // M3-S2 adds the first operations with an effect flag (reduce: destructive; refund: money and the customer, admins
+    // only; stock-refund.test.ts). Every other one has none, so a member may ask for it and a grant may cover it. None
+    // resends by itself.
+    const flagged: readonly string[] = ['shopify.inventory.reduce', 'shopify.refund.create']
+    for (const e of Object.values(OPERATIONS)) {
+      expect(e.idempotent, e.key).toBe(false)
+      if (flagged.includes(e.key)) continue
+      expect(e, e.key).toMatchObject({ defaults: { grant: { perDay: expect.any(Number) } }, memberMay: true, effects: { money: false, customer: false, destructive: false, access: false } })
+    }
     expect(OPERATIONS['shopify.order.tag_add'].defaults.grant?.perDay).toBe(50)
     expect(OPERATIONS['slack.channel.post'].defaults.grant?.perDay).toBe(50)
   })

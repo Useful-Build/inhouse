@@ -79,6 +79,8 @@ export const AccountSummarySchema = z.strictObject({
   configured: z.boolean(),
   status: AccountStatusSchema,
   shop: z.string().regex(SHOP_HANDLE).optional(),
+  // Stage 1 M3-S2 (N21): the write store's currency, ISO 4217.
+  currency: z.string().regex(/^[A-Z]{3}$/).optional(),
 })
 
 /** A connector id or account id: `shopify`, `shopify:store`. */
@@ -100,7 +102,8 @@ export const CallToolOptionsSchema = z.strictObject({ testShopHost: z.string().r
 // Stage 1 M2 (W0-A): the write entrypoint's request and result (contract.ts WriteRequest, WriteResult).
 // Written out, as HubErrorCodeSchema is (this file imports nothing from contract.ts); schemas.test.ts checks it equals
 // WRITE_OPERATIONS.
-export const WriteOperationKeySchema = z.enum(['shopify.order.tag_add', 'slack.channel.post', 'shopify.order.tag_remove', 'shopify.draft_order.create'])
+export const WriteOperationKeySchema = z.enum(['shopify.order.tag_add', 'slack.channel.post', 'shopify.order.tag_remove', 'shopify.draft_order.create',
+  'shopify.inventory.restock', 'shopify.inventory.reduce', 'shopify.refund.create'])
 
 export const WriteRequestSchema = z.strictObject({
   actionId: id,

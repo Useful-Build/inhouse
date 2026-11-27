@@ -35,8 +35,13 @@ export const resolve: ResolveFn = async (f, p) => {
   if (!account || !account.connected || account.paused || account.connectedAtMs === null) return refuse('account_unavailable')
   if (entry.connector === 'shopify' && !account.shop) return refuse('account_unavailable')
   const scope = entry.scope(args, f)
-  // The only refusal an entry's scope gives: the channel (or other target) isn't one the brand listed.
-  if ('refuse' in scope) return refuse('not_listed')
+  // An entry's scope refuses a target the brand didn't list, or (Stage 1 M3-S2) an argument or account fact the brand's
+  // account can't take: a refund in another currency than the shop's, or while the shop's currency isn't known.
+  if ('refuse' in scope) {
+    const reason = scope.refuse
+    if (reason === 'not_listed' || reason === 'invalid_args' || reason === 'account_unavailable') return refuse(reason)
+    throw new Error(`resolve: ${entry.key} refused with a reason no entry may give`)
+  }
   const records = entry.records(args)
   const units = entry.units(args)
   // An entry that counts nothing, or a fraction, is a bug in the table: fail loud rather than let it past the guardrails.

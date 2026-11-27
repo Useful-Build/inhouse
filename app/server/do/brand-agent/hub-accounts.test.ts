@@ -27,8 +27,8 @@ const status = (o: { state?: 'active' | 'failed' | 'disconnected' | 'empty'; pau
   connectedBy: null, connectedAt: o.connectedAtMs === null ? null : { iso: new Date(o.connectedAtMs ?? HUB_GEN).toISOString(), ms: o.connectedAtMs ?? HUB_GEN },
   revokeFailedAt: null, needsReconnect: false,
 })
-const shopify = (o: Parameters<typeof status>[0] & { shop?: string } = {}): AccountSummary =>
-  ({ accountId: SHOP, connector: 'shopify', configured: true, status: status(o), ...(o.shop === undefined ? { shop: 'example-write' } : o.shop === '' ? {} : { shop: o.shop }) })
+const shopify = (o: Parameters<typeof status>[0] & { shop?: string; currency?: string } = {}): AccountSummary =>
+  ({ accountId: SHOP, connector: 'shopify', configured: true, status: status(o), ...(o.shop === undefined ? { shop: 'example-write' } : o.shop === '' ? {} : { shop: o.shop }), ...(o.currency === undefined ? {} : { currency: o.currency }) })
 const slack = (o: Parameters<typeof status>[0] = {}): AccountSummary => ({ accountId: SLACK, connector: 'slack', configured: true, status: status({ connectedAtMs: HUB_GEN + 1, ...o }) })
 
 const gateway = (answer: unknown) => {
@@ -142,5 +142,57 @@ describe('fail closed (failures 4, 5)', () => {
     expect(await read(answer)).toEqual([{ accountId: SHOP, paused: false, label: 'Shopify' }])
     expect(disposed).toBe(1)
     expect(await read({ ok: true, value: [shopify()], stub: () => 1 })).toEqual([])
+  })
+})
+
+// Stage 1 M3-S2 (N21): the write store's currency, copied as the handle is. Ways it can fail, written first: a refund
+// resolves in a currency the hub never named; an odd value from the hub is kept; a passing failure to read it flips refunds
+// off (and writes a line) on every request; a store change keeps the old store's currency.
+describe('the shop\'s currency (M3-S2)', () => {
+  const REFUND = { orderId: 'gid://shopify/Order/1', lines: [{ lineItemId: 'gid://shopify/LineItem/1', quantity: 1 }], amount: { minor: 100, currency: 'USD' }, restock: false, notifyCustomer: false }
+  const resolveRefund = async () => {
+    const facts = await outboxFacts({ db, hubAccounts: async () => [{ accountId: SHOP, paused: false, label: 'Shopify' }] }).resolveFacts(6_000)
+    return { facts, r: await resolve(facts, { operation: 'shopify.refund.create', args: REFUND }) }
+  }
+
+  it('copies the hub\'s currency; a refund in it resolves, in another it\'s invalid_args', async () => {
+    await read({ ok: true, value: [shopify({ currency: 'USD' })] })
+    expect(await row(SHOP)).toMatchObject({ shop: 'example-write', currency: 'USD', rev: 1 })
+    const { facts, r } = await resolveRefund()
+    expect(facts.accounts.shopify).toMatchObject({ currency: 'USD' })
+    expect(r).toMatchObject({ units: 100, scope: { shop: 'example-write' } })
+    expect(await resolve(facts, { operation: 'shopify.refund.create', args: { ...REFUND, amount: { minor: 100, currency: 'EUR' } } }))
+      .toEqual({ refuse: { verdict: 'refuse', reason: 'invalid_args' } })
+  })
+
+  it('no currency, or an odd one, refuses every refund (account_unavailable); the other operations resolve', async () => {
+    for (const currency of [undefined, 'usd', 'US$']) {
+      await db.prepare('DELETE FROM connector_accounts').run()
+      await read({ ok: true, value: [shopify(currency === undefined ? {} : { currency })] })
+      expect(await row(SHOP)).toMatchObject({ currency: null })
+      const { facts, r } = await resolveRefund()
+      expect(r).toEqual({ refuse: { verdict: 'refuse', reason: 'account_unavailable' } })
+      expect(await resolve(facts, { operation: 'shopify.order.tag_add', args: { orderIds: ['gid://shopify/Order/1'], tags: ['a'] } })).toMatchObject({ accountGen: HUB_GEN })
+    }
+  })
+
+  it('a read that names none keeps the stored currency for the same store and generation, writing nothing', async () => {
+    await read({ ok: true, value: [shopify({ currency: 'USD' })] })
+    const mark = await lastLineId(db)
+    await read({ ok: true, value: [shopify()] }, 9_000)
+    expect(await row(SHOP)).toMatchObject({ currency: 'USD', rev: 1 })
+    expect(await linesSince(db, mark)).toEqual([])
+    // The hub names another currency: copied.
+    await read({ ok: true, value: [shopify({ currency: 'CAD' })] }, 10_000)
+    expect(await row(SHOP)).toMatchObject({ currency: 'CAD', rev: 2 })
+  })
+
+  it('another store or a new generation takes the hub\'s word as it is: none until it reads the new store\'s', async () => {
+    await read({ ok: true, value: [shopify({ currency: 'USD' })] })
+    await read({ ok: true, value: [shopify({ shop: 'other-store' })] }, 9_000)
+    expect(await row(SHOP)).toMatchObject({ shop: 'other-store', currency: null })
+    await read({ ok: true, value: [shopify({ shop: 'other-store', currency: 'EUR' })] }, 10_000)
+    await read({ ok: true, value: [shopify({ shop: 'other-store', connectedAtMs: HUB_GEN + 5 })] }, 11_000)
+    expect(await row(SHOP)).toMatchObject({ connected_at_ms: HUB_GEN + 5, currency: null })
   })
 })

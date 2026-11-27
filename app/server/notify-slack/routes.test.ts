@@ -306,7 +306,7 @@ describe('routes F, G and H', () => {
       const [g] = await grants()
       expect(g).toMatchObject({ account_gen: HUB_GEN, revoked_at_ms: null })
       // The first post's sync (BrandAgent's hubAccounts, the same `syncFromHub`) finds nothing to change: the grant lives.
-      expect(await stores.connectors.syncFromHub('slack:workspace', 'slack', { connectedAtMs: HUB_GEN, shop: null }, { actorId: 'm_system', requestId: reqId(), nowMs: 10_000 })).toBe(false)
+      expect(await stores.connectors.syncFromHub('slack:workspace', 'slack', { connectedAtMs: HUB_GEN, shop: null, currency: null }, { actorId: 'm_system', requestId: reqId(), nowMs: 10_000 })).toBe(false)
       expect((await grants()).map(x => x.revoked_at_ms)).toEqual([null])
       // Without that sync (the hub unread) the grant would take the product's date and lapse at the first post's sync.
       await markAlertsWithout(p, hub)
@@ -318,7 +318,7 @@ describe('routes F, G and H', () => {
       expect((await put(p, hub, { channelIds: ['C0TEST0001'], alertsChannelId: 'C0TEST0001', ifRev: await rev() })).status).toBe(200)
       const live = (await grants()).filter(x => x.revoked_at_ms === null)
       expect(live.map(x => x.account_gen)).toEqual([7_000])
-      await stores.connectors.syncFromHub('slack:workspace', 'slack', { connectedAtMs: 9_000, shop: null }, { actorId: 'm_system', requestId: reqId(), nowMs: 11_000 })
+      await stores.connectors.syncFromHub('slack:workspace', 'slack', { connectedAtMs: 9_000, shop: null, currency: null }, { actorId: 'm_system', requestId: reqId(), nowMs: 11_000 })
       expect((await grants()).filter(x => x.revoked_at_ms === null)).toEqual([])
     }
 

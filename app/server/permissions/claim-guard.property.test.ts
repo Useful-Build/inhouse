@@ -29,8 +29,15 @@ const db = env.DB
 const ASKER = 'm_claim_asker'
 const OTHER = 'm_claim_other'
 const CHANNEL = 'C0CLAIM0001'
-const ACCOUNT: Record<WriteOperationKey, string> = { 'shopify.order.tag_add': 'shopify:store', 'slack.channel.post': 'slack:workspace', 'shopify.order.tag_remove': 'shopify:store', 'shopify.draft_order.create': 'shopify:store' }
-const SCOPE: Record<WriteOperationKey, Record<string, string>> = { 'shopify.order.tag_add': { shop: 'store-a' }, 'slack.channel.post': { channelId: CHANNEL }, 'shopify.order.tag_remove': { shop: 'store-a' }, 'shopify.draft_order.create': { shop: 'store-a' } }
+const ACCOUNT: Record<WriteOperationKey, string> = {
+  'shopify.order.tag_add': 'shopify:store', 'slack.channel.post': 'slack:workspace', 'shopify.order.tag_remove': 'shopify:store', 'shopify.draft_order.create': 'shopify:store',
+  'shopify.inventory.restock': 'shopify:store', 'shopify.inventory.reduce': 'shopify:store', 'shopify.refund.create': 'shopify:store',
+}
+const SHOP = { shop: 'store-a' }
+const SCOPE: Record<WriteOperationKey, Record<string, string>> = {
+  'shopify.order.tag_add': SHOP, 'slack.channel.post': { channelId: CHANNEL }, 'shopify.order.tag_remove': SHOP, 'shopify.draft_order.create': SHOP,
+  'shopify.inventory.restock': SHOP, 'shopify.inventory.reduce': SHOP, 'shopify.refund.create': SHOP,
+}
 const scopeKey = (s: Record<string, string>) => Object.entries(s).map(([k, v]) => `${k}=${v}`).join('&')
 
 interface Row {
@@ -61,12 +68,16 @@ const flagsArb = fc.record({
   memberMay: fc.oneof({ weight: 3, arbitrary: fc.constant(true) }, { weight: 1, arbitrary: fc.constant(false) }),
   effects: fc.oneof({ weight: 3, arbitrary: fc.constant(NO_EFFECTS) }, { weight: 1, arbitrary: fc.record({ money: fc.boolean(), customer: fc.boolean(), destructive: fc.boolean(), access: fc.boolean() }) }),
 })
-const tableArb: fc.Arbitrary<GuardTable> = fc.record({ shop: flagsArb, slack: flagsArb, untag: flagsArb, draft: flagsArb }).map(({ shop, slack, untag, draft }) => ({
-  'shopify.order.tag_add': { connector: 'shopify', ...shop },
-  'slack.channel.post': { connector: 'slack', ...slack },
-  'shopify.order.tag_remove': { connector: 'shopify', ...untag },
-  'shopify.draft_order.create': { connector: 'shopify', ...draft },
-}))
+const tableArb: fc.Arbitrary<GuardTable> = fc.record({ shop: flagsArb, slack: flagsArb, untag: flagsArb, draft: flagsArb, restock: flagsArb, reduce: flagsArb, refund: flagsArb })
+  .map(({ shop, slack, untag, draft, restock, reduce, refund }) => ({
+    'shopify.order.tag_add': { connector: 'shopify', ...shop },
+    'slack.channel.post': { connector: 'slack', ...slack },
+    'shopify.order.tag_remove': { connector: 'shopify', ...untag },
+    'shopify.draft_order.create': { connector: 'shopify', ...draft },
+    'shopify.inventory.restock': { connector: 'shopify', ...restock },
+    'shopify.inventory.reduce': { connector: 'shopify', ...reduce },
+    'shopify.refund.create': { connector: 'shopify', ...refund },
+  }))
 const resolvedArb = (table: GuardTable): fc.Arbitrary<Resolved> => fc.record({
   operation: fc.constantFrom(...OPS),
   accountGen: fc.constantFrom(1_000, 2_000),
