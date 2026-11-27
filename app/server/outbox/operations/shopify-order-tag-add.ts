@@ -34,11 +34,15 @@ export const shopifyOrderTagAdd: OperationEntry<TagAddArgs> & { key: 'shopify.or
   },
   records: () => 1,
   units: () => 1,
+  unitsLabel: 'orders',
+  // Stage 1 M3-A: the shape N21 adds; M3-S1 widens the arguments to a list of orders and adds `items`.
+  itemLine: (a, f) => `Order ${orderNumber(a.orderId)}${f.accounts.shopify?.shop ? ` (${f.accounts.shopify.shop})` : ''}: add ${a.tags.join(', ')}`,
   effects: { money: false, customer: false, destructive: false, access: false },
   memberMay: true,
   reversible: true,
   idempotent: false,
-  defaultPerDay: 50,
+  coalesces: true,
+  defaults: { grant: { perDay: 50, unitsMax: 5 }, ceiling: { perDayMax: 200, unitsMax: 100 } },
   card: a => ({
     title: `Add ${a.tags.length === 1 ? 'a tag' : `${a.tags.length} tags`} to order ${orderNumber(a.orderId)}`,
     lines: a.tags.map(t => `Tag: ${t}`),

@@ -18,7 +18,7 @@ const instant = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
 const cardArb: fc.Arbitrary<ActionCard> = fc.record({
   state: fc.constantFrom(...STATES),
   kind: fc.constantFrom('ask' as const, 'exact' as const),
-  can: fc.record({ allowOnce: fc.boolean(), alwaysAllow: fc.boolean(), approve: fc.boolean(), deny: fc.boolean(), undo: fc.boolean(), resolve: fc.boolean() }),
+  can: fc.record({ allowOnce: fc.boolean(), alwaysAllow: fc.boolean(), approve: fc.boolean(), deny: fc.boolean(), undo: fc.boolean(), resolve: fc.boolean(), withdraw: fc.boolean() }),
   nudgeAlways: fc.boolean(),
   serverNow: fc.integer({ min: 1_700_000_000_000, max: 1_900_000_000_000 }),
   hold: fc.integer({ min: -5000, max: 20_000 }),
@@ -36,6 +36,7 @@ const cardArb: fc.Arbitrary<ActionCard> = fc.record({
   ...(r.result ? { result: r.result } : {}), ...(r.lapsed ? { lapsed: r.lapsed } : {}),
   // The server never sets Always allow on an exact card (card.ts); the arbitrary keeps to what it can send.
   can: { ...r.can, alwaysAllow: r.kind === 'exact' ? false : r.can.alwaysAllow }, nudgeAlways: r.nudgeAlways && r.kind === 'ask' && r.can.alwaysAllow,
+  approverKind: 'person' as const,
 }))
 
 describe('buttons follow can and state (1, 2)', () => {
@@ -53,7 +54,7 @@ describe('buttons follow can and state (1, 2)', () => {
     }
   })
   test.prop([cardArb])('nothing is offered with every can false', card => {
-    const none = { allowOnce: false, alwaysAllow: false, approve: false, deny: false, undo: false, resolve: false }
+    const none = { allowOnce: false, alwaysAllow: false, approve: false, deny: false, undo: false, resolve: false, withdraw: false }
     expect(buttonsOf({ ...card, can: none, nudgeAlways: false })).toEqual([])
   })
   test.prop([cardArb])('Always allow: never on an exact card, at most once, first and primary when nudged', card => {

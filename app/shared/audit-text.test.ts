@@ -74,6 +74,7 @@ const sample: Record<AuditArgs['action'], AuditArgs> = {
   'question.asked': { action: 'question.asked', questionId: 'q_AAAAAAAAAAAAAAAAAAAAAA', askedOf: 'owner', options: 3 },
   'question.answered': { action: 'question.answered', questionId: 'q_AAAAAAAAAAAAAAAAAAAAAA' },
   'question.expired': { action: 'question.expired', questionId: 'q_AAAAAAAAAAAAAAAAAAAAAA' },
+  'ceiling.changed': { action: 'ceiling.changed', operation: 'shopify.order.tag_add', old: null, new: { enabled: true, perDayMax: 1200, unitsMax: 100, bulkThreshold: 5, batchMax: 500 } },
 }
 const names = (id: string) => ({ m_a: 'Ada Example' } as Record<string, string>)[id] ?? null
 
@@ -310,5 +311,28 @@ describe('Stage 1 M2 lines (N18)', () => {
     expect(auditText(sample['action.requested'], names)).toEqual({ what: 'the agent asked for an approval', detail: 'Add tags to orders in Shopify: needs an exact approval, it changes more than 5 records' })
     expect(auditText(sample['question.asked'], names)).toEqual({ what: 'the agent asked a question', detail: 'Asked the person in the chat' })
     expect(auditText({ action: 'question.asked', questionId: 'q_AAAAAAAAAAAAAAAAAAAAAA', askedOf: 'admins', options: 2 }, names)).toEqual({ what: 'the agent asked a question', detail: 'Asked the admins' })
+  })
+})
+
+describe('Stage 1 M3 lines (N25, N26)', () => {
+  it('says what the Inhouse team changed in plain words, with no key, code or em dash', () => {
+    expect(auditText(sample['ceiling.changed'], names)).toEqual({
+      what: 'changed what the agent can do',
+      detail: 'Add tags to orders in Shopify: on, up to 1,200 a day, 100 at most in one call, an exact approval past 5 at once, up to 500 in one batch',
+    })
+    const off = auditText({ action: 'ceiling.changed', operation: 'slack.channel.post', old: { enabled: true, perDayMax: 50, unitsMax: 1, bulkThreshold: 5, batchMax: 500 }, new: { enabled: false, perDayMax: 50, unitsMax: 1, bulkThreshold: 5, batchMax: 500 } }, names)
+    expect(off).toEqual({ what: 'changed what the agent can do', detail: 'Post messages to a channel in Slack: off (was on, up to 50 a day, 1 at most in one call)' })
+    expect(`${off.what} ${off.detail}`).not.toMatch(/\.tag_add|\.post|_|—/)
+  })
+  it('names only the limits that apply to the operation (posts never batch)', () => {
+    const on = auditText({ action: 'ceiling.changed', operation: 'slack.channel.post', old: null, new: { enabled: true, perDayMax: 200, unitsMax: 1, bulkThreshold: 5, batchMax: 500 } }, names)
+    expect(on.detail).toBe('Post messages to a channel in Slack: on, up to 200 a day, 1 at most in one call')
+  })
+  it('reads a lapse over the limit', () => {
+    expect(auditText({ action: 'action.lapsed', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', reason: 'over_limit', released: true }, names))
+      .toEqual({ what: 'an approval lapsed', detail: 'it’s over the limit the Inhouse team set' })
+  })
+  it('reads an answer the same with or without who could answer it', () => {
+    expect(auditText({ action: 'action.answered', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', choice: 'always', permissionId: 'pg_AAAAAAAAAAAAAAAAAAAAAA', approverKind: 'admins' }, names)).toEqual(auditText(sample['action.answered'], names))
   })
 })

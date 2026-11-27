@@ -14,6 +14,11 @@ export const REFUSAL_TEXT: Readonly<Record<OutboxRefuseReason, string>> = {
   no_one_to_ask: 'There’s no one to ask for an approval here, so nothing was asked or sent.',
   invocation_conflict: 'That call was already made with other details, so nothing new was asked or sent.',
   chat_deleted: 'This chat was deleted, so nothing was asked or sent.',
+  // Stage 1 M3-A (N23, N22, N26): nothing returns these before M3-L, M3-B and M3-C.
+  over_limit: 'That’s over the limit the Inhouse team set for this kind of action, so nothing was asked or sent.',
+  batch_full: 'The waiting list for this kind of action is full, so nothing was asked or sent. Wait for an answer on it first.',
+  too_many_waiting: 'Five of these are already waiting for an answer in this chat, so nothing was asked or sent. Wait for an answer first.',
+  writes_off: 'Changing what the agent can do is switched off in this build, so nothing changed.',
 }
 
 /** Why an approval lapsed, as the card says it. */
@@ -31,6 +36,8 @@ export const LAPSE_TEXT: Readonly<Record<LapseReason, string>> = {
   count: 'Today’s allowance for this permission is used up, so this needs your OK.',
   stale_approval: 'It wasn’t sent in time after the OK, so it needs your OK again.',
   chat_deleted: 'The chat it was asked in was deleted.',
+  // Stage 1 M3-A (N23): nothing lapses for it before M3-L.
+  over_limit: 'It’s over the limit the Inhouse team set now, so it can’t be approved as it is.',
 }
 
 /**
@@ -42,6 +49,7 @@ export const WITHDRAWN_TEXT: Readonly<Partial<Record<LapseReason, string>>> = {
   policy_changed: 'The rules changed, so this was withdrawn. Ask the agent to propose it again.',
   asker_removed: 'The person who asked left the team, so this was withdrawn.',
   chat_deleted: 'The chat it was asked in was deleted, so this was withdrawn.',
+  over_limit: 'It’s over the limit the Inhouse team set now, so this was withdrawn. Ask the agent to propose it again within the limit.',
 }
 
 /** A needs-check row's words on its card. */

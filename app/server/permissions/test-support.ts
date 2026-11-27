@@ -45,7 +45,13 @@ export async function channel(db: D1Database, id: string, name: string, addedBy:
 }
 
 /** A grant row as the facts say (scope JSON from the key's one `name=value`). */
-export async function insertGrant(db: D1Database, g: GrantFacts, at = 1): Promise<void> {
+/**
+ * A grant row to insert. `unitsMax` may be left out: `permission_grants.units_max` arrives with 0760 (M3-L) at its default
+ * of 1, the value every grant has until then, and this helper doesn't write it yet (M3-L does when it's given).
+ */
+export type GrantRowInput = Omit<GrantFacts, 'unitsMax'> & { unitsMax?: number }
+
+export async function insertGrant(db: D1Database, g: GrantRowInput, at = 1): Promise<void> {
   const [k, v] = g.scopeKey.split('=')
   await db.prepare(
     `INSERT INTO permission_grants (id, holder, holder_member, account_id, account_gen, operation, scope_json, scope_key, per_day,

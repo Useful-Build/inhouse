@@ -58,7 +58,7 @@ async function insertGrantRow(revoked: boolean): Promise<string> {
   const id = newPermissionId()
   await insertGrant(db, {
     id, holder: `member:${ASKER}`, accountId: 'shopify:store', accountGen: SHOP_GEN, operation: 'shopify.order.tag_add',
-    scopeKey: `shop=${id.slice(3, 12).replace(/[^A-Za-z0-9]/g, 'x')}`, perDay: 5, policyRev: POLICY_REV, grantedRole: 'member', ceilingRev: 1,
+    scopeKey: `shop=${id.slice(3, 12).replace(/[^A-Za-z0-9]/g, 'x')}`, perDay: 5, unitsMax: 1, policyRev: POLICY_REV, grantedRole: 'member', ceilingRev: 1,
     revokedAtMs: revoked ? T0 : null,
   })
   return id

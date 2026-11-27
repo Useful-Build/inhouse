@@ -44,6 +44,10 @@ export const ErrorReasonSchema = z.enum([
   'shared_channel', 'archived', 'not_public', 'not_member', 'not_found', 'name_taken', 'slack_not_connected',
   // P6a W3: a request to the Inhouse team past 50 open ones.
   'request_limit',
+  // Stage 1 M3 (N26, N23, N22): a ceiling change while editing is off in a deployable build (403); an answer past the
+  // largest call the Inhouse team allows now (a ceiling lowered since the card was made); a batch answer whose totals
+  // aren't those of its items 1 to `upTo` (409, with the card as `current`).
+  'writes_off', 'over_limit', 'totals_changed',
 ])
 export type ErrorReason = z.infer<typeof ErrorReasonSchema>
 

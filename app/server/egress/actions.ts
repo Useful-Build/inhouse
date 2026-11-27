@@ -251,6 +251,9 @@ export async function callAction(grant: RunGrant, name: string, args: Record<str
     { mode: 'tool' },
   )
   if (r.outcome === 'refused') return refused(r.reason, r.text)
+  // Stage 1 M3-A: a call that joined a batch has no action of its own (`action` is the shared batch), so the wait and
+  // the words below would be about other calls' items. Nothing returns it before M3-B, which answers it from the item.
+  if (r.outcome === 'collected') throw new Error(`write tool: the outbox collected a call into ${r.action.id} before batches exist (M3-B)`)
   const actionId = r.action.id
   await d.rpc.askNoted(admitted.turnId, actionId)
   const approver = await approverName(d.db, r.action.approver)

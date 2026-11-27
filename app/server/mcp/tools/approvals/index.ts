@@ -145,7 +145,7 @@ export function approvalHandlers(wiringOf: (deps: ToolDeps) => ApprovalsWiring |
           { operation, args: a.args },
           { mode: 'ask_only' },
         )
-        if (r.outcome !== 'refused') await wiring.noted?.(scope, r.action.id)
+        if (r.outcome !== 'refused' && r.outcome !== 'collected') await wiring.noted?.(scope, r.action.id)
         switch (r.outcome) {
           case 'refused':
             return refusal(r.reason, r.text)
@@ -156,6 +156,10 @@ export function approvalHandlers(wiringOf: (deps: ToolDeps) => ApprovalsWiring |
           case 'approved':
             // `ask_only` never runs (store.ts `decide`). Reaching here is a bug in the outbox: fail loud, never report a send.
             throw new Error(`approval_request: the outbox approved ${r.action.id} under ask_only`)
+          case 'collected':
+            // Stage 1 M3-A: the batch's id isn't this request's approval id (withdrawing it would withdraw every item).
+            // Nothing returns it before M3-B, which answers it from the item.
+            throw new Error(`approval_request: the outbox collected a request into ${r.action.id} before batches exist (M3-B)`)
         }
       },
     }),
@@ -184,6 +188,9 @@ export function approvalHandlers(wiringOf: (deps: ToolDeps) => ApprovalsWiring |
         const row = await read.get(a.approval_id)
         if (!row) return refusal('not_found', TEXT.notFound)
         if (row.chat_id !== scope.chatId) return refusal('forbidden', TEXT.otherChat)
+        // Stage 1 M3-A (N22): a batch is shared by other calls' items; withdrawing it would withdraw them all. No batch
+        // row exists before M3-B (0770 adds `kind`).
+        if (row.kind === 'batch') return refusal('conflict', TEXT.batch)
         const state = stateOf(row, scope.nowMs)
         if (state !== 'waiting') return refusal('conflict', TEXT.notWaiting(row.id, state))
         const r = await read.port.withdraw({ kind: 'agent', chatId: scope.chatId, turnId: scope.turnId }, row.id, { ifRev: row.rev })

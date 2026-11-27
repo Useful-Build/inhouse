@@ -17,7 +17,7 @@ import type { GuardTable } from './claim-guard.ts'
 import { decideCore } from './decide.ts'
 import { POLICY_REV } from './policy.ts'
 import { account, ceiling, channel, insertGrant, person, resetPermissions, storable } from './test-support.ts'
-import { OPS, ceilingsArb, ctxArb, grantArb, policyRevArb, recordsArb } from './test-arbitraries.ts'
+import { M2_CEILING_LIMITS, OPS, ceilingsArb, ctxArb, grantArb, policyRevArb, recordsArb } from './test-arbitraries.ts'
 import type { Asker, DecideCtx, DecideFacts, GrantFacts, Origin, Resolved, WriteOperationKey } from './types.ts'
 
 const db = env.DB
@@ -140,12 +140,12 @@ describe('the claim\'s own checks (D3)', () => {
   const ctx = { asker: { memberId: ASKER, role: 'member' as const }, origin: 'chat' as const, chatId: 'c_claim', nowMs: 10 }
   const grant: GrantFacts = {
     id: 'pg_claimUnitAAAAAAAAAAAAAA', holder: `member:${ASKER}`, accountId: r.accountId, accountGen: r.accountGen, operation: r.operation,
-    scopeKey: r.scopeKey, perDay: 5, policyRev: POLICY_REV, grantedRole: 'member', ceilingRev: 1, revokedAtMs: null,
+    scopeKey: r.scopeKey, perDay: 5, unitsMax: 1, policyRev: POLICY_REV, grantedRole: 'member', ceilingRev: 1, revokedAtMs: null,
   }
   const runRow = rowOf(r, ctx, { verdict: 'run', grant_id: grant.id, approved_by: `grant:${grant.id}` })
   const personRow = rowOf(r, ctx, {})
   beforeEach(async () => {
-    await writeState({ r, ctx, ceilings: { 'slack.channel.post': { enabled: true, perDayMax: 5, loweredRev: 1 } }, grants: [grant] })
+    await writeState({ r, ctx, ceilings: { 'slack.channel.post': { enabled: true, perDayMax: 5, loweredRev: 1, ...M2_CEILING_LIMITS } }, grants: [grant] })
     await useFor(runRow.id, grant.id)
   })
 
@@ -201,7 +201,7 @@ describe('the guard\'s own grant checks, every perturbation (review round 2: sam
       const ctx = { asker: { memberId: ASKER, role: askerRole }, origin: 'chat' as const, chatId: 'c_claim', nowMs: 10 }
       const g: GrantFacts = {
         id: `pg_claimTable${String(++n).padStart(9, '0')}`, holder: `member:${ASKER}`, accountId: base.accountId, accountGen: base.accountGen,
-        operation: base.operation, scopeKey: base.scopeKey, perDay: 5, policyRev: POLICY_REV, grantedRole: mineRole, ceilingRev: 1, revokedAtMs: null,
+        operation: base.operation, scopeKey: base.scopeKey, perDay: 5, unitsMax: 1, policyRev: POLICY_REV, grantedRole: mineRole, ceilingRev: 1, revokedAtMs: null,
       }
       const grant: GrantFacts = (({
         none: g, holder_other: { ...g, holder: `member:${OTHER}` }, holder_brand_member: { ...g, holder: 'brand', grantedRole: 'member' },
@@ -211,7 +211,7 @@ describe('the guard\'s own grant checks, every perturbation (review round 2: sam
       }) satisfies Record<(typeof PERTURB)[number], GrantFacts>)[p]
       // Both operations enabled at the same revision, so the `operation` perturbation is caught by the operation check
       // itself, not by a missing ceiling row.
-      const both = { enabled: true, perDayMax: 50, loweredRev: 1 }
+      const both = { enabled: true, perDayMax: 50, loweredRev: 1, ...M2_CEILING_LIMITS }
       await writeState({ r: base, ctx, ceilings: { 'shopify.order.tag_add': both, 'slack.channel.post': both }, grants: [grant] })
       const id = `ac_claim_t${n}`
       await useFor(id, grant.id)

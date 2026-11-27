@@ -1,11 +1,16 @@
 // Stage 1 M2 (frozen by W0-A; M2-B builds it, N11 and N12): the outbox's row, its gate row and its port. Types only.
 // `request` is the only way a write gets in. Every other change to a row goes through this port, bound to `ifRev`.
-import type { ActionChoice, ActionResolution, ActionState } from '../../shared/contract/actions.ts'
+import type { ActionAnswerTotals, ActionApproverKind, ActionChoice, ActionItemsPage, ActionItemState, ActionResolution, ActionState } from '../../shared/contract/actions.ts'
 import type { AgentErrorCode, ErrorReason } from '../../shared/contract/common.ts'
 import type { MemberRole } from '../../shared/contract/members.ts'
 import type { DecideCtx, Guardrail, Origin, Proposed, RefuseReason, WriteOperationKey } from '../permissions/types.ts'
 
-export type { ActionState }
+export type { ActionItemState, ActionState }
+
+/** Stage 1 M3 (N22): a single action (M2's path) or a batch (one action with an item list, `outbox/batch/`). */
+export type OutboxActionKind = 'single' | 'batch'
+/** Stage 1 M3 (N25): who answers the row: its `approver` (a person), or any active admin (`approver = 'role:admin'`). */
+export type OutboxApproverKind = ActionApproverKind
 
 /** How a proposal arrived: the agent's write tool, or `approval_request` (never `run`). */
 export type OutboxVia = 'tool' | 'approval_request'
@@ -56,7 +61,57 @@ export interface OutboxActionRow {
   expires_at_ms: number
   /** Set when the row enters a final state; null while open (M2-B: retention ages rows by it, never an open one). */
   final_at_ms: number | null
+  // Stage 1 M3 (N22, N25; 0770_outbox_batches.sql, M3-B). Until 0770 runs these columns don't exist; nothing reads them
+  // before M3-B.
+  kind: OutboxActionKind
+  approver_kind: OutboxApproverKind
+  /** The tip: the items on a batch's card now (0 for a single action). */
+  items_n: number
+  /** The items the approval covers, 1 to this; null until a batch is approved (and for a single action). */
+  approved_upto: number | null
+  /** `operation`, account, generation and scope key while a batch collects; cleared when it leaves `waiting` or is full. */
+  coalesce_key: string | null
   created_at_ms: number
+  updated_at_ms: number
+  stamp: string | null
+}
+
+/**
+ * Stage 1 M3 (N22; 0770_outbox_batches.sql, M3-B): one item of a batch, one hub call. `item_id` (`oi_` + random) and the
+ * call that made it are kept across moves; `action_id`, `n` and `moved_from` change only while `pending` (a trigger
+ * refuses any other change to the item's identity, arguments, line or counts).
+ *
+ * Two ways an item is made: a call over the bulk threshold (or a multi-record call under a grant) is split by its
+ * entry's `items` into one item per record, `tool_use_id` null (the call is on the batch row); a call that joins a
+ * collecting batch is one item holding the whole call, up to `bulk_threshold` records (so 2 to 5 orders are one item and
+ * one hub call), `tool_use_id` set.
+ */
+export interface OutboxItemRow {
+  item_id: string
+  action_id: string
+  /** Position in its current batch, 1-based. */
+  n: number
+  chat_id: string
+  /** The call that made it (a collected item, the whole call); null for an item split from a one-call batch. */
+  tool_use_id: string | null
+  args_json: string
+  payload_hash: string
+  line: string
+  records: number
+  units: number
+  /** The batch it left, for the audit trail. */
+  moved_from: string | null
+  state: ActionItemState
+  attempt: number
+  /** Throttled answers so far (nothing ran); after 5 the item is `failed`. */
+  throttles: number
+  /** Not claimed before this (a throttle's `retryAfterMs`). */
+  not_before_ms: number | null
+  claimed_at_ms: number | null
+  result_json: string | null
+  error_code: string | null
+  resolved_by: string | null
+  resolved_at_ms: number | null
   updated_at_ms: number
   stamp: string | null
 }
@@ -103,6 +158,13 @@ export type OutboxRequestResult =
    * card for the same `payload_hash`, and this is that card (no second card for a retry).
    */
   | { outcome: 'waiting'; action: OutboxActionRow; existing: boolean }
+  /**
+   * Stage 1 M3 (N22; M3-B returns it): the call joined a collecting batch. `item` is the call's own item; `action` is the
+   * batch that holds it now, shared with other calls, so it is never this call's own action: its id isn't the call's
+   * approval id, and its state isn't the call's outcome (read `item.state`). `existing`: nothing new was written (a
+   * replay of this call, wherever its item now sits, or the same payload already pending in the open batch).
+   */
+  | { outcome: 'collected'; action: OutboxActionRow; item: OutboxItemRow; existing: boolean }
   /** New, approved under a grant with its use reserved; it sends after the hold. */
   | { outcome: 'approved'; action: OutboxActionRow }
   /**
@@ -122,12 +184,26 @@ export type OutboxChange = { action: OutboxActionRow } | OutboxRefusal
 
 export interface OutboxPort {
   request(ctx: OutboxRequestCtx, proposed: Proposed, opts: { mode: OutboxRequestMode }): Promise<OutboxRequestResult>
-  /** `waiting` to `approved` or `denied`; `always` only on an `ask` row, and it adds the grant under this answer's stamp. */
-  answer(actor: OutboxActor, actionId: string, input: { choice: ActionChoice; ifRev: number }): Promise<OutboxChange>
+  /**
+   * `waiting` to `approved` or `denied`; `always` only on an `ask` row, and it adds the grant under this answer's stamp.
+   * Stage 1 M3 (N22): a batch's answer carries `upTo` and the `totals` the card showed for items 1 to `upTo`.
+   */
+  answer(actor: OutboxActor, actionId: string, input: { choice: ActionChoice; ifRev: number; upTo?: number; totals?: ActionAnswerTotals }): Promise<OutboxChange>
   /** `approved` to `undone`, only before the claim. */
   undo(actor: OutboxActor, actionId: string, input: { ifRev: number }): Promise<OutboxChange>
   /** `waiting` to `withdrawn`: the asker, or the agent for its own action (`approval_withdraw`). */
   withdraw(by: { kind: 'member'; actor: OutboxActor } | { kind: 'agent'; chatId: string; turnId: string }, actionId: string, input: { ifRev: number }): Promise<OutboxChange>
-  /** `needs_check` to `sent` or `failed`: the approver or an admin. "It didn't go out" releases the use. */
-  resolve(actor: OutboxActor, actionId: string, input: { outcome: ActionResolution; ifRev: number }): Promise<OutboxChange>
+  /**
+   * `needs_check` to `sent` or `failed`: the approver or an admin. "It didn't go out" releases the use. Stage 1 M3 (N22):
+   * a batch's unclear item by its position `item`; the batch ends once none is unclear.
+   */
+  resolve(actor: OutboxActor, actionId: string, input: { outcome: ActionResolution; ifRev: number; item?: number }): Promise<OutboxChange>
+}
+
+/**
+ * Stage 1 M3 (N22, N33; M3-B builds it): a batch's full item list, `GET /api/actions/:id/items?after=n`, for a person
+ * who may see the card. A single action has no items (`not_found`).
+ */
+export interface OutboxItemsPort {
+  items(viewer: OutboxActor, actionId: string, query: { after: number }): Promise<{ page: ActionItemsPage } | OutboxRefusal>
 }

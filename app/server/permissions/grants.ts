@@ -202,7 +202,8 @@ export const revokeChannelGrantsStmts = (channelId: string, at: At, when: Exists
 /** Who reads or removes: a brand person. Admins see and remove any grant; a member only their own (N15). */
 export interface Viewer { memberId: string; role: MemberRole }
 
-type ListRow = GrantRow & { channel_name: string | null }
+/** `ceiling_per_day_max`: the operation's ceiling (the list shows only current grants, so its row exists and is on). */
+type ListRow = GrantRow & { channel_name: string | null; ceiling_per_day_max: number }
 
 const instant = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
 const TOOL: Readonly<Record<WriteOperationKey, string>> = { 'shopify.order.tag_add': 'Shopify', 'slack.channel.post': 'Slack' }
@@ -221,13 +222,22 @@ export function permissionOf(r: ListRow, viewer: Viewer): Permission {
     tool: { accountId: r.account_id, label: tool },
     scope: where,
     perDay: r.per_day,
+    // Stage 1 M3-A (N33): one unit per call until 0760 (M3-L) adds `units_max`, its default; the day's real allowance is
+    // the smaller of the grant's count and the ceiling's, as the reservation counts it.
+    limits: {
+      perDay: r.per_day,
+      unitsMax: 1,
+      unitsLabel: OPERATIONS[r.operation].unitsLabel,
+      effectivePerDay: Math.min(r.per_day, r.ceiling_per_day_max),
+    },
     grantedBy: r.granted_by,
     grantedAt: instant(r.granted_at_ms),
     can: { remove: viewer.role === 'admin' || r.holder === memberHolder(viewer.memberId) },
   }
 }
 
-const LIST = `SELECT g.*, nc.name AS channel_name FROM permission_grants g
+const LIST = `SELECT g.*, nc.name AS channel_name, lc.per_day_max AS ceiling_per_day_max FROM permission_grants g
+  JOIN permission_ceiling lc ON lc.operation = g.operation
   LEFT JOIN notify_channels nc ON nc.channel_id = json_extract(g.scope_json, '$.channelId') AND nc.removed_at_ms IS NULL
   WHERE ${CURRENT}`
 

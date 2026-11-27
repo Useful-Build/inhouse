@@ -6,15 +6,16 @@ import { TEXT_MAX } from '../../../shared/notify/bound.ts'
 import { auditInputSha256 } from '../../../shared/protocol/index.ts'
 import { resolve } from '../../permissions/resolve.ts'
 import type { ResolveFacts } from '../../permissions/types.ts'
-import { OPERATIONS, operationForTool } from './index.ts'
+import { OPERATION_LIMITS } from '../../../shared/audit-text.ts'
+import { OPERATIONS, grantDefaults, operationForTool } from './index.ts'
 import { TagAddArgsSchema } from './shopify-order-tag-add.ts'
 import { PostArgsSchema } from './slack-channel-post.ts'
 
 const facts: ResolveFacts = {
   nowMs: 1,
   accounts: {
-    shopify: { accountId: 'shopify:store', connectedAtMs: 10, connected: true, paused: false, label: 'Shopify (Store A)', shop: 'store-a' },
-    slack: { accountId: 'slack:workspace', connectedAtMs: 20, connected: true, paused: false, label: 'Slack', shop: null },
+    shopify: { accountId: 'shopify:store', connectedAtMs: 10, connected: true, paused: false, label: 'Shopify (Store A)', shop: 'store-a', currency: null },
+    slack: { accountId: 'slack:workspace', connectedAtMs: 20, connected: true, paused: false, label: 'Slack', shop: null, currency: null },
   },
   listedChannels: [{ id: 'C0123ABCD', name: 'Ops' }],
 }
@@ -87,7 +88,7 @@ describe('the table', () => {
     expect(operationForTool('shopify_order_tag_add')).toBe('shopify.order.tag_add')
     expect(operationForTool('slack_channel_post')).toBe('slack.channel.post')
     expect(operationForTool('notification_send')).toBeNull()
-    for (const e of Object.values(OPERATIONS)) expect(e).toMatchObject({ idempotent: false, defaultPerDay: 50, memberMay: true, effects: { money: false, customer: false, destructive: false, access: false } })
+    for (const e of Object.values(OPERATIONS)) expect(e).toMatchObject({ idempotent: false, defaults: { grant: { perDay: 50 } }, memberMay: true, effects: { money: false, customer: false, destructive: false, access: false } })
   })
   it('gives the same payload hash for the same action and another for any change', async () => {
     const a = await resolve(facts, { operation: 'slack.channel.post', args: { channel: '#ops', text: 'hi' } })
@@ -103,5 +104,51 @@ describe('the table', () => {
   it('hashes the canonical JSON of operation, account, generation, scope and parsed arguments, as the egress does', async () => {
     const r = await resolve(facts, { operation: 'slack.channel.post', args: { text: 'hi', channel: '#ops' } })
     expect((r as { payloadHash: string }).payloadHash).toBe(await auditInputSha256({ scope: { channelId: 'C0123ABCD' }, operation: 'slack.channel.post', args: { channel: '#ops', text: 'hi' }, accountGen: 20, accountId: 'slack:workspace' }))
+  })
+})
+
+// Stage 1 M3-A (section 0, N21, N22, N24, N25): the class rules over the whole table, as the type states them, so an entry
+// that slips past the type (a cast, a widened literal) still can't ship. Ways it can go wrong: a money, destructive or
+// admin-only operation that collects into a batch (a batch then moves money, can't be undone item by item, or needs an
+// admin); money with no amount; destructive marked reversible; grant numbers on an operation no grant covers, or none
+// on one a grant can, or over the ceiling it suggests; the audit and screen's view of which limits apply drifting from
+// the entry.
+describe('the table keeps the class rules (M3-A)', () => {
+  const entries = Object.values(OPERATIONS)
+  const flagged = (e: (typeof entries)[number]) => e.effects.money || e.effects.customer || e.effects.destructive || e.effects.access
+  it('never collects money, destructive or admin-only operations', () => {
+    for (const e of entries) if (e.effects.money || e.effects.destructive || !e.memberMay) expect(e.coalesces, e.key).toBe(false)
+  })
+  it('defines an amount exactly for money, and never undoes the destructive', () => {
+    for (const e of entries) {
+      expect(typeof e.amount === 'function', e.key).toBe(e.effects.money)
+      if (e.effects.destructive) expect(e.reversible, e.key).toBe(false)
+    }
+  })
+  it('names grant defaults only where a grant can cover it, under the ceiling it suggests', () => {
+    for (const e of entries) {
+      if (flagged(e)) {
+        expect(e.defaults.grant, e.key).toBeNull()
+        expect(() => grantDefaults(e.key), e.key).toThrow()
+        continue
+      }
+      const g = grantDefaults(e.key)
+      expect(g.perDay, e.key).toBeLessThanOrEqual(e.defaults.ceiling.perDayMax)
+      expect(g.unitsMax, e.key).toBeLessThanOrEqual(e.defaults.ceiling.unitsMax)
+      for (const n of [g.perDay, g.unitsMax, e.defaults.ceiling.perDayMax, e.defaults.ceiling.unitsMax]) expect(Number.isSafeInteger(n) && n >= 1, e.key).toBe(true)
+    }
+  })
+  it('says which limits apply as the entry does (audit-text OPERATION_LIMITS)', () => {
+    expect(Object.keys(OPERATION_LIMITS).sort()).toEqual(Object.keys(OPERATIONS).sort())
+    for (const e of entries) {
+      expect(OPERATION_LIMITS[e.key], e.key).toEqual({ perDay: !flagged(e), batch: e.coalesces || e.items !== undefined, money: e.effects.money })
+    }
+  })
+  it('shows every word a post holds in its item line', () => {
+    const post = OPERATIONS['slack.channel.post']
+    const text = 'Line one\nLine two, which is long enough to be cut by anything that cuts: '.padEnd(400, 'x')
+    const line = post.itemLine({ channel: '#ops', title: 'Heads up', text }, facts)
+    expect(line).toContain('Heads up')
+    expect(line).toContain(text)
   })
 })

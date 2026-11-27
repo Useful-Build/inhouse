@@ -83,6 +83,7 @@ const VALID: { [A in AuditAction]: Extract<AuditArgs, { action: A }> } = {
   'question.asked': { action: 'question.asked', questionId: 'q_AAAAAAAAAAAAAAAAAAAAAA', askedOf: 'owner', options: 3 },
   'question.answered': { action: 'question.answered', questionId: 'q_AAAAAAAAAAAAAAAAAAAAAA' },
   'question.expired': { action: 'question.expired', questionId: 'q_AAAAAAAAAAAAAAAAAAAAAA' },
+  'ceiling.changed': { action: 'ceiling.changed', operation: 'shopify.order.tag_add', old: { enabled: false, perDayMax: 50, unitsMax: 1, bulkThreshold: 5, batchMax: 500 }, new: { enabled: true, perDayMax: 200, unitsMax: 100, bulkThreshold: 5, batchMax: 500 } },
 }
 const word = fc.stringMatching(/^[A-Z][a-z]{1,11}$/)
 const name = fc.oneof(word, fc.tuple(word, word).map(([a, b]) => `${a} ${b}`))
@@ -518,5 +519,28 @@ describe('M2-R: the restore hold\'s needs-check line', () => {
     }
     expect(ok({ action: 'action.needs_check', actionId: id, attempt: 0, why: 'restore' })).toBe(false)
     expect(ok({ action: 'action.needs_check', actionId: id, why: 'restored' })).toBe(false)
+  })
+})
+
+describe('Stage 1 M3 (N25, N26): the ceiling line and who could answer', () => {
+  const values = { enabled: true, perDayMax: 200, unitsMax: 100, bulkThreshold: 5, batchMax: 500 }
+  const line = (o: Record<string, unknown>) => ({ action: 'ceiling.changed', operation: 'shopify.order.tag_add', old: null, new: values, ...o })
+  it('takes switches and counts only, inside the ceiling bounds', () => {
+    expect(ok(line({}))).toBe(true)
+    expect(ok(line({ old: { ...values, enabled: false } }))).toBe(true)
+    expect(ok(line({ operation: 'shopify.order.cancel' }))).toBe(false)
+    expect(ok(line({ new: { ...values, bulkThreshold: 6 } }))).toBe(false)
+    expect(ok(line({ new: { ...values, batchMax: 501 } }))).toBe(false)
+    expect(ok(line({ new: { ...values, unitsMax: 0 } }))).toBe(false)
+    expect(ok(line({ new: { ...values, note: 'why' } }))).toBe(false)
+    expect(ok(line({ actorName: 'Dana' }))).toBe(false)
+    expect(ok(line({ old: undefined }))).toBe(false)
+  })
+  it('reads an answer written before M3 (no approverKind) and one after', () => {
+    const answered = { action: 'action.answered', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', choice: 'approve' }
+    expect(ok(answered)).toBe(true)
+    expect(ok({ ...answered, approverKind: 'admins' })).toBe(true)
+    expect(ok({ ...answered, approverKind: 'person' })).toBe(true)
+    expect(ok({ ...answered, approverKind: 'role:admin' })).toBe(false)
   })
 })

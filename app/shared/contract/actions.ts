@@ -20,6 +20,38 @@ export type ActionState = z.infer<typeof ActionStateSchema>
 export const ActionKindSchema = z.enum(['ask', 'exact'])
 export type ActionKind = z.infer<typeof ActionKindSchema>
 
+/**
+ * Stage 1 M3 (N25): who answers the card. `person`: the one approver the row names (the asker, M2's cards). `admins`:
+ * any active admin, first answer wins (an operation a member may not approve, such as a refund). Single actions only:
+ * a batch is always `person` (money and destructive operations never collect into one).
+ */
+export const ActionApproverKindSchema = z.enum(['person', 'admins'])
+export type ActionApproverKind = z.infer<typeof ActionApproverKindSchema>
+
+/** Stage 1 M3 (N22): the most items one batch holds (the ceiling's `batch_max` is 1 to this). */
+export const BATCH_ITEMS_MAX = 500
+/** Stage 1 M3 (N33): how many of a batch's item lines the card itself carries; the rest page through the items route. */
+export const BATCH_FIRST_LINES = 10
+
+/**
+ * Stage 1 M3 (N33): a batch card's list, as the card holds it. `itemCount` is the tip (the items on the card now);
+ * `firstLines` the first 10 items' lines (destination and material arguments, server words); `totals` sum items 1 to
+ * `itemCount` in the person's words ("120 orders", "+2,400 stock units"). `amount` is a money total already formatted by
+ * the server ("$24.90 (USD)"); a batch never moves money today, so it's set by no operation yet.
+ */
+export const ActionBatchSchema = z.object({
+  /** 0 only for a batch whose every item moved to a new card before any was sent (the old card lapses in place). */
+  itemCount: z.number().int().min(0).max(BATCH_ITEMS_MAX),
+  firstLines: z.array(z.string()).max(BATCH_FIRST_LINES),
+  totals: z.object({
+    records: z.number().int().min(0),
+    units: z.number().int().min(0),
+    unitsLabel: z.string(),
+    amount: z.string().optional(),
+  }),
+})
+export type ActionBatch = z.infer<typeof ActionBatchSchema>
+
 export const ActionCardSchema = z.object({
   id: ActionIdSchema,
   rev: z.number().int().min(1),
@@ -49,9 +81,19 @@ export const ActionCardSchema = z.object({
    * a viewer who may remove it (its holder, the asker, or an admin).
    */
   permissionId: PermissionIdSchema.optional(),
-  can: z.object({ allowOnce: z.boolean(), alwaysAllow: z.boolean(), approve: z.boolean(), deny: z.boolean(), undo: z.boolean(), resolve: z.boolean() }),
+  /**
+   * `withdraw` (Stage 1 M3, N25): the asker may take back a card someone else answers (an admins card); the route is
+   * M3-X's. False on every card before then.
+   */
+  can: z.object({ allowOnce: z.boolean(), alwaysAllow: z.boolean(), approve: z.boolean(), deny: z.boolean(), undo: z.boolean(), resolve: z.boolean(), withdraw: z.boolean() }),
   /** Offer Always allow first: this person said Allow once 3 times for this operation and scope in 30 days. */
   nudgeAlways: z.boolean(),
+  /** Stage 1 M3 (N22, N33): set only for a batch (one action with an item list). */
+  batch: ActionBatchSchema.optional(),
+  /** Stage 1 M3 (N25): who answers it. */
+  approverKind: ActionApproverKindSchema,
+  /** Stage 1 M3 (N25): whom a waiting card waits for, in server words ("an admin"), for a viewer who can't answer it. */
+  waitingFor: z.string().optional(),
 })
 export type ActionCard = z.infer<typeof ActionCardSchema>
 
@@ -69,8 +111,23 @@ export type ActionsList = z.infer<typeof ActionsListSchema>
 export const ActionChoiceSchema = z.enum(['once', 'always', 'approve', 'deny'])
 export type ActionChoice = z.infer<typeof ActionChoiceSchema>
 
-/** `POST /api/actions/:id/answer`. */
-export const AnswerActionInputSchema = z.object({ choice: ActionChoiceSchema, ifRev: RowIfRevSchema }).strict()
+/**
+ * Stage 1 M3 (N22, N33): what a batch answer says it saw. `upTo`: the items it covers, 1 to `upTo` (at most the tip
+ * when it answers); `totals`: those items' records and units as the card showed them. The server refuses the answer
+ * (`totals_changed`) when they don't match the stored items 1 to `upTo`. Required for a batch, for Approve and No
+ * alike, refused for a single action (the server checks which the row is). Either way, items after `upTo` (added while
+ * the card was open) move to a new collecting card that needs its own answer: a No covers only what it saw.
+ */
+export const ActionAnswerTotalsSchema = z.object({ records: z.number().int().min(0), units: z.number().int().min(0) }).strict()
+export type ActionAnswerTotals = z.infer<typeof ActionAnswerTotalsSchema>
+
+/** `POST /api/actions/:id/answer`. `upTo` and `totals` come together or not at all (Stage 1 M3). */
+export const AnswerActionInputSchema = z.object({
+  choice: ActionChoiceSchema,
+  ifRev: RowIfRevSchema,
+  upTo: z.number().int().min(1).max(BATCH_ITEMS_MAX).optional(),
+  totals: ActionAnswerTotalsSchema.optional(),
+}).strict().refine(a => (a.upTo === undefined) === (a.totals === undefined), { message: 'upTo and totals come together', path: ['totals'] })
 export type AnswerActionInput = z.infer<typeof AnswerActionInputSchema>
 
 /** `undoAction(id, ifRev)`: an approved action, before its claim. */
@@ -81,6 +138,52 @@ export type UndoActionInput = z.infer<typeof UndoActionInputSchema>
 export const ActionResolutionSchema = z.enum(['sent', 'failed'])
 export type ActionResolution = z.infer<typeof ActionResolutionSchema>
 
-/** `resolveAction(id, ifRev, outcome)`: `needs_check` to `sent` or `failed`. */
-export const ResolveActionInputSchema = z.object({ outcome: ActionResolutionSchema, ifRev: RowIfRevSchema }).strict()
+/**
+ * `resolveAction(id, ifRev, outcome)`: `needs_check` to `sent` or `failed`. `item` (Stage 1 M3, N22): a batch's unclear
+ * items are resolved one at a time, by position; the batch ends `sent` or `failed` once none is unclear. Required for a
+ * batch, refused for a single action.
+ */
+export const ResolveActionInputSchema = z.object({
+  outcome: ActionResolutionSchema,
+  ifRev: RowIfRevSchema,
+  item: z.number().int().min(1).max(BATCH_ITEMS_MAX).optional(),
+}).strict()
 export type ResolveActionInput = z.infer<typeof ResolveActionInputSchema>
+
+/** Stage 1 M3 (N25; M3-X's route): the asker takes back a waiting card (`can.withdraw`). */
+export const WithdrawActionInputSchema = z.object({ ifRev: RowIfRevSchema }).strict()
+export type WithdrawActionInput = z.infer<typeof WithdrawActionInputSchema>
+
+// ---------- Stage 1 M3 (N22, N33): a batch's items ----------
+
+/**
+ * One item's state (`outbox_items.state`): `pending` until its claim; `sending` while its hub call runs; then `sent`,
+ * `failed` or `needs_check`; `withdrawn` when it can never be approved (the asker removed, the chat deleted). An item
+ * moved to a new card keeps its id and is `pending` there.
+ */
+export const ActionItemStateSchema = z.enum(['pending', 'sending', 'sent', 'failed', 'needs_check', 'withdrawn'])
+export type ActionItemState = z.infer<typeof ActionItemStateSchema>
+
+/** One item as the full list shows it: its position in the batch, its line (server words) and its outcome. */
+export const ActionItemSchema = z.object({
+  n: z.number().int().min(1).max(BATCH_ITEMS_MAX),
+  line: z.string(),
+  state: ActionItemStateSchema,
+  /** The outcome in server words, once it has one (sent with its safe ref, or the failure). */
+  result: z.string().optional(),
+})
+export type ActionItem = z.infer<typeof ActionItemSchema>
+
+/** Items per page of `GET /api/actions/:id/items`. */
+export const ACTION_ITEMS_PAGE = 100
+
+/** `GET /api/actions/:id/items?after=n`: items after position `n` (0 for the first page), arriving as query text. */
+export const ActionItemsQuerySchema = z.object({ after: z.coerce.number().int().min(0).max(BATCH_ITEMS_MAX).default(0) }).strict()
+export type ActionItemsQuery = z.infer<typeof ActionItemsQuerySchema>
+
+/** One page of a batch's items, in order. `next`: the `after` for the next page; absent on the last. */
+export const ActionItemsPageSchema = z.object({
+  items: z.array(ActionItemSchema).max(ACTION_ITEMS_PAGE),
+  next: z.number().int().min(1).max(BATCH_ITEMS_MAX).optional(),
+})
+export type ActionItemsPage = z.infer<typeof ActionItemsPageSchema>

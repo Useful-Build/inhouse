@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest'
 import { decideCore } from './decide.ts'
 import { POLICY_REV } from './policy.ts'
+import { M2_CEILING_LIMITS } from './test-arbitraries.ts'
 import type { Asker, CeilingFacts, DecideCtx, GrantFacts, Origin, Resolved, Verdict } from './types.ts'
 
 const PERTURBATIONS = ['none', 'holder_other', 'holder_brand_member', 'holder_brand_admin', 'account', 'gen', 'operation', 'scope', 'policy', 'role', 'ceiling', 'revoked'] as const
@@ -17,7 +18,7 @@ const CEILINGS = ['enabled_rev1', 'enabled_rev2', 'disabled', 'absent'] as const
 function grantFor(p: Perturbation, r: Resolved, loweredRev: number, mineRole: 'member' | 'admin'): GrantFacts {
   const g: GrantFacts = {
     id: 'pg_tableAAAAAAAAAAAAAAAAA', holder: 'member:m_asker', accountId: r.accountId, accountGen: r.accountGen, operation: r.operation,
-    scopeKey: r.scopeKey, perDay: 5, policyRev: POLICY_REV, grantedRole: mineRole, ceilingRev: loweredRev, revokedAtMs: null,
+    scopeKey: r.scopeKey, perDay: 5, unitsMax: 1, policyRev: POLICY_REV, grantedRole: mineRole, ceilingRev: loweredRev, revokedAtMs: null,
   }
   switch (p) {
     case 'none': return g
@@ -55,7 +56,7 @@ describe('decideCore, every combination', () => {
             records, units: 1, effects: { money, customer: false, destructive: false, access: false }, memberMay, payloadHash: '0'.repeat(64), policyRev,
           }
           const loweredRev = c === 'enabled_rev2' ? 2 : 1
-          const ceiling: CeilingFacts | undefined = c === 'absent' ? undefined : { enabled: c !== 'disabled', perDayMax: 50, loweredRev }
+          const ceiling: CeilingFacts | undefined = c === 'absent' ? undefined : { enabled: c !== 'disabled', perDayMax: 50, loweredRev, ...M2_CEILING_LIMITS }
           const asker: Asker | null = askerRole === null ? null : { memberId: 'm_asker', role: askerRole }
           const ctx: DecideCtx = { asker, origin, chatId: 'c_t', nowMs: 1 }
           const g = grantFor(p, r, loweredRev, mineRole)
@@ -65,8 +66,8 @@ describe('decideCore, every combination', () => {
           if (!ceiling?.enabled) want = { verdict: 'refuse', reason: 'over_ceiling' }
           else if (asker === null) want = { verdict: 'refuse', reason: 'no_one_to_ask' }
           else if (asker.role === 'member' && !memberMay) want = { verdict: 'refuse', reason: 'needs_admin' }
-          else if (money) want = { verdict: 'exact', guardrail: 'money' }
-          else if (records > 5) want = { verdict: 'exact', guardrail: 'bulk' }
+          else if (money) want = { verdict: 'exact', guardrail: 'money', approver: 'asker' }
+          else if (records > 5) want = { verdict: 'exact', guardrail: 'bulk', approver: 'asker' }
           else if (origin === 'routine') want = { verdict: 'ask', nudge: false }
           else if (policyRev === POLICY_REV && stillCovers(p, asker, mineRole)) want = { verdict: 'run', grantId: g.id }
           else want = { verdict: 'ask', nudge: allowOnce >= 3 }

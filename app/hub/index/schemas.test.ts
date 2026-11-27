@@ -3,7 +3,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import type { z } from 'zod'
 import type { AccountStatus, AccountSummary, CallerScope, CallToolOptions, HubError, HubErrorCode, HubResult, Instant, SignInState, ToolInfo, WriteOperationKey, WriteRequest, WriteResult } from './contract'
-import { WRITE_OPERATIONS } from './contract'
+import { THROTTLE_WAIT_MS, WRITE_OPERATIONS } from './contract'
 import {
   AccountStatusSchema,
   AccountSummarySchema,
@@ -82,5 +82,31 @@ describe('schemas.ts mirrors contract.ts', () => {
     expect(WriteResultSchema.safeParse({ ok: false, error }).success).toBe(false)
     expect(WriteResultSchema.safeParse({ ok: false, error, sent: 'yes' }).success).toBe(false)
     expect(WriteResultSchema.safeParse({ ok: true, value: { ref: 'x', body: {} } }).success).toBe(false)
+  })
+
+  // Stage 1 M3 (N22, N21), ways it can go wrong, written first: an item past the batch's end, an item 0, a batch longer
+  // than the ceiling allows (500), an item with a key riding along, an idempotency key that is empty, too long or carries
+  // characters a GraphQL directive argument shouldn't; and a throttle that loses its retry time or says nothing went out
+  // without `sent`.
+  it('batch items, idempotency keys and throttles parse strictly', () => {
+    const req = { actionId: 'ac_1', attempt: 1, requestId: 'ac_1:3', accountId: 'shopify:store', expect: { connectedAtMs: 5, shop: 'store-a' }, operation: 'shopify.order.tag_add', args: {} }
+    expect(WriteRequestSchema.safeParse({ ...req, item: { n: 3, of: 40 }, idempotencyKey: 'ac_1:3' }).success).toBe(true)
+    expect(WriteRequestSchema.safeParse({ ...req, item: { n: 1, of: 1 } }).success).toBe(true)
+    expect(WriteRequestSchema.safeParse({ ...req, item: { n: 500, of: 500 } }).success).toBe(true)
+    for (const item of [{ n: 0, of: 1 }, { n: 2, of: 1 }, { n: 1, of: 501 }, { n: 1.5, of: 2 }, { n: 1 }, { n: 1, of: 2, total: 2 }])
+      expect(WriteRequestSchema.safeParse({ ...req, item }).success, JSON.stringify(item)).toBe(false)
+    for (const idempotencyKey of ['', 'a'.repeat(201), 'ac_1:3"', 'ac 1', 'ac_1:3\n', '{x}'])
+      expect(WriteRequestSchema.safeParse({ ...req, idempotencyKey }).success, idempotencyKey).toBe(false)
+    expect(WriteRequestSchema.safeParse({ ...req, idempotencyKey: 'a'.repeat(200) }).success).toBe(true)
+    const throttled = { ok: false, error: { code: 'rate_limited', message: 'rate limited by the upstream', retryAfterMs: 2000 }, sent: 'no' }
+    expect(WriteResultSchema.safeParse(throttled).success).toBe(true)
+    expect(WriteResultSchema.safeParse({ ...throttled, error: { ...throttled.error, retryAfterMs: '2000' } }).success).toBe(false)
+    expect(WriteResultSchema.safeParse({ ok: false, error: throttled.error }).success).toBe(false)
+    const { retryAfterMs: _, ...noWait } = throttled.error
+    expect(WriteResultSchema.safeParse({ ...throttled, error: noWait }).success).toBe(true)
+    for (const retryAfterMs of [-1, 1.5, 86_400_001]) expect(WriteResultSchema.safeParse({ ...throttled, error: { ...throttled.error, retryAfterMs } }).success, String(retryAfterMs)).toBe(false)
+    expect(WriteResultSchema.safeParse({ ...throttled, error: { ...throttled.error, upstream: 'body' } }).success).toBe(false)
+    expect(THROTTLE_WAIT_MS.min).toBeLessThanOrEqual(THROTTLE_WAIT_MS.default)
+    expect(THROTTLE_WAIT_MS.default).toBeLessThanOrEqual(THROTTLE_WAIT_MS.max)
   })
 })

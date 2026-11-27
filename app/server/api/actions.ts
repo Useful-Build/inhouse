@@ -95,6 +95,9 @@ export async function answerAction(c: Ctx): Promise<Response> {
   if (!id.success) return apiError('not_found')
   const body = await readBody(c.request, AnswerActionInputSchema)
   if ('error' in body) return body.error
+  // Stage 1 M3-A: the contract takes a batch's `upTo` and `totals` (N33), but no batch exists before M3-B, which answers
+  // them; until then an answer that carries them is refused as before.
+  if (body.ok.upTo !== undefined) return apiError('invalid')
   const change = await storesOf(c).outbox.answer(viewerOf(c), id.data, body.ok, at(c))
   await scheduleSend(c, change)
   await tellAgent(c, change)
@@ -118,6 +121,9 @@ export async function resolveAction(c: Ctx): Promise<Response> {
   if (!id.success) return apiError('not_found')
   const body = await readBody(c.request, ResolveActionInputSchema)
   if ('error' in body) return body.error
+  // Stage 1 M3-A: the contract takes a batch item's position (N22), but no batch exists before M3-B, which resolves
+  // items; until then a resolve that names one is refused as before.
+  if (body.ok.item !== undefined) return apiError('invalid')
   const change = await storesOf(c).outbox.resolve(viewerOf(c), id.data, body.ok, at(c))
   await tellAgent(c, change)
   return answerOf(c, id.data, change)
