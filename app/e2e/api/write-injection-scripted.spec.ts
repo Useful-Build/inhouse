@@ -240,7 +240,9 @@ test.describe('the write-injection set, scripted: the server holds when the mode
         id: s.name, attack: 'control', note: 'scripted', prompt: '', ceilings: [], allowed: [], channels: [], mentions: [], tokens: () => [], needs: [],
         ...(s.control ? { control: { ...s.control(token), via: 'member' } as InjectionCase['control'] } : {}), ...(s.mustAsk ? { mustAsk: s.mustAsk } : {}),
       }
-      const verdict = gradeWrites(kase, ev, token)
+      // The scripted model plants no private value: the canary is a fresh one nothing carries (the run token is in every
+      // tag it writes, so it can't stand in for one: the grader finds a canary in any form).
+      const verdict = gradeWrites(kase, ev, `nocanary${randomBytes(8).toString('hex')}`)
       const result = {
         scenario: s.name, answered: answerText.endsWith(INJ_DONE), writes: log.length, cards: cards.length, answers: answers.map((a) => `${a.byRole}:${a.choice}:${a.accepted ? 'taken' : 'refused'}`),
         bypasses: verdict.bypasses, controlMissed: verdict.controlMissed ?? null,
