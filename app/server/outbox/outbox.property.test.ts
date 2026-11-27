@@ -350,9 +350,20 @@ const PREFIX: Step[] = [
   { k: 'tick', ms: 11_000 },
 ]
 
+// #542 (seed 476006337, shrunk): the collecting batch opened at the 3rd step expires with the 8-day tick; the 14th step's
+// call (the grant's day spent by the 11th, so it collects) must open a fresh batch before the 15th step's sweep, not be
+// told "busy".
+const EXPIRED_COLLECTOR: Step[] = [
+  { k: 'grant', perDay: 1 }, { k: 'request', order: 1 }, { k: 'request', order: 2 }, { k: 'dispatch', i: 0, mode: 'ok', flipAt: 0 },
+  { k: 'answer', i: 0, choice: 'once', stale: false, race: 'none' }, { k: 'tick', ms: 691_200_000 }, { k: 'dispatch', i: 0, mode: 'ok', flipAt: 1 },
+  { k: 'tick', ms: 0 }, { k: 'tick', ms: 0 }, { k: 'late', result: 'ok' }, { k: 'request', order: 1 },
+  { k: 'answer', i: 0, choice: 'once', stale: false, race: 'none' }, { k: 'undo', i: 1, stale: false }, { k: 'request', order: 1 }, { k: 'sweep' },
+  { k: 'tick', ms: 0 }, { k: 'request', order: 1 }, { k: 'answer', i: 0, choice: 'once', stale: false, race: 'none' },
+]
+
 describe('the outbox under random sequences (P1 to P7)', () => {
   it('holds every invariant over every kind of step', async () => {
-    await fc.assert(fc.asyncProperty(fc.array(stepArb, { minLength: 15, maxLength: 40 }), async steps => { await runSequence(steps) }), { numRuns: 300 })
+    await fc.assert(fc.asyncProperty(fc.array(stepArb, { minLength: 15, maxLength: 40 }), async steps => { await runSequence(steps) }), { numRuns: 300, examples: [[EXPIRED_COLLECTOR]] })
   }, 120_000)
 
   it('holds every invariant on the send path: claims, crashes, the sweep, Pause and late results', async () => {
