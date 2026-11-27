@@ -46,7 +46,7 @@ describe('"an approval is waiting" to the alerts channel', () => {
   })
 
   async function waitingCard(nowMs: number): Promise<string> {
-    const r = await outbox(db, () => nowMs).request(requestCtx({ nowMs }), { operation: 'shopify.order.tag_add', args: { orderId: 'gid://shopify/Order/42', tags: ['vip-secret-tag'] } }, { mode: 'tool' })
+    const r = await outbox(db, () => nowMs).request(requestCtx({ nowMs }), { operation: 'shopify.order.tag_add', args: { orderIds: ['gid://shopify/Order/42'], tags: ['vip-secret-tag'] } }, { mode: 'tool' })
     if (r.outcome !== 'waiting') throw new Error(`expected a card, got ${r.outcome}`)
     return r.action.id
   }

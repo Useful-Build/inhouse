@@ -67,7 +67,7 @@ export function actionWorld(brandOrigin: string): ActionWorld {
       await hook({ op: 'ceiling', operation: OPERATION, enabled: true, perDayMax: 50 })
       // A tag of its own each time: a card waiting with the same arguments would be returned instead of a new one.
       const tag = `contract-${Date.now().toString(36)}-${++n}`
-      const { result } = await hook({ op: 'action', as: { memberId: adminId }, operation: OPERATION, args: { orderId: ORDER, tags: [tag] } })
+      const { result } = await hook({ op: 'action', as: { memberId: adminId }, operation: OPERATION, args: { orderIds: [ORDER], tags: [tag] } })
       if (result?.outcome !== 'waiting' || typeof result.action?.id !== 'string') throw new Error(`The real contract target couldn't put an action waiting: ${JSON.stringify(result)}`)
       return result.action.id as string
     },

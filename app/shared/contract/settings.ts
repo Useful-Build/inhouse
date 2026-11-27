@@ -67,7 +67,7 @@ const SETTING_LABELS: Record<string, string> = {
   's:job_cap': 'Job budget', 's:currency': 'Show amounts in', 'stage': 'Stage', 't:tone': 'Tone', 't:signs': 'Signs emails as', 'g:mode': 'Default model',
   'l:daily': 'Daily limit', 'l:restock': 'Largest restock', 'd:chats': 'Chats', 'd:steps': 'Activity and steps',
   'd:2fa': 'Two-step sign-in', 't:max_turns': 'Most steps per answer', 't:webfetch': 'Web pages the agent may read',
-  't:websearch': 'Search the web', 't:webfetch_on': 'Read web pages',
+  't:websearch': 'Search the web', 't:webfetch_on': 'Read web pages', 't:webfetch_mode': 'Web pages the agent may reach',
 }
 
 /** A key's readable name: the page's label for an exact key, a described one for a key pattern, else null. */

@@ -100,7 +100,7 @@ export const CallToolOptionsSchema = z.strictObject({ testShopHost: z.string().r
 // Stage 1 M2 (W0-A): the write entrypoint's request and result (contract.ts WriteRequest, WriteResult).
 // Written out, as HubErrorCodeSchema is (this file imports nothing from contract.ts); schemas.test.ts checks it equals
 // WRITE_OPERATIONS.
-export const WriteOperationKeySchema = z.enum(['shopify.order.tag_add', 'slack.channel.post'])
+export const WriteOperationKeySchema = z.enum(['shopify.order.tag_add', 'slack.channel.post', 'shopify.order.tag_remove', 'shopify.draft_order.create'])
 
 export const WriteRequestSchema = z.strictObject({
   actionId: id,

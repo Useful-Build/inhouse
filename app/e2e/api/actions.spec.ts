@@ -38,12 +38,12 @@ const run = Date.now().toString(36)
 let n = 0
 /** A tag no other request carries: the store's log names it, so each effect is traced to its action. */
 const tag = () => `m2s-${run}-${++n}`
-const tagArgs = (t: string) => ({ orderId: 'gid://shopify/Order/9001', tags: [t] })
+const tagArgs = (t: string) => ({ orderIds: ['gid://shopify/Order/9001'], tags: [t] })
 
 let danaId = ''
 let adminId = ''
 
-interface StoreWrite { operation: string; variables: { id?: string; tags?: string[] }; outcome: string }
+interface StoreWrite { operation: string; variables: { id0?: string; tags?: string[] }; outcome: string }
 const storeWrites = async (request: APIRequestContext): Promise<StoreWrite[]> => {
   const r = await hook(request, { op: 'state' })
   expect(r.status, r.text).toBe(200)
@@ -213,7 +213,7 @@ test('Undo before the claim sends nothing; an approved action goes out once, aft
   const after = await card(request, sent)
   expect(after.serverNow.ms).toBeGreaterThanOrEqual(approved.sendAtMs)
   expect(after.result).toBeTruthy()
-  expect(await writesOf(request, sentTag)).toEqual([{ operation: TAG_ADD, variables: { id: 'gid://shopify/Order/9001', tags: [sentTag] }, outcome: 'succeed' }])
+  expect(await writesOf(request, sentTag)).toEqual([{ operation: TAG_ADD, variables: { tags: [sentTag], id0: 'gid://shopify/Order/9001' }, outcome: 'succeed' }])
   // The undone action's task came due first, and it sent nothing.
   expect(await writesOf(request, undoneTag)).toEqual([])
   expect((await card(request, undone)).state).toBe('undone')

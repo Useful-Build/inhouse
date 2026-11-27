@@ -198,7 +198,7 @@ export const BrandSkillIdSchema = z.string().regex(new RegExp(`^bs_${RANDOM}$`))
 // ---------- Stage 1 M2's argument shapes (N10, N18): ids, closed codes and counts; never an argument, a card's words,
 // a question or an answer's text ----------
 /** A write operation's key, written out (the client bundle imports nothing from the hub); the hub's `WRITE_OPERATIONS`. */
-export const WriteOperationArgSchema = z.enum(['shopify.order.tag_add', 'slack.channel.post'])
+export const WriteOperationArgSchema = z.enum(['shopify.order.tag_add', 'slack.channel.post', 'shopify.order.tag_remove', 'shopify.draft_order.create'])
 // Fails the typecheck when the two lists differ, either way.
 const sameOperations: [z.infer<typeof WriteOperationArgSchema>, WriteOperationKey] extends [WriteOperationKey, z.infer<typeof WriteOperationArgSchema>] ? true : never = true
 void sameOperations
@@ -381,15 +381,26 @@ const otherLines = [
    * `approverKind` (Stage 1 M3, N25): who could answer it; `admins` when any admin could (the answering admin is the
    * line's actor). Absent on lines written before M3.
    */
-  line('action.answered', { actionId: ActionIdSchema, choice: ActionChoiceSchema, permissionId: PermissionIdSchema.optional(), approverKind: ActionApproverKindSchema.optional() }),
+  /** `upTo` (Stage 1 M3-B, N22): a batch's answer covers its items 1 to this. */
+  line('action.answered', {
+    actionId: ActionIdSchema, choice: ActionChoiceSchema, permissionId: PermissionIdSchema.optional(), approverKind: ActionApproverKindSchema.optional(),
+    upTo: z.number().int().min(1).max(500).optional(),
+  }),
   /** `released`: the action's reserved use was given back. */
   line('action.undone', { actionId: ActionIdSchema, released: z.boolean() }),
   line('action.withdrawn', { actionId: ActionIdSchema, by: z.enum(['member', 'agent']) }),
   line('action.lapsed', { actionId: ActionIdSchema, reason: LapseReasonSchema, released: z.boolean() }),
-  line('action.sent', { actionId: ActionIdSchema, attempt: ACTION_ATTEMPT }),
+  /** `items` (Stage 1 M3-B, N22): a batch's end, how many of its items went out and how many didn't. */
+  line('action.sent', {
+    actionId: ActionIdSchema, attempt: ACTION_ATTEMPT,
+    items: z.object({ sent: z.number().int().min(1).max(500), failed: z.number().int().min(0).max(500) }).strict().optional(),
+  }),
   line('action.failed', { actionId: ActionIdSchema, attempt: ACTION_ATTEMPT.optional(), code: ActionFailCodeSchema, released: z.boolean() }),
-  /** `attempt` is left out only by a restore's hold, for a row that was never claimed (M2-R). */
-  line('action.needs_check', { actionId: ActionIdSchema, attempt: ACTION_ATTEMPT.optional(), why: NeedsCheckWhySchema }).superRefine((a, ctx) => {
+  /**
+   * `attempt` is left out only by a restore's hold, for a row that was never claimed (M2-R). `item` (Stage 1 M3-B, N22):
+   * the batch item's position; `attempt` is then the item's.
+   */
+  line('action.needs_check', { actionId: ActionIdSchema, attempt: ACTION_ATTEMPT.optional(), why: NeedsCheckWhySchema, item: z.number().int().min(1).max(500).optional() }).superRefine((a, ctx) => {
     if (a.attempt === undefined && a.why !== 'restore') ctx.addIssue({ code: 'custom', path: ['attempt'], message: 'Only a restore leaves out the attempt' })
   }),
   /**

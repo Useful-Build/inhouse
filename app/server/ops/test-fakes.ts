@@ -33,7 +33,8 @@
 // - `transcripts`: the R2 session store's objects (`sessions/`, the runner's transcripts) as texts. Answers `{ texts }`.
 //   Empty in the local test build (no container writes a session); filled on the per-PR remote deploy.
 // - `ceiling` (Stage 1 M2-B, N2, N19): { operation, enabled, perDayMax }: the one way an operation exists in the test build
-//   (no route writes the ceiling in M1 or M2). Answers `{ ok: true }`.
+//   (no route writes the ceiling in M1 or M2). Stage 1 M3-L (N23): optional `unitsMax`, `bulkThreshold` and `batchMax`;
+//   left out, 0760's defaults (M2's rules). Answers `{ ok: true }`.
 // - `action` (Stage 1 M2-B, N19; M2-D): { as: { memberId, chatId? }, operation, args, mode? }: the write tool's call
 //   through the egress's own `actions` handler (handleActions; `mode: 'ask_only'` is `approval_request` through the MCP
 //   server's handler), as an active person, with a made-up run grant as the `hub` op has. CLOSE TO AUTH: N14's admission
@@ -41,7 +42,8 @@
 //   test build); everything after it is the real path: the hub's accounts read and copied into D1, the outbox's
 //   `request`, BrandAgent's `ask` part, the send scheduled on BrandAgent, the report (that turn isn't live, so nothing
 //   waits). Answers `{ result }`: `{ outcome, reason?, text, action? }` (the outbox's outcome read back from the row)
-//   and `tool`, the tool's own answer as the agent reads it.
+//   and `tool`, the tool's own answer as the agent reads it. Stage 1 M3-B (N22): a call that joined a batch is
+//   `{ outcome: 'collected', action, item }`, the batch and the call's own item on it.
 import { z } from 'zod'
 import type { CallerScope, ConnectGateway, HubResult } from '../../hub/index/contract.ts'
 import type { RunGrant } from '../do/brand-agent/tokens.ts'
@@ -53,10 +55,11 @@ import { utcDay } from '../notify-slack/store.ts'
 import { turnPromptDeps, turnSystemPrompt } from '../prompt/connected.ts'
 import { R2_PREFIXES, type KeyedBucket } from '../db/r2-keys.ts'
 import { WriteOperationArgSchema } from '../../shared/contract/audit.ts'
+import { CeilingValuesSchema } from '../../shared/contract/ceiling.ts'
 import { runBatch } from '../db/sql.ts'
 import { setCeilingStmt } from '../permissions/ceiling.ts'
 import { OPERATIONS } from '../outbox/operations/index.ts'
-import type { OutboxActionRow } from '../outbox/types.ts'
+import type { OutboxActionRow, OutboxItemRow } from '../outbox/types.ts'
 import type { BrandAgent } from '../do/brand-agent/index.ts'
 import { approvalsWiring, handleActions } from '../egress/actions.ts'
 import type { ActionsRouteDeps } from '../egress/actions.ts'
@@ -81,7 +84,11 @@ const ProductOpSchema = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('systemNotice'), notice: z.unknown() }),
   z.strictObject({ op: z.literal('logs'), since: z.strictObject({ product: z.number().int().min(0).optional(), hub: z.number().int().min(0).optional() }).optional() }),
   z.strictObject({ op: z.literal('transcripts') }),
-  z.strictObject({ op: z.literal('ceiling'), operation: WriteOperationArgSchema, enabled: z.boolean(), perDayMax: z.number().int().min(1).max(10_000) }),
+  z.strictObject({
+    op: z.literal('ceiling'), operation: WriteOperationArgSchema, enabled: z.boolean(), perDayMax: z.number().int().min(1).max(10_000),
+    unitsMax: CeilingValuesSchema.shape.unitsMax.optional(), bulkThreshold: CeilingValuesSchema.shape.bulkThreshold.optional(),
+    batchMax: CeilingValuesSchema.shape.batchMax.optional(),
+  }),
   z.strictObject({
     op: z.literal('action'), as: z.strictObject({ memberId: id, chatId: id.optional() }), operation: WriteOperationArgSchema,
     args: z.record(z.string(), z.unknown()), mode: z.enum(['tool', 'ask_only']).optional(),
@@ -292,7 +299,10 @@ async function transcriptsOp(env: TestFakesEnv): Promise<TestFakesAnswer> {
 
 /** `ceiling`: turns an operation on or off for the brand (the test build only: no route writes the ceiling, N2). */
 async function ceilingOp(env: TestFakesEnv, op: Extract<ProductOp, { op: 'ceiling' }>): Promise<TestFakesAnswer> {
-  await runBatch(env.DB, [setCeilingStmt({ operation: op.operation, enabled: op.enabled, perDayMax: op.perDayMax, actorId: 'm_system', nowMs: Date.now() })])
+  await runBatch(env.DB, [setCeilingStmt({
+    operation: op.operation, enabled: op.enabled, perDayMax: op.perDayMax, unitsMax: op.unitsMax, bulkThreshold: op.bulkThreshold, batchMax: op.batchMax,
+    actorId: 'm_system', nowMs: Date.now(),
+  })])
   return ok({ ok: true })
 }
 
@@ -343,6 +353,13 @@ async function actionOp(env: TestFakesEnv, op: Extract<ProductOp, { op: 'action'
   const actionId = tool.structuredContent?.approval_id
   const action = typeof actionId === 'string' ? await env.DB.prepare('SELECT * FROM outbox_actions WHERE id = ?').bind(actionId).first<OutboxActionRow>() : null
   if (!action) return refuse(502, 'no_action', 'the tool answered no action')
+  // Stage 1 M3-B (N22): a call that joined a batch names its item on that batch.
+  const n = tool.structuredContent?.item
+  if (typeof n === 'number') {
+    const item = await env.DB.prepare('SELECT * FROM outbox_items WHERE action_id = ? AND n = ?').bind(action.id, n).first<OutboxItemRow>()
+    if (!item) return refuse(502, 'no_item', 'the tool answered no item')
+    return ok({ result: { outcome: 'collected', text, action, item, tool } })
+  }
   const outcome = action.state === 'approved' && action.verdict === 'run' ? 'approved' : action.state === 'waiting' ? 'waiting' : 'existing'
   return ok({ result: { outcome, text, action, tool } })
 }

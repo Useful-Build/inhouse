@@ -30,8 +30,10 @@ const BARE_GID_RE = /^gid:\/\/shopify\/([A-Za-z0-9]+)\/\d+$/
 /**
  * Catalogue data (decision L2), by source and path, never by key name alone: only the fixed-shape Shopify tools, and
  * only these paths of their data (`result.content[].text`, parsed). A `text` path gives up emails only; an
- * id path is skipped when the whole leaf is one bare id of the listed types, and read in full otherwise. Every other
- * tool (orders, `shopify_script_run`, Slack, anything new), `/mcp/` and `/files/` are read in full.
+ * id path is skipped when the whole leaf is one bare id of the listed types, and read in full otherwise. The order
+ * tools give up only their line items' product fields; every other tool (`shopify_script_run`, Slack, anything new),
+ * `/mcp/` and `/files/` are read in full. Written here as dotted paths for reading; matched as parsed paths
+ * (`canonicalPath`), so a key holding `.` or `[]` can't stand in for a path.
  */
 const CATALOG_SHAPES: Readonly<Record<string, Readonly<Record<string, 'text' | readonly string[]>>>> = {
   products_search: {
@@ -58,8 +60,29 @@ const CATALOG_SHAPES: Readonly<Record<string, Readonly<Record<string, 'text' | r
   refunds_search: { 'items[].lines[].sku': 'text' },
   returns_search: { 'items[].lines[].sku': 'text' },
 }
-/** Where a hub tool's data sits in its JSON-RPC answer. */
-const HUB_DATA_PATH = 'result.content[].text'
+type ShapeRule = 'text' | readonly string[]
+
+/**
+ * A parsed JSON path as one string that no key can forge: each object key as `.` and its JSON string (quotes escaped
+ * inside), each array step as `[]`. `{"items[].title": x}` is `."items[].title"`, never `."items"[]."title"`.
+ */
+const keyStep = (key: string) => `.${JSON.stringify(key)}`
+/** A dotted shape path (`items[].variants[].id`; its keys hold no `.`, `[` or `]`) in the parsed form `walkJson` builds. */
+function canonicalPath(dotted: string): string {
+  let out = ''
+  for (const part of dotted.split('.')) {
+    const m = /^([^[\]]+)((?:\[\])*)$/.exec(part)
+    if (!m) throw new Error(`not a shape path: ${dotted}`)
+    out += keyStep(m[1]!) + m[2]!
+  }
+  return out
+}
+/** Each tool's catalogue paths, keyed by parsed path. */
+const CATALOG_PATHS: ReadonlyMap<string, ReadonlyMap<string, ShapeRule>> = new Map(
+  Object.entries(CATALOG_SHAPES).map(([tool, shape]) => [tool, new Map(Object.entries(shape).map(([p, rule]) => [canonicalPath(p), rule]))]),
+)
+/** Where a hub tool's data sits in its JSON-RPC answer (parsed form). */
+const HUB_DATA_PATH = canonicalPath('result.content[].text')
 
 /** Where a captured result came from. `tool`: the hub tool called (null when it can't be read: nothing is catalogue). */
 export type TaintSource = { route: 'hub'; tool: string | null } | { route: 'mcp' } | { route: 'files'; contentType: string }
@@ -211,11 +234,11 @@ const isJsonMime = (contentType: string) => {
  * that holds JSON is parsed and walked as its own document. `shape`: the catalogue paths of a Shopify product tool's
  * data, applied only to the document parsed from the hub answer's `result.content[].text`.
  */
-function walkJson(root: unknown, sink: Sink, shape: Readonly<Record<string, 'text' | readonly string[]>> | null): void {
+function walkJson(root: unknown, sink: Sink, shape: ReadonlyMap<string, ShapeRule> | null): void {
   const stack: { v: unknown; path: string; nest: number; data: boolean }[] = [{ v: root, path: '', nest: 0, data: false }]
   while (stack.length > 0) {
     const { v, path, nest, data } = stack.pop()!
-    const rule = data && shape && Object.hasOwn(shape, path) ? shape[path] : undefined
+    const rule = data && shape ? shape.get(path) : undefined
     if (typeof v === 'string') {
       const head = v.trimStart()[0]
       if (nest < MAX_NESTED_JSON && (head === '{' || head === '[')) {
@@ -241,7 +264,7 @@ function walkJson(root: unknown, sink: Sink, shape: Readonly<Record<string, 'tex
       for (let i = entries.length - 1; i >= 0; i--) {
         const [k, x] = entries[i]!
         scanText(k, sink)
-        stack.push({ v: x, path: path ? `${path}.${k}` : k, nest, data })
+        stack.push({ v: x, path: path + keyStep(k), nest, data })
       }
     }
   }
@@ -256,7 +279,7 @@ export function resultTokens(body: string, source: TaintSource): string[] {
   if (!body) return []
   const sink = new Sink(TAINT_MAX_TOKENS_PER_RESULT)
   const json = source.route !== 'files' || isJsonMime(source.contentType) ? parseJson(body) : { ok: false as const }
-  const shape = source.route === 'hub' && source.tool !== null ? (Object.hasOwn(CATALOG_SHAPES, source.tool) ? CATALOG_SHAPES[source.tool]! : null) : null
+  const shape = source.route === 'hub' && source.tool !== null ? (CATALOG_PATHS.get(source.tool) ?? null) : null
   if (json.ok) walkJson(json.value, sink, shape)
   else scanText(body, sink)
   return sink.all()

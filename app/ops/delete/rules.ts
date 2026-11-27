@@ -113,10 +113,15 @@ export const deletionRules: Readonly<Record<string, DeletionRule>> = {
   permission_ceiling: { action: 'keep', why: 'the brand\'s ceiling: updated_by stays pseudonymous', kept: ['updated_by'] },
   permission_grants: { action: 'delete_rows', column: 'holder_member', kept: ['granted_by', 'revoked_by'] },
   permission_uses: { action: 'keep', why: 'no member id: a grant\'s day counter by action and grant id; retention removes it' },
+  // Stage 1 M3-L: a batch item's units given back from its grant use, by action id and position only.
+  permission_item_releases: { action: 'keep', why: 'no member id: a batch item\'s units given back, by action id and position; retention removes it' },
   // Stage 1 M2-B. The actions the person asked for go (their chats' words are in them); an action someone else asked for
   // keeps who approved or resolved it, pseudonymous once their row is. The gate names no one.
   outbox_gate: { action: 'keep', why: 'one row of pause state: no member id' },
   outbox_actions: { action: 'delete_rows', column: 'asked_by', kept: ['approver', 'approved_by', 'resolved_by'] },
+  // Stage 1 M3-B: a batch's items name no asker; they go with their batch (0770's trigger deletes them with its row). An
+  // item of someone else's batch keeps who resolved it, pseudonymous once their row is.
+  outbox_items: { action: 'keep', why: 'no asker: a batch\'s items go with their batch\'s row (a trigger); resolved_by stays pseudonymous', kept: ['resolved_by'] },
   // Stage 1 M2-Q. The questions asked of the person go; one asked of every admin keeps who answered it, pseudonymous once
   // their row is.
   questions: { action: 'delete_rows', column: 'asked_of', kept: ['answered_by'] },

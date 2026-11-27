@@ -5,6 +5,8 @@
 // 3. With no Shopify write credentials, the answer is `not_configured` (`sent: 'no'`), never falling back to the read token.
 // 4. Paused account and changed `connectedAtMs` are refused with `sent: 'no'`, including when the change lands during an awaited step.
 // 5. Each Shopify write fault switch (`succeed`, `refuse`, `timeout`, `broken_body`) maps to ok, definite refusal (`sent: 'no'`), or unknown (`sent: 'unknown'`).
+//    Stage 1 M3-S1: the same for every Shopify operation, plus `throttle` (`rate_limited`, `sent: 'no'`, `retryAfterMs`),
+//    a multi-order call's partial outcome, and one upstream request per hub call (see shopify-ops.test.ts).
 // 6. Slack outbox posts reuse `postToSlack` (bounds, single escape, channel re-check, fixed params) and return safe refs only.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AccountStatus, CallerScope, HubResult, WriteRequest } from '../index/contract'
@@ -54,7 +56,7 @@ const baseShopifyReq = (overrides: Partial<WriteRequest> = {}): WriteRequest => 
   accountId: SHOPIFY_WRITE_ACCOUNT,
   expect: { connectedAtMs: CONNECTED_AT_MS, shop: SHOPIFY_WRITE_SHOP },
   operation: 'shopify.order.tag_add',
-  args: { orderId: 'gid://shopify/Order/9001', tags: ['priority', 'rush'] },
+  args: { orderIds: ['gid://shopify/Order/9001'], tags: ['priority', 'rush'] },
   ...overrides,
 })
 
@@ -102,7 +104,7 @@ function shopifyWorld(opts: {
     writeTimeoutMs: opts.writeTimeoutMs,
   })
   const deps: WriteGatewayDeps = {
-    shopifyOrderTagAdd: input => core.orderTagAdd(input),
+    shopifyWrite: input => core.run(input),
     slackChannelPost: async () => ({ ok: false, error: { code: 'not_configured', message: 'connector not configured' }, sent: 'no' }),
     now: () => now,
   }
@@ -135,11 +137,17 @@ describe('WriteGateway schema & operation checks', () => {
       { ...baseShopifyReq(), expect: { connectedAtMs: CONNECTED_AT_MS, shop: SHOPIFY_WRITE_SHOP, extra: 1 } },
       { ...baseShopifyReq(), expect: { connectedAtMs: CONNECTED_AT_MS } },
       { ...baseShopifyReq(), extraField: true },
-      { ...baseShopifyReq(), args: { orderId: '1234', tags: ['a'] } },
-      { ...baseShopifyReq(), args: { orderId: 'gid://shopify/Order/9001', tags: [] } },
-      { ...baseShopifyReq(), args: { orderId: 'gid://shopify/Order/9001', tags: ['1', '2', '3', '4', '5', '6'] } },
-      { ...baseShopifyReq(), args: { orderId: 'gid://shopify/Order/9001', tags: ['bad,tag'] } },
-      { ...baseShopifyReq(), args: { orderId: 'gid://shopify/Order/9001', tags: ['ok'], extra: 1 } },
+      { ...baseShopifyReq(), args: { orderIds: ['1234'], tags: ['a'] } },
+      { ...baseShopifyReq(), args: { orderIds: ['gid://shopify/Order/9001'], tags: [] } },
+      { ...baseShopifyReq(), args: { orderIds: ['gid://shopify/Order/9001'], tags: ['1', '2', '3', '4', '5', '6'] } },
+      { ...baseShopifyReq(), args: { orderIds: ['gid://shopify/Order/9001'], tags: ['bad,tag'] } },
+      { ...baseShopifyReq(), args: { orderIds: ['gid://shopify/Order/9001'], tags: ['ok'], extra: 1 } },
+      // M3-S1: the list form only (M2's one `orderId` is gone), 1 to 5 distinct orders per hub call.
+      { ...baseShopifyReq(), args: { orderId: 'gid://shopify/Order/9001', tags: ['ok'] } },
+      { ...baseShopifyReq(), args: { orderIds: [], tags: ['ok'] } },
+      { ...baseShopifyReq(), args: { orderIds: ['gid://shopify/Order/9001', 'gid://shopify/Order/9001'], tags: ['ok'] } },
+      { ...baseShopifyReq(), args: { orderIds: [1, 2, 3, 4, 5, 6].map(n => `gid://shopify/Order/${n}`), tags: ['ok'] } },
+      { ...baseShopifyReq(), args: { orderIds: 'gid://shopify/Order/9001', tags: ['ok'] } },
       { ...baseShopifyReq(), accountId: SLACK },
     ]
     for (const bad of bads) {
@@ -363,7 +371,7 @@ describe('Shopify write fault switches', () => {
     const w = shopifyWorld()
     const r = await runWriteAction(
       w.deps,
-      baseShopifyReq({ args: { orderId: 'gid://shopify/Order/999999', tags: ['test'] } }),
+      baseShopifyReq({ args: { orderIds: ['gid://shopify/Order/999999'], tags: ['test'] } }),
     )
     expect(r).toMatchObject({ ok: false, error: { code: 'upstream_rejected' }, sent: 'no' })
   })
@@ -379,19 +387,19 @@ describe('Shopify write GraphQL errors and a rejected token', () => {
     })
   const denied = [{ message: 'denied', extensions: { code: 'ACCESS_DENIED' } }]
   const throttled = [{ message: 'throttled', extensions: { code: 'THROTTLED' } }]
-  const partial = { tagsAdd: { node: { id: 'gid://shopify/Order/9001' }, userErrors: [] } }
+  const partial = { o0: { node: { id: 'gid://shopify/Order/9001' }, userErrors: [] } }
 
   it.each([
     ['a definite refusal with no data', { errors: denied }, 'upstream_rejected', 'no'],
     ['a definite refusal with data null', { errors: denied, data: null }, 'upstream_rejected', 'no'],
-    ['a definite refusal with tagsAdd null', { errors: denied, data: { tagsAdd: null } }, 'upstream_rejected', 'no'],
-    ['a definite refusal next to a tagsAdd result', { errors: denied, data: partial }, 'upstream_unavailable', 'unknown'],
+    ['a definite refusal with the order\'s root field null', { errors: denied, data: { o0: null } }, 'upstream_rejected', 'no'],
+    ['a definite refusal next to an order\'s result', { errors: denied, data: partial }, 'upstream_unavailable', 'unknown'],
     ['THROTTLED with no data', { errors: throttled }, 'rate_limited', 'no'],
-    ['THROTTLED with tagsAdd null', { errors: throttled, data: { tagsAdd: null } }, 'rate_limited', 'no'],
-    ['THROTTLED next to a tagsAdd result', { errors: throttled, data: partial }, 'rate_limited', 'unknown'],
-    ['a definite refusal beside an uncoded error', { errors: [...denied, { message: 'odd' }], data: { tagsAdd: null } }, 'upstream_unavailable', 'unknown'],
-    ['THROTTLED beside an uncoded error', { errors: [...throttled, { message: 'odd' }], data: { tagsAdd: null } }, 'rate_limited', 'unknown'],
-    ['THROTTLED beside another code', { errors: [...throttled, ...denied], data: { tagsAdd: null } }, 'rate_limited', 'unknown'],
+    ['THROTTLED with the order\'s root field null', { errors: throttled, data: { o0: null } }, 'rate_limited', 'no'],
+    ['THROTTLED next to an order\'s result', { errors: throttled, data: partial }, 'rate_limited', 'unknown'],
+    ['a definite refusal beside an uncoded error', { errors: [...denied, { message: 'odd' }], data: { o0: null } }, 'upstream_unavailable', 'unknown'],
+    ['THROTTLED beside an uncoded error', { errors: [...throttled, { message: 'odd' }], data: { o0: null } }, 'rate_limited', 'unknown'],
+    ['THROTTLED beside another code', { errors: [...throttled, ...denied], data: { o0: null } }, 'rate_limited', 'unknown'],
   ] as const)('%s answers %s, sent: %s', async (_, body, code, sent) => {
     const w = gqlWorld(body)
     const r = await runWriteAction(w.deps, baseShopifyReq())
@@ -442,7 +450,7 @@ describe('Slack outbox operation (slack.channel.post)', () => {
       slackPost: (id, req, e) => w.core.slackPost(id, req, e),
     }
     const deps: WriteGatewayDeps = {
-      shopifyOrderTagAdd: async () => ({ ok: false, error: { code: 'not_configured', message: 'connector not configured' }, sent: 'no' }),
+      shopifyWrite: async () => ({ ok: false, error: { code: 'not_configured', message: 'connector not configured' }, sent: 'no' }),
       slackChannelPost: input => postSlackOutboxAction(stub, input),
     }
     return { w, stub, deps, connectedAtMs }

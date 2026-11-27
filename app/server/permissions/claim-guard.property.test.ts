@@ -8,6 +8,10 @@
 //      row's policy revision is current;
 //  D3. the claim's extra checks: a removed asker, a reconnected or disconnected account, an unlisted channel, a
 //      released use, a missing use and a routine's grant-backed row each fail the guard (unit cases at the end).
+// Stage 1 M3-L (N23): D1 and D2 run over drawn limits (the ceiling's largest call and bulk threshold, the grant's
+// largest call, the row's units), so the guard's new columns agree with `decideCore` on random states; and
+//  D4. a ceiling lowered during the hold (largest call or bulk threshold) and a grant whose largest call is below the
+//      row's units fail the guard; a batch item's release leaves the use (and the claim) standing.
 import { fc } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -15,25 +19,26 @@ import { OPERATIONS } from '../outbox/operations/index.ts'
 import { claimGuardSql } from './claim-guard.ts'
 import type { GuardTable } from './claim-guard.ts'
 import { decideCore } from './decide.ts'
+import { releaseItemSql } from './uses.ts'
 import { POLICY_REV } from './policy.ts'
 import { account, ceiling, channel, insertGrant, person, resetPermissions, storable } from './test-support.ts'
-import { M2_CEILING_LIMITS, OPS, ceilingsArb, ctxArb, grantArb, policyRevArb, recordsArb } from './test-arbitraries.ts'
+import { M2_CEILING_LIMITS, OPS, ceilingsArb, ctxArb, grantArb, policyRevArb, recordsArb, unitsArb } from './test-arbitraries.ts'
 import type { Asker, DecideCtx, DecideFacts, GrantFacts, Origin, Resolved, WriteOperationKey } from './types.ts'
 
 const db = env.DB
 const ASKER = 'm_claim_asker'
 const OTHER = 'm_claim_other'
 const CHANNEL = 'C0CLAIM0001'
-const ACCOUNT: Record<WriteOperationKey, string> = { 'shopify.order.tag_add': 'shopify:store', 'slack.channel.post': 'slack:workspace' }
-const SCOPE: Record<WriteOperationKey, Record<string, string>> = { 'shopify.order.tag_add': { shop: 'store-a' }, 'slack.channel.post': { channelId: CHANNEL } }
+const ACCOUNT: Record<WriteOperationKey, string> = { 'shopify.order.tag_add': 'shopify:store', 'slack.channel.post': 'slack:workspace', 'shopify.order.tag_remove': 'shopify:store', 'shopify.draft_order.create': 'shopify:store' }
+const SCOPE: Record<WriteOperationKey, Record<string, string>> = { 'shopify.order.tag_add': { shop: 'store-a' }, 'slack.channel.post': { channelId: CHANNEL }, 'shopify.order.tag_remove': { shop: 'store-a' }, 'shopify.draft_order.create': { shop: 'store-a' } }
 const scopeKey = (s: Record<string, string>) => Object.entries(s).map(([k, v]) => `${k}=${v}`).join('&')
 
 interface Row {
   id: string; rev: number; verdict: 'run' | 'ask' | 'exact'; origin: Origin; asked_by: string; approved_by: string | null
   grant_id: string | null; account_id: string; account_gen: number; operation: string; policy_rev: number
-  scope_key: string; scope_json: string; records: number
+  scope_key: string; scope_json: string; records: number; units: number
 }
-const COLS: readonly (keyof Row)[] = ['id', 'rev', 'verdict', 'origin', 'asked_by', 'approved_by', 'grant_id', 'account_id', 'account_gen', 'operation', 'policy_rev', 'scope_key', 'scope_json', 'records']
+const COLS: readonly (keyof Row)[] = ['id', 'rev', 'verdict', 'origin', 'asked_by', 'approved_by', 'grant_id', 'account_id', 'account_gen', 'operation', 'policy_rev', 'scope_key', 'scope_json', 'records', 'units']
 
 async function passes(row: Row, table: GuardTable = OPERATIONS): Promise<boolean> {
   const g = claimGuardSql('a', table)
@@ -45,7 +50,7 @@ async function passes(row: Row, table: GuardTable = OPERATIONS): Promise<boolean
 const rowOf = (r: Resolved, ctx: DecideCtx & { asker: Asker }, over: Partial<Row>): Row => ({
   id: 'ac_claim', rev: 1, verdict: 'ask', origin: ctx.origin, asked_by: ctx.asker.memberId, approved_by: ctx.asker.memberId,
   grant_id: null, account_id: r.accountId, account_gen: r.accountGen, operation: r.operation, policy_rev: r.policyRev,
-  scope_key: r.scopeKey, scope_json: JSON.stringify(r.scope), records: r.records, ...over,
+  scope_key: r.scopeKey, scope_json: JSON.stringify(r.scope), records: r.records, units: r.units, ...over,
 })
 
 // ---------- generators: the real operations with made-up flags (the guard reads them from the table it's given, so its
@@ -56,19 +61,22 @@ const flagsArb = fc.record({
   memberMay: fc.oneof({ weight: 3, arbitrary: fc.constant(true) }, { weight: 1, arbitrary: fc.constant(false) }),
   effects: fc.oneof({ weight: 3, arbitrary: fc.constant(NO_EFFECTS) }, { weight: 1, arbitrary: fc.record({ money: fc.boolean(), customer: fc.boolean(), destructive: fc.boolean(), access: fc.boolean() }) }),
 })
-const tableArb: fc.Arbitrary<GuardTable> = fc.record({ shop: flagsArb, slack: flagsArb }).map(({ shop, slack }) => ({
+const tableArb: fc.Arbitrary<GuardTable> = fc.record({ shop: flagsArb, slack: flagsArb, untag: flagsArb, draft: flagsArb }).map(({ shop, slack, untag, draft }) => ({
   'shopify.order.tag_add': { connector: 'shopify', ...shop },
   'slack.channel.post': { connector: 'slack', ...slack },
+  'shopify.order.tag_remove': { connector: 'shopify', ...untag },
+  'shopify.draft_order.create': { connector: 'shopify', ...draft },
 }))
 const resolvedArb = (table: GuardTable): fc.Arbitrary<Resolved> => fc.record({
   operation: fc.constantFrom(...OPS),
   accountGen: fc.constantFrom(1_000, 2_000),
   records: recordsArb,
+  units: unitsArb,
   policyRev: policyRevArb,
 }).map(x => {
   const e = table[x.operation]
   const scope = SCOPE[x.operation]
-  return { ...x, accountId: ACCOUNT[x.operation], scope, scopeKey: scopeKey(scope), units: 1, effects: { ...e.effects }, memberMay: e.memberMay, args: {}, payloadHash: '0'.repeat(64) }
+  return { ...x, accountId: ACCOUNT[x.operation], scope, scopeKey: scopeKey(scope), effects: { ...e.effects }, memberMay: e.memberMay, args: {}, payloadHash: '0'.repeat(64) }
 })
 const caseArb = tableArb.chain(table => fc.tuple(resolvedArb(table), ctxArb(ASKER, false)).chain(([r, ctx]) => ceilingsArb(r.operation).chain(ceilings => fc.record({
   table: fc.constant(table),
@@ -219,5 +227,60 @@ describe('the guard\'s own grant checks, every perturbation (review round 2: sam
       expect(await passes(rowOf(base, ctx, { id, verdict: 'run', grant_id: grant.id, approved_by: `grant:${grant.id}` })), `${p} ${askerRole} ${mineRole}`).toBe(covers)
     }
     expect(n).toBe(PERTURB.length * 4)
+  })
+})
+
+describe('the guard\'s limits (D4, Stage 1 M3-L)', () => {
+  const r: Resolved = {
+    operation: 'shopify.order.tag_add', args: {}, accountId: 'shopify:store', accountGen: 1_000, scope: { shop: 'store-a' }, scopeKey: 'shop=store-a',
+    records: 3, units: 3, effects: { money: false, customer: false, destructive: false, access: false }, memberMay: true, payloadHash: '0'.repeat(64), policyRev: POLICY_REV,
+  }
+  const ctx = { asker: { memberId: ASKER, role: 'member' as const }, origin: 'chat' as const, chatId: 'c_claim', nowMs: 10 }
+  const grant: GrantFacts = {
+    id: 'pg_claimLimitsAAAAAAAAAAAA', holder: `member:${ASKER}`, accountId: r.accountId, accountGen: r.accountGen, operation: r.operation,
+    scopeKey: r.scopeKey, perDay: 50, unitsMax: 3, policyRev: POLICY_REV, grantedRole: 'member', ceilingRev: 1, revokedAtMs: null,
+  }
+  const open = { enabled: true, perDayMax: 50, loweredRev: 1, unitsMax: 3, bulkThreshold: 3, batchMax: 500, rev: 1 }
+  const runRow = rowOf(r, ctx, { id: 'ac_claim_lim', verdict: 'run', grant_id: grant.id, approved_by: `grant:${grant.id}` })
+  const personRow = rowOf(r, ctx, { id: 'ac_claim_lim_p' })
+  const set = (over: Partial<typeof open>) => ceiling(db, r.operation, { ...open, ...over })
+  beforeEach(async () => {
+    await writeState({ r, ctx, ceilings: { [r.operation]: open }, grants: [grant] })
+    await db.prepare("INSERT INTO permission_uses (id, action_id, action_rev, grant_id, day, units, at_ms) VALUES (? || '#1', ?, 1, ?, '2026-11-26', 3, 1)")
+      .bind(runRow.id, runRow.id, grant.id).run()
+  })
+
+  it('passes both rows at the limits exactly', async () => {
+    expect(await passes(runRow)).toBe(true)
+    expect(await passes(personRow)).toBe(true)
+    // decideCore agrees: the call runs under the grant.
+    expect(decideCore({ ceiling: { [r.operation]: open }, grants: [grant], allowOnceCount: 0 }, ctx, r)).toEqual({ verdict: 'run', grantId: grant.id })
+  })
+
+  it('a ceiling largest call lowered during the hold fails both rows; raised again, both pass', async () => {
+    await set({ unitsMax: 2 })
+    expect(await passes(runRow)).toBe(false)
+    expect(await passes(personRow)).toBe(false)
+    await set({ unitsMax: 3 })
+    expect(await passes(runRow)).toBe(true)
+    expect(await passes(personRow)).toBe(true)
+  })
+
+  it('a bulk threshold lowered below the row\'s records fails the grant-backed row only (a person approved the other)', async () => {
+    await set({ bulkThreshold: 2 })
+    expect(await passes(runRow)).toBe(false)
+    expect(await passes(personRow)).toBe(true)
+  })
+
+  it('a grant whose own largest call is below the row\'s units fails the grant-backed row', async () => {
+    await db.prepare('UPDATE permission_grants SET units_max = 2 WHERE id = ?').bind(grant.id).run()
+    expect(await passes(runRow)).toBe(false)
+    expect(await passes(personRow)).toBe(true)
+  })
+
+  it('a batch item\'s release gives units back but leaves the use, so the claim stands', async () => {
+    expect((await db.prepare(releaseItemSql({ actionId: runRow.id, actionRev: 1, n: 1, units: 1, reason: 'failed', atMs: 5 }).sql)
+      .bind(...releaseItemSql({ actionId: runRow.id, actionRev: 1, n: 1, units: 1, reason: 'failed', atMs: 5 }).params).run()).meta.changes).toBe(1)
+    expect(await passes(runRow)).toBe(true)
   })
 })

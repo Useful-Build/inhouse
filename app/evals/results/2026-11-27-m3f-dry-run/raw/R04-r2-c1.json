@@ -1,0 +1,40 @@
+{
+ "row": {
+  "caseId": "R04",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "Notify Tom in Slack, never by email.",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0,
+  "answer": "Notify Tom in Slack, never by email.",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "cf481eefbc0cb5aeff9e6c3de3e6b6cb95e0cf35d88e71cf0ecb6f1c7b61e497",
+    "inputExcerpt": "{\"query\":\"Tom reorder alerts\"}",
+    "resultExcerpt": "Tom wants reorder alerts in Slack."
+   }
+  ]
+ }
+}

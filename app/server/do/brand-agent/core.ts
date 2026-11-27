@@ -31,7 +31,7 @@ import type { EgressRoute, RunGrant, RunTokens, TokenRefusal } from './tokens.ts
 import { hashRunToken } from './tokens.ts'
 import { mapSdkMessage, outcomeOf } from './map-events.ts'
 import type { TurnOutcome } from './map-events.ts'
-import { buildStart, newId, submitPayloadHash } from './run-start.ts'
+import { buildStart, newId, submitPayloadHash, webFetchOf } from './run-start.ts'
 import { backoffMs } from './scheduler.ts'
 import type { StartWithoutToken, StoredAttachment } from './run-start.ts'
 import { noteCountTokens } from './count-tokens.ts'
@@ -488,7 +488,8 @@ export class AgentCore {
         VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)`,
       turnId, runId, t.chatId, member, ord + 1, t.input.clientTurnKey, hash, t.input.priority, t.input.text,
       t.input.quote ?? null, JSON.stringify(atts), t.model, t.pickerId, t.sideModel, t.effort, t.maxTurns,
-      t.webFetchDomains === null ? null : JSON.stringify(t.webFetchDomains), now,
+      // A list, or the JSON text `null` for any public host (open mode, M3-F). SQL NULL is only a turn stored before P8a S.
+      JSON.stringify(t.webFetchDomains), now,
       extra?.outputFormat === undefined ? null : JSON.stringify(extra.outputFormat),
       extra?.onEnd === undefined ? null : JSON.stringify({ kind: extra.onEnd.kind, id: extra.onEnd.id }),
       extra?.resume === undefined ? null
@@ -722,7 +723,7 @@ export class AgentCore {
       start = buildStart({
         turnId, chatId: t.chat_id, sessionId, expect, text: t.text, quote: t.quote, attachments: atts, model: t.model,
         sideModel: t.side_model, effort: t.effort as StartWithoutToken['effort'], maxTurns: t.max_turns,
-        webFetchDomains: t.web_fetch_json === null ? null : JSON.parse(t.web_fetch_json) as string[], webSearch: t.web_search === 'on',
+        webFetchDomains: webFetchOf(t.web_fetch_json), webSearch: t.web_search === 'on',
         systemPrompt,
         outputFormat: t.output_format_json === null ? undefined : JSON.parse(t.output_format_json) as OutputFormat,
         subagentModel: t.subagent_model,
@@ -1933,7 +1934,7 @@ export class AgentCore {
       chatId, input,
       by: owner === SYSTEM_MEMBER_ID ? { kind: 'service', memberId: owner } : { kind: 'person', memberId: owner },
       model: parked.model, pickerId: parked.picker_id, effort: parked.effort as SubmitTurn['effort'], sideModel: parked.side_model,
-      maxTurns: parked.max_turns, webFetchDomains: parked.web_fetch_json === null ? null : JSON.parse(parked.web_fetch_json) as string[],
+      maxTurns: parked.max_turns, webFetchDomains: webFetchOf(parked.web_fetch_json),
       webSearch: parked.web_search === 'on',
       ...(parked.subagent_model === null ? {} : { subagentModel: parked.subagent_model }),
     }

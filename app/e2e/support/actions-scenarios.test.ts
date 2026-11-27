@@ -43,7 +43,7 @@ describe('the M2-D action scenarios', () => {
       const call = (await answer(await model.handle(opening, scenario))).content.find(b => b.type === 'tool_use')!
       expect(call.name).toBe(tool)
       const args = scenario === 'action-tag-add' ? call.input : (call.input as { args: unknown }).args
-      expect(args).toEqual({ orderId: ACTION_ORDER_ID, tags: [ACTION_TAG] })
+      expect(args).toEqual({ orderIds: [ACTION_ORDER_ID], tags: [ACTION_TAG] })
 
       const words = `Done. It went out: ${ACTION_TAG}. (approval_id: ${ID})`
       const results: unknown[] = [

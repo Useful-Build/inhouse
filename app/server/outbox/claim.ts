@@ -10,7 +10,7 @@
 import { all, first, stmt } from '../db/sql.ts'
 import type { SqlValue, Stmt } from '../db/sql.ts'
 import { claimGuardSql } from '../permissions/claim-guard.ts'
-import { BULK_RECORDS, POLICY_REV } from '../permissions/policy.ts'
+import { POLICY_REV } from '../permissions/policy.ts'
 import { operationEntry } from './operations/index.ts'
 import { actionLine, both, butNot, releaseUseWhere, stamped, unreleasedUse } from './sql.ts'
 import type { LapseReason } from './sql.ts'
@@ -18,12 +18,12 @@ import { timing } from './timing.ts'
 import type { OutboxActionRow, OutboxGateRow } from './types.ts'
 
 /** M2-D (N11): the action's chat isn't in the trash (a deleted chat withdraws its actions). */
-const CHAT_KEPT = 'NOT EXISTS (SELECT 1 FROM chats ch WHERE ch.id = outbox_actions.chat_id AND ch.deleted_at_ms IS NOT NULL)'
+export const CHAT_KEPT = 'NOT EXISTS (SELECT 1 FROM chats ch WHERE ch.id = outbox_actions.chat_id AND ch.deleted_at_ms IS NOT NULL)'
 /**
  * M2-D (N9): a Shopify action's scope names the store its account writes to now (`connector_accounts.shop`, the hub's
  * word): a store change with the same connection date can't send an action approved for the old store.
  */
-const SHOP_KEPT = `(json_extract(outbox_actions.scope_json, '$.shop') IS NULL OR EXISTS (SELECT 1 FROM connector_accounts cs
+export const SHOP_KEPT = `(json_extract(outbox_actions.scope_json, '$.shop') IS NULL OR EXISTS (SELECT 1 FROM connector_accounts cs
   WHERE cs.account_id = outbox_actions.account_id AND cs.shop = json_extract(outbox_actions.scope_json, '$.shop')))`
 
 export function claimStmt(p: { actionId: string; nowMs: number; pauseGen: number; stamp: string }): Stmt {
@@ -59,7 +59,12 @@ export async function whyRefused(db: D1Database, row: OutboxActionRow, nowMs: nu
   if (!gate) throw new Error('outbox: the gate row is missing')
   if (gate.restore_hold === 1) return { kind: 'lapse', reason: 'restore_hold' }
   if (gate.paused === 1 || gate.epoch !== row.approved_epoch || gate.do_gen !== pauseGen) return { kind: 'lapse', reason: 'paused' }
-  if (!(await exists(db, 'SELECT 1 FROM permission_ceiling WHERE operation = ? AND enabled = 1', row.operation))) return { kind: 'lapse', reason: 'over_ceiling' }
+  const ceiling = await first<{ units_max: number; bulk_threshold: number }>(db, stmt(
+    'SELECT units_max, bulk_threshold FROM permission_ceiling WHERE operation = ? AND enabled = 1', row.operation,
+  ))
+  if (!ceiling) return { kind: 'lapse', reason: 'over_ceiling' }
+  // Stage 1 M3-L (N23): the largest single call was lowered below this one's since it was approved.
+  if (row.units > ceiling.units_max) return { kind: 'lapse', reason: 'over_limit' }
   const entry = operationEntry(row.operation)
   // A stored action made under another policy, or on another account generation, can never pass again: withdrawn, so
   // a person isn't asked to approve something that can only lapse again.
@@ -87,11 +92,11 @@ export async function whyRefused(db: D1Database, row: OutboxActionRow, nowMs: nu
     if (!(await exists(db, 'SELECT 1 FROM notify_channels WHERE channel_id = ? AND removed_at_ms IS NULL', channelId))) return { kind: 'lapse', reason: 'channel_not_listed' }
   }
   if (row.grant_id !== null) {
-    if (row.origin === 'routine' || row.records > BULK_RECORDS || Object.values(entry.effects).some(Boolean)) return { kind: 'lapse', reason: 'permission_removed' }
+    if (row.origin === 'routine' || row.records > ceiling.bulk_threshold || Object.values(entry.effects).some(Boolean)) return { kind: 'lapse', reason: 'permission_removed' }
     if (!(await exists(db, 'SELECT 1 FROM permission_uses WHERE id = ? AND grant_id = ? AND released_at_ms IS NULL', `${row.id}#${row.rev}`, row.grant_id))) {
       return { kind: 'lapse', reason: 'count' }
     }
-    // Revoked, made under another ceiling or policy, or no longer covering the asker.
+    // Revoked, made under another ceiling or policy, no longer covering the asker, or its `units_max` below these units.
     return { kind: 'lapse', reason: 'permission_removed' }
   }
   if (!may(row.approved_by)) return { kind: 'lapse', reason: 'approver_not_allowed' }

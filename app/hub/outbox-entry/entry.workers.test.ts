@@ -8,6 +8,7 @@ import type { AccountStatus, CallerScope, ConnectGateway, HubResult, ReadGateway
 import { WriteResultSchema } from '../index/schemas'
 import { mintTestCode } from '../../test/upstreams/mcp/server'
 import { WriteGateway as WriteGatewayClass } from './entry'
+import { shopifyWrite } from '../testing/index'
 
 const gw = exports as unknown as {
   ReadGateway: ReadGateway
@@ -50,7 +51,7 @@ describe('WriteGateway through Worker exports (workerd)', () => {
       accountId: 'shopify:store',
       expect: { connectedAtMs, shop: 'example-write' },
       operation: 'shopify.order.tag_add',
-      args: { orderId: 'gid://shopify/Order/9001', tags: ['urgent'] },
+      args: { orderIds: ['gid://shopify/Order/9001'], tags: ['urgent'] },
     }
     const okRes = await gw.WriteGateway.runAction(req)
     expect(WriteResultSchema.safeParse(okRes).success).toBe(true)
@@ -79,6 +80,42 @@ describe('WriteGateway through Worker exports (workerd)', () => {
     expect(brokenRes).toMatchObject({ ok: false, error: { code: 'upstream_unavailable' }, sent: 'unknown' })
     // The timeout fault hangs until the hub's real 15 s write deadline aborts it.
   }, 30_000)
+
+  // Stage 1 M3-S1 (#443 P9): the write set's other operations through the real runtime's RPC answer (WriteGateway to the
+  // write SignIn DO and back), each answer read as plain data; the throttle fault set on the test bundle's fake directly.
+  it('executes shopify.order.tag_remove and shopify.draft_order.create, and answers a throttle with rate_limited', async () => {
+    const read = await gw.ReadGateway.callTool(runScope, 'orders_search', { first: 1 })
+    expect(read.ok).toBe(true)
+    const statusRes = (await env.SIGNIN.get(env.SIGNIN.idFromName('shopify:store')).status('shopify:store')) as HubResult<AccountStatus>
+    if (!statusRes.ok || !statusRes.value.connectedAt) throw new Error('expected shopify:store connectedAt')
+    const base = {
+      actionId: 'ac_DDDDDDDDDDDDDDDDDDDDDD', attempt: 1, requestId: 'req-shopify-2', accountId: 'shopify:store',
+      expect: { connectedAtMs: statusRes.value.connectedAt.ms, shop: 'example-write' },
+    }
+
+    const removed = await gw.WriteGateway.runAction({ ...base, operation: 'shopify.order.tag_remove', args: { orderIds: ['gid://shopify/Order/9001', 'gid://shopify/Order/9003'], tags: ['vip', 'existing'] } })
+    expect(WriteResultSchema.safeParse(removed).success).toBe(true)
+    expect(removed).toEqual({ ok: true, value: { ref: 'orders 9001, 9003: removed vip, existing' } })
+    expect(shopifyWrite.orders.get('gid://shopify/Order/9001')!.tags).toEqual([])
+    expect(shopifyWrite.orders.get('gid://shopify/Order/9003')!.tags).toEqual([])
+
+    const lines = [{ variantId: 'gid://shopify/ProductVariant/7002', quantity: 3 }]
+    const drafted = await gw.WriteGateway.runAction({ ...base, attempt: 2, operation: 'shopify.draft_order.create', args: { lines, tags: ['sample'] } })
+    expect(drafted).toEqual({ ok: true, value: { ref: 'draft order 1001: 3 items' } })
+    expect(shopifyWrite.drafts).toEqual([{ id: 'gid://shopify/DraftOrder/1001', lines, tags: ['sample'] }])
+
+    shopifyWrite.faults['shopify.draft_order.create'] = 'throttle'
+    const throttled = await gw.WriteGateway.runAction({ ...base, attempt: 3, operation: 'shopify.draft_order.create', args: { lines } })
+    expect(WriteResultSchema.safeParse(throttled).success).toBe(true)
+    expect(throttled).toMatchObject({ ok: false, error: { code: 'rate_limited', retryAfterMs: 100 }, sent: 'no' })
+    expect(shopifyWrite.drafts).toHaveLength(1)
+
+    // A stale account generation is refused before any write reaches the fake.
+    const writes = shopifyWrite.writes.length
+    const stale = await gw.WriteGateway.runAction({ ...base, attempt: 4, expect: { ...base.expect, connectedAtMs: base.expect.connectedAtMs + 1 }, operation: 'shopify.order.tag_remove', args: { orderIds: ['gid://shopify/Order/9002'], tags: ['x'] } })
+    expect(stale).toMatchObject({ ok: false, error: { code: 'connect_stale' }, sent: 'no' })
+    expect(shopifyWrite.writes).toHaveLength(writes)
+  })
 
   it('executes slack.channel.post against FakeSlackWeb through postToSlack', async () => {
     const started = await gw.ConnectGateway.startConnect(serverScope, { accountId: 'slack:workspace', memberId: 'mem_test_0001' })
@@ -113,7 +150,7 @@ describe('WriteGateway through Worker exports (workerd)', () => {
       accountId: 'shopify:store',
       expect: { connectedAtMs: 1, shop: 'example-write' },
       operation: 'shopify.order.tag_add',
-      args: { orderId: 'gid://shopify/Order/9001', tags: ['a'] },
+      args: { orderIds: ['gid://shopify/Order/9001'], tags: ['a'] },
     })
     expect(r).toMatchObject({ ok: false, error: { code: 'not_configured' }, sent: 'no' })
   })

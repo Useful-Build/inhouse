@@ -2,7 +2,10 @@
 //  1. repairs the gate when it and the object disagree (gate.ts: the sync that lapses every approved row);
 //  2. schedules the send of an approved row still unclaimed 30 s past its hold (its task was lost); the send task claims
 //     it with the same conditional update as always;
-//  3. moves a row `sending` for more than 60 s to `needs_check` (compare on its attempt), never back to `approved`;
+//  3. moves a row `sending` for more than 60 s to `needs_check` (compare on its attempt), never back to `approved`.
+//     Stage 1 M3-B (N22): item-aware. A batch row is exempt (its items take minutes); an item `sending` for more than
+//     60 s is `needs_check` instead (compare on its attempt), and a batch still sending whose task hasn't run for 30 s
+//     (it was lost, or an item just went stale) is scheduled again, so it carries on or ends;
 //  4. expires a waiting card past its 7 days;
 //  5. lapses an approval not claimed within 10 minutes of being given (the approval age cap; the claim checks it too).
 import { SYSTEM_MEMBER_ID, writeStamp } from '../db/ids.ts'
@@ -70,21 +73,36 @@ export async function sweepOutbox(d: SweepDeps): Promise<SweepResult> {
   ])
   const tooOld = await all<{ id: string; rev: number; approver: string }>(d.db, stmt("SELECT id, rev, approver FROM outbox_actions WHERE stamp = ? AND state = 'waiting'", oldStamp))
 
-  const lost = await all<{ id: string }>(d.db, stmt(
-    "SELECT id FROM outbox_actions WHERE state = 'approved' AND send_at_ms <= ? ORDER BY send_at_ms LIMIT 100", d.nowMs - t.lostTaskMs,
-  ))
-  for (const r of lost) d.scheduler.ensure({ id: sendTaskId(r.id), kind: SEND_KIND, dueAtMs: d.nowMs })
-
   const staleStamp = writeStamp(d.requestId)
   await runBatch(d.db, [
     stmt(
       `UPDATE outbox_actions SET state = 'needs_check', rev = rev + 1, updated_at_ms = ?, stamp = ?
-       WHERE state = 'sending' AND claimed_at_ms <= ?`,
+       WHERE state = 'sending' AND kind = 'single' AND claimed_at_ms <= ?`,
       d.nowMs, staleStamp, d.nowMs - t.staleSendingMs,
     ),
     linesForStamped('action.needs_check', "json_object('actionId', a.id, 'attempt', a.attempt, 'why', 'stale')", [], who, staleStamp),
+    // Stage 1 M3-B: a batch item past its deadline, the same way; its batch ends (or carries on) at its next pass.
+    stmt(
+      `UPDATE outbox_items SET state = 'needs_check', updated_at_ms = ?, stamp = ?
+       WHERE state = 'sending' AND claimed_at_ms <= ?`,
+      d.nowMs, staleStamp, d.nowMs - t.staleSendingMs,
+    ),
+    stmt(
+      `INSERT INTO audit_log (at_ms, actor_id, action, target_kind, target_id, args_json, req_id)
+       SELECT ?, ?, 'action.needs_check', 'action', i.action_id, json_object('actionId', i.action_id, 'attempt', i.attempt, 'why', 'stale', 'item', i.n), ?
+       FROM outbox_items i WHERE i.stamp = ? ORDER BY i.action_id, i.n`,
+      who.atMs, who.actorId, who.requestId, staleStamp,
+    ),
   ])
   const stale = await all<{ id: string; attempt: number; approver: string }>(d.db, stmt('SELECT id, attempt, approver FROM outbox_actions WHERE stamp = ?', staleStamp))
+
+  const lost = await all<{ id: string }>(d.db, stmt(
+    `SELECT id FROM outbox_actions WHERE state = 'approved' AND send_at_ms <= ?
+     UNION SELECT id FROM outbox_actions WHERE state = 'sending' AND kind = 'batch' AND updated_at_ms <= ?
+     LIMIT 100`,
+    d.nowMs - t.lostTaskMs, d.nowMs - t.lostTaskMs,
+  ))
+  for (const r of lost) d.scheduler.ensure({ id: sendTaskId(r.id), kind: SEND_KIND, dueAtMs: d.nowMs })
 
   const expiredStamp = writeStamp(d.requestId)
   await runBatch(d.db, [

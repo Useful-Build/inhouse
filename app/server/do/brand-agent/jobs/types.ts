@@ -16,7 +16,8 @@ export interface JobTurnSettings {
   effort: Effort
   sideModel: string
   maxTurns: number
-  webFetchDomains: string[]
+  /** A list, or null for any public host (open mode, M3-F). */
+  webFetchDomains: string[] | null
   webSearch: boolean
   /** The helpers' model (N6, M1-P): read again with the rest, so a continuation gets the helpers its root had. */
   subagentModel: string

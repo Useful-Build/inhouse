@@ -69,8 +69,9 @@ describe('reserving a use (failures 1 and 2)', () => {
       async (perDay, perDayMax, steps) => {
         await db.prepare('DELETE FROM permission_uses').run()
         await db.prepare('DELETE FROM permission_grants').run()
-        await ceiling(db, 'shopify.order.tag_add', { enabled: true, perDayMax, loweredRev: 1 })
-        const g = shopGrant('member:m_use_b', { perDay })
+        // Stage 1 M3-L: calls of up to 3 units, within both largest-call limits, so only the day's count decides.
+        await ceiling(db, 'shopify.order.tag_add', { enabled: true, perDayMax, loweredRev: 1, unitsMax: 3 })
+        const g = shopGrant('member:m_use_b', { perDay, unitsMax: 3 })
         await insertGrant(db, g)
         const model: { id: string; units: number; day: string; live: boolean }[] = []
         for (const [i, s] of steps.entries()) {
@@ -125,7 +126,7 @@ describe('reserving a use (failures 1 and 2)', () => {
       const guard = claimGuardSql('a')
       const passes = await db.prepare(`WITH a AS (SELECT ? AS id, 1 AS rev, 'run' AS verdict, 'chat' AS origin, 'm_use_d' AS asked_by, NULL AS approved_by,
           ? AS grant_id, 'shopify:store' AS account_id, ? AS account_gen, 'shopify.order.tag_add' AS operation, ? AS policy_rev, ? AS scope_key,
-          '{"shop":"store-a"}' AS scope_json, 1 AS records) SELECT COUNT(*) AS n FROM a WHERE ${guard.sql}`)
+          '{"shop":"store-a"}' AS scope_json, 1 AS records, 1 AS units) SELECT COUNT(*) AS n FROM a WHERE ${guard.sql}`)
         .bind(`ac_${order}`, g.id, SHOP_GEN, POLICY_REV, g.scopeKey, ...guard.params).first<number>('n')
       expect(passes).toBe(0)
     }
@@ -142,7 +143,7 @@ describe('reserving a use (failures 1 and 2)', () => {
 describe('"Always allow" (failure 3)', () => {
   const resolved = { accountId: 'shopify:store', accountGen: SHOP_GEN, operation: 'shopify.order.tag_add' as const, scope: { shop: 'store-a' }, scopeKey: 'shop=store-a', policyRev: POLICY_REV }
   const always = (memberId: string, action: string, onlyIf = { sql: 'SELECT 1', params: [] }) =>
-    alwaysAllowStmts({ holderMemberId: memberId, grantedRole: 'member', resolved, perDay: 50, sourceAction: action, onlyIf, at: at(memberId, NOW) })
+    alwaysAllowStmts({ holderMemberId: memberId, grantedRole: 'member', resolved, perDay: 50, unitsMax: 5, sourceAction: action, onlyIf, at: at(memberId, NOW) })
 
   it('a second Always allow on a live grant makes no second grant and no second line; both read the one grant back', async () => {
     await person(db, 'm_always_a', 'member')
@@ -161,7 +162,7 @@ describe('"Always allow" (failure 3)', () => {
     await person(db, 'm_always_c', 'member')
     const mark = await lastLineId(db)
     const tryAlways = async (over: Partial<typeof resolved>, grantedRole: 'member' | 'admin' = 'member') => {
-      const a = alwaysAllowStmts({ holderMemberId: 'm_always_c', grantedRole, resolved: { ...resolved, ...over }, perDay: 50, sourceAction: 'ac_IIIIIIIIIIIIIIIIIIIIII', onlyIf: { sql: 'SELECT 1', params: [] }, at: at('m_always_c', NOW) })
+      const a = alwaysAllowStmts({ holderMemberId: 'm_always_c', grantedRole, resolved: { ...resolved, ...over }, perDay: 50, unitsMax: 5, sourceAction: 'ac_IIIIIIIIIIIIIIIIIIIIII', onlyIf: { sql: 'SELECT 1', params: [] }, at: at('m_always_c', NOW) })
       await db.batch(a.stmts.map(s => db.prepare(s.sql).bind(...s.params)))
     }
     await account(db, 'shopify:store', SHOP_GEN + 1)
@@ -197,7 +198,7 @@ describe('"Always allow" (failure 3)', () => {
 describe('a dead grant never blocks a new "Always allow" (review round 1)', () => {
   const resolved = { accountId: 'shopify:store', accountGen: SHOP_GEN, operation: 'shopify.order.tag_add' as const, scope: { shop: 'store-a' }, scopeKey: 'shop=store-a', policyRev: POLICY_REV }
   const always = async (memberId: string, action: string) => {
-    const a = alwaysAllowStmts({ holderMemberId: memberId, grantedRole: 'member', resolved, perDay: 50, sourceAction: action, onlyIf: { sql: 'SELECT 1', params: [] }, at: at(memberId, NOW) })
+    const a = alwaysAllowStmts({ holderMemberId: memberId, grantedRole: 'member', resolved, perDay: 50, unitsMax: 5, sourceAction: action, onlyIf: { sql: 'SELECT 1', params: [] }, at: at(memberId, NOW) })
     await db.batch(a.stmts.map(x => db.prepare(x.sql).bind(...x.params)))
     return a.id
   }
@@ -264,7 +265,7 @@ describe('Slack and disconnects (review round 2)', () => {
     await channel(db, 'C0ROUND201', 'ops', 'm_r2_admin')
   })
   const alwaysPost = async (action: string) => {
-    const a = alwaysAllowStmts({ holderMemberId: 'm_r2_a', grantedRole: 'member', resolved: post, perDay: 50, sourceAction: action, onlyIf: { sql: 'SELECT 1', params: [] }, at: at('m_r2_a', NOW) })
+    const a = alwaysAllowStmts({ holderMemberId: 'm_r2_a', grantedRole: 'member', resolved: post, perDay: 50, unitsMax: 5, sourceAction: action, onlyIf: { sql: 'SELECT 1', params: [] }, at: at('m_r2_a', NOW) })
     await db.batch(a.stmts.map(x => db.prepare(x.sql).bind(...x.params)))
   }
   const count = () => db.prepare("SELECT COUNT(*) AS n FROM permission_grants WHERE holder = 'member:m_r2_a'").first<number>('n')

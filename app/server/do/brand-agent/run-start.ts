@@ -24,7 +24,10 @@ export interface StartInput {
   sideModel: string
   effort: RunStart['effort']
   maxTurns: number
-  /** null only from a turn stored before P8a S: sent as `[]`, no host. */
+  /**
+   * null: any public host (M3-F, N29: `t:webfetch_mode` is `open`), sent as null. A turn stored before P8a S (SQL NULL)
+   * reaches here as `[]` (`webFetchOf`). The egress decides every request by the brand's live mode and list.
+   */
   webFetchDomains: string[] | null
   /** Web search (P8a S): sent as `webSearch: true` only when true, and left out otherwise. */
   webSearch?: boolean
@@ -44,6 +47,12 @@ export interface StartInput {
   actions?: boolean
 }
 
+/**
+ * A turn row's WebFetch reach (`turns.web_fetch_json`): its list, or null (any public host, open mode, M3-F) from the
+ * stored JSON text `null`. SQL NULL is a turn stored before P8a S: no host, never open.
+ */
+export const webFetchOf = (json: string | null): string[] | null => (json === null ? [] : JSON.parse(json) as string[] | null)
+
 export function buildStart(i: StartInput): StartWithoutToken {
   const ceiling = TURN_CEILING_MICRO[i.model]
   if (ceiling === undefined) throw new Error(`no per-turn ceiling for ${i.model}`)
@@ -62,8 +71,8 @@ export function buildStart(i: StartInput): StartWithoutToken {
     maxTurns: i.maxTurns,
     // Per query() call, never the resumed session's earlier spend (SDK 0.3.328 sdk.d.ts:6252; agent-sdk/cost-tracking, read 2026-11-21).
     maxBudgetUsd: ceiling / 1_000_000,
-    // Never null (the runner's "any public host"): a list, empty for none (P8a S).
-    webFetchDomains: i.webFetchDomains ?? [],
+    // A list (empty for none, P8a S), or null for any public host (open mode, M3-F).
+    webFetchDomains: i.webFetchDomains,
     // The key only when on (like outputFormat): RunStart is a strict object, so a runner on an image from before P8a
     // refuses a start that carries it; off is its absence.
     ...(i.webSearch === true ? { webSearch: true } : {}),

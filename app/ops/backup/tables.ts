@@ -94,10 +94,16 @@ export const TABLE_RULES: readonly TableRule[] = [
   { name: 'permission_ceiling', orderBy: ['operation'], mode: 'snapshot' },
   { name: 'permission_grants', orderBy: ['id'], mode: 'snapshot', after: ['members'] },
   { name: 'permission_uses', orderBy: ['id'], mode: 'paged', createdColumn: 'at_ms' },
+  // Stage 1 M3-L: insert-only, growing with every batch item given back: paged.
+  { name: 'permission_item_releases', orderBy: ['id'], mode: 'paged', createdColumn: 'at_ms' },
   // Stage 1 M2-B: the gate is one row; the actions are updated through their life and grow with every write: paged. A
   // restore holds the outbox (M2-R: every restored approved or sending row to "Needs a check").
   { name: 'outbox_gate', orderBy: ['id'], mode: 'snapshot' },
   { name: 'outbox_actions', orderBy: ['id'], mode: 'paged', createdColumn: 'created_at_ms' },
+  // Stage 1 M3-B: a batch's items, updated through their send and growing with every batch: paged, restored after their
+  // batches (no foreign key, but an item belongs to its batch). A restore holds them with their batch (every pending or
+  // sending item of a held batch to "Needs a check").
+  { name: 'outbox_items', orderBy: ['item_id'], mode: 'paged', createdColumn: 'created_at_ms', after: ['outbox_actions'] },
   // Stage 1 M2-Q: few rows, each updated once or twice (answered, delivered), so a whole snapshot.
   { name: 'questions', orderBy: ['id'], mode: 'snapshot' },
   // Stage 1 M3-R: the eval write log and its faults, written only on the eval deployment and cleared per case-repeat;

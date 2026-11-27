@@ -4,7 +4,7 @@
 // don't follow the settings; a broken stored host list allows any host instead of none; an empty or missing list allows
 // any host (P8a S: it allows none); web search is on without the brand's `t:websearch` switch; a fetch host is left
 // while the brand's `t:webfetch_on` is off (M1-F: both switches are brand settings, so both scopes are read); the helpers'
-// model doesn't follow N6 (M1-P).
+// model doesn't follow N6 (M1-P); open fetch mode (M3-F) isn't any public host, or a mode other than `open` widens it.
 import { describe, expect, it } from 'vitest'
 import type { SettingRecord } from '../../shared/contract/settings.ts'
 import { settingSpec } from '../../shared/contract/settings.ts'
@@ -37,6 +37,14 @@ describe('resolveTurnSettings (F)', () => {
     const hosts = 'example.com\ndocs.example.org'
     for (const v of [false, 'false', 0, 'off']) expect(await resolveTurnSettings(store({ 't:webfetch': hosts, 't:webfetch_on': v }), 'sonnet'), String(v)).toMatchObject({ webFetchDomains: [] })
     for (const v of [true, null, undefined]) expect(await resolveTurnSettings(store({ 't:webfetch': hosts, ...(v === undefined ? {} : { 't:webfetch_on': v }) }), 'sonnet'), String(v)).toMatchObject({ webFetchDomains: ['example.com', 'docs.example.org'] })
+  })
+
+  it('open fetch mode (M3-F): any public host (null) while reading is on, whatever the list; off leaves none; any other mode is the list', async () => {
+    const hosts = 'example.com\ndocs.example.org'
+    for (const list of [{}, { 't:webfetch': '' }, { 't:webfetch': hosts }, { 't:webfetch': 'not a list!' }])
+      expect(await resolveTurnSettings(store({ ...list, 't:webfetch_mode': 'open' }), 'sonnet'), JSON.stringify(list)).toMatchObject({ webFetchDomains: null })
+    for (const v of [false, 'off']) expect(await resolveTurnSettings(store({ 't:webfetch_mode': 'open', 't:webfetch_on': v }), 'sonnet'), String(v)).toMatchObject({ webFetchDomains: [] })
+    for (const v of ['list', null, 'OPEN', 'any', true]) expect(await resolveTurnSettings(store({ 't:webfetch': hosts, 't:webfetch_mode': v }), 'sonnet'), String(v)).toMatchObject({ webFetchDomains: ['example.com', 'docs.example.org'] })
   })
 
   it('follows the settings: effort label, Haiku off, the turn budget and a host list', async () => {

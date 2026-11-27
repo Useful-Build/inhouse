@@ -188,7 +188,7 @@ export function createDoor(run: RunSql, nowSql: () => string = () => D1_NOW_MS):
       if (!CARD_TEXT.test(a.title) || !CARD_TEXT.test(a.line)) throw new DoorRefusal('not a card title or line the door writes')
       const now = nowSql()
       const card = JSON.stringify({ title: a.title, lines: [a.line], label: 'Shopify (eval)', nudge: false })
-      const args = JSON.stringify({ orderId: 'gid://shopify/Order/1', tags: ['eval'] })
+      const args = JSON.stringify({ orderIds: ['gid://shopify/Order/1'], tags: ['eval'] })
       await run(`INSERT INTO outbox_actions (id, rev, state, verdict, origin, via, asked_by, approver, chat_id, account_id, account_gen, operation,
         policy_rev, scope_json, scope_key, args_json, payload_hash, records, units, card_json, expires_at_ms, created_at_ms, updated_at_ms)
         VALUES (${sqlString(a.id)}, 1, 'waiting', 'ask', 'chat', 'approval_request', ${sqlString(a.askedBy)}, ${sqlString(a.askedBy)}, ${sqlString(a.chatId)},

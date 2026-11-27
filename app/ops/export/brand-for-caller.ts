@@ -146,6 +146,18 @@ export const BRAND_FOR_CALLER: Readonly<Record<string, CallerPolicy>> = {
       return rest
     },
   },
+  // Stage 1 M3-B. Route 125 shows a batch's items (position, line, outcome) to whoever sees its card: an Admin every
+  // batch's, the Inhouse team none. An item never carries its chat or call ids out (a collected item's call may be
+  // another person's chat; the batch row says whose).
+  outbox_items: {
+    kind: 'rows',
+    why: "route 125: a batch's items to whoever sees its card, without chat or call ids; the Inhouse team sees none",
+    where: c => (person(c) ? { where: '1', params: [] } : null),
+    project: row => {
+      const { chat_id: _chat, tool_use_id: _tool, ...rest } = row
+      return rest
+    },
+  },
   // Stage 1 M2-Q. Route 140 shows a person the questions asked of them (and an Admin those asked of every admin); a
   // question asked of another member is that member's chat. The Inhouse team gets none.
   questions: {

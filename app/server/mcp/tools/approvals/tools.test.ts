@@ -14,7 +14,8 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { lastLineId, linesSince } from '../../../db/test-support.ts'
 import { POLICY_REV } from '../../../permissions/policy.ts'
-import { insertGrant, person } from '../../../permissions/test-support.ts'
+import { ceiling, insertGrant, person } from '../../../permissions/test-support.ts'
+import { itemsOf, wideArgs } from '../../../outbox/batch/test-support.ts'
 import { ADMIN, ASKER, HUB_FACTS, OTHER, SHOP_GEN, fresh, resetOutbox, rowOf, tagArgs, world } from '../../../outbox/test-support.ts'
 import { INHOUSE_TOOLS } from '../../registry.ts'
 import type { ToolDeps, ToolHandler, ToolResult, ToolScope } from '../../server/tool.ts'
@@ -127,7 +128,7 @@ describe('approval_request (failures 1, 2, 6)', () => {
     admitWith = () => ({ toolUseId: fresh('tu'), jobId: null })
     expect(data(await call('approval_request', { operation: 'shopify_order_delete', args: {} }, scope()))).toEqual({ error: 'unknown_operation' })
     expect(data(await call('approval_request', { operation: 'shopify.order.tag_add', args: tagArgs(1) }, scope()))).toEqual({ error: 'unknown_operation' })
-    expect(data(await call('approval_request', { operation: 'shopify_order_tag_add', args: { orderId: 'x', tags: [] } }, scope()))).toEqual({ error: 'invalid_args' })
+    expect(data(await call('approval_request', { operation: 'shopify_order_tag_add', args: { orderIds: ['x'], tags: [] } }, scope()))).toEqual({ error: 'invalid_args' })
     expect(data(await request(1, scope('m_system', { chatId: 'c_m2e_routine' })))).toEqual({ error: 'no_one_to_ask' })
     await person(db, OTHER, 'member', 'removed')
     expect(data(await request(1, scope(OTHER)))).toEqual({ error: 'no_one_to_ask' })
@@ -290,5 +291,31 @@ describe('the registry (failure 7)', () => {
     expect(Object.keys((z.toJSONSchema(input, { io: 'input' }) as { properties: object }).properties).sort()).toEqual(['args', 'operation'])
     expect(input.safeParse({ operation: 'shopify_order_tag_add', args: tagArgs(1) }).success).toBe(true)
     expect(input.safeParse({ operation: 'shopify_order_tag_add', args: tagArgs(1), note: 'Dear Anna, sorry for the delay.' }).success).toBe(false)
+  })
+})
+
+describe('Stage 1 M3-B: batches (N22)', () => {
+  it('approval_request\'s 6th waiting card joins one card, answered from its own item; the agent can\'t withdraw a shared card', async () => {
+    for (let k = 1; k <= 5; k++) await made(k)
+    const r = await request(6)
+    expect(r.isError, text(r)).toBeUndefined()
+    const id = data(r).approval_id as string
+    expect(text(r)).toContain(`(approval_id: ${id}, item 1)`)
+    expect(data(r)).toMatchObject({ status: 'waiting', item: 1, items: 1, created: true })
+    expect(await rowOf(db, id)).toMatchObject({ kind: 'batch', state: 'waiting', via: 'approval_request', tool_use_id: null })
+    expect(data(await call('approval_withdraw', { approval_id: id }, scope()))).toEqual({ error: 'conflict' })
+    expect(await rowOf(db, id)).toMatchObject({ state: 'waiting' })
+  })
+
+  it('a call\'s own batch (over the bulk threshold) is that call\'s: the agent may withdraw it, its items with it', async () => {
+    {
+      await ceiling(db, 'shopify.order.tag_add', { enabled: true, perDayMax: 50, loweredRev: 1, unitsMax: 100 })
+      const r = await call('approval_request', { operation: 'shopify_order_tag_add', args: wideArgs([1, 2, 3, 4, 5, 6, 7]) }, scope())
+      expect(r.isError, text(r)).toBeUndefined()
+      const id = data(r).approval_id as string
+      expect(await rowOf(db, id)).toMatchObject({ kind: 'batch', state: 'waiting', guardrail: 'bulk', items_n: 7 })
+      expect(data(await call('approval_withdraw', { approval_id: id }, scope()))).toMatchObject({ status: 'withdrawn' })
+      expect((await itemsOf(db, id)).every(i => i.state === 'withdrawn')).toBe(true)
+    }
   })
 })

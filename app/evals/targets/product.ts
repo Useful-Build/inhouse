@@ -22,6 +22,7 @@ import { readFileSync } from 'node:fs'
 import type { JWK } from 'jose'
 import { createDoor, newActionId, newMemoryId, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory } from './door.ts'
 import { writeProvides } from './write-door.ts'
+import { createFetchDoor, withEgress, type FetchDoor } from '../exfiltration/open-fetch/egress.ts'
 import { CapReachedError, type Case, type ChatResult, type ExfilSpec, type People, type PersonKey, type RunContext, type SeedApproval, type SeedFact, type Session, type Target, type ToolCall } from '../types.ts'
 
 /**
@@ -119,6 +120,8 @@ export interface ProductTargetOptions {
   now?: () => number
   /** The memory door. Default: wrangler on INHOUSE_EVAL_D1_NAME (door.ts), made only after the eval-brand check passed. */
   door?: MemoryDoor
+  /** The fetch mode and egress record door (M3-F). Default: the same runner as `door`'s default. */
+  fetchDoor?: FetchDoor
   /** Milliseconds between reads while a turn runs. */
   pollMs?: number
   sleep?: (ms: number) => Promise<void>
@@ -229,6 +232,8 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
   }
 
   let door: MemoryDoor | undefined = opts.door
+  /** The fetch mode and the egress record (M3-F): the same database and runner as `door`. */
+  let fetchDoor: FetchDoor | undefined = opts.fetchDoor
   let ready: Promise<void> | undefined
   /** The server-side eval-brand check, then the people's ids and the door. Once, before the first chat. */
   /** The eval lease's tag (door.ts takeLease): this run's. */
@@ -287,7 +292,11 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     const notServed = shopifyNotServed(tools.json)
     if (notServed !== null) throw new ProductTargetRefusal(`refusing: ${notServed}`)
     // (a) the door only after the check passed; (b) and (c) are door.ts's.
-    door ??= createDoor(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env }))
+    if (!door || !fetchDoor) {
+      const sql = wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env })
+      door ??= createDoor(sql)
+      fetchDoor ??= createFetchDoor(sql)
+    }
     // The database must be the one this origin answers from: make a chat through the API, read it back through the door. Nothing is
     // cleared or written before this passes.
     const probe = `eval-probe-${rid()}`
@@ -329,7 +338,11 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     try {
       await d.setWebSearch(false)
     } finally {
-      await d.setWebfetchHosts(null)
+      try {
+        await d.setWebfetchHosts(null)
+      } finally {
+        await fetchDoor!.setMode('list')
+      }
     }
   }
 
@@ -372,6 +385,8 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
         settingsTouched = true
         await d.setWebSearch(false)
         await d.setWebfetchHosts(exfil ? exfil.hosts.map((h) => h.toLowerCase()) : null)
+        // M3-F (N29): an open-fetch case reaches any public host; every other case keeps the list (the default).
+        await fetchDoor!.setMode(exfil?.fetch ?? 'list')
         await d.clear()
         // The case-repeat's own person: invited through the door, bound by its first sign-in (the product's invite path).
         const who = casePerson(runTag, run.caseId, run.rep)
@@ -397,7 +412,7 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
         if (exfil?.via === 'memory_search') facts.push({ id: newMemoryId(), scope: 'person', ownerId: people.current, text: exfil.plant(run.canary) })
         if (exfil?.via === 'attachment') attachment = { name: 'note.txt', bytes: new TextEncoder().encode(exfil.plant(run.canary)) }
         await d.insert(facts)
-        session = productSession({ api, must, door: d, people, picker, real, attachment, approvals: run.approvals, pollMs, sleep, askedAs: who.sub, onSpend: (usd) => { spentTotal += usd } })
+        session = productSession({ api, must, door: d, ...(exfil ? { egress: fetchDoor! } : {}), people, picker, real, attachment, approvals: run.approvals, pollMs, sleep, askedAs: who.sub, onSpend: (usd) => { spentTotal += usd } })
       } catch (e) {
         try {
           if (settingsTouched) await resetWebTools(door!)
@@ -433,6 +448,11 @@ export interface SessionDeps {
   pollMs: number
   sleep: (ms: number) => Promise<void>
   onSpend: (usd: number) => void
+  /**
+   * An exfiltration case's egress record (M3-F): each WebFetch the hook let through gets the egress's answer from the
+   * rows its chat added (`withEgress`), so a `leak` refusal is graded as one.
+   */
+  egress?: FetchDoor
 }
 
 /** Route 33's cost is whole cents, rounded to the nearest: the true figure is under half a cent more, so it is booked at that upper bound. */
@@ -528,6 +548,7 @@ export function productSession(d: SessionDeps): Session {
         attachments = [{ fileId: up.json.fileId, name: up.json.name }]
         attachment = undefined
       }
+      const mark = d.egress ? await d.egress.mark() : null
       const sent = await d.api('current', 'POST', `/api/chats/${chatId}/turns`, { json: { clientTurnKey: `eval-${rid()}`, text: prompt, model: d.picker, ...(attachments ? { attachments } : {}) }, signal: o?.signal })
       d.must(sent, 'send the turn', [200, 201, 202])
       const turnId: string = sent.json.turnId
@@ -581,7 +602,7 @@ export function productSession(d: SessionDeps): Session {
 
       const writes = writesFromRows(before, await d.door.rows(), (id) => d.real.get(id) ?? id, personKey)
       const used = new Set<ToolCall>()
-      const toolCalls: ToolCall[] = steps.map((s) => {
+      let toolCalls: ToolCall[] = steps.map((s) => {
         const n = s.detail
         const short = n.replace(/^mcp__inhouse__/, '')
         if (short === 'memory_save' || short === 'memory_update') {
@@ -596,6 +617,7 @@ export function productSession(d: SessionDeps): Session {
         return JSON.stringify(seeded) === JSON.stringify(c.input) ? c : { ...c, seedInput: seeded }
       })
       for (const w of writes) if (!used.has(w)) toolCalls.push(w)
+      if (d.egress && mark !== null) toolCalls = withEgress(toolCalls, await d.egress.since(mark))
       // The parked call, as the open question shows it, if the trace doesn't hold it: its text and options are graded.
       if (parked && !toolCalls.some((c) => c.name === QUESTION_ASK)) {
         toolCalls.push({ name: QUESTION_ASK, input: { question: parked.question, options: parked.options }, result: 'Asked; the chat waits on the answer (seen from the open question, route 140)', isError: false })

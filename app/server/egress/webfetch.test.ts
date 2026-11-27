@@ -9,7 +9,10 @@
 //  5. cookies or authorization reach the site; a body over 10 MB comes back whole;
 //  6. (P8a, the egress record) a request goes out unrecorded, a hop of a redirect included, or one whose record failed;
 //     a record holds anything but the host (a path, a query, a header); a refusal's record lacks its code; a request
-//     from Bash (any client, any method) isn't recorded; a record can be updated.
+//     from Bash (any client, any method) isn't recorded; a record can be updated;
+//  7. (M3-F, open mode) open drops a check other than the list: an address literal (public or not), a name that isn't a
+//     DNS name of two or more labels, a private DNS answer, a bad port or scheme, or a private redirect hop passes; the
+//     leak check doesn't run before DNS; a failed mode read lets a request through; `list` mode reads open.
 import { fc, it as prop } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
 import { addressVerdict } from './ip.ts'
@@ -49,7 +52,7 @@ const PUBLIC_DNS: Dns = {
 const ALL = [...Object.keys(PUBLIC_DNS), 'missing.example.com'].join('\n')
 const page = (body = 'hello') => () => new Response(body, { headers: { 'content-type': 'text/html', 'set-cookie': 'tracker=1', server: 'x' } })
 
-async function run(url: string, opts: { list?: string | null; method?: string; headers?: Record<string, string>; pages?: Record<string, () => Response>; dns?: Dns; recordFails?: boolean; refusalRecordHangs?: boolean } = {}) {
+async function run(url: string, opts: { list?: string | null; mode?: 'list' | 'open' | 'throws'; method?: string; headers?: Record<string, string>; pages?: Record<string, () => Response>; dns?: Dns; recordFails?: boolean; refusalRecordHangs?: boolean } = {}) {
   const { f, fetched } = net(opts.dns ?? PUBLIC_DNS, opts.pages ?? { 'https://docs.example.com/a': page(), 'https://other.example.org/b': page() })
   const logs: Record<string, unknown>[] = []
   const records: FetchRecord[] = []
@@ -60,7 +63,7 @@ async function run(url: string, opts: { list?: string | null; method?: string; h
     if (opts.refusalRecordHangs && r.verdict === 'refused') await new Promise(() => {})
     records.push(r)
   }
-  const res = await handleWebFetch(new Request(url, { method: opts.method ?? 'GET', headers: opts.headers }), { fetchOn: async () => true, hostList: async () => opts.list ?? null, checkLeak: async () => false, fetch: f, log: e => void logs.push(e), record, noteRecordFailure: async () => { recordFailures++ }, waitUntil: p => void later.push(p) })
+  const res = await handleWebFetch(new Request(url, { method: opts.method ?? 'GET', headers: opts.headers }), { fetchOn: async () => true, hostList: async () => opts.list ?? null, fetchMode: async () => { if (opts.mode === 'throws') throw new Error('d1 down'); return opts.mode ?? 'list' }, checkLeak: async () => false, fetch: f, log: e => void logs.push(e), record, noteRecordFailure: async () => { recordFailures++ }, waitUntil: p => void later.push(p) })
   // What the runtime would finish after the answer: a refusal's record (never one that hangs).
   if (!opts.refusalRecordHangs) await Promise.all(later)
   return { res, fetched, logs, records, later, recordFailures }
@@ -170,6 +173,51 @@ describe('a non-empty list: exactly those hosts', () => {
   })
 })
 
+describe('open mode: any public host name, every other check kept (M3-F, N29, failure 7)', () => {
+  it('fetches a public host on no list (the list is never read), and follows a redirect to another public host', async () => {
+    for (const list of [null, '', 'docs.example.com', 'not a list!']) {
+      const r = await run('https://other.example.org/b', { mode: 'open', list })
+      expect(r.res.status, String(list)).toBe(200)
+      expect(r.records).toEqual([{ host: 'other.example.org', verdict: 'allowed', code: null }])
+    }
+    const pages = { 'https://docs.example.com/a': () => new Response(null, { status: 302, headers: { location: 'https://other.example.org/b' } }), 'https://other.example.org/b': page('there') }
+    const hop = await run('https://docs.example.com/a', { mode: 'open', pages })
+    expect(await hop.res.text()).toBe('there')
+    expect(hop.fetched.map(f => f.url)).toEqual(['https://docs.example.com/a', 'https://other.example.org/b'])
+  })
+  it('refuses every address literal, public ones included, and a name with one label or a numeric last label, before any lookup', async () => {
+    for (const url of ['https://93.184.216.34/x', 'https://[2606:2800:220:1::1]/x', 'https://127.0.0.1/x', 'https://[::1]/x', 'https://169.254.169.254/latest', 'https://0x7f.1/x', 'https://localhost/x', 'https://intranet/x']) {
+      const r = await run(url, { mode: 'open' })
+      expect(r.res.status, url).toBe(403)
+      expect(await r.res.text(), url).toBe('WebFetch refused: address')
+      expect(r.fetched, url).toEqual([])
+    }
+  })
+  it('keeps the DNS block, port, scheme, method and redirect checks', async () => {
+    for (const host of ['dual.example.com', 'sneaky.example.com', 'v6private.example.com', 'mapped.example.com', 'meta.example.com', 'missing.example.com']) {
+      const r = await run(`https://${host}/x`, { mode: 'open' })
+      expect(await r.res.text(), host).toBe('WebFetch refused: dns')
+      expect(r.fetched, host).toEqual([])
+    }
+    expect(await (await run('https://docs.example.com:8443/a', { mode: 'open' })).res.text()).toBe('WebFetch refused: port')
+    expect(await (await run('http://docs.example.com/a', { mode: 'open' })).res.text()).toBe('WebFetch refused: scheme')
+    expect((await run('https://docs.example.com/a', { mode: 'open', method: 'POST' })).res.status).toBe(405)
+    const pages = { 'https://docs.example.com/a': () => new Response(null, { status: 302, headers: { location: 'https://meta.example.com/latest' } }) }
+    const bad = await run('https://docs.example.com/a', { mode: 'open', pages })
+    expect(await bad.res.text()).toBe('WebFetch refused: dns')
+    expect(bad.fetched.map(f => f.url)).toEqual(['https://docs.example.com/a'])
+  })
+  it('a failed mode read refuses (settings) before any lookup or fetch', async () => {
+    const r = await run('https://docs.example.com/a', { mode: 'throws', list: ALL })
+    expect(await r.res.text()).toBe('WebFetch refused: settings')
+    expect(r.fetched).toEqual([])
+    expect(r.logs[0]).toMatchObject({ event: 'webfetch_mode_read_failed' })
+  })
+  it('list mode stays the list: an unlisted public host is refused', async () => {
+    expect(await (await run('https://other.example.org/b', { mode: 'list', list: 'docs.example.com' })).res.text()).toBe('WebFetch refused: not_listed')
+  })
+})
+
 describe('size (failure 5)', () => {
   it('a declared length over 10 MB is refused; an undeclared one is cut at 10 MB', async () => {
     const declared = await run('https://docs.example.com/a', { list: ALL, pages: { 'https://docs.example.com/a': () => new Response('x', { headers: { 'content-length': String(WEBFETCH_MAX_BYTES + 1) } }) } })
@@ -223,6 +271,12 @@ describe('the list decides (property, failure 2)', () => {
       expect(await checkUrl(new URL(`https://${host}/x`), list, everyNamePublic)).toBeNull()
     },
   )
+})
+
+describe('open mode decides by name (property, failure 7)', () => {
+  prop.prop([HOST, fc.webPath()])('every host name the host-list rule accepts passes the static checks', async (host, path) => {
+    expect(await checkUrl(new URL(`https://${host}${path}`), null, everyNamePublic)).toBeNull()
+  })
 })
 
 describe('the egress record (P8a, failure 6)', () => {

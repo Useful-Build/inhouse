@@ -89,7 +89,7 @@ describe('request (failure 1)', () => {
     expect(r).toEqual({ outcome: 'refused', reason: 'over_ceiling', text: expect.stringContaining('turned off') })
     expect((await db.prepare('SELECT COUNT(*) AS n FROM outbox_actions').first<{ n: number }>())?.n).toBe(0)
     expect(await linesSince(db, mark)).toEqual([])
-    const bad = await outbox(db, clock).request(requestCtx({ nowMs: now }), { operation: 'shopify.order.tag_add', args: { orderId: 'x', tags: [] } }, { mode: 'tool' })
+    const bad = await outbox(db, clock).request(requestCtx({ nowMs: now }), { operation: 'shopify.order.tag_add', args: { orderIds: ['x'], tags: [] } }, { mode: 'tool' })
     expect(bad).toMatchObject({ outcome: 'refused', reason: 'invalid_args' })
     const system = await outbox(db, clock).request(requestCtx({ nowMs: now, asker: null }), { operation: 'shopify.order.tag_add', args: tagArgs(1) }, { mode: 'tool' })
     expect(system).toMatchObject({ outcome: 'refused', reason: 'over_ceiling' })
@@ -127,7 +127,10 @@ describe('request (failure 1)', () => {
     await grant({ perDay: 1 })
     expect((await ask(1)).outcome).toBe('approved')
     const second = await ask(2)
-    expect(second).toMatchObject({ outcome: 'waiting', action: { verdict: 'exact', guardrail: 'count' } })
+    // Stage 1 M3-B (N22): a call its grant can't take joins the chat's collecting batch, an exact card.
+    expect(second).toMatchObject({
+      outcome: 'collected', existing: false, action: { kind: 'batch', state: 'waiting', verdict: 'exact', guardrail: 'count', items_n: 1 }, item: { n: 1, state: 'pending' },
+    })
   })
 
   it('a run while the gate is closed leaves a card and no use', async () => {
@@ -178,11 +181,15 @@ describe('answers (failure 2)', () => {
   it('an exact card takes only Approve or No; a routine\'s card is exact', async () => {
     await grant({ perDay: 1 })
     await ask(1)
-    const exact = await waitingId(2)
+    // Stage 1 M3-B (N22): the `count` card is a collecting batch; its answer names the items it saw.
+    const collected = await ask(2)
+    if (collected.outcome !== 'collected') throw new Error(`expected a collected call, got ${collected.outcome}`)
+    const exact = collected.action
     expect(exact.verdict).toBe('exact')
-    expect(await outbox(db, clock).answer(ASKER_ACTOR, exact.id, { choice: 'always', ifRev: 1 })).toEqual({ refused: { code: 'invalid' } })
-    expect(await outbox(db, clock).answer(ASKER_ACTOR, exact.id, { choice: 'once', ifRev: 1 })).toEqual({ refused: { code: 'invalid' } })
-    expect(await outbox(db, clock).answer(ASKER_ACTOR, exact.id, { choice: 'approve', ifRev: 1 })).toMatchObject({ action: { state: 'approved' } })
+    expect(await outbox(db, clock).answer(ASKER_ACTOR, exact.id, { choice: 'always', ifRev: 1, upTo: 1, totals: { records: 1, units: 1 } })).toEqual({ refused: { code: 'invalid' } })
+    expect(await outbox(db, clock).answer(ASKER_ACTOR, exact.id, { choice: 'once', ifRev: 1, upTo: 1, totals: { records: 1, units: 1 } })).toEqual({ refused: { code: 'invalid' } })
+    expect(await outbox(db, clock).answer(ASKER_ACTOR, exact.id, { choice: 'approve', ifRev: 1 })).toEqual({ refused: { code: 'invalid' } })
+    expect(await outbox(db, clock).answer(ASKER_ACTOR, exact.id, { choice: 'approve', ifRev: 1, upTo: 1, totals: { records: 1, units: 1 } })).toMatchObject({ action: { state: 'approved' } })
     const routine = await ask(3, { origin: 'routine' })
     if (routine.outcome !== 'waiting') throw new Error('expected a card')
     expect(cardOf(routine.action, ASKER_ACTOR, now)).toMatchObject({ kind: 'exact', can: { approve: true, allowOnce: false, alwaysAllow: false } })
