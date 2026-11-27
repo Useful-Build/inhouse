@@ -65,19 +65,20 @@ export const slackChannelPost: OperationEntry<PostArgs> & { key: 'slack.channel.
   records: () => 1,
   units: () => 1,
   unitsLabel: 'posts',
-  // Stage 1 M3-A (N21): the channel and the post's first line, as the card's own words.
+  // Stage 1 M3-A (N21): the channel and the whole post, as the card shows it (never cut: it's what a person approves).
   itemLine(a, f) {
     const c = listedChannel(f.listedChannels, a.channel)
     if (!c) throw new Error('slack.channel.post: item line asked for an unlisted channel')
-    const first = (a.title ?? a.text).split('\n', 1)[0] ?? ''
-    return `#${c.name}: ${first.length > 80 ? `${first.slice(0, 79)}…` : first}`
+    return `#${c.name}: ${a.title === undefined ? a.text : `${a.title}\n${a.text}`}`
   },
   effects: { money: false, customer: false, destructive: false, access: false },
   memberMay: true,
   reversible: false,
   idempotent: false,
-  coalesces: true,
-  defaults: { perDay: 50, unitsMax: 1, ceiling: { perDayMax: 200, unitsMax: 1 } },
+  // Never collected into a batch: a batch card shows each item as one line among many, and a post's text is what the
+  // person approves (N31: private data to a listed channel). The 6th waiting post in a chat is refused instead.
+  coalesces: false,
+  defaults: { grant: { perDay: 50, unitsMax: 1 }, ceiling: { perDayMax: 200, unitsMax: 1 } },
   card(a, f) {
     const c = listedChannel(f.listedChannels, a.channel)
     // `resolve` refuses an unlisted channel before it builds the card.

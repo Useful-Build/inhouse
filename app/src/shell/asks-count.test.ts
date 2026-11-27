@@ -36,7 +36,7 @@ declare global { var IS_REACT_ACT_ENVIRONMENT: boolean }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const instant = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
-const NONE = { allowOnce: false, alwaysAllow: false, approve: false, deny: false, undo: false, resolve: false }
+const NONE = { allowOnce: false, alwaysAllow: false, approve: false, deny: false, undo: false, resolve: false, withdraw: false }
 let n = 0
 const card = (o: Partial<ActionCard> = {}): ActionCard => ({
   id: `ac_${String(++n).padStart(22, 'A')}`, rev: 1, kind: 'ask', state: 'waiting', title: 'Add a tag', lines: [],

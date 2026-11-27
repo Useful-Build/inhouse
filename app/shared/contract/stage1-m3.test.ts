@@ -1,17 +1,23 @@
 // Stage 1 M3's shared contracts (M3-A: N22, N23, N25, N26, N33). Ways they can go wrong, written first:
-//  1. a card claims more than a batch can hold, or carries more than its first 10 lines;
-//  2. a card leaves out who answers it, or names someone other than a person or the admins;
+//  1. a card claims more than a batch can hold, or carries more than its first 10 lines (an emptied batch still reads);
+//  2. a card leaves out who answers it or whether its asker may take it back, or names someone other than a person or
+//     the admins;
 //  3. a batch answer says how far it approves without the totals it saw, or the other way round (the server could then
 //     approve a list the person never saw summed), or an answer smuggles another key;
 //  4. an items page runs past 100 items, a position of 0, or a query that isn't a whole position;
 //  5. a permission without its limits, or a negative effective limit;
 //  6. a ceiling change outside the bounds the migration checks (bulk past 5, batch past 500, a limit of 0), an extra key
-//     riding along, or a create that names no revision.
+//     riding along, or a create that names no revision; a money row shown as a count;
+//  7. an item resolve that names no position or a position outside a batch; the refusals M3's routes send missing from
+//     the error reasons the client reads.
 import { describe, expect, it } from 'vitest'
 import {
   ACTION_ITEMS_PAGE, ActionCardSchema, ActionItemsPageSchema, ActionItemsQuerySchema, AnswerActionInputSchema, BATCH_FIRST_LINES, BATCH_ITEMS_MAX,
+  ResolveActionInputSchema, WithdrawActionInputSchema,
 } from './actions.ts'
-import { BULK_THRESHOLD_MAX, CeilingListSchema, CeilingRowSchema, UpdateCeilingInputSchema } from './ceiling.ts'
+import { BULK_THRESHOLD_MAX, CeilingListSchema, CeilingRowSchema, LIMIT_MAX, UpdateCeilingInputSchema } from './ceiling.ts'
+import { ErrorBodySchema } from './common.ts'
+import { AuditArgsSchema } from './audit.ts'
 import { PermissionSchema } from './permissions.ts'
 
 const R = 'A'.repeat(22)
@@ -20,7 +26,7 @@ const card = {
   id: `ac_${R}`, rev: 1, kind: 'exact', state: 'waiting', title: 'Tag 450 orders VIP', lines: ['More than 5 orders at once'],
   tool: { accountId: 'shopify:store', label: 'Shopify (Store A)' }, records: 450, reachesCustomer: false, reversible: true, guardrail: 'bulk',
   chatId: 'chat-1', askedBy: 'm_owner', askedAt: at, serverNow: at,
-  can: { allowOnce: false, alwaysAllow: false, approve: true, deny: true, undo: false, resolve: false }, nudgeAlways: false, approverKind: 'person',
+  can: { allowOnce: false, alwaysAllow: false, approve: true, deny: true, undo: false, resolve: false, withdraw: false }, nudgeAlways: false, approverKind: 'person',
 }
 const batch = { itemCount: 450, firstLines: Array.from({ length: 10 }, (_, i) => `Order ${1001 + i} (store-a): add VIP`), totals: { records: 450, units: 450, unitsLabel: 'orders' } }
 
@@ -34,6 +40,9 @@ describe('the batch card (1, 2)', () => {
   it('refuses a card without who answers it, or with anyone else', () => {
     const { approverKind: _, ...without } = card
     expect(ActionCardSchema.safeParse(without).success).toBe(false)
+    const { withdraw: __, ...canWithout } = card.can
+    expect(ActionCardSchema.safeParse({ ...card, can: canWithout }).success).toBe(false)
+    expect(ActionCardSchema.safeParse({ ...card, can: { ...card.can, withdraw: true } }).success).toBe(true)
     for (const approverKind of ['asker', 'role:admin', 'team', ''])
       expect(ActionCardSchema.safeParse({ ...card, approverKind }).success, approverKind).toBe(false)
   })
@@ -41,7 +50,8 @@ describe('the batch card (1, 2)', () => {
     expect(BATCH_ITEMS_MAX).toBe(500)
     expect(BATCH_FIRST_LINES).toBe(10)
     expect(ActionCardSchema.safeParse({ ...card, batch: { ...batch, itemCount: 500 } }).success).toBe(true)
-    for (const itemCount of [0, 501, 1.5]) expect(ActionCardSchema.safeParse({ ...card, batch: { ...batch, itemCount } }).success, String(itemCount)).toBe(false)
+    expect(ActionCardSchema.safeParse({ ...card, batch: { itemCount: 0, firstLines: [], totals: { records: 0, units: 0, unitsLabel: 'orders' } } }).success).toBe(true)
+    for (const itemCount of [-1, 501, 1.5]) expect(ActionCardSchema.safeParse({ ...card, batch: { ...batch, itemCount } }).success, String(itemCount)).toBe(false)
     expect(ActionCardSchema.safeParse({ ...card, batch: { ...batch, firstLines: [...batch.firstLines, 'one more'] } }).success).toBe(false)
     expect(ActionCardSchema.safeParse({ ...card, batch: { ...batch, totals: { records: 450, units: -1, unitsLabel: 'orders' } } }).success).toBe(false)
     expect(ActionCardSchema.safeParse({ ...card, batch: { ...batch, totals: { records: 450, units: 450 } } }).success).toBe(false)
@@ -102,14 +112,21 @@ describe('the ceiling (6)', () => {
   const values = { enabled: true, perDayMax: 200, unitsMax: 100, bulkThreshold: 5, batchMax: 500 }
   const row = {
     ...values, operation: 'shopify.order.tag_add', title: 'Add tags to orders', description: 'Adds 1 to 5 tags to up to 100 orders.', tool: 'Shopify',
-    unitsLabel: 'orders', guardrails: [], approverKind: 'person', suggested: { perDayMax: 200, unitsMax: 100 }, rev: 3, updatedAt: at, updatedBy: 'm_team',
+    measure: { kind: 'count', label: 'orders' }, applies: { perDay: true, batch: true }, guardrails: [], approverKind: 'person', suggested: { perDayMax: 200, unitsMax: 100 }, rev: 3, updatedAt: at, updatedBy: 'm_team',
   }
   it('lists every operation, with a row or without one yet', () => {
     expect(CeilingListSchema.safeParse({ items: [row], can: { edit: false }, writesOff: true }).success).toBe(true)
     const none = { ...row, enabled: false, rev: null, updatedAt: null, updatedBy: null }
     expect(CeilingRowSchema.safeParse(none).success).toBe(true)
-    const refund = { ...row, operation: 'shopify.refund.create', guardrails: ['money', 'customer'], approverKind: 'admins', unitsLabel: 'dollars', unitsMax: 50_000 }
+    const refund = {
+      ...row, operation: 'shopify.refund.create', guardrails: ['money', 'customer'], approverKind: 'admins', measure: { kind: 'money', currency: 'USD' },
+      applies: { perDay: false, batch: false }, unitsMax: 50_000,
+    }
     expect(CeilingRowSchema.safeParse(refund).success).toBe(true)
+    expect(CeilingRowSchema.safeParse({ ...refund, measure: { kind: 'money', currency: null } }).success).toBe(true)
+    for (const currency of ['usd', 'US', '$']) expect(CeilingRowSchema.safeParse({ ...refund, measure: { kind: 'money', currency } }).success, currency).toBe(false)
+    expect(CeilingRowSchema.safeParse({ ...refund, measure: { kind: 'money', label: 'dollars' } }).success).toBe(false)
+    expect(CeilingRowSchema.safeParse({ ...refund, applies: undefined }).success).toBe(false)
     expect(CeilingListSchema.safeParse({ items: [row], can: { edit: true } }).success).toBe(false)
   })
   it('takes a change inside the bounds 0760 checks, with the revision it read', () => {
@@ -124,5 +141,36 @@ describe('the ceiling (6)', () => {
       expect(ok({ ...values, ifRev: 1, [k]: v }), `${k}=${v}`).toBe(false)
     expect(ok({ ...values, ifRev: 1, operation: 'shopify.refund.create' })).toBe(false)
     expect(ok({ ...values, ifRev: 1, loweredRev: 9 })).toBe(false)
+  })
+})
+
+describe('item resolve, withdraw and refusals (7)', () => {
+  it('resolves a batch item by its position, or a single action without one', () => {
+    expect(ResolveActionInputSchema.safeParse({ outcome: 'sent', ifRev: 2 }).success).toBe(true)
+    expect(ResolveActionInputSchema.safeParse({ outcome: 'failed', ifRev: 2, item: 11 }).success).toBe(true)
+    for (const item of [0, 501, 1.5, '11']) expect(ResolveActionInputSchema.safeParse({ outcome: 'failed', ifRev: 2, item }).success, String(item)).toBe(false)
+    expect(ResolveActionInputSchema.safeParse({ outcome: 'failed', ifRev: 2, items: [11] }).success).toBe(false)
+  })
+  it('takes a withdraw with its revision only', () => {
+    expect(WithdrawActionInputSchema.safeParse({ ifRev: 1 }).success).toBe(true)
+    expect(WithdrawActionInputSchema.safeParse({}).success).toBe(false)
+    expect(WithdrawActionInputSchema.safeParse({ ifRev: 1, reason: 'x' }).success).toBe(false)
+  })
+  it('lets the client read the refusals M3 sends', () => {
+    for (const reason of ['writes_off', 'over_limit', 'totals_changed'])
+      expect(ErrorBodySchema.parse({ error: { code: 'conflict', reason } }).error.reason, reason).toBe(reason)
+  })
+  it('audits units and daily counts up to the ceiling bound, a lapse over the limit, and an item resolve', () => {
+    const ok = (v: unknown) => AuditArgsSchema.safeParse(v).success
+    const id = `ac_${R}`
+    const requested = { action: 'action.requested', actionId: id, operation: 'shopify.order.tag_add', verdict: 'exact', guardrail: 'money', origin: 'chat', records: 1 }
+    expect(ok({ ...requested, units: LIMIT_MAX })).toBe(true)
+    expect(ok({ ...requested, units: LIMIT_MAX + 1 })).toBe(false)
+    const granted = { action: 'permission.granted', permissionId: `pg_${R}`, operation: 'shopify.order.tag_add', accountId: 'shopify:store', scopeKey: 'shop=store-a', holder: 'member' }
+    expect(ok({ ...granted, perDay: LIMIT_MAX })).toBe(true)
+    expect(ok({ ...granted, perDay: LIMIT_MAX + 1 })).toBe(false)
+    expect(ok({ action: 'action.lapsed', actionId: id, reason: 'over_limit', released: true })).toBe(true)
+    expect(ok({ action: 'action.resolved', actionId: id, outcome: 'failed', released: true, item: 11 })).toBe(true)
+    expect(ok({ action: 'action.resolved', actionId: id, outcome: 'failed', released: true, item: 0 })).toBe(false)
   })
 })

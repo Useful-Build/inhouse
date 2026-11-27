@@ -3,7 +3,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import type { z } from 'zod'
 import type { AccountStatus, AccountSummary, CallerScope, CallToolOptions, HubError, HubErrorCode, HubResult, Instant, SignInState, ToolInfo, WriteOperationKey, WriteRequest, WriteResult } from './contract'
-import { WRITE_OPERATIONS } from './contract'
+import { THROTTLE_WAIT_MS, WRITE_OPERATIONS } from './contract'
 import {
   AccountStatusSchema,
   AccountSummarySchema,
@@ -102,5 +102,11 @@ describe('schemas.ts mirrors contract.ts', () => {
     expect(WriteResultSchema.safeParse(throttled).success).toBe(true)
     expect(WriteResultSchema.safeParse({ ...throttled, error: { ...throttled.error, retryAfterMs: '2000' } }).success).toBe(false)
     expect(WriteResultSchema.safeParse({ ok: false, error: throttled.error }).success).toBe(false)
+    const { retryAfterMs: _, ...noWait } = throttled.error
+    expect(WriteResultSchema.safeParse({ ...throttled, error: noWait }).success).toBe(true)
+    for (const retryAfterMs of [-1, 1.5, 86_400_001]) expect(WriteResultSchema.safeParse({ ...throttled, error: { ...throttled.error, retryAfterMs } }).success, String(retryAfterMs)).toBe(false)
+    expect(WriteResultSchema.safeParse({ ...throttled, error: { ...throttled.error, upstream: 'body' } }).success).toBe(false)
+    expect(THROTTLE_WAIT_MS.min).toBeLessThanOrEqual(THROTTLE_WAIT_MS.default)
+    expect(THROTTLE_WAIT_MS.default).toBeLessThanOrEqual(THROTTLE_WAIT_MS.max)
   })
 })

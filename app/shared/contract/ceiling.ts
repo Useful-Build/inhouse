@@ -10,8 +10,23 @@ import { GuardrailSchema, RowIfRevSchema } from './permissions.ts'
 /** The most records one call may touch before it needs an exact approval (`bulk`): the ceiling's `bulk_threshold` is 1 to this. */
 export const BULK_THRESHOLD_MAX = 5
 
-/** A ceiling limit: a whole number, at least 1 (refund units are the shop's minor currency units, so the top is wide). */
-const LimitSchema = z.number().int().min(1).max(1_000_000_000)
+/**
+ * The largest limit or unit count anywhere in M3 (a ceiling value, a grant's count, one action's units): refund units are
+ * the shop's minor currency units, so the top is wide. The audit lines use the same bound.
+ */
+export const LIMIT_MAX = 1_000_000_000
+const LimitSchema = z.number().int().min(1).max(LIMIT_MAX)
+
+/**
+ * What an operation's units are: a count of things in the person's words ("orders", "stock units", "posts"), or money in
+ * the shop's minor currency units (`currency` is the shop's ISO 4217 code; null while no connected account names one).
+ * A money limit is shown as money in that currency, never as a count.
+ */
+export const CeilingMeasureSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('count'), label: z.string() }),
+  z.object({ kind: z.literal('money'), currency: z.string().regex(/^[A-Z]{3}$/).nullable() }),
+])
+export type CeilingMeasure = z.infer<typeof CeilingMeasureSchema>
 
 /**
  * One operation's ceiling (`permission_ceiling`, 0720 and 0760). `perDayMax`: the most units any one permission may use
@@ -42,8 +57,14 @@ export const CeilingRowSchema = CeilingValuesSchema.extend({
   description: z.string(),
   /** The tool it writes to: "Shopify", "Slack". */
   tool: z.string(),
-  /** What its limits count: "orders", "stock units", "dollars", "posts". */
-  unitsLabel: z.string(),
+  /** What its limits count. */
+  measure: CeilingMeasureSchema,
+  /**
+   * Which values mean something for it: `perDay` only where a grant can cover it (no effect flag; an exact-only
+   * operation has no daily count), `batch` (`bulkThreshold` and `batchMax`) only where its calls can become a batch.
+   * The screen says nothing about a value that doesn't apply; the row still holds it.
+   */
+  applies: z.object({ perDay: z.boolean(), batch: z.boolean() }),
   guardrails: z.array(GuardrailSchema),
   approverKind: ActionApproverKindSchema,
   /** The values N24 suggests for a new row (the operation's entry). */

@@ -105,6 +105,9 @@ export function slackLeg(wiring: NotifyWiring, db: D1Database, scope: ToolScope,
         { mode: 'tool' },
       )
       if (r.outcome === 'refused') return refused(r.reason, r.text)
+      // Stage 1 M3-A: `slack.channel.post` never collects into a batch (`coalesces: false`: a batch line can't show a
+      // whole post). A collected post is a bug in the outbox: fail loud, never report a post as made.
+      if (r.outcome === 'collected') throw new Error(`notification_send: the outbox collected a Slack post into ${r.action.id}`)
       await wiring.noted(scope, r.action.id)
       return {
         kind: 'action', actionId: r.action.id, state: r.action.state, verdict: r.action.verdict,

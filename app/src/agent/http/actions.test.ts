@@ -24,7 +24,7 @@ const card = (o: Partial<ActionCard> = {}): ActionCard => ({
   id: AC, rev: 1, kind: 'ask', state: 'waiting', title: 'Add a tag to order 9001', lines: ['Tag: vip'],
   tool: { accountId: 'shopify:store', label: 'Shopify' }, records: 1, reachesCustomer: false, reversible: true,
   chatId: 'c_EEEEEEEEEEEEEEEEEEEEEE', askedBy: MEMBER, askedAt: iso(1000), serverNow: iso(2000),
-  can: { allowOnce: true, alwaysAllow: true, approve: false, deny: true, undo: false, resolve: false }, nudgeAlways: false, approverKind: 'person', ...o,
+  can: { allowOnce: true, alwaysAllow: true, approve: false, deny: true, undo: false, resolve: false, withdraw: false }, nudgeAlways: false, approverKind: 'person', ...o,
 })
 const permission = (o: Partial<Permission> = {}): Permission => ({
   id: PG, rev: 1, holder: { kind: 'member', memberId: MEMBER }, operation: 'shopify.order.tag_add', title: 'Add tags to orders',

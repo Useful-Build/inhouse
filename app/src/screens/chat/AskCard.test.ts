@@ -52,9 +52,9 @@ const card = (o: Partial<ActionCard> = {}): ActionCard => ({
   id: AC, rev: 1, kind: 'ask', state: 'waiting', title: 'Add a tag to order 9001', lines: ['Tag: vip'],
   tool: { accountId: 'shopify:store', label: 'Shopify' }, records: 1, reachesCustomer: false, reversible: true,
   chatId: 'c_EEEEEEEEEEEEEEEEEEEEEE', askedBy: 'm_A', askedAt: instant(NOW - 1000), serverNow: instant(NOW),
-  can: { allowOnce: true, alwaysAllow: true, approve: false, deny: true, undo: false, resolve: false }, nudgeAlways: false, approverKind: 'person', ...o,
+  can: { allowOnce: true, alwaysAllow: true, approve: false, deny: true, undo: false, resolve: false, withdraw: false }, nudgeAlways: false, approverKind: 'person', ...o,
 })
-const NONE = { allowOnce: false, alwaysAllow: false, approve: false, deny: false, undo: false, resolve: false }
+const NONE = { allowOnce: false, alwaysAllow: false, approve: false, deny: false, undo: false, resolve: false, withdraw: false }
 
 let host: HTMLDivElement
 let root: ReturnType<typeof createRoot>

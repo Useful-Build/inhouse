@@ -36,6 +36,8 @@ export const LAPSE_TEXT: Readonly<Record<LapseReason, string>> = {
   count: 'Today’s allowance for this permission is used up, so this needs your OK.',
   stale_approval: 'It wasn’t sent in time after the OK, so it needs your OK again.',
   chat_deleted: 'The chat it was asked in was deleted.',
+  // Stage 1 M3-A (N23): nothing lapses for it before M3-L.
+  over_limit: 'It’s over the limit the Inhouse team set now, so it can’t be approved as it is.',
 }
 
 /**
@@ -47,6 +49,7 @@ export const WITHDRAWN_TEXT: Readonly<Partial<Record<LapseReason, string>>> = {
   policy_changed: 'The rules changed, so this was withdrawn. Ask the agent to propose it again.',
   asker_removed: 'The person who asked left the team, so this was withdrawn.',
   chat_deleted: 'The chat it was asked in was deleted, so this was withdrawn.',
+  over_limit: 'It’s over the limit the Inhouse team set now, so this was withdrawn. Ask the agent to propose it again within the limit.',
 }
 
 /** A needs-check row's words on its card. */

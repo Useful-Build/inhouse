@@ -80,7 +80,7 @@ describe('records', () => {
     id: `ac_${R}`, rev: 1, kind: 'ask', state: 'waiting', title: 'Tag order #1001', lines: ['Adds the tag vip'],
     tool: { accountId: 'shopify:store', label: 'Shopify (Store A)' }, records: 1, reachesCustomer: false, reversible: true,
     chatId: 'chat-1', askedBy: 'm_owner', askedAt: at, serverNow: at,
-    can: { allowOnce: true, alwaysAllow: true, approve: false, deny: true, undo: false, resolve: false }, nudgeAlways: false, approverKind: 'person',
+    can: { allowOnce: true, alwaysAllow: true, approve: false, deny: true, undo: false, resolve: false, withdraw: false }, nudgeAlways: false, approverKind: 'person',
   }
   it('an action card parses, with its optional fields or without', () => {
     expect(ActionCardSchema.safeParse(card).success).toBe(true)

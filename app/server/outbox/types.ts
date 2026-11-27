@@ -77,9 +77,14 @@ export interface OutboxActionRow {
 }
 
 /**
- * Stage 1 M3 (N22; 0770_outbox_batches.sql, M3-B): one item of a batch. `item_id` (`oi_` + random) and the call that
- * made it are kept across moves; `action_id`, `n` and `moved_from` change only while `pending` (a trigger refuses any
- * other change to the item's identity, arguments, line or counts).
+ * Stage 1 M3 (N22; 0770_outbox_batches.sql, M3-B): one item of a batch, one hub call. `item_id` (`oi_` + random) and the
+ * call that made it are kept across moves; `action_id`, `n` and `moved_from` change only while `pending` (a trigger
+ * refuses any other change to the item's identity, arguments, line or counts).
+ *
+ * Two ways an item is made: a call over the bulk threshold (or a multi-record call under a grant) is split by its
+ * entry's `items` into one item per record, `tool_use_id` null (the call is on the batch row); a call that joins a
+ * collecting batch is one item holding the whole call, up to `bulk_threshold` records (so 2 to 5 orders are one item and
+ * one hub call), `tool_use_id` set.
  */
 export interface OutboxItemRow {
   item_id: string
@@ -87,7 +92,7 @@ export interface OutboxItemRow {
   /** Position in its current batch, 1-based. */
   n: number
   chat_id: string
-  /** The call that made it (a collected item); null for an item of a one-call batch. */
+  /** The call that made it (a collected item, the whole call); null for an item split from a one-call batch. */
   tool_use_id: string | null
   args_json: string
   payload_hash: string
@@ -151,10 +156,15 @@ export type OutboxRequestResult =
   /**
    * A new card waits for a person (`ask` or `exact`). `existing`: another invocation in this chat already has a waiting
    * card for the same `payload_hash`, and this is that card (no second card for a retry).
-   * `item` (Stage 1 M3, N22): the call joined a collecting batch, `action` is that batch and `item` the call's own item
-   * (`existing`: the same payload was already a pending item of the open batch, and this is it).
    */
-  | { outcome: 'waiting'; action: OutboxActionRow; existing: boolean; item?: OutboxItemRow }
+  | { outcome: 'waiting'; action: OutboxActionRow; existing: boolean }
+  /**
+   * Stage 1 M3 (N22; M3-B returns it): the call joined a collecting batch. `item` is the call's own item; `action` is the
+   * batch that holds it now, shared with other calls, so it is never this call's own action: its id isn't the call's
+   * approval id, and its state isn't the call's outcome (read `item.state`). `existing`: nothing new was written (a
+   * replay of this call, wherever its item now sits, or the same payload already pending in the open batch).
+   */
+  | { outcome: 'collected'; action: OutboxActionRow; item: OutboxItemRow; existing: boolean }
   /** New, approved under a grant with its use reserved; it sends after the hold. */
   | { outcome: 'approved'; action: OutboxActionRow }
   /**
@@ -162,7 +172,7 @@ export type OutboxRequestResult =
    * state it's in now (waiting, approved, sending, sent, failed, needs_check, undone, denied, withdrawn or expired).
    * Nothing is written.
    */
-  | { outcome: 'existing'; action: OutboxActionRow; item?: OutboxItemRow }
+  | { outcome: 'existing'; action: OutboxActionRow }
 
 /** A member acting on a row through the API. */
 export interface OutboxActor { memberId: string; role: MemberRole }
@@ -183,8 +193,11 @@ export interface OutboxPort {
   undo(actor: OutboxActor, actionId: string, input: { ifRev: number }): Promise<OutboxChange>
   /** `waiting` to `withdrawn`: the asker, or the agent for its own action (`approval_withdraw`). */
   withdraw(by: { kind: 'member'; actor: OutboxActor } | { kind: 'agent'; chatId: string; turnId: string }, actionId: string, input: { ifRev: number }): Promise<OutboxChange>
-  /** `needs_check` to `sent` or `failed`: the approver or an admin. "It didn't go out" releases the use. */
-  resolve(actor: OutboxActor, actionId: string, input: { outcome: ActionResolution; ifRev: number }): Promise<OutboxChange>
+  /**
+   * `needs_check` to `sent` or `failed`: the approver or an admin. "It didn't go out" releases the use. Stage 1 M3 (N22):
+   * a batch's unclear item by its position `item`; the batch ends once none is unclear.
+   */
+  resolve(actor: OutboxActor, actionId: string, input: { outcome: ActionResolution; ifRev: number; item?: number }): Promise<OutboxChange>
 }
 
 /**

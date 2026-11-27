@@ -118,5 +118,6 @@ export const WriteRequestSchema = z.strictObject({
 
 export const WriteResultSchema = z.discriminatedUnion('ok', [
   z.strictObject({ ok: z.literal(true), value: z.strictObject({ ref: z.string().max(500) }) }),
-  z.strictObject({ ok: z.literal(false), error: HubErrorSchema, sent: z.enum(['no', 'unknown']) }),
+  // Stage 1 M3 (N22): a write's `retryAfterMs` is a whole number of milliseconds up to a day (the batch clamps it).
+  z.strictObject({ ok: z.literal(false), error: HubErrorSchema.extend({ retryAfterMs: z.int().min(0).max(86_400_000).optional() }), sent: z.enum(['no', 'unknown']) }),
 ])

@@ -146,6 +146,7 @@ const LAPSED: Record<string, string> = {
   channel_not_listed: 'the channel isn’t listed any more', permission_removed: 'the permission was removed', count: 'today’s allowance is used up',
   stale_approval: 'it wasn’t sent in time after the OK',
   chat_deleted: 'the chat it was asked in was deleted',
+  over_limit: 'it’s over the limit the Inhouse team set',
 }
 const NEEDS_CHECK: Record<string, string> = {
   timeout: 'no answer in time', unknown: 'the tool couldn’t say whether it went out', thrown: 'the call broke off',
@@ -159,11 +160,33 @@ const FAILED: Record<string, string> = {
   rate_limited: 'the tool asked to slow down', connect_stale: 'the tool’s connection changed', invalid_args: 'the tool refused the details',
 }
 const thousands = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-/** Stage 1 M3 (N26): an operation's ceiling in plain words. Counts only, so the line holds nothing a person typed. */
-const ceilingWords = (v: { enabled: boolean; perDayMax: number; unitsMax: number; bulkThreshold: number; batchMax: number }) =>
-  v.enabled
-    ? `on, up to ${thousands(v.perDayMax)} a day, ${thousands(v.unitsMax)} at most in one call, an exact approval past ${v.bulkThreshold} at once, up to ${thousands(v.batchMax)} in one batch`
-    : 'off'
+
+/**
+ * Stage 1 M3 (N24, N26): which ceiling values mean something for each operation, as the ceiling screen's `applies` and
+ * `measure` say them. `perDay`: a grant can cover it (no effect flag). `batch`: its calls can become a batch. `money`:
+ * its units are the shop's minor currency units. The operation that adds an entry adds its line here (as it does to
+ * `OPERATION_TITLE`); server/outbox/operations/operations.test.ts checks every line against the operation table.
+ */
+export const OPERATION_LIMITS: Readonly<Record<keyof typeof OPERATION_TITLE, { perDay: boolean; batch: boolean; money: boolean }>> = {
+  'shopify.order.tag_add': { perDay: true, batch: true, money: false },
+  'slack.channel.post': { perDay: true, batch: false, money: false },
+}
+
+type CeilingValues = { enabled: boolean; perDayMax: number; unitsMax: number; bulkThreshold: number; batchMax: number }
+/**
+ * Stage 1 M3 (N26): an operation's ceiling in plain words, only the values that apply to it. Counts only, so the line
+ * holds nothing a person typed; a money limit says it's in the shop's minor currency units (the line has no currency).
+ */
+function ceilingWords(op: keyof typeof OPERATION_TITLE, v: CeilingValues): string {
+  if (!v.enabled) return 'off'
+  const applies = OPERATION_LIMITS[op]
+  return [
+    'on',
+    ...(applies.perDay ? [`up to ${thousands(v.perDayMax)} a day`] : []),
+    applies.money ? `${thousands(v.unitsMax)} at most in one call, in the shop’s minor currency units` : `${thousands(v.unitsMax)} at most in one call`,
+    ...(applies.batch ? [`an exact approval past ${v.bulkThreshold} at once`, `up to ${thousands(v.batchMax)} in one batch`] : []),
+  ].join(', ')
+}
 const QUESTION_ASKED = { owner: 'Asked the person in the chat', creator: 'Asked the routine’s creator', admins: 'Asked the admins' } as const
 const ANSWERED = { once: 'allowed an action once', always: 'allowed an action and said always allow', approve: 'approved an action', deny: 'declined an action' } as const
 
@@ -269,7 +292,7 @@ export function auditText(args: AuditArgs, name: (memberId: string) => string | 
     case 'question.asked': return { what: 'the agent asked a question', detail: QUESTION_ASKED[args.askedOf] }
     case 'question.answered': return { what: 'answered a question', detail: '' }
     case 'question.expired': return { what: 'a question expired', detail: 'No one answered in 7 days' }
-    case 'ceiling.changed': return { what: 'changed what the agent can do', detail: `${operation(args.operation)}: ${ceilingWords(args.new)}${args.old === null ? '' : ` (was ${ceilingWords(args.old)})`}` }
+    case 'ceiling.changed': return { what: 'changed what the agent can do', detail: `${operation(args.operation)}: ${ceilingWords(args.operation, args.new)}${args.old === null ? '' : ` (was ${ceilingWords(args.operation, args.old)})`}` }
     case 'data.exported': return { what: 'downloaded all brand data', detail: `${String(args.items).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} ${args.items === 1 ? 'item' : 'items'}` }
   }
 }

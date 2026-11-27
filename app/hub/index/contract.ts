@@ -153,8 +153,9 @@ export type WriteOperationKey = (typeof WRITE_OPERATIONS)[number]
  * store, even with no request since. `args` is checked per operation by the hub, strictly.
  *
  * Stage 1 M3 (M3-A, N22 and N21):
- * - `item`: one item of a batch, `n` of `of` (1-based, at most the ceiling's `batch_max`, 500); `requestId` is then
- *   `<actionId>:<n>` and `args` are that item's own arguments (one hub call per item). Absent for a single action.
+ * - `item`: one item of a batch, `n` of `of` (1-based; `of` is the batch's `approved_upto`, at most the ceiling's
+ *   `batch_max`, 500); `requestId` is then `<actionId>:<n>` and `args` are that item's own arguments (one hub call per
+ *   item). Absent for a single action.
  * - `idempotencyKey`: the upstream idempotency key, `<actionId>:<n>` (`n` = 1 for a single action), the same on every
  *   attempt, so a person's later "try again" can't apply twice. Sent for an operation whose mutation takes one
  *   (`inventoryAdjustQuantities`, `refundCreate`); the hub ignores it elsewhere. Never a reason to resend by itself.
@@ -176,10 +177,15 @@ export type WriteRequest = {
  * when the hub is sure nothing went out; everything else is `'unknown'`.
  *
  * Throttled (Stage 1 M3, N22): an upstream that throttled the call and ran nothing (Shopify's `THROTTLED`, HTTP 429) is
- * `{ code: 'rate_limited', retryAfterMs, sent: 'no' }`. `retryAfterMs` is when the batch may try that item again; a
- * throttle that may have run something is `sent: 'unknown'` like any other unclear answer.
+ * `{ code: 'rate_limited', retryAfterMs?, sent: 'no' }`. `retryAfterMs` is optional (Shopify's GraphQL `THROTTLED` names
+ * no wait) and, when present, a whole number of milliseconds up to a day. The batch tries that item again after
+ * `THROTTLE_WAIT_MS.default` when it's absent, and clamps any value to `THROTTLE_WAIT_MS.min` to `.max`. A throttle
+ * that may have run something is `sent: 'unknown'` like any other unclear answer.
  */
 export type WriteResult = { ok: true; value: { ref: string } } | { ok: false; error: HubError; sent: 'no' | 'unknown' }
+
+/** Stage 1 M3 (N22): how long a batch waits before it tries a throttled item again (see `WriteResult`). */
+export const THROTTLE_WAIT_MS = { default: 2_000, min: 1_000, max: 60_000 } as const
 
 /** Bound as `HUB_WRITE`, its own named entrypoint. `ReadGateway` never writes. */
 export interface WriteGateway {

@@ -42,7 +42,7 @@ export const shopifyOrderTagAdd: OperationEntry<TagAddArgs> & { key: 'shopify.or
   reversible: true,
   idempotent: false,
   coalesces: true,
-  defaults: { perDay: 50, unitsMax: 5, ceiling: { perDayMax: 200, unitsMax: 100 } },
+  defaults: { grant: { perDay: 50, unitsMax: 5 }, ceiling: { perDayMax: 200, unitsMax: 100 } },
   card: a => ({
     title: `Add ${a.tags.length === 1 ? 'a tag' : `${a.tags.length} tags`} to order ${orderNumber(a.orderId)}`,
     lines: a.tags.map(t => `Tag: ${t}`),

@@ -6,7 +6,7 @@ import { GrantHoursSchema, GrantIdSchema } from './grants.ts'
 import { FileIdSchema, RunIdSchema } from './chat-ids.ts'
 import { MemberIdSchema, MemberRoleSchema } from './members.ts'
 import { ActionApproverKindSchema, ActionChoiceSchema, ActionIdSchema, ActionResolutionSchema } from './actions.ts'
-import { CeilingValuesSchema } from './ceiling.ts'
+import { CeilingValuesSchema, LIMIT_MAX } from './ceiling.ts'
 import { GuardrailSchema, PermissionIdSchema } from './permissions.ts'
 import { QuestionIdSchema } from './questions.ts'
 import type { WriteOperationKey } from '../../hub/index/contract.ts'
@@ -224,6 +224,9 @@ export const LapseReasonSchema = z.enum([
   'stale_approval',
   // Stage 1 M2-D (N11): the chat it was asked in was deleted, so its waiting and approved actions are withdrawn.
   'chat_deleted',
+  // Stage 1 M3 (N23): the Inhouse team lowered the largest call allowed below this action's (checked at the answer and
+  // the claim), so it needs a new OK within the new limit.
+  'over_limit',
 ])
 /** A failed send's code: the hub's closed error codes (app/hub/index/contract.ts `HubErrorCode`), never upstream text. */
 export const ActionFailCodeSchema = ConnectOutcomeSchema.exclude(['ok'])
@@ -233,6 +236,8 @@ export const ActionFailCodeSchema = ConnectOutcomeSchema.exclude(['ok'])
  */
 export const NeedsCheckWhySchema = z.enum(['timeout', 'unknown', 'thrown', 'bad_result', 'stale', 'restore'])
 const ACTION_RECORDS = z.number().int().min(1).max(1_000_000)
+/** Stage 1 M3 (N21): an action's units, which for money are the shop's minor currency units (ceiling.ts `LIMIT_MAX`). */
+const ACTION_UNITS = z.number().int().min(1).max(LIMIT_MAX)
 const ACTION_ATTEMPT = z.number().int().min(1).max(1000)
 
 const line = <A extends AuditAction, S extends z.ZodRawShape>(action: A, shape: S) => z.object({ action: z.literal(action), ...shape }).strict()
@@ -363,13 +368,13 @@ const otherLines = [
   /** "Always allow" made a permission. `actionId`: the answer that made it (absent for one made another way). */
   line('permission.granted', {
     permissionId: PermissionIdSchema, operation: WriteOperationArgSchema, accountId: ConnectorAccountIdSchema, scopeKey: ScopeKeyArgSchema,
-    holder: z.enum(['member', 'brand']), perDay: z.number().int().min(1).max(100_000), actionId: ActionIdSchema.optional(),
+    holder: z.enum(['member', 'brand']), perDay: z.number().int().min(1).max(LIMIT_MAX), actionId: ActionIdSchema.optional(),
   }),
   line('permission.revoked', { permissionId: PermissionIdSchema, operation: WriteOperationArgSchema, reason: RevokeReasonSchema }),
   /** `permissionId`: a `run` under that permission, its use reserved with the action. */
   line('action.requested', {
     actionId: ActionIdSchema, operation: WriteOperationArgSchema, verdict: z.enum(['run', 'ask', 'exact']), guardrail: GuardrailSchema.optional(),
-    origin: z.enum(['chat', 'job', 'routine']), records: ACTION_RECORDS, units: ACTION_RECORDS, permissionId: PermissionIdSchema.optional(),
+    origin: z.enum(['chat', 'job', 'routine']), records: ACTION_RECORDS, units: ACTION_UNITS, permissionId: PermissionIdSchema.optional(),
   }),
   /** `permissionId`: the permission an "Always allow" made or found, whose use this action reserved. */
   /**
@@ -387,8 +392,11 @@ const otherLines = [
   line('action.needs_check', { actionId: ActionIdSchema, attempt: ACTION_ATTEMPT.optional(), why: NeedsCheckWhySchema }).superRefine((a, ctx) => {
     if (a.attempt === undefined && a.why !== 'restore') ctx.addIssue({ code: 'custom', path: ['attempt'], message: 'Only a restore leaves out the attempt' })
   }),
-  /** A person said whether a "Needs a check" action went out. `released`: "it didn't" gave the use back. */
-  line('action.resolved', { actionId: ActionIdSchema, outcome: ActionResolutionSchema, released: z.boolean() }),
+  /**
+   * A person said whether a "Needs a check" action went out. `released`: "it didn't" gave the use back. `item` (Stage 1
+   * M3, N22): the batch item's position, for a batch resolved item by item.
+   */
+  line('action.resolved', { actionId: ActionIdSchema, outcome: ActionResolutionSchema, released: z.boolean(), item: z.number().int().min(1).max(500).optional() }),
   /** `askedOf`: the chat's owner, the routine's creator, or every admin (a routine whose creator is gone). No member id. */
   line('question.asked', { questionId: QuestionIdSchema, askedOf: z.enum(['owner', 'creator', 'admins']), options: z.number().int().min(2).max(4) }),
   line('question.answered', { questionId: QuestionIdSchema }),

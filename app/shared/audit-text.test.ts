@@ -321,8 +321,16 @@ describe('Stage 1 M3 lines (N25, N26)', () => {
       detail: 'Add tags to orders in Shopify: on, up to 1,200 a day, 100 at most in one call, an exact approval past 5 at once, up to 500 in one batch',
     })
     const off = auditText({ action: 'ceiling.changed', operation: 'slack.channel.post', old: { enabled: true, perDayMax: 50, unitsMax: 1, bulkThreshold: 5, batchMax: 500 }, new: { enabled: false, perDayMax: 50, unitsMax: 1, bulkThreshold: 5, batchMax: 500 } }, names)
-    expect(off).toEqual({ what: 'changed what the agent can do', detail: 'Post messages to a channel in Slack: off (was on, up to 50 a day, 1 at most in one call, an exact approval past 5 at once, up to 500 in one batch)' })
+    expect(off).toEqual({ what: 'changed what the agent can do', detail: 'Post messages to a channel in Slack: off (was on, up to 50 a day, 1 at most in one call)' })
     expect(`${off.what} ${off.detail}`).not.toMatch(/\.tag_add|\.post|_|—/)
+  })
+  it('names only the limits that apply to the operation (posts never batch)', () => {
+    const on = auditText({ action: 'ceiling.changed', operation: 'slack.channel.post', old: null, new: { enabled: true, perDayMax: 200, unitsMax: 1, bulkThreshold: 5, batchMax: 500 } }, names)
+    expect(on.detail).toBe('Post messages to a channel in Slack: on, up to 200 a day, 1 at most in one call')
+  })
+  it('reads a lapse over the limit', () => {
+    expect(auditText({ action: 'action.lapsed', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', reason: 'over_limit', released: true }, names))
+      .toEqual({ what: 'an approval lapsed', detail: 'it’s over the limit the Inhouse team set' })
   })
   it('reads an answer the same with or without who could answer it', () => {
     expect(auditText({ action: 'action.answered', actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA', choice: 'always', permissionId: 'pg_AAAAAAAAAAAAAAAAAAAAAA', approverKind: 'admins' }, names)).toEqual(auditText(sample['action.answered'], names))
