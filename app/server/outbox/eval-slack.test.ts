@@ -16,7 +16,7 @@ import { evalWrite } from '../../hub/testing/eval-write.ts'
 import type { WriteGateway } from '../../hub/index/contract.ts'
 import { DoorRefusal } from '../../evals/targets/sql.ts'
 import type { RunSql } from '../../evals/targets/sql.ts'
-import { EVAL_SLACK_CHANNELS, SLACK_ACCOUNT, connectSlack, createSlackDoor } from '../../evals/targets/slack-door.ts'
+import { EVAL_SLACK_CHANNELS, SLACK_ACCOUNT, connectSlack, createSlackDoor, disconnectSlack } from '../../evals/targets/slack-door.ts'
 import type { InhouseApi } from '../../evals/targets/slack-door.ts'
 import { createWriteDoor } from '../../evals/targets/write-door.ts'
 import { FakeMcpServer, SLACK_TEST } from '../../test/upstreams/mcp/server.ts'
@@ -246,7 +246,7 @@ describe('the door checks what it writes, and its reset clears it (failure 5)', 
   })
 })
 
-describe('connectSlack drives the product\'s own connect flow', () => {
+describe('connectSlack and disconnectSlack drive the product\'s own routes', () => {
   const api = (o: { connected: boolean[]; callback?: { status: number; location: string | null } }) => {
     const calls: string[] = []
     let reads = 0
@@ -266,6 +266,25 @@ describe('connectSlack drives the product\'s own connect flow', () => {
     const a = api({ connected: [true, true] })
     await connectSlack(a.call)
     expect(a.calls).toEqual(['GET /api/tools', 'POST /api/tools/slack%3Aworkspace/disconnect', 'POST /api/connect/slack%3Aworkspace/start', 'GET /api/connect/callback', 'GET /api/tools'])
+  })
+
+  it('disconnectSlack (#583): route 72 when Slack is connected, then read back as gone', async () => {
+    const a = api({ connected: [true, false] })
+    await disconnectSlack(a.call)
+    expect(a.calls).toEqual(['GET /api/tools', 'POST /api/tools/slack%3Aworkspace/disconnect', 'GET /api/tools'])
+  })
+
+  it('disconnectSlack: already disconnected, nothing sent; still shown after the disconnect, a refusal', async () => {
+    const idle = api({ connected: [false, false] })
+    await disconnectSlack(idle.call)
+    expect(idle.calls).toEqual(['GET /api/tools', 'GET /api/tools'])
+    await expect(disconnectSlack(api({ connected: [true, true] }).call)).rejects.toThrow(/still connected after the disconnect/)
+  })
+
+  it('disconnectSlack: a refused disconnect or an unreadable Tools page is a refusal', async () => {
+    const refusing: InhouseApi = async (_method, path) => (path === '/api/tools' ? { status: 200, json: { connected: ['slack'] }, location: null } : { status: 403, json: null, location: null })
+    await expect(disconnectSlack(refusing)).rejects.toThrow(/the disconnect answered 403/)
+    await expect(disconnectSlack(async () => ({ status: 500, json: null, location: null }))).rejects.toThrow(/the Tools page answered 500/)
   })
 
   it('a callback that didn\'t connect, or a Tools page without Slack after it, is a refusal', async () => {

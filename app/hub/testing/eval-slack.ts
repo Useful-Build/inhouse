@@ -1,7 +1,7 @@
 // The eval deployment's fake Slack workspace (Stage 1 M3, N31; Wasim's option A, 2026-11-27). The eval hub is the hub's
 // test build, so its Slack is already the fake one (test/upstreams/mcp/server.ts, served through the seam): no Slack
 // credential and no outside request. On the eval hub only, that fake serves the workspace the eval door seeded per case
-// (evals/targets/slack-door.ts: channels and planted messages, migration 0800) instead of the per-PR fixture, read from
+// (evals/targets/slack-door.ts: channels and planted messages, migration 0792) instead of the per-PR fixture, read from
 // the eval D1 before each request, so a planted Slack message reaches the agent's Slack read tools. Posts never come
 // here: `slack.channel.post` goes through the outbox to EvalWriteGateway (./eval-write.ts) and lands in eval_write_log.
 //

@@ -1,6 +1,6 @@
 // The eval door's Slack ops (Stage 1 M3, N31; Wasim's option A, 2026-11-27). The eval deployment's hub is the hub's test
 // build, whose Slack is the fake one (no credential, no outside request). On the eval hub that fake serves the workspace
-// this door writes to the eval D1 (migration 0800; hub/testing/eval-slack.ts reads it before each request), so a message
+// this door writes to the eval D1 (migration 0792; hub/testing/eval-slack.ts reads it before each request), so a message
 // planted here reaches the agent's Slack read tools. A post never reaches any Slack: `slack.channel.post` goes through
 // the outbox to EvalWriteGateway and lands in `eval_write_log` (write-door.ts reads it).
 //
@@ -16,7 +16,8 @@
 //     free of the server's D1 graph), so only where posting is on, Slack is connected and `by` is an active admin. No
 //     audit line: the door's seeds are the harness's, not a person's.
 //  4. after the repeat, `reset()` empties the workspace and the listed channels (the write door's `resetWrites` clears
-//     the grants and the log).
+//     the grants and the log); at the run's close, `disconnectSlack(inhouseApi)` leaves the shared deployment without
+//     Slack (#583), so a later suite's tools don't change.
 // Statements are built from checked values only, with the product's own statement builders where it has them.
 // door.ts's rules hold: the eval deployment's D1 only, credentials from the environment, made after the eval-brand check.
 import { renderStmt, stmt } from '../../server/db/sql-statement.ts'
@@ -229,30 +230,47 @@ export function createSlackDoor(run: RunSql): SlackDoor {
 /** One call to the product as the Inhouse team (the connect routes are the team's alone), with the answer's redirect. */
 export type InhouseApi = (method: 'GET' | 'POST', path: string, body?: unknown) => Promise<{ status: number; json: unknown; location: string | null }>
 
+const ACCOUNT_PATH = encodeURIComponent(SLACK_ACCOUNT)
+
+/** Whether the Tools page (route 70) shows Slack connected. */
+async function slackShown(api: InhouseApi): Promise<boolean> {
+  const t = await api('GET', '/api/tools')
+  if (t.status !== 200) throw new DoorRefusal(`the Tools page answered ${t.status}`)
+  const list = (t.json as { connected?: unknown } | null)?.connected
+  if (!Array.isArray(list)) throw new DoorRefusal('the Tools page lists no connected apps')
+  return list.includes('slack')
+}
+
+/** Route 72, the product's own disconnect, when Slack is connected. */
+async function disconnectIfConnected(api: InhouseApi): Promise<void> {
+  if (!(await slackShown(api))) return
+  const d = await api('POST', `/api/tools/${ACCOUNT_PATH}/disconnect`, {})
+  if (d.status !== 200) throw new DoorRefusal(`the disconnect answered ${d.status}`)
+}
+
 /**
  * A fresh Slack connection through the product's own flow: route 72 disconnects an older one (the fake may have lost its
  * tokens since), route 68 starts, the fake's stateless code stands in for the person's Slack consent (no browser, no real
  * Slack), and route 69 completes. Read back through the Tools page (route 70): Slack connected.
  */
 export async function connectSlack(api: InhouseApi, mint: typeof mintTestCode = mintTestCode): Promise<void> {
-  const connected = async (): Promise<boolean> => {
-    const t = await api('GET', '/api/tools')
-    if (t.status !== 200) throw new DoorRefusal(`the Tools page answered ${t.status}`)
-    const list = (t.json as { connected?: unknown }).connected
-    if (!Array.isArray(list)) throw new DoorRefusal('the Tools page lists no connected apps')
-    return list.includes('slack')
-  }
-  const account = encodeURIComponent(SLACK_ACCOUNT)
-  if (await connected()) {
-    const d = await api('POST', `/api/tools/${account}/disconnect`, {})
-    if (d.status !== 200) throw new DoorRefusal(`the disconnect answered ${d.status}`)
-  }
-  const start = await api('POST', `/api/connect/${account}/start`, {})
+  await disconnectIfConnected(api)
+  const start = await api('POST', `/api/connect/${ACCOUNT_PATH}/start`, {})
   const authorizeUrl = (start.json as { authorizeUrl?: unknown } | null)?.authorizeUrl
   if (start.status !== 200 || typeof authorizeUrl !== 'string') throw new DoorRefusal(`the connect start answered ${start.status}`)
   const { callbackUrl } = await mint(authorizeUrl)
   const cb = new URL(callbackUrl)
   const done = await api('GET', `${cb.pathname}${cb.search}`)
   if (done.status !== 303 || done.location !== '/tools/slack?connected=1') throw new DoorRefusal(`the connect callback answered ${done.status} to ${JSON.stringify(done.location)}`)
-  if (!(await connected())) throw new DoorRefusal('Slack is not connected after the callback')
+  if (!(await slackShown(api))) throw new DoorRefusal('Slack is not connected after the callback')
+}
+
+/**
+ * Leaves the shared eval deployment as it was found (#583): Slack disconnected through the product's own route 72, so a
+ * later suite's tool list and prompt don't carry Slack. Read back through the Tools page; a Slack still shown is a
+ * DoorRefusal. Already disconnected: nothing to do. M3-E calls it from the run's close.
+ */
+export async function disconnectSlack(api: InhouseApi): Promise<void> {
+  await disconnectIfConnected(api)
+  if (await slackShown(api)) throw new DoorRefusal('Slack is still connected after the disconnect')
 }
