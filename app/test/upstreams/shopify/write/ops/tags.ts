@@ -11,10 +11,19 @@ function orderIds(variables: Record<string, unknown>): string[] {
   return ids
 }
 
-function tagsOp<K extends string>(key: K, mutation: string, root: 'tagsAdd' | 'tagsRemove', apply: (tags: string[], change: string[]) => string[]): FakeWriteOp<K> {
+/** `mutation <name>($tags: [String!]!, $id0: ID!, ...) { o0: <root>(id: $id0, tags: $tags) { node { id } userErrors { field message } } ... }` */
+function tagsDocument(name: string, root: string, n: number): string {
+  const ids = Array.from({ length: n }, (_, i) => `$id${i}: ID!`).join(', ')
+  const fields = Array.from({ length: n }, (_, i) => `o${i}: ${root}(id: $id${i}, tags: $tags) { node { id } userErrors { field message } }`).join('\n')
+  return `mutation ${name}($tags: [String!]!, ${ids}) {\n${fields}\n}`
+}
+
+function tagsOp<K extends string>(key: K, name: string, root: 'tagsAdd' | 'tagsRemove', apply: (tags: string[], change: string[]) => string[]): FakeWriteOp<K> {
   return {
     key,
-    mutation,
+    kind: 'mutation',
+    name,
+    document: variables => tagsDocument(name, root, orderIds(variables).length),
     root: 'o0',
     cost: variables => 10 * orderIds(variables).length,
     run(fake: FakeShopifyWriteUpstream, variables, refuse) {

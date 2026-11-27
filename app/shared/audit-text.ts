@@ -119,13 +119,20 @@ const REQUEST_STATUS = { done: 'marked a request done', declined: 'declined a re
 const hours = (h: number) => (h === 1 ? '1 hour' : `${h} hours`)
 
 /** Stage 1 M2: what each write operation does, as a person reads it (the audit log and the permissions list). */
-export const OPERATION_TITLE: Readonly<Record<'shopify.order.tag_add' | 'slack.channel.post' | 'shopify.order.tag_remove' | 'shopify.draft_order.create', string>> = {
+export const OPERATION_TITLE: Readonly<Record<'shopify.order.tag_add' | 'slack.channel.post' | 'shopify.order.tag_remove' | 'shopify.draft_order.create'
+  | 'shopify.inventory.restock' | 'shopify.inventory.reduce' | 'shopify.refund.create', string>> = {
   'shopify.order.tag_add': 'Add tags to orders',
   'slack.channel.post': 'Post messages to a channel',
   'shopify.order.tag_remove': 'Remove tags from orders',
   'shopify.draft_order.create': 'Create draft orders',
+  'shopify.inventory.restock': 'Add stock', // M3-S2
+  'shopify.inventory.reduce': 'Remove stock', // M3-S2
+  'shopify.refund.create': 'Refund orders', // M3-S2
 }
-const OPERATION_TOOL = { 'shopify.order.tag_add': 'Shopify', 'slack.channel.post': 'Slack', 'shopify.order.tag_remove': 'Shopify', 'shopify.draft_order.create': 'Shopify' } as const
+const OPERATION_TOOL = {
+  'shopify.order.tag_add': 'Shopify', 'slack.channel.post': 'Slack', 'shopify.order.tag_remove': 'Shopify', 'shopify.draft_order.create': 'Shopify',
+  'shopify.inventory.restock': 'Shopify', 'shopify.inventory.reduce': 'Shopify', 'shopify.refund.create': 'Shopify',
+} as const
 const operation = (op: keyof typeof OPERATION_TITLE) => `${OPERATION_TITLE[op]} in ${OPERATION_TOOL[op]}`
 /** Every reason but `removed` (a person removed it, said as its own `what`). Typed so a new reason fails the typecheck. */
 const REVOKED: Readonly<Record<Exclude<RevokeReason, 'removed'>, string>> = {
@@ -174,6 +181,9 @@ export const OPERATION_LIMITS: Readonly<Record<keyof typeof OPERATION_TITLE, { p
   'slack.channel.post': { perDay: true, batch: false, money: false },
   'shopify.order.tag_remove': { perDay: true, batch: true, money: false },
   'shopify.draft_order.create': { perDay: true, batch: true, money: false },
+  'shopify.inventory.restock': { perDay: true, batch: true, money: false }, // M3-S2
+  'shopify.inventory.reduce': { perDay: false, batch: false, money: false }, // M3-S2
+  'shopify.refund.create': { perDay: false, batch: false, money: true }, // M3-S2
 }
 
 type CeilingValues = { enabled: boolean; perDayMax: number; unitsMax: number; bulkThreshold: number; batchMax: number }

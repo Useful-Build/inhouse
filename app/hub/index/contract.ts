@@ -61,8 +61,11 @@ export type AccountStatus = {
  * One row per account id (two modules naming one account give one row). `shop` (Stage 1 M2-D): for the Shopify account
  * only, the handle of the store the write app writes to (`<handle>` of `<handle>.myshopify.com`, a deployment var, not a
  * secret), when one is configured. The product keeps it as the permission scope's `{ shop }`; absent, a write is refused.
+ * `currency` (Stage 1 M3-S2, N21): for the Shopify account only, the write store's currency (ISO 4217, upper case), as
+ * Shopify's `shop.currencyCode` names it, when the hub has read it. The product copies it like the handle; a refund in any
+ * other currency is refused at `resolve`, and absent, every refund is.
  */
-export type AccountSummary = { accountId: string; connector: string; configured: boolean; status: AccountStatus; shop?: string }
+export type AccountSummary = { accountId: string; connector: string; configured: boolean; status: AccountStatus; shop?: string; currency?: string }
 
 /**
  * A read call's options. `testShopHost` is the test and eval builds' shop override (the morning-check set, P4): the Shopify
@@ -150,6 +153,9 @@ export const WRITE_OPERATIONS = [
   'slack.channel.post',
   'shopify.order.tag_remove', // M3-S1
   'shopify.draft_order.create', // M3-S1
+  'shopify.inventory.restock', // M3-S2
+  'shopify.inventory.reduce', // M3-S2
+  'shopify.refund.create', // M3-S2
 ] as const
 export type WriteOperationKey = (typeof WRITE_OPERATIONS)[number]
 

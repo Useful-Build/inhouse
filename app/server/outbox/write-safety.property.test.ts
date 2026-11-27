@@ -95,7 +95,13 @@ interface WriteInput { accountId: string; expect: { connectedAtMs: number }; arg
 interface MutationDoc { query: string; variables: Record<string, unknown> }
 type MutationAnswer = { ok: true; data: Record<string, unknown> } | { ok: false; result: WriteResult }
 /** hub/connectors/shopify/write/ops/types.ts `PreparedShopifyWriteOp`. */
-interface ShopOp { prepare(args: unknown): { ok: true; doc: MutationDoc; read(data: Record<string, unknown>): WriteResult } | { ok: false; path: string } }
+/** Stage 1 M3-S2: a call's steps, an optional lookup query and the mutation built from its answer (`PreparedCall`). */
+type MutationStep = { ok: true; doc: MutationDoc; read(data: Record<string, unknown>): WriteResult } | { ok: false; result: WriteResult }
+interface ShopOp {
+  prepare(args: unknown, idempotencyKey: string | undefined):
+    | { ok: true; call: { lookup: MutationDoc | null; mutation(lookupData: Record<string, unknown> | null): MutationStep } }
+    | { ok: false; path: string }
+}
 /** hub/outbox-entry/gateway.ts `WriteGatewayDeps`. */
 interface WriteDeps { shopifyWrite(input: WriteInput & { operation: string }): Promise<WriteResult>; slackChannelPost(input: WriteInput): Promise<WriteResult> }
 /** hub/connectors/slack/outbox.ts `SlackOutboxStub`. */
@@ -228,8 +234,12 @@ class HubStandIn {
       const op = this.#code.SHOPIFY_WRITE_OPS[input.operation]
       if (!op) return this.#code.writeErr('unknown_tool', 'no')
       if (input.accountId !== this.#code.SHOPIFY_WRITE_ACCOUNT) return this.#code.writeErr('invalid_args', 'no', 'accountId')
-      const parsed = op.prepare(input.args)
+      const parsed = op.prepare(input.args, undefined)
       if (!parsed.ok) return this.#code.writeErr('invalid_args', 'no', parsed.path)
+      // The operations this suite drives (tag_add) send no lookup and take no idempotency key.
+      if (parsed.call.lookup !== null) throw new Error('the stand-in drives no operation with a lookup')
+      const step = parsed.call.mutation(null)
+      if (!step.ok) return step.result
       const before = this.#refusal(input.accountId, input.expect.connectedAtMs)
       if (before) return before
       if (this.#token === null) {
@@ -239,8 +249,8 @@ class HubStandIn {
       }
       const rightBefore = this.#refusal(input.accountId, input.expect.connectedAtMs)
       if (rightBefore) return rightBefore
-      const answer = await this.#code.postMutation(this.shop.fetch, SHOP_CONFIG, this.#token, parsed.doc, HUB_DEADLINE_MS)
-      return answer.ok ? parsed.read(answer.data) : answer.result
+      const answer = await this.#code.postMutation(this.shop.fetch, SHOP_CONFIG, this.#token, step.doc, HUB_DEADLINE_MS)
+      return answer.ok ? step.read(answer.data) : answer.result
     },
     slackChannelPost: input => this.#code.postSlackOutboxAction(this.#slack, input),
   }

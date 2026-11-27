@@ -14,6 +14,8 @@ export type WriteOperationInput = {
   accountId: string
   expect: { connectedAtMs: number; shop?: string }
   args: unknown
+  /** Stage 1 M3-S2: the request's idempotency key, passed on to an operation whose mutation takes one. */
+  idempotencyKey?: string
 }
 
 /** A Shopify write: the operation travels with the input (the write SignIn runs every `shopify.` operation, M3-S1). */
@@ -59,14 +61,18 @@ export async function runWriteAction(deps: WriteGatewayDeps, req: WriteRequest):
     return result
   }
 
-  const { requestId, accountId, expect, operation, args } = parsed.data
+  const { requestId, accountId, expect, operation, args, idempotencyKey } = parsed.data
   let result: WriteResult
   switch (operation) {
     case 'shopify.order.tag_add':
     case 'shopify.order.tag_remove':
     case 'shopify.draft_order.create':
-      // One hub call per item (N22): `item` and `idempotencyKey` change nothing here (none of these mutations takes a key).
-      result = await deps.shopifyWrite({ operation, accountId, expect, args })
+    case 'shopify.inventory.restock':
+    case 'shopify.inventory.reduce':
+    case 'shopify.refund.create':
+      // One hub call per item (N22): `item` changes nothing here. The idempotency key goes on to the write core, which
+      // requires it for an operation whose mutation takes one (stock and refunds, M3-S2) and ignores it elsewhere.
+      result = await deps.shopifyWrite({ operation, accountId, expect, args, ...(idempotencyKey !== undefined ? { idempotencyKey } : {}) })
       break
     case 'slack.channel.post':
       result = await deps.slackChannelPost({ accountId, expect, args })

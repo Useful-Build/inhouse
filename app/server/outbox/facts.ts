@@ -34,7 +34,7 @@ export async function brandTimeZone(db: D1Database): Promise<string> {
   return v
 }
 
-type AccountRow = { account_id: string; last_state: string; connected_at_ms: number | null; disconnected_at_ms: number | null; shop: string | null }
+type AccountRow = { account_id: string; last_state: string; connected_at_ms: number | null; disconnected_at_ms: number | null; shop: string | null; currency: string | null }
 type CeilingRow = {
   operation: WriteOperationKey; enabled: number; per_day_max: number; lowered_rev: number; units_max: number; bulk_threshold: number; batch_max: number; rev: number
 }
@@ -58,8 +58,8 @@ function accountFacts(connector: 'shopify' | 'slack', row: AccountRow | undefine
     paused: hub ? hub.paused : true,
     label: hub?.label ?? DEFAULT_LABEL[connector],
     shop: connector === 'shopify' ? row.shop : null,
-    // Stage 1 M3-A: M3-S2 copies the shop's currency into `connector_accounts`; until then no account has one.
-    currency: null,
+    // Stage 1 M3-S2: the write store's currency, copied from the hub like the handle (0790).
+    currency: connector === 'shopify' ? row.currency : null,
   }
 }
 
@@ -71,7 +71,7 @@ export function outboxFacts(d: { db: D1Database; hubAccounts: () => Promise<read
       // the rows are read only after that write, never beside it (the first request after a connect would see the old row).
       const hub = await d.hubAccounts()
       const [rows, channels] = await Promise.all([
-        all<AccountRow>(db, stmt('SELECT account_id, last_state, connected_at_ms, disconnected_at_ms, shop FROM connector_accounts WHERE account_id IN (?, ?)', ACCOUNT_IDS.shopify, ACCOUNT_IDS.slack)),
+        all<AccountRow>(db, stmt('SELECT account_id, last_state, connected_at_ms, disconnected_at_ms, shop, currency FROM connector_accounts WHERE account_id IN (?, ?)', ACCOUNT_IDS.shopify, ACCOUNT_IDS.slack)),
         all<{ channel_id: string; name: string }>(db, stmt('SELECT channel_id, name FROM notify_channels WHERE removed_at_ms IS NULL ORDER BY channel_id')),
       ])
       const row = (id: string) => rows.find(r => r.account_id === id)
