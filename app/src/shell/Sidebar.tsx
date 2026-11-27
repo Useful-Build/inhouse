@@ -33,16 +33,17 @@ export function Sidebar() {
     document.documentElement.dataset.side = side
     return () => { delete document.documentElement.dataset.side }
   }, [side])
-  // Design exploration: the look and the desk's tone (index.css keys its rules off data-side-look and data-side-tone).
+  // Design exploration: the look and the search control (index.css keys its rules off data-side-look and data-side-search).
   const look = useSideLook(s => s.look)
-  const tone = useSideLook(s => s.tone)
+  const search = useSideLook(s => s.search)
   useLayoutEffect(() => {
     const root = document.documentElement
     root.dataset.sideLook = look
-    root.dataset.sideTone = tone
-    return () => { delete root.dataset.sideLook; delete root.dataset.sideTone }
-  }, [look, tone])
-  // The selected row's chip: one element that glides to the row (index.css draws it and clears the row's own fill).
+    root.dataset.sideSearch = search
+    return () => { delete root.dataset.sideLook; delete root.dataset.sideSearch }
+  }, [look, search])
+  // The selected row's marker: one element that glides to the row. The Sidebar says where the row is (--pill-*) and
+  // index.css draws it there, as a chip or as a line, and clears the row's own fill.
   // Desktop only. It scrolls with the rows, since the sidebar is its containing block.
   const pill = useRef<HTMLElement>(null)
   const placePill = () => {
@@ -51,9 +52,10 @@ export function Sidebar() {
     const row = box.querySelector<HTMLElement>('button[aria-current="page"]:not([data-chat-fallback]), [data-chat-row].bg-fill-hover')
     if (!row) { el.dataset.off = ''; return }
     const b = box.getBoundingClientRect(), r = row.getBoundingClientRect()
-    el.style.width = `${r.width}px`
-    el.style.height = `${r.height}px`
-    el.style.transform = `translate(${r.left - b.left - box.clientLeft + box.scrollLeft}px, ${r.top - b.top - box.clientTop + box.scrollTop}px)`
+    el.style.setProperty('--pill-x', `${r.left - b.left - box.clientLeft + box.scrollLeft}px`)
+    el.style.setProperty('--pill-y', `${r.top - b.top - box.clientTop + box.scrollTop}px`)
+    el.style.setProperty('--pill-w', `${r.width}px`)
+    el.style.setProperty('--pill-h', `${r.height}px`)
     delete el.dataset.off
   }
   // After every render: the selected row may have changed, or moved (a chat pinned, a group added).
@@ -75,7 +77,8 @@ export function Sidebar() {
   useLayoutEffect(() => {
     if (!refocusToggle.current) return
     refocusToggle.current = false
-    document.querySelector<HTMLElement>('#sidebar [data-sidebar-toggle]')?.focus()
+    // preventScroll: mid-expand the button is still past the column's edge, and scrolling to it would slide the rows in.
+    document.querySelector<HTMLElement>('#sidebar [data-sidebar-toggle]')?.focus({ preventScroll: true })
   }, [rail])
   // Desktop only: on a phone the drawer closes instead, and the top bar's menu button opens it.
   const toggle = (
@@ -157,7 +160,7 @@ export function Sidebar() {
         </div>
 
         <div className="mt-4.5 flex flex-col gap-px">
-          <NavItem icon="search" label="Search" aria-keyshortcuts={SHORTCUTS.palette.aria}
+          <NavItem data-side-search icon="search" label="Search" aria-keyshortcuts={SHORTCUTS.palette.aria}
             onClick={() => patch(phone ? { sideOpen: false, palette: true } : { palette: true })}
             trailing={!phone && (
               mac
@@ -167,7 +170,7 @@ export function Sidebar() {
           <nav aria-label="Main" className="flex flex-col gap-px">
             {DAILY.map(n => navItem(n, false))}
             <div role="group" aria-labelledby="side-agent" className="flex flex-col gap-px">
-              <div id="side-agent" className="px-2.5 pt-5.5 pb-1.5 text-xs font-medium text-muted-foreground">Your agent</div>
+              <div id="side-agent" data-side-label className="px-2.5 pt-5.5 pb-1.5 text-xs font-medium text-muted-foreground">Your agent</div>
               {AGENT.map(n => navItem(n, false))}
             </div>
           </nav>
@@ -175,14 +178,14 @@ export function Sidebar() {
 
         {pinned.length > 0 && (
           <div role="group" aria-labelledby="side-pinned" className="flex flex-none flex-col">
-            <div id="side-pinned" className="px-2.5 pt-5.5 pb-1.5 text-xs font-medium text-muted-foreground">Pinned</div>
+            <div id="side-pinned" data-side-label className="px-2.5 pt-5.5 pb-1.5 text-xs font-medium text-muted-foreground">Pinned</div>
             {pinned.map(chatRow)}
           </div>
         )}
         {/* No chats yet (day one, or every one deleted): no heading over an empty list. */}
         {chats.length > 0 && <>
         <div className="flex items-center justify-between px-2.5 pt-5.5 pb-1.5 text-xs font-medium text-muted-foreground">
-          <span>Recent chats</span>
+          <span data-side-label>Recent chats</span>
           <Button variant="link" size="sm" data-chat-fallback className="text-xs font-medium" aria-current={page === 'chats' && chatList ? 'page' : undefined} onClick={openChatList}>See all</Button>
         </div>
         <div role="group" aria-label="Recent chats" className="flex flex-none flex-col">{recent.map(chatRow)}</div>

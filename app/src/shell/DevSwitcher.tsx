@@ -6,8 +6,8 @@ import { useUi } from '../state/store'
 import { Button, Icon, IconButton, Segmented, Switch } from '../ui'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { demoEnabled } from './demo'
-import { SIDE_LOOKS, SIDE_TONES, useSideLook } from './side-look'
-import type { SideLook, SideTone } from './side-look'
+import { SIDE_LOOKS, SIDE_SEARCHES, useSideLook } from './side-look'
+import type { SideLook, SideSearch } from './side-look'
 
 
 /** The dashed circle that opens the switches. It sits in the top bar, so it never covers a page's controls. */
@@ -39,7 +39,7 @@ export function DevSwitcher() {
   const ambient = useUi(s => s.ambient)
   const animateMark = useUi(s => s.animateMark)
   const sideLook = useSideLook(s => s.look)
-  const sideTone = useSideLook(s => s.tone)
+  const sideSearch = useSideLook(s => s.search)
   const { setDemo, resetDemo, showToast, patch } = useUi.getState()
   if (!demoEnabled() || !open) return null
   const label = 'mt-2.5 mb-1 text-2xs font-strong text-muted-foreground'
@@ -52,8 +52,8 @@ export function DevSwitcher() {
       </div>
       <div className={label}>Sidebar look</div>
       <Segmented<SideLook> label="Sidebar look" value={sideLook} options={SIDE_LOOKS} onChange={useSideLook.getState().setLook} />
-      <div className={label}>Desk tone</div>
-      <Segmented<SideTone> label="Desk tone" value={sideTone} options={SIDE_TONES} onChange={useSideLook.getState().setTone} />
+      <div className={label}>Sidebar search</div>
+      <Segmented<SideSearch> label="Sidebar search" value={sideSearch} options={SIDE_SEARCHES} onChange={useSideLook.getState().setSearch} />
       <div className={label}>Stage</div>
       <Segmented label="Stage" value={stage} options={STAGES.map(s => [s, s])} onChange={v => setDemo({ stage: v })} />
       <div className={label}>Scenario</div>
