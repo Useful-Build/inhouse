@@ -13,7 +13,7 @@ import { parseArgs } from 'node:util'
 import { INJECTION_CASES } from './cases.ts'
 import { createFakeInjectionTarget, FAKE_PLANTS, type FakePlant } from './fake.ts'
 import { gateOf, runInjection, type InjectionRunOutput, type InjectionTarget } from './runner.ts'
-import { gateLine, writeInjectionResults } from './report.ts'
+import { appendRow, gateLine, startRows, writeInjectionResults, type ReportMeta } from './report.ts'
 import type { InjectionCase } from './types.ts'
 
 /** The dry run as a grader check: the table for the README and whether every line held. */
@@ -83,18 +83,43 @@ async function main(): Promise<void> {
       return
     }
   }
-  let result: InjectionRunOutput
-  try {
-    // Cases the run leaves out on purpose, by name (Fable's #550 review): printed in the report and the gate line.
-    const waive = v.waive ? v.waive.split(',').filter((x) => x !== '') : []
-    for (const id of waive) if (!INJECTION_CASES.some((c) => c.id === id)) fail(`unknown case in --waive: ${id}`)
-    result = await runInjection({ target, cases, reps, waive, setSize: INJECTION_CASES.length, ...(budgetUsd !== undefined ? { budgetUsd } : {}) })
-  } finally {
-    await target.close?.()
-  }
-  const s = writeInjectionResults(out, result, { topic, target: target.name, model: v.target === 'fake' ? 'none' : v.model!, reps })
+  // Cases the run leaves out on purpose, by name (Fable's #550 review): printed in the report and the gate line.
+  const waive = v.waive ? v.waive.split(',').filter((x) => x !== '') : []
+  for (const id of waive) if (!INJECTION_CASES.some((c) => c.id === id)) fail(`unknown case in --waive: ${id}`)
+  const s = await runAndWrite({ target, cases, reps, waive, out, meta: { topic, target: target.name, model: v.target === 'fake' ? 'none' : v.model!, reps }, ...(budgetUsd !== undefined ? { budgetUsd } : {}) })
   console.log(`gate ${gateLine(s)}; ${s.repeats.pass}/${s.repeats.ran} repeats pass, ${s.bypasses.total} bypasses, cost $${s.soft.costUsd.toFixed(4)}`)
   if (!s.gate.pass) process.exitCode = 1
+}
+
+/**
+ * Runs the set and writes its results before the target's close (#605: the close reaches the deployment, and on the
+ * product it disconnects Slack; a failed call there must never cost the rows). A close that fails is recorded on the run
+ * (`closeErr`), fails the gate, and the results are written again with it.
+ */
+export async function runAndWrite(o: { target: InjectionTarget; cases: InjectionCase[]; reps: number; waive: string[]; out: string; meta: ReportMeta; budgetUsd?: number }): Promise<ReturnType<typeof writeInjectionResults>> {
+  let result: InjectionRunOutput
+  // Each graded row goes to rows.jsonl as its repeat ends (ops #49): a job timeout, a cancel or a crash keeps every
+  // finished row; the report is written at the end from the run's rows.
+  startRows(o.out)
+  try {
+    result = await runInjection({ target: o.target, cases: o.cases, reps: o.reps, waive: o.waive, setSize: INJECTION_CASES.length, onRow: (row) => appendRow(o.out, row), ...(o.budgetUsd !== undefined ? { budgetUsd: o.budgetUsd } : {}) })
+  } catch (e) {
+    // No rows to keep: give back what the target holds, and say so if that fails too.
+    try {
+      await o.target.close?.()
+    } catch (closeErr) {
+      throw new AggregateError([e, closeErr], 'the run failed, and the target\'s close failed too')
+    }
+    throw e
+  }
+  let s = writeInjectionResults(o.out, result, o.meta)
+  try {
+    await o.target.close?.()
+  } catch (e) {
+    result.closeErr = (e instanceof Error ? e.message : String(e)).split('\n')[0]!.replace(/\bhttps?:\/\/\S+/gi, '[url]').slice(0, 300)
+    s = writeInjectionResults(o.out, result, o.meta)
+  }
+  return s
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) await main()

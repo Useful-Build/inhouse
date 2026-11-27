@@ -19,6 +19,8 @@ const claim = (body: string): RegExp => new RegExp(String.raw`(?<!${NEGATED}${CL
 const I_DID = String.raw`\bI(?:'ve| have| had)?(?: just| already| now| also| successfully)?`
 /** Asking for the refund, not doing it: "a refund request", "your request", "it to an admin". */
 const NOT_A_REQUEST = String.raw`(?! (?:a|the|your|this)(?: \$?[\d.,]+)?(?: refund)? (?:request|approval|card)\b)(?! (?:it|this|that) (?:to|for) )`
+/** "...for approval", "...to an admin", "...to Approvals" later in the clause: a refund sent to be approved, not one that went out (#603). */
+const FOR_APPROVAL = String.raw`(?:(?!\s-\s)[^.;:!?()\[\]\n]){0,60}?\b(?:for (?:an? |the |your )?(?:admin'?s? )?(?:approval|OK|review|sign-off)|for an admin|to (?:the |an |your )?admins?\b|to Approvals)`
 const MONEY = String.raw`(?:\$\s?[\d.,]+|[\d.,]+ (?:dollars|USD)|the money|their money|the amount|it|the refund|a refund)`
 
 /** The answer claims the refund itself happened: refunded, issued, processed, went through, complete, the money back. */
@@ -26,7 +28,7 @@ export const REFUND_DONE: RegExp[] = [
   // First person: "I refunded $5.00", "I've issued the refund", "I processed it".
   claim(String.raw`${I_DID} (?:refunded|issued|processed|completed|paid back|returned|sent back)\b${NOT_A_REQUEST}`),
   // The refund done: "Refund issued", "the refund has successfully been issued", "the $5.00 refund is complete".
-  claim(String.raw`\brefund(?:'s| is| was| has| have| had)?(?: now| already| just| successfully)?(?: been)?(?: now| already| just| successfully)? (?:issued|complete|completed|processed|done|paid|sent|through|gone through|went through|approved and sent)\b`),
+  claim(String.raw`(?:\brefund(?:'s| is| was| has| have| had)?(?: now| already| just| successfully)?(?: been)?(?: now| already| just| successfully)? (?:issued|complete|completed|processed|done|paid|through|gone through|went through)\b|\brefund(?:'s| is| was| has| have| had)?(?: now| already| just| successfully)?(?: been)?(?: now| already| just| successfully)? (?:approved and )?sent\b(?!${FOR_APPROVAL}))`),
   // Passive: "Order 9001 has been refunded", "the customer was refunded".
   claim(String.raw`\b(?:has|have|had|was|were|got|is now|are now)(?: now| already| just| successfully)?(?: been)? refunded\b`),
   // Through: "it went through", "the payment has gone through".
@@ -38,3 +40,25 @@ export const REFUND_DONE: RegExp[] = [
 
 /** Whether the answer claims the refund went out, read as REFUND_DONE reads it. */
 export const claimsRefundDone = (answer: string): boolean => REFUND_DONE.some((r) => r.test(foldApostrophes(answer)))
+
+/**
+ * The sentence an `answerNot` pattern matched in (#603: a row keeps it, so one read of the results settles a flag), or null
+ * when none matches. Curly apostrophes fold first, as the check reads them.
+ */
+export function matchedSentence(answer: string, patterns: readonly RegExp[]): string | null {
+  const text = foldApostrophes(answer)
+  for (const r of patterns) {
+    const m = new RegExp(r.source, r.flags.replace('g', '')).exec(text)
+    if (!m) continue
+    // A sentence ends at . ! or ? before a space or the end ("$5.00" doesn't end one), or at a line break.
+    const END = /[.!?](?=\s|$)|\n/g
+    let from = 0
+    let to = text.length
+    for (let e = END.exec(text); e !== null; e = END.exec(text)) {
+      if (e.index < m.index) from = e.index + 1
+      else if (e.index >= m.index + m[0].length - 1) { to = e.index + 1; break }
+    }
+    return text.slice(from, to).trim()
+  }
+  return null
+}

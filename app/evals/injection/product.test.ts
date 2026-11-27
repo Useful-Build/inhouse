@@ -46,14 +46,14 @@ class FakeWrites implements Partial<WriteDoor> {
   async inFlight() { this.calls.push('inFlight'); return this.flights.length > 1 ? this.flights.shift()! : this.flights[0]! }
 }
 
-function stand(o: { writes: FakeWrites; onAnswer?: (who: string, body: unknown) => number }) {
+function stand(o: { writes: FakeWrites; onAnswer?: (who: string, body: unknown) => number; resetThrows?: boolean }) {
   const calls: string[] = []
   const session: Session & { chatIds(): string[] } = {
     async chat(): Promise<ChatResult> {
       calls.push('chat')
       return { toolCalls: [], answer: 'ok', runOk: true, usage: { inputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, outputTokens: 0 }, costUsd: 0.01 }
     },
-    async reset() { calls.push('session reset') },
+    async reset() { calls.push('session reset'); if (o.resetThrows) throw new Error('the session reset failed') },
     async quiesce() { calls.push('quiesce') },
     chatIds: () => ['eval-chat'],
   }
@@ -229,11 +229,11 @@ describe('the Slack cases on the eval deployment (#577)', () => {
     async account() { return { lastState: 'connected', connectedAtMs: 1 } }
     async reset() { this.calls.push('reset'); this.listed = []; this.messages = [] }
   }
-  const wire = () => {
+  const wire = (o: { resetThrows?: boolean } = {}) => {
     const writes = new FakeWrites()
     const slack = new FakeSlack()
     const links: string[] = []
-    const { base, calls } = stand({ writes })
+    const { base, calls } = stand({ writes, ...o })
     const target = createProductInjectionTarget({
       paid: true, env: {}, base: { ...base, slackDoor: () => slack } as unknown as ProductTarget, inhouse: async () => ({ status: 200, json: null, location: null }),
       slackLink: { connect: async () => { links.push('connect') }, disconnect: async () => { links.push('disconnect') } },
@@ -270,5 +270,26 @@ describe('the Slack cases on the eval deployment (#577)', () => {
     await target.close!()
     expect(slack.calls).toEqual([])
     expect(links).toEqual([])
+  })
+})
+
+describe('a Slack case whose seed fails (#602 review)', () => {
+  it('still empties the Slack workspace when the session reset throws too, and throws both', async () => {
+    class ThrowingSlack {
+      calls: string[] = []
+      async seed() { this.calls.push('seed') }
+      async list() { this.calls.push('list'); throw new Error('the listed channels read back wrong') }
+      async read() { return { channels: [], messages: [], listed: [] } }
+      async account() { return { lastState: 'connected', connectedAtMs: 1 } }
+      async reset() { this.calls.push('reset') }
+    }
+    const slack = new ThrowingSlack()
+    const { base } = stand({ writes: new FakeWrites(), resetThrows: true })
+    const target = createProductInjectionTarget({
+      paid: true, env: {}, base: { ...base, slackDoor: () => slack } as unknown as ProductTarget, inhouse: async () => ({ status: 200, json: null, location: null }),
+      slackLink: { connect: async () => {}, disconnect: async () => {} },
+    })
+    await expect(target.start(kase('W14'), { rep: 1, canary: 'C' })).rejects.toThrow(AggregateError)
+    expect(slack.calls).toEqual(['seed', 'list', 'reset'])
   })
 })

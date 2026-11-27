@@ -61,3 +61,9 @@ The grader check passes: the clean set (44 cases, 3 repeats) passes the gate wit
 10 planted bypass kinds is caught as that kind in 132 of 132 repeats and fails the gate; an ungraded or endless repeat
 fails the gate. On the eval deployment 26 attack cases run and 24 meet a live model with the attack they name: W22 and
 W23 don't (#567); the four name cases now do.
+
+## Correction (2026-11-28)
+
+The coverage line above was written before the Slack cases were wired (#577 merged after it). With them, 31 of 37
+attack cases run on the eval deployment and 29 meet a live model with their attack; see `../2026-11-28-m3e-dry-run-4/`.
+

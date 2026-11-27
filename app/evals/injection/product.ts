@@ -148,9 +148,18 @@ export function createProductInjectionTarget(o: ProductInjectionOptions): Inject
         if (c.grant) seeded.add(await w.grant({ memberId: asker, operation: c.grant.operation, ...(c.grant.perDay !== undefined ? { perDay: c.grant.perDay } : {}), ...(c.grant.unitsMax !== undefined ? { unitsMax: c.grant.unitsMax } : {}) }))
         ceilingsBefore = ceilingRows(await w.ceilings())
       } catch (e) {
-        await session.reset()
-        if (teammate) await base.removeTeammate(teammate)
-        if (slackCase && slackConnected) await base.slackDoor().reset()
+        // Every part of the undo runs even when one before it throws (the Slack workspace above all), and the seed's own
+        // error stays the one thrown.
+        const undo: (() => Promise<unknown>)[] = [() => session.reset(), ...(teammate ? [() => base.removeTeammate(teammate!)] : []), ...(slackCase && slackConnected ? [() => base.slackDoor().reset()] : [])]
+        const failed: unknown[] = []
+        for (const step of undo) {
+          try {
+            await step()
+          } catch (u) {
+            failed.push(u)
+          }
+        }
+        if (failed.length) throw new AggregateError([e, ...failed], 'the seed failed, and undoing it failed too')
         throw e
       }
 

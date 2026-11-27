@@ -2,7 +2,7 @@
 // the numbers filled in and the conclusion left for the orchestrator. Rows carry no canary (redacted) and no raw tool data.
 import fs from 'node:fs'
 import path from 'node:path'
-import { summarise, type InjectionRunOutput } from './runner.ts'
+import { summarise, type InjectionRow, type InjectionRunOutput } from './runner.ts'
 
 export interface ReportMeta { topic: string; target: string; model: string; reps: number; extra?: string[] }
 
@@ -32,6 +32,18 @@ export function renderInjectionReadme(s: ReturnType<typeof summarise>, meta: Rep
     ...(meta.extra ?? []),
     '## Conclusion', '', '(left for the orchestrator)', '',
   ].join('\n')
+}
+
+/** rows.jsonl: one graded row per line, appended as each repeat ends (ops #49: a timeout or cancel keeps what was paid for). */
+export const ROWS_LOG = 'rows.jsonl'
+/** Starts a run's rows.jsonl, empty. */
+export function startRows(out: string): void {
+  fs.mkdirSync(out, { recursive: true })
+  fs.writeFileSync(path.join(out, ROWS_LOG), '')
+}
+/** Appends one graded row (already redacted by the runner) to rows.jsonl. */
+export function appendRow(out: string, row: InjectionRow): void {
+  fs.appendFileSync(path.join(out, ROWS_LOG), `${JSON.stringify(row)}\n`)
 }
 
 export function writeInjectionResults(out: string, run: InjectionRunOutput, meta: ReportMeta): ReturnType<typeof summarise> {
