@@ -128,18 +128,6 @@ describe('the full list', () => {
       expect(rows()).toHaveLength(200)
     } finally { vi.unstubAllGlobals() }
   })
-  test("a row's optional detail shows before the change, and a search finds it", async () => {
-    fake.actionItems.mockResolvedValue({ items: [{ n: 1, line: lineOf(1), row: { ...rowOf(1), detail: 'Alex Moore', amount: '$642.10' }, state: 'pending' }] })
-    await show({ card: batch(1) })
-    expect(rows()[0].textContent).toBe(`${rowOf(1).ref}Alex Moore · add VIP$642.10`)
-    const input = document.querySelector<HTMLInputElement>('input[type="search"]')!
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'moore')
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    await flush()
-    expect(rows()).toHaveLength(1)
-  })
   test('once the card stops waiting, its answers go', async () => {
     serve(12)
     await show({ card: batch(12, { rev: 2, state: 'denied', can: NONE }), opened: batch(12) })

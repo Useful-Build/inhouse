@@ -69,7 +69,10 @@ export const STATES: UiState[] = [
   {
     name: 'pop-batch-sheet', stage: 'Act', scenario: 'Normal', hash: '#/chats/vip-tags', ready: 'and 447 more', a11y: true,
     act: async page => {
-      await page.getByRole('button', { name: /^See all 450: / }).click()
+      // Opened from the keyboard, with focus that doesn't scroll: a click would scroll the chat behind the sheet first, by
+      // however far the button sits under the composer, and the shot's background would move between runs.
+      await page.getByRole('button', { name: /^See all 450: / }).evaluate(el => (el as HTMLElement).focus({ preventScroll: true }))
+      await page.keyboard.press('Enter')
       const sheet = page.getByRole('dialog', { name: 'Tag 450 orders as VIP' })
       await expect(sheet.locator('[data-item]').first()).toBeVisible()
       await expect(sheet.getByRole('button', { name: 'Approve all 450' })).toBeVisible()
