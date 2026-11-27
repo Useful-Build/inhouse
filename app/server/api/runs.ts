@@ -9,7 +9,7 @@ import { ChatIdSchema } from '../../shared/contract/chat-ids.ts'
 import { RunIdSchema } from '../../shared/contract/chat-ids.ts'
 import { SendTurnInputSchema, TurnIdSchema } from '../../shared/contract/runs.ts'
 import type { ActiveRuns } from '../../shared/contract/runs.ts'
-import { MAX_TURNS, parseHostlist, webFetchOn, webSearchOn } from '../../shared/contract/settings-table.ts'
+import { MAX_TURNS, parseHostlist, webFetchMode, webFetchOn, webSearchOn } from '../../shared/contract/settings-table.ts'
 import { apiError, apiJson } from '../http.ts'
 import { readCapped, storesOf } from '../db/handler-kit.ts'
 import { SYSTEM_MEMBER_ID } from '../db/ids.ts'
@@ -55,10 +55,11 @@ export interface ResolvedTurn {
   sideModel: string
   maxTurns: number
   /**
-   * The hosts WebFetch may reach: exactly `t:webfetch`'s list, so empty (the default) is none (P8a S); none at all while
-   * an Admin has reading web pages off (`t:webfetch_on`, M1-F).
+   * The hosts WebFetch may reach: exactly `t:webfetch`'s list, so empty (the default) is none (P8a S); null (any public
+   * host) when the Inhouse team set `t:webfetch_mode` to `open` (M3-F, N29: the egress keeps every other check and decides
+   * by the live mode); none at all while an Admin has reading web pages off (`t:webfetch_on`, M1-F).
    */
-  webFetchDomains: string[]
+  webFetchDomains: string[] | null
   /** Web search: only with the brand's `t:websearch` switch set to true (an Admin's, M1-F); off by default. */
   webSearch: boolean
   /**
@@ -85,7 +86,8 @@ export function pickSubagentModel(turn: CatalogModel, settings: SettingsView, ca
  * Route 29's model and settings resolution (design 4.9; PR 5, ask F), the one function the route and a due-task handler
  * call: unknown model → `invalid`; switched off or unpriced → `forbidden`/`model_off`; the effort and side model from
  * the catalogue and `tm:<id>:*`; `maxTurns` from `t:max_turns` (else 25); WebFetch's hosts from `t:webfetch` (empty or
- * missing: none; a stored value that breaks the rule: none, fail closed; none while `t:webfetch_on` is off); web search on
+ * missing: none; a stored value that breaks the rule: none, fail closed; any public host, null, when `t:webfetch_mode`
+ * is `open`; none while `t:webfetch_on` is off); web search on
  * only when `t:websearch` is true; the helpers' model (`pickSubagentModel`, N6). The web switches are brand settings (an
  * Admin's, M1-F) and the rest technical, so both scopes are read.
  */
@@ -101,7 +103,7 @@ export async function resolveTurnSettings(
   const maxTurns = typeof maxTurnsSetting === 'string' && (MAX_TURNS as readonly string[]).includes(maxTurnsSetting) ? Number(maxTurnsSetting) : 25
   const hostSetting = settings['t:webfetch']
   const hosts = typeof hostSetting === 'string' ? parseHostlist(hostSetting) : []
-  const webFetchDomains = webFetchOn(settings['t:webfetch_on']) ? (hosts ?? []) : []
+  const webFetchDomains = !webFetchOn(settings['t:webfetch_on']) ? [] : webFetchMode(settings['t:webfetch_mode']) === 'open' ? null : (hosts ?? [])
   const webSearch = webSearchOn(settings['t:websearch'])
   const subagentModel = pickSubagentModel(resolved.model, settings as SettingsView, catalog)
   return { model: resolved.model.apiId, pickerId: resolved.model.id, effort: resolved.effort, sideModel: resolved.sideApiId, maxTurns, webFetchDomains, webSearch, subagentModel }

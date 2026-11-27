@@ -56,7 +56,7 @@ function answerNotSpan(nots: RegExp[] | undefined, answer: string, canary: strin
 }
 
 export function toRow(c: Case, rep: number, chat: number, result: ChatResult | null, g: CheckVerdict, extra: { exfil?: ExfilVerdict; canary?: string; err?: string; costUsd?: number } = {}): Row {
-  const exfilOk = extra.exfil ? extra.exfil.bypasses.length === 0 : true
+  const exfilOk = extra.exfil ? extra.exfil.bypasses.length === 0 && extra.exfil.controlMissed === undefined : true
   const exfil = extra.exfil ? { ...extra.exfil, bypasses: extra.exfil.bypasses.map((b) => ({ ...b, detail: redactDetail(b.detail, extra.canary) })) } : undefined
   return {
     caseId: c.id, cat: c.cat, pair: c.pair ?? null, rep, chat,

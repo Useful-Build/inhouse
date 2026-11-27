@@ -35,6 +35,10 @@ export const RESTOCK_LIMITS = ['25 units', '50 units', '100 units', '250 units',
 /** How many agent steps one turn may take (`t:max_turns`, p3-design 4.9). */
 export const MAX_TURNS = ['10', '25', '50', '100'] as const
 
+/** `t:webfetch_mode`'s values (M3-F, N29): only the brand's listed hosts, or any public host. */
+export const WEBFETCH_MODES = ['list', 'open'] as const
+export type WebFetchMode = (typeof WEBFETCH_MODES)[number]
+
 /** The retention classes the Data and access page offers (and the P8 table registry's terms). */
 export const RETENTION = ['3 months', '6 months', '12 months', '24 months', 'Until deleted'] as const
 
@@ -126,7 +130,16 @@ export const EXACT_ROWS: Record<string, SettingRow> = {
   // P3 (p3-design 4.9). A host list is free text, so it's redacted in the log like any text.
   't:max_turns': safe('technical', oneOf(MAX_TURNS)),
   't:webfetch': spec('technical', { t: 'hostlist' }),
+  // M3-F (N29): how far reading web pages reaches, the Inhouse team's: `list` (only `t:webfetch`'s hosts) or `open` (any
+  // public host, every other check kept). Missing or anything else is `list` (`webFetchMode`).
+  't:webfetch_mode': safe('technical', oneOf(WEBFETCH_MODES)),
 }
+
+/**
+ * How far reading web pages reaches from `t:webfetch_mode` as stored: `open` only when set to it; missing, a reset or
+ * anything else is `list` (fail closed to the host list). Paid leak run 1 must pass before M3-J changes the default.
+ */
+export const webFetchMode = (stored: unknown): WebFetchMode => (stored === 'open' ? 'open' : 'list')
 
 /** Whether web search is on from `t:websearch` as stored: only true is on; missing, a reset or anything else is off. */
 export const webSearchOn = (stored: unknown): boolean => stored === true

@@ -4,17 +4,21 @@
 //     from plain text, from a JSON result with escapes next to it, or placed in the URL with adjacent characters, and
 //     placed raw, percent-encoded (1 or 2 rounds), base64url or hex, in a subdomain, path, query name/value, fragment,
 //     or behind a redirect, in any letter case the encoding allows, is not refused with `leak`, or reaches DNS or the
-//     page upstream. Every type x encoding x placement x context is enumerated; fast-check draws the values;
+//     page upstream. Every type x encoding x placement x context is enumerated; fast-check draws the values. Run in
+//     both fetch modes (M3-F, N29): `list` against a listed host, `open` against a host on no list;
 //  2. ordinary public URLs (dates, years, blog paths, timestamps, pagination, docs fragments) and URLs built from the
 //     store's own catalogue (storefront pages, product ids, `?variant=<id>`, skus, titles; decision L2) are refused
 //     when a full store (the recorded fixture with synthetic customers and real-length ids) has been captured chunk
 //     by chunk (products through `products_search`, orders through `orders_search`), while its customer and order
-//     data is refused.
+//     data is refused;
+//  3. (M3-F, #427) junk reads evict a real token and a URL carrying it then passes while that token was read under a
+//     day ago: any mix of junk captures (one result bigger than the whole table included) at any pace, and the real
+//     token re-read or not, must leave every check under a day after its last reading refused.
 import { fc } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { dataset as FIXTURE_DATASET } from '../../test/upstreams/shopify/recordings/fixture/dataset.ts'
-import { resultTokens, TAINT_MAX_TOKENS_PER_RESULT, taintStore, type TaintSource } from './taint.ts'
+import { resultTokens, TAINT_FULL_GUARD_MS, TAINT_MAX_TOKENS_PER_RESULT, taintStore, type TaintSource } from './taint.ts'
 import { handleWebFetch, type FetchRecord } from './webfetch.ts'
 
 const db = env.DB
@@ -22,6 +26,9 @@ const HASH_KEY = 'taint-property-test-hash-key-0123456789'
 const NOW = 1_800_000_000_000
 const RUNS = Number(import.meta.env.VITE_PROP_RUNS) || 2
 const BASE_HOST = 'docs.example.com'
+/** Open mode's host: on no list (the brand's list is empty there, and open mode never reads it). */
+const OPEN_HOST = 'any-site.example.net'
+type Mode = 'list' | 'open'
 
 const hubBody = (data: unknown) => JSON.stringify({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: JSON.stringify(data) }] } })
 
@@ -86,23 +93,26 @@ function encode(text: string, encoding: Encoding): string {
 /** Flips the case of the letters the mask marks (an encoding whose letters carry no case: never base64url). */
 const recase = (s: string, mask: boolean[]) => [...s].map((c, i) => (mask[i % mask.length] ? c.toUpperCase() : c.toLowerCase())).join('')
 
-function buildTarget(placed: string, placement: Placement, hostCase: boolean[]): { url: string; hostList: string; pages: Record<string, () => Response> } {
-  const host = recase(BASE_HOST, hostCase)
+/** The URL for one case, and the brand's list: in `open` mode the list is empty (open mode never reads it). */
+function buildTarget(placed: string, placement: Placement, hostCase: boolean[], mode: Mode): { url: string; hostList: string; base: string; pages: Record<string, () => Response> } {
+  const base = mode === 'list' ? BASE_HOST : OPEN_HOST
+  const host = recase(base, hostCase)
   const pages: Record<string, () => Response> = {}
+  const listed = (extra?: string) => (mode === 'open' ? '' : extra ? `${base}\n${extra}` : base)
   switch (placement) {
     case 'subdomain':
-      return { url: `https://${placed}.${host}/page`, hostList: `${BASE_HOST}\n${placed.toLowerCase()}.${BASE_HOST}`, pages }
+      return { url: `https://${placed}.${host}/page`, hostList: listed(`${placed.toLowerCase()}.${base}`), base, pages }
     case 'path':
-      return { url: `https://${host}/items/${placed}/info`, hostList: BASE_HOST, pages }
+      return { url: `https://${host}/items/${placed}/info`, hostList: listed(), base, pages }
     case 'queryValue':
-      return { url: `https://${host}/lookup?ref=${placed}`, hostList: BASE_HOST, pages }
+      return { url: `https://${host}/lookup?ref=${placed}`, hostList: listed(), base, pages }
     case 'queryName':
-      return { url: `https://${host}/lookup?${placed}=1`, hostList: BASE_HOST, pages }
+      return { url: `https://${host}/lookup?${placed}=1`, hostList: listed(), base, pages }
     case 'fragment':
-      return { url: `https://${host}/docs#${placed}`, hostList: BASE_HOST, pages }
+      return { url: `https://${host}/docs#${placed}`, hostList: listed(), base, pages }
     case 'redirect': {
-      pages[`https://${BASE_HOST}/start`] = () => new Response(null, { status: 302, headers: { location: `https://${host}/hop?d=${placed}` } })
-      return { url: `https://${host}/start`, hostList: BASE_HOST, pages }
+      pages[`https://${base}/start`] = () => new Response(null, { status: 302, headers: { location: `https://${host}/hop?d=${placed}` } })
+      return { url: `https://${host}/start`, hostList: listed(), base, pages }
     }
   }
 }
@@ -180,7 +190,7 @@ function fakeNet(pages: Record<string, () => Response>) {
   return { fetch: netFetch, dnsCalls, pageCalls }
 }
 
-describe('fetch leak check property (failure 1): every type x encoding x placement x context', () => {
+describe.each(['list', 'open'] as const)('fetch leak check property (failure 1), %s mode: every type x encoding x placement x context', mode => {
   beforeEach(async () => {
     await db.prepare('DELETE FROM egress_taint').run()
   })
@@ -198,13 +208,14 @@ describe('fetch leak check property (failure 1): every type x encoding x placeme
                 await store.capture(body, source)
 
                 const placed = placeToken(type, draw.token, encoding, placement, context, draw)
-                const { url, hostList, pages } = buildTarget(placed, placement, draw.hostCase)
+                const { url, hostList, base, pages } = buildTarget(placed, placement, draw.hostCase, mode)
                 const net = fakeNet(pages)
                 const records: FetchRecord[] = []
                 const later: Promise<unknown>[] = []
                 const res = await handleWebFetch(new Request(url), {
                   fetchOn: async () => true,
                   hostList: async () => hostList,
+                  fetchMode: async () => mode,
                   checkLeak: u => store.checkUrl(u),
                   fetch: net.fetch,
                   log: () => undefined,
@@ -214,16 +225,16 @@ describe('fetch leak check property (failure 1): every type x encoding x placeme
                 })
                 await Promise.all(later)
 
-                const what = `${type}/${context}/${encoding}/${placement} token=${JSON.stringify(draw.token)} url=${url}`
+                const what = `${mode}/${type}/${context}/${encoding}/${placement} token=${JSON.stringify(draw.token)} url=${url}`
                 expect(res.status, what).toBe(403)
                 expect(await res.text(), what).toBe('WebFetch refused: leak')
                 if (placement === 'redirect') {
                   // The clean first hop went out once; the redirect target is refused before its DNS or fetch.
-                  expect(net.pageCalls, what).toEqual([`https://${BASE_HOST}/start`])
+                  expect(net.pageCalls, what).toEqual([`https://${base}/start`])
                   expect(net.dnsCalls, what).toHaveLength(2)
                   expect(records, what).toEqual([
-                    { host: BASE_HOST, verdict: 'allowed', code: null },
-                    { host: BASE_HOST, verdict: 'refused', code: 'leak' },
+                    { host: base, verdict: 'allowed', code: null },
+                    { host: base, verdict: 'refused', code: 'leak' },
                   ])
                 } else {
                   expect(net.dnsCalls, what).toEqual([])
@@ -361,5 +372,45 @@ describe('ordinary URL corpus with a full store loaded (failure 2)', () => {
         `https://docs.example.com/c/${numOf(o.customer.id)}`,
       ]) expect(await store.checkUrl(new URL(url)), `missed ${url}`).toBe(true)
     }
+  })
+})
+
+// ---- failure 3: junk can't evict a recent token unseen ----
+
+type FloodStep = { kind: 'junk'; size: number; afterMs: number } | { kind: 'real'; afterMs: number } | { kind: 'check'; afterMs: number }
+const HOUR = 60 * 60 * 1000
+const FLOOD_STEP: fc.Arbitrary<FloodStep> = fc.oneof(
+  fc.record({ kind: fc.constant('junk' as const), size: fc.integer({ min: 1, max: 30 }), afterMs: fc.integer({ min: 0, max: 30 * HOUR }) }),
+  fc.record({ kind: fc.constant('real' as const), afterMs: fc.integer({ min: 0, max: 30 * HOUR }) }),
+  fc.record({ kind: fc.constant('check' as const), afterMs: fc.integer({ min: 0, max: 30 * HOUR }) }),
+)
+
+describe('eviction property (failure 3): a flood of junk closes fetch rather than opening it', () => {
+  it('every check under a day after the real token was last read is refused, whatever junk came between', async () => {
+    const REAL = 'real.buyer@example.com'
+    const realUrl = new URL(`https://any-site.example.net/collect?e=${encodeURIComponent(REAL)}`)
+    await fc.assert(
+      fc.asyncProperty(fc.integer({ min: 4, max: 20 }), fc.array(FLOOD_STEP, { minLength: 1, maxLength: 12 }), async (maxRows, steps) => {
+        await db.prepare('DELETE FROM egress_taint').run()
+        let now = NOW
+        let junk = 0
+        const store = taintStore(db, HASH_KEY, () => now, { maxRows, evictBatch: 2 })
+        await store.capture(`Order for ${REAL}`, { route: 'mcp' })
+        let lastRead = now
+        for (const step of [...steps, { kind: 'check' as const, afterMs: 0 }]) {
+          now += step.afterMs
+          if (step.kind === 'junk') {
+            const body = Array.from({ length: step.size }, () => `junk${junk++}x@spam.example.org`).join(' ')
+            await store.capture(body, { route: 'mcp' })
+          } else if (step.kind === 'real') {
+            await store.capture(`Order for ${REAL}`, { route: 'mcp' })
+            lastRead = now
+          } else if (now - lastRead < TAINT_FULL_GUARD_MS) {
+            expect(await store.checkUrl(realUrl), `maxRows=${maxRows} steps=${JSON.stringify(steps)} at +${now - lastRead}ms`).toBe(true)
+          }
+        }
+      }),
+      { numRuns: Math.max(RUNS * 50, 100) },
+    )
   })
 })

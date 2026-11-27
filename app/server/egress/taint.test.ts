@@ -10,7 +10,7 @@ import type { HubRouteDeps, ReadGatewayLike } from './hub.ts'
 import { handleEgress, TAINT_OVERFLOW_TEXT, type EgressOptions } from './index.ts'
 import {
   digestToken, extractTokens, extractUrlTokens, isTextLikeContentType, MAX_URL_CANDIDATES, resultTokens, TAINT_MAX_TOKENS_PER_RESULT,
-  TAINT_TTL_MS, TaintOverflowError, taintStore, type TaintStore,
+  TAINT_FULL_GUARD_MS, TAINT_TTL_MS, TaintOverflowError, taintStore, type TaintStore,
 } from './taint.ts'
 import { egressRequest, GRANT, harness } from './testing/harness.ts'
 import { handleWebFetch, type FetchRecord } from './webfetch.ts'
@@ -25,6 +25,9 @@ const hubBody = (data: unknown) => JSON.stringify({ jsonrpc: '2.0', id: 1, resul
 const mcpBody = (text: string) => JSON.stringify({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text }] } })
 const capturing = (store: TaintStore): EgressOptions => ({ captureTaint: (body, source) => store.capture(body, source).then(() => undefined) })
 const leaks = (store: TaintStore, url: string) => store.checkUrl(new URL(url))
+/** Whether a token's digest is in the table (whatever its age). */
+const stored = async (token: string) =>
+  (await db.prepare('SELECT 1 AS hit FROM egress_taint WHERE digest = ?').bind(await digestToken(HASH_KEY, token)).first()) !== null
 
 beforeAll(async () => {
   await db
@@ -206,6 +209,15 @@ describe('catalogue data is not tainted, customer and order data is (decision L2
     // An exempt id path never carries a query, and a prototype key name is no path.
     expect(tokens({ items: [{ id: 'gid://shopify/Product/8123456789012?ref=5550000001001' }] })).toEqual(['5550000001001', '8123456789012'])
     expect(tokens({ constructor: 'gid://shopify/Product/8123456789012', toString: 'ord_AbC123def456' })).toEqual(['8123456789012', 'ord_abc123def456'])
+    // A key holding `.` or `[]` is one key, never a path (#427): it can't forge an exempt catalogue path.
+    expect(tokens({ 'items[].title': '#1001', 'items[].id': 'gid://shopify/Product/8123456789012' })).toEqual(['#1001', '8123456789012'])
+    expect(tokens({ 'items[]': { title: '#1002', variants: [{ sku: 'ord_AbC123def456' }] } })).toEqual(['#1002', 'ord_abc123def456'])
+    expect(tokens({ items: [{ 'variants[].sku': 'ord_AbC123def456', 'variants[]': { id: 'gid://shopify/ProductVariant/44012345678901' } }] }))
+      .toEqual(['44012345678901', 'ord_abc123def456'])
+    expect(tokens({ 'items"[]."title': '#1003' })).toEqual(['#1003'])
+    // Nor can a hub answer's own key stand in for where its data sits.
+    const forged = JSON.stringify({ jsonrpc: '2.0', id: 1, 'result.content[].text': JSON.stringify(PRODUCT) })
+    expect(resultTokens(forged, { route: 'hub', tool: 'products_search' })).toEqual(expect.arrayContaining(['8123456789012', '44012345678901', 'mossmug350slate01']))
     // The same shape from another tool, /mcp/ or a JSON file is read in full.
     for (const t of [resultTokens(hubBody(PRODUCT), { route: 'hub', tool: 'order_get' }), resultTokens(hubBody(PRODUCT), { route: 'hub', tool: null }),
       resultTokens(mcpBody(JSON.stringify(PRODUCT)), { route: 'mcp' }), resultTokens(JSON.stringify(PRODUCT), { route: 'files', contentType: 'application/json' })])
@@ -302,12 +314,11 @@ describe('expiry and row cap', () => {
     await store.capture('new1@example.com new2@example.com new3@example.com', { route: 'mcp' })
 
     expect(await db.prepare('SELECT COUNT(*) AS n FROM egress_taint').first<number>('n')).toBe(5)
-    for (const email of ['new1@example.com', 'new2@example.com', 'new3@example.com']) {
-      expect(await leaks(store, `https://docs.example.com/?e=${encodeURIComponent(email)}`)).toBe(true)
-    }
+    // Read from the table itself: a full table under a day old refuses every URL with a token, kept or evicted.
+    for (const email of ['new1@example.com', 'new2@example.com', 'new3@example.com']) expect(await stored(email), email).toBe(true)
     let oldRemaining = 0
     for (const email of ['old1@example.com', 'old2@example.com', 'old3@example.com', 'old4@example.com']) {
-      if (await leaks(store, `https://docs.example.com/?e=${encodeURIComponent(email)}`)) oldRemaining++
+      if (await stored(email)) oldRemaining++
     }
     expect(oldRemaining).toBe(2)
   })
@@ -335,6 +346,79 @@ describe('expiry and row cap', () => {
     await store.capture('b1@example.com b2@example.com b3@example.com b4@example.com', { route: 'mcp' })
     expect(sql.filter(q => q.includes('COUNT(*)'))).toHaveLength(1)
     expect(await db.prepare('SELECT COUNT(*) AS n FROM egress_taint').first<number>('n')).toBe(6)
+  })
+})
+
+describe('a flood of junk closes fetch rather than opening it (#427, M3-F)', () => {
+  it('a full table whose oldest row is under a day old refuses every URL with a token; a URL with none passes; at a day it opens', async () => {
+    let now = BASE_NOW
+    const store = taintStore(db, HASH_KEY, () => now, { maxRows: 5, evictBatch: 10 })
+    await store.capture('real.buyer@example.com', { route: 'mcp' })
+    now += 60_000
+    // Junk fills the table and evicts the real email.
+    await store.capture(Array.from({ length: 5 }, (_, i) => `junk${i}@spam.example.org`).join(' '), { route: 'mcp' })
+    expect(await stored('real.buyer@example.com')).toBe(false)
+    const real = 'https://any-site.example.net/?e=real.buyer%40example.com'
+    expect(await leaks(store, real)).toBe(true)
+    // Any other candidate token too (the check can't tell what was evicted); a URL with none still passes.
+    expect(await leaks(store, 'https://any-site.example.net/o/5550000009999')).toBe(true)
+    expect(await leaks(store, 'https://any-site.example.net/blog/2026/11/spring-sale')).toBe(false)
+    // The oldest row (the junk, seen a minute after the real email) turns a day old: open again.
+    now = BASE_NOW + 60_000 + TAINT_FULL_GUARD_MS - 1
+    expect(await leaks(store, real)).toBe(true)
+    now = BASE_NOW + 60_000 + TAINT_FULL_GUARD_MS
+    expect(await leaks(store, real)).toBe(false)
+  })
+
+  it('overlapping captures at the cap never leave the table under it, so the guard stays on (one-statement eviction)', async () => {
+    let now = BASE_NOW
+    const store = taintStore(db, HASH_KEY, () => now, { maxRows: 20, evictBatch: 100 })
+    await store.capture('real.buyer@example.com', { route: 'mcp' })
+    now += 1000
+    await store.capture(Array.from({ length: 20 }, (_, i) => `fill${i}@spam.example.org`).join(' '), { route: 'mcp' })
+    expect(await stored('real.buyer@example.com')).toBe(false)
+    for (let round = 0; round < 5; round++) {
+      now += 1000
+      await Promise.all(Array.from({ length: 6 }, (_, k) =>
+        store.capture(Array.from({ length: 7 }, (_, i) => `par${round}x${k}x${i}@spam.example.org`).join(' '), { route: 'mcp' })))
+      expect(await db.prepare('SELECT COUNT(*) AS n FROM egress_taint').first<number>('n'), `round ${round}`).toBe(20)
+      expect(await leaks(store, 'https://any-site.example.net/?e=real.buyer%40example.com'), `round ${round}`).toBe(true)
+    }
+  })
+
+  it('a table below the cap never refuses on age alone, and a full one with an old oldest row refuses only stored tokens', async () => {
+    let now = BASE_NOW
+    const store = taintStore(db, HASH_KEY, () => now, { maxRows: 5, evictBatch: 10 })
+    await store.capture('a1@example.com a2@example.com a3@example.com a4@example.com', { route: 'mcp' })
+    expect(await leaks(store, 'https://any-site.example.net/o/5550000009999')).toBe(false)
+    now += TAINT_FULL_GUARD_MS + 1
+    await store.capture('b1@example.com', { route: 'mcp' })
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM egress_taint').first<number>('n')).toBe(5)
+    expect(await leaks(store, 'https://any-site.example.net/o/5550000009999')).toBe(false)
+    expect(await leaks(store, 'https://any-site.example.net/?e=a1@example.com')).toBe(true)
+  })
+
+  it('the full check counts rows only when the oldest row is recent and the rowid span reaches the cap', async () => {
+    const sql: string[] = []
+    const watched = new Proxy(db, {
+      get(target, prop) {
+        if (prop === 'prepare') return (q: string) => { sql.push(q); return target.prepare(q) }
+        const v = Reflect.get(target, prop) as unknown
+        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v
+      },
+    })
+    let now = BASE_NOW
+    const store = taintStore(watched, HASH_KEY, () => now, { maxRows: 3, evictBatch: 10 })
+    await store.capture('c1@example.com c2@example.com', { route: 'mcp' })
+    const counts = () => sql.filter(q => q.includes('COUNT(*)')).length
+    await leaks(store, 'https://any-site.example.net/o/5550000009999')
+    expect(counts()).toBe(0)
+    await store.capture('c3@example.com', { route: 'mcp' })
+    await leaks(store, 'https://any-site.example.net/o/5550000009999')
+    expect(counts()).toBe(1)
+    now += TAINT_FULL_GUARD_MS + 1
+    await leaks(store, 'https://any-site.example.net/o/5550000009999')
+    expect(counts()).toBe(1)
   })
 })
 
@@ -462,6 +546,7 @@ describe('fail closed on capture and check failures', () => {
     const res = await handleWebFetch(new Request('https://docs.example.com/clean'), {
       fetchOn: async () => true,
       hostList: async () => 'docs.example.com',
+      fetchMode: async () => 'list',
       checkLeak: async () => { throw new Error('d1 unreachable') },
       fetch: (async (input: RequestInfo | URL) => {
         networkCalls.push(String(input))
@@ -504,6 +589,7 @@ describe('end-to-end on real D1: /hub/ read then WebFetch to a listed host', () 
     const fetchRes = await handleWebFetch(new Request('https://docs.example.com/lookup?order=5550000001001'), {
       fetchOn: async () => true,
       hostList: async () => 'docs.example.com',
+      fetchMode: async () => 'list',
       checkLeak: u => store.checkUrl(u),
       fetch: (async (input: RequestInfo | URL) => {
         networkCalls.push(String(input))
