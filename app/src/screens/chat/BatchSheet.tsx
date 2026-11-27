@@ -53,7 +53,8 @@ export function BatchSheet({ card, opened, whose, busy, refusal, onClose, onSawT
   const tap = phone ? TAP : undefined
   const before = useRef<HTMLElement | null>(null)
   const panel = useRef<HTMLDivElement>(null)
-  const end = useRef<HTMLDivElement>(null)
+  // The list's last line, once the sheet has drawn it (the sheet's content mounts after this component does).
+  const [end, setEnd] = useState<HTMLDivElement | null>(null)
   const waiting = opened.state === 'waiting'
   // A waiting batch lists what the opened card showed; any other lists every item it has now.
   const shownCard = waiting ? opened : card
@@ -77,6 +78,7 @@ export function BatchSheet({ card, opened, whose, busy, refusal, onClose, onSawT
     if (!want || read.next === null) return
     const mine = gen.current
     const after = read.next
+    setAtEnd(false)
     setRead(r => ({ ...r, busy: true }))
     agent.actionItems(card.id, after).then(page => {
       if (gen.current !== mine) return
@@ -95,13 +97,14 @@ export function BatchSheet({ card, opened, whose, busy, refusal, onClose, onSawT
   }, [want, read.next, card.id, shown])
 
   // The list's end in view asks for the next page.
+  // Watched afresh after each page, so its first report says whether the end still shows (a short list asks again).
+  const pages = read.items.length
   useEffect(() => {
-    const el = end.current
-    if (!el || typeof IntersectionObserver === 'undefined') return
+    if (!end || typeof IntersectionObserver === 'undefined') return
     const io = new IntersectionObserver(entries => setAtEnd(entries.some(e => e.isIntersecting)))
-    io.observe(el)
+    io.observe(end)
     return () => io.disconnect()
-  }, [])
+  }, [end, pages])
 
   const q = query.trim().toLowerCase()
   const rows = q ? read.items.filter(it => matches(it, q)) : read.items
@@ -155,7 +158,7 @@ export function BatchSheet({ card, opened, whose, busy, refusal, onClose, onSawT
             })}
           </ul>
           {q && !loading && rows.length === 0 && <p role="status" className="m-0 py-6 text-center text-sm text-muted-foreground">Nothing matches.</p>}
-          <div ref={end} className="h-px" />
+          <div ref={setEnd} className="h-px" />
           {loading && <p role="status" className="m-0 py-3 text-sm text-muted-foreground">{`Loading ${fmtCount(read.items.length, display())} of ${count}.`}</p>}
           {read.error !== null && (
             <div className="flex flex-wrap items-center gap-2 py-3 text-sm text-muted-foreground" role="status">

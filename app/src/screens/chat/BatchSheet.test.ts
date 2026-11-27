@@ -109,6 +109,25 @@ describe('the full list', () => {
     await flush()
     expect(rows().map(r => r.getAttribute('data-item'))).toEqual(['450'])
   })
+  test('with an observer, it reads a page each time the list\'s end shows, and no more', async () => {
+    const seen: ((e: { isIntersecting: boolean }[]) => void)[] = []
+    class FakeObserver { constructor(cb: (e: { isIntersecting: boolean }[]) => void) { seen.push(cb) } observe() {} disconnect() {} }
+    vi.stubGlobal('IntersectionObserver', FakeObserver)
+    try {
+      serve(450)
+      await show({ card: batch(450) })
+      expect(fake.actionItems).not.toHaveBeenCalled()
+      const atEnd = async (on: boolean) => { await act(async () => { seen.at(-1)!([{ isIntersecting: on }]) }); await flush() }
+      await atEnd(true)
+      await atEnd(false)
+      expect(fake.actionItems.mock.calls.map(c => c[1])).toEqual([0])
+      expect(rows()).toHaveLength(100)
+      await atEnd(true)
+      await atEnd(false)
+      expect(fake.actionItems.mock.calls.map(c => c[1])).toEqual([0, 100])
+      expect(rows()).toHaveLength(200)
+    } finally { vi.unstubAllGlobals() }
+  })
   test('once the card stops waiting, its answers go', async () => {
     serve(12)
     await show({ card: batch(12, { rev: 2, state: 'denied', can: NONE }), opened: batch(12) })
