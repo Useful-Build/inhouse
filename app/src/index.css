@@ -132,7 +132,7 @@
 
   /* columns and page widths */
   --app-sidebar: 252px;
-  --app-sidebar-rail: 62px;       /* the collapsed sidebar: a 40px nav square, its padding and border */
+  --app-sidebar-rail: 62px;       /* the collapsed sidebar: a 40px nav square, 12px in from the window and 10px off the page */
   --app-settings-nav: 274px;
   --app-library-nav: 236px;
   --app-today-column: 720px;      /* Today's column and its composer */
@@ -160,7 +160,7 @@
   --app-activity-panel: min(440px, calc(100vw - 40px)); /* an Activity line, opened */
 
   /* windows (Window sizes): the width, where the top sits and the tallest it gets. On desktop a window centers in the room
-   * right of the sidebar and never covers it: --app-side-offset is the sidebar and its margin (the Sidebar sets data-side
+   * right of the sidebar and never covers it: --app-side-offset is the sidebar's width (the Sidebar sets data-side
    * on <html>), 0 on a phone. */
   --app-side-offset: 0px;
   --app-window-center: calc(50% + var(--app-side-offset) / 2);
@@ -195,6 +195,10 @@
   --app-destructive-solid: var(--destructive);         /* a destructive button's fill, and the text on it */
   --app-on-destructive: var(--primary-foreground);
   --app-switch-off: #888888;                           /* an off switch's track: 3:1 on a card, the page, a window and a menu's cursor */
+  --app-side-hover: #ededf0;                           /* a hovered sidebar row. Solid, so a chat row's "···" button covers the title with it; it reads on the page and on the Skyspace wall */
+  --app-side-rule: rgba(15, 15, 20, .09);              /* the one line between the sidebar and the page */
+  --app-count: #dde5f7;                                /* the sidebar's waiting count: the agent's sapphire as a tint (8:1 under --brand-text) */
+  --app-side-ease: cubic-bezier(.2, .8, .2, 1);        /* the sidebar's moves: its marker, and its width on a collapse */
   --app-popup-fill: var(--fill);                       /* soft fills inside a menu or pop-up (the same as on a card in light) */
   --app-popup-fill-hover: var(--fill-hover);
   --app-popup-divider: var(--divider);                 /* a separator inside a menu or pop-up */
@@ -296,6 +300,9 @@
   --app-destructive-solid: #bd432b;   /* a deeper terracotta, so light text on it reads (4.9:1); the base's light red needs dark text */
   --app-on-destructive: #fafafa;
   --app-switch-off: #808088;          /* 3:1 on a card, a window, a menu (#242429), a hovered row and a menu's cursor */
+  --app-side-hover: #1e1e22;          /* a clear step off the page (#111113) and the Skyspace wall (#0d0d0f) */
+  --app-side-rule: rgba(255, 255, 255, .09);
+  --app-count: #1f2a44;               /* 8:1 under the dark --brand-text */
   --app-popup-fill: #34343b;          /* a step off the lifted pop-up, and off its #2c2c31 hover row */
   --app-popup-fill-hover: #3f3f48;
   --app-popup-divider: #34343b;       /* shows on the #242429 menu */
@@ -329,9 +336,9 @@
   --divider: var(--app-popup-divider);
 }
 
-/* The desktop sidebar's room (the Sidebar sets data-side on <html>): its width plus its 10px margin. */
-:root[data-side="full"] { --app-side-offset: calc(var(--app-sidebar) + 10px); }
-:root[data-side="rail"] { --app-side-offset: calc(var(--app-sidebar-rail) + 10px); }
+/* The desktop sidebar's room (the Sidebar sets data-side on <html>): its width, since it sits flush in the window. */
+:root[data-side="full"] { --app-side-offset: var(--app-sidebar); }
+:root[data-side="rail"] { --app-side-offset: var(--app-sidebar-rail); }
 
 /* A window's and a side panel's ground (data-surface="window", with bg-window-surface): a hovered or picked row and an
  * inset well (bg-muted) each take a clear step off it. Menus portal out of it, so theirs are unchanged. */
@@ -417,6 +424,8 @@
   --color-on-destructive: var(--app-on-destructive);
   --color-switch-off: var(--app-switch-off);
   --color-window-surface: var(--app-window-surface);
+  --color-side-hover: var(--app-side-hover);
+  --color-count: var(--app-count);
   --color-draft-sheet: var(--app-draft-sheet);
   --color-draft-kind: var(--app-draft-kind);
   --color-success: var(--app-success);
@@ -537,13 +546,18 @@
 /* Unlayered: ui-base's `mono-label` utility sets the `font` shorthand, which resets the property in the utilities layer. */
 .mono-label { font-variant-ligatures: none; }
 
-/* Turrell Skyspace architectural skylight cove: spans the full app shell behind both the floating sidebar and main.
- * The room fills the entire viewport (zero seam behind the sidebar), while the skylight cove centres on the main column. */
+/* Turrell Skyspace architectural skylight cove: spans the full app shell behind both the sidebar and main.
+ * The room fills the entire viewport (zero seam behind the sidebar), while the skylight cove centres on the main column:
+ * it shifts by half the sidebar's width, and moves with the sidebar when it collapses. */
 .skyspace-room {
   background: linear-gradient(180deg, var(--app-cove-wall) 0%, var(--background) 62%, var(--background) 100%);
 }
-[data-skyspace-offset="full"] { --app-cove-shift: 131px; }
-[data-skyspace-offset="rail"] { --app-cove-shift: 36px; }
+[data-skyspace-offset="full"] { --app-cove-shift: 126px; }
+[data-skyspace-offset="rail"] { --app-cove-shift: 31px; }
+.skyspace-cove, .skyspace-inner {
+  transition: left .24s var(--app-side-ease);
+  @media (prefers-reduced-motion: reduce) { transition: none; }
+}
 [data-skyspace-offset="none"] { --app-cove-shift: 0px; }
 .skyspace-cove {
   position: absolute; top: -28px; left: calc(50% + var(--app-cove-shift, 0px)); transform: translateX(-50%);
@@ -560,6 +574,43 @@
   box-shadow: inset 0 -1px 0 var(--app-cove-lip), 0 14px 44px -18px var(--app-cove-shadow);
   -webkit-mask-image: linear-gradient(to bottom, black 55%, rgba(0, 0, 0, .6) 85%, transparent 100%);
   mask-image: linear-gradient(to bottom, black 55%, rgba(0, 0, 0, .6) 85%, transparent 100%);
+}
+
+/* ---------- the sidebar ----------
+ * It has no surface of its own: it sits on the page's wall, behind one hairline (side-rule, on the main column). */
+/* The selection marker: a short ink line on the sidebar's edge, level with the selected row, that glides between rows.
+ * The Sidebar sets where the row is (--side-marker-y, --side-marker-h); until then the line has no height. It sits on
+ * the column itself, clear of the rows (they keep 12px from that edge), so it rides the edge through a collapse.
+ * It glides only once placed (data-ready, set by the Sidebar after a first place, a return from off or a scroll):
+ * before that its place is set at once, so it never slides in from the top. */
+@utility side-marker {
+  position: absolute; top: 0; right: 0; pointer-events: none;
+  width: 2px; height: calc(var(--side-marker-h, 0px) - 14px); transform: translateY(calc(var(--side-marker-y, 0px) + 7px));
+  border-radius: 2px 0 0 2px; background: var(--foreground);
+  transition: opacity .12s linear;
+  &[data-ready] { transition: transform .26s var(--app-side-ease), height .26s var(--app-side-ease), opacity .12s linear; }
+  @media (prefers-reduced-motion: reduce) { &, &[data-ready] { transition: none; } }
+}
+/* The phone drawer puts the sidebar's rows on a card: a hovered or open row takes the card's own hover step there. */
+@utility side-on-card { --app-side-hover: var(--accent); }
+/* Collapsing is a move, not a cut: the column narrows and the page follows. */
+@utility side-move {
+  transition: width .24s var(--app-side-ease);
+  @media (prefers-reduced-motion: reduce) { transition: none; }
+}
+/* The hairline between the sidebar and the page, on the main column's left edge. It fades out at both ends. */
+@utility side-rule {
+  &::before {
+    content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 1px; background: var(--app-side-rule); pointer-events: none;
+    -webkit-mask-image: linear-gradient(transparent, black 96px, black calc(100% - 96px), transparent);
+    mask-image: linear-gradient(transparent, black 96px, black calc(100% - 96px), transparent);
+  }
+}
+/* A glyph whose fill changes with its row's state (the sidebar's selected row): the fill is an axis of the icon font,
+ * so it fills in rather than swaps. */
+@utility icon-fill-ease {
+  transition: font-variation-settings .2s linear;
+  @media (prefers-reduced-motion: reduce) { transition: none; }
 }
 
 /* ---------- motion ---------- */

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'react'
+import { useCallback, useLayoutEffect, useRef } from 'react'
 import { pendingIds, STAGE_TAGS, stageLocked, userName } from '../state/derive'
 import { chatEntries, openChatKey, useCtx, useUi } from '../state/store'
 import { cn } from '@/lib/utils'
@@ -12,8 +12,43 @@ import { AGENT, DAILY, mac, SHORTCUTS } from './nav'
 import type { NavDef } from './nav'
 
 // The account row while its menu is open: it holds its hover look (open is hover, never selected).
-const OPEN_ROW = 'data-[state=open]:bg-accent data-[state=open]:text-foreground'
+const OPEN_ROW = 'data-[state=open]:bg-side-hover data-[state=open]:text-foreground'
 
+/**
+ * Tells the marker where the selected row is (`side-marker` in index.css draws the line there). With no selected row
+ * (See all, a page the sidebar doesn't list) the line is off.
+ * The line glides only between two placed rows. Its first place, its place after being off and its place while the rows
+ * scroll (`snap`) are set with no transition (`data-ready` off), so it never slides in from the top or lags a scroll.
+ */
+function placeMarker(el: HTMLElement, snap = false) {
+  const box = el.parentElement
+  if (!box) return
+  // The open chat by its row, not its button: while its title is being renamed the button isn't there.
+  const row = box.querySelector<HTMLElement>('[aria-current="page"]:not([data-chat-fallback], [data-chat-open]), [data-chat-row][data-current]')
+  if (!row) { el.dataset.off = ''; delete el.dataset.ready; return }
+  if (snap) delete el.dataset.ready
+  const b = box.getBoundingClientRect(), r = row.getBoundingClientRect()
+  el.style.setProperty('--side-marker-y', `${r.top - b.top - box.clientTop}px`)
+  el.style.setProperty('--side-marker-h', `${r.height}px`)
+  delete el.dataset.off
+  if (el.dataset.ready === undefined) {
+    // Reading its box applies the place above while the transition is still off; then the next change glides.
+    el.getBoundingClientRect()
+    el.dataset.ready = ''
+  }
+}
+
+/**
+ * The sidebar has no surface of its own on desktop: it sits on the page's wall behind one hairline (App's `side-rule`).
+ * The selected row (a page, the open chat, the account row) turns to ink, and one marker, a short ink line on the
+ * sidebar's edge, glides to it. The other rows wait a step quieter until the pointer or the keyboard is in the sidebar
+ * (`group/side`, NavItem's and ChatRow's `hush`). The phone drawer is the same rows on a card, never quiet (no hover).
+ *
+ * The `<aside>` is the column: on desktop its width animates on a collapse. Inside it one scroller holds the rows at
+ * the column's final width, so an expand reveals them without reflow, and a scrollbar that takes room narrows the rows
+ * instead of covering them. The marker sits on the column's own edge, so it rides that edge through a collapse; it is
+ * placed again as the rows scroll.
+ */
 export function Sidebar() {
   const ctx = useCtx()
   const page = useUi(s => s.page)
@@ -33,6 +68,22 @@ export function Sidebar() {
     return () => { delete document.documentElement.dataset.side }
   }, [side])
   const { go, newChat, openChat, openChatList, openTeam, patch, toggleSidebar } = useUi.getState()
+  // The marker's line. It mounts with its tree (the rail, the full sidebar, or the drawer's content a commit after the
+  // drawer opens), so the ref places it then and watches the sidebar's size; every render places it again, since the
+  // selected row may have changed or moved (a chat pinned, a group added); a scroll of the rows places it too.
+  const marker = useRef<HTMLElement | null>(null)
+  const markerRef = useCallback((el: HTMLElement | null) => {
+    marker.current = el
+    const box = el?.parentElement
+    if (!el || !box) return
+    placeMarker(el)
+    const ro = new ResizeObserver(() => placeMarker(el))
+    ro.observe(box)
+    return () => { ro.disconnect(); marker.current = null }
+  }, [])
+  useLayoutEffect(() => { if (marker.current) placeMarker(marker.current) })
+  const line = <i ref={markerRef} aria-hidden="true" className="side-marker data-off:opacity-0" />
+  const follow = () => { if (marker.current) placeMarker(marker.current, true) }
   // The phone drawer opens with focus on itself, so no row shows a focus ring until someone tabs.
   const drawer = useRef<HTMLDivElement>(null)
   // The rail and the full sidebar are different trees, so the collapse button is a new element after a click on it:
@@ -41,7 +92,8 @@ export function Sidebar() {
   useLayoutEffect(() => {
     if (!refocusToggle.current) return
     refocusToggle.current = false
-    document.querySelector<HTMLElement>('#sidebar [data-sidebar-toggle]')?.focus()
+    // preventScroll: mid-expand the button is still past the column's edge, and scrolling to it would slide the rows in.
+    document.querySelector<HTMLElement>('#sidebar [data-sidebar-toggle]')?.focus({ preventScroll: true })
   }, [rail])
   // Desktop only: on a phone the drawer closes instead, and the top bar's menu button opens it.
   const toggle = (
@@ -68,7 +120,7 @@ export function Sidebar() {
   const navItem = (n: NavDef, rail: boolean) => {
     const locked = stageLocked(ctx, n.need), active = activeKey === n.key
     const showCount = n.key === 'approvals' && (locked ? asks > 0 : count > 0)
-    return <NavItem key={n.key} rail={rail} icon={n.icon} label={n.label} active={active} locked={locked} onClick={() => go(n.key)}
+    return <NavItem key={n.key} marked hush={!phone} rail={rail} icon={n.icon} label={n.label} active={active} locked={locked} onClick={() => go(n.key)}
       count={showCount ? (locked ? asks : count) : undefined} countLabel={`${locked ? asks : count} waiting`} tag={locked ? STAGE_TAGS[n.need] : undefined} />
   }
   const openChatId = openChatKey({ fresh, chatId }, ctx.data)
@@ -80,14 +132,18 @@ export function Sidebar() {
       running={!!runs[c.id]} onClick={() => openChat(c.id)} />
   )
 
-    // Collapsed on desktop: an icon rail with the same items, each named in a tooltip.
+  // Collapsed on desktop: an icon rail with the same items, each named in a tooltip. Its icons sit where the full
+  // sidebar's do (12px in, on one axis with the mark, Search and New chat), so on a collapse they hold their place
+  // while the column narrows.
   if (rail) return (
-    <aside id="sidebar" aria-label="Sidebar" className="relative z-sidebar my-2.5 mr-0 ml-2.5 box-border flex w-sidebar-rail flex-none flex-col items-center gap-px overflow-x-hidden overflow-y-auto rounded-2xl border border-border bg-card px-2.5 pt-3 pb-2.5 shadow-float">
-      <span className="mb-1 flex size-9 flex-none items-center justify-center rounded-lg border border-input bg-card">
-        <InhouseMark />
+    <aside id="sidebar" aria-label="Sidebar" className="group/side side-move relative z-sidebar flex w-sidebar-rail flex-none flex-col overflow-hidden">
+      {line}
+      <div onScroll={follow} className="box-border flex min-h-0 w-sidebar-rail flex-1 flex-col items-start gap-px overflow-x-hidden overflow-y-auto pt-2 pb-3 pl-3">
+      <span className="ml-2.25 flex h-14.5 flex-none items-center">
+        <InhouseMark size={22} />
       </span>
-      <IconButton icon="search" label="Search" shortcut={SHORTCUTS.palette} size={18} onClick={() => patch({ palette: true })} variant="chrome" />
-      <IconButton icon="edit_square" label="New chat" shortcut={SHORTCUTS.newChat} size={18} onClick={() => newChat()} variant="chrome" className="mt-1" />
+      <IconButton icon="search" label="Search" shortcut={SHORTCUTS.palette} size={18} onClick={() => patch({ palette: true })} variant="chrome" className="mt-1.75 ml-1" />
+      <IconButton icon="edit_square" label="New chat" shortcut={SHORTCUTS.newChat} size={18} onClick={() => newChat()} variant="chrome" className="mt-1 ml-1" />
       <nav aria-label="Main" className="mt-4.5 flex flex-col items-center gap-px">
         {DAILY.map(n => navItem(n, true))}
         <div role="group" aria-label="Your agent" className="mt-1.5 flex flex-col items-center gap-px border-t border-divider pt-1.5">
@@ -99,29 +155,37 @@ export function Sidebar() {
         {team}
         {toggle}
         <AccountMenu>
-          <NavItem rail tone="quiet" label={name} tip={name} aria-label={`${name}, account and settings`} active={meActive} className={OPEN_ROW}
+          <NavItem marked hush rail tone="quiet" label={name} tip={name} aria-label={`${name}, account and settings`} active={meActive} className={OPEN_ROW}
             leading={<Avatar who={ctx.data.meta.currentUser.id} size={24} fontSize={10} cssInitials />} />
         </AccountMenu>
+      </div>
       </div>
     </aside>
   )
 
+  // A group's label. Its box has a set height, so the rows under it don't move when its font arrives (the marker is
+  // placed from where the rows are).
+  const label = 'mono-label box-border flex h-10.75 flex-none items-end px-2.5 pb-1.5'
+  // A quiet text control (See all): with the rows, it waits a step quieter.
+  const hushed = phone ? '' : 'text-foreground-3 transition-colors group-hover/side:text-foreground group-has-focus-visible/side:text-foreground'
   const aside = (
-      <aside id="sidebar" aria-label="Sidebar" className={cn('my-2.5 mr-0 ml-2.5 box-border flex w-sidebar flex-none flex-col overflow-x-hidden overflow-y-auto rounded-2xl border border-border bg-card px-2.5 pt-3 pb-2.5 shadow-float',
-        phone ? 'min-h-0 flex-1' : 'relative z-sidebar')}>
-        <div className="flex items-center gap-1.5 py-1 pr-1 pl-1.5">
-          <span className="mr-1 flex size-9 flex-none items-center justify-center rounded-lg border border-input bg-card">
-            <InhouseMark />
-          </span>
-          <div className="mr-1 min-w-0 flex-1">
+      <aside id="sidebar" aria-label="Sidebar" className={cn('group/side relative box-border flex w-sidebar flex-none flex-col overflow-hidden',
+        phone ? 'side-on-card my-2.5 mr-0 ml-2.5 min-h-0 flex-1 rounded-2xl border border-border bg-card shadow-float' : 'side-move z-sidebar')}>
+        {line}
+        {/* The drawer's card has a border, so its scroller takes the room the card leaves. */}
+        <div onScroll={follow} className={cn('box-border flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-3 pt-2 pb-3', phone ? 'w-full' : 'w-sidebar')}>
+        {/* As tall as the top bar and level with it. The mark sits on the nav icons' axis and the name starts on the labels' line. */}
+        <div className="flex h-14.5 flex-none items-center gap-2.5 pr-1 pl-2.25">
+          <InhouseMark size={22} />
+          <div className="min-w-0 flex-1">
             <div className="truncate text-base font-semibold tracking-card">Inhouse</div>
             <div className="truncate text-xs text-muted-foreground">{ctx.data.meta.brand.name}</div>
           </div>
           <IconButton icon="edit_square" label="New chat" shortcut={SHORTCUTS.newChat} size={18} onClick={() => newChat()} variant="chrome" />
         </div>
 
-        <div className="mt-4.5 flex flex-col gap-px">
-          <NavItem icon="search" label="Search" aria-keyshortcuts={SHORTCUTS.palette.aria}
+        <div className="mt-1.5 flex flex-col gap-px">
+          <NavItem marked hush={!phone} icon="search" label="Search" aria-keyshortcuts={SHORTCUTS.palette.aria}
             onClick={() => patch(phone ? { sideOpen: false, palette: true } : { palette: true })}
             trailing={!phone && (
               mac
@@ -131,7 +195,7 @@ export function Sidebar() {
           <nav aria-label="Main" className="flex flex-col gap-px">
             {DAILY.map(n => navItem(n, false))}
             <div role="group" aria-labelledby="side-agent" className="flex flex-col gap-px">
-              <div id="side-agent" className="px-2.5 pt-5.5 pb-1.5 text-xs font-medium text-muted-foreground">Your agent</div>
+              <div id="side-agent" className={label}>Your agent</div>
               {AGENT.map(n => navItem(n, false))}
             </div>
           </nav>
@@ -139,15 +203,15 @@ export function Sidebar() {
 
         {pinned.length > 0 && (
           <div role="group" aria-labelledby="side-pinned" className="flex flex-none flex-col">
-            <div id="side-pinned" className="px-2.5 pt-5.5 pb-1.5 text-xs font-medium text-muted-foreground">Pinned</div>
+            <div id="side-pinned" className={label}>Pinned</div>
             {pinned.map(chatRow)}
           </div>
         )}
         {/* No chats yet (day one, or every one deleted): no heading over an empty list. */}
         {chats.length > 0 && <>
-        <div className="flex items-center justify-between px-2.5 pt-5.5 pb-1.5 text-xs font-medium text-muted-foreground">
-          <span>Recent chats</span>
-          <Button variant="link" size="sm" data-chat-fallback className="text-xs font-medium" aria-current={page === 'chats' && chatList ? 'page' : undefined} onClick={openChatList}>See all</Button>
+        <div className="box-border flex h-11.25 flex-none items-center justify-between px-2.5 pt-5.5 pb-1.5">
+          <span className="mono-label">Recent chats</span>
+          <Button variant="link" size="sm" data-chat-fallback className={cn('text-xs font-medium', !(page === 'chats' && chatList) && hushed)} aria-current={page === 'chats' && chatList ? 'page' : undefined} onClick={openChatList}>See all</Button>
         </div>
         <div role="group" aria-label="Recent chats" className="flex flex-none flex-col">{recent.map(chatRow)}</div>
         </>}
@@ -156,11 +220,12 @@ export function Sidebar() {
         {/* The account row, the Inhouse team button and on desktop the collapse button, in line with New chat above. */}
         <div className="flex flex-none items-center gap-1 pr-1">
           <AccountMenu>
-            <NavItem tone="quiet" avatar label={name} aria-label={`${name}, account and settings`} active={meActive} className={cn(OPEN_ROW, 'min-w-0 flex-1')} leading={<Avatar who={ctx.data.meta.currentUser.id} size={24} fontSize={10} cssInitials />}
+            <NavItem marked hush={!phone} tone="quiet" avatar label={name} aria-label={`${name}, account and settings`} active={meActive} className={cn(OPEN_ROW, 'min-w-0 flex-1')} leading={<Avatar who={ctx.data.meta.currentUser.id} size={24} fontSize={10} cssInitials />}
               trailing={phone && <Icon name="unfold_more" size={16} className="text-faint" />} />
           </AccountMenu>
           {team}
           {!phone && toggle}
+        </div>
         </div>
       </aside>
   )

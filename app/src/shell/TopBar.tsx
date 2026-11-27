@@ -89,7 +89,7 @@ export function TopBar() {
         <Notifications>
           <IconButton icon="notifications" label={unread ? `Notifications, ${unread} unread` : 'Notifications'} variant="chrome" size={19} aria-expanded={pop === 'notif'} className={cn('aria-expanded:bg-accent', phone && TAP)} />
         </Notifications>
-        {unread > 0 && <i aria-hidden="true" className="pointer-events-none absolute top-1.5 right-1.75 size-2 rounded-full border-hairline border-background bg-foreground" />}
+        {unread > 0 && <i aria-hidden="true" className="pointer-events-none absolute top-1.5 right-1.75 size-2 rounded-full border-hairline border-background bg-brand" />}
       </div>
       <DemoButton />
     </header>

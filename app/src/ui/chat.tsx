@@ -115,9 +115,15 @@ const chatRowVariants = cva('group/chat relative flex flex-none items-center rou
   variants: {
     /** `sidebar` is a Recent chats or Pinned row; `list` a row in See all. */
     place: { sidebar: 'h-8', list: 'min-h-13' },
-    // The open chat has the nav's one selected look (NavItem), a step stronger than hover.
-    open: { true: 'bg-fill-hover', false: 'hover:bg-accent has-focus-visible:bg-accent has-aria-expanded:bg-accent' },
+    open: { true: '', false: '' },
   },
+  compoundVariants: [
+    // See all: the open or picked chat has the nav's selected fill (NavItem), a step stronger than hover.
+    { place: 'list', open: true, class: 'bg-fill-hover' },
+    { place: 'list', open: false, class: 'hover:bg-accent has-focus-visible:bg-accent has-aria-expanded:bg-accent' },
+    // The sidebar marks the open chat on its own edge (its marker line), so no row there holds a fill: each takes the hover step.
+    { place: 'sidebar', class: 'hover:bg-side-hover has-focus-visible:bg-side-hover has-aria-expanded:bg-side-hover' },
+  ],
   defaultVariants: { place: 'sidebar', open: false },
 })
 
@@ -131,8 +137,13 @@ const chatButtonVariants = cva('flex h-full min-w-0 flex-1 items-center text-lef
     },
     // A phone or touch screen always shows the trigger, so the title leaves room for it.
     reserve: { true: '', false: '' },
+    /** The sidebar's open chat turns to ink; `hush` keeps the others a step quieter until the pointer or the keyboard is in the sidebar (`group/side`). */
+    open: { true: '', false: '' },
+    hush: { true: '', false: '' },
   },
   compoundVariants: [
+    { place: 'sidebar', open: true, class: 'font-strong text-foreground' },
+    { place: 'sidebar', open: false, hush: true, class: 'text-foreground-3 transition-colors group-hover/side:text-foreground-2 group-has-focus-visible/side:text-foreground-2' },
     { place: 'sidebar', reserve: true, class: 'pr-9' },
     { place: 'sidebar', reserve: false, class: 'pr-2.5 pointer-coarse:pr-9' },
     // See all: the time ends on the card's edge, 12px in; a phone or touch screen keeps the trigger's room after it.
@@ -141,7 +152,7 @@ const chatButtonVariants = cva('flex h-full min-w-0 flex-1 items-center text-lef
     { place: 'list', reserve: true, class: 'pr-12' },
     { place: 'list', reserve: false, class: 'pr-3 pointer-coarse:pr-12' },
   ],
-  defaultVariants: { place: 'sidebar', reserve: false },
+  defaultVariants: { place: 'sidebar', reserve: false, open: false, hush: false },
 })
 
 /**
@@ -183,10 +194,15 @@ export function ChatRow({ chat, place = 'sidebar', open = false, running = false
     return range.getBoundingClientRect().width > shown + 0.5
   }
   // Faded out, not `invisible`: it stays focusable and in the accessibility tree, so Tab and Shift+Tab reach it.
-  const reveal = phone ? '' : 'opacity-0 group-hover/chat:opacity-100 group-focus-within/chat:opacity-100 aria-expanded:opacity-100 pointer-coarse:opacity-100'
+  // In the sidebar it shows with the row's own fill (hover, a focus ring, an open menu), never on the focus a click
+  // leaves behind: the open chat's row has no fill, so the trigger's fill would sit over its title as a lone square.
+  const reveal = phone ? '' : cn('opacity-0 group-hover/chat:opacity-100 aria-expanded:opacity-100 pointer-coarse:opacity-100',
+    place === 'sidebar' ? 'group-has-focus-visible/chat:opacity-100' : 'group-focus-within/chat:opacity-100')
 
-  // The sidebar trigger sits over the title's end, so it carries the row's own fill (solid, to cover the text).
-  const trigger = (on: boolean) => on ? 'bg-fill-hover hover:bg-fill-strong' : 'bg-accent hover:bg-fill-hover'
+  // The sidebar trigger sits over the title's end, so it carries the hovered row's own fill (solid, to cover the text).
+  // Only with a fine pointer: on a touch screen it always shows and the title leaves it room, so a fill would sit on
+  // every row as a lone square.
+  const trigger = 'pointer-fine:bg-side-hover pointer-fine:hover:bg-fill-strong'
 
   // Where focus goes after Pin (the same chat, redrawn in its new group) or Delete (the next row, else the previous,
   // else the list's fallback). Read from the page before the change, applied after it, by the menu.
@@ -208,7 +224,7 @@ export function ChatRow({ chat, place = 'sidebar', open = false, running = false
   }
 
   return (
-    <div ref={box} data-chat-row={chat.id} className={chatRowVariants({ place, open: open || !!picked })}>
+    <div ref={box} data-chat-row={chat.id} data-current={open ? '' : undefined} className={chatRowVariants({ place, open: open || !!picked })}>
       {editing ? (
         <ChatTitleInput title={chat.title} size={place === 'sidebar' ? 'sm' : 'default'} className={place === 'list' ? 'mx-1.5' : undefined}
           onDone={(t, byKey) => { if (t !== null) renameChat(chat.id, t); refocus.current = byKey; setEditing(false) }} />
@@ -216,7 +232,7 @@ export function ChatRow({ chat, place = 'sidebar', open = false, running = false
         <Tooltip open={tip} onOpenChange={o => setTip(o && cut())}>
           <TooltipTrigger asChild>
             <button ref={row} data-chat-open type="button" onClick={onClick} aria-current={open ? 'page' : undefined} aria-pressed={selecting ? picked : undefined}
-              aria-describedby={running ? runningId : undefined} className={cn(chatButtonVariants({ place, reserve: phone }), place === 'list' && phone && selecting && 'pr-3')}>
+              aria-describedby={running ? runningId : undefined} className={cn(chatButtonVariants({ place, reserve: phone, open, hush: !phone }), place === 'list' && phone && selecting && 'pr-3')}>
               {selecting && (
                 <span aria-hidden="true" className={cn('box-border flex size-5 flex-none items-center justify-center rounded-full text-primary-foreground', picked ? 'bg-primary' : 'border-hairline border-border-strong bg-card')}>
                   {picked && <Icon name="check" size={14} weight={500} />}
@@ -237,7 +253,7 @@ export function ChatRow({ chat, place = 'sidebar', open = false, running = false
       {running && <span id={runningId} hidden>Answering now</span>}
       {!selecting && (
         <ChatMenu chat={chat} onRename={() => setEditing(true)} focusAfter={focusAfter} box={place === 'sidebar' ? 'icon-sm' : 'icon'}
-          className={cn(editing ? 'invisible' : reveal, 'absolute top-1/2 -translate-y-1/2', place === 'sidebar' ? 'right-0.5' : 'right-1.5', place === 'sidebar' && !phone && trigger(open || !!picked))} />
+          className={cn(editing ? 'invisible' : reveal, 'absolute top-1/2 -translate-y-1/2', place === 'sidebar' ? 'right-0.5' : 'right-1.5', place === 'sidebar' && !phone && trigger)} />
       )}
     </div>
   )
