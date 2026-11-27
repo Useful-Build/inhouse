@@ -283,8 +283,41 @@ describe('shopify.refund.create', () => {
     // Line 90012 has 3 unfulfilled units; 1 fulfilled then makes a 3-unit refund part fulfilled, part not.
     w.fake.refundOrders.get(ORDER(9001))!.lines[1]!.unfulfilled = 2
     expect(await w.run(req('shopify.refund.create', refund({ lines: [{ lineItemId: LINE(90012), quantity: 3 }], amount: { minor: 1500, currency: 'USD' }, restock: true }))))
-      .toMatchObject({ ok: false, error: { message: 'upstream rejected the request: restock' }, sent: 'no' })
+      .toMatchObject({ ok: false, error: { message: 'upstream rejected the request: restock_part_fulfilled' }, sent: 'no' })
     expect(w.fake.writes).toEqual([])
+  })
+
+  // #512 review H1: a line of 5, 2 shipped and 3 not (order 9004). The customer sends back the 2 shipped and an admin
+  // approves "2 × line, restock: yes". A cancel there would cancel 2 unshipped units nobody approved; a return could be
+  // the wrong 2 as well. The arguments can't say which units, so a restock on such a line is refused, sent: no.
+  it('a restock on a line with both shipped and unshipped units left is refused, and no unshipped unit is cancelled', async () => {
+    const w = world()
+    const line = () => w.fake.refundOrders.get(ORDER(9004))!.lines[0]!
+    for (const quantity of [1, 2, 3, 5]) {
+      const r = await w.run(req('shopify.refund.create', refund({ orderId: ORDER(9004), lines: [{ lineItemId: LINE(90041), quantity }], amount: { minor: 1000 * quantity, currency: 'USD' }, restock: true })))
+      expect(r, String(quantity)).toEqual({ ok: false, error: { code: 'upstream_rejected', message: 'upstream rejected the request: restock_part_fulfilled' }, sent: 'no' })
+    }
+    expect(w.fake.writes).toEqual([])
+    expect(line()).toMatchObject({ refunded: 0, unfulfilled: 3 })
+    // Without a restock the refund goes out (no unit is cancelled or returned to stock).
+    const plain = await w.run(req('shopify.refund.create', refund({ orderId: ORDER(9004), lines: [{ lineItemId: LINE(90041), quantity: 2 }], amount: { minor: 2000, currency: 'USD' } })))
+    expect(plain.ok, JSON.stringify(plain)).toBe(true)
+    expect(w.fake.writes[0]!.variables).toMatchObject({ input: { refundLineItems: [{ lineItemId: LINE(90041), quantity: 2, restockType: 'NO_RESTOCK' }] } })
+    expect(line()).toMatchObject({ refunded: 2, unfulfilled: 3 })
+  })
+
+  it('a restock goes out as a cancel once every unit left on the line is unshipped, and as a return once every one is shipped', async () => {
+    const w = world()
+    const line = () => w.fake.refundOrders.get(ORDER(9004))!.lines[0]!
+    // The 2 shipped units refunded first (no restock): the 3 left are all unshipped.
+    expect((await w.run(req('shopify.refund.create', refund({ orderId: ORDER(9004), lines: [{ lineItemId: LINE(90041), quantity: 2 }], amount: { minor: 2000, currency: 'USD' } })))).ok).toBe(true)
+    const cancel = await w.run(req('shopify.refund.create', refund({ orderId: ORDER(9004), lines: [{ lineItemId: LINE(90041), quantity: 1 }], amount: { minor: 1000, currency: 'USD' }, restock: true }), { idempotencyKey: 'ac_CCCCCCCCCCCCCCCCCCCCCC:1' }))
+    expect(cancel.ok, JSON.stringify(cancel)).toBe(true)
+    expect(w.fake.writes[1]!.variables).toMatchObject({ input: { refundLineItems: [{ restockType: 'CANCEL' }] } })
+    expect(line()).toMatchObject({ refunded: 3, unfulfilled: 2 })
+    // Line 90011 of order 9001 is all shipped: a return.
+    expect((await w.run(req('shopify.refund.create', refund({ restock: true }), { idempotencyKey: 'ac_DDDDDDDDDDDDDDDDDDDDDD:1' }))).ok).toBe(true)
+    expect(w.fake.writes[2]!.variables).toMatchObject({ input: { refundLineItems: [{ restockType: 'RETURN' }] } })
   })
 
   it.each([

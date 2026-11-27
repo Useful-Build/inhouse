@@ -45,7 +45,7 @@ export const fakeRefundSuggestion: FakeWriteOp<'shopify.refund.suggestion'> = {
         }
       }
     }
-    lineItems: nodes(ids: $lineItemIds) { ... on LineItem { id unfulfilledQuantity } }
+    lineItems: nodes(ids: $lineItemIds) { ... on LineItem { id refundableQuantity unfulfilledQuantity } }
   }`,
   root: 'order',
   cost: () => 5,
@@ -54,7 +54,7 @@ export const fakeRefundSuggestion: FakeWriteOp<'shopify.refund.suggestion'> = {
     const lineItems = ids.map(id => {
       for (const o of fake.refundOrders.values()) {
         const line = o.lines.find(l => l.id === id)
-        if (line) return { id: line.id, unfulfilledQuantity: line.unfulfilled }
+        if (line) return { id: line.id, refundableQuantity: line.quantity - line.refunded, unfulfilledQuantity: line.unfulfilled }
       }
       return null
     })
@@ -114,8 +114,11 @@ export const fakeRefundCreate: FakeWriteOp<'shopify.refund.create'> = {
     for (const l of rawLines) {
       const line = order.lines.find(x => x.id === l.lineItemId)
       if (!line || typeof l.restockType !== 'string' || !RESTOCK.has(l.restockType)) return refused(['input', 'refundLineItems'], 'Line or restock type not valid')
+      // As Shopify does: a cancel takes unshipped units (and cancels them), a return takes shipped ones, each only up to
+      // what the line has of that kind. Nothing here checks that the person meant those units: that's the hub's job.
+      const shipped = line.quantity - line.refunded - line.unfulfilled
       if (l.restockType === 'CANCEL' && Number(l.quantity) > line.unfulfilled) return refused(['input', 'refundLineItems', 'restockType'], 'Cancel restocks unfulfilled units only')
-      if (l.restockType === 'RETURN' && line.unfulfilled > 0) return refused(['input', 'refundLineItems', 'restockType'], 'Return restocks fulfilled units only')
+      if (l.restockType === 'RETURN' && Number(l.quantity) > shipped) return refused(['input', 'refundLineItems', 'restockType'], 'Return restocks fulfilled units only')
     }
     const shippingIn = input.shipping === undefined ? 0 : parseCents(obj(input.shipping).amount)
     const total = shippingIn === null ? null : refundOf(order, { lines: asLines(rawLines), shippingMinor: shippingIn })
@@ -133,6 +136,8 @@ export const fakeRefundCreate: FakeWriteOp<'shopify.refund.create'> = {
       const line = order.lines.find(x => x.id === l.lineItemId)!
       line.refunded += Number(l.quantity)
       if (l.restockType === 'CANCEL') line.unfulfilled -= Number(l.quantity)
+      // Refunded with no restock: shipped units go first; an unshipped unit is refunded only past them.
+      else line.unfulfilled = Math.min(line.unfulfilled, line.quantity - line.refunded)
     }
     order.shippingRefunded += shippingIn ?? 0
     const id = `gid://shopify/Refund/${5001 + fake.refunds.length}`

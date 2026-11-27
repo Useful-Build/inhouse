@@ -77,7 +77,8 @@ export const FAKE_SHOP_CURRENCY = 'USD'
 
 /**
  * Order 9001: two fulfilled at $12.45 and three unfulfilled at $5.00, $5.00 shipping, one $44.90 sale. Order 9003: placed
- * in CAD (a multi-currency order the hub refuses to refund).
+ * in CAD (a multi-currency order the hub refuses to refund). Order 9004 (#512 review H1): one line of five at $10.00, two
+ * shipped and three not, one $50.00 sale.
  */
 export const INITIAL_REFUND_ORDERS: readonly FakeRefundOrder[] = [
   {
@@ -98,6 +99,14 @@ export const INITIAL_REFUND_ORDERS: readonly FakeRefundOrder[] = [
     shippingMinor: 0,
     shippingRefunded: 0,
     transactions: [{ id: 'gid://shopify/OrderTransaction/70003', gateway: 'bogus', amountMinor: 1000 }],
+  },
+  {
+    id: 'gid://shopify/Order/9004',
+    presentmentCurrency: 'USD',
+    lines: [{ id: 'gid://shopify/LineItem/90041', priceMinor: 1000, quantity: 5, refunded: 0, unfulfilled: 3 }],
+    shippingMinor: 0,
+    shippingRefunded: 0,
+    transactions: [{ id: 'gid://shopify/OrderTransaction/70004', gateway: 'bogus', amountMinor: 5000 }],
   },
 ]
 

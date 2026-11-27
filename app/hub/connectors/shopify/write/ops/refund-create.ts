@@ -2,13 +2,18 @@
 // shop's currency, for exactly the amount a person approved (`refundCreate`, write_orders; `suggestedRefund` reads under
 // the same grant). Two upstream requests per hub call, never more:
 // 1. Lookup (a query, so nothing changes): the order's currencies, Shopify's suggested refund for these lines and this
-//    shipping, and each line's unfulfilled quantity. The call is refused, `sent: 'no'`, when
+//    shipping, and each line's refundable and unfulfilled quantities. The call is refused, `sent: 'no'`, when
 //    - the order isn't found (`order`), or it was placed in another currency than the approved one, or in a presentment
 //      currency other than the shop's (`currency`: Stage 1 refunds only single-currency orders);
 //    - the suggested amount isn't the approved amount (`amount_changed`: "the refund amount changed");
 //    - the suggestion names no transaction to refund, or its transactions don't add up to the amount (`transactions`);
-//    - a line to restock is part fulfilled, part not (`restock`): Shopify restocks a fulfilled unit as a return and an
-//      unfulfilled one as a cancel, and one refund line can't be both.
+//    - a line to restock still has both shipped and unshipped units to refund (`restock_part_fulfilled`). A restock is a
+//      return (shipped units come back) or a cancel (unshipped units are cancelled), one per refund line, and the
+//      arguments don't say which units the person meant: a cancel there could cancel unshipped units nobody approved
+//      (#512 review H1). So a restock goes out only when every refundable unit of the line is shipped (`RETURN`) or every
+//      one is unshipped (`CANCEL`). Shopify's suggested refund only echoes the restock type it's given (RefundLineItem,
+//      read 2026-11-27), so it can't choose for us. The two quantities are compared for equality, which is right whether
+//      `unfulfilledQuantity` counts refunded units or not (the docs don't say).
 // 2. The mutation, carrying the amount explicitly in its transactions (each suggested transaction's parent and gateway),
 //    the currency, whether Shopify sends its own refund email (`notify`) and the idempotency key, so a later "try again"
 //    can't refund twice.
@@ -83,6 +88,7 @@ export const REFUND_LOOKUP_QUERY = `query RefundSuggestion($orderId: ID!, $refun
   lineItems: nodes(ids: $lineItemIds) {
     ... on LineItem {
       id
+      refundableQuantity
       unfulfilledQuantity
     }
   }
@@ -154,12 +160,16 @@ export function decideRefund(data: Record<string, unknown>, a: RefundCreateArgs)
   if (!a.restock) restockTypes.push(...a.lines.map((): RestockType => 'NO_RESTOCK'))
   else {
     const nodes = Array.isArray(data.lineItems) ? data.lineItems.map(obj) : []
+    const count = (v: unknown): number | null => (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null)
     for (const l of a.lines) {
-      const unfulfilled = nodes.find(n => n?.id === l.lineItemId)?.unfulfilledQuantity
-      if (typeof unfulfilled !== 'number' || !Number.isSafeInteger(unfulfilled) || unfulfilled < 0) return refuse('upstream_rejected', 'restock')
+      const node = nodes.find(n => n?.id === l.lineItemId)
+      const unfulfilled = count(node?.unfulfilledQuantity)
+      const refundable = count(node?.refundableQuantity)
+      if (unfulfilled === null || refundable === null) return refuse('upstream_unavailable', 'lookup')
+      if (l.quantity > refundable) return refuse('upstream_rejected', 'amount_changed')
       if (unfulfilled === 0) restockTypes.push('RETURN')
-      else if (l.quantity <= unfulfilled) restockTypes.push('CANCEL')
-      else return refuse('upstream_rejected', 'restock')
+      else if (unfulfilled === refundable) restockTypes.push('CANCEL')
+      else return refuse('upstream_rejected', 'restock_part_fulfilled')
     }
   }
   return { ok: true, value: { transactions, restockTypes } }
