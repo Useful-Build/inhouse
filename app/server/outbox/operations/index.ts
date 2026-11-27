@@ -1,12 +1,16 @@
 // The operation table (N9): the one catalogue of writes. Typed as `OperationTable`, so it and the hub's
 // `WRITE_OPERATIONS` can't drift: a key missing here, or an entry under another key, fails the typecheck.
+import { shopifyDraftOrderCreate } from './shopify-draft-order-create.ts'
 import { shopifyOrderTagAdd } from './shopify-order-tag-add.ts'
+import { shopifyOrderTagRemove } from './shopify-order-tag-remove.ts'
 import { slackChannelPost } from './slack-channel-post.ts'
 import type { GrantDefaults, OperationEntry, OperationTable, WriteOperationKey } from './types.ts'
 
 export const OPERATIONS: OperationTable = {
   'shopify.order.tag_add': shopifyOrderTagAdd,
   'slack.channel.post': slackChannelPost,
+  'shopify.order.tag_remove': shopifyOrderTagRemove, // M3-S1
+  'shopify.draft_order.create': shopifyDraftOrderCreate, // M3-S1
 }
 
 export const OPERATION_KEYS = Object.keys(OPERATIONS) as WriteOperationKey[]

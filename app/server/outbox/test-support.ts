@@ -44,7 +44,7 @@ let n = 0
 /** A fresh id that fits a tool use id, a chat id or a request id. */
 export const fresh = (prefix: string): string => `${prefix}_${Date.now().toString(36)}${(++n).toString(36)}`
 
-export const tagArgs = (order: number, tag = 'vip') => ({ orderId: `gid://shopify/Order/${order}`, tags: [tag] })
+export const tagArgs = (order: number, tag = 'vip') => ({ orderIds: [`gid://shopify/Order/${order}`], tags: [tag] })
 
 export function requestCtx(o: Partial<OutboxRequestCtx> & { nowMs: number }): OutboxRequestCtx {
   return {

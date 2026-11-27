@@ -89,7 +89,7 @@ describe('request (failure 1)', () => {
     expect(r).toEqual({ outcome: 'refused', reason: 'over_ceiling', text: expect.stringContaining('turned off') })
     expect((await db.prepare('SELECT COUNT(*) AS n FROM outbox_actions').first<{ n: number }>())?.n).toBe(0)
     expect(await linesSince(db, mark)).toEqual([])
-    const bad = await outbox(db, clock).request(requestCtx({ nowMs: now }), { operation: 'shopify.order.tag_add', args: { orderId: 'x', tags: [] } }, { mode: 'tool' })
+    const bad = await outbox(db, clock).request(requestCtx({ nowMs: now }), { operation: 'shopify.order.tag_add', args: { orderIds: ['x'], tags: [] } }, { mode: 'tool' })
     expect(bad).toMatchObject({ outcome: 'refused', reason: 'invalid_args' })
     const system = await outbox(db, clock).request(requestCtx({ nowMs: now, asker: null }), { operation: 'shopify.order.tag_add', args: tagArgs(1) }, { mode: 'tool' })
     expect(system).toMatchObject({ outcome: 'refused', reason: 'over_ceiling' })

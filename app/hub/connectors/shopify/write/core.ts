@@ -1,4 +1,4 @@
-// The Shopify write SignIn state machine (Stage 1 M2-C, N13, P6 W5): holds the write-scoped Shopify app's access token
+// The Shopify write SignIn state machine (Stage 1 M2-C, N13, P6 W5; every operation in `ops/` since M3-S1): holds the write-scoped Shopify app's access token
 // in its own SignIn Durable Object, sealed under the hub's KeyRing with AAD `shopify:store:write` (distinct from the
 // read app's `shopify:store`). Never reads or falls back to the read app's credentials or token.
 //
@@ -10,14 +10,16 @@ import { log } from '../../../index/log'
 import { checkGrantedScopes, describeScopeMismatch } from '../../../scope/scopes'
 import { EXPIRY_MARGIN_MS, type SyncStore } from '../../../signin/core'
 import { requestGrant, type ShopifyConfig, type Upstream } from '../../../signin/providers/shopify'
-import {
-  sendOrderTagsAdd,
-  SHOPIFY_WRITE_ACCOUNT,
-  SHOPIFY_WRITE_SCOPES,
-  SHOPIFY_WRITE_SIGNIN_ACCOUNT,
-  ShopifyOrderTagAddArgsSchema,
-  writeErr,
-} from './provider'
+import { isShopifyWriteKey, SHOPIFY_WRITE_OPS } from './ops/index'
+import { postMutation, SHOPIFY_WRITE_ACCOUNT, SHOPIFY_WRITE_SCOPES, SHOPIFY_WRITE_SIGNIN_ACCOUNT, writeErr } from './provider'
+
+/** One Shopify write as the gateway hands it over (`WriteRequest`'s operation, account, expectation and arguments). */
+export type ShopifyWriteInput = {
+  operation: string
+  accountId: string
+  expect: { connectedAtMs: number; shop?: string }
+  args: unknown
+}
 
 export type WriteTokenRecord = {
   v: 1
@@ -116,20 +118,19 @@ export class ShopifyWriteCore {
   }
 
   /**
-   * Executes `shopify.order.tag_add`. Checks config, account status (paused, connectedAtMs), acquires the write-scoped
-   * token, re-checks config, scopes, and account status again after every awaited step right before sending, and sends
-   * once with no retry.
+   * Runs one Shopify write operation (`ops/`). Checks the operation, config, the approved store and account status
+   * (paused, connectedAtMs), acquires the write-scoped token, re-checks config, the store, the operation's scope and the
+   * account status again after every awaited step right before sending, and sends one mutation document once, with no
+   * retry.
    */
-  async orderTagAdd(req: {
-    accountId: string
-    expect: { connectedAtMs: number; shop?: string }
-    args: unknown
-  }): Promise<WriteResult> {
+  async run(req: ShopifyWriteInput): Promise<WriteResult> {
+    if (!isShopifyWriteKey(req.operation)) return writeErr('unknown_tool', 'no')
+    const op = SHOPIFY_WRITE_OPS[req.operation]
     if (req.accountId !== SHOPIFY_WRITE_ACCOUNT) return writeErr('invalid_args', 'no', 'accountId')
     // Stage 1 M2-G: the store the action was approved for. Required: a write never goes to a store nobody named.
     if (req.expect.shop === undefined) return writeErr('invalid_args', 'no', 'expect.shop')
-    const parsed = ShopifyOrderTagAddArgsSchema.safeParse(req.args)
-    if (!parsed.success) return writeErr('invalid_args', 'no', parsed.error.issues[0]?.path.join('.') || 'args')
+    const prepared = op.prepare(req.args)
+    if (!prepared.ok) return writeErr('invalid_args', 'no', prepared.path)
 
     const config = this.#d.config()
     if (!config) return writeErr('not_configured', 'no', 'shopify_write')
@@ -151,15 +152,16 @@ export class ShopifyWriteCore {
     const configNow = this.#d.config()
     if (!configNow) return writeErr('not_configured', 'no', 'shopify_write')
     if (configNow.shop !== req.expect.shop) return writeErr('connect_stale', 'no', 'shop')
-    if (!SHOPIFY_WRITE_SCOPES.every(s => acquired.scopes.includes(s))) {
-      return writeErr('scope_mismatch', 'no', 'missing write_orders')
-    }
+    if (!acquired.scopes.includes(op.scope)) return writeErr('scope_mismatch', 'no', `missing ${op.scope}`)
     const rightBeforeSend = checkShopifyAccountState(await this.#d.accountStatus(req.accountId), req.expect.connectedAtMs)
     if (rightBeforeSend) return rightBeforeSend
 
-    const sent = await sendOrderTagsAdd(upstream, configNow, acquired.token, parsed.data, this.#d.writeTimeoutMs)
-    if (!sent.ok && sent.error.code === 'credentials_rejected') this.#dropRejected(acquired.envelope)
-    return sent
+    const answer = await postMutation(upstream, configNow, acquired.token, prepared.doc, this.#d.writeTimeoutMs)
+    if (!answer.ok) {
+      if (answer.result.ok === false && answer.result.error.code === 'credentials_rejected') this.#dropRejected(acquired.envelope)
+      return answer.result
+    }
+    return prepared.read(answer.data)
   }
 
   /**

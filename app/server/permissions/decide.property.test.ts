@@ -128,8 +128,10 @@ const facts = (over: Partial<ResolveFacts> = {}): ResolveFacts => ({
   ...over,
 })
 const validArgs = {
-  'shopify.order.tag_add': { orderId: 'gid://shopify/Order/42', tags: ['vip'] },
+  'shopify.order.tag_add': { orderIds: ['gid://shopify/Order/42'], tags: ['vip'] },
   'slack.channel.post': { channel: '#ops', text: 'Restock done' },
+  'shopify.order.tag_remove': { orderIds: ['gid://shopify/Order/42'], tags: ['vip'] },
+  'shopify.draft_order.create': { lines: [{ variantId: 'gid://shopify/ProductVariant/7', quantity: 1 }] },
 } as const
 
 describe('resolve (I8)', () => {

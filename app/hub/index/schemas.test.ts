@@ -59,11 +59,12 @@ describe('schemas.ts mirrors contract.ts', () => {
     expect(CallToolOptionsSchema.safeParse({ testShopHost: 1 }).success).toBe(false)
   })
 
-  // The write entrypoint (N13), ways it can go wrong, written first: an operation outside the two M2 writes, a request
+  // The write entrypoint (N13), ways it can go wrong, written first: an operation outside the write set, a request
   // with an extra key (a caller-supplied scope or a flag riding along), a missing account generation, an attempt of 0, a
   // result that says it failed without saying whether anything went out, or a `sent` other than 'no' and 'unknown'.
   it('write requests and results parse strictly', () => {
-    expect(WRITE_OPERATIONS).toEqual(['shopify.order.tag_add', 'slack.channel.post'])
+    // M3-S1 adds tag_remove and draft_order.create (plan section 0, Q1); nothing else.
+    expect(WRITE_OPERATIONS).toEqual(['shopify.order.tag_add', 'slack.channel.post', 'shopify.order.tag_remove', 'shopify.draft_order.create'])
     expect(WriteOperationKeySchema.options).toEqual([...WRITE_OPERATIONS])
     const req = { actionId: 'a_1', attempt: 1, requestId: 'q', accountId: 'shopify:store', expect: { connectedAtMs: 5 }, operation: 'shopify.order.tag_add', args: { orderId: '1', tags: ['x'] } }
     expect(WriteRequestSchema.safeParse(req).success).toBe(true)

@@ -6,7 +6,7 @@ import { fc } from '@fast-check/vitest'
 import { POLICY_REV } from './policy.ts'
 import type { Asker, CeilingFacts, DecideCtx, GrantFacts, Resolved, WriteOperationKey } from './types.ts'
 
-export const OPS: readonly WriteOperationKey[] = ['shopify.order.tag_add', 'slack.channel.post']
+export const OPS: readonly WriteOperationKey[] = ['shopify.order.tag_add', 'slack.channel.post', 'shopify.order.tag_remove', 'shopify.draft_order.create']
 
 export type Ceilings = Partial<Record<WriteOperationKey, CeilingFacts>>
 

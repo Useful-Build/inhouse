@@ -8,6 +8,7 @@ import { hubError } from '../index/errors'
 import { log } from '../index/log'
 import { WriteRequestSchema } from '../index/schemas'
 import { settledAnswer } from '../../shared/rpc-answer'
+import type { ShopifyWriteKey } from '../connectors/shopify/write/ops/index'
 
 export type WriteOperationInput = {
   accountId: string
@@ -15,21 +16,24 @@ export type WriteOperationInput = {
   args: unknown
 }
 
+/** A Shopify write: the operation travels with the input (the write SignIn runs every `shopify.` operation, M3-S1). */
+export type ShopifyWriteOperationInput = WriteOperationInput & { operation: ShopifyWriteKey }
+
 export type WriteGatewayDeps = {
-  shopifyOrderTagAdd(input: WriteOperationInput): Promise<WriteResult>
+  shopifyWrite(input: ShopifyWriteOperationInput): Promise<WriteResult>
   slackChannelPost(input: WriteOperationInput): Promise<WriteResult>
   now?: () => number
 }
 
-/** The write SignIn's method the test build's `shopifyOrderTagAdd` calls (entry.ts). */
-export type OrderTagAddStub = { orderTagAdd(input: WriteOperationInput): unknown }
+/** The write SignIn's method the test build's `shopifyWrite` calls (entry.ts). */
+export type ShopifyWriteStub = { runWrite(input: ShopifyWriteOperationInput): unknown }
 
 /**
- * The write SignIn's `orderTagAdd`, its answer read as plain data and released (`settledAnswer`, shared/rpc-answer.ts),
+ * The write SignIn's `runWrite`, its answer read as plain data and released (`settledAnswer`, shared/rpc-answer.ts),
  * never passed on as is: an answer passed on carries its disposer, which keeps the call open until the caller disposes it.
  */
-export async function orderTagAddVia(stub: OrderTagAddStub, input: WriteOperationInput): Promise<WriteResult> {
-  return (await settledAnswer(stub.orderTagAdd(input))) as WriteResult
+export async function shopifyWriteVia(stub: ShopifyWriteStub, input: ShopifyWriteOperationInput): Promise<WriteResult> {
+  return (await settledAnswer(stub.runWrite(input))) as WriteResult
 }
 
 const isUnknownOperation = (req: unknown): boolean => {
@@ -59,7 +63,10 @@ export async function runWriteAction(deps: WriteGatewayDeps, req: WriteRequest):
   let result: WriteResult
   switch (operation) {
     case 'shopify.order.tag_add':
-      result = await deps.shopifyOrderTagAdd({ accountId, expect, args })
+    case 'shopify.order.tag_remove':
+    case 'shopify.draft_order.create':
+      // One hub call per item (N22): `item` and `idempotencyKey` change nothing here (none of these mutations takes a key).
+      result = await deps.shopifyWrite({ operation, accountId, expect, args })
       break
     case 'slack.channel.post':
       result = await deps.slackChannelPost({ accountId, expect, args })

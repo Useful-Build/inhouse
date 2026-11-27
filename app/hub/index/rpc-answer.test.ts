@@ -13,7 +13,7 @@ import { connectDeps, MEMBER, SERVER, SLACK, world } from '../oauth/testing/kit'
 import { checkChannel, listChannels, postNotice, type DeliveryDeps } from '../connectors/slack/gateway'
 import { postSlackOutboxAction } from '../connectors/slack/outbox'
 import { connectSlack, deliveryWorld } from '../connectors/slack/testing/kit'
-import { orderTagAddVia } from '../outbox-entry/gateway'
+import { shopifyWriteVia } from '../outbox-entry/gateway'
 
 const DISPOSE = (Symbol as unknown as { dispose: symbol }).dispose
 
@@ -180,8 +180,8 @@ describe('WriteGateway answers plain data and releases every SignIn answer', () 
 
   it("the test build's Shopify tag add (the SignIn answer, passed on before the fix)", async () => {
     const ledger: Ledger = { handed: 0, released: 0 }
-    const stub = overRpc({ orderTagAdd: async () => ({ ok: true as const, value: { ref: 'order 9001' } }) }, ledger)
-    const r = await orderTagAddVia(stub, { accountId: 'shopify:store', expect: { connectedAtMs: 1 }, args: {} })
+    const stub = overRpc({ runWrite: async () => ({ ok: true as const, value: { ref: 'order 9001' } }) }, ledger)
+    const r = await shopifyWriteVia(stub, { operation: 'shopify.order.tag_add', accountId: 'shopify:store', expect: { connectedAtMs: 1 }, args: {} })
     expect(r).toEqual({ ok: true, value: { ref: 'order 9001' } })
     expectPlain(r, ledger)
   })

@@ -38,7 +38,7 @@ let n = 0
 /** A tag no other request carries: the store's log names it, so each effect is traced to its action. */
 const newTag = () => `m2j-${run}-${++n}`
 
-interface StoreWrite { operation: string; variables: { id?: string; tags?: string[] }; outcome: string }
+interface StoreWrite { operation: string; variables: { id0?: string; tags?: string[] }; outcome: string }
 async function writesOf(request: APIRequestContext, tag: string): Promise<StoreWrite[]> {
   const r = await hook(request, { op: 'state' })
   expect(r.status, r.text).toBe(200)
@@ -58,7 +58,7 @@ interface Row { id: string; state: string; verdict: string; grant_id: string | n
  */
 async function propose(request: APIRequestContext, tag: string, expected: 'waiting' | 'approved', chatId?: string): Promise<Row> {
   const { memberId } = await me(request, dana)
-  const r = await requestAction(request, { memberId, ...(chatId ? { chatId } : {}) }, OPERATION, { orderId: ORDER, tags: [tag] })
+  const r = await requestAction(request, { memberId, ...(chatId ? { chatId } : {}) }, OPERATION, { orderIds: [ORDER], tags: [tag] })
   expect(r?.outcome, JSON.stringify(r)).toBe(expected)
   return r.action as Row
 }
@@ -172,7 +172,7 @@ test('Allow once: the countdown runs out on the page clock while nothing goes ou
   await expect(answers(card)).toHaveCount(0)
   const sent = await cardAs(request, dana, row.id)
   expect(sent.serverNow.ms).toBeGreaterThanOrEqual(held.sendAt!.ms)
-  expect(await writesOf(request, tag)).toEqual([{ operation: OPERATION, variables: { id: ORDER, tags: [tag] }, outcome: 'succeed' }])
+  expect(await writesOf(request, tag)).toEqual([{ operation: OPERATION, variables: { tags: [tag], id0: ORDER }, outcome: 'succeed' }])
   // Undo after the send is a conflict with the card as it is; still one write.
   const undo = await call(request, dana, 'POST', `/api/actions/${row.id}/undo`, { json: { ifRev: sent.rev } })
   expect(undo.status, undo.text).toBe(409)

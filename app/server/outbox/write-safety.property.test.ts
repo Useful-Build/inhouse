@@ -90,10 +90,14 @@ globalThis.__INHOUSE_HUB_TEST__ = false
 // typecheck. The shapes they're used at are written here against the hub's contract types.
 type Upstream = (req: Request) => Promise<Response>
 interface ShopConfig { shop: string; clientId: string; clientSecret: string }
-interface TagArgs { orderId: string; tags: string[] }
 interface WriteInput { accountId: string; expect: { connectedAtMs: number }; args: unknown }
+/** hub/connectors/shopify/write/provider.ts `MutationDoc`, `MutationAnswer`. */
+interface MutationDoc { query: string; variables: Record<string, unknown> }
+type MutationAnswer = { ok: true; data: Record<string, unknown> } | { ok: false; result: WriteResult }
+/** hub/connectors/shopify/write/ops/types.ts `PreparedShopifyWriteOp`. */
+interface ShopOp { prepare(args: unknown): { ok: true; doc: MutationDoc; read(data: Record<string, unknown>): WriteResult } | { ok: false; path: string } }
 /** hub/outbox-entry/gateway.ts `WriteGatewayDeps`. */
-interface WriteDeps { shopifyOrderTagAdd(input: WriteInput): Promise<WriteResult>; slackChannelPost(input: WriteInput): Promise<WriteResult> }
+interface WriteDeps { shopifyWrite(input: WriteInput & { operation: string }): Promise<WriteResult>; slackChannelPost(input: WriteInput): Promise<WriteResult> }
 /** hub/connectors/slack/outbox.ts `SlackOutboxStub`. */
 interface SlackStub {
   status(accountId: string): Promise<HubResult<AccountStatus>>
@@ -103,9 +107,10 @@ interface SlackStub {
 interface HubCode {
   /** The write entry's logic (hub/outbox-entry/gateway.ts): the strict request schema, then the operation. */
   runWriteAction(deps: WriteDeps, req: WriteRequest): Promise<WriteResult>
-  /** hub/connectors/shopify/write/provider.ts: the one mutation, its deadline and its sure or unsure answer. */
-  sendOrderTagsAdd(upstream: Upstream, config: ShopConfig, token: string, args: TagArgs, timeoutMs: number): Promise<WriteResult>
-  ShopifyOrderTagAddArgsSchema: { safeParse(v: unknown): { success: true; data: TagArgs } | { success: false; error: { issues: { path: PropertyKey[] }[] } } }
+  /** hub/connectors/shopify/write/provider.ts: the one mutation document, its deadline and its sure or unsure answer. */
+  postMutation(upstream: Upstream, config: ShopConfig, token: string, doc: MutationDoc, timeoutMs: number): Promise<MutationAnswer>
+  /** hub/connectors/shopify/write/ops/index.ts: each Shopify operation's strict arguments, document and reading. */
+  SHOPIFY_WRITE_OPS: Readonly<Record<string, ShopOp>>
   SHOPIFY_WRITE_ACCOUNT: string
   writeErr(code: HubErrorCode, sent: 'no' | 'unknown', detail?: string): WriteResult
   /** hub/connectors/slack/outbox.ts: the Slack post's argument check, account checks and channel re-check. */
@@ -115,11 +120,11 @@ interface HubCode {
   hubError(code: HubErrorCode, detail?: string): HubError
 }
 const HUB_FILES = [
-  '../../hub/outbox-entry/gateway.ts', '../../hub/connectors/shopify/write/provider.ts', '../../hub/connectors/slack/outbox.ts',
+  '../../hub/outbox-entry/gateway.ts', '../../hub/connectors/shopify/write/provider.ts', '../../hub/connectors/shopify/write/ops/index.ts', '../../hub/connectors/slack/outbox.ts',
   '../../hub/signin/providers/shopify.ts', '../../hub/index/errors.ts',
 ]
 const HUB_NAMES: readonly (keyof HubCode)[] = [
-  'runWriteAction', 'sendOrderTagsAdd', 'ShopifyOrderTagAddArgsSchema', 'SHOPIFY_WRITE_ACCOUNT', 'writeErr', 'postSlackOutboxAction', 'requestGrant', 'hubError',
+  'runWriteAction', 'postMutation', 'SHOPIFY_WRITE_OPS', 'SHOPIFY_WRITE_ACCOUNT', 'writeErr', 'postSlackOutboxAction', 'requestGrant', 'hubError',
 ]
 async function loadHub(): Promise<HubCode> {
   const mods = await Promise.all(HUB_FILES.map(f => import(/* @vite-ignore */ f) as Promise<Record<string, unknown>>))
@@ -219,10 +224,12 @@ class HubStandIn {
   }
 
   readonly #deps: WriteDeps = {
-    shopifyOrderTagAdd: async input => {
+    shopifyWrite: async input => {
+      const op = this.#code.SHOPIFY_WRITE_OPS[input.operation]
+      if (!op) return this.#code.writeErr('unknown_tool', 'no')
       if (input.accountId !== this.#code.SHOPIFY_WRITE_ACCOUNT) return this.#code.writeErr('invalid_args', 'no', 'accountId')
-      const parsed = this.#code.ShopifyOrderTagAddArgsSchema.safeParse(input.args)
-      if (!parsed.success) return this.#code.writeErr('invalid_args', 'no', parsed.error.issues[0]?.path.join('.') || 'args')
+      const parsed = op.prepare(input.args)
+      if (!parsed.ok) return this.#code.writeErr('invalid_args', 'no', parsed.path)
       const before = this.#refusal(input.accountId, input.expect.connectedAtMs)
       if (before) return before
       if (this.#token === null) {
@@ -232,7 +239,8 @@ class HubStandIn {
       }
       const rightBefore = this.#refusal(input.accountId, input.expect.connectedAtMs)
       if (rightBefore) return rightBefore
-      return this.#code.sendOrderTagsAdd(this.shop.fetch, SHOP_CONFIG, this.#token, parsed.data, HUB_DEADLINE_MS)
+      const answer = await this.#code.postMutation(this.shop.fetch, SHOP_CONFIG, this.#token, parsed.doc, HUB_DEADLINE_MS)
+      return answer.ok ? parsed.read(answer.data) : answer.result
     },
     slackChannelPost: input => this.#code.postSlackOutboxAction(this.#slack, input),
   }
@@ -646,7 +654,7 @@ async function runSequence(steps: readonly Step[], o: World): Promise<Outcome> {
         const opNow: Op = replay ? replay.op : s.op
         const args: Record<string, unknown> = replay && s.replay === 'same'
           ? replay.args
-          : opNow === 'shop' ? { orderId: `gid://shopify/Order/${9001 + (n % 3)}`, tags: [t] } : { channel: n % 2 === 0 ? '#ops' : CHANNEL_ID, text: `${t} restock is in` }
+          : opNow === 'shop' ? { orderIds: [`gid://shopify/Order/${9001 + (n % 3)}`], tags: [t] } : { channel: n % 2 === 0 ? '#ops' : CHANNEL_ID, text: `${t} restock is in` }
         const asker = s.who === 'system' ? null : await actor(PEOPLE[s.who])
         const ctx: LastRequest['ctx'] = replay ? replay.ctx : {
           asker, origin: s.who === 'system' ? 'routine' as const : s.origin, chatId: `c_ws_${s.who}`, jobId: s.origin === 'job' ? 'j_ws' : null,

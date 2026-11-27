@@ -20,6 +20,8 @@ export { NO_ACTIONS_LINE }
 export const OPERATION_WORDS: Record<WriteOperationKey, string> = {
   'shopify.order.tag_add': 'add tags to an order in the Shopify store',
   'slack.channel.post': 'post a message in a Slack channel the brand listed for notices',
+  'shopify.order.tag_remove': 'remove tags from orders in the Shopify store',
+  'shopify.draft_order.create': 'create a draft order in the Shopify store',
 }
 
 /** One operation as the acting line names it: its words and its tool (`mcp__actions__<tool>`). */

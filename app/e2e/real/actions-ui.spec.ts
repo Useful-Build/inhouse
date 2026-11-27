@@ -30,7 +30,7 @@ async function seed(request: APIRequestContext, who: 'admin' | 'memberA'): Promi
   const { memberId } = await me(request, actor(who))
   await setCeiling(request, OPERATION, true)
   const tag = `e2e-${test.info().project.name}-${Date.now().toString(36)}`
-  const result = await requestAction(request, { memberId }, OPERATION, { orderId: ORDER, tags: [tag] }, { mode: 'ask_only' })
+  const result = await requestAction(request, { memberId }, OPERATION, { orderIds: [ORDER], tags: [tag] }, { mode: 'ask_only' })
   expect(result?.outcome, JSON.stringify(result)).toBe('waiting')
   return tag
 }

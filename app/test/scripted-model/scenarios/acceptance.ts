@@ -124,7 +124,7 @@ export function acceptanceScenarios(mainLoop: (tool?: string) => Check, resultIs
     },
     'action-late-answer': {
       turns: [
-        { content: [{ type: 'text', text: LATE_STARTED }, { type: 'tool_use', id: TOOL_USE_ID, name: LATE_TOOL, input: { orderId: LATE_ORDER_ID, tags: [LATE_TAG] } }], expect: loop },
+        { content: [{ type: 'text', text: LATE_STARTED }, { type: 'tool_use', id: TOOL_USE_ID, name: LATE_TOOL, input: { orderIds: [LATE_ORDER_ID], tags: [LATE_TAG] } }], expect: loop },
         { content: [{ type: 'text', text: LATE_WAITING }], expect: both(loop, resultIs(TOOL_USE_ID, false), cameBackWaiting) },
         { content: [{ type: 'text', text: LATE_DONE }], expect: both(loop, resumeNote) },
       ],

@@ -206,7 +206,7 @@ export interface Viewer { memberId: string; role: MemberRole }
 type ListRow = GrantRow & { channel_name: string | null; ceiling_per_day_max: number }
 
 const instant = (ms: number) => ({ iso: new Date(ms).toISOString(), ms })
-const TOOL: Readonly<Record<WriteOperationKey, string>> = { 'shopify.order.tag_add': 'Shopify', 'slack.channel.post': 'Slack' }
+const TOOL: Readonly<Record<WriteOperationKey, string>> = { 'shopify.order.tag_add': 'Shopify', 'slack.channel.post': 'Slack', 'shopify.order.tag_remove': 'Shopify', 'shopify.draft_order.create': 'Shopify' }
 
 /** A grant as the list shows it: server words only (the operation's title, the tool, the scope in plain words). */
 export function permissionOf(r: ListRow, viewer: Viewer): Permission {
