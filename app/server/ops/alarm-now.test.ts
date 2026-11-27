@@ -17,7 +17,7 @@ import { routes } from '../routes.ts'
 import type { Route } from '../routes.ts'
 import { alarmNowHandler } from './alarm-now.ts'
 import { runAlarmNow as offRunAlarmNow, TEST_CONTROLS_CANARY as OFF_CANARY } from './test-controls-off.ts'
-import { loadTestControls, resetTestControls, timing, TIMINGS_FLAG } from '@test-controls'
+import { loadTestControls, resetTestControls, setTimings, timing, TIMINGS_FLAG, TIMINGS_TTL_MS } from '@test-controls'
 import { accessMatrix } from '../access-matrix.ts'
 import { authenticate, checkAccess, checkOrigin } from '../auth/index.ts'
 import { mintPerson, mintService } from '../auth/test-issuer-mint.ts'
@@ -237,7 +237,7 @@ describe('the job timings kept in the object, and the observe control', () => {
       expect(await bodyOf(await post({ action: 'setTimings', overrides: { JOB_CUT_MS: 150_000 } }))).toEqual({ set: true })
       const stored = await runInDurableObject(brand(), (_i, state) =>
         state.storage.sql.exec<{ value: string }>('SELECT value FROM flags WHERE key = ?', TIMINGS_FLAG).toArray())
-      expect(stored.map(r => JSON.parse(r.value))).toEqual([{ JOB_CUT_MS: 150_000 }])
+      expect(stored.map(r => JSON.parse(r.value))).toEqual([{ setAtMs: expect.any(Number), overrides: { JOB_CUT_MS: 150_000 } }])
       // An eviction: this isolate's memory is gone (the module copy), and the constructor loads from the object's SQLite.
       resetTestControls()
       expect(timing('JOB_CUT_MS', 1_500_000)).toBe(1_500_000)
@@ -246,7 +246,7 @@ describe('the job timings kept in the object, and the observe control', () => {
       expect((await bodyOf(await post({ action: 'observe' }))).timings).toEqual({ JOB_CUT_MS: 150_000 })
       // A stored name or value the route would refuse is never loaded.
       await runInDurableObject(brand(), (_i, state) => {
-        state.storage.sql.exec('UPDATE flags SET value = ? WHERE key = ?', JSON.stringify({ JOB_CUT_MS: -5, JOB_UNKNOWN_MS: 10, JOB_RETRY_MS: 2_000 }), TIMINGS_FLAG)
+        state.storage.sql.exec('UPDATE flags SET value = ? WHERE key = ?', JSON.stringify({ setAtMs: Date.now(), overrides: { JOB_CUT_MS: -5, JOB_UNKNOWN_MS: 10, JOB_RETRY_MS: 2_000 } }), TIMINGS_FLAG)
         loadTestControls(state.storage.sql)
       })
       expect([timing('JOB_CUT_MS', 7), timing('JOB_RETRY_MS', 7)]).toEqual([7, 2_000])
@@ -258,6 +258,62 @@ describe('the job timings kept in the object, and the observe control', () => {
     await runInDurableObject(brand(), (_i, state) => { loadTestControls(state.storage.sql) })
     expect(timing('JOB_CUT_MS', 1_500_000)).toBe(1_500_000)
     expect(lines().length).toBeGreaterThan(0)
+  })
+
+  // #460 review (Fable): the constructor's load is what the fix is, so it's proven on a second instance really built
+  // over the same storage; and a bad row must never throw there (a throw would reset the object on every construction).
+  it('a second BrandAgent built over the same storage reads the kept timings (memory gone in between)', async () => {
+    controlLines()
+    const name = `timings-reload-${Math.random()}`
+    try {
+      const first = baseEnv.BRAND_AGENT.getByName(name)
+      expect(await first.testSetTimings({ JOB_CUT_MS: 150_000 })).toEqual({ set: true })
+      const before = await runInDurableObject(first, i => i)
+      await runInDurableObject(first, (_i, state) => { state.abort('a new instance, as after an eviction') }).catch(() => {})
+      resetTestControls()
+      const second = baseEnv.BRAND_AGENT.getByName(name)
+      const o = await second.testObserve(null)
+      expect(await runInDurableObject(second, i => i)).not.toBe(before)
+      expect(o.timings).toEqual({ JOB_CUT_MS: 150_000 })
+      expect(timing('JOB_CUT_MS', 1_500_000)).toBe(150_000)
+    } finally {
+      resetTestControls()
+      vi.restoreAllMocks()
+    }
+  })
+
+  it('a kept row it can\'t read is logged and loads none, never throws; an expired one loads none; no row leaves memory alone', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await runInDurableObject(brand(), (_i, state) => {
+        const sql = state.storage.sql
+        const put = (v: unknown) => sql.exec('INSERT INTO flags (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value', TIMINGS_FLAG, v as string)
+        for (const bad of ['not json', null, 'null', '[1,2]', '{"overrides":{"JOB_CUT_MS":1}}', '{"setAtMs":1,"overrides":null}', '{"setAtMs":1,"overrides":[1]}', '7']) {
+          setTimings({ JOB_CUT_MS: 99 })
+          put(bad)
+          expect(() => loadTestControls(sql), String(bad)).not.toThrow()
+          expect(timing('JOB_CUT_MS', 1_500_000), String(bad)).toBe(1_500_000)
+        }
+        expect(errors.mock.calls.map(([e]) => (e as { event?: string }).event)).toEqual(Array(8).fill('test_controls_bad_row'))
+        // Expired (set more than an hour before this load): none, without a log.
+        errors.mockClear()
+        put(JSON.stringify({ setAtMs: 1_000, overrides: { JOB_CUT_MS: 150_000 } }))
+        loadTestControls(sql, 1_000 + TIMINGS_TTL_MS + 1)
+        expect(timing('JOB_CUT_MS', 1_500_000)).toBe(1_500_000)
+        loadTestControls(sql, 1_000 + TIMINGS_TTL_MS)
+        expect(timing('JOB_CUT_MS', 1_500_000)).toBe(150_000)
+        expect(errors).not.toHaveBeenCalled()
+        // No row: a unit test's in-memory overrides survive an object being built.
+        sql.exec('DELETE FROM flags WHERE key = ?', TIMINGS_FLAG)
+        setTimings({ JOB_CUT_MS: 42 })
+        loadTestControls(sql)
+        expect(timing('JOB_CUT_MS', 1_500_000)).toBe(42)
+      })
+      expect(errors).not.toHaveBeenCalled()
+    } finally {
+      resetTestControls()
+      vi.restoreAllMocks()
+    }
   })
 
   it('observe answers the isolate, the instance, the timings and a turn\'s cut facts, writing nothing; a bad id is a 400', async () => {

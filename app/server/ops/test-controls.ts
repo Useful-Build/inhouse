@@ -37,8 +37,14 @@ export function armStopAfterBatch(): { armed: true } {
 // hibernation between a spec's `setTimings` and the turn it times cleared the memory copy, so a 150 s `JOB_CUT_MS`
 // became the 25-minute default and no job started (jobs.spec.ts on #454 and #455, 2026-11-27).
 let timings = new Map<JobTimingName, number>()
-/** The `flags` row that keeps the overrides (JSON), in the BrandAgent's SQLite. */
+/** The `flags` row that keeps the overrides (JSON `{ setAtMs, overrides }`), in the BrandAgent's SQLite. */
 export const TIMINGS_FLAG = 'test:job_timings'
+/**
+ * A kept row older than this is never loaded: a spec that died before its `finally` (a timeout, a cancelled run) can't
+ * leave a short cut for every later run on that sandbox (#460 review). The longest spec that sets timings (jobs.spec.ts)
+ * runs well under it; memory keeps the overrides as before, until the next eviction.
+ */
+export const TIMINGS_TTL_MS = 60 * 60_000
 
 const validTimings = (o: Record<string, unknown>): [JobTimingName, number][] =>
   Object.entries(o).filter((e): e is [JobTimingName, number] =>
@@ -52,14 +58,43 @@ export function setTimings(overrides: Partial<Record<JobTimingName, number>>, sq
   console.log({ event: 'test_control', control: 'set_timings', canary: TEST_CONTROLS_CANARY })
   timings = new Map(validTimings(overrides))
   // The BrandAgent always passes its SQLite; a unit test that runs no object keeps the overrides in memory only.
-  sql?.exec('INSERT INTO flags (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value', TIMINGS_FLAG, JSON.stringify(Object.fromEntries(timings)))
+  sql?.exec('INSERT INTO flags (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value', TIMINGS_FLAG,
+    JSON.stringify({ setAtMs: Date.now(), overrides: Object.fromEntries(timings) }))
   return { set: true }
 }
 
-/** The BrandAgent's constructor: the overrides kept in its SQLite, back in memory (none kept: the defaults). */
-export function loadTestControls(sql: SqlStorage): void {
-  const row = sql.exec<{ value: string }>('SELECT value FROM flags WHERE key = ?', TIMINGS_FLAG).toArray()[0]
-  timings = new Map(row ? validTimings(JSON.parse(String(row.value)) as Record<string, unknown>) : [])
+/** The overrides a kept row holds, or null (logged loud) for a row that isn't one `setTimings` writes. */
+function keptOverrides(value: unknown, nowMs: number): [JobTimingName, number][] | null {
+  let parsed: unknown
+  try {
+    parsed = typeof value === 'string' ? JSON.parse(value) : null
+  } catch {
+    parsed = null
+  }
+  const row = parsed as { setAtMs?: unknown; overrides?: unknown } | null
+  if (row === null || typeof row !== 'object' || typeof row.setAtMs !== 'number' || row.overrides === null || typeof row.overrides !== 'object' || Array.isArray(row.overrides)) {
+    console.error({ event: 'test_controls_bad_row', key: TIMINGS_FLAG, canary: TEST_CONTROLS_CANARY })
+    return null
+  }
+  if (nowMs - row.setAtMs > TIMINGS_TTL_MS) return []
+  return validTimings(row.overrides as Record<string, unknown>)
+}
+
+/**
+ * The BrandAgent's constructor: the overrides kept in its SQLite, back in memory. Never throws (a throw here would
+ * reset the object on every construction): a row it can't read is logged and loads none, an expired one loads none.
+ * With no row at all, memory is left as it is (a unit test's in-memory overrides survive an object being built).
+ */
+export function loadTestControls(sql: SqlStorage, nowMs: number = Date.now()): void {
+  let row: { value: SqlStorageValue } | undefined
+  try {
+    row = sql.exec<{ value: SqlStorageValue }>('SELECT value FROM flags WHERE key = ?', TIMINGS_FLAG).toArray()[0]
+  } catch (err) {
+    console.error({ event: 'test_controls_unreadable', error: err instanceof Error ? err.name : 'unknown', canary: TEST_CONTROLS_CANARY })
+    return
+  }
+  if (row === undefined) return
+  timings = new Map(keptOverrides(row.value, nowMs) ?? [])
 }
 
 /** The overrides in effect now, as the observe control reports them. */

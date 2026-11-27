@@ -22,7 +22,15 @@ import { actor, call } from './kit.ts'
 const dana = actor('memberA')
 const release = actor('release')
 const JOB_CUT_MS = 150_000
+/** How long after the cut the BrandAgent is first observed: the wait before it stays a silent socket (see below). */
+const OBSERVE_AFTER_CUT_MS = 30_000
 test.describe.configure({ mode: 'serial' })
+
+// The kept overrides start clear (#460 review): a run that died before a `finally` can't leave a short cut for these.
+test.beforeAll(async ({ request }) => {
+  if (!process.env.E2E_TEST_BUILD_REMOTE) return
+  await resetJobTimings(request)
+})
 
 /** A job of the token chain, started by dana's message in a new chat. */
 async function startRun(request: APIRequestContext) {
@@ -45,24 +53,31 @@ async function runFinished(request: APIRequestContext, chatId: string) {
 test('a cut turn becomes a job that carries on with the tab closed, survives a killed container mid-step and ends with one result and one notice', async ({ request }) => {
   needsContainer()
   test.setTimeout(16 * 60_000)
+  const timingsSetAtMs = Date.now()
   await setJobTimings(request, { JOB_CUT_MS })
   try {
     const tab = await Tab.open(dana)
     const { chatId, text, sent, prefix } = await startRun(request)
     tab.attach(sent.runId)
-    // The BrandAgent's view, polled while the job is awaited (route 67's observe): its isolate, the timings in effect and
-    // the root's cut facts. Printed with the failure, so a cut that never came says why (#454 and #455, 2026-11-27).
+    // Until the cut is due the wait is a silent socket, as before #460, so the BrandAgent may still go idle and be rebuilt
+    // (the path the kept timings exist for). Only after it, route 67's observe is polled: its isolate, the timings in
+    // effect and the root's cut facts, printed with a failure so a cut that never came says why (#454 and #455).
+    const jobStarted = () => tab.frames(sent.runId).some(f => f.event.type === 'job.started')
     const series: Record<string, unknown>[] = []
     try {
+      await tab.until(jobStarted, 'the job started', JOB_CUT_MS + OBSERVE_AFTER_CUT_MS).catch(() => {})
       await expect.poll(async () => {
         series.push(await observeAgent(request, sent.turnId))
-        return tab.frames(sent.runId).some(f => f.event.type === 'job.started')
-      }, { timeout: 300_000, intervals: [5_000], message: 'the job started' }).toBe(true)
+        return jobStarted()
+      }, { timeout: 300_000 - JOB_CUT_MS - OBSERVE_AFTER_CUT_MS, intervals: [10_000], message: 'the job started' }).toBe(true)
     } catch (err) {
       console.log(`M1-D jobs: no job.started.\n${await explainJob(request, dana, { chatId, turnId: sent.turnId, frames: tab.frames(sent.runId) as never, prefix })}`)
-      console.log(`M1-D jobs: the BrandAgent, every 5 s:\n${series.map(o => JSON.stringify(o)).join('\n')}`)
+      console.log(`M1-D jobs: the BrandAgent, every 10 s after the cut:\n${series.map(o => JSON.stringify(o)).join('\n')}`)
       throw err
     }
+    // One line on success too: whether the BrandAgent was rebuilt while the job was awaited (its construct time after the
+    // timings were set), and the timings it read.
+    console.log(`M1-D jobs: the BrandAgent at job.started: ${JSON.stringify(series.at(-1) ?? await observeAgent(request, sent.turnId))}; timings set at ${timingsSetAtMs}`)
     const frames = tab.frames(sent.runId)
     const started = frames.find(f => f.event.type === 'job.started')!.event
     expect(started.rootTurnId).toBe(sent.turnId)
