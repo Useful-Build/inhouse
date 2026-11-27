@@ -47,5 +47,3 @@ export const FILE_REFUSAL = {
 export const RATE_LIMITED = 'rate_limited' satisfies AgentErrorCode
 /** The query parameter W1's sign-in callback puts a failure's code in (`/tools/slack?connect_error=<code>`), kept here so no snake_case string is in src/ (check-icons). */
 export const CONNECT_ERROR_PARAM = 'connect_error'
-/** Stage 1 M3-C (N26): a change to the Inhouse ceiling while editing is off in this build (route 151). */
-export const WRITES_OFF = 'writes_off' satisfies ErrorReason

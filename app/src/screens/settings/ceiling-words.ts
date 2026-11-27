@@ -2,7 +2,8 @@
 // runs before it saves. Ceiling.tsx draws them. Plain words only: the page is technical, but a person reads it.
 import type { CeilingRow, CeilingValues } from '../../agent/types'
 import { AgentError } from '../../agent/types'
-import { CONFLICT, FORBIDDEN, WRITES_OFF } from '../../../shared/contract/error-codes'
+import { CONFLICT, FORBIDDEN } from '../../../shared/contract/error-codes'
+import { WRITES_OFF } from '../../../shared/contract/ceiling-codes'
 import { fmtCount, fmtMoney, majorOf, moneyOf } from '../../lib/format'
 import { display } from '../../state/display'
 

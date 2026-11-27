@@ -101,12 +101,12 @@ describe('lowering (failure 3)', () => {
 })
 
 describe('the menu (failure 4)', () => {
-  const ids = (product: boolean, inhouse = false, member = false) => menuFor({ connected: [], channels: [] }, product, inhouse, member).flatMap(s => s.pages).map(p => p.id)
+  const ids = (product: boolean, role?: 'admin' | 'member' | 'inhouse') => menuFor({ connected: [], channels: [] }, product, role).flatMap(s => s.pages).map(p => p.id)
   it('offers What the agent can do to admins and the Inhouse team in the product, never to a member or in the demo', () => {
-    expect(ids(true)).toContain('team-ceiling')
-    expect(ids(true, true)).toContain('team-ceiling')
-    expect(ids(true, false, true)).not.toContain('team-ceiling')
-    expect(ids(true, false, true)).toEqual(ids(true).filter(id => id !== 'team-ceiling'))
+    expect(ids(true, 'admin')).toContain('team-ceiling')
+    expect(ids(true, 'inhouse')).toContain('team-ceiling')
+    expect(ids(true, 'member')).not.toContain('team-ceiling')
+    expect(ids(true, 'member')).toEqual(ids(true, 'admin').filter(id => id !== 'team-ceiling'))
     expect(ids(false)).not.toContain('team-ceiling')
   })
 })

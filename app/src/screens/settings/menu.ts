@@ -81,15 +81,14 @@ const BRAND_PERSON_PAGES: readonly string[] = ['you-permissions']
 /**
  * The menu as this brand sees it: Slack notices only with Slack connected, and in the product (`product`: the build has no
  * demo) no demo-only pages. What stays of the limits section is the Spending cap and Pause, so the product calls it "Spending".
- * `inhouse`: the viewer is the Inhouse team, who has no Always allowed page. `member`: the viewer is a member, who has
- * no What the agent can do page.
+ * `role`: the viewer's (unknown while signing in): the Inhouse team has no Always allowed page, and (Stage 1 M3-C) a member
+ * no What the agent can do (route 150 lets only admins and the Inhouse team read it).
  */
-export const menuFor = (tools: SlackSignals, product = false, inhouse = false, member = false): SettingsSection[] => {
+export const menuFor = (tools: SlackSignals, product = false, role?: string | null): SettingsSection[] => {
   const slack = hasSlack(tools)
   return SECTIONS.map(s => {
-    // Stage 1 M3-C: a member has no What the agent can do (route 150 lets only admins and the Inhouse team read it).
-    const pages = s.pages.filter(p => (slack || p.id !== 'team-slack') && pageShown(p.id, product) && !(inhouse && BRAND_PERSON_PAGES.includes(p.id))
-      && !(member && p.id === 'team-ceiling'))
+    const pages = s.pages.filter(p => (slack || p.id !== 'team-slack') && pageShown(p.id, product) && !(role === 'inhouse' && BRAND_PERSON_PAGES.includes(p.id))
+      && !(role === 'member' && p.id === 'team-ceiling'))
     return { ...s, pages, ...(product && s.id === 'limits' ? { label: 'Spending' } : {}) }
   })
 }
