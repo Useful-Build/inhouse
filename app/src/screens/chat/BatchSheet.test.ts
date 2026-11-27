@@ -177,6 +177,13 @@ describe('the full list', () => {
       expect(rows()).toHaveLength(5)
     } finally { vi.unstubAllGlobals() }
   })
+  test('a table says its total once, in the footer; the header names the tool alone', async () => {
+    serve(12)
+    const table = batch(12, { batch: { itemCount: 12, firstLines: [], firstRows: [], heads: { ref: 'Item', change: 'Where and why', amount: 'Stock' }, totals: { records: 12, units: 900, unitsLabel: 'stock units' } } })
+    await show({ card: table })
+    expect(sheet().querySelector('h2 + p')?.textContent).toBe('Shopify')
+    expect(sheet().querySelector('[data-sheet-totals]')?.textContent).toBe('12 changes · 900 stock units')
+  })
   test('once the card stops waiting, its answers go', async () => {
     serve(12)
     await show({ card: batch(12, { rev: 2, state: 'denied', can: NONE }), opened: batch(12) })

@@ -214,15 +214,17 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
     return p && p.key === key ? p.card : card
   }
   const press = (b: CardButton) => send(b, shownFor(b.key))
-  /** A button's press handlers: where its press begins (pointer or key) and where one that didn't click ends. */
+  /**
+   * A button's press handlers: where its press begins (pointer down, or Space or Enter down). The press lives until the
+   * click that takes it (on a touch screen that click can come well after the release), the next press begins, or the
+   * press is cancelled or focus leaves the button; a press on another button never takes it (`shownFor`'s key check).
+   */
   const pressStart = (key: string) => {
     const end = () => { if (pressedOn.current?.key === key) pressedOn.current = null }
-    // After the click that follows the release (same task), so the click still reads the press.
-    const endAfterClick = () => setTimeout(end, 0)
     return {
       onPointerDown: () => { pressedOn.current = { key, card } },
       onKeyDown: (e: KeyboardEvent) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) pressedOn.current = { key, card } },
-      onPointerUp: endAfterClick, onKeyUp: endAfterClick, onPointerCancel: end, onBlur: end,
+      onPointerCancel: end, onBlur: end,
     }
   }
 

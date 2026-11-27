@@ -21,7 +21,7 @@ import { NO_MOTION } from '../../ui/motion'
 import { claimTrigger, keepForToast, restoreFocus } from '../../ui/dialogs'
 import { fmtCount } from '../../lib/format'
 import { display } from '../../state/display'
-import { buttonsOf, coversText, footerTotal, itemStatus, moreArrivedText, refusalOf, searchLabel, subtitleOf } from './ask-card'
+import { buttonsOf, coversText, footerTotal, isTable, itemStatus, moreArrivedText, refusalOf, searchLabel, subtitleOf } from './ask-card'
 import type { CardButton, Whose } from './ask-card'
 import { ItemRowView } from './ItemRow'
 
@@ -155,7 +155,7 @@ export function BatchSheet({ card, opened, whose, busy, refusal, onClose, onSawT
           <div className="flex items-start gap-3">
             <div className="min-w-0 flex-1">
               <SheetTitle className="text-md leading-card font-strong tracking-card text-pretty wrap-anywhere">{shownCard.title}</SheetTitle>
-              <p className={cn('m-0 mt-0.5 text-sm', sub.warn ? 'font-medium text-warning-text' : 'text-muted-foreground')}>{`${card.tool.label} · ${coversText(batch)}`}</p>
+              <p className={cn('m-0 mt-0.5 text-sm', sub.warn ? 'font-medium text-warning-text' : 'text-muted-foreground')}>{isTable(batch) ? card.tool.label : `${card.tool.label} · ${coversText(batch)}`}</p>
             </div>
             <IconButton icon="close" label="Close" onClick={onClose} className={cn('-mt-1 -mr-1.5', tap)} />
           </div>

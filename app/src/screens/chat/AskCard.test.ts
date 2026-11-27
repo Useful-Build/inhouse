@@ -461,6 +461,20 @@ describe('batches (Stage 1 M3-U)', () => {
     await flush()
     expect(fake.answerAction).toHaveBeenCalledWith(AC, 1, 'deny', { upTo: 453, totals: { records: 453, units: 453 } })
   })
+  test('on a touch screen the click can come long after the release: the press still answers for the card it began on', async () => {
+    fake.action.mockResolvedValue(batch(456))
+    fake.answerAction.mockResolvedValueOnce(batch(450, { rev: 2, state: 'approved', sendAt: instant(NOW + 10_000), can: { ...NONE, undo: true } }))
+    await show({ actionId: AC, initial: batch(450) })
+    const approve = [...host.querySelectorAll('button')].find(b => label(b) === 'Approve all 450')!
+    await act(async () => { approve.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); approve.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })) })
+    // The card grows while the tap's click is still on its way.
+    await tick(5000)
+    await flush()
+    expect(buttons()).toContain('Approve all 456')
+    await act(async () => { approve.click() })
+    await flush()
+    expect(fake.answerAction).toHaveBeenCalledWith(AC, 1, 'approve', { upTo: 450, totals: { records: 450, units: 450 } })
+  })
   test('a batch that needs a check is settled item by item in its list, never all at once from the card', async () => {
     await show({ actionId: AC, initial: batch(40, { state: 'needs_check', result: '38 went out. 2 are unclear.', can: { ...NONE, resolve: true } }) })
     expect(buttons()).toEqual(['See all 40', 'Check each change'])

@@ -11,8 +11,8 @@
 // composer (D) together measured 255.1 KB, and the approval cards (E) add about 1 KB. The final fleet PR measured 256.7 KB,
 // so the budget stays at 257 (0.3 KB of room) rather than measured plus 1 KB. Raised to 272 on 2026-11-27 (Wasim's standing
 // OK for Stage 1 M3-U, measured plus about 5%): the agent's batch and admins cards render in the chat, which shares the
-// entry chunk with Today (the cards' rows, table and words, +2.3 KB; their full list and the demo's sample actions load
-// on demand, outside it), measured 259.3 KB.
+// entry chunk with Today (the cards' rows, table and words, +2.5 KB; their full list and the demo's sample actions load
+// on demand, outside it), measured 259.5 KB.
 // The budget covers Today's first load only: a deep link to a lazy route adds that route's chunk on top. Raise it only on purpose, with the reason.
 // DIST overrides the build folder (for trying the script on a fake build).
 import { existsSync, readFileSync } from 'node:fs'
