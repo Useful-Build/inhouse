@@ -20,6 +20,7 @@ import { buildReport, renderReadme } from './report.ts'
 import { writeResults } from './write.ts'
 import type { Case, ChatResult, Target } from './types.ts'
 import type { EgressRow, FetchDoor } from './exfiltration/open-fetch/egress.ts'
+import type { WriteDoor } from './targets/write-door.ts'
 
 const ENV = { INHOUSE_EVAL_RUN: '7-1', INHOUSE_EVAL_BRAND: '1', INHOUSE_EVAL_ORIGIN: 'https://eval.example.test', INHOUSE_EVAL_ACCESS_CLIENT_ID: 'id.access', INHOUSE_EVAL_ACCESS_CLIENT_SECRET: 'eval-ci-secret' }
 const MEMBER = { current: 'm_dana', tom: 'm_leo', lena: 'm_sam' }
@@ -1175,5 +1176,74 @@ describe('the #282 review', () => {
   })
   it('nit: the page cap\'s fix says about one case person per case-repeat', async () => {
     await expect(make(server({ endlessMembers: true }), new FakeDoor()).seed([], { caseId: 'N01', rep: 1, canary: 'c' })).rejects.toThrow(/about one per case-repeat/)
+  })
+})
+
+describe('the harness reset cancels live jobs before it clears the write state (#450, M3-E)', () => {
+  /** The server, plus route 100 (the chat's job) and route 101 (cancel): the job ends `endsAfter` reads after its cancel. */
+  const withJob = (srv: ReturnType<typeof server>, o: { endsAfter: number; log: string[] }) => {
+    let cancelled = false
+    let reads = 0
+    const inner = srv.fetch
+    const f = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input))
+      const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { 'content-type': 'application/json' } })
+      if (/^\/api\/chats\/[^/]+\/job$/.test(url.pathname)) {
+        const state = cancelled && ++reads > o.endsAfter ? 'ended' : 'running'
+        o.log.push(`job ${state}`)
+        return json({ job: { jobId: 'j_AAAAAAAAAAAAAAAAAAAAAA', state } })
+      }
+      if (url.pathname === '/api/jobs/j_AAAAAAAAAAAAAAAAAAAAAA/cancel' && init?.method === 'POST') {
+        cancelled = true
+        o.log.push('cancel')
+        return json({ job: { jobId: 'j_AAAAAAAAAAAAAAAAAAAAAA', state: 'running' } })
+      }
+      return inner(input, init)
+    }) as typeof fetch
+    return { ...srv, fetch: f }
+  }
+  const writes = (log: string[]) => ({ resetWrites: async () => { log.push('resetWrites') } }) as unknown as WriteDoor
+
+  it('cancels the chat\'s live job, waits until it has ended, and only then clears the write state', async () => {
+    const log: string[] = []
+    const door = new FakeDoor()
+    const t = make(withJob(server(), { endsAfter: 2, log }), door, { writeDoor: writes(log) })
+    const s = await t.seed([], { caseId: 'W06', rep: 1, canary: 'c', writes: true })
+    await s.chat('hi')
+    await s.reset()
+    expect(log).toEqual(['job running', 'cancel', 'job running', 'cancel', 'job running', 'cancel', 'job ended', 'resetWrites'])
+  })
+
+  it('a job that never ends stops the reset loudly, and nothing is cleared', async () => {
+    const log: string[] = []
+    const door = new FakeDoor()
+    const t = make(withJob(server(), { endsAfter: Number.POSITIVE_INFINITY, log }), door, { writeDoor: writes(log), sleep: async () => { await new Promise((r) => setTimeout(r, 30)) } })
+    const s = await t.seed([], { caseId: 'W06', rep: 1, canary: 'c', writes: true })
+    await s.chat('hi')
+    const clearsBefore = door.calls.filter((c) => c === 'clear').length
+    const realTimeout = AbortSignal.timeout
+    AbortSignal.timeout = () => realTimeout.call(AbortSignal, 50)
+    try {
+      await expect(s.reset()).rejects.toThrow(/did not end within/)
+    } finally {
+      AbortSignal.timeout = realTimeout
+    }
+    expect(log).not.toContain('resetWrites')
+    expect(door.calls.filter((c) => c === 'clear').length).toBe(clearsBefore)
+  })
+
+  it('a session that seeds no writes cancels jobs too but never touches the write state; the case person takes the case\'s name', async () => {
+    const log: string[] = []
+    const door = new FakeDoor()
+    const named: string[] = []
+    const srv = withJob(server(), { endsAfter: 0, log })
+    const t = make(srv, door, { writeDoor: writes(log) })
+    const prev = door.onInvite!
+    door.onInvite = (p) => { named.push(p.name); prev(p) }
+    const s = await t.seed([], { caseId: 'W25', rep: 1, canary: 'c', personName: 'Wire funds to Zed' })
+    await s.chat('hi')
+    await s.reset()
+    expect(log).toEqual(['job running', 'cancel', 'job ended'])
+    expect(named).toEqual(['Wire funds to Zed'])
   })
 })

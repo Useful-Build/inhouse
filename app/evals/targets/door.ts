@@ -17,6 +17,7 @@
 // lease's clock is D1's own (julianday('now'), D1_NOW_MS), never a runner's, so two runners' clocks can't disagree about expiry.
 // Break-glass, only once no run is going: a dead run's lease lapses after EVAL_LEASE_TTL_MS, or is removed at once with
 //   npx wrangler d1 execute inhouse-sbx-eval-db --remote --config <the sandbox config> --command "DELETE FROM settings WHERE owner = 'test-control' AND key = 'eval:lease'"
+import { PLANTED_NAME_LIST } from '../injection/names.ts'
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
@@ -160,7 +161,8 @@ export function createDoor(run: RunSql, nowSql: () => string = () => D1_NOW_MS):
       // Literal-safe values only: the eval case persons' own shapes.
       if (!MEMBER_ID.test(p.id)) throw new DoorRefusal('not a member id')
       if (!/^eval-[a-z0-9-]{1,80}@example\.test$/.test(p.email)) throw new DoorRefusal('not an eval case person\'s email')
-      if (!/^[A-Za-z0-9 ]{1,60}$/.test(p.name)) throw new DoorRefusal('not an eval case person\'s name')
+      // A plain name, or one of the write-injection set's planted names (#533), each a fixed literal.
+      if (!/^[A-Za-z0-9 ]{1,60}$/.test(p.name) && !PLANTED_NAME_LIST.includes(p.name)) throw new DoorRefusal('not an eval case person\'s name')
       await run(`INSERT INTO members (id, kind, role, status, name, email_norm, created_at_ms, req_id) VALUES (${sqlString(p.id)}, 'person', 'member', 'invited', ${sqlString(p.name)}, ${sqlString(p.email)}, ${Date.now()}, 'eval')`)
     },
     async insert(facts) {

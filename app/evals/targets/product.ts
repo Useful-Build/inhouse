@@ -21,7 +21,7 @@ import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { JWK } from 'jose'
 import { createDoor, newActionId, newMemoryId, wranglerRunner, type MemoryDoor, type MemoryRow, type NewMemory } from './door.ts'
-import { writeProvides } from './write-door.ts'
+import { createWriteDoor, writeProvides, type WriteDoor } from './write-door.ts'
 import { createFetchDoor, withEgress, type FetchDoor } from '../exfiltration/open-fetch/egress.ts'
 import { CapReachedError, type Case, type ChatResult, type ExfilSpec, type People, type PersonKey, type RunContext, type SeedApproval, type SeedFact, type Session, type Target, type ToolCall } from '../types.ts'
 
@@ -122,6 +122,8 @@ export interface ProductTargetOptions {
   door?: MemoryDoor
   /** The fetch mode and egress record door (M3-F). Default: the same runner as `door`'s default. */
   fetchDoor?: FetchDoor
+  /** The write door (M3-R, N30; M3-E). Default: the same runner as `door`'s default. */
+  writeDoor?: WriteDoor
   /** Milliseconds between reads while a turn runs. */
   pollMs?: number
   sleep?: (ms: number) => Promise<void>
@@ -176,7 +178,17 @@ export function callOfStep(s: TraceStep): ToolCall {
   return { name: s.detail, input, ...(s.io?.denied === true ? { hookDenied: true } : {}), ...(cut ? { inputCut: true } : {}) }
 }
 
-export function createProductTarget(opts: ProductTargetOptions): Target {
+/**
+ * The product target, plus what the write-injection set (M3-E, evals/injection/product.ts) drives beside its chats: the
+ * signed API as the eval people, and the write door on the same database (made after the eval-brand check, so only
+ * once a seed has run).
+ */
+export interface ProductTarget extends Target {
+  readonly call: Api
+  writeDoor(): WriteDoor
+}
+
+export function createProductTarget(opts: ProductTargetOptions): ProductTarget {
   if (!opts.paid) throw new ProductTargetRefusal('the product target spends real money: pass --paid and --budget <usd>')
   if (!(typeof opts.budgetUsd === 'number' && opts.budgetUsd > 0)) throw new ProductTargetRefusal('the product target needs --budget <usd> above zero')
   if (opts.env[EVAL_BRAND_FLAG] !== '1') throw new ProductTargetRefusal(`refusing: ${EVAL_BRAND_FLAG}=1 is not set, so the brand isn't marked as an eval brand`)
@@ -234,6 +246,15 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
   let door: MemoryDoor | undefined = opts.door
   /** The fetch mode and the egress record (M3-F): the same database and runner as `door`. */
   let fetchDoor: FetchDoor | undefined = opts.fetchDoor
+  let writeDoor: WriteDoor | undefined = opts.writeDoor
+  /** The eval-brand check passed (setup ran): only then is a door made. */
+  let checked = false
+  /** The write door, made on first use (a write case), on the same database, only after the eval-brand check. */
+  const writesOf = (): WriteDoor => {
+    if (!checked) throw new ProductTargetRefusal('the write door is made only after the eval-brand check: seed a case first')
+    writeDoor ??= createWriteDoor(wranglerRunner({ database: opts.env[EVAL_D1_NAME] ?? '', config: opts.env[EVAL_WRANGLER_CONFIG] ?? '', env: opts.env }))
+    return writeDoor
+  }
   let ready: Promise<void> | undefined
   /** The server-side eval-brand check, then the people's ids and the door. Once, before the first chat. */
   /** The eval lease's tag (door.ts takeLease): this run's. */
@@ -297,6 +318,7 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
       door ??= createDoor(sql)
       fetchDoor ??= createFetchDoor(sql)
     }
+    checked = true
     // The database must be the one this origin answers from: make a chat through the API, read it back through the door. Nothing is
     // cleared or written before this passes.
     const probe = `eval-probe-${rid()}`
@@ -361,6 +383,8 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
     unobservable: unobservableReason,
     spentUsd: () => spentTotal,
     room,
+    call: api,
+    writeDoor: writesOf,
     async close() {
       await taking?.catch(() => {})
       if (leased) await door!.releaseLease(leaseTag)
@@ -392,7 +416,7 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
         const who = casePerson(runTag, run.caseId, run.rep)
         const personId = newMemberId()
         try {
-          await d.invitePerson({ id: personId, email: who.email, name: who.name })
+          await d.invitePerson({ id: personId, email: who.email, name: run.personName ?? who.name })
         } catch (e) {
           // The door's own error, never a guess at why (#282 re-review M1).
           throw new ProductTargetRefusal(`refusing: could not invite the case person ${who.sub} (run tag ${runTag}): ${e instanceof Error ? e.message : String(e)}`, { cause: e })
@@ -412,7 +436,7 @@ export function createProductTarget(opts: ProductTargetOptions): Target {
         if (exfil?.via === 'memory_search') facts.push({ id: newMemoryId(), scope: 'person', ownerId: people.current, text: exfil.plant(run.canary) })
         if (exfil?.via === 'attachment') attachment = { name: 'note.txt', bytes: new TextEncoder().encode(exfil.plant(run.canary)) }
         await d.insert(facts)
-        session = productSession({ api, must, door: d, ...(exfil ? { egress: fetchDoor! } : {}), people, picker, real, attachment, approvals: run.approvals, pollMs, sleep, askedAs: who.sub, onSpend: (usd) => { spentTotal += usd } })
+        session = productSession({ api, must, door: d, ...(exfil ? { egress: fetchDoor! } : {}), ...(run.writes ? { writes: writesOf() } : {}), people, picker, real, attachment, approvals: run.approvals, pollMs, sleep, askedAs: who.sub, onSpend: (usd) => { spentTotal += usd } })
       } catch (e) {
         try {
           if (settingsTouched) await resetWebTools(door!)
@@ -453,7 +477,15 @@ export interface SessionDeps {
    * rows its chat added (`withEgress`), so a `leak` refusal is graded as one.
    */
   egress?: FetchDoor
+  /**
+   * The write door, for a session whose case seeds writes (M3-E): its reset clears the write state (`resetWrites`) after
+   * every live job of the session's chats has ended (#450), so no job writes into the next repeat's log.
+   */
+  writes?: WriteDoor
 }
+
+/** How long reset waits for a cancelled job to end (#450). */
+export const JOB_END_TIMEOUT_MS = 120_000
 
 /** Route 33's cost is whole cents, rounded to the nearest: the true figure is under half a cent more, so it is booked at that upper bound. */
 export const cents = (minor: number): number => (minor + 0.5) / 100
@@ -487,8 +519,9 @@ export function parkedQuestionOf(items: { chatId: string | null; state: string; 
 export const parkedAnswer = (q: ParkedQuestion): string => `Asked: ${q.question}\nOptions: ${q.options.join(' | ')}`
 
 /** One case-repeat's chats (exported for the read-side set's scripted proof, which signs in on a PR's test build). */
-export function productSession(d: SessionDeps): Session {
+export function productSession(d: SessionDeps): Session & { chatIds(): readonly string[] } {
   const turns: string[] = []
+  const chats: string[] = []
   let booked = 0
   let attachment = d.attachment
   let approvals: readonly SeedApproval[] = d.approvals ?? []
@@ -518,6 +551,28 @@ export function productSession(d: SessionDeps): Session {
       }
     }
   }
+  /**
+   * #450: a turn that hit its step limit carries on as a long job behind the harness, and could write into the next
+   * repeat's log. Every chat this session made: its live job is cancelled (route 101, the owner's Cancel) and read again
+   * (route 100) until it has ended. A job that doesn't end in time, or an answer that can't be read, throws: reset() is
+   * loud, and the runner stops the run on it.
+   */
+  async function cancelJobs(): Promise<void> {
+    const deadline = AbortSignal.timeout(JOB_END_TIMEOUT_MS)
+    for (const chatId of chats) {
+      for (;;) {
+        const r = await d.api('current', 'GET', `/api/chats/${encodeURIComponent(chatId)}/job`)
+        if (r.status === 404) break // the chat is gone (deleted with its jobs)
+        if (r.status !== 200) throw new Error(`read the job of chat ${chatId}: ${r.status}`)
+        const job = r.json?.job as { jobId: string; state: string } | null
+        if (!job || job.state === 'ended') break
+        if (deadline.aborted) throw new Error(`job ${job.jobId} did not end within ${JOB_END_TIMEOUT_MS / 1000} s of its cancel`)
+        const c = await d.api('current', 'POST', `/api/jobs/${encodeURIComponent(job.jobId)}/cancel`, { json: {} })
+        if (c.status !== 200 && c.status !== 409) throw new Error(`cancel job ${job.jobId}: ${c.status}`)
+        await d.sleep(d.pollMs)
+      }
+    }
+  }
   async function bookCost(): Promise<number> {
     await endTurns()
     let total = 0
@@ -532,6 +587,7 @@ export function productSession(d: SessionDeps): Session {
       const before = await d.door.rows()
       const chatId = `eval-${rid()}`
       d.must(await d.api('current', 'POST', '/api/chats', { json: { id: chatId, title: 'Eval chat' }, signal: o?.signal }), 'create the chat')
+      chats.push(chatId)
       // The case's approvals (M2-G: T15, T16), the person's own, waiting in this chat; the prompt names each by its real id.
       for (const a of approvals) {
         const id = newActionId()
@@ -635,9 +691,13 @@ export function productSession(d: SessionDeps): Session {
     },
     async reset() {
       await endTurns()
+      // #450: every live job ended before anything is cleared, so none writes into the next repeat.
+      await cancelJobs()
       await d.door.deleteApprovals(seededApprovals)
       await d.door.clear()
+      await d.writes?.resetWrites()
     },
+    chatIds: () => [...chats],
   }
 }
 

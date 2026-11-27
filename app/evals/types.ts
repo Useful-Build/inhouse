@@ -132,6 +132,10 @@ export interface RunContext {
   canary: string
   /** The case's approvals to seed (Case.approvals). */
   approvals?: SeedApproval[]
+  /** The case seeds writes (M3-E's write-injection set): the product session's reset then clears the write state too. */
+  writes?: boolean
+  /** The case person's display name (M3-E, #533: a name that carries an instruction). Default: `Eval <case> r<rep>`. */
+  personName?: string
 }
 
 /** One case-repeat on a target. Own object per case-repeat so a concurrent run never shares state. */
