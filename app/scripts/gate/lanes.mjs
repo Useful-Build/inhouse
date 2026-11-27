@@ -173,6 +173,9 @@ const isFunction = arg => /^(?:async\b|function\b)/.test(arg) || /^(?:\([^]*?\)|
 // (`(true ? test.skip : test)`). A conditional skip is not: a first argument that isn't a literal (an identifier, a call,
 // a negation, a Playwright callback), whatever the reason after it, and a test picked by a real condition
 // (`(cond ? test : test.skip)('t', fn)`). Only `test`, `it` and `describe` chains count (`tour.skip()` is app code).
+// A condition on the CI flag alone is no condition where the checks run: `test.skip(!!process.env.CI, ...)` skips on
+// every CI run, so it's flagged, and so is one whose direction can't be read (`process.env.CI === 'true'`). The other
+// way round (`test.skip(!process.env.CI, ...)`, which runs in CI) and a condition that reads anything else are fine.
 
 const CHAIN = /(?<![\w$.])(test|it|describe)((?:\s*\.\s*[A-Za-z_$][\w$]*)+)/g
 const SKIP_MEMBERS = new Set(['skip', 'fixme', 'fail', 'fails', 'todo'])
@@ -182,6 +185,31 @@ function describeSkip(member) {
   if (member === 'todo') return 'a todo test (.todo)'
   if (member === 'fails' || member === 'fail') return `an expected-to-fail test (.${member})`
   return `a skipped test or suite (.${member})`
+}
+
+const CI_FLAG = /\bprocess\.env\.(?:CI|GITHUB_ACTIONS)\b|\bprocess\.env\[\s*(['"])(?:CI|GITHUB_ACTIONS)\1\s*\]/g
+const CI_FLAG_ALONE = /^(!*)(?:Boolean)?\(*(?:process\.env\.(?:CI|GITHUB_ACTIONS)|process\.env\[(['"])(?:CI|GITHUB_ACTIONS)\2\])\)*$/
+
+/**
+ * How a condition that reads only the CI flag turns out in CI: 'true', 'false', or 'unsure' when its direction can't be
+ * read. null when the condition reads anything else (or doesn't read the flag).
+ */
+function inCi(cond) {
+  if (!cond.match(CI_FLAG)) return null
+  const rest = cond.replace(CI_FLAG, '').replace(/'[^']*'|"[^"]*"|`[^`]*`/g, '').replace(/\b(?:true|false|null|undefined|Boolean|typeof)\b|\d+/g, '')
+  if (/[\w$]/.test(rest)) return null
+  const alone = CI_FLAG_ALONE.exec(cond.replace(/\s+/g, ''))
+  if (!alone) return 'unsure'
+  return alone[1].length % 2 === 0 ? 'true' : 'false'
+}
+
+/** Why a skip on the CI flag alone removes the test from CI, or null. `skipsWhen`: the condition's value that skips. */
+function ciSkip(cond, skipsWhen, name, picked = false) {
+  const ci = inCi(cond)
+  if (!ci) return null
+  if (ci === 'unsure') return `a ${name} ${picked ? 'picked ' : ''}on the CI flag alone (${cond}) (kept: can't tell which way it goes)`
+  if (ci !== String(skipsWhen)) return null
+  return picked ? `a ${name} always picked in CI (${cond})` : `a ${name} that always skips in CI (${cond})`
 }
 
 /** The condition before the `?` of the ternary a value sits in (the text after the last `(`, `=`, `,`, `;` or return). */
@@ -213,6 +241,8 @@ export function skipIn(view, i) {
       const [first, ...others] = call.args
       if (IF_MEMBERS.has(member)) {
         if (first === undefined || LITERAL.test(first)) return `a ${name}( with a literal condition (${first ?? 'none'})`
+        const ci = ciSkip(first, member === 'skipIf', `${name}(`)
+        if (ci) return ci
         continue
       }
       if (first === undefined) return `an unconditional skip (${name}())`
@@ -222,6 +252,8 @@ export function skipIn(view, i) {
       if (LITERAL.test(first)) return `an unconditional skip (${name}(${first}))`
       // A condition takes one reason at most; more arguments, or a function after the first, declare a test.
       if (!isFunction(first) && (others.length > 1 || others.some(isFunction))) return `${describeSkip(member)} whose title isn't a string literal`
+      const ci = ciSkip(first, true, `${name}(`)
+      if (ci) return ci
       continue
     }
     // A value: only a test picked by a real condition (`cond ? test : test.skip`) is conditional.
@@ -229,6 +261,9 @@ export function skipIn(view, i) {
     if (/[?:]\s*$/.test(before) && before.includes('?')) {
       const cond = ternaryCondition(before)
       if (LITERAL.test(cond)) return `a ${name} picked by a literal condition (${cond})`
+      // The skip sits after the `?` (picked when the condition is true) or after the `:` (picked when it's false).
+      const ci = ciSkip(cond, /\?\s*$/.test(before), name, true)
+      if (ci) return ci
       continue
     }
     return `a ${name} used as a value (kept: can't tell it's conditional)`
@@ -236,17 +271,103 @@ export function skipIn(view, i) {
   return null
 }
 
+// ---- Test declarations ----------------------------------------------------------------------------------------------
+// `test(`, `it(` and `describe(`, with the chains that still declare one: `test.describe(`, `it.each(rows)(`,
+// `test.prop([arb])(`, `describe.skipIf(cond)(`; and a property test under any import name (`fcTest.prop([arb])(`).
+// Not `test.describe.configure(`, `test.setTimeout(` or `test.step(`.
+
+const DECL = '(?:(?:test|it|describe)(?:\\s*\\.\\s*(?:describe|serial|parallel|concurrent|sequential|only|each|for|prop|skipIf|runIf))*|[A-Za-z_$][\\w$]*\\s*\\.\\s*prop)\\s*\\('
+const TEST_DECL = new RegExp(`(?<![\\w$.])${DECL}`, 'g')
+/** A line that begins a declaration (so not one in a comment or a string). */
+const OPENS_DECL = new RegExp(`^\\s*${DECL}`)
+const countDecls = lines => lines.reduce((n, text) => n + [...text.matchAll(TEST_DECL)].length, 0)
+
+/** A line that only closes brackets: a diff may show a new block's last line as context (it matched an older `})`). */
+const ONLY_CLOSES = /^[\s)\]};,]*$/
+/** What a regex literal can follow; a `/` after anything else is a division. */
+const BEFORE_REGEX = /(?:^|[(,=:[!&|?{};+\-*%<>~^]|\b(?:return|typeof|case|do|else|in|of|void|await|yield))$/
+
+/**
+ * The index of the line on which the brackets opened from the start of view[j] are all closed again, or -1 when they
+ * don't close in this hunk or the reader meets something it won't guess at (an unclosed string or regex). Strings,
+ * templates (with their `${}`), comments and regex literals are skipped.
+ */
+function closesAt(view, j) {
+  let depth = 0
+  let comment = false
+  let template = false
+  /** The depths at which a template's `${` opened, innermost last. */
+  const holes = []
+  for (let k = j; k < view.length; k++) {
+    const text = view[k].text
+    for (let p = 0; p < text.length; p++) {
+      const c = text[p]
+      if (comment) { if (c === '*' && text[p + 1] === '/') { comment = false; p++ } continue }
+      if (template) {
+        if (c === '\\') p++
+        else if (c === '`') template = false
+        else if (c === '$' && text[p + 1] === '{') { holes.push(depth++); template = false; p++ }
+        continue
+      }
+      if (c === '/' && text[p + 1] === '/') break
+      if (c === '/' && text[p + 1] === '*') { comment = true; p++; continue }
+      if (c === '`') { template = true; continue }
+      if (c === "'" || c === '"' || c === '/') {
+        if (c === '/' && !BEFORE_REGEX.test(text.slice(0, p).trimEnd())) continue
+        // A string or a regex ends on its own line (a `/` inside a regex's [class] doesn't end it).
+        let q = p + 1
+        for (let inClass = false; q < text.length; q++) {
+          if (text[q] === '\\') q++
+          else if (c === '/' && text[q] === '[') inClass = true
+          else if (c === '/' && text[q] === ']') inClass = false
+          else if (text[q] === c && !inClass) break
+        }
+        if (q >= text.length) return -1
+        p = q
+        continue
+      }
+      if ('([{'.includes(c)) depth++
+      else if (')]}'.includes(c)) {
+        if (--depth < 0) return -1
+        if (c === '}' && holes.at(-1) === depth) { holes.pop(); template = true }
+      }
+    }
+    if (depth === 0) return k
+  }
+  return -1
+}
+
+/**
+ * Whether the added line at view[i] is surely part of a newly added test: an added line begins a declaration at or above
+ * it, that declaration's brackets close at or below it, and every line of the block is added (bar a line that only
+ * closes brackets). `view` is the hunk's new-file lines. So a declaration the diff doesn't show whole, or one dropped
+ * above lines that were there before (a new suite around existing tests), is not taken as new.
+ */
+function inNewTest(view, i) {
+  for (let j = i; j >= 0; j--) {
+    if (!OPENS_DECL.test(view[j].text)) continue
+    const end = closesAt(view, j)
+    if (end >= i && view.slice(j, end + 1).every(l => l.added || ONLY_CLOSES.test(l.text))) return true
+  }
+  return false
+}
+
 // ---- Numeric settings -----------------------------------------------------------------------------------------------
-// Adding or tightening a test is never check-weakening; loosening an existing one is. So these rules read modified lines
-// only: a removed and an added line in the same hunk with the same key or call. In check files only (tests, specs, e2e
-// code, test folders, test, lint and type configs):
-// - a raised timeout, retries, retry, threshold, maxDiffPixels or maxDiffPixelRatio (by key suffix: testTimeout counts),
-//   a raised test.setTimeout, a lowered numRuns, and a changed value that can't be read;
-// - a loosening key newly added to an existing call (the call is on a removed line of the same hunk): retries or retry
-//   above 0, any maxDiffPixels, maxDiffPixelRatio or threshold, a numRuns below 100, or one of those that can't be read.
-// A purely added line (a new test with `test.setTimeout(180_000)` or `numRuns: 30`) never counts. Values are read as
-// numbers or products of numbers (`60 * 1000`, `60_000`). Product code (`MAX_INFRA_RETRIES = 3`, a busy_timeout) is not
-// a check file and never counts.
+// Adding or tightening a test is never check-weakening; loosening an existing one is. In check files only (tests, specs,
+// e2e code, test folders, test, lint and type configs):
+// - On a modified line (a removed and an added line in the same hunk with the same key or call): a raised timeout,
+//   retries, retry, threshold, maxDiffPixels or maxDiffPixelRatio (by key suffix: testTimeout counts), a raised
+//   test.setTimeout, a lowered numRuns, and a changed value that can't be read.
+// - On an added line with nothing removed to compare: retries or retry above 0, any maxDiffPixels, maxDiffPixelRatio or
+//   threshold, a numRuns below 100 or unreadable, and any test.setTimeout or testInfo.setTimeout. An unreadable retries
+//   or retry counts only in a test, it, describe or configure call, or in a call the hunk changes (`retry` is also a
+//   field of product data here). An added `timeout:` key never counts (a new wait or assertion carries one).
+// - Those added lines are let through only where the test is surely new: the file is new, or the line is part of a newly
+//   added test (inNewTest) in a hunk that removes no declaration (a removed one may be the same test renamed or
+//   re-indented) and no call of the same name. So a new test with `test.setTimeout(180_000)` or `numRuns: 30` never
+//   counts, and `test.describe.configure({ retries: 2 })` dropped into an existing spec does.
+// Values are read as numbers or products of numbers (`60 * 1000`, `60_000`). Product code (`MAX_INFRA_RETRIES = 3`, a
+// busy_timeout) is not a check file and never counts.
 
 const LOOSEN_KINDS = ['maxdiffpixelratio', 'maxdiffpixels', 'threshold', 'retries', 'retry', 'timeout', 'numruns']
 const kindOf = key => LOOSEN_KINDS.find(k => key.toLowerCase().endsWith(k)) ?? null
@@ -254,6 +375,8 @@ const kindOf = key => LOOSEN_KINDS.find(k => key.toLowerCase().endsWith(k)) ?? n
 const NEW_IS_LOOSER = new Set(['maxDiffPixels', 'maxDiffPixelRatio', 'threshold'])
 const SETTING = /([A-Za-z_$][\w$]*)\s*(?::|(?<![=!<>])=(?![=>]))\s*/g
 const SET_TIMEOUT = /(?<![\w$.])((?:test|testInfo)\.setTimeout)\s*\(/g
+/** Calls whose `retries` or `retry` option is the test runner's: `it('x', { retry: 3 }, fn)`, `test.describe.configure(`. */
+const RUNNER_CALL = /^(?:test|it|describe)(?:\.[\w$]+)*$/
 
 /** A number, or a product of numbers; null when it can't be read. */
 export function evaluate(expr) {
@@ -310,18 +433,35 @@ function settings(line) {
   }
   for (const m of text.matchAll(SET_TIMEOUT)) {
     const call = callArgs(text, m.index + m[0].length - 1)
-    const raw = call.unsure ? '(unreadable)' : (call.args[0] ?? '')
+    const raw = call.unsure ? '...' : (call.args[0] ?? '')
     out.push({ key: m[1], kind: 'timeout', raw, value: evaluate(raw), setTimeout: true })
   }
   return out
 }
 
-/** The check-weakening items in one hunk of a check file: loosened numeric settings. */
-function loosenedIn(hunk) {
+/** Why a setting on an added line, with nothing removed to compare, loosens a check; null when it doesn't. */
+function addedLoosening(s, inChangedCall) {
+  if (s.setTimeout) return `adds ${s.key}(${s.raw})`
+  if (s.key === 'retries' || s.key === 'retry') {
+    if (s.value !== null) return s.value > 0 ? `${s.key} raised from 0 to ${s.raw}` : null
+    return inChangedCall || RUNNER_CALL.test(s.call ?? '') ? `adds ${s.key} with a value that can't be read (${s.raw})` : null
+  }
+  if (NEW_IS_LOOSER.has(s.key)) return `adds ${s.key}: ${s.raw}`
+  if (s.key === 'numRuns' && (s.value === null || s.value < MIN_NUM_RUNS)) {
+    return `adds numRuns: ${s.raw}, ${s.value === null ? "a value that can't be read" : `below ${MIN_NUM_RUNS}`}`
+  }
+  return null
+}
+
+/** The check-weakening items in one hunk of a check file: loosened numeric settings. `newFile`: the file is added. */
+function loosenedIn(hunk, newFile) {
   const found = []
   const removed = new Map()
   for (const text of hunk.removed) for (const s of settings(text)) removed.set(s.key, [...(removed.get(s.key) ?? []), s])
-  for (const { line, text } of hunk.added) {
+  // A removed declaration may be an added one's old self (renamed, re-indented), so no added test here is surely new.
+  const rewritesTests = countDecls(hunk.removed) > 0
+  hunk.lines.forEach(({ line, text, added }, i) => {
+    if (!added) return
     for (const s of settings(text)) {
       const was = removed.get(s.key)?.shift()
       const at = `(line ${line})`
@@ -332,26 +472,19 @@ function loosenedIn(hunk) {
         if (loosened) found.push(`check-weakening: ${s.key} ${s.kind === 'numruns' ? 'lowered' : 'raised'} from ${was.raw} to ${s.raw} ${at}`)
         continue
       }
-      // Added with nothing removed: only a key added to an existing call (one a removed line of this hunk makes) counts.
-      if (s.setTimeout || !s.call) continue
-      const last = s.call.split('.').at(-1).replaceAll('$', '\\$')
-      if (!hunk.removed.some(t => new RegExp(`(?<![\\w$])${last}\\s*\\(`).test(t))) continue
-      if (s.key === 'retries' || s.key === 'retry') {
-        if (s.value === null) found.push(`check-weakening: adds ${s.key} with a value that can't be read (${s.raw}) ${at}`)
-        else if (s.value > 0) found.push(`check-weakening: ${s.key} raised from 0 to ${s.raw} ${at}`)
-      } else if (NEW_IS_LOOSER.has(s.key)) found.push(`check-weakening: adds ${s.key}: ${s.raw} ${at}`)
-      else if (s.key === 'numRuns' && (s.value === null || s.value < MIN_NUM_RUNS)) {
-        found.push(`check-weakening: adds numRuns: ${s.raw}, ${s.value === null ? "a value that can't be read" : `below ${MIN_NUM_RUNS}`} ${at}`)
-      }
+      // Added with nothing removed. The call it sits in on this line may be an existing one the hunk changes.
+      const last = s.call?.split('.').at(-1).replaceAll('$', '\\$')
+      const inChangedCall = Boolean(last) && hunk.removed.some(t => new RegExp(`(?<![\\w$])${last}\\s*\\(`).test(t))
+      const why = addedLoosening(s, inChangedCall)
+      if (!why || newFile) continue
+      const inNew = !inChangedCall && inNewTest(hunk.lines, i)
+      if (inNew && !rewritesTests) continue
+      const note = inNew ? ' (kept: the hunk also removes a test, so this one may be that test rewritten)' : s.setTimeout ? ' outside a newly added test' : ''
+      found.push(`check-weakening: ${why}${note} ${at}`)
     }
-  }
+  })
   return found
 }
-
-// ---- Test counts ----------------------------------------------------------------------------------------------------
-
-const TEST_DECL = /(?<![\w$.])(?:test|it|describe)(?:\.describe)?(?:\.(?:serial|parallel|concurrent|sequential|only))?\s*\(/g
-const countDecls = lines => lines.reduce((n, text) => n + [...text.matchAll(TEST_DECL)].length, 0)
 
 // ---- Hosts ----------------------------------------------------------------------------------------------------------
 // A host is a quoted string with a URL scheme, or a dotted name ending in a common top-level domain (dotted event names
@@ -455,7 +588,7 @@ function scanFile(f) {
         const why = skipIn(hunk.lines, i)
         if (why) lane4.push(`check-weakening: adds ${why} (line ${l.line})`)
       })
-      if (checkFile) lane4.push(...loosenedIn(hunk))
+      if (checkFile) lane4.push(...loosenedIn(hunk, f.status === 'added'))
     }
     if (isTestFile(f.filename)) {
       tests.removed = countDecls(hunks.flatMap(h => h.removed))
@@ -504,6 +637,18 @@ export function scan(files) {
 }
 
 // ---- Comments -------------------------------------------------------------------------------------------------------
+
+/** Review states that stand: a dismissed review was withdrawn, and a pending one isn't submitted yet. */
+const STANDING_REVIEWS = new Set(['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED'])
+
+/**
+ * The PR's notes whose lines can count, as { body, author_association, at }: its issue comments, and its reviews that
+ * still stand. A dismissed review's "Gate check:" or "wasim-approved:" line counts no more.
+ */
+export function notes(issueComments, reviews) {
+  return [...issueComments, ...reviews.filter(r => STANDING_REVIEWS.has(r.state))]
+    .map(c => ({ body: c.body ?? '', author_association: c.author_association, at: c.created_at ?? c.submitted_at ?? null }))
+}
 
 /** A comment line without leading list and emphasis marks; null for a quoted line (`>`), which never counts. */
 const bare = line => (/^\s*>/.test(line) ? null : line.replace(/^[\s*_`-]+/, ''))

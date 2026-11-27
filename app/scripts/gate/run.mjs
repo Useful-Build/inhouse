@@ -8,7 +8,7 @@
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { appendFileSync } from 'node:fs'
-import { APPROVAL_LABEL, approvedHead, classify, report } from './lanes.mjs'
+import { APPROVAL_LABEL, approvedHead, classify, notes, report } from './lanes.mjs'
 
 /** GitHub caps a PR's file list at 3000 and a comparison's at 300. */
 const COMPARE_FILE_CAP = 300
@@ -95,10 +95,8 @@ function main() {
   const mergeBase = get(`repos/${repo}/compare/${prData.base.sha}...${head}`).merge_base_commit.sha
   const files = withPackageTexts(repo, listed, mergeBase, head)
   const labels = prData.labels.map(l => l.name)
-  const comments = [
-    ...getAll(`repos/${repo}/issues/${pr}/comments?per_page=100`),
-    ...getAll(`repos/${repo}/pulls/${pr}/reviews?per_page=100`),
-  ].map(c => ({ body: c.body ?? '', author_association: c.author_association, at: c.created_at ?? c.submitted_at ?? null }))
+  // Issue comments, and the reviews that still stand (a dismissed review's lines don't count).
+  const comments = notes(getAll(`repos/${repo}/issues/${pr}/comments?per_page=100`), getAll(`repos/${repo}/pulls/${pr}/reviews?per_page=100`))
   const { approvedSha, ...record } = labels.includes(APPROVAL_LABEL) ? approval(repo, pr, prData, comments) : {}
 
   const result = classify({ files, labels, comments, incomplete, ...record })

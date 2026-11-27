@@ -2,12 +2,14 @@
 // that doesn't, so a rule that stops firing, or starts firing on a neighbour, fails here.
 import fc from 'fast-check'
 import { describe, expect, test } from 'vitest'
-import { APPROVAL_LABEL, approvedHead, classify, evaluate, gateChecks, NET_LOSS_PATH, parsePatch, report, scan } from './lanes.mjs'
+import { APPROVAL_LABEL, approvedHead, classify, evaluate, gateChecks, NET_LOSS_PATH, notes, parsePatch, report, scan } from './lanes.mjs'
 
 const BENIGN = '@@ -1,2 +1,2 @@\n const a = 1\n-const b = 2\n+const b = 3'
 const file = (filename, extra = {}) => ({ filename, status: 'modified', changes: 2, patch: BENIGN, ...extra })
 const added = (filename, lines, extra = {}) => file(filename, { status: 'added', patch: `@@ -0,0 +1,${lines.length} @@\n${lines.map(l => `+${l}`).join('\n')}`, ...extra })
 const hunk = (removed, addedLines) => `@@ -10,${removed.length + 1} +10,${addedLines.length + 1} @@\n ctx\n${removed.map(l => `-${l}`).join('\n')}${removed.length ? '\n' : ''}${addedLines.map(l => `+${l}`).join('\n')}`
+/** A one-hunk patch from raw diff lines (each starts with ' ', '+' or '-'), from line 1. */
+const diff = lines => `@@ -1,${lines.filter(l => l[0] !== '+').length} +1,${lines.filter(l => l[0] !== '-').length} @@\n${lines.join('\n')}`
 const laneOf = files => classify({ files }).lane
 const reasons = files => classify({ files }).lane4.map(i => i.reason)
 const pkg = (deps, extra = {}) => JSON.stringify({ name: 'x', version: '1.0.0', ...extra, ...(deps ? { dependencies: deps } : {}) }, null, 2)
@@ -159,6 +161,19 @@ describe('check-weakening patterns in added lines, in any file', () => {
     ['// oxlint-disable-next-line no-console', 'a lint disable comment'],
     ['/* eslint-disable */', 'a lint disable comment'],
     ['# oxlint-disable', 'a lint disable comment'],
+    // A condition on the CI flag alone: it skips on every CI run, which is where the checks run.
+    ["test.skip(!!process.env.CI, 'flaky in CI')", 'a .skip( that always skips in CI (!!process.env.CI)'],
+    ['test.skip(process.env.CI)', 'a .skip( that always skips in CI (process.env.CI)'],
+    ["test.fixme(Boolean(process.env.CI), 'x')", 'a .fixme( that always skips in CI (Boolean(process.env.CI))'],
+    ["test.skip(!!process.env.GITHUB_ACTIONS, 'x')", 'a .skip( that always skips in CI (!!process.env.GITHUB_ACTIONS)'],
+    ["test.skip(process.env['CI'], 'x')", "a .skip( that always skips in CI (process.env['CI'])"],
+    ['it.skipIf(process.env.CI)("x", fn)', 'a .skipIf( that always skips in CI (process.env.CI)'],
+    ['it.runIf(!process.env.CI)("x", fn)', 'a .runIf( that always skips in CI (!process.env.CI)'],
+    ["test.skip(process.env.CI === 'true', 'x')", "a .skip( on the CI flag alone (process.env.CI === 'true') (kept: can't tell which way it goes)"],
+    ['describe.runIf(process.env.CI !== undefined)("x", fn)', "a .runIf( on the CI flag alone (process.env.CI !== undefined) (kept: can't tell which way it goes)"],
+    ['(process.env.CI ? test.skip : test)("x", fn)', 'a .skip always picked in CI (process.env.CI)'],
+    ['(!process.env.CI ? test : test.skip)("x", fn)', 'a .skip always picked in CI (!process.env.CI)'],
+    ["(process.env.CI || process.env.GITHUB_ACTIONS ? test : test.skip)('x', fn)", "a .skip picked on the CI flag alone (process.env.CI || process.env.GITHUB_ACTIONS) (kept: can't tell which way it goes)"],
   ]
   test.each(patterns)('adds %s: Lane 4', (line, why) => {
     for (const path of ['app/src/a.ts', 'app/e2e/a.spec.ts', 'README.md', 'app/hub/x.yml']) {
@@ -194,6 +209,15 @@ describe('check-weakening patterns in added lines, in any file', () => {
     'this.tour.skip(); steps.todo("x")',
     "test.skip(!phone(page), 'desktop only') // see issue",
     'gate with `test.skip(!process.env.E2E_TEST_BUILD_REMOTE, ...)` in prose',
+    // The CI flag the other way round (the test runs in CI), with another condition, or a variable that only starts with CI.
+    "test.skip(!process.env.CI, 'runs in CI only')",
+    'it.skipIf(!process.env.CI)("x", fn)',
+    'describe.runIf(!!process.env.CI)("x", fn)',
+    "(process.env.CI ? test : test.skip)('x', fn)",
+    "(!process.env.CI ? test.skip : test)('x', fn)",
+    "test.skip(!!process.env.CI && !phone(page), 'x')",
+    "test.skip(!process.env.CI_TOKEN, 'x')",
+    "test.skip(process.env.CITY === 'x', 'x')",
   ]
   test.each(conditional)('adds %s: not check-weakening', line => {
     expect(laneOf([file('app/src/a.ts', { patch: hunk([], [line]) })])).toBe('Lane 1/2')
@@ -266,19 +290,144 @@ describe('loosened numeric settings, in check files only', () => {
       .toEqual(["check-weakening: timeout changed to a value that can't be read (Number(process.env.T ?? 5000)) (line 11)"])
     expect(reasons([file(spec, { patch: hunk(['timeout: T'], ['timeout: T * 2']) })])).toHaveLength(1)
   })
-  test('purely added lines never count: adding or tightening a test is never Lane 4', () => {
+  test('in a new file, added lines never count: adding a test is never Lane 4', () => {
     for (const line of [
-      'test.describe.configure({ retries: 2 })', '  retry: 1,', '  retry: RETRIES,', '  retry: noop,', '  test.setTimeout(120_000)',
-      '  test.setTimeout(SOAK_TIMEOUT_MS)', '  await expect(page).toHaveScreenshot({ maxDiffPixels: 50 })', '  maxDiffPixelRatio: 0.01,',
-      '  threshold: 0.3,', '  fc.assert(p, { numRuns: 40 })', '  fc.assert(p, { numRuns: runs })', 'retries: 0,', 'numRuns: 300',
-      'timeout: 9000', 'lowStockThreshold: 5,', 'shouldRetry: true', 'infra_retries: 3,', 'infra_retries: number', 'timeout: number;',
-      '    const retry = toolOf(await ask(convo))', 'let timeout = setTimeout(fn)',
+      'test.describe.configure({ retries: 2 })', '  retry: 1,', '  retry: RETRIES,', '  test.setTimeout(120_000)', '  test.setTimeout(SOAK_TIMEOUT_MS)',
+      '  await expect(page).toHaveScreenshot({ maxDiffPixels: 50 })', '  maxDiffPixelRatio: 0.01,', '  threshold: 0.3,', '  fc.assert(p, { numRuns: 40 })',
+      '  fc.assert(p, { numRuns: runs })', "it('x', { retry: 3 }, fn)",
+    ]) {
+      expect(laneOf([added(spec, [line])]), line).toBe('Lane 3')
+    }
+  })
+  test('in a newly added test, added lines never count', () => {
+    const newTest = [
+      ' })', '+', "+test('new', async ({ page }) => {", '+  test.setTimeout(180_000)', '+  // a long one', "+  await expect(page).toHaveScreenshot('new.png', { maxDiffPixels: 50 })",
+      '+  fc.assert(fc.property(arb, x => {', '+    expect(f(x)).toBe(x)', '+  }), { numRuns: 30 })', '+  fc.assert(', '+    fc.property(arb, check),', '+    { numRuns: runs },', '+  )', '+})',
+    ]
+    expect(reasons([file(spec, { patch: diff(newTest) })])).toEqual([])
+    const newSuite = [
+      ' })', "+test.describe('new suite', () => {", '+  test.describe.configure({ retries: 2 })', '+  test.beforeEach(async () => {', '+    test.setTimeout(120_000)', '+  })',
+      "+  test('a', {", '+    retry: 3,', '+  }, async () => {', '+    if (slow) {', '+      testInfo.setTimeout(90_000)', '+    } else {', '+      testInfo.setTimeout(60_000)', '+    }', '+  })', '+})',
+    ]
+    expect(reasons([file(spec, { patch: diff(newSuite) })])).toEqual([])
+    // The declaration forms this repo uses, with the setting on the declaring line or on its closing line.
+    for (const lines of [
+      ["+  test.prop([worldArb], { numRuns: 20 })('holds', async w => {", '+  })'], ["+it.prop([doc], { numRuns: 40 })('holds', d => {", '+})'],
+      ["+it('x', { retry: 3 }, async () => {", '+})'], ["+it('x', async () => {", '+  await run()', '+}, { retry: 3 })'],
+      ['+it.each([', '+  [1, 2],', "+])('adds %i', { retry: 2 }, (a, b) => {", '+})'], ["+describe.each(rows)('suite %s', { retry: 1 }, row => {", '+})'],
+      ["+  test.describe.serial('s', () => {", '+    test.describe.configure({ retries: 1 })', '+  })'],
+      // A property test under the name a file imports it by (`import { test as fcTest } from '@fast-check/vitest'`).
+      ["+  fcTest.prop([fc.constantFrom(400, 401)], { numRuns: 60 })(", "+    'any refusal leaves the snapshot as it was', async status => {", '+    })'], ["+prop.prop([doc], { numRuns: 12 })('holds', d => {", '+})'],
+    ]) {
+      expect(reasons([file(spec, { patch: diff([" const a = 1", ...lines]) })]), lines[0]).toEqual([])
+    }
+  })
+  test('an added line that loosens nothing is fine anywhere', () => {
+    for (const line of [
+      'retries: 0,', 'numRuns: 300', 'timeout: 9000', 'lowStockThreshold: 5,', 'shouldRetry: true', 'infra_retries: 3,', 'infra_retries: number', 'timeout: number;',
+      '    const retry = toolOf(await ask(convo))', 'let timeout = setTimeout(fn)', '  retry: noop,', '  retry: RETRIES,', "  { retry: 'unavailable' }",
+      '  { op: fc.constant(1), retry: fc.boolean() }', "  await expect(page).toHaveScreenshot('x.png', { timeout: 9000 })", '  fc.assert(p, { numRuns: 500 })',
     ]) {
       expect(laneOf([file(spec, { patch: hunk([], [line]) })]), line).toBe('Lane 3')
     }
   })
-  test('a new test beside a removed line that has no such key or call is not flagged', () => {
-    expect(laneOf([file(spec, { patch: hunk(["  await page.goto('/')"], ["  await page.goto('/')", '  test.setTimeout(180_000)', '  fc.assert(p, { numRuns: 30 })']) })])).toBe('Lane 3')
+  const KEPT = ' (kept: the hunk also removes a test, so this one may be that test rewritten)'
+  test('an existing test loosened through purely added lines is Lane 4 (round 2)', () => {
+    const weakened = lines => reasons([file(spec, { patch: diff(lines) })])
+    // A suite-wide setting dropped into an existing spec.
+    expect(weakened(['+test.describe.configure({ retries: 2 })', ' ', " test('existing', async ({ page }) => {"])).toEqual(['check-weakening: retries raised from 0 to 2 (line 1)'])
+    expect(weakened(['+test.describe.configure({ retries: R })', " test('existing', async ({ page }) => {"])).toEqual(["check-weakening: adds retries with a value that can't be read (R) (line 1)"])
+    // Options spread over lines of an existing test.
+    expect(weakened([" it('x', {", '+  retry: 3,', ' }, fn)'])).toEqual(['check-weakening: retry raised from 0 to 3 (line 2)'])
+    expect(weakened(["-it('x', async () => {", "+it('x', {", '+  retry: 3,', '+}, async () => {', '   await run()', ' })'])).toEqual(['check-weakening: retry raised from 0 to 3 (line 2)'])
+    // Options after the body of an existing test.
+    expect(weakened([" it('x', async () => {", '   await run()', '-})', '+}, { retry: 3 })'])).toEqual(['check-weakening: retry raised from 0 to 3 (line 3)'])
+    // An existing assertion rewrapped over several lines.
+    expect(weakened([" test('existing', async ({ page }) => {", "-  await expect(page).toHaveScreenshot('x.png')", "+  await expect(page).toHaveScreenshot('x.png', {", '+    maxDiffPixels: 500,', '+  })']))
+      .toEqual(['check-weakening: adds maxDiffPixels: 500 (line 3)'])
+    // An existing multi-line property that gains its options on the closing line.
+    expect(weakened([" it('holds', () => {", '   fc.assert(fc.property(arb, x => {', '     expect(f(x)).toBe(x)', '-  }))', '+  }), { numRuns: 5 })'])).toEqual(['check-weakening: adds numRuns: 5, below 100 (line 4)'])
+    expect(weakened(['   fc.assert(', '     fc.property(arb, check),', '+    { numRuns: runs },', '   )'])).toEqual(["check-weakening: adds numRuns: runs, a value that can't be read (line 3)"])
+    // A timeout set inside an existing test, or in a hook of an existing suite.
+    expect(weakened([" test('existing', async ({ page }) => {", '+  test.setTimeout(600_000)', "   await page.goto('/')"])).toEqual(['check-weakening: adds test.setTimeout(600_000) outside a newly added test (line 2)'])
+    expect(weakened([" test.describe('existing', () => {", '+  test.beforeEach(async ({}, testInfo) => {', '+    testInfo.setTimeout(SOAK_TIMEOUT_MS)', '+  })']))
+      .toEqual(['check-weakening: adds testInfo.setTimeout(SOAK_TIMEOUT_MS) outside a newly added test (line 3)'])
+    expect(weakened([" test('existing', async () => {", '+  test.setTimeout(', '+    600_000,'])).toEqual(['check-weakening: adds test.setTimeout(...) outside a newly added test (line 2)'])
+    // A new assertion that swaps in for an existing one.
+    expect(weakened([" test('existing', async ({ page }) => {", '-  await expect(a).toBeVisible()', '+  await expect(page).toHaveScreenshot({ maxDiffPixels: 5 })'])).toEqual(['check-weakening: adds maxDiffPixels: 5 (line 2)'])
+  })
+  test('an added test is new only when the diff shows it whole and the hunk removes no test', () => {
+    const weakened = lines => reasons([file(spec, { patch: diff(lines) })])
+    const timeout = line => [`check-weakening: adds test.setTimeout(600_000) outside a newly added test (line ${line})`]
+    // A renamed test is the old test: its opening line is added, but the hunk removes a declaration.
+    expect(weakened(["-test('a', async ({ page }) => {", "+test('a, renamed', async ({ page }) => {", '+  test.setTimeout(600_000)', "   await page.goto('/')", ' })'])).toEqual(timeout(2))
+    // The same test rewritten line for line: every line of it is added, and only the removed declaration gives it away.
+    expect(weakened(["-test('a', async ({ page }) => {", "-  await page.goto('/')", '-})', "+test('a, renamed', async ({ page }) => {", '+  test.setTimeout(600_000)', "+  await page.goto('/home')", '+})']))
+      .toEqual([`check-weakening: adds test.setTimeout(600_000)${KEPT} (line 2)`])
+    // The same hunk, further down: a test that is new can't be told from the removed one rewritten, so it's kept.
+    expect(weakened(["-test('a', async () => {", "+test('a2', async () => {", '   await run()', ' })', "+test('new', async () => {", '+  fc.assert(p, { numRuns: 30 })', '+})']))
+      .toEqual([`check-weakening: adds numRuns: 30, below 100${KEPT} (line 5)`])
+    expect(weakened(["-  test.prop([arb])('holds', x => {", "+  test.prop([arb], { numRuns: 5 })('holds', x => {"])).toEqual(['check-weakening: adds numRuns: 5, below 100 (line 1)'])
+    // Existing tests wrapped in a new suite, re-indented or not.
+    expect(weakened(["-test('existing', async () => {", '-  await run()', '-})', "+test.describe('wrapper', () => {", '+  test.describe.configure({ retries: 2 })', "+  test('existing', async () => {", '+    await run()', '+  })', '+})']))
+      .toEqual([`check-weakening: retries raised from 0 to 2${KEPT} (line 2)`])
+    expect(weakened(["+test.describe('wrapper', () => {", " test('existing', async () => {", '+  test.setTimeout(600_000)', '   await run()'])).toEqual(timeout(3))
+    // After a new test closes, the line is outside it again.
+    expect(weakened([' const a = 1', "+test('new', async () => {", '+  await run()', '+})', '+test.setTimeout(600_000)'])).toEqual(timeout(5))
+    expect(weakened([" describe('existing', () => {", "+  it('new', () => {", '+    run()', '+  })', '+  test.setTimeout(600_000)'])).toEqual(timeout(5))
+    expect(weakened([' const a = 1', "+test('new', async () => {", '+  await run()', '+})', '+  test.setTimeout(600_000)'])).toEqual(timeout(5))
+    // A new suite dropped around existing tests that weren't re-indented: its lines were there before.
+    expect(weakened(["+test.describe('wrapper', () => {", '+  test.describe.configure({ retries: 2 })', " test('existing', async () => {", '   await run()', ' })', '+})'])).toEqual(['check-weakening: retries raised from 0 to 2 (line 2)'])
+    expect(weakened(["+describe('wrapper', { retry: 3 }, () => {", " it('existing', () => {", '   run()', ' })', '+})'])).toEqual(['check-weakening: retry raised from 0 to 3 (line 1)'])
+    // A commented-out declaration opens nothing, and nor does one named in a comment on the line itself.
+    expect(weakened([" it('existing', {", "+  retry: 3, // as it('other', fn) has", ' }, fn)'])).toEqual(['check-weakening: retry raised from 0 to 3 (line 2)'])
+    expect(weakened([" test('existing', async () => {", "+  // test('old', async () => {", '+    test.setTimeout(600_000)'])).toEqual(timeout(3))
+    expect(weakened([' const a = 1', '+/*', "+test('old', async () => {", '+*/', '+test.setTimeout(600_000)'])).toEqual(timeout(5))
+    // A line that closes more than it opened ends the reading: what follows is not inside that test.
+    expect(weakened([" describe('existing', () => {", "+it('x', fn) })", '+test.describe.configure({ retries: 2 })', "+describe('next', () => {", '+})'])).toEqual(['check-weakening: retries raised from 0 to 2 (line 3)'])
+    // A new test that takes a call the hunk removes from an existing one: the call may have moved, looser.
+    expect(weakened([" it('existing', () => {", '-  fc.assert(p)', '+  run()', ' })', "+it('new', () => {", '+  fc.assert(p, { numRuns: 5 })', '+})'])).toEqual(['check-weakening: adds numRuns: 5, below 100 (line 5)'])
+    // A test the hunk doesn't show whole, or one the reader can't follow (an unclosed quote), is not taken as new.
+    expect(weakened([' const a = 1', "+test('new', async () => {", '+  test.setTimeout(600_000)', '+  await run()'])).toEqual(timeout(3))
+    expect(weakened([' const a = 1', "+test('new', async () => {", '+  render(<p>Don\'t</p>)', '+  test.setTimeout(600_000)', '+})'])).toEqual(timeout(4))
+    expect(weakened([' for (const c of CASES) {', "+  it('new', () => {", '+    render(<p>Don\'t</p>)', '+  })', '+  test.setTimeout(600_000)', ' }'])).toEqual(timeout(5))
+  })
+  test('a newly added test is read by its brackets, whatever its layout', () => {
+    const fine = lines => expect(reasons([file(spec, { patch: diff(lines) })]), lines.join('\n')).toEqual([])
+    // A template that runs over lines, with brackets and a `${}` in it.
+    fine([' const a = 1', "+test('new', async () => {", '+  const sql = `', '+SELECT (1', '+${[a, `}`].join(")")}`', '+  test.setTimeout(600_000)', '+})'])
+    // Regexes, divisions, comments and strings that hold brackets and quotes.
+    fine([' const a = 1', "+test('new', async ({ page }) => {", "+  await expect(page).toHaveURL(/\\/jobs\\/[^/)]+'?$/) // it's ) fine", "+  const half = (total / 2) / parts; const s = '})' /* ( */", '+  test.setTimeout(600_000)', '+})'])
+    // The call closes deeper than it opens (the layout this repo's property tests use).
+    fine([' const a = 1', '+  fcTest.prop([fc.constantFrom(400, 401)], { numRuns: 60 })(', "+    'any refusal leaves the snapshot as it was', async status => {", '+      await run(status)', '+    })', '+', " test('next', () => {"])
+    // The diff shows the new test's last line as context: it matched the `})` of the test above.
+    fine(['   await old()', '+})', '+', "+test('new', async () => {", '+  test.setTimeout(180_000)', '+  await run()', ' })'])
+    fine(['     await old()', '+  })', '+', "+  test('new', async () => {", '+    fc.assert(p, { numRuns: 30 })', '   })', ' })'])
+  })
+  test('a new test beside a removed line that has no declaration is not flagged', () => {
+    const lines = ["-  await page.goto('/')", "+  await page.goto('/home')", ' })', "+test('new', async () => {", '+  test.setTimeout(180_000)', '+  fc.assert(p, { numRuns: 30 })', '+})']
+    expect(laneOf([file(spec, { patch: diff(lines) })])).toBe('Lane 3')
+  })
+  test('property: a loosening line is Lane 4 in an existing test and not in a new one', () => {
+    const line = fc.constantFrom(
+      'test.setTimeout(600_000)', 'test.describe.configure({ retries: 2 })', "await expect(page).toHaveScreenshot('x.png', { maxDiffPixels: 50 })", 'fc.assert(p, { numRuns: 5 })',
+      'maxDiffPixelRatio: 0.2,', 'retry: 3,', 'threshold: 0.5,', 'numRuns: runs,',
+    )
+    const opener = fc.constantFrom(
+      "test('t', async ({ page }) => {", "it('t', () => {", "describe('s', () => {", "test.describe('s', () => {", "it.each(rows)('t %s', row => {", "test.prop([arb], { numRuns: 200 })('t', x => {",
+    )
+    const filler = fc.array(fc.constantFrom(
+      'await step()', 'const a = 1', '', "// a note, don't count (this", 'if (x) { y() }', "expect(s).toMatch(/a\\/b[/)]'/)", 'const t = `a ${b ? `(${c}` : "}"} c`', 'const half = n / 2 / (m)', '/* ( */ run()',
+    ), { maxLength: 4 })
+    fc.assert(fc.property(line, opener, filler, fc.nat(3), (l, o, body, depth) => {
+      const pad = '  '.repeat(depth)
+      const block = [`${pad}${o}`, ...body.map(b => (b ? `${pad}  ${b}` : '')), `${pad}  ${l}`, `${pad}})`]
+      const asNew = [' const first = 1', ...block.map(b => `+${b}`)]
+      const inExisting = [` ${block[0]}`, ...block.slice(1, -1).map(b => `+${b}`), ` ${block.at(-1)}`]
+      expect(laneOf([file(spec, { patch: diff(asNew) })])).toBe('Lane 3')
+      expect(laneOf([added(spec, block)])).toBe('Lane 3')
+      expect(laneOf([file(spec, { patch: diff(inExisting) })])).toBe('Lane 4')
+    }))
   })
   test('a loosening key added to an existing call (its removed line in the same hunk) counts', () => {
     const modified = (before, after) => reasons([file(spec, { patch: hunk([before], [after]) })])
@@ -296,7 +445,6 @@ describe('loosened numeric settings, in check files only', () => {
     expect(modified('  fc.assert(fc.property(arb, check))', '  fc.assert(fc.property(arb, check), { numRuns: 500 })')).toBe('Lane 3')
     expect(modified("  test.describe.configure({ mode: 'serial' })", "  test.describe.configure({ mode: 'serial', retries: 0 })")).toBe('Lane 3')
     expect(modified("  await expect(page).toHaveScreenshot('x.png')", "  await expect(page).toHaveScreenshot('x.png', { timeout: 9000 })")).toBe('Lane 3')
-    expect(modified("  await expect(a).toBeVisible()", "  await expect(page).toHaveScreenshot({ maxDiffPixels: 5 })")).toBe('Lane 3')
   })
   test('product code never counts (E)', () => {
     for (const [before, after] of [['const MAX_INFRA_RETRIES = 2', 'const MAX_INFRA_RETRIES = 3'], ['busy_timeout: 5000', 'busy_timeout: 30000'], [null, 'maxDiffPixels: 9']]) {
@@ -343,6 +491,12 @@ describe('net loss of tests', () => {
     expect(laneOf([t('app/src/a.test.ts', ["test('a', fn)", "describe('s', fn)"], []), t('app/src/b.test.ts', [], ["test('a', fn)", "test.describe('s', fn)"])])).toBe('Lane 1/2')
   })
   test('a test rewritten in place is not a loss', () => expect(laneOf([t('app/e2e/a.spec.ts', ["test('a', async ({ page }) => {"], ["test('a, renamed', async ({ page }) => {"])])).toBe('Lane 3'))
+  test('property, table and conditional declarations count too', () => {
+    const lost = ["test.prop([arb], { numRuns: 200 })('holds', x => {", "it.each(rows)('adds %i', row => {", "describe.skipIf(win)('suite', () => {", "it.prop([doc])('holds', d => {", "fcTest.prop([doc])('holds', d => {"]
+    expect(reasons([t('app/src/a.test.ts', lost, ["it('one', fn)"])])).toEqual(['check-weakening: net loss of tests (5 test, it or describe declarations removed, 1 added)'])
+    expect(laneOf([t('app/src/a.test.ts', lost, lost)])).toBe('Lane 1/2')
+    expect(laneOf([t('app/src/a.test.ts', ['test.describe.configure({ mode: "serial" })', 'test.setTimeout(5)', 'it.next()', 'test.info()', 'a.b.prop(x)', 'el.props(x)'], [])])).toBe('Lane 1/2')
+  })
   test('only test files count', () => expect(laneOf([t('docs/a.md', ["test('a', fn)", "test('b', fn)"], [])])).toBe('Lane 1/2'))
   test('turning a test into a skipped one is a loss (and a skip)', () => {
     expect(reasons([t('app/src/a.test.ts', ["it('a', fn)"], ["it.skip('a', fn)"])])).toEqual([
@@ -668,6 +822,35 @@ describe('approvedHead: the head a wasim-approved line names', () => {
   })
 })
 
+describe('notes: the comments and reviews whose lines can count', () => {
+  const A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  const comment = (body, created_at = '2026-11-27T12:05:00Z') => ({ body, author_association: 'MEMBER', created_at })
+  const review = (state, body, submitted_at = '2026-11-27T12:05:00Z') => ({ state, body, author_association: 'MEMBER', submitted_at })
+  test('comments and standing reviews are kept, with their time', () => {
+    expect(notes([comment('a', '2026-11-27T10:00:00Z')], [review('APPROVED', 'b', '2026-11-27T11:00:00Z'), review('COMMENTED', null), review('CHANGES_REQUESTED', 'd')])).toEqual([
+      { body: 'a', author_association: 'MEMBER', at: '2026-11-27T10:00:00Z' }, { body: 'b', author_association: 'MEMBER', at: '2026-11-27T11:00:00Z' },
+      { body: '', author_association: 'MEMBER', at: '2026-11-27T12:05:00Z' }, { body: 'd', author_association: 'MEMBER', at: '2026-11-27T12:05:00Z' },
+    ])
+  })
+  test('a dismissed review\'s Gate check line no longer counts', () => {
+    const line = 'Gate check: on ledger'
+    expect(gateChecks(notes([comment(line)], [review('APPROVED', line)])).on).toBe(2)
+    expect(gateChecks(notes([comment(line)], [review('DISMISSED', line)])).on).toBe(1)
+    expect(gateChecks(notes([], [review('DISMISSED', 'Gate check: off ledger')])).off).toBe(false)
+    const migration = [added('app/server/migrations/0750_x.sql', ['CREATE TABLE x (id TEXT);'])]
+    expect(classify({ files: migration, comments: notes([comment(line)], [review('APPROVED', line)]) }).pass).toBe(true)
+    expect(classify({ files: migration, comments: notes([comment(line)], [review('DISMISSED', line)]) }).pass).toBe(false)
+  })
+  test('a dismissed review\'s wasim-approved line no longer counts', () => {
+    const args = { labeledAt: '2026-11-27T12:00:00Z', commitShas: [A] }
+    expect(approvedHead({ ...args, comments: notes([], [review('COMMENTED', `wasim-approved: ${A}`)]) })).toEqual({ sha: A })
+    expect(approvedHead({ ...args, comments: notes([], [review('DISMISSED', `wasim-approved: ${A}`)]) })).toEqual({ needsLine: true })
+  })
+  test('a review that isn\'t submitted yet, or in a state the gate doesn\'t know, doesn\'t count', () => {
+    expect(notes([], [review('PENDING', 'Gate check: on ledger', undefined), review('SOMETHING_NEW', 'Gate check: on ledger'), { body: 'Gate check: on ledger', author_association: 'MEMBER' }])).toEqual([])
+  })
+})
+
 describe('Gate check lines', () => {
   test.each([
     'Gate check: on ledger', '- Gate check: on ledger (M2 ledger rows 3, 4)', '**Gate check: on ledger**',
@@ -749,7 +932,7 @@ describe('properties', () => {
   })
   test('a condition then at most one reason is never check-weakening', () => {
     const ident = fc.stringMatching(/^[a-z][a-zA-Z0-9]{0,8}$/).filter(s => !['true', 'false', 'null', 'undefined'].includes(s))
-    const cond = fc.oneof(ident, ident.map(s => `!${s}`), fc.tuple(ident, ident).map(([a, b]) => `${a}(${b}) && !${b}.x`), ident.map(s => `process.env.${s.toUpperCase()}`))
+    const cond = fc.oneof(ident, ident.map(s => `!${s}`), fc.tuple(ident, ident).map(([a, b]) => `${a}(${b}) && !${b}.x`), ident.filter(s => s.toUpperCase() !== 'CI').map(s => `process.env.${s.toUpperCase()}`))
     const reason = fc.stringMatching(/^[a-z ]{0,20}$/).map(s => `'${s}'`)
     fc.assert(fc.property(fc.constantFrom('test.skip', 'test.fixme', 'it.skipIf', 'test.describe.skip'), cond, fc.array(fc.oneof(reason, ident), { maxLength: 1 }), (call, c, rs) => {
       expect(laneOf([file('app/e2e/a.spec.ts', { patch: hunk([], [`  ${call}(${[c, ...rs].join(', ')})`]) })])).toBe('Lane 3')

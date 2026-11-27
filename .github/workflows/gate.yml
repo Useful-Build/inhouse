@@ -18,6 +18,7 @@
 # Ledger items (new migrations, route changes, egress hosts and host lists, write ops) need two reviewer lines starting
 # "Gate check: on ledger" (they cover the PR as a whole); a "Gate check: off ledger" line makes them Lane 4. Only lines
 # from the repo's owners, members and collaborators count (the repo is public), and a quoted line (`>`) never counts.
+# Nor does a line in a review that was dismissed: its "Gate check:" or "wasim-approved:" stops counting on the recheck.
 #
 # Reviewers' lines arrive as comments and reviews. Those runs belong to main's latest commit (issue_comment) or the PR's
 # merge ref (pull_request_review), not the PR's head, so they can't report `gate` on the PR itself: the `gate-recheck`
