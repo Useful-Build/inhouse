@@ -42,9 +42,6 @@ function resultText(row: OutboxActionRow): string | undefined {
   return undefined
 }
 
-/** An operation with no rows of its own (it never collects) names its columns plainly. */
-const NO_HEADS = { ref: 'Record', change: 'Change', amount: 'Amount' } as const
-
 /**
  * The card. A batch (Stage 1 M3-B, N33) also needs its first lines (`batch`, rows.ts `batchSummaries`): its title is its
  * call's own when it is one call's batch, else the count of its changes; its lines are its first 10 items'; its totals
@@ -107,7 +104,7 @@ export function cardOf(row: OutboxActionRow, viewer: Viewer, nowMs: number, batc
     ...(batch !== undefined
       ? {
         batch: {
-          itemCount: row.items_n, firstLines: batch.firstLines, firstRows: batch.firstRows, heads: entry.rowHeads ?? NO_HEADS,
+          itemCount: row.items_n, firstLines: batch.firstLines, firstRows: batch.firstRows, ...(entry.rowHeads ? { heads: entry.rowHeads } : {}),
           totals: { records: row.records, units: row.units, unitsLabel: entry.unitsLabel },
         },
       }

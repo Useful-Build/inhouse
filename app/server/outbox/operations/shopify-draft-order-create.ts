@@ -42,12 +42,11 @@ export const shopifyDraftOrderCreate: OperationEntry<DraftOrderArgs> & { key: 's
       ...(a.tags !== undefined ? [`tags: ${a.tags.join(', ')}`] : []),
     ].join('; ')
   },
-  // Stage 1 M3-U (N33): a draft as a row: its products and quantities, the note and the tags.
+  // Stage 1 M3-U (N33): a draft as a row: its products and quantities, the note and the tags (the title says they're drafts).
   itemRow: a => ({
-    ref: 'Draft',
+    ref: '',
     change: [a.lines.map(lineWords).join(', '), ...(a.note !== undefined ? [`note: ${a.note}`] : []), ...(a.tags !== undefined ? [`tags: ${a.tags.join(', ')}`] : [])].join('; '),
   }),
-  rowHeads: { ref: 'Order', change: 'Products', amount: 'Amount' },
   batchTitle: c => `Create ${countOf(c.records, 'draft order', 'draft orders')}`,
   effects: { money: false, customer: false, destructive: false, access: false },
   memberMay: true,

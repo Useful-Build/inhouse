@@ -82,7 +82,7 @@ describe('actions (routes 120 to 124)', () => {
   // Stage 1 M3-U (routes 122, 124 to 126): a batch's answer with what it covers, an item's resolve, the items' pages and
   // the asker's withdraw.
   test("a batch's answer carries upTo and totals; an item's resolve its position; withdraw its rev; the items page by `after`", async () => {
-    const batch = { itemCount: 450, firstLines: ['Order 9001 (store-a): add VIP'], firstRows: [{ ref: orderRef(9001), change: 'add VIP' }], heads: { ref: 'Order', change: 'Change', amount: 'Amount' }, totals: { records: 450, units: 450, unitsLabel: 'orders' } }
+    const batch = { itemCount: 450, firstLines: ['Order 9001 (store-a): add VIP'], firstRows: [{ ref: orderRef(9001), change: 'add VIP' }], totals: { records: 450, units: 450, unitsLabel: 'orders' } }
     const { agent, calls } = client({
       [`POST /api/actions/${AC}/answer`]: r => ({ body: card({ kind: 'exact', rev: body(r).ifRev + 1, state: 'approved', sendAt: iso(12_000), batch }) }),
       [`POST /api/actions/${AC}/resolve`]: r => ({ body: card({ kind: 'exact', rev: body(r).ifRev + 1, state: 'needs_check', batch }) }),

@@ -3,7 +3,11 @@
 import type { ReactNode } from 'react'
 import type { ActionItemRow } from '../../../shared/contract/actions'
 
-/** `children` sit under the change (an item's outcome, its answers when it needs a check). */
+/**
+ * `children` sit under the change (an item's outcome, its answers when it needs a check).
+ * TODO(#578): once #555's ActionDetail is on main, show `detail.rows[].order` (the order's name, "#1042") in place of
+ * `row.ref`, the customer and amount beside the change, and its `note` when it has no rows.
+ */
 export function ItemRowView({ row, children, ...rest }: { row: ActionItemRow; children?: ReactNode } & Record<`data-${string}`, string | number>) {
   return (
     <li className="flex items-baseline gap-3 border-b border-divider py-2.25 text-sm last:border-b-0" data-row {...rest}>

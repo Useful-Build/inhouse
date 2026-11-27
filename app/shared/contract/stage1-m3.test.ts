@@ -61,8 +61,10 @@ describe('the batch card (1, 2)', () => {
     expect(ActionCardSchema.safeParse({ ...card, batch: { ...batch, firstRows: [...batch.firstRows, { ref: '#1', change: 'add VIP' }] } }).success).toBe(false)
     expect(ActionCardSchema.safeParse({ ...card, batch: { ...batch, firstRows: [{ ref: '#1' }] } }).success).toBe(false)
     expect(ActionCardSchema.safeParse({ ...card, batch: { ...batch, firstRows: [{ ref: 'Item 1', change: 'Location 6', amount: '+20' }] } }).success).toBe(true)
+    // A list has no heads; a table's heads name all three columns.
     const { heads: _h, ...headless } = batch
-    expect(ActionCardSchema.safeParse({ ...card, batch: headless }).success).toBe(false)
+    expect(ActionCardSchema.safeParse({ ...card, batch: headless }).success).toBe(true)
+    expect(ActionCardSchema.safeParse({ ...card, batch: { ...batch, heads: { ref: 'Item', change: 'Where' } } }).success).toBe(false)
     expect(ActionCardSchema.safeParse({ ...card, batch: { ...batch, totals: { records: 450, units: -1, unitsLabel: 'orders' } } }).success).toBe(false)
     expect(ActionCardSchema.safeParse({ ...card, batch: { ...batch, totals: { records: 450, units: 450 } } }).success).toBe(false)
   })

@@ -69,8 +69,25 @@ export const STATES: UiState[] = [
   {
     name: 'pop-batch-sheet', stage: 'Act', scenario: 'Normal', hash: '#/chats/vip-tags', ready: 'and 447 more', a11y: true,
     act: async page => {
-      // Opened from the keyboard, with focus that doesn't scroll: a click would scroll the chat behind the sheet first, by
-      // however far the button sits under the composer, and the shot's background would move between runs.
+      // The chat behind the sheet has settled first (no scroller moved for 3 frames), so the shot's background is the same
+      // every run; then the sheet opens from the keyboard with a focus that doesn't scroll (a click would scroll the chat
+      // by however far the button sits under the composer).
+      await page.evaluate(() => new Promise<void>((resolve, reject) => {
+        const scrollers = () => [...document.querySelectorAll<HTMLElement>('*')].filter(e => e.scrollHeight > e.clientHeight && /auto|scroll/.test(getComputedStyle(e).overflowY))
+        const measure = () => scrollers().map(e => e.scrollTop).join(',')
+        let prev = measure()
+        let same = 0
+        let frames = 0
+        const tick = () => {
+          const now = measure()
+          same = now === prev ? same + 1 : 0
+          prev = now
+          if (same >= 3) return resolve()
+          if (++frames > 240) return reject(new Error(`The chat behind the sheet never settled (last ${now})`))
+          requestAnimationFrame(tick)
+        }
+        requestAnimationFrame(tick)
+      }))
       await page.getByRole('button', { name: /^See all 450: / }).evaluate(el => (el as HTMLElement).focus({ preventScroll: true }))
       await page.keyboard.press('Enter')
       const sheet = page.getByRole('dialog', { name: 'Tag 450 orders as VIP' })

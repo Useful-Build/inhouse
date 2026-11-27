@@ -247,9 +247,9 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
           <table className="w-full border-collapse text-sm" data-card-rows>
             <thead>
               <tr className="border-b border-divider text-left text-xs text-muted-foreground">
-                <th scope="col" className="py-2 pr-3 font-medium">{batch.heads.ref}</th>
-                <th scope="col" className="py-2 pr-3 font-medium">{batch.heads.change}</th>
-                <th scope="col" className="py-2 text-right font-medium">{batch.heads.amount}</th>
+                <th scope="col" className="py-2 pr-3 font-medium">{batch.heads!.ref}</th>
+                <th scope="col" className="py-2 pr-3 font-medium">{batch.heads!.change}</th>
+                <th scope="col" className="py-2 text-right font-medium">{batch.heads!.amount}</th>
               </tr>
             </thead>
             <tbody>

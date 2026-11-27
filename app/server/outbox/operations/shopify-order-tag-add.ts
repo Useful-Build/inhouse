@@ -2,7 +2,7 @@
 // in the brand's connected Shopify store. Scope `{ shop }`, one record and one unit per order, no effect flag (a tag
 // reaches no customer and moves no money), so a member may ask for it and "Always allow" may cover it within its limits.
 // Shared shape: ./shopify-order-tags.ts.
-import { itemsPerOrder, OrderTagsArgsSchema, shopScope, tagsCard, tagsItemLine, tagsItemRow, tagsBatchTitle, TAG_ROW_HEADS, type OrderTagsArgs } from './shopify-order-tags.ts'
+import { itemsPerOrder, OrderTagsArgsSchema, shopScope, tagsCard, tagsItemLine, tagsItemRow, tagsBatchTitle, type OrderTagsArgs } from './shopify-order-tags.ts'
 import type { OperationEntry } from './types.ts'
 
 export { OrderTagsArgsSchema as TagAddArgsSchema }
@@ -21,7 +21,6 @@ export const shopifyOrderTagAdd: OperationEntry<TagAddArgs> & { key: 'shopify.or
   items: itemsPerOrder,
   itemLine: (a, f) => tagsItemLine('add', a, f),
   itemRow: a => tagsItemRow('add', a),
-  rowHeads: TAG_ROW_HEADS,
   batchTitle: (c, same) => tagsBatchTitle('add', c.records, same),
   titleKey: '$.tags',
   effects: { money: false, customer: false, destructive: false, access: false },

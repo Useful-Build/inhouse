@@ -353,10 +353,9 @@ describe('reading the card again', () => {
 describe('batches (Stage 1 M3-U)', () => {
   const LINES = Array.from({ length: 10 }, (_, i) => `Order ${3901 + i} (store-a): add VIP`)
   const ROWS = Array.from({ length: 10 }, (_, i) => ({ ref: `#${3901 + i}`, change: 'add VIP' }))
-  const HEADS = { ref: 'Order', change: 'Change', amount: 'Amount' }
   const batch = (n: number, o: Partial<ActionCard> = {}): ActionCard => card({
     kind: 'exact', guardrail: 'bulk', title: `Tag ${n} orders as VIP`, lines: LINES, records: n, can: { ...NONE, approve: true, deny: true },
-    batch: { itemCount: n, firstLines: LINES, firstRows: ROWS, heads: HEADS, totals: { records: n, units: n, unitsLabel: 'orders' } }, ...o,
+    batch: { itemCount: n, firstLines: LINES, firstRows: ROWS, totals: { records: n, units: n, unitsLabel: 'orders' } }, ...o,
   })
   const rowTexts = () => [...host.querySelectorAll('[data-card-rows] [data-row]')].map(r => r.textContent)
   test('a quiet summary: the title, one line under it, 3 rows, "and N more" with See all, and Approve all', async () => {
@@ -371,18 +370,25 @@ describe('batches (Stage 1 M3-U)', () => {
     expect(text()).not.toContain('Needs your approval')
     expect(text()).not.toContain('In all')
   })
-  test('rows with amounts are a table with its total in the header and 5 rows under column heads', async () => {
+  test('a stock batch (the server sends column heads) is a table, its total once in the header, 5 rows under the heads', async () => {
     const rows = Array.from({ length: 10 }, (_, i) => ({ ref: `Item ${8001 + i}`, change: 'Location 601 · restock', amount: `+${10 * (i + 1)}` }))
     await show({ actionId: AC, initial: batch(12, { title: 'Restock 12 items', batch: { itemCount: 12, firstLines: LINES, firstRows: rows, heads: { ref: 'Item', change: 'Where and why', amount: 'Stock' }, totals: { records: 12, units: 900, unitsLabel: 'stock units' } } }) })
     expect(host.querySelector('[data-card-total]')?.textContent).toBe('12 changes · 900 stock units')
     expect([...host.querySelectorAll('th')].map(t => t.textContent)).toEqual(['Item', 'Where and why', 'Stock'])
     expect(host.querySelectorAll('tbody tr')).toHaveLength(5)
     expect(host.querySelector('tbody tr')?.textContent).toBe('Item 8001Location 601 · restock+10')
-    expect(host.querySelector('[data-card-subtitle]')?.textContent).toBe('Shopify · One approval covers 900 stock units')
+    // The total once, in the header: the line under the title is the tool alone.
+    expect(host.querySelector('[data-card-subtitle]')?.textContent).toBe('Shopify')
     expect(buttons()).toEqual(['See all 12', 'Approve all 12', 'No'])
   })
+  test('a tag batch whose rows carry amounts (richer rows) stays a list: the table is chosen by the operation', async () => {
+    const rows = ROWS.map(r => ({ ...r, amount: '$642.10' }))
+    await show({ actionId: AC, initial: batch(450, { batch: { itemCount: 450, firstLines: LINES, firstRows: rows, totals: { records: 450, units: 450, unitsLabel: 'orders' } } }) })
+    expect(host.querySelector('table')).toBeNull()
+    expect(rowTexts()[0]).toBe(`${orderRef(3901)}add VIP$642.10`)
+  })
   test('one item: a plain Approve, and the subtitle names what it covers', async () => {
-    await show({ actionId: AC, initial: batch(1, { lines: LINES.slice(0, 1), batch: { itemCount: 1, firstLines: LINES.slice(0, 1), firstRows: ROWS.slice(0, 1), heads: HEADS, totals: { records: 1, units: 1, unitsLabel: 'orders' } } }) })
+    await show({ actionId: AC, initial: batch(1, { lines: LINES.slice(0, 1), batch: { itemCount: 1, firstLines: LINES.slice(0, 1), firstRows: ROWS.slice(0, 1), totals: { records: 1, units: 1, unitsLabel: 'orders' } } }) })
     expect(buttons()).toEqual(['Approve', 'No'])
     expect(host.querySelector('[data-card-subtitle]')?.textContent).toBe('Shopify · One approval covers 1 order')
   })

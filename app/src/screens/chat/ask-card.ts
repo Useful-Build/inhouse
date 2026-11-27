@@ -172,8 +172,12 @@ export function coversLine(b: Batch): string {
     : `One approval covers ${coversText(b)}`
 }
 
-/** A batch whose rows carry amounts or quantities (stock, money) shows them as a table with its total (option B). */
-export const isTable = (b: Batch): boolean => b.firstRows.some(r => r.amount !== undefined)
+/**
+ * A batch of an operation whose rows are quantities or money (stock: the server sends its column heads) shows as a table
+ * with its total (option B). Chosen by the operation, never by whether a row has an amount: richer rows (#555's order
+ * totals) don't turn a tag batch into a table.
+ */
+export const isTable = (b: Batch): boolean => b.heads !== undefined
 
 /** How many rows the card previews: 3 in a list, 5 in a table. */
 export const previewRows = (b: Batch): number => (isTable(b) ? 5 : 3)
@@ -183,8 +187,11 @@ export function tableTotal(b: Batch): string {
   return `${fmtCount(b.itemCount, display())} ${b.itemCount === 1 ? 'change' : 'changes'} · ${coversText(b)}`
 }
 
-/** The full list's search placeholder, from the rows' first column: "Search orders", "Search items". */
-export const searchLabel = (b: Batch): string => `Search ${b.heads.ref.toLowerCase()}s`
+/** The full list's search placeholder: "Search orders" (what a list counts), "Search items" (a table's first column). */
+export const searchLabel = (b: Batch): string => (b.heads ? `Search ${b.heads.ref.toLowerCase()}s` : `Search ${b.totals.unitsLabel}`)
+
+/** The full list's footer line, only when it adds something the header doesn't: a table's total, or a money amount. */
+export const footerTotal = (b: Batch): string | null => (isTable(b) ? tableTotal(b) : b.totals.amount ? coversText(b) : null)
 
 /**
  * The quiet line under a card's title (Stage 1 M3-U design): the tool, then what the card is waiting for or where it got
@@ -198,7 +205,8 @@ export function subtitleOf(card: ActionCard, whose: Whose = null): { text: strin
     return { text: `${tool} · Waiting for ${whose ?? card.waitingFor ?? 'an admin'}`, warn: false }
   }
   if (whose !== null) return { text: `${tool} · Waiting for ${whose}`, warn: false }
-  if (card.batch) return { text: `${tool} · ${coversLine(card.batch)}`, warn: false }
+  // A table says its total once, in its header: the line under the title is the tool alone.
+  if (card.batch) return { text: isTable(card.batch) ? tool : `${tool} · ${coversLine(card.batch)}`, warn: false }
   return { text: `${tool} · ${card.kind === 'exact' ? 'Needs your approval' : 'Your Inhouse agent asks first'}`, warn: false }
 }
 

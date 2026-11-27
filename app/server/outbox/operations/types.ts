@@ -73,7 +73,10 @@ export interface OperationBase<A> {
    * defines it (operations.test.ts).
    */
   itemRow?(item: A): { ref: string; change: string; amount?: string }
-  /** Stage 1 M3-U: the rows' column heads, in the person's words. */
+  /**
+   * Stage 1 M3-U: the rows' column heads, in the person's words, for an operation whose batch shows as a table (its rows
+   * carry quantities or money: stock). Left out, the batch is a plain list, whatever its rows carry.
+   */
   rowHeads?: { ref: string; change: string; amount: string }
   /**
    * Stage 1 M3-U (N33): a batch card's title, what happens with its count ("Tag 450 orders as VIP"). `same` is an item's

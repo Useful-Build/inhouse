@@ -251,11 +251,13 @@ describe('the table keeps the class rules (M3-A)', () => {
 // no title (its card would fall back to a bare line or "450 changes in Shopify"); a row drops the record or the change;
 // a stock row loses its sign; a title names tags the items don't all share, or counts the wrong thing.
 describe('batch rows and titles (M3-U)', () => {
-  it('every operation that collects defines its row, its heads and its title', () => {
+  it('every operation that collects defines its row and its title; only stock shows as a table (its heads)', () => {
     for (const e of Object.values(OPERATIONS) as OperationEntry[]) {
       if (!e.coalesces) continue
-      expect([e.key, typeof e.itemRow, typeof e.batchTitle, e.rowHeads === undefined]).toEqual([e.key, 'function', 'function', false])
+      expect([e.key, typeof e.itemRow, typeof e.batchTitle]).toEqual([e.key, 'function', 'function'])
     }
+    const tables = (Object.values(OPERATIONS) as OperationEntry[]).filter(e => e.rowHeads).map(e => e.key).sort()
+    expect(tables).toEqual(['shopify.inventory.reduce', 'shopify.inventory.restock'])
   })
   it('tags: the orders and the change; the title names the tags only when every item shares them', () => {
     const add = OPERATIONS['shopify.order.tag_add'] as OperationEntry<TagAddArgs>
@@ -279,7 +281,7 @@ describe('batch rows and titles (M3-U)', () => {
     expect(reduce.itemRow!({ ...s, reason: 'damaged' })).toEqual({ ref: 'Item 8001', change: 'Location 601 · damaged', amount: '-1,200' })
     expect(restock.batchTitle!({ records: 120, units: 2400 }, null)).toBe('Restock 120 items')
     const draft = OPERATIONS['shopify.draft_order.create']
-    expect(draft.itemRow!({ lines: [{ variantId: 'gid://shopify/ProductVariant/7001', quantity: 2 }], note: 'Showroom' })).toEqual({ ref: 'Draft', change: '2 × variant 7001; note: Showroom' })
+    expect(draft.itemRow!({ lines: [{ variantId: 'gid://shopify/ProductVariant/7001', quantity: 2 }], note: 'Showroom' })).toEqual({ ref: '', change: '2 × variant 7001; note: Showroom' })
     expect(draft.batchTitle!({ records: 10, units: 10 }, null)).toBe('Create 10 draft orders')
   })
 })

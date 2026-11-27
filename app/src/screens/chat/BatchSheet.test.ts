@@ -34,7 +34,7 @@ const batch = (n: number, o: Partial<ActionCard> = {}): ActionCard => ({
   can: { ...NONE, approve: true, deny: true }, nudgeAlways: false, approverKind: 'person',
   batch: {
     itemCount: n, firstLines: Array.from({ length: Math.min(10, n) }, (_, i) => lineOf(i + 1)), firstRows: Array.from({ length: Math.min(10, n) }, (_, i) => rowOf(i + 1)),
-    heads: { ref: 'Order', change: 'Change', amount: 'Amount' }, totals: { records: n, units: n, unitsLabel: 'orders' },
+    totals: { records: n, units: n, unitsLabel: 'orders' },
   }, ...o,
 })
 /** The server's pages: 100 items after `after`, of `total`, each in `state`. */
@@ -80,7 +80,8 @@ describe('the full list', () => {
     expect(fake.actionItems.mock.calls.map(c => c[1])).toEqual([0, 100, 200, 300, 400])
     expect(rows().map(r => Number(r.getAttribute('data-item')))).toEqual(Array.from({ length: 450 }, (_, i) => i + 1))
     expect(rows()[449].textContent).toBe(`${rowOf(450).ref}add VIP`)
-    expect(sheet().querySelector('[data-sheet-totals]')?.textContent).toBe('450 orders')
+    // A list's footer adds no totals line: the header says "450 orders" already.
+    expect(sheet().querySelector('[data-sheet-totals]')).toBeNull()
     // No row numbers: the order number is the row's record.
     expect(rows()[0].textContent).toBe(`${rowOf(1).ref}add VIP`)
     expect(sheetButtons()).toEqual(['Approve all 450', 'No'])
@@ -127,6 +128,21 @@ describe('the full list', () => {
       expect(fake.actionItems.mock.calls.map(c => c[1])).toEqual([0, 100])
       expect(rows()).toHaveLength(200)
     } finally { vi.unstubAllGlobals() }
+  })
+  test('issue 579: settling an item reads the rows again in place, so the list keeps its rows (and its scroll)', async () => {
+    serve(3, 'needs_check', { result: 'It isn’t clear whether this went out.' })
+    const unclear = batch(3, { state: 'needs_check', can: { ...NONE, resolve: true } })
+    await show({ card: unclear })
+    expect(rows()).toHaveLength(3)
+    let seen = -1
+    fake.actionItems.mockImplementationOnce(async () => { seen = rows().length; return { items: [{ n: 1, line: lineOf(1), row: rowOf(1), state: 'failed' }, { n: 2, line: lineOf(2), row: rowOf(2), state: 'needs_check' }, { n: 3, line: lineOf(3), row: rowOf(3), state: 'needs_check' }] } })
+    await act(async () => root.render(createElement(TooltipProvider, null, createElement(BatchSheet, {
+      card: { ...unclear, rev: 2 }, opened: unclear, whose: null, busy: false, refusal: null, onClose: () => {}, onSawTip: () => {}, onAnswer: () => {}, onResolve: () => {},
+    }))))
+    await flush()
+    // The rows stayed while the page was read again, and the settled one shows its outcome.
+    expect(seen).toBe(3)
+    expect(rows().map(r => r.getAttribute('data-item-state'))).toEqual(['failed', 'needs_check', 'needs_check'])
   })
   test('once the card stops waiting, its answers go', async () => {
     serve(12)

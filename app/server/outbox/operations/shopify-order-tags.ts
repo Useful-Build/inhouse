@@ -49,9 +49,6 @@ export function tagsItemLine(verb: 'add' | 'remove', a: OrderTagsArgs, f: Resolv
 export const tagsItemRow = (verb: 'add' | 'remove', a: OrderTagsArgs) =>
   ({ ref: a.orderIds.map(id => `#${orderNumber(id)}`).join(', '), change: `${verb} ${a.tags.join(', ')}` })
 
-/** Stage 1 M3-U: the rows' heads (shown only for rows with amounts, which tags never have). */
-export const TAG_ROW_HEADS = { ref: 'Order', change: 'Change', amount: 'Amount' } as const
-
 /**
  * Stage 1 M3-U (N33): a batch's title. Every item with the same tags: "Tag 450 orders as VIP" ("Remove VIP from 450
  * orders"); else "Add tags to 450 orders" ("Remove tags from 450 orders").

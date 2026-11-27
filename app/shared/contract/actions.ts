@@ -57,8 +57,11 @@ export const ActionBatchSchema = z.object({
   firstLines: z.array(z.string()).max(BATCH_FIRST_LINES),
   /** Stage 1 M3-U: the same first items as rows. */
   firstRows: z.array(ActionItemRowSchema).max(BATCH_FIRST_LINES),
-  /** Stage 1 M3-U: the rows' column heads. */
-  heads: ActionItemHeadsSchema,
+  /**
+   * Stage 1 M3-U: the rows' column heads, set only for an operation whose rows are a table (stock and money: option B,
+   * the amounts in their own column, the total in the header). Absent, the rows are a plain list (option A).
+   */
+  heads: ActionItemHeadsSchema.optional(),
   totals: z.object({
     records: z.number().int().min(0),
     units: z.number().int().min(0),

@@ -21,7 +21,7 @@ import { NO_MOTION } from '../../ui/motion'
 import { claimTrigger, keepForToast, restoreFocus } from '../../ui/dialogs'
 import { fmtCount } from '../../lib/format'
 import { display } from '../../state/display'
-import { buttonsOf, coversText, isTable, itemStatus, moreArrivedText, refusalOf, searchLabel, subtitleOf, tableTotal } from './ask-card'
+import { buttonsOf, coversText, footerTotal, itemStatus, moreArrivedText, refusalOf, searchLabel, subtitleOf } from './ask-card'
 import type { CardButton, Whose } from './ask-card'
 import { ItemRowView } from './ItemRow'
 
@@ -41,9 +41,20 @@ export interface BatchSheetProps {
   onResolve: (outcome: ActionResolution, n: number) => void
 }
 
-/** What has been read: the items up to the shown count, where the next page starts (null once all are in), and past it. */
-interface Read { items: ActionItem[]; next: number | null; past: number; error: string | null; busy: boolean }
-const START: Read = { items: [], next: 0, past: 0, error: null, busy: false }
+/**
+ * What has been read: the items up to the shown count (by position), where the next page starts (null once all are in),
+ * how many joined past it, and `refill`: a reading again after the card moved on re-reads the pages it had, at once,
+ * while the rows already shown stay in place (so the list keeps its scroll, #579).
+ */
+interface Read { items: ActionItem[]; next: number | null; past: number; error: string | null; busy: boolean; refill: number }
+const START: Read = { items: [], next: 0, past: 0, error: null, busy: false, refill: 0 }
+
+/** `page`'s rows over `items`, by position: a row read again replaces its old self in place. */
+function merged(items: readonly ActionItem[], page: readonly ActionItem[]): ActionItem[] {
+  const byN = new Map(items.map(i => [i.n, i]))
+  for (const it of page) byN.set(it.n, it)
+  return [...byN.values()].sort((a, b) => a.n - b.n)
+}
 
 /** A search over a row's own words: its record, its change, its amount and its full line. */
 const matches = (it: ActionItem, q: string) => [it.row.ref, it.row.change, it.row.amount ?? '', it.line].some(t => t.toLowerCase().includes(q))
@@ -70,10 +81,17 @@ export function BatchSheet({ card, opened, whose, busy, refusal, onClose, onSawT
   useEffect(() => { onSaw.current = onSawTip })
   const gen = useRef(0)
 
-  useEffect(() => { gen.current++; setRead(START) }, [card.id, readRev, shown])
+  // Another card starts empty; the same card moving on (an item settled, the send) reads its rows again in place.
+  const cardId = useRef(card.id)
+  useEffect(() => {
+    gen.current++
+    if (cardId.current !== card.id) { cardId.current = card.id; setRead(START); return }
+    setRead(r => ({ ...START, items: r.items.filter(i => i.n <= shown), refill: r.items.length }))
+  }, [card.id, readRev, shown])
 
   // The next page, when the list's end shows, a search wants every item, or the scroll can't reach (no observer).
-  const want = read.next !== null && !read.busy && read.error === null && (atEnd || query.trim() !== '' || typeof IntersectionObserver === 'undefined')
+  const want = read.next !== null && !read.busy && read.error === null
+    && (atEnd || read.next < read.refill || query.trim() !== '' || typeof IntersectionObserver === 'undefined')
   useEffect(() => {
     if (!want || read.next === null) return
     const mine = gen.current
@@ -83,15 +101,12 @@ export function BatchSheet({ card, opened, whose, busy, refusal, onClose, onSawT
     agent.actionItems(card.id, after).then(page => {
       if (gen.current !== mine) return
       setRead(r => {
-        const items = [...r.items]
         let past = r.past
-        for (const it of page.items) {
-          if (it.n <= shown) items.push(it)
-          else past = Math.max(past, it.n - shown)
-        }
+        for (const it of page.items) if (it.n > shown) past = Math.max(past, it.n - shown)
+        const items = merged(r.items, page.items.filter(it => it.n <= shown))
         const next = page.next === undefined || page.next >= shown ? null : page.next
         if (next === null) onSaw.current(shown + past)
-        return { items, next, past, error: null, busy: false }
+        return { ...r, items, next, past, error: null, busy: false }
       })
     }, (e: unknown) => { if (gen.current === mine) setRead(r => ({ ...r, busy: false, error: refusalOf(e).text })) })
   }, [want, read.next, card.id, shown])
@@ -114,6 +129,7 @@ export function BatchSheet({ card, opened, whose, busy, refusal, onClose, onSawT
   const resolving = card.state === NEEDS_CHECK && card.can.resolve
   const count = fmtCount(shown, display())
   const sub = subtitleOf(card, whose)
+  const footer = footerTotal(batch)
   // A page is on its way (between pages nothing shows: the next one loads as the list's end comes into view).
   const loading = read.busy
   const complete = read.next === null
@@ -169,20 +185,18 @@ export function BatchSheet({ card, opened, whose, busy, refusal, onClose, onSawT
             </div>
           )}
         </div>
-        <div className="border-t border-divider px-5 pt-3 pb-4" data-sheet-footer>
-          <p className="m-0 text-sm text-foreground-2" data-sheet-totals>
-            {isTable(batch) ? tableTotal(batch) : coversText(batch)}
-          </p>
-          {past > 0 && waiting && <p className="m-0 mt-1 text-sm text-muted-foreground" data-more-arrived>{moreArrivedText(past)}</p>}
-          {refusal && <p role="alert" className="m-0 mt-2 text-sm text-destructive-text">{refusal}</p>}
+        {(footer || (past > 0 && waiting) || refusal || answers.length > 0) && <div className="border-t border-divider px-5 pt-3 pb-4" data-sheet-footer>
+          {footer && <p className="m-0 mb-3 text-sm text-foreground-2" data-sheet-totals>{footer}</p>}
+          {past > 0 && waiting && <p className="m-0 mb-3 text-sm text-muted-foreground" data-more-arrived>{moreArrivedText(past)}</p>}
+          {refusal && <p role="alert" className="m-0 mb-3 text-sm text-destructive-text">{refusal}</p>}
           {answers.length > 0 && (
-            <div data-sheet-actions className="mt-3 flex gap-2">
+            <div data-sheet-actions className="flex gap-2">
               {answers.map(b => (
                 <Button key={b.key} size="lg" variant={b.primary ? 'primary' : 'outline'} className={cn(b.primary && 'flex-1', tap)} disabled={busy} onClick={() => onAnswer(b)}>{b.label}</Button>
               ))}
             </div>
           )}
-        </div>
+        </div>}
       </SheetContent>
     </Sheet>
   )

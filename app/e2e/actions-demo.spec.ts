@@ -69,7 +69,8 @@ test('See all lists every change in order; its Approve covers the 450 it names, 
   await readAll(sheet, 450)
   await expect(items.nth(0)).toHaveText('#3901add VIP')
   await expect(items.nth(449)).toHaveText('#4350add VIP')
-  await expect(sheet.locator('[data-sheet-totals]')).toHaveText('450 orders')
+  // The footer adds no totals line for a list: the header says it.
+  await expect(sheet.locator('[data-sheet-totals]')).toHaveCount(0)
   // A search narrows the rows on their own words.
   await sheet.getByRole('searchbox', { name: 'Search orders' }).fill('4123')
   await expect(items).toHaveCount(1)

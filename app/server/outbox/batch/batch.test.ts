@@ -429,8 +429,10 @@ describe('grant-backed batches and their units (failure 3)', () => {
     if (r.outcome !== 'waiting') return
     const [card] = await cardsOf(db, [r.action], ME, now)
     // Stage 1 M3-U (N33): the title says what happens with its count; the first items come as rows too, with their heads.
-    expect(card).toMatchObject({ kind: 'exact', title: 'Tag 7 orders as vip', records: 7, batch: { itemCount: 7, heads: { ref: 'Order', change: 'Change' }, totals: { records: 7, units: 7, unitsLabel: 'orders' } } })
+    expect(card).toMatchObject({ kind: 'exact', title: 'Tag 7 orders as vip', records: 7, batch: { itemCount: 7, totals: { records: 7, units: 7, unitsLabel: 'orders' } } })
     expect(card!.batch!.firstLines).toHaveLength(7)
+    // A tag batch is a plain list: no column heads.
+    expect(card!.batch!.heads).toBeUndefined()
     expect(card!.batch!.firstRows).toEqual(Array.from({ length: 7 }, (_, k) => ({ ref: `#${k + 1}`, change: 'add vip' })))
     const page = await outboxStore({ db }).items(ME, r.action.id, { after: 0 })
     expect(page).toEqual({ page: { items: Array.from({ length: 7 }, (_, k) => ({ n: k + 1, line: `Order ${k + 1} (store-a): add vip`, row: { ref: `#${k + 1}`, change: 'add vip' }, state: 'pending' })) } })

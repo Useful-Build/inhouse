@@ -48,10 +48,10 @@ type Item = ActionItem & { records: number; units: number }
 interface Row { card: ActionCard; sendAtMs: number | null; items: Item[] }
 
 /** A batch's items in the server's words for its operation (operations/shopify-order-tags.ts, shopify-inventory.ts). */
-function itemsOf(b: RawBatch): { items: Item[]; heads: { ref: string; change: string; amount: string } } {
+function itemsOf(b: RawBatch): { items: Item[]; heads?: { ref: string; change: string; amount: string } } {
   if (b.kind === 'tags') {
+    // A tag batch is a plain list (no heads); a stock batch is a table.
     return {
-      heads: { ref: 'Order', change: 'Change', amount: 'Amount' },
       items: Array.from({ length: b.count }, (_, i) => {
         const order = b.firstOrder + i
         return { n: i + 1, line: `Order ${order} (${raw.shop}): add ${b.tag}`, row: { ref: `#${order}`, change: `add ${b.tag}` }, state: 'pending' as const, records: 1, units: 1 }
@@ -84,7 +84,7 @@ function batchRow(h: MockActionsHost, b: RawBatch): Row {
       reachesCustomer: false, reversible: true, guardrail: b.guardrail, chatId: b.chatId, askedBy: h.meId, askedAt: demoAt(b.askedAt),
       serverNow: demoAt(b.askedAt), can: { ...NONE, approve: true, deny: true }, nudgeAlways: false, approverKind: 'person',
       batch: {
-        itemCount: items.length, firstLines, firstRows: first.map(i => i.row), heads,
+        itemCount: items.length, firstLines, firstRows: first.map(i => i.row), ...(heads ? { heads } : {}),
         totals: { records: sum(items, 'records'), units: sum(items, 'units'), unitsLabel: b.unitsLabel },
       },
     },
