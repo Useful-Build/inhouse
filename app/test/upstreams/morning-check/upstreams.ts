@@ -23,11 +23,17 @@ const operationOf = (body: string): string | null => {
   }
 }
 
-/** The upstream with the case's fault: named operations (or every request) answer a fixed error; the rest go through. */
+/**
+ * The upstream with the case's fault: named operations (or every read) answer a fixed error; the rest go through. `ops: 'all'`
+ * fails every GraphQL read but never the token endpoint: a connected store that's down. The hub's grant still works, so the
+ * brand's Tools page (route 70) lists Shopify connected and the turn's prompt names it, as for a real outage of a store
+ * that was connected before; failing the token endpoint too would read as no store connected, and the graded run's store
+ * check would stop before the case (evals/shopify-served.ts).
+ */
 export function withFault(inner: Upstream, fault: FaultSpec): Upstream {
   return async req => {
-    if (fault.ops === 'all') return new Response('unavailable', { status: 503 })
     if (new URL(req.url).pathname.endsWith('/graphql.json')) {
+      if (fault.ops === 'all') return new Response('unavailable', { status: 503 })
       const body = await req.text()
       const op = operationOf(body)
       if (op !== null && fault.ops.includes(op)) {

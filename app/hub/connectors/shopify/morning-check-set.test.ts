@@ -5,6 +5,9 @@
 //  2. the answer depends on the day the set is run (every age is relative, so any `now` must give the same keys);
 //  3. a clean store crosses a rule;
 //  4. an outage fault doesn't reach the hub as its code: credentials_rejected, result_too_large, upstream_unavailable;
+//  4b. an outage fault stops the hub's first grant, so the store reads as never connected (route 70 lists it in the catalog,
+//      the prompt doesn't name it) and the graded run's store check stops before the case, instead of running a connected
+//      store that's down (the 2026-11-26 eval run stopped at outage-all for this);
 //  5. a dataset isn't well-formed, or two cases share a host.
 import { describe, expect, it } from 'vitest'
 import { AMBER, GAPS, META, OPERATIONS_OF, RED } from '../../../evals/morning-check/expected'
@@ -13,7 +16,8 @@ import { DAY, HOUR, fixtureStore, healthy } from '../../../test/upstreams/mornin
 import { expectedFindings } from '../../../test/upstreams/morning-check/oracle'
 import { MORNING_CHECK_UPSTREAMS, hostOf, lazyUpstream, morningCheckUpstreams, upstreamFor, withFault } from '../../../test/upstreams/morning-check/upstreams'
 import { checkDataset } from '../../../test/upstreams/shopify/dataset'
-import { createShopifyUpstream } from '../../../test/upstreams/shopify/server'
+import { createShopifyUpstream, TEST_CLIENT_ID, TEST_CLIENT_SECRET } from '../../../test/upstreams/shopify/server'
+import { shopifyConnector } from './route'
 import { call, signInClient } from './test-kit'
 
 const NOW = Date.parse('2026-11-22T12:00:00Z')
@@ -164,6 +168,38 @@ describe('the outage upstreams, through the hub\'s own tools', () => {
     expect(await call('returns_search', { first: 5 }, c)).toMatchObject({ ok: false, error: { code: 'result_too_large' } })
     expect(await call('orders_search', { first: 5 }, c)).toMatchObject({ ok: true })
     expect(await call('refunds_search', { first: 5, ...FROM }, c)).toMatchObject({ ok: true })
+  })
+
+  // 4b. The product's store check (evals/shopify-served.ts on route 70, server/api/tools.ts) and the prompt's account read
+  // (hub/oauth/entry.ts listAccounts) both need the test shop's first grant to work: SignIn's `warm`, then an account
+  // that is `active` with a connect date. Every outage case is a connected store that's down, never one never connected.
+  for (const c of CASES.filter(x => x.group === 'outage')) {
+    it(`${c.id}: the first grant works, so the account reads active with a connect date before any read`, async () => {
+      const { core } = signInClient(upstreamFor(c, NOW))
+      expect(await core.warm(shopifyConnector.accountId)).toEqual({ ok: true, value: { state: 'active' } })
+      expect(await core.accountStatus(shopifyConnector.accountId)).toMatchObject({ ok: true, value: { state: 'active', paused: false, lastError: null, connectedAt: { ms: expect.any(Number) } } })
+    })
+  }
+
+  it('outage-all: the token endpoint grants and every GraphQL read answers 503, whatever its operation', async () => {
+    const host = hostOf('outage-all')
+    const up = upstreamFor(CASES.find(c => c.id === 'outage-all')!, NOW)
+    const token = await up(new Request(`https://${host}/admin/oauth/access_token`, { method: 'POST', body: new URLSearchParams({ grant_type: 'client_credentials', client_id: TEST_CLIENT_ID, client_secret: TEST_CLIENT_SECRET }) }))
+    expect(token.status).toBe(200)
+    const { access_token } = (await token.json()) as { access_token: string }
+    for (const query of ['query OrdersSearch { orders(first: 1) { nodes { id } } }', 'query ShopName { shop { name } }', '{ shop { name } }', 'not graphql']) {
+      const r = await up(new Request(`https://${host}/admin/api/2026-10/graphql.json`, { method: 'POST', headers: { 'X-Shopify-Access-Token': access_token, 'Content-Type': 'application/json' }, body: JSON.stringify({ query }) }))
+      expect(r.status, query).toBe(503)
+    }
+  })
+
+  it('outage-all: after the grant, every read is still upstream_unavailable and the account keeps its connect date', async () => {
+    const { client: c, core } = signInClient(upstreamFor(CASES.find(x => x.id === 'outage-all')!, NOW))
+    expect(await core.warm(shopifyConnector.accountId)).toMatchObject({ ok: true })
+    for (const [tool, input] of [['orders_search', { first: 5 }], ['refunds_search', { first: 5, ...FROM }], ['returns_search', { first: 5 }], ['products_search', { first: 5 }]] as const) {
+      expect(await call(tool, input, c), tool).toMatchObject({ ok: false, error: { code: 'upstream_unavailable' } })
+    }
+    expect(await core.accountStatus(shopifyConnector.accountId)).toMatchObject({ ok: true, value: { connectedAt: { ms: expect.any(Number) } } })
   })
 
   it('a fault names only operations the gaps map to, and each gap maps to the operation its tool uses', () => {

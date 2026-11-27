@@ -78,7 +78,7 @@ export const META: readonly MorningCaseMeta[] = [
   { id: 'clean-steady', group: 'clean', builder: 'cleanSteady', ...complete, items: [] },
   { id: 'clean-empty', group: 'clean', builder: 'cleanEmpty', ...complete, items: [] },
   // Outages (the late-orders store, so what can still be read still shows): an outage that comes back `complete` fails.
-  { id: 'outage-all', group: 'outage', builder: 'lateOrders', fault: { kind: 'unavailable', ops: 'all' }, coverage: 'incomplete', gaps: GAPS, items: [], note: 'every request answers 503 (upstream_unavailable)' },
+  { id: 'outage-all', group: 'outage', builder: 'lateOrders', fault: { kind: 'unavailable', ops: 'all' }, coverage: 'incomplete', gaps: GAPS, items: [], note: 'every read answers 503 (upstream_unavailable); the token endpoint still grants, so Shopify reads as connected (a connected store that is down)' },
   {
     id: 'outage-credentials', group: 'outage', builder: 'lateOrders', fault: { kind: 'credentials_rejected', ops: ['RefundsSearch'] },
     coverage: 'incomplete', gaps: ['refunds'], lenient: true, items: [{ key: 'late-orders', sev: AMBER, sources: ['#2001', '#2002', '#2003'] }], note: 'one read answers credentials_rejected; the account then stays rejected',
