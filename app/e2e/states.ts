@@ -136,6 +136,10 @@ export const STATES: UiState[] = [
         await expect(drafts).toHaveCount(n - 1)
       }
       await page.clock.runFor(30_000)
+      // Each "sent" notice starts its 4-second countdown in an effect once React has rendered it (src/shell/Toasts.tsx),
+      // and React renders on a real task the paused clock doesn't step: when runFor above ends before that render, the
+      // countdown waits on the paused clock and the notices stay for the shot (run 44956112491). Step on until they've gone.
+      await expect.poll(async () => { await page.clock.runFor(1_000); return page.locator('[data-toast]').count() }, { message: 'every toast has left' }).toBe(0)
       await page.evaluate(() => { location.hash = '#/today' })
       await expect(page.getByText('All 6 approved.')).toBeVisible()
       // No hover or focus left over from the last Approve click on the card now under the pointer.
