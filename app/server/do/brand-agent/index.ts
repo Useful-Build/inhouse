@@ -31,7 +31,8 @@ import { alarmPort, createScheduler, registrySeeds } from './scheduler.ts'
 import { poke, revive, taskContext } from './task-ops.ts'
 import type { SqlScheduler, TaskContext } from './scheduler.ts'
 import { taskHandlers } from './tasks/index.ts'
-import { armStopAfterBatch, runAlarmNow, seedCursor, setTimings } from '@test-controls'
+import { armStopAfterBatch, currentTimings, isolateId, loadTestControls, runAlarmNow, seedCursor, setTimings } from '@test-controls'
+import { testControlsOn } from '../../ops/test-switch.ts'
 import { POKE_ID, TICK_KIND } from '../../routines/tick.ts'
 import { createRunTokens } from './tokens.ts'
 import { PRINCIPAL_HEADER, SocketHub } from './sockets.ts'
@@ -43,17 +44,34 @@ import type { EgressRoute, RunGrant, TokenRefusal } from './tokens.ts'
 import { doPauseState, lagSince } from '../../outbox/gate.ts'
 import type { Lag } from '../../ops/signals/needs-check.ts'
 
+/** What the test build's observe control answers (route 67, `{ action: 'observe' }`). */
+export interface TestObservation {
+  isolateId: string
+  constructedAtMs: number
+  nowMs: number
+  timings: Record<string, number>
+  turn: { state: string; startedAtMs: number | null; cutCause: string | null; interruptAsked: number } | null
+  turnWatch: { gen: number; dueAtMs: number; attempts: number; state: string; lastError: string | null } | null
+  quarantined: number
+}
+
 export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   private core!: AgentCore
   private sched!: SqlScheduler
   private ports!: BrandAgentPorts
   private hub!: SocketHub
+  /** When this instance was constructed (the test build's observe control reports it). */
+  private readonly constructedAtMs = Date.now()
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
     void ctx.blockConcurrencyWhile(async () => {
       const sql = ctx.storage.sql
       createAgentTables(sql)
+      // The test build's controls kept in this object's SQLite (the job timings), back in memory: an eviction or a
+      // hibernation since a spec set them must not drop them. Only while the controls are switched on (route 67's own
+      // switch, test-switch.ts); every other build's module has nothing to load anyway.
+      if (testControlsOn(env)) loadTestControls(sql)
       // Stage 1 M2-D (N14): the admitted calls and the asks' records.
       createInvocationTables(sql)
       createAskTables(sql)
@@ -122,7 +140,26 @@ export class BrandAgent extends DurableObject<Env> implements BrandAgentRpc {
   }
 
   async testSetTimings(overrides: Record<string, number>): Promise<{ set: true }> {
-    return setTimings(overrides)
+    return setTimings(overrides, this.ctx.storage.sql)
+  }
+
+  /**
+   * The test build's observe control (route 67, read only): this isolate and instance, the job timings in effect, and
+   * one turn's cut facts with its `turn-watch` task, so a job spec can say why a cut didn't come (#454/#455's runs).
+   */
+  async testObserve(turnId: string | null): Promise<TestObservation> {
+    // Fails before any read when the controls are off (route 67 never calls it then; this is the object's own guard).
+    if (!testControlsOn(this.env)) throw new Error('The test controls are not switched on.')
+    const turn = turnId === null ? null : this.core.turn(turnId)
+    const watch = turnId === null ? undefined
+      : this.ctx.storage.sql.exec<{ id: string; gen: number; due_at_ms: number; attempts: number; state: string; last_error: string | null }>(
+        'SELECT id, gen, due_at_ms, attempts, state, last_error FROM due_tasks WHERE id = ?', `turn-watch:${turnId}`).toArray()[0]
+    return {
+      isolateId: isolateId(), constructedAtMs: this.constructedAtMs, nowMs: Date.now(), timings: currentTimings(),
+      turn: turn === null ? null : { state: turn.state, startedAtMs: turn.started_at_ms, cutCause: turn.cut_cause, interruptAsked: turn.interrupt_asked },
+      turnWatch: watch === undefined ? null : { gen: watch.gen, dueAtMs: watch.due_at_ms, attempts: watch.attempts, state: watch.state, lastError: watch.last_error },
+      quarantined: this.sched.quarantinedCount(),
+    }
   }
 
   /** The test build's cursor seed (route 67): one routine's `checked_until_ms`, written to D1 from here. */
