@@ -1,0 +1,53 @@
+{
+ "row": {
+  "caseId": "T04",
+  "cat": "choice",
+  "pair": "memory_forget/routine_delete",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "memory_search",
+   "memory_forget"
+  ],
+  "toolSearches": 1,
+  "answer": "I deleted the saved fact \"The Moss glaze mug is our bestseller.\" It was the only",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_uSL565zQv1O6ksr0JoA0rQ",
+  "askedAs": "eval-45931306709-1-t04-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I deleted the saved fact \"The Moss glaze mug is our bestseller.\" It was the only",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "d63c61b1a761605065ae9b794d45a271bf0a307fd3f26b34f9656bbbfc3e9c5e",
+    "inputExcerpt": "{\"query\":\"Moss glaze\"}"
+   },
+   {
+    "name": "ToolSearch",
+    "inputSha256": "1655402f95bb18190d8345f57ef25a5e8413800ea2da84492a3df990af889041",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__memory_forget,mcp__inhouse__memory_list\",\"max_res"
+   },
+   {
+    "name": "mcp__inhouse__memory_forget",
+    "inputSha256": "d3765e30a9ea1a06258fb4aec5182744fe1aa5b12d62d5bcce39276018cdfe21",
+    "inputExcerpt": "{\"memory_id\":\"mem_nSknxuhZpjOZVS6Huz7MJg\"}"
+   }
+  ]
+ }
+}

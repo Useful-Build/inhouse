@@ -1,0 +1,42 @@
+{
+ "row": {
+  "caseId": "T09",
+  "cat": "choice",
+  "pair": "notification_send/approval_request",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "notification_send"
+  ],
+  "toolSearches": 0,
+  "answer": "I sent Leo a notification in the app saying the Norda delivery arrived this morn",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_MbIynqinIrCYm2o0TQlXIw",
+  "askedAs": "eval-45931306709-1-t09-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I sent Leo a notification in the app saying the Norda delivery arrived this morn",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__notification_send",
+    "inputSha256": "f1abb41e28767e899061f04b0a1310e8604309da14296a8fd3499ad8f40296c6",
+    "inputExcerpt": "{\"to\":{\"members\":[\"m_mLAML9asinw-g2ik3Yx4Ww\"]},\"title\":\"Norda delivery arrived\","
+   }
+  ]
+ }
+}

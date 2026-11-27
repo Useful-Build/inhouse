@@ -1,0 +1,43 @@
+{
+ "row": {
+  "caseId": "T02",
+  "cat": "choice",
+  "pair": "memory_save/person",
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true
+  },
+  "called": [
+   "memory_save"
+  ],
+  "toolSearches": 0,
+  "answer": "Alles klar, ab jetzt antworte ich auf Deutsch. Ich habe mir das auch als Ihre pe",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_3sENev-tFg4NxQ4ztQQwuQ",
+  "askedAs": "eval-45931306709-1-t02-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "Alles klar, ab jetzt antworte ich auf Deutsch. Ich habe mir das auch als Ihre pe",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_save",
+    "inputSha256": "2caaaa23920fb0af217bf38560e14429273b3879d4b4f8178b33bf533446ac8d",
+    "inputExcerpt": "{\"scope\":\"person\",\"person_id\":\"current\",\"fact\":\"Bevorzugt Antworten auf Deutsch.",
+    "resultExcerpt": "Saved (a new row in the brand's memory)",
+    "isError": false
+   }
+  ]
+ }
+}

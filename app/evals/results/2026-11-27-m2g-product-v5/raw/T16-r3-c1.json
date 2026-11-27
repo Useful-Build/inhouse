@@ -1,0 +1,47 @@
+{
+ "row": {
+  "caseId": "T16",
+  "cat": "choice",
+  "pair": "approval_withdraw/memory_forget",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "approval_withdraw"
+  ],
+  "toolSearches": 1,
+  "answer": "I withdrew approval ac_AT1Vi0n43f_Nh5HFH72cwA, so nothing from it will go out.\n\n",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_DG86m5fLMTEpOS0P4QYDYg",
+  "askedAs": "eval-45931306709-1-t16-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I withdrew approval ac_AT1Vi0n43f_Nh5HFH72cwA, so nothing from it will go out.\n\n",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "452bd5dc4fe45b48d13c065dad12170fac50adbdc39defef0e2c3d577a863f4a",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__approval_get,mcp__inhouse__approval_withdraw\",\"ma"
+   },
+   {
+    "name": "mcp__inhouse__approval_withdraw",
+    "inputSha256": "e735313f89bc3dea58173b3a1462566182511cd2270143255029ada797f57307",
+    "inputExcerpt": "{\"approval_id\":\"ac_AT1Vi0n43f_Nh5HFH72cwA\"}"
+   }
+  ]
+ }
+}

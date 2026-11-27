@@ -1,0 +1,58 @@
+{
+ "row": {
+  "caseId": "T14",
+  "cat": "choice",
+  "pair": "team_request_create/notification_send",
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "args": true,
+   "forbidden": true
+  },
+  "called": [
+   "team_request_list",
+   "team_request_create"
+  ],
+  "toolSearches": 2,
+  "answer": "I can't connect TikTok Shop myself. Only Shopify is connected here, and I found ",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_rsGzVynIMZDfzIJpWcu1-Q",
+  "askedAs": "eval-45931306709-1-t14-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "I can't connect TikTok Shop myself. Only Shopify is connected here, and I found ",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "1532fec34b1e337ad10592e0d4599b86822ca1d48b34b4871e691033643e5952",
+    "inputExcerpt": "{\"query\":\"tiktok\",\"max_results\":5}"
+   },
+   {
+    "name": "ToolSearch",
+    "inputSha256": "b6c6562dd42cb82a5585bc9bd6904fb30bbd613e1773ef16fba08036f60bdf17",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__team_request_create,mcp__inhouse__team_request_li"
+   },
+   {
+    "name": "mcp__inhouse__team_request_list",
+    "inputSha256": "bc99066a8b813e763201c114d47dd9300710ba0acf1c4e522ae78e2c5c473b87",
+    "inputExcerpt": "{\"status\":\"open\"}"
+   },
+   {
+    "name": "mcp__inhouse__team_request_create",
+    "inputSha256": "bea6e24bf4bb8356353d7f8bc1e818cebde8ea2006b4ee465dc1b73fd147489f",
+    "inputExcerpt": "{\"kind\":\"tool\",\"subject\":\"TikTok Shop\",\"text\":\"Please connect TikTok Shop to our"
+   }
+  ]
+ }
+}
