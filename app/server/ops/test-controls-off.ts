@@ -13,6 +13,10 @@ export const armStopAfterBatch: Real['armStopAfterBatch'] = off
 export const seedCursor: Real['seedCursor'] = off
 export const setTimings: Real['setTimings'] = off
 export const timing: Real['timing'] = (_name, fallback) => fallback
+/** The BrandAgent's constructor calls it in every build: nothing to load outside the test build. */
+export const loadTestControls: Real['loadTestControls'] = () => {}
+export const currentTimings: Real['currentTimings'] = off
+export const isolateId: Real['isolateId'] = off
 export const killRunner: Real['killRunner'] = off
 export const resetTestControls: Real['resetTestControls'] = () => {}
 /** The tick's hook (routines/tick.ts): nothing, so the product build's tick runs as written. */

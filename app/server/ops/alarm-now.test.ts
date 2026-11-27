@@ -17,6 +17,7 @@ import { routes } from '../routes.ts'
 import type { Route } from '../routes.ts'
 import { alarmNowHandler } from './alarm-now.ts'
 import { runAlarmNow as offRunAlarmNow, TEST_CONTROLS_CANARY as OFF_CANARY } from './test-controls-off.ts'
+import { loadTestControls, resetTestControls, timing, TIMINGS_FLAG } from '@test-controls'
 import { accessMatrix } from '../access-matrix.ts'
 import { authenticate, checkAccess, checkOrigin } from '../auth/index.ts'
 import { mintPerson, mintService } from '../auth/test-issuer-mint.ts'
@@ -220,5 +221,67 @@ describe('the off stand-in (failure 4)', () => {
     expect(() => offRunAlarmNow(async () => { ran = true })).toThrow('The test controls are not in this build.')
     expect(ran).toBe(false)
     expect(OFF_CANARY).toBe('')
+  })
+})
+
+// The job timings kept across an eviction, and the observe control (2026-11-27: jobs.spec.ts failed on #454 and #455
+// because an override set in the BrandAgent's memory was gone by the time the turn's cut was due). Ways it can fail,
+// written first: the overrides live in memory only, so a new instance reads the defaults; a load brings back a name or a
+// value the route refuses; observe writes anything, answers outside the test build, or leaves out the turn's cut facts.
+describe('the job timings kept in the object, and the observe control', () => {
+  const post = async (body: unknown) => setup({ compiled: true, flag: '1' })('/api/ops/alarm', { method: 'POST', headers: await release(), body: JSON.stringify(body) })
+
+  it('setTimings keeps the overrides in the object\'s SQLite; a new instance (memory cleared, then loaded) reads them back', async () => {
+    const lines = controlLines()
+    try {
+      expect(await bodyOf(await post({ action: 'setTimings', overrides: { JOB_CUT_MS: 150_000 } }))).toEqual({ set: true })
+      const stored = await runInDurableObject(brand(), (_i, state) =>
+        state.storage.sql.exec<{ value: string }>('SELECT value FROM flags WHERE key = ?', TIMINGS_FLAG).toArray())
+      expect(stored.map(r => JSON.parse(r.value))).toEqual([{ JOB_CUT_MS: 150_000 }])
+      // An eviction: this isolate's memory is gone (the module copy), and the constructor loads from the object's SQLite.
+      resetTestControls()
+      expect(timing('JOB_CUT_MS', 1_500_000)).toBe(1_500_000)
+      await runInDurableObject(brand(), (_i, state) => { loadTestControls(state.storage.sql) })
+      expect(timing('JOB_CUT_MS', 1_500_000)).toBe(150_000)
+      expect((await bodyOf(await post({ action: 'observe' }))).timings).toEqual({ JOB_CUT_MS: 150_000 })
+      // A stored name or value the route would refuse is never loaded.
+      await runInDurableObject(brand(), (_i, state) => {
+        state.storage.sql.exec('UPDATE flags SET value = ? WHERE key = ?', JSON.stringify({ JOB_CUT_MS: -5, JOB_UNKNOWN_MS: 10, JOB_RETRY_MS: 2_000 }), TIMINGS_FLAG)
+        loadTestControls(state.storage.sql)
+      })
+      expect([timing('JOB_CUT_MS', 7), timing('JOB_RETRY_MS', 7)]).toEqual([7, 2_000])
+    } finally {
+      expect((await post({ action: 'setTimings', overrides: {} })).status).toBe(200)
+      vi.restoreAllMocks()
+    }
+    // Cleared: kept as none, so a new instance loads the defaults.
+    await runInDurableObject(brand(), (_i, state) => { loadTestControls(state.storage.sql) })
+    expect(timing('JOB_CUT_MS', 1_500_000)).toBe(1_500_000)
+    expect(lines().length).toBeGreaterThan(0)
+  })
+
+  it('observe answers the isolate, the instance, the timings and a turn\'s cut facts, writing nothing; a bad id is a 400', async () => {
+    controlLines()
+    try {
+      const before = await runInDurableObject(brand(), (_i, state) => state.storage.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM due_tasks').one().n)
+      const o = await bodyOf(await post({ action: 'observe' }))
+      expect(o).toEqual({
+        isolateId: expect.stringMatching(/^[0-9a-f-]{36}$/), constructedAtMs: expect.any(Number), nowMs: expect.any(Number),
+        timings: {}, turn: null, turnWatch: null, quarantined: expect.any(Number),
+      })
+      expect(o.constructedAtMs).toBeLessThanOrEqual(o.nowMs)
+      // The same isolate answers twice with the same id.
+      expect((await bodyOf(await post({ action: 'observe' }))).isolateId).toBe(o.isolateId)
+      expect(await bodyOf(await post({ action: 'observe', turnId: 't_AAAAAAAAAAAAAAAAAAAAAA' }))).toMatchObject({ turn: null, turnWatch: null })
+      for (const bad of [{ action: 'observe', turnId: 'nope' }, { action: 'observe', extra: 1 }]) expect((await post(bad)).status).toBe(400)
+      const after = await runInDurableObject(brand(), (_i, state) => state.storage.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM due_tasks').one().n)
+      expect(after).toBe(before)
+      // Outside the test build, and in the eval build: 404, as every control.
+      const h = await release()
+      expect((await setup()('/api/ops/alarm', { method: 'POST', headers: h, body: JSON.stringify({ action: 'observe' }) })).status).toBe(404)
+      expect((await setup({ compiled: true, flag: '1', eval: true })('/api/ops/alarm', { method: 'POST', headers: h, body: JSON.stringify({ action: 'observe' }) })).status).toBe(404)
+    } finally {
+      vi.restoreAllMocks()
+    }
   })
 })

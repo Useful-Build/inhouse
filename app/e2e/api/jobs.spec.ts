@@ -15,7 +15,7 @@ import type { APIRequestContext } from '@playwright/test'
 import { JOB_CARRIED_ON_TEXT } from '../../shared/server-turn-text.ts'
 import { JOB_RUN_DONE, JOB_RUN_FILE, stepIdPrefix } from '../../test/scripted-model/scenarios/jobs.ts'
 import { Tab, createChat, needsContainer, send } from './chat-kit.ts'
-import { killRunners, resetJobTimings, setJobTimings } from './job-kit.ts'
+import { killRunners, observeAgent, resetJobTimings, setJobTimings } from './job-kit.ts'
 import { LOST_CALL, explainJob, jobNotices, jobWhen, onlyThePersonSpeaks, outputText, runToken, runnerGens, runningStep, stepsOf, storedJob, storedMessages } from './job-proof.ts'
 import { actor, call } from './kit.ts'
 
@@ -50,11 +50,17 @@ test('a cut turn becomes a job that carries on with the tab closed, survives a k
     const tab = await Tab.open(dana)
     const { chatId, text, sent, prefix } = await startRun(request)
     tab.attach(sent.runId)
+    // The BrandAgent's view, polled while the job is awaited (route 67's observe): its isolate, the timings in effect and
+    // the root's cut facts. Printed with the failure, so a cut that never came says why (#454 and #455, 2026-11-27).
+    const series: Record<string, unknown>[] = []
     try {
-      await tab.until(() => tab.frames(sent.runId).some(f => f.event.type === 'job.started'), 'the job started', 300_000)
+      await expect.poll(async () => {
+        series.push(await observeAgent(request, sent.turnId))
+        return tab.frames(sent.runId).some(f => f.event.type === 'job.started')
+      }, { timeout: 300_000, intervals: [5_000], message: 'the job started' }).toBe(true)
     } catch (err) {
-      // Why it didn't start, printed with the failure (M2-G: #454's runs timed out here with no clue).
       console.log(`M1-D jobs: no job.started.\n${await explainJob(request, dana, { chatId, turnId: sent.turnId, frames: tab.frames(sent.runId) as never, prefix })}`)
+      console.log(`M1-D jobs: the BrandAgent, every 5 s:\n${series.map(o => JSON.stringify(o)).join('\n')}`)
       throw err
     }
     const frames = tab.frames(sent.runId)

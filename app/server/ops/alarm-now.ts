@@ -18,8 +18,12 @@
 //     `{ killed: boolean }`, or 404 `not_found` with reason `runner` when `i` is outside the pool (`RUNNER_POOL`);
 //   `{ action: 'runnerGen', runner }`: the container generation `runner-<i>` last started, read from its own storage
 //     -> `{ gen }` (0 for none yet), 404 as `killRunner` outside the pool (M1-D: a spec proves a kill replaced it).
+//   `{ action: 'observe', turnId? }`: read only, the BrandAgent's isolate id and construct time, the job timings in
+//     effect, and (with `turnId`) that turn's state, `started_at_ms`, `cut_cause`, `interrupt_asked` and `turn-watch`
+//     task, and the quarantined task count -> BrandAgent `TestObservation` (a job spec prints the series on failure).
 import { z } from 'zod'
 import { RoutineIdSchema } from '../../shared/contract/audit.ts'
+import { TurnIdSchema } from '../../shared/contract/chat-ids.ts'
 import { MAX_BODY_BYTES, readCapped } from '../db/handler-kit.ts'
 import { apiError, apiJson } from '../http.ts'
 import type { Handler } from '../routes.ts'
@@ -36,6 +40,7 @@ const ControlSchema = z.union([
   z.strictObject({ action: z.literal('killRunner'), runner: z.string().regex(/^runner-(0|[1-9][0-9]{0,8})$/) }),
   z.strictObject({ action: z.literal('runnerGen'), runner: z.string().regex(/^runner-(0|[1-9][0-9]{0,8})$/) }),
   z.strictObject({ action: z.literal('seedCursor'), routineId: RoutineIdSchema, checkedUntilMs: z.number().int().nonnegative() }),
+  z.strictObject({ action: z.literal('observe'), turnId: TurnIdSchema.optional() }),
 ])
 
 /** The control the body names; no body, or an empty or whitespace-only one, is the plain alarm. `null` when invalid. */
@@ -69,6 +74,7 @@ export function alarmNowHandler(compiledTestBuild: boolean = __INHOUSE_TEST_BUIL
     }
     const agent = brandAgent(c.env)
     if (body.action === 'setTimings') return apiJson(await agent.testSetTimings(body.overrides))
+    if (body.action === 'observe') return apiJson(await agent.testObserve(body.turnId ?? null))
     if (body.action === 'stopAfterBatch') return apiJson(await agent.testStopAfterBatch())
     if (body.action === 'seedCursor') {
       if (body.checkedUntilMs >= c.nowMs) return apiError('invalid', { reason: 'not_past' })

@@ -60,6 +60,14 @@ export async function killRunners(request: APIRequestContext): Promise<string[]>
   throw new Error(`route 67 never answered 404 for a runner up to runner-${MAX_POOL - 1}`)
 }
 
+/**
+ * Route 67's observe control (read only): the BrandAgent's isolate id and construct time, the job timings in effect,
+ * and the turn's state, `started_at_ms`, `cut_cause`, `interrupt_asked`, its `turn-watch` task and the quarantined count.
+ */
+export async function observeAgent(request: APIRequestContext, turnId?: string): Promise<Record<string, unknown>> {
+  return await jobControl(request, { action: 'observe', ...(turnId === undefined ? {} : { turnId }) }) as Record<string, unknown>
+}
+
 /** N3's job state route. Call once M1-B's route is present. */
 export async function readJob(request: APIRequestContext, who: Actor, chatId: string): Promise<unknown> {
   const r = await call(request, who, 'GET', `/api/chats/${chatId}/job`)

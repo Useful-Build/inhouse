@@ -4,6 +4,7 @@
 // through route 67 (alarm-now.ts), inside `if (__INHOUSE_TEST_BUILD__ && env.INHOUSE_TEST_BUILD === '1')`: the
 // generic alarm-now control, routine controls and job test controls. The off module has no test behavior.
 import type { JobTimingName } from './job-timings.ts'
+import { JOB_TIMING_NAMES } from './job-timings.ts'
 
 /** The bundle-scan canary: it must be in the test build's Worker and never in the deployable one. */
 export const TEST_CONTROLS_CANARY = 'inhouse-test-controls-canary-5d81e0a7'
@@ -31,14 +32,49 @@ export function armStopAfterBatch(): { armed: true } {
   return { armed: true }
 }
 
-// Set via RPC on the BrandAgent so the reads and writes happen in the same isolate. Eviction clears the overrides.
+// Set via RPC on the BrandAgent so the reads and writes happen in the same isolate. Kept in the BrandAgent's own SQLite
+// too (its `flags` table) and loaded back when the object is constructed (`loadTestControls`): an eviction or a
+// hibernation between a spec's `setTimings` and the turn it times cleared the memory copy, so a 150 s `JOB_CUT_MS`
+// became the 25-minute default and no job started (jobs.spec.ts on #454 and #455, 2026-11-27).
 let timings = new Map<JobTimingName, number>()
+/** The `flags` row that keeps the overrides (JSON), in the BrandAgent's SQLite. */
+export const TIMINGS_FLAG = 'test:job_timings'
 
-/** Replaces the entire set. Pass an empty object in teardown to restore the defaults. Names: job-timings.ts. */
-export function setTimings(overrides: Partial<Record<JobTimingName, number>>): { set: true } {
+const validTimings = (o: Record<string, unknown>): [JobTimingName, number][] =>
+  Object.entries(o).filter((e): e is [JobTimingName, number] =>
+    (JOB_TIMING_NAMES as readonly string[]).includes(e[0]) && Number.isSafeInteger(e[1]) && (e[1] as number) > 0)
+
+/**
+ * Replaces the entire set, in memory and in the object's SQLite (`sql`, its `flags` table; the BrandAgent always passes
+ * it). Pass an empty object in teardown to restore the defaults. Names: job-timings.ts.
+ */
+export function setTimings(overrides: Partial<Record<JobTimingName, number>>, sql?: SqlStorage): { set: true } {
   console.log({ event: 'test_control', control: 'set_timings', canary: TEST_CONTROLS_CANARY })
-  timings = new Map(Object.entries(overrides) as [JobTimingName, number][])
+  timings = new Map(validTimings(overrides))
+  // The BrandAgent always passes its SQLite; a unit test that runs no object keeps the overrides in memory only.
+  sql?.exec('INSERT INTO flags (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value', TIMINGS_FLAG, JSON.stringify(Object.fromEntries(timings)))
   return { set: true }
+}
+
+/** The BrandAgent's constructor: the overrides kept in its SQLite, back in memory (none kept: the defaults). */
+export function loadTestControls(sql: SqlStorage): void {
+  const row = sql.exec<{ value: string }>('SELECT value FROM flags WHERE key = ?', TIMINGS_FLAG).toArray()[0]
+  timings = new Map(row ? validTimings(JSON.parse(String(row.value)) as Record<string, unknown>) : [])
+}
+
+/** The overrides in effect now, as the observe control reports them. */
+export function currentTimings(): Partial<Record<JobTimingName, number>> {
+  return Object.fromEntries(timings)
+}
+
+/**
+ * This isolate's id, made on first use (a random value can't be made at a module's top level in Workers): the observe
+ * control reports it, so a spec sees when the BrandAgent moved to a new isolate.
+ */
+let isolate: string | null = null
+export function isolateId(): string {
+  isolate ??= crypto.randomUUID()
+  return isolate
 }
 
 export function timing(name: JobTimingName, fallback: number): number {
