@@ -42,7 +42,8 @@ jobs:
   # unit test, for one). A .md under app/ can be a fixture, a skill the runner image ships or an eval result, and
   # anything under .github/ is CI itself, so those always run everything. The changed files, by event:
   # - pull_request: the PR's own changes, base...head (from the merge base, as the PR's file view shows them);
-  # - merge_group: base_sha..head_sha, every PR in the group on top of main;
+  # - merge_group: the queue branch against main (main...head_sha). Not base_sha..head_sha: base_sha is the group's
+  #   parent, which is the entry queued ahead, not main, so a docs PR behind a code PR would see only its own files;
   # - push to fleet/**: the whole branch against main (main...sha), never just this push: a newer push cancels the run
   #   in progress, so a docs push right after a code merge must not leave that code untested;
   # - dispatch, or anything unsure (a missing SHA, a failed diff, no files): a full run.
@@ -63,7 +64,6 @@ jobs:
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
-          MQ_BASE: ${{ github.event.merge_group.base_sha }}
           MQ_HEAD: ${{ github.event.merge_group.head_sha }}
           SHA: ${{ github.sha }}
         run: |
@@ -71,7 +71,7 @@ jobs:
           sha() { [[ "$1" =~ ^[0-9a-f]{40}$ ]]; }
           case "$EVENT" in
             pull_request) sha "$PR_BASE" && sha "$PR_HEAD" && range="$PR_BASE...$PR_HEAD" ;;
-            merge_group) sha "$MQ_BASE" && sha "$MQ_HEAD" && range="$MQ_BASE..$MQ_HEAD" ;;
+            merge_group) sha "$MQ_HEAD" && range="origin/main...$MQ_HEAD" ;;
             push) sha "$SHA" && range="origin/main...$SHA" ;;
             *) verdict false "a $EVENT run always runs everything" ;;
           esac
