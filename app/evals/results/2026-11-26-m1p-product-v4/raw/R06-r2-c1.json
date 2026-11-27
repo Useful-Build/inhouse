@@ -1,0 +1,70 @@
+{
+ "row": {
+  "caseId": "R06",
+  "cat": "recall",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search",
+   "products_search",
+   "products_search",
+   "products_search",
+   "products_search"
+  ],
+  "toolSearches": 1,
+  "answer": "Let me check that Fern is actually available.\n\nOffer the **Fern** glaze. Our sav",
+  "costUsd": 0.035,
+  "runOk": true,
+  "turnId": "t_XxYo5GyO4NIZjGdvTI9v2w",
+  "askedAs": "eval-45890736644-1-r06-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.035,
+  "answer": "Let me check that Fern is actually available.\n\nOffer the **Fern** glaze. Our sav",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "c14dcd53b81a6734d7b1b21744062c5f22a2cbe01030a8d500ca31dd5c04cfb7",
+    "inputExcerpt": "{\"query\":\"select:mcp__apps__products_search,mcp__apps__inventory_levels_get\",\"ma"
+   },
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "e152f9500483d674407bf97f653bfec51f3fb9a4e498af703f2ae6c1e721f106",
+    "inputExcerpt": "{\"query\":\"out of stock substitute offer mug\"}"
+   },
+   {
+    "name": "mcp__apps__products_search",
+    "inputSha256": "0d90e8b3f60a5217da791deccc5e4350e0a9a3a1b44a61889717877e519b5275",
+    "inputExcerpt": "{\"text\":\"Fern mug\"}"
+   },
+   {
+    "name": "mcp__apps__products_search",
+    "inputSha256": "3b543dfdea3669ab33e197866b2e27d4530f616f69f9e9d86a0a914681a53bad",
+    "inputExcerpt": "{\"text\":\"Moss\"}"
+   },
+   {
+    "name": "mcp__apps__products_search",
+    "inputSha256": "a158558e7c076e1e1b100ec73c9019cfc2014f8af94dbadd241190de19a90d34",
+    "inputExcerpt": "{\"text\":\"Fern\"}"
+   },
+   {
+    "name": "mcp__apps__products_search",
+    "inputSha256": "082d8ce6dc1b58cf96ddd2eee388e8d837d4902eefdd2784a7c083daa9f22494",
+    "inputExcerpt": "{\"text\":\"mug\",\"first\":20}"
+   }
+  ]
+ }
+}

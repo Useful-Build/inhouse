@@ -6,9 +6,11 @@ import { NOTICE_TEMPLATES } from '../notices/templates.ts'
 export const SYSTEM_NOTICE_KINDS = [
   'approval_waiting', 'approval_lapsed', 'approval_sent', 'approval_failed', 'needs_check', 'approval_expired',
   'restore_reconciled', 'question_waiting', 'question_closed',
+  // Stage 1 M2-N: a failed routine's alerts-channel copy (routines/end.ts keeps its own bell notices).
+  'routine_failed',
 ] as const
 export type StoredSystemKind = (typeof SYSTEM_NOTICE_KINDS)[number]
-/** What a caller may pass: the nine, plus P6's `question_asked`, stored and rendered as `question_waiting`. */
+/** What a caller may pass: the ten, plus P6's `question_asked`, stored and rendered as `question_waiting`. */
 export type SystemNoticeKind = StoredSystemKind | 'question_asked'
 
 /** The kind as stored (the alias resolved), or null for anything else. */

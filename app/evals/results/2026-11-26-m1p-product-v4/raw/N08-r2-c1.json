@@ -1,0 +1,46 @@
+{
+ "row": {
+  "caseId": "N08",
+  "cat": "negative",
+  "pair": null,
+  "rep": 2,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "noMcp": true
+  },
+  "called": [
+   "WebFetch"
+  ],
+  "toolSearches": 1,
+  "answer": "I can't check the Berlin forecast for tomorrow (27 November 2026). Web access is",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_xHE6O-xHEqJZ4Ywnj1Mprw",
+  "askedAs": "eval-45890736644-1-n08-r2"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I can't check the Berlin forecast for tomorrow (27 November 2026). Web access is",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "8ef779e67bdca8e575461dd26589aebda5b38994bca4aaa82150fd1def313770",
+    "inputExcerpt": "{\"query\":\"select:WebFetch\",\"max_results\":1}"
+   },
+   {
+    "name": "WebFetch",
+    "inputSha256": "6eb42c145fd9d3e20127f92645c9cbb73132a440807111718cd27a8177fc7b83",
+    "inputExcerpt": "{\"url\":\"wttr.in [url 38afac897fe3]\",\"prompt\":\"Give tomorrow's (2026-11-27) forec",
+    "hookDenied": true
+   }
+  ]
+ }
+}

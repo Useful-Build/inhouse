@@ -1,6 +1,7 @@
 // Ship spec for P5 Connectors (the plan's browser scenarios S1 to S7, docs/plans/2026-11-19-p5-connectors.md): connecting Slack, a
 // question that needs Slack and Shopify, a question over the whole store answered by a code mode script, an alert that reaches
-// the bell and never Slack (M2-F: both Slack legs are closed, whatever stage is stored), pausing, disconnecting, and the Admin's read-only Tools page, as real people on the TEST BUILD with the hub, the fake
+// the bell and never Slack (Stage 1 M2-N: a listed channel's post follows the Slack post rule, and while the operation is off,
+// as in this build, the notice reaches the bell, whatever stage is stored), pausing, disconnecting, and the Admin's read-only Tools page, as real people on the TEST BUILD with the hub, the fake
 // Slack and the recorded Shopify. Desktop (1440x900) and phone (390x844). Each test is titled `S<n>: ...` (the card before its clip).
 //
 // What runs where. S2, S3 and S4 run turns in a container, which only the sandbox deployment has: they call `needsContainer()`
@@ -44,9 +45,8 @@ const uid = () => crypto.randomUUID().slice(0, 8)
 // What the product and the scripted model say, copied (a spec reads no product string by import).
 const SUPPLIER_ANSWER = 'Kestrel Mills says the November restock of the Fern mug ships 2 weeks late. Sources: Slack #suppliers, Shopify orders.'
 const CODE_MODE_ANSWER = 'I counted every product in the store with a script: the five lowest on stock and how many sell for over $150. Source: Shopify, all products.'
-// The scripted model's fixed answer for `connectors-notice-watch`. Its second sentence predates M2-F (the stages are retired);
-// the scenario's words are test/scripted-model/scenarios.ts's, not the product's, and this spec doesn't read them as a claim.
-const BELL_ANSWER = 'I sent the stock alert to your bell. It reaches Slack from the Act stage.'
+// The scripted model's fixed answer for `connectors-notice-watch` (test/scripted-model/scenarios.ts's words, not the product's).
+const BELL_ANSWER = 'I sent the stock alert to your bell: Slack posts are turned off for this brand.'
 const UNLISTED_ANSWER = "I couldn't send that: #design isn't one of the channels your admin listed."
 const NOTIFY_TOOL = 'mcp__inhouse__notification_send'
 const NOTICE_TEXT = 'The Fern mug is almost out. Restock it this week.'

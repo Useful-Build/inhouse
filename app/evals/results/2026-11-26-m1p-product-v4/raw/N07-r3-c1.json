@@ -1,0 +1,32 @@
+{
+ "row": {
+  "caseId": "N07",
+  "cat": "negative",
+  "pair": null,
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "forbidden": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "Here's a draft. I haven't looked up her order, so the bracketed parts are placeh",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_y8Z1LUzsohLrkwJTKEZIdQ",
+  "askedAs": "eval-45890736644-1-n07-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "Here's a draft. I haven't looked up her order, so the bracketed parts are placeh",
+  "toolCalls": []
+ }
+}

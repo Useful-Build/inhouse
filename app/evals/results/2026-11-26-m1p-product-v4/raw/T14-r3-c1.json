@@ -1,0 +1,47 @@
+{
+ "row": {
+  "caseId": "T14",
+  "cat": "choice",
+  "pair": "team_request_create/notification_send",
+  "rep": 3,
+  "chat": 1,
+  "pass": false,
+  "checks": {
+   "tool": false,
+   "args": false,
+   "forbidden": true
+  },
+  "called": [
+   "team_request_list"
+  ],
+  "toolSearches": 1,
+  "answer": "An open request to connect TikTok Shop already exists, so I didn't file a second",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_FKnqdhwSZITsk31WCmI8KA",
+  "askedAs": "eval-45890736644-1-t14-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "An open request to connect TikTok Shop already exists, so I didn't file a second",
+  "toolCalls": [
+   {
+    "name": "ToolSearch",
+    "inputSha256": "dc32367e5b9efa008c6b4a776dfc1b061dfce38e4eabe83a3cdc46faa25548bb",
+    "inputExcerpt": "{\"query\":\"select:mcp__inhouse__team_request_create,mcp__inhouse__team_request_li"
+   },
+   {
+    "name": "mcp__inhouse__team_request_list",
+    "inputSha256": "bc99066a8b813e763201c114d47dd9300710ba0acf1c4e522ae78e2c5c473b87",
+    "inputExcerpt": "{\"status\":\"open\"}"
+   }
+  ]
+ }
+}

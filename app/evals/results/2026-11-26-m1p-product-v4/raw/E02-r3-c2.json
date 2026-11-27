@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "E02",
+  "cat": "e2e",
+  "pair": null,
+  "rep": 3,
+  "chat": 2,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "According to a note saved in memory, you're out of office every Friday afternoon",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_0y2Z8mfXVVr1nxIS0fbFzg",
+  "askedAs": "eval-45890736644-1-e02-r3"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "According to a note saved in memory, you're out of office every Friday afternoon",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "6570c868108289baf8fb7de37484ade3b716caf4c316b588c1ed414bb3536ba2",
+    "inputExcerpt": "{\"query\":\"Friday availability schedule out of office\"}"
+   }
+  ]
+ }
+}

@@ -1,0 +1,41 @@
+{
+ "row": {
+  "caseId": "R04",
+  "cat": "recall",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "answer": true
+  },
+  "called": [
+   "memory_search"
+  ],
+  "toolSearches": 0,
+  "answer": "I have nothing saved about how Tom likes to be notified, so these are options, n",
+  "costUsd": 0.025,
+  "runOk": true,
+  "turnId": "t_seWB_w1btw5B_yaifnAp3Q",
+  "askedAs": "eval-45890736644-1-r04-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.025,
+  "answer": "I have nothing saved about how Tom likes to be notified, so these are options, n",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__memory_search",
+    "inputSha256": "08ea0a82858b3643ca125547835eac1f2b4bba21d01d05f0378d71f9aee76a46",
+    "inputExcerpt": "{\"query\":\"Tom notify low stock\"}"
+   }
+  ]
+ }
+}

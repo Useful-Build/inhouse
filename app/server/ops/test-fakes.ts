@@ -20,7 +20,10 @@
 //   calling `notification_send` as `as.memberId`, which must be an active person on the brand; an `as.chatId` must be
 //   that member's chat, and an `as.runId` or `as.turnId` given with it one of that chat's (both: a pair of one row).
 //   Answers `{ result }`:
-//   the tool's CallToolResult (text, structuredContent.recipients, isError on a refusal).
+//   the tool's CallToolResult (text, structuredContent.recipients, isError on a refusal). Stage 1 M2-N: a listed
+//   channel's post goes through the outbox, so this op wires the tool as the egress does, with `action`'s stand-in
+//   admission (CLOSE TO AUTH, the same way: a fresh main-agent call of a turn no runner holds) and the real BrandAgent for
+//   the hub's accounts, the `ask` part and the send's task. Without a BrandAgent binding the post is refused.
 // - `prompt`: the prompt turnSystemPrompt builds now, for a synthetic turn id. Answers `{ prompt, version }`.
 // - `systemNotice`: { notice }: sendSystemNotice(env, notice) with the real env. Answers its SystemNoticeResult.
 // - `logs`: { since?: { product?, hub? } }: the captured log lines of this isolate and the hub's. Answers
@@ -44,7 +47,7 @@ import type { CallerScope, ConnectGateway, HubResult } from '../../hub/index/con
 import type { RunGrant } from '../do/brand-agent/tokens.ts'
 import { handleHub, hubRouteDeps, type ReadGatewayLike } from '../egress/hub.ts'
 import { handleMcp } from '../mcp/server/index.ts'
-import { notifyDeps } from '../mcp/tools/notifications/deps.ts'
+import { notifyDeps, notifyWiring } from '../mcp/tools/notifications/deps.ts'
 import { sendSystemNotice, type SystemNoticeInput } from '../notify-slack/send.ts'
 import { utcDay } from '../notify-slack/store.ts'
 import { turnPromptDeps, turnSystemPrompt } from '../prompt/connected.ts'
@@ -222,10 +225,29 @@ async function notifyOp(env: TestFakesEnv, op: Extract<ProductOp, { op: 'notify'
     turnId: op.as.turnId ?? `t_fakes_${tail()}`,
   }
   const message = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'notification_send', arguments: op.args } }
+  const agent = env.BRAND_AGENT as DurableObjectNamespace<BrandAgent> | undefined
+  const stub = agent?.getByName('brand')
+  const wiring = stub
+    ? notifyWiring(
+      {
+        hubAccounts: () => stub.hubAccounts(),
+        routineAsker: async () => null,
+        noted: (s, actionId) => stub.askNoted(s.turnId, actionId),
+      },
+      {
+        rpc: {
+          // The stand-in admission (as `action`'s): a fresh main-agent call of this made-up turn.
+          admitAction: async () => ({ toolUseId: `toolu_fakes_${tail()}`, turnId: scope.turnId, runId: scope.runId, chatId: scope.chatId, ownerId: member.id, jobId: null, replay: false }),
+          poke: p => stub.poke(p),
+        },
+        log: entry => console.log(entry),
+      },
+    )
+    : null
   const res = await handleMcp(
     new Request('https://egress.invalid/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(message) }),
     scope,
-    { db: env.DB, notify: notifyDeps(env) },
+    { db: env.DB, notify: notifyDeps(wiring) },
   )
   const body = (await res.json()) as { result?: unknown; error?: { message?: string } }
   if (body.result === undefined) return refuse(400, 'invalid', body.error?.message ?? 'no result')

@@ -164,7 +164,7 @@ export const NotifySourceSchema = z.enum(['agent', 'approvals', 'questions', 'ro
 /** The server's own notice kinds (p5-w4 section 3a); `question_asked` is stored as `question_waiting`. */
 export const SystemNoticeKindSchema = z.enum([
   'approval_waiting', 'approval_lapsed', 'approval_sent', 'approval_failed', 'needs_check', 'approval_expired',
-  'restore_reconciled', 'question_waiting', 'question_closed',
+  'restore_reconciled', 'question_waiting', 'question_closed', 'routine_failed',
 ])
 /** A public Slack channel id (never `U…`, `D…` or `G…`). */
 export const SlackChannelIdSchema = z.string().regex(/^C[A-Z0-9]{8,}$/)

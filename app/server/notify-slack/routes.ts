@@ -3,7 +3,8 @@
 // DeliveryGateway `HUB_DELIVERY`) and save the list (H). The matrix refuses first; each handler checks again. Every
 // added or kept channel is re-checked at Slack on save, its name re-read, and a shared, archived, private or
 // non-member channel refused with its reason. No notice text anywhere here.
-import type { DeliveryGateway } from '../../hub/index/contract.ts'
+import type { ConnectGateway, DeliveryGateway } from '../../hub/index/contract.ts'
+import { hubAccountFacts } from '../do/brand-agent/hub-accounts.ts'
 import { AvailableChannelsQuerySchema, PutNotifyChannelsSchema } from '../../shared/contract/notify-slack.ts'
 import type { AvailableChannels } from '../../shared/contract/notify-slack.ts'
 import { apiError, apiJson } from '../http.ts'
@@ -13,7 +14,7 @@ import type { HandlerEnv } from '../routes.ts'
 
 /** The DeliveryGateway methods these routes call. */
 export type ChannelsBinding = Pick<DeliveryGateway, 'listChannels' | 'checkChannel'>
-export type NotifyRouteCtx = ApiCtx & { env: Pick<HandlerEnv, 'HUB_DELIVERY'> }
+export type NotifyRouteCtx = ApiCtx & { env: Pick<HandlerEnv, 'HUB_DELIVERY'> & Partial<Pick<HandlerEnv, 'HUB_CONNECT'>> }
 
 /** Typed from the hub's plain contract (`wrangler types` gives a bare `Service`); every answer is a HubResult. */
 const gateway = (c: NotifyRouteCtx): ChannelsBinding => c.env.HUB_DELIVERY as unknown as ChannelsBinding
@@ -106,6 +107,19 @@ export async function putNotifyChannels(c: NotifyRouteCtx): Promise<Response> {
     const key = ch.name.toLowerCase()
     if (names.has(key)) return apiError('conflict', { reason: 'name_taken', current: { channelId: ch.channelId } })
     names.set(key, ch.channelId)
+  }
+  // Stage 1 M2-N: moving the alerts mark gives the brand's grant, which takes the Slack account's generation. The hub owns
+  // the sign-in, so its connection date is copied in first (the same sync every write request runs: M2-D's
+  // `hubAccountFacts`); else the grant would take the product's own clock and the first post's sync would revoke it as
+  // `account_reconnected` before its first use. A hub that can't be read leaves the row as it is (logged), and the
+  // grant, if any, then lapses at that sync: fail closed.
+  const alertsNow = current.channels.find(ch => ch.alerts)?.channelId ?? null
+  const alertsNext = body.ok.alertsChannelId ?? null
+  if (alertsNext !== null && alertsNext !== alertsNow && c.env.HUB_CONNECT) {
+    await hubAccountFacts({
+      connect: c.env.HUB_CONNECT as unknown as Pick<ConnectGateway, 'listAccounts'>, accounts: storesOf(c).connectors,
+      nowMs: c.nowMs, requestId: c.requestId, log: entry => console.log(entry),
+    })
   }
   const saved = await store.save({ channels: checked, alertsChannelId: body.ok.alertsChannelId ?? null, ifRev: body.ok.ifRev }, writer(c))
   if ('conflict' in saved) return apiError('conflict', { current: saved.conflict })

@@ -1,0 +1,32 @@
+{
+ "row": {
+  "caseId": "N01",
+  "cat": "negative",
+  "pair": null,
+  "rep": 1,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "none": true
+  },
+  "called": [],
+  "toolSearches": 0,
+  "answer": "You're welcome! Reach out whenever you need something else.",
+  "costUsd": 0.015,
+  "runOk": true,
+  "turnId": "t_fZ0TWKRk2pvJzqcYwEvt4g",
+  "askedAs": "eval-45890736644-1-n01-r1"
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0.015,
+  "answer": "You're welcome! Reach out whenever you need something else.",
+  "toolCalls": []
+ }
+}

@@ -65,6 +65,21 @@ describe('slack.channel.post', () => {
     expect(await resolve(facts, { operation: 'slack.channel.post', args: { channel: '#general', text: 'hi' } })).toEqual({ refuse: { verdict: 'refuse', reason: 'not_listed' } })
     expect(OPERATIONS['slack.channel.post'].card({ channel: 'ops', text: 'hi' }, facts)).toEqual({ title: 'Post to #Ops in Slack', lines: ['hi'] })
   })
+  // M2-N: notification_send's headline rides along as `title`. Ways it can fail: a title keeps a link or a line break, is
+  // cut instead of refused, changes an untitled post's arguments or hash, or doesn't reach the card.
+  it('takes an optional one-line title, cleaned and refused over 120 characters; without one the arguments are as before', async () => {
+    const titled = PostArgsSchema.parse({ channel: '#ops', title: 'Low\nstock https://evil.example', text: 'a\nb' })
+    expect(titled).toEqual({ channel: '#ops', title: 'Low stock [link removed]', text: 'a\nb' })
+    expect(PostArgsSchema.parse(titled)).toEqual(titled)
+    expect(PostArgsSchema.safeParse({ channel: 'ops', title: 'x'.repeat(121), text: 'hi' }).success).toBe(false)
+    expect(PostArgsSchema.safeParse({ channel: 'ops', title: '\u200b', text: 'hi' }).success).toBe(false)
+    expect(PostArgsSchema.parse({ channel: '#ops', text: 'hi' })).toEqual({ channel: '#ops', text: 'hi' })
+    expect(OPERATIONS['slack.channel.post'].card(titled, facts)).toEqual({ title: 'Post to #Ops in Slack', lines: ['Low stock [link removed]', 'a\nb'] })
+    const plain = await resolve(facts, { operation: 'slack.channel.post', args: { channel: '#ops', text: 'hi' } })
+    const withTitle = await resolve(facts, { operation: 'slack.channel.post', args: { channel: '#ops', text: 'hi', title: 'T' } })
+    expect((plain as { payloadHash: string }).payloadHash).toBe(await auditInputSha256({ scope: { channelId: 'C0123ABCD' }, operation: 'slack.channel.post', args: { channel: '#ops', text: 'hi' }, accountGen: 20, accountId: 'slack:workspace' }))
+    expect((withTitle as { payloadHash: string }).payloadHash).not.toBe((plain as { payloadHash: string }).payloadHash)
+  })
 })
 
 describe('the table', () => {
