@@ -7,8 +7,10 @@
 // inside a word, is flagged `mixed_script`. Generators draw from every CJK letter (Han, Hiragana, Katakana, Hangul,
 // Bopomofo) and every format, bidi-control and default-ignorable code point Unicode assigns, and on purpose from the
 // blank letters, marks and symbols (#536): a name holding one is never shown, and one between a CJK and a Latin letter
-// joins them into one word that is flagged. That every active person is found by their own name, through the tool and
-// D1, is in tools/team/member-find.test.ts.
+// joins them into one word that is flagged. They also draw on purpose from every letter and mark of a script outside
+// the 32 a shown name may use (#534): a name holding one is never shown and is flagged `unlisted_script`, and a word
+// holding letters of two such scripts is flagged `mixed_script`. That every active person is found by their own name,
+// through the tool and D1, is in tools/team/member-find.test.ts.
 import { fc } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
 import { fold, nameFlags, nameShown } from './fold.ts'
@@ -42,6 +44,33 @@ const BLANKS = ['\u115F', '\u1160', '\u3164', '\uFFA0', '\u2800', '\u{13441}', '
 const BLANK = /[\u115F\u1160\u3164\uFFA0\u2800\u{13441}\u{13442}\u{16FE4}]/u
 const blankChar = fc.constantFrom(...BLANKS)
 
+/**
+ * The scripts a shown name may use, stated apart from fold.ts: UAX #31's Recommended scripts plus Syriac, Cherokee and
+ * Mongolian. Common and Inherited letters and marks belong to no script.
+ */
+const LISTED = ['Latin', 'Greek', 'Cyrillic', 'Armenian', 'Hebrew', 'Arabic', 'Syriac', 'Thaana', 'Devanagari', 'Bengali', 'Gurmukhi',
+  'Gujarati', 'Oriya', 'Tamil', 'Telugu', 'Kannada', 'Malayalam', 'Sinhala', 'Thai', 'Lao', 'Tibetan', 'Myanmar', 'Georgian',
+  'Hangul', 'Ethiopic', 'Cherokee', 'Khmer', 'Mongolian', 'Hiragana', 'Katakana', 'Bopomofo', 'Han']
+const LISTED_OR_SHARED = new RegExp(`[${[...LISTED, 'Common', 'Inherited'].map(sc => `\\p{Script=${sc}}`).join('')}]`, 'u')
+/**
+ * Every letter and mark of any other script (#534): Lisu and its tone letters, Tifinagh, Coptic, Vai, Yi, the hieroglyphs
+ * and their blanks, the Khitan filler, the marks that draw nothing (U+13440, U+1BC9D, the SignWriting modifiers). Drawn
+ * by index (about 37,000 code points, too many to spread into fc.constantFrom safely).
+ */
+const UNLISTED_POOL = codePoints(/^[\p{L}\p{M}]$/u).filter(c => !LISTED_OR_SHARED.test(c))
+const unlistedChar = fc.nat({ max: UNLISTED_POOL.length - 1 }).map(i => UNLISTED_POOL[i])
+/** Some of those scripts, each with its letters, for words that mix two of them or use one alone. */
+const UNLISTED_SCRIPTS = ['Lisu', 'Tifinagh', 'Coptic', 'Vai', 'Yi', 'Adlam', 'Nko', 'Canadian_Aboriginal', 'Javanese', 'Deseret', 'Osage',
+  'Egyptian_Hieroglyphs', 'Khitan_Small_Script', 'Tangut', 'Brahmi', 'Duployan', 'Glagolitic', 'Runic', 'Ol_Chiki', 'Balinese', 'Bamum', 'Cham']
+const UNLISTED_LETTERS: readonly (readonly string[])[] = UNLISTED_SCRIPTS.map(sc => {
+  const re = new RegExp(`^\\p{Script=${sc}}$`, 'u')
+  return UNLISTED_POOL.filter(c => /\p{L}/u.test(c) && re.test(c))
+})
+const unlistedRun = (script: number): fc.Arbitrary<string> =>
+  fc.array(fc.constantFrom(...UNLISTED_LETTERS[script]), { minLength: 1, maxLength: 4 }).map(ls => ls.join(''))
+/** One to three words, each of letters of one of those scripts: often shown before #534. */
+const unlistedName = fc.array(fc.nat({ max: UNLISTED_SCRIPTS.length - 1 }).chain(unlistedRun), { minLength: 1, maxLength: 3 }).map(ws => ws.join(' '))
+
 /** Characters a name could smuggle with: marks, format, control and default-ignorable characters, fillers, look-alikes. */
 const TRICKY = [
   '\u0307', '\u0301', '\u200B', '\u200D', '\u202E', '\u00AD', '\n', '\u2028', '\u0000', 'İ', 'ẞ', 'ß', 'Σ', 'ς', 'ﬁ', 'Ⅻ',
@@ -62,6 +91,7 @@ const char = fc.oneof(
   { weight: 1, arbitrary: cjkLetter },
   { weight: 1, arbitrary: formatChar },
   { weight: 1, arbitrary: blankChar },
+  { weight: 1, arbitrary: unlistedChar },
 )
 const text = fc.array(char, { maxLength: 40 }).map(cs => cs.join(''))
 
@@ -119,7 +149,25 @@ describe('a name the agent is shown', () => {
       cs.splice(at % (cs.length + 1), 0, b)
       const n = cs.join('')
       expect(nameShown(n), n).toBe(false)
-    }), { numRuns: RUNS, examples: [['Leo', '\u{13441}', 3], ['Leo Park', '\u2800', 3], ['A', '\u{13441}', 0]] })
+    }), { numRuns: RUNS, examples: [['Leo', '\u{13441}', 3], ['Leo Park', '\u2800', 3], ['A', '\u{13441}', 0], ['\u{18B00}', '\u{16FE4}', 1]] })
+  })
+
+  it('is never one holding a letter or mark of a script outside the 32 listed, wherever it sits, and it is flagged unlisted_script (#534)', () => {
+    const plain = fc.stringMatching(/^[A-Z][a-z]{1,6}( [A-Z][a-z]{1,6}){0,2}$/)
+    fc.assert(fc.property(fc.oneof(plain, unlistedName, mixedName, text), unlistedChar, fc.nat(), (s, u, at) => {
+      const cs = [...s]
+      cs.splice(at % (cs.length + 1), 0, u)
+      const n = cs.join('')
+      expect(nameShown(n), n).toBe(false)
+      expect(nameFlags(n), n).toContain('unlisted_script')
+    }), { numRuns: RUNS, examples: [['\u{18B00}', '\u{16FE4}', 1], ['ꓡꓰꓳꓑꓮ', '\u{13440}', 3], ['ꓬꓳꓴꓟꓴꓢꓔ', 'ꓸ', 3], ['Leo', 'ⵐ', 3]] })
+  })
+
+  it('holds no letter or mark of a script outside the 32 listed, as typed or after NFKC (#534)', () => {
+    fc.assert(fc.property(fc.oneof(text, mixedName, unlistedName), s => {
+      if (!shown(s)) return
+      for (const c of s + s.normalize('NFKC')) if (/[\p{L}\p{M}]/u.test(c)) expect(c, s).toMatch(LISTED_OR_SHARED)
+    }), { numRuns: RUNS, examples: [['ꓡꓰꓳ ꓑꓮ'], ['ⵜⵉⴼⵉⵏⴰⵖ']] })
   })
 
   it('has no mark left after NFC on a Latin, Greek, Cyrillic or Common letter, and only cased letters of those three scripts', () => {
@@ -208,6 +256,20 @@ describe('mixed_script', () => {
     }), { numRuns: RUNS, examples: BLANKS.flatMap(b => [[`ᄀ${b}A`], [`A${b}ᄀ`], [`Leo${b}王`]]) })
   })
 
+
+  it('flags a word holding letters of two scripts outside the 32 listed, and never shows it (#534)', () => {
+    const pair = fc.tuple(fc.nat({ max: UNLISTED_SCRIPTS.length - 1 }), fc.nat({ max: UNLISTED_SCRIPTS.length - 2 }))
+      .map(([a, b]) => [a, b >= a ? b + 1 : b] as const)
+    const word = pair.chain(([a, b]) => fc.tuple(unlistedRun(a), unlistedRun(b), fc.constantFrom('', '-', "'", '\u200B')))
+      .map(([x, y, join]) => x + join + y)
+    const name = fc.tuple(word, fc.array(fc.stringMatching(/^[A-Z][a-z]{0,5}$/), { maxLength: 2 }), fc.nat())
+      .map(([w, others, at]) => { const ws = [...others]; ws.splice(at % (ws.length + 1), 0, w); return ws.join(' ') })
+    // The examples are #534's names: Lisu and Tifinagh, Lisu and Coptic.
+    fc.assert(fc.property(name, n => {
+      expect(nameFlags(n), n).toContain('mixed_script')
+      expect(shown(n), n).toBe(false)
+    }), { numRuns: RUNS, examples: [['ꓪꓲꓣꓰⵐꓮꓡꓡⵐꓝꓴꓠꓓꓢ'], ['ꓮꓓꓟꓲꓠⲞ']] })
+  })
 
   // The look-alike may be Cyrillic, Greek or CJK (#478).
   it('flags a Latin name, hyphens and apostrophes included, with one letter swapped for a look-alike of another script', () => {
