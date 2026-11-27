@@ -15,11 +15,15 @@ type Frame = {
 }
 
 // Runs on every document load (so also after a reload). Samples each frame until the cards have shown for a moment
-// (so a later disappearance is caught) or 3 s pass, then sets window.__layoutDone.
+// (so a later disappearance is caught) and more than 30 frames on #/chats/new are in, or 3 s pass, then sets
+// window.__layoutDone. The frame count is part of the stop rule because assertLayout checks it: after a reload the cards
+// show by the second frame, and a runner drawing under 60 fps fits fewer than 31 frames in the 500 ms that follow (28 in
+// merge-queue run 46054831050). A throttled rAF (a few frames a second) still stops at 3 s and fails that check.
 const SAMPLER = `(() => {
   const frames = []
   const t0 = performance.now()
   let seenAt = null
+  let onNew = 0
   const tick = () => {
     const now = performance.now()
     const composer = document.querySelector('[data-composer]')
@@ -33,8 +37,9 @@ const SAMPLER = `(() => {
       routine: document.querySelectorAll('[data-prompt-routine]').length,
       vh: innerHeight,
     })
+    if (location.hash === '#/chats/new') onNew++
     if (document.querySelectorAll('[data-prompt-card]').length > 0 && seenAt === null) seenAt = now
-    if ((seenAt !== null && now - seenAt > 500) || now - t0 > 3000) { window.__layoutFrames = frames; window.__layoutDone = true }
+    if ((seenAt !== null && now - seenAt > 500 && onNew > 30) || now - t0 > 3000) { window.__layoutFrames = frames; window.__layoutDone = true }
     else requestAnimationFrame(tick)
   }
   requestAnimationFrame(tick)
