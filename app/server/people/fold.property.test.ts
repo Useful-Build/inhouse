@@ -15,7 +15,7 @@ const TRICKY = [
   '\u0307', '\u0301', '\u200B', '\u200D', '\u202E', '\u00AD', '\n', '\u2028', '\u0000', 'İ', 'ẞ', 'ß', 'Σ', 'ς', 'ﬁ', 'Ⅻ',
   '한', 'ᄀ', 'ᅡ', 'ᆨ', 'Ｉ', '’', 'ʼ', '-', "'", ' ', '.', 'ǅ', 'ﷺ', '㍿', 'K', 'Å', 'Ω', 'о', 'е', 'а', 'ο', 'ー',
   '\u115F', '\u1160', '\u3164', '\uFFA0', '\uFE00', '\uFE0F', '\u{E0100}', '\u{E01EF}', '\u180B', '\u180D', '\u034F',
-  '\u17B4', '\u2060', '\u{E0041}',
+  '\u17B4', '\u2060', '\u{E0041}', 'ꞌ', 'Ꞌ', 'ー', 'ｰ', '\uFE70', '\uFE71', '\uFCF2', 'ŀ', '·',
 ]
 const char = fc.oneof(
   { weight: 3, arbitrary: fc.constantFrom(...TRICKY) },
@@ -42,7 +42,7 @@ describe('the fold', () => {
 /** Latin letters and their Cyrillic or Greek look-alikes, for names that mix scripts inside a word. */
 const MIXED_LETTERS = [...'abcehiopxyAEHKMOT', ...Object.values(LOOK_ALIKE)]
 /** Ways to join two parts of one word (no space): hyphens, apostrophes, invisible characters, marks, NFKC-space letters. */
-const IN_WORD = ['-', "'", '’', '', '\u200B', '\u034F', '\u0332', '\u037A', '\uFE70', '\u17D2']
+const IN_WORD = ['-', "'", '’', '', '\u200B', '\u034F', '\u0332', '\u037A', '\uFE70', '\uFE71', '\u17D2', 'ꞌ', 'ー', 'ｰ', 'ŀ']
 /** A part: Latin letters, look-alikes or both, so a word can join a Latin part to a look-alike-only one. */
 const mixedPart = fc.oneof(
   fc.stringMatching(/^[A-Za-z]{1,4}$/),
@@ -75,12 +75,13 @@ describe('a name the agent is shown', () => {
     }), { numRuns: RUNS })
   })
 
-  it('has at most 4 parts, split on spaces, hyphens, apostrophes, dots and marks', () => {
-    const parted = fc.array(fc.tuple(fc.stringMatching(/^[A-Za-z]{1,6}$/), fc.constantFrom(' ', '-', "'", '’', '. ', '\u0332', '\u0301', '\u17D2', '\u0305')), { minLength: 1, maxLength: 9 })
+  it('has at most 4 parts, split on spaces, hyphens, apostrophes, dots, marks, the saltillo, ー and what NFKC breaks', () => {
+    const parted = fc.array(fc.tuple(fc.stringMatching(/^[A-Za-z]{1,6}$/), fc.constantFrom(' ', '-', "'", '’', '. ', '\u0332', '\u0301', '\u17D2', '\u0305', 'ꞌ', 'Ꞌ', 'ー', 'ｰ', '\uFE70', '\uFE71', 'ŀ')), { minLength: 1, maxLength: 9 })
       .map(ps => ps.map(([w, sep]) => w + sep).join('').replace(/[\s'’.\p{M}-]+$/u, ''))
     fc.assert(fc.property(fc.oneof(parted, text), s => {
       if (!shown(s)) return
-      expect(s.normalize('NFC').split(/[\s'’.\p{M}-]+/u).filter(p => p !== '').length, s).toBeLessThanOrEqual(4)
+      // Split as NFKC leaves it, so presentation forms (a space or tatweel) and `ŀ` (`l·`) split too.
+      expect(s.normalize('NFKC').split(/[\s'’.\p{M}\-\uA78B\uA78C\u30FC\uFF70\u0640\u00B7]+/u).filter(p => p !== '').length, s).toBeLessThanOrEqual(4)
     }), { numRuns: RUNS })
   })
 

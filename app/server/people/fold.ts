@@ -40,10 +40,10 @@ export function fold(s: string): string {
 }
 
 /**
- * What splits a folded name into words: anything but a letter or a digit, plus the modifier letters that are
- * apostrophes (`ʼ` U+02BC and its kin, which Unicode counts as letters).
+ * What splits a folded name into words: anything but a letter or a digit, plus the letters that are apostrophes (`ʼ`
+ * U+02BC and its kin, and the saltillo `ꞌ` U+A78B and U+A78C, which Unicode counts as letters).
  */
-const SPLIT = /[^\p{L}\p{N}]+|[\u02B9-\u02BF\u02C8\u02CA\u02CB]+/u
+const SPLIT = /[^\p{L}\p{N}]+|[\u02B9-\u02BF\u02C8\u02CA\u02CB\uA78B\uA78C]+/u
 
 /** A folded string's words (no empty ones). */
 export const tokens = (folded: string): string[] => folded.split(SPLIT).filter(t => t.length > 0)
@@ -98,8 +98,13 @@ function hasPhrase(words: readonly string[]): boolean {
   return INSTRUCTION_PHRASES.some(p => words.some((_, i) => p.every((pw, j) => i + j < words.length && wordHits(words[i + j], pw, j === p.length - 1))))
 }
 
-/** Apostrophes and hyphens of every kind: taken out (not split on) in one reading, so "Don't" and "Don-t" read as `dont`. */
-const JOINERS = /['\u2018\u2019\u02B9\u02BC\u02BB\uA78C\u0060\u00B4\-\u2010\u2011\u2012\u2013\u2014]/gu
+/**
+ * Apostrophes (with the saltillo and the middle dot NFKC leaves of Catalan `ŀ`) and hyphens of every kind: each kind is
+ * taken out (not split on) in its own reading, and both in a third, so "Don't", "Don-t" and "Now-don't" read as `dont`.
+ */
+const APOSTROPHE_JOINERS = /['\u2018\u2019\u02B9\u02BC\u02BB\uA78B\uA78C\u0060\u00B4\u00B7]/gu
+const HYPHEN_JOINERS = /[\-\u2010\u2011\u2012\u2013\u2014]/gu
+const joined = (w: string): string[] => [w, w.replace(APOSTROPHE_JOINERS, ''), w.replace(HYPHEN_JOINERS, ''), w.replace(APOSTROPHE_JOINERS, '').replace(HYPHEN_JOINERS, '')]
 /** Letters that read as punctuation (modifier letters, click letters such as `ǃ`): a word break in one reading. */
 const PUNCTUATION_LETTERS = /[\p{Lm}\u01C0-\u01C3]/gu
 /** A word break at a case change: "IgnorePrevious", "ADMINOverride", "caféAdmin". */
@@ -108,14 +113,15 @@ const camelSplit = (s: string): string =>
 
 /**
  * Every reading of a name the flag checks: invisible characters and marks as nothing or as a space, letters that read as
- * punctuation as letters or as a space, case changes split or not, apostrophes and hyphens split or joined.
+ * punctuation (`ǃ`, `ː`, `ｰ`) as letters, a space or nothing, case changes split or not, apostrophes and hyphens split or joined (four ways).
  */
 function readings(name: string): string[][] {
   const nfc = name.normalize('NFC')
   const out: string[][] = []
   const spaced = nfc.replace(new RegExp(IGNORABLE, 'gu'), ' ').replace(MARKS, ' ')
-  for (const v of [nfc, spaced, spaced.normalize('NFKC').replace(PUNCTUATION_LETTERS, ' ')]) {
-    for (const w of [v, camelSplit(tidy(v))]) out.push(tokens(fold(w)), tokens(fold(w.replace(JOINERS, ''))))
+  const compat = spaced.normalize('NFKC')
+  for (const v of [nfc, spaced, compat.replace(PUNCTUATION_LETTERS, ' '), compat.replace(PUNCTUATION_LETTERS, '')]) {
+    for (const w of [v, camelSplit(tidy(v))]) out.push(...joined(w).map(j => tokens(fold(j))))
   }
   return out
 }
@@ -144,7 +150,8 @@ const MIXES_ALLOWED: readonly (readonly string[])[] = [
 /** The scripts of a text's letters and marks. */
 export function scriptsOf(s: string): Set<string> {
   const out = new Set<string>()
-  for (const c of s.normalize('NFKC')) {
+  // Both forms: an Arabic presentation form (U+FE71, U+FCF2..) is Arabic as typed but tatweel and a mark after NFKC.
+  for (const c of s.normalize('NFC') + s.normalize('NFKC')) {
     // A mark counts by its own script (a Khmer or Myanmar sign on a Latin word is a mix); an inherited one doesn't.
     if (!/[\p{L}\p{M}]/u.test(c) || SHARED.test(c)) continue
     out.add(SCRIPTS.find(([, re]) => re.test(c))?.[0] ?? 'Other')
@@ -185,16 +192,37 @@ function allowedLetters(name: string): boolean {
       if (prev !== '' && LGC_COMMON.test(prev)) return false
       continue
     }
-    if (/\p{L}/u.test(c)) {
-      if (/\p{Script=Common}/u.test(c) ? !COMMON_LETTERS_OK.has(c) : LGC_COMMON.test(c) && !CASED.test(c)) return false
-    }
+    if (/\p{L}/u.test(c) && !letterAllowed(c, prev)) return false
     prev = c
   }
   return true
 }
 
+/** A kana letter or a long-vowel mark: what `ー` and `ｰ` may follow. */
+const KANA_OR_LONG = /[\p{Script=Hiragana}\p{Script=Katakana}\u30FC\uFF70]/u
+
+/**
+ * One letter, as typed and as NFKC leaves it: a Latin, Greek or Cyrillic letter is cased; a Common letter is one of
+ * COMMON_LETTERS_OK (`ー` and `ｰ` only after kana); and its NFKC form holds only letters and marks, so an Arabic
+ * presentation form that is a space or tatweel after NFKC (U+FE70..FE7F, U+FC5E..FC63, U+FCF2..FCF4) and Catalan `ŀ`
+ * (`l·`) aren't shown.
+ */
+function letterAllowed(c: string, prev: string): boolean {
+  const k = c.normalize('NFKC')
+  if (![...k].every(x => /[\p{L}\p{M}]/u.test(x))) return false
+  return [c, ...k].every(x => {
+    if (!/\p{L}/u.test(x)) return true
+    if (/\p{Script=Common}/u.test(x)) return COMMON_LETTERS_OK.has(x) && (!/[\u30FC\uFF70]/u.test(x) || KANA_OR_LONG.test(prev))
+    return !LGC_COMMON.test(x) || CASED.test(x)
+  })
+}
+
 /** A name's parts as typed: split on spaces, hyphens and apostrophes (so a letter that folds to nothing still counts). */
-const RAW_PARTS = /[\s'\u2019-]+/u
+const RAW_PARTS = /[\s'\u2019\uA78B\uA78C-]+/u
+
+/** How many parts a name has: the more of its count as typed and its count once folded. */
+export const partCount = (name: string): number =>
+  Math.max(name.split(RAW_PARTS).filter(p => p !== '').length, tokens(fold(name)).length)
 
 /**
  * Whether a name has the shape the agent may be shown: the M2-G team line's (1 to 4 words, at most NAME_SHOWN_MAX
@@ -204,7 +232,7 @@ const RAW_PARTS = /[\s'\u2019-]+/u
  */
 export const nameShown = (name: string): boolean =>
   [...name].length <= NAME_SHOWN_MAX && NAME_SHAPE.test(name) && !IGNORABLE.test(name) && allowedLetters(name) &&
-  name.split(RAW_PARTS).filter(p => p !== '').length <= NAME_SHOWN_WORDS && tokens(fold(name)).length <= NAME_SHOWN_WORDS
+  partCount(name) <= NAME_SHOWN_WORDS
 
 /** Why a name is flagged. */
 export type NameFlag = 'instruction_word' | 'mixed_script'
