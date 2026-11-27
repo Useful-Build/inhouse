@@ -14,7 +14,7 @@ import { resolve } from '../permissions/resolve.ts'
 import type { DecideCtx, Resolved, Verdict } from '../permissions/types.ts'
 import { reserveUseSql, useDay as dayOfUse } from '../permissions/uses.ts'
 import { itemsPage } from './batch/rows.ts'
-import { cardsOf, kindOf } from './card.ts'
+import { ADMINS_APPROVER, cardsOf, kindOf } from './card.ts'
 import type { StoredCard, Viewer } from './card.ts'
 import { brandTimeZone } from './facts.ts'
 import type { OutboxFacts } from './facts.ts'
@@ -51,7 +51,7 @@ const refusedRequest = (reason: OutboxRefuseReason): OutboxRequestResult => ({ o
 const refusal = (code: OutboxRefusal['refused']['code'], reason?: OutboxRefusal['refused']['reason']): OutboxRefusal =>
   ({ refused: { code, ...(reason ? { reason } : {}) } })
 
-/** A row a person may see: their own (asked or to approve), or any for an admin (N15). */
+/** A row a person may see: their own (asked or to approve), or any for an admin (N15; an admins card is every admin's). */
 export const mayView = (row: Pick<OutboxActionRow, 'asked_by' | 'approver'>, v: Viewer): boolean =>
   v.role === 'admin' || row.asked_by === v.memberId || row.approver === v.memberId
 
@@ -64,10 +64,20 @@ const WITHIN_UNITS_MAX = `NOT EXISTS (SELECT 1 FROM permission_ceiling pc WHERE 
   AND outbox_actions.units > pc.units_max)`
 
 
+/**
+ * Stage 1 M3-X (N25): who may answer the row, in its answering update: its approver, or for an admins card any active
+ * admin (first answer wins: the update's `state = 'waiting'` and `rev`). Two parameters, the actor's id twice.
+ */
+const ANSWERER = `(CASE WHEN approver_kind = 'admins'
+  THEN EXISTS (SELECT 1 FROM members aa WHERE aa.id = ? AND aa.kind = 'person' AND aa.status = 'active' AND aa.role = 'admin')
+  ELSE approver = ? END)`
+/** Stage 1 M3-X (N25): who may undo an approval in its hold: the approver, or for an admins card the admin who approved it. */
+const UNDOER = "(CASE WHEN approver_kind = 'admins' THEN approved_by = ? ELSE approver = ? END)"
+
 const INSERT_COLUMNS = [
   'id', 'rev', 'state', 'verdict', 'guardrail', 'origin', 'via', 'asked_by', 'approver', 'chat_id', 'run_id', 'turn_id', 'tool_use_id', 'job_id',
   'account_id', 'account_gen', 'operation', 'policy_rev', 'scope_json', 'scope_key', 'args_json', 'payload_hash', 'records', 'units', 'card_json',
-  'grant_id', 'approved_by', 'approved_rev', 'approved_at_ms', 'send_at_ms', 'expires_at_ms', 'created_at_ms', 'updated_at_ms', 'stamp',
+  'grant_id', 'approved_by', 'approved_rev', 'approved_at_ms', 'send_at_ms', 'expires_at_ms', 'created_at_ms', 'updated_at_ms', 'stamp', 'approver_kind',
 ] as const
 
 interface NewRow {
@@ -82,6 +92,8 @@ interface NewRow {
   grantId: string | null
   nowMs: number
   stamp: string
+  /** Stage 1 M3-X (N25): `admins` for a card any active admin answers (`approver = 'role:admin'`); a waiting single only. */
+  approverKind: 'person' | 'admins'
 }
 
 /**
@@ -94,13 +106,14 @@ function insertAction(n: NewRow, also: readonly Exists[]): Stmt {
   if (!asker) throw new Error('outbox: an action with no asker')
   const t = timing()
   const approved = n.state === 'approved'
+  if (n.approverKind === 'admins' && (approved || n.verdict !== 'exact' || n.grantId !== null)) throw new Error('outbox: an admins card is a waiting exact card, never grant-backed')
   const values: SqlValue[] = [
-    n.id, 1, n.state, n.verdict, n.guardrail, n.ctx.origin, n.via, asker.memberId, asker.memberId, n.ctx.chatId,
+    n.id, 1, n.state, n.verdict, n.guardrail, n.ctx.origin, n.via, asker.memberId, n.approverKind === 'admins' ? ADMINS_APPROVER : asker.memberId, n.ctx.chatId,
     n.ctx.invocation?.runId ?? null, n.ctx.invocation?.turnId ?? null, n.ctx.invocation?.toolUseId ?? null, n.ctx.jobId,
     n.r.accountId, n.r.accountGen, n.r.operation, n.r.policyRev, JSON.stringify(n.r.scope), n.r.scopeKey, JSON.stringify(n.r.args), n.r.payloadHash,
     n.r.records, n.r.units, JSON.stringify(n.card),
     n.grantId, approved ? `grant:${n.grantId}` : null, approved ? 1 : null, approved ? n.nowMs : null, approved ? n.nowMs + t.holdMs : null,
-    n.nowMs + t.expiresMs, n.nowMs, n.nowMs, n.stamp,
+    n.nowMs + t.expiresMs, n.nowMs, n.nowMs, n.stamp, n.approverKind,
   ]
   const conds = [
     `NOT EXISTS (SELECT 1 FROM outbox_actions WHERE chat_id = ? AND payload_hash = ? AND state = 'waiting' AND expires_at_ms > ?)`,
@@ -289,7 +302,7 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
         const use = reserveUseSql({ actionId: id, actionRev: 1, grantId: v.grantId, day: dayOfUse(nowMs, tz), units: r.units, atMs: nowMs })
         await runBatch(db, [
           use,
-          insertAction({ id, state: 'approved', verdict: 'run', guardrail: null, ctx, via, r, card: card(false), grantId: v.grantId, nowMs, stamp }, [unreleasedUse(id, 1), { sql: GATE_OPEN, params: [] }]),
+          insertAction({ id, state: 'approved', verdict: 'run', guardrail: null, ctx, via, r, card: card(false), grantId: v.grantId, nowMs, stamp, approverKind: 'person' }, [unreleasedUse(id, 1), { sql: GATE_OPEN, params: [] }]),
           stmt('DELETE FROM permission_uses WHERE id = ? AND NOT EXISTS (SELECT 1 FROM outbox_actions WHERE id = ?)', `${id}#1`, id),
           hook(actionLine(
             { ...at(asker.memberId, nowMs), args: { action: 'action.requested', actionId: id, operation: r.operation, verdict: 'run', origin: ctx.origin, records: r.records, units: r.units, permissionId: v.grantId } },
@@ -316,7 +329,9 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
         if (v.verdict === 'run') v = (await gateOpen()) ? { verdict: 'exact', guardrail: 'count', approver: 'asker' } : { verdict: 'ask', nudge: false }
       }
 
-      if (v.verdict === 'exact' && v.guardrail === 'bulk' && splits) {
+      // Stage 1 M3-X (N25): an admins card is always one single waiting card (no batch ever needs an admin).
+      const admins = v.verdict === 'exact' && v.approver === 'admins'
+      if (v.verdict === 'exact' && v.guardrail === 'bulk' && splits && !admins) {
         // Way 1 (N22): over the bulk threshold, one exact card with the full list.
         if (await overBatchMax(db, r.operation, r.records)) return refusedRequest('batch_full')
         const made = await oneCallBatch(bd, call, { kind: 'exact' })
@@ -326,7 +341,7 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
         throw new Error('outbox: a batch insert applied nothing and no row explains it')
       }
       // Way 2 (N22): a call its grant can't take collects, when its kind does.
-      if (v.verdict === 'exact' && v.guardrail === 'count' && entry.coalesces) return collectAs('count')
+      if (v.verdict === 'exact' && v.guardrail === 'count' && entry.coalesces && !admins) return collectAs('count')
 
       const id = newActionId()
       const stamp = writeStamp(d.requestId)
@@ -340,7 +355,7 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
         params: [ctx.chatId, r.operation, nowMs, WAITING_SINGLES_MAX],
       }
       await runBatch(db, [
-        insertAction({ id, state: 'waiting', verdict, guardrail, ctx, via, r, card: card(nudge), grantId: null, nowMs, stamp }, [roomForOne]),
+        insertAction({ id, state: 'waiting', verdict, guardrail, ctx, via, r, card: card(nudge), grantId: null, nowMs, stamp, approverKind: admins ? 'admins' : 'person' }, [roomForOne]),
         hook(actionLine(
           { ...at(asker.memberId, nowMs), args: { action: 'action.requested', actionId: id, operation: r.operation, verdict, ...(guardrail ? { guardrail } : {}), origin: ctx.origin, records: r.records, units: r.units } },
           stamped(id, stamp),
@@ -353,7 +368,7 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       if (await chatDeleted(ctx.chatId)) return refusedRequest('chat_deleted')
       if (!(await first<{ one: number }>(db, stmt(`SELECT 1 AS one WHERE EXISTS (${roomForOne.sql})`, ...roomForOne.params)))) {
         // The 6th waiting card of this kind: collected when the kind collects, refused otherwise (money, destructive).
-        return entry.coalesces ? collectAs('bulk') : refusedRequest('too_many_waiting')
+        return entry.coalesces && !admins ? collectAs('bulk') : refusedRequest('too_many_waiting')
       }
       throw new Error('outbox: a waiting insert applied nothing and no row explains it')
     },
@@ -362,7 +377,8 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       const nowMs = d.now()
       const before = await row(actionId)
       if (!before || !mayView(before, actor)) return refusal('not_found')
-      if (before.approver !== actor.memberId) return refusal('forbidden', 'not_owner')
+      // Stage 1 M3-X (N25): an admins card is any active admin's to answer, never its member asker's.
+      if (before.approver_kind === 'admins' ? actor.role !== 'admin' : before.approver !== actor.memberId) return refusal('forbidden', 'not_owner')
       // M2-D (N11): a card whose chat was deleted can't be answered (its deletion withdraws it; this covers the race).
       if (await chatDeleted(before.chat_id)) return refusal('conflict')
       const kind = kindOf(before)
@@ -386,19 +402,19 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
           `UPDATE outbox_actions SET state = 'approved', rev = rev + 1, approved_by = ?, approved_rev = rev + 1, approved_at_ms = ?,
              approved_epoch = (SELECT epoch FROM outbox_gate WHERE id = 1), send_at_ms = ?, grant_id = NULL, lapsed_reason = NULL,
              updated_at_ms = ?, stamp = ?
-           WHERE id = ? AND rev = ? AND state = 'waiting' AND approver = ? AND expires_at_ms > ? AND ${kindSql}
+           WHERE id = ? AND rev = ? AND state = 'waiting' AND ${ANSWERER} AND expires_at_ms > ? AND ${kindSql}
              AND ${mayDo('?', entry.memberMay)} AND EXISTS (${GATE_OPEN}) AND ${CHAT_NOT_DELETED} AND ${WITHIN_UNITS_MAX}`,
-          actor.memberId, nowMs, sendAt, nowMs, stamp, actionId, input.ifRev, actor.memberId, nowMs, actor.memberId,
+          actor.memberId, nowMs, sendAt, nowMs, stamp, actionId, input.ifRev, actor.memberId, actor.memberId, nowMs, actor.memberId,
         )
         : stmt(
           `UPDATE outbox_actions SET state = 'denied', rev = rev + 1, final_at_ms = ?, updated_at_ms = ?, stamp = ?
-           WHERE id = ? AND rev = ? AND state = 'waiting' AND approver = ? AND ${kindSql}
+           WHERE id = ? AND rev = ? AND state = 'waiting' AND ${ANSWERER} AND ${kindSql}
              AND EXISTS (SELECT 1 FROM members m WHERE m.id = ? AND m.kind = 'person' AND m.status = 'active') AND ${CHAT_NOT_DELETED}`,
-          nowMs, nowMs, stamp, actionId, input.ifRev, actor.memberId, actor.memberId,
+          nowMs, nowMs, stamp, actionId, input.ifRev, actor.memberId, actor.memberId, actor.memberId,
         )]
       const line = (permissionId?: string) => ({
         ...at(actor.memberId, nowMs),
-        args: { action: 'action.answered' as const, actionId, choice: input.choice, ...(permissionId ? { permissionId } : {}) },
+        args: { action: 'action.answered' as const, actionId, choice: input.choice, ...(permissionId ? { permissionId } : {}), approverKind: before.approver_kind },
       })
       if (input.choice === 'always') {
         // The grant (or the live one already there), the action's use under it and `grant_id`, all only under this
@@ -432,7 +448,7 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
           // The line names the grant the batch found, so it's built in SQL from the row (ids and a closed code only).
           stmt(
             `INSERT INTO audit_log (at_ms, actor_id, action, target_kind, target_id, args_json, req_id)
-             SELECT ?, ?, 'action.answered', 'action', a.id, json_object('actionId', a.id, 'choice', 'always', 'permissionId', a.grant_id), ?
+             SELECT ?, ?, 'action.answered', 'action', a.id, json_object('actionId', a.id, 'choice', 'always', 'permissionId', a.grant_id, 'approverKind', a.approver_kind), ?
              FROM outbox_actions a WHERE a.id = ? AND a.stamp = ? AND a.grant_id IS NOT NULL`,
             nowMs, actor.memberId, d.requestId, actionId, stamp,
           ),
@@ -461,15 +477,16 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       const nowMs = d.now()
       const before = await row(actionId)
       if (!before || !mayView(before, actor)) return refusal('not_found')
-      if (before.approver !== actor.memberId) return refusal('forbidden', 'not_owner')
+      // Stage 1 M3-X (N25): an admins card's approval is undone by the admin who gave it.
+      if ((before.approver_kind === 'admins' ? before.approved_by : before.approver) !== actor.memberId) return refusal('forbidden', 'not_owner')
       const stamp = writeStamp(d.requestId)
       const mine = stamped(actionId, stamp)
       const line = (released: boolean) => ({ ...at(actor.memberId, nowMs), args: { action: 'action.undone' as const, actionId, released } })
       await runBatch(db, [
         stmt(
           `UPDATE outbox_actions SET state = 'undone', rev = rev + 1, final_at_ms = ?, updated_at_ms = ?, stamp = ?
-           WHERE id = ? AND rev = ? AND state = 'approved' AND approver = ?`,
-          nowMs, nowMs, stamp, actionId, input.ifRev, actor.memberId,
+           WHERE id = ? AND rev = ? AND state = 'approved' AND ${UNDOER}`,
+          nowMs, nowMs, stamp, actionId, input.ifRev, actor.memberId, actor.memberId,
         ),
         hook(actionLine(line(true), both(mine, unreleasedUse(actionId, input.ifRev)))),
         hook(actionLine(line(false), butNot(mine, unreleasedUse(actionId, input.ifRev)))),
@@ -604,6 +621,9 @@ export function outboxStore({ db, hook }: { db: D1Database; hook?: AuditHook }) 
       port(at).undo(actor, id, input),
     resolve: (actor: OutboxActor, id: string, input: Parameters<OutboxPort['resolve']>[2], at: { requestId: string; nowMs: number }): Promise<OutboxChange> =>
       port(at).resolve(actor, id, input),
+    /** Stage 1 M3-X (N25): the asker takes back their own waiting card. */
+    withdraw: (actor: OutboxActor, id: string, input: { ifRev: number }, at: { requestId: string; nowMs: number }): Promise<OutboxChange> =>
+      port(at).withdraw({ kind: 'member', actor }, id, input),
     /** The health signals' counts (ops/signals/needs-check.ts): open checks, sends past their deadline, the gate. */
     async health(nowMs: number): Promise<{ needsCheck: number; staleSending: number; gate: { paused: boolean; doGen: number; updatedAtMs: number } }> {
       const [counts, gate] = await Promise.all([

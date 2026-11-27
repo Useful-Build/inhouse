@@ -8,7 +8,7 @@ import type { Stmt } from '../../db/sql.ts'
 import type { ItemReleaseReason } from '../../permissions/policy.ts'
 import type { Exists } from '../sql.ts'
 import type { OutboxActionRow, OutboxItemRow } from '../types.ts'
-import { FAILED_TEXT, NEEDS_CHECK_TEXT, SENT_TEXT } from '../words.ts'
+import { FAILED_TEXT, needsCheckText, SENT_TEXT } from '../words.ts'
 
 const base64url = (bytes: Uint8Array): string => btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
 /** An item's id: `oi_` + 128 random bits, kept across moves. */
@@ -107,7 +107,7 @@ function itemResult(i: Pick<OutboxItemRow, 'state' | 'result_json'>): string | u
     return typeof ref === 'string' && ref !== '' ? `${SENT_TEXT} ${ref}` : SENT_TEXT
   }
   if (i.state === 'failed') return FAILED_TEXT
-  if (i.state === 'needs_check') return NEEDS_CHECK_TEXT
+  if (i.state === 'needs_check') return needsCheckText(i.result_json)
   return undefined
 }
 

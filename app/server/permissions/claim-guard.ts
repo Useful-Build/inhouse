@@ -4,14 +4,16 @@
 //    largest single call, whatever approved it, so a ceiling lowered during the hold stops the claim), and the row made
 //    under the current policy;
 //  - the account's generation is unchanged (`connector_accounts.connected_at_ms`, and no disconnect since);
-//  - the asker is still an active person whose role may do the operation;
+//  - the asker is still an active person whose role may do the operation, or (Stage 1 M3-X, N25) the row is an admins
+//    card (`approver_kind = 'admins'`, never grant-backed): a member asked for what only an admin may approve;
 //  - for Slack, the channel is still listed;
-//  - and either (a) `grant_id` set: not a routine's action, no guardrail (no effect flag, at most the ceiling's
+//  - and either (a) `grant_id` set: not a routine's action, not an admins card, no guardrail (no effect flag, at most the ceiling's
 //    `bulk_threshold` records), the grant live and covering (decide.ts `covers`), its `units_max` admitting the row's
 //    units, and an unreleased use row for this action and revision; or (b) no grant:
-//    the approver is still an active person whose role may do the operation.
+//    the approver is still an active person whose role may do the operation; for an admins card, still an active admin
+//    (an admin demoted or removed during the hold stops the claim).
 // The outbox adds its own gate checks (state, revision, hold, epoch, pause generation). Every value is a bound parameter
-// or a column; `alias` must be a plain SQL identifier. `alias.units` and `alias.records` are one call's (for a batch
+// or a column; `alias` must be a plain SQL identifier, and its row must carry `approver_kind` (Stage 1 M3-X). `alias.units` and `alias.records` are one call's (for a batch
 // item, M3-B, the item's: `units_max` bounds one call, never a batch's total). decide.property.test.ts checks this against `decideCore` on
 // random D1 states.
 import { OPERATION_KEYS, OPERATIONS } from '../outbox/operations/index.ts'
@@ -38,11 +40,12 @@ export function claimGuardSql(alias: string, table: GuardTable = OPERATIONS): { 
   AND ${a}.policy_rev = ?
   AND EXISTS (SELECT 1 FROM connector_accounts ca WHERE ca.account_id = ${a}.account_id AND ca.connected_at_ms = ${a}.account_gen
     AND (ca.disconnected_at_ms IS NULL OR ca.disconnected_at_ms < ca.connected_at_ms))
-  AND EXISTS (SELECT 1 FROM members am WHERE am.id = ${a}.asked_by AND am.kind = 'person' AND am.status = 'active' AND ${may('am')})
+  AND EXISTS (SELECT 1 FROM members am WHERE am.id = ${a}.asked_by AND am.kind = 'person' AND am.status = 'active'
+    AND (${may('am')} OR (${a}.approver_kind = 'admins' AND ${a}.grant_id IS NULL)))
   AND (NOT ${inList(`${a}.operation`, slack)} OR EXISTS (SELECT 1 FROM notify_channels nc
     WHERE nc.channel_id = json_extract(${a}.scope_json, '$.channelId') AND nc.removed_at_ms IS NULL))
   AND (
-    (${a}.grant_id IS NOT NULL AND ${a}.origin <> 'routine' AND NOT ${inList(`${a}.operation`, effectful)}
+    (${a}.grant_id IS NOT NULL AND ${a}.origin <> 'routine' AND ${a}.approver_kind = 'person' AND NOT ${inList(`${a}.operation`, effectful)}
       AND EXISTS (SELECT 1 FROM permission_grants g
         JOIN permission_ceiling gc ON gc.operation = g.operation AND gc.enabled = 1
         JOIN members gm ON gm.id = ${a}.asked_by
@@ -55,7 +58,7 @@ export function claimGuardSql(alias: string, table: GuardTable = OPERATIONS): { 
       AND EXISTS (SELECT 1 FROM permission_uses u WHERE u.action_id = ${a}.id AND u.action_rev = ${a}.rev
         AND u.grant_id = ${a}.grant_id AND u.released_at_ms IS NULL))
     OR (${a}.grant_id IS NULL AND EXISTS (SELECT 1 FROM members ap WHERE ap.id = ${a}.approved_by AND ap.kind = 'person'
-      AND ap.status = 'active' AND ${may('ap')}))
+      AND ap.status = 'active' AND (CASE WHEN ${a}.approver_kind = 'admins' THEN ap.role = 'admin' ELSE ${may('ap')} END)))
   )
 )`
   // Parameters in the order their `?` appear above.

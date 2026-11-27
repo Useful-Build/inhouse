@@ -126,7 +126,7 @@ describe('reserving a use (failures 1 and 2)', () => {
       const guard = claimGuardSql('a')
       const passes = await db.prepare(`WITH a AS (SELECT ? AS id, 1 AS rev, 'run' AS verdict, 'chat' AS origin, 'm_use_d' AS asked_by, NULL AS approved_by,
           ? AS grant_id, 'shopify:store' AS account_id, ? AS account_gen, 'shopify.order.tag_add' AS operation, ? AS policy_rev, ? AS scope_key,
-          '{"shop":"store-a"}' AS scope_json, 1 AS records, 1 AS units) SELECT COUNT(*) AS n FROM a WHERE ${guard.sql}`)
+          '{"shop":"store-a"}' AS scope_json, 1 AS records, 1 AS units, 'person' AS approver_kind) SELECT COUNT(*) AS n FROM a WHERE ${guard.sql}`)
         .bind(`ac_${order}`, g.id, SHOP_GEN, POLICY_REV, g.scopeKey, ...guard.params).first<number>('n')
       expect(passes).toBe(0)
     }

@@ -24,7 +24,7 @@ import type { DueTask, TaskContext, TaskHandler, TaskResult } from '../do/brand-
 import { safeError } from '../safe-error.ts'
 import { sendBatch } from './batch/send.ts'
 import { claimStmt, lapseStmts, whyRefused } from './claim.ts'
-import { expectOf, outcomeOf, requestArgs, startCall } from './hub-call.ts'
+import { expectOf, outcomeOf, partialJson, requestArgs, startCall } from './hub-call.ts'
 import type { SendOutcome } from './hub-call.ts'
 import { notifyAll, outboxNotifier } from './notify.ts'
 import type { OutboxNotice, OutboxNotifier } from './notify.ts'
@@ -32,7 +32,7 @@ import { actionLine, both, butNot, releaseUseWhere, stamped, unreleasedUse } fro
 import { SEND_KIND } from './send-task.ts'
 import { timing } from './timing.ts'
 import type { OutboxActionRow } from './types.ts'
-import { LAPSE_TEXT, NEEDS_CHECK_TEXT, WITHDRAWN_TEXT } from './words.ts'
+import { LAPSE_TEXT, needsCheckText, WITHDRAWN_TEXT } from './words.ts'
 
 /** Room left after the hub's limit for the result's own D1 write, so a send near the edge still lands before the sweep's stale mark. */
 export const PERMIT_RESULT_MARGIN_MS = 5_000
@@ -105,9 +105,10 @@ async function storeResult(d: Pick<DispatchDeps, 'db' | 'requestId' | 'notify'>,
       releaseUseWhere({ actionId: row.id, actionRev: useRev, reason: 'failed', atMs: nowMs }, mine),
     )
   } else {
+    // #487: a partly-sent call keeps the hub's groups (order numbers only) for the person who checks it.
     stmts.push(
-      stmt(`UPDATE outbox_actions SET state = 'needs_check', rev = rev + 1, updated_at_ms = ?, stamp = ?
-            WHERE id = ? AND attempt = ? AND state = 'sending'`, nowMs, stamp, row.id, row.attempt),
+      stmt(`UPDATE outbox_actions SET state = 'needs_check', rev = rev + 1, result_json = ?, updated_at_ms = ?, stamp = ?
+            WHERE id = ? AND attempt = ? AND state = 'sending'`, partialJson(outcome), nowMs, stamp, row.id, row.attempt),
       actionLine({ ...who, args: { action: 'action.needs_check', actionId: row.id, attempt: row.attempt, why: outcome.why } }, mine),
     )
   }
@@ -115,7 +116,7 @@ async function storeResult(d: Pick<DispatchDeps, 'db' | 'requestId' | 'notify'>,
   const after = await first<{ stamp: string | null; rev: number }>(d.db, stmt('SELECT stamp, rev FROM outbox_actions WHERE id = ?', row.id))
   const applied = after?.stamp === stamp
   if (applied && outcome.kind === 'needs_check') {
-    await notifyAll(d.notify, [{ kind: 'needs_check', to: row.approver, actionId: row.id, key: `needs_check:${row.id}:${row.attempt}`, body: NEEDS_CHECK_TEXT }])
+    await notifyAll(d.notify, [{ kind: 'needs_check', to: row.approver, actionId: row.id, key: `needs_check:${row.id}:${row.attempt}`, body: needsCheckText(partialJson(outcome)) }])
   }
   return applied
 }

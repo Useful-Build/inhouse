@@ -25,6 +25,8 @@ export const TEXT = {
   /** The chat's owner isn't an active person on the team. */
   noPerson: "There's no one to ask for an approval here, so nothing was asked or sent.",
   made: (id: string) => `It's in Approvals for the person to answer (approval_id: ${id}). Nothing goes out unless they approve it. This doesn't wait for the answer: check it later with approval_get.`,
+  /** Stage 1 M3-X (N25): a member asked for what only an admin may approve: any active admin answers the card. */
+  madeForAdmins: (id: string) => `Waiting for an admin's OK. It's in Approvals (approval_id: ${id}). Nothing goes out unless an admin approves it. This doesn't wait for the answer: check it later with approval_get.`,
   alreadyWaiting: (id: string) => `The same action is already waiting in Approvals, so no second card was made (approval_id: ${id}). Check it with approval_get.`,
   replay: (id: string, state: ActionState) => `This call already made approval ${id}. It's ${STATE_WORDS[state]}.`,
   /** Stage 1 M3-B: a collecting batch holds other calls' items too, so the agent can't withdraw it whole. */

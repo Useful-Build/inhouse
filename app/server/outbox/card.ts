@@ -1,6 +1,9 @@
 // An outbox row as its card shows it (N15, N18): server words only, `can` for display (the answering update checks who
 // may answer itself). The asker sees the card with its chat; an admin sees another person's card's facts, never the
 // chat (`chatId: null`), and may resolve a "Needs a check".
+// Stage 1 M3-X (N25): an admins card (`approver_kind = 'admins'`) is any active admin's to answer: its member asker sees
+// it in their chat waiting for an admin (`waitingFor`) and may withdraw it, never answer it; admins see its facts in
+// Approvals, never the chat; the admin who approved it may undo it in the hold.
 import type { ActionCard, ActionKind, ActionState } from '../../shared/contract/actions.ts'
 import { ActionCardSchema } from '../../shared/contract/actions.ts'
 import type { MemberRole } from '../../shared/contract/members.ts'
@@ -8,13 +11,16 @@ import { operationEntry } from './operations/index.ts'
 import type { OutboxActionRow, OutboxItemRow } from './types.ts'
 import { batchSummaries } from './batch/rows.ts'
 import type { BatchSummary } from './batch/rows.ts'
-import { batchMovedText, batchTitle, FAILED_TEXT, LAPSE_TEXT, NEEDS_CHECK_TEXT, SENT_TEXT, WITHDRAWN_TEXT } from './words.ts'
+import { batchMovedText, batchTitle, FAILED_TEXT, LAPSE_TEXT, needsCheckText, SENT_TEXT, WAITING_FOR_ADMIN, WITHDRAWN_TEXT } from './words.ts'
 import type { LapseReason } from './sql.ts'
 
 /** What the request stored for the card (`card_json`): the operation's own words, the tool's label and the nudge. */
 export interface StoredCard { title: string; lines: string[]; label: string; nudge: boolean }
 
 export interface Viewer { memberId: string; role: MemberRole }
+
+/** Stage 1 M3-X (N25): an admins card's `approver`: no person, any active admin answers it. */
+export const ADMINS_APPROVER = 'role:admin'
 
 /**
  * Which buttons the card has. A routine's card is always an exact approval (M2-A: a routine never gets "Always allow",
@@ -31,7 +37,8 @@ function resultText(row: OutboxActionRow): string | undefined {
     return typeof ref === 'string' && ref !== '' ? `${SENT_TEXT} ${ref}` : SENT_TEXT
   }
   if (row.state === 'failed') return FAILED_TEXT
-  if (row.state === 'needs_check') return NEEDS_CHECK_TEXT
+  // #487: a partly-sent call's groups (which orders went out, were refused or are unclear), when the hub named them.
+  if (row.state === 'needs_check') return needsCheckText(row.result_json)
   return undefined
 }
 
@@ -45,7 +52,11 @@ export function cardOf(row: OutboxActionRow, viewer: Viewer, nowMs: number, batc
   if (row.kind === 'batch' && batch === undefined) throw new Error(`outbox: batch ${row.id}'s card was asked for without its lines`)
   const entry = operationEntry(row.operation)
   if (!entry) throw new Error(`outbox: a stored action names no operation (${row.id})`)
-  const own = viewer.memberId === row.approver
+  const admins = row.approver_kind === 'admins'
+  // Who answers it: its approver, or for an admins card any admin (the answering update checks they're still active).
+  const own = admins ? viewer.role === 'admin' : viewer.memberId === row.approver
+  // Who undoes it in the hold: its approver, or for an admins card the admin who approved it.
+  const undoer = admins ? row.approved_by === viewer.memberId : own
   const asker = viewer.memberId === row.asked_by
   const waiting = row.state === 'waiting' && row.expires_at_ms > nowMs
   const kind = kindOf(row)
@@ -81,16 +92,17 @@ export function cardOf(row: OutboxActionRow, viewer: Viewer, nowMs: number, batc
       alwaysAllow: own && waiting && kind === 'ask',
       approve: own && waiting && kind === 'exact',
       deny: own && waiting,
-      undo: own && row.state === 'approved',
+      undo: undoer && row.state === 'approved',
       resolve: row.state === 'needs_check' && (own || viewer.role === 'admin'),
-      // Stage 1 M3-A: no member withdraw before M3-X's admins card (the agent's approval_withdraw is its own tool).
-      withdraw: false,
+      // Stage 1 M3-X (N25): the asker takes back a waiting card someone else answers.
+      withdraw: admins && asker && waiting,
     },
     nudgeAlways: own && waiting && kind === 'ask' && stored.nudge,
     ...(batch !== undefined
       ? { batch: { itemCount: row.items_n, firstLines: batch.firstLines, totals: { records: row.records, units: row.units, unitsLabel: entry.unitsLabel } } }
       : {}),
     approverKind: row.approver_kind,
+    ...(admins && waiting && !own ? { waitingFor: WAITING_FOR_ADMIN } : {}),
   })
 }
 

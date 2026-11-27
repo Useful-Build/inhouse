@@ -55,6 +55,36 @@ export const WITHDRAWN_TEXT: Readonly<Partial<Record<LapseReason, string>>> = {
 
 /** A needs-check row's words on its card. */
 export const NEEDS_CHECK_TEXT = 'It isn’t clear whether this went out. Check in the tool, then say whether it did.'
+
+/** Stage 1 M3-X (N25): whom an admins card waits for, as its asker's card says it. */
+export const WAITING_FOR_ADMIN = 'an admin'
+
+/**
+ * #487: what a partly-sent call stores beside its `needs_check` (`result_json`): the hub's groups of order numbers, read
+ * by hub-call.ts `partialOf` (digits only, never other text).
+ */
+export interface PartialGroups { sent: string[]; refused: string[]; unclear: string[] }
+
+const orderList = (nums: readonly string[]) => `${nums.length === 1 ? 'Order' : 'Orders'} ${nums.join(', ')}`
+
+/** #487: the groups in words: "Orders 9001, 9002 went out. Order 424242 was refused. Order 9003 is unclear." */
+export function partialText(g: PartialGroups): string {
+  const parts: string[] = []
+  if (g.sent.length > 0) parts.push(`${orderList(g.sent)} went out.`)
+  if (g.refused.length > 0) parts.push(`${orderList(g.refused)} ${g.refused.length === 1 ? 'was' : 'were'} refused.`)
+  if (g.unclear.length > 0) parts.push(`${orderList(g.unclear)} ${g.unclear.length === 1 ? 'is' : 'are'} unclear.`)
+  return parts.join(' ')
+}
+
+/**
+ * A needs-check row's (or item's) words, with the groups a partly-sent call stored (#487) when there are any: "Part of
+ * this went out. Orders 9001, 9002 went out. Order 424242 was refused. Check in the tool, then say whether it did."
+ */
+export function needsCheckText(resultJson: string | null): string {
+  const partial = resultJson ? (JSON.parse(resultJson) as { partial?: PartialGroups }).partial : undefined
+  if (!partial) return NEEDS_CHECK_TEXT
+  return `${partial.sent.length > 0 ? 'Part of this went out. ' : ''}${partialText(partial)} Check in the tool, then say whether it went out.`
+}
 /** A failed row's words: the hub's code in plain words is the audit text's; the card keeps it short. */
 export const FAILED_TEXT = 'It didn’t go out.'
 export const SENT_TEXT = 'Sent.'

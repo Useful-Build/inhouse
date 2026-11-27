@@ -5,8 +5,10 @@
 //  2. the call's units are past the ceiling's `units_max` (the largest single call, whatever approves it): refuse
 //     `over_limit` ("over the limit the Inhouse team set");
 //  3. no one to ask (a system routine): refuse `no_one_to_ask`;
-//  4. a member asks for an operation their role can't approve: refuse `needs_admin`. Until M3-X this step stays M2's
-//     refusal: no `admins` verdict is given (M3-X makes it an `exact` card for any active admin, with the outbox side, N25);
+//  4. a member asks for an operation their role can't approve (`memberMay: false`, a refund): `exact` with approver
+//     `admins` (Stage 1 M3-X, N25), a card any active admin answers, first answer wins. Its guardrail is the effect's (or
+//     `bulk`); an admin-only operation with neither says `access` (only admins may approve it). Never a grant, whatever
+//     the origin. An admin's own call goes on (an exact card to themselves when an effect applies);
 //  5. an effect flag, or more records than the ceiling's `bulk_threshold` (1 to 5, D3): `exact` with that guardrail,
 //     never covered by "Always allow";
 //  6. a routine: `ask` (routines use no grant, D4);
@@ -56,10 +58,10 @@ export function decideCore(f: DecideFacts, ctx: DecideCtx, r: Resolved): Verdict
   if (r.units > ceiling.unitsMax) return { verdict: 'refuse', reason: 'over_limit' }
   const asker = ctx.asker
   if (asker === null) return { verdict: 'refuse', reason: 'no_one_to_ask' }
-  // Stage 1 M3-L: an `admins` verdict is refused until M3-X lands the admins' card and its outbox side together (N25).
-  if (asker.role === 'member' && !r.memberMay) return { verdict: 'refuse', reason: 'needs_admin' }
   const guardrail = guardrailOf(r, ceiling)
-  // Every exact card is the asker's until M3-X adds the admins' card (N25).
+  // Stage 1 M3-X (N25): what a member's role can't approve is a card for any active admin (claimGuardSql's asker and
+  // approver checks name the same rule), never a refusal and never a grant.
+  if (asker.role === 'member' && !r.memberMay) return { verdict: 'exact', guardrail: guardrail ?? 'access', approver: 'admins' }
   if (guardrail) return { verdict: 'exact', guardrail, approver: 'asker' }
   if (ctx.origin === 'routine') return { verdict: 'ask', nudge: false }
   // The asker's own grant before the brand's, then by id: one answer for the same facts.

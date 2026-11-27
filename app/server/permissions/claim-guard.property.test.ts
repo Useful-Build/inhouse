@@ -36,9 +36,12 @@ const scopeKey = (s: Record<string, string>) => Object.entries(s).map(([k, v]) =
 interface Row {
   id: string; rev: number; verdict: 'run' | 'ask' | 'exact'; origin: Origin; asked_by: string; approved_by: string | null
   grant_id: string | null; account_id: string; account_gen: number; operation: string; policy_rev: number
-  scope_key: string; scope_json: string; records: number; units: number
+  scope_key: string; scope_json: string; records: number; units: number; approver_kind: 'person' | 'admins'
 }
-const COLS: readonly (keyof Row)[] = ['id', 'rev', 'verdict', 'origin', 'asked_by', 'approved_by', 'grant_id', 'account_id', 'account_gen', 'operation', 'policy_rev', 'scope_key', 'scope_json', 'records', 'units']
+const COLS: readonly (keyof Row)[] = [
+  'id', 'rev', 'verdict', 'origin', 'asked_by', 'approved_by', 'grant_id', 'account_id', 'account_gen', 'operation', 'policy_rev', 'scope_key', 'scope_json',
+  'records', 'units', 'approver_kind',
+]
 
 async function passes(row: Row, table: GuardTable = OPERATIONS): Promise<boolean> {
   const g = claimGuardSql('a', table)
@@ -50,7 +53,7 @@ async function passes(row: Row, table: GuardTable = OPERATIONS): Promise<boolean
 const rowOf = (r: Resolved, ctx: DecideCtx & { asker: Asker }, over: Partial<Row>): Row => ({
   id: 'ac_claim', rev: 1, verdict: 'ask', origin: ctx.origin, asked_by: ctx.asker.memberId, approved_by: ctx.asker.memberId,
   grant_id: null, account_id: r.accountId, account_gen: r.accountGen, operation: r.operation, policy_rev: r.policyRev,
-  scope_key: r.scopeKey, scope_json: JSON.stringify(r.scope), records: r.records, units: r.units, ...over,
+  scope_key: r.scopeKey, scope_json: JSON.stringify(r.scope), records: r.records, units: r.units, approver_kind: 'person', ...over,
 })
 
 // ---------- generators: the real operations with made-up flags (the guard reads them from the table it's given, so its
@@ -130,9 +133,41 @@ describe('claimGuardSql agrees with decideCore', () => {
       const v = decideCore({ ceiling: c.ceilings, grants: c.grants, allowOnceCount: 0 }, c.ctx, c.r)
       const want = v.verdict !== 'refuse' && c.r.policyRev === POLICY_REV
       const verdict = v.verdict === 'refuse' ? 'ask' : v.verdict === 'run' ? 'ask' : v.verdict
-      const got = await passes(rowOf(c.r, c.ctx, { verdict }), c.table)
-      tally.push(`${want}/${got}`)
+      // Stage 1 M3-X: the row the decision makes, approved by who may approve it (an admins card by an active admin).
+      const admins = v.verdict === 'exact' && v.approver === 'admins'
+      const got = await passes(rowOf(c.r, c.ctx, { verdict, ...(admins ? { approver_kind: 'admins', approved_by: OTHER } : {}) }), c.table)
+      tally.push(`${want}/${got}${admins ? '/admins' : ''}`)
       expect(got).toBe(want)
+    }), { numRuns: 150 })
+    expect(tally).toContain('true/true')
+    expect(tally).toContain('false/false')
+    expect(tally).toContain('true/true/admins')
+  })
+
+  it('D5: an admins row passes exactly when decideCore doesn\'t refuse and an active admin approved it', async () => {
+    const APPROVERS = ['other_admin', 'other_member', 'other_removed', 'asker', 'nobody'] as const
+    const tally: string[] = []
+    await fc.assert(fc.asyncProperty(caseArb, fc.constantFrom(...APPROVERS), async (raw, who) => {
+      const c = { ...raw, grants: storable(raw.grants) }
+      await writeState(c)
+      if (who === 'other_member') await person(db, OTHER, 'member')
+      if (who === 'other_removed') await person(db, OTHER, 'admin', 'removed')
+      const v = decideCore({ ceiling: c.ceilings, grants: c.grants, allowOnceCount: 0 }, c.ctx, c.r)
+      const approvedBy = who === 'nobody' ? null : who === 'asker' ? ASKER : OTHER
+      const byAdmin = who === 'other_admin' || (who === 'asker' && c.ctx.asker.role === 'admin')
+      const want = v.verdict !== 'refuse' && c.r.policyRev === POLICY_REV && byAdmin
+      const got = await passes(rowOf(c.r, c.ctx, { verdict: 'exact', approver_kind: 'admins', approved_by: approvedBy }), c.table)
+      tally.push(`${want}/${got}`)
+      expect(got, who).toBe(want)
+      // Never grant-backed: the same row naming a grant (its use reserved) fails, whoever approved it.
+      for (const g of c.grants) {
+        await useFor(`ac_claim_adm_${g.id}`, g.id)
+        expect(await passes(rowOf(c.r, c.ctx, { id: `ac_claim_adm_${g.id}`, verdict: 'run', approver_kind: 'admins', grant_id: g.id, approved_by: `grant:${g.id}` }), c.table)).toBe(false)
+      }
+      // A member's call their role can't approve never passes as a person row, whoever approved it.
+      if (c.ctx.asker.role === 'member' && !c.r.memberMay) {
+        expect(await passes(rowOf(c.r, c.ctx, { verdict: 'exact', approved_by: approvedBy }), c.table)).toBe(false)
+      }
     }), { numRuns: 150 })
     expect(tally).toContain('true/true')
     expect(tally).toContain('false/false')
@@ -227,6 +262,48 @@ describe('the guard\'s own grant checks, every perturbation (review round 2: sam
       expect(await passes(rowOf(base, ctx, { id, verdict: 'run', grant_id: grant.id, approved_by: `grant:${grant.id}` })), `${p} ${askerRole} ${mineRole}`).toBe(covers)
     }
     expect(n).toBe(PERTURB.length * 4)
+  })
+})
+
+describe('an admins card at the claim (D5, Stage 1 M3-X)', () => {
+  const r: Resolved = {
+    operation: 'shopify.order.tag_add', args: {}, accountId: 'shopify:store', accountGen: 1_000, scope: { shop: 'store-a' }, scopeKey: 'shop=store-a',
+    records: 1, units: 1, effects: { money: true, customer: true, destructive: false, access: false }, memberMay: false, payloadHash: '0'.repeat(64), policyRev: POLICY_REV,
+  }
+  // Made-up flags for a real key: money and customer, admins only (the guard reads them from the table it's given).
+  const table: GuardTable = { ...OPERATIONS, [r.operation]: { connector: 'shopify', memberMay: false, effects: r.effects } }
+  const ctx = { asker: { memberId: ASKER, role: 'member' as const }, origin: 'chat' as const, chatId: 'c_claim', nowMs: 10 }
+  const row = rowOf(r, ctx, { id: 'ac_claim_admins', verdict: 'exact', approver_kind: 'admins', approved_by: OTHER })
+  beforeEach(() => writeState({ r, ctx, ceilings: { [r.operation]: { enabled: true, perDayMax: 50, loweredRev: 1, ...M2_CEILING_LIMITS } }, grants: [] }))
+
+  it('decideCore makes it, and it passes while its approving admin is an active admin', async () => {
+    expect(decideCore({ ceiling: { [r.operation]: { enabled: true, perDayMax: 50, loweredRev: 1, ...M2_CEILING_LIMITS } }, grants: [], allowOnceCount: 0 }, ctx, r))
+      .toEqual({ verdict: 'exact', guardrail: 'money', approver: 'admins' })
+    expect(await passes(row, table)).toBe(true)
+  })
+
+  it('an admin demoted during the hold stops it; promoted again, it passes', async () => {
+    await person(db, OTHER, 'member')
+    expect(await passes(row, table)).toBe(false)
+    await person(db, OTHER, 'admin')
+    expect(await passes(row, table)).toBe(true)
+  })
+
+  it('an approving admin removed during the hold stops it', async () => {
+    await person(db, OTHER, 'admin', 'removed')
+    expect(await passes(row, table)).toBe(false)
+  })
+
+  it('never passes approved by its member asker, as a person row, or with no approver', async () => {
+    expect(await passes({ ...row, approved_by: ASKER }, table)).toBe(false)
+    expect(await passes({ ...row, approver_kind: 'person' }, table)).toBe(false)
+    expect(await passes({ ...row, approver_kind: 'person', approved_by: ASKER }, table)).toBe(false)
+    expect(await passes({ ...row, approved_by: null }, table)).toBe(false)
+  })
+
+  it('its asker removed stops it', async () => {
+    await person(db, ASKER, 'member', 'removed')
+    expect(await passes(row, table)).toBe(false)
   })
 })
 

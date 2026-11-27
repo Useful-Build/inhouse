@@ -152,7 +152,10 @@ export function approvalHandlers(wiringOf: (deps: ToolDeps) => ApprovalsWiring |
           case 'refused':
             return refusal(r.reason, r.text)
           case 'waiting':
-            return answer(r.existing ? TEXT.alreadyWaiting(r.action.id) : TEXT.made(r.action.id), { ...(await view(deps.db, r.action, scope)), created: !r.existing })
+            return answer(
+              r.existing ? TEXT.alreadyWaiting(r.action.id) : r.action.approver_kind === 'admins' ? TEXT.madeForAdmins(r.action.id) : TEXT.made(r.action.id),
+              { ...(await view(deps.db, r.action, scope)), created: !r.existing },
+            )
           case 'existing':
             return answer(TEXT.replay(r.action.id, stateOf(r.action, scope.nowMs)), { ...(await view(deps.db, r.action, scope)), created: false })
           case 'approved':

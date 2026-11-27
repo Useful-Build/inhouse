@@ -23,6 +23,8 @@ import { TOOL_HANDLERS } from '../index.ts'
 import { approvalHandlers } from './index.ts'
 import type { ApprovalsWiring } from './index.ts'
 import { dataOf } from '../../server/test-support.ts'
+import { OPERATIONS } from '../../../outbox/operations/index.ts'
+import type { OperationEntry } from '../../../outbox/operations/types.ts'
 
 const db = env.DB
 const T0 = 1_800_000_000_000
@@ -316,6 +318,22 @@ describe('Stage 1 M3-B: batches (N22)', () => {
       expect(await rowOf(db, id)).toMatchObject({ kind: 'batch', state: 'waiting', guardrail: 'bulk', items_n: 7 })
       expect(data(await call('approval_withdraw', { approval_id: id }, scope()))).toMatchObject({ status: 'withdrawn' })
       expect((await itemsOf(db, id)).every(i => i.state === 'withdrawn')).toBe(true)
+    }
+  })
+})
+
+describe('approval_request for an admins card (Stage 1 M3-X, N25)', () => {
+  it('a member\'s request only an admin may approve is a card for any admin, and says so', async () => {
+    const table = OPERATIONS as unknown as Record<string, OperationEntry>
+    const real = table['shopify.order.tag_add']!
+    table['shopify.order.tag_add'] = { ...real, memberMay: false, coalesces: false, effects: { ...real.effects, customer: true } } as OperationEntry
+    try {
+      const r = await request(7)
+      const id = data(r).approval_id as string
+      expect(text(r)).toBe(`Waiting for an admin's OK. It's in Approvals (approval_id: ${id}). Nothing goes out unless an admin approves it. This doesn't wait for the answer: check it later with approval_get.`)
+      expect(await rowOf(db, id)).toMatchObject({ state: 'waiting', verdict: 'exact', approver_kind: 'admins', approver: 'role:admin', asked_by: ASKER, via: 'approval_request' })
+    } finally {
+      table['shopify.order.tag_add'] = real
     }
   })
 })
