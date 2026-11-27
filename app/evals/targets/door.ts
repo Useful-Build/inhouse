@@ -17,6 +17,7 @@
 // lease's clock is D1's own (julianday('now'), D1_NOW_MS), never a runner's, so two runners' clocks can't disagree about expiry.
 // Break-glass, only once no run is going: a dead run's lease lapses after EVAL_LEASE_TTL_MS, or is removed at once with
 //   npx wrangler d1 execute inhouse-sbx-eval-db --remote --config <the sandbox config> --command "DELETE FROM settings WHERE owner = 'test-control' AND key = 'eval:lease'"
+import { PLANTED_NAME_LIST } from '../injection/names.ts'
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
@@ -103,6 +104,9 @@ export interface MemoryDoor {
    * to the first sign-in with that email (server/db/members.ts resolvePerson, path 2, with its own audit line).
    */
   invitePerson(p: { id: string; email: string; name: string }): Promise<void>
+  /** M3-E (#566): an active teammate (no sign-in) with an eval address and a planted name; and its removal. */
+  addTeammate(p: { id: string; email: string; name: string }): Promise<void>
+  removeTeammate(id: string): Promise<void>
   /**
    * Sets the brand's Default model (`g:mode`, a picker label such as "Fast"), which a routine's turn runs on
    * (server/routines/brand.ts submitSettings), and reads it back.
@@ -160,8 +164,21 @@ export function createDoor(run: RunSql, nowSql: () => string = () => D1_NOW_MS):
       // Literal-safe values only: the eval case persons' own shapes.
       if (!MEMBER_ID.test(p.id)) throw new DoorRefusal('not a member id')
       if (!/^eval-[a-z0-9-]{1,80}@example\.test$/.test(p.email)) throw new DoorRefusal('not an eval case person\'s email')
-      if (!/^[A-Za-z0-9 ]{1,60}$/.test(p.name)) throw new DoorRefusal('not an eval case person\'s name')
+      // A plain name, or one of the write-injection set's planted names (#533), each a fixed literal.
+      if (!/^[A-Za-z0-9 ]{1,60}$/.test(p.name) && !PLANTED_NAME_LIST.includes(p.name)) throw new DoorRefusal('not an eval case person\'s name')
       await run(`INSERT INTO members (id, kind, role, status, name, email_norm, created_at_ms, req_id) VALUES (${sqlString(p.id)}, 'person', 'member', 'invited', ${sqlString(p.name)}, ${sqlString(p.email)}, ${Date.now()}, 'eval')`)
+    },
+    async addTeammate(p) {
+      if (!MEMBER_ID.test(p.id)) throw new DoorRefusal('not a member id')
+      if (!/^eval-[a-z0-9-]{1,80}@example\.test$/.test(p.email)) throw new DoorRefusal('not an eval teammate\'s email')
+      if (!PLANTED_NAME_LIST.includes(p.name)) throw new DoorRefusal('not a planted name')
+      await run(`INSERT INTO members (id, kind, role, status, name, email_norm, created_at_ms, req_id) VALUES (${sqlString(p.id)}, 'person', 'member', 'active', ${sqlString(p.name)}, ${sqlString(p.email)}, ${Date.now()}, 'eval')`)
+    },
+    async removeTeammate(id) {
+      if (!MEMBER_ID.test(id)) throw new DoorRefusal('not a member id')
+      await run(`UPDATE members SET status = 'removed' WHERE id = ${sqlString(id)} AND email_norm LIKE 'eval-%@example.test'`)
+      const left = await run(`SELECT id FROM members WHERE id = ${sqlString(id)} AND status <> 'removed'`)
+      if (left.length !== 0) throw new DoorRefusal(`the teammate ${id} is still on the team`)
     },
     async insert(facts) {
       if (facts.length === 0) return
