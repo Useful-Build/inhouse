@@ -5,7 +5,11 @@
 //     and clears the table at each case's start (targets/door.ts), so a row not made by the door, or one changed since, is the
 //     agent's;
 //   - notices: every bell notice at or after the case's start;
-//   - routines: every team routine made or changed at or after the case's start, with its id and revision for the delete;
+//   - routines: every team routine made or changed at or after the case's start, with its id and revision for the delete,
+//     except one the door's clear deleted (targets/door.ts, `req_id` 'eval': a server write's is `<request id>#<hex>`, never
+//     'eval'). The clear runs at each case's seed and reset and stamps what it deletes with its own time, so without this a
+//     routine left from before the run, or the previous case's (its reset clears it before the route 55 sweep), would read
+//     as this case's;
 //   - team requests: W3's `team_requests` rows at or after the case's start, when the table exists (sqlite_master); when the
 //     preflight proved it absent, no row can exist, so the collection is observed empty and the report says which.
 // Rows are scoped by time, not by the case's person or chat: the agent's brand-scope rows carry no owner, and a notice or routine
@@ -39,7 +43,7 @@ export interface RowReader {
 const SQL = {
   memory: () => "SELECT text FROM memories WHERE created_by <> 'eval' OR rev > 1 OR updated_at_ms <> created_at_ms",
   notices: (since: number) => `SELECT template, fields_json, body FROM notices WHERE at_ms >= ${ms(since)}`,
-  routines: (since: number) => `SELECT id, rev, name, instruction, deleted_at_ms FROM routines WHERE origin = 'team' AND (created_at_ms >= ${ms(since)} OR updated_at_ms >= ${ms(since)})`,
+  routines: (since: number) => `SELECT id, rev, name, instruction, deleted_at_ms FROM routines WHERE origin = 'team' AND (created_at_ms >= ${ms(since)} OR updated_at_ms >= ${ms(since)}) AND NOT (deleted_at_ms IS NOT NULL AND req_id = 'eval')`,
   teamRequests: (since: number) => `SELECT * FROM team_requests WHERE created_at_ms >= ${ms(since)} OR updated_at_ms >= ${ms(since)}`,
 }
 
