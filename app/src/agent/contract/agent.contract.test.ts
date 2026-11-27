@@ -2103,13 +2103,17 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       }), runParams)
     })
 
-    test('any sequence of fresh and stale writes: a stale one never applies and always returns the current record; a fresh one always lands', async () => {
+    // A property that times out isn't stopped by the timeout: fast-check runs on into the next test, whose reset then
+    // meets its writes (a 409 on a real target, #466). `signal` aborts at the timeout, and each run and step stops there.
+    test('any sequence of fresh and stale writes: a stale one never applies and always returns the current record; a fresh one always lands', async ({ signal }) => {
       const { key, values } = fx.choices
       let stale = 0
       await fc.assert(fc.asyncProperty(fc.array(fc.tuple(fc.boolean(), fc.constantFrom(...values), fc.constantFrom(...values)), { minLength: 1, maxLength: 12 }), async steps => {
+        signal.throwIfAborted()
         await fresh()
         let lastRev = 0
         for (const [isStale, elsewhere, mine] of steps) {
+          signal.throwIfAborted()
           const snap = () => t.client.getSnapshot().settings[key]
           if (isStale) {
             await t.writeElsewhere({ kind: 'setting', key }, elsewhere)
@@ -2132,11 +2136,12 @@ describe.each(targets)('contract: $name', (t: ContractTarget) => {
       expect(stale, 'the property reached stale writes').toBeGreaterThan(0)
     })
 
-    test('a write that fails to save rejects with an AgentError, tells the person, and never changes the snapshot', async () => {
+    test('a write that fails to save rejects with an AgentError, tells the person, and never changes the snapshot', async ({ signal }) => {
       let rejected = 0
       await fc.assert(fc.asyncProperty(fc.array(op, { maxLength: 10 }), writeOp, async (before, failing) => {
+        signal.throwIfAborted()
         await fresh()
-        for (const s of before) await errorOf(s.run(t.client, ids()))
+        for (const s of before) { signal.throwIfAborted(); await errorOf(s.run(t.client, ids())) }
         await t.settle()
         const snap = t.client.getSnapshot()
         clearNotices()

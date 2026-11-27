@@ -153,7 +153,21 @@ describe('item releases (L3) and the reservation, against a model', () => {
         const dup = await db.prepare('SELECT COUNT(*) AS n FROM (SELECT 1 FROM permission_item_releases GROUP BY action_id, action_rev, n HAVING COUNT(*) > 1)').first<number>('n')
         expect(dup).toBe(0)
       },
-    ), { numRuns: 60 })
+    ), {
+      // 60 random runs, plus one fixed case that draws each counted answer (a fit, a miss and a repeated item release)
+      // so the tally below never rests on the draw: 60 random runs can miss a repeat (issue #511). Examples count
+      // toward numRuns in fast-check, hence 61.
+      numRuns: 61,
+      examples: [[
+        { perDay: 2, perDayMax: 2, unitsMax: 2, ceilingUnitsMax: 2 },
+        [
+          { kind: 'reserve', units: 2, day: 0 },
+          { kind: 'reserve', units: 1, day: 0 },
+          { kind: 'item', pick: 0, n: 1, units: 1 },
+          { kind: 'again' },
+        ],
+      ]],
+    })
     // Both answers and repeated item releases were drawn: a property that only ever fits proves nothing.
     expect(fits).toBeGreaterThan(0)
     expect(misses).toBeGreaterThan(0)
