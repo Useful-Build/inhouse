@@ -33,8 +33,6 @@ const dana = actor('memberA')
 const leo = actor('memberB')
 const admin = actor('admin')
 
-test.describe.configure({ mode: 'serial' })
-
 const run = Date.now().toString(36)
 let n = 0
 /** A tag no other request carries: the store's log names it, so each effect is traced to its action. */
@@ -101,6 +99,13 @@ async function removePermissions(request: APIRequestContext) {
 
 const cardOf = (page: Page, tag: string) => page.locator('[data-action-card]').filter({ hasText: `Tag: ${tag}` })
 const answers = (card: ReturnType<typeof cardOf>) => card.locator('[data-card-actions] button')
+/**
+ * An ask card's three answers, in any order: the server may put Always allow first (`nudgeAlways`, once the person has
+ * allowed this kind of action before), so the order isn't the scenario's to fix.
+ */
+const expectAskAnswers = (card: ReturnType<typeof cardOf>) =>
+  expect.poll(async () => (await answers(card).allTextContents()).sort(), { message: 'the card offers Allow once, Always allow and No' })
+    .toEqual(['Allow once', 'Always allow', 'No'])
 const toast = (page: Page, text: string) => page.locator('[data-toast]').filter({ hasText: text })
 
 async function signedIn(page: Page, who: Who, hash: string) {
@@ -140,7 +145,7 @@ test('Allow once: the countdown runs out on the page clock while nothing goes ou
   await page.clock.install()
   await signedIn(page, 'dana', '#/approvals')
   const card = cardOf(page, tag)
-  await expect(answers(card)).toHaveText(['Allow once', 'Always allow', 'No'])
+  await expectAskAnswers(card)
   await card.getByRole('button', { name: 'Allow once' }).click()
   await expect(toast(page, 'Allowed once. It goes out in a few seconds.')).toBeVisible()
   await expect(card.getByRole('timer')).toHaveText(/^Goes out in (10|9|8) seconds$/)
@@ -242,7 +247,7 @@ test('a permission removed during the hold stops the send: the card asks again a
   const card = cardOf(page, tag)
   await expect(card).toHaveAttribute('data-action-card', 'waiting', { timeout: 60_000 })
   await expect(card).toContainText('The permission was removed, so this needs your OK again.')
-  await expect(answers(card)).toHaveText(['Allow once', 'Always allow', 'No'])
+  await expectAskAnswers(card)
   expect(await writesOf(request, tag)).toEqual([])
   // Cleaned up: Dana says no.
   await card.getByRole('button', { name: 'No', exact: true }).click()
@@ -348,7 +353,7 @@ test("another member can't see the card, answer it or open the chat it belongs t
   // Dana: the card, with a way into her chat.
   await signedIn(page, 'dana', '#/approvals')
   const card = cardOf(page, tag)
-  await expect(answers(card)).toHaveText(['Allow once', 'Always allow', 'No'])
+  await expectAskAnswers(card)
   await card.getByRole('button', { name: `Open the chat: ${TITLE}` }).click()
   await expect(page).toHaveURL(new RegExp(`#/chats/${chatId}$`))
   await expect(page.getByText(title).first()).toBeVisible()
