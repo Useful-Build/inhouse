@@ -77,8 +77,6 @@ export const settingsTabs = (product: boolean): string[] => SETTINGS_PAGES.filte
 
 /** Stage 1 M2-H: the pages only a brand person has (the Inhouse team has no permissions: route 110 refuses them). */
 const BRAND_PERSON_PAGES: readonly string[] = ['you-permissions']
-/** Stage 1 M3-C: the pages a member doesn't have (route 150 lets only admins and the Inhouse team read the ceiling). */
-const NOT_MEMBER_PAGES: readonly string[] = ['team-ceiling']
 
 /**
  * The menu as this brand sees it: Slack notices only with Slack connected, and in the product (`product`: the build has no
@@ -89,8 +87,9 @@ const NOT_MEMBER_PAGES: readonly string[] = ['team-ceiling']
 export const menuFor = (tools: SlackSignals, product = false, inhouse = false, member = false): SettingsSection[] => {
   const slack = hasSlack(tools)
   return SECTIONS.map(s => {
+    // Stage 1 M3-C: a member has no What the agent can do (route 150 lets only admins and the Inhouse team read it).
     const pages = s.pages.filter(p => (slack || p.id !== 'team-slack') && pageShown(p.id, product) && !(inhouse && BRAND_PERSON_PAGES.includes(p.id))
-      && !(member && NOT_MEMBER_PAGES.includes(p.id)))
+      && !(member && p.id === 'team-ceiling'))
     return { ...s, pages, ...(product && s.id === 'limits' ? { label: 'Spending' } : {}) }
   })
 }

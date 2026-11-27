@@ -1007,8 +1007,9 @@ export class MockAgent implements AgentClient {
   // Stage 1 M1-D (N3): the demo runs no long jobs. A chat has none, and a Cancel names nothing it has.
   job(_chatId: string): Promise<Job | null> { return Promise.resolve(null) }
   cancelJob(_jobId: string): Promise<Job> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
-  // Stage 1 M3-C (N26): the demo has no ceiling (its page is the product's only). Nothing listed, editing off, a change refused.
-  ceiling(): Promise<CeilingList> { return Promise.resolve({ items: [], can: { edit: false }, writesOff: true }) }
+  // Stage 1 M3-C (N26): the demo has no ceiling (its page is the product's only, menu.ts), so a read or a change names
+  // nothing it has, refused like the M2 answers above (the same words, so Today's first load barely grows).
+  ceiling(): Promise<CeilingList> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
   setCeiling(): Promise<CeilingRow> { return this.rejected(NOT_FOUND, NO_M2_RECORD, false) }
 
   waitingMemory(): Promise<WaitingMemory[]> {

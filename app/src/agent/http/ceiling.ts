@@ -2,7 +2,7 @@
 // (the entry's size budget, schemas.ts): the transport parses each answer with the lazily loaded schemas.
 import type { CeilingList, CeilingRow, UpdateCeilingInput } from '../../../shared/contract/ceiling'
 import { AgentError } from '../types'
-import type { Contract, Transport } from './transport'
+import type { Transport } from './transport'
 
 const enc = encodeURIComponent
 
@@ -15,7 +15,8 @@ export const readCeiling = (http: Transport): Promise<CeilingList> =>
  * is passed on only when it parses as a row; else it's left out and the page reads the list again. (Here, not in the
  * client: the client loads with Today, under its size budget.)
  */
-export async function putCeilingRow(http: Transport, k: Contract, operation: string, input: UpdateCeilingInput): Promise<CeilingRow> {
+export async function putCeilingRow(http: Transport, operation: string, input: UpdateCeilingInput): Promise<CeilingRow> {
+  const k = await http.contract()
   try {
     return await http.call({ method: 'PUT', path: `/api/ceiling/${enc(operation)}`, schema: 'ceilingRow', json: k.BODIES.updateCeiling.parse(input) })
   } catch (e) {

@@ -1280,12 +1280,10 @@ export class HttpAgent implements AgentClient {
   removePermission = (id: string, ifRev: number): Promise<Permission[]> => this.m2((m, k) => m.postRemovePermission(this.http, k, id, ifRev), 'permission')
   questions = (): Promise<Question[]> => this.m2(m => m.readQuestions(this.http))
   answerQuestion = (id: string, choice: string): Promise<Question> => this.m2((m, k) => m.postQuestionAnswer(this.http, k, id, choice), 'question')
-  // ----- Stage 1 M3-C (N26): the Inhouse ceiling (routes 150 and 151); ./ceiling loads on first use -----
-  ceiling = async (): Promise<CeilingList> => { const m = await import('./ceiling'); return this.plain(() => m.readCeiling(this.http)) }
-  setCeiling = async (operation: string, input: UpdateCeilingInput): Promise<CeilingRow> => {
-    const [m, k] = await Promise.all([import('./ceiling'), this.k ?? this.http.contract()])
-    return this.plain(() => m.putCeilingRow(this.http, k, operation, input))
-  }
+  // ----- Stage 1 M3-C (N26): the Inhouse ceiling (routes 150 and 151); ./ceiling loads on first use. As short as it can
+  // be: this file loads with Today, under its size budget (the module does the rest).
+  ceiling = (): Promise<CeilingList> => import('./ceiling').then(m => this.plain(() => m.readCeiling(this.http)))
+  setCeiling = (operation: string, input: UpdateCeilingInput): Promise<CeilingRow> => import('./ceiling').then(m => this.plain(() => m.putCeilingRow(this.http, operation, input)))
   // ----- Stage 1 M1-D (N3): a chat's long job (routes 100 and 101); ./jobs loads on first use -----
   job = async (chatId: string): Promise<Job | null> => { const m = await import('./jobs'); return this.plain(() => m.readChatJob(this.http, chatId)) }
   cancelJob = async (jobId: string): Promise<Job> => { const m = await import('./jobs'); return this.plain(() => m.postCancelJob(this.http, jobId)) }
