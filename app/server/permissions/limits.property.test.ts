@@ -15,6 +15,7 @@ import { fc } from '@fast-check/vitest'
 import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { openStores } from '../db/stores.ts'
+import { CEILING_LIMIT_DEFAULTS } from './ceiling.ts'
 import { runBatch } from '../db/sql.ts'
 import { sendAction } from '../outbox/dispatch.ts'
 import { grantDefaults } from '../outbox/operations/index.ts'
@@ -336,6 +337,7 @@ describe('the outbox at the answer and the claim (L5, L6)', () => {
     expect(await db.prepare('SELECT per_day, units_max FROM permission_grants WHERE holder = ?').bind(`member:${ASKER}`).first())
       .toEqual({ per_day: defaults.perDay, units_max: defaults.unitsMax })
     const [p] = await openStores(env).permissions.list({ memberId: ASKER, role: 'member' })
-    expect(p.limits).toEqual({ perDay: defaults.perDay, unitsMax: defaults.unitsMax, unitsLabel: 'orders', effectivePerDay: Math.min(defaults.perDay, 50) })
+    // #492: the list's largest call is never above the ceiling's (the test ceiling keeps 0760's default of 1).
+    expect(p.limits).toEqual({ perDay: defaults.perDay, unitsMax: Math.min(defaults.unitsMax, CEILING_LIMIT_DEFAULTS.unitsMax), unitsLabel: 'orders', effectivePerDay: Math.min(defaults.perDay, 50) })
   })
 })
