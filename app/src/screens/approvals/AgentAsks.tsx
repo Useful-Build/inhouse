@@ -6,7 +6,7 @@
 // member's admins card that this admin may answer is theirs to act on, so it's listed under "Actions for you", saying
 // who asked. A batch answered here may leave items that joined while it was open on a new card: the list is read
 // again then, and new cards join the end (the answered ones stay where they were).
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { agent } from '../../agent'
 import type { ActionCard, AgentErrorCode, Question } from '../../agent/types'
 import { AgentError } from '../../agent/types'
@@ -39,7 +39,13 @@ export function AgentAsks() {
       ? { ...l, actions: [...l.actions, ...fresh.filter(f => !l.actions.some(a => a.id === f.id))] }
       : l)), (e: unknown) => console.warn('Inhouse: could not read the actions again.', e))
   }, [])
-  const onBatchChange = (before: ActionCard) => (next: ActionCard) => { if (before.state === 'waiting' && next.state !== 'waiting') readNew() }
+  // Once per batch: when it stops waiting (answered here, or elsewhere), never again on its later reads.
+  const settled = useRef(new Set<string>())
+  const onBatchChange = (before: ActionCard) => (next: ActionCard) => {
+    if (before.state !== 'waiting' || next.state === 'waiting' || settled.current.has(next.id)) return
+    settled.current.add(next.id)
+    readNew()
+  }
 
   if (!brandPerson || lists.status === 'loading') return null
   if (lists.status === 'error') return <LoadError what="what your Inhouse agent asked you" error={lists.error} onRetry={() => { setLists({ status: 'loading' }); read() }} />
