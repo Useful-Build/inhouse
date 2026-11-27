@@ -25,6 +25,8 @@ const EXPECTED = {
   'deploy-mcp-canary': [1, /FAIL {2}mcp upstream canary: the deployable.*\n.*INHOUSE_MCP_UPSTREAM_CANARY_7c2d/],
   // Stage 1 M3-R (N30): the eval deployment's write log gateway is the test bundle's alone.
   'deploy-eval-write-gateway': [1, /FAIL {2}eval write gateway: the deployable.*\n.*"EvalWriteGateway" in/],
+  // Stage 1 M3 (N31): the eval deployment's fake Slack workspace is the test bundle's alone.
+  'deploy-eval-slack-canary': [1, /FAIL {2}eval slack canary: the deployable.*\n.*INHOUSE_EVAL_SLACK_CANARY_5d1e/],
   'deploy-fakes-canary': [1, /FAIL {2}test-fakes canary: the deployable.*\n.*INHOUSE_HUB_FAKES_CANARY_3a6f/],
   'deploy-fakes-globals': [1, /FAIL {2}test-fakes globals: the deployable.*\n.*__inhouseHubTestLogs/],
   // The deployable script keeps the define's dead branches as text: names inside `if (false)` only are fine.

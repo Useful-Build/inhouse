@@ -110,6 +110,9 @@ export const TABLE_RULES: readonly TableRule[] = [
   // empty everywhere else, so whole snapshots.
   { name: 'eval_write_log', orderBy: ['n'], mode: 'snapshot' },
   { name: 'eval_write_fault', orderBy: ['operation'], mode: 'snapshot' },
+  // Stage 1 M3 (N31): the eval deployment's fake Slack workspace, likewise.
+  { name: 'eval_slack_channel', orderBy: ['channel_id'], mode: 'snapshot' },
+  { name: 'eval_slack_message', orderBy: ['ts'], mode: 'snapshot', after: ['eval_slack_channel'] },
 ]
 
 /** A name that goes into SQL as a quoted identifier: letters, digits and `_` only. */

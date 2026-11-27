@@ -10,6 +10,8 @@
 //      Each is read from its source, so the scan and the code can't drift.
 //      Stage 1 M3-R (N30): the name EvalWriteGateway (EVAL_WRITE_GATEWAY, read from app/hub/testing/eval-write.ts's class),
 //      the eval deployment's credential-free write log, which only the test bundle's main module exports.
+//      Stage 1 M3 (N31): EVAL_SLACK_CANARY (read from app/hub/testing/eval-slack.ts), the eval deployment's fake Slack
+//      workspace, which only the test bundle's seam reads from the eval D1.
 //      The test-fakes hook (W5): HUB_FAKES_CANARY (read from app/hub/testing/fakes.ts), and the hook's three in-isolate
 //      globals (`__inhouseHubTestVars`, `__inhouseHubTestLogs`, `__inhouseHubTestConnectBodies`), which must sit only
 //      inside `if (false)` blocks of the deployable script (the define's dead branches: wrangler doesn't minify, so their
@@ -96,8 +98,13 @@ function readCanaries() {
   if (!existsSync(evalWrite)) fail(`${relative(root, evalWrite)} is missing: there's no eval write gateway name to look for.`)
   const evalWriteMatch = read(evalWrite).match(/export class (EvalWriteGateway) extends WorkerEntrypoint/)
   if (!evalWriteMatch) fail(`no \`export class EvalWriteGateway extends WorkerEntrypoint\` in ${relative(root, evalWrite)}; the gateway's shape changed.`)
+  const evalSlack = join(hubDir, 'testing/eval-slack.ts')
+  if (!existsSync(evalSlack)) fail(`${relative(root, evalSlack)} is missing: there's no eval Slack canary to look for.`)
+  const evalSlackMatch = read(evalSlack).match(/export const EVAL_SLACK_CANARY = '([^']+)'/)
+  if (!evalSlackMatch) fail(`no \`export const EVAL_SLACK_CANARY = '...'\` in ${relative(root, evalSlack)}; the module's shape changed.`)
   return {
     EVAL_WRITE_GATEWAY: evalWriteMatch[1],
+    EVAL_SLACK_CANARY: evalSlackMatch[1],
     CANARY: canaryMatch[1],
     SHOPIFY_CANARY: shopifyMatch[1],
     SHOPIFY_WRITE_CANARY: shopifyWriteMatch[1],
@@ -239,7 +246,7 @@ function moduleGraph({ inputs }) {
 function main() {
   const deployDir = flag('--deploy', join(root, 'dist-hub'))
   const testDir = flag('--test', join(root, 'dist-hub-test'))
-  const { CANARY, SHOPIFY_CANARY, SHOPIFY_WRITE_CANARY, MCP_CANARY, FAKES_CANARY, EVAL_WRITE_GATEWAY } = readCanaries()
+  const { CANARY, SHOPIFY_CANARY, SHOPIFY_WRITE_CANARY, MCP_CANARY, FAKES_CANARY, EVAL_WRITE_GATEWAY, EVAL_SLACK_CANARY } = readCanaries()
 
   const PARTS = [
     ['canary string', canary(CANARY)],
@@ -249,6 +256,7 @@ function main() {
     ['test-fakes canary', canary(FAKES_CANARY)],
     ['test-fakes globals', fakesGlobals],
     ['eval write gateway', canary(EVAL_WRITE_GATEWAY)],
+    ['eval slack canary', canary(EVAL_SLACK_CANARY)],
     ['module graph', moduleGraph],
   ]
 

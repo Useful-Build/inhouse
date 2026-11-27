@@ -331,7 +331,8 @@ export class SignIn extends DurableObject<Env> {
       if (!this.ctx.id.equals(this.env.SIGNIN.idFromName(TEST_FAKES_DO_NAME))) return new Response('not found', { status: 404 })
       const { testUpstreamFetch } = await import('../testing/index')
       try {
-        return await testUpstreamFetch(request)
+        // The hub's env: on the eval hub it binds the eval D1, whose workspace the Slack fake serves (testing/eval-slack.ts).
+        return await testUpstreamFetch(request, this.env)
       } catch (e) {
         // Tunnel an intentional network throw (FakeSlackWeb.throwNextPost, FakeMcpServer refreshModes:'unreachable')
         // back to upstreamFor without letting an unhandled DO exception reset the DO's in-memory fake state.
