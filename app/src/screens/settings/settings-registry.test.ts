@@ -28,7 +28,7 @@ function allRows(): Row[] {
     me: agent.me(), invite: noop, removeMember: noop, grantUi: false, product: false, showGrant: true, loadingMore: false, loadMore: noop, exportFromServer: null, exportDataFromServer: null,
     // P5 W4: Slack notices as an Admin sees it, so its rows are checked too.
     notify: {
-      status: 'ready', list: { rev: 1, channels: [{ channelId: 'C0DEMO0001', name: 'ops-alerts', alerts: true }] },
+      status: 'ready', list: { rev: 1, channels: [{ channelId: 'C0DEMO0001', name: 'ops-alerts', alerts: true }], posting: { on: false } },
       available: [{ channelId: 'C0DEMO0002', name: 'warehouse' }], pickerError: null, pickerLoading: false, truncated: false, canEdit: true, busy: false, add: noop, remove: noop, setAlerts: noop, retry: noop,
     },
   }

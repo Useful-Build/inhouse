@@ -17,8 +17,19 @@ export const NotifyChannelSchema = z.object({
 })
 export type NotifyChannel = z.infer<typeof NotifyChannelSchema>
 
+/**
+ * Stage 1 M3-C (N27): whether the agent's posts are switched on for the brand (`slack.channel.post` enabled in the
+ * Inhouse ceiling), and while they are, the daily limit an admin's mark would give now: the smaller of the grant's own
+ * (the operation's default) and the ceiling's daily maximum. While off there is no limit to show.
+ */
+export const NotifyPostingSchema = z.discriminatedUnion('on', [
+  z.object({ on: z.literal(true), perDay: z.number().int().min(1) }),
+  z.object({ on: z.literal(false) }),
+])
+export type NotifyPosting = z.infer<typeof NotifyPostingSchema>
+
 /** Route F's answer, and route H's (and H's `conflict` carries it as `current`). `rev` 0: never saved. */
-export const NotifyChannelListSchema = z.object({ rev: z.number().int().min(0), channels: z.array(NotifyChannelSchema) })
+export const NotifyChannelListSchema = z.object({ rev: z.number().int().min(0), channels: z.array(NotifyChannelSchema), posting: NotifyPostingSchema })
 export type NotifyChannelList = z.infer<typeof NotifyChannelListSchema>
 
 /** Why a channel can't be listed: shared with another organization (Slack Connect), or the connected person isn't in it. */

@@ -39,6 +39,7 @@ import { checkDataExport, dataExportUrl as dataExportPath } from './data-access'
 import type { AvailableChannels, NotifyChannelList, PutNotifyChannels } from '../../../shared/contract/notify-slack'
 import type { ActionCard, ActionChoice, ActionFilter, ActionItemsPage, ActionResolution } from '../../../shared/contract/actions'
 import type { Permission } from '../../../shared/contract/permissions'
+import type { CeilingList, CeilingRow, UpdateCeilingInput } from '../../../shared/contract/ceiling'
 import type { Question } from '../../../shared/contract/questions'
 import type { Job } from '../../../shared/contract/jobs'
 import { MESSAGE, Transport } from './transport'
@@ -1281,6 +1282,10 @@ export class HttpAgent implements AgentClient {
   removePermission = (id: string, ifRev: number): Promise<Permission[]> => this.m2((m, k) => m.postRemovePermission(this.http, k, id, ifRev), 'permission')
   questions = (): Promise<Question[]> => this.m2(m => m.readQuestions(this.http))
   answerQuestion = (id: string, choice: string): Promise<Question> => this.m2((m, k) => m.postQuestionAnswer(this.http, k, id, choice), 'question')
+  // ----- Stage 1 M3-C (N26): the Inhouse ceiling (routes 150 and 151); ./ceiling loads on first use. As short as it can
+  // be: this file loads with Today, under its size budget (the module does the rest).
+  ceiling = (): Promise<CeilingList> => import('./ceiling').then(m => this.plain(() => m.readCeiling(this.http)))
+  setCeiling = (operation: string, input: UpdateCeilingInput): Promise<CeilingRow> => import('./ceiling').then(m => this.plain(() => m.putCeilingRow(this.http, operation, input)))
   // ----- Stage 1 M1-D (N3): a chat's long job (routes 100 and 101); ./jobs loads on first use -----
   job = async (chatId: string): Promise<Job | null> => { const m = await import('./jobs'); return this.plain(() => m.readChatJob(this.http, chatId)) }
   cancelJob = async (jobId: string): Promise<Job> => { const m = await import('./jobs'); return this.plain(() => m.postCancelJob(this.http, jobId)) }

@@ -5,8 +5,10 @@
 // word holding a Latin letter and a letter or mark of any other script (#478). A Latin name, hyphens and apostrophes
 // included, with one letter swapped for a look-alike of another script (CJK ones too), or with a CJK letter joining or
 // inside a word, is flagged `mixed_script`. Generators draw from every CJK letter (Han, Hiragana, Katakana, Hangul,
-// Bopomofo) and every format, bidi-control and default-ignorable code point Unicode assigns. That every active
-// person is found by their own name, through the tool and D1, is in tools/team/member-find.test.ts.
+// Bopomofo) and every format, bidi-control and default-ignorable code point Unicode assigns, and on purpose from the
+// blank letters, marks and symbols (#536): a name holding one is never shown, and one between a CJK and a Latin letter
+// joins them into one word that is flagged. That every active person is found by their own name, through the tool and
+// D1, is in tools/team/member-find.test.ts.
 import { fc } from '@fast-check/vitest'
 import { describe, expect, it } from 'vitest'
 import { fold, nameFlags, nameShown } from './fold.ts'
@@ -31,6 +33,14 @@ const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hang
 const cjkLetter = fc.constantFrom(...codePoints(/^(?!\p{Default_Ignorable_Code_Point})\p{L}$/u).filter(c => CJK.test(c)))
 /** Format characters, bidi controls (embeddings, overrides, isolates, marks) and other default-ignorable code points. */
 const formatChar = fc.constantFrom(...codePoints(/^[\p{Cf}\p{Bidi_Control}\p{Default_Ignorable_Code_Point}]$/u))
+/**
+ * Blank letters, marks and symbols (no visible glyph; none is Allowed in UTS #39's IdentifierStatus.txt): the Hangul
+ * fillers (default ignorable), the Braille pattern blank, the Egyptian hieroglyph full and half blanks and the Khitan
+ * small script filler (not default ignorable). Drawn on purpose, not 4 in formatChar's 4,206 (#536).
+ */
+const BLANKS = ['\u115F', '\u1160', '\u3164', '\uFFA0', '\u2800', '\u{13441}', '\u{13442}', '\u{16FE4}']
+const BLANK = /[\u115F\u1160\u3164\uFFA0\u2800\u{13441}\u{13442}\u{16FE4}]/u
+const blankChar = fc.constantFrom(...BLANKS)
 
 /** Characters a name could smuggle with: marks, format, control and default-ignorable characters, fillers, look-alikes. */
 const TRICKY = [
@@ -41,6 +51,8 @@ const TRICKY = [
   // #478: CJK joiners and look-alikes, bidi controls, mark-like Latin letters.
   'ㅡ', 'ヽ', '々', 'あ', 'ア', 'ㅣ', 'ㅇ', 'エ', '丅', 'ㄒ', '王', '\u200E', '\u200F', '\u061C', '\u202A', '\u202B', '\u202C', '\u202D',
   '\u2066', '\u2067', '\u2068', '\u2069', '\uFEFF', 'ꜥ', 'Ɂ', 'ʘ',
+  // #536: blanks that aren't default ignorable.
+  '\u2800', '\u{13441}', '\u{13442}', '\u{16FE4}',
 ]
 const char = fc.oneof(
   { weight: 3, arbitrary: fc.constantFrom(...TRICKY) },
@@ -49,6 +61,7 @@ const char = fc.oneof(
   { weight: 1, arbitrary: fc.constantFrom(...'0123456789') },
   { weight: 1, arbitrary: cjkLetter },
   { weight: 1, arbitrary: formatChar },
+  { weight: 1, arbitrary: blankChar },
 )
 const text = fc.array(char, { maxLength: 40 }).map(cs => cs.join(''))
 
@@ -76,7 +89,8 @@ const MIXED_LETTERS = [...'abcehiopxyAEHKMOTlt', ...Object.values(LOOK_ALIKE), .
  */
 const IN_WORD = ['-', "'", '’', '', '\u200B', '\u034F', '\u0332', '\u037A', '\uFE70', '\uFE71', '\u17D2', 'ꞌ', 'ー', 'ｰ', 'ŀ',
   'ㅡ', 'ヽ', '々', 'あー', 'アー', '\u2066', '\u202E', '\u200F', '\u061C']
-const inWord = fc.oneof({ weight: 4, arbitrary: fc.constantFrom(...IN_WORD) }, { weight: 1, arbitrary: cjkLetter }, { weight: 1, arbitrary: formatChar })
+const inWord = fc.oneof({ weight: 4, arbitrary: fc.constantFrom(...IN_WORD) }, { weight: 1, arbitrary: cjkLetter }, { weight: 1, arbitrary: formatChar },
+  { weight: 1, arbitrary: blankChar })
 /** A part: Latin letters, look-alikes or both, so a word can join a Latin part to a look-alike-only one. */
 const mixedPart = fc.oneof(
   fc.stringMatching(/^[A-Za-z]{1,4}$/),
@@ -93,8 +107,19 @@ describe('a name the agent is shown', () => {
     fc.assert(fc.property(fc.oneof(text, mixedName), s => {
       if (!shown(s)) return
       expect(s).not.toMatch(/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\p{N}]/u)
+      expect(s).not.toMatch(BLANK)
       expect([...s].length).toBeLessThanOrEqual(40)
     }), { numRuns: RUNS })
+  })
+
+  it('is never one holding a blank letter, mark or symbol, wherever it sits, though the name without it is shown (#536)', () => {
+    const plain = fc.stringMatching(/^[A-Z][a-z]{1,6}( [A-Z][a-z]{1,6}){0,2}$/)
+    fc.assert(fc.property(fc.oneof(plain, mixedName, text), blankChar, fc.nat(), (s, b, at) => {
+      const cs = [...s]
+      cs.splice(at % (cs.length + 1), 0, b)
+      const n = cs.join('')
+      expect(nameShown(n), n).toBe(false)
+    }), { numRuns: RUNS, examples: [['Leo', '\u{13441}', 3], ['Leo Park', '\u2800', 3], ['A', '\u{13441}', 0]] })
   })
 
   it('has no mark left after NFC on a Latin, Greek, Cyrillic or Common letter, and only cased letters of those three scripts', () => {
@@ -157,7 +182,7 @@ describe('a name the agent is shown', () => {
 describe('mixed_script', () => {
   it('flags a Latin word with any CJK letter inside or at either end, joiners, bidi and format characters included (#478)', () => {
     const latin = fc.stringMatching(/^[A-Za-z]{1,5}$/)
-    const word = fc.tuple(fc.array(fc.tuple(latin, fc.array(fc.oneof(cjkLetter, formatChar), { minLength: 1, maxLength: 2 })), { minLength: 1, maxLength: 4 }), fc.option(latin), fc.boolean())
+    const word = fc.tuple(fc.array(fc.tuple(latin, fc.array(fc.oneof(cjkLetter, formatChar, blankChar), { minLength: 1, maxLength: 2 })), { minLength: 1, maxLength: 4 }), fc.option(latin), fc.boolean())
       .map(([parts, last, cjkFirst]) => {
         const body = parts.map(([l, js]) => l + js.join('')).join('') + (last ?? '')
         return cjkFirst ? body.slice(parts[0][0].length) + parts[0][0] : body
@@ -168,7 +193,19 @@ describe('mixed_script', () => {
     fc.assert(fc.property(name, n => {
       expect(nameFlags(n), n).toContain('mixed_script')
       expect(shown(n), n).toBe(false)
-    }), { numRuns: RUNS })
+      // #536: fast-check's counterexample, a Hangul choseong, U+3164 HANGUL FILLER and a Latin letter, and its kin.
+    }), { numRuns: RUNS, examples: ['ᄀ\u3164A', 'ᄀ\u115FA', 'ᄀ\u1160A', 'ᄀ\uFFA0A', 'ᄀ\u2800A', 'A\u3164ᄀ'].map(n => [n]) })
+  })
+
+  it('flags a Latin letter and a CJK letter joined by blank letters, marks or symbols in one word, either way round (#536)', () => {
+    const word = fc.tuple(fc.stringMatching(/^[A-Za-z]{1,5}$/), fc.array(blankChar, { minLength: 1, maxLength: 3 }), cjkLetter, fc.boolean())
+      .map(([l, bs, c, cjkFirst]) => (cjkFirst ? c + bs.join('') + l : l + bs.join('') + c))
+    const name = fc.tuple(word, fc.array(fc.stringMatching(/^[A-Z][a-z]{0,5}$/), { maxLength: 2 }), fc.nat())
+      .map(([w, others, at]) => { const ws = [...others]; ws.splice(at % (ws.length + 1), 0, w); return ws.join(' ') })
+    fc.assert(fc.property(name, n => {
+      expect(nameFlags(n), n).toContain('mixed_script')
+      expect(shown(n), n).toBe(false)
+    }), { numRuns: RUNS, examples: BLANKS.flatMap(b => [[`ᄀ${b}A`], [`A${b}ᄀ`], [`Leo${b}王`]]) })
   })
 
 

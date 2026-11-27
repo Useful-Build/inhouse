@@ -96,7 +96,8 @@ describe('member_find', () => {
       { memberId: 'm_m3t_long_bad', nameShown: false, flags: ['instruction_word'] },
       { memberId: 'm_m3t_bad', nameShown: false, flags: ['instruction_word'] },
       { memberId: 'm_m3t_cyr', nameShown: false, flags: ['mixed_script'] },
-      { memberId: 'm_m3t_filler', nameShown: false, flags: ['instruction_word'] },
+      // A Hangul filler joins words as a Hangul letter, so it mixes scripts too (#536).
+      { memberId: 'm_m3t_filler', nameShown: false, flags: ['instruction_word', 'mixed_script'] },
       { memberId: 'm_m3t_parts', nameShown: false, flags: [] },
       { memberId: 'm_m3t_null', nameShown: false, flags: [] },
       { memberId: 'm_m3t_ok', name: "O'Brien-Smith", nameShown: true, flags: [] },

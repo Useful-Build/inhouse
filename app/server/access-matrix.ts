@@ -159,6 +159,10 @@ export const accessMatrix: readonly AccessRow[] = [
   // the question's `asked_of` decides, in its statement). Never the Inhouse team: a question is the brand's to answer.
   /* 140 */ { method: 'GET', pattern: '/api/questions', class: 'baseline', allow: ['member', 'admin'] },
   /* 141 */ { method: 'POST', pattern: '/api/questions/:id/answer', class: 'baseline', allow: ['member', 'admin'] },
+  // Stage 1 M3-C (N26): the Inhouse ceiling, "What the agent can do". Technical: the Inhouse team and admins read it
+  // (members never); the Inhouse team alone changes it, refused `writes_off` while editing is off in the build (N2).
+  /* 150 */ { method: 'GET', pattern: '/api/ceiling', class: 'technical', allow: ['admin', 'inhouse'] },
+  /* 151 */ { method: 'PUT', pattern: '/api/ceiling/:operation', class: 'technical', allow: ['inhouse'] },
 ]
 
 /** Each `CanKey`'s row (section 3). */

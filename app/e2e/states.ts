@@ -147,6 +147,10 @@ export const STATES: UiState[] = [
         } else await drafts.first().getByRole('button', { name: /^Approve/ }).click()
         await expect(drafts).toHaveCount(n - 1)
       }
+      // The pointer leaves the last Approve before the clock runs: the list closes up under it, a "sent" notice can rise
+      // under it, and a toast under the pointer pauses every countdown (src/shell/Toasts.tsx), so no notice would ever
+      // leave however far the clock ran (run 46020352931: the pointer at 146,688, over "Chase sent to Mei at Kestrel").
+      await pointerAway(page)
       await page.clock.runFor(30_000)
       // Each "sent" notice starts its 4-second countdown in an effect once React has rendered it (src/shell/Toasts.tsx),
       // and React renders on a real task the paused clock doesn't step: when runFor above ends before that render, the
