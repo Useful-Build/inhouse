@@ -291,7 +291,11 @@ function useHashRoute() {
       if (named) notFound(ui.page === 'app' ? toolName(agent.read().tools, ui.appKey) ?? 'Tools' : ui.page === 'settings' ? settingsLabel(ui.setTab) : PAGE_LABEL[ui.page])
     }
     window.addEventListener('hashchange', apply)
-    return () => window.removeEventListener('hashchange', apply)
+    // A hash changed before this listener existed (a link or Back while the loading screen showed, before the shell
+    // mounted) has had its event already: read it now. Like the event, after this commit's effects, so the sync effect
+    // below leaves that hash alone instead of putting the first route back.
+    const missed = location.hash !== hashBar.written() ? setTimeout(apply) : undefined
+    return () => { clearTimeout(missed); window.removeEventListener('hashchange', apply) }
   }, [])
   // A chat id that doesn't exist (a stale or typed link, a deleted chat, or a chat from before a reload) opens the newest
   // chat left, or a new chat when every chat was deleted, replacing the entry.
