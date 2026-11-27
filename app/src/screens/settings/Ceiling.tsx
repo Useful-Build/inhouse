@@ -45,7 +45,9 @@ export function Ceiling() {
     <section aria-labelledby="ceiling-actions">
       <SectionHeader id="ceiling-actions" title="Actions in your tools" className="mt-6 mb-2.5" />
       {note && <p role="note" className="m-0 mb-2.5 text-sm text-foreground-3">{note}</p>}
-      <ul className="m-0 list-none rounded-2xl border border-border bg-card px-5.5 py-0">
+      {/* Read-only (an admin, or editing off), the list has no button, and on a long page the content scrolls: the list
+          itself takes focus so a keyboard can reach and scroll it (axe scrollable-region-focusable). */}
+      <ul aria-labelledby="ceiling-actions" tabIndex={list.can.edit ? undefined : 0} className="m-0 list-none rounded-2xl border border-border bg-card px-5.5 py-0">
         {list.items.map((r, i) => (
           <li key={r.operation} data-ceiling={r.operation} className={cn('flex flex-wrap items-start gap-x-6 gap-y-3 py-4', i > 0 && 'border-t border-divider')}>
             <div className="min-w-0 grow basis-65">

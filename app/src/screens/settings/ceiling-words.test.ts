@@ -56,7 +56,7 @@ describe('what applies (failure 2)', () => {
   })
 })
 
-describe('money limits (#515)', () => {
+describe('money limits (issue 515)', () => {
   const refund = (currency: string | null, unitsMax = 50_000) => row({
     operation: 'shopify.refund.create', title: 'Refund orders', applies: { perDay: false, batch: false }, measure: { kind: 'money', currency },
     guardrails: ['money', 'customer'], approverKind: 'admins', unitsMax,
