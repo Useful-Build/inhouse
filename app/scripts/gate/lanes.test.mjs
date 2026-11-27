@@ -89,18 +89,80 @@ describe('app/scripts: existing check scripts are Lane 4, new ones are not', () 
 })
 
 describe('check-weakening patterns in added lines, in any file', () => {
+  // Each line, and the reason it must give.
   const patterns = [
-    "test.skip('x', () => {})", "  it.skip('x')", "describe.skip('x', fn)", "test.describe.skip('x', fn)",
-    "test.fixme('x')", "test.describe.fixme('x')", '(cond ? test : test.skip)("x", fn)', "it.skipIf(win)('x')",
-    "test.skip(!phone(page), 'the phone project only')", '// oxlint-disable-next-line no-console',
-    '/* eslint-disable */', '# oxlint-disable', 'it.skip.each([1])("x")',
+    ["test.skip('x', () => {})", 'a skipped test or suite (.skip)'],
+    ["  it.skip('x')", 'a skipped test or suite (.skip)'],
+    ["describe.skip('x', fn)", 'a skipped test or suite (.skip)'],
+    ["test.describe.skip('x', fn)", 'a skipped test or suite (.skip)'],
+    ['test.describe.skip("x", () => {})', 'a skipped test or suite (.skip)'],
+    ["test.fixme('x', async ({ page }) => {})", 'a skipped test or suite (.fixme)'],
+    ["test.describe.fixme('x')", 'a skipped test or suite (.fixme)'],
+    ['it.skip(`a ${"b"}`, fn)', 'a .skip( call (kept: a template with ${} in its arguments'],
+    ['it.skip(`plain title`, fn)', 'a skipped test or suite (.skip)'],
+    ['it.skip.each([1])("x")', 'a skipped test or suite (.skip)'],
+    ['test.skip()', 'an unconditional skip (.skip())'],
+    ['  test.skip( )', 'an unconditional skip (.skip())'],
+    ['test.fixme()', 'an unconditional skip (.fixme())'],
+    ["test.skip(true, 'flaky on CI')", 'an unconditional skip (.skip(true))'],
+    ['test.skip(true)', 'an unconditional skip (.skip(true))'],
+    ['it.skipIf(true)("x", fn)', 'an unconditional skip (.skipIf(true))'],
+    ["it.skipIf('yes')('x', fn)", "a .skipIf( with a string condition (kept: always true)"],
+    ['test.skip(title, async () => {})', "a skipped test whose title isn't a string literal (.skip)"],
+    ["test.skip(name, 'details', fn)", "a skipped test whose title isn't a string literal (.skip)"],
+    ["test.skip(..., 'x')", "a .skip( with its first argument left out (kept: can't tell it's conditional)"],
+    ['test.skip(!ready, () => {})', "a skipped test whose title isn't a string literal (.skip)"],
+    ["test.skip(name, async () => {", "a .skip( call (kept: its arguments run past the line"],
+    ['test.skip(!cond,', 'a .skip( call (kept: its arguments run past the line'],
+    ["test.skip(/firefox/.test(name), 'x')", 'a .skip( call (kept: a comment or regex in its arguments'],
+    ["test.skip(a, 'x'", 'a .skip( call (kept: its arguments run past the line'],
+    ["test.skip(a]", 'a .skip( call (kept: unbalanced brackets'],
+    ["test.skip('unterminated, fn)", 'a .skip( call (kept: its arguments run past the line'],
+    ['const s = test.skip', "a .skip used as a value (kept: can't tell it's conditional)"],
+    ['run(describe.skip)', "a .skip used as a value (kept: can't tell it's conditional)"],
+    ['({ fn: test.skip })', "a .skip used as a value (kept: can't tell it's conditional)"],
+    ["(cond ? test : test.skip)('x', fn); test.skip('y', fn)", 'a skipped test or suite (.skip)'],
+    ['// oxlint-disable-next-line no-console', 'a lint disable comment'],
+    ['/* eslint-disable */', 'a lint disable comment'],
+    ['# oxlint-disable', 'a lint disable comment'],
   ]
-  test.each(patterns)('adds %s: Lane 4', line => {
+  test.each(patterns)('adds %s: Lane 4', (line, why) => {
     for (const path of ['app/src/a.ts', 'app/e2e/a.spec.ts', 'README.md', 'app/hub/x.yml']) {
       const r = classify({ files: [file(path, { patch: hunk([], [line]) })] })
       expect(r.lane, `${path}: ${line}`).toBe('Lane 4')
-      expect(r.lane4[0].reason).toMatch(/^check-weakening: adds .* \(line 11\)$/)
+      expect(r.lane4[0].reason.startsWith(`check-weakening: adds ${why}`), r.lane4[0].reason).toBe(true)
+      expect(r.lane4[0].reason).toMatch(/ \(line 11\)$/)
     }
+  })
+  // Conditional skips: a condition first, then only reason strings. VERIFY.md asks deploy-only specs for this form.
+  const conditional = [
+    "test.skip(!phone(page), 'the phone project only')",
+    "  test.skip(!process.env.E2E_TEST_BUILD_REMOTE, 'needs the deployed build')",
+    'test.skip(!process.env.E2E_TEST_BUILD_REMOTE)',
+    "test.skip(browserName === 'webkit', 'no webkit')",
+    "test.fixme(isMobile, 'broken on phones, issue #12')",
+    "test.skip(({ browserName }) => browserName === 'firefox', 'no firefox')",
+    "test.skip(cond && other(a, [1, 2]), `reason`)",
+    "test.skip(false)",
+    '  ;(t.seedAction ? only(...ACTIONS) : test.skip)(\'an action: listed\', async () => {',
+    "(cond ? test : test.skip)('x', fn)",
+    "const t = ready ? describe : describe.skip",
+    "it.skipIf(win)('x', fn)",
+    "describe.skipIf(process.platform === 'win32')('suite', () => {})",
+    'query.skip(10).limit(5)',
+    "test.skip(!phone(page), 'desktop only') // see issue",
+    'gate with `test.skip(!process.env.E2E_TEST_BUILD_REMOTE, ...)` in prose',
+  ]
+  test.each(conditional)('adds %s: not check-weakening', line => {
+    expect(laneOf([file('app/src/a.ts', { patch: hunk([], [line]) })])).toBe('Lane 1/2')
+  })
+  test('the #442 lines are conditional', () => {
+    const lines = [
+      "  test.skip(!phone(page), 'the phone project only')",
+      "    ;(t.seedAction ? only(...ACTIONS) : test.skip)('an action: listed, Allow once starts the hold from the server clock, Undo takes it back, a stale answer is refused', async () => {",
+      "    ;(t.seedAction && t.failNextSend ? only(...ACTIONS) : test.skip)('a send whose result is unclear needs a check, and its approver says it did not go out', async () => {",
+    ]
+    expect(laneOf([file('app/e2e/real/actions-ui.spec.ts', { patch: hunk([], lines) })])).toBe('Lane 3')
   })
   test('one item per line, even when two patterns match it', () => {
     expect(reasons([file('a.ts', { patch: hunk([], ["test.skip('x') // eslint-disable-line"]) })])).toHaveLength(1)
@@ -113,7 +175,7 @@ describe('check-weakening patterns in added lines, in any file', () => {
   test.each(benign)('%s is not a pattern', line => expect(laneOf([file('app/src/a.ts', { patch: hunk([], [line]) })])).toBe('Lane 1/2'))
   test('the line number is the new file\'s', () => {
     const patch = '@@ -1,3 +1,4 @@\n a\n-b\n+c\n+test.skip("x")\n d\n@@ -40,1 +41,2 @@\n e\n+// eslint-disable-line'
-    expect(reasons([file('a.ts', { patch })])).toEqual(['check-weakening: adds a .skip( or .fixme( (line 3)', 'check-weakening: adds a lint disable comment (line 42)'])
+    expect(reasons([file('a.ts', { patch })])).toEqual(['check-weakening: adds a skipped test or suite (.skip) (line 3)', 'check-weakening: adds a lint disable comment (line 42)'])
   })
 })
 
@@ -188,7 +250,22 @@ describe('package.json: a change to a dependency block is Lane 4', () => {
       expect(laneOf([file(path, { before: pkg({ a: '1' }), after: pkg({ a: '2' }) })]), path).toBe('Lane 4')
     }
   })
-  test('a scripts-only change is not', () => expect(laneOf([pj(pkg({ a: '1' }, { scripts: { x: 'a' } }), pkg({ a: '1' }, { scripts: { x: 'b' } }))])).toBe('Lane 1/2'))
+  test('a scripts change is Lane 4 (the lint, typecheck and test commands)', () => {
+    expect(reasons([pj(pkg({ a: '1' }, { scripts: { lint: 'oxlint' } }), pkg({ a: '1' }, { scripts: { lint: 'true' } }))])).toEqual(['test or lint command change'])
+    expect(reasons([pj(pkg(null, { scripts: { a: 'x' } }), pkg(null, { scripts: { a: 'x', b: 'y' } }))])).toEqual(['test or lint command change'])
+    expect(reasons([pj(pkg(null, { scripts: { a: 'x' } }), pkg(null))])).toEqual(['test or lint command change'])
+    expect(reasons([pj(pkg({ a: '1' }, { scripts: { a: 'x' } }), pkg({ a: '2' }, { scripts: { a: 'y' } }))])).toEqual(['dependency change', 'test or lint command change'])
+  })
+  test('scripts in nested packages count', () => {
+    for (const path of ['app/hub/package.json', 'app/runner/package.json', 'app/runner/harness/package.json']) {
+      expect(reasons([file(path, { before: pkg(null, { scripts: { test: 'vitest run' } }), after: pkg(null, { scripts: { test: 'vitest run --passWithNoTests' } }) })]), path).toEqual(['test or lint command change'])
+    }
+  })
+  test('a new package.json with scripts is Lane 4', () => expect(reasons([pj(null, pkg(null, { scripts: { test: 'x' } }), { status: 'added' })])).toEqual(['test or lint command change']))
+  test('reordering scripts, or a name or version change, is not', () => {
+    expect(laneOf([pj(JSON.stringify({ scripts: { a: 'x', b: 'y' } }), JSON.stringify({ scripts: { b: 'y', a: 'x' } }))])).toBe('Lane 1/2')
+    expect(laneOf([pj(pkg(null, { scripts: { a: 'x' } }), pkg(null, { scripts: { a: 'x' }, version: '2.0.0' }))])).toBe('Lane 1/2')
+  })
   test('reordering dependency keys is not', () => {
     expect(laneOf([pj(JSON.stringify({ dependencies: { a: '1', b: '2' } }), JSON.stringify({ dependencies: { b: '2', a: '1' } }))])).toBe('Lane 1/2')
   })
@@ -432,9 +509,18 @@ describe('properties', () => {
       expect(rank[laneOf([...files, extra])]).toBeGreaterThanOrEqual(rank[laneOf(files)])
     }))
   })
-  test('a skip pattern anywhere in an added line, in any file, is Lane 4', () => {
-    fc.assert(fc.property(fc.oneof(benignPath, anyPath), benignLine, benignLine, fc.constantFrom('it.skip(', 'test.fixme(', 'describe.skip', 'eslint-disable', 'oxlint-disable'), (path, pre, post, pattern) => {
+  test('a skipped declaration anywhere in an added line, in any file, is Lane 4', () => {
+    const decl = fc.constantFrom("it.skip('x', fn)", "test.fixme('x')", "describe.skip('x', () => {})", 'test.skip()', 'test.skip(true)', '// eslint-disable', 'oxlint-disable')
+    fc.assert(fc.property(fc.oneof(benignPath, anyPath), benignLine, benignLine, decl, (path, pre, post, pattern) => {
       expect(laneOf([file(path, { patch: hunk([], [`${pre} ${pattern} ${post}`]) })])).toBe('Lane 4')
+    }))
+  })
+  test('a condition then reason strings is never check-weakening', () => {
+    const ident = fc.stringMatching(/^[a-z][a-zA-Z0-9]{0,8}$/).filter(s => s !== 'true')
+    const cond = fc.oneof(ident, ident.map(s => `!${s}`), fc.tuple(ident, ident).map(([a, b]) => `${a}(${b}) && !${b}.x`), ident.map(s => `process.env.${s.toUpperCase()}`))
+    const reason = fc.stringMatching(/^[a-z ]{0,20}$/).map(s => `'${s}'`)
+    fc.assert(fc.property(fc.constantFrom('test.skip', 'test.fixme', 'it.skipIf', 'test.describe.skip'), cond, fc.array(reason, { maxLength: 2 }), (call, c, rs) => {
+      expect(laneOf([file('app/e2e/a.spec.ts', { patch: hunk([], [`  ${call}(${[c, ...rs].join(', ')})`]) })])).toBe('Lane 3')
     }))
   })
   test('any file under a Lane 4 folder is Lane 4, in any status', () => {

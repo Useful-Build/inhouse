@@ -58,12 +58,94 @@ const PACKAGE_JSON = /(?:^|\/)package\.json$/
 /** Statuses that make a new file at `filename` (a rename counts only when it moves in from elsewhere). */
 const isNew = (f, dir) => f.status === 'added' || f.status === 'copied' || (f.status === 'renamed' && !dir.test(f.previous_filename ?? ''))
 
-const SKIP_PATTERNS = [
-  [/\.(?:skip|fixme)\s*\(/, 'a .skip( or .fixme('],
-  [/\b(?:test\.describe|describe|it|test)\.(?:skip|fixme)\b/, 'a skipped test or suite'],
-  [/\.skipIf\s*\(/, 'a .skipIf('],
-  [/\b(?:oxlint|eslint)-disable/, 'a lint disable comment'],
-]
+// Skips. A skip that removes a test is check-weakening: a skipped declaration (`test.skip('title', fn)`, `it.skip(`,
+// `describe.skip(`, `test.describe.skip(`, `.fixme` likewise, `it.skip.each(...)`) or an unconditional call (`test.skip()`,
+// `test.skip(true, 'why')`). A conditional skip is not: its first argument is a condition (not a string literal, not
+// `true`) and the rest are reason strings, as in `test.skip(!phone(page), 'desktop only')`, `it.skipIf(win)` or a
+// Playwright callback `test.skip(({ browserName }) => ..., 'why')`; and a test or suite picked by a condition,
+// `(cond ? test : test.skip)('title', fn)`. Each added line is read with a small tokenizer; when it can't be sure (the
+// arguments run past the line, a regex or comment in them, a skip passed around as a value), it keeps flagging.
+const SKIP_TOKEN = /\.(skipIf|skip|fixme)(?![\w$])/g
+const TEST_RECEIVER = /(?:^|[^\w$.])(?:test(?:\.describe)?|it|describe|suite|bench)$/
+const LINT_DISABLE = /\b(?:oxlint|eslint)-disable/
+const STRING_LITERAL = /^(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\$]|\$(?!\{))*`)$/
+const FUNCTION_ARG = /^(?:async\b|function\b|\(?\s*(?:[\w$]+|\{[^}]*\}|\([^)]*\))?\s*(?:,\s*[\w$]+\s*)*\)?\s*=>)/
+
+/**
+ * The top-level arguments of a call whose `(` is at text[open], as trimmed source strings; or { unsure } when the call
+ * doesn't close on the line or holds something the tokenizer won't guess at (a comment or a regex).
+ */
+export function callArgs(text, open) {
+  const args = []
+  let depth = 0
+  let start = open + 1
+  for (let i = open + 1; i < text.length; i++) {
+    const c = text[i]
+    if (c === "'" || c === '"' || c === '`') {
+      let j = i + 1
+      for (; j < text.length && text[j] !== c; j++) {
+        if (text[j] === '\\') j++
+        else if (c === '`' && text[j] === '$' && text[j + 1] === '{') return { unsure: 'a template with ${} in its arguments' }
+      }
+      if (j >= text.length) return { unsure: 'its arguments run past the line' }
+      i = j
+    } else if (c === '/') return { unsure: 'a comment or regex in its arguments' }
+    else if ('([{'.includes(c)) depth++
+    else if (')]}'.includes(c)) {
+      if (depth === 0) {
+        if (c !== ')') return { unsure: 'unbalanced brackets' }
+        const last = text.slice(start, i).trim()
+        if (last || args.length) args.push(last)
+        return { args }
+      }
+      depth--
+    } else if (c === ',' && depth === 0) {
+      args.push(text.slice(start, i).trim())
+      start = i + 1
+    }
+  }
+  return { unsure: 'its arguments run past the line' }
+}
+
+/** Why an added line weakens a check by skipping (one reason), or null. */
+export function skipIn(text) {
+  if (LINT_DISABLE.test(text)) return 'a lint disable comment'
+  for (const m of text.matchAll(SKIP_TOKEN)) {
+    const name = `.${m[1]}`
+    const before = text.slice(0, m.index)
+    const testy = TEST_RECEIVER.test(before)
+    const rest = text.slice(m.index + m[0].length)
+    const open = rest.search(/\S/)
+    const next = open < 0 ? '' : rest[open]
+    if (next === '(') {
+      const call = callArgs(text, m.index + m[0].length + open)
+      if (call.unsure) return `a ${name}( call (kept: ${call.unsure}, so it can't be read as conditional)`
+      const [first, ...others] = call.args
+      if (first === undefined) return `an unconditional skip (${name}())`
+      if (first === 'true') return `an unconditional skip (${name}(true))`
+      if (first === '...') return `a ${name}( with its first argument left out (kept: can't tell it's conditional)`
+      if (STRING_LITERAL.test(first)) {
+        if (m[1] === 'skipIf') return `a ${name}( with a string condition (kept: always true)`
+        return `a skipped test or suite (${name})`
+      }
+      // A bare `...` is prose quoting the form (VERIFY.md does), never code: it can't be a test body.
+      if (others.some(a => !STRING_LITERAL.test(a) && a !== '...')) {
+        // A condition takes only reason strings after it; a function after the first argument declares a test.
+        if (FUNCTION_ARG.test(first)) return `a ${name}( with a callback and a non-string argument (kept: may declare a skipped test)`
+        return `a skipped test whose title isn't a string literal (${name})`
+      }
+      continue
+    }
+    if (!testy) continue
+    // `it.skip.each(...)`, `test.describe.skip.serial(...)`: a skipped declaration.
+    if (next === '.') return `a skipped test or suite (${name})`
+    // A test or suite picked by a condition: `cond ? test : test.skip`.
+    const prev = before.replace(/[\w$.]+$/, '').trimEnd()
+    if (/[?:]$/.test(prev) && before.includes('?')) continue
+    return `a ${name} used as a value (kept: can't tell it's conditional)`
+  }
+  return null
+}
 
 /** Numeric settings whose rise (fall for numRuns) weakens a check, by the key's lower-case suffix. */
 const LOOSEN_KEYS = ['maxdiffpixelratio', 'maxdiffpixels', 'threshold', 'retries', 'timeout', 'numruns']
@@ -116,8 +198,8 @@ function settings(text) {
 function weakeningIn(hunk) {
   const found = []
   for (const { line, text } of hunk.added) {
-    const hit = SKIP_PATTERNS.find(([re]) => re.test(text))
-    if (hit) found.push(`check-weakening: adds ${hit[1]} (line ${line})`)
+    const why = skipIn(text)
+    if (why) found.push(`check-weakening: adds ${why} (line ${line})`)
   }
   // Pair each added setting with the removed one of the same key, in order.
   const removedByKey = new Map()
@@ -139,18 +221,22 @@ function weakeningIn(hunk) {
 
 const DEP_KEYS = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies', 'overrides']
 const sortedJson = v => JSON.stringify(v, (_, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : 1))) : x))
+const differs = (before, after, key) => sortedJson(before?.[key] ?? null) !== sortedJson(after?.[key] ?? null)
 
-/** Whether a package.json's dependency blocks differ; null when it can't be read (a Lane 4 item of its own). */
-function dependencyChange(f) {
+/** A package.json's Lane 4 reasons: its dependency blocks or its scripts (the lint, typecheck and test commands) changed. */
+function packageChanges(f) {
   if (f.before === undefined || f.after === undefined) throw new Error(`${f.filename}: the package.json text (before and after) wasn't fetched`)
   let before, after
   try {
     before = f.before === null ? {} : JSON.parse(f.before)
     after = f.after === null ? {} : JSON.parse(f.after)
   } catch {
-    return null
+    return ['dependency change: a package.json that can\'t be read']
   }
-  return DEP_KEYS.some(k => sortedJson(before?.[k] ?? null) !== sortedJson(after?.[k] ?? null))
+  const reasons = []
+  if (DEP_KEYS.some(k => differs(before, after, k))) reasons.push('dependency change')
+  if (differs(before, after, 'scripts')) reasons.push('test or lint command change')
+  return reasons
 }
 
 // Files the API may give no patch for that can't hide a check-weakening line: binaries, and data or prose (eval results).
@@ -173,9 +259,7 @@ function scanFile(f) {
     lane4.push('check-weakening: deletes a test file')
   }
   if (PACKAGE_JSON.test(f.filename) && !f.filename.includes('node_modules/')) {
-    const changed = dependencyChange(f)
-    if (changed === null) lane4.push('dependency change: a package.json that can\'t be read')
-    else if (changed) lane4.push('dependency change')
+    lane4.push(...packageChanges(f))
   }
   // Migrations are forward-only: a new file is a ledger item, a change to an existing one or a non-additive statement is Lane 4.
   if (MIGRATIONS.test(f.filename) || (f.previous_filename && MIGRATIONS.test(f.previous_filename))) {
