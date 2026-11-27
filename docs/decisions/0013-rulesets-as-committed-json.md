@@ -1,6 +1,6 @@
 # 0013. Branch rulesets as committed JSON, with no bypass
 
-- Status: accepted, 2026-11-19
+- Status: accepted, 2026-11-19; parts replaced by [0028](0028-merge-lanes-and-merge-queue.md) on 2026-11-27
 - Was: setup plan D4
 - Plan: [setup plan, Decisions](../plans/2026-11-19-setup-gaps.md#decisions)
 
