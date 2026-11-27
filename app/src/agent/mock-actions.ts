@@ -9,7 +9,6 @@ import type { ActionCard, ActionChoice, ActionFilter, ActionItem, ActionItemsPag
 import { AgentError } from './types'
 import { NOT_FOUND, TOTALS_CHANGED } from '../../shared/contract/error-codes'
 import { NEEDS_CHECK } from '../../shared/contract/action-states'
-import { ACTION_ITEMS_PAGE, BATCH_FIRST_LINES } from '../../shared/contract/actions'
 import { demoAt } from './demo-clock'
 import { instantOf as instant } from '../lib/format'
 
@@ -18,6 +17,13 @@ const raw = actionsRaw as {
   refund: { id: string; askedBy: string; title: string; lines: string[]; tool: string; askedAt: string; result: string }
 }
 
+/**
+ * Items per page of the full list, and the lines a batch card carries (shared/contract/actions.ts's ACTION_ITEMS_PAGE
+ * and BATCH_FIRST_LINES, written out here: that module brings zod, which the demo's bundle can't carry;
+ * mock-actions.test.ts holds them equal).
+ */
+export const ITEMS_PAGE = 100
+export const FIRST_LINES = 10
 /** The demo's hold, as the product's (N11). */
 export const DEMO_HOLD_MS = 10_000
 const NONE: ActionCard['can'] = { allowOnce: false, alwaysAllow: false, approve: false, deny: false, undo: false, resolve: false, withdraw: false }
@@ -40,7 +46,7 @@ const lineOf = (n: number) => raw.batch.line.replace('{n}', String(raw.batch.fir
 function batchRow(h: MockActionsHost): Row {
   const b = raw.batch
   const items: ActionItem[] = Array.from({ length: b.itemCount }, (_, i) => ({ n: i + 1, line: lineOf(i + 1), state: 'pending' as const }))
-  const firstLines = items.slice(0, BATCH_FIRST_LINES).map(i => i.line)
+  const firstLines = items.slice(0, FIRST_LINES).map(i => i.line)
   return {
     sendAtMs: null, items,
     card: {
@@ -147,7 +153,7 @@ export class MockActions {
   items(id: string, after: number): ActionItemsPage {
     const row = this.settled(this.find(id))
     if (!row.card.batch) throw new AgentError(NOT_FOUND, "That isn't there any more.")
-    const page = row.items.filter(i => i.n > after).slice(0, ACTION_ITEMS_PAGE)
+    const page = row.items.filter(i => i.n > after).slice(0, ITEMS_PAGE)
     const last = page.at(-1)?.n
     return { items: page, ...(last !== undefined && last < row.items.length ? { next: last } : {}) }
   }

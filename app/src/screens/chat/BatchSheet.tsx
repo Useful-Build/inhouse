@@ -114,8 +114,10 @@ export function BatchSheet({ card, opened, whose, busy, refusal, onClose, onSawT
             </p>
           )}
         </div>
-        <div className="min-h-0 flex-1 overflow-auto border-t border-divider px-6 py-2" data-sheet-list>
-          <ol className="m-0 list-none p-0" aria-label={`All ${count} changes`}>
+        {/* The list scrolls on its own: it takes keyboard focus so it scrolls from the keyboard too. */}
+        <div className="min-h-0 flex-1 overflow-auto border-t border-divider px-6 py-2" data-sheet-list
+          tabIndex={0} role="region" aria-label={`All ${count} changes`}>
+          <ol className="m-0 list-none p-0">
             {load.items.map(it => {
               const status = itemStatus(it)
               return (

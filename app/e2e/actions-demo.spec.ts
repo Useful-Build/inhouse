@@ -11,7 +11,7 @@ import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import { expect, fxFor, test, type Stage, type Theme } from './support/fx.js'
 
-const BATCH = '450 changes in Shopify (northline-outdoor)'
+const BATCH = '450 changes in Shopify'
 const APPROVE = 'Approve these 450: 450 orders'
 const phone = (page: Page) => (page.viewportSize()?.width ?? 1440) < 600
 
@@ -105,9 +105,13 @@ for (const theme of ['light', 'dark'] as const) {
   })
 }
 
-test('the cards show whatever the stage, and not on day one (no tools yet)', async ({ page }) => {
+test('the cards show whatever the stage', async ({ page }) => {
   await start(page, '#/chats/vip-tags', { stage: 'Watch' })
   await expect(batchCard(page)).toBeVisible()
+})
+
+test('none on day one (no tools yet)', async ({ page }) => {
+  await page.clock.install()
   await fxFor(page, undefined).seed({ stage: 'Act', scenario: 'First day' })
   await page.goto('/?demo#/approvals')
   await expect(page.getByText('Nothing to approve yet.')).toBeVisible()

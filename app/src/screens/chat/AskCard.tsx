@@ -142,11 +142,16 @@ export function AskCard({ actionId, initial, onChange, onOpenChat, whose = null,
 
   // A waiting batch reads itself every few seconds while the page shows (its count and totals grow as items join).
   const growing = !!card && card.state === 'waiting' && !!card.batch && !gone
+  const [polls, setPolls] = useState(0)
   useEffect(() => {
     if (!growing) return
-    const t = setInterval(() => { if (document.visibilityState === 'visible') void load() }, BATCH_REFRESH_MS)
-    return () => clearInterval(t)
-  }, [growing, load])
+    const t = setTimeout(() => {
+      const next = () => setPolls(n => n + 1)
+      if (document.visibilityState === 'visible') void load().finally(next)
+      else next()
+    }, BATCH_REFRESH_MS)
+    return () => clearTimeout(t)
+  }, [growing, load, polls])
 
   if (!card) {
     return (

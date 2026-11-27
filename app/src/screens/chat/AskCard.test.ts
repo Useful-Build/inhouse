@@ -11,6 +11,15 @@
 //  - a refusal with no card in it leaves the old buttons up without reading the card again; a card gone offers buttons;
 //  - Undo after Always allow doesn't say the permission stays; the keyboard is lost when the pressed button goes;
 //  - someone else's card (an admin's view) speaks as if it were the viewer's.
+// Stage 1 M3-U (N22, N25, N33):
+//  - a batch hides lines past its first 10 without saying how many more, shows no totals, or its Approve doesn't name
+//    the count and totals it covers;
+//  - a batch's answer sends another count or totals than the card on screen when the press began (it grew meanwhile),
+//    or sends none; a single card's sends any;
+//  - a waiting batch never reads itself (items joining keep its rev), or a single card polls;
+//  - a batch that needs a check offers to settle every item at once instead of one at a time in its list;
+//  - an admins card offers its asker an answer, or no Withdraw; Withdraw sends another rev; an admin who may answer it
+//    isn't told who asked; its outcome claims "you" said no.
 import { createElement } from 'react'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -23,6 +32,8 @@ const fake = vi.hoisted(() => ({
   answerAction: vi.fn(),
   undoAction: vi.fn(),
   resolveAction: vi.fn(),
+  withdrawAction: vi.fn(),
+  actionItems: vi.fn(),
   listeners: new Set<(u: { actionId: string; rev: number }) => void>(),
   toasts: [] as string[],
   role: 'member' as string,
@@ -30,6 +41,7 @@ const fake = vi.hoisted(() => ({
 vi.mock('../../agent', () => ({
   agent: {
     action: fake.action, answerAction: fake.answerAction, undoAction: fake.undoAction, resolveAction: fake.resolveAction,
+    withdrawAction: fake.withdrawAction, actionItems: fake.actionItems,
     onActionUpdated: (l: (u: { actionId: string; rev: number }) => void) => { fake.listeners.add(l); return () => fake.listeners.delete(l) },
     subscribe: () => () => undefined,
     me: () => ({ role: fake.role }),
@@ -62,7 +74,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
   // The browser's clock is far from the server's: the countdown must not care.
   vi.setSystemTime(NOW + 3 * 60 * 60_000)
-  for (const f of [fake.action, fake.answerAction, fake.undoAction, fake.resolveAction]) f.mockReset()
+  for (const f of [fake.action, fake.answerAction, fake.undoAction, fake.resolveAction, fake.withdrawAction, fake.actionItems]) f.mockReset()
   fake.listeners.clear(); fake.toasts = []
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
@@ -332,5 +344,98 @@ describe('reading the card again', () => {
     expect(text()).toContain('Sent.')
     await tick(120_000)
     expect(fake.action).toHaveBeenCalledTimes(SLOW)
+  })
+})
+
+describe('batches (Stage 1 M3-U)', () => {
+  const LINES = Array.from({ length: 10 }, (_, i) => `Order ${3901 + i} (store-a): add VIP`)
+  const batch = (n: number, o: Partial<ActionCard> = {}): ActionCard => card({
+    kind: 'exact', guardrail: 'bulk', title: `${n} changes in Shopify (store-a)`, lines: LINES, records: n, can: { ...NONE, approve: true, deny: true },
+    batch: { itemCount: n, firstLines: LINES, totals: { records: n, units: n, unitsLabel: 'orders' } }, ...o,
+  })
+  test('shows the first lines, how many more, the totals, See all and an Approve naming what it covers', async () => {
+    await show({ actionId: AC, initial: batch(450) })
+    const lines = [...host.querySelectorAll('[data-card-lines] li')].map(l => l.textContent)
+    expect(lines).toEqual([...LINES, 'and 440 more'])
+    expect(host.querySelector('[data-batch-totals]')?.textContent).toContain('In all: 450 orders')
+    expect(buttons()).toEqual(['See all 450', 'Approve these 450: 450 orders', 'No'])
+    expect(text()).toContain('Changes many records')
+  })
+  test('one item, one unit: the words are singular', async () => {
+    await show({ actionId: AC, initial: batch(1, { lines: LINES.slice(0, 1), batch: { itemCount: 1, firstLines: LINES.slice(0, 1), totals: { records: 1, units: 1, unitsLabel: 'orders' } } }) })
+    expect(buttons()).toEqual(['Approve this one: 1 order', 'No'])
+  })
+  test('Approve sends the count and totals on the card; No does too', async () => {
+    fake.answerAction.mockResolvedValueOnce(batch(450, { rev: 2, state: 'approved', sendAt: instant(NOW + 10_000), can: { ...NONE, undo: true } }))
+    await show({ actionId: AC, initial: batch(450) })
+    await press('Approve these 450: 450 orders')
+    expect(fake.answerAction).toHaveBeenCalledWith(AC, 1, 'approve', { upTo: 450, totals: { records: 450, units: 450 } })
+    expect(fake.toasts).toEqual(['Approved 450. They start going out in a few seconds.'])
+    fake.answerAction.mockResolvedValueOnce(batch(12, { id: 'ac_BBBBBBBBBBBBBBBBBBBBBB', rev: 2, state: 'denied', can: NONE }))
+    await show({ actionId: 'ac_BBBBBBBBBBBBBBBBBBBBBB', initial: batch(12, { id: 'ac_BBBBBBBBBBBBBBBBBBBBBB' }) })
+    await press('No')
+    expect(fake.answerAction).toHaveBeenLastCalledWith('ac_BBBBBBBBBBBBBBBBBBBBBB', 1, 'deny', { upTo: 12, totals: { records: 12, units: 12 } })
+  })
+  test('a waiting batch reads itself every few seconds; its count grows on screen; a single card never polls', async () => {
+    fake.action.mockResolvedValue(batch(452))
+    await show({ actionId: AC, initial: batch(450) })
+    await tick(5000)
+    await flush()
+    expect(fake.action).toHaveBeenCalledTimes(1)
+    expect(buttons()).toContain('Approve these 452: 452 orders')
+    await tick(5000)
+    await flush()
+    expect(fake.action).toHaveBeenCalledTimes(2)
+    fake.action.mockReset()
+    await show({ actionId: 'ac_BBBBBBBBBBBBBBBBBBBBBB', initial: card({ id: 'ac_BBBBBBBBBBBBBBBBBBBBBB' }) })
+    await tick(15_000)
+    expect(fake.action).not.toHaveBeenCalled()
+  })
+  test('a press that began before the card grew answers for the card it began on', async () => {
+    fake.action.mockResolvedValue(batch(460))
+    fake.answerAction.mockResolvedValueOnce(batch(450, { rev: 2, state: 'approved', sendAt: instant(NOW + 10_000), can: { ...NONE, undo: true } }))
+    await show({ actionId: AC, initial: batch(450) })
+    const approve = [...host.querySelectorAll('button')].find(b => label(b) === 'Approve these 450: 450 orders')!
+    await act(async () => { approve.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })) })
+    // The card reads itself and grows to 460 before the click lands.
+    await tick(5000)
+    await flush()
+    expect(buttons()).toContain('Approve these 460: 460 orders')
+    await act(async () => { approve.click() })
+    await flush()
+    expect(fake.answerAction).toHaveBeenCalledWith(AC, 1, 'approve', { upTo: 450, totals: { records: 450, units: 450 } })
+    // The 10 that joined meanwhile are named, and where they wait.
+    expect(host.querySelector('[data-left-over]')?.textContent).toBe("10 more arrived while you looked. They wait for their own OK. They're in Approvals.")
+  })
+  test('a batch that needs a check is settled item by item in its list, never all at once from the card', async () => {
+    await show({ actionId: AC, initial: batch(40, { state: 'needs_check', result: '38 went out. 2 are unclear.', can: { ...NONE, resolve: true } }) })
+    expect(buttons()).toEqual(['See all 40', 'Check each change'])
+  })
+})
+
+describe('admins cards (Stage 1 M3-U, N25)', () => {
+  const refund = (o: Partial<ActionCard> = {}): ActionCard => card({
+    kind: 'exact', guardrail: 'money', reachesCustomer: true, reversible: false, title: 'Refund $5.00 (USD) on order 9001', lines: ['1 item, shipping $0.00.'],
+    approverKind: 'admins', ...o,
+  })
+  test('its asker sees whom it waits for and may withdraw it, at the rev read, but not answer it', async () => {
+    fake.withdrawAction.mockResolvedValueOnce(refund({ rev: 2, state: 'withdrawn', can: NONE }))
+    await show({ actionId: AC, initial: refund({ waitingFor: 'an admin', can: { ...NONE, withdraw: true } }) })
+    expect(text()).toContain('Waiting for an admin')
+    expect(buttons()).toEqual(['Withdraw'])
+    await press('Withdraw')
+    expect(fake.withdrawAction).toHaveBeenCalledWith(AC, 1)
+    expect(fake.toasts).toEqual(['Withdrawn. Nothing goes out.'])
+    expect(text()).toContain('It was withdrawn. Nothing went out.')
+    expect(buttons()).toEqual([])
+  })
+  test('an admin who may answer it is told who asked; a No reads as not approved, never "you said no"', async () => {
+    fake.answerAction.mockResolvedValueOnce(refund({ rev: 2, state: 'denied', chatId: null, can: NONE }))
+    await show({ actionId: AC, initial: refund({ chatId: null, can: { ...NONE, approve: true, deny: true } }), whose: 'Dana Kim' })
+    expect(text()).toContain('Dana Kim asks an admin')
+    expect(buttons()).toEqual(['Approve', 'No'])
+    await press('No')
+    expect(fake.answerAction).toHaveBeenCalledWith(AC, 1, 'deny', undefined)
+    expect(text()).toContain("It wasn't approved. Nothing went out.")
   })
 })
