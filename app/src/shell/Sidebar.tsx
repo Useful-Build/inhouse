@@ -149,6 +149,9 @@ export function Sidebar() {
   // Each block is the rows' full width from the first frame of an expand, so nothing reflows while the column grows:
   // it is revealed. The drawer's card has a border, so its rows take the room it leaves.
   const block = phone ? '' : 'min-w-sidebar-inner'
+  // A group's label. Its box has a set height, so the rows under it don't move when its font arrives (the marker is
+  // placed from where the rows are).
+  const label = 'mono-label box-border flex h-10.75 flex-none items-end px-2.5 pb-1.5'
   // A quiet text control (See all): with the rows, it waits a step quieter.
   const hushed = phone ? '' : 'text-foreground-3 transition-colors group-hover/side:text-foreground group-focus-within/side:text-foreground'
   const aside = (
@@ -176,7 +179,7 @@ export function Sidebar() {
           <nav aria-label="Main" className="flex flex-col gap-px">
             {DAILY.map(n => navItem(n, false))}
             <div role="group" aria-labelledby="side-agent" className="flex flex-col gap-px">
-              <div id="side-agent" className="mono-label px-2.5 pt-5.5 pb-1.5">Your agent</div>
+              <div id="side-agent" className={label}>Your agent</div>
               {AGENT.map(n => navItem(n, false))}
             </div>
           </nav>
@@ -184,13 +187,13 @@ export function Sidebar() {
 
         {pinned.length > 0 && (
           <div role="group" aria-labelledby="side-pinned" className={cn('flex flex-none flex-col', block)}>
-            <div id="side-pinned" className="mono-label px-2.5 pt-5.5 pb-1.5">Pinned</div>
+            <div id="side-pinned" className={label}>Pinned</div>
             {pinned.map(chatRow)}
           </div>
         )}
         {/* No chats yet (day one, or every one deleted): no heading over an empty list. */}
         {chats.length > 0 && <>
-        <div className={cn('flex flex-none items-center justify-between px-2.5 pt-5.5 pb-1.5', block)}>
+        <div className={cn('box-border flex h-11.25 flex-none items-center justify-between px-2.5 pt-5.5 pb-1.5', block)}>
           <span className="mono-label">Recent chats</span>
           <Button variant="link" size="sm" data-chat-fallback className={cn('text-xs font-medium', !(page === 'chats' && chatList) && hushed)} aria-current={page === 'chats' && chatList ? 'page' : undefined} onClick={openChatList}>See all</Button>
         </div>

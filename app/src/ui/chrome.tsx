@@ -40,7 +40,7 @@ const navItemVariants = cva('flex w-full flex-none items-center gap-2.75 rounded
     { tone: 'quiet', active: true, class: 'bg-fill-hover text-foreground' },
     { tone: 'quiet', active: false, class: 'text-foreground-3 hover:bg-accent' },
     // After the looks above, so these win (twMerge keeps the last).
-    { marked: true, active: true, class: 'bg-transparent text-foreground' },
+    { marked: true, active: true, class: 'bg-transparent font-strong text-foreground' },
     { marked: true, active: false, class: 'hover:bg-side-hover' },
     { marked: true, hush: true, active: false, locked: false, class: 'text-foreground-3 transition-colors group-hover/side:text-foreground group-focus-within/side:text-foreground' },
   ],

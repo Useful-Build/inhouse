@@ -219,15 +219,17 @@ for (const width of [1440, 768, 390]) {
     else expect(nav.y + nav.height, 'places above the files').toBeLessThanOrEqual(h1.y + 1)
     await expect.poll(() => noSideways(page)).toBe(true)
 
-    // The selected place looks like the selected row of the side menu.
+    // The selected place has the selected fill. The sidebar's selected row has none: the sidebar marks it with its
+    // marker line and ink (Sidebar.tsx), so the two no longer share a look.
     if (!phone) {
       const sideItem = page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /^Library/ })
       await page.mouse.move(0, 0)
       const bg = (el: ReturnType<Page['locator']>) => el.evaluate(e => getComputedStyle(e).backgroundColor)
       // The fill eases in: wait for the transitions to end, then compare once.
       await atRest(page)
-      expect(await bg(place(page, 'All files'))).toBe(await bg(sideItem))
-      expect(await bg(sideItem)).not.toBe('rgba(0, 0, 0, 0)')
+      expect(await bg(place(page, 'All files'))).not.toBe('rgba(0, 0, 0, 0)')
+      await expect(sideItem).toHaveAttribute('aria-current', 'page')
+      expect(await bg(sideItem)).toBe('rgba(0, 0, 0, 0)')
     }
 
     // A list: whole names, however narrow. Phone: one list, no pictures.
