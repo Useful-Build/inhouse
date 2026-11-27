@@ -2,7 +2,7 @@
 // that doesn't, so a rule that stops firing, or starts firing on a neighbour, fails here.
 import fc from 'fast-check'
 import { describe, expect, test } from 'vitest'
-import { APPROVAL_LABEL, approvedHead, classify, evaluate, gateChecks, isTrusted, NET_LOSS_PATH, notes, parsePatch, report, scan } from './lanes.mjs'
+import { APPROVAL_LABEL, approvedHead, classify, evaluate, gateChecks, isTrusted, NET_LOSS_PATH, notes, parsePatch, permissionCanSpeak, report, scan } from './lanes.mjs'
 
 const BENIGN = '@@ -1,2 +1,2 @@\n const a = 1\n-const b = 2\n+const b = 3'
 const file = (filename, extra = {}) => ({ filename, status: 'modified', changes: 2, patch: BENIGN, ...extra })
@@ -974,6 +974,11 @@ describe('trust by repo permission: a private org member', () => {
     const line = 'Gate check: on ledger'
     expect(gateChecks([asContributor(line), asContributor(line)]).on).toBe(0)
     expect(gateChecks([asContributor(line, { trusted: true }), asContributor(line, { trusted: true })]).on).toBe(2)
+  })
+  test('only admin and write permissions can speak for the repo', () => {
+    expect(permissionCanSpeak('admin')).toBe(true)
+    expect(permissionCanSpeak('write')).toBe(true)
+    for (const p of ['read', 'none', 'triage', 'maintain', '', undefined, null, 'ADMIN']) expect(permissionCanSpeak(p)).toBe(false)
   })
   test('notes keeps the author login for the permission check', () => {
     expect(notes([{ body: 'x', author_association: 'CONTRIBUTOR', user: { login: 'owner' }, created_at: '2026-11-27T12:05:00Z' }], [])[0].login).toBe('owner')

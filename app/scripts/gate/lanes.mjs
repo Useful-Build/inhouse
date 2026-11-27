@@ -21,6 +21,13 @@ export const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR'])
  * org membership, so it reports a private member's comments as CONTRIBUTOR; the permission check covers them.
  */
 export const isTrusted = c => TRUSTED_ASSOCIATIONS.has(c.author_association) || c.trusted === true
+
+/**
+ * Whether a repo permission (the `permission` field of GET collaborators/{login}/permission) lets its holder speak for
+ * the repo. Only admin and write: the API reports maintain as write, triage as read, and a bot or an outsider as read or
+ * none, so none of those count.
+ */
+export const permissionCanSpeak = permission => permission === 'admin' || permission === 'write'
 export const GATE_CHECKS_NEEDED = 2
 /** Property tests below this many runs are check-weakening when added. */
 export const MIN_NUM_RUNS = 100

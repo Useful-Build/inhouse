@@ -8,7 +8,7 @@
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { appendFileSync } from 'node:fs'
-import { APPROVAL_LABEL, approvedHead, classify, isTrusted, notes, report } from './lanes.mjs'
+import { APPROVAL_LABEL, approvedHead, classify, isTrusted, notes, permissionCanSpeak, report } from './lanes.mjs'
 
 /** GitHub caps a PR's file list at 3000 and a comparison's at 300. */
 const COMPARE_FILE_CAP = 300
@@ -39,13 +39,11 @@ const getAll = path => JSON.parse(ghText(['--paginate', '--slurp', path])).flat(
 const escapeData = s => s.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A')
 const encodePath = p => p.split('/').map(encodeURIComponent).join('/')
 
-/** Repo permissions whose holders can speak for the repo (approve, confirm the ledger). */
-const SPEAKING_PERMISSIONS = new Set(['admin', 'maintain', 'write'])
-
 /**
- * Marks notes `trusted` when their author_association isn't trusted but the author has write access or more. The
+ * Marks notes `trusted` when their author_association isn't trusted but the author has write access or more (lanes.mjs'
+ * permissionCanSpeak). The
  * built-in GITHUB_TOKEN can't see private org membership, so a private member's comments come back as CONTRIBUTOR.
- * One lookup per login. A 404 (not a collaborator, or a bot) leaves the note untrusted; any other error throws, so
+ * One lookup per login. A 404 (the login isn't a user) leaves the note untrusted; any other error throws, so
  * the gate fails closed rather than guessing.
  */
 function withPermissionTrust(repo, list) {
@@ -54,7 +52,7 @@ function withPermissionTrust(repo, list) {
     if (!cache.has(login)) {
       let ok = false
       try {
-        ok = SPEAKING_PERMISSIONS.has(get(`repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`).permission)
+        ok = permissionCanSpeak(get(`repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`).permission)
       } catch (e) {
         if (!/HTTP 404/.test(String(e.stderr))) throw e
       }
