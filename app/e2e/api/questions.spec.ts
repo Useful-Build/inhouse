@@ -5,7 +5,8 @@
 // option chosen; a question asked beside another call is not asked, and the agent asks again on its own.
 // M2-J adds a routine's question (scenarios/acceptance.ts `routine-create-question`): a routine's run asks its creator,
 // who sees it in their questions (Approvals' Questions section, the inbox) with no chat to open (a routine's chat is the
-// system's); another member never sees it; the run waits until the creator answers, then finishes.
+// system's); another member never sees it; the run waits, across a kill of every runner, until the creator answers, then
+// finishes.
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
 import { QUESTION_ASKED, QUESTION_REPLY } from '../../test/scripted-model/scenarios/questions.ts'
@@ -130,8 +131,9 @@ test("a routine's question goes to its creator's inbox with no chat; the run wai
   // Another member never sees it, nor can answer it.
   expect(((await call(request, leo, 'GET', '/api/questions')).json.items as Q[]).map(x => x.id)).not.toContain(q!.id)
   expect((await call(request, leo, 'POST', `/api/questions/${q!.id}/answer`, { json: { choice: QUESTION_ASKED.options[0] } })).status).toBe(404)
-  // The run waits on the answer.
+  // The run waits on the answer, across a hard kill of every runner (P6 acceptance 10).
   expect((await runs())[0]).toMatchObject({ outcome: 'running', manual: true })
+  await killRunners(request)
 
   const answered = await call(request, dana, 'POST', `/api/questions/${q!.id}/answer`, { json: { choice: QUESTION_ASKED.options[0] } })
   expect(answered.status, answered.text).toBe(200)
