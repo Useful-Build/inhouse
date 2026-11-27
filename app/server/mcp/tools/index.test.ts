@@ -32,7 +32,7 @@ describe('composeHandlers', () => {
 describe('the composed map', () => {
   it('has one handler per registry tool; the seven built ones are not stubs', async () => {
     expect([...TOOL_HANDLERS.keys()].sort()).toEqual([
-      'approval_get', 'approval_list', 'approval_request', 'approval_withdraw', 'history_read', 'history_search', 'memory_forget', 'memory_list',
+      'approval_get', 'approval_list', 'approval_request', 'approval_withdraw', 'history_read', 'history_search', 'member_find', 'memory_forget', 'memory_list',
       'memory_save', 'memory_search', 'memory_update', 'notification_send', 'question_ask', 'routine_create', 'routine_delete', 'routine_list',
       'routine_run_now', 'routine_update', 'skill_save', 'team_request_create', 'team_request_list',
     ])

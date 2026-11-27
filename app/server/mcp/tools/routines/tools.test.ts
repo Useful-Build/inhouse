@@ -61,8 +61,8 @@ describe('legacy stage settings do not gate routines', () => {
 })
 
 describe('the routine tools (test 9)', () => {
-  it('the server still serves exactly the 21 tools (P6a added skill_save), the five routine ones built', () => {
-    expect(TOOL_HANDLERS.size).toBe(21)
+  it('the server still serves exactly the 22 tools (P6a added skill_save, M3-T member_find), the five routine ones built', () => {
+    expect(TOOL_HANDLERS.size).toBe(22)
     for (const name of ['routine_create', 'routine_list', 'routine_update', 'routine_delete', 'routine_run_now']) {
       expect(TOOL_HANDLERS.get(name)!.input.safeParse({ anything: 1 }).success, name).toBe(false)
     }

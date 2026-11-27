@@ -16,6 +16,7 @@ import { handlers as routines } from './routines/index.ts'
 import { STUB_NAMES, handlers as stubs } from './stubs/index.ts'
 import { handlers as skills } from './skills/index.ts'
 import { handlers as team } from './team/index.ts'
+import { memberFind } from './team/member-find.ts'
 
 export type Area = readonly [name: string, handlers: Partial<Record<InhouseToolName, ToolHandler>>]
 
@@ -31,6 +32,8 @@ const AREAS: readonly Area[] = [
   // Stage 1 M2-Q (N16).
   ['questions', questions],
   ['approvals', approvals],
+  // Stage 1 M3-T (N28).
+  ['people', { member_find: memberFind }],
 ]
 
 /** The map the server serves, or a thrown error naming what breaks the rules. Exported for its tests. */

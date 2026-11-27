@@ -25,6 +25,8 @@ const THE_20 = [
   'routine_create', 'routine_list', 'routine_update', 'routine_delete', 'routine_run_now',
   'history_search', 'history_read',
   'notification_send',
+  // Stage 1 M3-T (N28): the read-only member lookup.
+  'member_find',
   'team_request_create', 'team_request_list',
   // P6a brand skills (master plan standing decision 6).
   'skill_save',
@@ -35,6 +37,8 @@ const BUILT = ['memory_search', 'memory_save', 'memory_update', 'memory_forget',
   'routine_create', 'routine_list', 'routine_update', 'routine_delete', 'routine_run_now',
   // P5 W4: notification_send.
   'notification_send',
+  // Stage 1 M3-T: member_find (its own tests: tools/team/member-find.test.ts).
+  'member_find',
   // P6a W3: the Inhouse team tools.
   'team_request_create', 'team_request_list',
   // P6a brand skills.
@@ -120,7 +124,7 @@ describe('tools/list (failure 2)', () => {
       expect(t.description.length, t.name).toBeGreaterThan(30)
       if (!THE_6.includes(t.name)) expect(t._meta, t.name).toBeUndefined()
     }
-    expect(tools.filter(t => t.annotations.readOnlyHint === true).map(t => t.name)).toEqual(['memory_search', 'memory_list', 'approval_get', 'approval_list', 'routine_list', 'history_search', 'history_read', 'team_request_list'])
+    expect(tools.filter(t => t.annotations.readOnlyHint === true).map(t => t.name)).toEqual(['memory_search', 'memory_list', 'approval_get', 'approval_list', 'routine_list', 'history_search', 'history_read', 'member_find', 'team_request_list'])
     expect(tools.filter(t => t.annotations.destructiveHint === true).map(t => t.name)).toEqual(['memory_forget', 'approval_withdraw', 'routine_delete'])
     // The built tools take what agent-tools says their parameters hold.
     const props = (name: string) => Object.keys((tools.find(t => t.name === name)!.inputSchema as unknown as { properties: Record<string, unknown> }).properties).sort()
