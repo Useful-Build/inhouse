@@ -10,6 +10,15 @@ Never call a change done from reading code alone. Prove it by running the real a
 - Property tests (`fast-check`): for parsers, reducers, storage round-trips, and state logic, define invariants and failure modes before coding instead of writing trivial after-the-fact unit tests.
 - Differential tests: when migrating a system or swapping a mock for a real implementation, run old and new on the same inputs and diff the outputs.
 
+The test map (where each kind runs; decision 0028). Catch each bug at the lowest group that can catch it:
+
+| Group | What | Where |
+|---|---|---|
+| A. Laptop checks | Typecheck, lint (oxlint + the house scripts), unit tests, property tests and server tests in workerd: all one command, `npm run test:unit`; plus the hub and runner unit tests | Laptop (light lock) and CI |
+| B. Build tripwires | Bundle budget, product build scan, hub bundle and config checks, config refusals, fresh-install migrations, the runner image and its guard probes | CI |
+| C. Browser and API | Demo app projects (`desktop`, `phone`, `visual-*`, `a11y`, `product`) and the test build (`api`, `real-*`, `smoke`, the contract suite on the real client) | CI |
+| D. Real world | Sandbox deploy, deploy smoke, hourly monitor, nightly live checks, evals (fake target free; paid needs Wasim's OK on the cap) | Cloud |
+
 ## 3. Booting and driving Inhouse
 
 The build, preview and Playwright commands below run in GitHub CI and on cloud runners, not on Wasim's laptop (see §4 and §6). The one exception: `npm run dev` (through `~/.agents/tools/heavy-lock.sh`) when Wasim asks to see the app on localhost. Run all commands in `app/`. Override `E2E_PORT` (default 5193), `E2E_PRODUCT_PORT` (5194), or `E2E_TEST_BUILD_PORT` (8787) in parallel worktrees so ports never clash. Note that `vite build --mode product*` skips `tsc`, so always run `npm run typecheck` too. Never run a demo build and a product build (or a preview) concurrently in the same checkout.
@@ -32,6 +41,21 @@ On the laptop, run only the light checks. Everything heavier runs in GitHub CI o
   - Eval harness: dry run with `node evals/run.ts --target fake --out <dir>` (no model, no cost). Real runs (`--target product --paid --budget <usd>`) require Wasim's OK; commit results under `app/evals/results/`.
   - Morning-check set: run `node evals/morning-check/run.mjs --target <origin> --out-dir evals/morning-check/results --sha <git-sha> --issuer-key-file <key> --aud <aud>` with `INHOUSE_EVAL_D1_NAME`, `INHOUSE_EVAL_WRANGLER_CONFIG`, and `CF_SANDBOX_ACCOUNT_ID` inline (see `run.mjs` header; `--cases` is `partial`, never a pass). Commit results in `app/evals/morning-check/results/<date>-<sha>.json`. After squash into `main`, re-run against the eval brand (bounded by its $40 spending cap).
 - Release smoke (read-only, CI): CI's `test-build` job runs `E2E_TEST_BUILD=1 npx playwright test --project=smoke` on every PR into `main`. Against a live release it runs from the ops repo or another CI runner, never the laptop, with `SMOKE_BASE_URL=<url>` and the Access service-token env vars (`SMOKE_CLIENT_ID`, `SMOKE_CLIENT_SECRET`, `MONITOR_CLIENT_ID`, `MONITOR_CLIENT_SECRET`).
+
+### Re-runs: narrow to fix, wide to prove, once
+
+The full suite is the proof, and it runs once, on the final commit, started by the pipeline: the PR's own required run, the merge queue's run, or the push to `fleet/<topic>`. Never dispatch a full `ci` run to prove a small fix.
+
+1. While coding, run only what you touch: `npx vitest run <file>`, `-t "<name>"`, or `npx vitest related <changed files> --run` (static imports only, so it's for speed, never the final word).
+2. Before every push, run the full light set once (`npm run typecheck && npm run lint && npm run test:unit`, plus hub or runner if touched). Put the `Verified:` trailer in before the first push; never push an empty commit just to fix it.
+3. Push once, with every fix batched. Don't push while a CI run on the branch is still going and nothing has failed yet (each push cancels it; the global push guard enforces this). Watch with `gh pr checks <n> --watch --fail-fast` as a background command, so the first failed job wakes you.
+4. When something fails, read it first (`gh run view <id> --log-failed`, the Playwright report and trace in the `playwright-*` artifact), then sort it by facts:
+   - Infra: the job produced no test results (cancelled, time limit, install or runner failure). `gh run rerun <id> --failed` once (it re-runs the whole job). The sandbox refuses re-runs: dispatch it again with `only=`. If a job sits within 15% of its time limit on green runs, fix the split instead of re-running.
+   - Real: the failed tests fail again on the same commit in a targeted run with `repeat_each=5` (mixed results count as real). Fix every failure from that run, push once, and start a targeted run on the new commit at the same time as the PR's own run.
+   - Flaky: the failed tests pass 5 of 5 on the same commit. Re-run the failed job once and open an issue with the test name and run link. Never add retries and never edit the test to pass. A second flake of the same test within 7 days is fixed that day in its own PR (prove the fix with `repeat_each=20`).
+5. Targeted runs in CI: `gh workflow run targeted --ref <branch> -f project=<project>` with `-f failed_run=<run id>` (re-runs exactly that run's failures with `--last-failed`), or `-f specs="<paths under app/e2e>"` and `-f grep="<name>"`, plus `-f repeat_each=<n>` (at most 20). It's never a required check; it replaces extra full runs, never the full run. Watch it with `gh run watch <id> --exit-status` in the background (dispatched runs don't notify).
+
+A full run before merging a fleet PR (or a sandbox `full=true`) is right only when the diff touches shared plumbing a narrow run can't vouch for: `playwright.config.ts`, `vitest.config.ts`, `e2e/support/`, `e2e/states.ts`, `vite.config.ts`, `app/shared/` schemas, migrations, `wrangler*.jsonc`, lockfiles, the Playwright image, `app/test/upstreams/`, sample data, or design tokens and global CSS. The sandbox runs the agent set by default and `full=true` once on a milestone's final commit.
 
 ## 5. Targeted live QA, visual proof, and milestones
 

@@ -377,9 +377,10 @@ prompt change that runs evals (M2 removes "read only" from the prompt), and its 
 ## 7. Stage 1: Build
 
 Milestones run in this order; M1 and M2 run side by side (different code). Each lands through `AGENTS.md` section 5
-(feature branches, risk-tiered review per `REVIEW.md`, light checks locally, heavy suites in CI). Milestones touching
-prompts, migrations, `app/ops/`, `app/hub/{signin,crypto,scope}/`, routes or the access matrix are **High tier**
-(Fable 5.2 + Gemini 4 Neon + Wasim's OK). Every user-facing change updates `FEATURE_MAP.md`.
+(feature branches, review by lane per `REVIEW.md`, light checks locally, heavy suites in CI, merge queue). Each
+milestone plan carries a Gate ledger (routes, write operations, egress hosts, migrations) that Wasim approves with the
+plan; PRs that stay on it merge after Fable 5.2 + Gemini 4 Neon, and only Lane 4 items need his OK (decision 0028).
+Every user-facing change updates `FEATURE_MAP.md`.
 
 | # | Milestone | Status |
 |---|---|---|
