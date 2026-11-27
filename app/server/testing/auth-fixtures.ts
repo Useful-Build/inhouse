@@ -211,6 +211,7 @@ export const DESIGN_ROWS: readonly AccessRow[] = [
   { method: 'POST', pattern: '/api/actions/:id/answer', class: 'baseline', allow: ['member', 'admin'] },
   { method: 'POST', pattern: '/api/actions/:id/undo', class: 'baseline', allow: ['member', 'admin'] },
   { method: 'POST', pattern: '/api/actions/:id/resolve', class: 'baseline', allow: ['member', 'admin'] },
+  { method: 'GET', pattern: '/api/actions/:id/items', class: 'baseline', allow: ['member', 'admin'] },
   // Stage 1 M2-Q (N16).
   { method: 'GET', pattern: '/api/questions', class: 'baseline', allow: ['member', 'admin'] },
   { method: 'POST', pattern: '/api/questions/:id/answer', class: 'baseline', allow: ['member', 'admin'] },

@@ -27,8 +27,14 @@ export const TEXT = {
   made: (id: string) => `It's in Approvals for the person to answer (approval_id: ${id}). Nothing goes out unless they approve it. This doesn't wait for the answer: check it later with approval_get.`,
   alreadyWaiting: (id: string) => `The same action is already waiting in Approvals, so no second card was made (approval_id: ${id}). Check it with approval_get.`,
   replay: (id: string, state: ActionState) => `This call already made approval ${id}. It's ${STATE_WORDS[state]}.`,
-  /** Stage 1 M3-A: a batch holds other calls' items too, so the agent can't withdraw it whole (M3-B decides per item). */
+  /** Stage 1 M3-B: a collecting batch holds other calls' items too, so the agent can't withdraw it whole. */
   batch: "That approval holds other calls too, so it can't be withdrawn from here. The person can answer it in Approvals.",
+  /**
+   * Stage 1 M3-B (N22): the request joined one card with other changes like it (the 6th waiting of its kind in this
+   * chat, or past what its permission allows). The approval id is the card's; the item is this request's place on it.
+   */
+  collected: (id: string, n: number) =>
+    `It's in Approvals on one card with other changes like it (approval_id: ${id}, item ${n}). Nothing goes out unless the person approves it. This doesn't wait for the answer: check it later with approval_get.`,
   notFound: "There's no approval with that approval_id for this person. Use approval_list to see theirs.",
   status: (id: string, state: ActionState) => `Approval ${id} is ${STATE_WORDS[state]}.`,
   none: 'No approvals match.',

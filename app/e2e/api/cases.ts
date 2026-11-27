@@ -208,6 +208,7 @@ export const CASES: Record<string, RouteCase> = {
   'POST /api/actions/:id/answer': { design: d('baseline', PEOPLE), path: `/api/actions/${NO_ACTION}/answer`, json: { choice: 'deny', ifRev: 1 }, passes: 404 },
   'POST /api/actions/:id/undo': { design: d('baseline', PEOPLE), path: `/api/actions/${NO_ACTION}/undo`, json: { ifRev: 1 }, passes: 404 },
   'POST /api/actions/:id/resolve': { design: d('baseline', PEOPLE), path: `/api/actions/${NO_ACTION}/resolve`, json: { outcome: 'sent', ifRev: 1 }, passes: 404 },
+  'GET /api/actions/:id/items': { design: d('baseline', PEOPLE), path: `/api/actions/${NO_ACTION}/items`, passes: 404 },
   // Stage 1 M2-Q (N16): brand people only. An answer to a question nobody asked: 404, nothing written.
   'GET /api/questions': { design: d('baseline', PEOPLE), path: '/api/questions', passes: 200 },
   'POST /api/questions/:id/answer': { design: d('baseline', PEOPLE), path: `/api/questions/${NO_QUESTION}/answer`, json: { choice: 'Yes' }, passes: 404 },

@@ -25,6 +25,13 @@ export const FINAL_STATES = ['sent', 'failed', 'undone', 'denied', 'withdrawn', 
 /** The row this batch stamped: the condition its later statements and lines hang on. */
 export const stamped = (actionId: string, stamp: string): Exists => ({ sql: 'SELECT 1 FROM outbox_actions WHERE id = ? AND stamp = ?', params: [actionId, stamp] })
 
+/** An active brand person whose role may do this operation (the answer's and the claim's check). */
+export const mayDo = (memberParam: string, memberMay: boolean): string =>
+  `EXISTS (SELECT 1 FROM members m WHERE m.id = ${memberParam} AND m.kind = 'person' AND m.status = 'active' AND (m.role = 'admin' OR ${memberMay ? 1 : 0} = 1))`
+
+/** The row's chat isn't in the trash (M2-D, N11): an answer never approves a card of a deleted chat. */
+export const CHAT_NOT_DELETED = 'NOT EXISTS (SELECT 1 FROM chats c WHERE c.id = outbox_actions.chat_id AND c.deleted_at_ms IS NOT NULL)'
+
 /** The gate is open: not paused and not held for a restore (N12). */
 export const GATE_OPEN = 'SELECT 1 FROM outbox_gate WHERE id = 1 AND paused = 0 AND restore_hold = 0'
 

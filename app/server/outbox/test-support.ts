@@ -19,6 +19,7 @@ export const OTHER = 'm_ob_other'
 export async function resetOutbox(db: D1Database): Promise<void> {
   await db.batch([
     db.prepare('DELETE FROM outbox_actions'),
+    db.prepare('DELETE FROM outbox_items'),
     db.prepare('UPDATE outbox_gate SET paused = 0, restore_hold = 0, epoch = 1, do_gen = 0, updated_at_ms = 0 WHERE id = 1'),
     db.prepare("DELETE FROM settings WHERE owner = 'brand' AND key = 'g:tz'"),
   ])

@@ -19,6 +19,7 @@ export const REFUSAL_TEXT: Readonly<Record<OutboxRefuseReason, string>> = {
   batch_full: 'The waiting list for this kind of action is full, so nothing was asked or sent. Wait for an answer on it first.',
   too_many_waiting: 'Five of these are already waiting for an answer in this chat, so nothing was asked or sent. Wait for an answer first.',
   writes_off: 'Changing what the agent can do is switched off in this build, so nothing changed.',
+  busy: 'Many changes like this one arrived at once, so this one wasn’t added. Nothing was asked or sent; try it once more.',
 }
 
 /** Why an approval lapsed, as the card says it. */
@@ -57,3 +58,26 @@ export const NEEDS_CHECK_TEXT = 'It isn’t clear whether this went out. Check i
 /** A failed row's words: the hub's code in plain words is the audit text's; the card keeps it short. */
 export const FAILED_TEXT = 'It didn’t go out.'
 export const SENT_TEXT = 'Sent.'
+
+/**
+ * Stage 1 M3-B (N22): the title a collecting card (or the rest of a batch moved to a new card) stores, for the words that
+ * read the stored card (the resume turn names it): "Changes in Shopify (Store A)".
+ */
+export const batchStoredTitle = (label: string): string => `Changes in ${label}`
+
+/**
+ * Stage 1 M3-B (N22): a batch card's title when it isn't one call's own (a collecting card, or the rest of one moved to a
+ * new card). Its lines and totals carry the details.
+ */
+export const batchTitle = (items: number, label: string): string => `${items} ${items === 1 ? 'change' : 'changes'} in ${label}`
+
+/**
+ * Stage 1 M3-B (N22): a batch that stopped part way, to its approver: what went out, and where the rest is now ("Paused:
+ * 12 of 40 went out; the other 28 need a new OK").
+ */
+export function batchStoppedText(p: { sent: number; total: number; left: number; moved: boolean; why: string }): string {
+  const rest = p.moved
+    ? `The other ${p.left} ${p.left === 1 ? 'needs' : 'need'} a new OK on a new card.`
+    : `The other ${p.left} ${p.left === 1 ? 'was' : 'were'} withdrawn.`
+  return `${p.sent} of ${p.total} went out before this stopped. ${rest} ${p.why}`
+}

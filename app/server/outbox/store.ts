@@ -2,7 +2,7 @@
 // (answer, Undo, withdraw, resolve) or the dispatcher's (dispatch.ts, sweep.ts). Each write is one D1 batch: one
 // conditional update (or insert) that decides, then statements and audit lines that act only where its stamp is. The
 // rules on who may act sit in that update's WHERE, never only in a read before it.
-import type { ActionFilter } from '../../shared/contract/actions.ts'
+import type { ActionCard, ActionFilter, ActionItemsPage } from '../../shared/contract/actions.ts'
 import type { AuditHook } from '../db/audit.ts'
 import { writeStamp } from '../db/ids.ts'
 import { all, first, runBatch, stmt } from '../db/sql.ts'
@@ -13,13 +13,16 @@ import { NUDGE_AFTER } from '../permissions/policy.ts'
 import { resolve } from '../permissions/resolve.ts'
 import type { DecideCtx, Resolved, Verdict } from '../permissions/types.ts'
 import { reserveUseSql, useDay as dayOfUse } from '../permissions/uses.ts'
-import { kindOf } from './card.ts'
+import { itemsPage } from './batch/rows.ts'
+import { cardsOf, kindOf } from './card.ts'
 import type { StoredCard, Viewer } from './card.ts'
 import { brandTimeZone } from './facts.ts'
 import type { OutboxFacts } from './facts.ts'
+import { batchAnswerStmts, ITEMS_WITHIN_UNITS_MAX, resolveItemStmts } from './batch/answer.ts'
+import { collect, oneCallBatch, overBatchMax, replayItem, WAITING_SINGLES_MAX } from './batch/request.ts'
 import { grantDefaults, operationEntry } from './operations/index.ts'
 import {
-  actionLine, both, butNot, GATE_OPEN, newActionId, permissionUseKey, releaseUseWhere, reserveUseByKeyWhere, stamped, unreleasedUse,
+  actionLine, both, butNot, CHAT_NOT_DELETED, GATE_OPEN, mayDo, newActionId, permissionUseKey, releaseUseWhere, reserveUseByKeyWhere, stamped, unreleasedUse,
 } from './sql.ts'
 import type { Exists } from './sql.ts'
 import { timing } from './timing.ts'
@@ -52,9 +55,6 @@ const refusal = (code: OutboxRefusal['refused']['code'], reason?: OutboxRefusal[
 export const mayView = (row: Pick<OutboxActionRow, 'asked_by' | 'approver'>, v: Viewer): boolean =>
   v.role === 'admin' || row.asked_by === v.memberId || row.approver === v.memberId
 
-/** An active brand person whose role may do this operation (the answer's and the claim's check). */
-const mayDo = (memberParam: string, memberMay: boolean) =>
-  `EXISTS (SELECT 1 FROM members m WHERE m.id = ${memberParam} AND m.kind = 'person' AND m.status = 'active' AND (m.role = 'admin' OR ${memberMay ? 1 : 0} = 1))`
 
 /**
  * Stage 1 M3-L (N23): the row's units are within the ceiling's largest single call now. An approval past it is refused
@@ -63,8 +63,6 @@ const mayDo = (memberParam: string, memberMay: boolean) =>
 const WITHIN_UNITS_MAX = `NOT EXISTS (SELECT 1 FROM permission_ceiling pc WHERE pc.operation = outbox_actions.operation
   AND outbox_actions.units > pc.units_max)`
 
-/** The row's chat isn't in the trash (M2-D, N11): an answer never approves a card of a deleted chat. */
-const CHAT_NOT_DELETED = 'NOT EXISTS (SELECT 1 FROM chats c WHERE c.id = outbox_actions.chat_id AND c.deleted_at_ms IS NOT NULL)'
 
 const INSERT_COLUMNS = [
   'id', 'rev', 'state', 'verdict', 'guardrail', 'origin', 'via', 'asked_by', 'approver', 'chat_id', 'run_id', 'turn_id', 'tool_use_id', 'job_id',
@@ -163,6 +161,54 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
     return dup ? { outcome: 'waiting', action: dup, existing: true } : null
   }
 
+  /** Stage 1 M3-B (N22, N33): Approve or No for a batch's items 1 to `upTo`, as the card showed them. */
+  async function answerBatch(actor: OutboxActor, before: OutboxActionRow, input: Parameters<OutboxPort['answer']>[2], nowMs: number): Promise<OutboxChange> {
+    if (input.upTo === undefined || input.totals === undefined) return refusal('invalid')
+    if (input.choice !== 'approve' && input.choice !== 'deny') return refusal('invalid')
+    const entry = operationEntry(before.operation)
+    if (!entry) throw new Error(`outbox: a stored action names no operation (${before.id})`)
+    const stamp = writeStamp(d.requestId)
+    const { stmts } = batchAnswerStmts({
+      before, entry, actorId: actor.memberId, choice: input.choice, ifRev: input.ifRev, upTo: input.upTo, totals: input.totals, nowMs, stamp, requestId: d.requestId,
+    }, hook)
+    await runBatch(db, stmts)
+    const after = await row(before.id)
+    if (after && after.stamp === stamp) {
+      if (after.state === 'approved') await scheduleSend(after.id, after.send_at_ms as number)
+      return { action: after }
+    }
+    if (!after || after.rev !== input.ifRev || after.state !== 'waiting' || after.expires_at_ms <= nowMs) return refusal('conflict')
+    if (await chatDeleted(after.chat_id)) return refusal('conflict')
+    const shown = await first<{ n: number; records: number; units: number; open: number }>(db, stmt(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(records), 0) AS records, COALESCE(SUM(units), 0) AS units, SUM(state <> 'pending') AS open
+       FROM outbox_items WHERE action_id = ? AND n <= ?`,
+      after.id, input.upTo,
+    ))
+    if (after.items_n < input.upTo || !shown || shown.n === 0 || shown.records !== input.totals.records || shown.units !== input.totals.units || (shown.open ?? 0) > 0) {
+      return refusal('conflict', 'totals_changed')
+    }
+    if (input.choice === 'approve' && !(await gateOpen())) return refusal('conflict', 'paused')
+    if (input.choice === 'approve' && (await first<{ one: number }>(db, stmt(`SELECT 1 AS one FROM outbox_actions WHERE id = ? AND NOT ${ITEMS_WITHIN_UNITS_MAX}`, after.id, input.upTo))) !== null) {
+      return refusal('conflict', 'over_limit')
+    }
+    return refusal('forbidden')
+  }
+
+  /** Stage 1 M3-B (N22): one unclear item of a batch, by its position. */
+  async function resolveBatchItem(actor: OutboxActor, before: OutboxActionRow, input: Parameters<OutboxPort['resolve']>[2], nowMs: number): Promise<OutboxChange> {
+    if (input.item === undefined) return refusal('invalid')
+    const item = await first<{ n: number; units: number; state: string }>(db, stmt('SELECT n, units, state FROM outbox_items WHERE action_id = ? AND n = ?', before.id, input.item))
+    if (!item) return refusal('not_found')
+    const stamp = writeStamp(d.requestId)
+    await runBatch(db, resolveItemStmts({
+      before, item, outcome: input.outcome, ifRev: input.ifRev, actorId: actor.memberId, nowMs, stamp, requestId: d.requestId, hook,
+    }))
+    const after = await row(before.id)
+    if (after && after.stamp === stamp) return { action: after }
+    if (!after || after.rev !== input.ifRev || after.state !== 'needs_check' || item.state !== 'needs_check') return refusal('conflict')
+    return refusal('forbidden')
+  }
+
   return {
     async request(ctx, proposed, { mode }) {
       const facts = d.facts
@@ -171,10 +217,14 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       const rf = await facts.resolveFacts(nowMs)
       const r = await resolve(rf, proposed)
       if ('refuse' in r) return refusedRequest(r.refuse.reason)
-      // A replay of the same invocation is answered from its row, whatever the rules say now.
+      // A replay of the same invocation is answered from its row (or, Stage 1 M3-B, its item, wherever it sits now),
+      // whatever the rules say now.
       if (ctx.invocation) {
         const prior = await byInvocation(ctx.chatId, ctx.invocation.toolUseId)
         if (prior) return prior.payload_hash === r.payloadHash ? { outcome: 'existing', action: prior } : refusedRequest('invocation_conflict')
+        const item = await replayItem(db, ctx, r.payloadHash)
+        if (item === 'conflict') return refusedRequest('invocation_conflict')
+        if (item) return item
       }
       // M2-D (N11): nothing new from a deleted chat (its deletion withdraws what it had; this covers a request that lands
       // between the deletion and BrandAgent's end of the chat's turns, or when that end fails).
@@ -191,8 +241,46 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       const asker = ctx.asker
       if (!asker) throw new Error('outbox: decide let through an action with no asker')
       const via = mode === 'ask_only' ? 'approval_request' : 'tool'
+      // Stage 1 M3-B (N22): a multi-record call of an operation that splits is a batch of its own when it runs under a
+      // grant or is over the bulk threshold; a call that collects joins the chat's collecting batch.
+      const call = { ctx, r, entry, rf, via, label: account.label } as const
+      const bd = { db, requestId: d.requestId, nowMs, hook }
+      const splits = entry.items !== undefined && r.records > 1
+      const collectAs = async (guardrail: 'count' | 'bulk'): Promise<OutboxRequestResult> => {
+        const c = await collect(bd, call, guardrail)
+        switch (c.outcome) {
+          case 'busy': return refusedRequest('busy')
+          case 'full': return refusedRequest('batch_full')
+          case 'conflict': return refusedRequest('invocation_conflict')
+          case 'gone': return refusedRequest('chat_deleted')
+          default: return c
+        }
+      }
+      /** After a batch insert that didn't apply: the same invocation's row, the card for the same payload, or why not. */
+      const batchLost = async (): Promise<OutboxRequestResult | null> => {
+        const existing = await existingFor(ctx, r)
+        if (existing) return existing
+        if (await chatDeleted(ctx.chatId)) return refusedRequest('chat_deleted')
+        if (await overBatchMax(db, r.operation, r.records)) return refusedRequest('batch_full')
+        return null
+      }
 
-      if (v.verdict === 'run') {
+      if (v.verdict === 'run' && splits) {
+        const made = await oneCallBatch(bd, call, { kind: 'run', grantId: v.grantId, tz: await brandTimeZone(db) })
+        if (made) {
+          if (made.state === 'approved' && made.send_at_ms !== null) {
+            await scheduleSend(made.id, made.send_at_ms)
+            return { outcome: 'approved', action: made }
+          }
+          return made.state === 'waiting' ? { outcome: 'waiting', action: made, existing: false } : { outcome: 'existing', action: made }
+        }
+        const lost = await batchLost()
+        if (lost) return lost
+        // As a single `run` below: decide again; a run that still can't reserve is an exact `count` (collected).
+        v = await decide(facts, ctx, r, mode)
+        if (v.verdict === 'refuse') return refusedRequest(v.reason)
+        if (v.verdict === 'run') v = (await gateOpen()) ? { verdict: 'exact', guardrail: 'count', approver: 'asker' } : { verdict: 'ask', nudge: false }
+      } else if (v.verdict === 'run') {
         // The use first, then the action only where that use exists and the gate is open; the use goes again in the same
         // batch if the action didn't (a closed gate, a card that appeared meanwhile).
         const id = newActionId()
@@ -228,13 +316,31 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
         if (v.verdict === 'run') v = (await gateOpen()) ? { verdict: 'exact', guardrail: 'count', approver: 'asker' } : { verdict: 'ask', nudge: false }
       }
 
+      if (v.verdict === 'exact' && v.guardrail === 'bulk' && splits) {
+        // Way 1 (N22): over the bulk threshold, one exact card with the full list.
+        if (await overBatchMax(db, r.operation, r.records)) return refusedRequest('batch_full')
+        const made = await oneCallBatch(bd, call, { kind: 'exact' })
+        if (made) return { outcome: 'waiting', action: made, existing: false }
+        const lost = await batchLost()
+        if (lost) return lost
+        throw new Error('outbox: a batch insert applied nothing and no row explains it')
+      }
+      // Way 2 (N22): a call its grant can't take collects, when its kind does.
+      if (v.verdict === 'exact' && v.guardrail === 'count' && entry.coalesces) return collectAs('count')
+
       const id = newActionId()
       const stamp = writeStamp(d.requestId)
       const verdict = v.verdict as 'ask' | 'exact'
       const guardrail = v.verdict === 'exact' ? v.guardrail : null
       const nudge = v.verdict === 'ask' && v.nudge
+      // Stage 1 M3-B (N22): at most 5 waiting single cards of one operation in a chat, decided in the insert itself.
+      const roomForOne: Exists = {
+        sql: `SELECT 1 WHERE (SELECT COUNT(*) FROM outbox_actions WHERE chat_id = ? AND operation = ? AND kind = 'single' AND state = 'waiting'
+          AND expires_at_ms > ?) < ?`,
+        params: [ctx.chatId, r.operation, nowMs, WAITING_SINGLES_MAX],
+      }
       await runBatch(db, [
-        insertAction({ id, state: 'waiting', verdict, guardrail, ctx, via, r, card: card(nudge), grantId: null, nowMs, stamp }, []),
+        insertAction({ id, state: 'waiting', verdict, guardrail, ctx, via, r, card: card(nudge), grantId: null, nowMs, stamp }, [roomForOne]),
         hook(actionLine(
           { ...at(asker.memberId, nowMs), args: { action: 'action.requested', actionId: id, operation: r.operation, verdict, ...(guardrail ? { guardrail } : {}), origin: ctx.origin, records: r.records, units: r.units } },
           stamped(id, stamp),
@@ -245,6 +351,10 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       const existing = await existingFor(ctx, r)
       if (existing) return existing
       if (await chatDeleted(ctx.chatId)) return refusedRequest('chat_deleted')
+      if (!(await first<{ one: number }>(db, stmt(`SELECT 1 AS one WHERE EXISTS (${roomForOne.sql})`, ...roomForOne.params)))) {
+        // The 6th waiting card of this kind: collected when the kind collects, refused otherwise (money, destructive).
+        return entry.coalesces ? collectAs('bulk') : refusedRequest('too_many_waiting')
+      }
       throw new Error('outbox: a waiting insert applied nothing and no row explains it')
     },
 
@@ -256,6 +366,9 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       // M2-D (N11): a card whose chat was deleted can't be answered (its deletion withdraws it; this covers the race).
       if (await chatDeleted(before.chat_id)) return refusal('conflict')
       const kind = kindOf(before)
+      if (before.kind === 'batch') return answerBatch(actor, before, input, nowMs)
+      // Stage 1 M3 (N33): `upTo` and `totals` belong to a batch's answer only.
+      if (input.upTo !== undefined || input.totals !== undefined) return refusal('invalid')
       if ((input.choice === 'once' || input.choice === 'always') && kind !== 'ask') return refusal('invalid')
       if (input.choice === 'approve' && kind !== 'exact') return refusal('invalid')
       const entry = operationEntry(before.operation)
@@ -265,8 +378,9 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       const approving = input.choice !== 'deny'
       const sendAt = nowMs + timing().holdMs
       // The card's kind, in SQL: an `ask` card takes Allow once and Always allow, an exact one Approve (card.ts `kindOf`).
-      const kindSql = input.choice === 'approve' ? "(verdict = 'exact' OR origin = 'routine')"
-        : input.choice === 'deny' ? '1' : "(verdict <> 'exact' AND origin <> 'routine')"
+      // Only a single action is answered here (a batch's answer is `answerBatch`'s).
+      const kindSql = input.choice === 'approve' ? "kind = 'single' AND (verdict = 'exact' OR origin = 'routine')"
+        : input.choice === 'deny' ? "kind = 'single'" : "kind = 'single' AND (verdict <> 'exact' AND origin <> 'routine')"
       const stmts: Stmt[] = [approving
         ? stmt(
           `UPDATE outbox_actions SET state = 'approved', rev = rev + 1, approved_by = ?, approved_rev = rev + 1, approved_at_ms = ?,
@@ -278,7 +392,7 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
         )
         : stmt(
           `UPDATE outbox_actions SET state = 'denied', rev = rev + 1, final_at_ms = ?, updated_at_ms = ?, stamp = ?
-           WHERE id = ? AND rev = ? AND state = 'waiting' AND approver = ?
+           WHERE id = ? AND rev = ? AND state = 'waiting' AND approver = ? AND ${kindSql}
              AND EXISTS (SELECT 1 FROM members m WHERE m.id = ? AND m.kind = 'person' AND m.status = 'active') AND ${CHAT_NOT_DELETED}`,
           nowMs, nowMs, stamp, actionId, input.ifRev, actor.memberId, actor.memberId,
         )]
@@ -303,7 +417,13 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
         const use = permissionUseKey(actionId, nextRev)
         stmts.push(
           ...grant.stmts.map(s => hook(s)),
-          reserveUseByKeyWhere(key, { actionId, actionRev: nextRev, day: dayOfUse(nowMs, tz), units: before.units, atMs: nowMs }, mine),
+          // #493: a grant covers no call over the bulk threshold (claim-guard.ts), so a card over the threshold now (it was
+          // lowered while the card waited) keeps the person's own approval of this revision rather than a use that the
+          // claim could only refuse.
+          reserveUseByKeyWhere(key, { actionId, actionRev: nextRev, day: dayOfUse(nowMs, tz), units: before.units, atMs: nowMs }, both(mine, {
+            sql: 'SELECT 1 FROM outbox_actions a JOIN permission_ceiling pc ON pc.operation = a.operation WHERE a.id = ? AND a.records <= pc.bulk_threshold',
+            params: [actionId],
+          })),
           stmt(
             `UPDATE outbox_actions SET grant_id = (SELECT grant_id FROM permission_uses WHERE id = ? AND released_at_ms IS NULL)
              WHERE id = ? AND stamp = ? AND EXISTS (SELECT 1 FROM permission_uses WHERE id = ? AND released_at_ms IS NULL)`,
@@ -394,6 +514,9 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       const before = await row(actionId)
       if (!before || !mayView(before, actor)) return refusal('not_found')
       if (before.approver !== actor.memberId && actor.role !== 'admin') return refusal('forbidden', 'not_owner')
+      if (before.kind === 'batch') return resolveBatchItem(actor, before, input, nowMs)
+      // Stage 1 M3 (N22): an item belongs to a batch's resolve only.
+      if (input.item !== undefined) return refusal('invalid')
       const stamp = writeStamp(d.requestId)
       const mine = stamped(actionId, stamp)
       // The use was reserved at the approved revision (the claim moved `rev` on).
@@ -402,7 +525,7 @@ export function openOutbox(d: OutboxDeps): OutboxPort & {
       const stmts: Stmt[] = [
         stmt(
           `UPDATE outbox_actions SET state = ?, rev = rev + 1, resolved_by = ?, resolved_at_ms = ?, final_at_ms = ?, updated_at_ms = ?, stamp = ?
-           WHERE id = ? AND rev = ? AND state = 'needs_check' AND approved_rev IS ?
+           WHERE id = ? AND rev = ? AND state = 'needs_check' AND kind = 'single' AND approved_rev IS ?
              AND EXISTS (SELECT 1 FROM members m WHERE m.id = ? AND m.kind = 'person' AND m.status = 'active'
                AND (m.id = outbox_actions.approver OR m.role = 'admin'))`,
           input.outcome, actor.memberId, nowMs, nowMs, nowMs, stamp, actionId, input.ifRev, before.approved_rev, actor.memberId,
@@ -467,6 +590,14 @@ export function outboxStore({ db, hook }: { db: D1Database; hook?: AuditHook }) 
   return {
     list: (viewer: Viewer, filter: ActionFilter): Promise<OutboxActionRow[]> => reads.list(viewer, filter),
     get: (viewer: Viewer, id: string): Promise<OutboxActionRow | null> => reads.get(viewer, id),
+    /** The rows' cards for this viewer, each batch's first lines read with them (Stage 1 M3-B, N33). */
+    cards: (viewer: Viewer, rows: readonly OutboxActionRow[], nowMs: number): Promise<ActionCard[]> => cardsOf(db, rows, viewer, nowMs),
+    /** Stage 1 M3-B (N22, N33): a batch's full list, a page after `after`, for a person who may see its card. */
+    async items(viewer: Viewer, id: string, query: { after: number }): Promise<{ page: ActionItemsPage } | OutboxRefusal> {
+      const r = await reads.get(viewer, id)
+      if (!r || r.kind !== 'batch') return refusal('not_found')
+      return { page: await itemsPage(db, r, query.after) }
+    },
     answer: (actor: OutboxActor, id: string, input: Parameters<OutboxPort['answer']>[2], at: { requestId: string; nowMs: number }): Promise<OutboxChange> =>
       port(at).answer(actor, id, input),
     undo: (actor: OutboxActor, id: string, input: Parameters<OutboxPort['undo']>[2], at: { requestId: string; nowMs: number }): Promise<OutboxChange> =>

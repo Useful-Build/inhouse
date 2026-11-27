@@ -14,17 +14,18 @@
 //  6. Its audit line, and a notice to the approver for `needs_check`.
 // A result that arrives after the timeout may still move the row from `needs_check` to `sent` or `failed`, but only
 // while no person has resolved it.
-import { z } from 'zod'
+import type { z } from 'zod'
 import type { WriteGateway, WriteRequest } from '../../hub/index/contract.ts'
-import { ActionFailCodeSchema } from '../../shared/contract/audit.ts'
-import type { NeedsCheckWhySchema } from '../../shared/contract/audit.ts'
+import type { ActionFailCodeSchema } from '../../shared/contract/audit.ts'
 import { writeStamp } from '../db/ids.ts'
 import { first, runBatch, stmt } from '../db/sql.ts'
 import type { Stmt } from '../db/sql.ts'
 import type { DueTask, TaskContext, TaskHandler, TaskResult } from '../do/brand-agent/scheduler.ts'
 import { safeError } from '../safe-error.ts'
-import { plainAnswer } from '../../shared/rpc-answer.ts'
+import { sendBatch } from './batch/send.ts'
 import { claimStmt, lapseStmts, whyRefused } from './claim.ts'
+import { expectOf, outcomeOf, requestArgs, startCall } from './hub-call.ts'
+import type { SendOutcome } from './hub-call.ts'
 import { notifyAll, outboxNotifier } from './notify.ts'
 import type { OutboxNotice, OutboxNotifier } from './notify.ts'
 import { actionLine, both, butNot, releaseUseWhere, stamped, unreleasedUse } from './sql.ts'
@@ -33,23 +34,10 @@ import { timing } from './timing.ts'
 import type { OutboxActionRow } from './types.ts'
 import { LAPSE_TEXT, NEEDS_CHECK_TEXT, WITHDRAWN_TEXT } from './words.ts'
 
-type NeedsCheckWhy = z.infer<typeof NeedsCheckWhySchema>
-
-
-/** The hub's answer, as the dispatcher trusts it: a safe ref, or a closed error code with what the hub knows was sent. */
-const ResultSchema = z.union([
-  z.object({ ok: z.literal(true), value: z.object({ ref: z.string().max(500) }) }),
-  z.object({ ok: z.literal(false), error: z.object({ code: ActionFailCodeSchema }), sent: z.enum(['no', 'unknown']) }),
-])
-
 /** Room left after the hub's limit for the result's own D1 write, so a send near the edge still lands before the sweep's stale mark. */
 export const PERMIT_RESULT_MARGIN_MS = 5_000
 
-export type SendOutcome =
-  | { kind: 'not_claimed' }
-  | { kind: 'sent'; ref: string }
-  | { kind: 'failed'; code: string }
-  | { kind: 'needs_check'; why: NeedsCheckWhy }
+export type { SendOutcome }
 
 export interface DispatchDeps {
   db: D1Database
@@ -70,28 +58,21 @@ export interface DispatchDeps {
 }
 
 const SYSTEM = 'm_system'
-/** A safe ref as the card shows it: no control characters, at most 200 characters. */
-const safeRef = (ref: string) => ref.replace(/[\p{Cc}\p{Cf}]/gu, '').slice(0, 200)
 
 /**
- * The write the hub is asked for. A Slack post names the listed channel's id the claim just checked (N13), in the shape
- * the hub's strict schema takes (hub/connectors/slack/outbox.ts `SlackChannelPostArgsSchema`: `channelId`, `text` and,
- * when the action has one, `title`: M2-N, a `notification_send` headline).
- * A Shopify write names the store it was approved for (`expect.shop`, its scope; M2-G): the hub refuses when its write
- * app points at another store.
+ * The write the hub is asked for (hub-call.ts `requestArgs` and `expectOf`): a Slack post names the listed channel's id
+ * the claim just checked; every Shopify write names the store it was approved for (`expect.shop`). `idempotencyKey`
+ * (Stage 1 M3, N21): `<actionId>:1` for a single action, the same on every attempt.
  */
 export function writeRequest(row: OutboxActionRow, requestId: string): WriteRequest {
   const args = JSON.parse(row.args_json) as Record<string, unknown>
   const scope = JSON.parse(row.scope_json) as Record<string, string>
-  const shopify = row.operation === 'shopify.order.tag_add'
-  if (shopify && typeof scope.shop !== 'string') throw new Error(`outbox: a Shopify action with no shop in its scope (${row.id})`)
   return {
     actionId: row.id, attempt: row.attempt, requestId, accountId: row.account_id,
-    expect: shopify ? { connectedAtMs: row.account_gen, shop: scope.shop! } : { connectedAtMs: row.account_gen },
+    expect: expectOf(row.operation, row.account_gen, scope, row.id),
     operation: row.operation,
-    args: row.operation === 'slack.channel.post'
-      ? { channelId: scope.channelId, text: args.text, ...(typeof args.title === 'string' ? { title: args.title } : {}) }
-      : args,
+    args: requestArgs(row.operation, scope, args),
+    idempotencyKey: `${row.id}:1`,
   }
 }
 
@@ -139,22 +120,18 @@ async function storeResult(d: Pick<DispatchDeps, 'db' | 'requestId' | 'notify'>,
   return applied
 }
 
-/** What the hub's answer (or its absence) means. Anything the dispatcher can't read as sure is a check for a person. */
-function outcomeOf(answer: { value: unknown } | { thrown: true } | { timeout: true }): SendOutcome {
-  if ('thrown' in answer) return { kind: 'needs_check', why: 'thrown' }
-  if ('timeout' in answer) return { kind: 'needs_check', why: 'timeout' }
-  const parsed = ResultSchema.safeParse(answer.value)
-  if (!parsed.success) return { kind: 'needs_check', why: 'bad_result' }
-  const r = parsed.data
-  if (r.ok) return { kind: 'sent', ref: safeRef(r.value.ref) }
-  return r.sent === 'no' ? { kind: 'failed', code: r.error.code } : { kind: 'needs_check', why: 'unknown' }
-}
-
 /** One send of one approved action (steps 1 to 6 above). */
 export async function sendAction(actionId: string, d: DispatchDeps): Promise<SendOutcome> {
   const { db, nowMs } = d
-  if (d.gate.paused) return { kind: 'not_claimed' }
+  if (d.gate.paused) {
+    // Stage 1 M3-B (N22): a batch already sending stops at once (its pending items move to a new card); nothing else
+    // is claimed while paused.
+    const batch = await first<OutboxActionRow>(db, stmt("SELECT * FROM outbox_actions WHERE id = ? AND kind = 'batch' AND state = 'sending'", actionId))
+    return batch ? sendBatch(batch, d) : { kind: 'not_claimed' }
+  }
   const row = await first<OutboxActionRow>(db, stmt('SELECT * FROM outbox_actions WHERE id = ?', actionId))
+  // Stage 1 M3-B (N22): only batch rows take the batch path; a single action keeps M2's, unchanged.
+  if (row?.kind === 'batch') return sendBatch(row, d)
   if (!row || row.state !== 'approved') return { kind: 'not_claimed' }
   if (row.send_at_ms !== null && row.send_at_ms > nowMs) {
     d.again(row.send_at_ms)
@@ -197,7 +174,9 @@ export async function sendAction(actionId: string, d: DispatchDeps): Promise<Sen
       row: claimed, fromState: 'approved', to: why.kind === 'withdraw' ? 'withdrawn' : 'waiting', reason: why.reason, nowMs, stamp: lapse, requestId: d.requestId, actorId: SYSTEM,
     }))
     const after = await first<{ stamp: string | null; rev: number }>(db, stmt('SELECT stamp, rev FROM outbox_actions WHERE id = ?', actionId))
-    if (after?.stamp === lapse) {
+    // #444 (P9): a deleted chat's actions are its owner's own doing, and the deletion's own batch notifies no one; a
+    // claim that finds the deletion first withdraws the same way, silently.
+    if (after?.stamp === lapse && why.reason !== 'chat_deleted') {
       const body = (why.kind === 'withdraw' ? WITHDRAWN_TEXT[why.reason] : undefined) ?? LAPSE_TEXT[why.reason]
       await notifyAll(d.notify, [{ kind: 'approval_lapsed', to: claimed.approver, actionId, key: `lapsed:${actionId}:${after.rev}`, body }])
     }
@@ -222,29 +201,8 @@ export async function sendAction(actionId: string, d: DispatchDeps): Promise<Sen
     }
     return { kind: 'not_claimed' }
   }
-  // An async function runs synchronously up to its first await, so the call starts here; a synchronous throw becomes
-  // its rejection.
-  const call = (async () => hub.runAction(req))()
-
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<{ timeout: true }>(r => { timer = setTimeout(() => r({ timeout: true }), d.timeoutMs ?? timing().hubTimeoutMs) })
-  // The binding's answer is copied out, then released (shared/rpc-answer.ts): an answer that carried a disposer kept the
-  // call open, and this object then never went idle (so a removed member's socket never finished closing). The hub now
-  // releases its own inner answers; this copy is the backstop. An answer that isn't data (a function or a stub in it) is
-  // logged loud and read as no result: `ResultSchema` then refuses it, a check for a person (`bad_result`).
-  const settled = call.then(value => {
-    try {
-      return { value: plainAnswer(value) as unknown }
-    } catch (err) {
-      console.error({ event: 'outbox_answer_not_data', actionId, attempt: claimed.attempt, error: safeError(err) })
-      return { value: undefined as unknown }
-    }
-  }, (err: unknown) => {
-    console.error({ event: 'outbox_send_threw', actionId, attempt: claimed.attempt, error: safeError(err) })
-    return { thrown: true as const }
-  })
-  const answer = await Promise.race([settled, timeout])
-  clearTimeout(timer)
+  const { answer: answering, settled } = startCall(hub, req, d.timeoutMs ?? timing().hubTimeoutMs, { actionId, attempt: claimed.attempt })
+  const answer = await answering
   const outcome = outcomeOf(answer)
   if (!(await storeResult(d, claimed, outcome, nowMs, false))) {
     // Nothing else moves a `sending` row within the permit's deadline; if this fires, something did. Loud, not silent.

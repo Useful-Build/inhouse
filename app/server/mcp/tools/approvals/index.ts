@@ -17,7 +17,7 @@ import type { MemberRole } from '../../../../shared/contract/members.ts'
 import type { Asker } from '../../../permissions/types.ts'
 import { SYSTEM_MEMBER_ID } from '../../../db/ids.ts'
 import { first, stmt } from '../../../db/sql.ts'
-import { cardOf } from '../../../outbox/card.ts'
+import { cardsOf, itemState } from '../../../outbox/card.ts'
 import type { Viewer } from '../../../outbox/card.ts'
 import { outboxFacts } from '../../../outbox/facts.ts'
 import type { HubAccountFacts } from '../../../outbox/facts.ts'
@@ -82,8 +82,9 @@ const stateOf = (row: OutboxActionRow, nowMs: number): ActionState =>
   row.state === 'waiting' && row.expires_at_ms <= nowMs ? 'expired' : row.state
 
 /** An action as the agent reads it: ids, the state and the card's own server words. Never the hub's result. */
-function view(row: OutboxActionRow, scope: ToolScope) {
-  const card = cardOf(row, { memberId: row.asked_by, role: 'member' }, scope.nowMs)
+async function view(db: D1Database, row: OutboxActionRow, scope: ToolScope) {
+  const [card] = await cardsOf(db, [row], { memberId: row.asked_by, role: 'member' }, scope.nowMs)
+  if (!card) throw new Error(`approval tools: no card for ${row.id}`)
   return {
     approval_id: row.id,
     status: stateOf(row, scope.nowMs),
@@ -94,6 +95,7 @@ function view(row: OutboxActionRow, scope: ToolScope) {
     asked: card.askedAt.iso,
     this_chat: row.chat_id === scope.chatId,
     ...(card.lapsed !== undefined ? { lapsed: card.lapsed } : {}),
+    ...(card.batch !== undefined ? { items: card.batch.itemCount } : {}),
   }
 }
 
@@ -145,21 +147,24 @@ export function approvalHandlers(wiringOf: (deps: ToolDeps) => ApprovalsWiring |
           { operation, args: a.args },
           { mode: 'ask_only' },
         )
-        if (r.outcome !== 'refused' && r.outcome !== 'collected') await wiring.noted?.(scope, r.action.id)
+        if (r.outcome !== 'refused') await wiring.noted?.(scope, r.action.id)
         switch (r.outcome) {
           case 'refused':
             return refusal(r.reason, r.text)
           case 'waiting':
-            return answer(r.existing ? TEXT.alreadyWaiting(r.action.id) : TEXT.made(r.action.id), { ...view(r.action, scope), created: !r.existing })
+            return answer(r.existing ? TEXT.alreadyWaiting(r.action.id) : TEXT.made(r.action.id), { ...(await view(deps.db, r.action, scope)), created: !r.existing })
           case 'existing':
-            return answer(TEXT.replay(r.action.id, stateOf(r.action, scope.nowMs)), { ...view(r.action, scope), created: false })
+            return answer(TEXT.replay(r.action.id, stateOf(r.action, scope.nowMs)), { ...(await view(deps.db, r.action, scope)), created: false })
           case 'approved':
             // `ask_only` never runs (store.ts `decide`). Reaching here is a bug in the outbox: fail loud, never report a send.
             throw new Error(`approval_request: the outbox approved ${r.action.id} under ask_only`)
-          case 'collected':
-            // Stage 1 M3-A: the batch's id isn't this request's approval id (withdrawing it would withdraw every item).
-            // Nothing returns it before M3-B, which answers it from the item.
-            throw new Error(`approval_request: the outbox collected a request into ${r.action.id} before batches exist (M3-B)`)
+          case 'collected': {
+            // Stage 1 M3-B (N22): the request joined one card other calls share. It's answered from its own item: its
+            // state, never the card's (other calls' items are on it too).
+            const state = itemState(r.item, r.action)
+            const text = r.existing ? TEXT.replay(r.action.id, state) : TEXT.collected(r.action.id, r.item.n)
+            return answer(text, { ...(await view(deps.db, r.action, scope)), status: state, item: r.item.n, created: !r.existing })
+          }
         }
       },
     }),
@@ -169,7 +174,7 @@ export function approvalHandlers(wiringOf: (deps: ToolDeps) => ApprovalsWiring |
       async call(a, scope, deps) {
         const row = await reader(deps, scope).get(a.approval_id)
         if (!row) return refusal('not_found', TEXT.notFound)
-        return answer(TEXT.status(row.id, stateOf(row, scope.nowMs)), view(row, scope))
+        return answer(TEXT.status(row.id, stateOf(row, scope.nowMs)), await view(deps.db, row, scope))
       },
     }),
 
@@ -177,7 +182,9 @@ export function approvalHandlers(wiringOf: (deps: ToolDeps) => ApprovalsWiring |
       input: z.object({ status: ActionStateSchema.optional().describe('Only approvals in this state, for example "waiting".') }).strict(),
       async call(a, scope, deps) {
         const rows = await reader(deps, scope).list(a.status)
-        return answer(rows.length === 0 ? TEXT.none : TEXT.listed(rows.length), { approvals: rows.map(r => view(r, scope)) })
+        const approvals = []
+        for (const r of rows) approvals.push(await view(deps.db, r, scope))
+        return answer(rows.length === 0 ? TEXT.none : TEXT.listed(rows.length), { approvals })
       },
     }),
 
@@ -188,14 +195,14 @@ export function approvalHandlers(wiringOf: (deps: ToolDeps) => ApprovalsWiring |
         const row = await read.get(a.approval_id)
         if (!row) return refusal('not_found', TEXT.notFound)
         if (row.chat_id !== scope.chatId) return refusal('forbidden', TEXT.otherChat)
-        // Stage 1 M3-A (N22): a batch is shared by other calls' items; withdrawing it would withdraw them all. No batch
-        // row exists before M3-B (0770 adds `kind`).
-        if (row.kind === 'batch') return refusal('conflict', TEXT.batch)
+        // Stage 1 M3-B (N22): a collecting batch (no call of its own) is shared by other calls' items; withdrawing it would
+        // withdraw them all. One call's own batch (its `tool_use_id` on the row) is that call's, like a single action.
+        if (row.kind === 'batch' && row.tool_use_id === null) return refusal('conflict', TEXT.batch)
         const state = stateOf(row, scope.nowMs)
         if (state !== 'waiting') return refusal('conflict', TEXT.notWaiting(row.id, state))
         const r = await read.port.withdraw({ kind: 'agent', chatId: scope.chatId, turnId: scope.turnId }, row.id, { ifRev: row.rev })
         if ('refused' in r) return refusal('conflict', TEXT.changed)
-        return answer(TEXT.withdrawn(r.action.id), view(r.action, scope))
+        return answer(TEXT.withdrawn(r.action.id), await view(deps.db, r.action, scope))
       },
     }),
   }

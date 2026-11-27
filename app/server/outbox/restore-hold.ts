@@ -10,7 +10,8 @@
 //     `action.lapsed` expiry line above the backup's audit id) closed again the same way, as step 3b re-applies member
 //     removals: the re-appended line is its record, so no new line. Those exits only leave `waiting` and are final, so
 //     such a row was never sent, whatever it went through before;
-//  3. every `approved` and `sending` row to `needs_check` (a send may have happened after the backup), with an
+//  3. every `approved` and `sending` row to `needs_check` (a send may have happened after the backup; Stage 1 M3-B: so
+//     does every pending and sending item of such a batch), with an
 //     `action.needs_check` line (`why: 'restore'`). So is a `waiting` row the live brand approved after the backup (an
 //     `action.answered` line above the backup's audit id, re-appended in step 3), and, when the audit lines came from the
 //     daily copy with a gap, every `waiting` row: the lines that would say were lost. A row held this way is never sent
@@ -92,6 +93,13 @@ export function restoreHoldStmts(input: HoldInput, stamp: string): Stmt[] {
       `CASE WHEN a.attempt > 0 THEN json_object('actionId', a.id, 'attempt', a.attempt, 'why', 'restore')
         ELSE json_object('actionId', a.id, 'why', 'restore') END`,
       [], who, stamp,
+    ),
+    // Stage 1 M3-B (N22): item-aware. Every pending and sending item of a held batch is unclear too (the live brand may
+    // have sent it after the backup), so a person checks each; none is sent by the system.
+    stmt(
+      `UPDATE outbox_items SET state = 'needs_check', updated_at_ms = ?
+       WHERE state IN ('pending', 'sending') AND action_id IN (SELECT id FROM outbox_actions WHERE stamp = ? AND kind = 'batch')`,
+      at.nowMs, stamp,
     ),
     stmt("UPDATE outbox_actions SET state = 'needs_check', rev = rev + 1, updated_at_ms = ? WHERE stamp = ?", at.nowMs, stamp),
     stmt(
