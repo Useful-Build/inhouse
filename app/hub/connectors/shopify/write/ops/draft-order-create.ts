@@ -4,7 +4,7 @@
 // draft is never sent or completed. One root field: done, refused (`sent: 'no'`) or unclear (`sent: 'unknown'`).
 import { z } from 'zod'
 import { writeErr } from '../provider'
-import { ShopifyTagSchema } from './tags'
+import { ShopifyTagsSchema } from './tags'
 import { rootOutcome, type ShopifyWriteOp } from './types'
 
 const VARIANT_GID = /^gid:\/\/shopify\/ProductVariant\/[1-9]\d{0,19}$/
@@ -16,7 +16,7 @@ export const DraftOrderCreateArgsSchema = z.strictObject({
   lines: z.array(z.strictObject({ variantId: z.string().regex(VARIANT_GID), quantity: z.int().min(1).max(100) })).min(1).max(20)
     .refine(ls => new Set(ls.map(l => l.variantId)).size === ls.length, 'Each variant once'),
   note: z.string().min(1).max(500).regex(NOTE_RE).optional(),
-  tags: z.array(ShopifyTagSchema).min(1).max(5).optional(),
+  tags: ShopifyTagsSchema.optional(),
 })
 export type DraftOrderCreateArgs = z.infer<typeof DraftOrderCreateArgsSchema>
 
@@ -35,6 +35,7 @@ export const DRAFT_ORDER_CREATE_MUTATION = `mutation DraftOrderCreate($input: Dr
 export const draftOrderCreate: ShopifyWriteOp<DraftOrderCreateArgs> = {
   key: 'shopify.draft_order.create',
   scope: 'write_draft_orders',
+  idempotent: false,
   args: DraftOrderCreateArgsSchema,
   document: a => ({
     query: DRAFT_ORDER_CREATE_MUTATION,

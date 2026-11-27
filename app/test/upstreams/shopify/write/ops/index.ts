@@ -2,6 +2,8 @@
 // section 1). No npm packages (bundled into the hub's test build). Imports end in `.js` (resolved to the `.ts` file) so
 // both the hub's bundler resolution and the app's nodenext resolution take them.
 import { fakeDraftOrderCreate } from './draft-order-create.js'
+import { fakeInventoryReduce, fakeInventoryRestock } from './inventory.js'
+import { fakeRefundCreate, fakeRefundSuggestion, fakeShopCurrency } from './refund.js'
 import { fakeOrderTagAdd, fakeOrderTagRemove } from './tags.js'
 import type { FakeWriteOp } from './types.js'
 
@@ -9,6 +11,11 @@ const OPS = [
   fakeOrderTagAdd,
   fakeOrderTagRemove,
   fakeDraftOrderCreate,
+  fakeInventoryRestock, // M3-S2
+  fakeInventoryReduce, // M3-S2
+  fakeRefundSuggestion, // M3-S2 (a query)
+  fakeRefundCreate, // M3-S2
+  fakeShopCurrency, // M3-S2 (a query)
 ] as const
 
 /** The operation keys the fake answers (and keys its faults and call log by). */

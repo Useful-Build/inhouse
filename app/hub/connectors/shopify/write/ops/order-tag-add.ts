@@ -6,6 +6,7 @@ import type { ShopifyWriteOp } from './types'
 export const orderTagAdd: ShopifyWriteOp<ShopifyOrderTagsArgs> = {
   key: 'shopify.order.tag_add',
   scope: 'write_orders',
+  idempotent: false,
   args: ShopifyOrderTagsArgsSchema,
   document: a => tagsDocument({ operation: 'OrderTagsAdd', field: 'tagsAdd' }, a),
   read: (data, a) => readTags(data, a, ''),

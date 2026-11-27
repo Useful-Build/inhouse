@@ -8,6 +8,18 @@
 // - https://shopify.dev/docs/api/admin-graphql/latest/mutations/tagsRemove (the same shape)
 // - https://shopify.dev/docs/api/admin-graphql/latest/mutations/draftOrderCreate (input: DraftOrderInput!; write_draft_orders)
 // - https://shopify.dev/docs/api/admin-graphql#rate-limits (`THROTTLED`; `extensions.cost.throttleStatus`)
+// Stage 1 M3-S2, read 2026-11-27 (2026-10):
+// - https://shopify.dev/docs/api/admin-graphql/latest/mutations/inventoryAdjustQuantities (write_inventory; the
+//   `@idempotent(key:)` directive is required since 2026-04)
+// - https://shopify.dev/docs/api/admin-graphql/latest/input-objects/InventoryChangeInput (`changeFromQuantity` must be
+//   passed; null skips the compare-and-swap)
+// - https://shopify.dev/docs/apps/fulfillment/inventory-management-apps/quantities-states (the `reason` list)
+// - https://shopify.dev/docs/api/admin-graphql/latest/mutations/refundCreate (the `orders` scope, i.e. write_orders for a
+//   write; `@idempotent` required since 2026-04) and .../input-objects/RefundInput, RefundLineItemInput,
+//   OrderTransactionInput, ShippingRefundInput, .../enums/RefundLineItemRestockType
+// - https://shopify.dev/docs/api/admin-graphql/latest/objects/Order (`suggestedRefund`, `currencyCode`,
+//   `presentmentCurrencyCode`), .../objects/SuggestedRefund, .../objects/SuggestedOrderTransaction
+// - https://shopify.dev/docs/api/admin-graphql/latest/objects/Shop (`currencyCode`)
 import type { HubErrorCode, WriteResult } from '../../../index/contract'
 import { hubError } from '../../../index/errors'
 import type { ShopifyConfig, Upstream } from '../../../signin/providers/shopify'
@@ -16,7 +28,7 @@ export const SHOPIFY_WRITE_API_VERSION = '2026-10'
 export const SHOPIFY_WRITE_ACCOUNT = 'shopify:store' as const
 export const SHOPIFY_WRITE_SIGNIN_ACCOUNT = 'shopify:store:write' as const
 /** Every scope the write app's grant must hold; each operation names the one it needs (`ops/`). */
-export const SHOPIFY_WRITE_SCOPES = ['write_orders', 'write_draft_orders'] as const
+export const SHOPIFY_WRITE_SCOPES = ['write_orders', 'write_draft_orders', 'write_inventory'] as const
 export type ShopifyWriteScope = (typeof SHOPIFY_WRITE_SCOPES)[number]
 export const WRITE_TIMEOUT_MS = 15_000
 export const WRITE_MAX_BODY_BYTES = 64 * 1024

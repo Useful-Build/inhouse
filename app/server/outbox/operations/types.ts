@@ -38,7 +38,13 @@ export interface OperationBase<A> {
   /** Strict. */
   args: z.ZodType<A>
   connector: 'shopify' | 'slack'
-  scope(a: A, f: ResolveFacts): Record<string, string> | { refuse: 'not_listed' }
+  /**
+   * The permission scope, or the refusal `resolve` gives: `not_listed` (the channel or other target isn't one the brand
+   * listed); Stage 1 M3-S2: `invalid_args` (an argument the brand's account can't take, such as a refund in another
+   * currency than the shop's) and `account_unavailable` (the account lacks a fact the operation needs, such as the shop's
+   * currency).
+   */
+  scope(a: A, f: ResolveFacts): Record<string, string> | { refuse: 'not_listed' | 'invalid_args' | 'account_unavailable' }
   /** Records the call touches: more than the ceiling's `bulk_threshold` is an exact approval (`bulk`). */
   records(a: A): number
   /** What the daily count and `units_max` count (orders, stock units, minor currency units, posts). */

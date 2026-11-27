@@ -11,7 +11,8 @@ import { checkGrantedScopes, describeScopeMismatch } from '../../../scope/scopes
 import { EXPIRY_MARGIN_MS, type SyncStore } from '../../../signin/core'
 import { requestGrant, type ShopifyConfig, type Upstream } from '../../../signin/providers/shopify'
 import { isShopifyWriteKey, SHOPIFY_WRITE_OPS } from './ops/index'
-import { postMutation, SHOPIFY_WRITE_ACCOUNT, SHOPIFY_WRITE_SCOPES, SHOPIFY_WRITE_SIGNIN_ACCOUNT, writeErr } from './provider'
+import { CURRENCY_CODE } from './ops/money'
+import { postMutation, SHOPIFY_WRITE_ACCOUNT, SHOPIFY_WRITE_SCOPES, SHOPIFY_WRITE_SIGNIN_ACCOUNT, writeErr, type ShopifyWriteScope } from './provider'
 
 /** One Shopify write as the gateway hands it over (`WriteRequest`'s operation, account, expectation and arguments). */
 export type ShopifyWriteInput = {
@@ -19,6 +20,8 @@ export type ShopifyWriteInput = {
   accountId: string
   expect: { connectedAtMs: number; shop?: string }
   args: unknown
+  /** Stage 1 M3-S2: `WriteRequest.idempotencyKey`, required by an operation whose mutation takes one (`ops/`). */
+  idempotencyKey?: string
 }
 
 export type WriteTokenRecord = {
@@ -42,6 +45,18 @@ export type ShopifyWriteDeps = {
 }
 
 const WRITE_RECORD_KEY = 'write_record'
+const CURRENCY_KEY = 'shop_currency'
+/** How long a read currency is kept before it's read again (Stage 1 M3-S2). A shop rarely changes its currency. */
+export const CURRENCY_MAX_AGE_MS = 24 * 3600_000
+
+/** The write store's currency as last read (`shop.currencyCode`), for the store it was read from. */
+type CurrencyRecord = { v: 1; shop: string; code: string; readAtMs: number }
+
+const SHOP_CURRENCY_QUERY = `query ShopCurrency {
+  shop {
+    currencyCode
+  }
+}`
 
 /** Validates the brand's Shopify account state against `expect.connectedAtMs`. Returns a refusal WriteResult or null. */
 export function checkShopifyAccountState(status: HubResult<AccountStatus>, expectedConnectedAtMs: number): WriteResult | null {
@@ -98,14 +113,21 @@ export class ShopifyWriteCore {
     return { ok: true }
   }
 
+  /**
+   * The write token, granted when there's none, it's near expiry, or (#490) the stored grant's scopes don't cover `need`:
+   * a token granted before an operation's scope was added would otherwise refuse that operation (`scope_mismatch`) until
+   * it expired. A new grant must hold every write scope (`#doGrant`), so a second miss is the grant's own refusal.
+   */
   async #acquire(
     ring: KeyRing,
     config: ShopifyConfig,
     upstream: Upstream,
+    need: ShopifyWriteScope | null,
   ): Promise<{ ok: true; token: string; envelope: Envelope; scopes: string[] } | { ok: false; code: HubErrorCode; detail?: string }> {
     for (let attempt = 0; attempt < 2; attempt++) {
       const r = this.#read()
-      if (r?.token && r.expiresAtMs !== null && this.#d.now() < r.expiresAtMs - EXPIRY_MARGIN_MS) {
+      const covers = r !== undefined && (need === null || r.scopes.includes(need))
+      if (r?.token && covers && r.expiresAtMs !== null && this.#d.now() < r.expiresAtMs - EXPIRY_MARGIN_MS) {
         const opened = await open(ring, SHOPIFY_WRITE_SIGNIN_ACCOUNT, 'token', r.token)
         if (opened.ok && this.#d.now() < r.expiresAtMs - EXPIRY_MARGIN_MS) {
           return { ok: true, token: opened.plaintext, envelope: r.token, scopes: [...r.scopes] }
@@ -118,10 +140,23 @@ export class ShopifyWriteCore {
   }
 
   /**
-   * Runs one Shopify write operation (`ops/`). Checks the operation, config, the approved store and account status
-   * (paused, connectedAtMs), acquires the write-scoped token, re-checks config, the store, the operation's scope and the
-   * account status again after every awaited step right before sending, and sends one mutation document once, with no
-   * retry.
+   * Re-checks config, the approved store, the operation's scope and the account status right before an upstream request,
+   * after every awaited step. Null when the request may go.
+   */
+  async #recheck(req: ShopifyWriteInput, scope: ShopifyWriteScope, scopes: readonly string[]): Promise<WriteResult | null> {
+    const configNow = this.#d.config()
+    if (!configNow) return writeErr('not_configured', 'no', 'shopify_write')
+    if (configNow.shop !== req.expect.shop) return writeErr('connect_stale', 'no', 'shop')
+    if (!scopes.includes(scope)) return writeErr('scope_mismatch', 'no', `missing ${scope}`)
+    return checkShopifyAccountState(await this.#d.accountStatus(req.accountId), req.expect.connectedAtMs)
+  }
+
+  /**
+   * Runs one Shopify write operation (`ops/`). Checks the operation, its arguments and idempotency key, config, the
+   * approved store and account status (paused, connectedAtMs), acquires a write token whose grant covers the operation's
+   * scope, then re-checks config, the store, the scope and the account status after every awaited step right before each
+   * upstream request. An operation with a lookup (a refund) sends that one query first: any way it fails is `sent: 'no'`
+   * (a query changes nothing), and its answer may refuse the write. Then one mutation document, once, with no retry.
    */
   async run(req: ShopifyWriteInput): Promise<WriteResult> {
     if (!isShopifyWriteKey(req.operation)) return writeErr('unknown_tool', 'no')
@@ -129,7 +164,7 @@ export class ShopifyWriteCore {
     if (req.accountId !== SHOPIFY_WRITE_ACCOUNT) return writeErr('invalid_args', 'no', 'accountId')
     // Stage 1 M2-G: the store the action was approved for. Required: a write never goes to a store nobody named.
     if (req.expect.shop === undefined) return writeErr('invalid_args', 'no', 'expect.shop')
-    const prepared = op.prepare(req.args)
+    const prepared = op.prepare(req.args, req.idempotencyKey)
     if (!prepared.ok) return writeErr('invalid_args', 'no', prepared.path)
 
     const config = this.#d.config()
@@ -145,23 +180,69 @@ export class ShopifyWriteCore {
     if (!ring.ok) return writeErr('key_unavailable', 'no')
     const upstream = await this.#d.upstream()
 
-    const acquired = await this.#acquire(ring.ring, config, upstream)
+    const acquired = await this.#acquire(ring.ring, config, upstream, op.scope)
     if (!acquired.ok) return writeErr(acquired.code, 'no', acquired.detail)
 
+    let lookupData: Record<string, unknown> | null = null
+    if (prepared.call.lookup) {
+      const beforeLookup = await this.#recheck(req, op.scope, acquired.scopes)
+      if (beforeLookup) return beforeLookup
+      const looked = await postMutation(upstream, this.#d.config() ?? config, acquired.token, prepared.call.lookup, this.#d.writeTimeoutMs)
+      if (!looked.ok) {
+        if (looked.result.ok === false && looked.result.error.code === 'credentials_rejected') this.#dropRejected(acquired.envelope)
+        // A query changes nothing: whatever its answer, the write didn't happen.
+        return looked.result.ok ? writeErr('internal', 'no') : { ...looked.result, sent: 'no' }
+      }
+      lookupData = looked.data
+    }
+    const step = prepared.call.mutation(lookupData)
+    if (!step.ok) return step.result
+
     // Re-check config, scopes, and account state right before the upstream write request (after every awaited step).
+    const rightBeforeSend = await this.#recheck(req, op.scope, acquired.scopes)
+    if (rightBeforeSend) return rightBeforeSend
     const configNow = this.#d.config()
     if (!configNow) return writeErr('not_configured', 'no', 'shopify_write')
-    if (configNow.shop !== req.expect.shop) return writeErr('connect_stale', 'no', 'shop')
-    if (!acquired.scopes.includes(op.scope)) return writeErr('scope_mismatch', 'no', `missing ${op.scope}`)
-    const rightBeforeSend = checkShopifyAccountState(await this.#d.accountStatus(req.accountId), req.expect.connectedAtMs)
-    if (rightBeforeSend) return rightBeforeSend
 
-    const answer = await postMutation(upstream, configNow, acquired.token, prepared.doc, this.#d.writeTimeoutMs)
+    const answer = await postMutation(upstream, configNow, acquired.token, step.doc, this.#d.writeTimeoutMs)
     if (!answer.ok) {
       if (answer.result.ok === false && answer.result.error.code === 'credentials_rejected') this.#dropRejected(acquired.envelope)
       return answer.result
     }
-    return prepared.read(answer.data)
+    return step.read(answer.data)
+  }
+
+  /**
+   * Stage 1 M3-S2 (N21): the write store's currency (`shop.currencyCode`), for the connect/status answer the product copies
+   * into `connector_accounts`. Read with the write token at most once a day per store and kept; null when there's no
+   * config, no token or no readable answer (the product then refuses every refund). One query, no retry.
+   */
+  async currency(): Promise<string | null> {
+    const config = this.#d.config()
+    if (!config) return null
+    const kept = this.#d.store.get<CurrencyRecord>(CURRENCY_KEY)
+    if (kept?.shop === config.shop && this.#d.now() - kept.readAtMs < CURRENCY_MAX_AGE_MS) return kept.code
+    const ring = await this.#d.keyring()
+    if (!ring.ok) return null
+    const upstream = await this.#d.upstream()
+    const acquired = await this.#acquire(ring.ring, config, upstream, null)
+    if (!acquired.ok) return null
+    const answer = await postMutation(upstream, config, acquired.token, { query: SHOP_CURRENCY_QUERY, variables: {} }, this.#d.writeTimeoutMs)
+    if (!answer.ok) {
+      if (answer.result.ok === false && answer.result.error.code === 'credentials_rejected') this.#dropRejected(acquired.envelope)
+      log('hub_internal', { code: 'shop_currency_unread' })
+      return null
+    }
+    const shop = answer.data.shop
+    const code = typeof shop === 'object' && shop !== null ? (shop as { currencyCode?: unknown }).currencyCode : undefined
+    if (typeof code !== 'string' || !CURRENCY_CODE.test(code)) {
+      log('hub_internal', { code: 'shop_currency_unread' })
+      return null
+    }
+    // The store may have changed while the query was out: keep only an answer for the store configured now.
+    if (this.#d.config()?.shop !== config.shop) return null
+    this.#d.store.put(CURRENCY_KEY, { v: 1, shop: config.shop, code, readAtMs: this.#d.now() } satisfies CurrencyRecord)
+    return code
   }
 
   /**

@@ -53,8 +53,17 @@ const ARGS: Record<ShopifyKey, unknown> = {
   'shopify.order.tag_add': { orderIds: [ORDER(9001)], tags: ['priority'] },
   'shopify.order.tag_remove': { orderIds: [ORDER(9003)], tags: ['vip'] },
   'shopify.draft_order.create': { lines: [{ variantId: VARIANT(7001), quantity: 2 }] },
+  // Stage 1 M3-S2
+  'shopify.inventory.restock': { inventoryItemId: 'gid://shopify/InventoryItem/8001', locationId: 'gid://shopify/Location/601', quantity: 20, reason: 'restock' },
+  'shopify.inventory.reduce': { inventoryItemId: 'gid://shopify/InventoryItem/8001', locationId: 'gid://shopify/Location/601', quantity: 3, reason: 'damaged' },
+  'shopify.refund.create': {
+    orderId: ORDER(9001), lines: [{ lineItemId: 'gid://shopify/LineItem/90011', quantity: 2 }], shippingMinor: 0,
+    amount: { minor: 2490, currency: 'USD' }, restock: false, notifyCustomer: false,
+  },
 }
 const KEYS = Object.keys(ARGS) as ShopifyKey[]
+/** Stage 1 M3-S2: a refund sends its lookup query first, so it makes two GraphQL requests (one write). */
+const REQUESTS: Partial<Record<ShopifyKey, number>> = { 'shopify.refund.create': 2 }
 
 const req = (operation: ShopifyKey, args: unknown = ARGS[operation], overrides: Partial<WriteRequest> = {}): WriteRequest => ({
   actionId: 'ac_AAAAAAAAAAAAAAAAAAAAAA',
@@ -64,6 +73,8 @@ const req = (operation: ShopifyKey, args: unknown = ARGS[operation], overrides: 
   expect: { connectedAtMs: CONNECTED_AT_MS, shop: SHOPIFY_WRITE_SHOP },
   operation,
   args,
+  // Stage 1 M3-S2: the dispatcher sends one on every request; only stock and refunds use it.
+  idempotencyKey: 'ac_AAAAAAAAAAAAAAAAAAAAAA:1',
   ...overrides,
 })
 
@@ -97,7 +108,9 @@ function world(opts: { status?: () => Promise<HubResult<AccountStatus>>; shop?: 
   }
   /** Write requests that reached the GraphQL endpoint (the token grant isn't one). */
   const graphql = () => fake.requests.filter(q => q.path.endsWith('/graphql.json'))
-  return { fake, run, graphql }
+  /** Everything an operation can change in the fake store. */
+  const snapshot = () => JSON.stringify({ orders: [...fake.orders.values()], drafts: fake.drafts, stock: [...fake.stock], refunds: fake.refunds, refundOrders: [...fake.refundOrders.values()] })
+  return { fake, run, graphql, snapshot }
 }
 
 describe('the table', () => {
@@ -115,8 +128,10 @@ describe.each(KEYS)('%s', key => {
     expect(r.ok).toBe(true)
     expect(w.fake.writes).toHaveLength(1)
     expect(w.fake.writes[0]!.operation).toBe(key)
-    expect(w.graphql()).toHaveLength(1)
-    expect(logs.join('\n')).not.toMatch(/shpat_|priority|ProductVariant|9001|9003/)
+    expect(w.graphql()).toHaveLength(REQUESTS[key] ?? 1)
+    // #489: the fake answered only because the document read exactly as the operation's.
+    expect(w.fake.documentErrors).toEqual([])
+    expect(logs.join('\n')).not.toMatch(/shpat_|priority|ProductVariant|InventoryItem|LineItem|9001|9003/)
   })
 
   it.each([
@@ -125,9 +140,9 @@ describe.each(KEYS)('%s', key => {
   ] as const)('the %s fault answers %s, sent: %s, and changes nothing', async (fault, code, sent) => {
     const w = world()
     w.fake.faults[key] = fault
-    const before = JSON.stringify({ orders: [...w.fake.orders.values()], drafts: w.fake.drafts })
+    const before = w.snapshot()
     expect(await w.run(req(key))).toMatchObject({ ok: false, error: { code }, sent })
-    expect(JSON.stringify({ orders: [...w.fake.orders.values()], drafts: w.fake.drafts })).toBe(before)
+    expect(w.snapshot()).toBe(before)
     expect(w.fake.writes).toHaveLength(1)
   })
 
@@ -141,11 +156,10 @@ describe.each(KEYS)('%s', key => {
   it('the throttle fault answers rate_limited, sent: no, with the wait the cost extension names; nothing ran', async () => {
     const w = world()
     w.fake.faults[key] = 'throttle'
+    const before = w.snapshot()
     const r = await w.run(req(key))
     expect(r).toMatchObject({ ok: false, error: { code: 'rate_limited', retryAfterMs: 100 }, sent: 'no' })
-    expect(w.fake.drafts).toEqual([])
-    expect(w.fake.orders.get(ORDER(9001))!.tags).toEqual(['existing'])
-    expect(w.fake.orders.get(ORDER(9003))!.tags).toEqual(['vip'])
+    expect(w.snapshot()).toBe(before)
   })
 
   it('refuses a stale account generation, another store, a paused account and no expected store, before any request', async () => {

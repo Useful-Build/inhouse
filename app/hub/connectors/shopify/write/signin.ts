@@ -56,4 +56,21 @@ export class ShopifyWriteSignIn extends DurableObject<Env> {
       await flushTestLogs(this.env)
     }
   }
+
+  /**
+   * Stage 1 M3-S2 (N21): the write store's currency for the connect/status answer (`ConnectGateway.listAccounts`), read
+   * with the write token and kept a day. Gated as `runWrite` is: the deployable build answers null and reads nothing.
+   */
+  async shopCurrency(): Promise<string | null> {
+    try {
+      const hubEnv: HubWriteEnv = this.env
+      if (!(__INHOUSE_HUB_TEST__ && hubEnv.INHOUSE_TEST_BUILD === '1')) return null
+      return await this.#core.currency()
+    } catch {
+      log('hub_internal', { code: 'internal' })
+      return null
+    } finally {
+      await flushTestLogs(this.env)
+    }
+  }
 }

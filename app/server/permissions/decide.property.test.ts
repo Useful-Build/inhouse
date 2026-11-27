@@ -167,7 +167,8 @@ describe('decideCore', () => {
 const facts = (over: Partial<ResolveFacts> = {}): ResolveFacts => ({
   nowMs: 1_800_000_000_000,
   accounts: {
-    shopify: { accountId: 'shopify:store', connectedAtMs: 1_000, connected: true, paused: false, label: 'Shopify (Store A)', shop: 'store-a', currency: null },
+    // Stage 1 M3-S2: the shop's currency, so a refund in it resolves.
+    shopify: { accountId: 'shopify:store', connectedAtMs: 1_000, connected: true, paused: false, label: 'Shopify (Store A)', shop: 'store-a', currency: 'USD' },
     slack: { accountId: 'slack:workspace', connectedAtMs: 2_000, connected: true, paused: false, label: 'Slack', shop: null, currency: null },
   },
   listedChannels: [{ id: 'C0123ABCD', name: 'ops' }],
@@ -178,6 +179,10 @@ const validArgs = {
   'slack.channel.post': { channel: '#ops', text: 'Restock done' },
   'shopify.order.tag_remove': { orderIds: ['gid://shopify/Order/42'], tags: ['vip'] },
   'shopify.draft_order.create': { lines: [{ variantId: 'gid://shopify/ProductVariant/7', quantity: 1 }] },
+  // Stage 1 M3-S2: one unit each (a stock unit, a cent), so every operation resolves to 1 record and 1 unit here.
+  'shopify.inventory.restock': { inventoryItemId: 'gid://shopify/InventoryItem/8', locationId: 'gid://shopify/Location/6', quantity: 1, reason: 'restock' },
+  'shopify.inventory.reduce': { inventoryItemId: 'gid://shopify/InventoryItem/8', locationId: 'gid://shopify/Location/6', quantity: 1, reason: 'damaged' },
+  'shopify.refund.create': { orderId: 'gid://shopify/Order/42', lines: [{ lineItemId: 'gid://shopify/LineItem/1', quantity: 1 }], amount: { minor: 1, currency: 'USD' }, restock: false, notifyCustomer: false },
 } as const
 
 describe('resolve (I8)', () => {
