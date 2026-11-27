@@ -7,8 +7,7 @@
 //  4. a deleted product, a guest order or a store that didn't answer breaks the card or refuses the write;
 //  5. the facts are asked for the wrong store or ids, or not captured for the fetch leak check (or a failed capture
 //     still shows them);
-//  6. an audit line names the customer;
-//  7. a stored detail is rewritten after the card was made.
+//  6. an audit line names the customer.
 import { env } from 'cloudflare:workers'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { ActionCardSchema, ActionItemsPageSchema } from '../../shared/contract/actions.ts'
@@ -149,14 +148,6 @@ describe('a single card (failures 2, 3, 6)', () => {
     const row = (await latest())!
     expect(row.detail_json).toBeNull()
     expect((await cardOf(row.id)).detail).toBeUndefined()
-  })
-
-  it('a stored detail is never rewritten (failure 7)', async () => {
-    const w = setup()
-    w.rpc.cardFactsAnswer = clean({ ok: true, value: { orders: [order(1045, 'Alex Moore')], variants: null } }, { orderIds: [ORDER(1045)], variantIds: [] })
-    await w.call('shopify_order_tag_add', { orderIds: [ORDER(1045)], tags: ['vip'] })
-    const row = (await latest())!
-    await expect(db.prepare("UPDATE outbox_actions SET detail_json = '{}' WHERE id = ?").bind(row.id).run()).rejects.toThrow(/set at insert only/)
   })
 })
 

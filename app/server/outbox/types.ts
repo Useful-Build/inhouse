@@ -47,7 +47,7 @@ export interface OutboxActionRow {
   /**
    * Stage 1 M3 (card details, #488): the facts the card shows beside the ids (shared/contract/actions.ts `ActionDetail`),
    * read from Shopify at request time and cleaned (detail.ts). Display only: never in `card_json`, whose words reach
-   * the agent. Null when none were read. Set at insert, never changed (0791's trigger).
+   * the agent. Null when none were read. Set at insert only.
    */
   detail_json: string | null
   grant_id: string | null
