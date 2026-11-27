@@ -62,16 +62,18 @@ security headers as the pages.
 ## CI and the gates
 
 Two rulesets, kept as JSON in `.github/rulesets/`, guard `main` and `fleet/**`
-([0013](decisions/0013-rulesets-as-committed-json.md)). Both require a PR and two checks, with no bypass:
+([0013](decisions/0013-rulesets-as-committed-json.md)), with no bypass. `main` requires a PR and three checks, `ci`, `pr-gates` and `gate`, and merges through a merge queue that tests each PR on top of `main` and the PRs ahead of it ([0028](decisions/0028-merge-lanes-and-merge-queue.md)); `fleet/**` requires `ci` and `pr-gates`:
 
 - **`ci`** (`.github/workflows/ci.yml`): type check, lint (oxlint plus the design token rules), the Vitest and
   fast-check property tests, a production build and every Playwright project (desktop, phone, visual, accessibility),
-  in a digest-pinned Playwright image so screenshots render the same every run. The suite is split across two shards,
-  and a final job named `ci` passes only if every job that event runs did. That full suite runs on PRs into `main`
+  in a digest-pinned Playwright image so screenshots render the same every run. The browser suite is split across four `e2e` jobs, a
+  docs-only PR skips the suites, and a final job named `ci` passes only if every job that event runs did. That full suite runs on PRs into `main`
   and on each push to `fleet/**`; a PR into `fleet/**` runs only the fast checks (type check, lint, unit, the builds
   and their guards, the fresh-install migrations, the runner's tests), phase batching (Wasim, 2026-11-21).
 - **`pr-gates`**: every commit carries a `Verified:` trailer saying how it was checked, and a change to an existing
   check (a spec, a baseline, a property test, a lint script, a workflow) is flagged so the PR has to explain it.
+- **`gate`** (`.github/workflows/gate.yml`, run from `main`'s code): reports the PR's merge lane, fails a Lane 4
+  item until Wasim's yes is recorded, and fails ledger items until both reviewers confirm them (`REVIEW.md`).
 
 The visual suite compares 188 Linux baselines in light and dark, at desktop and phone size. A change meant to
 show commits new baselines, so the image diff is part of the PR.
@@ -87,11 +89,12 @@ deployment URL fixed to one commit and the head SHA. Previews are public and sen
 
 ## The ship recording
 
-`ship.yml` is run by hand on a final PR. It reads the fixed deployment URL from the preview comment, runs the
+`ship.yml` is run by hand on a milestone's last PR, while it's still open. It reads the fixed deployment URL from the preview comment, runs the
 project's ship specs (`app/e2e/ship/<topic>.spec.ts`) against it with video on and slowed down, on desktop and phone,
 and stitches one `reel.mp4` with a title card per scenario carrying the SHA. The PR's code runs only in the recording
-job, with read access and no secrets. The owner watches the reel and approves that exact SHA
-([0016](decisions/0016-ship-recording-and-exact-sha-approval.md)).
+job, with read access and no secrets. The owner watches the reel as the milestone review; for an all-at-once `fleet/<topic>` PR his yes on its
+content is the merge approval ([0016](decisions/0016-ship-recording-and-exact-sha-approval.md),
+[0028](decisions/0028-merge-lanes-and-merge-queue.md)).
 
 ## Deploys
 
@@ -112,23 +115,20 @@ An hourly check (`monitor.yml`) watches production and opens an issue assigned t
 
 ```mermaid
 flowchart TD
-  W[Feature PR] --> CI{ci and pr-gates}
+  W[Feature PR into main] --> CI{ci, pr-gates and gate}
   CI -- fail --> W
   CI -- pass --> PV[Workers Preview and PR comment]
-  PV --> RV[Risk-tiered review: REVIEW.md]
-  RV -- findings --> W
-  RV -- clean --> M1[Merge commit into fleet/topic]
-  M1 --> F[Final PR: fleet/topic into main]
-  F --> CI2{ci and pr-gates, up to date with main}
-  CI2 --> PV2[Preview or sandbox of the final PR]
-  PV2 --> QA[Targeted live QA: VERIFY.md]
-  QA --> SH[ship.yml records reel.mp4]
-  SH --> AP{Owner approves the exact head SHA}
-  AP -- a new push voids it --> CI2
-  AP -- approved --> SQ[Squash merge with --match-head-commit]
+  PV --> RV[Review by lane: REVIEW.md]
+  RV -- findings, at most 3 rounds --> W
+  RV -- clean --> L4{Lane 4 item?}
+  L4 -- yes --> OK[Wasim's yes: label and approved-head line]
+  L4 -- no --> AM[Auto-merge armed on the exact head]
+  OK --> AM
+  AM --> MQ[Merge queue: full ci on main plus the PRs ahead]
+  MQ -- fail --> W
+  MQ -- pass --> SQ[Squash merge]
   SQ --> DP[deploy.yml: upload, smoke, promote, smoke]
   DP --> PR[Production and a GitHub release]
-  DP -. smoke fails .-> RB[Rollback by version id]
 ```
 
 Small changes skip the integration branch and go straight into `main` through the same checks. How the agents work

@@ -21,6 +21,8 @@ export interface Expect {
   noMcp?: boolean
   answer?: RegExp[]
   answerNot?: RegExp[]
+  /** Each named tool is called at most this many times (a routine asks its creator at most once: Q01). */
+  atMost?: Record<string, number>
 }
 
 export interface SeedFact {

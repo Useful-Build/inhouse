@@ -1,0 +1,40 @@
+{
+ "row": {
+  "caseId": "Q01",
+  "cat": "choice",
+  "pair": "question_ask/AskUserQuestion",
+  "rep": 3,
+  "chat": 1,
+  "pass": true,
+  "checks": {
+   "tool": true,
+   "forbidden": true
+  },
+  "called": [
+   "question_ask"
+  ],
+  "toolSearches": 0,
+  "answer": "I've asked which supplier it is this week. I'll draft the message once you answe",
+  "costUsd": 0,
+  "runOk": true
+ },
+ "result": {
+  "runOk": true,
+  "usage": {
+   "inputTokens": 0,
+   "cacheCreationTokens": 0,
+   "cacheReadTokens": 0,
+   "outputTokens": 0
+  },
+  "costUsd": 0,
+  "answer": "I've asked which supplier it is this week. I'll draft the message once you answe",
+  "toolCalls": [
+   {
+    "name": "mcp__inhouse__question_ask",
+    "inputSha256": "f42b5a946aad0c2e6aad2109d6ca6d4b798801cb86779553433dba6cd3a822d0",
+    "inputExcerpt": "{\"question\":\"Which supplier are we ordering mugs from this week?\",\"options\":[\"No",
+    "resultExcerpt": "Shown to the person."
+   }
+  ]
+ }
+}

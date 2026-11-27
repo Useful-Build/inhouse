@@ -220,7 +220,8 @@ export function Today() {
                           <span className="min-w-0 flex-1 text-pretty">{c.sheetNote}</span>
                         </div>
                       )}
-                      <Button className={cn('relative z-raised mt-3 whitespace-nowrap', phone ? 'w-full' : 'self-start', tap)} onClick={low ? () => approve(p.id) : open}>
+                      {/* Ink marks the cards that can't wait (the ones with the Urgent pill): the rest take the outline button, so the page says where to start. */}
+                      <Button variant={!c.dimmed && isUrgent(p.sev) ? 'primary' : 'outline'} className={cn('relative z-raised mt-3 whitespace-nowrap', phone ? 'w-full' : 'self-start', tap)} onClick={low ? () => approve(p.id) : open}>
                         {low ? <><Icon name="check" size={16} />{dv.cta}</> : <>Review draft<Icon name="arrow_forward" size={16} /></>}
                       </Button>
                     </div>

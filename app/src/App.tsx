@@ -442,11 +442,11 @@ function Shell() {
   // While the tools are still being read, the tool page itself says so (it knows nothing of the key yet).
   const Screen = page === 'app' && route === 'unknown' ? Tools : page === 'skill' && !skill ? Skills : SCREENS[page]
   const subKey = page === 'app' ? appKey : page === 'skill' ? skillKey : page === 'settings' ? setTab : page === 'chats' ? (chatList ? 'all' : fresh ? 'new' : chatId ?? '') : ''
-  // Full-shell Turrell Skyspace behind both the floating sidebar and main: hero on Today and blank New chat, softly quieted in an active chat, off on other pages.
+  // Full-shell Turrell Skyspace behind both the sidebar and main: hero on Today and blank New chat, softly quieted in an active chat, off on other pages.
   const skyspace = page === 'today' || (page === 'chats' && !chatList && chatBlank) ? 'hero' : page === 'chats' && !chatList ? 'subtle' : null
   const skyspaceOffset = phone ? 'none' : sideCollapsed ? 'rail' : 'full'
   return (
-    // `isolation` here (not on main) keeps the Skyspace layer (zIndex -1) above the page colour and behind the floating sidebar and cards, while modals inside main still stack above the Sidebar.
+    // `isolation` here (not on main) keeps the Skyspace layer (zIndex -1) above the page colour and behind the sidebar and cards, while modals inside main still stack above the Sidebar.
     <div className="relative isolate flex h-dvh overflow-hidden bg-background">
       {skyspace && <SkyspaceBackground mode={skyspace} offset={skyspaceOffset} />}
       {/* First in the tab order: past the sidebar to the page (L18). An anchor's own jump would change the hash route. */}
@@ -455,7 +455,8 @@ function Shell() {
         Skip to content
       </a>
       <Sidebar />
-      <div className="relative flex min-w-0 flex-1 flex-col">
+      {/* On desktop one hairline stands between the sidebar and the page (side-rule), and the top bar keeps the same 8px of air above it as the sidebar's head, so the mark and the page's title share a line. */}
+      <div className={cn('relative flex min-w-0 flex-1 flex-col', !phone && 'side-rule pt-2')}>
         {/* The top bar is the banner landmark: a header outside main, so it stays put while main scrolls. */}
         <div className="flex-none"><TopBar /></div>
         <main id="main" ref={mainRef} tabIndex={-1} className="relative flex min-h-0 flex-1 flex-col overflow-auto outline-none">

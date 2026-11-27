@@ -163,8 +163,8 @@ test('Sidebar: collapse to the rail, move through it by its tooltips, stay colla
   await collapse.hover()
   await expect(tip(page, /Collapse sidebar\s*(⌘\\|Ctrl\+\\)/)).toBeVisible()
   await collapse.click()
-  const box = (await side(page).boundingBox())!
-  expect(box.width).toBeLessThan(80)
+  // The column narrows over a quarter of a second (side-move in index.css), so this waits for the rail's width.
+  await expect.poll(async () => (await side(page).boundingBox())!.width).toBeLessThan(80)
   await expect(page.getByRole('button', { name: 'Sidebar', exact: true })).toHaveAttribute('aria-expanded', 'false')
   await expect(side(page).getByText('Recent chats')).toHaveCount(0)
   await shot(page, 'sidebar-rail')

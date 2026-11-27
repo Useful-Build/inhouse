@@ -24,8 +24,12 @@ const navItemVariants = cva('flex w-full flex-none items-center gap-2.75 rounded
     rail: { true: 'size-10 justify-center px-0', false: '' },
     active: { true: '', false: '' },
     locked: { true: '', false: '' },
+    /** The sidebar: the selected row is marked on the sidebar's edge (its marker line), so the row takes no fill. It turns to ink and its icon fills. */
+    marked: { true: '', false: '' },
+    /** With `marked`: the other rows wait a step quieter until the pointer or the keyboard is in the sidebar (`group/side`: hover, or a focus ring inside it, so the focus a click leaves behind doesn't keep it awake). Off on a phone, which has no hover. */
+    hush: { true: '', false: '' },
   },
-  // One selected look everywhere (a step stronger than hover): the sidebar, the Settings menu and the Library's places.
+  // One selected look in the Settings menu and the Library's places (a fill a step stronger than hover); the sidebar's is `marked`.
   compoundVariants: [
     // After the avatar variant's px-2.5, so the chip's padding wins (twMerge keeps the last).
     { size: 'chip', avatar: false, class: 'px-3' },
@@ -35,21 +39,26 @@ const navItemVariants = cva('flex w-full flex-none items-center gap-2.75 rounded
     { tone: 'default', locked: true, class: 'text-foreground-3' },
     { tone: 'quiet', active: true, class: 'bg-fill-hover text-foreground' },
     { tone: 'quiet', active: false, class: 'text-foreground-3 hover:bg-accent' },
+    // After the looks above, so these win (twMerge keeps the last).
+    { marked: true, active: true, class: 'bg-transparent font-strong text-foreground' },
+    { marked: true, active: false, class: 'hover:bg-side-hover' },
+    { marked: true, hush: true, active: false, locked: false, class: 'text-foreground-3 transition-colors group-hover/side:text-foreground group-has-focus-visible/side:text-foreground' },
   ],
-  defaultVariants: { size: 'default', tone: 'default', avatar: false, rail: false, active: false, locked: false },
+  defaultVariants: { size: 'default', tone: 'default', avatar: false, rail: false, active: false, locked: false, marked: false, hush: false },
 })
 
 /**
  * A nav row: the sidebar, the Settings menu and the Library's places. `active` is the look and, unless `aria-current`
  * is passed, sets `aria-current="page"` (a Library place filters rather than navigates, so it passes `aria-pressed` and
  * `aria-current={undefined}`). Leads with `icon`, or with `leading` (an avatar, with `avatar`).
- * `count` is a waiting number in a badge, `meta` a quiet number (a place's file count); `detail` is a line under the
+ * `count` is a waiting number in a badge (the sidebar's Approvals row: the agent's signal, so it takes the agent's
+ * sapphire as a tint), `meta` a quiet number (a place's file count); `detail` is a line under the
  * label (a settings search's matches); `tag` is the stage a locked row is included in. Also works as an `asChild`
  * trigger's child (it forwards its props and ref).
  * `rail` is the collapsed sidebar's square: the label (and `tip`, when the name differs from what the tooltip should say)
  * shows in a tooltip, the count becomes a dot, and the name, count and tag stay for screen readers.
  */
-export function NavItem({ icon, iconWeight, leading, label, active, locked, count, countLabel, meta, detail, tag, trailing, size, tone, avatar, rail, tip, className, type = 'button', ...rest }:
+export function NavItem({ icon, iconWeight, leading, label, active, locked, marked, hush, count, countLabel, meta, detail, tag, trailing, size, tone, avatar, rail, tip, className, type = 'button', ...rest }:
   Omit<ComponentProps<'button'>, 'children'> & VariantProps<typeof navItemVariants> & {
     icon?: string; /** The glyph's weight, when it must match a heavier label than the default 300 (the Settings menu). */ iconWeight?: number; leading?: ReactNode; label: string; count?: number; countLabel?: string; meta?: ReactNode; detail?: ReactNode; tag?: string; trailing?: ReactNode; tip?: string
   }) {
@@ -58,10 +67,10 @@ export function NavItem({ icon, iconWeight, leading, label, active, locked, coun
   // Muted text on the selected fill falls under 4.5:1, so on a selected row it steps up a level.
   const quiet = active ? 'text-foreground-3' : 'text-muted-foreground'
   const row = (
-    <button type={type} {...rest} aria-current={current} className={cn(navItemVariants({ size, tone, avatar, rail, active, locked }), rail && 'relative', className)}>
+    <button type={type} {...rest} aria-current={current} className={cn(navItemVariants({ size, tone, avatar, rail, active, locked, marked, hush }), rail && 'relative', className)}>
       {leading}
       {/* A fixed 20px box, so labels line up whatever the glyph's own width. */}
-      {icon && <span className="flex w-5 flex-none justify-center"><Icon name={icon} size={size && size !== 'default' ? 18 : 20} weight={iconWeight} /></span>}
+      {icon && <span className="flex w-5 flex-none justify-center"><Icon name={icon} size={size && size !== 'default' ? 18 : 20} weight={marked && active ? 400 : iconWeight} fill={!!(marked && active)} className={marked ? 'icon-fill-ease' : undefined} /></span>}
       {rail ? <span className="sr-only">{label}</span> : (
         <span className="min-w-0 flex-1">
           <span className="ellipsis block">{label}</span>
@@ -70,8 +79,8 @@ export function NavItem({ icon, iconWeight, leading, label, active, locked, coun
       )}
       {!rail && meta != null && <span className={cn('text-xs font-book tabular-nums', quiet)}>{meta}</span>}
       {count != null && (rail
-        ? <><span className="sr-only">{countLabel}</span><i aria-hidden="true" className="absolute top-1.5 right-1.5 size-2 rounded-full border-hairline border-card bg-primary" /></>
-        : <Badge aria-label={countLabel} className="min-w-5 px-1.5 text-xs font-semibold tabular-nums">{count}</Badge>)}
+        ? <><span className="sr-only">{countLabel}</span><i aria-hidden="true" className="absolute top-1.5 right-1.5 size-2 rounded-full border-hairline border-background bg-brand" /></>
+        : <Badge aria-label={countLabel} className="min-w-5 bg-count px-1.5 text-xs font-semibold text-brand-text tabular-nums">{count}</Badge>)}
       {tag && (rail ? <span className="sr-only">Locked, included in a later stage: {tag}</span> : <StageTag tag={tag} strong={!!active} />)}
       {!rail && trailing}
     </button>

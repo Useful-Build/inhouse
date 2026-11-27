@@ -2,9 +2,10 @@
 
 <!-- What changed and why, in a few lines. Link the plan or issue. -->
 
-## Risk tier
+## Lane
 
-<!-- Low, Normal, or High (Sensitive) per REVIEW.md on main. -->
+<!-- 1 Low, 2 Normal, 3 High or 4 Wasim's OK, per REVIEW.md on main (the gate check reports 3 and 4). For Lane 4, list each
+item and quote Wasim's yes. For ledger items, name the plan's Gate ledger entry. -->
 
 ## Changed existing checks
 

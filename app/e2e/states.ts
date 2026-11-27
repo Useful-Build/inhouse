@@ -143,7 +143,7 @@ export const STATES: UiState[] = [
       await page.evaluate(() => { location.hash = '#/today' })
       await expect(page.getByText('All 6 approved.')).toBeVisible()
       // No hover or focus left over from the last Approve click on the card now under the pointer.
-      await page.mouse.move(0, 0)
+      await pointerAway(page)
       await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur() })
       await atRest(page)
       // Timers run again (axe needs them); the approvals already carry their 8:00 AM stamp.
@@ -160,7 +160,7 @@ export const STATES: UiState[] = [
       const other = page.getByRole('switch', { name: /^(?!Smart:).+: the team can use this model$/ }).last()
       await other.click()
       await expect(other).toHaveAttribute('aria-checked', 'false')
-      await page.mouse.move(0, 0)
+      await pointerAway(page)
       await page.getByRole('combobox', { name: /^How hard it thinks: Smart/ }).focus()
       await page.keyboard.press('Tab')
       await expect(page.getByRole('switch', { name: 'Smart: the team can use this model' })).toBeFocused()
@@ -196,7 +196,7 @@ export const STATES: UiState[] = [
       await page.locator('main [data-file]').first().click()
       const viewer = page.getByRole('dialog', { name: /^File: / })
       await expect(viewer.getByRole('button', { name: 'Close', exact: true })).toBeInViewport({ ratio: 1 })
-      await page.mouse.move(0, 0)
+      await pointerAway(page)
     },
   },
   {
@@ -241,12 +241,22 @@ export const STATES: UiState[] = [
 ]
 
 /** Opens a state from a clean demo: a fixed theme, no agent-mark animation, no dot sweep. */
+/**
+ * Parks the pointer where it hovers nothing: the window's top right corner, over the page's top edge. Not 0,0: on
+ * desktop that corner is inside the sidebar, whose rows wake (turn from quiet to ink) while the pointer is in it, so
+ * every shot would show the woken sidebar instead of the resting one. A page's own pointer starts at 0,0 too.
+ */
+export async function pointerAway(page: Page) {
+  await page.mouse.move(page.viewportSize()!.width - 1, 0)
+}
+
 export async function openState(page: Page, s: UiState, theme: Theme) {
   await page.emulateMedia({ colorScheme: theme })
   const client = mockClient(page)
   await client.seed({ stage: s.stage, scenario: s.scenario, theme, once: false })
   await client.open(s.hash)
   await expect(page.getByText(s.ready, { exact: false }).first()).toBeVisible()
+  await pointerAway(page)
   if (s.act) await s.act(page)
   await routeReady(page)
   await fontsReady(page)

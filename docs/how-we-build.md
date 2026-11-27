@@ -11,7 +11,7 @@ The pieces live in the repo, so you can check each claim against the files and t
 The repo keeps 5 core markdown files in the root so any model or cloud runner loads what it needs without external skill plumbing:
 
 - **[AGENTS.md](../AGENTS.md)** is always loaded: layout, commands, workflow, and repo invariants.
-- **[REVIEW.md](../REVIEW.md)** holds the risk tiers, sensitive paths, severity rules, and fresh-context PR review workflow (always read from `main`).
+- **[REVIEW.md](../REVIEW.md)** holds the merge lanes, the Lane 4 list, the Gate ledger, severity rules, the review cap, and the fresh-context PR review workflow (always read from `main`).
 - **[VERIFY.md](../VERIFY.md)** says how to boot, seed, drive, test, and run targeted live QA on the app.
 - **[DESIGN.md](../DESIGN.md)** defines the design bar, `ui-base` ownership, hard token rules, dark mode, and UI copy voice.
 - **[FEATURE_MAP.md](../FEATURE_MAP.md)** lists what each screen does, as a path, selector, expected result, and `Covered:` specs, with a `Gaps` section at the top. An agent changing a screen reads its entry and updates it in the same PR.
@@ -26,25 +26,26 @@ The repo keeps 5 core markdown files in the root so any model or cloud runner lo
 3. **CI runs everything.** Type check, lint, property tests, build and every Playwright project, on every PR into `main`. A PR that
    changes an existing check (a spec, a baseline, a lint rule, a workflow) is flagged, and its description has to say
    why. A check is never loosened to make a change pass.
-4. **Targeted live QA and risk-tiered reviews.** Every user-facing or agent-behavior PR gets targeted live QA on the PR before merge (`VERIFY.md`). Reviews scale to risk (`REVIEW.md`, always read from `main`): Low-risk PRs need CI + self-check only; Normal PRs get 1 fresh-context Opus 5.5 (high) review; Sensitive PRs get Fable 5.2 (high) + Gemini 4 Neon (high) + Wasim's OK.
-5. **Merge and deploy.** When CI and reviews are clean, the PR squash-merges into `main` and `deploy.yml` ships it.
+4. **Targeted live QA and reviews by lane.** Every user-facing or agent-behavior PR gets targeted live QA on the PR before merge (`VERIFY.md`). Reviews scale by lane (`REVIEW.md`, always read from `main`): Low-risk PRs need CI + self-check only; Normal PRs get 1 fresh-context Opus 5.5 (high) review; High (Lane 3) PRs get Fable 5.2 (high) + Gemini 4 Neon (high); only Lane 4 items (the referee, the rules, secrets and trust boundaries, money and irreversible steps, the plan) need Wasim's OK ([0028](decisions/0028-merge-lanes-and-merge-queue.md)).
+5. **Merge and deploy.** When CI and reviews are clean, auto-merge puts the PR in `main`'s merge queue, which tests it on top of `main` and the PRs ahead of it, squash-merges it, and `deploy.yml` ships it.
 
 ## Integration branches and milestone releases
 
-Big multi-PR milestones use an integration branch, `fleet/<topic>`, cut from `main`
+Work lands straight into `main` in small PRs by default ([0028](decisions/0028-merge-lanes-and-merge-queue.md)). Work that must land all at once uses an integration branch, `fleet/<topic>`, cut from `main`
 ([0010](decisions/0010-integration-branch-per-project.md)). Feature PRs merge into it with merge commits. Rulesets make
-it real: no direct pushes, a PR and both checks required, no bypass even for the admin account
+it real: no direct pushes, a PR and the required checks, no bypass even for the admin account
 ([0013](decisions/0013-rulesets-as-committed-json.md)).
 
 The final PR from `fleet/<topic>` into `main` goes through the ship gate
 ([0016](decisions/0016-ship-recording-and-exact-sha-approval.md)):
 
-1. Full CI on a branch that's up to date with `main`, and a final risk-tiered review of the whole branch (`REVIEW.md`).
+1. Full CI (through the merge queue), and a final review of the whole branch by lane (`REVIEW.md`).
 2. Targeted live QA on the preview or sandbox build for that exact commit ([0011](decisions/0011-workers-previews-from-trusted-workflow.md)).
 3. `ship.yml` records the milestone's browser scenarios on desktop and phone into one `reel.mp4`, with the SHA on every title card.
-4. The owner watches the reel and approves that SHA in chat. A push after approval voids it.
-5. The PR squash-merges with `--match-head-commit <sha>`, so GitHub refuses any other head. The squash message ends in
-   a `Verified:` trailer.
+4. The owner watches the reel and approves its content in chat; the approval is recorded as the `wasim-approved`
+   label and survives later pushes that touch no Lane 4 item ([0028](decisions/0028-merge-lanes-and-merge-queue.md)).
+5. Auto-merge is armed with `--match-head-commit <sha>` and the queue squash-merges it. The squash message ends in a
+   `Verified:` trailer.
 
 The setup project ([plan](plans/2026-11-19-setup-gaps.md), PR #30) was the first to land this way.
 

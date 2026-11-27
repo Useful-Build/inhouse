@@ -208,7 +208,7 @@ safer and simpler. Done wrong, new servers simply won't connect.
    a hub dependency, so the hub-isolation rule (no npm imports in code bundled into the hub from outside it) still
    holds.
 2. **Our client ID document**: one public HTTPS page describing Inhouse's client, served per brand account (the hub has
-   no public route, so it's served by the product Worker or a static path; decided in M4, High tier).
+   no public route, so it's served by the product Worker or a static path; decided in M4; Lane 3 with its route on the ledger, Lane 4 if it touches sign-in).
 3. **A runtime registry per brand** (D1): the server URL, its era, the login server's issuer, the tool snapshot with
    definition hashes and `ttlMs`, the confirmed read list, and reviewed operations. Today's compile-time registry
    (`app/hub/registry/registry.ts`) stays for Shopify, Slack and reviewed connectors.
@@ -377,9 +377,10 @@ prompt change that runs evals (M2 removes "read only" from the prompt), and its 
 ## 7. Stage 1: Build
 
 Milestones run in this order; M1 and M2 run side by side (different code). Each lands through `AGENTS.md` section 5
-(feature branches, risk-tiered review per `REVIEW.md`, light checks locally, heavy suites in CI). Milestones touching
-prompts, migrations, `app/ops/`, `app/hub/{signin,crypto,scope}/`, routes or the access matrix are **High tier**
-(Fable 5.2 + Gemini 4 Neon + Wasim's OK). Every user-facing change updates `FEATURE_MAP.md`.
+(feature branches, review by lane per `REVIEW.md`, light checks locally, heavy suites in CI, merge queue). Each
+milestone plan carries a Gate ledger (routes, write operations, egress hosts, migrations) that Wasim approves with the
+plan; PRs that stay on it merge after Fable 5.2 + Gemini 4 Neon, and only Lane 4 items need his OK (decision 0028).
+Every user-facing change updates `FEATURE_MAP.md`.
 
 | # | Milestone | Status |
 |---|---|---|

@@ -50,6 +50,10 @@
           {
             "context": "pr-gates",
             "integration_id": 15368
+          },
+          {
+            "context": "gate",
+            "integration_id": 15368
           }
         ]
       }

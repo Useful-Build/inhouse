@@ -11,5 +11,6 @@ never on time.
 
 The title cards are drawn by ffmpeg in the reel job (no per-spec code): the scenario title, the viewport and the short SHA.
 
-The preview is built from the PR's merge commit while the specs run at the head SHA. For the final `fleet/*` -> `main`
-PR the trees are identical (main is strict), but for worker PRs into `fleet/*` they can differ.
+The preview is built from the PR's merge commit while the specs run at the head SHA. Since main stopped requiring
+branches to be up to date (decision 0028, merge queue), the two trees can differ on any PR whose base moved; record
+the reel soon after a push, and the queue tests the combined result before it merges.

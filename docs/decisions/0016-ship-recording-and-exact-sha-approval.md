@@ -1,6 +1,6 @@
 # 0016. Ship recording, and approval of the exact SHA
 
-- Status: accepted, 2026-11-19
+- Status: accepted, 2026-11-19; parts replaced by [0028](0028-merge-lanes-and-merge-queue.md) on 2026-11-27
 - Was: setup plan, landing flow steps 4 to 7 (no id there)
 - Plan: [setup plan, The landing flow](../plans/2026-11-19-setup-gaps.md#the-landing-flow-every-big-project)
 

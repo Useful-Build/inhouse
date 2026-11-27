@@ -37,6 +37,7 @@ tracker's.
 | [0025](0025-slack-is-a-connected-tool.md) | Slack is a connected tool the agent reads, and a channel from Act (supersedes 0006) | P5 |
 | [0026](0026-one-agent-replaces-watch-act-run.md) | One agent with a proactive switch replaces Watch, Act and Run | Master plan 2026-11-24 |
 | [0027](0027-learn-from-executor-dont-run-it.md) | Learn from Executor's sign-in code, don't run it | Connect any tool 2026-11-26 |
+| [0028](0028-merge-lanes-and-merge-queue.md) | Merge lanes, a merge queue, and narrow re-runs | Merge policy walk-through 2026-11-27 |
 
 `PD` ids are the [production plan](../plans/2026-11-19-production.md#decisions)'s. The
 [backend plan](../plans/2026-11-19-backend.md#decisions)'s `BD1` to `BD13` don't collide and stay in that plan until
